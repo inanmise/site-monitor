@@ -12,6 +12,7 @@ vi.mock('../api/client', () => ({
       reNotifyAlert:    vi.fn(),
       previewReNotify:  vi.fn(),
       bulkAlertAction:  vi.fn(),
+      getTeams:         vi.fn(),   // filtre cubugu takim listesini ceker (yalniz urlSync modunda)
     },
   },
 }))
@@ -247,5 +248,139 @@ describe('AlertHistory — alarm tipi sözlüğü', () => {
     await waitFor(() => expect(api.admin.getAlerts).toHaveBeenCalled())
     // Sözlükte yoksa etiket HAM TİPE düşer — anahtar (incov.type.X) sızmaz.
     expect(await screen.findByText('HENUZ_OLMAYAN_TIP')).toBeInTheDocument()
+  })
+})
+
+/**
+ * FİLTRE ÇUBUĞU + İSTATİSTİK ŞERİDİ + PAYLAŞILABİLİR BAĞLANTI (2026-08-16)
+ *
+ * Sayfada arama kutusu YOKTU; seviye/takım/sahiplenme filtreleri yoktu; urlSync yalnız sayfa
+ * numarasını taşıyordu (bağlantıyı gönderince karşı taraf BAŞKA bir liste görüyordu).
+ *
+ * Bu yüzey YALNIZ bağımsız sayfada çıkmalı: aynı bileşen dokuz modalın içinde gömülü sekme
+ * olarak da kullanılıyor ve orada domain zaten sabit — takım/arama filtresi anlamsız olur.
+ */
+describe('AlertHistory — filtre çubuğu ve istatistik şeridi', () => {
+  const openAlert = { id: 1, domain: 'a.example.com', alert_type: 'EXPIRY', alert_level: 'CRITICAL',
+    acknowledged: false, resolved: false, created_at: '2026-08-01T08:00:00' }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.history.replaceState({}, '', '/')
+    api.admin.getAlerts.mockResolvedValue({
+      success: true, data: [openAlert], total: 1, page: 0, size: 20,
+      level_counts: { CRITICAL: 5, HIGH: 3, WARNING: 2 }, unacked_total: 7,
+      stale_total: 4, stale_hours: 24,
+    })
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'SY-A' }] })
+  })
+
+  it('GÖMÜLÜ modda filtre çubuğu ve şerit ÇIKMAZ (modalı şişirmez)', async () => {
+    const { container } = render(<AlertHistory domain="a.example.com" />)
+    await waitFor(() => expect(api.admin.getAlerts).toHaveBeenCalled())
+
+    expect(container.querySelector('.alh-toolbar')).toBeNull()
+    expect(container.querySelector('.stats-panel')).toBeNull()
+    expect(api.admin.getTeams).not.toHaveBeenCalled()   // gereksiz istek de atılmaz
+  })
+
+  it('BAĞIMSIZ sayfada şerit sunucudan gelen sayıları gösterir (sayfa içinden DEĞİL)', async () => {
+    const { container } = render(<AlertHistory urlSync />)
+    await waitFor(() => expect(container.querySelector('.stats-panel')).not.toBeNull())
+
+    // Listede 1 satır var ama şerit 5/3/2/7 göstermeli — sayfa içinden hesaplansaydı hepsi 1 olurdu
+    const values = [...container.querySelectorAll('.stat-value')].map(v => v.textContent)
+    expect(values).toEqual(['10', '5', '3', '2', '7', '4'])
+  })
+
+  it('Kritik kartına tıklamak seviye filtresini SUNUCUYA gönderir', async () => {
+    const { container } = render(<AlertHistory urlSync />)
+    await waitFor(() => expect(container.querySelector('.stats-panel')).not.toBeNull())
+
+    fireEvent.click([...container.querySelectorAll('.stat-item')][1])   // Kritik
+
+    await waitFor(() => {
+      const last = api.admin.getAlerts.mock.calls.at(-1)[0]
+      expect(last.level).toBe('CRITICAL')
+    })
+  })
+
+  it('Sahiplenilmemiş kartı SEVİYE değil sahiplenme boyutunu filtreler', async () => {
+    const { container } = render(<AlertHistory urlSync />)
+    await waitFor(() => expect(container.querySelector('.stats-panel')).not.toBeNull())
+
+    // Konum DEĞİL sıra: kart eklendikçe .at(-1) başka kartı yakalar (6. kart eklenince tam
+    // bu oldu). Etiketten seçmek de dile bağlar; kartın kendi indeksi sabittir.
+    fireEvent.click([...container.querySelectorAll('.stat-item')][4])   // Sahiplenilmemiş
+
+    await waitFor(() => {
+      const last = api.admin.getAlerts.mock.calls.at(-1)[0]
+      expect(last.acknowledged).toBe('false')
+      expect(last.level).toBeUndefined()   // seviye filtresine BULAŞMAZ
+    })
+  })
+
+  it('Arama DEBOUNCE edilir — her tuşta istek atılmaz', async () => {
+    const { container } = render(<AlertHistory urlSync />)
+    await waitFor(() => expect(container.querySelector('.alh-toolbar')).not.toBeNull())
+    const before = api.admin.getAlerts.mock.calls.length
+
+    const box = container.querySelector('.upt-search')
+    fireEvent.change(box, { target: { value: 'a' } })
+    fireEvent.change(box, { target: { value: 'ak' } })
+    fireEvent.change(box, { target: { value: 'akb' } })
+
+    await waitFor(() => {
+      const last = api.admin.getAlerts.mock.calls.at(-1)[0]
+      expect(last.q).toBe('akb')
+    }, { timeout: 2000 })
+    // Uc tusa uc istek atilsaydi cagri sayisi en az 3 artardi
+    expect(api.admin.getAlerts.mock.calls.length - before).toBeLessThan(3)
+  })
+
+  it('PAYLAŞILABİLİR BAĞLANTI: filtreler adres çubuğunda yaşar', async () => {
+    const { container } = render(<AlertHistory urlSync />)
+    await waitFor(() => expect(container.querySelector('.stats-panel')).not.toBeNull())
+
+    fireEvent.click([...container.querySelectorAll('.stat-item')][1])   // Kritik
+
+    await waitFor(() => expect(window.location.search).toContain('level=CRITICAL'), { timeout: 2000 })
+  })
+
+  it("URL'deki filtrelerle AÇILIR — bağlantıyı alan aynı listeyi görür", async () => {
+    window.history.replaceState({}, '', '/?level=HIGH&q=akbank&tab=closed')
+
+    render(<AlertHistory urlSync />)
+
+    await waitFor(() => {
+      const first = api.admin.getAlerts.mock.calls[0][0]
+      expect(first.level).toBe('HIGH')
+      expect(first.q).toBe('akbank')
+      expect(first.resolved).toBe('true')   // tab=closed
+    })
+  })
+
+  it('UZUN SÜREDİR AÇIK kartı yalnız AÇIK sekmede çıkar', async () => {
+    const { container } = render(<AlertHistory urlSync />)
+    await waitFor(() => expect(container.querySelector('.stats-panel')).not.toBeNull())
+    expect(container.querySelectorAll('.stat-item')).toHaveLength(6)
+
+    fireEvent.click(screen.getByRole('button', { name: /kapalı|closed/i }))
+
+    // Kapalı sekmede "24 saatten eski" demek olurdu, "24 saattir AÇIK" değil — iki farklı şey.
+    await waitFor(() => expect(container.querySelectorAll('.stat-item')).toHaveLength(5))
+  })
+
+  it('UZUN SÜREDİR AÇIK kartı SAYAÇTIR — tıklanınca filtre uygulamaz', async () => {
+    const { container } = render(<AlertHistory urlSync />)
+    await waitFor(() => expect(container.querySelector('.stats-panel')).not.toBeNull())
+    const before = api.admin.getAlerts.mock.calls.length
+
+    fireEvent.click([...container.querySelectorAll('.stat-item')][5])   // Uzun süredir açık
+
+    // Sunucuda karşılığı olan bir parametre yok; sahte istemci-tarafı süzme sayfalamayla
+    // yanıltıcı olurdu. Yeni istek de atılmamalı.
+    await new Promise(r => setTimeout(r, 50))
+    expect(api.admin.getAlerts.mock.calls.length).toBe(before)
   })
 })

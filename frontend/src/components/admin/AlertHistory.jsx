@@ -10,6 +10,8 @@ import UserBadge from '../ui/UserBadge.jsx'
 import { mailPreviewSrcDoc, mailLogoVariant, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import { ALERT_TYPES, alertTypeMeta, alertTypeLabel } from '../../utils/alertTypeMeta.js'
+import MonitorStatsSection from '../MonitorStatsSection.jsx'
+import SearchableSelect from '../ui/SearchableSelect.jsx'
 import {
   Check, ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, AlertCircle, ChevronUp,
   ChevronDown, Mail, MailX, Clock, Users, Calendar
@@ -336,21 +338,47 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
   const { showConfirm } = useDialog()
   const toast = useToast()
   const [alerts,       setAlerts]       = useState([])
-  const [tab,          setTab]          = useState('open')
+  const [tab,          setTab]          = useState(() => (urlSync && readUrlParam('tab', null) === 'closed' ? 'closed' : 'open'))
   const [page,         setPage]         = useState(() => (urlSync ? readUrlInt('page', 1) - 1 : 0))
   const [pageSize,     setPageSize]     = useState(() => (urlSync && readUrlInt('ps', null)) || readPageSize('alert-history'))
   const [total,        setTotal]        = useState(0)
-  const [closedFrom,   setClosedFrom]   = useState(null)
-  const [closedTo,     setClosedTo]     = useState(null)
+  const [closedFrom,   setClosedFrom]   = useState(() => (urlSync ? readUrlParam('from', null) : null))
+  const [closedTo,     setClosedTo]     = useState(() => (urlSync ? readUrlParam('to', null) : null))
   const [loading,      setLoading]      = useState(false)
   const [notifyModal,  setNotifyModal]  = useState(null)
   const [notifying,    setNotifying]    = useState(null)
   const [renotifyModal,   setRenotifyModal]   = useState(null)   // Tekrar Bildir onay pop-up'ı
   const [renotifySending, setRenotifySending] = useState(false)
-  const [typeFilter,   setTypeFilter]   = useState('')   // '' = tüm tipler
+  const [typeFilter,   setTypeFilter]   = useState(() => (urlSync ? readUrlParam('type', '') : ''))   // '' = tüm tipler
   const [typeCounts,   setTypeCounts]   = useState({})
   const [selected,     setSelected]     = useState(() => new Set())   // toplu seçim (yalnız açık sekme)
   const [bulkBusy,     setBulkBusy]     = useState(false)
+  // ── Arama ve filtreler (yalnız bağımsız sayfada; gömülü modda domain zaten sabit) ──
+  // Hepsi SUNUCUYA gider: istemci tarafında süzmek yalnız açık sayfayı süzer ve sayfalamayla
+  // "3 sonuç" derken aslında 90 sonuç olur.
+  const [search,       setSearch]       = useState(() => (urlSync ? readUrlParam('q', '') : ''))
+  const [searchTerm,   setSearchTerm]   = useState(search)   // debounce'lanmış hâli (isteğe giden)
+  const [levelFilter,  setLevelFilter]  = useState(() => (urlSync ? readUrlParam('level', '') : ''))
+  const [teamFilter,   setTeamFilter]   = useState(() => (urlSync ? readUrlParam('team', '') : ''))
+  const [ackFilter,    setAckFilter]    = useState(() => (urlSync ? readUrlParam('ack', '') : ''))
+  const [levelCounts,  setLevelCounts]  = useState({})
+  const [unackedTotal, setUnackedTotal] = useState(0)
+  const [staleTotal,   setStaleTotal]   = useState(0)
+  const [staleHours,   setStaleHours]   = useState(24)
+  const [teams,        setTeams]        = useState([])
+  const [statsVisible, setStatsVisible] = useState(true)
+
+  // Yazarken her tuşta istek atma — 300 ms sessizlikten sonra tek istek.
+  useEffect(() => {
+    const id = setTimeout(() => setSearchTerm(search), 300)
+    return () => clearTimeout(id)
+  }, [search])
+
+  // Takım listesi yalnız bağımsız sayfada ve bir kez.
+  useEffect(() => {
+    if (!urlSync) return
+    api.admin.getTeams().then(res => { if (res?.success) setTeams(res.data ?? []) }).catch(() => {})
+  }, [urlSync])
 
   const levelLabel = {
     WARNING: t('alh.level.warning'), HIGH: t('alh.level.high'), CRITICAL: t('alh.level.critical'),
@@ -368,6 +396,58 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
     )
   }
 
+  // ── İstatistik kartları ────────────────────────────────────────────────────
+  // Sayılar SUNUCUDAN gelir (level_counts / unacked_total). Sayfa içinden hesaplanamaz:
+  // 81 alarmın 20'si ekranda dururken "Kritik: 12" yazmak yanıltıcı olurdu.
+  const levelTotal = Object.values(levelCounts).reduce((a, b) => a + b, 0)
+  const statItems = [
+    { key: '',         Icon: Bell,        label: t('alh.statTotal'),    value: levelTotal,                  cls: 'total'    },
+    { key: 'CRITICAL', Icon: AlertCircle, label: t('alh.statCritical'), value: levelCounts.CRITICAL ?? 0,   cls: 'critical' },
+    { key: 'HIGH',     Icon: TrendingUp,  label: t('alh.statHigh'),     value: levelCounts.HIGH ?? 0,       cls: 'high'     },
+    { key: 'WARNING',  Icon: ShieldAlert, label: t('alh.statWarning'),  value: levelCounts.WARNING ?? 0,    cls: 'warning'  },
+    { key: 'unacked',  Icon: Bell,        label: t('alh.statUnacked'),  value: unackedTotal,                cls: 'warning',
+      hint: t('mondash.unackedHint') },
+    // YALNIZ açık sekmede: kapalı sekmede bu sayı "24 saatten eski" demek olurdu,
+    // "24 saattir AÇIK" değil — iki farklı şey ve ikincisi kullanıcının sorduğu.
+    ...(tab === 'open' ? [{ key: 'stale', Icon: Clock, label: t('alh.statStale', staleHours),
+                    value: staleTotal, cls: 'high', hint: t('alh.statStaleHint', staleHours) }] : []),
+  ]
+
+  // "Sahiplenilmemiş" kartı seviye DEĞİL, sahiplenme boyutunu filtreler — tek kart şeridinde
+  // iki farklı boyut olduğu için tıklama burada ayrıştırılır.
+  function onLevelCardClick(key) {
+    // "Uzun süredir açık" kartı SAYAÇ — tıklanınca filtre uygulamaz. Sunucuda karşılığı olan bir
+    // parametre yok; sahte bir istemci-tarafı süzme eklemek sayfalamayla yanıltıcı olurdu
+    // (ekrandaki 20 satırdan 3'ünü gösterip "3 tane" demek). Bilinçli olarak gösterge bırakıldı.
+    if (key === 'stale') return
+    if (key === 'unacked') { setAckFilter(a => (a === 'unack' ? '' : 'unack')); setLevelFilter(''); return }
+    setAckFilter('')
+    setLevelFilter(l => (l === key ? '' : key))
+  }
+
+  const levelOptions = [
+    { value: '',         label: t('alh.allLevels') },
+    { value: 'CRITICAL', label: levelLabel.CRITICAL },
+    { value: 'HIGH',     label: levelLabel.HIGH },
+    { value: 'WARNING',  label: levelLabel.WARNING },
+  ]
+  const ackOptions = [
+    { value: '',      label: t('alh.allAckStates') },
+    { value: 'unack', label: t('alh.unackedOnly') },
+    { value: 'ack',   label: t('alh.ackOnly') },
+  ]
+  const teamOptions = [
+    { value: '', label: t('alh.allTeams') },
+    ...teams.map(tm => ({ value: String(tm.id), label: tm.name })),
+  ]
+
+  const hasActiveFilters = !!(search || levelFilter || teamFilter || ackFilter || typeFilter
+                              || closedFrom || closedTo)
+  function clearFilters() {
+    setSearch(''); setLevelFilter(''); setTeamFilter(''); setAckFilter('')
+    setTypeFilter(''); setClosedFrom(null); setClosedTo(null)
+  }
+
   const load = useCallback(async () => {
     setLoading(true)
     const params = {
@@ -381,19 +461,30 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
     }
     if (domain) params.domain = domain
     if (typeFilter) params.alertType = typeFilter
+    if (searchTerm.trim()) params.q = searchTerm.trim()
+    if (levelFilter) params.level = levelFilter
+    if (teamFilter)  params.teamId = teamFilter
+    if (ackFilter)   params.acknowledged = ackFilter === 'ack' ? 'true' : 'false'
     const res = await api.admin.getAlerts(params)
     setLoading(false)
     if (res?.success) {
       setAlerts(res.data ?? [])
       setTotal(res.total ?? 0)
       setTypeCounts(res.type_counts ?? {})
+      setLevelCounts(res.level_counts ?? {})
+      setUnackedTotal(res.unacked_total ?? 0)
+      setStaleTotal(res.stale_total ?? 0)
+      setStaleHours(res.stale_hours ?? 24)
     } else if (res != null) {
       toast.error(res?.error || t('alh.loadError'))
     }
-  }, [tab, page, pageSize, closedFrom, closedTo, domain, typeFilter, t, toast])
+  }, [tab, page, pageSize, closedFrom, closedTo, domain, typeFilter,
+      searchTerm, levelFilter, teamFilter, ackFilter, t, toast])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => { setPage(0) }, [tab, pageSize, closedFrom, closedTo, typeFilter])
+  // Filtre değişince 1. sayfaya dön — aksi halde 5. sayfada daralan sonuçta BOŞ ekran kalır.
+  useEffect(() => { setPage(0) }, [tab, pageSize, closedFrom, closedTo, typeFilter,
+                                   searchTerm, levelFilter, teamFilter, ackFilter])
   // Liste bağlamı değişince seçim sıfırlansın (sekme/sayfa/filtre) — bayat id'ler seçili kalmasın
   useEffect(() => { setSelected(new Set()) }, [tab, page, pageSize, closedFrom, closedTo, typeFilter, domain])
 
@@ -526,7 +617,18 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
 
   // Paylaşılabilir URL (yalnız Alarm Geçmişi SEKMESİ — gömülü modallarda kapalı: enabled guard).
+  // Paylaşılabilir bağlantı: görünümü ÜRETEN her şey adres çubuğunda yaşar; varsayılan değer
+  // param üretmez (temiz URL). Bağlantıyı alan kişi AYNI listeyi açar — eskiden yalnız sayfa
+  // numarası taşınıyordu, filtreler kayboluyordu.
   useUrlQuerySync({
+    tab: tab !== 'open' ? tab : null,
+    type: typeFilter || null,
+    q: searchTerm.trim() || null,
+    level: levelFilter || null,
+    team: teamFilter || null,
+    ack: ackFilter || null,
+    from: closedFrom || null,
+    to: closedTo || null,
     page: page > 0 ? page + 1 : null,
     ps: (pageSize !== 50 || page > 0) ? pageSize : null,
   }, { enabled: urlSync })
@@ -556,6 +658,36 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
           <RefreshCcw size={13} /> {t('alh.refresh')}
         </button>
       </div>
+
+      {/* ── İstatistik şeridi + filtre çubuğu — YALNIZ bağımsız sayfada ──
+             Gömülü modda (monitör/sertifika modalının "Alarm Geçmişi" sekmesi) domain zaten
+             sabit; orada takım/arama filtresi anlamsız olur ve modalı gereksiz uzatır. ── */}
+      {urlSync && (
+        <>
+          <MonitorStatsSection
+            loading={loading} total={statItems[0].value}
+            statsVisible={statsVisible} onToggle={() => setStatsVisible(v => !v)}
+            items={statItems} activeFilter={levelFilter || null}
+            onStatClick={onLevelCardClick}
+            onClearFilter={() => setLevelFilter('')}
+            shownCount={alerts.length} />
+
+          <div className="upt-toolbar alh-toolbar">
+            <SearchableSelect value={levelFilter} onChange={setLevelFilter} options={levelOptions} />
+            {teamOptions.length > 1 && (
+              <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} searchThreshold={2} />
+            )}
+            <SearchableSelect value={ackFilter} onChange={setAckFilter} options={ackOptions} />
+            <input className="upt-search" type="text" placeholder={t('alh.searchPlaceholder')}
+              value={search} onChange={e => setSearch(e.target.value)} />
+            {hasActiveFilters && (
+              <button type="button" className="btn btn-secondary btn-sm-p" onClick={clearFilters}>
+                {t('alh.clearFilters')}
+              </button>
+            )}
+          </div>
+        </>
+      )}
 
       {/* ── Tip filtre pill'leri — canlı sayılarla ── */}
       <div className="inv-stats-pills" style={{ marginBottom: 14 }}>

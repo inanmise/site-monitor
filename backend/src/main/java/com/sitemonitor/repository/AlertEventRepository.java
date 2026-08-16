@@ -299,4 +299,85 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
                 null, null, null, null, scoped, scope);
     }
 
+
+    /**
+     * İstatistik şeridinin sayaçları: (seviye, sahiplenildi) kırılımı — TEK sorguda.
+     *
+     * <p>Kartlardaki sayılar SAYFA İÇİNDEN hesaplanamaz: 81 alarmın 20'si ekranda dururken
+     * "Kritik: 12" yazmak yanıltıcı olur. Bu yüzden sunucuda, listeyle AYNI filtrelerle sayılır.
+     *
+     * <p>Kendi boyutları HARİÇ: seviye ve sahiplenilme filtreleri buraya UYGULANMAZ — aksi halde
+     * "Kritik" kartına basınca diğer kartlar sıfırlanır ve kullanıcı geri dönemez.
+     */
+    @Query("""
+            SELECT e.alertLevel, e.acknowledged, COUNT(e) FROM AlertEvent e
+            WHERE (:resolved IS NULL OR e.resolved = :resolved)
+              AND (:since IS NULL OR e.createdAt >= :since)
+              AND (:until IS NULL OR e.createdAt <= :until)
+              AND (:resolvedSince IS NULL OR e.resolvedAt >= :resolvedSince)
+              AND (:resolvedUntil IS NULL OR e.resolvedAt <= :resolvedUntil)
+              AND (:domain IS NULL OR e.domain = :domain)
+              AND (:alertType IS NULL OR e.alertType = :alertType)
+              AND (:q IS NULL OR LOWER(e.domain) LIKE :q ESCAPE '!')
+              AND (:teamId IS NULL OR e.teamId = :teamId OR EXISTS (
+                      SELECT 1 FROM CertificateInventory ti
+                       WHERE ti.domain = e.domain
+                         AND (ti.teamId = :teamId OR ti.ugTeamId = :teamId)))
+              AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
+                      SELECT 1 FROM CertificateInventory i
+                       WHERE i.domain = e.domain
+                         AND (i.teamId IN :scope OR i.ugTeamId IN :scope)))
+            GROUP BY e.alertLevel, e.acknowledged
+            """)
+    List<Object[]> countFacets(
+            @Param("resolved") Boolean resolved,
+            @Param("since") String since,
+            @Param("until") String until,
+            @Param("resolvedSince") String resolvedSince,
+            @Param("resolvedUntil") String resolvedUntil,
+            @Param("domain") String domain,
+            @Param("alertType") String alertType,
+            @Param("q") String q,
+            @Param("teamId") Long teamId,
+            @Param("scoped") boolean scoped,
+            @Param("scope") List<Long> scope);
+
+
+    /**
+     * "Uzun süredir açık" sayacı — {@code staleBefore}'dan ESKİ alarmlar.
+     *
+     * <p>Neden AYRI sorgu: bu boyutu {@link #countFacets}'in gruplamasına {@code CASE WHEN} ile
+     * katmayı denedim ve Hibernate'in ürettiği SQL PostgreSQL'de patladı
+     * ({@code column "created_at" must appear in the GROUP BY clause}) — SELECT'teki CASE ile
+     * GROUP BY'daki CASE parametreli oldukları için özdeş sayılmıyor. Tek turu kurtarmak uğruna
+     * lehçeye bağımlı, kırılgan bir sorgu yazmaktansa ikinci bir COUNT daha ucuz.
+     *
+     * <p>Diğer filtreler listeyle AYNI uygulanır; yalnız yaş eşiği eklenir.
+     */
+    @Query("""
+            SELECT COUNT(e) FROM AlertEvent e
+            WHERE (:resolved IS NULL OR e.resolved = :resolved)
+              AND e.createdAt < :staleBefore
+              AND (:domain IS NULL OR e.domain = :domain)
+              AND (:alertType IS NULL OR e.alertType = :alertType)
+              AND (:q IS NULL OR LOWER(e.domain) LIKE :q ESCAPE '!')
+              AND (:teamId IS NULL OR e.teamId = :teamId OR EXISTS (
+                      SELECT 1 FROM CertificateInventory ti
+                       WHERE ti.domain = e.domain
+                         AND (ti.teamId = :teamId OR ti.ugTeamId = :teamId)))
+              AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
+                      SELECT 1 FROM CertificateInventory i
+                       WHERE i.domain = e.domain
+                         AND (i.teamId IN :scope OR i.ugTeamId IN :scope)))
+            """)
+    long countStale(
+            @Param("resolved") Boolean resolved,
+            @Param("staleBefore") String staleBefore,
+            @Param("domain") String domain,
+            @Param("alertType") String alertType,
+            @Param("q") String q,
+            @Param("teamId") Long teamId,
+            @Param("scoped") boolean scoped,
+            @Param("scope") List<Long> scope);
+
 }

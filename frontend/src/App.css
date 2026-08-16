@@ -3010,6 +3010,11 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* Tip rozeti: ikon + ad. Renk satır içinden gelir (tipe özgü, alertTypeMeta tek kaynak);
    yerleşim ve tipografi BURADA — eskiden üç ayrı yerde satır içi style olarak tekrarlıyordu. */
 .alh-type-chip { display: inline-flex; align-items: center; gap: 4px; font-weight: 700; }
+/* Alarm Geçmişi filtre çubuğu — izleme sayfalarının .upt-toolbar'ını yeniden kullanır;
+   burada yalnız tip rozetleriyle arasındaki boşluk ayarlanır (renk/kenarlık ORADAN gelir,
+   böylece koyu tema kuralları tek yerde kalır). */
+.alh-toolbar { justify-content: flex-end; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+
 
 .alert-domain { font-size: 1em; }
 .alert-days { background: #f8d7da; color: #721c24; padding: 2px 8px; border-radius: 10px; font-size: .82em; font-weight: 700; }

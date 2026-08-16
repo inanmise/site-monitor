@@ -90,6 +90,9 @@ public class AdminController {
     private final MonitoringGroupService monitoringGroupService;
     private final SchedulerService schedulerService;
 
+    /** "Uzun süredir açık" eşiği (saat) — bu yaştan eski AÇIK alarm unutulmuş kabul edilir. */
+    private static final int ALERT_STALE_HOURS = 24;
+
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
@@ -1044,12 +1047,39 @@ public class AdminController {
                 qEffective, levelEffective, acknowledged, teamId, scoped, scopeList)) {
             typeCounts.put(String.valueOf(row[0]), (Long) row[1]);
         }
-        return ok(Map.of(
-                "data",        result.getContent(),
-                "total",       result.getTotalElements(),
-                "page",        result.getNumber(),
-                "size",        result.getSize(),
-                "type_counts", typeCounts));
+        // İstatistik şeridi sayaçları: seviye kırılımı + sahiplenilmemiş toplamı. Kendi
+        // boyutları (level/acknowledged) BİLEREK uygulanmaz — aksi halde "Kritik" kartına
+        // basınca diğer kartlar sıfırlanır ve kullanıcı seçimden geri dönemez.
+        Map<String, Long> levelCounts = new LinkedHashMap<>();
+        long unackedTotal = 0L;
+        for (Object[] row : alertEventRepo.countFacets(
+                resolvedEffective, since, until, resolvedSince, resolvedUntil, domain, alertTypeEffective,
+                qEffective, teamId, scoped, scopeList)) {
+            String lvl = String.valueOf(row[0]);
+            long n = (Long) row[2];
+            levelCounts.merge(lvl, n, Long::sum);
+            if (!Boolean.TRUE.equals(row[1])) unackedTotal += n;
+        }
+        // "Uzun süredir açık": bu yaştan ESKİ alarmlar unutulmuş sayılır. Karşılaştırma
+        // sözlükseldir; created_at sabit genişlikte (19 karakter) ISO-UTC olduğu için güvenli —
+        // mevcut since/until yüklemleri de aynı deseni kullanıyor.
+        String staleBefore = ISO.format(Instant.now().minus(java.time.Duration.ofHours(ALERT_STALE_HOURS)));
+        long staleTotal = alertEventRepo.countStale(resolvedEffective, staleBefore, domain,
+                alertTypeEffective, qEffective, teamId, scoped, scopeList);
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("data",         result.getContent());
+        body.put("total",        result.getTotalElements());
+        body.put("page",         result.getNumber());
+        body.put("size",         result.getSize());
+        body.put("type_counts",  typeCounts);
+        body.put("level_counts", levelCounts);
+        body.put("unacked_total", unackedTotal);
+        // Yalnız AÇIK sekmede anlamlı: kapalı sekmede "24 saatten eski" demek olur,
+        // "24 saattir açık" değil. Arayüz kartı yalnız açık sekmede gösterir.
+        body.put("stale_total", staleTotal);
+        body.put("stale_hours", ALERT_STALE_HOURS);
+        return ok(body);
     }
 
     /**
