@@ -14,6 +14,7 @@ import { Play, Pencil, Copy, X, RefreshCw, Plus, Trash2, Radio, Users, Layers, F
 import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
+import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
@@ -201,15 +202,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   }
 
   // Türetilmiş listeler memoize — 1sn countdown her saniye render tetikler.
-  const teamOptions = useMemo(() => {
-    const names = new Set(); let hasNone = false
-    for (const m of monitors) { if (m.team_name) names.add(m.team_name); else hasNone = true }
-    const opts = [{ value: 'all', label: t('app.allTeams') }]
-    ;[...names].sort((a, b) => a.localeCompare(b)).forEach(n => opts.push({ value: n, label: n }))
-    if (hasNone) opts.push({ value: '__none__', label: t('app.noTeam') })
-    return opts
-  }, [monitors, t])
-  const hasTeamOptions = teamOptions.some(o => o.value !== 'all' && o.value !== '__none__')
+  const { teamOptions, hasTeamOptions } = useTeamOptions(monitors)
   const teamSelectOptions = useMemo(() => [{ value: '', label: t('ping.noTeam') },
     ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))], [teams, t])
   // Gruplar takıma özgü: kullanıcı yalnız kendi takımının gruplarını görür/seçer (admin tümünü).
