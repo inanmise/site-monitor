@@ -380,4 +380,20 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             @Param("scoped") boolean scoped,
             @Param("scope") List<Long> scope);
 
+
+    /**
+     * (domain, tip) → son {@code since} tarihinden bu yana açılmış alarm sayısı — TEK sorguda.
+     *
+     * <p>Kart başına ayrı sorgu N+1 olurdu (50 kayıtlık sayfada 50 sorgu); enrichAlerts'teki
+     * mevcut toplu-sorgu deseni izlendi. Kapsam kontrolü GEREKMEZ: yalnız zaten görüntülenen
+     * alarmların (domain, tip) çiftleri için sayım yapılıyor.
+     */
+    @Query("""
+            SELECT e.domain, e.alertType, COUNT(e) FROM AlertEvent e
+            WHERE e.domain IN :domains AND e.createdAt >= :since
+            GROUP BY e.domain, e.alertType
+            """)
+    List<Object[]> countRecentByDomainAndType(@Param("domains") Collection<String> domains,
+                                              @Param("since") String since);
+
 }

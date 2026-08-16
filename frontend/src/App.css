@@ -3034,6 +3034,17 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* Grup sayıları SAYFA İÇİDİR; tip toplamları rozetlerde. İki sayı farklı anlamda olduğu
    için ekranda bir satırla ayrılıyor — aksi halde kullanıcı çelişki sanar. */
 .alh-group-note { font-size: .8em; color: var(--text-muted); margin: -4px 0 12px; }
+/* Kart rozetleri: 'ne kadardır açık' ve 'N. kez'. Renkler token'lardan — koyu temada da okunur.
+   Vurgulu hâl (is-stale) yalnız eşik aşılınca; her karta kırmızı boyamak sinyali boğar. */
+.alh-open-for, .alh-repeat {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 7px; border-radius: 10px; font-size: .76em; font-weight: 600;
+  background: var(--bg-surface); border: 1px solid var(--border); color: var(--text-light);
+}
+.alh-open-for.is-stale { background: rgba(224,123,0,.12); border-color: #e07b00; color: #b45309; }
+[data-theme="dark"] .alh-open-for, [data-theme="dark"] .alh-repeat { background: var(--bg-card); }
+[data-theme="dark"] .alh-open-for.is-stale { color: #fbbf24; }
+
 [data-theme="dark"] .alh-group-head { background: var(--bg-card); }
 [data-theme="dark"] .alh-group-count { background: var(--bg-surface); }
 

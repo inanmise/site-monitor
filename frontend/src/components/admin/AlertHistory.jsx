@@ -334,6 +334,51 @@ function ReNotifyConfirmModal({ domain, recipients, sending, onSend, onClose }) 
 }
 
 
+
+/**
+ * "Ne kadardır AÇIK" rozeti — açık bir alarmın en kritik sayısı ve buraya kadar HİÇ
+ * gösterilmiyordu ({@code formatDuration} yalnız kapalı alarmlarda kullanılıyordu).
+ *
+ * <p>Eşiği aşan alarmlar vurgulanır: uzun süredir açık kalan bir alarm ya çözülmemiş ya
+ * unutulmuştur; ikisi de görünmesi gereken durumlar.
+ */
+function OpenDurationBadge({ createdAt, staleHours }) {
+  const t = useT()
+  if (!createdAt) return null
+  // UTC olarak ayrıştır. Backend zaman damgalarını saat dilimi EKİ OLMADAN yazıyor
+  // ("2026-08-16T09:00:00") ve JS böyle bir dizeyi YEREL saat sanır. Kapalı karttaki
+  // "açık kalma süresi" iki naive damganın FARKI olduğu için kayma sönümleniyordu; burada
+  // ise şimdiki zamanla (mutlak) karşılaştırıyoruz — sönümlenmez. Europe/Istanbul'da 3 saatlik
+  // sapma üretiyordu (testte yakalandı: 3 saatlik alarm "6s" görünüyordu).
+  const utc = createdAt.endsWith('Z') || createdAt.includes('+') ? createdAt : createdAt + 'Z'
+  const startedMs = new Date(utc).getTime()
+  const ms = Date.now() - startedMs
+  if (!Number.isFinite(ms) || ms < 0) return null
+  const stale = ms >= staleHours * 3_600_000
+  return (
+    <span className={`alh-open-for${stale ? ' is-stale' : ''}`}
+      title={stale ? t('alh.openForStaleTip', staleHours) : t('alh.openForTip')}>
+      <Clock size={11} /> {t('alh.openFor', formatDuration(Date.now(), startedMs))}
+    </span>
+  )
+}
+
+/**
+ * "Bu ay N. kez" rozeti — aynı domain + tip için son 30 gündeki alarm sayısı.
+ *
+ * <p>Tekrar eden sorunu tekil olandan ayırır. 1 ise rozet ÇIZILMEZ: her karta "1. kez" yazmak
+ * gürültüdür ve asıl sinyali (tekrar edenler) boğar.
+ */
+function RepeatBadge({ count }) {
+  const t = useT()
+  if (!count || count < 2) return null
+  return (
+    <span className="alh-repeat" title={t('alh.repeatTip', count)}>
+      <RefreshCcw size={11} /> {t('alh.repeat', count)}
+    </span>
+  )
+}
+
 /** Katlama durumunun oturum anahtarı — sekme değişince ayrı tutulur (açık/kapalı farklı listeler). */
 const GROUP_COLLAPSE_KEY = 'alh-collapsed-groups'
 
@@ -882,6 +927,8 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
                   </span>
                   <TypeChip type={a.alert_type} />
                   <strong className="alert-domain">{a.domain}</strong>
+                  <OpenDurationBadge createdAt={a.created_at} staleHours={staleHours} />
+                  <RepeatBadge count={a.repeat_count} />
                   {(a.email_failed_count ?? 0) > 0 && (
                     <span className="alert-send-failed" title={t('alh.sendFailedTip')}>
                       <MailX size={12} /> {t('alh.sendFailed')}
@@ -964,6 +1011,7 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
                   <div className="ahc-top">
                     <strong className="ahc-domain">{a.domain}</strong>
                     <TypeChip type={a.alert_type} size={12} />
+                    <RepeatBadge count={a.repeat_count} />
                     <span className="ahc-level" style={{ color: levelColor[a.alert_level] }}>
                       {levelLabel[a.alert_level] || a.alert_level}
                     </span>

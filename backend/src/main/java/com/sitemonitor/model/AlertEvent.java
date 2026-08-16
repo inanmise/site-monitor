@@ -85,4 +85,12 @@ public class AlertEvent {
     @Transient private Integer certTier;
     @Transient private Long    emailSentCount;
     @Transient private Long    emailFailedCount;
+    /**
+     * Aynı domain + alarm tipi için son 30 gündeki TOPLAM alarm sayısı (bu alarm dahil).
+     *
+     * <p>Tekrar eden sorunu tekil olandan ayırır: "bu ay 4. kez" rozeti, aynı sertifikanın ya da
+     * aynı DNS kaydının sürekli alarm ürettiğini tek bakışta gösterir — düz listede bu ancak
+     * geçmişi tarayarak fark edilirdi.
+     */
+    @Transient private Long    repeatCount;
 }

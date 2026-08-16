@@ -471,3 +471,80 @@ describe('AlertHistory — konuya göre gruplama', () => {
     expect(container.querySelectorAll('.alert-card')).toHaveLength(2)
   })
 })
+
+/**
+ * KART ZENGİNLEŞTİRMELERİ — açık süresi ve tekrar rozeti.
+ *
+ * "Ne kadardır açık" açık bir alarmın en kritik sayısıdır ve buraya kadar HİÇ gösterilmiyordu:
+ * formatDuration yalnız KAPALI alarmlarda kullanılıyordu (resolved_at - created_at).
+ *
+ * SAAT DİLİMİ UYARISI — bu suite'in bilinen sınırı: backend zaman damgalarını saat dilimi eki
+ * OLMADAN yazıyor ve JS böyle bir dizeyi YEREL saat sanar. Rozet mutlak "şimdi" ile
+ * karşılaştırdığı için sapma sönümlenmez (Europe/Istanbul'da 3 saat). Aşağıdaki testler bu hatayı
+ * YEREL geliştirmede yakalar; CI runner'ı UTC olduğu için ORADA sessiz kalır (offset 0).
+ * Bu yüzden düzeltmenin kendisi koda yorumla sabitlendi — testin tek başına yeterli olmadığı
+ * bir yer ve bunu bilmek gerekiyor.
+ */
+describe('AlertHistory — kart rozetleri', () => {
+  const hoursAgo = (h) => new Date(Date.now() - h * 3_600_000).toISOString().slice(0, 19)
+
+  const openAlertAt = (createdAt, extra = {}) => ({
+    id: 1, domain: 'a.example.com', alert_type: 'EXPIRY', alert_level: 'CRITICAL',
+    acknowledged: false, resolved: false, created_at: createdAt, ...extra,
+  })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.history.replaceState({}, '', '/')
+    sessionStorage.clear()
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [] })
+  })
+
+  const withAlert = (a) => api.admin.getAlerts.mockResolvedValue({
+    success: true, data: [a], total: 1, page: 0, size: 20,
+    level_counts: { CRITICAL: 1 }, unacked_total: 1, stale_total: 0, stale_hours: 24,
+  })
+
+  it('AÇIK alarmda "ne kadardır açık" gösterilir', async () => {
+    withAlert(openAlertAt(hoursAgo(3)))
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelector('.alh-open-for')).not.toBeNull())
+    expect(container.querySelector('.alh-open-for').textContent).toMatch(/3s/)
+  })
+
+  it('EŞİĞİ AŞAN alarm vurgulanır (çözülmemiş ya da unutulmuş)', async () => {
+    withAlert(openAlertAt(hoursAgo(50)))
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelector('.alh-open-for')).not.toBeNull())
+
+    expect(container.querySelector('.alh-open-for').classList.contains('is-stale')).toBe(true)
+    expect(container.querySelector('.alh-open-for').textContent).toMatch(/2g/)   // 50sa = 2g 2s
+  })
+
+  it('eşik ALTINDAKİ alarm vurgulanmaz (her kartı kırmızıya boyamak sinyali boğar)', async () => {
+    withAlert(openAlertAt(hoursAgo(2)))
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelector('.alh-open-for')).not.toBeNull())
+    expect(container.querySelector('.alh-open-for').classList.contains('is-stale')).toBe(false)
+  })
+
+  it('TEKRAR rozeti yalnız 2 ve üstünde çıkar (her karta "1. kez" yazmak gürültü)', async () => {
+    withAlert(openAlertAt(hoursAgo(1), { repeat_count: 1 }))
+    const { container, unmount } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelector('.alh-open-for')).not.toBeNull())
+    expect(container.querySelector('.alh-repeat')).toBeNull()
+    unmount()
+
+    withAlert(openAlertAt(hoursAgo(1), { repeat_count: 4 }))
+    const second = render(<AlertHistory />)
+    await waitFor(() => expect(second.container.querySelector('.alh-repeat')).not.toBeNull())
+    expect(second.container.querySelector('.alh-repeat').textContent).toMatch(/4/)
+  })
+
+  it('created_at yoksa rozet ÇİZİLMEZ — "NaN" ya da boş rozet görünmez', async () => {
+    withAlert(openAlertAt(null))
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelector('.alert-card')).not.toBeNull())
+    expect(container.querySelector('.alh-open-for')).toBeNull()
+  })
+})

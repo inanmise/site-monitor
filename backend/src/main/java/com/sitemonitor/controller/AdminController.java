@@ -93,6 +93,9 @@ public class AdminController {
     /** "Uzun süredir açık" eşiği (saat) — bu yaştan eski AÇIK alarm unutulmuş kabul edilir. */
     private static final int ALERT_STALE_HOURS = 24;
 
+    /** Tekrar rozetinin penceresi (gün) — bu süre içindeki aynı (domain, tip) alarmları sayılır. */
+    private static final int ALERT_REPEAT_WINDOW_DAYS = 30;
+
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
@@ -1124,7 +1127,18 @@ public class AdminController {
             }
         }
 
+        // Tekrar sayısı: (domain, tip) → son N gündeki alarm adedi. TEK sorgu — kart başına
+        // sorgu N+1 olurdu (50 kayıtlık sayfada 50 sorgu).
+        Map<String, Long> repeatCounts = new HashMap<>();
+        if (!domains.isEmpty()) {
+            String since = ISO.format(Instant.now().minus(java.time.Duration.ofDays(ALERT_REPEAT_WINDOW_DAYS)));
+            for (Object[] row : alertEventRepo.countRecentByDomainAndType(domains, since)) {
+                repeatCounts.put(row[0] + " " + row[1], (Long) row[2]);
+            }
+        }
+
         for (AlertEvent ev : events) {
+            ev.setRepeatCount(repeatCounts.get(ev.getDomain() + " " + ev.getAlertType()));
             CertificateInventory inv = invByDomain.get(ev.getDomain());
             if (inv != null) {
                 ev.setSyTeamName(inv.getTeamId()   != null ? teamNames.get(inv.getTeamId())   : null);
