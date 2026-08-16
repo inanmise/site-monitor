@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -1850,4 +1851,33 @@ class AdminControllerTest {
                 eq("%ak%"), eq("HIGH"), any(), any(), anyBoolean(), any());
     }
 
+
+    // ── CSV disa aktarim ─────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("CSV FORMUL ENJEKSIYONU: =,+,-,@ ile baslayan hucre tek tirnakla metinlestirilir")
+    void csvCell_neutralisesFormulaInjection() {
+        // Excel bu karakterlerle baslayan hucreyi FORMUL sayar. domain ve message dis veriden
+        // besleniyor: =cmd|'...'!A1 gibi bir deger, dosyayi acan kisinin makinesinde komut
+        // calistirma denemesine donusebilir.
+        assertThat(AdminController.csvCell("=cmd|'/c calc'!A1")).startsWith("'=");
+        assertThat(AdminController.csvCell("+1+1")).startsWith("'+");
+        assertThat(AdminController.csvCell("-2+3")).startsWith("'-");
+        assertThat(AdminController.csvCell("@SUM(A1)")).startsWith("'@");
+        // Zararsiz degerler DOKUNULMADAN gecer
+        assertThat(AdminController.csvCell("www.akbank.com")).isEqualTo("www.akbank.com");
+        assertThat(AdminController.csvCell("EXPIRY")).isEqualTo("EXPIRY");
+    }
+
+    @Test
+    @DisplayName("CSV kacislamasi: virgul, tirnak, noktali virgul ve satir sonu tirnak icine alinir")
+    void csvCell_escapesSeparators() {
+        assertThat(AdminController.csvCell("a,b")).isEqualTo("\"a,b\"");
+        assertThat(AdminController.csvCell("a;b")).isEqualTo("\"a;b\"");
+        assertThat(AdminController.csvCell("a\nb")).isEqualTo("\"a\nb\"");
+        // Ic tirnak IKIYE katlanir (RFC 4180) — aksi halde sutun sinirlari kayar
+        assertThat(AdminController.csvCell("de\"me")).isEqualTo("\"de\"\"me\"");
+        assertThat(AdminController.csvCell(null)).isEmpty();
+        assertThat(AdminController.csvCell("")).isEmpty();
+    }
 }

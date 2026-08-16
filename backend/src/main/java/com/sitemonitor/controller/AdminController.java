@@ -96,6 +96,10 @@ public class AdminController {
     /** Tekrar rozetinin penceresi (gün) — bu süre içindeki aynı (domain, tip) alarmları sayılır. */
     private static final int ALERT_REPEAT_WINDOW_DAYS = 30;
 
+    /** CSV dışa aktarım sınırları — tek istekte tüm tabloyu belleğe almamak için. */
+    private static final int ALERT_CSV_PAGE = 2_000;
+    private static final int ALERT_CSV_MAX_ROWS = 100_000;
+
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
@@ -1083,6 +1087,122 @@ public class AdminController {
         body.put("stale_total", staleTotal);
         body.put("stale_hours", ALERT_STALE_HOURS);
         return ok(body);
+    }
+
+
+    /**
+     * Alarm Geçmişi CSV dışa aktarımı — EKRANDAKİ filtrelerin AYNISIYLA.
+     *
+     * <p>Filtreler listeyle birebir aynı parametreleri alır; kullanıcı ekranda ne görüyorsa onu
+     * indirir. Ayrı bir filtre yüzeyi olsaydı "ekranda 12 satır vardı, dosyada 800 çıktı" tipi
+     * bir sürpriz kaçınılmaz olurdu.
+     *
+     * <p>Kapsam (IDOR) listeyle aynı: global görüntüleyici değilse yalnız kendi takımlarının
+     * alarmları. CSV, yetki atlatmak için kestirme bir yol OLMAMALI.
+     *
+     * <p>Yanıt doğrudan servlet çıkışına akıtılır ve {@code null} dönülür — CheckHistoryService'in
+     * CSV yolundaki aynı gerekçe (StreamingResponseBody wildcard dönüş tipinde devreye girmiyor).
+     */
+    @GetMapping("/alerts/export")
+    public ResponseEntity<Void> exportAlerts(
+            @RequestParam(required = false) Boolean resolved,
+            @RequestParam(required = false) String since,
+            @RequestParam(required = false) String until,
+            @RequestParam(required = false) String resolvedSince,
+            @RequestParam(required = false) String resolvedUntil,
+            @RequestParam(required = false) String domain,
+            @RequestParam(required = false) String alertType,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String level,
+            @RequestParam(required = false) Boolean acknowledged,
+            @RequestParam(required = false) Long teamId,
+            HttpSession session,
+            jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
+        requirePerm(session, "alerts.read", "view");
+
+        String alertTypeEffective = (alertType != null && !alertType.isBlank()) ? alertType.trim() : null;
+        String qEffective = null;
+        if (q != null && !q.isBlank()) {
+            String esc = q.trim().toLowerCase(java.util.Locale.ROOT)
+                    .replace("!", "!!").replace("%", "!%").replace("_", "!_");
+            qEffective = "%" + esc + "%";
+        }
+        String levelEffective = (level != null && !level.isBlank())
+                ? level.trim().toUpperCase(java.util.Locale.ROOT) : null;
+
+        List<Long> scope = SessionScope.isGlobalViewer(session) ? null : SessionScope.viewTeamIds(session);
+        boolean scoped = scope != null;
+        List<Long> scopeList = scoped ? scope : List.of(-1L);
+
+        response.setStatus(200);
+        response.setContentType("text/csv;charset=UTF-8");
+        response.setHeader(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,
+                "attachment; filename=\"alarm-gecmisi_" + ISO.format(Instant.now()).substring(0, 10) + ".csv\"");
+        java.io.Writer w = new java.io.OutputStreamWriter(response.getOutputStream(),
+                java.nio.charset.StandardCharsets.UTF_8);
+        w.write(0xFEFF);   // Excel UTF-8'i doğru açsın (mevcut dışa aktarımlarla aynı)
+
+        String[] headers = { "created_at", "resolved_at", "domain", "alert_type", "alert_level",
+                "acknowledged", "acknowledged_by", "acknowledged_at", "resolved_by",
+                "days_remaining", "sy_team", "ug_team", "cert_tier", "repeat_count", "message" };
+        writeCsvRow(w, headers);
+
+        int rows = 0;
+        if (!(scoped && scope.isEmpty())) {          // kapsamsız kullanıcı → yalnız başlık satırı
+            for (int page = 0; rows < ALERT_CSV_MAX_ROWS; page++) {
+                var chunk = alertEventRepo.findFiltered(resolved, since, until, resolvedSince, resolvedUntil,
+                        domain, alertTypeEffective, qEffective, levelEffective, acknowledged, teamId,
+                        scoped, scopeList,
+                        PageRequest.of(page, ALERT_CSV_PAGE, Sort.by(Sort.Direction.DESC, "createdAt")))
+                        .getContent();
+                if (chunk.isEmpty()) break;
+                enrichAlerts(chunk);                 // takım adları / tier / tekrar sayısı ekranla aynı
+                for (AlertEvent e : chunk) {
+                    writeCsvRow(w, new String[]{
+                            e.getCreatedAt(), e.getResolvedAt(), e.getDomain(), e.getAlertType(), e.getAlertLevel(),
+                            String.valueOf(Boolean.TRUE.equals(e.getAcknowledged())),
+                            e.getAcknowledgedBy(), e.getAcknowledgedAt(), e.getResolvedBy(),
+                            e.getDaysRemaining() == null ? "" : String.valueOf(e.getDaysRemaining()),
+                            e.getSyTeamName(), e.getUgTeamName(),
+                            e.getCertTier() == null ? "" : String.valueOf(e.getCertTier()),
+                            e.getRepeatCount() == null ? "" : String.valueOf(e.getRepeatCount()),
+                            e.getMessage() });
+                    rows++;
+                }
+                if (chunk.size() < ALERT_CSV_PAGE) break;
+            }
+        }
+        w.flush();
+        return null;
+    }
+
+    private static void writeCsvRow(java.io.Writer w, String[] cells) throws java.io.IOException {
+        for (int i = 0; i < cells.length; i++) {
+            if (i > 0) w.write(',');
+            w.write(csvCell(cells[i]));
+        }
+        w.write("\r\n");
+    }
+
+    /**
+     * CSV hücresi — kaçışlama VE formül enjeksiyonu koruması.
+     *
+     * <p>{@code =}, {@code +}, {@code -}, {@code @} (ve sekme/CR) ile BAŞLAYAN bir hücreyi Excel
+     * FORMÜL sayar: {@code =cmd|'...'!A1} biçiminde bir domain adı ya da alarm mesajı, dosyayı
+     * açan kişinin makinesinde komut çalıştırma denemesine dönüşebilir. Alarm alanları dış
+     * veriden besleniyor (domain, message); başa tek tırnak konarak metin olduğu sabitleniyor.
+     */
+    static String csvCell(String s) {
+        if (s == null || s.isEmpty()) return "";
+        String v = s;
+        char c0 = v.charAt(0);
+        if (c0 == '=' || c0 == '+' || c0 == '-' || c0 == '@' || c0 == '\t' || c0 == '\r') {
+            v = "'" + v;
+        }
+        boolean needQuote = v.indexOf(',') >= 0 || v.indexOf('\"') >= 0
+                || v.indexOf('\n') >= 0 || v.indexOf('\r') >= 0 || v.indexOf(';') >= 0;
+        v = v.replace("\"", "\"\"");
+        return needQuote ? "\"" + v + "\"" : v;
     }
 
     /**

@@ -362,8 +362,18 @@ function RepeatBadge({ count }) {
   )
 }
 
-/** Katlama durumunun oturum anahtarı — sekme değişince ayrı tutulur (açık/kapalı farklı listeler). */
-const GROUP_COLLAPSE_KEY = 'alh-collapsed-groups'
+/**
+ * AÇIK bırakılan grupların oturum anahtarı.
+ *
+ * <p>Semantik BİLEREK "açılmışlar" — "katlanmışlar" değil. Gruplar varsayılan olarak KAPALI
+ * geliyor: hepsi açıkken sayfa uzuyor ve "hangi konudan kaç alarm var" özeti kayboluyordu
+ * (kullanıcı geri bildirimi). Kapalıyken ekranda yalnız konu başlıkları ve sayıları kalıyor;
+ * ilgilenilen konu tek tıkla açılıyor.
+ *
+ * <p>Anahtar da değişti: eskiden burada KATLANMIŞ tipler saklanıyordu. Aynı anahtar
+ * kullanılsaydı eski oturumdaki liste "açılmışlar" diye okunur ve tam ters davranış çıkardı.
+ */
+const GROUP_EXPAND_KEY = 'alh-expanded-groups'
 
 /**
  * Alarmları KONUSUNA (alert_type) göre katlanabilir gruplara ayırır.
@@ -379,7 +389,7 @@ const GROUP_COLLAPSE_KEY = 'alh-collapsed-groups'
  * <p>Tek tip varsa gruplama YAPILMAZ: tek başlık altında tek grup, bilgi taşımayan bir çerçeveden
  * ibaret olurdu. Bu kural gömülü modda da (tek domainin 2-3 alarmı) doğru davranışı veriyor.
  */
-function AlertTypeGroups({ alerts, listClassName, collapsed, onToggle, renderCard }) {
+function AlertTypeGroups({ alerts, listClassName, expanded, onToggle, renderCard }) {
   const t = useT()
   const order = []
   const byType = new Map()
@@ -395,20 +405,20 @@ function AlertTypeGroups({ alerts, listClassName, collapsed, onToggle, renderCar
 
   return order.map(type => {
     const items = byType.get(type)
-    const isCollapsed = collapsed.has(type)
+    const isOpenGroup = expanded.has(type)
     const { icon: Icon, color } = alertTypeMeta(type)
     return (
       <div className="alh-group" key={type}>
         <button type="button" className="alh-group-head" onClick={() => onToggle(type)}
-          aria-expanded={!isCollapsed}>
+          aria-expanded={isOpenGroup}>
           <span className="alh-group-chevron">
-            {isCollapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+            {isOpenGroup ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
           </span>
           <Icon size={14} style={{ color, flexShrink: 0 }} />
           <span className="alh-group-title" style={{ color }}>{alertTypeLabel(t, type)}</span>
           <span className="alh-group-count">{items.length}</span>
         </button>
-        {!isCollapsed && <div className={listClassName}>{items.map(renderCard)}</div>}
+        {isOpenGroup && <div className={listClassName}>{items.map(renderCard)}</div>}
       </div>
     )
   })
@@ -447,17 +457,24 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
   const [staleTotal,   setStaleTotal]   = useState(0)
   const [staleHours,   setStaleHours]   = useState(24)
   const [teams,        setTeams]        = useState([])
-  const [statsVisible, setStatsVisible] = useState(true)
+  // Şerit KAPALI başlar — sekiz izleme sayfasının hepsinde böyle; burada `true` bırakmak
+  // tutarsızlıktı. Ayrıca sayfa açılışında ekranı doldurmuyor: önce alarmlar görünüyor,
+  // sayaçlara ihtiyaç duyan tek tıkla açıyor.
+  //
+  // Kapanınca seviye filtresi TEMİZLENMEZ (izleme sayfalarından farkı): burada aynı filtre
+  // araç çubuğundaki açılırda da duruyor, yani gizli bir filtre kalmıyor. İzleme sayfalarında
+  // tek erişim noktası kartlar olduğu için orada temizlemek doğru.
+  const [statsVisible, setStatsVisible] = useState(false)
   // Katlanan grup tipleri — oturum boyunca korunur (sayfa değişince kapattığın grup açılmasın).
-  const [collapsed, setCollapsed] = useState(() => {
-    try { return new Set(JSON.parse(sessionStorage.getItem(GROUP_COLLAPSE_KEY) || '[]')) }
+  const [expanded, setExpanded] = useState(() => {
+    try { return new Set(JSON.parse(sessionStorage.getItem(GROUP_EXPAND_KEY) || '[]')) }
     catch { return new Set() }
   })
   const toggleGroup = useCallback((type) => {
-    setCollapsed(prev => {
+    setExpanded(prev => {
       const next = new Set(prev)
       if (next.has(type)) next.delete(type); else next.add(type)
-      try { sessionStorage.setItem(GROUP_COLLAPSE_KEY, JSON.stringify([...next])) } catch { /* depolama kapalı */ }
+      try { sessionStorage.setItem(GROUP_EXPAND_KEY, JSON.stringify([...next])) } catch { /* depolama kapalı */ }
       return next
     })
   }, [])
@@ -534,6 +551,19 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
     { value: '', label: t('alh.allTeams') },
     ...teams.map(tm => ({ value: String(tm.id), label: tm.name })),
   ]
+
+  // CSV, listeyle AYNI parametreleri kullanır (sayfalama hariç — dosya tüm sonucu içerir).
+  const csvParams = {
+    resolved: tab === 'closed' ? 'true' : 'false',
+    ...(domain ? { domain } : {}),
+    ...(typeFilter ? { alertType: typeFilter } : {}),
+    ...(searchTerm.trim() ? { q: searchTerm.trim() } : {}),
+    ...(levelFilter ? { level: levelFilter } : {}),
+    ...(teamFilter ? { teamId: teamFilter } : {}),
+    ...(ackFilter ? { acknowledged: ackFilter === 'ack' ? 'true' : 'false' } : {}),
+    ...(tab === 'closed' && closedFrom ? { resolvedSince: closedFrom } : {}),
+    ...(tab === 'closed' && closedTo ? { resolvedUntil: closedTo } : {}),
+  }
 
   const hasActiveFilters = !!(search || levelFilter || teamFilter || ackFilter || typeFilter
                               || closedFrom || closedTo)
@@ -779,6 +809,10 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
                 {t('alh.clearFilters')}
               </button>
             )}
+            {/* CSV: EKRANDAKİ filtrelerin aynısıyla. Ayrı bir filtre yüzeyi olsaydı
+                "ekranda 12 satır vardı, dosyada 800 çıktı" sürprizi kaçınılmazdı. */}
+            <a className="hist-csv-btn" href={api.admin.getAlertsCsvUrl(csvParams)}
+              title={t('alh.csvTip')}>{t('alh.csv')}</a>
           </div>
         </>
       )}
@@ -892,7 +926,7 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
 
       {isOpen && alerts.length > 0 && (
         <AlertTypeGroups alerts={alerts} listClassName="alert-list"
-          collapsed={collapsed} onToggle={toggleGroup} renderCard={(a) => {
+          expanded={expanded} onToggle={toggleGroup} renderCard={(a) => {
             const notifiedList = parseContacts(a.notified_contacts)
             return (
               <div key={a.id} className={`alert-card alert-${a.alert_level?.toLowerCase()}`}>
@@ -986,7 +1020,7 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
       {isClosed && alerts.length > 0 && (
         <div className="alert-history-wrap">
           <AlertTypeGroups alerts={alerts} listClassName="alert-history-cards"
-            collapsed={collapsed} onToggle={toggleGroup} renderCard={(a) => (
+            expanded={expanded} onToggle={toggleGroup} renderCard={(a) => (
               <div key={a.id} className="alert-history-card">
                 <div className={`ahc-stripe alh-lvl-bg--${levelClass(a.alert_level)}`} />
 

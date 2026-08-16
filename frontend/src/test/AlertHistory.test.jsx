@@ -13,6 +13,7 @@ vi.mock('../api/client', () => ({
       previewReNotify:  vi.fn(),
       bulkAlertAction:  vi.fn(),
       getTeams:         vi.fn(),   // filtre cubugu takim listesini ceker (yalniz urlSync modunda)
+      getAlertsCsvUrl:  vi.fn(() => '/api/admin/alerts/export'),
     },
   },
 }))
@@ -195,9 +196,13 @@ describe('AlertHistory — alarm tipi sözlüğü', () => {
     // Eskiden ekranda birebir "SCRIPTED_FAIL" yazıyordu
     // Dil-bağımsız iddia: süit EN varsayılanda koşuyor. Asıl sözleşme "ham enum ekrana
     // düşmez ve yerine okunur bir ad gelir" — hangi dilde olduğu bu testin konusu değil.
-    await screen.findAllByText('x.example.com')   // uc alarm ayni domainde
-    const chips = [...document.querySelectorAll('.alh-type-chip')].map(c => c.textContent.trim())
-    expect(chips).toHaveLength(3)
+    // Gruplar VARSAYILAN KAPALI olduğu için tip adları GRUP BAŞLIKLARINDAN okunuyor.
+    const titles = await waitFor(() => {
+      const el = [...document.querySelectorAll('.alh-group-title')]
+      if (el.length !== 3) throw new Error('gruplar henüz çizilmedi')
+      return el
+    })
+    const chips = titles.map(c => c.textContent.trim())
     for (const raw of ['SCRIPTED_FAIL', 'KEYWORD_SLOW', 'PING_DOWN']) {
       expect(chips, `${raw} hâlâ ham enum olarak görünüyor`).not.toContain(raw)
     }
@@ -260,6 +265,21 @@ describe('AlertHistory — alarm tipi sözlüğü', () => {
  * Bu yüzey YALNIZ bağımsız sayfada çıkmalı: aynı bileşen dokuz modalın içinde gömülü sekme
  * olarak da kullanılıyor ve orada domain zaten sabit — takım/arama filtresi anlamsız olur.
  */
+/**
+ * İstatistik şeridi VARSAYILAN KAPALI açılır (kullanıcı isteği): sayfaya girince alarm listesi
+ * hemen görünsün, altı sayım kartı ekranın üstünü yemesin. Şerit katlama durumu MonitorStatsSection
+ * deseninin aynısı — başlık çubuğuna tıklanınca açılıp kapanır.
+ *
+ * Bu yüzden şeridin İÇERİĞİNİ sınayan her test önce şeridi açmak zorunda. "Varsayılan kapalı"
+ * sözleşmesini ayrı bir test tutuyor; yoksa varsayılan sessizce geri çevrilebilir ve bu
+ * yardımcı yüzünden hiçbir test kırmızı dönmezdi.
+ */
+async function expandStats(container) {
+  await waitFor(() => expect(container.querySelector('.stats-collapse-bar')).not.toBeNull())
+  fireEvent.click(container.querySelector('.stats-collapse-bar'))
+  await waitFor(() => expect(container.querySelector('.stats-panel')).not.toBeNull())
+}
+
 describe('AlertHistory — filtre çubuğu ve istatistik şeridi', () => {
   const openAlert = { id: 1, domain: 'a.example.com', alert_type: 'EXPIRY', alert_level: 'CRITICAL',
     acknowledged: false, resolved: false, created_at: '2026-08-01T08:00:00' }
@@ -284,9 +304,21 @@ describe('AlertHistory — filtre çubuğu ve istatistik şeridi', () => {
     expect(api.admin.getTeams).not.toHaveBeenCalled()   // gereksiz istek de atılmaz
   })
 
+  it('İstatistik şeridi VARSAYILAN KAPALI gelir — liste hemen görünür', async () => {
+    const { container } = render(<AlertHistory urlSync />)
+    await waitFor(() => expect(container.querySelector('.stats-collapse-bar')).not.toBeNull())
+
+    // Başlık çubuğu var ama kartlar ÇİZİLMEZ. Sayım kartları sayfanın en üstünü kaplayınca
+    // asıl içerik (alarm listesi) kaydırma altında kalıyordu.
+    expect(container.querySelector('.stats-panel')).toBeNull()
+
+    fireEvent.click(container.querySelector('.stats-collapse-bar'))
+    await waitFor(() => expect(container.querySelector('.stats-panel')).not.toBeNull())
+  })
+
   it('BAĞIMSIZ sayfada şerit sunucudan gelen sayıları gösterir (sayfa içinden DEĞİL)', async () => {
     const { container } = render(<AlertHistory urlSync />)
-    await waitFor(() => expect(container.querySelector('.stats-panel')).not.toBeNull())
+    await expandStats(container)
 
     // Listede 1 satır var ama şerit 5/3/2/7 göstermeli — sayfa içinden hesaplansaydı hepsi 1 olurdu
     const values = [...container.querySelectorAll('.stat-value')].map(v => v.textContent)
@@ -295,7 +327,7 @@ describe('AlertHistory — filtre çubuğu ve istatistik şeridi', () => {
 
   it('Kritik kartına tıklamak seviye filtresini SUNUCUYA gönderir', async () => {
     const { container } = render(<AlertHistory urlSync />)
-    await waitFor(() => expect(container.querySelector('.stats-panel')).not.toBeNull())
+    await expandStats(container)
 
     fireEvent.click([...container.querySelectorAll('.stat-item')][1])   // Kritik
 
@@ -307,7 +339,7 @@ describe('AlertHistory — filtre çubuğu ve istatistik şeridi', () => {
 
   it('Sahiplenilmemiş kartı SEVİYE değil sahiplenme boyutunu filtreler', async () => {
     const { container } = render(<AlertHistory urlSync />)
-    await waitFor(() => expect(container.querySelector('.stats-panel')).not.toBeNull())
+    await expandStats(container)
 
     // Konum DEĞİL sıra: kart eklendikçe .at(-1) başka kartı yakalar (6. kart eklenince tam
     // bu oldu). Etiketten seçmek de dile bağlar; kartın kendi indeksi sabittir.
@@ -340,7 +372,7 @@ describe('AlertHistory — filtre çubuğu ve istatistik şeridi', () => {
 
   it('PAYLAŞILABİLİR BAĞLANTI: filtreler adres çubuğunda yaşar', async () => {
     const { container } = render(<AlertHistory urlSync />)
-    await waitFor(() => expect(container.querySelector('.stats-panel')).not.toBeNull())
+    await expandStats(container)
 
     fireEvent.click([...container.querySelectorAll('.stat-item')][1])   // Kritik
 
@@ -362,7 +394,7 @@ describe('AlertHistory — filtre çubuğu ve istatistik şeridi', () => {
 
   it('UZUN SÜREDİR AÇIK kartı yalnız AÇIK sekmede çıkar', async () => {
     const { container } = render(<AlertHistory urlSync />)
-    await waitFor(() => expect(container.querySelector('.stats-panel')).not.toBeNull())
+    await expandStats(container)
     expect(container.querySelectorAll('.stat-item')).toHaveLength(6)
 
     fireEvent.click(screen.getByRole('button', { name: /kapalı|closed/i }))
@@ -373,7 +405,7 @@ describe('AlertHistory — filtre çubuğu ve istatistik şeridi', () => {
 
   it('UZUN SÜREDİR AÇIK kartı SAYAÇTIR — tıklanınca filtre uygulamaz', async () => {
     const { container } = render(<AlertHistory urlSync />)
-    await waitFor(() => expect(container.querySelector('.stats-panel')).not.toBeNull())
+    await expandStats(container)
     const before = api.admin.getAlerts.mock.calls.length
 
     fireEvent.click([...container.querySelectorAll('.stat-item')][5])   // Uzun süredir açık
@@ -428,32 +460,41 @@ describe('AlertHistory — konuya göre gruplama', () => {
     expect(container.querySelector('.alh-group-note')).toBeNull()   // açıklama da çıkmaz
   })
 
-  it('başlığa tıklamak grubu KATLAR; kartlar gizlenir, başlık kalır', async () => {
+  it('gruplar VARSAYILAN KAPALI gelir — sayfa uzamaz, konu özeti görünür', async () => {
+    // Kullanıcı geri bildirimi: hepsi açıkken sayfa uzuyor ve "hangi konudan kaç alarm var"
+    // özeti kayboluyordu. Kapalıyken ekranda yalnız başlıklar ve sayılar kalıyor.
     withAlerts([alertOf('DNS_FAILURE', 1), alertOf('EXPIRY', 2)])
     const { container } = render(<AlertHistory />)
-    await waitFor(() => expect(container.querySelectorAll('.alert-card')).toHaveLength(2))
+    await waitFor(() => expect(container.querySelectorAll('.alh-group-head')).toHaveLength(2))
 
-    const head = container.querySelectorAll('.alh-group-head')[0]
-    expect(head.getAttribute('aria-expanded')).toBe('true')
-    fireEvent.click(head)
-
-    await waitFor(() => expect(container.querySelectorAll('.alert-card')).toHaveLength(1))
-    expect(container.querySelectorAll('.alh-group-head')).toHaveLength(2)   // başlıklar durur
+    expect(container.querySelectorAll('.alert-card')).toHaveLength(0)
     expect(container.querySelectorAll('.alh-group-head')[0].getAttribute('aria-expanded')).toBe('false')
   })
 
-  it('katlama durumu OTURUMDA korunur (sayfa değişince açılmaz)', async () => {
+  it('başlığa tıklamak grubu AÇAR; yalnız o grubun kartları gelir', async () => {
+    withAlerts([alertOf('DNS_FAILURE', 1), alertOf('DNS_FAILURE', 2), alertOf('EXPIRY', 3)])
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelectorAll('.alh-group-head')).toHaveLength(2))
+
+    fireEvent.click(container.querySelectorAll('.alh-group-head')[0])
+
+    await waitFor(() => expect(container.querySelectorAll('.alert-card')).toHaveLength(2))
+    expect(container.querySelectorAll('.alh-group-head')[0].getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelectorAll('.alh-group-head')[1].getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('AÇTIĞIN grup oturum boyunca AÇIK kalır (her gezinmede yeniden açma yok)', async () => {
     withAlerts([alertOf('DNS_FAILURE', 1), alertOf('EXPIRY', 2)])
     const first = render(<AlertHistory />)
-    await waitFor(() => expect(first.container.querySelectorAll('.alert-card')).toHaveLength(2))
+    await waitFor(() => expect(first.container.querySelectorAll('.alh-group-head')).toHaveLength(2))
     fireEvent.click(first.container.querySelectorAll('.alh-group-head')[0])
     await waitFor(() => expect(first.container.querySelectorAll('.alert-card')).toHaveLength(1))
     first.unmount()
 
-    // Yeniden mount: kapattığın grup KAPALI gelmeli
     const second = render(<AlertHistory />)
     await waitFor(() => expect(second.container.querySelectorAll('.alh-group-head')).toHaveLength(2))
     expect(second.container.querySelectorAll('.alert-card')).toHaveLength(1)
+    expect(second.container.querySelectorAll('.alh-group-head')[0].getAttribute('aria-expanded')).toBe('true')
   })
 
   it('sayfa-içi/toplam ayrımı EKRANDA yazılı (iki sayı çelişki sanılmasın)', async () => {
@@ -468,7 +509,8 @@ describe('AlertHistory — konuya göre gruplama', () => {
     withAlerts([alertOf('HENUZ_OLMAYAN_TIP', 1), alertOf('EXPIRY', 2)])
     const { container } = render(<AlertHistory />)
     await waitFor(() => expect(container.querySelectorAll('.alh-group')).toHaveLength(2))
-    expect(container.querySelectorAll('.alert-card')).toHaveLength(2)
+    // Gruplar kapalı geldiği için kartlar değil BAŞLIKLAR sayılır; önemli olan çökmemesi.
+    expect(container.querySelectorAll('.alh-group-title')).toHaveLength(2)
   })
 })
 

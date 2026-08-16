@@ -518,6 +518,22 @@ export const api = {
     deleteContact: (id) => request(`/admin/contacts/${id}`, { method: 'DELETE' }),
 
     // Alert Events
+    /**
+     * Alarm Geçmişi CSV bağlantısı — indirme <a href> ile yapılır, fetch ile DEĞİL.
+     *
+     * <p>Sunucu dosyayı Content-Disposition ile akıtıyor; tarayıcının indirme akışını kullanmak
+     * hem büyük dosyayı belleğe almamayı hem de oturum çerezinin kendiliğinden gitmesini sağlar
+     * (Kontrol Geçmişi CSV'siyle aynı desen).
+     */
+    getAlertsCsvUrl: (params = {}) => {
+      const qs = new URLSearchParams()
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== '') qs.append(k, v)
+      })
+      const s = qs.toString()
+      return `${BASE}/admin/alerts/export${s ? `?${s}` : ''}`
+    },
+
     getAlerts: (params = {}) => {
       const opts = typeof params === 'object' && params !== null ? params : { onlyOpen: params }
       const qs = new URLSearchParams()
