@@ -486,7 +486,9 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
     })
     expect(thresholdInput.disabled).toBe(true)        // alarm kapalı → eşik düzenlenemez
 
-    const checkbox = document.querySelector('.sc-check input[type="checkbox"]')
+    // Sınıf adına DEĞİL erişilebilir ada bağlan: sınıf seçicisi, sınıf yanlış/ölü olsa bile
+    // yeşil kalıyordu (kaymış tik kutusu hatası tam böyle gözden kaçtı).
+    const checkbox = screen.getByRole('checkbox', { name: /yavaş koşum alarmı|slow-run alert/i })
     fireEvent.click(checkbox)
     expect(thresholdInput.disabled).toBe(false)
     fireEvent.change(thresholdInput, { target: { value: '8000' } })
@@ -496,5 +498,45 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
     const payload = api.monitoring.updateScriptedMonitor.mock.calls[0][1]
     expect(payload.slowResponseEnabled).toBe(true)
     expect(payload.slowThresholdMs).toBe(8000)
+  })
+
+  /**
+   * YERLEŞİM REGRESYONU — "yavaş koşum alarmı"nın tik kutusu etiketin üstüne kayıyordu.
+   * Sebebi görsel değil YAPISAL: label `sc-check` sınıfını taşıyordu ve o sınıfın App.css'te hiçbir
+   * karşılığı yoktu. Böyle ÖLÜ bir sınıfta işaret kutusu `.form-grid label`in varsayılanına düşer
+   * (sütun yönü + input'lara metin-kutusu padding/kenarlığı) — yani hata sessizdir: konsol temiz,
+   * test yeşil, yalnız ekran bozuk.
+   *
+   * jsdom yerleşim HESAPLAMAZ; bu yüzden burada piksel değil SÖZLEŞME kilitleniyor: form ızgarasının
+   * doğrudan label çocuğu olan her tik kutusu, satır yönünü veren PAYLAŞILAN `checkbox-label`
+   * sınıfını kullanmalı. Tek bir kutuya değil, hata SINIFINA bakıyor — sonraki checkbox aynı tuzağa
+   * düşerse bu test onu da yakalar. (Gerçek görünüm tarayıcıda doğrulanmalı: [[jsdom kör noktası]])
+   */
+  it('form ızgarasındaki HER tik kutusu paylaşılan checkbox-label sınıfını kullanır (ölü sınıf = kaymış kutu)', async () => {
+    api.monitoring.getScriptedMonitors.mockResolvedValue({ success: true, data: {
+      k6_available: true, k6_version: 'v0.49.0', can_manage: true,
+      monitors: [{ id: 1, name: 'OIDC Login', status: 'PASS', team_id: 5, team_name: 'SY-A',
+                   slow_response_enabled: false, slow_threshold_ms: 15000,
+                   script: 'export default function(){}', group_name: 'G',
+                   interval_seconds: 300, timeout_seconds: 60,
+                   confirm_attempts: 3, confirm_interval_seconds: 30,
+                   recovery_checks: 3, recovery_interval_seconds: 30, active: true, env: [] }],
+    } })
+    const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(screen.getByText('OIDC Login')).toBeInTheDocument())
+    fireEvent.click(container.querySelector('.mon-btn-edit'))
+
+    const slow = await screen.findByRole('checkbox', { name: /yavaş koşum alarmı|slow-run alert/i })
+    expect(slow.closest('label').className).toContain('checkbox-label')
+
+    // Izgaranın DOĞRUDAN label çocukları: env satırlarındaki (.env-secret) kendi düzeni olan
+    // kutular kapsam dışı, onlar ızgara hücresi değil.
+    const gridCheckboxLabels = [...document.querySelectorAll('.form-grid > label')]
+      .filter(l => l.querySelector('input[type="checkbox"]'))
+    expect(gridCheckboxLabels.length).toBeGreaterThanOrEqual(3)   // yavaş alarm + e-posta + aktif
+    for (const label of gridCheckboxLabels) {
+      expect(label.className, `sınıfsız/ölü sınıflı tik kutusu: "${label.textContent.trim()}"`)
+        .toContain('checkbox-label')
+    }
   })
 })
