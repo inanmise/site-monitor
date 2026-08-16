@@ -67,6 +67,39 @@ public class AuditService {
     @Value("${site.monitor.audit.fallback-file:logs/audit-fallback.jsonl}")
     private String fallbackFile;
 
+    /**
+     * Fallback dosyasındaki (DB'ye yazılamamış) denetim kaydı sayısı — 0 ise sorun yok.
+     *
+     * <p>Neden gerekiyor: bu dosya denetim izinin son çaresi ama <b>geri okuyan hiçbir kod yoktu</b>.
+     * DB yazımı başarısız olduğunda kayıt sessizce dosyaya düşüyor, kimse haberdar olmuyor ve o
+     * kayıtlar denetim zincirine hiç girmiyordu. Sayaç en azından "kaybımız var" demeyi mümkün
+     * kılar; açılışta bir kez WARN'lanır ve sistem durumundan okunabilir.
+     *
+     * <p>Dosya okunamıyorsa {@code -1} döner (bilinmiyor ≠ temiz).
+     */
+    public long pendingFallbackAuditCount() {
+        try {
+            Path p = Path.of(fallbackFile);
+            if (!Files.exists(p)) return 0L;
+            try (var lines = Files.lines(p, StandardCharsets.UTF_8)) {
+                return lines.filter(l -> !l.isBlank()).count();
+            }
+        } catch (Exception e) {
+            log.debug("Denetim fallback dosyası okunamadı ({}): {}", fallbackFile, e.getMessage());
+            return -1L;
+        }
+    }
+
+    /** Açılışta bir kez uyar — dosyada kayıt varsa denetim izinde BOŞLUK var demektir. */
+    @jakarta.annotation.PostConstruct
+    void warnIfFallbackPending() {
+        long n = pendingFallbackAuditCount();
+        if (n > 0) {
+            log.warn("⚠ Denetim izinde BOŞLUK: {} kayıt DB'ye yazılamamış ve {} dosyasında bekliyor. "
+                    + "Bu kayıtlar denetim zincirinde YOK; dosya elle incelenmeli.", n, fallbackFile);
+        }
+    }
+
     // ── Merkezi persist (kilit + hash zinciri + fallback) ────────────────────────
 
     /** TÜM denetim yazımlarının tek hunisi. Başarısızsa fallback dosyaya yazar, istisna fırlatmaz. */

@@ -536,6 +536,7 @@ public class SchedulerService {
         // yaziliyor; kaynak ayrilmazsa sertifika kesintisiyle karisir (ddl-auto zaten ekler,
         // bu guvenlik agi).
         patch("ALTER TABLE network_outage_events ADD COLUMN source VARCHAR(32)");
+        dedupeAndLockMonitorKeys();
         // keyword_results / ping_checks: süre-grafiği aralık taraması (monitor_id + checked_at) — tekil
         // index'ler entity'de var; composite range sorgusunu (responseSeriesRaw) hızlandırır.
         patch("CREATE INDEX IF NOT EXISTS idx_kwr_monitor_checked ON keyword_results(monitor_id, checked_at)");
@@ -800,6 +801,87 @@ public class SchedulerService {
      * her boot'ta tekrar eden no-op'lar (zaten var olan kolon/tablo, 0 satır etkileyen UPDATE,
      * CREATE ... IF NOT EXISTS index'ler) DEBUG'a iner → log gürültüsü gider, davranış aynı kalır.
      */
+    /**
+     * Envanter-türevi port/dns monitörlerinde MÜKERRER kaydı temizler ve tekrarını DB düzeyinde
+     * imkânsız kılar.
+     *
+     * <p>Yarış: {@code GET /monitoring/port} ve {@code /dns} eksik monitörleri istek anında
+     * "lazy-provision" ediyor — check-then-act. Tabloda benzersizlik kısıtı olmadığı için 100
+     * kullanıcı ekranı aynı anda açtığında aynı domain için N satır oluşabiliyordu; sonrasında o
+     * domain N kat kontrol trafiği üretir ve raporlarda çift sayılır.
+     *
+     * <p>Sıra ÖNEMLİ: önce birleştir, sonra index. Mükerrer varken index kurulmaya çalışılsaydı
+     * {@link #patch} istisnayı yutup {@code debug} loglardı (açılış patlamaz ama kısıt da hiç
+     * kurulmazdı — sessiz başarısızlık). Bu yüzden sonunda kısıtın gerçekten var olduğu doğrulanır.
+     *
+     * <p>{@code standalone} monitörler KAPSAM DIŞI: onları kullanıcı elle ekliyor ve aynı hedefi
+     * bilinçli olarak farklı ayarlarla iki kez izlemek meşru.
+     */
+    private void dedupeAndLockMonitorKeys() {
+        // port: doğal anahtar (host, port). dns: (domain) — envanter-türevi kayıtlar daima 'A' tipli.
+        mergeDuplicates("port_monitors", "port_checks", "x.host = m.host AND x.port = m.port", "host, port");
+        patch("CREATE UNIQUE INDEX IF NOT EXISTS uq_pm_host_port ON port_monitors(host, port) "
+            + "WHERE standalone IS NOT TRUE");
+
+        mergeDuplicates("dns_monitors", "dns_records", "x.domain = m.domain", "domain");
+        patch("CREATE UNIQUE INDEX IF NOT EXISTS uq_dnsm_domain ON dns_monitors(domain) "
+            + "WHERE standalone IS NOT TRUE");
+
+        warnIfIndexMissing("uq_pm_host_port");
+        warnIfIndexMissing("uq_dnsm_domain");
+    }
+
+    /**
+     * Bir monitör tablosundaki mükerrerleri EN KÜÇÜK id'de birleştirir; çocuk satırlar korunur
+     * (kontrol geçmişi silinmez, tutulan monitöre taşınır).
+     *
+     * @param table       monitör tablosu (dış takma ad daima {@code m})
+     * @param childTable  {@code monitor_id} ile bağlı kontrol/kayıt tablosu
+     * @param keyMatch    alt sorgu ({@code x}) ile dış satır ({@code m}) arasındaki anahtar eşitliği
+     * @param keyCols     doğal anahtar sütunları — yalnız log metni için
+     */
+    private void mergeDuplicates(String table, String childTable, String keyMatch, String keyCols) {
+        // Bu satırın "tutulacak" eşi: aynı anahtardaki en küçük id.
+        String keepId = "SELECT min(x.id) FROM " + table + " x WHERE x.standalone IS NOT TRUE AND " + keyMatch;
+        String dupFilter = "m.standalone IS NOT TRUE AND m.id > (" + keepId + ")";
+        try {
+            Integer dupes = jdbcTemplate.queryForObject(
+                    "SELECT count(*) FROM " + table + " m WHERE " + dupFilter, Integer.class);
+            if (dupes == null || dupes == 0) {
+                log.debug("{}: mükerrer kayıt yok ({})", table, keyCols);
+                return;
+            }
+            // Kaç satırın etkileneceği SİLMEDEN ÖNCE loglanır — prod verisine dokunuyoruz.
+            log.warn("{}: {} mükerrer kayıt bulundu ({}) — en küçük id'de birleştiriliyor", table, dupes, keyCols);
+
+            int moved = jdbcTemplate.update(
+                    "UPDATE " + childTable + " c SET monitor_id = k.keep_id FROM ("
+                  + "  SELECT m.id AS dup_id, (" + keepId + ") AS keep_id"
+                  + "    FROM " + table + " m WHERE " + dupFilter
+                  + ") k WHERE c.monitor_id = k.dup_id");
+
+            int deleted = jdbcTemplate.update("DELETE FROM " + table + " m WHERE " + dupFilter);
+            log.warn("{}: {} çocuk satır taşındı, {} mükerrer monitör silindi", table, moved, deleted);
+        } catch (Exception e) {
+            // Birleştirme başarısızsa index de kurulamaz; warnIfIndexMissing bunu görünür kılar.
+            log.warn("{}: mükerrer birleştirme başarısız ({}) — benzersizlik kısıtı KURULAMAYABİLİR",
+                    table, e.getMessage());
+        }
+    }
+
+    /** Kısıt gerçekten kuruldu mu? {@link #patch} istisnayı yuttuğu için sessiz başarısızlık olmasın. */
+    private void warnIfIndexMissing(String indexName) {
+        try {
+            Integer n = jdbcTemplate.queryForObject(
+                    "SELECT count(*) FROM pg_indexes WHERE lower(indexname) = lower(?)", Integer.class, indexName);
+            if (n == null || n == 0) {
+                log.warn("⚠ Benzersizlik kısıtı {} KURULAMADI — mükerrer monitör yarışı hâlâ mümkün", indexName);
+            }
+        } catch (Exception e) {
+            log.debug("{} kontrolü yapılamadı (PostgreSQL değil?): {}", indexName, e.getMessage());
+        }
+    }
+
     private void patch(String ddl) {
         String shortDdl = ddl.length() > 60 ? ddl.substring(0, 60) + "…" : ddl;
         String head = ddl.trim().toUpperCase(java.util.Locale.ROOT);
@@ -1673,6 +1755,14 @@ public class SchedulerService {
         scanMap.put("last_failure", lastRunFailure.get());   // null = son tur temiz bitti
         h.put("scan",       scanMap);
         h.put("scan_alarm", scanAlarm);
+
+        // Denetim izi boşluğu: DB'ye yazılamayıp fallback dosyasına düşen kayıtlar. Bu dosyayı
+        // GERİ OKUYAN hiçbir kod yok; sayaç olmadan kayıp tamamen görünmezdi (>0 = elle inceleme).
+        try {
+            h.put("audit_fallback_pending", auditService.pendingFallbackAuditCount());
+        } catch (Exception e) {
+            h.put("audit_fallback_pending", -1L);   // bilinmiyor ≠ temiz
+        }
 
         h.put("timestamp", ISO.format(Instant.now()));
         return h;
