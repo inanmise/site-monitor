@@ -18,6 +18,7 @@ import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 
+import MonitorStatsSection from './MonitorStatsSection.jsx'
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS']
 
 const INTERVALS = [
@@ -347,24 +348,12 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
 
       <MonitorHowBox bullets={[t('dns.how1'), t('dns.how2'), t('dns.how3'), t('dns.how4'), t('dns.how5')]} />
 
-      {!loading && monitors.length > 0 && (
-        <div className="stats-collapse-bar" onClick={toggleStats}
-          title={statsVisible ? t('app.collapseStats') : t('app.expandStats')}>
-          <span className="stats-collapse-icon"><BarChart3 size={18} /></span>
-          <span className="stats-collapse-label">{t('app.statistics')}</span>
-          {!statsVisible && <span className="stats-collapse-hint">{t('app.expandStats')}</span>}
-          <span className={`stats-collapse-chevron${statsVisible ? ' open' : ''}`}><ChevronDown size={18} /></span>
-        </div>
-      )}
-      {statsVisible && !loading && monitors.length > 0 && (
-        <MonitorStatsBar items={statItems} activeFilter={statFilter} onStatClick={onStatClick} />
-      )}
-      {statsVisible && statFilter && statFilter !== 'total' && (
-        <div className="stats-filter-bar" style={{ marginBottom: 16 }}>
-          <span>{statItems.find(s => s.key === statFilter)?.label} — {t('mondash.showing', filtered.length)}</span>
-          <button className="stats-filter-clear" onClick={() => setStatFilter(null)}>{t('app.clearFilter')}</button>
-        </div>
-      )}
+      <MonitorStatsSection
+        loading={loading} total={monitors.length}
+        statsVisible={statsVisible} onToggle={toggleStats}
+        items={statItems} activeFilter={statFilter}
+        onStatClick={onStatClick} onClearFilter={() => setStatFilter(null)}
+        shownCount={filtered.length} />
 
       <div className={`dns-info-card${infoOpen ? ' dns-info-open' : ''}`}>
         <button className="dns-info-toggle" onClick={() => setInfoOpen(v => !v)} type="button">

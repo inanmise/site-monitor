@@ -26,6 +26,7 @@ import MonitorStatsBar from './MonitorStatsBar.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
+import MonitorStatsSection from './MonitorStatsSection.jsx'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
 const INTERVALS = [
@@ -478,24 +479,12 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
 
       <MonitorHowBox bullets={[t('page.how1'), t('page.how2'), t('page.how2b'), t('page.how3'), t('page.how4'), t('page.how5'), t('page.how6'), t('page.how7'), t('page.how8')]} />
 
-      {!loading && monitors.length > 0 && (
-        <div className="stats-collapse-bar" onClick={toggleStats}
-          title={statsVisible ? t('app.collapseStats') : t('app.expandStats')}>
-          <span className="stats-collapse-icon"><BarChart3 size={18} /></span>
-          <span className="stats-collapse-label">{t('app.statistics')}</span>
-          {!statsVisible && <span className="stats-collapse-hint">{t('app.expandStats')}</span>}
-          <span className={`stats-collapse-chevron${statsVisible ? ' open' : ''}`}><ChevronDown size={18} /></span>
-        </div>
-      )}
-      {statsVisible && !loading && monitors.length > 0 && (
-        <MonitorStatsBar items={statItems} activeFilter={statFilter} onStatClick={onStatClick} />
-      )}
-      {statsVisible && statFilter && statFilter !== 'total' && (
-        <div className="stats-filter-bar" style={{ marginBottom: 16 }}>
-          <span>{statItems.find(s => s.key === statFilter)?.label} — {t('mondash.showing', displayMonitors.length)}</span>
-          <button className="stats-filter-clear" onClick={() => setStatFilter(null)}>{t('app.clearFilter')}</button>
-        </div>
-      )}
+      <MonitorStatsSection
+        loading={loading} total={monitors.length}
+        statsVisible={statsVisible} onToggle={toggleStats}
+        items={statItems} activeFilter={statFilter}
+        onStatClick={onStatClick} onClearFilter={() => setStatFilter(null)}
+        shownCount={displayMonitors.length} />
 
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
