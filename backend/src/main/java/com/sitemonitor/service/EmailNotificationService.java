@@ -3418,8 +3418,9 @@ public class EmailNotificationService {
     private String weeklyMonitoringBlock(Map<String, Object> k) {
         Object mon = k == null ? null : k.get("monitoring");
         if (!(mon instanceof List<?> list) || list.isEmpty()) return "";
-        Map<String, String> labels = Map.of("cert", "Sertifika", "domain", "Alan Adı", "http", "HTTP/Website",
-                "ping", "Ping", "port", "Port", "dns", "DNS", "keyword", "Keyword");
+        // Etiketler KANONİK katalogdan. Buradaki yerel kopyada "scripted" ve "page" yoktu; o türler
+        // e-postada ham anahtarıyla ("scripted") yazılıyordu — bkz. MonitorTypeCatalog.
+        Map<String, String> labels = MonitorTypeCatalog.LABELS_TR;
         StringBuilder rows = new StringBuilder();
         for (Object o : list) {
             if (!(o instanceof Map<?, ?> row)) continue;

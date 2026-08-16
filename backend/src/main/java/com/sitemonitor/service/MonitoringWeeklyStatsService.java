@@ -41,16 +41,10 @@ public class MonitoringWeeklyStatsService {
     private static final ZoneId IST = ZoneId.of("Europe/Istanbul");
     private static final int MAX_WEEKS_AGO = 8;
 
-    /** İzleme türü → o türe ait AlertEvent.alertType kümesi (EscalationService sabitleriyle). */
-    private static final Map<String, Set<String>> TYPE_ALERTS = Map.of(
-            "cert",    Set.of("EXPIRY", "CHAIN_BROKEN", "REVOKED", "MISMATCH"),
-            "http",    Set.of("ACCESSIBILITY", "HTTP_DOWN", "HTTP_SSL", "DOMAIN_EXPIRY"),
-            "port",    Set.of("PORT_DOWN", "PORT_SLOW"),
-            "dns",     Set.of("DNS_FAILURE", "DNS_CHANGED", "DNS_SLOW", "DNS_UNEXPECTED", "DNS_INCONSISTENT"),
-            "keyword", Set.of("KEYWORD", "KEYWORD_SLOW", "KEYWORD_SSL", "KEYWORD_DOMAIN_EXPIRY"),
-            "ping",    Set.of("PING_DOWN"),
-            "domain",  Set.of("DOMAINMON_EXPIRY", "DOMAINMON_UNKNOWN", "DOMAINMON_STATUS", "DOMAINMON_CHANGED"),
-            "scripted", Set.of("SCRIPTED_FAIL", "SCRIPTED_SLOW"));
+    /** İzleme türü → alarm tipleri: artık KANONİK katalogdan (bkz. {@link MonitorTypeCatalog}).
+     *  Buradaki yerel kopyada "page" HİÇ YOKTU — sayfa bütünlüğü alarmları haftalık göstergelerde
+     *  sessizce sayılmıyordu. Kopya kaldırıldı; kataloğu bir kapı testi EscalationService'e bağlıyor. */
+    private static final Map<String, Set<String>> TYPE_ALERTS = MonitorTypeCatalog.ALERT_TYPES;
 
     private final HttpMonitorRepository httpMonitorRepo;
     private final PortMonitorRepository portMonitorRepo;
@@ -60,6 +54,7 @@ public class MonitoringWeeklyStatsService {
     private final DomainMonitorRepository domainMonitorRepo;
     private final CertificateInventoryRepository inventoryRepo;
     private final ScriptedMonitorRepository scriptedMonitorRepo;
+    private final PageMonitorRepository pageMonitorRepo;
 
     private final HttpCheckRepository httpCheckRepo;
     private final PortCheckRepository portCheckRepo;
@@ -69,6 +64,7 @@ public class MonitoringWeeklyStatsService {
     private final DomainCheckRepository domainCheckRepo;
     private final CertificateCheckRepository certCheckRepo;
     private final ScriptedCheckRepository scriptedCheckRepo;
+    private final PageCheckRepository pageCheckRepo;
 
     private final AlertEventRepository alertEventRepo;
     private final CertificateService certificateService;
@@ -119,6 +115,7 @@ public class MonitoringWeeklyStatsService {
         types.add(portType(c));
         types.add(dnsType(c));
         types.add(keywordType(c));
+        types.add(pageType(c));
         types.add(scriptedType(c));
         return new MonitoringStats(types);
     }
@@ -217,6 +214,23 @@ public class MonitoringWeeklyStatsService {
      * ({@code ScriptedCheckRepository.weeklyStatsByMonitor}) zaten YAZILMIŞTI ama hiç çağrılmıyordu
      * — bağlanmamış halka.
      */
+    /**
+     * Sayfa bütünlüğü (page) izleme — sentetikle BİREBİR aynı bağlanmamış halka.
+     *
+     * <p>Kendi modeli, deposu, alarmları (PAGE_DOWN / PAGE_INTEGRITY), fırtına ve kesinti işleme
+     * mantığı olan tam bir izleme türü; {@code PageCheckRepository.weeklyStatsByMonitor} sorgusu
+     * da yazılmıştı — ama hiç çağrılmıyordu ve {@code TYPE_ALERTS}'te karşılığı yoktu. Sonuç:
+     * haftalık göstergelerde bu tür hiç görünmüyor, alarmları hiçbir kovaya düşmüyordu.
+     * Frontend {@code WeeklyMonitoringStrip.ORDER} 'page'i ZATEN bekliyordu — satır boş geliyordu.
+     */
+    private TypeStats pageType(Ctx c) {
+        List<MonRef> mons = pageMonitorRepo.findByActiveTrue().stream()
+                .filter(m -> c.teamId().equals(m.getTeamId()))
+                .map(m -> new MonRef(m.getId(), nz(m.getName(), m.getUrl()), m.getCreatedAt())).toList();
+        return monitorIdType("page", mons, c,
+                (idl, from, to) -> pageCheckRepo.weeklyStatsByMonitor(idl, from, to), ExtraMode.AVG_MS, null);
+    }
+
     private TypeStats scriptedType(Ctx c) {
         List<MonRef> mons = scriptedMonitorRepo.findByActiveTrue().stream()
                 .filter(m -> c.teamId().equals(m.getTeamId()))

@@ -223,6 +223,34 @@ public class SystemController {
         }
     }
 
+    /**
+     * Admin: haftalık kesinti PDF'ini GÖNDERMEDEN indir — mail ekinin birebir aynısı.
+     *
+     * <p>Yetki HTML önizlemesiyle AYNI ({@code system_health.actions}); PDF farklı bir kapı
+     * olmamalı. Takım kapsamı servis katmanında zaten uygulanır.
+     */
+    @GetMapping("/weekly-availability/outage-pdf")
+    public ResponseEntity<byte[]> weeklyOutagePdf(
+            @RequestParam Long teamId,
+            @RequestParam(required = false) Integer weekOffset, HttpSession session) {
+        requireAdmin(session);
+        permissionService.require(session, "system_health.actions", "execute");
+        try {
+            byte[] pdf = weeklyAvailabilityReportService.outagePdf(teamId, weekOffset);
+            if (pdf.length == 0) {
+                // Üretim düştü (loglandı). Bozuk/0 baytlık bir dosya indirtmektense açıkça hata dön.
+                return ResponseEntity.status(503).build();
+            }
+            String fileName = weeklyAvailabilityReportService.outagePdfFileName(teamId, weekOffset);
+            return ResponseEntity.ok()
+                    .header("Content-Type", "application/pdf")
+                    .header("Content-Disposition", "attachment; filename=\"" + fileName + "\"")
+                    .body(pdf);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
     /** Admin: seçilen takımın raporunu yalnız verilen test adresine gönder (toplu gönderim DEĞİL). */
     @PostMapping("/weekly-availability/send-test")
     public ResponseEntity<Map<String, Object>> weeklyAvailabilitySendTest(

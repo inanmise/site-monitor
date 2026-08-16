@@ -71,6 +71,19 @@ if you skip it. Adding a type means making these go green:
 | **Alert type dictionary** | `frontend/src/test/alertTypeMeta.test.jsx` | Parses `EscalationService.java` for `TYPE_* = "..."` and requires every type to have an icon + colour in `utils/alertTypeMeta.js` **and** a label under `incov.type.*` in BOTH locales. Without it the alarm renders as a raw enum (`SCRIPTED_FAIL`) with no icon — and, because the Alert History filter pills are built from the same dictionary, **it cannot be filtered at all**. |
 | **Response-series contract** | `MonitoringControllerTest.responseSeries_contract_allEndpoints` | A reflective mapping-count assert: every `/response-series` endpoint must return the bucket envelope. Added after a 2026-08 copy-paste crash where a raw return took down the chart screen. |
 | **Retention coverage** | `RetentionCoverageTest` (see `docs/RETENTION_POLITIKASI.md`) | Scans every persistent table; one without a retention policy — and without a justified exemption — turns the build red. Closes "new monitor type added, its cleanup forgotten". |
+| **Monitor type catalog** (backend) | `MonitorTypeCatalogTest` | The backend twin of the alert-type dictionary gate. Parses `EscalationService.java` for `TYPE_* = "..."` and requires every type to be mapped to a monitor type in `MonitorTypeCatalog.ALERT_TYPES`, with a Turkish label and a position in `ORDER`. Without it the alarm is counted in **no** weekly bucket and vanishes from the weekly monitoring strip, the weekly e-mail and the weekly outage PDF — silently, with no error. |
+
+This last gate was written **after** it had already failed twice in production code, both times silently:
+
+- **`page` (Sayfa Bütünlüğü)** had a model, repository, alerts (`PAGE_DOWN` / `PAGE_INTEGRITY`), storm
+  and outage handling — and even a written-but-never-called `PageCheckRepository.weeklyStatsByMonitor`
+  — but no entry in the alert map and no `pageType()` method. Its alarms were counted nowhere.
+  The frontend's `WeeklyMonitoringStrip.ORDER` had been expecting `page` all along; the row just
+  never arrived.
+- **`scripted`** was missing from the weekly e-mail's label map, so it printed the raw key.
+
+Both were copies of the same mapping drifting apart. The catalog is now the single source and the
+gate names the missing type when you break it.
 
 Two more links have **no automated gate yet** — check them by hand:
 
@@ -80,6 +93,15 @@ Two more links have **no automated gate yet** — check them by hand:
   type will not contribute to bulk-failure suppression.
 - `IncidentsController`'s type→category mapping — an unmapped type falls through to the default
   bucket in the incident overview.
+
+### Known duplication, deliberately left (do not copy it further)
+
+`service/report/PdfCanvas.java` holds the PDF plumbing (Roboto embedding, page management,
+encodable-glyph guard, wrap/clip, page numbers) used by the weekly outage report.
+`InventoryPdfWriter` still carries its **own copy** of the same plumbing — it was left untouched so
+the working, tested monthly inventory report was not disturbed by an unrelated change. This is
+recorded here rather than left silent. When writing a third PDF, use `PdfCanvas`; migrating
+`InventoryPdfWriter` onto it is a worthwhile follow-up.
 
 ## Coverage gates (enforced, not aspirational)
 

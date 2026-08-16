@@ -4,6 +4,7 @@ import com.sitemonitor.model.*;
 import com.sitemonitor.repository.*;
 import com.sitemonitor.service.EmailNotificationService.AvailabilityRow;
 import com.sitemonitor.service.EmailNotificationService.AvailabilitySummary;
+import com.sitemonitor.service.report.WeeklyOutageReportService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -46,6 +47,7 @@ public class WeeklyAvailabilityReportService {
     private final NotificationLogRepository notificationLogRepo;
     private final WeeklyAvailabilityLogRepository walRepo;
     private final AppSettingsService appSettings;
+    private final WeeklyOutageReportService outageReportService;
 
     @Value("${site.monitor.weekly-availability.enabled:true}")
     private boolean enabledDefault;
@@ -124,7 +126,9 @@ public class WeeklyAvailabilityReportService {
             }
 
             String[] cc = report.cc();
-            String status = emailService.sendHtml(report.to(), cc.length > 0 ? cc : null, report.subject(), report.html(), null);
+            List<EmailNotificationService.MailAttachment> attachments = outageAttachment(team, w, report.rows());
+            String status = emailService.sendHtmlWithAttachments(report.to(), cc.length > 0 ? cc : null,
+                    report.subject(), report.html(), null, attachments);
             saveNotificationLog(team, report.to(), cc, report.subject(), report.html(), status, "WEEKLY_AVAILABILITY");
             record(team.getId(), w.year(), w.week(), status != null && status.startsWith("FAILED") ? "FAILED" : "SENT");
             sent++;
@@ -282,6 +286,34 @@ public class WeeklyAvailabilityReportService {
         return new TeamReport(rows, summary, subject, html, to, cc);
     }
 
+    /**
+     * Haftanın kesinti detayı PDF'i — mail eki.
+     *
+     * <p>Kesinti YAŞANMAYAN haftalarda da eklenir (kullanıcı kararı): rapor arşivi her hafta bir
+     * dosya içerecek şekilde tutarlı kalsın ve "ek gelmedi, unutuldu mu?" sorusu doğmasın.
+     *
+     * <p>Erişilebilirlik satırları PARAMETRE olarak geçiliyor: {@code buildTeamReport} onları
+     * zaten hesapladı; toplayıcının yeniden hesaplaması tüm uptime sorgularını ikinci kez
+     * koşturmak olurdu (tek pod, 200-1000+ domain).
+     *
+     * <p>Toplama ya da çizim herhangi bir sebeple patlarsa boş liste döner ve <b>mail ek olmadan
+     * yine gider</b>. Haftalık rapor bir ek hatası yüzünden hiç gitmemezlik etmemeli.
+     */
+    private List<EmailNotificationService.MailAttachment> outageAttachment(
+            Team team, Window w, List<AvailabilityRow> rows) {
+        try {
+            var data = outageReportService.collect(team, w, rows);
+            byte[] pdf = outageReportService.pdf(data);
+            if (pdf.length == 0) return List.of();
+            return List.of(new EmailNotificationService.MailAttachment(
+                    WeeklyOutageReportService.fileName(team.getName(), w), pdf, "application/pdf"));
+        } catch (Exception e) {
+            log.warn("Haftalık kesinti eki hazırlanamadı (team={} week={}) — mail EK OLMADAN gidiyor: {}",
+                    team.getName(), w.weekLabel(), e.toString(), e);
+            return List.of();
+        }
+    }
+
     // ── Önizleme / test / durum (Ayarlar sayfası) ────────────────────────────────
 
     /** Geriye uyumlu: hafta belirtilmezse geçen tam hafta (e-posta ile giden). */
@@ -315,11 +347,43 @@ public class WeeklyAvailabilityReportService {
         TeamReport report = buildTeamReport(team, w, domains);
         String subject = "[Site Monitor][TEST] " + team.getName() + " — Haftalık Erişilebilirlik (" + w.weekLabel() + ")";
         String[] to = { email };
-        String status = emailService.sendHtml(to, null, subject, report.html(), null);
+        // Test maili gerçek mailin AYNISI olmalı — eki taşımasaydı PDF ancak pazartesi sabahı
+        // görülebilirdi, yani göndermeden önce doğrulanamazdı.
+        String status = emailService.sendHtmlWithAttachments(to, null, subject, report.html(), null,
+                outageAttachment(team, w, report.rows()));
         saveNotificationLog(team, to, null, subject, report.html(), status, "WEEKLY_AVAILABILITY_TEST");
         log.info("Haftalık erişilebilirlik TEST maili: team={} week={} to={} status={}",
                 team.getName(), w.weekLabel(), email, status);
         return status;
+    }
+
+    /**
+     * Kesinti PDF'ini GÖNDERMEDEN üretir (Ayarlar → önizleme; ekin indirilebilir hâli).
+     *
+     * <p>Neden ayrı bir yol var: eki doğrulamanın tek yolu mail göndermek olsaydı, PDF'e bakmak
+     * için ya pazartesiyi beklemek ya da gerçek bir adrese test maili atmak gerekirdi. Önizleme
+     * ikisini de gereksiz kılar.
+     *
+     * @param weekOffset 0 = bu hafta (kısmi), 1 = geçen tam hafta (e-posta ile giden); [0,8] aralığına kırpılır
+     * @return PDF baytları; üretim düşerse boş dizi (çağıran 503/uyarı döndürür)
+     */
+    public byte[] outagePdf(Long teamId, Integer weekOffset) {
+        Team team = teamRepo.findById(teamId)
+                .orElseThrow(() -> new IllegalArgumentException("Takım bulunamadı: " + teamId));
+        int offset = weekOffset != null ? Math.max(0, Math.min(weekOffset, 8)) : 1;
+        Window w = windowForOffset(offset);
+        List<CertificateInventory> domains =
+                inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(teamId);
+        TeamReport report = buildTeamReport(team, w, domains);
+        return outageReportService.pdf(outageReportService.collect(team, w, report.rows()));
+    }
+
+    /** Önizleme/indirme için ek dosya adı — mailde gidenle AYNI ad. */
+    public String outagePdfFileName(Long teamId, Integer weekOffset) {
+        Team team = teamRepo.findById(teamId)
+                .orElseThrow(() -> new IllegalArgumentException("Takım bulunamadı: " + teamId));
+        int offset = weekOffset != null ? Math.max(0, Math.min(weekOffset, 8)) : 1;
+        return WeeklyOutageReportService.fileName(team.getName(), windowForOffset(offset));
     }
 
     /** Ayarlar durum kartı: genel anahtar + cron + raporlanan hafta + mail kitlesindeki takımlar (≥1 domain). */

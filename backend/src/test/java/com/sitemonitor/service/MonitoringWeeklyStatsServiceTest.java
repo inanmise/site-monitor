@@ -39,6 +39,7 @@ class MonitoringWeeklyStatsServiceTest {
     @Mock DomainMonitorRepository domainMonitorRepo;
     @Mock CertificateInventoryRepository inventoryRepo;
     @Mock ScriptedMonitorRepository scriptedMonitorRepo;
+    @Mock PageMonitorRepository pageMonitorRepo;
     @Mock HttpCheckRepository httpCheckRepo;
     @Mock PortCheckRepository portCheckRepo;
     @Mock DnsRecordRepository dnsRecordRepo;
@@ -47,6 +48,7 @@ class MonitoringWeeklyStatsServiceTest {
     @Mock DomainCheckRepository domainCheckRepo;
     @Mock CertificateCheckRepository certCheckRepo;
     @Mock ScriptedCheckRepository scriptedCheckRepo;
+    @Mock PageCheckRepository pageCheckRepo;
     @Mock AlertEventRepository alertEventRepo;
     @Mock CertificateService certificateService;
     @Mock WeeklyAvailabilityReportService availabilityService;
