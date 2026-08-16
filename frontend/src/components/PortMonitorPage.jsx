@@ -1,5 +1,5 @@
 import { LoadingBlock } from './ui/Progress.jsx'
-import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
+import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -21,6 +21,9 @@ import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
+import MonitorStatsSection from './MonitorStatsSection.jsx'
+import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
+import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
@@ -82,7 +85,6 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
-  const deepLinkDone = useRef(false)
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
   const [secondsSince, setSecondsSince] = useState(0)
 
@@ -121,16 +123,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   }, [])
 
   // E-posta CTA deep-link: ?monitor=<id> → ilgili port monitörünün detayını aç (bir kez), paramı temizle.
-  useEffect(() => {
-    if (deepLinkDone.current || monitors.length === 0) return
-    deepLinkDone.current = true
-    let id
-    try { id = new URLSearchParams(window.location.search).get('monitor') } catch { return }
-    if (!id) return
-    const m = monitors.find(x => String(x.id) === String(id))
-    if (m) openModal(m)
-    // monitor paramı artık kalıcı (useUrlQuerySync yazar/siler) — eski replaceState temizliği kaldırıldı.
-  }, [monitors]) // eslint-disable-line react-hooks/exhaustive-deps
+  useMonitorDeepLink(monitors, openModal)
 
   // Modal her açıldığında önceki kaydetme hatası + test sonucunu temizle.
   useEffect(() => { setSaveError(null); setTestResult(null) }, [modal])
@@ -288,14 +281,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   // Geçmiş modalı sayfalaması — 30 sn modal yenilemesi history referansını değiştirir; sayfa korunur.
 
   const displayMonitors = useMemo(() => monitors.filter(m => {
-    if (teamFilter !== 'all') {
-      if (teamFilter === '__none__') { if (m.team_name) return false }
-      else if (m.team_name !== teamFilter) return false
-    }
-    if (groupFilter !== 'all') {
-      if (groupFilter === '__none__') { if (m.group_name) return false }
-      else if (m.group_name !== groupFilter) return false
-    }
+    if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
     if (statFilter && statFilter !== 'total') {
       if (statFilter === 'up' && m.status !== 'open') return false
       if (statFilter === 'down' && m.status !== 'closed') return false
@@ -316,12 +302,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   // Paylaşılabilir URL: görünür durum (filtre/arama/sayfa/açık modal) adres çubuğunda yaşar;
   // varsayılan değerler param üretmez (temiz URL). Yazım debounce'lu replaceState (useUrlQuerySync).
   useUrlQuerySync({
-    team: teamFilter === 'all' ? null : teamFilter,
-    group: groupFilter === 'all' ? null : groupFilter,
-    q: search.trim() || null,
-    stat: statFilter && statFilter !== 'total' ? statFilter : null,
-    page: pager.page > 1 ? pager.page : null,
-    ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
+    ...monitorUrlState({ teamFilter, groupFilter, search, statFilter, pager }),
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'control' ? detailTab : null,
     // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
@@ -376,24 +357,12 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
 
       <MonitorHowBox bullets={[t('port.how1'), t('port.how2'), t('port.how3')]} />
 
-      {!loading && monitors.length > 0 && (
-        <div className="stats-collapse-bar" onClick={toggleStats}
-          title={statsVisible ? t('app.collapseStats') : t('app.expandStats')}>
-          <span className="stats-collapse-icon"><BarChart3 size={18} /></span>
-          <span className="stats-collapse-label">{t('app.statistics')}</span>
-          {!statsVisible && <span className="stats-collapse-hint">{t('app.expandStats')}</span>}
-          <span className={`stats-collapse-chevron${statsVisible ? ' open' : ''}`}><ChevronDown size={18} /></span>
-        </div>
-      )}
-      {statsVisible && !loading && monitors.length > 0 && (
-        <MonitorStatsBar items={statItems} activeFilter={statFilter} onStatClick={onStatClick} />
-      )}
-      {statsVisible && statFilter && statFilter !== 'total' && (
-        <div className="stats-filter-bar" style={{ marginBottom: 16 }}>
-          <span>{statItems.find(s => s.key === statFilter)?.label} — {t('mondash.showing', displayMonitors.length)}</span>
-          <button className="stats-filter-clear" onClick={() => setStatFilter(null)}>{t('app.clearFilter')}</button>
-        </div>
-      )}
+      <MonitorStatsSection
+        loading={loading} total={monitors.length}
+        statsVisible={statsVisible} onToggle={toggleStats}
+        items={statItems} activeFilter={statFilter}
+        onStatClick={onStatClick} onClearFilter={() => setStatFilter(null)}
+        shownCount={displayMonitors.length} />
 
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', marginBottom: '14px', gap: 8 }}>

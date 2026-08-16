@@ -11,13 +11,12 @@ import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
 import { SCRIPTED_TEMPLATES } from './scriptedTemplates.js'
-import { FlaskConical, Play, Pencil, Plus, Trash2, X, RefreshCw, Eye, EyeOff, Copy, Users, Layers,
-  AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, BarChart3, ChevronDown,
-  Terminal } from 'lucide-react'
+import { FlaskConical, Play, Pencil, Plus, Trash2, X, RefreshCw, Eye, EyeOff, Copy, AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, BarChart3, ChevronDown, Terminal } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { collectK6Markers } from '../utils/k6Errors.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
+import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
@@ -29,6 +28,9 @@ import StatusBlock from './ui/StatusBlock.jsx'
 import CopyButton from './ui/CopyButton.jsx'
 import { exitLabel, exitHint, diagnosisHint, k6SyntaxLevel, readPhases, formatBytes,
   checksSummary, stuckLabel } from './scriptedExitCodes.js'
+import MonitorStatsSection from './MonitorStatsSection.jsx'
+import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
+import MonitorCardMeta from './MonitorCardMeta.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
@@ -400,15 +402,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   function closeDetail() { setSelected(null); setSelCheck(null) }
 
   // Türetilmiş listeler memoize — 1sn countdown her saniye render tetikler.
-  const teamOptions = useMemo(() => {
-    const names = new Set(); let hasNone = false
-    for (const m of monitors) { if (m.team_name) names.add(m.team_name); else hasNone = true }
-    const opts = [{ value: 'all', label: t('app.allTeams') }]
-    ;[...names].sort((a, b) => a.localeCompare(b)).forEach(n => opts.push({ value: n, label: n }))
-    if (hasNone) opts.push({ value: '__none__', label: t('app.noTeam') })
-    return opts
-  }, [monitors, t])
-  const hasTeamOptions = teamOptions.some(o => o.value !== 'all' && o.value !== '__none__')
+  const { teamOptions, hasTeamOptions } = useTeamOptions(monitors)
   const teamSelectOptions = useMemo(() => teams.map(tm => ({ value: String(tm.id), label: tm.name })), [teams])
 
   /** Modalın script'ini ALDIĞI kayıtlı monitör (düzenlemede kendisi, kopyalamada kaynak). */
@@ -449,14 +443,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   const groupSelectOptions = useMemo(() => teamGroups.map(g => ({ value: g.name, label: g.name })), [teamGroups])
 
   const scoped = useMemo(() => monitors.filter(m => {
-    if (teamFilter !== 'all') {
-      if (teamFilter === '__none__') { if (m.team_name) return false }
-      else if (m.team_name !== teamFilter) return false
-    }
-    if (groupFilter !== 'all') {
-      if (groupFilter === '__none__') { if (m.group_name) return false }
-      else if (m.group_name !== groupFilter) return false
-    }
+    if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
     const q = search.trim().toLowerCase()
     if (!q) return true
     return (m.name || '').toLowerCase().includes(q) || (m.group_name || '').toLowerCase().includes(q)
@@ -492,12 +479,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   })
   // Paylaşılabilir URL: filtre/arama/sayfa + açık detay modalı adres çubuğunda yaşar (varsayılanlar param üretmez).
   useUrlQuerySync({
-    team: teamFilter === 'all' ? null : teamFilter,
-    group: groupFilter === 'all' ? null : groupFilter,
-    q: search.trim() || null,
-    stat: statFilter && statFilter !== 'total' ? statFilter : null,
-    page: pager.page > 1 ? pager.page : null,
-    ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
+    ...monitorUrlState({ teamFilter, groupFilter, search, statFilter, pager }),
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'control' ? detailTab : null,
     // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
@@ -895,24 +877,12 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
         </AlertBanner>
       )}
 
-      {!loading && monitors.length > 0 && (
-        <div className="stats-collapse-bar" onClick={toggleStats}
-          title={statsVisible ? t('app.collapseStats') : t('app.expandStats')}>
-          <span className="stats-collapse-icon"><BarChart3 size={18} /></span>
-          <span className="stats-collapse-label">{t('app.statistics')}</span>
-          {!statsVisible && <span className="stats-collapse-hint">{t('app.expandStats')}</span>}
-          <span className={`stats-collapse-chevron${statsVisible ? ' open' : ''}`}><ChevronDown size={18} /></span>
-        </div>
-      )}
-      {statsVisible && !loading && monitors.length > 0 && (
-        <MonitorStatsBar items={statItems} activeFilter={statFilter} onStatClick={onStatClick} />
-      )}
-      {statsVisible && statFilter && statFilter !== 'total' && (
-        <div className="stats-filter-bar" style={{ marginBottom: 16 }}>
-          <span>{statItems.find(s => s.key === statFilter)?.label} — {t('mondash.showing', displayMonitors.length)}</span>
-          <button className="stats-filter-clear" onClick={() => setStatFilter(null)}>{t('app.clearFilter')}</button>
-        </div>
-      )}
+      <MonitorStatsSection
+        loading={loading} total={monitors.length}
+        statsVisible={statsVisible} onToggle={toggleStats}
+        items={statItems} activeFilter={statFilter}
+        onStatClick={onStatClick} onClearFilter={() => setStatFilter(null)}
+        shownCount={displayMonitors.length} />
 
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
@@ -956,16 +926,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
                 <span className="upt-port-tag">k6</span>
               </div>
               <div className="upt-card-domain" title={m.name}>{m.name}</div>
-              {m.team_name && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '.78em', color: 'var(--text-muted)', marginTop: 2 }}>
-                  <Users size={12} />{m.team_name}
-                </div>
-              )}
-              {m.group_name && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '.78em', color: 'var(--text-muted)', marginTop: 2 }}>
-                  <Layers size={12} />{m.group_name}
-                </div>
-              )}
+              <MonitorCardMeta monitor={m} />
               <div className="upt-card-divider" />
               <div className="upt-card-metrics">
                 <div className="upt-metric">

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
@@ -18,6 +18,9 @@ import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 
+import MonitorStatsSection from './MonitorStatsSection.jsx'
+import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
+import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS']
 
 const INTERVALS = [
@@ -79,7 +82,6 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const [secondsSince, setSecondsSince] = useState(0)
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
-  const deepLinkDone = useRef(false)
 
   const load = useCallback(async () => {
     const res = await api.monitoring.getDnsMonitors()
@@ -114,16 +116,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   }, [])
 
   // E-posta CTA deep-link: ?monitor=<id> → ilgili DNS monitörünün detayını aç (bir kez), paramı temizle.
-  useEffect(() => {
-    if (deepLinkDone.current || monitors.length === 0) return
-    deepLinkDone.current = true
-    let id
-    try { id = new URLSearchParams(window.location.search).get('monitor') } catch { return }
-    if (!id) return
-    const m = monitors.find(x => String(x.id) === String(id))
-    if (m) setDetailMonitor(m)
-    // monitor paramı artık kalıcı (useUrlQuerySync yazar/siler).
-  }, [monitors]) // eslint-disable-line react-hooks/exhaustive-deps
+  useMonitorDeepLink(monitors, setDetailMonitor)
 
   const teamSelectOptions = [{ value: '', label: t('app.noTeam') },
     ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))]
@@ -283,14 +276,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }
 
   const filtered = useMemo(() => monitors.filter(m => {
-    if (teamFilter !== 'all') {
-      if (teamFilter === '__none__') { if (m.team_name) return false }
-      else if (m.team_name !== teamFilter) return false
-    }
-    if (groupFilter !== 'all') {
-      if (groupFilter === '__none__') { if (m.group_name) return false }
-      else if (m.group_name !== groupFilter) return false
-    }
+    if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
     if (statFilter && statFilter !== 'total') {
       if (statFilter === 'alarm' && !m.active_alarm) return false
       if (statFilter === 'ok' && (m.active === false || m.active_alarm)) return false
@@ -311,12 +297,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
 
   // Paylaşılabilir URL: filtre/arama/sayfa + açık detay modalı (mtab/range DnsDetailModal içinde sync'lenir).
   useUrlQuerySync({
-    team: teamFilter === 'all' ? null : teamFilter,
-    group: groupFilter === 'all' ? null : groupFilter,
-    q: search.trim() || null,
-    stat: statFilter && statFilter !== 'total' ? statFilter : null,
-    page: pager.page > 1 ? pager.page : null,
-    ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
+    ...monitorUrlState({ teamFilter, groupFilter, search, statFilter, pager }),
     monitor: detailMonitor?.id ?? null,
     // Modal AÇIKKEN mtab/range'i DnsDetailModal yönetir (anahtarlar mapping'de olmaz → dokunulmaz);
     // modal kapanınca burada null'a düşer ve URL'den silinir (modal unmount'ta silme yapamaz).
@@ -347,24 +328,12 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
 
       <MonitorHowBox bullets={[t('dns.how1'), t('dns.how2'), t('dns.how3'), t('dns.how4'), t('dns.how5')]} />
 
-      {!loading && monitors.length > 0 && (
-        <div className="stats-collapse-bar" onClick={toggleStats}
-          title={statsVisible ? t('app.collapseStats') : t('app.expandStats')}>
-          <span className="stats-collapse-icon"><BarChart3 size={18} /></span>
-          <span className="stats-collapse-label">{t('app.statistics')}</span>
-          {!statsVisible && <span className="stats-collapse-hint">{t('app.expandStats')}</span>}
-          <span className={`stats-collapse-chevron${statsVisible ? ' open' : ''}`}><ChevronDown size={18} /></span>
-        </div>
-      )}
-      {statsVisible && !loading && monitors.length > 0 && (
-        <MonitorStatsBar items={statItems} activeFilter={statFilter} onStatClick={onStatClick} />
-      )}
-      {statsVisible && statFilter && statFilter !== 'total' && (
-        <div className="stats-filter-bar" style={{ marginBottom: 16 }}>
-          <span>{statItems.find(s => s.key === statFilter)?.label} — {t('mondash.showing', filtered.length)}</span>
-          <button className="stats-filter-clear" onClick={() => setStatFilter(null)}>{t('app.clearFilter')}</button>
-        </div>
-      )}
+      <MonitorStatsSection
+        loading={loading} total={monitors.length}
+        statsVisible={statsVisible} onToggle={toggleStats}
+        items={statItems} activeFilter={statFilter}
+        onStatClick={onStatClick} onClearFilter={() => setStatFilter(null)}
+        shownCount={filtered.length} />
 
       <div className={`dns-info-card${infoOpen ? ' dns-info-open' : ''}`}>
         <button className="dns-info-toggle" onClick={() => setInfoOpen(v => !v)} type="button">
