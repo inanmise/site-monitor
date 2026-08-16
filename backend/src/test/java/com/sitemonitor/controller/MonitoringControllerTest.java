@@ -100,8 +100,10 @@ class MonitoringControllerTest {
     void stubTeamMap() {
         // Senaryo kaydetme yolu artık kaydetmeden önce script doğrulaması çağırıyor; mock varsayılanı
         // null döner ve NPE'ye yol açar. Zararsız (engellemeyen, uyarısız) bir sonuç stub'la.
+        // ÜÇ argümanlı aşırı yükleme: süreç bütçesi (timeoutSeconds) de geçiliyor — ters bütçe
+        // uyarısı ("istek timeout'u ≥ süreç bütçesi") ancak bu bilinirse üretilebiliyor.
         org.mockito.Mockito.lenient().when(scriptedChecker.validateScript(org.mockito.ArgumentMatchers.any(),
-                org.mockito.ArgumentMatchers.any()))
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new com.sitemonitor.service.ScriptedCheckerService.ScriptDiagnostics(null, java.util.List.of()));
         // Retention mock'u stub'sız 0 döner; geçmiş VE seri uçları "from"u saklama penceresine kırptığı
         // için 0 gün, istenen aralığı sıfıra indirip kova genişliğini bozardı. Gerçek varsayılan: 180.
@@ -1691,6 +1693,62 @@ class MonitoringControllerTest {
 
         mvc.perform(get("/api/monitoring/port").session(session("ADMIN")))
                 .andExpect(status().isOk());
+    }
+
+    // ── Lazy-provision yarışı (mükerrer monitör) ─────────────────────────────────
+    //
+    // GET /port ve /dns eksik monitörleri istek anında yaratıyor (check-then-act). Tabloda
+    // benzersizlik kısıtı olmadığı sürece 100 kullanıcı ekranı aynı anda açtığında aynı domain
+    // için N satır oluşuyordu → N kat kontrol trafiği ve raporlarda çift sayım. Artık kısıt var
+    // (uq_pm_host_port / uq_dnsm_domain); bu testler kaybeden isteğin 500 ATMADIĞINI ve listenin
+    // yine dolu döndüğünü pinler.
+
+    @Test
+    @DisplayName("Port lazy-provision çakışırsa istek 500 ATMAZ — tablo yeniden okunur, liste döner")
+    void portProvisionRace_recoversFromConflict() throws Exception {
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv("yaris.example.com")));
+        com.sitemonitor.model.PortMonitor winner = new com.sitemonitor.model.PortMonitor();
+        winner.setId(77L); winner.setHost("yaris.example.com"); winner.setPort(443);
+        winner.setName("yaris.example.com"); winner.setActive(true);
+        // 1. okuma: boş (biz de yaratmaya karar veriyoruz) · 2. okuma: kazananın satırı
+        when(portMonitorRepo.findAll()).thenReturn(List.of(), List.of(winner));
+        when(portMonitorRepo.saveAll(anyList()))
+                .thenThrow(new org.springframework.dao.DataIntegrityViolationException("uq_pm_host_port"));
+
+        mvc.perform(get("/api/monitoring/port").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].host").value("yaris.example.com"));
+    }
+
+    @Test
+    @DisplayName("Yarış sonrası satır HÂLÂ yoksa o domain atlanır — tüm liste tek kayıt yüzünden ölmez")
+    void portProvisionRace_missingRowIsSkippedNotFatal() throws Exception {
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc())
+                .thenReturn(List.of(inv("kayip.example.com")));
+        when(portMonitorRepo.findAll()).thenReturn(List.of());   // her iki okumada da boş
+        when(portMonitorRepo.saveAll(anyList()))
+                .thenThrow(new org.springframework.dao.DataIntegrityViolationException("uq_pm_host_port"));
+
+        // Eskiden monitor DAİMA dolu varsayılıyordu → NPE → 500; artık boş liste ile 200.
+        mvc.perform(get("/api/monitoring/port").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(0));
+    }
+
+    @Test
+    @DisplayName("DNS lazy-provision çakışması da aynı şekilde kurtarılır")
+    void dnsProvisionRace_recoversFromConflict() throws Exception {
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv("yaris.example.com")));
+        com.sitemonitor.model.DnsMonitor winner = new com.sitemonitor.model.DnsMonitor();
+        winner.setId(88L); winner.setDomain("yaris.example.com"); winner.setRecordType("A");
+        winner.setName("yaris.example.com"); winner.setActive(true);
+        when(dnsMonitorRepo.findAll()).thenReturn(List.of(), List.of(winner));
+        when(dnsMonitorRepo.saveAll(anyList()))
+                .thenThrow(new org.springframework.dao.DataIntegrityViolationException("uq_dnsm_domain"));
+
+        mvc.perform(get("/api/monitoring/dns").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].domain").value("yaris.example.com"));
     }
 
     // ── IDOR: yazma uçlarında takım sınırı ───────────────────────────────────────

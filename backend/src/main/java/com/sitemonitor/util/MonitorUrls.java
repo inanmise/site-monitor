@@ -66,8 +66,32 @@ public final class MonitorUrls {
         return s.isBlank() ? null : s;
     }
 
-    /** Kontrol motoru bu URL'e istek atabilir mi (http/https + host var mı)? */
+    /**
+     * URL'de istek atmayı İMKÂNSIZ kılan boşluk/kontrol karakteri var mı?
+     *
+     * <p>Saha vakası (2026-06-22 → 2026-08-16, iki ay): bir Kelime izlemesinin URL'i
+     * {@code "http://localhost:8080/health- Orjinal"} olarak kaydedildi. {@link #isCheckable}
+     * yalnız HOST'a baktığı için ("localhost" geçerli) doğrulamadan geçti; her kontrol ise
+     * {@code Illegal character in path at index 29} ile düştü. Toplamda 12 000+ başarısız kontrol
+     * üretti, sıradan bir "DOWN" gibi göründü ve hiç fark edilmedi — üstelik alarm bastırma
+     * oranını da şişirdi ({@code MonitoringOutageService.isOutageClass}).
+     *
+     * <p>Boşluk BİLEREK düzeltilmez (kırpma/kodlama yapılmaz): "%20" ile kaçırmak sessizce BAŞKA
+     * bir hedefe istek atmak demektir. Kullanıcıya söylenir, o düzeltir.
+     *
+     * <p>{@code {timestamp}} yer tutucusu (Kelime izlemesi) boşluk içermez → bu denetimden etkilenmez.
+     */
+    public static boolean hasIllegalWhitespace(String url) {
+        if (url == null) return false;
+        for (int i = 0; i < url.length(); i++) {
+            char c = url.charAt(i);
+            if (Character.isWhitespace(c) || c < 0x20 || c == 0x7F) return true;
+        }
+        return false;
+    }
+
+    /** Kontrol motoru bu URL'e istek atabilir mi (http/https + host var + ayrıştırılabilir)? */
     public static boolean isCheckable(String url) {
-        return hostOrNull(url) != null;
+        return hostOrNull(url) != null && !hasIllegalWhitespace(url == null ? null : url.trim());
     }
 }

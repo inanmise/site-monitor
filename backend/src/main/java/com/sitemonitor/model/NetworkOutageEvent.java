@@ -34,4 +34,15 @@ public class NetworkOutageEvent {
     /** ONGOING or RESOLVED */
     @Column(nullable = false, length = 16)
     private String status;
+
+    /**
+     * Olayı ÜRETEN sweep: {@code null} ⇒ sertifika sweep'i (eski kayıtlar ve bugünkü davranış),
+     * aksi halde izleme tipi ({@code ACCESSIBILITY}, {@code KEYWORD_FAIL}, {@code PORT_DOWN} …).
+     *
+     * <p>İzleme sweep'lerinin bastırması 2026-08'e kadar HİÇ kaydedilmiyordu; tek izi log
+     * dosyasında tekrar eden bir WARN satırıydı. Aynı tabloya yazılıyorlar, bu yüzden kaynağın
+     * ayrılabilmesi şart — yoksa "ağ kesintisi geçmişi" iki farklı olguyu tek listede karıştırır.
+     */
+    @Column(length = 32)
+    private String source;
 }

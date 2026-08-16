@@ -692,6 +692,30 @@ public class MonitoringController {
         return forbidden("Bu domain'in geçmişini görüntüleme yetkiniz yok");
     }
 
+    /**
+     * Lazy-provision yarışından sonra port monitör haritasını DB'den tazeler.
+     *
+     * <p>Kaybeden istekte transaction geri alınır: bizim eklediğimiz satırların HİÇBİRİ kalmaz.
+     * Bu yüzden haritayı sıfırdan kurmak şart — kısmi güncelleme yapsaydık kazananın yarattığı
+     * satırlar eksik kalır ve liste o domainleri hiç göstermezdi.
+     */
+    private void reloadPortMonitors(Map<String, PortMonitor> monitorByKey) {
+        monitorByKey.clear();
+        for (PortMonitor m : portMonitorRepo.findAll()) {
+            if (Boolean.TRUE.equals(m.getStandalone())) continue;
+            monitorByKey.merge(m.getHost() + ":" + m.getPort(), m, (a, b) -> a.getId() <= b.getId() ? a : b);
+        }
+    }
+
+    /** {@link #reloadPortMonitors} ile aynı gerekçe — DNS tarafı. */
+    private void reloadDnsMonitors(Map<String, DnsMonitor> monitorByDomain) {
+        monitorByDomain.clear();
+        for (DnsMonitor m : dnsMonitorRepo.findAll()) {
+            if (Boolean.TRUE.equals(m.getStandalone())) continue;
+            monitorByDomain.merge(m.getDomain(), m, (a, b) -> a.getId() <= b.getId() ? a : b);
+        }
+    }
+
     // ── Port Monitors ─────────────────────────────────────────────────────────
 
     @GetMapping("/port")
@@ -728,7 +752,17 @@ public class MonitoringController {
                 toCreate.add(m);
             }
         }
-        if (!toCreate.isEmpty()) portMonitorRepo.saveAll(toCreate);
+        if (!toCreate.isEmpty()) {
+            // Benzersizlik kısıtı (uq_pm_host_port) artık DB'de: eşzamanlı iki istek aynı domaini
+            // görürse biri çakışır. Kaybeden istek 500 almaz — tabloyu YENİDEN OKUR ve kazananın
+            // satırlarını kullanır. Kısıt olmadan bu yol sessizce N mükerrer monitör üretiyordu.
+            try {
+                portMonitorRepo.saveAll(toCreate);
+            } catch (org.springframework.dao.DataIntegrityViolationException race) {
+                log.debug("Port monitör lazy-provision yarışı — yeniden okunuyor: {}", race.getMessage());
+                reloadPortMonitors(monitorByKey);
+            }
+        }
 
         // Her monitör için en güncel kontrol — tek toplu sorgu (eski: monitör başına findTop... → N+1).
         Map<Long, PortCheck> latestByMonitor = portCheckRepo.findLatestPerMonitor().stream()
@@ -747,6 +781,9 @@ public class MonitoringController {
         for (CertificateInventory inv : inventory) {
             int invPort = inv.getPort() != null ? inv.getPort() : 443;
             PortMonitor monitor = monitorByKey.get(inv.getDomain() + ":" + invPort);
+            // Yarış sonrası hâlâ eksikse SATIRI ATLA. Eskiden burada monitor DAİMA dolu varsayılıyordu
+            // ve provision başarısız olsa NPE → 500 olurdu: tüm liste, tek bir domain yüzünden ölürdü.
+            if (monitor == null) continue;
             PortCheck latest = monitor.getId() != null ? latestByMonitor.get(monitor.getId()) : null;
             result.add(enrichPort(monitor, latest, teamMap, teamById, portAlarms.get(monitor.getHost())));
         }
@@ -1026,7 +1063,14 @@ public class MonitoringController {
                 toCreate.add(m);
             }
         }
-        if (!toCreate.isEmpty()) dnsMonitorRepo.saveAll(toCreate);
+        if (!toCreate.isEmpty()) {
+            try {
+                dnsMonitorRepo.saveAll(toCreate);
+            } catch (org.springframework.dao.DataIntegrityViolationException race) {
+                log.debug("DNS monitör lazy-provision yarışı — yeniden okunuyor: {}", race.getMessage());
+                reloadDnsMonitors(monitorByDomain);
+            }
+        }
 
         // Her monitör için en güncel kayıt — tek toplu sorgu (eski: monitör başına findTop... → N+1).
         Map<Long, DnsRecord> latestByMonitor = dnsRecordRepo.findLatestPerMonitor().stream()
@@ -1044,6 +1088,7 @@ public class MonitoringController {
         List<Map<String, Object>> result = new ArrayList<>();
         for (CertificateInventory inv : inventory) {
             DnsMonitor monitor = monitorByDomain.get(inv.getDomain());
+            if (monitor == null) continue;   // yarış sonrası eksikse satırı atla (bkz. port yolu)
             DnsRecord latest = monitor.getId() != null ? latestByMonitor.get(monitor.getId()) : null;
             result.add(enrichDns(monitor, latest, teamMap, teamById, dnsAlarms.get(inv.getDomain())));
         }
@@ -2405,7 +2450,7 @@ public class MonitoringController {
             return badRequest("Bu ad bu takımda zaten kullanılıyor; mükerrer izleme oluşturulamaz.");
         String scanErr = scanScriptOrError(body.get("script"));
         if (scanErr != null) return badRequest(scanErr);
-        var diag = validateScripted(body.get("script"), body.get("env"));
+        var diag = validateScripted(body.get("script"), body.get("env"), body.get("timeoutSeconds"));
         if (diag.blocked()) return badRequest(diag.blocking());
         String now = ISO.format(Instant.now());
         com.sitemonitor.model.ScriptedMonitor m = new com.sitemonitor.model.ScriptedMonitor();
@@ -2449,7 +2494,7 @@ public class MonitoringController {
         // düzenlerken (asıl düzeltme anı) "__ENV tanımsız", "doğrulama atlandı" gibi uyarıları
         // görmezse o uyarılar pratikte hiç görünmez.
         var diag = body.get("script") != null
-                ? validateScripted(body.get("script"), body.get("env"))
+                ? validateScripted(body.get("script"), body.get("env"), body.get("timeoutSeconds"))
                 : new com.sitemonitor.service.ScriptedCheckerService.ScriptDiagnostics(null, java.util.List.of());
         if (diag.blocked()) return badRequest(diag.blocking());
         return scriptedMonitorRepo.findById(id).map(m -> {
@@ -2884,13 +2929,35 @@ public class MonitoringController {
      * (timeout, uzak import indirilemedi) kaydeder ve uyarı döndürür.
      */
     private com.sitemonitor.service.ScriptedCheckerService.ScriptDiagnostics validateScripted(Object script, Object envRaw) {
+        return validateScripted(script, envRaw, null);
+    }
+
+    /**
+     * @param timeoutRaw kaydedilmek üzere olan süreç bütçesi (gövdeden). Ters bütçe uyarısı
+     *                   ("istek timeout'u ≥ süreç bütçesi") ancak bu bilinirse üretilebilir —
+     *                   sahada 289 koşumluk sessiz başarısızlığın sebebi tam olarak buydu.
+     */
+    private com.sitemonitor.service.ScriptedCheckerService.ScriptDiagnostics validateScripted(
+            Object script, Object envRaw, Object timeoutRaw) {
         List<String> envNames = new ArrayList<>();
         if (envRaw instanceof List<?> list) {
             for (Object o : list) {
                 if (o instanceof Map<?, ?> e && e.get("name") != null) envNames.add(e.get("name").toString());
             }
         }
-        return scriptedChecker.validateScript(script == null ? null : script.toString(), envNames);
+        return scriptedChecker.validateScript(script == null ? null : script.toString(), envNames,
+                asPositiveInt(timeoutRaw));
+    }
+
+    /** Gövdeden gelen sayı ("60", 60, 60.0) → pozitif int; ayrıştırılamazsa null (denetim atlanır). */
+    private static Integer asPositiveInt(Object raw) {
+        if (raw == null) return null;
+        try {
+            int v = (raw instanceof Number n) ? n.intValue() : Integer.parseInt(raw.toString().trim());
+            return v > 0 ? v : null;
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     private void applyScriptedFields(com.sitemonitor.model.ScriptedMonitor m, Map<String, Object> body, String existingEnvJson) {

@@ -167,8 +167,27 @@ public class ScriptedCheckerService {
      * hâle getirmemeli.
      */
     public ScriptDiagnostics validateScript(String script, List<String> envNames) {
+        return validateScript(script, envNames, null);
+    }
+
+    /**
+     * @param timeoutSeconds monitörün KAYDEDİLMEK ÜZERE olan süreç bütçesi (ham, kısıtlanmamış).
+     *                       null ⇒ bütçe-bağımlı denetimler atlanır (eski iki argümanlı çağrı).
+     */
+    public ScriptDiagnostics validateScript(String script, List<String> envNames, Integer timeoutSeconds) {
         List<String> warnings = new ArrayList<>(auditEnvReferences(script, envNames));
         warnings.addAll(auditRequestTimeouts(script));
+        // Kısıtlama SESSİZ olmasın: kullanıcı 300 yazdıysa monitör 180'de kesilecek ve bunu hiçbir
+        // yerde görmüyordu — sonra "180. saniyede neden öldü" sorusu cevapsız kalıyordu.
+        if (timeoutSeconds != null) {
+            int effective = clampTimeout(timeoutSeconds);
+            if (effective != timeoutSeconds) {
+                warnings.add(String.format(
+                        "Süreç bütçesi %d sn olarak kaydedilecek (girdiğiniz %d sn sınırlara kısıldı).",
+                        effective, timeoutSeconds));
+            }
+            warnings.addAll(auditTimeoutBudget(script, effective));
+        }
         String policy = appSettings.getString("site.monitor.scripted.syntax-check-policy", "WARN");
         if ("OFF".equalsIgnoreCase(policy) || !k6Available || script == null || script.isBlank()) {
             return new ScriptDiagnostics(null, warnings);
@@ -365,6 +384,83 @@ public class ScriptedCheckerService {
         }
         return out;
     }
+
+    /** {@code timeout: '20s'} / {@code timeout: "500ms"} / {@code timeout: 20000} — değeriyle birlikte. */
+    private static final Pattern TIMEOUT_VALUE = Pattern.compile(
+            "timeout\\s*:\\s*(?:'([^']*)'|\"([^\"]*)\"|(\\d+))");
+
+    /** k6 süre bileşeni — bileşik ifadeler de geçerli: {@code '1m30s'}. */
+    private static final Pattern DURATION_PART = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*(ms|s|m|h)");
+
+    /** k6 süre gösterimi → ms. Çıplak sayı k6'da MİLİSANİYEDİR. Ayrıştırılamazsa null. */
+    static Long parseK6DurationMs(String raw) {
+        if (raw == null) return null;
+        String s = raw.trim();
+        if (s.isEmpty()) return null;
+        if (s.matches("\\d+")) return Long.parseLong(s);          // çıplak sayı = ms (k6 sözleşmesi)
+        long total = 0;
+        boolean any = false;
+        var m = DURATION_PART.matcher(s);
+        while (m.find()) {
+            double v = Double.parseDouble(m.group(1));
+            long mult = switch (m.group(2)) {
+                case "ms" -> 1L;
+                case "s"  -> 1_000L;
+                case "m"  -> 60_000L;
+                default   -> 3_600_000L;                          // "h"
+            };
+            total += (long) (v * mult);
+            any = true;
+        }
+        return any ? total : null;
+    }
+
+    /**
+     * Script'teki EN BÜYÜK açık istek timeout'u (saniye, yukarı yuvarlanır); açık timeout yoksa null.
+     *
+     * <p>En büyüğü alınır çünkü süreci öldüren şey en uzun bekleyen istektir.
+     */
+    static Integer maxRequestTimeoutSeconds(String script) {
+        if (script == null || script.isBlank()) return null;
+        Long maxMs = null;
+        var m = TIMEOUT_VALUE.matcher(stripComments(script));
+        while (m.find()) {
+            String raw = m.group(1) != null ? m.group(1) : m.group(2) != null ? m.group(2) : m.group(3);
+            Long ms = parseK6DurationMs(raw);
+            if (ms != null && (maxMs == null || ms > maxMs)) maxMs = ms;
+        }
+        return maxMs == null ? null : (int) Math.ceil(maxMs / 1000.0);
+    }
+
+    /**
+     * TERS BÜTÇE — istek timeout'u süreç bütçesinden büyük/eşitse sebep ASLA yazılamaz.
+     *
+     * <p>Saha vakası (2026-08, 289 koşumun 289'u): script'te {@code timeout: '20s'} vardı, monitörün
+     * süreç bütçesi 10 sn'ydi. k6 kendi isteğini düşürmeye fırsat bulamadan süreci 10. saniyede
+     * öldürüyorduk; ekranda her seferinde sebepsiz "Süre aşımı" kaldı. {@link #auditRequestTimeouts}
+     * bunun TERSİNİ (açık timeout yokluğunu) denetlediği için hiç uyarı çıkmadı — üstelik arayüz
+     * "script'e açık timeout ekleyin" diye, kullanıcının çoktan yaptığı şeyi tavsiye ediyordu.
+     *
+     * <p>Eşitlik de hatadır: iki bütçe aynı anda dolar, yarışı hangisinin kazanacağı belirsizdir.
+     */
+    static List<String> auditTimeoutBudget(String script, Integer processBudgetSec) {
+        List<String> out = new ArrayList<>();
+        if (processBudgetSec == null || processBudgetSec <= 0) return out;
+        Integer reqSec = maxRequestTimeoutSeconds(script);
+        if (reqSec == null || reqSec < processBudgetSec) return out;   // açık timeout yok ya da sıra doğru
+        out.add(String.format(
+                "İstek timeout'u (%d sn) monitörün süreç bütçesine (%d sn) eşit ya da ondan büyük: "
+                + "k6 isteği kendi düşüremeden süreci öldürüyoruz ve başarısızlığın SEBEBİ hiç yazılamıyor. "
+                + "Süreç bütçesini ≥ %d sn yapın ya da istek timeout'unu ≤ %d sn'ye çekin.",
+                reqSec, processBudgetSec, reqSec + TIMEOUT_HEADROOM_SEC,
+                Math.max(1, processBudgetSec - TIMEOUT_HEADROOM_MIN_SEC)));
+        return out;
+    }
+
+    /** k6'nın başlangıç + kapanış payı: süreç bütçesi, istek timeout'unun bu kadar üstünde olmalı. */
+    private static final int TIMEOUT_HEADROOM_SEC = 15;
+    /** Ters yönde öneri için asgari pay (istek timeout'u bütçenin bu kadar altına çekilmeli). */
+    private static final int TIMEOUT_HEADROOM_MIN_SEC = 3;
 
     /** Açılışta (ve yeniden) k6 varlığını + sürümünü doğrular. */
     public final void probeK6() {
@@ -734,6 +830,14 @@ public class ScriptedCheckerService {
             if (!s.parsed && !"PASS".equals(status) && !"TIMEOUT".equals(status)) {
                 error = (error == null ? "" : error + " · ") + "k6 özeti okunamadı (metrik yok)";
             }
+            // Koşum bağlamı: "nereden timeout aldık" sorusunun cevabı burada. Hangi bütçe doldu,
+            // script isteğine ne verilmiş, hangi çıkıştan gidildi, kurumsal CA verildi mi.
+            // Bunlar hiçbir yerde kayıtlı değildi; kullanıcı 289 koşum boyunca yalnız "Süre aşımı"
+            // görüp sebebi tahmin etmeye çalıştı.
+            if (!"PASS".equals(status)) {
+                String ctx = runContextNote(script, timeoutSec, viaProxy, caFile != null);
+                error = (error == null ? "" : error + "\n") + ctx;
+            }
             return buildResult(status, durationMs, r, s, output, error, viaProxy.on());
         } catch (Exception e) {
             // ── Katman 1: dış guard — r/output/durationMs artık KAPSAMDA ──
@@ -743,6 +847,45 @@ public class ScriptedCheckerService {
             deleteQuiet(scriptFile);
             deleteQuiet(summaryFile);
             deleteQuiet(caFile);
+        }
+    }
+
+    /**
+     * Başarısız koşumun ALTINA yazılan bağlam satırı — teşhisin başladığı yer.
+     *
+     * <p>Ters bütçe varsa (istek timeout'u ≥ süreç bütçesi) önce O anlatılır: sebebin neden hiç
+     * yazılamadığını açıklayan tek şey odur ve kullanıcı bunu ekrandan başka hiçbir yerden göremez.
+     */
+    private String runContextNote(String script, int timeoutSec, ProxyUse viaProxy, boolean withCa) {
+        return runContextNote(script, timeoutSec, viaProxy.on(), safeProxyTarget(), withCa);
+    }
+
+    /** Saf biçimlendirme — vekil adresi parametre olarak alınır ki birim testte örnek gerekmesin. */
+    static String runContextNote(String script, int timeoutSec, boolean viaProxy,
+                                 String proxyTarget, boolean withCa) {
+        StringBuilder sb = new StringBuilder();
+        for (String w : auditTimeoutBudget(script, timeoutSec)) sb.append(w).append('\n');
+
+        Integer reqSec = maxRequestTimeoutSeconds(script);
+        sb.append("süreç bütçesi=").append(timeoutSec).append("s · script istek timeout'u=")
+          .append(reqSec == null ? "verilmemiş (k6 varsayılanı 60s)" : reqSec + "s")
+          .append(" · çıkış=");
+        if (viaProxy) {
+            sb.append("vekil").append(proxyTarget == null || proxyTarget.isBlank() ? "" : " (" + proxyTarget + ")");
+        } else {
+            sb.append("doğrudan");
+        }
+        sb.append(" · kurumsal CA=").append(withCa ? "verildi" : "verilmedi");
+        return sb.toString();
+    }
+
+    /** Vekil adresi teşhis için değerli ama çözümlemesi patlarsa koşum raporunu düşürmemeli. */
+    private String safeProxyTarget() {
+        try {
+            String t = proxySettings.displayTarget();
+            return (t == null || t.isBlank()) ? null : t;
+        } catch (Exception e) {
+            return null;
         }
     }
 

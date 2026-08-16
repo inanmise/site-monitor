@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TEST LOGLAMASI — YALNIZ KONSOL.
+
+  Neden var (2026-08-16 bulgusu): test süiti, uygulamanın logback-spring.xml'ini kullanıyor ve
+  surefire'ın çalışma dizini `backend/` olduğu için OPERASYONEL log dosyalarına yazıyordu:
+  `backend/logs/site-monitor.log` ve `-error.log`. O dosyalar 1,3 MB'a ulaşmıştı ve içeriği
+  UYDURMAYDI — hiç yaşanmamış olaylar:
+
+      ✗ E-posta gönderilemedi: TO=to@test.com | HATA=boom-prep
+      aylik-rapor başarısız: SMTP down
+      *** APPLICATION FAILED TO START ***   (bunlar @WebMvcTest dilimlerinin bilinçli hataları)
+
+  Bir olay incelemesinde bu dosyayı açan kişi, gerçekten olmuş sanıp yanlış yöne gider. Bu
+  incelemede tam olarak öyle oldu: canlı hata sanılan kayıtların testlerden geldiği ancak
+  zaman damgaları karşılaştırılınca anlaşıldı.
+
+  Ayrıca AuditService'in fallback dosyası (`logs/audit-fallback.jsonl`) da testlerin ürettiği
+  SYSTEM_STARTUP/SYSTEM_SHUTDOWN kayıtlarıyla kirleniyordu — denetim izinin sahte kayıt
+  içermemesi, dosyanın kendisi kadar önemli.
+
+  Karar: testler diske HİÇ log yazmaz. Hata ayıklaması gerektiğinde surefire çıktısı
+  (target/surefire-reports) zaten her şeyi tutuyor.
+-->
+<configuration>
+
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{HH:mm:ss.SSS} %-5level [%thread] %logger{36} -- %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <!-- Gürültü kısma: testlerde Hibernate/Spring iç logları teşhise katkı vermiyor. -->
+  <logger name="org.hibernate"                   level="WARN"/>
+  <logger name="org.springframework"             level="WARN"/>
+  <logger name="com.zaxxer.hikari"               level="WARN"/>
+
+  <!-- AUDIT logger'ı uygulamada ayrı dosyaya gidiyor; testte de konsolda kalsın (additivity=false
+       olmasaydı root'a düşer ve iki kez basardı). -->
+  <logger name="AUDIT" level="INFO" additivity="false">
+    <appender-ref ref="CONSOLE"/>
+  </logger>
+
+  <root level="INFO">
+    <appender-ref ref="CONSOLE"/>
+  </root>
+
+</configuration>

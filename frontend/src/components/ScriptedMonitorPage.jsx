@@ -508,7 +508,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     { key: 'up',      Icon: CheckCircle2,    label: t('scripted.dashUp'),      value: counts.up,      cls: 'valid'    },
     { key: 'down',    Icon: WifiOff,         label: t('scripted.dashDown'),    value: counts.down,    cls: 'critical' },
     { key: 'alarm',   Icon: Siren,           label: t('scripted.dashAlarm'),   value: counts.alarm,   cls: 'high'     },
-    { key: 'unacked', Icon: BellDot,         label: t('scripted.dashUnacked'), value: counts.unacked, cls: 'warning'  },
+    { key: 'unacked', Icon: BellDot,         label: t('scripted.dashUnacked'), value: counts.unacked, cls: 'warning'  , hint: t('mondash.unackedHint') },
     { key: 'paused',  Icon: PauseCircle,     label: t('scripted.dashPaused'),  value: counts.paused,  cls: 'paused'   },
   ]
   const onStatClick = (key) => setStatFilter(k => k === key ? null : key)
@@ -1423,7 +1423,12 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
           {/* Yavaş koşum alarmı (SCRIPTED_SLOW) — opt-in. Senaryo GEÇİYOR ama yavaşlıyorsa
               kesinti alarmı hiç açılmaz; bu eşik o sessiz bozulmayı görünür kılar. Teyit/kurtarma
               sayıları kesinti alarmıyla ORTAKTIR (aynı 3× doğrulama üssel zinciri). */}
-          <label className="sc-check"><input type="checkbox" checked={!!form.slowResponseEnabled}
+          {/* checkbox-label: .form-grid label VARSAYILANI sütun yönlü ve input'lara metin-kutusu
+              geometrisi (padding/kenarlık) veriyor — tik kutusu etiketin ÜSTÜNE düşüp kayıyordu.
+              Buradaki eski `sc-check` sınıfının App.css'te hiç karşılığı yoktu (sessiz ölü sınıf).
+              Bu sayfadaki diğer iki checkbox ile birebir aynı desen. */}
+          <label className="checkbox-label full-width">
+            <input type="checkbox" checked={!!form.slowResponseEnabled}
               onChange={e => setForm(f => ({ ...f, slowResponseEnabled: e.target.checked }))} />
             <span>{t('scripted.slowEnabled')}</span></label>
           <label><span>{t('scripted.slowThreshold')}</span>

@@ -41,6 +41,7 @@ class MonitoringOutageServiceTest {
     @Mock DnsRecordRepository dnsRecordRepo;
     @Mock DnsMonitorRepository dnsMonitorRepo;
     @Mock AppSettingsService appSettings;
+    @Mock com.sitemonitor.repository.NetworkOutageEventRepository networkOutageRepo;
 
     private MonitoringOutageService service;
 
@@ -58,12 +59,16 @@ class MonitoringOutageServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new MonitoringOutageService(alertEventRepo, escalationService, jdbcTemplate, dnsRecordRepo, dnsMonitorRepo, appSettings);
+        service = new MonitoringOutageService(alertEventRepo, escalationService, jdbcTemplate, dnsRecordRepo, dnsMonitorRepo, appSettings, networkOutageRepo);
         // AppSettings override yok → fallback (alan değeri) döner
         when(appSettings.getBoolean(anyString(), anyBoolean())).thenAnswer(i -> i.getArgument(1));
         ReflectionTestUtils.setField(service, "uptimeAlertEnabled", true);
         ReflectionTestUtils.setField(service, "portAlertEnabled", true);
         ReflectionTestUtils.setField(service, "dnsAlertEnabled", true);
+        // keyword/ping @Value alanları manuel kurulumda false kalıyor ve alertEnabled() sweep'i
+        // en başta düşürüyordu — bu tiplerin testleri "sessizce hiç koşmamış" olurdu.
+        ReflectionTestUtils.setField(service, "keywordAlertEnabled", true);
+        ReflectionTestUtils.setField(service, "pingAlertEnabled", true);
         ReflectionTestUtils.setField(service, "confirmAttempts", 3);
         ReflectionTestUtils.setField(service, "confirmDelayMs", 1L);
         ReflectionTestUtils.setField(service, "bulkRateThreshold", 0.50);
@@ -586,5 +591,143 @@ class MonitoringOutageServiceTest {
 
         verify(escalationService, never()).processConfirmedOutage(anyString(), anyString(), anyString(), anyMap());
         assertThat(service.activeConfirmations("Odeme Akisi")).isEmpty();
+    }
+
+    // ── Ağ-sınıfı ayrımı: yapılandırma hatası "ağ kesintisi" sayılmasın ─────────
+    //
+    // 2026-08 saha bulgusu: bastırma "düşük olan her monitörü" sayıyordu. Canlıda üç keyword
+    // monitörünün üçü de AĞ YÜZÜNDEN DEĞİL düşüktü (ikisinin URL'inde boşluk vardı — iki aydır
+    // her turda `Illegal character in path`; üçüncüsünü SsrfGuard bilerek reddediyordu) ve sezgi
+    // her sweep'te tüm alarmları bastırıyordu. Yani bozuk yapılandırma, SAĞLAM monitörlerin
+    // gerçek kesintisini süresiz maskeleyebiliyordu.
+
+    /** Hata metnini serbest verebilen item — sınıflandırma testleri için (error null ⇒ up). */
+    private static MonitoringOutageService.SweepItem itemErr(String type, String domain, String error,
+                                                             Supplier<Map<String, Object>> recheck) {
+        return new MonitoringOutageService.SweepItem(type, domain, "443", error == null, error, Map.of(), recheck);
+    }
+
+    @Test
+    @DisplayName("Hata sınıflandırması: taşıma/DNS hataları kesinti kanıtı, yapılandırma hataları DEĞİL")
+    void errorClassification() {
+        // Ağ — canlı veritabanından birebir alınmış metinler
+        assertThat(MonitoringOutageService.isOutageClass("Connect timed out", "a.com")).isTrue();
+        assertThat(MonitoringOutageService.isOutageClass("Connection refused: getsockopt", "a.com")).isTrue();
+        assertThat(MonitoringOutageService.isOutageClass("request timed out", "a.com")).isTrue();
+        assertThat(MonitoringOutageService.isOutageClass("ConnectException", "a.com")).isTrue();
+        assertThat(MonitoringOutageService.isOutageClass("Remote host terminated the handshake", "a.com")).isTrue();
+        // DNS
+        assertThat(MonitoringOutageService.isOutageClass("çözümlenemeyen host: www.x.com", "www.x.com")).isTrue();
+        assertThat(MonitoringOutageService.isOutageClass("Ping request could not find host 1.2.3.4", "x")).isTrue();
+        // UnknownHostException.getMessage() SADECE host adını döndürür — canlıda uptime_checks'te
+        // bu biçimde 1000+ satır var. Bu dal olmadan gerçek DNS kesintilerinin çoğu elenirdi.
+        assertThat(MonitoringOutageService.isOutageClass("www.akbank.com", "www.akbank.com")).isTrue();
+
+        // Yapılandırma / politika — ASLA kesinti kanıtı değil
+        assertThat(MonitoringOutageService.isOutageClass(
+                "Illegal character in path at index 29: http://localhost:8080/health- duplicate", "localhost")).isFalse();
+        assertThat(MonitoringOutageService.isOutageClass(
+                "izin verilmeyen hedef localhost → 127.0.0.1 (loopback/any-local)", "localhost")).isFalse();
+        // Sebep bilinmiyorsa kanıt da yok
+        assertThat(MonitoringOutageService.isOutageClass(null, "a.com")).isFalse();
+        assertThat(MonitoringOutageService.isOutageClass("  ", "a.com")).isFalse();
+        // Tanınmayan hata ağ SAYILMAZ → bastırma olmaz → alarm çıkar (güvenli taraf)
+        assertThat(MonitoringOutageService.isOutageClass("kelime bulunamadı", "a.com")).isFalse();
+    }
+
+    @Test
+    @DisplayName("SAHA VAKASI: 3/3 düşük ama hepsi YAPILANDIRMA hatası → bastırma YOK, teyit başlar")
+    void configErrorsDoNotSuppress() {
+        AtomicInteger calls = new AtomicInteger();
+        service.handleSweepResults(EscalationService.TYPE_KEYWORD, List.of(
+                itemErr(EscalationService.TYPE_KEYWORD, "a.example.com",
+                        "Illegal character in path at index 29: http://x/ y", downThenUp(99, calls)),
+                itemErr(EscalationService.TYPE_KEYWORD, "b.example.com",
+                        "Illegal character in path at index 29: http://x/ z", downThenUp(99, calls)),
+                itemErr(EscalationService.TYPE_KEYWORD, "c.example.com",
+                        "izin verilmeyen hedef localhost → 127.0.0.1 (loopback/any-local)", downThenUp(99, calls))));
+
+        assertThat(calls.get())
+                .as("bastırma kalkınca teyit zinciri koşmalı — eskiden hiç koşmuyordu")
+                .isPositive();
+        verify(networkOutageRepo, never()).save(any());   // ağ kesintisi olayı ÜRETİLMEZ
+    }
+
+    @Test
+    @DisplayName("Yapılandırma hatası oranı şişiremez: 2 bozuk + 1 gerçek kesinti → bastırma YOK")
+    void brokenConfigCannotMaskRealOutage() {
+        AtomicInteger calls = new AtomicInteger();
+        service.handleSweepResults(EscalationService.TYPE_KEYWORD, List.of(
+                itemErr(EscalationService.TYPE_KEYWORD, "bozuk1.example.com",
+                        "Illegal character in path at index 5: http://a b", downThenUp(99, calls)),
+                itemErr(EscalationService.TYPE_KEYWORD, "bozuk2.example.com",
+                        "izin verilmeyen hedef localhost → 127.0.0.1 (loopback/any-local)", downThenUp(99, calls)),
+                itemErr(EscalationService.TYPE_KEYWORD, "gercek.example.com",
+                        "Connect timed out", downThenUp(99, calls))));
+
+        // 1 ağ-sınıfı DOWN < bulkMinErrors(3) → bastırma yok, GERÇEK kesinti teyide girer
+        assertThat(calls.get()).isPositive();
+    }
+
+    @Test
+    @DisplayName("Gerçek ağ kesintisinde bastırma SÜRER ve artık GÖRÜNÜR (olay kaydı üretilir)")
+    void networkOutageIsSuppressedAndRecorded() {
+        AtomicInteger calls = new AtomicInteger();
+        service.handleSweepResults(EscalationService.TYPE_PORT_DOWN, List.of(
+                itemErr(EscalationService.TYPE_PORT_DOWN, "a.example.com", "Connect timed out", downThenUp(99, calls)),
+                itemErr(EscalationService.TYPE_PORT_DOWN, "b.example.com", "Connect timed out", downThenUp(99, calls)),
+                itemErr(EscalationService.TYPE_PORT_DOWN, "c.example.com", "Connection refused: getsockopt", downThenUp(99, calls))));
+
+        assertThat(calls.get()).isZero();
+        verifyNoInteractions(escalationService);
+        ArgumentCaptor<com.sitemonitor.model.NetworkOutageEvent> ev =
+                ArgumentCaptor.forClass(com.sitemonitor.model.NetworkOutageEvent.class);
+        verify(networkOutageRepo).save(ev.capture());
+        assertThat(ev.getValue().getStatus()).isEqualTo("ONGOING");
+        assertThat(ev.getValue().getNetworkErrors()).isEqualTo(3);
+        assertThat(ev.getValue().getTotalChecks()).isEqualTo(3);
+        // Kaynak imzası ŞART: aynı tabloyu sertifika sweep'i de kullanıyor, ayrılmazsa karışır
+        assertThat(ev.getValue().getSource()).isEqualTo(EscalationService.TYPE_PORT_DOWN);
+    }
+
+    @Test
+    @DisplayName("Bastırma tekrarında olay ÇOĞALTILMAZ (log seli ve mükerrer kayıt biter)")
+    void repeatedSuppressionRecordsOnce() {
+        AtomicInteger calls = new AtomicInteger();
+        List<MonitoringOutageService.SweepItem> allDown = List.of(
+                itemErr(EscalationService.TYPE_PORT_DOWN, "a.example.com", "Connect timed out", downThenUp(99, calls)),
+                itemErr(EscalationService.TYPE_PORT_DOWN, "b.example.com", "Connect timed out", downThenUp(99, calls)),
+                itemErr(EscalationService.TYPE_PORT_DOWN, "c.example.com", "Connect timed out", downThenUp(99, calls)));
+
+        service.handleSweepResults(EscalationService.TYPE_PORT_DOWN, allDown);
+        service.handleSweepResults(EscalationService.TYPE_PORT_DOWN, allDown);
+        service.handleSweepResults(EscalationService.TYPE_PORT_DOWN, allDown);
+
+        verify(networkOutageRepo, times(1)).save(any());   // yalnız DURUMA GİRERKEN
+    }
+
+    @Test
+    @DisplayName("Kesinti geçince açık olay RESOLVED'a çekilir (kaynağıyla eşleşen kayıt)")
+    void suppressionResolvesWhenNetworkRecovers() {
+        AtomicInteger calls = new AtomicInteger();
+        service.handleSweepResults(EscalationService.TYPE_PORT_DOWN, List.of(
+                itemErr(EscalationService.TYPE_PORT_DOWN, "a.example.com", "Connect timed out", downThenUp(99, calls)),
+                itemErr(EscalationService.TYPE_PORT_DOWN, "b.example.com", "Connect timed out", downThenUp(99, calls)),
+                itemErr(EscalationService.TYPE_PORT_DOWN, "c.example.com", "Connect timed out", downThenUp(99, calls))));
+
+        com.sitemonitor.model.NetworkOutageEvent open = new com.sitemonitor.model.NetworkOutageEvent();
+        open.setDetectedAt("2026-08-16T00:00:00");
+        open.setStatus("ONGOING");
+        open.setSource(EscalationService.TYPE_PORT_DOWN);
+        when(networkOutageRepo.findFirstBySourceAndStatusOrderByIdDesc(EscalationService.TYPE_PORT_DOWN, "ONGOING"))
+                .thenReturn(java.util.Optional.of(open));
+
+        service.handleSweepResults(EscalationService.TYPE_PORT_DOWN, List.of(
+                itemErr(EscalationService.TYPE_PORT_DOWN, "a.example.com", null, MonitoringOutageServiceTest::up),
+                itemErr(EscalationService.TYPE_PORT_DOWN, "b.example.com", null, MonitoringOutageServiceTest::up),
+                itemErr(EscalationService.TYPE_PORT_DOWN, "c.example.com", null, MonitoringOutageServiceTest::up)));
+
+        assertThat(open.getStatus()).isEqualTo("RESOLVED");
+        assertThat(open.getResolvedAt()).isNotNull();
     }
 }

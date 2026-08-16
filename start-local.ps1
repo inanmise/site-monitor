@@ -88,6 +88,12 @@ Write-Host "  DB host      : $($cfg['DB_HOST']):$($cfg['DB_PORT'])/$($cfg['DB_NA
 Write-Host "  Mail enabled : $($cfg['SITE_MONITOR_EMAIL_ENABLED'])"
 Write-Host ""
 
+# Log dizini MUTLAK verilir. Aksi halde logback'in "logs" varsayilani CALISMA DIZININE gore
+# cozulur: bu script backend\logs\ uretirken, jar'i baska bir dizinden baslatan bir komut
+# <o dizin>\logs\ uretir. 2026-08-16'da tam bu yuzden bir inceleme yanlis dosyayi okudu
+# (canli ornek D:\site-monitor\logs\, test suiti backend\logs\ yaziyordu).
+$env:LOGGING_FILE_PATH = Join-Path $ScriptDir "logs"
+
 Start-Process -FilePath $Java `
     -ArgumentList $allArgs `
     -WorkingDirectory (Join-Path $ScriptDir "backend") `

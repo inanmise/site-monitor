@@ -425,7 +425,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
     { key: 'degraded', Icon: TriangleAlert,   label: t('page.dashDegraded'), value: counts.degraded, cls: 'warning'  },
     { key: 'down',     Icon: ServerCrash,     label: t('page.dashDown'),     value: counts.down,     cls: 'critical' },
     { key: 'alarm',    Icon: Siren,           label: t('page.dashAlarm'),    value: counts.alarm,    cls: 'high'     },
-    { key: 'unacked',  Icon: BellDot,         label: t('page.dashUnacked'),  value: counts.unacked,  cls: 'error'    },
+    { key: 'unacked',  Icon: BellDot,         label: t('page.dashUnacked'),  value: counts.unacked,  cls: 'error'    , hint: t('mondash.unackedHint') },
   ]
   const onStatClick = (key) => setStatFilter(k => k === key ? null : key)
   const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }

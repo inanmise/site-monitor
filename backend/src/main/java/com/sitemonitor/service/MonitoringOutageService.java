@@ -57,6 +57,7 @@ public class MonitoringOutageService {
     private final DnsRecordRepository dnsRecordRepo;
     private final DnsMonitorRepository dnsMonitorRepo;
     private final AppSettingsService appSettings;
+    private final com.sitemonitor.repository.NetworkOutageEventRepository networkOutageRepo;
 
     @Value("${site.monitor.uptime.alert-enabled:true}")
     private boolean uptimeAlertEnabled;
@@ -156,6 +157,113 @@ public class MonitoringOutageService {
         recoveryExecutor.shutdownNow();
     }
 
+    // ── Ağ-sınıfı hata ayrımı ───────────────────────────────────────────────────
+    //
+    // 2026-08 bulgusu: bu sınıflandırma YOKTU. Bastırma "düşük olan her monitörü" sayıyordu ve
+    // sertifika sweep'i ile arasında sessiz bir asimetri vardı (o yalnız error_class ∈ {DNS,
+    // NETWORK} sayar). Sonuç ölçüldü: üç keyword monitörünün üçü de AĞ YÜZÜNDEN DEĞİL düşüktü
+    // (ikisinin URL'inde boşluk vardı — iki aydır her turda ayrıştırma hatası; üçüncüsünü
+    // SsrfGuard bilerek reddediyordu), ama sezgi "ağ kesintisi" deyip HER sweep'te tüm alarmları
+    // bastırıyordu. Yani yapılandırması bozuk birkaç monitör, sağlam monitörlerin GERÇEK
+    // kesintisini süresiz olarak maskeleyebiliyordu.
+    //
+    // Yön seçimi: ağ desenleri AÇIK LİSTE, yapılandırma/politika desenleri ise onları EZER.
+    // Tanınmayan bir hata ağ sayılmaz — yani yeni bir hata sınıfı çıkarsa sonuç "bastırma yok,
+    // alarm var" olur. Bu, güvenli tarafa düşmektir: kör kalmaktansa fazladan alarm.
+
+    /** Yapılandırma/politika hataları — bunlar ASLA ağ kesintisi kanıtı değildir. */
+    private static final List<String> CONFIG_ERROR_MARKS = List.of(
+            "illegal character",        // URL'de boşluk vb. → URISyntaxException (iki aylık saha vakası)
+            "urisyntax", "malformed",
+            "izin verilmeyen hedef",    // SsrfGuard politikası — bilinçli ret
+            "no protocol", "unknown protocol", "invalid uri");
+
+    /** DNS çözümleme hataları — sertifika sweep'inde de kesinti sayılır. */
+    private static final List<String> DNS_ERROR_MARKS = List.of(
+            "unknownhost", "çözümlenemeyen host", "could not find host",
+            "name or service not known", "nodename nor servname", "temporary failure in name resolution");
+
+    /** Taşıma katmanı hataları. */
+    private static final List<String> NETWORK_ERROR_MARKS = List.of(
+            "timed out", "timeout", "connection refused", "connectexception",
+            "no route to host", "connection reset", "terminated the handshake",
+            "network is unreachable", "socketexception", "i/o timeout", "broken pipe");
+
+    /**
+     * Bu hata bir AĞ/DNS kesintisi kanıtı mı? (Bastırma oranına yalnız bunlar girer.)
+     *
+     * @param error  checker'ın yazdığı mesaj; null/boş ⇒ sayılmaz (sebep bilinmiyorsa kanıt da yok)
+     * @param domain kontrol edilen hedef — {@code UnknownHostException.getMessage()} SADECE host
+     *               adını döndürdüğü için "hata metni = hedef" durumu DNS'tir. Bu dal olmadan
+     *               gerçek DNS kesintilerinin büyük kısmı sınıflandırılamadan elenirdi
+     *               (canlı veride {@code uptime_checks.error = 'www.akbank.com'} biçiminde 1000+ satır).
+     */
+    static boolean isOutageClass(String error, String domain) {
+        if (error == null || error.isBlank()) return false;
+        String e = error.toLowerCase(Locale.ROOT);
+        for (String m : CONFIG_ERROR_MARKS) if (e.contains(m)) return false;   // yapılandırma EZER
+        if (domain != null && !domain.isBlank() && e.trim().equals(domain.trim().toLowerCase(Locale.ROOT))) {
+            return true;                                                        // çıplak host = UnknownHost
+        }
+        for (String m : DNS_ERROR_MARKS)     if (e.contains(m)) return true;
+        for (String m : NETWORK_ERROR_MARKS) if (e.contains(m)) return true;
+        return false;
+    }
+
+    // ── Bastırmanın görünürlüğü ─────────────────────────────────────────────────
+    //
+    // Eskiden bastırma her sweep'te bir WARN satırı basıp SESSİZCE dönüyordu: olay kaydı yok,
+    // bildirim yok, sayaç yok. Tek kanıt, kimsenin okumadığı log dosyasında 46 kez tekrar eden
+    // aynı satırdı. Sertifika sweep'i ise aynı durumda NetworkOutageEvent üretiyor. Bu fark
+    // kapatılıyor: aynı tabloya, kaynağı belli olacak şekilde yazılır ve log YALNIZ duruma
+    // girerken/çıkarken basar.
+
+    /** alertType → o tip için bastırma şu anda AÇIK mı (log ve olay kaydı yalnız geçişte). */
+    private final Map<String, Boolean> suppressionActive = new ConcurrentHashMap<>();
+
+    private void noteSuppression(String alertType, int networkDown, int totalDomains) {
+        double rate = totalDomains == 0 ? 0 : (double) networkDown / totalDomains;
+        boolean wasActive = Boolean.TRUE.equals(suppressionActive.put(alertType, true));
+        if (wasActive) {
+            log.debug("{} sweep: bastırma sürüyor ({}/{} ağ-sınıfı DOWN)", alertType, networkDown, totalDomains);
+            return;
+        }
+        log.warn("⚠ {} sweep: {}/{} domain AĞ-SINIFI hatayla DOWN (oran={}) — ağ kesintisi şüphesi, "
+                + "alarmlar bastırılıyor", alertType, networkDown, totalDomains, String.format("%.2f", rate));
+        try {
+            com.sitemonitor.model.NetworkOutageEvent ev = new com.sitemonitor.model.NetworkOutageEvent();
+            ev.setDetectedAt(ISO.format(Instant.now()));
+            ev.setNetworkErrors(networkDown);
+            ev.setTotalChecks(totalDomains);
+            ev.setErrorRate(rate);
+            ev.setThreshold(bulkRateThreshold);
+            ev.setStatus("ONGOING");
+            ev.setSource(alertType);
+            networkOutageRepo.save(ev);
+        } catch (Exception e) {
+            log.warn("{} bastırma olayı kaydedilemedi: {}", alertType, e.getMessage());
+        }
+    }
+
+    private void clearSuppression(String alertType) {
+        if (!Boolean.TRUE.equals(suppressionActive.put(alertType, false))) return;   // zaten kapalıydı
+        log.info("{} sweep: ağ kesintisi şüphesi kalktı — alarm işleme normale döndü", alertType);
+        try {
+            networkOutageRepo.findFirstBySourceAndStatusOrderByIdDesc(alertType, "ONGOING").ifPresent(ev -> {
+                String now = ISO.format(Instant.now());
+                ev.setResolvedAt(now);
+                ev.setStatus("RESOLVED");
+                try {
+                    ev.setDurationMs(Instant.from(ISO.parse(now)).toEpochMilli()
+                                   - Instant.from(ISO.parse(ev.getDetectedAt())).toEpochMilli());
+                } catch (Exception ignored) { /* süre null kalır */ }
+                networkOutageRepo.save(ev);
+            });
+        } catch (Exception e) {
+            log.warn("{} bastırma olayı kapatılamadı: {}", alertType, e.getMessage());
+        }
+    }
+
     /** Uptime/Port/DNS-failure sweep'leri her tur sonunda bir kez çağırır. */
     public void handleSweepResults(String alertType, List<SweepItem> items) {
         if (!alertEnabled(alertType) || items == null || items.isEmpty()) return;
@@ -166,15 +274,19 @@ public class MonitoringOutageService {
             byDomain.computeIfAbsent(it.domain(), d -> new ArrayList<>()).add(it);
         }
 
-        long downDomains = byDomain.values().stream()
-                .filter(list -> list.stream().anyMatch(it -> !it.up()))
+        // Bastırma YALNIZ ağ-sınıfı hatalara bakar — sertifika sweep'indeki kuralın aynısı
+        // (SchedulerService: error_class ∈ {DNS, NETWORK}). Gerekçe için bkz. isOutageClass:
+        // yapılandırma hatası olan bir monitör SONSUZA DEK düşük kalır ve oranı kalıcı şişirir.
+        long networkDown = byDomain.entrySet().stream()
+                .filter(e -> e.getValue().stream()
+                        .anyMatch(it -> !it.up() && isOutageClass(it.error(), e.getKey())))
                 .count();
-        if (downDomains >= bulkMinErrors
-                && (double) downDomains / byDomain.size() >= bulkRateThreshold) {
-            log.warn("{} sweep: {}/{} domain DOWN — monitör host ağ kesintisi şüphesi, "
-                    + "alarmlar bu sweep'te bastırıldı", alertType, downDomains, byDomain.size());
+        if (networkDown >= bulkMinErrors
+                && (double) networkDown / byDomain.size() >= bulkRateThreshold) {
+            noteSuppression(alertType, (int) networkDown, byDomain.size());
             return;
         }
+        clearSuppression(alertType);
 
         Set<String> domainsWithOpenAlert = alertEventRepo.findOpenByDomainIn(byDomain.keySet()).stream()
                 .filter(e -> alertType.equals(e.getAlertType()))
