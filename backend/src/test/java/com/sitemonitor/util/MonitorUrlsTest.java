@@ -49,4 +49,39 @@ class MonitorUrlsTest {
         assertThat(MonitorUrls.isCheckable("www.axess.com.tr")).isFalse();
         assertThat(MonitorUrls.isCheckable("")).isFalse();
     }
+
+    /**
+     * İKİ AYLIK SESSİZ HATA — 2026-06-22'de kaydedilen bir Kelime izlemesinin URL'inde BOŞLUK vardı
+     * ({@code "http://localhost:8080/health- Orjinal"}). Doğrulama yalnız HOST'a baktığı için
+     * ("localhost" geçerli) kayıt kabul edildi; her kontrol {@code Illegal character in path at
+     * index 29} ile düştü. 12 000+ başarısız kontrol üretti, sıradan bir "DOWN" gibi göründü,
+     * kimse fark etmedi — üstelik alarm bastırma oranını da şişirip başka monitörlerin gerçek
+     * kesintisini maskeledi.
+     */
+    @Test
+    @DisplayName("SAHA VAKASI: URL'de boşluk/kontrol karakteri varsa kontrol edilemez sayılır")
+    void isCheckable_rejectsWhitespaceInUrl() {
+        assertThat(MonitorUrls.isCheckable("http://localhost:8080/health- Orjinal")).isFalse();
+        assertThat(MonitorUrls.isCheckable("https://x.com/a b")).isFalse();
+        assertThat(MonitorUrls.isCheckable("https://x.com/a\tb")).isFalse();
+        assertThat(MonitorUrls.isCheckable("https://x.com/a\nb")).isFalse();
+
+        // Baş/son boşluk normalize ile kırpılır → kayıt REDDEDİLMEZ (kullanıcıyı boş yere engelleme)
+        assertThat(MonitorUrls.isCheckable(MonitorUrls.normalize("  https://x.com/a  "))).isTrue();
+
+        // Yer tutucu ve normal URL'ler etkilenmez
+        assertThat(MonitorUrls.isCheckable("https://x.com/a?t={timestamp}")).isTrue();
+        assertThat(MonitorUrls.isCheckable("https://x.com/a%20b")).isTrue();   // kodlanmış boşluk MEŞRU
+    }
+
+    @Test
+    @DisplayName("hasIllegalWhitespace boşluğu KODLAMAZ — sessizce başka hedefe istek atılmaz")
+    void whitespaceIsReportedNotRepaired() {
+        String bad = "http://x.com/a b";
+        assertThat(MonitorUrls.hasIllegalWhitespace(bad)).isTrue();
+        // normalize yalnız şema ekler/kırpar; iç boşluğu düzeltmeye ÇALIŞMAZ
+        assertThat(MonitorUrls.normalize(bad)).isEqualTo(bad);
+        assertThat(MonitorUrls.hasIllegalWhitespace("http://x.com/ab")).isFalse();
+        assertThat(MonitorUrls.hasIllegalWhitespace(null)).isFalse();
+    }
 }

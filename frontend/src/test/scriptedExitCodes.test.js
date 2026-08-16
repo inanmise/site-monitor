@@ -14,6 +14,7 @@ const KNOWN = new Set([
   'scripted.hintOldEngine',
   'scripted.hintTimeoutNoDetail',
   'scripted.hintRequestTimeout',
+  'scripted.hintTimeoutRunDiagnostics',
 ])
 const t = (k, ...a) => {
   const args = a.length ? `(${a.join(',')})` : ''
@@ -99,13 +100,18 @@ describe('diagnosisHint — k6 sözdizimi duvarı', () => {
     expect(diagnosisHint(t, null, 'v0.49.0')).toBeNull()
   })
 
-  it('TIMEOUT: sebep yazılamadığı için "açık istek timeout u verin" ipucu çıkar', () => {
-    // Süreç öldürüldüğü icin k6 hiçbir sebep yazamıyor — outputTail bomboş olabilir.
-    expect(diagnosisHint(t, { status: 'TIMEOUT', error: 'Süre aşımı — süreç sonlandırıldı' }, 'v0.49.0'))
-      .toBe('«scripted.hintTimeoutNoDetail»')
-    // Sürüm eşiğinden BAĞIMSIZ: yeni k6'da da aynı tuzak var (varsayılan istek timeout'u 60 sn)
-    expect(diagnosisHint(t, { status: 'TIMEOUT' }, 'v1.0.0')).toBe('«scripted.hintTimeoutNoDetail»')
-    expect(diagnosisHint(t, { status: 'TIMEOUT' }, null)).toBe('«scripted.hintTimeoutNoDetail»')
+  it('TIMEOUT: sebep yazılamadığında yönlendirme çıkar (sürüm eşiğinden BAĞIMSIZ)', () => {
+    // DEĞİŞTİ (2026-08): eskiden burada koşulsuz "script'e açık istek timeout'u ekleyin" iddia
+    // ediliyordu. Sahada 289 koşumluk bir monitörde bu tavsiye YANLIŞTI — script'te açık timeout
+    // zaten vardı, sebep süreç bütçesinin ondan küçük olmasıydı. Artık doğru metni backend'in
+    // yazdığı bağlam satırı belirliyor; hangi dalın hangi metni seçtiği aşağıdaki
+    // "zaman aşımı dalları" grubunda tek tek pinli. Burada kalan sözleşme: TIMEOUT sebepsizse
+    // kullanıcı ASLA yönlendirmesiz bırakılmaz ve karar k6 sürümüne bağlı değildir.
+    for (const version of ['v0.49.0', 'v1.0.0', null]) {
+      expect(diagnosisHint(t, { status: 'TIMEOUT', error: 'Süre aşımı — süreç sonlandırıldı' }, version))
+        .toBe('«scripted.hintTimeoutRunDiagnostics»')
+      expect(diagnosisHint(t, { status: 'TIMEOUT' }, version)).toBe('«scripted.hintTimeoutRunDiagnostics»')
+    }
   })
 
   it('TIMEOUT: sebep GÖSTERİLEBİLDİYSE ipucu susar (yazılmış sebebin altında "yazamadı" demesin)', () => {
@@ -289,5 +295,63 @@ describe('stuckLabel', () => {
     expect(stuckLabel(t, { status: 'PASS', phases: {
       blocked_ms: 1, connecting_ms: 2, tls_ms: 3, sending_ms: 4, waiting_ms: 5, receiving_ms: 0 } })).toBeNull()
     expect(stuckLabel(t, { status: 'FAIL' })).toBeNull()
+  })
+})
+
+/**
+ * ZAMAN AŞIMI İPUCU DALLARI — sahada 289 koşum boyunca YANLIŞ tavsiye veren kural.
+ *
+ * Kural koşulsuzdu: statü TIMEOUT ve `error` tek satırsa daima "script'e AÇIK bir istek timeout'u
+ * ekleyin" diyordu. Gerçek monitörün script'inde `timeout: '20s'` ZATEN vardı; sebep, monitörün
+ * süreç bütçesinin (10 sn) istek timeout'undan KÜÇÜK olmasıydı — k6 sebebi yazmaya fırsat
+ * bulamadan süreci öldürüyorduk. Kullanıcı iki ay boyunca çoktan yaptığı şeyi yapması söylendi.
+ *
+ * Artık dalı backend'in yazdığı bağlam satırı belirliyor. Bu testler her dalın DOĞRU metni
+ * seçtiğini pinler; en önemlisi de yanlış metnin bir daha çıkmamasını.
+ */
+describe('diagnosisHint — zaman aşımı dalları', () => {
+  const CTX = "süreç bütçesi=60s · script istek timeout'u=20s · çıkış=doğrudan · kurumsal CA=verildi"
+  const INVERSE = "İstek timeout'u (20 sn) monitörün süreç bütçesine (10 sn) eşit ya da ondan büyük: "
+    + "k6 isteği kendi düşüremeden süreci öldürüyoruz ve başarısızlığın SEBEBİ hiç yazılamıyor."
+
+  it('SAHA VAKASI: ters bütçede genel ipucu SUSAR — backend iki sayıyı zaten yazdı', () => {
+    const check = { status: 'TIMEOUT',
+      error: `Süre aşımı — süreç sonlandırıldı\n${INVERSE}\nsüreç bütçesi=10s · script istek timeout'u=20s · çıkış=doğrudan · kurumsal CA=verildi` }
+
+    expect(diagnosisHint(t, check, 'v0.49.0')).toBeNull()
+  })
+
+  it('script\'te açık timeout YOKSA eski ipucu doğrudur ve gösterilir', () => {
+    const check = { status: 'TIMEOUT',
+      error: "Süre aşımı — süreç sonlandırıldı\nsüreç bütçesi=60s · script istek timeout'u=verilmemiş (k6 varsayılanı 60s) · çıkış=doğrudan · kurumsal CA=verildi" }
+
+    expect(diagnosisHint(t, check, 'v0.49.0')).toBe('«scripted.hintTimeoutNoDetail»')
+  })
+
+  it('bütçe sırası doğru ama sebep yoksa Bağlantı Teşhisi\'ne yönlendirir (script suçlanmaz)', () => {
+    const check = { status: 'TIMEOUT', error: `Süre aşımı — süreç sonlandırıldı\n${CTX}` }
+
+    expect(diagnosisHint(t, check, 'v0.49.0')).toBe('«scripted.hintTimeoutRunDiagnostics»')
+  })
+
+  it('k6 GERÇEK sebebi yazdıysa ipucu susar — bağlam satırı "sebep" sanılmaz', () => {
+    const check = { status: 'TIMEOUT',
+      error: `Süre aşımı — süreç sonlandırıldı:\nRequest Failed error="dial tcp: i/o timeout"\n${CTX}` }
+
+    expect(diagnosisHint(t, check, 'v0.49.0')).toBeNull()
+  })
+
+  it('REGRESYON: bağlam satırının kendisi "sebep var" saydırmaz', () => {
+    // Bağlam `\n` ile ekleniyor; ayıklanmasaydı her zaman aşımı "sebebi var" görünür ve
+    // gerçekten sebepsiz kalan koşumlarda hiçbir yönlendirme çıkmazdı — düzeltme teşhisi körleştirirdi.
+    const onlyContext = { status: 'TIMEOUT', error: `Süre aşımı — süreç sonlandırıldı\n${CTX}` }
+
+    expect(diagnosisHint(t, onlyContext, 'v0.49.0')).not.toBeNull()
+  })
+
+  it('bağlam satırı olmayan ESKİ kayıtlar da yönlendirme alır (sessiz kalmaz)', () => {
+    const legacy = { status: 'TIMEOUT', error: 'Süre aşımı — süreç sonlandırıldı' }
+
+    expect(diagnosisHint(t, legacy, 'v0.49.0')).toBe('«scripted.hintTimeoutRunDiagnostics»')
   })
 })

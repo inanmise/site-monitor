@@ -532,6 +532,10 @@ public class SchedulerService {
         patch("CREATE INDEX IF NOT EXISTS idx_ci_ugteam_active ON certificate_inventory(ug_team_id, active)");
         // port_monitors: aktif sweep taraması (findByActiveTrue).
         patch("CREATE INDEX IF NOT EXISTS idx_pm_active ON port_monitors(active)");
+        // network_outage_events.source — izleme sweep'lerinin bastirma olaylari da bu tabloya
+        // yaziliyor; kaynak ayrilmazsa sertifika kesintisiyle karisir (ddl-auto zaten ekler,
+        // bu guvenlik agi).
+        patch("ALTER TABLE network_outage_events ADD COLUMN source VARCHAR(32)");
         // keyword_results / ping_checks: süre-grafiği aralık taraması (monitor_id + checked_at) — tekil
         // index'ler entity'de var; composite range sorgusunu (responseSeriesRaw) hızlandırır.
         patch("CREATE INDEX IF NOT EXISTS idx_kwr_monitor_checked ON keyword_results(monitor_id, checked_at)");
@@ -3912,15 +3916,26 @@ public class SchedulerService {
             ev.setErrorRate(rate);
             ev.setThreshold(appSettings.getDouble("site.monitor.network.error-rate-threshold", networkErrorRateThreshold));
             ev.setStatus("ONGOING");
+            // Kaynak imzasi: ayni tabloya artik izleme sweep'lerinin bastirma olaylari da yaziliyor
+            // (MonitoringOutageService). Isaretlenmezse iki olgu "ag kesintisi gecmisi"nde karisir.
+            ev.setSource("CERT");
             networkOutageRepo.save(ev);
         } catch (Exception e) {
             log.warn("Failed to persist outage detection event: {}", e.getMessage());
         }
     }
 
+    /** Sertifika sweep'ine ait acik kesinti olayi (source NULL = 2026-08 oncesi kayitlar). */
+    private java.util.Optional<NetworkOutageEvent> certOngoingOutage() {
+        return networkOutageRepo.findCertByStatus("ONGOING", org.springframework.data.domain.PageRequest.of(0, 1))
+                .stream().findFirst();
+    }
+
     private void persistOutageResolved(String resolvedAt) {
         try {
-            networkOutageRepo.findFirstByStatusOrderByIdDesc("ONGOING").ifPresent(ev -> {
+            // Kapsamli sorgu SART: kapsamsiz hali, izleme sweep'inin daha yeni acik olayini
+            // sertifika kesintisi sanip yanlis kaydi RESOLVED'a ceker / panoya tasirdi.
+            certOngoingOutage().ifPresent(ev -> {
                 ev.setResolvedAt(resolvedAt);
                 ev.setStatus("RESOLVED");
                 try {
@@ -3940,7 +3955,9 @@ public class SchedulerService {
      *  banner persists across restarts. The next healthy scan run will resolve it. */
     private void restoreOutageStateFromDb() {
         try {
-            networkOutageRepo.findFirstByStatusOrderByIdDesc("ONGOING").ifPresent(ev -> {
+            // Kapsamli sorgu SART: kapsamsiz hali, izleme sweep'inin daha yeni acik olayini
+            // sertifika kesintisi sanip yanlis kaydi RESOLVED'a ceker / panoya tasirdi.
+            certOngoingOutage().ifPresent(ev -> {
                 networkOutageActive.set(true);
                 networkOutageDetectedAt.set(ev.getDetectedAt());
                 networkOutageResolvedAt.set(null);

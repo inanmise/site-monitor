@@ -203,6 +203,9 @@ public class CertificateController {
         m.put("duration_ms", e.getDurationMs());
         m.put("network_errors", e.getNetworkErrors());
         m.put("total_checks", e.getTotalChecks());
+        // Kaynak: null ⇒ sertifika sweep'i (eski kayıtlar). İzleme sweep'lerinin bastırması
+        // 2026-08'den beri buraya yazılıyor; ayrılmazsa iki farklı olgu tek listede karışır.
+        m.put("source", e.getSource() == null ? "CERT" : e.getSource());
         m.put("error_rate", e.getErrorRate());
         m.put("threshold", e.getThreshold());
         m.put("status", e.getStatus());

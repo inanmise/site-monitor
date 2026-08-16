@@ -209,7 +209,37 @@ export function formatBytes(n) {
  * @param {{error?: string}} check
  */
 function hasTimeoutReason(check) {
-  return /\n/.test(String(check.error ?? ''))
+  return /\n/.test(withoutRunContext(check))
+}
+
+/** Backend'in her başarısız koşuma eklediği bağlam satırının imzası. */
+const RUN_CONTEXT_MARK = 'süreç bütçesi='
+/** Ters bütçe cümlesinin başlangıcı — bağlamın parçası, "k6 sebebi" değil. */
+const INVERSE_BUDGET_MARK = "İstek timeout'u ("
+
+/**
+ * Koşum bağlamını (bütçe/çıkış satırı + ters bütçe cümlesi) metinden AYIKLAR.
+ *
+ * <p>Şart: bağlam satırı `\n` ile ekleniyor ve {@link hasTimeoutReason} "satır sayısı" ile karar
+ * veriyordu. Ayıklanmazsa bağlam eklendiği andan itibaren HER zaman aşımı "sebebi var" sayılır ve
+ * gerçekten sebepsiz kalan koşumlarda hiçbir yönlendirme çıkmaz — düzeltmenin kendisi teşhisi
+ * körleştirirdi.
+ */
+function withoutRunContext(check) {
+  const err = String(check.error ?? '')
+  const cut = [err.indexOf(RUN_CONTEXT_MARK), err.indexOf(INVERSE_BUDGET_MARK)]
+    .filter((i) => i >= 0)
+  return (cut.length ? err.slice(0, Math.min(...cut)) : err).trim()
+}
+
+/** Bu koşumda ters bütçe (istek timeout'u ≥ süreç bütçesi) tespit edilmiş mi? */
+function hasInverseBudget(check) {
+  return String(check.error ?? '').includes(INVERSE_BUDGET_MARK)
+}
+
+/** Bağlam satırı "script'te açık istek timeout'u yok" diyor mu? */
+function lacksExplicitTimeout(check) {
+  return /script istek timeout'u=verilmemiş/.test(String(check.error ?? ''))
 }
 
 /** PASS koşumunda tanı ipucu gösterilmez (çıktıda "request timeout" geçse bile — ör. eski satır metni). */
@@ -245,7 +275,23 @@ export function diagnosisHint(t, check, k6Version) {
   // Sebep GÖSTERİLEBİLDİYSE ipucu SUSAR: metni "k6 sebebi yazamadı" diye başlıyor ve tam da
   // yazılmış bir sebebin altında görünmesi kullanıcıyı yanlış yola sokar (üstelik tavsiye edilen
   // şey — açık istek timeout'u — zaten yapılmıştır; sebep onun sayesinde çıktı).
-  if (check.status === 'TIMEOUT') return hasTimeoutReason(check) ? null : t('scripted.hintTimeoutNoDetail')
+  //
+  // 2026-08 düzeltmesi — bu kural KOŞULSUZ çalışıyordu ve sahada tam tersini yaptı: script'inde
+  // `timeout: '20s'` YAZAN bir monitörde 289 koşum boyunca "script'e açık timeout ekleyin" dedi.
+  // Kullanıcı önerileni zaten yapmıştı; gerçek sebep monitörün süreç bütçesinin (10 sn) istek
+  // timeout'undan KÜÇÜK olmasıydı. Artık dört dal var ve hangisinin doğru olduğuna backend'in
+  // yazdığı bağlam satırı karar veriyor — tahmin yok.
+  if (check.status === 'TIMEOUT') {
+    // (a) Ters bütçe: backend zaten iki sayıyı ve iki çıkış yolunu yazdı. Üstüne genel bir ipucu
+    //     koymak sinyali sulandırır — sus.
+    if (hasInverseBudget(check)) return null
+    // (b) k6 sebebi yazabilmiş → yönlendirmeye gerek yok.
+    if (hasTimeoutReason(check)) return null
+    // (c) Script'te açık timeout YOK → eski ipucu burada gerçekten doğru.
+    if (lacksExplicitTimeout(check)) return t('scripted.hintTimeoutNoDetail')
+    // (d) Bütçe sırası doğru, açık timeout var, yine de sebep yok → sıra Bağlantı Teşhisi'nde.
+    return t('scripted.hintTimeoutRunDiagnostics')
+  }
 
   // Kural 2 — k6'nın KENDİ istek timeout'u düştü (statü FAIL/ERROR; süreç öldürülmedi).
   //

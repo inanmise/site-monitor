@@ -5,9 +5,13 @@ import { useT } from '../i18n/index.jsx'
  * Ping/Keyword (ileride port/dns) izleme sayfalarında üstte 6 tıklanabilir sayım kartı gösterir.
  *
  * Props:
- *  - items: [{ key, Icon, label, value, cls }]  (cls = mevcut .stat-item-{cls} renk sınıfı)
+ *  - items: [{ key, Icon, label, value, cls, hint? }]  (cls = mevcut .stat-item-{cls} renk sınıfı)
  *  - activeFilter: string|null  (aktif kart anahtarı)
  *  - onStatClick: (key) => void (toggle filtre)
+ *
+ * `hint`: kartın NE SAYDIĞINI açıklayan bir cümle; ipucu metninin sonuna eklenir. Etiketler kısa
+ * olmak zorunda ve kısa etiket yanlış okunabiliyor — "Sahiplenilmemiş" kartı sahada "takımı yok"
+ * diye anlaşıldı, oysa "açık alarmı henüz kimse sahiplenmemiş" demek.
  */
 export default function MonitorStatsBar({ items, activeFilter, onStatClick }) {
   const t = useT()
@@ -21,7 +25,8 @@ export default function MonitorStatsBar({ items, activeFilter, onStatClick }) {
             key={item.key}
             className={`stat-item stat-item-${item.cls} stat-clickable${isActive ? ' stat-active' : ''}`}
             onClick={() => onStatClick(item.key)}
-            title={isActive ? t('mondash.clearTip') : t('mondash.filterTip', item.label)}
+            title={[isActive ? t('mondash.clearTip') : t('mondash.filterTip', item.label), item.hint]
+              .filter(Boolean).join(' — ')}
           >
             <span className="stat-icon"><item.Icon size={32} /></span>
             <span className={`stat-value stat-value-${item.cls}`}>{item.value ?? 0}</span>

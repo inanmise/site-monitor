@@ -315,7 +315,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
     { key: 'down',    Icon: TriangleAlert,   label: t('http.dashDown'),    value: counts.down,    cls: 'critical' },
     { key: 'error',   Icon: ServerCrash,     label: t('http.dashError'),   value: counts.error,   cls: 'error'    },
     { key: 'alarm',   Icon: Siren,           label: t('http.dashAlarm'),   value: counts.alarm,   cls: 'high'     },
-    { key: 'unacked', Icon: BellDot,         label: t('http.dashUnacked'), value: counts.unacked, cls: 'warning'  },
+    { key: 'unacked', Icon: BellDot,         label: t('http.dashUnacked'), value: counts.unacked, cls: 'warning'  , hint: t('mondash.unackedHint') },
   ]
   const onStatClick = (key) => setStatFilter(k => k === key ? null : key)
 

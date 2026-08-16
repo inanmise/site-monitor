@@ -2405,7 +2405,7 @@ public class MonitoringController {
             return badRequest("Bu ad bu takımda zaten kullanılıyor; mükerrer izleme oluşturulamaz.");
         String scanErr = scanScriptOrError(body.get("script"));
         if (scanErr != null) return badRequest(scanErr);
-        var diag = validateScripted(body.get("script"), body.get("env"));
+        var diag = validateScripted(body.get("script"), body.get("env"), body.get("timeoutSeconds"));
         if (diag.blocked()) return badRequest(diag.blocking());
         String now = ISO.format(Instant.now());
         com.sitemonitor.model.ScriptedMonitor m = new com.sitemonitor.model.ScriptedMonitor();
@@ -2449,7 +2449,7 @@ public class MonitoringController {
         // düzenlerken (asıl düzeltme anı) "__ENV tanımsız", "doğrulama atlandı" gibi uyarıları
         // görmezse o uyarılar pratikte hiç görünmez.
         var diag = body.get("script") != null
-                ? validateScripted(body.get("script"), body.get("env"))
+                ? validateScripted(body.get("script"), body.get("env"), body.get("timeoutSeconds"))
                 : new com.sitemonitor.service.ScriptedCheckerService.ScriptDiagnostics(null, java.util.List.of());
         if (diag.blocked()) return badRequest(diag.blocking());
         return scriptedMonitorRepo.findById(id).map(m -> {
@@ -2884,13 +2884,35 @@ public class MonitoringController {
      * (timeout, uzak import indirilemedi) kaydeder ve uyarı döndürür.
      */
     private com.sitemonitor.service.ScriptedCheckerService.ScriptDiagnostics validateScripted(Object script, Object envRaw) {
+        return validateScripted(script, envRaw, null);
+    }
+
+    /**
+     * @param timeoutRaw kaydedilmek üzere olan süreç bütçesi (gövdeden). Ters bütçe uyarısı
+     *                   ("istek timeout'u ≥ süreç bütçesi") ancak bu bilinirse üretilebilir —
+     *                   sahada 289 koşumluk sessiz başarısızlığın sebebi tam olarak buydu.
+     */
+    private com.sitemonitor.service.ScriptedCheckerService.ScriptDiagnostics validateScripted(
+            Object script, Object envRaw, Object timeoutRaw) {
         List<String> envNames = new ArrayList<>();
         if (envRaw instanceof List<?> list) {
             for (Object o : list) {
                 if (o instanceof Map<?, ?> e && e.get("name") != null) envNames.add(e.get("name").toString());
             }
         }
-        return scriptedChecker.validateScript(script == null ? null : script.toString(), envNames);
+        return scriptedChecker.validateScript(script == null ? null : script.toString(), envNames,
+                asPositiveInt(timeoutRaw));
+    }
+
+    /** Gövdeden gelen sayı ("60", 60, 60.0) → pozitif int; ayrıştırılamazsa null (denetim atlanır). */
+    private static Integer asPositiveInt(Object raw) {
+        if (raw == null) return null;
+        try {
+            int v = (raw instanceof Number n) ? n.intValue() : Integer.parseInt(raw.toString().trim());
+            return v > 0 ? v : null;
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     private void applyScriptedFields(com.sitemonitor.model.ScriptedMonitor m, Map<String, Object> body, String existingEnvJson) {
