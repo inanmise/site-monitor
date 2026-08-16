@@ -1,5 +1,5 @@
 import { LoadingBlock } from './ui/Progress.jsx'
-import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
+import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -23,6 +23,7 @@ import MonitorStatsBar from './MonitorStatsBar.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
+import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
@@ -84,7 +85,6 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
-  const deepLinkDone = useRef(false)
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
   const [secondsSince, setSecondsSince] = useState(0)
 
@@ -123,16 +123,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   }, [])
 
   // E-posta CTA deep-link: ?monitor=<id> → ilgili port monitörünün detayını aç (bir kez), paramı temizle.
-  useEffect(() => {
-    if (deepLinkDone.current || monitors.length === 0) return
-    deepLinkDone.current = true
-    let id
-    try { id = new URLSearchParams(window.location.search).get('monitor') } catch { return }
-    if (!id) return
-    const m = monitors.find(x => String(x.id) === String(id))
-    if (m) openModal(m)
-    // monitor paramı artık kalıcı (useUrlQuerySync yazar/siler) — eski replaceState temizliği kaldırıldı.
-  }, [monitors]) // eslint-disable-line react-hooks/exhaustive-deps
+  useMonitorDeepLink(monitors, openModal)
 
   // Modal her açıldığında önceki kaydetme hatası + test sonucunu temizle.
   useEffect(() => { setSaveError(null); setTestResult(null) }, [modal])

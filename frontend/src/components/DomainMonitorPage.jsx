@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
+import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -26,6 +26,7 @@ import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorCardActions from './MonitorCardActions.jsx'
+import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
 const REFRESH_INTERVAL = 60
@@ -95,7 +96,6 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
   const [secondsSince, setSecondsSince] = useState(0)
-  const deepLinkDone = useRef(false)
 
   const load = useCallback(async () => {
     const res = await api.monitoring.getDomainMonitors()
@@ -128,16 +128,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
     api.monitoring.monitorDefaults?.()?.then(r => { if (r?.success) setDefaults(r.data?.domain) })
   }, [])
 
-  useEffect(() => {
-    if (deepLinkDone.current || monitors.length === 0) return
-    deepLinkDone.current = true
-    let id
-    try { id = new URLSearchParams(window.location.search).get('monitor') } catch { return }
-    if (!id) return
-    const m = monitors.find(x => String(x.id) === String(id))
-    if (m) openDetail(m)
-    // monitor paramı artık kalıcı (useUrlQuerySync yazar/siler) — eski replaceState temizliği kaldırıldı.
-  }, [monitors]) // eslint-disable-line react-hooks/exhaustive-deps
+  useMonitorDeepLink(monitors, openDetail)
 
   function openDetail(m) { setSelected(m); setDetailTab('control') }
   function closeDetail() { setSelected(null) }

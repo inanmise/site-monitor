@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
@@ -20,6 +20,7 @@ import { LoadingBlock } from './ui/Progress.jsx'
 
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
+import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS']
 
 const INTERVALS = [
@@ -81,7 +82,6 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const [secondsSince, setSecondsSince] = useState(0)
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
-  const deepLinkDone = useRef(false)
 
   const load = useCallback(async () => {
     const res = await api.monitoring.getDnsMonitors()
@@ -116,16 +116,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   }, [])
 
   // E-posta CTA deep-link: ?monitor=<id> → ilgili DNS monitörünün detayını aç (bir kez), paramı temizle.
-  useEffect(() => {
-    if (deepLinkDone.current || monitors.length === 0) return
-    deepLinkDone.current = true
-    let id
-    try { id = new URLSearchParams(window.location.search).get('monitor') } catch { return }
-    if (!id) return
-    const m = monitors.find(x => String(x.id) === String(id))
-    if (m) setDetailMonitor(m)
-    // monitor paramı artık kalıcı (useUrlQuerySync yazar/siler).
-  }, [monitors]) // eslint-disable-line react-hooks/exhaustive-deps
+  useMonitorDeepLink(monitors, setDetailMonitor)
 
   const teamSelectOptions = [{ value: '', label: t('app.noTeam') },
     ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))]
