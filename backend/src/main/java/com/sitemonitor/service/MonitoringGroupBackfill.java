@@ -92,7 +92,7 @@ public class MonitoringGroupBackfill {
     }
 
     /** Dönüş: 1=dolduruldu, -1=grubu var ama türetilemedi (orphan), 0=değişiklik yok. */
-    private static int fill(Long teamId, String domain, Map<String, Long> domainTeam, java.util.function.Consumer<Long> setTeam, String group) {
+    static int fill(Long teamId, String domain, Map<String, Long> domainTeam, java.util.function.Consumer<Long> setTeam, String group) {
         if (teamId != null) return 0;
         if (domain != null) {
             Long t = domainTeam.get(domain.toLowerCase(Locale.ROOT));
@@ -139,8 +139,9 @@ public class MonitoringGroupBackfill {
         };
     }
 
-    /** URL/host'tan ana makineyi çıkarır (şema/port/path olmadan). */
-    private static String host(String raw) {
+    /** URL/host'tan ana makineyi çıkarır (şema/port/path olmadan). Paket görünür: yanlış ayrıştırma
+     *  monitörü YANLIŞ TAKIMA düşürür (o takım başkasının monitörünü görür) — testle kilitli. */
+    static String host(String raw) {
         if (raw == null) return null;
         String s = raw.trim();
         int sc = s.indexOf("://");

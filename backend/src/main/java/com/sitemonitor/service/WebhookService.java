@@ -35,17 +35,35 @@ public class WebhookService {
                 .build();
     }
 
+    /** Teams MessageCard gövdesi. AYRI metot: gövde post() içinde serileştirildiği için testten
+     *  okunamıyordu ve "renk/format" iddia eden testler aslında yalnız URI'yi doğruluyordu. */
+    static Map<String, Object> buildTeamsPayload(String title, String message, String color) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("@type", "MessageCard");
+        payload.put("@context", "http://schema.org/extensions");
+        payload.put("themeColor", color);
+        payload.put("summary", title);
+        payload.put("title", title);
+        payload.put("text", message);
+        return payload;
+    }
+
+    /** Slack attachment gövdesi (Teams'ten FARKLI şekil — karışırsa mesaj sessizce bozuk gider). */
+    static Map<String, Object> buildSlackPayload(String title, String message, String color) {
+        Map<String, Object> attachment = new LinkedHashMap<>();
+        attachment.put("color", color);
+        attachment.put("title", title);
+        attachment.put("text", message);
+        attachment.put("footer", "SiteMonitor Enterprise");
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("attachments", List.of(attachment));
+        return payload;
+    }
+
     public void sendTeams(String webhookUrl, String title, String message, String color) {
         try {
-            Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("@type", "MessageCard");
-            payload.put("@context", "http://schema.org/extensions");
-            payload.put("themeColor", color);
-            payload.put("summary", title);
-            payload.put("title", title);
-            payload.put("text", message);
-
-            post(webhookUrl, payload);
+            post(webhookUrl, buildTeamsPayload(title, message, color));
         } catch (Exception e) {
             log.warn("Teams webhook failed {}: {}", webhookUrl, e.getMessage());
         }
@@ -53,16 +71,7 @@ public class WebhookService {
 
     public void sendSlack(String webhookUrl, String title, String message, String color) {
         try {
-            Map<String, Object> attachment = new LinkedHashMap<>();
-            attachment.put("color", color);
-            attachment.put("title", title);
-            attachment.put("text", message);
-            attachment.put("footer", "SiteMonitor Enterprise");
-
-            Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("attachments", List.of(attachment));
-
-            post(webhookUrl, payload);
+            post(webhookUrl, buildSlackPayload(title, message, color));
         } catch (Exception e) {
             log.warn("Slack webhook failed {}: {}", webhookUrl, e.getMessage());
         }
@@ -90,7 +99,7 @@ public class WebhookService {
         log.debug("Webhook response {}: {}", response.statusCode(), response.body());
     }
 
-    private String levelToColor(String level) {
+    static String levelToColor(String level) {
         return switch (level) {
             case "CRITICAL" -> "FF0000";
             case "HIGH" -> "FF8C00";
