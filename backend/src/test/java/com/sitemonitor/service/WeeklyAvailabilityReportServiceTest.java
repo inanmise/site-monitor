@@ -66,11 +66,29 @@ class WeeklyAvailabilityReportServiceTest {
         when(appSettings.getBoolean(eq("site.monitor.weekly-availability.enabled"), anyBoolean())).thenReturn(true);
         when(emailService.sendHtml(any(), any(), any(), any(), any())).thenReturn("SENT");
         when(emailService.sendHtmlWithAttachments(any(), any(), any(), any(), any(), any())).thenReturn("SENT");
+        when(outageReportService.collect(any(), any(), any())).thenReturn(outageData(3, 1));
         when(outageReportService.pdf(any())).thenReturn(new byte[]{ 1, 2, 3 });
-        when(emailService.buildWeeklyAvailabilityHtml(any(), any(), any(), any())).thenReturn("<html></html>");
+        when(emailService.buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any())).thenReturn("<html></html>");
         when(emailService.getEmailFrom()).thenReturn("noreply@sitemonitor");
         when(walRepo.findByTeamIdAndReportYearAndWeekNo(anyLong(), anyInt(), anyInt())).thenReturn(Optional.empty());
         when(latestCheckRepo.findById(anyString())).thenReturn(Optional.empty());
+    }
+
+    /**
+     * Asgari kesinti verisi — yalnız gövdedeki ek bandının okuduğu alanlar dolu.
+     *
+     * <p>Kayıt geniş (28 alan) ama bu testler onun İÇERİĞİYLE ilgilenmiyor; ilgilendikleri şey
+     * verinin bir kez toplanıp hem gövdeye hem PDF'e verilmesi. Alanları tek tek doldurmak testi
+     * kırılganlaştırır: kayda yeni bir alan eklendiğinde burası da değişmek zorunda kalırdı.
+     */
+    private static com.sitemonitor.service.report.WeeklyOutageReportService.WeeklyOutageData outageData(
+            int totalAlarms, int stillOpen) {
+        return new com.sitemonitor.service.report.WeeklyOutageReportService.WeeklyOutageData(
+                "Dijital", "15–21 Haziran 2026", "22.06.2026 10:00",
+                totalAlarms, stillOpen, 0, 2, 120, 99.5, 1, 0, totalAlarms,
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), 7L * 24 * 60,
+                List.of(), List.of(), List.of(), List.of(), 0, 0);
     }
 
     private UptimeCheck uc(String status, Long ms, String checkedAt) {
@@ -269,6 +287,66 @@ class WeeklyAvailabilityReportServiceTest {
         assertThat(rowsCap.getValue()).hasSize(2);
         assertThat(rowsCap.getValue()).extracting(AvailabilityRow::domain)
                 .containsExactlyInAnyOrder("a.com", "b.com");
+    }
+
+    @Test
+    @DisplayName("Gövde EKİ DUYURUR: dosya adı ve içeriği e-posta HTML'ine yazılır")
+    void send_bodyAnnouncesTheAttachment() {
+        Team t = team(5L, "Dijital", "dijital@x.com");
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
+        when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L))
+                .thenReturn(List.of(inv("a.com")));
+        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
+                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+
+        service.sendWeeklyReports(false);
+
+        // Ek sessizce iliştirilseydi okuyanların çoğu — özellikle telefonda — fark etmezdi.
+        ArgumentCaptor<EmailNotificationService.AttachmentInfo> attCap =
+                ArgumentCaptor.forClass(EmailNotificationService.AttachmentInfo.class);
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture());
+        assertThat(attCap.getValue()).isNotNull();
+        assertThat(attCap.getValue().fileName()).endsWith(".pdf");
+        assertThat(attCap.getValue().monitorTypeCount()).isEqualTo(MonitorTypeCatalog.ORDER.size());
+    }
+
+    @Test
+    @DisplayName("Kesinti verisi bir KEZ toplanır — gövde bandı ve PDF aynı veriyi kullanır")
+    void send_collectsOutageDataOnlyOnce() {
+        Team t = team(5L, "Dijital", "dijital@x.com");
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
+        when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L))
+                .thenReturn(List.of(inv("a.com")));
+        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
+                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+
+        service.sendWeeklyReports(false);
+
+        // Gövde bandı ekin içeriğini yazdığı için veri HTML'den ÖNCE toplanmak zorunda; sonra PDF
+        // için yeniden toplansaydı bütün alarm sorguları tek podda İKİ KEZ koşardı.
+        verify(outageReportService, times(1)).collect(any(), any(), any());
+        verify(outageReportService, times(1)).pdf(any());
+    }
+
+    @Test
+    @DisplayName("Veri toplanamazsa gövde ekten SÖZ ETMEZ — olmayan bir eke atıf yapılmaz")
+    void send_collectFailure_bodyDoesNotMentionAttachment() {
+        Team t = team(5L, "Dijital", "dijital@x.com");
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
+        when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L))
+                .thenReturn(List.of(inv("a.com")));
+        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
+                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+        when(outageReportService.collect(any(), any(), any())).thenThrow(new RuntimeException("patladı"));
+
+        var result = service.sendWeeklyReports(false);
+
+        ArgumentCaptor<EmailNotificationService.AttachmentInfo> attCap =
+                ArgumentCaptor.forClass(EmailNotificationService.AttachmentInfo.class);
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture());
+        assertThat(attCap.getValue()).isNull();      // gövdede ek bandı çizilmez
+        verify(outageReportService, never()).pdf(any());
+        assertThat(result.sent()).isEqualTo(1);      // rapor yine gitti
     }
 
     @Test
