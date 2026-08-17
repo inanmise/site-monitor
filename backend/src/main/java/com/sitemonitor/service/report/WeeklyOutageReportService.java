@@ -1,13 +1,9 @@
 package com.sitemonitor.service.report;
 
 import com.sitemonitor.model.AlertEvent;
-import com.sitemonitor.model.CertificateInventory;
-import com.sitemonitor.model.LatestCheck;
 import com.sitemonitor.model.MaintenanceWindow;
 import com.sitemonitor.model.Team;
 import com.sitemonitor.repository.AlertEventRepository;
-import com.sitemonitor.repository.CertificateInventoryRepository;
-import com.sitemonitor.repository.LatestCheckRepository;
 import com.sitemonitor.repository.MaintenanceWindowRepository;
 import com.sitemonitor.repository.NotificationLogRepository;
 import com.sitemonitor.service.EmailNotificationService.AvailabilityRow;
@@ -70,8 +66,6 @@ public class WeeklyOutageReportService {
 
     private final AlertEventRepository alertEventRepo;
     private final NotificationLogRepository notificationLogRepo;
-    private final CertificateInventoryRepository inventoryRepo;
-    private final LatestCheckRepository latestCheckRepo;
     private final MaintenanceWindowRepository maintenanceRepo;
     private final MaintenanceService maintenanceService;
     private final MonitoringWeeklyStatsService weeklyStatsService;
@@ -92,15 +86,11 @@ public class WeeklyOutageReportService {
     public WeeklyOutageReportService(
             AlertEventRepository alertEventRepo,
             NotificationLogRepository notificationLogRepo,
-            CertificateInventoryRepository inventoryRepo,
-            LatestCheckRepository latestCheckRepo,
             MaintenanceWindowRepository maintenanceRepo,
             MaintenanceService maintenanceService,
             @org.springframework.context.annotation.Lazy MonitoringWeeklyStatsService weeklyStatsService) {
         this.alertEventRepo = alertEventRepo;
         this.notificationLogRepo = notificationLogRepo;
-        this.inventoryRepo = inventoryRepo;
-        this.latestCheckRepo = latestCheckRepo;
         this.maintenanceRepo = maintenanceRepo;
         this.maintenanceService = maintenanceService;
         this.weeklyStatsService = weeklyStatsService;
@@ -157,7 +147,7 @@ public class WeeklyOutageReportService {
             String teamName, String weekLabel, String generatedAt,
             int totalAlarms, int stillOpenCount, int carriedOverCount, int affectedTargets,
             long totalDowntimeMin, Double avgAvailabilityPct, int domainsWithOutage,
-            int alarmsPrevWeek, int alarmsDelta,
+            int alarmsOpenedThisWeek, int alarmsPrevWeek, int alarmsDelta,
             List<MonitoringWeeklyStatsService.TypeStats> typeStats,
             List<TypeGroup> groups, List<OutageRow> longest, List<RepeatItem> repeats,
             List<Bucket> byDay, List<Bucket> byHour, List<Bucket> byLevel,
@@ -183,7 +173,7 @@ public class WeeklyOutageReportService {
     public WeeklyOutageData collect(Team team, Window w, List<AvailabilityRow> availabilityRows) {
         List<AlertEvent> alarms = loadWeekAlarms(team.getId(), w);
         Map<Long, long[]> notify = notifyCounts(alarms);
-        List<MaintenanceWindow> windows = loadMaintenanceWindows();
+        List<MaintWindow> windows = loadMaintenanceWindows();
 
         List<OutageRow> rows = new ArrayList<>(alarms.size());
         for (AlertEvent e : alarms) rows.add(toRow(e, w, notify, windows));
@@ -244,9 +234,23 @@ public class WeeklyOutageReportService {
         return m;
     }
 
-    private List<MaintenanceWindow> loadMaintenanceWindows() {
+    /**
+     * Bakım penceresi + hedefleri HAZIRLANMIŞ hâlde.
+     *
+     * <p>{@code MaintenanceService.targetsOf} her çağrıda hedef JSON'unu Jackson ile baştan
+     * ayrıştırıyor ve {@code List} döndürüyor. Eskiden bu metot alarm × pencere döngüsünün
+     * İÇİNDEN çağrılıyordu: 400 alarm × N pencere = binlerce gereksiz parse, üstüne
+     * {@code List.contains} ile O(n) arama. Artık pencere başına bir kez ayrıştırılıp
+     * {@code Set}'e alınıyor.
+     */
+    private record MaintWindow(MaintenanceWindow window, boolean allMonitors, Set<String> targets) {}
+
+    private List<MaintWindow> loadMaintenanceWindows() {
         try {
-            return maintenanceRepo.findAll();
+            return maintenanceRepo.findAll().stream()
+                    .map(w -> new MaintWindow(w, Boolean.TRUE.equals(w.getAllMonitors()),
+                            Set.copyOf(maintenanceService.targetsOf(w))))
+                    .toList();
         } catch (Exception e) {
             log.warn("Bakım pencereleri okunamadı, kesinti raporunda bakım işareti çizilmeyecek: {}", e.getMessage());
             return List.of();
@@ -255,7 +259,7 @@ public class WeeklyOutageReportService {
 
     // ── Satır türetme ────────────────────────────────────────────────────────
 
-    OutageRow toRow(AlertEvent e, Window w, Map<Long, long[]> notify, List<MaintenanceWindow> windows) {
+    OutageRow toRow(AlertEvent e, Window w, Map<Long, long[]> notify, List<MaintWindow> windows) {
         Instant start = parse(e.getCreatedAt());
         Instant end = parse(e.getResolvedAt());
         boolean stillOpen = !Boolean.TRUE.equals(e.getResolved()) || end == null;
@@ -308,12 +312,11 @@ public class WeeklyOutageReportService {
      * değiştirilmiş ya da silinmişse işaret yanılır — bu yüzden PDF'te rozet "bakımdaydı" değil,
      * "bakım penceresine denk geliyor (bugünkü tanıma göre)" diye etiketlenir.
      */
-    boolean overlapsMaintenance(String target, Instant start, List<MaintenanceWindow> windows) {
+    boolean overlapsMaintenance(String target, Instant start, List<MaintWindow> windows) {
         if (start == null || windows.isEmpty()) return false;
-        for (MaintenanceWindow w : windows) {
-            boolean covers = Boolean.TRUE.equals(w.getAllMonitors())
-                    || (target != null && maintenanceService.targetsOf(w).contains(target));
-            if (covers && maintenanceService.isActiveAt(w, start)) return true;
+        for (MaintWindow mw : windows) {
+            boolean covers = mw.allMonitors() || (target != null && mw.targets().contains(target));
+            if (covers && maintenanceService.isActiveAt(mw.window(), start)) return true;
         }
         return false;
     }
@@ -336,8 +339,12 @@ public class WeeklyOutageReportService {
                     List.copyOf(en.getValue())));
         }
 
+        // HAFTAYA DÜŞEN süreye göre sıralanır. Ham toplam süreye göre sıralandığında liste
+        // tamamen aylardır süren devreden alarmlarla doluyor ve bu HAFTANIN en kötü kesintileri
+        // ilk ona hiç giremiyordu. Tablo iki süreyi de gösterdiği için gerçek boy kaybolmuyor.
         List<OutageRow> longest = rows.stream()
-                .sorted(Comparator.comparingLong(OutageRow::durationMin).reversed())
+                .sorted(Comparator.comparingLong(OutageRow::weekDurationMin).reversed()
+                        .thenComparing(Comparator.comparingLong(OutageRow::durationMin).reversed()))
                 .limit(10).toList();
 
         // Tekrar edenler: aynı (hedef, alarm tipi) ≥2 → kronik sorun; tekil olaydan ayrılır.
@@ -359,6 +366,8 @@ public class WeeklyOutageReportService {
                 .toList();
 
         int prevAlarms = prevWeekAlarmCount(team.getId(), w);
+        List<OutageRow> openedRows = rows.stream().filter(r -> !r.carriedOver()).toList();
+        int openedThisWeek = openedRows.size();
 
         return new WeeklyOutageData(
                 team.getName(), w.weekLabel(), ZonedDateTime.now(IST).format(STAMP),
@@ -369,14 +378,23 @@ public class WeeklyOutageReportService {
                 rows.stream().mapToLong(OutageRow::weekDurationMin).sum(),
                 avgAvailability(availabilityRows),
                 (int) availabilityRows.stream().filter(r -> r.outageCount() > 0).count(),
-                prevAlarms, rows.size() - prevAlarms,
+                // Delta İKİ TARAFTA DA "o hafta açılan" alarmı sayar. Eskiden sol taraf
+                // rows.size() idi (devredenler dahil) ve karşılaştırma elmayla armut oluyordu:
+                // canlı veride 14 vs 3 → "+11 artış" yazıyordu, oysa o hafta 6 alarm açılmıştı
+                // ve gerçek fark +3'tü.
+                openedThisWeek, prevAlarms, openedThisWeek - prevAlarms,
                 typeStats(team.getId(), w),
                 groups, longest, repeats,
-                dayBuckets(rows), hourBuckets(rows), levelBuckets(rows),
-                heatRows(rows), timelineRows(rows), durationMin(parseOrEpoch(w.fromUtc()), w.windowEnd()),
+                // Dağılımlar "alarmlar NE ZAMAN açılıyor" sorusunu yanıtlar; devreden bir alarm bu
+                // hafta açılmadı ve başlangıç anı pencerenin DIŞINDA. Süzülmezse 11 Temmuz'da açılmış
+                // bir alarm 3-9 Ağustos raporunun "Cumartesi" kutusuna düşer ve ısı haritası birden
+                // fazla haftanın gün/saatlerini aynı ızgaraya bindirir — tam da göstermek için
+                // eklendiği deseni gizler.
+                dayBuckets(openedRows), hourBuckets(openedRows), levelBuckets(rows),
+                heatRows(openedRows), timelineRows(rows), durationMin(parseOrEpoch(w.fromUtc()), w.windowEnd()),
                 rows.stream().filter(OutageRow::stillOpen).toList(),
                 rows.stream().filter(OutageRow::notifyGap).toList(),
-                availabilityRows, certExpiries(team.getId()),
+                availabilityRows, certExpiries(availabilityRows),
                 (int) rows.stream().filter(OutageRow::maintenanceOverlap).count(),
                 (int) rows.stream().map(OutageRow::stormId).filter(Objects::nonNull).distinct().count());
     }
@@ -525,16 +543,20 @@ public class WeeklyOutageReportService {
         return total;
     }
 
-    private List<CertExpiry> certExpiries(Long teamId) {
-        List<CertExpiry> out = new ArrayList<>();
-        for (CertificateInventory inv :
-                inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(teamId)) {
-            Integer days = latestCheckRepo.findById(inv.getDomain())
-                    .map(LatestCheck::getDaysRemaining).orElse(null);
-            if (days != null && days <= CERT_EXPIRY_DAYS) out.add(new CertExpiry(inv.getDomain(), days));
-        }
-        out.sort(Comparator.comparingInt(CertExpiry::daysRemaining));
-        return out;
+    /**
+     * Süresi yaklaşan sertifikalar — MEVCUT erişilebilirlik satırlarından türetilir.
+     *
+     * <p>Eskiden burada domain başına {@code latestCheckRepo.findById} çağrılıyordu; oysa aynı
+     * değer {@link AvailabilityRow#certDaysRemaining()} içinde ZATEN geliyor ({@code buildTeamReport}
+     * onu domain başına bir kez okuyor). Yani takım başına domain sayısı kadar sorgu tamamen
+     * tekrardı — pazartesi 10:00'da bütün takımlar için aynı anda, tek podda.
+     */
+    private List<CertExpiry> certExpiries(List<AvailabilityRow> availabilityRows) {
+        return availabilityRows.stream()
+                .filter(r -> r.certDaysRemaining() != null && r.certDaysRemaining() <= CERT_EXPIRY_DAYS)
+                .map(r -> new CertExpiry(r.domain(), r.certDaysRemaining()))
+                .sorted(Comparator.comparingInt(CertExpiry::daysRemaining))
+                .toList();
     }
 
     private static Double avgAvailability(List<AvailabilityRow> rows) {

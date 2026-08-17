@@ -85,7 +85,7 @@ class WeeklyAvailabilityReportServiceTest {
             int totalAlarms, int stillOpen) {
         return new com.sitemonitor.service.report.WeeklyOutageReportService.WeeklyOutageData(
                 "Dijital", "15–21 Haziran 2026", "22.06.2026 10:00",
-                totalAlarms, stillOpen, 0, 2, 120, 99.5, 1, 0, totalAlarms,
+                totalAlarms, stillOpen, 0, 2, 120, 99.5, 1, totalAlarms, 0, totalAlarms,
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
                 List.of(), List.of(), 7L * 24 * 60,
                 List.of(), List.of(), List.of(), List.of(), 0, 0);
