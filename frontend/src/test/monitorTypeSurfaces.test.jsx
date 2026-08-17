@@ -120,6 +120,37 @@ describe('İzleme türü yüzeyleri — yeni tür eklenince hepsi güncellenmeli
     expect(keys).toEqual(expect.arrayContaining(upper))
   })
 
+  it('Giriş sayfasının "İzle" vitrini her izleme türü için bir çip taşır', () => {
+    // Bu vitrin ürünün ilk izlenimi. Sayfa Bütünlüğü ve Sentetik (k6) burada YOKTU: ikisi de
+    // tam birer izleme türüyken (kendi sayfası, alarmları, haftalık raporu var) giriş
+    // ekranında hiç görünmüyorlardı.
+    const src = read('pages/Login.jsx')
+    const keys = valuesIn(src, "key: 'login.pillarMonitor'", '],', /key: 'login\.(cap\w+)'/g,
+      'Login İzle vitrini')
+    for (const type of ALL_TYPES) {
+      const expected = `cap${type[0].toUpperCase()}${type.slice(1)}`
+      expect(keys, `giriş sayfası vitrininde çip yok: ${type} (${expected})`).toContain(expected)
+    }
+  })
+
+  it('"N izleme türü" metnindeki sayı vitrindeki çip sayısıyla TUTAR (TR ve EN)', () => {
+    // Metin "10 izleme türü" derken vitrinde 8 çip vardı. Pazarlama cümlesindeki sayı elle
+    // yazıldığı için tür eklendikçe sessizce yanlışa dönüşüyor; artık çiplerle kilitli.
+    const chips = valuesIn(read('pages/Login.jsx'), "key: 'login.pillarMonitor'", '],',
+      /key: 'login\.(cap\w+)'/g, 'Login İzle vitrini').length
+
+    const i18n = read('i18n/index.jsx')
+    // Kaçışlı tırnağa dikkat: TR metni "uptime\'a" içeriyor ve naif [^']* orada kesiliyor.
+    const claims = [...i18n.matchAll(/'login\.pillarMonitorDesc':\s*'((?:[^'\\]|\\.)*)'/g)].map(m => m[1])
+    expect(claims.length, 'pillarMonitorDesc iki dilde de bulunmalı').toBe(2)
+
+    for (const claim of claims) {
+      const n = /(\d+)/.exec(claim)
+      expect(n, `metinde sayı yok: ${claim}`).not.toBeNull()
+      expect(Number(n[1]), `metindeki sayı çip sayısıyla tutmuyor: "${claim}"`).toBe(chips)
+    }
+  })
+
   it('Haftalık izleme şeridi sırası katalogla BİREBİR aynı', () => {
     // Sıra ayrışırsa aynı rapor iki yerde farklı okunur; eksik tür ise satırı hiç çizilmez.
     const order = valuesIn(read('components/WeeklyMonitoringStrip.jsx'),

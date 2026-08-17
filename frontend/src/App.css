@@ -2168,6 +2168,11 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   text-align: center;
   margin-top: -8px;
 }
+/* Soru kendi satırında; "Sistem yöneticisine bildirin" HER ZAMAN altında kalır.
+   İkisi tek satırda akarken bağlantının yeri kart genişliğine ve dile göre değişiyordu. */
+.lp-help-text {
+  display: block;
+}
 /* "Sorun bildir" pop-up'ı — Odyssey diliyle (koyu panel + bronz vurgu; blur yok) */
 .lp-modal-overlay {
   position: fixed;
@@ -2280,6 +2285,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   font-size: .8rem;
   text-decoration: underline;
   text-underline-offset: 3px;
+  margin-top: 4px;   /* soru satırından ayrılsın; alt satıra indiği için nefes payı gerekiyor */
 }
 .lp-help-link:hover { filter: brightness(1.15); }
 
