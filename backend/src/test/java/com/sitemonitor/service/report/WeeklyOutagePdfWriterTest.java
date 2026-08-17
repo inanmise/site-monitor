@@ -50,9 +50,15 @@ class WeeklyOutagePdfWriterTest {
     }
 
     private static OutageRow row(String target, String type, String alertType, String msg) {
+        return row(target, type, alertType, msg, null, null);
+    }
+
+    /** Gerekçe notlu satır — onay/çözüm notlarının PDF'e düşüşünü sınayan testler için. */
+    private static OutageRow row(String target, String type, String alertType, String msg,
+                                 String ackNote, String resolveNote) {
         return new OutageRow(1L, type, alertType, target, "CRITICAL",
                 "2026-06-16T09:00:00", "2026-06-16T11:00:00", false, false, 120, 120, 0,
-                "ahmet", "2026-06-16T09:05:00", "sistem", 2, 0, false, null, msg);
+                "ahmet", "2026-06-16T09:05:00", "sistem", ackNote, resolveNote, 2, 0, false, null, msg);
     }
 
     /** Tek bir (gün, saat) hücresine değer koyan ısı haritası; kalan 167 hücre sıfır. */

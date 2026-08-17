@@ -2,6 +2,7 @@ package com.sitemonitor.controller;
 
 import com.sitemonitor.model.*;
 import com.sitemonitor.repository.*;
+import com.sitemonitor.service.AlertActionNote;
 import com.sitemonitor.service.AuditDiff;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.ClientIpResolver;
@@ -101,6 +102,8 @@ public class AdminController {
 
     /** Sorgu satırındaki Object'i güvenle dizeye çevirir (null → null, anahtar yine tutarlı). */
     private static String str(Object o) { return o == null ? null : o.toString(); }
+    /** Map.of null DEGER kabul etmez; denetim ayrintisinda null alan bosa cevrilir. */
+    private static String nz(String s) { return s == null ? "" : s; }
 
     /** CSV dışa aktarım sınırları — tek istekte tüm tabloyu belleğe almamak için. */
     private static final int ALERT_CSV_PAGE = 2_000;
@@ -1149,7 +1152,8 @@ public class AdminController {
         w.write(0xFEFF);   // Excel UTF-8'i doğru açsın (mevcut dışa aktarımlarla aynı)
 
         String[] headers = { "created_at", "resolved_at", "domain", "alert_type", "alert_level",
-                "acknowledged", "acknowledged_by", "acknowledged_at", "resolved_by",
+                "acknowledged", "acknowledged_by", "acknowledged_at", "acknowledged_note",
+                "resolved_by", "resolved_note",
                 "days_remaining", "sy_team", "ug_team", "cert_tier", "repeat_count", "message" };
         writeCsvRow(w, headers);
 
@@ -1167,7 +1171,8 @@ public class AdminController {
                     writeCsvRow(w, new String[]{
                             e.getCreatedAt(), e.getResolvedAt(), e.getDomain(), e.getAlertType(), e.getAlertLevel(),
                             String.valueOf(Boolean.TRUE.equals(e.getAcknowledged())),
-                            e.getAcknowledgedBy(), e.getAcknowledgedAt(), e.getResolvedBy(),
+                            e.getAcknowledgedBy(), e.getAcknowledgedAt(), e.getAcknowledgedNote(),
+                            e.getResolvedBy(), e.getResolvedNote(),
                             e.getDaysRemaining() == null ? "" : String.valueOf(e.getDaysRemaining()),
                             e.getSyTeamName(), e.getUgTeamName(),
                             e.getCertTier() == null ? "" : String.valueOf(e.getCertTier()),
@@ -1281,31 +1286,54 @@ public class AdminController {
         }
     }
 
+    /**
+     * Denetim ayrıntısı — DÜZGÜN JSON.
+     *
+     * <p>Eskiden {@code "{\"domain\":\"" + domain + "\"}"} diye elle birleştiriliyordu. Gerekçe
+     * notu serbest metin ve gerekçe cümlesi yazan kullanıcı TIRNAK kullanır; elle birleştirme
+     * ilk tırnakta bozuk JSON üretirdi. Kaçış işini Jackson yapıyor.
+     */
+    private String auditDetail(Map<String, Object> fields) {
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(fields);
+        } catch (Exception e) {
+            // Denetim kaydı asıl işlemi düşürmemeli; en kötü ihtimalle ayrıntısız kalır.
+            log.warn("Denetim ayrıntısı serileştirilemedi: {}", e.getMessage());
+            return "{}";
+        }
+    }
+
     @PostMapping("/alerts/{id}/acknowledge")
     public ResponseEntity<Map<String, Object>> acknowledgeAlert(
             @PathVariable Long id,
+            @RequestBody(required = false) Map<String, Object> body,
             HttpSession session, HttpServletRequest request) {
         requirePerm(session, "alerts.actions", "execute");
         requireAlertScope(session, id);   // takım kapsamı (IDOR engeli)
+        // Gerekçe ZORUNLU ve sunucuda doğrulanıyor: kural yalnız arayüzde kalsaydı API'den
+        // notsuz geçilebilir, "her manuel onayın gerekçesi vardır" garantisi çökerdi.
+        String note = AlertActionNote.require(body == null ? null : str(body.get("note")));
         String by = resolveDisplayName(session);
-        AlertEvent event = escalationService.acknowledge(id, by);
+        AlertEvent event = escalationService.acknowledge(id, by, note);
         auditService.recordAction("ALERT_ACKNOWLEDGE", session, request,
                 "ALERT_EVENT", id.toString(),
-                "{\"domain\":\"" + event.getDomain() + "\"}");
+                auditDetail(Map.of("domain", nz(event.getDomain()), "note", note)));
         return ok(Map.of("data", event, "message", "Alert acknowledged"));
     }
 
     @PostMapping("/alerts/{id}/resolve")
     public ResponseEntity<Map<String, Object>> resolveAlert(
             @PathVariable Long id,
+            @RequestBody(required = false) Map<String, Object> body,
             HttpSession session, HttpServletRequest request) {
         requirePerm(session, "alerts.actions", "execute");
         requireAlertScope(session, id);   // takım kapsamı (IDOR engeli)
+        String note = AlertActionNote.require(body == null ? null : str(body.get("note")));
         String by = resolveDisplayName(session);
-        AlertEvent event = escalationService.resolve(id, by);
+        AlertEvent event = escalationService.resolve(id, by, note);
         auditService.recordAction("ALERT_RESOLVE", session, request,
                 "ALERT_EVENT", id.toString(),
-                "{\"domain\":\"" + event.getDomain() + "\"}");
+                auditDetail(Map.of("domain", nz(event.getDomain()), "note", note)));
         return ok(Map.of("data", event, "message", "Alert resolved"));
     }
 
@@ -1359,14 +1387,20 @@ public class AdminController {
         }
         if (ids.isEmpty()) throw new IllegalArgumentException("No ids provided");
 
+        // Gerekçe TOPLU işlemde de zorunlu (onayla/çöz). Yalnız tekli uçta istenseydi zorunluluk
+        // delinirdi: kullanıcı tek alarmı seçip "toplu onayla" diyerek notsuz geçerdi ve zamanla
+        // herkes o yolu kullanırdı. Tek not seçilen bütün alarmlara yazılır.
+        boolean needsNote = "acknowledge".equals(action) || "resolve".equals(action);
+        String note = needsNote ? AlertActionNote.require(str(body.get("note"))) : null;
+
         String by = resolveDisplayName(session);
         int processed = 0, skipped = 0, failed = 0;
         for (Long id : ids) {
             if (!isAlertInScope(session, id)) { skipped++; continue; }   // kapsam-dışı → atla (fırlatma yok)
             try {
                 switch (action) {
-                    case "acknowledge" -> escalationService.acknowledge(id, by);
-                    case "resolve"     -> escalationService.resolve(id, by);
+                    case "acknowledge" -> escalationService.acknowledge(id, by, note);
+                    case "resolve"     -> escalationService.resolve(id, by, note);
                     case "re-notify"   -> escalationService.reNotify(id);
                 }
                 processed++;
@@ -1380,9 +1414,13 @@ public class AdminController {
             case "resolve"     -> "ALERT_BULK_RESOLVE";
             default             -> "ALERT_BULK_RENOTIFY";
         };
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("processed", processed);
+        detail.put("skipped", skipped);
+        detail.put("failed", failed);
+        if (note != null) detail.put("note", note);
         auditService.recordAction(auditAction, session, request, "ALERT_EVENT",
-                processed + " alert",
-                "{\"processed\":" + processed + ",\"skipped\":" + skipped + ",\"failed\":" + failed + "}");
+                processed + " alert", auditDetail(detail));
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("processed", processed);
         data.put("skipped", skipped);

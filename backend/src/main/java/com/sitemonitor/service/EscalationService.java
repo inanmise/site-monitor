@@ -283,12 +283,24 @@ public class EscalationService {
     }
 
     @Transactional
+    /** Geriye uyumlu: notsuz onay (eski çağrılar / not gerektirmeyen yollar). */
     public AlertEvent acknowledge(Long eventId, String acknowledgedBy) {
+        return acknowledge(eventId, acknowledgedBy, null);
+    }
+
+    /**
+     * Alarmı onaylar; {@code note} verilirse NEDEN onaylandığı da kaydedilir.
+     *
+     * <p>Not burada DOĞRULANMAZ — doğrulama uçta yapılır ({@link AlertActionNote}) çünkü zorunluluk
+     * yalnız manuel akışlar için geçerli; servis katmanı notsuz da çağrılabilmeli.
+     */
+    public AlertEvent acknowledge(Long eventId, String acknowledgedBy, String note) {
         AlertEvent event = alertEventRepo.findById(eventId)
                 .orElseThrow(() -> new NoSuchElementException("Alert not found: " + eventId));
         event.setAcknowledged(true);
         event.setAcknowledgedBy(acknowledgedBy);
         event.setAcknowledgedAt(now());
+        if (note != null && !note.isBlank()) event.setAcknowledgedNote(note.trim());
         return alertEventRepo.save(event);
     }
 
@@ -514,7 +526,13 @@ public class EscalationService {
 
     // DB save is sync (atomic + fast), mail notification is dispatched async on certCheckExecutor.
     // HTTP response returns in <1s even if SMTP times out.
+    /** Geriye uyumlu: notsuz çözüm. KENDİLİĞİNDEN kurtarma bu yolu kullanmaz (doğrudan setResolved). */
     public AlertEvent resolve(Long eventId, String resolvedBy) {
+        return resolve(eventId, resolvedBy, null);
+    }
+
+    /** {@code note} verilirse alarmın NASIL çözüldüğü de kaydedilir (manuel çözüm). */
+    public AlertEvent resolve(Long eventId, String resolvedBy, String note) {
         AlertEvent event = alertEventRepo.findById(eventId)
                 .orElseThrow(() -> new NoSuchElementException("Alert not found: " + eventId));
         // İdempotent: zaten çözülmüş bir alarmı yeniden çözme — çift "çözüldü" e-postası gönderme ve
@@ -527,6 +545,7 @@ public class EscalationService {
         event.setResolved(true);
         event.setResolvedAt(now());
         event.setResolvedBy(by);
+        if (note != null && !note.isBlank()) event.setResolvedNote(note.trim());
         AlertEvent saved = alertEventRepo.save(event);
         self.sendResolutionNotificationAsync(saved, by, "MANUAL_RESOLVE");
         return saved;

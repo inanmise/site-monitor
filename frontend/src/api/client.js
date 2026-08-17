@@ -579,19 +579,24 @@ export const api = {
       const s = qs.toString()
       return request(`/admin/alerts${s ? `?${s}` : ''}`)
     },
-    acknowledgeAlert: (id, acknowledgedBy) => request(`/admin/alerts/${id}/acknowledge`, {
+    // note = zorunlu gerekçe (en az 3 kelime). Sunucu da doğruluyor; geçersizse 400 döner.
+    acknowledgeAlert: (id, note) => request(`/admin/alerts/${id}/acknowledge`, {
       method: 'POST',
-      body: JSON.stringify({ acknowledged_by: acknowledgedBy }),
+      body: JSON.stringify({ note }),
     }),
-    resolveAlert:     (id) => request(`/admin/alerts/${id}/resolve`,     { method: 'POST' }),
+    resolveAlert: (id, note) => request(`/admin/alerts/${id}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    }),
     reNotifyAlert: (id, body) => request(`/admin/alerts/${id}/re-notify`, {
       method: 'POST', ...(body ? { body: JSON.stringify(body) } : {}),
     }),
     // "Tekrar Bildir" onay pop-up'ı: gönderim yapmadan alıcı listesini döner
     previewReNotify: (id) => request(`/admin/alerts/${id}/re-notify/preview`),
     // Toplu işlem: action ∈ {acknowledge, resolve, re-notify}, ids = alarm id listesi
-    bulkAlertAction: (action, ids) => request('/admin/alerts/bulk', {
-      method: 'POST', body: JSON.stringify({ action, ids }),
+    // note yalnız acknowledge/resolve için gerekli; re-notify'da null geçilir (sunucu da aramaz).
+    bulkAlertAction: (action, ids, note) => request('/admin/alerts/bulk', {
+      method: 'POST', body: JSON.stringify({ action, ids, ...(note ? { note } : {}) }),
     }),
     getAlertNotifications: (id) => request(`/admin/alerts/${id}/notifications`),
 

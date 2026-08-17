@@ -40,7 +40,7 @@ function alertExpiryDate(a) {
   return new Date(created.getTime() + a.days_remaining * 86_400_000)
 }
 
-function AuditRow({ label, by, at, variant }) {
+function AuditRow({ label, by, at, variant, note }) {
   // Palet ARTIK burada değil: satır içi sabit hex CSS'i baypas ettiği için koyu temada
   // açık zeminler okunmuyordu. Renkler .alh-audit--* sınıflarında, iki tema için de tanımlı.
   const kind = ['ack', 'resolve', 'system'].includes(variant) ? variant : 'system'
@@ -53,6 +53,9 @@ function AuditRow({ label, by, at, variant }) {
           <UserBadge username={by} inline size="sm" />
           {at && <> &nbsp;·&nbsp; {formatDate(at)}</>}
         </span>
+        {/* Gerekçe — zorunluluk ÖNCESİ onaylanmış alarmlarda yok; boş blok çizmemek için
+            koşullu. Notsuz eski kayıtlar sayıca çok ve hepsinde boş alıntı görünürdü. */}
+        {note && <span className="alh-audit-note">{note}</span>}
       </div>
     </div>
   )
@@ -426,7 +429,7 @@ function AlertTypeGroups({ alerts, listClassName, expanded, onToggle, renderCard
 
 export default function AlertHistory({ domain = null, urlSync = false }) {
   const t = useT()
-  const { showConfirm } = useDialog()
+  const { showConfirm, showNoteConfirm } = useDialog()
   const toast = useToast()
   const [alerts,       setAlerts]       = useState([])
   const [tab,          setTab]          = useState(() => (urlSync && readUrlParam('tab', null) === 'closed' ? 'closed' : 'open'))
@@ -619,32 +622,48 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
     setClosedTo(now.toISOString().slice(0, 19))
   }
 
+  /** Zorunlu gerekçe modalinin ortak seçenekleri — dört çağrı noktasında (tekli/toplu × onay/çöz)
+   *  aynı kural ve aynı ipucu metni kullanılsın diye tek yerde. */
+  function noteOpts(extra) {
+    return {
+      noteHint: t('alh.note.hint'),
+      noteOkText: t('alh.note.ok'),
+      noteLabel: t('alh.note.label'),
+      placeholder: t('alh.note.placeholder'),
+      chips: [t('alh.note.chip1'), t('alh.note.chip2'), t('alh.note.chip3'),
+              t('alh.note.chip4'), t('alh.note.chip5')],
+      cancelText: t('alh.ackDialog.cancel'),
+      ...extra,
+    }
+  }
+
   async function ack(id) {
     const alert = alerts.find(a => a.id === id)
-    const confirmed = await showConfirm({
+    const res = await showNoteConfirm(noteOpts({
       title: t('alh.ackDialog.title'),
       message: t('alh.ackDialog.msg', alert?.domain ?? ''),
       variant: 'warning',
       confirmText: t('alh.ackDialog.confirm'),
-      cancelText: t('alh.ackDialog.cancel'),
-    })
-    if (!confirmed) return
-    await api.admin.acknowledgeAlert(id)
+    }))
+    if (!res?.confirmed) return
+    const r = await api.admin.acknowledgeAlert(id, res.note)
+    if (r?.success === false) { toast.error(r?.error || t('alh.note.error')); return }
     load()
   }
 
   async function resolve(id) {
     const alert = alerts.find(a => a.id === id)
-    const confirmed = await showConfirm({
+    const ok = await showNoteConfirm(noteOpts({
       title: t('alh.resolveDialog.title'),
       message: t('alh.resolveDialog.msg', alert?.domain ?? ''),
       variant: 'success',
       confirmText: t('alh.resolveDialog.confirm'),
       cancelText: t('alh.resolveDialog.cancel'),
-    })
-    if (!confirmed) return
+      placeholder: t('alh.note.placeholderResolve'),
+    }))
+    if (!ok?.confirmed) return
     try {
-      const res = await api.admin.resolveAlert(id)
+      const res = await api.admin.resolveAlert(id, ok.note)
       if (res?.success === false) {
         toast.error(res?.error || t('alh.resolveError'))
       } else {
@@ -701,14 +720,29 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
       resolve:     { title: t('alh.bulk.resolveTitle'),  msg: t('alh.bulk.resolveMsg', ids.length),  variant: 'success', confirm: t('alh.resolve') },
       're-notify': { title: t('alh.bulk.renotifyTitle'), msg: t('alh.bulk.renotifyMsg', ids.length), variant: 'warning', confirm: t('alh.renotify') },
     }[action]
-    const confirmed = await showConfirm({
-      title: meta.title, message: meta.msg, variant: meta.variant,
-      confirmText: meta.confirm, cancelText: t('alh.resolveDialog.cancel'),
-    })
-    if (!confirmed) return
+    // Onayla/çöz TOPLU yolda da gerekçe ister — yalnız teklide istenseydi zorunluluk delinirdi
+    // (tek alarmı seçip "toplu onayla" demek notsuz bir kaçış olurdu). Tekrar bildirimde not
+    // aranmaz: orada bir alarm kapatılmıyor, yalnız bildirim yeniden gönderiliyor.
+    const needsNote = action === 'acknowledge' || action === 'resolve'
+    let note = null
+    if (needsNote) {
+      const res0 = await showNoteConfirm(noteOpts({
+        title: meta.title, message: meta.msg, variant: meta.variant, confirmText: meta.confirm,
+        placeholder: action === 'resolve' ? t('alh.note.placeholderResolve') : t('alh.note.placeholder'),
+        noteHint: t('alh.note.hintBulk', ids.length),
+      }))
+      if (!res0?.confirmed) return
+      note = res0.note
+    } else {
+      const confirmed = await showConfirm({
+        title: meta.title, message: meta.msg, variant: meta.variant,
+        confirmText: meta.confirm, cancelText: t('alh.resolveDialog.cancel'),
+      })
+      if (!confirmed) return
+    }
     setBulkBusy(true)
     let res
-    try { res = await api.admin.bulkAlertAction(action, ids) }
+    try { res = await api.admin.bulkAlertAction(action, ids, note) }
     finally { setBulkBusy(false) }
     if (res?.success) {
       const { processed = 0, skipped = 0, failed = 0 } = res.data ?? {}
@@ -983,6 +1017,7 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
                       by={a.acknowledged_by}
                       at={a.acknowledged_at}
                       variant="ack"
+                      note={a.acknowledged_note}
                     />
                   </div>
                 )}
@@ -1085,6 +1120,9 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
                             <UserBadge username={a.acknowledged_by} inline size="sm" />
                             {a.acknowledged_at && <> &nbsp;·&nbsp; {formatDate(a.acknowledged_at)}</>}
                           </div>
+                          {a.acknowledged_note && (
+                            <div className="ahc-tl-note">{a.acknowledged_note}</div>
+                          )}
                         </div>
                       </div>
                     ) : (
@@ -1107,6 +1145,9 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
                             : <UserBadge username={a.resolved_by} inline size="sm" />}
                           {a.resolved_at && <> &nbsp;·&nbsp; {formatDate(a.resolved_at)}</>}
                         </div>
+                        {a.resolved_note && (
+                          <div className="ahc-tl-note">{a.resolved_note}</div>
+                        )}
                       </div>
                     </div>
                   </div>

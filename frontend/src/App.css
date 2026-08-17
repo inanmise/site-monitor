@@ -3058,6 +3058,29 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .alh-audit-text { display: flex; flex-direction: column; gap: 1px; }
 .alh-audit-label { font-weight: 700; }
 .alh-audit-meta { color: var(--text-muted); }
+/* Gerekçe notu — kullanıcının yazdığı serbest metin. Alıntı çizgisiyle meta satırından ayrılır;
+   uzun cümleler sarmalı ve satır sonları korunmalı (kullanıcı madde madde yazabiliyor). */
+.alh-audit-note {
+  display: block;
+  margin-top: 6px;
+  padding-left: 9px;
+  border-left: 2px solid currentColor;
+  font-size: .88em;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  opacity: .92;
+}
+.ahc-tl-note {
+  margin-top: 4px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border, #e2e8f0);
+  font-size: .85em;
+  line-height: 1.4;
+  color: var(--text-light, #64748b);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .alh-audit--ack     { background: #f0fdf4; border-color: #86efac; }
 .alh-audit--ack     .alh-audit-label { color: #15803d; }
 .alh-audit--ack     .alh-audit-icon  { background: #dcfce7; color: #15803d; }
@@ -3704,6 +3727,82 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   border-color: var(--dlg-accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--dlg-accent) 15%, transparent);
 }
+
+/* ── Zorunlu gerekçe notu (onayla/çöz) ───────────────────────────────────────
+   Renkler token'lardan; satır içi stil YOK — koyu temada okunmayan açık zeminler
+   bu yüzden oluşuyordu (bkz. Alarm Geçmişi tema düzeltmesi). */
+.dlg-note {
+  width: 100%;
+  text-align: left;
+  margin-bottom: 18px;
+}
+.dlg-note-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.dlg-note-chip {
+  background: var(--bg-subtle, #f1f5f9);
+  border: 1px solid var(--border, #e2e8f0);
+  color: var(--text, #1e293b);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: .78em;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.dlg-note-chip:hover {
+  background: color-mix(in srgb, var(--dlg-accent) 12%, transparent);
+  border-color: var(--dlg-accent);
+}
+.dlg-note-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 2px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  font-size: .92em;
+  font-family: inherit;
+  box-sizing: border-box;
+  outline: none;
+  resize: vertical;
+  background: var(--bg-input, #fff);
+  color: var(--text, #111827);
+  transition: border-color .2s, box-shadow .2s;
+}
+.dlg-note-input:focus {
+  border-color: var(--dlg-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dlg-accent) 15%, transparent);
+}
+.dlg-note-input[aria-invalid="true"] {
+  border-color: var(--border, #e5e7eb);   /* yazmaya başlamadan kırmızı göstermek cezalandırıcı olur */
+}
+.dlg-note-hint {
+  margin-top: 6px;
+  min-height: 16px;                        /* metin değişince modal ZIPLAMASIN */
+  font-size: .76em;
+  color: var(--text-light, #64748b);
+}
+.dlg-note-hint.is-ok {
+  color: #15803d;
+}
+.dlg-btn-confirm:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+  filter: grayscale(.4);
+}
+
+[data-theme="dark"] .dlg-note-chip {
+  background: rgba(148, 163, 184, .12);
+  border-color: rgba(148, 163, 184, .3);
+  color: #e2e8f0;
+}
+[data-theme="dark"] .dlg-note-input {
+  background: rgba(15, 23, 42, .6);
+  border-color: rgba(148, 163, 184, .3);
+  color: #e2e8f0;
+}
+[data-theme="dark"] .dlg-note-hint.is-ok { color: #4ade80; }
 
 .dlg-actions {
   display: flex;

@@ -57,11 +57,25 @@ public class AlertEvent {
     private String acknowledgedBy;
     private String acknowledgedAt;
 
+    /**
+     * Alarmın NEDEN onaylandığı — kullanıcının yazdığı gerekçe.
+     *
+     * <p>Onay eskiden yalnız "kim" ve "ne zaman" bırakıyordu; haftalar sonra bakan kişi sorunun
+     * çözülüp çözülmediğini mi yoksa yalnız susturulduğunu mu bilemiyordu. Manuel onayda zorunlu
+     * (en az 3 kelime, sunucuda da doğrulanır); ONAY ÖNCESİ kayıtlarda ve otomatik yollarda null.
+     */
+    @Column(columnDefinition = "TEXT")
+    private String acknowledgedNote;
+
     @Column(nullable = false)
     private Boolean resolved = false;
 
     private String resolvedAt;
     private String resolvedBy;
+
+    /** Alarmın NASIL çözüldüğü. Manuel çözümde zorunlu; KENDİLİĞİNDEN kurtarmada null kalır. */
+    @Column(columnDefinition = "TEXT")
+    private String resolvedNote;
 
     private String createdAt;
     private String lastReAlertAt;

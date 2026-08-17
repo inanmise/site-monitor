@@ -104,6 +104,7 @@ public class WeeklyOutageReportService {
             String startedAt, String endedAt, boolean stillOpen, boolean carriedOver,
             long durationMin, long weekDurationMin, long weekStartOffsetMin,
             String acknowledgedBy, String acknowledgedAt, String resolvedBy,
+            String acknowledgedNote, String resolvedNote,
             long notifySent, long notifyFailed, boolean maintenanceOverlap, Long stormId,
             String message) {
 
@@ -296,6 +297,8 @@ public class WeeklyOutageReportService {
                 e.getAcknowledgedBy(),
                 e.getAcknowledgedAt(),
                 e.getResolvedBy(),
+                e.getAcknowledgedNote(),
+                e.getResolvedNote(),
                 n[0], n[1],
                 overlapsMaintenance(e.getDomain(), start, windows),
                 e.getStormId(),

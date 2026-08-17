@@ -359,6 +359,10 @@ public class SchedulerService {
         // bu kolonla besleniyor. Geriye dönük veri üretilemez, mevcut satırlar NULL kalır (istatistiğe girmez).
         patch("ALTER TABLE certificate_checks ADD COLUMN response_ms INTEGER");
         patch("ALTER TABLE alert_events ADD COLUMN resolved_by TEXT");
+        // Manuel onay/çözüm gerekçesi — "kim ve ne zaman"ın yanına "NEDEN". Eski satırlarda NULL
+        // kalır (geriye dönük üretilemez); gösterim tarafı null'ı boş blok çizmeden geçmeli.
+        patch("ALTER TABLE alert_events ADD COLUMN acknowledged_note TEXT");
+        patch("ALTER TABLE alert_events ADD COLUMN resolved_note TEXT");
         // Alarm fırtınası (alert storm) bağı + per-group scoping (ddl-auto zaten ekler — güvenlik ağı).
         patch("ALTER TABLE alert_events ADD COLUMN storm_id BIGINT");
         patch("ALTER TABLE alert_events ADD COLUMN group_name TEXT");

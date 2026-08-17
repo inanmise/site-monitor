@@ -271,14 +271,16 @@ describe('api.admin.getAlerts', () => {
 })
 
 describe('api.admin.acknowledgeAlert', () => {
-  it('POSTs to /api/admin/alerts/:id/acknowledge', async () => {
+  // İkinci parametre artık "kim" değil ZORUNLU GEREKÇE. Sunucu da doğruluyor (AlertActionNote);
+  // burada yalnız notun gövdeye doğru anahtarla konduğu kilitleniyor.
+  it('POSTs to /api/admin/alerts/:id/acknowledge with the note', async () => {
     mockFetch({ success: true })
-    await api.admin.acknowledgeAlert(5, 'alice')
+    await api.admin.acknowledgeAlert(5, 'planlı bakım kapsamında')
     expect(global.fetch).toHaveBeenCalledWith(
       '/api/admin/alerts/5/acknowledge',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ acknowledged_by: 'alice' }),
+        body: JSON.stringify({ note: 'planlı bakım kapsamında' }),
       })
     )
   })
@@ -287,10 +289,13 @@ describe('api.admin.acknowledgeAlert', () => {
 describe('api.admin.resolveAlert', () => {
   it('POSTs to /api/admin/alerts/:id/resolve', async () => {
     mockFetch({ success: true })
-    await api.admin.resolveAlert(7)
+    await api.admin.resolveAlert(7, 'düzeltme devrede doğrulandı')
     expect(global.fetch).toHaveBeenCalledWith(
       '/api/admin/alerts/7/resolve',
-      expect.objectContaining({ method: 'POST' })
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ note: 'düzeltme devrede doğrulandı' }),
+      })
     )
   })
 })
