@@ -112,7 +112,7 @@ public class WeeklyOutageReportService {
     public record OutageRow(
             Long alertId, String monitorType, String alertType, String target, String level,
             String startedAt, String endedAt, boolean stillOpen, boolean carriedOver,
-            long durationMin, long weekDurationMin,
+            long durationMin, long weekDurationMin, long weekStartOffsetMin,
             String acknowledgedBy, String acknowledgedAt, String resolvedBy,
             long notifySent, long notifyFailed, boolean maintenanceOverlap, Long stormId,
             String message) {
@@ -130,11 +130,27 @@ public class WeeklyOutageReportService {
     /** Aynı (hedef, alarm tipi) için hafta içinde birden fazla alarm — kronik sorun işareti. */
     public record RepeatItem(String target, String alertType, String typeLabel, int count) {}
 
-    /** Gün/saat dağılımı kovası. */
+    /** Gün/saat/seviye dağılımı kovası. */
     public record Bucket(String label, int count) {}
 
     /** Süresi yaklaşan sertifika. */
     public record CertExpiry(String domain, Integer daysRemaining) {}
+
+    /** Zaman çizelgesindeki tek bir kesinti aralığı — pencere başına göre konum + uzunluk. */
+    public record TimelineSegment(long startOffsetMin, long durationMin, String level, boolean stillOpen) {}
+
+    /**
+     * Zaman çizelgesinin bir satırı: bir hedef ve o hedefin haftaya düşen bütün kesinti aralıkları.
+     *
+     * <p>Alarm başına değil HEDEF başına satır: aynı hedefin üç alarmı tek çizgide yan yana
+     * görününce "bu hedef haftanın ne kadarında kesintideydi" tek bakışta okunur, ayrıca farklı
+     * hedeflerin çubukları alt alta hizalandığı için eşzamanlı kesintiler (ortak kök neden)
+     * gözle fark edilir.
+     */
+    public record TimelineRow(String target, List<TimelineSegment> segments, long totalMin) {}
+
+    /** Isı haritasının bir günü: 24 saatlik alarm sayıları (indeks = saat). */
+    public record HeatRow(String day, List<Integer> hours) {}
 
     /** PDF'in ihtiyaç duyduğu her şey. */
     public record WeeklyOutageData(
@@ -144,7 +160,8 @@ public class WeeklyOutageReportService {
             int alarmsPrevWeek, int alarmsDelta,
             List<MonitoringWeeklyStatsService.TypeStats> typeStats,
             List<TypeGroup> groups, List<OutageRow> longest, List<RepeatItem> repeats,
-            List<Bucket> byDay, List<Bucket> byHour,
+            List<Bucket> byDay, List<Bucket> byHour, List<Bucket> byLevel,
+            List<HeatRow> heat, List<TimelineRow> timeline, long windowMinutes,
             List<OutageRow> openNow, List<OutageRow> notifyGaps,
             List<AvailabilityRow> availability, List<CertExpiry> certExpiries,
             int maintenanceOverlapCount, int stormCount) {
@@ -271,6 +288,7 @@ public class WeeklyOutageReportService {
                 start != null && start.isBefore(windowStart),
                 minutes,
                 weekMinutes,
+                start == null ? 0 : durationMin(windowStart, clippedStart),
                 e.getAcknowledgedBy(),
                 e.getAcknowledgedAt(),
                 e.getResolvedBy(),
@@ -354,7 +372,8 @@ public class WeeklyOutageReportService {
                 prevAlarms, rows.size() - prevAlarms,
                 typeStats(team.getId(), w),
                 groups, longest, repeats,
-                dayBuckets(rows), hourBuckets(rows),
+                dayBuckets(rows), hourBuckets(rows), levelBuckets(rows),
+                heatRows(rows), timelineRows(rows), durationMin(parseOrEpoch(w.fromUtc()), w.windowEnd()),
                 rows.stream().filter(OutageRow::stillOpen).toList(),
                 rows.stream().filter(OutageRow::notifyGap).toList(),
                 availabilityRows, certExpiries(team.getId()),
@@ -416,6 +435,94 @@ public class WeeklyOutageReportService {
         return m.entrySet().stream()
                 .map(en -> new Bucket(String.format("%02d:00", en.getKey()), en.getValue()))
                 .toList();
+    }
+
+    /**
+     * Seviye dağılımı — halka grafiği için. Sıra SABİT (kritik → yüksek → uyarı → diğer);
+     * veri sırasına bırakılsaydı iki haftanın grafiğinde aynı renk farklı seviyeyi gösterirdi.
+     */
+    private List<Bucket> levelBuckets(List<OutageRow> rows) {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        for (String lvl : LEVEL_ORDER) counts.put(lvl, 0);
+        for (OutageRow r : rows) {
+            String lvl = r.level() == null ? "OTHER" : r.level().toUpperCase(Locale.ROOT);
+            counts.merge(LEVEL_ORDER.contains(lvl) ? lvl : "OTHER", 1, Integer::sum);
+        }
+        return counts.entrySet().stream()
+                .filter(en -> en.getValue() > 0)
+                .map(en -> new Bucket(en.getKey(), en.getValue()))
+                .toList();
+    }
+
+    /** Sabit seviye sırası — grafik renkleri hafta hafta kaymasın. */
+    static final List<String> LEVEL_ORDER = List.of("CRITICAL", "HIGH", "WARNING", "INFO", "OTHER");
+
+    /** Gün × saat ısı haritası (satır = gün, sütun = saat, Europe/Istanbul). */
+    private List<HeatRow> heatRows(List<OutageRow> rows) {
+        int[][] grid = new int[7][24];
+        for (OutageRow r : rows) {
+            Instant i = parse(r.startedAt());
+            if (i == null) continue;
+            ZonedDateTime z = i.atZone(IST);
+            grid[z.getDayOfWeek().getValue() - 1][z.getHour()]++;
+        }
+        List<HeatRow> out = new ArrayList<>(7);
+        for (int d = 0; d < 7; d++) {
+            List<Integer> hours = new ArrayList<>(24);
+            for (int h = 0; h < 24; h++) hours.add(grid[d][h]);
+            out.add(new HeatRow(DAY_TR[d], List.copyOf(hours)));
+        }
+        return out;
+    }
+
+    /**
+     * Zaman çizelgesi satırları — hedef başına, kesinti süresi en uzun olan üstte.
+     *
+     * <p>Sıfır uzunluklu (haftaya hiç düşmeyen) aralıklar atılır: çizilemeyecek bir çubuk için
+     * satır ayırmak çizelgeyi seyreltir ve asıl deseni gizler.
+     */
+    private List<TimelineRow> timelineRows(List<OutageRow> rows) {
+        Map<String, List<TimelineSegment>> byTarget = new LinkedHashMap<>();
+        for (OutageRow r : rows) {
+            if (r.weekDurationMin() <= 0 || r.target() == null) continue;
+            byTarget.computeIfAbsent(r.target(), k -> new ArrayList<>())
+                    .add(new TimelineSegment(r.weekStartOffsetMin(), r.weekDurationMin(),
+                            r.level(), r.stillOpen()));
+        }
+        return byTarget.entrySet().stream()
+                .map(en -> new TimelineRow(en.getKey(), List.copyOf(en.getValue()),
+                        unionMinutes(en.getValue())))
+                .sorted(Comparator.comparingLong(TimelineRow::totalMin).reversed())
+                .toList();
+    }
+
+    /**
+     * Aralıkların BİRLEŞİMİ — çakışan alarmlar iki kez sayılmaz.
+     *
+     * <p>Çizelgedeki satır süresi "bu hedef haftanın ne kadarında kesintideydi" diye okunur ve
+     * 7 günü aşamaz. Ham toplam alınsaydı aynı anda düşen sertifika + HTTP + port alarmları
+     * üst üste sayılır ve canlı veride görüldüğü gibi <b>yedi günlük bir çizelgede 21 gün</b>
+     * yazardı. Çizilen çubuklar da zaten üst üste bindiği için sayı ile resim çelişirdi.
+     *
+     * <p>Alarm başına ham süreler kaybolmuyor: detay tablosu ve özet onları ayrıca gösteriyor.
+     */
+    static long unionMinutes(List<TimelineSegment> segments) {
+        List<long[]> spans = segments.stream()
+                .map(s -> new long[]{ s.startOffsetMin(), s.startOffsetMin() + s.durationMin() })
+                .sorted(Comparator.comparingLong(a -> a[0]))
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+        long total = 0, curStart = -1, curEnd = -1;
+        for (long[] s : spans) {
+            if (curEnd < 0) { curStart = s[0]; curEnd = s[1]; continue; }
+            if (s[0] <= curEnd) {                      // çakışıyor ya da bitişik → birleştir
+                curEnd = Math.max(curEnd, s[1]);
+            } else {
+                total += curEnd - curStart;
+                curStart = s[0]; curEnd = s[1];
+            }
+        }
+        if (curEnd >= 0) total += curEnd - curStart;
+        return total;
     }
 
     private List<CertExpiry> certExpiries(Long teamId) {

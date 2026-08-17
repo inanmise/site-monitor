@@ -106,6 +106,13 @@ class WeeklyOutageReportServiceTest {
         return e;
     }
 
+    /** Seviyesi belirtilmiş alarm — seviye dağılımı testleri için. */
+    private static AlertEvent level(long id, String domain, String lvl) {
+        AlertEvent e = alarm(id, domain, "HTTP_DOWN", "2026-06-16T09:00:00");
+        e.setAlertLevel(lvl);
+        return e;
+    }
+
     private static AlertEvent resolved(long id, String domain, String type, String from, String to) {
         AlertEvent e = alarm(id, domain, type, from);
         e.setResolved(true);
@@ -429,6 +436,127 @@ class WeeklyOutageReportServiceTest {
         WeeklyOutageData d = collect();
         assertThat(d.typeStats()).isEmpty();
         assertThat(d.totalAlarms()).isEqualTo(1);
+    }
+
+    // ── Grafik verisi ────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Zaman çizelgesi HEDEF başına satır verir; aynı hedefin iki alarmı tek satırda birleşir")
+    void timelineGroupsSegmentsByTarget() {
+        stubAlarms(List.of(
+                resolved(1, "a.com", "HTTP_DOWN", "2026-06-15T09:00:00", "2026-06-15T10:00:00"),
+                resolved(2, "a.com", "PORT_DOWN", "2026-06-17T09:00:00", "2026-06-17T09:30:00"),
+                resolved(3, "b.com", "HTTP_DOWN", "2026-06-16T09:00:00", "2026-06-16T09:15:00")), List.of(), List.of());
+
+        var timeline = collect().timeline();
+
+        assertThat(timeline).hasSize(2);
+        // En uzun toplam kesinti ÜSTTE — grafiği okuyan önce en kötüyü görsün.
+        assertThat(timeline.get(0).target()).isEqualTo("a.com");
+        assertThat(timeline.get(0).segments()).hasSize(2);
+        assertThat(timeline.get(0).totalMin()).isEqualTo(90);   // 60 + 30, çakışma yok
+        assertThat(timeline.get(1).target()).isEqualTo("b.com");
+    }
+
+    @Test
+    @DisplayName("Çizelge süresi ÇAKIŞAN alarmları iki kez saymaz — 7 günlük çizelgede 21 gün yazamaz")
+    void timelineTotalIsUnionNotSum() {
+        // Aynı hedefte üç alarm AYNI ANDA açık (sertifika + HTTP + port birlikte düştü).
+        // Ham toplam alınsaydı canlı veride görüldüğü gibi "21g" yazardı.
+        stubAlarms(List.of(), List.of(
+                alarm(1, "cakisan.com", "EXPIRY", "2026-06-01T00:00:00"),
+                alarm(2, "cakisan.com", "HTTP_DOWN", "2026-06-01T00:00:00"),
+                alarm(3, "cakisan.com", "PORT_DOWN", "2026-06-01T00:00:00")), List.of());
+
+        var row = collect().timeline().get(0);
+
+        assertThat(row.segments()).hasSize(3);                 // çubuklar korunur
+        assertThat(row.totalMin()).isEqualTo(10_080);          // ama süre TEK hafta = 7×1440
+    }
+
+    @Test
+    @DisplayName("Birleşim hesabı: ayrık, çakışan, bitişik ve iç içe aralıklar")
+    void unionMinutesCoversTheEdgeCases() {
+        java.util.function.BiFunction<Long, Long, WeeklyOutageReportService.TimelineSegment> seg =
+                (s, d) -> new WeeklyOutageReportService.TimelineSegment(s, d, "CRITICAL", false);
+
+        // Ayrık: 0-10 ve 20-30 → 20
+        assertThat(WeeklyOutageReportService.unionMinutes(List.of(seg.apply(0L, 10L), seg.apply(20L, 10L))))
+                .isEqualTo(20);
+        // Çakışan: 0-10 ve 5-15 → 15
+        assertThat(WeeklyOutageReportService.unionMinutes(List.of(seg.apply(0L, 10L), seg.apply(5L, 10L))))
+                .isEqualTo(15);
+        // Bitişik: 0-10 ve 10-20 → 20 (tek kesinti gibi okunur)
+        assertThat(WeeklyOutageReportService.unionMinutes(List.of(seg.apply(0L, 10L), seg.apply(10L, 10L))))
+                .isEqualTo(20);
+        // İç içe: 0-100 ve 20-30 → 100 (kısa olan uzunun içinde kaybolur)
+        assertThat(WeeklyOutageReportService.unionMinutes(List.of(seg.apply(0L, 100L), seg.apply(20L, 10L))))
+                .isEqualTo(100);
+        // Sırasız girdi de doğru sonuç vermeli
+        assertThat(WeeklyOutageReportService.unionMinutes(List.of(seg.apply(50L, 10L), seg.apply(0L, 10L))))
+                .isEqualTo(20);
+        assertThat(WeeklyOutageReportService.unionMinutes(List.of())).isZero();
+    }
+
+    @Test
+    @DisplayName("Çizelge konumu pencere BAŞINA göre; devreden alarm 0'dan başlar")
+    void timelineOffsetsAreRelativeToWindowStart() {
+        stubAlarms(List.of(
+                // 15 Haziran Pzt 00:00 IST = pencere başı. 09:00 IST → 540 dk sonra.
+                resolved(1, "gec.com", "HTTP_DOWN", "2026-06-15T06:00:00", "2026-06-15T07:00:00")),
+                List.of(alarm(2, "devreden.com", "PORT_DOWN", "2026-06-01T00:00:00")), List.of());
+
+        var byTarget = collect().timeline().stream()
+                .collect(java.util.stream.Collectors.toMap(r -> r.target(), r -> r));
+
+        // 06:00 UTC = 09:00 IST → pencere başından 540 dk.
+        assertThat(byTarget.get("gec.com").segments().get(0).startOffsetMin()).isEqualTo(540);
+        // Devreden alarm haftadan ÖNCE açıldı → çubuk pencerenin en başından başlar.
+        assertThat(byTarget.get("devreden.com").segments().get(0).startOffsetMin()).isZero();
+    }
+
+    @Test
+    @DisplayName("Isı haritası 7×24 ızgara; sayım doğru hücreye Europe/Istanbul ile düşer")
+    void heatmapIsSevenByTwentyFour() {
+        // 16 Haziran Salı 22:30 UTC = 17 Haziran ÇARŞAMBA 01:30 IST.
+        stubAlarms(List.of(alarm(1, "a.com", "HTTP_DOWN", "2026-06-16T22:30:00")), List.of(), List.of());
+
+        var heat = collect().heat();
+
+        assertThat(heat).hasSize(7);
+        assertThat(heat).allSatisfy(r -> assertThat(r.hours()).hasSize(24));
+        assertThat(heat.get(2).day()).isEqualTo("Çarşamba");
+        assertThat(heat.get(2).hours().get(1)).isEqualTo(1);
+        // Başka hiçbir hücreye sızmamalı.
+        assertThat(heat.stream().flatMap(r -> r.hours().stream()).mapToInt(Integer::intValue).sum()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Seviye dağılımı SABİT sırada — grafik renkleri hafta hafta kaymaz")
+    void levelBucketsUseFixedOrder() {
+        stubAlarms(List.of(
+                level(1, "a.com", "WARNING"), level(2, "b.com", "CRITICAL"),
+                level(3, "c.com", "HIGH"), level(4, "d.com", "CRITICAL")), List.of(), List.of());
+
+        var byLevel = collect().byLevel();
+
+        // Veri sırasına bırakılsaydı (WARNING önce geldi) iki haftanın grafiğinde aynı renk
+        // farklı seviyeyi gösterirdi.
+        assertThat(byLevel).extracting(WeeklyOutageReportService.Bucket::label)
+                .containsExactly("CRITICAL", "HIGH", "WARNING");
+        assertThat(byLevel.get(0).count()).isEqualTo(2);
+        // Sıfır olan seviyeler çizilmez — boş dilim gürültüdür.
+        assertThat(byLevel).noneMatch(b -> b.count() == 0);
+    }
+
+    @Test
+    @DisplayName("Bilinmeyen seviye dağılımdan DÜŞMEZ, 'OTHER' kovasına girer")
+    void unknownLevelFallsToOtherBucket() {
+        stubAlarms(List.of(level(1, "a.com", "BOYLE_BIR_SEVIYE_YOK")), List.of(), List.of());
+
+        assertThat(collect().byLevel())
+                .extracting(WeeklyOutageReportService.Bucket::label)
+                .containsExactly("OTHER");
     }
 
     // ── Kapsam (IDOR) ────────────────────────────────────────────────────────

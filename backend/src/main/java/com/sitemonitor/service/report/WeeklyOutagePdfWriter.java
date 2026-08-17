@@ -7,6 +7,8 @@ import com.sitemonitor.service.report.WeeklyOutageReportService.Bucket;
 import com.sitemonitor.service.report.WeeklyOutageReportService.CertExpiry;
 import com.sitemonitor.service.report.WeeklyOutageReportService.OutageRow;
 import com.sitemonitor.service.report.WeeklyOutageReportService.RepeatItem;
+import com.sitemonitor.service.report.WeeklyOutageReportService.TimelineRow;
+import com.sitemonitor.service.report.WeeklyOutageReportService.TimelineSegment;
 import com.sitemonitor.service.report.WeeklyOutageReportService.TypeGroup;
 import com.sitemonitor.service.report.WeeklyOutageReportService.WeeklyOutageData;
 
@@ -43,6 +45,7 @@ class WeeklyOutagePdfWriter implements AutoCloseable {
         } else {
             weekOverWeek(d);
             typeSummary(d);
+            timeline(d);
             outageDetail(d);
             longestAndRepeats(d);
             distribution(d);
@@ -68,14 +71,27 @@ class WeeklyOutagePdfWriter implements AutoCloseable {
 
         sectionHeader("Yönetici Özeti");
 
-        List<String[]> cards = new ArrayList<>();
-        cards.add(new String[]{ "Toplam alarm", String.valueOf(d.totalAlarms()) });
-        cards.add(new String[]{ "Hâlâ açık", String.valueOf(d.stillOpenCount()) });
-        cards.add(new String[]{ "Etkilenen hedef", String.valueOf(d.affectedTargets()) });
-        cards.add(new String[]{ "Kesinti süresi (bu hafta)", WeeklyOutageReportService.humanDuration(d.totalDowntimeMin()) });
-        cards.add(new String[]{ "Ortalama erişilebilirlik", pct(d.avgAvailabilityPct()) });
-        cards.add(new String[]{ "Kesinti yaşayan domain", d.domainsWithOutage() + " / " + d.availability().size() });
+        // Kartların rengi DURUMU anlatır: sorun varsa kırmızı, temizse yeşil, nötr bilgi gri.
+        // Renk tek başına taşıyıcı değil — sayı ve etiket her hâlükârda yazılı (renk körlüğü /
+        // siyah-beyaz çıktı).
+        List<Card> cards = new ArrayList<>();
+        cards.add(new Card("Toplam alarm", String.valueOf(d.totalAlarms()),
+                d.totalAlarms() > 0 ? Tone.WARN : Tone.GOOD));
+        cards.add(new Card("Hâlâ açık", String.valueOf(d.stillOpenCount()),
+                d.stillOpenCount() > 0 ? Tone.BAD : Tone.GOOD));
+        cards.add(new Card("Etkilenen hedef", String.valueOf(d.affectedTargets()),
+                d.affectedTargets() > 0 ? Tone.WARN : Tone.GOOD));
+        cards.add(new Card("Kesinti süresi (bu hafta)",
+                WeeklyOutageReportService.humanDuration(d.totalDowntimeMin()),
+                d.totalDowntimeMin() > 0 ? Tone.WARN : Tone.GOOD));
+        cards.add(new Card("Ortalama erişilebilirlik", pct(d.avgAvailabilityPct()),
+                availabilityTone(d.avgAvailabilityPct())));
+        cards.add(new Card("Kesinti yaşayan domain",
+                d.domainsWithOutage() + " / " + d.availability().size(),
+                d.domainsWithOutage() > 0 ? Tone.BAD : Tone.GOOD));
         statCards(cards);
+
+        levelDonut(d);
 
         List<String> notes = new ArrayList<>();
         if (d.totalDowntimeMin() > WEEK_MINUTES) {
@@ -141,24 +157,144 @@ class WeeklyOutagePdfWriter implements AutoCloseable {
     private void typeSummary(WeeklyOutageData d) throws IOException {
         if (d.typeStats().isEmpty()) return;
         sectionHeader("İzleme Türü Bazında Özet");
+        typeBars(d);
         float[] w = { 92, 46, 58, 52, 52, 46, 46 };
         String[] head = { "Tür", "İzleme", "Kontrol", "Başarı %", "Δ Başarı", "Açılan", "Açık" };
         table(head, w, () -> {
-            List<String[]> rows = new ArrayList<>();
+            List<Cell[]> rows = new ArrayList<>();
             for (TypeStats t : d.typeStats()) {
                 if (t.activeMonitors() == 0 && t.alarmsOpened() == 0 && t.alarmsOpen() == 0) continue;
-                rows.add(new String[]{
+                rows.add(p(
                         MonitorTypeCatalog.label(t.type()),
                         String.valueOf(t.activeMonitors()),
                         String.valueOf(t.totalChecks()),
                         t.successRate() == null ? "—" : fmt(t.successRate()),
                         t.successRateDelta() == null ? "—" : signed(t.successRateDelta()),
                         String.valueOf(t.alarmsOpened()),
-                        String.valueOf(t.alarmsOpen()) });
+                        String.valueOf(t.alarmsOpen()) ));
             }
             return rows;
         });
         note("İzlemesi ve alarmı olmayan türler gizlendi.");
+    }
+
+    /**
+     * Tür başına açılan/açık alarm çubukları — "bu hafta hangi tür sorunluydu" tek bakışta.
+     *
+     * <p>Yalnız alarmı olan türler çizilir; sıfırlı dokuz satır grafiği okunmaz hâle getirirdi.
+     * Sayılar çubukların yanında AYRICA yazılı — çubuk uzunluğunu gözle ölçmek gerekmez ve
+     * siyah-beyaz çıktıda bilgi kaybolmaz.
+     */
+    private void typeBars(WeeklyOutageData d) throws IOException {
+        List<TypeStats> withAlarms = d.typeStats().stream()
+                .filter(t -> t.alarmsOpened() > 0 || t.alarmsOpen() > 0).toList();
+        if (withAlarms.isEmpty()) {
+            note("Bu hafta hiçbir izleme türünde alarm açılmadı.");
+            return;
+        }
+        int max = withAlarms.stream().mapToInt(t -> Math.max(t.alarmsOpened(), t.alarmsOpen())).max().orElse(1);
+        float labelW = 92, barMax = 190;
+
+        c.ensureSpace(16);
+        c.text(c.regular, 6.5f, MARGIN + labelW, c.y, "açılan", BLUE);
+        c.text(c.regular, 6.5f, MARGIN + labelW + 30, c.y, "· açık", AMBER);
+        c.y -= 10;
+
+        for (TypeStats t : withAlarms) {
+            c.ensureSpace(20);
+            c.text(c.regular, 7.5f, MARGIN, c.y - 3,
+                    c.clip(MonitorTypeCatalog.label(t.type()), labelW - 6, c.regular, 7.5f), INK);
+            c.hBar(MARGIN + labelW, c.y + 1, barMax, t.alarmsOpened(), max, BLUE);
+            c.hBar(MARGIN + labelW, c.y - 8, barMax, t.alarmsOpen(), max, AMBER);
+            c.text(c.regular, 6.8f, MARGIN + labelW + barMax + 6, c.y + 1,
+                    t.alarmsOpened() + " açılan", LABEL);
+            c.text(c.regular, 6.8f, MARGIN + labelW + barMax + 6, c.y - 8,
+                    t.alarmsOpen() + " açık", LABEL);
+            c.y -= 20;
+        }
+        c.y -= 4;
+    }
+
+    // ── 3b. Kesinti zaman çizelgesi ──────────────────────────────────────────
+
+    /**
+     * Hafta boyunca hedef başına kesinti aralıkları (Gantt).
+     *
+     * <p>Raporun en çok bilgi taşıyan görseli: "hangi izleme ne zaman ne kadar kesinti yaşadı"
+     * sorusunun doğrudan cevabı. Satırlar alt alta hizalı olduğu için AYNI ANDA düşen hedefler
+     * (ortak kök neden / alarm fırtınası) tabloda hiç görünmeyecek şekilde gözle fark edilir.
+     *
+     * <p>Çubuk rengi alarm SEVİYESİNDEN gelir ve tablo rozetleriyle aynı paleti kullanır; sağda
+     * toplam süre yazılı olduğu için renk kaybolsa da bilgi durur.
+     */
+    private void timeline(WeeklyOutageData d) throws IOException {
+        if (d.timeline().isEmpty() || d.windowMinutes() <= 0) return;
+        sectionHeader("Kesinti Zaman Çizelgesi");
+        note("Her satır bir hedef, her çubuk o hedefin bir kesinti aralığı. Renk alarm seviyesini "
+                + "gösterir. Sağdaki süre, hedefin haftanın NE KADARINDA kesintide olduğudur: "
+                + "aynı anda süren alarmlar iki kez sayılmaz, bu yüzden bu sayı 7 günü aşamaz "
+                + "(yönetici özetindeki toplam ise alarm başına sürelerin toplamıdır ve aşabilir). "
+                + "Alt alta hizalanan çubuklar eşzamanlı kesintiyi (ortak kök neden olabilir) işaret eder.");
+
+        float labelW = 132, chartW = 300, durW = 60;
+        Runnable axis = () -> {
+            try { drawTimelineAxis(labelW, chartW); }
+            catch (IOException e) { throw new java.io.UncheckedIOException(e); }
+        };
+        c.ensureSpace(30);
+        axis.run();
+        c.setPageHeaderHook(axis);
+        try {
+            for (TimelineRow row : d.timeline()) {
+                c.ensureSpace(13);
+                c.text(c.regular, 7f, MARGIN, c.y,
+                        c.clip(nz(row.target()), labelW - 6, c.regular, 7f), INK);
+                // Zemin: haftanın tamamı açık gri — çubuk yoksa "veri yok" değil "kesinti yok" demek.
+                c.rect(MARGIN + labelW, c.y - 1, chartW, 7f, new float[]{ 241 / 255f, 245 / 255f, 249 / 255f });
+                for (TimelineSegment s : row.segments()) {
+                    float x = MARGIN + labelW + (float) (chartW * s.startOffsetMin() / d.windowMinutes());
+                    float w = (float) (chartW * s.durationMin() / d.windowMinutes());
+                    // Çok kısa kesinti 0.1pt olur ve hiç çizilmez → "kesinti yaşanmamış" gibi okunur.
+                    w = Math.max(w, 1.2f);
+                    if (x + w > MARGIN + labelW + chartW) w = MARGIN + labelW + chartW - x;
+                    if (w > 0) c.rect(x, c.y - 1, w, 7f, PdfCanvas.levelSolid(s.level()));
+                }
+                c.text(c.regular, 6.8f, MARGIN + labelW + chartW + 6, c.y,
+                        c.clip(WeeklyOutageReportService.humanDuration(row.totalMin()), durW, c.regular, 6.8f), LABEL);
+                c.y -= 12;
+            }
+        } finally {
+            c.setPageHeaderHook(null);
+        }
+        c.y -= 6;
+        levelLegend();
+    }
+
+    /** Çizelgenin gün ekseni — sayfa kırılımında yeniden çizilir, yoksa alttaki çubuklar okunmaz. */
+    private void drawTimelineAxis(float labelW, float chartW) throws IOException {
+        float x0 = MARGIN + labelW;
+        String[] days = { "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz" };
+        for (int i = 0; i < 7; i++) {
+            float x = x0 + chartW * i / 7f;
+            c.text(c.regular, 6f, x + 1, c.y, days[i], MUTED);
+            c.line(x, c.y - 3, x, RULE);
+        }
+        c.line(x0, c.y - 3, x0 + chartW, RULE);
+        c.y -= 13;
+    }
+
+    /** Seviye renk göstergesi — renk körlüğü/siyah-beyaz için ad ve renk birlikte. */
+    private void levelLegend() throws IOException {
+        c.ensureSpace(14);
+        float x = MARGIN;
+        c.text(c.regular, 6.5f, x, c.y, "Seviye:", LABEL);
+        x += 32;
+        for (String lvl : List.of("CRITICAL", "HIGH", "WARNING")) {
+            c.rect(x, c.y - 1, 7, 7, PdfCanvas.levelSolid(lvl));
+            c.text(c.regular, 6.5f, x + 10, c.y, PdfCanvas.levelLabel(lvl), INK);
+            x += 12 + c.width(PdfCanvas.levelLabel(lvl), c.regular, 6.5f) + 12;
+        }
+        c.y -= 14;
     }
 
     // ── 4. Kesinti detayı — tür bazında (ana gövde) ──────────────────────────
@@ -171,20 +307,21 @@ class WeeklyOutagePdfWriter implements AutoCloseable {
         for (TypeGroup g : d.groups()) {
             c.ensureSpace(40);
             groupHeader(g.label(), g.rows().size());
-            float[] w = { 118, 66, 52, 52, 42, 58, 34, 62 };
-            String[] head = { "Hedef", "Alarm", "Başlangıç", "Bitiş", "Süre", "Sahiplenen", "Bild.", "Durum" };
+            float[] w = { 108, 62, 46, 50, 48, 40, 52, 30, 62 };
+            String[] head = { "Hedef", "Alarm", "Seviye", "Başlangıç", "Bitiş", "Süre", "Sahiplenen", "Bild.", "Durum" };
             table(head, w, () -> {
-                List<String[]> rows = new ArrayList<>();
+                List<Cell[]> rows = new ArrayList<>();
                 for (OutageRow r : g.rows()) {
-                    rows.add(new String[]{
-                            nz(r.target()),
-                            nz(r.alertType()),
-                            WeeklyOutageReportService.shortStamp(r.startedAt()),
-                            r.stillOpen() ? "sürüyor" : WeeklyOutageReportService.shortStamp(r.endedAt()),
-                            WeeklyOutageReportService.humanDuration(r.durationMin()),
-                            nz(r.acknowledgedBy()),
-                            notifyCell(r),
-                            statusCell(r) });
+                    rows.add(new Cell[]{
+                            plain(nz(r.target())),
+                            plain(nz(r.alertType())),
+                            levelBadge(r.level()),
+                            plain(WeeklyOutageReportService.shortStamp(r.startedAt())),
+                            plain(r.stillOpen() ? "sürüyor" : WeeklyOutageReportService.shortStamp(r.endedAt())),
+                            plain(WeeklyOutageReportService.humanDuration(r.durationMin())),
+                            plain(nz(r.acknowledgedBy())),
+                            notifyCellColored(r),
+                            statusBadge(r) });
                 }
                 return rows;
             });
@@ -228,14 +365,14 @@ class WeeklyOutagePdfWriter implements AutoCloseable {
             float[] w = { 140, 78, 62, 62, 62, 80 };
             String[] head = { "Hedef", "Alarm", "Süre", "Başlangıç", "Bitiş", "Tür" };
             table(head, w, () -> {
-                List<String[]> rows = new ArrayList<>();
+                List<Cell[]> rows = new ArrayList<>();
                 for (OutageRow r : d.longest()) {
-                    rows.add(new String[]{
+                    rows.add(p(
                             nz(r.target()), nz(r.alertType()),
                             WeeklyOutageReportService.humanDuration(r.durationMin()),
                             WeeklyOutageReportService.shortStamp(r.startedAt()),
                             r.stillOpen() ? "sürüyor" : WeeklyOutageReportService.shortStamp(r.endedAt()),
-                            MonitorTypeCatalog.label(r.monitorType()) });
+                            MonitorTypeCatalog.label(r.monitorType()) ));
                 }
                 return rows;
             });
@@ -248,10 +385,10 @@ class WeeklyOutagePdfWriter implements AutoCloseable {
             float[] w = { 170, 100, 96, 58 };
             String[] head = { "Hedef", "Alarm", "Tür", "Tekrar" };
             table(head, w, () -> {
-                List<String[]> rows = new ArrayList<>();
+                List<Cell[]> rows = new ArrayList<>();
                 for (RepeatItem r : d.repeats()) {
-                    rows.add(new String[]{ nz(r.target()), nz(r.alertType()), nz(r.typeLabel()),
-                            r.count() + " kez" });
+                    rows.add(p( nz(r.target()), nz(r.alertType()), nz(r.typeLabel()),
+                            r.count() + " kez" ));
                 }
                 return rows;
             });
@@ -262,34 +399,63 @@ class WeeklyOutagePdfWriter implements AutoCloseable {
 
     private void distribution(WeeklyOutageData d) throws IOException {
         sectionHeader("Gün ve Saat Dağılımı");
+
         int maxDay = d.byDay().stream().mapToInt(Bucket::count).max().orElse(0);
         for (Bucket b : d.byDay()) {
             c.ensureSpace(13);
             c.text(c.regular, 7.5f, MARGIN, c.y, b.label(), INK);
-            barAt(MARGIN + 66, b.count(), maxDay, 170);
+            c.hBar(MARGIN + 66, c.y - 1.5f, 170, b.count(), maxDay, BLUE);
+            float w = maxDay <= 0 ? 0 : Math.max(b.count() > 0 ? 1.5f : 0f, 170f * b.count() / maxDay);
+            c.text(c.regular, 7.5f, MARGIN + 66 + w + 5, c.y, String.valueOf(b.count()), LABEL);
             c.y -= 12;
         }
-        c.y -= 6;
+        c.y -= 8;
 
-        if (!d.byHour().isEmpty()) {
-            c.ensureSpace(16);
-            c.text(c.bold, 7.5f, MARGIN, c.y, "Alarm düşen saatler (Europe/Istanbul)", LABEL);
-            c.y -= 12;
-            int maxHour = d.byHour().stream().mapToInt(Bucket::count).max().orElse(0);
-            for (Bucket b : d.byHour()) {
-                c.ensureSpace(13);
-                c.text(c.regular, 7.5f, MARGIN, c.y, b.label(), INK);
-                barAt(MARGIN + 66, b.count(), maxHour, 170);
-                c.y -= 12;
-            }
-            note("Hiç alarm düşmeyen saatler listelenmez — 24 satırın çoğu sıfır olsaydı desen okunmazdı.");
-        }
+        heatmap(d);
     }
 
-    private void barAt(float x, int value, int max, float maxWidth) throws IOException {
-        float w = max <= 0 ? 0 : Math.max(value > 0 ? 2f : 0f, maxWidth * value / max);
-        if (w > 0) c.rect(x, c.y - 1.5f, w, 7f, BLUE);
-        c.text(c.regular, 7.5f, x + w + 5, c.y, String.valueOf(value), LABEL);
+    /**
+     * Gün × saat ısı haritası.
+     *
+     * <p>İki ayrı liste (günler ve saatler) her boyutu tek başına gösteriyordu; "her Cumartesi
+     * gece 03:00" gibi bir desen ancak iki boyut BİRLİKTE çizilince görünür. Yoğunluk koyulukla
+     * verilir ama sıfır olmayan her hücreye SAYI da yazılır — renk tek başına taşıyıcı değil.
+     */
+    private void heatmap(WeeklyOutageData d) throws IOException {
+        int max = d.heat().stream().flatMap(r -> r.hours().stream()).mapToInt(Integer::intValue).max().orElse(0);
+        if (max == 0) return;
+
+        c.ensureSpace(24 + 7 * 13);
+        c.text(c.bold, 7.5f, MARGIN, c.y, "Gün × saat yoğunluğu (Europe/Istanbul)", LABEL);
+        c.y -= 12;
+
+        float labelW = 52, cellW = (CONTENT_W - labelW - 26) / 24f, cellH = 11f;
+
+        // Saat başlıkları — her saati yazmak sığmaz, 3 saatte bir yeter.
+        for (int h = 0; h < 24; h += 3) {
+            c.text(c.regular, 5.5f, MARGIN + labelW + h * cellW, c.y, String.format("%02d", h), MUTED);
+        }
+        c.y -= 9;
+
+        for (WeeklyOutageReportService.HeatRow row : d.heat()) {
+            c.ensureSpace(cellH + 2);
+            c.text(c.regular, 6.8f, MARGIN, c.y + 2, row.day(), INK);
+            for (int h = 0; h < 24; h++) {
+                int v = row.hours().get(h);
+                float x = MARGIN + labelW + h * cellW;
+                c.heatCell(x, c.y, cellW - 1f, cellH - 1f, (double) v / max, RED);
+                if (v > 0) {
+                    String s = String.valueOf(v);
+                    // Koyu hücrede beyaz, açık hücrede koyu yazı — ikisi de okunur kalsın.
+                    float[] fg = ((double) v / max) > 0.55 ? WHITE : INK;
+                    c.text(c.bold, 5.5f, x + (cellW - 1f - c.width(s, c.bold, 5.5f)) / 2, c.y + 3, s, fg);
+                }
+            }
+            c.y -= cellH + 1;
+        }
+        c.y -= 6;
+        note("Koyuluk o saatte açılan alarm sayısını gösterir; sayı hücrenin içinde de yazılıdır. "
+                + "Boş hücre o saatte alarm açılmadığı anlamına gelir.");
     }
 
     // ── 7. Hâlâ açık alarmlar ────────────────────────────────────────────────
@@ -301,13 +467,13 @@ class WeeklyOutagePdfWriter implements AutoCloseable {
         float[] w = { 132, 74, 58, 56, 58, 46, 52 };
         String[] head = { "Hedef", "Alarm", "Seviye", "Başlangıç", "Süre", "Bild.", "Sahiplenen" };
         table(head, w, () -> {
-            List<String[]> rows = new ArrayList<>();
+            List<Cell[]> rows = new ArrayList<>();
             for (OutageRow r : d.openNow()) {
-                rows.add(new String[]{
-                        nz(r.target()), nz(r.alertType()), nz(r.level()),
-                        WeeklyOutageReportService.shortStamp(r.startedAt()),
-                        WeeklyOutageReportService.humanDuration(r.durationMin()),
-                        notifyCell(r), nz(r.acknowledgedBy()) });
+                rows.add(new Cell[]{
+                        plain(nz(r.target())), plain(nz(r.alertType())), levelBadge(r.level()),
+                        plain(WeeklyOutageReportService.shortStamp(r.startedAt())),
+                        plain(WeeklyOutageReportService.humanDuration(r.durationMin())),
+                        notifyCellColored(r), plain(nz(r.acknowledgedBy())) });
             }
             return rows;
         });
@@ -323,12 +489,13 @@ class WeeklyOutagePdfWriter implements AutoCloseable {
         float[] w = { 150, 88, 62, 66, 62 };
         String[] head = { "Hedef", "Alarm", "Seviye", "Başlangıç", "Başarısız" };
         table(head, w, () -> {
-            List<String[]> rows = new ArrayList<>();
+            List<Cell[]> rows = new ArrayList<>();
             for (OutageRow r : d.notifyGaps()) {
-                rows.add(new String[]{
-                        nz(r.target()), nz(r.alertType()), nz(r.level()),
-                        WeeklyOutageReportService.shortStamp(r.startedAt()),
-                        r.notifyFailed() > 0 ? r.notifyFailed() + " deneme" : "kayıt yok" });
+                rows.add(new Cell[]{
+                        plain(nz(r.target())), plain(nz(r.alertType())), levelBadge(r.level()),
+                        plain(WeeklyOutageReportService.shortStamp(r.startedAt())),
+                        new Cell(r.notifyFailed() > 0 ? r.notifyFailed() + " deneme" : "kayıt yok",
+                                null, RED, null, null) });
             }
             return rows;
         });
@@ -339,24 +506,27 @@ class WeeklyOutagePdfWriter implements AutoCloseable {
     private void availability(WeeklyOutageData d) throws IOException {
         if (d.availability().isEmpty()) return;
         sectionHeader("Erişilebilirlik (HTTP · sertifika envanteri domainleri)");
-        float[] w = { 150, 52, 42, 62, 62, 46, 46 };
+        float[] w = { 142, 76, 42, 62, 62, 46, 46 };
         String[] head = { "Domain", "Uptime %", "Kesinti", "Toplam süre", "En uzun", "Ort. ms", "p95 ms" };
         table(head, w, () -> {
-            List<String[]> rows = new ArrayList<>();
+            List<Cell[]> rows = new ArrayList<>();
             for (AvailabilityRow r : d.availability()) {
-                rows.add(new String[]{
-                        nz(r.domain()),
-                        r.availabilityPct() == null ? "veri yok" : fmt(r.availabilityPct()),
-                        String.valueOf(r.outageCount()),
-                        WeeklyOutageReportService.humanDuration(r.downtimeMinutes()),
-                        WeeklyOutageReportService.humanDuration(r.longestOutageMinutes()),
-                        r.avgMs() == null ? "—" : String.valueOf(r.avgMs()),
-                        r.p95Ms() == null ? "—" : String.valueOf(r.p95Ms()) });
+                rows.add(new Cell[]{
+                        plain(nz(r.domain())),
+                        availabilityCell(r.availabilityPct()),
+                        r.outageCount() > 0 ? new Cell(String.valueOf(r.outageCount()), null, AMBER, null, null)
+                                            : plain("0"),
+                        plain(WeeklyOutageReportService.humanDuration(r.downtimeMinutes())),
+                        plain(WeeklyOutageReportService.humanDuration(r.longestOutageMinutes())),
+                        plain(r.avgMs() == null ? "—" : String.valueOf(r.avgMs())),
+                        plain(r.p95Ms() == null ? "—" : String.valueOf(r.p95Ms())) });
             }
             return rows;
         });
-        note("Bu tablo e-posta gövdesiyle AYNI kaynaktan gelir (uptime_checks) ve bakım pencerelerini "
-                + "hariç tutar; kapsamı yalnız sertifika envanterindeki domainlerdir.");
+        note("Uptime sütunundaki çubuk yüzdeyi görselleştirir: %99,9 ve üzeri yeşil, %99–99,9 turuncu, "
+                + "altı kırmızı. Yüzde ayrıca yazılıdır. Bu tablo e-posta gövdesiyle AYNI kaynaktan "
+                + "gelir (uptime_checks) ve bakım pencerelerini hariç tutar; kapsamı yalnız sertifika "
+                + "envanterindeki domainlerdir.");
     }
 
     // ── 10. Sertifika bitişleri ──────────────────────────────────────────────
@@ -367,12 +537,19 @@ class WeeklyOutagePdfWriter implements AutoCloseable {
         float[] w = { 220, 80, 80 };
         String[] head = { "Domain", "Kalan gün", "Durum" };
         table(head, w, () -> {
-            List<String[]> rows = new ArrayList<>();
+            List<Cell[]> rows = new ArrayList<>();
             for (CertExpiry e : d.certExpiries()) {
                 Integer days = e.daysRemaining();
                 String state = days == null ? "—" : days < 0 ? "SÜRESİ DOLDU" : days <= 15 ? "kritik"
                         : days <= 30 ? "yakın" : "izlemede";
-                rows.add(new String[]{ nz(e.domain()), days == null ? "—" : String.valueOf(days), state });
+                // Renk kalan güne göre; durum metni her hâlükârda yazılı kalır.
+                String lvl = days == null ? "" : days < 0 || days <= 15 ? "CRITICAL"
+                        : days <= 30 ? "HIGH" : "WARNING";
+                float[][] col = PdfCanvas.levelColors(lvl);
+                rows.add(new Cell[]{
+                        plain(nz(e.domain())),
+                        plain(days == null ? "—" : String.valueOf(days)),
+                        days == null ? plain(state) : new Cell(state, col[0], col[1], null, null) });
             }
             return rows;
         });
@@ -441,21 +618,81 @@ class WeeklyOutagePdfWriter implements AutoCloseable {
         c.y -= 3;
     }
 
-    private void statCards(List<String[]> cards) throws IOException {
+    /** Özet kartının durumu — rengi belirler; metin her zaman ayrıca yazılı kalır. */
+    private enum Tone { GOOD, WARN, BAD, NEUTRAL }
+
+    private record Card(String label, String value, Tone tone) {}
+
+    private static Tone availabilityTone(Double pct) {
+        if (pct == null) return Tone.NEUTRAL;
+        if (pct >= 99.9) return Tone.GOOD;
+        return pct >= 99.0 ? Tone.WARN : Tone.BAD;
+    }
+
+    private void statCards(List<Card> cards) throws IOException {
         float gap = 8f;
         int perRow = 3;
         float cw = (CONTENT_W - gap * (perRow - 1)) / perRow;
         for (int i = 0; i < cards.size(); i += perRow) {
             c.ensureSpace(42);
             for (int j = 0; j < perRow && i + j < cards.size(); j++) {
-                String[] card = cards.get(i + j);
+                Card card = cards.get(i + j);
                 float x = MARGIN + j * (cw + gap);
-                c.rect(x, c.y - 24, cw, 34, new float[]{ 248 / 255f, 250 / 255f, 252 / 255f });
-                c.text(c.regular, 6.8f, x + 8, c.y - 1, c.clip(card[0], cw - 16, c.regular, 6.8f), LABEL);
-                c.text(c.bold, 13f, x + 8, c.y - 18, c.clip(card[1], cw - 16, c.bold, 13f), INK);
+                float[] bg = switch (card.tone()) {
+                    case GOOD -> new float[]{ 236 / 255f, 253 / 255f, 245 / 255f };
+                    case WARN -> new float[]{ 255 / 255f, 247 / 255f, 237 / 255f };
+                    case BAD  -> new float[]{ 254 / 255f, 242 / 255f, 242 / 255f };
+                    case NEUTRAL -> new float[]{ 248 / 255f, 250 / 255f, 252 / 255f };
+                };
+                float[] fg = switch (card.tone()) {
+                    case GOOD -> GREEN;
+                    case WARN -> AMBER;
+                    case BAD  -> RED;
+                    case NEUTRAL -> INK;
+                };
+                c.rect(x, c.y - 24, cw, 34, bg);
+                // Sol kenarda ince renk şeridi — zemin rengi soluk yazdırıldığında bile ayırt edilir.
+                c.rect(x, c.y - 24, 2.5f, 34, fg);
+                c.text(c.regular, 6.8f, x + 10, c.y - 1, c.clip(card.label(), cw - 18, c.regular, 6.8f), LABEL);
+                c.text(c.bold, 13f, x + 10, c.y - 18, c.clip(card.value(), cw - 18, c.bold, 13f), fg);
             }
             c.y -= 42;
         }
+    }
+
+    /**
+     * Seviye dağılımı halkası + sayılı gösterge.
+     *
+     * <p>Gösterge zorunlu: dilim renkleri tek başına hangi seviyenin ne kadar olduğunu söylemez
+     * ve siyah-beyaz çıktıda tamamen kaybolur. Her satırda seviye ADI ve SAYISI yazılı.
+     */
+    private void levelDonut(WeeklyOutageData d) throws IOException {
+        int total = d.byLevel().stream().mapToInt(Bucket::count).sum();
+        if (total == 0) return;
+
+        c.ensureSpace(78);
+        float cx = MARGIN + 40, cy = c.y - 34;
+        double angle = 90;   // saat 12'den başla, saat yönünde ilerle
+        for (Bucket b : d.byLevel()) {
+            double sweep = 360.0 * b.count() / total;
+            c.donutSlice(cx, cy, 30, 17, angle - sweep, sweep, PdfCanvas.levelSolid(b.label()));
+            angle -= sweep;
+        }
+        // Ortada toplam — halkanın kendisi bir sayı vermez.
+        String totalStr = String.valueOf(total);
+        c.text(c.bold, 12f, cx - c.width(totalStr, c.bold, 12f) / 2, cy - 4, totalStr, INK);
+        c.text(c.regular, 5.5f, cx - c.width("alarm", c.regular, 5.5f) / 2, cy - 13, "alarm", LABEL);
+
+        float lx = MARGIN + 92;
+        float ly = c.y - 12;
+        for (Bucket b : d.byLevel()) {
+            c.rect(lx, ly - 1, 7, 7, PdfCanvas.levelSolid(b.label()));
+            String pctStr = String.format(Locale.of("tr", "TR"), "%.0f%%", 100.0 * b.count() / total);
+            c.text(c.bold, 7.5f, lx + 11, ly, PdfCanvas.levelLabel(b.label()), INK);
+            c.text(c.regular, 7.5f, lx + 62, ly, b.count() + " alarm  ·  " + pctStr, LABEL);
+            ly -= 12;
+        }
+        c.y -= 78;
     }
 
     /**
@@ -474,12 +711,12 @@ class WeeklyOutagePdfWriter implements AutoCloseable {
         c.setPageHeaderHook(header);
         try {
             int i = 0;
-            for (String[] row : supplier.rows()) {
+            for (Cell[] row : supplier.rows()) {
                 c.ensureSpace(12);
                 if (i % 2 == 1) c.rect(MARGIN, c.y - 3, CONTENT_W, 11, ZEBRA);
                 float x = MARGIN;
                 for (int col = 0; col < row.length && col < widths.length; col++) {
-                    c.text(c.regular, 7f, x + 3, c.y, c.clip(row[col], widths[col] - 6, c.regular, 7f), INK);
+                    drawCell(row[col], x, widths[col]);
                     x += widths[col];
                 }
                 c.y -= 11;
@@ -489,6 +726,52 @@ class WeeklyOutagePdfWriter implements AutoCloseable {
             c.setPageHeaderHook(null);
         }
         c.y -= 8;
+    }
+
+    /**
+     * Tablo hücresi: düz metin, renkli rozet ya da metin + oran çubuğu.
+     *
+     * <p>Rozet ve çubuk METNİ ASLA GİZLEMEZ — seviye adı ve yüzde her hâlükârda yazılı kalır.
+     * Renk yalnız hızlı taramaya yardım eder; siyah-beyaz yazdırıldığında ya da kırmızı-yeşil
+     * ayırt edilemediğinde hiçbir bilgi kaybolmaz (kullanıcı kararı).
+     */
+    private void drawCell(Cell cell, float x, float width) throws IOException {
+        if (cell == null) return;
+        String txt = c.clip(cell.text(), width - (cell.barPct() != null ? 34 : 6), c.regular, 7f);
+        if (cell.bg() != null) {
+            float w = Math.min(c.width(txt, c.bold, 6.5f) + 8, width - 4);
+            c.rect(x + 2, c.y - 2.5f, w, 10.5f, cell.bg());
+            c.text(c.bold, 6.5f, x + 6, c.y, txt, cell.fg());
+            return;
+        }
+        c.text(c.regular, 7f, x + 3, c.y, txt, cell.fg() == null ? INK : cell.fg());
+        if (cell.barPct() != null) {
+            c.ratioBar(x + width - 30, c.y + 0.5f, 26, cell.barPct(), cell.barColor());
+        }
+    }
+
+    /** Tablo hücresi — bg dolu ise rozet, barPct dolu ise metnin sağında oran çubuğu. */
+    private record Cell(String text, float[] bg, float[] fg, Double barPct, float[] barColor) {}
+
+    private static Cell[] p(String... values) {
+        Cell[] out = new Cell[values.length];
+        for (int i = 0; i < values.length; i++) out[i] = new Cell(values[i], null, null, null, null);
+        return out;
+    }
+
+    private static Cell plain(String s) { return new Cell(s, null, null, null, null); }
+
+    /** Seviye rozeti — 400 satırlık bir tabloda kritik olanı gözle bulmak aksi hâlde imkânsız. */
+    private static Cell levelBadge(String level) {
+        float[][] col = PdfCanvas.levelColors(level);
+        return new Cell(PdfCanvas.levelLabel(level), col[0], col[1], null, null);
+    }
+
+    /** Erişilebilirlik hücresi: yüzde yazılı + yanında eşiğe göre renklenen oran çubuğu. */
+    private static Cell availabilityCell(Double pct) {
+        if (pct == null) return plain("veri yok");
+        float[] color = pct >= 99.9 ? GREEN : pct >= 99.0 ? AMBER : RED;
+        return new Cell(fmt(pct), null, color, pct, color);
     }
 
     private void drawHeadRow(String[] head, float[] widths) throws IOException {
@@ -502,13 +785,43 @@ class WeeklyOutagePdfWriter implements AutoCloseable {
     }
 
     @FunctionalInterface
-    private interface RowSupplier { List<String[]> rows() throws IOException; }
+    private interface RowSupplier { List<Cell[]> rows() throws IOException; }
 
     // ── Hücre biçimleyiciler ─────────────────────────────────────────────────
 
     private static String notifyCell(OutageRow r) {
         if (r.notifySent() > 0) return r.notifySent() + (r.notifyFailed() > 0 ? "/" + r.notifyFailed() + "✗" : "");
         return r.notifyFailed() > 0 ? r.notifyFailed() + "✗" : "yok";
+    }
+
+    /** Bildirim hücresi — hiç ulaşmamışsa kırmızı. Metin ("yok") zaten bilgiyi taşıyor. */
+    private static Cell notifyCellColored(OutageRow r) {
+        String s = notifyCell(r);
+        return r.notifySent() == 0 ? new Cell(s, null, RED, null, null) : plain(s);
+    }
+
+    /**
+     * Durum rozeti — en BASKIN işaret renklendirilir.
+     *
+     * <p>Dört işaret (açık/devreden/bakım?/fırtına) tek hücreye sığmıyor; hepsi metin olarak
+     * yazılırken renk yalnız en önemlisini vurgular: hâlâ açık olmak, planlı bakım olmaktan
+     * daha acildir. Metnin tamamı korunduğu için renk kaybolsa da bilgi durur.
+     */
+    private static Cell statusBadge(OutageRow r) {
+        String txt = statusCell(r);
+        if (r.stillOpen()) {
+            float[][] col = PdfCanvas.levelColors("CRITICAL");
+            return new Cell(txt, col[0], col[1], null, null);
+        }
+        if (r.maintenanceOverlap()) {
+            float[][] col = PdfCanvas.levelColors("INFO");
+            return new Cell(txt, col[0], col[1], null, null);
+        }
+        if (r.stormId() != null) {
+            float[][] col = PdfCanvas.levelColors("HIGH");
+            return new Cell(txt, col[0], col[1], null, null);
+        }
+        return new Cell(txt, null, GREEN, null, null);   // çözüldü
     }
 
     /** Durum hücresi kesintinin "neyle işaretli" olduğunu tek yerde toplar. */

@@ -157,6 +157,105 @@ class PdfCanvas implements AutoCloseable {
         return x + w + 4;
     }
 
+    // ── Grafik ilkelleri ─────────────────────────────────────────────────────
+
+    /**
+     * Yatay çubuk: {@code maxWidth} üzerinden orantılı, sıfır olmayan değerler için en az 1.5pt.
+     *
+     * <p>En az genişlik önemli: 400 alarmın yanında 1 alarmlık çubuk 0.2pt olur ve HİÇ çizilmez —
+     * "bu türde alarm yok" gibi okunur. Görünür bir iz bırakmak yanlış okumayı önler.
+     */
+    void hBar(float x, float yy, float maxWidth, double value, double max, float[] color) throws IOException {
+        if (max <= 0) return;
+        float w = (float) (maxWidth * value / max);
+        if (value > 0) w = Math.max(w, 1.5f);
+        if (w > 0) rect(x, yy, w, 7f, color);
+    }
+
+    /** Çerçeveli oran çubuğu (erişilebilirlik) — dolu kısım renkli, kalan kısım açık gri. */
+    void ratioBar(float x, float yy, float w, double pct, float[] fill) throws IOException {
+        rect(x, yy, w, 5.5f, new float[]{ 226 / 255f, 232 / 255f, 240 / 255f });
+        double clamped = Math.max(0, Math.min(100, pct));
+        rect(x, yy, (float) (w * clamped / 100.0), 5.5f, fill);
+    }
+
+    /**
+     * Halka (donut) dilimi — PDFBox'ta yay ilkelı yok, çokgenle yaklaşıyoruz.
+     *
+     * <p>2°'lik adım 180 kenarlı bir çokgen verir; bu ölçekte (r ≈ 26pt) kenarlar gözle
+     * ayırt edilemez ve Bezier yaklaşımından çok daha az kod tutar.
+     */
+    void donutSlice(float cx, float cy, float rOuter, float rInner,
+                    double startDeg, double sweepDeg, float[] color) throws IOException {
+        if (sweepDeg <= 0) return;
+        cs.setNonStrokingColor(color[0], color[1], color[2]);
+        int steps = Math.max(2, (int) Math.ceil(sweepDeg / 2.0));
+        boolean first = true;
+        for (int i = 0; i <= steps; i++) {
+            double a = Math.toRadians(startDeg + sweepDeg * i / steps);
+            float px = cx + (float) (rOuter * Math.cos(a));
+            float py = cy + (float) (rOuter * Math.sin(a));
+            if (first) { cs.moveTo(px, py); first = false; } else { cs.lineTo(px, py); }
+        }
+        for (int i = steps; i >= 0; i--) {
+            double a = Math.toRadians(startDeg + sweepDeg * i / steps);
+            cs.lineTo(cx + (float) (rInner * Math.cos(a)), cy + (float) (rInner * Math.sin(a)));
+        }
+        cs.closePath();
+        cs.fill();
+    }
+
+    /**
+     * Isı haritası hücresi — yoğunluk 0..1 arasında beyazdan taban renge doğru.
+     *
+     * <p>Sıfır değerli hücre boş bırakılmaz, çok açık bir zemin alır: ızgaranın kendisi
+     * görünmezse "hangi saatler boş" bilgisi de kaybolur.
+     */
+    void heatCell(float x, float yy, float w, float h, double intensity, float[] base) throws IOException {
+        double t = Math.max(0, Math.min(1, intensity));
+        float[] empty = { 241 / 255f, 245 / 255f, 249 / 255f };
+        float[] c = {
+                (float) (empty[0] + (base[0] - empty[0]) * t),
+                (float) (empty[1] + (base[1] - empty[1]) * t),
+                (float) (empty[2] + (base[2] - empty[2]) * t) };
+        rect(x, yy, w, h, c);
+    }
+
+    // ── Seviye paleti (TEK kaynak) ───────────────────────────────────────────
+
+    /**
+     * Alarm seviyesinin zemin/yazı rengi. Tek yerde tutuluyor ki halka grafiği, zaman çizelgesi
+     * ve tablo rozetleri AYNI seviyeye aynı rengi versin — üç yerde ayrı palet olsaydı grafikle
+     * tablo birbirini tutmazdı.
+     */
+    static float[][] levelColors(String level) {
+        String l = level == null ? "" : level.toUpperCase(java.util.Locale.ROOT);
+        return switch (l) {
+            case "CRITICAL" -> new float[][]{ { 254 / 255f, 226 / 255f, 226 / 255f }, RED };
+            case "HIGH"     -> new float[][]{ { 255 / 255f, 237 / 255f, 213 / 255f }, AMBER };
+            case "WARNING"  -> new float[][]{ { 254 / 255f, 249 / 255f, 195 / 255f }, { 133 / 255f, 77 / 255f, 14 / 255f } };
+            case "INFO"     -> new float[][]{ { 219 / 255f, 234 / 255f, 254 / 255f }, BLUE };
+            default         -> new float[][]{ { 241 / 255f, 245 / 255f, 249 / 255f }, LABEL };
+        };
+    }
+
+    /** Grafiklerde kullanılan DOLGU rengi (rozet zemini değil) — çubuk/dilim/çizelge için. */
+    static float[] levelSolid(String level) {
+        return levelColors(level)[1];
+    }
+
+    /** Seviyenin Türkçe kısa adı — renk körlüğü ve siyah-beyaz çıktı için renk TEK BAŞINA yetmez. */
+    static String levelLabel(String level) {
+        String l = level == null ? "" : level.toUpperCase(java.util.Locale.ROOT);
+        return switch (l) {
+            case "CRITICAL" -> "KRİTİK";
+            case "HIGH"     -> "YÜKSEK";
+            case "WARNING"  -> "UYARI";
+            case "INFO"     -> "BİLGİ";
+            default         -> l.isEmpty() ? "—" : l;
+        };
+    }
+
     float width(String s, PDFont font, float size) throws IOException {
         return font.getStringWidth(encodable(font, s)) / 1000 * size;
     }

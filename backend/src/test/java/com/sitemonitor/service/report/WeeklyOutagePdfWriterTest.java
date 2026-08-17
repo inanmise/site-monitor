@@ -6,6 +6,8 @@ import com.sitemonitor.service.report.WeeklyOutageReportService.Bucket;
 import com.sitemonitor.service.report.WeeklyOutageReportService.CertExpiry;
 import com.sitemonitor.service.report.WeeklyOutageReportService.OutageRow;
 import com.sitemonitor.service.report.WeeklyOutageReportService.RepeatItem;
+import com.sitemonitor.service.report.WeeklyOutageReportService.TimelineRow;
+import com.sitemonitor.service.report.WeeklyOutageReportService.TimelineSegment;
 import com.sitemonitor.service.report.WeeklyOutageReportService.TypeGroup;
 import com.sitemonitor.service.report.WeeklyOutageReportService.WeeklyOutageData;
 import org.apache.pdfbox.Loader;
@@ -49,8 +51,29 @@ class WeeklyOutagePdfWriterTest {
 
     private static OutageRow row(String target, String type, String alertType, String msg) {
         return new OutageRow(1L, type, alertType, target, "CRITICAL",
-                "2026-06-16T09:00:00", "2026-06-16T11:00:00", false, false, 120, 120,
+                "2026-06-16T09:00:00", "2026-06-16T11:00:00", false, false, 120, 120, 0,
                 "ahmet", "2026-06-16T09:05:00", "sistem", 2, 0, false, null, msg);
+    }
+
+    /** Tek bir (gün, saat) hücresine değer koyan ısı haritası; kalan 167 hücre sıfır. */
+    private static List<WeeklyOutageReportService.HeatRow> heatOf(int day, int hour, int value) {
+        String[] days = { "Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar" };
+        List<WeeklyOutageReportService.HeatRow> out = new ArrayList<>();
+        for (int d = 0; d < 7; d++) {
+            List<Integer> hours = new ArrayList<>();
+            for (int h = 0; h < 24; h++) hours.add(d == day && h == hour ? value : 0);
+            out.add(new WeeklyOutageReportService.HeatRow(days[d], hours));
+        }
+        return out;
+    }
+
+    private static List<TimelineRow> timelineOf(List<OutageRow> rows) {
+        return rows.stream()
+                .map(r -> new TimelineRow(r.target(),
+                        List.of(new TimelineSegment(r.weekStartOffsetMin(), r.weekDurationMin(),
+                                r.level(), r.stillOpen())),
+                        r.weekDurationMin()))
+                .toList();
     }
 
     private static WeeklyOutageData data(List<TypeGroup> groups, int totalAlarms) {
@@ -67,6 +90,8 @@ class WeeklyOutagePdfWriterTest {
                         new Bucket("Perşembe", 0), new Bucket("Cuma", 0), new Bucket("Cumartesi", 0),
                         new Bucket("Pazar", 0)),
                 List.of(new Bucket("09:00", 2), new Bucket("14:00", 1)),
+                List.of(new Bucket("CRITICAL", 2), new Bucket("HIGH", 1)),
+                heatOf(1, 9, 2), timelineOf(all), 7L * 24 * 60,
                 all.stream().limit(1).toList(),
                 all.stream().limit(1).toList(),
                 List.of(new AvailabilityRow("a.com", 99.42, 2, 45, 30, 180L, 320L, 25)),
@@ -140,7 +165,8 @@ class WeeklyOutagePdfWriterTest {
         WeeklyOutageData quiet = new WeeklyOutageData(
                 "Sessiz Takım", "15–21 Haziran 2026", "22.06.2026 10:00",
                 0, 0, 0, 0, 0, 100.0, 0, 0, 0,
-                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), 7L * 24 * 60,
                 List.of(), List.of(), List.of(), List.of(), 0, 0);
 
         byte[] pdf = render(quiet);
@@ -178,14 +204,108 @@ class WeeklyOutagePdfWriterTest {
                 12, 12, 8, 7, 113_000, 85.71, 3, 3, 9,      // 113000 dk ≈ 78 gün
                 List.of(), List.of(new TypeGroup("http", "HTTP/Website",
                         List.of(row("a.com", "http", "HTTP_DOWN", "hata")))),
-                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                List.of(), List.of(), 0, 1);
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), 7L * 24 * 60,
+                List.of(), List.of(), List.of(), List.of(), 0, 1);
 
         String text = textOf(render(d));
         assertThat(text).contains("alarm BAŞINA sürelerin toplamıdır");
         assertThat(text).contains("haftanın 7 gününü aşabilir");
         // Devreden alarmlar varsa kırpma kuralı da açıklanmalı.
         assertThat(text).contains("BU HAFTAYA düşen payı");
+    }
+
+    // ── Görselleştirme ───────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Seviye halkası: dilimler ÇİZİLİR ve göstergede ad + sayı + yüzde YAZILI")
+    void levelDonutHasTextualLegend() throws IOException {
+        String text = textOf(render(data(List.of(new TypeGroup("http", "HTTP/Website",
+                List.of(row("a.com", "http", "HTTP_DOWN", "hata")))), 3)));
+
+        // Renk tek başına taşıyıcı olamaz (renk körlüğü / siyah-beyaz çıktı) — seviye ADI,
+        // sayısı ve yüzdesi metin olarak da bulunmalı.
+        assertThat(text).contains("KRİTİK");
+        assertThat(text).contains("YÜKSEK");
+        assertThat(text).contains("2 alarm");
+        assertThat(text).contains("67%");     // 2/3
+        assertThat(text).contains("33%");     // 1/3
+    }
+
+    @Test
+    @DisplayName("Zaman çizelgesi: gün ekseni, hedef adı, süre ve seviye göstergesi YAZILI")
+    void timelineHasAxisAndTextualValues() throws IOException {
+        String text = textOf(render(data(List.of(new TypeGroup("http", "HTTP/Website",
+                List.of(row("cizelge.example.com", "http", "HTTP_DOWN", "hata")))), 1)));
+
+        assertThat(text).contains("Kesinti Zaman Çizelgesi");
+        // Gün ekseni olmadan cubuklarin nereye denk geldigi okunamaz.
+        assertThat(text).contains("Pzt").contains("Cmt").contains("Paz");
+        assertThat(text).contains("cizelge.example.com");
+        assertThat(text).contains("2sa");                 // sagdaki toplam sure
+        assertThat(text).contains("Seviye:");             // renk gostergesi
+    }
+
+    @Test
+    @DisplayName("Isı haritası: sıfır olmayan hücrenin SAYISI yazılı — renk tek başına yetmez")
+    void heatmapWritesCountsNotJustColor() throws IOException {
+        // Salı (indeks 1) saat 09:00'da 2 alarm.
+        String text = textOf(render(data(List.of(new TypeGroup("http", "HTTP/Website",
+                List.of(row("a.com", "http", "HTTP_DOWN", "hata")))), 3)));
+
+        assertThat(text).contains("Gün × saat yoğunluğu");
+        assertThat(text).contains("Salı");
+        // Hucre icindeki sayi: koyulugu gozle olcmek gerekmesin.
+        assertThat(text).contains("2");
+        assertThat(text).contains("hücrenin içinde de yazılıdır");
+    }
+
+    @Test
+    @DisplayName("Tür çubukları: her türün açılan/açık sayısı çubuğun YANINDA yazılı")
+    void typeBarsWriteCountsBesideBars() throws IOException {
+        String text = textOf(render(data(List.of(new TypeGroup("http", "HTTP/Website",
+                List.of(row("a.com", "http", "HTTP_DOWN", "hata")))), 1)));
+
+        assertThat(text).contains("HTTP/Website");
+        assertThat(text).contains("3 açılan");   // TypeStats(alarmsOpened=3)
+        assertThat(text).contains("1 açık");     // TypeStats(alarmsOpen=1)
+    }
+
+    @Test
+    @DisplayName("Seviye rozeti tabloda METİN olarak durur — renk kaybolsa da seviye okunur")
+    void levelBadgeKeepsItsText() throws IOException {
+        String text = textOf(render(data(List.of(new TypeGroup("dns", "DNS",
+                List.of(row("rozet.example.com", "dns", "DNS_FAILURE", "hata")))), 1)));
+
+        // Rozet zemini renkli ama etiket her zaman yazili; siyah-beyaz ciktida da okunur.
+        assertThat(text).contains("KRİTİK");
+        assertThat(text).contains("Seviye");     // sutun basligi
+    }
+
+    @Test
+    @DisplayName("Erişilebilirlik çubuğu yüzdenin YERİNE geçmez — yüzde yazılı kalır")
+    void availabilityBarDoesNotReplaceThePercentage() throws IOException {
+        String text = textOf(render(data(List.of(new TypeGroup("http", "HTTP/Website",
+                List.of(row("a.com", "http", "HTTP_DOWN", "hata")))), 1)));
+
+        assertThat(text).contains("99,42%");
+        assertThat(text).contains("Uptime sütunundaki çubuk yüzdeyi görselleştirir");
+    }
+
+    @Test
+    @DisplayName("Kesintisiz haftada grafik ÇİZİLMEZ — boş eksen ve sıfır ızgara gürültüdür")
+    void quietWeekDrawsNoCharts() throws IOException {
+        WeeklyOutageData quiet = new WeeklyOutageData(
+                "Sessiz Takım", "15–21 Haziran 2026", "22.06.2026 10:00",
+                0, 0, 0, 0, 0, 100.0, 0, 0, 0,
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), 7L * 24 * 60,
+                List.of(), List.of(), List.of(), List.of(), 0, 0);
+
+        String text = textOf(render(quiet));
+        assertThat(text).doesNotContain("Kesinti Zaman Çizelgesi");
+        assertThat(text).doesNotContain("Gün × saat yoğunluğu");
+        assertThat(text).contains("Bu hafta kesinti yaşanmadı");
     }
 
     @Test
