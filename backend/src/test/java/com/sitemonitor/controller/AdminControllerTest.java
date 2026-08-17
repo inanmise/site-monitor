@@ -931,12 +931,12 @@ class AdminControllerTest {
         event.setAcknowledged(true);
         event.setAcknowledgedBy("admin");
         event.setResolved(false);
-        when(escalationService.acknowledge(anyLong(), any())).thenReturn(event);
+        when(escalationService.acknowledge(anyLong(), any(), any())).thenReturn(event);
 
         mvc.perform(post("/api/admin/alerts/1/acknowledge")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"acknowledged_by\":\"admin\"}"))
+                        .content("{\"note\":\"planlı bakım kapsamında kapatıldı\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
     }
@@ -950,9 +950,11 @@ class AdminControllerTest {
         event.setAlertType("EXPIRY");
         event.setAlertLevel("WARNING");
         event.setResolved(true);
-        when(escalationService.resolve(eq(2L), any())).thenReturn(event);
+        when(escalationService.resolve(eq(2L), any(), any())).thenReturn(event);
 
-        mvc.perform(post("/api/admin/alerts/2/resolve").session(authSession()))
+        mvc.perform(post("/api/admin/alerts/2/resolve").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"note\":\"düzeltme devrede doğrulandı\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
     }
@@ -963,45 +965,45 @@ class AdminControllerTest {
     @DisplayName("POST /api/admin/alerts/bulk resolve → processed count + resolve called per id")
     void bulkAlert_resolve_returns200() throws Exception {
         AlertEvent ev = new AlertEvent(); ev.setId(1L); ev.setResolved(true);
-        when(escalationService.resolve(anyLong(), any())).thenReturn(ev);
+        when(escalationService.resolve(anyLong(), any(), any())).thenReturn(ev);
 
         mvc.perform(post("/api/admin/alerts/bulk").session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"action\":\"resolve\",\"ids\":[1,2]}"))
+                        .content("{\"action\":\"resolve\",\"ids\":[1,2],\"note\":\"toplu çözüm gerekçesi\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.processed").value(2))
                 .andExpect(jsonPath("$.data.skipped").value(0))
                 .andExpect(jsonPath("$.data.failed").value(0));
 
-        org.mockito.Mockito.verify(escalationService).resolve(eq(1L), any());
-        org.mockito.Mockito.verify(escalationService).resolve(eq(2L), any());
+        org.mockito.Mockito.verify(escalationService).resolve(eq(1L), any(), any());
+        org.mockito.Mockito.verify(escalationService).resolve(eq(2L), any(), any());
     }
 
     @Test
     @DisplayName("POST /api/admin/alerts/bulk acknowledge → acknowledge called per id")
     void bulkAlert_acknowledge_returns200() throws Exception {
         AlertEvent ev = new AlertEvent(); ev.setId(3L);
-        when(escalationService.acknowledge(anyLong(), any())).thenReturn(ev);
+        when(escalationService.acknowledge(anyLong(), any(), any())).thenReturn(ev);
 
         mvc.perform(post("/api/admin/alerts/bulk").session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"action\":\"acknowledge\",\"ids\":[3]}"))
+                        .content("{\"action\":\"acknowledge\",\"ids\":[3],\"note\":\"bilinen sorun takip ediliyor\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.processed").value(1));
-        org.mockito.Mockito.verify(escalationService).acknowledge(eq(3L), any());
+        org.mockito.Mockito.verify(escalationService).acknowledge(eq(3L), any(), any());
     }
 
     @Test
     @DisplayName("POST /api/admin/alerts/bulk one failing id → counted as failed, batch continues")
     void bulkAlert_partialFailure_counted() throws Exception {
         AlertEvent ev = new AlertEvent(); ev.setId(1L); ev.setResolved(true);
-        when(escalationService.resolve(eq(1L), any())).thenReturn(ev);
-        when(escalationService.resolve(eq(2L), any())).thenThrow(new java.util.NoSuchElementException("gone"));
+        when(escalationService.resolve(eq(1L), any(), any())).thenReturn(ev);
+        when(escalationService.resolve(eq(2L), any(), any())).thenThrow(new java.util.NoSuchElementException("gone"));
 
         mvc.perform(post("/api/admin/alerts/bulk").session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"action\":\"resolve\",\"ids\":[1,2]}"))
+                        .content("{\"action\":\"resolve\",\"ids\":[1,2],\"note\":\"toplu çözüm gerekçesi\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.processed").value(1))
                 .andExpect(jsonPath("$.data.failed").value(1));
@@ -1014,6 +1016,133 @@ class AdminControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"action\":\"frobnicate\",\"ids\":[1]}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    // ── Zorunlu gerekçe notu ──────────────────────────────────────────────────
+    //
+    // Kural SUNUCUDA. Yalnız arayüzde dursaydı kozmetik kalırdı: aşağıdaki istekler tarayıcıdan
+    // geçmiyor, doğrudan uca gidiyor — yani "her manuel onayın gerekçesi vardır" garantisini
+    // ancak bu testler kilitleyebilir.
+
+    @Test
+    @DisplayName("Onay: notsuz istek 400 ve alarma DOKUNULMAZ")
+    void acknowledge_withoutNote_returns400_andDoesNotTouchAlert() throws Exception {
+        mvc.perform(post("/api/admin/alerts/1/acknowledge").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
+        // Gövde hiç yollanmasa da aynı sonuç.
+        mvc.perform(post("/api/admin/alerts/1/acknowledge").session(authSession()))
+                .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verify(escalationService, org.mockito.Mockito.never())
+                .acknowledge(anyLong(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Onay: kuralı geçiştiren not 400 döner (a b c / iki kelime)")
+    void acknowledge_weakNote_returns400() throws Exception {
+        for (String bad : new String[]{ "a b c", "planlı bakım", "   ", "ok ok ok" }) {
+            mvc.perform(post("/api/admin/alerts/1/acknowledge").session(authSession())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"note\":\"" + bad + "\"}"))
+                    .andExpect(status().isBadRequest());
+        }
+        org.mockito.Mockito.verify(escalationService, org.mockito.Mockito.never())
+                .acknowledge(anyLong(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Onay: geçerli not SERVİSE iletilir (kırpılmış)")
+    void acknowledge_validNote_isPassedToService() throws Exception {
+        AlertEvent ev = new AlertEvent(); ev.setId(1L); ev.setDomain("example.com");
+        when(escalationService.acknowledge(anyLong(), any(), any())).thenReturn(ev);
+
+        mvc.perform(post("/api/admin/alerts/1/acknowledge").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"note\":\"  bilinen sorun takip ediliyor  \"}"))
+                .andExpect(status().isOk());
+
+        org.mockito.Mockito.verify(escalationService)
+                .acknowledge(eq(1L), any(), eq("bilinen sorun takip ediliyor"));
+    }
+
+    @Test
+    @DisplayName("Çözüm: notsuz istek 400")
+    void resolve_withoutNote_returns400() throws Exception {
+        mvc.perform(post("/api/admin/alerts/2/resolve").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verify(escalationService, org.mockito.Mockito.never())
+                .resolve(anyLong(), any(), any());
+    }
+
+    @Test
+    @DisplayName("TOPLU onay notsuz 400 — zorunluluğun kaçış yolu kapalı")
+    void bulkAcknowledge_withoutNote_returns400() throws Exception {
+        // Tek alarmı seçip "toplu onayla" demek, tekli akıştaki zorunluluğu delen en kolay yoldu.
+        mvc.perform(post("/api/admin/alerts/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"acknowledge\",\"ids\":[1]}"))
+                .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verify(escalationService, org.mockito.Mockito.never())
+                .acknowledge(anyLong(), any(), any());
+    }
+
+    @Test
+    @DisplayName("TOPLU onay: TEK not seçilen HER alarma yazılır")
+    void bulkAcknowledge_sameNoteWrittenToEveryAlert() throws Exception {
+        AlertEvent ev = new AlertEvent(); ev.setId(1L);
+        when(escalationService.acknowledge(anyLong(), any(), any())).thenReturn(ev);
+
+        mvc.perform(post("/api/admin/alerts/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"acknowledge\",\"ids\":[1,2,3],"
+                               + "\"note\":\"fırtına sonrası toplu kapatma\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.processed").value(3));
+
+        for (long id : new long[]{ 1L, 2L, 3L }) {
+            org.mockito.Mockito.verify(escalationService)
+                    .acknowledge(eq(id), any(), eq("fırtına sonrası toplu kapatma"));
+        }
+    }
+
+    @Test
+    @DisplayName("TEKRAR BİLDİR toplu işlemi not İSTEMEZ — orada alarm kapatılmıyor")
+    void bulkRenotify_doesNotRequireNote() throws Exception {
+        when(escalationService.reNotify(anyLong())).thenReturn(java.util.Map.of("ok", true));
+
+        mvc.perform(post("/api/admin/alerts/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"re-notify\",\"ids\":[1]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.processed").value(1));
+    }
+
+    @Test
+    @DisplayName("Denetim ayrıntısı TIRNAKLI notta da GEÇERLİ JSON üretir")
+    void auditDetail_isValidJson_evenWithQuotesInNote() throws Exception {
+        // Ayrıntı eskiden elle birleştiriliyordu ("{\"domain\":\"" + domain + "\"}"); gerekçe
+        // cümlesi yazan kullanıcı tırnak kullanır ve ilk tırnakta bozuk JSON üretilirdi.
+        AlertEvent ev = new AlertEvent(); ev.setId(1L); ev.setDomain("example.com");
+        when(escalationService.acknowledge(anyLong(), any(), any())).thenReturn(ev);
+
+        mvc.perform(post("/api/admin/alerts/1/acknowledge").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"note\":\"\\\"planlı bakım\\\" nedeniyle susturuldu\"}"))
+                .andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<String> detail = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(auditService).recordAction(
+                eq("ALERT_ACKNOWLEDGE"), any(), any(jakarta.servlet.http.HttpServletRequest.class),
+                eq("ALERT_EVENT"), eq("1"), detail.capture());
+
+        // Ayrıştırılabiliyorsa geçerli; elle birleştirmede burası patlardı.
+        var parsed = new com.fasterxml.jackson.databind.ObjectMapper()
+                .readTree(detail.getValue());
+        assertThat(parsed.get("domain").asText()).isEqualTo("example.com");
+        assertThat(parsed.get("note").asText()).isEqualTo("\"planlı bakım\" nedeniyle susturuldu");
     }
 
     @Test
@@ -1165,9 +1294,11 @@ class AdminControllerTest {
         ev.setTeamId(2L);   // USER'ın görüntüleme kapsamındaki takım → erişebilir
         when(alertEventRepo.findById(1L)).thenReturn(java.util.Optional.of(ev));
         when(inventoryRepo.findByDomain("example.com")).thenReturn(java.util.Optional.empty());
-        when(escalationService.acknowledge(eq(1L), any())).thenReturn(ev);
+        when(escalationService.acknowledge(eq(1L), any(), any())).thenReturn(ev);
 
-        mvc.perform(post("/api/admin/alerts/1/acknowledge").session(userSession()))
+        mvc.perform(post("/api/admin/alerts/1/acknowledge").session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"note\":\"bilinen sorun takip ediliyor\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
     }

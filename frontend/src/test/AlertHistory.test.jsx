@@ -266,6 +266,71 @@ describe('AlertHistory — alarm tipi sözlüğü', () => {
  * olarak da kullanılıyor ve orada domain zaten sabit — takım/arama filtresi anlamsız olur.
  */
 /**
+ * GEREKÇE NOTU — "kim ve ne zaman"ın yanına "NEDEN".
+ *
+ * <p>Zorunluluk öncesi onaylanmış alarmlarda not YOK; gösterim bunu boş blok çizmeden geçmeli
+ * (o kayıtlar sayıca çok, hepsinde boş bir alıntı görünürdü).
+ */
+describe('AlertHistory — onay/çözüm gerekçesi', () => {
+  const withNotes = {
+    ...closedAlert,
+    id: 301,
+    acknowledged_note: 'planlı bakım kapsamında susturuldu',
+    resolved_note: 'sertifika yenilendi ve doğrulandı',
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [] })
+  })
+
+  /** Zaman çizelgesi (ahc-*) yalnız KAPALI sekmesinde çizilir; açık sekmede kart düzeni farklı. */
+  async function openClosedTab() {
+    fireEvent.click(screen.getByRole('button', { name: /kapalı|closed/i }))
+    await waitFor(() => expect(document.querySelector('.ahc-timeline')).not.toBeNull())
+  }
+
+  it('Kapalı kartın zaman çizelgesinde onay ve çözüm notları GÖRÜNÜR', async () => {
+    api.admin.getAlerts.mockResolvedValue({
+      success: true, data: [withNotes], total: 1, page: 0, size: 20,
+    })
+    render(<AlertHistory domain="foo.example.com" />)
+    await openClosedTab()
+
+    expect(await screen.findByText('planlı bakım kapsamında susturuldu')).toBeInTheDocument()
+    expect(screen.getByText('sertifika yenilendi ve doğrulandı')).toBeInTheDocument()
+  })
+
+  it('NOTSUZ eski alarmda boş gerekçe bloğu ÇİZİLMEZ', async () => {
+    api.admin.getAlerts.mockResolvedValue({
+      success: true, data: [closedAlert], total: 1, page: 0, size: 20,   // not alanları yok
+    })
+    const { container } = render(<AlertHistory domain="foo.example.com" />)
+    await openClosedTab()
+
+    expect(container.querySelector('.ahc-tl-note')).toBeNull()
+    expect(container.querySelector('.alh-audit-note')).toBeNull()
+  })
+
+  it('AÇIK alarmın onay satırında not gösterilir', async () => {
+    api.admin.getAlerts.mockResolvedValue({
+      success: true,
+      data: [{
+        id: 302, domain: 'acik.example.com', alert_type: 'HTTP_DOWN', alert_level: 'CRITICAL',
+        acknowledged: true, acknowledged_by: 'erdi', acknowledged_at: '2026-06-05T10:00:00',
+        acknowledged_note: 'bilinen sorun takip ediliyor',
+        resolved: false, created_at: '2026-06-01T08:00:00',
+      }],
+      total: 1, page: 0, size: 20,
+    })
+    const { container } = render(<AlertHistory domain="acik.example.com" />)
+
+    expect(await screen.findByText('bilinen sorun takip ediliyor')).toBeInTheDocument()
+    expect(container.querySelector('.alh-audit-note')).not.toBeNull()
+  })
+})
+
+/**
  * İstatistik şeridi VARSAYILAN KAPALI açılır (kullanıcı isteği): sayfaya girince alarm listesi
  * hemen görünsün, altı sayım kartı ekranın üstünü yemesin. Şerit katlama durumu MonitorStatsSection
  * deseninin aynısı — başlık çubuğuna tıklanınca açılıp kapanır.

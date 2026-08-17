@@ -346,26 +346,56 @@ class WeeklyOutagePdfWriter implements AutoCloseable {
      * "Her kesintinin en ince ayrıntısı" isteğinin karşılığı budur.
      */
     private void messages(List<OutageRow> rows) throws IOException {
-        List<OutageRow> withMsg = rows.stream().filter(r -> r.message() != null && !r.message().isBlank()).toList();
-        if (withMsg.isEmpty()) return;
+        List<OutageRow> withText = rows.stream()
+                .filter(r -> notBlank(r.message()) || notBlank(r.acknowledgedNote()) || notBlank(r.resolvedNote()))
+                .toList();
+        if (withText.isEmpty()) return;
         c.y -= 4;
         c.ensureSpace(14);
-        c.text(c.bold, 7f, MARGIN, c.y, "Mesajlar", LABEL);
+        c.text(c.bold, 7f, MARGIN, c.y, "Mesajlar ve gerekçeler", LABEL);
         c.y -= 11;
-        for (OutageRow r : withMsg) {
+        for (OutageRow r : withText) {
             String head = WeeklyOutageReportService.shortStamp(r.startedAt()) + "  " + nz(r.target()) + " — ";
-            List<String> lines = c.wrap(r.message(), CONTENT_W - 12, c.regular, 6.8f, 4);
-            c.ensureSpace(10 + lines.size() * 8.5f);
-            c.text(c.bold, 6.8f, MARGIN + 6, c.y, head, INK);
-            float x = MARGIN + 6 + c.width(head, c.bold, 6.8f);
-            boolean first = true;
-            for (String ln : lines) {
-                if (first) { c.text(c.regular, 6.8f, x, c.y, c.clip(ln, CONTENT_W - (x - MARGIN) - 6, c.regular, 6.8f), INK); first = false; }
-                else { c.text(c.regular, 6.8f, MARGIN + 12, c.y, ln, INK); }
-                c.y -= 8.5f;
+            if (notBlank(r.message())) {
+                List<String> lines = c.wrap(r.message(), CONTENT_W - 12, c.regular, 6.8f, 4);
+                c.ensureSpace(10 + lines.size() * 8.5f);
+                c.text(c.bold, 6.8f, MARGIN + 6, c.y, head, INK);
+                float x = MARGIN + 6 + c.width(head, c.bold, 6.8f);
+                boolean first = true;
+                for (String ln : lines) {
+                    if (first) { c.text(c.regular, 6.8f, x, c.y, c.clip(ln, CONTENT_W - (x - MARGIN) - 6, c.regular, 6.8f), INK); first = false; }
+                    else { c.text(c.regular, 6.8f, MARGIN + 12, c.y, ln, INK); }
+                    c.y -= 8.5f;
+                }
             }
+            // Kullanıcının yazdığı gerekçeler — "bu alarm neden kapatılmış" sorusunun cevabı
+            // pazartesi raporunu okuyanın elinde olsun. Eski (zorunluluk öncesi) alarmlarda boş.
+            noteLine("Onay notu:", r.acknowledgedNote(), notBlank(r.message()) ? null : head);
+            noteLine("Çözüm notu:", r.resolvedNote(), null);
         }
     }
+
+    /** Gerekçe satırı; {@code head} verilirse (mesajsız satırda) hedef/zaman önce yazılır. */
+    private void noteLine(String label, String note, String head) throws IOException {
+        if (!notBlank(note)) return;
+        if (head != null) {
+            c.ensureSpace(12);
+            c.text(c.bold, 6.8f, MARGIN + 6, c.y, head, INK);
+            c.y -= 8.5f;
+        }
+        List<String> lines = c.wrap(note, CONTENT_W - 70, c.regular, 6.8f, 4);
+        c.ensureSpace(10 + lines.size() * 8.5f);
+        c.text(c.bold, 6.8f, MARGIN + 12, c.y, label, LABEL);
+        float x = MARGIN + 12 + c.width(label, c.bold, 6.8f) + 4;
+        boolean first = true;
+        for (String ln : lines) {
+            if (first) { c.text(c.regular, 6.8f, x, c.y, ln, INK); first = false; }
+            else { c.text(c.regular, 6.8f, MARGIN + 18, c.y, ln, INK); }
+            c.y -= 8.5f;
+        }
+    }
+
+    private static boolean notBlank(String s) { return s != null && !s.isBlank(); }
 
     // ── 5. En uzunlar + tekrar edenler ───────────────────────────────────────
 
