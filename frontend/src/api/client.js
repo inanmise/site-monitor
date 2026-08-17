@@ -518,7 +518,9 @@ export const api = {
         a.href = objectUrl
         a.download = match ? match[1] : 'haftalik-kesinti-raporu.pdf'
         a.click()
-        URL.revokeObjectURL(objectUrl)
+        // Serbest bırakmayı ERTELE: click() indirmeyi eşzamanlı başlatmıyor ve URL hemen
+        // geçersiz kılınırsa bazı tarayıcılar dosyayı boş indiriyor ya da hiç indirmiyor.
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
         return { success: true }
       } catch (e) {
         return { success: false, error: e?.message || 'NETWORK' }

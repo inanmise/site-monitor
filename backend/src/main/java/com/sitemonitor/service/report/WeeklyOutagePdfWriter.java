@@ -139,17 +139,27 @@ class WeeklyOutagePdfWriter implements AutoCloseable {
         int delta = d.alarmsDelta();
         String dir = delta > 0 ? "▲ " + delta + " artış" : delta < 0 ? "▼ " + Math.abs(delta) + " azalış" : "değişim yok";
         float[] color = delta > 0 ? RED : delta < 0 ? GREEN : LABEL;
+        String lead = "Bu hafta " + d.alarmsOpenedThisWeek() + " alarm AÇILDI, geçen hafta "
+                + d.alarmsPrevWeek() + " — ";
         c.ensureSpace(18);
-        c.text(c.regular, 8.5f, MARGIN, c.y,
-                "Bu hafta " + d.totalAlarms() + " alarm, geçen hafta " + d.alarmsPrevWeek() + " alarm — ", INK);
-        float x = MARGIN + c.width("Bu hafta " + d.totalAlarms() + " alarm, geçen hafta "
-                + d.alarmsPrevWeek() + " alarm — ", c.regular, 8.5f);
-        c.text(c.bold, 8.5f, x, c.y, dir, color);
+        c.text(c.regular, 8.5f, MARGIN, c.y, lead, INK);
+        c.text(c.bold, 8.5f, MARGIN + c.width(lead, c.regular, 8.5f), c.y, dir, color);
         c.y -= 14;
-        c.text(c.regular, 7f, MARGIN, c.y,
-                "Karşılaştırma yalnız o hafta AÇILAN alarmları sayar; devreden açık alarmlar iki tarafta da "
-                + "hesaba katılmaz.", MUTED);
-        c.y -= 16;
+        // Karşılaştırma İKİ TARAFTA DA yalnız o hafta açılanı sayar. Yönetici özetindeki toplam
+        // ise devreden alarmları da içerir; iki sayının neden farklı olduğu burada söylenmezse
+        // okuyucu birini diğerinin yerine koyar.
+        String note = "Karşılaştırma iki tarafta da yalnız o hafta AÇILAN alarmları sayar."
+                + (d.carriedOverCount() > 0
+                   ? " Yönetici özetindeki " + d.totalAlarms() + " alarm ise önceki haftalardan devreden "
+                     + d.carriedOverCount() + " alarmı da içerir; onlar bu hafta açılmadıkları için "
+                     + "karşılaştırmaya girmez."
+                   : "");
+        for (String line : c.wrap(note, CONTENT_W, c.regular, 7f, 3)) {
+            c.ensureSpace(10);
+            c.text(c.regular, 7f, MARGIN, c.y, line, MUTED);
+            c.y -= 9;
+        }
+        c.y -= 8;
     }
 
     // ── 3. İzleme türü bazında özet ──────────────────────────────────────────
@@ -362,17 +372,27 @@ class WeeklyOutagePdfWriter implements AutoCloseable {
     private void longestAndRepeats(WeeklyOutageData d) throws IOException {
         if (!d.longest().isEmpty()) {
             sectionHeader("En Uzun Kesintiler");
-            float[] w = { 140, 78, 62, 62, 62, 80 };
-            String[] head = { "Hedef", "Alarm", "Süre", "Başlangıç", "Bitiş", "Tür" };
+            // Sıralama HAFTAYA DÜŞEN süreye göre. Ham toplam süreye göre sıralandığında liste
+            // aylardır süren devreden alarmlarla doluyor ve bu haftanın en kötüleri ilk ona hiç
+            // giremiyordu. İki sütun birden yazılıyor ki gerçek boy da kaybolmasın.
+            note("«Bu hafta» sütunu kesintinin bu haftaya düşen payı, «Toplam» ise alarmın açılışından "
+                    + "bu yana geçen gerçek süredir. Sıralama bu haftaya düşen süreye göredir.");
+            float[] w = { 126, 70, 56, 56, 54, 54, 66 };
+            String[] head = { "Hedef", "Alarm", "Bu hafta", "Toplam", "Başlangıç", "Bitiş", "Tür" };
             table(head, w, () -> {
                 List<Cell[]> rows = new ArrayList<>();
                 for (OutageRow r : d.longest()) {
-                    rows.add(p(
-                            nz(r.target()), nz(r.alertType()),
-                            WeeklyOutageReportService.humanDuration(r.durationMin()),
-                            WeeklyOutageReportService.shortStamp(r.startedAt()),
-                            r.stillOpen() ? "sürüyor" : WeeklyOutageReportService.shortStamp(r.endedAt()),
-                            MonitorTypeCatalog.label(r.monitorType()) ));
+                    boolean differs = r.weekDurationMin() != r.durationMin();
+                    rows.add(new Cell[]{
+                            plain(nz(r.target())), plain(nz(r.alertType())),
+                            plain(WeeklyOutageReportService.humanDuration(r.weekDurationMin())),
+                            // Devreden alarmda toplam çok daha uzundur; vurgulanır ki gözden kaçmasın.
+                            differs ? new Cell(WeeklyOutageReportService.humanDuration(r.durationMin()),
+                                               null, AMBER, null, null)
+                                    : plain(WeeklyOutageReportService.humanDuration(r.durationMin())),
+                            plain(WeeklyOutageReportService.shortStamp(r.startedAt())),
+                            plain(r.stillOpen() ? "sürüyor" : WeeklyOutageReportService.shortStamp(r.endedAt())),
+                            plain(MonitorTypeCatalog.label(r.monitorType())) });
                 }
                 return rows;
             });
@@ -398,7 +418,14 @@ class WeeklyOutagePdfWriter implements AutoCloseable {
     // ── 6. Gün / saat dağılımı ───────────────────────────────────────────────
 
     private void distribution(WeeklyOutageData d) throws IOException {
+        // Devreden alarmlar bu bölümde sayılmıyor; hiç alarm açılmamışsa çizilecek bir şey yok.
+        // Boş bir ızgara "veri yok"la "alarm yok"u ayırt ettirmez.
+        if (d.alarmsOpenedThisWeek() == 0) return;
+
         sectionHeader("Gün ve Saat Dağılımı");
+        note("Bu hafta AÇILAN " + d.alarmsOpenedThisWeek() + " alarmın dağılımı. Önceki haftalardan "
+                + "devreden alarmlar burada sayılmaz — başlangıçları bu haftanın dışında kalır ve "
+                + "sayılsalardı başka bir haftanın günü/saati bu haftanın kutusuna yazılmış olurdu.");
 
         int maxDay = d.byDay().stream().mapToInt(Bucket::count).max().orElse(0);
         for (Bucket b : d.byDay()) {
@@ -567,9 +594,17 @@ class WeeklyOutagePdfWriter implements AutoCloseable {
         bullet("Alarm sayısı ile erişilebilirlik düşüşü AYNI ŞEY DEĞİLDİR. Alarm üretimi ardışık "
                 + "doğrulama ister; kısa süreli bir kesinti uptime yüzdesini düşürür ama alarm üretmez. "
                 + "«0 alarm ama %99,7 erişilebilirlik» tutarlı bir tablodur.");
-        bullet("Kesinti süresi, alarmın açılışından çözülüşüne kadar geçen süredir. Hâlâ açık alarmlarda "
-                + "hafta sonuna kadar sayılır — böylece geçmiş bir haftanın raporu her üretildiğinde "
-                + "aynı sonucu verir.");
+        bullet("Raporda İKİ ayrı süre kavramı var ve karıştırılmamalı: detay tablolarındaki süre "
+                + "alarmın açılışından çözülüşüne kadar geçen GERÇEK süredir; yönetici özetindeki "
+                + "toplam ile zaman çizelgesindeki süreler ise yalnız BU HAFTAYA düşen payı sayar. "
+                + "Ayrım olmasaydı aylardır süren tek bir kesinti haftalık toplamı yüzlerce güne "
+                + "çıkarırdı.");
+        bullet("Hâlâ açık alarmlarda süre hafta sonuna kadar sayılır (şu ana kadar değil) — böylece "
+                + "geçmiş bir haftanın raporu ne zaman üretilirse üretilsin aynı sonucu verir.");
+        bullet("Gün/saat dağılımı ve ısı haritası yalnız BU HAFTA AÇILAN alarmları sayar; devreden "
+                + "alarmların başlangıcı bu haftanın dışında olduğu için oraya yazılmaları başka bir "
+                + "haftanın gününü bu haftaya mal etmek olurdu. «Geçen haftaya göre» karşılaştırması "
+                + "da aynı sebeple iki tarafta da yalnız açılan alarmları sayar.");
         bullet("Bakım işareti GERİYE DÖNÜK hesaplanır: bakım pencerelerinin BUGÜNKÜ tanımı alarmın "
                 + "geçmişteki anına uygulanır. Pencere o tarihten sonra değiştirildiyse ya da silindiyse "
                 + "işaret yanılabilir. Erişilebilirlik tablosundaki bakım bilgisi ise kontrol anında "

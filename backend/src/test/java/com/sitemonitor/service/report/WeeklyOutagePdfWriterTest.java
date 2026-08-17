@@ -81,7 +81,7 @@ class WeeklyOutagePdfWriterTest {
         return new WeeklyOutageData(
                 "Dijital SY", "15–21 Haziran 2026", "22.06.2026 10:00",
                 totalAlarms, 1, 0, all.size(), 240, 99.42, 2,
-                7, totalAlarms - 7,
+                totalAlarms, 7, totalAlarms - 7,
                 List.of(new TypeStats("http", 12, 4000L, 99.4, 3, 2, 1, -0.3, 1, 210.0, List.of())),
                 groups,
                 all.stream().limit(10).toList(),
@@ -164,7 +164,7 @@ class WeeklyOutagePdfWriterTest {
     void quietWeekProducesShortValidDocument() throws IOException {
         WeeklyOutageData quiet = new WeeklyOutageData(
                 "Sessiz Takım", "15–21 Haziran 2026", "22.06.2026 10:00",
-                0, 0, 0, 0, 0, 100.0, 0, 0, 0,
+                0, 0, 0, 0, 0, 100.0, 0, 0, 0, 0,
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
                 List.of(), List.of(), 7L * 24 * 60,
                 List.of(), List.of(), List.of(), List.of(), 0, 0);
@@ -201,7 +201,7 @@ class WeeklyOutagePdfWriterTest {
     void downtimeExceedingAWeekIsExplained() throws IOException {
         WeeklyOutageData d = new WeeklyOutageData(
                 "Dijital SY", "15–21 Haziran 2026", "22.06.2026 10:00",
-                12, 12, 8, 7, 113_000, 85.71, 3, 3, 9,      // 113000 dk ≈ 78 gün
+                12, 12, 8, 7, 113_000, 85.71, 3, 4, 3, 1,      // 113000 dk ≈ 78 gün
                 List.of(), List.of(new TypeGroup("http", "HTTP/Website",
                         List.of(row("a.com", "http", "HTTP_DOWN", "hata")))),
                 List.of(), List.of(), List.of(), List.of(), List.of(),
@@ -297,7 +297,7 @@ class WeeklyOutagePdfWriterTest {
     void quietWeekDrawsNoCharts() throws IOException {
         WeeklyOutageData quiet = new WeeklyOutageData(
                 "Sessiz Takım", "15–21 Haziran 2026", "22.06.2026 10:00",
-                0, 0, 0, 0, 0, 100.0, 0, 0, 0,
+                0, 0, 0, 0, 0, 100.0, 0, 0, 0, 0,
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
                 List.of(), List.of(), 7L * 24 * 60,
                 List.of(), List.of(), List.of(), List.of(), 0, 0);
@@ -306,6 +306,59 @@ class WeeklyOutagePdfWriterTest {
         assertThat(text).doesNotContain("Kesinti Zaman Çizelgesi");
         assertThat(text).doesNotContain("Gün × saat yoğunluğu");
         assertThat(text).contains("Bu hafta kesinti yaşanmadı");
+    }
+
+    @Test
+    @DisplayName("«Geçen haftaya göre» AÇILAN alarmı yazar ve toplamdan farkını açıklar")
+    void weekOverWeekReportsOpenedNotTotal() throws IOException {
+        // totalAlarms=12 (8'i devreden), açılan=4, geçen hafta=3 → +1 artış.
+        WeeklyOutageData d = new WeeklyOutageData(
+                "Dijital SY", "15–21 Haziran 2026", "22.06.2026 10:00",
+                12, 12, 8, 7, 5000, 85.71, 3, 4, 3, 1,
+                List.of(), List.of(new TypeGroup("http", "HTTP/Website",
+                        List.of(row("a.com", "http", "HTTP_DOWN", "hata")))),
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), 7L * 24 * 60,
+                List.of(), List.of(), List.of(), List.of(), 0, 0);
+
+        String text = textOf(render(d));
+
+        assertThat(text).contains("Bu hafta 4 alarm AÇILDI, geçen hafta 3");
+        // Toplamın neden 12 olduğu söylenmezse okuyucu 4 ile 12'yi birbirinin yerine koyar.
+        assertThat(text).contains("devreden");
+        assertThat(text).contains("karşılaştırmaya girmez");
+    }
+
+    @Test
+    @DisplayName("«En Uzun Kesintiler» İKİ süre sütunu taşır — gerçek boy kaybolmaz")
+    void longestTableShowsBothDurations() throws IOException {
+        String text = textOf(render(data(List.of(new TypeGroup("http", "HTTP/Website",
+                List.of(row("a.com", "http", "HTTP_DOWN", "hata")))), 5)));
+
+        assertThat(text).contains("Bu hafta").contains("Toplam");
+        assertThat(text).contains("Sıralama bu haftaya düşen süreye göredir");
+    }
+
+    @Test
+    @DisplayName("Dağılım bölümü paydayı YAZAR; bu hafta hiç alarm açılmadıysa hiç çizilmez")
+    void distributionStatesItsDenominatorAndHidesWhenEmpty() throws IOException {
+        String withOpened = textOf(render(data(List.of(new TypeGroup("http", "HTTP/Website",
+                List.of(row("a.com", "http", "HTTP_DOWN", "hata")))), 5)));
+        assertThat(withOpened).contains("Gün ve Saat Dağılımı");
+        assertThat(withOpened).contains("alarmın dağılımı");
+        assertThat(withOpened).contains("devreden alarmlar burada sayılmaz");
+
+        // Yalnız devreden alarm varsa (bu hafta hiçbir şey açılmadı) bölüm çizilmez:
+        // boş bir ızgara "veri yok" ile "alarm yok"u ayırt ettirmez.
+        WeeklyOutageData onlyCarried = new WeeklyOutageData(
+                "Dijital SY", "15–21 Haziran 2026", "22.06.2026 10:00",
+                3, 3, 3, 2, 5000, 99.0, 1, 0, 2, -2,
+                List.of(), List.of(new TypeGroup("http", "HTTP/Website",
+                        List.of(row("a.com", "http", "HTTP_DOWN", "hata")))),
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), 7L * 24 * 60,
+                List.of(), List.of(), List.of(), List.of(), 0, 0);
+        assertThat(textOf(render(onlyCarried))).doesNotContain("Gün ve Saat Dağılımı");
     }
 
     @Test

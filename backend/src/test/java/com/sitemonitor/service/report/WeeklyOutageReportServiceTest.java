@@ -4,8 +4,6 @@ import com.sitemonitor.model.AlertEvent;
 import com.sitemonitor.model.MaintenanceWindow;
 import com.sitemonitor.model.Team;
 import com.sitemonitor.repository.AlertEventRepository;
-import com.sitemonitor.repository.CertificateInventoryRepository;
-import com.sitemonitor.repository.LatestCheckRepository;
 import com.sitemonitor.repository.MaintenanceWindowRepository;
 import com.sitemonitor.repository.NotificationLogRepository;
 import com.sitemonitor.service.EmailNotificationService.AvailabilityRow;
@@ -46,8 +44,6 @@ class WeeklyOutageReportServiceTest {
 
     @Mock AlertEventRepository alertEventRepo;
     @Mock NotificationLogRepository notificationLogRepo;
-    @Mock CertificateInventoryRepository inventoryRepo;
-    @Mock LatestCheckRepository latestCheckRepo;
     @Mock MaintenanceWindowRepository maintenanceRepo;
     @Mock MaintenanceService maintenanceService;
     @Mock MonitoringWeeklyStatsService weeklyStatsService;
@@ -70,11 +66,9 @@ class WeeklyOutageReportServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new WeeklyOutageReportService(alertEventRepo, notificationLogRepo, inventoryRepo,
-                latestCheckRepo, maintenanceRepo, maintenanceService, weeklyStatsService);
+        service = new WeeklyOutageReportService(alertEventRepo, notificationLogRepo,
+                maintenanceRepo, maintenanceService, weeklyStatsService);
         when(maintenanceRepo.findAll()).thenReturn(List.of());
-        when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(anyLong()))
-                .thenReturn(List.of());
         when(notificationLogRepo.countByAlertIds(any())).thenReturn(List.of());
         when(alertEventRepo.countFilteredByType(any(), any(), any(), any(), any(), any(), anyBoolean(), any()))
                 .thenReturn(List.of());
@@ -438,6 +432,87 @@ class WeeklyOutageReportServiceTest {
         assertThat(d.totalAlarms()).isEqualTo(1);
     }
 
+    // ── Hafta karşılaştırması ve dağılım paydası ─────────────────────────────
+
+    @Test
+    @DisplayName("Delta yalnız AÇILAN alarmları karşılaştırır — devreden alarm karşılaştırmayı ŞİŞİRMEZ")
+    void deltaComparesOnlyAlarmsOpenedInTheWeek() {
+        // Geçen hafta 3 alarm açılmış.
+        when(alertEventRepo.countFilteredByType(any(), any(), any(), any(), any(), any(), anyBoolean(), any()))
+                .thenReturn(List.<Object[]>of(new Object[]{ "HTTP_DOWN", 3L }));
+        // Bu hafta 2 alarm AÇILDI; ayrıca 3 alarm önceki haftalardan devretti.
+        stubAlarms(List.of(
+                        alarm(1, "yeni1.com", "HTTP_DOWN", "2026-06-16T09:00:00"),
+                        alarm(2, "yeni2.com", "PORT_DOWN", "2026-06-17T09:00:00")),
+                List.of(
+                        alarm(11, "eski1.com", "HTTP_DOWN", "2026-06-01T00:00:00"),
+                        alarm(12, "eski2.com", "PORT_DOWN", "2026-06-01T00:00:00"),
+                        alarm(13, "eski3.com", "DNS_FAILURE", "2026-06-01T00:00:00")),
+                List.of());
+
+        WeeklyOutageData d = collect();
+
+        // Özet "hafta içinde açık olan" sayısını göstermeye devam eder...
+        assertThat(d.totalAlarms()).isEqualTo(5);
+        assertThat(d.carriedOverCount()).isEqualTo(3);
+        // ...ama KARŞILAŞTIRMA iki tarafta da yalnız o hafta AÇILANLARI sayar.
+        assertThat(d.alarmsOpenedThisWeek()).isEqualTo(2);
+        assertThat(d.alarmsPrevWeek()).isEqualTo(3);
+        assertThat(d.alarmsDelta()).isEqualTo(-1);   // 2 - 3, devredenler karışmaz
+    }
+
+    @Test
+    @DisplayName("Devreden alarm eklemek deltayı DEĞİŞTİRMEZ — bu hafta hiçbir şey açılmadı")
+    void carriedOverAlarmsDoNotMoveTheDelta() {
+        when(alertEventRepo.countFilteredByType(any(), any(), any(), any(), any(), any(), anyBoolean(), any()))
+                .thenReturn(List.<Object[]>of(new Object[]{ "HTTP_DOWN", 2L }));
+        // Hafta içinde HİÇ alarm açılmadı; yalnız eski alarmlar sürüyor.
+        stubAlarms(List.of(), List.of(
+                alarm(11, "eski1.com", "HTTP_DOWN", "2026-06-01T00:00:00"),
+                alarm(12, "eski2.com", "PORT_DOWN", "2026-06-01T00:00:00"),
+                alarm(13, "eski3.com", "DNS_FAILURE", "2026-06-01T00:00:00"),
+                alarm(14, "eski4.com", "PING_DOWN", "2026-06-01T00:00:00")), List.of());
+
+        WeeklyOutageData d = collect();
+
+        assertThat(d.alarmsOpenedThisWeek()).isZero();
+        assertThat(d.alarmsDelta()).isEqualTo(-2);   // 0 açıldı, geçen hafta 2 → azalış
+    }
+
+    @Test
+    @DisplayName("Gün/saat/ısı dağılımı DEVREDEN alarmları saymaz — başlangıçları bu haftanın DIŞINDA")
+    void distributionsCountOnlyAlarmsOpenedInTheWindow() {
+        // 2026-06-16T09:00Z = Salı 12:00 IST (pencere içi)
+        // 2026-06-01T00:00Z = 1 Haziran Pazartesi 03:00 IST — pencereden İKİ HAFTA önce.
+        // Devredenler süzülmezse Pazartesi kutusuna düşer ve rapor "bu hafta pazartesi 3 alarm
+        // açıldı" der; oysa o gün bu haftaya ait bile değil.
+        stubAlarms(List.of(
+                        alarm(1, "yeni1.com", "HTTP_DOWN", "2026-06-16T09:00:00"),
+                        alarm(2, "yeni2.com", "PORT_DOWN", "2026-06-16T09:30:00")),
+                List.of(
+                        alarm(11, "eski1.com", "HTTP_DOWN", "2026-06-01T00:00:00"),
+                        alarm(12, "eski2.com", "PORT_DOWN", "2026-06-01T00:00:00"),
+                        alarm(13, "eski3.com", "DNS_FAILURE", "2026-06-01T00:00:00")),
+                List.of());
+
+        WeeklyOutageData d = collect();
+
+        // Paydalar birbirini tutmalı: dağılım = bu hafta açılanlar.
+        int dayTotal = d.byDay().stream().mapToInt(WeeklyOutageReportService.Bucket::count).sum();
+        int hourTotal = d.byHour().stream().mapToInt(WeeklyOutageReportService.Bucket::count).sum();
+        int heatTotal = d.heat().stream().flatMap(r -> r.hours().stream()).mapToInt(Integer::intValue).sum();
+
+        assertThat(dayTotal).isEqualTo(2);
+        assertThat(hourTotal).isEqualTo(2);
+        assertThat(heatTotal).isEqualTo(2);
+        assertThat(dayTotal).isEqualTo(d.alarmsOpenedThisWeek());
+
+        // Pazartesi kutusu BOŞ olmalı — 1 Haziran bu haftanın pazartesisi değil.
+        assertThat(d.byDay().get(0).label()).isEqualTo("Pazartesi");
+        assertThat(d.byDay().get(0).count()).isZero();
+        assertThat(d.heat().get(0).hours()).allMatch(v -> v == 0);
+    }
+
     // ── Grafik verisi ────────────────────────────────────────────────────────
 
     @Test
@@ -557,6 +632,74 @@ class WeeklyOutageReportServiceTest {
         assertThat(collect().byLevel())
                 .extracting(WeeklyOutageReportService.Bucket::label)
                 .containsExactly("OTHER");
+    }
+
+    // ── En uzunlar / sertifika / bakım hazırlığı ─────────────────────────────
+
+    @Test
+    @DisplayName("«En uzunlar» HAFTAYA DÜŞEN süreye göre sıralanır — devreden alarm listeyi kapatmaz")
+    void longestRanksByWeekShareNotRawDuration() {
+        // İKİ SIRALAMANIN ÇELİŞTİĞİ senaryo — testin bir şey kanıtlaması için şart:
+        //   buhafta.com : 10 saat, tamamı bu hafta   → hafta payı 600 dk, ham 600 dk
+        //   eski.com    : iki hafta önce açıldı ama pazartesi sabahı ÇÖZÜLDÜ
+        //                 → hafta payı yalnız 4 saat (240 dk), ham süre ~14 gün (20 000+ dk)
+        // Ham süreye göre sıralanırsa eski.com üstte çıkar ve bu haftanın asıl kesintisi altta
+        // kalır; haftaya düşen paya göre sıralanırsa doğru olan buhafta.com üste gelir.
+        stubAlarms(List.of(
+                        resolved(1, "buhafta.com", "HTTP_DOWN",
+                                "2026-06-17T06:00:00", "2026-06-17T16:00:00")),
+                List.of(),
+                List.of(resolved(11, "eski.com", "PORT_DOWN",
+                        "2026-06-01T00:00:00", "2026-06-15T01:00:00")));
+
+        var longest = collect().longest();
+
+        assertThat(longest).hasSize(2);
+        assertThat(longest.get(0).target()).isEqualTo("buhafta.com");   // ham süreye göre 2. olurdu
+        assertThat(longest.get(0).weekDurationMin()).isEqualTo(600);
+        assertThat(longest.get(1).target()).isEqualTo("eski.com");
+        assertThat(longest.get(1).weekDurationMin()).isEqualTo(240);
+        // Gerçek boy kaybolmuyor: PDF'te «Toplam» sütununda bu değer yazılı.
+        assertThat(longest.get(1).durationMin()).isGreaterThan(20_000);
+    }
+
+    @Test
+    @DisplayName("Sertifika bitişleri MEVCUT erişilebilirlik satırlarından türetilir — ek sorgu YOK")
+    void certExpiriesAreDerivedFromAvailabilityRows() {
+        List<AvailabilityRow> rows = List.of(
+                new AvailabilityRow("yakin.com", 99.9, 0, 0, 0, 100L, 120L, 12),
+                new AvailabilityRow("uzak.com", 100.0, 0, 0, 0, 100L, 120L, 200),
+                new AvailabilityRow("orta.com", 99.9, 0, 0, 0, 100L, 120L, 45),
+                new AvailabilityRow("veriyok.com", null, 0, 0, 0, null, null, null));
+
+        var expiries = service.collect(TEAM, W, rows).certExpiries();
+
+        // ≤60 gün süzgeci + kalan güne göre artan sıralama korunur.
+        assertThat(expiries).extracting(WeeklyOutageReportService.CertExpiry::domain)
+                .containsExactly("yakin.com", "orta.com");
+        assertThat(expiries.get(0).daysRemaining()).isEqualTo(12);
+        // Sertifika günü ZATEN AvailabilityRow'da geliyor; eskiden domain başına yeniden
+        // sorgulanıyordu. Bağımlılık yapıcıdan kalktığı için tekrar sorgu DERLEME düzeyinde
+        // imkânsız — bu test de veriyle aynı sonucu ürettiğini kilitliyor.
+    }
+
+    @Test
+    @DisplayName("Bakım pencerelerinin hedefleri pencere BAŞINA BİR KEZ ayrıştırılır")
+    void maintenanceTargetsAreParsedOncePerWindow() {
+        MaintenanceWindow win = new MaintenanceWindow();
+        win.setId(1L);
+        when(maintenanceRepo.findAll()).thenReturn(List.of(win));
+        when(maintenanceService.targetsOf(win)).thenReturn(List.of("a.com"));
+        when(maintenanceService.isActiveAt(eq(win), any())).thenReturn(false);
+        // Çok alarmlı senaryo: eskiden targetsOf alarm × pencere döngüsünün İÇİNDEN çağrılıyordu
+        // ve her çağrıda hedef JSON'u Jackson ile baştan ayrıştırılıyordu.
+        List<AlertEvent> many = new java.util.ArrayList<>();
+        for (int i = 0; i < 25; i++) many.add(alarm(i + 1, "h" + i + ".com", "HTTP_DOWN", "2026-06-16T09:00:00"));
+        stubAlarms(many, List.of(), List.of());
+
+        collect();
+
+        org.mockito.Mockito.verify(maintenanceService, org.mockito.Mockito.times(1)).targetsOf(win);
     }
 
     // ── Kapsam (IDOR) ────────────────────────────────────────────────────────
