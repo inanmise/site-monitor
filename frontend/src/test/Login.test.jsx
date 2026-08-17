@@ -123,8 +123,12 @@ describe('Login', () => {
     expect(screen.getByText('Monitor')).toBeDefined()
     expect(screen.getByText('Alert')).toBeDefined()
     expect(screen.getByText('Report')).toBeDefined()
-    // İzle sütunu: 8 monitör çipi (flagship Sertifika canlı nabız noktalı), Uyar: 3, Raporla: 3 → toplam 14
-    expect(container.querySelectorAll('.lp-chip')).toHaveLength(14)
+    // İzle sütunu: 10 çip (9 izleme türü + Uptime; flagship Sertifika canlı nabız noktalı),
+    // Uyar: 3, Raporla: 3 → toplam 16. Sayfa Bütünlüğü ve Sentetik (k6) sonradan eklendi:
+    // metin "10 izleme türü" derken vitrinde yalnız 8 çip vardı.
+    // İzle sütununun türlerle TAM örtüşmesi ayrıca monitorTypeSurfaces.test.jsx'te kilitli;
+    // buradaki toplam diğer iki sütunun da sabit kalmasını sağlar.
+    expect(container.querySelectorAll('.lp-chip')).toHaveLength(16)
     expect(container.querySelector('.lp-chip--flag')).not.toBeNull()
     expect(container.querySelector('.lp-chip--flag .lp-chip-live')).not.toBeNull()
     expect(screen.getByText('DNS')).toBeDefined()
@@ -231,5 +235,38 @@ describe('Login', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /^send report$/i }))
 
     expect(await within(dialog).findByText(/a server error occurred/i)).toBeInTheDocument()
+  })
+
+  /**
+   * "Sistem yöneticisine bildirin" bağlantısı HER ZAMAN sorunun ALTINDA durmalı.
+   *
+   * jsdom yerleşim hesaplamaz — "altında mı" diye ölçemeyiz. Bunun yerine konumu belirleyen
+   * YAPISAL sözleşme sınanıyor: soru kendi blok öğesinde (.lp-help-text) duruyor, bağlantı da
+   * onun kardeşi. İkisi tek bir metin akışında olsaydı bağlantının yeri kart genişliğine ve
+   * dilin metin uzunluğuna göre değişirdi.
+   *
+   * GERÇEK GÖRÜNÜM DOĞRULANMADI: satır aralığı ve hizalama tarayıcıda kontrol edilmeli.
+   */
+  it('yardım bağlantısı soruyla AYNI SATIRDA değil — soru kendi blok öğesinde', () => {
+    const { container } = render(<Login onLogin={() => {}} />)
+
+    const help = container.querySelector('.lp-help')
+    expect(help).not.toBeNull()
+
+    const text = help.querySelector('.lp-help-text')
+    const link = help.querySelector('.lp-help-link')
+    expect(text, 'soru kendi blok öğesinde olmalı (.lp-help-text)').not.toBeNull()
+    expect(link).not.toBeNull()
+
+    // Soru metni doğrudan .lp-help'in çıplak metin düğümü OLMAMALI; öyle olsaydı bağlantıyla
+    // aynı satır akışını paylaşır ve konum genişliğe göre kayardı.
+    const bareText = [...help.childNodes]
+      .filter(n => n.nodeType === 3)
+      .map(n => n.textContent.trim())
+      .filter(Boolean)
+    expect(bareText, 'soru metni sarmalanmamış — blok öğesi içine alınmalı').toEqual([])
+
+    // Bağlantı, soru bloğunun ARDINDAN gelmeli (DOM sırası = görsel sıra).
+    expect(text.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 })

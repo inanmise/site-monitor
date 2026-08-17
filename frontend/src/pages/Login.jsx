@@ -11,7 +11,7 @@ import { useT, useLanguage } from '../i18n/index.jsx'
 import { useBranding } from '../contexts/BrandingProvider.jsx'
 import BrandLogo from '../components/BrandLogo.jsx'
 import { downscaleImage } from '../utils/imageDownscale.js'
-import { ShieldAlert, ShieldCheck, Lock, Globe, Activity, Radio, Network, Server, Search, Gauge, Bell, BellRing, AlertTriangle, FileText, BarChart3, TrendingUp, Wrench, X } from 'lucide-react'
+import { ShieldAlert, ShieldCheck, Lock, Globe, Activity, Radio, Network, Server, Search, Gauge, Bell, BellRing, AlertTriangle, FileText, BarChart3, TrendingUp, Wrench, ScanSearch, FlaskConical, X } from 'lucide-react'
 
 // App.jsx logout temizliği de bu anahtarı kullanır — tek kaynak buradan export edilir.
 export const REMEMBER_KEY = 'site-monitor-remembered-user'
@@ -160,6 +160,11 @@ export default function Login({ onLogin, sessionExpired = false }) {
         { Icon: Radio,       key: 'login.capPing',    desc: 'login.capPingDesc',    tint: '#22d3ee' },
         { Icon: Globe,       key: 'login.capDomain',  desc: 'login.capDomainDesc',  tint: '#34d399' },
         { Icon: Search,      key: 'login.capKeyword', desc: 'login.capKeywordDesc', tint: '#f472b6' },
+        // Sayfa Bütünlüğü ve Sentetik (k6) burada YOKTU: metin "10 izleme türü" derken çipler
+        // yalnız sekizini gösteriyordu. İkisi de tam birer izleme türü (kendi sayfası, alarmları
+        // ve haftalık raporu var) — Nav'da ve katalogda duruyorlardı, eksik olan yalnız bu vitrindi.
+        { Icon: ScanSearch,  key: 'login.capPage',     desc: 'login.capPageDesc',     tint: '#2dd4bf' },
+        { Icon: FlaskConical, key: 'login.capScripted', desc: 'login.capScriptedDesc', tint: '#c084fc' },
         { Icon: Gauge,       key: 'login.capUptime',  desc: 'login.capUptimeDesc',  tint: '#818cf8' },
       ],
     },
@@ -499,9 +504,12 @@ export default function Login({ onLogin, sessionExpired = false }) {
             </form>
           )}
 
-          {/* Yardım: sorun bildirimi — tıklanınca pop-up açılır, sistem yöneticisine mail gider */}
+          {/* Yardım: sorun bildirimi — tıklanınca pop-up açılır, sistem yöneticisine mail gider.
+              Soru ile bağlantı AYRI SATIRLARDA: ikisi tek satırda akarken bağlantı, kart
+              genişliğine ve dilin metin uzunluğuna göre bazen yanda bazen altta kalıyordu.
+              Soruyu blok yapmak konumu her genişlikte ve her dilde sabitler. */}
           <p className="lp-help">
-            {t('login.helpText')}{' '}
+            <span className="lp-help-text">{t('login.helpText')}</span>
             <button type="button" className="lp-help-link" onClick={openHelp}>
               {t('login.helpLink')}
             </button>

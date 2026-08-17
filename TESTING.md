@@ -71,6 +71,7 @@ if you skip it. Adding a type means making these go green:
 | **Alert type dictionary** | `frontend/src/test/alertTypeMeta.test.jsx` | Parses `EscalationService.java` for `TYPE_* = "..."` and requires every type to have an icon + colour in `utils/alertTypeMeta.js` **and** a label under `incov.type.*` in BOTH locales. Without it the alarm renders as a raw enum (`SCRIPTED_FAIL`) with no icon — and, because the Alert History filter pills are built from the same dictionary, **it cannot be filtered at all**. |
 | **Response-series contract** | `MonitoringControllerTest.responseSeries_contract_allEndpoints` | A reflective mapping-count assert: every `/response-series` endpoint must return the bucket envelope. Added after a 2026-08 copy-paste crash where a raw return took down the chart screen. |
 | **Retention coverage** | `RetentionCoverageTest` (see `docs/RETENTION_POLITIKASI.md`) | Scans every persistent table; one without a retention policy — and without a justified exemption — turns the build red. Closes "new monitor type added, its cleanup forgotten". |
+| **UI surfaces per type** | `frontend/src/test/monitorTypeSurfaces.test.jsx` | Parses `MonitorTypeCatalog.java` for the canonical `ORDER` and asserts every per-type UI surface covers it: the sidebar **İzleme** group, `VALID_TABS` (deep links), the type's `*MonitorPage.jsx` plus its `MonitorHowBox` + `MonitorGuideButton`, `MONITOR_GUIDES` (TR+EN), the maintenance-window target picker, the activity-log type badges, and the weekly monitoring strip order. A missing entry never throws — the type just silently vanishes from that surface. |
 | **Monitor type catalog** (backend) | `MonitorTypeCatalogTest` | The backend twin of the alert-type dictionary gate. Parses `EscalationService.java` for `TYPE_* = "..."` and requires every type to be mapped to a monitor type in `MonitorTypeCatalog.ALERT_TYPES`, with a Turkish label and a position in `ORDER`. Without it the alarm is counted in **no** weekly bucket and vanishes from the weekly monitoring strip, the weekly e-mail and the weekly outage PDF — silently, with no error. |
 
 This last gate was written **after** it had already failed twice in production code, both times silently:
@@ -84,6 +85,18 @@ This last gate was written **after** it had already failed twice in production c
 
 Both were copies of the same mapping drifting apart. The catalog is now the single source and the
 gate names the missing type when you break it.
+
+The UI gate exists for the same reason — two of its surfaces had already rotted, and the code
+comments still record what it cost:
+
+- `scripted` missing from `MaintenanceWindowsPage.MON_TYPES` meant synthetic monitors **could not
+  be silenced during planned maintenance**; the only workaround was the "all monitors" flag, which
+  silences everything at once.
+- `scripted` missing from `ActivityLog.TYPES` rendered those rows with a grey "?" badge and never
+  produced the type filter chip.
+
+Adding a tenth type to `MonitorTypeCatalog.ORDER` and running the frontend suite turns **seven**
+of these assertions red at once, each naming the surface it is missing from.
 
 Two more links have **no automated gate yet** — check them by hand:
 
