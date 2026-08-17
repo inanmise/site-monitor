@@ -39,8 +39,10 @@ describe('TeamManager — business-card members', () => {
 
   it('renders the team list without crashing', async () => {
     render(<TeamManager onTeamsChange={() => {}} />)
-    await waitFor(() => expect(api.admin.getTeams).toHaveBeenCalled())
-    expect(screen.getByText('Payments')).toBeDefined()
+    // waitFor(getTeams çağrıldı) yalnız İSTEĞİN yapıldığını bekler; state güncellenmeden
+    // getByText çalışırsa yük altında satır henüz çizilmemiş olur ve test aralıklı kırılır
+    // (2026-08-16'da tam bu oldu). Render'ın KENDİSİ beklenir — alttaki test zaten böyle.
+    await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
   })
 
   it('expands a team row and shows member cards as label-value pairs', async () => {

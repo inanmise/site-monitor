@@ -9,17 +9,16 @@ import { readPageSize, writePageSize } from '../../hooks/usePagination.js'
 import UserBadge from '../ui/UserBadge.jsx'
 import { mailPreviewSrcDoc, mailLogoVariant, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
 import { LoadingBlock } from '../ui/Progress.jsx'
+import { ALERT_TYPES, alertTypeMeta, alertTypeLabel } from '../../utils/alertTypeMeta.js'
+import MonitorStatsSection from '../MonitorStatsSection.jsx'
+import SearchableSelect from '../ui/SearchableSelect.jsx'
 import {
-  Check, ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, AlertCircle,
-  ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Mail, MailX, Clock, Users, Calendar,
-  Globe, Link2, Ban, Zap, Plug, Server, Shuffle, Network,
+  Check, ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, AlertCircle, ChevronUp,
+  ChevronDown, ChevronRight, Mail, MailX, Clock, Users, Calendar
 } from 'lucide-react'
 
-const levelColor = { WARNING: '#f0a500', HIGH: '#e07b00', CRITICAL: '#c0392b' }
-const TIER_COLOR = { 1: '#4f46e5', 2: '#0284c7', 3: '#0891b2', 4: '#6b7280' }
-
-function tierColor(t) { return TIER_COLOR[t] ?? '#94a3b8' }
-
+/** Seviye → CSS sınıfı eki. Renkler App.css'te (iki tema); burada yalnız eşleme. */
+const levelClass = (lvl) => ({ WARNING: 'warning', HIGH: 'high', CRITICAL: 'critical' })[lvl] ?? 'unknown'
 function formatDuration(end, start) {
   const ms = new Date(end) - new Date(start)
   if (isNaN(ms) || ms < 0) return '—'
@@ -42,26 +41,15 @@ function alertExpiryDate(a) {
 }
 
 function AuditRow({ label, by, at, variant }) {
-  const colors = {
-    ack:     { bg: '#f0fdf4', border: '#86efac', text: '#15803d', iconBg: '#dcfce7' },
-    resolve: { bg: '#eff6ff', border: '#93c5fd', text: '#1d4ed8', iconBg: '#dbeafe' },
-    system:  { bg: '#f8fafc', border: '#cbd5e1', text: '#475569', iconBg: '#f1f5f9' },
-  }
-  const c = colors[variant] ?? colors.system
+  // Palet ARTIK burada değil: satır içi sabit hex CSS'i baypas ettiği için koyu temada
+  // açık zeminler okunmuyordu. Renkler .alh-audit--* sınıflarında, iki tema için de tanımlı.
+  const kind = ['ack', 'resolve', 'system'].includes(variant) ? variant : 'system'
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 10,
-      background: c.bg, border: `1px solid ${c.border}`,
-      borderRadius: 8, padding: '8px 12px', fontSize: '.84em',
-    }}>
-      <span style={{
-        width: 28, height: 28, borderRadius: '50%', background: c.iconBg,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        flexShrink: 0,
-      }}><Check size={14} color={c.text} /></span>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-        <span style={{ color: c.text, fontWeight: 700 }}>{label}</span>
-        <span style={{ color: '#64748b' }}>
+    <div className={`alh-audit alh-audit--${kind}`}>
+      <span className="alh-audit-icon"><Check size={14} /></span>
+      <div className="alh-audit-text">
+        <span className="alh-audit-label">{label}</span>
+        <span className="alh-audit-meta">
           <UserBadge username={by} inline size="sm" />
           {at && <> &nbsp;·&nbsp; {formatDate(at)}</>}
         </span>
@@ -87,18 +75,20 @@ function NotifLogCard({ log: l, alertLevel }) {
   const locale = useDateLocale()
   const [open, setOpen] = useState(false)
 
+  // Tetikleyici görsel kimliği: yalnız ikon + etiket burada; RENKLER .nl-trigger--* ve
+  // .nl-card--* sınıflarında (koyu tema karşılıklarıyla). Eskiden satır içi sabit hex'ti.
   const triggerMeta = {
-    INITIAL:       { Icon: ShieldAlert,  textKey: 'alh.trigger.initial',    bg: '#fef2f2', border: '#fca5a5', color: '#c0392b' },
-    ESCALATION:    { Icon: TrendingUp,   textKey: 'alh.trigger.escalation', bg: '#fff7ed', border: '#fdba74', color: '#c2410c' },
-    DAILY_REALERT: { Icon: RefreshCcw,   textKey: 'alh.trigger.daily',      bg: '#fffbeb', border: '#fcd34d', color: '#92400e' },
-    MANUAL:        { Icon: Bell,         textKey: 'alh.trigger.manual',     bg: '#eff6ff', border: '#93c5fd', color: '#1d4ed8' },
-    RESOLUTION:    { Icon: CheckCircle,  textKey: 'alh.trigger.resolution', bg: '#f0fdf4', border: '#86efac', color: '#15803d' },
+    INITIAL:       { Icon: ShieldAlert, textKey: 'alh.trigger.initial',    cls: 'initial' },
+    ESCALATION:    { Icon: TrendingUp,  textKey: 'alh.trigger.escalation', cls: 'escalation' },
+    DAILY_REALERT: { Icon: RefreshCcw,  textKey: 'alh.trigger.daily',      cls: 'daily' },
+    MANUAL:        { Icon: Bell,        textKey: 'alh.trigger.manual',     cls: 'manual' },
+    RESOLUTION:    { Icon: CheckCircle, textKey: 'alh.trigger.resolution', cls: 'resolution' },
   }
 
   const trigBase = triggerMeta[l.trigger]
   const trig = trigBase
     ? { ...trigBase, text: t(trigBase.textKey) }
-    : { Icon: Mail, text: l.trigger, bg: '#f8fafc', border: '#e2e8f0', color: '#475569' }
+    : { Icon: Mail, text: l.trigger, cls: 'other' }
 
   function fmtDateTime(iso) {
     if (!iso) return '—'
@@ -114,9 +104,9 @@ function NotifLogCard({ log: l, alertLevel }) {
   const sentDate = fmtDateTime(l.sent_at)
 
   return (
-    <div className="nl-card" style={{ borderColor: trig.border, background: open ? trig.bg : undefined }}>
+    <div className={`nl-card nl-card--${trig.cls}${open ? ' is-open' : ''}`}>
       <div className="nl-card-header" onClick={() => setOpen(o => !o)}>
-        <span className="nl-trigger-badge" style={{ background: trig.bg, color: trig.color, borderColor: trig.border }}>
+        <span className={`nl-trigger-badge nl-trigger--${trig.cls}`}>
           <trig.Icon size={11} /> {trig.text}
         </span>
         <div className="nl-recipient">
@@ -219,12 +209,7 @@ function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
           <h3 style={{ margin: 0 }}>{t('alh.notifModal.title')}</h3>
           {alertInfo && (
-            <span style={{
-              fontSize: '.8em', fontWeight: 700, padding: '2px 9px',
-              borderRadius: 12, background: alertInfo.resolved ? '#eff6ff' : '#fef2f2',
-              color: alertInfo.resolved ? '#1d4ed8' : '#c0392b',
-              border: `1px solid ${alertInfo.resolved ? '#93c5fd' : '#fca5a5'}`,
-            }}>
+            <span className={`alh-modal-state alh-modal-state--${alertInfo.resolved ? 'closed' : 'open'}`}>
               {alertInfo.resolved ? t('alh.notifModal.closed') : t('alh.notifModal.open')} · {alertInfo.domain}
             </span>
           )}
@@ -331,69 +316,260 @@ function ReNotifyConfirmModal({ domain, recipients, sending, onSend, onClose }) 
   )
 }
 
+
+
+/**
+ * "Ne kadardır AÇIK" rozeti — açık bir alarmın en kritik sayısı ve buraya kadar HİÇ
+ * gösterilmiyordu ({@code formatDuration} yalnız kapalı alarmlarda kullanılıyordu).
+ *
+ * <p>Eşiği aşan alarmlar vurgulanır: uzun süredir açık kalan bir alarm ya çözülmemiş ya
+ * unutulmuştur; ikisi de görünmesi gereken durumlar.
+ */
+function OpenDurationBadge({ createdAt, staleHours }) {
+  const t = useT()
+  if (!createdAt) return null
+  // UTC olarak ayrıştır. Backend zaman damgalarını saat dilimi EKİ OLMADAN yazıyor
+  // ("2026-08-16T09:00:00") ve JS böyle bir dizeyi YEREL saat sanır. Kapalı karttaki
+  // "açık kalma süresi" iki naive damganın FARKI olduğu için kayma sönümleniyordu; burada
+  // ise şimdiki zamanla (mutlak) karşılaştırıyoruz — sönümlenmez. Europe/Istanbul'da 3 saatlik
+  // sapma üretiyordu (testte yakalandı: 3 saatlik alarm "6s" görünüyordu).
+  const utc = createdAt.endsWith('Z') || createdAt.includes('+') ? createdAt : createdAt + 'Z'
+  const startedMs = new Date(utc).getTime()
+  const ms = Date.now() - startedMs
+  if (!Number.isFinite(ms) || ms < 0) return null
+  const stale = ms >= staleHours * 3_600_000
+  return (
+    <span className={`alh-open-for${stale ? ' is-stale' : ''}`}
+      title={stale ? t('alh.openForStaleTip', staleHours) : t('alh.openForTip')}>
+      <Clock size={11} /> {t('alh.openFor', formatDuration(Date.now(), startedMs))}
+    </span>
+  )
+}
+
+/**
+ * "Bu ay N. kez" rozeti — aynı domain + tip için son 30 gündeki alarm sayısı.
+ *
+ * <p>Tekrar eden sorunu tekil olandan ayırır. 1 ise rozet ÇIZILMEZ: her karta "1. kez" yazmak
+ * gürültüdür ve asıl sinyali (tekrar edenler) boğar.
+ */
+function RepeatBadge({ count }) {
+  const t = useT()
+  if (!count || count < 2) return null
+  return (
+    <span className="alh-repeat" title={t('alh.repeatTip', count)}>
+      <RefreshCcw size={11} /> {t('alh.repeat', count)}
+    </span>
+  )
+}
+
+/**
+ * AÇIK bırakılan grupların oturum anahtarı.
+ *
+ * <p>Semantik BİLEREK "açılmışlar" — "katlanmışlar" değil. Gruplar varsayılan olarak KAPALI
+ * geliyor: hepsi açıkken sayfa uzuyor ve "hangi konudan kaç alarm var" özeti kayboluyordu
+ * (kullanıcı geri bildirimi). Kapalıyken ekranda yalnız konu başlıkları ve sayıları kalıyor;
+ * ilgilenilen konu tek tıkla açılıyor.
+ *
+ * <p>Anahtar da değişti: eskiden burada KATLANMIŞ tipler saklanıyordu. Aynı anahtar
+ * kullanılsaydı eski oturumdaki liste "açılmışlar" diye okunur ve tam ters davranış çıkardı.
+ */
+const GROUP_EXPAND_KEY = 'alh-expanded-groups'
+
+/**
+ * Alarmları KONUSUNA (alert_type) göre katlanabilir gruplara ayırır.
+ *
+ * <p>"Hangi konudan hangi alarmlar var" sorusunun ekrandaki karşılığı: düz bir listede 20 satır
+ * arasında 5 DNS + 3 sertifika + 12 erişim alarmı olduğunu görmek için tek tek okumak gerekiyordu.
+ *
+ * <p><b>Gruplama GÖRÜNEN SAYFA içindedir</b> — sunucu sayfalaması korunur. Bu yüzden başlıktaki
+ * sayı "bu sayfada N" demektir, tipin TOPLAMI değil; toplam yukarıdaki tip rozetinde duruyor.
+ * İki sayı farklı anlamda olduğu için çubuğun altında bir satırla açıkça söyleniyor (aksi halde
+ * kullanıcı çelişki sanar).
+ *
+ * <p>Tek tip varsa gruplama YAPILMAZ: tek başlık altında tek grup, bilgi taşımayan bir çerçeveden
+ * ibaret olurdu. Bu kural gömülü modda da (tek domainin 2-3 alarmı) doğru davranışı veriyor.
+ */
+function AlertTypeGroups({ alerts, listClassName, expanded, onToggle, renderCard }) {
+  const t = useT()
+  const order = []
+  const byType = new Map()
+  for (const a of alerts) {
+    const key = a.alert_type ?? '?'
+    if (!byType.has(key)) { byType.set(key, []); order.push(key) }
+    byType.get(key).push(a)
+  }
+
+  if (order.length < 2) {
+    return <div className={listClassName}>{alerts.map(renderCard)}</div>
+  }
+
+  return order.map(type => {
+    const items = byType.get(type)
+    const isOpenGroup = expanded.has(type)
+    const { icon: Icon, color } = alertTypeMeta(type)
+    return (
+      <div className="alh-group" key={type}>
+        <button type="button" className="alh-group-head" onClick={() => onToggle(type)}
+          aria-expanded={isOpenGroup}>
+          <span className="alh-group-chevron">
+            {isOpenGroup ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+          </span>
+          <Icon size={14} style={{ color, flexShrink: 0 }} />
+          <span className="alh-group-title" style={{ color }}>{alertTypeLabel(t, type)}</span>
+          <span className="alh-group-count">{items.length}</span>
+        </button>
+        {isOpenGroup && <div className={listClassName}>{items.map(renderCard)}</div>}
+      </div>
+    )
+  })
+}
+
 export default function AlertHistory({ domain = null, urlSync = false }) {
   const t = useT()
   const { showConfirm } = useDialog()
   const toast = useToast()
   const [alerts,       setAlerts]       = useState([])
-  const [tab,          setTab]          = useState('open')
+  const [tab,          setTab]          = useState(() => (urlSync && readUrlParam('tab', null) === 'closed' ? 'closed' : 'open'))
   const [page,         setPage]         = useState(() => (urlSync ? readUrlInt('page', 1) - 1 : 0))
   const [pageSize,     setPageSize]     = useState(() => (urlSync && readUrlInt('ps', null)) || readPageSize('alert-history'))
   const [total,        setTotal]        = useState(0)
-  const [closedFrom,   setClosedFrom]   = useState(null)
-  const [closedTo,     setClosedTo]     = useState(null)
+  const [closedFrom,   setClosedFrom]   = useState(() => (urlSync ? readUrlParam('from', null) : null))
+  const [closedTo,     setClosedTo]     = useState(() => (urlSync ? readUrlParam('to', null) : null))
   const [loading,      setLoading]      = useState(false)
   const [notifyModal,  setNotifyModal]  = useState(null)
   const [notifying,    setNotifying]    = useState(null)
   const [renotifyModal,   setRenotifyModal]   = useState(null)   // Tekrar Bildir onay pop-up'ı
   const [renotifySending, setRenotifySending] = useState(false)
-  const [typeFilter,   setTypeFilter]   = useState('')   // '' = tüm tipler
+  const [typeFilter,   setTypeFilter]   = useState(() => (urlSync ? readUrlParam('type', '') : ''))   // '' = tüm tipler
   const [typeCounts,   setTypeCounts]   = useState({})
   const [selected,     setSelected]     = useState(() => new Set())   // toplu seçim (yalnız açık sekme)
   const [bulkBusy,     setBulkBusy]     = useState(false)
+  // ── Arama ve filtreler (yalnız bağımsız sayfada; gömülü modda domain zaten sabit) ──
+  // Hepsi SUNUCUYA gider: istemci tarafında süzmek yalnız açık sayfayı süzer ve sayfalamayla
+  // "3 sonuç" derken aslında 90 sonuç olur.
+  const [search,       setSearch]       = useState(() => (urlSync ? readUrlParam('q', '') : ''))
+  const [searchTerm,   setSearchTerm]   = useState(search)   // debounce'lanmış hâli (isteğe giden)
+  const [levelFilter,  setLevelFilter]  = useState(() => (urlSync ? readUrlParam('level', '') : ''))
+  const [teamFilter,   setTeamFilter]   = useState(() => (urlSync ? readUrlParam('team', '') : ''))
+  const [ackFilter,    setAckFilter]    = useState(() => (urlSync ? readUrlParam('ack', '') : ''))
+  const [levelCounts,  setLevelCounts]  = useState({})
+  const [unackedTotal, setUnackedTotal] = useState(0)
+  const [staleTotal,   setStaleTotal]   = useState(0)
+  const [staleHours,   setStaleHours]   = useState(24)
+  const [teams,        setTeams]        = useState([])
+  // Şerit KAPALI başlar — sekiz izleme sayfasının hepsinde böyle; burada `true` bırakmak
+  // tutarsızlıktı. Ayrıca sayfa açılışında ekranı doldurmuyor: önce alarmlar görünüyor,
+  // sayaçlara ihtiyaç duyan tek tıkla açıyor.
+  //
+  // Kapanınca seviye filtresi TEMİZLENMEZ (izleme sayfalarından farkı): burada aynı filtre
+  // araç çubuğundaki açılırda da duruyor, yani gizli bir filtre kalmıyor. İzleme sayfalarında
+  // tek erişim noktası kartlar olduğu için orada temizlemek doğru.
+  const [statsVisible, setStatsVisible] = useState(false)
+  // Katlanan grup tipleri — oturum boyunca korunur (sayfa değişince kapattığın grup açılmasın).
+  const [expanded, setExpanded] = useState(() => {
+    try { return new Set(JSON.parse(sessionStorage.getItem(GROUP_EXPAND_KEY) || '[]')) }
+    catch { return new Set() }
+  })
+  const toggleGroup = useCallback((type) => {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      if (next.has(type)) next.delete(type); else next.add(type)
+      try { sessionStorage.setItem(GROUP_EXPAND_KEY, JSON.stringify([...next])) } catch { /* depolama kapalı */ }
+      return next
+    })
+  }, [])
+
+  // Yazarken her tuşta istek atma — 300 ms sessizlikten sonra tek istek.
+  useEffect(() => {
+    const id = setTimeout(() => setSearchTerm(search), 300)
+    return () => clearTimeout(id)
+  }, [search])
+
+  // Takım listesi yalnız bağımsız sayfada ve bir kez.
+  useEffect(() => {
+    if (!urlSync) return
+    api.admin.getTeams().then(res => { if (res?.success) setTeams(res.data ?? []) }).catch(() => {})
+  }, [urlSync])
 
   const levelLabel = {
     WARNING: t('alh.level.warning'), HIGH: t('alh.level.high'), CRITICAL: t('alh.level.critical'),
   }
-  const typeLabel = {
-    EXPIRY: t('alh.type.expiry'), CHAIN_BROKEN: t('alh.type.chain'),
-    REVOKED: t('alh.type.revoked'), MISMATCH: t('alh.type.mismatch'),
-    ACCESSIBILITY: t('alh.type.accessibility'),
-    PORT_DOWN: t('alh.type.portDown'),
-    DNS_FAILURE: t('alh.type.dnsFailure'),
-    DNS_SLOW: t('alh.type.dnsSlow'),
-    DNS_UNEXPECTED: t('alh.type.dnsUnexpected'),
-    DNS_INCONSISTENT: t('alh.type.dnsInconsistent'),
-    DNS_CHANGED: t('alh.type.dnsChanged'),
-  }
-  // Tip bazlı görsel kimlik — pill'lerde ve kart rozetlerinde kullanılır.
-  // Renkler seviye renklerinden (sarı/turuncu/bordo) bilinçli olarak farklı.
-  const typeMeta = {
-    ACCESSIBILITY: { icon: Globe,   color: '#dc2626' },
-    PORT_DOWN:     { icon: Plug,    color: '#db2777' },
-    DNS_FAILURE:   { icon: Server,  color: '#2563eb' },
-    DNS_SLOW:      { icon: Clock,   color: '#0d9488' },
-    DNS_UNEXPECTED:{ icon: AlertCircle, color: '#ea580c' },
-    DNS_INCONSISTENT: { icon: Network, color: '#0284c7' },
-    DNS_CHANGED:   { icon: Shuffle, color: '#9333ea' },
-    EXPIRY:        { icon: Clock,   color: '#d97706' },
-    CHAIN_BROKEN:  { icon: Link2,   color: '#7c3aed' },
-    REVOKED:       { icon: Ban,     color: '#be123c' },
-    MISMATCH:      { icon: Zap,     color: '#0891b2' },
-  }
-
+  // Tip etiketi/ikonu/rengi ARTIK YEREL DEĞİL: utils/alertTypeMeta.js tek kaynak.
+  // Buradaki yerel harita yalnız 11 tip tanıyordu (backend'de 28) — keyword/ping/HTTP/sayfa/
+  // sentetik/alan-adı alarmları ham enum adıyla görünüyor ve FİLTRELENEMİYORDU.
   function TypeChip({ type, size = 13 }) {
-    const meta = typeMeta[type]
-    const Icon = meta?.icon
+    const { icon: Icon, color } = alertTypeMeta(type)
     return (
-      <span className="alert-type" style={{
-        color: meta?.color, fontWeight: 700,
-        display: 'inline-flex', alignItems: 'center', gap: 4,
-      }}>
-        {Icon && <Icon size={size} />}
-        {typeLabel[type] || type}
+      <span className="alert-type alh-type-chip" style={{ color }}>
+        <Icon size={size} />
+        {alertTypeLabel(t, type)}
       </span>
     )
+  }
+
+  // ── İstatistik kartları ────────────────────────────────────────────────────
+  // Sayılar SUNUCUDAN gelir (level_counts / unacked_total). Sayfa içinden hesaplanamaz:
+  // 81 alarmın 20'si ekranda dururken "Kritik: 12" yazmak yanıltıcı olurdu.
+  const levelTotal = Object.values(levelCounts).reduce((a, b) => a + b, 0)
+  const statItems = [
+    { key: '',         Icon: Bell,        label: t('alh.statTotal'),    value: levelTotal,                  cls: 'total'    },
+    { key: 'CRITICAL', Icon: AlertCircle, label: t('alh.statCritical'), value: levelCounts.CRITICAL ?? 0,   cls: 'critical' },
+    { key: 'HIGH',     Icon: TrendingUp,  label: t('alh.statHigh'),     value: levelCounts.HIGH ?? 0,       cls: 'high'     },
+    { key: 'WARNING',  Icon: ShieldAlert, label: t('alh.statWarning'),  value: levelCounts.WARNING ?? 0,    cls: 'warning'  },
+    { key: 'unacked',  Icon: Bell,        label: t('alh.statUnacked'),  value: unackedTotal,                cls: 'warning',
+      hint: t('mondash.unackedHint') },
+    // YALNIZ açık sekmede: kapalı sekmede bu sayı "24 saatten eski" demek olurdu,
+    // "24 saattir AÇIK" değil — iki farklı şey ve ikincisi kullanıcının sorduğu.
+    ...(tab === 'open' ? [{ key: 'stale', Icon: Clock, label: t('alh.statStale', staleHours),
+                    value: staleTotal, cls: 'high', hint: t('alh.statStaleHint', staleHours) }] : []),
+  ]
+
+  // "Sahiplenilmemiş" kartı seviye DEĞİL, sahiplenme boyutunu filtreler — tek kart şeridinde
+  // iki farklı boyut olduğu için tıklama burada ayrıştırılır.
+  function onLevelCardClick(key) {
+    // "Uzun süredir açık" kartı SAYAÇ — tıklanınca filtre uygulamaz. Sunucuda karşılığı olan bir
+    // parametre yok; sahte bir istemci-tarafı süzme eklemek sayfalamayla yanıltıcı olurdu
+    // (ekrandaki 20 satırdan 3'ünü gösterip "3 tane" demek). Bilinçli olarak gösterge bırakıldı.
+    if (key === 'stale') return
+    if (key === 'unacked') { setAckFilter(a => (a === 'unack' ? '' : 'unack')); setLevelFilter(''); return }
+    setAckFilter('')
+    setLevelFilter(l => (l === key ? '' : key))
+  }
+
+  const levelOptions = [
+    { value: '',         label: t('alh.allLevels') },
+    { value: 'CRITICAL', label: levelLabel.CRITICAL },
+    { value: 'HIGH',     label: levelLabel.HIGH },
+    { value: 'WARNING',  label: levelLabel.WARNING },
+  ]
+  const ackOptions = [
+    { value: '',      label: t('alh.allAckStates') },
+    { value: 'unack', label: t('alh.unackedOnly') },
+    { value: 'ack',   label: t('alh.ackOnly') },
+  ]
+  const teamOptions = [
+    { value: '', label: t('alh.allTeams') },
+    ...teams.map(tm => ({ value: String(tm.id), label: tm.name })),
+  ]
+
+  // CSV, listeyle AYNI parametreleri kullanır (sayfalama hariç — dosya tüm sonucu içerir).
+  const csvParams = {
+    resolved: tab === 'closed' ? 'true' : 'false',
+    ...(domain ? { domain } : {}),
+    ...(typeFilter ? { alertType: typeFilter } : {}),
+    ...(searchTerm.trim() ? { q: searchTerm.trim() } : {}),
+    ...(levelFilter ? { level: levelFilter } : {}),
+    ...(teamFilter ? { teamId: teamFilter } : {}),
+    ...(ackFilter ? { acknowledged: ackFilter === 'ack' ? 'true' : 'false' } : {}),
+    ...(tab === 'closed' && closedFrom ? { resolvedSince: closedFrom } : {}),
+    ...(tab === 'closed' && closedTo ? { resolvedUntil: closedTo } : {}),
+  }
+
+  const hasActiveFilters = !!(search || levelFilter || teamFilter || ackFilter || typeFilter
+                              || closedFrom || closedTo)
+  function clearFilters() {
+    setSearch(''); setLevelFilter(''); setTeamFilter(''); setAckFilter('')
+    setTypeFilter(''); setClosedFrom(null); setClosedTo(null)
   }
 
   const load = useCallback(async () => {
@@ -409,19 +585,30 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
     }
     if (domain) params.domain = domain
     if (typeFilter) params.alertType = typeFilter
+    if (searchTerm.trim()) params.q = searchTerm.trim()
+    if (levelFilter) params.level = levelFilter
+    if (teamFilter)  params.teamId = teamFilter
+    if (ackFilter)   params.acknowledged = ackFilter === 'ack' ? 'true' : 'false'
     const res = await api.admin.getAlerts(params)
     setLoading(false)
     if (res?.success) {
       setAlerts(res.data ?? [])
       setTotal(res.total ?? 0)
       setTypeCounts(res.type_counts ?? {})
+      setLevelCounts(res.level_counts ?? {})
+      setUnackedTotal(res.unacked_total ?? 0)
+      setStaleTotal(res.stale_total ?? 0)
+      setStaleHours(res.stale_hours ?? 24)
     } else if (res != null) {
       toast.error(res?.error || t('alh.loadError'))
     }
-  }, [tab, page, pageSize, closedFrom, closedTo, domain, typeFilter, t, toast])
+  }, [tab, page, pageSize, closedFrom, closedTo, domain, typeFilter,
+      searchTerm, levelFilter, teamFilter, ackFilter, t, toast])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => { setPage(0) }, [tab, pageSize, closedFrom, closedTo, typeFilter])
+  // Filtre değişince 1. sayfaya dön — aksi halde 5. sayfada daralan sonuçta BOŞ ekran kalır.
+  useEffect(() => { setPage(0) }, [tab, pageSize, closedFrom, closedTo, typeFilter,
+                                   searchTerm, levelFilter, teamFilter, ackFilter])
   // Liste bağlamı değişince seçim sıfırlansın (sekme/sayfa/filtre) — bayat id'ler seçili kalmasın
   useEffect(() => { setSelected(new Set()) }, [tab, page, pageSize, closedFrom, closedTo, typeFilter, domain])
 
@@ -554,7 +741,18 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
 
   // Paylaşılabilir URL (yalnız Alarm Geçmişi SEKMESİ — gömülü modallarda kapalı: enabled guard).
+  // Paylaşılabilir bağlantı: görünümü ÜRETEN her şey adres çubuğunda yaşar; varsayılan değer
+  // param üretmez (temiz URL). Bağlantıyı alan kişi AYNI listeyi açar — eskiden yalnız sayfa
+  // numarası taşınıyordu, filtreler kayboluyordu.
   useUrlQuerySync({
+    tab: tab !== 'open' ? tab : null,
+    type: typeFilter || null,
+    q: searchTerm.trim() || null,
+    level: levelFilter || null,
+    team: teamFilter || null,
+    ack: ackFilter || null,
+    from: closedFrom || null,
+    to: closedTo || null,
     page: page > 0 ? page + 1 : null,
     ps: (pageSize !== 50 || page > 0) ? pageSize : null,
   }, { enabled: urlSync })
@@ -585,6 +783,40 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
         </button>
       </div>
 
+      {/* ── İstatistik şeridi + filtre çubuğu — YALNIZ bağımsız sayfada ──
+             Gömülü modda (monitör/sertifika modalının "Alarm Geçmişi" sekmesi) domain zaten
+             sabit; orada takım/arama filtresi anlamsız olur ve modalı gereksiz uzatır. ── */}
+      {urlSync && (
+        <>
+          <MonitorStatsSection
+            loading={loading} total={statItems[0].value}
+            statsVisible={statsVisible} onToggle={() => setStatsVisible(v => !v)}
+            items={statItems} activeFilter={levelFilter || null}
+            onStatClick={onLevelCardClick}
+            onClearFilter={() => setLevelFilter('')}
+            shownCount={alerts.length} />
+
+          <div className="upt-toolbar alh-toolbar">
+            <SearchableSelect value={levelFilter} onChange={setLevelFilter} options={levelOptions} />
+            {teamOptions.length > 1 && (
+              <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} searchThreshold={2} />
+            )}
+            <SearchableSelect value={ackFilter} onChange={setAckFilter} options={ackOptions} />
+            <input className="upt-search" type="text" placeholder={t('alh.searchPlaceholder')}
+              value={search} onChange={e => setSearch(e.target.value)} />
+            {hasActiveFilters && (
+              <button type="button" className="btn btn-secondary btn-sm-p" onClick={clearFilters}>
+                {t('alh.clearFilters')}
+              </button>
+            )}
+            {/* CSV: EKRANDAKİ filtrelerin aynısıyla. Ayrı bir filtre yüzeyi olsaydı
+                "ekranda 12 satır vardı, dosyada 800 çıktı" sürprizi kaçınılmazdı. */}
+            <a className="hist-csv-btn" href={api.admin.getAlertsCsvUrl(csvParams)}
+              title={t('alh.csvTip')}>{t('alh.csv')}</a>
+          </div>
+        </>
+      )}
+
       {/* ── Tip filtre pill'leri — canlı sayılarla ── */}
       <div className="inv-stats-pills" style={{ marginBottom: 14 }}>
         <button
@@ -595,10 +827,10 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
         >
           {t('alh.typeAll')}: <strong>{Object.values(typeCounts).reduce((s, n) => s + n, 0)}</strong>
         </button>
-        {Object.keys(typeMeta)
+        {ALERT_TYPES
           .filter(type => (typeCounts[type] ?? 0) > 0 || typeFilter === type)
           .map(type => {
-            const meta = typeMeta[type]
+            const meta = alertTypeMeta(type)
             const Icon = meta.icon
             const selected = typeFilter === type
             return (
@@ -610,11 +842,17 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
                 onClick={() => setTypeFilter(selected ? '' : type)}
               >
                 <Icon size={12} style={{ color: meta.color, flexShrink: 0 }} />
-                {typeLabel[type]}: <strong>{typeCounts[type] ?? 0}</strong>
+                {alertTypeLabel(t, type)}: <strong>{typeCounts[type] ?? 0}</strong>
               </button>
             )
           })}
       </div>
+
+      {/* Grup sayıları SAYFA İÇİdir, tip rozetleri TOPLAMI gösterir — iki farklı sayı.
+             Ayrılmazsa kullanıcı çelişki sanar. Yalnız gruplama gerçekten yapılıyorsa çıkar. */}
+      {new Set(alerts.map(a => a.alert_type)).size > 1 && (
+        <div className="alh-group-note">{t('alh.groupNote')}</div>
+      )}
 
       {isClosed && (
         <div className="alh-filter-bar">
@@ -687,8 +925,8 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
       )}
 
       {isOpen && alerts.length > 0 && (
-        <div className="alert-list">
-          {alerts.map(a => {
+        <AlertTypeGroups alerts={alerts} listClassName="alert-list"
+          expanded={expanded} onToggle={toggleGroup} renderCard={(a) => {
             const notifiedList = parseContacts(a.notified_contacts)
             return (
               <div key={a.id} className={`alert-card alert-${a.alert_level?.toLowerCase()}`}>
@@ -701,11 +939,13 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
                     onChange={() => toggleSelect(a.id)}
                     aria-label={t('alh.bulk.selectOne')}
                   />
-                  <span className="alert-level-badge" style={{ background: levelColor[a.alert_level] }}>
+                  <span className={`alert-level-badge alh-lvl-bg--${levelClass(a.alert_level)}`}>
                     {levelLabel[a.alert_level] || a.alert_level}
                   </span>
                   <TypeChip type={a.alert_type} />
                   <strong className="alert-domain">{a.domain}</strong>
+                  <OpenDurationBadge createdAt={a.created_at} staleHours={staleHours} />
+                  <RepeatBadge count={a.repeat_count} />
                   {(a.email_failed_count ?? 0) > 0 && (
                     <span className="alert-send-failed" title={t('alh.sendFailedTip')}>
                       <MailX size={12} /> {t('alh.sendFailed')}
@@ -774,31 +1014,22 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
 
               </div>
             )
-          })}
-        </div>
+          }} />
       )}
 
       {isClosed && alerts.length > 0 && (
         <div className="alert-history-wrap">
-          <div className="alert-history-cards">
-            {alerts.map(a => (
+          <AlertTypeGroups alerts={alerts} listClassName="alert-history-cards"
+            expanded={expanded} onToggle={toggleGroup} renderCard={(a) => (
               <div key={a.id} className="alert-history-card">
-                <div className="ahc-stripe" style={{ background: levelColor[a.alert_level] ?? '#ccc' }} />
+                <div className={`ahc-stripe alh-lvl-bg--${levelClass(a.alert_level)}`} />
 
                 <div className="ahc-body">
                   <div className="ahc-top">
                     <strong className="ahc-domain">{a.domain}</strong>
-                    <span className="ahc-type" style={{
-                      color: typeMeta[a.alert_type]?.color, fontWeight: 700,
-                      display: 'inline-flex', alignItems: 'center', gap: 4,
-                    }}>
-                      {typeMeta[a.alert_type]?.icon && (() => {
-                        const Icon = typeMeta[a.alert_type].icon
-                        return <Icon size={12} />
-                      })()}
-                      {typeLabel[a.alert_type] || a.alert_type}
-                    </span>
-                    <span className="ahc-level" style={{ color: levelColor[a.alert_level] }}>
+                    <TypeChip type={a.alert_type} size={12} />
+                    <RepeatBadge count={a.repeat_count} />
+                    <span className={`ahc-level alh-lvl--${levelClass(a.alert_level)}`}>
                       {levelLabel[a.alert_level] || a.alert_level}
                     </span>
                     {a.days_remaining != null && (
@@ -828,7 +1059,7 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
                           </span>
                         )}
                         {a.cert_tier != null && (
-                          <span className="ahc-chip ahc-chip-tier" style={{ background: tierColor(a.cert_tier) }}>
+                          <span className={`ahc-chip ahc-chip-tier tier-badge-${a.cert_tier}`}>
                             T{a.cert_tier}
                           </span>
                         )}
@@ -858,10 +1089,10 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
                       </div>
                     ) : (
                       <div className="ahc-tl-item ahc-tl-noack">
-                        <span className="ahc-tl-icon" style={{ color: '#9ca3af' }}>—</span>
+                        <span className="ahc-tl-icon alh-tl-empty">—</span>
                         <div>
                           <div className="ahc-tl-label">{t('alh.tlAckLabel')}</div>
-                          <div className="ahc-tl-val" style={{ color: '#9ca3af' }}>{t('alh.tlNotAcked')}</div>
+                          <div className="ahc-tl-val alh-tl-empty">{t('alh.tlNotAcked')}</div>
                         </div>
                       </div>
                     )}
@@ -904,8 +1135,7 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
                   </div>
                 </div>
               </div>
-            ))}
-          </div>
+            )} />
         </div>
       )}
 

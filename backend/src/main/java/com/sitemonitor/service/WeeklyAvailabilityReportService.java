@@ -4,6 +4,7 @@ import com.sitemonitor.model.*;
 import com.sitemonitor.repository.*;
 import com.sitemonitor.service.EmailNotificationService.AvailabilityRow;
 import com.sitemonitor.service.EmailNotificationService.AvailabilitySummary;
+import com.sitemonitor.service.report.WeeklyOutageReportService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -46,6 +47,7 @@ public class WeeklyAvailabilityReportService {
     private final NotificationLogRepository notificationLogRepo;
     private final WeeklyAvailabilityLogRepository walRepo;
     private final AppSettingsService appSettings;
+    private final WeeklyOutageReportService outageReportService;
 
     @Value("${site.monitor.weekly-availability.enabled:true}")
     private boolean enabledDefault;
@@ -61,9 +63,18 @@ public class WeeklyAvailabilityReportService {
     /** Geçen tam ISO hafta penceresi (Europe/Istanbul → UTC ISO sınırlar). */
     public record Window(String fromUtc, String toUtc, Instant windowEnd, int year, int week, String weekLabel) {}
 
-    /** Tek takımlık rapor (gönderilmeden önce hazır): satırlar, özet, konu, HTML, çözülmüş alıcılar. */
+    /**
+     * Tek takımlık rapor (gönderilmeden önce hazır): satırlar, özet, konu, HTML, çözülmüş alıcılar
+     * ve kesinti eki verisi.
+     *
+     * <p>{@code outage} burada taşınıyor çünkü gövdedeki "ek" bandının ekin İÇERİĞİNİ (kaç alarm,
+     * kaçı açık) yazması gerekiyor; yani veri HTML'den ÖNCE toplanmak zorunda. Aynı veri sonra
+     * PDF'i çizmek için yeniden kullanılıyor — iki kez toplansaydı bütün alarm sorguları tek podda
+     * iki kez koşardı. Toplama başarısızsa {@code null} olur ve mail eksiz gider.
+     */
     public record TeamReport(List<AvailabilityRow> rows, AvailabilitySummary summary,
-                             String subject, String html, String[] to, String[] cc) {}
+                             String subject, String html, String[] to, String[] cc,
+                             WeeklyOutageReportService.WeeklyOutageData outage) {}
 
     /** Önizleme yanıtı (göndermeden). */
     public record PreviewResult(String html, String teamName, String weekLabel,
@@ -124,7 +135,9 @@ public class WeeklyAvailabilityReportService {
             }
 
             String[] cc = report.cc();
-            String status = emailService.sendHtml(report.to(), cc.length > 0 ? cc : null, report.subject(), report.html(), null);
+            List<EmailNotificationService.MailAttachment> attachments = outageAttachment(team, w, report);
+            String status = emailService.sendHtmlWithAttachments(report.to(), cc.length > 0 ? cc : null,
+                    report.subject(), report.html(), null, attachments);
             saveNotificationLog(team, report.to(), cc, report.subject(), report.html(), status, "WEEKLY_AVAILABILITY");
             record(team.getId(), w.year(), w.week(), status != null && status.startsWith("FAILED") ? "FAILED" : "SENT");
             sent++;
@@ -278,8 +291,56 @@ public class WeeklyAvailabilityReportService {
         String[] to = resolveTo(team);
         String[] cc = resolveCc(team.getId(), to);
         String subject = "[Site Monitor] " + team.getName() + " — Haftalık Erişilebilirlik (" + w.weekLabel() + ")";
-        String html = emailService.buildWeeklyAvailabilityHtml(team.getName(), w.weekLabel(), rows, summary);
-        return new TeamReport(rows, summary, subject, html, to, cc);
+
+        // Kesinti verisi HTML'den ÖNCE toplanır: gövdedeki ek bandı ekin içeriğini yazıyor.
+        WeeklyOutageReportService.WeeklyOutageData outage = collectOutage(team, w, rows);
+        EmailNotificationService.AttachmentInfo att = outage == null ? null
+                : new EmailNotificationService.AttachmentInfo(
+                        WeeklyOutageReportService.fileName(team.getName(), w),
+                        outage.totalAlarms(), outage.stillOpenCount(), outage.affectedTargets(),
+                        MonitorTypeCatalog.ORDER.size());
+
+        String html = emailService.buildWeeklyAvailabilityHtml(team.getName(), w.weekLabel(), rows, summary, att);
+        return new TeamReport(rows, summary, subject, html, to, cc, outage);
+    }
+
+    /** Kesinti verisini toplar; patlarsa {@code null} döner ve rapor eksiz ama TAM olarak gider. */
+    private WeeklyOutageReportService.WeeklyOutageData collectOutage(
+            Team team, Window w, List<AvailabilityRow> rows) {
+        try {
+            return outageReportService.collect(team, w, rows);
+        } catch (Exception e) {
+            log.warn("Haftalık kesinti verisi toplanamadı (team={} week={}) — mail EK OLMADAN gidiyor: {}",
+                    team.getName(), w.weekLabel(), e.toString(), e);
+            return null;
+        }
+    }
+
+    /**
+     * Haftanın kesinti detayı PDF'i — mail eki.
+     *
+     * <p>Kesinti YAŞANMAYAN haftalarda da eklenir (kullanıcı kararı): rapor arşivi her hafta bir
+     * dosya içerecek şekilde tutarlı kalsın ve "ek gelmedi, unutuldu mu?" sorusu doğmasın.
+     *
+     * <p>Erişilebilirlik satırları PARAMETRE olarak geçiliyor: {@code buildTeamReport} onları
+     * zaten hesapladı; toplayıcının yeniden hesaplaması tüm uptime sorgularını ikinci kez
+     * koşturmak olurdu (tek pod, 200-1000+ domain).
+     *
+     * <p>Toplama ya da çizim herhangi bir sebeple patlarsa boş liste döner ve <b>mail ek olmadan
+     * yine gider</b>. Haftalık rapor bir ek hatası yüzünden hiç gitmemezlik etmemeli.
+     */
+    private List<EmailNotificationService.MailAttachment> outageAttachment(Team team, Window w, TeamReport report) {
+        if (report.outage() == null) return List.of();   // toplama düşmüş, gövde zaten ekten söz etmiyor
+        try {
+            byte[] pdf = outageReportService.pdf(report.outage());
+            if (pdf.length == 0) return List.of();
+            return List.of(new EmailNotificationService.MailAttachment(
+                    WeeklyOutageReportService.fileName(team.getName(), w), pdf, "application/pdf"));
+        } catch (Exception e) {
+            log.warn("Haftalık kesinti eki hazırlanamadı (team={} week={}) — mail EK OLMADAN gidiyor: {}",
+                    team.getName(), w.weekLabel(), e.toString(), e);
+            return List.of();
+        }
     }
 
     // ── Önizleme / test / durum (Ayarlar sayfası) ────────────────────────────────
@@ -315,11 +376,45 @@ public class WeeklyAvailabilityReportService {
         TeamReport report = buildTeamReport(team, w, domains);
         String subject = "[Site Monitor][TEST] " + team.getName() + " — Haftalık Erişilebilirlik (" + w.weekLabel() + ")";
         String[] to = { email };
-        String status = emailService.sendHtml(to, null, subject, report.html(), null);
+        // Test maili gerçek mailin AYNISI olmalı — eki taşımasaydı PDF ancak pazartesi sabahı
+        // görülebilirdi, yani göndermeden önce doğrulanamazdı.
+        String status = emailService.sendHtmlWithAttachments(to, null, subject, report.html(), null,
+                outageAttachment(team, w, report));
         saveNotificationLog(team, to, null, subject, report.html(), status, "WEEKLY_AVAILABILITY_TEST");
         log.info("Haftalık erişilebilirlik TEST maili: team={} week={} to={} status={}",
                 team.getName(), w.weekLabel(), email, status);
         return status;
+    }
+
+    /**
+     * Kesinti PDF'ini GÖNDERMEDEN üretir (Ayarlar → önizleme; ekin indirilebilir hâli).
+     *
+     * <p>Neden ayrı bir yol var: eki doğrulamanın tek yolu mail göndermek olsaydı, PDF'e bakmak
+     * için ya pazartesiyi beklemek ya da gerçek bir adrese test maili atmak gerekirdi. Önizleme
+     * ikisini de gereksiz kılar.
+     *
+     * @param weekOffset 0 = bu hafta (kısmi), 1 = geçen tam hafta (e-posta ile giden); [0,8] aralığına kırpılır
+     * @return PDF baytları; üretim düşerse boş dizi (çağıran 503/uyarı döndürür)
+     */
+    public byte[] outagePdf(Long teamId, Integer weekOffset) {
+        Team team = teamRepo.findById(teamId)
+                .orElseThrow(() -> new IllegalArgumentException("Takım bulunamadı: " + teamId));
+        int offset = weekOffset != null ? Math.max(0, Math.min(weekOffset, 8)) : 1;
+        Window w = windowForOffset(offset);
+        List<CertificateInventory> domains =
+                inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(teamId);
+        TeamReport report = buildTeamReport(team, w, domains);
+        // buildTeamReport veriyi ZATEN topladı (gövdedeki ek bandı için) — yeniden toplamak
+        // bütün alarm sorgularını ikinci kez koşturmak olurdu.
+        return report.outage() == null ? new byte[0] : outageReportService.pdf(report.outage());
+    }
+
+    /** Önizleme/indirme için ek dosya adı — mailde gidenle AYNI ad. */
+    public String outagePdfFileName(Long teamId, Integer weekOffset) {
+        Team team = teamRepo.findById(teamId)
+                .orElseThrow(() -> new IllegalArgumentException("Takım bulunamadı: " + teamId));
+        int offset = weekOffset != null ? Math.max(0, Math.min(weekOffset, 8)) : 1;
+        return WeeklyOutageReportService.fileName(team.getName(), windowForOffset(offset));
     }
 
     /** Ayarlar durum kartı: genel anahtar + cron + raporlanan hafta + mail kitlesindeki takımlar (≥1 domain). */

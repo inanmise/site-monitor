@@ -65,7 +65,11 @@ export default function ResponseTimeChart({ monitorId, kind }) {
   // kurduğu ikinci eksen deseninin aynısı. response_ms kolonu YENİ olduğu için geçmişte ms yok,
   // kalan gün ise 180 günlük geçmişten dolu gelir; hasData bunu da saymalı (aşağıda).
   const isSsl = kind === 'ssl'
-  const [preset, setPreset] = useState('30d')
+  // Varsayılan aralık 24 saat (eskiden 30 gündü) — TÜM izleme türlerinde. Grafik "şu an ne
+  // oluyor" sorusuna bakılan yer; 30 günlük pencere son birkaç saatteki dalgalanmayı kova
+  // ortalamasında eritiyordu. Uzun pencereye ihtiyaç olduğunda tek tıkla erişiliyor.
+  // Yan fayda: 24 saat en küçük pencere → ilk açılışta en az satır taranır.
+  const [preset, setPreset] = useState('24h')
   const [custom, setCustom] = useState(null)         // { from, to } ISO (UTC)
   const [showCustom, setShowCustom] = useState(false)
   const [pickFrom, setPickFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 7); return d })

@@ -12,6 +12,8 @@ vi.mock('../api/client', () => ({
       reNotifyAlert:    vi.fn(),
       previewReNotify:  vi.fn(),
       bulkAlertAction:  vi.fn(),
+      getTeams:         vi.fn(),   // filtre cubugu takim listesini ceker (yalniz urlSync modunda)
+      getAlertsCsvUrl:  vi.fn(() => '/api/admin/alerts/export'),
     },
   },
 }))
@@ -164,5 +166,487 @@ describe('AlertHistory closed-alert details', () => {
     fireEvent.click(screen.getByRole('button', { name: /^gönder$|^send$/i }))
     await waitFor(() => expect(api.admin.reNotifyAlert)
       .toHaveBeenCalledWith(301, { excludeEmails: ['mudur@akbank.com'] }))
+  })
+})
+
+/**
+ * TİP SÖZLÜĞÜ REGRESYONU — 2026-08-16'da kapatılan işlevsel boşluk.
+ *
+ * AlertHistory kendi tip haritasını tutuyordu ve yalnız 11 tip tanıyordu; backend'de 28 var.
+ * Sonuç: keyword / ping / HTTP / sayfa bütünlüğü / sentetik / alan-adı alarmları ekranda HAM
+ * ENUM adıyla ("SCRIPTED_FAIL") görünüyordu ve tip filtresi pill'leri de aynı haritadan
+ * üretildiği için o alarmlar HİÇ FİLTRELENEMİYORDU.
+ */
+describe('AlertHistory — alarm tipi sözlüğü', () => {
+  const alertOfType = (type, id) => ({
+    id, domain: 'x.example.com', alert_type: type, alert_level: 'CRITICAL',
+    acknowledged: false, resolved: false, created_at: '2026-08-01T08:00:00',
+  })
+
+  beforeEach(() => vi.clearAllMocks())
+
+  it('YENİ izleme türlerinin alarmları ham enum DEĞİL, okunur adıyla görünür', async () => {
+    api.admin.getAlerts.mockResolvedValue({
+      success: true, total: 3, page: 0, size: 20,
+      data: [alertOfType('SCRIPTED_FAIL', 1), alertOfType('KEYWORD_SLOW', 2), alertOfType('PING_DOWN', 3)],
+    })
+    render(<AlertHistory />)
+    await waitFor(() => expect(api.admin.getAlerts).toHaveBeenCalled())
+
+    // Eskiden ekranda birebir "SCRIPTED_FAIL" yazıyordu
+    // Dil-bağımsız iddia: süit EN varsayılanda koşuyor. Asıl sözleşme "ham enum ekrana
+    // düşmez ve yerine okunur bir ad gelir" — hangi dilde olduğu bu testin konusu değil.
+    // Gruplar VARSAYILAN KAPALI olduğu için tip adları GRUP BAŞLIKLARINDAN okunuyor.
+    const titles = await waitFor(() => {
+      const el = [...document.querySelectorAll('.alh-group-title')]
+      if (el.length !== 3) throw new Error('gruplar henüz çizilmedi')
+      return el
+    })
+    const chips = titles.map(c => c.textContent.trim())
+    for (const raw of ['SCRIPTED_FAIL', 'KEYWORD_SLOW', 'PING_DOWN']) {
+      expect(chips, `${raw} hâlâ ham enum olarak görünüyor`).not.toContain(raw)
+    }
+    expect(chips.every(c => c.length > 0)).toBe(true)
+  })
+
+  it('tip FİLTRESİ rozeti yeni türler için de üretilir (eskiden hiç çıkmazdı)', async () => {
+    api.admin.getAlerts.mockResolvedValue({
+      success: true, total: 1, page: 0, size: 20,
+      data: [alertOfType('SCRIPTED_FAIL', 1)],
+      type_counts: { SCRIPTED_FAIL: 4, PAGE_INTEGRITY: 2 },
+    })
+    const { container } = render(<AlertHistory />)
+
+    // Rozetin KENDİSİNİ bekle: getAlerts'in çağrılmış olması state'in işlendiği anlamına gelmez,
+    // ayrıca belge geneli metin sorguları önceki testin kalıntısıyla erken eşleşebiliyor.
+    // Eskiden bu iki tip typeMeta'da olmadığı için rozet HİÇ üretilmiyordu (sayıları gelse bile).
+    await waitFor(() => expect(container.querySelectorAll('.inv-stat-pill').length).toBeGreaterThan(1))
+    const pills = [...container.querySelectorAll('.inv-stat-pill')].map(p => p.textContent)
+    expect(pills.filter(x => /: 4$/.test(x))).toHaveLength(1)   // SCRIPTED_FAIL sayacı
+    expect(pills.filter(x => /: 2$/.test(x))).toHaveLength(1)   // PAGE_INTEGRITY sayacı
+    expect(pills.some(x => x.includes('SCRIPTED_FAIL'))).toBe(false)   // ham enum değil
+  })
+
+  it('pill tıklanınca O TİPLE filtreleyerek yeniden yükler', async () => {
+    api.admin.getAlerts.mockResolvedValue({
+      success: true, total: 1, page: 0, size: 20,
+      data: [alertOfType('SCRIPTED_FAIL', 1)], type_counts: { SCRIPTED_FAIL: 4 },
+    })
+    render(<AlertHistory />)
+    await waitFor(() => expect(api.admin.getAlerts).toHaveBeenCalled())
+
+    // "Tümü" rozeti ilk sırada; tipe ait olan ondan sonraki tek rozet.
+    const pill = [...document.querySelectorAll('.inv-stat-pill')].at(-1)
+    fireEvent.click(pill)
+
+    await waitFor(() => {
+      const last = api.admin.getAlerts.mock.calls.at(-1)[0]
+      expect(last.alertType).toBe('SCRIPTED_FAIL')
+    })
+  })
+
+  it('SÖZLÜKTE OLMAYAN bir tip ekranı çökertmez, ham adıyla görünür', async () => {
+    api.admin.getAlerts.mockResolvedValue({
+      success: true, total: 1, page: 0, size: 20, data: [alertOfType('HENUZ_OLMAYAN_TIP', 9)],
+    })
+    render(<AlertHistory />)
+    await waitFor(() => expect(api.admin.getAlerts).toHaveBeenCalled())
+    // Sözlükte yoksa etiket HAM TİPE düşer — anahtar (incov.type.X) sızmaz.
+    expect(await screen.findByText('HENUZ_OLMAYAN_TIP')).toBeInTheDocument()
+  })
+})
+
+/**
+ * FİLTRE ÇUBUĞU + İSTATİSTİK ŞERİDİ + PAYLAŞILABİLİR BAĞLANTI (2026-08-16)
+ *
+ * Sayfada arama kutusu YOKTU; seviye/takım/sahiplenme filtreleri yoktu; urlSync yalnız sayfa
+ * numarasını taşıyordu (bağlantıyı gönderince karşı taraf BAŞKA bir liste görüyordu).
+ *
+ * Bu yüzey YALNIZ bağımsız sayfada çıkmalı: aynı bileşen dokuz modalın içinde gömülü sekme
+ * olarak da kullanılıyor ve orada domain zaten sabit — takım/arama filtresi anlamsız olur.
+ */
+/**
+ * İstatistik şeridi VARSAYILAN KAPALI açılır (kullanıcı isteği): sayfaya girince alarm listesi
+ * hemen görünsün, altı sayım kartı ekranın üstünü yemesin. Şerit katlama durumu MonitorStatsSection
+ * deseninin aynısı — başlık çubuğuna tıklanınca açılıp kapanır.
+ *
+ * Bu yüzden şeridin İÇERİĞİNİ sınayan her test önce şeridi açmak zorunda. "Varsayılan kapalı"
+ * sözleşmesini ayrı bir test tutuyor; yoksa varsayılan sessizce geri çevrilebilir ve bu
+ * yardımcı yüzünden hiçbir test kırmızı dönmezdi.
+ */
+async function expandStats(container) {
+  await waitFor(() => expect(container.querySelector('.stats-collapse-bar')).not.toBeNull())
+  fireEvent.click(container.querySelector('.stats-collapse-bar'))
+  await waitFor(() => expect(container.querySelector('.stats-panel')).not.toBeNull())
+}
+
+describe('AlertHistory — filtre çubuğu ve istatistik şeridi', () => {
+  const openAlert = { id: 1, domain: 'a.example.com', alert_type: 'EXPIRY', alert_level: 'CRITICAL',
+    acknowledged: false, resolved: false, created_at: '2026-08-01T08:00:00' }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.history.replaceState({}, '', '/')
+    api.admin.getAlerts.mockResolvedValue({
+      success: true, data: [openAlert], total: 1, page: 0, size: 20,
+      level_counts: { CRITICAL: 5, HIGH: 3, WARNING: 2 }, unacked_total: 7,
+      stale_total: 4, stale_hours: 24,
+    })
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'SY-A' }] })
+  })
+
+  it('GÖMÜLÜ modda filtre çubuğu ve şerit ÇIKMAZ (modalı şişirmez)', async () => {
+    const { container } = render(<AlertHistory domain="a.example.com" />)
+    await waitFor(() => expect(api.admin.getAlerts).toHaveBeenCalled())
+
+    expect(container.querySelector('.alh-toolbar')).toBeNull()
+    expect(container.querySelector('.stats-panel')).toBeNull()
+    expect(api.admin.getTeams).not.toHaveBeenCalled()   // gereksiz istek de atılmaz
+  })
+
+  it('İstatistik şeridi VARSAYILAN KAPALI gelir — liste hemen görünür', async () => {
+    const { container } = render(<AlertHistory urlSync />)
+    await waitFor(() => expect(container.querySelector('.stats-collapse-bar')).not.toBeNull())
+
+    // Başlık çubuğu var ama kartlar ÇİZİLMEZ. Sayım kartları sayfanın en üstünü kaplayınca
+    // asıl içerik (alarm listesi) kaydırma altında kalıyordu.
+    expect(container.querySelector('.stats-panel')).toBeNull()
+
+    fireEvent.click(container.querySelector('.stats-collapse-bar'))
+    await waitFor(() => expect(container.querySelector('.stats-panel')).not.toBeNull())
+  })
+
+  it('BAĞIMSIZ sayfada şerit sunucudan gelen sayıları gösterir (sayfa içinden DEĞİL)', async () => {
+    const { container } = render(<AlertHistory urlSync />)
+    await expandStats(container)
+
+    // Listede 1 satır var ama şerit 5/3/2/7 göstermeli — sayfa içinden hesaplansaydı hepsi 1 olurdu
+    const values = [...container.querySelectorAll('.stat-value')].map(v => v.textContent)
+    expect(values).toEqual(['10', '5', '3', '2', '7', '4'])
+  })
+
+  it('Kritik kartına tıklamak seviye filtresini SUNUCUYA gönderir', async () => {
+    const { container } = render(<AlertHistory urlSync />)
+    await expandStats(container)
+
+    fireEvent.click([...container.querySelectorAll('.stat-item')][1])   // Kritik
+
+    await waitFor(() => {
+      const last = api.admin.getAlerts.mock.calls.at(-1)[0]
+      expect(last.level).toBe('CRITICAL')
+    })
+  })
+
+  it('Sahiplenilmemiş kartı SEVİYE değil sahiplenme boyutunu filtreler', async () => {
+    const { container } = render(<AlertHistory urlSync />)
+    await expandStats(container)
+
+    // Konum DEĞİL sıra: kart eklendikçe .at(-1) başka kartı yakalar (6. kart eklenince tam
+    // bu oldu). Etiketten seçmek de dile bağlar; kartın kendi indeksi sabittir.
+    fireEvent.click([...container.querySelectorAll('.stat-item')][4])   // Sahiplenilmemiş
+
+    await waitFor(() => {
+      const last = api.admin.getAlerts.mock.calls.at(-1)[0]
+      expect(last.acknowledged).toBe('false')
+      expect(last.level).toBeUndefined()   // seviye filtresine BULAŞMAZ
+    })
+  })
+
+  it('Arama DEBOUNCE edilir — her tuşta istek atılmaz', async () => {
+    const { container } = render(<AlertHistory urlSync />)
+    await waitFor(() => expect(container.querySelector('.alh-toolbar')).not.toBeNull())
+    const before = api.admin.getAlerts.mock.calls.length
+
+    const box = container.querySelector('.upt-search')
+    fireEvent.change(box, { target: { value: 'a' } })
+    fireEvent.change(box, { target: { value: 'ak' } })
+    fireEvent.change(box, { target: { value: 'akb' } })
+
+    await waitFor(() => {
+      const last = api.admin.getAlerts.mock.calls.at(-1)[0]
+      expect(last.q).toBe('akb')
+    }, { timeout: 2000 })
+    // Uc tusa uc istek atilsaydi cagri sayisi en az 3 artardi
+    expect(api.admin.getAlerts.mock.calls.length - before).toBeLessThan(3)
+  })
+
+  it('PAYLAŞILABİLİR BAĞLANTI: filtreler adres çubuğunda yaşar', async () => {
+    const { container } = render(<AlertHistory urlSync />)
+    await expandStats(container)
+
+    fireEvent.click([...container.querySelectorAll('.stat-item')][1])   // Kritik
+
+    await waitFor(() => expect(window.location.search).toContain('level=CRITICAL'), { timeout: 2000 })
+  })
+
+  it("URL'deki filtrelerle AÇILIR — bağlantıyı alan aynı listeyi görür", async () => {
+    window.history.replaceState({}, '', '/?level=HIGH&q=akbank&tab=closed')
+
+    render(<AlertHistory urlSync />)
+
+    await waitFor(() => {
+      const first = api.admin.getAlerts.mock.calls[0][0]
+      expect(first.level).toBe('HIGH')
+      expect(first.q).toBe('akbank')
+      expect(first.resolved).toBe('true')   // tab=closed
+    })
+  })
+
+  it('UZUN SÜREDİR AÇIK kartı yalnız AÇIK sekmede çıkar', async () => {
+    const { container } = render(<AlertHistory urlSync />)
+    await expandStats(container)
+    expect(container.querySelectorAll('.stat-item')).toHaveLength(6)
+
+    fireEvent.click(screen.getByRole('button', { name: /kapalı|closed/i }))
+
+    // Kapalı sekmede "24 saatten eski" demek olurdu, "24 saattir AÇIK" değil — iki farklı şey.
+    await waitFor(() => expect(container.querySelectorAll('.stat-item')).toHaveLength(5))
+  })
+
+  it('UZUN SÜREDİR AÇIK kartı SAYAÇTIR — tıklanınca filtre uygulamaz', async () => {
+    const { container } = render(<AlertHistory urlSync />)
+    await expandStats(container)
+    const before = api.admin.getAlerts.mock.calls.length
+
+    fireEvent.click([...container.querySelectorAll('.stat-item')][5])   // Uzun süredir açık
+
+    // Sunucuda karşılığı olan bir parametre yok; sahte istemci-tarafı süzme sayfalamayla
+    // yanıltıcı olurdu. Yeni istek de atılmamalı.
+    await new Promise(r => setTimeout(r, 50))
+    expect(api.admin.getAlerts.mock.calls.length).toBe(before)
+  })
+})
+
+/**
+ * KONUYA GÖRE GRUPLAMA — "hangi konudan hangi alarmlar var" isteğinin ekrandaki karşılığı.
+ *
+ * İki inceliği var ve ikisi de sessizce yanlış olabilir:
+ *  - Gruplama GÖRÜNEN SAYFA içindedir (sunucu sayfalaması korunur): başlıktaki sayı "bu sayfada
+ *    N" demektir, tipin TOPLAMI değil. İki sayı ayrılmazsa kullanıcı çelişki sanar.
+ *  - Tek tip varsa gruplama YAPILMAZ: tek başlık altında tek grup bilgi taşımaz, yalnız
+ *    gürültüdür (gömülü modda tek domainin 2-3 alarmı için de doğru davranış).
+ */
+describe('AlertHistory — konuya göre gruplama', () => {
+  const alertOf = (type, id) => ({ id, domain: `d${id}.example.com`, alert_type: type,
+    alert_level: 'CRITICAL', acknowledged: false, resolved: false, created_at: '2026-08-01T08:00:00' })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.history.replaceState({}, '', '/')
+    sessionStorage.clear()
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [] })
+  })
+
+  const withAlerts = (data) => api.admin.getAlerts.mockResolvedValue({
+    success: true, data, total: data.length, page: 0, size: 20,
+    level_counts: { CRITICAL: data.length }, unacked_total: data.length, stale_total: 0,
+  })
+
+  it('birden çok tip varsa KONU başlıkları çıkar ve sayılar doğru', async () => {
+    withAlerts([alertOf('DNS_FAILURE', 1), alertOf('DNS_FAILURE', 2), alertOf('EXPIRY', 3)])
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelectorAll('.alh-group')).toHaveLength(2))
+
+    const counts = [...container.querySelectorAll('.alh-group-count')].map(c => c.textContent)
+    expect(counts).toEqual(['2', '1'])   // ilk görülen tip önce — liste sırası korunur
+  })
+
+  it('TEK tip varsa gruplama YAPILMAZ (tek başlık gürültüdür)', async () => {
+    withAlerts([alertOf('EXPIRY', 1), alertOf('EXPIRY', 2)])
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelectorAll('.alert-card')).toHaveLength(2))
+
+    expect(container.querySelectorAll('.alh-group')).toHaveLength(0)
+    expect(container.querySelector('.alh-group-note')).toBeNull()   // açıklama da çıkmaz
+  })
+
+  it('gruplar VARSAYILAN KAPALI gelir — sayfa uzamaz, konu özeti görünür', async () => {
+    // Kullanıcı geri bildirimi: hepsi açıkken sayfa uzuyor ve "hangi konudan kaç alarm var"
+    // özeti kayboluyordu. Kapalıyken ekranda yalnız başlıklar ve sayılar kalıyor.
+    withAlerts([alertOf('DNS_FAILURE', 1), alertOf('EXPIRY', 2)])
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelectorAll('.alh-group-head')).toHaveLength(2))
+
+    expect(container.querySelectorAll('.alert-card')).toHaveLength(0)
+    expect(container.querySelectorAll('.alh-group-head')[0].getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('başlığa tıklamak grubu AÇAR; yalnız o grubun kartları gelir', async () => {
+    withAlerts([alertOf('DNS_FAILURE', 1), alertOf('DNS_FAILURE', 2), alertOf('EXPIRY', 3)])
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelectorAll('.alh-group-head')).toHaveLength(2))
+
+    fireEvent.click(container.querySelectorAll('.alh-group-head')[0])
+
+    await waitFor(() => expect(container.querySelectorAll('.alert-card')).toHaveLength(2))
+    expect(container.querySelectorAll('.alh-group-head')[0].getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelectorAll('.alh-group-head')[1].getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('AÇTIĞIN grup oturum boyunca AÇIK kalır (her gezinmede yeniden açma yok)', async () => {
+    withAlerts([alertOf('DNS_FAILURE', 1), alertOf('EXPIRY', 2)])
+    const first = render(<AlertHistory />)
+    await waitFor(() => expect(first.container.querySelectorAll('.alh-group-head')).toHaveLength(2))
+    fireEvent.click(first.container.querySelectorAll('.alh-group-head')[0])
+    await waitFor(() => expect(first.container.querySelectorAll('.alert-card')).toHaveLength(1))
+    first.unmount()
+
+    const second = render(<AlertHistory />)
+    await waitFor(() => expect(second.container.querySelectorAll('.alh-group-head')).toHaveLength(2))
+    expect(second.container.querySelectorAll('.alert-card')).toHaveLength(1)
+    expect(second.container.querySelectorAll('.alh-group-head')[0].getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('sayfa-içi/toplam ayrımı EKRANDA yazılı (iki sayı çelişki sanılmasın)', async () => {
+    withAlerts([alertOf('DNS_FAILURE', 1), alertOf('EXPIRY', 2)])
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelectorAll('.alh-group')).toHaveLength(2))
+
+    expect(container.querySelector('.alh-group-note')).not.toBeNull()
+  })
+
+  it('bilinmeyen tip kendi grubunu alır — ekran çökmez', async () => {
+    withAlerts([alertOf('HENUZ_OLMAYAN_TIP', 1), alertOf('EXPIRY', 2)])
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelectorAll('.alh-group')).toHaveLength(2))
+    // Gruplar kapalı geldiği için kartlar değil BAŞLIKLAR sayılır; önemli olan çökmemesi.
+    expect(container.querySelectorAll('.alh-group-title')).toHaveLength(2)
+  })
+})
+
+/**
+ * KART ZENGİNLEŞTİRMELERİ — açık süresi ve tekrar rozeti.
+ *
+ * "Ne kadardır açık" açık bir alarmın en kritik sayısıdır ve buraya kadar HİÇ gösterilmiyordu:
+ * formatDuration yalnız KAPALI alarmlarda kullanılıyordu (resolved_at - created_at).
+ *
+ * SAAT DİLİMİ UYARISI — bu suite'in bilinen sınırı: backend zaman damgalarını saat dilimi eki
+ * OLMADAN yazıyor ve JS böyle bir dizeyi YEREL saat sanar. Rozet mutlak "şimdi" ile
+ * karşılaştırdığı için sapma sönümlenmez (Europe/Istanbul'da 3 saat). Aşağıdaki testler bu hatayı
+ * YEREL geliştirmede yakalar; CI runner'ı UTC olduğu için ORADA sessiz kalır (offset 0).
+ * Bu yüzden düzeltmenin kendisi koda yorumla sabitlendi — testin tek başına yeterli olmadığı
+ * bir yer ve bunu bilmek gerekiyor.
+ */
+describe('AlertHistory — kart rozetleri', () => {
+  const hoursAgo = (h) => new Date(Date.now() - h * 3_600_000).toISOString().slice(0, 19)
+
+  const openAlertAt = (createdAt, extra = {}) => ({
+    id: 1, domain: 'a.example.com', alert_type: 'EXPIRY', alert_level: 'CRITICAL',
+    acknowledged: false, resolved: false, created_at: createdAt, ...extra,
+  })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.history.replaceState({}, '', '/')
+    sessionStorage.clear()
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [] })
+  })
+
+  const withAlert = (a) => api.admin.getAlerts.mockResolvedValue({
+    success: true, data: [a], total: 1, page: 0, size: 20,
+    level_counts: { CRITICAL: 1 }, unacked_total: 1, stale_total: 0, stale_hours: 24,
+  })
+
+  it('AÇIK alarmda "ne kadardır açık" gösterilir', async () => {
+    withAlert(openAlertAt(hoursAgo(3)))
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelector('.alh-open-for')).not.toBeNull())
+    expect(container.querySelector('.alh-open-for').textContent).toMatch(/3s/)
+  })
+
+  it('EŞİĞİ AŞAN alarm vurgulanır (çözülmemiş ya da unutulmuş)', async () => {
+    withAlert(openAlertAt(hoursAgo(50)))
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelector('.alh-open-for')).not.toBeNull())
+
+    expect(container.querySelector('.alh-open-for').classList.contains('is-stale')).toBe(true)
+    expect(container.querySelector('.alh-open-for').textContent).toMatch(/2g/)   // 50sa = 2g 2s
+  })
+
+  it('eşik ALTINDAKİ alarm vurgulanmaz (her kartı kırmızıya boyamak sinyali boğar)', async () => {
+    withAlert(openAlertAt(hoursAgo(2)))
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelector('.alh-open-for')).not.toBeNull())
+    expect(container.querySelector('.alh-open-for').classList.contains('is-stale')).toBe(false)
+  })
+
+  it('TEKRAR rozeti yalnız 2 ve üstünde çıkar (her karta "1. kez" yazmak gürültü)', async () => {
+    withAlert(openAlertAt(hoursAgo(1), { repeat_count: 1 }))
+    const { container, unmount } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelector('.alh-open-for')).not.toBeNull())
+    expect(container.querySelector('.alh-repeat')).toBeNull()
+    unmount()
+
+    withAlert(openAlertAt(hoursAgo(1), { repeat_count: 4 }))
+    const second = render(<AlertHistory />)
+    await waitFor(() => expect(second.container.querySelector('.alh-repeat')).not.toBeNull())
+    expect(second.container.querySelector('.alh-repeat').textContent).toMatch(/4/)
+  })
+
+  it('created_at yoksa rozet ÇİZİLMEZ — "NaN" ya da boş rozet görünmez', async () => {
+    withAlert(openAlertAt(null))
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelector('.alert-card')).not.toBeNull())
+    expect(container.querySelector('.alh-open-for')).toBeNull()
+  })
+})
+
+/**
+ * KOYU TEMA KİLİDİ — renkler SATIR İÇİ sabit hex olarak dururken CSS'i baypas ediyorlardı.
+ * Sınıfların [data-theme="dark"] kuralları yazılmıştı ama hiç devreye giremiyordu: açık zeminler
+ * koyu temada okunmuyordu (47 sabit hex).
+ *
+ * jsdom gerçek CSS uygulamaz — bu yüzden RENK değil, "renk bir SINIFTAN geliyor mu" sözleşmesi
+ * test ediliyor. Biri satır içi renge geri dönerse burası kırılır.
+ */
+describe('AlertHistory — tema sözleşmesi', () => {
+  const alertOf = (level, extra = {}) => ({
+    id: 1, domain: 'a.example.com', alert_type: 'EXPIRY', alert_level: level,
+    acknowledged: false, resolved: false, created_at: '2026-08-01T08:00:00', ...extra,
+  })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.history.replaceState({}, '', '/')
+    sessionStorage.clear()
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [] })
+  })
+
+  const withAlert = (a, resolved = false) => api.admin.getAlerts.mockResolvedValue({
+    success: true, data: [a], total: 1, page: 0, size: 20,
+    level_counts: { [a.alert_level]: 1 }, unacked_total: 1, stale_total: 0, stale_hours: 24,
+  })
+
+  it('seviye rengi SINIFTAN gelir, satır içi stilden DEĞİL', async () => {
+    withAlert(alertOf('CRITICAL'))
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelector('.alert-level-badge')).not.toBeNull())
+
+    const badge = container.querySelector('.alert-level-badge')
+    expect(badge.classList.contains('alh-lvl-bg--critical')).toBe(true)
+    expect(badge.getAttribute('style')).toBeNull()   // satır içi renk YOK
+  })
+
+  it('bilinmeyen seviye de sınıf alır — renksiz/çıplak kalmaz', async () => {
+    withAlert(alertOf('SOMETHING_NEW'))
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelector('.alert-level-badge')).not.toBeNull())
+    expect(container.querySelector('.alert-level-badge').classList.contains('alh-lvl-bg--unknown')).toBe(true)
+  })
+
+  it('tier rozeti PAYLAŞILAN .tier-badge-N sınıfını kullanır (yerel renk kopyası silindi)', async () => {
+    api.admin.getAlerts.mockResolvedValue({
+      success: true, page: 0, size: 20, total: 1, level_counts: { CRITICAL: 1 }, unacked_total: 0,
+      data: [alertOf('CRITICAL', { resolved: true, resolved_at: '2026-08-02T08:00:00',
+                                   resolved_by: 'system', cert_tier: 2 })],
+    })
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(api.admin.getAlerts).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /kapalı|closed/i }))
+
+    await waitFor(() => expect(container.querySelector('.ahc-chip-tier')).not.toBeNull())
+    const chip = container.querySelector('.ahc-chip-tier')
+    expect(chip.classList.contains('tier-badge-2')).toBe(true)
+    expect(chip.getAttribute('style')).toBeNull()
   })
 })

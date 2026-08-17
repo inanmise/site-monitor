@@ -490,6 +490,40 @@ export const api = {
     getWeeklyAvailPreview: (teamId, weekOffset) =>
       request(`/admin/system/weekly-availability/preview?teamId=${encodeURIComponent(teamId)}`
         + (weekOffset != null ? `&weekOffset=${encodeURIComponent(weekOffset)}` : '')),
+    /**
+     * Haftalık kesinti PDF'ini indirir — mail ekinin BİREBİR aynısı.
+     *
+     * <p>Düz `<a href>` yerine blob: uç PDF üretilemediğinde 503 döner ve bağlantı olsaydı
+     * tarayıcı boş/bozuk bir sayfaya giderdi. Burada hata yakalanıp kullanıcıya söylenebiliyor.
+     * Dosya küçük (tipik 30 KB – birkaç MB), belleğe almak sorun değil.
+     *
+     * @returns {Promise<{success: boolean, error?: string}>}
+     */
+    downloadWeeklyOutagePdf: async (teamId, weekOffset) => {
+      const url = `${BASE}/admin/system/weekly-availability/outage-pdf`
+        + `?teamId=${encodeURIComponent(teamId)}`
+        + (weekOffset != null ? `&weekOffset=${encodeURIComponent(weekOffset)}` : '')
+      try {
+        const res = await fetch(url, { credentials: 'include' })
+        if (!res.ok) {
+          return { success: false, status: res.status,
+            error: res.status === 503 ? 'PDF_GENERATION_FAILED' : `HTTP_${res.status}` }
+        }
+        const blob = await res.blob()
+        // Dosya adını sunucunun Content-Disposition'ından al — mailde giden adla aynı olsun.
+        const disp = res.headers.get('Content-Disposition') || ''
+        const match = /filename="?([^";]+)"?/.exec(disp)
+        const objectUrl = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = objectUrl
+        a.download = match ? match[1] : 'haftalik-kesinti-raporu.pdf'
+        a.click()
+        URL.revokeObjectURL(objectUrl)
+        return { success: true }
+      } catch (e) {
+        return { success: false, error: e?.message || 'NETWORK' }
+      }
+    },
     sendWeeklyAvailTest: (teamId, email) => request('/admin/system/weekly-availability/send-test', {
       method: 'POST', body: JSON.stringify({ teamId, email }),
     }),
@@ -518,6 +552,22 @@ export const api = {
     deleteContact: (id) => request(`/admin/contacts/${id}`, { method: 'DELETE' }),
 
     // Alert Events
+    /**
+     * Alarm Geçmişi CSV bağlantısı — indirme <a href> ile yapılır, fetch ile DEĞİL.
+     *
+     * <p>Sunucu dosyayı Content-Disposition ile akıtıyor; tarayıcının indirme akışını kullanmak
+     * hem büyük dosyayı belleğe almamayı hem de oturum çerezinin kendiliğinden gitmesini sağlar
+     * (Kontrol Geçmişi CSV'siyle aynı desen).
+     */
+    getAlertsCsvUrl: (params = {}) => {
+      const qs = new URLSearchParams()
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== '') qs.append(k, v)
+      })
+      const s = qs.toString()
+      return `${BASE}/admin/alerts/export${s ? `?${s}` : ''}`
+    },
+
     getAlerts: (params = {}) => {
       const opts = typeof params === 'object' && params !== null ? params : { onlyOpen: params }
       const qs = new URLSearchParams()

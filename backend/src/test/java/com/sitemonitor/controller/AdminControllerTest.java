@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -758,7 +759,7 @@ class AdminControllerTest {
     @DisplayName("GET /api/admin/alerts returns paginated alerts by default")
     void listAlerts_allAlerts_returns200() throws Exception {
         Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(empty);
 
         mvc.perform(get("/api/admin/alerts").session(authSession()))
@@ -773,8 +774,8 @@ class AdminControllerTest {
     void listAlerts_alertTypeFilter_passedToQueryWithCounts() throws Exception {
         Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
         when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(),
-                eq("ACCESSIBILITY"), anyBoolean(), any(), any(Pageable.class))).thenReturn(empty);
-        when(alertEventRepo.countFilteredByType(any(), any(), any(), any(), any(), any(), anyBoolean(), any()))
+                eq("ACCESSIBILITY"), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class))).thenReturn(empty);
+        when(alertEventRepo.countFilteredByType(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any()))
                 .thenReturn(List.of(
                         new Object[]{"EXPIRY", 8L},
                         new Object[]{"ACCESSIBILITY", 2L}));
@@ -786,28 +787,30 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.type_counts.ACCESSIBILITY").value(2));
 
         org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(),
-                eq("ACCESSIBILITY"), anyBoolean(), any(), any(Pageable.class));
+                eq("ACCESSIBILITY"), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
     }
 
     @Test
     @DisplayName("GET /api/admin/alerts without alertType passes null to query")
     void listAlerts_noAlertType_passesNull() throws Exception {
         Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(empty);
 
         mvc.perform(get("/api/admin/alerts").session(authSession()))
                 .andExpect(status().isOk());
 
+        // alertType + dort YENI filtre (q/level/acknowledged/teamId) verilmediginde hepsi NULL
+        // gitmeli: bos string ya da "" gecerse sorgu her seyi eler ve ekran bos gorunur.
         org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(),
-                isNull(), anyBoolean(), any(), any(Pageable.class));
+                isNull(), isNull(), isNull(), isNull(), isNull(), anyBoolean(), any(), any(Pageable.class));
     }
 
     @Test
     @DisplayName("GET /api/admin/alerts?onlyOpen=true returns only open alerts")
     void listAlerts_onlyOpen_returnsOpenAlerts() throws Exception {
         Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
-        when(alertEventRepo.findFiltered(eq(Boolean.FALSE), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+        when(alertEventRepo.findFiltered(eq(Boolean.FALSE), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(empty);
 
         mvc.perform(get("/api/admin/alerts?onlyOpen=true").session(authSession()))
@@ -834,7 +837,7 @@ class AdminControllerTest {
         Team sy = new Team(); sy.setId(7L); sy.setName("SY-Team-A");
         Team ug = new Team(); ug.setId(8L); ug.setName("UG-Team-B");
 
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(ev)));
         when(inventoryRepo.findByDomainIn(any())).thenReturn(List.of(inv));
         when(teamRepo.findAllById(any())).thenReturn(List.of(sy, ug));
@@ -859,7 +862,7 @@ class AdminControllerTest {
         ev.setAlertType("EXPIRY");
         ev.setAlertLevel("WARNING");
 
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(ev)));
         when(inventoryRepo.findByDomainIn(any())).thenReturn(Collections.emptyList());
         when(notificationLogRepo.countByAlertIds(any())).thenReturn(Collections.emptyList());
@@ -1186,15 +1189,15 @@ class AdminControllerTest {
     @Test
     @DisplayName("GET /api/admin/alerts as USER → sorguya takım kapsamı (scoped=true, scope=[2]) geçer")
     void listAlerts_asUser_passesScope() throws Exception {
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(Collections.emptyList()));
-        when(alertEventRepo.countFilteredByType(any(), any(), any(), any(), any(), any(), anyBoolean(), any()))
+        when(alertEventRepo.countFilteredByType(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any()))
                 .thenReturn(Collections.emptyList());
 
         mvc.perform(get("/api/admin/alerts").session(userSession()))
                 .andExpect(status().isOk());
 
-        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(),
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
                 eq(true), eq(java.util.List.of(2L)), any(Pageable.class));
     }
 
@@ -1758,5 +1761,123 @@ class AdminControllerTest {
         c.setMinAlertLevel("WARNING");
         c.setActive(true);
         return c;
+    }
+
+    // ── Alarm Geçmişi: arama + yeni filtreler (2026-08-16) ────────────────────
+    //
+    // Bu filtreler SUNUCU tarafında olmak zorunda: istemci tarafı süzme yalnız açık sayfayı
+    // süzer, sayfalamayla "3 sonuç" derken aslında 90 sonuç olur — yanıltıcı.
+
+    private void stubEmptyAlerts() {
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(Pageable.class))).thenReturn(new PageImpl<>(Collections.emptyList()));
+    }
+
+    @Test
+    @DisplayName("Arama: kısmi + büyük/küçük harf duyarsız — sorguya %küçük harf% olarak gider")
+    void listAlerts_search_isLowercasedAndWrapped() throws Exception {
+        stubEmptyAlerts();
+
+        mvc.perform(get("/api/admin/alerts?q=AkBank").session(authSession()))
+                .andExpect(status().isOk());
+
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(),
+                eq("%akbank%"), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
+    }
+
+    @Test
+    @DisplayName("Arama JOKERLERİ kaçışlanır — tek bir '%' aramayı sessizce filtresiz bırakmasın")
+    void listAlerts_search_escapesWildcards() throws Exception {
+        stubEmptyAlerts();
+
+        mvc.perform(get("/api/admin/alerts").param("q", "%_a").session(authSession()))
+                .andExpect(status().isOk());
+
+        // '%' ve '_' kullanıcı verisidir, joker DEĞİL: kaçışlanmazsa "%" araması TÜM kayıtları getirir
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(),
+                eq("%!%!_a%"), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
+    }
+
+    @Test
+    @DisplayName("Boş/boşluk arama param üretmez (filtresiz sorgu, boş sonuç değil)")
+    void listAlerts_blankSearch_passesNull() throws Exception {
+        stubEmptyAlerts();
+
+        mvc.perform(get("/api/admin/alerts").param("q", "   ").session(authSession()))
+                .andExpect(status().isOk());
+
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(),
+                isNull(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
+    }
+
+    @Test
+    @DisplayName("Seviye filtresi BÜYÜK HARFE çevrilir (critical → CRITICAL)")
+    void listAlerts_levelIsUppercased() throws Exception {
+        stubEmptyAlerts();
+
+        mvc.perform(get("/api/admin/alerts?level=critical").session(authSession()))
+                .andExpect(status().isOk());
+
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(),
+                any(), eq("CRITICAL"), any(), any(), anyBoolean(), any(), any(Pageable.class));
+    }
+
+    @Test
+    @DisplayName("acknowledged ve teamId filtreleri sorguya AYNEN geçer")
+    void listAlerts_acknowledgedAndTeamPassThrough() throws Exception {
+        stubEmptyAlerts();
+
+        mvc.perform(get("/api/admin/alerts?acknowledged=false&teamId=7").session(authSession()))
+                .andExpect(status().isOk());
+
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), eq(Boolean.FALSE), eq(7L), anyBoolean(), any(), any(Pageable.class));
+    }
+
+    @Test
+    @DisplayName("Tip SAYAÇLARI yeni filtreleri dikkate alır ama tip filtresinden BAĞIMSIZ kalır")
+    void listAlerts_typeCountsHonourNewFiltersButNotType() throws Exception {
+        stubEmptyAlerts();
+        when(alertEventRepo.countFilteredByType(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any())).thenReturn(List.<Object[]>of(new Object[]{"EXPIRY", 3L}));
+
+        mvc.perform(get("/api/admin/alerts?alertType=EXPIRY&q=ak&level=HIGH").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.type_counts.EXPIRY").value(3));
+
+        // Sayaç sorgusunda alertType YOK (imzada zaten yok) ama q/level VAR:
+        // aksi halde arama yapınca rozet sayıları toplamla çelişirdi.
+        org.mockito.Mockito.verify(alertEventRepo).countFilteredByType(any(), any(), any(), any(), any(), any(),
+                eq("%ak%"), eq("HIGH"), any(), any(), anyBoolean(), any());
+    }
+
+
+    // ── CSV disa aktarim ─────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("CSV FORMUL ENJEKSIYONU: =,+,-,@ ile baslayan hucre tek tirnakla metinlestirilir")
+    void csvCell_neutralisesFormulaInjection() {
+        // Excel bu karakterlerle baslayan hucreyi FORMUL sayar. domain ve message dis veriden
+        // besleniyor: =cmd|'...'!A1 gibi bir deger, dosyayi acan kisinin makinesinde komut
+        // calistirma denemesine donusebilir.
+        assertThat(AdminController.csvCell("=cmd|'/c calc'!A1")).startsWith("'=");
+        assertThat(AdminController.csvCell("+1+1")).startsWith("'+");
+        assertThat(AdminController.csvCell("-2+3")).startsWith("'-");
+        assertThat(AdminController.csvCell("@SUM(A1)")).startsWith("'@");
+        // Zararsiz degerler DOKUNULMADAN gecer
+        assertThat(AdminController.csvCell("www.akbank.com")).isEqualTo("www.akbank.com");
+        assertThat(AdminController.csvCell("EXPIRY")).isEqualTo("EXPIRY");
+    }
+
+    @Test
+    @DisplayName("CSV kacislamasi: virgul, tirnak, noktali virgul ve satir sonu tirnak icine alinir")
+    void csvCell_escapesSeparators() {
+        assertThat(AdminController.csvCell("a,b")).isEqualTo("\"a,b\"");
+        assertThat(AdminController.csvCell("a;b")).isEqualTo("\"a;b\"");
+        assertThat(AdminController.csvCell("a\nb")).isEqualTo("\"a\nb\"");
+        // Ic tirnak IKIYE katlanir (RFC 4180) — aksi halde sutun sinirlari kayar
+        assertThat(AdminController.csvCell("de\"me")).isEqualTo("\"de\"\"me\"");
+        assertThat(AdminController.csvCell(null)).isEmpty();
+        assertThat(AdminController.csvCell("")).isEmpty();
     }
 }

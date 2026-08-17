@@ -3007,6 +3007,131 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .alert-card-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 .alert-level-badge { color: #fff; padding: 3px 10px; border-radius: 12px; font-size: .8em; font-weight: 700; }
 .alert-type { font-size: .85em; color: var(--text-light); }
+/* Tip rozeti: ikon + ad. Renk satır içinden gelir (tipe özgü, alertTypeMeta tek kaynak);
+   yerleşim ve tipografi BURADA — eskiden üç ayrı yerde satır içi style olarak tekrarlıyordu. */
+.alh-type-chip { display: inline-flex; align-items: center; gap: 4px; font-weight: 700; }
+/* Alarm Geçmişi filtre çubuğu — izleme sayfalarının .upt-toolbar'ını yeniden kullanır;
+   burada yalnız tip rozetleriyle arasındaki boşluk ayarlanır (renk/kenarlık ORADAN gelir,
+   böylece koyu tema kuralları tek yerde kalır). */
+.alh-toolbar { justify-content: flex-end; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+/* Konu (alarm tipi) grupları — katlanabilir başlık + altındaki kart listesi.
+   Renk satır içinden gelir (tipe özgü, alertTypeMeta tek kaynak); yerleşim burada. */
+.alh-group { margin-bottom: 14px; }
+.alh-group-head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 8px 12px; margin-bottom: 8px; cursor: pointer;
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: 6px; font-size: .9em; text-align: left;
+}
+.alh-group-head:hover { background: var(--bg-hover, var(--bg-surface)); }
+.alh-group-chevron { display: flex; color: var(--text-muted); flex-shrink: 0; }
+.alh-group-title { font-weight: 700; }
+.alh-group-count {
+  margin-left: auto; min-width: 26px; text-align: center;
+  padding: 1px 8px; border-radius: 10px; font-weight: 700; font-size: .92em;
+  background: var(--bg-card); border: 1px solid var(--border); color: var(--text-light);
+}
+/* Grup sayıları SAYFA İÇİDİR; tip toplamları rozetlerde. İki sayı farklı anlamda olduğu
+   için ekranda bir satırla ayrılıyor — aksi halde kullanıcı çelişki sanar. */
+.alh-group-note { font-size: .8em; color: var(--text-muted); margin: -4px 0 12px; }
+
+/* ── Alarm Geçmişi: KOYU TEMA düzeltmeleri ──────────────────────────────────
+   Aşağıdaki renkler bileşende SATIR İÇİ sabit hex olarak duruyordu (47 adet). Satır içi stil
+   CSS'i baypas ettiği için koyu temada açık zeminler okunmuyordu — sınıfların [data-theme]
+   kuralları yazılmıştı ama hiç devreye giremiyordu. */
+
+/* Denetim satırı (sahiplenildi / çözüldü / sistem) */
+.alh-audit {
+  display: flex; align-items: center; gap: 10px;
+  border: 1px solid; border-radius: 8px; padding: 8px 12px; font-size: .84em;
+}
+.alh-audit-icon {
+  width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.alh-audit-text { display: flex; flex-direction: column; gap: 1px; }
+.alh-audit-label { font-weight: 700; }
+.alh-audit-meta { color: var(--text-muted); }
+.alh-audit--ack     { background: #f0fdf4; border-color: #86efac; }
+.alh-audit--ack     .alh-audit-label { color: #15803d; }
+.alh-audit--ack     .alh-audit-icon  { background: #dcfce7; color: #15803d; }
+.alh-audit--resolve { background: #eff6ff; border-color: #93c5fd; }
+.alh-audit--resolve .alh-audit-label { color: #1d4ed8; }
+.alh-audit--resolve .alh-audit-icon  { background: #dbeafe; color: #1d4ed8; }
+.alh-audit--system  { background: #f8fafc; border-color: #cbd5e1; }
+.alh-audit--system  .alh-audit-label { color: #475569; }
+.alh-audit--system  .alh-audit-icon  { background: #f1f5f9; color: #475569; }
+[data-theme="dark"] .alh-audit--ack     { background: rgba(21,128,61,.14);  border-color: #166534; }
+[data-theme="dark"] .alh-audit--ack     .alh-audit-label { color: #4ade80; }
+[data-theme="dark"] .alh-audit--ack     .alh-audit-icon  { background: rgba(21,128,61,.28); color: #4ade80; }
+[data-theme="dark"] .alh-audit--resolve { background: rgba(29,78,216,.14);  border-color: #1e40af; }
+[data-theme="dark"] .alh-audit--resolve .alh-audit-label { color: #60a5fa; }
+[data-theme="dark"] .alh-audit--resolve .alh-audit-icon  { background: rgba(29,78,216,.28); color: #60a5fa; }
+[data-theme="dark"] .alh-audit--system  { background: var(--bg-surface); border-color: var(--border); }
+[data-theme="dark"] .alh-audit--system  .alh-audit-label { color: var(--text-light); }
+[data-theme="dark"] .alh-audit--system  .alh-audit-icon  { background: var(--bg-card); color: var(--text-light); }
+
+/* Bildirim tetikleyici rozeti — kart kenarlığı ve açık gövde zemini de buradan gelir */
+.nl-card--initial    { border-color: #fca5a5; } .nl-card--initial.is-open    { background: #fef2f2; }
+.nl-card--escalation { border-color: #fdba74; } .nl-card--escalation.is-open { background: #fff7ed; }
+.nl-card--daily      { border-color: #fcd34d; } .nl-card--daily.is-open      { background: #fffbeb; }
+.nl-card--manual     { border-color: #93c5fd; } .nl-card--manual.is-open     { background: #eff6ff; }
+.nl-card--resolution { border-color: #86efac; } .nl-card--resolution.is-open { background: #f0fdf4; }
+.nl-card--other      { border-color: var(--border); } .nl-card--other.is-open { background: var(--bg-surface); }
+.nl-trigger--initial    { background: #fef2f2; color: #c0392b; border-color: #fca5a5; }
+.nl-trigger--escalation { background: #fff7ed; color: #c2410c; border-color: #fdba74; }
+.nl-trigger--daily      { background: #fffbeb; color: #92400e; border-color: #fcd34d; }
+.nl-trigger--manual     { background: #eff6ff; color: #1d4ed8; border-color: #93c5fd; }
+.nl-trigger--resolution { background: #f0fdf4; color: #15803d; border-color: #86efac; }
+.nl-trigger--other      { background: var(--bg-surface); color: var(--text-light); border-color: var(--border); }
+[data-theme="dark"] .nl-card--initial.is-open    { background: rgba(192,57,43,.16); }
+[data-theme="dark"] .nl-card--escalation.is-open { background: rgba(194,65,12,.16); }
+[data-theme="dark"] .nl-card--daily.is-open      { background: rgba(146,64,14,.16); }
+[data-theme="dark"] .nl-card--manual.is-open     { background: rgba(29,78,216,.16); }
+[data-theme="dark"] .nl-card--resolution.is-open { background: rgba(21,128,61,.16); }
+[data-theme="dark"] .nl-card--other.is-open      { background: var(--bg-card); }
+[data-theme="dark"] .nl-trigger--initial    { background: rgba(192,57,43,.20); color: #fca5a5; }
+[data-theme="dark"] .nl-trigger--escalation { background: rgba(194,65,12,.20); color: #fdba74; }
+[data-theme="dark"] .nl-trigger--daily      { background: rgba(146,64,14,.20); color: #fcd34d; }
+[data-theme="dark"] .nl-trigger--manual     { background: rgba(29,78,216,.20); color: #93c5fd; }
+[data-theme="dark"] .nl-trigger--resolution { background: rgba(21,128,61,.20); color: #86efac; }
+[data-theme="dark"] .nl-trigger--other      { background: var(--bg-card); color: var(--text-light); }
+
+/* Seviye renkleri — üç seviye, üç sınıf. Şerit (kapalı kart) ve metin ayrı kullanılıyor. */
+.alh-lvl-bg--warning  { background: #f0a500; } .alh-lvl--warning  { color: #f0a500; }
+.alh-lvl-bg--high     { background: #e07b00; } .alh-lvl--high     { color: #e07b00; }
+.alh-lvl-bg--critical { background: #c0392b; } .alh-lvl--critical { color: #c0392b; }
+.alh-lvl-bg--unknown  { background: var(--border); } .alh-lvl--unknown { color: var(--text-light); }
+[data-theme="dark"] .alh-lvl--warning  { color: #fbbf24; }
+[data-theme="dark"] .alh-lvl--high     { color: #fb923c; }
+[data-theme="dark"] .alh-lvl--critical { color: #f87171; }
+
+/* Zaman çizelgesinde "henüz yok" durumu */
+.alh-tl-empty { color: var(--text-muted); }
+/* Bildirim modalindeki durum rozeti (açık / kapalı) */
+.alh-modal-state { font-size: .8em; font-weight: 700; padding: 2px 9px; border-radius: 12px; border: 1px solid; }
+.alh-modal-state--open   { background: #fef2f2; color: #c0392b; border-color: #fca5a5; }
+.alh-modal-state--closed { background: #eff6ff; color: #1d4ed8; border-color: #93c5fd; }
+[data-theme="dark"] .alh-modal-state--open   { background: rgba(192,57,43,.18); color: #f87171; border-color: #7f1d1d; }
+[data-theme="dark"] .alh-modal-state--closed { background: rgba(29,78,216,.18); color: #60a5fa; border-color: #1e3a8a; }
+
+
+/* Kart rozetleri: 'ne kadardır açık' ve 'N. kez'. Renkler token'lardan — koyu temada da okunur.
+   Vurgulu hâl (is-stale) yalnız eşik aşılınca; her karta kırmızı boyamak sinyali boğar. */
+.alh-open-for, .alh-repeat {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 7px; border-radius: 10px; font-size: .76em; font-weight: 600;
+  background: var(--bg-surface); border: 1px solid var(--border); color: var(--text-light);
+}
+.alh-open-for.is-stale { background: rgba(224,123,0,.12); border-color: #e07b00; color: #b45309; }
+[data-theme="dark"] .alh-open-for, [data-theme="dark"] .alh-repeat { background: var(--bg-card); }
+[data-theme="dark"] .alh-open-for.is-stale { color: #fbbf24; }
+
+[data-theme="dark"] .alh-group-head { background: var(--bg-card); }
+[data-theme="dark"] .alh-group-count { background: var(--bg-surface); }
+
+
+
 .alert-domain { font-size: 1em; }
 .alert-days { background: #f8d7da; color: #721c24; padding: 2px 8px; border-radius: 10px; font-size: .82em; font-weight: 700; }
 .alert-send-failed { display: inline-flex; align-items: center; gap: 4px; background: #fde8e8; color: #b91c1c; border: 1px solid #f5b5b5; padding: 2px 8px; border-radius: 10px; font-size: .78em; font-weight: 700; white-space: nowrap; }

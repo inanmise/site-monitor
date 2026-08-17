@@ -2817,10 +2817,27 @@ public class EmailNotificationService {
                                       String bestDomain, Double bestPct, String worstDomain, Double worstPct,
                                       int downDomainCount, Integer nearestCertDays) {}
 
-    /** Sertifika sahibi takıma haftalık erişilebilirlik özeti (executive). rows en kötü
-     *  availability üstte sıralı gelir; down domainler ayrı vurgulanır. */
+    /**
+     * Mailin ekindeki kesinti raporunu gövdede duyurmak için gereken bilgi.
+     *
+     * <p>Ek sessizce iliştirilirse okuyan çoğu zaman fark etmez — özellikle telefonda. Gövdede
+     * ekin ADI ve NE İÇERDİĞİ yazılıysa hem bulunur hem de açmaya değip değmeyeceği anlaşılır.
+     */
+    public record AttachmentInfo(String fileName, int alarmCount, int stillOpenCount,
+                                 int affectedTargets, int monitorTypeCount) {}
+
+    /** Geriye uyumlu: ek yokken (ya da üretilemediğinde) gövdede ek bandı çizilmez. */
     public String buildWeeklyAvailabilityHtml(String teamName, String weekLabel,
                                               List<AvailabilityRow> rows, AvailabilitySummary s) {
+        return buildWeeklyAvailabilityHtml(teamName, weekLabel, rows, s, null);
+    }
+
+    /** Sertifika sahibi takıma haftalık erişilebilirlik özeti (executive). rows en kötü
+     *  availability üstte sıralı gelir; down domainler ayrı vurgulanır.
+     *  {@code att} doluysa gövdeye ek duyuru bandı eklenir. */
+    public String buildWeeklyAvailabilityHtml(String teamName, String weekLabel,
+                                              List<AvailabilityRow> rows, AvailabilitySummary s,
+                                              AttachmentInfo att) {
         String accent = "#1f3864";
         String outerBg = "#f4f6f8";
         String generatedAt = ZonedDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
@@ -2836,6 +2853,30 @@ public class EmailNotificationService {
             + kpiCard("EN YAKIN SERTİFİKA", s.nearestCertDays() != null ? s.nearestCertDays() + " gün" : "—",
                       s.nearestCertDays() != null && s.nearestCertDays() <= 30 ? "#dc2626" : "#1e293b", "#f8fafc")
             + "</tr></table>";
+
+        // Ek duyuru bandı — ekin ADI ve İÇERİĞİ gövdede yazılı olmazsa çoğu okuyucu eki kaçırır.
+        // Outlook-güvenli: td + bgcolor, düz hex (rgba yok), div arka planı yok.
+        String attachSection = "";
+        if (att != null) {
+            String what = att.alarmCount() == 0
+                    ? "Bu hafta kesinti yaşanmadı; ek, kapsam ve yöntem notunu içerir."
+                    : att.alarmCount() + " alarmın tamamı — izleme türü bazında gruplanmış detay, "
+                      + "kesinti zaman çizelgesi, gün/saat yoğunluğu ve erişilebilirlik tabloları. "
+                      + (att.stillOpenCount() > 0
+                         ? "<strong>" + att.stillOpenCount() + " alarm hâlâ açık.</strong>" : "");
+            attachSection =
+                "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 18px'><tr>"
+                + "<td bgcolor='#eff6ff' style='background:#eff6ff;border-left:4px solid #2563eb;"
+                + "border-radius:0 8px 8px 0;padding:12px 16px;font-size:13px;color:#1e293b'>"
+                + "<span style='font-weight:800;color:#1d4ed8'>📎 Ek: ayrıntılı kesinti raporu (PDF)</span><br>"
+                + "<span style='font-size:12px;color:#475569'>" + escHtml(att.fileName()) + "</span><br>"
+                + "<span style='font-size:12px;color:#334155'>" + what + "</span><br>"
+                + "<span style='font-size:11px;color:#64748b'>Ek, bu e-postadan DAHA GENİŞ bir kapsamı "
+                + "raporlar: " + att.monitorTypeCount() + " izleme türünün alarmları. Bu gövde ise yalnız "
+                + "sertifika envanterindeki domainlerin HTTP erişilebilirliğini gösterir — iki yerdeki "
+                + "sayılar bu yüzden birbirini tutmaz.</span>"
+                + "</td></tr></table>";
+        }
 
         // Kesinti bölümü — varsa kırmızı liste, yoksa yeşil "kesinti yok" bandı (mail her durumda gider)
         StringBuilder down = new StringBuilder();
@@ -2934,6 +2975,7 @@ public class EmailNotificationService {
             + "<p style='font-size:14px;color:#334155;line-height:1.7;margin:0 0 14px'>"
             + "Aşağıda sahip olduğunuz domainlerin geçen haftaya (<strong>" + escHtml(weekLabel) + "</strong>) ait erişilebilirlik özeti yer almaktadır.</p>"
             + kpi
+            + attachSection
             + downSection
             + bestWorst
             + table
@@ -3418,8 +3460,9 @@ public class EmailNotificationService {
     private String weeklyMonitoringBlock(Map<String, Object> k) {
         Object mon = k == null ? null : k.get("monitoring");
         if (!(mon instanceof List<?> list) || list.isEmpty()) return "";
-        Map<String, String> labels = Map.of("cert", "Sertifika", "domain", "Alan Adı", "http", "HTTP/Website",
-                "ping", "Ping", "port", "Port", "dns", "DNS", "keyword", "Keyword");
+        // Etiketler KANONİK katalogdan. Buradaki yerel kopyada "scripted" ve "page" yoktu; o türler
+        // e-postada ham anahtarıyla ("scripted") yazılıyordu — bkz. MonitorTypeCatalog.
+        Map<String, String> labels = MonitorTypeCatalog.LABELS_TR;
         StringBuilder rows = new StringBuilder();
         for (Object o : list) {
             if (!(o instanceof Map<?, ?> row)) continue;

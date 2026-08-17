@@ -42,19 +42,53 @@ class WeeklyAvailabilityReportServiceTest {
     @Mock NotificationLogRepository notificationLogRepo;
     @Mock WeeklyAvailabilityLogRepository walRepo;
     @Mock AppSettingsService appSettings;
+    @Mock com.sitemonitor.service.report.WeeklyOutageReportService outageReportService;
 
     private WeeklyAvailabilityReportService service;
+
+    /**
+     * "Hiç mail gitmedi" iddiası İKİ metodu birden kapsamalı.
+     *
+     * <p>Zamanlanmış gönderim {@code sendHtmlWithAttachments}'a geçti; yalnız {@code sendHtml}'e
+     * bakan bir {@code never()} artık kod mail GÖNDERSE BİLE yeşil kalırdı — sessiz bir yalancı
+     * yeşil. Tek yerde toplandı ki bir sonraki imza değişiminde de aynı tuzak kurulmasın.
+     */
+    private void verifyNoMailSent() {
+        verify(emailService, never()).sendHtml(any(), any(), any(), any(), any());
+        verify(emailService, never()).sendHtmlWithAttachments(any(), any(), any(), any(), any(), any());
+    }
 
     @BeforeEach
     void setUp() {
         service = new WeeklyAvailabilityReportService(teamRepo, inventoryRepo, uptimeCheckRepo,
-                latestCheckRepo, contactRepo, userRepo, emailService, notificationLogRepo, walRepo, appSettings);
+                latestCheckRepo, contactRepo, userRepo, emailService, notificationLogRepo, walRepo, appSettings,
+                outageReportService);
         when(appSettings.getBoolean(eq("site.monitor.weekly-availability.enabled"), anyBoolean())).thenReturn(true);
         when(emailService.sendHtml(any(), any(), any(), any(), any())).thenReturn("SENT");
-        when(emailService.buildWeeklyAvailabilityHtml(any(), any(), any(), any())).thenReturn("<html></html>");
+        when(emailService.sendHtmlWithAttachments(any(), any(), any(), any(), any(), any())).thenReturn("SENT");
+        when(outageReportService.collect(any(), any(), any())).thenReturn(outageData(3, 1));
+        when(outageReportService.pdf(any())).thenReturn(new byte[]{ 1, 2, 3 });
+        when(emailService.buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any())).thenReturn("<html></html>");
         when(emailService.getEmailFrom()).thenReturn("noreply@sitemonitor");
         when(walRepo.findByTeamIdAndReportYearAndWeekNo(anyLong(), anyInt(), anyInt())).thenReturn(Optional.empty());
         when(latestCheckRepo.findById(anyString())).thenReturn(Optional.empty());
+    }
+
+    /**
+     * Asgari kesinti verisi — yalnız gövdedeki ek bandının okuduğu alanlar dolu.
+     *
+     * <p>Kayıt geniş (28 alan) ama bu testler onun İÇERİĞİYLE ilgilenmiyor; ilgilendikleri şey
+     * verinin bir kez toplanıp hem gövdeye hem PDF'e verilmesi. Alanları tek tek doldurmak testi
+     * kırılganlaştırır: kayda yeni bir alan eklendiğinde burası da değişmek zorunda kalırdı.
+     */
+    private static com.sitemonitor.service.report.WeeklyOutageReportService.WeeklyOutageData outageData(
+            int totalAlarms, int stillOpen) {
+        return new com.sitemonitor.service.report.WeeklyOutageReportService.WeeklyOutageData(
+                "Dijital", "15–21 Haziran 2026", "22.06.2026 10:00",
+                totalAlarms, stillOpen, 0, 2, 120, 99.5, 1, 0, totalAlarms,
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), 7L * 24 * 60,
+                List.of(), List.of(), List.of(), List.of(), 0, 0);
     }
 
     private UptimeCheck uc(String status, Long ms, String checkedAt) {
@@ -214,10 +248,148 @@ class WeeklyAvailabilityReportServiceTest {
 
         ArgumentCaptor<String[]> toCap = ArgumentCaptor.forClass(String[].class);
         ArgumentCaptor<String[]> ccCap = ArgumentCaptor.forClass(String[].class);
-        verify(emailService).sendHtml(toCap.capture(), ccCap.capture(), anyString(), anyString(), any());
+        verify(emailService).sendHtmlWithAttachments(toCap.capture(), ccCap.capture(), anyString(), anyString(), any(), any());
         assertThat(toCap.getValue()).containsExactly("dijital@x.com");
         assertThat(ccCap.getValue()).contains("po@x.com");
         verify(walRepo).save(any(WeeklyAvailabilityLog.class));
+        assertThat(result.sent()).isEqualTo(1);
+    }
+
+    // ── Haftalık kesinti PDF'i (mail eki) ────────────────────────────────────
+
+    @Test
+    @DisplayName("Kesinti PDF'i EK olarak iliştirilir; toplayıcı e-postanın HESAPLADIĞI satırları alır")
+    void send_attachesOutagePdf() {
+        Team t = team(5L, "Dijital", "dijital@x.com");
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
+        when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L))
+                .thenReturn(List.of(inv("a.com"), inv("b.com")));
+        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
+                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+
+        service.sendWeeklyReports(false);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<EmailNotificationService.MailAttachment>> attCap =
+                ArgumentCaptor.forClass(List.class);
+        verify(emailService).sendHtmlWithAttachments(any(), any(), anyString(), anyString(), any(), attCap.capture());
+        assertThat(attCap.getValue()).hasSize(1);
+        var att = attCap.getValue().get(0);
+        assertThat(att.contentType()).isEqualTo("application/pdf");
+        assertThat(att.fileName()).startsWith("haftalik-kesinti-raporu_dijital_").endsWith(".pdf");
+        assertThat(att.data()).isNotEmpty();
+
+        // Erişilebilirlik satırları YENİDEN hesaplanmaz — e-postanın ürettiği liste toplayıcıya geçer.
+        // Aksi halde 200-1000+ domainlik uptime sorguları tek podda ikinci kez koşardı.
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<AvailabilityRow>> rowsCap = ArgumentCaptor.forClass(List.class);
+        verify(outageReportService).collect(any(), any(), rowsCap.capture());
+        assertThat(rowsCap.getValue()).hasSize(2);
+        assertThat(rowsCap.getValue()).extracting(AvailabilityRow::domain)
+                .containsExactlyInAnyOrder("a.com", "b.com");
+    }
+
+    @Test
+    @DisplayName("Gövde EKİ DUYURUR: dosya adı ve içeriği e-posta HTML'ine yazılır")
+    void send_bodyAnnouncesTheAttachment() {
+        Team t = team(5L, "Dijital", "dijital@x.com");
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
+        when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L))
+                .thenReturn(List.of(inv("a.com")));
+        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
+                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+
+        service.sendWeeklyReports(false);
+
+        // Ek sessizce iliştirilseydi okuyanların çoğu — özellikle telefonda — fark etmezdi.
+        ArgumentCaptor<EmailNotificationService.AttachmentInfo> attCap =
+                ArgumentCaptor.forClass(EmailNotificationService.AttachmentInfo.class);
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture());
+        assertThat(attCap.getValue()).isNotNull();
+        assertThat(attCap.getValue().fileName()).endsWith(".pdf");
+        assertThat(attCap.getValue().monitorTypeCount()).isEqualTo(MonitorTypeCatalog.ORDER.size());
+    }
+
+    @Test
+    @DisplayName("Kesinti verisi bir KEZ toplanır — gövde bandı ve PDF aynı veriyi kullanır")
+    void send_collectsOutageDataOnlyOnce() {
+        Team t = team(5L, "Dijital", "dijital@x.com");
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
+        when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L))
+                .thenReturn(List.of(inv("a.com")));
+        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
+                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+
+        service.sendWeeklyReports(false);
+
+        // Gövde bandı ekin içeriğini yazdığı için veri HTML'den ÖNCE toplanmak zorunda; sonra PDF
+        // için yeniden toplansaydı bütün alarm sorguları tek podda İKİ KEZ koşardı.
+        verify(outageReportService, times(1)).collect(any(), any(), any());
+        verify(outageReportService, times(1)).pdf(any());
+    }
+
+    @Test
+    @DisplayName("Veri toplanamazsa gövde ekten SÖZ ETMEZ — olmayan bir eke atıf yapılmaz")
+    void send_collectFailure_bodyDoesNotMentionAttachment() {
+        Team t = team(5L, "Dijital", "dijital@x.com");
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
+        when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L))
+                .thenReturn(List.of(inv("a.com")));
+        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
+                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+        when(outageReportService.collect(any(), any(), any())).thenThrow(new RuntimeException("patladı"));
+
+        var result = service.sendWeeklyReports(false);
+
+        ArgumentCaptor<EmailNotificationService.AttachmentInfo> attCap =
+                ArgumentCaptor.forClass(EmailNotificationService.AttachmentInfo.class);
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture());
+        assertThat(attCap.getValue()).isNull();      // gövdede ek bandı çizilmez
+        verify(outageReportService, never()).pdf(any());
+        assertThat(result.sent()).isEqualTo(1);      // rapor yine gitti
+    }
+
+    @Test
+    @DisplayName("PDF ÜRETİLEMEZSE mail EK OLMADAN yine gider — rapor bir ek hatası yüzünden düşmez")
+    void send_pdfFailure_stillSendsMailWithoutAttachment() {
+        Team t = team(5L, "Dijital", "dijital@x.com");
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
+        when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L))
+                .thenReturn(List.of(inv("a.com")));
+        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
+                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+        // Toplayıcı patlıyor (veritabanı hatası, bozuk veri, ne olursa)
+        when(outageReportService.collect(any(), any(), any()))
+                .thenThrow(new RuntimeException("kesinti toplama patladı"));
+
+        var result = service.sendWeeklyReports(false);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<EmailNotificationService.MailAttachment>> attCap =
+                ArgumentCaptor.forClass(List.class);
+        verify(emailService).sendHtmlWithAttachments(any(), any(), anyString(), anyString(), any(), attCap.capture());
+        assertThat(attCap.getValue()).isEmpty();     // ek yok
+        assertThat(result.sent()).isEqualTo(1);      // ama rapor GİTTİ
+    }
+
+    @Test
+    @DisplayName("PDF boş dönerse (üretim düştü) ek iliştirilmez — 0 baytlık dosya gönderilmez")
+    void send_emptyPdf_producesNoAttachment() {
+        Team t = team(5L, "Dijital", "dijital@x.com");
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
+        when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L))
+                .thenReturn(List.of(inv("a.com")));
+        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
+                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+        when(outageReportService.pdf(any())).thenReturn(new byte[0]);
+
+        var result = service.sendWeeklyReports(false);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<EmailNotificationService.MailAttachment>> attCap =
+                ArgumentCaptor.forClass(List.class);
+        verify(emailService).sendHtmlWithAttachments(any(), any(), anyString(), anyString(), any(), attCap.capture());
+        assertThat(attCap.getValue()).isEmpty();
         assertThat(result.sent()).isEqualTo(1);
     }
 
@@ -231,7 +403,7 @@ class WeeklyAvailabilityReportServiceTest {
 
         var result = service.sendWeeklyReports(false);
 
-        verify(emailService, never()).sendHtml(any(), any(), any(), any(), any());
+        verifyNoMailSent();
         assertThat(result.sent()).isZero();
         assertThat(result.skippedDisabled()).isEqualTo(2);
         // Kapalı takım için domain sorgusu bile çalışmamalı.
@@ -257,7 +429,7 @@ class WeeklyAvailabilityReportServiceTest {
     void send_disabled() {
         when(appSettings.getBoolean(eq("site.monitor.weekly-availability.enabled"), anyBoolean())).thenReturn(false);
         var result = service.sendWeeklyReports(false);
-        verify(emailService, never()).sendHtml(any(), any(), any(), any(), any());
+        verifyNoMailSent();
         assertThat(result.sent()).isZero();
     }
 
@@ -274,10 +446,10 @@ class WeeklyAvailabilityReportServiceTest {
         when(walRepo.findByTeamIdAndReportYearAndWeekNo(eq(5L), anyInt(), anyInt())).thenReturn(Optional.of(sentLog));
 
         assertThat(service.sendWeeklyReports(false).sent()).isZero();         // zaten gönderilmiş → atla
-        verify(emailService, never()).sendHtml(any(), any(), any(), any(), any());
+        verifyNoMailSent();
 
         assertThat(service.sendWeeklyReports(true).sent()).isEqualTo(1);      // force → gönder
-        verify(emailService).sendHtml(any(), any(), any(), any(), any());
+        verify(emailService).sendHtmlWithAttachments(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -288,7 +460,7 @@ class WeeklyAvailabilityReportServiceTest {
         when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(9L)).thenReturn(List.of());
 
         var result = service.sendWeeklyReports(false);
-        verify(emailService, never()).sendHtml(any(), any(), any(), any(), any());
+        verifyNoMailSent();
         assertThat(result.skippedNoDomains()).isEqualTo(1);
     }
 
@@ -305,7 +477,7 @@ class WeeklyAvailabilityReportServiceTest {
 
         var result = service.sendWeeklyReports(false);
         ArgumentCaptor<String[]> toCap = ArgumentCaptor.forClass(String[].class);
-        verify(emailService).sendHtml(toCap.capture(), any(), anyString(), anyString(), any());
+        verify(emailService).sendHtmlWithAttachments(toCap.capture(), any(), anyString(), anyString(), any(), any());
         assertThat(toCap.getValue()).containsExactly("po@x.com");   // CC adayı TO'ya terfi
         assertThat(result.sent()).isEqualTo(1);
     }
@@ -330,7 +502,7 @@ class WeeklyAvailabilityReportServiceTest {
         assertThat(p.cc()).contains("po@x.com");
         assertThat(p.domainCount()).isEqualTo(2);
         assertThat(p.noRecipients()).isFalse();
-        verify(emailService, never()).sendHtml(any(), any(), any(), any(), any());
+        verifyNoMailSent();
     }
 
     @Test
@@ -401,9 +573,17 @@ class WeeklyAvailabilityReportServiceTest {
 
         ArgumentCaptor<String[]> toCap = ArgumentCaptor.forClass(String[].class);
         ArgumentCaptor<String[]> ccCap = ArgumentCaptor.forClass(String[].class);
-        verify(emailService).sendHtml(toCap.capture(), ccCap.capture(), contains("[TEST]"), anyString(), any());
+        // Test maili gerçek mailin aynısı: kesinti PDF'ini de taşır, yoksa gönderimden önce
+        // doğrulanamazdı.
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<EmailNotificationService.MailAttachment>> attCap =
+                ArgumentCaptor.forClass(List.class);
+        verify(emailService).sendHtmlWithAttachments(toCap.capture(), ccCap.capture(),
+                contains("[TEST]"), anyString(), any(), attCap.capture());
         assertThat(toCap.getValue()).containsExactly("tester@x.com");
         assertThat(ccCap.getValue()).isNull();
+        assertThat(attCap.getValue()).hasSize(1);
+        assertThat(attCap.getValue().get(0).fileName()).endsWith(".pdf");
         verify(walRepo, never()).save(any(WeeklyAvailabilityLog.class));   // idempotency log'una dokunmaz
 
         // Arşiv: NotificationLog yazılır; alertEventId=0 sentinel (NOT NULL) + test trigger'ı
@@ -451,7 +631,7 @@ class WeeklyAvailabilityReportServiceTest {
         assertThat(ts.cc()).contains("po@x.com");
         assertThat(ts.lastStatus()).isEqualTo("SENT");
         assertThat(ts.lastSentAt()).isEqualTo("2026-06-15T08:00:00");
-        verify(emailService, never()).sendHtml(any(), any(), any(), any(), any());
+        verifyNoMailSent();
     }
 
     @Test
