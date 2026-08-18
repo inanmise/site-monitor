@@ -3219,6 +3219,8 @@ export const TR = {
   'nav.loginIssues':       'Sorun Bildirimleri',
   'help.title':         'SiteMonitor — Kullanım Kılavuzu',
   'help.download':      'PDF İndir',
+  'help.downloadTitle': 'Kılavuzu PDF olarak indir (Türkçe)',
+  'help.langNote':      'Kılavuz dili üst menüdeki dil seçimini izler',
 
   'nav.groupMonitoring': 'İzleme',
   'nav.uptime':          'Durum İzleme',
@@ -7498,6 +7500,8 @@ export const EN = {
   'nav.loginIssues':       'Issue Reports',
   'help.title':         'SiteMonitor — User Guide',
   'help.download':      'Download PDF',
+  'help.downloadTitle': 'Download the guide as a PDF (English)',
+  'help.langNote':      'The guide follows the language selected in the top menu',
 
   'nav.groupMonitoring': 'Monitoring',
   'nav.uptime':          'Status',

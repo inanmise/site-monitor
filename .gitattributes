@@ -1,0 +1,2 @@
+# PDF ikili dosyadir: git diff/merge denemesin (kilavuz PDF ureticisi ciktilari).
+*.pdf binary -diff -merge

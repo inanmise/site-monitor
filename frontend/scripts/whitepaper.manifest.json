@@ -1,0 +1,33 @@
+{
+  "manifestVersion": 1,
+  "generatedAt": "2026-08-18T05:25:20.457Z",
+  "appVersion": "20.23.0",
+  "sources": {
+    "src/assets/whitepaper.en.md": {
+      "sha256": "4618e8bc146c490ee8c36f85bc03d091a7fbdaecd1279759d06bd0787462c7b3",
+      "bytes": 122289
+    },
+    "src/assets/whitepaper.md": {
+      "sha256": "ba04f8b4739aab12b85f7ea9cfa71def5571b237a7bed6039cb3945911129580",
+      "bytes": 142608
+    }
+  },
+  "toolchain": {
+    "scripts/whitepaper-print.css": {
+      "sha256": "079ce04f409f0ceb1eed45049070209e8fd7ea7725a5bae2d9b40fb535f0e66f",
+      "bytes": 6667
+    }
+  },
+  "outputs": {
+    "public/whitepaper.en.pdf": {
+      "sha256": "0916fed6184366ede568ee3e43575a70aa199d364a370cceb1f693e80ce844ec",
+      "bytes": 1454848,
+      "pages": 45
+    },
+    "public/whitepaper.tr.pdf": {
+      "sha256": "70acd540860408ab5f1b8d5348d53cd3ebb91b8148b20691a6d6dc4a5b469f2e",
+      "bytes": 1820747,
+      "pages": 49
+    }
+  }
+}

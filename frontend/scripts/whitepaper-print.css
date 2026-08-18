@@ -1,0 +1,162 @@
+/*
+ * Kılavuz PDF'inin baskı stil sayfası — gen-whitepaper-pdf.mjs tarafından gömülür.
+ *
+ * Neden App.css DEĞİL: ekrandaki .help-content kuralları tema değişkenlerine (var(--*)) ve
+ * kaydırılan bir flex kabına bağlıdır; baskıda ikisi de yoktur. Bu sayfa kendi kendine
+ * yeterlidir ve renkleri düz hex olarak taşır.
+ *
+ * DİKKAT: bu dosyanın hash'i whitepaper.manifest.json içinde tutulur. Burayı değiştirip
+ * PDF'leri yeniden üretmezseniz tazelik kapısı kırmızıya döner — kasıtlıdır.
+ */
+
+/* ── Sayfa geometrisi ─────────────────────────────────────────────────────── */
+@page            { size: A4;          margin: 18mm 16mm 16mm 16mm; }
+@page cover      {                    margin: 0; }
+@page wide       { size: A4 landscape; margin: 12mm; }
+
+/* ── Tipografi ────────────────────────────────────────────────────────────── */
+:root {
+  --ink:      #1c2530;
+  --muted:    #5b6673;
+  --rule:     #d8dee6;
+  --accent:   #1e6ba8;
+  --codebg:   #f5f7fa;
+  --thbg:     #eef2f7;
+  --zebra:    #f8fafc;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  /* DejaVuSansMono yedek olarak DURUYOR: Roboto'da ✓ ✗ → gibi işaretler YOK ve onlarsız
+     Chromium sistem fontuna düşer (Windows'ta Segoe UI Symbol, Linux'ta çoğu zaman hiçbir şey
+     → tofu kutusu). Gömülü yedek, PDF'in üretildiği makineden bağımsız aynı çıktıyı verir. */
+  font-family: 'Roboto', 'DejaVuSansMono', Arial, sans-serif;
+  font-size: 10pt;
+  line-height: 1.55;
+  color: var(--ink);
+  margin: 0;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* Ölçüm kabı: genişliği tam basılabilir alana eşitlenir, böylece <pre> taşma
+   ölçümü (scrollWidth > clientWidth) gerçek baskı genişliğine karşı yapılır. */
+.sheet { width: 178mm; margin: 0 auto; }
+
+p { margin: 0 0 .62em; orphans: 3; widows: 3; }
+
+/* ── Başlıklar ────────────────────────────────────────────────────────────── */
+h1, h2, h3, h4 {
+  color: var(--ink);
+  line-height: 1.25;
+  margin: 0 0 .45em;
+  break-after: avoid;
+  page-break-after: avoid;
+}
+h1 {
+  font-size: 20pt;
+  break-before: page;           /* her numaralı bölüm yeni sayfada başlar */
+  padding-bottom: .25em;
+  border-bottom: 2px solid var(--accent);
+  margin-top: 0;
+}
+h1:first-of-type { break-before: auto; }
+h2 { font-size: 15pt; margin-top: 1.5em; border-bottom: 1px solid var(--rule); padding-bottom: .2em; }
+h3 { font-size: 12pt; margin-top: 1.2em; color: #24405c; }
+h4 { font-size: 10.5pt; margin-top: 1em; color: var(--muted); }
+
+/* Başlığın hemen ardından gelen içerik başlıktan koparılmaz */
+h1 + *, h2 + *, h3 + *, h4 + * { break-before: avoid; page-break-before: avoid; }
+
+/* ── Listeler ─────────────────────────────────────────────────────────────── */
+ul, ol { margin: 0 0 .7em; padding-left: 1.35em; }
+li { margin-bottom: .22em; orphans: 3; widows: 3; }
+
+/* ── Tablolar ─────────────────────────────────────────────────────────────── */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 8.6pt;
+  margin: .5em 0 1em;
+}
+thead { display: table-header-group; }   /* sayfa aşan tabloda başlık tekrarlanır */
+tfoot { display: table-footer-group; }
+tr { break-inside: avoid; page-break-inside: avoid; }
+th, td {
+  border: 1px solid var(--rule);
+  padding: 4px 7px;
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+}
+th { background: var(--thbg); font-weight: 700; }
+tbody tr:nth-child(even) td { background: var(--zebra); }
+
+/* ── Kod ve ASCII diyagramlar ─────────────────────────────────────────────── */
+code {
+  font-family: 'DejaVuSansMono', 'Consolas', monospace;
+  font-size: .88em;
+  background: var(--codebg);
+  padding: .1em .3em;
+  border-radius: 3px;
+}
+pre {
+  font-family: 'DejaVuSansMono', 'Consolas', monospace;
+  background: var(--codebg);
+  border-left: 4px solid var(--accent);
+  padding: 8px 10px;
+  margin: .5em 0 1em;
+  font-size: 8pt;
+  line-height: 1.32;
+  /* SARMA YOK: kutu-çizim diyagramları sarıldığında okunamaz hâle gelir.
+     Taşma, üretici tarafından yazı boyutu ölçülerek çözülür. */
+  white-space: pre;
+  overflow: visible;
+}
+pre code { background: none; padding: 0; font-size: inherit; }
+
+/* 25 satırdan kısa bloklar bölünmez; uzunları bölünebilmeli, aksi hâlde boş sayfa iter */
+pre.short { break-inside: avoid; page-break-inside: avoid; }
+
+/* Portrede 8pt'ye inince bile sığmayan blok yatay sayfaya taşınır */
+pre.wide {
+  page: wide;
+  break-before: page;
+  break-after: page;
+}
+
+/* ── Diğer ────────────────────────────────────────────────────────────────── */
+blockquote {
+  margin: .6em 0 1em;
+  padding: .5em .9em;
+  border-left: 4px solid #f0a02a;
+  background: #fdf6e8;
+  break-inside: avoid;
+}
+blockquote p:last-child { margin-bottom: 0; }
+
+hr { border: none; border-top: 1px solid var(--rule); margin: 1.4em 0; }
+
+a { color: var(--accent); text-decoration: none; }
+
+img { max-width: 100%; }
+
+/* ── Kapak ────────────────────────────────────────────────────────────────── */
+.cover {
+  page: cover;
+  break-after: page;
+  height: 297mm;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 0 24mm;
+  background: #ffffff;
+}
+.cover img { width: 132px; height: 132px; margin-bottom: 26px; }
+.cover .cover-title    { font-size: 30pt; font-weight: 700; line-height: 1.15; margin: 0 0 10px; }
+.cover .cover-subtitle { font-size: 13pt; color: var(--muted); margin: 0 0 40px; }
+.cover .cover-meta     { font-size: 10.5pt; color: var(--muted); line-height: 1.9; }
+.cover .cover-rule     { width: 92px; height: 3px; background: var(--accent); margin: 0 0 34px; }
