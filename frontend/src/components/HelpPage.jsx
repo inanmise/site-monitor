@@ -1,44 +1,39 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { useT } from '../i18n/index.jsx'
+import { useT, useLanguage } from '../i18n/index.jsx'
+import { slugify, parseToc } from '../utils/mdToc.js'
 import BrandLogo from './BrandLogo.jsx'
-import whitepaperContent from '../assets/whitepaper.md?raw'
+import whitepaperTr from '../assets/whitepaper.md?raw'
+import whitepaperEn from '../assets/whitepaper.en.md?raw'
 
-function slugify(text) {
-  return String(text)
-    .toLowerCase()
-    .replace(/ş/g, 's').replace(/ğ/g, 'g').replace(/ı/g, 'i')
-    .replace(/ü/g, 'u').replace(/ö/g, 'o').replace(/ç/g, 'c')
-    .replace(/[^a-z0-9\s-]/g, '')
-    .trim()
-    .replace(/\s+/g, '-')
+/**
+ * Kılavuz dile göre seçilir — monitorGuides.js'teki {tr, en} deseniyle aynı.
+ * PDF'ler `frontend/scripts/gen-whitepaper-pdf.mjs` ile aynı markdown'dan üretilir;
+ * whitepaper-pdf-freshness.test.jsx kaynak ile PDF'in ayrışmasını engeller.
+ */
+const GUIDES = {
+  tr: { md: whitepaperTr, pdf: '/whitepaper.tr.pdf', file: 'Site-Monitor-Kullanim-Kilavuzu.pdf' },
+  en: { md: whitepaperEn, pdf: '/whitepaper.en.pdf', file: 'Site-Monitor-User-Guide.pdf' },
 }
-
-function parseToc(markdown) {
-  const lines = markdown.split('\n')
-  const items = []
-  for (const line of lines) {
-    const m = line.match(/^(#{1,4})\s+(.+)/)
-    if (!m) continue
-    const level = m[1].length
-    if (level > 3) continue
-    const text = m[2].replace(/\*\*/g, '').replace(/`/g, '').trim()
-    items.push({ level, text, id: slugify(text) })
-  }
-  return items
-}
-
-const tocItems = parseToc(whitepaperContent)
 
 export default function HelpPage() {
   const t = useT()
+  const { lang } = useLanguage()
+  const guide = GUIDES[lang] ?? GUIDES.tr
   const contentRef = useRef(null)
   const [activeId, setActiveId] = useState('')
+
+  // guide.md modül seviyesi sabit string → memo yalnız dil değişiminde yeniden hesaplar.
+  const tocItems = useMemo(() => parseToc(guide.md), [guide.md])
 
   useEffect(() => {
     const el = contentRef.current
     if (!el) return
+    // Dil değişti: eski slug'a işaret eden aktif başlığı ve kaydırma konumunu sıfırla,
+    // yoksa okuyucu yeni belgenin ortasında ve yanlış TOC vurgusuyla açılır.
+    el.scrollTop = 0
+    setActiveId('')
     const handler = () => {
       const headings = el.querySelectorAll('h1[id], h2[id], h3[id]')
       const containerTop = el.getBoundingClientRect().top
@@ -50,7 +45,7 @@ export default function HelpPage() {
     }
     el.addEventListener('scroll', handler, { passive: true })
     return () => el.removeEventListener('scroll', handler)
-  }, [])
+  }, [lang])
 
   function scrollTo(id) {
     const container = contentRef.current
@@ -61,27 +56,27 @@ export default function HelpPage() {
     container.scrollBy({ top: headingRect.top - containerRect.top - 16, behavior: 'smooth' })
   }
 
-  function extractText(children) {
-    if (typeof children === 'string') return children
-    if (Array.isArray(children)) return children.map(extractText).join('')
-    if (children?.props?.children != null) return extractText(children.props.children)
-    return ''
-  }
-
-  const components = {
-    h1: ({ children }) => <h1 id={slugify(extractText(children))}>{children}</h1>,
-    h2: ({ children }) => <h2 id={slugify(extractText(children))}>{children}</h2>,
-    h3: ({ children }) => <h3 id={slugify(extractText(children))}>{children}</h3>,
-    h4: ({ children }) => <h4 id={slugify(extractText(children))}>{children}</h4>,
-    code: ({ inline, className, children }) => {
-      if (inline) return <code>{children}</code>
-      return (
-        <pre>
-          <code className={className}>{children}</code>
-        </pre>
-      )
-    },
-  }
+  // Sabit tutulur: her render'da yeniden yaratmak react-markdown'a 100 KB'lık belgeyi
+  // baştan render ettirir — scroll-spy her kaydırmada setActiveId çağırdığı için pahalı.
+  const components = useMemo(() => {
+    function extractText(children) {
+      if (typeof children === 'string') return children
+      if (Array.isArray(children)) return children.map(extractText).join('')
+      if (children?.props?.children != null) return extractText(children.props.children)
+      return ''
+    }
+    return {
+      h1: ({ children }) => <h1 id={slugify(extractText(children))}>{children}</h1>,
+      h2: ({ children }) => <h2 id={slugify(extractText(children))}>{children}</h2>,
+      h3: ({ children }) => <h3 id={slugify(extractText(children))}>{children}</h3>,
+      h4: ({ children }) => <h4 id={slugify(extractText(children))}>{children}</h4>,
+      // `code` BİLİNÇLİ olarak override edilmiyor. react-markdown 9+ sürümlerinde `inline`
+      // prop'u kaldırıldı; eski override'da koşul her zaman false'a düşüyor ve satır içi
+      // `kod` parçaları tam genişlikte <pre> bloğuna dönüşerek cümleleri ve tablo
+      // hücrelerini parçalıyordu. Varsayılan davranış zaten doğru: çit → <pre><code>,
+      // satır içi → <code>; ikisinin stili de App.css'te .help-content altında tanımlı.
+    }
+  }, [])
 
   return (
     <div className="help-page">
@@ -91,12 +86,15 @@ export default function HelpPage() {
           <BrandLogo status="ok" size={64} />
           <div>
             <h2 className="help-header-title" style={{ margin: 0 }}>{t('help.title')}</h2>
-            <span style={{ fontSize: 12, opacity: .65 }}>v{__APP_VERSION__}</span>
+            <span style={{ fontSize: 12, opacity: .65 }}>
+              v{__APP_VERSION__} · {t('help.langNote')}
+            </span>
           </div>
         </div>
         <a
-          href="/whitepaper.pdf"
-          download="SiteMonitor-WhitePaper.pdf"
+          href={guide.pdf}
+          download={guide.file}
+          title={t('help.downloadTitle')}
           className="btn btn-sm help-download-btn"
         >
           {t('help.download')}
@@ -120,7 +118,7 @@ export default function HelpPage() {
 
         <div className="help-content" ref={contentRef}>
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-            {whitepaperContent}
+            {guide.md}
           </ReactMarkdown>
         </div>
       </div>

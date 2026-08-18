@@ -51,12 +51,17 @@ describe('naming consistency (rename bekçisi)', () => {
     expect(violations, violations.join('\n')).toEqual([])
   })
 
-  it('User Guide (whitepaper.md) bitişik "SiteMonitor" yazımı içermez — kılavuzda marka "Site Monitor" (BRAND.md §5.1)', () => {
+  it('User Guide dosyaları bitişik "SiteMonitor" yazımı içermez — kılavuzda marka "Site Monitor" (BRAND.md §5.1)', () => {
     // Kapsam bilinçli olarak yalnız kılavuz: UI kod/i18n\'de "SiteMonitor" yazımı ayrı bir üründür kararıdır.
-    const guide = fs.readFileSync(path.join(SRC, 'assets', 'whitepaper.md'), 'utf8')
-    const hits = guide.split('\n')
-      .map((l, i) => (l.includes('SiteMonitor') ? `whitepaper.md:${i + 1} → ${l.trim()}` : null))
-      .filter(Boolean)
+    // Dil dosyaları readdir ile bulunur; ileride eklenecek bir whitepaper.<dil>.md indiği gün kapsama girer.
+    const assets = path.join(SRC, 'assets')
+    const guides = fs.readdirSync(assets).filter((f) => /^whitepaper(\.[a-z]{2})?\.md$/.test(f))
+    expect(guides.length, 'kılavuz dosyası bulunamadı — yanlış kök?').toBeGreaterThan(0)
+    const hits = guides.flatMap((f) =>
+      fs.readFileSync(path.join(assets, f), 'utf8').split('\n')
+        .map((l, i) => (l.includes('SiteMonitor') ? `${f}:${i + 1} → ${l.trim()}` : null))
+        .filter(Boolean)
+    )
     expect(hits, hits.join('\n')).toEqual([])
   })
 
