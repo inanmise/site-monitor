@@ -400,15 +400,19 @@ export default function IncidentHistoryPage() {
     return out
   }, [trendDaily, trendDays])
 
-  if (!allowView) return <div className="empty-state">{t('inc.noAccess')}</div>
-
-  const totalPages = Math.max(1, Math.ceil(total / size))
-
   // Paylaşılabilir URL: sayfa/boyut (URL'de HEP 1-tabanlı).
+  // DİKKAT: bu çağrı aşağıdaki `allowView` erken-return'ünün ÜSTÜNDE kalmalı. Altında
+  // olduğunda yetkiler asenkron yüklendiği için `allowView` false→true dönüyor ve hook
+  // sayısı render'lar arasında değişiyordu ("Rendered more hooks than during the previous
+  // render"). Bu bileşene yeni hook eklerken de aynı kurala uyun.
   useUrlQuerySync({
     page: page > 0 ? page + 1 : null,
     ps: (size !== 50 || page > 0) ? size : null,
   })
+
+  if (!allowView) return <div className="empty-state">{t('inc.noAccess')}</div>
+
+  const totalPages = Math.max(1, Math.ceil(total / size))
   const setF = (k, v) => setFilters(f => ({ ...f, [k]: v }))
   // Trend çubuğuna tıkla → o günü listede filtrele (since=until=gün); aynı güne tekrar tıkla → temizle.
   const toggleDay = (day) => {

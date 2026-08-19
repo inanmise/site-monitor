@@ -112,6 +112,11 @@ jobs:
       - name: Test (with coverage gate)
         run: npm run test:coverage
 
+      # Global eşik büyük+kapsamsız dosyaları ortalamanın arkasına gizliyordu (2026-08-19
+      # SystemHealth olayı: 2324 satır, %11.94). Bu adım dosya-bazlı tabanı zorlar.
+      - name: Coverage floor (large components)
+        run: npm run coverage:floor
+
       - name: Build
         run: npm run build
 

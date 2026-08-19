@@ -33,7 +33,9 @@ export default defineConfig({
     // (2026-08-06 ölçümü: satır/deyim 57.1, dal 62.7, fonksiyon 33.3), yeni testlerle YUKARI çekilir.
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'html'],
+      // json-summary: scripts/check-coverage-floor.mjs dosya-bazlı tabanı bu çıktıdan okur
+      // (global eşik büyük ve kapsamsız dosyaları ortalamanın arkasına gizliyordu).
+      reporter: ['text', 'html', 'json-summary'],
       // Varsayılan coverage exclude'u yalnız 'node_modules'ü tanır; kilitli-dosya geçici
       // kopyaları (node_modules.stale) "all files" taramasına girip yüzdeleri ezmesin.
       exclude: ['**/node_modules*/**', ...coverageConfigDefaults.exclude],

@@ -12,7 +12,7 @@ import DateTimeRangePicker from '../ui/DateTimeRangePicker.jsx'
 
 import UserBadge from '../ui/UserBadge.jsx'   // proje-geneli ortak kullanıcı rozeti (avatar + ad-soyad)
 import { mailPreviewSrcDoc, mailLogoVariant } from '../../utils/mailPreview.js'
-import { Spinner, LoadingBlock } from '../ui/Progress.jsx'
+import { Spinner, ProgressBar, LoadingBlock } from '../ui/Progress.jsx'
 const LoginActivityChart = lazy(() => import('./LoginActivityChart.jsx'))   // recharts → tembel yükle (bundle hafif)
 const HttpMetricsExplorer = lazy(() => import('./HttpMetricsExplorer.jsx'))  // recharts → tembel yükle
 
