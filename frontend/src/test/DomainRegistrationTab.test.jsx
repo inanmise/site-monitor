@@ -1,14 +1,16 @@
 import { render, screen, waitFor } from './test-utils.jsx'
 import DomainRegistrationTab from '../components/DomainRegistrationTab.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
   formatDateSec: (s) => s ?? '',
-  api: {
+  api: withApiFallback({
     monitoring: {
       getDomainRegistration: vi.fn(),
       getDomainHistory: vi.fn(),
     },
-  },
+  }),
 }))
 import { api } from '../api/client'
 

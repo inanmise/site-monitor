@@ -202,7 +202,9 @@ async function fitCodeBlocks(page) {
 
 /* ── Üretim ───────────────────────────────────────────────────────────────── */
 async function buildPdf(browser, source, { version, dateStr, outPath }) {
-  const md = readFileSync(source.absPath, 'utf8')
+  // Sürüm damgası kaynakta {{VERSION}} olarak durur; uygulamada __APP_VERSION__ ile,
+  // burada kök VERSION dosyasıyla çözülür. Elle yazılan numara her sürümde eskiyordu.
+  const md = readFileSync(source.absPath, 'utf8').split('{{VERSION}}').join(version)
   const body = String(await processor.process(md))
   const css = readFileSync(PRINT_CSS_PATH, 'utf8')
 

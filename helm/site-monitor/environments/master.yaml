@@ -16,7 +16,11 @@ image:
   tag: "1.0.0"      # overridden by CI with exact git tag
   pullPolicy: Always
 
-replicaCount: 3
+# Üretim TEK POD çalışır (2026-08-19 teyidi). Ölçekleme DİKEY yapılır: kapasite yetmezse
+# önce resources büyütülür. Yatay ölçeklemeye geçilecekse aşağıdaki autoscaling /
+# podDisruptionBudget / topologySpreadConstraints bloklarını birlikte açın — chart bunları
+# destekler ve çok-pod mekanizmaları (scheduler_lock, JDBC oturum) zaten hazırdır.
+replicaCount: 1
 
 config:
   springProfile: prod
@@ -38,9 +42,9 @@ config:
   # ekleniyor. 10 bağlantı 100 eşzamanlı kullanıcıda ilk darboğaz oluyordu.
   # minimum-idle 10'da bırakıldı (DB_POOL_MIN ezilmiyor): boşta tutulan bağlantı sayısı
   # artmaz, havuz yük geldikçe 30'a kadar büyür.
-  # DİKKAT: bu değer POD BAŞINA. replicaCount 3 ise DB sunucusunda 3 × 30 = 90 bağlantı
-  # demektir — replika sayısını değiştirirken Postgres max_connections bütçesini birlikte
-  # gözden geçirin.
+  # DİKKAT: bu değer POD BAŞINA. Tek pod profilinde DB'de 30 bağlantı demektir; replika
+  # sayısını artırırsanız çarpılır (3 replika = 90) ve Postgres max_connections bütçesini
+  # birlikte gözden geçirmeniz gerekir.
   dbPoolMax: "30"
 
 ingress:
@@ -55,6 +59,11 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
     nginx.ingress.kubernetes.io/proxy-body-size: "1m"
 
+# BİLİNÇLİ AYRIŞMA: chart varsayılanı (values.yaml) tek pod için 1792Mi/1500m → 3584Mi/4000m
+# önerir; üretim şimdilik aşağıdaki daha dar limitlerle çalışıyor ve bu değerler KORUNUYOR.
+# Yükseltmeden önce namespace kotası ve node kapasitesi kontrol edilmeli — yetmezse pod
+# Pending'de kalır. Senaryo (k6) izlemesi yoğunlaşırsa ilk büyütülecek yer burasıdır,
+# çünkü k6 alt süreçleri JVM heap'inin ÜSTÜNE RSS bindirir.
 resources:
   requests:
     memory: "512Mi"
@@ -63,18 +72,22 @@ resources:
     memory: "1536Mi"
     cpu: "2000m"
 
+# Tek pod profilinde üçü de KAPALI. Değerler, yatay ölçeklemeye geçildiğinde
+# doğrudan kullanılabilsin diye korunuyor.
 autoscaling:
-  enabled: true
-  minReplicas: 3
-  maxReplicas: 10
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
   targetCPUUtilizationPercentage: 70
   targetMemoryUtilizationPercentage: 80
 
+# DİKKAT: tek replikayla minAvailable=2 bir PDB TUZAĞIDIR — voluntary eviction hiçbir zaman
+# izin almaz, yani node drain / cluster upgrade süresiz bloke olur. Replika 1 iken kapalı kalmalı.
 podDisruptionBudget:
-  enabled: true
-  minAvailable: 2
+  enabled: false
+  minAvailable: 1
 
 topologySpreadConstraints:
-  enabled: true
+  enabled: false
   maxSkew: 1
   topologyKey: kubernetes.io/hostname

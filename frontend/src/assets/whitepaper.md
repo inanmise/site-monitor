@@ -1,6 +1,6 @@
 # Site Monitor — Kurumsal İzleme Platformu
 
-Sürüm `20.23.0` · Ağustos 2026 · Türkçe
+Sürüm `{{VERSION}}` · Ağustos 2026 · Türkçe
 
 ---
 
@@ -1435,9 +1435,9 @@ Windows'ta tam yığını tek komutla açmak için `start-local.ps1` vardır: `.
 Kayıt defteri : ghcr.io/<sahip>/site-monitor
 Etiketler:
   latest                (üretim son)
-  v20.23.0              (sürüm etiketi)
+  vX.Y.Z                (sürüm etiketi)
   develop-a1b2c3d       (geliştirme commit'i)
-  20.23.0-rc / staging  (release adayı)
+  X.Y.Z-rc / staging    (release adayı)
 ```
 
 İmaj dört aşamalıdır:
@@ -1751,7 +1751,7 @@ Yaklaşık 180 anahtar **Yönetim → Ayarlar** ekranından, uygulama çalışı
 
 | Bilgi | Değer |
 |---|---|
-| Güncel sürüm | 20.23.0 |
+| Güncel sürüm | {{VERSION}} |
 | Belge tarihi | Ağustos 2026 |
 | Java | 25 (LTS) |
 | Spring Boot | 4.1.0 (Spring Framework 7, Jakarta EE 11, Hibernate 7, Tomcat 11) |
@@ -1767,9 +1767,9 @@ Sürüm numarası tek `VERSION` dosyasından gelir ve conventional commit önekl
 
 | Önek | Artış | Örnek |
 |---|---|---|
-| `feat:` | Minor | 20.23.x → 20.24.0 |
-| `fix:` / `chore:` / `refactor:` | Patch | 20.23.0 → 20.23.1 |
-| `BREAKING CHANGE` | Major | 20.x → 21.0.0 |
+| `feat:` | Minor | `1.4.2` → `1.5.0` |
+| `fix:` / `chore:` / `refactor:` | Patch | `1.4.2` → `1.4.3` |
+| `BREAKING CHANGE` | Major | `1.4.2` → `2.0.0` |
 
 `backend/pom.xml` ve `frontend/package.json` içindeki sürüm alanları bu numarayla eşleşmez ve eşleşmesi de beklenmez — hiçbir yerde okunmazlar, tek doğruluk kaynağı kök `VERSION` dosyasıdır.
 
@@ -1893,4 +1893,4 @@ Kılavuz boyunca terimler tek biçimde kullanılır; İngilizce arayüz metinler
 
 ---
 
-*Bu belge Site Monitor v20.23.0 için Ağustos 2026 itibarıyla hazırlanmıştır.*
+*Bu belge Site Monitor v{{VERSION}} için Ağustos 2026 itibarıyla hazırlanmıştır.*

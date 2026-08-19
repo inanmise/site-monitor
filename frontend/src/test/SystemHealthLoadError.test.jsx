@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from './test-utils.jsx'
 import SystemHealth from '../components/admin/SystemHealth.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
-  api: {
+  api: withApiFallback({
     admin: {
       getSystemHealth: vi.fn(),
       getMetrics:      vi.fn(),
@@ -20,7 +22,7 @@ vi.mock('../api/client', () => ({
       getSchedulerHistory:    vi.fn().mockResolvedValue({ success: true, data: [] }),
       getMailLogs:            vi.fn().mockResolvedValue({ success: true, data: [] }),
     },
-  },
+  }),
 }))
 
 import { api } from '../api/client'

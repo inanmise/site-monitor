@@ -4,11 +4,13 @@ import KeywordMonitorPage from '../components/KeywordMonitorPage.jsx'
 
 // Açıklama ifadeleri (expectPhrase/triggerPhrase) dilden bağımsız TR; butonlar
 // varsayılan dilde (en) — regex'ler iki-dilli/dil-bağımsız tutuldu.
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
   formatDate:     (s) => s ?? '',
   formatDateSec:  (s) => s ?? '',
   formatDateOnly: (s) => s ?? '',
-  api: {
+  api: withApiFallback({
     monitoring: {
       listGroups:           vi.fn(() => Promise.resolve({ success: true, data: [] })),
       getKeywordMonitors:   vi.fn(),
@@ -21,7 +23,7 @@ vi.mock('../api/client', () => ({
       testKeyword:          vi.fn(),
     },
     admin: { getTeams: vi.fn() },
-  },
+  }),
 }))
 import { api } from '../api/client'
 

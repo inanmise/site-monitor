@@ -2,8 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from './test-utils.jsx'
 import CertRenewalGuide from '../components/CertRenewalGuide.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
-  api: { guideLinks: { list: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() } },
+  api: withApiFallback({ guideLinks: { list: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() } }),
 }))
 
 import { api } from '../api/client'

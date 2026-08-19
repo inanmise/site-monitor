@@ -587,7 +587,7 @@ Ortam bazlı değer dosyaları:
 
 | Dosya | Ortam | Özellikler |
 |-------|-------|-----------|
-| `environments/master.yaml` | Üretim | 3 replica, HPA min:3/max:10, PDB |
+| `environments/master.yaml` | Üretim | **Tek pod** (dikey ölçekleme); HPA/PDB/topology spread kapalı |
 | `environments/release.yaml` | Staging | 2 replica, HPA min:2/max:5 |
 | `environments/develop.yaml` | Geliştirme | 1 replica, HPA kapalı, e-posta kapalı |
 

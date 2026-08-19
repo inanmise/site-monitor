@@ -17,8 +17,10 @@ const sampleDetail = {
   ],
 }
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
-  api: {
+  api: withApiFallback({
     admin: {
       getLoginIssues: vi.fn(async () => ({
         success: true, data: [sampleRow], total: 1, counts: { OPEN: 1, IN_PROGRESS: 0, RESOLVED: 0 },
@@ -28,7 +30,7 @@ vi.mock('../api/client', () => ({
         success: true, data: { ...sampleDetail, status: 'RESOLVED', resolutionNote: 'done', resolvedBy: 'admin' },
       })),
     },
-  },
+  }),
 }))
 
 // Bileşen artık issues.login-reports/view iznine göre kendini gate'liyor (izinsiz → temiz mesaj, spinner değil).

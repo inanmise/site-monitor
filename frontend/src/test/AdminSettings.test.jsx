@@ -18,7 +18,9 @@ vi.mock('../components/admin/RetentionSettings', () => ({ default: () => <div da
 vi.mock('../components/admin/DatabaseInfo', () => ({ default: () => <div data-testid="sec-database" /> }))
 vi.mock('../components/admin/SecretTools', () => ({ default: () => <div data-testid="sec-secrets" /> }))
 // Emniyet kemeri: bir stub kaçarsa gerçek fetch yerine mock'a düşsün.
-vi.mock('../api/client', () => ({ api: {}, getRecentFailures: () => [] }))
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
+vi.mock('../api/client', () => ({ api: withApiFallback({}), getRecentFailures: () => [] }))
 
 import AdminSettings from '../components/admin/AdminSettings.jsx'
 

@@ -4,8 +4,10 @@ import CertificatesTable from '../components/CertificatesTable.jsx'
 
 // api istemcisini mock'la — component mount'ta getCertificatesPaginated çağırır.
 // Durum sınıfları (status-valid/critical/error) dilden BAĞIMSIZ CSS sınıfı → i18n metnine bağlanmadan doğrulanır.
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
-  api: { getCertificatesPaginated: vi.fn() },
+  api: withApiFallback({ getCertificatesPaginated: vi.fn() }),
   formatDate: (s) => s || 'N/A',
 }))
 

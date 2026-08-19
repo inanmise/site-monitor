@@ -3,9 +3,11 @@ import { render, screen, waitFor, fireEvent } from './test-utils.jsx'
 import ActivityLog from '../components/ActivityLog.jsx'
 
 // Birleşik aktivite akışı — api mock'lanır. Durum/tür rozetleri dilden bağımsız CSS/enum ile doğrulanır.
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
   formatDateSec: (s) => s ?? '',
-  api: { getActivity: vi.fn(), getActivitySummary: vi.fn(), getActivityDetail: vi.fn() },
+  api: withApiFallback({ getActivity: vi.fn(), getActivitySummary: vi.fn(), getActivityDetail: vi.fn() }),
 }))
 
 import { api } from '../api/client'

@@ -2,16 +2,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from './test-utils.jsx'
 import LoginAnomalySettings from '../components/admin/LoginAnomalySettings.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
-  api: {
+  api: withApiFallback({
     admin: {
       getLoginAnomalySettings: vi.fn(),
       saveLoginAnomalySettings: vi.fn(),
       testLoginAnomalyEmail: vi.fn(),
       getLoginAnomalyIncidents: vi.fn(),
     },
-  },
+  }),
 }))
 import { api } from '../api/client'
 

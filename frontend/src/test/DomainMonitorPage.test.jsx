@@ -2,10 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
 import DomainMonitorPage from '../components/DomainMonitorPage.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
   formatDateSec: (s) => s ?? '',
-  api: {
+  api: withApiFallback({
     monitoring: {
       listGroups:          vi.fn(() => Promise.resolve({ success: true, data: [] })),
       getDomainMonitors:   vi.fn(),
@@ -24,7 +26,7 @@ vi.mock('../api/client', () => ({
       monitorDefaults:     vi.fn(),
     },
     admin: { getTeams: vi.fn() },
-  },
+  }),
 }))
 import { api } from '../api/client'
 

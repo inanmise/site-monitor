@@ -34,9 +34,11 @@ vi.mock('../components/ui/Toast.jsx', () => ({
   ToastProvider: ({ children }) => children,
 }))
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
   formatDate: (s) => String(s ?? ''),
-  api: {
+  api: withApiFallback({
     weeklyReports: {
       years: vi.fn(), list: vi.fn(), get: vi.fn(), lock: vi.fn(), unlock: vi.fn(),
       save: vi.fn(), submit: vi.fn(), approve: vi.fn(), reject: vi.fn(), reopen: vi.fn(),
@@ -44,7 +46,7 @@ vi.mock('../api/client', () => ({
       mails: vi.fn(), uploadImage: vi.fn(), transfer: vi.fn(),
     },
     admin: { getTeams: vi.fn() },
-  },
+  }),
 }))
 
 import { api } from '../api/client'

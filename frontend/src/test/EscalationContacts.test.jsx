@@ -13,16 +13,18 @@ import { LangProvider } from '../i18n/index.jsx'
 const confirmMock = vi.fn(() => Promise.resolve(true))
 const toastMock = { success: vi.fn(), error: vi.fn(), info: vi.fn() }
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
   formatDate: (s) => String(s ?? ''),
-  api: { admin: {
+  api: withApiFallback({ admin: {
     getContacts: vi.fn(),
     getUsers: vi.fn(),
     getTeams: vi.fn(),
     addContact: vi.fn(),
     updateContact: vi.fn(),
     deleteContact: vi.fn(),
-  } },
+  } }),
 }))
 vi.mock('../components/ui/Dialog.jsx', () => ({
   useDialog: () => ({ showConfirm: confirmMock }),

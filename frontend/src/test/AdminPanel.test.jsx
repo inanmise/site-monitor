@@ -2,12 +2,14 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, act } from './test-utils.jsx'
 import AdminPanel from '../components/admin/AdminPanel.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
-  api: {
+  api: withApiFallback({
     admin: {
       getTeams: vi.fn().mockResolvedValue({ success: true, data: [] }),
     },
-  },
+  }),
 }))
 
 vi.mock('../components/admin/EscalationContacts.jsx', () => ({

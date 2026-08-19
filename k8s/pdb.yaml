@@ -4,7 +4,10 @@ metadata:
   name: site-monitor
   namespace: site-monitor
 spec:
-  minAvailable: 2
+  # DIKKAT: tek replikayla minAvailable=2 bir TUZAKTIR — voluntary eviction hicbir zaman
+  # izin almaz ve node drain / cluster upgrade suresiz bloke olur. Tek pod profilinde bu
+  # manifest UYGULANMAZ; yatay olceklemeye gecerken 2'ye cikarin.
+  minAvailable: 1
   selector:
     matchLabels:
       app: site-monitor

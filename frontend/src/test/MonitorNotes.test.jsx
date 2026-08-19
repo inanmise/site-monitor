@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
 import MonitorNotes from '../components/MonitorNotes.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
-  api: {
+  api: withApiFallback({
     monitoring: {
       getMonitorNotes:   vi.fn(),
       saveMonitorGuide:  vi.fn(),
@@ -12,7 +14,7 @@ vi.mock('../api/client', () => ({
       updateMonitorNote: vi.fn(),
       deleteMonitorNote: vi.fn(),
     },
-  },
+  }),
 }))
 import { api } from '../api/client'
 

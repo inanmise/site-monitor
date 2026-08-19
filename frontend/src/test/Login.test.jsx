@@ -4,13 +4,15 @@ import Login from '../pages/Login.jsx'
 
 // We mock the entire api module so the form's submit handler resolves
 // without touching the network. The shape mirrors the real client.
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
-  api: {
+  api: withApiFallback({
     login: vi.fn(),
     // Hero istatistikleri artık gerçek veriden (public endpoint) — testte sabit mock.
     getPublicStats: vi.fn(async () => ({ success: true, data: { monitored_targets: 512, availability_pct: 99.9 } })),
     sendLoginHelp: vi.fn(async () => ({ success: true })),
-  },
+  }),
 }))
 
 import { api } from '../api/client'

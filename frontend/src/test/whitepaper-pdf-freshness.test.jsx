@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
-  MANIFEST_VERSION, MANIFEST_PATH, REGEN_HINT,
+  MANIFEST_VERSION, MANIFEST_PATH, REGEN_HINT, FRONTEND_DIR,
   guideSources, toolchainFiles, readManifest, sha256, inspectPdf, outputFor,
 } from '../../scripts/whitepaperManifest.mjs'
 import { duplicateSlugs } from '../utils/mdToc.js'
@@ -59,6 +60,22 @@ describe('kılavuz PDF tazeliği', () => {
     expect(info.hasEof, `${out.relKey} eksik/bozuk (kuyrukta %%EOF yok)`).toBe(true)
     expect(info.bytes, `${out.relKey} şüpheli derecede küçük`).toBeGreaterThan(200_000)
     expect(info.pages, `${out.relKey} beklenenden az sayfa içeriyor`).toBeGreaterThanOrEqual(20)
+  })
+
+  it.each(sources.map((s) => [s.relKey, s]))('%s sürüm damgasını {{VERSION}} ile yazar', (relKey, s) => {
+    // Elle yazılan sürüm her release'de eskiyordu (kılavuz 20.23.0 derken uygulama 20.24.1).
+    // Damga artık token; HelpPage __APP_VERSION__ ile, PDF üreticisi kök VERSION ile çözer.
+    const text = readFileSync(s.absPath, 'utf8')
+    expect(text, 'sürüm damgası {{VERSION}} token\'ı içermeli').toContain('{{VERSION}}')
+
+    const current = readFileSync(join(FRONTEND_DIR, '..', 'VERSION'), 'utf8').trim()
+    const hardcoded = text.split('\n')
+      .map((l, i) => (l.includes(current) ? `${relKey}:${i + 1} → ${l.trim()}` : null))
+      .filter(Boolean)
+    expect(
+      hardcoded,
+      `Kılavuzda sabit sürüm numarası var; {{VERSION}} kullanın:\n${hardcoded.join('\n')}`
+    ).toEqual([])
   })
 
   it.each(sources.map((s) => [s.relKey, s]))('%s içinde çakışan başlık slugu yok', (relKey, s) => {

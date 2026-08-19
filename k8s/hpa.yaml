@@ -8,8 +8,9 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: site-monitor
-  minReplicas: 3
-  maxReplicas: 10
+  # Tek pod profilinde bu HPA UYGULANMAZ; yatay olceklemeye gecilirse kullanilir.
+  minReplicas: 1
+  maxReplicas: 5
   metrics:
     - type: Resource
       resource:

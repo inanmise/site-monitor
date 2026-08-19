@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
 import DnsMonitorPage from '../components/DnsMonitorPage.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
-  api: {
+  api: withApiFallback({
     monitoring: {
       listGroups:       vi.fn(() => Promise.resolve({ success: true, data: [] })),
       getDnsMonitors:   vi.fn(),
@@ -17,7 +19,7 @@ vi.mock('../api/client', () => ({
       testDnsMonitor:   vi.fn(),
     },
     admin: { getTeams: vi.fn() },
-  },
+  }),
 }))
 import { api } from '../api/client'
 

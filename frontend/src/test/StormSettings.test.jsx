@@ -2,15 +2,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from './test-utils.jsx'
 import StormSettings from '../components/admin/StormSettings.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
-  api: {
+  api: withApiFallback({
     monitoring: {
       storm: {
         getSettings: vi.fn(),
         saveSettings: vi.fn(),
       },
     },
-  },
+  }),
 }))
 import { api } from '../api/client'
 

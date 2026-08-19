@@ -2,8 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
 import UserEditModal from '../components/admin/UserEditModal.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
-  api: { admin: { updateUser: vi.fn() } },
+  api: withApiFallback({ admin: { updateUser: vi.fn() } }),
 }))
 
 import { api } from '../api/client'

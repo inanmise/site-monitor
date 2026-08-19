@@ -3,9 +3,11 @@ import { render, screen, waitFor, fireEvent } from './test-utils.jsx'
 import AuditLogViewer from '../components/admin/AuditLogViewer.jsx'
 
 // Denetim konsolu — api mock'lu. Preset/bütünlük/diff dilden bağımsız (regex TR|EN) doğrulanır.
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
-  api: {
+  api: withApiFallback({
     admin: {
       getAuditLogs: vi.fn(),
       getAuditStats: vi.fn(),
@@ -13,7 +15,7 @@ vi.mock('../api/client', () => ({
       getAuditResourceHistory: vi.fn(),
       auditExportUrl: vi.fn(() => 'http://x/export'),
     },
-  },
+  }),
 }))
 import { api } from '../api/client'
 

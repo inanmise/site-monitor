@@ -1,13 +1,15 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, waitFor } from './test-utils'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
-  api: {
+  api: withApiFallback({
     monitoring: {
       getScriptedResponseSeries: vi.fn(),
       getKeywordResponseSeries: vi.fn(),
     },
-  },
+  }),
   formatDate: (s) => String(s),
 }))
 
