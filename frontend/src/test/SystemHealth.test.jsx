@@ -22,27 +22,42 @@ import SystemHealth from '../components/admin/SystemHealth.jsx'
  * dikkat: bir alanı silmek ilgili kapıyı kapatır ve testi sessizce değersizleştirir.
  */
 
+/**
+ * api.admin vekili: testin AÇIKÇA kontrol ettiği dört uç elle tanımlı, geri kalan HER
+ * metot ilk erişimde otomatik üretilir ve başarılı boş yanıt döndürür.
+ *
+ * Neden vekil: elle sayılan bir mock listesi bileşen yeni bir uç çağırdığı gün sessizce
+ * eksik kalır. Nitekim bu testin ilk hâlinde `getLoginSeries` yoktu; "Kullanıcı/Oturum"
+ * bölümü açılınca efekt içinde `is not a function` ile REDDEDİLEN bir promise üretti.
+ * Yerelde zamanlama nedeniyle yüzeye çıkmadı, CI'da "1 unhandled rejection" olarak koşumu
+ * kırmızıya çevirdi — testlerin hepsi geçtiği hâlde. Vekil bu sürüklenmeyi kökten kapatır.
+ *
+ * `vi.clearAllMocks()` yalnız çağrı kayıtlarını temizler, implementasyonu korur.
+ */
+// vi.hoisted şart: vi.mock çağrıları dosyanın en üstüne taşınır ve fabrika, bu dosyadaki
+// const'lar başlatılmadan önce çalışır (TDZ hatası).
+const { adminProxy } = vi.hoisted(() => {
+  const target = {
+    getSystemHealth: vi.fn(),
+    getMetrics:      vi.fn(),
+    getHttpMetrics:  vi.fn(),
+    getDbStats:      vi.fn(),
+  }
+  return {
+    adminProxy: new Proxy(target, {
+      get(t, prop) {
+        if (prop in t || typeof prop === 'symbol') return t[prop]
+        t[prop] = vi.fn(() => Promise.resolve({ success: true, data: [] }))
+        return t[prop]
+      },
+    }),
+  }
+})
+
 vi.mock('../api/client', () => ({
-  formatDate: (s) => s ?? '',
+  formatDate:    (s) => s ?? '',
   formatDateSec: (s) => s ?? '',
-  api: {
-    admin: {
-      getSystemHealth:      vi.fn(),
-      getMetrics:           vi.fn(),
-      getHttpMetrics:       vi.fn(),
-      getDbStats:           vi.fn(),
-      getUserActivity:      vi.fn().mockResolvedValue({ success: true, data: {} }),
-      getUserActivitySeries: vi.fn().mockResolvedValue({ success: true, data: [] }),
-      terminateUserSession: vi.fn().mockResolvedValue({ success: true }),
-      releaseSchedulerLock: vi.fn().mockResolvedValue({ success: true }),
-      triggerSchedulerRun:  vi.fn().mockResolvedValue({ success: true }),
-      getCertPoolHealth:    vi.fn().mockResolvedValue({ success: true, data: {} }),
-      getSchedulerHistory:  vi.fn().mockResolvedValue({ success: true, data: [] }),
-      getMailLogs:          vi.fn().mockResolvedValue({ success: true, data: [] }),
-      getHeartbeat:         vi.fn().mockResolvedValue({ success: true, data: [] }),
-      getDbAnalytics:       vi.fn().mockResolvedValue({ success: true, data: {} }),
-    },
-  },
+  api: { admin: adminProxy },
 }))
 
 import { api } from '../api/client'
