@@ -3,12 +3,14 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { render } from './test-utils.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
-  api: {
+  api: withApiFallback({
     login: vi.fn(async () => ({ success: false })),
     getPublicStats: vi.fn(async () => ({ success: true, data: {} })),
     sendLoginHelp: vi.fn(async () => ({ success: true })),
-  },
+  }),
   formatDate: (s) => s,
 }))
 

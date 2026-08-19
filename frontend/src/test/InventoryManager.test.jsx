@@ -16,9 +16,11 @@ import { LangProvider } from '../i18n/index.jsx'
 const confirmMock = vi.fn(() => Promise.resolve(true))
 const toastMock = { success: vi.fn(), error: vi.fn(), info: vi.fn() }
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
   formatDate: (s) => String(s ?? ''),
-  api: { admin: {
+  api: withApiFallback({ admin: {
     getInventory: vi.fn(),
     getTeams: vi.fn(),
     getAlerts: vi.fn(),
@@ -28,7 +30,7 @@ vi.mock('../api/client', () => ({
     purgeInventory: vi.fn(),
     purgeDeletedInventory: vi.fn(),
     transferCertSy: vi.fn(),
-  } },
+  } }),
 }))
 vi.mock('../components/ui/Dialog.jsx', () => ({
   useDialog: () => ({ showConfirm: confirmMock }),

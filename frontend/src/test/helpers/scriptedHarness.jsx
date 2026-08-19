@@ -7,6 +7,7 @@
  * böylece hoist sırasında tanımsız değişken sorunu oluşmaz.
  */
 import { vi } from 'vitest'
+import { withApiFallback } from '../apiMock.js'
 
 export function apiClientMock() {
   return {
@@ -15,7 +16,7 @@ export function apiClientMock() {
     formatDateSec: (s) => (s ? `FMT:${s}` : 'N/A'),
     formatDateOnly: (s) => s ?? '',
     formatDate: (s) => s ?? '',
-    api: {
+    api: withApiFallback({
       monitoring: {
         getScriptedMonitors: vi.fn(),
         getScriptedVersions: vi.fn(() => Promise.resolve({ success: true, data: { versions: [], current_version: null } })),
@@ -34,7 +35,7 @@ export function apiClientMock() {
         monitorDefaults: vi.fn(() => Promise.resolve({ success: true, data: { scripted: { intervalSeconds: 300, timeoutSeconds: 60 } } })),
       },
       admin: { getTeams: vi.fn(() => Promise.resolve({ success: true, data: [] })) },
-    },
+    }),
   }
 }
 

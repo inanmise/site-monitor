@@ -24,8 +24,15 @@ export default function HelpPage() {
   const contentRef = useRef(null)
   const [activeId, setActiveId] = useState('')
 
-  // guide.md modül seviyesi sabit string → memo yalnız dil değişiminde yeniden hesaplar.
-  const tocItems = useMemo(() => parseToc(guide.md), [guide.md])
+  // Sürüm damgası kaynakta {{VERSION}} olarak durur ve BURADA çözülür. Elle yazılan bir
+  // numara her sürümde eskiyordu (kılavuz 20.23.0 derken uygulama 20.24.1'di); artık tek
+  // doğruluk kaynağı kök VERSION dosyası (__APP_VERSION__ olarak gömülüyor).
+  const markdown = useMemo(
+    () => guide.md.split('{{VERSION}}').join(__APP_VERSION__),
+    [guide.md]
+  )
+  // markdown modül seviyesi sabitten türer → memo yalnız dil değişiminde yeniden hesaplar.
+  const tocItems = useMemo(() => parseToc(markdown), [markdown])
 
   useEffect(() => {
     const el = contentRef.current
@@ -118,7 +125,7 @@ export default function HelpPage() {
 
         <div className="help-content" ref={contentRef}>
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-            {guide.md}
+            {markdown}
           </ReactMarkdown>
         </div>
       </div>

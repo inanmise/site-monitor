@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
 import WeeklyAvailabilitySettings from '../components/admin/WeeklyAvailabilitySettings.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
-  api: {
+  api: withApiFallback({
     admin: {
       getWeeklyAvailStatus:      vi.fn(),
       getWeeklyAvailHistory:     vi.fn(),
@@ -14,7 +16,7 @@ vi.mock('../api/client', () => ({
       sendWeeklyAvailTest:       vi.fn(),
       downloadWeeklyOutagePdf:   vi.fn(),
     },
-  },
+  }),
 }))
 
 import { api } from '../api/client'

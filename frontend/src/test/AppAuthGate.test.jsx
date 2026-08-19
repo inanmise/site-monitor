@@ -2,13 +2,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen } from './test-utils.jsx'
 
 // Mock the API so getMe controls the auth gate and nothing hits the network.
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
-  api: {
+  api: withApiFallback({
     getMe: vi.fn().mockResolvedValue({}),   // no active session → user stays null
     logout: vi.fn().mockResolvedValue({}),
     login: vi.fn(),
     checkDomain: vi.fn(),
-  },
+  }),
   formatDate: (v) => String(v ?? ''),
 }))
 

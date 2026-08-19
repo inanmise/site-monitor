@@ -2,8 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from './test-utils.jsx'
 import { LastLoginNotice, LastLoginSummary, LastLoginPopoverLines } from '../components/LastLoginInfo.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
-  api: {},
+  api: withApiFallback({}),
   // Zaman biçimlendirme kimlik fonksiyonu — test tarih formatını değil MANTIĞI doğrular.
   // Popover saniyesiz (formatDate), özet kart saniyeli (formatDateSec) kullanıyor.
   formatDate: (s) => s ?? '',

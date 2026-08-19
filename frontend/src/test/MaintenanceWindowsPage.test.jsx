@@ -2,10 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from './test-utils.jsx'
 import MaintenanceWindowsPage from '../components/MaintenanceWindowsPage.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
   formatDateSec: (s) => s ?? '',
-  api: {
+  api: withApiFallback({
     monitoring: {
       maintenance: {
         list: vi.fn(), active: vi.fn(), create: vi.fn(), update: vi.fn(),
@@ -14,7 +16,7 @@ vi.mock('../api/client', () => ({
       getHttpMonitors: vi.fn(), getPortMonitors: vi.fn(), getKeywordMonitors: vi.fn(),
       getPingMonitors: vi.fn(), getDnsMonitors: vi.fn(), getDomainMonitors: vi.fn(), getUptimeOverview: vi.fn(),
     },
-  },
+  }),
 }))
 import { api } from '../api/client'
 

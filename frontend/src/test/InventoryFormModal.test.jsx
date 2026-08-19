@@ -8,8 +8,10 @@ import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
  */
 const confirmMock = vi.fn(() => Promise.resolve(true))
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
-  api: {
+  api: withApiFallback({
     admin: {
       addInventory:    vi.fn().mockResolvedValue({ success: true }),
       updateInventory: vi.fn().mockResolvedValue({ success: true }),
@@ -17,7 +19,7 @@ vi.mock('../api/client', () => ({
       getInventoryByDomain: vi.fn().mockResolvedValue({ success: true, data: null }),
     },
     monitoring: { listGroups: vi.fn().mockResolvedValue({ success: true, data: [] }) },
-  },
+  }),
 }))
 // test-utils sarmalayıcısı DialogProvider'ı da render ediyor → mock ikisini birden vermeli.
 vi.mock('../components/ui/Dialog.jsx', () => ({

@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from './test-utils'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => {
   const K = (s) => 'site.monitor.branding.' + s
   const row = (key, type = 'STRING', value = '', def = '') =>
@@ -17,12 +19,12 @@ vi.mock('../api/client', () => {
     row('banner-version', 'INT', '0', '0'),
   ]
   return {
-    api: {
+    api: withApiFallback({
       admin: {
         getBrandingSettings: vi.fn(async () => ({ success: true, data: catalog })),
         saveBrandingSettings: vi.fn(async () => ({ success: true, data: catalog, message: 'saved' })),
       },
-    },
+    }),
   }
 })
 import { api } from '../api/client'

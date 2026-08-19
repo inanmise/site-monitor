@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
 import AlertHistory from '../components/admin/AlertHistory.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
-  api: {
+  api: withApiFallback({
     admin: {
       getAlerts:        vi.fn(),
       acknowledgeAlert: vi.fn(),
@@ -15,7 +17,7 @@ vi.mock('../api/client', () => ({
       getTeams:         vi.fn(),   // filtre cubugu takim listesini ceker (yalniz urlSync modunda)
       getAlertsCsvUrl:  vi.fn(() => '/api/admin/alerts/export'),
     },
-  },
+  }),
 }))
 
 import { api } from '../api/client'

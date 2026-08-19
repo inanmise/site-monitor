@@ -2,15 +2,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
 import LdapSettings from '../components/admin/LdapSettings.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
-  api: {
+  api: withApiFallback({
     admin: {
       getLdapSettings: vi.fn(),
       saveLdapSettings: vi.fn(),
       testLdap: vi.fn(() => Promise.resolve({ success: true, message: 'Bind başarılı' })),
       queryLdapUser: vi.fn(),
     },
-  },
+  }),
 }))
 import { api } from '../api/client'
 

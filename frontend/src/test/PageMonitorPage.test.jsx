@@ -2,10 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
 import PageMonitorPage from '../components/PageMonitorPage.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
   formatDate:    (s) => s ?? '',
   formatDateSec: (s) => s ?? '',
-  api: {
+  api: withApiFallback({
     monitoring: {
       listGroups:        vi.fn(() => Promise.resolve({ success: true, data: [] })),
       monitorDefaults:   vi.fn(() => Promise.resolve({ success: true, data: { page: {} } })),
@@ -20,7 +22,7 @@ vi.mock('../api/client', () => ({
       testPage:          vi.fn(),
     },
     admin: { getTeams: vi.fn() },
-  },
+  }),
 }))
 import { api } from '../api/client'
 

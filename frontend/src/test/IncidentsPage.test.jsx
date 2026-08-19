@@ -2,10 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from './test-utils.jsx'
 import IncidentsPage from '../components/IncidentsPage.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
   formatDateSec: (s) => s ?? '',
-  api: {
+  api: withApiFallback({
     monitoring: {
       incidents: {
         list:          vi.fn(),
@@ -15,7 +17,7 @@ vi.mock('../api/client', () => ({
         remove:        vi.fn(),
       },
     },
-  },
+  }),
 }))
 import { api } from '../api/client'
 

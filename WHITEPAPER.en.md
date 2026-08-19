@@ -4,7 +4,7 @@
 
 # Site Monitor — Enterprise Monitoring Platform
 
-Version `20.23.0` · August 2026 · English
+Version `{{VERSION}}` · August 2026 · English
 
 ---
 
@@ -1284,9 +1284,9 @@ On Windows there is a script that brings the whole stack up in one go: it reads 
 Registry : ghcr.io/<owner>/site-monitor
 Tags:
   latest                (current production)
-  v20.23.0              (release tag)
+  vX.Y.Z                (release tag)
   develop-a1b2c3d       (development commit)
-  20.23.0-rc / staging  (release candidate)
+  X.Y.Z-rc / staging    (release candidate)
 ```
 
 The image is built in four stages:
@@ -1581,7 +1581,7 @@ Three families live on their own screens: **SMTP**, **Directory** and **Retentio
 
 | Item | Value |
 |---|---|
-| Current version | 20.23.0 |
+| Current version | {{VERSION}} |
 | Document date | August 2026 |
 | Java | 25 (LTS) |
 | Spring Boot | 4.1.0 (Spring Framework 7, Jakarta EE 11, Hibernate 7, Tomcat 11) |
@@ -1597,9 +1597,9 @@ The version number comes from a single `VERSION` file and increments automatical
 
 | Prefix | Increment | Example |
 |---|---|---|
-| `feat:` | Minor | 20.23.x → 20.24.0 |
-| `fix:` / `chore:` / `refactor:` | Patch | 20.23.0 → 20.23.1 |
-| Breaking change | Major | 20.x → 21.0.0 |
+| `feat:` | Minor | `1.4.2` → `1.5.0` |
+| `fix:` / `chore:` / `refactor:` | Patch | `1.4.2` → `1.4.3` |
+| Breaking change | Major | `1.4.2` → `2.0.0` |
 
 The version fields inside the build files do not match this number and are not expected to — nothing reads them; the root `VERSION` file is the single source of truth.
 
@@ -1720,4 +1720,4 @@ Terms are used consistently throughout this guide; the Turkish equivalents used 
 
 ---
 
-*This document was prepared for Site Monitor v20.23.0, as of August 2026.*
+*This document was prepared for Site Monitor v{{VERSION}}, as of August 2026.*

@@ -2,8 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from './test-utils.jsx'
 import MyAuditLog from '../components/MyAuditLog.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
-  api: { me: { getMyAudit: vi.fn() } },
+  api: withApiFallback({ me: { getMyAudit: vi.fn() } }),
   formatDate: (s) => s ?? '',
   formatDateSec: (s) => s ?? '',
 }))

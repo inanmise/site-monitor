@@ -2,13 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
 import MonitorGroups from '../components/admin/MonitorGroups.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
-  api: {
+  api: withApiFallback({
     monitoring: {
       listGroups: vi.fn(),
       renameGroup: vi.fn(),
     },
-  },
+  }),
 }))
 import { api } from '../api/client'
 

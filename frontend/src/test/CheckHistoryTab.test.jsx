@@ -2,16 +2,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
 import CheckHistoryTab from '../components/history/CheckHistoryTab.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
   formatDate:     (s) => s ?? '',
   formatDateSec:  (s) => s ?? '',
   formatDateOnly: (s) => s ?? '',
-  api: {
+  api: withApiFallback({
     monitoring: {
       getCheckHistory: vi.fn(),
       getCheckHistoryCsvUrl: vi.fn(() => '/api/monitoring/ping/1/history?format=csv'),
     },
-  },
+  }),
 }))
 import { api } from '../api/client'
 

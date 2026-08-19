@@ -2,11 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
 import DnsDetailModal from '../components/DnsDetailModal.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
   formatDateSec: (s) => s ?? '',
   formatDateOnly: (s) => s ?? '',
-  api: {
+  api: withApiFallback({
     monitoring: {
       getDnsDetails: vi.fn(),
       getCheckHistory: vi.fn(),
@@ -17,7 +19,7 @@ vi.mock('../api/client', () => ({
       // AlertHistory (alerts tab) — bu testte tab açılmıyor ama import zinciri için güvenli stub
       getAlertHistory: vi.fn(() => Promise.resolve({ success: true, data: [] })),
     },
-  },
+  }),
 }))
 import { api } from '../api/client'
 

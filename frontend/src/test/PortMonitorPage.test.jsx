@@ -2,10 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
 import PortMonitorPage from '../components/PortMonitorPage.jsx'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
   formatDateOnly: (s) => s ?? '',
-  api: {
+  api: withApiFallback({
     monitoring: {
       listGroups:        vi.fn(() => Promise.resolve({ success: true, data: [] })),
       getPortMonitors:   vi.fn(),
@@ -19,7 +21,7 @@ vi.mock('../api/client', () => ({
       triggerPortCheck:  vi.fn(),
     },
     admin: { getTeams: vi.fn(), getAlerts: vi.fn() },
-  },
+  }),
 }))
 import { api } from '../api/client'
 

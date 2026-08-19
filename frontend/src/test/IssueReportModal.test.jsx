@@ -2,11 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useState } from 'react'
 import { render, screen, fireEvent, waitFor } from './test-utils'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
-  api: {
+  api: withApiFallback({
     getMe: vi.fn(),
     sendIssueReport: vi.fn(),
-  },
+  }),
   getRecentFailures: () => [{ path: '/api/monitoring/scripted/7/response-series', status: 500, at: '2026-08-07T00:00:00' }],
 }))
 

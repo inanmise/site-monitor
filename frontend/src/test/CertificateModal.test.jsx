@@ -7,12 +7,14 @@ import { render, screen, waitFor } from './test-utils.jsx'
  * goal is smoke coverage: a non-null domain renders the chrome (close
  * button, tab bar, status pill); a null domain renders nothing.
  */
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
   formatDate: (s) => String(s ?? ''),
   // Kontrol Geçmişi sekmesi (paylaşılan CheckHistoryTab) bu iki biçimleyiciyi de import ediyor.
   formatDateSec:  (s) => String(s ?? ''),
   formatDateOnly: (s) => String(s ?? ''),
-  api: {
+  api: withApiFallback({
     getHistory:           vi.fn().mockResolvedValue({ success: true, data: [] }),
     checkDomainPreview:   vi.fn().mockResolvedValue({ success: true, data: null }),
     getDomainAlerts:      vi.fn().mockResolvedValue({ success: true, data: [] }),
@@ -47,7 +49,7 @@ vi.mock('../api/client', () => ({
         created_at: '2026-01-01', updated_at: '2026-01-02',
       } }),
     },
-  },
+  }),
 }))
 
 // canView('inventory.list') → true so the new Envanter Bilgileri tab is present.

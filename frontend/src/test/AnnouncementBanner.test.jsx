@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from './test-utils'
 
+const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+
 vi.mock('../api/client', () => ({
-  api: { getBranding: vi.fn(async () => ({ success: true, data: {} })) },
+  api: withApiFallback({ getBranding: vi.fn(async () => ({ success: true, data: {} })) }),
 }))
 import { api } from '../api/client'
 import { BrandingProvider } from '../contexts/BrandingProvider.jsx'
