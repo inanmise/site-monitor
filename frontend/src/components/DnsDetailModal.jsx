@@ -6,32 +6,11 @@ import { useUrlQuerySync, readUrlParam } from '../hooks/useUrlQuerySync.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import { X, Activity, Clock, Server, FileText, Globe, Route } from 'lucide-react'
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts'
 import AlertHistory from './admin/AlertHistory'
 import MonitorNotes from './MonitorNotes.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 // Süre grafiği artık paylaşımlı ResponseTimeChart (ping/keyword/port ile aynı: 90g/özel aralık + avg/min-max/p95).
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
-
-function ChartTooltip({ active, payload, t }) {
-  if (!active || !payload || !payload.length) return null
-  const d = payload[0].payload
-  return (
-    <div className="dns-chart-tooltip">
-      <div className="dns-chart-tt-time">{d.ts}</div>
-      <div className="dns-chart-tt-row">
-        <span>{t('dns.responseMs')}:</span> <strong>{d.ms}ms</strong>
-      </div>
-      {d.ttl != null && (
-        <div className="dns-chart-tt-row">
-          <span>{t('dns.ttl')}:</span> <strong>{d.ttl}s</strong>
-        </div>
-      )}
-      {d.changed && <div className="dns-chart-tt-badge changed">{t('dns.changed')}</div>}
-      {d.rotated && <div className="dns-chart-tt-badge rotated">{t('dns.rotated')}</div>}
-    </div>
-  )
-}
 
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS']
 

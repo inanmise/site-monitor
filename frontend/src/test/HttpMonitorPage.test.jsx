@@ -8,7 +8,7 @@ vi.mock('../api/client', () => ({
   formatDate:    (s) => s ?? '',
   formatDateSec: (s) => s ?? '',
   formatDateOnly: (s) => s ?? '',
-  api: {
+  api: withApiFallback({
     monitoring: {
       listGroups:        vi.fn(() => Promise.resolve({ success: true, data: [] })),
       monitorDefaults:   vi.fn(() => Promise.resolve({ success: true, data: { http: {} } })),
@@ -22,7 +22,7 @@ vi.mock('../api/client', () => ({
       testHttp:          vi.fn(),
     },
     admin: { getTeams: vi.fn(), getAlerts: vi.fn() },
-  },
+  }),
 }))
 import { api } from '../api/client'
 

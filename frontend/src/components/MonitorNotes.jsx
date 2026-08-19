@@ -30,7 +30,7 @@ export default function MonitorNotes({ type, target }) {
   const [editId, setEditId] = useState(null)
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => { load() /* eslint-disable-next-line */ }, [type, target])
+  useEffect(() => { load()   }, [type, target])
 
   async function load() {
     if (!target) { setLoading(false); return }

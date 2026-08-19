@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import ScriptedMonitorPage, { invalidNumericField, SCRIPTED_NUM_FIELDS }
+import ScriptedMonitorPage
   from '../components/ScriptedMonitorPage.jsx'
 
 // CodeEditor (prismjs/CSS) jsdom'da ağır → basit textarea ile mock

@@ -7,7 +7,7 @@ import { readPageSize, writePageSize } from '../hooks/usePagination.js'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
-import { RefreshCcw, Plus, ChevronLeft, ChevronRight, ChevronDown, Pencil, Trash2, ListChecks } from 'lucide-react'
+import { RefreshCcw, Plus, ChevronRight, ChevronDown, Pencil, Trash2, ListChecks } from 'lucide-react'
 import MarkdownEditor from './ui/MarkdownEditor.jsx'
 import DateTimeField from './ui/DateTimeField.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
@@ -296,9 +296,11 @@ export default function IncidentHistoryPage() {
 
   const loadTrends = useCallback(async () => {
     if (!allowView) return
-    const res = await api.incidents.trends(localDayToUtcIso(filters.since, false), localDayToUtcIso(filters.until, true))
-    if (res?.success) setTrends(res.data)
-  }, [filters.since, filters.until, allowView]) // eslint-disable-line react-hooks/exhaustive-deps
+    try {
+      const res = await api.incidents.trends(localDayToUtcIso(filters.since, false), localDayToUtcIso(filters.until, true))
+      if (res?.success) setTrends(res.data)
+    } catch { /* sessiz — özet paneli boş kalır, liste yine çizilir (efektten fire-and-forget çağrılıyor) */ }
+  }, [filters.since, filters.until, allowView])
 
   const loadOptions = useCallback(async () => {
     if (!allowView) return
@@ -348,9 +350,11 @@ export default function IncidentHistoryPage() {
     const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
     const today = new Date()
     const since = ymd(new Date(today.getTime() - (trendDays - 1) * 86400000))
-    const res = await api.incidents.trends(localDayToUtcIso(since, false), localDayToUtcIso(ymd(today), true))
-    if (res?.success) setTrendDaily(res.data?.daily ?? [])
-  }, [trendDays, allowView]) // eslint-disable-line react-hooks/exhaustive-deps
+    try {
+      const res = await api.incidents.trends(localDayToUtcIso(since, false), localDayToUtcIso(ymd(today), true))
+      if (res?.success) setTrendDaily(res.data?.daily ?? [])
+    } catch { /* sessiz — günlük trend grafiği boş kalır, sayfa ayakta (efektten fire-and-forget çağrılıyor) */ }
+  }, [trendDays, allowView])
   useEffect(() => { loadTrendDaily() }, [loadTrendDaily])
   useEffect(() => { loadOptions() }, [loadOptions])
   useEffect(() => { loadTeams() }, [loadTeams])
@@ -375,7 +379,7 @@ export default function IncidentHistoryPage() {
       window.history.replaceState({}, '', url.pathname + (qs ? `?${qs}` : '') + url.hash)
     } catch { /* yoksay */ }
     return () => { cancelled = true }
-  }, [allowView]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [allowView])  
 
   // Günlük trend: aralığı SÜREKLİ günlere doldur (olaysız gün = 0) → gerçek takvim trendi (2-3 blok yerine).
   // Çok geniş/garip aralıkta (>120 gün) doldurma yapma; yalnız veri günlerini sırala (devasa grafik olmasın).

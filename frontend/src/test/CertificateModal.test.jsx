@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from './test-utils.jsx'
+import userEvent from '@testing-library/user-event'
 
 /**
  * CertificateModal does live API fetches in useEffect. We mock the entire
@@ -165,5 +166,54 @@ describe('CertificateModal — Kontrol Geçmişi + Grafik', () => {
     await screen.findAllByText('example.com')
     expect(screen.queryByRole('button', { name: 'Check History' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Certificate Chart' })).toBeNull()
+  })
+})
+
+/**
+ * TÜM sekmeleri tek tek açan koruma.
+ *
+ * Gerekçe: `SystemHealth` üretim çökmesinde kırık JSX varsayılan KAPALI bir bölümün
+ * ardındaydı; sekme yüklenmesi yetmiyordu, bölümün AÇILMASI gerekiyordu. Bu pencerede de
+ * yedi sekme var ve yalnız ilki (ssl) varsayılan açık. Aşağıdaki test sekme çubuğundaki
+ * her düğmeye tıklar; herhangi birinin içinde tanımsız bir bileşen/alan olsa render ağacı
+ * patlar ve test kırmızıya döner.
+ */
+describe('CertificateModal — tüm sekmeler açılır', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('sekme çubuğundaki her sekme çökmeden açılır', async () => {
+    const user = userEvent.setup()
+    render(
+      <CertificateModal domain="example.com" onClose={() => {}}
+                        currentUser="admin" currentUserRole="ADMIN" />
+    )
+    await screen.findByText('example.com')
+
+    const tabs = [...document.querySelectorAll('.modal-tab')]
+    expect(tabs.length, 'sekme çubuğu bulunamadı').toBeGreaterThan(1)
+
+    for (const tab of tabs) {
+      await user.click(tab)
+      // Her tıklamadan sonra pencere ayakta olmalı (throw → test kırılır).
+      expect(document.querySelector('.modal-tab')).toBeTruthy()
+    }
+
+    // Son sekme gerçekten etkinleşmiş olmalı
+    expect(document.querySelector('.modal-tab.active')).toBeTruthy()
+  })
+
+  it('sekmeler arasında ileri geri gidilebilir', async () => {
+    const user = userEvent.setup()
+    render(
+      <CertificateModal domain="example.com" onClose={() => {}}
+                        currentUser="admin" currentUserRole="ADMIN" />
+    )
+    await screen.findByText('example.com')
+
+    const tabs = [...document.querySelectorAll('.modal-tab')]
+    for (const tab of tabs.slice().reverse()) await user.click(tab)
+    await user.click(tabs[0])
+
+    expect(document.querySelector('.modal-tab.active')).toBeTruthy()
   })
 })

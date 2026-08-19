@@ -57,11 +57,6 @@ export default function PermissionMatrix() {
       g.action === action && g.allowed)
   }
 
-  function findGrant(role, resourceKey, action) {
-    return grants.find(g =>
-      g.role === role && g.resource_key === resourceKey && g.action === action)
-  }
-
   async function toggle(role, resourceKey, action, current, sensitive) {
     if (sensitive && !current) {
       const ok = await showConfirm({

@@ -54,7 +54,6 @@ async function encodeAtScale(bitmap, width, height, scale, qualities, targetByte
 
   let last = null
   for (const q of qualities) {
-    // eslint-disable-next-line no-await-in-loop
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', q))
     if (!blob) continue
     last = blob

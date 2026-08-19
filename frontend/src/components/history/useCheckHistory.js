@@ -88,7 +88,6 @@ export function useCheckHistory({ kind, id, listKey, presets = [1, 7, 15, 30], d
   useEffect(() => {
     if (firstRun.current) { firstRun.current = false; return }
     setPageRaw(1)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, id, preset, customFrom, customTo, status, pageSize, fixedFrom, fixedTo])
 
   const setPreset = (p) => { setPresetRaw(p); if (p !== 'custom') { setCustomFrom(null); setCustomTo(null) } }

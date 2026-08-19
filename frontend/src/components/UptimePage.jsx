@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useState, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -17,7 +17,6 @@ import { LoadingBlock } from './ui/Progress.jsx'
 const REFRESH_INTERVAL = 60
 
 function todayStartDate() { const d = new Date(); d.setHours(0, 0, 0, 0); return d }
-function toApiStr(date)   { return date.toISOString().slice(0, 16) }
 
 export default function UptimePage({ systemRole }) {
   const t = useT()
@@ -117,12 +116,6 @@ export default function UptimePage({ systemRole }) {
     page: pager.page > 1 ? pager.page : null,
     ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
   })
-
-  function statusColor(status) {
-    if (status === 'up')   return '#22c55e'
-    if (status === 'down') return '#ef4444'
-    return '#94a3b8'
-  }
 
   function statusLabel(status) {
     if (status === 'up')   return t('uptime.statusUp')

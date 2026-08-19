@@ -11,7 +11,7 @@ import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { Play, Pencil, Copy, X, RefreshCw, Plug, Plus, Trash2, FlaskConical, AlertTriangle, Network, Check, Pause, BarChart3, ChevronDown, BellDot,
+import { Play, Pencil, Copy, X, RefreshCw, Plug, Plus, Trash2, FlaskConical, AlertTriangle, Network, Check, Pause, ChevronDown, BellDot,
   Mail, MessageSquare, Phone, Smartphone } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
@@ -19,7 +19,6 @@ import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQueryS
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
-import MonitorStatsBar from './MonitorStatsBar.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
