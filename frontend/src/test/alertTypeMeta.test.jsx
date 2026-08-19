@@ -49,6 +49,9 @@ const CERT_TYPES = ['EXPIRY', 'CHAIN_BROKEN', 'REVOKED', 'MISMATCH']
 
 const canonicalTypes = [...canonicalTypesFromBackend(), ...CERT_TYPES]
 
+// renderHook'un kanonik deseni: callback React'in kendi render bağlamında çağrılıyor,
+// lint bunu göremediği için yanlış alarm veriyor (kural yalnız bu satırda susturuluyor).
+// eslint-disable-next-line react-hooks/rules-of-hooks
 const useTr = () => renderHook(() => useT(), {
   wrapper: ({ children }) => <LangProvider>{children}</LangProvider>,
 }).result.current

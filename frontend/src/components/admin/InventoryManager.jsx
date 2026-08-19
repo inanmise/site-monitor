@@ -170,6 +170,13 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   function openAdd() { setFormModal({ mode: 'add', record: null }) }
   function openEdit(item) { setFormModal({ mode: 'edit', record: item }) }
   function openDuplicate(item) { setFormModal({ mode: 'duplicate', record: item }) }
+  // Devret modalı: 964dfd1a formu ayrı modale çıkarırken bu yardımcı silinmiş ama satır
+  // eylemindeki çağrısı kalmıştı → "Devret" tıklaması ReferenceError ile ErrorBoundary'ye
+  // düşüyordu (yalnız isAdmin && teams.length > 1 koşulunda göründüğü için fark edilmemiş).
+  function openTransfer(item) {
+    setTransferModal(item)
+    setTransferTeamId(String(item.team_id ?? ''))
+  }
 
   // Dashboard'daki "domain ekle" butonundan tetiklenince add modalını aç (bir kez; App tüketince sıfırlar).
   useEffect(() => {
