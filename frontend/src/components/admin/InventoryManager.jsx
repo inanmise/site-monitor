@@ -74,7 +74,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
         ? exportInventoryCsv(all, teams, t)
         : await exportInventoryPdf(all, teams, t)
       toast.success(t('inv.exportSuccess', n))
-    } catch (e) {
+    } catch {
       toast.error(t('inv.exportError'))
     } finally {
       setExporting(false)
@@ -89,7 +89,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       } else {
         toast.error(res?.error || t('inv.loadError'))
       }
-    } catch (e) {
+    } catch {
       toast.error(t('inv.loadError'))
     }
   }

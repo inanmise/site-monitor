@@ -364,10 +364,6 @@ export default function AuditLogViewer() {
     const next = { ...EMPTY_FILTERS, resourceType: type || '', resourceId: id || '' }
     setActiveCard(null); setActivePreset(null); setFilters(next); writeUrlFilters(next); loadLogs(0, next)
   }
-  function drillActor(actor) {
-    const next = { ...EMPTY_FILTERS, actor }
-    setActiveCard(null); setActivePreset(null); setFilters(next); writeUrlFilters(next); loadLogs(0, next)
-  }
 
   const totalPages = Math.ceil(total / size)
 

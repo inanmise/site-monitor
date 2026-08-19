@@ -28,6 +28,5 @@ export function useVisibleInterval(fn, ms, immediate = true) {
     if (!document.hidden) start()
     document.addEventListener('visibilitychange', onVis)
     return () => { stop(); document.removeEventListener('visibilitychange', onVis) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ms, immediate])
 }

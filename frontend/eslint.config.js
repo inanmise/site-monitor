@@ -66,6 +66,31 @@ export default [
       'react/no-unescaped-entities': 'off',
       // propTypes bu projede kullanılmıyor (tip sözleşmesi testlerle korunuyor).
       'react/prop-types': 'off',
+
+      // ── React Compiler kural alt kümesi: KAPALI (bilinçli karar, 2026-08-19) ───────
+      // eslint-plugin-react-hooks v7, React Compiler için yazılmış bir kural ailesi getirir.
+      // Bu proje React 18 kullanıyor ve derleyici DEVREDE DEĞİL. Kurallar kod tabanında 103
+      // uyarı üretiyordu ve bunların ezici çoğunluğu yerleşik, test edilmiş React 18
+      // desenleri: "filtre değişince sayfayı sıfırla" gibi efekt içi setState çağrıları
+      // (tek başına 74 uyarı). Hepsini "düzeltmek" çalışan kodu yeniden yapılandırmak
+      // demekti — kazancı belirsiz, regresyon riski gerçek.
+      // KORUNANLAR: rules-of-hooks (error, CRASH_RULES içinde) ve exhaustive-deps (warn) —
+      // ikisi de React 18 için gerçek doğruluk kurallarıdır.
+      // React Compiler devreye alınırsa bu blok kaldırılıp uyarılar tek tek ele alınmalıdır.
+      'react-hooks/set-state-in-effect': 'off',
+      'react-hooks/immutability': 'off',
+      'react-hooks/purity': 'off',
+      'react-hooks/refs': 'off',
+      'react-hooks/globals': 'off',
+      'react-hooks/use-memo': 'off',
+      'react-hooks/static-components': 'off',
+      'react-hooks/preserve-manual-memoization': 'off',
+      'react-hooks/incompatible-library': 'off',
+
+      // Boş catch bloğu bu kod tabanında bilinçli bir desen ("depolama yok → sessiz geç");
+      // her birinde gerekçe yorumu var. Diğer boş bloklar uyarı olarak kalır.
+      'no-empty': ['warn', { allowEmptyCatch: true }],
+
       ...CRASH_RULES,
     },
   },

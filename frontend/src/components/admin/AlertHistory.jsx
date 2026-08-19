@@ -669,7 +669,7 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
       } else {
         toast.success(t('alh.resolveSuccess'))
       }
-    } catch (err) {
+    } catch {
       toast.error(t('alh.resolveError'))
     } finally {
       load()

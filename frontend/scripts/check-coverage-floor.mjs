@@ -31,12 +31,14 @@ const EXCLUDED = new Set([
 /**
  * Cırcırlı muafiyet: 2026-08-19 ölçümü. Değerler yalnız YUKARI güncellenir.
  * Bir dosya FLOOR'u geçtiğinde buradan SİLİNİR.
+ *
+ * 2026-08-20: liste BOŞALDI. Açılıştaki dört dosyanın (DiagnosticsModal %0,
+ * IncidentHistoryPage %24, ExpiryForecastPage %25, CertificateModal %27) hepsi
+ * test yazılarak tabanın üstüne çıkarıldı; artık genel FLOOR kuralına tabiler.
+ * Buraya yeni satır EKLEMEK, kapsamsız dev dosyayı kalıcılaştırmak demektir —
+ * önce test yazmayı deneyin.
  */
 const GRANDFATHERED = {
-  'src/components/admin/DiagnosticsModal.jsx': 0,      // 661 satır — hiç birim testi yok
-  'src/components/IncidentHistoryPage.jsx':    24,     // 908 satır
-  'src/pages/ExpiryForecastPage.jsx':          25,     // 578 satır
-  'src/components/CertificateModal.jsx':       27,     // 713 satır
 }
 
 function fail(msg) {

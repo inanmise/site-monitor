@@ -243,7 +243,6 @@ function NotesTab({ domain, t, currentUser, isAdmin }) {
             const canRestore = isDeleted && isAdmin
             const isEditing  = editingId === n.id
             const revs       = revisions[n.id] ?? []
-            const editEvents = revs.filter(r => r.event_type === 'EDIT').length
             return (
               <div key={n.id} className={`alert-history-card cert-note-card${isDeleted ? ' cert-note-deleted' : ''}`}>
                 <div className="ahc-stripe" style={{ background: isDeleted ? '#9ca3af' : categoryStripe(cat) }} />

@@ -1,5 +1,5 @@
 import {
-  Globe, ShieldAlert, Network, Plug, Search, Server, Clock, Shuffle, AlertCircle,
+  Globe, ShieldAlert, Network, Plug, Server, Clock, Shuffle, AlertCircle,
   Target, Radio, ScanSearch, FlaskConical, CalendarDays, Link2, Ban, Zap, Gauge, Bell,
 } from 'lucide-react'
 

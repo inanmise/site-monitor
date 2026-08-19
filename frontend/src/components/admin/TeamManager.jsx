@@ -31,7 +31,6 @@ function WeeklyPill({ on, disabled, onToggle, label }) {
   )
 }
 
-const ORG_ROLE_COLORS = { PO: '#2563eb', MANAGER: '#d97706', CLEVEL: '#dc2626', TECH: '#16a34a' }
 
 function computeInitials(name) {
   if (!name) return '?'

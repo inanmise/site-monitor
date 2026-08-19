@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
-import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Loader2 } from 'lucide-react'
+import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock } from 'lucide-react'
 
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
@@ -193,7 +193,6 @@ export default function App() {
   const [activityRefreshKey, setActivityRefreshKey] = useState(0)
   const [silentAlertDomains, setSilentAlertDomains] = useState(new Set())
   const [mailFailureDomains, setMailFailureDomains] = useState(new Set())
-  const [adminInitialTab, setAdminInitialTab] = useState(null)
   const [smtpPreFilterDomain, setSmtpPreFilterDomain] = useState(null)
   const [openSmtpModalOnLoad, setOpenSmtpModalOnLoad] = useState(false)
 
@@ -1009,8 +1008,12 @@ export default function App() {
                         hasSilentAlert={silentAlertDomains.has(cert.domain)}
                         hasMailFailure={mailFailureDomains.has(cert.domain)}
                         onMailFailureClick={() => {
-                          handleTabChange('admin')
-                          setAdminInitialTab('health')
+                          // 'health' sekmesine gidilmeli: preFilterDomain/openSmtpModalOnLoad
+                          // props'larını SystemHealth tüketiyor (bkz. tab === 'health' bloğu).
+                          // Eskiden 'admin'e gidiliyor ve niyet ölü bir setAdminInitialTab('health')
+                          // çağrısında kalıyordu → yanlış sekme açılıyor, SMTP penceresi hiç
+                          // görünmüyordu. (2026-08-19, lint temizliğinde bulundu.)
+                          handleTabChange('health')
                           setSmtpPreFilterDomain(cert.domain)
                           setOpenSmtpModalOnLoad(true)
                         }}

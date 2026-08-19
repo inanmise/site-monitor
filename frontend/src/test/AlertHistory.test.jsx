@@ -679,7 +679,7 @@ describe('AlertHistory — tema sözleşmesi', () => {
     api.admin.getTeams.mockResolvedValue({ success: true, data: [] })
   })
 
-  const withAlert = (a, resolved = false) => api.admin.getAlerts.mockResolvedValue({
+  const withAlert = (a) => api.admin.getAlerts.mockResolvedValue({
     success: true, data: [a], total: 1, page: 0, size: 20,
     level_counts: { [a.alert_level]: 1 }, unacked_total: 1, stale_total: 0, stale_hours: 24,
   })

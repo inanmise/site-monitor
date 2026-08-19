@@ -607,7 +607,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     if (!dirty || !editable) return
     const id = setTimeout(writeBackupNow, 1500)
     return () => clearTimeout(id)
-  }, [content, dirty, editable]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [content, dirty, editable])  
 
   // Sekme kapanırken / 401 oturum yönlendirmesinde: son hali yedekle + kilidi bırak
   useEffect(() => {
@@ -620,7 +620,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     }
     window.addEventListener('beforeunload', handleUnload)
     return () => window.removeEventListener('beforeunload', handleUnload)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])  
 
   // Component kapanırken kilidi bırak (terk edilen kilit 3 dk'da zaten bayatlar)
   useEffect(() => () => {

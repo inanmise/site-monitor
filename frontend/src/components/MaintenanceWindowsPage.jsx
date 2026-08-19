@@ -9,7 +9,7 @@ import PaginationBar from './ui/PaginationBar.jsx'
 import MultiTeamSelect from './ui/MultiTeamSelect.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import DateTimeField from './ui/DateTimeField.jsx'
-import { Wrench, Plus, Play, Pencil, Trash2, Pause, X, RefreshCw } from 'lucide-react'
+import { Wrench, Plus, Play, Pencil, Trash2, Pause, RefreshCw } from 'lucide-react'
 
 const RECURRENCES = ['NONE', 'DAILY', 'WEEKLY', 'MONTHLY']
 const DOW = [1, 2, 3, 4, 5, 6, 7]   // Pzt..Paz (ISO)

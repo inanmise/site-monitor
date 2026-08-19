@@ -11,7 +11,7 @@ import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
 import { SCRIPTED_TEMPLATES } from './scriptedTemplates.js'
-import { FlaskConical, Play, Pencil, Plus, Trash2, X, RefreshCw, Eye, EyeOff, Copy, AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, BarChart3, ChevronDown, Terminal } from 'lucide-react'
+import { FlaskConical, Play, Pencil, Plus, Trash2, X, RefreshCw, Eye, EyeOff, Copy, AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, ChevronDown, Terminal } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { collectK6Markers } from '../utils/k6Errors.js'
 import { usePagination } from '../hooks/usePagination.js'
@@ -20,7 +20,6 @@ import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
-import MonitorStatsBar from './MonitorStatsBar.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import { LoadingBlock, Spinner } from './ui/Progress.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
@@ -396,7 +395,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     if (!id) return
     const m = monitors.find(x => String(x.id) === String(id))
     if (m) openDetail(m)
-  }, [monitors]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [monitors])  
 
   function openDetail(m) { setSelected(m); setSelCheck(null); setSummary({ total: 0, down: 0 }); setDetailTab('control') }
   function closeDetail() { setSelected(null); setSelCheck(null) }
@@ -598,8 +597,6 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
 
   // ── Otomatik taslak: anahtar, yazma, yükleme ─────────────────────────────
 
-  /** Taslak anahtarı: mevcut monitörde id'si, yeni monitörde "new". */
-  const draftKey = () => (modal?.id ? String(modal.id) : 'new')
 
   /** Formun kaydedilebilir hâli — secret env DEĞERLERİ taslağa YAZILMAZ (düz metin saklanmasın). */
   function draftPayload() {

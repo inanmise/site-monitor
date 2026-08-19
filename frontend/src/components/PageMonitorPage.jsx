@@ -15,12 +15,11 @@ import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { X, RefreshCw, Plus, Trash2, ScanSearch, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, BarChart3, ChevronDown, Image, FileCode, Link2, Frame, Type, ShieldAlert, Download, EyeOff } from 'lucide-react'
+import { X, RefreshCw, Plus, Trash2, ScanSearch, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, Image, FileCode, Link2, Frame, Type, ShieldAlert, Download, EyeOff } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { normalizeUrl } from '../utils/normalizeUrl.js'
 import { useDialog } from './ui/Dialog.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
-import MonitorStatsBar from './MonitorStatsBar.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
@@ -81,7 +80,6 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   const [issuesLoading, setIssuesLoading] = useState(false)
   const [confirmations, setConfirmations] = useState([])   // canlı teyit zincirleri (Teyit denemesi X/N)
   const [issueFilter, setIssueFilter] = useState('all')   // all | BROKEN | MIXED_CONTENT | SLOW | firstParty
-  const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
   const [modal, setModal] = useState(null)
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
@@ -147,7 +145,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
     setConfirmations(res?.success ? (res.data ?? []) : [])
   }
   function openDetail(m) {
-    setSelected(m); setIssues([]); setConfirmations([]); setIssueFilter('all'); setSummary({ total: 0, down: 0 }); setDetailTab('issues')
+    setSelected(m); setIssues([]); setConfirmations([]); setIssueFilter('all'); setDetailTab('issues')
     loadIssues(m.id, 'all'); loadConfirmations(m.url)
   }
   function closeDetail() { setSelected(null); setIssues([]); setConfirmations([]) }
@@ -653,7 +651,6 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
               <CheckHistoryTab kind="page" monitorId={selected.id} listKey="page-history"
                 defaultPreset={7} gridClass="page-rt-grid"
                 columns={[t('page.colTime'), t('page.colStatus'), t('page.mBroken'), t('page.mTimeout'), t('page.mMixed')]}
-                onCounts={(c) => setSummary({ total: c.total, down: c.fail })}
                 renderRow={(c) => (<>
                   <span className="upt-rt-time">{formatDateSec(c.checked_at)}</span>
                   <span style={{ color: STATUS_COLOR[c.status] || STATUS_COLOR.unknown, fontWeight: 600 }}>
