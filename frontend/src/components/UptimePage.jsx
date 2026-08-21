@@ -187,7 +187,7 @@ export default function UptimePage({ systemRole }) {
             <RefreshCw size={14} />
             {t('uptime.refresh')}
           </button>
-          <CopyLinkButton />
+          <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
         </div>
       </div>
 

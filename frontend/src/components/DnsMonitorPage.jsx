@@ -316,7 +316,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 'auto' }}>
           <span className="upt-last-check">{t('dns.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}</span>
           <button className="btn btn-sm upt-refresh-btn" onClick={load}><RefreshCw size={14} />{t('dns.refreshBtn')}</button>
-          <CopyLinkButton />
+          <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
           <MonitorGuideButton type="dns" />
           {canWrite && (
             <button className="btn btn-sm btn-primary" onClick={openNew}>

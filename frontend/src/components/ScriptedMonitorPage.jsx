@@ -857,7 +857,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
             <button className="btn btn-sm upt-refresh-btn" onClick={load}>
               <RefreshCw size={14} />{t('scripted.refresh')}
             </button>
-            <CopyLinkButton />
+            {/* iconOnly (10 izleme sayfasında da aynı): "Bağlantıyı kopyala" tam metniyle başlık
+                satırının en geniş öğesiydi. Anlam kaybı yok — metin title/aria-label'da duruyor. */}
+            <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
             {/* Sürüm listede de görünsün: script yazmaya başlamadan önce hangi motor olduğu bilinsin. */}
             <K6VersionBadge t={t} version={k6.version} />
             <MonitorGuideButton type="scripted" />

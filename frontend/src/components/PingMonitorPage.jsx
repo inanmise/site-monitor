@@ -315,7 +315,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
           <button className="btn btn-sm upt-refresh-btn" onClick={load}>
             <RefreshCw size={14} />{t('ping.refresh')}
           </button>
-          <CopyLinkButton />
+          <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
           <MonitorGuideButton type="ping" />
           {canWrite && (
             <button className="btn btn-sm btn-primary" onClick={openNew}>
