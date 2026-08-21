@@ -2556,6 +2556,8 @@ public class MonitoringController {
         if (mon == null) return notFound("Sentetik izleme bulunamadı");
         var deny = denyIfNotViewable(session, mon.getTeamId());
         if (deny != null) return deny;
+        // Sürüm başına koşum karnesi TEK sorguyla, döngüden ÖNCE: satır başına sayım N+1 olurdu.
+        Map<String, long[]> stats = versionRunStats(scriptedCheckRepo.runStatsByScriptVersion(id));
         List<Map<String, Object>> rows = scriptedVersionRepo.findByMonitorIdOrderBySequenceNoDesc(id).stream()
                 .map(v -> {
                     Map<String, Object> r = new LinkedHashMap<>();
@@ -2568,12 +2570,35 @@ public class MonitoringController {
                     r.put("created_by", v.getCreatedBy());
                     r.put("script_chars", v.getScript() == null ? 0 : v.getScript().length());
                     r.put("current", v.getVersion() != null && v.getVersion().equals(mon.getScriptVersion()));
+                    // "Bu sürüm sahada ne yaptı?" — bozuk sürüm listede kırmızı görünsün.
+                    long[] st = stats.get(v.getVersion());
+                    r.put("run_count",  st == null ? 0L : st[0]);
+                    r.put("fail_count", st == null ? 0L : st[1]);
                     return r;
                 }).toList();
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("versions", rows);
         out.put("current_version", mon.getScriptVersion());
         return ok(out);
+    }
+
+    /**
+     * {@code [sürüm, koşum, hata]} satırlarını sürüm→sayaç haritasına çevirir.
+     *
+     * <p>Saf/statik: Spring context'i olmadan test edilir. Sürüm dizeleri monitör başına
+     * benzersizdir ({@code nextVersion} kesin artan), o yüzden dizeyle anahtarlamak güvenli.
+     * Null sürüm atılır (sürümleme öncesi kayıtlar hiçbir sürümün karnesine yazılmamalı).
+     */
+    static Map<String, long[]> versionRunStats(List<Object[]> rows) {
+        Map<String, long[]> out = new LinkedHashMap<>();
+        if (rows == null) return out;
+        for (Object[] r : rows) {
+            if (r == null || r.length < 3 || r[0] == null) continue;
+            long total = r[1] instanceof Number n ? n.longValue() : 0L;
+            long fail  = r[2] instanceof Number n ? n.longValue() : 0L;
+            out.put(String.valueOf(r[0]), new long[]{ total, fail });
+        }
+        return out;
     }
 
     /** Tek sürümün gövdesi — önizleme ve "editöre yükle" için. */
@@ -2646,10 +2671,17 @@ public class MonitoringController {
         return ok(Map.of("drafts", rows));
     }
 
+    /**
+     * Kullanıcının açıkça istediği silme — sessiz DEĞİL.
+     *
+     * <p>Silinemezse 500 döner ki arayüz "taslak silindi" deyip uyarıyı geri getirmesin
+     * (yaşanan hata: türetilmiş silme sorgusu tx'siz düşüyordu, {@link #clearDraft} yutuyordu,
+     * kullanıcı her açılışta aynı taslak uyarısını görüyordu).
+     */
     @DeleteMapping("/scripted/draft/{monitorKey}")
     public ResponseEntity<Map<String, Object>> deleteScriptedDraft(@PathVariable String monitorKey, HttpSession session) {
         permissionService.require(session, "monitoring.scripted", "edit");
-        clearDraft(session, draftKey(monitorKey));
+        scriptedDraftRepo.deleteByOwnerAndMonitorKey(actor(session), draftKey(monitorKey));
         return ok(Map.of("deleted", true));
     }
 
@@ -2666,12 +2698,19 @@ public class MonitoringController {
         return s.matches("\\d+") ? s : "new";
     }
 
-    /** Kayıt başarılı olunca / kullanıcı isteyince taslağı düşürür — sessiz (ana işlemi bozmaz). */
+    /**
+     * Kayıt BAŞARILI olduktan sonra taslağı düşürür — sessiz, çünkü asıl işlem (monitör kaydı)
+     * bitti ve onu geri almak taslaktan daha kötü. Kullanıcının açıkça bastığı silme bu yoldan
+     * GEÇMEZ ({@link #deleteScriptedDraft} hatayı yüzeye çıkarır).
+     *
+     * <p>Log seviyesi WARN: buranın düşmesi artık bir arıza belirtisidir. DEBUG'ta iken tam da bu
+     * gizlendi — silme tx'siz koştuğu için her seferinde patlıyordu ve kimse görmüyordu.
+     */
     private void clearDraft(HttpSession session, String monitorKey) {
         try {
             scriptedDraftRepo.deleteByOwnerAndMonitorKey(actor(session), monitorKey);
         } catch (Exception e) {
-            log.debug("Taslak silinemedi ({}): {}", monitorKey, e.toString());
+            log.warn("Taslak silinemedi ({}): {}", monitorKey, e.toString());
         }
     }
 
@@ -2688,7 +2727,7 @@ public class MonitoringController {
             // Sürüm geçmişi BİLİNÇLİ olarak silinmez: silinen bir monitörün script'i denetim değeri
             // taşır; öksüz satırlar retention kuralıyla temizlenir.
             try { scriptedDraftRepo.deleteByMonitorId(m.getId()); }
-            catch (Exception e) { log.debug("Monitör taslakları silinemedi: {}", e.toString()); }
+            catch (Exception e) { log.warn("Monitör taslakları silinemedi: {}", e.toString()); }
             activityLog.recordLifecycle(ActivityLogService.SCRIPTED, m.getId(), m.getName(), m.getName(), m.getTeamId(), "DELETED", actor(session));
             auditService.recordAction("MONITOR_DELETE", session, "SCRIPTED_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             return ok(Map.of("deleted", true));
@@ -2981,32 +3020,18 @@ public class MonitoringController {
 
     // ── k6 script sürümleme ──────────────────────────────────────────────────
 
-    private static final String FIRST_VERSION = "1.0.0";
+    private static final String FIRST_VERSION = com.sitemonitor.service.VersionLabels.FIRST_VERSION;
 
     /**
-     * {@code 1.0.2} → bump türüne göre bir sonraki sürüm. Ayrıştırılamayan etiket {@link #FIRST_VERSION}'a düşer
-     * (elle bozulmuş/eski veri sürüm zincirini kilitlemesin).
+     * {@code 1.0.2} → bump türüne göre bir sonraki sürüm.
+     *
+     * <p>Gerçek uygulama {@link com.sitemonitor.service.VersionLabels}'a taşındı (2026-08-20):
+     * şablon kütüphanesi AYNI sürümleme sözleşmesini kullanıyor ve ikinci bir kopya iki
+     * davranışın zamanla ayrışmasını garanti ederdi. Bu metot delege olarak KALIYOR — sözleşmeyi
+     * pinleyen {@code ScriptedVersioningTest} tek satır değişmeden geçerliliğini sürdürsün.
      */
     static String nextVersion(String current, String bumpType) {
-        int[] p = {1, 0, 0};
-        if (current != null) {
-            var m = java.util.regex.Pattern.compile("(\\d+)\\.(\\d+)\\.(\\d+)").matcher(current);
-            if (m.find()) {
-                p[0] = Integer.parseInt(m.group(1));
-                p[1] = Integer.parseInt(m.group(2));
-                p[2] = Integer.parseInt(m.group(3));
-            } else {
-                return FIRST_VERSION;
-            }
-        } else {
-            return FIRST_VERSION;
-        }
-        String bump = bumpType == null ? "" : bumpType.trim().toLowerCase(java.util.Locale.ROOT);
-        return switch (bump) {
-            case "major" -> (p[0] + 1) + ".0.0";
-            case "minor" -> p[0] + "." + (p[1] + 1) + ".0";
-            default      -> p[0] + "." + p[1] + "." + (p[2] + 1);   // yama = varsayılan
-        };
+        return com.sitemonitor.service.VersionLabels.nextVersion(current, bumpType);
     }
 
     /**

@@ -821,6 +821,40 @@ class EmailNotificationServiceTest {
         verify(notificationLogRepo).save(stuck);
     }
 
+    /**
+     * Bellek tavanı (2026-08-20 bellek denetimi). mailRetryExecutor'ın DelayedWorkQueue'su
+     * SINIRSIZDIR ve planlanan her görev closure'ıyla TÜM MimeMessage'ı (HTML gövde, gömülü logo,
+     * PDF ekleri) canlı tutar. SMTP uzun süre 421 dönerken bekleyen mesaj sayısı kadar tam e-posta
+     * bellekte birikirdi. Bu test, görevleri HİÇ çalıştırmayan bir executor ile fan-out'u simüle
+     * eder: tavan aşılmamalı ve tavana çarpan gönderim sessizce yutulmayıp FAILED dönmeli.
+     */
+    @Test
+    @DisplayName("421 retry kuyruğu tavana ulaşınca yeni retry PLANLANMAZ ve gönderim FAILED döner (bellek tavanı)")
+    void retryQueue_capReached_dropsInsteadOfGrowing() throws Exception {
+        when(settingsService.getOrDefaults()).thenReturn(settings(true));
+        when(smtpMailService.currentSender()).thenReturn(sender);
+        MimeMessage mockMsg = mock(MimeMessage.class);
+        when(sender.createMimeMessage()).thenReturn(mockMsg);
+        when(mockMsg.getAllRecipients()).thenReturn(null);
+        when(mockMsg.getSubject()).thenReturn("[SiteMonitor] tavan testi");
+        doThrow(new MailSendException("421 4.4.2 Try again later")).when(sender).send(mockMsg);
+
+        // Görevleri ASLA çalıştırmayan executor → bekleyenler birikir (gerçek 421 fırtınası).
+        ScheduledExecutorService neverRuns = mock(ScheduledExecutorService.class);
+        when(neverRuns.schedule(any(Runnable.class), anyLong(), any(TimeUnit.class))).thenReturn(null);
+        ReflectionTestUtils.setField(service, "mailRetryExecutor", neverRuns);
+
+        String lastResult = null;
+        for (int i = 0; i < 60; i++) {                       // tavan 50 → son 10 gönderim reddedilmeli
+            lastResult = service.sendAlert("to@test.com", "[SiteMonitor] tavan testi", "msg");
+        }
+
+        assertThat(service.pendingRetryCount()).isLessThanOrEqualTo(50);
+        assertThat(lastResult).isEqualTo("FAILED: retry kuyruğu dolu");
+        // Tavana kadar olanlar gerçekten planlandı (sessizce hiç denenmemiş olmasın).
+        verify(neverRuns, times(50)).schedule(any(Runnable.class), anyLong(), any(TimeUnit.class));
+    }
+
     @Test
     @DisplayName("doSend: 421 sonrası retry başarılı → QUEUED_RETRY logu SENT'e geri-yazılır")
     void retrySucceeds_writesBackSent() throws Exception {

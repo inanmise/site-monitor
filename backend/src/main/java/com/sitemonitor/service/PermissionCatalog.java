@@ -61,6 +61,15 @@ public final class PermissionCatalog {
         r("domain.registration.view", "monitoring", VIEW),   // Domain Kaydı sekmesi (registrar/IANA/DNSSEC/IP/EPP)
         r("monitoring.group", "monitoring", VIEW),           // İzleme Grupları — görüntüleme (takım-scope)
         r("monitoring.group", "monitoring", EDIT),           // İzleme Grupları — yeniden adlandırma (takım-scope)
+        // Şablon kütüphanesi. İKİ AYRI SATIR olması ZORUNLU, tek çok-eylemli Resource DEĞİL:
+        // auditDefaults() `r.actions.contains(VIEW)` sonucunu putAll ile kaynağın TÜM eylemlerine
+        // uyguluyor (bkz. :238-241, :246-249). Tek satırda List.of(VIEW, EDIT) yazsaydık salt-okunur
+        // AUDIT rolü sessizce şablon DÜZENLEME yetkisi kazanırdı. Ayrı satırlarda VIEW=true,
+        // EDIT=false doğru şekilde hesaplanır — monitoring.group'un yukarıdaki deseni de bu yüzden.
+        r("monitoring.scripted_templates", "monitoring", VIEW),
+        // EDIT hassas: şablon, başkalarının çalıştıracağı KOD'dur. (sensitive = matris onay
+        // istemi; varsayılan değeri belirlemez — K2 gereği USER'a AÇIK gelir.)
+        r("monitoring.scripted_templates", "monitoring", EDIT, Set.of(EDIT)),
 
         // ── Loglar & Raporlar ─────────────────────────────────────────────
         r("audit_log.read",     "logs", VIEW),
@@ -183,6 +192,7 @@ public final class PermissionCatalog {
             // monitoring.crud/trigger: kendi takımı için keyword/ping izleme oluştur/düzenle/çalıştır
             // monitoring.scripted: PO/TEAM_ADMIN kendi takımı için k6 senaryosu yazar/çalıştırır (USER'a AÇILMAZ)
             "monitoring.read", "monitoring.crud", "monitoring.trigger", "monitoring.scripted", "domain.registration.view", "monitoring.group",
+            "monitoring.scripted_templates",   // şablon kütüphanesi (USER'a da açık — K2)
             // Haftalık raporlar: takım yöneticisi okur/düzenler ve onaylayabilir;
             // tanılama geçmişini görür (canlı tarama admin-only kalır)
             "weekly_reports.read", "weekly_reports.crud", "weekly_reports.approve",
@@ -216,6 +226,11 @@ public final class PermissionCatalog {
             // monitoring.crud/trigger: USER kendi takımı için keyword/ping izleme oluşturur/düzenler/çalıştırır
             // (silme canManage ile TEAM_ADMIN/ADMIN'de; Port/DNS yazma requireAdmin ile admin-only kalır)
             "monitoring.read", "monitoring.crud", "monitoring.trigger", "domain.registration.view", "monitoring.group",
+            // Şablon kütüphanesi: USER kendi TAKIMINA şablon yazar (K2). monitoring.scripted'den
+            // AYRI ve bilinçli olarak daha açık: şablon yazmak kod ÇALIŞTIRMAK değildir — o
+            // şablondan monitör kurmak hâlâ monitoring.scripted ister ve o USER'a KAPALI.
+            // Genel şablonu düzenlemek uçta requireAdmin ile ayrıca korunur.
+            "monitoring.scripted_templates",
             // audit_log.read: sistem-geneli denetim → yalnız admin/AUDIT (requireAuditAccess)
             "weak_algo.read",
             // Haftalık raporlar: USER kendi takımının raporunu yazar/düzenler

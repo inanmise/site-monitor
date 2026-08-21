@@ -9,6 +9,68 @@
 import { vi } from 'vitest'
 import { withApiFallback } from '../apiMock.js'
 
+/**
+ * Şablon kütüphanesinin test fixture'ı — `scripted-templates.json`'daki YERLEŞİK katalogun
+ * küçültülmüş ama sadık bir örneği (alan adları liste ucunun ürettiği satırla birebir).
+ *
+ * Neden burada: şablonlar 20.25 ile statik `scriptedTemplates.js` modülünden çıkıp API'ye taşındı.
+ * Sayfa testleri artık ucu mock'lamazsa seçicide şablon grubu SESSİZCE boşalır ve testler
+ * "seçenek yok" diye kırılır — ki bu, ürün hatası değil fixture eksikliğidir.
+ *
+ * `script` alanı bilerek YOK: liste ucu gövdeyi taşımaz (yüzlerce şablonda yanıt şişmesin diye),
+ * gövde `getScriptedTemplate(id)` ile tekil çekilir. Gerçek sözleşme buysa fixture de öyle olmalı.
+ */
+export const TEMPLATE_ROWS = [
+  {
+    id: 101, name: 'Sistem sağlık kontrolü (smoke)', name_en: 'System health check (smoke)',
+    description: 'env GEREKTİRMEZ; www.akbank.com adresine GET atıp içeriği doğrular.',
+    description_en: 'No env needed; GETs www.akbank.com and validates its content.',
+    when_to_use: 'Sentetik İzleme\'yi ilk kez kurarken.', when_to_use_en: 'When setting up Synthetic Monitoring.',
+    tags: [], team_id: null, team_name: null, scope: 'general',
+    builtin: true, builtin_key: 'smoke-health', select_token: 'smoke-health',
+    current_version: '1.0.0', active: true, env: [], script_chars: 620,
+    updated_at: '2026-08-20T10:00:00', updated_by_name: 'Sistem',
+    can_edit: false, can_delete: false, can_promote: false, can_demote: false, can_permanent_delete: false,
+  },
+  {
+    id: 102, name: 'JSON sağlık ucu (Actuator / mikroservis)', name_en: 'JSON health endpoint (Actuator / microservice)',
+    description: 'Actuator health ucunu çağırır ve status alanını doğrular.',
+    description_en: 'Calls the Actuator health endpoint and validates the status field.',
+    when_to_use: 'Mikroservis sağlık ucu izlemesinde.', when_to_use_en: 'For microservice health endpoints.',
+    tags: [], team_id: null, team_name: null, scope: 'general',
+    builtin: true, builtin_key: 'json-health', select_token: 'json-health',
+    current_version: '1.0.0', active: true,
+    env: [{ name: 'BASE_URL', secret: false }], script_chars: 540,
+    updated_at: '2026-08-20T10:00:00', updated_by_name: 'Sistem',
+    can_edit: false, can_delete: false, can_promote: false, can_demote: false, can_permanent_delete: false,
+  },
+  {
+    id: 103, name: 'OAuth2 client_credentials → korumalı API', name_en: 'OAuth2 client_credentials → protected API',
+    description: 'Token alır, korumalı API\'yi Bearer ile çağırır.',
+    description_en: 'Gets a token, calls the protected API with Bearer.',
+    when_to_use: 'Servisten servise entegrasyonlarda.', when_to_use_en: 'For service-to-service integrations.',
+    tags: [], team_id: null, team_name: null, scope: 'general',
+    builtin: true, builtin_key: 'oauth2-client-credentials', select_token: 'oauth2-client-credentials',
+    current_version: '1.0.0', active: true,
+    env: [
+      { name: 'TOKEN_URL', secret: false },
+      { name: 'CLIENT_ID', secret: false },
+      { name: 'CLIENT_SECRET', secret: true },
+      { name: 'API_URL', secret: false },
+    ],
+    script_chars: 980,
+    updated_at: '2026-08-20T10:00:00', updated_by_name: 'Sistem',
+    can_edit: false, can_delete: false, can_promote: false, can_demote: false, can_permanent_delete: false,
+  },
+]
+
+/** Tekil ucun döndürdüğü gövdeler (id → script). */
+export const TEMPLATE_SCRIPTS = {
+  101: "import http from 'k6/http';\nimport { check } from 'k6';\n\nexport default function () {\n  const res = http.get('https://www.akbank.com/', { timeout: '20s' });\n  check(res, { 'status 200': (r) => r.status === 200 });\n}\n",
+  102: "import http from 'k6/http';\nimport { check } from 'k6';\n\nexport default function () {\n  const res = http.get(__ENV.BASE_URL + '/actuator/health', { timeout: '20s' });\n  check(res, { 'UP': (r) => r.json('status') === 'UP' });\n}\n",
+  103: "import http from 'k6/http';\nimport { check } from 'k6';\n\nexport default function () {\n  const tok = http.post(__ENV.TOKEN_URL, { grant_type: 'client_credentials', client_id: __ENV.CLIENT_ID, client_secret: __ENV.CLIENT_SECRET }, { timeout: '20s' });\n  check(tok, { 'token': (r) => r.status === 200 });\n}\n",
+}
+
 export function apiClientMock() {
   return {
     // GERÇEK davranış pini: formatDateSec undefined/null'a 'N/A' basar — 2026-08 regresyonunda
@@ -33,6 +95,11 @@ export function apiClientMock() {
         testScripted: vi.fn(() => Promise.resolve({ success: true, data: { status: 'PASS', checks_passed: 3, checks_failed: 0, duration_ms: 820, output_tail: 'out' } })),
         listGroups: vi.fn(() => Promise.resolve({ success: true, data: [] })),
         monitorDefaults: vi.fn(() => Promise.resolve({ success: true, data: { scripted: { intervalSeconds: 300, timeoutSeconds: 60 } } })),
+        // Şablon uçları da `monitoring` ad alanında — client.js'te tanımlandıkları yer.
+        // Yanlış ad alanına yazmak testi yeşil bırakır (withApiFallback bilinmeyen adı üretir)
+        // ama tarayıcıda "is not a function" olur; kapısı `api-call-sites.test.js`.
+        getScriptedTemplates: vi.fn(),
+        getScriptedTemplate: vi.fn(),
       },
       admin: { getTeams: vi.fn(() => Promise.resolve({ success: true, data: [] })) },
     }),
@@ -51,6 +118,17 @@ export function resetScriptedMocks(api) {
   api.monitoring.getScriptedVersions.mockResolvedValue({ success: true, data: { versions: [], current_version: null } })
   api.monitoring.monitorDefaults.mockResolvedValue({ success: true, data: { scripted: { intervalSeconds: 300, timeoutSeconds: 60 } } })
   api.admin.getTeams.mockResolvedValue({ success: true, data: [] })
+  api.monitoring.getScriptedTemplates.mockResolvedValue({
+    success: true,
+    data: {
+      templates: TEMPLATE_ROWS,
+      can_create_general: false, can_view_trash: false, writable_team_ids: [5], k6_version: 'v0.49.0',
+    },
+  })
+  api.monitoring.getScriptedTemplate.mockImplementation((id) => Promise.resolve(
+    TEMPLATE_SCRIPTS[id]
+      ? { success: true, data: { ...TEMPLATE_ROWS.find(r => r.id === id), script: TEMPLATE_SCRIPTS[id] } }
+      : { success: false, error: 'Şablon bulunamadı' }))
   api.monitoring.getScriptedMonitors.mockResolvedValue({
     success: true,
     data: {

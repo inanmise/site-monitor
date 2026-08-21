@@ -18,6 +18,17 @@ import java.util.concurrent.atomic.AtomicLong;
 public class HttpMetricsService {
 
     private static final int MAX_BUCKETS = 1440; // 24 h × 60 min
+
+    /**
+     * Bir dakika penceresindeki AYRI endpoint kovası üst sınırı; aşılırsa hepsi tek
+     * {@code (overflow)} kovasına katlanır. Yapısal güvence (2026-08-20 bellek denetimi):
+     * endpoint anahtarı yüksek kardinaliteli bir kaynaktan beslenirse ne bellek-içi harita
+     * ne de {@code http_metric_minute} tablosu sınırsız büyüyebilsin — dakika başına en çok
+     * MAX_ENDPOINTS_PER_MINUTE+1 satır. Bugünkü tek besleyici olan interceptor sınırlı rota
+     * şablonu kullanıyor (~92 ayrı endpoint ölçüldü), yani tavan pratikte hiç görülmemeli;
+     * amaç ileride yanlışlıkla ham URI/ID besleyen bir çağıranın sessizce sızdırmaması.
+     */
+    private static final int MAX_ENDPOINTS_PER_MINUTE = 500;
     private static final DateTimeFormatter MINUTE_FMT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
@@ -55,8 +66,14 @@ public class HttpMetricsService {
             }
         }
         current.add(status, durationMs);                         // toplam (mini-grafikler)
-        currentEndpoints.computeIfAbsent(endpoint == null ? "(other)" : endpoint, k -> new EndpointBucket())
-                        .add(status, durationMs);                // endpoint bazlı (kalıcı seri)
+
+        // Endpoint bazlı (kalıcı seri) — dakika içi kardinalite tavanıyla.
+        // rotateTo() haritayı takas edebilir; yerel referans al ki sayım ile ekleme aynı
+        // pencereye gitsin (takas olursa en fazla bir kova yanlış pencereye düşer, sızıntı olmaz).
+        ConcurrentHashMap<String, EndpointBucket> eps = currentEndpoints;
+        String epKey = endpoint == null ? "(other)" : endpoint;
+        if (!eps.containsKey(epKey) && eps.size() >= MAX_ENDPOINTS_PER_MINUTE) epKey = "(overflow)";
+        eps.computeIfAbsent(epKey, k -> new EndpointBucket()).add(status, durationMs);
     }
 
     // ── Rotate every minute to emit zero-count buckets during quiet periods ──

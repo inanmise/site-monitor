@@ -892,6 +892,21 @@ export const api = {
       return request(`/monitoring/scripted/${id}/response-series${q ? `?${q}` : ''}`)
     },
 
+    // Şablon kütüphanesi — Genel (teamId null) + Takım katmanları.
+    // Yanıt satır başına can_edit/can_delete/can_promote/... taşır; UI yetkiyi YENİDEN HESAPLAMAZ.
+    getScriptedTemplates:   (scope) => request(`/monitoring/scripted/templates${scope ? `?scope=${scope}` : ''}`),
+    getScriptedTemplate:    (id) => request(`/monitoring/scripted/templates/${id}`),
+    createScriptedTemplate: (data) => request('/monitoring/scripted/templates', { method: 'POST', body: JSON.stringify(data) }),
+    updateScriptedTemplate: (id, data) => request(`/monitoring/scripted/templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    // permanent=true yalnız admin'e ve yerleşik OLMAYAN şablona açık (yerleşiği seeder diriltir).
+    deleteScriptedTemplate: (id, permanent) => request(`/monitoring/scripted/templates/${id}${permanent ? '?permanent=true' : ''}`, { method: 'DELETE' }),
+    // Çöpten geri alma. Adı bilinçli `undelete`: bu ailede "restore" SÜRÜM geri yüklemedir.
+    undeleteScriptedTemplate: (id) => request(`/monitoring/scripted/templates/${id}/undelete`, { method: 'POST' }),
+    promoteScriptedTemplate:  (id) => request(`/monitoring/scripted/templates/${id}/promote`, { method: 'POST' }),
+    demoteScriptedTemplate:   (id, teamId) => request(`/monitoring/scripted/templates/${id}/demote`, { method: 'POST', body: JSON.stringify({ teamId }) }),
+    getScriptedTemplateVersions: (id) => request(`/monitoring/scripted/templates/${id}/versions`),
+    getScriptedTemplateVersion:  (id, versionId) => request(`/monitoring/scripted/templates/${id}/versions/${versionId}`),
+
     // HTTP / Website
     getHttpMonitors:   () => request('/monitoring/http'),
     createHttpMonitor: (data) => request('/monitoring/http', { method: 'POST', body: JSON.stringify(data) }),

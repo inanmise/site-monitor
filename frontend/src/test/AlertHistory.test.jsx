@@ -81,8 +81,10 @@ describe('AlertHistory closed-alert details', () => {
     // Stats row contains the mail counts and the open duration label
     expect(card.textContent).toMatch(/3.*başarılı|3.*sent/i)
     expect(card.textContent).toMatch(/1.*başarısız|1.*failed/i)
-    // 6 days 2 hours between 2026-06-01 08:00 and 2026-06-07 10:00
-    expect(card.textContent).toMatch(/6g/)
+    // 6 days 2 hours between 2026-06-01 08:00 and 2026-06-07 10:00.
+    // Birim harfleri i18n'den (incov.unit.*) geliyor — TR "6 g", EN "6 d". Eskiden yerel
+    // biçimleyici dakikayı `d` ile yazıyordu ve dil ne olursa olsun Türkçe harf basıyordu.
+    expect(card.textContent).toMatch(/6\s*[gd]\b/)
   })
 
   it('shows the "send failed" badge next to the domain when email_failed_count > 0', async () => {
@@ -618,7 +620,22 @@ describe('AlertHistory — kart rozetleri', () => {
     withAlert(openAlertAt(hoursAgo(3)))
     const { container } = render(<AlertHistory />)
     await waitFor(() => expect(container.querySelector('.alh-open-for')).not.toBeNull())
-    expect(container.querySelector('.alh-open-for').textContent).toMatch(/3s/)
+    expect(container.querySelector('.alh-open-for').textContent).toMatch(/3\s*(sa|h)\b/)
+  })
+
+  /**
+   * 2026-08-20 regresyonu: yerel `formatDuration` dakikayı `d`, saati `s` ile yazıyordu.
+   * 10 dakikalık bir alarm ekranda "9d" görünüyordu ve GÜN olarak okunuyordu — kesinti
+   * süresi, alarm kartındaki en kritik sayı, sistematik olarak yanlış anlaşılıyordu.
+   */
+  it('10 dakikalık alarm "9d" (gün sanılan) DEĞİL dakika birimiyle gösterilir', async () => {
+    withAlert(openAlertAt(new Date(Date.now() - 10 * 60_000).toISOString().slice(0, 19)))
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelector('.alh-open-for')).not.toBeNull())
+
+    const txt = container.querySelector('.alh-open-for').textContent
+    expect(txt).toMatch(/\b(9|10)\s*(dk|min)\b/)   // dakika birimi açıkça yazılı
+    expect(txt).not.toMatch(/\b\d+\s*d\b/)          // çıplak `d` (gün sanılan) YOK
   })
 
   it('EŞİĞİ AŞAN alarm vurgulanır (çözülmemiş ya da unutulmuş)', async () => {
@@ -627,7 +644,7 @@ describe('AlertHistory — kart rozetleri', () => {
     await waitFor(() => expect(container.querySelector('.alh-open-for')).not.toBeNull())
 
     expect(container.querySelector('.alh-open-for').classList.contains('is-stale')).toBe(true)
-    expect(container.querySelector('.alh-open-for').textContent).toMatch(/2g/)   // 50sa = 2g 2s
+    expect(container.querySelector('.alh-open-for').textContent).toMatch(/2\s*[gd]\b/)   // 50 saat = 2 gün 2 saat
   })
 
   it('eşik ALTINDAKİ alarm vurgulanmaz (her kartı kırmızıya boyamak sinyali boğar)', async () => {

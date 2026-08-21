@@ -420,6 +420,41 @@ public class SchedulerService {
         // Taslak kullanıcı+monitör başına TEK satır. monitor_id yerine metin anahtar kullanılıyor:
         // PostgreSQL unique index'te NULL'ları birbirinden farklı sayar, "yeni monitör" taslakları çoğalırdı.
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_scripted_draft_owner_key ON scripted_drafts(owner, monitor_key)");
+        // ── Şablon kütüphanesi (Genel / Takım) ──────────────────────────────────────────────
+        // Tablolar ddl-auto=update ile de doğar; bu patch'ler ESKİ kurulumların yükseltmesi için
+        // (CLAUDE.md kuralı). team_id NULL = GENEL şablon; builtin_key benzersiz, çünkü seeder'ın
+        // idempotensi ve eski `tpl:<id>` çözümü ona dayanıyor (PostgreSQL NULL'ları çakıştırmaz).
+        patch("""
+            CREATE TABLE IF NOT EXISTS scripted_templates (
+              id BIGSERIAL PRIMARY KEY,
+              name TEXT NOT NULL, name_en TEXT,
+              description TEXT, description_en TEXT,
+              when_to_use TEXT, when_to_use_en TEXT,
+              script TEXT NOT NULL, env_json TEXT, tags TEXT,
+              team_id BIGINT, source_team_name TEXT,
+              promoted_at TEXT, promoted_by TEXT,
+              builtin_key VARCHAR(64), builtin_seed_version INTEGER,
+              active BOOLEAN NOT NULL DEFAULT TRUE,
+              deleted_at TEXT, deleted_by TEXT,
+              current_version VARCHAR(20),
+              created_at TEXT NOT NULL, created_by TEXT NOT NULL, created_by_name TEXT,
+              updated_at TEXT, updated_by TEXT, updated_by_name TEXT)""");
+        patch("CREATE INDEX IF NOT EXISTS idx_stpl_team_active ON scripted_templates(team_id, active)");
+        patch("CREATE UNIQUE INDEX IF NOT EXISTS uq_stpl_builtin_key ON scripted_templates(builtin_key)");
+        patch("CREATE INDEX IF NOT EXISTS idx_stpl_name ON scripted_templates(name)");
+        // Sürüm geçmişi: append-only, tam snapshot. team_id o ANDAKİ kapsamı taşır ki
+        // PROMOTE/DEMOTE satırı join'siz okunabilsin.
+        patch("""
+            CREATE TABLE IF NOT EXISTS scripted_template_versions (
+              id BIGSERIAL PRIMARY KEY,
+              template_id BIGINT NOT NULL,
+              sequence_no INTEGER NOT NULL,
+              version VARCHAR(20) NOT NULL,
+              event_type VARCHAR(16) NOT NULL,
+              script TEXT, env_json TEXT, team_id BIGINT, note TEXT,
+              created_at TEXT NOT NULL, created_by TEXT NOT NULL, created_by_name TEXT)""");
+        patch("CREATE INDEX IF NOT EXISTS idx_stv_template_seq ON scripted_template_versions(template_id, sequence_no)");
+        patch("CREATE INDEX IF NOT EXISTS idx_stv_created ON scripted_template_versions(created_at)");
         // Takım başına haftalık e-posta anahtarları (Cuma hatırlatması + Pazartesi erişilebilirlik raporu).
         // YENİ takım kapalı doğar (entity başlatıcısı false), ama MEVCUT takımlar TRUE'ya çekilir: kolon
         // eklendiğinde satırlar NULL kalır ve NULL'ı "kapalı" saymak bugün e-posta alan tüm takımları
@@ -3026,6 +3061,27 @@ public class SchedulerService {
      */
     private final java.util.concurrent.ExecutorService manualRunPool =
             java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+
+    /**
+     * Kapanışta havuzu kapat (2026-08-20 bellek denetimi). Üretimde etkisi ~sıfırdır (JVM zaten
+     * ölüyor, sanal thread'ler daemon); değeri TEST ve context-refresh senaryolarındadır: kapatılmayan
+     * her havuz, süit boyunca açılıp kapanan onlarca Spring context'inde arkasında iş parçacığı ve
+     * bağlı nesne bırakır. Kod tabanındaki diğer tüm executor'lar (@PreDestroy'lu MonitoringOutage,
+     * EmailNotification, PageChecker, ScriptedChecker, HttpChecker) bu deseni izliyor; burası
+     * eksik kalmıştı.
+     */
+    @jakarta.annotation.PreDestroy
+    void shutdownManualRunPool() {
+        manualRunPool.shutdown();
+        try {
+            if (!manualRunPool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                manualRunPool.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            manualRunPool.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
 
     /**
      * Manuel kontrolü İSTEK THREAD'İNİN DIŞINDA başlatır ve {@link Future} döner.

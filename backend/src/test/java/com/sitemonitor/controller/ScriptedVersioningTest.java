@@ -55,4 +55,29 @@ class ScriptedVersioningTest {
     void tolerantParse() {
         assertThat(MonitoringController.nextVersion("v1.4.2", "patch")).isEqualTo("1.4.3");
     }
+
+    @Test
+    @DisplayName("versionRunStats: sürüm→[koşum, hata] haritası; null sürüm ATILIR, eksik sürüm 0/0 okunur")
+    void versionRunStats_mapsAndSkipsNull() {
+        // Repo GROUP BY çıktısı: [scriptVersion, COUNT, SUM(ok=false)]
+        var rows = java.util.List.<Object[]>of(
+                new Object[]{ "1.0.3", 8L, 8L },     // bozuk sürüm
+                new Object[]{ "1.0.2", 41L, 0L },    // sağlıklı sürüm
+                new Object[]{ null, 12L, 3L });      // sürümleme ÖNCESİ kayıtlar — hiçbir sürüme ait değil
+
+        var stats = MonitoringController.versionRunStats(rows);
+
+        assertThat(stats).containsOnlyKeys("1.0.3", "1.0.2");
+        assertThat(stats.get("1.0.3")).containsExactly(8L, 8L);
+        assertThat(stats.get("1.0.2")).containsExactly(41L, 0L);
+        assertThat(stats.get("1.0.0")).isNull();     // hiç koşmamış sürüm → çağıran 0/0 yazar
+    }
+
+    @Test
+    @DisplayName("versionRunStats: null/bozuk satırlarda istisna YOK")
+    void versionRunStats_isDefensive() {
+        assertThat(MonitoringController.versionRunStats(null)).isEmpty();
+        assertThat(MonitoringController.versionRunStats(
+                java.util.Arrays.asList(null, new Object[]{ "1.0.0" }))).isEmpty();
+    }
 }

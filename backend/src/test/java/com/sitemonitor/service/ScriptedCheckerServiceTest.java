@@ -428,4 +428,146 @@ class ScriptedCheckerServiceTest {
         assertThat(ScriptedCheckerService.scanHardcodedSecrets(clean)).isEmpty();
         assertThat(ScriptedCheckerService.scanHardcodedSecrets(null)).isEmpty();
     }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 2026-08-20 üretim olayı: threshold tanımlayan bir script çöktüğünde koşum
+    // sessizce PASS yazılıyordu. Aşağıdaki girdilerin TAMAMI yerel k6 v0.49 ile
+    // üretilmiş GERÇEK çıktılardır (uydurma fixture yok).
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /** Fixture A — tanımsız sabit + `thresholds: {checks: [...]}`; k6 çıkış 0, 0 byte. */
+    private static final String CRASH_OUTPUT =
+            "time=\"2026-08-20T11:54:14+03:00\" level=error "
+            + "msg=\"ReferenceError: REQUEST_TIMEOUT is not defined\\n\\tat file:///tmp/k6-script-1.js:16:54(6)\\n\" "
+            + "executor=shared-iterations scenario=default source=stacktrace";
+
+    @Test
+    @DisplayName("REGRESYON: threshold'lu script çökünce checks 0/0 gelir — PASS DEĞİL ERROR")
+    void decideStatus_thresholdedCrash_isError() {
+        // Eski guard yalnız null/null'a bakıyordu; k6 threshold yüzünden metriği 0/0 ile
+        // materyalize ettiği için guard atlanıyor ve PASS dönüyordu. 25 dakikalık körlük buydu.
+        assertThat(ScriptedCheckerService.decideStatus(0, false, 0, 0, true, true, false))
+                .isEqualTo("ERROR");
+    }
+
+    @Test
+    @DisplayName("check() kullanmayan MEŞRU threshold-only script (trafik VAR) PASS kalır")
+    void decideStatus_thresholdOnlyScript_staysPass() {
+        // Fixture B ölçümü: metrics.checks düğümü HİÇ yok, data_sent 86 byte.
+        assertThat(ScriptedCheckerService.decideStatus(0, false, null, null, true, false, true))
+                .isEqualTo("PASS");
+        // Aynı script `checks` üzerinde de threshold tanımlarsa sayaçlar 0/0 gelir — yine PASS.
+        assertThat(ScriptedCheckerService.decideStatus(0, false, 0, 0, true, false, true))
+                .isEqualTo("PASS");
+    }
+
+    @Test
+    @DisplayName("Hedef gerçekten düştü: düşen check çökme sinyalini EZER — FAIL kalır (ERROR değil)")
+    void decideStatus_failedCheckBeatsCrash() {
+        // k6 başarısız isteği level=warning+error= ile basar; sıra ters olsaydı her gerçek
+        // arıza ERROR görünür ve "hedef mi script mi bozuk" ayrımı kaybolurdu.
+        assertThat(ScriptedCheckerService.decideStatus(0, false, 2, 1, true, true, true))
+                .isEqualTo("FAIL");
+    }
+
+    @Test
+    @DisplayName("Kısmi iterasyon: 3 check geçti sonra script patladı → ERROR (yarım doğrulama PASS değildir)")
+    void decideStatus_partialIteration_isError() {
+        assertThat(ScriptedCheckerService.decideStatus(0, false, 3, 0, false, true, true))
+                .isEqualTo("ERROR");
+    }
+
+    @Test
+    @DisplayName("Threshold var ama TEK BYTE gitmedi → NO_CHECKS (hata satırı çıktı penceresi dışında kalırsa ikinci savunma)")
+    void decideStatus_thresholdsButNoTraffic_isNoChecks() {
+        assertThat(ScriptedCheckerService.decideStatus(0, false, 0, 0, true, false, false))
+                .isEqualTo("NO_CHECKS");
+    }
+
+    @Test
+    @DisplayName("Eski 6 argümanlı imza davranışı DEĞİŞMEZ (trafik bilinmiyorsa var sayılır)")
+    void decideStatus_legacyOverload_unchanged() {
+        assertThat(ScriptedCheckerService.decideStatus(0, false, null, null, true, false))
+                .isEqualTo("PASS");
+        assertThat(ScriptedCheckerService.decideStatus(0, false, null, null, false, false))
+                .isEqualTo("NO_CHECKS");
+    }
+
+    @Test
+    @DisplayName("parseSummary: threshold'lu SIFIR-ÖRNEKLİ checks metriği 0/0 OKUNUR (null değil) — yanlış PASS'in kökü")
+    void parseSummary_zeroSampleChecksMetric() {
+        // Yerel k6 v0.49'un sum-A.json çıktısından birebir.
+        String json = "{\"metrics\":{"
+                + "\"checks\":{\"passes\":0,\"fails\":0,\"thresholds\":{\"rate>0.99\":false},\"value\":0},"
+                + "\"http_req_duration\":{\"avg\":0,\"p(95)\":0,\"thresholds\":{\"p(95)<10000\":false}},"
+                + "\"data_sent\":{\"count\":0},\"data_received\":{\"count\":0}}}";
+        ScriptedCheckerService.Summary s = ScriptedCheckerService.parseSummary(json, mapper);
+
+        assertThat(s.checksPassed).isZero();      // null DEĞİL — guard'ı atlatan tam olarak buydu
+        assertThat(s.checksFailed).isZero();
+        assertThat(s.hasThresholds).isTrue();
+        assertThat(s.dataSent).isZero();
+    }
+
+    @Test
+    @DisplayName("hasScriptCrash: yakalanmamış istisna (source=stacktrace) çökme SAYILIR")
+    void hasScriptCrash_referenceError() {
+        assertThat(ScriptedCheckerService.hasScriptCrash(CRASH_OUTPUT)).isTrue();
+        assertThat(ScriptedCheckerService.hasScriptCrash("ERRO[0001] GoError: something blew up")).isTrue();
+    }
+
+    @Test
+    @DisplayName("hasScriptCrash: kullanıcının console.error'ı çökme SAYILMAZ (k6 onu source=console etiketliyor)")
+    void hasScriptCrash_consoleErrorIsNotCrash() {
+        // Fixture C ölçümü: script sorunsuz koştu, check geçti — yalnız kullanıcı log bastı.
+        String consoleLine = "time=\"2026-08-20T11:54:16+03:00\" level=error "
+                + "msg=\"yeniden deneniyor - bu bir cokme DEGIL\" source=console";
+        assertThat(ScriptedCheckerService.hasScriptCrash(consoleLine)).isFalse();
+    }
+
+    @Test
+    @DisplayName("hasScriptCrash: başarısız İSTEK uyarısı çökme SAYILMAZ — o FAIL'in işi")
+    void hasScriptCrash_failedRequestWarningIsNotCrash() {
+        String warn = "time=\"2026-08-20T11:54:16+03:00\" level=warning msg=\"Request Failed\" "
+                + "error=\"Post \\\"http://x/\\\": request timeout\"";
+        assertThat(ScriptedCheckerService.hasScriptCrash(warn)).isFalse();
+    }
+
+    /**
+     * 2026-08-20: yerleşik `oauth2-client-credentials` şablonu KENDİ tarayıcımıza takıldı —
+     * `Authorization: 'Bearer ' + token`. Tırnak içindeki 'Bearer ' 7 karakter olduğu için
+     * desene uyuyordu, oysa gerçek kimlik bilgisi değişkenden geliyor.
+     */
+    @Test
+    @DisplayName("scanHardcodedSecrets: birleştirilen ÖNEK ('Bearer ' + token) sabit-kodlu secret SAYILMAZ")
+    void scanHardcodedSecrets_concatenatedPrefixIsNotASecret() {
+        assertThat(ScriptedCheckerService.scanHardcodedSecrets(
+                "headers: { Authorization: 'Bearer ' + token }")).isEmpty();
+        assertThat(ScriptedCheckerService.scanHardcodedSecrets(
+                "const h = { Authorization: 'Basic ' + b64 };")).isEmpty();
+        // Boşluklu yazım da aynı: literal ile + arasında boşluk olabilir.
+        assertThat(ScriptedCheckerService.scanHardcodedSecrets(
+                "Authorization: 'Bearer '   +   __ENV.TOKEN")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("scanHardcodedSecrets: GERÇEK sabit-kodlu değer hâlâ yakalanır (düzeltme kapıyı açmadı)")
+    void scanHardcodedSecrets_realLiteralStillCaught() {
+        assertThat(ScriptedCheckerService.scanHardcodedSecrets(
+                "const body = { password: 'CokGizliParola123' };")).containsExactly("password");
+        assertThat(ScriptedCheckerService.scanHardcodedSecrets(
+                "api_key: \"AKIA1234567890ABCD\"")).containsExactly("api_key");
+        // Birleştirme SONRASI gelen literal de yakalanmaya devam eder — yalnız ÖNEK muaf.
+        assertThat(ScriptedCheckerService.scanHardcodedSecrets(
+                "const u = base + '?token=x'; const p = { secret: 'gercekten-gizli' };"))
+                .contains("secret");
+    }
+
+    @Test
+    @DisplayName("hasScriptCrash: null/boş çıktı → false, istisna YOK (catch yolundan da çağrılıyor)")
+    void hasScriptCrash_nullAndBlankAreSafe() {
+        assertThat(ScriptedCheckerService.hasScriptCrash(null)).isFalse();
+        assertThat(ScriptedCheckerService.hasScriptCrash("")).isFalse();
+        assertThat(ScriptedCheckerService.hasScriptCrash("   \n  ")).isFalse();
+    }
 }

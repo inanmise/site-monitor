@@ -17,6 +17,7 @@ import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
+import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
@@ -412,6 +413,9 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
                   <td className="mon-cell-num">{m.response_ms != null ? `${m.response_ms}ms` : '—'}</td>
                   <td className="mon-cell-time">{m.checked_at ? formatDate(m.checked_at) : '—'}</td>
                   <td className="mon-cell-actions" onClick={e => e.stopPropagation()}>
+                    {/* Kart değil TABLO satırı: paylaşım düğmesi eylem hücresine girer.
+                        Yetkiden bağımsız — bağlantı kopyalamak salt-okunur bir iştir. */}
+                    <CopyLinkButton iconOnly url={monitorDeepLink('port', m.id)} className="btn btn-sm mon-btn-edit" />
                     {canManageRow(m) && (
                       <button className="btn btn-sm mon-btn-check" disabled={checking === m.id} onClick={() => checkNow(m)} title={t('port.check')}>
                         <Play size={12} />

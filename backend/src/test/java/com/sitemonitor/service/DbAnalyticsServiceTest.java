@@ -6,6 +6,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -22,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -65,7 +67,7 @@ class DbAnalyticsServiceTest {
                 q("alice", "SELECT 1", 10L, true, now),
                 q("alice", "SELECT 1", 20L, true, now),
                 q("bob",   "SELECT 2", 5L,  false, now));
-        when(historyRepo.findByExecutedAtGreaterThanEqualOrderByExecutedAtAsc(any())).thenReturn(rows);
+        when(historyRepo.findByExecutedAtGreaterThanEqualOrderByExecutedAtDesc(any(), any())).thenReturn(rows);
         when(jdbcTemplate.queryForObject(contains("pg_extension"), eq(Long.class))).thenReturn(0L); // pgss off
 
         Map<String, Object> d = service.getOverview(7);
@@ -87,12 +89,49 @@ class DbAnalyticsServiceTest {
     @DisplayName("getOverview: gün penceresi 1/7/30 dışına taşmaz")
     @SuppressWarnings("unchecked")
     void getOverview_windowClamped() {
-        when(historyRepo.findByExecutedAtGreaterThanEqualOrderByExecutedAtAsc(any())).thenReturn(List.of());
+        when(historyRepo.findByExecutedAtGreaterThanEqualOrderByExecutedAtDesc(any(), any())).thenReturn(List.of());
         when(jdbcTemplate.queryForObject(contains("pg_extension"), eq(Long.class))).thenReturn(0L);
 
         Map<String, Object> sum = (Map<String, Object>) service.getOverview(999).get("summary");
         assertThat(((Number) sum.get("days")).intValue()).isEqualTo(30);     // 999 → 30
         Map<String, Object> sum1 = (Map<String, Object>) service.getOverview(1).get("summary");
         assertThat(((Number) sum1.get("days")).intValue()).isEqualTo(1);
+    }
+
+    /**
+     * Satır tavanı (2026-08-20 bellek denetimi). getOverview zaman-pencereli ama LIMIT'siz
+     * çekiyordu; sql-history retention'ı 365 gün olduğundan 30 günlük pencere tabloyu
+     * sınırlamıyordu ve tüm satırlar (+ 9 toplayıcının türevleri + @Cacheable payload'ı)
+     * aynı anda bellekte oluyordu.
+     */
+    @Test
+    @DisplayName("getOverview: repo'ya TAVANLI ve en-yeni-önce sorar; tavana değince payload truncated taşır")
+    @SuppressWarnings("unchecked")
+    void getOverview_capsHistoryRows() {
+        Instant now = Instant.now();
+        // Tavan kadar satır dön → truncated=true beklenir.
+        List<SqlQueryHistory> many = new java.util.ArrayList<>();
+        for (int i = 0; i < 50_000; i++) many.add(q("u" + (i % 3), "SELECT " + (i % 5), 1L, true, now));
+        when(historyRepo.findByExecutedAtGreaterThanEqualOrderByExecutedAtDesc(any(), any())).thenReturn(many);
+        when(jdbcTemplate.queryForObject(contains("pg_extension"), eq(Long.class))).thenReturn(0L);
+
+        Map<String, Object> d = service.getOverview(30);
+
+        ArgumentCaptor<org.springframework.data.domain.Limit> limitCap =
+                ArgumentCaptor.forClass(org.springframework.data.domain.Limit.class);
+        verify(historyRepo).findByExecutedAtGreaterThanEqualOrderByExecutedAtDesc(any(), limitCap.capture());
+        assertThat(limitCap.getValue().max()).isEqualTo(50_000);
+        assertThat((Boolean) d.get("truncated")).isTrue();
+        assertThat(((Number) d.get("row_limit")).intValue()).isEqualTo(50_000);
+    }
+
+    @Test
+    @DisplayName("getOverview: tavanın altında kalan veri truncated=false döner")
+    void getOverview_belowCap_notTruncated() {
+        when(historyRepo.findByExecutedAtGreaterThanEqualOrderByExecutedAtDesc(any(), any()))
+                .thenReturn(List.of(q("alice", "SELECT 1", 10L, true, Instant.now())));
+        when(jdbcTemplate.queryForObject(contains("pg_extension"), eq(Long.class))).thenReturn(0L);
+
+        assertThat((Boolean) service.getOverview(7).get("truncated")).isFalse();
     }
 }

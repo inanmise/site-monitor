@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -19,6 +19,10 @@ export default function DomainDiagnostics() {
   const [caLoading, setCaLoading] = useState(false)
   const [ca, setCa] = useState(null)      // { ok, chain, ca_pem, ca_count, error, error_class }
   const [copied, setCopied] = useState(false)
+  // Kopyalama geri bildirimi zamanlayıcısı ref'te + unmount temizliği (CopyButton.jsx deseni):
+  // panel 2 sn dolmadan kapanırsa zamanlayıcı ayakta kalmasın.
+  const copyTimer = useRef(null)
+  useEffect(() => () => clearTimeout(copyTimer.current), [])
 
   async function run() {
     const d = domain.trim()
@@ -49,7 +53,9 @@ export default function DomainDiagnostics() {
     if (!ca?.ca_pem) return
     try {
       await navigator.clipboard.writeText(ca.ca_pem)
-      setCopied(true); setTimeout(() => setCopied(false), 2000)
+      setCopied(true)
+      clearTimeout(copyTimer.current)
+      copyTimer.current = setTimeout(() => setCopied(false), 2000)
       toast.success(t('dexp.caCopied'))
     } catch { toast.error(t('dexp.caCopyErr')) }
   }

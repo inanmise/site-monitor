@@ -164,4 +164,27 @@ describe('ScriptedMonitorPage — liste ve kartlar', () => {
     // KARTİN detay modalını açmamış olması.
     expect(document.querySelector('.upt-modal')).toBeNull()
   })
+
+  /**
+   * Kart üzerindeki "bağlantıyı kopyala" düğmesi (2026-08-20). İki ayrı sözleşme:
+   *  1. Kartın kendi onClick'i detay modalını açıyor — kopyalama düğmesi olayı DURDURMALI,
+   *     yoksa tek tık hem panoya yazar hem modalı açar.
+   *  2. Kopyalanan bağlantı, adres çubuğundaki liste URL'i DEĞİL o monitörün derin bağlantısı
+   *     olmalı; modal kapalıyken adres çubuğunda `monitor=` parametresi yok.
+   */
+  it('kart üzerindeki kopyala düğmesi derin bağlantıyı kopyalar ve detayı AÇMAZ', async () => {
+    const writeText = vi.fn(() => Promise.resolve())
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+
+    const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(screen.getByText('OIDC Login')).toBeInTheDocument())
+
+    const copyBtn = container.querySelector('.upt-card .upt-card-copy')
+    expect(copyBtn).not.toBeNull()
+    fireEvent.click(copyBtn)
+
+    await waitFor(() => expect(writeText).toHaveBeenCalled())
+    expect(writeText.mock.calls[0][0]).toContain('?tab=scripted&monitor=1')
+    expect(document.querySelector('.upt-modal')).toBeNull()
+  })
 })

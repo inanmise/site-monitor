@@ -157,7 +157,16 @@ public final class ProcessProbe {
             }
             byte[] bytes;
             try { bytes = reader.get(GRACE_SECONDS, TimeUnit.SECONDS); }
-            catch (Exception e) { bytes = new byte[0]; reader.cancel(true); }
+            catch (Exception e) {
+                bytes = new byte[0];
+                // reader.cancel(true) okuyucu thread'i KESMEZ: CompletableFuture
+                // mayInterruptIfRunning'i yok sayar. Süreç ölmesine rağmen stream EOF vermezse
+                // (Windows'ta miras alınmış boru tanıtıcısı açık kaldığında olur) okuyucu
+                // read()'te süresiz asılı kalır ve hem READER_POOL thread'ini hem 512 KB'lık
+                // ring buffer'ı tutar. Stream'i kapatmak read()'i IOException'la döndürür.
+                try { p.getInputStream().close(); } catch (Exception ignore) { /* zaten kapalı */ }
+                reader.cancel(true);
+            }
             // Son maxOutputBytes'ı tut (hata k6 çıktısının sonundadır).
             int cap = Math.max(0, maxOutputBytes);
             if (cap > 0 && bytes.length > cap)
@@ -201,7 +210,10 @@ public final class ProcessProbe {
             try { bytes = reader.get(3, TimeUnit.SECONDS); }
             catch (Exception e) {
                 bytes = new byte[0];
-                reader.cancel(true); // okuma thread'ini bırak (süreç zaten öldürüldü → stream EOF)
+                // Stream'i KAPAT: cancel(true) tek başına read()'te bloke thread'i kesmez
+                // (bkz. yukarıdaki overload'ın ayrıntılı gerekçesi).
+                try { p.getInputStream().close(); } catch (Exception ignore) { /* zaten kapalı */ }
+                reader.cancel(true);
             }
             String output = new String(bytes, StandardCharsets.UTF_8)
                     + (timedOut ? "\n[zaman aşımı: " + timeoutSeconds + "s — komut sonlandırıldı]" : "");

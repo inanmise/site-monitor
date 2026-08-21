@@ -125,6 +125,9 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       })
       const utils = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
       await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
+      // Şablon kütüphanesi de açılışta yükleniyor: beklemezsek state güncellemesi act() dışında
+      // düşer ve konsolu uyarıyla doldurur (kural: test çıktısı temiz kalır).
+      await waitFor(() => expect(api.monitoring.getScriptedTemplates).toHaveBeenCalled())
       await screen.findByText(row.name)
       fireEvent.click(utils.container.querySelector('.mon-btn-edit'))
       return utils
@@ -193,13 +196,15 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       pickSource(/smoke/i)
 
       expect(inModal('.sc-testrun')).toBeNull()
-      expect(screen.getByTestId('code-editor').value).toContain('www.akbank.com')
+      // Şablonun GÖVDESİ liste yanıtında gelmez (bilinçli), tekil uçtan asenkron çekilir → bekle.
+      await waitFor(() => expect(screen.getByTestId('code-editor').value).toContain('www.akbank.com'))
     })
 
     it('kayıtlı script seçilince o monitörün script+env\'i yüklenir ve paneli geri gelir', async () => {
       await openEditFor(FAILING)
       pickSource(/smoke/i)
       expect(inModal('.sc-testrun')).toBeNull()
+      await waitFor(() => expect(screen.getByTestId('code-editor').value).toContain('www.akbank.com'))
 
       pickSource(/llm-test/)
 
@@ -234,7 +239,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       expect(document.querySelector('.sc-source-select .ss-opt-placeholder')).not.toBeNull()
 
       pickSource(/smoke/i)
-      expect(screen.getByTestId('code-editor').value).toContain('www.akbank.com')
+      await waitFor(() => expect(screen.getByTestId('code-editor').value).toContain('www.akbank.com'))
       openSource()
       fireEvent.mouseDown(document.querySelector('.sc-source-select .ss-opt-placeholder'))
       expect(screen.getByTestId('code-editor').value).toBe('')
@@ -259,6 +264,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       api.monitoring.updateScriptedMonitor.mockResolvedValue({ success: true, data: { id: MON.id } })
       const utils = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
       await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
+      await waitFor(() => expect(api.monitoring.getScriptedTemplates).toHaveBeenCalled())
       await screen.findByText('llm-test')
       return utils
     }
@@ -376,6 +382,42 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       await waitFor(() => expect(screen.getByTestId('code-editor').value).toContain('taslak'))
     })
 
+    it('"Taslağı sil" başarılıysa şerit kalkar', async () => {
+      api.monitoring.getScriptedDrafts.mockResolvedValue({ success: true, data: { drafts: [
+        { monitor_key: 'new', monitor_id: null, monitor_name: 'yarim-kalan',
+          form_json: JSON.stringify({ name: 'yarim-kalan', script: 'export default function(){}' }),
+          updated_at: '2026-08-13T09:30:00' },
+      ] } })
+      await renderPage()
+
+      expect(await screen.findByText(/unfinished draft|tamamlanmamış taslağınız/i)).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: /^discard( draft)?$|^taslağı sil$/i }))
+
+      await waitFor(() => expect(api.monitoring.deleteScriptedDraft).toHaveBeenCalledWith('new'))
+      await waitFor(() =>
+        expect(screen.queryByText(/unfinished draft|tamamlanmamış taslağınız/i)).toBeNull())
+    })
+
+    it('REGRESYON: silme SUNUCUDA başarısızsa şerit KALIR (yalancı "taslak silindi" bildirimi)', async () => {
+      // Yasanan hata: backend'de turetilmis silme sorgusu transaction'siz kostugu icin her seferinde
+      // dusuyordu; arayuz ise yaniti hic okumadan "taslak silindi" deyip seridi yerel state'ten
+      // kaldiriyordu. Kullanici her acilista ayni uyariyi goruyor, taslak asla silinmiyordu.
+      api.monitoring.getScriptedDrafts.mockResolvedValue({ success: true, data: { drafts: [
+        { monitor_key: 'new', monitor_id: null, monitor_name: 'yarim-kalan',
+          form_json: JSON.stringify({ name: 'yarim-kalan', script: 'export default function(){}' }),
+          updated_at: '2026-08-13T09:30:00' },
+      ] } })
+      api.monitoring.deleteScriptedDraft.mockResolvedValue({ success: false, error: 'tx yok' })
+      await renderPage()
+
+      expect(await screen.findByText(/unfinished draft|tamamlanmamış taslağınız/i)).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: /^discard( draft)?$|^taslağı sil$/i }))
+
+      await waitFor(() => expect(api.monitoring.deleteScriptedDraft).toHaveBeenCalled())
+      // Serit YERINDE: kullanici silinmedigini gorsun, sahte basari ile kaybolmasin.
+      expect(screen.getByText(/unfinished draft|tamamlanmamış taslağınız/i)).toBeInTheDocument()
+    })
+
     it('mevcut monitörde taslak OTOMATİK uygulanmaz — kullanıcıya sorulur', async () => {
       api.monitoring.getScriptedDrafts.mockResolvedValue({ success: true, data: { drafts: [
         { monitor_key: '3', monitor_id: 3, monitor_name: 'llm-test',
@@ -418,6 +460,42 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       // Geri dönüş doğrudan YAZMAZ: içerik editöre gelir, kullanıcı kaydedince yeni sürüm olur
       await waitFor(() => expect(screen.getByTestId('code-editor').value).toContain('eski surum'))
       expect(api.monitoring.updateScriptedMonitor).not.toHaveBeenCalled()
+    })
+
+    /**
+     * Kaydetme sonrası doğrulama koşumu (2026-08-20). 2026-08-20 olayında bozuk bir sürüm
+     * 3 dakika boyunca fark edilmedi; koşum kaydeder kaydetmez tetiklenince saniyeler içinde
+     * görünür. KAPI ince: yalnız GERÇEKTEN yeni sürüm yazıldıysa çalışmalı — yoksa her ayar
+     * kaydı k6 havuzundan (varsayılan 2) slot yakar.
+     */
+    it('YENİ SÜRÜM yazılınca doğrulama koşumu tetiklenir ve modal açık kalır', async () => {
+      const { container } = await renderPage()
+      // Mock renderPage'DEN SONRA kurulur: renderPage kendi varsayılanını yazıyor ve
+      // daha önce kurulan mock'u ezerdi (test yanlış sebeple yeşil/kırmızı olurdu).
+      api.monitoring.updateScriptedMonitor.mockResolvedValue({
+        success: true, data: { id: MON.id, script_version: '1.0.3' },   // sürüm ARTTI
+      })
+      api.monitoring.triggerScriptedCheck.mockResolvedValue({ success: true, data: { queued: true } })
+
+      fireEvent.click(container.querySelector('.mon-btn-edit'))
+      fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+
+      await waitFor(() => expect(api.monitoring.triggerScriptedCheck).toHaveBeenCalledWith(MON.id))
+      // Modal KAPANMAZ: sonuç formda gösterilecek.
+      expect(container.ownerDocument.querySelector('.sc-smoke')).not.toBeNull()
+    })
+
+    it('YALNIZ AYAR kaydında (sürüm değişmedi) doğrulama koşumu tetiklenMEZ', async () => {
+      const { container } = await renderPage()
+      api.monitoring.updateScriptedMonitor.mockResolvedValue({
+        success: true, data: { id: MON.id, script_version: '1.0.2' },   // MON ile AYNI sürüm
+      })
+
+      fireEvent.click(container.querySelector('.mon-btn-edit'))
+      fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+
+      await waitFor(() => expect(api.monitoring.updateScriptedMonitor).toHaveBeenCalled())
+      expect(api.monitoring.triggerScriptedCheck).not.toHaveBeenCalled()
     })
   })
 

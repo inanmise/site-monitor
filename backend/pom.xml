@@ -186,6 +186,23 @@
                     </excludes>
                 </configuration>
             </plugin>
+            <!-- Test JVM'ine bellek tavanı (2026-08-20 bellek denetimi).
+                 NEDEN: Bu pom'da surefire yapılandırması HİÇ yoktu; fork edilen test JVM'i
+                 varsayılan ergonomiyle (makine RAM'inin ~1/4'ü ≈ 4 GB MaxHeap) açılıyor ve JaCoCo
+                 ajanı da bu kapaksız fork'un içinde koşuyordu. Depoda duran 15 hs_err kaydının
+                 13'ü tam olarak bu şekilde üretilmiş: hiçbiri Java-heap OOM'u değil, JIT
+                 derleyicisinin native arena'sı (arena.cpp) veya G1'in başlangıçta 256 MB
+                 rezerve edememesi (os_windows.cpp) — yani makinede fiziksel RAM tükenmişken
+                 (çökme anında boş RAM 292 MB–2.7 GB) açılan fazladan JVM'ler.
+                 @{argLine} ZORUNLU: jacoco prepare-agent ajan bayrağını o değişkene yazar;
+                 silinirse kapsam raporu boşalır ve `verify` eşik kuralları sessizce çöker. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>@{argLine} -Xmx1g -Xss512k -XX:+HeapDumpOnOutOfMemoryError</argLine>
+                </configuration>
+            </plugin>
             <!-- Code coverage report. Run via `mvn test`; output in target/site/jacoco/index.html -->
             <plugin>
                 <groupId>org.jacoco</groupId>

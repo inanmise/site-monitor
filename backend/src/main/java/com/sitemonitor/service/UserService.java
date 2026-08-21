@@ -358,6 +358,25 @@ public class UserService {
         return ownTeamIds(u);
     }
 
+    /**
+     * ÜYELİK kapsamı: kullanıcının gerçekten üyesi OLDUĞU takımlar — her rol için aynı anlam.
+     *
+     * <p>Mevcut iki kapsamdan da AYRIDIR ve bu ayrım kasıtlıdır:
+     * <ul>
+     *   <li>{@link #computeViewTeamIds} müdürde ASTLARIN takımlarını içerir — üyelik değil, görüş alanı.</li>
+     *   <li>{@link #computeManageTeamIds} USER için {@code List.of()} döner — yönetim yetkisi, üyelik değil.</li>
+     * </ul>
+     * Şablon kütüphanesi "takımın her üyesi kendi takımının şablonunu düzenler" kuralını
+     * ({@code monitoring.scripted_templates}) ancak bu kapsamla yazabilir; diğer ikisiyle
+     * yazmak ya çok geniş (müdür) ya çok dar (USER) olurdu.
+     *
+     * <p>ASLA {@code null} dönmez — "kısıtsız" diye bir üyelik yoktur; global admin bile
+     * yalnız kendi takımlarının ÜYESİDİR (yetkisi ayrı kapıdan gelir).
+     */
+    public List<Long> computeMemberTeamIds(AppUser u) {
+        return u == null ? List.of() : ownTeamIds(u);
+    }
+
     /** Kullanıcının üye olduğu tüm takımlar (birincil {@code teamId} dahil), sıralı + tekil. */
     private List<Long> ownTeamIds(AppUser u) {
         LinkedHashSet<Long> ids = new LinkedHashSet<>();

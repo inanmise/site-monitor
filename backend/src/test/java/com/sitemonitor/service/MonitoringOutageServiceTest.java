@@ -28,6 +28,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -729,5 +730,54 @@ class MonitoringOutageServiceTest {
 
         assertThat(open.getStatus()).isEqualTo("RESOLVED");
         assertThat(open.getResolvedAt()).isNotNull();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Immediate (teyit=0) yolunda in-flight sızıntısı — 2026-08-20 bellek denetimi.
+    //
+    // startConfirmation'ın N-denemeli yolu (runConfirmAttempt) escalation istisnasını
+    // catch'te yakalayıp anahtarı siliyordu; immediate yol ise remove'u try/finally'siz,
+    // düz akışta çağırıyordu. withLock da yalnız KİLİT bırakmayı finally'ye alır,
+    // action.run()'ı sarmaz → istisna dışarı çıkıp remove'u atlıyordu.
+    //
+    // İki ayrı sonucu var, ikisi de aşağıda pinlenir:
+    //  1) putIfAbsent yeniden-giriş guard'ı olduğundan anahtar kalıcı ölür → o monitörün
+    //     kesinti teyidi bir daha HİÇ başlamaz (restart'a kadar sessiz alarm körlüğü).
+    //  2) startConfirmation sweep'in domain döngüsünden çağrıldığı için istisna o
+    //     sweep'in KALAN domain'lerini de düşürür.
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Immediate mod: escalation fırlatsa bile in-flight anahtarı TEMİZLENİR (yoksa monitör kalıcı sağır kalır)")
+    void immediate_escalationThrows_inFlightCleared() {
+        doThrow(new RuntimeException("escalation patladi"))
+                .when(escalationService).processConfirmedOutage(anyString(), anyString(), anyString(), anyMap());
+
+        MonitoringOutageService.SweepItem it = item(EscalationService.TYPE_PORT_DOWN,
+                "immediate.example.com", "443/TCP", false,
+                Map.of("monitor_confirm_attempts", 0), MonitoringOutageServiceTest::up);
+
+        // runConfirmAttempt ile simetrik: istisna log'lanıp yutulur, çağıran akış devam eder.
+        assertThatCode(() -> service.startConfirmation(it)).doesNotThrowAnyException();
+
+        assertThat(service.activeConfirmations(null)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Immediate mod: ilk domain'in escalation'ı patlarsa sweep'in KALAN domain'leri yine işlenir")
+    void immediate_firstDomainThrows_sweepContinues() {
+        doThrow(new RuntimeException("ilk domain patladi"))
+                .when(escalationService).processConfirmedOutage(
+                        eq("ilk.example.com"), anyString(), anyString(), anyMap());
+
+        service.handleSweepResults(EscalationService.TYPE_PORT_DOWN, List.of(
+                item(EscalationService.TYPE_PORT_DOWN, "ilk.example.com", "443/TCP", false,
+                        Map.of("monitor_confirm_attempts", 0), MonitoringOutageServiceTest::up),
+                item(EscalationService.TYPE_PORT_DOWN, "ikinci.example.com", "443/TCP", false,
+                        Map.of("monitor_confirm_attempts", 0), MonitoringOutageServiceTest::up)));
+
+        verify(escalationService).processConfirmedOutage(
+                eq("ikinci.example.com"), eq(EscalationService.TYPE_PORT_DOWN), anyString(), anyMap());
+        assertThat(service.activeConfirmations(null)).isEmpty();
     }
 }

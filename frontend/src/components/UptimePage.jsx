@@ -6,6 +6,7 @@ import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
+import { domainDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { RefreshCw, X, AlertCircle, CheckCircle, Users } from 'lucide-react'
 import DateTimeRangePicker from './ui/DateTimeRangePicker.jsx'
@@ -236,7 +237,11 @@ export default function UptimePage({ systemRole }) {
                   <span className="upt-badge-dot" />
                   {statusLabel(item.status)}
                 </div>
-                <span className="upt-port-tag">:{item.port}</span>
+                <span className="upt-card-top-right">
+                  <span className="upt-port-tag">:{item.port}</span>
+                  {/* Uptime kartının monitör id'si YOK — anahtarı alan adı, derin bağlantı da öyle. */}
+                  <CopyLinkButton iconOnly url={domainDeepLink('uptime', item.domain)} className="btn btn-sm upt-card-copy" />
+                </span>
               </div>
 
               <div className="upt-card-domain">{item.domain}</div>

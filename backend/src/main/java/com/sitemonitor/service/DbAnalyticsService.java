@@ -49,6 +49,8 @@ public class DbAnalyticsService {
     private static final int RECENT_N = 200;      // "Sorgu" kartı drill-down: son ham sorgu satırları
     private static final int SQL_PREVIEW = 240;   // SQL metni gösterim kısaltması
     private static final long DAY = 86_400L;
+    /** getOverview'un belleğe alacağı azami sorgu-geçmişi satırı (bkz. getOverview yorumu). */
+    private static final int MAX_HISTORY_ROWS = 50_000;
 
     private enum Gran { DAY, HOUR }
 
@@ -71,10 +73,21 @@ public class DbAnalyticsService {
     public Map<String, Object> getOverview(int days) {
         int win = days <= 1 ? 1 : days >= 30 ? 30 : 7;
         String since = ISO.format(Instant.now().minusSeconds((long) win * DAY));
-        List<SqlQueryHistory> rows = historyRepo.findByExecutedAtGreaterThanEqualOrderByExecutedAtAsc(since);
+        // Tavanlı çekim (2026-08-20 bellek denetimi): pencere zaman filtreliydi ama LIMIT'siz,
+        // oysa sql-history retention'ı 365 gün — 30 günlük pencere tabloyu sınırlamıyordu.
+        // En YENİ satırlar korunur; aşağıdaki toplayıcılar ASC beklediği için ters çevrilir.
+        List<SqlQueryHistory> rows = new java.util.ArrayList<>(
+                historyRepo.findByExecutedAtGreaterThanEqualOrderByExecutedAtDesc(
+                        since, org.springframework.data.domain.Limit.of(MAX_HISTORY_ROWS)));
+        boolean truncated = rows.size() >= MAX_HISTORY_ROWS;
+        java.util.Collections.reverse(rows);
         boolean pgss = pgStatStatementsAvailable();
 
         Map<String, Object> out = new LinkedHashMap<>();
+        // Kırpma GÖRÜNÜR olmalı: sessizce kesilen bir analitik ekranı "sistemde 50.000 sorgu var"
+        // gibi yanlış bir tabloyu doğruymuş gibi gösterir.
+        out.put("truncated", truncated);
+        out.put("row_limit", MAX_HISTORY_ROWS);
         out.put("summary",      buildSummary(rows, win, pgss));
         out.put("top_users",    buildTopUsers(rows));
         out.put("top_sql",      pgss ? topSqlFromPgss() : topSqlFromHistory(rows));
