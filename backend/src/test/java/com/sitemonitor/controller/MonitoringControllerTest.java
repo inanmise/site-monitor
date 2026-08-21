@@ -569,7 +569,7 @@ class MonitoringControllerTest {
         when(scriptedChecker.version()).thenReturn("v0.49.0");
         when(scriptedChecker.targetUrls(any())).thenReturn(List.of("https://hedef.example/x"));
         var phases = new com.sitemonitor.service.ScriptedCheckerService.Phases(
-                0L, 41L, 0L, 0L, 0L, 0L, 281L, 316L, 1);
+                0L, 41L, 0L, 0L, 0L, 0L, 281L, 316L, 1, 1L);
         when(scriptedChecker.probe(anyString(), anyBoolean(), anyBoolean())).thenReturn(
                 new com.sitemonitor.service.ScriptedCheckerService.ScriptedResult(
                         "FAIL", false, 15000L, 0, null, null, null, null, null, null,

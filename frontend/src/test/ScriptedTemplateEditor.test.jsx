@@ -107,6 +107,58 @@ describe('ScriptedTemplateEditor — yeni şablon', () => {
     draw()
     expect(screen.getByText('tpl.save').closest('button')).toBeDisabled()
   })
+
+  it('admin ÜYE OLMADIĞI takımı da kapsam olarak seçebilir (sunucu writable_team_ids ile bildirir)', () => {
+    // Sunucu tarafi duzeltmenin arayuz karsiligi: writable_team_ids genisleyince secici de genisler.
+    // Once yalnizca "Genel" cikiyordu, admin "yalniz X takimi gorsun" diyemiyordu.
+    draw({ meta: { ...META, can_create_general: true, writable_team_ids: [5, 6] } })
+    openScopeSelect()
+    expect(screen.getByText('tpl.scopeGeneral')).toBeInTheDocument()
+    expect(screen.getAllByText('Kanal').length).toBeGreaterThan(0)
+    expect(screen.getByText('Çekirdek')).toBeInTheDocument()
+  })
+
+  it('scrim (kenar boşluğu) tıklaması modalı KAPATMAZ; İptal kapatır', () => {
+    // Formda script + ad + env satirlari birikiyor ve taslak YOK: kazara kenara tiklamak
+    // yazilanlarin hepsini gotururdu. Kapanis yalniz bilincli yollardan.
+    const onClose = vi.fn()
+    draw({ onClose })
+    fireEvent.click(document.querySelector('.modal-shell-overlay'))
+    expect(onClose).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByText('tpl.cancel'))
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('script alanındaki kopyala düğmesi script gövdesini panoya yazar', async () => {
+    const writeText = vi.fn(() => Promise.resolve())
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+
+    draw()
+    // Bos script -> dugme HIC cizilmez (olu dugme birakmayalim).
+    expect(screen.queryByTitle('tpl.scriptCopy')).toBeNull()
+
+    fireEvent.change(screen.getByTestId('code-editor'), { target: { value: SCRIPT } })
+    fireEvent.click(screen.getByTitle('tpl.scriptCopy'))
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(SCRIPT))
+    // Onay yerinde verilir (toast yok): ikon 2 sn "kopyalandi"ya doner.
+    await waitFor(() => expect(screen.getByTitle('tpl.scriptCopied')).toBeInTheDocument())
+  })
+
+  it('Kaydet/İptal kaydırılan gövdenin DIŞINDA, sabit altlıkta durur', () => {
+    // jsdom yerlesim hesaplamaz — bu yuzden "gorunuyor mu" degil, YAPI pinleniyor: dugmeler
+    // .modal-shell-footer icinde ve .modal-shell-body (kaydirilan alan) icinde DEGIL.
+    // Gorsel dogrulama tarayicida yapilmali.
+    draw()
+    const footer = document.querySelector('.modal-shell-footer')
+    const body = document.querySelector('.modal-shell-body')
+    expect(footer).not.toBeNull()
+    expect(footer.contains(screen.getByText('tpl.save'))).toBe(true)
+    expect(footer.contains(screen.getByText('tpl.cancel'))).toBe(true)
+    expect(body.contains(screen.getByText('tpl.save'))).toBe(false)
+    expect(document.querySelector('.modal-box').className).toContain('modal-shell--scroll')
+  })
 })
 
 describe('ScriptedTemplateEditor — düzenleme', () => {

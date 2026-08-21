@@ -1053,6 +1053,25 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   display: flex; justify-content: flex-end; gap: 8px;
   margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border);
 }
+
+/* scrollBody: uzun formlarda YALNIZ gövde kaydırılır, altlık (Kaydet/İptal) daima görünür.
+   Neden gerekli: .modal-overlay `align-items: flex-start` + `overflow-y: auto` ile kutuyu
+   serbest bırakıyor; içerik uzayınca düğmeler ekranın çok altına düşüyor ve kullanıcı her
+   kayıt için sayfayı sonuna kadar kaydırmak zorunda kalıyordu (şablon editörü).
+   Yükseklik tavanı overlay'in 60px üst+alt dolgusunu düşer — kutu scrim'in dışına taşmasın. */
+.modal-box.modal-shell--scroll {
+  max-height: min(88vh, calc(100vh - 120px));
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.modal-shell--scroll .modal-shell-hdr { flex: 0 0 auto; }
+/* min-height:0 ŞART — flex öğesinin varsayılan `min-height:auto`'su içeriğe göre büyür ve
+   overflow hiç devreye girmez (altlık yine aşağı kaçar). */
+.modal-shell--scroll .modal-shell-body {
+  flex: 1 1 auto; overflow-y: auto; min-height: 0;
+  /* Kaydırma çubuğu içerik kenarına yapışmasın; kutunun 28px dolgusu korunur. */
+  padding-right: 4px; margin-right: -4px;
+}
+.modal-shell--scroll .modal-shell-footer { flex: 0 0 auto; margin-top: 14px; }
 [data-theme="dark"] .modal-shell-close:hover:not(:disabled) { background: var(--bg-surface); }
 
 /* Sorun Bildir modalı (components/IssueReportModal.jsx) — eskiden tamamı satır içi stildi. */
@@ -2457,7 +2476,43 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .ptr-note { margin-top: 6px; font-size: .92em; opacity: .85; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: end; }
 .form-grid label { display: flex; flex-direction: column; gap: 5px; font-size: .88em; font-weight: 600; }
-.form-grid label input, .form-grid label select { padding: 9px 10px; border: 1px solid var(--border); border-radius: 4px; font-size: .95em; }
+/* Form alanı = `.input` ile AYNI görünüm — tek standart, iki tanım değil.
+   İki eksik vardı ve ikisi de "stilsiz" görüntünün sebebiydi:
+   1) `textarea` bu seçicinin DIŞINDAYDI → tarayıcı varsayılanı: monospace yazı tipi, dolgu yok,
+      ince gri kenarlık. Yanındaki input'la aynı formda durunca fark bariz. Şablon editöründe
+      üst üste üç textarea (açıklama / ne zaman kullanılır / İngilizce karşılıkları) olduğu için
+      en görünür orada.
+   2) input/select'te odak halkası, placeholder rengi, disabled durumu ve tema token'ları
+      (`--input-bg`/`--input-text`) yoktu; alanlar açık temada beyaz-üstü-beyaz kalıyor ve
+      tıklandığında hiçbir geri bildirim vermiyordu. */
+.form-grid label input,
+.form-grid label select,
+.form-grid label textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--input-text);
+  font-family: inherit;
+  font-size: .95em;
+  font-weight: 400;                 /* etiket 600; alanın metni normal kalmalı */
+  transition: border-color .15s, box-shadow .15s;
+}
+.form-grid label textarea { resize: vertical; min-height: 62px; line-height: 1.45; }
+.form-grid label input:focus,
+.form-grid label select:focus,
+.form-grid label textarea:focus {
+  outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(59,130,246,.15);
+}
+.form-grid label input::placeholder,
+.form-grid label textarea::placeholder { color: var(--text-light); opacity: .85; }
+.form-grid label input:disabled,
+.form-grid label select:disabled,
+.form-grid label textarea:disabled {
+  background: var(--bg-surface); color: var(--text-light); cursor: not-allowed;
+}
 .form-grid .full-width { grid-column: 1 / -1; }
 /* Genel form-control sınıfı — Senaryo İzleme modalı .input kullanıyor ama sınıf
    tanımsızdı; label DIŞINDAKİ alanlar (Ortam Değişkenleri AD/değer) tarayıcı
@@ -2571,9 +2626,15 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   background: rgba(22,163,74,.06); font-size: .85em; line-height: 1.5; color: var(--text, #1e293b); }
 .kw-type-banner svg { flex-shrink: 0; margin-top: 1px; color: #16a34a; }
 .kw-block-title { font-weight: 700; font-size: .9em; margin-bottom: 4px; color: var(--text, #1e293b); }
-.kw-tags-block, .kw-notify-section, .kw-interval-block, .kw-ssl-section {
+/* `sc-tpl-block`: şablon editörünün grupları (etiketler / script / env / İngilizce) aynı
+   çerçeveyi kullanır — izleme formlarındaki bölümlerle tek dil. Ayrı bir kutu tanımı YAZILMADI,
+   mevcut liste genişletildi. */
+.kw-tags-block, .kw-notify-section, .kw-interval-block, .kw-ssl-section, .sc-tpl-block {
   grid-column: 1 / -1; padding: 13px 14px; border: 1px solid var(--border); border-radius: 9px;
   background: rgba(148,163,184,.06); }
+/* Bölüm içindeki son ipucunun altında boşluk kalmasın (kutu zaten dolgulu). */
+.sc-tpl-block > .field-hint:last-child { margin-bottom: 0; }
+.sc-tpl-block .sc-tpl-en { margin-top: 12px; }
 .kw-ssl-section .checkbox-label { margin-top: 8px; }
 .kw-days-row { display: flex; align-items: center; gap: 8px; margin: 6px 0 2px 26px; font-size: .84em; color: var(--text-muted); }
 .kw-days-row input { width: 140px; padding: 6px 9px; border: 1px solid var(--border); border-radius: 4px; font-size: .95em; }
@@ -7389,6 +7450,10 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .sc-k6ver-note--warn { color: var(--warning, #f59e0b); }
 /* Başlık satırı: "k6 Script (JavaScript)" solda, sürüm bilgisi sağda. */
 .sc-script-title { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+/* Başlık satırının SAĞ grubu: k6 sürüm rozeti + panoya kopyala. Tek tek çocuk olsalardı
+   `justify-content: space-between` ikisini satırın iki ucuna dağıtırdı. */
+.sc-script-tools { display: inline-flex; align-items: center; gap: 8px; }
+.sc-script-tools .btn { line-height: 0; padding: 5px 8px; }
 
 /* SearchableSelect grup başlığı (kayıtlı script'ler / şablonlar ayrımı). */
 .ss-group {
@@ -7412,9 +7477,84 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 .sc-draft-saved { margin-left: 10px; font-size: .68em; font-weight: 600; color: var(--success, #16a34a); }
 .sc-versions { margin-top: 4px; }
-.sc-ver-preview { margin-top: 12px; }
-.sc-ver-preview-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
 .uact-row-click.is-sel { background: color-mix(in srgb, var(--text) 5%, transparent); }
+
+/* ── Sürüm geçmişi zaman çizelgesi (components/scripted/VersionTimeline.jsx) ──────────────
+   Eskiden Sistem Sağlığı'nın `health-dbtable`'ı ödünç alınıyordu: `table-layout: fixed` + orada
+   tanımlı genişlik sınıfları olmadan beş sütun eşit bölünüyor, hücreler dolgu/kenarlık sınıfı
+   taşımadığı için sıkışık ve çerçevesiz kalıyordu. Burada veri zaten bir olay akışı. */
+.sc-vt { list-style: none; margin: 0; padding: 0; }
+.sc-vt-item { position: relative; padding-left: 30px; }
+/* Dikey ray: noktanın merkezinden geçer, İLK satırda üstten ve SON satırda alttan kesilir —
+   çizgi listenin dışına taşmasın. */
+.sc-vt-item::before {
+  content: ''; position: absolute; left: 12px; top: 0; bottom: 0;
+  width: 2px; background: var(--border);
+}
+/* 21px = noktanın merkezi (top 8px + 26px/2). Ray ilk noktanın merkezinden başlar, son noktanın
+   merkezinde biter. Tek satırlık geçmişte ray HİÇ çizilmez — bağlanacak ikinci nokta yok. */
+.sc-vt-item:first-child::before { top: 21px; }
+.sc-vt-item:last-child::before  { bottom: auto; height: 21px; }
+.sc-vt-item:first-child:last-child::before { display: none; }
+
+.sc-vt-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 9px 10px 9px 0; cursor: pointer; border-radius: 8px;
+  transition: background .12s;
+}
+.sc-vt-row:hover { background: var(--bg-hover, rgba(0,0,0,.03)); }
+.sc-vt-row:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.sc-vt-item.is-sel .sc-vt-row {
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+
+/* Olay noktası — rayın üstünde durur, bu yüzden kendi arka planı OPAK olmalı. */
+.sc-vt-dot {
+  position: absolute; left: 0; top: 8px;
+  width: 26px; height: 26px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px solid var(--bg-card, #fff); box-sizing: border-box;
+  color: #fff; flex: 0 0 auto;
+}
+.sc-vt-dot--new    { background: var(--primary, #3b82f6); }
+.sc-vt-dot--edit   { background: #64748b; }
+.sc-vt-dot--up     { background: var(--success, #16a34a); }
+.sc-vt-dot--down   { background: var(--warning, #f59e0b); }
+.sc-vt-dot--danger { background: var(--danger, #dc2626); }
+
+.sc-vt-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 auto; }
+.sc-vt-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sc-vt-event { font-size: .88em; font-weight: 700; color: var(--text); }
+.sc-vt-meta {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: .78em; color: var(--text-muted);
+}
+.sc-vt-sep { opacity: .6; }
+/* Not kendi satırında ve TAM okunur (tabloda 1/5 sütuna sıkışıyordu). */
+.sc-vt-note {
+  font-size: .82em; color: var(--text-light); line-height: 1.45;
+  padding-left: 9px; border-left: 2px solid var(--border);
+}
+.sc-vt-caret { flex: 0 0 auto; margin-top: 6px; color: var(--text-muted); transition: transform .15s; }
+.sc-vt-item.is-sel .sc-vt-caret { transform: rotate(90deg); color: var(--primary); }
+
+/* Seçili sürümün önizleme paneli — çerçeveli kart: listeden görsel olarak ayrılsın. */
+.sc-ver-preview {
+  margin-top: 14px; border: 1px solid var(--border); border-radius: 10px;
+  overflow: hidden; background: var(--bg-card, #fff);
+}
+.sc-ver-preview-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 9px 12px; background: var(--bg-surface); border-bottom: 1px solid var(--border);
+}
+.sc-ver-preview-id { display: inline-flex; align-items: center; gap: 8px; }
+.sc-ver-preview-tools { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sc-ver-preview-body { padding: 12px; }
+.sc-ver-preview-body > .sc-diff-summary:first-child { margin-top: 0; }
+
+[data-theme="dark"] .sc-vt-dot { border-color: var(--bg-card); }
+[data-theme="dark"] .sc-ver-preview { background: var(--bg-card); }
 
 /* "Hiç başarılı olmadı" rozeti — arıza (kırmızı) ile yapılandırma sorununu ayırmak için mor,
    Sayfa türündeki CONFIG_ERROR ile aynı görsel dil. */
@@ -7424,6 +7564,15 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   background: rgba(124,58,237,.12); color: #6d28d9; border: 1px solid rgba(124,58,237,.3);
 }
 [data-theme="dark"] .sc-never-badge { color: #c4b5fd; border-color: rgba(167,139,250,.4); }
+
+/* "Sistem kapattı" rozeti — anomali guard'ının otomatik devre dışı bırakması. Kırmızı, çünkü
+   kullanıcının kendi kapattığı pasif izlemeyle karıştırılmamalı: bu bir MÜDAHALE gerektirir. */
+.sc-autodisabled-badge {
+  font-size: .64em; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 10px; white-space: nowrap;
+  background: rgba(220,38,38,.12); color: #b91c1c; border: 1px solid rgba(220,38,38,.35);
+}
+[data-theme="dark"] .sc-autodisabled-badge { color: #fca5a5; border-color: rgba(248,113,113,.4); }
 
 /* Test Run konsolu — düzenleme modalındaki sonuç paneli. */
 .sc-testrun { margin-top: 4px; }

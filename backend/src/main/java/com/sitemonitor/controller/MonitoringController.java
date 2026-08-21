@@ -2515,7 +2515,18 @@ public class MonitoringController {
             }
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("teamId"))    m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
-            if (body.get("active") instanceof Boolean b) m.setActive(b);
+            if (body.get("active") instanceof Boolean b) {
+                // Kullanıcı izlemeyi YENİDEN AÇIYORSA anomali kapatmasının sebebi düşer: uyarı,
+                // düzeltilmiş bir izlemenin üstünde sonsuza kadar asılı kalmamalı. Kapatma kararı
+                // aktivite akışında ve denetim kaydında zaten kalıcıdır.
+                if (b && Boolean.FALSE.equals(m.getActive()) && m.getDisabledReason() != null) {
+                    log.info("Anomali ile kapatılan izleme kullanıcı tarafından yeniden açıldı: {} ({})",
+                            m.getName(), actor(session));
+                    m.setDisabledReason(null);
+                    m.setDisabledAt(null);
+                }
+                m.setActive(b);
+            }
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (body.get("confirmAttempts") != null)         m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
             if (body.get("confirmIntervalSeconds") != null)  m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
@@ -3214,6 +3225,10 @@ public class MonitoringController {
         item.put("slow_response_enabled", Boolean.TRUE.equals(m.getSlowResponseEnabled()));
         item.put("slow_threshold_ms", m.getSlowThresholdMs());
         item.put("script_version", m.getScriptVersion());
+        // Anomali guard'ı kapattıysa SEBEP arayüzde kalıcı uyarı olarak durur; kullanıcının kendi
+        // kapattığı izlemeden ayrılır (ikisinde de active=false).
+        item.put("disabled_reason", m.getDisabledReason());
+        item.put("disabled_at", m.getDisabledAt());
         item.put("active_alarm", openAlarm != null);
         item.put("alarm_level", openAlarm != null ? openAlarm.getAlertLevel() : null);
         item.put("alarm_acknowledged", openAlarm != null ? openAlarm.getAcknowledged() : null);

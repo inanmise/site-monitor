@@ -5,6 +5,7 @@ import ModalShell from '../ui/ModalShell.jsx'
 import CodeEditor from '../ui/CodeEditor.jsx'
 import TagInput from '../ui/TagInput.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
+import CopyButton from '../ui/CopyButton.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
 
@@ -101,7 +102,24 @@ export default function ScriptedTemplateEditor({
     (!isNew || form.scope !== '')
 
   return (
-    <ModalShell open onClose={onClose} title={title} icon={FileCode2} size="lg" busy={saving}>
+    // dismissOnBackdrop={false}: bu formda script + ad + kapsam + env satırları birikiyor ve
+    // kenar boşluğuna kazara tıklamak hepsini geri dönülmez biçimde siliyordu (taslak yok).
+    // Kapanış yalnız BİLİNÇLİ yollardan: İptal, X ve Escape.
+    // scrollBody + footer: form kod editörüyle birlikte ekranı kolayca aşıyor; düğmeler gövdenin
+    // içindeyken en alta düşüyor ve her kayıt için sonuna kadar kaydırmak gerekiyordu.
+    <ModalShell open onClose={onClose} title={title} icon={FileCode2} size="lg" busy={saving}
+      dismissOnBackdrop={false} scrollBody
+      footer={
+        <>
+          <button className="btn btn-secondary" onClick={onClose}>
+            {readOnly ? t('tpl.close') : t('tpl.cancel')}
+          </button>
+          {!readOnly &&
+            <button className="btn btn-primary" onClick={save} disabled={!canSave} aria-busy={saving}>
+              {saving ? '…' : t('tpl.save')}
+            </button>}
+        </>
+      }>
       {loading
         ? <LoadingBlock label={t('modal.loading')} />
         : (<>
@@ -137,14 +155,14 @@ export default function ScriptedTemplateEditor({
                     ? t('tpl.scopeGeneral')
                     : (template.team_name || teamName || t('tpl.scopeTeam'))} /></label>}
 
-            <div className="full-width">
+            <div className="full-width sc-tpl-block">
               <div className="kw-block-title">{t('tpl.tags')}</div>
               <TagInput value={form.tags} onChange={v => set({ tags: v })} disabled={readOnly}
                 placeholder={t('tpl.tagsPlaceholder')} />
             </div>
 
             {/* İngilizce alanlar — katlanmış (K6: kullanıcıya çeviri yükü bindirme). */}
-            <div className="full-width">
+            <div className="full-width sc-tpl-block">
               <button type="button" className="btn btn-sm btn-secondary" onClick={() => setShowEn(v => !v)}>
                 {showEn ? t('tpl.enHide') : t('tpl.enShow')}
               </button>
@@ -163,10 +181,16 @@ export default function ScriptedTemplateEditor({
               )}
             </div>
 
-            <div className="full-width">
+            <div className="full-width sc-tpl-block">
               <div className="kw-block-title sc-script-title">
                 <span>{t('tpl.script')} <span className="req-star">*</span></span>
-                {k6Version && <span className="sc-k6ver-chip">k6 {k6Version}</span>}
+                <span className="sc-script-tools">
+                  {k6Version && <span className="sc-k6ver-chip">k6 {k6Version}</span>}
+                  {/* Şablonun asıl işi kopyalanmak: salt-okunur görünümde de dursun. */}
+                  {(form.script || '').trim() &&
+                    <CopyButton value={form.script} className="btn btn-sm btn-secondary"
+                      label={t('tpl.scriptCopy')} copiedLabel={t('tpl.scriptCopied')} />}
+                </span>
               </div>
               <CodeEditor value={form.script} onChange={code => set({ script: code })}
                 readOnly={readOnly} textareaId={`k6-template-${template?.id || 'new'}`}
@@ -175,7 +199,7 @@ export default function ScriptedTemplateEditor({
             </div>
 
             {/* Env TANIMLARI — değer alanı bilinçli olarak YOK. */}
-            <div className="full-width">
+            <div className="full-width sc-tpl-block">
               <div className="kw-block-title">{t('tpl.env')}</div>
               {form.env.length > 0 &&
                 <div className="env-list">
@@ -213,16 +237,6 @@ export default function ScriptedTemplateEditor({
                 </select>
                 <span className="field-hint">{t('tpl.bumpHint')}</span></label>
             )}
-          </div>
-
-          <div className="modal-actions">
-            <button className="btn btn-secondary" onClick={onClose}>
-              {readOnly ? t('tpl.close') : t('tpl.cancel')}
-            </button>
-            {!readOnly &&
-              <button className="btn btn-primary" onClick={save} disabled={!canSave} aria-busy={saving}>
-                {saving ? '…' : t('tpl.save')}
-              </button>}
           </div>
         </>)}
     </ModalShell>

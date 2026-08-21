@@ -170,6 +170,9 @@ public class SchedulerService {
     private com.sitemonitor.repository.ScriptedMonitorRepository scriptedMonitorRepo;
     @Autowired
     private com.sitemonitor.repository.ScriptedCheckRepository scriptedCheckRepo;
+    /** Anomali guard'ı (L3) — koşum kaydedildikten sonra izlemeyi kapatabilir. */
+    @Autowired
+    private ScriptedAnomalyGuard scriptedAnomalyGuard;
 
     @Value("${site.monitor.username:user}")
     private String adminUsername;
@@ -417,6 +420,10 @@ public class SchedulerService {
         // SCRIPTED_SLOW (opt-in yavaş koşum alarmı) — port/keyword'deki alan adlarıyla aynı.
         patch("ALTER TABLE scripted_monitors ADD COLUMN slow_response_enabled BOOLEAN DEFAULT FALSE");
         patch("ALTER TABLE scripted_monitors ADD COLUMN slow_threshold_ms INTEGER");
+        // Anomali guard'ı (L3): izleme SİSTEM tarafından kapatıldıysa sebebi burada durur ve
+        // ekranda kalıcı uyarı olarak görünür. Kullanıcının kendi kapattığı izlemeden ayırır.
+        patch("ALTER TABLE scripted_monitors ADD COLUMN disabled_reason TEXT");
+        patch("ALTER TABLE scripted_monitors ADD COLUMN disabled_at VARCHAR(40)");
         // Taslak kullanıcı+monitör başına TEK satır. monitor_id yerine metin anahtar kullanılıyor:
         // PostgreSQL unique index'te NULL'ları birbirinden farklı sayar, "yeni monitör" taslakları çoğalırdı.
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_scripted_draft_owner_key ON scripted_drafts(owner, monitor_key)");
@@ -2982,6 +2989,24 @@ public class SchedulerService {
         if (res.checksFailed() != null) out.put("checks_failed", res.checksFailed());
         if (res.outputTail() != null) out.put("output_tail", res.outputTail());
         out.put("failed_checks", failedCheckNames(res.checksJson()));
+
+        // ── L3: anomali guard'ı — KAYIT YAZILDIKTAN SONRA ────────────────────────────────
+        // Sıra önemli: guard ardışık zaman aşımı serisini `scripted_checks` üzerinden okuyor,
+        // yani bu koşumun satırı DB'de olmalı. Kapatma gerçekleştiyse manuel tetikleyen kullanıcı
+        // sebebi yanıtta görsün — arka planda sessizce kapanmasın.
+        // Guard bir GÜVENLİK AĞI'dır, kontrol hattının bir parçası değil: buradaki bir arıza
+        // koşumun kaydedilmesini ya da sweep sonucunun üretilmesini ASLA engellememeli.
+        // (Guard'ın kendi içi de sessiz; bu ikinci kemer enjeksiyonun hiç yapılmadığı yolları
+        // da kapsıyor — aksi halde tek bir null bütün senaryo sweep'ini sessizce düşürürdü.)
+        try {
+            String disabled = scriptedAnomalyGuard == null ? null : scriptedAnomalyGuard.evaluate(m, res);
+            if (disabled != null) {
+                out.put("disabled", true);
+                out.put("disabled_reason", disabled);
+            }
+        } catch (Exception e) {
+            log.warn("Anomali guard'ı çalıştırılamadı ({}): {}", m.getName(), e.toString());
+        }
         return out;
     }
 

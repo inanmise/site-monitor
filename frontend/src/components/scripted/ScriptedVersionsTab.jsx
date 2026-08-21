@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo } from 'react'
-import { api, formatDateSec } from '../../api/client'
+import { api } from '../../api/client'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
-import UserBadge from '../ui/UserBadge.jsx'
 import CodeEditor from '../ui/CodeEditor.jsx'
+import VersionTimeline from './VersionTimeline.jsx'
 import { lineDiff, collapseContext, envNameDiff } from '../../utils/lineDiff.js'
 
 /**
@@ -67,63 +67,50 @@ export default function ScriptedVersionsTab({ t, monitor, canEdit, onLoadIntoEdi
 
   return (
     <div className="sc-versions">
-      <table className="health-dbtable">
-        <thead><tr>
-          <th className="dbtcol-th">{t('scripted.versionColVersion')}</th>
-          <th className="dbtcol-th">{t('scripted.versionColWhen')}</th>
-          <th className="dbtcol-th">{t('scripted.versionColWho')}</th>
-          <th className="dbtcol-th">{t('scripted.versionColEvent')}</th>
-          <th className="dbtcol-th">{t('scripted.versionColNote')}</th>
-        </tr></thead>
-        <tbody>
-          {rows.map(v => (
-            <tr key={v.id} className={`uact-row-click${sel?.id === v.id ? ' is-sel' : ''}`} style={{ cursor: 'pointer' }}
-                onClick={() => { setSel(sel?.id === v.id ? null : v); setView('diff') }}>
-              <td>
-                <span className="sc-ver-chip">v{v.version}</span>
-                {v.current && <span className="sc-ver-current">{t('scripted.versionCurrent')}</span>}
-                <VersionRuns t={t} version={v} />
-              </td>
-              <td className="sys-mono sys-small">{formatDateSec(v.created_at)}</td>
-              {/* Sicil DEĞİL ad-soyad + AD fotoğrafı: UserBadge uygulamanın diğer tüm
-                  "kim yaptı" yüzeylerinde (denetim kaydı, alarm geçmişi) zaten standart. */}
-              <td className="sys-small"><UserBadge username={v.created_by} size="sm" inline nameOnly /></td>
-              <td className="sys-small">{eventLabel(v.event_type)}</td>
-              <td className="sys-small">{v.note || '—'}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {/* Şablon modalıyla AYNI zaman çizelgesi — ikisi de aynı veriyi gösteriyor, ikiye ayrılmış
+          bir tasarım "aynı şey mi, farklı şey mi?" sorusu üretirdi. */}
+      <VersionTimeline
+        rows={rows} selId={sel?.id ?? null}
+        currentLabel={t('scripted.versionCurrent')}
+        eventLabel={eventLabel}
+        renderExtra={v => <VersionRuns t={t} version={v} />}
+        onPick={v => { setSel(sel?.id === v.id ? null : v); setView('diff') }} />
 
       {sel && (
         <div className="sc-ver-preview">
           <div className="sc-ver-preview-head">
-            <span className="sc-ver-chip">v{sel.version}</span>
-            {prev && <span className="sc-ver-vs">v{prev.version} → v{sel.version}</span>}
-            <span className="sc-ver-viewtabs">
-              <button type="button" className={`btn btn-sm${view === 'diff' ? ' btn-primary' : ''}`}
-                onClick={() => setView('diff')} disabled={!prev}>{t('scripted.verTabDiff')}</button>
-              <button type="button" className={`btn btn-sm${view === 'script' ? ' btn-primary' : ''}`}
-                onClick={() => setView('script')}>{t('scripted.verTabScript')}</button>
+            <span className="sc-ver-preview-id">
+              <span className="sc-ver-chip sc-ver-chip--cell">v{sel.version}</span>
+              {prev && <span className="sc-ver-vs">v{prev.version} → v{sel.version}</span>}
             </span>
-            {canEdit && detail && (
-              <button className="btn btn-sm btn-primary" onClick={() => onLoadIntoEditor(sel, detail)}>
-                {t('scripted.versionLoad')}
-              </button>
-            )}
+            <span className="sc-ver-preview-tools">
+              <span className="seg-ctl">
+                <button type="button" className={`seg-ctl-btn${view === 'diff' ? ' active' : ''}`}
+                  onClick={() => setView('diff')} disabled={!prev}>{t('scripted.verTabDiff')}</button>
+                <button type="button" className={`seg-ctl-btn${view === 'script' ? ' active' : ''}`}
+                  onClick={() => setView('script')}>{t('scripted.verTabScript')}</button>
+              </span>
+              {canEdit && detail && (
+                <button className="btn btn-sm btn-primary" onClick={() => onLoadIntoEditor(sel, detail)}>
+                  {t('scripted.versionLoad')}
+                </button>
+              )}
+            </span>
           </div>
 
-          {view === 'script' || !prev
-            ? (detail
-                ? <CodeEditor value={detail.script || ''} onChange={() => {}} readOnly textareaId={`k6-version-${sel.id}`} />
-                : <LoadingBlock label={t('modal.loading')} />)
-            : (detail && prevDetail
-                ? <VersionDiff t={t} oldDetail={prevDetail} newDetail={detail} />
-                : <LoadingBlock label={t('modal.loading')} />)}
+          <div className="sc-ver-preview-body">
+            {view === 'script' || !prev
+              ? (detail
+                  ? <CodeEditor value={detail.script || ''} onChange={() => {}} readOnly textareaId={`k6-version-${sel.id}`} />
+                  : <LoadingBlock label={t('modal.loading')} />)
+              : (detail && prevDetail
+                  ? <VersionDiff t={t} oldDetail={prevDetail} newDetail={detail} />
+                  : <LoadingBlock label={t('modal.loading')} />)}
 
-          {!prev && view === 'diff' && (
-            <StatusBlock tone="neutral" title={t('scripted.verDiffFirst')} />
-          )}
+            {!prev && view === 'diff' && (
+              <StatusBlock tone="neutral" title={t('scripted.verDiffFirst')} />
+            )}
+          </div>
         </div>
       )}
     </div>

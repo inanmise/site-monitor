@@ -132,7 +132,19 @@ class ScriptedProxyTest {
     private ScriptedCheckerService serviceWithGuard(ProxySettings p) {
         SsrfGuard guard = org.mockito.Mockito.mock(SsrfGuard.class);
         org.mockito.Mockito.when(guard.blacklistCidrs()).thenReturn(STRICT);
-        return new ScriptedCheckerService(guard, null, null, null, p);
+        return new ScriptedCheckerService(guard, null, defaultSettings(), null, p);
+    }
+
+    /**
+     * Ayarları VARSAYILANLARINA döndüren stub. {@code buildProcessEnv} artık kaynak tavanlarını
+     * (GOMAXPROCS/GOMEMLIMIT) buradan okuyor; null geçmek testi üretimde olmayan bir NPE ile
+     * düşürürdü. Varsayılanı döndürmek üretim davranışının ta kendisi.
+     */
+    private static AppSettingsService defaultSettings() {
+        AppSettingsService s = org.mockito.Mockito.mock(AppSettingsService.class);
+        org.mockito.Mockito.when(s.getString(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString())).thenAnswer(i -> i.getArgument(1));
+        return s;
     }
 
     @Test
@@ -168,7 +180,7 @@ class ScriptedProxyTest {
     // Bu yolun uzun süre tek satır testi yoktu; yalnız ProxySettings'in ürettiği STRING pinliydi.
 
     private ScriptedCheckerService service(ProxySettings p) {
-        return new ScriptedCheckerService(null, null, null, null, p);
+        return new ScriptedCheckerService(null, null, defaultSettings(), null, p);
     }
 
     private static List<ScriptedCheckerService.EnvVar> env(ScriptedCheckerService.EnvVar... v) {
@@ -248,6 +260,31 @@ class ScriptedProxyTest {
         // CA yoksa değişken HİÇ konmaz (boş yol Go'da sistem havuzunu bozardı)
         assertThat(svc.buildProcessEnv(List.of(), ScriptedCheckerService.ProxyUse.DIRECT, null,
                 new java.util.ArrayList<>())).doesNotContainKey("SSL_CERT_FILE");
+    }
+
+    @Test
+    @DisplayName("Kaynak tavanları alt süreç ortamına GEÇER (GOMAXPROCS/GOMEMLIMIT)")
+    void resourceLimitsReachProcessEnv() {
+        // Script'ler ÜRETİM sistemlerinde koşuyor ve k6 ayrı bir süreç: pod limiti dışında onu
+        // kısan hiçbir şey yoktu. Bu iki değişkeni Go runtime'ı doğrudan okur — sonsuz bir CPU
+        // döngüsü tek çekirdekten, bellek de tavandan fazlasını yiyemez.
+        var svc = service(settings("", 0, "", "", ""));
+
+        var e = svc.buildProcessEnv(List.of(), ScriptedCheckerService.ProxyUse.DIRECT, null,
+                new java.util.ArrayList<>());
+
+        assertThat(e).containsEntry("GOMAXPROCS", "1").containsEntry("GOMEMLIMIT", "256MiB");
+    }
+
+    @Test
+    @DisplayName("Kullanıcının kendi GOMAXPROCS'u EZİLMEZ (putIfAbsent) — bilinçli değer korunur")
+    void userSuppliedLimitWins() {
+        var svc = service(settings("", 0, "", "", ""));
+
+        var e = svc.buildProcessEnv(env(new ScriptedCheckerService.EnvVar("GOMAXPROCS", "2", false)),
+                ScriptedCheckerService.ProxyUse.DIRECT, null, new java.util.ArrayList<>());
+
+        assertThat(e).containsEntry("GOMAXPROCS", "2");
     }
 
     // ── "Her zaman vekil üzerinden" (ON) GERÇEKTEN vekilden geçirir ──────────────────────────

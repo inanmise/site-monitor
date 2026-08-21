@@ -21,6 +21,15 @@ import { X } from 'lucide-react'
  * `busy` iken kapatma yolları (Escape, scrim tıklaması, X) devre dışıdır — gönderim sürerken
  * yanlışlıkla kapatmayı önler.
  *
+ * `dismissOnBackdrop={false}` scrim tıklamasını TAMAMEN kapatır (Escape ve X açık kalır).
+ * İçinde uzun emek biriken formlar için: yanlışlıkla kenara tıklamak yazılanların hepsini
+ * götürüyordu ve geri alma yolu yok. Varsayılan `true` — mevcut modalların davranışı değişmesin.
+ *
+ * `scrollBody` uzun formlar içindir: kutuya yükseklik tavanı koyar, YALNIZ gövdeyi kaydırır ve
+ * `footer`'ı daima görünür tutar. Düğmeler bu modda `footer` ile verilmeli — gövdenin içine
+ * konursa onlar da kaydırma alanında kalır ve amaç boşa gider. İkisi de varsayılan olarak
+ * KAPALI: mevcut modalların yerleşimi bu değişiklikten etkilenmesin.
+ *
  * Kapsam notu: mevcut ~12 modal bilinçli olarak taşınmadı; her biri kendi iç düzenini
  * `.modal-box`/`.modal-content` üstüne kurmuş ve toplu geçiş ayrı bir iş.
  */
@@ -48,6 +57,7 @@ const FOCUSABLE = [
 
 export default function ModalShell({
   open, onClose, title, icon: Icon, size = 'md', busy = false,
+  dismissOnBackdrop = true, scrollBody = false,
   closeLabel, footer, children, className = '',
 }) {
   const parentDepth = useContext(DepthCtx)
@@ -135,11 +145,15 @@ export default function ModalShell({
       <div
         className="modal-overlay modal-shell-overlay"
         style={{ '--modal-z': 2000 + parentDepth * 10 }}
-        onClick={(e) => { if (e.target === e.currentTarget && !busy) onClose?.() }}
+        onClick={(e) => {
+          if (!dismissOnBackdrop || busy) return
+          if (e.target === e.currentTarget) onClose?.()
+        }}
       >
         <div
           ref={boxRef}
-          className={['modal-box', `modal-shell--${size}`, className].filter(Boolean).join(' ')}
+          className={['modal-box', `modal-shell--${size}`, scrollBody && 'modal-shell--scroll', className]
+            .filter(Boolean).join(' ')}
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleId}
