@@ -110,6 +110,20 @@ public class ScriptedMonitor {
     @Column(name = "notify_email")
     private Boolean notifyEmail = true;
 
+    /**
+     * Otomatik devre dışı bırakma SEBEBİ — doluysa izleme sistem tarafından kapatılmıştır.
+     *
+     * <p>{@code active=false} tek başına yetmez: kullanıcının kendi kapattığı bir izleme ile
+     * sistemin anomali yüzünden kapattığı ayırt edilemezdi. Bu alan ekranda kalıcı bir uyarı
+     * olarak gösterilir ve kullanıcı izlemeyi yeniden açtığında TEMİZLENİR.
+     */
+    @Column(name = "disabled_reason", columnDefinition = "TEXT")
+    private String disabledReason;
+
+    /** Otomatik kapatmanın zamanı (ISO). {@link #disabledReason} ile birlikte yazılır/silinir. */
+    @Column(name = "disabled_at")
+    private String disabledAt;
+
     @Column(name = "created_at")
     private String createdAt;
 

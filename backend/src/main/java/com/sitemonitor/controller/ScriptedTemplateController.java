@@ -114,11 +114,21 @@ public class ScriptedTemplateController {
                 || SessionScope.isMemberOf(session, teamId);
     }
 
-    /** Kullanıcının yazabildiği takımlar — UI kapsam seçicisini bundan doldurur, tahmin etmez. */
-    private static List<Long> writableTeamIds(HttpSession session) {
+    /**
+     * Kullanıcının yazabildiği takımlar — UI kapsam seçicisini bundan doldurur, tahmin etmez.
+     *
+     * <p><b>{@link #canWriteTeam} ile AYNI cevabı vermek zorundadır.</b> Global admin oradaki ilk
+     * satırda her takıma yazabiliyor; burada ise yalnız ÜYE/yönetici olduğu takımlar sayılıyordu.
+     * Sonuç: admin'e kapsam seçicisinde "Herkes görür" dışında hiçbir takım görünmüyor, oysa aynı
+     * isteği elle göndermek kabul edilirdi — yani yetki değil, yalnız listeleme eksikti. Üyelik
+     * önce ekleniyor: {@link #primaryWritableTeam} ilk sırayı varsayılan sayar, admin'in kendi
+     * takımı rastgele bir takımın arkasına düşmemeli.
+     */
+    private List<Long> writableTeamIds(HttpSession session) {
         LinkedHashSet<Long> out = new LinkedHashSet<>(SessionScope.memberTeamIds(session));
         List<Long> manage = SessionScope.manageTeamIds(session);
         if (manage != null) out.addAll(manage);
+        if (SessionScope.isGlobalAdmin(session)) out.addAll(certificateService.teamNamesById().keySet());
         return new ArrayList<>(out);
     }
 
@@ -250,7 +260,7 @@ public class ScriptedTemplateController {
     }
 
     /** Kapsam belirtilmemişse yazılabilir İLK takım — üyelik önce (K3), sonra yönetim. */
-    private static Long primaryWritableTeam(HttpSession session) {
+    private Long primaryWritableTeam(HttpSession session) {
         List<Long> writable = writableTeamIds(session);
         if (!writable.isEmpty()) return writable.get(0);
         Object primary = session != null ? session.getAttribute("teamId") : null;

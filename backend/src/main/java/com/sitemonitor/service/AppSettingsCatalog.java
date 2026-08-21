@@ -78,6 +78,17 @@ public final class AppSettingsCatalog {
         // BLOCK = kesin hatada (satır/sütun çıkarılabiliyorsa) kaydetmeyi reddet · OFF = kapalı.
         new Setting("site.monitor.scripted.syntax-check-policy",     "scripted", Type.ENUM, java.util.List.of("BLOCK", "WARN", "OFF")),
         new Setting("site.monitor.scripted.validate-timeout-seconds","scripted", Type.INT),
+        // ── Kaynak tavanları (L2) — script ÜRETİM sistemlerine istek atıyor ────────────────
+        // max-rps: k6 --rps; statik analizin kanıtlayamadığı döngüleri saniyede bu sayıya yayar.
+        // max-procs / mem-limit: k6 alt sürecinin GOMAXPROCS / GOMEMLIMIT değerleri (Go runtime).
+        // max-requests-per-run: aşılırsa koşum ANOMALİ sayılır ve izleme anında kapatılır.
+        new Setting("site.monitor.scripted.max-rps",                 "scripted", Type.INT),
+        new Setting("site.monitor.scripted.max-procs",               "scripted", Type.STRING),
+        new Setting("site.monitor.scripted.mem-limit",               "scripted", Type.STRING),
+        new Setting("site.monitor.scripted.max-requests-per-run",    "scripted", Type.INT),
+        // ── Anomali guard'ı (L3) ──────────────────────────────────────────────────────────
+        new Setting("site.monitor.scripted.anomaly.enabled",         "scripted", Type.BOOL),
+        new Setting("site.monitor.scripted.anomaly.timeout-streak",  "scripted", Type.INT),
         new Setting("site.monitor.scripted.slow-threshold-ms",       "scripted", Type.INT),
         new Setting("site.monitor.metrics.scripted.retention-days",  "scripted", Type.INT),
         // Alan adı (domain) süre-bitişi izleme — RDAP (proxy-aware) + env-gated WHOIS.

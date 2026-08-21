@@ -943,6 +943,13 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
                     {t('scripted.neverSucceeded')}
                   </span>
                 )}
+                {/* Sistem kapattı: kullanıcının kendi kapattığı pasif izlemeden AYRI görünmeli,
+                    yoksa "ben kapatmadım ki" ile "neden veri yok" aynı sessiz duruma düşer. */}
+                {m.disabled_reason && (
+                  <span className="sc-autodisabled-badge" title={m.disabled_reason}>
+                    {t('scripted.autoDisabledBadge')}
+                  </span>
+                )}
                 {/* Sağ blok tek kapsayıcıda: .upt-card-top bir space-between flex'i, doğrudan
                     6. kardeş eklemek mevcut rozetleri yeniden yayardı. */}
                 <span className="upt-card-top-right">
@@ -1040,6 +1047,18 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
               <button className={`modal-tab${detailTab === 'diag' ? ' active' : ''}`} onClick={() => setDetailTab('diag')}>{t('scripted.tabDiag')}</button>
               <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('scripted.tabGuide')}</button>
             </div>
+
+            {/* Anomali guard'ı kapattıysa sebep HER SEKMEDE görünür: kullanıcı "izleme neden
+                veri üretmiyor?" sorusunu sekme gezerek aramasın. Uyarı ancak izleme yeniden
+                açılınca düşer (sunucu `disabled_reason`u orada temizler). */}
+            {selected.disabled_reason && (
+              <AlertBanner tone="danger" icon={AlertTriangle} title={t('scripted.autoDisabledTitle')}>
+                <div>{selected.disabled_reason}</div>
+                {selected.disabled_at &&
+                  <div className="sys-small">{t('scripted.autoDisabledAt', formatDateSec(selected.disabled_at))}</div>}
+                <div className="sys-small">{t('scripted.autoDisabledHow')}</div>
+              </AlertBanner>
+            )}
 
             {detailTab === 'control' && (<>
               {/* gridClass ZORUNLU: sürüm kolonuyla birlikte 5 kolon olduk, ortak `.upt-rt-grid`
@@ -1497,7 +1516,15 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
           <div className="full-width">
             <div className="kw-block-title sc-script-title">
               <span>{t('scripted.script')}</span>
-              <K6VersionBadge t={t} version={k6Version} withSyntaxNote />
+              <span className="sc-script-tools">
+                <K6VersionBadge t={t} version={k6Version} withSyntaxNote />
+                {/* Script'i panoya al — editörün içinden elle seçmek uzun script'te zahmetli
+                    (kaydırma + seçimi kaçırma). Boşken düğme HİÇ çizilmez: copyText('') zaten
+                    false döner ve onay ikonu hiç gelmez — ölü bir düğme bırakmayalım. */}
+                {(form.script || '').trim() &&
+                  <CopyButton value={form.script} className="btn btn-sm btn-secondary"
+                    label={t('scripted.scriptCopy')} copiedLabel={t('scripted.scriptCopied')} />}
+              </span>
             </div>
             <CodeEditor value={form.script} onChange={code => setForm(f => ({ ...f, script: code }))}
               placeholder={t('scripted.scriptPlaceholder')} markers={markers} revealMarkers />

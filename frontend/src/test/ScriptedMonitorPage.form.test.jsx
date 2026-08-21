@@ -453,7 +453,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       expect(await screen.findByText('v1.0.2')).toBeInTheDocument()
       expect(screen.getByText('v1.0.0')).toBeInTheDocument()
 
-      fireEvent.click(screen.getByText('v1.0.0').closest('tr'))
+      fireEvent.click(screen.getByText('v1.0.0').closest('.sc-vt-row'))
       const loadBtn = await screen.findByRole('button', { name: /load this version|editöre yükle/i })
       fireEvent.click(loadBtn)
 

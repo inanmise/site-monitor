@@ -79,12 +79,12 @@ public class ScriptedCheckerService {
      */
     public record Phases(Long blockedMs, Long connectingMs, Long tlsMs, Long sendingMs,
                          Long waitingMs, Long receivingMs, Long dataSent, Long dataReceived,
-                         Integer httpReqFailed) {
-        public static final Phases EMPTY = new Phases(null, null, null, null, null, null, null, null, null);
+                         Integer httpReqFailed, Long httpReqs) {
+        public static final Phases EMPTY = new Phases(null, null, null, null, null, null, null, null, null, null);
 
         static Phases of(Summary s) {
             return new Phases(s.blockedMs, s.connectingMs, s.tlsMs, s.sendingMs, s.waitingMs,
-                    s.receivingMs, s.dataSent, s.dataReceived, s.httpReqFailed);
+                    s.receivingMs, s.dataSent, s.dataReceived, s.httpReqFailed, s.httpReqs);
         }
     }
 
@@ -177,6 +177,13 @@ public class ScriptedCheckerService {
     public ScriptDiagnostics validateScript(String script, List<String> envNames, Integer timeoutSeconds) {
         List<String> warnings = new ArrayList<>(auditEnvReferences(script, envNames));
         warnings.addAll(auditRequestTimeouts(script));
+
+        // GÜVENLİK denetimi EN BAŞTA ve k6 sözdizimi kontrolünden ÖNCE: sonsuz döngülü bir script
+        // sözdizimsel olarak KUSURSUZDUR, `k6 archive` ondan hiç şikâyet etmez. Ayrıca engelleyici
+        // bulguda erken dönerek o script için alt süreç hiç başlatılmaz.
+        ScriptedSafetyRules.SafetyDiagnostics safety = ScriptedSafetyRules.check(script);
+        warnings.addAll(safety.warnings());
+        if (safety.blocked()) return new ScriptDiagnostics(safety.blocking(), warnings);
         // Kısıtlama SESSİZ olmasın: kullanıcı 300 yazdıysa monitör 180'de kesilecek ve bunu hiçbir
         // yerde görmüyordu — sonra "180. saniyede neden öldü" sorusu cevapsız kalıyordu.
         if (timeoutSeconds != null) {
@@ -681,7 +688,33 @@ public class ScriptedCheckerService {
             }
         }
         if (caFile != null) env.putIfAbsent("SSL_CERT_FILE", caFile.toAbsolutePath().toString());
+
+        // ── L2 sert tavan: CPU + bellek ────────────────────────────────────────────────────
+        // k6 bir Go programı; bu iki değişkeni Go runtime'ı doğrudan okur, yani k6 sürümünden
+        // ve ayrıcalıktan bağımsız çalışırlar (`--rps` gibi bir k6 bayrağı DEĞİL).
+        //   GOMAXPROCS — Go kodunun aynı anda kullanacağı çekirdek sayısı. Sonsuz bir CPU
+        //     döngüsü bile tek çekirdekten fazlasını yiyemez; üretim TEK pod olduğu için bu,
+        //     "bir izleme diğer tüm kontrolleri aç bıraktı" senaryosunu kapatır.
+        //   GOMEMLIMIT — Go GC'sinin hedef bellek tavanı. YUMUŞAK tavandır: aşıldığında GC
+        //     agresifleşir, süreç öldürülmez. Bu yüzden devasa ayırmalar AYRICA kaynakta
+        //     engelleniyor (ScriptedSafetyRules BLOCK 4) — tek başına yeterli sayılmamalı.
+        // `putIfAbsent`: kullanıcı bilinçli olarak kendi değerini verdiyse ezilmez (env adları
+        // zaten kendi monitöründe görünür ve bu ikisi secret değildir).
+        String maxProcs = appSettings.getString("site.monitor.scripted.max-procs", "1");
+        if (!maxProcs.isBlank() && !"0".equals(maxProcs.trim())) env.putIfAbsent("GOMAXPROCS", maxProcs.trim());
+        String memLimit = appSettings.getString("site.monitor.scripted.mem-limit", "256MiB");
+        if (!memLimit.isBlank() && !"0".equals(memLimit.trim())) env.putIfAbsent("GOMEMLIMIT", memLimit.trim());
         return env;
+    }
+
+    /** İstek/sn tavanı (k6 {@code --rps}); ≤0 ⇒ tavan yok. */
+    int maxRps() {
+        return appSettings.getInt("site.monitor.scripted.max-rps", 25);
+    }
+
+    /** Tek koşumda kabul edilen en fazla HTTP isteği; aşılırsa koşum ANOMALİ sayılır. ≤0 ⇒ tavan yok. */
+    public int maxRequestsPerRun() {
+        return appSettings.getInt("site.monitor.scripted.max-requests-per-run", 200);
     }
 
     // ── Bağlantı teşhisi sondası ─────────────────────────────────────────────
@@ -794,6 +827,13 @@ public class ScriptedCheckerService {
                     k6Bin(), "run", "--quiet", "--no-usage-report",
                     "--summary-export=" + summaryFile.toAbsolutePath(),
                     "--vus", "1", "--iterations", "1"));
+            // ── L2 sert tavan: istek/sn ────────────────────────────────────────────────────
+            // Statik analiz `for (i=0;i<n;i++)` gibi değişken sınırlı bir döngüde kaç istek
+            // atılacağını KANITLAYAMAZ. Bu bayrak kanıt gerektirmez: script 10.000 istek yazsa
+            // bile saniyede bu sayıdan fazlası çıkmaz, yani üretim sistemine ani sel gitmez.
+            // 0/negatif ⇒ tavan yok (kaçış kapısı; bilinçli bir ayar olmadan asla oluşmaz).
+            int rps = maxRps();
+            if (rps > 0) { args.add("--rps"); args.add(String.valueOf(rps)); }
             for (String cidr : blacklistFor(viaProxy.on())) { args.add("--blacklist-ip"); args.add(cidr); }
             args.add(scriptFile.toAbsolutePath().toString());
 
@@ -1497,6 +1537,13 @@ public class ScriptedCheckerService {
         Long dataSent, dataReceived;
         /** k6'nın kendi başarısız-istek sayacı ({@code http_req_failed.passes}). */
         Integer httpReqFailed;
+        /**
+         * Koşumda GERÇEKTEN atılan istek sayısı ({@code http_reqs.count}).
+         *
+         * <p>Statik analizin ölçemediği tek şey budur: değişken sınırlı bir döngünün kaç tur
+         * döndüğü ancak koşumdan sonra bilinir. L3 anomali guard'ı tavanı bunun üzerinden uygular.
+         */
+        Long httpReqs;
         String checksJson;
         /** Özet JSON gerçekten okunup ayrıştırılabildi mi — "bozuk özet" ile "hiç özet"i ayırır. */
         boolean parsed;
@@ -1584,6 +1631,8 @@ public class ScriptedCheckerService {
             s.dataReceived = countOf(metrics, "data_received");
             JsonNode failed = metrics.path("http_req_failed");
             if (failed.has("passes")) s.httpReqFailed = failed.path("passes").asInt();
+            // Atılan toplam istek — L3 anomali tavanının kaynağı (bkz. Summary.httpReqs).
+            s.httpReqs     = countOf(metrics, "http_reqs");
             // Per-check adları — grupların İÇİ DÂHİL (bkz. collectChecks).
             List<Map<String, Object>> list = new ArrayList<>();
             collectChecks(root.path("root_group"), null, list);

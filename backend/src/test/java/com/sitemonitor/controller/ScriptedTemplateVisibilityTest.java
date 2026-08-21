@@ -278,6 +278,45 @@ class ScriptedTemplateVisibilityTest {
                 .andExpect(jsonPath("$.data.can_create_general").value(true));
     }
 
+    /**
+     * REGRESYON: kapsam seçicisi {@code writable_team_ids}'ten doluyor. Global admin'in üyeliği
+     * yokken bu liste BOŞ dönüyordu → arayüzde "Herkes görür" dışında hiçbir takım seçeneği
+     * çıkmıyor, admin "yalnız X takımı görsün" diyemiyordu. Oysa {@code canWriteTeam} global
+     * admin'e her takımı zaten açıyordu; yani yetki değil, listeleme eksikti. İki uç AYNI cevabı
+     * vermek zorunda: aşağıdaki ikinci istek bunu davranışla kanıtlıyor.
+     */
+    @Test
+    @DisplayName("Kapsam: global admin ÜYE OLMADIĞI takımları da yazılabilir görür ve oraya şablon kurabilir")
+    void adminCanScopeTemplateToAnyTeam() throws Exception {
+        mvc.perform(get("/api/monitoring/scripted/templates").session(globalAdmin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.writable_team_ids.length()").value(2))
+                .andExpect(jsonPath("$.data.writable_team_ids[?(@ == 1)]").exists())
+                .andExpect(jsonPath("$.data.writable_team_ids[?(@ == 2)]").exists());
+
+        when(templateRepo.countDuplicateInScope(anyString(), any(), any())).thenReturn(0L);
+        when(templateRepo.save(any(ScriptedTemplate.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        // Admin hiçbir takımın ÜYESİ değil; yine de B takımına kurabilmeli.
+        mvc.perform(post("/api/monitoring/scripted/templates").session(globalAdmin())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"B icin sablon\",\"teamId\":2,"
+                                + "\"script\":\"export default function () {}\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_id").value(2));
+    }
+
+    /** Müdür global admin DEĞİL: kapsam listesi üyelik/yönetimle sınırlı kalır (boş). */
+    @Test
+    @DisplayName("Kapsam: müdürde writable_team_ids genişlemez")
+    void mudurScopeStaysNarrow() throws Exception {
+        when(templateRepo.findActiveByTeams(List.of(TEAM_A))).thenReturn(List.of());
+
+        mvc.perform(get("/api/monitoring/scripted/templates").session(mudur()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.writable_team_ids.length()").value(0));
+    }
+
     @Test
     @DisplayName("Çöp kutusu yalnız admin'e: USER 403, admin 200")
     void trashIsAdminOnly() throws Exception {

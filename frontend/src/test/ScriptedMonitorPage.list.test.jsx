@@ -61,6 +61,42 @@ describe('ScriptedMonitorPage — liste ve kartlar', () => {
     expect(second.container.querySelector('.sc-k6ver-chip')).toBeNull()
   })
 
+  it('anomali guard KAPATTIYSA kart ayrı bir rozet gösterir ve sebep detayda kalıcı durur', async () => {
+    // Kullanicinin kendi kapattigi pasif izleme ile SISTEMIN kapattigi ayni gorunemez:
+    // ikisi de active=false, ama ikincisi mudahale gerektiriyor. Sebep detayda TUM sekmelerde
+    // durur, cunku "izleme neden veri uretmiyor?" sorusu sekme gezerek aranmamali.
+    const REASON = 'Anomali durumu tespit edildi: tek koşumda 5000 istek atıldı (tavan 200).'
+    api.monitoring.getScriptedMonitors.mockResolvedValue({
+      success: true,
+      data: {
+        k6_available: true, k6_version: 'v0.49.0', can_manage: true,
+        monitors: [{
+          id: 1, name: 'OIDC Login', status: 'PASS', team_id: 5, team_name: 'SY-A',
+          active: false, checked_at: '2026-08-21T10:00:00',
+          disabled_reason: REASON, disabled_at: '2026-08-21T10:00:05',
+        }],
+      },
+    })
+    const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+
+    expect(await screen.findByText('OIDC Login')).toBeInTheDocument()
+    const badge = container.querySelector('.sc-autodisabled-badge')
+    expect(badge).not.toBeNull()
+    expect(badge.getAttribute('title')).toBe(REASON)   // tam sebep hover'da
+
+    fireEvent.click(screen.getByText('OIDC Login'))
+    expect(await screen.findByText(REASON)).toBeInTheDocument()
+    // Baslik metnine bak: sebebin kendisi de "Anomali durumu tespit edildi" ile basliyor,
+    // o kaliba bakmak iki eslesme bulurdu.
+    expect(screen.getByText(/otomatik devre dışı bırakıldı|disabled automatically/i)).toBeInTheDocument()
+  })
+
+  it('kapatma sebebi YOKSA rozet hiç çizilmez (pasif izleme sistem kapatması sanılmasın)', async () => {
+    const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
+    expect(container.querySelector('.sc-autodisabled-badge')).toBeNull()
+  })
+
   it('k6 yoksa "devre dışı" banner gösterir', async () => {
     api.monitoring.getScriptedMonitors.mockResolvedValue({ success: true, data: { k6_available: false, monitors: [], can_manage: true } })
     render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)

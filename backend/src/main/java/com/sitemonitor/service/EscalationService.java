@@ -1568,6 +1568,17 @@ public class EscalationService {
         return String.join(", ", names);
     }
 
+    /**
+     * Bir takımın alarm e-posta adresi — alarm zincirinin DIŞINDAN bildirim gönderenler için.
+     *
+     * <p>{@link ScriptedAnomalyGuard} bunu kullanır: otomatik devre dışı bırakma bir alarm TÜRÜ
+     * değil (kapatılan izleme sweep üretmez, alarm hiç kapanamazdı) ama aynı kişilere gitmeli.
+     * Alıcı çözümü tek yerde kalsın diye burada açılıyor, kopyalanmıyor.
+     */
+    public List<String> teamAlertEmails(Long teamId) {
+        return collectTeamEmails(teamId, null);
+    }
+
     private List<String> collectTeamEmails(Long syTeamId, Long ugTeamId) {
         List<String> result = new ArrayList<>();
         Set<String> seen = new HashSet<>();

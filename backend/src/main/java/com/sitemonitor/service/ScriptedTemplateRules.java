@@ -79,6 +79,13 @@ public final class ScriptedTemplateRules {
             }
         }
 
+        // ── GÜVENLİK: şablon N monitöre kopyalanır, kusuru da kopyalanır ──────────────────
+        // Şablon katmanında denetim monitörden DAHA önemli: kütüphaneye giren sonsuz döngü,
+        // onu seçen her monitörde yeniden doğar ve kaynağı geriye izlenemez.
+        ScriptedSafetyRules.SafetyDiagnostics safety = ScriptedSafetyRules.check(script);
+        warnings.addAll(safety.warnings());
+        if (safety.blocked()) return block(safety.blocking(), warnings);
+
         // ── Sözdizimi: dağıtımdaki motor ayrıştıramıyorsa ENGELLE ─────────────────────────
         String modern = modernSyntaxHit(script);
         if (modern != null) {
