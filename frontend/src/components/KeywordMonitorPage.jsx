@@ -366,7 +366,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
           <button className="btn btn-sm upt-refresh-btn" onClick={load}>
             <RefreshCw size={14} />{t('keyword.refresh')}
           </button>
-          <CopyLinkButton />
+          <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
           <MonitorGuideButton type="keyword" />
           {canWrite && (
             <button className="btn btn-sm btn-primary" onClick={openNew}>

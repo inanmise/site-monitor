@@ -446,7 +446,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
           <button className="btn btn-sm upt-refresh-btn" onClick={load}>
             <RefreshCw size={14} />{t('page.refresh')}
           </button>
-          <CopyLinkButton />
+          <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
           <MonitorGuideButton type="page" />
           {canWrite && (
             <button className="btn btn-sm btn-primary" onClick={openNew}>

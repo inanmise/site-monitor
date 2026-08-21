@@ -348,7 +348,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
         <div className="upt-header-right">
           <span className="upt-last-check">{t('dom.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}</span>
           <button className="btn btn-sm upt-refresh-btn" onClick={load}><RefreshCw size={14} />{t('dom.refresh')}</button>
-          <CopyLinkButton />
+          <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
           <MonitorGuideButton type="domain" />
           {canWrite && <button className="btn btn-sm btn-primary" onClick={openNew}><Plus size={14} />{t('dom.addMonitor')}</button>}
         </div>
