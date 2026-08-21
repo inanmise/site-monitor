@@ -47,6 +47,23 @@ public class IncidentNotificationService {
         return t;
     });
 
+    /**
+     * Kapanışta havuzu kapat (2026-08-20 bellek denetimi). Kuyrukta bekleyen her görev bir olay
+     * DTO'sunu ve (doNotify içinde) e-posta gövdesini canlı tutar; kapatmadan bırakmak testte ve
+     * context-refresh'te thread + nesne sızdırır. Desen EmailNotificationService ile aynı:
+     * kısa bir graceful pencere, sonra shutdownNow.
+     */
+    @jakarta.annotation.PreDestroy
+    void shutdownExecutor() {
+        exec.shutdown();
+        try {
+            if (!exec.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) exec.shutdownNow();
+        } catch (InterruptedException e) {
+            exec.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
+
     /** dto = controller'ın ürettiği snake_case olay haritası. kind = NEW | UPDATED | RESOLVED. */
     public void notifyIncident(Map<String, Object> dto, String kind) {
         if (dto == null) return;

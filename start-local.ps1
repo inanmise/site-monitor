@@ -81,11 +81,22 @@ if ($conn8080) {
     Start-Sleep -Seconds 2
 }
 
-$allArgs = $dProps + @("-jar", $jar.FullName)
+# JVM bayraklari (-Xmx, -Xlog:gc*, NMT, ...) $env:JAVA_OPTS ile gecirilir ve -jar'dan ONCE
+# gelmek ZORUNDADIR; -jar'dan sonrasi uygulamanin argumani sayilir ve JVM onlari yok sayar.
+# 2026-08-20'ye kadar bu script JAVA_OPTS'u HIC okumuyordu: bellek olcumu icin
+# "$env:JAVA_OPTS = '-Xmx512m ...'; .\start-local.ps1" diyen her deneme sessizce
+# BAYRAKSIZ bir JVM baslatiyor ve olculen sayilar varsayilan yapilandirmaya ait oluyordu.
+# Asagidaki "JVM opts" satiri bu sessiz-hatanin tekrarini engeller: bayraklar gorunmuyorsa
+# gecmemislerdir. Dogrulama: jcmd <pid> VM.command_line
+$jvmOpts = @()
+if ($env:JAVA_OPTS) { $jvmOpts = ($env:JAVA_OPTS -split '\s+') | Where-Object { $_ } }
+
+$allArgs = $jvmOpts + $dProps + @("-jar", $jar.FullName)
 Write-Host "Starting $($jar.Name) with Zulu 25..."
 Write-Host "  Profile      : $($cfg['SPRING_PROFILES_ACTIVE'])"
 Write-Host "  DB host      : $($cfg['DB_HOST']):$($cfg['DB_PORT'])/$($cfg['DB_NAME'])"
 Write-Host "  Mail enabled : $($cfg['SITE_MONITOR_EMAIL_ENABLED'])"
+Write-Host "  JVM opts     : $(if ($jvmOpts) { $jvmOpts -join ' ' } else { '(yok - varsayilan)' })"
 Write-Host ""
 
 # Log dizini MUTLAK verilir. Aksi halde logback'in "logs" varsayilani CALISMA DIZININE gore

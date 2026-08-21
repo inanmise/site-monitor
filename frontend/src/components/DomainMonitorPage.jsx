@@ -8,6 +8,7 @@ import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
+import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
@@ -388,7 +389,10 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
                 {statusBadge(m)}
                 {alarmBadge(m)}<MaintenanceBadge target={m.domain} />
                 {m.changed && <span className="dom-changed-ico" title={t('dom.changedTip')}><Activity size={13} /></span>}
-                {m.source && <span className="upt-port-tag" title={m.whois_provider ? t('dom.sourceVia') : undefined}>{sourceTag(m.source, m.whois_provider)}</span>}
+                <span className="upt-card-top-right">
+                  {m.source && <span className="upt-port-tag" title={m.whois_provider ? t('dom.sourceVia') : undefined}>{sourceTag(m.source, m.whois_provider)}</span>}
+                  <CopyLinkButton iconOnly url={monitorDeepLink('domain', m.id)} className="btn btn-sm upt-card-copy" />
+                </span>
               </div>
               <div className="upt-card-domain" title={m.domain}>{m.domain}</div>
               {m.registrar && (

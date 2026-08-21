@@ -813,10 +813,21 @@ public class ScriptedCheckerService {
             try {
                 // Hata satırı ayıklaması iki işe yarıyor: mesajı zenginleştirmek VE "script patladı mı"
                 // sinyalini üretmek (k6 iterasyon istisnasında yine 0 ile çıkıyor).
-                boolean scriptErrored = extractErrorLines(output) != null;
-                status = decideStatus(r.exitCode(), r.timedOut(), s.checksPassed, s.checksFailed,
-                        s.hasThresholds, scriptErrored);
-                status = applyNoChecksPolicy(status);
+                // DAR sinyal (hasScriptCrash), extractErrorLines DEĞİL: ikincisi başarısız bir
+                // İSTEĞİN uyarı satırını da yakalıyor ve statüye taşınsaydı her gerçek arıza
+                // FAIL yerine ERROR görünürdü (bkz. decideStatus sıra tablosu).
+                boolean scriptCrashed = hasScriptCrash(output);
+                boolean anyTraffic = s.dataSent != null && s.dataSent > 0;
+                String raw = decideStatus(r.exitCode(), r.timedOut(), s.checksPassed, s.checksFailed,
+                        s.hasThresholds, scriptCrashed, anyTraffic);
+                // Etki alanı ölçülebilir olsun: çökme sinyali bir koşumu PASS'ten çıkardıysa
+                // logla. Ayarlanabilir bir kaçış kapısı BİLİNÇLİ olarak yok — "kırmızıyı sustur"
+                // düğmesi bu olayı kalıcılaştırırdı; onun yerine etkiyi log'dan ölçüyoruz.
+                if (scriptCrashed && "ERROR".equals(raw)) {
+                    log.warn("Senaryo çöktü — k6 çıkış {} verse de koşum PASS sayılmıyor (checks={}/{}, gönderilen={} byte)",
+                            r.exitCode(), s.checksPassed, s.checksFailed, s.dataSent);
+                }
+                status = applyNoChecksPolicy(raw);
                 error = "PASS".equals(status) ? null : summarizeError(status, r, output);
             } catch (RuntimeException ie) {
                 log.error("Senaryo sonucu yorumlanamadı (exit={} timedOut={})", r.exitCode(), r.timedOut(), ie);
@@ -1172,15 +1183,95 @@ public class ScriptedCheckerService {
      */
     static String decideStatus(int exitCode, boolean timedOut, Integer checksPassed, Integer checksFailed,
                                boolean hasThresholds, boolean scriptErrored) {
+        return decideStatus(exitCode, timedOut, checksPassed, checksFailed, hasThresholds, scriptErrored, true);
+    }
+
+    /**
+     * Tam karar tablosu. SIRA sözleşmedir — her satır kendinden sonrakini bilinçli olarak ezer.
+     *
+     * <p><b>2026-08-20 üretim olayı — bu metodun ikinci yarısının var oluş sebebi.</b> Bir monitörün
+     * v1.0.3'ü {@code timeout: REQUEST_TIMEOUT} ile tanımsız bir sabite dokundu. k6 {@code default}
+     * içinde {@code ReferenceError} fırlattı, iterasyonu iptal etti — ve <b>yine 0 ile çıktı</b>.
+     * Script {@code thresholds: {checks: [...]}} tanımladığı için k6 {@code checks} metriğini
+     * SIFIR ÖRNEKLE materyalize etti: özet JSON'unda {@code "checks":{"passes":0,"fails":0}}.
+     * Eski guard "iki sayaç da null mı?" diye soruyordu; sayaçlar null DEĞİL 0 olduğundan guard
+     * atlandı, {@code scriptErrored} hiç okunmadı ve 25 dakika boyunca her koşum 334 ms'de
+     * "Geçti" yazıldı: 0 byte gönderildi, 0 doğrulama koştu, uptime %100, alarm YOK.
+     * (Yerel k6 v0.49 ile birebir üretildi — bkz. {@code ScriptedCheckerServiceTest}.)
+     *
+     * <p>Bu yüzden "hiç check çalışmadı" artık İKİ biçimi birden kapsıyor ({@code null/null} ve
+     * {@code 0/0}) ve çökme sinyali sayaç biçiminden BAĞIMSIZ sorgulanıyor.
+     *
+     * @param scriptCrashed {@link #hasScriptCrash} — çıktıda script'in patladığına dair KESİN iz
+     * @param anyTraffic    koşum tek byte bile gönderdi mi (özet {@code data_sent})
+     */
+    static String decideStatus(int exitCode, boolean timedOut, Integer checksPassed, Integer checksFailed,
+                               boolean hasThresholds, boolean scriptCrashed, boolean anyTraffic) {
         if (timedOut) return "TIMEOUT";
         if (exitCode != 0 && exitCode != 99) return "ERROR";
         if (exitCode == 99) return "FAIL";
+        // GERÇEK düşen check her şeyin ÖNÜNDE: hedef çöktüğünde k6 çıktıya hata satırı da basar
+        // (level=warning + error=). Sıra ters olsaydı her gerçek arıza FAIL yerine ERROR görünür,
+        // "hedef mi bozuk, script mi bozuk" ayrımı — teşhisin tamamı — kaybolurdu.
         if (checksFailed != null && checksFailed > 0) return "FAIL";
-        if (checksPassed == null && checksFailed == null) {
-            if (scriptErrored) return "ERROR";
-            if (!hasThresholds) return "NO_CHECKS";
+        // Script iterasyon içinde patladı. Birkaç check geçmiş olması PASS'i haklı çıkarmaz:
+        // kalan doğrulamalar HİÇ çalışmadı, koşum hiçbir şey kanıtlamadı.
+        if (scriptCrashed) return "ERROR";
+        if (noChecksExecuted(checksPassed, checksFailed)) {
+            // check() kullanmayıp yalnız options.thresholds ile doğrulayan script MEŞRUDUR —
+            // AMA gerçekten istek yaptıysa. Tek byte gitmediyse threshold'lar da BOŞ metrik
+            // üzerinde değerlendirilmiştir (k6 örneksiz metrikte eşiği düşürmez), yani
+            // "meşru threshold-only script" varsayımı çöker. Hata satırı 8 KiB'lık çıktı
+            // penceresinin dışında kaldığında ikinci savunma hattı budur.
+            if (!hasThresholds || !anyTraffic) return "NO_CHECKS";
         }
         return "PASS";
+    }
+
+    /**
+     * "check() hiç çalışmadı" — İKİ biçimde görünür ve ikisi de AYNI olaydır:
+     * <ul>
+     *   <li>{@code null/null} — özette {@code metrics.checks} düğümü hiç yok (threshold'suz script)</li>
+     *   <li>{@code 0/0} — script {@code checks} üzerinde threshold tanımlamış; k6 metriği sıfır
+     *       örnekle materyalize eder (üretimdeki yanlış PASS tam olarak buydu)</li>
+     * </ul>
+     */
+    private static boolean noChecksExecuted(Integer passed, Integer failed) {
+        return (passed == null || passed == 0) && (failed == null || failed == 0);
+    }
+
+    /**
+     * Çıktıda SCRIPT'İN KENDİSİNİN patladığına dair KESİN iz var mı?
+     *
+     * <p>{@link #extractErrorLines} ile BİLİNÇLİ olarak ayrı: o metot "kullanıcıya gösterilecek
+     * sebep satırı" arar ve ağını geniş atar — başarısız bir İSTEĞİN
+     * {@code level=warning msg="Request Failed" error="…"} satırını da yakalar. Bu metot ise
+     * STATÜ kararına girer; oradaki geniş ağ, hedefi düşüp check'i düşen koşumu (FAIL) ya da
+     * isteği yeniden deneyip sonunda geçen koşumu (PASS) ERROR'a çevirirdi.
+     *
+     * <p>KESİN iz sayılanlar (k6 v0.49 logfmt, non-TTY — yerel ölçümle doğrulandı):
+     * <ul>
+     *   <li>{@code source=stacktrace} — yakalanmamış JS istisnası (ReferenceError/TypeError…)</li>
+     *   <li>{@code GoError:} — JS'e sızan Go hatası</li>
+     *   <li>{@code level=error} / {@code ERRO[} — AMA {@code source=console} DEĞİLSE: kullanıcının
+     *       kendi {@code console.error()} çağrısı script'in patladığı anlamına GELMEZ
+     *       (ölçüldü: k6 onu {@code source=console} ile etiketliyor).</li>
+     * </ul>
+     *
+     * <p>Hiçbir koşulda istisna fırlatmaz — catch yolundan da çağrılabilir.
+     */
+    static boolean hasScriptCrash(String maskedOutput) {
+        if (maskedOutput == null || maskedOutput.isBlank()) return false;
+        for (String raw : maskedOutput.split("\\R")) {
+            String line = raw.strip();
+            if (line.isEmpty()) continue;
+            String lower = line.toLowerCase(Locale.ROOT);
+            if (lower.contains("source=console")) continue;            // kullanıcının kendi logu
+            if (lower.contains("source=stacktrace")) return true;
+            if (line.contains("GoError:")) return true;
+            if (lower.contains("level=error") || line.contains("ERRO[")) return true;
+        }
+        return false;
     }
 
     /**
@@ -1528,11 +1619,32 @@ public class ScriptedCheckerService {
     private static final Pattern HARDCODED = Pattern.compile(
             "(?i)(password|passwd|secret|api[_-]?key|apikey|token|credential|bearer|authorization)\\s*[:=]\\s*[\"'][^\"']{6,}[\"']");
 
+    /**
+     * Birleştirme ÖNEKİ mi? Yani eşleşen literalin hemen ardından {@code +} geliyor mu?
+     *
+     * <p>2026-08-20'de yerleşik {@code oauth2-client-credentials} şablonu kendi tarayıcımıza
+     * takıldı: {@code headers: { Authorization: 'Bearer ' + token }}. Tırnak içindeki
+     * {@code 'Bearer '} 7 karakter olduğu için desene uyuyor, oysa GERÇEK kimlik bilgisi
+     * {@code token} değişkeninden geliyor — literal yalnızca önek. {@code 'Bearer ' + …},
+     * {@code 'Basic ' + …} kalıpları doğru ve çok yaygın; onları "sabit-kodlu secret" saymak
+     * meşru script'leri (BLOCK politikasında) kaydedilemez hâle getiriyordu.
+     *
+     * <p>Kabul edilen bedel: {@code password: 'hun' + 'ter2'} gibi KASITLI bir kaçış artık
+     * yakalanmaz. Bu tarayıcı bir korkuluktur (varsayılan politika WARN), güvenlik sınırı değil —
+     * kasıtlı kaçışı hedeflemez, dikkatsizce yapıştırılmış bir parolayı hedefler.
+     */
+    private static boolean isConcatenatedPrefix(String script, int matchEnd) {
+        int i = matchEnd;
+        while (i < script.length() && Character.isWhitespace(script.charAt(i))) i++;
+        return i < script.length() && script.charAt(i) == '+';
+    }
+
     public static List<String> scanHardcodedSecrets(String script) {
         List<String> hits = new ArrayList<>();
         if (script == null || script.isBlank()) return hits;
         var m = HARDCODED.matcher(script);
         while (m.find()) {
+            if (isConcatenatedPrefix(script, m.end())) continue;   // 'Bearer ' + token → secret DEĞİL
             String key = m.group(1).toLowerCase(Locale.ROOT);
             if (!hits.contains(key)) hits.add(key);   // DEĞER değil yalnız anahtar-adı raporlanır (sızıntı yok)
         }

@@ -34,6 +34,34 @@ public final class SessionScope {
         return (o instanceof List) ? (List<Long>) o : null;
     }
 
+    /**
+     * ÜYELİK kapsamı — "bu kullanıcı hangi takımların ÜYESİ?". ASLA {@code null} dönmez.
+     *
+     * <p>{@code viewTeamIds}/{@code manageTeamIds}'ten farkı: view müdürde ASTLARIN takımlarını
+     * içerir (görüş alanı, üyelik değil), manage ise USER'da BOŞTUR (yönetim yetkisi, üyelik
+     * değil). "Takımın her üyesi kendi takımının şablonunu düzenler" kuralı ancak bu kapsamla
+     * yazılabilir.
+     *
+     * <p><b>ROLLING-DEPLOY GERİ DÜŞÜŞÜ — opsiyonel değil.</b> Spring Session JDBC oturumları
+     * pod ölümünden sağ çıkarıyor: yeni sürüme geçerken ESKİ pod'un ürettiği oturumlarda bu
+     * nitelik YOKTUR. O oturumları kilitlemek yerine birincil takıma düşüyoruz — çok-takımlı
+     * bir kullanıcı birkaç dakika yalnız ana takımının şablonlarını düzenleyebilir, ama kimse
+     * "yetkiniz yok" duvarına toslamaz. Nitelik bir sonraki girişte doğru dolar.
+     */
+    @SuppressWarnings("unchecked")
+    public static List<Long> memberTeamIds(HttpSession session) {
+        if (session == null) return List.of();
+        Object o = session.getAttribute("memberTeamIds");
+        if (o instanceof List) return (List<Long>) o;
+        Object primary = session.getAttribute("teamId");
+        return primary instanceof Number n ? List.of(n.longValue()) : List.of();
+    }
+
+    /** Kullanıcı bu takımın ÜYESİ mi? (yetki değil, üyelik sorusu) */
+    public static boolean isMemberOf(HttpSession session, Long teamId) {
+        return teamId != null && memberTeamIds(session).contains(teamId);
+    }
+
     /** True only for the unrestricted (local/bootstrap) ADMIN — never for a scoped müdür. */
     public static boolean isGlobalAdmin(HttpSession session) {
         return session != null

@@ -67,6 +67,29 @@ public class EmailNotificationService {
                 return t;
             });
 
+    /**
+     * Aynı anda bekleyen 421-retry görevi ÜST SINIRI (2026-08-20 bellek denetimi).
+     *
+     * mailRetryExecutor'ın kuyruğu JDK'nın DelayedWorkQueue'sudur ve SINIRSIZDIR. Planlanan her
+     * görev, closure'ıyla TÜM MimeMessage'ı canlı tutar: HTML gövde + gömülü logo (ByteArrayResource)
+     * + varsa haftalık rapor PDF eki. Tek bir mesaj en çok MAX_SEND_ATTEMPTS-1 kez yeniden denenir
+     * (90/180/360 sn ≈ 10.5 dk), yani sınırsız olan derinlik değil FAN-OUT: SMTP ağ geçidi uzun süre
+     * 421 dönerken bir alarm fırtınası + haftalık rapor aynı pencereye denk gelirse bekleyen mesaj
+     * sayısı kadar tam e-posta gövdesi bellekte birikir.
+     *
+     * Tavan dolduğunda yeni retry PLANLANMAZ: mesaj düşürülür, log.error basılır ve bildirim logu
+     * FAILED'a çekilir — "Alarm gönderilemedi" rozeti gerçeği yansıtsın (sessizce yutmak, operatörün
+     * gönderilmemiş bir alarmı gönderilmiş sanmasına yol açardı).
+     */
+    private static final int MAX_PENDING_RETRIES = 50;
+
+    /** Kuyrukta bekleyen 421-retry görev sayısı (tavan denetimi + gözlemlenebilirlik). */
+    private final java.util.concurrent.atomic.AtomicInteger pendingRetries =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    /** Bekleyen 421-retry görev sayısı — test ve bellek örnekleyicisi için. */
+    int pendingRetryCount() { return pendingRetries.get(); }
+
     @PreDestroy
     void shutdownRetryExecutor() {
         mailRetryExecutor.shutdown();
@@ -248,12 +271,22 @@ public class EmailNotificationService {
                     MAIL_LOG.trace("⏳ SMTP 421 ayrıntı: TO={} | süre={}ms | {} | kök sebep={}",
                             to, ms, smtpContext(), rootMessage(e), e);
                 }
+                // Bellek tavanı: kuyruk doluysa retry PLANLAMA (bkz. MAX_PENDING_RETRIES).
+                if (pendingRetries.get() >= MAX_PENDING_RETRIES) {
+                    log.error("✗ 421 retry kuyruğu dolu ({} bekleyen) — retry PLANLANMADI, e-posta düşürüldü: TO={}",
+                            MAX_PENDING_RETRIES, to);
+                    if (attempt > 1) writeBackRetryStatus(msg, "FAILED: retry kuyruğu dolu");
+                    return "FAILED: retry kuyruğu dolu";
+                }
                 // Caller'ı bloke etme; retry'ı ayrı thread'de tetikle.
+                pendingRetries.incrementAndGet();
                 mailRetryExecutor.schedule(
                     () -> {
                         try { doSend(to, msg, attempt + 1); }
                         catch (Exception ex) {
                             log.error("✗ Async retry başarısız: TO={} | HATA={}", to, ex.getMessage(), ex);
+                        } finally {
+                            pendingRetries.decrementAndGet();
                         }
                     },
                     delay, TimeUnit.MILLISECONDS);

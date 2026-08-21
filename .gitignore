@@ -34,6 +34,14 @@ k8s/secret.yaml
 *.log
 logs/
 
+# ── JVM çökme/tanı çıktıları ──────────────────────────
+# hs_err/replay dosyaları yukarıdaki *.log kuralına TESADÜFEN takılıyordu; niyet açık yazılsın
+# (adları .log ile bitmeyen varyantları da var). *.hprof ise HİÇ kapsanmıyordu ve
+# -XX:+HeapDumpOnOutOfMemoryError açıkken yüzlerce MB'lık dump'lar depoya sızabilirdi.
+hs_err_pid*
+replay_pid*
+*.hprof
+
 # ── IDE ───────────────────────────────────────────────
 .idea/
 .vscode/

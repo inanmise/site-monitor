@@ -12,6 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
@@ -56,9 +57,19 @@ class HttpMetricsInterceptorTest {
         verify(metrics).record(eq("GET /api/incidents/{id}"), eq(200), anyLong());
     }
 
+    /**
+     * SÖZLEŞME DEĞİŞTİ (2026-08-20 bellek denetimi). Eskiden şablon yoksa ham URI'ye düşülüyordu
+     * ve bu davranış burada pinlenmişti. Ham URI, metrik anahtarının kardinalitesini isteği yapana
+     * bırakır: her ayrı yol hem {@code currentEndpoints} haritasında hem {@code http_metric_minute}
+     * tablosunda ayrı bir kayıt üretir. Bugünkü kurulumda erişilmesi zor (interceptor yalnız
+     * {@code /api/**}'a kayıtlı, kimliksiz istek AuthInterceptor'da 401 ile kesiliyor, eşleşmeyen
+     * kimlikli istek de Boot'un varsayılan {@code /**} kaynak işleyicisine düşüp sınırlı şablon
+     * alıyor) — ama tek bir yapılandırma değişikliğiyle canlanabilecek bir sızıntı yüzeyi.
+     * Artık tek {@code (unmatched)} kovasına katlanır; istenen ham yol erişim log'unda durur.
+     */
     @Test
-    @DisplayName("afterCompletion: eşleşen şablon yoksa ham URI'ye düşer")
-    void afterCompletion_noPattern_fallsBackToRawUri() {
+    @DisplayName("afterCompletion: eşleşen şablon yoksa ham URI DEĞİL tek '(unmatched)' kovası kaydedilir")
+    void afterCompletion_noPattern_foldsIntoUnmatchedBucket() {
         MockHttpServletRequest req = new MockHttpServletRequest("POST", "/api/unmatched");
         req.setAttribute("_t", System.currentTimeMillis());
         MockHttpServletResponse res = new MockHttpServletResponse();
@@ -66,7 +77,22 @@ class HttpMetricsInterceptorTest {
 
         interceptor.afterCompletion(req, res, new Object(), null);
 
-        verify(metrics).record(eq("POST /api/unmatched"), eq(404), anyLong());
+        verify(metrics).record(eq("POST (unmatched)"), eq(404), anyLong());
+    }
+
+    @Test
+    @DisplayName("afterCompletion: ÇOK sayıda farklı eşleşmeyen yol tek anahtara katlanır (kardinalite patlamaz)")
+    void afterCompletion_manyDistinctUnmatchedPaths_collapseToOneKey() {
+        for (int i = 0; i < 50; i++) {
+            MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/rastgele-" + i + "-" + (i * 7919));
+            req.setAttribute("_t", System.currentTimeMillis());
+            MockHttpServletResponse res = new MockHttpServletResponse();
+            res.setStatus(404);
+            interceptor.afterCompletion(req, res, new Object(), null);
+        }
+
+        // 50 ayrı yol → 50 ayrı anahtar DEĞİL, aynı anahtara 50 kayıt.
+        verify(metrics, times(50)).record(eq("GET (unmatched)"), eq(404), anyLong());
     }
 
     @Test

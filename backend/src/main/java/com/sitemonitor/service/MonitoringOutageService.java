@@ -490,11 +490,23 @@ public class MonitoringOutageService {
             // Immediate (confirmation period = 0) — DOWN tespitinde incident'ı HEMEN aç, teyit bekleme.
             log.warn("{} DOWN tespit edildi: {} [{}] — immediate mod (teyit yok), incident hemen açılıyor",
                     item.alertType(), item.domain(), item.detail());
-            Map<String, Object> ctx = buildOutageContext(item, firstFailureAt, attempts);
-            withLock(item.alertType(), item.domain(), () ->
-                    escalationService.processConfirmedOutage(item.domain(), item.alertType(),
-                            levelFor(item.alertType()), ctx));
-            inFlight.remove(key);
+            // try/catch/finally ZORUNLU (2026-08-20 bellek denetimi). withLock yalnız KİLİT bırakmayı
+            // finally'ye alır, action.run()'ı sarmaz → escalation (veya buildOutageContext) fırlatırsa
+            // istisna buradan dışarı çıkardı. İki sonucu vardı: (1) inFlight.remove atlanır, putIfAbsent
+            // yeniden-giriş guard'ı olduğu için o anahtar kalıcı ölür ve monitörün kesinti teyidi bir daha
+            // HİÇ başlamaz (restart'a kadar sessiz alarm körlüğü); (2) startConfirmation sweep'in domain
+            // döngüsünden çağrıldığı için sweep'in KALAN domain'leri de işlenmeden düşerdi.
+            // Aşağıdaki yapı N-denemeli yolla (runConfirmAttempt) simetriktir: logla, yut, anahtarı bırak.
+            try {
+                Map<String, Object> ctx = buildOutageContext(item, firstFailureAt, attempts);
+                withLock(item.alertType(), item.domain(), () ->
+                        escalationService.processConfirmedOutage(item.domain(), item.alertType(),
+                                levelFor(item.alertType()), ctx));
+            } catch (Exception e) {
+                log.error("Immediate teyit başarısız oldu: {} — {}", key, e.getMessage(), e);
+            } finally {
+                inFlight.remove(key);
+            }
             return;
         }
         log.info("{} DOWN tespit edildi: {} [{}] — {} sn arayla {} doğrulama denemesi başlatıldı",

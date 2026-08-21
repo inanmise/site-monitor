@@ -8,6 +8,7 @@ import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
+import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
@@ -489,7 +490,10 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
               <div className="upt-card-top">
                 {statusBadge(m)}
                 {alarmBadge(m)}<MaintenanceBadge target={m.url} />
-                <span className="upt-port-tag">{m.mode === 'SITE_CRAWL' ? t('page.modeCrawl') : t('page.modeSingle')}</span>
+                <span className="upt-card-top-right">
+                  <span className="upt-port-tag">{m.mode === 'SITE_CRAWL' ? t('page.modeCrawl') : t('page.modeSingle')}</span>
+                  <CopyLinkButton iconOnly url={monitorDeepLink('page', m.id)} className="btn btn-sm upt-card-copy" />
+                </span>
               </div>
               <div className="upt-card-domain" title={m.url}>{m.url}</div>
               <MonitorCardMeta monitor={m} />

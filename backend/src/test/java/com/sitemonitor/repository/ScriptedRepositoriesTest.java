@@ -1,6 +1,7 @@
 package com.sitemonitor.repository;
 
 import com.sitemonitor.model.ScriptedCheck;
+import com.sitemonitor.model.ScriptedDraft;
 import com.sitemonitor.model.ScriptedMonitor;
 import com.sitemonitor.model.ScriptedScriptVersion;
 import org.junit.jupiter.api.DisplayName;
@@ -32,6 +33,7 @@ class ScriptedRepositoriesTest {
     @Autowired ScriptedMonitorRepository monitorRepo;
     @Autowired ScriptedCheckRepository checkRepo;
     @Autowired ScriptedScriptVersionRepository versionRepo;
+    @Autowired ScriptedDraftRepository draftRepo;
 
     private ScriptedMonitor mon(String name, Long teamId, String group, boolean active) {
         ScriptedMonitor m = new ScriptedMonitor();
@@ -254,5 +256,64 @@ class ScriptedRepositoriesTest {
     @DisplayName("findMaxSequenceNo: hiç sürümü olmayan monitörde BOŞ döner (ilk sürüm 1'den başlar)")
     void findMaxSequenceNo_emptyWhenNoVersions() {
         assertThat(versionRepo.findMaxSequenceNo(42L)).isEmpty();
+    }
+
+    // ── ScriptedDraftRepository ──────────────────────────────────────────────────────────────
+
+    private ScriptedDraft draft(String owner, String key, Long monitorId) {
+        ScriptedDraft d = new ScriptedDraft();
+        d.setOwner(owner);
+        d.setMonitorKey(key);
+        d.setMonitorId(monitorId);
+        d.setFormJson("{\"name\":\"yarim\"}");
+        d.setUpdatedAt("2026-08-21T10:00:00");
+        return d;
+    }
+
+    /**
+     * REGRESYON: taslak silme UYGULAMADAKİ gibi, yani AMBİYANS TRANSACTION OLMADAN koşmalı.
+     *
+     * <p>{@code @DataJpaTest} her testi bir transaction'a sarar; bu sarmal yüzünden türetilmiş
+     * silmenin tx eksikliği testte GÖRÜNMEZ. Üretimde ise {@code MonitoringController} transactional
+     * değil ve {@code open-in-view=false} — {@code deleteByOwnerAndMonitorKey} tx'siz çalışıp
+     * {@code TransactionRequiredException} ile düşüyor, çağıran yutuyor, kullanıcı "taslak silindi"
+     * bildirimini alıyor ama taslak duruyordu. {@code NOT_SUPPORTED} bu koşulu birebir kurar:
+     * repository metodundaki {@code @Transactional} kaldırılırsa bu test KIRMIZI olur.
+     */
+    @Test
+    @org.springframework.transaction.annotation.Transactional(
+            propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    @DisplayName("deleteByOwnerAndMonitorKey: dışarıda transaction YOKKEN gerçekten siler (yalnız o kullanıcının taslağını)")
+    void deleteDraft_worksWithoutAmbientTransaction() {
+        draftRepo.save(draft("AYSE", "new", null));
+        draftRepo.save(draft("AYSE", "7", 7L));
+        draftRepo.save(draft("MEHMET", "new", null));
+
+        int deleted = draftRepo.deleteByOwnerAndMonitorKey("AYSE", "new");
+
+        assertThat(deleted).isEqualTo(1);
+        assertThat(draftRepo.findByOwnerAndMonitorKey("AYSE", "new")).isEmpty();
+        assertThat(draftRepo.findByOwnerAndMonitorKey("AYSE", "7")).isPresent();      // aynı kullanıcının diğer taslağı
+        assertThat(draftRepo.findByOwnerAndMonitorKey("MEHMET", "new")).isPresent();  // başka kullanıcı dokunulmadı
+
+        draftRepo.deleteAll();   // NOT_SUPPORTED: yazımlar gerçekten commit edildi, sınıfı kirletmesin
+    }
+
+    /** Monitör silinince taslakları da düşer — bu da tx'siz yoldan çağrılıyor (aynı tuzak). */
+    @Test
+    @org.springframework.transaction.annotation.Transactional(
+            propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    @DisplayName("deleteByMonitorId: dışarıda transaction YOKKEN o monitörün taslaklarını siler")
+    void deleteDraftByMonitorId_worksWithoutAmbientTransaction() {
+        draftRepo.save(draft("AYSE", "9", 9L));
+        draftRepo.save(draft("MEHMET", "9", 9L));
+        draftRepo.save(draft("AYSE", "10", 10L));
+
+        int deleted = draftRepo.deleteByMonitorId(9L);
+
+        assertThat(deleted).isEqualTo(2);        // monitör bazlı: TÜM kullanıcıların taslağı
+        assertThat(draftRepo.findByOwnerAndMonitorKey("AYSE", "10")).isPresent();
+
+        draftRepo.deleteAll();
     }
 }

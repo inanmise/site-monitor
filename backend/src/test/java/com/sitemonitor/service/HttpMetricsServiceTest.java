@@ -158,4 +158,35 @@ class HttpMetricsServiceTest {
         assertThat(m.getMaxMs()).isEqualTo(120L);
         assertThat(m.getHist()).contains(",");   // histogram CSV dolu
     }
+
+    /**
+     * Kardinalite tavanı (2026-08-20 bellek denetimi). Endpoint anahtarı yüksek kardinaliteli bir
+     * kaynaktan beslenirse hem bellek-içi harita hem {@code http_metric_minute} tablosu sınırsız
+     * büyürdü. Tavan yapısal güvencedir: dakika başına en çok MAX_ENDPOINTS_PER_MINUTE+1 satır.
+     */
+    @Test
+    @DisplayName("kardinalite tavanı: 5000 farklı endpoint → dakika başına en çok 501 kova, fazlası '(overflow)'")
+    @SuppressWarnings("unchecked")
+    void record_cardinalityCap_foldsOverflowBucket() throws Exception {
+        HttpMetricMinuteRepository repo = mock(HttpMetricMinuteRepository.class);
+        ReflectionTestUtils.setField(service, "metricRepo", repo);
+
+        for (int i = 0; i < 5000; i++) service.record("GET /api/e" + i, 200, 5);
+
+        var ctor = Class.forName("com.sitemonitor.service.HttpMetricsService$MinuteBucket")
+                .getDeclaredConstructor(String.class);
+        ctor.setAccessible(true);
+        ReflectionTestUtils.setField(service, "current", ctor.newInstance("2000-01-01T00:00:00"));
+
+        service.rotate();
+
+        ArgumentCaptor<List<HttpMetricMinute>> cap = ArgumentCaptor.forClass(List.class);
+        verify(repo).saveAll(cap.capture());
+        List<HttpMetricMinute> rows = cap.getValue();
+
+        assertThat(rows).hasSizeLessThanOrEqualTo(501);          // 500 ayrı + 1 taşma kovası
+        assertThat(rows).extracting(HttpMetricMinute::getEndpoint).contains("(overflow)");
+        // Taşma kovası kaybolan istekleri YUTMAZ: toplam req_count korunur.
+        assertThat(rows.stream().mapToLong(HttpMetricMinute::getReqCount).sum()).isEqualTo(5000L);
+    }
 }

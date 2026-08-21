@@ -555,6 +555,12 @@ public class AuthController {
         else session.setAttribute("viewTeamIds", new ArrayList<>(view));
         if (manage == null) session.removeAttribute("manageTeamIds");
         else session.setAttribute("manageTeamIds", new ArrayList<>(manage));
+
+        // ÜYELİK kapsamı (2026-08-20, şablon kütüphanesi): "bu kullanıcı hangi takımların ÜYESİ?"
+        // view/manage'ın ikisi de bu soruyu cevaplamıyor — view müdürde astların takımlarını
+        // içeriyor, manage USER'da boş. ASLA null bırakılmaz: yokluğu "kısıtsız" anlamına
+        // gelmemeli, boş liste "hiçbir takımın üyesi değil" demeli.
+        session.setAttribute("memberTeamIds", new ArrayList<>(userService.computeMemberTeamIds(user)));
     }
 
     private Map<String, Object> buildMeResponse(AppUser user, HttpSession session,

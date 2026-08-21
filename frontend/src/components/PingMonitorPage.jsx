@@ -15,6 +15,7 @@ import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
+import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
@@ -358,7 +359,10 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
               <div className="upt-card-top">
                 {statusBadge(m)}
                 {alarmBadge(m)}<MaintenanceBadge target={m.host} />
-                <span className="upt-port-tag">{m.ip_version && m.ip_version !== 'auto' ? m.ip_version.toUpperCase() : 'ICMP'}</span>
+                <span className="upt-card-top-right">
+                  <span className="upt-port-tag">{m.ip_version && m.ip_version !== 'auto' ? m.ip_version.toUpperCase() : 'ICMP'}</span>
+                  <CopyLinkButton iconOnly url={monitorDeepLink('ping', m.id)} className="btn btn-sm upt-card-copy" />
+                </span>
               </div>
               <div className="upt-card-domain" title={m.host}>{m.host}</div>
               <MonitorCardMeta monitor={m} />

@@ -1,0 +1,248 @@
+{
+  "seedVersion": 1,
+  "templates": [
+    {
+      "builtinKey": "smoke-health",
+      "name": "Sistem sağlık kontrolü (smoke)",
+      "nameEn": "System health check (smoke)",
+      "description": "k6 / Sentetik İzleme uçtan uca çalışıyor mu — env GEREKTİRMEZ; www.akbank.com adresine GET atıp içeriği doğrular. İsteğe açık 20 sn timeout verilmiştir: hedefe çıkış kapalıysa koşum sebepsiz zaman aşımına düşmez, gerçek sebebi yazar.",
+      "descriptionEn": "Is k6 / Synthetic Monitoring working end to end — NO env needed; GETs www.akbank.com and validates its content. The request carries an explicit 20s timeout, so if egress is blocked the run reports the real cause instead of a silent timeout.",
+      "whenToUse": "Sentetik İzleme'yi ilk kez kurarken veya \"acaba k6 mı bozuldu?\" şüphesinde ilk çalıştırılacak şablon. Yeni bir pod/ortam sonrası DNS + TLS + HTTP zincirinin ayakta olduğunu tek tıkla gösterir.",
+      "whenToUseEn": "The first template to run when setting up Synthetic Monitoring, or when you suspect k6 itself is broken. After a new pod/environment it proves the DNS + TLS + HTTP chain is alive in one click.",
+      "env": [],
+      "script": "import http from 'k6/http';\nimport { check } from 'k6';\n\n// Env gerektirmez — k6/Sentetik İzleme'nin uçtan uca çalıştığını doğrulayan basit smoke testi.\n// Hedef kurumsal sitemiz: DNS + TLS + HTTP zinciri pod'dan GERÇEK bir hedefle sınanır.\n// Başka bir hedefi denemek için URL'i değiştirmeniz yeterli.\n//\n// timeout AÇIK ve süreç zaman aşımından KISA verilmiştir (bilerek): k6'nın kendi varsayılan\n// istek timeout'u 60 sn, monitörün varsayılan süreç timeout'u da 60 sn. İkisi eşit olunca istek\n// kendi kendine düşemeden süreci öldürüyoruz ve k6 başarısızlığın sebebini (bağlantı reddi, DNS,\n// TLS, istek zaman aşımı) yazmaya fırsat bulamıyor — ekranda sebepsiz \"Süre aşımı\" kalıyor.\nexport default function () {\n  const r = http.get('https://www.akbank.com', { timeout: '20s' });\n  check(r, {\n    'status 200': (res) => res.status === 200,\n    // \"gövde var\" YETMEZ: engelleyen vekil/captive portal sayfasının da gövdesi vardır.\n    // İçerik kontrolü, gerçekten hedefe ulaşıldığını doğrular.\n    'içerik Akbank sayfası': (res) => (res.body || '').indexOf('Akbank') >= 0,\n  });\n}\n"
+    },
+    {
+      "builtinKey": "json-health",
+      "name": "JSON sağlık ucu (Actuator / mikroservis)",
+      "nameEn": "JSON health endpoint (Actuator / microservice)",
+      "description": "Servisin /health ucunu çağırır ve gövdeyi metin olarak değil ALAN olarak doğrular: `status` alanı UP mı, yanıt süresi eşiğin altında mı. Env: BASE_URL.",
+      "descriptionEn": "Calls the service /health endpoint and validates the body as a FIELD, not text: is `status` UP, is the response under the latency bar. Env: BASE_URL.",
+      "whenToUse": "Spring Boot Actuator veya benzeri bir JSON sağlık ucu yayınlayan mikroservisler için. HTTP izleme yalnız 200 görür; bu şablon \"200 dönüyor ama status: DOWN\" durumunu yakalar — en sık gözden kaçan arıza budur.",
+      "whenToUseEn": "For microservices exposing a Spring Boot Actuator-style JSON health endpoint. HTTP monitoring only sees 200; this template catches \"returns 200 but status: DOWN\" — the most commonly missed failure.",
+      "env": [
+        {
+          "name": "BASE_URL",
+          "secret": false
+        }
+      ],
+      "script": "import http from 'k6/http';\nimport { check } from 'k6';\n\n// Gerekli __ENV: BASE_URL   (örn. https://servis.akbank.com)\nexport default function () {\n  const r = http.get(__ENV.BASE_URL + '/health', { timeout: '15s' });\n\n  // json('status') gövde JSON değilse istisna atar → kontrol ERROR olur ve sebebi ekrana yazılır.\n  // Bu bilinçli: HTML dönen bir \"sağlık ucu\" sessizce PASS geçmemeli.\n  check(r, {\n    'status 200': (res) => res.status === 200,\n    'health UP': (res) => res.json('status') === 'UP',\n    'yanıt 2 sn altında': (res) => res.timings.duration < 2000,\n  });\n}\n"
+    },
+    {
+      "builtinKey": "oauth2-client-credentials",
+      "name": "OAuth2 client_credentials → korumalı API",
+      "nameEn": "OAuth2 client_credentials → protected API",
+      "description": "Önce token endpoint'inden client_credentials ile access_token alır, sonra korumalı API'yi Bearer ile çağırır ve 401/403 dönmediğini doğrular. Env: TOKEN_URL, CLIENT_ID, CLIENT_SECRET (secret), API_URL, SCOPE (opsiyonel).",
+      "descriptionEn": "Gets an access_token from the token endpoint via client_credentials, then calls the protected API with Bearer and verifies it is not 401/403. Env: TOKEN_URL, CLIENT_ID, CLIENT_SECRET (secret), API_URL, SCOPE (optional).",
+      "whenToUse": "Servisten servise (makine-makine) entegrasyonlar: API gateway arkasındaki uçlar, açık bankacılık/partner API'leri. Token üretiminin kendisi de izlenmiş olur — süresi dolan sertifika/secret veya yetki kaybı, API çağrısından ÖNCE görünür.",
+      "whenToUseEn": "Service-to-service (machine-to-machine) integrations: endpoints behind an API gateway, open-banking/partner APIs. Token issuance itself is monitored too — an expired secret or lost scope shows up BEFORE the API call.",
+      "env": [
+        {
+          "name": "TOKEN_URL",
+          "secret": false
+        },
+        {
+          "name": "CLIENT_ID",
+          "secret": false
+        },
+        {
+          "name": "CLIENT_SECRET",
+          "secret": true
+        },
+        {
+          "name": "API_URL",
+          "secret": false
+        },
+        {
+          "name": "SCOPE",
+          "secret": false
+        }
+      ],
+      "script": "import http from 'k6/http';\nimport { check } from 'k6';\n\n// İZLEME İÇİN AYRI BİR SERVİS HESABI/İSTEMCİSİ KULLANIN.\n// Gerekli __ENV: TOKEN_URL, CLIENT_ID, CLIENT_SECRET, API_URL   (opsiyonel: SCOPE)\nexport default function () {\n  // 1) Token al\n  const tok = http.post(__ENV.TOKEN_URL, {\n    grant_type: 'client_credentials',\n    client_id: __ENV.CLIENT_ID,\n    client_secret: __ENV.CLIENT_SECRET,\n    scope: __ENV.SCOPE || '',\n  }, { timeout: '15s' });\n\n  check(tok, {\n    'token 200': (r) => r.status === 200,\n    'access_token döndü': (r) => r.status === 200 && !!r.json('access_token'),\n  });\n\n  const token = tok.status === 200 ? tok.json('access_token') : null;\n  if (!token) return;   // token yoksa korumalı uca gitmek anlamsız — sebep zaten yukarıda raporlandı\n\n  // 2) Korumalı API'yi çağır\n  const api = http.get(__ENV.API_URL, {\n    timeout: '15s',\n    headers: { Authorization: 'Bearer ' + token },\n  });\n\n  check(api, {\n    'API 200': (r) => r.status === 200,\n    'yetki kabul edildi (401/403 değil)': (r) => r.status !== 401 && r.status !== 403,\n  });\n}\n"
+    },
+    {
+      "builtinKey": "api-chain",
+      "name": "Basit API zinciri (POST → GET)",
+      "nameEn": "Simple API chain (POST → GET)",
+      "description": "POST ile kayıt oluşturur, dönen ID ile GET yapar ve alan doğrular. Env: BASE_URL, TOKEN (secret, opsiyonel).",
+      "descriptionEn": "Creates a record via POST, GETs it by returned ID and validates a field. Env: BASE_URL, TOKEN (secret, optional).",
+      "whenToUse": "Tek bir uç değil, YAZ-OKU turunun bütünlüğü önemliyse: kayıt oluşturulabiliyor ve hemen ardından okunabiliyor mu. Yazma tarafı bozulduğunda ya da okuma replikası geride kaldığında ortaya çıkar.",
+      "whenToUseEn": "When the write-then-read round trip matters, not a single endpoint: can a record be created and immediately read back. Surfaces broken writes and lagging read replicas.",
+      "env": [
+        {
+          "name": "BASE_URL",
+          "secret": false
+        },
+        {
+          "name": "TOKEN",
+          "secret": true
+        }
+      ],
+      "script": "import http from 'k6/http';\nimport { check } from 'k6';\n\n// Gerekli __ENV: BASE_URL  (opsiyonel: TOKEN)\nexport default function () {\n  const base = __ENV.BASE_URL;\n  const headers = { 'Content-Type': 'application/json' };\n  if (__ENV.TOKEN) headers.Authorization = 'Bearer ' + __ENV.TOKEN;\n\n  // 1) POST — kayıt oluştur\n  const create = http.post(base + '/api/items', JSON.stringify({ name: 'monitor-probe', kind: 'test' }), { timeout: '15s', headers: headers });\n  check(create, { 'POST 200/201': (r) => r.status === 200 || r.status === 201 });\n  const id = create.json('id');\n  check(create, { 'id döndü': () => !!id });\n\n  // 2) GET — dönen ID ile oku + alan doğrula\n  if (id) {\n    const get = http.get(base + '/api/items/' + id, { timeout: '15s', headers: headers });\n    check(get, { 'GET 200': (r) => r.status === 200, 'name doğru': (r) => r.json('name') === 'monitor-probe' });\n  }\n}\n"
+    },
+    {
+      "builtinKey": "multi-step-journey",
+      "name": "Çok adımlı kullanıcı yolculuğu (group)",
+      "nameEn": "Multi-step user journey (group)",
+      "description": "Kritik iş akışını adım adım koşar (ana sayfa → arama → detay) ve her adımı `group()` ile ayırır; çıktıda hangi ADIMIN düştüğü net görünür. Env: BASE_URL.",
+      "descriptionEn": "Runs a critical flow step by step (home → search → detail), separating each with `group()`; the output shows exactly WHICH step failed. Env: BASE_URL.",
+      "whenToUse": "Tek bir URL'in ayakta olması yetmiyorsa: uçtan uca bir iş akışının (arama, sorgulama, form doldurma) çalıştığını kanıtlamak için. Tüm uçlar tek tek 200 dönerken akışın ortasında kopan entegrasyonları yakalar.",
+      "whenToUseEn": "When a single URL being up is not enough: to prove an end-to-end flow (search, query, form) works. Catches integrations that break mid-flow while every endpoint individually returns 200.",
+      "env": [
+        {
+          "name": "BASE_URL",
+          "secret": false
+        }
+      ],
+      "script": "import http from 'k6/http';\nimport { check, group } from 'k6';\n\n// Gerekli __ENV: BASE_URL\n// group() adımları çıktıda ayrı başlıklar hâlinde görünür → \"hangi adım düştü\" sorusu tek bakışta cevaplanır.\nexport default function () {\n  let itemId = null;\n\n  group('1) ana sayfa', function () {\n    const r = http.get(__ENV.BASE_URL + '/', { timeout: '15s' });\n    check(r, { 'ana sayfa 200': (res) => res.status === 200 });\n  });\n\n  group('2) arama', function () {\n    const r = http.get(__ENV.BASE_URL + '/api/search?q=test', { timeout: '15s' });\n    check(r, { 'arama 200': (res) => res.status === 200 });\n    if (r.status === 200) itemId = r.json('items.0.id') || null;\n    check(r, { 'en az bir sonuç döndü': () => !!itemId });\n  });\n\n  group('3) detay', function () {\n    if (!itemId) return;   // arama düştüyse detay adımını koşmak yanıltıcı olur\n    const r = http.get(__ENV.BASE_URL + '/api/items/' + itemId, { timeout: '15s' });\n    check(r, { 'detay 200': (res) => res.status === 200 });\n  });\n}\n"
+    },
+    {
+      "builtinKey": "sla-threshold",
+      "name": "Yanıt süresi SLA (threshold)",
+      "nameEn": "Response-time SLA (threshold)",
+      "description": "`options.thresholds` ile süre ve hata oranı eşiği tanımlar. Eşik düşerse k6 99 ile çıkar ve kontrol FAIL olur — yani \"çalışıyor ama yavaş\" da arıza sayılır. Env: TARGET_URL.",
+      "descriptionEn": "Defines duration and error-rate bars via `options.thresholds`. If a bar is missed k6 exits 99 and the check FAILs — so \"up but slow\" counts as a failure too. Env: TARGET_URL.",
+      "whenToUse": "Yanıt süresi taahhüdü (SLA) olan uçlar için: ödeme, sorgulama, giriş. Ayakta ama yavaşlayan bir servisi, kullanıcı şikâyeti gelmeden alarma dönüştürür.",
+      "whenToUseEn": "For endpoints with a latency commitment (SLA): payments, queries, login. Turns a service that is up but slowing down into an alert before users complain.",
+      "env": [
+        {
+          "name": "TARGET_URL",
+          "secret": false
+        }
+      ],
+      "script": "import http from 'k6/http';\nimport { check } from 'k6';\n\n// Gerekli __ENV: TARGET_URL\n//\n// Eşikler her koşumda TEK istek üzerinden değerlendirilir (motor --vus 1 --iterations 1 ile koşar),\n// yani p(95) pratikte o tek isteğin süresidir. Yük testi değil, SLA nöbetçisi olarak düşünün.\n//\n// EŞİĞİ KENDİ UCUNUZA GÖRE AYARLAYIN: aşağıdaki 1,5 sn bir API ucu içindir. Ağır bir HTML sayfası\n// (birkaç yüz KB) ilk isteğin TLS + indirme maliyetiyle bunu rahatlıkla aşar ve monitör boş yere\n// FAIL verir. Gerçek ölçümünüzü \"Test Çalıştır\" ile alıp üstüne makul bir pay ekleyin.\nexport const options = {\n  thresholds: {\n    'http_req_duration': ['p(95)<1500'],   // 1,5 sn üstü = SLA ihlali\n    'http_req_failed': ['rate<0.01'],      // isteğin kendisi düşerse\n  },\n};\n\nexport default function () {\n  const r = http.get(__ENV.TARGET_URL, { timeout: '20s' });\n  check(r, { 'status 200': (res) => res.status === 200 });\n}\n"
+    },
+    {
+      "builtinKey": "soap-xml",
+      "name": "SOAP / XML servis çağrısı",
+      "nameEn": "SOAP / XML service call",
+      "description": "SOAP zarfı gönderir; HTTP 200'ün yanında gövdede `Fault` OLMADIĞINI doğrular. Env: SOAP_URL, SOAP_ACTION.",
+      "descriptionEn": "Posts a SOAP envelope and verifies there is NO `Fault` in the body, not just HTTP 200. Env: SOAP_URL, SOAP_ACTION.",
+      "whenToUse": "Çekirdek bankacılık ve eski entegrasyon servisleri için. SOAP'ta asıl arıza HTTP kodunda değil zarfın içindedir: servis 200 dönerken içeride `faultstring` gönderir — düz HTTP izleme bunu sağlıklı sanır.",
+      "whenToUseEn": "For core-banking and legacy integration services. In SOAP the real failure is inside the envelope, not the HTTP code: the service returns 200 while carrying a `faultstring` — plain HTTP monitoring reads that as healthy.",
+      "env": [
+        {
+          "name": "SOAP_URL",
+          "secret": false
+        },
+        {
+          "name": "SOAP_ACTION",
+          "secret": false
+        }
+      ],
+      "script": "import http from 'k6/http';\nimport { check } from 'k6';\n\n// Gerekli __ENV: SOAP_URL, SOAP_ACTION\n// Zarfı kendi servisinizin beklediği istek gövdesiyle değiştirin (aşağıdaki basit bir Ping örneğidir).\nexport default function () {\n  const envelope = '<?xml version=\"1.0\" encoding=\"UTF-8\"?>'\n    + '<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\">'\n    + '<soapenv:Header/><soapenv:Body><Ping/></soapenv:Body>'\n    + '</soapenv:Envelope>';\n\n  const r = http.post(__ENV.SOAP_URL, envelope, {\n    timeout: '20s',\n    headers: { 'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': __ENV.SOAP_ACTION },\n  });\n\n  const body = r.body || '';\n  check(r, {\n    'HTTP 200': (res) => res.status === 200,\n    'SOAP zarfı döndü': () => body.indexOf('Envelope') >= 0,\n    // SOAP'ta 200 + Fault normaldir; arıza tam olarak BUDUR.\n    'SOAP Fault yok': () => body.indexOf('faultstring') < 0 && body.indexOf('Fault>') < 0,\n  });\n}\n"
+    },
+    {
+      "builtinKey": "oidc-keycloak",
+      "name": "OIDC / Keycloak login akışı",
+      "nameEn": "OIDC / Keycloak login flow",
+      "description": "Authorization-code akışı: auth endpoint → login formu submit → redirect/code → token exchange → claim doğrulama. Gerekli env: BASE_URL, REALM, CLIENT_ID, CLIENT_SECRET (secret), REDIRECT_URI, USERNAME, PASSWORD (secret).",
+      "descriptionEn": "Authorization-code flow: auth endpoint → submit login form → redirect/code → token exchange → claim check. Env: BASE_URL, REALM, CLIENT_ID, CLIENT_SECRET (secret), REDIRECT_URI, USERNAME, PASSWORD (secret).",
+      "whenToUse": "Kimlik sağlayıcısının (Keycloak/OIDC) kendisi kritikse: SSO bozulduğunda arkasındaki tüm uygulamalar aynı anda erişilemez olur. Sertifika yenileme, realm/istemci ayarı değişikliği ve süresi dolan client secret bu şablonla dakikalar içinde görünür.",
+      "whenToUseEn": "When the identity provider itself is critical: if SSO breaks, every application behind it becomes unreachable at once. Certificate renewals, realm/client config changes and expired client secrets surface within minutes.",
+      "env": [
+        {
+          "name": "BASE_URL",
+          "secret": false
+        },
+        {
+          "name": "REALM",
+          "secret": false
+        },
+        {
+          "name": "CLIENT_ID",
+          "secret": false
+        },
+        {
+          "name": "CLIENT_SECRET",
+          "secret": true
+        },
+        {
+          "name": "REDIRECT_URI",
+          "secret": false
+        },
+        {
+          "name": "USERNAME",
+          "secret": false
+        },
+        {
+          "name": "PASSWORD",
+          "secret": true
+        }
+      ],
+      "script": "import http from 'k6/http';\nimport { check } from 'k6';\n\n// İZLEME İÇİN AYRI BİR SERVİS HESABI KULLANIN — gerçek kullanıcı hesabıyla izleme yapmayın.\n// Gerekli __ENV: BASE_URL, REALM, CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, USERNAME, PASSWORD\nexport default function () {\n  const base = __ENV.BASE_URL;\n  const realm = __ENV.REALM || 'master';\n  const authUrl = base + '/realms/' + realm + '/protocol/openid-connect/auth'\n    + '?client_id=' + __ENV.CLIENT_ID\n    + '&redirect_uri=' + encodeURIComponent(__ENV.REDIRECT_URI)\n    + '&response_type=code&scope=openid';\n\n  // 1) Login sayfasını al (form + cookie'ler)\n  const loginPage = http.get(authUrl, { timeout: '15s' });\n  check(loginPage, { 'login sayfası 200': (r) => r.status === 200 });\n\n  // 2) Keycloak login formunu doldur + submit; redirect'i yakala\n  const afterLogin = loginPage.submitForm({\n    formSelector: '#kc-form-login',\n    fields: { username: __ENV.USERNAME, password: __ENV.PASSWORD },\n    params: { redirects: 0, timeout: '15s' },\n  });\n  check(afterLogin, {\n    'redirect (302/303)': (r) => r.status === 302 || r.status === 303,\n    'authorization code var': (r) => (r.headers['Location'] || '').indexOf('code=') >= 0,\n  });\n\n  // 3) code'u çıkar → token exchange\n  const loc = afterLogin.headers['Location'] || '';\n  const m = loc.match(/[?&]code=([^&]+)/);\n  const code = m ? m[1] : null;\n  if (code) {\n    const tok = http.post(base + '/realms/' + realm + '/protocol/openid-connect/token', {\n      grant_type: 'authorization_code', code: code,\n      client_id: __ENV.CLIENT_ID, redirect_uri: __ENV.REDIRECT_URI,\n      client_secret: __ENV.CLIENT_SECRET || '',\n    }, { timeout: '15s' });\n    check(tok, { 'token exchange 200': (r) => r.status === 200 });\n    const b = tok.json();\n    check(b, { 'access_token mevcut': (x) => !!x.access_token, 'id_token mevcut': (x) => !!x.id_token });\n  }\n}\n"
+    },
+    {
+      "builtinKey": "form-login",
+      "name": "Form login + oturum sayfası",
+      "nameEn": "Form login + session page",
+      "description": "Login formunu doldurur ve oturum-korumalı bir sayfanın erişilebilir olduğunu doğrular. Env: BASE_URL, USERNAME, PASSWORD (secret).",
+      "descriptionEn": "Submits a login form and verifies a session-protected page is reachable. Env: BASE_URL, USERNAME, PASSWORD (secret).",
+      "whenToUse": "Klasik (OIDC olmayan) form login kullanan iç uygulamalar için. Giriş sayfası açılıyor diye uygulama sağlıklı sayılmaz; bu şablon oturumun gerçekten AÇILDIĞINI kanıtlar — LDAP/DB bağlantısı kopunca giriş sayfası hâlâ 200 döner.",
+      "whenToUseEn": "For internal apps using classic (non-OIDC) form login. A reachable login page does not mean the app is healthy; this template proves a session actually opens — when LDAP/DB connectivity breaks, the login page still returns 200.",
+      "env": [
+        {
+          "name": "BASE_URL",
+          "secret": false
+        },
+        {
+          "name": "USERNAME",
+          "secret": false
+        },
+        {
+          "name": "PASSWORD",
+          "secret": true
+        }
+      ],
+      "script": "import http from 'k6/http';\nimport { check } from 'k6';\n\n// İZLEME İÇİN AYRI SERVİS HESABI KULLANIN. Gerekli __ENV: BASE_URL, USERNAME, PASSWORD\nexport default function () {\n  const base = __ENV.BASE_URL;\n\n  // 1) Login sayfası\n  const page = http.get(base + '/login', { timeout: '15s' });\n  check(page, { 'login sayfası 200': (r) => r.status === 200 });\n\n  // 2) Form login\n  const res = page.submitForm({\n    fields: { username: __ENV.USERNAME, password: __ENV.PASSWORD },\n    params: { timeout: '15s' },\n  });\n  check(res, { 'login sonrası 200': (r) => r.status === 200 });\n\n  // 3) Oturum-korumalı sayfa erişilebilir mi\n  const dash = http.get(base + '/dashboard', { timeout: '15s' });\n  check(dash, {\n    'dashboard 200': (r) => r.status === 200,\n    'oturum açık (login formuna düşmedi)': (r) => (r.body || '').indexOf('name=\"password\"') < 0,\n  });\n}\n"
+    },
+    {
+      "builtinKey": "mtls-client-cert",
+      "name": "mTLS — istemci sertifikasıyla API",
+      "nameEn": "mTLS — API with client certificate",
+      "description": "İstemci sertifikası (mTLS) isteyen bir ucu çağırır; sertifika ve anahtar PEM olarak env'den gelir. Env: BASE_URL, CERT_DOMAIN, CLIENT_CERT, CLIENT_KEY (secret).",
+      "descriptionEn": "Calls an endpoint requiring a client certificate (mTLS); cert and key come from env as PEM. Env: BASE_URL, CERT_DOMAIN, CLIENT_CERT, CLIENT_KEY (secret).",
+      "whenToUse": "Karşılıklı TLS ile korunan partner/entegrasyon uçları için. Sunucu sertifikasının süresini Port(443) izlemesi zaten takip eder; bu şablon ise BİZİM istemci sertifikamızın hâlâ kabul edildiğini doğrular — süresi dolan ya da yeni CA'ya geçilen istemci sertifikası ancak burada görünür.",
+      "whenToUseEn": "For partner/integration endpoints protected by mutual TLS. Port(443) monitoring already tracks the server certificate; this template proves OUR client certificate is still accepted — an expired or re-issued client cert shows up only here.",
+      "env": [
+        {
+          "name": "BASE_URL",
+          "secret": false
+        },
+        {
+          "name": "CERT_DOMAIN",
+          "secret": false
+        },
+        {
+          "name": "CLIENT_CERT",
+          "secret": false
+        },
+        {
+          "name": "CLIENT_KEY",
+          "secret": true
+        }
+      ],
+      "script": "import http from 'k6/http';\nimport { check } from 'k6';\n\n// Gerekli __ENV: BASE_URL, CERT_DOMAIN, CLIENT_CERT, CLIENT_KEY\n// CLIENT_CERT/CLIENT_KEY tam PEM içeriğidir (\"-----BEGIN ...\" dahil). ANAHTARI \"secret\" İŞARETLEYİN:\n// secret değerler şifreli saklanır ve çıktıda maskelenir. Script gövdesine ASLA gömmeyin.\n//\n// tlsAuth KOŞULLU tanımlanır (bilerek): kaydetme sırasındaki sözdizimi doğrulaması script'i env\n// VERMEDEN derler — secret'lar o yola hiç girmez. Koşulsuz yazılsaydı doğrulama boş PEM'de\n// \"failed to find any PEM data\" ile düşer ve kullanıcı, script'i sapasağlamken uyarı görürdü.\nexport const options = __ENV.CLIENT_CERT\n  ? {\n      tlsAuth: [{\n        domains: [__ENV.CERT_DOMAIN || ''],\n        cert: __ENV.CLIENT_CERT,\n        key: __ENV.CLIENT_KEY,\n      }],\n    }\n  : {};\n\nexport default function () {\n  const r = http.get(__ENV.BASE_URL, { timeout: '20s' });\n\n  // mTLS reddi genelde TLS el sıkışmasında düşer: istek hiç tamamlanmaz ve sebep\n  // \"remote error: tls: ...\" olarak hata satırına yazılır.\n  check(r, {\n    'status 200': (res) => res.status === 200,\n    'yetki kabul edildi (401/403 değil)': (res) => res.status !== 401 && res.status !== 403,\n  });\n}\n"
+    },
+    {
+      "builtinKey": "graphql",
+      "name": "GraphQL sorgusu",
+      "nameEn": "GraphQL query",
+      "description": "GraphQL ucuna sorgu gönderir; HTTP 200'ün yanında yanıtta `errors` alanı OLMADIĞINI doğrular. Env: GRAPHQL_URL, TOKEN (secret, opsiyonel).",
+      "descriptionEn": "Posts a query to a GraphQL endpoint and verifies the response has NO `errors` field, not just HTTP 200. Env: GRAPHQL_URL, TOKEN (secret, optional).",
+      "whenToUse": "GraphQL API'leri için. GraphQL hatayı HTTP koduyla değil gövdedeki `errors` dizisiyle bildirir: çözümleyici (resolver) patlasa bile yanıt 200'dür — düz HTTP izleme bu arızayı hiç görmez.",
+      "whenToUseEn": "For GraphQL APIs. GraphQL reports failures in the body `errors` array, not the HTTP code: even when a resolver blows up the response is 200 — plain HTTP monitoring never sees it.",
+      "env": [
+        {
+          "name": "GRAPHQL_URL",
+          "secret": false
+        },
+        {
+          "name": "TOKEN",
+          "secret": true
+        }
+      ],
+      "script": "import http from 'k6/http';\nimport { check } from 'k6';\n\n// Gerekli __ENV: GRAPHQL_URL   (opsiyonel: TOKEN)\n// Sorguyu kendi şemanızdan gerçek bir alanla değiştirin; __typename her şemada çalışan güvenli bir başlangıçtır.\nexport default function () {\n  const query = JSON.stringify({ query: '{ __typename }' });\n  const headers = { 'Content-Type': 'application/json' };\n  if (__ENV.TOKEN) headers.Authorization = 'Bearer ' + __ENV.TOKEN;\n\n  const r = http.post(__ENV.GRAPHQL_URL, query, { timeout: '15s', headers: headers });\n  const body = r.body || '';\n\n  check(r, {\n    'status 200': (res) => res.status === 200,\n    'data alanı var': () => body.indexOf('\"data\"') >= 0,\n    // GraphQL hatayı 200 ile döndürür; arıza tam olarak BURADADIR.\n    'errors alanı yok': () => body.indexOf('\"errors\"') < 0,\n  });\n}\n"
+    }
+  ]
+}

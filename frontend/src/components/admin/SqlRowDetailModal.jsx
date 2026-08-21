@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Table, Copy, Check } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 
@@ -10,6 +10,11 @@ import { useT } from '../../i18n/index.jsx'
 export default function SqlRowDetailModal({ row, cols, index, onClose }) {
   const t = useT()
   const [copiedKey, setCopiedKey] = useState(null)
+  // Kopyalama geri bildirimi zamanlayıcısı ref'te tutulur ve unmount'ta temizlenir
+  // (CopyButton.jsx deseni). Aksi halde modal 1.2 sn dolmadan kapanırsa zamanlayıcı
+  // ayakta kalır ve unmount edilmiş bileşende setState'e gider.
+  const timer = useRef(null)
+  useEffect(() => () => clearTimeout(timer.current), [])
 
   function copyValue(key, val) {
     const text = val == null ? '' : String(val)
@@ -17,7 +22,8 @@ export default function SqlRowDetailModal({ row, cols, index, onClose }) {
     try {
       navigator.clipboard.writeText(text).then(() => {
         setCopiedKey(key)
-        setTimeout(() => setCopiedKey(null), 1200)
+        clearTimeout(timer.current)
+        timer.current = setTimeout(() => setCopiedKey(null), 1200)
       }).catch(() => {})
     } catch { /* clipboard unavailable */ }
   }

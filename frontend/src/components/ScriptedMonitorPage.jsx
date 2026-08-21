@@ -10,14 +10,21 @@ import CodeEditor from './ui/CodeEditor.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { SCRIPTED_TEMPLATES } from './scriptedTemplates.js'
-import { FlaskConical, Play, Pencil, Plus, Trash2, X, RefreshCw, Eye, EyeOff, Copy, AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, ChevronDown, Terminal } from 'lucide-react'
+import ScriptedTemplateInfo from './scripted/ScriptedTemplateInfo.jsx'
+import { useScriptedTemplates } from '../hooks/useScriptedTemplates.js'
+import { buildScriptSourceOptions, resolveTemplate } from '../utils/scriptSourceOptions.js'
+import { FlaskConical, Play, Pencil, Plus, Trash2, X, RefreshCw, Eye, EyeOff, Copy, AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, ChevronDown, Terminal, FileCode2 } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { collectK6Markers } from '../utils/k6Errors.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
+import ScriptedVersionsTab from './scripted/ScriptedVersionsTab.jsx'
+import ScriptedTemplatesTab from './scripted/ScriptedTemplatesTab.jsx'
+import SegmentedControl from './ui/SegmentedControl.jsx'
+import { usePermissions } from '../contexts/PermissionsProvider.jsx'
+import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
@@ -94,91 +101,6 @@ function K6VersionBadge({ t, version, withSyntaxNote = false }) {
   )
 }
 
-/**
- * Sürümler sekmesi — script'in geçmiş hâlleri, salt-okunur önizleme ve "editöre yükle".
- *
- * Liste gövde taşımaz (yüzlerce sürümde yanıt şişmesin); seçilen sürümün script'i ayrı çağrıyla
- * gelir. Geri dönüş doğrudan yazmaz: içerik editöre yüklenir, kullanıcı test edip kaydeder.
- */
-function VersionsTab({ t, monitor, canEdit, onLoadIntoEditor }) {
-  const [rows, setRows] = useState(null)      // null = yükleniyor
-  const [sel, setSel] = useState(null)        // seçili sürüm (liste satırı)
-  const [detail, setDetail] = useState(null)  // seçili sürümün gövdesi
-
-  useEffect(() => {
-    let alive = true
-    api.monitoring.getScriptedVersions?.(monitor.id).then(r => {
-      if (alive) setRows(r?.success ? (r.data?.versions || []) : [])
-    })
-    return () => { alive = false }
-  }, [monitor.id])
-
-  useEffect(() => {
-    if (!sel) { setDetail(null); return }
-    let alive = true
-    api.monitoring.getScriptedVersion?.(monitor.id, sel.id).then(r => {
-      if (alive && r?.success) setDetail(r.data)
-    })
-    return () => { alive = false }
-  }, [monitor.id, sel])
-
-  if (rows === null) return <LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />
-  if (rows.length === 0) {
-    return <StatusBlock tone="neutral" title={t('scripted.versionNone')} description={t('scripted.versionEmptyHint')} />
-  }
-
-  const eventLabel = (ev) => {
-    if (ev === 'CREATE') return t('scripted.versionEventCREATE')
-    if (ev === 'RESTORE') return t('scripted.versionEventRESTORE')
-    return t('scripted.versionEventEDIT')
-  }
-
-  return (
-    <div className="sc-versions">
-      <table className="health-dbtable">
-        <thead><tr>
-          <th className="dbtcol-th">{t('scripted.versionColVersion')}</th>
-          <th className="dbtcol-th">{t('scripted.versionColWhen')}</th>
-          <th className="dbtcol-th">{t('scripted.versionColWho')}</th>
-          <th className="dbtcol-th">{t('scripted.versionColEvent')}</th>
-          <th className="dbtcol-th">{t('scripted.versionColNote')}</th>
-        </tr></thead>
-        <tbody>
-          {rows.map(v => (
-            <tr key={v.id} className={`uact-row-click${sel?.id === v.id ? ' is-sel' : ''}`} style={{ cursor: 'pointer' }}
-                onClick={() => setSel(sel?.id === v.id ? null : v)}>
-              <td>
-                <span className="sc-ver-chip">v{v.version}</span>
-                {v.current && <span className="sc-ver-current">{t('scripted.versionCurrent')}</span>}
-              </td>
-              <td className="sys-mono sys-small">{formatDateSec(v.created_at)}</td>
-              <td className="sys-small">{v.created_by || '—'}</td>
-              <td className="sys-small">{eventLabel(v.event_type)}</td>
-              <td className="sys-small">{v.note || '—'}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      {sel && (
-        <div className="sc-ver-preview">
-          <div className="sc-ver-preview-head">
-            <span className="sc-ver-chip">v{sel.version}</span>
-            {canEdit && detail && (
-              <button className="btn btn-sm btn-primary" onClick={() => onLoadIntoEditor(sel, detail)}>
-                {t('scripted.versionLoad')}
-              </button>
-            )}
-          </div>
-          {detail
-            ? <CodeEditor value={detail.script || ''} onChange={() => {}} readOnly textareaId={`k6-version-${sel.id}`} />
-            : <LoadingBlock label={t('modal.loading')} />}
-        </div>
-      )}
-    </div>
-  )
-}
-
 /** Backend çok satırlı hata döndürdüyse bu bir k6/Babel kod çerçevesidir (hizalı caret taşır). */
 function isCodeFrame(error) { return typeof error === 'string' && error.includes('\n') }
 
@@ -223,27 +145,6 @@ export function invalidNumericField(form) {
 }
 
 /**
- * Seçili şablonun ne yaptığı + KULLANIM SENARYOSU + gereken env'ler.
- *
- * Şablon seçicisi uzun süre yalnız ADLARI listeledi; `desc` alanı veriyle birlikte duruyor ama
- * hiçbir yerde gösterilmiyordu — kullanıcı şablonu yükleyip script'i okumadan hangisinin kendi
- * işine uyduğunu anlayamıyordu. Seçim yapılır yapılmaz burada görünür.
- */
-function TemplateInfo({ id, lang, t }) {
-  const tpl = SCRIPTED_TEMPLATES.find(x => x.id === id)
-  if (!tpl) return null
-  const pick = o => (o && (o[lang] || o.en)) || ''
-  return (
-    <div className="sc-tpl-info">
-      <p>{pick(tpl.desc)}</p>
-      <p><b>{t('scripted.templateWhen')}</b> {pick(tpl.when)}</p>
-      {tpl.env.length > 0 &&
-        <p><b>{t('scripted.templateEnvNeeded')}</b> {tpl.env.map(e => e.name).join(', ')}</p>}
-    </div>
-  )
-}
-
-/**
  * Kontrol Geçmişi gruplama imzası (CheckHistoryTab `rowSignature`).
  *
  * Yalnız BAŞARISIZ satırlar gruplanır — PASS satırlarını katlamak normal zaman çizgisini gizlerdi.
@@ -270,7 +171,17 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   const isOwnTeam = (m) => myTeam != null && String(m.team_id) === myTeam
 
   const [monitors, setMonitors] = useState([])
+  // Şablon kütüphanesi (Genel + takım). Yükleme hatası sayfayı DÜŞÜRMEZ: liste boş kalsa bile
+  // script'i elle yazmak her zaman mümkün olmalı.
+  const { templates: scriptTemplates } = useScriptedTemplates()
+  const { canView } = usePermissions()
+  // Sayfa içi görünüm: monitör listesi ↔ şablon kütüphanesi. `?tab=` whitelist'ine DOKUNULMAZ —
+  // bu sayfanın kendi iç durumudur, monitör detay sekmeleriyle karışmaz.
+  const [view, setView] = useState('monitors')
+  const canViewTemplates = canView('monitoring.scripted_templates')
   const [k6, setK6] = useState({ available: true, version: null, canManage: false })
+  // Kaydetme sonrası doğrulama koşumunun durumu: null | {state:'running'|'queued'|'skipped'|'cooldown'}
+  const [smoke, setSmoke] = useState(null)
   // Kurumsal vekilin ETKİN durumu — düzenleme formunda "bu ayarla gerçekte ne olacak" notu için.
   const [proxy, setProxy] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -592,7 +503,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     // taslak kaydı MONİTÖRÜ DEĞİŞTİRMEZ, yalnız kaldığı yeri saklar.
     if (!skipDraft) flushDraft()
     setModal(null); setTestResult(null); setDupSource(null); setSaveWarnings([]); setSaveError(null)
-    setPendingDraft(null); setDraftSavedAt(null); setBumpType('patch')
+    setPendingDraft(null); setDraftSavedAt(null); setBumpType('patch'); setSmoke(null)
   }
 
   // ── Otomatik taslak: anahtar, yazma, yükleme ─────────────────────────────
@@ -646,8 +557,18 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     } catch { toast.error(t('scripted.saveError')) }
   }
 
+  /**
+   * Taslağı sil — SUNUCU onaylamadan "silindi" DEME.
+   *
+   * Yaşanan hata: yanıt hiç okunmadığı için sunucudaki silme düşse bile başarı bildirimi çıkıyor,
+   * şerit yerel state'ten kalkıyor, sonraki açılışta taslak geri geliyordu ("sildim ama duruyor").
+   * Artık yalnız `success` gelirse yerel liste temizlenir; aksi halde şerit yerinde kalır ve hata
+   * görünür olur.
+   */
   async function discardDraft(key) {
-    await api.monitoring.deleteScriptedDraft?.(key)
+    let ok = false
+    try { ok = !!(await api.monitoring.deleteScriptedDraft?.(key))?.success } catch { ok = false }
+    if (!ok) { toast.error(t('scripted.draftDiscardError')); return }
     setPendingDraft(null)
     setDrafts(d => d.filter(x => x.monitor_key !== key))
     toast.success(t('scripted.draftDiscarded'))
@@ -693,14 +614,40 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     setTestResult(null)
   }
 
-  function applyTemplate(id) {
-    const tpl = SCRIPTED_TEMPLATES.find(x => x.id === id)
+  /**
+   * `tpl:<token>` seçimini forma uygular.
+   *
+   * Şablon env TANIMI taşır, DEĞER taşımaz — `value: ''` bilinçli: gizli bilgiyi kullanıcı
+   * kendi girer, kütüphane asla taşımaz. Şablon satırı silinmişse sessizce hiçbir şey yapılmaz
+   * (form kullanıcının yazdığını korur).
+   */
+  async function applyTemplate(token) {
+    const tpl = resolveTemplate(scriptTemplates, token)
     if (!tpl) return
+    // Env TANIMLARI liste yanıtında GELİR, script GÖVDESİ gelmez (yüzlerce şablonda yanıt
+    // şişmesin diye bilinçli). Gövde tekil uçtan çekilir — yoksa şablon seçmek env'i doldurup
+    // editörü boş bırakırdı ve kullanıcı "şablon çalışmıyor" derdi.
     setForm(f => ({
       ...f,
-      script: tpl.script,
-      env: tpl.env.map(e => ({ name: e.name, secret: !!e.secret, value: '' })),
+      env: (tpl.env || []).map(e => ({ name: e.name, secret: !!e.secret, value: '' })),
     }))
+    let script = tpl.script
+    if (!script) {
+      const res = await api.monitoring.getScriptedTemplate(tpl.id)
+      if (!res?.success) { toast.error(res?.error || t('tpl.loadError')); return }
+      script = res.data?.script || ''
+    }
+    // Geç dönen gövde ARTIK seçili olmayan şablona aitse yazma: kullanıcı beklerken başka bir
+    // kaynağa (kayıtlı script / boş) geçmiş olabilir — o seçimin script'ini ezmek veri kaybıdır.
+    setForm(f => (f.template === `tpl:${token}` ? { ...f, script: script || f.script } : f))
+  }
+
+  /** Şablon kütüphanesinden "Bu şablonla monitör oluştur": monitör görünümüne dön ve formu doldur. */
+  function startMonitorFromTemplate(row) {
+    setView('monitors')
+    openNew()
+    // openNew formu sıfırlar; şablon uygulaması bir sonraki tick'te (sürüm yükleme deseniyle aynı).
+    setTimeout(() => selectScriptSource(`tpl:${row.select_token != null ? row.select_token : row.id}`), 0)
   }
 
   function envPayload() {
@@ -757,6 +704,12 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
       // gösterilir — toast kaybolur, bu bilgi kaydettikten sonra da lazım.
       const w = res.data?.warnings
       if (Array.isArray(w) && w.length) setSaveWarnings(w)
+      else if (shouldSmokeRun(res.data)) {
+        // Kaydetme sonrası DOĞRULAMA KOŞUMU. Modal açık kalır; sürüm ZATEN kalıcı, koşum
+        // kaydı bloklamıyor — banner metni bunu açıkça söylüyor.
+        toast.success(t('scripted.saved'))
+        runSmokeCheck(res.data?.id ?? modal?.id)
+      }
       else { toast.success(t('scripted.saved')); closeEdit({ skipDraft: true }) }
       load()
     }
@@ -769,6 +722,48 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
       setSaveError(res?.error || null)
       toast.error(res?.error || t('scripted.saveError'))
     }
+  }
+
+  /**
+   * Kaydetme sonrası doğrulama koşumu YAPILSIN MI?
+   *
+   * <p>KAPI: yalnız gerçekten YENİ BİR SÜRÜM yazıldıysa. Yalnız ayar (aralık, takım, alarm
+   * tercihi) değiştiren bir kayıt sürüm üretmez ve k6 slotu yakmamalı — havuz varsayılan 2.
+   * Yeni kayıtta önceki sürüm yok, `1.0.0` doğal olarak farklıdır.
+   */
+  function shouldSmokeRun(saved) {
+    if (!k6.available) return false
+    const newVersion = saved?.script_version
+    if (!newVersion) return false
+    return newVersion !== modal?.script_version
+  }
+
+  /**
+   * Yeni sürümü BİR KEZ çalıştırır ve sonucu formda gösterir.
+   *
+   * <p>BİLİNÇLİ olarak `/scripted/{id}/check` (kaydedilmiş monitörü çalıştırır), `/scripted/test`
+   * DEĞİL: form üzerinden test, kullanıcının yeniden yazmadığı secret'ları BOŞ gönderiyor
+   * (kayıtlı şifreli değer korunsun diye) — secret'lı her monitörde sahte hata verir ve
+   * kullanıcı bandı görmezden gelmeyi öğrenirdi. `/check` ayrıca koşumu Kontrol Geçmişi'ne
+   * yazar ve script sürümünü damgalar, yani sürüm rozetini de besler.
+   *
+   * <p>Kaydı ASLA bloklamaz: sürüm bu noktada zaten kalıcı. Hata dönerse hiçbir şey geri
+   * alınmaz; kullanıcı görür ve düzeltir (bu da bir sonraki yama sürümünü üretir).
+   */
+  async function runSmokeCheck(id) {
+    if (!id) return
+    setSmoke({ state: 'running' })
+    setTestResult(null)
+    const res = await api.monitoring.triggerScriptedCheck(id)
+    if (res?.success) {
+      if (res.data?.skipped) setSmoke({ state: 'skipped', reason: res.data.skipped_reason || '' })
+      else if (res.data?.queued) setSmoke({ state: 'queued' })
+      else {
+        setSmoke(null)
+        setTestResult({ ...res.data, _source: 'smoke', _checkedAt: res.data?.checked_at })
+      }
+    } else if (res?.status === 429) setSmoke({ state: 'cooldown' })
+    else { setSmoke(null); toast.error(res?.error || t('scripted.triggerError')) }
   }
 
   async function del() {
@@ -832,22 +827,50 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
         <div>
           <h2 className="upt-title"><FlaskConical size={20} style={{ verticalAlign: '-4px' }} /> {t('scripted.title')}</h2>
           <p className="upt-subtitle">{t('scripted.subtitle')}</p>
+          {/* Görünüm anahtarı: monitörler ↔ şablon kütüphanesi. Şablon izni yoksa HİÇ çizilmez —
+              basılabilen ama 403 yiyen bir düğme göstermek yerine yüzey görünmez kalır.
+              BAŞLIĞIN ALTINDA durur, sağdaki eylem kümesinde DEĞİL: sağ küme (otomatik yenileme
+              sayacı + Yenile + bağlantı kopyala + k6 rozeti + Kılavuz + Yeni Monitör) anahtar
+              da eklenince ~900 px'i buluyor ve dar ekranda sarmalanıp Yeni Monitör düğmesini
+              alt satıra atıyordu. Ayrıca bu bir EYLEM değil görünüm seçicidir; yeri başlığın
+              yanıdır (şablon görünümündeki kapsam anahtarıyla da alt alta gelmez). */}
+          {canViewTemplates &&
+            <div className="sc-view-switch">
+              <SegmentedControl value={view} onChange={setView} ariaLabel={t('tpl.viewSwitch')}
+                options={[
+                  { value: 'monitors', label: t('tpl.viewMonitors'), icon: LayoutDashboard },
+                  { value: 'templates', label: t('tpl.viewTemplates'), icon: FileCode2 },
+                ]} />
+            </div>}
         </div>
-        <div className="upt-header-right">
-          <span className="upt-last-check">
-            {t('scripted.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}
-          </span>
-          <button className="btn btn-sm upt-refresh-btn" onClick={load}>
-            <RefreshCw size={14} />{t('scripted.refresh')}
-          </button>
-          <CopyLinkButton />
-          {/* Sürüm listede de görünsün: script yazmaya başlamadan önce hangi motor olduğu bilinsin. */}
-          <K6VersionBadge t={t} version={k6.version} />
-          <MonitorGuideButton type="scripted" />
-          {k6.canManage && k6.available &&
-            <button className="btn btn-sm btn-primary" onClick={openNew}><Plus size={14} />{t('scripted.addMonitor')}</button>}
-        </div>
+        {/* Sağdaki eylem kümesinin TAMAMI monitör görünümüne aittir: otomatik yenileme sayacı ve
+            Yenile monitör listesini tazeler, bağlantı kopyala monitör filtrelerini taşıyan URL'i
+            verir, k6 rozeti ile "Nasıl doldurulur?" kılavuzu MONİTÖR FORMUNU anlatır. Şablon
+            görünümünde hiçbiri o ekrandaki içerikle ilgili değil — sayaç şablon listesini
+            yenilemiyor, kılavuz başka bir formu anlatıyordu. Şablon sekmesinin kendi tazeleme ve
+            yönetim düğmeleri ScriptedTemplatesTab içinde. */}
+        {view === 'monitors' && (
+          <div className="upt-header-right">
+            <span className="upt-last-check">
+              {t('scripted.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}
+            </span>
+            <button className="btn btn-sm upt-refresh-btn" onClick={load}>
+              <RefreshCw size={14} />{t('scripted.refresh')}
+            </button>
+            <CopyLinkButton />
+            {/* Sürüm listede de görünsün: script yazmaya başlamadan önce hangi motor olduğu bilinsin. */}
+            <K6VersionBadge t={t} version={k6.version} />
+            <MonitorGuideButton type="scripted" />
+            {k6.canManage && k6.available &&
+              <button className="btn btn-sm btn-primary" onClick={openNew}><Plus size={14} />{t('scripted.addMonitor')}</button>}
+          </div>
+        )}
       </div>
+
+      {view === 'templates' ? (
+        <ScriptedTemplatesTab t={t} lang={lang} teams={teams} teamName={teamName}
+          onUseTemplate={k6.canManage && k6.available ? startMonitorFromTemplate : null} />
+      ) : (<>
 
       <MonitorHowBox bullets={[t('scripted.how1'), t('scripted.how2'), t('scripted.how3'), t('scripted.how4'), t('scripted.how5')]} />
 
@@ -920,7 +943,13 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
                     {t('scripted.neverSucceeded')}
                   </span>
                 )}
-                <span className="upt-port-tag">k6</span>
+                {/* Sağ blok tek kapsayıcıda: .upt-card-top bir space-between flex'i, doğrudan
+                    6. kardeş eklemek mevcut rozetleri yeniden yayardı. */}
+                <span className="upt-card-top-right">
+                  <span className="upt-port-tag">k6</span>
+                  <CopyLinkButton iconOnly url={monitorDeepLink('scripted', m.id)}
+                    className="btn btn-sm upt-card-copy" />
+                </span>
               </div>
               <div className="upt-card-domain" title={m.name}>{m.name}</div>
               <MonitorCardMeta monitor={m} />
@@ -983,6 +1012,21 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
               <div className="upt-modal-metric" title={t('scripted.sumTotalHint')}><span className="upt-modal-metric-val">{summary.total}</span><span className="upt-modal-metric-lbl">{t('scripted.sumTotal')}</span></div>
               <div className="upt-modal-metric" title={t('scripted.sumIncidentsHint')}><span className="upt-modal-metric-val">{summary.down}</span><span className="upt-modal-metric-lbl">{t('scripted.sumIncidents')}</span></div>
               {selected.duration_ms != null && <div className="upt-modal-metric"><span className="upt-modal-metric-val">{selected.duration_ms}ms</span><span className="upt-modal-metric-lbl">{t('scripted.lastDuration')}</span></div>}
+              {/* Çalışan script sürümü. `sc-ver-chip` BİLİNÇLİ kullanılmıyor: o satır-içi küçük bir
+                  rozet, buradaki 18px/700 metrik değerinin yerinde yanındaki beş metrikle kavga eder.
+                  `≠` işareti: son koşum GÜNCEL sürümle yapılmamış (kaydedildi ama henüz çalışmadı) —
+                  "son düzenlemem bozdu mu?" sorusunun ilk yarısı. */}
+              {selected.script_version && (
+                <div className="upt-modal-metric" title={t('scripted.sumVersionHint')}>
+                  <span className="upt-modal-metric-val">
+                    v{selected.script_version}
+                    {selected.run_script_version && selected.run_script_version !== selected.script_version && (
+                      <span className="sc-ver-drift" title={t('scripted.verDriftHint', selected.run_script_version)}>≠</span>
+                    )}
+                  </span>
+                  <span className="upt-modal-metric-lbl">{t('scripted.sumVersion')}</span>
+                </div>
+              )}
               {checksSummary(t, selected) &&
                 <div className="upt-modal-metric"><span className="upt-modal-metric-val"><ChecksSummary t={t} check={selected} /></span><span className="upt-modal-metric-lbl">{t('scripted.checks')}</span></div>}
               {selected.checked_at && <div className="upt-modal-metric"><span className="upt-modal-metric-val upt-modal-metric-time">{formatDateSec(selected.checked_at)}</span><span className="upt-modal-metric-lbl">{t('scripted.lastCheck')}</span></div>}
@@ -998,8 +1042,13 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
             </div>
 
             {detailTab === 'control' && (<>
+              {/* gridClass ZORUNLU: sürüm kolonuyla birlikte 5 kolon olduk, ortak `.upt-rt-grid`
+                  tabanı ise 4 kolonluk. Kendi şablonumuzu geçmezsek 5. hücre taşar — ve tabanı
+                  değiştirmek CheckHistoryTab'ı paylaşan diğer 9 izleme sayfasını bozardı. */}
               <CheckHistoryTab kind="scripted" monitorId={selected.id} listKey="scripted-history"
-                columns={[t('scripted.colTime'), t('scripted.colStatus'), t('scripted.colDuration'), t('scripted.colDetail')]}
+                gridClass="sc-rt-grid"
+                columns={[t('scripted.colTime'), t('scripted.colStatus'), t('scripted.versionColVersion'),
+                  t('scripted.colDuration'), t('scripted.colDetail')]}
                 onCounts={(c) => setSummary({ total: c.total, down: c.fail })}
                 groupIdenticalErrors
                 rowSignature={scriptedRowSignature}
@@ -1009,6 +1058,14 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
                     <span className="upt-rt-time" style={{ cursor: 'pointer' }} onClick={() => setSelCheck(isSel ? null : c)}>{formatDateSec(c.checked_at)}</span>
                     <span className={isPass(c.status) ? 'upt-rt-up' : isWarnLike(c.status) ? 'upt-rt-warn' : 'upt-rt-down'} style={{ cursor: 'pointer', fontWeight: isSel ? 700 : undefined }}
                       onClick={() => setSelCheck(isSel ? null : c)}>{statusLabel(t, c.status)}</span>
+                    {/* Bu koşumun HANGİ sürümle yapıldığı. Boş olabilir ve bu MEŞRU: sürümleme
+                        öncesi kayıtlar ile yalnız ayarı kaydedilmiş (sürüm yazılmamış) monitörler.
+                        O durumda `—` basılır; çıplak `v` ASLA basılmaz. */}
+                    <span className="upt-rt-ms">
+                      {c.script_version
+                        ? <span className="sc-ver-chip sc-ver-chip--cell">v{c.script_version}</span>
+                        : '—'}
+                    </span>
                     <span className="upt-rt-ms">{c.duration_ms != null ? `${c.duration_ms}ms` : '—'}</span>
                     {/* Detay hücresinin işi ÖZET + panele davet. Zenginlik (kod çerçevesi, çıkış
                         kodu etiketi, faz kırılımı, k6 çıktısı) satıra tıklayınca açılan
@@ -1035,7 +1092,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
             {detailTab === 'diag' && <DiagTab t={t} monitor={selected} canRun={canManageRow(selected)} />}
 
             {detailTab === 'versions' && (
-              <VersionsTab t={t} monitor={selected} canEdit={canManageRow(selected)}
+              <ScriptedVersionsTab t={t} monitor={selected} canEdit={canManageRow(selected)}
                 onLoadIntoEditor={(v, detail) => {
                   // Geri dönüş "tek tıkla geri al" DEĞİL: sürüm editöre yüklenir, kullanıcı
                   // görür/test eder, kaydedince YENİ sürüm olur — geçmiş asla ezilmez.
@@ -1063,8 +1120,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
         </div>,
         document.body
       )}
+      </>)}
 
-      {modal && createPortal(<EditModal {...{ t, lang, k6Version: k6.version, proxy, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, save, del, closeEdit, runTest, isAdminish, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts, savedSource, draftSavedAt, pendingDraft, applyDraft, discardDraft, bumpType, setBumpType }} />, document.body)}
+      {modal && createPortal(<EditModal {...{ t, lang, k6Version: k6.version, proxy, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke, dismissSmoke: () => { setSmoke(null); closeEdit({ skipDraft: true }) }, save, del, closeEdit, runTest, isAdminish, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts, savedSource, templates: scriptTemplates, draftSavedAt, pendingDraft, applyDraft, discardDraft, bumpType, setBumpType }} />, document.body)}
     </div>
   )
 }
@@ -1279,7 +1337,7 @@ function CheckDetail({ t, check, k6Version }) {
 }
 
 // ── Create/Edit modal ────────────────────────────────────────────────────────
-function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, save, del, closeEdit, runTest, isAdminish, canDelete, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts = [], savedSource = null, draftSavedAt = null, pendingDraft = null, applyDraft, discardDraft, bumpType = 'patch', setBumpType }) {
+function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke = null, dismissSmoke, save, del, closeEdit, runTest, isAdminish, canDelete, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts = [], savedSource = null, templates = [], draftSavedAt = null, pendingDraft = null, applyDraft, discardDraft, bumpType = 'patch', setBumpType }) {
   // Seçili kayıtlı script'in adı — "hangi monitörden yüklendi" notu için.
   const selectedSavedName = form.template?.startsWith('saved:')
     ? savedScripts.find(s => `saved:${s.id}` === form.template)?.name
@@ -1293,22 +1351,11 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
   const errorLines = useMemo(
     () => markers.filter(m => m.type === 'error').map(m => m.line), [markers])
 
-  // Seçici seçenekleri: iki grup tek listede (SearchableSelect `group` ile başlıklara böler).
-  // Boş seçenek YALNIZ yeni monitörde — düzenlemede monitörün kendi girdisi zaten listede ve
-  // "boşalt" yolu kaydedilmiş script'i siliyordu.
-  const scriptSourceOptions = [
-    ...(savedSource ? [] : [{ value: '', label: t('scripted.templatePick') }]),
-    ...savedScripts.map(s => ({
-      value: `saved:${s.id}`,
-      label: s.id === savedSource?.id ? `${s.name} ${t('scripted.srcThisMonitor')}` : s.name,
-      group: t('scripted.srcGroupSaved'),
-    })),
-    ...SCRIPTED_TEMPLATES.map(tp => ({
-      value: `tpl:${tp.id}`,
-      label: tp.name[lang] || tp.name.en,
-      group: t('scripted.srcGroupTemplates'),
-    })),
-  ]
+  // Seçici seçenekleri: dört grup tek listede (SearchableSelect `group` ile başlıklara böler).
+  // Grup SIRASI çağıranın sorumluluğu — başlıklar bitişikliğe göre basılıyor (bkz. utils).
+  const scriptSourceOptions = buildScriptSourceOptions({
+    savedScripts, templates, savedSourceId: savedSource?.id, lang, t,
+  })
   const ivIdx = intervalIdx(Number(form.intervalSeconds))
   return (
     <div className="modal-overlay">
@@ -1440,7 +1487,8 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
                 placeholder={t('scripted.templatePick')}
               />
             </div>
-            {form.template?.startsWith('tpl:') && <TemplateInfo id={form.template.slice(4)} lang={lang} t={t} />}
+            {form.template?.startsWith('tpl:') &&
+              <ScriptedTemplateInfo tpl={resolveTemplate(templates, form.template.slice(4))} lang={lang} t={t} />}
             {form.template?.startsWith('saved:') && selectedSavedName &&
               <span className="field-hint">{t('scripted.srcFromMonitor', selectedSavedName)}</span>}
           </div>
@@ -1464,7 +1512,9 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
             <div className="full-width sc-testrun">
               <div className="sc-testrun-head">
                 <span className="sc-run-src">
-                  {testResult._source === 'lastCheck' ? t('scripted.runSourceLast') : t('scripted.runSourceTest')}
+                  {testResult._source === 'lastCheck' ? t('scripted.runSourceLast')
+                    : testResult._source === 'smoke' ? t('scripted.runSourceSmoke')
+                    : t('scripted.runSourceTest')}
                 </span>
                 <span className="sc-testrun-status" style={{ color: STATUS_COLOR[testResult.status] || 'inherit' }}>
                   {statusLabel(t, testResult.status)}</span>
@@ -1554,6 +1604,25 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
                 <ul className="sc-warn-list">{saveWarnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
               </AlertBanner>
             </div>}
+
+          {/* Kaydetme sonrası doğrulama koşumu. Sürüm ZATEN kaydedildi — metin bunu söylüyor
+              ve "Kapat" her an açık: koşum sunucuda sürer, sonucu Kontrol Geçmişi'ne düşer. */}
+          {smoke && (
+            <div className="full-width sc-smoke">
+              <AlertBanner tone={smoke.state === 'skipped' ? 'warning' : 'info'}>
+                <span className="sc-smoke-msg">
+                  {smoke.state === 'running' && <Spinner size={14} inline decorative />}
+                  {smoke.state === 'running'  && t('scripted.smokeRunning')}
+                  {smoke.state === 'queued'   && t('scripted.smokeQueued')}
+                  {smoke.state === 'cooldown' && t('scripted.smokeCooldown')}
+                  {smoke.state === 'skipped'  && t('scripted.smokeSkipped', smoke.reason || '')}
+                </span>
+                <button type="button" className="btn btn-sm btn-secondary" onClick={dismissSmoke}>
+                  {t('scripted.smokeClose')}
+                </button>
+              </AlertBanner>
+            </div>
+          )}
 
         </div>
         <div className="modal-actions">

@@ -32,10 +32,13 @@ public class HttpMetricsInterceptor implements HandlerInterceptor {
         String uri = req.getRequestURI();
         if (uri.endsWith("/metrics") || uri.contains("/http-metrics")) return;
 
-        // Endpoint = method + route şablonu (ör. "GET /api/incidents/{id}") — ham URI yerine
-        // (kardinalite sınırlı). Şablon yoksa (eşleşmeyen istek) ham URI'ye düş.
+        // Endpoint = method + route şablonu (ör. "GET /api/incidents/{id}") — kardinalitesi sınırlı.
+        // Şablon YOKSA ham URI'ye DÜŞÜLMEZ (2026-08-20 bellek denetimi): ham URI, metrik anahtarının
+        // kardinalitesini istemci kontrolüne bırakır ve hem currentEndpoints haritasını hem
+        // http_metric_minute tablosunu sınırsız büyütebilir. Tek "(unmatched)" kovasına katlanır;
+        // hangi yolun istendiği erişim log'unda ve client-errors yüzeyinde zaten duruyor.
         Object pattern = req.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
-        String route = (pattern instanceof String p && !p.isBlank()) ? p : uri;
+        String route = (pattern instanceof String p && !p.isBlank()) ? p : "(unmatched)";
         httpMetricsService.record(req.getMethod() + " " + route, res.getStatus(),
                 System.currentTimeMillis() - start);
     }

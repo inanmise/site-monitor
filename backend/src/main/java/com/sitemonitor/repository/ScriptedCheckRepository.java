@@ -73,4 +73,18 @@ public interface ScriptedCheckRepository extends JpaRepository<ScriptedCheck, Lo
      *  Zaman kolonu indexli oldugundan MIN/MAX index-seek'tir (tablo taramasi yok). */
     @Query("SELECT MIN(c.checkedAt), MAX(c.checkedAt) FROM ScriptedCheck c WHERE c.monitorId = :id")
     List<Object[]> historyBounds(@Param("id") Long id);
+
+    /**
+     * Sürüm başına koşum sonucu — Sürümler sekmesindeki "8 koşum / 8 hata" rozeti.
+     *
+     * <p>TEK toplu sorgu: sürüm listesi yüzlerce satır olabilir, satır başına sayım N+1 olurdu.
+     * {@code monitor_id} indeksli ve retention hacmi sınırlıyor.
+     *
+     * <p>{@code script_version} NULL olan eski kayıtlar DIŞARIDA: onlar sürümleme öncesine ait,
+     * hiçbir sürüm satırına karşılık gelmiyorlar ve bir sürümün karnesine yazılmaları yanlış olur.
+     */
+    @Query("SELECT c.scriptVersion, COUNT(c), SUM(CASE WHEN c.ok = false THEN 1L ELSE 0L END) "
+         + "FROM ScriptedCheck c WHERE c.monitorId = :id AND c.scriptVersion IS NOT NULL "
+         + "GROUP BY c.scriptVersion")
+    List<Object[]> runStatsByScriptVersion(@Param("id") Long id);
 }

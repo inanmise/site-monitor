@@ -67,6 +67,14 @@ class RetentionCoverageTest {
                     "k6 script sürüm geçmişi — monitör tanımının parçası ve geri dönüş kaynağı; "
                     + "kullanıcı kararıyla süresiz saklanır (metinler KB mertebesinde). "
                     + "Monitörü silinen satırlar 'scripted-versions-orphan' kuralıyla temizlenir."),
+            Map.entry("scripted_templates",
+                    "Şablon kütüphanesi — küratörlü/kullanıcı katkılı içerik, zaman serisi DEĞİL. "
+                    + "Satır sayısı yerleşik set + takımların yazdığı şablon kadar (onlarca mertebesi); "
+                    + "silme soft delete ile yapılır, kalıcı silme admin'in açık eylemidir."),
+            Map.entry("scripted_template_versions",
+                    "Şablon sürüm geçmişi — 'kim ne zaman ne değiştirdi' denetim izi ve geri dönüş "
+                    + "kaynağı; scripted_script_versions ile aynı gerekçeyle süresiz saklanır. "
+                    + "Şablon KALICI silindiğinde geçmişi de silinir (soft delete'te korunur)."),
             // İçerik: kullanıcı üretimi, soft delete ile yönetilen kayıtlar.
             Map.entry("certificate_notes", "Kullanıcı notu — soft delete; revizyonlarının politikası var."),
             Map.entry("monitor_notes", "Kullanıcı notu — soft delete."),

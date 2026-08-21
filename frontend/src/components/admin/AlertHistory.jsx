@@ -10,6 +10,7 @@ import UserBadge from '../ui/UserBadge.jsx'
 import { mailPreviewSrcDoc, mailLogoVariant, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import { ALERT_TYPES, alertTypeMeta, alertTypeLabel } from '../../utils/alertTypeMeta.js'
+import { formatDuration, durationMs } from '../../utils/incidentMeta.js'
 import MonitorStatsSection from '../MonitorStatsSection.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import {
@@ -19,17 +20,14 @@ import {
 
 /** Seviye → CSS sınıfı eki. Renkler App.css'te (iki tema); burada yalnız eşleme. */
 const levelClass = (lvl) => ({ WARNING: 'warning', HIGH: 'high', CRITICAL: 'critical' })[lvl] ?? 'unknown'
-function formatDuration(end, start) {
-  const ms = new Date(end) - new Date(start)
-  if (isNaN(ms) || ms < 0) return '—'
-  const totalMin = Math.floor(ms / 60000)
-  const days  = Math.floor(totalMin / 1440)
-  const hours = Math.floor((totalMin % 1440) / 60)
-  const mins  = totalMin % 60
-  if (days  > 0) return `${days}g ${hours}s ${mins}d`
-  if (hours > 0) return `${hours}s ${mins}d`
-  return `${mins}d`
-}
+// Süre biçimlendirme BİLİNÇLİ olarak ortak yardımcıdan geliyor (utils/incidentMeta.js).
+//
+// 2026-08-20'ye kadar burada yerel bir kopya vardı ve birimleri TERSTİ: dakikayı `d`, saati `s`
+// ile yazıyordu. 10 dakikalık bir alarm "9d" (gün sanıldı), 3sa5dk ise "3s 5d" (saniye sanıldı)
+// görünüyordu — yani ekrandaki en kritik sayı, kesintinin süresi, sistematik olarak yanlış
+// okunuyordu. Aynı işin üç ayrı kopyası olması (App.jsx, incidentMeta.js, burası) bu sapmanın
+// fark edilmeden yaşamasının sebebiydi; diğer ikisi zaten dk/sa/g kullanıyor.
+// incidentMeta.formatDuration birimleri i18n'den alır (incov.unit.*), yani TR/EN tutarlıdır.
 
 // Snapshot expiry date at alarm-creation time: created_at + days_remaining × 1 day.
 // Reflects the cert's not_after as it was when the alert fired, not the current value.
@@ -344,7 +342,7 @@ function OpenDurationBadge({ createdAt, staleHours }) {
   return (
     <span className={`alh-open-for${stale ? ' is-stale' : ''}`}
       title={stale ? t('alh.openForStaleTip', staleHours) : t('alh.openForTip')}>
-      <Clock size={11} /> {t('alh.openFor', formatDuration(Date.now(), startedMs))}
+      <Clock size={11} /> {t('alh.openFor', formatDuration(ms, t))}
     </span>
   )
 }
@@ -1161,7 +1159,7 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
                     </span>
                     {a.resolved_at && a.created_at && (
                       <span className="ahc-stat ahc-stat-duration">
-                        <Clock size={12}/> {t('alh.openDuration')}: <strong>{formatDuration(a.resolved_at, a.created_at)}</strong>
+                        <Clock size={12}/> {t('alh.openDuration')}: <strong>{formatDuration(durationMs(a.created_at, a.resolved_at), t)}</strong>
                       </span>
                     )}
                   </div>

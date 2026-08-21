@@ -16,6 +16,7 @@ import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
+import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { normalizeUrl } from '../utils/normalizeUrl.js'
 import AlertHistory from './admin/AlertHistory.jsx'
@@ -409,8 +410,11 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
               <div className="upt-card-top">
                 {statusBadge(m)}
                 {alarmBadge(m)}<MaintenanceBadge target={m.url} />
-                <span className="upt-port-tag">
-                  {(OP_SYM[m.operator] || '≥') + (m.match_count ?? 1)} kez
+                <span className="upt-card-top-right">
+                  <span className="upt-port-tag">
+                    {(OP_SYM[m.operator] || '≥') + (m.match_count ?? 1)} kez
+                  </span>
+                  <CopyLinkButton iconOnly url={monitorDeepLink('keyword', m.id)} className="btn btn-sm upt-card-copy" />
                 </span>
               </div>
               <div className="upt-card-domain" title={m.url}>{m.url}</div>

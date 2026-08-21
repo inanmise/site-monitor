@@ -6,6 +6,7 @@ import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
+import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
@@ -435,6 +436,9 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
                   <td className="dns-cell-num">{m.response_ms != null ? `${m.response_ms}ms` : '—'}</td>
                   <td className="dns-cell-time">{m.checked_at ? formatDate(m.checked_at) : '—'}</td>
                   <td className="dns-cell-actions" onClick={e => e.stopPropagation()}>
+                    {/* Kart değil TABLO satırı: paylaşım düğmesi eylem hücresine girer.
+                        Yetkiden bağımsız — bağlantı kopyalamak salt-okunur bir iştir. */}
+                    <CopyLinkButton iconOnly url={monitorDeepLink('dns', m.id)} className="btn btn-sm mon-btn-edit" />
                     {canManageRow(m) && (
                       <button className="btn btn-sm mon-btn-check" disabled={checking === m.id}
                         onClick={() => checkNow(m)} title={t('dns.check')}>
