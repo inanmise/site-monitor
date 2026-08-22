@@ -38,17 +38,25 @@ public interface MonitorChangeLogRepository extends JpaRepository<MonitorChangeL
      * <p>{@code teamScopeAll} true ise takım kısıtı UYGULANMAZ (global admin/AUDIT); false ise
      * yalnız {@code teamIds} kesişimi döner. İki ayrı sorgu yazmak yerine tek yerde tutuluyor ki
      * kapsam mantığı ikiye ayrılıp ayrışmasın.
+     *
+     * <p><b>{@code CAST(:x AS string)} ZORUNLU</b> — süslemedir sanılmasın: PostgreSQL'de null
+     * bir metin parametresi tip bilgisi olmadan {@code bytea} olarak bağlanır ve
+     * {@code lower(bytea)} diye bir fonksiyon yoktur → sorgu 500 ile düşer (2026-08-22'de
+     * konsol tam bu yüzden "Değişiklik geçmişi yüklenemedi" verdi). Hibernate'in bir kısıtı
+     * değil, Postgres'in tip çıkarımı; {@code AlertEventRepository} aynı çözümü kullanıyor.
+     * Yalnız NULL geçilebilen parametreler sarılır — eşitlik aramalarındaki zorunlu
+     * parametrelerin cast'e ihtiyacı yok.
      */
     @Query("""
            SELECT c FROM MonitorChangeLog c
            WHERE c.resourceKind <> 'SYSTEM'
              AND (:kind IS NULL OR c.resourceKind = :kind)
              AND (:eventType IS NULL OR c.eventType = :eventType)
-             AND (:actor IS NULL OR LOWER(c.actor) = LOWER(:actor))
+             AND (:actor IS NULL OR LOWER(c.actor) = LOWER(CAST(:actor AS string)))
              AND (:teamId IS NULL OR c.teamId = :teamId)
              AND (:from IS NULL OR c.createdAt >= :from)
              AND (:to IS NULL OR c.createdAt <= :to)
-             AND (:q IS NULL OR LOWER(c.resourceName) LIKE LOWER(CONCAT('%', :q, '%')))
+             AND (:q IS NULL OR LOWER(c.resourceName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
              AND (:teamScopeAll = TRUE OR c.teamId IN :teamIds)
            ORDER BY c.createdAt DESC, c.id DESC
            """)
