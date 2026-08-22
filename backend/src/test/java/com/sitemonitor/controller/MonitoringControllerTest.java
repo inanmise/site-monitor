@@ -45,6 +45,8 @@ class MonitoringControllerTest {
     @MockitoBean com.sitemonitor.service.HttpMetricsService httpMetricsService;
     @MockitoBean com.sitemonitor.service.ActivityLogService activityLog;
     @MockitoBean com.sitemonitor.service.AuditService auditService;
+    @MockitoBean com.sitemonitor.service.MonitorHistoryService monitorHistory;
+    @MockitoBean com.sitemonitor.repository.MonitorChangeLogRepository changeLogRepo;
 
     @MockitoBean LatestCheckRepository latestCheckRepo;
     @MockitoBean CertificateInventoryRepository inventoryRepo;
@@ -1839,5 +1841,282 @@ class MonitoringControllerTest {
 
         mvc.perform(post(url + "/check").session(sessionWithTeam("USER", 1L)))
                 .andExpect(status().isForbidden());
+    }
+
+    // ══ Değişiklik geçmişi uçları ═════════════════════════════════════════════
+
+    /**
+     * "Kim, ne zaman, hangi IP'den, neyi değiştirdi" uçlarının KAPSAM sözleşmesi.
+     *
+     * <p>Bu uçlar takım kullanıcısına açık — denetim konsolunun aksine admin kapısı YOK. O yüzden
+     * asıl risk yetkilendirme: başka takımın izlemesinin geçmişi (IP adresleri ve eski değerler
+     * dâhil) sızarsa, denetim kaydını admin'e ayırmış olmanın bir anlamı kalmaz.
+     */
+    @org.junit.jupiter.api.Nested
+    @DisplayName("Değişiklik geçmişi")
+    class ChangeHistoryEndpoints {
+
+        private com.sitemonitor.model.MonitorChangeLog row(Long teamId) {
+            com.sitemonitor.model.MonitorChangeLog r = new com.sitemonitor.model.MonitorChangeLog();
+            r.setId(1L); r.setResourceKind("PORT"); r.setResourceId(7L); r.setResourceName("Ödeme portu");
+            r.setSeq(0); r.setEventType("CREATE"); r.setTeamId(teamId);
+            r.setActor("N70678"); r.setActorName("Ada Lovelace"); r.setIpAddress("10.20.30.40");
+            r.setSnapshot("{\"name\":\"Odeme portu\"}"); r.setCreatedAt("2026-08-22T10:00:00");
+            return r;
+        }
+
+        private MockHttpSession memberOf(Long teamId) {
+            MockHttpSession s = sessionWithTeam("USER", teamId);
+            s.setAttribute("viewTeamIds", List.of(teamId));
+            return s;
+        }
+
+        @Test
+        @DisplayName("Kendi takımının geçmişi okunur; liste yanıtı SNAPSHOT taşımaz")
+        void ownTeam_listed_withoutSnapshot() throws Exception {
+            when(changeLogRepo.findTopByResourceKindAndResourceIdOrderByCreatedAtDesc("PORT", 7L))
+                    .thenReturn(Optional.of(row(5L)));
+            when(changeLogRepo.findByResourceKindAndResourceIdOrderByCreatedAtDescIdDesc(
+                    eq("PORT"), eq(7L), any()))
+                    .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(5L))));
+
+            mvc.perform(get("/api/monitoring/changes/port/7").session(memberOf(5L)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.changes[0].event_type").value("CREATE"))
+                    .andExpect(jsonPath("$.data.changes[0].ip_address").value("10.20.30.40"))
+                    .andExpect(jsonPath("$.data.changes[0].actor_name").value("Ada Lovelace"))
+                    // Snapshot yalnız TEK olay ucunda döner — liste yanıtını şişirmez.
+                    .andExpect(jsonPath("$.data.changes[0].snapshot").doesNotExist());
+        }
+
+        @Test
+        @DisplayName("IDOR: yabancı takımın geçmişi 404 döner ve güvenlik olayı yazılır")
+        void foreignTeam_notFound_andAudited() throws Exception {
+            when(changeLogRepo.findTopByResourceKindAndResourceIdOrderByCreatedAtDesc("PORT", 7L))
+                    .thenReturn(Optional.of(row(9L)));
+
+            mvc.perform(get("/api/monitoring/changes/port/7").session(memberOf(1L)))
+                    .andExpect(status().isNotFound());
+
+            // Satırlar HİÇ okunmamalı: yetki kararı sorgudan ÖNCE verilir.
+            verify(changeLogRepo, never())
+                    .findByResourceKindAndResourceIdOrderByCreatedAtDescIdDesc(anyString(), anyLong(), any());
+            verify(auditService).recordSecurityEvent(eq("CHANGE_LOG_DENIED"), any(), any(), anyString(),
+                    anyString(), anyString());
+        }
+
+        @Test
+        @DisplayName("Hiç kayıt yoksa boş liste döner — varlık/yokluk bilgisi sızmaz")
+        void noRows_emptyList() throws Exception {
+            when(changeLogRepo.findTopByResourceKindAndResourceIdOrderByCreatedAtDesc(anyString(), anyLong()))
+                    .thenReturn(Optional.empty());
+
+            mvc.perform(get("/api/monitoring/changes/port/7").session(memberOf(1L)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.total").value(0));
+        }
+
+        @Test
+        @DisplayName("Bilinmeyen kaynak türü 400 — yol parametresi sessizce yutulmaz")
+        void unknownKind_badRequest() throws Exception {
+            mvc.perform(get("/api/monitoring/changes/telepati/7").session(memberOf(1L)))
+                    .andExpect(status().isBadRequest());
+        }
+
+        @Test
+        @DisplayName("Tek olay ucu snapshot'ı VERİR; yabancı takımda 404")
+        void detail_returnsSnapshot_andBlocksForeign() throws Exception {
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("PORT", 7L, 0))
+                    .thenReturn(Optional.of(row(5L)));
+
+            mvc.perform(get("/api/monitoring/changes/port/7/0").session(memberOf(5L)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.snapshot").value("{\"name\":\"Odeme portu\"}"));
+
+            mvc.perform(get("/api/monitoring/changes/port/7/0").session(memberOf(1L)))
+                    .andExpect(status().isNotFound());
+        }
+
+        @Test
+        @DisplayName("Toplu akış: admin TÜM takımları görür (kapsam süzgeci uygulanmaz)")
+        void recent_globalAdmin_seesAll() throws Exception {
+            when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(),
+                    eq(true), any(), any()))
+                    .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(9L))));
+            when(changeLogRepo.countByEventType(any(), eq(true), any()))
+                    .thenReturn(List.<Object[]>of(new Object[]{"CREATE", 4L}));
+
+            mvc.perform(get("/api/monitoring/changes/recent").session(session("ADMIN")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.changes[0].resource_name").value("Ödeme portu"))
+                    .andExpect(jsonPath("$.data.event_counts.CREATE").value(4));
+        }
+
+        @Test
+        @DisplayName("Toplu akış: takım kullanıcısı KENDİ kapsamıyla sorgular")
+        void recent_teamUser_isScoped() throws Exception {
+            when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(),
+                    eq(false), eq(List.of(5L)), any()))
+                    .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(5L))));
+            when(changeLogRepo.countByEventType(any(), eq(false), eq(List.of(5L))))
+                    .thenReturn(List.<Object[]>of());
+
+            mvc.perform(get("/api/monitoring/changes/recent").session(memberOf(5L)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.changes[0].team_id").value(5));
+        }
+
+        @Test
+        @DisplayName("Kapsamı BOŞ kullanıcı hiçbir şey görmez — sorgu bile açılmaz")
+        void recent_emptyScope_returnsNothing() throws Exception {
+            MockHttpSession s = sessionWithTeam("USER", 1L);
+            s.setAttribute("viewTeamIds", List.of());
+
+            mvc.perform(get("/api/monitoring/changes/recent").session(s))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.total").value(0));
+
+            verify(changeLogRepo, never()).search(any(), any(), any(), any(), any(), any(), any(),
+                    org.mockito.ArgumentMatchers.anyBoolean(), any(), any());
+        }
+
+        @Test
+        @DisplayName("kind yol anahtarı BÜYÜK/küçük harften bağımsız çözülür")
+        void recent_kindIsCaseInsensitive() throws Exception {
+            when(changeLogRepo.search(eq("SCRIPTED"), any(), any(), any(), any(), any(), any(),
+                    eq(true), any(), any()))
+                    .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
+            when(changeLogRepo.countByEventType(any(), eq(true), any()))
+                    .thenReturn(List.<Object[]>of());
+
+            mvc.perform(get("/api/monitoring/changes/recent").param("kind", "Scripted")
+                            .session(session("ADMIN")))
+                    .andExpect(status().isOk());
+
+            verify(changeLogRepo).search(eq("SCRIPTED"), any(), any(), any(), any(), any(), any(),
+                    eq(true), any(), any());
+        }
+
+        // ── Geri döndürme (K6) ──────────────────────────────────────────────
+
+        private MockHttpSession managerOf(Long teamId) {
+            MockHttpSession s = sessionWithTeam("USER", teamId);
+            s.setAttribute("viewTeamIds", List.of(teamId));
+            s.setAttribute("manageTeamIds", List.of(teamId));
+            return s;
+        }
+
+        private com.sitemonitor.model.MonitorChangeLog snapRow(Long teamId, String snapshot) {
+            com.sitemonitor.model.MonitorChangeLog r = row(teamId);
+            r.setSnapshot(snapshot);
+            return r;
+        }
+
+        private com.sitemonitor.model.PortMonitor liveMonitor() {
+            com.sitemonitor.model.PortMonitor m = new com.sitemonitor.model.PortMonitor();
+            m.setId(7L); m.setName("Ödeme portu"); m.setHost("odeme.local"); m.setPort(8443);
+            m.setTeamId(5L); m.setActive(false); m.setIntervalSeconds(60);
+            return m;
+        }
+
+        @Test
+        @DisplayName("Snapshot'taki değerler geri yazılır ve RESTORE olaylı YENİ satır eklenir")
+        void restore_appliesSnapshot_andAppendsRestoreRow() throws Exception {
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("PORT", 7L, 0))
+                    .thenReturn(Optional.of(snapRow(5L,
+                            "{\"name\":\"Ödeme portu\",\"port\":443,\"active\":true,\"intervalSeconds\":300}")));
+            com.sitemonitor.model.PortMonitor live = liveMonitor();
+            when(portMonitorRepo.findById(7L)).thenReturn(Optional.of(live));
+
+            mvc.perform(post("/api/monitoring/changes/port/7/0/restore").session(managerOf(5L)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.restored").value(true));
+
+            // Değerler GERÇEKTEN geri yazıldı (yanıt "başarılı" derken kayıt değişmemiş olmasın).
+            assertThat(live.getPort()).isEqualTo(443);
+            assertThat(live.getActive()).isTrue();
+            assertThat(live.getIntervalSeconds()).isEqualTo(300);
+            verify(portMonitorRepo).save(live);
+            // Geçmiş EZİLMEZ: geri alma da bir olaydır ve kendi satırını yazar.
+            verify(monitorHistory).record(eq("PORT"), eq(7L), anyString(), eq(5L),
+                    eq("RESTORE"), any(), any(), anyString(), any());
+        }
+
+        @Test
+        @DisplayName("Maskeli alan geri YAZILMAZ — gerçek sır '***' ile ezilmez, atlandığı bildirilir")
+        void restore_neverWritesMaskedValues() throws Exception {
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("PORT", 7L, 0))
+                    .thenReturn(Optional.of(snapRow(5L, "{\"port\":443,\"expect\":\"***\"}")));
+            com.sitemonitor.model.PortMonitor live = liveMonitor();
+            live.setExpect("gerçek-imza");
+            when(portMonitorRepo.findById(7L)).thenReturn(Optional.of(live));
+
+            mvc.perform(post("/api/monitoring/changes/port/7/0/restore").session(managerOf(5L)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.skipped_masked[0]").value("expect"));
+
+            assertThat(live.getExpect()).isEqualTo("gerçek-imza");
+        }
+
+        @Test
+        @DisplayName("Takım alanı geri alma ile DEĞİŞMEZ — takım taşımak ayrı bir yetki kararı")
+        void restore_neverMovesTeam() throws Exception {
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("PORT", 7L, 0))
+                    .thenReturn(Optional.of(snapRow(5L, "{\"port\":443,\"teamId\":99}")));
+            com.sitemonitor.model.PortMonitor live = liveMonitor();
+            when(portMonitorRepo.findById(7L)).thenReturn(Optional.of(live));
+
+            mvc.perform(post("/api/monitoring/changes/port/7/0/restore").session(managerOf(5L)))
+                    .andExpect(status().isOk());
+
+            assertThat(live.getTeamId()).isEqualTo(5L);
+        }
+
+        @Test
+        @DisplayName("Yalnız GÖRME yetkisi geri almaya yetmez → 403, kayıt kaydedilmez")
+        void restore_requiresManageScope() throws Exception {
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("PORT", 7L, 0))
+                    .thenReturn(Optional.of(snapRow(5L, "{\"port\":443}")));
+
+            mvc.perform(post("/api/monitoring/changes/port/7/0/restore").session(memberOf(5L)))
+                    .andExpect(status().isForbidden());
+
+            verify(portMonitorRepo, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("Ayarlar zaten o andaki gibiyse 400 — boş bir RESTORE satırı üretilmez")
+        void restore_noDifference_isRejected() throws Exception {
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("PORT", 7L, 0))
+                    .thenReturn(Optional.of(snapRow(5L, "{\"bilinmeyenAlan\":1}")));
+            when(portMonitorRepo.findById(7L)).thenReturn(Optional.of(liveMonitor()));
+
+            mvc.perform(post("/api/monitoring/changes/port/7/0/restore").session(managerOf(5L)))
+                    .andExpect(status().isBadRequest());
+
+            verify(portMonitorRepo, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("Snapshot'sız olay geri alınamaz (liste yanıtından gelen satır gibi)")
+        void restore_withoutSnapshot_isRejected() throws Exception {
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("PORT", 7L, 0))
+                    .thenReturn(Optional.of(snapRow(5L, null)));
+
+            mvc.perform(post("/api/monitoring/changes/port/7/0/restore").session(managerOf(5L)))
+                    .andExpect(status().isBadRequest());
+        }
+
+        @Test
+        @DisplayName("Geri alınamayan tür (bakım penceresi) açıkça reddedilir")
+        void restore_unsupportedKind_isRejected() throws Exception {
+            var r = snapRow(5L, "{\"name\":\"gece bakımı\"}");
+            r.setResourceKind("MAINTENANCE");
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("MAINTENANCE", 7L, 0))
+                    .thenReturn(Optional.of(r));
+
+            mvc.perform(post("/api/monitoring/changes/maintenance/7/0/restore").session(managerOf(5L)))
+                    .andExpect(status().isNotFound());
+        }
     }
 }

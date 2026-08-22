@@ -6,6 +6,7 @@ import CodeEditor from '../ui/CodeEditor.jsx'
 import TagInput from '../ui/TagInput.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import CopyButton from '../ui/CopyButton.jsx'
+import { categoryOptions } from '../../utils/templateCategories.js'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
 
@@ -75,6 +76,8 @@ export default function ScriptedTemplateEditor({
       whenToUseEn: nullIfBlank(form.whenToUseEn),
       script: form.script,
       tags: form.tags,
+      // Boş seçim null gider: sunucu bilinmeyen/boş anahtarı zaten null'a düşürüyor.
+      category: form.category === '' ? null : form.category,
       // DEĞER YOK: yalnız tanım. `value` anahtarı sunucuda reddedilir.
       env: form.env.filter(e => (e.name || '').trim())
         .map(e => ({ name: e.name.trim(), secret: !!e.secret, desc: nullIfBlank(e.desc) })),
@@ -154,6 +157,14 @@ export default function ScriptedTemplateEditor({
                   <input disabled value={template.scope === 'general'
                     ? t('tpl.scopeGeneral')
                     : (template.team_name || teamName || t('tpl.scopeTeam'))} /></label>}
+
+            {/* Kategori: kütüphanedeki ağaçta hangi dala düşeceğini belirler. Zorunlu DEĞİL —
+                seçilmezse "Diğer" dalında görünür; kategori bir düzenleme kolaylığıdır. */}
+            <label className="full-width"><span>{t('tpl.category')}</span>
+              <SearchableSelect value={form.category} onChange={v => set({ category: v })}
+                options={[{ value: '', label: t('tpl.categoryPick') }, ...categoryOptions(t)]}
+                searchThreshold={6} disabled={readOnly} />
+              <span className="field-hint">{t('tpl.categoryHint')}</span></label>
 
             <div className="full-width sc-tpl-block">
               <div className="kw-block-title">{t('tpl.tags')}</div>
@@ -258,6 +269,7 @@ function formFrom(row, meta, teams) {
     whenToUseEn: r.when_to_use_en || '',
     script: r.script || '',
     tags: Array.isArray(r.tags) ? r.tags.join(', ') : (r.tags || ''),
+    category: r.category || '',
     env: (r.env || []).map(e => ({ name: e.name || '', secret: !!e.secret, desc: e.desc || '' })),
     scope: r.id ? (r.team_id == null ? 'general' : String(r.team_id))
                 : (onlyTeam ? String(writable[0]) : ''),

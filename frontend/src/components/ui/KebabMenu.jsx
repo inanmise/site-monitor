@@ -19,13 +19,20 @@ import { Menu } from 'lucide-react'
  * şekilde düzeltilir (altta yer yoksa butonun üstüne çevrilir, kenarlara taşarsa yaslanır).
  * Ölçüm turunda menü `visibility:hidden` durur — kullanıcı yanlış konumda bir kare görmez.
  *
+ * <h3>placement</h3>
+ * `'bottom'` (varsayılan): butonun ALTINA, sağ kenarları hizalı — tablo "İşlem" sütununun
+ * alışılmış davranışı. `'right'`: butonun SAĞINA, üst kenarları hizalı. İkincisi kart
+ * ızgaralarında gerekiyor: aşağı açılan menü kartın kendi içeriğini örtüyor ve kullanıcı
+ * hangi kaydın menüsünü açtığını göremiyordu. Sağda yer yoksa sola, o da yoksa viewport'a
+ * yaslanır — yani dar ekranda eski davranışa güvenli biçimde düşer.
+ *
  * Mevcut .wr-menu-wrap / .wr-menu-pop class'ları yeniden kullanılır (yeni CSS yok).
  * Görünür item yoksa hiçbir şey render etmez (yetkisiz kullanıcıda boş hücre).
  */
 const GAP = 4    // buton ile menü arası
 const EDGE = 8   // viewport kenar payı
 
-export default function KebabMenu({ items = [], label = 'İşlemler' }) {
+export default function KebabMenu({ items = [], label = 'İşlemler', placement = 'bottom' }) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState(null)   // null = henüz ölçülmedi
   const btnRef = useRef(null)
@@ -64,19 +71,34 @@ export default function KebabMenu({ items = [], label = 'İşlemler' }) {
     const vw = window.innerWidth || 0
     const vh = window.innerHeight || 0
 
-    let top = b.bottom + GAP
-    if (m.height && top + m.height > vh - EDGE) {
-      const above = b.top - GAP - m.height
-      top = above >= EDGE ? above : Math.max(EDGE, vh - EDGE - m.height)
+    let top;
+    let left;
+    if (placement === 'right') {
+      // Butonun SAĞINA aç: kartın içeriğini örtmesin. Sağda yer yoksa soluna geç, o da
+      // sığmıyorsa viewport'a yasla (dar ekranda kaçınılmaz örtüşme, ama menü hep görünür).
+      left = b.right + GAP
+      if (m.width && left + m.width > vw - EDGE) {
+        const leftSide = b.left - GAP - m.width
+        left = leftSide >= EDGE ? leftSide : Math.max(EDGE, vw - EDGE - m.width)
+      }
+      // Dikeyde butonun ÜST kenarıyla hizalı; alta taşarsa yukarı çekilir.
+      top = b.top
+      if (m.height && top + m.height > vh - EDGE) top = Math.max(EDGE, vh - EDGE - m.height)
+    } else {
+      top = b.bottom + GAP
+      if (m.height && top + m.height > vh - EDGE) {
+        const above = b.top - GAP - m.height
+        top = above >= EDGE ? above : Math.max(EDGE, vh - EDGE - m.height)
+      }
+      // Sağ kenarı butonla hizala (menü sola doğru açılır), sonra viewport'a sıkıştır.
+      left = b.right - m.width
+      left = Math.min(Math.max(EDGE, left), Math.max(EDGE, vw - EDGE - m.width))
     }
-    // Sağ kenarı butonla hizala (menü sola doğru açılır), sonra viewport'a sıkıştır.
-    let left = b.right - m.width
-    left = Math.min(Math.max(EDGE, left), Math.max(EDGE, vw - EDGE - m.width))
 
     setPos((p) => (p && Math.abs(p.top - top) < 0.5 && Math.abs(p.left - left) < 0.5
       ? p
       : { top, left }))
-  }, [open])
+  }, [open, placement])
 
   const visible = (items || []).filter((it) => it && !it.hidden)
   if (visible.length === 0) return null

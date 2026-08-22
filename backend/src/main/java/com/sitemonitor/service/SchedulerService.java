@@ -87,6 +87,8 @@ public class SchedulerService {
     private final JdbcTemplate jdbcTemplate;
     private final UserService userService;
     private final PermissionService permissionService;
+    /** Tek seferlik geçmiş geri doldurma (K5) — açılışta koşar, nişanı kendi tablosunda tutar. */
+    private final MonitorHistoryBackfillService historyBackfill;
     private final DataSource dataSource;
     private final ApplicationEventPublisher eventPublisher;   // readiness gating (REFUSING/ACCEPTING_TRAFFIC)
 
@@ -288,6 +290,14 @@ public class SchedulerService {
             } catch (Exception e) {
                 log.warn("Startup active-session cleanup failed: {}", e.getMessage());
             }
+            // Geçmiş tablosu ŞEMA YAMALARINDAN SONRA doldurulur (tablo/kolonlar hazır olmalı).
+            // Hata yutulur: geri doldurma açılışı düşürmez, bir sonraki başlangıç yeniden dener.
+            try {
+                int moved = historyBackfill.runOnce();
+                if (moved > 0) log.info("İzleme değişiklik geçmişi denetimden dolduruldu: {} satır", moved);
+            } catch (Exception e) {
+                log.warn("İzleme geçmişi geri doldurma başarısız: {}", e.getMessage());
+            }
             permissionService.seedDefaultsIfEmpty();
             permissionService.seedMissingDefaults(); // katalogda yeni eklenen modüllerin grant'lerini backfill et
             try { incidentService.seedOptions(); } // olay modülü varsayılan kanalları (idempotent)
@@ -424,6 +434,45 @@ public class SchedulerService {
         // ekranda kalıcı uyarı olarak görünür. Kullanıcının kendi kapattığı izlemeden ayırır.
         patch("ALTER TABLE scripted_monitors ADD COLUMN disabled_reason TEXT");
         patch("ALTER TABLE scripted_monitors ADD COLUMN disabled_at VARCHAR(40)");
+        // Şablon kütüphanesi ağaç görünümünün dalı — sabit anahtar kümesi (ScriptedTemplateCategories).
+        patch("ALTER TABLE scripted_templates ADD COLUMN category VARCHAR(40)");
+        patch("CREATE INDEX IF NOT EXISTS idx_stpl_category ON scripted_templates(category)");
+
+        // ── İzleme değişiklik geçmişi (ürün-görünür; audit_log AYRI ve dokunulmadan kalır) ──
+        patch("""
+              CREATE TABLE IF NOT EXISTS monitor_change_log(
+                id BIGSERIAL PRIMARY KEY,
+                resource_kind VARCHAR(20) NOT NULL,
+                resource_id BIGINT NOT NULL,
+                resource_name VARCHAR(255),
+                seq INTEGER NOT NULL,
+                event_type VARCHAR(30) NOT NULL,
+                team_id BIGINT,
+                actor VARCHAR(100),
+                actor_id BIGINT,
+                actor_name VARCHAR(255),
+                ip_address VARCHAR(50),
+                user_agent TEXT,
+                changes TEXT,
+                snapshot TEXT,
+                note TEXT,
+                created_at VARCHAR(30) NOT NULL)""");
+        patch("CREATE INDEX IF NOT EXISTS idx_mchg_resource ON monitor_change_log(resource_kind, resource_id)");
+        patch("CREATE INDEX IF NOT EXISTS idx_mchg_team ON monitor_change_log(team_id)");
+        patch("CREATE INDEX IF NOT EXISTS idx_mchg_created ON monitor_change_log(created_at)");
+
+        // Kimlik kolonları: "kim oluşturdu" sorusu geçmiş tablosuna bakmadan da cevaplanabilsin
+        // (kart künyesi bunu okur). Geçmişten BAĞIMSIZ tutulur — biri silinse diğeri ayakta kalır.
+        for (String tbl : new String[] {
+                "port_monitors", "dns_monitors", "keyword_monitors", "http_monitors",
+                "page_monitors", "scripted_monitors", "domain_monitors", "ping_monitors",
+                "certificate_inventory" }) {
+            patch("ALTER TABLE " + tbl + " ADD COLUMN created_by VARCHAR(100)");
+            patch("ALTER TABLE " + tbl + " ADD COLUMN created_by_name VARCHAR(255)");
+            patch("ALTER TABLE " + tbl + " ADD COLUMN created_ip VARCHAR(50)");
+            patch("ALTER TABLE " + tbl + " ADD COLUMN updated_by VARCHAR(100)");
+            patch("ALTER TABLE " + tbl + " ADD COLUMN updated_by_name VARCHAR(255)");
+        }
         // Taslak kullanıcı+monitör başına TEK satır. monitor_id yerine metin anahtar kullanılıyor:
         // PostgreSQL unique index'te NULL'ları birbirinden farklı sayar, "yeni monitör" taslakları çoğalırdı.
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_scripted_draft_owner_key ON scripted_drafts(owner, monitor_key)");

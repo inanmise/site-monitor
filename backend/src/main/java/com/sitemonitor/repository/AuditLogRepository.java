@@ -148,6 +148,12 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
     /** Bir kullanıcının tüm eylemleri. */
     List<AuditLog> findByActorIdOrderByEventTimeDesc(Long actorId, Pageable pageable);
 
+    /**
+     * İzleme geçmişi geri doldurması (tek seferlik) — verilen olay türlerinin TAMAMI, EN ESKİDEN
+     * yeniye. Sıra önemli: kaydı ilk oluşturan aktör en eski CREATE satırından okunur.
+     */
+    List<AuditLog> findByEventTypeInOrderByEventTimeAsc(java.util.Collection<String> eventTypes);
+
     /** Aynı istekten doğan ilişkili olaylar. */
     List<AuditLog> findByCorrelationIdOrderBySeqAsc(String correlationId);
 

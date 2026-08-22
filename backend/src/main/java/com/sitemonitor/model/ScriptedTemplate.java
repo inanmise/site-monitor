@@ -43,6 +43,20 @@ public class ScriptedTemplate {
     private String name;
 
     /**
+     * Kategori ANAHTARI — kütüphaneyi ağaç olarak gruplar ({@code availability}, {@code identity}…).
+     *
+     * <p>Serbest metin DEĞİL, sabit bir anahtar kümesidir ({@link com.sitemonitor.service.ScriptedTemplateCategories}).
+     * Gerekçe: gruplama başlıkları iki dilde gösteriliyor; serbest metin olsaydı her kullanıcı
+     * kendi yazımıyla yeni bir dal açar ("Ödeme", "odeme", "Payment") ve ağaç kısa sürede
+     * kullanılamaz hâle gelirdi. Anahtar sabit, etiket i18n'den geliyor.
+     *
+     * <p>{@code null} olabilir: eski kayıtlar ve kategori seçmeyen kullanıcı şablonları
+     * arayüzde "Diğer" dalında toplanır — kategori zorunlu tutulup kayıt reddedilmez.
+     */
+    @Column(length = 40)
+    private String category;
+
+    /**
      * İngilizce karşılıklar — YALNIZ seed'lenen 11 yerleşikte dolu.
      * Kullanıcıya çeviri yükü bindirilmez; boşsa tüketici birincil metne düşer.
      */

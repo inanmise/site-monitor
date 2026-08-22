@@ -88,7 +88,11 @@ public class ScriptedTemplateSeeder {
             String key = n.path("builtinKey").asText(null);
             if (key == null || key.isBlank()) continue;
             try {
-                if (templateRepo.findByBuiltinKey(key).isPresent()) continue;   // ASLA üzerine yazma
+                var existing = templateRepo.findByBuiltinKey(key);
+                if (existing.isPresent()) {
+                    backfillCategory(existing.get(), n);
+                    continue;                                                   // ASLA üzerine yazma
+                }
                 ScriptedTemplate t = toEntity(n, seedVersion);
                 ScriptedTemplate saved = templateRepo.save(t);
                 writeSeedVersion(saved);
@@ -103,6 +107,29 @@ public class ScriptedTemplateSeeder {
         return added;
     }
 
+    /**
+     * Kategori GERİ-DOLDURMASI — yalnız alan BOŞKEN, yalnız yerleşiklerde.
+     *
+     * <p>"Üzerine yazma" kuralının istisnası DEĞİL, tamamlayıcısıdır: kategori alanı sonradan
+     * eklendi ve mevcut kurulumlardaki yerleşikler onsuz doğdu. Dokunmasaydık, bugüne kadar
+     * kurulmuş her sistemde küratörlü 11 şablon ağacın "Diğer" dalında toplanırdı — kullanıcı
+     * hiçbir şey seçmemişken bozuk görünen bir kütüphane.
+     *
+     * <p>Sınır KESKİN: {@code category != null} ise DOKUNULMAZ. Yani admin bir yerleşiği başka
+     * kategoriye taşıdıysa o seçim korunur; yalnız hiç değer olmayan satır doldurulur.
+     */
+    private void backfillCategory(ScriptedTemplate existing, JsonNode n) {
+        if (existing.getCategory() != null) return;
+        String category = ScriptedTemplateCategories.normalize(text(n, "category"));
+        if (category == null) return;
+        try {
+            existing.setCategory(category);
+            templateRepo.save(existing);
+        } catch (Exception e) {
+            log.debug("Şablon kategorisi geri doldurulamadı ({}): {}", existing.getBuiltinKey(), e.toString());
+        }
+    }
+
     private ScriptedTemplate toEntity(JsonNode n, int seedVersion) {
         String now = ISO.format(Instant.now());
         ScriptedTemplate t = new ScriptedTemplate();
@@ -110,6 +137,9 @@ public class ScriptedTemplateSeeder {
         t.setBuiltinSeedVersion(seedVersion);
         t.setName(n.path("name").asText());
         t.setNameEn(text(n, "nameEn"));
+        // Bilinmeyen anahtar sessizce null'a düşer: katalogda yazım hatası bütün seed'i
+        // düşürmemeli, yalnız o şablon "Diğer" dalında görünür (kapıyı katalog testi tutuyor).
+        t.setCategory(ScriptedTemplateCategories.normalize(text(n, "category")));
         t.setDescription(text(n, "description"));
         t.setDescriptionEn(text(n, "descriptionEn"));
         t.setWhenToUse(text(n, "whenToUse"));

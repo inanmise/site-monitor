@@ -117,4 +117,24 @@ public class CertificateInventory {
     // filtreli) isimler burada sunucuda çözülür → her rolde SY/UG takım adı görünür.
     @Transient private String teamName;
     @Transient private String ugTeamName;
+
+    // ── Kimlik künyesi ────────────────────────────────────────────────────────────────────
+    // "Bu izlemeyi kim kurdu?" sorusu geçmiş tablosuna gitmeden de cevaplanabilsin (kart künyesi
+    // bunu okur). monitor_change_log'dan BAĞIMSIZ: biri retention ile temizlense de diğeri kalır.
+    // Eski kayıtlarda null'dır — arayüz o zaman künyeyi hiç göstermez.
+    @Column(name = "created_by", length = 100)
+    private String createdBy;
+
+    @Column(name = "created_by_name")
+    private String createdByName;
+
+    @Column(name = "created_ip", length = 50)
+    private String createdIp;
+
+    @Column(name = "updated_by", length = 100)
+    private String updatedBy;
+
+    @Column(name = "updated_by_name")
+    private String updatedByName;
+
 }

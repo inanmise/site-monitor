@@ -82,6 +82,9 @@ class AdminControllerTest {
     AuditService auditService;
 
     @MockitoBean
+    com.sitemonitor.service.MonitorHistoryService monitorHistory;
+
+    @MockitoBean
     com.sitemonitor.service.SsrfGuard ssrfGuard;
 
     @MockitoBean

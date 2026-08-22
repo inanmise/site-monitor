@@ -47,6 +47,7 @@ BDDK/iç denetim süreleri esas alınmalıdır.
 | Tablo | Süre | Taban | Ayar anahtarı | Kural | Gerekçe |
 |---|---|---|---|---|---|
 | `audit_log` | 365 gün | 30 g | `site.monitor.audit.retention-days` | `event_time < ?` | Kullanıcı eylem denetimi. Silmeden ÖNCE JSONL arşivi yazılır; süre uyum birimi onayına tabidir. |
+| `monitor_change_log` | 730 gün | 30 g | `site.monitor.monitoring.change-retention-days` | `created_at < ? AND resource_kind <> 'SYSTEM'` | İzleme yapılandırması değişiklik geçmişi (kim/ne zaman/hangi IP/neyi değiştirdi). audit_log'dan UZUN tutulur (730 gün): ayrı tablo olmasının sebeplerinden biri de budur — denetim değeri yüksek, hacim düşük (yapılandırma değişiklikleri kontrol kayıtları gibi akmaz). SYSTEM satırları HARİÇ: geri doldurmanın 'koştu' nişanı orada duruyor; silinirse bir sonraki açılış geçmişi ikinci kez doldurmaya kalkardı. |
 | `sql_query_history` | 365 gün | 7 g | `site.monitor.sql-history.retention-days` | `executed_at < ?` | Admin SQL çalışma alanı geçmişi (kullanıcı + serbest SQL metni). Denetim penceresiyle aynı 1 yıl (2026-08 kararı); hacmi düşüktür. |
 | `login_anomaly_incident` | 365 gün | 7 g | `site.monitor.failed-login.retention-days` | `resolved = true AND opened_at < ?` | Başarısız giriş anomali olayları. Yalnız ÇÖZÜLMÜŞ olanlar silinir; açık olaylar durur. Güvenlik penceresiyle aynı 1 yıl (2026-08 kararı). |
 

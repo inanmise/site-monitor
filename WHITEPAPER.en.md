@@ -388,6 +388,7 @@ These append-only tables grow fastest and are the main target of the retention p
 | `scheduler_lock` | The distributed scheduler lock |
 | `retention_run` / `retention_run_item` | The nightly clean-up's own history — how many rows it removed from which table |
 | `audit_log` | The security audit trail — hash-chained, with IP and geolocation |
+| `monitor_change_log` | Monitor CONFIGURATION history — who changed which field, when, from which IP, with a full snapshot of every event (kept for 730 days) |
 | `weekly_reports` / `weekly_report_images` / `weekly_report_mails` | Weekly report content, images and the archive of what was sent |
 | `weekly_availability_log` | Idempotency record for the weekly availability email |
 | `cert_inventory_report_log` | Delivery record for the monthly inventory report |
@@ -743,7 +744,29 @@ Every sign-in, sign-out and administrative action is recorded with a UTC timesta
 
 Audit entries are enriched with anomaly flags: out-of-hours access, an unusual IP address, an impossible travel velocity, brute-force patterns and rate limiting. The detection windows are managed under **Settings → Login Anomaly**, and an unusual concentration of failed sign-ins can open an incident record automatically.
 
-### 12.7 Error Handling and Information Leakage
+### 12.7 Monitor Change History
+
+The audit trail belongs to the security team and is open only to admin and AUDIT roles. But the
+question a team member asks about their own monitor — "who set this up, when, with what settings, and
+who changed what afterwards?" — is part of the day job. That is why there is a separate,
+product-facing layer: `monitor_change_log`.
+
+Every monitor, certificate inventory record, monitor group and maintenance window keeps its create,
+update, delete and rollback events field by field (old → new) alongside a full snapshot of the state.
+Sensitive fields go through the **same** blocklist as the audit trail and come out masked as `***`.
+Anyone making a change can add a short reason for it, and the change also lands in the activity feed
+as a `CONFIG_CHANGED` event.
+
+Getting to it: the **Changes** tab in each monitor's detail view, scoped to the team — another team's
+history returns a 404 and raises a security event. Administrators also get a **Monitor Changes**
+console that pages through every monitor's changes in one list. Rolling back to an earlier moment is
+supported: nothing is erased, the rollback itself is appended as a `RESTORE` entry, and masked fields
+and team ownership are deliberately left untouched.
+
+When the feature went live, the monitor events already sitting in the audit trail were carried across
+once (`AUDIT_BACKFILL`); anything older than the audit trail's own retention window simply isn't there.
+
+### 12.8 Error Handling and Information Leakage
 
 A global exception handler catches everything that is not handled explicitly and returns a helpful message rather than an internal one:
 
@@ -761,7 +784,7 @@ A global exception handler catches everything that is not handled explicitly and
 
 Stack traces and internal error detail go to the log file only.
 
-### 12.8 Masking Sensitive Fields
+### 12.9 Masking Sensitive Fields
 
 Full HTTP request and response tracing is available but switched off by default; you enable it by raising the log level for the request logging filter alone. When it is on, roughly sixty sensitive field names across JSON bodies, form bodies and URL query strings are masked automatically:
 
@@ -776,11 +799,11 @@ pin / otp / mfa_code / verification_code   (English and Turkish variants)
 
 Sensitive HTTP headers such as `Authorization`, `Cookie`, `Set-Cookie` and API key headers are masked too. Health checks, favicons, static assets and common static file extensions are skipped entirely, and body logging is truncated at 2,000 characters.
 
-### 12.9 Front-End Error Boundaries
+### 12.10 Front-End Error Boundaries
 
 The interface is wrapped in two layers of error boundary: the root layer prevents a blank white screen, and the per-tab layer stops a rendering fault in one tab from taking the rest down with it. The user sees a "something went wrong" message and a refresh button; the full error goes to the console.
 
-### 12.10 Input Validation
+### 12.11 Input Validation
 
 Models carry validation annotations and controllers enforce them:
 
@@ -792,7 +815,7 @@ Models carry validation annotations and controllers enforce them:
 
 An invalid body is rejected with a 400 and the list of offending fields, never a stack trace.
 
-### 12.11 Outbound Request Protection
+### 12.12 Outbound Request Protection
 
 Every monitor points at a URL or host that a user typed, which makes server-side request forgery a real risk. Before any check runs, the target host is resolved and every resolved address is validated; the connection is then made to those addresses rather than resolving again, which closes the DNS rebinding window. For page integrity checks, each parsed resource and each redirect hop goes through the same gate.
 
@@ -800,11 +823,11 @@ The policy has three tiers. Cloud metadata endpoints, multicast and link-local a
 
 The same policy is handed to k6 as an address blocklist, because k6 resolves its own DNS and would otherwise bypass the gate entirely.
 
-### 12.12 Identifying the Real Client
+### 12.13 Identifying the Real Client
 
 Behind a reverse proxy, the client address that matters for auditing and anomaly detection comes from a forwarded header rather than the socket. Site Monitor takes an ordered list of candidate headers and an index into the resulting chain. The index is what makes this safe: a positive index counts from the left, which is only correct behind a proxy that sanitises the header, while a negative index counts from the right, selecting the hop your own infrastructure added, which a client cannot forge. A diagnostic endpoint dumps every known forwarding header alongside the socket address so that operations can pick the right setting rather than guess.
 
-### 12.13 Cross-Origin Requests
+### 12.14 Cross-Origin Requests
 
 Allowed origins are read live on every request, so changing them takes effect without a restart. Two safety rules are built in: a wildcard is stripped from the list, and if the list ends up empty, cross-origin access is disabled rather than opened. Getting the configuration wrong therefore fails closed.
 

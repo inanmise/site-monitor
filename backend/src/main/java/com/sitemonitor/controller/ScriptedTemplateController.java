@@ -57,7 +57,7 @@ public class ScriptedTemplateController {
      *  düzenlemede audit satırına kopyalanırsa tablo şişer — script geçmişi sürüm tablosunda. */
     private static final String[] TEMPLATE_FIELDS = {
             "name", "nameEn", "description", "descriptionEn", "whenToUse", "whenToUseEn",
-            "envJson", "tags", "teamId", "active", "currentVersion", "builtinKey"
+            "envJson", "tags", "category", "teamId", "active", "currentVersion", "builtinKey"
     };
 
     private final ScriptedTemplateRepository templateRepo;
@@ -542,6 +542,10 @@ public class ScriptedTemplateController {
     private void applyFields(ScriptedTemplate t, Map<String, Object> body, List<Map<String, Object>> envDefs) {
         if (body.containsKey("name"))          t.setName(trimOrNull(body.get("name")));
         if (body.containsKey("nameEn"))        t.setNameEn(trimOrNull(body.get("nameEn")));
+        // Bilinmeyen anahtar null'a düşer (ScriptedTemplateCategories.normalize) — istemciden
+        // gelen serbest metin ağaca yeni dal AÇAMAZ.
+        if (body.containsKey("category"))      t.setCategory(
+                com.sitemonitor.service.ScriptedTemplateCategories.normalize(trimOrNull(body.get("category"))));
         if (body.containsKey("description"))   t.setDescription(trimOrNull(body.get("description")));
         if (body.containsKey("descriptionEn")) t.setDescriptionEn(trimOrNull(body.get("descriptionEn")));
         if (body.containsKey("whenToUse"))     t.setWhenToUse(trimOrNull(body.get("whenToUse")));
@@ -562,6 +566,7 @@ public class ScriptedTemplateController {
         r.put("description_en", t.getDescriptionEn());
         r.put("when_to_use", t.getWhenToUse());
         r.put("when_to_use_en", t.getWhenToUseEn());
+        r.put("category", t.getCategory());
         r.put("tags", tagList(t.getTags()));
         r.put("team_id", t.getTeamId());
         r.put("team_name", t.getTeamId() == null ? null : teams.get(t.getTeamId()));

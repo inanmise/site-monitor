@@ -881,6 +881,24 @@ export const api = {
     // Sürüm geçmişi: liste gövde taşımaz (yüzlerce sürümde yanıt şişmesin), önizleme ayrı çağrı.
     getScriptedVersions:   (id) => request(`/monitoring/scripted/${id}/versions`),
     getScriptedVersion:    (id, versionId) => request(`/monitoring/scripted/${id}/versions/${versionId}`),
+    // ── Yapılandırma değişiklik geçmişi (kim/ne zaman/hangi IP/neyi değiştirdi) ──
+    // Script SÜRÜMLERİYLE karıştırmayın: orası script gövdesinin sürümleri, burası ayarların geçmişi.
+    getChanges: (kind, id, params = {}) => {
+      const q = new URLSearchParams()
+      Object.keys(params).forEach(k => { if (params[k] != null && params[k] !== '') q.set(k, params[k]) })
+      const qs = q.toString()
+      return request(`/monitoring/changes/${kind}/${id}${qs ? '?' + qs : ''}`)
+    },
+    getChangeDetail: (kind, id, seq) => request(`/monitoring/changes/${kind}/${id}/${seq}`),
+    getRecentChanges: (params = {}) => {
+      const q = new URLSearchParams()
+      Object.keys(params).forEach(k => { if (params[k] != null && params[k] !== '') q.set(k, params[k]) })
+      const qs = q.toString()
+      return request(`/monitoring/changes/recent${qs ? '?' + qs : ''}`)
+    },
+    // Geri döndürme: geçmişi EZMEZ, RESTORE olaylı yeni bir satır üretir (sunucu tarafında).
+    restoreChange: (kind, id, seq, note) => request(`/monitoring/changes/${kind}/${id}/${seq}/restore`,
+      { method: 'POST', body: JSON.stringify(note ? { changeNote: note } : {}) }),
     // Otomatik taslak — DOĞRULAMA YAPMAYAN ayrı uç (PUT /scripted/{id} her çağrıda k6 çalıştırıyor).
     saveScriptedDraft:     (data) => request('/monitoring/scripted/draft', { method: 'PUT', body: JSON.stringify(data) }),
     getScriptedDrafts:     () => request('/monitoring/scripted/drafts'),

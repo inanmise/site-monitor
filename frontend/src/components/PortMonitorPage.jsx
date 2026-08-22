@@ -24,8 +24,10 @@ import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
+import ChangeNoteField from './history/ChangeNoteField.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
+const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
 const INTERVALS = [
   { value: 30,    labelKey: 'port.iv30s' },
@@ -78,6 +80,9 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const [advOpen, setAdvOpen] = useState(false)               // "Gelişmiş ayarlar" accordion
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(null)
+  // Opsiyonel "değişiklik nedeni" — form nesnesine DEĞİL ayrı tutulur: taslak/kirlilik
+  // karşılaştırması form üzerinden yapılıyor ve not bir ayar değil, tek seferlik açıklama.
+  const [changeNote, setChangeNote] = useState('')
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState(null)
   const [checking, setChecking] = useState(null)
@@ -162,6 +167,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   function openEdit(m) {
     setDupSource(null)
     setForm(formFrom(m))
+    setChangeNote('')
     setModal(m)
   }
   /** Kopyala: kaynağın birebir kopyası, YENİ kayıt modunda (create). Ad "(Kopya)" sonekli;
@@ -171,7 +177,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     setForm({ ...formFrom(m), name: duplicateName(m.name || m.host) })
     setModal('new')
   }
-  function closeEdit() { setModal(null); setDupSource(null) }
+  function closeEdit() { setModal(null); setDupSource(null); setChangeNote('') }
 
   async function save() {
     if (!form.host.trim() || !form.port) { setSaveError(t('port.hostRequired')); return }
@@ -188,6 +194,8 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
       confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
       recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
       active: form.active,
+      // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
+      ...(changeNote.trim() ? { changeNote: changeNote.trim() } : {}),
     }
     const res = modal === 'new'
       ? await api.monitoring.createPortMonitor(payload)
@@ -249,6 +257,9 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   // Modal seçicileri: takım (admin → tüm takımlar) + grup (mevcut gruplardan, yeni grup oluşturulabilir).
   const teamSelectOptions = useMemo(() => [{ value: '', label: t('app.noTeam') },
     ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))], [teams, t])
+  // Değişiklik geçmişi `teamId` farkını ADA çevirebilsin — çıplak sayı okunmuyor.
+  const teamNameById = useMemo(
+    () => Object.fromEntries(teams.map(tm => [tm.id, tm.name])), [teams])
   const groupNames = useMemo(
     () => [...new Set(monitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [monitors])
   // Form içi grup dropdown'ı takım+tür kapsamlı endpoint'ten (liste filtresi değil): admin başka takımın grubunu görmez.
@@ -506,6 +517,9 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
               <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('port.tabAlerts')}</button>
               <button className={`modal-tab${detailTab === 'chart' ? ' active' : ''}`} onClick={() => setDetailTab('chart')}>{t('port.tabChart')}</button>
               <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('port.tabGuide')}</button>
+              {/* Yapılandırma geçmişi — kontrol geçmişiyle (ilk sekme) KARIŞTIRILMAMALI:
+                  orası "hedef ayakta mıydı", burası "ayarları kim değiştirdi". */}
+              <button className={`modal-tab${detailTab === 'changes' ? ' active' : ''}`} onClick={() => setDetailTab('changes')}>{t('chg.tab')}</button>
             </div>
 
             {detailTab === 'control' && (
@@ -537,6 +551,13 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
             {detailTab === 'notes' && (
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <MonitorNotes type="PORT" target={`${selected.host}:${selected.port}`} />
+              </Suspense>
+            )}
+
+            {detailTab === 'changes' && (
+              <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
+                <ChangeHistoryTab t={t} kind="port" monitorId={selected.id} teamNames={teamNameById}
+                  canManage={canManageRow(selected)} />
               </Suspense>
             )}
           </div>
@@ -691,6 +712,12 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
                 </div>
               ))}
             {saveError && <div className="mon-modal-error">{saveError}</div>}
+            {/* Yalnız DÜZENLEMEDE: "neden" sorusu ancak var olan bir şey değişince anlamlı.
+                Form ızgarasının DIŞINDA, eylem çubuğunun hemen üstünde: sekiz izleme
+                sayfasında da aynı yerde dursun (ızgaraların iç düzeni sayfadan sayfaya değişiyor). */}
+            {modal !== 'new' && (
+              <ChangeNoteField t={t} id="port-change-note" value={changeNote} onChange={setChangeNote} />
+            )}
             <div className="modal-actions">
               <div style={{ display: 'flex', gap: 8, marginRight: 'auto' }}>
                 <button className="btn btn-secondary" onClick={runTest} disabled={testing || !form.host.trim() || !form.port}>

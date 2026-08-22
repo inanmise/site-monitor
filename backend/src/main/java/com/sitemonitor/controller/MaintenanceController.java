@@ -2,8 +2,10 @@ package com.sitemonitor.controller;
 
 import com.sitemonitor.model.MaintenanceWindow;
 import com.sitemonitor.repository.MaintenanceWindowRepository;
+import com.sitemonitor.service.AuditDiff;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.MaintenanceService;
+import com.sitemonitor.service.MonitorHistoryService;
 import com.sitemonitor.service.PermissionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
@@ -38,6 +40,13 @@ public class MaintenanceController {
     private final MaintenanceService maintenanceService;
     private final PermissionService permissionService;
     private final AuditService auditService;
+    private final MonitorHistoryService monitorHistory;
+
+    /** Bakım penceresinin geçmişte tutulan alanları (denetim burada yalnız "{}" yazıyordu). */
+    private static final String[] MAINTENANCE_FIELDS = {
+        "name", "description", "targetsJson", "startAt", "durationMinutes",
+        "daysOfWeek", "dayOfMonth", "active", "teamId"
+    };
 
     // ── Liste ──────────────────────────────────────────────────────────────────
     @GetMapping
@@ -80,6 +89,10 @@ public class MaintenanceController {
         MaintenanceWindow saved = repo.save(w);
         maintenanceService.refresh();
         auditService.recordAction("MAINTENANCE_CREATE", session, request, "MAINTENANCE_WINDOW", String.valueOf(saved.getId()), "{}");
+        // Denetim burada detay olarak "{}" yazıyor — yani "bir pencere oluşturuldu" bilinir ama
+        // HANGİ değerlerle bilinmez. Ürün geçmişi ilk değerleri taşır.
+        monitorHistory.record(MonitorHistoryService.MAINTENANCE, saved.getId(), saved.getName(), saved.getTeamId(),
+                MonitorHistoryService.CREATE, null, AuditDiff.snapshot(saved, MAINTENANCE_FIELDS), null, session);
         return ok(Map.of("data", dto(saved, Instant.now()), "message", "Maintenance window created"));
     }
 
@@ -88,12 +101,15 @@ public class MaintenanceController {
                                                       HttpSession session, HttpServletRequest request) {
         permissionService.require(session, "maintenance.manage", "edit");
         MaintenanceWindow w = requireManageable(id, session);
+        Map<String, Object> _before = AuditDiff.snapshot(w, MAINTENANCE_FIELDS);
         applyFields(w, body);
         validateWindow(w);
         w.setUpdatedAt(now());
         MaintenanceWindow saved = repo.save(w);
         maintenanceService.refresh();
         auditService.recordAction("MAINTENANCE_UPDATE", session, request, "MAINTENANCE_WINDOW", String.valueOf(id), "{}");
+        monitorHistory.record(MonitorHistoryService.MAINTENANCE, saved.getId(), saved.getName(), saved.getTeamId(),
+                MonitorHistoryService.UPDATE, _before, AuditDiff.snapshot(saved, MAINTENANCE_FIELDS), null, session);
         return ok(Map.of("data", dto(saved, Instant.now()), "message", "Maintenance window updated"));
     }
 
@@ -101,10 +117,16 @@ public class MaintenanceController {
     public ResponseEntity<Map<String, Object>> delete(@PathVariable Long id,
                                                       HttpSession session, HttpServletRequest request) {
         permissionService.require(session, "maintenance.delete", "execute");
-        requireManageable(id, session);
+        MaintenanceWindow doomed = requireManageable(id, session);
+        // HARD delete: satır gittikten sonra snapshot alınamaz.
+        Map<String, Object> _before = AuditDiff.snapshot(doomed, MAINTENANCE_FIELDS);
+        String name = doomed.getName();
+        Long teamId = doomed.getTeamId();
         repo.deleteById(id);
         maintenanceService.refresh();
         auditService.recordAction("MAINTENANCE_DELETE", session, request, "MAINTENANCE_WINDOW", String.valueOf(id), "{}");
+        monitorHistory.record(MonitorHistoryService.MAINTENANCE, id, name, teamId,
+                MonitorHistoryService.DELETE, _before, null, null, session);
         return ok(Map.of("message", "Maintenance window deleted"));
     }
 

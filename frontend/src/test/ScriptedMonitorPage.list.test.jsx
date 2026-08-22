@@ -45,12 +45,18 @@ describe('ScriptedMonitorPage — liste ve kartlar', () => {
     expect(container.querySelector('.btn-xs')).toBeNull()
   })
 
-  it('ortamdaki k6 sürümü listede görünür; sürüm bilinmiyorsa rozet HİÇ çıkmaz', async () => {
-    // Kullanıcı script'i hangi motora yazdığını bilmeli — sürüm API'den geliyordu ama
-    // yalnız hata sonrası tanı ipucunda kullanılıyor, ekranda hiç gösterilmiyordu.
+  it('ortamdaki k6 sürümü BAŞLIĞIN yanında parantez içinde; sürüm bilinmiyorsa hiç çıkmaz', async () => {
+    // Kullanıcı script'i hangi motora yazdığını bilmeli. Sürüm önce sağdaki eylem kümesindeydi;
+    // orada bir eylemmiş gibi durup satırı şişiriyordu. Sürüm bir eylem değil, ekranın neyle
+    // çalıştığının künyesi — yeri başlık. Boş parantez ("( )") yazmamak için sürüm yoksa hiç çizilmez.
     const { container, unmount } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-    expect(await screen.findByText(/k6 v0\.49\.0/)).toBeInTheDocument()
-    expect(container.querySelector('.sc-k6ver-chip')).not.toBeNull()
+    const badge = await waitFor(() => {
+      const el = container.querySelector('.sc-title-k6')
+      expect(el).not.toBeNull()
+      return el
+    })
+    expect(badge.textContent).toContain('(k6 v0.49.0)')
+    expect(badge.closest('.upt-title')).not.toBeNull()   // başlığın İÇİNDE
     unmount()
 
     api.monitoring.getScriptedMonitors.mockResolvedValue({
@@ -58,7 +64,7 @@ describe('ScriptedMonitorPage — liste ve kartlar', () => {
     })
     const second = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
-    expect(second.container.querySelector('.sc-k6ver-chip')).toBeNull()
+    expect(second.container.querySelector('.sc-title-k6')).toBeNull()
   })
 
   it('anomali guard KAPATTIYSA kart ayrı bir rozet gösterir ve sebep detayda kalıcı durur', async () => {

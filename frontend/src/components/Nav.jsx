@@ -5,7 +5,7 @@ import { useTheme } from '../i18n/theme.jsx'
 import {
   LayoutDashboard, AlertTriangle, FileText,
   RefreshCw, ClipboardList, Settings, User, Globe, LogOut, Lock,
-  Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen,
+  Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen, History,
   Wifi, Network, Search, TrendingDown, Database, UserCheck, ShieldCheck, CalendarDays, ListChecks, Target, Radio, Siren, Wrench, LifeBuoy, ScanSearch, FlaskConical, Bug,
 } from 'lucide-react'
 import BrandLogo from './BrandLogo.jsx'
@@ -83,6 +83,9 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
         { id: 'activity',   Icon: ClipboardList, labelKey: 'nav.activity',   show: true               },
         { id: 'myactivity', Icon: UserCheck,     labelKey: 'nav.myActivity', show: true               },
         { id: 'system',     Icon: Server,        labelKey: 'nav.system',     show: isGlobalAdmin || isAudit },
+        // Denetim konsolunun YANINDA: ikisi de "kim ne yaptı" sorusuna bakar — biri güvenlik
+        // kaydına (audit_log), diğeri izleme yapılandırmasının ürün geçmişine.
+        { id: 'monitorchanges', Icon: History,   labelKey: 'nav.monitorChanges', show: isGlobalAdmin || isAudit },
       ],
     },
     {

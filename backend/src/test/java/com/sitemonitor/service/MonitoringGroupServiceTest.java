@@ -62,6 +62,7 @@ class MonitoringGroupServiceTest {
     @Mock AlertEventRepository alertEventRepo;
     @Mock TeamRepository teamRepo;
     @Mock AuditService auditService;
+    @Mock com.sitemonitor.service.MonitorHistoryService monitorHistory;
     @Mock org.springframework.transaction.PlatformTransactionManager txManager;
 
     @InjectMocks MonitoringGroupService service;
