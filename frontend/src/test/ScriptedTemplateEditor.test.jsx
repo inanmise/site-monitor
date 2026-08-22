@@ -233,3 +233,82 @@ describe('ScriptedTemplateEditor — düzenleme', () => {
     expect(screen.getAllByRole('textbox')[0]).toBeDisabled()
   })
 })
+
+/**
+ * Kullanıcı bildirimi (2026-08-22): "ekran İngilizce iken Şablonlar'da hamburger menüden View
+ * dediğimde field içerikleri Türkçe geliyor."
+ *
+ * Şablonun veri modeli Türkçe-asıl + İngilizce-ikincil. Kart listesi zaten `pickLang` kullanıyordu,
+ * bu pencere kullanmıyordu: kullanıcı kartta İngilizce adı okuyup pencereyi açınca Türkçe metin
+ * görüyordu. GÖRÜNTÜLEME bir okuma yüzeyi olduğu için artık arayüz dilini izliyor; DÜZENLEME ise
+ * iki dili de göstermeye devam ediyor (kullanıcı ikisini de yazar).
+ */
+describe('ScriptedTemplateEditor — görüntülemede dil', () => {
+  const BILINGUAL = {
+    ...ROW,
+    name_en: 'Payment flow', description_en: 'card endpoint',
+    when_to_use_en: 'During a payment outage',
+  }
+
+  beforeEach(() => {
+    api.monitoring.getScriptedTemplate.mockResolvedValue({ success: true, data: { ...BILINGUAL, script: SCRIPT } })
+  })
+
+  it('İngilizce arayüzde İNGİLİZCE metinleri gösterir', async () => {
+    draw({ template: BILINGUAL, readOnly: true, lang: 'en' })
+    await screen.findByTestId('code-editor')
+
+    expect(screen.getByDisplayValue('Payment flow')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('card endpoint')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('During a payment outage')).toBeInTheDocument()
+    // Türkçe asıl KAYBOLMAZ, katlanan bloğa taşınır.
+    expect(screen.queryByDisplayValue('Ödeme akışı')).not.toBeInTheDocument()
+    expect(screen.getByText('tpl.trShow')).toBeInTheDocument()
+  })
+
+  it('katlanan blok İngilizce arayüzde TÜRKÇE aslı taşır (içerik kaybolmaz)', async () => {
+    draw({ template: BILINGUAL, readOnly: true, lang: 'en' })
+    await screen.findByTestId('code-editor')
+
+    fireEvent.click(screen.getByText('tpl.trShow'))
+
+    expect(screen.getByText('tpl.nameTr')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Ödeme akışı')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Ödeme kesintisinde')).toBeInTheDocument()
+  })
+
+  it('Türkçe arayüzde Türkçe metinleri ve İNGİLİZCE katlanan bloğu gösterir', async () => {
+    draw({ template: BILINGUAL, readOnly: true, lang: 'tr' })
+    await screen.findByTestId('code-editor')
+
+    expect(screen.getByDisplayValue('Ödeme akışı')).toBeInTheDocument()
+    expect(screen.getByText('tpl.enShow')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('tpl.enShow'))
+    expect(screen.getByText('tpl.nameEn')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Payment flow')).toBeInTheDocument()
+  })
+
+  it('İngilizce karşılığı YOKSA Türkçe aslına düşer ve bunu SÖYLER', async () => {
+    // Sessiz düşüş, kullanıcıya "düzeltme çalışmadı" hissi verirdi; boş alan ise veriyi
+    // kaybolmuş gösterirdi. Üçüncü yol: aslını göster + nedenini yaz.
+    api.monitoring.getScriptedTemplate.mockResolvedValue({ success: true, data: { ...ROW, script: SCRIPT } })
+    draw({ template: ROW, readOnly: true, lang: 'en' })
+    await screen.findByTestId('code-editor')
+
+    expect(screen.getByDisplayValue('Ödeme akışı')).toBeInTheDocument()
+    expect(screen.getAllByText('tpl.noTranslation').length).toBeGreaterThan(0)
+  })
+
+  it('DÜZENLEMEDE dil anahtarı işlemez: asıl alanlar Türkçe, İngilizce alanlar ayrı kalır', async () => {
+    // Editör iki dili birden yazdığı için burada "arayüz diline göre göster" YANLIŞ olurdu:
+    // kullanıcı İngilizce alanı düzenlediğini sanıp Türkçe aslını ezerdi.
+    draw({ template: BILINGUAL, readOnly: false, lang: 'en' })
+    await screen.findByTestId('code-editor')
+
+    expect(screen.getByDisplayValue('Ödeme akışı')).toBeInTheDocument()
+    expect(screen.getByText('tpl.enShow')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('tpl.enShow'))
+    expect(screen.getByText('tpl.nameEn')).toBeInTheDocument()
+  })
+})
