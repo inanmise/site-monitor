@@ -7,6 +7,7 @@ import TagInput from '../ui/TagInput.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import CopyButton from '../ui/CopyButton.jsx'
 import { categoryOptions } from '../../utils/templateCategories.js'
+import { pickLang } from '../../utils/scriptSourceOptions.js'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
 
@@ -29,7 +30,7 @@ import { LoadingBlock } from '../ui/Progress.jsx'
  * şablonlar iki dilli olduğu için alanlar katlanmış hâlde durur ve isteyen doldurur.
  */
 export default function ScriptedTemplateEditor({
-  t, k6Version, template, meta, teams = [], teamName, onClose, onSaved, readOnly = false,
+  t, lang = 'tr', k6Version, template, meta, teams = [], teamName, onClose, onSaved, readOnly = false,
 }) {
   const isNew = !template?.id
   const [form, setForm] = useState(() => formFrom(template, meta, teams))
@@ -53,6 +54,24 @@ export default function ScriptedTemplateEditor({
   }, [isNew, template?.id])   // eslint-disable-line react-hooks/exhaustive-deps
 
   const set = (patch) => setForm(f => ({ ...f, ...patch }))
+
+  /**
+   * GÖRÜNTÜLEME modunda metinler ARAYÜZ DİLİNDE gösterilir.
+   *
+   * <p>Şablonun veri modeli Türkçe-asıl + İngilizce-ikincil: düzenlerken ikisi de görünmeli,
+   * çünkü kullanıcı ikisini de yazar. Ama "Görüntüle" bir OKUMA yüzeyi — İngilizce arayüzde
+   * kartta İngilizce adı okuyup pencereyi açınca Türkçe metin görmek (2026-08-22 kullanıcı
+   * bildirimi) tutarsızdı: liste zaten {@code pickLang} kullanıyordu, bu pencere kullanmıyordu.
+   *
+   * <p>Karşılığı olmayan alanda {@code pickLang} diğer dile düşer; o durumda alanın altına
+   * "bu dilde çeviri yok" notu konur — yoksa kullanıcı düzeltmenin çalışmadığını sanır.
+   */
+  const en = lang === 'en'
+  const show = (primary, alternate) => (readOnly ? pickLang(primary, alternate, lang) : primary)
+  const missingTranslation = (primary, alternate) => readOnly && en && !alternate && !!primary
+  /** Görüntülemede katlanan blok DİĞER dili taşır; düzenlemede her zaman İngilizce alanlardır. */
+  const otherLangLabel = (key) => (readOnly && en ? t(`tpl.${key}Tr`) : t(`tpl.${key}En`))
+  const otherLangValue = (primary, alternate) => (readOnly && en ? primary : alternate)
   const setEnvRow = (i, patch) => setForm(f => ({ ...f, env: f.env.map((e, x) => x === i ? { ...e, ...patch } : e) }))
   const addEnvRow = () => setForm(f => ({ ...f, env: [...f.env, { name: '', secret: false, desc: '' }] }))
   const delEnvRow = (i) => setForm(f => ({ ...f, env: f.env.filter((_, x) => x !== i) }))
@@ -134,17 +153,23 @@ export default function ScriptedTemplateEditor({
 
           <div className="form-grid form-grid--top">
             <label className="full-width"><span>{t('tpl.name')} <span className="req-star">*</span></span>
-              <input value={form.name} disabled={readOnly} autoFocus={!readOnly}
-                onChange={e => set({ name: e.target.value })} /></label>
+              <input value={show(form.name, form.nameEn)} disabled={readOnly} autoFocus={!readOnly}
+                onChange={e => set({ name: e.target.value })} />
+              {missingTranslation(form.name, form.nameEn) &&
+                <span className="field-hint">{t('tpl.noTranslation')}</span>}</label>
 
             <label className="full-width"><span>{t('tpl.description')}</span>
-              <textarea rows={2} value={form.description} disabled={readOnly}
-                onChange={e => set({ description: e.target.value })} /></label>
+              <textarea rows={2} value={show(form.description, form.descriptionEn)} disabled={readOnly}
+                onChange={e => set({ description: e.target.value })} />
+              {missingTranslation(form.description, form.descriptionEn) &&
+                <span className="field-hint">{t('tpl.noTranslation')}</span>}</label>
 
             <label className="full-width"><span>{t('tpl.whenToUse')}</span>
-              <textarea rows={2} value={form.whenToUse} disabled={readOnly}
+              <textarea rows={2} value={show(form.whenToUse, form.whenToUseEn)} disabled={readOnly}
                 onChange={e => set({ whenToUse: e.target.value })} />
-              <span className="field-hint">{t('tpl.whenToUseHint')}</span></label>
+              <span className="field-hint">
+                {missingTranslation(form.whenToUse, form.whenToUseEn)
+                  ? t('tpl.noTranslation') : t('tpl.whenToUseHint')}</span></label>
 
             {/* Kapsam YALNIZ oluşturmada seçilir: sonrasında değişimi promote/demote yapar —
                 aksi hâlde bir USER kendi şablonunu Genel'e taşıyıp yetki yükseltebilirdi. */}
@@ -172,21 +197,25 @@ export default function ScriptedTemplateEditor({
                 placeholder={t('tpl.tagsPlaceholder')} />
             </div>
 
-            {/* İngilizce alanlar — katlanmış (K6: kullanıcıya çeviri yükü bindirme). */}
+            {/* Katlanan dil bloğu — düzenlemede İNGİLİZCE alanlar (K6: kullanıcıya çeviri yükü
+                bindirme), İngilizce arayüzde GÖRÜNTÜLERKEN ise Türkçe aslı. İçerik hiçbir modda
+                kaybolmaz, yalnız hangisinin "asıl" hangisinin "diğer" olduğu yer değiştirir. */}
             <div className="full-width sc-tpl-block">
               <button type="button" className="btn btn-sm btn-secondary" onClick={() => setShowEn(v => !v)}>
-                {showEn ? t('tpl.enHide') : t('tpl.enShow')}
+                {readOnly && en
+                  ? (showEn ? t('tpl.trHide') : t('tpl.trShow'))
+                  : (showEn ? t('tpl.enHide') : t('tpl.enShow'))}
               </button>
               {showEn && (
                 <div className="form-grid form-grid--top sc-tpl-en">
-                  <label className="full-width"><span>{t('tpl.nameEn')}</span>
-                    <input value={form.nameEn} disabled={readOnly}
+                  <label className="full-width"><span>{otherLangLabel('name')}</span>
+                    <input value={otherLangValue(form.name, form.nameEn)} disabled={readOnly}
                       onChange={e => set({ nameEn: e.target.value })} /></label>
-                  <label className="full-width"><span>{t('tpl.descriptionEn')}</span>
-                    <textarea rows={2} value={form.descriptionEn} disabled={readOnly}
+                  <label className="full-width"><span>{otherLangLabel('description')}</span>
+                    <textarea rows={2} value={otherLangValue(form.description, form.descriptionEn)} disabled={readOnly}
                       onChange={e => set({ descriptionEn: e.target.value })} /></label>
-                  <label className="full-width"><span>{t('tpl.whenToUseEn')}</span>
-                    <textarea rows={2} value={form.whenToUseEn} disabled={readOnly}
+                  <label className="full-width"><span>{otherLangLabel('whenToUse')}</span>
+                    <textarea rows={2} value={otherLangValue(form.whenToUse, form.whenToUseEn)} disabled={readOnly}
                       onChange={e => set({ whenToUseEn: e.target.value })} /></label>
                 </div>
               )}

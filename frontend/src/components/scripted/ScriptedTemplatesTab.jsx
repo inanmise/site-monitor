@@ -246,7 +246,7 @@ export default function ScriptedTemplatesTab({ t, lang, teams = [], teamName, on
 
       {viewing && (
         <ScriptedTemplateEditor
-          t={t} k6Version={meta.k6_version} template={viewing} meta={meta}
+          t={t} lang={lang} k6Version={meta.k6_version} template={viewing} meta={meta}
           teams={teams} teamName={teamName} readOnly onClose={() => setViewing(null)} />
       )}
 
