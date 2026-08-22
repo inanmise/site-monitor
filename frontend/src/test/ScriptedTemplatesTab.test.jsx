@@ -318,3 +318,31 @@ describe('ScriptedTemplatesTab — eylemler', () => {
     expect(onUse).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }))
   })
 })
+
+/**
+ * Kart listesi arayüz DİLİNİ izler.
+ *
+ * 2026-08-22 hatası kardeş yüzeyde çıktı ("Görüntüle" penceresi İngilizce arayüzde Türkçe metin
+ * gösteriyordu) ve o yüzeyin İngilizce yolu hiç test edilmemişti — buradaki de öyleydi: tüm şablon
+ * testleri lang="tr" ile koşuyordu. Statik kapı (bilingual-fields-lang.test.jsx) yalnız `_en`
+ * alanına DOKUNAN dosyaları görür; sadece asıl alanı basan bir yüzeyi göremez. Bu davranış testi
+ * o boşluğu kapatır.
+ */
+describe('ScriptedTemplatesTab — kart dili', () => {
+  it('İngilizce arayüzde kart İNGİLİZCE adı gösterir', async () => {
+    list([BUILTIN])
+    draw({ lang: 'en' })
+    await expandAll()
+
+    expect(screen.getByText('Health check')).toBeInTheDocument()
+    expect(screen.queryByText('Sistem sağlık kontrolü')).not.toBeInTheDocument()
+  })
+
+  it('İngilizce karşılığı olmayan şablon Türkçe adıyla görünür (kart BOŞ kalmaz)', async () => {
+    list([TEAM_TPL])
+    draw({ lang: 'en' })
+    await expandAll()
+
+    expect(screen.getByText('Ödeme akışı')).toBeInTheDocument()
+  })
+})
