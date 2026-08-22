@@ -293,11 +293,21 @@ class HistoryQueryGrammarTest {
 
         // 5) Özet şeridi de aynı kapsam + SYSTEM dışlaması ile çalışmalı.
         Map<String, Long> counts = new LinkedHashMap<>();
-        for (Object[] r : changeRepo.countByEventType(null, true, all)) {
+        for (Object[] r : changeRepo.countByEventType(null, null, true, all)) {
             counts.put(String.valueOf(r[0]), ((Number) r[1]).longValue());
         }
         assertThat(counts).containsEntry("CREATE", 2L).containsEntry("UPDATE", 1L);
         assertThat(counts).doesNotContainKey("AUDIT_BACKFILL");
+
+        // 5b) Tür kartları: (tür × olay) kırılımı — konsolun "hangi izlemede ne kadar" sorusu.
+        Map<String, Map<String, Long>> byKind = new LinkedHashMap<>();
+        for (Object[] r : changeRepo.countByKindAndEventType(null, null, true, all)) {
+            byKind.computeIfAbsent(String.valueOf(r[0]), k -> new LinkedHashMap<>())
+                  .put(String.valueOf(r[1]), ((Number) r[2]).longValue());
+        }
+        assertThat(byKind.keySet()).containsExactlyInAnyOrder("PORT", "SCRIPTED");
+        assertThat(byKind.get("PORT")).containsEntry("CREATE", 1L).containsEntry("UPDATE", 1L);
+        assertThat(byKind.get("SCRIPTED")).containsEntry("CREATE", 1L);
 
         // 6) Kaynak bazlı geçmiş + tek olay + nişan sorgusu.
         assertThat(changeRepo.findByResourceKindAndResourceIdOrderByCreatedAtDescIdDesc(

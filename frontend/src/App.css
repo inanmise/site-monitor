@@ -7610,6 +7610,93 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   font-size: .85em; color: var(--text); border-radius: 0 6px 6px 0;
 }
 
+/* ── İzleme Değişiklikleri konsolu: özet şeridi + tür kartları ─────────────────
+   Şerit ve kartlar seçili ZAMAN PENCERESİNİN tamamını özetler, sayfalanan listeyi değil.
+   Kartlar aynı zamanda tür süzgeci; bu yüzden düğme (basılabilir olduğu görünsün). */
+.chg-stats-row { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 900px) { .chg-stats-row { grid-template-columns: repeat(2, 1fr); } }
+
+/* Olay tonları — sayı rengi anlamı taşır (yeşil ekleme, mavi değişiklik, kırmızı silme). */
+.chg-stat--new .audit-stat-value { color: var(--success, #16a34a); }
+.chg-stat--edit .audit-stat-value { color: var(--primary, #2563eb); }
+.chg-stat--danger .audit-stat-value { color: var(--danger, #dc2626); }
+
+/* Zaman aralığı şeridi — gün pencereleri + özel tarih seçici yan yana, dar ekranda alt alta. */
+.chg-range-row {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 10px;
+}
+.chg-range-seg { flex-wrap: wrap; }
+.chg-range-note { font-size: .76em; color: var(--text-light); }
+@media (max-width: 640px) { .chg-range-row { align-items: stretch; flex-direction: column; } }
+
+.chg-kpi-grid {
+  display: grid; gap: 10px; margin: 12px 0 14px;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+
+.chg-kpi {
+  display: flex; flex-direction: column; gap: 6px; text-align: left;
+  padding: 12px 14px; border-radius: 10px; cursor: pointer;
+  background: var(--bg-card, #fff); border: 1px solid var(--border, #e2e8f0);
+  font: inherit; color: var(--text);
+  transition: border-color .15s, box-shadow .15s, transform .15s;
+}
+.chg-kpi:hover {
+  border-color: var(--primary, #2563eb); transform: translateY(-1px);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary, #2563eb) 18%, transparent);
+}
+.chg-kpi.is-sel {
+  border-color: var(--primary, #2563eb);
+  background: color-mix(in srgb, var(--primary, #2563eb) 8%, var(--bg-card, #fff));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary, #2563eb) 30%, transparent);
+}
+.chg-kpi--all { background: color-mix(in srgb, var(--primary, #2563eb) 4%, var(--bg-card, #fff)); }
+
+.chg-kpi-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.chg-kpi-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 7px; flex-shrink: 0;
+  background: color-mix(in srgb, var(--primary, #2563eb) 12%, transparent);
+  color: var(--primary, #2563eb);
+}
+.chg-kpi-name {
+  font-size: .82em; font-weight: 600; color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chg-kpi-total { font-size: 1.6em; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+.chg-kpi-sub { font-size: .74em; color: var(--text-light); }
+
+.chg-kpi-breakdown { display: flex; flex-wrap: wrap; gap: 5px; }
+.chg-kpi-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 1px 6px; border-radius: 999px;
+  font-size: .74em; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.chg-kpi-chip--new {
+  background: color-mix(in srgb, var(--success, #16a34a) 14%, transparent);
+  color: var(--success, #16a34a);
+}
+.chg-kpi-chip--edit {
+  background: color-mix(in srgb, var(--primary, #2563eb) 14%, transparent);
+  color: var(--primary, #2563eb);
+}
+.chg-kpi-chip--danger {
+  background: color-mix(in srgb, var(--danger, #dc2626) 14%, transparent);
+  color: var(--danger, #dc2626);
+}
+
+/* Oran şeridi — sayıları okumadan dağılımı görmek için. */
+.chg-kpi-bar {
+  display: flex; height: 4px; border-radius: 999px; overflow: hidden;
+  background: var(--border, #e2e8f0);
+}
+.chg-kpi-bar-seg { display: block; height: 100%; }
+.chg-kpi-bar-seg--new { background: var(--success, #16a34a); }
+.chg-kpi-bar-seg--edit { background: var(--primary, #2563eb); }
+.chg-kpi-bar-seg--danger { background: var(--danger, #dc2626); }
+
+@media (max-width: 560px) { .chg-kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+
 /* "Değişiklik nedeni" alanı — eylem çubuğunun hemen üstünde, form ızgarasının DIŞINDA.
    Sekiz izleme sayfasının ızgara düzeni birbirinden farklı; alanı ızgaraya sokmak her sayfada
    başka yere düşürüyordu. Kendi kutusunu taşıdığı için nerede çizilirse çizilsin aynı görünür. */

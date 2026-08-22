@@ -5,11 +5,13 @@ import { useT } from '../../i18n/index.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
+import DateTimeRangePicker from '../ui/DateTimeRangePicker.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import ChangeDiffChips from '../history/ChangeDiffChips.jsx'
+import ChangeKindCards from './ChangeKindCards.jsx'
 import { shortUserAgent } from '../history/changeFields.js'
 import { copyText } from '../../utils/copyText.js'
 
@@ -31,6 +33,16 @@ const KINDS = ['port', 'dns', 'keyword', 'http', 'page', 'scripted', 'domain', '
   'inventory', 'group', 'maintenance']
 const EVENTS = ['CREATE', 'UPDATE', 'DELETE', 'RESTORE', 'GROUP_RENAME']
 
+/** Zaman pencereleri. Saklama süresi 730 gün; 90 günden uzun pencereler için özel aralık var. */
+const RANGE_KEYS = ['all', 'today', '7', '15', '30', '45', '60', '90', 'custom']
+
+/** Yerel saatle ISO — sunucu ISO METİN karşılaştırıyor, UTC'ye kaydırmak günü şaşırtır. */
+function localIso(d) {
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+    + `T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
 /** İzleme türü → uygulama sekmesi (satırdan izlemenin kendi geçmişine gitmek için). */
 const TAB_BY_KIND = {
   port: 'port', dns: 'dns', keyword: 'keyword', http: 'http', page: 'page',
@@ -41,6 +53,7 @@ export default function MonitorChangesConsole() {
   const t = useT()
   const [rows, setRows] = useState(null)
   const [counts, setCounts] = useState({})
+  const [kindCounts, setKindCounts] = useState({})
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
   const [size, setSize] = useState(25)
@@ -49,17 +62,22 @@ export default function MonitorChangesConsole() {
   const [actor, setActor] = useState('')
   const [q, setQ] = useState('')
   const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+  // Seçili aralık DÜĞMESİ ayrı tutulur: from/to'dan geri çıkarmak ("30 gün mü, özel mi")
+  // tahmin işi olurdu ve gün sınırındaki bir yenilemede seçim kayardı.
+  const [rangeKey, setRangeKey] = useState('all')
   const [open, setOpen] = useState(null)
   const [error, setError] = useState(null)
 
   const load = useCallback(async () => {
     setRows(null)
     try {
-      const res = await api.monitoring.getRecentChanges({ page, size, kind, eventType, actor, q, from })
+      const res = await api.monitoring.getRecentChanges({ page, size, kind, eventType, actor, q, from, to })
       if (res?.success) {
         setRows(res.data?.changes || [])
         setTotal(res.data?.total || 0)
         setCounts(res.data?.event_counts || {})
+        setKindCounts(res.data?.kind_counts || {})
         setError(null)
       } else {
         setRows([])
@@ -69,7 +87,7 @@ export default function MonitorChangesConsole() {
       setRows([])
       setError(e?.message || String(e))
     }
-  }, [page, size, kind, eventType, actor, q, from, t])
+  }, [page, size, kind, eventType, actor, q, from, to, t])
 
   useEffect(() => { load() }, [load])
 
@@ -92,42 +110,90 @@ export default function MonitorChangesConsole() {
     return label === key ? ev : label
   }
 
-  /** Hazır süzgeçler: en sık sorulan üç soru tek tık. */
-  function applyPreset(preset) {
+  /**
+   * Zaman aralığı seçimi.
+   *
+   * <p>Sunucu ISO metin karşılaştırması yapıyor (createdAt bir metin kolonu), bu yüzden yerel
+   * saat bileşenleriyle kurulup saniyeye kadar biçimlendiriliyor — {@code toISOString()} UTC'ye
+   * kaydırır ve Türkiye'de "bugün" 03:00'te başlamış gibi görünürdü.
+   */
+  function applyRange(key) {
     setPage(0)
-    const today = new Date()
-    const iso = (d) => d.toISOString().slice(0, 19)
-    if (preset === 'today') {
-      setFrom(iso(new Date(today.getFullYear(), today.getMonth(), today.getDate())))
-      setEventType('')
-    } else if (preset === 'week') {
-      setFrom(iso(new Date(Date.now() - 7 * 864e5)))
-      setEventType('')
-    } else if (preset === 'deletes') {
-      setFrom(''); setEventType('DELETE')
-    } else {
-      setFrom(''); setEventType(''); setActor(''); setKind(''); setQ('')
+    setRangeKey(key)
+    if (key === 'custom') return                 // aralık seçici açılır, uygulanınca yazar
+    setTo('')
+    if (key === 'all') { setFrom(''); return }
+    const start = new Date()
+    if (key === 'today') start.setHours(0, 0, 0, 0)
+    else {
+      start.setDate(start.getDate() - (Number(key) - 1))   // "7 gün" = bugün DÂHİL son 7 gün
+      start.setHours(0, 0, 0, 0)
     }
+    setFrom(localIso(start))
+  }
+
+  /** Özel aralık: seçici Date verir, uç ISO metin bekler. */
+  function applyCustom(f, tDate) {
+    setPage(0)
+    setRangeKey('custom')
+    setFrom(f ? localIso(f) : '')
+    setTo(tDate ? localIso(tDate) : '')
+  }
+
+  function clearFilters() {
+    setPage(0)
+    setRangeKey('all')
+    setFrom(''); setTo(''); setEventType(''); setActor(''); setKind(''); setQ('')
   }
 
   const totalPages = Math.max(1, Math.ceil(total / size))
 
   return (
     <div className="audit-viewer chg-console">
-      {/* Özet şeridi — "bugün ne oldu" sorusunun tek bakışta cevabı. */}
-      <div className="audit-stats-row">
-        <Stat label={t('chg.statTotal')} value={total} />
-        <Stat label={t('chg.eventCREATE')} value={counts.CREATE ?? 0} />
-        <Stat label={t('chg.eventUPDATE')} value={counts.UPDATE ?? 0} />
-        <Stat label={t('chg.eventDELETE')} value={counts.DELETE ?? 0} />
+      {/* Özet şeridi — seçili zaman penceresinin TAMAMI (sayfalanan liste değil). */}
+      <div className="audit-stats-row chg-stats-row">
+        <Stat label={t('chg.statTotal')} value={counts.TOTAL ?? sumCounts(counts)} />
+        <Stat label={t('chg.eventCREATE')} value={counts.CREATE ?? 0} tone="new" />
+        <Stat label={t('chg.eventUPDATE')} value={counts.UPDATE ?? 0} tone="edit" />
+        <Stat label={t('chg.eventDELETE')} value={counts.DELETE ?? 0} tone="danger" />
+      </div>
+
+      {/* Tür kartları: hangi izlemede ne kadar oluşturma/değişiklik/silme — ve tür süzgeci. */}
+      <ChangeKindCards t={t} kindCounts={kindCounts} selected={kind}
+        onSelect={(v) => { setKind(v); setPage(0) }} />
+
+      {/* Zaman aralığı: hazır pencereler + özel tarih. Kısa etiket (7g) ile uzun açıklama
+          (Son 7 gün) ayrı: şerit dar kalsın ama ne olduğu tooltip'te tam yazsın. */}
+      <div className="chg-range-row">
+        <SegmentedControl value={rangeKey} onChange={applyRange}
+          ariaLabel={t('chg.rangeFilter')} className="chg-range-seg"
+          options={RANGE_KEYS.map(k => ({
+            value: k,
+            label: k === 'all' ? t('chg.rangeAll')
+              : k === 'today' ? t('chg.rangeToday')
+                : k === 'custom' ? t('chg.rangeCustom')
+                  : t('chg.rangeDaysShort', k),
+            title: k === 'all' ? t('chg.rangeAll')
+              : k === 'today' ? t('chg.rangeToday')
+                : k === 'custom' ? t('chg.rangeCustomHint')
+                  : t('chg.rangeDays', k),
+          }))} />
+        {rangeKey === 'custom' && (
+          <DateTimeRangePicker
+            from={from ? new Date(from) : new Date(Date.now() - 29 * 864e5)}
+            to={to ? new Date(to) : new Date()}
+            onApply={applyCustom} />
+        )}
+        {rangeKey !== 'all' && (
+          <span className="chg-range-note">{t('chg.rangeNote')}</span>
+        )}
       </div>
 
       <div className="audit-toolbar">
         <div className="audit-presets">
-          <button className="audit-filter-btn" onClick={() => applyPreset('today')}>{t('chg.presetToday')}</button>
-          <button className="audit-filter-btn" onClick={() => applyPreset('week')}>{t('chg.presetWeek')}</button>
-          <button className="audit-filter-btn" onClick={() => applyPreset('deletes')}>{t('chg.presetDeletes')}</button>
-          <button className="audit-filter-btn" onClick={() => applyPreset('clear')}>{t('chg.presetClear')}</button>
+          <button className="audit-filter-btn" onClick={() => { setEventType('DELETE'); setPage(0) }}>
+            {t('chg.presetDeletes')}</button>
+          <button className="audit-filter-btn" onClick={clearFilters}>{t('chg.presetClear')}</button>
         </div>
         <div className="audit-toolbar-actions chg-filters">
           <SearchableSelect value={kind} onChange={(v) => { setKind(v); setPage(0) }}
@@ -220,9 +286,18 @@ export default function MonitorChangesConsole() {
   )
 }
 
-function Stat({ label, value }) {
+/** Olay sayaçları toplamı — "toplam değişiklik" sayfalanan listeden DEĞİL, pencereden okunur. */
+function sumCounts(counts) {
+  return Object.values(counts || {}).reduce((a, b) => a + Number(b || 0), 0)
+}
+
+/**
+ * Denetim konsolunun kart sınıfı kullanılır: `.audit-stat` diye bir CSS kuralı YOK — ilk sürüm
+ * onu kullandığı için şerit çerçevesiz/dolgusuz, yani "çıplak" görünüyordu (kullanıcı bildirimi).
+ */
+function Stat({ label, value, tone }) {
   return (
-    <div className="audit-stat">
+    <div className={`audit-stat-card${tone ? ` chg-stat--${tone}` : ''}`}>
       <div className="audit-stat-value">{value ?? '—'}</div>
       <div className="audit-stat-label">{label}</div>
     </div>

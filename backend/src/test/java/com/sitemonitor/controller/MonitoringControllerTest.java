@@ -1943,7 +1943,7 @@ class MonitoringControllerTest {
             when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(),
                     eq(true), any(), any()))
                     .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(9L))));
-            when(changeLogRepo.countByEventType(any(), eq(true), any()))
+            when(changeLogRepo.countByEventType(any(), any(), eq(true), any()))
                     .thenReturn(List.<Object[]>of(new Object[]{"CREATE", 4L}));
 
             mvc.perform(get("/api/monitoring/changes/recent").session(session("ADMIN")))
@@ -1958,7 +1958,7 @@ class MonitoringControllerTest {
             when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(),
                     eq(false), eq(List.of(5L)), any()))
                     .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(5L))));
-            when(changeLogRepo.countByEventType(any(), eq(false), eq(List.of(5L))))
+            when(changeLogRepo.countByEventType(any(), any(), eq(false), eq(List.of(5L))))
                     .thenReturn(List.<Object[]>of());
 
             mvc.perform(get("/api/monitoring/changes/recent").session(memberOf(5L)))
@@ -1986,7 +1986,7 @@ class MonitoringControllerTest {
             when(changeLogRepo.search(eq("SCRIPTED"), any(), any(), any(), any(), any(), any(),
                     eq(true), any(), any()))
                     .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
-            when(changeLogRepo.countByEventType(any(), eq(true), any()))
+            when(changeLogRepo.countByEventType(any(), any(), eq(true), any()))
                     .thenReturn(List.<Object[]>of());
 
             mvc.perform(get("/api/monitoring/changes/recent").param("kind", "Scripted")

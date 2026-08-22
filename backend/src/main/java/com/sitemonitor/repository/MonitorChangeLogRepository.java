@@ -76,12 +76,39 @@ public interface MonitorChangeLogRepository extends JpaRepository<MonitorChangeL
            SELECT c.eventType, COUNT(c) FROM MonitorChangeLog c
            WHERE c.resourceKind <> 'SYSTEM'
              AND (:from IS NULL OR c.createdAt >= :from)
+             AND (:to IS NULL OR c.createdAt <= :to)
              AND (:teamScopeAll = TRUE OR c.teamId IN :teamIds)
            GROUP BY c.eventType
            """)
     List<Object[]> countByEventType(@Param("from") String from,
+                                    @Param("to") String to,
                                     @Param("teamScopeAll") boolean teamScopeAll,
                                     @Param("teamIds") Collection<Long> teamIds);
+
+    /**
+     * Konsolun tür kartları: (izleme türü × olay türü) dağılımı.
+     *
+     * <p>"Hangi izlemede ne kadar oluşturma/değişiklik/silme oldu" sorusunun tek sorguluk cevabı.
+     * Sayfalanan listeden hesaplanamaz — o yalnız GÖRÜNEN sayfayı taşır; kartlar tüm pencereyi
+     * özetlemek zorunda.
+     *
+     * <p>Kasten yalnız TARİH ARALIĞI + kapsam süzgecini alır: kartlar tür seçmenin GİRİŞ noktası,
+     * tür süzgeci uygulanırsa tek karta düşer ve karşılaştırma imkânı kaybolurdu. Aralık ise
+     * uygulanmalı — kullanıcı 30 günü seçmişken kartların 90 günü sayması şeridi ile kartları
+     * çelişirdi.
+     */
+    @Query("""
+           SELECT c.resourceKind, c.eventType, COUNT(c) FROM MonitorChangeLog c
+           WHERE c.resourceKind <> 'SYSTEM'
+             AND (:from IS NULL OR c.createdAt >= :from)
+             AND (:to IS NULL OR c.createdAt <= :to)
+             AND (:teamScopeAll = TRUE OR c.teamId IN :teamIds)
+           GROUP BY c.resourceKind, c.eventType
+           """)
+    List<Object[]> countByKindAndEventType(@Param("from") String from,
+                                           @Param("to") String to,
+                                           @Param("teamScopeAll") boolean teamScopeAll,
+                                           @Param("teamIds") Collection<Long> teamIds);
 
     /** Backfill idempotensi: aynı kaynak+olay+zaman üçlüsü ikinci kez yazılmasın. */
     boolean existsByResourceKindAndResourceIdAndEventTypeAndCreatedAt(

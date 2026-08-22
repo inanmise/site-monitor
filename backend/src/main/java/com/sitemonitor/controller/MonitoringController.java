@@ -453,8 +453,15 @@ public class MonitoringController {
                 PageRequest.of(Math.max(0, page), Math.max(1, Math.min(size, 200))));
 
         Map<String, Object> counts = new LinkedHashMap<>();
-        for (Object[] row : changeLogRepo.countByEventType(blankToNull(from), all, scope)) {
+        for (Object[] row : changeLogRepo.countByEventType(blankToNull(from), blankToNull(to), all, scope)) {
             counts.put(String.valueOf(row[0]), row[1]);
+        }
+        // Tür kartları: (tür → olay → adet). Sayfalanan listeden türetilemez (o yalnız görünen
+        // sayfayı taşır); kartlar seçili zaman penceresinin TAMAMINI özetler.
+        Map<String, Map<String, Object>> byKind = new LinkedHashMap<>();
+        for (Object[] row : changeLogRepo.countByKindAndEventType(blankToNull(from), blankToNull(to), all, scope)) {
+            byKind.computeIfAbsent(String.valueOf(row[0]), k -> new LinkedHashMap<>())
+                  .put(String.valueOf(row[1]), row[2]);
         }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("changes", pg.getContent().stream().map(r -> changeRow(r, false)).toList());
@@ -462,6 +469,7 @@ public class MonitoringController {
         out.put("page", pg.getNumber());
         out.put("size", pg.getSize());
         out.put("event_counts", counts);
+        out.put("kind_counts", byKind);
         return ok(out);
     }
 
