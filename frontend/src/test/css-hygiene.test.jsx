@@ -66,6 +66,24 @@ describe('CSS hijyeni', () => {
     expect(CSS.match(/^\.pg-bar \{/gm) ?? []).toHaveLength(1)
   })
 
+  it('.form-grid alan geometrisi tik/radyo kutusunu KAPSAMAZ', () => {
+    // 2026-08-21'de `.form-grid label input` kuralına `width: 100%` eklendi ve kural
+    // input[type="checkbox"]'ı da kapsadığı için tik kutusu satır genişliğine yayılıp yanındaki
+    // etiketi kaydırdı (Sentetik İzleme formunda "E-posta bildirimi" ve "Aktif" alanları).
+    // jsdom yerleşim hesaplamadığı için görünüm test edilemiyor; KURALIN KENDİSİ pinleniyor.
+    // Satır sonu ve girinti farklarına takılmamak için boşluklar tekilleştirilir (dosya CRLF).
+    const flat = CSS.replace(/\s+/g, ' ')
+    const rule = flat.match(/\.form-grid label input[^{]*\.form-grid label textarea \{[^}]*width: 100%[^}]*\}/)
+    expect(rule, '.form-grid alan kuralı bulunamadı').not.toBeNull()
+    expect(rule[0], 'kural metin-kutusu geometrisini checkbox\'a da uyguluyor')
+      .toContain(':not([type="checkbox"])')
+    expect(rule[0]).toContain(':not([type="radio"])')
+
+    // Kutunun kendi boyutu ayrıca sabitlenmiş olmalı: ileride eklenecek başka bir
+    // `.form-grid label input` kuralı onu yeniden esnetemesin.
+    expect(CSS).toMatch(/\.form-grid label input\[type="checkbox"\][\s\S]{0,200}width: auto/)
+  })
+
   it('9999 beraberliği çözüldü: katman token\'ları tanımlı ve kullanılıyor', () => {
     for (const tok of ['--z-modal', '--z-announce', '--z-dialog', '--z-toast', '--z-critical']) {
       expect(CSS, `${tok} tanımlı değil`).toContain(`${tok}:`)

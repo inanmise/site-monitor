@@ -26,8 +26,10 @@ import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
+import ChangeNoteField from './history/ChangeNoteField.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
+const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
 const INTERVALS = [
   { value: 30,  labelKey: 'ping.interval30s' },
@@ -56,6 +58,9 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const [selected, setSelected] = useState(null)
   const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
   const [modal, setModal] = useState(null)
+  // Opsiyonel "değişiklik nedeni" — form nesnesine DEĞİL ayrı tutulur: taslak/kirlilik
+  // karşılaştırması form üzerinden yapılıyor ve not bir ayar değil, tek seferlik açıklama.
+  const [changeNote, setChangeNote] = useState('')
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
@@ -130,6 +135,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   function openEdit(m) {
     setDupSource(null)
     setForm(formFrom(m))
+    setChangeNote('')
     setModal(m)
   }
   /** Kopyala: kaynağın birebir kopyası, YENİ kayıt modunda (create). Ad "(Kopya)" sonekli;
@@ -139,7 +145,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
     setForm({ ...formFrom(m), name: duplicateName(m.name || m.host) })
     setModal('new')
   }
-  function closeEdit() { setModal(null); setDupSource(null) }
+  function closeEdit() { setModal(null); setDupSource(null); setChangeNote('') }
 
   async function save() {
     if (!form.host.trim()) return
@@ -153,6 +159,8 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
       confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds), recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
       active: form.active,
     }
+    // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
+    if (changeNote.trim()) payload.changeNote = changeNote.trim()
     const res = modal === 'new'
       ? await api.monitoring.createPingMonitor(payload)
       : await api.monitoring.updatePingMonitor(modal.id, payload)
@@ -199,6 +207,9 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const { teamOptions, hasTeamOptions } = useTeamOptions(monitors)
   const teamSelectOptions = useMemo(() => [{ value: '', label: t('ping.noTeam') },
     ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))], [teams, t])
+  // Değişiklik geçmişi `teamId` farkını ADA çevirebilsin — çıplak sayı okunmuyor.
+  const teamNameById = useMemo(
+    () => Object.fromEntries(teams.map(tm => [tm.id, tm.name])), [teams])
   // Gruplar takıma özgü: kullanıcı yalnız kendi takımının gruplarını görür/seçer (admin tümünü).
   const groupMonitors = useMemo(
     () => (isAdmin ? monitors : monitors.filter(m => myTeam != null && String(m.team_id) === myTeam)),
@@ -426,6 +437,9 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
               <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('ping.tabAlerts')}</button>
               <button className={`modal-tab${detailTab === 'chart' ? ' active' : ''}`} onClick={() => setDetailTab('chart')}>{t('ping.tabChart')}</button>
               <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('ping.tabGuide')}</button>
+              {/* Yapılandırma geçmişi — kontrol geçmişiyle (ilk sekme) KARIŞTIRILMAMALI:
+                  orası "hedef ayakta mıydı", burası "ayarları kim değiştirdi". */}
+              <button className={`modal-tab${detailTab === 'changes' ? ' active' : ''}`} onClick={() => setDetailTab('changes')}>{t('chg.tab')}</button>
             </div>
 
             {detailTab === 'control' && (
@@ -452,6 +466,13 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
             {detailTab === 'notes' && (
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <MonitorNotes type="PING" target={selected.host} />
+              </Suspense>
+            )}
+
+            {detailTab === 'changes' && (
+              <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
+                <ChangeHistoryTab t={t} kind="ping" monitorId={selected.id} teamNames={teamNameById}
+                  canManage={canManageRow(selected)} />
               </Suspense>
             )}
           </div>
@@ -532,6 +553,10 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
                             {testResult.packet_loss != null && <> · {t('ping.loss')} %{testResult.packet_loss}</>}</>}
                 </span>
               </div>
+            )}
+            {/* Yalnız DÜZENLEMEDE: "neden" sorusu ancak var olan bir şey değişince anlamlı. */}
+            {modal !== 'new' && (
+              <ChangeNoteField t={t} id="ping-change-note" value={changeNote} onChange={setChangeNote} />
             )}
             <div className="modal-actions">
               <div style={{ display: 'flex', gap: 8, marginRight: 'auto' }}>

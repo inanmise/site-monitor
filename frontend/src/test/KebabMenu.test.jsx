@@ -84,6 +84,73 @@ describe('KebabMenu', () => {
     expect(document.querySelector('.wr-menu-pop')).toBeNull()
   })
 
+  /**
+   * Konumlandırma saf aritmetiktir: girdisi iki dikdörtgen + viewport. jsdom yerleşim yapmasa da
+   * dikdörtgenleri SABİTLEYEREK bu aritmetik doğrulanabilir — "jsdom konum ölçemez" gerekçesi
+   * hesabın kendisini test etmemek için mazeret olmamalı. Ekrandaki nihai görünüm yine tarayıcıda
+   * doğrulanır; burada pinlenen, menünün karta doğru mu yoksa karttan uzağa mı açıldığıdır.
+   */
+  function stubRects({ btn, menu, vw = 1200, vh = 800 }) {
+    const orig = Element.prototype.getBoundingClientRect
+    Element.prototype.getBoundingClientRect = function rect() {
+      if (this.classList?.contains('kebab-trigger')) return btn
+      if (this.classList?.contains('wr-menu-pop')) return menu
+      return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 }
+    }
+    window.innerWidth = vw
+    window.innerHeight = vh
+    return () => { Element.prototype.getBoundingClientRect = orig }
+  }
+
+  it('placement="right": menü butonun SAĞINA açılır, kartın üstünü örtmez', () => {
+    const restore = stubRects({
+      btn: { top: 100, left: 300, right: 330, bottom: 130, width: 30, height: 30 },
+      menu: { top: 0, left: 0, right: 200, bottom: 150, width: 200, height: 150 },
+    })
+    try {
+      render(<KebabMenu label="menü" placement="right" items={[{ label: 'Düzenle', onClick: vi.fn() }]} />)
+      fireEvent.click(screen.getByLabelText('menü'))
+
+      const pop = document.querySelector('.wr-menu-pop')
+      // Sol kenarı butonun SAĞ kenarından sonra: menü kartın içine değil dışına doğru açılıyor.
+      expect(parseFloat(pop.style.left)).toBeGreaterThanOrEqual(330)
+      // Dikeyde butonun üstüyle hizalı (aşağı kaymıyor).
+      expect(parseFloat(pop.style.top)).toBe(100)
+    } finally { restore() }
+  })
+
+  it('placement="right": sağda yer yoksa SOLA düşer (viewport dışına taşmaz)', () => {
+    const restore = stubRects({
+      btn: { top: 100, left: 1150, right: 1180, bottom: 130, width: 30, height: 30 },
+      menu: { top: 0, left: 0, right: 200, bottom: 150, width: 200, height: 150 },
+      vw: 1200,
+    })
+    try {
+      render(<KebabMenu label="menü" placement="right" items={[{ label: 'Düzenle', onClick: vi.fn() }]} />)
+      fireEvent.click(screen.getByLabelText('menü'))
+
+      const pop = document.querySelector('.wr-menu-pop')
+      const left = parseFloat(pop.style.left)
+      expect(left).toBeLessThanOrEqual(1150 - 200)   // butonun soluna geçti
+      expect(left).toBeGreaterThanOrEqual(8)         // kenar payının içinde
+    } finally { restore() }
+  })
+
+  it('varsayılan (bottom) davranış DEĞİŞMEDİ — tablo menüleri hâlâ altta ve sağa hizalı', () => {
+    const restore = stubRects({
+      btn: { top: 100, left: 300, right: 330, bottom: 130, width: 30, height: 30 },
+      menu: { top: 0, left: 0, right: 200, bottom: 150, width: 200, height: 150 },
+    })
+    try {
+      render(<KebabMenu label="menü" items={[{ label: 'Düzenle', onClick: vi.fn() }]} />)
+      fireEvent.click(screen.getByLabelText('menü'))
+
+      const pop = document.querySelector('.wr-menu-pop')
+      expect(parseFloat(pop.style.top)).toBe(134)          // buton altı + GAP(4)
+      expect(parseFloat(pop.style.left)).toBe(130)         // sağ kenar butonla hizalı (330-200)
+    } finally { restore() }
+  })
+
   it('görünür eylem yoksa tetik HİÇ çizilmez (yetkisiz kullanıcı)', () => {
     render(<KebabMenu label="menü" items={[{ label: 'Sil', onClick: vi.fn(), hidden: true }]} />)
     expect(screen.queryByLabelText('menü')).not.toBeInTheDocument()

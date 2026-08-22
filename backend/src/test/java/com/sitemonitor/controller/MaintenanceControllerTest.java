@@ -32,6 +32,7 @@ class MaintenanceControllerTest {
     @MockitoBean MaintenanceService maintenanceService;
     @MockitoBean PermissionService permissionService;
     @MockitoBean AuditService auditService;
+    @MockitoBean com.sitemonitor.service.MonitorHistoryService monitorHistory;
     @MockitoBean RememberMeService rememberMeService;
     @MockitoBean UserService userService;
     @MockitoBean AuthController authController;

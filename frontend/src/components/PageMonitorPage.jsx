@@ -29,7 +29,9 @@ import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
+import ChangeNoteField from './history/ChangeNoteField.jsx'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
+const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
 const INTERVALS = [
   { value: 60,    labelKey: 'page.iv1m'  },
@@ -82,6 +84,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   const [confirmations, setConfirmations] = useState([])   // canlı teyit zincirleri (Teyit denemesi X/N)
   const [issueFilter, setIssueFilter] = useState('all')   // all | BROKEN | MIXED_CONTENT | SLOW | firstParty
   const [modal, setModal] = useState(null)
+  // Opsiyonel "değişiklik nedeni" — form nesnesine DEĞİL ayrı tutulur: taslak/kirlilik
+  // karşılaştırması form üzerinden yapılıyor ve not bir ayar değil, tek seferlik açıklama.
+  const [changeNote, setChangeNote] = useState('')
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
   const [teamGroups, setTeamGroups] = useState([])
@@ -193,6 +198,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   function openEdit(m) {
     setTestResult(null); setDupSource(null)
     setForm(formFrom(m))
+    setChangeNote('')
     setModal(m)
   }
   /** Kopyala: kaynağın birebir kopyası, YENİ kayıt modunda (create). Ad "(Kopya)" sonekli;
@@ -202,7 +208,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
     setForm({ ...formFrom(m), name: duplicateName(m.name || m.url) })
     setModal('new')
   }
-  function closeEdit() { setModal(null); setTestResult(null); setDupSource(null) }
+  function closeEdit() { setModal(null); setTestResult(null); setDupSource(null); setChangeNote('') }
 
   async function runTest() {
     if (!form.url.trim()) return
@@ -228,6 +234,8 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
       recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
       active: form.active,
     }
+    // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
+    if (changeNote.trim()) payload.changeNote = changeNote.trim()
     const res = modal === 'new'
       ? await api.monitoring.createPageMonitor(payload)
       : await api.monitoring.updatePageMonitor(modal.id, payload)
@@ -334,6 +342,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   const { teamOptions, hasTeamOptions } = useTeamOptions(monitors)
   const teamSelectOptions = useMemo(() => [{ value: '', label: t('page.noTeam') },
     ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))], [teams, t])
+  // Değişiklik geçmişi `teamId` farkını ADA çevirebilsin — çıplak sayı okunmuyor.
+  const teamNameById = useMemo(
+    () => Object.fromEntries(teams.map(tm => [tm.id, tm.name])), [teams])
   const groupMonitors = useMemo(
     () => (isAdmin ? monitors : monitors.filter(m => myTeam != null && String(m.team_id) === myTeam)),
     [monitors, isAdmin, myTeam])
@@ -568,6 +579,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
               <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('hist.tab')}</button>
               <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('page.tabAlerts')}</button>
               <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('page.tabNotes')}</button>
+              {/* Yapılandırma geçmişi — kontrol geçmişiyle (ilk sekme) KARIŞTIRILMAMALI:
+                  orası "hedef ayakta mıydı", burası "ayarları kim değiştirdi". */}
+              <button className={`modal-tab${detailTab === 'changes' ? ' active' : ''}`} onClick={() => setDetailTab('changes')}>{t('chg.tab')}</button>
             </div>
 
             {detailTab === 'issues' && (<>
@@ -671,6 +685,13 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
             {detailTab === 'notes' && (
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <MonitorNotes type="PAGE" target={selected.url} />
+              </Suspense>
+            )}
+
+            {detailTab === 'changes' && (
+              <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
+                <ChangeHistoryTab t={t} kind="page" monitorId={selected.id} teamNames={teamNameById}
+                  canManage={canManageRow(selected)} />
               </Suspense>
             )}
           </div>
@@ -817,6 +838,10 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                         {testResult.http_status != null && <> · HTTP {testResult.http_status}</>}</>}
                 </span>
               </div>
+            )}
+            {/* Yalnız DÜZENLEMEDE: "neden" sorusu ancak var olan bir şey değişince anlamlı. */}
+            {modal !== 'new' && (
+              <ChangeNoteField t={t} id="page-change-note" value={changeNote} onChange={setChangeNote} />
             )}
             <div className="modal-actions">
               <button className="btn btn-secondary" style={{ marginRight: 'auto' }} onClick={runTest}

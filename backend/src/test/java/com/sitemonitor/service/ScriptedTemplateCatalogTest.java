@@ -49,18 +49,57 @@ class ScriptedTemplateCatalogTest {
         catalog.path("templates").forEach(templates::add);
     }
 
+    /**
+     * Katalog 11'den 100'e büyüdü (10 kategori × 10 şablon). TAM küme pinlemek artık yanlış kapı
+     * olurdu: her yeni şablon testi düşürür ama hiçbir şeyi kanıtlamaz. Korunması gereken tek
+     * şey ilk 11'in KAYBOLMAMASI — kayıtlı monitörlerin {@code template} kolonunda hâlâ
+     * {@code tpl:<builtinKey>} dizeleri duruyor ve o anahtar silinirse monitör şablonunu
+     * çözemez hâle gelir.
+     */
+    private static final List<String> LEGACY_KEYS = List.of(
+            "smoke-health", "json-health", "oauth2-client-credentials", "api-chain",
+            "multi-step-journey", "sla-threshold", "soap-xml", "oidc-keycloak",
+            "form-login", "mtls-client-cert", "graphql");
+
     @Test
-    @DisplayName("Katalog: bilinen 11 yerleşik şablonun TAM id kümesi (sayı değil, küme pinlenir)")
-    void catalog_pinsExactIdSet() {
-        // Sayı pinlemek kırılgan: yeni şablon eklemek testi düşürür ama bir şey kanıtlamaz.
-        // Kümeyi pinlemek ise "mevcut bir şablon sessizce kayboldu" durumunu yakalar —
-        // eski `tpl:<id>` değerleri taşıyan monitörler bundan doğrudan etkilenir.
-        assertThat(templates.stream().map(ScriptedTemplateCatalogTest::key))
-                .containsExactlyInAnyOrder(
-                        "smoke-health", "json-health", "oauth2-client-credentials", "api-chain",
-                        "multi-step-journey", "sla-threshold", "soap-xml", "oidc-keycloak",
-                        "form-login", "mtls-client-cert", "graphql");
+    @DisplayName("Katalog: ilk 11 yerleşik anahtar ASLA kaybolmaz (eski tpl:<key> referansları)")
+    void catalog_keepsLegacyKeys() {
+        assertThat(templates.stream().map(ScriptedTemplateCatalogTest::key).toList())
+                .containsAll(LEGACY_KEYS);
         assertThat(catalog.path("seedVersion").asInt()).isPositive();
+    }
+
+    @Test
+    @DisplayName("Katalog: her şablonun kategorisi BİLİNEN anahtarlardan biri")
+    void catalog_categoriesAreKnown() {
+        for (JsonNode t : templates) {
+            String c = t.path("category").asText("");
+            assertThat(ScriptedTemplateCategories.isKnown(c))
+                    .as("%s: bilinmeyen kategori '%s'", key(t), c).isTrue();
+        }
+    }
+
+    @Test
+    @DisplayName("Katalog: 10 kategorinin HER BİRİNDE tam 10 şablon var")
+    void catalog_tenPerCategory() {
+        java.util.Map<String, Long> byCat = templates.stream()
+                .collect(java.util.stream.Collectors.groupingBy(
+                        t -> t.path("category").asText(""), java.util.stream.Collectors.counting()));
+        for (String c : ScriptedTemplateCategories.ORDER) {
+            assertThat(byCat.getOrDefault(c, 0L)).as("kategori '%s' şablon sayısı", c).isEqualTo(10L);
+        }
+        assertThat(templates).as("toplam şablon").hasSize(100);
+    }
+
+    @Test
+    @DisplayName("Katalog KENDİ güvenlik kurallarımızı geçer (yerleşikler kaydedilemez olamaz)")
+    void catalog_passesSafetyRules() {
+        // Kullanıcı bir yerleşiği düzenleyip kaydettiğinde ScriptedSafetyRules çalışır. Katalog
+        // kendi kapımıza takılırsa kullanıcı o şablonu bir daha kaydedemez — sessiz bir kilit.
+        for (JsonNode t : templates) {
+            var d = ScriptedSafetyRules.check(script(t));
+            assertThat(d.blocked()).as("%s: güvenlik kuralına takıldı → %s", key(t), d.blocking()).isFalse();
+        }
     }
 
     @Test

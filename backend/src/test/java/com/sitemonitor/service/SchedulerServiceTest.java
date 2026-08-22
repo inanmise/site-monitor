@@ -72,6 +72,7 @@ class SchedulerServiceTest {
     @Mock JdbcTemplate jdbcTemplate;
     @Mock UserService userService;
     @Mock PermissionService permissionService;
+    @Mock MonitorHistoryBackfillService historyBackfill;
     @Mock DataSource dataSource;
     @Mock ApplicationEventPublisher eventPublisher;
     @Mock PortCheckerService portCheckerService;
@@ -123,7 +124,7 @@ class SchedulerServiceTest {
         scheduler = new SchedulerService(
                 checkerService, certService, emailService, escalationService, maintenanceService,
                 inventoryRepo, latestCheckRepo, thresholdRepo, jdbcTemplate,
-                userService, permissionService, dataSource, eventPublisher,
+                userService, permissionService, historyBackfill, dataSource, eventPublisher,
                 portCheckerService, portMonitorRepo, portCheckRepo,
                 dnsCheckerService, dnsMonitorRepo, dnsRecordRepo,
                 uptimeHttpCheckerService, uptimeCheckRepo, monitoringOutageService,

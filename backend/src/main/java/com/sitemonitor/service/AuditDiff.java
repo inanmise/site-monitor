@@ -70,6 +70,29 @@ public final class AuditDiff {
         }
     }
 
+    /**
+     * Bir snapshot haritasını düz JSON nesnesine çevirir ({@code {"alan":deger,…}}) — hassas
+     * alanlar yine {@link #MASK}'lenir.
+     *
+     * <p>Neden burada: maskeleme kara-listesi ve JSON kaçışı zaten bu sınıfın içinde. Snapshot'ı
+     * başka bir yerde Jackson ile yazmak, "hangi alan hassas" kararını İKİNCİ bir yere kopyalardı
+     * ve o kopya kaçınılmaz olarak ayrışırdı — parolayı düz metin yazan taraf da o olurdu.
+     *
+     * @return JSON nesnesi; {@code null}/boş haritada {@code null}
+     */
+    public static String snapshotJson(Map<String, Object> snapshot) {
+        if (snapshot == null || snapshot.isEmpty()) return null;
+        StringBuilder sb = new StringBuilder("{");
+        boolean first = true;
+        for (Map.Entry<String, Object> e : snapshot.entrySet()) {
+            if (!first) sb.append(",");
+            first = false;
+            sb.append(jsonStr(e.getKey())).append(":")
+              .append(isSensitive(e.getKey()) ? jsonStr(MASK) : jsonVal(e.getValue()));
+        }
+        return sb.append("}").toString();
+    }
+
     /** Tek bir değeri anahtar adına göre maskeler (serbest detay üretiminde). */
     public static String maskValue(String key, Object value) {
         return isSensitive(key) ? MASK : String.valueOf(value);

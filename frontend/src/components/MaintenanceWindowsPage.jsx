@@ -1,5 +1,5 @@
 import { LoadingBlock } from './ui/Progress.jsx'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -9,7 +9,10 @@ import PaginationBar from './ui/PaginationBar.jsx'
 import MultiTeamSelect from './ui/MultiTeamSelect.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import DateTimeField from './ui/DateTimeField.jsx'
-import { Wrench, Plus, Play, Pencil, Trash2, Pause, RefreshCw } from 'lucide-react'
+import ModalShell from './ui/ModalShell.jsx'
+import { Wrench, Plus, Play, Pencil, Trash2, Pause, RefreshCw, History } from 'lucide-react'
+
+const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
 const RECURRENCES = ['NONE', 'DAILY', 'WEEKLY', 'MONTHLY']
 const DOW = [1, 2, 3, 4, 5, 6, 7]   // Pzt..Paz (ISO)
@@ -54,6 +57,7 @@ export default function MaintenanceWindowsPage({ systemRole }) {
   const pager = usePagination(rows, { listKey: 'maintenance-windows' })
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState(null)          // 'new' | window | 'quick'
+  const [historyItem, setHistoryItem] = useState(null)   // değişiklik geçmişi penceresi
   const [form, setForm] = useState(emptyForm)
   const [quickForm, setQuickForm] = useState({ allMonitors: false, targets: [], minutes: 30, name: '' })
   const [saving, setSaving] = useState(false)
@@ -212,6 +216,9 @@ export default function MaintenanceWindowsPage({ systemRole }) {
                         {w.status === 'paused' ? <Play size={13} /> : <Pause size={13} />}
                       </button>
                       <button className="mw-act" title={t('mw.edit')} onClick={() => openEdit(w)}><Pencil size={13} /></button>
+                      {/* Pencerenin GEÇMİŞİ: planlı kesinti alarmları susturur, dolayısıyla
+                          "bu pencereyi kim genişletti" sorusunun izlenebilir olması gerekir. */}
+                      <button className="mw-act" title={t('chg.tab')} onClick={() => setHistoryItem(w)}><History size={13} /></button>
                       <button className="mw-act mw-act-danger" title={t('mw.delete')} onClick={() => del(w)}><Trash2 size={13} /></button>
                     </>}
                   </td>
@@ -319,6 +326,18 @@ export default function MaintenanceWindowsPage({ systemRole }) {
             </div>
           </div>
         </div>, document.body)}
+
+      {/* Değişiklik geçmişi — ayrı ve SALT-OKUNUR bir kabuk. Düzenleme formunun içine sekme
+          olarak konsaydı geçmişi okumak için formu açmak gerekirdi ve yanlışlıkla kayıt
+          riski doğardı. */}
+      <ModalShell open={!!historyItem} onClose={() => setHistoryItem(null)}
+        title={historyItem ? historyItem.name : ''} icon={History} size="lg" scrollBody>
+        {historyItem && (
+          <Suspense fallback={<LoadingBlock label={t('modal.loading')} />}>
+            <ChangeHistoryTab t={t} kind="maintenance" monitorId={historyItem.id} />
+          </Suspense>
+        )}
+      </ModalShell>
     </div>
   )
 }

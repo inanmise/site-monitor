@@ -34,6 +34,23 @@ import static org.mockito.Mockito.*;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class ScriptedTemplateSeederTest {
 
+    /**
+     * Katalog boyutu SABİT YAZILMAZ, kaynaktan okunur. Sabit sayı pinlemek katalog her
+     * büyüdüğünde bu testleri düşürür ama hiçbir şey kanıtlamaz; burada kanıtlanan şey
+     * "seeder katalogdaki HER şablonu ekler" ve "ikinci turda hiçbirini tekrar eklemez".
+     * (Katalogun kendi içeriği {@code ScriptedTemplateCatalogTest} tarafından korunuyor.)
+     */
+    private static final int CATALOG_SIZE = catalogSize();
+
+    private static int catalogSize() {
+        try (java.io.InputStream in = ScriptedTemplateSeederTest.class.getClassLoader()
+                .getResourceAsStream("scripted-templates.json")) {
+            return new com.fasterxml.jackson.databind.ObjectMapper().readTree(in).path("templates").size();
+        } catch (Exception e) {
+            throw new IllegalStateException("Şablon kataloğu okunamadı", e);
+        }
+    }
+
     @Mock ScriptedTemplateRepository templateRepo;
     @Mock ScriptedTemplateVersionRepository versionRepo;
 
@@ -59,12 +76,12 @@ class ScriptedTemplateSeederTest {
     }
 
     @Test
-    @DisplayName("İlk seed: katalogdaki 11 yerleşik GENEL şablon olarak eklenir")
+    @DisplayName("İlk seed: katalogdaki TÜM yerleşikler GENEL şablon olarak eklenir")
     void firstSeed_insertsCatalog() {
         int added = seeder.seed();
 
-        assertThat(added).isEqualTo(11);
-        assertThat(table).hasSize(11).containsKeys("smoke-health", "graphql", "oidc-keycloak");
+        assertThat(added).isEqualTo(CATALOG_SIZE);
+        assertThat(table).hasSize(CATALOG_SIZE).containsKeys("smoke-health", "graphql", "oidc-keycloak");
         // Seed edilen her şablon GENEL'dir ve ilk sürümle doğar.
         for (ScriptedTemplate t : table.values()) {
             assertThat(t.getTeamId()).as("%s: seed edilen şablon GENEL olmalı", t.getBuiltinKey()).isNull();
@@ -79,13 +96,13 @@ class ScriptedTemplateSeederTest {
     @Test
     @DisplayName("İKİNCİ seed hiçbir şey eklemez — her açılışta çoğalmaz")
     void secondSeed_isIdempotent() {
-        assertThat(seeder.seed()).isEqualTo(11);
+        assertThat(seeder.seed()).isEqualTo(CATALOG_SIZE);
 
         int addedAgain = seeder.seed();
 
         assertThat(addedAgain).isZero();
-        assertThat(table).hasSize(11);
-        verify(templateRepo, times(11)).save(any(ScriptedTemplate.class));   // ilk turdakiler, fazlası yok
+        assertThat(table).hasSize(CATALOG_SIZE);
+        verify(templateRepo, times(CATALOG_SIZE)).save(any(ScriptedTemplate.class));   // ilk turdakiler, fazlası yok
     }
 
     /**
@@ -115,7 +132,7 @@ class ScriptedTemplateSeederTest {
         seeder.seed();
 
         ArgumentCaptor<ScriptedTemplateVersion> cap = ArgumentCaptor.forClass(ScriptedTemplateVersion.class);
-        verify(versionRepo, times(11)).save(cap.capture());
+        verify(versionRepo, times(CATALOG_SIZE)).save(cap.capture());
 
         for (ScriptedTemplateVersion v : cap.getAllValues()) {
             assertThat(v.getEventType()).isEqualTo("SEED");
@@ -125,6 +142,29 @@ class ScriptedTemplateSeederTest {
             assertThat(v.getTemplateId()).isNotNull();
             assertThat(v.getScript()).isNotBlank();
         }
+    }
+
+    @Test
+    @DisplayName("Kategori GERİ DOLDURULUR — alan sonradan eklendi, eski yerleşikler onsuz doğmuştu")
+    void seed_backfillsMissingCategory() {
+        seeder.seed();
+        ScriptedTemplate legacy = table.get("smoke-health");
+        legacy.setCategory(null);            // alanın var olmadığı bir kurulumdan gelmiş satır
+
+        seeder.seed();
+
+        assertThat(table.get("smoke-health").getCategory()).isEqualTo("availability");
+    }
+
+    @Test
+    @DisplayName("Admin'in SEÇTİĞİ kategori geri doldurmada EZİLMEZ (sınır keskin: yalnız null doldurulur)")
+    void seed_doesNotOverwriteChosenCategory() {
+        seeder.seed();
+        table.get("smoke-health").setCategory("journey");   // admin bilerek taşımış
+
+        seeder.seed();
+
+        assertThat(table.get("smoke-health").getCategory()).isEqualTo("journey");
     }
 
     @Test
@@ -151,7 +191,7 @@ class ScriptedTemplateSeederTest {
 
         int added = seeder.seed();
 
-        assertThat(added).isEqualTo(10);                    // 11 - 1
+        assertThat(added).isEqualTo(CATALOG_SIZE - 1);   // biri düştü
         assertThat(table).doesNotContainKey("api-chain");
     }
 
@@ -162,7 +202,7 @@ class ScriptedTemplateSeederTest {
 
         int added = seeder.seed();
 
-        assertThat(added).isEqualTo(11);
-        assertThat(table).hasSize(11);
+        assertThat(added).isEqualTo(CATALOG_SIZE);
+        assertThat(table).hasSize(CATALOG_SIZE);
     }
 }

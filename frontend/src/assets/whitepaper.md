@@ -450,6 +450,7 @@ Bunlar sistemin en hızlı büyüyen tablolarıdır ve saklama politikasının a
 | `scheduler_lock` | Dağıtık zamanlayıcı kilidi (`name`, `locked_by`, `locked_until`) |
 | `retention_run` / `retention_run_item` | Gece temizliğinin kendi koşum geçmişi — hangi tablodan kaç satır silindi |
 | `audit_log` | Güvenlik ve yönetim denetim izi — **hash zincirli** (`seq`, `row_hash`, `prev_hash`), IP + coğrafi konum, `anomaly_flags` |
+| `monitor_change_log` | İzleme YAPILANDIRMASI değişiklik geçmişi — kim, ne zaman, hangi IP'den, hangi alanı neyle değiştirdi; her olayda tam durum kaydı (730 gün) |
 | `weekly_reports` / `weekly_report_images` / `weekly_report_mails` | Haftalık takım raporu, görselleri ve gönderilen posta arşivi |
 | `weekly_availability_log` | Haftalık erişilebilirlik maili idempotency kaydı (takım × hafta) |
 | `cert_inventory_report_log` | Aylık envanter raporu gönderim kaydı |
@@ -882,7 +883,28 @@ Her giriş, çıkış ve yönetim aksiyonu şu bilgilerle kaydedilir: UTC zaman 
 
 Denetim kayıtları anomali bayraklarıyla zenginleştirilir: mesai dışı erişim (OFF_HOURS), alışılmadık IP (UNUSUAL_IP), coğrafi hız ihlali (GEO_VELOCITY), kaba kuvvet (BRUTE_FORCE) ve hız sınırı (RATE_LIMITED). Algılama pencereleri **Ayarlar → Login Anomali** bölümünden yönetilir; anormal başarısız giriş yoğunluğu otomatik olay kaydı da açabilir.
 
-### 12.7 Hata Yönetimi ve Bilgi Sızıntısı Önleme
+### 12.7 İzleme Değişiklik Geçmişi
+
+Denetim kaydı güvenlik ekibinin aracıdır ve yalnız admin/AUDIT rolüne açıktır. Takım kullanıcısının
+kendi izlemesi için sorduğu "bunu kim, ne zaman, hangi değerlerle kurdu; sonra kim neyi değiştirdi"
+sorusu ise günlük işin parçasıdır. Bu yüzden ürün-görünür ayrı bir katman vardır: `monitor_change_log`.
+
+Her izleme, sertifika envanteri kaydı, izleme grubu ve bakım penceresi için oluşturma, güncelleme,
+silme ve geri döndürme olayları alan bazında (eski → yeni) ve tam durum kaydıyla saklanır. Hassas
+alanlar denetimle **aynı** kara listeden geçer ve `***` olarak maskelenir. Kullanıcı isterse
+değişikliğe bir gerekçe notu ekleyebilir; yapılandırma değişikliği ayrıca aktivite akışına
+`CONFIG_CHANGED` olayı olarak düşer.
+
+Erişim: her izlemenin detayındaki **Değişiklikler** sekmesi (takım kapsamlı — yabancı takımın geçmişi
+404 döner ve güvenlik olayı yazılır), yöneticiler için ayrıca tüm izlemeleri tek listede sayfalayan
+**İzleme Değişiklikleri** konsolu. Geçmişteki bir ana **geri dönmek** mümkündür: eski satırlar
+silinmez, geri alma işleminin kendisi yeni bir `RESTORE` satırı olarak eklenir; maskeli alanlar ve
+takım ataması geri yazılmaz.
+
+Özellik devreye alınırken mevcut denetim kayıtlarındaki izleme olayları bir kez geçmişe taşınmıştır
+(`AUDIT_BACKFILL`); denetimin kendi saklama penceresinden eskisi bulunmaz.
+
+### 12.8 Hata Yönetimi ve Bilgi Sızıntısı Önleme
 
 `GlobalExceptionHandler` tüm yakalanmamış istisnaları karşılar ve kullanıcı-dostu Türkçe mesajla yanıt döner:
 
@@ -901,7 +923,7 @@ Denetim kayıtları anomali bayraklarıyla zenginleştirilir: mesai dışı eri�
 
 Stack trace ve iç hata detayı yalnız log dosyasına yazılır.
 
-### 12.8 Hassas Alan Maskeleme
+### 12.9 Hassas Alan Maskeleme
 
 `RequestLoggingFilter`, TRACE seviyesinde tüm HTTP istek/yanıt gövdesini loglayabilir; varsayılan `com.sitemonitor=DEBUG` seviyesinde sessizdir. Açmak için:
 
@@ -922,11 +944,11 @@ pin / otp / mfa_code / verification_code  (EN + TR varyantları)
 
 Hassas HTTP başlıkları (`Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`, `X-Auth-Token` vb.) de maskelenir. `/health`, `/favicon.ico`, `/assets/*`, `/static/*` ve statik uzantılar atlanır; gövde logu 2000 karakterde kesilir.
 
-### 12.9 Frontend Hata Sınırı
+### 12.10 Frontend Hata Sınırı
 
 Uygulama iki katmanlı `ErrorBoundary` ile sarılıdır: kök seviye beyaz ekranı önler, sekme seviyesi bir sekmenin render hatasının diğerlerini düşürmesini engeller. Hata durumunda "Bir şey ters gitti" mesajı ve "Yenile" butonu gösterilir; tam hata konsola düşer.
 
-### 12.10 Girdi Doğrulama
+### 12.11 Girdi Doğrulama
 
 Modellerde `jakarta-validation` anotasyonları, controller'larda `@Valid` kullanılır:
 

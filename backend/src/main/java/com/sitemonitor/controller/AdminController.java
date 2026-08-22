@@ -7,6 +7,7 @@ import com.sitemonitor.service.AuditDiff;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.ClientIpResolver;
 import com.sitemonitor.service.ConnectionDiagnosticsService;
+import com.sitemonitor.service.MonitorHistoryService;
 import com.sitemonitor.service.DiagnosticHistoryService;
 import com.sitemonitor.service.DomainExpiryDiagnosticsService;
 import com.sitemonitor.service.DomainExpiryRefreshService;
@@ -61,6 +62,20 @@ import java.util.concurrent.ConcurrentHashMap;
 public class AdminController {
 
     private final AuditService auditService;
+    private final MonitorHistoryService monitorHistory;
+
+    /**
+     * Envanter geçmişinde tutulan alanlar — {@code buildInventoryDiff}'in denetim için ürettiği
+     * alan listesiyle AYNI küme. İkisi ayrışırsa geçmişte görünmeyen bir değişiklik olur; bu
+     * yüzden yeni bir envanter alanı eklenirken İKİSİ birden güncellenir.
+     */
+    private static final String[] INVENTORY_FIELDS = {
+        "domain", "port", "active", "tier", "description", "owner", "tags", "externalVendor",
+        "actionRequired", "openshift", "sslPinning", "internalCert", "jksKeystore", "serverUpdate",
+        "netscaler", "wafEnabled", "inUse", "evCertificate", "transferredToSy", "useProxy",
+        "tlsMode", "purchasedBy", "changeDescription", "expectedFingerprint", "expectedSubject",
+        "teamId", "groupName", "deletedAt"
+    };
     private final CertificateInventoryRepository inventoryRepo;
     private final AlertThresholdRepository thresholdRepo;
     private final EscalationContactRepository contactRepo;
@@ -202,10 +217,14 @@ public class AdminController {
         if (item.getActive() == null) item.setActive(true);
         item.setTlsMode(normalizeTlsMode(item.getTlsMode()));
         item.setGroupName(monitoringGroupService.getOrCreate(item.getTeamId(), "cert", item.getGroupName(), actor(session)));
+        monitorHistory.stampCreated(item, session);
         CertificateInventory saved = inventoryRepo.save(item);
         auditService.recordAction("DOMAIN_ADD", session, request,
                 "CERTIFICATE", saved.getDomain(),
                 "{\"port\":" + saved.getPort() + ",\"teamId\":" + saved.getTeamId() + "}");
+        // Envanter Uptime/SSL kartlarının kaynağı — geçmişi izleme tipleriyle AYNI hunide toplanır.
+        monitorHistory.record(MonitorHistoryService.INVENTORY, saved.getId(), saved.getDomain(), saved.getTeamId(),
+                MonitorHistoryService.CREATE, null, AuditDiff.snapshot(saved, INVENTORY_FIELDS), null, session);
         // Anında tek-domain kontrol (async): latest_checks satırı hemen oluşsun → Genel Bakış'ta
         // gecikmeden görünür ve kontrollere dahil olur (5-dk stale sweep'i beklemeden).
         schedulerService.checkSingleDomainAsync(saved.getDomain(),
@@ -233,6 +252,9 @@ public class AdminController {
 
         // Build diff BEFORE applying changes
         String diffJson = buildInventoryDiff(existing, item, true);
+        // Geçmiş için AYRI snapshot: buildInventoryDiff elle JSON kuruyor ve yalnız FARKI üretiyor;
+        // ürün geçmişi ise "o an tam durum" da tutuyor (AuditDiff ile, aynı maskeleme kurallarıyla).
+        Map<String, Object> _histBefore = AuditDiff.snapshot(existing, INVENTORY_FIELDS);
 
         // ── Domain rename: latest_checks + geçmiş tabloları yeni isme taşı ────
         // Aksi halde SchedulerService.syncLatestChecksToInventory (artık devre
@@ -300,6 +322,8 @@ public class AdminController {
             auditService.recordAction("DOMAIN_EDIT", session, request,
                     "CERTIFICATE", saved.getDomain(), diffJson);
         }
+        monitorHistory.record(MonitorHistoryService.INVENTORY, saved.getId(), saved.getDomain(), saved.getTeamId(),
+                MonitorHistoryService.UPDATE, _histBefore, AuditDiff.snapshot(saved, INVENTORY_FIELDS), null, session);
         return ok(Map.of("data", saved, "alertsClosed", alertsClosed));
     }
 
@@ -641,6 +665,7 @@ public class AdminController {
         return inventoryRepo.findById(id).map(inv -> {
             requireTeamScopedAdmin(session, inv.getTeamId());
             requirePerm(session, "inventory.crud", "edit");
+            Map<String, Object> _histBefore = AuditDiff.snapshot(inv, INVENTORY_FIELDS);
             inv.setDeletedAt(now());
             inv.setActive(false);
             inventoryRepo.save(inv);
@@ -648,6 +673,8 @@ public class AdminController {
             auditService.recordAction("DOMAIN_SOFT_DELETE", session, request,
                     "CERTIFICATE", inv.getDomain(),
                     "{\"teamId\":" + inv.getTeamId() + ",\"alertsClosed\":" + alertsClosed + "}");
+            monitorHistory.record(MonitorHistoryService.INVENTORY, inv.getId(), inv.getDomain(), inv.getTeamId(),
+                    MonitorHistoryService.DELETE, _histBefore, AuditDiff.snapshot(inv, INVENTORY_FIELDS), null, session);
             return ok(Map.of("message", "Deleted", "alertsClosed", alertsClosed));
         }).orElse(ResponseEntity.notFound().build());
     }
@@ -747,6 +774,7 @@ public class AdminController {
         return inventoryRepo.findById(id).map(inv -> {
             requireTeamScopedAdmin(session, inv.getTeamId());
             requirePerm(session, "inventory.crud", "edit");
+            Map<String, Object> _histBefore = AuditDiff.snapshot(inv, INVENTORY_FIELDS);
             inv.setDeletedAt(null);
             inv.setActive(true);
             inv.setUpdatedAt(now());
@@ -754,6 +782,8 @@ public class AdminController {
             auditService.recordAction("DOMAIN_RESTORE", session, request,
                     "CERTIFICATE", inv.getDomain(),
                     "{\"teamId\":" + inv.getTeamId() + "}");
+            monitorHistory.record(MonitorHistoryService.INVENTORY, inv.getId(), inv.getDomain(), inv.getTeamId(),
+                    MonitorHistoryService.RESTORE, _histBefore, AuditDiff.snapshot(inv, INVENTORY_FIELDS), null, session);
             return ok(Map.of("data", inv, "message", "Restored"));
         }).orElse(ResponseEntity.notFound().build());
     }

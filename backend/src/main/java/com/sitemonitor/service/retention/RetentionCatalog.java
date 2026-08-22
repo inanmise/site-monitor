@@ -87,6 +87,17 @@ public final class RetentionCatalog {
         age("audit-log", "audit_log", "event_time", "site.monitor.audit.retention-days",
                 365, 30, true, DataClass.SECURITY_AUDIT,
                 "Kullanıcı eylem denetimi. Silmeden ÖNCE JSONL arşivi yazılır; süre uyum birimi onayına tabidir."),
+        // batched=false BİLİNÇLİ: batch'li silme büyük seri tablolar için var (id + ANALYZE).
+        // Yapılandırma değişiklikleri kontrol kayıtları gibi akmaz — hacim düşük, tek DELETE yeter.
+        guarded("monitor-change-log", "monitor_change_log", "created_at",
+                "site.monitor.monitoring.change-retention-days", 730, 30,
+                "{t} AND resource_kind <> 'SYSTEM'",
+                DataClass.SECURITY_AUDIT,
+                "İzleme yapılandırması değişiklik geçmişi (kim/ne zaman/hangi IP/neyi değiştirdi). "
+                + "audit_log'dan UZUN tutulur (730 gün): ayrı tablo olmasının sebeplerinden biri de budur — "
+                + "denetim değeri yüksek, hacim düşük (yapılandırma değişiklikleri kontrol kayıtları gibi akmaz). "
+                + "SYSTEM satırları HARİÇ: geri doldurmanın 'koştu' nişanı orada duruyor; silinirse bir "
+                + "sonraki açılış geçmişi ikinci kez doldurmaya kalkardı."),
         age("notification-logs", "notification_logs", "sent_at", "site.monitor.notification.retention-days",
                 365, 30, true, DataClass.PERSONAL,
                 "Gönderilen bildirim geçmişi (alıcı adı/e-postası içerir). Kişisel veri saklama süreleri "

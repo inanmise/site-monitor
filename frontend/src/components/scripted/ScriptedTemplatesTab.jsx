@@ -1,15 +1,14 @@
-import { useMemo, useState } from 'react'
-import { Plus, Pencil, Eye, History, Copy, Globe2, Users, Trash2, RotateCcw, Search, FlaskConical } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Plus, Pencil, Eye, History, Copy, Globe2, Users, Trash2, RotateCcw, Search, FlaskConical, ChevronRight } from 'lucide-react'
 import { api, formatDateSec } from '../../api/client'
 import { useScriptedTemplates } from '../../hooks/useScriptedTemplates.js'
-import { usePagination } from '../../hooks/usePagination.js'
+import { CATEGORY_ORDER } from '../../utils/templateCategories.js'
 import { pickLang } from '../../utils/scriptSourceOptions.js'
 import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
 import ModalShell from '../ui/ModalShell.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
-import PaginationBar from '../ui/PaginationBar.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
@@ -65,7 +64,37 @@ export default function ScriptedTemplatesTab({ t, lang, teams = [], teamName, on
     })
   }, [templates, scope, tag, search])
 
-  const pager = usePagination(shown, { listKey: 'scriptedTemplates', defaultSize: 25, resetDeps: [scope, tag, search] })
+  /**
+   * Kategori ağacı. Sıra SUNUCUDAKİ sıradır (ScriptedTemplateCategories.ORDER): bir siteyi
+   * izlemeye baştan başlayan birinin ilerleyeceği yol. Alfabetik sıralamak bu bilgiyi yok ederdi.
+   * Kategorisiz şablonlar sonda "Diğer" dalında toplanır — hiçbir kayıt ağacın dışında kalmaz.
+   */
+  const grouped = useMemo(() => {
+    const out = CATEGORY_ORDER.map(key => ({ key, items: shown.filter(x => x.category === key) }))
+    const others = shown.filter(x => CATEGORY_ORDER.indexOf(x.category) < 0)
+    if (others.length > 0) out.push({ key: 'other', items: others })
+    return out.filter(g => g.items.length > 0)
+  }, [shown])
+
+  // Varsayılan KAPALI (ürün kararı): 10 dal tek ekrana sığar, kullanıcı aradığı yeri seçer.
+  const [openCats, setOpenCats] = useState(() => new Set())
+  const toggleCat = (key) => setOpenCats(prev => {
+    const next = new Set(prev)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    return next
+  })
+
+  /**
+   * Arama/filtre varken eşleşen dallar KENDİLİĞİNDEN açılır. Aksi halde kullanıcı arar, sonuç
+   * bulunur ama hepsi kapalı dalların içinde kalır ve arama bozuk görünür — kapalı varsayılanın
+   * en klasik tuzağı budur.
+   */
+  const filtering = search.trim() !== '' || tag !== 'all'
+  useEffect(() => {
+    if (!filtering) return
+    setOpenCats(new Set(grouped.map(g => g.key)))
+  }, [filtering, grouped])
 
   const canCreate = meta.can_create_general || (meta.writable_team_ids || []).length > 0
 
@@ -165,24 +194,41 @@ export default function ScriptedTemplatesTab({ t, lang, teams = [], teamName, on
                     <Plus size={14} />{t('tpl.emptyCta')}
                   </button>
                 : null} />
-          : (<>
-            <div className="cards-container sc-tpl-cards">
-              {pager.pageItems.map(row => (
-                <TemplateCard key={row.id} t={t} lang={lang} row={row}
-                  onView={() => setViewing(row)}
-                  onEdit={() => setEditing(row)}
-                  onVersions={() => setVersionsFor(row)}
-                  onDuplicate={() => duplicate(row)}
-                  onPromote={() => promote(row)}
-                  onDemote={() => setDemoting(row)}
-                  onDelete={() => remove(row)}
-                  onUndelete={() => undelete(row)}
-                  onPurge={() => removeForever(row)}
-                  onUse={onUseTemplate ? () => onUseTemplate(row) : null} />
-              ))}
-            </div>
-            <PaginationBar {...pager} />
-          </>)}
+          : (<div className="sc-tpl-tree">
+            {grouped.map(group => {
+              const open = openCats.has(group.key)
+              return (
+                <section key={group.key} className={`sc-tpl-branch${open ? ' is-open' : ''}`}>
+                  <button type="button" className="sc-tpl-branch-head"
+                    aria-expanded={open} onClick={() => toggleCat(group.key)}>
+                    <ChevronRight size={15} className="sc-tpl-branch-caret" aria-hidden="true" />
+                    <span className="sc-tpl-branch-name">{t('tpl.cat.' + group.key)}</span>
+                    <span className="sc-tpl-branch-count">{group.items.length}</span>
+                  </button>
+
+                  {/* Kapalı dal İÇERİĞİ HİÇ ÇİZİLMEZ (CSS ile gizlenmez): 100 şablonun tamamını
+                      DOM'a koyup saklamak, ağacın çözdüğü sorunu geri getirirdi. */}
+                  {open && (
+                    <div className="cards-container sc-tpl-cards">
+                      {group.items.map(row => (
+                        <TemplateCard key={row.id} t={t} lang={lang} row={row}
+                          onView={() => setViewing(row)}
+                          onEdit={() => setEditing(row)}
+                          onVersions={() => setVersionsFor(row)}
+                          onDuplicate={() => duplicate(row)}
+                          onPromote={() => promote(row)}
+                          onDemote={() => setDemoting(row)}
+                          onDelete={() => remove(row)}
+                          onUndelete={() => undelete(row)}
+                          onPurge={() => removeForever(row)}
+                          onUse={onUseTemplate ? () => onUseTemplate(row) : null} />
+                      ))}
+                    </div>
+                  )}
+                </section>
+              )
+            })}
+          </div>)}
 
       {/* `editing` YENİ kayıtta da dolu olabilir: "Kopyala" akışı id'siz bir taslak taşır — bu
           yüzden editöre koşulsuz geçilir; id'ye bakıp null göndermek kopyalanan içeriği yutardı. */}
@@ -261,7 +307,9 @@ function TemplateCard({ t, lang, row, onView, onEdit, onVersions, onDuplicate, o
           {row.current_version && <span className="sc-ver-chip">v{row.current_version}</span>}
           {deleted && <span className="card-badge sc-tpl-badge--deleted">{t('tpl.badgeDeleted')}</span>}
         </div>
-        <KebabMenu items={items} label={t('tpl.actions')} />
+        {/* placement="right": aşağı açılan menü kartın kendi içeriğini örtüyordu ve kullanıcı
+            hangi şablonun menüsünü açtığını göremiyordu. */}
+        <KebabMenu items={items} label={t('tpl.actions')} placement="right" />
       </div>
 
       {desc && <p className="sc-tpl-card-desc">{desc}</p>}

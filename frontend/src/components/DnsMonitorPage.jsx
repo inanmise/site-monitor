@@ -21,6 +21,7 @@ import { LoadingBlock } from './ui/Progress.jsx'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
+import ChangeNoteField from './history/ChangeNoteField.jsx'
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS']
 
 const INTERVALS = [
@@ -66,6 +67,9 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const [teams, setTeams] = useState([])
   const [detailMonitor, setDetailMonitor] = useState(null)
   const [modal, setModal] = useState(null)
+  // Opsiyonel "değişiklik nedeni" — form nesnesine DEĞİL ayrı tutulur: taslak/kirlilik
+  // karşılaştırması form üzerinden yapılıyor ve not bir ayar değil, tek seferlik açıklama.
+  const [changeNote, setChangeNote] = useState('')
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
@@ -148,6 +152,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
     setDupSource(null)
     setForm(formFrom(m))
     setTestResult(null)
+    setChangeNote('')
     setModal(m)
   }
   /** Kopyala: kaynağın birebir kopyası, YENİ kayıt modunda (create). Ad "(Kopya)" sonekli;
@@ -158,7 +163,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
     setTestResult(null)
     setModal('new')
   }
-  function closeEditModal() { setModal(null); setTestResult(null); setDupSource(null) }
+  function closeEditModal() { setModal(null); setTestResult(null); setDupSource(null); setChangeNote('') }
 
   async function save() {
     // Takım alanı yalnız yeni/standalone'da görünür ve zorunlu; envanter-türevi düzenlemede takım envanterden gelir.
@@ -178,6 +183,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
       dnsChangeAlertEnabled: !!form.dnsChangeAlertEnabled,
       active: form.active,
     }
+    // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
+    if (changeNote.trim()) payload.changeNote = changeNote.trim()
     let res
     if (isNew) {
       payload.domain = (form.domain || '').trim()
@@ -288,6 +295,10 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
     const s = search.toLowerCase()
     return m.domain?.toLowerCase().includes(s) || m.record_type?.toLowerCase().includes(s)
   }), [monitors, teamFilter, groupFilter, statFilter, search])
+
+  // Değişiklik geçmişi `teamId` farkını ADA çevirebilsin — çıplak sayı okunmuyor.
+  const teamNameById = useMemo(
+    () => Object.fromEntries(teams.map(tm => [tm.id, tm.name])), [teams])
 
   // Sayfalama filtrelenmiş listenin ÜZERİNE; sayaç/istatistikler tam listeden hesaplanmaya devam eder.
   const pager = usePagination(filtered, {
@@ -472,7 +483,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
       )}
 
       {detailMonitor && (
-        <DnsDetailModal monitor={detailMonitor} onClose={() => setDetailMonitor(null)} />
+        <DnsDetailModal monitor={detailMonitor} onClose={() => setDetailMonitor(null)} teamNames={teamNameById}
+          canManage={canManageRow(detailMonitor)} />
       )}
 
       {modal && (
@@ -638,6 +650,10 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
                       </>}
                 </span>
               </div>
+            )}
+            {/* Yalnız DÜZENLEMEDE: "neden" sorusu ancak var olan bir şey değişince anlamlı. */}
+            {modal !== 'new' && (
+              <ChangeNoteField t={t} id="dns-change-note" value={changeNote} onChange={setChangeNote} />
             )}
             <div className="modal-actions">
               <button className="btn btn-secondary" style={{ marginRight: 'auto' }} onClick={runTest}

@@ -1,0 +1,102 @@
+package com.sitemonitor.repository;
+
+import com.sitemonitor.model.MonitorChangeLog;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
+
+public interface MonitorChangeLogRepository extends JpaRepository<MonitorChangeLog, Long> {
+
+    /** Bir kaynağın geçmişi — en yeni üstte. Sıralama createdAt+id ile KESİN (seq best-effort). */
+    Page<MonitorChangeLog> findByResourceKindAndResourceIdOrderByCreatedAtDescIdDesc(
+            String resourceKind, Long resourceId, Pageable pageable);
+
+    Optional<MonitorChangeLog> findByResourceKindAndResourceIdAndSeq(
+            String resourceKind, Long resourceId, Integer seq);
+
+    /** Yeni satırın {@code seq}'i bundan türetilir (yoksa 0 = CREATE). */
+    @Query("SELECT MAX(c.seq) FROM MonitorChangeLog c WHERE c.resourceKind = :kind AND c.resourceId = :id")
+    Optional<Integer> findMaxSeq(@Param("kind") String kind, @Param("id") Long id);
+
+    /** Kaynak silindiyse kapsam kararı SON satırın takımından okunur. */
+    Optional<MonitorChangeLog> findTopByResourceKindAndResourceIdOrderByCreatedAtDesc(
+            String resourceKind, Long resourceId);
+
+    /**
+     * Yönetici konsolu ve takım akışı — süzgeçler null geçilebilir (tek sorgu, dallanma yok).
+     *
+     * <p>Geri doldurmanın {@code SYSTEM} nişan satırı DIŞLANIR: o bir izleme değişikliği değil,
+     * çalışma kaydı — konsolda "kim neyi değiştirdi" listesinde yeri yok.
+     *
+     * <p>{@code teamScopeAll} true ise takım kısıtı UYGULANMAZ (global admin/AUDIT); false ise
+     * yalnız {@code teamIds} kesişimi döner. İki ayrı sorgu yazmak yerine tek yerde tutuluyor ki
+     * kapsam mantığı ikiye ayrılıp ayrışmasın.
+     */
+    @Query("""
+           SELECT c FROM MonitorChangeLog c
+           WHERE c.resourceKind <> 'SYSTEM'
+             AND (:kind IS NULL OR c.resourceKind = :kind)
+             AND (:eventType IS NULL OR c.eventType = :eventType)
+             AND (:actor IS NULL OR LOWER(c.actor) = LOWER(:actor))
+             AND (:teamId IS NULL OR c.teamId = :teamId)
+             AND (:from IS NULL OR c.createdAt >= :from)
+             AND (:to IS NULL OR c.createdAt <= :to)
+             AND (:q IS NULL OR LOWER(c.resourceName) LIKE LOWER(CONCAT('%', :q, '%')))
+             AND (:teamScopeAll = TRUE OR c.teamId IN :teamIds)
+           ORDER BY c.createdAt DESC, c.id DESC
+           """)
+    Page<MonitorChangeLog> search(@Param("kind") String kind,
+                                  @Param("eventType") String eventType,
+                                  @Param("actor") String actor,
+                                  @Param("teamId") Long teamId,
+                                  @Param("from") String from,
+                                  @Param("to") String to,
+                                  @Param("q") String q,
+                                  @Param("teamScopeAll") boolean teamScopeAll,
+                                  @Param("teamIds") Collection<Long> teamIds,
+                                  Pageable pageable);
+
+    /** Konsolun özet şeridi: olay tipi dağılımı (aynı kapsam kuralıyla). */
+    @Query("""
+           SELECT c.eventType, COUNT(c) FROM MonitorChangeLog c
+           WHERE c.resourceKind <> 'SYSTEM'
+             AND (:from IS NULL OR c.createdAt >= :from)
+             AND (:teamScopeAll = TRUE OR c.teamId IN :teamIds)
+           GROUP BY c.eventType
+           """)
+    List<Object[]> countByEventType(@Param("from") String from,
+                                    @Param("teamScopeAll") boolean teamScopeAll,
+                                    @Param("teamIds") Collection<Long> teamIds);
+
+    /** Backfill idempotensi: aynı kaynak+olay+zaman üçlüsü ikinci kez yazılmasın. */
+    boolean existsByResourceKindAndResourceIdAndEventTypeAndCreatedAt(
+            String resourceKind, Long resourceId, String eventType, String createdAt);
+
+    /**
+     * "Geri doldurma koştu mu" nişanı — nişan satırı bu tablonun KENDİSİNDE tutulur.
+     *
+     * <p>{@code app_settings}'e konmadı: oradaki her anahtar yönetici ayar ekranında listeleniyor
+     * ve bu bir ayar değil, tek seferlik bir çalışma kaydı. Aynı tabloda durması ayrıca veritabanı
+     * geri yüklemelerinde nişan ile veriyi birlikte tutar — ayrı yerlerde olsalardı geri yüklenen
+     * bir yedek "koştu" der ama satırlar olmazdı.
+     */
+    boolean existsByResourceKindAndEventType(String resourceKind, String eventType);
+
+    /**
+     * Elle/test temizliği. Saklama süresi temizliğini {@code RetentionCatalog} yapıyor (doğrudan
+     * SQL, tüm tablolar için tek motor) — bu metot onun yerine geçmez, ondan bağımsızdır.
+     *
+     * <p>{@code @Transactional} ŞART: türetilmiş silme sorgusuna Spring Data kendiliğinden tx
+     * sarmaz ve {@code open-in-view=false} olduğu için tx'siz çağrı düşer
+     * (bkz. {@code RepositoryWriteTransactionGuardTest}). Dönüş silinen satır sayısıdır.
+     */
+    @Transactional
+    int deleteByCreatedAtBefore(String cutoff);
+}

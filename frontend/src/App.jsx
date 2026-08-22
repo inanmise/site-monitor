@@ -58,6 +58,7 @@ const IncidentsPage = lazy(() => import('./components/IncidentsPage'))
 const MaintenanceWindowsPage = lazy(() => import('./components/MaintenanceWindowsPage'))
 const InventoryManager = lazy(() => import('./components/admin/InventoryManager'))
 const AuditLogViewer = lazy(() => import('./components/admin/AuditLogViewer'))
+const MonitorChangesConsole = lazy(() => import('./components/admin/MonitorChangesConsole'))
 const WeakAlgorithmReport = lazy(() => import('./components/admin/WeakAlgorithmReport'))
 const WeeklyReportsPage = lazy(() => import('./components/WeeklyReportsPage'))
 const IncidentHistoryPage = lazy(() => import('./components/IncidentHistoryPage'))
@@ -101,7 +102,7 @@ function formatDurationShort(ms) {
 const VALID_TABS = new Set([
   'dashboard', 'all', 'domains', 'forecast', 'renewal', 'renewal-guide',
   'warnings', 'incidents', 'maintenance', 'alerthistory', 'stats', 'weakalgo', 'weeklyreports', 'incident-history',
-  'health', 'uptime', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'scripted', 'activity', 'myactivity', 'system',
+  'health', 'uptime', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'scripted', 'activity', 'myactivity', 'system', 'monitorchanges',
   'admin', 'permissions', 'sqlplayground', 'login-issues', 'help', 'settings',
 ])
 /** "Şimdi Kontrol Et" + domain ekleme yalnız bu sekmelerde anlamlı (sertifika sayfaları). */
@@ -1203,6 +1204,17 @@ export default function App() {
               <div className="tab-content active">
                 <h2>{t('app.systemTitle')}</h2>
                 <AuditLogViewer />
+              </div>
+            )}
+
+            {/* İzleme değişiklik konsolu — denetim konsoluyla AYNI kapıda (globalAdmin || AUDIT).
+                Denetim güvenlik kaydını gösterir; bu ekran ürün geçmişini: kim hangi izlemeyi
+                ekledi/değiştirdi, hangi değerlerle. */}
+            {tab === 'monitorchanges' && (globalAdmin || systemRole === 'AUDIT') && (
+              <div className="tab-content active">
+                <h2>{t('chg.consoleTitle')}</h2>
+                <p className="upt-subtitle">{t('chg.consoleSubtitle')}</p>
+                <MonitorChangesConsole />
               </div>
             )}
 

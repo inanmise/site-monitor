@@ -168,6 +168,28 @@ describe('ScriptedTemplateEditor — düzenleme', () => {
     expect(await screen.findByTestId('code-editor')).toHaveValue(SCRIPT)
   })
 
+  it('REGRESYON: ad alanında yapılan değişiklik payload\'a GİRER', async () => {
+    // Saha bildirimi: "Edit Template deyip adi degistirdim, 'Kaydedildi' bildirimi cikti ama
+    // listede ad eski kaldi." Sunucu tarafi temiz cikti (applyFields adi uyguluyor, liste
+    // onbelleksiz okuyor) ve denetim kaydinda hic `name` degisikligi yoktu — yani istege
+    // eski ad girmis. Bu test tam o yolu kosuyor: duzenleme kipinde ada yaz, kaydet, payload'a bak.
+    api.monitoring.updateScriptedTemplate.mockResolvedValue({ success: true, data: { id: 7 } })
+    draw({ template: ROW })
+    await screen.findByTestId('code-editor')   // tekil cekim bitsin (form ondan sonra dolar)
+
+    const nameInput = screen.getAllByRole('textbox')[0]
+    expect(nameInput).toHaveValue('Ödeme akışı')          // once mevcut ad geldi mi
+    fireEvent.change(nameInput, { target: { value: 'Ödeme akışı v2' } })
+    expect(nameInput).toHaveValue('Ödeme akışı v2')       // yazma forma islendi mi
+
+    fireEvent.click(screen.getByText('tpl.save'))
+    await waitFor(() => expect(api.monitoring.updateScriptedTemplate).toHaveBeenCalled())
+
+    const [id, payload] = api.monitoring.updateScriptedTemplate.mock.calls[0]
+    expect(id).toBe(7)
+    expect(payload.name).toBe('Ödeme akışı v2')
+  })
+
   it('env satırında DEĞER alanı yoktur; gönderilen tanım `value` taşımaz', async () => {
     api.monitoring.updateScriptedTemplate.mockResolvedValue({ success: true, data: { id: 7 } })
     draw({ template: ROW })

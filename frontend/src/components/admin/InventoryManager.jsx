@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react'
 import { ChevronDown, Download } from 'lucide-react'
 import { api } from '../../api/client'
 import { InventoryDetails } from '../inventory/InventoryDetails.jsx'
@@ -13,7 +13,9 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import DiagnosticsModal from './DiagnosticsModal.jsx'
 import { exportInventoryCsv, exportInventoryPdf } from '../../utils/exportInventory'
-import { Spinner } from '../ui/Progress.jsx'
+import { Spinner, LoadingBlock } from '../ui/Progress.jsx'
+
+const ChangeHistoryTab = lazy(() => import('../history/ChangeHistoryTab.jsx'))
 
 export default function InventoryManager({ onInventoryChange, systemRole, teams: teamsProp = [], isAdmin: isAdminProp = false, openAddSignal = false, onAddConsumed }) {
   const t = useT()
@@ -30,12 +32,15 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const [saving, setSaving]           = useState(false)
   const [statusFilter, setStatusFilter] = useState(() => readUrlParam('stat', 'default'))
   const [showItem,    setShowItem]    = useState(null)
+  const [showTab,     setShowTab]     = useState('details')
   const [diag,        setDiag]        = useState(null)   // { domain, port } → DiagnosticsModal
   const [exportOpen,  setExportOpen]  = useState(false)
   const [exporting,   setExporting]   = useState(false)
   const exportRef = useRef(null)
 
   const teamMap  = Object.fromEntries(teams.map(t => [String(t.id), t.name]))
+  // Geçmişteki `teamId` farkı ADA çevrilsin — teamMap dize anahtarlı, geçmiş sayısal.
+  const teamNameById = Object.fromEntries(teams.map(t => [t.id, t.name]))
 
   useEffect(() => {
     load()
@@ -439,12 +444,12 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                   <KebabMenu label={t('inv.colActions')} items={
                     item.deleted_at
                       ? [
-                          { label: t('inv.show'), onClick: () => setShowItem(item) },
+                          { label: t('inv.show'), onClick: () => { setShowTab('details'); setShowItem(item) } },
                           { label: t('inv.restore'), onClick: () => restore(item.id), hidden: !canManage },
                           { label: t('inv.purge'), danger: true, onClick: () => purge(item.id), hidden: !isAdmin },
                         ]
                       : [
-                          { label: t('inv.show'), onClick: () => setShowItem(item) },
+                          { label: t('inv.show'), onClick: () => { setShowTab('details'); setShowItem(item) } },
                           { label: t('inv.diagnose'), onClick: () => setDiag({ domain: item.domain, port: item.port || 443 }), hidden: !isAdmin },
                           { label: t('inv.edit'), onClick: () => openEdit(item), hidden: !canManage },
                           { label: t('mon.duplicate'), onClick: () => openDuplicate(item), hidden: !canManage },
@@ -500,7 +505,25 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
               <button type="button" className="show-close" aria-label={t('app.dismiss')} onClick={() => setShowItem(null)}>✕</button>
             </div>
 
-            <InventoryDetails record={showItem} teamMap={teamMap} />
+            {/* İki sekme: kaydın kendisi ve kaydın GEÇMİŞİ (kim, ne zaman, neyi değiştirdi).
+                Envanter satırları sertifika sahipliğinin kaynağı — "bu alanı kim T1 yaptı"
+                sorusu burada, kaydın yanında cevaplanmalı. */}
+            <div className="modal-tabs">
+              <button className={`modal-tab${showTab === 'details' ? ' active' : ''}`}
+                onClick={() => setShowTab('details')}>{t('modal.detailsTab')}</button>
+              <button className={`modal-tab${showTab === 'changes' ? ' active' : ''}`}
+                onClick={() => setShowTab('changes')}>{t('chg.tab')}</button>
+            </div>
+
+            {showTab === 'details' && <InventoryDetails record={showItem} teamMap={teamMap} />}
+            {showTab === 'changes' && (
+              <div className="show-body">
+                <Suspense fallback={<LoadingBlock label={t('modal.loading')} />}>
+                  <ChangeHistoryTab t={t} kind="inventory" monitorId={showItem.id}
+                    teamNames={teamNameById} />
+                </Suspense>
+              </div>
+            )}
 
           </div>
         </div>

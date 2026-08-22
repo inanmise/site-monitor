@@ -11,6 +11,7 @@ import MonitorNotes from './MonitorNotes.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 // Süre grafiği artık paylaşımlı ResponseTimeChart (ping/keyword/port ile aynı: 90g/özel aralık + avg/min-max/p95).
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
+const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS']
 
@@ -34,7 +35,7 @@ function withinExpected(expectedJoined, valueJoined) {
   return values.length > 0 && values.every(v => expected.has(v))
 }
 
-export default function DnsDetailModal({ monitor, onClose }) {
+export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canManage = false }) {
   const t = useT()
   const [details, setDetails] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -97,10 +98,19 @@ export default function DnsDetailModal({ monitor, onClose }) {
           <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('dns.tabAlerts')}</button>
           <button className={`modal-tab${detailTab === 'chart' ? ' active' : ''}`} onClick={() => setDetailTab('chart')}>{t('dns.tabChart')}</button>
           <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('dns.tabGuide')}</button>
+          <button className={`modal-tab${detailTab === 'changes' ? ' active' : ''}`} onClick={() => setDetailTab('changes')}>{t('chg.tab')}</button>
         </div>
 
         {detailTab === 'alerts' && <AlertHistory domain={monitor.domain} />}
         {detailTab === 'notes' && <MonitorNotes type="DNS" target={monitor.domain} />}
+        {detailTab === 'changes' && (
+          <div className="dns-modal-body">
+            <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="dns-modal-loading" />}>
+              {/* Takım adları sayfadan gelir; modal takım listesini kendisi çekmez (tek istek yeter). */}
+              <ChangeHistoryTab t={t} kind="dns" monitorId={monitor.id} teamNames={teamNames} canManage={canManage} />
+            </Suspense>
+          </div>
+        )}
 
         {detailTab === 'control' && (loading ? (
           <LoadingBlock label={t('dns.loadingDetails')} className="dns-modal-loading" />

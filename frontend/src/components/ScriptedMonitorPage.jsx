@@ -40,6 +40,7 @@ import MonitorCardMeta from './MonitorCardMeta.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
+const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
 const INTERVALS = [
   { value: 60, k: 'scripted.iv1m' }, { value: 300, k: 'scripted.iv5m' }, { value: 600, k: 'scripted.iv10m' },
@@ -314,6 +315,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   // Türetilmiş listeler memoize — 1sn countdown her saniye render tetikler.
   const { teamOptions, hasTeamOptions } = useTeamOptions(monitors)
   const teamSelectOptions = useMemo(() => teams.map(tm => ({ value: String(tm.id), label: tm.name })), [teams])
+  // Değişiklik geçmişi `teamId` farkını ADA çevirebilsin — çıplak sayı okunmuyor.
+  const teamNameById = useMemo(
+    () => Object.fromEntries(teams.map(tm => [tm.id, tm.name])), [teams])
 
   /** Modalın script'ini ALDIĞI kayıtlı monitör (düzenlemede kendisi, kopyalamada kaynak). */
   const savedSource = modal?.id ? modal : dupSource
@@ -825,7 +829,16 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     <div className="upt-page">
       <div className="upt-header">
         <div>
-          <h2 className="upt-title"><FlaskConical size={20} style={{ verticalAlign: '-4px' }} /> {t('scripted.title')}</h2>
+          {/* Motor sürümü BAŞLIĞIN yanında, parantez içinde. Eskiden sağdaki eylem kümesindeydi;
+              orada bir eylemmiş gibi duruyor ve satırı şişiriyordu. Sürüm bir eylem değil, bu
+              ekranın neyle çalıştığının künyesi — yeri başlıktır. Sürüm okunamıyorsa parantez
+              HİÇ çizilmez: boş bir "( )" yazmaktansa sessiz kal. */}
+          <h2 className="upt-title">
+            <FlaskConical size={20} style={{ verticalAlign: '-4px' }} /> {t('scripted.title')}
+            {k6.version && (
+              <span className="sc-title-k6" title={t('scripted.k6VersionTitle')}> (k6 {k6.version})</span>
+            )}
+          </h2>
           <p className="upt-subtitle">{t('scripted.subtitle')}</p>
           {/* Görünüm anahtarı: monitörler ↔ şablon kütüphanesi. Şablon izni yoksa HİÇ çizilmez —
               basılabilen ama 403 yiyen bir düğme göstermek yerine yüzey görünmez kalır.
@@ -860,8 +873,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
             {/* iconOnly (10 izleme sayfasında da aynı): "Bağlantıyı kopyala" tam metniyle başlık
                 satırının en geniş öğesiydi. Anlam kaybı yok — metin title/aria-label'da duruyor. */}
             <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
-            {/* Sürüm listede de görünsün: script yazmaya başlamadan önce hangi motor olduğu bilinsin. */}
-            <K6VersionBadge t={t} version={k6.version} />
+            {/* k6 sürümü buradan BAŞLIĞA taşındı (yukarıdaki nota bakın). K6VersionBadge yaşamaya
+                devam ediyor: düzenleme formunda sözdizimi notuyla birlikte kullanılıyor. */}
             <MonitorGuideButton type="scripted" />
             {k6.canManage && k6.available &&
               <button className="btn btn-sm btn-primary" onClick={openNew}><Plus size={14} />{t('scripted.addMonitor')}</button>}
@@ -1048,6 +1061,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
               <button className={`modal-tab${detailTab === 'versions' ? ' active' : ''}`} onClick={() => setDetailTab('versions')}>{t('scripted.tabVersions')}</button>
               <button className={`modal-tab${detailTab === 'diag' ? ' active' : ''}`} onClick={() => setDetailTab('diag')}>{t('scripted.tabDiag')}</button>
               <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('scripted.tabGuide')}</button>
+              {/* Yapılandırma geçmişi — kontrol geçmişiyle (ilk sekme) KARIŞTIRILMAMALI:
+                  orası "hedef ayakta mıydı", burası "ayarları kim değiştirdi". */}
+              <button className={`modal-tab${detailTab === 'changes' ? ' active' : ''}`} onClick={() => setDetailTab('changes')}>{t('chg.tab')}</button>
             </div>
 
             {/* Anomali guard'ı kapattıysa sebep HER SEKMEDE görünür: kullanıcı "izleme neden
@@ -1135,6 +1151,13 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
             {detailTab === 'notes' && (
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <MonitorNotes type="SCRIPTED" target={selected.name} />
+              </Suspense>
+            )}
+
+            {detailTab === 'changes' && (
+              <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
+                <ChangeHistoryTab t={t} kind="scripted" monitorId={selected.id} teamNames={teamNameById}
+                  canManage={canManageRow(selected)} />
               </Suspense>
             )}
           </div>

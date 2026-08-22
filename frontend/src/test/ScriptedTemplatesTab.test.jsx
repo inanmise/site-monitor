@@ -67,12 +67,28 @@ function list(templates, meta = {}) {
 
 const TEAMS = [{ id: 5, name: 'Kanal' }, { id: 6, name: 'Çekirdek' }]
 
+/**
+ * Kütüphane artık KATEGORİ AĞACI ve dallar varsayılan KAPALI (ürün kararı: 100 şablon düz
+ * ızgarada okunamıyordu). Kapalı dalın kartları DOM'a hiç çizilmez, bu yüzden kart bekleyen
+ * her test önce dalı açmak zorunda. `draw()` bunu kendisi yapıyor ki testler ağacın varlığını
+ * değil davranışı sınamaya devam etsin; kapalı-varsayılan ayrıca kendi testiyle pinleniyor.
+ */
+async function expandAll() {
+  // Liste ASENKRON yükleniyor: dal başlıkları daha çizilmemişken tıklamak sessizce hiçbir şey
+  // yapmaz ve test "kart yok" diye düşer. Önce dalın gelmesini bekle.
+  await waitFor(() => expect(document.querySelector('.sc-tpl-branch-head')).not.toBeNull())
+  document.querySelectorAll('.sc-tpl-branch-head').forEach(h => fireEvent.click(h))
+  await waitFor(() => expect(document.querySelector('.sc-tpl-card')).not.toBeNull())
+}
+
 function draw(props = {}) {
   return render(<ScriptedTemplatesTab t={t} lang="tr" teams={TEAMS} teamName="Kanal" {...props} />)
 }
 
-/** Kartın kebab menüsünü açar ve menü düğmelerini döndürür. */
+/** Kartın kebab menüsünü açar ve menü düğmelerini döndürür. Dalı kendisi açar. */
 async function openMenu(cardName) {
+  await waitFor(() => expect(document.querySelector('.sc-tpl-branch-head')).not.toBeNull())
+  await expandAll()
   const card = (await screen.findByText(cardName)).closest('.sc-tpl-card')
   fireEvent.click(within(card).getByLabelText('tpl.actions'))
   return () => screen.queryAllByRole('button').map(b => b.textContent)
@@ -86,6 +102,7 @@ beforeEach(() => {
 describe('ScriptedTemplatesTab — kapsam ve yetki yüzeyi', () => {
   it('üç katmanı da rozetleriyle listeler', async () => {
     draw()
+    await expandAll()
     expect(await screen.findByText('Sistem sağlık kontrolü')).toBeInTheDocument()
     expect(screen.getByText('Ödeme akışı')).toBeInTheDocument()
     expect(screen.getByText('tpl.badgeBuiltin')).toBeInTheDocument()
@@ -96,6 +113,7 @@ describe('ScriptedTemplatesTab — kapsam ve yetki yüzeyi', () => {
 
   it('genele açılmış şablonun köken takımı kartta görünür', async () => {
     draw()
+    await expandAll()
     expect(await screen.findByText('scripted.tplFromTeam:Kanal')).toBeInTheDocument()
   })
 
@@ -125,6 +143,7 @@ describe('ScriptedTemplatesTab — kapsam ve yetki yüzeyi', () => {
 
   it('çöp kutusu sekmesi yalnız yetki bayrağıyla çizilir', async () => {
     draw()
+    await expandAll()
     await screen.findByText('Ödeme akışı')
     expect(screen.queryByText('tpl.scopeTrash')).not.toBeInTheDocument()
 
@@ -142,6 +161,7 @@ describe('ScriptedTemplatesTab — kapsam ve yetki yüzeyi', () => {
     list([{ ...TEAM_TPL, active: false, can_permanent_delete: true }], { can_view_trash: true })
     draw()
     fireEvent.click((await screen.findAllByText('tpl.scopeTrash'))[0])
+    await expandAll()
     await waitFor(() => expect(screen.getAllByText('tpl.badgeDeleted').length).toBeGreaterThan(0))
   })
 })
@@ -150,8 +170,61 @@ describe('ScriptedTemplatesTab — süzgeçler ve boş durum', () => {
   it('kapsam süzgeci yerleşikleri ayırır', async () => {
     draw()
     fireEvent.click(await screen.findByText('tpl.scopeBuiltin'))
+    await expandAll()
     expect(screen.getByText('Sistem sağlık kontrolü')).toBeInTheDocument()
     expect(screen.queryByText('Ödeme akışı')).not.toBeInTheDocument()
+  })
+
+  it('kategori ağacı VARSAYILAN KAPALI açılır — kart DOM\'a hiç çizilmez', async () => {
+    // 100 şablon düz ızgarada okunamıyordu. Kapalı dalın içeriği gizlenmez, HİÇ ÇİZİLMEZ:
+    // hepsini DOM'a koyup saklamak ağacın çözdüğü sorunu geri getirirdi.
+    list([{ ...BUILTIN, category: 'availability' }, { ...TEAM_TPL, category: 'checkout' }])
+    draw()
+
+    await waitFor(() => expect(document.querySelectorAll('.sc-tpl-branch').length).toBe(2))
+    expect(document.querySelector('.sc-tpl-card')).toBeNull()
+    expect(screen.queryByText('Sistem sağlık kontrolü')).not.toBeInTheDocument()
+    // Dal başlığı sayıyı gösterir: açmadan kaç şablon olduğu görünsün.
+    expect(document.querySelectorAll('.sc-tpl-branch-count')[0].textContent).toBe('1')
+  })
+
+  it('dal başlığına tıklayınca AÇILIR, tekrar tıklayınca kapanır', async () => {
+    list([{ ...BUILTIN, category: 'availability' }])
+    draw()
+
+    const head = await waitFor(() => {
+      const h = document.querySelector('.sc-tpl-branch-head')
+      expect(h).not.toBeNull()
+      return h
+    })
+    expect(head.getAttribute('aria-expanded')).toBe('false')
+
+    fireEvent.click(head)
+    expect(await screen.findByText('Sistem sağlık kontrolü')).toBeInTheDocument()
+    expect(head.getAttribute('aria-expanded')).toBe('true')
+
+    fireEvent.click(head)
+    expect(screen.queryByText('Sistem sağlık kontrolü')).not.toBeInTheDocument()
+  })
+
+  it('arama yapılınca eşleşen dallar KENDİLİĞİNDEN açılır (arama bozuk görünmesin)', async () => {
+    // Kapalı-varsayılanın klasik tuzağı: kullanıcı arar, sonuç bulunur ama kapalı dalların
+    // içinde kalır ve arama çalışmıyor sanılır.
+    list([{ ...BUILTIN, category: 'availability' }, { ...TEAM_TPL, category: 'checkout' }])
+    draw()
+    await waitFor(() => expect(document.querySelectorAll('.sc-tpl-branch').length).toBe(2))
+    expect(document.querySelector('.sc-tpl-card')).toBeNull()
+
+    fireEvent.change(screen.getByLabelText('tpl.searchPlaceholder'), { target: { value: 'odeme' } })
+
+    expect(await screen.findByText('Ödeme akışı')).toBeInTheDocument()
+  })
+
+  it('kategorisiz şablon "Diğer" dalında toplanır — hiçbir kayıt ağacın dışında kalmaz', async () => {
+    list([{ ...TEAM_TPL, category: null }])
+    draw()
+    await waitFor(() => expect(document.querySelectorAll('.sc-tpl-branch').length).toBe(1))
+    expect(screen.getByText('tpl.cat.other')).toBeInTheDocument()
   })
 
   it('arama ada ve etikete bakar', async () => {

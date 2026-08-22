@@ -123,6 +123,9 @@ public final class AppSettingsCatalog {
         // Denetim (audit) kayıt saklama süresi (gün) + silmeden önce JSONL arşiv üretimi (append-only + arşiv).
         new Setting("site.monitor.audit.retention-days",             "monitoring", Type.INT),
         new Setting("site.monitor.audit.archive-enabled",            "monitoring", Type.BOOL),
+        // İzleme YAPILANDIRMASI değişiklik geçmişi (kim/ne zaman/hangi IP/neyi değiştirdi).
+        // audit'ten UZUN tutulur (varsayılan 730 gün): ayrı tablo olmasının sebeplerinden biri de budur.
+        new Setting("site.monitor.monitoring.change-retention-days", "monitoring", Type.INT),
         // Kontrol sıklığı + request timeout — per-tip VARSAYILAN (yeni monitör oluştururken kullanılır).
         new Setting("site.monitor.ping.default-interval-seconds",    "frequency", Type.INT),
         new Setting("site.monitor.keyword.default-interval-seconds", "frequency", Type.INT),

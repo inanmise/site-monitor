@@ -80,6 +80,7 @@ public class MonitoringGroupService {
     private final AlertEventRepository alertEventRepo;
     private final TeamRepository teamRepo;
     private final AuditService auditService;   // rename → audit_log (MONITOR_GROUP_RENAME, eski→yeni)
+    private final MonitorHistoryService monitorHistory;   // rename → ürün-görünür geçmiş (grup başına tek satır)
     private final PlatformTransactionManager txManager;   // getOrCreate insert'i REQUIRES_NEW ile izole eder
 
     public record GroupInfo(Long id, Long teamId, String teamName, String type, String name, int count) {}
@@ -252,6 +253,13 @@ public class MonitoringGroupService {
                 strAttr(session, "systemRole"), "MONITOR_GROUP", String.valueOf(groupId),
                 auditDetail(teamId, type, oldName, newName, affected),
                 null, null, session.getId());
+        // Ürün geçmişi: grup başına TEK satır (etkilenen her monitör için değil) — grup adı bir
+        // GRUBUN özelliğidir; monitör başına satır yazmak zaman çizelgesini gürültüye boğardı.
+        monitorHistory.record(MonitorHistoryService.GROUP, groupId, newName, teamId,
+                MonitorHistoryService.GROUP_RENAME,
+                java.util.Map.of("name", oldName), java.util.Map.of("name", newName, "type", type,
+                        "affectedMonitors", affected),
+                null, session);
         return affected;
     }
 

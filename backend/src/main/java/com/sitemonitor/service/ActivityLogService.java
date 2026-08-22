@@ -48,9 +48,20 @@ public class ActivityLogService {
     /** İzleme yaşam döngüsü olayı (CREATED/UPDATED/DELETED/PAUSED/RESUMED). */
     public void recordLifecycle(String type, Long monitorId, String monitorName, String target,
                                 Long teamId, String action, String actor) {
+        recordLifecycle(type, monitorId, monitorName, target, teamId, action, actor, null);
+    }
+
+    /**
+     * Özetli yaşam döngüsü olayı — {@code CONFIG_CHANGED} için "hangi alanlar değişti" bilgisini
+     * taşır. Akışta olayı görenin ayrıntı için değişiklik geçmişine gitmesi gerekmesin diye
+     * özet satırın kendisinde durur; TAM eski→yeni farkı yine {@code monitor_change_log}'da.
+     */
+    public void recordLifecycle(String type, Long monitorId, String monitorName, String target,
+                                Long teamId, String action, String actor, String summary) {
         try {
             ActivityLog a = base(type, monitorId, monitorName, target, teamId, action, actor);
             a.setResultStatus("SUCCESS");
+            if (summary != null && !summary.isBlank()) a.setResultSummary(trim(summary, 500));
             repo.save(a);
         } catch (Exception e) {
             log.debug("activity-log lifecycle atlandı (type={} action={}): {}", type, action, e.toString());
