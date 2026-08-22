@@ -58,6 +58,7 @@ class HistoryQueryGrammarTest {
     @Autowired DnsRecordRepository dnsRepo;
     @Autowired UptimeCheckRepository uptimeRepo;
     @Autowired CertificateCheckRepository certRepo;
+    @Autowired MonitorChangeLogRepository changeRepo;
 
     /** [bucket → (toplam, hata)] — native sorgu Long/BigInteger/BigDecimal dönebilir, Number'a indirger. */
     private static Map<String, long[]> asBuckets(List<Object[]> rows) {
@@ -244,5 +245,76 @@ class HistoryQueryGrammarTest {
 
         Map<String, long[]> minutely = asBuckets(pingRepo.historyHistogram(9L, FROM, TO, 16));
         assertThat(minutely.keySet()).containsExactly("2026-08-01T10:00", "2026-08-01T10:30", "2026-08-01T11:00");
+    }
+
+    // ── Değişiklik geçmişi: süzgeçlerin TAMAMI null iken de koşmalı ─────────
+    //
+    // 2026-08-22 kaçağı: konsol açılır açılmaz 500 veriyordu. `search` JPQL'i null bir metin
+    // parametresini LOWER()/CONCAT() içine sokuyordu; PostgreSQL onu bytea olarak bağlayıp
+    // "function lower(bytea) does not exist" atıyordu. Controller testleri repo'yu MOCK'ladığı
+    // için sorgu hiç çalışmamıştı. Statik kapı ayrıca var (RepositoryNullableParamCastTest);
+    // burası sorgunun GERÇEKTEN koştuğunu ve doğru satırları döndüğünü pinler.
+    @Test
+    @DisplayName("değişiklik geçmişi: boş süzgeçle, süzgeçliyle ve SYSTEM nişanı dışlanarak koşar")
+    void monitorChangeLog() {
+        changeRepo.saveAll(List.of(
+                chg("PORT", 1L, "Ödeme portu", "CREATE", 5L, "N70678", "2026-08-01T10:00:00"),
+                chg("PORT", 1L, "Ödeme portu", "UPDATE", 5L, "N70678", "2026-08-01T11:00:00"),
+                chg("SCRIPTED", 2L, "Ödeme akışı", "CREATE", 7L, "AHMET", "2026-08-01T12:00:00"),
+                // Geri doldurma nişanı — HİÇBİR listede görünmemeli.
+                chg("SYSTEM", 0L, "audit-backfill", "AUDIT_BACKFILL", null, "system", "2026-08-01T09:00:00")));
+
+        var all = List.of(5L, 7L);
+
+        // 1) TÜM süzgeçler null (konsolun ilk açılışı) — kaçağın yaşandığı tam senaryo.
+        var open = changeRepo.search(null, null, null, null, null, null, null, true, all, PageRequest.of(0, 25));
+        assertThat(open.getTotalElements()).isEqualTo(3);
+        assertThat(open.getContent()).extracting("resourceKind").doesNotContain("SYSTEM");
+        // Sıralama: en yeni üstte.
+        assertThat(open.getContent().get(0).getResourceName()).isEqualTo("Ödeme akışı");
+
+        // 2) Serbest arama + aktör: LOWER/CONCAT yolu gerçekten eşleşmeli (cast doğru yerde mi).
+        assertThat(changeRepo.search(null, null, null, null, null, null, "ödeme p", true, all,
+                PageRequest.of(0, 25)).getTotalElements()).isEqualTo(2);
+        assertThat(changeRepo.search(null, null, "n70678", null, null, null, null, true, all,
+                PageRequest.of(0, 25)).getTotalElements()).isEqualTo(2);   // aktör aramasi harf duyarsiz
+
+        // 3) Tür + olay + tarih süzgeçleri.
+        assertThat(changeRepo.search("SCRIPTED", null, null, null, null, null, null, true, all,
+                PageRequest.of(0, 25)).getTotalElements()).isEqualTo(1);
+        assertThat(changeRepo.search(null, "UPDATE", null, null, null, null, null, true, all,
+                PageRequest.of(0, 25)).getTotalElements()).isEqualTo(1);
+        assertThat(changeRepo.search(null, null, null, null, "2026-08-01T11:30:00", null, null, true, all,
+                PageRequest.of(0, 25)).getTotalElements()).isEqualTo(1);
+
+        // 4) Takım kapsamı: teamScopeAll=false iken YALNIZ verilen takımlar.
+        assertThat(changeRepo.search(null, null, null, null, null, null, null, false, List.of(7L),
+                PageRequest.of(0, 25)).getTotalElements()).isEqualTo(1);
+
+        // 5) Özet şeridi de aynı kapsam + SYSTEM dışlaması ile çalışmalı.
+        Map<String, Long> counts = new LinkedHashMap<>();
+        for (Object[] r : changeRepo.countByEventType(null, true, all)) {
+            counts.put(String.valueOf(r[0]), ((Number) r[1]).longValue());
+        }
+        assertThat(counts).containsEntry("CREATE", 2L).containsEntry("UPDATE", 1L);
+        assertThat(counts).doesNotContainKey("AUDIT_BACKFILL");
+
+        // 6) Kaynak bazlı geçmiş + tek olay + nişan sorgusu.
+        assertThat(changeRepo.findByResourceKindAndResourceIdOrderByCreatedAtDescIdDesc(
+                "PORT", 1L, PageRequest.of(0, 25)).getTotalElements()).isEqualTo(2);
+        assertThat(changeRepo.findTopByResourceKindAndResourceIdOrderByCreatedAtDesc("PORT", 1L))
+                .get().extracting("eventType").isEqualTo("UPDATE");
+        assertThat(changeRepo.findByResourceKindAndResourceIdAndSeq("PORT", 1L, 0)).isPresent();
+        assertThat(changeRepo.existsByResourceKindAndEventType("SYSTEM", "AUDIT_BACKFILL")).isTrue();
+    }
+
+    private static MonitorChangeLog chg(String kind, Long id, String name, String event,
+                                        Long teamId, String actor, String at) {
+        MonitorChangeLog c = new MonitorChangeLog();
+        c.setResourceKind(kind); c.setResourceId(id); c.setResourceName(name);
+        c.setEventType(event); c.setTeamId(teamId); c.setActor(actor);
+        c.setSeq("UPDATE".equals(event) ? 1 : 0);
+        c.setCreatedAt(at);
+        return c;
     }
 }
