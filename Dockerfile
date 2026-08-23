@@ -13,7 +13,7 @@ COPY frontend/ .
 RUN npm run build
 
 # ── Stage 2: Spring Boot build ───────────────────────
-FROM maven:3.9-eclipse-temurin-25 AS backend-build
+FROM maven:3-eclipse-temurin-24 AS backend-build
 WORKDIR /app
 COPY backend/pom.xml .
 RUN mvn dependency:go-offline -q
