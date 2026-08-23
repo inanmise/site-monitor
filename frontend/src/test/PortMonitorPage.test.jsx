@@ -172,3 +172,70 @@ describe('PortMonitorPage', () => {
     }
   })
 })
+
+/**
+ * "Değişiklik nedeni" (K8) — yalnız DÜZENLEMEDE görünür ve yazıldıysa payload'a girer.
+ *
+ * Geçmiş satırı neyin değiştiğini gösterir ama NEDEN değiştiğini gösteremez; bu alan onu
+ * cevaplar. Zorunlu değil: zorunlu olsaydı insanlar "guncelleme" yazıp geçerdi. Bu yüzden iki
+ * yönü de pinlenmeli — boşken payload'ı KİRLETMEMESİ ve doluyken GERÇEKTEN gitmesi.
+ */
+describe('PortMonitorPage — değişiklik nedeni', () => {
+  const MON = {
+    id: 1, name: 'mail', host: '10.0.0.1', port: 8443, status: 'open',
+    checked_at: '2026-06-24T00:00:00', team_id: 3, team_name: 'SY-A', active: true,
+  }
+
+  async function openEdit() {
+    api.monitoring.getPortMonitors.mockResolvedValue({ success: true, data: [MON] })
+    api.monitoring.updatePortMonitor.mockResolvedValue({ success: true, data: {} })
+    render(<PortMonitorPage systemRole="ADMIN" teamId={3} teamName="SY-A" />)
+    await screen.findByText('10.0.0.1')
+    fireEvent.click(screen.getByRole('button', { name: /düzenle|edit/i }))
+    // Modal başlığı yerine ALANIN KENDİSİNİ bekle: başlık metni düğme adıyla çakışıyor.
+    await waitFor(() => expect(document.getElementById('port-change-note')).not.toBeNull())
+  }
+
+  it('YENİ kayıtta alan HİÇ çizilmez — "neden" sorusu ancak var olan bir şey değişince anlamlı', async () => {
+    api.monitoring.getPortMonitors.mockResolvedValue({ success: true, data: [MON] })
+    render(<PortMonitorPage systemRole="ADMIN" teamId={3} teamName="SY-A" />)
+    await screen.findByText('10.0.0.1')
+
+    fireEvent.click(screen.getByRole('button', { name: /yeni|new|ekle/i }))
+    expect(document.getElementById('port-change-note')).toBeNull()
+  })
+
+  it('düzenlemede alan çizilir ve yazılan not payload ile GİDER', async () => {
+    await openEdit()
+    const note = document.getElementById('port-change-note')
+    expect(note).not.toBeNull()
+
+    fireEvent.change(note, { target: { value: '  Kesinti sonrası sıklık düşürüldü  ' } })
+    fireEvent.click(screen.getByRole('button', { name: /kaydet|save/i }))
+
+    await waitFor(() => expect(api.monitoring.updatePortMonitor).toHaveBeenCalled())
+    const [, payload] = api.monitoring.updatePortMonitor.mock.calls.at(-1)
+    // Kırpılır: baştaki/sondaki boşluk geçmişte görünmesin.
+    expect(payload.changeNote).toBe('Kesinti sonrası sıklık düşürüldü')
+  })
+
+  it('not BOŞSA payload\'a hiç girmez (boş alan istek gövdesini kirletmesin)', async () => {
+    await openEdit()
+    fireEvent.click(screen.getByRole('button', { name: /kaydet|save/i }))
+
+    await waitFor(() => expect(api.monitoring.updatePortMonitor).toHaveBeenCalled())
+    const [, payload] = api.monitoring.updatePortMonitor.mock.calls.at(-1)
+    expect(payload).not.toHaveProperty('changeNote')
+  })
+
+  it('modal kapanınca not SIFIRLANIR — sonraki düzenlemeye sızmaz', async () => {
+    await openEdit()
+    fireEvent.change(document.getElementById('port-change-note'),
+      { target: { value: 'ilk düzenlemenin gerekçesi' } })
+    fireEvent.click(screen.getByRole('button', { name: /iptal|cancel/i }))
+
+    fireEvent.click(screen.getByRole('button', { name: /düzenle|edit/i }))
+    await waitFor(() => expect(document.getElementById('port-change-note')).not.toBeNull())
+    expect(document.getElementById('port-change-note').value).toBe('')
+  })
+})

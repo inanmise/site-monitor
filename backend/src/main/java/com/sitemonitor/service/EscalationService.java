@@ -153,6 +153,15 @@ public class EscalationService {
         return TYPE_SCRIPTED_FAIL.equals(t) || TYPE_SCRIPTED_SLOW.equals(t);
     }
 
+    /** Sayfa Hızı (10. tür): DOWN = sayfa hiç alınamadı (kesinti, CRITICAL); SLOW = bir eşik aşıldı
+     *  (performans olayı, kesinti DEĞİL — uptime'a işlemez). Ayrımı korumak şart: yavaş sayfa çökmüş
+     *  sayfayla aynı kovaya girerse uptime rakamları anlamsızlaşır. */
+    public static final String TYPE_PAGESPEED_DOWN = "PAGESPEED_DOWN";
+    public static final String TYPE_PAGESPEED_SLOW = "PAGESPEED_SLOW";
+    public static boolean isPageSpeed(String t) {
+        return TYPE_PAGESPEED_DOWN.equals(t) || TYPE_PAGESPEED_SLOW.equals(t);
+    }
+
     /** İzleme kaynaklı alarm tipleri — kadanslarının sahibi ilgili sweep'lerdir;
      *  cert sweep'inin auto-resolve'u ve startup catch-up bunlara dokunmaz. */
     public static final Set<String> MONITORING_ALERT_TYPES =
@@ -161,7 +170,8 @@ public class EscalationService {
                    TYPE_KEYWORD, TYPE_PING_DOWN, TYPE_HTTP_DOWN, TYPE_HTTP_SSL, TYPE_DOMAIN_EXPIRY,
                    TYPE_DOMAINMON_EXPIRY, TYPE_DOMAINMON_UNKNOWN, TYPE_DOMAINMON_STATUS, TYPE_DOMAINMON_CHANGED,
                    TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY, TYPE_PORT_SLOW,
-                   TYPE_PAGE_DOWN, TYPE_PAGE_INTEGRITY, TYPE_SCRIPTED_FAIL, TYPE_SCRIPTED_SLOW);
+                   TYPE_PAGE_DOWN, TYPE_PAGE_INTEGRITY, TYPE_SCRIPTED_FAIL, TYPE_SCRIPTED_SLOW,
+                   TYPE_PAGESPEED_DOWN, TYPE_PAGESPEED_SLOW);
 
     /** Sertifika kaynaklı alarm tipleri — cert sweep'inin auto-resolve kapsamı.
      *  İzleme tipleri bilinçli olarak DIŞINDA: sertifika kontrolünün düzelmesi
@@ -173,7 +183,8 @@ public class EscalationService {
      *  Slow/SSL/expiry/changed/domainmon/cert bilinçli DIŞINDA (bunlar kesinti değildir). */
     public static final Set<String> DOWN_ALERT_TYPES =
             Set.of(TYPE_ACCESSIBILITY, TYPE_HTTP_DOWN, TYPE_PORT_DOWN, TYPE_PING_DOWN, TYPE_DNS_FAILURE, TYPE_KEYWORD,
-                   TYPE_PAGE_DOWN, TYPE_SCRIPTED_FAIL);
+                   // PAGESPEED_SLOW bilinçli DIŞARIDA: yavaşlık kesinti değildir, storm sayımına girmemeli.
+                   TYPE_PAGE_DOWN, TYPE_SCRIPTED_FAIL, TYPE_PAGESPEED_DOWN);
 
     public void processResults(List<Map<String, Object>> results) {
         AlertThreshold threshold = thresholdRepo.findFirstByActiveTrue()
@@ -677,6 +688,24 @@ public class EscalationService {
         return orphanDomains.size();
     }
 
+    /** Öksüz sayfa-hızı alarmı temizliği — hiçbir sayfa hızı monitörüne karşılık gelmeyen açık
+     *  PAGESPEED_* alarmlarını sessizce kapatır (URL değişimi/silme sonrası). Kimlik = URL. */
+    public int resolveOrphanedPageSpeedAlerts(Set<String> existingUrls) {
+        if (existingUrls == null) return 0;
+        Set<String> orphans = new HashSet<>();
+        for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
+            if (!isPageSpeed(e.getAlertType())) continue;
+            if (e.getDomain() == null || existingUrls.contains(e.getDomain())) continue;
+            orphans.add(e.getDomain());
+        }
+        for (String d : orphans) {
+            resolveOpenAlertsSilently(d, Set.of(TYPE_PAGESPEED_DOWN, TYPE_PAGESPEED_SLOW),
+                    "Sistem (öksüz alarm — eşleşen sayfa hızı izlemesi yok)");
+        }
+        if (!orphans.isEmpty()) log.info("🧹 Öksüz sayfa hızı alarmı temizlendi: {} URL {}", orphans.size(), orphans);
+        return orphans.size();
+    }
+
     /** Öksüz senaryo alarmı temizliği — hiçbir senaryo monitörüne karşılık gelmeyen açık SCRIPTED_FAIL
      *  alarmlarını sessizce kapatır (ad rename/silme sonrası). Kimlik = senaryo adı. */
     public int resolveOrphanedScriptedAlerts(Set<String> existingNames) {
@@ -972,6 +1001,22 @@ public class EscalationService {
                         (detail != null ? " — " + detail : " (kırık kaynak / mixed content)") + ". " +
                         "Sorunlu kaynaklar giderildiğinde alarm otomatik kapanır.";
             }
+            case TYPE_PAGESPEED_DOWN -> {
+                Object url = ctx.getOrDefault("url", domain);
+                Object status = ctx.get("http_status");
+                return "KRİTİK: " + url + " sayfası hız ölçümü için hiç alınamadı" +
+                        (status != null ? " (durum " + status + ")" : "") + ". " +
+                        "Ardışık doğrulama denemeleri başarısız oldu. " +
+                        "Sayfa yeniden yüklendiğinde alarm otomatik kapanacaktır.";
+            }
+            case TYPE_PAGESPEED_SLOW -> {
+                Object url = ctx.getOrDefault("url", domain);
+                Object detail = ctx.get("detail");
+                return "YÜKSEK: " + url + " sayfası performans eşiğini aştı" +
+                        (detail != null ? " — " + detail : "") + ". " +
+                        "Bu bir KESİNTİ DEĞİLDİR: sayfa çalışıyor ancak hedeflenenden ağır/yavaş. " +
+                        "Ölçüm eşiğin altına indiğinde alarm otomatik kapanır.";
+            }
             case TYPE_SCRIPTED_SLOW -> {
                 Object ms = ctx.get("duration_ms");
                 Object th = ctx.get("threshold_ms");
@@ -1159,6 +1204,8 @@ public class EscalationService {
                 case TYPE_PAGE_INTEGRITY -> "Sayfa Bütünlüğü";
                 case TYPE_SCRIPTED_FAIL -> "Sentetik İzleme";
                 case TYPE_SCRIPTED_SLOW -> "Sentetik Yavaş Koşum";
+                case TYPE_PAGESPEED_DOWN -> "Sayfa Hızı Ölçülemiyor";
+                case TYPE_PAGESPEED_SLOW -> "Sayfa Hızı Eşiği Aşıldı";
                 case TYPE_DOMAIN_EXPIRY -> "Domain Süre Bitişi";
                 case TYPE_DOMAINMON_EXPIRY  -> "Alan Adı Süre Bitişi";
                 case TYPE_DOMAINMON_UNKNOWN -> "Alan Adı Veri Yok";
@@ -1425,6 +1472,8 @@ public class EscalationService {
             case TYPE_PAGE_INTEGRITY -> "Sayfa Bütünlüğü Sorunu";
             case TYPE_SCRIPTED_FAIL -> "Sentetik Test Başarısız";
             case TYPE_SCRIPTED_SLOW -> "Sentetik Yavaş Koşum";
+            case TYPE_PAGESPEED_DOWN -> "Sayfa Hızı Ölçülemiyor";
+            case TYPE_PAGESPEED_SLOW -> "Sayfa Hızı Eşiği Aşıldı";
             case TYPE_DOMAIN_EXPIRY -> "Domain Süre Bitişi";
             case TYPE_DOMAINMON_EXPIRY  -> "Alan Adı Süre Bitişi";
             case TYPE_DOMAINMON_UNKNOWN -> "Alan Adı Veri Yok";
@@ -1439,6 +1488,8 @@ public class EscalationService {
             case TYPE_PAGE_INTEGRITY -> "Sayfada kırık kaynak / mixed content";
             case TYPE_SCRIPTED_FAIL -> "Sentetik test (k6) başarısız";
             case TYPE_SCRIPTED_SLOW -> "Sentetik test (k6) yavaş";
+            case TYPE_PAGESPEED_DOWN -> "Sayfa hızı ölçülemiyor";
+            case TYPE_PAGESPEED_SLOW -> "Sayfa performans eşiğini aştı";
             case TYPE_DOMAINMON_UNKNOWN -> "Alan adı kayıt verisi alınamadı";
             case TYPE_DOMAINMON_STATUS  -> "Alan adı durum kodu uyarısı";
             case TYPE_DOMAINMON_CHANGED -> "Alan adı kaydı değişti";
@@ -1674,6 +1725,12 @@ public class EscalationService {
             case TYPE_SCRIPTED_SLOW -> "YÜKSEK: " + domain +
                     " senaryosu çalışıyor ancak koşum süresi eşiği aştı. " +
                     "Süre eşiğin altına indiğinde alarm otomatik kapanacaktır.";
+            case TYPE_PAGESPEED_DOWN -> "KRİTİK: " + domain +
+                    " sayfası hız ölçümü için alınamadı. " +
+                    "Sayfa yeniden yüklendiğinde alarm otomatik kapanacaktır.";
+            case TYPE_PAGESPEED_SLOW -> "YÜKSEK: " + domain +
+                    " sayfası performans eşiğini aştı — bu bir kesinti değildir, sayfa çalışıyor ancak ağır/yavaş. " +
+                    "Ölçüm eşiğin altına indiğinde alarm otomatik kapanacaktır.";
             case TYPE_HTTP_SSL -> "YÜKSEK: " + domain +
                     " için TLS sertifikası hata veriyor ya da süresi dolmak üzere. " +
                     "Sertifika düzeldiğinde alarm otomatik kapanır.";
@@ -1746,7 +1803,8 @@ public class EscalationService {
     private static boolean isStandaloneMon(String alertType) {
         return TYPE_KEYWORD.equals(alertType) || TYPE_PING_DOWN.equals(alertType)
                 || TYPE_HTTP_DOWN.equals(alertType) || TYPE_HTTP_SSL.equals(alertType) || TYPE_DOMAIN_EXPIRY.equals(alertType)
-                || isDomainMon(alertType) || isKeywordAux(alertType) || isPage(alertType) || isScripted(alertType);
+                || isDomainMon(alertType) || isKeywordAux(alertType) || isPage(alertType) || isScripted(alertType)
+                || isPageSpeed(alertType);
     }
 
     /** Domain süre-bitişi alarmında müdür (eskalasyon kontağı) da eklensin mi? Kullanıcı politikası:

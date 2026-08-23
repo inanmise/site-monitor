@@ -10,6 +10,7 @@ import com.sitemonitor.service.ActivityLogService;
 import com.sitemonitor.service.AuditDiff;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.MonitorHistoryService;
+import com.sitemonitor.service.PageSpeedCheckerService;
 import com.sitemonitor.service.PortCheckerService;
 import com.sitemonitor.service.KeywordCheckerService;
 import com.sitemonitor.service.PingCheckerService;
@@ -146,6 +147,15 @@ public class MonitoringController {
     private com.sitemonitor.repository.PageResourceIssueRepository pageResourceIssueRepo;
     @org.springframework.beans.factory.annotation.Autowired
     private com.sitemonitor.service.PageCheckerService pageChecker;
+    /** Sayfa Hızı — aynı desen (alan enjeksiyonu). */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.sitemonitor.repository.PageSpeedMonitorRepository pageSpeedMonitorRepo;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.sitemonitor.repository.PageSpeedCheckRepository pageSpeedCheckRepo;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.sitemonitor.repository.PageSpeedResourceRepository pageSpeedResourceRepo;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.sitemonitor.service.PageSpeedCheckerService pageSpeedChecker;
     @org.springframework.beans.factory.annotation.Autowired
     private com.sitemonitor.repository.ScriptedMonitorRepository scriptedMonitorRepo;
     @org.springframework.beans.factory.annotation.Autowired
@@ -169,6 +179,7 @@ public class MonitoringController {
     /** Manuel sayfa-kontrol tetikleri için per-monitör cooldown zamanı (H1c rate-limit; in-memory, monitör sayısıyla sınırlı). */
     private final java.util.concurrent.ConcurrentHashMap<Long, Long> pageManualTriggerAt = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.concurrent.ConcurrentHashMap<Long, Long> scriptedManualTriggerAt = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<Long, Long> pageSpeedManualTriggerAt = new java.util.concurrent.ConcurrentHashMap<>();
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -208,7 +219,12 @@ public class MonitoringController {
                               "crawlDepth",          appSettings.getInt("site.monitor.page.default-crawl-depth", 2),
                               "crawlMaxPages",       appSettings.getInt("site.monitor.page.default-crawl-max-pages", 50)),
             "scripted", Map.of("intervalSeconds", appSettings.getInt("site.monitor.scripted.default-interval-seconds", 300),
-                              "timeoutSeconds",   appSettings.getInt("site.monitor.scripted.default-timeout-seconds", 60))
+                              "timeoutSeconds",   appSettings.getInt("site.monitor.scripted.default-timeout-seconds", 60)),
+            "pagespeed", Map.of("intervalSeconds",     appSettings.getInt("site.monitor.pagespeed.default-interval-seconds", 1800),
+                              "timeoutMs",           appSettings.getInt("site.monitor.pagespeed.default-timeout-ms", 10000),
+                              "resourceConcurrency", appSettings.getInt("site.monitor.pagespeed.resource-concurrency", 5),
+                              // Aralık tabanı: form bunun altına inemez (sunucu da uygular).
+                              "minIntervalSeconds",  com.sitemonitor.model.PageSpeedMonitor.MIN_INTERVAL_SECONDS)
         ));
     }
 
@@ -334,6 +350,7 @@ public class MonitoringController {
             case MonitorHistoryService.KEYWORD -> keywordMonitorRepo.findById(id);
             case MonitorHistoryService.HTTP -> httpMonitorRepo.findById(id);
             case MonitorHistoryService.PAGE -> pageMonitorRepo.findById(id);
+            case MonitorHistoryService.PAGESPEED -> pageSpeedMonitorRepo.findById(id);
             case MonitorHistoryService.SCRIPTED -> scriptedMonitorRepo.findById(id);
             case MonitorHistoryService.DOMAIN -> domainMonitorRepo.findById(id);
             case MonitorHistoryService.PING -> pingMonitorRepo.findById(id);
@@ -348,6 +365,7 @@ public class MonitoringController {
             case MonitorHistoryService.KEYWORD -> keywordMonitorRepo.save((com.sitemonitor.model.KeywordMonitor) entity);
             case MonitorHistoryService.HTTP -> httpMonitorRepo.save((com.sitemonitor.model.HttpMonitor) entity);
             case MonitorHistoryService.PAGE -> pageMonitorRepo.save((com.sitemonitor.model.PageMonitor) entity);
+            case MonitorHistoryService.PAGESPEED -> pageSpeedMonitorRepo.save((com.sitemonitor.model.PageSpeedMonitor) entity);
             case MonitorHistoryService.SCRIPTED -> scriptedMonitorRepo.save((com.sitemonitor.model.ScriptedMonitor) entity);
             case MonitorHistoryService.DOMAIN -> domainMonitorRepo.save((com.sitemonitor.model.DomainMonitor) entity);
             case MonitorHistoryService.PING -> pingMonitorRepo.save((com.sitemonitor.model.PingMonitor) entity);
@@ -385,7 +403,8 @@ public class MonitoringController {
         if (entityOpt.isEmpty()) return notFound("İzleme bulunamadı ya da bu tür geri alınamıyor");
         Object entity = entityOpt.get();
 
-        String[] fields = MonitorHistoryService.SCRIPTED.equals(resolved) ? SCRIPTED_FIELDS : MON_FIELDS;
+        String[] fields = MonitorHistoryService.SCRIPTED.equals(resolved) ? SCRIPTED_FIELDS
+                : MonitorHistoryService.PAGESPEED.equals(resolved) ? PAGESPEED_FIELDS : MON_FIELDS;
         Map<String, Object> before = AuditDiff.snapshot(entity, fields);
         Map<String, Object> snapshot;
         try {
@@ -396,15 +415,25 @@ public class MonitoringController {
         // teamId: takım taşımak ayrı bir karar. groupName: grup kaydı silinmiş olabilir.
         var result = MonitorHistoryService.applySnapshot(entity, snapshot, fields,
                 java.util.Set.of("teamId", "groupName"));
-        List<String> applied = result.get(0);
         List<String> maskedSkipped = result.get(1);
-        if (applied.isEmpty())
-            return badRequest("Geri yüklenecek bir fark yok — ayarlar zaten o andaki gibi");
 
-        saveRestored(resolved, entity);
+        // "Yazılan alan" ile "DEĞİŞEN alan" aynı şey değil: snapshot güncel değerin aynısını
+        // taşıyorsa applySnapshot onu yine yazar. Karar farka bakmalı — aksi halde hiçbir şeyin
+        // değişmediği bir geri alma da RESTORE satırı üretir ve kullanıcıya "N alan döndü"
+        // denirdi. Entity bu noktada DETACHED (findById kendi kısa transaction'ında kapandı),
+        // yani kaydetmeden dönmek veritabanına hiçbir şey yazmaz.
         Map<String, Object> after = AuditDiff.snapshot(entity, fields);
+        String effective = AuditDiff.diff(before, after);
+        if (effective == null)
+            return badRequest("Geri yüklenecek bir fark yok — ayarlar zaten o andaki gibi");
+        List<String> applied = MonitorHistoryService.changedFields(effective);
+
+        // Geri alma da bir GÜNCELLEMEDİR: kaydın "son değiştiren/son değişiklik" künyesi
+        // güncellenmezse kart, geri almayı yapan kişiyi ve zamanı hiç göstermez.
+        touchUpdated(entity, session);
+        saveRestored(resolved, entity);
         auditService.recordAction("MONITOR_RESTORE", session, resolved + "_MONITOR", String.valueOf(id),
-                row.getResourceName(), AuditDiff.diff(before, after));
+                row.getResourceName(), effective);
         monitorHistory.record(resolved, id, row.getResourceName(), row.getTeamId(),
                 MonitorHistoryService.RESTORE, before, after,
                 "#" + seq + " numaralı kayda geri döndürüldü" + noteSuffix(body), session);
@@ -415,6 +444,17 @@ public class MonitoringController {
         // Atlananlar SESSİZ kalmamalı: kullanıcı parolanın eski değerine dönmediğini bilmeli.
         out.put("skipped_masked", maskedSkipped);
         return ok(out);
+    }
+
+    /** Geri almada kimlik + zaman künyesi. {@code setUpdatedAt} olmayan türde sessizce geçer. */
+    private void touchUpdated(Object entity, HttpSession session) {
+        monitorHistory.stampUpdated(entity, session);
+        try {
+            entity.getClass().getMethod("setUpdatedAt", String.class)
+                    .invoke(entity, ISO.format(Instant.now()));
+        } catch (Exception ignored) {
+            // kolon yok → künye yok; geri alma yine tamamlanır
+        }
     }
 
     private static String noteSuffix(Map<String, Object> body) {
@@ -2650,6 +2690,438 @@ public class MonitoringController {
                 range[0], range[1], false));
     }
 
+
+    // ── Sayfa Hızı (Page Speed) Monitors ─────────────────────────────────────
+    //
+    // Snapshot alanları: MON_FIELDS ortak alanları KAPSAMAZ (bu türe özgü eşikler/gelişmiş alanlar var).
+    // basicAuthPassEnc ve customHeadersEnc listede BİLİNÇLİ duruyor: AuditDiff.isSensitive onları
+    // maskeliyor (SecretMask "_pass_"/"cipher" segmentleri), böylece geçmişte "parola değişti" görünür
+    // ama DEĞERİ görünmez. Listeden çıkarmak değişikliği tamamen görünmez yapardı.
+    private static final String[] PAGESPEED_FIELDS = {
+            "name", "url", "active", "teamId", "groupName", "intervalSeconds", "timeoutMs",
+            "maxLoadMs", "maxTtfbMs", "maxPageKb", "maxRequests",
+            "userAgent", "sendDnt", "excludeTrackers", "trackerPatterns",
+            "basicAuthUser", "basicAuthPassEnc", "customHeadersEnc", "resourceConcurrency",
+            "confirmAttempts", "confirmIntervalSeconds", "recoveryChecks", "recoveryIntervalSeconds",
+            "tags", "notifyEmail" };
+
+    @GetMapping("/pagespeed")
+    public ResponseEntity<Map<String, Object>> listPageSpeed(HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        Map<Long, com.sitemonitor.model.PageSpeedCheck> latest = pageSpeedCheckRepo.findLatestPerMonitor().stream()
+                .filter(c -> c.getMonitorId() != null)
+                .collect(Collectors.toMap(com.sitemonitor.model.PageSpeedCheck::getMonitorId, c -> c, (a, b) -> a));
+        Map<Long, String> teams = teamNameMap();
+        // IDOR: yalnız oturumun görüntüleyebildiği takımların izlemeleri (global admin → hepsi).
+        List<com.sitemonitor.model.PageSpeedMonitor> monitors = pageSpeedMonitorRepo.findAllByOrderByNameAsc().stream()
+                .filter(m -> SessionScope.canView(session, m.getTeamId())).toList();
+        Set<String> urls = monitors.stream().map(com.sitemonitor.model.PageSpeedMonitor::getUrl).collect(Collectors.toSet());
+        Map<String, AlertEvent> down = openAlarmsByDomain(urls, EscalationService.TYPE_PAGESPEED_DOWN);
+        Map<String, AlertEvent> slow = openAlarmsByDomain(urls, EscalationService.TYPE_PAGESPEED_SLOW);
+        boolean admin = SessionScope.isGlobalAdmin(session);
+        List<Map<String, Object>> result = monitors.stream()
+                .map(m -> enrichPageSpeed(m, latest.get(m.getId()), teams,
+                        down.getOrDefault(m.getUrl(), slow.get(m.getUrl())), admin)).toList();
+        return ok(result);
+    }
+
+    @PostMapping("/pagespeed")
+    public ResponseEntity<Map<String, Object>> createPageSpeed(@RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        if (blank(body.get("url"))) return badRequest("url zorunlu");
+        Long teamId = resolveWriteTeam(session, body);
+        if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
+        String url = MonitorUrls.normalize(body.get("url").toString());   // şemasız girdiye https:// eklenir
+        if (!MonitorUrls.isCheckable(url)) return badRequest(INVALID_URL_MSG);
+        if (pageSpeedMonitorRepo.existsDuplicate(url, teamId, null))
+            return badRequest("Bu URL bu takımda zaten hız açısından izleniyor; mükerrer izleme oluşturulamaz.");
+        String now = ISO.format(Instant.now());
+        com.sitemonitor.model.PageSpeedMonitor m = new com.sitemonitor.model.PageSpeedMonitor();
+        m.setName(blank(body.get("name")) ? url : body.get("name").toString());
+        m.setUrl(url);
+        m.setTeamId(teamId);
+        m.setActive(true);                                            // varsayılan: yeni izleme aktif
+        if (body.get("active") instanceof Boolean b) m.setActive(b);  // Kopyala: pasif kaynağın kopyası da pasif doğsun
+        if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
+        applyPageSpeedFields(m, body, session);
+        m.setCreatedAt(now);
+        m.setUpdatedAt(now);
+        com.sitemonitor.model.PageSpeedMonitor saved = pageSpeedMonitorRepo.save(m);
+        activityLog.recordLifecycle(ActivityLogService.PAGESPEED, saved.getId(), saved.getName(),
+                saved.getUrl(), saved.getTeamId(), "CREATED", actor(session));
+        auditService.recordAction("MONITOR_CREATE", session, "PAGESPEED_MONITOR", String.valueOf(saved.getId()), saved.getName(), null);
+        monitorHistory.record(MonitorHistoryService.PAGESPEED, saved.getId(), saved.getName(), saved.getTeamId(),
+                MonitorHistoryService.CREATE, null, AuditDiff.snapshot(saved, PAGESPEED_FIELDS), changeNote(body), session);
+        return ok(enrichPageSpeed(saved, null, teamNameMap(), null, SessionScope.isGlobalAdmin(session)));
+    }
+
+    @PutMapping("/pagespeed/{id}")
+    public ResponseEntity<Map<String, Object>> updatePageSpeed(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        Map<String, Object> _before = pageSpeedMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, PAGESPEED_FIELDS)).orElse(null);
+        return pageSpeedMonitorRepo.findById(id).map(m -> {
+            if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
+            if (body.get("name") != null) m.setName((String) body.get("name"));
+            if (body.get("url")  != null) {
+                String u = MonitorUrls.normalize(body.get("url").toString());
+                if (!MonitorUrls.isCheckable(u)) return badRequest(INVALID_URL_MSG);
+                m.setUrl(u);
+            }
+            if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
+            if (body.containsKey("teamId"))    m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
+            if (body.get("active") instanceof Boolean b) m.setActive(b);
+            applyPageSpeedFields(m, body, session);
+            m.setUpdatedAt(ISO.format(Instant.now()));
+            com.sitemonitor.model.PageSpeedMonitor saved = pageSpeedMonitorRepo.save(m);
+            auditService.recordAction("MONITOR_UPDATE", session, "PAGESPEED_MONITOR", String.valueOf(saved.getId()), saved.getName(),
+                    AuditDiff.diff(_before, AuditDiff.snapshot(saved, PAGESPEED_FIELDS)));
+            var changeRow = monitorHistory.record(MonitorHistoryService.PAGESPEED, saved.getId(), saved.getName(), saved.getTeamId(),
+                    MonitorHistoryService.UPDATE, _before, AuditDiff.snapshot(saved, PAGESPEED_FIELDS), changeNote(body), session);
+            noteConfigChanged(changeRow, ActivityLogService.PAGESPEED, saved.getUrl(), session);
+            return ok(enrichPageSpeed(saved, pageSpeedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
+                    openPageSpeedAlarm(saved.getUrl()), SessionScope.isGlobalAdmin(session)));
+        }).orElse(notFound("Sayfa hızı izlemesi bulunamadı"));
+    }
+
+    @DeleteMapping("/pagespeed/{id}")
+    public ResponseEntity<Map<String, Object>> deletePageSpeed(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        Map<String, Object> _before = pageSpeedMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, PAGESPEED_FIELDS)).orElse(null);
+        return pageSpeedMonitorRepo.findById(id).map(m -> {
+            if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
+            escalationService.resolveOpenAlertsSilently(m.getUrl(),
+                    Set.of(EscalationService.TYPE_PAGESPEED_DOWN, EscalationService.TYPE_PAGESPEED_SLOW),
+                    "Sistem (izleme silindi)");
+            // Ölçüm serisi ve kaynak kırılımı da gider — yoksa aynı id yeniden kullanıldığında
+            // yeni izlemeye eski izlemenin geçmişi yapışırdı.
+            pageSpeedResourceRepo.deleteByMonitorId(m.getId());
+            pageSpeedCheckRepo.deleteByMonitorId(m.getId());
+            pageSpeedMonitorRepo.delete(m);
+            activityLog.recordLifecycle(ActivityLogService.PAGESPEED, m.getId(), m.getName(),
+                    m.getUrl(), m.getTeamId(), "DELETED", actor(session));
+            auditService.recordAction("MONITOR_DELETE", session, "PAGESPEED_MONITOR", String.valueOf(m.getId()), m.getName(), null);
+            monitorHistory.record(MonitorHistoryService.PAGESPEED, m.getId(), m.getName(), m.getTeamId(),
+                    MonitorHistoryService.DELETE, _before, AuditDiff.snapshot(m, PAGESPEED_FIELDS), null, session);
+            return ok(Map.of("deleted", true));
+        }).orElse(notFound("Sayfa hızı izlemesi bulunamadı"));
+    }
+
+    @GetMapping("/pagespeed/{id}/history")
+    public ResponseEntity<?> pageSpeedHistory(@PathVariable Long id, HttpSession session,
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
+            @RequestParam(required = false) String days,
+            @RequestParam(defaultValue = "all") String status,
+            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
+            @RequestParam(required = false) String format,
+            jakarta.servlet.http.HttpServletResponse response) {
+        com.sitemonitor.model.PageSpeedMonitor mon = pageSpeedMonitorRepo.findById(id).orElse(null);
+        if (mon == null) return notFound("Sayfa hızı izlemesi bulunamadı");
+        var src = new CheckHistoryService.Source<com.sitemonitor.model.PageSpeedCheck>() {
+            public org.springframework.data.domain.Page<com.sitemonitor.model.PageSpeedCheck> page(
+                    String f, String t, boolean fail, org.springframework.data.domain.Pageable p) {
+                return fail ? pageSpeedCheckRepo.findByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t, p)
+                            : pageSpeedCheckRepo.findByMonitorIdAndCheckedAtBetween(id, f, t, p);
+            }
+            public long total(String f, String t) { return pageSpeedCheckRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
+            public long fail(String f, String t) { return pageSpeedCheckRepo.countByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t); }
+            public List<Object[]> histogram(String f, String t, int len) { return pageSpeedCheckRepo.historyHistogram(id, f, t, len); }
+            public List<Object[]> bounds() { return pageSpeedCheckRepo.historyBounds(id); }
+        };
+        // "Hata" filtresi ok=false demektir: eşik aşımı (SLOW) BURAYA GİRMEZ — o bir kesinti değil,
+        // ayrı bir kolonda (breached_metrics) taşınır.
+        return runHistory(session, mon.getTeamId(), src, "pagespeed",
+                mon.getUrl(), Set.of(EscalationService.TYPE_PAGESPEED_DOWN, EscalationService.TYPE_PAGESPEED_SLOW),
+                from, to, days, status, page, size, format, "pagespeed-history-" + id, List.of(
+                new CsvColumn<>("checked_at", com.sitemonitor.model.PageSpeedCheck::getCheckedAt),
+                new CsvColumn<>("ok", com.sitemonitor.model.PageSpeedCheck::getOk),
+                new CsvColumn<>("http_status", com.sitemonitor.model.PageSpeedCheck::getStatusCode),
+                new CsvColumn<>("ttfb_ms", com.sitemonitor.model.PageSpeedCheck::getTtfbMs),
+                new CsvColumn<>("response_ms", com.sitemonitor.model.PageSpeedCheck::getResponseMs),
+                new CsvColumn<>("total_bytes", com.sitemonitor.model.PageSpeedCheck::getTotalBytes),
+                new CsvColumn<>("request_count", com.sitemonitor.model.PageSpeedCheck::getRequestCount),
+                new CsvColumn<>("failed_count", com.sitemonitor.model.PageSpeedCheck::getFailedCount),
+                new CsvColumn<>("bytes_truncated", com.sitemonitor.model.PageSpeedCheck::getBytesTruncated),
+                new CsvColumn<>("breached_metrics", com.sitemonitor.model.PageSpeedCheck::getBreachedMetrics),
+                new CsvColumn<>("error", com.sitemonitor.model.PageSpeedCheck::getErrorMessage)), response);
+    }
+
+    @PostMapping("/pagespeed/{id}/check")
+    public ResponseEntity<Map<String, Object>> triggerPageSpeed(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.trigger", "execute");
+        return pageSpeedMonitorRepo.findById(id).map(m -> {
+            if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
+            // Per-monitör cooldown: bir ölçüm ana sayfa + onlarca kaynak isteği demek; art arda tetik
+            // request-thread'lerini tüketir (sayfa bütünlüğündeki H1c ile aynı gerekçe).
+            long nowMs = System.currentTimeMillis();
+            long cooldownMs = appSettings.getInt("site.monitor.pagespeed.manual-cooldown-seconds", 30) * 1000L;
+            Long prev = pageSpeedManualTriggerAt.get(id);
+            if (prev != null && nowMs - prev < cooldownMs) {
+                return ResponseEntity.status(429).body(Map.<String, Object>of("success", false,
+                        "error", "Bu izleme için çok sık manuel ölçüm; " + (cooldownMs / 1000) + " sn bekleyin."));
+            }
+            pageSpeedManualTriggerAt.put(id, nowMs);
+            schedulerService.triggerPageSpeedCheck(m);   // tam ölçüm + persist (checks + resources + activity)
+            auditService.recordAction("MONITOR_TRIGGER", session, "PAGESPEED_MONITOR", String.valueOf(m.getId()), m.getName(), null);
+            return ok(enrichPageSpeed(m, pageSpeedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
+                    teamNameMap(), openPageSpeedAlarm(m.getUrl()), SessionScope.isGlobalAdmin(session)));
+        }).orElse(notFound("Sayfa hızı izlemesi bulunamadı"));
+    }
+
+    /** Kaydetmeden canlı deneme — formdaki değerlerle tek ölçüm; DB'ye hiçbir şey yazmaz. */
+    @PostMapping("/pagespeed/test")
+    public ResponseEntity<Map<String, Object>> testPageSpeed(@RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        String url = body.get("url") != null ? MonitorUrls.normalize(body.get("url").toString()) : "";
+        if (url.isEmpty()) return badRequest("url zorunlu");
+        if (!MonitorUrls.isCheckable(url)) return badRequest(INVALID_URL_MSG);
+        com.sitemonitor.model.PageSpeedMonitor draft = new com.sitemonitor.model.PageSpeedMonitor();
+        draft.setUrl(url);
+        applyPageSpeedFields(draft, body, session);
+        // Denemede eşik DEĞERLENDİRİLMEZ (checker null eşikle çağrılır) — kullanıcı önce ham ölçümü görsün,
+        // eşiği ona bakarak koysun.
+        PageSpeedCheckerService.Result r = pageSpeedChecker.test(draft);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status",         r.status());
+        out.put("reachable",      r.reachable());
+        out.put("http_status",    r.statusCode());
+        out.put("ttfb_ms",        r.ttfbMs());
+        out.put("html_ms",        r.htmlMs());
+        out.put("response_ms",    r.totalMs());
+        out.put("total_bytes",    r.totalBytes());
+        out.put("request_count",  r.requestCount());
+        out.put("failed_count",   r.failedCount());
+        out.put("capped",         r.capped());
+        out.put("bytes_truncated", r.bytesTruncated());
+        out.put("error",          r.error());
+        List<Map<String, Object>> rows = new ArrayList<>();
+        List<PageSpeedCheckerService.Measured> heavy = new ArrayList<>(r.resources());
+        heavy.sort((a, b) -> Long.compare(b.bytes(), a.bytes()));
+        for (PageSpeedCheckerService.Measured x : heavy.subList(0, Math.min(heavy.size(), 25))) {
+            rows.add(measuredToMap(x));
+        }
+        out.put("resources", rows);
+        return ok(out);
+    }
+
+    /**
+     * Kaynak kırılımı: son ölçüm (LATEST) ya da bir eşik-ihlali anının donmuş delili (checkId ile).
+     * Ayrıca hangi ihlal anlarının delili olduğu listelenir ki arayüz "o güne bak" diyebilsin.
+     */
+    @GetMapping("/pagespeed/{id}/resources")
+    public ResponseEntity<Map<String, Object>> pageSpeedResources(@PathVariable Long id,
+            @RequestParam(required = false) Long checkId,
+            @RequestParam(defaultValue = "50") int limit, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        com.sitemonitor.model.PageSpeedMonitor mon = pageSpeedMonitorRepo.findById(id).orElse(null);
+        if (mon == null) return notFound("Sayfa hızı izlemesi bulunamadı");
+        var deny = denyIfNotViewable(session, mon.getTeamId());   // IDOR: başka takımın kırılımı okunamaz
+        if (deny != null) return deny;
+        int cap = Math.max(1, Math.min(limit, 500));
+        List<com.sitemonitor.model.PageSpeedResource> rows = checkId != null
+                ? pageSpeedResourceRepo.findByCheck(checkId, cap)
+                : pageSpeedResourceRepo.findHeaviest(id, com.sitemonitor.model.PageSpeedResource.KEEP_LATEST, cap);
+        // Başka bir izlemenin checkId'si ile veri sızmasın: dönen satırlar bu izlemeye ait olmalı.
+        rows = rows.stream().filter(r -> id.equals(r.getMonitorId())).toList();
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("resources", rows.stream().map(this::resourceToMap).toList());
+        out.put("breaches", pageSpeedResourceRepo.breachSnapshots(id, 20).stream()
+                .map(a -> Map.of("check_id", a[0], "checked_at", a[1])).toList());
+        return ok(out);
+    }
+
+    /**
+     * Grafik serisi — {@code metric} ile hangi metriğin çizileceği seçilir.
+     * Sunucu satırları TEK sorguda okur ve istenen kolonu projekte eder; metrik değiştirmek yeni bir
+     * tablo taraması üretmez.
+     */
+    @GetMapping("/pagespeed/{id}/response-series")
+    public ResponseEntity<Map<String, Object>> pageSpeedSeries(@PathVariable Long id,
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
+            @RequestParam(defaultValue = "30") int days,
+            @RequestParam(defaultValue = "load") String metric, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        com.sitemonitor.model.PageSpeedMonitor mon = pageSpeedMonitorRepo.findById(id).orElse(null);
+        if (mon == null) return notFound("Sayfa hızı izlemesi bulunamadı");
+        var deny = denyIfNotViewable(session, mon.getTeamId());   // IDOR
+        if (deny != null) return deny;
+        String[] range = resolveRange(from, to, days);
+        int col = switch (metric == null ? "" : metric.toLowerCase(java.util.Locale.ROOT)) {
+            case "ttfb" -> 2;
+            case "size" -> 3;       // bayt → arayüz KB'ye çevirir
+            case "requests" -> 4;
+            default -> 1;           // load (toplam yükleme süresi)
+        };
+        // seriesRaw: [checkedAt, responseMs, ttfbMs, totalBytes, requestCount, ok]
+        List<Object[]> raw = pageSpeedCheckRepo.seriesRaw(id, range[0], range[1], SERIES_RAW_CAP);
+        List<Object[]> projected = new ArrayList<>(raw.size());
+        for (Object[] r : raw) {
+            // BAŞARISIZ ölçümün değeri seriye GİRMEZ (null geçilir, buildResponseSeries onu atlar).
+            // Alınamayan bir sayfa 0 bayt / 0 istek olarak kaydediliyor; bunları çizmek grafiği
+            // aşağı çekip "sayfa hafifledi" gibi okutur. Kesinti zaten AYRI kırmızı işaretle
+            // gösteriliyor (üçüncü kolon ok bayrağı), yani bilgi kaybolmuyor — yalnız yanlış
+            // yere, ortalamanın içine karışmıyor.
+            boolean up = Boolean.TRUE.equals(r[5]);
+            projected.add(new Object[]{ r[0], up ? r[col] : null, r[5] });
+        }
+        Map<String, Object> out = new LinkedHashMap<>(buildResponseSeries(projected, range[0], range[1], false));
+        out.put("metric", metric);
+        return ok(out);
+    }
+
+    /** Ortak: sayfa hızına özgü alanları clamp'li uygular. Şifreli alanlar write-only desende yazılır. */
+    private void applyPageSpeedFields(com.sitemonitor.model.PageSpeedMonitor m, Map<String, Object> body, HttpSession session) {
+        // Aralık tabanı SUNUCUDA da uygulanır: form atlanabilir, uç atlanamaz.
+        if (body.get("intervalSeconds") instanceof Number n)
+            m.setIntervalSeconds(com.sitemonitor.service.page.PageSpeedRules.clampInterval(n.intValue()));
+        if (body.get("timeoutMs") instanceof Number n) m.setTimeoutMs(Math.max(1000, Math.min(120000, n.intValue())));
+
+        // Eşikler: 4'ü de opsiyonel. Açıkça null gönderilirse eşik KALDIRILIR (kullanıcı vazgeçebilmeli).
+        applyThreshold(body, "maxLoadMs",   m::setMaxLoadMs);
+        applyThreshold(body, "maxTtfbMs",   m::setMaxTtfbMs);
+        applyThreshold(body, "maxPageKb",   m::setMaxPageKb);
+        applyThreshold(body, "maxRequests", m::setMaxRequests);
+
+        if (body.containsKey("userAgent")) m.setUserAgent(blank(body.get("userAgent")) ? null : body.get("userAgent").toString().trim());
+        if (body.get("sendDnt") instanceof Boolean b) m.setSendDnt(b);
+        if (body.get("excludeTrackers") instanceof Boolean b) m.setExcludeTrackers(b);
+        if (body.containsKey("trackerPatterns")) m.setTrackerPatterns(blank(body.get("trackerPatterns")) ? null : body.get("trackerPatterns").toString());
+        if (body.get("resourceConcurrency") instanceof Number n) m.setResourceConcurrency(Math.max(1, Math.min(20, n.intValue())));
+
+        if (body.get("confirmAttempts") instanceof Number n)         m.setConfirmAttempts(clampAttempts(n.intValue()));
+        if (body.get("confirmIntervalSeconds") instanceof Number n)  m.setConfirmIntervalSeconds(clampInterval(n.intValue()));
+        if (body.get("recoveryChecks") instanceof Number n)          m.setRecoveryChecks(clampRecovery(n.intValue()));
+        if (body.get("recoveryIntervalSeconds") instanceof Number n) m.setRecoveryIntervalSeconds(clampInterval(n.intValue()));
+        if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
+        if (body.get("notifyEmail") instanceof Boolean b) m.setNotifyEmail(b);
+
+        if (body.containsKey("basicAuthUser")) m.setBasicAuthUser(blank(body.get("basicAuthUser")) ? null : body.get("basicAuthUser").toString().trim());
+        // Write-only sır deseni (scripted env emsali): alan hiç gelmediyse dokunma, BOŞ geldiyse mevcut
+        // şifreli değeri KORU, dolu geldiyse şifreleyip değiştir. Aksi halde her form kaydı parolayı silerdi.
+        if (body.containsKey("basicAuthPass") && !blank(body.get("basicAuthPass"))) {
+            m.setBasicAuthPassEnc(secretCipher.encrypt(body.get("basicAuthPass").toString()));
+        }
+        // Kullanıcı adı temizlendiyse parola da anlamsız kalır — birlikte düşsünler.
+        if (m.getBasicAuthUser() == null) m.setBasicAuthPassEnc(null);
+        if (Boolean.TRUE.equals(body.get("clearBasicAuthPass"))) m.setBasicAuthPassEnc(null);
+
+        // Özel başlıklar YALNIZ global admin: serbest başlık iç servislere yetki/SSRF yüzeyi açar.
+        // Admin olmayan kullanıcının gönderdiği alan sessizce YOK SAYILIR (hata değil) — mevcut değer korunur,
+        // böylece takım kullanıcısı formu kaydettiğinde admin'in koyduğu başlıklar silinmez.
+        if (body.containsKey("customHeaders") && SessionScope.isGlobalAdmin(session)) {
+            String raw = blank(body.get("customHeaders")) ? null : body.get("customHeaders").toString();
+            m.setCustomHeadersEnc(raw == null ? null : secretCipher.encrypt(raw));
+        }
+    }
+
+    /** Eşik alanı: sayı → uygula (negatif 0'a kırpılır), açık null → eşiği kaldır, yoksa dokunma. */
+    private void applyThreshold(Map<String, Object> body, String key, java.util.function.Consumer<Integer> setter) {
+        if (!body.containsKey(key)) return;
+        Object v = body.get(key);
+        if (v == null || (v instanceof String s && s.isBlank())) { setter.accept(null); return; }
+        if (v instanceof Number n) setter.accept(Math.max(0, n.intValue()));
+    }
+
+    private AlertEvent openPageSpeedAlarm(String url) {
+        return alertEventRepo.findOpenAlert(url, EscalationService.TYPE_PAGESPEED_DOWN)
+                .or(() -> alertEventRepo.findOpenAlert(url, EscalationService.TYPE_PAGESPEED_SLOW)).orElse(null);
+    }
+
+    private Map<String, Object> measuredToMap(PageSpeedCheckerService.Measured x) {
+        Map<String, Object> im = new LinkedHashMap<>();
+        im.put("url", x.url());
+        im.put("type", PageSpeedCheckerService.normalizeType(x.type()));
+        im.put("bytes", x.bytes());
+        im.put("duration_ms", x.durationMs());
+        im.put("http_status", x.statusCode());
+        im.put("third_party", x.thirdParty());
+        im.put("failed", x.failed());
+        im.put("truncated", x.truncated());
+        return im;
+    }
+
+    private Map<String, Object> resourceToMap(com.sitemonitor.model.PageSpeedResource r) {
+        Map<String, Object> im = new LinkedHashMap<>();
+        im.put("url", r.getUrl());
+        im.put("type", r.getType());
+        im.put("bytes", r.getBytes());
+        im.put("duration_ms", r.getDurationMs());
+        im.put("http_status", r.getStatusCode());
+        im.put("third_party", r.getThirdParty());
+        im.put("truncated", Boolean.TRUE.equals(r.getTruncated()));
+        im.put("checked_at", r.getCheckedAt());
+        return im;
+    }
+
+    private Map<String, Object> enrichPageSpeed(com.sitemonitor.model.PageSpeedMonitor m,
+                                                com.sitemonitor.model.PageSpeedCheck latest,
+                                                Map<Long, String> teams, AlertEvent openAlarm, boolean admin) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id",                   m.getId());
+        item.put("name",                 m.getName());
+        item.put("url",                  m.getUrl());
+        item.put("group_name",           m.getGroupName());
+        item.put("team_id",              m.getTeamId());
+        item.put("team_name",            m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
+        item.put("active",               m.getActive());
+        item.put("interval_seconds",     m.getIntervalSeconds());
+        item.put("timeout_ms",           m.getTimeoutMs());
+        item.put("max_load_ms",          m.getMaxLoadMs());
+        item.put("max_ttfb_ms",          m.getMaxTtfbMs());
+        item.put("max_page_kb",          m.getMaxPageKb());
+        item.put("max_requests",         m.getMaxRequests());
+        item.put("user_agent",           m.getUserAgent());
+        item.put("send_dnt",             m.getSendDnt());
+        item.put("exclude_trackers",     m.getExcludeTrackers());
+        item.put("tracker_patterns",     m.getTrackerPatterns());
+        item.put("resource_concurrency", m.getResourceConcurrency());
+        item.put("basic_auth_user",      m.getBasicAuthUser());
+        // Parola ASLA (şifreli hâli bile) dönmez — arayüz yalnız "kayıtlı mı" bilgisine ihtiyaç duyar.
+        item.put("has_basic_auth_pass",  m.getBasicAuthPassEnc() != null && !m.getBasicAuthPassEnc().isBlank());
+        item.put("has_custom_headers",   m.getCustomHeadersEnc() != null && !m.getCustomHeadersEnc().isBlank());
+        // Başlık ADLARI yalnız admin'e ve yalnız AD olarak — değerler jeton taşıyabilir.
+        item.put("custom_header_names",  admin ? customHeaderNames(m) : List.of());
+        item.put("confirm_attempts",         m.getConfirmAttempts());
+        item.put("confirm_interval_seconds", m.getConfirmIntervalSeconds());
+        item.put("recovery_checks",           m.getRecoveryChecks());
+        item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
+        item.put("tags",                      m.getTags());
+        item.put("notify_email",              m.getNotifyEmail());
+        item.put("created_at",                m.getCreatedAt());
+        item.put("created_by_name",           m.getCreatedByName());
+        item.put("active_alarm",       openAlarm != null);
+        item.put("alarm_level",        openAlarm != null ? openAlarm.getAlertLevel() : null);
+        item.put("alarm_acknowledged", openAlarm != null ? openAlarm.getAcknowledged() : null);
+        if (latest != null) {
+            item.put("status",         Boolean.FALSE.equals(latest.getOk()) ? "DOWN"
+                                       : (blank(latest.getBreachedMetrics()) ? "OK" : "SLOW"));
+            item.put("ok",             latest.getOk());
+            item.put("http_status",    latest.getStatusCode());
+            item.put("ttfb_ms",        latest.getTtfbMs());
+            item.put("html_ms",        latest.getHtmlMs());
+            item.put("response_ms",    latest.getResponseMs());
+            item.put("total_bytes",    latest.getTotalBytes());
+            item.put("request_count",  latest.getRequestCount());
+            item.put("failed_count",   latest.getFailedCount());
+            item.put("capped",         latest.getCapped());
+            item.put("bytes_truncated", Boolean.TRUE.equals(latest.getBytesTruncated()));
+            item.put("breached_metrics", blank(latest.getBreachedMetrics()) ? List.of()
+                                       : List.of(latest.getBreachedMetrics().split(",")));
+            item.put("error",          latest.getErrorMessage());
+            item.put("last_check",     latest.getCheckedAt());
+        }
+        return item;
+    }
+
+    /** Şifreli başlık bloğundan yalnız AD listesi (değer yok). Çözülemezse boş liste. */
+    private List<String> customHeaderNames(com.sitemonitor.model.PageSpeedMonitor m) {
+        if (m.getCustomHeadersEnc() == null || m.getCustomHeadersEnc().isBlank()) return List.of();
+        try {
+            return List.copyOf(com.sitemonitor.service.page.PageSpeedRules
+                    .parseHeaders(secretCipher.decrypt(m.getCustomHeadersEnc())).keySet());
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
     /** Ortak: sayfa-özel alanları (mode, crawl derinlik/limit, exclude, slow, alertThirdParty, concurrency,
      *  tags, notifyEmail) body'den clamp'li uygular. */
     private void applyPageFeatureFields(com.sitemonitor.model.PageMonitor m, Map<String, Object> body) {

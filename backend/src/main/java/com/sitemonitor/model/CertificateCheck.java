@@ -75,6 +75,13 @@ public class CertificateCheck {
     private String ocspUrl;
     private String crlUrl;
 
+    /** Anlaşılan TLS sürümü / cipher suite — sağlık değerlendirmesinin kaynağı (bkz. LatestCheck). */
+    @Column(length = 20)
+    private String tlsVersion;
+
+    @Column(length = 100)
+    private String cipherSuite;
+
     private String runId;
     private String checkedAt;
     private String createdAt;

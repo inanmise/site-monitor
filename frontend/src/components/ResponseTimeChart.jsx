@@ -6,6 +6,7 @@ import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import DateTimeRangePicker from './ui/DateTimeRangePicker.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
+import { formatBytes, formatBytesAxis } from '../utils/formatBytes.js'
 import StatusBlock from './ui/StatusBlock.jsx'
 import { BarChart3 } from 'lucide-react'
 
@@ -27,13 +28,19 @@ function tickLabel(ts, bucket) {
   return `${p(d.getDate())}.${p(d.getMonth() + 1)} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-function ChartTooltip({ active, payload, t, isPing, isSsl }) {
+function ChartTooltip({ active, payload, t, isPing, isSsl, fmt = (v) => `${v}ms` }) {
   if (!active || !payload || !payload.length) return null
   const d = payload[0].payload
-  const row = (label, val, suffix = 'ms') =>
+  // Değer biçimi metriğe göre değişir: süre "3480ms", boyut "46.4 MB", istek sayısı çıplak sayı.
+  // Sabit 'ms' eki bırakıldığında boyut serisi "48697344ms" yazıyordu — eksen de ipucu da
+  // "ne ölçüyorum" sorusuna yanlış cevap veriyordu.
+  // suffixOverride: ikinci eksenli seriler (ping paket kaybı %, sertifika kalan gün) kendi
+  // birimlerini taşır; onlar ana metrik biçimlendiricisine tabi değildir.
+  const row = (label, val, suffixOverride) =>
     val == null ? null : (
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16 }}>
-        <span style={{ color: 'var(--text-muted)' }}>{label}</span><strong>{val}{suffix}</strong>
+        <span style={{ color: 'var(--text-muted)' }}>{label}</span>
+        <strong>{suffixOverride != null ? `${val}${suffixOverride}` : fmt(val)}</strong>
       </div>
     )
   return (
@@ -58,7 +65,17 @@ function ChartTooltip({ active, payload, t, isPing, isSsl }) {
   )
 }
 
-export default function ResponseTimeChart({ monitorId, kind }) {
+/**
+ * Metrik birimi → değer biçimi. Grafik ekseni ve ipucu AYNI biçimlendiriciyi kullanır;
+ * ayrışırlarsa aynı sayı iki yerde farklı okunur.
+ */
+const VALUE_FORMAT = {
+  ms: { fmt: (v) => `${v}ms`,        axis: (v) => `${v}ms`,          width: 46 },
+  B:  { fmt: (v) => formatBytes(v),  axis: formatBytesAxis,          width: 58 },
+  '': { fmt: (v) => String(v),       axis: (v) => String(v),         width: 40 },
+}
+
+export default function ResponseTimeChart({ monitorId, kind, metric, unit = 'ms' }) {
   const t = useT()
   const isPing = kind === 'ping'
   // Sertifika: ana seri kontrol süresi (ms), yardımcı seri kalan gün — ping'in paket kaybı için
@@ -87,13 +104,15 @@ export default function ResponseTimeChart({ monitorId, kind }) {
     const fetcher = { ping: api.monitoring.getPingResponseSeries, keyword: api.monitoring.getKeywordResponseSeries,
       port: api.monitoring.getPortResponseSeries, dns: api.monitoring.getDnsResponseSeries, http: api.monitoring.getHttpResponseSeries,
       page: api.monitoring.getPageResponseSeries, scripted: api.monitoring.getScriptedResponseSeries,
+      pagespeed: api.monitoring.getPageSpeedSeries,
       ssl: api.monitoring.getSslResponseSeries }[kind] ?? api.monitoring.getKeywordResponseSeries
     const params = custom ? { from: custom.from, to: custom.to } : { days: PRESETS.find(p => p.key === preset)?.days ?? 30 }
-    const res = await fetcher(monitorId, params)
+    // metric yalnız sayfa hızında dolu; diğer uçlarda undefined kalır ve istemci onu URL'e koymaz.
+    const res = await fetcher(monitorId, metric ? { ...params, metric } : params)
     if (seq !== seqRef.current) return          // daha yeni bir istek var: bu yanıtı YOK SAY
     setData(res?.success ? res.data : null)
     setLoading(false)
-  }, [monitorId, kind, preset, custom])
+  }, [monitorId, kind, preset, custom, metric])
 
   useEffect(() => { load() }, [load])
 
@@ -118,6 +137,7 @@ export default function ResponseTimeChart({ monitorId, kind }) {
 
   // Yardımcı seri de veri sayılır: sertifikada ms kolonu yeni olduğu için ilk günlerde avg boş,
   // ama kalan gün eğrisi dolu — yalnız avg'e bakan eski kontrol ekranı tümüyle "veri yok" gösterirdi.
+  const valueFormat = VALUE_FORMAT[unit] ?? VALUE_FORMAT.ms
   const hasData = chartData.some(d => d.avg != null || (isSsl && d.days != null))
   const tickEvery = Math.max(0, Math.floor(chartData.length / 8))
 
@@ -174,7 +194,7 @@ export default function ResponseTimeChart({ monitorId, kind }) {
             <XAxis dataKey="label" tick={{ fontSize: 10, fill: 'var(--text-light)' }} stroke="var(--border)"
               interval={tickEvery} minTickGap={16} />
             <YAxis yAxisId="ms" tick={{ fontSize: 10, fill: 'var(--text-light)' }} stroke="var(--border)"
-              width={46} tickFormatter={(v) => `${v}ms`} />
+              width={valueFormat.width} tickFormatter={valueFormat.axis} />
             {isPing && (
               <YAxis yAxisId="loss" orientation="right" domain={[0, 100]} tick={{ fontSize: 10, fill: '#ea580c' }}
                 stroke="var(--border)" width={34} tickFormatter={(v) => `${v}%`} />
@@ -183,7 +203,7 @@ export default function ResponseTimeChart({ monitorId, kind }) {
               <YAxis yAxisId="days" orientation="right" tick={{ fontSize: 10, fill: '#0d9488' }}
                 stroke="var(--border)" width={40} tickFormatter={(v) => `${v}${t('chart.unitDays')}`} />
             )}
-            <Tooltip content={<ChartTooltip t={t} isPing={isPing} isSsl={isSsl} />} />
+            <Tooltip content={<ChartTooltip t={t} isPing={isPing} isSsl={isSsl} fmt={valueFormat.fmt} />} />
             <Area yAxisId="ms" type="monotone" dataKey="band" name={t('chart.minmax')} hide={hidden.has('band')}
               fill="#bfdbfe" fillOpacity={0.45} stroke="none" isAnimationActive={false} connectNulls />
             <Line yAxisId="ms" type="monotone" dataKey="avg" name={t('chart.avg')} hide={hidden.has('avg')}

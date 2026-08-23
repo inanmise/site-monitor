@@ -62,6 +62,7 @@ class RetentionCoverageTest {
             Map.entry("ping_monitors", "Monitör tanımı."),
             Map.entry("domain_monitors", "Monitör tanımı."),
             Map.entry("page_monitors", "Monitör tanımı."),
+            Map.entry("pagespeed_monitors", "Monitör tanımı."),
             Map.entry("scripted_monitors", "Monitör tanımı."),
             Map.entry("scripted_script_versions",
                     "k6 script sürüm geçmişi — monitör tanımının parçası ve geri dönüş kaynağı; "

@@ -234,45 +234,15 @@ public class AuditController {
         return ok(body);
     }
 
+    /**
+     * Zayıflık sınıflandırması ORTAK kurala devreder ({@link com.sitemonitor.service.CertificateHealthRules}).
+     *
+     * <p>Aynı hüküm sertifika sağlık kontrol listesinde de veriliyor; iki yerde ayrı eşik tutmak,
+     * aynı sertifikanın bir ekranda "zayıf" diğerinde "temiz" görünmesi demekti.
+     */
     private String classifyWeakness(LatestCheck lc, List<String> weaknesses) {
-        String sig     = lc.getSignatureAlgorithm();
-        String keyAlgo = lc.getPublicKeyAlgorithm();
-        Integer keySize = lc.getPublicKeySize();
-        String maxSev  = null;
-
-        if (sig != null) {
-            String up = sig.toUpperCase();
-            if (up.contains("MD2") || up.contains("MD5")) {
-                weaknesses.add("Deprecated hash: " + sig);
-                maxSev = "CRITICAL";
-            } else if (up.contains("SHA1") || up.contains("SHA-1")) {
-                weaknesses.add("Weak hash: " + sig);
-                maxSev = worst(maxSev, "HIGH");
-            }
-        }
-
-        if (keyAlgo != null && keySize != null) {
-            String up = keyAlgo.toUpperCase();
-            if (up.contains("RSA") || up.contains("DSA")) {
-                if (keySize < 2048) {
-                    weaknesses.add("Short key: " + keyAlgo + " " + keySize + "-bit");
-                    maxSev = worst(maxSev, keySize <= 1024 ? "CRITICAL" : "HIGH");
-                }
-            } else if (up.contains("EC")) {
-                if (keySize < 256) {
-                    weaknesses.add("Short EC key: " + keySize + "-bit");
-                    maxSev = worst(maxSev, keySize < 192 ? "CRITICAL" : "HIGH");
-                }
-            }
-        }
-        return maxSev;
-    }
-
-    private String worst(String cur, String cand) {
-        if ("CRITICAL".equals(cur)) return cur;
-        if ("CRITICAL".equals(cand)) return cand;
-        if ("HIGH".equals(cur)) return cur;
-        return cand;
+        return com.sitemonitor.service.CertificateHealthRules.classifyWeakness(
+                lc.getSignatureAlgorithm(), lc.getPublicKeyAlgorithm(), lc.getPublicKeySize(), weaknesses);
     }
 
     private int severityRank(String s) {
@@ -329,11 +299,12 @@ public class AuditController {
         return sb.toString();
     }
 
+    /**
+     * Ortak kurala devreder ({@link com.sitemonitor.util.Csv#cell}) — denetim disa aktarimi da
+     * formul notrlemesi almali: aktor adi, kaynak adi ve detay alanlari dis veriden besleniyor.
+     */
     private static String csvCell(Object o) {
-        if (o == null) return "";
-        String s = o.toString();
-        return (s.contains(",") || s.contains("\"") || s.contains("\n") || s.contains("\r"))
-                ? "\"" + s.replace("\"", "\"\"").replace("\n", " ").replace("\r", " ") + "\"" : s;
+        return com.sitemonitor.util.Csv.cell(o);
     }
 
     private String toJson(List<AuditLog> rows) {

@@ -135,6 +135,47 @@ describe('ErrorBoundary', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('LIR-2026-000077'))
   })
 
+  it('teknik detay metni tek tikla kopyalanir', async () => {
+    // Bu metin cogu zaman birkac ekran boyu stack trace; kullanicinin onu iletmesinin tek yolu
+    // elle secmekti. Cokmus bir ekranda uzun bir <pre>'yi fareyle secmek pratikte islemiyor.
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { writable: true, configurable: true, value: { writeText } })
+    render(<ErrorBoundary><Bomb /></ErrorBoundary>)
+
+    fireEvent.click(await screen.findByRole('button', { name: /copy error text/i }))
+
+    await waitFor(() => expect(writeText).toHaveBeenCalled())
+    // Kopyalanan sey EKRANDAKI metnin ta kendisi olmali — kirpilmis ya da baska bir sey degil.
+    const copied = writeText.mock.calls[0][0]
+    expect(copied).toContain('BOOM')
+    expect(copied).toContain('Component stack:')
+  })
+
+  it('kopyalama butonu <details> panelini ACIP KAPATMAZ', async () => {
+    // Buton <summary> icinde durdugu icin tiklama varsayilan olarak paneli toggle ederdi:
+    // kullanici kopyalarken metin gozunun onunden kaybolurdu.
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { writable: true, configurable: true, value: { writeText } })
+    const { container } = render(<ErrorBoundary><Bomb /></ErrorBoundary>)
+    const details = container.querySelector('details')
+    details.open = true
+
+    fireEvent.click(await screen.findByRole('button', { name: /copy error text/i }))
+
+    expect(details.open).toBe(true)
+  })
+
+  it('kopyalama TOAST provider olmadan da calisir (cokme yuzeyi kendi patlamaz)', async () => {
+    // Kural: bu yuzeyde kullanilan hicbir sey provider'a bagli olamaz. useToast() provider
+    // yoksa throw ediyor; toast'a bagli bir kopya butonu ikinci bir cokme uretirdi.
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { writable: true, configurable: true, value: { writeText } })
+
+    expect(() => rawRender(<ErrorBoundary><Bomb /></ErrorBoundary>)).not.toThrow()
+    fireEvent.click(await screen.findByRole('button', { name: /copy error text/i }))
+    await waitFor(() => expect(writeText).toHaveBeenCalled())
+  })
+
   it('bildirim gövdesi appVersion ve screenSize taşır', () => {
     render(<ErrorBoundary><Bomb /></ErrorBoundary>)
     const body = JSON.parse(fetchMock.mock.calls[0][1].body)

@@ -1131,7 +1131,11 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .eb-reported { margin-top: 14px; font-size: 13px; color: var(--text-light); }
 .eb-report-failed { max-width: 560px; margin: 14px auto 0; text-align: left; }
 .eb-details { margin-top: 18px; text-align: left; max-width: 720px; margin-inline: auto; }
-.eb-details-summary { cursor: pointer; color: var(--text-light); font-weight: 600; }
+.eb-details-summary { cursor: pointer; color: var(--text-light); font-weight: 600;
+  display: flex; align-items: center; gap: 8px; }
+/* Kopyalama butonu satirin sagina yaslanir; <summary> icinde durdugu icin baslikla
+   ayni satiri paylasir ve ayri bir satir acmaz. */
+.eb-details-copy { margin-left: auto; display: inline-flex; }
 .eb-pre {
   margin-top: 8px; padding: 12px; border-radius: 8px;
   background: var(--bg-surface); color: var(--text); border: 1px solid var(--border);
@@ -4816,6 +4820,28 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 
 .field-hint { display: block; font-size: .82em; margin-top: 5px; }
 .field-hint--warn { color: var(--warning, #f59e0b); }
+/* Alan etiketinin yanindaki birim eki (ms/KB) — etiketi okurken birimi aramak zorunda
+   kalmayin diye. Etiketten daha soluk ve daha kucuk, boylece etiketle yarismaz. */
+.field-unit { font-weight: 400; font-size: .85em; color: var(--text-muted); margin-left: 4px; }
+
+/* ── Sayfa Hizi: onerilen esikler kutusu ─────────────────────────────────────
+   Ham olcume bakip dort alana elle sayi yazmak, hangi metrigin ne kadar oynadigini
+   bilmeyi gerektiriyor. Kutu oneriyi GEREKCESIYLE gosterir; tek tik forma yazar. */
+.pspd-suggest { margin: 0 0 14px; padding: 12px 14px; border: 1px solid var(--border);
+  border-left: 3px solid var(--accent, #2563eb); border-radius: 0 8px 8px 0;
+  background: var(--bg-subtle, #f8fafc); }
+.pspd-suggest-head { font-weight: 700; font-size: .88em; margin-bottom: 8px; }
+.pspd-suggest-list { list-style: none; margin: 0 0 10px; padding: 0; }
+.pspd-suggest-list li { display: grid; grid-template-columns: minmax(120px, 1fr) auto;
+  column-gap: 12px; align-items: baseline; padding: 4px 0; font-size: .85em;
+  border-top: 1px solid var(--border); }
+.pspd-suggest-list li:first-child { border-top: 0; }
+.pspd-suggest-list li > span { color: var(--text-muted); }
+.pspd-suggest-list li > strong { font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Gerekce tam genislikte alt satira duser — dar modalde sayiyi sikistirmasin. */
+.pspd-suggest-list li > em { grid-column: 1 / -1; font-style: normal; font-size: .92em;
+  color: var(--text-muted); opacity: .85; }
+[data-theme="dark"] .pspd-suggest { background: #0f172a; }
 
 [data-theme="dark"] .ss-trigger { background: var(--input-bg); color: var(--input-text); }
 [data-theme="dark"] .ss-dropdown { background: var(--bg-card); }
@@ -10274,6 +10300,123 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* ── SSL Checker panel ── */
 .ssl-checker-panel  { display: flex; flex-direction: column; gap: 0; }
 .ssl-checks         { display: flex; flex-direction: column; gap: 6px; margin-bottom: 20px; }
+
+/* ── Sertifika Sağlık Kontrol Listesi ─────────────────────────────────────────
+   Mevcut ssl-* ailesinin evrimi: durum kutusu + başlık/açıklama + aksiyon + değer rozeti
+   dört bölgeli bir ızgara. Dar ekranda sütunlar alt alta akar (yatay taşma YOK). */
+.hlth-panel { padding: 4px 2px 10px; }
+
+/* Üst künye — geçerlilik penceresi ve kontrol zamanları. */
+.hlth-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 10px 12px; margin-bottom: 14px;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-subtle, var(--card-bg));
+}
+.hlth-meta-spacer { flex: 1 1 auto; }
+.hlth-chip {
+  display: inline-flex; align-items: baseline; gap: 6px;
+  padding: 4px 9px; border-radius: 999px;
+  background: var(--card-bg); border: 1px solid var(--border);
+}
+.hlth-chip-k { font-size: .72em; color: var(--text-light); text-transform: uppercase; letter-spacing: .02em; }
+.hlth-chip-v { font-size: .84em; font-weight: 600; color: var(--text); }
+.hlth-chip--days.is-ok   .hlth-chip-v { color: var(--success, #16a34a); }
+.hlth-chip--days.is-warn .hlth-chip-v { color: #d97706; }
+.hlth-chip--days.is-fail .hlth-chip-v { color: var(--danger, #dc2626); }
+.hlth-summary { font-size: .82em; font-weight: 600; color: var(--text-muted); }
+.hlth-refresh { display: inline-flex; align-items: center; gap: 5px; }
+.hlth-spin { animation: hlth-rot 1s linear infinite; }
+@keyframes hlth-rot { to { transform: rotate(360deg); } }
+
+/* Grup başlıkları — 13 satır başlıksız okunmuyor. */
+.hlth-group { margin-bottom: 14px; }
+.hlth-group-title {
+  display: flex; align-items: center; gap: 6px; margin: 0 0 6px;
+  font-size: .78em; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+  color: var(--text-muted);
+}
+.hlth-rows { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+
+.hlth-row + .hlth-row { border-top: 1px solid var(--border); }
+.hlth-row:nth-child(even) { background: color-mix(in srgb, var(--text) 2%, transparent); }
+.hlth-row-head {
+  width: 100%; display: grid; gap: 10px; align-items: center; text-align: left;
+  grid-template-columns: 32px minmax(0, 1fr) minmax(0, 220px) minmax(0, 200px) 16px;
+  padding: 11px 12px; background: none; border: 0; font: inherit; color: var(--text);
+  cursor: pointer;
+}
+.hlth-row-head:disabled { cursor: default; }
+.hlth-row-head:not(:disabled):hover { background: color-mix(in srgb, var(--primary) 5%, transparent); }
+
+/* Durum kutusu — referanstaki büyük onay kutusu hissi. */
+.hlth-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 8px; color: #fff; flex-shrink: 0;
+}
+.hlth-mark--ok      { background: var(--success, #16a34a); }
+.hlth-mark--warn    { background: #d97706; }
+.hlth-mark--fail    { background: var(--danger, #dc2626); }
+.hlth-mark--unknown,
+.hlth-mark--na      { background: var(--text-light); }
+
+.hlth-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.hlth-row-title { font-size: .88em; font-weight: 600; }
+.hlth-row-desc { font-size: .78em; color: var(--text-light); line-height: 1.45; }
+.hlth-row-note {
+  margin-top: 3px; font-size: .74em; color: var(--text-muted);
+  border-left: 2px solid var(--border); padding-left: 6px;
+}
+
+.hlth-row-action { font-size: .8em; color: var(--text); }
+.hlth-row-action.is-none { color: var(--text-light); }
+
+.hlth-row-value { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
+.hlth-value-badge {
+  display: inline-block; padding: 2px 9px; border-radius: 999px;
+  font-size: .78em; font-weight: 600; white-space: nowrap;
+}
+.hlth-value-badge--ok {
+  background: color-mix(in srgb, var(--success, #16a34a) 14%, transparent); color: var(--success, #16a34a);
+}
+.hlth-value-badge--warn { background: color-mix(in srgb, #d97706 16%, transparent); color: #b45309; }
+.hlth-value-badge--fail {
+  background: color-mix(in srgb, var(--danger, #dc2626) 14%, transparent); color: var(--danger, #dc2626);
+}
+.hlth-value-badge--unknown,
+.hlth-value-badge--na {
+  background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text-muted);
+}
+.hlth-cipher {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+  font-size: .72em; color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hlth-row-caret { color: var(--text-light); transition: transform .15s; }
+.hlth-row.is-open .hlth-row-caret { transform: rotate(90deg); }
+
+/* Kanıt paneli — satır açılınca ham veriler. */
+.hlth-evidence {
+  margin: 0; padding: 8px 12px 12px 54px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px;
+  background: color-mix(in srgb, var(--primary) 4%, transparent);
+}
+.hlth-evidence-row { display: flex; gap: 8px; align-items: baseline; min-width: 0; padding: 3px 0; }
+.hlth-evidence-row dt { flex: 0 0 42%; font-size: .76em; font-weight: 600; color: var(--text-muted); }
+.hlth-evidence-row dd {
+  flex: 1 1 auto; margin: 0; font-size: .78em; min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  .hlth-row-head { grid-template-columns: 30px minmax(0, 1fr) 16px; }
+  .hlth-row-action, .hlth-row-value { grid-column: 2 / 3; }
+  .hlth-evidence { grid-template-columns: 1fr; padding-left: 12px; }
+}
+
+[data-theme="dark"] .hlth-row:nth-child(even) { background: color-mix(in srgb, #fff 3%, transparent); }
+[data-theme="dark"] .hlth-value-badge--warn { color: #fbbf24; }
+
 .ssl-check-row      { display: flex; align-items: center; gap: 10px; padding: 7px 10px;
                        border-radius: 8px; font-size: .85em; line-height: 1.4; transition: background .15s; }
 .ssl-ok             { background: #f0fdf4; }
@@ -11027,6 +11170,13 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .hist-group-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; border-radius: 3px; }
 /* Tür-özel geçmiş grid şablonları (CheckHistoryTab gridClass) */
 .page-rt-grid { grid-template-columns: 150px 90px 70px 100px 1fr; }
+.pspd-rt-grid { grid-template-columns: 150px 110px 90px 80px 90px 1fr; }
+/* Metrik secimi ile zaman araligi secimi ayri islerdir; etiket + segmented control
+   ikisini gorsel olarak ayirir (eskiden iki ayni gorunen etiketsiz dugme siralaydi). */
+.pspd-metric-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 0 0 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.pspd-metric-label { font-size: .82em; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .03em; }
 .dns-rt-grid  { grid-template-columns: 150px 1fr 64px 80px 170px; }
 .upt-uptime-rt-grid { grid-template-columns: 140px 64px 90px 1fr; }
 /* Senaryo: zaman · durum · SÜRÜM · süre · detay. Sürüm kolonu 2026-08-20'de eklendi —

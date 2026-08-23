@@ -2859,10 +2859,30 @@ public class EmailNotificationService {
     public record AttachmentInfo(String fileName, int alarmCount, int stillOpenCount,
                                  int affectedTargets, int monitorTypeCount) {}
 
+    /**
+     * Haftalık rapordaki Sayfa Hızı bölümü için tek satır.
+     *
+     * @param avgLoadMs     bu haftanın ortalama toplam yükleme süresi (null = hiç ölçüm yok)
+     * @param prevAvgLoadMs GEÇEN haftanın ortalaması — trend oku bundan hesaplanır (null = kıyas yok)
+     * @param breachedChecks bu hafta eşik aşan ölçüm sayısı
+     */
+    public record PageSpeedWeeklyRow(String name, String url, Long avgLoadMs, Long prevAvgLoadMs,
+                                     long breachedChecks) {}
+
+    /** Sayfa Hızı bölümü: en yavaş N sayfa + kaç izlemenin eşiği aşıldığı. */
+    public record PageSpeedWeekly(List<PageSpeedWeeklyRow> slowest, int monitorCount, int breachedMonitorCount) {}
+
     /** Geriye uyumlu: ek yokken (ya da üretilemediğinde) gövdede ek bandı çizilmez. */
     public String buildWeeklyAvailabilityHtml(String teamName, String weekLabel,
                                               List<AvailabilityRow> rows, AvailabilitySummary s) {
-        return buildWeeklyAvailabilityHtml(teamName, weekLabel, rows, s, null);
+        return buildWeeklyAvailabilityHtml(teamName, weekLabel, rows, s, null, null);
+    }
+
+    /** Geriye uyumlu: Sayfa Hızı bölümü olmadan. */
+    public String buildWeeklyAvailabilityHtml(String teamName, String weekLabel,
+                                              List<AvailabilityRow> rows, AvailabilitySummary s,
+                                              AttachmentInfo att) {
+        return buildWeeklyAvailabilityHtml(teamName, weekLabel, rows, s, att, null);
     }
 
     /** Sertifika sahibi takıma haftalık erişilebilirlik özeti (executive). rows en kötü
@@ -2870,7 +2890,7 @@ public class EmailNotificationService {
      *  {@code att} doluysa gövdeye ek duyuru bandı eklenir. */
     public String buildWeeklyAvailabilityHtml(String teamName, String weekLabel,
                                               List<AvailabilityRow> rows, AvailabilitySummary s,
-                                              AttachmentInfo att) {
+                                              AttachmentInfo att, PageSpeedWeekly ps) {
         String accent = "#1f3864";
         String outerBg = "#f4f6f8";
         String generatedAt = ZonedDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
@@ -2934,6 +2954,60 @@ public class EmailNotificationService {
               + "<td bgcolor='#ecfdf5' style='background:#ecfdf5;border-left:4px solid #16a34a;border-radius:0 8px 8px 0;"
               + "padding:12px 16px;font-size:14px;font-weight:700;color:#15803d'>✓ Bu hafta hiçbir domain kesinti yaşamadı 🎉</td>"
               + "</tr></table>";
+
+        // ── Sayfa Hızı bölümü (opsiyonel) ────────────────────────────────────────────────
+        // Outlook-güvenli: td + bgcolor, düz hex (rgba yok), div arka planı yok.
+        // Bölüm KESİNTİ DEĞİL performans anlatır — başlık ve dip not bunu açıkça söyler ki
+        // okuyan yavaşlığı erişilebilirlik rakamlarıyla karıştırmasın.
+        String pageSpeedSection = "";
+        if (ps != null && !ps.slowest().isEmpty()) {
+            StringBuilder psBody = new StringBuilder();
+            psBody.append("<tr>")
+                  .append(thCell("Sayfa", "left")).append(thCell("Ort. yükleme", "left"))
+                  .append(thCell("Geçen haftaya göre", "left")).append(thCell("Eşik aşımı", "left"))
+                  .append("</tr>");
+            for (PageSpeedWeeklyRow r : ps.slowest()) {
+                String load = r.avgLoadMs() != null ? r.avgLoadMs() + " ms" : "—";
+                String trend = "—";
+                String trendColor = "#64748b";
+                if (r.avgLoadMs() != null && r.prevAvgLoadMs() != null && r.prevAvgLoadMs() > 0) {
+                    long diff = r.avgLoadMs() - r.prevAvgLoadMs();
+                    long pct = Math.round(100.0 * diff / r.prevAvgLoadMs());
+                    if (pct > 0) { trend = "▲ %" + pct + " yavaşladı"; trendColor = "#b91c1c"; }
+                    else if (pct < 0) { trend = "▼ %" + Math.abs(pct) + " hızlandı"; trendColor = "#15803d"; }
+                    else { trend = "değişmedi"; }
+                }
+                psBody.append("<tr style='border-top:1px solid #e2e8f0'>")
+                      .append("<td style='padding:9px 13px;font-size:13px;font-weight:600;color:#1e293b;word-break:break-all'>")
+                      .append(escHtml(r.name())).append("</td>")
+                      .append("<td style='padding:9px 13px;font-size:14px;font-weight:800;color:#1e293b;white-space:nowrap'>")
+                      .append(load).append("</td>")
+                      .append("<td style='padding:9px 13px;font-size:13px;font-weight:700;color:").append(trendColor)
+                      .append(";white-space:nowrap'>").append(trend).append("</td>")
+                      .append("<td style='padding:9px 13px;font-size:13px;color:")
+                      .append(r.breachedChecks() > 0 ? "#b91c1c" : "#64748b").append(";white-space:nowrap'>")
+                      .append(r.breachedChecks() > 0 ? r.breachedChecks() + " ölçüm" : "—").append("</td>")
+                      .append("</tr>");
+            }
+            pageSpeedSection =
+                "<div style='margin:0 0 18px'>"
+                + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
+                + "<td bgcolor='" + accent + "' style='background:" + accent + ";color:#fff;border-radius:8px 8px 0 0;"
+                + "padding:9px 14px;font-size:13px;font-weight:800'>Sayfa Hızı — en yavaş "
+                + ps.slowest().size() + " sayfa"
+                + (ps.breachedMonitorCount() > 0
+                   ? " · " + ps.breachedMonitorCount() + " izlemede eşik aşıldı" : "")
+                + "</td></tr></table>"
+                + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;"
+                + "border-top:none;border-collapse:collapse'>" + psBody + "</table>"
+                + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
+                + "<td bgcolor='#f8fafc' style='background:#f8fafc;border:1px solid #e2e8f0;border-top:none;"
+                + "border-radius:0 0 8px 8px;padding:8px 14px;font-size:11px;color:#64748b'>"
+                + "Bu bölüm PERFORMANSI anlatır, kesintiyi değil: yavaş bir sayfa yukarıdaki "
+                + "erişilebilirlik yüzdesini düşürmez. Ölçüm sunucudan çekilen HTML ve alt kaynaklarla "
+                + "yapılır; tarayıcı çalıştırılmadığı için JavaScript ile sonradan yüklenen kaynaklar "
+                + "sayıma girmez.</td></tr></table></div>";
+        }
 
         // Domain tablosu (en kötü üstte — servis sıralar)
         StringBuilder body = new StringBuilder();
@@ -3012,6 +3086,7 @@ public class EmailNotificationService {
             + downSection
             + bestWorst
             + table
+            + pageSpeedSection
             // Footer
             + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
             + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitor — Otomatik Haftalık Rapor</td>"

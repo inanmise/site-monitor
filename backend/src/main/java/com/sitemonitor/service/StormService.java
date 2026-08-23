@@ -81,9 +81,13 @@ public class StormService {
     @org.springframework.beans.factory.annotation.Autowired
     private com.sitemonitor.repository.PageMonitorRepository pageRepo;
 
-    /** 10. tür (senaryo) — alan enjeksiyonu (constructor/test büyütmemek için; pageRepo ile aynı desen). */
+    /** Senaryo türü — alan enjeksiyonu (constructor/test büyütmemek için; pageRepo ile aynı desen). */
     @org.springframework.beans.factory.annotation.Autowired
     private com.sitemonitor.repository.ScriptedMonitorRepository scriptedRepo;
+
+    /** Sayfa hızı türü — alan enjeksiyonu (pageRepo/scriptedRepo ile aynı desen). */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.sitemonitor.repository.PageSpeedMonitorRepository pageSpeedRepo;
 
     public enum StormAction {
         /** Storm devrede değil / eşik altı → bireysel alarm gönder (bugünkü davranış, sıfır gecikme). */
@@ -320,7 +324,15 @@ public class StormService {
                     + domainRepo.countByActiveTrue()
                     + portRepo.countByStandaloneTrueAndActiveTrue()   // cert-türevi satırları çift saymamak için standalone
                     + dnsRepo.countByStandaloneTrueAndActiveTrue()
-                    + (pageRepo != null ? pageRepo.countByActiveTrue() : 0);   // 9. tür (field-inject; test'te null → 0)
+                    + (pageRepo != null ? pageRepo.countByActiveTrue() : 0)      // 9. tür (field-inject; test'te null → 0)
+                    // 10. tür (sentetik). ATLANMIŞTI: SCRIPTED_FAIL storm ÜYESİ olabiliyor
+                    // (DOWN_ALERT_TYPES içinde) ama paydada yoktu; yüzde eşiği olduğundan küçük
+                    // çıkıyor, fırtına erken ilan ediliyor ve bireysel alarmlar erken bastırılıyordu.
+                    + (scriptedRepo != null ? scriptedRepo.countByActiveTrue() : 0)
+                    // Sayfa hızı: PAGESPEED_DOWN storm ÜYESİ (DOWN_ALERT_TYPES içinde) → paydada da olmalı.
+                    // Payda eksik kalırsa yüzde olduğundan büyük çıkar, fırtına erken ilan edilir ve
+                    // bireysel alarmlar gereksiz yere bastırılır.
+                    + (pageSpeedRepo != null ? pageSpeedRepo.countByActiveTrue() : 0);
         } catch (Exception e) {
             return cachedTotal > 0 ? cachedTotal : 0;
         }
@@ -383,6 +395,8 @@ public class StormService {
                         pageRepo != null ? pageRepo.findFirstByUrlOrderByIdAsc(d).map(m -> m.getGroupName()).orElse(null) : null;
                 case EscalationService.TYPE_SCRIPTED_FAIL, EscalationService.TYPE_SCRIPTED_SLOW ->
                         scriptedRepo != null ? scriptedRepo.findFirstByNameOrderByIdAsc(d).map(m -> m.getGroupName()).orElse(null) : null;
+                case EscalationService.TYPE_PAGESPEED_DOWN, EscalationService.TYPE_PAGESPEED_SLOW ->
+                        pageSpeedRepo != null ? pageSpeedRepo.findFirstByUrlOrderByIdAsc(d).map(m -> m.getGroupName()).orElse(null) : null;
                 case EscalationService.TYPE_PING_DOWN ->
                         pingRepo.findFirstByHostOrderByIdAsc(d).map(m -> m.getGroupName()).orElse(null);
                 case EscalationService.TYPE_DNS_FAILURE ->

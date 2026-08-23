@@ -56,6 +56,7 @@ class RepositoryWriteTransactionGuardTest {
             "HttpMonitorRepository#renameGroupForTeam",
             "KeywordMonitorRepository#renameGroupForTeam",
             "PageMonitorRepository#renameGroupForTeam",
+            "PageSpeedMonitorRepository#renameGroupForTeam",
             "PingMonitorRepository#renameGroupForTeam",
             "PortMonitorRepository#renameGroupForTeam",
             "ScriptedMonitorRepository#renameGroupForTeam",

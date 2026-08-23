@@ -239,10 +239,13 @@ public class CheckHistoryService {
         w.flush();
     }
 
+    /**
+     * Ortak kurala devreder ({@link com.sitemonitor.util.Csv#cell}).
+     *
+     * <p>Kendi kacisi yalniz tirnakliyordu, FORMUL notrlemesi yoktu. Buradaki veri ozellikle
+     * risklidir: hata metnini kontrol edilen UZAK SUNUCU uretiyor.
+     */
     private static String csvEscape(String s) {
-        if (s == null) return "";
-        boolean needQuote = s.contains(",") || s.contains("\"") || s.contains("\n") || s.contains("\r") || s.contains(";");
-        String v = s.replace("\"", "\"\"");
-        return needQuote ? "\"" + v + "\"" : v;
+        return com.sitemonitor.util.Csv.cell(s);
     }
 }

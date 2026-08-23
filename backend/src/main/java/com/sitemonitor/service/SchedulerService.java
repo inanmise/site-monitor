@@ -10,6 +10,8 @@ import com.sitemonitor.model.UptimeCheck;
 import com.sitemonitor.model.NetworkOutageEvent;
 import com.sitemonitor.model.PageCheck;
 import com.sitemonitor.model.PageResourceIssue;
+import com.sitemonitor.model.PageSpeedCheck;
+import com.sitemonitor.model.PageSpeedResource;
 import com.sitemonitor.repository.AlertThresholdRepository;
 import com.sitemonitor.repository.CertificateInventoryRepository;
 import com.sitemonitor.repository.DnsMonitorRepository;
@@ -165,7 +167,17 @@ public class SchedulerService {
     @Autowired
     private com.sitemonitor.repository.PageResourceIssueRepository pageResourceIssueRepo;
 
-    /** Senaryo İzleme (10. tür) — alan enjeksiyonu (aynı desen). */
+    /** Sayfa Hızı — alan enjeksiyonu (aynı desen). */
+    @Autowired
+    private PageSpeedCheckerService pageSpeedCheckerService;
+    @Autowired
+    private com.sitemonitor.repository.PageSpeedMonitorRepository pageSpeedMonitorRepo;
+    @Autowired
+    private com.sitemonitor.repository.PageSpeedCheckRepository pageSpeedCheckRepo;
+    @Autowired
+    private com.sitemonitor.repository.PageSpeedResourceRepository pageSpeedResourceRepo;
+
+    /** Senaryo İzleme — alan enjeksiyonu (aynı desen). */
     @Autowired
     private ScriptedCheckerService scriptedCheckerService;
     @Autowired
@@ -183,6 +195,10 @@ public class SchedulerService {
     private String adminPassword;
 
     /** Stale threshold: domain not checked within this many minutes is considered stale. */
+    /** Sertifika süpürme cron'u — "sonraki kontrol" hesabı da bunu okur (tek kaynak). */
+    @Value("${site.monitor.scheduler.cron:0 0 * * * *}")
+    private String sweepCron;
+
     @Value("${site.monitor.scheduler.stale-minutes:65}")
     private int staleMinutes;
 
@@ -389,6 +405,23 @@ public class SchedulerService {
         patch("ALTER TABLE certificate_inventory ADD COLUMN domain_expiry_checked_at TEXT");
         patch("ALTER TABLE latest_checks ADD COLUMN via TEXT");
         patch("ALTER TABLE latest_checks ADD COLUMN tls_mode_used TEXT");
+
+        // Sertifika sağlık kontrol listesi (v20.29): anlaşılan protokol/cipher artık KALICI —
+        // checker bunları üretiyordu ama saklanmıyordu, süpürme verisinden sağlık okunamıyordu.
+        patch("ALTER TABLE latest_checks ADD COLUMN tls_version TEXT");
+        patch("ALTER TABLE latest_checks ADD COLUMN cipher_suite TEXT");
+        patch("ALTER TABLE certificate_checks ADD COLUMN tls_version TEXT");
+        patch("ALTER TABLE certificate_checks ADD COLUMN cipher_suite TEXT");
+        // Uygulama katmanı satırları (istemli koşar, sonucu tarihiyle saklanır).
+        patch("ALTER TABLE latest_checks ADD COLUMN mixed_content_status TEXT");
+        patch("ALTER TABLE latest_checks ADD COLUMN mixed_content_at TEXT");
+        patch("ALTER TABLE latest_checks ADD COLUMN hsts_status TEXT");
+        patch("ALTER TABLE latest_checks ADD COLUMN hsts_at TEXT");
+        // Otomatik parmak izi pini (TOFU) — sertifikanın sessizce değişmesini görünür kılar.
+        patch("ALTER TABLE latest_checks ADD COLUMN pinned_fingerprint TEXT");
+        patch("ALTER TABLE latest_checks ADD COLUMN pinned_at TEXT");
+        patch("ALTER TABLE latest_checks ADD COLUMN previous_fingerprint TEXT");
+        patch("ALTER TABLE latest_checks ADD COLUMN fingerprint_changed_at TEXT");
         patch("ALTER TABLE app_users ADD COLUMN role_locked BOOLEAN DEFAULT false");
         patch("ALTER TABLE app_users ADD COLUMN org_role_locked BOOLEAN DEFAULT false");
         // Giriş damgaları — kullanıcının kendi güvenlik özeti ("önceki girişiniz / son başarısız
@@ -702,9 +735,22 @@ public class SchedulerService {
         // ── Yüksek-yazımlı tablolarda daha AGRESİF autovacuum — büyük tabloda varsayılan %20 ölü-tuple
         //    eşiği çok seyrek vacuum + şişme (bloat) demek; %2 scale + sabit eşikle sık, küçük vacuum/analyze.
         //    Postgres'e özgü; H2'de patch() sessiz atlar. Dış prod DB'de de çalışır (ALTER TABLE). Idempotent. ──
+        // ── Sayfa Hızı: SONRADAN eklenen kolonlar ────────────────────────────────────────────
+        // ddl-auto=update bunları YAPAMAZ: dolu bir tabloya "ADD COLUMN … NOT NULL" varsayılansız
+        // gelince Postgres reddeder, Hibernate hatayı yutar ve kolon HİÇ oluşmaz. Sonuç 2026-08-23'te
+        // yaşandı: her INSERT ve listeleme sorgusu "column bytes_truncated does not exist" ile düştü,
+        // ekran "Sunucu hatası" verdi. DEFAULT ile gelen ALTER mevcut satırları da doldurur.
+        patch("ALTER TABLE pagespeed_checks ADD COLUMN bytes_truncated BOOLEAN DEFAULT FALSE");
+        patch("UPDATE pagespeed_checks SET bytes_truncated = FALSE WHERE bytes_truncated IS NULL");
+        patch("ALTER TABLE pagespeed_resources ADD COLUMN truncated BOOLEAN DEFAULT FALSE");
+        patch("UPDATE pagespeed_resources SET truncated = FALSE WHERE truncated IS NULL");
+
         for (String t : new String[]{"port_checks", "ping_checks", "keyword_results", "http_checks",
                 "uptime_checks", "dns_records", "certificate_checks", "activity_log", "audit_log", "notification_logs",
-                "page_checks", "page_resource_issues", "scripted_checks"}) {
+                "page_checks", "page_resource_issues", "scripted_checks",
+                // Sayfa Hızı: kırılım tablosu her kontrolde LATEST satırlarını silip yeniden yazar →
+                // ölü-tuple üretimi yüksek, agresif autovacuum şart (yoksa tablo şişer).
+                "pagespeed_checks", "pagespeed_resources"}) {
             patch("ALTER TABLE " + t + " SET (autovacuum_vacuum_scale_factor = 0.02, autovacuum_vacuum_threshold = 5000, "
                 + "autovacuum_analyze_scale_factor = 0.02, autovacuum_analyze_threshold = 5000)");
         }
@@ -1224,8 +1270,10 @@ public class SchedulerService {
             int h  = rollupUpsert("HTTP",    "http_checks",     "ok",   "response_ms", from, to);
             int pi = rollupUpsert("PAGE",    "page_checks",     "ok",   "response_ms", from, to);
             int sc = rollupUpsert("SCRIPTED", "scripted_checks", "ok",  "duration_ms", from, to);
+            int ps = rollupUpsert("PAGESPEED", "pagespeed_checks", "ok", "response_ms", from, to);
             int u  = rollupUptime(from, to);
-            log.info("Daily rollup: port={}, ping={}, keyword={}, http={}, page={}, scripted={}, uptime={} ({} → {})", p, pg, k, h, pi, sc, u, from, to);
+            log.info("Daily rollup: port={}, ping={}, keyword={}, http={}, page={}, scripted={}, pagespeed={}, uptime={} ({} → {})",
+                    p, pg, k, h, pi, sc, ps, u, from, to);
         } catch (Exception e) {
             log.warn("Daily rollup failed: {}", e.getMessage());
         }
@@ -1282,6 +1330,7 @@ public class SchedulerService {
         total += Math.max(0, rollupInto(target, bucketCol, len, "HTTP",     "http_checks",     "ok",   "response_ms", from, to));
         total += Math.max(0, rollupInto(target, bucketCol, len, "PAGE",     "page_checks",     "ok",   "response_ms", from, to));
         total += Math.max(0, rollupInto(target, bucketCol, len, "SCRIPTED", "scripted_checks", "ok",   "duration_ms", from, to));
+        total += Math.max(0, rollupInto(target, bucketCol, len, "PAGESPEED", "pagespeed_checks", "ok", "response_ms", from, to));
         total += Math.max(0, rollupUptimeInto(target, bucketCol, len, from, to));
         return total;
     }
@@ -1726,9 +1775,34 @@ public class SchedulerService {
 
     // ── Status & helpers ──────────────────────────────────────────────────────
 
+    /**
+     * Sertifika süpürmesinin SIRADAKİ çalışma zamanı (UTC ISO) — "Sonraki kontrol" künyesinin
+     * tek kaynağı.
+     *
+     * <p>Cron ifadesi yapılandırmadan okunur, böylece saatlik varsayılan değiştirilirse ekran da
+     * onunla birlikte değişir. Ayrıştırılamayan ifade ekranı DÜŞÜRMEZ, null döner ve arayüz
+     * alanı hiç çizmez. Not: {@code @Scheduled} bu ifadeyi sunucunun varsayılan saat dilimiyle
+     * yorumluyor (zone verilmemiş), hesap da öyle yapılır — aksi halde gösterilen saat gerçek
+     * çalışma anından kayardı.
+     */
+    public String nextCertificateSweepAt() {
+        try {
+            String cron = (sweepCron == null || sweepCron.isBlank()) ? "0 0 * * * *" : sweepCron;
+            var next = org.springframework.scheduling.support.CronExpression.parse(cron)
+                    .next(java.time.ZonedDateTime.now());
+            return next == null ? null
+                    : next.withZoneSameInstant(java.time.ZoneOffset.UTC)
+                          .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
+        } catch (Exception e) {
+            log.debug("Sıradaki süpürme zamanı hesaplanamadı: {}", e.toString());
+            return null;
+        }
+    }
+
     public Map<String, Object> getStatus() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("last_run",       lastRun.get() != null ? lastRun.get().toString() : "Not yet run");
+        m.put("next_run",       nextCertificateSweepAt());
         m.put("active_domains", inventoryRepo.countByActiveTrue());
         m.put("schedule",       "Hourly (top of every hour) + stale sweep every 5 minutes");
         m.put("running",        running.get());
@@ -1748,10 +1822,9 @@ public class SchedulerService {
         schedulerMap.put("current_run_id", currentRunId.get());
         schedulerMap.put("last_run_id",    lastRunId.get());
         schedulerMap.put("last_run",       lastRun.get() != null ? lastRun.get().toString() : null);
-        schedulerMap.put("next_run",       LocalDateTime.now(ZoneOffset.UTC)
-                                               .truncatedTo(ChronoUnit.HOURS)
-                                               .plusHours(1)
-                                               .toString());
+        // Eskiden "sonraki saat başı" varsayılıyordu; cron yapılandırılabilir olduğu için
+        // (ör. yarım saatte bir) bu yanlış zaman gösterebiliyordu — artık ifadeden hesaplanıyor.
+        schedulerMap.put("next_run",       nextCertificateSweepAt());
         schedulerMap.put("instance_id",    INSTANCE_ID);
         schedulerMap.put("active_domains", inventoryRepo.countByActiveTrue());
         h.put("scheduler", schedulerMap);
@@ -1930,6 +2003,7 @@ public class SchedulerService {
         pingMonitorRepo.findAll().forEach(m -> live.add("ping:" + m.getId()));
         dnsMonitorRepo.findAll().forEach(m -> live.add("dns:" + m.getId()));
         pageMonitorRepo.findAll().forEach(m -> live.add("page:" + m.getId()));
+        pageSpeedMonitorRepo.findAll().forEach(m -> live.add("pagespeed:" + m.getId()));
         scriptedMonitorRepo.findAll().forEach(m -> live.add("scripted:" + m.getId()));
         return live;
     }
@@ -2793,6 +2867,251 @@ public class SchedulerService {
      *  tutup Tomcat worker'larını tüketebilir; derin crawl yalnız günlük runPageCrawls akışında koşar. */
     public Map<String, Object> triggerPageCheck(com.sitemonitor.model.PageMonitor m) {
         return recheckPage(m, true, "SINGLE_PAGE");
+    }
+
+    // ── Sayfa Hızı sweep ────────────────────────────────────────────────────────────────────
+    // Aralık tabanı 5 dk olduğu için sweep dakikada bir uyanıp yalnız vakti gelenleri ölçer (checkDue).
+    @Scheduled(fixedDelayString = "${site.monitor.pagespeed.interval-ms:60000}", initialDelayString = "120000")
+    public void runPageSpeedChecks() {
+        if (!appSettings.getBoolean("site.monitor.pagespeed.alert-enabled", true)) return;
+        if (!tryAcquireSchedulerLock("pagespeed-sweep", sweepLockTtlMinutes)) {
+            log.debug("Sayfa hızı sweep — lock başka instance'da, atlanıyor");
+            return;
+        }
+        try { runPageSpeedChecksLocked(); }
+        finally { releaseSchedulerLock("pagespeed-sweep"); }
+    }
+
+    private void runPageSpeedChecksLocked() {
+        List<com.sitemonitor.model.PageSpeedMonitor> monitors = pageSpeedMonitorRepo.findByActiveTrue();
+        if (orphanCleanupDue("pagespeed")) try {
+            java.util.Set<String> existingUrls = pageSpeedMonitorRepo.findAll().stream()
+                    .map(com.sitemonitor.model.PageSpeedMonitor::getUrl).filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toSet());
+            escalationService.resolveOrphanedPageSpeedAlerts(existingUrls);
+        } catch (Exception e) {
+            log.warn("Öksüz sayfa hızı alarmı temizliği başarısız: {}", e.getMessage());
+        }
+        if (monitors.isEmpty()) return;
+        int checked = 0;
+        // İKİ BAĞIMSIZ alarm tipi: DOWN (sayfa hiç alınamadı — kesinti) + SLOW (eşik aşıldı — kesinti DEĞİL).
+        // Ayrı sweep listeleri şart: aynı listeye konsalardı yavaş sayfa uptime'ı düşürürdü.
+        List<MonitoringOutageService.SweepItem> downSweep = new ArrayList<>();
+        List<MonitoringOutageService.SweepItem> slowSweep = new ArrayList<>();
+        List<Map.Entry<com.sitemonitor.model.PageSpeedMonitor, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
+        for (com.sitemonitor.model.PageSpeedMonitor m : monitors) {
+            if (!checkDue("pagespeed", m.getId(),
+                    com.sitemonitor.service.page.PageSpeedRules.clampInterval(m.getIntervalSeconds()))) continue;
+            started.add(Map.entry(m, startNetworkCheck(() -> recheckPageSpeed(m, false))));
+        }
+        for (var entry : started) {
+            com.sitemonitor.model.PageSpeedMonitor m = entry.getKey();
+            try {
+                addPageSpeedSweepItems(m, entry.getValue().get(), downSweep, slowSweep);
+                checked++;
+            } catch (Exception e) {
+                log.warn("Sayfa hızı ölçümü başarısız {}: {}", m.getUrl(), e.getMessage());
+            }
+        }
+        try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGESPEED_DOWN, downSweep); }
+        catch (Exception e) { log.warn("Sayfa hızı DOWN işlenemedi: {}", e.getMessage(), e); }
+        try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGESPEED_SLOW, slowSweep); }
+        catch (Exception e) { log.warn("Sayfa hızı SLOW işlenemedi: {}", e.getMessage(), e); }
+        log.debug("Sayfa hızı ölçümleri tamam: {} izleme", checked);
+    }
+
+    private void addPageSpeedSweepItems(com.sitemonitor.model.PageSpeedMonitor m, Map<String, Object> r,
+                                        List<MonitoringOutageService.SweepItem> downSweep,
+                                        List<MonitoringOutageService.SweepItem> slowSweep) {
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("monitor_name", m.getName());   // subject standardı: ad > çıplak URL
+        ctx.put("url", m.getUrl());
+        ctx.put("monitor_id", m.getId());
+        ctx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+        ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+        ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
+        ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+        if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+        ctx.put("pagespeed_status", r.get("status"));
+        for (String k : new String[]{"response_ms", "ttfb_ms", "total_bytes", "request_count",
+                "http_status", "bytes_truncated"}) {
+            if (r.get(k) != null) ctx.put(k, r.get(k));
+        }
+        if (r.get("breached") != null) ctx.put("breached_metrics", r.get("breached"));
+        if (r.get("heavy_rows") != null) { ctx.put("heavy_rows", r.get("heavy_rows")); ctx.put("heavy_total", r.get("heavy_total")); }
+
+        // Yapılandırma hatası (URL'de host yok) kesinti DEĞİL → sentetik "up" item: alarm açılmaz,
+        // teyit zinciri başlamaz, askıda kalmış eski alarm varsa sessizce kapanır.
+        boolean cfgError = Boolean.TRUE.equals(r.get("config_error"));
+        boolean up = cfgError || Boolean.TRUE.equals(r.get("reachable"));
+        boolean withinThresholds = cfgError || !up || Boolean.TRUE.equals(r.get("within_thresholds"));
+        String err = cfgError ? null : (String) r.get("error");
+
+        downSweep.add(new MonitoringOutageService.SweepItem(
+                EscalationService.TYPE_PAGESPEED_DOWN, m.getUrl(), "sayfa hızı",
+                up, err, new LinkedHashMap<>(ctx),
+                () -> { Map<String, Object> p = recheckPageSpeed(m, false);
+                        return Map.of("status", Boolean.TRUE.equals(p.get("config_error"))
+                                || Boolean.TRUE.equals(p.get("reachable")) ? "up" : "down"); }));
+
+        // Sayfa alınamıyorken AYRI bir yavaşlık alarmı üretme (withinThresholds yukarıda !up ile true'lanır):
+        // çökmüş bir sayfayı "yavaş" diye ikinci kez raporlamak gürültüdür.
+        String slowDetail = pageSpeedBreachDetail(r);
+        Map<String, Object> slowCtx = new LinkedHashMap<>(ctx);
+        slowCtx.put("detail", slowDetail);
+        slowSweep.add(new MonitoringOutageService.SweepItem(
+                EscalationService.TYPE_PAGESPEED_SLOW, m.getUrl(), slowDetail,
+                withinThresholds, withinThresholds ? null : slowDetail, slowCtx,
+                () -> { Map<String, Object> p = recheckPageSpeed(m, false);
+                        return Map.of("status", Boolean.TRUE.equals(p.get("config_error"))
+                                || !Boolean.TRUE.equals(p.get("reachable"))
+                                || Boolean.TRUE.equals(p.get("within_thresholds")) ? "up" : "down"); }));
+    }
+
+    /** Aşılan eşikleri okunur tek satıra çevirir (e-posta konusu ve alarm detayı). */
+    private static String pageSpeedBreachDetail(Map<String, Object> r) {
+        Object breached = r.get("breached");
+        if (!(breached instanceof List<?> list) || list.isEmpty()) return "eşikler içinde";
+        List<String> parts = new ArrayList<>();
+        for (Object b : list) {
+            switch (String.valueOf(b)) {
+                case "LOAD" -> parts.add("yükleme " + r.getOrDefault("response_ms", "?") + " ms");
+                case "TTFB" -> parts.add("TTFB " + r.getOrDefault("ttfb_ms", "?") + " ms");
+                // Kırpılmış ölçümde rakam alt sınırdır; e-postada da "≥" ile gösterilir ki
+                // alarmı okuyan kişi eksik bir sayıya bakıp yanlış karar vermesin.
+                case "SIZE" -> parts.add("boyut "
+                        + (Boolean.TRUE.equals(r.get("bytes_truncated")) ? "≥ " : "")
+                        + kb(r.get("total_bytes")) + " KB");
+                case "REQUESTS" -> parts.add(r.getOrDefault("request_count", "?") + " istek");
+                default -> parts.add(String.valueOf(b));
+            }
+        }
+        return String.join(" · ", parts) + " eşiği aştı";
+    }
+
+    private static String kb(Object bytes) {
+        if (!(bytes instanceof Number n)) return "?";
+        return String.valueOf(n.longValue() / 1024);
+    }
+
+    /**
+     * Bir sayfa hızı ölçümü: motoru çalıştırır, pagespeed_checks + pagespeed_resources + activity_log yazar.
+     * Döner: {status, reachable, within_thresholds, breached, error, http_status, response_ms, ttfb_ms,
+     * total_bytes, request_count}.
+     */
+    private Map<String, Object> recheckPageSpeed(com.sitemonitor.model.PageSpeedMonitor m, boolean manual) {
+        PageSpeedCheckerService.Result res = pageSpeedCheckerService.check(m);
+        boolean cfgError = "CONFIG_ERROR".equals(res.status());
+        boolean reachable = res.reachable();
+        String ts = ISO.format(Instant.now());
+
+        try {
+            PageSpeedCheck pc = new PageSpeedCheck();
+            pc.setMonitorId(m.getId());
+            pc.setCheckedAt(ts);
+            // ok = SAYFA ALINABİLDİ Mİ. Eşik aşımı burayı FALSE YAPMAZ — yoksa yavaş sayfa uptime'ı düşürürdü.
+            pc.setOk(reachable);
+            pc.setStatusCode(res.statusCode());
+            pc.setTtfbMs((int) res.ttfbMs());
+            pc.setHtmlMs((int) res.htmlMs());
+            pc.setResponseMs((int) res.totalMs());
+            pc.setTotalBytes(res.totalBytes());
+            pc.setRequestCount(res.requestCount());
+            pc.setFailedCount(res.failedCount());
+            pc.setCapped(res.capped());
+            pc.setBytesTruncated(res.bytesTruncated());
+            pc.setBreachedMetrics(com.sitemonitor.service.page.PageSpeedRules.joinBreaches(res.breached()));
+            pc.setErrorMessage(res.error());
+            pageSpeedCheckRepo.save(pc);
+            writeResourceBreakdown(m, pc, res, ts);
+        } catch (Exception e) {
+            log.warn("Sayfa hızı kaydı yazılamadı: {} — {}", m.getUrl(), e.getMessage());
+        }
+
+        Map<String, Object> activity = new LinkedHashMap<>();
+        activity.put("status", res.status());
+        activity.put("ok", reachable);
+        activity.put("http_status", res.statusCode());
+        activity.put("response_ms", res.totalMs());
+        activity.put("ttfb_ms", res.ttfbMs());
+        activity.put("total_bytes", res.totalBytes());
+        activity.put("request_count", res.requestCount());
+        if (res.error() != null) activity.put("error", res.error());
+        activityLog.recordCheck(ActivityLogService.PAGESPEED, m.getId(), m.getName(),
+                m.getUrl(), m.getTeamId(), manual, manual ? "manual" : "scheduler", activity);
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", res.status());
+        out.put("reachable", reachable);
+        out.put("within_thresholds", res.breached().isEmpty());
+        out.put("breached", res.breached());
+        if (cfgError) out.put("config_error", true);
+        out.put("error", res.error());
+        out.put("http_status", res.statusCode());
+        out.put("response_ms", res.totalMs());
+        out.put("ttfb_ms", res.ttfbMs());
+        out.put("total_bytes", res.totalBytes());
+        // Toplam ALT SINIR mı: arayüz "≥" ile gösteriyor, e-posta detayı da bunu okuyor.
+        out.put("bytes_truncated", res.bytesTruncated());
+        out.put("request_count", res.requestCount());
+        // E-posta "En ağır kaynaklar" bölümü: tab-delimited "tür\tURL\tKB" (tab URL'de asla geçmez).
+        if (!res.resources().isEmpty()) {
+            List<PageSpeedCheckerService.Measured> heavy = new ArrayList<>(res.resources());
+            heavy.sort((a, b) -> Long.compare(b.bytes(), a.bytes()));
+            StringBuilder rows = new StringBuilder();
+            int shown = 0;
+            for (PageSpeedCheckerService.Measured x : heavy) {
+                if (shown >= HEAVY_LIMIT) break;
+                rows.append(PageSpeedCheckerService.normalizeType(x.type())).append('\t')
+                    .append(x.url()).append('\t').append(x.bytes() / 1024).append('\n');
+                shown++;
+            }
+            out.put("heavy_rows", rows.toString().trim());
+            out.put("heavy_total", heavy.size());
+        }
+        return out;
+    }
+
+    private static final int HEAVY_LIMIT = 10;
+
+    /**
+     * Kaynak kırılımını yazar. LATEST satırları her ölçümde silinip yeniden yazılır (tablo izleme sayısıyla
+     * orantılı kalır, kontrol sayısıyla DEĞİL); eşik ihlali varsa aynı satırlar BREACH işaretiyle ikinci kez
+     * KALICI yazılır — "geçen salı neden yavaşladı" sorusu sonradan da cevaplanabilsin diye.
+     */
+    private void writeResourceBreakdown(com.sitemonitor.model.PageSpeedMonitor m, PageSpeedCheck pc,
+                                        PageSpeedCheckerService.Result res, String ts) {
+        pageSpeedResourceRepo.deleteByMonitorIdAndKeepReason(m.getId(), PageSpeedResource.KEEP_LATEST);
+        if (res.resources().isEmpty()) return;
+        boolean breached = !res.breached().isEmpty();
+        List<PageSpeedResource> rows = new ArrayList<>(res.resources().size() * (breached ? 2 : 1));
+        for (PageSpeedCheckerService.Measured x : res.resources()) {
+            rows.add(resourceRow(m, pc, x, ts, PageSpeedResource.KEEP_LATEST));
+            if (breached) rows.add(resourceRow(m, pc, x, ts, PageSpeedResource.KEEP_BREACH));
+        }
+        pageSpeedResourceRepo.saveAll(rows);
+    }
+
+    private static PageSpeedResource resourceRow(com.sitemonitor.model.PageSpeedMonitor m, PageSpeedCheck pc,
+                                                 PageSpeedCheckerService.Measured x, String ts, String reason) {
+        PageSpeedResource row = new PageSpeedResource();
+        row.setMonitorId(m.getId());
+        row.setCheckId(pc.getId());
+        row.setCheckedAt(ts);
+        row.setUrl(x.url());
+        row.setType(PageSpeedCheckerService.normalizeType(x.type()));
+        row.setBytes(x.bytes());
+        row.setDurationMs((int) x.durationMs());
+        row.setStatusCode(x.statusCode());
+        row.setThirdParty(x.thirdParty());
+        row.setTruncated(x.truncated());
+        row.setKeepReason(reason);
+        return row;
+    }
+
+    /** Manuel tetik (controller). */
+    public Map<String, Object> triggerPageSpeedCheck(com.sitemonitor.model.PageSpeedMonitor m) {
+        return recheckPageSpeed(m, true);
     }
 
     // ── Senaryo İzleme (10. tür) — k6 alt süreç sweep'i (bounded executor, scheduler'ı bloklamaz) ──────

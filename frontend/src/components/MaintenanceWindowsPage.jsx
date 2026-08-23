@@ -25,6 +25,7 @@ const MON_TYPES = [
   ['keyword', 'getKeywordMonitors', m => m.url],
   ['ping', 'getPingMonitors', m => m.host],
   ['page', 'getPageMonitors', m => m.url],
+  ['pagespeed', 'getPageSpeedMonitors', m => m.url],
   ['dns', 'getDnsMonitors', m => m.domain],
   ['domain', 'getDomainMonitors', m => m.domain],
   ['cert', 'getUptimeOverview', m => m.domain],

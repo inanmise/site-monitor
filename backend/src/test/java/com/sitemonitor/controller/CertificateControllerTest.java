@@ -23,11 +23,17 @@ import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(CertificateController.class)
+// Sağlık değerlendirmesi GERÇEK servisle test edilir: mock'lansaydı uç testi mock'u test etmiş
+// olurdu ve satır sözleşmesi (ROW_KEYS) hiçbir şeyi korumazdı. Tek bağımlılığı zaten @MockitoBean.
+@org.springframework.context.annotation.Import(com.sitemonitor.service.CertificateHealthService.class)
 class CertificateControllerTest {
 
     @Autowired
@@ -71,6 +77,19 @@ class CertificateControllerTest {
 
     @MockitoBean
     com.sitemonitor.service.AuditService auditService;
+
+    @MockitoBean
+    com.sitemonitor.repository.LatestCheckRepository latestCheckRepo;
+
+    @MockitoBean
+    com.sitemonitor.repository.PageMonitorRepository pageMonitorRepo;
+
+    /** Eşikleri okur; sağlık servisinin KENDİSİ mock DEĞİL (aşağıya bakın). */
+    @MockitoBean
+    com.sitemonitor.repository.AlertThresholdRepository thresholdRepo;
+
+    @MockitoBean
+    com.sitemonitor.service.CertificateAppLayerProbe appLayerProbe;
 
     // ── Auth guard ────────────────────────────────────────────────────────────
 
@@ -348,5 +367,188 @@ class CertificateControllerTest {
                 .andExpect(status().isForbidden());
 
         org.mockito.Mockito.verify(certService, org.mockito.Mockito.never()).getHistory(anyString(), anyInt());
+    }
+
+    // ── Sertifika sağlık kontrol listesi ────────────────────────────────────
+
+    private MockHttpSession teamSession(Long teamId) {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", Boolean.TRUE);
+        s.setAttribute("username", "u");
+        s.setAttribute("systemRole", "USER");
+        s.setAttribute("teamId", teamId);
+        s.setAttribute("viewTeamIds", java.util.List.of(teamId));
+        return s;
+    }
+
+    private com.sitemonitor.model.CertificateInventory invOf(Long teamId, Integer port) {
+        com.sitemonitor.model.CertificateInventory i = new com.sitemonitor.model.CertificateInventory();
+        i.setDomain("a.example.com");
+        i.setTeamId(teamId);
+        i.setPort(port);
+        return i;
+    }
+
+    private com.sitemonitor.model.LatestCheck latestOf() {
+        com.sitemonitor.model.LatestCheck lc = new com.sitemonitor.model.LatestCheck();
+        lc.setDomain("a.example.com");
+        lc.setDaysRemaining(120);
+        lc.setNotAfter("2027-01-01T00:00:00");
+        lc.setRevocationStatus("VALID");
+        lc.setChainStatus("VALID");
+        lc.setTrustStatus("TRUSTED");
+        lc.setDeploymentStatus("COMPLETE");
+        lc.setSignatureAlgorithm("SHA256withRSA");
+        lc.setPublicKeyAlgorithm("RSA");
+        lc.setPublicKeySize(2048);
+        lc.setTlsVersion("TLSv1.3");
+        lc.setCipherSuite("TLS_AES_256_GCM_SHA384");
+        lc.setCheckedAt("2026-08-23T10:00:00");
+        return lc;
+    }
+
+    @Test
+    @DisplayName("Sağlık ucu künye + satırları döner; sonraki kontrol zamanı zamanlayıcıdan gelir")
+    void health_returnsRowsAndSchedule() throws Exception {
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(java.util.Optional.of(invOf(5L, 8443)));
+        when(latestCheckRepo.findById("a.example.com")).thenReturn(java.util.Optional.of(latestOf()));
+        when(pageMonitorRepo.existsByUrlContainingIgnoreCaseAndActiveTrue("a.example.com")).thenReturn(false);
+        when(schedulerService.nextCertificateSweepAt()).thenReturn("2026-08-23T11:00:00");
+
+        mvc.perform(get("/api/certificates/a.example.com/health").session(teamSession(5L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.domain").value("a.example.com"))
+                .andExpect(jsonPath("$.data.port").value(8443))
+                .andExpect(jsonPath("$.data.next_check_at").value("2026-08-23T11:00:00"))
+                .andExpect(jsonPath("$.data.rows[0].key").value("expiry"))
+                .andExpect(jsonPath("$.data.rows[0].status").value("OK"))
+                // Backend CÜMLE kurmaz: metin anahtarı taşınır, arayüz i18n'den kurar.
+                .andExpect(jsonPath("$.data.rows[0].value_key").value("daysLeft"))
+                .andExpect(jsonPath("$.data.rows[0].action_key").value("none"));
+    }
+
+    @Test
+    @DisplayName("SÖZLEŞME: yanıttaki satır anahtarları çekirdeğin kanonik listesiyle birebir")
+    void health_rowKeysMatchCanonicalContract() throws Exception {
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(java.util.Optional.of(invOf(5L, 443)));
+        when(latestCheckRepo.findById("a.example.com")).thenReturn(java.util.Optional.of(latestOf()));
+
+        var body = mvc.perform(get("/api/certificates/a.example.com/health").session(teamSession(5L)))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        // Satır eklenip uçta unutulursa (ya da sıra kayarsa) burada yakalanır.
+        for (String key : com.sitemonitor.service.CertificateHealthService.ROW_KEYS) {
+            org.assertj.core.api.Assertions.assertThat(body)
+                    .as("kanonik satır yanıtta yok: %s", key)
+                    .contains("\"key\":\"" + key + "\"");
+        }
+    }
+
+    @Test
+    @DisplayName("IDOR: yabancı takımın sertifika sağlığı 404 döner ve güvenlik olayı yazılır")
+    void health_foreignTeam_isNotFound() throws Exception {
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(java.util.Optional.of(invOf(9L, 443)));
+
+        mvc.perform(get("/api/certificates/a.example.com/health").session(teamSession(1L)))
+                .andExpect(status().isNotFound());
+
+        verify(auditService).recordSecurityEvent(eq("CERT_HEALTH_DENIED"), any(), any(),
+                eq("CERTIFICATE"), eq("a.example.com"), anyString());
+        verify(latestCheckRepo, never()).findById(anyString());
+    }
+
+    @Test
+    @DisplayName("Envanterde olmayan domain 404 — güvenlik olayı YAZILMAZ (saldırı değil, yok)")
+    void health_unknownDomain_isNotFound() throws Exception {
+        when(inventoryRepo.findByDomain("yok.example.com")).thenReturn(java.util.Optional.empty());
+
+        mvc.perform(get("/api/certificates/yok.example.com/health").session(teamSession(5L)))
+                .andExpect(status().isNotFound());
+
+        verify(auditService, never()).recordSecurityEvent(anyString(), any(), any(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("Hiç kontrol edilmemiş domain: künye boş ama uç ÇÖKMEZ")
+    void health_neverChecked_returnsEmptyMeta() throws Exception {
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(java.util.Optional.of(invOf(5L, 443)));
+        when(latestCheckRepo.findById("a.example.com")).thenReturn(java.util.Optional.empty());
+
+        mvc.perform(get("/api/certificates/a.example.com/health").session(teamSession(5L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.checked_at").doesNotExist())
+                .andExpect(jsonPath("$.data.evaluated_count").value(0));
+    }
+
+    @Test
+    @DisplayName("Tazeleme envanter PORTUYLA canlı kontrol koşar, kaydeder ve denetime yazar")
+    void healthRefresh_usesInventoryPort() throws Exception {
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(java.util.Optional.of(invOf(5L, 8443)));
+        when(latestCheckRepo.findById("a.example.com")).thenReturn(java.util.Optional.of(latestOf()));
+        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any()))
+                .thenReturn(new java.util.LinkedHashMap<>(java.util.Map.of("status", "valid")));
+
+        mvc.perform(post("/api/certificates/a.example.com/health/refresh").session(teamSession(5L)))
+                .andExpect(status().isOk());
+
+        verify(checkerService).check(eq("a.example.com"), eq(8443), anyBoolean(), any());
+        verify(certService).saveResult(any());
+        verify(auditService).recordAction(eq("CERT_HEALTH_REFRESH"), any(), eq("CERTIFICATE"),
+                eq("a.example.com"), any(), any());
+    }
+
+    @Test
+    @DisplayName("Tazeleme SOĞUMA süresine tabi — düğmeye üst üste basmak el sıkışma yağmuru olmaz")
+    void healthRefresh_isRateLimited() throws Exception {
+        when(inventoryRepo.findByDomain("cool.example.com")).thenReturn(java.util.Optional.of(invOf(5L, 443)));
+        when(latestCheckRepo.findById("cool.example.com")).thenReturn(java.util.Optional.empty());
+        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any()))
+                .thenReturn(new java.util.LinkedHashMap<>(java.util.Map.of("status", "valid")));
+
+        mvc.perform(post("/api/certificates/cool.example.com/health/refresh").session(teamSession(5L)))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/certificates/cool.example.com/health/refresh").session(teamSession(5L)))
+                .andExpect(status().is(429));
+
+        verify(checkerService, times(1)).check(eq("cool.example.com"), anyInt(), anyBoolean(), any());
+    }
+
+    @Test
+    @DisplayName("IDOR: yabancı takımda tazeleme de 404 ve canlı kontrol HİÇ koşmaz")
+    void healthRefresh_foreignTeam_isBlocked() throws Exception {
+        when(inventoryRepo.findByDomain("b.example.com")).thenReturn(java.util.Optional.of(invOf(9L, 443)));
+
+        mvc.perform(post("/api/certificates/b.example.com/health/refresh").session(teamSession(1L)))
+                .andExpect(status().isNotFound());
+
+        verify(checkerService, never()).check(eq("b.example.com"), anyInt(), anyBoolean(), any());
+    }
+
+    @Test
+    @DisplayName("check-preview envanter PORTUNU kullanır (443 sabiti kaldırıldı)")
+    void preview_usesInventoryPort() throws Exception {
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(java.util.Optional.of(invOf(5L, 8443)));
+        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any()))
+                .thenReturn(new java.util.LinkedHashMap<>(java.util.Map.of("status", "valid")));
+
+        mvc.perform(get("/api/check-preview/a.example.com").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.port").value(8443));
+
+        verify(checkerService).check(eq("a.example.com"), eq(8443), anyBoolean(), any());
+    }
+
+    @Test
+    @DisplayName("check-preview envanterde OLMAYAN domainde 443'e düşer (SSL Checker aracı çalışsın)")
+    void preview_unknownDomainFallsBackTo443() throws Exception {
+        when(inventoryRepo.findByDomain("serbest.example.com")).thenReturn(java.util.Optional.empty());
+        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any()))
+                .thenReturn(new java.util.LinkedHashMap<>(java.util.Map.of("status", "valid")));
+
+        mvc.perform(get("/api/check-preview/serbest.example.com").session(authSession()))
+                .andExpect(status().isOk());
+
+        verify(checkerService).check(eq("serbest.example.com"), eq(443), anyBoolean(), any());
     }
 }

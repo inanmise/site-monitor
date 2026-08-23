@@ -123,6 +123,9 @@ public class EmailTemplateBuilder {
     private static boolean isScripted(String t) {
         return "SCRIPTED_FAIL".equals(t) || "SCRIPTED_SLOW".equals(t);
     }
+    private static boolean isPageSpeed(String t) {
+        return "PAGESPEED_DOWN".equals(t) || "PAGESPEED_SLOW".equals(t);
+    }
     /** Sertifika alarmı mı (EXPIRY/REVOKED/MISMATCH/CHAIN_BROKEN — "dashboard" sekmesine düşen default dal).
      *  Paket görünürlüğü: {@code EscalationService} envanter zenginleştirmesini aynı tanıma bağlar. */
     static boolean isCert(String t) { return tabFor(t).equals("dashboard"); }
@@ -143,6 +146,7 @@ public class EmailTemplateBuilder {
         if ("KEYWORD".equals(t)) return "keyword";
         if ("PING_DOWN".equals(t)) return "ping";
         if (isPage(t)) return "page";
+        if (isPageSpeed(t)) return "pagespeed";
         if (isScripted(t)) return "scripted";
         return "dashboard";   // sertifika
     }
@@ -749,6 +753,7 @@ public class EmailTemplateBuilder {
         if ("KEYWORD".equals(t)) return "Keyword İzleme";
         if ("PING_DOWN".equals(t)) return "Ping İzleme";
         if (isPage(t)) return "Sayfa Bütünlüğü İzleme";
+        if (isPageSpeed(t)) return "Sayfa Hızı İzleme";
         if (isScripted(t)) return "Sentetik İzleme";
         return "Sertifika İzleme";
     }

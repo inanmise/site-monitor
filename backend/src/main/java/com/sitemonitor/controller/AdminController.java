@@ -1226,24 +1226,11 @@ public class AdminController {
     }
 
     /**
-     * CSV hücresi — kaçışlama VE formül enjeksiyonu koruması.
-     *
-     * <p>{@code =}, {@code +}, {@code -}, {@code @} (ve sekme/CR) ile BAŞLAYAN bir hücreyi Excel
-     * FORMÜL sayar: {@code =cmd|'...'!A1} biçiminde bir domain adı ya da alarm mesajı, dosyayı
-     * açan kişinin makinesinde komut çalıştırma denemesine dönüşebilir. Alarm alanları dış
-     * veriden besleniyor (domain, message); başa tek tırnak konarak metin olduğu sabitleniyor.
+     * CSV hücresi — kaçışlama VE formül enjeksiyonu koruması; kural {@link com.sitemonitor.util.Csv}
+     * içinde tek yerde durur (denetim dışa aktarımı ve kontrol geçmişi de aynı kuralı kullanır).
      */
     static String csvCell(String s) {
-        if (s == null || s.isEmpty()) return "";
-        String v = s;
-        char c0 = v.charAt(0);
-        if (c0 == '=' || c0 == '+' || c0 == '-' || c0 == '@' || c0 == '\t' || c0 == '\r') {
-            v = "'" + v;
-        }
-        boolean needQuote = v.indexOf(',') >= 0 || v.indexOf('\"') >= 0
-                || v.indexOf('\n') >= 0 || v.indexOf('\r') >= 0 || v.indexOf(';') >= 0;
-        v = v.replace("\"", "\"\"");
-        return needQuote ? "\"" + v + "\"" : v;
+        return com.sitemonitor.util.Csv.cell(s);
     }
 
     /**

@@ -10,6 +10,7 @@ import SqlRowDetailModal from './SqlRowDetailModal.jsx'
 import TableDetailsModal from './TableDetailsModal.jsx'
 import SchemaDiagramModal from './SchemaDiagramModal.jsx'
 import { Spinner } from '../ui/Progress.jsx'
+import { csvCell } from '../../utils/csv.js'
 
 const DEFAULT_QUERY = ''
 
@@ -129,13 +130,9 @@ export default function SqlPlayground() {
   const exportCsv = () => {
     if (!result?.rows?.length) return
     const cols = Object.keys(result.rows[0])
-    const escape = (v) => {
-      const s = v == null ? '' : String(v)
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
-    }
     const csv = [
-      cols.join(','),
-      ...result.rows.map(r => cols.map(c => escape(r[c])).join(',')),
+      cols.map(csvCell).join(','),
+      ...result.rows.map(r => cols.map(c => csvCell(r[c])).join(',')),
     ].join('\n')
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)

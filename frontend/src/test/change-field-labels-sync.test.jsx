@@ -19,6 +19,7 @@ const BACKEND = path.resolve(__dirname, '../../../backend/src/main/java/com/site
 const SOURCES = [
   { file: 'controller/MonitoringController.java', name: 'MON_FIELDS' },
   { file: 'controller/MonitoringController.java', name: 'SCRIPTED_FIELDS' },
+  { file: 'controller/MonitoringController.java', name: 'PAGESPEED_FIELDS' },
   { file: 'controller/AdminController.java', name: 'INVENTORY_FIELDS' },
   { file: 'controller/MaintenanceController.java', name: 'MAINTENANCE_FIELDS' },
 ]

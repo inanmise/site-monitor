@@ -1,41 +1,31 @@
 package com.sitemonitor.service;
 
-import jakarta.annotation.PostConstruct;
-import jakarta.annotation.PreDestroy;
+import com.sitemonitor.service.page.PageFetchCore;
+import com.sitemonitor.service.page.PageFetchCore.Resource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.jsoup.Jsoup;
-import org.jsoup.nodes.Document;
-import org.jsoup.nodes.Element;
 import org.springframework.stereotype.Service;
 
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.X509TrustManager;
-import java.io.InputStream;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.security.SecureRandom;
-import java.security.cert.X509Certificate;
-import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.regex.Pattern;
+
+import static com.sitemonitor.service.page.PageFetchCore.hostOf;
+import static com.sitemonitor.service.page.PageFetchCore.isHttp;
+import static com.sitemonitor.service.page.PageFetchCore.originOf;
+import static com.sitemonitor.service.page.PageFetchCore.resolve;
+import static com.sitemonitor.service.page.PageFetchCore.sanitize;
+import static com.sitemonitor.service.page.PageFetchCore.stripFragment;
 
 /**
  * Sayfa Bütünlüğü kontrol motoru — bir web sayfasının KOD SEVİYESİNDE sağlıklı yüklendiğini doğrular:
@@ -52,26 +42,19 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class PageCheckerService {
 
-    /** Ana sayfa gövde okuma tavanı (OOM koruması + hash için yeterli). */
-    private static final int MAX_BODY_BYTES = 2_000_000;
-    /** Tek SAYFANIN doğrulanacak azami (tekil) kaynağı — tek-pod yük koruması; aşılırsa WARN + kırpılır. */
-    private static final int MAX_RESOURCES_PER_CHECK = 500;
     /** Bir CRAWL genelinde toplam doğrulanacak azami kaynak — bellek + DB-insert patlamasını sınırlar (M2). */
-    private static final int MAX_TOTAL_RESOURCES = 1500;
-    /** Manuel redirect zinciri üst sınırı. */
-    private static final int MAX_REDIRECTS = 5;
+    private static final int MAX_TOTAL_RESOURCES = PageFetchCore.MAX_TOTAL_RESOURCES;
     /** Tarayıcı-uyumlu varsayılan UA (Mozilla-prefix → naif WAF/UA filtreleri 403/406 üretmez; kimlik + iletişim
      *  korunur). Admin {@code site.monitor.page.user-agent} ile override edebilir (F4). */
     private static final String DEFAULT_UA = "Mozilla/5.0 (compatible; SiteMonitor-PageCheck/1.0; +https://sitemonitor)";
     /** robots.txt User-agent eşleşmesi için sabit bot token'ı (UA browser-y olsa da robots bunu tanır). */
     private static final String BOT_TOKEN = "sitemonitor-pagecheck";
 
-    private final SsrfGuard ssrfGuard;
+    /** Ağ davranışı (trust-all TLS, hop-başına SSRF, gövde tavanı) ve jsoup envanteri burada — Sayfa Hızı
+     *  izlemesiyle PAYLAŞILIR; güvenlik kuralı olduğu için ikinci bir kopyası olmamalı. */
+    private final PageFetchCore core;
     private final PublicSuffixService publicSuffixService;
     private final AppSettingsService appSettings;   // page.user-agent canlı okuma (F4)
-    private HttpClient httpClient;
-    /** Kaynak doğrulama fan-out'u için sanal-thread executor (I/O-bound; concurrency Semaphore ile sınırlanır). */
-    private ExecutorService resourceExecutor;
 
     // ── Sonuç tipleri ────────────────────────────────────────────────────────
     public record ResourceIssue(String resourceUrl, String resourceType, String sourcePage,
@@ -82,33 +65,6 @@ public class PageCheckerService {
                                   int mixedContentCount,
                                   int pagesCrawled, String contentHash, Long bodyBytes, String error,
                                   List<ResourceIssue> issues) {}
-
-    private record FetchResult(int status, long durationMs, byte[] body, String error, boolean blocked) {}
-
-    @PostConstruct
-    public void init() {
-        HttpClient.Builder b = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .followRedirects(HttpClient.Redirect.NEVER);   // redirect'leri manuel takip → her hop SSRF'den geçsin
-        try {
-            SSLContext ssl = SSLContext.getInstance("TLS");
-            ssl.init(null, new TrustManager[]{ new X509TrustManager() {
-                public void checkClientTrusted(X509Certificate[] c, String a) {}
-                public void checkServerTrusted(X509Certificate[] c, String a) {}
-                public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
-            }}, new SecureRandom());
-            b.sslContext(ssl);
-        } catch (Exception e) {
-            log.warn("Page checker trust-all SSL kurulamadı, varsayılan kullanılacak: {}", e.getMessage());
-        }
-        httpClient = b.build();
-        resourceExecutor = Executors.newVirtualThreadPerTaskExecutor();
-    }
-
-    @PreDestroy
-    public void shutdown() {
-        if (resourceExecutor != null) resourceExecutor.shutdownNow();
-    }
 
     // ── Giriş noktaları ──────────────────────────────────────────────────────
 
@@ -146,7 +102,7 @@ public class PageCheckerService {
                                             Excludes excludes, long deadline) {
         long start = System.currentTimeMillis();
         String rootHost = hostOf(url);
-        FetchResult main = fetchFollowing(url, "GET", true, timeoutMs);
+        PageFetchCore.Fetch main = fetchFollowing(url, "GET", true, timeoutMs);
         if (main.blocked() || main.body() == null || main.status() >= 400 || main.status() == 0) {
             long ms = System.currentTimeMillis() - start;
             String err = main.error() != null ? main.error()
@@ -170,7 +126,7 @@ public class PageCheckerService {
         boolean pageHttps = url.toLowerCase(Locale.ROOT).startsWith("https://");
         Set<String> disallow = fetchRobotsDisallow(url, timeoutMs);
 
-        FetchResult first = fetchFollowing(url, "GET", true, timeoutMs);
+        PageFetchCore.Fetch first = fetchFollowing(url, "GET", true, timeoutMs);
         if (first.blocked() || first.body() == null || first.status() >= 400 || first.status() == 0) {
             long ms = System.currentTimeMillis() - start;
             return new PageCheckResult("DOWN", false, first.status() == 0 ? null : first.status(), ms,
@@ -202,7 +158,7 @@ public class PageCheckerService {
             if (excludes.matches(pageUrl) || isDisallowed(pageUrl, disallow)) continue;
             visited.add(pageUrl);
 
-            FetchResult pr = pageUrl.equals(url) ? first : fetchFollowing(pageUrl, "GET", true, timeoutMs);
+            PageFetchCore.Fetch pr = pageUrl.equals(url) ? first : fetchFollowing(pageUrl, "GET", true, timeoutMs);
             if (pr.blocked() || pr.body() == null || pr.status() >= 400 || pr.status() == 0) {
                 // Crawl sırasında erişilemeyen İÇ sayfa = kırık link (kaynak sayfası bir üst adımda kaydedildi)
                 continue;
@@ -240,83 +196,11 @@ public class PageCheckerService {
         return summarize(allIssues, totalResources, Math.max(1, pagesCrawled), first.status(), ms, rootHash, rootBytes);
     }
 
-    // ── Kaynak envanteri (jsoup) ─────────────────────────────────────────────
-    private record Resource(String url, String type, String sourcePage) {}
-
+    // ── Kaynak envanteri (jsoup) — PageFetchCore'a devredildi ────────────────
+    // rootHost parametresi burada hiç kullanılmıyordu (ölü parametre); çekirdek imzasında yok.
     private List<Resource> inventory(byte[] bytes, String baseUrl, String sourcePage, String rootHost,
                                      Excludes excludes) {
-        Document doc;
-        try {
-            // Bayt-stream + null charset → jsoup <meta charset>/BOM'dan charset'i otomatik tespit eder (L1);
-            // parse hatasında (bozuk/dev HTML) boş envanter (L2 — controller'a exception sızmaz).
-            doc = Jsoup.parse(new java.io.ByteArrayInputStream(bytes), null, baseUrl);
-        } catch (Exception e) {
-            log.debug("HTML parse edilemedi {}: {}", sanitize(sourcePage), e.getMessage());
-            return List.of();
-        }
-        LinkedHashMap<String, Resource> out = new LinkedHashMap<>();   // absUrl → Resource (dedup, sıra korunur)
-        addAll(out, doc, "img[src]", "src", "IMG", sourcePage);
-        addSrcset(out, doc, sourcePage);
-        addAll(out, doc, "link[rel=stylesheet][href]", "href", "CSS", sourcePage);
-        addAll(out, doc, "script[src]", "src", "JS", sourcePage);
-        addAll(out, doc, "iframe[src]", "src", "IFRAME", sourcePage);
-        addAll(out, doc, "link[rel~=(?i)icon][href]", "href", "FAVICON", sourcePage);
-        addAll(out, doc, "link[rel=preload][as=font][href]", "href", "FONT", sourcePage);
-        addAll(out, doc, "a[href]", "href", "LINK", sourcePage);
-        List<Resource> list = new ArrayList<>();
-        for (Resource r : out.values()) {
-            if (!isHttp(r.url()) || excludes.matches(r.url())) continue;
-            // Sayfanın kendisine çözülen link (a[href="#x"], href="") — gereksiz self-request (L7)
-            if ("LINK".equals(r.type()) && stripFragment(r.url()).equalsIgnoreCase(sourcePage)) continue;
-            list.add(r);
-            if (list.size() >= MAX_RESOURCES_PER_CHECK) {
-                log.warn("Sayfa {} — {} kaynak limitine ulaşıldı, kalanlar atlandı", sanitize(sourcePage), MAX_RESOURCES_PER_CHECK);
-                break;
-            }
-        }
-        return list;
-    }
-
-    private void addAll(Map<String, Resource> out, Document doc, String css, String attr, String type, String src) {
-        for (Element el : doc.select(css)) {
-            String abs = el.absUrl(attr);
-            if (abs == null || abs.isBlank()) abs = el.attr(attr);   // parse edilemezse ham değer (mixed/broken tespiti için)
-            abs = normalizeUrl(abs);
-            if (abs.isBlank()) continue;
-            out.putIfAbsent(abs, new Resource(abs, type, src));
-        }
-    }
-
-    /** HTML'den gelen URL'de URI.create'i PATLATAN kodlanmamış ASCII karakterleri (boşluk " < > | { } ^ \ [ ] `)
-     *  yüzde-kodlar — tarayıcı da böyle yapar; aksi halde host çözülemez → yanlış "kırık" (akbank
-     *  'urune davet-main.jpg' vakası + tracking URL'lerindeki [ | ). '%' ve non-ASCII'ye DOKUNMAZ (Java non-ASCII'yi
-     *  tolere eder; zaten-kodlanmış %XX bozulmaz). */
-    private static final String URL_UNSAFE = " \"<>|{}^`\\[]";
-    static String normalizeUrl(String url) {
-        if (url == null) return "";
-        boolean needs = false;
-        for (int i = 0; i < url.length(); i++) if (URL_UNSAFE.indexOf(url.charAt(i)) >= 0) { needs = true; break; }
-        if (!needs) return url;
-        StringBuilder sb = new StringBuilder(url.length() + 12);
-        for (int i = 0; i < url.length(); i++) {
-            char c = url.charAt(i);
-            if (URL_UNSAFE.indexOf(c) >= 0) sb.append('%').append(Character.forDigit((c >> 4) & 0xF, 16))
-                    .append(Character.forDigit(c & 0xF, 16));
-            else sb.append(c);
-        }
-        return sb.toString();
-    }
-
-    /** srcset: "url 1x, url2 2w" listesindeki her aday URL. */
-    private void addSrcset(Map<String, Resource> out, Document doc, String src) {
-        for (Element el : doc.select("img[srcset], source[srcset]")) {
-            for (String cand : el.attr("srcset").split(",")) {
-                String u = cand.trim().split("\\s+")[0];
-                if (u.isBlank()) continue;
-                String abs = normalizeUrl(el.root().baseUri().isBlank() ? u : resolve(el.baseUri(), u));
-                out.putIfAbsent(abs, new Resource(abs, "IMG", src));
-            }
-        }
+        return core.inventory(bytes, baseUrl, sourcePage, excludes::matches);
     }
 
     // ── Kaynak doğrulama ─────────────────────────────────────────────────────
@@ -336,7 +220,7 @@ public class PageCheckerService {
                     Thread.currentThread().interrupt();
                     return null;
                 }
-            }, resourceExecutor));
+            }, core.executor()));
         }
         List<ResourceIssue> issues = new ArrayList<>();
         for (CompletableFuture<ResourceIssue> f : futures) {
@@ -398,7 +282,7 @@ public class PageCheckerService {
         if (isMixedContent(pageHttps, r.type(), r.url())) {
             return new ResourceIssue(r.url(), r.type(), r.sourcePage(), "MIXED_CONTENT", firstParty, null, null);
         }
-        FetchResult res = verifyWithRetry(r.url(), timeoutMs);
+        PageFetchCore.Fetch res = verifyWithRetry(r.url(), timeoutMs);
         if (res.blocked()) {
             return new ResourceIssue(r.url(), r.type(), r.sourcePage(), "BROKEN", firstParty, null, res.durationMs());
         }
@@ -417,8 +301,8 @@ public class PageCheckerService {
     }
 
     /** HEAD → (405/501 ya da transport hatasında) GET; kırık/timeout kararı için kısa aralıklı tek retry. */
-    private FetchResult verifyWithRetry(String url, int timeoutMs) {
-        FetchResult r = verifyOnce(url, timeoutMs);
+    private PageFetchCore.Fetch verifyWithRetry(String url, int timeoutMs) {
+        PageFetchCore.Fetch r = verifyOnce(url, timeoutMs);
         boolean bad = r.blocked() || r.status() == 0 || r.status() >= 400;
         if (r.blocked() || !bad) return r;   // engellendi ya da zaten iyi → retry yok
         try { Thread.sleep(300); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return r; }
@@ -426,8 +310,8 @@ public class PageCheckerService {
         return verifyOnce(url, timeoutMs);
     }
 
-    private FetchResult verifyOnce(String url, int timeoutMs) {
-        FetchResult head = fetchFollowing(url, "HEAD", false, timeoutMs);
+    private PageFetchCore.Fetch verifyOnce(String url, int timeoutMs) {
+        PageFetchCore.Fetch head = fetchFollowing(url, "HEAD", false, timeoutMs);
         if (head.blocked()) return head;
         // HEAD çoğu WAF/CDN/ASP.NET(.aspx) sunucusunda YANLIŞ ele alınır (405/501 değil; 400/403/404/500 dönebilir
         // ama aynı kaynak GET'te 200'dür). Bu yüzden HEAD transport hatası (0) VEYA herhangi bir >=400 dönerse
@@ -438,57 +322,12 @@ public class PageCheckerService {
         return head;
     }
 
-    // ── Manuel redirect takipli fetch (her hop SSRF'den geçer) ───────────────
-    private FetchResult fetchFollowing(String url, String method, boolean wantBody, int timeoutMs) {
-        long start = System.currentTimeMillis();
-        String current = url;
-        try {
-            for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
-                String host = hostOf(current);
-                try {
-                    if (host == null) throw new SsrfGuard.BlockedException("geçersiz URL: " + current);
-                    // SSRF (her hop). NOT (M4 residual): validate() çözülen IP'leri döndürür ama HttpClient host'u
-                    // yeniden çözer → TOCTOU/DNS-rebind penceresi. Metadata/loopback/link-local HER ZAMAN bloklu +
-                    // JVM pozitif-DNS cache pratik riski azaltır; IP-pinning (NetworkResolver) bilinçli uygulanmadı
-                    // (HTTPS SNI karmaşası + kaynak-başı maliyet). Ops: networkaddress.cache.ttl'i 0'a çekmeyin.
-                    ssrfGuard.validate(host);
-                } catch (SsrfGuard.BlockedException be) {
-                    return new FetchResult(0, System.currentTimeMillis() - start, null, be.getMessage(), true);
-                }
-                HttpRequest.Builder rb = HttpRequest.newBuilder()
-                        .uri(URI.create(current))
-                        .timeout(Duration.ofMillis(Math.max(1000, timeoutMs)))
-                        // Tarayıcı-benzeri header seti (F4): katı sunucular Accept/Accept-Language yoksa 406/403 döner.
-                        .header("User-Agent", userAgent())
-                        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-                        .header("Accept-Language", "tr,en;q=0.9");
-                HttpRequest req = "HEAD".equals(method)
-                        ? rb.method("HEAD", HttpRequest.BodyPublishers.noBody()).build()
-                        : rb.GET().build();
-                HttpResponse<InputStream> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofInputStream());
-                int sc = resp.statusCode();
-                if (sc >= 300 && sc < 400) {
-                    String loc = resp.headers().firstValue("location").orElse(null);
-                    try (InputStream is = resp.body()) { is.readNBytes(4096); } catch (Exception ignore) {}
-                    if (loc == null || loc.isBlank()) {   // yönlendirme hedefi yok → olduğu gibi dön
-                        return new FetchResult(sc, System.currentTimeMillis() - start, null, null, false);
-                    }
-                    current = resolve(current, loc);
-                    if ("HEAD".equals(method) && sc == 303) method = "GET";   // 303 See Other → GET
-                    continue;
-                }
-                byte[] body = null;
-                try (InputStream is = resp.body()) {
-                    if (wantBody) body = is.readNBytes(MAX_BODY_BYTES);
-                    else is.readNBytes(4096);   // gövdeyi tüket (bağlantı iadesi)
-                }
-                return new FetchResult(sc, System.currentTimeMillis() - start, body, null, false);
-            }
-            return new FetchResult(0, System.currentTimeMillis() - start, null, "çok fazla yönlendirme", false);
-        } catch (Exception e) {
-            String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-            return new FetchResult(0, System.currentTimeMillis() - start, null, msg, false);
-        }
+    // ── Fetch — PageFetchCore'a devredildi (trust-all TLS + hop-başına SSRF orada) ────
+    private PageFetchCore.Fetch fetchFollowing(String url, String method, boolean wantBody, int timeoutMs) {
+        PageFetchCore.FetchOptions opts = wantBody
+                ? PageFetchCore.FetchOptions.body(timeoutMs, userAgent())
+                : PageFetchCore.FetchOptions.probe(timeoutMs, userAgent());
+        return core.fetch(url, method, opts);
     }
 
     // ── robots.txt / sitemap ─────────────────────────────────────────────────
@@ -496,7 +335,7 @@ public class PageCheckerService {
         Set<String> disallow = new HashSet<>();
         try {
             String robots = originOf(url) + "/robots.txt";
-            FetchResult r = fetchFollowing(robots, "GET", true, timeoutMs);
+            PageFetchCore.Fetch r = fetchFollowing(robots, "GET", true, timeoutMs);
             if (r.body() == null || r.status() >= 400) return disallow;
             boolean applies = false;   // yalnız "*" veya bizim UA grubunu uygula
             for (String line : new String(r.body(), StandardCharsets.UTF_8).split("\\r?\\n")) {
@@ -520,7 +359,7 @@ public class PageCheckerService {
     private List<String> fetchSitemapSeeds(String url, int timeoutMs, String rootHost) {
         List<String> seeds = new ArrayList<>();
         try {
-            FetchResult r = fetchFollowing(originOf(url) + "/sitemap.xml", "GET", true, timeoutMs);
+            PageFetchCore.Fetch r = fetchFollowing(originOf(url) + "/sitemap.xml", "GET", true, timeoutMs);
             if (r.body() == null || r.status() >= 400) return seeds;
             var m = Pattern.compile("<loc>\\s*(.*?)\\s*</loc>", Pattern.CASE_INSENSITIVE).matcher(
                     new String(r.body(), StandardCharsets.UTF_8));
@@ -602,51 +441,15 @@ public class PageCheckerService {
         return false;
     }
 
-    private static boolean isHttp(String url) {
-        String l = url.toLowerCase(Locale.ROOT);
-        return l.startsWith("http://") || l.startsWith("https://");
-    }
-
-    private static String hostOf(String url) {
-        try { return URI.create(url).getHost(); } catch (Exception e) { return null; }
-    }
-
-    /** Log-forging önleme (L4): loglanan URL/host'taki CR/LF'yi boşlukla değiştir (flat-file satır enjeksiyonu). */
-    private static String sanitize(String s) { return s == null ? null : s.replace('\n', ' ').replace('\r', ' '); }
-
     /** İstek User-Agent'ı — canlı config (F4); boş/null ise tarayıcı-uyumlu varsayılan. */
     private String userAgent() {
         String ua = appSettings.getString("site.monitor.page.user-agent", DEFAULT_UA);
         return (ua == null || ua.isBlank()) ? DEFAULT_UA : ua;
     }
 
-    private static String originOf(String url) {
-        try {
-            URI u = URI.create(url);
-            int port = u.getPort();
-            return u.getScheme() + "://" + u.getHost() + (port > 0 ? ":" + port : "");
-        } catch (Exception e) { return url; }
-    }
-
-    private static String resolve(String base, String ref) {
-        try { return URI.create(base).resolve(ref).toString(); } catch (Exception e) { return ref; }
-    }
-
-    private static String stripFragment(String url) {
-        int h = url.indexOf('#');
-        return h >= 0 ? url.substring(0, h) : url;
-    }
-
-    /** Birinci-taraf: aynı host ya da aynı KAYITLI DOMAIN (eTLD+1, PSL). www/cdn alt-alanları dahil.
-     *  PSL şart: naif "son 2 etiket" .com.tr/.co.uk gibi çok-etiketli suffix'lerde a.com.tr ile b.com.tr'yi
-     *  yanlışlıkla aynı-site sayar → crawl kapsam kaçışı + 3.-taraf'ın 1.-taraf sanılması (yanlış alarm). */
+    /** Birinci-taraf ayrımı PSL servisinde — Sayfa Hızı izlemesiyle ORTAK kural (tek kopya). */
     private boolean sameSite(String host, String rootHost) {
-        if (host == null || rootHost == null) return false;
-        if (host.equalsIgnoreCase(rootHost)) return true;
-        String a = publicSuffixService.registrableDomain(host);
-        String b = publicSuffixService.registrableDomain(rootHost);
-        if (a != null && b != null) return a.equalsIgnoreCase(b);
-        return false;   // PSL çözemezse (salt-suffix vb.) host eşitliği yukarıda kontrol edildi → farklı say
+        return publicSuffixService.sameSite(host, rootHost);
     }
 
     private static String sha256(byte[] data) {

@@ -65,6 +65,25 @@ public class PublicSuffixService {
         return sb.toString();
     }
 
+    /**
+     * Birinci-taraf mı: aynı host ya da aynı KAYITLI DOMAIN (eTLD+1). www/cdn alt-alanları dahil.
+     *
+     * <p>PSL şart: naif "son 2 etiket" yaklaşımı .com.tr/.co.uk gibi çok-etiketli suffix'lerde
+     * a.com.tr ile b.com.tr'yi yanlışlıkla aynı-site sayar → crawl kapsam kaçışı ve üçüncü-tarafın
+     * birinci-taraf sanılması (yanlış alarm, yanlış ağırlık ataması).
+     *
+     * <p>Sayfa Bütünlüğü (kırık kaynak 1./3. taraf ayrımı) ve Sayfa Hızı (ağırlığın ne kadarı bizim)
+     * aynı kuralı kullanır — tek kopya.
+     */
+    public boolean sameSite(String host, String rootHost) {
+        if (host == null || rootHost == null) return false;
+        if (host.equalsIgnoreCase(rootHost)) return true;
+        String a = registrableDomain(host);
+        String b = registrableDomain(rootHost);
+        if (a != null && b != null) return a.equalsIgnoreCase(b);
+        return false;   // PSL çözemezse (salt-suffix vb.) host eşitliği yukarıda kontrol edildi → farklı say
+    }
+
     /** Kayıtlı domain'in TLD'si (son etiket) — WHOIS/RDAP sunucu seçimi için. */
     public String tldOf(String hostOrUrl) {
         String reg = registrableDomain(hostOrUrl);

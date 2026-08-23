@@ -4,7 +4,10 @@ import com.sitemonitor.dto.CertificateDto;
 import com.sitemonitor.model.AlertEvent;
 import com.sitemonitor.model.NetworkOutageEvent;
 import com.sitemonitor.repository.AlertEventRepository;
+import jakarta.servlet.http.HttpServletRequest;
 import com.sitemonitor.model.CertificateInventory;
+import com.sitemonitor.model.LatestCheck;
+import com.sitemonitor.service.CertificateHealthService;
 import com.sitemonitor.repository.CertificateInventoryRepository;
 import com.sitemonitor.repository.NetworkOutageEventRepository;
 import org.springframework.data.domain.PageRequest;
@@ -42,6 +45,10 @@ public class CertificateController {
     private final ExtendedHealthService extendedHealthService;
     private final PermissionService permissionService;
     private final AuditService auditService;
+    private final com.sitemonitor.repository.LatestCheckRepository latestCheckRepo;
+    private final com.sitemonitor.repository.PageMonitorRepository pageMonitorRepo;
+    private final com.sitemonitor.service.CertificateHealthService healthService;
+    private final com.sitemonitor.service.CertificateAppLayerProbe appLayerProbe;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -129,12 +136,23 @@ public class CertificateController {
         return ok(Map.of("success", true, "data", result, "timestamp", now()));
     }
 
+    /**
+     * SSL Checker önizlemesi — envanterde OLMAYAN domainler de sorgulanabilir (Dashboard'daki
+     * serbest arama kutusu bunu kullanır), bu yüzden takım kapsamı UYGULANMAZ.
+     *
+     * <p><b>Port düzeltmesi:</b> port 443'e sabitlenmişti; oysa proxy ve TLS modu zaten envanterden
+     * okunuyordu. 8443 gibi bir portta duran envanter kaydında önizleme YANLIŞ hedefin
+     * sertifikasını gösteriyordu (manuel kontrol yolu bunu doğru yapıyor, iki yüzey ayrışmıştı).
+     * Envanterde yoksa 443 varsayılanı sürer.
+     */
     @GetMapping("/check-preview/{domain}")
     public ResponseEntity<Map<String, Object>> previewDomain(@PathVariable String domain) {
         var inv = inventoryRepo.findByDomain(domain);
         boolean forceProxy = inv.map(ci -> Boolean.TRUE.equals(ci.getUseProxy())).orElse(false);
         String tlsOverride = inv.map(ci -> ci.getTlsMode()).orElse(null);
-        Map<String, Object> result = new LinkedHashMap<>(checkerService.check(domain, 443, forceProxy, tlsOverride));
+        int port = inv.map(CertificateInventory::getPort).filter(p -> p != null && p > 0).orElse(443);
+        Map<String, Object> result = new LinkedHashMap<>(checkerService.check(domain, port, forceProxy, tlsOverride));
+        result.put("port", port);
         return ok(Map.of("success", true, "data", result, "timestamp", now()));
     }
 
@@ -258,5 +276,122 @@ public class CertificateController {
 
     private String now() {
         return ISO.format(Instant.now());
+    }
+
+    // ── Sertifika sağlık kontrol listesi ────────────────────────────────────
+
+    /** Aynı domain için arka arkaya tazeleme isteklerini frenler (manuel tetik cooldown deseni). */
+    private final java.util.concurrent.ConcurrentHashMap<String, Long> healthRefreshAt =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final long HEALTH_REFRESH_COOLDOWN_MS = 30_000L;
+
+    /**
+     * Sertifika sağlık kontrol listesi — KALICI son kontrolden anında üretilir (K2).
+     *
+     * <p>Modal açılışı ağ beklemez: değerlendirme {@code latest_checks} satırından yapılır.
+     * Canlı el sıkışması yalnız kullanıcı "Şimdi kontrol et" derse koşar (refresh ucu). Böylece
+     * her kart tıklamasında izlenen sunucuya el sıkışma yükü binmez.
+     *
+     * <p>Kapsam: domain envanterde olmalı ve takımı kullanıcının görüş alanında olmalı; değilse
+     * 404 + güvenlik olayı (403 "var ama giremezsin" bilgisini sızdırır).
+     */
+    @GetMapping("/certificates/{domain}/health")
+    public ResponseEntity<Map<String, Object>> certificateHealth(
+            @PathVariable String domain, HttpSession session, HttpServletRequest request) {
+        CertificateInventory inv = requireViewableForHealth(session, domain, request);
+        if (inv == null) return notFoundBody();
+
+        LatestCheck lc = latestCheckRepo.findById(domain).orElse(null);
+        boolean hasPageMonitor = pageMonitorRepo.existsByUrlContainingIgnoreCaseAndActiveTrue(domain);
+        var result = healthService.evaluate(lc, inv, hasPageMonitor);
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("domain", domain);
+        out.put("port", inv.getPort() != null ? inv.getPort() : 443);
+        out.put("not_before", lc == null ? null : lc.getNotBefore());
+        out.put("not_after", lc == null ? null : lc.getNotAfter());
+        out.put("days_remaining", lc == null ? null : lc.getDaysRemaining());
+        out.put("checked_at", lc == null ? null : lc.getCheckedAt());
+        out.put("next_check_at", schedulerService.nextCertificateSweepAt());
+        out.put("tls_mode_used", lc == null ? null : lc.getTlsModeUsed());
+        out.put("has_page_monitor", hasPageMonitor);
+        out.put("ok_count", result.okCount());
+        out.put("evaluated_count", result.evaluatedCount());
+        out.put("rows", result.rows().stream().map(CertificateController::healthRowJson).toList());
+        return ok(Map.of("success", true, "data", out, "timestamp", now()));
+    }
+
+    /**
+     * "Şimdi kontrol et" — envanter PORTUYLA canlı kontrol koşar, sonucu kalıcılaştırır ve
+     * güncellenmiş sağlık listesini döner.
+     *
+     * <p>Aynı domain için 30 sn'lik soğuma: düğmeye üst üste basmak izlenen sunucuya el sıkışma
+     * yağmuru olmasın (mevcut manuel tetik deseni).
+     */
+    @PostMapping("/certificates/{domain}/health/refresh")
+    public ResponseEntity<Map<String, Object>> refreshCertificateHealth(
+            @PathVariable String domain, HttpSession session, HttpServletRequest request) {
+        CertificateInventory inv = requireViewableForHealth(session, domain, request);
+        if (inv == null) return notFoundBody();
+
+        long nowMs = System.currentTimeMillis();
+        Long last = healthRefreshAt.get(domain);
+        if (last != null && nowMs - last < HEALTH_REFRESH_COOLDOWN_MS) {
+            long waitSec = (HEALTH_REFRESH_COOLDOWN_MS - (nowMs - last) + 999) / 1000;
+            return ResponseEntity.status(429).body(Map.of("success", false,
+                    "error", "Çok sık kontrol — " + waitSec + " sn sonra tekrar deneyin"));
+        }
+        healthRefreshAt.put(domain, nowMs);
+
+        int port = inv.getPort() != null ? inv.getPort() : 443;
+        Map<String, Object> result = new LinkedHashMap<>(checkerService.check(
+                domain, port, Boolean.TRUE.equals(inv.getUseProxy()), inv.getTlsMode()));
+        result.put("run_id", "health-refresh");
+        result.put("port", port);
+        certService.saveResult(result);
+        // Uygulama katmanı satırları (HSTS, karışık içerik) yalnız BURADA doldurulur — saatlik
+        // süpürmeye eklenseydi tüm envanter için her saat HTML çekilirdi. Best-effort: bu
+        // kontroller patlasa da sertifika tazelemesi tamamlanmış sayılır.
+        try {
+            appLayerProbe.refresh(domain, port);
+        } catch (Exception e) {
+            log.debug("Uygulama katmanı kontrolleri atlandı ({}): {}", domain, e.toString());
+        }
+        certService.evictAllCaches();
+        auditService.recordAction("CERT_HEALTH_REFRESH", session, "CERTIFICATE", domain, null, null);
+
+        return certificateHealth(domain, session, request);
+    }
+
+    /** Envanter kaydını takım kapsamıyla döndürür; yetkisizse güvenlik olayı yazıp null döner. */
+    private CertificateInventory requireViewableForHealth(HttpSession session, String domain,
+                                                          HttpServletRequest request) {
+        var inv = inventoryRepo.findByDomain(domain).orElse(null);
+        if (inv == null || !SessionScope.canView(session, inv.getTeamId())) {
+            if (inv != null) {
+                auditService.recordSecurityEvent("CERT_HEALTH_DENIED", request, session,
+                        "CERTIFICATE", domain, "Yetkisiz sertifika sağlığı erişimi");
+            }
+            return null;
+        }
+        return inv;
+    }
+
+    private ResponseEntity<Map<String, Object>> notFoundBody() {
+        return ResponseEntity.status(404).body(Map.of("success", false, "error", "Kayıt bulunamadı"));
+    }
+
+    /** Satır → JSON. Durum ve anahtarlar taşınır; CÜMLE kurulmaz (arayüz i18n'den kurar). */
+    private static Map<String, Object> healthRowJson(CertificateHealthService.HealthRow r) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("key", r.key());
+        m.put("group", r.group());
+        m.put("status", r.status().name());
+        m.put("value_key", r.valueKey());
+        m.put("value_args", r.valueArgs());
+        m.put("action_key", r.actionKey());
+        m.put("action_args", r.actionArgs());
+        m.put("evidence", r.evidence());
+        return m;
     }
 }

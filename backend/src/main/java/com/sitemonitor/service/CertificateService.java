@@ -113,6 +113,8 @@ public class CertificateService {
             check.setIntermediateExpiry((String) result.get("intermediate_expiry"));
             check.setIntermediateDaysRemaining(toInt(result.get("intermediate_days_remaining")));
             check.setSerialNumber((String) result.get("serial_number"));
+            check.setTlsVersion((String) result.get("tls_version"));
+            check.setCipherSuite((String) result.get("cipher_suite"));
             check.setSignatureAlgorithm((String) result.get("signature_algorithm"));
             check.setPublicKeyAlgorithm((String) result.get("public_key_algorithm"));
             check.setPublicKeySize(toInt(result.get("public_key_size")));
@@ -168,6 +170,12 @@ public class CertificateService {
             latest.setCrlUrl((String) result.get("crl_url"));
             latest.setVia((String) result.get("via"));
             latest.setTlsModeUsed((String) result.get("tls_mode_used"));
+            // Anlaşılan protokol/cipher: checker üretiyordu ama saklanmıyordu — sağlık
+            // kontrol listesi bunlar olmadan protokol/PFS satırı üretemiyordu.
+            latest.setTlsVersion((String) result.get("tls_version"));
+            latest.setCipherSuite((String) result.get("cipher_suite"));
+            // TOFU pin: ilk görüşte sabitle, değiştiği anda yenisini sabitle ve değişimi kaydet.
+            applyAutoPin(latest, servedFingerprint, now);
             latest.setCheckedAt((String) result.get("checked_at"));
             latest.setUpdatedAt(now);
             latestRepo.save(latest);
@@ -181,6 +189,32 @@ public class CertificateService {
         boolean manual = "manual".equals(result.get("run_id"));
         activityLog.recordCheck(ActivityLogService.CERT, null, domain, domain,
                 teamId, manual, manual ? null : "scheduler", result);
+    }
+
+    /**
+     * Otomatik parmak izi pini (TOFU) — kullanıcıdan hiçbir aksiyon istemez.
+     *
+     * <p>Kural: pin yoksa sunulanı sabitle (ilk görüş, sessiz). Sunulan pinle aynıysa dokunma.
+     * Farklıysa ESKİSİNİ sakla, yenisini sabitle ve değişim anını yaz — sağlık listesi bu bilgiyle
+     * "sertifika değişti" satırını gösterir. Yeniden sabitlemek şart: aksi halde bir yenilemeden
+     * sonra satır kalıcı olarak kırmızı kalır ve kullanıcı onu görmezden gelmeye başlar.
+     *
+     * <p>Sunulan parmak izi yoksa (erişilemedi/hata) pin KORUNUR — erişim sorununu sertifika
+     * değişimi gibi göstermek yanlış alarm olurdu.
+     */
+    static void applyAutoPin(LatestCheck latest, String servedFingerprint, String now) {
+        if (servedFingerprint == null || servedFingerprint.isBlank()) return;
+        String pinned = latest.getPinnedFingerprint();
+        if (pinned == null || pinned.isBlank()) {
+            latest.setPinnedFingerprint(servedFingerprint);
+            latest.setPinnedAt(now);
+            return;
+        }
+        if (pinned.equalsIgnoreCase(servedFingerprint)) return;
+        latest.setPreviousFingerprint(pinned);
+        latest.setPinnedFingerprint(servedFingerprint);
+        latest.setPinnedAt(now);
+        latest.setFingerprintChangedAt(now);
     }
 
     private String determineDeploymentStatus(String domain, String servedFingerprint) {

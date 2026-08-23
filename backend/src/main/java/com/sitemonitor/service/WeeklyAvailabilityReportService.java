@@ -48,6 +48,10 @@ public class WeeklyAvailabilityReportService {
     private final WeeklyAvailabilityLogRepository walRepo;
     private final AppSettingsService appSettings;
     private final WeeklyOutageReportService outageReportService;
+    /** Sayfa Hızı bölümü (K10) — SERVİS değil DEPO enjekte edilir. Bu sınıfa bir SERVİS eklemek
+     *  dairesel referans üretiyor ve uygulama hiç açılmıyor; depolar o zincire girmez. */
+    private final com.sitemonitor.repository.PageSpeedMonitorRepository pageSpeedMonitorRepo;
+    private final com.sitemonitor.repository.PageSpeedCheckRepository pageSpeedCheckRepo;
 
     @Value("${site.monitor.weekly-availability.enabled:true}")
     private boolean enabledDefault;
@@ -300,8 +304,85 @@ public class WeeklyAvailabilityReportService {
                         outage.totalAlarms(), outage.stillOpenCount(), outage.affectedTargets(),
                         MonitorTypeCatalog.ORDER.size());
 
-        String html = emailService.buildWeeklyAvailabilityHtml(team.getName(), w.weekLabel(), rows, summary, att);
+        EmailNotificationService.PageSpeedWeekly pageSpeed = collectPageSpeed(team, w);
+        String html = emailService.buildWeeklyAvailabilityHtml(
+                team.getName(), w.weekLabel(), rows, summary, att, pageSpeed);
         return new TeamReport(rows, summary, subject, html, to, cc, outage);
+    }
+
+    /** Haftalık rapordaki en yavaş sayfa sayısı — tablo okunur kalsın diye kısa tutulur. */
+    private static final int PAGESPEED_TOP_N = 5;
+
+    /**
+     * Takımın Sayfa Hızı özeti: en yavaş {@value #PAGESPEED_TOP_N} sayfa + geçen haftaya göre değişim.
+     *
+     * <p>Patlarsa {@code null} döner ve rapor bu bölüm OLMADAN tam olarak gider — haftalık rapor bir
+     * yan bölüm yüzünden hiç gitmemezlik etmemeli (kesinti ekiyle aynı ilke).
+     */
+    private EmailNotificationService.PageSpeedWeekly collectPageSpeed(Team team, Window w) {
+        try {
+            List<com.sitemonitor.model.PageSpeedMonitor> monitors = pageSpeedMonitorRepo.findByActiveTrue().stream()
+                    .filter(m -> team.getId().equals(m.getTeamId()))
+                    .toList();
+            if (monitors.isEmpty()) return null;
+            List<Long> ids = monitors.stream().map(com.sitemonitor.model.PageSpeedMonitor::getId).toList();
+
+            Map<Long, Object[]> cur = summaryById(ids, w.fromUtc(), w.toUtc());
+            // Geçen hafta: aynı uzunlukta, bir hafta geriye kaydırılmış pencere.
+            String prevFrom = shiftWeek(w.fromUtc());
+            String prevTo = shiftWeek(w.toUtc());
+            Map<Long, Object[]> prev = summaryById(ids, prevFrom, prevTo);
+
+            List<EmailNotificationService.PageSpeedWeeklyRow> rows = new ArrayList<>();
+            int breachedMonitors = 0;
+            for (com.sitemonitor.model.PageSpeedMonitor m : monitors) {
+                Object[] c = cur.get(m.getId());
+                if (c == null) continue;                       // bu hafta hiç ölçüm yok → satır yazma
+                Long avg = asLongRounded(c[2]);
+                long breaches = c[3] instanceof Number n ? n.longValue() : 0L;
+                if (breaches > 0) breachedMonitors++;
+                Object[] pr = prev.get(m.getId());
+                rows.add(new EmailNotificationService.PageSpeedWeeklyRow(
+                        m.getName(), m.getUrl(), avg, pr == null ? null : asLongRounded(pr[2]), breaches));
+            }
+            if (rows.isEmpty()) return null;
+            rows.sort((a, b) -> Long.compare(b.avgLoadMs() == null ? -1 : b.avgLoadMs(),
+                                             a.avgLoadMs() == null ? -1 : a.avgLoadMs()));
+            List<EmailNotificationService.PageSpeedWeeklyRow> top =
+                    rows.subList(0, Math.min(rows.size(), PAGESPEED_TOP_N));
+            return new EmailNotificationService.PageSpeedWeekly(
+                    List.copyOf(top), monitors.size(), breachedMonitors);
+        } catch (Exception e) {
+            log.warn("Haftalık sayfa hızı bölümü toplanamadı (team={} week={}) — rapor bu bölüm OLMADAN gidiyor: {}",
+                    team.getName(), w.weekLabel(), e.toString());
+            return null;
+        }
+    }
+
+    /** [monitorId, sayı, ort ms, ihlal sayısı] satırlarını id'ye göre indeksler. */
+    private Map<Long, Object[]> summaryById(List<Long> ids, String from, String to) {
+        Map<Long, Object[]> out = new java.util.HashMap<>();
+        for (Object[] r : pageSpeedCheckRepo.weeklySummary(ids, from, to)) {
+            if (r[0] instanceof Number n) out.put(n.longValue(), r);
+        }
+        return out;
+    }
+
+    private static Long asLongRounded(Object v) {
+        return v instanceof Number n ? Math.round(n.doubleValue()) : null;
+    }
+
+    /**
+     * ISO-UTC damgasını tam BİR HAFTA geriye kaydırır (pencere uzunluğu korunur).
+     *
+     * <p>Biçim AÇIKÇA verilir: {@code LocalDateTime.toString()} saniye sıfırsa onu DÜŞÜRÜR
+     * ({@code 2026-08-10T00:00}). Kontrol damgaları veritabanında hep saniyeli saklandığı ve
+     * karşılaştırma METİNSEL yapıldığı için bu, geçen-hafta penceresini sessizce kaydırırdı. */
+    private static final java.time.format.DateTimeFormatter WINDOW_ISO =
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
+
+    static String shiftWeek(String isoUtc) {
+        return java.time.LocalDateTime.parse(isoUtc).minusWeeks(1).format(WINDOW_ISO);
     }
 
     /** Kesinti verisini toplar; patlarsa {@code null} döner ve rapor eksiz ama TAM olarak gider. */

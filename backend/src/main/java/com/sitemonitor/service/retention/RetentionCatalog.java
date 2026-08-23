@@ -143,6 +143,17 @@ public final class RetentionCatalog {
                 180, 1, true, DataClass.OPERATIONAL,
                 "Senaryo (k6) kontrol serisi — çıktı kuyruğu ve kontrol JSON'u içerir."),
 
+        // ── Sayfa hızı: ÖNCE çocuk (kaynak kırılımı), SONRA ana (ölçümler) ────────────────────
+        guarded("pagespeed-resources", "pagespeed_resources", "checked_at",
+                "site.monitor.metrics.pagespeed-resources.retention-days",
+                90, 1, "keep_reason = 'BREACH' AND {t}", DataClass.OPERATIONAL,
+                "Sayfa hızı kaynak kırılımı. YALNIZ eşik-ihlali anlarının donmuş delilleri yaşa göre silinir; "
+                + "keep_reason='LATEST' satırları retention DIŞIDIR çünkü her kontrolde zaten üzerine yazılır — "
+                + "onları yaşa göre silmek son ölçümün kırılımını ekrandan kaybettirirdi."),
+        age("pagespeed-checks", "pagespeed_checks", "checked_at", "site.monitor.metrics.pagespeed.retention-days",
+                180, 1, true, DataClass.OPERATIONAL,
+                "Sayfa hızı ölçüm serisi (süre/TTFB/bayt/istek özeti)."),
+
         new RetentionPolicy("system-heartbeat", "system_heartbeat", "recorded_at", TimeKind.TIMESTAMP,
                 "site.monitor.heartbeat.retention-days", 30, 7, false, "{t}", Mode.AGE, false,
                 DataClass.OPERATIONAL,
@@ -296,6 +307,7 @@ public final class RetentionCatalog {
             case "keyword"   -> "series-keyword";
             case "http"      -> "series-http";
             case "page"      -> "page-checks";
+            case "pagespeed" -> "pagespeed-checks";
             case "scripted"  -> "series-scripted";
             case "dns"       -> "series-dns";
             case "domain"    -> "series-domain";

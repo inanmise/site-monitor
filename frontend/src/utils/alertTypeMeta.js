@@ -63,6 +63,11 @@ export const ALERT_TYPE_META = {
   PAGE_DOWN:         { icon: ScanSearch,   color: '#dc2626' },
   PAGE_INTEGRITY:    { icon: ScanSearch,   color: '#0369a1' },
 
+  // ── Sayfa hızı ────────────────────────────────────────────────────────────
+  // DOWN kırmızı (kesinti), SLOW turuncu: yavaşlık kesinti DEĞİL, renk de bunu söylemeli.
+  PAGESPEED_DOWN:    { icon: Gauge,        color: '#dc2626' },
+  PAGESPEED_SLOW:    { icon: Gauge,        color: '#c2410c' },
+
   // ── Sentetik izleme ───────────────────────────────────────────────────────
   SCRIPTED_FAIL:     { icon: FlaskConical, color: '#be123c' },
   SCRIPTED_SLOW:     { icon: FlaskConical, color: '#0f766e' },

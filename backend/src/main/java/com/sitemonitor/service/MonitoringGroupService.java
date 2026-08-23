@@ -11,6 +11,7 @@ import com.sitemonitor.repository.HttpMonitorRepository;
 import com.sitemonitor.repository.KeywordMonitorRepository;
 import com.sitemonitor.repository.MonitoringGroupRepository;
 import com.sitemonitor.repository.PageMonitorRepository;
+import com.sitemonitor.repository.PageSpeedMonitorRepository;
 import com.sitemonitor.repository.PingMonitorRepository;
 import com.sitemonitor.repository.PortMonitorRepository;
 import com.sitemonitor.repository.ScriptedMonitorRepository;
@@ -65,7 +66,8 @@ public class MonitoringGroupService {
             // İki tür SONRADAN grup taşımaya başladı (typeOf zaten "page"/"scripted" üretiyor) ama bu haritaya
             // hiç girmemişti: grup yeniden adlandırıldığında o türün alarm geçmişindeki group_name ESKİ kalıyordu.
             "page",     Set.of("PAGE_DOWN", "PAGE_INTEGRITY"),
-            "scripted", Set.of("SCRIPTED_FAIL", "SCRIPTED_SLOW"));
+            "scripted", Set.of("SCRIPTED_FAIL", "SCRIPTED_SLOW"),
+            "pagespeed", Set.of("PAGESPEED_DOWN", "PAGESPEED_SLOW"));
 
     private final MonitoringGroupRepository groupRepo;
     private final CertificateInventoryRepository certRepo;
@@ -76,6 +78,7 @@ public class MonitoringGroupService {
     private final KeywordMonitorRepository keywordRepo;
     private final DomainMonitorRepository domainRepo;
     private final PageMonitorRepository pageRepo;
+    private final PageSpeedMonitorRepository pageSpeedRepo;
     private final ScriptedMonitorRepository scriptedRepo;
     private final AlertEventRepository alertEventRepo;
     private final TeamRepository teamRepo;
@@ -133,6 +136,7 @@ public class MonitoringGroupService {
             // (listGroups(teamId, type)) boş dönüyordu. Eski ""-türlü satırlar applySchemaPatches'te backfill edilir.
             case "PageMonitor"     -> "page";
             case "ScriptedMonitor" -> "scripted";
+            case "PageSpeedMonitor" -> "pagespeed";
             default                -> "";
         };
     }
@@ -170,6 +174,7 @@ public class MonitoringGroupService {
             // cagrilmiyordu: Monitor Gruplari ekrani sentetik gruplari 0 gosteriyordu.
             countInto(counts, "scripted", scriptedRepo.groupCountsByTeam());
             countInto(counts, "page",     pageRepo.groupCountsByTeam());   // aynı eksik "page"de de vardı
+            countInto(counts, "pagespeed", pageSpeedRepo.groupCountsByTeam());
         }
 
         Map<Long, String> teamNames = new HashMap<>();
@@ -198,6 +203,7 @@ public class MonitoringGroupService {
             case "domain"  -> domainRepo.groupCountsByTeam();
             case "scripted"-> scriptedRepo.groupCountsByTeam();
             case "page"    -> pageRepo.groupCountsByTeam();
+            case "pagespeed"-> pageSpeedRepo.groupCountsByTeam();
             default        -> List.of();
         };
     }
@@ -296,6 +302,7 @@ public class MonitoringGroupService {
             // da sorgu zaten yazılıydı, yalnız çağrılmıyordu.
             case "page"    -> pageRepo.renameGroupForTeam(teamId, oldName, newName);
             case "scripted"-> scriptedRepo.renameGroupForTeam(teamId, oldName, newName);
+            case "pagespeed"-> pageSpeedRepo.renameGroupForTeam(teamId, oldName, newName);
             default        -> 0;
         };
     }
