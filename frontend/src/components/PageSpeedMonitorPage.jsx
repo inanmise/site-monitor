@@ -574,17 +574,29 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
             </div>
 
             {detailTab === 'resources' && (<>
-              <div className="upt-range-btns" style={{ flexWrap: 'wrap' }}>
-                <button type="button" className={`btn btn-sm ${resCheckId == null ? 'btn-primary' : 'btn-secondary'}`}
-                  onClick={() => { setResCheckId(null); loadResources(selected.id, null) }}>{t('pspd.resLatest')}</button>
-                {breaches.map(b => (
-                  <button key={b.check_id} type="button"
-                    className={`btn btn-sm ${resCheckId === b.check_id ? 'btn-primary' : 'btn-secondary'}`}
-                    onClick={() => { setResCheckId(b.check_id); loadResources(selected.id, b.check_id) }}>
-                    {formatDateSec(b.checked_at)}
-                  </button>
-                ))}
-                <button type="button" className="btn btn-sm btn-secondary" style={{ marginLeft: 'auto' }}
+              {/* Ihlal anlari EskiDEN her biri ayri bir dugmeydi; birikince (20'ye kadar) tablonun
+                  ustunu iki-uc sira doldurup paneli kullanilmaz hale getiriyordu. Tek bir secici
+                  hem sabit yer kaplar hem de tarihleri okunur birakir. Ihlal yoksa secici HIC
+                  cizilmez: secilecek bir sey olmadiginda kontrol gostermek bos gurultudur. */}
+              <div className="pspd-snapshot-row">
+                {breaches.length > 0 && (<>
+                  <span className="pspd-metric-label">{t('pspd.snapshotLabel')}</span>
+                  <SearchableSelect
+                    value={resCheckId == null ? '' : String(resCheckId)}
+                    onChange={(v) => {
+                      const id = v === '' ? null : Number(v)
+                      setResCheckId(id)
+                      loadResources(selected.id, id)
+                    }}
+                    options={[
+                      { value: '', label: t('pspd.resLatest') },
+                      ...breaches.map(b => ({ value: String(b.check_id), label: formatDateSec(b.checked_at) })),
+                    ]}
+                    searchThreshold={8} />
+                  <span className="field-hint pspd-snapshot-count">
+                    {t('pspd.breachCount', breaches.length)}</span>
+                </>)}
+                <button type="button" className="btn btn-sm btn-secondary pspd-snapshot-csv"
                   disabled={!resources.length} onClick={exportResourcesCsv}><Download size={12} />{t('pspd.exportCsv')}</button>
               </div>
               <div className="field-hint" style={{ margin: '0 0 8px' }}>{t('pspd.resHint')}</div>

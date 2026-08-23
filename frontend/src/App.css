@@ -11177,6 +11177,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   margin: 0 0 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
 .pspd-metric-label { font-size: .82em; font-weight: 600; color: var(--text-muted);
   text-transform: uppercase; letter-spacing: .03em; }
+/* Kaynak sekmesi ust satiri: olcum secici solda, CSV sagda. Ihlal anlari eskiden
+   her biri bir dugmeydi ve birikince tablonun ustunu iki-uc sira dolduruyordu. */
+.pspd-snapshot-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 0 0 8px; }
+.pspd-snapshot-count { margin-top: 0; }
+.pspd-snapshot-csv { margin-left: auto; }
 .dns-rt-grid  { grid-template-columns: 150px 1fr 64px 80px 170px; }
 .upt-uptime-rt-grid { grid-template-columns: 140px 64px 90px 1fr; }
 /* Senaryo: zaman · durum · SÜRÜM · süre · detay. Sürüm kolonu 2026-08-20'de eklendi —
