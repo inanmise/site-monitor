@@ -12,6 +12,16 @@ import java.util.Optional;
 public interface PageMonitorRepository extends JpaRepository<PageMonitor, Long> {
     List<PageMonitor> findByActiveTrue();
     long countByActiveTrue();
+
+    /**
+     * Bu domain için AKTİF bir sayfa izlemesi var mı — sertifika sağlığındaki "karışık içerik"
+     * satırı, varsa o izlemenin sonucundan beslenir (K3), yoksa istemli kontrol önerilir.
+     * URL şema/port/yol taşıdığı için içerik araması yapılır (host tam eşleşmesi kaçırırdı).
+     */
+    boolean existsByUrlContainingIgnoreCaseAndActiveTrue(String domain);
+
+    /** Aynı domain için AKTİF sayfa izlemeleri — karışık içerik satırı bunların sonucundan beslenir. */
+    java.util.List<PageMonitor> findByUrlContainingIgnoreCaseAndActiveTrue(String domain);
     List<PageMonitor> findAllByOrderByNameAsc();
     Optional<PageMonitor> findFirstByUrlOrderByIdAsc(String url);
 

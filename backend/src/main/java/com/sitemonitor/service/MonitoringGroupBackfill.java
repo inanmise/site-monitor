@@ -15,6 +15,7 @@ import com.sitemonitor.repository.KeywordMonitorRepository;
 import com.sitemonitor.repository.PageMonitorRepository;
 import com.sitemonitor.repository.PingMonitorRepository;
 import com.sitemonitor.repository.PortMonitorRepository;
+import com.sitemonitor.repository.PageSpeedMonitorRepository;
 import com.sitemonitor.repository.ScriptedMonitorRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -50,6 +51,7 @@ public class MonitoringGroupBackfill {
     private final DomainMonitorRepository domainRepo;
     private final PageMonitorRepository pageRepo;
     private final ScriptedMonitorRepository scriptedRepo;
+    private final PageSpeedMonitorRepository pageSpeedRepo;
     private final MonitoringGroupService groupService;
 
     @EventListener(ApplicationReadyEvent.class)
@@ -85,6 +87,7 @@ public class MonitoringGroupBackfill {
             // grupları registry'de hiç oluşmuyordu → İzleme Grupları ekranında görünmüyor, yeniden adlandırılamıyordu.
             seeded += seed("page",     pageRepo.groupCountsByTeam());
             seeded += seed("scripted", scriptedRepo.groupCountsByTeam());
+            seeded += seed("pagespeed", pageSpeedRepo.groupCountsByTeam());
             if (seeded > 0) log.info("Monitoring group registry seed: {} (team,type,name) grubu tarandı", seeded);
         } catch (Exception e) {
             log.warn("Monitoring group backfill failed: {}", e.getMessage());
@@ -135,6 +138,7 @@ public class MonitoringGroupBackfill {
             case "domain"  -> domainRepo.renameGroupForTeam(teamId, oldName, newName);
             case "page"    -> pageRepo.renameGroupForTeam(teamId, oldName, newName);
             case "scripted"-> scriptedRepo.renameGroupForTeam(teamId, oldName, newName);
+            case "pagespeed"-> pageSpeedRepo.renameGroupForTeam(teamId, oldName, newName);
             default        -> 0;
         };
     }

@@ -225,6 +225,11 @@ export const api = {
 
   checkDomain: (domain) => request(`/check/${encodeURIComponent(domain)}`),
   checkDomainPreview: (domain) => request(`/check-preview/${encodeURIComponent(domain)}`),
+  // Sertifika sağlık kontrol listesi: KALICI son kontrolden anında gelir (ağ beklemez).
+  getCertificateHealth: (domain) => request(`/certificates/${encodeURIComponent(domain)}/health`),
+  // "Şimdi kontrol et" — canlı el sıkışması koşar, sonucu kalıcılaştırır, listeyi tazeler.
+  refreshCertificateHealth: (domain) =>
+    request(`/certificates/${encodeURIComponent(domain)}/health/refresh`, { method: 'POST' }),
 
   getStats: () => request('/stats'),
 
@@ -865,6 +870,26 @@ export const api = {
         Object.fromEntries(Object.entries({ issueType, days, limit }).filter(([, v]) => v != null && v !== '')),
       ).toString()
       return request(`/monitoring/page/${id}/issues${q ? `?${q}` : ''}`)
+    },
+
+    // Sayfa Hızı (Page Speed)
+    getPageSpeedMonitors:   () => request('/monitoring/pagespeed'),
+    createPageSpeedMonitor: (data) => request('/monitoring/pagespeed', { method: 'POST', body: JSON.stringify(data) }),
+    updatePageSpeedMonitor: (id, data) => request(`/monitoring/pagespeed/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    deletePageSpeedMonitor: (id) => request(`/monitoring/pagespeed/${id}`, { method: 'DELETE' }),
+    triggerPageSpeedCheck:  (id) => request(`/monitoring/pagespeed/${id}/check`, { method: 'POST' }),
+    testPageSpeed:          (data) => request('/monitoring/pagespeed/test', { method: 'POST', body: JSON.stringify(data) }),
+    getPageSpeedSeries: (id, { from, to, days, metric } = {}) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(Object.entries({ from, to, days, metric }).filter(([, v]) => v != null && v !== '')),
+      ).toString()
+      return request(`/monitoring/pagespeed/${id}/response-series${q ? `?${q}` : ''}`)
+    },
+    getPageSpeedResources: (id, { checkId, limit } = {}) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(Object.entries({ checkId, limit }).filter(([, v]) => v != null && v !== '')),
+      ).toString()
+      return request(`/monitoring/pagespeed/${id}/resources${q ? `?${q}` : ''}`)
     },
 
     // Senaryo İzleme (Scripted Check / k6) — 10. tür

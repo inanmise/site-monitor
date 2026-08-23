@@ -1,5 +1,6 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.service.page.PageFetchCore;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
@@ -29,6 +30,8 @@ class PageCheckerServiceTest {
     private HttpServer server;
     private String base;
     private PageCheckerService checker;
+    /** Ağ çekirdeği artık ayrı bir bean — HttpClient/executor yaşam döngüsü ONUN üzerinde. */
+    private PageFetchCore core;
 
     @BeforeEach
     void setUp() throws IOException {
@@ -43,8 +46,9 @@ class PageCheckerServiceTest {
         // page.user-agent: config yok → DEFAULT_UA (getString fallback = 2. arg)
         lenient().when(settings.getString(anyString(), org.mockito.ArgumentMatchers.any())).thenAnswer(i -> i.getArgument(1));
 
-        checker = new PageCheckerService(guard, psl, settings);
-        checker.init();
+        core = new PageFetchCore(guard);
+        core.init();
+        checker = new PageCheckerService(core, psl, settings);
 
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         base = "http://127.0.0.1:" + server.getAddress().getPort();
@@ -55,7 +59,7 @@ class PageCheckerServiceTest {
     @AfterEach
     void tearDown() {
         if (server != null) server.stop(0);
-        if (checker != null) checker.shutdown();
+        if (core != null) core.shutdown();
     }
 
     // ── Testler ──────────────────────────────────────────────────────────────
@@ -222,11 +226,11 @@ class PageCheckerServiceTest {
     @Test
     @DisplayName("F1: URI-illegal ASCII karakterler ( [ ] | boşluk) %XX'e kodlanır; zaten-kodlu/non-ASCII bozulmaz")
     void normalizeUrl_encodesUnsafeAscii() {
-        assertThat(PageCheckerService.normalizeUrl("http://x/a b.png")).isEqualTo("http://x/a%20b.png");
-        assertThat(PageCheckerService.normalizeUrl("http://x/a[b].png")).isEqualTo("http://x/a%5bb%5d.png");
-        assertThat(PageCheckerService.normalizeUrl("http://x/a|b.js")).isEqualTo("http://x/a%7cb.js");
-        assertThat(PageCheckerService.normalizeUrl("http://x/ok%20done.png")).isEqualTo("http://x/ok%20done.png");
-        assertThat(PageCheckerService.normalizeUrl("http://x/temiz.png")).isEqualTo("http://x/temiz.png");
+        assertThat(PageFetchCore.normalizeUrl("http://x/a b.png")).isEqualTo("http://x/a%20b.png");
+        assertThat(PageFetchCore.normalizeUrl("http://x/a[b].png")).isEqualTo("http://x/a%5bb%5d.png");
+        assertThat(PageFetchCore.normalizeUrl("http://x/a|b.js")).isEqualTo("http://x/a%7cb.js");
+        assertThat(PageFetchCore.normalizeUrl("http://x/ok%20done.png")).isEqualTo("http://x/ok%20done.png");
+        assertThat(PageFetchCore.normalizeUrl("http://x/temiz.png")).isEqualTo("http://x/temiz.png");
     }
 
     @Test

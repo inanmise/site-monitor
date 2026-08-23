@@ -5,6 +5,7 @@ import IssueReportModal from './IssueReportModal.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
 import CopyableRef from './ui/CopyableRef.jsx'
+import CopyButton from './ui/CopyButton.jsx'
 
 /**
  * Çökme ekranı. İki kural bu yüzeyi diğerlerinden ayırır:
@@ -68,9 +69,22 @@ function ErrorFallback({ onReload, errorText, reportRef, reportState }) {
       )}
 
       {errorText && (
-        // Gerçek hata mesajı + component stack'i göster (devtools açmadan tanı) — kopyalanabilir.
+        // Gerçek hata mesajı + component stack'i göster (devtools açmadan tanı).
+        //
+        // Kopyalama butonu ŞART: bu metin çoğu zaman birkaç ekran boyu stack trace ve kullanıcının
+        // onu iletmesinin tek yolu elle seçmek. Çökmüş bir ekranda uzun bir <pre>'yi fareyle
+        // seçmek pratikte işlemiyor. CopyButton bilinçli: CopyableRef değeri ekranda TEKRAR yazar
+        // (kısa referans kodları için), burada metin zaten <pre> içinde. İkisi de toast KULLANMAZ —
+        // bu yüzey provider'sız da çalışmak zorunda (dosya başındaki 1. kural).
         <details className="eb-details">
-          <summary className="eb-details-summary">{t('err.details')}</summary>
+          <summary className="eb-details-summary">
+            <span>{t('err.details')}</span>
+            {/* Butona tıklamak <details>'i açıp kapatmasın diye olay burada durdurulur. */}
+            <span className="eb-details-copy"
+                  onClick={e => { e.preventDefault(); e.stopPropagation() }}>
+              <CopyButton value={errorText} label={t('err.copyError')} copiedLabel={t('err.copied')} />
+            </span>
+          </summary>
           <pre className="eb-pre">{errorText}</pre>
         </details>
       )}

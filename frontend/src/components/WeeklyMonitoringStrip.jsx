@@ -12,7 +12,7 @@ const TYPE_META = {
   page:    { icon: ScanSearch,  labelKey: 'wr.monTypePage',    extraLabel: null,                  extraUnit: null },
   scripted:{ icon: FlaskConical,labelKey: 'wr.monTypeScripted',extraLabel: 'wr.monExtraResp',     extraUnit: 'ms' },
 }
-const ORDER = ['cert', 'domain', 'http', 'ping', 'port', 'dns', 'keyword', 'page', 'scripted']
+const ORDER = ['cert', 'domain', 'http', 'ping', 'port', 'dns', 'keyword', 'page', 'pagespeed', 'scripted']
 
 /** Backend snake_case (SNAKE_CASE) → normalize; camelCase fallback güvenlik için. */
 function norm(x) {

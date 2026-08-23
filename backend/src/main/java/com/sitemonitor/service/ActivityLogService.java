@@ -25,7 +25,8 @@ import java.util.Map;
 public class ActivityLogService {
 
     public static final String CERT = "CERT", UPTIME = "UPTIME", HTTP = "HTTP", PORT = "PORT",
-            PING = "PING", DNS = "DNS", KEYWORD = "KEYWORD", DOMAIN = "DOMAIN", PAGE = "PAGE", SCRIPTED = "SCRIPTED";
+            PING = "PING", DNS = "DNS", KEYWORD = "KEYWORD", DOMAIN = "DOMAIN", PAGE = "PAGE", SCRIPTED = "SCRIPTED",
+            PAGESPEED = "PAGESPEED";
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -149,6 +150,24 @@ public class ActivityLogService {
                         : ((broken != null ? broken : 0) + " kırık"
                            + (timeouts != null && timeouts > 0 ? " · " + timeouts + " zaman aşımı" : "")
                            + (mixed != null && mixed > 0 ? " · " + mixed + " mixed" : ""));
+                a.setResultSummary(detail + (ms != null ? " · " + ms + "ms" : ""));
+            }
+            case PAGESPEED -> {
+                String status = str(r.get("status"));   // OK | SLOW | DOWN | CONFIG_ERROR
+                // SLOW bir KESİNTİ DEĞİL, performans olayıdır → WARNING. ERROR'a çekilirse aktivite
+                // akışında yavaş sayfa çökmüş sayfayla aynı görünür ve sinyal boğulur.
+                a.setResultStatus(switch (status == null ? "" : status.toUpperCase()) {
+                    case "OK" -> "SUCCESS";
+                    case "SLOW" -> "WARNING";
+                    case "DOWN" -> error != null ? errStatus(errorClass) : "ERROR";
+                    default -> "ERROR";   // CONFIG_ERROR dahil
+                });
+                Long bytes = asLong(r.get("total_bytes"));
+                Integer reqs = asInt(r.get("request_count"));
+                String detail = "CONFIG_ERROR".equalsIgnoreCase(status) ? "yapılandırma hatası"
+                        : "DOWN".equalsIgnoreCase(status) ? "yüklenemedi"
+                        : (bytes != null ? (bytes / 1024) + " KB" : "-")
+                          + (reqs != null ? " · " + reqs + " istek" : "");
                 a.setResultSummary(detail + (ms != null ? " · " + ms + "ms" : ""));
             }
             case SCRIPTED -> {

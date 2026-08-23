@@ -46,6 +46,7 @@ public class MonitorHistoryService {
     public static final String KEYWORD = "KEYWORD";
     public static final String HTTP = "HTTP";
     public static final String PAGE = "PAGE";
+    public static final String PAGESPEED = "PAGESPEED";
     public static final String SCRIPTED = "SCRIPTED";
     public static final String DOMAIN = "DOMAIN";
     public static final String PING = "PING";
@@ -56,7 +57,8 @@ public class MonitorHistoryService {
     /** Arayüzün `kind` yol parametresi → depolanan tür. Tek kaynak; sözleşme testi bunu sayar. */
     public static final Map<String, String> KIND_BY_PATH = Map.ofEntries(
             Map.entry("port", PORT), Map.entry("dns", DNS), Map.entry("keyword", KEYWORD),
-            Map.entry("http", HTTP), Map.entry("page", PAGE), Map.entry("scripted", SCRIPTED),
+            Map.entry("http", HTTP), Map.entry("page", PAGE), Map.entry("pagespeed", PAGESPEED),
+            Map.entry("scripted", SCRIPTED),
             Map.entry("domain", DOMAIN), Map.entry("ping", PING),
             Map.entry("inventory", INVENTORY), Map.entry("group", GROUP),
             Map.entry("maintenance", MAINTENANCE));

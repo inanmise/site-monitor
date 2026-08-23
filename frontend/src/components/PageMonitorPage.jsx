@@ -30,6 +30,7 @@ import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
+import { csvCell } from '../utils/csv.js'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
@@ -330,9 +331,11 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   function exportIssuesCsv() {
     if (!issues.length) return
     const head = ['resource_url', 'resource_type', 'source_page', 'issue_type', 'first_party', 'http_status', 'duration_ms', 'checked_at']
-    const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`
-    const body = issues.map(r => head.map(k => esc(r[k])).join(',')).join('\n')
-    const blob = new Blob([head.join(',') + '\n' + body], { type: 'text/csv;charset=utf-8' })
+    // Ortak kaçış: formül nötrleme + CR/LF tırnaklama (utils/csv.js). Satır sonu CRLF ve
+    // başta BOM — Excel Türkçe karakterleri ancak öyle doğru açıyor (envanter dışa aktarımıyla aynı).
+    const body = issues.map(r => head.map(k => csvCell(r[k])).join(',')).join('\r\n')
+    const blob = new Blob(['﻿' + head.map(csvCell).join(',') + '\r\n' + body],
+      { type: 'text/csv;charset=utf-8' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
     a.download = `page-issues-${selected?.id ?? 'x'}.csv`

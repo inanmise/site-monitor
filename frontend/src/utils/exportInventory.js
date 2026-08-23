@@ -1,11 +1,8 @@
 import { formatDate } from '../api/client'
 import { drawBrandHeader } from './pdfBrand.js'
 import { INVENTORY_FLAGS } from './inventoryFlags.js'
+import { csvCell } from './csv.js'
 
-const csvEscape = (v) => {
-  const s = v == null ? '' : String(v)
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
-}
 
 const teamName = (id, teams) =>
   (teams ?? []).find(tt => tt.id === id)?.name ?? ''
@@ -64,7 +61,7 @@ export function exportInventoryCsv(items, teams, t) {
   ])
   const bom = '﻿' // UTF-8 BOM for Excel TR character support
   const csv = bom + [cols, ...rows]
-    .map(r => r.map(csvEscape).join(','))
+    .map(r => r.map(csvCell).join(','))
     .join('\r\n')
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
   triggerDownload(blob, `site-monitor-inventory-${dateStamp()}.csv`)

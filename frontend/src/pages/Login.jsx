@@ -11,7 +11,7 @@ import { useT, useLanguage } from '../i18n/index.jsx'
 import { useBranding } from '../contexts/BrandingProvider.jsx'
 import BrandLogo from '../components/BrandLogo.jsx'
 import { downscaleImage } from '../utils/imageDownscale.js'
-import { ShieldAlert, ShieldCheck, Lock, Globe, Activity, Radio, Network, Server, Search, Gauge, Bell, BellRing, AlertTriangle, FileText, BarChart3, TrendingUp, Wrench, ScanSearch, FlaskConical, X } from 'lucide-react'
+import { ShieldAlert, ShieldCheck, Lock, Globe, Activity, Radio, Network, Server, Search, Gauge, Bell, BellRing, AlertTriangle, FileText, BarChart3, TrendingUp, Wrench, ScanSearch, FlaskConical, Zap, X } from 'lucide-react'
 
 // App.jsx logout temizliği de bu anahtarı kullanır — tek kaynak buradan export edilir.
 export const REMEMBER_KEY = 'site-monitor-remembered-user'
@@ -165,6 +165,8 @@ export default function Login({ onLogin, sessionExpired = false }) {
         // ve haftalık raporu var) — Nav'da ve katalogda duruyorlardı, eksik olan yalnız bu vitrindi.
         { Icon: ScanSearch,  key: 'login.capPage',     desc: 'login.capPageDesc',     tint: '#2dd4bf' },
         { Icon: FlaskConical, key: 'login.capScripted', desc: 'login.capScriptedDesc', tint: '#c084fc' },
+        // Ikon Zap: bu vitrinde Gauge uptime'a ait, sayfa hizi onunla karismasin.
+        { Icon: Zap,         key: 'login.capPagespeed', desc: 'login.capPagespeedDesc', tint: '#fb923c' },
         { Icon: Gauge,       key: 'login.capUptime',  desc: 'login.capUptimeDesc',  tint: '#818cf8' },
       ],
     },

@@ -47,6 +47,7 @@ const HttpMonitorPage = lazy(() => import('./components/HttpMonitorPage'))
 const DomainMonitorPage = lazy(() => import('./components/DomainMonitorPage'))
 const PingMonitorPage = lazy(() => import('./components/PingMonitorPage'))
 const PageMonitorPage = lazy(() => import('./components/PageMonitorPage'))
+const PageSpeedMonitorPage = lazy(() => import('./components/PageSpeedMonitorPage'))
 const ScriptedMonitorPage = lazy(() => import('./components/ScriptedMonitorPage'))
 
 const AdminPanel = lazy(() => import('./components/admin/AdminPanel'))
@@ -102,7 +103,7 @@ function formatDurationShort(ms) {
 const VALID_TABS = new Set([
   'dashboard', 'all', 'domains', 'forecast', 'renewal', 'renewal-guide',
   'warnings', 'incidents', 'maintenance', 'alerthistory', 'stats', 'weakalgo', 'weeklyreports', 'incident-history',
-  'health', 'uptime', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'scripted', 'activity', 'myactivity', 'system', 'monitorchanges',
+  'health', 'uptime', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'pagespeed', 'scripted', 'activity', 'myactivity', 'system', 'monitorchanges',
   'admin', 'permissions', 'sqlplayground', 'login-issues', 'help', 'settings',
 ])
 /** "Şimdi Kontrol Et" + domain ekleme yalnız bu sekmelerde anlamlı (sertifika sayfaları). */
@@ -1275,6 +1276,7 @@ export default function App() {
             {tab === 'keyword'  && <KeywordMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
             {tab === 'ping'     && <PingMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
             {tab === 'page'     && <PageMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
+            {tab === 'pagespeed' && <PageSpeedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
             {tab === 'scripted' && <ScriptedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
             {tab === 'forecast' && <ExpiryForecastPage onSelectDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} />}
             </Suspense>

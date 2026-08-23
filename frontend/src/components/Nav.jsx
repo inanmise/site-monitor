@@ -6,7 +6,7 @@ import {
   LayoutDashboard, AlertTriangle, FileText,
   RefreshCw, ClipboardList, Settings, User, Globe, LogOut, Lock,
   Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen, History,
-  Wifi, Network, Search, TrendingDown, Database, UserCheck, ShieldCheck, CalendarDays, ListChecks, Target, Radio, Siren, Wrench, LifeBuoy, ScanSearch, FlaskConical, Bug,
+  Wifi, Network, Search, TrendingDown, Database, UserCheck, ShieldCheck, CalendarDays, ListChecks, Target, Radio, Siren, Wrench, LifeBuoy, Gauge, ScanSearch, FlaskConical, Bug,
 } from 'lucide-react'
 import BrandLogo from './BrandLogo.jsx'
 import IssueReportModal from './IssueReportModal.jsx'
@@ -56,6 +56,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
         { id: 'keyword', Icon: Target,   labelKey: 'nav.keyword', show: true },
         { id: 'ping',    Icon: Radio,    labelKey: 'nav.ping',    show: true },
         { id: 'page',    Icon: ScanSearch, labelKey: 'nav.page',  show: true },
+        { id: 'pagespeed', Icon: Gauge, labelKey: 'nav.pagespeed', show: true },
         { id: 'scripted', Icon: FlaskConical, labelKey: 'nav.scripted', show: true },
       ],
     },

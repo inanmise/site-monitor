@@ -12,6 +12,7 @@ import UserBadge from '../ui/UserBadge.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import ChangeDiffChips from '../history/ChangeDiffChips.jsx'
 import ChangeKindCards from './ChangeKindCards.jsx'
+import { toApiTime, startOfLocalDay, startOfLastNDays } from '../../utils/apiTime.js'
 import { shortUserAgent } from '../history/changeFields.js'
 import { copyText } from '../../utils/copyText.js'
 
@@ -36,12 +37,6 @@ const EVENTS = ['CREATE', 'UPDATE', 'DELETE', 'RESTORE', 'GROUP_RENAME']
 /** Zaman pencereleri. Saklama süresi 730 gün; 90 günden uzun pencereler için özel aralık var. */
 const RANGE_KEYS = ['all', 'today', '7', '15', '30', '45', '60', '90', 'custom']
 
-/** Yerel saatle ISO — sunucu ISO METİN karşılaştırıyor, UTC'ye kaydırmak günü şaşırtır. */
-function localIso(d) {
-  const p = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
-    + `T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-}
 
 /** İzleme türü → uygulama sekmesi (satırdan izlemenin kendi geçmişine gitmek için). */
 const TAB_BY_KIND = {
@@ -113,31 +108,34 @@ export default function MonitorChangesConsole() {
   /**
    * Zaman aralığı seçimi.
    *
-   * <p>Sunucu ISO metin karşılaştırması yapıyor (createdAt bir metin kolonu), bu yüzden yerel
-   * saat bileşenleriyle kurulup saniyeye kadar biçimlendiriliyor — {@code toISOString()} UTC'ye
-   * kaydırır ve Türkiye'de "bugün" 03:00'te başlamış gibi görünürdü.
+   * <p>Pencere kullanıcının YEREL takvimine göre kurulur ("bugün" = yerel gece yarısı), sonra
+   * {@code toApiTime} ile UTC'ye çevrilip gönderilir (utils/apiTime.js).
    */
   function applyRange(key) {
     setPage(0)
     setRangeKey(key)
-    if (key === 'custom') return                 // aralık seçici açılır, uygulanınca yazar
+    if (key === 'custom') {
+      // Seçici, EKRANDA GÖRÜNEN pencereyi göstermeli. Aralık zaten varsa ona dokunulmaz;
+      // "Tümü"den geliniyorsa seçicinin varsayılanı (son 30 gün) hemen uygulanır — aksi halde
+      // düğme "Özel" derken liste hâlâ tüm zamanı gösterir ve kontrol ekranla çelişir.
+      if (!from) {
+        setFrom(toApiTime(startOfLastNDays(30)))
+        setTo(toApiTime(new Date()))
+      }
+      return
+    }
     setTo('')
     if (key === 'all') { setFrom(''); return }
-    const start = new Date()
-    if (key === 'today') start.setHours(0, 0, 0, 0)
-    else {
-      start.setDate(start.getDate() - (Number(key) - 1))   // "7 gün" = bugün DÂHİL son 7 gün
-      start.setHours(0, 0, 0, 0)
-    }
-    setFrom(localIso(start))
+    // Sınır yerel takvimden, gönderim UTC — kural utils/apiTime.js'te tek yerde.
+    setFrom(toApiTime(key === 'today' ? startOfLocalDay() : startOfLastNDays(Number(key))))
   }
 
   /** Özel aralık: seçici Date verir, uç ISO metin bekler. */
   function applyCustom(f, tDate) {
     setPage(0)
     setRangeKey('custom')
-    setFrom(f ? localIso(f) : '')
-    setTo(tDate ? localIso(tDate) : '')
+    setFrom(f ? toApiTime(f) : '')
+    setTo(tDate ? toApiTime(tDate) : '')
   }
 
   function clearFilters() {

@@ -14,6 +14,7 @@ import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 
 // Grafik recharts çekiyor; diğer izleme sayfalarındaki gibi (PingMonitorPage) tembel yüklenir.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
+const CertHealthPanel = lazy(() => import('./CertHealthPanel.jsx'))
 
 const NOTE_CATEGORIES   = ['NOTE', 'DEPLOYMENT', 'INCIDENT', 'RENEWAL']
 const NOTE_EDIT_WINDOW_MS = 24 * 60 * 60 * 1000
@@ -387,13 +388,23 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
       if (res?.success && res.data.length > 0) setCertData(res.data[0])
     })
 
-    // SSL tabı için canlı check (SSL Checker ile aynı endpoint)
+  }, [domain])
+
+  /**
+   * SSL sekmesindeki CANLI kontrol yalnız o sekme açıldığında koşar (K2).
+   *
+   * <p>Önceden her modal açılışında koşuyordu: kullanıcı yalnız "Detaylar"a bakacak olsa bile
+   * izlenen sunucuyla TLS el sıkışması yapılıyor, modal onu bekliyordu. Sağlık sekmesi zaten
+   * kalıcı son kontrolle anında çiziliyor; canlı probe artık istemli.
+   */
+  useEffect(() => {
+    if (!domain || activeTab !== 'ssl' || sslData || sslLoading) return
     setSslLoading(true)
     api.checkDomainPreview(domain).then((res) => {
       setSslData(res?.data ?? null)
       setSslLoading(false)
-    })
-  }, [domain])
+    }).catch(() => setSslLoading(false))
+  }, [domain, activeTab, sslData, sslLoading])
 
   function switchTab(tab) { setActiveTab(tab) }
 
@@ -428,6 +439,18 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
           >
             {t('ssl.tab')}
           </button>
+          {/* Sağlık, SSL'in hemen yanında: ikisi kardeş yüzey — SSL canlı el sıkışmasını ham
+              hâliyle gösterir, Sağlık aynı sertifika için HÜKÜM ve AKSİYON üretir. Sekme
+              çubuğunun sonunda durursa kullanıcı ikisini ilişkilendiremiyor. Önizleme modunda
+              gizli: envanterde olmayan bir domainin kalıcı sağlık kaydı yoktur. */}
+          {!previewMode && (
+            <button
+              className={`modal-tab${activeTab === 'health' ? ' active' : ''}`}
+              onClick={() => switchTab('health')}
+            >
+              {t('hlth.tab')}
+            </button>
+          )}
           <button
             className={`modal-tab${activeTab === 'details' ? ' active' : ''}`}
             onClick={() => switchTab('details')}
@@ -479,6 +502,14 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
             </button>
           )}
         </div>
+
+        {!previewMode && activeTab === 'health' && (
+          <div className="modal-body">
+            <Suspense fallback={<LoadingBlock label={t('modal.loading')} fullWidth />}>
+              <CertHealthPanel domain={domain} />
+            </Suspense>
+          </div>
+        )}
 
         {activeTab === 'ssl' && (
           (sslLoading || !sslData) ? (

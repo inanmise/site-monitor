@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { MONITOR_GUIDES } from '../components/monitorGuides.js'
 
@@ -32,6 +32,25 @@ function read(relPath) {
   const full = resolve(FRONTEND_SRC, relPath)
   expect(existsSync(full), `beklenen dosya yok: ${relPath}`).toBe(true)
   return readFileSync(full, 'utf8')
+}
+
+/**
+ * Tür → sayfa dosyası, HARF DUYARSIZ çözülür.
+ *
+ * <p>Eskiden ad `PascalCase(type) + MonitorPage.jsx` diye ÜRETİLİYORDU. Tek kelimelik türlerde
+ * (`page`, `dns`) sorun yok ama `pagespeed` için `PagespeedMonitorPage.jsx` üretiyor, gerçek
+ * dosya ise `PageSpeedMonitorPage.jsx`. Bu fark Windows'ta GÖRÜNMEZ (dosya sistemi harf
+ * duyarsız, existsSync true döner) ama CI Linux'ta testi kırar — yani kapı geliştiricinin
+ * işletim sistemine göre farklı davranıyordu. Artık dizin listelenip küçük harfe indirgenerek
+ * eşleştiriliyor: kapının anlamı ("bu türün bir sayfası var mı") korunuyor, ürün adının doğru
+ * yazımı (`PageSpeed`) zorlanmadan.
+ */
+const COMPONENT_FILES = readdirSync(resolve(FRONTEND_SRC, 'components'))
+function pageFileFor(type) {
+  const wanted = `${type}monitorpage.jsx`
+  const hit = COMPONENT_FILES.find(f => f.toLowerCase() === wanted)
+  expect(hit, `${type}: components/ altında <Tür>MonitorPage.jsx yok`).toBeTruthy()
+  return `components/${hit}`
 }
 
 /** Kanonik izleme türleri — backend katalogunun ORDER listesinden. */
@@ -89,7 +108,7 @@ describe('İzleme türü yüzeyleri — yeni tür eklenince hepsi güncellenmeli
   it('Her izleme türünün sayfası var ve iki standart yardım bileşenini kullanıyor', () => {
     // Proje standardı: MonitorHowBox (nasıl/nereden) + MonitorGuideButton (form nasıl doldurulur).
     for (const type of MONITOR_TYPES) {
-      const file = `components/${type[0].toUpperCase()}${type.slice(1)}MonitorPage.jsx`
+      const file = pageFileFor(type)
       const src = read(file)
       expect(src, `${file}: MonitorHowBox yok`).toContain('MonitorHowBox')
       expect(src, `${file}: MonitorGuideButton yok`).toContain('MonitorGuideButton')

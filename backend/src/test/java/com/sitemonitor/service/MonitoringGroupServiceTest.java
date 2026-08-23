@@ -59,6 +59,7 @@ class MonitoringGroupServiceTest {
     // listForScope tüm testlerde NPE'ye düşer (sayım yolu her çağrıda bu repo'ya uğrar).
     @Mock ScriptedMonitorRepository scriptedRepo;
     @Mock PageMonitorRepository pageRepo;
+    @Mock com.sitemonitor.repository.PageSpeedMonitorRepository pageSpeedRepo;
     @Mock AlertEventRepository alertEventRepo;
     @Mock TeamRepository teamRepo;
     @Mock AuditService auditService;

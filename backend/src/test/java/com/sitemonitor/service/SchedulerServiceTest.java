@@ -111,6 +111,10 @@ class SchedulerServiceTest {
     @Mock com.sitemonitor.repository.PageMonitorRepository pageMonitorRepo;
     @Mock com.sitemonitor.repository.PageCheckRepository pageCheckRepo;
     @Mock com.sitemonitor.repository.PageResourceIssueRepository pageResourceIssueRepo;
+    @Mock PageSpeedCheckerService pageSpeedCheckerService;
+    @Mock com.sitemonitor.repository.PageSpeedMonitorRepository pageSpeedMonitorRepo;
+    @Mock com.sitemonitor.repository.PageSpeedCheckRepository pageSpeedCheckRepo;
+    @Mock com.sitemonitor.repository.PageSpeedResourceRepository pageSpeedResourceRepo;
     @Mock com.sitemonitor.service.ScriptedCheckerService scriptedCheckerService;
     @Mock com.sitemonitor.repository.ScriptedMonitorRepository scriptedMonitorRepo;
     @Mock com.sitemonitor.repository.ScriptedCheckRepository scriptedCheckRepo;
@@ -143,6 +147,10 @@ class SchedulerServiceTest {
         ReflectionTestUtils.setField(scheduler, "pageMonitorRepo", pageMonitorRepo);
         ReflectionTestUtils.setField(scheduler, "pageCheckRepo", pageCheckRepo);
         ReflectionTestUtils.setField(scheduler, "pageResourceIssueRepo", pageResourceIssueRepo);
+        ReflectionTestUtils.setField(scheduler, "pageSpeedCheckerService", pageSpeedCheckerService);
+        ReflectionTestUtils.setField(scheduler, "pageSpeedMonitorRepo", pageSpeedMonitorRepo);
+        ReflectionTestUtils.setField(scheduler, "pageSpeedCheckRepo", pageSpeedCheckRepo);
+        ReflectionTestUtils.setField(scheduler, "pageSpeedResourceRepo", pageSpeedResourceRepo);
         ReflectionTestUtils.setField(scheduler, "scriptedCheckerService", scriptedCheckerService);
         ReflectionTestUtils.setField(scheduler, "scriptedMonitorRepo", scriptedMonitorRepo);
         ReflectionTestUtils.setField(scheduler, "scriptedCheckRepo", scriptedCheckRepo);
@@ -163,11 +171,13 @@ class SchedulerServiceTest {
     // RetentionService içinde, RetentionCatalog politikalarından üretiliyor (2026-08).
 
     @Test
-    @DisplayName("rollupDailyStats: 7 tip (port/ping/keyword/http/page/scripted/uptime) için upsert çalıştırır")
+    @DisplayName("rollupDailyStats: 8 tip (port/ping/keyword/http/page/scripted/pagespeed/uptime) için upsert çalıştırır")
     void rollupDailyStats_runsAllTypes() {
         when(jdbcTemplate.update(anyString(), anyString(), anyString())).thenReturn(3);
         scheduler.rollupDailyStats();
-        verify(jdbcTemplate, times(7)).update(anyString(), anyString(), anyString());   // 7 monitör tipi (sql, from, to)
+        // Yeni bir izleme türü eklenip rollup satırı unutulursa bu sayı tutmaz: o türün uptime'ı
+        // günlük özete hiç girmez ve haftalık raporlarda sessizce yok sayılırdı.
+        verify(jdbcTemplate, times(8)).update(anyString(), anyString(), anyString());   // 8 tip (sql, from, to)
     }
 
     @Test
@@ -1064,5 +1074,140 @@ class SchedulerServiceTest {
         scheduler.runWithSchedulerLock("aylik-rapor", runs::incrementAndGet);
 
         assertThat(runs.get()).isEqualTo(1);
+    }
+
+    // ── Sayfa Hızı: kaynak kırılımı saklama kararının KAPISI ───────────────────────────────
+    //
+    // Karar (2026-08): özet her ölçümde seriye yazılır; AĞIR kırılım yalnız SON ölçüm için tutulur
+    // (LATEST — üzerine yazılır) + eşik ihlali anlarında delil olarak dondurulur (BREACH — kalıcı).
+    // Bu kural bozulursa tablo kontrol sayısıyla büyür: 100 sayfa × 500 kaynak × yarım saatte bir
+    // günde milyonlarca satır eder ve tek pod'da her şeyi yavaşlatır. Hata SESSİZDİR — ekranda
+    // hiçbir şey değişmez, yalnız disk ve sorgular şişer.
+
+    private com.sitemonitor.model.PageSpeedMonitor psMonitor() {
+        var m = new com.sitemonitor.model.PageSpeedMonitor();
+        m.setId(7L);
+        m.setName("odeme sayfasi");
+        m.setUrl("https://x.com/odeme");
+        m.setTeamId(1L);
+        return m;
+    }
+
+    private PageSpeedCheckerService.Result psResult(java.util.List<String> breached) {
+        var res = new PageSpeedCheckerService.Measured(
+                "https://x.com/a.js", "JS", 5000L, 120L, 200, false, false, false);
+        return new PageSpeedCheckerService.Result(
+                breached.isEmpty() ? "OK" : "SLOW", 200, 40L, 90L, 300L,
+                20000L, 3, 0, false, false, breached, null, java.util.List.of(res));
+    }
+
+    @SuppressWarnings("unchecked")
+    private java.util.List<com.sitemonitor.model.PageSpeedResource> captureSavedResources() {
+        var cap = org.mockito.ArgumentCaptor.forClass(java.util.List.class);
+        verify(pageSpeedResourceRepo).saveAll(cap.capture());
+        return (java.util.List<com.sitemonitor.model.PageSpeedResource>) cap.getValue();
+    }
+
+    @Test
+    @DisplayName("İhlal YOKken kırılım yalnız LATEST yazılır ve önceki LATEST silinir (tablo büyümez)")
+    void resourceBreakdown_cleanCheck_onlyLatest() {
+        when(pageSpeedCheckerService.check(any())).thenReturn(psResult(java.util.List.of()));
+        when(pageSpeedCheckRepo.save(any())).thenAnswer(i -> {
+            com.sitemonitor.model.PageSpeedCheck c = i.getArgument(0); c.setId(100L); return c; });
+
+        scheduler.triggerPageSpeedCheck(psMonitor());
+
+        // Önceki ölçümün LATEST satırları SİLİNMELİ — silinmezse her ölçüm satır ekler.
+        verify(pageSpeedResourceRepo).deleteByMonitorIdAndKeepReason(7L,
+                com.sitemonitor.model.PageSpeedResource.KEEP_LATEST);
+        var saved = captureSavedResources();
+        assertThat(saved).hasSize(1);
+        assertThat(saved.get(0).getKeepReason()).isEqualTo(com.sitemonitor.model.PageSpeedResource.KEEP_LATEST);
+        assertThat(saved.get(0).getBytes()).isEqualTo(5000L);
+        assertThat(saved.get(0).getCheckId()).isEqualTo(100L);
+    }
+
+    @Test
+    @DisplayName("İhlal VARken aynı kırılım BREACH kopyasıyla da dondurulur (delil kalıcı)")
+    void resourceBreakdown_breach_freezesEvidence() {
+        when(pageSpeedCheckerService.check(any())).thenReturn(psResult(java.util.List.of("SIZE")));
+        when(pageSpeedCheckRepo.save(any())).thenAnswer(i -> {
+            com.sitemonitor.model.PageSpeedCheck c = i.getArgument(0); c.setId(101L); return c; });
+
+        scheduler.triggerPageSpeedCheck(psMonitor());
+
+        var saved = captureSavedResources();
+        assertThat(saved).hasSize(2);
+        assertThat(saved).extracting(com.sitemonitor.model.PageSpeedResource::getKeepReason)
+                .containsExactlyInAnyOrder(com.sitemonitor.model.PageSpeedResource.KEEP_LATEST,
+                        com.sitemonitor.model.PageSpeedResource.KEEP_BREACH);
+    }
+
+    @Test
+    @DisplayName("Kirpma bayragi HEM olcum ozetine HEM kaynak satirina yazilir")
+    void truncationFlagIsPersistedOnBothTables() {
+        var res = new PageSpeedCheckerService.Measured(
+                "https://x.com/dev.bin", "OTHER", 10L * 1024 * 1024, 900L, 200, false, false, true);
+        when(pageSpeedCheckerService.check(any())).thenReturn(new PageSpeedCheckerService.Result(
+                "OK", 200, 40L, 90L, 300L, 11L * 1024 * 1024, 2, 0, false, true,
+                java.util.List.of(), null, java.util.List.of(res)));
+        when(pageSpeedCheckRepo.save(any())).thenAnswer(i -> {
+            com.sitemonitor.model.PageSpeedCheck c = i.getArgument(0); c.setId(200L); return c; });
+
+        var out = scheduler.triggerPageSpeedCheck(psMonitor());
+
+        var cap = org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.PageSpeedCheck.class);
+        verify(pageSpeedCheckRepo).save(cap.capture());
+        assertThat(cap.getValue().getBytesTruncated()).isTrue();
+        assertThat(captureSavedResources()).allMatch(com.sitemonitor.model.PageSpeedResource::getTruncated);
+        // Arayuz bandi bu anahtari okuyor.
+        assertThat(out.get("bytes_truncated")).isEqualTo(true);
+    }
+
+    @Test
+    @DisplayName("Eşik aşımı ok=true kalır — yavaş sayfa uptime'ı DÜŞÜRMEZ, ihlal ayrı kolonda durur")
+    void breachDoesNotMarkCheckAsFailed() {
+        when(pageSpeedCheckerService.check(any())).thenReturn(psResult(java.util.List.of("LOAD", "SIZE")));
+        when(pageSpeedCheckRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        scheduler.triggerPageSpeedCheck(psMonitor());
+
+        var cap = org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.PageSpeedCheck.class);
+        verify(pageSpeedCheckRepo).save(cap.capture());
+        assertThat(cap.getValue().getOk()).isTrue();                       // KESİNTİ DEĞİL
+        assertThat(cap.getValue().getBreachedMetrics()).isEqualTo("LOAD,SIZE");
+        assertThat(cap.getValue().getResponseMs()).isEqualTo(300);
+        assertThat(cap.getValue().getTtfbMs()).isEqualTo(40);
+    }
+
+    @Test
+    @DisplayName("Sayfa alınamazsa ok=false (kesinti) ve kırılım hiç yazılmaz")
+    void unreachablePageIsAnOutageWithoutBreakdown() {
+        when(pageSpeedCheckerService.check(any())).thenReturn(new PageSpeedCheckerService.Result(
+                "DOWN", null, 0L, 0L, 50L, 0L, 1, 1, false, false,
+                java.util.List.of(), "sayfa alinamadi", java.util.List.of()));
+        when(pageSpeedCheckRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        var out = scheduler.triggerPageSpeedCheck(psMonitor());
+
+        var cap = org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.PageSpeedCheck.class);
+        verify(pageSpeedCheckRepo).save(cap.capture());
+        assertThat(cap.getValue().getOk()).isFalse();
+        assertThat(cap.getValue().getBreachedMetrics()).isNull();
+        verify(pageSpeedResourceRepo, never()).saveAll(any());
+        assertThat(out.get("reachable")).isEqualTo(false);
+    }
+
+    @Test
+    @DisplayName("Yapılandırma hatası kesinti DEĞİL: config_error bayrağı çıkar, alarm yolu 'up' okur")
+    void configErrorIsNotAnOutage() {
+        when(pageSpeedCheckerService.check(any())).thenReturn(new PageSpeedCheckerService.Result(
+                "CONFIG_ERROR", null, 0L, 0L, 0L, 0L, 0, 0, false, false,
+                java.util.List.of(), "url gecersiz", java.util.List.of()));
+        when(pageSpeedCheckRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        var out = scheduler.triggerPageSpeedCheck(psMonitor());
+
+        assertThat(out.get("config_error")).isEqualTo(true);
     }
 }

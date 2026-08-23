@@ -76,14 +76,23 @@ class RetentionSqlIdentityTest {
     }
 
     @Test
-    @DisplayName("Batch'li olan tablolar dönüşüm öncesiyle bire bir aynı (12 tablo)")
+    @DisplayName("Batch'li tablolar: 12 eski tablo dönüşüm öncesiyle bire bir aynı + sonradan eklenenler")
     void batchedFlagsMatchLegacy() {
         // Eskiden safeDeleteBatched ile silinenler — id kolonu ister, ANALYZE ile biter.
+        // Bu 12'si DÖNÜŞÜM-NÖTRLÜK kaydıdır: biri listeden düşerse eski davranış sessizce değişmiş demektir.
+        assertThat(RetentionCatalog.ALL.stream().filter(RetentionPolicy::batched).map(RetentionPolicy::id))
+                .contains("audit-log", "notification-logs", "series-uptime",
+                        "series-certificate", "series-port", "series-keyword", "series-ping",
+                        "series-http", "page-resource-issues", "page-checks", "series-scripted",
+                        "activity-log");
+        // Dönüşümden SONRA eklenen yüksek-hacimli seriler ayrı tutulur — eski listeye karışmasınlar ki
+        // "12 tablo" kaydı bir tarih belgesi olarak okunabilir kalsın.
         assertThat(RetentionCatalog.ALL.stream().filter(RetentionPolicy::batched).map(RetentionPolicy::id))
                 .containsExactlyInAnyOrder("audit-log", "notification-logs", "series-uptime",
                         "series-certificate", "series-port", "series-keyword", "series-ping",
                         "series-http", "page-resource-issues", "page-checks", "series-scripted",
-                        "activity-log");
+                        "activity-log",
+                        "pagespeed-checks");   // Sayfa Hızı ölçüm serisi (2026-08)
     }
 
     @Test

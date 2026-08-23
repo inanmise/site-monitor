@@ -660,6 +660,9 @@ public class MonitoringOutageService {
             case EscalationService.TYPE_PAGE_DOWN,
                  EscalationService.TYPE_PAGE_INTEGRITY ->
                     appSettings.getBoolean("site.monitor.page.alert-enabled", true);
+            case EscalationService.TYPE_PAGESPEED_DOWN,
+                 EscalationService.TYPE_PAGESPEED_SLOW ->
+                    appSettings.getBoolean("site.monitor.pagespeed.alert-enabled", true);
             // AYRI anahtar (diğer 8 türle parite). Eskiden motorun kendisine
             // (`scripted.enabled`) bakılıyordu: "bu hafta k6 alarmı sussun" demek sentetik
             // izlemeyi TAMAMEN durdurmak anlamına geliyordu — kontrol serisi ve uptime de kesiliyordu.
@@ -688,6 +691,8 @@ public class MonitoringOutageService {
                 || EscalationService.TYPE_PORT_SLOW.equals(alertType)
                 || EscalationService.TYPE_SCRIPTED_SLOW.equals(alertType)
                 || EscalationService.TYPE_PAGE_INTEGRITY.equals(alertType)
+                // Sayfa yavaş ama AYAKTA → HIGH; CRITICAL yalnız gerçekten alınamadığında.
+                || EscalationService.TYPE_PAGESPEED_SLOW.equals(alertType)
                 || EscalationService.isDomainMon(alertType)) ? "HIGH" : "CRITICAL";
     }
 

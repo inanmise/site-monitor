@@ -49,6 +49,10 @@ public class InventoryHygieneService {
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
+    /** Rapor satırlarında gösterim saat dilimi — proje geneli kural (bkz. shortTime). */
+    private static final java.time.ZoneId IST = java.time.ZoneId.of("Europe/Istanbul");
+    private static final DateTimeFormatter SHORT_LOCAL = DateTimeFormatter.ofPattern("dd.MM HH:mm");
+
     private final CertificateService certificateService;
     private final LatestCheckRepository latestRepo;
     private final AppSettingsService appSettings;
@@ -171,10 +175,28 @@ public class InventoryHygieneService {
                 all.size() > MAX_PER_GROUP ? List.copyOf(all.subList(0, MAX_PER_GROUP)) : List.copyOf(all));
     }
 
-    /** ISO → "09.08 15:00" (mail satırı kısa kalsın). */
-    private static String shortTime(String iso) {
-        if (iso == null || iso.length() < 16) return String.valueOf(iso);
-        return iso.substring(8, 10) + "." + iso.substring(5, 7) + " " + iso.substring(11, 16);
+    /**
+     * ISO (UTC) → "09.08 18:00" YEREL saatte (mail satırı kısa kalsın).
+     *
+     * <p><b>Saat dilimi çevrilmeli.</b> Zaman damgaları UTC saklanıyor; proje kuralı e-postalarda
+     * DAİMA Europe/Istanbul göstermek ({@code EmailNotificationService.formatIso},
+     * {@code EmailTemplateBuilder.formatHuman} aynı şeyi yapıyor). İlk sürüm UTC dizesini
+     * dilimleyip olduğu gibi basıyordu: rapor "son kontrol 15:00" diyor, gerçekte 18:00'di.
+     * Bu satırın tek işi "izleme bayat mı" sorusunu cevaplamak olduğu için üç saatlik kayma
+     * doğrudan yanlış karara götürür.
+     *
+     * <p>Ayrıştırılamayan girdide ham değer döner — rapor bir biçim hatası yüzünden düşmez.
+     */
+    static String shortTime(String iso) {
+        if (iso == null || iso.isBlank()) return String.valueOf(iso);
+        try {
+            String s = iso.trim();
+            java.time.OffsetDateTime odt = java.time.OffsetDateTime.parse(
+                    s.endsWith("Z") || s.matches(".*T.*[+-]\\d\\d:\\d\\d") ? s : s + "Z");
+            return odt.atZoneSameInstant(IST).format(SHORT_LOCAL);
+        } catch (Exception e) {
+            return iso;
+        }
     }
 
     /**

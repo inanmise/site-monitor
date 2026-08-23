@@ -38,7 +38,7 @@ public class MonitorNotesController {
     // Frontend'in Rehber & Notlar sekmesinde kullandığı tüm monitör tipleri (MonitorNotes type=...).
     // PAGE eksikti → Sayfa Bütünlüğü modalındaki Notlar sekmesi "Geçersiz izleme tipi: PAGE" veriyordu (2026-08-03).
     // SCRIPTED ileriye dönük eklendi (Sentetik İzleme'ye notlar sekmesi geldiğinde hazır).
-    private static final Set<String> TYPES = Set.of("KEYWORD", "PING", "DNS", "PORT", "DOMAIN", "HTTP", "PAGE", "SCRIPTED");
+    private static final Set<String> TYPES = Set.of("KEYWORD", "PING", "DNS", "PORT", "DOMAIN", "HTTP", "PAGE", "SCRIPTED", "PAGESPEED");
     private static final int MAX = 5000;
 
     private final MonitorGuideRepository guideRepo;

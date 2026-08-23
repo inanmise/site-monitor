@@ -87,6 +87,10 @@ class MonitoringControllerTest {
     @MockitoBean PageCheckRepository pageCheckRepo;
     @MockitoBean PageResourceIssueRepository pageResourceIssueRepo;
     @MockitoBean com.sitemonitor.service.PageCheckerService pageChecker;
+    @MockitoBean com.sitemonitor.repository.PageSpeedMonitorRepository pageSpeedMonitorRepo;
+    @MockitoBean com.sitemonitor.repository.PageSpeedCheckRepository pageSpeedCheckRepo;
+    @MockitoBean com.sitemonitor.repository.PageSpeedResourceRepository pageSpeedResourceRepo;
+    @MockitoBean com.sitemonitor.service.PageSpeedCheckerService pageSpeedChecker;
     // 10. tür (senaryo/k6) — aynı desen: controller alan-enjekte eder → mock zorunlu.
     @MockitoBean com.sitemonitor.repository.ScriptedMonitorRepository scriptedMonitorRepo;
     @MockitoBean com.sitemonitor.repository.ScriptedCheckRepository scriptedCheckRepo;
@@ -656,12 +660,22 @@ class MonitoringControllerTest {
         var hm = new com.sitemonitor.model.HttpMonitor();     hm.setId(1L);
         var pm = new com.sitemonitor.model.PageMonitor();     pm.setId(1L);
         var sm = new com.sitemonitor.model.ScriptedMonitor(); sm.setId(1L);
+        var psm = new com.sitemonitor.model.PageSpeedMonitor(); psm.setId(1L);
+        // [checkedAt, responseMs, ttfbMs, totalBytes, requestCount, ok]
+        List<Object[]> rawPageSpeed = List.of(
+                new Object[]{ "2026-08-06T10:05:00", 100, 30, 2048L, 12, true  },
+                new Object[]{ "2026-08-06T10:25:00", 0,   0,  0L,    0,  false });
 
         // Tür → (mock hazırlığı, URL). YENİ monitör türü eklerken buraya bir satır ekle — aşağıdaki
         // refleksiyon kilidi eklemeyi ZORLAR (2026-08 scripted çökmesi: kopyala-yapıştır ham dönüş).
         // URL de spec'te taşınıyor: sertifika serisi domain-anahtarlı ("/uptime/{domain}/ssl/response-series"),
         // diğerleri id-anahtarlı → tek kalıba sığmıyor.
-        record Spec(Runnable setup, String url) {}
+        // expectedAvg: kova ortalamasi. Varsayilan 50 = (100+0)/2, yani BASARISIZ kontrolun
+        // 0 ms'i de ortalamaya katilir (tum turlerde mevcut davranis). Sayfa Hizi bilincli
+        // olarak AYRILIR — asagida gerekcesiyle.
+        record Spec(Runnable setup, String url, int expectedAvg) {
+            Spec(Runnable setup, String url) { this(setup, url, 50); }
+        }
         java.util.Map<String, Spec> specs = new java.util.LinkedHashMap<>();
         specs.put("keyword",  new Spec(() -> { when(keywordMonitorRepo.findById(1L)).thenReturn(Optional.of(kw));
             when(keywordResultRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); },
@@ -684,6 +698,15 @@ class MonitoringControllerTest {
         specs.put("scripted", new Spec(() -> { when(scriptedMonitorRepo.findById(1L)).thenReturn(Optional.of(sm));
             when(scriptedCheckRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); },
             "/api/monitoring/scripted/1/response-series"));
+        // Sayfa hızı serisi TEK sorguda dört metrik döner ([ts, load, ttfb, bytes, requests, ok]) ve
+        // controller istenen kolonu projekte eder → ham satır 6 elemanlı, zarf yine aynı huniden geçer.
+        // Sayfa Hizi: BASARISIZ olcumun degeri seriye HIC girmez (null gecilir) → ortalama 100,
+        // 50 degil. Alinamayan bir sayfa 0 bayt / 0 istek olarak kaydediliyor; onlari cizmek
+        // grafigi asagi cekip "sayfa hafifledi" gibi okuturdu. Kesinti AYRI kirmizi isaretle
+        // gosterildigi icin bilgi kaybolmuyor (down sayaci asagida yine 1).
+        specs.put("pagespeed", new Spec(() -> { when(pageSpeedMonitorRepo.findById(1L)).thenReturn(Optional.of(psm));
+            when(pageSpeedCheckRepo.seriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(rawPageSpeed); },
+            "/api/monitoring/pagespeed/1/response-series", 100));
         specs.put("ssl",      new Spec(() -> { when(inventoryRepo.findByDomain("a.com")).thenReturn(Optional.of(inv("a.com")));
             when(certCheckRepo.responseSeriesRaw(eq("a.com"), anyString(), anyString(), anyInt())).thenReturn(raw); },
             "/api/monitoring/uptime/a.com/ssl/response-series"));
@@ -709,8 +732,7 @@ class MonitoringControllerTest {
                     .andExpect(jsonPath("$.data.series[0].ts").isString())
                     .andExpect(jsonPath("$.data.series[0].count").value(2))
                     .andExpect(jsonPath("$.data.series[0].down").value(1))
-                    // (100+0)/2 — down satırın 0 ms süresi de ortalamaya katılır (mevcut davranış).
-                    .andExpect(jsonPath("$.data.series[0].avg").value(50));
+                    .andExpect(jsonPath("$.data.series[0].avg").value(e.getValue().expectedAvg()));
         }
     }
 
@@ -2118,5 +2140,360 @@ class MonitoringControllerTest {
             mvc.perform(post("/api/monitoring/changes/maintenance/7/0/restore").session(managerOf(5L)))
                     .andExpect(status().isNotFound());
         }
+
+        @Test
+        @DisplayName("Snapshot GÜNCEL durumun aynısıysa reddedilir: boş RESTORE satırı üretilmez")
+        void restore_identicalSnapshot_isRejected() throws Exception {
+            com.sitemonitor.model.PortMonitor live = liveMonitor();
+            // Canlı kayıtla birebir aynı degerler: applySnapshot yazar ama FARK yoktur.
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("PORT", 7L, 0))
+                    .thenReturn(Optional.of(snapRow(5L,
+                            "{\"name\":\"Ödeme portu\",\"port\":8443,\"active\":false,\"intervalSeconds\":60}")));
+            when(portMonitorRepo.findById(7L)).thenReturn(Optional.of(live));
+
+            mvc.perform(post("/api/monitoring/changes/port/7/0/restore").session(managerOf(5L)))
+                    .andExpect(status().isBadRequest());
+
+            verify(portMonitorRepo, never()).save(any());
+            verify(monitorHistory, never()).record(anyString(), anyLong(), any(), any(),
+                    eq("RESTORE"), any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("Geri alma kaydın SON DEĞİŞTİREN künyesini de günceller")
+        void restore_stampsUpdatedIdentity() throws Exception {
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("PORT", 7L, 0))
+                    .thenReturn(Optional.of(snapRow(5L, "{\"port\":443}")));
+            com.sitemonitor.model.PortMonitor live = liveMonitor();
+            when(portMonitorRepo.findById(7L)).thenReturn(Optional.of(live));
+
+            mvc.perform(post("/api/monitoring/changes/port/7/0/restore").session(managerOf(5L)))
+                    .andExpect(status().isOk());
+
+            verify(monitorHistory).stampUpdated(eq(live), any());
+            assertThat(live.getUpdatedAt()).isNotNull();
+        }
+
+        @Test
+        @DisplayName("Yanıttaki alan listesi GERÇEKTEN değişenleri sayar, yazılanları değil")
+        void restore_reportsOnlyChangedFields() throws Exception {
+            // name zaten aynı, yalnız port farklı → yanıt tek alan bildirmeli.
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("PORT", 7L, 0))
+                    .thenReturn(Optional.of(snapRow(5L, "{\"name\":\"Ödeme portu\",\"port\":443}")));
+            when(portMonitorRepo.findById(7L)).thenReturn(Optional.of(liveMonitor()));
+
+            mvc.perform(post("/api/monitoring/changes/port/7/0/restore").session(managerOf(5L)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.fields.length()").value(1))
+                    .andExpect(jsonPath("$.data.fields[0]").value("port"));
+        }
+
+        // ── Activity akışına düşen CONFIG_CHANGED (K9) ──────────────────────
+        //
+        // Bu bağ HİÇ test edilmemişti ve sessizce ölü kalabilirdi: noteConfigChanged, geçmiş
+        // satırının DÖNÜŞ değerine bakıyor; @WebMvcTest'te monitorHistory bir mock olduğu için
+        // varsayılan null döner ve olay hiç üretilmez. Yani "update testleri geçiyor" demek
+        // bu kablonun çalıştığı anlamına GELMİYORDU.
+
+        private com.sitemonitor.model.MonitorChangeLog changeRow(String changesJson) {
+            com.sitemonitor.model.MonitorChangeLog r = row(5L);
+            r.setEventType("UPDATE");
+            r.setChanges(changesJson);
+            return r;
+        }
+
+        private com.sitemonitor.model.PortMonitor livePort() {
+            com.sitemonitor.model.PortMonitor m = new com.sitemonitor.model.PortMonitor();
+            m.setId(7L); m.setName("Ödeme portu"); m.setHost("odeme.local"); m.setPort(8443);
+            m.setTeamId(5L); m.setActive(true); m.setIntervalSeconds(300);
+            return m;
+        }
+
+        @Test
+        @DisplayName("Güncelleme Activity akışına CONFIG_CHANGED düşer, özetinde DEĞİŞEN ALANLAR olur")
+        void update_emitsConfigChangedWithFieldSummary() throws Exception {
+            when(portMonitorRepo.findById(7L)).thenReturn(Optional.of(livePort()));
+            when(portMonitorRepo.save(any(com.sitemonitor.model.PortMonitor.class)))
+                    .thenAnswer(a -> a.getArgument(0));
+            when(monitorHistory.record(eq("PORT"), eq(7L), any(), any(), eq("UPDATE"),
+                    any(), any(), any(), any()))
+                    .thenReturn(changeRow("{\"intervalSeconds\":{\"from\":300,\"to\":60},"
+                            + "\"timeoutMs\":{\"from\":5000,\"to\":9000}}"));
+
+            mvc.perform(put("/api/monitoring/port/7").session(managerOf(5L))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"intervalSeconds\":60,\"timeoutMs\":9000}"))
+                    .andExpect(status().isOk());
+
+            verify(activityLog).recordLifecycle(eq("PORT"), eq(7L), anyString(), anyString(),
+                    eq(5L), eq("CONFIG_CHANGED"), any(), eq("intervalSeconds, timeoutMs"));
+        }
+
+        @Test
+        @DisplayName("Hiçbir alan değişmediyse CONFIG_CHANGED üretilmez (akış gürültüyle dolmasın)")
+        void update_noChange_emitsNoActivity() throws Exception {
+            when(portMonitorRepo.findById(7L)).thenReturn(Optional.of(livePort()));
+            when(portMonitorRepo.save(any(com.sitemonitor.model.PortMonitor.class)))
+                    .thenAnswer(a -> a.getArgument(0));
+            // Geçmiş servisi "değişiklik yok" dediğinde null döner — sözleşmesi bu.
+            when(monitorHistory.record(anyString(), anyLong(), any(), any(), eq("UPDATE"),
+                    any(), any(), any(), any())).thenReturn(null);
+
+            mvc.perform(put("/api/monitoring/port/7").session(managerOf(5L))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"intervalSeconds\":300}"))
+                    .andExpect(status().isOk());
+
+            verify(activityLog, never()).recordLifecycle(anyString(), anyLong(), any(), any(),
+                    any(), eq("CONFIG_CHANGED"), any(), any());
+        }
+
+        @Test
+        @DisplayName("Diff BOŞ gelirse de olay üretilmez (satır var ama alan yok)")
+        void update_emptyDiff_emitsNoActivity() throws Exception {
+            when(portMonitorRepo.findById(7L)).thenReturn(Optional.of(livePort()));
+            when(portMonitorRepo.save(any(com.sitemonitor.model.PortMonitor.class)))
+                    .thenAnswer(a -> a.getArgument(0));
+            when(monitorHistory.record(anyString(), anyLong(), any(), any(), eq("UPDATE"),
+                    any(), any(), any(), any())).thenReturn(changeRow(null));
+
+            mvc.perform(put("/api/monitoring/port/7").session(managerOf(5L))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"intervalSeconds\":60}"))
+                    .andExpect(status().isOk());
+
+            verify(activityLog, never()).recordLifecycle(anyString(), anyLong(), any(), any(),
+                    any(), eq("CONFIG_CHANGED"), any(), any());
+        }
+    }
+
+    // ── Sayfa Hızı ─────────────────────────────────────────────────────────────
+
+    private static com.sitemonitor.model.PageSpeedMonitor psMon(Long id, String url, Long teamId) {
+        com.sitemonitor.model.PageSpeedMonitor m = new com.sitemonitor.model.PageSpeedMonitor();
+        m.setId(id); m.setName(url); m.setUrl(url); m.setTeamId(teamId); m.setActive(true);
+        return m;
+    }
+
+    @Test
+    @DisplayName("IDOR: GET /pagespeed yalnız görüntülenebilir takımın izlemesini döndürür")
+    void listPageSpeed_scopesToViewableTeams() throws Exception {
+        when(pageSpeedCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+        when(pageSpeedMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(
+                psMon(1L, "https://a.com", 1L), psMon(2L, "https://b.com", 2L)));
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of());
+        MockHttpSession s = session("USER");
+        s.setAttribute("viewTeamIds", java.util.List.of(1L));
+
+        mvc.perform(get("/api/monitoring/pagespeed").session(s))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].url").value("https://a.com"));
+    }
+
+    @Test
+    @DisplayName("IDOR: başka takımın serisi ve kaynak kırılımı 403")
+    void pageSpeedReads_foreignTeam_forbidden() throws Exception {
+        when(pageSpeedMonitorRepo.findById(9L)).thenReturn(Optional.of(psMon(9L, "https://x.com", 2L)));
+        MockHttpSession s = session("USER");
+        s.setAttribute("viewTeamIds", java.util.List.of(1L));
+
+        mvc.perform(get("/api/monitoring/pagespeed/9/response-series").session(s))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/api/monitoring/pagespeed/9/resources").session(s))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("SIR: parola API'den ASLA dönmez — yalnız 'kayıtlı mı' bayrağı görünür")
+    void pageSpeedResponseNeverLeaksPassword() throws Exception {
+        var m = psMon(1L, "https://x.com", 1L);
+        m.setBasicAuthUser("kadir");
+        m.setBasicAuthPassEnc("SIFRELI-DEGER");
+        m.setCustomHeadersEnc("SIFRELI-BASLIKLAR");
+        when(pageSpeedCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+        when(pageSpeedMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(m));
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of());
+        when(secretCipher.decrypt("SIFRELI-BASLIKLAR")).thenReturn("X-Api-Key: cok-gizli-jeton");
+
+        String body = mvc.perform(get("/api/monitoring/pagespeed").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].has_basic_auth_pass").value(true))
+                .andExpect(jsonPath("$.data[0].has_custom_headers").value(true))
+                // Admin başlık ADLARINI görür — DEĞERLERİNİ değil.
+                .andExpect(jsonPath("$.data[0].custom_header_names[0]").value("X-Api-Key"))
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(body).doesNotContain("SIFRELI-DEGER");
+        assertThat(body).doesNotContain("cok-gizli-jeton");
+        assertThat(body).doesNotContain("basic_auth_pass_enc");
+    }
+
+    @Test
+    @DisplayName("SIR: BOŞ parola gönderimi mevcut şifreli değeri KORUR (her kayıt parolayı silmesin)")
+    void blankPasswordKeepsExistingSecret() throws Exception {
+        var existing = psMon(5L, "https://x.com", 1L);
+        existing.setBasicAuthUser("kadir");
+        existing.setBasicAuthPassEnc("ESKI-SIFRELI");
+        when(pageSpeedMonitorRepo.findById(5L)).thenReturn(Optional.of(existing));
+        when(pageSpeedMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(put("/api/monitoring/pagespeed/5").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"yeni ad\",\"basicAuthUser\":\"kadir\",\"basicAuthPass\":\"\"}"))
+                .andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.PageSpeedMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.PageSpeedMonitor.class);
+        verify(pageSpeedMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getBasicAuthPassEnc()).isEqualTo("ESKI-SIFRELI");
+    }
+
+    @Test
+    @DisplayName("SIR: kullanıcı adı temizlenirse parola da düşer (yetim şifreli değer kalmaz)")
+    void clearingUserAlsoClearsPassword() throws Exception {
+        var existing = psMon(5L, "https://x.com", 1L);
+        existing.setBasicAuthUser("kadir");
+        existing.setBasicAuthPassEnc("ESKI-SIFRELI");
+        when(pageSpeedMonitorRepo.findById(5L)).thenReturn(Optional.of(existing));
+        when(pageSpeedMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(put("/api/monitoring/pagespeed/5").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"basicAuthUser\":\"\"}"))
+                .andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.PageSpeedMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.PageSpeedMonitor.class);
+        verify(pageSpeedMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getBasicAuthPassEnc()).isNull();
+    }
+
+    @Test
+    @DisplayName("YETKİ: admin OLMAYAN kullanıcının gönderdiği özel başlık YOK SAYILIR (mevcut değer korunur)")
+    void customHeadersAreAdminOnlyAndNonAdminEditIsIgnored() throws Exception {
+        var existing = psMon(5L, "https://x.com", 1L);
+        existing.setCustomHeadersEnc("ADMIN-IN-KOYDUGU");
+        when(pageSpeedMonitorRepo.findById(5L)).thenReturn(Optional.of(existing));
+        when(pageSpeedMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        MockHttpSession s = session("USER");
+        s.setAttribute("teamId", 1L);
+        s.setAttribute("viewTeamIds", java.util.List.of(1L));
+
+        mvc.perform(put("/api/monitoring/pagespeed/5").session(s)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"customHeaders\":\"X-Evil: 1\"}"))
+                .andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.PageSpeedMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.PageSpeedMonitor.class);
+        verify(pageSpeedMonitorRepo).save(cap.capture());
+        // Ne yazıldı ne silindi: takım kullanıcısı formu kaydettiğinde admin'in ayarı olduğu gibi kalır.
+        assertThat(cap.getValue().getCustomHeadersEnc()).isEqualTo("ADMIN-IN-KOYDUGU");
+    }
+
+    @Test
+    @DisplayName("Aralık TABANI sunucuda uygulanır — form atlansa da 60 sn kaydedilemez")
+    void intervalFloorIsEnforcedServerSide() throws Exception {
+        when(pageSpeedMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(pageSpeedMonitorRepo.save(any())).thenAnswer(i -> {
+            com.sitemonitor.model.PageSpeedMonitor m = i.getArgument(0); m.setId(1L); return m; });
+
+        mvc.perform(post("/api/monitoring/pagespeed").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"https://x.com\",\"teamId\":1,\"intervalSeconds\":60}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.interval_seconds")
+                        .value(com.sitemonitor.model.PageSpeedMonitor.MIN_INTERVAL_SECONDS));
+    }
+
+    @Test
+    @DisplayName("Eşik AÇIKÇA null gönderilirse kaldırılır; alan hiç gelmezse dokunulmaz")
+    void thresholdsCanBeClearedButAreNotTouchedWhenAbsent() throws Exception {
+        var existing = psMon(5L, "https://x.com", 1L);
+        existing.setMaxLoadMs(3000);
+        existing.setMaxTtfbMs(500);
+        when(pageSpeedMonitorRepo.findById(5L)).thenReturn(Optional.of(existing));
+        when(pageSpeedMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(put("/api/monitoring/pagespeed/5").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"maxLoadMs\":null}"))
+                .andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.PageSpeedMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.PageSpeedMonitor.class);
+        verify(pageSpeedMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getMaxLoadMs()).isNull();       // açıkça temizlendi
+        assertThat(cap.getValue().getMaxTtfbMs()).isEqualTo(500); // gönderilmedi → korundu
+    }
+
+    @Test
+    @DisplayName("Şemasız URL normalize edilir; host'suz URL 400 döner")
+    void urlIsNormalisedAndValidated() throws Exception {
+        when(pageSpeedMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(pageSpeedMonitorRepo.save(any())).thenAnswer(i -> {
+            com.sitemonitor.model.PageSpeedMonitor m = i.getArgument(0); m.setId(1L); return m; });
+
+        mvc.perform(post("/api/monitoring/pagespeed").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"www.x.com\",\"teamId\":1}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.url").value("https://www.x.com"));
+
+        mvc.perform(post("/api/monitoring/pagespeed").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"://\",\"teamId\":1}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("Manuel ölçüm cooldown'ı: ikinci tetik 429")
+    void triggerPageSpeed_cooldownReturns429() throws Exception {
+        when(appSettings.getInt(eq("site.monitor.pagespeed.manual-cooldown-seconds"), anyInt())).thenReturn(30);
+        when(pageSpeedMonitorRepo.findById(3L)).thenReturn(Optional.of(psMon(3L, "https://x.com", 1L)));
+        MockHttpSession s = session("ADMIN");
+
+        mvc.perform(post("/api/monitoring/pagespeed/3/check").session(s)).andExpect(status().isOk());
+        mvc.perform(post("/api/monitoring/pagespeed/3/check").session(s)).andExpect(status().isTooManyRequests());
+    }
+
+    @Test
+    @DisplayName("Kaynak kırılımı BAŞKA izlemenin checkId'siyle sızdırılamaz")
+    void resourcesCannotLeakAcrossMonitorsViaCheckId() throws Exception {
+        when(pageSpeedMonitorRepo.findById(1L)).thenReturn(Optional.of(psMon(1L, "https://a.com", 1L)));
+        var foreign = new com.sitemonitor.model.PageSpeedResource();
+        foreign.setMonitorId(99L);           // BAŞKA izlemenin satırı
+        foreign.setUrl("https://gizli/x.js");
+        when(pageSpeedResourceRepo.findByCheck(eq(77L), anyInt())).thenReturn(List.of(foreign));
+        when(pageSpeedResourceRepo.breachSnapshots(eq(1L), anyInt())).thenReturn(List.of());
+
+        mvc.perform(get("/api/monitoring/pagespeed/1/resources?checkId=77").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.resources.length()").value(0));
+    }
+
+    @Test
+    @DisplayName("Seri metriği seçilebilir: ?metric=ttfb TTFB kolonunu çizer, varsayılan yükleme süresi")
+    void seriesMetricSelectsTheProjectedColumn() throws Exception {
+        when(pageSpeedMonitorRepo.findById(1L)).thenReturn(Optional.of(psMon(1L, "https://a.com", 1L)));
+        // [checkedAt, responseMs, ttfbMs, totalBytes, requestCount, ok]
+        when(pageSpeedCheckRepo.seriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(
+                // List.<Object[]>of: tek dizi argümanı varargs sanılıp List<Object> çıkarımına düşer.
+                List.<Object[]>of(new Object[]{ "2026-08-23T10:00:00", 900, 120, 4096L, 30, true }));
+
+        mvc.perform(get("/api/monitoring/pagespeed/1/response-series?days=7").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.metric").value("load"))
+                .andExpect(jsonPath("$.data.series[0].avg").value(900));
+
+        mvc.perform(get("/api/monitoring/pagespeed/1/response-series?days=7&metric=ttfb").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.metric").value("ttfb"))
+                .andExpect(jsonPath("$.data.series[0].avg").value(120));
+
+        mvc.perform(get("/api/monitoring/pagespeed/1/response-series?days=7&metric=requests").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.series[0].avg").value(30));
     }
 }

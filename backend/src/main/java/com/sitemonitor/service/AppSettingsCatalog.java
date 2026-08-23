@@ -57,6 +57,13 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.page.user-agent",              "monitoring", Type.STRING),
         new Setting("site.monitor.page.max-check-seconds",       "monitoring", Type.INT),
         new Setting("site.monitor.page.manual-cooldown-seconds", "monitoring", Type.INT),
+        new Setting("site.monitor.pagespeed.alert-enabled",           "monitoring", Type.BOOL),
+        new Setting("site.monitor.pagespeed.resource-concurrency",    "monitoring", Type.INT),
+        new Setting("site.monitor.pagespeed.user-agent",              "monitoring", Type.STRING),
+        new Setting("site.monitor.pagespeed.max-check-seconds",       "monitoring", Type.INT),
+        new Setting("site.monitor.pagespeed.manual-cooldown-seconds", "monitoring", Type.INT),
+        new Setting("site.monitor.metrics.pagespeed.retention-days",           "monitoring", Type.INT),
+        new Setting("site.monitor.metrics.pagespeed-resources.retention-days", "monitoring", Type.INT),
         // Sayfa-bütünlüğü check/issue serisi — gün-bazlı saklama (gece batch-purge).
         new Setting("site.monitor.metrics.page.retention-days",       "monitoring", Type.INT),
         new Setting("site.monitor.metrics.page-issues.retention-days","monitoring", Type.INT),
@@ -143,6 +150,8 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.page.default-slow-ms",              "frequency", Type.INT),
         new Setting("site.monitor.page.default-crawl-depth",          "frequency", Type.INT),
         new Setting("site.monitor.page.default-crawl-max-pages",      "frequency", Type.INT),
+        new Setting("site.monitor.pagespeed.default-interval-seconds", "frequency", Type.INT),
+        new Setting("site.monitor.pagespeed.default-timeout-ms",       "frequency", Type.INT),
         // Haftalık erişilebilirlik e-postası (Pazartesi 10:00) aç/kapa — canlı.
         new Setting("site.monitor.weekly-availability.enabled",  "monitoring", Type.BOOL),
         // Aylık sertifika envanteri raporu (ayın son cuması 10:00) — aç/kapa + alıcılar, canlı.

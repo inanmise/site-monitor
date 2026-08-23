@@ -289,6 +289,134 @@ class MonitorHistoryServiceTest {
         public void setUpdatedByName(String v) { updatedByName = v; }
     }
 
+
+    // ── Geri yükleme: snapshot'ı entity'ye yazma (K6'nın kalbi) ─────────────
+    //
+    // Bu metot şimdiye dek yalnız uç üzerinden dolaylı test ediliyordu; tip dönüşümü ve atlama
+    // kuralları doğrudan pinlenmemişti. Yanlış dönüşüm burada sessizdir: alan yazılmaz ya da
+    // yanlış değerle yazılır, kullanıcı "geri alındı" mesajını görür.
+
+    /** Farklı tipte setter'lar — coerce'ün gerçek yüzeyi. */
+    public static class Target {
+        public String name, note;
+        public Integer boxedInt;
+        public int primInt = -1;
+        public Long boxedLong;
+        public Boolean boxedBool;
+        public boolean primBool;
+        public Double boxedDouble;
+        public void setName(String v) { name = v; }
+        public void setNote(String v) { note = v; }
+        public void setBoxedInt(Integer v) { boxedInt = v; }
+        public void setPrimInt(int v) { primInt = v; }
+        public void setBoxedLong(Long v) { boxedLong = v; }
+        public void setBoxedBool(Boolean v) { boxedBool = v; }
+        public void setPrimBool(boolean v) { primBool = v; }
+        public void setBoxedDouble(Double v) { boxedDouble = v; }
+    }
+
+    private static final String[] TARGET_FIELDS = {
+            "name", "note", "boxedInt", "primInt", "boxedLong", "boxedBool", "primBool",
+            "boxedDouble", "olmayanAlan" };
+
+    @Test
+    @DisplayName("JSON'dan gelen gevşek tipler setter'ın beklediği tipe çevrilir")
+    void applySnapshot_coercesTypes() {
+        Target bean = new Target();
+        var res = MonitorHistoryService.applySnapshot(bean, map(
+                "name", "Ödeme portu",
+                "boxedInt", 443,          // Jackson Integer verir
+                "primInt", 8443,
+                "boxedLong", 42,          // Integer → Long
+                "boxedBool", true,
+                "primBool", "true",       // metin → boolean
+                "boxedDouble", "2.5"      // metin → double
+        ), TARGET_FIELDS, null);
+
+        assertThat(bean.name).isEqualTo("Ödeme portu");
+        assertThat(bean.boxedInt).isEqualTo(443);
+        assertThat(bean.primInt).isEqualTo(8443);
+        assertThat(bean.boxedLong).isEqualTo(42L);
+        assertThat(bean.boxedBool).isTrue();
+        assertThat(bean.primBool).isTrue();
+        assertThat(bean.boxedDouble).isEqualTo(2.5);
+        assertThat(res.get(0)).contains("name", "boxedInt", "primInt", "boxedLong");
+        assertThat(res.get(1)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("MASKELİ alan geri YAZILMAZ ve atlandığı bildirilir — sır *** ile ezilmez")
+    void applySnapshot_skipsMaskedAndReports() {
+        Target bean = new Target();
+        bean.name = "gerçek-değer";
+
+        var res = MonitorHistoryService.applySnapshot(bean,
+                map("name", AuditDiff.MASK, "note", "serbest"), TARGET_FIELDS, null);
+
+        assertThat(bean.name).isEqualTo("gerçek-değer");
+        assertThat(res.get(0)).containsExactly("note");
+        assertThat(res.get(1)).containsExactly("name");
+    }
+
+    @Test
+    @DisplayName("skip listesi ve izin listesi dışındaki alanlara DOKUNULMAZ")
+    void applySnapshot_respectsSkipAndAllowList() {
+        Target bean = new Target();
+
+        var res = MonitorHistoryService.applySnapshot(bean,
+                map("name", "yeni", "note", "yeni not", "izinsizAlan", "x"),
+                TARGET_FIELDS, java.util.Set.of("note"));
+
+        assertThat(bean.name).isEqualTo("yeni");
+        assertThat(bean.note).isNull();                  // skip listesinde
+        assertThat(res.get(0)).containsExactly("name");  // izin listesinde olmayan alan yok sayıldı
+    }
+
+    @Test
+    @DisplayName("İLKEL alana null yazılmaz — çökmek yerine alan atlanır")
+    void applySnapshot_primitiveNullIsSkipped() {
+        Target bean = new Target();
+
+        var res = MonitorHistoryService.applySnapshot(bean,
+                map("primInt", null, "boxedInt", null), TARGET_FIELDS, null);
+
+        assertThat(bean.primInt).isEqualTo(-1);          // dokunulmadı
+        assertThat(bean.boxedInt).isNull();              // sarmalı tipe null YAZILIR
+        assertThat(res.get(0)).containsExactly("boxedInt");
+    }
+
+    @Test
+    @DisplayName("Çevrilemeyen değer tüm geri yüklemeyi düşürmez, yalnız o alan atlanır")
+    void applySnapshot_badValueSkipsOnlyThatField() {
+        Target bean = new Target();
+
+        var res = MonitorHistoryService.applySnapshot(bean,
+                map("boxedInt", "sayı-değil", "name", "yazıldı"), TARGET_FIELDS, null);
+
+        assertThat(bean.name).isEqualTo("yazıldı");
+        assertThat(bean.boxedInt).isNull();
+        assertThat(res.get(0)).containsExactly("name");
+    }
+
+    @Test
+    @DisplayName("Setter'ı olmayan alan sessizce geçilir (MON_FIELDS tür-üstü bir superset)")
+    void applySnapshot_missingSetterIsIgnored() {
+        Target bean = new Target();
+
+        // MON_FIELDS her türde olmayan alanları da içerir: PORT'ta url/domain yoktur.
+        var res = MonitorHistoryService.applySnapshot(bean,
+                map("olmayanAlan", "x", "name", "var"), TARGET_FIELDS, null);
+
+        assertThat(res.get(0)).containsExactly("name");
+    }
+
+    @Test
+    @DisplayName("Boş girdilerde çökmez")
+    void applySnapshot_nullInputs() {
+        assertThat(MonitorHistoryService.applySnapshot(null, map("name", "x"), TARGET_FIELDS, null).get(0)).isEmpty();
+        assertThat(MonitorHistoryService.applySnapshot(new Target(), null, TARGET_FIELDS, null).get(0)).isEmpty();
+    }
+
     // ── Sözleşme ────────────────────────────────────────────────────────────────────────────
 
     @Nested

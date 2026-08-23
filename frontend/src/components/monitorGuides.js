@@ -533,6 +533,103 @@ leave a broken script running for hours.
   yesterday” you can diff and roll back.
 `
 
+const PAGESPEED_TR = `
+## Sayfa Hızı izlemesi nasıl eklenir?
+
+Bir sayfanın **ne kadar sürede yüklendiğini** ve **ne kadar ağırlaştığını** düzenli aralıkla ölçer.
+
+**+ İzleme Ekle** ile formu açın.
+
+### Zorunlu alanlar
+- **Sayfa URL'i** — Ölçülecek sayfanın tam adresi (ör. \`https://www.akbank.com/kampanya\`). Şema yazmazsanız \`https://\` eklenir.
+- **Takım** — İzlemenin sahibi ekip. Alarmlar bu takıma gider.
+
+### Alarm eşikleri (dördü de opsiyonel)
+Boş bıraktığınız metrik **alarm üretmez**. Eşiğin tam değeri ihlal sayılmaz; yalnız üstü sayılır.
+- **Azami yükleme süresi (ms)** — HTML + tüm alt kaynakların toplam süresi.
+- **Azami TTFB (ms)** — İlk bayta kadar geçen süre. "Sunucu mu yavaş, sayfa mı ağır" sorusunu ayırır.
+- **Azami sayfa boyutu (KB)** — Toplam transfer.
+- **Azami istek sayısı** — Şişmenin en erken işareti: yeni bir script eklendiğinde bayt az, istek çok artar.
+
+### Diğer alanlar
+- **Ad** — Boşsa URL kullanılır. **Grup** — mevcut/yeni.
+- **Etiketler**, **E-posta bildirimi** — standart.
+- **Kontrol aralığı** — Varsayılan 30 dk, **taban 5 dk**. Bir ölçüm onlarca istek demektir; daha sık ölçmek hem bu sistemi hem izlenen sayfayı gereksiz yorar.
+
+### Gelişmiş (katlanır)
+- **Zaman aşımı**, **Eşzamanlı istek** (1–20), **Teyit/Toparlanma** ayarları — standart.
+- **User-Agent** — Boşsa kendini tanıtan varsayılan gider. WAF/bot koruması olan sayfalarda değiştirmeniz gerekebilir.
+- **DNT başlığı** — Ölçümün takip edilmemesini talep eder.
+- **Tracker'ları ölçüm dışı bırak** — Açıkken bilinen analytics/tracker kaynakları ne indirilir ne sayılır; "kendi sayfam ne kadar ağır" sorusu üçüncü-taraf gürültüsünden arınır. Altındaki alandan kendi desenlerinizi ekleyebilirsiniz.
+- **Kimlikli istekler** — Basic auth kullanıcı/parola. Parola **şifreli** saklanır ve ekrana bir daha dönmez; boş bırakmak "değiştirme" demektir, "sil" değil.
+- **Özel istek başlıkları** — Yalnız yöneticiler düzenleyebilir (serbest başlık iç servislere doğru bir yetki yüzeyi açar). Şifreli saklanır.
+
+### Ölçümün dürüst sınırı
+Gerçek bir tarayıcı çalıştırılmaz, **JavaScript çalışmaz**. Bu yüzden LCP/CLS gibi Core Web Vitals
+metrikleri iddia edilmez ve JS ile sonradan yüklenen kaynaklar sayıma girmez. Ölçülen şey
+"sunucu ne kadar sürede veriyor ve sayfa ne kadar ağır". \`a[href]\` linkleri de sayılmaz —
+tarayıcı onları indirmez.
+
+### "Eşik aşıldı" kesinti midir?
+**Hayır.** Eşik aşımı bir **performans** olayıdır: sayfa çalışıyor ama hedeflenenden ağır/yavaş.
+Uptime yüzdenizi düşürmez. Sayfa **hiç alınamazsa** ayrı bir kesinti alarmı açılır.
+
+### Sonucu nasıl okurum?
+- Karttaki dört metrik son ölçümü gösterir; aşılan eşikler sarı rozet olarak listelenir.
+- **Kaynaklar** sekmesi son ölçümün kırılımını en ağırdan hafife sıralar — sayfayı neyin ağırlaştırdığı buradan görülür.
+- Eşik aşıldığı anların kırılımı **kalıcı** saklanır: üstteki tarih düğmeleriyle o ana dönebilirsiniz.
+- **Grafik** sekmesinde süre / TTFB / boyut / istek sayısı arasında geçiş yapılır.
+`
+
+const PAGESPEED_EN = `
+## How do I add a Page Speed monitor?
+
+Measures, at a regular interval, **how long a page takes to load** and **how heavy it has become**.
+
+Open the form with **+ Add Monitor**.
+
+### Required fields
+- **Page URL** — The full address of the page to measure (e.g. \`https://www.akbank.com/campaign\`). Leave out the scheme and \`https://\` is added for you.
+- **Team** — The team that owns the monitor. Alerts go to them.
+
+### Alert thresholds (all four optional)
+A metric you leave blank raises **no alerts**. The threshold value itself is allowed; only going above it counts.
+- **Max load time (ms)** — Total time for the HTML plus every sub-resource.
+- **Max TTFB (ms)** — Time to first byte. This is what separates "the server is slow" from "the page is heavy".
+- **Max page size (KB)** — Total transfer.
+- **Max requests** — The earliest sign of bloat: add one script and the byte count barely moves while the request count jumps.
+
+### Other fields
+- **Name** — Falls back to the URL. **Group** — existing or new.
+- **Tags**, **Email notifications** — as elsewhere.
+- **Check interval** — 30 minutes by default, with a **5-minute floor**. One measurement means dozens of requests, so checking more often puts needless load on both this system and the page itself.
+
+### Advanced (collapsible)
+- **Timeout**, **Concurrent requests** (1–20), **Confirmation/recovery** settings — as elsewhere.
+- **User-Agent** — Left blank, a default that identifies itself is sent. You may need to change it for pages behind a WAF or bot protection.
+- **DNT header** — Asks that the measurement not be tracked.
+- **Leave trackers out of the measurement** — When on, known analytics and tracker resources are neither downloaded nor counted, so "how heavy is my own page?" is not drowned out by third-party noise. Add your own patterns in the field below it.
+- **Authenticated requests** — Basic auth username and password. The password is stored **encrypted** and never comes back to the screen; leaving it blank means "don't change it", not "delete it".
+- **Custom request headers** — Administrators only, since an arbitrary header opens a route into internal services. Stored encrypted.
+
+### What the measurement honestly is
+No real browser is involved, so **JavaScript does not run**. Core Web Vitals such as LCP and CLS
+are therefore not claimed, and resources injected later by scripts are not counted. What is
+measured is how fast the server responds and how heavy the page is. \`a[href]\` links are not
+counted either — a browser does not download them.
+
+### Is "over threshold" an outage?
+**No.** A breach is a **performance** event: the page works, it is just heavier or slower than you
+wanted, and your uptime figure is untouched. If the page cannot be fetched **at all**, a separate
+outage alert is raised.
+
+### How do I read the result?
+- The four figures on the card show the latest measurement; any breached thresholds appear as amber badges.
+- The **Resources** tab lists the latest breakdown heaviest first — this is where you see what is weighing the page down.
+- Breakdowns from the moments a threshold was breached are kept **permanently**: the date buttons above the table take you back to them.
+- The **Chart** tab switches between load time, TTFB, size and request count.
+`
+
 export const MONITOR_GUIDES = {
   http:     { tr: HTTP_TR,     en: HTTP_EN },
   port:     { tr: PORT_TR,     en: PORT_EN },
@@ -541,5 +638,6 @@ export const MONITOR_GUIDES = {
   ping:     { tr: PING_TR,     en: PING_EN },
   page:     { tr: PAGE_TR,     en: PAGE_EN },
   domain:   { tr: DOMAIN_TR,   en: DOMAIN_EN },
+  pagespeed: { tr: PAGESPEED_TR, en: PAGESPEED_EN },
   scripted: { tr: SCRIPTED_TR, en: SCRIPTED_EN },
 }

@@ -43,6 +43,8 @@ class WeeklyAvailabilityReportServiceTest {
     @Mock WeeklyAvailabilityLogRepository walRepo;
     @Mock AppSettingsService appSettings;
     @Mock com.sitemonitor.service.report.WeeklyOutageReportService outageReportService;
+    @Mock com.sitemonitor.repository.PageSpeedMonitorRepository pageSpeedMonitorRepo;
+    @Mock com.sitemonitor.repository.PageSpeedCheckRepository pageSpeedCheckRepo;
 
     private WeeklyAvailabilityReportService service;
 
@@ -62,13 +64,16 @@ class WeeklyAvailabilityReportServiceTest {
     void setUp() {
         service = new WeeklyAvailabilityReportService(teamRepo, inventoryRepo, uptimeCheckRepo,
                 latestCheckRepo, contactRepo, userRepo, emailService, notificationLogRepo, walRepo, appSettings,
-                outageReportService);
+                outageReportService, pageSpeedMonitorRepo, pageSpeedCheckRepo);
         when(appSettings.getBoolean(eq("site.monitor.weekly-availability.enabled"), anyBoolean())).thenReturn(true);
         when(emailService.sendHtml(any(), any(), any(), any(), any())).thenReturn("SENT");
         when(emailService.sendHtmlWithAttachments(any(), any(), any(), any(), any(), any())).thenReturn("SENT");
         when(outageReportService.collect(any(), any(), any())).thenReturn(outageData(3, 1));
         when(outageReportService.pdf(any())).thenReturn(new byte[]{ 1, 2, 3 });
-        when(emailService.buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any())).thenReturn("<html></html>");
+        when(emailService.buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), any()))
+                .thenReturn("<html></html>");
+        // Varsayılan: takımın sayfa hızı izlemesi yok → bölüm hiç çizilmez.
+        when(pageSpeedMonitorRepo.findByActiveTrue()).thenReturn(java.util.List.of());
         when(emailService.getEmailFrom()).thenReturn("noreply@sitemonitor");
         when(walRepo.findByTeamIdAndReportYearAndWeekNo(anyLong(), anyInt(), anyInt())).thenReturn(Optional.empty());
         when(latestCheckRepo.findById(anyString())).thenReturn(Optional.empty());
@@ -304,7 +309,7 @@ class WeeklyAvailabilityReportServiceTest {
         // Ek sessizce iliştirilseydi okuyanların çoğu — özellikle telefonda — fark etmezdi.
         ArgumentCaptor<EmailNotificationService.AttachmentInfo> attCap =
                 ArgumentCaptor.forClass(EmailNotificationService.AttachmentInfo.class);
-        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture());
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture(), any());
         assertThat(attCap.getValue()).isNotNull();
         assertThat(attCap.getValue().fileName()).endsWith(".pdf");
         assertThat(attCap.getValue().monitorTypeCount()).isEqualTo(MonitorTypeCatalog.ORDER.size());
@@ -343,7 +348,7 @@ class WeeklyAvailabilityReportServiceTest {
 
         ArgumentCaptor<EmailNotificationService.AttachmentInfo> attCap =
                 ArgumentCaptor.forClass(EmailNotificationService.AttachmentInfo.class);
-        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture());
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture(), any());
         assertThat(attCap.getValue()).isNull();      // gövdede ek bandı çizilmez
         verify(outageReportService, never()).pdf(any());
         assertThat(result.sent()).isEqualTo(1);      // rapor yine gitti
@@ -757,5 +762,111 @@ class WeeklyAvailabilityReportServiceTest {
     }
     private EscalationContact contact(String email) {
         EscalationContact c = new EscalationContact(); c.setEmail(email); c.setActive(true); return c;
+    }
+
+    // ── Sayfa Hızı bölümü (K10) ────────────────────────────────────────────────────────────
+
+    private com.sitemonitor.model.PageSpeedMonitor psMon(Long id, String name, Long teamId) {
+        var m = new com.sitemonitor.model.PageSpeedMonitor();
+        m.setId(id); m.setName(name); m.setUrl("https://" + name); m.setTeamId(teamId); m.setActive(true);
+        return m;
+    }
+
+    /** weeklySummary satırı: [monitorId, sayı, ort ms, ihlal sayısı]. */
+    private Object[] psSummary(long id, long count, double avgMs, long breaches) {
+        return new Object[]{ id, count, avgMs, breaches };
+    }
+
+    private void arrangeTeamWithUptime(Team t) {
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
+        when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(t.getId()))
+                .thenReturn(List.of(inv("a.com")));
+        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
+                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+    }
+
+    private EmailNotificationService.PageSpeedWeekly capturePageSpeed() {
+        ArgumentCaptor<EmailNotificationService.PageSpeedWeekly> cap =
+                ArgumentCaptor.forClass(EmailNotificationService.PageSpeedWeekly.class);
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), cap.capture());
+        return cap.getValue();
+    }
+
+    @Test
+    @DisplayName("Sayfa Hızı bölümü en yavaş sayfaları SIRALI verir ve geçen haftayı kıyaslar")
+    void pageSpeedSection_sortsSlowestFirstAndComparesToPreviousWeek() {
+        Team t = team(5L, "Dijital", "dijital@x.com");
+        arrangeTeamWithUptime(t);
+        when(pageSpeedMonitorRepo.findByActiveTrue()).thenReturn(List.of(
+                psMon(1L, "hizli", 5L), psMon(2L, "yavas", 5L)));
+        // Bu hafta: yavas=900ms (2 ihlal), hizli=200ms. Geçen hafta: yavas=600ms, hizli=200ms.
+        when(pageSpeedCheckRepo.weeklySummary(any(), any(), any()))
+                .thenReturn(List.of(psSummary(1L, 10, 200.0, 0), psSummary(2L, 10, 900.0, 2)))
+                .thenReturn(List.of(psSummary(1L, 10, 200.0, 0), psSummary(2L, 10, 600.0, 0)));
+
+        service.sendWeeklyReports(false);
+
+        var ps = capturePageSpeed();
+        assertThat(ps).isNotNull();
+        assertThat(ps.monitorCount()).isEqualTo(2);
+        assertThat(ps.breachedMonitorCount()).isEqualTo(1);
+        // EN YAVAŞ ÜSTTE — sıralama tersse rapor "sorun yok" izlenimi verir.
+        assertThat(ps.slowest()).extracting(EmailNotificationService.PageSpeedWeeklyRow::name)
+                .containsExactly("yavas", "hizli");
+        var slowest = ps.slowest().get(0);
+        assertThat(slowest.avgLoadMs()).isEqualTo(900L);
+        assertThat(slowest.prevAvgLoadMs()).isEqualTo(600L);   // trend oku bunu okur
+        assertThat(slowest.breachedChecks()).isEqualTo(2L);
+    }
+
+    @Test
+    @DisplayName("BAŞKA takımın sayfa hızı izlemesi rapora SIZMAZ")
+    void pageSpeedSection_isTeamScoped() {
+        Team t = team(5L, "Dijital", "dijital@x.com");
+        arrangeTeamWithUptime(t);
+        when(pageSpeedMonitorRepo.findByActiveTrue()).thenReturn(List.of(
+                psMon(1L, "bizim", 5L), psMon(2L, "baskasinin", 99L)));
+        when(pageSpeedCheckRepo.weeklySummary(any(), any(), any()))
+                .thenReturn(List.<Object[]>of(psSummary(1L, 5, 300.0, 0)));
+
+        service.sendWeeklyReports(false);
+
+        assertThat(capturePageSpeed().slowest())
+                .extracting(EmailNotificationService.PageSpeedWeeklyRow::name)
+                .containsExactly("bizim");
+    }
+
+    @Test
+    @DisplayName("Sayfa hızı izlemesi olmayan takımda bölüm HİÇ çizilmez (null geçer)")
+    void pageSpeedSection_absentWhenNoMonitors() {
+        Team t = team(5L, "Dijital", "dijital@x.com");
+        arrangeTeamWithUptime(t);
+        when(pageSpeedMonitorRepo.findByActiveTrue()).thenReturn(List.of());
+
+        service.sendWeeklyReports(false);
+
+        assertThat(capturePageSpeed()).isNull();
+    }
+
+    @Test
+    @DisplayName("Bölüm toplanamazsa rapor YİNE gider — yan bölüm haftalık raporu düşürmemeli")
+    void pageSpeedSection_failureDoesNotBlockTheReport() {
+        Team t = team(5L, "Dijital", "dijital@x.com");
+        arrangeTeamWithUptime(t);
+        when(pageSpeedMonitorRepo.findByActiveTrue()).thenThrow(new IllegalStateException("db kapali"));
+
+        var result = service.sendWeeklyReports(false);
+
+        assertThat(result.sent()).isEqualTo(1);       // mail gitti
+        assertThat(capturePageSpeed()).isNull();      // yalnız bölüm yok
+    }
+
+    @Test
+    @DisplayName("Geçen hafta penceresi tam BİR HAFTA geriye kaydırılır (kıyas aynı uzunlukta olsun)")
+    void previousWeekWindowIsShiftedByExactlyOneWeek() {
+        assertThat(WeeklyAvailabilityReportService.shiftWeek("2026-08-17T00:00:00"))
+                .isEqualTo("2026-08-10T00:00:00");
+        assertThat(WeeklyAvailabilityReportService.shiftWeek("2026-01-05T21:00:00"))
+                .isEqualTo("2025-12-29T21:00:00");   // yıl sınırını doğru geçer
     }
 }

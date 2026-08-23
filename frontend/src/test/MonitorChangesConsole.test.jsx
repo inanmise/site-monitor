@@ -265,10 +265,15 @@ describe('MonitorChangesConsole — zaman aralığı', () => {
   const pick = (container, label) => fireEvent.click(within(seg(container)).getByText(label))
   const lastCall = () => api.monitoring.getRecentChanges.mock.calls.at(-1)[0]
 
-  /** '2026-08-22T00:00:00' → Date; yerel kurulduğu için Z eki OLMAMALI. */
-  const asLocal = (iso) => {
-    expect(iso).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/)
-    return new Date(iso)
+  /**
+   * Gönderilen sınırı ANLAMIYLA çözer: sunucu UTC sakladığı için dize UTC'dir, bu yüzden
+   * 'Z' ekleyerek Date'e çevrilir. İlk sürüm bunu yerel saatle gönderiyordu ve test de onu
+   * pinliyordu — Türkiye'de (UTC+3) "bugün" penceresi 3 saat geç başlıyor, günün ilk üç
+   * saatindeki değişiklikler listeden sessizce düşüyordu.
+   */
+  const asInstant = (iso) => {
+    expect(iso).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/)   // saniye hassasiyeti, Z'siz
+    return new Date(iso + 'Z')
   }
 
   it('varsayılan TÜM zaman: tarih süzgeci gönderilmez', async () => {
@@ -288,7 +293,7 @@ describe('MonitorChangesConsole — zaman aralığı', () => {
       await waitFor(() => expect(api.monitoring.getRecentChanges).toHaveBeenCalled())
 
       const { from, to } = lastCall()
-      const start = asLocal(from)
+      const start = asInstant(from)
       // "Son N gün" bugünü DÂHİL sayar → başlangıç (N-1) gün önceki günün 00:00'ı.
       const expected = new Date()
       expected.setDate(expected.getDate() - (days - 1))
@@ -306,7 +311,7 @@ describe('MonitorChangesConsole — zaman aralığı', () => {
     pick(container, 'Today')
     await waitFor(() => expect(api.monitoring.getRecentChanges).toHaveBeenCalled())
 
-    const start = asLocal(lastCall().from)
+    const start = asInstant(lastCall().from)
     const midnight = new Date()
     midnight.setHours(0, 0, 0, 0)
     expect(start.getTime()).toBe(midnight.getTime())
@@ -330,6 +335,36 @@ describe('MonitorChangesConsole — zaman aralığı', () => {
     expect(container.querySelector('.dp-trigger')).toBeNull()
     pick(container, 'Custom')
     expect(container.querySelectorAll('.dp-trigger').length).toBeGreaterThan(0)
+  })
+
+  it('Tümü seçiliyken Özele geçince seçicinin varsayılanı HEMEN uygulanır', async () => {
+    // Aksi halde düğme "Özel" derken liste hâlâ tüm zamanı gösterir: kontrol ekranla çelişir.
+    const { container } = render(<MonitorChangesConsole />)
+    await screen.findByText('Ödeme akışı')
+    expect(lastCall()).toMatchObject({ from: '', to: '' })
+
+    pick(container, 'Custom')
+
+    await waitFor(() => expect(lastCall().from).not.toBe(''))
+    const start = asInstant(lastCall().from)
+    const expected = new Date()
+    expected.setDate(expected.getDate() - 29)
+    expected.setHours(0, 0, 0, 0)
+    expect(start.getTime()).toBe(expected.getTime())
+    expect(lastCall().to).not.toBe('')
+  })
+
+  it('AKTİF bir pencereden Özele geçince aralık DEĞİŞMEZ', async () => {
+    const { container } = render(<MonitorChangesConsole />)
+    await screen.findByText('Ödeme akışı')
+
+    pick(container, '90d')
+    await waitFor(() => expect(lastCall().from).not.toBe(''))
+    const before = lastCall().from
+
+    pick(container, 'Custom')
+    // Kullanıcının seçtiği pencere korunur; seçici onu gösterir.
+    expect(lastCall().from).toBe(before)
   })
 
   it('aralık değişince sayfa BAŞA döner (3. sayfada 90 gün seçip boş liste görmeyelim)', async () => {

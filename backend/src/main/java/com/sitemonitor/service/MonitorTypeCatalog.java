@@ -34,7 +34,7 @@ public final class MonitorTypeCatalog {
 
     /** Ekranda/PDF'te tür sırası — frontend WeeklyMonitoringStrip.ORDER ile AYNI. */
     public static final List<String> ORDER =
-            List.of("cert", "domain", "http", "ping", "port", "dns", "keyword", "page", "scripted");
+            List.of("cert", "domain", "http", "ping", "port", "dns", "keyword", "page", "pagespeed", "scripted");
 
     /**
      * Tür → o türe ait {@code AlertEvent.alertType} kümesi.
@@ -52,13 +52,14 @@ public final class MonitorTypeCatalog {
             "ping",     Set.of("PING_DOWN"),
             "domain",   Set.of("DOMAINMON_EXPIRY", "DOMAINMON_UNKNOWN", "DOMAINMON_STATUS", "DOMAINMON_CHANGED"),
             "page",     Set.of("PAGE_DOWN", "PAGE_INTEGRITY"),
-            "scripted", Set.of("SCRIPTED_FAIL", "SCRIPTED_SLOW"));
+            "scripted", Set.of("SCRIPTED_FAIL", "SCRIPTED_SLOW"),
+            "pagespeed", Set.of("PAGESPEED_DOWN", "PAGESPEED_SLOW"));
 
     /** Tür → Türkçe etiket (e-posta + PDF ortak). */
     public static final Map<String, String> LABELS_TR = Map.of(
             "cert", "Sertifika", "domain", "Alan Adı", "http", "HTTP/Website", "ping", "Ping",
             "port", "Port", "dns", "DNS", "keyword", "Keyword", "page", "Sayfa Bütünlüğü",
-            "scripted", "Sentetik (k6)");
+            "pagespeed", "Sayfa Hızı", "scripted", "Sentetik (k6)");
 
     /** alertType → tür (ters eşleme, tek sefer kurulur). */
     private static final Map<String, String> TYPE_OF_ALERT = buildReverse();

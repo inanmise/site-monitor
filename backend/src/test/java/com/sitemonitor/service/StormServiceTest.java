@@ -54,6 +54,9 @@ class StormServiceTest {
     @Mock PingMonitorRepository pingRepo;
     @Mock DnsMonitorRepository dnsRepo;
     @Mock DomainMonitorRepository domainRepo;
+    @Mock com.sitemonitor.repository.PageMonitorRepository pageRepo;
+    @Mock com.sitemonitor.repository.ScriptedMonitorRepository scriptedRepo;
+    @Mock com.sitemonitor.repository.PageSpeedMonitorRepository pageSpeedRepo;
 
     private StormService storm;
 
@@ -274,4 +277,97 @@ class StormServiceTest {
         s.setCreatedAt("2026-07-10T09:00:00");
         return s;
     }
+
+    // ── Payda bütünlüğü: yüzde eşiği TÜM izleme türlerini saymalı ─────────────
+    //
+    // 2026-08-23'te bulunan hata: SCRIPTED_FAIL storm ÜYESİ olabiliyordu (DOWN_ALERT_TYPES
+    // içinde) ama sentetik izlemeler paydada yoktu. Yüzde eşiği olduğundan küçük çıkıyor,
+    // fırtına erken ilan ediliyor ve bireysel alarmlar erken bastırılıyordu — kimse hata
+    // görmüyor, yalnız alarm davranışı sessizce değişiyordu.
+    //
+    // Eski testler bunu göremezdi: page/scripted depoları ALAN enjeksiyonlu, testte null
+    // kalıyor ve 0 katkı veriyordu. Bu yüzden aşağıda ikisi de reflection ile bağlanıyor.
+
+    /** Storm üyesi olabilen her alarm türü ↔ paydayı besleyen depo alanı. */
+    private static final java.util.Map<String, String> REPO_FIELD_BY_ALERT_TYPE = java.util.Map.of(
+            EscalationService.TYPE_ACCESSIBILITY, "inventoryRepo",
+            EscalationService.TYPE_HTTP_DOWN, "httpRepo",
+            EscalationService.TYPE_PORT_DOWN, "portRepo",
+            EscalationService.TYPE_PING_DOWN, "pingRepo",
+            EscalationService.TYPE_DNS_FAILURE, "dnsRepo",
+            EscalationService.TYPE_KEYWORD, "keywordRepo",
+            EscalationService.TYPE_PAGE_DOWN, "pageRepo",
+            EscalationService.TYPE_SCRIPTED_FAIL, "scriptedRepo",
+            EscalationService.TYPE_PAGESPEED_DOWN, "pageSpeedRepo");
+
+    private void injectFieldRepos() {
+        org.springframework.test.util.ReflectionTestUtils.setField(storm, "pageRepo", pageRepo);
+        org.springframework.test.util.ReflectionTestUtils.setField(storm, "scriptedRepo", scriptedRepo);
+        org.springframework.test.util.ReflectionTestUtils.setField(storm, "pageSpeedRepo", pageSpeedRepo);
+    }
+
+    @Test
+    @DisplayName("KAPI: storm üyesi olabilen HER tür paydada karşılığını bulmalı")
+    void everyStormMemberTypeHasADenominatorSource() {
+        // Yeni bir DOWN türü eklenip paydaya bağlanmazsa bu satır ADIYLA söyleyerek kırılır.
+        assertThat(REPO_FIELD_BY_ALERT_TYPE.keySet())
+                .as("DOWN_ALERT_TYPES'a yeni tür eklendi ama StormService paydasına bağlanmadı "
+                        + "(totalActiveMonitors) — yüzde eşiği yanlış hesaplanır")
+                .containsExactlyInAnyOrderElementsOf(EscalationService.DOWN_ALERT_TYPES);
+    }
+
+    @Test
+    @DisplayName("Payda sentetik, sayfa ve sayfa hızı izlemelerini de sayar")
+    void denominatorIncludesPageAndScripted() {
+        injectFieldRepos();
+        stubTotalMonitors(2, 2, 2, 2, 2, 2, 2);          // 7 tür × 2 = 14
+        when(pageRepo.countByActiveTrue()).thenReturn(3L);
+        when(scriptedRepo.countByActiveTrue()).thenReturn(5L);
+        when(pageSpeedRepo.countByActiveTrue()).thenReturn(4L);
+
+        assertThat(storm.totalActiveMonitors()).isEqualTo(26L);   // 14 + 3 + 5 + 4
+    }
+
+    @Test
+    @DisplayName("Sentetik payda dışında kalınca eşik DÜŞÜYORDU — regresyon kilidi")
+    void percentThresholdCountsScriptedMonitors() {
+        when(appSettings.getString(eq(StormService.KEY_UNIT), anyString())).thenReturn("PERCENT");
+        when(appSettings.getInt(eq(StormService.KEY_VALUE), anyInt())).thenReturn(10);
+        injectFieldRepos();
+        stubTotalMonitors(20, 0, 0, 0, 0, 0, 0);
+        when(pageRepo.countByActiveTrue()).thenReturn(0L);
+        when(scriptedRepo.countByActiveTrue()).thenReturn(80L);   // ağırlık sentetikte
+        when(pageSpeedRepo.countByActiveTrue()).thenReturn(0L);
+
+        // Doğru payda 100 → %10 = 10. Sentetik sayılmasaydı payda 20 → eşik 2 çıkardı:
+        // 100 monitörlük bir kurulumda 2 arıza "fırtına" sayılırdı.
+        assertThat(storm.computeThreshold()).isEqualTo(10);
+    }
+
+    @Test
+    @DisplayName("Payda sorgusu patlarsa 0'a düşer ama eşik TABANIN altına inmez")
+    void denominatorFailureFallsBackSafely() {
+        when(appSettings.getString(eq(StormService.KEY_UNIT), anyString())).thenReturn("PERCENT");
+        when(appSettings.getInt(eq(StormService.KEY_VALUE), anyInt())).thenReturn(50);
+        when(inventoryRepo.countByActiveTrue()).thenThrow(new RuntimeException("db yok"));
+
+        assertThat(storm.totalActiveMonitors()).isZero();
+        assertThat(storm.computeThreshold()).isEqualTo(2);   // taban: 1 arızada fırtına ilan edilmez
+    }
+
+    @Test
+    @DisplayName("Payda 60 sn önbelleklenir — her kesintide tüm tablolar sayılmaz")
+    void denominatorIsCached() {
+        injectFieldRepos();
+        stubTotalMonitors(1, 1, 1, 1, 1, 1, 1);
+        when(pageRepo.countByActiveTrue()).thenReturn(0L);
+        when(scriptedRepo.countByActiveTrue()).thenReturn(0L);
+
+        assertThat(storm.totalActiveMonitors()).isEqualTo(7L);
+        assertThat(storm.totalActiveMonitors()).isEqualTo(7L);
+
+        verify(inventoryRepo, org.mockito.Mockito.times(1)).countByActiveTrue();
+        verify(scriptedRepo, org.mockito.Mockito.times(1)).countByActiveTrue();
+    }
+
 }

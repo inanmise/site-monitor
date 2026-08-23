@@ -4,10 +4,11 @@ import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import {
-  Shield, Activity, Globe, Server, Radio, Share2, Search, CalendarClock, ScanSearch, FlaskConical,
+  Shield, Activity, Globe, Server, Radio, Share2, Search, CalendarClock, ScanSearch, FlaskConical, Gauge,
   CheckCircle, AlertTriangle, XCircle, HelpCircle, ChevronDown, ChevronRight,
   Download, X, RefreshCw, Clock, User,
 } from 'lucide-react'
+import { csvCell } from '../utils/csv.js'
 
 // Her izleme türünün ayırt edici ikon + rengi (badge).
 const TYPES = [
@@ -20,6 +21,7 @@ const TYPES = [
   { key: 'DNS',     Icon: Share2,        color: '#6d28d9' },
   { key: 'KEYWORD', Icon: Search,        color: '#d97706' },
   { key: 'PAGE',    Icon: ScanSearch,    color: '#0d9488' },
+  { key: 'PAGESPEED', Icon: Gauge,      color: '#c2410c' },
   // Backend SCRIPTED kaydi yaziyor (ActivityLogService.SCRIPTED) ama burada karsiligi yoktu:
   // satirlar gri "?" rozetiyle cikiyor ve tur filtresi cipi hic uretilmiyordu.
   { key: 'SCRIPTED',Icon: FlaskConical,  color: '#7e22ce' },
@@ -67,17 +69,13 @@ function writeParams(f) {
   window.history.replaceState(null, '', `${window.location.pathname}${s ? '?' + s : ''}`)
 }
 
-function csvEscape(v) {
-  const s = v == null ? '' : String(v)
-  return /[",\n;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s
-}
 function exportCsv(rows) {
   const header = ['time', 'type', 'name', 'target', 'action', 'status', 'summary', 'error']
   const lines = [header.join(',')]
   rows.forEach((r) => lines.push([
     r.activity_time, r.monitor_type, r.monitor_name, r.target, r.action,
     r.result_status, r.result_summary, r.error_message,
-  ].map(csvEscape).join(',')))
+  ].map(csvCell).join(',')))
   const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
