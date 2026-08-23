@@ -830,8 +830,31 @@ public class EscalationService {
                 log.debug("İzleme alarmı storm üyesi — bireysel re-alert atlandı: {} [{}]", domain, alertType);
                 return;
             }
-            String lastAlertTime = event.getLastReAlertAt() != null
-                    ? event.getLastReAlertAt() : event.getCreatedAt();
+            // İLK bildirim hiç tamamlanmadıysa (lastReAlertAt null) onu ŞİMDİ gönder.
+            //
+            // lastReAlertAt iki başarı yolunun İKİSİNDE de damgalanıyor (storm'a eklendi ve
+            // bireysel gönderim), yani null OLMASI "ilk bildirim yarıda kaldı" demektir: alarm
+            // satırı kaydedildikten SONRA, bildirim gitmeden önce süreç ölmüş (deploy, restart,
+            // OOM). Eskiden bu durumda createdAt'e düşülüyordu ve kod sanki bildirim oluşturma
+            // aninda gitmis gibi davraniyordu — alarm bir re-alert araligi (varsayilan 24 saat)
+            // boyunca SESSIZ kaliyor, hicbir yerde de isaret birakmiyordu.
+            //
+            // 2026-08-24'te goruldu: PAGESPEED_SLOW alarmi olustu, tam o anda backend yeniden
+            // baslatildi; alarm ekranda "acik" gorunuyor ama bildirim gecmisi bos ve sistem
+            // "bugun zaten gonderildi" diyordu.
+            if (event.getLastReAlertAt() == null) {
+                List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId);
+                sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
+                        message, "", event.getId(), "INITIAL", null, outageContext);
+                event.setNotifiedContacts(serializeContacts(contacts));
+                event.setLastReAlertAt(now());
+                event.setMessage(message);
+                alertEventRepo.save(event);
+                log.warn("🔴 Yarıda kalmış ilk bildirim tamamlandı: {} [{}] — alarm {} tarihinde açılmıştı",
+                        domain, alertType, event.getCreatedAt());
+                return;
+            }
+            String lastAlertTime = event.getLastReAlertAt();
             if (reAlertDue(lastAlertTime, now(), reAlertIntervalHours())) {
                 List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId);
                 sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,

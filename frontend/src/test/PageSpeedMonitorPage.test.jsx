@@ -179,7 +179,11 @@ describe('PageSpeedMonitorPage', () => {
     render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     fireEvent.click(await screen.findByText('https://x.com/odeme'))
 
-    fireEvent.click(await screen.findByRole('button', { name: '2026-08-20T09:00:00' }))
+    // Ihlal anlari artik tek tek dugme DEGIL, tek bir secici: birikince (20'ye kadar) tablonun
+    // ustunu iki-uc sira dolduruyorlardi. SearchableSelect mouseDown dinler (click DEGIL).
+    await screen.findByText(/threshold breaches on record|eşik ihlali kayıtlı/i)
+    fireEvent.mouseDown(document.querySelector('.pspd-snapshot-row .ss-trigger'))
+    fireEvent.mouseDown(await screen.findByText('2026-08-20T09:00:00'))
     await waitFor(() => expect(api.monitoring.getPageSpeedResources).toHaveBeenCalledWith(1, { checkId: 77 }))
   })
 

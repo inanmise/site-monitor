@@ -23,6 +23,7 @@ import java.util.*;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.mockito.AdditionalMatchers.not;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.mockito.Mockito.atLeast;
@@ -1381,6 +1382,51 @@ class EscalationServiceTest {
         verify(emailService).sendAlert(any(String[].class), contains("[RE-ALERT]"),
                 anyString(), eq(domain), eq("CRITICAL"), eq("ACCESSIBILITY"), isNull(), any());
         assertThat(open.getLastReAlertAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("processConfirmedOutage: YARIDA KALMIS ilk bildirim (lastReAlertAt null) HEMEN gonderilir")
+    void processConfirmedOutage_interruptedFirstNotification_sendsNow() {
+        // 2026-08-24 vakasi: alarm satiri kaydedildi, bildirim gitmeden once surec oldu
+        // (deploy/restart/OOM). lastReAlertAt iki basari yolunda da damgalandigi icin NULL olmasi
+        // "ilk bildirim yarida kaldi" demektir. Eskiden createdAt'e dusuluyordu ve kod sanki
+        // bildirim gitmis gibi davraniyordu: alarm 24 saat SESSIZ kaliyor, hicbir isaret birakmiyordu.
+        String domain = "down.example.com";
+        AlertEvent open = existingOpenAlert(domain, "ACCESSIBILITY", "CRITICAL", false);
+        open.setId(7L);
+        open.setCreatedAt(ISO.format(Instant.now()));   // AZ ONCE olusmus → re-alert penceresi DOLMADI
+        open.setLastReAlertAt(null);                    // ...ama ilk bildirim hic tamamlanmamis
+        when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.empty());
+        when(alertEventRepo.findOpenAlert(domain, "ACCESSIBILITY")).thenReturn(Optional.of(open));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(contactRepo.findByActiveTrueOrderByRoleAsc())
+                .thenReturn(List.of(contact("team@test.com", "TECH", "WARNING")));
+
+        service.processConfirmedOutage(domain, "ACCESSIBILITY", "CRITICAL", outageCtx());
+
+        // ILK bildirim olarak gider — "[RE-ALERT]" onekiyle DEGIL (kullaniciya tekrar gibi gorunmemeli).
+        verify(emailService).sendAlert(any(String[].class), not(contains("[RE-ALERT]")),
+                anyString(), eq(domain), eq("CRITICAL"), eq("ACCESSIBILITY"), isNull(), any());
+        // Damga atilir ki bir sonraki sweep bunu tekrar gondermesin.
+        assertThat(open.getLastReAlertAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("processConfirmedOutage: bildirimi TAMAMLANMIS taze alarm sessiz kalir (tekrar gondermez)")
+    void processConfirmedOutage_freshAlertAlreadyNotified_staysSilent() {
+        // Yukaridaki kurtarmanin ters kosulu: lastReAlertAt DOLUYSA bildirim gitmistir,
+        // re-alert penceresi dolana kadar susulur. Bu ayrim kaybolursa her sweep mail atardi.
+        String domain = "down.example.com";
+        AlertEvent open = existingOpenAlert(domain, "ACCESSIBILITY", "CRITICAL", false);
+        open.setCreatedAt(ISO.format(Instant.now()));
+        open.setLastReAlertAt(ISO.format(Instant.now()));
+        when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.empty());
+        when(alertEventRepo.findOpenAlert(domain, "ACCESSIBILITY")).thenReturn(Optional.of(open));
+
+        service.processConfirmedOutage(domain, "ACCESSIBILITY", "CRITICAL", outageCtx());
+
+        verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(),
+                any(), any(), any(), any(), any());
     }
 
     @Test
