@@ -2330,6 +2330,34 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("KAPASITE: /pagespeed/test ust uste cagrilamaz (ayni oturumda ikinci istek 429)")
+    void pageSpeedTest_hasPerSessionCooldown() throws Exception {
+        // Kayitli olcumun cooldown'u vardi ama bu ucun YOKTU — oysa AYNI isi yapiyor: ana sayfa +
+        // yuzlerce alt kaynak GET'i, GOVDELER dahil (kardes /page/test yalniz HEAD attigi icin ucuz,
+        // bu degil). Tek pod 100 eszamanli kullaniciya hizmet ediyor; "Simdi Dene"ye ust uste basmak
+        // istek thread'lerini ve bant genisligini tuketebiliyordu.
+        // appSettings @MockitoBean → getInt varsayilan 0 doner (fallback DEGIL); acikca kur.
+        when(appSettings.getInt(eq("site.monitor.pagespeed.test-cooldown-seconds"), anyInt())).thenReturn(10);
+        when(pageSpeedChecker.test(any())).thenReturn(new com.sitemonitor.service.PageSpeedCheckerService.Result(
+                "OK", 200, 40L, 90L, 300L, 20000L, 3, 0, false, false,
+                java.util.List.of(), null, java.util.List.of()));
+        var s = session("ADMIN");
+
+        mvc.perform(post("/api/monitoring/pagespeed/test").session(s)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"https://x.com\"}"))
+                .andExpect(status().isOk());
+
+        mvc.perform(post("/api/monitoring/pagespeed/test").session(s)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"https://x.com\"}"))
+                .andExpect(status().is(429));
+
+        // ASIL KANIT: ikinci istek olcumu HIC baslatmadi.
+        verify(pageSpeedChecker, org.mockito.Mockito.times(1)).test(any());
+    }
+
+    @Test
     @DisplayName("SIR: BOŞ parola gönderimi mevcut şifreli değeri KORUR (her kayıt parolayı silmesin)")
     void blankPasswordKeepsExistingSecret() throws Exception {
         var existing = psMon(5L, "https://x.com", 1L);

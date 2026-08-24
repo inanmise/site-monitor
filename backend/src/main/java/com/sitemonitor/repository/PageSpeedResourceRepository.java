@@ -23,7 +23,12 @@ public interface PageSpeedResourceRepository extends JpaRepository<PageSpeedReso
      */
     long countByMonitorIdAndKeepReason(Long monitorId, String keepReason);
 
-    long countByCheckId(Long checkId);
+    /**
+     * DIKKAT: izleme kimligiyle birlikte sayilir. Yalniz checkId ile saymak, BASKA bir izlemenin
+     * checkId'si gecildiginde o izlemenin kaynak sayisini sizdiriyordu (satirlar zaten filtrelenip
+     * bosaliyor, ama sayi "0 / 57" diye ekrana geliyordu).
+     */
+    long countByMonitorIdAndCheckId(Long monitorId, Long checkId);
 
     /** Bir eşik-ihlali anının kırılımı (delil). */
     @Query("SELECT r FROM PageSpeedResource r WHERE r.checkId = :checkId ORDER BY r.bytes DESC NULLS LAST LIMIT :limit")

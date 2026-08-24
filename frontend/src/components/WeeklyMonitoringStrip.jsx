@@ -1,7 +1,7 @@
-import { ShieldCheck, Globe, Activity, Radio, Network, Server, Search, ScanSearch, FlaskConical } from 'lucide-react'
+import { ShieldCheck, Globe, Activity, Radio, Network, Server, Search, ScanSearch, Gauge, FlaskConical } from 'lucide-react'
 
 /** Tür → {ikon, etiket anahtarı, türe-özgü ekstra metrik etiketi + birimi}. */
-const TYPE_META = {
+export const TYPE_META = {
   cert:    { icon: ShieldCheck, labelKey: 'wr.monTypeCert',    extraLabel: 'wr.monExtraExpiring', extraUnit: 'count' },
   domain:  { icon: Globe,       labelKey: 'wr.monTypeDomain',  extraLabel: 'wr.monExtraExpiring', extraUnit: 'count' },
   http:    { icon: Activity,    labelKey: 'wr.monTypeHttp',    extraLabel: 'wr.monExtraResp',     extraUnit: 'ms' },
@@ -10,9 +10,10 @@ const TYPE_META = {
   dns:     { icon: Server,      labelKey: 'wr.monTypeDns',     extraLabel: 'wr.monExtraChanges',  extraUnit: 'count' },
   keyword: { icon: Search,      labelKey: 'wr.monTypeKeyword', extraLabel: null,                  extraUnit: null },
   page:    { icon: ScanSearch,  labelKey: 'wr.monTypePage',    extraLabel: null,                  extraUnit: null },
+  pagespeed:{icon: Gauge,       labelKey: 'wr.monTypePageSpeed',extraLabel: 'wr.monExtraResp',   extraUnit: 'ms' },
   scripted:{ icon: FlaskConical,labelKey: 'wr.monTypeScripted',extraLabel: 'wr.monExtraResp',     extraUnit: 'ms' },
 }
-const ORDER = ['cert', 'domain', 'http', 'ping', 'port', 'dns', 'keyword', 'page', 'pagespeed', 'scripted']
+export const ORDER = ['cert', 'domain', 'http', 'ping', 'port', 'dns', 'keyword', 'page', 'pagespeed', 'scripted']
 
 /** Backend snake_case (SNAKE_CASE) → normalize; camelCase fallback güvenlik için. */
 function norm(x) {
@@ -56,7 +57,11 @@ export default function WeeklyMonitoringStrip({ stats, loading, t }) {
     <div className="wr-mon">
       <div className="wr-mon-title">{t('wr.monTitle')}</div>
       <div className="wr-mon-grid">
-        {ORDER.filter((k) => byType[k]).map((k) => {
+        {/* TYPE_META'da karsiligi OLMAYAN tur ATLANIR. `ORDER` ile `TYPE_META` bir kez ayrik
+            dustu: `pagespeed` ORDER'a eklenmis, TYPE_META'ya eklenmemisti — sunucu o satiri
+            dondurdugu anda `meta.icon` patlayip HAFTALIK RAPOR SAYFASINI tamamen cokertiyordu.
+            Rapor ekrani, tanimadigi bir tur yuzunden beyaz ekrana dusmemeli. */}
+        {ORDER.filter((k) => byType[k] && TYPE_META[k]).map((k) => {
           const s = byType[k]
           const meta = TYPE_META[k]
           const Icon = meta.icon

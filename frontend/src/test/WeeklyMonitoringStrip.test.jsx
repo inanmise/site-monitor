@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { render } from './test-utils.jsx'
-import WeeklyMonitoringStrip from '../components/WeeklyMonitoringStrip.jsx'
+import WeeklyMonitoringStrip, { ORDER, TYPE_META } from '../components/WeeklyMonitoringStrip.jsx'
 
 const t = (key, ...a) => {
   const m = {
     'wr.monTitle': 'İzleme Göstergeleri', 'wr.monTypeCert': 'Sertifika', 'wr.monTypeHttp': 'HTTP', 'wr.monTypeDomain': 'Alan Adı',
     'wr.monTypePing': 'Ping', 'wr.monTypePort': 'Port', 'wr.monTypeDns': 'DNS', 'wr.monTypeKeyword': 'Keyword',
+    'wr.monTypePageSpeed': 'Sayfa Hızı',
     'wr.monLblActive': 'İzleme', 'wr.monLblChecks': 'Kontrol', 'wr.monLblOpened': 'Açılan',
     'wr.monLblResolved': 'Çözülen', 'wr.monLblOpen': 'Açık',
     'wr.monExtraExpiring': '≤30 gün', 'wr.monExtraResp': 'Ort. Yanıt', 'wr.monExtraClosed': 'Kapalı Port', 'wr.monExtraChanges': 'Değişim',
@@ -54,5 +55,23 @@ describe('WeeklyMonitoringStrip', () => {
   it('loading + veri yok → yükleniyor göstergesi', () => {
     const { container } = render(<WeeklyMonitoringStrip stats={null} loading={true} t={t} />)
     expect(container.querySelector('.wr-mon--loading')).toBeTruthy()
+  })
+
+  it('SOZLESME: ORDER ile TYPE_META ayni anahtar kumesini tasir', () => {
+    // Bu ikisi bir kez ayrik dustu: `pagespeed` ORDER'a eklenmis, TYPE_META'ya eklenmemisti.
+    // Sunucu o satiri dondurdugu ilk anda `meta.icon` patlayip HAFTALIK RAPOR SAYFASINI tamamen
+    // cokertiyordu (backend o zamana kadar satiri hic uretmedigi icin hata gizli kalmisti).
+    // Iki listeyi de elle guncellemek gerekiyor; kapisi burasi.
+    expect([...ORDER].sort()).toEqual(Object.keys(TYPE_META).sort())
+  })
+
+  it('Sayfa Hizi satiri gelirse karti cizilir (ORDER + TYPE_META birlikte)', () => {
+    const { container } = render(<WeeklyMonitoringStrip t={t} stats={{ types: [
+      { type: 'pagespeed', active_monitors: 3, total_checks: 40, success_rate: 97.5, extra: 210, top3: [] },
+    ] }} />)
+
+    expect(container.querySelectorAll('.wr-mon-card')).toHaveLength(1)
+    expect(container.textContent).toContain('Sayfa Hızı')
+    expect(container.textContent).toContain('97.5')
   })
 })
