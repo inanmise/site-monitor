@@ -762,7 +762,7 @@ class AdminControllerTest {
     @DisplayName("GET /api/admin/alerts returns paginated alerts by default")
     void listAlerts_allAlerts_returns200() throws Exception {
         Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(empty);
 
         mvc.perform(get("/api/admin/alerts").session(authSession()))
@@ -777,8 +777,8 @@ class AdminControllerTest {
     void listAlerts_alertTypeFilter_passedToQueryWithCounts() throws Exception {
         Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
         when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(),
-                eq("ACCESSIBILITY"), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class))).thenReturn(empty);
-        when(alertEventRepo.countFilteredByType(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any()))
+                eq("ACCESSIBILITY"), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class))).thenReturn(empty);
+        when(alertEventRepo.countFilteredByType(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any()))
                 .thenReturn(List.of(
                         new Object[]{"EXPIRY", 8L},
                         new Object[]{"ACCESSIBILITY", 2L}));
@@ -790,14 +790,75 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.type_counts.ACCESSIBILITY").value(2));
 
         org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(),
-                eq("ACCESSIBILITY"), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
+                eq("ACCESSIBILITY"), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
+    }
+
+    // ── Alarm sekmesinin TIP KAPSAMI (alertTypes) ────────────────────────────────────────
+    //
+    // Izleme modallarindaki "Alarmlar" sekmesi yalniz domain'e gore suzuluyordu: ayni URL'i
+    // izleyen HER monitorun alarmi oraya dusuyordu (Sayfa Hizi modalinde HTTP'nin SSL alarmi ve
+    // Sayfa Butunlugu alarmi gorunuyordu). Suzme SUNUCUDA yapilmak ZORUNDA -- istemcide suzmek
+    // yalniz acik sayfayi suzer; sayfalama, tip cipleri ve seviye sayaclari yanlis kalirdi.
+
+    @Test
+    @DisplayName("GET /api/admin/alerts?alertTypes=A,B → sorguya TIP KAPSAMI gecer")
+    void listAlerts_alertTypes_scopesQuery() throws Exception {
+        Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+                .thenReturn(empty);
+
+        mvc.perform(get("/api/admin/alerts?alertTypes=PAGESPEED_DOWN,PAGESPEED_SLOW").session(authSession()))
+                .andExpect(status().isOk());
+
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(),
+                eq(true), eq(List.of("PAGESPEED_DOWN", "PAGESPEED_SLOW")),
+                any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
+        // Tip cipleri de AYNI kapsamda sayilmali; aksi halde ekranda gorunmeyen bir tip icin
+        // "SSL Sertifika Sorunu: 1" cipi cikardi.
+        org.mockito.Mockito.verify(alertEventRepo).countFilteredByType(any(), any(), any(), any(), any(), any(),
+                eq(true), eq(List.of("PAGESPEED_DOWN", "PAGESPEED_SLOW")),
+                any(), any(), any(), any(), anyBoolean(), any());
+    }
+
+    @Test
+    @DisplayName("alertTypes VERILMEZSE tip kapsami UYGULANMAZ (bagimsiz Alarm Gecmisi ekrani)")
+    void listAlerts_noAlertTypes_noTypeScope() throws Exception {
+        Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+                .thenReturn(empty);
+
+        mvc.perform(get("/api/admin/alerts").session(authSession())).andExpect(status().isOk());
+
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(),
+                eq(false), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
+    }
+
+    @Test
+    @DisplayName("alertTypes SERBEST METIN degil: gecersiz jetonlar elenir, bos kalirsa kapsam yok")
+    void listAlerts_alertTypes_sanitised() throws Exception {
+        Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+                .thenReturn(empty);
+
+        // Bosluk/kucuk harf normalize edilir; tirnak-noktali virgul tasiyan jeton ATILIR.
+        mvc.perform(get("/api/admin/alerts?alertTypes= page_down , DROP;TABLE ,PAGE_DOWN")
+                        .session(authSession()))
+                .andExpect(status().isOk());
+
+        // Tekrar eden PAGE_DOWN bir kez; "DROP;TABLE" elendi.
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(),
+                eq(true), eq(List.of("PAGE_DOWN")),
+                any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
     }
 
     @Test
     @DisplayName("GET /api/admin/alerts without alertType passes null to query")
     void listAlerts_noAlertType_passesNull() throws Exception {
         Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(empty);
 
         mvc.perform(get("/api/admin/alerts").session(authSession()))
@@ -806,14 +867,14 @@ class AdminControllerTest {
         // alertType + dort YENI filtre (q/level/acknowledged/teamId) verilmediginde hepsi NULL
         // gitmeli: bos string ya da "" gecerse sorgu her seyi eler ve ekran bos gorunur.
         org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(),
-                isNull(), isNull(), isNull(), isNull(), isNull(), anyBoolean(), any(), any(Pageable.class));
+                isNull(), anyBoolean(), any(), isNull(), isNull(), isNull(), isNull(), anyBoolean(), any(), any(Pageable.class));
     }
 
     @Test
     @DisplayName("GET /api/admin/alerts?onlyOpen=true returns only open alerts")
     void listAlerts_onlyOpen_returnsOpenAlerts() throws Exception {
         Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
-        when(alertEventRepo.findFiltered(eq(Boolean.FALSE), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+        when(alertEventRepo.findFiltered(eq(Boolean.FALSE), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(empty);
 
         mvc.perform(get("/api/admin/alerts?onlyOpen=true").session(authSession()))
@@ -840,7 +901,7 @@ class AdminControllerTest {
         Team sy = new Team(); sy.setId(7L); sy.setName("SY-Team-A");
         Team ug = new Team(); ug.setId(8L); ug.setName("UG-Team-B");
 
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(ev)));
         when(inventoryRepo.findByDomainIn(any())).thenReturn(List.of(inv));
         when(teamRepo.findAllById(any())).thenReturn(List.of(sy, ug));
@@ -865,7 +926,7 @@ class AdminControllerTest {
         ev.setAlertType("EXPIRY");
         ev.setAlertLevel("WARNING");
 
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(ev)));
         when(inventoryRepo.findByDomainIn(any())).thenReturn(Collections.emptyList());
         when(notificationLogRepo.countByAlertIds(any())).thenReturn(Collections.emptyList());
@@ -1323,15 +1384,15 @@ class AdminControllerTest {
     @Test
     @DisplayName("GET /api/admin/alerts as USER → sorguya takım kapsamı (scoped=true, scope=[2]) geçer")
     void listAlerts_asUser_passesScope() throws Exception {
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(Collections.emptyList()));
-        when(alertEventRepo.countFilteredByType(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any()))
+        when(alertEventRepo.countFilteredByType(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any()))
                 .thenReturn(Collections.emptyList());
 
         mvc.perform(get("/api/admin/alerts").session(userSession()))
                 .andExpect(status().isOk());
 
-        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(),
                 eq(true), eq(java.util.List.of(2L)), any(Pageable.class));
     }
 
@@ -1903,7 +1964,7 @@ class AdminControllerTest {
     // süzer, sayfalamayla "3 sonuç" derken aslında 90 sonuç olur — yanıltıcı.
 
     private void stubEmptyAlerts() {
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(),
                 anyBoolean(), any(), any(Pageable.class))).thenReturn(new PageImpl<>(Collections.emptyList()));
     }
 
@@ -1915,7 +1976,7 @@ class AdminControllerTest {
         mvc.perform(get("/api/admin/alerts?q=AkBank").session(authSession()))
                 .andExpect(status().isOk());
 
-        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(),
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
                 eq("%akbank%"), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
     }
 
@@ -1928,7 +1989,7 @@ class AdminControllerTest {
                 .andExpect(status().isOk());
 
         // '%' ve '_' kullanıcı verisidir, joker DEĞİL: kaçışlanmazsa "%" araması TÜM kayıtları getirir
-        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(),
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
                 eq("%!%!_a%"), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
     }
 
@@ -1940,7 +2001,7 @@ class AdminControllerTest {
         mvc.perform(get("/api/admin/alerts").param("q", "   ").session(authSession()))
                 .andExpect(status().isOk());
 
-        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(),
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
                 isNull(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
     }
 
@@ -1952,7 +2013,7 @@ class AdminControllerTest {
         mvc.perform(get("/api/admin/alerts?level=critical").session(authSession()))
                 .andExpect(status().isOk());
 
-        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(),
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
                 any(), eq("CRITICAL"), any(), any(), anyBoolean(), any(), any(Pageable.class));
     }
 
@@ -1964,7 +2025,7 @@ class AdminControllerTest {
         mvc.perform(get("/api/admin/alerts?acknowledged=false&teamId=7").session(authSession()))
                 .andExpect(status().isOk());
 
-        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(),
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
                 any(), any(), eq(Boolean.FALSE), eq(7L), anyBoolean(), any(), any(Pageable.class));
     }
 
@@ -1972,7 +2033,7 @@ class AdminControllerTest {
     @DisplayName("Tip SAYAÇLARI yeni filtreleri dikkate alır ama tip filtresinden BAĞIMSIZ kalır")
     void listAlerts_typeCountsHonourNewFiltersButNotType() throws Exception {
         stubEmptyAlerts();
-        when(alertEventRepo.countFilteredByType(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+        when(alertEventRepo.countFilteredByType(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(),
                 anyBoolean(), any())).thenReturn(List.<Object[]>of(new Object[]{"EXPIRY", 3L}));
 
         mvc.perform(get("/api/admin/alerts?alertType=EXPIRY&q=ak&level=HIGH").session(authSession()))
@@ -1981,7 +2042,7 @@ class AdminControllerTest {
 
         // Sayaç sorgusunda alertType YOK (imzada zaten yok) ama q/level VAR:
         // aksi halde arama yapınca rozet sayıları toplamla çelişirdi.
-        org.mockito.Mockito.verify(alertEventRepo).countFilteredByType(any(), any(), any(), any(), any(), any(),
+        org.mockito.Mockito.verify(alertEventRepo).countFilteredByType(any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
                 eq("%ak%"), eq("HIGH"), any(), any(), anyBoolean(), any());
     }
 

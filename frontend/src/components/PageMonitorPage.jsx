@@ -21,6 +21,7 @@ import { duplicateName } from '../utils/duplicateName.js'
 import { normalizeUrl } from '../utils/normalizeUrl.js'
 import { useDialog } from './ui/Dialog.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
+import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
@@ -683,7 +684,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                 </>)} />
             )}
 
-            {detailTab === 'alerts' && <AlertHistory domain={selected.url} />}
+            {detailTab === 'alerts' && <AlertHistory domain={selected.url} types={alertTypesFor('page')} />}
 
             {detailTab === 'notes' && (
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>

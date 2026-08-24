@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { MONITOR_GUIDES } from '../components/monitorGuides.js'
+import { MONITOR_ALERT_TYPES } from '../utils/monitorAlertTypes.js'
 
 /**
  * YENİ İZLEME TÜRÜ EKLEYENİ DURDURAN KAPI — arayüz yüzeyleri.
@@ -167,6 +168,62 @@ describe('İzleme türü yüzeyleri — yeni tür eklenince hepsi güncellenmeli
       const n = /(\d+)/.exec(claim)
       expect(n, `metinde sayı yok: ${claim}`).not.toBeNull()
       expect(Number(n[1]), `metindeki sayı çip sayısıyla tutmuyor: "${claim}"`).toBe(chips)
+    }
+  })
+
+  // ── Alarm sekmesinin TIP KAPSAMI ────────────────────────────────────────────────────────
+  //
+  // Izleme modallarindaki "Alarmlar" sekmesi yalniz URL/host'a gore suzuluyordu: ayni hedefi
+  // izleyen HER monitorun alarmi oraya dusuyordu (Sayfa Hizi modalinde HTTP'nin SSL alarmi ve
+  // Sayfa Butunlugu alarmi gorunuyordu). Artik her sayfa kendi tip kumesini geciyor; o kume
+  // backend katalogunun aynasi olmak ZORUNDA, yoksa bir tur eklenince alarmi hicbir sayfada
+  // gorunmez ya da yanlis sayfada gorunur.
+
+  /** MonitorTypeCatalog.ALERT_TYPES → { tur: [tip, ...] } */
+  function catalogAlertTypes() {
+    const src = readFileSync(CATALOG, 'utf8')
+    const at = src.indexOf('ALERT_TYPES =')
+    expect(at, 'MonitorTypeCatalog okundu ama ALERT_TYPES bulunamadi').toBeGreaterThan(-1)
+    // Blok: "ALERT_TYPES = Map.of( ... );" — ilk noktali virgule kadar.
+    const block = src.slice(at, src.indexOf(');', at))
+    const out = {}
+    for (const m of block.matchAll(/"(\w+)",\s*Set\.of\(([^)]*)\)/g)) {
+      out[m[1]] = [...m[2].matchAll(/"(\w+)"/g)].map(x => x[1])
+    }
+    expect(Object.keys(out).length, 'ALERT_TYPES bulundu ama icinden tur cikmadi — regex bozulmus')
+      .toBeGreaterThan(5)
+    return out
+  }
+
+  it('MONITOR_ALERT_TYPES backend katalogunun BIREBIR aynasi', () => {
+    const catalog = catalogAlertTypes()
+    // Anahtarlar ayni kume olmali: eksik tur = o turun alarmlari sekmede hic gorunmez,
+    // fazla tur = katalogda olmayan bir tip sunucuya gonderilir.
+    expect(Object.keys(MONITOR_ALERT_TYPES).sort()).toEqual(Object.keys(catalog).sort())
+    for (const [type, types] of Object.entries(catalog)) {
+      expect([...MONITOR_ALERT_TYPES[type]].sort(), `${type}: alarm tipleri katalogla ayrismis`)
+        .toEqual([...types].sort())
+    }
+  })
+
+  it('Her izleme sayfasi Alarmlar sekmesine KENDI tip kumesini geciyor', () => {
+    // Tip gecilmezse sekme yine calisir ama BASKA monitorlerin alarmlarini listeler — sessiz
+    // hata: ekran dolu gorunur, sadece yanlis doludur.
+    const PAGES = {
+      page: 'components/PageMonitorPage.jsx',
+      pagespeed: 'components/PageSpeedMonitorPage.jsx',
+      http: 'components/HttpMonitorPage.jsx',
+      keyword: 'components/KeywordMonitorPage.jsx',
+      ping: 'components/PingMonitorPage.jsx',
+      port: 'components/PortMonitorPage.jsx',
+      domain: 'components/DomainMonitorPage.jsx',
+      scripted: 'components/ScriptedMonitorPage.jsx',
+      dns: 'components/DnsDetailModal.jsx',
+    }
+    for (const [type, file] of Object.entries(PAGES)) {
+      const src = read(file)
+      expect(src, `${file}: AlertHistory'ye types gecilmemis`)
+        .toContain(`types={alertTypesFor('${type}')}`)
     }
   })
 

@@ -425,7 +425,16 @@ function AlertTypeGroups({ alerts, listClassName, expanded, onToggle, renderCard
   })
 }
 
-export default function AlertHistory({ domain = null, urlSync = false }) {
+/**
+ * @param types İzleme modallarında GÖMÜLÜ kullanım için: yalnız bu alarm tipleri listelenir.
+ *              Verilmezse (bağımsız Alarm Geçmişi ekranı) hiçbir tip süzgeci uygulanmaz.
+ *              Süzme SUNUCUDA yapılır — istemcide süzmek yalnız açık sayfayı süzer, sayfalama
+ *              ve tip/seviye sayaçları yanlış kalırdı (arama/seviye filtreleriyle aynı gerekçe).
+ */
+export default function AlertHistory({ domain = null, urlSync = false, types = null }) {
+  // Dizi kimliği her render'da değişir; load() bağımlılığına DİZİ koymak sonsuz döngü demek.
+  // Tek bir dizeye indirgeniyor.
+  const typesParam = Array.isArray(types) && types.length > 0 ? types.join(',') : null
   const t = useT()
   const { showConfirm, showNoteConfirm } = useDialog()
   const toast = useToast()
@@ -557,6 +566,7 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
   const csvParams = {
     resolved: tab === 'closed' ? 'true' : 'false',
     ...(domain ? { domain } : {}),
+    ...(typesParam ? { alertTypes: typesParam } : {}),
     ...(typeFilter ? { alertType: typeFilter } : {}),
     ...(searchTerm.trim() ? { q: searchTerm.trim() } : {}),
     ...(levelFilter ? { level: levelFilter } : {}),
@@ -585,6 +595,7 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
       if (closedTo)   params.resolvedUntil = closedTo
     }
     if (domain) params.domain = domain
+    if (typesParam) params.alertTypes = typesParam
     if (typeFilter) params.alertType = typeFilter
     if (searchTerm.trim()) params.q = searchTerm.trim()
     if (levelFilter) params.level = levelFilter
@@ -603,7 +614,7 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
     } else if (res != null) {
       toast.error(res?.error || t('alh.loadError'))
     }
-  }, [tab, page, pageSize, closedFrom, closedTo, domain, typeFilter,
+  }, [tab, page, pageSize, closedFrom, closedTo, domain, typesParam, typeFilter,
       searchTerm, levelFilter, teamFilter, ackFilter, t, toast])
 
   useEffect(() => { load() }, [load])

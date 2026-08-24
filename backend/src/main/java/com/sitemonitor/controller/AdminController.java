@@ -1048,6 +1048,7 @@ public class AdminController {
             @RequestParam(required = false) String resolvedUntil,
             @RequestParam(required = false) String domain,
             @RequestParam(required = false) String alertType,
+            @RequestParam(required = false) String alertTypes,
             @RequestParam(required = false) String q,
             @RequestParam(required = false) String level,
             @RequestParam(required = false) Boolean acknowledged,
@@ -1055,6 +1056,9 @@ public class AdminController {
             HttpSession session) {
         requirePerm(session, "alerts.read", "view");
         int sz = Math.max(1, Math.min(size, 200));
+        List<String> typeList = parseAlertTypes(alertTypes);
+        boolean typeScoped = !typeList.isEmpty();
+        List<String> typesParam = typeScoped ? typeList : List.of("-");   // IN boş olamaz (scope deseniyle aynı)
         Boolean resolvedEffective = resolved != null ? resolved : (onlyOpen ? Boolean.FALSE : null);
         String alertTypeEffective = (alertType != null && !alertType.isBlank()) ? alertType.trim() : null;
         // Arama: kismi + buyuk/kucuk harf duyarsiz. Joker karakterler SORGUDA degil BURADA
@@ -1083,6 +1087,7 @@ public class AdminController {
         List<Long> scopeList = scoped ? scope : List.of(-1L);   // global'de dummy (scoped=false kısa-devre)
         Page<AlertEvent> result = alertEventRepo.findFiltered(
                 resolvedEffective, since, until, resolvedSince, resolvedUntil, domain, alertTypeEffective,
+                typeScoped, typesParam,
                 qEffective, levelEffective, acknowledged, teamId,
                 scoped, scopeList, PageRequest.of(Math.max(0, page), sz, sort));
         enrichAlerts(result.getContent());
@@ -1090,6 +1095,7 @@ public class AdminController {
         Map<String, Long> typeCounts = new LinkedHashMap<>();
         for (Object[] row : alertEventRepo.countFilteredByType(
                 resolvedEffective, since, until, resolvedSince, resolvedUntil, domain,
+                typeScoped, typesParam,
                 qEffective, levelEffective, acknowledged, teamId, scoped, scopeList)) {
             typeCounts.put(String.valueOf(row[0]), (Long) row[1]);
         }
@@ -1100,6 +1106,7 @@ public class AdminController {
         long unackedTotal = 0L;
         for (Object[] row : alertEventRepo.countFacets(
                 resolvedEffective, since, until, resolvedSince, resolvedUntil, domain, alertTypeEffective,
+                typeScoped, typesParam,
                 qEffective, teamId, scoped, scopeList)) {
             String lvl = String.valueOf(row[0]);
             long n = (Long) row[2];
@@ -1111,7 +1118,7 @@ public class AdminController {
         // mevcut since/until yüklemleri de aynı deseni kullanıyor.
         String staleBefore = ISO.format(Instant.now().minus(java.time.Duration.ofHours(ALERT_STALE_HOURS)));
         long staleTotal = alertEventRepo.countStale(resolvedEffective, staleBefore, domain,
-                alertTypeEffective, qEffective, teamId, scoped, scopeList);
+                alertTypeEffective, typeScoped, typesParam, qEffective, teamId, scoped, scopeList);
 
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("data",         result.getContent());
@@ -1151,6 +1158,7 @@ public class AdminController {
             @RequestParam(required = false) String resolvedUntil,
             @RequestParam(required = false) String domain,
             @RequestParam(required = false) String alertType,
+            @RequestParam(required = false) String alertTypes,
             @RequestParam(required = false) String q,
             @RequestParam(required = false) String level,
             @RequestParam(required = false) Boolean acknowledged,
@@ -1160,6 +1168,11 @@ public class AdminController {
         requirePerm(session, "alerts.read", "view");
 
         String alertTypeEffective = (alertType != null && !alertType.isBlank()) ? alertType.trim() : null;
+        // CSV, ekranla AYNI filtreleri kullanmak zorunda: tip kapsamı burada da uygulanmazsa
+        // kullanıcı ekranda 1 alarm görüp dosyada 3 alarm indirirdi.
+        List<String> csvTypeList = parseAlertTypes(alertTypes);
+        boolean csvTypeScoped = !csvTypeList.isEmpty();
+        List<String> csvTypesParam = csvTypeScoped ? csvTypeList : List.of("-");
         String qEffective = null;
         if (q != null && !q.isBlank()) {
             String esc = q.trim().toLowerCase(java.util.Locale.ROOT)
@@ -1191,7 +1204,8 @@ public class AdminController {
         if (!(scoped && scope.isEmpty())) {          // kapsamsız kullanıcı → yalnız başlık satırı
             for (int page = 0; rows < ALERT_CSV_MAX_ROWS; page++) {
                 var chunk = alertEventRepo.findFiltered(resolved, since, until, resolvedSince, resolvedUntil,
-                        domain, alertTypeEffective, qEffective, levelEffective, acknowledged, teamId,
+                        domain, alertTypeEffective, csvTypeScoped, csvTypesParam,
+                        qEffective, levelEffective, acknowledged, teamId,
                         scoped, scopeList,
                         PageRequest.of(page, ALERT_CSV_PAGE, Sort.by(Sort.Direction.DESC, "createdAt")))
                         .getContent();
@@ -2080,6 +2094,31 @@ public class AdminController {
     }
 
     /** Yetki kapısı kısayolu — rolün (resource, action) iznini doğrular (403 fırlatır). Takım-scope AYRI. */
+
+    /**
+     * İzleme sayfalarının gömülü "Alarmlar" sekmesi için TİP KAPSAMI.
+     *
+     * <p>Sekme domain'e göre süzülüyordu; aynı URL'i izleyen HER monitörün alarmı oraya
+     * düşüyordu. Sayfa Hızı modalinde HTTP izlemesinin SSL alarmı ve Sayfa Bütünlüğü alarmı
+     * görünüyordu — kullanıcı orada onlara müdahale edemez ve sayfa kendi üretmediği alarmları
+     * üretmiş gibi görünür. Süzme SUNUCUDA yapılır: istemcide süzmek yalnız açık sayfayı
+     * süzer, sayfalama ve tip/seviye sayaçları yanlış kalırdı.
+     *
+     * <p>Boş/verilmemiş liste "tümü" demektir (bağımsız Alarm Geçmişi ekranı böyle çağırır);
+     * o durumda {@code typeScoped=false} gider ve sorgu aynen eskisi gibi çalışır.
+     */
+    private static List<String> parseAlertTypes(String csv) {
+        if (csv == null || csv.isBlank()) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String part : csv.split(",")) {
+            String t = part.trim().toUpperCase(java.util.Locale.ROOT);
+            // Serbest metin DEĞİL sabit enum adı: harf/rakam/alt çizgi dışı her şey elenir.
+            if (!t.isEmpty() && t.matches("[A-Z0-9_]{1,40}") && !out.contains(t)) out.add(t);
+            if (out.size() >= 30) break;
+        }
+        return out;
+    }
+
     private void requirePerm(HttpSession session, String key, String action) {
         permissionService.require(session, key, action);
     }
