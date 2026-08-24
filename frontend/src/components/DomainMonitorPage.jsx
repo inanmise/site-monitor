@@ -18,6 +18,7 @@ import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import { X, RefreshCw, Plus, Trash2, CalendarClock, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Building2, Activity, Calendar } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import AlertHistory from './admin/AlertHistory.jsx'
+import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import DomainRegistrationTab from './DomainRegistrationTab.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import DomainExpiryTrace from './DomainExpiryTrace.jsx'
@@ -505,7 +506,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
             </>)}
 
             {detailTab === 'registration' && <DomainRegistrationTab monitor={selected} />}
-            {detailTab === 'alerts' && <AlertHistory domain={selected.domain} />}
+            {detailTab === 'alerts' && <AlertHistory domain={selected.domain} types={alertTypesFor('domain')} />}
             {detailTab === 'notes' && (
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <MonitorNotes type="DOMAIN" target={selected.domain} />

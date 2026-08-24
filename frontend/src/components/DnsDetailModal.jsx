@@ -7,6 +7,7 @@ import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import { X, Activity, Clock, Server, FileText, Globe, Route } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory'
+import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import MonitorNotes from './MonitorNotes.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 // Süre grafiği artık paylaşımlı ResponseTimeChart (ping/keyword/port ile aynı: 90g/özel aralık + avg/min-max/p95).
@@ -101,7 +102,7 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
           <button className={`modal-tab${detailTab === 'changes' ? ' active' : ''}`} onClick={() => setDetailTab('changes')}>{t('chg.tab')}</button>
         </div>
 
-        {detailTab === 'alerts' && <AlertHistory domain={monitor.domain} />}
+        {detailTab === 'alerts' && <AlertHistory domain={monitor.domain} types={alertTypesFor('dns')} />}
         {detailTab === 'notes' && <MonitorNotes type="DNS" target={monitor.domain} />}
         {detailTab === 'changes' && (
           <div className="dns-modal-body">

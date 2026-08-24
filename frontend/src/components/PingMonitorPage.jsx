@@ -18,6 +18,7 @@ import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
+import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
@@ -455,7 +456,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
                 </>)} />
             )}
 
-            {detailTab === 'alerts' && <AlertHistory domain={selected.host} />}
+            {detailTab === 'alerts' && <AlertHistory domain={selected.host} types={alertTypesFor('ping')} />}
 
             {detailTab === 'chart' && (
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>

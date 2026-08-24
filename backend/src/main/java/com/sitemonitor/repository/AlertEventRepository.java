@@ -108,6 +108,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
               AND (:resolvedUntil IS NULL OR e.resolvedAt <= :resolvedUntil)
               AND (:domain IS NULL OR e.domain = :domain)
               AND (:alertType IS NULL OR e.alertType = :alertType)
+              AND (:typeScoped = FALSE OR e.alertType IN :types)
               AND (:q IS NULL OR LOWER(e.domain) LIKE :q ESCAPE '!')
               AND (:level IS NULL OR e.alertLevel = :level)
               AND (:acknowledged IS NULL OR e.acknowledged = :acknowledged)
@@ -128,6 +129,8 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             @Param("resolvedUntil") String resolvedUntil,
             @Param("domain") String domain,
             @Param("alertType") String alertType,
+            @Param("typeScoped") boolean typeScoped,
+            @Param("types") java.util.Collection<String> types,
             @Param("q") String q,
             @Param("level") String level,
             @Param("acknowledged") Boolean acknowledged,
@@ -146,6 +149,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
               AND (:resolvedSince IS NULL OR e.resolvedAt >= :resolvedSince)
               AND (:resolvedUntil IS NULL OR e.resolvedAt <= :resolvedUntil)
               AND (:domain IS NULL OR e.domain = :domain)
+              AND (:typeScoped = FALSE OR e.alertType IN :types)
               AND (:q IS NULL OR LOWER(e.domain) LIKE :q ESCAPE '!')
               AND (:level IS NULL OR e.alertLevel = :level)
               AND (:acknowledged IS NULL OR e.acknowledged = :acknowledged)
@@ -166,6 +170,8 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             @Param("resolvedSince") String resolvedSince,
             @Param("resolvedUntil") String resolvedUntil,
             @Param("domain") String domain,
+            @Param("typeScoped") boolean typeScoped,
+            @Param("types") java.util.Collection<String> types,
             @Param("q") String q,
             @Param("level") String level,
             @Param("acknowledged") Boolean acknowledged,
@@ -277,6 +283,47 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             @Param("scoped") boolean scoped,
             @Param("scope") List<Long> scope);
 
+
+    // ── Tip kapsamı EKLENMEDEN ÖNCEKİ imzalar ────────────────────────────────────────────
+    // Alarm sekmesinin tip süzgeci (typeScoped/types) YALNIZ AdminController'ın alarm ucundan
+    // besleniyor. Diğer tüm çağıranlar ve testler tipe göre süzmüyor; imzayı orada da
+    // değiştirmek 22 çağrı yerini gereksiz yere riske sokardı. Dosyadaki mevcut desen
+    // (bkz. aşağıdaki "Eski (filtresiz) imza") aynen izleniyor: default aşırı yükleme
+    // typeScoped=false geçer ve sorgu eskisiyle BİREBİR aynı davranır.
+
+    default Page<AlertEvent> findFiltered(Boolean resolved, String since, String until,
+            String resolvedSince, String resolvedUntil, String domain, String alertType,
+            String q, String level, Boolean acknowledged, Long teamId,
+            boolean scoped, List<Long> scope, Pageable pageable) {
+        return findFiltered(resolved, since, until, resolvedSince, resolvedUntil, domain, alertType,
+                false, NO_TYPE_SCOPE, q, level, acknowledged, teamId, scoped, scope, pageable);
+    }
+
+    default List<Object[]> countFilteredByType(Boolean resolved, String since, String until,
+            String resolvedSince, String resolvedUntil, String domain,
+            String q, String level, Boolean acknowledged, Long teamId,
+            boolean scoped, List<Long> scope) {
+        return countFilteredByType(resolved, since, until, resolvedSince, resolvedUntil, domain,
+                false, NO_TYPE_SCOPE, q, level, acknowledged, teamId, scoped, scope);
+    }
+
+    default List<Object[]> countFacets(Boolean resolved, String since, String until,
+            String resolvedSince, String resolvedUntil, String domain, String alertType,
+            String q, Long teamId, boolean scoped, List<Long> scope) {
+        return countFacets(resolved, since, until, resolvedSince, resolvedUntil, domain, alertType,
+                false, NO_TYPE_SCOPE, q, teamId, scoped, scope);
+    }
+
+    default long countStale(Boolean resolved, String staleBefore, String domain, String alertType,
+            String q, Long teamId, boolean scoped, List<Long> scope) {
+        return countStale(resolved, staleBefore, domain, alertType,
+                false, NO_TYPE_SCOPE, q, teamId, scoped, scope);
+    }
+
+    /** Tip kapsamı KAPALIYKEN IN listesine geçilen kukla değer: JPQL'de "IN ()" geçersizdir,
+     *  bu yüzden takım kapsamındaki {@code scopeList} deseninin aynısı uygulanır. */
+    java.util.List<String> NO_TYPE_SCOPE = java.util.List.of("-");
+
     /**
      * Eski (filtresiz) imza — haftalık KPI ve izleme istatistikleri servisleri bunu kullanıyor.
      *
@@ -287,8 +334,9 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     default Page<AlertEvent> findFiltered(Boolean resolved, String since, String until,
             String resolvedSince, String resolvedUntil, String domain, String alertType,
             boolean scoped, List<Long> scope, Pageable pageable) {
+        // typeScoped=false → tip kapsamı UYGULANMAZ (bu çağıranlar tek tip ya da tümünü ister).
         return findFiltered(resolved, since, until, resolvedSince, resolvedUntil, domain, alertType,
-                null, null, null, null, scoped, scope, pageable);
+                false, NO_TYPE_SCOPE, null, null, null, null, scoped, scope, pageable);
     }
 
     /** {@link #findFiltered} ile aynı gerekçe — eski imza korunur. */
@@ -296,7 +344,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             String resolvedSince, String resolvedUntil, String domain,
             boolean scoped, List<Long> scope) {
         return countFilteredByType(resolved, since, until, resolvedSince, resolvedUntil, domain,
-                null, null, null, null, scoped, scope);
+                false, NO_TYPE_SCOPE, null, null, null, null, scoped, scope);
     }
 
 
@@ -318,6 +366,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
               AND (:resolvedUntil IS NULL OR e.resolvedAt <= :resolvedUntil)
               AND (:domain IS NULL OR e.domain = :domain)
               AND (:alertType IS NULL OR e.alertType = :alertType)
+              AND (:typeScoped = FALSE OR e.alertType IN :types)
               AND (:q IS NULL OR LOWER(e.domain) LIKE :q ESCAPE '!')
               AND (:teamId IS NULL OR e.teamId = :teamId OR EXISTS (
                       SELECT 1 FROM CertificateInventory ti
@@ -337,6 +386,8 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             @Param("resolvedUntil") String resolvedUntil,
             @Param("domain") String domain,
             @Param("alertType") String alertType,
+            @Param("typeScoped") boolean typeScoped,
+            @Param("types") java.util.Collection<String> types,
             @Param("q") String q,
             @Param("teamId") Long teamId,
             @Param("scoped") boolean scoped,
@@ -360,6 +411,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
               AND e.createdAt < :staleBefore
               AND (:domain IS NULL OR e.domain = :domain)
               AND (:alertType IS NULL OR e.alertType = :alertType)
+              AND (:typeScoped = FALSE OR e.alertType IN :types)
               AND (:q IS NULL OR LOWER(e.domain) LIKE :q ESCAPE '!')
               AND (:teamId IS NULL OR e.teamId = :teamId OR EXISTS (
                       SELECT 1 FROM CertificateInventory ti
@@ -375,6 +427,8 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             @Param("staleBefore") String staleBefore,
             @Param("domain") String domain,
             @Param("alertType") String alertType,
+            @Param("typeScoped") boolean typeScoped,
+            @Param("types") java.util.Collection<String> types,
             @Param("q") String q,
             @Param("teamId") Long teamId,
             @Param("scoped") boolean scoped,

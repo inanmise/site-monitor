@@ -27,6 +27,7 @@ import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
+import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import { LoadingBlock, Spinner } from './ui/Progress.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
@@ -1124,7 +1125,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
               {selCheck && <CheckDetail t={t} check={selCheck} k6Version={k6.version} />}
             </>)}
 
-            {detailTab === 'alerts' && <AlertHistory domain={selected.name} />}
+            {detailTab === 'alerts' && <AlertHistory domain={selected.name} types={alertTypesFor('scripted')} />}
 
             {detailTab === 'diag' && <DiagTab t={t} monitor={selected} canRun={canManageRow(selected)} />}
 
