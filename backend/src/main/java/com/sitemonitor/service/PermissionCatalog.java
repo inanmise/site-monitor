@@ -226,11 +226,21 @@ public final class PermissionCatalog {
             // monitoring.crud/trigger: USER kendi takımı için keyword/ping izleme oluşturur/düzenler/çalıştırır
             // (silme canManage ile TEAM_ADMIN/ADMIN'de; Port/DNS yazma requireAdmin ile admin-only kalır)
             "monitoring.read", "monitoring.crud", "monitoring.trigger", "domain.registration.view", "monitoring.group",
-            // Şablon kütüphanesi: USER kendi TAKIMINA şablon yazar (K2). monitoring.scripted'den
-            // AYRI ve bilinçli olarak daha açık: şablon yazmak kod ÇALIŞTIRMAK değildir — o
-            // şablondan monitör kurmak hâlâ monitoring.scripted ister ve o USER'a KAPALI.
+            // Şablon kütüphanesi: USER kendi TAKIMINA şablon yazar (K2).
             // Genel şablonu düzenlemek uçta requireAdmin ile ayrıca korunur.
             "monitoring.scripted_templates",
+            // monitoring.scripted (edit + execute): USER kendi TAKIMININ sentetik monitörünü
+            // yazar/düzenler ve elle koşturur. 2026-08-24'e kadar USER'a KAPALIYDI ve kullanıcı
+            // bunu bir kusur olarak bildirdi: şablon yazabiliyor ama o şablondan monitör
+            // kuramıyordu — yarım bir yetki.
+            //
+            // Riski KABUL EDİLDİ ve sınırları şöyle: k6 keyfi koddur ve pod üzerinde çalışır, ama
+            // (a) takım izolasyonu AYRI ve zaten yerinde — `canOperateTeam` başka takımın
+            // monitörüne SecurityException atar, (b) SİLME hâlâ TEAM_ADMIN/ADMIN'de
+            // (`canDeleteRow` ayrıca isTeamAdmin ister), (c) script tarayıcısı (scanScriptOrError)
+            // ve k6 zaman/kaynak tavanları herkese aynı şekilde uygulanır.
+            // Her iki eylem de "sensitive" işaretli kalır: matriste kapatmak tek tık.
+            "monitoring.scripted",
             // audit_log.read: sistem-geneli denetim → yalnız admin/AUDIT (requireAuditAccess)
             "weak_algo.read",
             // Haftalık raporlar: USER kendi takımının raporunu yazar/düzenler

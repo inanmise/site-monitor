@@ -44,15 +44,25 @@ class ScriptedTemplatePermissionTest {
     }
 
     @Test
-    @DisplayName("K2: USER varsayılan olarak şablon yazabilir — monitoring.scripted'den AYRI ve daha açık")
+    @DisplayName("K2: USER varsayılan olarak şablon yazabilir")
     void userCanAuthorTemplatesByDefault() {
         Map<String, Boolean> user = actionsFor("USER");
         assertThat(user.get("view")).isTrue();
         assertThat(user.get("edit")).isTrue();
+    }
 
-        // Ayrım kasıtlı: şablon YAZMAK kod ÇALIŞTIRMAK değildir. O şablondan monitör kurmak
-        // hâlâ monitoring.scripted ister ve o USER'a KAPALI kalır.
-        assertThat(PermissionCatalog.defaultsFor("USER").get("monitoring.scripted").get("edit")).isFalse();
+    @Test
+    @DisplayName("2026-08-24: USER artık o şablondan MONİTÖR de kurabilir (yarım yetki kapandı)")
+    void userCanAlsoCreateScriptedMonitors() {
+        // Bu test EskiDEN tam TERSİNİ iddia ediyordu: "monitoring.scripted USER'a KAPALI kalır".
+        // Kullanıcı bunu kusur olarak bildirdi — şablon yazabilip ondan monitör kuramamak yarım
+        // bir yetkiydi. Karar bilinçli olarak DEĞİŞTİ; eski satır silinmedi, gerekçesiyle
+        // tersine çevrildi ki bir sonraki okuyan "regresyon" sanıp geri almasın.
+        //
+        // Risk sınırları AYRI katmanlarda ve DEĞİŞMEDİ: takım izolasyonu canOperateTeam'de,
+        // SİLME hâlâ TEAM_ADMIN/ADMIN'de, script tarayıcısı ve k6 tavanları herkese aynı.
+        assertThat(PermissionCatalog.defaultsFor("USER").get("monitoring.scripted").get("edit")).isTrue();
+        assertThat(PermissionCatalog.defaultsFor("USER").get("monitoring.scripted").get("execute")).isTrue();
     }
 
     @Test

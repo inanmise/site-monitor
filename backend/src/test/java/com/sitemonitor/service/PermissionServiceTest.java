@@ -122,4 +122,80 @@ class PermissionServiceTest {
         assertThat(service.allows("USER", "inventory.list", "view")).isTrue();
         assertThat(service.allows("USER", "inventory.crud", "edit")).isFalse();
     }
+
+    // ── Politika yükseltmesi (applyPolicyUpgrades) ────────────────────────────
+    //
+    // Katalog varsayilani SONRADAN gevsetildiginde mevcut kurulumlar geride kalir:
+    // seedMissingDefaults yalniz EKSIK satiri ekler, var olan allowed=false satirini CEVIRMEZ.
+    // Bu yuzden ayri bir yukseltme adimi var — ve yalniz INSAN ELI DEGMEMIS satirlara dokunur.
+
+    private static PermissionGrant grantBy(String role, String key, String action,
+                                           boolean allowed, String updatedBy) {
+        PermissionGrant g = grant(role, key, action, allowed);
+        g.setUpdatedBy(updatedBy);
+        return g;
+    }
+
+    @Test
+    @DisplayName("Yukseltme: tohumlanmis (system) KAPALI satiri ACAR")
+    void policyUpgrade_flipsSystemSeededRow() {
+        var edit = grantBy("USER", "monitoring.scripted", "edit", false, "system");
+        var exec = grantBy("USER", "monitoring.scripted", "execute", false, "system");
+        when(repo.findByRoleAndResourceKeyAndAction("USER", "monitoring.scripted", "edit"))
+                .thenReturn(Optional.of(edit));
+        when(repo.findByRoleAndResourceKeyAndAction("USER", "monitoring.scripted", "execute"))
+                .thenReturn(Optional.of(exec));
+
+        service.applyPolicyUpgrades();
+
+        assertThat(edit.getAllowed()).isTrue();
+        assertThat(exec.getAllowed()).isTrue();
+        verify(repo, times(2)).save(any(PermissionGrant.class));
+    }
+
+    @Test
+    @DisplayName("Yukseltme INSAN kararina DOKUNMAZ (yonetici kapattiysa kapali kalir)")
+    void policyUpgrade_respectsAdminDecision() {
+        // EN KRITIK DAVRANIS: bir yonetici bu yetkiyi bilincli kapattiysa migration onu EZMEZ.
+        // Ayrica kendini sinirlar — yukseltmeden sonra kapatilirsa updated_by artik o yonetici
+        // olur ve bir daha asla geri acilmaz; aksi halde her acilista yoneticiyle kavga ederdi.
+        var edit = grantBy("USER", "monitoring.scripted", "edit", false, "erdi.inanmis");
+        var exec = grantBy("USER", "monitoring.scripted", "execute", false, "erdi.inanmis");
+        when(repo.findByRoleAndResourceKeyAndAction("USER", "monitoring.scripted", "edit"))
+                .thenReturn(Optional.of(edit));
+        when(repo.findByRoleAndResourceKeyAndAction("USER", "monitoring.scripted", "execute"))
+                .thenReturn(Optional.of(exec));
+
+        service.applyPolicyUpgrades();
+
+        assertThat(edit.getAllowed()).isFalse();
+        assertThat(exec.getAllowed()).isFalse();
+        verify(repo, never()).save(any(PermissionGrant.class));
+    }
+
+    @Test
+    @DisplayName("Yukseltme IDEMPOTENT: zaten acik satirda yazma YAPMAZ")
+    void policyUpgrade_isIdempotent() {
+        var edit = grantBy("USER", "monitoring.scripted", "edit", true, "system");
+        var exec = grantBy("USER", "monitoring.scripted", "execute", true, "system");
+        when(repo.findByRoleAndResourceKeyAndAction("USER", "monitoring.scripted", "edit"))
+                .thenReturn(Optional.of(edit));
+        when(repo.findByRoleAndResourceKeyAndAction("USER", "monitoring.scripted", "execute"))
+                .thenReturn(Optional.of(exec));
+
+        service.applyPolicyUpgrades();
+
+        verify(repo, never()).save(any(PermissionGrant.class));
+    }
+
+    @Test
+    @DisplayName("Satir HIC YOKSA yukseltme uretmez (onu seedMissingDefaults ekler)")
+    void policyUpgrade_skipsMissingRow() {
+        when(repo.findByRoleAndResourceKeyAndAction(anyString(), anyString(), anyString()))
+                .thenReturn(Optional.empty());
+
+        service.applyPolicyUpgrades();
+
+        verify(repo, never()).save(any(PermissionGrant.class));
+    }
 }
