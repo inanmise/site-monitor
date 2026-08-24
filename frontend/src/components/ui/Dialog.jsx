@@ -28,20 +28,40 @@ export function isNoteValid(note) {
   return t.split(/\s+/).filter(w => w.length >= NOTE_RULE.minWordLen).length >= NOTE_RULE.minWords
 }
 
+/** Odak tuzagi icin: diyalog icindeki odaklanabilir ogeler (gizli/pasif olanlar HARIC). */
+const FOCUSABLE =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
 function DialogModal({ dialog, onConfirm, onCancel }) {
   const [inputVal, setInputVal] = useState(dialog.defaultValue ?? '')
   const inputRef  = useRef(null)
   const confirmRef = useRef(null)
+  const boxRef = useRef(null)
+  // Diyalog acilmadan ONCEKI odak — kapaninca oraya geri verilir.
+  const returnFocusRef = useRef(null)
+  // Baslik/mesaj id'leri: aria-labelledby/describedby bunlara bagli. useId yerine sabit
+  // id yeterli cunku ayni anda TEK diyalog acik olur (provider tek `dialog` state tutar).
+  const titleId = 'dlg-title'
+  const messageId = 'dlg-message'
   const v = VARIANTS[dialog.variant] ?? VARIANTS.info
   const isNote = dialog.type === 'note'
   const noteOk = !isNote || isNoteValid(inputVal)
 
   useEffect(() => {
+    // Odagi GERI VERMEK icin nereden geldigimizi sakla. Bu olmadan, tablodaki bir satiri
+    // silmeyi onaylayan klavye kullanicisi odagi body'de bulur ve listedeki yerini kaybeder.
+    returnFocusRef.current = document.activeElement
     if (dialog.type === 'prompt' || dialog.type === 'note') {
       inputRef.current?.focus()
       inputRef.current?.select()
     } else {
       confirmRef.current?.focus()
+    }
+    return () => {
+      const back = returnFocusRef.current
+      // Tetikleyici bu arada DOM'dan kalkmis olabilir (ornegin silinen satirin dugmesi);
+      // o zaman geri verme atlanir, hata firlatilmaz.
+      if (back && typeof back.focus === 'function' && document.contains(back)) back.focus()
     }
   }, [dialog.type])
 
@@ -51,6 +71,21 @@ function DialogModal({ dialog, onConfirm, onCancel }) {
 
   function handleKey(e) {
     if (e.key === 'Escape') { onCancel(); return }
+    // ODAK TUZAGI: Tab diyalogdan CIKMAMALI. Aksi halde klavye/ekran-okuyucu kullanicisi
+    // ortuk sayfadaki dugmelere ulasir ve modalin arkasindaki iceriklerle etkilesebilir.
+    if (e.key === 'Tab') {
+      const items = boxRef.current ? [...boxRef.current.querySelectorAll(FOCUSABLE)] : []
+      if (items.length === 0) return
+      const first = items[0]
+      const last = items[items.length - 1]
+      const active = document.activeElement
+      if (e.shiftKey && (active === first || !boxRef.current.contains(active))) {
+        e.preventDefault(); last.focus()
+      } else if (!e.shiftKey && (active === last || !boxRef.current.contains(active))) {
+        e.preventDefault(); first.focus()
+      }
+      return
+    }
     // Not modalinde Enter ONAYLAMAZ: metin çok satırlı ve Enter yeni satır demek. Ayrıca
     // kural sağlanmadan Enter'la geçilmesi zorunluluğu delerdi.
     if (e.key === 'Enter' && dialog.type !== 'prompt' && dialog.type !== 'note') onConfirm(true)
@@ -58,16 +93,28 @@ function DialogModal({ dialog, onConfirm, onCancel }) {
 
   return createPortal(
     <div className="dlg-overlay" onClick={handleOverlayClick} onKeyDown={handleKey} tabIndex={-1}>
-      <div className="dlg-box" style={{ '--dlg-accent': v.color, '--dlg-bg': v.bg, '--dlg-border': v.border }}>
+      {/* role/aria-modal: ekran okuyucu bunu DIYALOG olarak duyurur ve sanal imleci iceriye
+          hapseder. aria-labelledby/describedby olmadan role tek basina yetmez — diyalogun
+          erisilebilir ADI ve ACIKLAMASI bu iki id'den gelir. */}
+      <div
+        ref={boxRef}
+        className="dlg-box"
+        role={dialog.type === 'alert' ? 'alertdialog' : 'dialog'}
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={dialog.message ? messageId : undefined}
+        style={{ '--dlg-accent': v.color, '--dlg-bg': v.bg, '--dlg-border': v.border }}
+      >
 
-        <div className="dlg-icon-ring">
+        {/* Ikon DEKORATIF: anlami zaten baslikta yazili, SR'a iki kez okutmanin faydasi yok. */}
+        <div className="dlg-icon-ring" aria-hidden="true">
           <v.Icon size={30} color={v.color} />
         </div>
 
-        <h3 className="dlg-title">{dialog.title}</h3>
+        <h3 className="dlg-title" id={titleId}>{dialog.title}</h3>
 
         {dialog.message && (
-          <p className="dlg-message">{dialog.message}</p>
+          <p className="dlg-message" id={messageId}>{dialog.message}</p>
         )}
 
         {dialog.type === 'prompt' && (
@@ -105,10 +152,11 @@ function DialogModal({ dialog, onConfirm, onCancel }) {
               placeholder={dialog.placeholder ?? ''}
               aria-label={dialog.noteLabel ?? 'Gerekçe'}
               aria-invalid={!noteOk}
+              aria-describedby="dlg-note-hint"
             />
             {/* Neyin eksik olduğu YAZILI — düğmeyi pasif bırakıp sebebini söylememek,
                 kullanıcıya "bozuk" hissi verir. */}
-            <div className={`dlg-note-hint${noteOk ? ' is-ok' : ''}`}>
+            <div id="dlg-note-hint" className={`dlg-note-hint${noteOk ? ' is-ok' : ''}`}>
               {noteOk ? (dialog.noteOkText ?? '') : (dialog.noteHint ?? '')}
             </div>
           </div>
