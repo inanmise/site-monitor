@@ -7508,6 +7508,30 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 .ss-options > .ss-group:first-child { border-top: none; }
 
+/* Katlanabilir dal başlığı (`collapsibleGroups`). Uzun kataloglar için: sentetik izlemenin script
+   seçicisinde 100 yerleşik şablon (10 kategori × 10) düz liste hâlinde dökülüyordu. Görünüm
+   Şablon Kütüphanesi sekmesindeki ağaçla (`sc-tpl-branch-head`) bilinçli olarak aynı: aynı veriyi
+   iki ayrı yerde iki ayrı biçimde göstermek kullanıcıyı ikinci kez öğrenmeye zorlar. */
+.ss-group-btn {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  background: none; border: 0; border-top: 1px solid var(--border);
+  cursor: pointer; text-align: left; font: inherit;
+  /* .ss-group'un tipografisi miras alınmıyor (button reset) → tekrar yazılıyor. */
+  padding: 7px 10px; font-size: .66em; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--text-light);
+}
+.ss-group-btn:hover { background: var(--bg-hover); color: var(--text); }
+.ss-group-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.ss-group-caret { flex-shrink: 0; transition: transform .15s; }
+.ss-group-btn.is-open .ss-group-caret { transform: rotate(90deg); }
+.ss-group-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Adet: dalı açmadan "burada kaç script var" sorusunu cevaplar (aramada gerçek sonuç sayısı). */
+.ss-group-count {
+  flex-shrink: 0; font-variant-numeric: tabular-nums;
+  background: var(--bg-surface); border: 1px solid var(--border); border-radius: 999px;
+  padding: 0 6px; font-size: .95em; color: var(--text-muted);
+}
+
 /* Sürüm rozeti + otomatik taslak göstergesi + Sürümler sekmesi. */
 .sc-ver-chip {
   display: inline-flex; align-items: center;

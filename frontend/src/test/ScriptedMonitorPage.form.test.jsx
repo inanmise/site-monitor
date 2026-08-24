@@ -112,8 +112,19 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
     const isSourceOpen = () => !!document.querySelector('.sc-source-select .ss-dropdown')
     const openSource = () => { if (!isSourceOpen()) fireEvent.mouseDown(document.querySelector('.sc-source-select .ss-trigger')) }
     const sourceOptions = () => [...document.querySelectorAll('.sc-source-select .ss-option')]
+    /**
+     * Gruplar artik KATLANABILIR (`collapsibleGroups`): yerlesik katalog 100 sablon oldugu icin
+     * dallar kapali geliyor ve kapali dalin secenekleri hic CIZILMIYOR. Kullanici da once dali
+     * acmak zorunda; test de ayni yolu izler.
+     */
+    const expandSourceGroups = () => {
+      for (const b of document.querySelectorAll('.sc-source-select .ss-group-btn')) {
+        if (b.getAttribute('aria-expanded') !== 'true') fireEvent.mouseDown(b)
+      }
+    }
     const pickSource = (labelRe) => {
       openSource()
+      expandSourceGroups()
       const opt = sourceOptions().find(o => labelRe.test(o.textContent))
       fireEvent.mouseDown(opt)
     }
@@ -133,14 +144,20 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       return utils
     }
 
-    it('seçici İKİ GRUP gösterir: kayıtlı script\'ler (bu monitör başta) ve şablonlar', async () => {
+    it('kayıtlı scriptler EN ÜSTTE ve AÇIK gelir (bu monitör başta); şablonlar kategori dallarında', async () => {
+      // Eskiden secici TEK duz "Sablonlar" basligi gosteriyordu; artik yerlesikler kategoriye
+      // dallaniyor. Bu testin ISPATLADIGI sey degismedi: kapsam sirasi + duzenlenen monitorun
+      // en basta ve isaretli olmasi. KAYITLI dal ACIK gelir — kendi script'ini secmek en sik
+      // yapilan is, ona fazladan tik eklenmemeli (`groupOpen`).
       await openEditFor(FAILING)
       openSource()
       const groups = [...document.querySelectorAll('.sc-source-select .ss-group')].map(g => g.textContent)
-      expect(groups).toHaveLength(2)
       expect(groups[0]).toMatch(/saved scripts|kayıtlı/i)
-      expect(groups[1]).toMatch(/templates|şablon/i)
-      // Düzenlenen monitör kendi adıyla ve "(bu monitör)" işaretiyle EN BAŞTA
+      expect(groups.length).toBeGreaterThan(1)                      // ardindan sablon dallari
+      expect(groups.slice(1).every(g => !/saved scripts|kayıtlı/i.test(g))).toBe(true)
+
+      // Duzenlenen monitor kendi adiyla ve "(bu monitor)" isaretiyle EN BASTA — dal ACIK oldugu
+      // icin fazladan tik GEREKMEDEN gorunur.
       const first = sourceOptions()[0].textContent
       expect(first).toContain('llm-test')
       expect(first).toMatch(/this monitor|bu monitör/i)
@@ -187,6 +204,37 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
     it('hiç koşmamış monitörde panel HİÇ açılmaz', async () => {
       await openEditFor(NEVER_RUN)
       expect(inModal('.sc-testrun')).toBeNull()
+    })
+
+    it('yerleşik şablonlar KATEGORİ dalları altında; dal açılınca script seçilebilir', async () => {
+      // Kullanici bildirimi 2026-08-24: "scriptin hangi templates grubundan geldigi belli degil".
+      // Yerlesik katalog 100 sablon (10 kategori x 10) ve hepsi tek duz baslik altina dokuluyordu.
+      render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+      await waitFor(() => expect(api.monitoring.getScriptedTemplates).toHaveBeenCalled())
+      fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
+      openSource()
+
+      // Dal basliklari VAR ve kategoriye gore ayrilmis...
+      const heads = [...document.querySelectorAll('.sc-source-select .ss-group-btn')]
+        .map(b => b.textContent)
+      // Etiketler i18n'den gelir (tpl.cat.*) — TR "Erişilebilirlik & Uptime" / "Kimlik & Oturum",
+      // EN "Availability & uptime" / "Sign-in & sessions".
+      expect(heads.some(h => /erişilebilirlik|availability/i.test(h))).toBe(true)
+      expect(heads.some(h => /kimlik|sign-in/i.test(h))).toBe(true)
+      // Uc sablon, uc AYRI kategori → uc dal; hepsi tek yiginda DEGIL.
+      expect(heads).toHaveLength(3)
+
+      // ...ve dal KAPALI oldugu icin script'i henuz secemeyiz.
+      expect(sourceOptions().some(o => /smoke/i.test(o.textContent))).toBe(false)
+
+      // Dali ac → altindaki script secilebilir olur.
+      const branch = [...document.querySelectorAll('.sc-source-select .ss-group-btn')]
+        .find(b => /erişilebilirlik|availability/i.test(b.textContent))
+      fireEvent.mouseDown(branch)
+      const opt = sourceOptions().find(o => /smoke/i.test(o.textContent))
+      expect(opt).toBeTruthy()
+      fireEvent.mouseDown(opt)
+      await waitFor(() => expect(screen.getByTestId('code-editor').value).toContain('www.akbank.com'))
     })
 
     it('şablon seçilince panel KAYBOLUR (asıl şikayet) ve script şablonunkiyle değişir', async () => {
@@ -357,6 +405,10 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
         fireEvent.change(screen.getByTestId('code-editor'), { target: { value: 'x' } })
         // Şablon seç → env satırları gelsin, birine gizli değer yazalım
         fireEvent.mouseDown(document.querySelector('.sc-source-select .ss-trigger'))
+        // Dallar kapali gelir (collapsibleGroups) → once ac, sonra sec.
+        for (const b of document.querySelectorAll('.sc-source-select .ss-group-btn')) {
+          if (b.getAttribute('aria-expanded') !== 'true') fireEvent.mouseDown(b)
+        }
         fireEvent.mouseDown([...document.querySelectorAll('.sc-source-select .ss-option')]
           .find(o => /OAuth2/i.test(o.textContent)))
         const secretInput = document.querySelector('.modal-box .env-row input.env-val[type="password"]')
