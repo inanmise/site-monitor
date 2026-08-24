@@ -99,4 +99,21 @@ class PermissionCatalogTest {
             assertThat(admin).as("ADMIN default '%s' resource'unu içermeli", r.key).containsKey(r.key);
         }
     }
+
+    @Test
+    @DisplayName("USER kendi takiminin sentetik monitorunu yazar/kosturur; AUDIT yazamaz")
+    void userCanManageOwnTeamScriptedMonitors() {
+        // 2026-08-24 politika degisikligi: USER sablon yazabiliyor ama o sablondan monitor
+        // KURAMIYORDU — yarim bir yetkiydi ve kullanici bunu kusur olarak bildirdi.
+        // Risk kabul edildi ve sinirlari ayri katmanlarda duruyor: takim izolasyonu
+        // canOperateTeam'de, SILME hala TEAM_ADMIN/ADMIN'de, script tarayicisi herkese ayni.
+        Map<String, Map<String, Boolean>> user = PermissionCatalog.defaultsFor("USER");
+        assertThat(user.get("monitoring.scripted").get("edit")).isTrue();
+        assertThat(user.get("monitoring.scripted").get("execute")).isTrue();
+
+        // Salt-okunur AUDIT rolu bundan ETKILENMEZ.
+        Map<String, Map<String, Boolean>> audit = PermissionCatalog.defaultsFor("AUDIT");
+        assertThat(audit.get("monitoring.scripted").get("edit")).isFalse();
+        assertThat(audit.get("monitoring.scripted").get("execute")).isFalse();
+    }
 }

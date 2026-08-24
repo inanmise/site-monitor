@@ -316,6 +316,10 @@ public class SchedulerService {
             }
             permissionService.seedDefaultsIfEmpty();
             permissionService.seedMissingDefaults(); // katalogda yeni eklenen modüllerin grant'lerini backfill et
+            // Politika yükseltmeleri: seedMissingDefaults yalnız EKSİK satırı ekler, var olan
+            // allowed=false satırını çevirmez — sonradan gevşetilen bir varsayılan mevcut
+            // kurulumlarda ancak bununla geçerli olur (yalnız insan eli değmemiş satırlar).
+            permissionService.applyPolicyUpgrades();
             try { incidentService.seedOptions(); } // olay modülü varsayılan kanalları (idempotent)
             catch (Exception e) { log.warn("Incident option seed failed: {}", e.getMessage()); }
             ensureDefaultThreshold();

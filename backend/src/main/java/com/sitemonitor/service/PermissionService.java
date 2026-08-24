@@ -15,6 +15,7 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -170,6 +171,56 @@ public class PermissionService {
             rebuildCache();
         }
     }
+
+    /**
+     * Politika yükseltmesi: katalog varsayılanı SONRADAN açılan bir yetkiyi, mevcut kurulumlarda da
+     * açar. {@link #seedMissingDefaults()} yetmez — o yalnız EKSİK satırı ekler, var olan
+     * {@code allowed=false} satırını çevirmez; dolayısıyla katalog değişikliği yalnız SIFIRDAN
+     * kurulumları etkilerdi.
+     *
+     * <p><b>Yalnız insan eli değmemiş satırlar çevrilir</b> ({@code updated_by = 'system'}).
+     * Bunun üç sonucu var ve üçü de bilinçli:
+     * <ul>
+     *   <li>Bir yönetici bu yetkiyi BİLİNÇLİ kapattıysa ({@code updated_by} = kullanıcı adı)
+     *       satıra DOKUNULMAZ — kararı ezilmez.</li>
+     *   <li>Doğal olarak idempotenttir: değer zaten true ise yazma yapılmaz.</li>
+     *   <li>Kendini sınırlar: yükseltmeden sonra yönetici kapatırsa {@code updated_by} artık
+     *       o yönetici olur ve bir daha ASLA geri açılmaz. Aksi halde her açılışta yöneticiyle
+     *       kavga eden bir migration olurdu.</li>
+     * </ul>
+     */
+    @Transactional
+    public void applyPolicyUpgrades() {
+        int flipped = 0;
+        for (PolicyUpgrade up : POLICY_UPGRADES) {
+            for (String action : up.actions()) {
+                var existing = repo.findByRoleAndResourceKeyAndAction(up.role(), up.resourceKey(), action);
+                if (existing.isEmpty()) continue;                       // seedMissingDefaults ekler
+                PermissionGrant g = existing.get();
+                if (Boolean.TRUE.equals(g.getAllowed())) continue;      // zaten açık
+                if (!"system".equals(g.getUpdatedBy())) continue;       // İNSAN kararı — dokunma
+                g.setAllowed(true);
+                g.setUpdatedAt(ISO.format(Instant.now()));
+                repo.save(g);
+                flipped++;
+                log.warn("Yetki politikası yükseltmesi: {} → {}/{} AÇILDI ({})",
+                        up.role(), up.resourceKey(), action, up.reason());
+            }
+        }
+        if (flipped > 0) rebuildCache();
+    }
+
+    private record PolicyUpgrade(String role, String resourceKey, List<String> actions, String reason) {}
+
+    /**
+     * Uygulanacak politika yükseltmeleri. Buraya satır EKLEMEK geri alınamaz bir güvenlik kararıdır:
+     * yalnız varsayılanı gerçekten gevşettiğimizde ve gerekçesi yazılıyken eklenir.
+     */
+    private static final List<PolicyUpgrade> POLICY_UPGRADES = List.of(
+            new PolicyUpgrade("USER", "monitoring.scripted", List.of("edit", "execute"),
+                    "USER kendi takımının sentetik monitörünü yazamıyordu (2026-08-24); "
+                  + "takım izolasyonu canOperateTeam ile ayrıca korunuyor, silme TEAM_ADMIN'de kalıyor")
+    );
 
     /** Update single grant. ADMIN row'ları her zaman true; bypass yok. */
     @Transactional
