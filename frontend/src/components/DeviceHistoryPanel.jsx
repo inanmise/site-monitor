@@ -61,7 +61,7 @@ function AnomalyChips({ flags, t }) {
  *   Salt-okunurluk ayri bir bayrak DEGIL, bu tek gercekten turetilir — sunucu tarafinda da
  *   admin yolunda eylem ucu yoktur; iki taraf ayni kurala bagli kalir.
  */
-export default function DeviceHistoryPanel({ userId = null }) {
+export default function DeviceHistoryPanel({ userId = null, onChangePassword = null }) {
   const isAdminView = userId != null
   const t = useT()
   const toast = useToast()
@@ -162,8 +162,23 @@ export default function DeviceHistoryPanel({ userId = null }) {
     })
     if (!ok) return
     const res = await api.me.reportSuspiciousLogin(row.id)
-    if (res?.success) toast.success(t('dev.reportDone'))
-    else toast.error(res?.error || t('dev.reportFailed'))
+    if (!res?.success) { toast.error(res?.error || t('dev.reportFailed')); return }
+    toast.success(t('dev.reportDone'))
+
+    // ASIL degerli an: oneriyi metin olarak yazmak yerine dugmeyi onune koymak.
+    // Referans numarasi da gosterilir — kullanici destege basvururken soyleyebilsin.
+    const wantsRevoke = await showConfirm({
+      title: t('dev.afterReportTitle'),
+      message: res.ref ? t('dev.afterReportMsgRef', res.ref) : t('dev.afterReportMsg'),
+      confirmText: t('dev.afterReportRevoke'),
+      cancelText: t('dev.afterReportLater'),
+      variant: 'danger',
+    })
+    if (wantsRevoke) {
+      const r = await api.me.logoutOtherDevices()
+      if (r?.success) { toast.success(t('dev.logoutOthersDone')); loadDevices() }
+      else toast.error(r?.error || t('dev.revokeFailed'))
+    }
   }
 
   if (loading) return <LoadingBlock label={t('app.loading')} className="dev-loading" />
@@ -349,9 +364,18 @@ export default function DeviceHistoryPanel({ userId = null }) {
         <button type="button" className="btn btn-sm btn-danger" onClick={logoutOthers}>
           <LogOut size={13} />{t('dev.logoutOthersAction')}
         </button>
-        <span className="dev-actions-hint">
-          <KeyRound size={13} />{t('dev.passwordHint')}
-        </span>
+        {/* Eskiden yalniz METINDI: "parolani da degistir" diyip kullaniciyi kendi basina
+            birakiyordu. Akis App seviyesinde (selfPwdModalOpen) ve prop ile geliyor;
+            gelmezse metne duseriz — panel her durumda calisir. */}
+        {onChangePassword ? (
+          <button type="button" className="btn btn-sm btn-secondary" onClick={onChangePassword}>
+            <KeyRound size={13} />{t('dev.changePasswordAction')}
+          </button>
+        ) : (
+          <span className="dev-actions-hint">
+            <KeyRound size={13} />{t('dev.passwordHint')}
+          </span>
+        )}
       </section>
       )}
     </div>

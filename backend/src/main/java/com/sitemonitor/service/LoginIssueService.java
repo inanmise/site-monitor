@@ -2,6 +2,7 @@ package com.sitemonitor.service;
 
 import com.sitemonitor.model.LoginIssueReport;
 import com.sitemonitor.model.LoginIssueReportImage;
+import com.sitemonitor.repository.LoginIssueMailLogRepository;
 import com.sitemonitor.repository.LoginIssueReportImageRepository;
 import com.sitemonitor.repository.LoginIssueReportRepository;
 import lombok.RequiredArgsConstructor;
@@ -42,6 +43,8 @@ public class LoginIssueService {
 
     private final LoginIssueReportRepository reportRepo;
     private final LoginIssueReportImageRepository imageRepo;
+    /** Kalıcı silmede giden maillerin SAKLANAN kopyası da gider (konu + alıcı + tam HTML gövde). */
+    private final LoginIssueMailLogRepository mailLogRepo;
 
     /** Ayrıştırılmış görsel — data-URL prefix'i çıkarılmış ham base64. */
     public record ParsedImage(String contentType, String base64) {}
@@ -93,6 +96,27 @@ public class LoginIssueService {
             }
         }
         return saved;
+    }
+
+    /**
+     * Raporu KALICI siler — rapor + resimleri + mail gunlugu.
+     *
+     * <p>Uc tablo BIRLIKTE silinir: baglar duz {@code reportId} FK'sidir (proje deseni,
+     * @ManyToOne yok), yani yalniz raporu silmek otekileri OKSUZ birakir -- hicbir ekranda
+     * gorunmeyen ama sonsuza dek buyuyen satirlar.
+     *
+     * <p>Geri alinamaz; cagiran yetkiyi ve onayi kendisi saglar.
+     *
+     * @return silinen rapor (kayit yoksa {@code null}) -- denetim kaydi icin
+     */
+    @Transactional
+    public LoginIssueReport purge(Long id) {
+        LoginIssueReport r = reportRepo.findById(id).orElse(null);
+        if (r == null) return null;
+        imageRepo.deleteByReportId(id);
+        mailLogRepo.deleteByReportId(id);
+        reportRepo.delete(r);
+        return r;
     }
 
     /** Geçerli kaynaklar — dışarıdan gelen filtre değeri bu kümede değilse yok sayılır. */

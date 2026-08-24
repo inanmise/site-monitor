@@ -37,7 +37,7 @@ function eventClass(et) {
  * gorunum Cihaz Gecmisi'dir — "hesabim guvende mi" sorusu ham olay listesinden daha sik
  * sorulur; denetim tablosu tek tikla, davranisi ve filtreleriyle AYNEN duruyor.
  */
-export default function MyAuditLog({ loginInfo = null }) {
+export default function MyAuditLog({ loginInfo = null, onChangePassword = null }) {
   const t = useT()
   const [view, setView] = useState('devices')
   const [rows, setRows] = useState([])
@@ -77,7 +77,7 @@ export default function MyAuditLog({ loginInfo = null }) {
           ]} />
       </div>
 
-      {view === 'devices' ? <DeviceHistoryPanel /> : (<>
+      {view === 'devices' ? <DeviceHistoryPanel onChangePassword={onChangePassword} /> : (<>
       <div className="audit-filters">
         <SearchableSelect
           value={filters.eventType}

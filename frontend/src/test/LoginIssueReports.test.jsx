@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from './test-utils'
+import { render, screen, fireEvent, waitFor, within } from './test-utils'
 
 const sampleRow = {
   id: 5, refCode: 'LIR-2026-000005', username: 'N12345', messageSummary: 'Cannot login',
@@ -29,15 +29,22 @@ vi.mock('../api/client', () => ({
       updateLoginIssueStatus: vi.fn(async () => ({
         success: true, data: { ...sampleDetail, status: 'RESOLVED', resolutionNote: 'done', resolvedBy: 'admin' },
       })),
+      purgeLoginIssue: vi.fn(async () => ({ success: true })),
     },
   }),
 }))
 
 // Bileşen artık issues.login-reports/view iznine göre kendini gate'liyor (izinsiz → temiz mesaj, spinner değil).
 // Test provider sarmıyor → canView'i hoisted bayrakla kontrol et (varsayılan true; noAccess testinde false).
-const perm = vi.hoisted(() => ({ allow: true }))
+// KALICI silme AYRI bir yetki (issues.login-reports.purge / execute) — bayragi da ayri
+// tutuyoruz, yoksa "yetkisi olmayan silme dugmesini gormez" iddiasi sinanamazdi.
+const perm = vi.hoisted(() => ({ allow: true, purge: true }))
 vi.mock('../contexts/PermissionsProvider.jsx', () => ({
-  usePermissions: () => ({ canView: () => perm.allow, canEdit: () => perm.allow, canExecute: () => perm.allow, perms: {}, refresh: () => {} }),
+  usePermissions: () => ({
+    canView: () => perm.allow, canEdit: () => perm.allow,
+    canExecute: (r) => (r === 'issues.login-reports.purge' ? perm.purge : perm.allow),
+    perms: {}, refresh: () => {},
+  }),
 }))
 import { api } from '../api/client'
 import LoginIssueReports from '../components/admin/LoginIssueReports.jsx'
@@ -166,5 +173,51 @@ describe('LoginIssueReports', () => {
     fireEvent.click(next)
     await waitFor(() => expect(api.admin.getLoginIssues).toHaveBeenCalledWith(
       expect.objectContaining({ page: 1 })))
+  })
+
+  // ── Kalici silme ─────────────────────────────────────────────────────────
+
+  it('YETKISI OLMAYANA silme dugmesi CIZILMEZ (403 alip "bozuk" sanmasin)', async () => {
+    perm.purge = false
+    try {
+      render(<LoginIssueReports />)
+      fireEvent.click(await screen.findByText(/LIR-/))
+      await screen.findByRole('dialog').catch(() => null)
+
+      await waitFor(() => expect(api.admin.getLoginIssue).toHaveBeenCalled())
+      expect(screen.queryByText(/Delete permanently|Kalıcı sil/i)).toBeNull()
+    } finally { perm.purge = true }
+  })
+
+  it('silme ONAY ister ve onaylaninca kayit + mailler silinir', async () => {
+    render(<LoginIssueReports />)
+    fireEvent.click(await screen.findByText(/LIR-/))
+    await waitFor(() => expect(api.admin.getLoginIssue).toHaveBeenCalled())
+
+    fireEvent.click(await screen.findByText(/Delete permanently|Kalıcı sil/i))
+    // Onaylanmadan API CAGRILMAZ.
+    expect(api.admin.purgeLoginIssue).not.toHaveBeenCalled()
+
+    const dlg = await screen.findByRole('dialog')
+    // Onay metni NE KAYBEDILDIGINI acikca soylemeli — mailler dahil.
+    expect(dlg.textContent).toMatch(/email|mail/i)
+    fireEvent.click(within(dlg).getByText(/^Delete permanently$|^Kalıcı olarak sil$/))
+
+    await waitFor(() => expect(api.admin.purgeLoginIssue).toHaveBeenCalledWith(sampleDetail.id))
+  })
+
+  it('onay IPTAL edilirse HICBIR SEY silinmez (onay gercekten kapi)', async () => {
+    // Ilk testim yalniz "onaydan ONCE cagrilmadi" diyordu; bu, onayin gercekten kapi oldugunu
+    // KANITLAMIYORDU — iptal yolu sinanmadan mutasyon testi de gecmisti.
+    render(<LoginIssueReports />)
+    fireEvent.click(await screen.findByText(/LIR-/))
+    await waitFor(() => expect(api.admin.getLoginIssue).toHaveBeenCalled())
+
+    fireEvent.click(await screen.findByText(/Delete permanently|Kalıcı sil/i))
+    const dlg = await screen.findByRole('dialog')
+    fireEvent.click(within(dlg).getByText(/^Cancel$|^İptal$/))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(api.admin.purgeLoginIssue).not.toHaveBeenCalled()
   })
 })
