@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -96,6 +96,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
   const [teams, setTeams] = useState([])
   const [selected, setSelected] = useState(null)
   const [resources, setResources] = useState([])
+  const [resTotal, setResTotal] = useState(0)   // listedeki değil, KIRILIMDAKİ toplam kaynak sayısı
   const [breaches, setBreaches] = useState([])
   const [resCheckId, setResCheckId] = useState(null)   // null = son ölçüm (LATEST)
   const [resLoading, setResLoading] = useState(false)
@@ -149,20 +150,34 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
 
   useMonitorDeepLink(monitors, openDetail)
 
+  // Kirilim istekleri YARISABILIR: modal 30 sn'de bir kendini tazeliyor ve kullanici bu sirada
+  // baska bir anlik goruntuye ya da baska bir izlemeye gecebiliyor. Yanitlar gonderim sirasiyla
+  // donmek zorunda degil; geciken ESKI yanit YENISININ uzerine yazarsa tablo yanlis olcumun —
+  // hatta yanlis IZLEMENIN — kaynaklarini gosterir ve kullanici bunu fark edemez. Sira numarasi
+  // ile yalnizca EN SON istegin yaniti ekrana yazilir.
+  const resSeq = useRef(0)
+
   async function loadResources(id, checkId = null, silent = false) {
+    const seq = ++resSeq.current
     if (!silent) setResLoading(true)
     const res = await api.monitoring.getPageSpeedResources(id, { checkId: checkId ?? undefined })
+    if (seq !== resSeq.current) return          // daha yeni bir istek var → bu yaniti AT
     setResources(res?.success ? (res.data?.resources ?? []) : [])
+    setResTotal(res?.success ? (res.data?.total ?? 0) : 0)
     setBreaches(res?.success ? (res.data?.breaches ?? []) : [])
     setResLoading(false)
   }
 
   function openDetail(m) {
-    setSelected(m); setResources([]); setBreaches([]); setResCheckId(null)
+    resSeq.current++            // onceki izlemenin ucusan yaniti bu modali DOLDURMASIN
+    setSelected(m); setResources([]); setResTotal(0); setBreaches([]); setResCheckId(null)
     setDetailTab('resources'); setMetric('load')
     loadResources(m.id)
   }
-  function closeDetail() { setSelected(null); setResources([]); setBreaches([]) }
+  function closeDetail() {
+    resSeq.current++
+    setSelected(null); setResources([]); setResTotal(0); setBreaches([])
+  }
 
   async function refreshModal() {
     if (!selected) return
@@ -600,7 +615,13 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
                 <button type="button" className="btn btn-sm btn-secondary pspd-snapshot-csv"
                   disabled={!resources.length} onClick={exportResourcesCsv}><Download size={12} />{t('pspd.exportCsv')}</button>
               </div>
-              <div className="field-hint" style={{ margin: '0 0 8px' }}>{t('pspd.resHint')}</div>
+              {/* Sunucu en agir N kaynagi dondurur. Kirpildiysa bunu SOYLEMEK zorunlu: yoksa
+                  kullanici 50 satiri sayfanin tamami sanip agirligin nereden geldigini yanlis okur. */}
+              <div className="field-hint" style={{ margin: '0 0 8px' }}>
+                {t('pspd.resHint')}
+                {resTotal > resources.length && resources.length > 0
+                  && ` ${t('pspd.resTruncated', resources.length, resTotal)}`}
+              </div>
               {resLoading ? <LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />
                 : resources.length === 0 ? <LoadingBlock label={t('pspd.noResources')} className="upt-modal-loading" />
                 : (

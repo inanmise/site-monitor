@@ -102,6 +102,23 @@ class PageSpeedCheckerServiceTest {
         bytes("/baska-sayfa", 99999, "text/html");   // istenirse ÇOK büyük → yanlışlıkla sayılırsa fark edilir
 
         html("/kimlikli", "<html><body><img src='/a.png'></body></html>");
+        // Responsive gorsel: tarayici DPR/ekrana gore YALNIZ BIRINI indirir.
+        html("/responsive", """
+            <html><body>
+              <img src="/a.png" srcset="/r-320.png 320w, /r-640.png 640w, /r-1280.png 1280w">
+              <picture><source srcset="/p-a.webp 1x, /p-b.webp 2x"><img src="/a.css.png"></picture>
+            </body></html>""");
+        bytes("/r-320.png", 1000, "image/png");
+        bytes("/r-640.png", 2000, "image/png");
+        bytes("/r-1280.png", 4000, "image/png");
+        bytes("/p-a.webp", 1000, "image/webp");
+        bytes("/p-b.webp", 2000, "image/webp");
+        bytes("/a.css.png", 1500, "image/png");
+        // Link agirlikli sayfa: 600 a[href] + 2 gercek kaynak.
+        StringBuilder linky = new StringBuilder("<html><head>"
+                + "<link rel='stylesheet' href='/a.css'><script src='/a.js'></script></head><body>");
+        for (int i = 0; i < 600; i++) linky.append("<a href='/l").append(i).append("'>x</a>");
+        html("/linkli", linky.append("</body></html>").toString());
         // Bayt tavanini (10 MB) ASAN tek kaynak: sayim orada kesilmeli ve isaretlenmeli.
         html("/devasa", "<html><body><img src='/dev.bin'></body></html>");
         bytes("/dev.bin", (int) PageFetchCore.MAX_COUNT_BYTES + 4096, "application/octet-stream");
@@ -217,6 +234,52 @@ class PageSpeedCheckerServiceTest {
         assertThat(r.status()).isEqualTo("OK");
         assertThat(r.requestCount()).isEqualTo(1);
         assertThat(r.resources()).isEmpty();
+    }
+
+    // ── Olcum DOGRULUGU: tarayicinin GERCEKTEN indirdigi kadari ──────────────
+
+    @Test
+    @DisplayName("Responsive gorselin srcset varyantlari AYRI AYRI sayilmaz — tarayici birini indirir")
+    void srcsetVariantsAreNotDoubleCounted() {
+        var r = checker.check(monitor("/responsive"));
+
+        var urls = r.resources().stream().map(PageSpeedCheckerService.Measured::url).toList();
+        // img[src] alindi; ayni gorselin 320/640/1280 varyantlari ALINMADI.
+        assertThat(urls).anyMatch(u -> u.endsWith("/a.png"));
+        assertThat(urls).noneMatch(u -> u.contains("/r-320") || u.contains("/r-640") || u.contains("/r-1280"));
+        // <picture><source srcset> de atlanir; indirilecek olan kardes img'dir.
+        assertThat(urls).noneMatch(u -> u.contains("/p-a") || u.contains("/p-b"));
+        assertThat(urls).anyMatch(u -> u.endsWith("/a.css.png"));
+        // Iki gorsel elemani → iki indirme (HTML ile birlikte 3 istek).
+        assertThat(r.requestCount()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("Sayfa Butunlugu srcset adaylarinin HEPSINI ister — paylasilan cekirdek onu bozmaz")
+    void pageIntegrityStillSeesEveryCandidate() {
+        // Ayni HTML, FULL secenegiyle: kirik bir varyant kacmasin diye hepsi envantere girer.
+        var full = core.inventory(("<html><body><img src='/a.png' "
+                + "srcset='/r-320.png 320w, /r-640.png 640w'></body></html>").getBytes(StandardCharsets.UTF_8),
+                base + "/", base + "/", null, PageFetchCore.InventoryOptions.FULL);
+
+        assertThat(full).extracting(PageFetchCore.Resource::url)
+                .anyMatch(u -> u.contains("/r-320"))
+                .anyMatch(u -> u.contains("/r-640"));
+    }
+
+    @Test
+    @DisplayName("a[href] linkleri kaynak TAVANINI yemez — 600 linkli sayfada gercek kaynaklar olculur")
+    void hyperlinksDoNotConsumeTheResourceBudget() {
+        var r = checker.check(monitor("/linkli"));
+
+        // 600 link envanter tavanini (500) doldursaydi CSS/JS hic olculmezdi.
+        var urls = r.resources().stream().map(PageSpeedCheckerService.Measured::url).toList();
+        assertThat(urls).anyMatch(u -> u.endsWith("/a.css"));
+        assertThat(urls).anyMatch(u -> u.endsWith("/a.js"));
+        assertThat(r.requestCount()).isEqualTo(3);          // HTML + CSS + JS
+        // "Olcum kismi" uyarisi da yanlis yere cikmaz.
+        assertThat(r.capped()).isFalse();
+        assertThat(hits).doesNotContainKey("/l0");
     }
 
     // ── Kesinti / yapılandırma ───────────────────────────────────────────────

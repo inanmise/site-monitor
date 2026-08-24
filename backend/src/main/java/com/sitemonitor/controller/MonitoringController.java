@@ -2922,8 +2922,14 @@ public class MonitoringController {
                 : pageSpeedResourceRepo.findHeaviest(id, com.sitemonitor.model.PageSpeedResource.KEEP_LATEST, cap);
         // Başka bir izlemenin checkId'si ile veri sızmasın: dönen satırlar bu izlemeye ait olmalı.
         rows = rows.stream().filter(r -> id.equals(r.getMonitorId())).toList();
+        // Kirpma GORUNUR olmali: 50 satir, 300 kaynakli bir sayfanin TAMAMI sanilirsa kullanici
+        // agirligin nereden geldigini yanlis okur.
+        long total = checkId != null
+                ? pageSpeedResourceRepo.countByCheckId(checkId)
+                : pageSpeedResourceRepo.countByMonitorIdAndKeepReason(id, com.sitemonitor.model.PageSpeedResource.KEEP_LATEST);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("resources", rows.stream().map(this::resourceToMap).toList());
+        out.put("total", total);
         out.put("breaches", pageSpeedResourceRepo.breachSnapshots(id, 20).stream()
                 .map(a -> Map.of("check_id", a[0], "checked_at", a[1])).toList());
         return ok(out);

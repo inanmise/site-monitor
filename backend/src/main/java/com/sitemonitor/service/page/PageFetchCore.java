@@ -66,6 +66,15 @@ public class PageFetchCore {
     // 1024 tabanlı: arayüz boyutları KB/MB olarak 1024 tabanıyla gösteriyor; ondalık 10.000.000
     // bırakılsaydı kırpılan satır "≥ 9,5 MB" gibi tuhaf bir sayı gösterirdi.
     public static final long MAX_COUNT_BYTES = 10L * 1024 * 1024;
+    /**
+     * Bir kontrolde indirilecek TOPLAM bayt tavanı.
+     *
+     * <p>Kaynak başına tavan tek başına yetmiyor: 500 kaynak × 10 MB teorik olarak 5 GB eder ve
+     * tek sınır duvar-saati deadline'ı kalırdı. Tek pod, 100 eşzamanlı kullanıcıya hizmet veriyor;
+     * bir ölçümün yüzlerce MB çekmesi hem bant genişliğini hem CPU'yu yer. Tavana ulaşılınca kalan
+     * kaynaklar ATLANIR ve ölçüm "alt sınır" olarak işaretlenir — sessizce eksik sayılmaz.
+     */
+    public static final long MAX_TOTAL_MEASURED_BYTES = 150L * 1024 * 1024;
 
     private final SsrfGuard ssrfGuard;
 
@@ -280,12 +289,38 @@ public class PageFetchCore {
     // ── Kaynak envanteri (jsoup) ─────────────────────────────────────────────
 
     /**
+     * Envanter davranışı — iki tüketicinin İHTİYACI FARKLI.
+     *
+     * @param hyperlinks         {@code a[href]} bağlantıları da toplansın mı. Sayfa Bütünlüğü onları
+     *                           kırık-link diye kontrol eder; Sayfa Hızı için ANLAMSIZDIR (tarayıcı
+     *                           indirmez) ve daha kötüsü {@link #MAX_RESOURCES_PER_CHECK} bütçesini
+     *                           yer: link ağırlıklı bir sayfada 500'lük tavan linklere harcanır ve
+     *                           GERÇEK kaynaklar hiç ölçülmez.
+     * @param allImageCandidates {@code srcset}'teki TÜM adaylar toplansın mı. Tarayıcı bir görsel
+     *                           için ekran/DPR'a göre YALNIZ BİRİNİ indirir; hepsini saymak sayfa
+     *                           ağırlığını katbekat şişirir. Sayfa Bütünlüğü hepsini ister (herhangi
+     *                           biri kırık olabilir), Sayfa Hızı görsel başına BİR tane ister.
+     */
+    public record InventoryOptions(boolean hyperlinks, boolean allImageCandidates) {
+        /** Sayfa Bütünlüğü: her şeyi topla (mevcut davranış). */
+        public static final InventoryOptions FULL = new InventoryOptions(true, true);
+        /** Sayfa Hızı: tarayıcının GERÇEKTEN indireceği kadarı — link yok, görsel başına tek aday. */
+        public static final InventoryOptions AS_BROWSER_LOADS = new InventoryOptions(false, false);
+    }
+
+    /** Geriye uyum: seçeneksiz çağrı Sayfa Bütünlüğü davranışını korur. */
+    public List<Resource> inventory(byte[] bytes, String baseUrl, String sourcePage, Predicate<String> exclude) {
+        return inventory(bytes, baseUrl, sourcePage, exclude, InventoryOptions.FULL);
+    }
+
+    /**
      * HTML gövdesinden alt kaynak envanterini çıkarır (img/srcset/CSS/JS/iframe/favicon/font/a[href]).
      * Aynı URL bir kez döner (sıra korunur). Parse hatası boş liste verir — çağırana exception sızmaz.
      *
      * @param exclude URL bazlı hariç-tutma yüklemi; null ise hiçbir şey hariç tutulmaz
      */
-    public List<Resource> inventory(byte[] bytes, String baseUrl, String sourcePage, Predicate<String> exclude) {
+    public List<Resource> inventory(byte[] bytes, String baseUrl, String sourcePage, Predicate<String> exclude,
+                                    InventoryOptions opts) {
         Document doc;
         try {
             // Bayt-stream + null charset → jsoup <meta charset>/BOM'dan charset'i otomatik tespit eder;
@@ -297,13 +332,13 @@ public class PageFetchCore {
         }
         LinkedHashMap<String, Resource> out = new LinkedHashMap<>();   // absUrl → Resource (dedup, sıra korunur)
         addAll(out, doc, "img[src]", "src", "IMG", sourcePage);
-        addSrcset(out, doc, sourcePage);
+        addSrcset(out, doc, sourcePage, opts.allImageCandidates());
         addAll(out, doc, "link[rel=stylesheet][href]", "href", "CSS", sourcePage);
         addAll(out, doc, "script[src]", "src", "JS", sourcePage);
         addAll(out, doc, "iframe[src]", "src", "IFRAME", sourcePage);
         addAll(out, doc, "link[rel~=(?i)icon][href]", "href", "FAVICON", sourcePage);
         addAll(out, doc, "link[rel=preload][as=font][href]", "href", "FONT", sourcePage);
-        addAll(out, doc, "a[href]", "href", "LINK", sourcePage);
+        if (opts.hyperlinks()) addAll(out, doc, "a[href]", "href", "LINK", sourcePage);
         List<Resource> list = new ArrayList<>();
         for (Resource r : out.values()) {
             if (!isHttp(r.url())) continue;
@@ -329,14 +364,24 @@ public class PageFetchCore {
         }
     }
 
-    /** srcset: "url 1x, url2 2w" listesindeki her aday URL. */
-    private void addSrcset(Map<String, Resource> out, Document doc, String src) {
-        for (Element el : doc.select("img[srcset], source[srcset]")) {
+    /**
+     * srcset: "url 1x, url2 2w" listesindeki aday URL'ler.
+     *
+     * <p>{@code allCandidates=false} (Sayfa Hızı) ise tarayıcı davranışı taklit edilir: bir görsel
+     * için YALNIZ BİR dosya indirilir. {@code <source srcset>} tamamen atlanır ve {@code img}'in
+     * srcset'i yalnız {@code src} YOKSA (yani indirilecek başka aday yoksa) ilk adayla temsil
+     * edilir. Aksi halde tek bir görsel 4-5 kez sayılır ve sayfa ağırlığı katbekat şişer.
+     */
+    private void addSrcset(Map<String, Resource> out, Document doc, String src, boolean allCandidates) {
+        String selector = allCandidates ? "img[srcset], source[srcset]" : "img[srcset]";
+        for (Element el : doc.select(selector)) {
+            if (!allCandidates && !el.attr("src").isBlank()) continue;   // src zaten toplandı
             for (String cand : el.attr("srcset").split(",")) {
                 String u = cand.trim().split("\\s+")[0];
                 if (u.isBlank()) continue;
                 String abs = normalizeUrl(el.root().baseUri().isBlank() ? u : resolve(el.baseUri(), u));
                 out.putIfAbsent(abs, new Resource(abs, "IMG", src));
+                if (!allCandidates) break;   // görsel başına tek aday
             }
         }
     }

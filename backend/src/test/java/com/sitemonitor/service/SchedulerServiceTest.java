@@ -1128,8 +1128,11 @@ class SchedulerServiceTest {
     }
 
     @Test
-    @DisplayName("İhlal VARken aynı kırılım BREACH kopyasıyla da dondurulur (delil kalıcı)")
+    @DisplayName("İhlal BAŞLADIĞINDA kırılım BREACH kopyasıyla dondurulur (delil kalıcı)")
     void resourceBreakdown_breach_freezesEvidence() {
+        // Önceki ölçüm TEMİZ → bu, ihlalin başladığı an.
+        when(pageSpeedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(anyLong()))
+                .thenReturn(java.util.Optional.empty());
         when(pageSpeedCheckerService.check(any())).thenReturn(psResult(java.util.List.of("SIZE")));
         when(pageSpeedCheckRepo.save(any())).thenAnswer(i -> {
             com.sitemonitor.model.PageSpeedCheck c = i.getArgument(0); c.setId(101L); return c; });
@@ -1162,6 +1165,28 @@ class SchedulerServiceTest {
         assertThat(captureSavedResources()).allMatch(com.sitemonitor.model.PageSpeedResource::getTruncated);
         // Arayuz bandi bu anahtari okuyor.
         assertThat(out.get("bytes_truncated")).isEqualTo(true);
+    }
+
+    @Test
+    @DisplayName("İhlal SÜRERKEN delil TEKRAR dondurulmaz — tablo kontrol sayısıyla büyümez")
+    void resourceBreakdown_ongoingBreach_doesNotRefreeze() {
+        // Kalıcı yavaş bir sayfa 30 dk'da bir 500 kalıcı satır yazsaydı günde ~24.000 satır,
+        // 90 günlük saklamayla tek izleme için milyonlarca satır ederdi. Delil BOZULMA ANINDA
+        // alınır; ihlal sürerken kırılım LATEST'te canlı duruyor.
+        var prev = new com.sitemonitor.model.PageSpeedCheck();
+        prev.setBreachedMetrics("SIZE");                 // önceki ölçüm de ihlalliydi
+        when(pageSpeedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(anyLong()))
+                .thenReturn(java.util.Optional.of(prev));
+        when(pageSpeedCheckerService.check(any())).thenReturn(psResult(java.util.List.of("SIZE")));
+        when(pageSpeedCheckRepo.save(any())).thenAnswer(i -> {
+            com.sitemonitor.model.PageSpeedCheck c = i.getArgument(0); c.setId(102L); return c; });
+
+        scheduler.triggerPageSpeedCheck(psMonitor());
+
+        var saved = captureSavedResources();
+        assertThat(saved).hasSize(1);
+        assertThat(saved.get(0).getKeepReason()).isEqualTo(com.sitemonitor.model.PageSpeedResource.KEEP_LATEST);
+        assertThat(saved).noneMatch(r -> com.sitemonitor.model.PageSpeedResource.KEEP_BREACH.equals(r.getKeepReason()));
     }
 
     @Test
