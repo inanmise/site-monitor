@@ -503,9 +503,12 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
                 </div>
               </div>
               {Array.isArray(m.breached_metrics) && m.breached_metrics.length > 0 && (
-                <div className="upt-card-tags">
+                /* `tag-chips` projenin mevcut cip-satiri primitifi (flex + wrap + gap).
+                   Onceki `upt-card-tags` HICBIR YERDE tanimli DEGILDI: birden fazla ihlal
+                   rozeti bosluksuz, sarmasiz yan yana diziliyordu. */
+                <div className="tag-chips">
                   {m.breached_metrics.map(k => (
-                    <span key={k} className="upt-port-tag" style={{ color: '#b45309' }}>{breachLabel(k)}</span>
+                    <span key={k} className="upt-port-tag pspd-breach-tag">{breachLabel(k)}</span>
                   ))}
                 </div>
               )}
@@ -621,6 +624,11 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
                 {t('pspd.resHint')}
                 {resTotal > resources.length && resources.length > 0
                   && ` ${t('pspd.resTruncated', resources.length, resTotal)}`}
+                {/* Kirilimin KENDI zamani. Sayfa alinamadiginda son iyi kirilim KORUNUYOR (silmek,
+                    kullanici tam da "bozulmadan once neye benziyordu" diye baktigi anda tabloyu
+                    bosaltiyordu) — o yuzden "Son olcum" etiketi tek basina yaniltabilir. */}
+                {resCheckId == null && resources[0]?.checked_at
+                  && ` ${t('pspd.resMeasuredAt', formatDateSec(resources[0].checked_at))}`}
               </div>
               {resLoading ? <LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />
                 : resources.length === 0 ? <LoadingBlock label={t('pspd.noResources')} className="upt-modal-loading" />

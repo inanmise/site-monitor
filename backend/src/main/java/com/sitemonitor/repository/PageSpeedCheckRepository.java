@@ -74,4 +74,11 @@ public interface PageSpeedCheckRepository extends JpaRepository<PageSpeedCheck, 
     @Transactional
     @Modifying
     int deleteByMonitorId(Long monitorId);
+
+    /** Haftalık izleme özeti: [monitorId, toplam, BAŞARILI, ort_yanıt_ms] — ids ∩ [from,to]; başarı = ok=true. */
+    @Query("SELECT r.monitorId, COUNT(r), SUM(CASE WHEN r.ok = true THEN 1L ELSE 0L END), AVG(r.responseMs) "
+         + "FROM PageSpeedCheck r WHERE r.monitorId IN :ids AND r.checkedAt >= :from AND r.checkedAt <= :to "
+         + "GROUP BY r.monitorId")
+    List<Object[]> weeklyStatsByMonitor(@Param("ids") java.util.Collection<Long> ids,
+                                        @Param("from") String from, @Param("to") String to);
 }

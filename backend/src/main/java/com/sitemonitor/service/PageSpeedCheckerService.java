@@ -150,7 +150,13 @@ public class PageSpeedCheckerService {
             if (x.failed()) failed++;
             if (x.truncated()) bytesTruncated = true;
         }
-        int requestCount = 1 + measured.size();
+        // İstek sayısı, SAYFANIN İSTEDİĞİ kadardır — bizim indirmeyi BAŞARDIĞIMIZ kadar değil.
+        // measured.size() kullanmak ters bir alarm davranışı üretiyordu: sayfa ağırlaştıkça deadline
+        // ya da bayt bütçesi daha çok kaynağı atlıyor, atlanan kaynak sayılmadığı için raporlanan
+        // istek sayısı DÜŞÜYOR ve REQUESTS eşiği tam olarak EN KÖTÜ sayfalarda ateşlemeyi bırakıyordu.
+        // Envanterdeki her satır tarayıcının yapacağı bir istektir (başarısız olanlar dahil); atlamak
+        // bizim sınırımız, sayfanın davranışı değil. Envanterin kendi tavanı `capped` ile bildirilir.
+        int requestCount = 1 + loadable.size();
         long totalMs = System.currentTimeMillis() - start;
 
         List<String> breached = thresholds == null ? List.of()
@@ -174,17 +180,22 @@ public class PageSpeedCheckerService {
         Semaphore gate = new Semaphore(concurrency);
         // Tek kontrolün indirebileceği TOPLAM bayt: kaynak başına tavan tek başına yetmiyor
         // (500 × 10 MB = 5 GB). Tek pod'da bant genişliği ve CPU gerçek sınırlar.
+        final long budget = maxTotalMeasuredBytes();
         java.util.concurrent.atomic.AtomicLong spent = new java.util.concurrent.atomic.AtomicLong();
         List<CompletableFuture<Measured>> futures = new ArrayList<>(resources.size());
         for (PageFetchCore.Resource r : resources) {
             futures.add(CompletableFuture.supplyAsync(() -> {
-                // Deadline ve bütçe İSTEK ATILMADAN önce kontrol edilir: kuyrukta bekleyen görevler
-                // biz sonucu bırakmışken ağa çıkmasın (boşa CPU + bant genişliği).
-                if (System.currentTimeMillis() > deadline) return null;
-                if (spent.get() >= PageFetchCore.MAX_TOTAL_MEASURED_BYTES) return null;
+                // Kaba ön kontrol: kapıya boşuna sıraya girmemek için. Bağlayıcı OLAN kontrol
+                // aşağıda, kapının İÇİNDE. supplyAsync tüm görevleri hemen kuyruğa attığı için
+                // yalnız burada bakmak bütçeyi ETKİSİZ bırakıyordu: hepsi henüz spent=0 iken
+                // geçip kapıda sıraya giriyor, sonra sırayla İNDİRİYORdu.
+                if (System.currentTimeMillis() > deadline || spent.get() >= budget) return null;
                 try {
                     gate.acquire();
                     try {
+                        // Kapının İÇİNDE, isteği atmadan hemen önce: en güncel harcamayı görür.
+                        // Eşzamanlılık N ise en fazla N-1 kaynak tavanı aşabilir (sınırlı taşma).
+                        if (System.currentTimeMillis() > deadline || spent.get() >= budget) return null;
                         Measured m = weighOne(r, rootHost, opts);
                         spent.addAndGet(m.bytes());
                         return m;
@@ -208,7 +219,7 @@ public class PageSpeedCheckerService {
                 /* bu kaynak düştü → atla, ölçümün geri kalanı geçerli */
             }
         }
-        return new Weighed(out, spent.get() >= PageFetchCore.MAX_TOTAL_MEASURED_BYTES);
+        return new Weighed(out, spent.get() >= budget);
     }
 
     /**
@@ -259,6 +270,18 @@ public class PageSpeedCheckerService {
     }
 
     /** Tüm ölçüm için wall-clock üst sınırı — yanıt vermeyen hedef scheduler thread'ini süresiz tutmasın. */
+    /**
+     * Bir kontrolde indirilecek TOPLAM bayt tavanı — ops ayarlanabilir, varsayılanı
+     * {@link PageFetchCore#MAX_TOTAL_MEASURED_BYTES}. Yanlış/çok küçük bir ayar ölçümü tamamen kör
+     * etmesin diye 64 KB tabanı var; tavan aşılırsa kalan kaynaklar atlanır ve ölçüm "alt sınır"
+     * olarak işaretlenir (sessizce eksik sayılmaz).
+     */
+    private long maxTotalMeasuredBytes() {
+        int kb = appSettings.getInt("site.monitor.pagespeed.max-total-kb",
+                (int) (PageFetchCore.MAX_TOTAL_MEASURED_BYTES / 1024));
+        return Math.max(64L * 1024L, kb * 1024L);
+    }
+
     private int maxCheckSeconds() {
         return Math.max(10, appSettings.getInt("site.monitor.pagespeed.max-check-seconds", 120));
     }

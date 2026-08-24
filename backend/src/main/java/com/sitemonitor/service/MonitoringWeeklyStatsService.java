@@ -55,6 +55,7 @@ public class MonitoringWeeklyStatsService {
     private final CertificateInventoryRepository inventoryRepo;
     private final ScriptedMonitorRepository scriptedMonitorRepo;
     private final PageMonitorRepository pageMonitorRepo;
+    private final PageSpeedMonitorRepository pageSpeedMonitorRepo;
 
     private final HttpCheckRepository httpCheckRepo;
     private final PortCheckRepository portCheckRepo;
@@ -65,6 +66,7 @@ public class MonitoringWeeklyStatsService {
     private final CertificateCheckRepository certCheckRepo;
     private final ScriptedCheckRepository scriptedCheckRepo;
     private final PageCheckRepository pageCheckRepo;
+    private final PageSpeedCheckRepository pageSpeedCheckRepo;
 
     private final AlertEventRepository alertEventRepo;
     private final CertificateService certificateService;
@@ -116,6 +118,7 @@ public class MonitoringWeeklyStatsService {
         types.add(dnsType(c));
         types.add(keywordType(c));
         types.add(pageType(c));
+        types.add(pageSpeedType(c));
         types.add(scriptedType(c));
         return new MonitoringStats(types);
     }
@@ -229,6 +232,22 @@ public class MonitoringWeeklyStatsService {
                 .map(m -> new MonRef(m.getId(), nz(m.getName(), m.getUrl()), m.getCreatedAt())).toList();
         return monitorIdType("page", mons, c,
                 (idl, from, to) -> pageCheckRepo.weeklyStatsByMonitor(idl, from, to), ExtraMode.AVG_MS, null);
+    }
+
+    /**
+     * Sayfa Hızı — sentetik ve sayfa bütünlüğüyle BİREBİR aynı bağlanmamış halka.
+     *
+     * <p>{@code MonitorTypeCatalog.ALERT_TYPES}'ta {@code pagespeed} VARDI ama {@code compute()}
+     * onun için bir {@code TypeStats} ÜRETMİYORDU: haftalık izleme özeti ekranı, PDF'i ve e-postası
+     * Sayfa Hızı izlemelerini tamamen yok sayıyordu (aktif sayı yok, kontrol yok, başarı oranı yok,
+     * alarm kovası yok). Kapı: {@code MonitoringWeeklyStatsServiceTest} katalog sözleşmesi.
+     */
+    private TypeStats pageSpeedType(Ctx c) {
+        List<MonRef> mons = pageSpeedMonitorRepo.findByActiveTrue().stream()
+                .filter(m -> c.teamId().equals(m.getTeamId()))
+                .map(m -> new MonRef(m.getId(), nz(m.getName(), m.getUrl()), m.getCreatedAt())).toList();
+        return monitorIdType("pagespeed", mons, c,
+                (idl, from, to) -> pageSpeedCheckRepo.weeklyStatsByMonitor(idl, from, to), ExtraMode.AVG_MS, null);
     }
 
     private TypeStats scriptedType(Ctx c) {

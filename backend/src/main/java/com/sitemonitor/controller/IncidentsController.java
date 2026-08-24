@@ -144,7 +144,9 @@ public class IncidentsController {
     }
 
     // ── Root-cause türetimi (kod + kategori; etiket/renk frontend'de i18n'lenir) ──
-    private Map<String, String> rootCause(String type, Map<String, Object> ctx) {
+    // Paket gorunur: MonitorTypeCatalog'daki HER alarm tipinin bir kategoriye dustugunu
+    // dogrulayan sozlesme testi bunu dogrudan cagirir (bkz. IncidentsControllerTest).
+    Map<String, String> rootCause(String type, Map<String, Object> ctx) {
         Integer http = ctx != null && ctx.get("http_status") instanceof Number n ? n.intValue() : null;
         String err = ctx != null && ctx.get("last_error") != null ? ctx.get("last_error").toString().toLowerCase(Locale.ROOT) : null;
         String code, cat;
@@ -171,6 +173,9 @@ public class IncidentsController {
         else if ("SCRIPTED_FAIL".equals(type))    { code = "SYNTHETIC"; cat = "down"; }
         else if ("PAGE_DOWN".equals(type))        { code = "DOWN";      cat = "down"; }
         else if ("PAGE_INTEGRITY".equals(type))   { code = "INTEGRITY"; cat = "content"; }
+        // PAGESPEED_SLOW yukaridaki `_SLOW` kuralina takilir; DOWN'un burada acikca yeri olmali,
+        // yoksa Sayfa Hizi KESINTILERI olay ekraninda "bilinmeyen" kok neden olarak gorunur.
+        else if ("PAGESPEED_DOWN".equals(type))   { code = "DOWN";      cat = "down"; }
         else { code = type; cat = "unknown"; }
         return Map.of("code", code, "category", cat);
     }

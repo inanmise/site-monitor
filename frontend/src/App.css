@@ -11175,6 +11175,16 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* Tür-özel geçmiş grid şablonları (CheckHistoryTab gridClass) */
 .page-rt-grid { grid-template-columns: 150px 90px 70px 100px 1fr; }
 .pspd-rt-grid { grid-template-columns: 150px 110px 90px 80px 90px 1fr; }
+/* Kaynak satirindaki URL hucresi. KIRPMA SART: kaynak URL'leri rutin olarak 150+ karakter ve
+   bolunemez tek bir inline kutu; grid'in `fr` parcasi varsayilan `min-width: auto` ile en uzun
+   URL'e kadar GENISLEDIGI icin tablo modalin disina tasiyordu. `min-width: 0` olmadan overflow
+   hicbir sey yapmaz -- grid ogesinin kucuLmesine izin veren sey odur. Tam URL `title`'da.
+   (jsdom yerlesim yapmadigi icin bu tur bir hata testte GORUNMEZ.) */
+.upt-rt-url { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Ihlal rozeti. Renk satir-ici stil DEGIL sinif: #b45309 koyu temada koyu kart uzerinde okunmuyordu.
+   Tema cifti `.upt-rt-warn` emsalini izler (acikta koyu amber, koyuda parlak amber). */
+.pspd-breach-tag { color: #b45309; font-weight: 600; }
+[data-theme="dark"] .pspd-breach-tag { color: #fbbf24; }
 /* Metrik secimi ile zaman araligi secimi ayri islerdir; etiket + segmented control
    ikisini gorsel olarak ayirir (eskiden iki ayni gorunen etiketsiz dugme siralaydi). */
 .pspd-metric-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;

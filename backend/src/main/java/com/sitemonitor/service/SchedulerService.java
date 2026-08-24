@@ -3080,14 +3080,20 @@ public class SchedulerService {
     private static final int HEAVY_LIMIT = 10;
 
     /**
-     * Kaynak kırılımını yazar. LATEST satırları her ölçümde silinip yeniden yazılır (tablo izleme sayısıyla
-     * orantılı kalır, kontrol sayısıyla DEĞİL); eşik ihlali varsa aynı satırlar BREACH işaretiyle ikinci kez
-     * KALICI yazılır — "geçen salı neden yavaşladı" sorusu sonradan da cevaplanabilsin diye.
+     * Kaynak kırılımını yazar. LATEST satırları, YENİSİ VARSA silinip yeniden yazılır (tablo izleme
+     * sayısıyla orantılı kalır, kontrol sayısıyla DEĞİL). İhlalin BAŞLADIĞI ölçümde aynı satırlar
+     * BREACH işaretiyle ikinci kez KALICI yazılır — "geçen salı neden yavaşladı" sorusu sonradan da
+     * cevaplanabilsin diye. İhlal SÜRERKEN tekrar dondurulmaz (bkz. gövdedeki gerekçe).
      */
     private void writeResourceBreakdown(com.sitemonitor.model.PageSpeedMonitor m, PageSpeedCheck pc,
                                         PageSpeedCheckerService.Result res, String ts, boolean wasBreached) {
-        pageSpeedResourceRepo.deleteByMonitorIdAndKeepReason(m.getId(), PageSpeedResource.KEEP_LATEST);
+        // Kırılım YOKSA (sayfa alınamadı / yapılandırma hatası) mevcut LATEST satırlarına DOKUNULMAZ.
+        // Önce silip sonra dönmek, tek bir başarısız kontrolde son iyi kırılımı KALICI olarak
+        // siliyordu — yani kullanıcı "bozulmadan önce sayfa neye benziyordu" diye baktığı ANDA
+        // tablo boşalıyordu. Satırlar kendi `checked_at`'ini taşıyor, arayüz de onu gösteriyor;
+        // eski kırılımı tutmak yanıltıcı değil, tek bilgi kaynağı.
         if (res.resources().isEmpty()) return;
+        pageSpeedResourceRepo.deleteByMonitorIdAndKeepReason(m.getId(), PageSpeedResource.KEEP_LATEST);
         // KENAR-TETIKLI: delil yalnizca ihlal BASLADIGI anda dondurulur, ihlal SURDUGU her kontrolde
         // degil. Aksi halde kalici yavas bir sayfa 30 dk'da bir 500 kalici satir yazar — gunde
         // ~24.000 satir, 90 gunluk saklamayla tek izleme icin milyonlarca satir. Sorulan soru

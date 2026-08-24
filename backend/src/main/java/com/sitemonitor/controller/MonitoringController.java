@@ -180,6 +180,8 @@ public class MonitoringController {
     private final java.util.concurrent.ConcurrentHashMap<Long, Long> pageManualTriggerAt = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.concurrent.ConcurrentHashMap<Long, Long> scriptedManualTriggerAt = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.concurrent.ConcurrentHashMap<Long, Long> pageSpeedManualTriggerAt = new java.util.concurrent.ConcurrentHashMap<>();
+    /** "Şimdi Dene" bekleme damgası — OTURUM niteliğinde tutulur (harita tutmak sızıntı olurdu). */
+    private static final String PAGESPEED_TEST_AT = "pagespeedTestAt";
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -2874,6 +2876,22 @@ public class MonitoringController {
         String url = body.get("url") != null ? MonitorUrls.normalize(body.get("url").toString()) : "";
         if (url.isEmpty()) return badRequest("url zorunlu");
         if (!MonitorUrls.isCheckable(url)) return badRequest(INVALID_URL_MSG);
+        // OTURUM BAZLI bekleme. Kayıtlı ölçümün ("/pagespeed/{id}/check") cooldown'u var ama bu ucun
+        // yoktu — oysa AYNI işi yapıyor: ana sayfa + yüzlerce alt kaynak GET'i, gövdeler dahil (kardeş
+        // "/page/test" yalnız HEAD attığı için ucuz, bu değil). Tek pod 100 eşzamanlı kullanıcıya
+        // hizmet ediyor; "Şimdi Dene"ye üst üste basmak istek thread'lerini ve bant genişliğini
+        // tüketebiliyordu. Anahtar oturumun KENDİSİNDE tutulur: harita yok → sızıntı da yok.
+        long nowMs = System.currentTimeMillis();
+        // Kayitli olcumun 30 sn'sinden AYRI ve daha kisa: burasi form doldururken kullaniliyor,
+        // kullanici URL'i duzeltip tekrar denemek istiyor. 10 sn ust uste tiklamayi keser ama
+        // mesru kullanimi engellemez.
+        long testCooldownMs = appSettings.getInt("site.monitor.pagespeed.test-cooldown-seconds", 10) * 1000L;
+        Object prevTest = session.getAttribute(PAGESPEED_TEST_AT);
+        if (prevTest instanceof Long p && nowMs - p < testCooldownMs) {
+            return ResponseEntity.status(429).body(Map.<String, Object>of("success", false,
+                    "error", "Çok sık deneme; " + (testCooldownMs / 1000) + " sn bekleyin."));
+        }
+        session.setAttribute(PAGESPEED_TEST_AT, nowMs);
         com.sitemonitor.model.PageSpeedMonitor draft = new com.sitemonitor.model.PageSpeedMonitor();
         draft.setUrl(url);
         applyPageSpeedFields(draft, body, session);
@@ -2925,7 +2943,7 @@ public class MonitoringController {
         // Kirpma GORUNUR olmali: 50 satir, 300 kaynakli bir sayfanin TAMAMI sanilirsa kullanici
         // agirligin nereden geldigini yanlis okur.
         long total = checkId != null
-                ? pageSpeedResourceRepo.countByCheckId(checkId)
+                ? pageSpeedResourceRepo.countByMonitorIdAndCheckId(id, checkId)
                 : pageSpeedResourceRepo.countByMonitorIdAndKeepReason(id, com.sitemonitor.model.PageSpeedResource.KEEP_LATEST);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("resources", rows.stream().map(this::resourceToMap).toList());

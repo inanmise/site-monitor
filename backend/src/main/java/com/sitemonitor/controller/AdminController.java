@@ -1056,9 +1056,13 @@ public class AdminController {
             HttpSession session) {
         requirePerm(session, "alerts.read", "view");
         int sz = Math.max(1, Math.min(size, 200));
+        // KAPALI DÜŞER: kapsam, parametrenin VERİLİP VERİLMEDİĞİNE bakar — doğrulamadan kaç tanesinin
+        // sağ çıktığına DEĞİL. Aksi halde geçersiz bir tip adı (yeniden adlandırma, yazım hatası)
+        // süzgeci sessizce DÜŞÜRÜR ve modal yine kendi üretmediği alarmları gösterir; yani kullanıcının
+        // bildirdiği hata geri gelir. Şimdi hiçbir geçerli tip kalmazsa sonuç BOŞ döner (görünür hata).
+        boolean typeScoped = alertTypes != null && !alertTypes.isBlank();
         List<String> typeList = parseAlertTypes(alertTypes);
-        boolean typeScoped = !typeList.isEmpty();
-        List<String> typesParam = typeScoped ? typeList : List.of("-");   // IN boş olamaz (scope deseniyle aynı)
+        List<String> typesParam = typeList.isEmpty() ? List.of("-") : typeList;   // IN boş olamaz (scope deseniyle aynı)
         Boolean resolvedEffective = resolved != null ? resolved : (onlyOpen ? Boolean.FALSE : null);
         String alertTypeEffective = (alertType != null && !alertType.isBlank()) ? alertType.trim() : null;
         // Arama: kismi + buyuk/kucuk harf duyarsiz. Joker karakterler SORGUDA degil BURADA
@@ -1170,9 +1174,10 @@ public class AdminController {
         String alertTypeEffective = (alertType != null && !alertType.isBlank()) ? alertType.trim() : null;
         // CSV, ekranla AYNI filtreleri kullanmak zorunda: tip kapsamı burada da uygulanmazsa
         // kullanıcı ekranda 1 alarm görüp dosyada 3 alarm indirirdi.
+        // CSV indirmesi ekranla AYNI süzgeci taşımak zorunda (bkz. liste ucundaki gerekçe).
+        boolean csvTypeScoped = alertTypes != null && !alertTypes.isBlank();
         List<String> csvTypeList = parseAlertTypes(alertTypes);
-        boolean csvTypeScoped = !csvTypeList.isEmpty();
-        List<String> csvTypesParam = csvTypeScoped ? csvTypeList : List.of("-");
+        List<String> csvTypesParam = csvTypeList.isEmpty() ? List.of("-") : csvTypeList;
         String qEffective = null;
         if (q != null && !q.isBlank()) {
             String esc = q.trim().toLowerCase(java.util.Locale.ROOT)
@@ -2104,8 +2109,9 @@ public class AdminController {
      * üretmiş gibi görünür. Süzme SUNUCUDA yapılır: istemcide süzmek yalnız açık sayfayı
      * süzer, sayfalama ve tip/seviye sayaçları yanlış kalırdı.
      *
-     * <p>Boş/verilmemiş liste "tümü" demektir (bağımsız Alarm Geçmişi ekranı böyle çağırır);
-     * o durumda {@code typeScoped=false} gider ve sorgu aynen eskisi gibi çalışır.
+     * <p>Parametrenin HİÇ verilmemesi "tümü" demektir (bağımsız Alarm Geçmişi ekranı böyle çağırır);
+     * o durumda {@code typeScoped=false} gider ve sorgu aynen eskisi gibi çalışır. Parametre VERİLİP
+     * içinden geçerli tip çıkmazsa sonuç BOŞTUR — süzgeç sessizce düşürülmez (fail-closed).
      */
     private static List<String> parseAlertTypes(String csv) {
         if (csv == null || csv.isBlank()) return List.of();

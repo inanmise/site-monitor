@@ -28,6 +28,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class IncidentsControllerTest {
 
     @Autowired MockMvc mvc;
+    @Autowired IncidentsController controller;
 
     @MockitoBean AlertEventRepository alertEventRepo;
     @MockitoBean AlertCommentRepository commentRepo;
@@ -156,5 +157,24 @@ class IncidentsControllerTest {
                         .contentType("application/json").content("{\"body\":\"  \"}"))
                 .andExpect(status().isBadRequest());
         verify(commentRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("SOZLESME: katalogdaki HER alarm tipi bir kok-neden kategorisine duser (unknown YOK)")
+    void rootCause_everyCatalogAlertType_hasCategory() {
+        // Bu kapi olmadan yeni bir izleme turu sessizce "bilinmeyen" kok nedene dusuyor: olay
+        // ekraninda renk/etiket kayboluyor ve kategoriye gore gruplama calismiyor. Gercekten
+        // yasandi — PAGESPEED_DOWN buraya eklenmemisti (PAGESPEED_SLOW `_SLOW` kuralina takildigi
+        // icin dogru calisiyordu, yani hata YARIM gorunuyordu).
+        java.util.List<String> unknown = new java.util.ArrayList<>();
+        com.sitemonitor.service.MonitorTypeCatalog.ALERT_TYPES.values().stream()
+                .flatMap(java.util.Set::stream)
+                .forEach(alertType -> {
+                    String cat = controller.rootCause(alertType, java.util.Map.of()).get("category");
+                    if ("unknown".equals(cat)) unknown.add(alertType);
+                });
+        org.assertj.core.api.Assertions.assertThat(unknown)
+                .as("kok-neden kategorisi olmayan alarm tipleri")
+                .isEmpty();
     }
 }

@@ -45,6 +45,7 @@ class PageSpeedCheckerServiceTest {
     private final Map<String, Map<String, List<String>>> seenHeaders = new ConcurrentHashMap<>();
     /** Yol → kaç kez istendi (tracker hariç tutma "indirilmedi mi" diye buraya bakar). */
     private final Map<String, Integer> hits = new ConcurrentHashMap<>();
+    private AppSettingsService appSettings;
 
     @BeforeEach
     void setUp() throws IOException {
@@ -54,6 +55,7 @@ class PageSpeedCheckerServiceTest {
         lenient().when(settings.getInt(anyString(), anyInt())).thenAnswer(i -> i.getArgument(1));
         lenient().when(settings.getString(anyString(), any())).thenAnswer(i -> i.getArgument(1));
 
+        appSettings = settings;
         SsrfGuard guard = new SsrfGuard(settings);
         PublicSuffixService psl = new PublicSuffixService();
         psl.load();
@@ -114,6 +116,13 @@ class PageSpeedCheckerServiceTest {
         bytes("/p-a.webp", 1000, "image/webp");
         bytes("/p-b.webp", 2000, "image/webp");
         bytes("/a.css.png", 1500, "image/png");
+        // Butce sayfasi: dort ADET 30 KB kaynak. 64 KB tavaniyla ikisi indirilir, kalani ATLANIR.
+        html("/agir", """
+            <html><head>
+              <script src="/h1.js"></script><script src="/h2.js"></script>
+              <script src="/h3.js"></script><script src="/h4.js"></script>
+            </head><body>x</body></html>""");
+        for (int i = 1; i <= 4; i++) bytes("/h" + i + ".js", 30 * 1024, "application/javascript");
         // Link agirlikli sayfa: 600 a[href] + 2 gercek kaynak.
         StringBuilder linky = new StringBuilder("<html><head>"
                 + "<link rel='stylesheet' href='/a.css'><script src='/a.js'></script></head><body>");
@@ -280,6 +289,55 @@ class PageSpeedCheckerServiceTest {
         // "Olcum kismi" uyarisi da yanlis yere cikmaz.
         assertThat(r.capped()).isFalse();
         assertThat(hits).doesNotContainKey("/l0");
+    }
+
+    @Test
+    @DisplayName("TOPLAM bayt bütçesi gerçekten bağlar — tavan dolunca kalan kaynak İNDİRİLMEZ")
+    void totalByteBudgetActuallyStopsDownloads() {
+        // Butce kontrolu kapinin DISINDA yapildiginda etkisizdi: supplyAsync tum gorevleri hemen
+        // kuyruga attigi icin hepsi spent=0 iken gecip kapida siraya giriyor, sonra SIRAYLA
+        // hepsini indiriyordu. Yani 150 MB tavani hicbir seyi sinirlamiyordu.
+        when(appSettings.getInt(eq("site.monitor.pagespeed.max-total-kb"), anyInt())).thenReturn(64);
+        PageSpeedMonitor m = monitor("/agir");
+        m.setResourceConcurrency(1);           // sirali → hangi kaynagin atlandigi belirleyici
+
+        var r = checker.check(m);
+
+        int downloaded = 0;
+        for (int i = 1; i <= 4; i++) if (hits.containsKey("/h" + i + ".js")) downloaded++;
+        assertThat(downloaded).isLessThan(4);                 // ASIL KANIT: ag istegi HIC atilmadi
+        assertThat(r.resources()).hasSizeLessThan(4);
+        assertThat(r.bytesTruncated()).isTrue();              // toplam "alt sinir" olarak isaretli
+    }
+
+    @Test
+    @DisplayName("İstek sayısı sayfanın İSTEDİĞİ kadardır — atlanan kaynak sayıyı DÜŞÜRMEZ")
+    void requestCountReflectsWhatThePageAsksFor() {
+        // measured.size() kullanmak ters bir alarm davranisi uretiyordu: sayfa agirlastikca daha
+        // cok kaynak atlanir, atlanan sayilmadigi icin raporlanan istek sayisi DUSER ve REQUESTS
+        // esigi tam olarak EN KOTU sayfalarda atesleme yapmaz.
+        when(appSettings.getInt(eq("site.monitor.pagespeed.max-total-kb"), anyInt())).thenReturn(64);
+        PageSpeedMonitor m = monitor("/agir");
+        m.setResourceConcurrency(1);
+
+        var r = checker.check(m);
+
+        assertThat(r.requestCount()).isEqualTo(5);             // HTML + 4 script (atlananlar DAHIL)
+        assertThat(r.resources().size()).isLessThan(4);        // ...ama hepsi olculemedi
+    }
+
+    @Test
+    @DisplayName("Bütçe dolduğunda REQUESTS eşiği yine ateşler (regresyonun asıl bedeli)")
+    void requestsThresholdStillFiresWhenBudgetTruncates() {
+        when(appSettings.getInt(eq("site.monitor.pagespeed.max-total-kb"), anyInt())).thenReturn(64);
+        PageSpeedMonitor m = monitor("/agir");
+        m.setResourceConcurrency(1);
+        m.setMaxRequests(4);                                   // 5 istek > 4 → ihlal
+
+        var r = checker.check(m);
+
+        assertThat(r.breached()).contains("REQUESTS");
+        assertThat(r.status()).isEqualTo("SLOW");
     }
 
     // ── Kesinti / yapılandırma ───────────────────────────────────────────────

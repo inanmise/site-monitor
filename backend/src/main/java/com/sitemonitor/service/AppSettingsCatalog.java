@@ -62,6 +62,12 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.pagespeed.user-agent",              "monitoring", Type.STRING),
         new Setting("site.monitor.pagespeed.max-check-seconds",       "monitoring", Type.INT),
         new Setting("site.monitor.pagespeed.manual-cooldown-seconds", "monitoring", Type.INT),
+        // "Şimdi Dene" beklemesi — kayıtlı ölçümden AYRI ve daha kısa (form doldururken kullanılır).
+        new Setting("site.monitor.pagespeed.test-cooldown-seconds",   "monitoring", Type.INT),
+        // Bir ölçümde indirilecek TOPLAM bayt tavanı (KB). Kaynak başına tavan tek başına yetmiyor:
+        // 500 kaynak × 10 MB teorik olarak 5 GB eder. Tavan dolunca kalan kaynaklar atlanır ve
+        // ölçüm "alt sınır" olarak işaretlenir.
+        new Setting("site.monitor.pagespeed.max-total-kb",            "monitoring", Type.INT),
         new Setting("site.monitor.metrics.pagespeed.retention-days",           "monitoring", Type.INT),
         new Setting("site.monitor.metrics.pagespeed-resources.retention-days", "monitoring", Type.INT),
         // Sayfa-bütünlüğü check/issue serisi — gün-bazlı saklama (gece batch-purge).

@@ -1168,6 +1168,24 @@ class SchedulerServiceTest {
     }
 
     @Test
+    @DisplayName("Sayfa ALINAMAZSA son iyi kırılım SİLİNMEZ (kesinti anında tablo boşalmaz)")
+    void resourceBreakdown_unreachable_keepsLastGoodBreakdown() {
+        // Once silip sonra "kirilim bos" diye donmek, tek bir basarisiz kontrolde son iyi kirilimi
+        // KALICI olarak siliyordu — yani kullanici "bozulmadan once sayfa neye benziyordu" diye
+        // baktigi ANDA tablo bosaliyordu.
+        when(pageSpeedCheckerService.check(any())).thenReturn(new PageSpeedCheckerService.Result(
+                "DOWN", null, 0L, 0L, 120L, 0L, 1, 1, false, false,
+                java.util.List.of(), "sayfa alınamadı", java.util.List.of()));
+        when(pageSpeedCheckRepo.save(any())).thenAnswer(i -> {
+            com.sitemonitor.model.PageSpeedCheck c = i.getArgument(0); c.setId(103L); return c; });
+
+        scheduler.triggerPageSpeedCheck(psMonitor());
+
+        verify(pageSpeedResourceRepo, never()).deleteByMonitorIdAndKeepReason(anyLong(), anyString());
+        verify(pageSpeedResourceRepo, never()).saveAll(any());
+    }
+
+    @Test
     @DisplayName("İhlal SÜRERKEN delil TEKRAR dondurulmaz — tablo kontrol sayısıyla büyümez")
     void resourceBreakdown_ongoingBreach_doesNotRefreeze() {
         // Kalıcı yavaş bir sayfa 30 dk'da bir 500 kalıcı satır yazsaydı günde ~24.000 satır,

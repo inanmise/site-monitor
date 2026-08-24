@@ -40,6 +40,7 @@ class MonitoringWeeklyStatsServiceTest {
     @Mock CertificateInventoryRepository inventoryRepo;
     @Mock ScriptedMonitorRepository scriptedMonitorRepo;
     @Mock PageMonitorRepository pageMonitorRepo;
+    @Mock PageSpeedMonitorRepository pageSpeedMonitorRepo;
     @Mock HttpCheckRepository httpCheckRepo;
     @Mock PortCheckRepository portCheckRepo;
     @Mock DnsRecordRepository dnsRecordRepo;
@@ -49,6 +50,7 @@ class MonitoringWeeklyStatsServiceTest {
     @Mock CertificateCheckRepository certCheckRepo;
     @Mock ScriptedCheckRepository scriptedCheckRepo;
     @Mock PageCheckRepository pageCheckRepo;
+    @Mock PageSpeedCheckRepository pageSpeedCheckRepo;
     @Mock AlertEventRepository alertEventRepo;
     @Mock CertificateService certificateService;
     @Mock WeeklyAvailabilityReportService availabilityService;
@@ -188,5 +190,20 @@ class MonitoringWeeklyStatsServiceTest {
         LocalDate old = LocalDate.now(java.time.ZoneId.of("Europe/Istanbul")).minusWeeks(20);
         assertThat(service.compute(9L, old.get(WeekFields.ISO.weekBasedYear()),
                 old.get(WeekFields.ISO.weekOfWeekBasedYear()))).isNull();
+    }
+
+    @Test
+    @DisplayName("SOZLESME: katalogdaki HER izleme turu haftalik ozette bir satir uretir")
+    void compute_everyCatalogTypeIsReported() {
+        // Bagli olmayan halka gercekten yasandi: MonitorTypeCatalog'ta `pagespeed` VARDI ama
+        // compute() onun icin TypeStats uretmiyordu — haftalik ozet ekrani, PDF'i ve e-postasi
+        // Sayfa Hizi izlemelerini tamamen yok sayiyordu (dosyanin kendi yorumu ayni hatayi
+        // `scripted` ve `page` icin de anlatiyor). Bu kapi 11. tur icin de calisir.
+        stubWindows();
+        var stats = service.compute(5L, 2026, 28);
+
+        assertThat(stats).isNotNull();
+        var reported = stats.types().stream().map(MonitoringWeeklyStatsService.TypeStats::type).toList();
+        assertThat(reported).containsExactlyInAnyOrderElementsOf(MonitorTypeCatalog.ALERT_TYPES.keySet());
     }
 }

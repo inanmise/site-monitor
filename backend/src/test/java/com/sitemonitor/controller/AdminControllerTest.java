@@ -836,7 +836,7 @@ class AdminControllerTest {
     }
 
     @Test
-    @DisplayName("alertTypes SERBEST METIN degil: gecersiz jetonlar elenir, bos kalirsa kapsam yok")
+    @DisplayName("alertTypes SERBEST METIN degil: gecersiz jetonlar elenir, gecerliler kalir")
     void listAlerts_alertTypes_sanitised() throws Exception {
         Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
         when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(),
@@ -851,6 +851,28 @@ class AdminControllerTest {
         // Tekrar eden PAGE_DOWN bir kez; "DROP;TABLE" elendi.
         org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(),
                 eq(true), eq(List.of("PAGE_DOWN")),
+                any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
+    }
+
+    @Test
+    @DisplayName("alertTypes VERILIP hicbir gecerli tip kalmazsa sonuc BOS doner (fail-closed)")
+    void listAlerts_alertTypes_allInvalid_failsClosed() throws Exception {
+        // ONEMLI: kapsam parametrenin VERILIP VERILMEDIGINE bakar, dogrulamadan kacinin sag
+        // ciktigina DEGIL. Aksi halde gecersiz bir tip adi (yeniden adlandirma, yazim hatasi)
+        // suzgeci SESSIZCE dusurur ve modal yine kendi uretmedigi alarmlari gosterir -- yani
+        // kullanicinin bildirdigi hata geri gelir. Gorunur bir bos liste, sessiz bir sizintidan
+        // iyidir.
+        Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+                .thenReturn(empty);
+
+        mvc.perform(get("/api/admin/alerts?alertTypes=DROP;TABLE").session(authSession()))
+                .andExpect(status().isOk());
+
+        // typeScoped=TRUE + hicbir seye uymayan sentinel liste → sorgu bos doner.
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(),
+                eq(true), eq(List.of("-")),
                 any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
     }
 
