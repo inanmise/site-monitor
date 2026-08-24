@@ -63,6 +63,8 @@ public class AuthController {
     private final com.sitemonitor.service.DeviceHistoryService deviceHistoryService;
     private final com.sitemonitor.repository.RememberMeTokenRepository rememberMeTokenRepo;
     private final com.sitemonitor.service.LoginIssueService loginIssueService;
+    private final com.sitemonitor.service.LoginIssueMailService loginIssueMailService;
+    private final com.sitemonitor.service.AppSettingsService appSettings;
     private final UserService userService;
     private final com.sitemonitor.repository.AuditLogRepository auditLogRepo;
     private final ClientIpResolver clientIpResolver;
@@ -619,16 +621,37 @@ public class AuthController {
                 + a.getEventTime() + " · " + (a.getIpAddress() == null ? "IP yok" : a.getIpAddress())
                 + " · " + com.sitemonitor.service.UserAgentSummary.labelOf(a.getUserAgent());
 
-        loginIssueService.save(user.getUsername(), user.getEmail(), null, detail,
-                java.util.List.of(), auditService.resolveIp(request),
-                request.getHeader("User-Agent"), null,
+        String clientIp = auditService.resolveIp(request);
+        String ua = request.getHeader("User-Agent");
+        var report = loginIssueService.save(user.getUsername(), user.getEmail(), null, detail,
+                java.util.List.of(), clientIp, ua, null,
                 new com.sitemonitor.service.LoginIssueService.ReportMeta(
                         "USER_REPORT", "BLOCKER", null, null, "myactivity", null,
                         "audit#" + auditId));
+        String refCode = com.sitemonitor.service.LoginIssueService.refCode(report);
+
+        // BILDIRIM GERCEKTEN GIDER. Kayit acip beklemek, bu akisin butun degerini (hizli haber
+        // verme) sifirlardi: hesabinin ele gecirildigini dusunen kullanici bildirir, kimse
+        // haberdar olmazdi. Kural kardes akislarla AYNI — gunluk ozet acikken tekil admin maili
+        // atlanir (ozet cron'u toplar), ACK her durumda gider.
+        String adminEmail = appSettings.getString("site.monitor.system-admin.email", "");
+        boolean digest = appSettings.getBoolean("site.monitor.issue-reports.daily-digest", false);
+        if (adminEmail != null && !adminEmail.isBlank() && !digest) {
+            loginIssueMailService.dispatchUserReport(report.getId(), refCode, adminEmail,
+                    user.getUsername(), user.getEmail(), "BLOCKER", detail, null,
+                    "audit#" + auditId, "myactivity", null, java.util.List.of(),
+                    clientIp, ua, report.getReportedAt());
+        }
+        // ACK: bildiren kisi "gitti mi" diye merakta kalmasin — referans numarasiyla.
+        if (user.getEmail() != null && !user.getEmail().isBlank()) {
+            loginIssueMailService.dispatchAck(report.getId(), refCode, user.getEmail(),
+                    user.getUsername(), null, detail, java.util.List.of(), report.getReportedAt());
+        }
 
         auditService.recordAction("LOGIN_DISPUTED", session, request,
-                "audit_log", String.valueOf(auditId), "Şüpheli giriş bildirildi");
-        return ResponseEntity.ok(Map.of("success", true));
+                "audit_log", String.valueOf(auditId), "Şüpheli giriş bildirildi (" + refCode + ")");
+        // Referans numarasi arayuze doner: kullanici destege basvururken bunu soyleyebilsin.
+        return ResponseEntity.ok(Map.of("success", true, "ref", refCode));
     }
 
     /** Remember-me cookie'lerini (yeni ve eski ad) tarayıcıdan düşürür. */

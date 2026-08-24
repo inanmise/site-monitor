@@ -96,6 +96,11 @@ public final class PermissionCatalog {
         // Anahtar bilinçli korunuyor: rename mevcut grant'leri kaybettirir (bootstrap seed'i yeniden koşmaz).
         r("issues.login-reports", "issues", VIEW),   // listeleme/görüntüleme
         r("issues.login-reports", "issues", EDIT),   // durum değiştirme (İşleme Al / Çözümlendi / Yeniden Aç)
+        // KALICI (geri-alınamaz) silme — DEDİKE + sensitive, inventory.purge emsali.
+        // Durumu değiştirmek ile kaydı YOK ETMEK farklı yetkilerdir: ikincisi güvenlik
+        // bildirimlerini de silebilir, o yüzden "raporları yönetsin ama kanıt silemesin"
+        // ayrımı mümkün kalmalı. Varsayılan: yalnız ADMIN (diğer rollerin listesine EKLENMEZ).
+        r("issues.login-reports.purge", "issues", EXECUTE, Set.of(EXECUTE)),
 
         // ── Yönetim Araçları (kritik) ─────────────────────────────────────
         r("diagnostics.run",        "tools", EXECUTE, Set.of(EXECUTE)),

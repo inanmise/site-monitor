@@ -471,6 +471,9 @@ export const api = {
     getLoginIssue: (id) => request(`/admin/login-issues/${id}`),
     updateLoginIssueStatus: (id, dto) =>
       request(`/admin/login-issues/${id}/status`, { method: 'PUT', body: JSON.stringify(dto) }),
+    // KALICI silme: kayit + gorselleri + giden maillerin saklanan kopyalari. Ayri ve
+    // "hassas" bir yetki ister (issues.login-reports.purge).
+    purgeLoginIssue: (id) => request(`/admin/login-issues/${id}`, { method: 'DELETE' }),
 
 
     // Anahtar çözümleme aracı — verilen SITE_MONITOR_SECRET_KEY ile şifreli alanları çöz

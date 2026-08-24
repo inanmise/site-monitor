@@ -12,6 +12,7 @@ import com.sitemonitor.service.PermissionService;
 import com.sitemonitor.service.RememberMeService;
 import com.sitemonitor.service.UserService;
 import jakarta.servlet.http.HttpSession;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -34,6 +35,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.mockito.Mockito.never;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -201,5 +204,56 @@ class LoginIssueControllerTest {
                 .andExpect(jsonPath("$.data.mailHistory[0].body").value("<html>çözüldü</html>"))
                 .andExpect(jsonPath("$.data.mailHistory[0].status").value("SENT"))
                 .andExpect(jsonPath("$.data.mailHistory[0].forced").value(true));
+    }
+
+    // ── Kalici silme (AYRI + hassas yetki) ───────────────────────────────────
+
+    private com.sitemonitor.model.LoginIssueReport report(long id) {
+        com.sitemonitor.model.LoginIssueReport r = new com.sitemonitor.model.LoginIssueReport();
+        r.setId(id);
+        r.setReportedAt("2026-08-24T10:00:00");
+        r.setSource("USER_REPORT");
+        r.setUsername("N68753");
+        return r;
+    }
+
+    @Test
+    @DisplayName("Kalici silme AYRI yetki ister — duzenleme yetkisi YETMEZ")
+    void purge_requiresDedicatedPermission() throws Exception {
+        // Raporun DURUMUNU degistirmek ile kaydi YOK ETMEK farkli yetkiler: ikincisi guvenlik
+        // bildirimlerini de silebilir. "Raporlari yonetsin ama kanit silemesin" ayrimi korunmali.
+        // require() asiri yuklu (HttpSession / String) → any() belirsiz kalir, TIPLI matcher sart.
+        doThrow(new SecurityException("yok")).when(permissionService)
+                .require(any(jakarta.servlet.http.HttpSession.class),
+                        eq("issues.login-reports.purge"), eq("execute"));
+
+        mvc.perform(delete("/api/admin/login-issues/7").session(authed()))
+                .andExpect(status().isForbidden());
+
+        verify(loginIssueService, never()).purge(any());
+    }
+
+    @Test
+    @DisplayName("Yetkiliyse kayit silinir ve DENETIME yazilir")
+    void purge_deletesAndAudits() throws Exception {
+        when(loginIssueService.get(7L)).thenReturn(Optional.of(report(7L)));
+
+        mvc.perform(delete("/api/admin/login-issues/7").session(authed()))
+                .andExpect(status().isOk());
+
+        verify(loginIssueService).purge(7L);
+        verify(auditService).recordAction(eq("LOGIN_ISSUE_PURGE"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), anyString(), eq("7"), anyString());
+    }
+
+    @Test
+    @DisplayName("OLMAYAN kayit 404 — silme cagrilmaz")
+    void purge_missingRowIs404() throws Exception {
+        when(loginIssueService.get(99L)).thenReturn(Optional.empty());
+
+        mvc.perform(delete("/api/admin/login-issues/99").session(authed()))
+                .andExpect(status().isNotFound());
+
+        verify(loginIssueService, never()).purge(any());
     }
 }

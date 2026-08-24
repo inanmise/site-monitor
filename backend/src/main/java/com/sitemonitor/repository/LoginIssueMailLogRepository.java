@@ -9,4 +9,8 @@ public interface LoginIssueMailLogRepository extends JpaRepository<LoginIssueMai
 
     /** Bir bildirime ait mail gönderimleri, en eskiden yeniye (gönderim sırası). */
     List<LoginIssueMailLog> findByReportIdOrderByIdAsc(Long reportId);
+
+    /** Rapor kalici silinince mail gunlugu de gider (yoksa oksuz satir kalir). */
+    @org.springframework.transaction.annotation.Transactional
+    int deleteByReportId(Long reportId);
 }

@@ -29,13 +29,15 @@ class LoginIssueServiceTest {
 
     LoginIssueReportRepository reportRepo;
     LoginIssueReportImageRepository imageRepo;
+    com.sitemonitor.repository.LoginIssueMailLogRepository mailLogRepo;
     LoginIssueService service;
 
     @BeforeEach
     void setup() {
         reportRepo = mock(LoginIssueReportRepository.class);
         imageRepo = mock(LoginIssueReportImageRepository.class);
-        service = new LoginIssueService(reportRepo, imageRepo);
+        mailLogRepo = mock(com.sitemonitor.repository.LoginIssueMailLogRepository.class);
+        service = new LoginIssueService(reportRepo, imageRepo, mailLogRepo);
     }
 
     @Test
@@ -181,5 +183,39 @@ class LoginIssueServiceTest {
         LoginIssueReport r = new LoginIssueReport();
         r.setId(id); r.setStatus(status); r.setReportedAt("2026-07-23T10:00:00"); r.setMessage("m");
         return r;
+    }
+
+    // ── Kalici silme ─────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("purge: rapor + RESIMLERI + GIDEN MAIL kopyalari BIRLIKTE silinir")
+    void purge_removesReportImagesAndMailCopies() {
+        // Baglar duz reportId FK'sidir (@ManyToOne yok): yalniz raporu silmek otekileri OKSUZ
+        // birakir — hicbir ekranda gorunmeyen ama sonsuza dek buyuyen satirlar. Mail gunlugu
+        // giden mailin TAM govdesini sakliyor, dolayisiyla silinmesi bir gizlilik gereginin de
+        // karsiligi.
+        LoginIssueReport r = new LoginIssueReport();
+        r.setId(7L);
+        r.setReportedAt("2026-08-24T10:00:00");
+        when(reportRepo.findById(7L)).thenReturn(java.util.Optional.of(r));
+
+        LoginIssueReport out = service.purge(7L);
+
+        assertThat(out).isSameAs(r);
+        verify(imageRepo).deleteByReportId(7L);
+        verify(mailLogRepo).deleteByReportId(7L);
+        verify(reportRepo).delete(r);
+    }
+
+    @Test
+    @DisplayName("purge: OLMAYAN kayitta hicbir silme yapilmaz ve null doner")
+    void purge_missingRowDeletesNothing() {
+        when(reportRepo.findById(99L)).thenReturn(java.util.Optional.empty());
+
+        assertThat(service.purge(99L)).isNull();
+
+        verify(imageRepo, never()).deleteByReportId(any());
+        verify(mailLogRepo, never()).deleteByReportId(any());
+        verify(reportRepo, never()).delete(any());
     }
 }

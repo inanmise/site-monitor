@@ -1150,7 +1150,7 @@ export default function App() {
             {tab === 'myactivity' && (
               <div className="tab-content active">
                 <h2>{t('app.myAuditTitle')}</h2>
-                <MyAuditLog loginInfo={loginInfo} />
+                <MyAuditLog loginInfo={loginInfo} onChangePassword={() => setSelfPwdModalOpen(true)} />
               </div>
             )}
 

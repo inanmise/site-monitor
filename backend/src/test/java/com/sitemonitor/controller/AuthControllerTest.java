@@ -67,6 +67,12 @@ class AuthControllerTest {
     @MockitoBean
     com.sitemonitor.service.LoginIssueService loginIssueService;
 
+    @MockitoBean
+    com.sitemonitor.service.LoginIssueMailService loginIssueMailService;
+
+    @MockitoBean
+    com.sitemonitor.service.AppSettingsService appSettings;
+
     private AppUser testUser;
 
     @BeforeEach
@@ -652,5 +658,98 @@ class AuthControllerTest {
                 .andExpect(status().isOk());
 
         verify(rememberMeService).invalidateAllForUser("testuser");
+    }
+
+    // ── "Bu girisi ben yapmadim" bildirimi GERCEKTEN ulasir mi ───────────────
+
+    private com.sitemonitor.model.AuditLog ownLoginRow() {
+        com.sitemonitor.model.AuditLog a = new com.sitemonitor.model.AuditLog();
+        a.setId(42L);
+        a.setEventTime("2026-08-24T09:15:00");
+        a.setIpAddress("88.1.2.3");
+        a.setUserAgent("Mozilla/5.0 (Windows NT 10.0) Chrome/120 Safari/537.36");
+        return a;
+    }
+
+    private com.sitemonitor.model.LoginIssueReport savedReport() {
+        com.sitemonitor.model.LoginIssueReport r = new com.sitemonitor.model.LoginIssueReport();
+        r.setId(7L);
+        r.setReportedAt("2026-08-24T10:00:00");
+        return r;
+    }
+
+    @Test
+    @DisplayName("Bildirim YONETICIYE mail olarak gider ve bildirene ALINDI teyidi doner")
+    void reportLogin_notifiesAdminAndUser() {
+        // Onceki hali yalniz DB satiri aciyordu: kayit vardi ama KIMSE haberdar olmuyordu —
+        // hesabinin ele gecirildigini dusunup bildiren biri icin akisin butun degeri kaybolur.
+        testUser.setEmail("kadir@example.com");
+        when(userService.findByUsername("testuser")).thenReturn(Optional.of(testUser));
+        when(auditLogRepo.findOwnById(org.mockito.ArgumentMatchers.eq(42L), anyString()))
+                .thenReturn(Optional.of(ownLoginRow()));
+        when(loginIssueService.save(any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(savedReport());
+        when(appSettings.getString(org.mockito.ArgumentMatchers.eq("site.monitor.system-admin.email"), anyString()))
+                .thenReturn("admin@example.com");
+        when(appSettings.getBoolean(anyString(), anyBoolean())).thenReturn(false);
+
+        try {
+            mvc.perform(post("/api/me/devices/report-login").session(selfSession())
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"auditId\":42}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.ref").value("LIR-2026-000007"));
+        } catch (Exception e) { throw new RuntimeException(e); }
+
+        // NOT: auditService mock oldugu icin resolveIp() NULL doner → o konumda anyString()
+        // kullanilamaz (null'i kabul etmez). Ayni sekilde errorText/appVersion bilincli null.
+        verify(loginIssueMailService).dispatchUserReport(any(), org.mockito.ArgumentMatchers.eq("LIR-2026-000007"),
+                org.mockito.ArgumentMatchers.eq("admin@example.com"), anyString(), anyString(),
+                anyString(), anyString(), any(), anyString(), anyString(), any(), any(),
+                any(), any(), anyString());
+        verify(loginIssueMailService).dispatchAck(any(), org.mockito.ArgumentMatchers.eq("LIR-2026-000007"),
+                org.mockito.ArgumentMatchers.eq("kadir@example.com"), anyString(), any(), anyString(),
+                any(), anyString());
+    }
+
+    @Test
+    @DisplayName("GUNLUK OZET acikken tekil admin maili ATLANIR; ACK yine gider")
+    void reportLogin_digestSuppressesAdminMail() throws Exception {
+        // Karde akışlarla aynı kural: ozet cron'u toplayacagi icin tekil mail gonderilmez.
+        testUser.setEmail("kadir@example.com");
+        when(userService.findByUsername("testuser")).thenReturn(Optional.of(testUser));
+        when(auditLogRepo.findOwnById(org.mockito.ArgumentMatchers.eq(42L), anyString()))
+                .thenReturn(Optional.of(ownLoginRow()));
+        when(loginIssueService.save(any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(savedReport());
+        when(appSettings.getString(anyString(), anyString())).thenReturn("admin@example.com");
+        when(appSettings.getBoolean(org.mockito.ArgumentMatchers.eq("site.monitor.issue-reports.daily-digest"),
+                anyBoolean())).thenReturn(true);
+
+        mvc.perform(post("/api/me/devices/report-login").session(selfSession())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"auditId\":42}"))
+                .andExpect(status().isOk());
+
+        verify(loginIssueMailService, never()).dispatchUserReport(any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(loginIssueMailService).dispatchAck(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("YABANCI kayitta hicbir mail gitmez (IDOR kapisi bildirimden ONCE)")
+    void reportLogin_foreignRowSendsNothing() throws Exception {
+        when(userService.findByUsername("testuser")).thenReturn(Optional.of(testUser));
+        when(auditLogRepo.findOwnById(org.mockito.ArgumentMatchers.eq(42L), anyString()))
+                .thenReturn(Optional.empty());
+
+        mvc.perform(post("/api/me/devices/report-login").session(selfSession())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"auditId\":42}"))
+                .andExpect(status().isNotFound());
+
+        verify(loginIssueMailService, never()).dispatchUserReport(any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(loginIssueMailService, never()).dispatchAck(any(), any(), any(), any(), any(), any(), any(), any());
     }
 }

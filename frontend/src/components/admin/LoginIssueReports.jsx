@@ -4,6 +4,8 @@ import { useT } from '../../i18n/index.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import { readPageSize, writePageSize } from '../../hooks/usePagination.js'
 import { useToast } from '../ui/Toast.jsx'
+import { useDialog } from '../ui/Dialog.jsx'
+import { Trash2 } from 'lucide-react'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import DateTimeField from '../ui/DateTimeField.jsx'
 import { mailPreviewSrcDoc } from '../../utils/mailPreview.js'
@@ -53,8 +55,12 @@ const SOURCE_STYLE = {
 export default function LoginIssueReports() {
   const t = useT()
   const toast = useToast()
-  const { canView } = usePermissions()
+  const { showConfirm } = useDialog()
+  const { canView, canExecute } = usePermissions()
   const allowView = canView('issues.login-reports')  // izinsiz erişimde (bayat nav state) kalıcı spinner yerine temiz mesaj
+  // KALICI silme AYRI ve hassas bir yetki (inventory.purge emsali): raporu YÖNETMEK ile
+  // kaydı YOK ETMEK aynı şey değil — ikincisi güvenlik bildirimlerini de silebilir.
+  const canPurge = canExecute('issues.login-reports.purge')
 
   const [rows, setRows] = useState(null)       // null = yükleniyor
   const [counts, setCounts] = useState({ OPEN: 0, IN_PROGRESS: 0, RESOLVED: 0 })
@@ -99,6 +105,32 @@ export default function LoginIssueReports() {
     const res = await api.admin.getLoginIssue(id)
     if (res?.success) { setDetail(res.data); setNote(res.data.resolutionNote || '') }  // mevcut notu önyükle (kaybolmasın)
     else toast.error(res?.error || t('settings.loadError'))
+  }
+
+  /**
+   * Kaydi KALICI siler.
+   *
+   * <p>Onay metni ne kaybedildigini ACIKCA soyler: "Sil" gibi genel bir ifade, giden
+   * maillerin saklanan kopyalarinin da gidecegini gizlerdi. Geri alinamaz.
+   */
+  async function purgeReport() {
+    const ok = await showConfirm({
+      title: t('loginIssues.purgeTitle'),
+      message: t('loginIssues.purgeMsg', detail.refCode ?? ''),
+      confirmText: t('loginIssues.purgeConfirm'),
+      variant: 'danger',
+    })
+    if (!ok) return
+    setBusy(true)
+    const res = await api.admin.purgeLoginIssue(detail.id)
+    setBusy(false)
+    if (res?.success) {
+      toast.success(t('loginIssues.purgeDone'))
+      setDetail(null)
+      load()
+    } else {
+      toast.error(res?.error || t('loginIssues.purgeFailed'))
+    }
   }
 
   async function changeStatus(newStatus) {
@@ -448,6 +480,12 @@ export default function LoginIssueReports() {
               {detail.status === 'RESOLVED' && (
                 <button className="btn btn-warning" disabled={busy} onClick={() => changeStatus('OPEN')}>
                   {t('loginIssues.actionReopen')}</button>
+              )}
+              {/* Yetkisi olmayana HIC cizilmez: dugmeye basip 403 almak, kullaniciya
+                  "bozuk" hissi verir. */}
+              {canPurge && (
+                <button className="btn btn-danger" disabled={busy} onClick={purgeReport}>
+                  <Trash2 size={13} />{t('loginIssues.purgeAction')}</button>
               )}
               <button className="btn btn-secondary" onClick={() => setDetail(null)}>{t('dom.close')}</button>
             </div>

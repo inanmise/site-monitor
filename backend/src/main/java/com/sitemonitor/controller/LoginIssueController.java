@@ -82,6 +82,37 @@ public class LoginIssueController {
                 .orElseGet(this::notFound);
     }
 
+    /**
+     * Raporu KALICI siler — rapor + resimleri + GİDEN MAİLLERİN saklanan kopyası.
+     *
+     * <p>Yetki AYRI ve "hassas" ({@code issues.login-reports.purge}, {@code inventory.purge}
+     * emsali): raporun DURUMUNU değiştirmek ile kaydı YOK ETMEK farklı yetkilerdir. İkincisi
+     * güvenlik bildirimlerini de ("bu girişi ben yapmadım") silebildiği için "raporları yönetsin
+     * ama kanıt silemesin" ayrımı mümkün kalmalı. Varsayılan: yalnız ADMIN.
+     *
+     * <p>Denetim kaydı silmeden ÖNCE toplanan bilgiyle yazılır — satır gittikten sonra kimin neyi
+     * sildiği artık hiçbir yerden okunamazdı.
+     */
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Map<String, Object>> purge(@PathVariable Long id,
+                                                     HttpSession session, HttpServletRequest request) {
+        requirePurge(session);
+
+        var existing = loginIssueService.get(id);
+        if (existing.isEmpty()) return notFound();
+        // Denetim ayrıntısı SİLMEDEN ÖNCE hazırlanır: sonrasında bu bilgiler kaybolur.
+        LoginIssueReport before = existing.get();
+        String detail = "Kalıcı silindi — " + LoginIssueService.refCode(before)
+                + " · kaynak=" + before.getSource()
+                + " · bildiren=" + (before.getUsername() == null ? "-" : before.getUsername());
+
+        loginIssueService.purge(id);
+
+        auditService.recordAction("LOGIN_ISSUE_PURGE", session, request,
+                "login_issue_report", String.valueOf(id), detail);
+        return ok(Map.of("message", "Kayıt ve ilgili mailler kalıcı olarak silindi"));
+    }
+
     @PutMapping("/{id}/status")
     public ResponseEntity<Map<String, Object>> updateStatus(
             @PathVariable Long id, @RequestBody Map<String, Object> body,
@@ -128,6 +159,15 @@ public class LoginIssueController {
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
+
+    /**
+     * Kalıcı silme kapısı — AYRI yetki. Bootstrap admin muafiyeti burada da geçerli (kurulum
+     * hesabı kilitli kalmasın), ama normal yolda {@code issues.login-reports.purge} istenir.
+     */
+    private void requirePurge(HttpSession session) {
+        if (Boolean.TRUE.equals(session != null ? session.getAttribute("bootstrapAdmin") : null)) return;
+        permissionService.require(session, PERM + ".purge", "execute");
+    }
 
     /** Bootstrap admin (login'de set edilen bayrak) her zaman erişir; aksi halde matris izni. */
     private void requireAccess(HttpSession session, String action) {

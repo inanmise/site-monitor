@@ -210,4 +210,59 @@ describe('DeviceHistoryPanel', () => {
       expect(screen.queryByText(/CURRENT SESSION|MEVCUT OTURUM/i)).toBeNull()
     })
   })
+
+  // ── Bildirim sonrasi koruyucu adimlar ────────────────────────────────────
+
+  it('bildirim sonrasi KORUYUCU ADIM teklif edilir; kabul edilirse girisler iptal olur', async () => {
+    // Oneriyi METIN olarak yazmak yerine dugmeyi onune koymak — hesabinin ele gecirildigini
+    // dusunen biri icin asil degerli an burasi.
+    api.me.reportSuspiciousLogin.mockResolvedValue({ success: true, ref: 'LIR-2026-000007' })
+    api.me.logoutOtherDevices.mockResolvedValue({ success: true })
+    render(<DeviceHistoryPanel />)
+    await screen.findAllByText('Windows · Chrome')
+
+    fireEvent.click(screen.getByRole('button', { name: /Show or hide details|Ayrıntıyı aç/i }))
+    fireEvent.click(await screen.findByText(/This was not me|Bu girişi ben yapmadım/i))
+
+    // 1) Bildirim onayi
+    let dlg = await screen.findByRole('dialog')
+    fireEvent.click(within(dlg).getByText(/^Report$|^Bildir$/))
+    await waitFor(() => expect(api.me.reportSuspiciousLogin).toHaveBeenCalledWith(11))
+
+    // 2) Ardindan koruyucu adim teklifi — REFERANS numarasi da gosterilir
+    dlg = await screen.findByRole('dialog')
+    expect(dlg.textContent).toContain('LIR-2026-000007')
+    fireEvent.click(within(dlg).getByText(/Clear remembered sign-ins|Hatırlanan girişleri iptal et/i))
+
+    await waitFor(() => expect(api.me.logoutOtherDevices).toHaveBeenCalled())
+  })
+
+  it('"Simdi degil" secilirse HICBIR SEY iptal edilmez', async () => {
+    api.me.reportSuspiciousLogin.mockResolvedValue({ success: true, ref: 'LIR-2026-000007' })
+    render(<DeviceHistoryPanel />)
+    await screen.findAllByText('Windows · Chrome')
+
+    fireEvent.click(screen.getByRole('button', { name: /Show or hide details|Ayrıntıyı aç/i }))
+    fireEvent.click(await screen.findByText(/This was not me|Bu girişi ben yapmadım/i))
+    let dlg = await screen.findByRole('dialog')
+    fireEvent.click(within(dlg).getByText(/^Report$|^Bildir$/))
+    await waitFor(() => expect(api.me.reportSuspiciousLogin).toHaveBeenCalled())
+
+    dlg = await screen.findByRole('dialog')
+    fireEvent.click(within(dlg).getByText(/^Not now$|^Şimdi değil$/))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(api.me.logoutOtherDevices).not.toHaveBeenCalled()
+  })
+
+  it('parola kisayolu prop GELIRSE dugme, gelmezse metin olur (panel her durumda calisir)', async () => {
+    const onChangePassword = vi.fn()
+    const { unmount } = render(<DeviceHistoryPanel onChangePassword={onChangePassword} />)
+    fireEvent.click(await screen.findByText(/Change my password|Parolamı değiştir/i))
+    expect(onChangePassword).toHaveBeenCalled()
+    unmount()
+
+    render(<DeviceHistoryPanel />)
+    await screen.findByText(/change your password as well|parolanı da değiştir/i)
+  })
 })
