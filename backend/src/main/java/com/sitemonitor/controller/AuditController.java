@@ -1,5 +1,6 @@
 package com.sitemonitor.controller;
 
+import com.sitemonitor.model.AppUser;
 import com.sitemonitor.model.AuditLog;
 import com.sitemonitor.model.CertificateInventory;
 import com.sitemonitor.model.LatestCheck;
@@ -35,6 +36,8 @@ public class AuditController {
     private final TeamRepository               teamRepo;
     private final PermissionService permissionService;
     private final AuditService auditService;
+    private final com.sitemonitor.service.DeviceHistoryService deviceHistoryService;
+    private final com.sitemonitor.repository.AppUserRepository appUserRepo;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -249,6 +252,42 @@ public class AuditController {
         if ("CRITICAL".equals(s)) return 2;
         if ("HIGH".equals(s))     return 1;
         return 0;
+    }
+
+    // ── Cihaz Geçmişi — ADMIN salt-okunur görünümü (K8) ──────────────────────
+    //
+    // AYRI uç olması BİLİNÇLİ: /api/me/devices self-scope'tur ve kimliği YALNIZ oturumdan okur;
+    // oraya "başka kullanıcı" parametresi eklemek o güvencenin kendisini delerdi. Buradaki uç
+    // denetim yetkisiyle (audit_log.read + AUDIT/ADMIN) korunur ve YALNIZ OKUR — iptal/çıkış
+    // eylemleri bu yola HİÇ açılmaz; bir yönetici başkasının cihazını buradan düşüremez.
+
+    @GetMapping("/users/{id}/devices")
+    public ResponseEntity<Map<String, Object>> userDevices(@PathVariable Long id, HttpSession session) {
+        requireAuditAccess(session);
+        permissionService.require(session, "audit_log.read", "view");
+
+        AppUser target = appUserRepo.findById(id).orElse(null);
+        if (target == null) return ResponseEntity.status(404).body(Map.of("success", false, "error", "Kullanıcı bulunamadı"));
+
+        // currentTokenHash = null: yöneticinin tarayıcısı hedef kullanıcının cihazı DEĞİL,
+        // dolayısıyla hiçbir satır "bu cihaz" diye işaretlenmez.
+        return ok(Map.of("data", deviceHistoryService.devicesFor(target, null)));
+    }
+
+    @GetMapping("/users/{id}/devices/logins")
+    public ResponseEntity<Map<String, Object>> userDeviceLogins(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size,
+            @RequestParam(defaultValue = "false") boolean failed,
+            HttpSession session) {
+        requireAuditAccess(session);
+        permissionService.require(session, "audit_log.read", "view");
+
+        AppUser target = appUserRepo.findById(id).orElse(null);
+        if (target == null) return ResponseEntity.status(404).body(Map.of("success", false, "error", "Kullanıcı bulunamadı"));
+
+        return ok(Map.of("data", deviceHistoryService.loginsFor(target, failed, page, size)));
     }
 
     private void requireAuditAccess(HttpSession session) {

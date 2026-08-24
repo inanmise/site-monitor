@@ -70,6 +70,18 @@ public class AuditLog {
     @Column(name = "user_agent", columnDefinition = "TEXT")
     private String userAgent;
 
+    /**
+     * Oturum kimliği — YANITA ÇIKMAZ.
+     *
+     * <p>{@code /api/me/audit} ve admin denetim ucu satırları ENTITY olarak serileştiriyor; bu alan
+     * da JSON'a giriyordu. Hiçbir arayüz onu okumuyor, ama kullanıcıya açık bir sayfanın ağ
+     * yükünde oturum kimliği taşımak gereksiz bir risktir — üstelik üründe ekran görüntüsü
+     * yakalayan bir "sorun bildir" akışı var ve hata bildirimleri bu yükü taşıyabilir.
+     *
+     * <p>{@code @JsonIgnore} bütünlük zincirini ETKİLEMEZ: {@code AuditService.canonical()} hash'i
+     * açık getter'larla üretir, Jackson'la değil.
+     */
+    @com.fasterxml.jackson.annotation.JsonIgnore
     @Column(name = "session_id", length = 100)
     private String sessionId;
 
@@ -105,4 +117,23 @@ public class AuditLog {
      *  yapılmaz; null ise yalnız IP gösterilir. */
     @Column(name = "ip_reverse_host", length = 255)
     private String ipReverseHost;
+
+    /**
+     * Ham User-Agent'in insan okunur ozeti ("Windows · Chrome") — TUREVDIR, kolon DEGILDIR.
+     *
+     * <p>Denetim tablolari satirlari ENTITY olarak serilestiriyor; ozeti burada uretince hem
+     * {@code /api/me/audit} hem admin denetim ucu onu bedava alir ve arayuz ikinci bir
+     * ayristirici yazmak zorunda kalmaz (tek dogruluk kaynagi {@link
+     * com.sitemonitor.service.UserAgentSummary}). Ham UA alani yerinde kalir: tooltip'te ve
+     * satir genisletmesinde gosterilir.
+     *
+     * <p>{@code @Transient}: Hibernate bunu kolon sanmasin. (Kimlik alan uzerinde oldugu icin
+     * erisim zaten alan-bazli, ama niyet acikca yazili olsun.)
+     *
+     * <p>JSON adi {@code ua_summary} — global SNAKE_CASE stratejisi.
+     */
+    @jakarta.persistence.Transient
+    public String getUaSummary() {
+        return com.sitemonitor.service.UserAgentSummary.labelOf(userAgent);
+    }
 }

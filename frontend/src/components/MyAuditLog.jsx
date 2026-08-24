@@ -6,6 +6,9 @@ import PaginationBar from './ui/PaginationBar.jsx'
 import { readPageSize, writePageSize } from '../hooks/usePagination.js'
 import { LoadingBlock } from './ui/Progress.jsx'
 import { LastLoginSummary } from './LastLoginInfo.jsx'
+import SegmentedControl from './ui/SegmentedControl.jsx'
+import DeviceHistoryPanel from './DeviceHistoryPanel.jsx'
+import { MonitorSmartphone, ListChecks } from 'lucide-react'
 
 const EVENT_TYPES = [
   'LOGIN', 'LOGIN_FAILED', 'LOGOUT',
@@ -26,8 +29,17 @@ function eventClass(et) {
   return 'ev-other'
 }
 
+/**
+ * "Etkinliklerim" sayfasi — IKI gorunum.
+ *
+ * <p>Sekme anahtari (`myactivity`) ve Nav girisi DEGISMEDI: kullanicinin aliskanligini
+ * bozmamak icin yeni bir sekme acmak yerine sayfa kendi icinde ikiye ayrildi. Varsayilan
+ * gorunum Cihaz Gecmisi'dir — "hesabim guvende mi" sorusu ham olay listesinden daha sik
+ * sorulur; denetim tablosu tek tikla, davranisi ve filtreleriyle AYNEN duruyor.
+ */
 export default function MyAuditLog({ loginInfo = null }) {
   const t = useT()
+  const [view, setView] = useState('devices')
   const [rows, setRows] = useState([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
@@ -54,6 +66,18 @@ export default function MyAuditLog({ loginInfo = null }) {
       {/* Ham olay listesinden ÖNCE özet: kullanıcının ilk sorduğu soru "son ne zaman girdim,
           adıma başarısız deneme oldu mu". Veri prop'tan gelir — ek fetch yok. */}
       <LastLoginSummary info={loginInfo} />
+
+      <div className="audit-view-switch">
+        <SegmentedControl
+          ariaLabel={t('dev.tabDevices')}
+          value={view} onChange={setView}
+          options={[
+            { value: 'devices', label: t('dev.tabDevices'), icon: MonitorSmartphone },
+            { value: 'audit', label: t('dev.tabAudit'), icon: ListChecks },
+          ]} />
+      </div>
+
+      {view === 'devices' ? <DeviceHistoryPanel /> : (<>
       <div className="audit-filters">
         <SearchableSelect
           value={filters.eventType}
@@ -99,11 +123,12 @@ export default function MyAuditLog({ loginInfo = null }) {
               <th>{t('audit.colOutcome')}</th>
               <th>{t('audit.colResource')}</th>
               <th>{t('audit.colIp')}</th>
+              <th>{t('audit.colDevice')}</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && !loading && (
-              <tr><td colSpan={5} className="audit-empty">{t('audit.empty')}</td></tr>
+              <tr><td colSpan={6} className="audit-empty">{t('audit.empty')}</td></tr>
             )}
             {rows.map(row => (
               <tr key={row.id}>
@@ -124,6 +149,12 @@ export default function MyAuditLog({ loginInfo = null }) {
                   {row.resource_id || '—'}
                 </td>
                 <td className="audit-mono">{row.ip_address || '—'}</td>
+                {/* Cihaz sutunu YENI: kullanici kendi denetim satirinda "bu hangi
+                    tarayicidan" sorusuna cevap bulamiyordu. Ozet sunucudan; ham UA
+                    tooltip'te. */}
+                <td>{row.ua_summary
+                  ? <span title={row.user_agent}>{row.ua_summary}</span>
+                  : '—'}</td>
               </tr>
             ))}
           </tbody>
@@ -138,6 +169,7 @@ export default function MyAuditLog({ loginInfo = null }) {
         onPageChange={p => loadLogs(p - 1)}
         onPageSizeChange={n => { setSize(n); writePageSize('my-audit', n); loadLogs(0, filters, n) }}
       />
+      </>)}
     </div>
   )
 }

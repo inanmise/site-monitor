@@ -2,12 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { useTheme } from '../i18n/theme.jsx'
-import {
-  LayoutDashboard, AlertTriangle, FileText,
-  RefreshCw, ClipboardList, Settings, User, Globe, LogOut, Lock,
-  Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen, History,
-  Wifi, Network, Search, TrendingDown, Database, UserCheck, ShieldCheck, CalendarDays, ListChecks, Target, Radio, Siren, Wrench, LifeBuoy, Gauge, ScanSearch, FlaskConical, Bug,
-} from 'lucide-react'
+import { LayoutDashboard, AlertTriangle, FileText, RefreshCw, ClipboardList, Settings, User, Globe, LogOut, Lock, Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen, History, Wifi, Network, Search, TrendingDown, Database, UserCheck, ShieldCheck, CalendarDays, ListChecks, Target, Radio, Siren, Wrench, LifeBuoy, Gauge, ScanSearch, FlaskConical, Bug, MonitorSmartphone } from 'lucide-react'
 import BrandLogo from './BrandLogo.jsx'
 import IssueReportModal from './IssueReportModal.jsx'
 import { LastLoginPopoverLines } from './LastLoginInfo.jsx'
@@ -285,6 +280,15 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
             <div className="sb-user-popover-hdr">{t('nav.userSettings')}</div>
             {/* Giriş bilgisi — popover veri ÇEKMEZ, değerler App state'inden prop ile gelir. */}
             <LastLoginPopoverLines info={loginInfo} />
+            {/* Popover son girisi gosteriyor; dogal devami "peki tum gecmis?" —
+                kullaniciyi Etkinliklerim'deki Cihaz Gecmisi gorunumune goturur. */}
+            <button
+              className="sb-user-popover-item"
+              onClick={() => { setUserMenuOpen(false); onTabChange('myactivity') }}
+            >
+              <MonitorSmartphone size={14} />
+              <span>{t('dev.navLink')}</span>
+            </button>
             {username?.toLowerCase() === 'admin' && (
               <button
                 className="sb-user-popover-item"

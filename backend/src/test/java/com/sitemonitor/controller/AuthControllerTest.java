@@ -20,6 +20,8 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -55,6 +57,15 @@ class AuthControllerTest {
 
     @MockitoBean
     com.sitemonitor.service.LdapProvisioningService ldapProvisioning;
+
+    @MockitoBean
+    com.sitemonitor.service.DeviceHistoryService deviceHistoryService;
+
+    @MockitoBean
+    com.sitemonitor.repository.RememberMeTokenRepository rememberMeTokenRepo;
+
+    @MockitoBean
+    com.sitemonitor.service.LoginIssueService loginIssueService;
 
     private AppUser testUser;
 
@@ -501,5 +512,145 @@ class AuthControllerTest {
         var resp = AuthController.photoResponse(b64);
         assertThat(resp.getStatusCode().value()).isEqualTo(200);
         assertThat(resp.getHeaders().getFirst("Content-Type")).isEqualTo("image/jpeg");
+    }
+
+    // ── Cihaz Gecmisi uclari (self-scope) ────────────────────────────────────
+
+    @Test
+    @DisplayName("GET /me/devices: kimlik OTURUMDAN okunur — kullanici secen parametre YOKTUR")
+    void devices_isSelfScoped() throws Exception {
+        when(userService.findByUsername("testuser")).thenReturn(Optional.of(testUser));
+        when(deviceHistoryService.devicesFor(any(), any()))
+                .thenReturn(java.util.Map.of("current", java.util.Map.of("known", false),
+                                             "remembered", java.util.List.of()));
+
+        mvc.perform(get("/api/me/devices").session(selfSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        // ASIL KANIT: servise OTURUMDAKI kullanici gecti; baska kullaniciya gecis yolu yok.
+        org.mockito.ArgumentCaptor<AppUser> cap = org.mockito.ArgumentCaptor.forClass(AppUser.class);
+        verify(deviceHistoryService).devicesFor(cap.capture(), any());
+        org.assertj.core.api.Assertions.assertThat(cap.getValue().getUsername()).isEqualTo("testuser");
+    }
+
+    @Test
+    @DisplayName("GET /me/devices: OTURUM ACILMAMISSA veri sizmaz")
+    void devices_requiresAuthentication() throws Exception {
+        mvc.perform(get("/api/me/devices"))
+                .andExpect(status().is4xxClientError());
+
+        verify(deviceHistoryService, never()).devicesFor(any(), any());
+    }
+
+    @Test
+    @DisplayName("GET /me/devices: cookie token'i YALNIZ hash'lenir; ham deger servise gitmez")
+    void devices_passesOnlyTokenHash() throws Exception {
+        when(userService.findByUsername("testuser")).thenReturn(Optional.of(testUser));
+        when(rememberMeService.hashOf("HAM-TOKEN")).thenReturn("HASH-DEGERI");
+        when(deviceHistoryService.devicesFor(any(), any())).thenReturn(java.util.Map.of());
+
+        mvc.perform(get("/api/me/devices")
+                        .session(selfSession())
+                        .cookie(new jakarta.servlet.http.Cookie(RememberMeService.COOKIE_NAME, "HAM-TOKEN")))
+                .andExpect(status().isOk());
+
+        verify(deviceHistoryService).devicesFor(any(), org.mockito.ArgumentMatchers.eq("HASH-DEGERI"));
+        verify(deviceHistoryService, never()).devicesFor(any(), org.mockito.ArgumentMatchers.eq("HAM-TOKEN"));
+    }
+
+    @Test
+    @DisplayName("GET /me/devices/logins: sayfa boyutu ve failed bayragi servise gecer")
+    void deviceLogins_passesParams() throws Exception {
+        when(userService.findByUsername("testuser")).thenReturn(Optional.of(testUser));
+        when(deviceHistoryService.loginsFor(any(), anyBoolean(), anyInt(), anyInt()))
+                .thenReturn(java.util.Map.of("rows", java.util.List.of()));
+
+        mvc.perform(get("/api/me/devices/logins?page=2&size=25&failed=true")
+                        .session(selfSession()))
+                .andExpect(status().isOk());
+
+        verify(deviceHistoryService).loginsFor(any(), org.mockito.ArgumentMatchers.eq(true),
+                org.mockito.ArgumentMatchers.eq(2), org.mockito.ArgumentMatchers.eq(25));
+    }
+
+    // ── Cihaz eylemleri (Faz 2) ──────────────────────────────────────────────
+
+    @Test
+    @DisplayName("IDOR: BASKASININ hatirlanan cihazi 404 doner (403 DEGIL — varlik sizmasin)")
+    void revokeRemembered_foreignRow_is404() throws Exception {
+        when(userService.findByUsername("testuser")).thenReturn(Optional.of(testUser));
+        // Sahiplik kontrolu SORGUNUN ICINDE: baskasinin satirinda 0 satir silinir.
+        when(rememberMeTokenRepo.deleteByIdAndUsername(99L, "testuser")).thenReturn(0);
+
+        mvc.perform(delete("/api/me/devices/remembered/99").session(selfSession()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.success").value(false));
+
+        // Denetim kaydi da YAZILMAZ — olmayan/yabanci satir icin olay uretmeyiz.
+        verify(auditService, never()).recordAction(org.mockito.ArgumentMatchers.eq("REMEMBER_TOKEN_REVOKE"),
+                any(jakarta.servlet.http.HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class),
+                anyString(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("Kendi cihazini iptal: satir silinir ve DENETIME yazilir")
+    void revokeRemembered_ownRow_deletesAndAudits() throws Exception {
+        when(userService.findByUsername("testuser")).thenReturn(Optional.of(testUser));
+        when(rememberMeTokenRepo.deleteByIdAndUsername(5L, "testuser")).thenReturn(1);
+
+        mvc.perform(delete("/api/me/devices/remembered/5").session(selfSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        verify(auditService).recordAction(org.mockito.ArgumentMatchers.eq("REMEMBER_TOKEN_REVOKE"),
+                any(jakarta.servlet.http.HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class),
+                anyString(), org.mockito.ArgumentMatchers.eq("5"), anyString());
+    }
+
+    @Test
+    @DisplayName("Diger cihazlardan cikis: TUM token'lar iptal + denetim")
+    void logoutOthers_revokesAll() throws Exception {
+        when(userService.findByUsername("testuser")).thenReturn(Optional.of(testUser));
+
+        mvc.perform(post("/api/me/devices/logout-others").session(selfSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        verify(rememberMeService).invalidateAllForUser("testuser");
+        verify(auditService).recordAction(org.mockito.ArgumentMatchers.eq("SESSION_REVOKE_ALL"),
+                any(jakarta.servlet.http.HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class),
+                anyString(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("IDOR: BASKASININ giris kaydi bildirilemez (404) ve bildirim URETILMEZ")
+    void reportLogin_foreignAuditRow_is404() throws Exception {
+        when(userService.findByUsername("testuser")).thenReturn(Optional.of(testUser));
+        when(auditLogRepo.findOwnById(org.mockito.ArgumentMatchers.eq(42L), anyString()))
+                .thenReturn(Optional.empty());
+
+        mvc.perform(post("/api/me/devices/report-login").session(selfSession())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"auditId\":42}"))
+                .andExpect(status().isNotFound());
+
+        verify(loginIssueService, never()).save(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("PAROLA DEGISIMI tum hatirlanan girisleri IPTAL eder (calinan parola sonrasi cihaz disari atilir)")
+    void changePassword_revokesRememberMeTokens() throws Exception {
+        // Bu eksikti: parolasini degistiren kullanicinin eski cihazi remember-me cookie'siyle
+        // 7 gun daha otomatik giris yapabiliyordu — yani parola degistirmek saldirganı DISARI
+        // ATMIYORDU.
+        when(userService.findByUsername("testuser")).thenReturn(Optional.of(testUser));
+
+        mvc.perform(post("/api/me/change-password").session(selfSession())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"current_password\":\"eski\",\"new_password\":\"YeniParola123!\"}"))
+                .andExpect(status().isOk());
+
+        verify(rememberMeService).invalidateAllForUser("testuser");
     }
 }

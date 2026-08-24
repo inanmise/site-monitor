@@ -177,6 +177,46 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
      * findFiltered ile aynı ama actor tam (case-insensitive) eşleşme — bir kullanıcı adı başkasının
      * alt-dizesi olsa bile karışmasın. /api/me/audit'i besler.
      */
+    // ── Cihaz Geçmişi ekranı (self-scope) ────────────────────────────────────────
+    //
+    // findOwnFiltered ile AYNI güvenlik deseni: actor TAM ve case-insensitive eşleşir
+    // (LOWER) — bir kullanıcı adı başkasının alt-dizesi olsa bile karışmaz. Yeni TABLO
+    // AÇILMADI: giriş geçmişinin kaynağı audit_log'dur, dolayısıyla ufku
+    // `site.monitor.audit.retention-days` ile sınırlıdır (arayüzde not edilir).
+
+    /** Giriş zaman çizelgesi. {@code failed=false} → yalnız LOGIN, {@code true} → yalnız LOGIN_FAILED. */
+    @Query("SELECT a FROM AuditLog a WHERE LOWER(a.actor) = :actor "
+         + "AND a.eventType = :eventType ORDER BY a.eventTime DESC")
+    Page<AuditLog> findOwnLogins(@Param("actor") String actor,
+                                 @Param("eventType") String eventType,
+                                 Pageable pageable);
+
+    /** Kullanıcının EN SON başarılı girişi — "Bu cihaz" kartının IP/konum/zaman kaynağı. */
+    @Query("SELECT a FROM AuditLog a WHERE LOWER(a.actor) = :actor "
+         + "AND a.eventType = 'LOGIN' AND a.outcome = 'SUCCESS' ORDER BY a.eventTime DESC LIMIT 1")
+    Optional<AuditLog> findLatestOwnLogin(@Param("actor") String actor);
+
+    /** Tek satır self-scope doğrulaması — "bu girişi ben yapmadım" akışında IDOR kapısı. */
+    @Query("SELECT a FROM AuditLog a WHERE a.id = :id AND LOWER(a.actor) = :actor")
+    Optional<AuditLog> findOwnById(@Param("id") Long id, @Param("actor") String actor);
+
+    /**
+     * E1: kullanıcının GEÇMİŞTE giriş yaptığı FARKLI User-Agent dizeleri.
+     *
+     * <p>"Yeni cihaz" tespiti neden HAM UA eşitliğiyle YAPILMAZ: tarayıcı her güncellendiğinde
+     * ham dize değişir ({@code Chrome/120} → {@code Chrome/121}), yani ham karşılaştırma her
+     * tarayıcı güncellemesinde "yeni cihaz" der ve kullanıcıyı yanlış alarma boğar. Çağıran bu
+     * listeyi {@link com.sitemonitor.service.UserAgentSummary} özetine indirger ("Windows ·
+     * Chrome") ve karşılaştırmayı ONUN üzerinden yapar — sürümden bağımsız, kararlı.
+     *
+     * <p>DISTINCT olduğu için küme küçüktür (kullanıcı başına birkaç tarayıcı).
+     */
+    @Query("SELECT DISTINCT a.userAgent FROM AuditLog a WHERE LOWER(a.actor) = :actor "
+         + "AND a.eventType = 'LOGIN' AND a.outcome = 'SUCCESS' "
+         + "AND a.userAgent IS NOT NULL AND a.id <> :excludeId")
+    List<String> findDistinctLoginUserAgents(@Param("actor") String actor,
+                                             @Param("excludeId") Long excludeId);
+
     @Query("SELECT a FROM AuditLog a WHERE " +
            "LOWER(a.actor) = :actor AND " +
            "(:eventType IS NULL OR a.eventType = :eventType) AND " +

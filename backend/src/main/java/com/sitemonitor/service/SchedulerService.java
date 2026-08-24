@@ -576,6 +576,17 @@ public class SchedulerService {
         // sayimi/audit dogru). DB UPPER, idempotent (yalniz farkli satirlar). remember_me_tokens da hizalanir.
         patch("UPDATE app_users SET username = UPPER(username) WHERE username <> UPPER(username)");
         patch("UPDATE remember_me_tokens SET username = UPPER(username) WHERE username <> UPPER(username)");
+        // Cihaz Geçmişi ekranı — remember-me token'ına cihaz meta'sı. HEPSİ NULLABLE:
+        // dolu tabloya NOT NULL kolon eklemek Postgres'te reddedilir, Hibernate yutar, kolon
+        // HİÇ oluşmaz ve o tabloya giden her sorgu 500 verir (projede yaşandı).
+        patch("ALTER TABLE remember_me_tokens ADD COLUMN created_at TEXT");
+        patch("ALTER TABLE remember_me_tokens ADD COLUMN last_used_at TEXT");
+        patch("ALTER TABLE remember_me_tokens ADD COLUMN ip_address VARCHAR(64)");
+        patch("ALTER TABLE remember_me_tokens ADD COLUMN ua_summary VARCHAR(128)");
+        patch("ALTER TABLE remember_me_tokens ADD COLUMN ip_city VARCHAR(128)");
+        patch("ALTER TABLE remember_me_tokens ADD COLUMN ip_country VARCHAR(64)");
+        // Cihaz listesi username'e göre okunur; tabloda satır az ama sorgu her panel açılışında.
+        patch("CREATE INDEX IF NOT EXISTS idx_rmt_username ON remember_me_tokens(username)");
         // Widen varchar(255) columns to TEXT — markdown editor / long descriptions can overflow
         patch("ALTER TABLE certificate_inventory ALTER COLUMN change_description TYPE TEXT");
         patch("ALTER TABLE certificate_inventory ALTER COLUMN description TYPE TEXT");

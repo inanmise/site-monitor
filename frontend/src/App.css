@@ -5872,6 +5872,131 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* ═══════════════════════  AUDIT LOG VIEWER  ═════════════════════ */
 .audit-viewer { display: flex; flex-direction: column; gap: 16px; }
 
+/* ── Cihaz Geçmişi / Oturum Güvenliği ──────────────────────────────────────
+   Airbnb'nin cihaz-geçmişi satır düzeni (ikon · başlık · meta · sağda eylem) SiteMonitor'ün
+   renk/tipografi token'larıyla. YALNIZ tanımlı token kullanılır (cssTokens.test.js kapısı);
+   sabit hex yalnız anomali rozetlerinde ve orada koyu tema karşılığıyla birlikte. */
+.audit-view-switch { display: flex; }
+
+.dev-panel { display: flex; flex-direction: column; gap: 22px; }
+.dev-section { display: flex; flex-direction: column; gap: 10px; }
+.dev-section-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.dev-section-title {
+  margin: 0; font-size: .95em; font-weight: 700; color: var(--text);
+}
+.dev-retention { font-size: .8em; color: var(--text-muted); }
+.dev-icon { flex-shrink: 0; color: var(--text-muted); }
+.dev-muted { color: var(--text-muted); }
+.dev-loading { padding: 24px 0; }
+
+/* "Bu cihaz" kartı — listeden görsel olarak ayrışsın diye çerçeveli. */
+.dev-card {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-surface);
+}
+.dev-card-body { min-width: 0; flex: 1; }
+.dev-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dev-card-name { font-weight: 700; font-size: .95em; color: var(--text); }
+.dev-card-meta { margin-top: 3px; font-size: .85em; color: var(--text-muted); }
+.dev-card-sub  { margin-top: 2px; font-size: .8em; color: var(--text-light); }
+
+/* Satır listesi — hatırlanan cihazlar + giriş geçmişi aynı görsel dili paylaşır. */
+.dev-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.dev-row {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 11px 2px; border-bottom: 1px solid var(--border);
+}
+.dev-row:last-child { border-bottom: none; }
+.dev-row-body { min-width: 0; flex: 1; }
+.dev-row-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* URL/UA gibi uzun bölünemez dizeler satırı taşırmasın: min-width:0 olmadan overflow iş görmez. */
+.dev-row-name {
+  font-weight: 600; font-size: .9em; color: var(--text);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dev-row-meta { margin-top: 2px; font-size: .82em; color: var(--text-muted); }
+
+.dev-row-action {
+  flex-shrink: 0; background: none; border: 0; padding: 2px 4px;
+  font: inherit; font-size: .85em; font-weight: 600;
+  color: var(--danger); cursor: pointer; text-decoration: underline;
+}
+.dev-row-action:hover { color: var(--text); }
+.dev-row-action:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+
+.dev-row-toggle {
+  flex-shrink: 0; background: none; border: 0; padding: 2px; line-height: 0;
+  color: var(--text-muted); cursor: pointer;
+}
+.dev-row-toggle svg { transition: transform .15s; }
+.dev-row-toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
+.dev-row-toggle:hover { color: var(--text); }
+
+/* Satır genişletmesi: ham UA ve IP BURADA — listede asla dökülmez. */
+.dev-row-detail {
+  margin-top: 8px; padding: 10px 12px; border-radius: 8px;
+  background: var(--bg-surface); font-size: .82em;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.dev-detail-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dev-detail-key { color: var(--text-muted); min-width: 110px; }
+.dev-mono { font-family: Consolas, monospace; }
+.dev-ua-raw { overflow-wrap: anywhere; }
+.dev-report-btn {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 5px;
+  margin-top: 2px; padding: 4px 10px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--bg-card);
+  font: inherit; font-size: .95em; color: var(--danger); cursor: pointer;
+}
+.dev-report-btn:hover { border-color: var(--danger); }
+
+/* Rozetler */
+.dev-badge {
+  flex-shrink: 0; padding: 1px 7px; border-radius: 999px;
+  font-size: .7em; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
+}
+.dev-badge--current    { background: var(--primary); color: #fff; }
+.dev-badge--remembered { background: var(--bg-hover); color: var(--text-muted); border: 1px solid var(--border); }
+
+/* Anomali rozetleri — renk TEK sinyal değil, metin de var. Koyu tema karşılıkları altta. */
+.dev-anomalies { display: inline-flex; gap: 5px; flex-wrap: wrap; }
+.dev-anomaly {
+  padding: 1px 7px; border-radius: 999px; font-size: .72em; font-weight: 600; white-space: nowrap;
+}
+.dev-anomaly--off-hours    { background: rgba(217,119,6,.12);  color: #b45309; }
+.dev-anomaly--unusual-ip,
+.dev-anomaly--geo-velocity,
+.dev-anomaly--brute-force,
+.dev-anomaly--rate-limited { background: rgba(220,38,38,.10);  color: #b91c1c; }
+[data-theme="dark"] .dev-anomaly--off-hours    { color: #fbbf24; }
+[data-theme="dark"] .dev-anomaly--unusual-ip,
+[data-theme="dark"] .dev-anomaly--geo-velocity,
+[data-theme="dark"] .dev-anomaly--brute-force,
+[data-theme="dark"] .dev-anomaly--rate-limited { color: #fca5a5; }
+
+/* Başarısız denemeler — katlanır bölüm */
+.dev-collapse {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  background: none; border: 0; padding: 6px 0; cursor: pointer; text-align: left;
+  font: inherit; font-size: .95em; font-weight: 700; color: var(--text);
+}
+.dev-collapse-caret { transition: transform .15s; color: var(--text-muted); }
+.dev-collapse.is-open .dev-collapse-caret { transform: rotate(90deg); }
+.dev-empty-inline { padding: 8px 0; font-size: .85em; color: var(--text-muted); }
+.dev-row--failed .dev-row-name { color: var(--danger); }
+
+/* Güvenlik eylem çubuğu */
+.dev-actions {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding-top: 14px; border-top: 1px solid var(--border);
+}
+.dev-actions-hint {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: .82em; color: var(--text-muted);
+}
+
+
 /* Stats row */
 .audit-stats-row {
   display: grid;

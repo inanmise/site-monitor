@@ -31,6 +31,7 @@ class AuditServiceTest {
 
     @Mock AuditLogRepository auditLogRepo;
     @Mock GeoIpService geoIpService;
+    @Mock NewDeviceNotifier newDeviceNotifier;
 
     private AuditService service;
 
@@ -40,8 +41,11 @@ class AuditServiceTest {
         ClientIpResolver clientIpResolver = new ClientIpResolver();
         ReflectionTestUtils.setField(clientIpResolver, "headers", new String[]{"X-Forwarded-For"});
         ReflectionTestUtils.setField(clientIpResolver, "index", 0);
-        service = new AuditService(auditLogRepo, geoIpService, clientIpResolver);
-        // officeStartHour=0, officeEndHour=0 → hour < 0 is never true → isOffHours checks dow>=6
+        service = new AuditService(auditLogRepo, geoIpService, newDeviceNotifier, clientIpResolver);
+        // NOT: buradaki 0/0 ayari mesai penceresini ETKISIZ birakmaz — `hour >= 0` her zaman
+        // dogru oldugundan kural DAIMA "mesai disi" der. (Eski yorum bunun tersini soyluyordu.)
+        // Bu testler OFF_HOURS'a bakmiyor; kuralin kendisi OffHoursRuleTest'te saf fonksiyon
+        // olarak, saat dilimi ve sinirlariyla birlikte pinlenir.
         // Use 0–0 so that on weekdays isOffHours() returns false deterministically
         ReflectionTestUtils.setField(service, "bruteForceWindowSeconds", 600);
         ReflectionTestUtils.setField(service, "geoVelocityWindowSeconds", 3600);

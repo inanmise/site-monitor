@@ -26,6 +26,8 @@ import static org.mockito.Mockito.verify;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(AuditController.class)
@@ -44,6 +46,8 @@ class AuditControllerTest {
     @MockitoBean TeamRepository teamRepo;
     @MockitoBean com.sitemonitor.service.PermissionService permissionService;
     @MockitoBean com.sitemonitor.service.AuditService auditService;
+    @MockitoBean com.sitemonitor.service.DeviceHistoryService deviceHistoryService;
+    @MockitoBean com.sitemonitor.repository.AppUserRepository appUserRepo;
 
     private MockHttpSession session(String role) {
         MockHttpSession s = new MockHttpSession();
@@ -154,5 +158,54 @@ class AuditControllerTest {
                 .andExpect(jsonPath("$.total").value(5))      // ok.example elendi
                 .andExpect(jsonPath("$.critical").value(3))   // md5, rsa1024, ec128
                 .andExpect(jsonPath("$.high").value(2));      // sha1, ec200
+    }
+
+    // ── Cihaz Gecmisi admin gorunumu (K8) ────────────────────────────────────
+
+    @Test
+    @DisplayName("Admin cihaz gorunumu DENETIM YETKISI ister — sirali USER 403 alir")
+    void userDevices_requiresAuditAccess() throws Exception {
+        mvc.perform(get("/api/admin/users/5/devices").session(session("USER")))
+                .andExpect(status().isForbidden());
+
+        org.mockito.Mockito.verify(deviceHistoryService, org.mockito.Mockito.never())
+                .devicesFor(any(), any());
+    }
+
+    @Test
+    @DisplayName("AUDIT rolu baskasinin cihaz gecmisini OKUR; 'bu cihaz' isareti VERILMEZ")
+    void userDevices_auditRoleCanRead() throws Exception {
+        com.sitemonitor.model.AppUser target = new com.sitemonitor.model.AppUser();
+        target.setId(5L); target.setUsername("N68753");
+        when(appUserRepo.findById(5L)).thenReturn(java.util.Optional.of(target));
+        when(deviceHistoryService.devicesFor(any(), any())).thenReturn(java.util.Map.of());
+
+        mvc.perform(get("/api/admin/users/5/devices").session(session("AUDIT")))
+                .andExpect(status().isOk());
+
+        // currentTokenHash NULL gecmeli: yoneticinin tarayicisi hedefin cihazi DEGIL, hicbir
+        // satir "bu cihaz" diye isaretlenmemeli.
+        org.mockito.Mockito.verify(deviceHistoryService)
+                .devicesFor(any(), org.mockito.ArgumentMatchers.isNull());
+    }
+
+    @Test
+    @DisplayName("Olmayan kullanici 404 — bos panel yerine acik cevap")
+    void userDevices_unknownUser_is404() throws Exception {
+        when(appUserRepo.findById(999L)).thenReturn(java.util.Optional.empty());
+
+        mvc.perform(get("/api/admin/users/999/devices").session(session("ADMIN")))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("SOZLESME: admin yolunda EYLEM ucu YOKTUR (yonetici baskasinin cihazini dusuremez)")
+    void adminPathExposesNoActions() throws Exception {
+        // Salt-okunur olmasi bilincli: iptal/cikis yalniz kullanicinin KENDI self-scope
+        // ucundadir. Bu kapi olmadan biri kolayca "admin de iptal edebilsin" diye ekler.
+        mvc.perform(delete("/api/admin/users/5/devices/remembered/1").session(session("ADMIN")))
+                .andExpect(status().isNotFound());
+        mvc.perform(post("/api/admin/users/5/devices/logout-others").session(session("ADMIN")))
+                .andExpect(status().isNotFound());
     }
 }

@@ -4,7 +4,9 @@ import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import MultiTeamSelect from '../ui/MultiTeamSelect.jsx'
-import { UserCog } from 'lucide-react'
+import { UserCog, ChevronRight } from 'lucide-react'
+import DeviceHistoryPanel from '../DeviceHistoryPanel.jsx'
+import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 
 /** Modal başlık rozetinde kullanıcının LDAP fotoğrafı; yoksa ikona düşer. */
 export function ModalHeaderAvatar({ userId, children }) {
@@ -28,6 +30,11 @@ export default function UserEditModal({ user, teams, onClose, onSaved, readOnly 
   const [form, setForm] = useState(toForm(user))
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
+  // Cihaz gecmisi KAPALI baslar: panel acilinca iki sorgu atiyor ve bu bilgiye nadiren
+  // bakiliyor — her modal acilista sormak herkesin isini yavaslatirdi.
+  const [devicesOpen, setDevicesOpen] = useState(false)
+  const { canView } = usePermissions()
+  const canSeeDevices = canView('audit_log.read')
 
   useEffect(() => { setForm(toForm(user)); setMsg(null) }, [user])
 
@@ -169,6 +176,18 @@ export default function UserEditModal({ user, teams, onClose, onSaved, readOnly 
             {t('usr.formActive')}
           </label>
         </div>
+        {/* Cihaz Gecmisi (K8) — SALT-OKUNUR. Yetkisi olmayana HIC cizilmez; aksi halde
+            bolumu acan kisi 403 alir ve bunu bir hata sanardi. */}
+        {canSeeDevices && user?.id && (
+          <div className="usr-devices">
+            <button type="button" className={`dev-collapse${devicesOpen ? ' is-open' : ''}`}
+              aria-expanded={devicesOpen} onClick={() => setDevicesOpen(o => !o)}>
+              <ChevronRight size={15} className="dev-collapse-caret" aria-hidden="true" />
+              {t('dev.adminSectionTitle')}
+            </button>
+            {devicesOpen && <DeviceHistoryPanel userId={user.id} />}
+          </div>
+        )}
         {msg && <div className="alert-msg alert-msg--err" style={{ marginTop: 8 }}>{msg}</div>}
         <div className="modal-actions">
           {readOnly ? (
