@@ -11,7 +11,7 @@ import {
 import BrandLogo from './BrandLogo.jsx'
 import IssueReportModal from './IssueReportModal.jsx'
 import { LastLoginPopoverLines } from './LastLoginInfo.jsx'
-import { useBranding } from '../contexts/BrandingProvider.jsx'
+import { useBranding, useAppVersion } from '../contexts/BrandingProvider.jsx'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 
 export default function Nav({ activeTab, onTabChange, username, teamName, systemRole, globalAdmin, onLogout, onChangePassword, globalStatus = 'ok', loginInfo = null }) {
@@ -19,6 +19,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
   const { toggle } = useLanguage()
   const { theme, toggle: toggleTheme } = useTheme()
   const { get: brand, branding } = useBranding()
+  // Sürüm SUNUCUDAN gelir; derleme zamanı değeri yalnız yedektir (bkz. utils/appVersion.js).
+  const appVersion = useAppVersion()
   const { canView } = usePermissions()
   const isAdmin     = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
@@ -193,7 +195,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
             {open && (
               <div className="sb-brand-text">
                 <span className="sb-brand-name">{brand('app_name', 'SiteMonitor')}</span>
-                <span className="sb-brand-version">v{__APP_VERSION__}</span>
+                <span className="sb-brand-version">v{appVersion}</span>
               </div>
             )}
           </div>
@@ -204,7 +206,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
             {open && (
               <div className="sb-brand-text">
                 <span className="sb-brand-name">{brand('app_name', 'SiteMonitor')}</span>
-                <span className="sb-brand-version">v{__APP_VERSION__}</span>
+                <span className="sb-brand-version">v{appVersion}</span>
               </div>
             )}
           </div>

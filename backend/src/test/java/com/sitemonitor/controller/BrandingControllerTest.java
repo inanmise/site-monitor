@@ -35,6 +35,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class BrandingControllerTest {
 
     @Autowired MockMvc mvc;
+    @Autowired org.springframework.core.env.Environment environment;
 
     @MockitoBean AppSettingsService settingsService;
     @MockitoBean PermissionService permissionService;
@@ -96,7 +97,22 @@ class BrandingControllerTest {
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.app_name").value("SiteMonitor"))
                 .andExpect(jsonPath("$.data.banner_enabled").value(false))
-                .andExpect(jsonPath("$.data.banner_version").value(0));
+                .andExpect(jsonPath("$.data.banner_version").value(0))
+                // Surum BU UCTAN gelir: arayuz onu derleme zamaninda gomuyordu ve dev-server
+                // yeniden baslatilmadikca BAYAT kaliyordu (kullanici v20.26.1 gorurken depo
+                // v20.29.4'teydi). Uc PUBLIC olmak ZORUNDA: login sayfasi footer'da surumu
+                // oturum acmadan gosteriyor.
+                .andExpect(jsonPath("$.data.app_version").isNotEmpty());
+    }
+
+    @Test
+    @DisplayName("Surum public ucta DONER ve AppVersion ile AYNI degerdir (tek dogruluk kaynagi)")
+    void publicBranding_exposesAppVersion() throws Exception {
+        String expected = com.sitemonitor.service.AppVersion.resolve(environment);
+
+        mvc.perform(get("/api/branding"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.app_version").value(expected));
     }
 
     @Test
