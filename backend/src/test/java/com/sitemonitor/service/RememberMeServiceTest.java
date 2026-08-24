@@ -174,4 +174,65 @@ class RememberMeServiceTest {
         t.setExpiresAt(expiresAt);
         return t;
     }
+
+    // ── Cihaz meta'si (Cihaz Gecmisi ekrani) ─────────────────────────────────
+
+    @Test
+    @DisplayName("Uretim cihaz meta'sini yazar; HAM UA saklanmaz, yalniz OZET")
+    void generateStoresDeviceMeta() {
+        ArgumentCaptor<RememberMeToken> cap = ArgumentCaptor.forClass(RememberMeToken.class);
+        String ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36";
+
+        service.generateToken("N68753", "10.1.2.3", ua);
+
+        verify(repo).save(cap.capture());
+        RememberMeToken saved = cap.getValue();
+        assertThat(saved.getUaSummary()).isEqualTo("Windows · Chrome");
+        assertThat(saved.getIpAddress()).isEqualTo("10.1.2.3");
+        assertThat(saved.getCreatedAt()).isNotBlank();
+        // Ham UA hicbir kolona yazilmaz — ekranda gerekirse audit satirindan okunur.
+        assertThat(saved.getUaSummary()).doesNotContain("Mozilla");
+    }
+
+    @Test
+    @DisplayName("Basarili dogrulama SON KULLANIM izini gunceller (kullanilmayan cihaz taze gorunmesin)")
+    void validateStampsLastUsed() {
+        RememberMeToken t = new RememberMeToken();
+        t.setUsername("N68753");
+        t.setExpiresAt(Instant.now().getEpochSecond() + 3600);
+        when(repo.findByToken(anyString())).thenReturn(Optional.of(t));
+
+        var user = service.validate("ham-token", "10.9.9.9");
+
+        assertThat(user).contains("N68753");
+        assertThat(t.getLastUsedAt()).isNotBlank();
+        assertThat(t.getIpAddress()).isEqualTo("10.9.9.9");
+        verify(repo).save(t);
+    }
+
+    @Test
+    @DisplayName("Iz yazimi PATLASA BILE giris engellenmez (best-effort)")
+    void validateSurvivesTrailWriteFailure() {
+        // Bir metadata guncelleme hatasi kullaniciyi disarida birakmamali.
+        RememberMeToken t = new RememberMeToken();
+        t.setUsername("N68753");
+        t.setExpiresAt(Instant.now().getEpochSecond() + 3600);
+        when(repo.findByToken(anyString())).thenReturn(Optional.of(t));
+        when(repo.save(any(RememberMeToken.class))).thenThrow(new RuntimeException("DB down"));
+
+        assertThat(service.validate("ham-token", "10.9.9.9")).contains("N68753");
+    }
+
+    @Test
+    @DisplayName("SURESI DOLMUS token'da iz YAZILMAZ ve kullanici donmez")
+    void expiredTokenLeavesNoTrail() {
+        RememberMeToken t = new RememberMeToken();
+        t.setUsername("N68753");
+        t.setExpiresAt(Instant.now().getEpochSecond() - 1);
+        when(repo.findByToken(anyString())).thenReturn(Optional.of(t));
+
+        assertThat(service.validate("ham-token", "10.9.9.9")).isEmpty();
+        assertThat(t.getLastUsedAt()).isNull();
+        verify(repo, never()).save(any(RememberMeToken.class));
+    }
 }

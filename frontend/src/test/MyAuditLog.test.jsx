@@ -1,11 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from './test-utils.jsx'
+import { render, screen, waitFor, fireEvent } from './test-utils.jsx'
 import MyAuditLog from '../components/MyAuditLog.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 
 vi.mock('../api/client', () => ({
-  api: withApiFallback({ me: { getMyAudit: vi.fn() } }),
+  api: withApiFallback({ me: {
+    getMyAudit: vi.fn(),
+    // Cihaz Gecmisi artik VARSAYILAN gorunum; panel mount olunca bu uclari cagirir.
+    getMyDevices: vi.fn(),
+    getMyDeviceLogins: vi.fn(),
+  } }),
   formatDate: (s) => s ?? '',
   formatDateSec: (s) => s ?? '',
 }))
@@ -25,12 +30,28 @@ describe('MyAuditLog', () => {
     vi.clearAllMocks()
     sessionStorage.clear()
     api.me.getMyAudit.mockResolvedValue({ success: true, data: [ROW], total: 1, page: 0 })
+    api.me.getMyDevices.mockResolvedValue({ success: true, data: { current: {}, remembered: [] } })
+    api.me.getMyDeviceLogins.mockResolvedValue({ success: true, data: { rows: [], total: 0, page: 0 } })
   })
 
-  it('kendi denetim kaydını listeler', async () => {
+  /** Denetim gorunumune gec — sayfa artik ikiye ayrildi (varsayilan: Cihaz Gecmisi). */
+  function openAuditView() {
+    fireEvent.click(screen.getByText(/My audit log|Denetim Kayıtlarım/i))
+  }
+
+  it('kendi denetim kaydını listeler (denetim gorunumunde)', async () => {
+    // Sayfa K1a ile ikiye ayrildi; TABLONUN DAVRANISI degismedi, yalniz bir sekme arkasinda.
     render(<MyAuditLog />)
+    openAuditView()
     await waitFor(() => expect(screen.getByText('LOGIN')).toBeInTheDocument())
     expect(screen.getByText('10.0.0.1')).toBeInTheDocument()
+  })
+
+  it('VARSAYILAN gorunum Cihaz Gecmisi (guvenlik sorusu ham olay listesinden once)', async () => {
+    render(<MyAuditLog />)
+    await waitFor(() => expect(api.me.getMyDevices).toHaveBeenCalled())
+    // Denetim tablosu henuz cizilmemis olmali.
+    expect(screen.queryByText('10.0.0.1')).not.toBeInTheDocument()
   })
 
   it('loginInfo verilmediğinde sayfa çalışmaya devam eder (özet blok yok)', async () => {

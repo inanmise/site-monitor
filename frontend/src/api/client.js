@@ -118,6 +118,24 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ current_password: currentPwd, new_password: newPwd }),
     }),
+    // ── Cihaz Gecmisi / Oturum Guvenligi (self-scope) ────────────────────────
+    // Hicbirinde KULLANICI parametresi YOKTUR — kimlik sunucuda oturumdan okunur.
+    getMyDevices: () => request('/me/devices'),
+    getMyDeviceLogins: (params = {}) => {
+      const qs = new URLSearchParams()
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== '') qs.append(k, v)
+      })
+      const s = qs.toString()
+      return request(`/me/devices/logins${s ? `?${s}` : ''}`)
+    },
+    revokeRememberedDevice: (id) => request(`/me/devices/remembered/${id}`, { method: 'DELETE' }),
+    logoutOtherDevices: () => request('/me/devices/logout-others', { method: 'POST' }),
+    reportSuspiciousLogin: (auditId) => request('/me/devices/report-login', {
+      method: 'POST',
+      body: JSON.stringify({ auditId }),
+    }),
+
     getMyAudit: (params = {}) => {
       const qs = new URLSearchParams()
       Object.entries(params).forEach(([k, v]) => {
@@ -420,6 +438,18 @@ export const api = {
       request(`/admin/retention/backfill-hourly${days > 0 ? `?days=${days}` : ''}`, { method: 'POST' }),
     saveRetentionApproval: (policyId, note) =>
       request('/admin/retention/approval', { method: 'PUT', body: JSON.stringify({ policy_id: policyId, note }) }),
+
+    // Cihaz Gecmisi — ADMIN salt-okunur gorunumu (K8). Eylem ucu YOKTUR ve olmamalidir:
+    // iptal/cikis yalniz kullanicinin KENDI self-scope ucundadir (sunucu tarafinda da oyle).
+    getUserDevices: (userId) => request(`/admin/users/${userId}/devices`),
+    getUserDeviceLogins: (userId, params = {}) => {
+      const qs = new URLSearchParams()
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== '') qs.append(k, v)
+      })
+      const s = qs.toString()
+      return request(`/admin/users/${userId}/devices/logins${s ? `?${s}` : ''}`)
+    },
 
     getBrandingSettings: () => request('/admin/branding/settings'),
     saveBrandingSettings: (dto) => request('/admin/branding/settings', { method: 'PUT', body: JSON.stringify(dto) }),

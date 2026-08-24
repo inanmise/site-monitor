@@ -42,6 +42,8 @@ public class AuditService {
 
     private final AuditLogRepository auditLogRepo;
     private final GeoIpService geoIpService;
+    @org.springframework.context.annotation.Lazy
+    private final NewDeviceNotifier newDeviceNotifier;
     private final ClientIpResolver clientIpResolver;
 
     private static final DateTimeFormatter ISO =
@@ -61,8 +63,12 @@ public class AuditService {
     @Value("${site.monitor.audit.office-start-hour:8}")
     private int officeStartHour;
 
-    @Value("${site.monitor.audit.office-end-hour:23}")
+    @Value("${site.monitor.audit.office-end-hour:20}")
     private int officeEndHour;
+
+    /** Mesai penceresinin hesaplandığı saat dilimi — kurumun dilimi (crontab'larla aynı). */
+    @Value("${site.monitor.audit.timezone:Europe/Istanbul}")
+    private String auditTimezone;
 
     @Value("${site.monitor.audit.fallback-file:logs/audit-fallback.jsonl}")
     private String fallbackFile;
@@ -268,7 +274,15 @@ public class AuditService {
         }
 
         AuditLog saved = persist(entry);
-        if (saved != null) enrichGeoAsync(saved.getId(), ipAddress);
+        if (saved != null) {
+            enrichGeoAsync(saved.getId(), ipAddress);
+            // E1: daha önce görülmemiş bir cihazdan giriş → kullanıcıya bilgi maili.
+            // Best-effort ve @Async: bildirim GİRİŞİ engellemez, hatası yutulur.
+            if (success) {
+                newDeviceNotifier.notifyIfNewDevice(saved.getId(), actor, userAgent,
+                        ipAddress, entry.getEventTime());
+            }
+        }
         return saved;
     }
 
@@ -474,11 +488,39 @@ public class AuditService {
 
     // ── Yardımcılar ──────────────────────────────────────────────────────────────
 
+    /**
+     * "Mesai dışı" (OFF_HOURS) anomalisi — hafta içi {@code [start, end)} saatleri MESAİ,
+     * geri kalan her şey mesai dışıdır (hafta sonunun tamamı dahil).
+     *
+     * <p><b>SAAT DİLİMİ KURUMUN DİLİMİDİR, UTC DEĞİL.</b> Eskiden hesap {@code ZoneOffset.UTC}
+     * ile yapılıyordu ve kurum Europe/Istanbul (UTC+3) olduğu için pencere 3 saat kayıyordu:
+     * "08:00–20:00" ayarı fiilen 11:00–23:00 İstanbul demek oluyordu. Sonuçları GERÇEKTİ —
+     * sabah 08:00'deki normal giriş "mesai dışı" damgalanıyor, akşam 22:00'deki giriş
+     * damgalanmıyordu. Hafta günü de kayıyordu: cumartesi 01:00 İstanbul, UTC'de hâlâ cuma.
+     *
+     * <p>Saf ve parametreli tutulması bilinçli: {@code now()} çağıran bir mantık ancak süitin
+     * KOŞTUĞU saate göre test edilebilirdi (CI runner UTC, geliştirici makinesi Istanbul —
+     * projede yaşanmış tuzak). Sınırlar burada tablo testiyle pinleniyor.
+     */
+    static boolean isOffHours(ZonedDateTime local, int startHour, int endHour) {
+        int dow = local.getDayOfWeek().getValue();      // 1=Pazartesi … 6=Cumartesi, 7=Pazar
+        if (dow >= 6) return true;                      // hafta sonunun TAMAMI mesai dışı
+        int hour = local.getHour();
+        return hour < startHour || hour >= endHour;     // end HARİÇ: 20:00 artık mesai dışıdır
+    }
+
     private boolean isOffHours() {
-        ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
-        int dow = now.getDayOfWeek().getValue();
-        int hour = now.getHour();
-        return dow >= 6 || hour < officeStartHour || hour >= officeEndHour;
+        return isOffHours(ZonedDateTime.now(auditZone()), officeStartHour, officeEndHour);
+    }
+
+    /** Geçersiz/eksik ayarda UTC'ye düşmek sessiz bir 3 saatlik kayma olurdu — İstanbul'a düşülür. */
+    private java.time.ZoneId auditZone() {
+        try {
+            return java.time.ZoneId.of(auditTimezone);
+        } catch (Exception e) {
+            log.warn("Geçersiz denetim saat dilimi '{}' — Europe/Istanbul kullanılıyor", auditTimezone);
+            return java.time.ZoneId.of("Europe/Istanbul");
+        }
     }
 
     public String resolveIp(HttpServletRequest request) {

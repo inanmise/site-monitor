@@ -22,6 +22,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
@@ -58,7 +59,7 @@ class AuthInterceptorTest {
     void rememberMe_lockedUser_rejected() throws Exception {
         MockHttpServletRequest req = reqWithCookie("/api/certificates");
         MockHttpServletResponse res = new MockHttpServletResponse();
-        when(rememberMeService.validate("tok")).thenReturn(Optional.of("alice"));
+        when(rememberMeService.validate(eq("tok"), any())).thenReturn(Optional.of("alice"));
         when(userService.findByUsername("alice")).thenReturn(Optional.of(activeUser()));
         when(userService.checkLockout("alice")).thenReturn(new UserService.LockoutStatus(true, 0));
 
@@ -74,7 +75,7 @@ class AuthInterceptorTest {
     void rememberMe_temporarilyLockedUser_rejected() throws Exception {
         MockHttpServletRequest req = reqWithCookie("/api/certificates");
         MockHttpServletResponse res = new MockHttpServletResponse();
-        when(rememberMeService.validate("tok")).thenReturn(Optional.of("alice"));
+        when(rememberMeService.validate(eq("tok"), any())).thenReturn(Optional.of("alice"));
         when(userService.findByUsername("alice")).thenReturn(Optional.of(activeUser()));
         when(userService.checkLockout("alice")).thenReturn(new UserService.LockoutStatus(false, 120));
 
@@ -90,7 +91,7 @@ class AuthInterceptorTest {
     void rememberMe_mustChangePassword_blocksNonWhitelistedPath() throws Exception {
         MockHttpServletRequest req = reqWithCookie("/api/certificates");
         MockHttpServletResponse res = new MockHttpServletResponse();
-        when(rememberMeService.validate("tok")).thenReturn(Optional.of("alice"));
+        when(rememberMeService.validate(eq("tok"), any())).thenReturn(Optional.of("alice"));
         when(userService.findByUsername("alice")).thenReturn(Optional.of(activeUser()));
         when(userService.checkLockout("alice")).thenReturn(new UserService.LockoutStatus(false, 0));
         // Gerçek populateSession davranışını taklit et: mustChangePassword session'a yazılır.
@@ -111,7 +112,7 @@ class AuthInterceptorTest {
     void rememberMe_mustChangePassword_allowsWhitelistedPath() throws Exception {
         MockHttpServletRequest req = reqWithCookie("/api/me/change-password");
         MockHttpServletResponse res = new MockHttpServletResponse();
-        when(rememberMeService.validate("tok")).thenReturn(Optional.of("alice"));
+        when(rememberMeService.validate(eq("tok"), any())).thenReturn(Optional.of("alice"));
         when(userService.findByUsername("alice")).thenReturn(Optional.of(activeUser()));
         when(userService.checkLockout("alice")).thenReturn(new UserService.LockoutStatus(false, 0));
         doAnswer(inv -> {
@@ -130,7 +131,7 @@ class AuthInterceptorTest {
     void rememberMe_activeUser_allowed() throws Exception {
         MockHttpServletRequest req = reqWithCookie("/api/certificates");
         MockHttpServletResponse res = new MockHttpServletResponse();
-        when(rememberMeService.validate("tok")).thenReturn(Optional.of("alice"));
+        when(rememberMeService.validate(eq("tok"), any())).thenReturn(Optional.of("alice"));
         when(userService.findByUsername("alice")).thenReturn(Optional.of(activeUser()));
         when(userService.checkLockout("alice")).thenReturn(new UserService.LockoutStatus(false, 0));
 
@@ -147,7 +148,7 @@ class AuthInterceptorTest {
     void rememberMe_stampsSuccessfulLogin() throws Exception {
         MockHttpServletRequest req = reqWithCookie("/api/certificates");
         MockHttpServletResponse res = new MockHttpServletResponse();
-        when(rememberMeService.validate("tok")).thenReturn(Optional.of("alice"));
+        when(rememberMeService.validate(eq("tok"), any())).thenReturn(Optional.of("alice"));
         when(userService.findByUsername("alice")).thenReturn(Optional.of(activeUser()));
         when(userService.checkLockout("alice")).thenReturn(new UserService.LockoutStatus(false, 0));
         when(auditService.resolveIp(any())).thenReturn("10.0.0.1");
@@ -164,7 +165,7 @@ class AuthInterceptorTest {
     void rememberMe_writesAuditLogin() throws Exception {
         MockHttpServletRequest req = reqWithCookie("/api/certificates");
         MockHttpServletResponse res = new MockHttpServletResponse();
-        when(rememberMeService.validate("tok")).thenReturn(Optional.of("alice"));
+        when(rememberMeService.validate(eq("tok"), any())).thenReturn(Optional.of("alice"));
         when(userService.findByUsername("alice")).thenReturn(Optional.of(activeUser()));
         when(userService.checkLockout("alice")).thenReturn(new UserService.LockoutStatus(false, 0));
 
@@ -179,7 +180,7 @@ class AuthInterceptorTest {
     void rememberMe_lockedUser_noStampNoAudit() throws Exception {
         MockHttpServletRequest req = reqWithCookie("/api/certificates");
         MockHttpServletResponse res = new MockHttpServletResponse();
-        when(rememberMeService.validate("tok")).thenReturn(Optional.of("alice"));
+        when(rememberMeService.validate(eq("tok"), any())).thenReturn(Optional.of("alice"));
         when(userService.findByUsername("alice")).thenReturn(Optional.of(activeUser()));
         when(userService.checkLockout("alice")).thenReturn(new UserService.LockoutStatus(true, 0));
 

@@ -60,6 +60,9 @@ public class AuthController {
 
     private final AuditService auditService;
     private final RememberMeService rememberMeService;
+    private final com.sitemonitor.service.DeviceHistoryService deviceHistoryService;
+    private final com.sitemonitor.repository.RememberMeTokenRepository rememberMeTokenRepo;
+    private final com.sitemonitor.service.LoginIssueService loginIssueService;
     private final UserService userService;
     private final com.sitemonitor.repository.AuditLogRepository auditLogRepo;
     private final ClientIpResolver clientIpResolver;
@@ -201,7 +204,11 @@ public class AuthController {
             // yazılır ve gösterilecek "önceki girişiniz" değeri boşa harcanırdı.
             UserService.LoginStamp loginStamp = userService.recordSuccessfulLogin(
                     user.getUsername(), newSession.getId(), clientIp, UserService.LoginMethod.PASSWORD);
-            rememberMeService.invalidateAllForUser(username);
+            // CANONICAL username (yazılan case DEĞİL): app_users ve remember_me_tokens BÜYÜK harfe
+            // normalize ediliyor (applySchemaPatches). Yazılan case ile silmek, kullanıcı bir gün
+            // "n68753" ertesi gün "N68753" yazdığında eşleşmez ve ÖKSÜZ bir token hayatta kalır —
+            // yani "her login eski token'ları iptal eder" güvencesi sessizce delinir.
+            rememberMeService.invalidateAllForUser(user.getUsername());
 
             log.info("User logged in: {} (role={}, teamId={}, rememberMe={}, IP={})",
                     user.getUsername(), user.getSystemRole(), user.getTeamId(), rememberMe, clientIp);
@@ -213,7 +220,9 @@ public class AuthController {
                     request.getHeader("User-Agent"), newSession.getId(), true, null, null, 5);
 
             if (rememberMe) {
-                String token = rememberMeService.generateToken(username);
+                String token = rememberMeService.generateToken(
+                        user.getUsername(),                       // CANONICAL — iptal yolu da bununla arıyor
+                        clientIp, request.getHeader("User-Agent"));
                 Cookie cookie = new Cookie(RememberMeService.COOKIE_NAME, token);
                 cookie.setMaxAge(rememberTtlSeconds);
                 cookie.setHttpOnly(true);
@@ -424,6 +433,17 @@ public class AuthController {
         }
 
         userService.changePassword(userId, newPwd, username, currentPwd);
+        // Parola değişimi TÜM hatırlanan girişleri iptal eder.
+        //
+        // Bu eksikti: parolasının çalındığını düşünüp parolasını değiştiren kullanıcının eski
+        // cihazı, remember-me cookie'siyle 7 gün daha (TTL) sessizce otomatik giriş yapabiliyordu
+        // — yani parola değiştirmek saldırganı DIŞARI ATMIYORDU. Bilinen iyi pratik; ekrandaki
+        // "parola değiştir" kısayoluyla da tutarlı.
+        //
+        // CANONICAL username: token satırları büyük harfe normalize; yazılan case ile silmek
+        // eşleşmez (bkz. login yolundaki aynı düzeltme).
+        userService.findByUsername(username)
+                .ifPresent(u -> rememberMeService.invalidateAllForUser(u.getUsername()));
         // Successful self-change clears the forced-change session flag too —
         // AuthInterceptor uses it to gate other endpoints.
         session.setAttribute("mustChangePassword", false);
@@ -485,6 +505,161 @@ public class AuthController {
         resp.put("page", result.getNumber());
         resp.put("total_pages", result.getTotalPages());
         return ResponseEntity.ok(resp);
+    }
+
+    // ── Cihaz Geçmişi / Oturum Güvenliği (SELF-SCOPE) ────────────────────────
+    //
+    // Güvenlik sözleşmesi (/me/audit ile AYNI): kullanıcı YALNIZ kendi verisini görür ve bunu
+    // seçen bir PARAMETRE YOKTUR — kimlik oturumdan okunur. Başka kullanıcının verisine giden
+    // hiçbir giriş kabul edilmediği için IDOR yüzeyi de yoktur.
+    //
+    // Yanıtlar oturum kimliği, token değeri ya da token hash'i TAŞIMAZ (bkz. DeviceHistoryService).
+
+    @GetMapping("/me/devices")
+    public ResponseEntity<Map<String, Object>> myDevices(HttpSession session, HttpServletRequest request) {
+        AppUser user = requireSelf(session);
+        // Cookie'deki ham token yalnız HASH'e çevrilip "bu cihaz mı" işaretlemesinde kullanılır.
+        String currentHash = findRememberMeCookieValue(request)
+                .map(rememberMeService::hashOf).orElse(null);
+
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("success", true);
+        resp.put("data", deviceHistoryService.devicesFor(user, currentHash));
+        return ResponseEntity.ok(resp);
+    }
+
+    @GetMapping("/me/devices/logins")
+    public ResponseEntity<Map<String, Object>> myDeviceLogins(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size,
+            @RequestParam(defaultValue = "false") boolean failed,
+            HttpSession session) {
+        AppUser user = requireSelf(session);
+
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("success", true);
+        resp.put("data", deviceHistoryService.loginsFor(user, failed, page, size));
+        return ResponseEntity.ok(resp);
+    }
+
+    /**
+     * Hatırlanan cihazı iptal eder.
+     *
+     * <p>Sahiplik kontrolü SORGUNUN İÇİNDE: silinen satır sayısı 0 ise satır ya yok ya da
+     * başkasının — İKİSİ DE 404 döner. 403 dönmek "bu id var ama senin değil" bilgisini
+     * sızdırırdı (varlık sızıntısı).
+     */
+    @DeleteMapping("/me/devices/remembered/{id}")
+    public ResponseEntity<Map<String, Object>> revokeRememberedDevice(
+            @PathVariable Long id, HttpSession session,
+            HttpServletRequest request, HttpServletResponse response) {
+        AppUser user = requireSelf(session);
+
+        int removed = rememberMeTokenRepo.deleteByIdAndUsername(id, user.getUsername());
+        if (removed == 0) {
+            return ResponseEntity.status(404).body(Map.of("success", false, "error", "Kayıt bulunamadı"));
+        }
+
+        // İptal edilen BU tarayıcının token'ıysa cookie de düşürülmeli, yoksa kullanıcı listeden
+        // sildiği hâlde bir sonraki ziyarette yine otomatik giriş yapar (silme "işe yaramamış"
+        // görünürdü). Hangi satırın silindiğini bilmiyoruz ama cookie'nin hash'i artık DB'de
+        // OLMADIĞINDAN, düşürmek her hâlükârda doğru.
+        findRememberMeCookieValue(request).ifPresent(raw -> {
+            if (rememberMeTokenRepo.findByToken(rememberMeService.hashOf(raw)).isEmpty()) {
+                clearRememberMeCookies(response);
+            }
+        });
+
+        auditService.recordAction("REMEMBER_TOKEN_REVOKE", session, request,
+                "remember_me_token", String.valueOf(id), "Hatırlanan cihaz iptal edildi");
+        return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    /**
+     * Tüm hatırlanan girişleri iptal eder.
+     *
+     * <p>Mesaj DÜRÜST: tek-aktif-oturum modelinde kullanıcının başka CANLI oturumu zaten olamaz,
+     * dolayısıyla burada "diğer oturumları kapattık" demek yanlış olurdu. Yaptığımız şey kalıcı
+     * girişleri (remember-me) iptal etmektir.
+     */
+    @PostMapping("/me/devices/logout-others")
+    public ResponseEntity<Map<String, Object>> logoutOtherDevices(
+            HttpSession session, HttpServletRequest request, HttpServletResponse response) {
+        AppUser user = requireSelf(session);
+
+        rememberMeService.invalidateAllForUser(user.getUsername());
+        clearRememberMeCookies(response);   // bu tarayıcınınki de iptal edildi
+        auditService.recordAction("SESSION_REVOKE_ALL", session, request,
+                "remember_me_token", user.getUsername(), "Tüm hatırlanan girişler iptal edildi");
+
+        return ResponseEntity.ok(Map.of("success", true, "remembered_revoked", true));
+    }
+
+    /**
+     * "Bu girişi ben yapmadım" — şüpheli giriş bildirimi (K7).
+     *
+     * <p>Self-scope: bildirilen audit satırı KULLANICININ KENDİ satırı olmak zorunda, aksi hâlde
+     * 404. Böylece başkasının giriş kaydı hakkında bildirim üretilemez.
+     */
+    @PostMapping("/me/devices/report-login")
+    public ResponseEntity<Map<String, Object>> reportSuspiciousLogin(
+            @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
+        AppUser user = requireSelf(session);
+        Long auditId = body.get("auditId") instanceof Number n ? n.longValue() : null;
+        if (auditId == null) return ResponseEntity.badRequest().body(Map.of("success", false, "error", "auditId zorunlu"));
+
+        String actor = user.getUsername() == null ? "" : user.getUsername().toLowerCase();
+        var row = auditLogRepo.findOwnById(auditId, actor);
+        if (row.isEmpty()) {
+            return ResponseEntity.status(404).body(Map.of("success", false, "error", "Kayıt bulunamadı"));
+        }
+
+        var a = row.get();
+        String detail = "Kullanıcı bu girişi kendisinin yapmadığını bildirdi — "
+                + a.getEventTime() + " · " + (a.getIpAddress() == null ? "IP yok" : a.getIpAddress())
+                + " · " + com.sitemonitor.service.UserAgentSummary.labelOf(a.getUserAgent());
+
+        loginIssueService.save(user.getUsername(), user.getEmail(), null, detail,
+                java.util.List.of(), auditService.resolveIp(request),
+                request.getHeader("User-Agent"), null,
+                new com.sitemonitor.service.LoginIssueService.ReportMeta(
+                        "USER_REPORT", "BLOCKER", null, null, "myactivity", null,
+                        "audit#" + auditId));
+
+        auditService.recordAction("LOGIN_DISPUTED", session, request,
+                "audit_log", String.valueOf(auditId), "Şüpheli giriş bildirildi");
+        return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    /** Remember-me cookie'lerini (yeni ve eski ad) tarayıcıdan düşürür. */
+    private void clearRememberMeCookies(HttpServletResponse response) {
+        for (String name : new String[]{ RememberMeService.COOKIE_NAME, RememberMeService.LEGACY_COOKIE_NAME }) {
+            Cookie del = new Cookie(name, "");
+            del.setMaxAge(0);
+            del.setHttpOnly(true);
+            del.setPath("/");
+            response.addCookie(del);
+        }
+    }
+
+    /** Oturumdaki kullanıcıyı çözer; yoksa 401. Cihaz uçlarının TEK kimlik kaynağı. */
+    private AppUser requireSelf(HttpSession session) {
+        Object usernameAttr = session.getAttribute("username");
+        if (usernameAttr == null) throw new SecurityException("Not authenticated");
+        return userService.findByUsername(usernameAttr.toString())
+                .orElseThrow(() -> new SecurityException("Not authenticated"));
+    }
+
+    /** Cookie'deki ham remember-me token'ı (yeni ve eski ad) — yalnız hash'lenmek üzere okunur. */
+    private java.util.Optional<String> findRememberMeCookieValue(HttpServletRequest request) {
+        Cookie[] cookies = request.getCookies();
+        if (cookies == null) return java.util.Optional.empty();
+        return Arrays.stream(cookies)
+                .filter(c -> RememberMeService.COOKIE_NAME.equals(c.getName())
+                        || RememberMeService.LEGACY_COOKIE_NAME.equals(c.getName()))
+                .map(Cookie::getValue)
+                .filter(v -> v != null && !v.isBlank())
+                .findFirst();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

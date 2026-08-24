@@ -179,6 +179,10 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.storm.per-group",              "storm",      Type.BOOL),
         // Kurumsal/iç kök+ara CA paketi (PEM) — bu CA ile imzalı host'lar TRUSTED sayılır.
         // TrustEvaluator okuma anında okur (canlı reload). Boş = yalnız public CA'lar (cacerts).
+        // Yeni cihazdan giriş bilgi e-postası (E1). Varsayılan KAPALI: kurumsal kurulumda
+        // posta hacmi bir karardır, yönetici açar. Tespit ham UA değil CİHAZ ÖZETİ ile
+        // yapılır — yoksa her tarayıcı güncellemesi yanlış alarm üretirdi.
+        new Setting("site.monitor.security.new-device-email",   "security",   Type.BOOL),
         new Setting("site.monitor.trust.ca-bundle-pem",          "security",   Type.TEXT),
         // CA otomatik sabitleme (TOFU) — PKIX hatasında CA sunucudan çekilip host bazında pinlenir,
         // rotasyon/bitişte otomatik yenilenir (CaAutoPinService). Kapsam: HTTP uptime strict + RDAP çıkışı.

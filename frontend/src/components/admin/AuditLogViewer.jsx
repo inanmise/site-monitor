@@ -108,25 +108,6 @@ const CARD_DEFS = [
   { key: 'failed_logins_7d', statKey: 'failed_logins_7d',  warn: true,  filter: () => ({ since: isoMinus(7*86400),     anomalyOnly: false, eventType: 'LOGIN_FAILED' }) },
 ]
 
-function parseBrowser(ua) {
-  if (!ua) return '—'
-  let browser = 'Unknown'
-  if (ua.includes('Edg/') || ua.includes('EdgA/'))       browser = 'Edge'
-  else if (ua.includes('OPR/') || ua.includes('Opera/')) browser = 'Opera'
-  else if (ua.includes('Chrome/'))                        browser = 'Chrome'
-  else if (ua.includes('Firefox/'))                       browser = 'Firefox'
-  else if (ua.includes('Safari/'))                        browser = 'Safari'
-
-  let os = ''
-  if (ua.includes('Windows NT'))                            os = 'Windows'
-  else if (ua.includes('Android'))                          os = 'Android'
-  else if (ua.includes('iPhone') || ua.includes('iPad'))    os = 'iOS'
-  else if (ua.includes('Mac OS'))                           os = 'macOS'
-  else if (ua.includes('Linux'))                            os = 'Linux'
-
-  return os ? `${browser} · ${os}` : browser
-}
-
 function AnomalyChips({ flags }) {
   if (!flags) return null
   return (
@@ -569,9 +550,12 @@ export default function AuditLogViewer() {
                   </td>
                   <td className="audit-mono">{row.ip_address || '—'}</td>
                   <td>
-                    {row.user_agent
-                      ? <span title={row.user_agent}>{parseBrowser(row.user_agent)}</span>
-                      : '—'}
+                    {/* Ozet SUNUCUDAN gelir (ua_summary); ham UA tooltip'te kalir.
+                        Taninmayan UA'da ozet null olur — ham dizeyi sutuna dokmek yerine
+                        tire gosteririz, cunku ham UA sutunu okunmaz hale getiriyordu. */}
+                    {row.ua_summary
+                      ? <span title={row.user_agent}>{row.ua_summary}</span>
+                      : (row.user_agent ? <span title={row.user_agent}>—</span> : '—')}
                   </td>
                   <td>
                     {row.ip_country && (

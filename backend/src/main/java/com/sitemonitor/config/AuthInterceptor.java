@@ -101,7 +101,11 @@ public class AuthInterceptor implements HandlerInterceptor {
         //    or locked (temporary/permanent lockout) account is rejected here, same
         //    as the password-login path, otherwise an admin lock could be bypassed
         //    by an outstanding remember-me cookie until its 7-day TTL expires.
-        Optional<String> usernameOpt = findRememberMeCookie(req).flatMap(rememberMeService::validate);
+        // IP geçirilir: doğrulama başarılıysa token'ın "son kullanım" izi güncellenir (Cihaz
+        // Geçmişi ekranı "bu cihaz en son ne zaman otomatik girdi" diye soruyor).
+        String rememberIp = auditService.resolveIp(req);
+        Optional<String> usernameOpt = findRememberMeCookie(req)
+                .flatMap(t -> rememberMeService.validate(t, rememberIp));
 
         if (usernameOpt.isPresent()) {
             String username = usernameOpt.get();
@@ -116,7 +120,7 @@ public class AuthInterceptor implements HandlerInterceptor {
                 // Bu yol bir GİRİŞTİR: damgası basılır ve — bugüne kadar hiç yazılmayan — denetim
                 // kaydı da bırakılır, yoksa çerezle dönen kullanıcı "Etkinliklerim"de kendi girişini
                 // göremez. CANONICAL username: yazılan/cookie'deki case DB'dekinden farklı olabilir.
-                String clientIp = auditService.resolveIp(req);
+                String clientIp = rememberIp;   // yukarıda bir kez çözüldü
                 userService.recordSuccessfulLogin(user.getUsername(), newSession.getId(),
                         clientIp, UserService.LoginMethod.REMEMBER_ME);
                 if (shouldAuditReauth(user.getUsername())) {

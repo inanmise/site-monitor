@@ -439,6 +439,65 @@ public class EmailNotificationService {
         }
     }
 
+    /**
+     * "Yeni bir cihazdan giriş yapıldı" bilgi e-postası (E1).
+     *
+     * <p>Tier-3 Outlook-güvenli çerçeveyi kullanır (td bgcolor, düz hex, MSO/VML, LIGHT_SCHEME_META)
+     * — şifre sıfırlama e-postasıyla AYNI iskelet, ayrı bir HTML yazılmadı.
+     *
+     * <p>Ton bilinçli olarak SAKİN: bu bir alarm değil bilgilendirmedir; girişi yapan çoğu zaman
+     * kullanıcının kendisidir. "Bu sen değilsen" yolu net ama panik yaratmadan verilir.
+     */
+    public String sendNewDeviceEmail(String toAddress, String displayName, String deviceSummary,
+                                     String ip, String location, String whenIso) {
+        if (!isEnabled()) {
+            log.info("⚠ Email devre dışı — yeni cihaz bildirimi: TO={}", toAddress);
+            return "SKIPPED_DISABLED";
+        }
+        try {
+            MimeMessage msg = currentSender().createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
+            helper.setTo(toAddress);
+            applyFrom(helper);
+            helper.setSubject("[Site Monitor] Hesabınıza yeni bir cihazdan giriş yapıldı");
+            helper.setText(buildNewDeviceHtml(displayName, deviceSummary, ip, location, whenIso), true);
+            return doSend(toAddress, msg, 1);
+        } catch (Exception e) {
+            log.error("✗ Yeni cihaz e-postası hazırlanamadı: TO={} | HATA={}", toAddress, e.getMessage(), e);
+            return "FAILED: " + e.getMessage();
+        }
+    }
+
+    private String buildNewDeviceHtml(String displayName, String deviceSummary,
+                                      String ip, String location, String whenIso) {
+        StringBuilder rows = new StringBuilder();
+        rows.append(newDeviceRow("Cihaz", deviceSummary));
+        if (whenIso != null && !whenIso.isBlank()) rows.append(newDeviceRow("Zaman", whenIso));
+        if (location != null && !location.isBlank()) rows.append(newDeviceRow("Konum", location));
+        if (ip != null && !ip.isBlank()) rows.append(newDeviceRow("IP", ip));
+
+        return simpleFrameOpen(560)
+            + "<h2 style='color:#4f46e5;margin:0 0 12px;font-size:20px'>Yeni cihazdan giriş</h2>"
+            + "<p style='margin:0 0 10px'>Sayın <strong>" + escHtml(displayName) + "</strong>,</p>"
+            + "<p style='margin:0 0 10px'>Site Monitor hesabınıza daha önce görmediğimiz bir cihazdan "
+            + "giriş yapıldı.</p>"
+            + "<table role='presentation' cellpadding='0' cellspacing='0' border='0' "
+            + "style='border-collapse:collapse;margin:14px 0;font-size:14px'>"
+            + rows
+            + "</table>"
+            + "<p style='margin:0 0 10px'><strong>Bu sizseniz</strong>, yapmanız gereken bir şey yok.</p>"
+            + "<p style='margin:0 0 10px'><strong>Bu siz değilseniz</strong>, parolanızı değiştirin ve "
+            + "\"Etkinliklerim → Cihaz Geçmişi\" ekranından hatırlanan cihazları iptal edin.</p>"
+            + simpleFrameClose();
+    }
+
+    private String newDeviceRow(String label, String value) {
+        return "<tr>"
+             + "<td bgcolor='#ffffff' style='padding:4px 12px 4px 0;color:#6b7280'>" + escHtml(label) + "</td>"
+             + "<td bgcolor='#ffffff' style='padding:4px 0;font-weight:600'>" + escHtml(value) + "</td>"
+             + "</tr>";
+    }
+
     /** Tier-3 (sistem/admin) e-postaları için sade Outlook-güvenli çerçeve: dış bgcolor tablo → ortalanmış
      *  sabit-genişlik beyaz kart → padding TD'de (Outlook div padding'ini ve max-width'i yok sayar).
      *  İç içerik (h2/p/tablo/ul) olduğu gibi bu td'ye yerleştirilir; rich builder'lardaki gibi hep-açık. */
