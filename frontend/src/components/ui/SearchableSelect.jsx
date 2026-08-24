@@ -1,13 +1,29 @@
-import { useState, useRef, useEffect, Fragment } from 'react'
+import { useState, useRef, useEffect, useMemo, Fragment } from 'react'
 import { useT } from '../../i18n/index.jsx'
 
 /**
  * Aranabilir seçici. Seçeneklere opsiyonel `group` verilirse liste grup başlıklarıyla bölünür
  * (ör. "Kayıtlı script'ler" / "Şablonlar") — arama yine ETİKET üzerinde çalışır.
+ *
+ * <p>`collapsibleGroups` ile grup başlıkları KATLANABİLİR dala dönüşür (başlık + adet, tıklayınca
+ * açılır). OPT-IN olması bilinçli: bu bileşen 20'den fazla yerde kullanılıyor ve çoğunda grup
+ * sayısı 2-3; onları katlamak gereksiz bir tık ekler. Uzun kataloglar için vardır — sentetik
+ * izlemedeki script seçicisinde 100 yerleşik şablon (10 kategori × 10) tek düz liste hâlinde
+ * dökülüyordu ve bir script'in hangi kategoriden geldiği HİÇ görünmüyordu.
+ *
+ * <p>Kurallar: seçili değerin dalı AÇIK başlar (kullanıcı mevcut seçimini görebilsin); arama
+ * yazılınca TÜM dallar açılır (aksi halde eşleşen sonuç kapalı dalda saklı kalırdı); `group`
+ * taşımayan seçenekler (ör. boş "Seçiniz" satırı) her zaman görünür.
+ *
+ * <p>Bir seçenek `groupOpen: true` taşırsa o dal AÇIK başlar. Karar ÇAĞIRANA bırakıldı, çünkü
+ * "hangi dal küçük/önemli" bilgisi veriye özgü: script seçicisinde kullanıcının KENDİ script'leri
+ * birkaç tanedir ve en sık seçilendir — onları katlamak en yaygın işe fazladan tık ekler; asıl
+ * katlanması gereken 100 satırlık yerleşik katalogtur. Bileşene sihirli bir "küçükse aç" eşiği
+ * koymak bu bilgiyi tahmine çevirirdi.
  */
 export default function SearchableSelect({
   value, onChange, options, placeholder, disabled = false, searchThreshold = 4,
-  creatable = false, onCreate, onDelete, ariaLabel
+  creatable = false, onCreate, onDelete, ariaLabel, collapsibleGroups = false
 }) {
   const t = useT()
   const [open, setOpen] = useState(false)
@@ -59,6 +75,31 @@ export default function SearchableSelect({
     select(v)
   }
 
+  // Seçili değerin dalı açık başlasın; kullanıcı listeyi açtığında mevcut seçimi görmeli.
+  const selectedGroup = selected?.group
+  const [collapsedOverride, setCollapsedOverride] = useState({})
+  const searching = collapsibleGroups && query.trim() !== ''
+  /** Çağıranın "açık başlasın" dediği gruplar (seçeneklerdeki `groupOpen`). */
+  const defaultOpenGroups = useMemo(() => {
+    const set = new Set()
+    for (const o of options) if (o.groupOpen && o.group) set.add(o.group)
+    return set
+  }, [options])
+  const isExpanded = (g) => {
+    if (!collapsibleGroups) return true
+    if (searching) return true                       // arama: hiçbir sonuç kapalı dalda saklanmasın
+    const o = collapsedOverride[g]
+    return o !== undefined ? o : (g === selectedGroup || defaultOpenGroups.has(g))
+  }
+  const toggleGroup = (g) => setCollapsedOverride(p => ({ ...p, [g]: !isExpanded(g) }))
+
+  /** Dal başlığındaki adet — filtrelenmiş listeden sayılır, aramada gerçek sonucu gösterir. */
+  const groupCounts = useMemo(() => {
+    const m = {}
+    for (const o of filtered) if (o.group) m[o.group] = (m[o.group] || 0) + 1
+    return m
+  }, [filtered])
+
   const isEmpty = value === '' || value === null || value === undefined
   // creatable serbest değer: options'ta yoksa bile değeri etiket olarak göster
   const triggerLabel = selected ? selected.label : (isEmpty ? (placeholder || t('ss.choose')) : String(value))
@@ -105,9 +146,25 @@ export default function SearchableSelect({
               // Başlık, o gruptan hayatta kalan İLK seçeneğe bağlı çizildiği için aramada boşalan
               // grubun başlığı kendiliğinden kaybolur. Fragment kullanılıyor: araya sarmalayıcı bir
               // div girseydi `.ss-options > .ss-option` yerleşimi bozulurdu.
-              const header = opt.group && opt.group !== (i > 0 ? filtered[i - 1].group : undefined)
-                ? <div className="ss-group">{opt.group}</div>
-                : null
+              const isNewGroup = opt.group && opt.group !== (i > 0 ? filtered[i - 1].group : undefined)
+              const expanded = isExpanded(opt.group)
+              const header = !isNewGroup ? null
+                : collapsibleGroups
+                  ? (
+                    <button type="button" className={`ss-group ss-group-btn${expanded ? ' is-open' : ''}`}
+                      aria-expanded={expanded}
+                      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); toggleGroup(opt.group) }}>
+                      <svg className="ss-group-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        strokeWidth="2" width="12" height="12" aria-hidden="true">
+                        <polyline points="9 18 15 12 9 6" />
+                      </svg>
+                      <span className="ss-group-name">{opt.group}</span>
+                      <span className="ss-group-count">{groupCounts[opt.group]}</span>
+                    </button>
+                  )
+                  : <div className="ss-group">{opt.group}</div>
+              // Kapalı dalın seçenekleri ÇİZİLMEZ (başlığı yine çizilir, yoksa dal kaybolurdu).
+              if (opt.group && !expanded) return <Fragment key={String(opt.value)}>{header}</Fragment>
               return (
                 <Fragment key={String(opt.value)}>
                   {header}

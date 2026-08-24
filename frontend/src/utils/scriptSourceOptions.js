@@ -1,3 +1,5 @@
+import { CATEGORY_ORDER } from './templateCategories.js'
+
 /**
  * Sentetik izleme formundaki "Script kaynağı" seçicisinin seçenekleri.
  *
@@ -12,7 +14,18 @@
  *   1. Kayıtlı script'ler   — düzenlenen monitörün KENDİ girdisi burada
  *   2. Takım şablonlarım    — kullanıcının kendi takımının şablonları
  *   3. Genel şablonlar      — takımlardan genele açılmış (K5) şablonlar
- *   4. Yerleşik şablonlar   — ürünle gelen küratörlü katalog
+ *   4. Yerleşik şablonlar   — ürünle gelen küratörlü katalog, KATEGORİYE göre dallanır
+ *
+ * ## Yerleşikler neden kategoriye bölünüyor
+ * Yerleşik katalog 100 şablon (10 kategori × 10). Hepsi tek bir "Yerleşik şablonlar" başlığı
+ * altına dökülünce bir script'in hangi kategoriden geldiği HİÇ görünmüyordu ve liste 100 satır
+ * uzunluğundaydı. Artık her kategori kendi dalı; seçici `collapsibleGroups` ile çiziliyor, yani
+ * dallar kapalı gelir ve tıklanınca altındaki 10 script açılır (Şablon Kütüphanesi sekmesindeki
+ * ağaçla aynı desen). Kategori sırası CATEGORY_ORDER'dan gelir — alfabetik DEĞİL, bir siteyi
+ * izlemeye baştan başlayan birinin ilerleyeceği yol.
+ *
+ * <p>Kapsam bilgisi KAYBOLMUYOR: kayıtlı/takım/genel kendi başlıklarını koruyor, kategori adı
+ * taşıyan her dal ise tanımı gereği YERLEŞİK. İki eksen de okunur kalıyor.
  *
  * ## `tpl:` geriye uyumu
  * Mevcut monitörlerin `template` kolonunda `tpl:smoke-health` gibi değerler YAZILI. Değer
@@ -52,11 +65,15 @@ export function buildScriptSourceOptions({ savedScripts = [], templates = [], sa
   // Boş seçenek YALNIZ yeni monitörde: düzenlemede "boşalt" yolu kaydedilmiş script'i siliyordu.
   if (!savedSourceId) opts.push({ value: '', label: t('scripted.templatePick') })
 
+  // `groupOpen`: kapsam dalları AÇIK başlar. Kullanıcının kendi script'leri birkaç tanedir ve en
+  // sık seçilendir — onları katlamak en yaygın işe fazladan tık ekler. Katlanması gereken, 100
+  // satırlık yerleşik katalogtur; kategori dalları bu bayrağı TAŞIMAZ.
   for (const s of savedScripts) {
     opts.push({
       value: `saved:${s.id}`,
       label: s.id === savedSourceId ? `${s.name} ${t('scripted.srcThisMonitor')}` : s.name,
       group: t('scripted.srcGroupSaved'),
+      groupOpen: true,
     })
   }
 
@@ -64,12 +81,23 @@ export function buildScriptSourceOptions({ savedScripts = [], templates = [], sa
   const general = templates.filter(x => x.scope === 'general' && !x.builtin)
   const builtin = templates.filter(x => x.scope === 'general' && x.builtin)
 
-  const push = (rows, group) => {
-    for (const tpl of rows) opts.push({ value: templateValue(tpl), label: templateLabel(tpl, lang), group })
+  const push = (rows, group, groupOpen = false) => {
+    for (const tpl of rows) {
+      opts.push({ value: templateValue(tpl), label: templateLabel(tpl, lang), group, groupOpen })
+    }
   }
-  push(team,    t('scripted.srcGroupMyTeam'))
-  push(general, t('scripted.srcGroupGeneral'))
-  push(builtin, t('scripted.srcGroupTemplates'))
+  push(team,    t('scripted.srcGroupMyTeam'),  true)
+  push(general, t('scripted.srcGroupGeneral'), true)
+
+  // Yerleşikler kategoriye göre dallanır. Sıra CATEGORY_ORDER'dan; bitişiklik sözleşmesi gereği
+  // aynı kategorinin satırları ARDIŞIK olmak zorunda (yoksa aynı başlık iki kez basılırdı).
+  for (const key of CATEGORY_ORDER) {
+    push(builtin.filter(x => x.category === key), t('tpl.cat.' + key))
+  }
+  // Kataloğa CATEGORY_ORDER'da olmayan bir kategori (ya da kategorisiz satır) girerse SESSİZCE
+  // DÜŞMESİN — eski "Yerleşik şablonlar" başlığı altında toplanır.
+  const known = new Set(CATEGORY_ORDER)
+  push(builtin.filter(x => !known.has(x.category)), t('scripted.srcGroupTemplates'))
 
   return opts
 }

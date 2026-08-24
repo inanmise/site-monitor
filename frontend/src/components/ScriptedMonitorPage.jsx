@@ -1396,7 +1396,8 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
   const errorLines = useMemo(
     () => markers.filter(m => m.type === 'error').map(m => m.line), [markers])
 
-  // Seçici seçenekleri: dört grup tek listede (SearchableSelect `group` ile başlıklara böler).
+  // Seçici seçenekleri: kapsam grupları + yerleşiklerin kategori dalları, tek listede
+  // (SearchableSelect `group` ile başlıklara böler, `collapsibleGroups` ile katlar).
   // Grup SIRASI çağıranın sorumluluğu — başlıklar bitişikliğe göre basılıyor (bkz. utils).
   const scriptSourceOptions = buildScriptSourceOptions({
     savedScripts, templates, savedSourceId: savedSource?.id, lang, t,
@@ -1521,8 +1522,11 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
               monitörün kendi girdisi listede olduğu için "boşalt" yolu veri kaybettiriyordu. */}
           <div className="full-width">
             <div className="kw-block-title">{t('scripted.scriptSource')}</div>
-            {/* Aranabilir: script sayısı arttıkça ada göre süzmek şart. Gruplar (kayıtlı/şablon)
-                SearchableSelect'in `group` alanıyla korunuyor. */}
+            {/* Aranabilir: script sayısı arttıkça ada göre süzmek şart. Gruplar (kayıtlı/takım/
+                genel + yerleşiklerin 10 kategorisi) SearchableSelect'in `group` alanıyla korunuyor.
+                `collapsibleGroups`: yerleşik katalog 100 şablon; düz liste hâlinde hem 100 satır
+                uzunluğundaydı hem de bir script'in hangi kategoriden geldiği görünmüyordu. Dallar
+                kapalı gelir, tıklanınca altındaki 10 script açılır. */}
             <div className="sc-source-select">
               <SearchableSelect
                 ariaLabel={t('scripted.scriptSource')}
@@ -1530,6 +1534,7 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
                 onChange={selectScriptSource}
                 options={scriptSourceOptions}
                 placeholder={t('scripted.templatePick')}
+                collapsibleGroups
               />
             </div>
             {form.template?.startsWith('tpl:') &&
