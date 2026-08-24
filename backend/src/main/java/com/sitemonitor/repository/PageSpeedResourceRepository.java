@@ -16,6 +16,15 @@ public interface PageSpeedResourceRepository extends JpaRepository<PageSpeedReso
          + "ORDER BY r.bytes DESC NULLS LAST LIMIT :limit")
     List<PageSpeedResource> findHeaviest(@Param("id") Long id, @Param("reason") String reason, @Param("limit") int limit);
 
+    /**
+     * Gosterilen listenin KAC kaynaktan secildigi — arayuz "N kaynaktan en agir 50'si" diyebilsin
+     * diye. Kirilim sessizce kirpilirsa kullanici 50 satiri sayfanin TAMAMI sanir ve agirligin
+     * nereden geldigini yanlis okur. Iki sorgu da indeksli COUNT'tur.
+     */
+    long countByMonitorIdAndKeepReason(Long monitorId, String keepReason);
+
+    long countByCheckId(Long checkId);
+
     /** Bir eşik-ihlali anının kırılımı (delil). */
     @Query("SELECT r FROM PageSpeedResource r WHERE r.checkId = :checkId ORDER BY r.bytes DESC NULLS LAST LIMIT :limit")
     List<PageSpeedResource> findByCheck(@Param("checkId") Long checkId, @Param("limit") int limit);

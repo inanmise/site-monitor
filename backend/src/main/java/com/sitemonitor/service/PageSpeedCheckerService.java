@@ -128,20 +128,23 @@ public class PageSpeedCheckerService {
         }
 
         String rootHost = PageFetchCore.hostOf(url);
-        List<PageFetchCore.Resource> all = core.inventory(main.body(), url, url, exclude);
-        List<PageFetchCore.Resource> loadable = new ArrayList<>(all.size());
-        for (PageFetchCore.Resource r : all) {
-            // a[href] tarayıcı tarafından İNDİRİLMEZ → sayfa ağırlığına girmez.
-            if (!"LINK".equals(r.type())) loadable.add(r);
-        }
-        boolean capped = all.size() >= PageFetchCore.MAX_RESOURCES_PER_CHECK;
+        // AS_BROWSER_LOADS: a[href] hiç toplanmaz ve srcset'te görsel başına tek aday alınır.
+        // Bu bir "iyileştirme" değil DOĞRULUK meselesi — envanter tavanı (500) eskiden link'lere
+        // harcanıyordu (link ağırlıklı bir sayfada gerçek kaynaklar hiç ölçülmüyordu) ve responsive
+        // görsellerin her varyantı ayrı sayıldığı için sayfa ağırlığı katbekat şişiyordu.
+        List<PageFetchCore.Resource> loadable =
+                core.inventory(main.body(), url, url, exclude, PageFetchCore.InventoryOptions.AS_BROWSER_LOADS);
+        // Tavan artık YALNIZ indirilen kaynaklara bakıyor, yani "ölçüm kısmi" uyarısı gerçekten
+        // kısmi olduğunda çıkıyor.
+        boolean capped = loadable.size() >= PageFetchCore.MAX_RESOURCES_PER_CHECK;
 
-        List<Measured> measured = weighAll(loadable, rootHost, timeoutMs, concurrency, userAgent, headers, deadline);
+        Weighed weighed = weighAll(loadable, rootHost, timeoutMs, concurrency, userAgent, headers, deadline);
+        List<Measured> measured = weighed.rows();
 
         long totalBytes = main.bytes();
         int failed = 0;
         // Ana sayfanın kendisi de tavana takılmış olabilir (dev HTML) — o da toplamı alt sınıra çevirir.
-        boolean bytesTruncated = main.truncated();
+        boolean bytesTruncated = main.truncated() || weighed.budgetExhausted();
         for (Measured x : measured) {
             totalBytes += x.bytes();
             if (x.failed()) failed++;
@@ -159,21 +162,33 @@ public class PageSpeedCheckerService {
                 totalBytes, requestCount, failed, capped, bytesTruncated, breached, null, measured);
     }
 
-    /** Alt kaynakları sınırlı eşzamanlılıkla, deadline'a saygılı biçimde tartar. */
-    private List<Measured> weighAll(List<PageFetchCore.Resource> resources, String rootHost, int timeoutMs,
-                                    int concurrency, String userAgent, Map<String, String> headers, long deadline) {
-        if (resources.isEmpty()) return List.of();
+    /** Tartım sonucu: satırlar + toplam bayt bütçesinin dolup dolmadığı. */
+    private record Weighed(List<Measured> rows, boolean budgetExhausted) {}
+
+    /** Alt kaynakları sınırlı eşzamanlılıkla, deadline'a VE toplam bayt bütçesine saygılı tartar. */
+    private Weighed weighAll(List<PageFetchCore.Resource> resources, String rootHost, int timeoutMs,
+                             int concurrency, String userAgent, Map<String, String> headers, long deadline) {
+        if (resources.isEmpty()) return new Weighed(List.of(), false);
         PageFetchCore.FetchOptions opts = PageFetchCore.FetchOptions
                 .weigh(timeoutMs, userAgent).withHeaders(headers);
         Semaphore gate = new Semaphore(concurrency);
+        // Tek kontrolün indirebileceği TOPLAM bayt: kaynak başına tavan tek başına yetmiyor
+        // (500 × 10 MB = 5 GB). Tek pod'da bant genişliği ve CPU gerçek sınırlar.
+        java.util.concurrent.atomic.AtomicLong spent = new java.util.concurrent.atomic.AtomicLong();
         List<CompletableFuture<Measured>> futures = new ArrayList<>(resources.size());
         for (PageFetchCore.Resource r : resources) {
             futures.add(CompletableFuture.supplyAsync(() -> {
+                // Deadline ve bütçe İSTEK ATILMADAN önce kontrol edilir: kuyrukta bekleyen görevler
+                // biz sonucu bırakmışken ağa çıkmasın (boşa CPU + bant genişliği).
                 if (System.currentTimeMillis() > deadline) return null;
+                if (spent.get() >= PageFetchCore.MAX_TOTAL_MEASURED_BYTES) return null;
                 try {
                     gate.acquire();
-                    try { return weighOne(r, rootHost, opts); }
-                    finally { gate.release(); }
+                    try {
+                        Measured m = weighOne(r, rootHost, opts);
+                        spent.addAndGet(m.bytes());
+                        return m;
+                    } finally { gate.release(); }
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                     return null;
@@ -193,7 +208,7 @@ public class PageSpeedCheckerService {
                 /* bu kaynak düştü → atla, ölçümün geri kalanı geçerli */
             }
         }
-        return out;
+        return new Weighed(out, spent.get() >= PageFetchCore.MAX_TOTAL_MEASURED_BYTES);
     }
 
     /**

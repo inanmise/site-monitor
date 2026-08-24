@@ -30,7 +30,7 @@
   color: var(--text-muted, #64748b);
   border: 1px dashed var(--border, #cbd5e1);
   border-radius: 8px;
-  background: var(--surface, #f8fafc);
+  background: var(--bg-surface);
 }
 
 .guide-section {
@@ -64,13 +64,13 @@
   padding: 10px 12px;
   border: 1px solid var(--border, #e2e8f0);
   border-radius: 6px;
-  background: var(--card-bg, #fff);
+  background: var(--bg-card);
   transition: background .15s, border-color .15s;
 }
 
 .guide-item:hover {
-  border-color: var(--accent, #4f46e5);
-  background: var(--surface-hover, #f1f5f9);
+  border-color: var(--primary);
+  background: var(--bg-hover);
 }
 
 .guide-item-body {
@@ -84,7 +84,7 @@
   gap: 6px;
   font-weight: 500;
   text-decoration: none;
-  color: var(--accent, #4f46e5);
+  color: var(--primary);
   word-break: break-all;
 }
 
@@ -104,7 +104,7 @@
 
 .guide-url:hover {
   text-decoration: underline;
-  color: var(--accent, #4f46e5);
+  color: var(--primary);
 }
 
 .guide-desc {

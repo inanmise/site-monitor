@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within, act } from './test-utils.jsx'
 import PageSpeedMonitorPage from '../components/PageSpeedMonitorPage.jsx'
 import { formatBytes } from '../utils/formatBytes.js'
 
@@ -193,6 +193,72 @@ describe('PageSpeedMonitorPage', () => {
     fireEvent.click(await screen.findByText('https://x.com/odeme'))
 
     expect(await screen.findByText(/resource cap reached|kaynak tavanına ulaşıldı/i)).toBeInTheDocument()
+  })
+
+  it('kırılım kırpıldığında KAÇ kaynaktan seçildiği yazılır (sessiz kırpma yok)', async () => {
+    // Sunucu en agir 50 satiri dondurur. Kirpma soylenmezse kullanici 2 satiri sayfanin TAMAMI
+    // sanip agirligin nereden geldigini yanlis okur — esikleri de ona gore yanlis kurar.
+    api.monitoring.getPageSpeedResources.mockResolvedValue({ success: true, data: {
+      resources: [
+        { url: 'https://x.com/app.js', type: 'JS', bytes: 512000, duration_ms: 210, http_status: 200 },
+        { url: 'https://x.com/a.png', type: 'IMG', bytes: 2048, duration_ms: 30, http_status: 200 },
+      ],
+      total: 183,
+      breaches: [],
+    } })
+    render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await screen.findByText('https://x.com/odeme'))
+
+    expect(await screen.findByText(/183/)).toBeInTheDocument()
+  })
+
+  it('kırılım TAM olduğunda kırpma uyarısı ÇIKMAZ', async () => {
+    api.monitoring.getPageSpeedResources.mockResolvedValue({ success: true, data: {
+      resources: [{ url: 'https://x.com/app.js', type: 'JS', bytes: 512000, duration_ms: 210, http_status: 200 }],
+      total: 1,
+      breaches: [],
+    } })
+    render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await screen.findByText('https://x.com/odeme'))
+
+    await screen.findByText('https://x.com/app.js')
+    expect(screen.queryByText(/heaviest of|en ağır/i)).not.toBeInTheDocument()
+  })
+
+  it('geciken ESKİ kırılım yanıtı YENİSİNİN üzerine YAZMAZ (yarış koşulu)', async () => {
+    // Modal 30 sn'de bir kendini tazeliyor ve kullanici bu sirada baska bir anlik goruntuye
+    // gecebiliyor. Once gonderilen istek SONRA donerse tablo yanlis olcumun kaynaklarini gosterir
+    // ve kullanici bunu FARK EDEMEZ, cunku ustteki secici DOGRU tarihi yaziyor olur.
+    const BR = [{ check_id: 77, checked_at: '2026-08-20T09:00:00' }]
+    const rows = (name) => [{ url: `https://x.com/${name}`, type: 'JS', bytes: 1, duration_ms: 1, http_status: 200 }]
+    let releaseSlow
+    let call = 0
+    api.monitoring.getPageSpeedResources.mockImplementation(() => {
+      call += 1
+      if (call === 2) {   // ihlal anlik goruntusu: YAVAS, en son doner
+        return new Promise(r => { releaseSlow = () => r({ success: true, data: {
+          resources: rows('ESKI.js'), total: 1, breaches: BR } }) })
+      }
+      return Promise.resolve({ success: true, data: {
+        resources: rows(call === 1 ? 'ILK.js' : 'YENI.js'), total: 1, breaches: BR } })
+    })
+
+    render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await screen.findByText('https://x.com/odeme'))
+    await screen.findByText('https://x.com/ILK.js')
+
+    // Ihlal anlik goruntusune gec (2. istek HAVADA kalir)...
+    fireEvent.mouseDown(document.querySelector('.pspd-snapshot-row .ss-trigger'))
+    fireEvent.mouseDown(await screen.findByText('2026-08-20T09:00:00'))
+    // ...ve daha o donmeden son olcume geri don (3. istek HEMEN doner).
+    fireEvent.mouseDown(document.querySelector('.pspd-snapshot-row .ss-trigger'))
+    fireEvent.mouseDown(await screen.findByText(/^Son ölçüm$|^Latest measurement$/))
+    expect(await screen.findByText('https://x.com/YENI.js')).toBeInTheDocument()
+
+    // Simdi GECIKMIS 2. yanit doner — ekrani DEGISTIRMEMELI.
+    await act(async () => { releaseSlow() })
+    expect(screen.queryByText('https://x.com/ESKI.js')).not.toBeInTheDocument()
+    expect(screen.getByText('https://x.com/YENI.js')).toBeInTheDocument()
   })
 
   it('bozuk kaynak satırı ekranı ÇÖKERTMEZ (eksik alanlar tire ile çizilir)', async () => {

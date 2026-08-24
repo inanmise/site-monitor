@@ -3000,6 +3000,11 @@ public class SchedulerService {
      * total_bytes, request_count}.
      */
     private Map<String, Object> recheckPageSpeed(com.sitemonitor.model.PageSpeedMonitor m, boolean manual) {
+        // Delil dondurma KENAR-tetiklidir: bunun icin ONCEKI olcumun ihlal durumu, yeni kayit
+        // yazilmadan ONCE okunur (tek indeksli sorgu).
+        boolean wasBreached = pageSpeedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(m.getId())
+                .map(prev -> prev.getBreachedMetrics() != null && !prev.getBreachedMetrics().isBlank())
+                .orElse(false);
         PageSpeedCheckerService.Result res = pageSpeedCheckerService.check(m);
         boolean cfgError = "CONFIG_ERROR".equals(res.status());
         boolean reachable = res.reachable();
@@ -3023,7 +3028,7 @@ public class SchedulerService {
             pc.setBreachedMetrics(com.sitemonitor.service.page.PageSpeedRules.joinBreaches(res.breached()));
             pc.setErrorMessage(res.error());
             pageSpeedCheckRepo.save(pc);
-            writeResourceBreakdown(m, pc, res, ts);
+            writeResourceBreakdown(m, pc, res, ts, wasBreached);
         } catch (Exception e) {
             log.warn("Sayfa hızı kaydı yazılamadı: {} — {}", m.getUrl(), e.getMessage());
         }
@@ -3080,10 +3085,15 @@ public class SchedulerService {
      * KALICI yazılır — "geçen salı neden yavaşladı" sorusu sonradan da cevaplanabilsin diye.
      */
     private void writeResourceBreakdown(com.sitemonitor.model.PageSpeedMonitor m, PageSpeedCheck pc,
-                                        PageSpeedCheckerService.Result res, String ts) {
+                                        PageSpeedCheckerService.Result res, String ts, boolean wasBreached) {
         pageSpeedResourceRepo.deleteByMonitorIdAndKeepReason(m.getId(), PageSpeedResource.KEEP_LATEST);
         if (res.resources().isEmpty()) return;
-        boolean breached = !res.breached().isEmpty();
+        // KENAR-TETIKLI: delil yalnizca ihlal BASLADIGI anda dondurulur, ihlal SURDUGU her kontrolde
+        // degil. Aksi halde kalici yavas bir sayfa 30 dk'da bir 500 kalici satir yazar — gunde
+        // ~24.000 satir, 90 gunluk saklamayla tek izleme icin milyonlarca satir. Sorulan soru
+        // "ne zaman bozuldu" oldugu icin bozulma ANI zaten yeterli; ihlal surerken kirilim
+        // LATEST'te canli duruyor.
+        boolean breached = !res.breached().isEmpty() && !wasBreached;
         List<PageSpeedResource> rows = new ArrayList<>(res.resources().size() * (breached ? 2 : 1));
         for (PageSpeedCheckerService.Measured x : res.resources()) {
             rows.add(resourceRow(m, pc, x, ts, PageSpeedResource.KEEP_LATEST));
