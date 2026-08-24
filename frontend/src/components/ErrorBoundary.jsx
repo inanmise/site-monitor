@@ -1,4 +1,5 @@
 import { Component, useState } from 'react'
+import { currentVersion } from '../utils/appVersion.js'
 import { AlertOctagon, Bug } from 'lucide-react'
 import { useT } from '../i18n/index.jsx'
 import IssueReportModal from './IssueReportModal.jsx'
@@ -168,7 +169,7 @@ export default class ErrorBoundary extends Component {
           // hiç göndermiyordu, yani CLIENT_ERROR kayıtları sürüm/ekran bilgisi olmadan düşüyordu.
           // Sözleşme değişikliği değil: uç @RequestBody Map alıyor, mevcut alanlar dolduruluyor.
           // userAgent GÖNDERİLMEZ — sunucu onu HTTP başlığından okuyor.
-          appVersion: typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '',
+          appVersion: currentVersion(),
           screenSize: `${window.screen?.width || 0}x${window.screen?.height || 0}`,
         }),
       })

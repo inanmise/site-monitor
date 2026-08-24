@@ -53,6 +53,7 @@ public class BrandingController {
     private final AppSettingsService settingsService;
     private final AuditService auditService;
     private final PermissionService permissionService;
+    private final org.springframework.core.env.Environment environment;
 
     // ── Admin: ayar sayfası ───────────────────────────────────────────────────
 
@@ -112,6 +113,13 @@ public class BrandingController {
         b.put("banner_link_label", settingsService.getString(PREFIX + "banner-link-label", ""));
         b.put("banner_tone",       settingsService.getString(PREFIX + "banner-tone", "INFO"));
         b.put("banner_version",    settingsService.getInt(BANNER_VERSION_KEY, 0));
+        // Uygulama sürümü ÇALIŞMA ANINDA buradan gelir. Arayüz bunu derleme zamanında gömüyordu
+        // (Vite `define` → __APP_VERSION__), o değer dev-server BAŞLARKEN bir kez okunuyordu ve
+        // sürüm yükseltmesinden sonra sunucu yeniden başlatılmadıkça ekranda BAYAT kalıyordu
+        // (kullanıcı v20.26.1 görürken depo v20.29.4'teydi). AppVersion dosyayı her istekte
+        // çözdüğü için burada verilen değer her zaman günceldir. Bu uç zaten public ve login
+        // sayfasınca çekiliyor → ne yeni uç ne de ek istek gerekti (60 sn cache yeterli).
+        b.put("app_version",       com.sitemonitor.service.AppVersion.resolve(environment));
         return ok(Map.of("data", b));
     }
 

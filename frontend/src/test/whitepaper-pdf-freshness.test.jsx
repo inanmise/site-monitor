@@ -64,7 +64,7 @@ describe('kılavuz PDF tazeliği', () => {
 
   it.each(sources.map((s) => [s.relKey, s]))('%s sürüm damgasını {{VERSION}} ile yazar', (relKey, s) => {
     // Elle yazılan sürüm her release'de eskiyordu (kılavuz 20.23.0 derken uygulama 20.24.1).
-    // Damga artık token; HelpPage __APP_VERSION__ ile, PDF üreticisi kök VERSION ile çözer.
+    // Damga artık token; HelpPage sürümü ÇALIŞMA ANINDA sunucudan (useAppVersion) çözer, PDF üreticisi kök VERSION ile.
     const text = readFileSync(s.absPath, 'utf8')
     expect(text, 'sürüm damgası {{VERSION}} token\'ı içermeli').toContain('{{VERSION}}')
 

@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react'
 import { api } from '../api/client'
+import { setRuntimeVersion, currentVersion } from '../utils/appVersion.js'
 
 const BrandingContext = createContext(null)
 
@@ -17,7 +18,12 @@ export function BrandingProvider({ children }) {
   const refresh = useCallback(async (fresh = false) => {
     try {
       const res = await api.getBranding(fresh)
-      if (res?.success) setBranding(res.data || {})
+      if (res?.success) {
+        setBranding(res.data || {})
+        // Sürüm ÇALIŞMA ANINDA sunucudan gelir; senkron okuyucular (ErrorBoundary, hata bildirimi)
+        // context'e bağlanamadığı için değeri modül düzeyinde de saklıyoruz.
+        setRuntimeVersion(res.data?.app_version)
+      }
     } catch { /* branding olmadan da uygulama çalışır */ }
   }, [])
 
@@ -36,6 +42,18 @@ export function BrandingProvider({ children }) {
       {children}
     </BrandingContext.Provider>
   )
+}
+
+/**
+ * Ekranda çizilecek uygulama sürümü. Sunucudan geleni yeğler, yoksa derleme zamanı yedeğine düşer.
+ * Bileşenler bunu kullanınca branding yanıtı geldiğinde kendiliğinden tazelenirler.
+ */
+export function useAppVersion() {
+  const ctx = useContext(BrandingContext)
+  const fromServer = ctx?.branding?.app_version
+  return (typeof fromServer === 'string' && fromServer.trim() && fromServer.trim() !== 'unknown')
+    ? fromServer.trim()
+    : currentVersion()
 }
 
 export function useBranding() {

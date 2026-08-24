@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useAppVersion } from '../contexts/BrandingProvider.jsx'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useT, useLanguage } from '../i18n/index.jsx'
@@ -25,11 +26,13 @@ export default function HelpPage() {
   const [activeId, setActiveId] = useState('')
 
   // Sürüm damgası kaynakta {{VERSION}} olarak durur ve BURADA çözülür. Elle yazılan bir
-  // numara her sürümde eskiyordu (kılavuz 20.23.0 derken uygulama 20.24.1'di); artık tek
-  // doğruluk kaynağı kök VERSION dosyası (__APP_VERSION__ olarak gömülüyor).
+  // numara her sürümde eskiyordu (kılavuz 20.23.0 derken uygulama 20.24.1'di); doğruluk kaynağı
+  // kök VERSION dosyasıdır ve ÇALIŞMA ANINDA sunucudan gelir (derleme zamanı değeri yalnız yedek —
+  // gömülü olan, dev-server yeniden başlatılmadıkça bayat kalıyordu).
+  const appVersion = useAppVersion()
   const markdown = useMemo(
-    () => guide.md.split('{{VERSION}}').join(__APP_VERSION__),
-    [guide.md]
+    () => guide.md.split('{{VERSION}}').join(appVersion),
+    [guide.md, appVersion]
   )
   // markdown modül seviyesi sabitten türer → memo yalnız dil değişiminde yeniden hesaplar.
   const tocItems = useMemo(() => parseToc(markdown), [markdown])
@@ -94,7 +97,7 @@ export default function HelpPage() {
           <div>
             <h2 className="help-header-title" style={{ margin: 0 }}>{t('help.title')}</h2>
             <span style={{ fontSize: 12, opacity: .65 }}>
-              v{__APP_VERSION__} · {t('help.langNote')}
+              v{appVersion} · {t('help.langNote')}
             </span>
           </div>
         </div>

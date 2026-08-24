@@ -8,7 +8,7 @@ import '@fontsource/josefin-sans/400.css'
 import '@fontsource/josefin-sans/600.css'
 import { api } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
-import { useBranding } from '../contexts/BrandingProvider.jsx'
+import { useBranding, useAppVersion } from '../contexts/BrandingProvider.jsx'
 import BrandLogo from '../components/BrandLogo.jsx'
 import { downscaleImage } from '../utils/imageDownscale.js'
 import { ShieldAlert, ShieldCheck, Lock, Globe, Activity, Radio, Network, Server, Search, Gauge, Bell, BellRing, AlertTriangle, FileText, BarChart3, TrendingUp, Wrench, ScanSearch, FlaskConical, Zap, X } from 'lucide-react'
@@ -22,6 +22,7 @@ export default function Login({ onLogin, sessionExpired = false }) {
   const { lang, toggle: toggleLang } = useLanguage()
   // Branding (beyaz etiket): dolu değer varsa onu, boşsa i18n varsayılanını kullan (auth ÖNCESİ public).
   const { get: brand, branding } = useBranding()
+  const appVersion = useAppVersion()   // sunucudan; gömülü değer yalnız yedek
   const saved = localStorage.getItem(STORAGE_KEY)
   const [username, setUsername] = useState(saved || '')
   const [password, setPassword] = useState('')
@@ -338,7 +339,7 @@ export default function Login({ onLogin, sessionExpired = false }) {
             </div>
             <div className="lp-footer">
               <span className="lp-footer-meta">
-                {brand('footer_text', `v${__APP_VERSION__} · © ${new Date().getFullYear()} ${brand('app_name', 'SiteMonitor')}`)}
+                {brand('footer_text', `v${appVersion} · © ${new Date().getFullYear()} ${brand('app_name', 'SiteMonitor')}`)}
               </span>
               <button type="button" className="lp-lang-btn" onClick={toggleLang}>
                 <Globe size={13} />

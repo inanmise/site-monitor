@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { currentVersion } from '../utils/appVersion.js'
 import { Bug, Camera, CheckCircle2, Send, X, ZoomIn } from 'lucide-react'
 import { api, getRecentFailures } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
@@ -145,7 +146,7 @@ export default function IssueReportModal({ open, onClose, errorText = '', linked
         linkedReference: linkedReference || undefined,
         url,
         tabKey,
-        appVersion: typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '',
+        appVersion: currentVersion(),
         screenSize,
         theme,
         lang,
@@ -168,7 +169,7 @@ export default function IssueReportModal({ open, onClose, errorText = '', linked
     [t('issue.autoWho'),     me?.username || '—'],
     [t('issue.autoWhen'),    now.toLocaleString(lang === 'tr' ? 'tr-TR' : 'en-GB')],
     [t('issue.autoWhere'),   `${tabKey} · ${url.length > 60 ? url.slice(0, 60) + '…' : url}`],
-    [t('issue.autoVersion'), typeof __APP_VERSION__ !== 'undefined' ? `v${__APP_VERSION__}` : '—'],
+    [t('issue.autoVersion'), currentVersion() ? `v${currentVersion()}` : '—'],
     [t('issue.autoBrowser'), browserLabel(navigator.userAgent)],
     [t('issue.autoScreen'),  screenSize],
     [t('issue.autoTheme'),   `${theme} · ${lang.toUpperCase()}`],
