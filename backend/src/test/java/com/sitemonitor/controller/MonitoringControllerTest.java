@@ -938,6 +938,70 @@ class MonitoringControllerTest {
                 .andExpect(jsonPath("$.data.recovery_interval_seconds").value(600)); // clampInterval(999) → 600
     }
 
+    // ── Bildirim grubu YAŞAM DÖNGÜSÜ: silinmiş grup vs başka takımın grubu ──
+
+    private com.sitemonitor.model.KeywordMonitor keywordWithGroup() {
+        com.sitemonitor.model.KeywordMonitor m = new com.sitemonitor.model.KeywordMonitor();
+        m.setId(7L); m.setUrl("https://x.example.com"); m.setKeyword("foo"); m.setActive(true);
+        m.setTeamId(5L); m.setNotificationGroupId(2L);
+        when(keywordMonitorRepo.findById(7L)).thenReturn(Optional.of(m));
+        when(keywordMonitorRepo.save(any(com.sitemonitor.model.KeywordMonitor.class)))
+                .thenAnswer(a -> a.getArgument(0));
+        when(keywordResultRepo.findTopByMonitorIdOrderByCheckedAtDesc(7L)).thenReturn(Optional.empty());
+        return m;
+    }
+
+    private com.sitemonitor.model.NotificationGroup grp(long id, long teamId, boolean active) {
+        com.sitemonitor.model.NotificationGroup g = new com.sitemonitor.model.NotificationGroup();
+        g.setId(id); g.setTeamId(teamId); g.setActive(active); g.setName("G" + id);
+        return g;
+    }
+
+    /**
+     * Grup SİLİNDİĞİNDE onu kullanan monitörler kalır ve formda "(silinmiş)" rozetiyle görünür.
+     * Form her kaydetmede anahtarı GÖNDERDİĞİ için, silinmiş grubu reddetmek o monitörlerin
+     * BÜTÜN düzenlemelerini kilitlerdi — interval değiştirmek bile imkânsızlaşırdı. Üstelik
+     * "bu takıma ait değil" mesajı gerçek dışıydı: grup o takımın, yalnızca silinmiş.
+     */
+    @Test
+    @DisplayName("PUT: SİLİNMİŞ grup düzenlemeyi ENGELLEMEZ — takım varsayılanına düşer")
+    void updateKeyword_deletedGroup_fallsBackInsteadOfBlocking() throws Exception {
+        keywordWithGroup();
+        when(notificationGroupRepo.findById(2L)).thenReturn(Optional.of(grp(2L, 5L, false)));
+
+        mvc.perform(put("/api/monitoring/keyword/7").session(session("ADMIN"))
+                        .contentType("application/json")
+                        .content("{\"teamId\":5,\"notificationGroupId\":2,\"recoveryChecks\":3}"))
+                .andExpect(status().isOk())
+                // Zincirin kalanı işler: null = takım varsayılanı → Team.email
+                .andExpect(jsonPath("$.data.notification_group_id").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("PUT: BAŞKA takımın grubu HÂLÂ reddedilir (400) — bu bir yönlendirme sızıntısı olurdu")
+    void updateKeyword_foreignGroup_stillRejected() throws Exception {
+        keywordWithGroup();
+        when(notificationGroupRepo.findById(9L)).thenReturn(Optional.of(grp(9L, 42L, true)));
+
+        mvc.perform(put("/api/monitoring/keyword/7").session(session("ADMIN"))
+                        .contentType("application/json")
+                        .content("{\"teamId\":5,\"notificationGroupId\":9,\"recoveryChecks\":3}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("PUT: AKTİF ve kendi takımının grubu normal şekilde kaydedilir")
+    void updateKeyword_activeOwnGroup_persists() throws Exception {
+        keywordWithGroup();
+        when(notificationGroupRepo.findById(2L)).thenReturn(Optional.of(grp(2L, 5L, true)));
+
+        mvc.perform(put("/api/monitoring/keyword/7").session(session("ADMIN"))
+                        .contentType("application/json")
+                        .content("{\"teamId\":5,\"notificationGroupId\":2,\"recoveryChecks\":3}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.notification_group_id").value(2));
+    }
+
     // ── Keyword mükerrer koruması: aynılık anahtarı url + keyword + takım (ping desenin ikizi) ──
 
     @Test

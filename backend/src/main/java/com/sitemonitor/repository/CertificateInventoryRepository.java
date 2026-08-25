@@ -51,4 +51,9 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     @Modifying
     @Query("UPDATE CertificateInventory c SET c.groupName = :newName WHERE LOWER(c.groupName) = LOWER(:oldName) AND ((:teamId IS NULL AND c.teamId IS NULL) OR c.teamId = :teamId)")
     int renameGroupForTeam(@Param("teamId") Long teamId, @Param("oldName") String oldName, @Param("newName") String newName);
+
+    /** Bildirim grubu KULLANIM sorgusu — grup silinmeden once "nerede kullaniliyor" ve
+     *  toplu tasima icin. Talep uzerine calisir (silme/kullanim ekrani), sweep yolunda DEGIL. */
+    java.util.List<CertificateInventory> findByNotificationGroupId(Long notificationGroupId);
+
 }

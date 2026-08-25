@@ -15,6 +15,8 @@ vi.mock('../api/client', () => ({
       create: vi.fn(async () => ({ success: true, data: {} })),
       update: vi.fn(async () => ({ success: true, data: {} })),
       remove: vi.fn(async () => ({ success: true })),
+      usage: vi.fn(async () => ({ success: true, data: { total: 0, by_type: {}, items: [] } })),
+      reassign: vi.fn(async () => ({ success: true, data: { moved: 2 } })),
       makeDefault: vi.fn(async () => ({ success: true, data: {} })),
     },
   }),
@@ -150,6 +152,67 @@ describe('NotificationGroups', () => {
     await waitFor(() => expect(dialog.spy).toHaveBeenCalled())
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
     expect(api.notificationGroups.remove).not.toHaveBeenCalled()
+  })
+
+  it('KULLANIMDAKİ grup: 409 gelince kullanım modalı açılır ve etkilenenler listelenir', async () => {
+    // Silme reddedildiğinde kullanıcıyı ham hata mesajıyla baş başa bırakmıyoruz: NEREDE
+    // kullanıldığını gösterip taşıma adımını önüne koyuyoruz.
+    state.groups = [group()]
+    api.notificationGroups.remove.mockResolvedValueOnce({
+      success: false,
+      error: 'in use',
+      usage: { total: 2, by_type: { ping: 2 }, items: [{ type: 'ping', id: 1, name: 'GW' }], truncated: true },
+    })
+    render(<NotificationGroups teams={TEAMS} systemRole="USER" />)
+    await screen.findByText('Ödeme Nöbetçi')
+
+    fireEvent.click(screen.getByRole('button', { name: /Actions/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/ }))
+
+    expect(await screen.findByText(/This group is in use/)).toBeTruthy()
+    expect(screen.getByText('GW')).toBeTruthy()
+    expect(screen.getByText(/Ping monitor/)).toBeTruthy()
+  })
+
+  it('Taşıma: seçilen hedef grup ile reassign çağrılır', async () => {
+    state.groups = [group(), group({ id: 11, name: 'Hedef' })]
+    api.notificationGroups.remove.mockResolvedValueOnce({
+      success: false, error: 'in use',
+      usage: { total: 1, by_type: { ping: 1 }, items: [{ type: 'ping', id: 1, name: 'GW' }], truncated: false },
+    })
+    render(<NotificationGroups teams={TEAMS} systemRole="USER" />)
+    await screen.findByText('Ödeme Nöbetçi')
+
+    fireEvent.click(screen.getAllByRole('button', { name: /Actions/i })[0])
+    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/ }))
+    await screen.findByText(/This group is in use/)
+
+    fireEvent.mouseDown(screen.getByRole('button', { name: /Target group/i }))
+    // SearchableSelect secenekleri onMouseDown ile secilir (click DEGIL); ayrica "Hedef" adi
+    // hem tabloda hem acilir listede gectigi icin .ss-option olani hedefliyoruz.
+    const opts = await screen.findAllByText('Hedef')
+    fireEvent.mouseDown(opts.find(el => el.closest('.ss-option')))
+    fireEvent.click(screen.getByRole('button', { name: /Move to another group/i }))
+
+    await waitFor(() => expect(api.notificationGroups.reassign).toHaveBeenCalledWith(10, 11))
+  })
+
+  it('Taşıma: hedef seçilmezse TAKIM VARSAYILANINA taşınır (null gönderilir)', async () => {
+    state.groups = [group()]
+    api.notificationGroups.remove.mockResolvedValueOnce({
+      success: false, error: 'in use',
+      usage: { total: 1, by_type: { ping: 1 }, items: [{ type: 'ping', id: 1, name: 'GW' }], truncated: false },
+    })
+    render(<NotificationGroups teams={TEAMS} systemRole="USER" />)
+    await screen.findByText('Ödeme Nöbetçi')
+
+    fireEvent.click(screen.getByRole('button', { name: /Actions/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/ }))
+    await screen.findByText(/This group is in use/)
+
+    fireEvent.click(screen.getByRole('button', { name: /Move to another group/i }))
+
+    await waitFor(() => expect(api.notificationGroups.reassign).toHaveBeenCalledWith(10, null))
   })
 
   it('Yazma yetkisi olmayan satırda işlem menüsü ÇİZİLMEZ (403 alıp "bozuk" sanmasın)', async () => {

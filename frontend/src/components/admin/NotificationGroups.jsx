@@ -47,6 +47,10 @@ export default function NotificationGroups({ teams = [], systemRole }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
   const [fTeam, setFTeam] = useState('')
+  // { group, usage } — silme 409 dondugunde ya da kullanici kullanimi merak ettiginde
+  const [usageModal, setUsageModal] = useState(null)
+  const [moveTarget, setMoveTarget] = useState('')
+  const [moving, setMoving] = useState(false)
 
   const teamMap = useMemo(() => Object.fromEntries(teams.map(x => [String(x.id), x.name])), [teams])
 
@@ -158,20 +162,49 @@ export default function NotificationGroups({ teams = [], systemRole }) {
   }
 
   async function remove(g) {
-    const teamEmail = teamEmails[String(g.team_id)]
     const ok = await showConfirm({
       title: t('ng.deleteTitle'),
-      // Ne kaybedildiğini AÇIKÇA söyler: bu grubu kullanan izlemeler nereye düşecek?
-      message: t('ng.deleteMsg')
-        .replace('{name}', g.name)
-        .replace('{fallback}', teamEmail || t('ng.noTeamEmail')),
+      // Silme KALICI ve yalnız kullanılmayan grupta mümkün; onay metni ikisini de söyler.
+      message: t('ng.deleteMsg').replace('{name}', g.name),
       confirmText: t('ng.delete'),
     })
     if (!ok) return
     const res = await api.notificationGroups.remove(g.id)
-    if (res?.success) { toast.success(t('ng.deleted')); load() }
-    else toast.error(res?.error || t('ng.errSave'))
+    if (res?.success) { toast.success(t('ng.deleted')); load(); return }
+    // 409: grup kullanimda. Kullaniciyi hata mesajiyla bas basa birakmak yerine NEREDE
+    // kullanildigini gosterip tasima adimini onune koyuyoruz.
+    if (res?.usage) {
+      setMoveTarget('')
+      setUsageModal({ group: g, usage: res.usage })
+      return
+    }
+    toast.error(res?.error || t('ng.errSave'))
   }
+
+  async function doMove() {
+    if (!usageModal) return
+    setMoving(true)
+    try {
+      const target = moveTarget === '' ? null : Number(moveTarget)
+      const res = await api.notificationGroups.reassign(usageModal.group.id, target)
+      if (res?.success) {
+        toast.success(t('ng.moveDone').replace('{n}', res.data?.moved ?? 0))
+        setUsageModal(null)
+        load()
+      } else {
+        toast.error(res?.error || t('ng.errSave'))
+      }
+    } finally {
+      setMoving(false)
+    }
+  }
+
+  /** Ayni takimin AKTIF ve kaynaktan FARKLI gruplari — tasima hedefi olabilecekler. */
+  const moveTargets = usageModal
+    ? groups.filter(x => x.active
+        && String(x.team_id) === String(usageModal.group.team_id)
+        && x.id !== usageModal.group.id)
+    : []
 
   const teamOptions = writableTeamIds.map(id => ({ value: id, label: teamMap[id] ?? `#${id}` }))
 
@@ -271,6 +304,70 @@ export default function NotificationGroups({ teams = [], systemRole }) {
           </table>
         </div>
       )}
+
+      <ModalShell
+        open={!!usageModal}
+        onClose={() => setUsageModal(null)}
+        title={t('ng.inUseTitle')}
+        icon={Users}
+        busy={moving}
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => setUsageModal(null)} disabled={moving}>
+              {t('ng.cancel')}
+            </button>
+            <button className="btn btn-primary" onClick={doMove} disabled={moving}>
+              {moving ? t('ng.saving') : t('ng.moveBtn')}
+            </button>
+          </>
+        }
+      >
+        {usageModal && (
+          <>
+            <AlertBanner tone="warning">
+              {t('ng.inUseBody').replace('{n}', usageModal.usage.total)}
+            </AlertBanner>
+
+            <div className="admin-table-wrap">
+              <table className="admin-table">
+                <thead>
+                  <tr><th>{t('ng.colName')}</th><th>{t('ng.colTeam')}</th></tr>
+                </thead>
+                <tbody>
+                  {(usageModal.usage.items ?? []).map(it => (
+                    <tr key={`${it.type}:${it.id}`}>
+                      <td>{it.name}</td>
+                      <td>{t(`ng.type.${it.type}`)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {usageModal.usage.truncated && (
+              <span className="field-hint">
+                {t('ng.inUseMore').replace('{n}',
+                  usageModal.usage.total - (usageModal.usage.items ?? []).length)}
+              </span>
+            )}
+
+            <Field label={t('ng.moveTarget')}>
+              {() => (
+                <SearchableSelect
+                  ariaLabel={t('ng.moveTarget')}
+                  value={moveTarget}
+                  onChange={setMoveTarget}
+                  options={[{ value: '', label: t('ng.moveToDefault') },
+                            ...moveTargets.map(x => ({ value: String(x.id), label: x.name }))]}
+                  placeholder={t('ng.moveToDefault')}
+                />
+              )}
+            </Field>
+            {moveTargets.length === 0 && (
+              <span className="field-hint">{t('ng.moveNoTarget')}</span>
+            )}
+          </>
+        )}
+      </ModalShell>
 
       <ModalShell
         open={!!modal}

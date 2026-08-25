@@ -7,6 +7,7 @@ import com.sitemonitor.repository.TeamRepository;
 import com.sitemonitor.service.AuditDiff;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.NotificationGroupService;
+import com.sitemonitor.service.NotificationGroupUsageService;
 import com.sitemonitor.service.PermissionService;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
@@ -53,6 +54,7 @@ public class NotificationGroupController {
 
     private final NotificationGroupRepository groupRepo;
     private final NotificationGroupService groupService;
+    private final NotificationGroupUsageService usageService;
     private final TeamRepository teamRepo;
     private final PermissionService permissionService;
     private final AuditService auditService;
@@ -241,6 +243,74 @@ public class NotificationGroupController {
 
     // ── Silme (yumuşak) ──────────────────────────────────────────────────────
 
+    /**
+     * Grup NEREDE kullanılıyor — silme onayından önce gösterilen özet.
+     *
+     * <p>Silme ekranı bunu çağırıp kullanıcıya etkilenecek izlemeleri gösterir; kullanıcı hangi
+     * izlemelerin yönlendirmesini değiştireceğini GÖRMEDEN karar vermek zorunda kalmasın.
+     */
+    @GetMapping("/{id}/usage")
+    public ResponseEntity<Map<String, Object>> usage(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, PERM, "view");
+        NotificationGroup g = groupRepo.findById(id).orElse(null);
+        if (g == null || !SessionScope.canView(session, g.getTeamId())) return notFound();
+        return ok(usageMap(usageService.usage(id)));
+    }
+
+    /**
+     * Grubun TÜM referanslarını başka bir gruba taşır ({@code target_group_id} null → takım
+     * varsayılanı). Silmeden önceki hazırlık adımı: kullanıcı 200 izlemeyi tek tek gezmesin.
+     */
+    @PostMapping("/{id}/reassign")
+    public ResponseEntity<Map<String, Object>> reassign(@PathVariable Long id,
+                                                        @RequestBody Map<String, Object> body,
+                                                        HttpSession session) {
+        permissionService.require(session, PERM, "edit");
+        NotificationGroup from = groupRepo.findById(id).orElse(null);
+        if (from == null || !SessionScope.canView(session, from.getTeamId())) return notFound();
+        if (!canWriteTeam(session, from.getTeamId()))
+            throw new SecurityException("Bu grubun izlemelerini taşıma yetkiniz yok");
+
+        Long targetId = toLong(body.get("target_group_id"));
+        if (targetId != null) {
+            NotificationGroup to = groupRepo.findById(targetId).orElse(null);
+            // Hedef AYNI takımın AKTİF grubu olmalı: aksi halde toplu taşıma, tek tek yapılması
+            // engellenen şeyi (başka takıma yönlendirme) toptan yapmanın yolu olurdu.
+            if (to == null || !from.getTeamId().equals(to.getTeamId()))
+                throw new IllegalArgumentException("Hedef grup bu takıma ait değil");
+            if (!Boolean.TRUE.equals(to.getActive()))
+                throw new IllegalArgumentException("Silinmiş bir gruba taşıma yapılamaz");
+            if (targetId.equals(id))
+                throw new IllegalArgumentException("Hedef grup kaynakla aynı olamaz");
+        }
+
+        Map<String, Integer> moved = usageService.reassign(id, targetId);
+        int total = moved.values().stream().mapToInt(Integer::intValue).sum();
+        auditService.recordAction("NOTIFICATION_GROUP_REASSIGN", session, "NOTIFICATION_GROUP",
+                String.valueOf(id), from.getName(),
+                "{\"to\":" + targetId + ",\"moved\":" + total + "}");
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("moved", total);
+        out.put("by_type", moved);
+        return ok(out);
+    }
+
+    private static Map<String, Object> usageMap(NotificationGroupUsageService.Usage u) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("total", u.total());
+        m.put("by_type", u.byType());
+        m.put("items", u.items().stream().map(r -> {
+            Map<String, Object> x = new LinkedHashMap<>();
+            x.put("type", r.type());
+            x.put("id", r.id());
+            x.put("name", r.name());
+            return x;
+        }).toList());
+        m.put("truncated", u.total() > u.items().size());
+        return m;
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<Map<String, Object>> delete(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, PERM, "edit");
@@ -249,11 +319,25 @@ public class NotificationGroupController {
         if (!canWriteTeam(session, g.getTeamId()))
             throw new SecurityException("Bu grubu silme yetkiniz yok");
 
-        Map<String, Object> before = AuditDiff.snapshot(g, FIELDS);
-        NotificationGroup saved = groupService.softDelete(g, actor(session), actorName(session));
+        // KULLANIMDAYSA SİLİNMEZ. Sessizce silmek, o izlemelerin alarm yönlendirmesini kullanıcı
+        // görmeden değiştirirdi. 409 + kullanım özeti döner; arayüz özeti gösterip "başka gruba
+        // taşı" adımını sunar. IllegalStateException → 409 (GlobalExceptionHandler).
+        var u = usageService.usage(id);
+        if (u.inUse()) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("success", false);
+            body.put("error", "Bu grup " + u.total() + " yerde kullanılıyor — önce başka bir gruba taşıyın");
+            body.put("usage", usageMap(u));      // arayüz modali BU özetten besleniyor
+            return ResponseEntity.status(409).body(body);
+        }
+
+        // Denetim kaydı silmeden ÖNCE: satır gittikten sonra kimin neyi sildiği okunamazdı.
+        // Diff yerine son durumun anlık görüntüsü yazılır — "sonra"sı yok, kayıt tamamen gitti.
+        String snapshot = String.valueOf(AuditDiff.snapshot(g, FIELDS));
+        String name = g.getName();
+        groupService.deletePermanently(g);
         auditService.recordAction("NOTIFICATION_GROUP_DELETE", session, "NOTIFICATION_GROUP",
-                String.valueOf(id), saved.getName(),
-                AuditDiff.diff(before, AuditDiff.snapshot(saved, FIELDS)));
+                String.valueOf(id), name, snapshot);
         return ok(Map.of("message", "Grup silindi", "id", id));
     }
 

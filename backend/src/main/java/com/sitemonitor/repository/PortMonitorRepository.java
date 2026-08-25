@@ -25,4 +25,9 @@ public interface PortMonitorRepository extends JpaRepository<PortMonitor, Long> 
     @Modifying
     @Query("UPDATE PortMonitor m SET m.groupName = :newName WHERE LOWER(m.groupName) = LOWER(:oldName) AND ((:teamId IS NULL AND m.teamId IS NULL) OR m.teamId = :teamId)")
     int renameGroupForTeam(@Param("teamId") Long teamId, @Param("oldName") String oldName, @Param("newName") String newName);
+
+    /** Bildirim grubu KULLANIM sorgusu — grup silinmeden once "nerede kullaniliyor" ve
+     *  toplu tasima icin. Talep uzerine calisir (silme/kullanim ekrani), sweep yolunda DEGIL. */
+    java.util.List<PortMonitor> findByNotificationGroupId(Long notificationGroupId);
+
 }

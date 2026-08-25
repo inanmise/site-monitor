@@ -32,8 +32,20 @@ public interface NotificationGroupRepository extends JpaRepository<NotificationG
     /** Zincirin ikinci halkası: takımın aktif varsayılan grubu. */
     Optional<NotificationGroup> findFirstByTeamIdAndIsDefaultTrueAndActiveTrue(Long teamId);
 
-    /** Takım içinde ad benzersizliği (kendisi hariç — güncellemede kullanılır). */
+    /**
+     * Takım içinde ad benzersizliği (kendisi hariç — güncellemede kullanılır).
+     *
+     * <p><b>YALNIZ AKTİF gruplara bakar.</b> Yumuşak silme satırı bırakıyor; aktiflik filtresi
+     * olmadan silinmiş bir grubun adı SONSUZA DEK rezerve kalıyordu. Kullanıcı açısından o grup
+     * yok — listede görünmüyor, seçilemiyor — ama aynı adı yeniden kullanmak istediğinde
+     * "bu takımda zaten var" diyen, hiçbir yerde göremediği bir kayda çarpıyordu.
+     *
+     * <p>Rezerve tutmanın koruduğu bir şey de yok: bir grup ancak KULLANIMDA DEĞİLKEN silinebiliyor
+     * ({@code NotificationGroupUsageService}) ve silindikten sonra referans kazanamıyor (seçici
+     * pasif grupları sunmuyor). Yani silinmiş satır kalıcı olarak sahipsizdir.
+     */
     @Query("SELECT COUNT(g) > 0 FROM NotificationGroup g WHERE g.teamId = :teamId "
+         + "AND g.active = true "
          + "AND LOWER(g.name) = LOWER(:name) AND (:excludeId IS NULL OR g.id <> :excludeId)")
     boolean existsByTeamAndName(@Param("teamId") Long teamId, @Param("name") String name,
                                 @Param("excludeId") Long excludeId);
@@ -48,7 +60,9 @@ public interface NotificationGroupRepository extends JpaRepository<NotificationG
 
     /** Bir takımın diğer varsayılanlarını indirir — "en fazla bir varsayılan" kısıtının uygulaması. */
     @org.springframework.transaction.annotation.Transactional
-    @org.springframework.data.jpa.repository.Modifying
+    // clearAutomatically: toplu UPDATE satirlari dogrudan veritabaninda degistirir; kalicilik
+    // baglami temizlenmezse ayni islem icinde okunan entity'ler BAYAT is_default tasir.
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE NotificationGroup g SET g.isDefault = false "
          + "WHERE g.teamId = :teamId AND g.id <> :keepId AND g.isDefault = true")
     int clearOtherDefaults(@Param("teamId") Long teamId, @Param("keepId") Long keepId);

@@ -95,31 +95,69 @@ public class NotificationGroupService {
                 } else if (!Boolean.TRUE.equals(g.getActive())) {
                     log.debug("Damgalı bildirim grubu {} pasif — zincirin kalanına düşülüyor", g.getId());
                 } else {
-                    List<String> emails = parseEmails(g.getEmails());
+                    List<String> emails = deliverableEmails(g.getEmails());
                     if (!emails.isEmpty()) {
                         return new Override(emails, Source.GROUP, g.getId(), g.getName());
                     }
+                    warnUnusable(g);
                 }
             }
         }
 
         // 2) Takımın aktif varsayılan grubu
         Optional<NotificationGroup> def = groupRepo.findFirstByTeamIdAndIsDefaultTrueAndActiveTrue(teamId);
-        if (def.isPresent()) {
-            List<String> emails = parseEmails(def.get().getEmails());
+        // Aktiflik BURADA da doğrulanır. Sorgu adı zaten aktif süzüyor ama garanti, bir metot
+        // adının doğru kalmasına bağlı OLMAMALI: sorgu ileride değişirse ya da bu dal başka bir
+        // kaynaktan beslenirse pasif grup sessizce uygulanır ve takım adresi atlanırdı.
+        if (def.isPresent() && Boolean.TRUE.equals(def.get().getActive())) {
+            List<String> emails = deliverableEmails(def.get().getEmails());
             if (!emails.isEmpty()) {
                 return new Override(emails, Source.TEAM_DEFAULT_GROUP, def.get().getId(), def.get().getName());
             }
+            warnUnusable(def.get());
         }
 
         // 3) Grup yok → çağıran KENDİ Team.email yoluna düşer (bugünkü davranış).
         return Override.NONE;
     }
 
+    /**
+     * Grup var ama GÖNDERİLEBİLİR adresi yok — zincir takım adresine düşecek.
+     *
+     * <p>Sessizce düşmek yeterli DEĞİL: alarm gitmeye devam eder ama kimse grubun bozuk
+     * olduğunu öğrenmez. Uyarı, sorunu ops tarafında görünür kılar.
+     */
+    private void warnUnusable(NotificationGroup g) {
+        log.warn("Bildirim grubu {} ('{}') gönderilebilir adres taşımıyor — takım adresine düşülüyor. "
+               + "Kayıtlı içerik: '{}'", g.getId(), g.getName(), g.getEmails());
+    }
+
     /** Damgasız kısayol — storm, olay bildirimi ve alarm zinciri dışı gönderimler için. */
     public Override overrideFor(Long teamId) {
         return overrideFor(teamId, null);
     }
+
+    /**
+     * GÖNDERİLEBİLİR adresler — çözümleme yolunun kullandığı süzgeç.
+     *
+     * <p>{@link #parseEmails} ham içeriği döner (ekranda yönetici ne kayıtlıysa onu görmeli).
+     * Burada ayrıca BİÇİM süzgeci var: adres gibi görünmeyen girdiler atılır. Aksi halde
+     * {@code emails} kolonunda "asdf" gibi bir içerik taşıyan grup UYGULANIR, alarm adres
+     * olmayan bir şeye gider ve takım adresi ATLANIRDI. Yazma anında doğrulama var, ama eski
+     * kayıtlar / doğrudan veritabanı müdahalesi / ileride eklenecek bir yazma yolu onu delebilir;
+     * garanti gönderim anında da durmalı.
+     */
+    static List<String> deliverableEmails(String csv) {
+        List<String> out = new ArrayList<>();
+        for (String e : parseEmails(csv)) {
+            if (DELIVERABLE.matcher(e).matches()) out.add(e);
+        }
+        return out;
+    }
+
+    /** Kasten gevşek: amaç yazım denetimi değil, "bu hiç adres değil"i elemek. */
+    private static final java.util.regex.Pattern DELIVERABLE =
+            java.util.regex.Pattern.compile("[^\\s@,;]+@[^\\s@,;]+\\.[^\\s@,;]{2,}");
 
     /** Normalize CSV → adres listesi (boşlar atılır, büyük/küçük harf duyarsız yinelenenler tekilleşir). */
     public static List<String> parseEmails(String csv) {
@@ -252,18 +290,25 @@ public class NotificationGroupService {
     }
 
     /**
-     * Yumuşak silme (K7). Satır KALIR: onu kullanan monitörlerin seçimi korunur, kullanıcı
-     * formda "silinmiş grup" rozetini görür ve bilinçli olarak başka bir grup seçer. Kalıcı
-     * silinseydi o monitörler sessizce takım varsayılanına kayardı — kimse fark etmezdi.
+     * KALICI silme — satır gider.
+     *
+     * <p>Eskiden yumuşak silmeydi ({@code active=false}) ve satır kalıyordu. İki gerçek soruna yol
+     * açtı: (1) silinmiş grubun adı SONSUZA DEK rezerve kalıyordu — kullanıcı hiçbir yerde
+     * göremediği bir kayda çarpıp "bu adda grup zaten var" uyarısı alıyordu; (2) hiçbir işe
+     * yaramayan sahipsiz satırlar birikiyordu.
+     *
+     * <p>Kalıcı silme artık GÜVENLİ, çünkü silme yalnız grup HİÇBİR YERDE KULLANILMIYORKEN
+     * mümkün ({@code NotificationGroupUsageService} + controller kapısı). Yani giden satırın
+     * hiçbir izleme/envanter referansı yoktur.
+     *
+     * <p>Denetim kaydı çağıranda silmeden ÖNCE hazırlanır — satır gittikten sonra kimin neyi
+     * sildiği hiçbir yerden okunamazdı.
      */
     @org.springframework.transaction.annotation.Transactional
-    public NotificationGroup softDelete(NotificationGroup g, String actor, String actorName) {
-        g.setActive(false);
-        g.setIsDefault(false);          // pasif grup takımın varsayılanı KALAMAZ
-        g.setUpdatedAt(nowIso());
-        g.setUpdatedBy(actor);
-        g.setUpdatedByName(actorName);
-        return groupRepo.save(g);
+    public void deletePermanently(NotificationGroup g) {
+        log.info("Bildirim grubu kalıcı silindi: id={} takım={} ad='{}'",
+                g.getId(), g.getTeamId(), g.getName());
+        groupRepo.delete(g);
     }
 
     /** Arayüz gösterimi — CSV yerine dizi döner, "kaç adres" sayacı ekranda hesaplanmaz. */

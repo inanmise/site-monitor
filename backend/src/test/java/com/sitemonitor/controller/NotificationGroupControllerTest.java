@@ -50,6 +50,7 @@ class NotificationGroupControllerTest {
 
     @MockitoBean NotificationGroupRepository groupRepo;
     @MockitoBean NotificationGroupService groupService;
+    @MockitoBean com.sitemonitor.service.NotificationGroupUsageService usageService;
     @MockitoBean TeamRepository teamRepo;
     @MockitoBean PermissionService permissionService;
     @MockitoBean AuditService auditService;
@@ -73,8 +74,11 @@ class NotificationGroupControllerTest {
                 .thenReturn(new NotificationGroupService.GroupInput("Nöbet", List.of("n@x.com"), false));
         when(groupService.create(anyLong(), any(), any(), any())).thenReturn(group(GROUP_A, TEAM_A));
         when(groupService.update(any(), any(), any(), any())).thenReturn(group(GROUP_A, TEAM_A));
-        when(groupService.softDelete(any(), any(), any())).thenReturn(group(GROUP_A, TEAM_A));
         when(groupService.makeDefault(any())).thenReturn(group(GROUP_A, TEAM_A));
+
+        when(usageService.usage(anyLong()))
+                .thenReturn(new com.sitemonitor.service.NotificationGroupUsageService.Usage(
+                        0, java.util.Map.of(), List.of()));
 
         userOfA = session("ayse", TEAM_A);
         userOfB = session("burak", TEAM_B);
@@ -165,7 +169,7 @@ class NotificationGroupControllerTest {
         mvc.perform(delete("/api/notification-groups/{id}", GROUP_A).session(userOfB))
                 .andExpect(status().isNotFound());
 
-        verify(groupService, never()).softDelete(any(), any(), any());
+        verify(groupService, never()).deletePermanently(any());
     }
 
     @Test
@@ -210,7 +214,7 @@ class NotificationGroupControllerTest {
         mvc.perform(delete("/api/notification-groups/{id}", GROUP_A).session(userOfA))
                 .andExpect(status().isForbidden());
 
-        verify(groupService, never()).softDelete(any(), any(), any());
+        verify(groupService, never()).deletePermanently(any());
     }
 
     // ── Doğrulama ────────────────────────────────────────────────────────────
@@ -244,6 +248,131 @@ class NotificationGroupControllerTest {
     }
 
     // ── Listeleme ────────────────────────────────────────────────────────────
+
+    // ── Kullanım / silme kapısı / toplu taşıma ───────────────────────────────
+
+    private com.sitemonitor.service.NotificationGroupUsageService.Usage usageOf(int total) {
+        return new com.sitemonitor.service.NotificationGroupUsageService.Usage(
+                total, java.util.Map.of("ping", total),
+                List.of(new com.sitemonitor.service.NotificationGroupUsageService.Ref("ping", 1L, "GW")));
+    }
+
+    /**
+     * Kullanımdaki grubu silmek, o izlemelerin alarm yönlendirmesini kullanıcı GÖRMEDEN
+     * değiştirirdi. 409 döner ve yanıt kullanım özetini TAŞIR — arayüz modali bu özetten
+     * besleniyor, ayrı bir istek atmak zorunda kalmıyor.
+     */
+    @Test
+    @DisplayName("KULLANIMDAKİ grup silinemez: 409 ve yanıt kullanım özetini taşır")
+    void delete_inUse_returns409WithUsage() throws Exception {
+        when(usageService.usage(GROUP_A)).thenReturn(usageOf(3));
+
+        mvc.perform(delete("/api/notification-groups/{id}", GROUP_A).session(userOfA))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.usage.total").value(3))
+                .andExpect(jsonPath("$.usage.items[0].name").value("GW"))
+                .andExpect(jsonPath("$.usage.by_type.ping").value(3));
+
+        verify(groupService, never()).deletePermanently(any());
+    }
+
+    @Test
+    @DisplayName("KullanımDA DEĞİLSE silme normal işler")
+    void delete_notInUse_ok() throws Exception {
+        mvc.perform(delete("/api/notification-groups/{id}", GROUP_A).session(userOfA))
+                .andExpect(status().isOk());
+
+        verify(groupService).deletePermanently(any());
+    }
+
+    @Test
+    @DisplayName("Kullanım ucu: kendi takımının grubu için özet döner")
+    void usage_ownTeam_ok() throws Exception {
+        when(usageService.usage(GROUP_A)).thenReturn(usageOf(2));
+
+        mvc.perform(get("/api/notification-groups/{id}/usage", GROUP_A).session(userOfA))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(2))
+                .andExpect(jsonPath("$.data.truncated").value(true));
+    }
+
+    @Test
+    @DisplayName("IDOR: BAŞKA takımın grubunun kullanımı sorulamaz (404)")
+    void usage_foreignTeam_404() throws Exception {
+        mvc.perform(get("/api/notification-groups/{id}/usage", GROUP_B).session(userOfA))
+                .andExpect(status().isNotFound());
+
+        verify(usageService, never()).usage(GROUP_B);
+    }
+
+    @Test
+    @DisplayName("Taşıma: hedef AYNI takımın aktif grubu olmalı, aksi halde 400")
+    void reassign_foreignTarget_400() throws Exception {
+        mvc.perform(post("/api/notification-groups/{id}/reassign", GROUP_A)
+                        .session(userOfA)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"target_group_id\":20}"))          // GROUP_B → TEAM_B
+                .andExpect(status().isBadRequest());
+
+        // Toplu taşıma, tek tek yapılması engellenen şeyin (başka takıma yönlendirme)
+        // toptan yolu OLMAMALI.
+        verify(usageService, never()).reassign(anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("Taşıma: SİLİNMİŞ gruba taşınamaz (400)")
+    void reassign_deletedTarget_400() throws Exception {
+        NotificationGroup deleted = group(30L, TEAM_A);
+        deleted.setActive(false);
+        when(groupRepo.findById(30L)).thenReturn(Optional.of(deleted));
+
+        mvc.perform(post("/api/notification-groups/{id}/reassign", GROUP_A)
+                        .session(userOfA)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"target_group_id\":30}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("Taşıma: hedef kaynakla AYNI olamaz (400)")
+    void reassign_sameTarget_400() throws Exception {
+        mvc.perform(post("/api/notification-groups/{id}/reassign", GROUP_A)
+                        .session(userOfA)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"target_group_id\":10}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("Taşıma: hedef null → grup seçimi kaldırılır (takım varsayılanı) + audit")
+    void reassign_toTeamDefault_ok() throws Exception {
+        when(usageService.reassign(GROUP_A, null)).thenReturn(java.util.Map.of("ping", 2));
+
+        mvc.perform(post("/api/notification-groups/{id}/reassign", GROUP_A)
+                        .session(userOfA)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"target_group_id\":null}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.moved").value(2));
+
+        verify(usageService).reassign(GROUP_A, null);
+        verify(auditService).recordAction(eq("NOTIFICATION_GROUP_REASSIGN"),
+                any(jakarta.servlet.http.HttpSession.class),
+                ArgumentMatchers.<String>any(), ArgumentMatchers.<String>any(),
+                ArgumentMatchers.<String>any(), ArgumentMatchers.<String>any());
+    }
+
+    @Test
+    @DisplayName("IDOR: BAŞKA takımın grubundan taşıma yapılamaz (404)")
+    void reassign_foreignSource_404() throws Exception {
+        mvc.perform(post("/api/notification-groups/{id}/reassign", GROUP_B)
+                        .session(userOfA)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"target_group_id\":null}"))
+                .andExpect(status().isNotFound());
+
+        verify(usageService, never()).reassign(anyLong(), any());
+    }
 
     // ── Gövde ayrıştırma ve kapsam çözümü ────────────────────────────────────
 
@@ -323,12 +452,12 @@ class NotificationGroupControllerTest {
     }
 
     @Test
-    @DisplayName("Silme: kendi takımının grubunda 200 ve YUMUŞAK silme çağrılır")
-    void delete_ownTeam_softDeletes() throws Exception {
+    @DisplayName("Silme: kendi takımının KULLANILMAYAN grubu KALICI silinir")
+    void delete_ownTeam_deletesPermanently() throws Exception {
         mvc.perform(delete("/api/notification-groups/{id}", GROUP_A).session(userOfA))
                 .andExpect(status().isOk());
 
-        verify(groupService).softDelete(any(), eq("ayse"), any());
+        verify(groupService).deletePermanently(any());
     }
 
     @Test
