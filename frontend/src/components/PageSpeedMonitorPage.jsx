@@ -80,6 +80,41 @@ const emptyForm = {
   active: true,
 }
 
+/**
+ * Eşik ihlali delili: hangi metrik, eşik neydi, ölçülen neydi.
+ *
+ * <p>{@code breach_detail} ölçüm ANINDAKİ eşiği taşır ("TTFB:1000>2955"). Eşik sonradan
+ * değiştirilirse bugünkü değeri göstermek geçmişi yanlış açıklardı; o yüzden satır kendi
+ * delilini taşıyor. Delil yoksa (eski kayıt) yalnız metrik adları yazılır.
+ */
+function BreachEvidence({ metrics, detail, t }) {
+  const label = (k) => {
+    const key = `pspd.breach_${String(k).toLowerCase()}`
+    const s = t(key)
+    return s === key ? k : s
+  }
+  const parsed = (detail || '').split(',').map(x => x.trim()).filter(Boolean).map(part => {
+    const m = /^([A-Z]+):(.*?)>(.*)$/.exec(part)
+    return m ? { key: m[1], threshold: m[2], measured: m[3] } : null
+  }).filter(Boolean)
+
+  const keys = String(metrics || '').split(',').map(x => x.trim()).filter(Boolean)
+  const rows = parsed.length > 0 ? parsed : keys.map(k => ({ key: k }))
+
+  return (
+    <span className="pspd-breach-why">
+      {rows.map(r => (
+        <span key={r.key} className="pspd-breach-chip">
+          {label(r.key)}
+          {r.threshold != null && (
+            <span className="pspd-breach-nums">{r.threshold} → <strong>{r.measured}</strong></span>
+          )}
+        </span>
+      ))}
+    </span>
+  )
+}
+
 export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
   const toast = useToast()
@@ -693,7 +728,12 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
                   const st = c.ok === false ? 'DOWN' : breached ? 'SLOW' : 'OK'
                   return (<>
                     <span className="upt-rt-time">{formatDateSec(c.checked_at)}</span>
-                    <span style={{ color: STATUS_COLOR[st], fontWeight: 600 }}>{statusLabel(st)}</span>
+                    <span style={{ color: STATUS_COLOR[st], fontWeight: 600 }}>
+                      {statusLabel(st)}
+                      {/* HANGİ eşik, kaçtı, kaç ölçüldü. Yalnız "Eşik aşıldı" demek kullanıcıyı
+                          sebebi aramaya gönderiyordu — veri zaten kayıtlıydı, gösterilmiyordu. */}
+                      {breached && <BreachEvidence metrics={c.breached_metrics} detail={c.breach_detail} t={t} />}
+                    </span>
                     <span className="upt-rt-ms">{c.response_ms != null ? `${c.response_ms} ms` : '—'}</span>
                     <span className="upt-rt-ms">{c.ttfb_ms != null ? `${c.ttfb_ms} ms` : '—'}</span>
                     <span className="upt-rt-ms">{formatBytes(c.total_bytes, c.bytes_truncated)}</span>

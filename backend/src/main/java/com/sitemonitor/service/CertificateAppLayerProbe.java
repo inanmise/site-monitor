@@ -64,16 +64,19 @@ public class CertificateAppLayerProbe {
      * <p>Best-effort: bir probe patlarsa diğeri yine koşar ve sertifika tazelemesi düşmez.
      * Sağlık listesi eksik bir satırla açılır, kullanıcının kaydı bozulmaz.
      */
-    public void refresh(String domain, int port) {
+    public void refresh(String domain, int port, boolean forceProxy) {
         String now = ISO.format(Instant.now());
-        String hsts = safe(() -> checkHsts(domain, port), "HSTS");
+        HstsOutcome hsts = safeHsts(domain, port, forceProxy);
         String mixed = safe(() -> checkMixedContent(domain, port), "karışık içerik");
 
         try {
             LatestCheck lc = latestCheckRepo.findById(domain).orElse(null);
             if (lc == null) return;                    // hiç kontrol edilmemiş domain — yazacak satır yok
-            lc.setHstsStatus(hsts);
+            lc.setHstsStatus(hsts.status());
             lc.setHstsAt(now);
+            // UNKNOWN'un SEBEBİ saklanır: sağlık satırında "Doğrulanamadı" yazıp nedenini
+            // söylememek, kullanıcıyı tam olarak buraya bakmaya zorlayan şeydi.
+            lc.setHstsNote(hsts.note());
             lc.setMixedContentStatus(mixed);
             lc.setMixedContentAt(now);
             latestCheckRepo.save(lc);
@@ -89,12 +92,46 @@ public class CertificateAppLayerProbe {
      * <p>{@code max-age=0} politikayı bilerek SİLER, yani başlık var diye "açık" saymak yanlış
      * olur — {@code NOT_ENFORCED} de eksik sayılır.
      */
-    public String checkHsts(String domain, int port) {
-        Map<String, Object> r = hstsService.diagnose(domain, port);
+    public String checkHsts(String domain, int port, boolean forceProxy) {
+        return probeHsts(domain, port, forceProxy).status();
+    }
+
+    /**
+     * Durum + (yalnız UNKNOWN'da) gerekçe. Gerekçe DÖNÜŞ DEĞERİNDE taşınır, bir alanda değil:
+     * bu servis tekil (singleton) ve iki kullanıcı farklı domainler için aynı anda kontrol
+     * tetikleyebilir — paylaşılan alan, birinin gerekçesini diğerinin satırına yazardı.
+     */
+    private record HstsOutcome(String status, String note) {}
+
+    private HstsOutcome probeHsts(String domain, int port, boolean forceProxy) {
+        // forceProxy YUKARIDAN iner: izlemenin "vekilsiz" tercihi burada yeniden türetilirse
+        // sertifika kontrolüyle ayrışır ve aynı domain için iki farklı cevap çıkar.
+        Map<String, Object> r = hstsService.diagnose(domain, port, forceProxy);
         String verdict = String.valueOf(r.get("verdict"));
-        if ("ENFORCED".equals(verdict)) return HSTS_ENABLED;
-        if ("ABSENT".equals(verdict) || "NOT_ENFORCED".equals(verdict)) return HSTS_MISSING;
-        return UNKNOWN;                                 // CONNECT_FAILED ve beklenmeyen değerler
+        if ("ENFORCED".equals(verdict)) return new HstsOutcome(HSTS_ENABLED, null);
+        if ("ABSENT".equals(verdict) || "NOT_ENFORCED".equals(verdict)) {
+            return new HstsOutcome(HSTS_MISSING, null);
+        }
+        return new HstsOutcome(UNKNOWN, note(verdict, r));   // CONNECT_FAILED ve beklenmeyenler
+    }
+
+    /** UNKNOWN'un okunur gerekçesi — sağlık satırının kanıtında gösterilir. */
+    private static String note(String verdict, Map<String, Object> r) {
+        Object err = r.get("error");
+        Object why = r.get("proxy_reason");
+        String base = err != null ? String.valueOf(err) : verdict;
+        return why != null ? base + " (" + why + ")" : base;
+    }
+
+    /** {@link #safe} ile aynı best-effort sözleşmesi; gerekçeyi de taşır. */
+    private HstsOutcome safeHsts(String domain, int port, boolean forceProxy) {
+        try {
+            HstsOutcome o = probeHsts(domain, port, forceProxy);
+            return o == null ? new HstsOutcome(UNKNOWN, null) : o;
+        } catch (Exception e) {
+            log.debug("HSTS kontrolü başarısız: {}", e.toString());
+            return new HstsOutcome(UNKNOWN, e.toString());
+        }
     }
 
     /**

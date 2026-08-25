@@ -62,6 +62,44 @@ public class ProxySettings {
     }
 
     /**
+     * Bu hedef için vekil KULLANILMALI mı — kararın TEK noktası.
+     *
+     * <p>Üç girdi birlikte karar verir: izlemenin kendi {@code use_proxy} tercihi, vekilin
+     * yapılandırılmış olması ve {@code NO_PROXY} listesi. Kuralın ikinci bir kopyası olmamalı:
+     * HSTS tanılaması yalnız global yapılandırmaya bakıp izlemenin "vekilsiz" tercihini yok
+     * sayıyordu; sertifika kontrolü doğrudan bağlanıp başlığı bulurken sağlık satırı vekilden
+     * geçmeye çalışıp bağlanamıyor ve "Doğrulanamadı" kalıyordu — aynı domain için iki farklı
+     * cevap.
+     *
+     * @param forceProxy izlemenin/envanter kaydının {@code use_proxy} tercihi
+     */
+    public boolean useFor(String domain, boolean forceProxy) {
+        return forceProxy && enabled() && !bypass(domain);
+    }
+
+    /**
+     * {@code NO_PROXY} listesi bu domaini kapsıyor mu (vekil ATLANMALI mı)?
+     *
+     * <p>Girdi nokta ile başlıyorsa sonek eşleşmesi ({@code .example.com} → {@code a.example.com}
+     * ve {@code example.com}); başlamıyorsa hem tam eşleşme hem alt alan sayılır.
+     */
+    public boolean bypass(String domain) {
+        String list = noProxyList();
+        if (list.isBlank() || domain == null) return false;
+        String d = domain.toLowerCase(java.util.Locale.ROOT);
+        for (String entry : list.split(",")) {
+            String e = entry.trim().toLowerCase(java.util.Locale.ROOT);
+            if (e.isEmpty()) continue;
+            if (e.startsWith(".")) {
+                if (d.endsWith(e) || d.equals(e.substring(1))) return true;
+            } else {
+                if (d.equals(e) || d.endsWith("." + e)) return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Go/k6'nın {@code HTTPS_PROXY} olarak anlayacağı URL.
      *
      * <p>Kimlik varsa {@code http://user:pass@host:port}. Kullanıcı adı/parola URL-encode edilir:

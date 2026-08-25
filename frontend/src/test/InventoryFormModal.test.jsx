@@ -27,7 +27,9 @@ vi.mock('../components/ui/Dialog.jsx', () => ({
   DialogProvider: ({ children }) => children,
 }))
 // MDEditor jsdom'da ağır; forma dair iddialar onu gerektirmiyor.
-vi.mock('@uiw/react-md-editor', () => ({ default: ({ value }) => <textarea readOnly value={value ?? ''} /> }))
+vi.mock('@uiw/react-md-editor', () => ({
+  default: ({ value, textareaProps }) => <textarea readOnly value={value ?? ''} {...(textareaProps ?? {})} />,
+}))
 
 import { api } from '../api/client'
 import InventoryFormModal, { InventoryFormModalForDomain } from '../components/inventory/InventoryFormModal.jsx'
@@ -209,6 +211,34 @@ describe('InventoryFormModal', () => {
     await waitFor(() => expect(api.monitoring.listGroups).toHaveBeenCalledWith('1', 'cert'))
   })
 })
+
+  /**
+   * KOK NEDEN KAPISI. Editor bir <label> ile sariliyken `.form-grid label textarea` kurali
+   * (0,2,1) kutuphanenin (0,1,0) kurallarini yenip METNI SEFFAF, mutlak konumlu overlay'e
+   * opak arka plan veriyordu; alttaki <pre> tamamen ortuluyor ve kutu BOS gorunuyordu.
+   *
+   * jsdom duzen/renk hesaplamaz - piksel sonucu buradan dogrulanamaz. Ama sebep YAPISALDIR
+   * ve olculebilir: editorun textarea'sinin <label> atasi OLMAMALI. Editor tekrar <label>
+   * icine alinirsa bu iddia duser.
+   */
+  it("editorun textarea'si <label> ICINDE OLMAMALI (form alani CSS'i sizmasin)", () => {
+    render(<InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+
+    const box = document.querySelector(".md-editor-box")
+    expect(box).not.toBeNull()
+    const ta = box.querySelector("textarea")
+    expect(ta).not.toBeNull()
+    expect(ta.closest("label")).toBeNull()
+  })
+
+  it("etiket hala kontrole BAGLI - sarmalamadan cikmak erisilebilirligi dusurmemeli", () => {
+    render(<InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+
+    // htmlFor/id bagi Field tarafindan kuruluyor; kopmasi ekran okuyucuda alani adsiz birakirdi.
+    const ta = document.querySelector(".md-editor-box textarea")
+    expect(ta.id).toBeTruthy()
+    expect(document.querySelector(`label[for="${ta.id}"]`)).not.toBeNull()
+  })
 
 describe('InventoryFormModalForDomain', () => {
   beforeEach(() => { vi.clearAllMocks() })

@@ -421,6 +421,13 @@ public class SchedulerService {
         patch("ALTER TABLE latest_checks ADD COLUMN mixed_content_at TEXT");
         patch("ALTER TABLE latest_checks ADD COLUMN hsts_status TEXT");
         patch("ALTER TABLE latest_checks ADD COLUMN hsts_at TEXT");
+        patch("ALTER TABLE latest_checks ADD COLUMN hsts_note TEXT");
+        patch("ALTER TABLE page_speed_checks ADD COLUMN dns_ms INTEGER");
+        patch("ALTER TABLE page_speed_checks ADD COLUMN connect_ms INTEGER");
+        patch("ALTER TABLE page_speed_checks ADD COLUMN tls_ms INTEGER");
+        patch("ALTER TABLE page_speed_checks ADD COLUMN server_ms INTEGER");
+        patch("ALTER TABLE page_speed_checks ADD COLUMN skipped_lazy INTEGER");
+        patch("ALTER TABLE page_speed_checks ADD COLUMN breach_detail TEXT");
         // Otomatik parmak izi pini (TOFU) — sertifikanın sessizce değişmesini görünür kılar.
         patch("ALTER TABLE latest_checks ADD COLUMN pinned_fingerprint TEXT");
         patch("ALTER TABLE latest_checks ADD COLUMN pinned_at TEXT");
@@ -3071,6 +3078,18 @@ public class SchedulerService {
             pc.setCapped(res.capped());
             pc.setBytesTruncated(res.bytesTruncated());
             pc.setBreachedMetrics(com.sitemonitor.service.page.PageSpeedRules.joinBreaches(res.breached()));
+            // TTFB faz kırılımı: sıçramanın hangi fazdan geldiği sonradan da okunabilsin.
+            pc.setDnsMs(res.phases().dnsMs());
+            pc.setConnectMs(res.phases().connectMs());
+            pc.setTlsMs(res.phases().tlsMs());
+            pc.setServerMs(res.phases().serverMs());
+            pc.setSkippedLazy(res.skippedLazy());
+            // İhlal delili ÖLÇÜM ANINDAKİ eşikle donar; izleme sonradan düzenlenirse geçmiş
+            // satır yine doğru sayıyı gösterir.
+            pc.setBreachDetail(com.sitemonitor.service.page.PageSpeedRules.breachDetail(
+                    m, res.breached(), (int) res.totalMs(),
+                    res.phases().serverMs() != null ? res.phases().serverMs() : (int) res.ttfbMs(),
+                    res.totalBytes(), res.requestCount()));
             pc.setErrorMessage(res.error());
             pageSpeedCheckRepo.save(pc);
             writeResourceBreakdown(m, pc, res, ts, wasBreached);
@@ -3100,6 +3119,11 @@ public class SchedulerService {
         out.put("http_status", res.statusCode());
         out.put("response_ms", res.totalMs());
         out.put("ttfb_ms", res.ttfbMs());
+        out.put("dns_ms", res.phases().dnsMs());
+        out.put("connect_ms", res.phases().connectMs());
+        out.put("tls_ms", res.phases().tlsMs());
+        out.put("server_ms", res.phases().serverMs());
+        out.put("skipped_lazy", res.skippedLazy());
         out.put("total_bytes", res.totalBytes());
         // Toplam ALT SINIR mı: arayüz "≥" ile gösteriyor, e-posta detayı da bunu okuyor.
         out.put("bytes_truncated", res.bytesTruncated());

@@ -10,7 +10,13 @@ import { formatBytes, formatBytesAxis } from '../utils/formatBytes.js'
 import StatusBlock from './ui/StatusBlock.jsx'
 import { BarChart3 } from 'lucide-react'
 
+// Saatlik on ayarlar: en kucuk pencere 24 saatti ve 10 dakikalik kova yuzunden olcumler
+// ortalamaya karisiyordu — "az once ne oldu" sorusu grafikten cevaplanamiyordu. <= 6 saatte
+// backend DAKIKA kovasina duser, yani her kontrol kendi noktasi olur.
 const PRESETS = [
+  { key: '1h',  hours: 1 },
+  { key: '6h',  hours: 6 },
+  { key: '12h', hours: 12 },
   { key: '24h', days: 1 },
   { key: '7d',  days: 7 },
   { key: '30d', days: 30 },
@@ -47,10 +53,14 @@ function ChartTooltip({ active, payload, t, isPing, isSsl, fmt = (v) => `${v}ms`
     <div style={{ background: 'var(--bg-card, #fff)', border: '1px solid var(--border)', borderRadius: 8,
       padding: '8px 11px', fontSize: '.82em', lineHeight: 1.7, boxShadow: '0 4px 16px rgba(0,0,0,.12)' }}>
       <div style={{ fontWeight: 700, marginBottom: 4 }}>{formatDate(d.ts)}</div>
-      {row(t('chart.avg'), d.avg)}
-      {row(t('chart.p95'), d.p95)}
-      {row(t('chart.min'), d.min)}
-      {row(t('chart.max'), d.max)}
+      {/* Kovada TEK olcum varsa avg/p95/min/max ayni sayidir; dordunu birden yazmak "dort ayri
+          veri var" izlenimi verip okumayi zorlastiriyordu. Tek olcumde tek satir. */}
+      {d.count === 1 ? row(t('chart.value'), d.avg) : (<>
+        {row(t('chart.avg'), d.avg)}
+        {row(t('chart.p95'), d.p95)}
+        {row(t('chart.min'), d.min)}
+        {row(t('chart.max'), d.max)}
+      </>)}
       {isPing && row(t('chart.packetLoss'), d.loss, '%')}
       {isSsl && row(t('modal.daysRemain'), d.days, t('chart.unitDays'))}
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16 }}>
@@ -106,7 +116,11 @@ export default function ResponseTimeChart({ monitorId, kind, metric, unit = 'ms'
       page: api.monitoring.getPageResponseSeries, scripted: api.monitoring.getScriptedResponseSeries,
       pagespeed: api.monitoring.getPageSpeedSeries,
       ssl: api.monitoring.getSslResponseSeries }[kind] ?? api.monitoring.getKeywordResponseSeries
-    const params = custom ? { from: custom.from, to: custom.to } : { days: PRESETS.find(p => p.key === preset)?.days ?? 30 }
+    const sel = PRESETS.find(p => p.key === preset)
+    // Saatlik pencereler gun cinsinden ifade edilemez: acik from/to gonderilir (ozel aralikla ayni yol).
+    const params = custom ? { from: custom.from, to: custom.to }
+      : sel?.hours ? { from: toIso(Date.now() - sel.hours * 3600_000), to: toIso(Date.now()) }
+      : { days: sel?.days ?? 30 }
     // metric yalnız sayfa hızında dolu; diğer uçlarda undefined kalır ve istemci onu URL'e koymaz.
     const res = await fetcher(monitorId, metric ? { ...params, metric } : params)
     if (seq !== seqRef.current) return          // daha yeni bir istek var: bu yanıtı YOK SAY

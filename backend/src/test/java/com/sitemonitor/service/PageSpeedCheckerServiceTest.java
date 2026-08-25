@@ -40,6 +40,7 @@ class PageSpeedCheckerServiceTest {
     private HttpServer server;
     private String base;
     private PageFetchCore core;
+    private com.sitemonitor.service.page.HttpPhaseProbe phaseProbe;
     private PageSpeedCheckerService checker;
     /** Sunucunun gördüğü istek başlıkları: yol → başlık haritası (kimlik/DNT testleri buradan okur). */
     private final Map<String, Map<String, List<String>>> seenHeaders = new ConcurrentHashMap<>();
@@ -63,9 +64,10 @@ class PageSpeedCheckerServiceTest {
         // Şifre çözme kimliktir: testte şifreli alan = düz metin.
         lenient().when(cipher.decrypt(anyString())).thenAnswer(i -> i.getArgument(0));
 
+        phaseProbe = new com.sitemonitor.service.page.HttpPhaseProbe(guard);
         core = new PageFetchCore(guard);
         core.init();
-        checker = new PageSpeedCheckerService(core, psl, settings, cipher);
+        checker = new PageSpeedCheckerService(core, phaseProbe, psl, settings, cipher);
 
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         base = "http://127.0.0.1:" + server.getAddress().getPort();
@@ -77,6 +79,95 @@ class PageSpeedCheckerServiceTest {
     void tearDown() {
         if (server != null) server.stop(0);
         if (core != null) core.shutdown();
+    }
+
+    // ── Lazy kaynaklar ve faz kırılımı ──────────────────────────────────────
+
+    @Test
+    @DisplayName("loading=lazy kaynaklar ÖLÇÜLMEZ ve atlanan sayısı raporlanır")
+    void lazyResourcesAreSkippedAndCounted() {
+        var r = checker.test(monitor("/lazy"));
+
+        assertThat(r.skippedLazy()).as("atlanan sayı sessizce kaybolmamalı").isEqualTo(2);
+        // Yalnız ana sayfa + lazy OLMAYAN görsel indirilmeli.
+        assertThat(hits.getOrDefault("/lazy1.png", 0)).isZero();
+        assertThat(hits.getOrDefault("/lazy2.png", 0)).isZero();
+        assertThat(hits.getOrDefault("/a.png", 0)).isEqualTo(1);
+        // 1 MB'lık iki lazy görsel toplama girmemeli.
+        assertThat(r.totalBytes()).isLessThan(500_000L);
+    }
+
+    @Test
+    @DisplayName("Sayfa Bütünlüğü envanteri lazy kaynakları ATLAMAZ (orada soru 'var mı')")
+    void integrityInventoryStillSeesLazy() {
+        byte[] html = ("<html><body><img src='" + base + "/a.png'>"
+                + "<img src='" + base + "/lazy1.png' loading='lazy'></body></html>")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+
+        var full = core.inventory(html, base, base + "/x", null, PageFetchCore.InventoryOptions.FULL);
+        var browser = core.inventory(html, base, base + "/x", null,
+                PageFetchCore.InventoryOptions.AS_BROWSER_LOADS);
+
+        assertThat(full).hasSize(2);
+        assertThat(browser).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("TTFB fazlara ayrılır: sunucu bekleme AYRI ölçülür ve eşik ona bakar")
+    void phasesAreMeasured() {
+        var r = checker.test(monitor("/"));
+
+        // DNS/bağlantı ölçülmeli (yerel sunucuda TLS yok → null beklenir).
+        assertThat(r.phases().dnsMs()).isNotNull();
+        assertThat(r.phases().connectMs()).isNotNull();
+        assertThat(r.phases().serverMs()).as("eşiğin baktığı değer").isNotNull();
+        assertThat(r.phases().tlsMs()).as("düz HTTP'de TLS fazı yok").isNull();
+        // Fazlar tek tek toplam ölçümden küçük olmalı — biri diğerini kapsamamalı.
+        assertThat(r.phases().serverMs()).isLessThanOrEqualTo((int) r.totalMs() + 1000);
+    }
+
+    // ── Transfer boyutu ve saklama ──────────────────────────────────────────
+
+    @Test
+    @DisplayName("Accept-Encoding GÖNDERİLİR — ölçülen 'transfer boyutu' gerçekten telden geçen")
+    void acceptEncodingIsSent() {
+        checker.test(monitor("/"));
+
+        // Java HttpClient bu başlığı kendiliğinden EKLEMEZ; göndermeyince sunucu sıkıştırmasız
+        // yanıtlıyor ve arayüzdeki "transfer boyutu" etiketi yalan oluyordu.
+        for (String path : new String[]{ "/", "/a.css", "/a.js", "/a.png" }) {
+            var h = seenHeaders.get(path);
+            assertThat(h).as("istek görülmedi: %s", path).isNotNull();
+            assertThat(h.keySet().stream().anyMatch(k -> k.equalsIgnoreCase("Accept-Encoding")))
+                    .as("Accept-Encoding eksik: %s", path).isTrue();
+        }
+    }
+
+    /**
+     * İNDİRİLEN İÇERİK HİÇBİR YERDE TUTULMAZ: ölçülür ve atılır.
+     *
+     * <p>Alt kaynak çekimi gövdeyi belleğe bile almaz ({@code countBytes} yolu yalnız sayar),
+     * ölçüm satırı da yalnız üstveri taşır. Bu davranış bugün doğru; kapı, ileride "hata ayıklama
+     * için gövdeyi de saklayalım" diye eklenecek bir alanın sessizce geçmesini engeller.
+     */
+    @Test
+    @DisplayName("Ölçüm sonucu hiçbir kaynağın İÇERİĞİNİ taşımaz")
+    void measurementCarriesNoContent() {
+        var r = checker.test(monitor("/"));
+        assertThat(r.resources()).isNotEmpty();
+
+        for (var comp : PageSpeedCheckerService.Measured.class.getRecordComponents()) {
+            assertThat(comp.getType())
+                    .as("Measured.%s içerik taşıyor olabilir", comp.getName())
+                    .isNotEqualTo(byte[].class);
+        }
+        for (var f : com.sitemonitor.model.PageSpeedResource.class.getDeclaredFields()) {
+            assertThat(f.getType()).as("PageSpeedResource.%s içerik taşıyor", f.getName())
+                    .isNotEqualTo(byte[].class);
+            assertThat(f.getName().toLowerCase())
+                    .as("PageSpeedResource.%s gövde saklıyor olabilir", f.getName())
+                    .doesNotContain("body").doesNotContain("content");
+        }
     }
 
     // ── Test sunucusu ────────────────────────────────────────────────────────
@@ -131,6 +222,16 @@ class PageSpeedCheckerServiceTest {
         // Bayt tavanini (10 MB) ASAN tek kaynak: sayim orada kesilmeli ve isaretlenmeli.
         html("/devasa", "<html><body><img src='/dev.bin'></body></html>");
         bytes("/dev.bin", (int) PageFetchCore.MAX_COUNT_BYTES + 4096, "application/octet-stream");
+        // loading="lazy": tarayici ekran disindaki gorseli HIC istemez. Olcumun onu indirmesi
+        // sayfayi kat kat agir gosteriyordu (44.6 MB olculen sayfada tarayici 6.1 MB indiriyordu).
+        html("/lazy", """
+            <html><body>
+              <img src="/a.png">
+              <img src="/lazy1.png" loading="lazy">
+              <img src="/lazy2.png" loading="lazy">
+            </body></html>""");
+        bytes("/lazy1.png", 500_000, "image/png");
+        bytes("/lazy2.png", 500_000, "image/png");
         html("/bos", "<html><body>hicbir kaynak yok</body></html>");
         server.createContext("/hata", ex -> { record(ex); ex.sendResponseHeaders(500, -1); ex.close(); });
         // Kaynağı kırık sayfa: ölçüm devam etmeli, failed_count artmalı.
@@ -492,7 +593,7 @@ class PageSpeedCheckerServiceTest {
         lenient().when(settings.getString(anyString(), any())).thenAnswer(i -> i.getArgument(1));
         PublicSuffixService psl = new PublicSuffixService();
         psl.load();
-        var c2 = new PageSpeedCheckerService(core, psl, settings, boom);
+        var c2 = new PageSpeedCheckerService(core, phaseProbe, psl, settings, boom);
 
         PageSpeedMonitor m = monitor("/kimlikli");
         m.setBasicAuthUser("kadir");

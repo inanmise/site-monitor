@@ -472,7 +472,13 @@ public class MonitoringOutageService {
      */
     private static String confirmKey(SweepItem item) {
         // SCRIPTED_SLOW da ayni sebeple detail'siz: detail olculen sure ("8123 ms"), her sweep'te degisir.
-        if (EscalationService.isScripted(item.alertType()))
+        // PAGESPEED_SLOW AYNI SINIFTA: detail'i pageSpeedBreachDetail uretir ve OLCULEN degeri tasir
+        // ("TTFB 2955 ms"). Her sweep farkli bir anahtar dogurdugu icin cift-zincir guard'i (inFlight)
+        // hic tutmuyordu: ihlal suren bir izleme icin her sweep 3 denemelik YENI bir zincir aciyordu,
+        // her denemesi tam bir sayfa indirmesi (yuzlerce istek, on MB'lar). Sentetikte cozulen kusurun
+        // ayni si; burada maliyeti daha agir cunku re-check tum alt kaynaklari yeniden cekiyor.
+        if (EscalationService.isScripted(item.alertType())
+                || EscalationService.TYPE_PAGESPEED_SLOW.equals(item.alertType()))
             return item.alertType() + ":" + item.domain();
         return item.alertType() + ":" + item.domain() + ":" + item.detail();
     }

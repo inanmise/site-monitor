@@ -92,6 +92,10 @@ public class LatestCheck {
     private String hstsStatus;
     private String hstsAt;
 
+    /** UNKNOWN'un gerekçesi (bağlantı hatası + vekil kararı); ENABLED/MISSING'de null.
+     *  Nullable: dolu tabloya NOT NULL kolon eklemek sessizce düşer ve her sorgu 500 verirdi. */
+    private String hstsNote;
+
     /**
      * OTOMATİK parmak izi pini (TOFU — ilk görüşte güven). Kullanıcıdan hiçbir aksiyon istenmez:
      * sertifika ilk görüldüğünde sabitlenir, her kontrolde sunulanla karşılaştırılır ve DEĞİŞTİĞİ

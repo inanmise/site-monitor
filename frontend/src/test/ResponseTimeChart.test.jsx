@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, waitFor } from './test-utils'
+import { render, screen, waitFor, fireEvent } from './test-utils'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 
@@ -31,6 +31,30 @@ describe('ResponseTimeChart', () => {
     await waitFor(() => expect(api.monitoring.getScriptedResponseSeries).toHaveBeenCalled())
     expect(screen.queryByText('No data in this range')).toBeNull()
     expect(screen.getByText('Custom')).toBeInTheDocument()
+  })
+
+  /**
+   * Saatlik pencereler: en kucuk aralik 24 saatti ve backend <=48 saatte 10 dakikalik kova
+   * kullandigi icin olcumler ortalamaya karisiyordu. Gun cinsinden ifade edilemedikleri icin
+   * bu pencereler ACIK from/to gonderir — days ile gondermek 1 gune yuvarlardi.
+   */
+  it('saatlik aralik acik from/to gonderir (days DEGIL)', async () => {
+    api.monitoring.getScriptedResponseSeries.mockResolvedValue(envelope([]))
+    render(<ResponseTimeChart monitorId={7} kind="scripted" />)
+    await waitFor(() => expect(api.monitoring.getScriptedResponseSeries).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByRole('button', { name: '1 hr' }))
+
+    await waitFor(() => {
+      const last = api.monitoring.getScriptedResponseSeries.mock.calls.at(-1)[1]
+      expect(last.days).toBeUndefined()
+      expect(last.from).toBeTruthy()
+      expect(last.to).toBeTruthy()
+      // Pencere gercekten ~1 saat olmali; yanlis hesap sessizce baska bir araligi cizerdi.
+      const span = new Date(last.to + 'Z') - new Date(last.from + 'Z')
+      expect(span).toBeGreaterThan(55 * 60 * 1000)
+      expect(span).toBeLessThan(65 * 60 * 1000)
+    })
   })
 
   it('bozuk besleme (ham dizi elemanları, ts yok) → ÇÖKMEZ, "veri yok" gösterir', async () => {

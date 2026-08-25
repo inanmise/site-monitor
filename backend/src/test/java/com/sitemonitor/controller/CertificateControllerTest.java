@@ -498,6 +498,47 @@ class CertificateControllerTest {
                 eq("a.example.com"), any(), any());
     }
 
+    /**
+     * Sertifika kontrolü ile uygulama-katmanı probu AYNI vekil tercihini almalı.
+     *
+     * <p>Tercih proba geçmediğinde HSTS tanılaması kararı yalnız global yapılandırmadan
+     * türüyordu: SSL sekmesi "HSTS etkin" derken Sağlık sekmesi "Doğrulanamadı" kalıyordu.
+     */
+    @Test
+    @DisplayName("Uygulama katmanı probu, sertifika kontrolüyle AYNI vekil tercihini alır")
+    void probeGetsSameProxyPreference() throws Exception {
+        com.sitemonitor.model.CertificateInventory inv = invOf(5L, 443);
+        inv.setDomain("prox.example.com");
+        inv.setUseProxy(false);                                  // "Proxy Üzerinden Kontrol Et = Hayır"
+        when(inventoryRepo.findByDomain("prox.example.com")).thenReturn(java.util.Optional.of(inv));
+        when(latestCheckRepo.findById("prox.example.com")).thenReturn(java.util.Optional.of(latestOf()));
+        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any()))
+                .thenReturn(new java.util.LinkedHashMap<>(java.util.Map.of("status", "valid")));
+
+        mvc.perform(post("/api/certificates/prox.example.com/health/refresh").session(teamSession(5L)))
+                .andExpect(status().isOk());
+
+        verify(checkerService).check(eq("prox.example.com"), anyInt(), eq(false), any());
+        verify(appLayerProbe).refresh("prox.example.com", 443, false);
+    }
+
+    @Test
+    @DisplayName("use_proxy AÇIKSA tercih yine AYNEN iner")
+    void probeGetsProxyPreferenceWhenEnabled() throws Exception {
+        com.sitemonitor.model.CertificateInventory inv = invOf(5L, 443);
+        inv.setDomain("prox2.example.com");
+        inv.setUseProxy(true);
+        when(inventoryRepo.findByDomain("prox2.example.com")).thenReturn(java.util.Optional.of(inv));
+        when(latestCheckRepo.findById("prox2.example.com")).thenReturn(java.util.Optional.of(latestOf()));
+        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any()))
+                .thenReturn(new java.util.LinkedHashMap<>(java.util.Map.of("status", "valid")));
+
+        mvc.perform(post("/api/certificates/prox2.example.com/health/refresh").session(teamSession(5L)))
+                .andExpect(status().isOk());
+
+        verify(appLayerProbe).refresh("prox2.example.com", 443, true);
+    }
+
     @Test
     @DisplayName("Tazeleme SOĞUMA süresine tabi — düğmeye üst üste basmak el sıkışma yağmuru olmaz")
     void healthRefresh_isRateLimited() throws Exception {

@@ -85,4 +85,25 @@ public class PageSpeedCheck {
 
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
+
+    /** TTFB faz kırılımı (ms). Ölçülemeyen faz {@code null} kalır — sıfır yazmak, olmayan bir
+     *  hızı iddia etmek olurdu. {@code serverMs} EŞİĞİN baktığı değerdir. */
+    @Column(name = "dns_ms")     private Integer dnsMs;
+    @Column(name = "connect_ms") private Integer connectMs;
+    @Column(name = "tls_ms")     private Integer tlsMs;
+    @Column(name = "server_ms")  private Integer serverMs;
+
+    /** Ölçüm dışı bırakılan {@code loading="lazy"} kaynak sayısı — tarayıcı da onları istemez. */
+    @Column(name = "skipped_lazy")
+    private Integer skippedLazy;
+
+    /**
+     * İhlal DELİLİ: hangi eşik neydi, ölçülen neydi (ör. {@code "TTFB:1000>2955"}).
+     *
+     * <p>Neden kaydediliyor: eşik izlemenin ANLIK ayarıdır; kullanıcı sonradan eşiği değiştirince
+     * geçmiş satırın yanına bugünkü eşiği yazmak DELİLİ BOZAR — "neden alarm verdi" sorusu yanlış
+     * sayıyla cevaplanır. Ölçüm anındaki değer burada donar.
+     */
+    @Column(name = "breach_detail", columnDefinition = "TEXT")
+    private String breachDetail;
 }

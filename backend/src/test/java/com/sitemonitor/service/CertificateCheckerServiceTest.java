@@ -51,7 +51,8 @@ class CertificateCheckerServiceTest {
     void setUp() {
         // SsrfGuard'ı MOCK'la (validate no-op) — bu test'ler sahte/çözülmeyen domain'lerle çalışır; gerçek guard
         // DNS'e sokup bloklardı. SsrfGuard'ın kendisi SsrfGuardTest'te doğrulanır.
-        service = new CertificateCheckerService(chainValidationService, dnsCheckerService, new ObjectMapper(), trustEvaluator, mock(SsrfGuard.class));
+        service = new CertificateCheckerService(chainValidationService, dnsCheckerService, new ObjectMapper(),
+                trustEvaluator, mock(SsrfGuard.class), new ProxySettings());
     }
 
     // ── SAN serialization ──────────────────────────────────────────────────────

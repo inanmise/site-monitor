@@ -389,7 +389,10 @@ public class CertificateHealthService {
 
     private HealthRow hstsRow(LatestCheck lc) {
         String status = lc.getHstsStatus();
-        Map<String, Object> ev = ev("raw", status, "checked_at", lc.getHstsAt());
+        // Gerekçe kanıta girer: "Doğrulanamadı" deyip nedenini söylememek, kullanıcıyı
+        // ekranı bırakıp koda bakmaya zorlayan şeydi (vekil kararı sapması vakası).
+        Map<String, Object> ev = ev("raw", status, "checked_at", lc.getHstsAt(),
+                "note", lc.getHstsNote());
         if (status == null || status.isBlank()) {
             // Hiç bakılmamış: kullanıcı isteğiyle koşar (K4) — otomatik başlık çekmiyoruz.
             return new HealthRow("hsts", GROUP_APPLICATION, Status.UNKNOWN, "notChecked", List.of(),

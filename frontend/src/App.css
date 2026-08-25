@@ -2530,6 +2530,34 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   width: auto; flex: 0 0 auto; margin: 0; padding: 0;
 }
 .form-grid .full-width { grid-column: 1 / -1; }
+/* MDEditor'ün İÇ textarea'sı bir FORM ALANI DEĞİLDİR: görünen <pre> katmanının ÜSTÜNDE duran,
+   metni ŞEFFAF, mutlak konumlu bir overlay'dir (kütüphane ona bilerek `background: none`,
+   `border: 0`, `padding: inherit` verir). Ona form alanı geometrisi/arka planı uygulamak
+   <pre>'yi tamamen örter ve kutu BOŞ görünür — envanter "Değişiklik Açıklaması" vakası.
+   Sızıntının İKİ kaynağı var ve ikisi de kütüphanenin (0,1,0) kurallarını yener:
+     • `.form-grid label textarea`      (0,2,1) — editör bir <label> içindeyse
+     • `[data-theme="dark"] textarea`   (0,1,1) — koyu temada GLOBAL, <label> olmasa da
+   İkincisi yüzünden muafiyet global ve `!important` olmak ZORUNDA; yalnız formu düzeltmek
+   koyu temada aynı hatayı bırakırdı. */
+.w-md-editor-text-input {
+  background: none !important;
+  border: 0 !important;
+  padding: inherit !important;
+  min-height: 0 !important;
+  resize: none !important;
+  box-shadow: none !important;
+  color: inherit !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+  font-weight: inherit !important;
+}
+/* Kütüphane `.w-md-editor-text`'e SATIR İÇİ min-height:100px veriyor; satır içi stil kendi
+   `min-height: 100%` kuralını ezer ve yazma alanını kutunun ~yarısında sabitler (height=260
+   verilse bile). İçerik alanının tamamını doldur; mutlak textarea kendi içinde kayar.
+   Aynı çözüm haftalık rapor editöründe `.wr-editor` altında da var — ad öneki oraya ait
+   olduğu için burada nötr adlı ayrı bir sınıf kullanılıyor. */
+.md-editor-box .w-md-editor-text { min-height: 100% !important; height: 100%; }
+.md-editor-box .w-md-editor-area { height: 100%; }
 /* Genel form-control sınıfı — Senaryo İzleme modalı .input kullanıyor ama sınıf
    tanımsızdı; label DIŞINDAKİ alanlar (Ortam Değişkenleri AD/değer) tarayıcı
    varsayılanında kalıyordu. Üstteki Ad/Açıklama alanlarıyla birebir aynı görünüm. */
@@ -6179,6 +6207,14 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .ng-hist-fields li { display: flex; gap: 8px; flex-wrap: wrap; }
 .ng-hist-diff { margin: 6px 0 0 4px; }
 .ng-hist-header { margin-top: 22px; }
+
+/* Sayfa Hızı — eşik ihlali delili (kontrol geçmişi satırı). Durum etiketinin altında,
+   hangi eşiğin kaça karşı kaç ölçüldüğünü tek bakışta verir. */
+.pspd-breach-why { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.pspd-breach-chip { display: inline-flex; align-items: baseline; gap: 5px; padding: 1px 7px;
+  border-radius: 10px; font-size: 11px; font-weight: 600; background: #fef3c7; color: #92400e; }
+.pspd-breach-nums { font-family: Consolas, monospace; font-weight: 400; font-size: 10.5px; opacity: .9; }
+[data-theme="dark"] .pspd-breach-chip { background: #422006; color: #fcd34d; }
 
 /* Outcome badges */
 .audit-outcome-badge {

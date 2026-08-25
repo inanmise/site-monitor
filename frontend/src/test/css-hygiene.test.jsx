@@ -84,6 +84,25 @@ describe('CSS hijyeni', () => {
     expect(CSS).toMatch(/\.form-grid label input\[type="checkbox"\][\s\S]{0,200}width: auto/)
   })
 
+  it("MDEditor ic textarea'si form alani geometrisinden MUAF", () => {
+    // MDEditor, görünen <pre> katmanının ÜSTÜNDE metni ŞEFFAF, mutlak konumlu bir <textarea>
+    // çizer. Ona OPAK bir arka plan verilirse <pre> tamamen örtülür ve kutu BOŞ görünür
+    // (envanter "Değişiklik Açıklaması" vakası). Sızıntının iki kaynağı vardı:
+    // `.form-grid label textarea` (0,2,1) ve GLOBAL `[data-theme="dark"] textarea` (0,1,1);
+    // ikincisi yüzünden muafiyet global ve !important olmak zorunda.
+    // jsdom renk/yığın hesaplamaz — KURALIN KENDİSİ pinleniyor.
+    const flat = CSS.replace(/\s+/g, ' ')
+    const rule = flat.match(/\.w-md-editor-text-input \{[^}]*\}/)
+    expect(rule, 'MDEditor textarea muafiyet bloğu bulunamadı').not.toBeNull()
+    for (const decl of ['background: none !important', 'border: 0 !important',
+                        'min-height: 0 !important', 'resize: none !important']) {
+      expect(rule[0], `muafiyette eksik: ${decl}`).toContain(decl)
+    }
+
+    // Yazma alanı yüksekliği: kütüphane satır içi min-height:100px veriyor, kutu yarıda kalıyordu.
+    expect(flat).toMatch(/\.md-editor-box \.w-md-editor-text \{[^}]*min-height: 100% !important/)
+  })
+
   it('9999 beraberliği çözüldü: katman token\'ları tanımlı ve kullanılıyor', () => {
     for (const tok of ['--z-modal', '--z-announce', '--z-dialog', '--z-toast', '--z-critical']) {
       expect(CSS, `${tok} tanımlı değil`).toContain(`${tok}:`)
