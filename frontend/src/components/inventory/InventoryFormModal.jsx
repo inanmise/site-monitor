@@ -9,6 +9,7 @@ import { useTheme } from '../../i18n/theme.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import NotificationGroupSelect from '../ui/NotificationGroupSelect.jsx'
 import { INVENTORY_FLAGS, emptyFlags } from '../../utils/inventoryFlags.js'
+import { CONTACT_FIELDS, looksLikeBrokenEmail } from '../../utils/inventoryContacts.js'
 import { LoadingBlock } from '../ui/Progress.jsx'
 
 /**
@@ -41,30 +42,6 @@ function YesNo({ value, onChange }) {
         onClick={() => onChange(false)}>Hayır</button>
     </div>
   )
-}
-
-/**
- * Sorumlu Ekipler alanlari — sira backend'deki {@code CertificateInventoryContacts.ALL} ve
- * envanter detay modaliyla AYNI; kullanici uc yerde (form, detay, e-posta) ayni dizilisi gorsun.
- */
-export const CONTACT_FIELDS = [
-  { key: 'svc_mgmt_contact',  labelKey: 'inv.formSvcMgmt' },
-  { key: 'app_dev_contact',   labelKey: 'inv.formAppDev' },
-  { key: 'iis_admin_contact', labelKey: 'inv.formIisAdmin' },
-  { key: 'waf_admin_contact', labelKey: 'inv.formWafAdmin' },
-]
-
-/**
- * YUMUSAK uyari: deger bir e-posta yazmaya calisiyor ama bicimi bozuk gorunuyor.
- *
- * Kaydi ENGELLEMEZ — alan serbest metindir ("Ad Soyad - ad.soyad@example.com", yalniz ad, yalniz
- * adres hepsi gecerli). Engelleseydik "Ahmet (izinde)" gibi mesru bir degeri de reddederdik.
- * Yalniz "@ yazmis ama adres tamamlanmamis" halini isaret eder.
- */
-export function looksLikeBrokenEmail(value) {
-  const v = (value ?? '').trim()
-  if (!v.includes('@')) return false
-  return !/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.test(v)
 }
 
 function SectionHeader({ label }) {
@@ -213,7 +190,12 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
       active:             form.active,
       team_id:            form.team_id ? Number(form.team_id) : null,
       // Bos = takim varsayilani -> takim adresi (zincirin kalani).
-      notificationGroupId: form.notification_group_id ? Number(form.notification_group_id) : null,
+      // Anahtar SNAKE_CASE olmak ZORUNDA: uc @RequestBody CertificateInventory ile baglaniyor ve
+      // Jackson spring.jackson.property-naming-strategy=SNAKE_CASE altinda calisiyor. camelCase
+      // gonderilen anahtar SESSIZCE yok sayilir (bilinmeyen alan) -> deger null baglanir ve
+      // updateInventory onu mevcut kaydin UZERINE yazar. Monitor uclari farkli: onlar
+      // @RequestBody Map alip anahtari duz okuyor, orada camelCase DOGRU.
+      notification_group_id: form.notification_group_id ? Number(form.notification_group_id) : null,
       group_name:         form.group_name?.trim() || null,
       ug_team_id:         null,   // tek takım modeli — UG ayrımı kaldırıldı
       external_vendor:    form.external_vendor,
@@ -234,8 +216,8 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
       change_description: form.change_description || null,
       // DİKKAT: payload'ın tek camelCase çifti (entity Jackson adlarıyla eşleşsin diye).
       // snake_case'e "düzeltilirse" iki alan sessizce null gider.
-      expectedFingerprint: form.expected_fingerprint || null,
-      expectedSubject:    form.expected_subject || null,
+      expected_fingerprint: form.expected_fingerprint || null,
+      expected_subject:    form.expected_subject || null,
       tier:               form.tier ? Number(form.tier) : null,
     }
     const res = mode === 'edit'

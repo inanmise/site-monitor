@@ -120,6 +120,48 @@ class GuideLinkControllerTest {
                 .andExpect(jsonPath("$.data.title").value("New title"));
     }
 
+    /**
+     * BAGLAMA KAPISI — uc {@code @RequestBody GuideLink} ile bagliyor ve Jackson
+     * {@code SNAKE_CASE} altinda calisiyor, dolayisiyla anahtar {@code sort_order} olmali.
+     *
+     * <p>Frontend {@code sortOrder} (camelCase) gonderiyordu: Jackson bunu sessizce atiyor, alan
+     * entity VARSAYILANI olan 0'da kaliyor ve {@code body.getSortOrder() != null} kontrolu de
+     * GECTIGI icin her duzenleme siralamayi 0'a ceviriyordu. Yani ozellik iki yonden de
+     * calismiyordu (okuma tarafinda da yanit snake_case donuyor).
+     */
+    @Test
+    @DisplayName("PUT: sort_order snake_case ile BAGLANIR")
+    void update_sortOrder_snakeCaseBinds() throws Exception {
+        GuideLink existing = link(7L, "WAF", "Old", "https://old");
+        existing.setSortOrder(5);
+        when(repo.findById(7L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        mvc.perform(put("/api/guide-links/7")
+                        .session(adminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"category\":\"WAF\",\"title\":\"T\",\"url\":\"https://n\",\"sort_order\":9}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.sort_order").value(9));
+    }
+
+    @Test
+    @DisplayName("PUT: camelCase sortOrder baglanmaz — mevcut siralamayi 0'a cevirirdi")
+    void update_sortOrder_camelCaseDoesNotBind() throws Exception {
+        GuideLink existing = link(7L, "WAF", "Old", "https://old");
+        existing.setSortOrder(5);
+        when(repo.findById(7L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        mvc.perform(put("/api/guide-links/7")
+                        .session(adminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"category\":\"WAF\",\"title\":\"T\",\"url\":\"https://n\",\"sortOrder\":9}"))
+                .andExpect(status().isOk())
+                // Kural YAZILI hale getiriliyor: bir daha kimse "camelCase de calisiyordur" sanmasin.
+                .andExpect(jsonPath("$.data.sort_order").value(0));
+    }
+
     @Test
     @DisplayName("PUT /api/guide-links/{id} with unknown id returns 404")
     void update_unknownId_returns404() throws Exception {

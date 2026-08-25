@@ -56,7 +56,9 @@ export default function CertRenewalGuide({ isAdmin }) {
       title:       link.title || '',
       url:         link.url || '',
       description: link.description || '',
-      sortOrder:   link.sortOrder ?? 0,
+      // API yaniti SNAKE_CASE doner; link.sortOrder DAIMA undefined'di, yani duzenleme
+      // formu kayitli siralamayi hic gostermiyordu.
+      sortOrder:   link.sort_order ?? 0,
     })
     setMsg(null)
     setModal(link)
@@ -73,7 +75,10 @@ export default function CertRenewalGuide({ isAdmin }) {
       title:       form.title.trim(),
       url:         form.url.trim(),
       description: form.description.trim(),
-      sortOrder:   Number(form.sortOrder) || 0,
+      // Uc @RequestBody GuideLink ile bagliyor (Jackson SNAKE_CASE): camelCase anahtar
+      // sessizce dusuyordu. Entity varsayilani 0 oldugu icin null-kontrolu de GECIYOR ve
+      // her duzenleme siralamayi 0'a ceviriyordu.
+      sort_order:  Number(form.sortOrder) || 0,
     }
     const res = modal === 'add'
       ? await api.guideLinks.create(payload)

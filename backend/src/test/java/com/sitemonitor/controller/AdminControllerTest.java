@@ -31,6 +31,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import org.mockito.ArgumentCaptor;
+import org.mockito.ArgumentMatchers;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -399,6 +400,138 @@ class AdminControllerTest {
         // Govdede GONDERILMEYEN alan silinmez: "yalniz IISAdmin'i doldur, 200 kayda uygula"
         // istegi otekileri sessizce bosaltsaydi bu bir veri kaybi olurdu.
         assertThat(saved.getAppDevContact()).isEqualTo("dokunma@example.com");
+    }
+
+    /**
+     * BAGLAMA KAPISI — envanter ucu {@code @RequestBody CertificateInventory} ile bagliyor ve
+     * Jackson {@code spring.jackson.property-naming-strategy=SNAKE_CASE} altinda calisiyor.
+     * Dolayisiyla JSON anahtarlari SNAKE_CASE olmak zorunda.
+     *
+     * <p>Bu kapi neden gerekliydi: frontend uc alani camelCase gonderiyordu
+     * ({@code expectedFingerprint}, {@code expectedSubject}, {@code notificationGroupId}).
+     * Jackson bilinmeyen anahtari SESSIZCE atiyor, alan null bagli kaliyor ve
+     * {@code updateInventory} bunu mevcut kaydin UZERINE yaziyordu. Yani alanlar formdan hic
+     * kaydedilemiyor, ustelik her duzenlemede mevcut degeri SILINIYORDU. Frontend testi payload
+     * SEKLINI dogruluyordu ama ucun onu KABUL ETTIGINI dogrulamiyordu; bu yuzden hata gorunmedi.
+     *
+     * <p>Monitor uclari bu kurala TABI DEGIL: onlar {@code @RequestBody Map} alip anahtari duz
+     * okuyor ({@code body.get("notificationGroupId")}), orada camelCase dogrudur.
+     */
+    @Test
+    @DisplayName("PUT inventory: snake_case anahtarlar BAGLANIR (camelCase sessizce dusuyordu)")
+    void updateInventory_snakeCaseKeys_bind() throws Exception {
+        CertificateInventory existing = inventory("old.com");
+        existing.setId(1L);
+        existing.setTeamId(7L);
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+        when(inventoryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        mvc.perform(put("/api/admin/inventory/1")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"old.com\",\"port\":443,\"active\":true,"
+                               + "\"expected_fingerprint\":\"AA:BB:CC\","
+                               + "\"expected_subject\":\"CN=old.com\"}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<CertificateInventory> cap = ArgumentCaptor.forClass(CertificateInventory.class);
+        verify(inventoryRepo, atLeastOnce()).save(cap.capture());
+        CertificateInventory saved = cap.getAllValues().get(cap.getAllValues().size() - 1);
+        assertThat(saved.getExpectedFingerprint()).isEqualTo("AA:BB:CC");
+        assertThat(saved.getExpectedSubject()).isEqualTo("CN=old.com");
+    }
+
+    @Test
+    @DisplayName("PUT inventory: camelCase anahtar BAGLANMAZ — kural belgelenir, sessiz kalmaz")
+    void updateInventory_camelCaseKeys_doNotBind() throws Exception {
+        CertificateInventory existing = inventory("old.com");
+        existing.setId(1L);
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+        when(inventoryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        mvc.perform(put("/api/admin/inventory/1")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"old.com\",\"port\":443,\"active\":true,"
+                               + "\"expectedFingerprint\":\"CAMEL\"}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<CertificateInventory> cap = ArgumentCaptor.forClass(CertificateInventory.class);
+        verify(inventoryRepo, atLeastOnce()).save(cap.capture());
+        // Bu davranis Jackson'in kendisi; testin amaci onu DEGISTIRMEK degil, bir daha kimse
+        // "camelCase de calisiyordur" varsayimina dusmesin diye YAZILI hale getirmek.
+        assertThat(cap.getAllValues().get(cap.getAllValues().size() - 1).getExpectedFingerprint()).isNull();
+    }
+
+    @Test
+    @DisplayName("PUT inventory: bildirim grubu snake_case ile baglanir ve SAHIPLIK dogrulanir")
+    void updateInventory_notificationGroup_bindsAndValidatesOwnership() throws Exception {
+        CertificateInventory existing = inventory("old.com");
+        existing.setId(1L);
+        existing.setTeamId(7L);
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+        when(inventoryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        com.sitemonitor.model.NotificationGroup g = new com.sitemonitor.model.NotificationGroup();
+        g.setId(50L); g.setTeamId(7L); g.setActive(true); g.setName("Nobet");
+        when(notificationGroupRepo.findById(50L)).thenReturn(Optional.of(g));
+
+        mvc.perform(put("/api/admin/inventory/1")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"old.com\",\"port\":443,\"active\":true,"
+                               + "\"notification_group_id\":50}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<CertificateInventory> cap = ArgumentCaptor.forClass(CertificateInventory.class);
+        verify(inventoryRepo, atLeastOnce()).save(cap.capture());
+        assertThat(cap.getAllValues().get(cap.getAllValues().size() - 1).getNotificationGroupId()).isEqualTo(50L);
+    }
+
+    @Test
+    @DisplayName("POST inventory: BASKA takimin bildirim grubu kaydedilmez (olusturma yolu)")
+    void addInventory_foreignNotificationGroup_isDropped() throws Exception {
+        when(inventoryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        com.sitemonitor.model.NotificationGroup foreign = new com.sitemonitor.model.NotificationGroup();
+        foreign.setId(99L); foreign.setTeamId(42L); foreign.setActive(true); foreign.setName("Baska");
+        when(notificationGroupRepo.findById(99L)).thenReturn(Optional.of(foreign));
+
+        mvc.perform(post("/api/admin/inventory")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"yeni.example.com\",\"port\":443,\"active\":true,"
+                               + "\"team_id\":7,\"notification_group_id\":99}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<CertificateInventory> cap = ArgumentCaptor.forClass(CertificateInventory.class);
+        verify(inventoryRepo, atLeastOnce()).save(cap.capture());
+        // Gonderim aninda ikinci bir kapi daha var, ama gecersiz deger KAYDEDILMEMELI: arayuzde
+        // "alarmlar su gruba gidiyor" diye yanlis gorunurdu.
+        assertThat(cap.getAllValues().get(0).getNotificationGroupId()).isNull();
+    }
+
+    @Test
+    @DisplayName("Toplu atama KENDI denetim adiyla yazilir (silme gibi gorunmez)")
+    void bulkSetContacts_auditActionIsNotDelete() throws Exception {
+        CertificateInventory existing = inventory("old.com");
+        existing.setId(1L);
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+        when(inventoryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        mvc.perform(post("/api/admin/inventory/bulk")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"ids\":[1],\"action\":\"set-contacts\","
+                               + "\"svc_mgmt_contact\":\"ekip@example.com\"}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<String> act = ArgumentCaptor.forClass(String.class);
+        verify(auditService).recordAction(act.capture(), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class),
+                ArgumentMatchers.<String>any(), ArgumentMatchers.<String>any(), ArgumentMatchers.<String>any());
+        // Denetim kaydinin YANLIS olmasi, hic olmamasindan kotudur: eskiden bu eylem
+        // DOMAIN_BULK_DELETE olarak yaziliyor ve olmamis bir silme raporlaniyordu.
+        assertThat(act.getValue()).isEqualTo("DOMAIN_BULK_SET_CONTACTS");
     }
 
     @Test
