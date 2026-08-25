@@ -19,9 +19,9 @@ class ClientIpResolverTest {
     void leftmostXffByDefault() {
         ClientIpResolver r = resolver(new String[]{"X-Forwarded-For"}, 0);
         MockHttpServletRequest req = new MockHttpServletRequest();
-        req.addHeader("X-Forwarded-For", "10.218.204.187, 172.21.116.251");
-        req.setRemoteAddr("172.21.116.251");
-        assertThat(r.resolve(req)).isEqualTo("10.218.204.187");
+        req.addHeader("X-Forwarded-For", "10.0.0.7, 172.16.0.51");
+        req.setRemoteAddr("172.16.0.51");
+        assertThat(r.resolve(req)).isEqualTo("10.0.0.7");
     }
 
     @Test
@@ -29,9 +29,9 @@ class ClientIpResolverTest {
         // XFF proxy IP'si taşısa bile, sıralı listede önce gelen X-Real-IP gerçek client'ı verir
         ClientIpResolver r = resolver(new String[]{"X-Real-IP", "X-Forwarded-For"}, 0);
         MockHttpServletRequest req = new MockHttpServletRequest();
-        req.addHeader("X-Forwarded-For", "172.21.116.251");
-        req.addHeader("X-Real-IP", "10.218.204.187");
-        assertThat(r.resolve(req)).isEqualTo("10.218.204.187");
+        req.addHeader("X-Forwarded-For", "172.16.0.51");
+        req.addHeader("X-Real-IP", "10.0.0.7");
+        assertThat(r.resolve(req)).isEqualTo("10.0.0.7");
     }
 
     @Test
@@ -79,10 +79,10 @@ class ClientIpResolverTest {
     void debugInfoExposesHeadersAndResolved() {
         ClientIpResolver r = resolver(new String[]{"X-Forwarded-For"}, 0);
         MockHttpServletRequest req = new MockHttpServletRequest();
-        req.addHeader("X-Forwarded-For", "10.218.204.187");
-        req.setRemoteAddr("172.21.116.251");
+        req.addHeader("X-Forwarded-For", "10.0.0.7");
+        req.setRemoteAddr("172.16.0.51");
         var info = r.debugInfo(req);
-        assertThat(info.get("resolved")).isEqualTo("10.218.204.187");
-        assertThat(info.get("remote_addr")).isEqualTo("172.21.116.251");
+        assertThat(info.get("resolved")).isEqualTo("10.0.0.7");
+        assertThat(info.get("remote_addr")).isEqualTo("172.16.0.51");
     }
 }

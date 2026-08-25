@@ -858,7 +858,7 @@ class EmailNotificationServiceTest {
     @Test
     @DisplayName("doSend: 421 sonrası retry başarılı → QUEUED_RETRY logu SENT'e geri-yazılır")
     void retrySucceeds_writesBackSent() throws Exception {
-        String subject = "[SiteMonitor YÜKSEK] genesys.akbank.com — DNS";
+        String subject = "[SiteMonitor YÜKSEK] genesys.example.com — DNS";
         when(settingsService.getOrDefaults()).thenReturn(settings(true));
         when(smtpMailService.currentSender()).thenReturn(sender);
         MimeMessage mockMsg = mock(MimeMessage.class);
@@ -927,7 +927,7 @@ class EmailNotificationServiceTest {
     @DisplayName("buildAlertEmailHtml: KEYWORD alarmı kendine özgü şablon — cert alanları YOK")
     void keywordAlert_ownTemplate() {
         Map<String, Object> ctx = new HashMap<>();
-        ctx.put("url", "https://www.akbank.com/");
+        ctx.put("url", "https://www.example.com/");
         ctx.put("keyword", "Melih Ekmekçi");
         ctx.put("operator", "GTE");
         ctx.put("match_count", 3);
@@ -936,7 +936,7 @@ class EmailNotificationServiceTest {
         ctx.put("http_status", 200);
         ctx.put("first_failure_at", "2026-06-23T12:00:00");
         String html = service.buildAlertEmailHtml("[SiteMonitor KRİTİK] keyword",
-                "KRİTİK: kelime bulunamıyor", "https://www.akbank.com/", "CRITICAL", "KEYWORD", null, ctx);
+                "KRİTİK: kelime bulunamıyor", "https://www.example.com/", "CRITICAL", "KEYWORD", null, ctx);
         assertThat(html).contains("İÇERİK (KEYWORD) İZLEME");
         assertThat(html).contains("Aranan kelime");
         assertThat(html).contains("Melih Ekmekçi");
@@ -969,7 +969,7 @@ class EmailNotificationServiceTest {
     @Test
     @DisplayName("buildResolutionEmailHtml: KEYWORD/PING çözüldü kendine özgü — cert alanları YOK")
     void keywordPingResolved_ownTemplate() {
-        String kw = service.buildResolutionEmailHtml("https://www.akbank.com/", "KEYWORD", "CRITICAL",
+        String kw = service.buildResolutionEmailHtml("https://www.example.com/", "KEYWORD", "CRITICAL",
                 null, "Sistem (otomatik)", "2026-06-23T13:00:00", "2026-06-23T12:00:00", null);
         assertThat(kw).contains("İçerik Doğrulaması Yeniden Başarılı");
         assertThat(kw).doesNotContain("Son Kullanma");
@@ -1121,26 +1121,26 @@ class EmailNotificationServiceTest {
         EmailNotificationService.InlineImage img =
                 new EmailNotificationService.InlineImage("shot0", new byte[]{1, 2, 3}, "image/png");
         String html = org.springframework.test.util.ReflectionTestUtils.invokeMethod(service, "buildLoginIssueHtml",
-                "LIR-2026-000042", "N<script>", "reporter@akbank.com", "HTTP 423 <b>x</b>", "mesaj & <tag>",
+                "LIR-2026-000042", "N<script>", "reporter@example.com", "HTTP 423 <b>x</b>", "mesaj & <tag>",
                 java.util.List.of(img), "10.1.2.3", "curl/8", "2026-07-24T09:00:00", false);
 
         assertThat(html).contains("LIR-2026-000042");
         assertThat(html).contains("N&lt;script&gt;").doesNotContain("N<script>");   // XSS: kullanıcı değeri escape'li
         assertThat(html).contains("cid:shot0");                                      // görsel inline referansı
         assertThat(html).contains("10.1.2.3").contains("curl/8");                    // admin varyantı IP/UA gösterir
-        assertThat(html).contains("reporter@akbank.com");                            // admin varyantı bildiren e-postasını gösterir
+        assertThat(html).contains("reporter@example.com");                            // admin varyantı bildiren e-postasını gösterir
     }
 
     @Test
     @DisplayName("Bildiren onay (ACK) HTML'i: referans var; IP/UA satırı GİZLİ (forReporter)")
     void loginIssueAck_htmlHidesIpUa() {
         String html = org.springframework.test.util.ReflectionTestUtils.invokeMethod(service, "buildLoginIssueHtml",
-                "LIR-2026-000042", "N1", "reporter@akbank.com", "HTTP 423", "mesaj",
+                "LIR-2026-000042", "N1", "reporter@example.com", "HTTP 423", "mesaj",
                 java.util.List.of(), null, null, "2026-07-24T09:00:00", true);
 
         assertThat(html).contains("LIR-2026-000042");
         assertThat(html).doesNotContain("IP Adresi").doesNotContain("Tarayıcı");   // bildirene IP/UA satırı yok
-        assertThat(html).doesNotContain("reporter@akbank.com");                    // bildirene kendi e-postası satırı gösterilmez
+        assertThat(html).doesNotContain("reporter@example.com");                    // bildirene kendi e-postası satırı gösterilmez
     }
 
     @Test
@@ -1151,27 +1151,27 @@ class EmailNotificationServiceTest {
         doNothing().when(spySender).send(any(MimeMessage.class));
         when(smtpMailService.currentSender()).thenReturn(spySender);
 
-        service.sendLoginIssueResolved("reporter@akbank.com", "admin@akbank.com", "LIR-2026-000009",
+        service.sendLoginIssueResolved("reporter@example.com", "admin@example.com", "LIR-2026-000009",
                 "N9", "HTTP 423", "giriş yok", "2026-07-24T08:00:00",
                 "hesap açıldı", "2026-07-24T10:00:00", java.util.List.of(), false);
         org.mockito.ArgumentCaptor<MimeMessage> cap = org.mockito.ArgumentCaptor.forClass(MimeMessage.class);
         verify(spySender).send(cap.capture());
         MimeMessage msg = cap.getValue();
         assertThat(java.util.Arrays.toString(msg.getRecipients(jakarta.mail.Message.RecipientType.TO)))
-                .contains("reporter@akbank.com");
+                .contains("reporter@example.com");
         assertThat(java.util.Arrays.toString(msg.getRecipients(jakarta.mail.Message.RecipientType.CC)))
-                .contains("admin@akbank.com");
+                .contains("admin@example.com");
         assertThat(msg.getSubject()).contains("LIR-2026-000009");
 
         // Bildiren yok → admin To olur (boş To olmasın).
         reset(spySender);
         doNothing().when(spySender).send(any(MimeMessage.class));
-        service.sendLoginIssueResolved(null, "admin@akbank.com", "LIR-2026-000010",
+        service.sendLoginIssueResolved(null, "admin@example.com", "LIR-2026-000010",
                 "N10", null, "msg", "2026-07-24T08:00:00", null, "2026-07-24T10:00:00", java.util.List.of(), false);
         org.mockito.ArgumentCaptor<MimeMessage> cap2 = org.mockito.ArgumentCaptor.forClass(MimeMessage.class);
         verify(spySender).send(cap2.capture());
         assertThat(java.util.Arrays.toString(cap2.getValue().getRecipients(jakarta.mail.Message.RecipientType.TO)))
-                .contains("admin@akbank.com");
+                .contains("admin@example.com");
     }
 
     @Test
@@ -1185,7 +1185,7 @@ class EmailNotificationServiceTest {
         EmailNotificationService.InlineImage img =
                 new EmailNotificationService.InlineImage("shot0", new byte[]{1, 2, 3}, "image/png");
         EmailNotificationService.LoginIssueMailResult res = service.sendLoginIssueResolved(
-                "reporter@akbank.com", "admin@akbank.com", "LIR-2026-000009",
+                "reporter@example.com", "admin@example.com", "LIR-2026-000009",
                 "N9", "HTTP 423 <b>x</b>", "giriş yapamıyorum", "2026-07-24T08:00:00",
                 "hesap açıldı", "2026-07-24T10:00:00", java.util.List.of(img), false);
 

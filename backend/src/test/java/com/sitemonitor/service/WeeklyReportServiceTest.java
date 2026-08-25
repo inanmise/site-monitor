@@ -153,6 +153,8 @@ class WeeklyReportServiceTest {
         when(reportRepo.findByTeamIdAndReportYearAndWeekNo(2L, 2026, 24)).thenReturn(Optional.empty());
 
         WeeklyReport created = service.create(null, 2026, 24, USER_T2);
+        // Tohum sablonundaki kanal adi URUN VERISI (WeeklyReportService:136) ve bilincli olarak
+        // supurulmedi; test onu AYNEN yansitmak zorunda (bkz. kimlik-tarama muafiyet listesi).
         assertThat(created.getContentJson()).contains("Çağrı Merkezi").contains("Akbank.com");
 
         when(reportRepo.findByTeamIdAndReportYearAndWeekNo(2L, 2026, 24))
@@ -973,7 +975,7 @@ class WeeklyReportServiceTest {
         member.setId(50L); member.setTeamId(2L); member.setActive(true); member.setManagerId(70L);
         when(userRepo.findByTeamIdOrderByUsernameAsc(2L)).thenReturn(List.of(member));
         AppUser mgr = new AppUser();
-        mgr.setId(70L); mgr.setActive(true); mgr.setEmail("mudur@akbank.com"); mgr.setDisplayName("Ali Müdür");
+        mgr.setId(70L); mgr.setActive(true); mgr.setEmail("mudur@example.com"); mgr.setDisplayName("Ali Müdür");
         when(userRepo.findById(70L)).thenReturn(Optional.of(mgr));
 
         Map<String, Object> out = service.approve(5L, PO_T2);
@@ -981,7 +983,7 @@ class WeeklyReportServiceTest {
         assertThat(((WeeklyReport) out.get("data")).getStatus()).isEqualTo("APPROVED");
         ArgumentCaptor<String[]> toCap = ArgumentCaptor.forClass(String[].class);
         verify(emailService).sendHtml(toCap.capture(), any(), anyString(), anyString(), any());
-        assertThat(toCap.getValue()).contains("mudur@akbank.com");
+        assertThat(toCap.getValue()).contains("mudur@example.com");
     }
 
     @Test

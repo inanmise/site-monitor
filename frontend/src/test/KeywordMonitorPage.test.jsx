@@ -28,7 +28,7 @@ vi.mock('../api/client', () => ({
 import { api } from '../api/client'
 
 const monitor = {
-  id: 1, name: 'Akbank', url: 'https://www.akbank.com/', keyword: 'akbank',
+  id: 1, name: 'Example', url: 'https://www.example.com/', keyword: 'example',
   operator: 'GTE', match_count: 1, group_name: 'X Sistemleri', team_name: 'SY-A',
   status: 'up', http_status: 200, occurrences: 5, active: true, checked_at: '2026-06-24T00:00:00',
 }
@@ -46,8 +46,8 @@ describe('KeywordMonitorPage', () => {
   it('izleme kartını (url + kelime) listeler', async () => {
     render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
-    expect(await screen.findByText('https://www.akbank.com/')).toBeInTheDocument()
-    expect(screen.getByText('akbank')).toBeInTheDocument()
+    expect(await screen.findByText('https://www.example.com/')).toBeInTheDocument()
+    expect(screen.getByText('example')).toBeInTheDocument()
   })
 
   it('Yeni modal: dinamik tetiklenme açıklaması görünür + güncellenir', async () => {
@@ -70,7 +70,7 @@ describe('KeywordMonitorPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitor/i }))
     fireEvent.change(screen.getByPlaceholderText('https://example.com'), { target: { value: 'https://x.example.com' } })
-    fireEvent.change(screen.getByPlaceholderText('SUCCESS'), { target: { value: 'akbank' } })
+    fireEvent.change(screen.getByPlaceholderText('SUCCESS'), { target: { value: 'example' } })
 
     fireEvent.click(screen.getByRole('button', { name: /test/i }))
     await waitFor(() => expect(api.monitoring.testKeyword).toHaveBeenCalled())
@@ -80,7 +80,7 @@ describe('KeywordMonitorPage', () => {
   it('karta tıkla → detay modalında 3 sekme görünür', async () => {
     render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
-    fireEvent.click(screen.getByText('https://www.akbank.com/'))
+    fireEvent.click(screen.getByText('https://www.example.com/'))
     await waitFor(() => expect(api.monitoring.getCheckHistory).toHaveBeenCalled())
     expect(screen.getByRole('button', { name: /check history|kontrol/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /response chart|süre/i })).toBeInTheDocument()
@@ -99,7 +99,7 @@ describe('KeywordMonitorPage', () => {
     fireEvent.blur(url)
     expect(url.value).toBe('https://x.example.com/a?t={timestamp}')
 
-    fireEvent.change(screen.getByPlaceholderText('SUCCESS'), { target: { value: 'akbank' } })
+    fireEvent.change(screen.getByPlaceholderText('SUCCESS'), { target: { value: 'example' } })
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
     await waitFor(() => expect(api.monitoring.createKeywordMonitor).toHaveBeenCalled())
     expect(api.monitoring.createKeywordMonitor.mock.calls[0][0].url).toBe('https://x.example.com/a?t={timestamp}')
@@ -108,7 +108,7 @@ describe('KeywordMonitorPage', () => {
   it('Kopyala: TÜM kullanıcı ayarları birebir kopyalanır (yalnız ad "(Kopya)" olur)', async () => {
     // Her alan varsayılandan FARKLI → bir alan formFrom'dan düşerse tam-payload karşılaştırması kırılır.
     api.monitoring.getKeywordMonitors.mockResolvedValue({ success: true, data: [{
-      id: 1, name: 'Akbank', url: 'https://www.akbank.com/', keyword: 'akbank', status: 'up',
+      id: 1, name: 'Example', url: 'https://www.example.com/', keyword: 'example', status: 'up',
       checked_at: '2026-06-24T00:00:00',
       operator: 'LTE', match_count: 4, group_name: 'Kurumsal', team_id: 5, team_name: 'SY-A',
       case_sensitive: true, tags: 'prod,kritik', notify_email: false,
@@ -123,21 +123,21 @@ describe('KeywordMonitorPage', () => {
 
     render(<KeywordMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
-    await screen.findByText('https://www.akbank.com/')
+    await screen.findByText('https://www.example.com/')
 
     fireEvent.click(screen.getByRole('button', { name: /kopyala|duplicate/i }))
 
     // Kopya rozeti + ipucu görünür (yeni-kayıt modu, kaynak belli)
     expect(document.querySelector('.mon-dup-badge')).not.toBeNull()
     expect(document.querySelector('.mon-dup-hint')).not.toBeNull()
-    expect(screen.getByPlaceholderText('https://www.akbank.com/').value).toMatch(/\(Kopya\)$/)
+    expect(screen.getByPlaceholderText('https://www.example.com/').value).toMatch(/\(Kopya\)$/)
 
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
     await waitFor(() => expect(api.monitoring.createKeywordMonitor).toHaveBeenCalled())
     expect(api.monitoring.updateKeywordMonitor).not.toHaveBeenCalled()
 
     expect(api.monitoring.createKeywordMonitor.mock.calls[0][0]).toEqual({
-      name: 'Akbank (Kopya)', url: 'https://www.akbank.com/', keyword: 'akbank',
+      name: 'Example (Kopya)', url: 'https://www.example.com/', keyword: 'example',
       operator: 'LTE', matchCount: 4, groupName: 'Kurumsal', teamId: 5,
       caseSensitive: true, tags: 'prod,kritik', notifyEmail: false,
       checkSslErrors: true, sslExpiryReminders: true, domainExpiryReminders: true,
@@ -226,10 +226,10 @@ describe('KeywordMonitorPage', () => {
     window.history.replaceState({}, '', '/?tab=keyword')
     try {
       render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
-      await screen.findByText('https://www.akbank.com/')
+      await screen.findByText('https://www.example.com/')
       const box = screen.getByPlaceholderText(/ara|search/i)
-      fireEvent.change(box, { target: { value: 'akbank' } })
-      await waitFor(() => expect(window.location.search).toContain('q=akbank'), { timeout: 1500 })
+      fireEvent.change(box, { target: { value: 'example' } })
+      await waitFor(() => expect(window.location.search).toContain('q=example'), { timeout: 1500 })
       fireEvent.change(box, { target: { value: '' } })
       await waitFor(() => expect(window.location.search).not.toContain('q='), { timeout: 1500 })
       expect(window.location.search).toContain('tab=keyword')   // eşleme-dışı param korunur

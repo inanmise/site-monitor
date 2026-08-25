@@ -23,14 +23,14 @@ class ScriptedTargetUrlTest {
         String script = """
             import http from 'k6/http';
             export default function () {
-              http.get('https://www.akbank.com/login', { timeout: '20s' });
+              http.get('https://www.example.com/login', { timeout: '20s' });
               http.post("https://api.example.com/v1/x", '{}');
-              http.get('https://www.akbank.com/login');
+              http.get('https://www.example.com/login');
             }
             """;
 
         assertThat(ScriptedCheckerService.extractTargetUrls(script, List.of()))
-                .containsExactly("https://www.akbank.com/login", "https://api.example.com/v1/x");
+                .containsExactly("https://www.example.com/login", "https://api.example.com/v1/x");
     }
 
     @Test

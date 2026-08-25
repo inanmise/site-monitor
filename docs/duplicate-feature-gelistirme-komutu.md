@@ -6,7 +6,7 @@
 
 ## Görev özeti
 
-CertMonitor'da bir izleme kartının üzerinden **tek tıkla kopya (duplicate) oluşturma** özelliği ekle. Kullanıcı senaryosu: elinde `callcenterfacewebmon1.akbank.com/...` gibi 30+ benzer URL var; her sunucu için formu sıfırdan doldurmak yerine mevcut karttaki **Kopyala** butonuna basacak, form mevcut izlemenin birebir kopyasıyla (isim, URL, takım, grup, interval, bildirim ayarları, eşikler, keyword/koşul, etiketler vb.) dolu açılacak, kullanıcı sadece URL'deki `1`'i `2` yapıp kaydedecek. Hiçbir alanı yeniden girmek zorunda kalmayacak. Kullanıcı hiçbir değişiklik yapmadan kaydederse backend "zaten izleniyor" hatası dönecek ve mükerrer kayıt OLUŞMAYACAK.
+CertMonitor'da bir izleme kartının üzerinden **tek tıkla kopya (duplicate) oluşturma** özelliği ekle. Kullanıcı senaryosu: elinde `callcenterfacewebmon1.example.com/...` gibi 30+ benzer URL var; her sunucu için formu sıfırdan doldurmak yerine mevcut karttaki **Kopyala** butonuna basacak, form mevcut izlemenin birebir kopyasıyla (isim, URL, takım, grup, interval, bildirim ayarları, eşikler, keyword/koşul, etiketler vb.) dolu açılacak, kullanıcı sadece URL'deki `1`'i `2` yapıp kaydedecek. Hiçbir alanı yeniden girmek zorunda kalmayacak. Kullanıcı hiçbir değişiklik yapmadan kaydederse backend "zaten izleniyor" hatası dönecek ve mükerrer kayıt OLUŞMAYACAK.
 
 Özellik şu 8 izleme sayfasının **hepsine** aynı davranışla eklenecek:
 

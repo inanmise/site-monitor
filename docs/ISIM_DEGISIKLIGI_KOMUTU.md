@@ -27,7 +27,7 @@ Bu görev bir **proje adı** değişikliğidir, **alan dili (domain) değişikli
 - DB şeması: hiçbir tablo/kolon adı değişmez; `applySchemaPatches`'e bu görev için patch EKLENMEZ.
 - API endpoint yolları (`/api/...`) — dış tüketiciler kırılmasın.
 - `VERSION`, `Chart.yaml` sürüm alanı (CI yönetir), CHANGELOG'un GEÇMİŞ girdileri (tarih yeniden yazılmaz).
-- Prod URL/DNS (`certmonitor-prod.akbank.com`) ve `docs/` altındaki tarihsel komut dosyaları (`PAGING_*`, `PAYLASILABILIR_*`, `duplicate-*` — geçmiş kayıttır, güncellenmez).
+- Prod URL/DNS (`certmonitor-prod.example.com`) ve `docs/` altındaki tarihsel komut dosyaları (`PAGING_*`, `PAYLASILABILIR_*`, `duplicate-*` — geçmiş kayıttır, güncellenmez).
 
 Kör toplu bul-değiştir YASAK. Her değişiklik yukarıdaki token tablosuna göre, dosya bazında bilinçli yapılır.
 
@@ -193,7 +193,7 @@ Claude Code kendi çalışma klasörünü yeniden adlandıramaz (içinde çalı�
 
 ## 8. Kapsam DIŞI (kullanıcı kendisi ayarlayacak / bilinçli bırakılıyor)
 
-- **Prod ve test DNS/URL ayarları** (`certmonitor-prod.akbank.com` → yeni adres): kullanıcı kendisi yapacak. `docs/DEPLOY_GECIS_PLANI.md`'de ingress/route HOST alanlarının değişmediği, DNS geçişinin kullanıcı tarafından ayrıca yapılacağı bir satırla not edilir.
+- **Prod ve test DNS/URL ayarları** (`certmonitor-prod.example.com` → yeni adres): kullanıcı kendisi yapacak. `docs/DEPLOY_GECIS_PLANI.md`'de ingress/route HOST alanlarının değişmediği, DNS geçişinin kullanıcı tarafından ayrıca yapılacağı bir satırla not edilir.
 - Log toplayıcı (filebeat vb.) desen güncellemeleri — geçiş planındaki notla altyapı ekibine.
 - Kayıtlı eski logların, eski ghcr imaj/paketlerinin temizliği.
 

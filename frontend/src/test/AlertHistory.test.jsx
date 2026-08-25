@@ -139,8 +139,8 @@ describe('AlertHistory closed-alert details', () => {
     api.admin.previewReNotify.mockResolvedValue({
       success: true,
       data: { alert_id: 301, recipients: [
-        { email: 'dijitalsy@akbank.com', name: 'SY-Dijital', role: null, kind: 'TEAM' },
-        { email: 'mudur@akbank.com', name: 'Cenk Çil', role: 'MANAGER', kind: 'CONTACT' },
+        { email: 'dijitalsy@example.com', name: 'SY-Dijital', role: null, kind: 'TEAM' },
+        { email: 'mudur@example.com', name: 'Cenk Çil', role: 'MANAGER', kind: 'CONTACT' },
       ] },
     })
     api.admin.reNotifyAlert.mockResolvedValue({ success: true, data: { recipients_queued: 1 } })
@@ -157,19 +157,19 @@ describe('AlertHistory closed-alert details', () => {
 
     // Pop-up iki alıcıyı listeler
     await screen.findByText(/alıcıları onayla|confirm recipients/i)
-    expect(screen.getByText('dijitalsy@akbank.com')).toBeDefined()
-    expect(screen.getByText('mudur@akbank.com')).toBeDefined()
+    expect(screen.getByText('dijitalsy@example.com')).toBeDefined()
+    expect(screen.getByText('mudur@example.com')).toBeDefined()
     expect(screen.getByText(/2 alıcı seçili|2 recipients selected/i)).toBeDefined()
 
     // Müdürü listeden çıkar → Gönder → excludeEmails taşınır
     const modal = document.querySelector('.nl-modal')
     const mudurRow = Array.from(modal.querySelectorAll('label'))
-      .find(l => l.textContent.includes('mudur@akbank.com'))
+      .find(l => l.textContent.includes('mudur@example.com'))
     fireEvent.click(mudurRow.querySelector('input[type=checkbox]'))
     expect(screen.getByText(/1 alıcı seçili|1 recipients selected/i)).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: /^gönder$|^send$/i }))
     await waitFor(() => expect(api.admin.reNotifyAlert)
-      .toHaveBeenCalledWith(301, { excludeEmails: ['mudur@akbank.com'] }))
+      .toHaveBeenCalledWith(301, { excludeEmails: ['mudur@example.com'] }))
   })
 })
 
@@ -449,14 +449,14 @@ describe('AlertHistory — filtre çubuğu ve istatistik şeridi', () => {
   })
 
   it("URL'deki filtrelerle AÇILIR — bağlantıyı alan aynı listeyi görür", async () => {
-    window.history.replaceState({}, '', '/?level=HIGH&q=akbank&tab=closed')
+    window.history.replaceState({}, '', '/?level=HIGH&q=example&tab=closed')
 
     render(<AlertHistory urlSync />)
 
     await waitFor(() => {
       const first = api.admin.getAlerts.mock.calls[0][0]
       expect(first.level).toBe('HIGH')
-      expect(first.q).toBe('akbank')
+      expect(first.q).toBe('example')
       expect(first.resolved).toBe('true')   // tab=closed
     })
   })

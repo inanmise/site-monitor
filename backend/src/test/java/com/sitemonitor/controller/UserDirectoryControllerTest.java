@@ -51,8 +51,8 @@ class UserDirectoryControllerTest {
     @SuppressWarnings("unchecked")
     void directory_filtersNullUsername_andMapsFields() {
         when(userRepo.findAll()).thenReturn(List.of(
-                user(1L, "aylin", "Aylin Y.", null, null, "aylin@akbank.com"),
-                user(2L, null, "Ghost", "G", "H", "ghost@akbank.com")   // username null → elenmeli
+                user(1L, "aylin", "Aylin Y.", null, null, "aylin@example.com"),
+                user(2L, null, "Ghost", "G", "H", "ghost@example.com")   // username null → elenmeli
         ));
 
         ResponseEntity<Map<String, Object>> resp = controller.directory();
@@ -63,7 +63,7 @@ class UserDirectoryControllerTest {
         assertThat(data.get(0)).containsEntry("id", 1L)
                 .containsEntry("username", "aylin")
                 .containsEntry("display_name", "Aylin Y.")
-                .containsEntry("email", "aylin@akbank.com");
+                .containsEntry("email", "aylin@example.com");
     }
 
     @Test

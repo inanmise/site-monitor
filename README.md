@@ -256,7 +256,7 @@ slow-threshold-ms}`,
 `site.monitor.metrics.scripted.retention-days`. Micrometer: `scripted.k6.active`, `scripted.k6.queued`.
 
 Çıkış vekili: monitör başına **Otomatik / Her zaman vekil üzerinden / Doğrudan**. Otomatik'te Go, NO_PROXY
-girdilerini SONEK olarak uygular (`akbank.com` ⇒ tüm alt alanlar doğrudan çıkar); "Her zaman vekil üzerinden"
+girdilerini SONEK olarak uygular (`example.com` ⇒ tüm alt alanlar doğrudan çıkar); "Her zaman vekil üzerinden"
 NO_PROXY'yi hiç vermez. Kurumsal CA paketi sistem köküyle birleştirilip `SSL_CERT_FILE` ile k6'ya geçer.
 Monitör başına **yavaş koşum alarmı** (opt-in): senaryo geçse bile toplam süre eşiği aşarsa
 `SCRIPTED_SLOW` açılır (kesintiden ayrı, aynı 3× teyit/kurtarma). Eşik boşsa `slow-threshold-ms` kullanılır.

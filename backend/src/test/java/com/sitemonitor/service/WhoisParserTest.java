@@ -52,16 +52,16 @@ class WhoisParserTest {
                 + "Frozen Status: -\n"
                 + "Transfer Status: The domain is LOCKED to transfer.\n\n"
                 + "** Registrant:\n"
-                + "AKBANK A.S.\n"
+                + "EXAMPLE A.S.\n"
                 + "Hidden upon user request\n\n"
                 + "** Registrar:\n"
                 + "NIC Handle\t\t: itt46\n"
                 + "Organization Name\t: IHS KURUMSAL TEKNOLOJI HIZMETLERI A.S.\n"
                 + "Address\t\t\t: Kosuyolu Mah.\n\n"
                 + "** Domain Servers:\n"
-                + "ns1.akbank.com.tr\n"
-                + "srv.akbank.com.tr\n"
-                + "ns12.akbank.com.tr\n\n"
+                + "ns1.example.com.tr\n"
+                + "srv.example.com.tr\n"
+                + "ns12.example.com.tr\n\n"
                 + "** Additional Info:\n"
                 + "Created on..............: 2006-Oct-27.\n"
                 + "Expires on..............: 2029-Oct-26.\n";
@@ -69,7 +69,7 @@ class WhoisParserTest {
         assertThat(r.get("expiry_date")).isEqualTo("2029-10-26");
         assertThat(r.get("registration_date")).isEqualTo("2006-10-27");
         assertThat((String) r.get("registrar")).contains("KURUMSAL");
-        assertThat((List<String>) r.get("nameservers")).contains("ns1.akbank.com.tr", "srv.akbank.com.tr", "ns12.akbank.com.tr");
+        assertThat((List<String>) r.get("nameservers")).contains("ns1.example.com.tr", "srv.example.com.tr", "ns12.example.com.tr");
         assertThat((List<String>) r.get("status_codes")).contains("clientTransferProhibited");
     }
 }

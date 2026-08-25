@@ -26,8 +26,8 @@ class TrWebWhoisClientTest {
             Organization Name\t: İHS KURUMSAL TEKNOLOJİ HİZMETLERİ ANONİM ŞİRKETİ
 
             ** Domain Servers:
-            ns1.akbank.com.tr
-            srv.akbank.com.tr
+            ns1.example.com.tr
+            srv.example.com.tr
 
             ** Additional Info:
             Created on..............: 2006-Oct-27.
@@ -46,7 +46,7 @@ class TrWebWhoisClientTest {
             + "Transfer Status: The domain is LOCKED to transfer.<br/><br/>"
             + "** Registrar:<br/>NIC Handle\t\t: itt46<br/>"
             + "Organization Name\t: İHS KURUMSAL TEKNOLOJİ HİZMETLERİ ANONİM ŞİRKETİ<br/><br/>"
-            + "** Domain Servers:<br/>ns1.akbank.com.tr<br/>srv.akbank.com.tr<br/><br/>"
+            + "** Domain Servers:<br/>ns1.example.com.tr<br/>srv.example.com.tr<br/><br/>"
             + "** Additional Info:<br/>Created on..............: 2006-Oct-27.<br/>"
             + "Expires on..............: 2029-Oct-26.<br/><br/>"
             + "** Whois Server:<br/>Last Update Time: 2026-07-25T00:47:01+03:00<br/></p>";
@@ -72,7 +72,7 @@ class TrWebWhoisClientTest {
         assertThat((String) info.get("registrar")).contains("İHS KURUMSAL");
         @SuppressWarnings("unchecked")
         List<String> ns = (List<String>) info.get("nameservers");
-        assertThat(ns).contains("ns1.akbank.com.tr", "srv.akbank.com.tr");
+        assertThat(ns).contains("ns1.example.com.tr", "srv.example.com.tr");
     }
 
     @Test
@@ -88,7 +88,7 @@ class TrWebWhoisClientTest {
         assertThat((String) info.get("registrar")).contains("İHS KURUMSAL");
         @SuppressWarnings("unchecked")
         List<String> ns = (List<String>) info.get("nameservers");
-        assertThat(ns).contains("ns1.akbank.com.tr");
+        assertThat(ns).contains("ns1.example.com.tr");
     }
 
     @Test

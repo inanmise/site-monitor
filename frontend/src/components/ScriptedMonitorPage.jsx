@@ -1502,7 +1502,7 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
             <span className="field-hint">{t('scripted.useProxyHint')}</span>
             {/* ETKİN karar — "AUTO seçtim, vekilden geçiyordur" varsayımı sahada dört sürüm boyunca
                 yanlış teşhise sebep oldu: Go, NO_PROXY girdilerini SONEK olarak uygular
-                (`akbank.com` ⇒ tüm alt alanlar), yani eşleşen hedef AUTO'da bile doğrudan çıkar. */}
+                (`example.com` ⇒ tüm alt alanlar), yani eşleşen hedef AUTO'da bile doğrudan çıkar. */}
             {proxy && !proxy.configured && (
               <span className="field-hint sc-proxy-note">{t('scripted.useProxyNotConfigured')}</span>
             )}

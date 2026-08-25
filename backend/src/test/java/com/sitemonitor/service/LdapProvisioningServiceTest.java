@@ -63,9 +63,9 @@ class LdapProvisioningServiceTest {
     @Test
     @DisplayName("PRODUCT OWNER → orgRole PO + systemRole TEAM_ADMIN; all profile fields mapped")
     void mapsAllFields_poBecomesTeamAdmin() {
-        when(directory.groupMail(anyString())).thenReturn(Optional.of("sy-darkside@akbank.com"));
+        when(directory.groupMail(anyString())).thenReturn(Optional.of("sy-darkside@example.com"));
         Map<String, Object> attrs = Map.ofEntries(
-                Map.entry("mail", "erdi@akbank.com"),
+                Map.entry("mail", "erdi@example.com"),
                 Map.entry("cn", "63999"),
                 Map.entry("givenName", "Erdi"),
                 Map.entry("sn", "İnanmış"),
@@ -77,13 +77,13 @@ class LdapProvisioningServiceTest {
                 Map.entry("company", "PRODUCT OWNER"),
                 Map.entry("extensionAttribute5", "8861;TEKN.MİM. VE TEMEL BANK. SERVİS YÖNETİMİ"),
                 Map.entry("memberOf", List.of(
-                        "CN=SY-DarkSide,OU=ScrumGroups,OU=BTPersonel,OU=Aknet,DC=aknet,DC=akb",
-                        "CN=aidatasy,OU=DistributionGroups,OU=Groups,OU=Aknet,DC=aknet,DC=akb")));
+                        "CN=Takim A,OU=ScrumGroups,OU=Staff,OU=Corp,DC=example,DC=com",
+                        "CN=dagitim-listesi,OU=DistributionGroups,OU=Groups,OU=Corp,DC=example,DC=com")));
 
-        AppUser u = service.provisionFromAd("n64954", "CN=n64954,OU=BTPersonel,DC=aknet,DC=akb", attrs);
+        AppUser u = service.provisionFromAd("n34567", "CN=n34567,OU=Staff,DC=example,DC=com", attrs);
 
-        assertThat(u.getUsername()).isEqualTo("N64954");   // username HER ZAMAN büyük harf
-        assertThat(u.getEmail()).isEqualTo("erdi@akbank.com");
+        assertThat(u.getUsername()).isEqualTo("N34567");   // username HER ZAMAN büyük harf
+        assertThat(u.getEmail()).isEqualTo("erdi@example.com");
         assertThat(u.getEmployeeId()).isEqualTo("63999");          // cn = sicil
         assertThat(u.getFirstName()).isEqualTo("Erdi");
         assertThat(u.getLastName()).isEqualTo("İnanmış");
@@ -98,25 +98,25 @@ class LdapProvisioningServiceTest {
         assertThat(u.getMudurlukName()).isEqualTo("TEKN.MİM. VE TEMEL BANK. SERVİS YÖNETİMİ");
         assertThat(u.getAuthSource()).isEqualTo("LDAP");
         assertThat(u.getPasswordHash()).isNull();
-        assertThat(u.getTeamId()).isNotNull();                      // SY-DarkSide team created
+        assertThat(u.getTeamId()).isNotNull();                      // Takim A team created
     }
 
     @Test
     @DisplayName("team extracted from ScrumGroups memberOf CN, created with group mail; PO becomes leader")
     void extractsTeamFromScrumGroups() {
-        when(directory.groupMail(anyString())).thenReturn(Optional.of("sy-darkside@akbank.com"));
+        when(directory.groupMail(anyString())).thenReturn(Optional.of("sy-darkside@example.com"));
         org.mockito.ArgumentCaptor<Team> teamCap = org.mockito.ArgumentCaptor.forClass(Team.class);
         Map<String, Object> attrs = Map.of(
                 "cn", "70001", "company", "PRODUCT OWNER",
-                "memberOf", "CN=SY-DarkSide,OU=ScrumGroups,OU=BTPersonel,OU=Aknet,DC=aknet,DC=akb");
+                "memberOf", "CN=Takim A,OU=ScrumGroups,OU=Staff,OU=Corp,DC=example,DC=com");
 
-        service.provisionFromAd("po1", "CN=po1,DC=aknet,DC=akb", attrs);
+        service.provisionFromAd("po1", "CN=po1,DC=example,DC=com", attrs);
 
         org.mockito.Mockito.verify(teamRepo, org.mockito.Mockito.atLeastOnce()).save(teamCap.capture());
         Team created = teamCap.getAllValues().stream()
-                .filter(t -> "SY-DarkSide".equals(t.getName())).findFirst().orElseThrow();
-        assertThat(created.getName()).isEqualTo("SY-DarkSide");
-        assertThat(created.getEmail()).isEqualTo("sy-darkside@akbank.com");
+                .filter(t -> "Takim A".equals(t.getName())).findFirst().orElseThrow();
+        assertThat(created.getName()).isEqualTo("Takim A");
+        assertThat(created.getEmail()).isEqualTo("sy-darkside@example.com");
         assertThat(created.getLeaderId()).isNotNull(); // PO set as leader
     }
 
@@ -124,32 +124,32 @@ class LdapProvisioningServiceTest {
     @DisplayName("non-PO → USER; manager resolved from extensionAttribute4 and provisioned if missing")
     void regularUser_resolvesManager() {
         // Manager not in DB → looked up in AD by cn and provisioned.
-        when(directory.findOne("cn", "63535")).thenReturn(Optional.of(Map.of(
-                "sAMAccountName", "mgr1", "displayName", "Müdür Bey", "cn", "63535")));
+        when(directory.findOne("cn", "99999")).thenReturn(Optional.of(Map.of(
+                "sAMAccountName", "mgr1", "displayName", "Müdür Bey", "cn", "99999")));
         Map<String, Object> attrs = Map.of(
                 "cn", "80002",
                 "displayName", "Normal User",
-                "extensionAttribute4", "CN=63535,OU=BTPersonel,OU=Aknet,DC=aknet,DC=akb");
+                "extensionAttribute4", "CN=99999,OU=Staff,OU=Corp,DC=example,DC=com");
 
-        AppUser u = service.provisionFromAd("usr1", "CN=usr1,DC=aknet,DC=akb", attrs);
+        AppUser u = service.provisionFromAd("usr1", "CN=usr1,DC=example,DC=com", attrs);
 
         assertThat(u.getSystemRole()).isEqualTo("USER");
         assertThat(u.getOrgRole()).isEqualTo("TECH");   // PO/D6/D7 değil → TECH (eski davranış: null)
-        assertThat(u.getManagerSicil()).isEqualTo("63535");
+        assertThat(u.getManagerSicil()).isEqualTo("99999");
         assertThat(u.getManagerId()).isNotNull();   // manager provisioned + linked
     }
 
     @Test
     @DisplayName("Faz 3b: recursively-provisioned manager (müdür) → systemRole ADMIN")
     void recursiveManager_becomesAdmin() {
-        when(directory.findOne("cn", "63535")).thenReturn(Optional.of(Map.of(
-                "sAMAccountName", "mgr1", "displayName", "Müdür Bey", "cn", "63535")));
+        when(directory.findOne("cn", "99999")).thenReturn(Optional.of(Map.of(
+                "sAMAccountName", "mgr1", "displayName", "Müdür Bey", "cn", "99999")));
         Map<String, Object> attrs = Map.of(
                 "cn", "80002",
                 "displayName", "Normal User",
-                "extensionAttribute4", "CN=63535,OU=BTPersonel,OU=Aknet,DC=aknet,DC=akb");
+                "extensionAttribute4", "CN=99999,OU=Staff,OU=Corp,DC=example,DC=com");
 
-        service.provisionFromAd("usr1", "CN=usr1,DC=aknet,DC=akb", attrs);
+        service.provisionFromAd("usr1", "CN=usr1,DC=example,DC=com", attrs);
 
         org.mockito.ArgumentCaptor<AppUser> cap = org.mockito.ArgumentCaptor.forClass(AppUser.class);
         org.mockito.Mockito.verify(userRepo, org.mockito.Mockito.atLeastOnce()).save(cap.capture());
@@ -163,9 +163,9 @@ class LdapProvisioningServiceTest {
     void poWhoIsAlsoManager_staysTeamAdmin() {
         when(userRepo.existsByManagerId(anyLong())).thenReturn(true);   // kendisine bağlı çalışan var
         Map<String, Object> attrs = Map.of(
-                "cn", "90010", "displayName", "PO Boss", "company", "PRODUCT OWNER-SY-DarkSide");
+                "cn", "90010", "displayName", "PO Boss", "company", "PRODUCT OWNER-Takim A");
 
-        AppUser u = service.provisionFromAd("poboss", "CN=poboss,DC=aknet,DC=akb", attrs);
+        AppUser u = service.provisionFromAd("poboss", "CN=poboss,DC=example,DC=com", attrs);
 
         assertThat(u.getOrgRole()).isEqualTo("PO");
         assertThat(u.getSystemRole()).isEqualTo("TEAM_ADMIN");   // ADMIN'e YÜKSELMEZ
@@ -182,7 +182,7 @@ class LdapProvisioningServiceTest {
         when(userRepo.findByUsername("POADMIN")).thenReturn(Optional.of(existing));
         Map<String, Object> attrs = Map.of("cn", "90011", "company", "PRODUCT OWNER");
 
-        AppUser u = service.provisionFromAd("poadmin", "CN=poadmin,DC=aknet,DC=akb", attrs);
+        AppUser u = service.provisionFromAd("poadmin", "CN=poadmin,DC=example,DC=com", attrs);
 
         assertThat(u.getSystemRole()).isEqualTo("ADMIN");
         assertThat(u.getOrgRole()).isEqualTo("PO");   // org rol yine de AD'den tazelenir
@@ -199,7 +199,7 @@ class LdapProvisioningServiceTest {
         when(userRepo.findByUsername("POLOCKED")).thenReturn(Optional.of(existing));
         Map<String, Object> attrs = Map.of("cn", "90012", "company", "PRODUCT OWNER");
 
-        AppUser u = service.provisionFromAd("polocked", "CN=polocked,DC=aknet,DC=akb", attrs);
+        AppUser u = service.provisionFromAd("polocked", "CN=polocked,DC=example,DC=com", attrs);
 
         assertThat(u.getSystemRole()).isEqualTo("ADMIN");
         assertThat(u.getOrgRole()).isEqualTo("PO");   // org rol yine de tazelenir (orgRoleLocked ayrı)
@@ -216,7 +216,7 @@ class LdapProvisioningServiceTest {
         when(userRepo.findByUsername("POAUDIT")).thenReturn(Optional.of(existing));
         Map<String, Object> attrs = Map.of("cn", "90013", "company", "PRODUCT OWNER");
 
-        AppUser u = service.provisionFromAd("poaudit", "CN=poaudit,DC=aknet,DC=akb", attrs);
+        AppUser u = service.provisionFromAd("poaudit", "CN=poaudit,DC=example,DC=com", attrs);
 
         assertThat(u.getSystemRole()).isEqualTo("AUDIT");
     }
@@ -227,7 +227,7 @@ class LdapProvisioningServiceTest {
         when(userRepo.existsByManagerId(org.mockito.ArgumentMatchers.anyLong())).thenReturn(true);
         Map<String, Object> attrs = Map.of("cn", "90003", "displayName", "Boss");
 
-        AppUser u = service.provisionFromAd("boss1", "CN=boss1,DC=aknet,DC=akb", attrs);
+        AppUser u = service.provisionFromAd("boss1", "CN=boss1,DC=example,DC=com", attrs);
 
         assertThat(u.getSystemRole()).isEqualTo("TEAM_ADMIN");
     }
@@ -236,23 +236,23 @@ class LdapProvisioningServiceTest {
     @DisplayName("ScrumGroups: '...Onayci' grubu takım sayılmaz; düz grup takım adı + mail o DN'den")
     void teamFromScrumGroups_skipsApproverGroup() {
         // Onayci grubunun maili yanlışlıkla seçilmesin diye yalnız düz grubun DN'ine mail ver.
-        String teamDn = "CN=SY-Dijital Bankacilik,OU=ScrumGroups,OU=BTPersonel,OU=Aknet,DC=aknet,DC=akb";
-        when(directory.groupMail(teamDn)).thenReturn(Optional.of("sy-dijitalbankacilik@akbank.com"));
+        String teamDn = "CN=Takim B,OU=ScrumGroups,OU=Staff,OU=Corp,DC=example,DC=com";
+        when(directory.groupMail(teamDn)).thenReturn(Optional.of("sy-dijitalbankacilik@example.com"));
         org.mockito.ArgumentCaptor<Team> teamCap = org.mockito.ArgumentCaptor.forClass(Team.class);
         Map<String, Object> attrs = Map.of(
                 "cn", "64954", "company", "PRODUCT OWNER",
                 "memberOf", List.of(
-                        "CN=SY-Dijital Bankacilik_Onayci,OU=ScrumGroups,OU=BTPersonel,OU=Aknet,DC=aknet,DC=akb",
+                        "CN=Takim B_Onayci,OU=ScrumGroups,OU=Staff,OU=Corp,DC=example,DC=com",
                         teamDn));
 
-        service.provisionFromAd("n64954", "CN=n64954,DC=aknet,DC=akb", attrs);
+        service.provisionFromAd("n34567", "CN=n34567,DC=example,DC=com", attrs);
 
         org.mockito.Mockito.verify(teamRepo, org.mockito.Mockito.atLeastOnce()).save(teamCap.capture());
         Team created = teamCap.getAllValues().stream()
                 .filter(t -> t.getName() != null && !t.getName().toLowerCase().contains("onayci"))
                 .findFirst().orElseThrow();
-        assertThat(created.getName()).isEqualTo("SY-Dijital Bankacilik");
-        assertThat(created.getEmail()).isEqualTo("sy-dijitalbankacilik@akbank.com");
+        assertThat(created.getName()).isEqualTo("Takim B");
+        assertThat(created.getEmail()).isEqualTo("sy-dijitalbankacilik@example.com");
         // "...Onayci" adıyla hiçbir takım oluşturulmamalı.
         assertThat(teamCap.getAllValues()).noneMatch(t ->
                 t.getName() != null && t.getName().toLowerCase().contains("onayci"));
@@ -261,17 +261,17 @@ class LdapProvisioningServiceTest {
     @Test
     @DisplayName("isApproverCn: yalnız Onayci/Onaycı ile bitenler true")
     void isApproverCnHelper() {
-        assertThat(LdapProvisioningService.isApproverCn("SY-Dijital Bankacilik_Onayci")).isTrue();
-        assertThat(LdapProvisioningService.isApproverCn("SY-Dijital Bankacilik Onaycı")).isTrue();
-        assertThat(LdapProvisioningService.isApproverCn("SY-Dijital Bankacilik")).isFalse();
+        assertThat(LdapProvisioningService.isApproverCn("Takim B_Onayci")).isTrue();
+        assertThat(LdapProvisioningService.isApproverCn("Takim B Onaycı")).isTrue();
+        assertThat(LdapProvisioningService.isApproverCn("Takim B")).isFalse();
         assertThat(LdapProvisioningService.isApproverCn(null)).isFalse();
     }
 
     @Test
     @DisplayName("cnOf extracts the CN value from a DN")
     void cnOfHelper() {
-        assertThat(LdapProvisioningService.cnOf("CN=63535,OU=BTPersonel,DC=aknet,DC=akb")).isEqualTo("63535");
-        assertThat(LdapProvisioningService.cnOf("CN=SY-DarkSide,OU=ScrumGroups,DC=akb")).isEqualTo("SY-DarkSide");
+        assertThat(LdapProvisioningService.cnOf("CN=99999,OU=Staff,DC=example,DC=com")).isEqualTo("99999");
+        assertThat(LdapProvisioningService.cnOf("CN=Takim A,OU=ScrumGroups,DC=akb")).isEqualTo("Takim A");
         assertThat(LdapProvisioningService.cnOf(null)).isNull();
     }
 
@@ -281,8 +281,8 @@ class LdapProvisioningServiceTest {
         Map<String, Object> attrs = Map.of(
                 "cn", "70010",
                 "memberOf", List.of(
-                        "CN=SY-Alpha,OU=ScrumGroups,DC=aknet,DC=akb",
-                        "CN=SY-Beta,OU=ScrumGroups,DC=aknet,DC=akb"));
+                        "CN=SY-Alpha,OU=ScrumGroups,DC=example,DC=com",
+                        "CN=SY-Beta,OU=ScrumGroups,DC=example,DC=com"));
 
         AppUser u = service.provisionFromAd("multi1", "CN=multi1,DC=akb", attrs);
 
@@ -333,7 +333,7 @@ class LdapProvisioningServiceTest {
         Map<String, Object> attrs = Map.of(
                 "cn", "80006",
                 "company", "YAZILIM UZMANI-SY-ShouldNotAppear",
-                "memberOf", "CN=SY-RealTeam,OU=ScrumGroups,DC=aknet,DC=akb");
+                "memberOf", "CN=SY-RealTeam,OU=ScrumGroups,DC=example,DC=com");
 
         AppUser u = service.provisionFromAd("u6", "CN=u6,DC=akb", attrs);
 
@@ -362,28 +362,28 @@ class LdapProvisioningServiceTest {
     @DisplayName("provision: ayar AÇIKKEN takım + müdür varsa müdür otomatik MANAGER eskalasyon kontağı (HIGH) olur")
     void provision_autoCreatesManagerEscalationContact() {
         when(appSettings.getBoolean("site.monitor.escalation.auto-add-managers", false)).thenReturn(true);
-        when(directory.groupMail(anyString())).thenReturn(Optional.of("sy@akbank.com"));
+        when(directory.groupMail(anyString())).thenReturn(Optional.of("sy@example.com"));
         // Müdür DB'de mevcut (employeeId=63535), e-postalı → resolveManagerLink onu bulur
         AppUser mgr = new AppUser();
-        mgr.setId(700L); mgr.setUsername("mgr1"); mgr.setEmployeeId("63535");
-        mgr.setActive(true); mgr.setEmail("mudur@akbank.com"); mgr.setDisplayName("Ali Müdür");
-        when(userRepo.findByEmployeeId("63535")).thenReturn(Optional.of(mgr));
+        mgr.setId(700L); mgr.setUsername("mgr1"); mgr.setEmployeeId("99999");
+        mgr.setActive(true); mgr.setEmail("mudur@example.com"); mgr.setDisplayName("Ali Müdür");
+        when(userRepo.findByEmployeeId("99999")).thenReturn(Optional.of(mgr));
         when(userRepo.findById(700L)).thenReturn(Optional.of(mgr));
         when(contactRepo.findByTeamIdOrderByRoleAsc(anyLong())).thenReturn(List.of());
 
         Map<String, Object> attrs = Map.of(
                 "cn", "80002", "displayName", "Üye",
-                "extensionAttribute4", "CN=63535,OU=BTPersonel,DC=aknet,DC=akb",
-                "memberOf", "CN=SY-DarkSide,OU=ScrumGroups,OU=BTPersonel,OU=Aknet,DC=aknet,DC=akb");
+                "extensionAttribute4", "CN=99999,OU=Staff,DC=example,DC=com",
+                "memberOf", "CN=Takim A,OU=ScrumGroups,OU=Staff,OU=Corp,DC=example,DC=com");
 
-        service.provisionFromAd("uye1", "CN=uye1,DC=aknet,DC=akb", attrs);
+        service.provisionFromAd("uye1", "CN=uye1,DC=example,DC=com", attrs);
 
         org.mockito.ArgumentCaptor<EscalationContact> cap = org.mockito.ArgumentCaptor.forClass(EscalationContact.class);
         org.mockito.Mockito.verify(contactRepo).save(cap.capture());
         EscalationContact c = cap.getValue();
         assertThat(c.getRole()).isEqualTo("MANAGER");
         assertThat(c.getMinAlertLevel()).isEqualTo("HIGH");
-        assertThat(c.getEmail()).isEqualTo("mudur@akbank.com");
+        assertThat(c.getEmail()).isEqualTo("mudur@example.com");
         assertThat(c.getActive()).isTrue();
         assertThat(c.getUserId()).isEqualTo(700L);
     }
@@ -392,19 +392,19 @@ class LdapProvisioningServiceTest {
     @DisplayName("provision: ayar KAPALIYKEN (varsayılan) müdür kontağı OLUŞMAZ; manager bağlantısı yine kurulur")
     void provision_defaultOff_noManagerContactCreated() {
         // appSettings varsayılanı fallback döner → false (üretim varsayılanı)
-        when(directory.groupMail(anyString())).thenReturn(Optional.of("sy@akbank.com"));
+        when(directory.groupMail(anyString())).thenReturn(Optional.of("sy@example.com"));
         AppUser mgr = new AppUser();
-        mgr.setId(700L); mgr.setUsername("mgr1"); mgr.setEmployeeId("63535");
-        mgr.setActive(true); mgr.setEmail("mudur@akbank.com");
-        when(userRepo.findByEmployeeId("63535")).thenReturn(Optional.of(mgr));
+        mgr.setId(700L); mgr.setUsername("mgr1"); mgr.setEmployeeId("99999");
+        mgr.setActive(true); mgr.setEmail("mudur@example.com");
+        when(userRepo.findByEmployeeId("99999")).thenReturn(Optional.of(mgr));
         when(userRepo.findById(700L)).thenReturn(Optional.of(mgr));
 
         Map<String, Object> attrs = Map.of(
                 "cn", "80002", "displayName", "Üye",
-                "extensionAttribute4", "CN=63535,OU=BTPersonel,DC=aknet,DC=akb",
-                "memberOf", "CN=SY-DarkSide,OU=ScrumGroups,OU=BTPersonel,OU=Aknet,DC=aknet,DC=akb");
+                "extensionAttribute4", "CN=99999,OU=Staff,DC=example,DC=com",
+                "memberOf", "CN=Takim A,OU=ScrumGroups,OU=Staff,OU=Corp,DC=example,DC=com");
 
-        AppUser saved = service.provisionFromAd("uye1", "CN=uye1,DC=aknet,DC=akb", attrs);
+        AppUser saved = service.provisionFromAd("uye1", "CN=uye1,DC=example,DC=com", attrs);
 
         org.mockito.Mockito.verify(contactRepo, org.mockito.Mockito.never()).save(any(EscalationContact.class));
         assertThat(saved.getManagerId()).isEqualTo(700L);   // ilişki yine kaydedilir; yalnız kontak eklenmez
@@ -414,22 +414,22 @@ class LdapProvisioningServiceTest {
     @DisplayName("provision: ayar AÇIKKEN aynı müdür zaten MANAGER kontağıysa tekrar eklenmez")
     void provision_skipsDuplicateManagerContact() {
         when(appSettings.getBoolean("site.monitor.escalation.auto-add-managers", false)).thenReturn(true);
-        when(directory.groupMail(anyString())).thenReturn(Optional.of("sy@akbank.com"));
+        when(directory.groupMail(anyString())).thenReturn(Optional.of("sy@example.com"));
         AppUser mgr = new AppUser();
-        mgr.setId(700L); mgr.setUsername("mgr1"); mgr.setEmployeeId("63535");
-        mgr.setActive(true); mgr.setEmail("mudur@akbank.com");
-        when(userRepo.findByEmployeeId("63535")).thenReturn(Optional.of(mgr));
+        mgr.setId(700L); mgr.setUsername("mgr1"); mgr.setEmployeeId("99999");
+        mgr.setActive(true); mgr.setEmail("mudur@example.com");
+        when(userRepo.findByEmployeeId("99999")).thenReturn(Optional.of(mgr));
         when(userRepo.findById(700L)).thenReturn(Optional.of(mgr));
         EscalationContact existing = new EscalationContact();
-        existing.setTeamId(1L); existing.setRole("MANAGER"); existing.setEmail("mudur@akbank.com");
+        existing.setTeamId(1L); existing.setRole("MANAGER"); existing.setEmail("mudur@example.com");
         when(contactRepo.findByTeamIdOrderByRoleAsc(anyLong())).thenReturn(List.of(existing));
 
         Map<String, Object> attrs = Map.of(
                 "cn", "80002", "displayName", "Üye",
-                "extensionAttribute4", "CN=63535,OU=BTPersonel,DC=aknet,DC=akb",
-                "memberOf", "CN=SY-DarkSide,OU=ScrumGroups,OU=BTPersonel,OU=Aknet,DC=aknet,DC=akb");
+                "extensionAttribute4", "CN=99999,OU=Staff,DC=example,DC=com",
+                "memberOf", "CN=Takim A,OU=ScrumGroups,OU=Staff,OU=Corp,DC=example,DC=com");
 
-        service.provisionFromAd("uye1", "CN=uye1,DC=aknet,DC=akb", attrs);
+        service.provisionFromAd("uye1", "CN=uye1,DC=example,DC=com", attrs);
 
         org.mockito.Mockito.verify(contactRepo, org.mockito.Mockito.never()).save(any());
     }

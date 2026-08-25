@@ -61,15 +61,15 @@ class MonitorHistoryBackfillServiceTest {
     @DisplayName("Denetim satırları geçmişe taşınır; ad ve IP korunur")
     void movesAuditRowsIntoHistory() {
         when(auditRepo.findByEventTypeInOrderByEventTimeAsc(any())).thenReturn(List.of(
-                audit("MONITOR_CREATE", "PORT_MONITOR", "7", "Ödeme portu", "N70678", "2026-01-01T09:00:00"),
-                audit("MONITOR_UPDATE", "PORT_MONITOR", "7", "Ödeme portu", "N70678", "2026-02-01T09:00:00")));
+                audit("MONITOR_CREATE", "PORT_MONITOR", "7", "Ödeme portu", "N23456", "2026-01-01T09:00:00"),
+                audit("MONITOR_UPDATE", "PORT_MONITOR", "7", "Ödeme portu", "N23456", "2026-02-01T09:00:00")));
 
         assertThat(service.runOnce()).isEqualTo(2);
 
         verify(history).recordBackfill("PORT", 7L, "Ödeme portu", 5L, "CREATE", null,
-                "N70678", 42L, "10.20.30.40", "2026-01-01T09:00:00");
+                "N23456", 42L, "10.20.30.40", "2026-01-01T09:00:00");
         verify(history).recordBackfill("PORT", 7L, "Ödeme portu", 5L, "UPDATE", null,
-                "N70678", 42L, "10.20.30.40", "2026-02-01T09:00:00");
+                "N23456", 42L, "10.20.30.40", "2026-02-01T09:00:00");
     }
 
     @Test

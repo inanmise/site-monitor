@@ -31,12 +31,12 @@ describe('SearchableSelect', () => {
 
   it('yazılan sorguya göre label\'a göre filtreler', () => {
     render(<SearchableSelect value="" onChange={() => {}} options={[
-      { value: 'a', label: 'Akbank' }, { value: 'b', label: 'Garanti' },
+      { value: 'a', label: 'Example' }, { value: 'b', label: 'Garanti' },
       { value: 'c', label: 'Yapi Kredi' }, { value: 'd', label: 'Ziraat' },
     ]} />)
     open()
-    fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: 'akb' } })
-    expect(screen.getByText('Akbank')).toBeDefined()
+    fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: 'exa' } })
+    expect(screen.getByText('Example')).toBeDefined()
     expect(screen.queryByText('Garanti')).toBeNull()
   })
 

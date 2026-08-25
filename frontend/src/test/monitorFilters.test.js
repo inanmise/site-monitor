@@ -69,10 +69,10 @@ describe('monitorUrlState', () => {
   })
 
   it('gerçek filtreler param üretir, "all"/boş üretmez', () => {
-    const s = monitorUrlState({ ...base, teamFilter: 'SY-A', groupFilter: 'G1', search: '  akbank  ' })
+    const s = monitorUrlState({ ...base, teamFilter: 'SY-A', groupFilter: 'G1', search: '  example  ' })
     expect(s.team).toBe('SY-A')
     expect(s.group).toBe('G1')
-    expect(s.q).toBe('akbank')          // kırpılır
+    expect(s.q).toBe('example')          // kırpılır
     expect(monitorUrlState({ ...base, search: '   ' }).q).toBeNull()   // yalnız boşluk = param yok
   })
 

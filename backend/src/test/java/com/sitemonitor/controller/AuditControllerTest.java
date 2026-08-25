@@ -176,7 +176,7 @@ class AuditControllerTest {
     @DisplayName("AUDIT rolu baskasinin cihaz gecmisini OKUR; 'bu cihaz' isareti VERILMEZ")
     void userDevices_auditRoleCanRead() throws Exception {
         com.sitemonitor.model.AppUser target = new com.sitemonitor.model.AppUser();
-        target.setId(5L); target.setUsername("N68753");
+        target.setId(5L); target.setUsername("N12345");
         when(appUserRepo.findById(5L)).thenReturn(java.util.Optional.of(target));
         when(deviceHistoryService.devicesFor(any(), any())).thenReturn(java.util.Map.of());
 

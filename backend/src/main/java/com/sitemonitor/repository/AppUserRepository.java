@@ -14,7 +14,7 @@ import java.util.Optional;
 
 public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     // Username eşleştirmesi CASE-INSENSITIVE (DB UPPER): canonical saklama BÜYÜK harf olsa da yazılan/eski
-    // satırların case'i ne olursa olsun aynı kullanıcıya çözülür (Melih "N68753"/"n68753" tek satır) +
+    // satırların case'i ne olursa olsun aynı kullanıcıya çözülür (Melih "N12345"/"n12345" tek satır) +
     // LDAP re-provision eski satırı bulur (dup yaratmaz). DB UPPER iki tarafta → collation-tutarlı.
     @Query("SELECT u FROM AppUser u WHERE UPPER(u.username) = UPPER(:username)")
     Optional<AppUser> findByUsername(@Param("username") String username);

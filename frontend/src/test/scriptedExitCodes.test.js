@@ -129,7 +129,7 @@ describe('diagnosisHint — k6 sözdizimi duvarı', () => {
   it('FAIL + "request timeout": ipucu çıkar (288 koşum boyunca hiçbir yönlendirme yoktu)', () => {
     const failWithTimeout = {
       status: 'FAIL',
-      error: 'k6 check/threshold başarısız:\nRequest Failed — Get "https://www.akbank.com": request timeout',
+      error: 'k6 check/threshold başarısız:\nRequest Failed — Get "https://www.example.com": request timeout',
     }
     expect(diagnosisHint(t, failWithTimeout, 'v0.49.0')).toBe('«scripted.hintRequestTimeout»')
     // Sürümden BAĞIMSIZ: yeni k6'da da aynı tuzak var

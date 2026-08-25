@@ -534,7 +534,7 @@ public class UserActivityService {
     }
 
     /** username(küçük harf) → AppUser. Audit actor login'de yazıldığı gibi saklanır (örn. küçük harf
-     *  "n64954"); AppUser.username ise kanonik olabilir (büyük harf "N64954"). Login case-insensitive
+     *  "n34567"); AppUser.username ise kanonik olabilir (büyük harf "N34567"). Login case-insensitive
      *  eşleştiği için her iki yazım da giriş yapabilir → eşleştirmeyi de case-insensitive yapmalıyız,
      *  aksi halde küçük-harf login eden kullanıcının resmi/adı top-user & rol/takım listesinde çıkmaz. */
     private Map<String, AppUser> usersByName() {

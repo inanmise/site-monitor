@@ -45,7 +45,7 @@ class DnsCheckerServiceTest {
     @Test
     @DisplayName("toHostname: URL şema/userinfo/path/port/trailing-dot ayıklanır → çıplak host (sahte NXDOMAIN fix)")
     void toHostname_stripsUrlParts() {
-        assertThat(DnsCheckerService.toHostname("https://www.akbank.com/basvuru/Juzdan/")).isEqualTo("www.akbank.com");
+        assertThat(DnsCheckerService.toHostname("https://www.example.com/basvuru/Juzdan/")).isEqualTo("www.example.com");
         assertThat(DnsCheckerService.toHostname("http://example.com:8443/path?q=1")).isEqualTo("example.com");
         assertThat(DnsCheckerService.toHostname("user@host.example.com/x")).isEqualTo("host.example.com");
         assertThat(DnsCheckerService.toHostname("WWW.Example.COM.")).isEqualTo("www.example.com");
@@ -155,7 +155,7 @@ class DnsCheckerServiceTest {
     @Test
     @DisplayName("detectChange: subset overlap is ROTATED (CDN edge rotation)")
     void detectChange_subsetOverlap_isRotated() {
-        // Akbank example: prev had two edge IPs, now returns one of them
+        // Example example: prev had two edge IPs, now returns one of them
         assertThat(DnsCheckerService.detectChange(
                 "217.169.192.73\n217.169.204.113",
                 "217.169.204.113"))
@@ -212,20 +212,20 @@ class DnsCheckerServiceTest {
     @Test
     @DisplayName("withinExpected: canlı değerlerin TAMAMI beklenen settteyse true (iç/dış IP flip'i)")
     void withinExpected_allInSet_isTrue() {
-        String expected = "192.168.10.249\n217.169.196.197";
-        assertThat(DnsCheckerService.withinExpected(expected, List.of("192.168.10.249"))).isTrue();
+        String expected = "192.168.1.10\n217.169.196.197";
+        assertThat(DnsCheckerService.withinExpected(expected, List.of("192.168.1.10"))).isTrue();
         assertThat(DnsCheckerService.withinExpected(expected, List.of("217.169.196.197"))).isTrue();
         assertThat(DnsCheckerService.withinExpected(expected,
-                List.of("192.168.10.249", "217.169.196.197"))).isTrue();
+                List.of("192.168.1.10", "217.169.196.197"))).isTrue();
     }
 
     @Test
     @DisplayName("withinExpected: set dışında TEK değer bile varsa false (alarm devam)")
     void withinExpected_anyOutsider_isFalse() {
-        String expected = "192.168.10.249\n217.169.196.197";
+        String expected = "192.168.1.10\n217.169.196.197";
         assertThat(DnsCheckerService.withinExpected(expected, List.of("9.9.9.9"))).isFalse();
         assertThat(DnsCheckerService.withinExpected(expected,
-                List.of("192.168.10.249", "9.9.9.9"))).isFalse();
+                List.of("192.168.1.10", "9.9.9.9"))).isFalse();
     }
 
     @Test

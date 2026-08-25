@@ -35,8 +35,8 @@ class DomainExpiryDiagnosticsServiceTest {
     @BeforeEach
     void setUp() {
         svc = new DomainExpiryDiagnosticsService(rdap, whois, psl);
-        when(psl.registrableDomain("akbank.com")).thenReturn("akbank.com");
-        when(psl.tldOf("akbank.com")).thenReturn("com");
+        when(psl.registrableDomain("example.com")).thenReturn("example.com");
+        when(psl.tldOf("example.com")).thenReturn("com");
     }
 
     private Map<String, Object> step(String name, String status) {
@@ -56,9 +56,9 @@ class DomainExpiryDiagnosticsServiceTest {
         rdapResult.put("source", "RDAP_REGISTRY");
         rdapResult.put("expiry_date", "2027-01-15T00:00:00Z");
         rdapResult.put("registrar", "MarkMonitor Inc.");
-        when(rdap.diagnoseSteps(eq("akbank.com"), any())).thenReturn(rdapResult);
+        when(rdap.diagnoseSteps(eq("example.com"), any())).thenReturn(rdapResult);
 
-        Map<String, Object> out = svc.diagnose("akbank.com");
+        Map<String, Object> out = svc.diagnose("example.com");
 
         assertThat(out.get("source")).isEqualTo("RDAP_REGISTRY");
         assertThat(out.get("expiry_date")).isEqualTo("2027-01-15T00:00:00Z");
@@ -81,14 +81,14 @@ class DomainExpiryDiagnosticsServiceTest {
         Map<String, Object> rdapResult = new LinkedHashMap<>();
         rdapResult.put("steps", steps);
         rdapResult.put("source", "FAILED");
-        when(rdap.diagnoseSteps(eq("akbank.com"), any())).thenReturn(rdapResult);
+        when(rdap.diagnoseSteps(eq("example.com"), any())).thenReturn(rdapResult);
 
         Map<String, Object> whoisStep = step("WHOIS", "ok");
         whoisStep.put("expiry_date", "2026-08-01T00:00:00Z");
         whoisStep.put("registrar", "TR-Nic");
-        when(whois.diagnose("akbank.com")).thenReturn(whoisStep);
+        when(whois.diagnose("example.com")).thenReturn(whoisStep);
 
-        Map<String, Object> out = svc.diagnose("akbank.com");
+        Map<String, Object> out = svc.diagnose("example.com");
 
         assertThat(out.get("source")).isEqualTo("WHOIS");
         assertThat(out.get("expiry_date")).isEqualTo("2026-08-01T00:00:00Z");
@@ -106,13 +106,13 @@ class DomainExpiryDiagnosticsServiceTest {
         Map<String, Object> rdapResult = new LinkedHashMap<>();
         rdapResult.put("steps", steps);
         rdapResult.put("source", "FAILED");
-        when(rdap.diagnoseSteps(eq("akbank.com"), any())).thenReturn(rdapResult);
+        when(rdap.diagnoseSteps(eq("example.com"), any())).thenReturn(rdapResult);
 
         Map<String, Object> whoisStep = step("WHOIS", "fail");
         whoisStep.put("error_class", "CONNECT_TIMEOUT");
-        when(whois.diagnose("akbank.com")).thenReturn(whoisStep);
+        when(whois.diagnose("example.com")).thenReturn(whoisStep);
 
-        Map<String, Object> out = svc.diagnose("akbank.com");
+        Map<String, Object> out = svc.diagnose("example.com");
 
         assertThat(out.get("source")).isEqualTo("FAILED");
         assertThat(out.get("expiry_date")).isNull();

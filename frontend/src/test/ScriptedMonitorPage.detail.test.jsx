@@ -186,7 +186,7 @@ describe('ScriptedMonitorPage — detay, faz ve teşhis', () => {
     // TCP açılıyor (connecting>0), TLS tamamlanmıyor (sonrası 0).
     api.monitoring.diagnoseScripted = vi.fn().mockResolvedValue({ success: true, data: {
       url: 'https://hedef.example/x', candidates: ['https://hedef.example/x'],
-      proxy_configured: true, no_proxy: 'akbank.com', k6_version: 'v0.49.0',
+      proxy_configured: true, no_proxy: 'example.com', k6_version: 'v0.49.0',
       legs: [
         { key: 'k6-direct-ca', label: 'k6 · doğrudan · kurumsal CA', status: 'FAIL', ok: false,
           duration_ms: 15200, error: 'Request Failed — request timeout', via_proxy: false,
@@ -215,7 +215,7 @@ describe('ScriptedMonitorPage — detay, faz ve teşhis', () => {
     expect(legs[0].querySelector('.sc-phase--stuck').textContent).toMatch(/TLS/i)
     expect(legs[1].querySelectorAll('.sc-phase--stuck')).toHaveLength(0)
     // Etkin vekil bağlamı görünür (NO_PROXY sonek eşleşmesi yanlış teşhisin kaynağıydı)
-    expect(document.querySelector('.sc-diag-meta').textContent).toContain('akbank.com')
+    expect(document.querySelector('.sc-diag-meta').textContent).toContain('example.com')
   })
 
   it('Detay hücresi: kriptik "2✓/0✗" YERİNE okunur ifade (kullanıcı bildirimi)', async () => {

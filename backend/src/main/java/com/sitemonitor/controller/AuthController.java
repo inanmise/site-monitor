@@ -197,8 +197,8 @@ public class AuthController {
             // Tek aktif oturum (store-agnostik): bu oturumu kullanıcının "aktif" oturumu olarak kaydet —
             // AuthInterceptor her istekte karşılaştırır, eşleşmeyen eski oturumu kapatır. Ayrıca eski
             // remember-me token'larını iptal et (eski tarayıcı cookie ile sessizce geri dönüp kicklemesin).
-            // CANONICAL username (user.getUsername()) kullan: AD/LDAP girişinde yazılan case (ör. "N68753")
-            // DB'deki canonical'dan ("n68753") farklı olabilir; recordActiveSession→findByUsername case-sensitive
+            // CANONICAL username (user.getUsername()) kullan: AD/LDAP girişinde yazılan case (ör. "N12345")
+            // DB'deki canonical'dan ("n12345") farklı olabilir; recordActiveSession→findByUsername case-sensitive
             // olduğundan yazılan case'le satır bulunamaz ve aktif-oturum/lastSeenAt set EDİLMEZ → kullanıcı
             // "aktif" sayılmaz. populateSession + sessionPing zaten canonical kullanıyor; burada da hizala.
             // Giriş damgası + aktif oturum kaydı TEK yazmada. Damga BURADA basılır (409 dalından
@@ -208,7 +208,7 @@ public class AuthController {
                     user.getUsername(), newSession.getId(), clientIp, UserService.LoginMethod.PASSWORD);
             // CANONICAL username (yazılan case DEĞİL): app_users ve remember_me_tokens BÜYÜK harfe
             // normalize ediliyor (applySchemaPatches). Yazılan case ile silmek, kullanıcı bir gün
-            // "n68753" ertesi gün "N68753" yazdığında eşleşmez ve ÖKSÜZ bir token hayatta kalır —
+            // "n12345" ertesi gün "N12345" yazdığında eşleşmez ve ÖKSÜZ bir token hayatta kalır —
             // yani "her login eski token'ları iptal eder" güvencesi sessizce delinir.
             rememberMeService.invalidateAllForUser(user.getUsername());
 
@@ -216,7 +216,7 @@ public class AuthController {
                     user.getUsername(), user.getSystemRole(), user.getTeamId(), rememberMe, clientIp);
             // Audit actor'ı da CANONICAL: yazılan case ile kaydedilirse aktif-oturum kartı enrichment'i
             // (findTopByActor(canonical, sid)) eşleşmez → login zamanı/IP boş kalır; ayrıca aynı kullanıcı
-            // audit'te iki farklı case ("N68753"/"n68753") ile görünür.
+            // audit'te iki farklı case ("N12345"/"n12345") ile görünür.
             auditService.recordLogin(user.getUsername(), user.getId(), user.getTeamId(),
                     user.getSystemRole(), clientIp,
                     request.getHeader("User-Agent"), newSession.getId(), true, null, null, 5);

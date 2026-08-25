@@ -62,7 +62,7 @@ class InventoryExportServiceTest {
     @Test
     @DisplayName("CSV: BOM + CRLF, 13 bayrak kolonu, Evet/Hayır ve tırnak kaçışı")
     void csvShape() {
-        String csv = new String(service.csv(List.of(row("www.akbank.com", 1, true)), teams), StandardCharsets.UTF_8);
+        String csv = new String(service.csv(List.of(row("www.example.com", 1, true)), teams), StandardCharsets.UTF_8);
 
         assertThat(csv).startsWith("﻿");                       // Excel'in UTF-8 açması için BOM
         assertThat(csv).contains("\r\n");
@@ -74,7 +74,7 @@ class InventoryExportServiceTest {
         assertThat(header).contains("Proxy Üzerinden Kontrol Et");
 
         String dataRow = csv.split("\r\n")[1];
-        assertThat(dataRow).contains("www.akbank.com").contains("SY-Dijital Bankacılık").contains("Aktif");
+        assertThat(dataRow).contains("www.example.com").contains("SY-Dijital Bankacılık").contains("Aktif");
         assertThat(dataRow).contains("Evet").contains("Hayır");
     }
 
@@ -100,8 +100,8 @@ class InventoryExportServiceTest {
     @DisplayName("PDF: ekrandaki detay düzeni — bölüm başlıkları, alanlar, Türkçe glyph'ler")
     void pdfMatchesScreenLayout() throws Exception {
         byte[] pdf = service.pdf(List.of(
-                row("www.akbank.com", 1, true),
-                row("internetsubesi.akbank.com", 2, true)), teams);
+                row("www.example.com", 1, true),
+                row("internetsubesi.example.com", 2, true)), teams);
 
         assertThat(pdf).isNotEmpty();
         try (PDDocument doc = Loader.loadPDF(pdf)) {
@@ -114,7 +114,7 @@ class InventoryExportServiceTest {
                     .contains("TEMEL BİLGİLER")
                     .contains("OPERASYONEL BİLGİLER")
                     .contains("DEĞİŞİKLİK AÇIKLAMASI");
-            assertThat(text).contains("www.akbank.com").contains("internetsubesi.akbank.com");
+            assertThat(text).contains("www.example.com").contains("internetsubesi.example.com");
             // ✓ Roboto'da yok → encodable() "+" ile değiştirir; önemli olan Evet/Hayır ayrımı.
             assertThat(text).contains("Netscaler").contains("Evet").contains("Hayır");
             assertThat(text).contains("Kritiklik Seviyesi (Tier)").contains("Satın Alan Kişi/Ekip");

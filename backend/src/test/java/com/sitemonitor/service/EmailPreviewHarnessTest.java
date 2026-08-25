@@ -72,11 +72,11 @@ class EmailPreviewHarnessTest {
 
     /** Envanter zenginleştirmesi olan sertifika bağlamı (EscalationService bunu üretir). */
     private Map<String, Object> inventoryCtx() {
-        Map<String, Object> m = ctx("https://www.akbank.com", null);
-        m.put("team_name", "SY-Dijital Bankacilik");
+        Map<String, Object> m = ctx("https://www.example.com", null);
+        m.put("team_name", "Takim B");
         m.put("not_after", "2026-09-09T02:59:00Z");
         m.put("issuer_cn", "DigiCert EV RSA CA G2");
-        m.put("subject", "CN=www.akbank.com");
+        m.put("subject", "CN=www.example.com");
         m.put("fingerprint", "EB0B59B1AA31C0F5C2D8E4A76B93F1D0C4A85E2739BD61FA0C8E7B4D53B8DD8C3");
         m.put("inv_ops", List.of("Netscaler", "WAF'ta Var", "Kullanım Durumu"));
         // Sorumlu Ekipler kartı — önizlemede de görünsün ki şablon değişikliği gözle kontrol edilebilsin.
@@ -100,7 +100,7 @@ class EmailPreviewHarnessTest {
         m.put("old_values", oldValues);
         m.put("new_values", newValues);
         m.put("alert_event_id", 4242L);
-        return service.buildAlertEmailHtml("konu", "DNS kaydı değişti", "callcenterfacechat.akbank.com",
+        return service.buildAlertEmailHtml("konu", "DNS kaydı değişti", "callcenterfacechat.example.com",
                 "HIGH", "DNS_CHANGED", null, m);
     }
 
@@ -119,8 +119,8 @@ class EmailPreviewHarnessTest {
         }
         // Envanter bölümleri (operasyonel çipler + değişiklik açıklaması) — gerçek prod verisine yakın
         write("cert-expiry-inventory",
-                service.buildAlertEmailHtml("konu", "www.akbank.com adresindeki sertifikanın süresi 30 gün içinde doluyor.",
-                        "www.akbank.com", "MEDIUM", "EXPIRY", 30, inventoryCtx()));
+                service.buildAlertEmailHtml("konu", "www.example.com adresindeki sertifikanın süresi 30 gün içinde doluyor.",
+                        "www.example.com", "MEDIUM", "EXPIRY", 30, inventoryCtx()));
         write("domain-expiry-critical",
                 service.buildAlertEmailHtml("konu", "Alan adı süresi doluyor", "example.com", "CRITICAL", "DOMAINMON_EXPIRY", 3, ctx("example.com", null)));
 
@@ -155,7 +155,7 @@ class EmailPreviewHarnessTest {
                 List.of("10.1.0.1")));
         write("dns-changed-txt", dnsPreview(
                 List.of("v=DKIM1; k=rsa; p=" + "A".repeat(240)),
-                List.of("cname-hedefi.uzun-alan-adi.akbank.com")));
+                List.of("cname-hedefi.uzun-alan-adi.example.com")));
 
         // Olay aksiyon butonlu sürümler (alert_event_id dolu)
         Map<String, Object> act = ctx("https://example.com/health", "Sağlık Ucu");

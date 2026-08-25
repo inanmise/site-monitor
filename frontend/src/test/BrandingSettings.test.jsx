@@ -45,10 +45,10 @@ describe('BrandingSettings', () => {
     render(<BrandingSettings />)
     await screen.findByText('White Label')
     const appName = screen.getByText('App name').closest('.threshold-field').querySelector('input')
-    fireEvent.change(appName, { target: { value: 'Akbank Monitor' } })
+    fireEvent.change(appName, { target: { value: 'Example Monitor' } })
     fireEvent.click(screen.getByRole('button', { name: /save/i }))
     await waitFor(() => expect(api.admin.saveBrandingSettings).toHaveBeenCalledWith({
-      values: { 'site.monitor.branding.app-name': 'Akbank Monitor' },
+      values: { 'site.monitor.branding.app-name': 'Example Monitor' },
     }))
   })
 

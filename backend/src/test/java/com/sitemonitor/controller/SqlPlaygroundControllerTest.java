@@ -111,7 +111,7 @@ class SqlPlaygroundControllerTest {
     private MockHttpSession adminSession() {
         MockHttpSession s = new MockHttpSession();
         s.setAttribute("authenticated", Boolean.TRUE);
-        s.setAttribute("username", "n64954");
+        s.setAttribute("username", "n34567");
         s.setAttribute("systemRole", "ADMIN");
         return s;
     }

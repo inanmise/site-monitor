@@ -208,7 +208,7 @@ class PageCheckerServiceTest {
     }
 
     @Test
-    @DisplayName("HEAD 404 ama GET 200 dönen kaynak (ASP.NET/.aspx) → GET ile teyit, KIRIK sayılmaz (akbank gayrimenkulsatis bug'ı)")
+    @DisplayName("HEAD 404 ama GET 200 dönen kaynak (ASP.NET/.aspx) → GET ile teyit, KIRIK sayılmaz (example gayrimenkulsatis bug'ı)")
     void headBadGetOk_notBroken() {
         var r = checker.check(base + "/headbad", "SINGLE_PAGE", 5000, 2000, 5, null, 2, 50, 60);
         assertThat(r.status()).isEqualTo("OK");
@@ -216,7 +216,7 @@ class PageCheckerServiceTest {
     }
 
     @Test
-    @DisplayName("URL'de kodlanmamış BOŞLUK olan kaynak %20'ye kodlanır → yüklenir, KIRIK sayılmaz (akbank urune davet bug'ı)")
+    @DisplayName("URL'de kodlanmamış BOŞLUK olan kaynak %20'ye kodlanır → yüklenir, KIRIK sayılmaz (example urune davet bug'ı)")
     void spacedResourceUrl_encodedNotBroken() {
         var r = checker.check(base + "/spaceimg", "SINGLE_PAGE", 5000, 2000, 5, null, 2, 50, 60);
         assertThat(r.status()).isEqualTo("OK");

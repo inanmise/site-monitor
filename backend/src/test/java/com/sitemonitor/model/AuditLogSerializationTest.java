@@ -33,7 +33,7 @@ class AuditLogSerializationTest {
     void sessionIdIsNeverSerialised() throws Exception {
         AuditLog log = new AuditLog();
         log.setSessionId("GIZLI-OTURUM-KIMLIGI");
-        log.setActor("n68753");
+        log.setActor("n12345");
         log.setEventType("LOGIN");
         log.setIpAddress("10.1.2.3");
         log.setUserAgent("Mozilla/5.0 (Windows NT 10.0) Chrome/120");
@@ -43,7 +43,7 @@ class AuditLogSerializationTest {
         assertThat(json).doesNotContain("GIZLI-OTURUM-KIMLIGI");
         assertThat(json).doesNotContain("sessionId");
         // Ekranin gercekten ihtiyac duydugu alanlar kaybolmadi.
-        assertThat(json).contains("n68753").contains("LOGIN").contains("10.1.2.3");
+        assertThat(json).contains("n12345").contains("LOGIN").contains("10.1.2.3");
     }
 
     @Test

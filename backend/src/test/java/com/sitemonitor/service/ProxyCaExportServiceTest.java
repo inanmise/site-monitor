@@ -44,9 +44,9 @@ class ProxyCaExportServiceTest {
     @Test
     @DisplayName("leaf+intermediate+root → yaprağı atar, 2 CA'yı PEM'e koyar, kökü self-signed işaretler")
     void fullChain() throws Exception {
-        X509Certificate leaf = cert("data.iana.org", "AKBANK-ISSUING-CA", -1);
-        X509Certificate inter = cert("AKBANK-ISSUING-CA", "AKBANK-ROOT-CA-256", 0);
-        X509Certificate root = cert("AKBANK-ROOT-CA-256", "AKBANK-ROOT-CA-256", 1);
+        X509Certificate leaf = cert("data.iana.org", "EXAMPLE-ISSUING-CA", -1);
+        X509Certificate inter = cert("EXAMPLE-ISSUING-CA", "EXAMPLE-ROOT-CA-256", 0);
+        X509Certificate root = cert("EXAMPLE-ROOT-CA-256", "EXAMPLE-ROOT-CA-256", 1);
         when(certChecker.captureProxyChain(anyString(), anyInt())).thenReturn(new X509Certificate[]{ leaf, inter, root });
 
         Map<String, Object> out = svc.capture("data.iana.org", 443);
@@ -69,7 +69,7 @@ class ProxyCaExportServiceTest {
     @Test
     @DisplayName("yalnız yaprak gelirse → ca_count=0, PEM boş (ok yine true)")
     void leafOnly() throws Exception {
-        X509Certificate leaf = cert("data.iana.org", "AKBANK-ISSUING-CA", -1);
+        X509Certificate leaf = cert("data.iana.org", "EXAMPLE-ISSUING-CA", -1);
         when(certChecker.captureProxyChain(anyString(), anyInt())).thenReturn(new X509Certificate[]{ leaf });
 
         Map<String, Object> out = svc.capture("data.iana.org", 443);

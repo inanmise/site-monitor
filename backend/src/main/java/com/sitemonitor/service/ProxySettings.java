@@ -20,7 +20,7 @@ import java.nio.charset.StandardCharsets;
  * <ul>
  *   <li>Prod {@code NO_PROXY} değeri {@code akbank.com} içeriyor. Go ({@code x/net/http/httpproxy})
  *       bu girdiyi {@code .akbank.com} sonek eşleşmesine çevirir ⇒ {@code www.akbank.com} ve
- *       {@code *.apps.ocpint.akbank.com} dâhil TÜM alt alanlar vekili BAYPAS eder. Yani
+ *       {@code *.apps.<ic-openshift>.<kurumsal-alan>} dâhil TÜM alt alanlar vekili BAYPAS eder. Yani
  *       {@code HTTPS_PROXY} verilse de Go bu hedefler için onu kullanmaz.</li>
  *   <li>{@code ProcessBuilder.environment()} ebeveyn ortamının kopyasıyla başladığı için k6 zaten
  *       ÖNCEDEN de pod'un {@code NO_PROXY}'sini görüyordu — net davranış değişmedi.

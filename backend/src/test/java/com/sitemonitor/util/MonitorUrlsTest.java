@@ -27,7 +27,7 @@ class MonitorUrlsTest {
     @Test
     @DisplayName("hostOrNull: http(s) + host varsa host; şema yok / host yok / kontrol edilemez şema → null")
     void hostOrNull_requiresHttpSchemeAndHost() {
-        assertThat(MonitorUrls.hostOrNull("https://www.akbank.com/kampanya")).isEqualTo("www.akbank.com");
+        assertThat(MonitorUrls.hostOrNull("https://www.example.com/kampanya")).isEqualTo("www.example.com");
         assertThat(MonitorUrls.hostOrNull("http://user:pw@x.com:8080/a")).isEqualTo("x.com");
         assertThat(MonitorUrls.hostOrNull("https://X.COM.")).isEqualTo("x.com");          // trailing dot + case
         assertThat(MonitorUrls.hostOrNull("https://[::1]:8080/a")).isEqualTo("[::1]");    // IPv6 literal

@@ -222,14 +222,14 @@ class CertificateHealthRulesTest {
 
     @org.junit.jupiter.params.ParameterizedTest(name = "{0} ⊂ {1} → {2}")
     @org.junit.jupiter.params.provider.CsvSource({
-            "www.akbank.com,     www.akbank.com,       OK",
-            "WWW.AKBANK.COM,     www.akbank.com,       OK",
-            "www.akbank.com,     *.akbank.com,         OK",
-            "akbank.com,         *.akbank.com,         FAIL",
-            "a.b.akbank.com,     *.akbank.com,         FAIL",
-            "www.akbank.com,     *.baska.com,          FAIL",
-            "www.akbank.com,     akbank.com,           FAIL",
-            "sub.akbank.com,     *.,                   FAIL",
+            "www.example.com,     www.example.com,       OK",
+            "WWW.EXAMPLE.COM,     www.example.com,       OK",
+            "www.example.com,     *.example.com,         OK",
+            "example.com,         *.example.com,         FAIL",
+            "a.b.example.com,     *.example.com,         FAIL",
+            "www.example.com,     *.baska.com,          FAIL",
+            "www.example.com,     example.com,           FAIL",
+            "sub.example.com,     *.,                   FAIL",
     })
     void sanCoverageRules(String domain, String entry, String expected) {
         assertThat(CertificateHealthRules.sanCoverage(domain, java.util.List.of(entry)))
@@ -239,8 +239,8 @@ class CertificateHealthRulesTest {
     @Test
     @DisplayName("Listede EŞLEŞEN bir giriş varsa yeterli (birden çok SAN normaldir)")
     void sanCoverageScansWholeList() {
-        assertThat(CertificateHealthRules.sanCoverage("api.akbank.com",
-                java.util.List.of("www.akbank.com", "akbank.com", "*.akbank.com")))
+        assertThat(CertificateHealthRules.sanCoverage("api.example.com",
+                java.util.List.of("www.example.com", "example.com", "*.example.com")))
                 .isEqualTo(Status.OK);
     }
 
@@ -258,8 +258,8 @@ class CertificateHealthRulesTest {
         java.util.List<String> san = new java.util.ArrayList<>();
         san.add(null);
         san.add("   ");
-        san.add("www.akbank.com");
-        assertThat(CertificateHealthRules.sanCoverage("www.akbank.com", san)).isEqualTo(Status.OK);
+        san.add("www.example.com");
+        assertThat(CertificateHealthRules.sanCoverage("www.example.com", san)).isEqualTo(Status.OK);
     }
 
     // ── Süre ────────────────────────────────────────────────────────────────

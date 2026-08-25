@@ -258,8 +258,8 @@ class HistoryQueryGrammarTest {
     @DisplayName("değişiklik geçmişi: boş süzgeçle, süzgeçliyle ve SYSTEM nişanı dışlanarak koşar")
     void monitorChangeLog() {
         changeRepo.saveAll(List.of(
-                chg("PORT", 1L, "Ödeme portu", "CREATE", 5L, "N70678", "2026-08-01T10:00:00"),
-                chg("PORT", 1L, "Ödeme portu", "UPDATE", 5L, "N70678", "2026-08-01T11:00:00"),
+                chg("PORT", 1L, "Ödeme portu", "CREATE", 5L, "N23456", "2026-08-01T10:00:00"),
+                chg("PORT", 1L, "Ödeme portu", "UPDATE", 5L, "N23456", "2026-08-01T11:00:00"),
                 chg("SCRIPTED", 2L, "Ödeme akışı", "CREATE", 7L, "AHMET", "2026-08-01T12:00:00"),
                 // Geri doldurma nişanı — HİÇBİR listede görünmemeli.
                 chg("SYSTEM", 0L, "audit-backfill", "AUDIT_BACKFILL", null, "system", "2026-08-01T09:00:00")));
@@ -276,7 +276,7 @@ class HistoryQueryGrammarTest {
         // 2) Serbest arama + aktör: LOWER/CONCAT yolu gerçekten eşleşmeli (cast doğru yerde mi).
         assertThat(changeRepo.search(null, null, null, null, null, null, "ödeme p", true, all,
                 PageRequest.of(0, 25)).getTotalElements()).isEqualTo(2);
-        assertThat(changeRepo.search(null, null, "n70678", null, null, null, null, true, all,
+        assertThat(changeRepo.search(null, null, "n23456", null, null, null, null, true, all,
                 PageRequest.of(0, 25)).getTotalElements()).isEqualTo(2);   // aktör aramasi harf duyarsiz
 
         // 3) Tür + olay + tarih süzgeçleri.

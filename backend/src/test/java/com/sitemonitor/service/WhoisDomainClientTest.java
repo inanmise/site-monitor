@@ -111,16 +111,16 @@ class WhoisDomainClientTest {
     @Test
     @DisplayName("lookup: .tr + web-whois açık → fetched raw TrWhoisParser'a beslenir, source=WHOIS + provider damgalanır")
     void lookup_trWebWhois_parsesAndStampsProviderAndExpiry() {
-        String raw = "** Domain Name: akbank.com.tr\n"
+        String raw = "** Domain Name: example.com.tr\n"
                 + "** Additional Info:\n"
                 + "Created on..............: 2006-Oct-27.\n"
                 + "Expires on..............: 2029-Oct-26.\n";
-        when(psl.tldOf("akbank.com.tr")).thenReturn("tr");
+        when(psl.tldOf("example.com.tr")).thenReturn("tr");
         when(trWebWhois.enabled()).thenReturn(true);
-        when(trWebWhois.fetch(eq("akbank.com.tr")))
+        when(trWebWhois.fetch(eq("example.com.tr")))
                 .thenReturn(new TrWebWhoisClient.Fetched(raw, "isimtescil"));
 
-        Map<String, Object> r = client.lookup("akbank.com.tr");
+        Map<String, Object> r = client.lookup("example.com.tr");
 
         assertThat(r.get("source")).isEqualTo("WHOIS");
         assertThat(r.get("whois_provider")).isEqualTo("isimtescil");

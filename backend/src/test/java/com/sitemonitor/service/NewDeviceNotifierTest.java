@@ -52,7 +52,7 @@ class NewDeviceNotifierTest {
     void setUp() {
         when(appSettings.getBoolean(anyString(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(true);
         AppUser u = new AppUser();
-        u.setUsername("N68753");
+        u.setUsername("N12345");
         u.setEmail("kadir@example.com");
         when(appUserRepo.findByUsername(anyString())).thenReturn(Optional.of(u));
         when(geoIpService.isPrivateIp(anyString())).thenReturn(true);
@@ -66,7 +66,7 @@ class NewDeviceNotifierTest {
         when(auditLogRepo.findDistinctLoginUserAgents(anyString(), anyLong()))
                 .thenReturn(List.of(CHROME_120));
 
-        notifier.notifyIfNewDevice(9L, "N68753", CHROME_121, "10.0.0.1", "2026-08-24T10:00:00");
+        notifier.notifyIfNewDevice(9L, "N12345", CHROME_121, "10.0.0.1", "2026-08-24T10:00:00");
 
         verify(emailService, never()).sendNewDeviceEmail(any(), any(), any(), any(), any(), any());
     }
@@ -77,7 +77,7 @@ class NewDeviceNotifierTest {
         when(auditLogRepo.findDistinctLoginUserAgents(anyString(), anyLong()))
                 .thenReturn(List.of(CHROME_120));
 
-        notifier.notifyIfNewDevice(9L, "N68753", FIREFOX_MAC, "10.0.0.1", "2026-08-24T10:00:00");
+        notifier.notifyIfNewDevice(9L, "N12345", FIREFOX_MAC, "10.0.0.1", "2026-08-24T10:00:00");
 
         verify(emailService).sendNewDeviceEmail(
                 org.mockito.ArgumentMatchers.eq("kadir@example.com"), anyString(),
@@ -89,7 +89,7 @@ class NewDeviceNotifierTest {
     void firstEverLoginIsSilent() {
         when(auditLogRepo.findDistinctLoginUserAgents(anyString(), anyLong())).thenReturn(List.of());
 
-        notifier.notifyIfNewDevice(9L, "N68753", CHROME_120, "10.0.0.1", "2026-08-24T10:00:00");
+        notifier.notifyIfNewDevice(9L, "N12345", CHROME_120, "10.0.0.1", "2026-08-24T10:00:00");
 
         verify(emailService, never()).sendNewDeviceEmail(any(), any(), any(), any(), any(), any());
     }
@@ -102,7 +102,7 @@ class NewDeviceNotifierTest {
         when(auditLogRepo.findDistinctLoginUserAgents(anyString(), anyLong()))
                 .thenReturn(List.of(CHROME_120));
 
-        notifier.notifyIfNewDevice(9L, "N68753", "curl/8.4.0", "10.0.0.1", "2026-08-24T10:00:00");
+        notifier.notifyIfNewDevice(9L, "N12345", "curl/8.4.0", "10.0.0.1", "2026-08-24T10:00:00");
 
         verify(emailService, never()).sendNewDeviceEmail(any(), any(), any(), any(), any(), any());
     }
@@ -112,7 +112,7 @@ class NewDeviceNotifierTest {
     void disabledByDefaultDoesNothing() {
         when(appSettings.getBoolean(anyString(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(false);
 
-        notifier.notifyIfNewDevice(9L, "N68753", FIREFOX_MAC, "10.0.0.1", "2026-08-24T10:00:00");
+        notifier.notifyIfNewDevice(9L, "N12345", FIREFOX_MAC, "10.0.0.1", "2026-08-24T10:00:00");
 
         verify(auditLogRepo, never()).findDistinctLoginUserAgents(anyString(), anyLong());
         verify(emailService, never()).sendNewDeviceEmail(any(), any(), any(), any(), any(), any());
@@ -122,12 +122,12 @@ class NewDeviceNotifierTest {
     @DisplayName("E-postasi OLMAYAN kullanicida sessizce vazgecilir (patlamaz)")
     void userWithoutEmailIsSkipped() {
         AppUser noMail = new AppUser();
-        noMail.setUsername("N68753");
+        noMail.setUsername("N12345");
         when(appUserRepo.findByUsername(anyString())).thenReturn(Optional.of(noMail));
         when(auditLogRepo.findDistinctLoginUserAgents(anyString(), anyLong()))
                 .thenReturn(List.of(CHROME_120));
 
-        notifier.notifyIfNewDevice(9L, "N68753", FIREFOX_MAC, "10.0.0.1", "2026-08-24T10:00:00");
+        notifier.notifyIfNewDevice(9L, "N12345", FIREFOX_MAC, "10.0.0.1", "2026-08-24T10:00:00");
 
         verify(emailService, never()).sendNewDeviceEmail(any(), any(), any(), any(), any(), any());
     }
@@ -139,7 +139,7 @@ class NewDeviceNotifierTest {
                 .thenThrow(new RuntimeException("DB down"));
 
         // Istisna DISARI CIKMAMALI: bildirim hatasi girisi engellememeli.
-        notifier.notifyIfNewDevice(9L, "N68753", FIREFOX_MAC, "10.0.0.1", "2026-08-24T10:00:00");
+        notifier.notifyIfNewDevice(9L, "N12345", FIREFOX_MAC, "10.0.0.1", "2026-08-24T10:00:00");
 
         verify(emailService, never()).sendNewDeviceEmail(any(), any(), any(), any(), any(), any());
     }

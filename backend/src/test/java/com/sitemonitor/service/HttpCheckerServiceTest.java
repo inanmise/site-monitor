@@ -231,12 +231,12 @@ class HttpCheckerServiceTest {
     @Test
     @DisplayName("matchName: tam eşleşme + tek-etiket wildcard (çok-A pin sonrası hostname doğrulaması)")
     void matchName_exactAndWildcard() {
-        assertThat(HttpCheckerService.matchName("callcenterfacechat.akbank.com", "callcenterfacechat.akbank.com")).isTrue();
-        assertThat(HttpCheckerService.matchName("*.akbank.com", "callcenterfacechat.akbank.com")).isTrue();
-        assertThat(HttpCheckerService.matchName("*.akbank.com", "akbank.com")).isFalse();        // wildcard bir etiket ister
-        assertThat(HttpCheckerService.matchName("*.akbank.com", "a.b.akbank.com")).isFalse();    // yalnız en soldaki tek etiket
-        assertThat(HttpCheckerService.matchName("*.example.com", "callcenterfacechat.akbank.com")).isFalse();
-        assertThat(HttpCheckerService.matchName("www.akbank.com", "akbank.com")).isFalse();
+        assertThat(HttpCheckerService.matchName("callcenterfacechat.example.com", "callcenterfacechat.example.com")).isTrue();
+        assertThat(HttpCheckerService.matchName("*.example.com", "callcenterfacechat.example.com")).isTrue();
+        assertThat(HttpCheckerService.matchName("*.example.com", "example.com")).isFalse();        // wildcard bir etiket ister
+        assertThat(HttpCheckerService.matchName("*.example.com", "a.b.example.com")).isFalse();    // yalnız en soldaki tek etiket
+        assertThat(HttpCheckerService.matchName("*.example.org", "callcenterfacechat.example.com")).isFalse();   // BASKA alan adi
+        assertThat(HttpCheckerService.matchName("www.example.com", "example.com")).isFalse();
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

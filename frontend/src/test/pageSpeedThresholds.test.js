@@ -32,7 +32,7 @@ describe('roundUpTo', () => {
 })
 
 describe('suggestThresholds', () => {
-  // akbank.com ana sayfasından gelen gerçek ölçüm (2026-08-23) — sayılar bu vakadan.
+  // example.com ana sayfasından gelen gerçek ölçüm (2026-08-23) — sayılar bu vakadan.
   const real = { response_ms: 3297, ttfb_ms: 90, total_bytes: 46.4 * 1024 * 1024, request_count: 183 }
 
   it('gerçek bir ölçümden okunur ve savunulabilir dört değer üretir', () => {

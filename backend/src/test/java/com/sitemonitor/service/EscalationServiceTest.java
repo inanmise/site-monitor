@@ -400,7 +400,7 @@ class EscalationServiceTest {
         when(alertEventRepo.findById(31L)).thenReturn(Optional.of(event));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
-        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@akbank.com");
+        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@example.com");
         when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
         com.sitemonitor.model.PageCheck latest = new com.sitemonitor.model.PageCheck();
         latest.setMonitorId(55L); latest.setStatus("OK"); latest.setTotalResources(135);
@@ -754,12 +754,12 @@ class EscalationServiceTest {
 
         // Takım e-postası (collectTeamEmails → teamRepo)
         com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
-        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@akbank.com");
+        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@example.com");
         when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
 
         // GLOBAL müdür kontağı MEVCUT — eski hatalı davranışta buna düşerdi; teamOnly ile ARTIK eklenmemeli.
         when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING"))
-                .thenReturn(List.of(contact("mudur@akbank.com", "MANAGER", "WARNING")));
+                .thenReturn(List.of(contact("mudur@example.com", "MANAGER", "WARNING")));
 
         // İçerik bağlamı — EN GÜNCEL DomainCheck (registrar/bitiş/EPP → zengin mail)
         com.sitemonitor.model.DomainMonitor mon = new com.sitemonitor.model.DomainMonitor();
@@ -784,7 +784,7 @@ class EscalationServiceTest {
         verify(emailService).sendAlert(toCap.capture(), contains("[RE-ALERT]"), anyString(),
                 eq("kartfree.com"), any(), any(), any(), ctxCap.capture());
         // TO = SADECE takım e-postası; müdür DEĞİL
-        assertThat(toCap.getValue()).containsExactly("dijitalsy@akbank.com");
+        assertThat(toCap.getValue()).containsExactly("dijitalsy@example.com");
         // İçerik zengin — registrar + bitiş bağlamı geçti (detay tablosu dolu)
         assertThat(ctxCap.getValue()).containsEntry("registrar", "GoDaddy.com, LLC");
         assertThat(ctxCap.getValue()).containsKey("expiry_date");
@@ -801,11 +801,11 @@ class EscalationServiceTest {
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
-        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@akbank.com");
+        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@example.com");
         when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
         // KRİTİK seviye eskalasyon kontağı (müdür) — kritik domainde EKLENİR
         when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(7L))
-                .thenReturn(List.of(contact("mudur@akbank.com", "MANAGER", "CRITICAL")));
+                .thenReturn(List.of(contact("mudur@example.com", "MANAGER", "CRITICAL")));
 
         com.sitemonitor.model.DomainMonitor mon = new com.sitemonitor.model.DomainMonitor();
         mon.setId(55L); mon.setDomain("kritik.example.com"); mon.setTeamId(7L);
@@ -822,7 +822,7 @@ class EscalationServiceTest {
         ArgumentCaptor<String[]> toCap = ArgumentCaptor.forClass(String[].class);
         verify(emailService).sendAlert(toCap.capture(), contains("[RE-ALERT]"), anyString(),
                 eq("kritik.example.com"), any(), any(), any(), any());
-        assertThat(toCap.getValue()).containsExactlyInAnyOrder("dijitalsy@akbank.com", "mudur@akbank.com");
+        assertThat(toCap.getValue()).containsExactlyInAnyOrder("dijitalsy@example.com", "mudur@example.com");
     }
 
     // ── previewReNotify + excludeEmails (Tekrar Bildir onay pop-up'ı) ────────────
@@ -834,18 +834,18 @@ class EscalationServiceTest {
         event.setId(301L); event.setTeamId(7L);
         when(alertEventRepo.findById(301L)).thenReturn(Optional.of(event));
         com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
-        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@akbank.com");
+        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@example.com");
         when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
         when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(7L))
-                .thenReturn(List.of(contact("mudur@akbank.com", "MANAGER", "CRITICAL")));
+                .thenReturn(List.of(contact("mudur@example.com", "MANAGER", "CRITICAL")));
 
         List<EscalationService.ReNotifyRecipient> out = service.previewReNotify(301L);
 
         assertThat(out).hasSize(2);
-        assertThat(out.get(0).email()).isEqualTo("dijitalsy@akbank.com");
+        assertThat(out.get(0).email()).isEqualTo("dijitalsy@example.com");
         assertThat(out.get(0).kind()).isEqualTo("TEAM");
         assertThat(out.get(0).name()).isEqualTo("SY-Dijital");
-        assertThat(out.get(1).email()).isEqualTo("mudur@akbank.com");
+        assertThat(out.get(1).email()).isEqualTo("mudur@example.com");
         assertThat(out.get(1).kind()).isEqualTo("CONTACT");
         assertThat(out.get(1).role()).isEqualTo("MANAGER");
         verify(alertEventRepo, never()).save(any());
@@ -871,27 +871,27 @@ class EscalationServiceTest {
         when(alertEventRepo.findById(303L)).thenReturn(Optional.of(event));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
-        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@akbank.com");
+        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@example.com");
         when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
         when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(7L))
-                .thenReturn(List.of(contact("mudur@akbank.com", "MANAGER", "CRITICAL")));
+                .thenReturn(List.of(contact("mudur@example.com", "MANAGER", "CRITICAL")));
         com.sitemonitor.model.DomainMonitor mon = new com.sitemonitor.model.DomainMonitor();
         mon.setId(55L); mon.setDomain("excl.example.com"); mon.setTeamId(7L);
         when(domainMonitorRepo.findFirstByDomainOrderByIdAsc("excl.example.com")).thenReturn(Optional.of(mon));
 
-        Map<String, Object> result = service.reNotify(303L, Set.of(" MUDUR@akbank.com "));   // trim+case-insensitive
+        Map<String, Object> result = service.reNotify(303L, Set.of(" MUDUR@example.com "));   // trim+case-insensitive
 
         assertThat(result.get("recipients_queued")).isEqualTo(1);   // yalnız takım
         assertThat(result.get("contacts_queued")).isEqualTo(0);
         ArgumentCaptor<AlertEvent> evCap = ArgumentCaptor.forClass(AlertEvent.class);
         verify(alertEventRepo, atLeast(1)).save(evCap.capture());
         assertThat(evCap.getValue().getNotifiedContacts() == null
-                || !evCap.getValue().getNotifiedContacts().contains("mudur@akbank.com")).isTrue();
+                || !evCap.getValue().getNotifiedContacts().contains("mudur@example.com")).isTrue();
         @SuppressWarnings("unchecked")
         ArgumentCaptor<String[]> toCap = ArgumentCaptor.forClass(String[].class);
         verify(emailService).sendAlert(toCap.capture(), contains("[RE-ALERT]"), anyString(),
                 eq("excl.example.com"), any(), any(), any(), any());
-        assertThat(toCap.getValue()).containsExactly("dijitalsy@akbank.com");
+        assertThat(toCap.getValue()).containsExactly("dijitalsy@example.com");
     }
 
     @Test
@@ -901,12 +901,12 @@ class EscalationServiceTest {
         event.setId(304L); event.setTeamId(7L);
         when(alertEventRepo.findById(304L)).thenReturn(Optional.of(event));
         com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
-        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@akbank.com");
+        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@example.com");
         when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
         when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(7L))
-                .thenReturn(List.of(contact("mudur@akbank.com", "MANAGER", "CRITICAL")));
+                .thenReturn(List.of(contact("mudur@example.com", "MANAGER", "CRITICAL")));
 
-        assertThatThrownBy(() -> service.reNotify(304L, Set.of("dijitalsy@akbank.com", "mudur@akbank.com")))
+        assertThatThrownBy(() -> service.reNotify(304L, Set.of("dijitalsy@example.com", "mudur@example.com")))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(alertEventRepo, never()).save(any());
         verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(),
@@ -925,10 +925,10 @@ class EscalationServiceTest {
         inv.setTeamId(7L);
         when(inventoryRepo.findByDomain("www.iyigelecegeyatirim.com")).thenReturn(Optional.of(inv));
         com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
-        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@akbank.com");
+        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@example.com");
         when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
         com.sitemonitor.model.DnsRecord rec = new com.sitemonitor.model.DnsRecord();
-        rec.setRecordType("A"); rec.setPreviousValue("192.168.10.249"); rec.setValue("217.169.196.197");
+        rec.setRecordType("A"); rec.setPreviousValue("192.168.1.10"); rec.setValue("217.169.196.197");
         rec.setCheckedAt("2026-08-02T01:32:00");
         when(dnsRecordRepo.findChangedByDomain(eq("www.iyigelecegeyatirim.com"),
                 any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of(rec));
@@ -940,8 +940,8 @@ class EscalationServiceTest {
         ArgumentCaptor<String> msgCap = ArgumentCaptor.forClass(String.class);
         verify(emailService).sendAlert(any(String[].class), contains("[RE-ALERT]"), msgCap.capture(),
                 eq("www.iyigelecegeyatirim.com"), any(), any(), any(), ctxCap.capture());
-        assertThat(msgCap.getValue()).contains("192.168.10.249").contains("217.169.196.197");
-        assertThat(ctxCap.getValue()).containsEntry("old_values", List.of("192.168.10.249"));
+        assertThat(msgCap.getValue()).contains("192.168.1.10").contains("217.169.196.197");
+        assertThat(ctxCap.getValue()).containsEntry("old_values", List.of("192.168.1.10"));
         assertThat(ctxCap.getValue()).containsEntry("new_values", List.of("217.169.196.197"));
     }
 
@@ -956,7 +956,7 @@ class EscalationServiceTest {
         inv.setTeamId(7L);
         when(inventoryRepo.findByDomain("nohist.example.com")).thenReturn(Optional.of(inv));
         com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
-        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@akbank.com");
+        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@example.com");
         when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
         when(dnsRecordRepo.findChangedByDomain(anyString(),
                 any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of());
@@ -1206,7 +1206,7 @@ class EscalationServiceTest {
         String domain = "https://kw.example.com/";
         Map<String, Object> ctx = new LinkedHashMap<>();
         ctx.put("team_id", 9L);
-        ctx.put("keyword", "akbank");
+        ctx.put("keyword", "example");
         ctx.put("operator", "GTE");
         ctx.put("match_count", 1);
         ctx.put("occurrences", 0);
@@ -1224,7 +1224,7 @@ class EscalationServiceTest {
         assertThat(saved.getAlertLevel()).isEqualTo("CRITICAL");
         assertThat(saved.getTeamId()).isEqualTo(9L);
         assertThat(saved.getContextJson()).isNotNull();
-        assertThat(saved.getContextJson()).contains("akbank");   // snapshot → çözüldü mailinde kelime detayı
+        assertThat(saved.getContextJson()).contains("example");   // snapshot → çözüldü mailinde kelime detayı
     }
 
     @Test

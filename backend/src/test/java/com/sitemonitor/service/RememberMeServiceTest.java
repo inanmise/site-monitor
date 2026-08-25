@@ -183,7 +183,7 @@ class RememberMeServiceTest {
         ArgumentCaptor<RememberMeToken> cap = ArgumentCaptor.forClass(RememberMeToken.class);
         String ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36";
 
-        service.generateToken("N68753", "10.1.2.3", ua);
+        service.generateToken("N12345", "10.1.2.3", ua);
 
         verify(repo).save(cap.capture());
         RememberMeToken saved = cap.getValue();
@@ -198,13 +198,13 @@ class RememberMeServiceTest {
     @DisplayName("Basarili dogrulama SON KULLANIM izini gunceller (kullanilmayan cihaz taze gorunmesin)")
     void validateStampsLastUsed() {
         RememberMeToken t = new RememberMeToken();
-        t.setUsername("N68753");
+        t.setUsername("N12345");
         t.setExpiresAt(Instant.now().getEpochSecond() + 3600);
         when(repo.findByToken(anyString())).thenReturn(Optional.of(t));
 
         var user = service.validate("ham-token", "10.9.9.9");
 
-        assertThat(user).contains("N68753");
+        assertThat(user).contains("N12345");
         assertThat(t.getLastUsedAt()).isNotBlank();
         assertThat(t.getIpAddress()).isEqualTo("10.9.9.9");
         verify(repo).save(t);
@@ -215,19 +215,19 @@ class RememberMeServiceTest {
     void validateSurvivesTrailWriteFailure() {
         // Bir metadata guncelleme hatasi kullaniciyi disarida birakmamali.
         RememberMeToken t = new RememberMeToken();
-        t.setUsername("N68753");
+        t.setUsername("N12345");
         t.setExpiresAt(Instant.now().getEpochSecond() + 3600);
         when(repo.findByToken(anyString())).thenReturn(Optional.of(t));
         when(repo.save(any(RememberMeToken.class))).thenThrow(new RuntimeException("DB down"));
 
-        assertThat(service.validate("ham-token", "10.9.9.9")).contains("N68753");
+        assertThat(service.validate("ham-token", "10.9.9.9")).contains("N12345");
     }
 
     @Test
     @DisplayName("SURESI DOLMUS token'da iz YAZILMAZ ve kullanici donmez")
     void expiredTokenLeavesNoTrail() {
         RememberMeToken t = new RememberMeToken();
-        t.setUsername("N68753");
+        t.setUsername("N12345");
         t.setExpiresAt(Instant.now().getEpochSecond() - 1);
         when(repo.findByToken(anyString())).thenReturn(Optional.of(t));
 

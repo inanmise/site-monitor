@@ -29,7 +29,7 @@ class CsvTest {
     void leavesInnerCharactersAlone() {
         assertThat(Csv.cell("a=b")).isEqualTo("a=b");
         assertThat(Csv.cell("1-2")).isEqualTo("1-2");
-        assertThat(Csv.cell("mail@akbank.com")).isEqualTo("mail@akbank.com");
+        assertThat(Csv.cell("mail@example.com")).isEqualTo("mail@example.com");
     }
 
     @Test

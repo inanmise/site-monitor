@@ -12,8 +12,8 @@ const sampleDetail = {
   reportedAt: '2026-07-23T10:00:00', resolvedBy: null, resolvedAt: null, resolutionNote: null,
   imageCount: 2, images: ['data:image/png;base64,AAAA', 'data:image/png;base64,BBBB'],
   mailHistory: [
-    { mailType: 'REPORT_ADMIN', from: 'noreply@sitemonitor', to: 'admin@akbank.com', cc: null, subject: 'Konu R', body: "<p>rapor govdesi</p><img src='cid:shot0'>", status: 'SENT', error: null, forced: true, sentAt: '2026-07-23T10:00:05' },
-    { mailType: 'REPORTER_ACK', from: 'noreply@sitemonitor', to: 'user@akbank.com', cc: null, subject: 'Konu A', body: '<p>onay govdesi</p>', status: 'FAILED: 550', error: 'FAILED: 550 mailbox unavailable', forced: false, sentAt: '2026-07-23T10:00:06' },
+    { mailType: 'REPORT_ADMIN', from: 'noreply@sitemonitor', to: 'admin@example.com', cc: null, subject: 'Konu R', body: "<p>rapor govdesi</p><img src='cid:shot0'>", status: 'SENT', error: null, forced: true, sentAt: '2026-07-23T10:00:05' },
+    { mailType: 'REPORTER_ACK', from: 'noreply@sitemonitor', to: 'user@example.com', cc: null, subject: 'Konu A', body: '<p>onay govdesi</p>', status: 'FAILED: 550', error: 'FAILED: 550 mailbox unavailable', forced: false, sentAt: '2026-07-23T10:00:06' },
   ],
 }
 

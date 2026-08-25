@@ -19,7 +19,7 @@ describe('csvCell', () => {
 
   it('formül karakteri ORTADA ise dokunmaz', () => {
     expect(csvCell('a=b')).toBe('a=b')
-    expect(csvCell('mail@akbank.com')).toBe('mail@akbank.com')
+    expect(csvCell('mail@example.com')).toBe('mail@example.com')
   })
 
   it('ayraç/tırnak/satır sonu içeren değeri tırnaklar, tırnakları ikiler', () => {

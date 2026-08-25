@@ -42,7 +42,7 @@ class SqlPlaygroundServiceTest {
         List<Map<String, Object>> rows = List.of(Map.of("id", 1, "name", "alice"));
         when(jdbc.queryForList(contains("SELECT"))).thenReturn(rows);
 
-        Map<String, Object> result = service.execute("SELECT id, name FROM teams", "n64954");
+        Map<String, Object> result = service.execute("SELECT id, name FROM teams", "n34567");
 
         assertThat(result.get("ok")).isEqualTo(true);
         assertThat(result.get("rowCount")).isEqualTo(1);

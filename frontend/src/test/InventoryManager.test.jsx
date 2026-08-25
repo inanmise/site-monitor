@@ -50,10 +50,10 @@ import { api } from '../api/client'
 import InventoryManager from '../components/admin/InventoryManager.jsx'
 
 const ITEMS = [
-  { id: 1, domain: 'aktif-bir.akbank.com', port: 443, active: true,  team_id: 5, team_name: 'SY-A' },
-  { id: 2, domain: 'aktif-iki.akbank.com', port: 443, active: true,  team_id: 5, team_name: 'SY-A' },
-  { id: 3, domain: 'pasif.akbank.com',     port: 443, active: false, team_id: 5, team_name: 'SY-A' },
-  { id: 4, domain: 'silinmis.akbank.com',  port: 443, active: false, team_id: 5, team_name: 'SY-A',
+  { id: 1, domain: 'aktif-bir.example.com', port: 443, active: true,  team_id: 5, team_name: 'SY-A' },
+  { id: 2, domain: 'aktif-iki.example.com', port: 443, active: true,  team_id: 5, team_name: 'SY-A' },
+  { id: 3, domain: 'pasif.example.com',     port: 443, active: false, team_id: 5, team_name: 'SY-A' },
+  { id: 4, domain: 'silinmis.example.com',  port: 443, active: false, team_id: 5, team_name: 'SY-A',
     deleted_at: '2026-08-01T10:00:00' },
 ]
 
@@ -85,9 +85,9 @@ describe('InventoryManager', () => {
 
   it('silinmemiş kayıtları listeler; silinmiş kayıt varsayılan görünümde GİZLİ', async () => {
     renderIm()
-    expect(await screen.findByText('aktif-bir.akbank.com')).toBeInTheDocument()
-    expect(screen.getByText('pasif.akbank.com')).toBeInTheDocument()
-    expect(screen.queryByText('silinmis.akbank.com')).toBeNull()
+    expect(await screen.findByText('aktif-bir.example.com')).toBeInTheDocument()
+    expect(screen.getByText('pasif.example.com')).toBeInTheDocument()
+    expect(screen.queryByText('silinmis.example.com')).toBeNull()
   })
 
   // ── Geri alınamaz: kalıcı silme ──────────────────────────────────────────────
@@ -95,10 +95,10 @@ describe('InventoryManager', () => {
   it('KALICI SİL onay ister; iptal edilirse uç ÇAĞRILMAZ (geri dönüşü yok)', async () => {
     confirmMock.mockResolvedValue(false)
     renderIm()
-    await screen.findByText('aktif-bir.akbank.com')
+    await screen.findByText('aktif-bir.example.com')
 
     fireEvent.click(screen.getByRole('button', { name: /silinmiş|deleted/i }))   // 'deleted' filtre pili
-    await openRowMenu('silinmis.akbank.com')
+    await openRowMenu('silinmis.example.com')
     fireEvent.click(await screen.findByText(/^Kalıcı Sil$|^Permanent Delete$/))
 
     await waitFor(() => expect(confirmMock).toHaveBeenCalled())
@@ -107,10 +107,10 @@ describe('InventoryManager', () => {
 
   it('kalıcı silme onaylanınca TAM OLARAK o satırın id\'si gider', async () => {
     renderIm()
-    await screen.findByText('aktif-bir.akbank.com')
+    await screen.findByText('aktif-bir.example.com')
 
     fireEvent.click(screen.getByRole('button', { name: /silinmiş|deleted/i }))
-    await openRowMenu('silinmis.akbank.com')
+    await openRowMenu('silinmis.example.com')
     fireEvent.click(await screen.findByText(/^Kalıcı Sil$|^Permanent Delete$/))
 
     await waitFor(() => expect(api.admin.purgeInventory).toHaveBeenCalledWith(4))
@@ -120,7 +120,7 @@ describe('InventoryManager', () => {
   it('TÜMÜNÜ kalıcı sil onay ister; iptalde toplu purge ucu çağrılmaz', async () => {
     confirmMock.mockResolvedValue(false)
     renderIm()
-    await screen.findByText('aktif-bir.akbank.com')
+    await screen.findByText('aktif-bir.example.com')
     fireEvent.click(screen.getByRole('button', { name: /silinmiş|deleted/i }))
 
     fireEvent.click(await screen.findByRole('button', { name: /Tüm Silinmişleri|Permanently Delete All/i }))
@@ -131,10 +131,10 @@ describe('InventoryManager', () => {
 
   it('KALICI SİL yalnız ADMIN\'e görünür — TEAM_ADMIN menüsünde yok', async () => {
     renderIm('TEAM_ADMIN')
-    await screen.findByText('aktif-bir.akbank.com')
+    await screen.findByText('aktif-bir.example.com')
 
     fireEvent.click(screen.getByRole('button', { name: /silinmiş|deleted/i }))
-    await openRowMenu('silinmis.akbank.com')
+    await openRowMenu('silinmis.example.com')
 
     expect(screen.queryByText(/^Kalıcı Sil$|^Permanent Delete$/)).toBeNull()
     expect(await screen.findByText(/^Geri Getir$|^Restore$/)).toBeInTheDocument()   // geri getirme açık
@@ -144,7 +144,7 @@ describe('InventoryManager', () => {
 
   it('toplu silme SEÇİLİ id kümesini ve doğru aksiyonu gönderir', async () => {
     renderIm()
-    await screen.findByText('aktif-bir.akbank.com')
+    await screen.findByText('aktif-bir.example.com')
 
     fireEvent.click(checkboxes()[0])   // id=1
     fireEvent.click(checkboxes()[2])   // id=3 (pasif — varsayılan görünümde de listede)
@@ -159,7 +159,7 @@ describe('InventoryManager', () => {
   it('toplu silme onay ister; iptalde HİÇBİR kayıt gitmez', async () => {
     confirmMock.mockResolvedValue(false)
     renderIm()
-    await screen.findByText('aktif-bir.akbank.com')
+    await screen.findByText('aktif-bir.example.com')
 
     fireEvent.click(checkboxes()[0])
     fireEvent.click(await screen.findByRole('button', { name: /^Sil$|^Delete$/ }))
@@ -170,7 +170,7 @@ describe('InventoryManager', () => {
 
   it('FİLTRE değişince seçim TEMİZLENİR — görünmeyen kayıt toplu eyleme takılmaz', async () => {
     renderIm()
-    await screen.findByText('aktif-bir.akbank.com')
+    await screen.findByText('aktif-bir.example.com')
 
     fireEvent.click(checkboxes()[0])
     expect(await screen.findByText(/1 seçili|1 selected/)).toBeInTheDocument()
@@ -183,7 +183,7 @@ describe('InventoryManager', () => {
   it('toplu eylem sunucuda reddedilirse başarı denmez ve liste yeniden yüklenmez', async () => {
     api.admin.bulkInventory.mockResolvedValue({ success: false, error: 'yetki yok' })
     renderIm()
-    await screen.findByText('aktif-bir.akbank.com')
+    await screen.findByText('aktif-bir.example.com')
 
     fireEvent.click(checkboxes()[0])
     fireEvent.click(await screen.findByRole('button', { name: /^Sil$|^Delete$/ }))
@@ -198,7 +198,7 @@ describe('InventoryManager', () => {
   it('açık alarmı olan domain silinirken sayım okunur ve UYARI varyantıyla onay istenir', async () => {
     api.admin.getAlerts.mockResolvedValue({ success: true, total: 3 })
     renderIm()
-    await openRowMenu('aktif-bir.akbank.com')
+    await openRowMenu('aktif-bir.example.com')
     fireEvent.click(await screen.findByText(/^Sil$|^Delete$/))
 
     await waitFor(() => expect(confirmMock).toHaveBeenCalled())
@@ -211,7 +211,7 @@ describe('InventoryManager', () => {
   it('alarm sayımı patlasa da silme akışı DEVAM eder (sayaç ikincil bilgi)', async () => {
     api.admin.getAlerts.mockRejectedValue(new Error('500'))
     renderIm()
-    await openRowMenu('aktif-bir.akbank.com')
+    await openRowMenu('aktif-bir.example.com')
     fireEvent.click(await screen.findByText(/^Sil$|^Delete$/))
 
     await waitFor(() => expect(api.admin.deleteInventory).toHaveBeenCalledWith(1))

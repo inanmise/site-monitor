@@ -293,7 +293,7 @@ public class LdapProvisioningService {
 
     // ── helpers ────────────────────────────────────────────────────────────────
 
-    /** Extracts the CN value from a DN, e.g. "CN=63535,OU=..." → "63535". */
+    /** Extracts the CN value from a DN, e.g. "CN=99999,OU=..." → "99999". */
     static String cnOf(String dn) {
         if (dn == null) return null;
         int i = indexOfCi(dn, "CN=");
@@ -305,7 +305,7 @@ public class LdapProvisioningService {
     }
 
     /** True when a group CN denotes an approver ("Onaycı") group rather than a team,
-     *  e.g. "SY-Dijital Bankacilik_Onayci". Such groups are skipped for team naming. */
+     *  e.g. "Takim B_Onayci". Such groups are skipped for team naming. */
     static boolean isApproverCn(String cn) {
         if (cn == null) return false;
         String c = cn.trim().toLowerCase(java.util.Locale.ROOT);

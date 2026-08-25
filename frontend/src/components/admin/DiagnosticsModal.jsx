@@ -234,7 +234,7 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
 
   /** Çalışan JVM'in TLS istemci parmak izi: JDK sürümü + browser/default modda
    *  sunulan protokol/cipher/ALPN (+ varsa imza şeması/named-group). JDK sürümleri
-   *  arası handshake farkını (ör. akbankpos WAF) karşılaştırmak için: aynı teşhisi
+   *  arası handshake farkını (ör. examplepos WAF) karşılaştırmak için: aynı teşhisi
    *  JDK 21 ve JDK 25 instance'ında koşup bu bölümü + combo cipher'larını kıyasla. */
   function renderTlsClient(tc) {
     if (!tc) return null

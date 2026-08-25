@@ -27,7 +27,7 @@ vi.mock('../api/client', () => ({
 import { api } from '../api/client'
 
 const monitor = {
-  id: 1, name: 'Akbank', url: 'https://www.akbank.com/', mode: 'SINGLE_PAGE',
+  id: 1, name: 'Example', url: 'https://www.example.com/', mode: 'SINGLE_PAGE',
   group_name: 'X Sistemleri', team_name: 'SY-A', status: 'DEGRADED',
   broken_resources: 2, mixed_content_count: 0, total_resources: 12, active: true, checked_at: '2026-06-24T00:00:00',
 }
@@ -44,7 +44,7 @@ describe('PageMonitorPage', () => {
   it('izleme kartını (url) listeler', async () => {
     render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
-    expect(await screen.findByText('https://www.akbank.com/')).toBeInTheDocument()
+    expect(await screen.findByText('https://www.example.com/')).toBeInTheDocument()
   })
 
   it('Yeni modal açılır (form alanları görünür)', async () => {
@@ -104,7 +104,7 @@ describe('PageMonitorPage', () => {
     ] })
     const { container } = render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
-    await screen.findByText('https://www.akbank.com/')
+    await screen.findByText('https://www.example.com/')
     expect(screen.getByText(/yapılandırma hatası|configuration error/i)).toBeInTheDocument()
     // Kesinti gibi gösterilmez — kart "down" sınıfını almaz (alarm/e-posta da üretilmez).
     expect(container.querySelector('.upt-card--down')).toBeNull()
@@ -113,7 +113,7 @@ describe('PageMonitorPage', () => {
   it('karta tıkla → detay modalında Sorunlar + Grafik sekmeleri; issues yüklenir', async () => {
     render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
-    fireEvent.click(screen.getByText('https://www.akbank.com/'))
+    fireEvent.click(screen.getByText('https://www.example.com/'))
     await waitFor(() => expect(api.monitoring.getPageIssues).toHaveBeenCalled())
     expect(screen.getByRole('button', { name: /issues|sorunlar/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /chart|grafik/i })).toBeInTheDocument()
@@ -150,7 +150,7 @@ describe('PageMonitorPage', () => {
   it('Kopyala: TÜM kullanıcı ayarları birebir kopyalanır (yalnız ad "(Kopya)" olur)', async () => {
     // Her alan varsayılandan FARKLI → bir alan formFrom'dan düşerse tam-payload karşılaştırması kırılır.
     api.monitoring.getPageMonitors.mockResolvedValue({ success: true, data: [{
-      id: 1, name: 'Akbank', url: 'https://www.akbank.com/', status: 'DEGRADED', checked_at: '2026-06-24T00:00:00',
+      id: 1, name: 'Example', url: 'https://www.example.com/', status: 'DEGRADED', checked_at: '2026-06-24T00:00:00',
       group_name: 'Kurumsal', team_id: 5, team_name: 'SY-A', tags: 'prod,kritik', notify_email: false,
       mode: 'CRAWL', crawl_depth: 3, crawl_max_pages: 80, exclude_patterns: '/ads/\n/tracker/',
       slow_resource_ms: 1500, alert_third_party: true, alert_mixed_content: false, alert_timeout: false,
@@ -162,14 +162,14 @@ describe('PageMonitorPage', () => {
 
     render(<PageMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
-    await screen.findByText('https://www.akbank.com/')
+    await screen.findByText('https://www.example.com/')
 
     fireEvent.click(screen.getByRole('button', { name: /kopyala|duplicate/i }))
 
     // Kopya rozeti + ipucu görünür (yeni-kayıt modu, kaynak belli)
     expect(document.querySelector('.mon-dup-badge')).not.toBeNull()
     expect(document.querySelector('.mon-dup-hint')).not.toBeNull()
-    expect(screen.getByPlaceholderText('https://www.akbank.com/').value).toMatch(/\(Kopya\)$/)
+    expect(screen.getByPlaceholderText('https://www.example.com/').value).toMatch(/\(Kopya\)$/)
     expect(document.querySelector('.page-exclude-ta').value).toBe('/ads/\n/tracker/')
 
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
@@ -177,7 +177,7 @@ describe('PageMonitorPage', () => {
     expect(api.monitoring.updatePageMonitor).not.toHaveBeenCalled()
 
     expect(api.monitoring.createPageMonitor.mock.calls[0][0]).toEqual({
-      name: 'Akbank (Kopya)', url: 'https://www.akbank.com/',
+      name: 'Example (Kopya)', url: 'https://www.example.com/',
       groupName: 'Kurumsal', teamId: 5, tags: 'prod,kritik', notifyEmail: false,
       mode: 'CRAWL', crawlDepth: 3, crawlMaxPages: 80, excludePatterns: '/ads/\n/tracker/',
       slowResourceMs: 1500, alertThirdParty: true, alertMixedContent: false, alertTimeout: false,
@@ -190,7 +190,7 @@ describe('PageMonitorPage', () => {
   // ── Sorun satırından "Hariç tut" aksiyonu ──────────────────────────────────
   const brokenIssue = {
     id: 11, monitor_id: 1, resource_url: 'https://voting.institutionalinvestor.com/welcome',
-    resource_type: 'LINK', source_page: 'https://www.akbank.com/', issue_type: 'BROKEN',
+    resource_type: 'LINK', source_page: 'https://www.example.com/', issue_type: 'BROKEN',
     first_party: false, http_status: null, duration_ms: 100, checked_at: '2026-08-03T19:45:36',
   }
 
@@ -203,7 +203,7 @@ describe('PageMonitorPage', () => {
 
     render(<PageMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
-    fireEvent.click(screen.getByText('https://www.akbank.com/'))
+    fireEvent.click(screen.getByText('https://www.example.com/'))
     await waitFor(() => expect(api.monitoring.getPageIssues).toHaveBeenCalled())
 
     const btn = await screen.findByRole('button', { name: /hariç tut$|^exclude$/i })
@@ -230,7 +230,7 @@ describe('PageMonitorPage', () => {
     ] })
     render(<PageMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
-    fireEvent.click(screen.getByText('https://www.akbank.com/'))
+    fireEvent.click(screen.getByText('https://www.example.com/'))
     await waitFor(() => expect(api.monitoring.getPageIssues).toHaveBeenCalled())
 
     const out = await screen.findAllByText(/kapsam dışı|out of scope/i)
@@ -249,7 +249,7 @@ describe('PageMonitorPage', () => {
     ] })
     render(<PageMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
-    fireEvent.click(screen.getByText('https://www.akbank.com/'))
+    fireEvent.click(screen.getByText('https://www.example.com/'))
     await waitFor(() => expect(api.monitoring.getPageIssues).toHaveBeenCalled())
     await screen.findAllByText(/googletagmanager|voting\.institutionalinvestor/)
 
@@ -267,7 +267,7 @@ describe('PageMonitorPage', () => {
 
     const { unmount } = render(<PageMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
-    fireEvent.click(screen.getByText('https://www.akbank.com/'))
+    fireEvent.click(screen.getByText('https://www.example.com/'))
     const already = await screen.findByRole('button', { name: /zaten hariç|already matches/i })
     expect(already).toBeDisabled()
     unmount()
@@ -286,7 +286,7 @@ describe('PageMonitorPage', () => {
     api.monitoring.getConfirmations.mockResolvedValue({ success: true, data: [] })
     render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
-    fireEvent.click(screen.getByText('https://www.akbank.com/'))
+    fireEvent.click(screen.getByText('https://www.example.com/'))
     await waitFor(() => expect(api.monitoring.getPageIssues).toHaveBeenCalled())
     await screen.findByText(/voting\.institutionalinvestor\.com/)
     expect(screen.queryByRole('button', { name: /hariç tut$|^exclude$|zaten hariç|already matches/i })).toBeNull()
