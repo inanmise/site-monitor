@@ -142,11 +142,26 @@ public class MonitoringController {
                 : current;
         if (requested == null) return null;
         var g = notificationGroupRepo.findById(requested).orElse(null);
-        boolean valid = g != null && teamId != null && teamId.equals(g.getTeamId())
-                && Boolean.TRUE.equals(g.getActive());
-        if (valid) return requested;
-        if (supplied) throw new IllegalArgumentException("Secilen bildirim grubu bu takima ait degil");
-        log.info("Bildirim grubu {} artik takim {} ile uyumlu degil - izleme takim varsayilanina dusuruldu",
+        boolean ownedByTeam = g != null && teamId != null && teamId.equals(g.getTeamId());
+
+        if (ownedByTeam && Boolean.TRUE.equals(g.getActive())) return requested;
+
+        // BASKA TAKIMIN grubu: gercek bir hata -- acikca reddet. Kabul edilseydi bir takim, bir
+        // monitoru digerinin nobetci listesine yonlendirebilirdi.
+        //
+        // Grup HIC YOKSA (g == null) reddetmiyoruz: gruplar artik KALICI siliniyor, dolayisiyla
+        // "form acikken grup silindi" normal bir yaris hali. Kullaniciya 400 vermek, silinen
+        // grubu tasiyan monitorun butun duzenlemelerini kilitlerdi.
+        if (supplied && g != null && !ownedByTeam) {
+            throw new IllegalArgumentException("Secilen bildirim grubu bu takima ait degil");
+        }
+
+        // KENDI takiminin SILINMIS grubu: kullanici hatasi degil, normal yasam dongusu. Grup
+        // silindiginde onu kullanan monitorler kaliyor ve formda "(silinmis)" rozetiyle gorunuyor.
+        // Burada 400 firlatmak, grubu silen kisinin o monitorlerin BUTUN duzenlemelerini
+        // kilitlemesi olurdu (interval degistirmek bile imkansizlasirdi). Zarifce zincirin
+        // kalanina duseriz: takim varsayilani -> Team.email.
+        log.info("Bildirim grubu {} artik gecerli degil (takim {}) - izleme takim varsayilanina dusuruldu",
                 requested, teamId);
         return null;
     }
@@ -1336,6 +1351,7 @@ public class MonitoringController {
         item.put("host",            m.getHost());
         // Manuel eklenen kayıt takımı teamId'den; otomatik üretilen (teamId=null) kayıt domain→takım haritasından.
         item.put("team_id",         m.getTeamId());
+        item.put("notification_group_id",         m.getNotificationGroupId());
         item.put("team_name",       m.getTeamId() != null ? teamById.get(m.getTeamId()) : teamMap.get(m.getHost()));
         item.put("group_name",      m.getGroupName());
         item.put("port",            m.getPort());
@@ -1687,6 +1703,7 @@ public class MonitoringController {
         item.put("domain",          m.getDomain());
         item.put("standalone",      standalone);
         item.put("team_id",         m.getTeamId());
+        item.put("notification_group_id",         m.getNotificationGroupId());
         item.put("expected_value",  m.getExpectedValue());
         item.put("propagation_check", Boolean.TRUE.equals(m.getPropagationCheck()));
         item.put("dns_change_alert_enabled", !Boolean.FALSE.equals(m.getDnsChangeAlertEnabled()));   // etkin değer (null=açık)
@@ -2169,6 +2186,7 @@ public class MonitoringController {
         item.put("match_count",      m.getMatchCount());
         item.put("group_name",       m.getGroupName());
         item.put("team_id",          m.getTeamId());
+        item.put("notification_group_id",          m.getNotificationGroupId());
         item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
         item.put("active",           m.getActive());
         item.put("interval_seconds", m.getIntervalSeconds());
@@ -2458,6 +2476,7 @@ public class MonitoringController {
         item.put("verify_ssl",       m.getVerifySsl());
         item.put("group_name",       m.getGroupName());
         item.put("team_id",          m.getTeamId());
+        item.put("notification_group_id",          m.getNotificationGroupId());
         item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
         item.put("active",           m.getActive());
         item.put("interval_seconds", m.getIntervalSeconds());
@@ -3131,6 +3150,7 @@ public class MonitoringController {
         item.put("url",                  m.getUrl());
         item.put("group_name",           m.getGroupName());
         item.put("team_id",              m.getTeamId());
+        item.put("notification_group_id",              m.getNotificationGroupId());
         item.put("team_name",            m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
         item.put("active",               m.getActive());
         item.put("interval_seconds",     m.getIntervalSeconds());
@@ -3228,6 +3248,7 @@ public class MonitoringController {
         item.put("resource_concurrency", m.getResourceConcurrency());
         item.put("group_name",           m.getGroupName());
         item.put("team_id",              m.getTeamId());
+        item.put("notification_group_id",              m.getNotificationGroupId());
         item.put("team_name",            m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
         item.put("active",               m.getActive());
         item.put("interval_seconds",     m.getIntervalSeconds());
@@ -4101,6 +4122,7 @@ public class MonitoringController {
         item.put("timeout_seconds", m.getTimeoutSeconds());
         item.put("group_name", m.getGroupName());
         item.put("team_id", m.getTeamId());
+        item.put("notification_group_id", m.getNotificationGroupId());
         item.put("team_name", m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
         item.put("active", m.getActive());
         item.put("interval_seconds", m.getIntervalSeconds());
@@ -4374,6 +4396,7 @@ public class MonitoringController {
         item.put("domain",           m.getDomain());
         item.put("group_name",       m.getGroupName());
         item.put("team_id",          m.getTeamId());
+        item.put("notification_group_id",          m.getNotificationGroupId());
         item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
         item.put("active",           m.getActive());
         item.put("interval_seconds", m.getIntervalSeconds());
@@ -4609,6 +4632,7 @@ public class MonitoringController {
         item.put("ip_version",       m.getIpVersion());
         item.put("group_name",       m.getGroupName());
         item.put("team_id",          m.getTeamId());
+        item.put("notification_group_id",          m.getNotificationGroupId());
         item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
         item.put("active",           m.getActive());
         item.put("interval_seconds", m.getIntervalSeconds());

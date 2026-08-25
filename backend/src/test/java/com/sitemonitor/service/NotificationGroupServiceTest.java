@@ -365,16 +365,18 @@ class NotificationGroupServiceTest {
         }
 
         @Test
-        @DisplayName("Yumuşak silme varsayılanlığı da düşürür — pasif grup varsayılan KALAMAZ")
-        void softDelete_clearsDefault() {
-            NotificationGroup g = group(30L, TEAM_A, "Nöbet", "n@x.com", true, true);
-            when(repo.save(any())).thenAnswer(i -> i.getArgument(0));
+        @DisplayName("Silme KALICIDIR — satır gider, yumuşak silme kalıntısı bırakmaz")
+        void deletePermanently_removesRow() {
+            NotificationGroup g = group(30L, TEAM_A, "Nöbet", "n@example.com", true, true);
 
-            var saved = service.softDelete(g, "ahmet", "Ahmet Yılmaz");
+            service.deletePermanently(g);
 
-            assertThat(saved.getActive()).isFalse();
-            assertThat(saved.getIsDefault()).isFalse();
-            assertThat(saved.getUpdatedBy()).isEqualTo("ahmet");
+            // Yumuşak silme satırı bırakıyordu ve o satırın ADI sonsuza dek rezerve kalıyordu:
+            // kullanıcı hiçbir yerde göremediği bir kayda çarpıp "bu adda grup zaten var"
+            // uyarısı alıyordu. Silme yalnız grup KULLANILMIYORKEN mümkün olduğu için kalıcı
+            // silmek güvenli.
+            verify(repo).delete(g);
+            verify(repo, never()).save(any());
         }
 
         @Test

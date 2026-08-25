@@ -399,6 +399,12 @@ export const api = {
     update: (id, body) => request(`/notification-groups/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
     remove: (id) => request(`/notification-groups/${id}`, { method: 'DELETE' }),
     makeDefault: (id) => request(`/notification-groups/${id}/make-default`, { method: 'POST' }),
+    /** Grup nerede kullaniliyor — silme onayindan ONCE gosterilen ozet. */
+    usage: (id) => request(`/notification-groups/${id}/usage`),
+    /** Tum referanslari baska gruba tasi; targetGroupId null => takim varsayilani. */
+    reassign: (id, targetGroupId) => request(`/notification-groups/${id}/reassign`, {
+      method: 'POST', body: JSON.stringify({ target_group_id: targetGroupId ?? null }),
+    }),
   },
 
   admin: {
