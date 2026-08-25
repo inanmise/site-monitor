@@ -18,6 +18,7 @@ vi.mock('../api/client', () => ({
       usage: vi.fn(async () => ({ success: true, data: { total: 0, by_type: {}, items: [] } })),
       reassign: vi.fn(async () => ({ success: true, data: { moved: 2 } })),
       makeDefault: vi.fn(async () => ({ success: true, data: {} })),
+      history: vi.fn(async () => ({ success: true, data: { items: [], truncated: false, hidden: 0 } })),
     },
   }),
 }))
@@ -215,13 +216,53 @@ describe('NotificationGroups', () => {
     await waitFor(() => expect(api.notificationGroups.reassign).toHaveBeenCalledWith(10, null))
   })
 
-  it('Yazma yetkisi olmayan satırda işlem menüsü ÇİZİLMEZ (403 alıp "bozuk" sanmasın)', async () => {
+  /**
+   * Kural GÜNCELLENDİ: menü artık çizilir ama içinde YALNIZ "Geçmiş" olur.
+   *
+   * Eski kural "yazamayan kullanıcıya menü hiç gösterme" idi ve gerekçesi 403 alıp ekranı bozuk
+   * sanmasını önlemekti. Geçmiş OKUMA'dır: grubu görebilen kullanıcı geçmişini de görebilir, 403
+   * almaz — dolayısıyla eski kural onu da gizleyerek gerçek bir yeteneği saklıyordu. Asıl korunması
+   * gereken değişmez "yazma eylemi gösterilmesin"dir; test artık doğrudan onu sabitliyor.
+   */
+  /**
+   * Geçmiş KAPALI başlar: ekranı grupları yönetmek için açan kullanıcıya her seferinde bir
+   * denetim sorgusu bindirmek bedava değil. Açıldığında ise okunur.
+   */
+  it('Geçmiş kapalı başlar; açılınca okunur', async () => {
+    state.groups = [group()]
+    render(<NotificationGroups teams={TEAMS} systemRole="ADMIN" />)
+    await screen.findByText('Ödeme Nöbetçi')
+    expect(api.notificationGroups.history).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: /Show history/i }))
+
+    await waitFor(() => expect(api.notificationGroups.history).toHaveBeenCalledWith(null))
+  })
+
+  it('Satırdaki "Geçmiş" o grubu SÜZER', async () => {
+    state.groups = [group()]
+    render(<NotificationGroups teams={TEAMS} systemRole="ADMIN" />)
+    await screen.findByText('Ödeme Nöbetçi')
+
+    fireEvent.click(screen.getByRole('button', { name: /Actions/i }))
+    fireEvent.click(screen.getByText('History'))
+
+    await waitFor(() => expect(api.notificationGroups.history).toHaveBeenCalledWith(10))
+    // Süzgecin AÇIK olduğu kullanıcıya söylenir; aksi halde eksik listeyi tam sanardı.
+    expect(await screen.findByText(/Showing the history of/i)).toBeTruthy()
+  })
+
+  it('Yazma yetkisi olmayan satırda YALNIZ geçmiş sunulur, yazma eylemleri ÇİZİLMEZ', async () => {
     state.groups = [group({ can_write: false })]
     state.writable = []
     render(<NotificationGroups teams={TEAMS} systemRole="USER" />)
     await screen.findByText('Ödeme Nöbetçi')
 
-    expect(screen.queryByRole('button', { name: /Actions/i })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Actions/i }))
+    expect(screen.getByText('History')).toBeTruthy()
+    for (const forbidden of [/^Edit$/, /^Delete$/, /Make team default/i]) {
+      expect(screen.queryByText(forbidden)).toBeNull()
+    }
     // Yazamayan kullanıcıya "Grup Ekle" de gösterilmez.
     expect(screen.queryByRole('button', { name: /Add group/i })).toBeNull()
   })

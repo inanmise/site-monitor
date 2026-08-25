@@ -51,6 +51,7 @@ class NotificationGroupControllerTest {
     @MockitoBean NotificationGroupRepository groupRepo;
     @MockitoBean NotificationGroupService groupService;
     @MockitoBean com.sitemonitor.service.NotificationGroupUsageService usageService;
+    @MockitoBean com.sitemonitor.service.NotificationGroupHistoryService historyService;
     @MockitoBean TeamRepository teamRepo;
     @MockitoBean PermissionService permissionService;
     @MockitoBean AuditService auditService;
@@ -372,6 +373,113 @@ class NotificationGroupControllerTest {
                 .andExpect(status().isNotFound());
 
         verify(usageService, never()).reassign(anyLong(), any());
+    }
+
+    // ── Değişiklik geçmişi ───────────────────────────────────────────────────
+
+    private static com.sitemonitor.model.AuditLog auditRow(long id, String type, String groupId) {
+        com.sitemonitor.model.AuditLog a = new com.sitemonitor.model.AuditLog();
+        a.setId(id);
+        a.setEventType(type);
+        a.setEventTime("2026-08-25T10:00:00");
+        a.setActor("ayse");
+        a.setResourceId(groupId);
+        a.setDetail("Nöbet");
+        a.setChanges("{\"name\":{\"from\":\"Eski\",\"to\":\"Nöbet\"}}");
+        return a;
+    }
+
+    /**
+     * Geçmiş, ekranı açan yetkiyle ({@code notification.groups}) gelir — denetim uçlarının
+     * istediği {@code audit_log.read} ARANMAZ. Aksi halde kendi takımının grubunu yönetebilen
+     * kullanıcı, o grubu kimin değiştirdiğini göremezdi.
+     */
+    @Test
+    @DisplayName("Geçmiş: kendi görüş kapsamıyla sınırlı olarak döner")
+    void history_returnsScopedRows() throws Exception {
+        when(historyService.history(any(), any(), anyInt())).thenReturn(
+                new com.sitemonitor.service.NotificationGroupHistoryService.History(
+                        List.of(new com.sitemonitor.service.NotificationGroupHistoryService.Entry(
+                                auditRow(1L, "NOTIFICATION_GROUP_UPDATE", "10"), TEAM_A)),
+                        false, 0));
+
+        mvc.perform(get("/api/notification-groups/history").session(userOfA))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].action").value("UPDATE"))
+                .andExpect(jsonPath("$.data.items[0].actor").value("ayse"))
+                .andExpect(jsonPath("$.data.items[0].group_id").value("10"))
+                .andExpect(jsonPath("$.data.items[0].team_id").value(1))
+                .andExpect(jsonPath("$.data.hidden").value(0));
+
+        // Kapsam servise AKTARILMALI: burada boş/null geçmek, tüm takımların geçmişini sızdırırdı.
+        verify(historyService).history(argThat(ids -> ids != null && ids.contains(TEAM_A)), isNull(), anyInt());
+    }
+
+    @Test
+    @DisplayName("Geçmiş: kesilme ve gizlenen sayısı yanıtta AÇIKÇA taşınır")
+    void history_reportsTruncationHonestly() throws Exception {
+        when(historyService.history(any(), any(), anyInt())).thenReturn(
+                new com.sitemonitor.service.NotificationGroupHistoryService.History(List.of(), true, 3));
+
+        mvc.perform(get("/api/notification-groups/history").session(userOfA))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.truncated").value(true))
+                .andExpect(jsonPath("$.data.hidden").value(3));
+    }
+
+    @Test
+    @DisplayName("Geçmiş: groupId süzgeci servise geçer")
+    void history_passesGroupFilter() throws Exception {
+        when(historyService.history(any(), any(), anyInt())).thenReturn(
+                new com.sitemonitor.service.NotificationGroupHistoryService.History(List.of(), false, 0));
+
+        mvc.perform(get("/api/notification-groups/history").param("groupId", "10").session(userOfA))
+                .andExpect(status().isOk());
+
+        verify(historyService).history(any(), eq(GROUP_A), anyInt());
+    }
+
+    /**
+     * OLUŞTURMA kaydı anlık görüntü taşımalı: "neyi ekledi" sorusunun cevabı başka hiçbir yerde
+     * kalmıyor — ayrıca grup sonradan silinince kimlik→takım eşlemesi bu kayıttan kuruluyor.
+     */
+    @Test
+    @DisplayName("Oluşturma denetimi İÇERİĞİ kaydeder (adresler, varsayılan, takım)")
+    void create_recordsSnapshot() throws Exception {
+        mvc.perform(post("/api/notification-groups")
+                        .session(userOfA)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"team_id\":1,\"name\":\"Nöbet\",\"emails\":[\"n@example.com\"]}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<String> changes = ArgumentCaptor.forClass(String.class);
+        verify(auditService).recordAction(eq("NOTIFICATION_GROUP_CREATE"),
+                any(jakarta.servlet.http.HttpSession.class), eq("NOTIFICATION_GROUP"),
+                ArgumentMatchers.<String>any(), ArgumentMatchers.<String>any(), changes.capture());
+
+        assertThat(changes.getValue()).isNotNull();
+        assertThat(new com.fasterxml.jackson.databind.ObjectMapper()
+                .readTree(changes.getValue()).get("teamId").asLong()).isEqualTo(TEAM_A);
+    }
+
+    /** Silme kaydı AYRIŞTIRILABİLİR olmalı: JSON değilse geçmiş ekranı onu okuyamaz. */
+    @Test
+    @DisplayName("Silme denetimi GEÇERLİ JSON anlık görüntü yazar")
+    void delete_recordsParsableSnapshot() throws Exception {
+        when(usageService.usage(GROUP_A)).thenReturn(
+                new com.sitemonitor.service.NotificationGroupUsageService.Usage(0, java.util.Map.of(), List.of()));
+
+        mvc.perform(delete("/api/notification-groups/{id}", GROUP_A).session(userOfA))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<String> changes = ArgumentCaptor.forClass(String.class);
+        verify(auditService).recordAction(eq("NOTIFICATION_GROUP_DELETE"),
+                any(jakarta.servlet.http.HttpSession.class), eq("NOTIFICATION_GROUP"),
+                ArgumentMatchers.<String>any(), ArgumentMatchers.<String>any(), changes.capture());
+
+        var node = new com.fasterxml.jackson.databind.ObjectMapper().readTree(changes.getValue());
+        assertThat(node.get("teamId").asLong()).isEqualTo(TEAM_A);
+        assertThat(node.get("name").asText()).isNotBlank();
     }
 
     // ── Gövde ayrıştırma ve kapsam çözümü ────────────────────────────────────

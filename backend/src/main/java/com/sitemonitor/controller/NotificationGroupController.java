@@ -6,6 +6,7 @@ import com.sitemonitor.repository.NotificationGroupRepository;
 import com.sitemonitor.repository.TeamRepository;
 import com.sitemonitor.service.AuditDiff;
 import com.sitemonitor.service.AuditService;
+import com.sitemonitor.service.NotificationGroupHistoryService;
 import com.sitemonitor.service.NotificationGroupService;
 import com.sitemonitor.service.NotificationGroupUsageService;
 import com.sitemonitor.service.PermissionService;
@@ -58,6 +59,7 @@ public class NotificationGroupController {
     private final TeamRepository teamRepo;
     private final PermissionService permissionService;
     private final AuditService auditService;
+    private final NotificationGroupHistoryService historyService;
 
     // ── Yanıt yardımcıları ───────────────────────────────────────────────────
 
@@ -185,8 +187,13 @@ public class NotificationGroupController {
         var in = groupService.validate(str(body.get("name")), emails(body.get("emails")), bool(body.get("is_default")));
         NotificationGroup saved = groupService.create(teamId, in, actor(session), actorName(session));
 
+        // Anlık görüntü YAZILIR: "neyi ekledi" sorusunun cevabı yalnız burada kalır. Daha önce
+        // null geçiliyordu; geçmişte oluşturma satırı görünüyor ama İÇERİĞİ (adresler, varsayılan
+        // mı) hiçbir yerde okunamıyordu — üstelik grup sonradan silinince kimlik→takım eşlemesi
+        // de bu kayıttan kuruluyor.
         auditService.recordAction("NOTIFICATION_GROUP_CREATE", session, "NOTIFICATION_GROUP",
-                String.valueOf(saved.getId()), saved.getName(), null);
+                String.valueOf(saved.getId()), saved.getName(),
+                AuditDiff.snapshotJson(AuditDiff.snapshot(saved, FIELDS)));
         return ok(groupService.toDto(saved));
     }
 
@@ -333,12 +340,66 @@ public class NotificationGroupController {
 
         // Denetim kaydı silmeden ÖNCE: satır gittikten sonra kimin neyi sildiği okunamazdı.
         // Diff yerine son durumun anlık görüntüsü yazılır — "sonra"sı yok, kayıt tamamen gitti.
-        String snapshot = String.valueOf(AuditDiff.snapshot(g, FIELDS));
+        // snapshotJson: düz `String.valueOf(Map)` JSON DEĞİLDİR ({name=X, ...}); geçmiş ekranı
+        // ve takım çözümü bu alanı ayrıştırmak zorunda, ayrıştırılamayan kayıt kaybolmuş sayılır.
+        String snapshot = AuditDiff.snapshotJson(AuditDiff.snapshot(g, FIELDS));
         String name = g.getName();
         groupService.deletePermanently(g);
         auditService.recordAction("NOTIFICATION_GROUP_DELETE", session, "NOTIFICATION_GROUP",
                 String.valueOf(id), name, snapshot);
         return ok(Map.of("message", "Grup silindi", "id", id));
+    }
+
+    // ── Değişiklik geçmişi ───────────────────────────────────────────────────
+
+    /**
+     * "Kim, ne zaman, neyi değiştirdi" — silinmiş gruplar DAHİL.
+     *
+     * <p>Ekranı açan yetki ({@code notification.groups}) yeterlidir; denetim uçlarının istediği
+     * {@code audit_log.read} aranmaz — ama kapsam takıma sıkı sıkıya bağlıdır: kullanıcı yalnız
+     * GÖREBİLDİĞİ takımların grup geçmişini alır. Silinmiş grup için takım, denetim kaydındaki
+     * anlık görüntüden çözülür ({@link NotificationGroupHistoryService}).
+     */
+    @GetMapping("/history")
+    public ResponseEntity<Map<String, Object>> history(@RequestParam(required = false) Long groupId,
+                                                       @RequestParam(defaultValue = "50") int limit,
+                                                       HttpSession session) {
+        permissionService.require(session, PERM, "view");
+        // null = sınırsız; global görücü dışında herkes kendi görüş kapsamıyla sınırlı.
+        List<Long> scope = SessionScope.isGlobalViewer(session) ? null : readableTeamIds(session);
+
+        var h = historyService.history(scope, groupId, limit);
+        Map<Long, String> teamNames = new LinkedHashMap<>();
+        teamRepo.findAll().forEach(t -> teamNames.put(t.getId(), t.getName()));
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("items", h.items().stream().map(e -> historyItem(e, teamNames)).toList());
+        out.put("truncated", h.truncated());
+        // Takımı çözülemeyen satır sayısı: eksik bir geçmişi tam sanmak, geçmişin kendisinden
+        // daha kötüdür.
+        out.put("hidden", h.hidden());
+        return ok(out);
+    }
+
+    private static Map<String, Object> historyItem(NotificationGroupHistoryService.Entry e,
+                                                   Map<Long, String> teamNames) {
+        var r = e.row();
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", r.getId());
+        m.put("at", r.getEventTime());
+        m.put("actor", r.getActor());
+        // Ekran etiketi ile olay türü ayrı kalsın: arayüz kısa eylemi çevirir, ham tür kanıttır.
+        m.put("action", r.getEventType() != null
+                ? r.getEventType().replace("NOTIFICATION_GROUP_", "") : null);
+        m.put("event_type", r.getEventType());
+        m.put("group_id", r.getResourceId());
+        m.put("group_name", r.getDetail());
+        m.put("team_id", e.teamId());
+        m.put("team_name", teamNames.get(e.teamId()));
+        m.put("changes", r.getChanges());
+        m.put("ip", r.getIpAddress());
+        m.put("outcome", r.getOutcome());
+        return m;
     }
 
     // ── Gövde ayrıştırma ─────────────────────────────────────────────────────

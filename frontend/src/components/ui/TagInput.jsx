@@ -18,6 +18,14 @@ const tagHue = (s) => {
  * DIŞINDA (Bildirim Grupları modalı) kullanılınca tarayıcı varsayılanı olarak çizildi. `.form-grid`
  * içindeki mevcut kullanımlar değişmez: o kural daha yüksek özgüllükte ve `.input`'u ezmeye
  * devam eder.
+ *
+ * Bekleyen metin bir ÖNİZLEME chip'i olarak çizilir (`tag-chip--pending`). Bu kozmetik değil,
+ * bir tıklama hatasının çözümü: `onBlur` ile işleme alma chip satırını O ANDA büyütüyordu.
+ * Kullanıcı değeri yazıp ALTTAKİ bir denetime (örn. "varsayılan yap" kutusu) bastığında sıra
+ * şuydu — mousedown → blur → chip eklenir → altındaki her şey bir satır AŞAĞI kayar → mouseup
+ * artık başka bir öğenin üstündedir → tarayıcı `click`'i ortak ataya verir ve kutu HİÇ
+ * işaretlenmez; kullanıcı ikinci kez basmak zorunda kalırdı. Önizleme yeri baştan ayırdığı için
+ * işleme alma anında yükseklik DEĞİŞMEZ ve tıklama hedefinde kalır.
  */
 export default function TagInput({ label, value, onChange, disabled, placeholder }) {
   const [text, setText] = useState('')
@@ -41,6 +49,11 @@ export default function TagInput({ label, value, onChange, disabled, placeholder
     setText('')
   }
   const remove = (tag) => onChange(tags.filter(x => x !== tag).join(', '))
+  const pending = text.trim()
+  // Yinelenen girdi `add` tarafından zaten eklenmiyor; önizlemesi de gösterilmez. Böylece
+  // "önizlemede görünen ne ise işleme alınan odur" eşitliği — dolayısıyla yükseklik
+  // kararlılığı — her iki dalda da korunur.
+  const pendingIsNew = !!pending && !tags.some(x => x.toLowerCase() === pending.toLowerCase())
   return (
     <label className="full-width">
       {label && <span>{label}</span>}
@@ -49,7 +62,7 @@ export default function TagInput({ label, value, onChange, disabled, placeholder
           onChange={e => setText(e.target.value)} onBlur={add}
           onKeyDown={e => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add() } }} />
       )}
-      {tags.length > 0 && (
+      {(tags.length > 0 || pendingIsNew) && (
         <div className="tag-chips">
           {tags.map(tag => {
             const h = hues[tag] ?? tagHue(tag)
@@ -62,6 +75,19 @@ export default function TagInput({ label, value, onChange, disabled, placeholder
               </span>
             )
           })}
+          {pendingIsNew && (
+            <span className="tag-chip tag-chip--pending">
+              {pending}
+              {/* Gerçek chip ile AYNI öğe türü: farklı bir etiket kullanmak (span) düğme
+                  yazı tipi kalıtımı yüzünden birkaç piksellik genişlik farkı üretir ve
+                  önizlemenin ayırdığı yer tam oturmaz. */}
+              <button type="button" className="tag-chip-x" tabIndex={-1} aria-label="discard"
+                // mousedown'da blur ENGELLENİR: aksi halde metin önce chip'e dönüşür, bu
+                // düğme kaybolur ve tıklama boşa düşerdi.
+                onMouseDown={e => e.preventDefault()}
+                onClick={() => setText('')}>×</button>
+            </span>
+          )}
         </div>
       )}
     </label>

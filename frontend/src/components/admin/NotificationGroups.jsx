@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Users, Star, Mail, Plus, Trash2, Pencil } from 'lucide-react'
+import { Users, Star, Mail, Plus, Trash2, Pencil, History } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -11,6 +11,7 @@ import Field from '../ui/Field.jsx'
 import TagInput from '../ui/TagInput.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
+import NotificationGroupHistory from './NotificationGroupHistory.jsx'
 
 /** Grup başına adres tavanı — backend {@code NotificationGroupService.MAX_EMAILS_PER_GROUP} ile AYNI. */
 const MAX_EMAILS = 15
@@ -51,6 +52,13 @@ export default function NotificationGroups({ teams = [], systemRole }) {
   const [usageModal, setUsageModal] = useState(null)
   const [moveTarget, setMoveTarget] = useState('')
   const [moving, setMoving] = useState(false)
+  // Degisiklik gecmisi — KAPALI baslar: her acilista denetim sorgusu atmak, ekrani asil isi
+  // (gruplari yonetmek) icin acan kullaniciya bedava yuk bindirirdi.
+  const [histOpen, setHistOpen] = useState(false)
+  const [histGroup, setHistGroup] = useState(null)   // { id, name } | null → tek gruba suz
+  const [hist, setHist] = useState(null)
+  const [histLoading, setHistLoading] = useState(false)
+  const [histError, setHistError] = useState(null)
 
   const teamMap = useMemo(() => Object.fromEntries(teams.map(x => [String(x.id), x.name])), [teams])
 
@@ -68,6 +76,32 @@ export default function NotificationGroups({ teams = [], systemRole }) {
     } finally {
       setLoading(false)
     }
+  }
+
+  /**
+   * Gecmis, gruplar HER degistiginde yeniden okunur: kullanici bir grubu duzenleyip hemen
+   * altta "kim ne yapti" listesine bakiyorsa, kendi az onceki degisikligini gormemek listeyi
+   * bayat sanmasina yol acardi.
+   */
+  useEffect(() => {
+    if (!histOpen) return
+    let cancelled = false
+    setHistLoading(true)
+    setHistError(null)
+    api.notificationGroups.history(histGroup?.id ?? null)
+      .then(res => {
+        if (cancelled) return
+        if (res?.success) setHist(res.data)
+        else setHistError(res?.error ?? t('ng.histError'))
+      })
+      .catch(e => { if (!cancelled) setHistError(e?.message ?? String(e)) })
+      .finally(() => { if (!cancelled) setHistLoading(false) })
+    return () => { cancelled = true }
+  }, [histOpen, histGroup, groups])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  function openHistory(g) {
+    setHistGroup(g ? { id: g.id, name: g.name } : null)
+    setHistOpen(true)
   }
 
   const visible = useMemo(
@@ -286,15 +320,19 @@ export default function NotificationGroups({ teams = [], systemRole }) {
                     <td>
                       <KebabMenu
                         label={t('ng.actions')}
-                        items={g.can_write ? [
-                          { label: t('ng.edit'), icon: <Pencil size={14} />, onClick: () => openEdit(g) },
-                          ...(g.active && !g.is_default
-                            ? [{ label: t('ng.makeDefault'), icon: <Star size={14} />, onClick: () => makeDefault(g) }]
-                            : []),
-                          ...(g.active
-                            ? [{ label: t('ng.delete'), icon: <Trash2 size={14} />, danger: true, onClick: () => remove(g) }]
-                            : []),
-                        ] : []}
+                        items={[
+                          // Gecmis OKUMA'dir: ekrani gorebilen, bu grubun gecmisini de gorebilir.
+                          { label: t('ng.histBtn'), icon: <History size={14} />, onClick: () => openHistory(g) },
+                          ...(g.can_write ? [
+                            { label: t('ng.edit'), icon: <Pencil size={14} />, onClick: () => openEdit(g) },
+                            ...(g.active && !g.is_default
+                              ? [{ label: t('ng.makeDefault'), icon: <Star size={14} />, onClick: () => makeDefault(g) }]
+                              : []),
+                            ...(g.active
+                              ? [{ label: t('ng.delete'), icon: <Trash2 size={14} />, danger: true, onClick: () => remove(g) }]
+                              : []),
+                          ] : []),
+                        ]}
                       />
                     </td>
                   </tr>
@@ -303,6 +341,31 @@ export default function NotificationGroups({ teams = [], systemRole }) {
             </tbody>
           </table>
         </div>
+      )}
+
+      <div className="admin-section-header ng-hist-header">
+        <div>
+          <h3>{t('ng.histTitle')}</h3>
+          <p className="section-desc">{t('ng.histDesc')}</p>
+        </div>
+        <button
+          className="btn btn-secondary"
+          onClick={() => { if (histOpen) { setHistOpen(false); setHistGroup(null) } else setHistOpen(true) }}
+        >
+          <History size={15} aria-hidden="true" /> {histOpen ? t('ng.histHide') : t('ng.histShow')}
+        </button>
+      </div>
+
+      {histOpen && (
+        <NotificationGroupHistory
+          rows={hist?.items ?? []}
+          truncated={!!hist?.truncated}
+          hidden={hist?.hidden ?? 0}
+          loading={histLoading}
+          error={histError}
+          filterName={histGroup?.name}
+          onClearFilter={() => setHistGroup(null)}
+        />
       )}
 
       <ModalShell

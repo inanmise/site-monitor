@@ -2569,6 +2569,10 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .tag-chip-x { background: none; border: none; cursor: pointer; font-size: 1.15em; line-height: 1;
   padding: 0; font-weight: 700; }
 .tag-chip-x:hover { opacity: .65; }
+/* Bekleyen (henüz işlenmemiş) girdi. Yeri BAŞTAN ayırır: chip'e dönüşürken satır yüksekliği
+   değişmezse, tam o anda alttaki bir denetime yapılan tıklama hedefinden kaymaz. */
+.tag-chip--pending { background: var(--bg-surface); color: var(--text-muted);
+  border-color: var(--border); border-style: dashed; }
 
 /* ── HTTP / Website monitör formu ─────────────────────────────────────────── */
 .modal-icon-hdr--http .modal-icon-hdr-badge { background: linear-gradient(135deg, #2563eb, #0ea5e9); color: #fff; }
@@ -6156,6 +6160,25 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .ev-create  { background: #dbeafe; color: #1e40af; }
 .ev-edit    { background: #fef3c7; color: #92400e; }
 .ev-other   { background: #f1f5f9; color: #475569; }
+
+/* Bildirim grubu DEĞİŞİKLİK GEÇMİŞİ listesi.
+   Kendi ad ailesi var (ret-change* nasıl saklama ekranına aitse) — .audit-timeline-* adları
+   denetim ekranındaki DİKEY DRAWER'a ait, oradan devralmak iki ayrı yerleşimi tek ada bağlardı.
+   Satır içi parçalar (rozet, fark tablosu, mono hücre) audit-* dağarcığından yeniden kullanılır. */
+.ng-hist { display: flex; flex-direction: column; gap: 10px; }
+.ng-hist-filter { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ng-hist-list { list-style: none; margin: 0; padding: 0; }
+.ng-hist-row { padding: 9px 2px; border-bottom: 1px solid var(--border); }
+.ng-hist-row:last-child { border-bottom: none; }
+.ng-hist-main { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; }
+.ng-hist-who { font-weight: 700; color: var(--text); }
+.ng-hist-what { color: var(--text); }
+.ng-hist-ip { margin-left: auto; font-size: 11px; color: var(--text-light); }
+.ng-hist-detail { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0 0 4px; font-size: 12px; }
+.ng-hist-fields { list-style: none; margin: 4px 0 0 4px; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.ng-hist-fields li { display: flex; gap: 8px; flex-wrap: wrap; }
+.ng-hist-diff { margin: 6px 0 0 4px; }
+.ng-hist-header { margin-top: 22px; }
 
 /* Outcome badges */
 .audit-outcome-badge {
