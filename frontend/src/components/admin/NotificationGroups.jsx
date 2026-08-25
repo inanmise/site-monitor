@@ -77,6 +77,27 @@ export default function NotificationGroups({ teams = [], systemRole }) {
     return writableTeamIds.filter(id => !withGroup.has(id))
   }, [groups, writableTeamIds])
 
+  /**
+   * Alarmları ALICISIZ kalabilecek takımlar: aktif varsayılan grubu da, takım e-posta adresi de
+   * olmayanlar. Bu bir GRUP değil TAKIM özelliğidir — eskiden satır başına "Sorun" sütununda
+   * gösteriliyordu ve iki yönden yanlıştı: aynı takımın her satırında tekrarlıyor, üstelik uyarıyı
+   * sorunu YAŞAMAYAN nesnenin (adresleri olan, çalışan grubun) üstüne yazıyordu. Asıl mağdur
+   * hiç grup seçmemiş izlemelerdir ve onlar bu tabloda görünmez.
+   *
+   * Takım süzgeci uygulanmışsa uyarı da o takımla sınırlanır — ekranda görünmeyen bir takım için
+   * uyarı vermek gürültüdür.
+   */
+  const teamsAtRisk = useMemo(() => {
+    const scope = new Set([...groups.map(g => String(g.team_id)), ...writableTeamIds])
+    const hasDefault = new Set(
+      groups.filter(g => g.active && g.is_default).map(g => String(g.team_id)))
+    return [...scope]
+      .filter(id => !fTeam || String(fTeam) === id)
+      .filter(id => !hasDefault.has(id))
+      .filter(id => !String(teamEmails[id] ?? '').trim())
+      .map(id => teamMap[id] ?? `#${id}`)
+  }, [groups, writableTeamIds, teamEmails, teamMap, fTeam])
+
   const emailList = (form.emails || '').split(',').map(s => s.trim()).filter(Boolean)
   const overLimit = emailList.length > MAX_EMAILS
 
@@ -181,6 +202,12 @@ export default function NotificationGroups({ teams = [], systemRole }) {
         </div>
       )}
 
+      {!loading && teamsAtRisk.length > 0 && (
+        <AlertBanner tone="warning" title={t('ng.riskTitle')}>
+          {t('ng.riskBody').replace('{teams}', teamsAtRisk.join(', '))}
+        </AlertBanner>
+      )}
+
       {loading ? (
         <StatusBlock tone="neutral" title={t('ng.loading')} />
       ) : visible.length === 0 ? (
@@ -202,14 +229,12 @@ export default function NotificationGroups({ teams = [], systemRole }) {
                 <th>{t('ng.colName')}</th>
                 <th>{t('ng.colTeam')}</th>
                 <th>{t('ng.colEmails')}</th>
-                <th>{t('ng.colIssue')}</th>
                 <th>{t('ng.actions')}</th>
               </tr>
             </thead>
             <tbody>
               {visible.map(g => {
                 const count = (g.emails ?? []).length
-                const teamEmail = teamEmails[String(g.team_id)]
                 return (
                   <tr key={g.id}>
                     <td>
@@ -224,14 +249,6 @@ export default function NotificationGroups({ teams = [], systemRole }) {
                     <td>{teamMap[String(g.team_id)] ?? `#${g.team_id}`}</td>
                     <td title={(g.emails ?? []).join(', ')}>
                       {t('ng.emailCount').replace('{n}', count)}
-                    </td>
-                    <td>
-                      {/* "Sorun" sütunu: sessizce yanlış davranacak kurulumları GÖRÜNÜR kılar. */}
-                      {count === 0 && <span className="badge badge-err">{t('ng.issueEmpty')}</span>}
-                      {count > 0 && !g.is_default && !teamEmail && (
-                        <span className="badge badge-warn">{t('ng.issueNoFallback')}</span>
-                      )}
-                      {count > 0 && (g.is_default || teamEmail) && '—'}
                     </td>
                     <td>
                       <KebabMenu
@@ -272,7 +289,7 @@ export default function NotificationGroups({ teams = [], systemRole }) {
           </>
         }
       >
-        {error && <AlertBanner tone="error" role="alert">{error}</AlertBanner>}
+        {error && <AlertBanner tone="danger" role="alert">{error}</AlertBanner>}
 
         {!editing && (
           <Field label={t('ng.fieldTeam')} required>

@@ -57,6 +57,15 @@ class InventoryHygieneServiceTest {
     private static CertificateInventory inv(String domain, Long teamId, Integer tier, Boolean active) {
         CertificateInventory i = new CertificateInventory();
         i.setDomain(domain); i.setTeamId(teamId); i.setTier(tier); i.setActive(active);
+        // "Eksiksiz kayit"in tanimina sorumlu ekip de girdi; bos birakilan hal invNoContacts ile sinanir.
+        i.setSvcMgmtContact("ekip@example.com");
+        return i;
+    }
+
+    /** Sorumlu ekip alanlarinin DORDU de bos olan kayit. */
+    private static CertificateInventory invNoContacts(String domain) {
+        CertificateInventory i = inv(domain, 5L, 1, true);
+        i.setSvcMgmtContact(null);
         return i;
     }
 
@@ -90,6 +99,31 @@ class InventoryHygieneServiceTest {
         assertThat(g.samples()).extracting("domain")
                 .containsExactly("takimsiz.com", "tiersiz.com", "ikisi-de-yok.com");
         assertThat(g.samples().get(2).detail()).contains("takım").contains("tier");
+    }
+
+    @Test
+    @DisplayName("Sorumlu ekip eksigi AYRI grupta — takim/tier sinyalini kirletmez")
+    void missingContacts_separateGroup() {
+        var r = service.analyze(List.of(
+                invNoContacts("ekipsiz.com"),
+                inv("temiz.com", 5L, 2, true)));
+
+        var g = group(r, "contacts");
+        assertThat(g.total()).isEqualTo(1);
+        assertThat(g.samples()).extracting("domain").containsExactly("ekipsiz.com");
+        // Ayni kayit "missing" grubuna DUSMEZ: takim ve tier'i tamam.
+        assertThat(r.groups()).noneMatch(x -> "missing".equals(x.key()));
+    }
+
+    @Test
+    @DisplayName("Bir alan bile doluysa eksik SAYILMAZ — her sertifikanin dort ekiple iliskisi yok")
+    void missingContacts_oneFilledIsEnough() {
+        CertificateInventory only = invNoContacts("yalniz-waf.com");
+        only.setWafAdminContact("waf@example.com");
+
+        var r = service.analyze(List.of(only));
+
+        assertThat(r.groups()).noneMatch(x -> "contacts".equals(x.key()));
     }
 
     @Test

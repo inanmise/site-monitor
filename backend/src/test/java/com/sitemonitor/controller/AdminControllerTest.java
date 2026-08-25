@@ -30,6 +30,8 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import org.mockito.ArgumentCaptor;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -335,6 +337,78 @@ class AdminControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.tls_mode").value("default"));
+    }
+
+    // ── Sorumlu Ekipler ───────────────────────────────────────────────────────
+
+    /**
+     * SETTER TUZAGI — CLAUDE.md'deki 1 numarali envanter bug'i.
+     *
+     * <p>{@code updateInventory}'de setter unutulursa istek 200 doner ve form "kaydedildi" der,
+     * ama deger entity'ye HIC yazilmaz: sayfa yenilendiginde alan bos gelir. Bu test yaniti degil
+     * KAYDEDILEN NESNEYI dogrular; dort setterdan biri silinirse kirmiziya doner.
+     */
+    @Test
+    @DisplayName("PUT inventory: dort sorumlu ekip alani da ENTITY'ye yazilir (setter tuzagi)")
+    void updateInventory_contacts_persistedOnEntity() throws Exception {
+        CertificateInventory existing = inventory("old.com");
+        existing.setId(1L);
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+        when(inventoryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        mvc.perform(put("/api/admin/inventory/1")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"old.com\",\"port\":443,\"active\":true,"
+                               + "\"svc_mgmt_contact\":\"Ad Soyad - ad.soyad@example.com\","
+                               + "\"app_dev_contact\":\"ekip@example.com\","
+                               + "\"iis_admin_contact\":\"iis@example.com\","
+                               + "\"waf_admin_contact\":\"waf@example.com\"}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<CertificateInventory> cap = ArgumentCaptor.forClass(CertificateInventory.class);
+        verify(inventoryRepo, atLeastOnce()).save(cap.capture());
+        CertificateInventory saved = cap.getAllValues().get(cap.getAllValues().size() - 1);
+        assertThat(saved.getSvcMgmtContact()).isEqualTo("Ad Soyad - ad.soyad@example.com");
+        assertThat(saved.getAppDevContact()).isEqualTo("ekip@example.com");
+        assertThat(saved.getIisAdminContact()).isEqualTo("iis@example.com");
+        assertThat(saved.getWafAdminContact()).isEqualTo("waf@example.com");
+    }
+
+    @Test
+    @DisplayName("Toplu atama: YALNIZ gonderilen alan yazilir, otekilere DOKUNULMAZ")
+    void bulkSetContacts_onlyTouchesSuppliedFields() throws Exception {
+        CertificateInventory existing = inventory("old.com");
+        existing.setId(1L);
+        existing.setSvcMgmtContact("onceki@example.com");
+        existing.setAppDevContact("dokunma@example.com");
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+        when(inventoryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        mvc.perform(post("/api/admin/inventory/bulk")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"ids\":[1],\"action\":\"set-contacts\","
+                               + "\"svc_mgmt_contact\":\"yeni@example.com\"}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<CertificateInventory> cap = ArgumentCaptor.forClass(CertificateInventory.class);
+        verify(inventoryRepo, atLeastOnce()).save(cap.capture());
+        CertificateInventory saved = cap.getValue();
+        assertThat(saved.getSvcMgmtContact()).isEqualTo("yeni@example.com");
+        // Govdede GONDERILMEYEN alan silinmez: "yalniz IISAdmin'i doldur, 200 kayda uygula"
+        // istegi otekileri sessizce bosaltsaydi bu bir veri kaybi olurdu.
+        assertThat(saved.getAppDevContact()).isEqualTo("dokunma@example.com");
+    }
+
+    @Test
+    @DisplayName("Toplu atama: bilinmeyen action 400 doner")
+    void bulk_unknownAction_returns400() throws Exception {
+        mvc.perform(post("/api/admin/inventory/bulk")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"ids\":[1],\"action\":\"set-everything\"}"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

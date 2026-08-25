@@ -234,6 +234,7 @@ public class EmailTemplateBuilder {
           // (operasyonel bayraklar) ve takımın kendi yenileme sürecini görür, sonra genel aksiyon adımlarını.
           // CTA butonu aksiyon kartının içinde olduğu için bu bloklar ondan sonra gelemez.
           .append(opsSection(m))
+          .append(contactsSection(m))
           .append(changeDescSection(m))
           // Önerilen Aksiyon — numaralı adımlar
           .append("<tr><td style='padding:18px 30px 4px'>")
@@ -294,6 +295,12 @@ public class EmailTemplateBuilder {
         // HTML paritesi: envanter bölümleri metin sürümde de aynı sırayla yer alır.
         List<String> ops = opsLabels(m.ctx());
         if (!ops.isEmpty()) sb.append("\nOperasyonel Bilgiler: ").append(String.join(", ", ops)).append('\n');
+        Map<String, String> contacts = contactMap(m.ctx());
+        if (!contacts.isEmpty()) {
+            sb.append("\nSorumlu Ekipler:\n");
+            // E-posta duz metinde adres olarak AYNEN yazilir; mailto: sarmalamasi yalniz HTML'de.
+            contacts.forEach((label, value) -> sb.append(label).append(": ").append(value).append('\n'));
+        }
         String desc = m.ctx() == null ? null : strCtx(m.ctx(), "inv_change_desc");
         if (desc != null && !desc.isBlank()) {
             List<String> lines = descLines(desc);
@@ -814,6 +821,71 @@ public class EmailTemplateBuilder {
                 + "<td bgcolor='" + PILL_BG + "' style='background-color:" + PILL_BG + ";border-radius:4px;"
                 + "padding:5px 10px;font-size:12.5px;font-weight:600;color:" + PILL_INK + ";white-space:nowrap'>"
                 + "✓&nbsp;" + esc(label) + "</td></tr></table></td>";
+    }
+
+    /** ctx'teki {@code inv_contacts} haritasi (etiket → deger, yalniz DOLU alanlar, ekleme sirali). */
+    private static Map<String, String> contactMap(Map<String, Object> ctx) {
+        if (ctx == null || !(ctx.get("inv_contacts") instanceof Map<?, ?> raw)) return Map.of();
+        Map<String, String> out = new java.util.LinkedHashMap<>();
+        for (Map.Entry<?, ?> e : raw.entrySet()) {
+            if (e.getKey() == null || e.getValue() == null) continue;
+            String v = e.getValue().toString().trim();
+            if (!v.isBlank()) out.put(e.getKey().toString(), v);
+        }
+        return out;
+    }
+
+    /**
+     * SORUMLU EKIPLER — sertifikayi kimin yenileyecegi: Servis Yonetimi / Uygulama Gelistirme /
+     * IISAdmin / WAFAdmin.
+     *
+     * <p><b>Neden 4 sutunlu tablo DEGIL:</b> mail govdesi 600px sabittir
+     * ({@code EmailTemplateStandardTest}); dort sutuna bolununce sutun basina ~140px kalir ve
+     * kurumsal bir e-posta adresi iki-uc satira kirilir, Outlook'ta sutun genislikleri oynar.
+     * Etiket/deger satiri hem dar ekranda hem Outlook'ta guvenli.
+     *
+     * <p>Yalniz dolu alanlar basilir; hicbiri dolu degilse "" doner → kart HIC render edilmez.
+     */
+    private static String contactsSection(AlertMail m) {
+        Map<String, String> contacts = contactMap(m.ctx());
+        if (contacts.isEmpty()) return "";
+        StringBuilder rows = new StringBuilder(
+                "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'>");
+        for (Map.Entry<String, String> e : contacts.entrySet()) {
+            rows.append("<tr>")
+                .append("<td width='40%' valign='top' style='padding:4px 10px 4px 0;font-size:11px;font-weight:700;")
+                .append("letter-spacing:.04em;text-transform:uppercase;color:").append(MUTED).append("'>")
+                .append(esc(e.getKey())).append("</td>")
+                .append("<td valign='top' style='padding:4px 0;font-size:13.5px;line-height:1.5;color:")
+                .append(INK).append(";word-break:break-word'>").append(linkifyEmails(e.getValue())).append("</td>")
+                .append("</tr>");
+        }
+        rows.append("</table>");
+        return card("Sorumlu Ekipler", rows.toString());
+    }
+
+    /** Serbest metin icindeki e-posta belirteci — kasten GEVSEK; amac linklemek, dogrulamak degil. */
+    private static final java.util.regex.Pattern EMAIL_IN_TEXT =
+            java.util.regex.Pattern.compile("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}");
+
+    /**
+     * Degerdeki e-posta benzeri belirtecleri {@code mailto:} baglantisina cevirir; geri kalan her
+     * sey {@code esc} ile kacirilir. Deger serbest metindir ("Ad Soyad - ad.soyad@example.com"),
+     * bu yuzden tamamini link yapmak yerine yalniz adres parcasi linklenir.
+     */
+    static String linkifyEmails(String raw) {
+        java.util.regex.Matcher mt = EMAIL_IN_TEXT.matcher(raw);
+        StringBuilder out = new StringBuilder();
+        int last = 0;
+        while (mt.find()) {
+            out.append(esc(raw.substring(last, mt.start())));
+            String addr = mt.group();
+            out.append("<a href='mailto:").append(esc(addr)).append("' style='color:").append(NAVY)
+               .append(";text-decoration:underline'>").append(esc(addr)).append("</a>");
+            last = mt.end();
+        }
+        out.append(esc(raw.substring(last)));
+        return out.toString();
     }
 
     /**

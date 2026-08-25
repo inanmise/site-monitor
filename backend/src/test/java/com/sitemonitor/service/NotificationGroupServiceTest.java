@@ -78,12 +78,12 @@ class NotificationGroupServiceTest {
         @DisplayName("Damgalı grup uygulanır — takım varsayılanının ÖNÜNDE")
         void stampedGroup_winsOverDefault() {
             when(repo.findById(10L)).thenReturn(Optional.of(
-                    group(10L, TEAM_A, "Ödeme Nöbetçi", "odeme@akbank.com", false, true)));
+                    group(10L, TEAM_A, "Ödeme Nöbetçi", "odeme@example.com", false, true)));
 
             var ov = service.overrideFor(TEAM_A, 10L);
 
             assertThat(ov.applies()).isTrue();
-            assertThat(ov.emails()).containsExactly("odeme@akbank.com");
+            assertThat(ov.emails()).containsExactly("odeme@example.com");
             assertThat(ov.source()).isEqualTo(NotificationGroupService.Source.GROUP);
             assertThat(ov.label()).isEqualTo("Grup: Ödeme Nöbetçi");
             // Damga çözdüyse varsayılan sorgusu HİÇ çalışmamalı (gereksiz sorgu = sweep maliyeti).
@@ -94,12 +94,12 @@ class NotificationGroupServiceTest {
         @DisplayName("Damga yoksa takımın varsayılan grubu uygulanır")
         void noStamp_usesTeamDefault() {
             when(repo.findFirstByTeamIdAndIsDefaultTrueAndActiveTrue(TEAM_A)).thenReturn(Optional.of(
-                    group(20L, TEAM_A, "Takım Nöbet", "nobet@akbank.com, yedek@akbank.com", true, true)));
+                    group(20L, TEAM_A, "Takım Nöbet", "nobet@example.com, yedek@example.com", true, true)));
 
             var ov = service.overrideFor(TEAM_A, null);
 
             assertThat(ov.applies()).isTrue();
-            assertThat(ov.emails()).containsExactly("nobet@akbank.com", "yedek@akbank.com");
+            assertThat(ov.emails()).containsExactly("nobet@example.com", "yedek@example.com");
             assertThat(ov.source()).isEqualTo(NotificationGroupService.Source.TEAM_DEFAULT_GROUP);
         }
 
@@ -107,13 +107,13 @@ class NotificationGroupServiceTest {
         @DisplayName("Damgalı grup PASİFse zincirin kalanına düşer")
         void stampedInactive_fallsThrough() {
             when(repo.findById(10L)).thenReturn(Optional.of(
-                    group(10L, TEAM_A, "Silinmiş", "eski@akbank.com", false, false)));
+                    group(10L, TEAM_A, "Silinmiş", "eski@example.com", false, false)));
             when(repo.findFirstByTeamIdAndIsDefaultTrueAndActiveTrue(TEAM_A)).thenReturn(Optional.of(
-                    group(20L, TEAM_A, "Takım Nöbet", "nobet@akbank.com", true, true)));
+                    group(20L, TEAM_A, "Takım Nöbet", "nobet@example.com", true, true)));
 
             var ov = service.overrideFor(TEAM_A, 10L);
 
-            assertThat(ov.emails()).containsExactly("nobet@akbank.com");
+            assertThat(ov.emails()).containsExactly("nobet@example.com");
             assertThat(ov.source()).isEqualTo(NotificationGroupService.Source.TEAM_DEFAULT_GROUP);
         }
 
@@ -133,14 +133,14 @@ class NotificationGroupServiceTest {
             // bir takımın alarmı diğerinin nöbetçi listesine giderdi — hem yanlış yönlendirme
             // hem de o listeyi dolaylı ifşa.
             when(repo.findById(99L)).thenReturn(Optional.of(
-                    group(99L, TEAM_B, "B Takımı Nöbet", "b-takim@akbank.com", false, true)));
+                    group(99L, TEAM_B, "B Takımı Nöbet", "b-takim@example.com", false, true)));
             when(repo.findFirstByTeamIdAndIsDefaultTrueAndActiveTrue(TEAM_A)).thenReturn(Optional.of(
-                    group(20L, TEAM_A, "A Nöbet", "a-nobet@akbank.com", true, true)));
+                    group(20L, TEAM_A, "A Nöbet", "a-nobet@example.com", true, true)));
 
             var ov = service.overrideFor(TEAM_A, 99L);
 
-            assertThat(ov.emails()).containsExactly("a-nobet@akbank.com");
-            assertThat(ov.emails()).doesNotContain("b-takim@akbank.com");
+            assertThat(ov.emails()).containsExactly("a-nobet@example.com");
+            assertThat(ov.emails()).doesNotContain("b-takim@example.com");
         }
 
         @Test

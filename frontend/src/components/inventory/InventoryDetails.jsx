@@ -6,7 +6,35 @@ import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useTheme } from '../../i18n/theme.jsx'
 import { INVENTORY_FLAGS } from '../../utils/inventoryFlags.js'
+import { CONTACT_FIELDS } from './InventoryFormModal.jsx'
+import CopyButton from '../ui/CopyButton.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
+
+/** Serbest metin icindeki e-posta belirteci — mail sablonundaki EMAIL_IN_TEXT ile ayni gevseklik. */
+const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/
+
+/**
+ * Sorumlu ekip degeri: "Ad Soyad - ad.soyad@example.com" gibi serbest metin.
+ * Icinde e-posta varsa YALNIZ o parca mailto baglantisi olur, gerisi duz metin kalir;
+ * ayrica adres tek tikla kopyalanabilir (destege basvururken yazim hatasi olmasin).
+ */
+function ContactValue({ value }) {
+  const raw = (value ?? '').trim()
+  if (!raw) return '—'
+  const m = raw.match(EMAIL_RE)
+  if (!m) return raw
+  const addr = m[0]
+  const before = raw.slice(0, m.index)
+  const after = raw.slice(m.index + addr.length)
+  return (
+    <>
+      {before}
+      <a href={`mailto:${addr}`}>{addr}</a>
+      {after}
+      <CopyButton value={addr} />
+    </>
+  )
+}
 
 function ShowField({ label, value, mono, full }) {
   return (
@@ -53,6 +81,19 @@ export function InventoryDetails({ record, teamMap }) {
             : t('inv.tlsModeInherit')
           } />
         </div>
+
+        {/* Sorumlu Ekipler — sertifikayi kimin yenileyecegi (yonlendirme DEGIL, bilgilendirme) */}
+        <div className="show-section-header">{t('inv.sectionContacts')}</div>
+        {CONTACT_FIELDS.some(({ key }) => (record[key] ?? '').trim()) ? (
+          <div className="show-grid-2">
+            {CONTACT_FIELDS.filter(({ key }) => (record[key] ?? '').trim()).map(({ key, labelKey }) => (
+              <ShowField key={key} label={t(labelKey)} value={<ContactValue value={record[key]} />} />
+            ))}
+          </div>
+        ) : (
+          // Bos basliktan sonra bos izgara birakmak "veri yuklenmedi" hissi verir; durumu ACIKCA yaz.
+          <span className="field-hint">{t('inv.contactsEmpty')}</span>
+        )}
 
         {/* Operasyonel Bilgiler */}
         <div className="show-section-header">{t('inv.sectionOps')}</div>

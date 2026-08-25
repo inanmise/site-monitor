@@ -1,5 +1,9 @@
 import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react'
-import { ChevronDown, Download } from 'lucide-react'
+import { ChevronDown, Download, Users } from 'lucide-react'
+import ModalShell from '../ui/ModalShell.jsx'
+import Field from '../ui/Field.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
+import { CONTACT_FIELDS } from '../inventory/InventoryFormModal.jsx'
 import { api } from '../../api/client'
 import { InventoryDetails } from '../inventory/InventoryDetails.jsx'
 import InventoryFormModal from '../inventory/InventoryFormModal.jsx'
@@ -16,6 +20,41 @@ import { exportInventoryCsv, exportInventoryPdf } from '../../utils/exportInvent
 import { Spinner, LoadingBlock } from '../ui/Progress.jsx'
 
 const ChangeHistoryTab = lazy(() => import('../history/ChangeHistoryTab.jsx'))
+
+/**
+ * Toplu sorumlu-ekip atama formu.
+ *
+ * Boş bırakılan alan GÖNDERİLMEZ — çağıran onu gövdeye koymaz, backend de dokunmaz. Modal bunu
+ * kullanıcıya açıkça söyler: "boş bıraktığınız alanlar değişmeden kalır."
+ */
+function BulkContactsModal({ count, onApply, onClose }) {
+  const t = useT()
+  const [values, setValues] = useState({
+    svc_mgmt_contact: '', app_dev_contact: '', iis_admin_contact: '', waf_admin_contact: '',
+  })
+  return (
+    <ModalShell open onClose={onClose} title={t('inv.bulkContactsTitle')} icon={Users}
+      footer={
+        <>
+          <button className="btn btn-secondary" onClick={onClose}>{t('inv.cancel')}</button>
+          <button className="btn btn-primary" onClick={() => onApply(values)}>
+            {t('inv.bulkContactsBtn')}
+          </button>
+        </>
+      }>
+      <AlertBanner tone="info">{t('inv.bulkContactsHint', count)}</AlertBanner>
+      {CONTACT_FIELDS.map(({ key, labelKey }) => (
+        <Field key={key} label={t(labelKey)}>
+          {({ id }) => (
+            <input id={id} className="input" maxLength={300} value={values[key]}
+              placeholder={t('inv.contactsPh')}
+              onChange={e => setValues(v => ({ ...v, [key]: e.target.value }))} />
+          )}
+        </Field>
+      ))}
+    </ModalShell>
+  )
+}
 
 export default function InventoryManager({ onInventoryChange, systemRole, teams: teamsProp = [], isAdmin: isAdminProp = false, openAddSignal = false, onAddConsumed }) {
   const t = useT()
@@ -120,6 +159,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
 
   // ── Toplu seçim (yalnız silinmemiş kayıtlar seçilebilir) ──────────────────
   const [selected, setSelected] = useState(() => new Set())
+  const [contactsModal, setContactsModal] = useState(null)   // E5: toplu sorumlu ekip atama
   const selectableItems = useMemo(() => visibleItems.filter(i => !i.deleted_at), [visibleItems])
 
   // Sayfalama yalnız RENDER'ı böler; "tümünü seç" filtrelenmiş tüm liste (selectableItems) üzerinde kalır.
@@ -164,6 +204,43 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     if (res?.success) {
       const d = res.data || {}
       toast.success(t('inv.bulkDone', d.processed ?? 0, d.skipped ?? 0))
+      setSelected(new Set())
+      load()
+      onInventoryChange?.()
+    } else {
+      toast.error(res?.error || t('inv.saveError'))
+    }
+  }
+
+  /**
+   * E5 — seçili kayıtlara sorumlu ekip ata.
+   *
+   * YALNIZ doldurulmuş alanlar gönderilir: boş bırakılan alan gövdeye HİÇ konmaz, böylece
+   * backend ona dokunmaz. Aksi halde "sadece IISAdmin'i doldurup 200 kayda uygula" isteği
+   * diğer üç alanı sessizce silerdi.
+   */
+  async function applyBulkContacts(values) {
+    const ids = [...selected]
+    if (ids.length === 0) return
+    const extra = {}
+    for (const [k, v] of Object.entries(values)) {
+      if ((v ?? '').trim()) extra[k] = v.trim()
+    }
+    if (Object.keys(extra).length === 0) { toast.error(t('inv.bulkContactsEmpty')); return }
+
+    const ok = await showConfirm({
+      title: t('inv.bulkContactsTitle'),
+      message: t('inv.bulkContactsMsg', ids.length, Object.keys(extra).length),
+      variant: 'warning',
+      confirmText: t('inv.bulkContactsBtn'), cancelText: t('inv.cancel'),
+    })
+    if (!ok) return
+
+    const res = await api.admin.bulkInventory(ids, 'set-contacts', extra)
+    if (res?.success) {
+      const d = res.data || {}
+      toast.success(t('inv.bulkDone', d.processed ?? 0, d.skipped ?? 0))
+      setContactsModal(null)
       setSelected(new Set())
       load()
       onInventoryChange?.()
@@ -383,6 +460,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
           <button className="btn btn-success btn-sm-p"   onClick={() => bulkAction('activate')}>{t('inv.bulkActivateBtn')}</button>
           <button className="btn btn-warning btn-sm-p"   onClick={() => bulkAction('deactivate')}>{t('inv.bulkDeactivateBtn')}</button>
           <button className="btn btn-danger btn-sm-p"    onClick={() => bulkAction('delete')}>{t('inv.bulkDeleteBtn')}</button>
+          <button className="btn btn-secondary btn-sm-p" onClick={() => setContactsModal({})}>{t('inv.bulkContactsBtn')}</button>
           <button className="btn btn-secondary btn-sm-p" onClick={() => setSelected(new Set())}>{t('inv.bulkClear')}</button>
         </div>
       )}
@@ -467,6 +545,14 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
 
       {/* ── Ana Form Modalı — inventory/InventoryFormModal.jsx'e çıkarıldı (dashboard kartı da aynı
              formu açıyor). key: açıkken mod/kayıt değişirse remount olsun. ── */}
+      {contactsModal && (
+        <BulkContactsModal
+          count={selected.size}
+          onApply={applyBulkContacts}
+          onClose={() => setContactsModal(null)}
+        />
+      )}
+
       {formModal && (
         <InventoryFormModal
           key={`${formModal.mode}:${formModal.record?.id ?? 'new'}`}

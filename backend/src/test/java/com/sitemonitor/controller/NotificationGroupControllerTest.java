@@ -95,7 +95,7 @@ class NotificationGroupControllerTest {
         Team t = new Team();
         t.setId(id);
         t.setName(name);
-        t.setEmail("takim" + id + "@akbank.com");
+        t.setEmail("takim" + id + "@example.com");
         return t;
     }
 
@@ -104,7 +104,7 @@ class NotificationGroupControllerTest {
         g.setId(id);
         g.setTeamId(teamId);
         g.setName("Nöbet " + id);
-        g.setEmails("n" + id + "@akbank.com");
+        g.setEmails("n" + id + "@example.com");
         g.setActive(true);
         g.setIsDefault(false);
         return g;
@@ -255,6 +255,6 @@ class NotificationGroupControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.groups[0].id").value((int) GROUP_A))
                 .andExpect(jsonPath("$.data.groups[0].can_write").value(true))
-                .andExpect(jsonPath("$.data.team_emails.1").value("takim1@akbank.com"));
+                .andExpect(jsonPath("$.data.team_emails.1").value("takim1@example.com"));
     }
 }

@@ -2,6 +2,7 @@ package com.sitemonitor.service.report;
 
 import com.sitemonitor.dto.CertificateDto;
 import com.sitemonitor.model.CertificateInventory;
+import com.sitemonitor.service.CertificateInventoryContacts;
 import com.sitemonitor.repository.LatestCheckRepository;
 import com.sitemonitor.service.AppSettingsService;
 import com.sitemonitor.service.CertificateService;
@@ -92,6 +93,7 @@ public class InventoryHygieneService {
 
         List<Group> groups = new ArrayList<>();
         groups.add(missingInventoryFields(active));
+        groups.add(missingContacts(active));
         groups.add(uncheckedOrStale(active, latest));
         groups.add(checkErrors(latest));
         groups.add(certificateHealth(latest));
@@ -110,6 +112,27 @@ public class InventoryHygieneService {
             if (!missing.isEmpty()) f.add(new Finding(r.getDomain(), String.join(", ", missing)));
         }
         return group("missing", "Envanter bilgisi eksik", f);
+    }
+
+    /**
+     * Sorumlu ekip bilgisi hiç girilmemiş kayıtlar — AYRI grup, bilinçli olarak.
+     *
+     * <p>{@code missing} grubuna eklenseydi, alan yeni geldiği için İLK GÜN envanterin TAMAMI
+     * o gruba düşer ve gerçekten aksiyon isteyen "takım atanmamış / tier atanmamış" bulguları
+     * gürültü içinde kaybolurdu. Ayrı grup, doldurma kampanyası ilerledikçe kendiliğinden küçülür
+     * ve komşu sinyali hiç kirletmez.
+     *
+     * <p>DÖRDÜ birden boşsa bulgu; biri bile doluysa eksik saymayız — her sertifikanın dört ekiple
+     * ilişkisi yok (WAF'ta durmayan, IIS'te çalışmayan kayıtlar var).
+     */
+    private Group missingContacts(List<CertificateInventory> active) {
+        List<Finding> f = new ArrayList<>();
+        for (CertificateInventory r : active) {
+            if (CertificateInventoryContacts.filled(r).isEmpty()) {
+                f.add(new Finding(r.getDomain(), "sorumlu ekip bilgisi girilmemiş"));
+            }
+        }
+        return group("contacts", "Sorumlu ekip bilgisi eksik", f);
     }
 
     // ── 2) Hiç kontrol edilmemiş / bayat kontrol ─────────────────────────────
