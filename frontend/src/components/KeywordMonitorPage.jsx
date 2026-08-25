@@ -195,6 +195,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
       name: (form.name || form.url).trim(), url: normalizeUrl(form.url), keyword: form.keyword,
       operator: form.operator, matchCount: Number(form.matchCount),
       groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId),
+      // Bos = takim varsayilani -> takim adresi (zincirin kalani).
+      notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
+        ? null : Number(form.notificationGroupId),
       caseSensitive: form.caseSensitive, tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail,
       checkSslErrors: form.checkSslErrors, sslExpiryReminders: form.sslExpiryReminders, domainExpiryReminders: form.domainExpiryReminders,
       sslReminderDays: form.sslReminderDays?.trim() || '30,14,7', domainReminderDays: form.domainReminderDays?.trim() || '30,14,7',

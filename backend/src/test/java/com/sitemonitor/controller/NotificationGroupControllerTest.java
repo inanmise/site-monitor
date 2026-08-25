@@ -8,6 +8,7 @@ import com.sitemonitor.service.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatchers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -19,6 +20,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.util.List;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -242,6 +244,115 @@ class NotificationGroupControllerTest {
     }
 
     // ── Listeleme ────────────────────────────────────────────────────────────
+
+    // ── Gövde ayrıştırma ve kapsam çözümü ────────────────────────────────────
+
+    @Test
+    @DisplayName("POST: team_id verilmezse YAZILABİLİR ilk takıma düşer")
+    void create_withoutTeamId_fallsBackToWritableTeam() throws Exception {
+        mvc.perform(post("/api/notification-groups")
+                        .session(userOfA)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Nöbet\",\"emails\":[\"n@example.com\"]}"))
+                .andExpect(status().isOk());
+
+        verify(groupService).create(eq(TEAM_A), any(), eq("ayse"), any());
+    }
+
+    @Test
+    @DisplayName("POST: yazılabilir takımı OLMAYAN kullanıcı 400 alır (403 değil — istek geçersiz)")
+    void create_withNoWritableTeam_returns400() throws Exception {
+        MockHttpSession noTeam = new MockHttpSession();
+        noTeam.setAttribute("authenticated", Boolean.TRUE);
+        noTeam.setAttribute("username", "cem");
+        noTeam.setAttribute("systemRole", "USER");
+        noTeam.setAttribute("viewTeamIds", List.of());
+        noTeam.setAttribute("manageTeamIds", List.of());
+        noTeam.setAttribute("memberTeamIds", List.of());
+
+        mvc.perform(post("/api/notification-groups")
+                        .session(noTeam)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Nöbet\",\"emails\":[\"n@example.com\"]}"))
+                .andExpect(status().isBadRequest());
+
+        verify(groupService, never()).create(anyLong(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("POST: adresler DİZİ yerine tek dize olarak da gönderilebilir")
+    void create_acceptsEmailsAsPlainString() throws Exception {
+        // Belgelenmiş bir kabul: kopyala-yapıştır tek alana virgüllü liste bırakır.
+        mvc.perform(post("/api/notification-groups")
+                        .session(userOfA)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"team_id\":1,\"name\":\"Nöbet\",\"emails\":\"a@example.com, b@example.com\"}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<List<String>> cap = ArgumentCaptor.forClass(List.class);
+        verify(groupService).validate(any(), cap.capture(), anyBoolean());
+        assertThat(cap.getValue()).containsExactly("a@example.com, b@example.com");
+    }
+
+    @Test
+    @DisplayName("Liste: includeInactive=true SİLİNMİŞ grupları da döner (formdaki rozet buna dayanıyor)")
+    void list_includeInactive_returnsSoftDeleted() throws Exception {
+        NotificationGroup deleted = group(GROUP_A, TEAM_A);
+        deleted.setActive(false);
+        when(groupRepo.findByTeamIdOrderByNameAsc(TEAM_A)).thenReturn(List.of(deleted));
+        when(groupService.toDto(any())).thenReturn(new java.util.LinkedHashMap<>(
+                java.util.Map.of("id", GROUP_A, "active", false)));
+
+        mvc.perform(get("/api/notification-groups")
+                        .param("teamId", "1").param("includeInactive", "true")
+                        .session(userOfA))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.groups[0].active").value(false));
+
+        // Varsayılan (aktif-only) sorgu bu yolda HİÇ kullanılmamalı.
+        verify(groupRepo, never()).findByTeamIdAndActiveTrueOrderByNameAsc(TEAM_A);
+    }
+
+    @Test
+    @DisplayName("Varsayılan yapma: kendi takımının aktif grubunda 200 ve servis çağrılır")
+    void makeDefault_ownTeam_ok() throws Exception {
+        mvc.perform(post("/api/notification-groups/{id}/make-default", GROUP_A).session(userOfA))
+                .andExpect(status().isOk());
+
+        verify(groupService).makeDefault(any());
+    }
+
+    @Test
+    @DisplayName("Silme: kendi takımının grubunda 200 ve YUMUŞAK silme çağrılır")
+    void delete_ownTeam_softDeletes() throws Exception {
+        mvc.perform(delete("/api/notification-groups/{id}", GROUP_A).session(userOfA))
+                .andExpect(status().isOk());
+
+        verify(groupService).softDelete(any(), eq("ayse"), any());
+    }
+
+    @Test
+    @DisplayName("Liste TEK toplu sorgu kullanır (takım başına sorgu N+1 üretiyordu)")
+    void list_batchesTeamQueries() throws Exception {
+        // Global admin: kapsam TÜM takımlar. Eskiden takım başına ayrı sorgu atiliyor ve yorumda
+        // "kullanıcı birkaç takımın üyesidir" yaziyordu — bu ekranı tam olarak adminler açıyor.
+        MockHttpSession admin = new MockHttpSession();
+        admin.setAttribute("authenticated", Boolean.TRUE);
+        admin.setAttribute("username", "admin");
+        admin.setAttribute("systemRole", "ADMIN");     // viewTeamIds YOK -> global
+
+        when(groupRepo.findByTeamIdInAndActiveTrueOrderByTeamIdAscNameAsc(any()))
+                .thenReturn(List.of(group(GROUP_A, TEAM_A), group(GROUP_B, TEAM_B)));
+        when(groupService.toDto(any())).thenReturn(new java.util.LinkedHashMap<>(
+                java.util.Map.of("id", GROUP_A)));
+
+        mvc.perform(get("/api/notification-groups").session(admin))
+                .andExpect(status().isOk());
+
+        verify(groupRepo).findByTeamIdInAndActiveTrueOrderByTeamIdAscNameAsc(any());
+        // Takım başına sorgu HİÇ atılmamalı.
+        verify(groupRepo, never()).findByTeamIdAndActiveTrueOrderByNameAsc(anyLong());
+    }
 
     @Test
     @DisplayName("Liste kendi takımının gruplarını ve DÜRÜST BOŞ DURUM için takım adresini döner")

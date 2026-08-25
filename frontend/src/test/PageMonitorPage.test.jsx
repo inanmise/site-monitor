@@ -156,7 +156,7 @@ describe('PageMonitorPage', () => {
       slow_resource_ms: 1500, alert_third_party: true, alert_mixed_content: false, alert_timeout: false,
       resource_concurrency: 8, interval_seconds: 600, timeout_ms: 6000,
       confirm_attempts: 5, confirm_interval_seconds: 45, recovery_checks: 4, recovery_interval_seconds: 90,
-      active: false,
+      active: false, notification_group_id: 7,
     }] })
     api.monitoring.createPageMonitor.mockResolvedValue({ success: true, data: {} })
 
@@ -184,6 +184,8 @@ describe('PageMonitorPage', () => {
       resourceConcurrency: 8, intervalSeconds: 600, timeoutMs: 6000,
       confirmAttempts: 5, confirmIntervalSeconds: 45, recoveryChecks: 4, recoveryIntervalSeconds: 90,
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
+      // Bildirim grubu da kopyalanir: kopya, kaynagin alarmini ALAN ekibe gitsin.
+      notificationGroupId: 7,
     })
   })
 

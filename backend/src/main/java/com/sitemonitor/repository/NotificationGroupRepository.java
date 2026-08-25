@@ -16,6 +16,19 @@ public interface NotificationGroupRepository extends JpaRepository<NotificationG
     /** Seçici ve çözümleme: yalnız AKTİF gruplar. */
     List<NotificationGroup> findByTeamIdAndActiveTrueOrderByNameAsc(Long teamId);
 
+    /**
+     * Yönetim ekranı, ÇOK takımlı kapsam — TEK sorgu.
+     *
+     * <p>Takım başına ayrı sorgu N+1 üretiyordu; global admin/AUDIT'te kapsam TÜM takımlar
+     * olduğu için bu, ekranı açan her yöneticide takım sayısı kadar sorgu demekti (tek pod).
+     *
+     * <p><b>Boş koleksiyonla ÇAĞIRMAYIN:</b> JPQL {@code IN ()} üretir ve sağlayıcıya bağlı
+     * sözdizimi hatası verir — çağıran tarafta koru (şablon kütüphanesindeki aynı tuzak).
+     */
+    List<NotificationGroup> findByTeamIdInOrderByTeamIdAscNameAsc(java.util.Collection<Long> teamIds);
+
+    List<NotificationGroup> findByTeamIdInAndActiveTrueOrderByTeamIdAscNameAsc(java.util.Collection<Long> teamIds);
+
     /** Zincirin ikinci halkası: takımın aktif varsayılan grubu. */
     Optional<NotificationGroup> findFirstByTeamIdAndIsDefaultTrueAndActiveTrue(Long teamId);
 

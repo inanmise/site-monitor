@@ -79,7 +79,7 @@ describe('HttpMonitorPage', () => {
       ssl_reminder_days: '45,20,5', domain_reminder_days: '60,30,10',
       interval_seconds: 600, timeout_ms: 7000,
       confirm_attempts: 5, confirm_interval_seconds: 45, recovery_checks: 4, recovery_interval_seconds: 90,
-      active: false,
+      active: false, notification_group_id: 7,
     }] })
 
     render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
@@ -106,6 +106,8 @@ describe('HttpMonitorPage', () => {
       intervalSeconds: 600, timeoutMs: 7000,
       confirmAttempts: 5, confirmIntervalSeconds: 45, recoveryChecks: 4, recoveryIntervalSeconds: 90,
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
+      // Bildirim grubu da kopyalanir: kopya, kaynagin alarmini ALAN ekibe gitsin.
+      notificationGroupId: 7,
     })
   })
 

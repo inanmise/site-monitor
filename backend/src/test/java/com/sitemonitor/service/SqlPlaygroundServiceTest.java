@@ -5,6 +5,8 @@ import com.sitemonitor.repository.SqlQueryHistoryRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -176,6 +178,60 @@ class SqlPlaygroundServiceTest {
     }
 
     // ── listTables / listColumns ──────────────────────────────────────────────
+
+    // ── Tehlikeli fonksiyon engeli (SELECT-only kuralının YAKALAYAMADIĞI yüzey) ──
+
+    /**
+     * Bu sorguların hepsi geçerli SELECT'tir ve DML/DDL anahtar kelimesi İÇERMEZ — yani
+     * SELECT-only kuralını ve FORBIDDEN listesini sorunsuz geçerler. Onları durduran tek şey
+     * FORBIDDEN_FUNCTIONS listesidir ve o liste hiçbir testle korunmuyordu.
+     */
+    @ParameterizedTest(name = "yasak fonksiyon reddedilir: {0}")
+    @ValueSource(strings = {
+            "SELECT pg_read_file('/etc/passwd')",                       // sunucu dosyası okuma
+            "SELECT pg_read_binary_file('/etc/shadow')",
+            "SELECT pg_ls_dir('/')",                                    // dizin listeleme
+            "SELECT pg_stat_file('/etc/hostname')",
+            "SELECT lo_import('/etc/passwd')",                          // large-object
+            "SELECT lo_export(1, '/tmp/x')",
+            "SELECT dblink_connect('host=10.0.0.1 user=x')",            // iç-ağ bağlantısı
+            "SELECT * FROM dblink('dbname=x', 'SELECT 1') AS t(a int)",
+            "SELECT pg_sleep(30)",                                      // kaynak tüketimi
+            "SELECT pg_terminate_backend(123)",                         // backend kontrolü
+            "SELECT pg_cancel_backend(123)",
+            "SELECT pg_reload_conf()",
+            "SELECT set_config('x', 'y', false)",
+    })
+    void execute_forbiddenFunctions_rejected(String sql) {
+        assertThatThrownBy(() -> service.execute(sql, "admin"))
+                .isInstanceOf(IllegalArgumentException.class);
+        // Reddedilen sorgu veritabanına HİÇ gitmez.
+        verifyNoInteractions(jdbc);
+    }
+
+    @ParameterizedTest(name = "büyük/küçük harf ve boşluk kaçamağı işe yaramaz: {0}")
+    @ValueSource(strings = {
+            "SELECT PG_READ_FILE('/etc/passwd')",
+            "select Pg_Sleep(10)",
+            "SELECT   pg_ls_dir  ( '/' )",
+    })
+    void execute_forbiddenFunctions_caseAndSpacingEvasionFails(String sql) {
+        assertThatThrownBy(() -> service.execute(sql, "admin"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("Kelime sınırı: adında yasak fonksiyon GEÇEN sütun reddedilmez")
+    void execute_columnNamedLikeForbiddenFunction_allowed() {
+        // Engel listesi kelime sınırıyla eşleşir; "my_pg_sleep_log" gibi meşru bir ad
+        // reddedilirse kullanıcı sebebini anlayamaz. FORBIDDEN listesinde aynı güvence
+        // zaten test edilmiş; fonksiyon listesi için de aynısı geçerli olmalı.
+        when(jdbc.queryForList(contains("SELECT"))).thenReturn(List.of());
+
+        Map<String, Object> r = service.execute("SELECT my_pg_sleep_log FROM audit_log", "admin");
+
+        assertThat(r.get("ok")).isEqualTo(true);
+    }
 
     @Test
     @DisplayName("listTables queries information_schema")

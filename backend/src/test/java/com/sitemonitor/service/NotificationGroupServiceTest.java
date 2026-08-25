@@ -225,6 +225,126 @@ class NotificationGroupServiceTest {
         }
     }
 
+    // ── CRUD ─────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("create / update / toDto")
+    class Crud {
+
+        @Test
+        @DisplayName("create: adresler normalize CSV olarak yazılır, kimlik alanları damgalanır")
+        void create_writesNormalizedCsvAndIdentity() {
+            when(repo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+            NotificationGroup g = service.create(TEAM_A,
+                    new NotificationGroupService.GroupInput("Nöbet", List.of("a@example.com", "b@example.com"), false),
+                    "ayse", "Ayşe Yılmaz");
+
+            assertThat(g.getTeamId()).isEqualTo(TEAM_A);
+            assertThat(g.getEmails()).isEqualTo("a@example.com, b@example.com");
+            assertThat(g.getActive()).isTrue();
+            assertThat(g.getIsDefault()).isFalse();
+            assertThat(g.getCreatedBy()).isEqualTo("ayse");
+            assertThat(g.getCreatedByName()).isEqualTo("Ayşe Yılmaz");
+            assertThat(g.getCreatedAt()).isNotBlank();
+            assertThat(g.getUpdatedAt()).isNotBlank();
+            // makeDefault istenmedi → diğer varsayılanlara DOKUNULMAZ.
+            verify(repo, never()).clearOtherDefaults(anyLong(), anyLong());
+        }
+
+        @Test
+        @DisplayName("create + varsayılan iste: diğer varsayılanlar indirilir")
+        void create_asDefault_demotesOthers() {
+            when(repo.save(any())).thenAnswer(i -> {
+                NotificationGroup x = i.getArgument(0);
+                if (x.getId() == null) x.setId(77L);       // JPA kimlik atamasının yerine
+                return x;
+            });
+            when(repo.clearOtherDefaults(eq(TEAM_A), anyLong())).thenReturn(1);
+
+            NotificationGroup g = service.create(TEAM_A,
+                    new NotificationGroupService.GroupInput("Nöbet", List.of("a@example.com"), true),
+                    "ayse", "Ayşe");
+
+            assertThat(g.getIsDefault()).isTrue();
+            verify(repo).clearOtherDefaults(TEAM_A, 77L);
+        }
+
+        @Test
+        @DisplayName("update: ad/adres güncellenir, güncelleyen damgalanır")
+        void update_writesFieldsAndActor() {
+            NotificationGroup existing = group(10L, TEAM_A, "Eski", "eski@example.com", false, true);
+            when(repo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+            NotificationGroup g = service.update(existing,
+                    new NotificationGroupService.GroupInput("Yeni", List.of("yeni@example.com"), false),
+                    "burak", "Burak D.");
+
+            assertThat(g.getName()).isEqualTo("Yeni");
+            assertThat(g.getEmails()).isEqualTo("yeni@example.com");
+            assertThat(g.getUpdatedBy()).isEqualTo("burak");
+            assertThat(g.getUpdatedByName()).isEqualTo("Burak D.");
+        }
+
+        @Test
+        @DisplayName("update: VARSAYILANLIK GERİ ALINABİLİR — takım 'artık takım maili' diyebilmeli")
+        void update_canClearDefault() {
+            // Kullanıcının dogrudan tetikledigi bir yol: varsayilan grubu duzenleyip anahtari
+            // kapatmak. Bu dal hic calismamisti; sessizce calismasaydi kullanici anahtari
+            // kapatir, kaydeder ve grup varsayilan KALMAYA devam ederdi.
+            NotificationGroup existing = group(10L, TEAM_A, "Nöbet", "n@example.com", true, true);
+            when(repo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+            NotificationGroup g = service.update(existing,
+                    new NotificationGroupService.GroupInput("Nöbet", List.of("n@example.com"), false),
+                    "burak", "Burak");
+
+            assertThat(g.getIsDefault()).isFalse();
+            verify(repo, never()).clearOtherDefaults(anyLong(), anyLong());
+        }
+
+        @Test
+        @DisplayName("update + varsayılan iste: diğerleri indirilir")
+        void update_makeDefault_demotesOthers() {
+            NotificationGroup existing = group(10L, TEAM_A, "Nöbet", "n@example.com", false, true);
+            when(repo.save(any())).thenAnswer(i -> i.getArgument(0));
+            when(repo.clearOtherDefaults(TEAM_A, 10L)).thenReturn(2);
+
+            NotificationGroup g = service.update(existing,
+                    new NotificationGroupService.GroupInput("Nöbet", List.of("n@example.com"), true),
+                    "burak", "Burak");
+
+            assertThat(g.getIsDefault()).isTrue();
+            verify(repo).clearOtherDefaults(TEAM_A, 10L);
+        }
+
+        @Test
+        @DisplayName("toDto: adresler DİZİ olur (arayüz sayacı CSV ayrıştırmasın)")
+        void toDto_splitsEmails() {
+            var dto = service.toDto(group(10L, TEAM_A, "Nöbet", "a@example.com, b@example.com", true, true));
+
+            assertThat(dto.get("id")).isEqualTo(10L);
+            assertThat(dto.get("team_id")).isEqualTo(TEAM_A);
+            assertThat(dto.get("emails")).isEqualTo(List.of("a@example.com", "b@example.com"));
+            assertThat(dto.get("is_default")).isEqualTo(true);
+            assertThat(dto.get("active")).isEqualTo(true);
+        }
+
+        @Test
+        @DisplayName("toDto: null bayraklar false döner (arayüzde 'undefined' rozet çıkmasın)")
+        void toDto_nullFlagsBecomeFalse() {
+            NotificationGroup g = new NotificationGroup();
+            g.setId(1L); g.setTeamId(TEAM_A); g.setName("X"); g.setEmails(null);
+            g.setIsDefault(null); g.setActive(null);
+
+            var dto = service.toDto(g);
+
+            assertThat(dto.get("emails")).isEqualTo(List.of());
+            assertThat(dto.get("is_default")).isEqualTo(false);
+            assertThat(dto.get("active")).isEqualTo(false);
+        }
+    }
+
     // ── Tek-varsayılan kısıtı (K7) ───────────────────────────────────────────
 
     @Nested

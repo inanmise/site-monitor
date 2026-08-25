@@ -191,6 +191,9 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
       name: (form.name || form.url).trim(), url: normalizeUrl(form.url), method: form.method,
       expectedStatus: form.expectedStatus?.trim() || '200-399', followRedirects: form.followRedirects, verifySsl: form.verifySsl,
       groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId), tags: form.tags?.trim() || null,
+      // Bos = takim varsayilani -> takim adresi (zincirin kalani).
+      notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
+        ? null : Number(form.notificationGroupId),
       notifyEmail: form.notifyEmail,
       checkSslErrors: form.checkSslErrors, sslExpiryReminders: form.sslExpiryReminders, domainExpiryReminders: form.domainExpiryReminders,
       sslReminderDays: form.sslReminderDays?.trim() || '30,14,7', domainReminderDays: form.domainReminderDays?.trim() || '30,14,7',

@@ -228,6 +228,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
     const payload = {
       name: (form.name || form.url).trim(), url: normalizeUrl(form.url),
       groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId),
+      // Bos = takim varsayilani -> takim adresi (zincirin kalani).
+      notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
+        ? null : Number(form.notificationGroupId),
       tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail,
       mode: form.mode, crawlDepth: Number(form.crawlDepth), crawlMaxPages: Number(form.crawlMaxPages),
       excludePatterns: form.excludePatterns?.trim() || null, slowResourceMs: Number(form.slowResourceMs),
