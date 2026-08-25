@@ -6,7 +6,7 @@ import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useTheme } from '../../i18n/theme.jsx'
 import { INVENTORY_FLAGS } from '../../utils/inventoryFlags.js'
-import { CONTACT_FIELDS } from './InventoryFormModal.jsx'
+import { CONTACT_FIELDS } from '../../utils/inventoryContacts.js'
 import CopyButton from '../ui/CopyButton.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
 

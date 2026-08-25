@@ -219,6 +219,11 @@ public class AdminController {
             throw new IllegalArgumentException("Port must be between 1 and 65535");
         if (item.getActive() == null) item.setActive(true);
         item.setTlsMode(normalizeTlsMode(item.getTlsMode()));
+        // Bildirim grubu SAHIPLIK dogrulamasi — updateInventory ile AYNI kural. Olusturma yolunda
+        // eksikti: baska takimin grup id'si ile kayit acilabiliyordu. Gonderim aninda ikinci bir
+        // kapi daha var (NotificationGroupService yabanci grubu yok sayar) ama gecersiz deger yine
+        // de KAYDEDILIR ve arayuzde "alarmlar su gruba gidiyor" diye YANLIS gorunurdu.
+        item.setNotificationGroupId(validInventoryGroup(item.getNotificationGroupId(), item.getTeamId()));
         item.setGroupName(monitoringGroupService.getOrCreate(item.getTeamId(), "cert", item.getGroupName(), actor(session)));
         monitorHistory.stampCreated(item, session);
         CertificateInventory saved = inventoryRepo.save(item);
@@ -798,10 +803,16 @@ public class AdminController {
                 }
             }
         }
+        // Her eylemin KENDI denetim adi olmali. Eskiden default -> DOMAIN_BULK_DELETE'ti; yeni bir
+        // eylem eklenince (set-contacts) denetim kaydi "N domain SILINDI" diye yaziliyordu. Denetim
+        // kaydinin yanlis olmasi, hic olmamasindan daha kotudur: kaydi inceleyen kisi olmamis bir
+        // silme gorur. Bilinmeyen eylem artik sessizce silme gibi gorunmez.
         String auditAction = switch (action) {
-            case "activate"   -> "DOMAIN_BULK_ACTIVATE";
-            case "deactivate" -> "DOMAIN_BULK_DEACTIVATE";
-            default            -> "DOMAIN_BULK_DELETE";
+            case "activate"     -> "DOMAIN_BULK_ACTIVATE";
+            case "deactivate"   -> "DOMAIN_BULK_DEACTIVATE";
+            case "delete"       -> "DOMAIN_BULK_DELETE";
+            case "set-contacts" -> "DOMAIN_BULK_SET_CONTACTS";
+            default             -> "DOMAIN_BULK_" + action.toUpperCase(java.util.Locale.ROOT).replace('-', '_');
         };
         auditService.recordAction(auditAction, session, request, "CERTIFICATE",
                 processed + " domain",

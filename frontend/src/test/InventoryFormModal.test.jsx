@@ -80,9 +80,14 @@ describe('InventoryFormModal', () => {
     const payload = api.admin.updateInventory.mock.calls[0][1]
     expect(payload.owner).toBe('Ops Ekibi')
     expect(payload.description).toBe('Kritik ödeme servisi')
-    // Payload'ın TEK camelCase çifti — snake_case'e "düzeltilirse" sessizce null giderdi.
-    expect(payload.expectedFingerprint).toBe('AA:BB:CC')
-    expect(payload.expectedSubject).toBe('CN=a.example.com')
+    // Anahtarlar SNAKE_CASE. Bu satirlar eskiden camelCase bekliyordu ve yorumu "snake_case'e
+    // duzeltilirse sessizce null gider" diyordu — GERCEK TAM TERSIYDI: uc
+    // @RequestBody CertificateInventory ile bagliyor, Jackson SNAKE_CASE calisiyor, dolayisiyla
+    // camelCase anahtar sessizce yok sayiliyordu. Test payload SEKLINI dogruluyor ama ucun onu
+    // KABUL ETTIGINI dogrulamiyordu; o yuzden bug'i yillarca sabitledi. Asil kapi backend'de:
+    // AdminControllerTest.updateInventory_snakeCaseKeys_bind.
+    expect(payload.expected_fingerprint).toBe('AA:BB:CC')
+    expect(payload.expected_subject).toBe('CN=a.example.com')
     // Diğer taşınan alanlar
     expect(payload.port).toBe(8443)
     expect(payload.tier).toBe(2)
@@ -139,8 +144,8 @@ describe('InventoryFormModal', () => {
     const payload = api.admin.addInventory.mock.calls[0][0]
     expect(payload.domain).toBe('b.example.com')
     // Beklenen parmak izi kopyalansaydı yeni domain sürekli DEPLOYMENT_INCOMPLETE alarmı üretirdi.
-    expect(payload.expectedFingerprint).toBeNull()
-    expect(payload.expectedSubject).toBeNull()
+    expect(payload.expected_fingerprint).toBeNull()
+    expect(payload.expected_subject).toBeNull()
     expect(payload.change_description).toBeNull()
     // Ayarlar ise kopyalanır — kopyalamanın amacı bu.
     expect(payload.port).toBe(8443)
