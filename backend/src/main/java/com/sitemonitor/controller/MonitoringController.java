@@ -2096,6 +2096,10 @@ public class MonitoringController {
     private static int bucketKeyLen(String from, String to) {
         try {
             long hours = java.time.Duration.between(LocalDateTime.parse(from, LDT), LocalDateTime.parse(to, LDT)).toHours();
+            // <= 6 saat: DAKİKA hassasiyeti — her kontrol kendi noktası olur. 10 dakikalık kovada
+            // 10 dakikada bir koşan bir izlemenin ölçümleri ortalamaya karışıyor ve kullanıcı
+            // "hangi anda ne oldu" sorusunu grafikten cevaplayamıyordu.
+            if (hours <= 6) return 16;
             if (hours <= 48) return 15;
             if (hours <= 31 * 24) return 13;
             return 10;
@@ -2105,6 +2109,7 @@ public class MonitoringController {
     /** Kova anahtarını (kısaltılmış ISO) tam ISO timestamp'e açar (grafik x-ekseni). */
     private static String bucketIso(String key, int keyLen) {
         return switch (keyLen) {
+            case 16 -> key + ":00";         // ...THH:mm → ...THH:mm:00
             case 15 -> key + "0:00";        // ...THH:m → ...THH:m0:00
             case 13 -> key + ":00:00";      // ...THH   → ...THH:00:00
             default -> key + "T00:00:00";   // yyyy-MM-dd → ...T00:00:00
@@ -2165,7 +2170,7 @@ public class MonitoringController {
         }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("series",     series);
-        out.put("bucket",     keyLen == 15 ? "10m" : keyLen == 13 ? "hour" : "day");
+        out.put("bucket",     keyLen == 16 ? "minute" : keyLen == 15 ? "10m" : keyLen == 13 ? "hour" : "day");
         out.put("unit",       "ms");
         out.put("from",       from);
         out.put("to",         to);
@@ -2909,6 +2914,13 @@ public class MonitoringController {
                 new CsvColumn<>("failed_count", com.sitemonitor.model.PageSpeedCheck::getFailedCount),
                 new CsvColumn<>("bytes_truncated", com.sitemonitor.model.PageSpeedCheck::getBytesTruncated),
                 new CsvColumn<>("breached_metrics", com.sitemonitor.model.PageSpeedCheck::getBreachedMetrics),
+                // İhlal delili: hangi eşik neydi, ölçülen neydi — dışa aktarımda da taşınmalı,
+                // yoksa CSV'ye bakan kişi "eşik aşıldı"nın sebebini yine göremez.
+                new CsvColumn<>("breach_detail", com.sitemonitor.model.PageSpeedCheck::getBreachDetail),
+                new CsvColumn<>("dns_ms", com.sitemonitor.model.PageSpeedCheck::getDnsMs),
+                new CsvColumn<>("connect_ms", com.sitemonitor.model.PageSpeedCheck::getConnectMs),
+                new CsvColumn<>("tls_ms", com.sitemonitor.model.PageSpeedCheck::getTlsMs),
+                new CsvColumn<>("server_ms", com.sitemonitor.model.PageSpeedCheck::getServerMs),
                 new CsvColumn<>("error", com.sitemonitor.model.PageSpeedCheck::getErrorMessage)), response);
     }
 

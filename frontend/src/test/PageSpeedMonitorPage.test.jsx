@@ -308,7 +308,50 @@ describe('PageSpeedMonitorPage', () => {
     fireEvent.click(await screen.findByText('https://x.com/odeme'))
     fireEvent.click(screen.getByRole('button', { name: /check history|kontrol geçmişi/i }))
 
-    expect(await screen.findByText(/over threshold|eşik aşıldı/i)).toBeInTheDocument()
+    // Satir artik ihlal eden metrikleri de yaziyor; "esik asildi" birden fazla dugumde geciyor.
+    // Onemli olan DOWN degil SLOW etiketlenmesi.
+    expect((await screen.findAllByText(/over threshold|eşik aşıldı/i)).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/^Down$|^Kesinti$/i)).toBeNull()
+  })
+
+  /**
+   * "Esik asildi" TEK BASINA yetmez: kullanici hangi metrigin, hangi esikle, kac olculdugu icin
+   * asildigini goremiyordu. Veri zaten kayitliydi (breached_metrics + breach_detail), satir onu
+   * okuyup atiyordu.
+   */
+  it('Kontrol Gecmisi: HANGI esik, kac idi, kac olculdu satirda YAZAR', async () => {
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      items: [{ checked_at: '2026-08-25T21:53:19', ok: true, breached_metrics: 'TTFB',
+                breach_detail: 'TTFB:1000>2955',
+                response_ms: 15094, ttfb_ms: 2955, total_bytes: 44 * 1024 * 1024, request_count: 182 }],
+      counts: { total: 1, fail: 0 }, buckets: [], alerts: [],
+      range: { from: '2026-08-16T00:00:00', to: '2026-08-26T23:59:59' },
+      total: 1, page: 0, size: 50 } })
+    render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await screen.findByText('https://x.com/odeme'))
+    fireEvent.click(screen.getByRole('button', { name: /check history|kontrol geçmişi/i }))
+
+    expect(await screen.findByText(/TTFB over threshold|TTFB eşiği aşıldı/i)).toBeInTheDocument()
+    // Esik ve olculen tek bir kutuda: "1000 → 2955"
+    const nums = document.querySelector('.pspd-breach-nums')
+    expect(nums).not.toBeNull()
+    expect(nums.textContent.replace(/\s+/g, ' ')).toContain('1000')
+    expect(nums.textContent).toContain('2955')
+  })
+
+  it('Delil YOKSA (eski kayit) satir COKMEZ, yalniz metrik adi yazar', async () => {
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      items: [{ checked_at: '2026-08-20T10:00:00', ok: true, breached_metrics: 'LOAD',
+                breach_detail: null,
+                response_ms: 9000, ttfb_ms: 120, total_bytes: 1024, request_count: 10 }],
+      counts: { total: 1, fail: 0 }, buckets: [], alerts: [],
+      range: { from: '2026-08-16T00:00:00', to: '2026-08-26T23:59:59' },
+      total: 1, page: 0, size: 50 } })
+    render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await screen.findByText('https://x.com/odeme'))
+    fireEvent.click(screen.getByRole('button', { name: /check history|kontrol geçmişi/i }))
+
+    expect(await screen.findByText(/Load time over threshold|Yükleme eşiği aşıldı/i)).toBeInTheDocument()
   })
 
   // ── Modal sekmelerinin HEPSI acilmali ──────────────────────────────────────────────────

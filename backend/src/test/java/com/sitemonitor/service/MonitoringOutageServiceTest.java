@@ -352,6 +352,63 @@ class MonitoringOutageServiceTest {
         assertThat(scheduled.get()).isEqualTo(1);
     }
 
+    /**
+     * ASIL KAPI. PAGESPEED_SLOW'un detail'ini {@code pageSpeedBreachDetail} üretir ve ÖLÇÜLEN
+     * değeri taşır ("TTFB 2955 ms"). Teyit anahtarı detail'i içerirken her sweep farklı bir
+     * anahtar doğuruyor, çift-zincir guard'ı hiç tutmuyordu: ihlal süren bir izleme için her
+     * sweep 3 denemelik YENİ bir zincir açıyordu ve her deneme tam bir sayfa indirmesi
+     * (yüzlerce istek, on MB'lar). Sentetikte çözülen kusurun aynısı.
+     */
+    @Test
+    @DisplayName("PAGESPEED_SLOW: ölçülen değer DEĞİŞSE de aynı izlemeye ikinci zincir başlamaz")
+    void pageSpeedSlow_detailChanges_stillOneChain() {
+        AtomicInteger scheduled = new AtomicInteger();
+        ScheduledThreadPoolExecutor recording = new ScheduledThreadPoolExecutor(1) {
+            @Override
+            public ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit) {
+                scheduled.incrementAndGet();
+                return null;
+            }
+        };
+        ReflectionTestUtils.setField(service, "confirmExecutor", recording);
+
+        // Aynı izleme, ardışık iki sweep — yalnız ölçülen değer farklı.
+        service.startConfirmation(item(EscalationService.TYPE_PAGESPEED_SLOW,
+                "https://x.example.com/", "TTFB 2750 ms", false, Map.of(),
+                MonitoringOutageServiceTest::up));
+        service.startConfirmation(item(EscalationService.TYPE_PAGESPEED_SLOW,
+                "https://x.example.com/", "TTFB 2955 ms", false, Map.of(),
+                MonitoringOutageServiceTest::up));
+
+        assertThat(scheduled.get())
+                .as("ölçülen değer anahtara girerse her sweep yeni bir zincir açar")
+                .isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("PAGESPEED_DOWN detail'e göre ayrışmaya DEVAM eder (farklı arıza = farklı zincir)")
+    void pageSpeedDown_keepsDetailInKey() {
+        AtomicInteger scheduled = new AtomicInteger();
+        ScheduledThreadPoolExecutor recording = new ScheduledThreadPoolExecutor(1) {
+            @Override
+            public ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit) {
+                scheduled.incrementAndGet();
+                return null;
+            }
+        };
+        ReflectionTestUtils.setField(service, "confirmExecutor", recording);
+
+        // DOWN'da detail ölçülen bir sayı değil ARIZA TÜRÜDÜR; ayrı tutmak doğrudur.
+        service.startConfirmation(item(EscalationService.TYPE_PAGESPEED_DOWN,
+                "https://x.example.com/", "sayfa HTTP 503", false, Map.of(),
+                MonitoringOutageServiceTest::up));
+        service.startConfirmation(item(EscalationService.TYPE_PAGESPEED_DOWN,
+                "https://x.example.com/", "bağlantı zaman aşımı", false, Map.of(),
+                MonitoringOutageServiceTest::up));
+
+        assertThat(scheduled.get()).isEqualTo(2);
+    }
+
     @Test
     @DisplayName("activeConfirmations: zincir başlarken attempt=0/total görünür; deneme koşarken X/N'e ilerler; bitince boşalır")
     void activeConfirmations_exposesLiveState() {

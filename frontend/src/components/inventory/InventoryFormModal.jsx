@@ -11,6 +11,7 @@ import NotificationGroupSelect from '../ui/NotificationGroupSelect.jsx'
 import { INVENTORY_FLAGS, emptyFlags } from '../../utils/inventoryFlags.js'
 import { CONTACT_FIELDS, looksLikeBrokenEmail } from '../../utils/inventoryContacts.js'
 import { LoadingBlock } from '../ui/Progress.jsx'
+import Field from '../ui/Field.jsx'
 
 /**
  * Envanter (sertifika) kayıt formu — InventoryManager'dan ÇIKARILDI ki dashboard kartındaki
@@ -368,18 +369,25 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
             ))}
           </div>
 
-          <label className="full-width">
-            {t('inv.formChangeDesc')}
-            <div data-color-mode={theme === 'dark' ? 'dark' : 'light'}>
-              <MDEditor
-                value={form.change_description}
-                onChange={(v) => f('change_description', v ?? '')}
-                preview="edit"
-                height={260}
-                visibleDragbar={false}
-              />
-            </div>
-          </label>
+          {/* Editör bilerek <label> ile SARILMAZ. MDEditor, görünen <pre> katmanının üstüne
+              metni şeffaf, mutlak konumlu bir <textarea> koyar; `.form-grid label textarea`
+              (0,2,1) kütüphanenin (0,1,0) kurallarını yenip o overlay'e OPAK arka plan verince
+              <pre> tamamen örtülüyor ve kutu BOŞ görünüyordu. Field, etiketi htmlFor ile ayrı
+              kurar — bağ korunur, seçici artık eşleşmez. */}
+          <Field label={t('inv.formChangeDesc')} className="full-width">
+            {({ id }) => (
+              <div className="md-editor-box" data-color-mode={theme === 'dark' ? 'dark' : 'light'}>
+                <MDEditor
+                  value={form.change_description}
+                  onChange={(v) => f('change_description', v ?? '')}
+                  preview="edit"
+                  height={260}
+                  visibleDragbar={false}
+                  textareaProps={{ id }}
+                />
+              </div>
+            )}
+          </Field>
 
         </div>
 

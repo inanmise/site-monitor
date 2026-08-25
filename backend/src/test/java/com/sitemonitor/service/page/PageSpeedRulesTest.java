@@ -5,6 +5,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -53,6 +54,49 @@ class PageSpeedRulesTest {
             var m = withThresholds(3000, 500, 1000, 50);
 
             assertThat(PageSpeedRules.evaluate(m, 3000, 500, 1000L * 1024, 50)).isEmpty();
+        }
+
+        /**
+         * TTFB eşiği SUNUCU bekleme süresine bakar.
+         *
+         * <p>Eski tek-parça {@code ttfbMs} DNS + TCP + TLS + yönlendirme zincirini de içeriyordu
+         * ve bağlantı havuzu sıcakken 41 ms, soğukken ~3 sn okunuyordu; eşik o rakama bakınca
+         * sunucu hiç yavaşlamamışken alarm üretiyordu.
+         */
+        @Test
+        @DisplayName("TTFB eşiği serverMs'e bakar; bağlantı kurma maliyeti alarm ÜRETMEZ")
+        void ttfbThresholdUsesServerPhase() {
+            var m = withThresholds(0, 500, 0, 0);
+
+            // Toplam 2955 ms ama sunucu yalnız 53 ms düşündü → ihlal YOK.
+            assertThat(PageSpeedRules.evaluate(m, null, 2955, 53, null, null)).isEmpty();
+            // Sunucunun kendisi yavaşladıysa ihlal VAR.
+            assertThat(PageSpeedRules.evaluate(m, null, 2955, 501, null, null))
+                    .containsExactly(PageSpeedRules.BREACH_TTFB);
+        }
+
+        @Test
+        @DisplayName("Faz ölçülemediyse eski ttfb'ye düşülür — eşik sessizce devre dışı KALMAZ")
+        void fallsBackToLegacyTtfbWhenPhaseMissing() {
+            var m = withThresholds(0, 500, 0, 0);
+
+            assertThat(PageSpeedRules.evaluate(m, null, 501, null, null, null))
+                    .containsExactly(PageSpeedRules.BREACH_TTFB);
+            assertThat(PageSpeedRules.evaluate(m, null, 500, null, null, null)).isEmpty();
+        }
+
+        @Test
+        @DisplayName("İhlal delili eşiği ve ölçüleni ÖLÇÜM ANINDAKİ değerlerle taşır")
+        void breachDetailCarriesThresholdAndMeasured() {
+            var m = withThresholds(3000, 500, 1000, 50);
+
+            String d = PageSpeedRules.breachDetail(m,
+                    List.of(PageSpeedRules.BREACH_TTFB, PageSpeedRules.BREACH_SIZE),
+                    15094, 2955, 2000L * 1024, 182);
+
+            // Boyut KB cinsinden: eşik KB girilir, delil de aynı birimde okunmalı.
+            assertThat(d).isEqualTo("TTFB:500>2955,SIZE:1000>2000");
+            assertThat(PageSpeedRules.breachDetail(m, List.of(), 1, 1, 1L, 1)).isNull();
         }
 
         @Test

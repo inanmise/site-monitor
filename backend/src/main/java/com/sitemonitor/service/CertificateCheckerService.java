@@ -40,6 +40,7 @@ public class CertificateCheckerService {
     private final ObjectMapper objectMapper;
     private final TrustEvaluator trustEvaluator;
     private final SsrfGuard ssrfGuard;
+    private final ProxySettings proxySettings;
 
     @Value("${site.monitor.check-timeout-seconds:6}")
     private int timeoutSeconds;
@@ -623,19 +624,10 @@ public class CertificateCheckerService {
         return proxyHost != null && !proxyHost.isBlank() && proxyPort > 0;
     }
 
+    /** NO_PROXY kararı {@link ProxySettings#bypass} ile TEK yerde tutulur — ikinci bir kopya,
+     *  HSTS tanılamasında olduğu gibi sessizce ayrışır ve aynı domain için iki farklı cevap üretir. */
     private boolean shouldBypassProxy(String domain) {
-        if (noProxyList == null || noProxyList.isBlank()) return false;
-        String d = domain.toLowerCase();
-        for (String entry : noProxyList.split(",")) {
-            String e = entry.trim().toLowerCase();
-            if (e.isEmpty()) continue;
-            if (e.startsWith(".")) {
-                if (d.endsWith(e) || d.equals(e.substring(1))) return true;
-            } else {
-                if (d.equals(e) || d.endsWith("." + e)) return true;
-            }
-        }
-        return false;
+        return proxySettings.bypass(domain);
     }
 
     /**

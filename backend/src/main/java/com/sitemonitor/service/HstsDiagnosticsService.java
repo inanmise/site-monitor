@@ -28,6 +28,12 @@ import java.util.regex.Pattern;
 @Service
 public class HstsDiagnosticsService {
 
+    private final ProxySettings proxySettings;
+
+    public HstsDiagnosticsService(ProxySettings proxySettings) {
+        this.proxySettings = proxySettings;
+    }
+
     @Value("${site.monitor.diagnostics.timeout-seconds:5}")
     private int timeoutSeconds;
     @Value("${site.monitor.proxy.host:}") private String proxyHost;
@@ -39,9 +45,25 @@ public class HstsDiagnosticsService {
     private static final SSLSocketFactory TRUST_ALL = buildTrustAll();
     private static final HostnameVerifier ALLOW_ALL = (h, s) -> true;
 
+    /**
+     * Geriye uyum: izlemenin {@code use_proxy} tercihi bilinmiyorsa vekil yapılandırılmışsa
+     * kullanılır. Tercihi BİLEN çağıranlar {@link #diagnose(String, int, boolean)} kullanmalı.
+     */
     public Map<String, Object> diagnose(String domain, int port) {
+        return diagnose(domain, port, true);
+    }
+
+    /**
+     * @param forceProxy izlemenin/envanter kaydının {@code use_proxy} tercihi
+     *
+     * <p>Bu parametre olmadan tanılama yalnız global yapılandırmaya bakıyordu: {@code use_proxy}
+     * kapalı bir hedef için sertifika kontrolü DOĞRUDAN bağlanıp başlığı bulurken (SSL sekmesi
+     * "HSTS etkin"), bu tanılama vekilden geçmeye çalışıp bağlanamıyor ve sağlık satırı
+     * "Doğrulanamadı" kalıyordu — aynı domain, iki farklı cevap.
+     */
+    public Map<String, Object> diagnose(String domain, int port, boolean forceProxy) {
         long start = System.currentTimeMillis();
-        boolean useProxy = proxyHost != null && !proxyHost.isBlank() && proxyPort > 0;
+        boolean useProxy = proxySettings.useFor(domain, forceProxy);
         int timeoutMs = Math.max(1, timeoutSeconds) * 1000;
         String url = "https://" + domain + (port == 443 ? "" : ":" + port) + "/";
 
@@ -50,6 +72,11 @@ public class HstsDiagnosticsService {
         r.put("port", port);
         r.put("url", url);
         r.put("proxy_used", useProxy);
+        // "Neden vekilden geçmedi/geçti" sorusu bir dahaki sefere koda bakmadan cevaplansın.
+        r.put("proxy_reason", !forceProxy ? "monitor_prefers_direct"
+                : !proxySettings.enabled() ? "proxy_not_configured"
+                : proxySettings.bypass(domain) ? "no_proxy_list"
+                : "proxy_configured");
 
         List<Map<String, Object>> checks = new ArrayList<>();
         List<String> notes = new ArrayList<>();
@@ -187,7 +214,10 @@ public class HstsDiagnosticsService {
                 hc.setRequestProperty("Proxy-Authorization", "Basic " + creds);
             }
         } else {
-            hc = (HttpURLConnection) url.openConnection();
+            // Doğrudan = KESİN doğrudan: JVM ProxySelector / sistem proxy ortam değişkenini
+            // baypas et. Aksi halde global yapılandırma boş olsa bile ortamdan gelen vekil
+            // sızar ve "doğrudan" dediğimiz istek yine vekilden geçerdi.
+            hc = (HttpURLConnection) url.openConnection(java.net.Proxy.NO_PROXY);
         }
         if (hc instanceof HttpsURLConnection https) {
             https.setSSLSocketFactory(TRUST_ALL);

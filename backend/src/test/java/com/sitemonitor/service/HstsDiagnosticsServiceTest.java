@@ -68,7 +68,7 @@ class HstsDiagnosticsServiceTest {
         server.start();
 
         int port = server.getAddress().getPort();
-        HstsDiagnosticsService svc = new HstsDiagnosticsService();
+        HstsDiagnosticsService svc = new HstsDiagnosticsService(new ProxySettings());
         ReflectionTestUtils.setField(svc, "timeoutSeconds", 5);
         return svc.diagnose("localhost", port);
     }
@@ -111,7 +111,7 @@ class HstsDiagnosticsServiceTest {
     @Test
     @DisplayName("diagnose: kapalı porta bağlanılamaz → CONNECT_FAILED + status=error")
     void diagnose_connectFailure_connectFailed() {
-        HstsDiagnosticsService svc = new HstsDiagnosticsService();
+        HstsDiagnosticsService svc = new HstsDiagnosticsService(new ProxySettings());
         ReflectionTestUtils.setField(svc, "timeoutSeconds", 2);
 
         Map<String, Object> r = svc.diagnose("localhost", 1);   // 1 numaralı port kapalı
@@ -119,6 +119,44 @@ class HstsDiagnosticsServiceTest {
         assertThat(r.get("status")).isEqualTo("error");
         assertThat(r.get("verdict")).isEqualTo("CONNECT_FAILED");
         assertThat(r.get("error")).isNotNull();
+    }
+
+    /**
+     * İzlemenin vekil tercihi KARARA girmeli.
+     *
+     * <p>Bu parametre yok sayıldığında ({@code use_proxy=Hayır} olsa bile vekilden geçmeye
+     * çalışmak) sertifika kontrolü doğrudan bağlanıp "HSTS etkin" derken sağlık satırı
+     * bağlanamayıp "Doğrulanamadı" kalıyordu — aynı domain, iki farklı cevap. Bağlantının
+     * başarısı burada önemli değil; sınanan KARAR.
+     */
+    @org.junit.jupiter.api.Test
+    @DisplayName("İzleme DOĞRUDAN istiyorsa vekil yapılandırılmış olsa da kullanılmaz")
+    void monitorPreference_decidesProxyUsage() {
+        ProxySettings proxy = new ProxySettings();
+        ReflectionTestUtils.setField(proxy, "host", "proxy.example.com");
+        ReflectionTestUtils.setField(proxy, "port", 8080);
+        ReflectionTestUtils.setField(proxy, "noProxy", "");
+        HstsDiagnosticsService svc = new HstsDiagnosticsService(proxy);
+        ReflectionTestUtils.setField(svc, "timeoutSeconds", 1);
+
+        assertThat(svc.diagnose("hedef.example.com", 443, false).get("proxy_used")).isEqualTo(false);
+        assertThat(svc.diagnose("hedef.example.com", 443, true).get("proxy_used")).isEqualTo(true);
+    }
+
+    @org.junit.jupiter.api.Test
+    @DisplayName("Kararın GEREKÇESİ raporda yazılı — 'neden bağlanamadı' koda bakmadan cevaplansın")
+    void proxyReasonIsReported() {
+        ProxySettings proxy = new ProxySettings();
+        ReflectionTestUtils.setField(proxy, "host", "proxy.example.com");
+        ReflectionTestUtils.setField(proxy, "port", 8080);
+        ReflectionTestUtils.setField(proxy, "noProxy", "example.com");
+        HstsDiagnosticsService svc = new HstsDiagnosticsService(proxy);
+        ReflectionTestUtils.setField(svc, "timeoutSeconds", 1);
+
+        assertThat(svc.diagnose("hedef.example.com", 443, false).get("proxy_reason"))
+                .isEqualTo("monitor_prefers_direct");
+        assertThat(svc.diagnose("hedef.example.com", 443, true).get("proxy_reason"))
+                .isEqualTo("no_proxy_list");
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

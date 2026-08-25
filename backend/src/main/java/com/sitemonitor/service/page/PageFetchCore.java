@@ -174,6 +174,9 @@ public class PageFetchCore {
      */
     public Fetch fetch(String url, String method, FetchOptions opts) {
         long start = System.currentTimeMillis();
+        // Kendi SSRF/DNS kontrolumuzun suresi TTFB'ye YAZILMAZ: hedefin yavasligi degil bizim
+        // guvenlik kapimizin maliyetidir. Olcum penceresinden dusulur (her hop icin toplanir).
+        long guardMs = 0L;
         String current = url;
         String m = method;
         try {
@@ -185,7 +188,9 @@ public class PageFetchCore {
                     // yeniden çözer → TOCTOU/DNS-rebind penceresi. Metadata/loopback/link-local HER ZAMAN bloklu +
                     // JVM pozitif-DNS cache pratik riski azaltır; IP-pinning (NetworkResolver) bilinçli uygulanmadı
                     // (HTTPS SNI karmaşası + kaynak-başı maliyet). Ops: networkaddress.cache.ttl'i 0'a çekmeyin.
+                    long g0 = System.currentTimeMillis();
                     ssrfGuard.validate(host);
+                    guardMs += System.currentTimeMillis() - g0;
                 } catch (SsrfGuard.BlockedException be) {
                     return new Fetch(0, 0L, System.currentTimeMillis() - start, 0L, null, be.getMessage(), true, false);
                 }
@@ -195,14 +200,19 @@ public class PageFetchCore {
                         // Tarayıcı-benzeri header seti: katı sunucular Accept/Accept-Language yoksa 406/403 döner.
                         .header("User-Agent", opts.userAgent())
                         .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-                        .header("Accept-Language", "tr,en;q=0.9");
+                        .header("Accept-Language", "tr,en;q=0.9")
+                        // Java HttpClient bu basligi KENDILIGINDEN EKLEMEZ ve otomatik ACMAZ.
+                        // Gondermeyince sunucu sikistirmasiz yaniyor: arayuz "transfer boyutu"
+                        // diyordu ama olculen sey acilmis boyuttu (44.6 MB ↔ tarayicida 6.1 MB).
+                        // Artik telde ne gidiyorsa o sayiliyor; govde YALNIZ ayristirmak icin aciliyor.
+                        .header("Accept-Encoding", "gzip, deflate");
                 applyExtraHeaders(rb, opts.extraHeaders());
                 HttpRequest req = "HEAD".equals(m)
                         ? rb.method("HEAD", HttpRequest.BodyPublishers.noBody()).build()
                         : rb.GET().build();
                 HttpResponse<InputStream> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofInputStream());
                 // send() başlıklar geldiğinde döner → ilk-bayt anı burasıdır (gövde henüz okunmadı).
-                long ttfb = System.currentTimeMillis() - start;
+                long ttfb = Math.max(0L, System.currentTimeMillis() - start - guardMs);
                 int sc = resp.statusCode();
                 if (sc >= 300 && sc < 400) {
                     String loc = resp.headers().firstValue("location").orElse(null);
@@ -217,10 +227,16 @@ public class PageFetchCore {
                 byte[] body = null;
                 long count = 0L;
                 boolean truncated = false;
+                String encoding = resp.headers().firstValue("content-encoding").orElse(null);
                 try (InputStream is = resp.body()) {
                     if (opts.wantBody()) {
-                        body = is.readNBytes(MAX_BODY_BYTES);
-                        count = body.length;
+                        // SAYIM telden gelen (sıkıştırılmış) bayt üzerinden; GÖVDE ayrıştırmak için açılır.
+                        // İkisini karıştırmak iki ayrı hataya yol açardı: sıkıştırılmışı parse etmek
+                        // envanteri BOŞ bırakır (hiç kaynak ölçülmez), açılmışı saymak da "transfer
+                        // boyutu" etiketini yine yalancı yapardı.
+                        byte[] raw = is.readNBytes(MAX_BODY_BYTES);
+                        count = raw.length;
+                        body = decode(raw, encoding);
                         if (opts.countBytes()) {                   // tavanın ötesini SAY (sakla değil)
                             count += drain(is, MAX_COUNT_BYTES - count);
                             truncated = count >= MAX_COUNT_BYTES;
@@ -239,6 +255,32 @@ public class PageFetchCore {
             String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
             return new Fetch(0, 0L, System.currentTimeMillis() - start, 0L, null, msg, false, false);
         }
+    }
+
+    /**
+     * Sıkıştırılmış gövdeyi açar (gzip/deflate). Açılamazsa HAM bayt döner: bozuk/kesik bir
+     * akış yüzünden sayfanın tamamen ölçülemez hale gelmesindense, ayrıştırıcının elinden
+     * geleni yapması yeğdir (jsoup bozuk girdide boş envanter döner, istisna sızmaz).
+     */
+    private static byte[] decode(byte[] raw, String encoding) {
+        if (raw == null || raw.length == 0 || encoding == null) return raw;
+        String enc = encoding.trim().toLowerCase(java.util.Locale.ROOT);
+        try (java.io.ByteArrayInputStream in = new java.io.ByteArrayInputStream(raw)) {
+            if (enc.contains("gzip")) {
+                try (java.util.zip.GZIPInputStream g = new java.util.zip.GZIPInputStream(in)) {
+                    return g.readAllBytes();
+                }
+            }
+            if (enc.contains("deflate")) {
+                try (java.util.zip.InflaterInputStream d =
+                             new java.util.zip.InflaterInputStream(in, new java.util.zip.Inflater(true))) {
+                    return d.readAllBytes();
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Gövde açılamadı ({}), ham bayt kullanılıyor: {}", enc, e.getMessage());
+        }
+        return raw;
     }
 
     /**
@@ -301,12 +343,24 @@ public class PageFetchCore {
      *                           ağırlığını katbekat şişirir. Sayfa Bütünlüğü hepsini ister (herhangi
      *                           biri kırık olabilir), Sayfa Hızı görsel başına BİR tane ister.
      */
-    public record InventoryOptions(boolean hyperlinks, boolean allImageCandidates) {
-        /** Sayfa Bütünlüğü: her şeyi topla (mevcut davranış). */
-        public static final InventoryOptions FULL = new InventoryOptions(true, true);
-        /** Sayfa Hızı: tarayıcının GERÇEKTEN indireceği kadarı — link yok, görsel başına tek aday. */
-        public static final InventoryOptions AS_BROWSER_LOADS = new InventoryOptions(false, false);
+    public record InventoryOptions(boolean hyperlinks, boolean allImageCandidates, boolean skipLazy) {
+        /** Sayfa Bütünlüğü: her şeyi topla (mevcut davranış). {@code loading=lazy} DAHİL —
+         *  orada soru "bu kaynak var mı", tarayıcının onu ne zaman istediği değil. */
+        public static final InventoryOptions FULL = new InventoryOptions(true, true, false);
+        /**
+         * Sayfa Hızı: tarayıcının GERÇEKTEN indireceği kadarı — link yok, görsel başına tek aday,
+         * {@code loading="lazy"} kaynaklar ATLANIR.
+         *
+         * <p>Lazy atlama bir "iyileştirme" değil doğruluk meselesi: tarayıcı ekran dışındaki
+         * (karusel slaytı, sayfa altı) görselleri hiç istemez. Onları indirmek sayfayı olduğundan
+         * kat kat ağır gösteriyordu — ölçülen 44.6 MB / 182 istek, aynı sayfada tarayıcı 6.1 MB /
+         * 124 istek. Atlanan sayı raporlanır: sessizce eksiltmek de fazla saymak kadar yanıltıcı.
+         */
+        public static final InventoryOptions AS_BROWSER_LOADS = new InventoryOptions(false, false, true);
     }
+
+    /** Envanter + ölçüm dışı bırakılanların sayısı. */
+    public record Inventory(List<Resource> resources, int skippedLazy) {}
 
     /** Geriye uyum: seçeneksiz çağrı Sayfa Bütünlüğü davranışını korur. */
     public List<Resource> inventory(byte[] bytes, String baseUrl, String sourcePage, Predicate<String> exclude) {
@@ -331,6 +385,14 @@ public class PageFetchCore {
             return List.of();
         }
         LinkedHashMap<String, Resource> out = new LinkedHashMap<>();   // absUrl → Resource (dedup, sıra korunur)
+        // loading="lazy" URL'leri: aşağıda envanterden düşülür (yalnız AS_BROWSER_LOADS'ta).
+        java.util.Set<String> lazyUrls = new java.util.HashSet<>();
+        if (opts.skipLazy()) {
+            for (Element el : doc.select("img[loading=lazy][src], iframe[loading=lazy][src]")) {
+                String abs = normalizeUrl(el.absUrl("src"));
+                if (!abs.isBlank()) lazyUrls.add(abs);
+            }
+        }
         addAll(out, doc, "img[src]", "src", "IMG", sourcePage);
         addSrcset(out, doc, sourcePage, opts.allImageCandidates());
         addAll(out, doc, "link[rel=stylesheet][href]", "href", "CSS", sourcePage);
@@ -340,8 +402,10 @@ public class PageFetchCore {
         addAll(out, doc, "link[rel=preload][as=font][href]", "href", "FONT", sourcePage);
         if (opts.hyperlinks()) addAll(out, doc, "a[href]", "href", "LINK", sourcePage);
         List<Resource> list = new ArrayList<>();
+        int skippedLazy = 0;
         for (Resource r : out.values()) {
             if (!isHttp(r.url())) continue;
+            if (lazyUrls.contains(r.url())) { skippedLazy++; continue; }
             if (exclude != null && exclude.test(r.url())) continue;
             // Sayfanın kendisine çözülen link (a[href="#x"], href="") — gereksiz self-request
             if ("LINK".equals(r.type()) && stripFragment(r.url()).equalsIgnoreCase(sourcePage)) continue;
@@ -351,8 +415,20 @@ public class PageFetchCore {
                 break;
             }
         }
+        lastSkippedLazy.set(skippedLazy);
         return list;
     }
+
+    /** Envanter + atlanan lazy sayısı — sayının çağırana ULAŞMASI için (ölçüm raporunda yazılır). */
+    public Inventory inventoryDetailed(byte[] bytes, String baseUrl, String sourcePage,
+                                       Predicate<String> exclude, InventoryOptions opts) {
+        List<Resource> list = inventory(bytes, baseUrl, sourcePage, exclude, opts);
+        return new Inventory(list, lastSkippedLazy.get());
+    }
+
+    /** {@link #inventoryDetailed} çağıran thread'in son sayısını taşır — paylaşılan alan DEĞİL
+     *  (bu servis tekil ve envanter paralel çağrılabilir; ThreadLocal olmadan sayı karışırdı). */
+    private final ThreadLocal<Integer> lastSkippedLazy = ThreadLocal.withInitial(() -> 0);
 
     private void addAll(Map<String, Resource> out, Document doc, String css, String attr, String type, String src) {
         for (Element el : doc.select(css)) {

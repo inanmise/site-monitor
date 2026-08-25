@@ -517,7 +517,12 @@ public class AdminController {
         int port = portRaw != null ? portRaw.intValue() : 443;
         if (port < 1 || port > 65535)
             throw new IllegalArgumentException("Port must be between 1 and 65535");
-        Map<String, Object> data = hstsDiagnosticsService.diagnose(domain, port);
+        // Envanterdeki vekil tercihi BURADA da geçerli: elle tanılama ile Sağlık sekmesi
+        // aynı yoldan çıkmalı, yoksa iki ekran aynı domain için farklı cevap verir.
+        boolean forceProxy = inventoryRepo.findByDomain(domain)
+                .map(ci -> Boolean.TRUE.equals(ci.getUseProxy()))
+                .orElse(true);          // envanterde yoksa eski davranış: vekil varsa kullan
+        Map<String, Object> data = hstsDiagnosticsService.diagnose(domain, port, forceProxy);
         auditService.recordAction("DIAGNOSTICS_HSTS", session, request,
                 "CERTIFICATE", domain, "{\"port\":" + port + "}");
         String verdict = String.valueOf(data.get("verdict"));

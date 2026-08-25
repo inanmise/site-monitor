@@ -1,6 +1,7 @@
 package com.sitemonitor.service;
 
 import com.sitemonitor.model.PageSpeedMonitor;
+import com.sitemonitor.service.page.HttpPhaseProbe;
 import com.sitemonitor.service.page.PageFetchCore;
 import com.sitemonitor.service.page.PageSpeedRules;
 import com.sitemonitor.util.MonitorUrls;
@@ -58,12 +59,22 @@ public class PageSpeedCheckerService {
     public record Result(String status, Integer statusCode, long ttfbMs, long htmlMs, long totalMs,
                          long totalBytes, int requestCount, int failedCount, boolean capped,
                          boolean bytesTruncated,
-                         List<String> breached, String error, List<Measured> resources) {
+                         List<String> breached, String error, List<Measured> resources,
+                         HttpPhaseProbe.Phases phases, int skippedLazy) {
 
         public boolean reachable() { return "OK".equals(status) || "SLOW".equals(status); }
+
+        /** Eski çağrı biçimi (faz/lazy bilgisi olmadan) — test ve geriye uyum. */
+        public Result(String status, Integer statusCode, long ttfbMs, long htmlMs, long totalMs,
+                      long totalBytes, int requestCount, int failedCount, boolean capped,
+                      boolean bytesTruncated, List<String> breached, String error, List<Measured> resources) {
+            this(status, statusCode, ttfbMs, htmlMs, totalMs, totalBytes, requestCount, failedCount,
+                    capped, bytesTruncated, breached, error, resources, HttpPhaseProbe.NONE, 0);
+        }
     }
 
     private final PageFetchCore core;
+    private final HttpPhaseProbe phaseProbe;
     private final PublicSuffixService publicSuffixService;
     private final AppSettingsService appSettings;
     private final SecretCipher secretCipher;
@@ -111,6 +122,11 @@ public class PageSpeedCheckerService {
             return new Result("CONFIG_ERROR", null, 0, 0, 0, 0, 0, 0, false, false,
                     List.of(), MonitorUrls.CONFIG_ERROR_MSG, List.of());
         }
+        // Faz kırılımı ÖNCE ölçülür (taze bağlantı): HttpClient havuzu ısındıktan sonra ölçmek
+        // "sıcak" bir rakam verirdi ve karşılaştırılabilirliği bozardı. Prob ASIL ölçümün ön
+        // şartı değildir — başarısız olursa fazlar null kalır, kontrol normal sürer.
+        HttpPhaseProbe.Phases phases = phaseProbe.measure(url, timeoutMs);
+
         long start = System.currentTimeMillis();
         long deadline = start + maxCheckSeconds() * 1000L;
         Map<String, String> headers = buildHeaders(dnt, basicAuth, customHeaders);
@@ -124,7 +140,7 @@ public class PageSpeedCheckerService {
                     : (main.status() >= 400 ? "sayfa HTTP " + main.status() : "sayfa alınamadı");
             return new Result("DOWN", main.status() == 0 ? null : main.status(),
                     main.ttfbMs(), main.durationMs(), System.currentTimeMillis() - start,
-                    main.bytes(), 1, 1, false, false, List.of(), err, List.of());
+                    main.bytes(), 1, 1, false, false, List.of(), err, List.of(), phases, 0);
         }
 
         String rootHost = PageFetchCore.hostOf(url);
@@ -132,8 +148,9 @@ public class PageSpeedCheckerService {
         // Bu bir "iyileştirme" değil DOĞRULUK meselesi — envanter tavanı (500) eskiden link'lere
         // harcanıyordu (link ağırlıklı bir sayfada gerçek kaynaklar hiç ölçülmüyordu) ve responsive
         // görsellerin her varyantı ayrı sayıldığı için sayfa ağırlığı katbekat şişiyordu.
-        List<PageFetchCore.Resource> loadable =
-                core.inventory(main.body(), url, url, exclude, PageFetchCore.InventoryOptions.AS_BROWSER_LOADS);
+        PageFetchCore.Inventory inv =
+                core.inventoryDetailed(main.body(), url, url, exclude, PageFetchCore.InventoryOptions.AS_BROWSER_LOADS);
+        List<PageFetchCore.Resource> loadable = inv.resources();
         // Tavan artık YALNIZ indirilen kaynaklara bakıyor, yani "ölçüm kısmi" uyarısı gerçekten
         // kısmi olduğunda çıkıyor.
         boolean capped = loadable.size() >= PageFetchCore.MAX_RESOURCES_PER_CHECK;
@@ -160,12 +177,14 @@ public class PageSpeedCheckerService {
         long totalMs = System.currentTimeMillis() - start;
 
         List<String> breached = thresholds == null ? List.of()
-                : PageSpeedRules.evaluate(thresholds, (int) totalMs, (int) main.ttfbMs(), totalBytes, requestCount);
+                : PageSpeedRules.evaluate(thresholds, (int) totalMs, (int) main.ttfbMs(),
+                        phases.serverMs(), totalBytes, requestCount);
 
         // Eşik aşımı bir PERFORMANS olayıdır, kesinti değil: status SLOW, ok=true kalır.
         String status = breached.isEmpty() ? "OK" : "SLOW";
         return new Result(status, main.status(), main.ttfbMs(), main.durationMs(), totalMs,
-                totalBytes, requestCount, failed, capped, bytesTruncated, breached, null, measured);
+                totalBytes, requestCount, failed, capped, bytesTruncated, breached, null, measured,
+                phases, inv.skippedLazy());
     }
 
     /** Tartım sonucu: satırlar + toplam bayt bütçesinin dolup dolmadığı. */

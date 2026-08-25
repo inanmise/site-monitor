@@ -353,7 +353,9 @@ public class CertificateController {
         // süpürmeye eklenseydi tüm envanter için her saat HTML çekilirdi. Best-effort: bu
         // kontroller patlasa da sertifika tazelemesi tamamlanmış sayılır.
         try {
-            appLayerProbe.refresh(domain, port);
+            // İzlemenin kendi vekil tercihi proba da geçer: yukarıdaki sertifika kontrolü
+            // aynı tercihle koşuyor, ikisi ayrışırsa aynı domain için iki farklı cevap çıkar.
+            appLayerProbe.refresh(domain, port, Boolean.TRUE.equals(inv.getUseProxy()));
         } catch (Exception e) {
             log.debug("Uygulama katmanı kontrolleri atlandı ({}): {}", domain, e.toString());
         }

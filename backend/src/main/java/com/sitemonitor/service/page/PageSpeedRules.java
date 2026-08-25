@@ -43,10 +43,26 @@ public final class PageSpeedRules {
      */
     public static List<String> evaluate(PageSpeedMonitor m, Integer loadMs, Integer ttfbMs,
                                         Long totalBytes, Integer requestCount) {
+        return evaluate(m, loadMs, ttfbMs, null, totalBytes, requestCount);
+    }
+
+    /**
+     * @param serverMs SUNUCU bekleme süresi (faz kırılımından); {@code null} ise eski tek-parça
+     *                 {@code ttfbMs}'e düşülür.
+     *
+     * <p>TTFB eşiği neden {@code serverMs}'e bakar: eski {@code ttfbMs} DNS + TCP + TLS +
+     * yönlendirme zincirini de içeriyordu ve bağlantı havuzu sıcakken 41 ms, soğukken ~3 sn
+     * okunuyordu. Eşik o rakama bakınca sunucu hiç yavaşlamamışken alarm üretiyordu — ölçtüğü
+     * şey sunucunun değil BİZİM bağlantı kurma maliyetimizdi. Fazlar ölçülemediyse (eski kayıt,
+     * prob başarısız) eskiye düşmek zorunlu: eşiği sessizce devre dışı bırakmak, alarmı
+     * kaybetmek olurdu.
+     */
+    public static List<String> evaluate(PageSpeedMonitor m, Integer loadMs, Integer ttfbMs,
+                                        Integer serverMs, Long totalBytes, Integer requestCount) {
         List<String> out = new ArrayList<>(4);
         if (m == null) return out;
         if (exceeds(loadMs, m.getMaxLoadMs())) out.add(BREACH_LOAD);
-        if (exceeds(ttfbMs, m.getMaxTtfbMs())) out.add(BREACH_TTFB);
+        if (exceeds(serverMs != null ? serverMs : ttfbMs, m.getMaxTtfbMs())) out.add(BREACH_TTFB);
         // Boyut eşiği KB cinsinden girilir, ölçüm bayt — çevrim TEK yerde olsun diye burada.
         if (m.getMaxPageKb() != null && m.getMaxPageKb() > 0 && totalBytes != null
                 && totalBytes > m.getMaxPageKb() * 1024L) {
@@ -58,6 +74,34 @@ public final class PageSpeedRules {
 
     private static boolean exceeds(Integer measured, Integer threshold) {
         return threshold != null && threshold > 0 && measured != null && measured > threshold;
+    }
+
+    /**
+     * İhlal DELİLİ: {@code "TTFB:1000>2955,LOAD:8000>15094"} — eşik ve ölçülen, ölçüm anındaki
+     * değerlerle. Kullanıcı eşiği sonradan değiştirince geçmiş satır yanlış sayıyla açıklanmasın.
+     * Boş liste → {@code null}.
+     */
+    public static String breachDetail(PageSpeedMonitor m, List<String> breaches, Integer loadMs,
+                                      Integer ttfbMs, Long totalBytes, Integer requestCount) {
+        if (m == null || breaches == null || breaches.isEmpty()) return null;
+        List<String> parts = new ArrayList<>(breaches.size());
+        for (String b : breaches) {
+            switch (b) {
+                case BREACH_LOAD     -> parts.add(pair(BREACH_LOAD, m.getMaxLoadMs(), loadMs));
+                case BREACH_TTFB     -> parts.add(pair(BREACH_TTFB, m.getMaxTtfbMs(), ttfbMs));
+                // Boyut eşiği KB girilir, ölçüm bayt: delil de KB cinsinden yazılır ki eşikle
+                // aynı birimde okunsun (bayt yazmak kullanıcıyı her seferinde bölmeye zorlardı).
+                case BREACH_SIZE     -> parts.add(pair(BREACH_SIZE, m.getMaxPageKb(),
+                        totalBytes == null ? null : (int) (totalBytes / 1024)));
+                case BREACH_REQUESTS -> parts.add(pair(BREACH_REQUESTS, m.getMaxRequests(), requestCount));
+                default              -> parts.add(b);
+            }
+        }
+        return String.join(",", parts);
+    }
+
+    private static String pair(String key, Integer threshold, Integer measured) {
+        return key + ":" + (threshold == null ? "?" : threshold) + ">" + (measured == null ? "?" : measured);
     }
 
     /** {@code evaluate} çıktısını DB kolonuna yazılacak biçime çevirir (boşsa null → "ihlal yok"). */

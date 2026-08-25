@@ -24,6 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -65,18 +66,57 @@ class CertificateAppLayerProbeTest {
     @Test
     @DisplayName("ENFORCED → açık; ABSENT ve NOT_ENFORCED → eksik; bağlantı hatası → UNKNOWN")
     void hstsVerdictMapping() {
-        when(hstsService.diagnose(anyString(), anyInt())).thenReturn(Map.of("verdict", "ENFORCED"));
-        assertThat(probe.checkHsts("a.example.com", 443)).isEqualTo("ENABLED");
+        when(hstsService.diagnose(anyString(), anyInt(), anyBoolean())).thenReturn(Map.of("verdict", "ENFORCED"));
+        assertThat(probe.checkHsts("a.example.com", 443, false)).isEqualTo("ENABLED");
 
-        when(hstsService.diagnose(anyString(), anyInt())).thenReturn(Map.of("verdict", "ABSENT"));
-        assertThat(probe.checkHsts("a.example.com", 443)).isEqualTo("MISSING");
+        when(hstsService.diagnose(anyString(), anyInt(), anyBoolean())).thenReturn(Map.of("verdict", "ABSENT"));
+        assertThat(probe.checkHsts("a.example.com", 443, false)).isEqualTo("MISSING");
 
         // max-age=0 politikayı SİLER: başlık var diye "açık" saymak yanlış olurdu.
-        when(hstsService.diagnose(anyString(), anyInt())).thenReturn(Map.of("verdict", "NOT_ENFORCED"));
-        assertThat(probe.checkHsts("a.example.com", 443)).isEqualTo("MISSING");
+        when(hstsService.diagnose(anyString(), anyInt(), anyBoolean())).thenReturn(Map.of("verdict", "NOT_ENFORCED"));
+        assertThat(probe.checkHsts("a.example.com", 443, false)).isEqualTo("MISSING");
 
-        when(hstsService.diagnose(anyString(), anyInt())).thenReturn(Map.of("verdict", "CONNECT_FAILED"));
-        assertThat(probe.checkHsts("a.example.com", 443)).isEqualTo("UNKNOWN");
+        when(hstsService.diagnose(anyString(), anyInt(), anyBoolean())).thenReturn(Map.of("verdict", "CONNECT_FAILED"));
+        assertThat(probe.checkHsts("a.example.com", 443, false)).isEqualTo("UNKNOWN");
+    }
+
+    /**
+     * İzlemenin vekil tercihi tanılamaya AYNEN iner.
+     *
+     * <p>Parametre yolda yutulursa tanılama kararı yalnız global yapılandırmadan türer;
+     * {@code use_proxy=Hayır} olan bir hedef için sertifika kontrolü doğrudan bağlanıp başlığı
+     * bulurken bu probe vekilden geçmeye çalışıp bağlanamaz ve satır "Doğrulanamadı" kalır.
+     */
+    @Test
+    @DisplayName("use_proxy tercihi tanılamaya AYNEN geçer (yutulursa iki ekran ayrışır)")
+    void forceProxyReachesDiagnostics() {
+        when(hstsService.diagnose(anyString(), anyInt(), anyBoolean()))
+                .thenReturn(Map.of("verdict", "ENFORCED"));
+
+        probe.checkHsts("a.example.com", 443, false);
+        verify(hstsService).diagnose("a.example.com", 443, false);
+
+        probe.checkHsts("a.example.com", 443, true);
+        verify(hstsService).diagnose("a.example.com", 443, true);
+    }
+
+    @Test
+    @DisplayName("UNKNOWN'un GEREKÇESİ kaydedilir; sağlam sonuçta not TEMİZLENİR")
+    void unknownStoresReason() {
+        LatestCheck lc = stored();
+        when(hstsService.diagnose(anyString(), anyInt(), anyBoolean())).thenReturn(
+                Map.of("verdict", "CONNECT_FAILED", "error", "connect timed out",
+                       "proxy_reason", "monitor_prefers_direct"));
+
+        probe.refresh("a.example.com", 443, false);
+
+        // "Doğrulanamadı" deyip nedenini söylememek kullanıcıyı tam olarak koda bakmaya zorluyordu.
+        assertThat(lc.getHstsNote()).contains("connect timed out").contains("monitor_prefers_direct");
+
+        when(hstsService.diagnose(anyString(), anyInt(), anyBoolean())).thenReturn(Map.of("verdict", "ENFORCED"));
+        probe.refresh("a.example.com", 443, false);
+        // Eski gerekçe ASILI KALMAZ: sorun geçtikten sonra da görünmesi yanıltıcı olurdu.
+        assertThat(lc.getHstsNote()).isNull();
     }
 
     // ── Karışık içerik ──────────────────────────────────────────────────────
@@ -157,11 +197,11 @@ class CertificateAppLayerProbeTest {
     @DisplayName("Sonuçlar tarihleriyle birlikte kaydedilir — sonraki açılışta 'kontrol edilmedi' demez")
     void resultsArePersistedWithTimestamps() {
         LatestCheck lc = stored();
-        when(hstsService.diagnose(anyString(), anyInt())).thenReturn(Map.of("verdict", "ENFORCED"));
+        when(hstsService.diagnose(anyString(), anyInt(), anyBoolean())).thenReturn(Map.of("verdict", "ENFORCED"));
         when(pageMonitorRepo.findByUrlContainingIgnoreCaseAndActiveTrue(anyString())).thenReturn(List.of());
         when(pageChecker.test(anyString(), anyInt())).thenReturn(pageResult(true, 0));
 
-        probe.refresh("a.example.com", 443);
+        probe.refresh("a.example.com", 443, false);
 
         ArgumentCaptor<LatestCheck> cap = ArgumentCaptor.forClass(LatestCheck.class);
         verify(latestCheckRepo).save(cap.capture());
@@ -177,11 +217,11 @@ class CertificateAppLayerProbeTest {
     @DisplayName("Bir probe patlarsa DİĞERİ yine koşar ve UNKNOWN olarak kaydedilir")
     void oneFailingProbeDoesNotBlockTheOther() {
         stored();
-        when(hstsService.diagnose(anyString(), anyInt())).thenThrow(new RuntimeException("ağ yok"));
+        when(hstsService.diagnose(anyString(), anyInt(), anyBoolean())).thenThrow(new RuntimeException("ağ yok"));
         when(pageMonitorRepo.findByUrlContainingIgnoreCaseAndActiveTrue(anyString())).thenReturn(List.of());
         when(pageChecker.test(anyString(), anyInt())).thenReturn(pageResult(true, 0));
 
-        probe.refresh("a.example.com", 443);
+        probe.refresh("a.example.com", 443, false);
 
         ArgumentCaptor<LatestCheck> cap = ArgumentCaptor.forClass(LatestCheck.class);
         verify(latestCheckRepo).save(cap.capture());
@@ -193,11 +233,11 @@ class CertificateAppLayerProbeTest {
     @DisplayName("Hiç kontrol edilmemiş domainde yazacak satır yok — çökmez, kaydetmez")
     void neverCheckedDomainIsSkipped() {
         when(latestCheckRepo.findById("yok.example.com")).thenReturn(Optional.empty());
-        when(hstsService.diagnose(anyString(), anyInt())).thenReturn(Map.of("verdict", "ENFORCED"));
+        when(hstsService.diagnose(anyString(), anyInt(), anyBoolean())).thenReturn(Map.of("verdict", "ENFORCED"));
         when(pageMonitorRepo.findByUrlContainingIgnoreCaseAndActiveTrue(anyString())).thenReturn(List.of());
         when(pageChecker.test(anyString(), anyInt())).thenReturn(pageResult(true, 0));
 
-        probe.refresh("yok.example.com", 443);
+        probe.refresh("yok.example.com", 443, false);
 
         verify(latestCheckRepo, never()).save(any());
     }
@@ -206,11 +246,11 @@ class CertificateAppLayerProbeTest {
     @DisplayName("Kaydetme patlarsa tazeleme yine tamamlanır (best-effort sözleşmesi)")
     void saveFailureIsSwallowed() {
         stored();
-        when(hstsService.diagnose(anyString(), anyInt())).thenReturn(Map.of("verdict", "ABSENT"));
+        when(hstsService.diagnose(anyString(), anyInt(), anyBoolean())).thenReturn(Map.of("verdict", "ABSENT"));
         when(pageMonitorRepo.findByUrlContainingIgnoreCaseAndActiveTrue(anyString())).thenReturn(List.of());
         when(pageChecker.test(anyString(), anyInt())).thenReturn(pageResult(true, 0));
         when(latestCheckRepo.save(any())).thenThrow(new RuntimeException("tablo kilitli"));
 
-        probe.refresh("a.example.com", 443);   // istisna DIŞARI sızmamalı
+        probe.refresh("a.example.com", 443, false);   // istisna DIŞARI sızmamalı
     }
 }

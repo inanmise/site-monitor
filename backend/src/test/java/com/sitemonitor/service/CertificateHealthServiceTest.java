@@ -389,6 +389,32 @@ class CertificateHealthServiceTest {
     }
 
     @Test
+    @DisplayName("HSTS doğrulanamadıysa SEBEBİ kanıtta taşınır (sebepsiz 'Doğrulanamadı' kör nokta)")
+    void hstsUnverifiedCarriesReason() {
+        LatestCheck lc = healthy();
+        lc.setHstsStatus("UNKNOWN");
+        lc.setHstsNote("connect timed out (monitor_prefers_direct)");
+        var r = row(lc, "hsts");
+
+        assertThat(r.status()).isEqualTo(Status.UNKNOWN);
+        assertThat(r.valueKey()).isEqualTo("unverified");
+        // Kullanıcı "Doğrulanamadı" görüp neden olduğunu ekranda bulamadığı için bu iş açıldı.
+        assertThat(r.evidence()).containsEntry("note", "connect timed out (monitor_prefers_direct)");
+    }
+
+    @Test
+    @DisplayName("HSTS açıkken kanıtta asılı kalmış bir sebep BULUNMAZ")
+    void hstsEnabledHasNoStaleReason() {
+        LatestCheck lc = healthy();
+        lc.setHstsStatus("ENABLED");
+        lc.setHstsNote(null);
+        var r = row(lc, "hsts");
+
+        assertThat(r.status()).isEqualTo(Status.OK);
+        assertThat(r.evidence().get("note")).isNull();
+    }
+
+    @Test
     @DisplayName("Sayfa izlemesi YOKSA karışık içerik aksiyonu iki yol sunar")
     void mixedContentWithoutPageMonitor() {
         LatestCheck lc = healthy();
