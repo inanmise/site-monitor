@@ -37,7 +37,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
           tags: 'prod,kritik', notify_email: false,
           interval_seconds: 900, timeout_seconds: 45,
           confirm_attempts: 5, confirm_interval_seconds: 45, recovery_checks: 4, recovery_interval_seconds: 90,
-          active: false, script: 'export default function(){}',
+          active: false, script: 'export default function(){}', notification_group_id: 7,
           // gizli env değeri şifreli saklanır → kopyaya taşınamaz (yalnız ad+secret bayrağı gider)
           env: [{ name: 'BASE_URL', secret: false, value: 'https://x.example.com' },
                 { name: 'PASSWORD', secret: true, value_set: true }],
@@ -68,6 +68,8 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       groupName: 'Senaryolar', teamId: 5, tags: 'prod,kritik', notifyEmail: false,
       intervalSeconds: 900, timeoutSeconds: 45,
       confirmAttempts: 5, confirmIntervalSeconds: 45, recoveryChecks: 4, recoveryIntervalSeconds: 90,
+      // Bildirim grubu da kopyalanir: kopya, kaynagin alarmini ALAN ekibe gitsin.
+      notificationGroupId: 7,
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
       script: 'export default function(){}',
       useProxy: 'AUTO',   // vekil tercihi de kopyalanır (kaynakta yoksa AUTO)

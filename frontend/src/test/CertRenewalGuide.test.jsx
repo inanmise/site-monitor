@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from './test-utils.jsx'
+import { render, screen, waitFor, fireEvent } from './test-utils.jsx'
 import CertRenewalGuide from '../components/CertRenewalGuide.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -48,5 +48,49 @@ describe('CertRenewalGuide', () => {
     expect(screen.getByText('WAF')).toBeDefined()
     // URL is displayed openly under the title (this PR's fix)
     expect(screen.getByText('https://wiki/ns-vserver')).toBeDefined()
+  })
+
+  /**
+   * Siralama alaninin CIFT YONLU tur-gidis-donusu.
+   *
+   * Bu ozellik iki yonden de oluydu ve hicbir test yakalamiyordu:
+   *  - OKUMA: form `link.sortOrder` okuyordu; API yaniti SNAKE_CASE doner, yani deger
+   *    DAIMA undefined'di ve duzenleme formu kayitli siralamayi hic gostermiyordu.
+   *  - YAZMA: payload `sortOrder` (camelCase) gonderiyordu; uc @RequestBody GuideLink ile
+   *    bagliyor ve Jackson SNAKE_CASE calisiyor, anahtar sessizce dusuyordu. Entity
+   *    varsayilani 0 oldugu icin sunucudaki null-kontrolu de GECIYOR ve her duzenleme
+   *    siralamayi 0'a ceviriyordu.
+   *
+   * Backend testi yalnizca YAZMA tarafini koruyabilir; okuma tarafinin kapisi burasi.
+   */
+  it('duzenleme formu kayitli siralamayi GOSTERIR (snake_case okunur)', async () => {
+    api.guideLinks.list.mockResolvedValueOnce({ success: true, data: [
+      { id: 1, category: 'WAF', title: 'Rehber', url: 'https://x.example.com', description: '', sort_order: 9 },
+    ] })
+    render(<CertRenewalGuide isAdmin />)
+    await screen.findByText('Rehber')
+
+    fireEvent.click(screen.getAllByTitle(/Edit|Düzenle/i)[0])
+
+    expect(screen.getByDisplayValue('9')).toBeTruthy()
+  })
+
+  it('kaydetme yuku siralamayi SNAKE_CASE anahtarla gonderir', async () => {
+    api.guideLinks.list.mockResolvedValue({ success: true, data: [
+      { id: 1, category: 'WAF', title: 'Rehber', url: 'https://x.example.com', description: '', sort_order: 9 },
+    ] })
+    api.guideLinks.update.mockResolvedValueOnce({ success: true })
+    render(<CertRenewalGuide isAdmin />)
+    await screen.findByText('Rehber')
+
+    fireEvent.click(screen.getAllByTitle(/Edit|Düzenle/i)[0])
+    fireEvent.change(screen.getByDisplayValue('9'), { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('button', { name: /^Save$|^Kaydet$/i }))
+
+    await waitFor(() => expect(api.guideLinks.update).toHaveBeenCalled())
+    const payload = api.guideLinks.update.mock.calls[0][1]
+    expect(payload.sort_order).toBe(3)
+    // camelCase anahtar GONDERILMEZ: uc onu sessizce yok sayardi.
+    expect(payload.sortOrder).toBeUndefined()
   })
 })

@@ -117,7 +117,7 @@ describe('KeywordMonitorPage', () => {
       slow_response_enabled: true, slow_threshold_ms: 4500,
       interval_seconds: 900, timeout_ms: 8000,
       confirm_attempts: 5, confirm_interval_seconds: 45, recovery_checks: 4, recovery_interval_seconds: 90,
-      custom_headers: 'X-Api-Key: abc', active: false,
+      custom_headers: 'X-Api-Key: abc', active: false, notification_group_id: 7,
     }] })
     api.monitoring.createKeywordMonitor.mockResolvedValue({ success: true, data: {} })
 
@@ -147,6 +147,8 @@ describe('KeywordMonitorPage', () => {
       confirmAttempts: 5, confirmIntervalSeconds: 45, recoveryChecks: 4, recoveryIntervalSeconds: 90,
       customHeaders: 'X-Api-Key: abc',
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
+      // Bildirim grubu da kopyalanir: kopya, kaynagin alarmini ALAN ekibe gitsin.
+      notificationGroupId: 7,
     })
   })
 

@@ -78,7 +78,7 @@ describe('DomainMonitorPage', () => {
       checked_at: '2026-07-10T00:00:00',
       team_id: 3, team_name: 'SY-A', group_name: 'Kurumsal',
       thresholds_csv: '90,45,10,2', warning_days: 45, critical_days: 9,
-      interval_seconds: 43200, check_timeout_ms: 12000, active: false,
+      interval_seconds: 43200, check_timeout_ms: 12000, active: false, notification_group_id: 7,
     }] })
     api.monitoring.createDomainMonitor.mockResolvedValue({ success: true, data: {} })
 
@@ -102,6 +102,8 @@ describe('DomainMonitorPage', () => {
       thresholdsCsv: '90,45,10,2', warningDays: 45, criticalDays: 9,
       intervalSeconds: 43200, checkTimeoutMs: 12000,
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
+      // Bildirim grubu da kopyalanir: kopya, kaynagin alarmini ALAN ekibe gitsin.
+      notificationGroupId: 7,
     })
   })
 

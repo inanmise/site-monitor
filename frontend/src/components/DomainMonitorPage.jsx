@@ -191,6 +191,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
       // Serbest metin isimler korunur (backend URL'li isimleri host'a indirger); boşsa normalize domain.
       name: form.name.trim() || normalizeDomainInput(form.domain), domain: normalizeDomainInput(form.domain),
       groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId),
+      // Bos = takim varsayilani -> takim adresi (zincirin kalani).
+      notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
+        ? null : Number(form.notificationGroupId),
       thresholdsCsv: form.thresholdsCsv?.trim() || '60,30,14,7,3,1',
       warningDays: Number(form.warningDays), criticalDays: Number(form.criticalDays),
       intervalSeconds: Number(form.intervalSeconds), active: form.active,

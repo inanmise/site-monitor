@@ -134,20 +134,26 @@ public class NotificationGroupController {
                     ? groupRepo.findByTeamIdOrderByNameAsc(teamId)
                     : groupRepo.findByTeamIdAndActiveTrueOrderByNameAsc(teamId);
         } else {
-            // Boş koleksiyonla IN sorgusu çalıştırmayız — takım başına dönülür, kapsam
-            // zaten küçüktür (kullanıcı en fazla birkaç takımın üyesidir).
-            rows = new ArrayList<>();
-            for (Long id : readableTeamIds(session)) {
-                rows.addAll(includeInactive
-                        ? groupRepo.findByTeamIdOrderByNameAsc(id)
-                        : groupRepo.findByTeamIdAndActiveTrueOrderByNameAsc(id));
-            }
+            // TEK sorgu. Eskiden takım başına dönülüyordu ve yorumda "kapsam küçüktür, kullanıcı
+            // birkaç takımın üyesidir" yazıyordu — bu GLOBAL ADMIN/AUDIT için yanlıştı: onların
+            // kapsamı TÜM takımlar ve bu ekranı tam olarak onlar açıyor. Tek pod'da takım sayısı
+            // kadar sorgu demekti.
+            // Boş koleksiyon JPQL "IN ()" üretir (sağlayıcıya bağlı sözdizimi hatası) → korunur.
+            List<Long> scope = readableTeamIds(session);
+            rows = scope.isEmpty() ? List.of()
+                    : (includeInactive
+                        ? groupRepo.findByTeamIdInOrderByTeamIdAscNameAsc(scope)
+                        : groupRepo.findByTeamIdInAndActiveTrueOrderByTeamIdAscNameAsc(scope));
         }
 
+        // Takım tablosu TEK kez okunur; iki harita aynı geçişte kurulur (eskiden findAll iki kez
+        // çağrılıyordu, readableTeamIds'inkiyle birlikte global admin yolunda üç kez).
         Map<Long, String> teamNames = new LinkedHashMap<>();
-        teamRepo.findAll().forEach(t -> teamNames.put(t.getId(), t.getName()));
         Map<Long, String> teamEmails = new LinkedHashMap<>();
-        teamRepo.findAll().forEach(t -> teamEmails.put(t.getId(), t.getEmail()));
+        for (Team t : teamRepo.findAll()) {
+            teamNames.put(t.getId(), t.getName());
+            teamEmails.put(t.getId(), t.getEmail());
+        }
 
         List<Map<String, Object>> items = rows.stream().map(g -> {
             Map<String, Object> m = new LinkedHashMap<>(groupService.toDto(g));

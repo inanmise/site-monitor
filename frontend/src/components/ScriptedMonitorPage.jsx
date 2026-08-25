@@ -677,6 +677,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     const payload = {
       name: form.name.trim(), description: form.description?.trim() || null,
       groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId),
+      // Bos = takim varsayilani -> takim adresi (zincirin kalani).
+      notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
+        ? null : Number(form.notificationGroupId),
       tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail,
       intervalSeconds: Number(form.intervalSeconds), timeoutSeconds: Number(form.timeoutSeconds),
       confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
