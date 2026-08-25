@@ -171,7 +171,7 @@ class MonitoringOutageServiceTest {
                         Map.of("record_type", "A"), downThenUp(99, new AtomicInteger()))),
                 List.of(),
                 List.of(new MonitoringOutageService.DnsChange(
-                        "changed.example.com", "A", "1.2.3.4\n5.6.7.8", "9.9.9.9", "2026-06-11T10:00:00", null,
+                        "changed.example.com", "A", "1.2.3.4\n5.6.7.8", "9.9.9.9", "2026-06-11T10:00:00", null, null,
                         downThenUp(99, calls))),   // değişiklik kalıcı → 3 recheck de "down" → teyit edilir
                 List.of(),
                 List.of());
@@ -193,7 +193,7 @@ class MonitoringOutageServiceTest {
                 List.of(),
                 List.of(),
                 List.of(new MonitoringOutageService.DnsChange(
-                        "flap.example.com", "A", "1.2.3.4", "9.9.9.9", "2026-06-11T10:00:00", null,
+                        "flap.example.com", "A", "1.2.3.4", "9.9.9.9", "2026-06-11T10:00:00", null, null,
                         () -> { calls.incrementAndGet(); return up(); })),   // ilk recheck'te baseline'a döndü
                 List.of(),
                 List.of());
@@ -441,7 +441,7 @@ class MonitoringOutageServiceTest {
                 List.of(item(EscalationService.TYPE_DNS_FAILURE, "down.example.com", "A", false,
                         Map.of(), downThenUp(99, calls))),
                 List.of(),
-                List.of(new MonitoringOutageService.DnsChange("c.example.com", "A", "1.1.1.1", "2.2.2.2", "now", null, () -> up())),
+                List.of(new MonitoringOutageService.DnsChange("c.example.com", "A", "1.1.1.1", "2.2.2.2", "now", null, null, () -> up())),
                 List.of(),
                 List.of());
 

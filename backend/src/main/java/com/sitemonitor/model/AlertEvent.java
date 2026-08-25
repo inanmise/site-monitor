@@ -107,4 +107,17 @@ public class AlertEvent {
      * geçmişi tarayarak fark edilirdi.
      */
     @Transient private Long    repeatCount;
+
+    /**
+     * Alarm ACILIRKEN damgalanan Bildirim Grubu ({@code teamId} emsali).
+     *
+     * <p>Neden damga, neden canli cozum degil: alarm surerken monitorun grubu degisirse
+     * ilk bildirim bir gruba, cozum bildirimi baska bir gruba giderdi — alarmi acan ekip
+     * kapandigini HIC ogrenemezdi. Damga uc bildirim yolunun (ilk / cozum / yeniden
+     * gonderim) ayni aliciya gitmesini garantiler.
+     *
+     * <p>Damgali grup silinmis/pasifse cozumleme zincirin kalanina duser.
+     */
+    @jakarta.persistence.Column(name = "notification_group_id")
+    private Long notificationGroupId;
 }

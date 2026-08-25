@@ -56,6 +56,11 @@ public class EscalationService {
     private final com.sitemonitor.repository.DnsRecordRepository dnsRecordRepo;
     // Sayfa çözüm mailinde "güncel durum" satırı için son PageCheck (2026-08-04 — çözüm maili detayları).
     private final com.sitemonitor.repository.PageCheckRepository pageCheckRepo;
+    /**
+     * Takim alicilarinin GRUP bileseni. Yalniz "gecerli bir grup var mi" sorusunu yanitlar;
+     * yoksa asagidaki metotlar KENDI mevcut {@code Team.email} kollarini aynen isletir.
+     */
+    private final NotificationGroupService notificationGroups;
 
     // Self-injection (@Lazy avoids circular dep) — needed to invoke @Async methods via proxy
     @Autowired @Lazy
@@ -240,6 +245,11 @@ public class EscalationService {
 
             if (existing.isEmpty()) {
                 AlertEvent event = newEvent(domain, alertLevel, alertType, message, daysRemaining);
+                // K5: envanterin bildirim grubu alarma DAMGALANIR -- cozum ve yeniden-gonderim
+                // ayni aliciya gitsin diye (canli okuma yapilsaydi grup degisiminde saparlardi).
+                event.setNotificationGroupId(inventoryOpt
+                        .map(com.sitemonitor.model.CertificateInventory::getNotificationGroupId)
+                        .orElse(null));
                 event = alertEventRepo.save(event);
 
                 List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId);
@@ -325,7 +335,8 @@ public class EscalationService {
     }
 
     /** Manuel re-notify hedefleri: takımlar + (varsa) eskalasyon kontakları. */
-    private record ReNotifyTargets(Long domainTeamId, Long ugTeamId, List<EscalationContact> contacts) {}
+    private record ReNotifyTargets(Long domainTeamId, Long ugTeamId, List<EscalationContact> contacts,
+                                   Long stampedGroupId) {}
 
     /** Onay pop-up'ında gösterilen tek alıcı satırı. kind: TEAM | CONTACT. */
     public record ReNotifyRecipient(String email, String name, String role, String kind) {}
@@ -342,12 +353,13 @@ public class EscalationService {
             List<EscalationContact> contacts = includeManagerContacts(event.getAlertType(), event.getAlertLevel())
                     ? getContactsForLevel(event.getAlertLevel(), event.getTeamId())
                     : List.of();
-            return new ReNotifyTargets(event.getTeamId(), null, contacts);
+            return new ReNotifyTargets(event.getTeamId(), null, contacts, event.getNotificationGroupId());
         }
         var inventoryOpt = inventoryRepo.findByDomain(event.getDomain());
         Long domainTeamId = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
         Long ugTeamId     = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null);
-        return new ReNotifyTargets(domainTeamId, ugTeamId, getContactsForLevel(event.getAlertLevel(), domainTeamId));
+        return new ReNotifyTargets(domainTeamId, ugTeamId,
+                getContactsForLevel(event.getAlertLevel(), domainTeamId), event.getNotificationGroupId());
     }
 
     /**
@@ -364,8 +376,10 @@ public class EscalationService {
         ReNotifyTargets targets = resolveReNotifyTargets(event);
         List<ReNotifyRecipient> out = new ArrayList<>();
         Set<String> seen = new HashSet<>();
-        for (String[] team : collectTeamRecipients(targets.domainTeamId(), targets.ugTeamId())) {
-            if (seen.add(team[0].toLowerCase())) out.add(new ReNotifyRecipient(team[0], team[1], null, "TEAM"));
+        for (String[] team : collectTeamRecipients(targets.domainTeamId(), targets.ugTeamId(),
+                targets.stampedGroupId())) {
+            // role alani takim satirinda K9 kaynak etiketini tasir ("Grup: X" / "Takim maili").
+            if (seen.add(team[0].toLowerCase())) out.add(new ReNotifyRecipient(team[0], team[1], team[2], "TEAM"));
         }
         for (EscalationContact c : targets.contacts()) {
             if (c.getEmail() != null && !c.getEmail().isBlank()
@@ -400,7 +414,7 @@ public class EscalationService {
                 .toList();
 
         // Count actual recipients (team emails + contacts, deduped, exclusions applied) — same logic as sendCombinedAlert
-        List<String> teamEmails = collectTeamEmails(domainTeamId, ugTeamId);
+        List<String> teamEmails = collectTeamEmails(domainTeamId, ugTeamId, targets.stampedGroupId());
         Set<String> seen = new HashSet<>();
         int recipientCount = 0;
         for (String e : teamEmails) {
@@ -797,6 +811,9 @@ public class EscalationService {
         if (existing.isEmpty()) {
             AlertEvent event = newEvent(domain, alertLevel, alertType, message, null);
             event.setTeamId(domainTeamId);   // çözüm bildiriminde takımı buradan bul (özellikle keyword/ping)
+            // K5: monitorun bildirim grubu -- sweep ctx'e koyar, teamId ile ayni yoldan gelir.
+            // Envanter-turevli alarmda (ctx'te yok) envanterin grubuna duselim ki iki kaynak da calissin.
+            event.setNotificationGroupId(resolveStampFromContext(outageContext, domain));
             event.setContextJson(snapshotContext(outageContext));   // çözüldü mailinde keyword/koşul detayı için
             event = alertEventRepo.save(event);
 
@@ -1188,7 +1205,9 @@ public class EscalationService {
             }
 
             // Build combined TO: team emails + contact emails (deduped)
-            List<String> teamEmails = collectTeamEmails(domainTeamId, ugTeamId);
+            // Cozum bildirimi alarmin DAMGASINI kullanir: alarm surerken monitorun grubu
+            // degistiyse bile kapanis, acilisi ogrenen ekibe gider.
+            List<String> teamEmails = collectTeamEmails(domainTeamId, ugTeamId, event.getNotificationGroupId());
             Set<String> seen = new HashSet<>();
             List<String> allEmails = new ArrayList<>();
             for (String e : teamEmails) {
@@ -1274,7 +1293,7 @@ public class EscalationService {
             // Çözüm postasında da olay kimliği taşınır (aksiyon butonları için); ctx null olabildiği
             // için kopya map'e sarılır — MONITORING tiplerinde yukarıda bilerek null'a çekiliyor.
             certContext = withAlertEventId(certContext, event.getId());
-            String teamNames = collectTeamNames(domainTeamId, ugTeamId);
+            String teamNames = collectTeamNames(domainTeamId, ugTeamId, event.getNotificationGroupId());
             // Recovery erişilebilirlik özeti — yalnız HTTP uptime örneği olan tipte (ACCESSIBILITY); veri yoksa null.
             EmailNotificationService.UptimeSummary uptime = null;
             if (TYPE_ACCESSIBILITY.equals(event.getAlertType())) {
@@ -1415,7 +1434,14 @@ public class EscalationService {
         // 1. TO listesi: takım email'leri + kontaklar (dedup). excludeEmails (lowercase) — manuel
         // re-notify onay pop-up'ında kullanıcının çıkardığı adresler; takım e-postaları burada
         // çözüldüğünden filtre de burada uygulanır (kontaklar reNotify'da zaten filtrelenmiş gelir).
-        List<String> teamEmails = collectTeamEmails(syTeamId, ugTeamId);
+        // K5 damgasi: alarm ACILIRKEN yazilan grup. Canli monitor degeri DEGIL damga okunur --
+        // aksi halde alarm surerken grup degisirse ilk bildirim bir gruba, cozum baskasina giderdi.
+        // Ayni okuma asagidaki ctx zenginlestirmesini de besler (eskiden ayri bir findById vardi).
+        AlertEvent stampEvent = alertEventId != null
+                ? alertEventRepo.findById(alertEventId).orElse(null) : null;
+        Long stampedGroupId = stampEvent != null ? stampEvent.getNotificationGroupId() : null;
+
+        List<String> teamEmails = collectTeamEmails(syTeamId, ugTeamId, stampedGroupId);
         Set<String> seen = new HashSet<>();
         List<String> allEmails = new ArrayList<>();
         for (String e : teamEmails) {
@@ -1438,15 +1464,14 @@ public class EscalationService {
         // DAILY_REALERT tetiklemesinde saklanan değerin +1'idir.
         Map<String, Object> enrichedCtx = new LinkedHashMap<>();
         if (certContext != null) enrichedCtx.putAll(certContext);
-        String teamNames = collectTeamNames(syTeamId, ugTeamId);
+        String teamNames = collectTeamNames(syTeamId, ugTeamId, stampedGroupId);
         if (teamNames != null && !teamNames.isBlank()) enrichedCtx.putIfAbsent("team_name", teamNames);
-        if (alertEventId != null) {
-            alertEventRepo.findById(alertEventId).ifPresent(ev -> {
-                if (ev.getCreatedAt() != null) enrichedCtx.putIfAbsent("first_alert_at", ev.getCreatedAt());
-                int shown = (ev.getRealertCount() == null ? 0 : ev.getRealertCount())
-                        + ("DAILY_REALERT".equals(trigger) ? 1 : 0);
-                if (shown > 0) enrichedCtx.putIfAbsent("realert_count", shown);
-            });
+        if (stampEvent != null) {
+            if (stampEvent.getCreatedAt() != null)
+                enrichedCtx.putIfAbsent("first_alert_at", stampEvent.getCreatedAt());
+            int shown = (stampEvent.getRealertCount() == null ? 0 : stampEvent.getRealertCount())
+                    + ("DAILY_REALERT".equals(trigger) ? 1 : 0);
+            if (shown > 0) enrichedCtx.putIfAbsent("realert_count", shown);
         }
         // Olay kimliği: e-postadaki "Olay detayını görüntüle / Olaya yorum yap" derin linklerini besler.
         // put (putIfAbsent DEĞİL): saklanmış eski bir anlık görüntüdeki bayat kimlik canlı olayı ezmesin.
@@ -1624,7 +1649,11 @@ public class EscalationService {
         return m;
     }
 
-    private String collectTeamNames(Long syTeamId, Long ugTeamId) {
+    /**
+     * Mailin "takim" satirinda gorunen adlar. Bir takim ancak GERCEKTEN alici uretiyorsa
+     * listelenir; grup devredeyse takim adi degismez -- degisen alicidir, sahip degil.
+     */
+    private String collectTeamNames(Long syTeamId, Long ugTeamId, Long stampedGroupId) {
         List<String> names = new ArrayList<>();
         Set<String> seenEmails = new HashSet<>();
         for (Long teamId : List.of(
@@ -1632,14 +1661,33 @@ public class EscalationService {
                 ugTeamId != null ? ugTeamId : -1L)) {
             if (teamId < 0) continue;
             teamRepo.findById(teamId).ifPresent(team -> {
-                String email = team.getEmail() != null ? team.getEmail().trim() : "";
-                if (!email.isBlank() && seenEmails.add(email.toLowerCase())) {
+                boolean fresh = false;
+                for (String e : teamRecipientEmails(teamId, syTeamId, stampedGroupId, team)) {
+                    if (seenEmails.add(e.toLowerCase())) fresh = true;
+                }
+                if (fresh) {
                     String name = team.getName() != null ? team.getName().trim() : "";
                     if (!name.isBlank()) names.add(name);
                 }
             });
         }
         return String.join(", ", names);
+    }
+
+    /**
+     * Bir takimin alarm alicilari: grup devredeyse grubun adresleri, degilse {@code Team.email}.
+     *
+     * <p>Damga YALNIZ izlemenin sahibi takima ({@code syTeamId}) uygulanir: monitor formundaki
+     * grup secimi o takimin kararidir; cift-takimli sertifika alarmlarinda UG takimi kendi
+     * varsayilanindan cozulur.
+     */
+    private List<String> teamRecipientEmails(Long teamId, Long syTeamId, Long stampedGroupId,
+                                             com.sitemonitor.model.Team team) {
+        Long stamp = teamId.equals(syTeamId) ? stampedGroupId : null;
+        NotificationGroupService.Override ov = notificationGroups.overrideFor(teamId, stamp);
+        if (ov != null && ov.applies()) return ov.emails();
+        String email = team.getEmail() != null ? team.getEmail().trim() : "";
+        return email.isBlank() ? List.of() : List.of(email);
     }
 
     /**
@@ -1650,10 +1698,10 @@ public class EscalationService {
      * Alıcı çözümü tek yerde kalsın diye burada açılıyor, kopyalanmıyor.
      */
     public List<String> teamAlertEmails(Long teamId) {
-        return collectTeamEmails(teamId, null);
+        return collectTeamEmails(teamId, null, null);
     }
 
-    private List<String> collectTeamEmails(Long syTeamId, Long ugTeamId) {
+    private List<String> collectTeamEmails(Long syTeamId, Long ugTeamId, Long stampedGroupId) {
         List<String> result = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (Long teamId : List.of(
@@ -1661,16 +1709,21 @@ public class EscalationService {
                 ugTeamId != null ? ugTeamId : -1L)) {
             if (teamId < 0) continue;
             teamRepo.findById(teamId).ifPresent(team -> {
-                String email = team.getEmail() != null ? team.getEmail().trim() : "";
-                if (!email.isBlank() && seen.add(email.toLowerCase()))
-                    result.add(email);
+                for (String email : teamRecipientEmails(teamId, syTeamId, stampedGroupId, team)) {
+                    if (seen.add(email.toLowerCase())) result.add(email);
+                }
             });
         }
         return result;
     }
 
-    /** Önizleme için takım alıcıları: [email, takım adı] çiftleri (collectTeamEmails ile aynı sıra/dedupe). */
-    private List<String[]> collectTeamRecipients(Long syTeamId, Long ugTeamId) {
+    /**
+     * Önizleme için takım alıcıları: [email, takım adı, kaynak etiketi] üçlüleri
+     * (collectTeamEmails ile aynı sıra/dedupe). Üçüncü alan K9 etiketidir: grup devredeyse
+     * "Grup: X", değilse "Takım maili" -- kullanıcı postanın NEREDEN yönlendirildiğini onay
+     * pop-up'ında görür.
+     */
+    private List<String[]> collectTeamRecipients(Long syTeamId, Long ugTeamId, Long stampedGroupId) {
         List<String[]> result = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (Long teamId : List.of(
@@ -1678,9 +1731,14 @@ public class EscalationService {
                 ugTeamId != null ? ugTeamId : -1L)) {
             if (teamId < 0) continue;
             teamRepo.findById(teamId).ifPresent(team -> {
-                String email = team.getEmail() != null ? team.getEmail().trim() : "";
-                if (!email.isBlank() && seen.add(email.toLowerCase()))
-                    result.add(new String[]{ email, team.getName() != null ? team.getName().trim() : "" });
+                Long stamp = teamId.equals(syTeamId) ? stampedGroupId : null;
+                NotificationGroupService.Override ov = notificationGroups.overrideFor(teamId, stamp);
+                String source = (ov != null && ov.applies()) ? ov.label() : "Takım maili";
+                String teamName = team.getName() != null ? team.getName().trim() : "";
+                for (String email : teamRecipientEmails(teamId, syTeamId, stampedGroupId, team)) {
+                    if (seen.add(email.toLowerCase()))
+                        result.add(new String[]{ email, teamName, source });
+                }
             });
         }
         return result;
@@ -1781,6 +1839,21 @@ public class EscalationService {
                     : lvl + ": " + domain + " adresindeki sertifikaya erişilemediği için sertifika bilgileri alınamadı (ağ/firewall kaynaklı olabilir).";
             }
         };
+    }
+
+    /**
+     * Acilan izleme alarmina damgalanacak bildirim grubu.
+     *
+     * <p>Once sweep'in ctx'e koydugu monitor grubu; yoksa (envanter-turevli DNS/Port alarmlarinda
+     * ctx monitor tasimaz) domainin envanter kaydinin grubu. Ikisi de yoksa null -- cozumleme
+     * zincirin kalanina, yani takimin varsayilanina ve {@code Team.email}'e duser.
+     */
+    private Long resolveStampFromContext(Map<String, Object> ctx, String domain) {
+        Object v = ctx != null ? ctx.get("notification_group_id") : null;
+        if (v instanceof Number n) return n.longValue();
+        return inventoryRepo.findByDomain(domain)
+                .map(com.sitemonitor.model.CertificateInventory::getNotificationGroupId)
+                .orElse(null);
     }
 
     private AlertEvent newEvent(String domain, String level, String type, String message, Integer days) {

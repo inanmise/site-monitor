@@ -75,6 +75,8 @@ public class StormService {
     private final PingMonitorRepository pingRepo;
     private final DnsMonitorRepository dnsRepo;
     private final DomainMonitorRepository domainRepo;
+    /** Takim mailinin yerine gecebilecek bildirim grubu (damgasiz -- asagiya bakin). */
+    private final NotificationGroupService notificationGroups;
 
     /** 9. tür (sayfa-bütünlüğü) — @RequiredArgsConstructor'ı (ve StormServiceTest'in elle çağrısını)
      *  büyütmemek için alan enjeksiyonu (SchedulerService ile aynı desen). */
@@ -523,15 +525,35 @@ public class StormService {
         return new Recipients(emails, new ArrayList<>(teamNames), webhooks);
     }
 
+    /**
+     * Bir takimi toplu-kesinti alicilarina ekler.
+     *
+     * <p><b>Damga KULLANILMAZ:</b> storm postasi bircok monitoru TEK maile topluyor; iclerinden
+     * birinin bildirim grubunu secmek keyfi olurdu. Bu yolda zincir yalnizca
+     * "takimin varsayilan grubu -> {@code Team.email}" seklindedir.
+     *
+     * <p>Cozum takim onbellegi icinde yapilir: tur basina onlarca uye olabilir, takim basina TEK
+     * sorgu kalir (N+1 yok).
+     */
     private void addTeam(Long teamId, Map<Long, TeamInfo> cache,
                          Set<String> seenEmail, List<String> emails, Set<String> teamNames) {
         if (teamId == null) return;
         TeamInfo info = cache.computeIfAbsent(teamId, id -> teamRepo.findById(id)
-                .map(t -> new TeamInfo(t.getEmail(), t.getName())).orElse(TeamInfo.EMPTY));
-        if (info.email != null && !info.email.isBlank() && seenEmail.add(info.email.trim().toLowerCase())) {
-            emails.add(info.email.trim());
-            if (info.name != null && !info.name.isBlank()) teamNames.add(info.name.trim());
+                .map(t -> new TeamInfo(resolveTeamEmails(id, t.getEmail()), t.getName()))
+                .orElse(TeamInfo.EMPTY));
+        boolean added = false;
+        for (String e : info.emails()) {
+            if (seenEmail.add(e.toLowerCase())) { emails.add(e); added = true; }
         }
+        if (added && info.name != null && !info.name.isBlank()) teamNames.add(info.name.trim());
+    }
+
+    /** Grup devredeyse grubun adresleri, degilse {@code Team.email} (bugunku davranis). */
+    private List<String> resolveTeamEmails(Long teamId, String teamEmail) {
+        NotificationGroupService.Override ov = notificationGroups.overrideFor(teamId);
+        if (ov != null && ov.applies()) return ov.emails();
+        String e = teamEmail != null ? teamEmail.trim() : "";
+        return e.isBlank() ? List.of() : List.of(e);
     }
 
     private List<EscalationContact> contactsForLevel(String level, Long teamId) {
@@ -592,7 +614,9 @@ public class StormService {
     // ── Küçük yardımcılar ─────────────────────────────────────────────────────────
 
     private record Recipients(List<String> emails, List<String> teamNames, Map<String, String> webhooks) {}
-    private record TeamInfo(String email, String name) { static final TeamInfo EMPTY = new TeamInfo(null, null); }
+    private record TeamInfo(List<String> emails, String name) {
+        static final TeamInfo EMPTY = new TeamInfo(List.of(), null);
+    }
 
     private static int clamp(int v, int lo, int hi) { return Math.max(lo, Math.min(hi, v)); }
 

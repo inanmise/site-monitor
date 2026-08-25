@@ -12,6 +12,7 @@ import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import NotificationGroupSelect from './ui/NotificationGroupSelect.jsx'
 import SegmentedControl from './ui/SegmentedControl.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
@@ -70,7 +71,7 @@ const METRICS = [
 ]
 
 const emptyForm = {
-  name: '', url: '', groupName: '', teamId: '', tags: '', notifyEmail: true,
+  name: '', url: '', groupName: '', notificationGroupId: '', teamId: '', tags: '', notifyEmail: true,
   intervalSeconds: 1800, timeoutMs: 10000,
   maxLoadMs: '', maxTtfbMs: '', maxPageKb: '', maxRequests: '',
   userAgent: '', sendDnt: false, excludeTrackers: false, trackerPatterns: '',
@@ -204,7 +205,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
    *  Parola BİLİNÇLİ olarak taşınmaz: API onu hiç döndürmez (yalnız "kayıtlı mı" bayrağı gelir). */
   function formFrom(m) {
     return {
-      name: m.name || '', url: m.url || '', groupName: m.group_name || '',
+      name: m.name || '', url: m.url || '', groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
       teamId: m.team_id != null ? String(m.team_id) : '',
       tags: m.tags || '', notifyEmail: m.notify_email !== false,
       intervalSeconds: m.interval_seconds ?? 1800, timeoutMs: m.timeout_ms ?? 10000,
@@ -237,6 +238,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
     const p = {
       name: (form.name || form.url).trim(), url: normalizeUrl(form.url),
       groupName: form.groupName?.trim() || null,
+      // Bos = takim varsayilani -> takim adresi (zincirin kalani).
+      notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
+        ? null : Number(form.notificationGroupId),
       teamId: form.teamId === '' ? null : Number(form.teamId),
       tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail,
       intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
@@ -748,6 +752,8 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
                 <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
                   options={[{ value: '', label: t('pspd.noGroup') }, ...groupSelectOptions]}
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('pspd.noGroup')} /></label>
+              <NotificationGroupSelect teamId={form.teamId} value={form.notificationGroupId}
+                onChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
 
               {/* ── Alarm eşikleri: DÖRDÜ DE opsiyonel ── */}
               <div className="full-width kw-tags-block">

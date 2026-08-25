@@ -42,6 +42,7 @@ class RetentionCoverageTest {
             Map.entry("teams", "Takım sayısı kadar."),
             Map.entry("permission_grants", "Rol×kaynak matrisi — sabit boyut."),
             Map.entry("escalation_contacts", "Eskalasyon kontakları — elle yönetilir."),
+            Map.entry("notification_groups", "Bildirim grubu — takım başına birkaç satır, yumuşak silinir (elle yönetilir)."),
             Map.entry("maintenance_windows", "Bakım pencereleri — elle yönetilir."),
             Map.entry("certificate_inventory", "Envanter: izlenen domain sayısı kadar (soft delete)."),
             Map.entry("latest_checks", "Domain başına TEK satır (PK = domain)."),

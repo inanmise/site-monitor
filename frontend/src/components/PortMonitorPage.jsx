@@ -9,6 +9,7 @@ import { useToast } from './ui/Toast.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import NotificationGroupSelect from './ui/NotificationGroupSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
 import { Play, Pencil, Copy, X, RefreshCw, Plug, Plus, Trash2, FlaskConical, AlertTriangle, Network, Check, Pause, ChevronDown, BellDot,
@@ -51,7 +52,7 @@ const intervalIdx = (secs) => {
 
 const REFRESH_INTERVAL = 60
 const PORT_TYPES = ['TCP', 'TLS', 'HTTP', 'BANNER', 'UDP']
-const emptyForm = { name: '', host: '', port: '', protocol: 'TCP', expect: '', sendData: '', teamId: '', groupName: '',
+const emptyForm = { name: '', host: '', port: '', protocol: 'TCP', expect: '', sendData: '', teamId: '', groupName: '', notificationGroupId: '',
   tags: '', notifyEmail: true, ipVersion: 'auto', slowResponseEnabled: false, slowThresholdMs: 3000,
   intervalSeconds: 300, timeoutMs: 5000,
   confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true }
@@ -157,7 +158,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     const derivedTeam = m.team_id == null && m.team_name ? teams.find(tm => tm.name === m.team_name) : null
     return { name: m.name || '', host: m.host || '', port: m.port ?? '', protocol: m.protocol || 'TCP',
       expect: m.expect || '', sendData: m.send_data || '',
-      teamId: m.team_id != null ? String(m.team_id) : (derivedTeam ? String(derivedTeam.id) : ''), groupName: m.group_name || '',
+      teamId: m.team_id != null ? String(m.team_id) : (derivedTeam ? String(derivedTeam.id) : ''), groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
       tags: m.tags || '', notifyEmail: m.notify_email !== false, ipVersion: m.ip_version || 'auto',
       slowResponseEnabled: !!m.slow_response_enabled, slowThresholdMs: m.slow_threshold_ms ?? 3000,
       intervalSeconds: m.interval_seconds ?? 300, timeoutMs: m.timeout_ms ?? 5000,
@@ -189,6 +190,9 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
       protocol: form.protocol?.trim() || 'TCP',
       expect: form.expect?.trim() || null, sendData: form.sendData || null,
       teamId: form.teamId === '' ? null : Number(form.teamId), groupName: form.groupName?.trim() || null,
+      // Bos = takim varsayilani -> takim adresi (zincirin kalani).
+      notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
+        ? null : Number(form.notificationGroupId),
       tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, ipVersion: form.ipVersion,
       slowResponseEnabled: form.slowResponseEnabled, slowThresholdMs: Number(form.slowThresholdMs),
       intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
@@ -616,6 +620,8 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
                 <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
                   options={[{ value: '', label: t('port.noGroup') }, ...groupSelectOptions]}
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('port.noGroup')} /></label>
+              <NotificationGroupSelect teamId={form.teamId} value={form.notificationGroupId}
+                onChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
               {/* Etiketler */}
               <div className="full-width port-tags-block">
                 <div className="port-block-title">{t('port.tagsTitle')}</div>

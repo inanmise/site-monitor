@@ -8,6 +8,7 @@ import { useToast } from './ui/Toast.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import NotificationGroupSelect from './ui/NotificationGroupSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
 import { X, RefreshCw, Plus, Trash2, Target, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, ShieldCheck, Mail, MessageSquare, Phone, Smartphone } from 'lucide-react'
@@ -54,7 +55,7 @@ const intervalIdx = (secs) => {
 }
 const REFRESH_INTERVAL = 60
 const OP_SYM = { GTE: '≥', LTE: '≤', EQ: '=', GT: '>', LT: '<' }
-const emptyForm = { name: '', url: '', keyword: '', operator: 'GTE', matchCount: 1, groupName: '', teamId: '',
+const emptyForm = { name: '', url: '', keyword: '', operator: 'GTE', matchCount: 1, groupName: '', notificationGroupId: '', teamId: '',
   caseSensitive: false, tags: '', notifyEmail: true,
   checkSslErrors: false, sslExpiryReminders: false, domainExpiryReminders: false,
   sslReminderDays: '30,14,7', domainReminderDays: '30,14,7',
@@ -148,7 +149,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   /** Monitör (snake_case) → form state eşlemesi. Edit ve Kopyala AYNI eşlemeyi kullanır → alan kaçmaz. */
   function formFrom(m) {
     return { name: m.name || '', url: m.url || '', keyword: m.keyword || '',
-      operator: m.operator || 'GTE', matchCount: m.match_count ?? 1, groupName: m.group_name || '',
+      operator: m.operator || 'GTE', matchCount: m.match_count ?? 1, groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
       teamId: m.team_id != null ? String(m.team_id) : '',
       caseSensitive: !!m.case_sensitive, tags: m.tags || '', notifyEmail: m.notify_email !== false,
       checkSslErrors: !!m.check_ssl_errors, sslExpiryReminders: !!m.ssl_expiry_reminders, domainExpiryReminders: !!m.domain_expiry_reminders,
@@ -617,6 +618,8 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                 <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
                   options={[{ value: '', label: t('keyword.noGroup') }, ...groupSelectOptions]}
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('keyword.noGroup')} /></label>
+              <NotificationGroupSelect teamId={form.teamId} value={form.notificationGroupId}
+                onChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
 
               {/* Etiketler */}
               <div className="full-width kw-tags-block">

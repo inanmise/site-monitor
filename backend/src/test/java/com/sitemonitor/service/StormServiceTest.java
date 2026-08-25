@@ -57,6 +57,8 @@ class StormServiceTest {
     @Mock com.sitemonitor.repository.PageMonitorRepository pageRepo;
     @Mock com.sitemonitor.repository.ScriptedMonitorRepository scriptedRepo;
     @Mock com.sitemonitor.repository.PageSpeedMonitorRepository pageSpeedRepo;
+    /** Bilerek STUB'LANMAZ: null donus = "hic grup yok" -> eski Team.email yolu isler (birinci yasa). */
+    @Mock NotificationGroupService notificationGroups;
 
     private StormService storm;
 
@@ -64,7 +66,7 @@ class StormServiceTest {
     void setUp() {
         storm = new StormService(stormRepo, alertEventRepo, appSettings, emailService, webhookService,
                 teamRepo, contactRepo, inventoryRepo, jdbcTemplate,
-                httpRepo, portRepo, keywordRepo, pingRepo, dnsRepo, domainRepo);
+                httpRepo, portRepo, keywordRepo, pingRepo, dnsRepo, domainRepo, notificationGroups);
     }
 
     private AlertEvent down(long id, String type, Long teamId) {
@@ -370,4 +372,45 @@ class StormServiceTest {
         verify(scriptedRepo, org.mockito.Mockito.times(1)).countByActiveTrue();
     }
 
+
+    // ── Bildirim grubu yönlendirmesi ─────────────────────────────────────────
+
+    /**
+     * {@code addTeam} özel; refleksiyonla çağrılıyor çünkü tek kamusal giriş noktası
+     * ({@code sendStormAlert}) e-posta/webhook gönderimini de tetikliyor ve bu testin
+     * sorusu yalnızca "alıcı listesine ne konuyor".
+     */
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    private java.util.List<String> collectFor(Long teamId) {
+        java.util.List<String> emails = new java.util.ArrayList<>();
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                storm, "addTeam", teamId, new java.util.HashMap(),
+                new java.util.HashSet<String>(), emails, new java.util.LinkedHashSet<String>());
+        return emails;
+    }
+
+    @Test
+    @DisplayName("STORM: takımın varsayılan grubu takım mailinin YERİNE geçer")
+    void storm_defaultGroupReplacesTeamEmail() {
+        com.sitemonitor.model.Team t = new com.sitemonitor.model.Team();
+        t.setId(7L); t.setName("Dijital SY"); t.setEmail("takim@bank.com");
+        when(teamRepo.findById(7L)).thenReturn(java.util.Optional.of(t));
+        // Damga YOK: storm birçok monitörü tek maile topluyor, birinin grubunu seçmek keyfî olurdu.
+        when(notificationGroups.overrideFor(7L)).thenReturn(new NotificationGroupService.Override(
+                java.util.List.of("nobet@bank.com"), NotificationGroupService.Source.TEAM_DEFAULT_GROUP,
+                20L, "Takım Nöbet"));
+
+        assertThat(collectFor(7L)).containsExactly("nobet@bank.com");
+    }
+
+    @Test
+    @DisplayName("STORM: grup yoksa davranış BUGÜNKÜNÜN AYNISI — takım maili")
+    void storm_noGroup_keepsTeamEmail() {
+        com.sitemonitor.model.Team t = new com.sitemonitor.model.Team();
+        t.setId(7L); t.setName("Dijital SY"); t.setEmail("takim@bank.com");
+        when(teamRepo.findById(7L)).thenReturn(java.util.Optional.of(t));
+        when(notificationGroups.overrideFor(7L)).thenReturn(NotificationGroupService.Override.NONE);
+
+        assertThat(collectFor(7L)).containsExactly("takim@bank.com");
+    }
 }

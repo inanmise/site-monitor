@@ -111,6 +111,7 @@ describe('DnsMonitorPage', () => {
       interval_seconds: 900, group_name: 'Kurumsal',
       expected_value: '1.2.3.4\n5.6.7.8', slow_threshold_ms: 2500,
       propagation_check: true, dns_change_alert_enabled: false, active: false,
+      notification_group_id: 7,
     }] })
     api.monitoring.createDnsMonitor.mockResolvedValue({ success: true, data: {} })
 
@@ -136,6 +137,8 @@ describe('DnsMonitorPage', () => {
       expectedValue: '1.2.3.4\n5.6.7.8', slowThresholdMs: 2500,
       propagationCheck: true, dnsChangeAlertEnabled: false,
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
+      // Bildirim grubu da kopyalanir: kopya, kaynagin alarmini ALAN ekibe gitmeye devam etsin.
+      notificationGroupId: 7,
     })
   })
 

@@ -7,6 +7,7 @@ import { useToast } from '../ui/Toast.jsx'
 import { useT } from '../../i18n/index.jsx'
 import { useTheme } from '../../i18n/theme.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
+import NotificationGroupSelect from '../ui/NotificationGroupSelect.jsx'
 import { INVENTORY_FLAGS, emptyFlags } from '../../utils/inventoryFlags.js'
 import { LoadingBlock } from '../ui/Progress.jsx'
 
@@ -21,7 +22,7 @@ import { LoadingBlock } from '../ui/Progress.jsx'
 
 const EMPTY = {
   domain: '', port: 443, owner: '', description: '', active: true,
-  team_id: '', group_name: '', tier: null,
+  team_id: '', group_name: '', notification_group_id: '', tier: null,
   ...emptyFlags(),          // 13 operasyonel bayrak — tek kaynak: utils/inventoryFlags.js
   tls_mode: '',
   purchased_by: '',
@@ -51,6 +52,7 @@ function formFrom(item) {
     ...EMPTY,
     ...item,
     team_id:            String(item.team_id ?? ''),
+    notification_group_id: item.notification_group_id != null ? String(item.notification_group_id) : '',
     external_vendor:    item.external_vendor  ?? false,
     action_required:    item.action_required  ?? false,
     openshift:          item.openshift        ?? false,
@@ -180,6 +182,8 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
       description:        form.description,
       active:             form.active,
       team_id:            form.team_id ? Number(form.team_id) : null,
+      // Bos = takim varsayilani -> takim adresi (zincirin kalani).
+      notificationGroupId: form.notification_group_id ? Number(form.notification_group_id) : null,
       group_name:         form.group_name?.trim() || null,
       ug_team_id:         null,   // tek takım modeli — UG ayrımı kaldırıldı
       external_vendor:    form.external_vendor,
@@ -282,6 +286,13 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
               ]}
             />
           </label>
+
+          <NotificationGroupSelect
+            teamId={form.team_id}
+            value={form.notification_group_id}
+            onChange={v => f('notification_group_id', v)}
+            disabled={!canManage}
+          />
 
           <label>
             {t('inv.formTier')}

@@ -8,6 +8,7 @@ import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import CodeEditor from './ui/CodeEditor.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import NotificationGroupSelect from './ui/NotificationGroupSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
 import ScriptedTemplateInfo from './scripted/ScriptedTemplateInfo.jsx'
@@ -55,7 +56,7 @@ function intervalIdx(secs) {
 const REFRESH_INTERVAL = 60
 
 const emptyForm = {
-  name: '', description: '', groupName: '', teamId: '', tags: '', notifyEmail: true,
+  name: '', description: '', groupName: '', notificationGroupId: '', teamId: '', tags: '', notifyEmail: true,
   intervalSeconds: 300, timeoutSeconds: 60, confirmAttempts: 3, confirmIntervalSeconds: 30,
   recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true, script: '', env: [], template: '',
   slowResponseEnabled: false, slowThresholdMs: 15000,
@@ -463,7 +464,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   /** Monitör (snake_case) → form state eşlemesi. Edit ve Kopyala AYNI eşlemeyi kullanır → alan kaçmaz. */
   function formFrom(m) {
     return {
-      name: m.name || '', description: m.description || '', groupName: m.group_name || '',
+      name: m.name || '', description: m.description || '', groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
       teamId: m.team_id != null ? String(m.team_id) : '', tags: m.tags || '', notifyEmail: m.notify_email !== false,
       intervalSeconds: m.interval_seconds ?? 300, timeoutSeconds: m.timeout_seconds ?? 60,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
@@ -1453,6 +1454,8 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
               onCreate={() => {}}
               searchThreshold={2}
               placeholder={t('scripted.groupPick')} /></label>
+          <NotificationGroupSelect teamId={form.teamId} value={form.notificationGroupId}
+            onChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
 
           <label><span>{t('scripted.interval')}</span>
             <input type="range" min="0" max={INTERVALS.length - 1} value={ivIdx}

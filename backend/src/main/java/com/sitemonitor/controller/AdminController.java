@@ -74,9 +74,11 @@ public class AdminController {
         "actionRequired", "openshift", "sslPinning", "internalCert", "jksKeystore", "serverUpdate",
         "netscaler", "wafEnabled", "inUse", "evCertificate", "transferredToSy", "useProxy",
         "tlsMode", "purchasedBy", "changeDescription", "expectedFingerprint", "expectedSubject",
-        "teamId", "groupName", "deletedAt"
+        "teamId", "groupName", "deletedAt", "notificationGroupId"
     };
     private final CertificateInventoryRepository inventoryRepo;
+    /** Envantere secilen bildirim grubunun sahipligini dogrulamak icin. */
+    private final com.sitemonitor.repository.NotificationGroupRepository inventoryGroupRepo;
     private final AlertThresholdRepository thresholdRepo;
     private final EscalationContactRepository contactRepo;
     private final AlertEventRepository alertEventRepo;
@@ -290,6 +292,10 @@ public class AdminController {
         existing.setExpectedSubject(item.getExpectedSubject());
         if (item.getTeamId() != null) existing.setTeamId(item.getTeamId());
         existing.setUgTeamId(item.getUgTeamId());
+        // Bildirim grubu: SAHIPLIK dogrulanir -- baska takimin grubu envantere yazilamaz
+        // (monitor tarafindaki applyNotificationGroup ile ayni kural).
+        existing.setNotificationGroupId(
+                validInventoryGroup(item.getNotificationGroupId(), existing.getTeamId()));
         existing.setExternalVendor(item.getExternalVendor());
         existing.setActionRequired(item.getActionRequired());
         existing.setOpenshift(item.getOpenshift());
@@ -354,11 +360,27 @@ public class AdminController {
         fieldDiff(sb, "changeDescription",  o.getChangeDescription(),    n.getChangeDescription());
         fieldDiff(sb, "expectedFingerprint",o.getExpectedFingerprint(),  n.getExpectedFingerprint());
         fieldDiff(sb, "expectedSubject",    o.getExpectedSubject(),      n.getExpectedSubject());
+        fieldDiff(sb, "notificationGroupId", o.getNotificationGroupId(), n.getNotificationGroupId());
         if (isAdmin && n.getTeamId() != null)
             fieldDiff(sb, "teamId",         o.getTeamId(),               n.getTeamId());
         if (sb.length() > 1 && sb.charAt(sb.length() - 1) == ',') sb.deleteCharAt(sb.length() - 1);
         sb.append('}');
         return sb.toString();
+    }
+
+    /**
+     * Envantere yazilabilecek bildirim grubu — grup o takima ait ve aktif degilse null'a duser.
+     *
+     * <p>Sessiz null'lama bilincli: envanter satiri toplu ice aktarma/transfer yollarindan da
+     * guncelleniyor; oralarda 400 firlatmak koca bir aktarimi tek satir yuzunden dusururdu.
+     * Yanlis takimin listesine posta gondermektense takim varsayilanina dusmek dogru taraftir.
+     */
+    private Long validInventoryGroup(Long requested, Long teamId) {
+        if (requested == null || teamId == null) return null;
+        return inventoryGroupRepo.findById(requested)
+                .filter(g -> teamId.equals(g.getTeamId()) && Boolean.TRUE.equals(g.getActive()))
+                .map(com.sitemonitor.model.NotificationGroup::getId)
+                .orElse(null);
     }
 
     private void fieldDiff(StringBuilder sb, String field, Object oldVal, Object newVal) {

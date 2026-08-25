@@ -8,6 +8,7 @@ import { useToast } from './ui/Toast.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import NotificationGroupSelect from './ui/NotificationGroupSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import { X, RefreshCw, Plus, Trash2, Radio, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
@@ -39,7 +40,7 @@ const INTERVALS = [
   { value: 900, labelKey: 'ping.interval15m' },
 ]
 const REFRESH_INTERVAL = 60
-const emptyForm = { name: '', host: '', ipVersion: 'auto', groupName: '', teamId: '',
+const emptyForm = { name: '', host: '', ipVersion: 'auto', groupName: '', notificationGroupId: '', teamId: '',
   intervalSeconds: 60, timeoutMs: 5000, packetCount: 4, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true }
 
 export default function PingMonitorPage({ systemRole, teamId, teamName }) {
@@ -127,7 +128,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   }
   /** Monitör (snake_case) → form state eşlemesi. Edit ve Kopyala AYNI eşlemeyi kullanır → alan kaçmaz. */
   function formFrom(m) {
-    return { name: m.name || '', host: m.host || '', ipVersion: m.ip_version || 'auto', groupName: m.group_name || '',
+    return { name: m.name || '', host: m.host || '', ipVersion: m.ip_version || 'auto', groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
       teamId: m.team_id != null ? String(m.team_id) : '', intervalSeconds: m.interval_seconds ?? 60,
       timeoutMs: m.timeout_ms ?? 5000, packetCount: m.packet_count ?? 4,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30, recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
@@ -155,6 +156,9 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
     const payload = {
       name: (form.name || form.host).trim(), host: form.host.trim(), ipVersion: form.ipVersion,
       groupName: form.groupName?.trim() || null,
+      // Bos = takim varsayilani -> takim adresi (zincirin kalani).
+      notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
+        ? null : Number(form.notificationGroupId),
       teamId: form.teamId === '' ? null : Number(form.teamId), intervalSeconds: Number(form.intervalSeconds),
       timeoutMs: Number(form.timeoutMs), packetCount: Number(form.packetCount),
       confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds), recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
@@ -510,6 +514,8 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
                 <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
                   options={[{ value: '', label: t('ping.noGroup') }, ...groupSelectOptions]}
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('ping.noGroup')} /></label>
+              <NotificationGroupSelect teamId={form.teamId} value={form.notificationGroupId}
+                onChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
               <label><span>{t('ping.interval')}</span>
                 <select value={form.intervalSeconds} onChange={e => setForm(f => ({ ...f, intervalSeconds: Number(e.target.value) }))}>
                   {INTERVALS.map(o => <option key={o.value} value={o.value}>{t(o.labelKey)}</option>)}

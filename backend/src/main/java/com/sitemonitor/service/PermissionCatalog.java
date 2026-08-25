@@ -29,6 +29,11 @@ public final class PermissionCatalog {
         // ── İletişim / Eskalasyon ─────────────────────────────────────────
         r("contacts.list",      "communication", VIEW),
         r("contacts.crud",      "communication", EDIT),
+        // Takim Bildirim Gruplari — adlandirilmis alici listeleri. Tek anahtar, iki eylem:
+        // gruplar takim-kapsamli ve dusuk riskli (yalniz e-posta adresleri), kisiler gibi
+        // ayri "list"/"crud" ayrimina ihtiyac duymuyor. TEAM_ADMIN + USER'a acik (K2):
+        // takim kendi nobetci listesini yonetir; uc ayrica UYELIK dogrular.
+        new Resource("notification.groups", "communication", List.of(VIEW, EDIT), Set.of()),
 
         // ── Yönetim (Takım & Kullanıcı) ───────────────────────────────────
         r("teams.list",         "management", VIEW),
@@ -185,7 +190,7 @@ public final class PermissionCatalog {
         // system_health.read, audit_log.read, weak_algo.read, monitoring.read
         Set<String> allowed = Set.of(
             "inventory.list", "inventory.crud",
-            "contacts.list", "contacts.crud",
+            "contacts.list", "contacts.crud", "notification.groups",
             "notes.read", "notes.crud",
             "teams.list", "teams.update", "teams.weekly_notifications",
             "users.list", "users.crud", "users.actions",
@@ -219,6 +224,9 @@ public final class PermissionCatalog {
         Set<String> allowed = Set.of(
             "inventory.list",
             "contacts.list",
+            // Bildirim gruplari: USER kendi TAKIMININ alici listesini yonetir (K2) -- alarmi
+            // kimin alacagi takimin nobet duzenidir, yonetici islemi degil. Uc UYELIK dogrular.
+            "notification.groups",
             "notes.read",
             "teams.list",
             // Kendi takımının haftalık e-posta anahtarlarını çevirebilir (uç üyelik doğrular);

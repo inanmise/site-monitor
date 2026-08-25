@@ -185,4 +185,11 @@ public class PageSpeedMonitor {
     /** Ölçümün kendini tanıttığı varsayılan UA — kimlik açık, hedefin log'unda kim olduğumuz bellidir. */
     public static final String DEFAULT_UA =
             "Mozilla/5.0 (compatible; SiteMonitor-PageSpeed/1.0; +https://sitemonitor)";
+
+    /**
+     * Bu izlemenin alarmlarinin gidecegi Bildirim Grubu — NULL ise zincirin kalani islet:
+     * takimin varsayilan grubu, o da yoksa {@code Team.email} (bugunku davranis).
+     */
+    @jakarta.persistence.Column(name = "notification_group_id")
+    private Long notificationGroupId;
 }

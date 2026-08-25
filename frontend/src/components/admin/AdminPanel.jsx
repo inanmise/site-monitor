@@ -3,6 +3,7 @@ import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import AlertThresholds from './AlertThresholds'
 import EscalationContacts from './EscalationContacts'
+import NotificationGroups from './NotificationGroups'
 import TeamManager from './TeamManager'
 import UserManager from './UserManager'
 
@@ -17,6 +18,8 @@ const TAB_GROUPS = [
     groupKey: 'admin.groupNotify',
     tabs: [
       { id: 'contacts', labelKey: 'admin.tabContacts', adminOnly: false },
+      // adminOnly: false — takimin her uyesi kendi takiminin alici listesini yonetir (K2).
+      { id: 'notifyGroups', labelKey: 'admin.tabNotifyGroups', adminOnly: false },
     ],
   },
   {
@@ -72,6 +75,7 @@ export default function AdminPanel({ systemRole, ownTeamId, myTeamIds, currentUs
       <div className="admin-content">
         {activeTab === 'thresholds' && isAdmin && <AlertThresholds />}
         {activeTab === 'contacts'   && <EscalationContacts teams={teams} systemRole={systemRole} />}
+        {activeTab === 'notifyGroups' && <NotificationGroups teams={teams} systemRole={systemRole} />}
         {activeTab === 'teams'      && <TeamManager systemRole={systemRole} ownTeamId={ownTeamId} myTeamIds={myTeamIds} onTeamsChange={loadTeams} />}
         {activeTab === 'users'      && <UserManager systemRole={systemRole} ownTeamId={ownTeamId} currentUsername={currentUsername} teams={teams} />}
       </div>

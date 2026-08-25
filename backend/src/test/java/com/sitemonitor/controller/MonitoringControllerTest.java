@@ -101,6 +101,8 @@ class MonitoringControllerTest {
     @MockitoBean com.sitemonitor.service.ProxySettings proxySettings;
     @MockitoBean com.sitemonitor.service.SsrfGuard ssrfGuard;
     @MockitoBean com.sitemonitor.service.SecretCipher secretCipher;
+    /** Bildirim gruplari: dilim baglami icin gerekli; stub YOK -> "hic grup yok" (birinci yasa). */
+    @MockitoBean com.sitemonitor.repository.NotificationGroupRepository notificationGroupRepo;
 
     @BeforeEach
     void stubTeamMap() {

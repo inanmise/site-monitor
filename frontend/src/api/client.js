@@ -379,6 +379,28 @@ export const api = {
 
   // ── Admin ────────────────────────────────────────────────────────────────
 
+  /**
+   * Takim Bildirim Gruplari (/api/notification-groups).
+   *
+   * admin blogunun DISINDA: uc admin-only degil -- takimin her uyesi kendi takiminin
+   * alici listesini yonetir (K2). api.admin altina konsaydi cagri yerlerinde yanlis
+   * bir yetki cagrisimi yaratirdi.
+   */
+  notificationGroups: {
+    /** teamId verilirse yalniz o takim; includeInactive silinmisleri de getirir (rozet icin). */
+    list: (teamId, includeInactive = false) => {
+      const qs = new URLSearchParams()
+      if (teamId != null && teamId !== '') qs.set('teamId', String(teamId))
+      if (includeInactive) qs.set('includeInactive', 'true')
+      const q = qs.toString()
+      return request(`/notification-groups${q ? `?${q}` : ''}`)
+    },
+    create: (body) => request('/notification-groups', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id, body) => request(`/notification-groups/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    remove: (id) => request(`/notification-groups/${id}`, { method: 'DELETE' }),
+    makeDefault: (id) => request(`/notification-groups/${id}/make-default`, { method: 'POST' }),
+  },
+
   admin: {
     // Inventory
     getInventory: (showDeleted = false) => request(`/admin/inventory?showDeleted=${showDeleted}`),

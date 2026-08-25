@@ -587,6 +587,20 @@ public class SchedulerService {
         patch("ALTER TABLE remember_me_tokens ADD COLUMN ip_country VARCHAR(64)");
         // Cihaz listesi username'e göre okunur; tabloda satır az ama sorgu her panel açılışında.
         patch("CREATE INDEX IF NOT EXISTS idx_rmt_username ON remember_me_tokens(username)");
+        // ── Takım Bildirim Grupları ──────────────────────────────────────────────
+        // Alarm e-postaları bugüne dek TEK adrese (Team.email) gidiyordu; grup o adresin
+        // yerine geçen adlandırılmış alıcı listesidir. Kolonların HEPSİ NULLABLE: null =
+        // "zincirin kalanı" (takım varsayılanı → Team.email), yani MEVCUT DAVRANIŞ.
+        // Ayrıca dolu tabloya NOT NULL eklemek Postgres'te reddedilir, Hibernate yutar ve
+        // kolon HİÇ oluşmaz (projede yaşanmış tuzak).
+        for (String t : new String[]{
+                "dns_monitors", "domain_monitors", "http_monitors", "keyword_monitors",
+                "page_monitors", "pagespeed_monitors", "ping_monitors", "port_monitors",
+                "scripted_monitors", "certificate_inventory", "alert_events" }) {
+            patch("ALTER TABLE " + t + " ADD COLUMN notification_group_id BIGINT");
+        }
+        patch("CREATE INDEX IF NOT EXISTS idx_ng_team ON notification_groups(team_id)");
+        patch("CREATE INDEX IF NOT EXISTS idx_ng_team_default ON notification_groups(team_id, is_default)");
         // Widen varchar(255) columns to TEXT — markdown editor / long descriptions can overflow
         patch("ALTER TABLE certificate_inventory ALTER COLUMN change_description TYPE TEXT");
         patch("ALTER TABLE certificate_inventory ALTER COLUMN description TYPE TEXT");
@@ -2266,6 +2280,7 @@ public class SchedulerService {
                 ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
                 ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
                 if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+                if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
                 // Hata fırlatan monitör item üretmez — yanlış all-up resolve olmaz
                 sweep.add(new MonitoringOutageService.SweepItem(
                         EscalationService.TYPE_PORT_DOWN, m.getHost(),
@@ -2283,6 +2298,7 @@ public class SchedulerService {
                 slowCtx.put("monitor_recovery_checks", m.getRecoveryChecks());
                 slowCtx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
                 if (m.getTeamId() != null) slowCtx.put("team_id", m.getTeamId());
+                if (m.getNotificationGroupId() != null) slowCtx.put("notification_group_id", m.getNotificationGroupId());
                 int slowTh = m.getSlowThresholdMs() != null ? m.getSlowThresholdMs() : 3000;
                 slowCtx.put("threshold_ms", slowTh);
                 Long respMs = r.get("response_ms") instanceof Number rn ? rn.longValue() : null;
@@ -2409,6 +2425,7 @@ public class SchedulerService {
                 ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
                 ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
                 if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+                if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
                 if (r.get("http_status") != null) ctx.put("http_status", r.get("http_status"));
                 if (r.get("response_ms") != null) ctx.put("response_ms", r.get("response_ms"));
                 if (r.get("snippet") != null)     ctx.put("snippet", r.get("snippet"));
@@ -2428,6 +2445,7 @@ public class SchedulerService {
                 slowCtx.put("monitor_recovery_checks", m.getRecoveryChecks());
                 slowCtx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
                 if (m.getTeamId() != null) slowCtx.put("team_id", m.getTeamId());
+                if (m.getNotificationGroupId() != null) slowCtx.put("notification_group_id", m.getNotificationGroupId());
                 int slowTh = m.getSlowThresholdMs() != null ? m.getSlowThresholdMs() : 3000;
                 slowCtx.put("threshold_ms", slowTh);
                 Long respMs = r.get("response_ms") instanceof Number rn ? rn.longValue() : null;
@@ -2550,6 +2568,7 @@ public class SchedulerService {
                 ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
                 ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
                 if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+                if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
                 if (r.get("http_status") != null) ctx.put("http_status", r.get("http_status"));
                 if (r.get("response_ms") != null) ctx.put("response_ms", r.get("response_ms"));
                 sweep.add(new MonitoringOutageService.SweepItem(
@@ -2697,6 +2716,7 @@ public class SchedulerService {
         ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
         ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
         if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+        if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
         // E-posta detay bölümü için sayfa-özel bağlam (EmailTemplateBuilder isPage dalı okur).
         ctx.put("page_status", r.get("status"));
         ctx.put("page_mode", m.getMode());                                     // SINGLE_PAGE | SITE_CRAWL
@@ -2947,6 +2967,7 @@ public class SchedulerService {
         ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
         ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
         if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+        if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
         ctx.put("pagespeed_status", r.get("status"));
         for (String k : new String[]{"response_ms", "ttfb_ms", "total_bytes", "request_count",
                 "http_status", "bytes_truncated"}) {
@@ -3235,6 +3256,7 @@ public class SchedulerService {
         ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
         ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
         if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+        if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
         ctx.put("scripted_status", r.get("status"));
         if (r.get("checks_failed") != null) ctx.put("checks_failed", r.get("checks_failed"));
         if (r.get("output_tail") != null) ctx.put("output_tail", r.get("output_tail"));
@@ -3608,6 +3630,7 @@ public class SchedulerService {
         ctx.put("monitor_confirm_attempts", 0);   // eşik durumu — re-check churn'ü yok, anında
         ctx.put("monitor_recovery_checks", 1);
         if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+        if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
         return ctx;
     }
 
@@ -3772,6 +3795,7 @@ public class SchedulerService {
         ctx.put("monitor_confirm_attempts", 0);   // eşik durumu — re-check churn'ü yok, anında
         ctx.put("monitor_recovery_checks", 1);
         if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+        if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
         return ctx;
     }
 
@@ -3996,6 +4020,7 @@ public class SchedulerService {
         ctx.put("monitor_confirm_attempts", 0);   // eşik durumu — anında alarm (teyit zinciri yok)
         ctx.put("monitor_recovery_checks", 1);
         if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+        if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
         if (r.get("days_remaining") != null) ctx.put("days", r.get("days_remaining"));
         if (r.get("expiry_date") != null) ctx.put("expiry_date", r.get("expiry_date"));
         if (r.get("registrar") != null) ctx.put("registrar", r.get("registrar"));
@@ -4081,6 +4106,7 @@ public class SchedulerService {
                 ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
                 ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
                 if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+                if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
                 if (r.get("rtt_ms") != null)      ctx.put("rtt_ms", r.get("rtt_ms"));
                 if (r.get("packet_loss") != null) ctx.put("packet_loss", r.get("packet_loss"));
                 if (Boolean.TRUE.equals(r.get("na"))) ctx.put("na", true);
@@ -4244,6 +4270,7 @@ public class SchedulerService {
                 failCtx.put("record_type", m.getRecordType());
                 failCtx.put("monitor_id", m.getId());   // e-posta CTA deep-link (?tab=dns&monitor=<id>)
                 if (m.getTeamId() != null) failCtx.put("team_id", m.getTeamId());   // standalone → alarm takıma
+                if (m.getNotificationGroupId() != null) failCtx.put("notification_group_id", m.getNotificationGroupId());
                 sweep.add(new MonitoringOutageService.SweepItem(
                         EscalationService.TYPE_DNS_FAILURE, m.getDomain(), m.getRecordType(),
                         success, (String) r.get("error"),
@@ -4263,6 +4290,7 @@ public class SchedulerService {
                     slowCtx.put("monitor_confirm_attempts", slowConfirmAttempts);
                     slowCtx.put("monitor_confirm_interval_ms", (long) slowConfirmIntervalMs);
                     if (m.getTeamId() != null) slowCtx.put("team_id", m.getTeamId());   // standalone → alarm takıma
+                    if (m.getNotificationGroupId() != null) slowCtx.put("notification_group_id", m.getNotificationGroupId());
                     slowSweep.add(new MonitoringOutageService.SweepItem(
                             EscalationService.TYPE_DNS_SLOW, m.getDomain(), m.getRecordType(),
                             !slow, slow ? responseMs + " ms" : null,
@@ -4278,6 +4306,7 @@ public class SchedulerService {
                     unexpCtx.put("unexpected_values", unexpected);
                     unexpCtx.put("expected_values", DnsCheckerService.splitLines(m.getExpectedValue()));
                     if (m.getTeamId() != null) unexpCtx.put("team_id", m.getTeamId());   // standalone → alarm takıma
+                    if (m.getNotificationGroupId() != null) unexpCtx.put("notification_group_id", m.getNotificationGroupId());
                     unexpectedSweep.add(new MonitoringOutageService.SweepItem(
                             EscalationService.TYPE_DNS_UNEXPECTED, m.getDomain(), m.getRecordType(),
                             unexpected.isEmpty(), unexpected.isEmpty() ? null : String.join(", ", unexpected),
@@ -4297,6 +4326,7 @@ public class SchedulerService {
                         // (geçici/rotasyon baseline'a dönerse iptal). Baseline = değişiklik öncesi bilinen-iyi değer.
                         changes.add(new MonitoringOutageService.DnsChange(
                                 m.getDomain(), m.getRecordType(), prevValue, valueStr, now, m.getTeamId(),
+                                m.getNotificationGroupId(),
                                 () -> recheckDnsChanged(m, prevValue)));
                     } else {
                         log.info("DNS change suppressed for {} {} ({}): was='{}' now='{}'",
@@ -4322,6 +4352,7 @@ public class SchedulerService {
                     incCtx.put("record_type", m.getRecordType());
                     incCtx.put("resolver_detail", detail);
                     if (m.getTeamId() != null) incCtx.put("team_id", m.getTeamId());   // standalone → alarm takıma
+                    if (m.getNotificationGroupId() != null) incCtx.put("notification_group_id", m.getNotificationGroupId());
                     inconsistentSweep.add(new MonitoringOutageService.SweepItem(
                             EscalationService.TYPE_DNS_INCONSISTENT, m.getDomain(), m.getRecordType(),
                             !inconsistent, inconsistent ? detail : null,
