@@ -37,6 +37,8 @@ public class IncidentNotificationService {
     private final AppUserRepository userRepo;
     private final IncidentImageRepository imageRepo;
     private final AppSettingsService appSettings;
+    /** Takim mailinin yerine gecebilecek bildirim grubu -- olayin monitoru olmadigi icin damgasiz. */
+    private final NotificationGroupService notificationGroups;
 
     @Value("${site.monitor.app.base-url:http://localhost:5173}")
     private String appBaseUrl;
@@ -90,8 +92,15 @@ public class IncidentNotificationService {
         Team team = teamRepo.findById(tid.longValue()).orElse(null);
         if (team == null) { log.warn("Incident notify: team {} not found", teamIdObj); return; }
 
+        // Takim bileseni: varsayilan bildirim grubu varsa takim mailinin YERINE gecer.
+        // Damga yok -- olay bir monitore bagli degildir, bu yuzden takim seviyesinde cozulur.
         List<String> recipients = new ArrayList<>();
-        if (team.getEmail() != null && !team.getEmail().isBlank()) recipients.add(team.getEmail().trim());
+        NotificationGroupService.Override ov = notificationGroups.overrideFor(team.getId());
+        if (ov != null && ov.applies()) {
+            recipients.addAll(ov.emails());
+        } else if (team.getEmail() != null && !team.getEmail().isBlank()) {
+            recipients.add(team.getEmail().trim());
+        }
 
         String managerName = null;
         if (team.getLeaderId() != null) {
@@ -104,7 +113,7 @@ public class IncidentNotificationService {
             }
         }
         if (recipients.isEmpty()) {
-            log.warn("Incident notify: team {} has no email and no manager email — skipped", team.getId());
+            log.warn("Incident notify: team {} has no group/email and no manager email — skipped", team.getId());
             return;
         }
 

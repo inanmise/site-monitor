@@ -78,7 +78,7 @@ describe('PortMonitorPage', () => {
       ip_version: 'v4', slow_response_enabled: true, slow_threshold_ms: 4500,
       interval_seconds: 900, timeout_ms: 7000,
       confirm_attempts: 5, confirm_interval_seconds: 45, recovery_checks: 4, recovery_interval_seconds: 90,
-      active: false,
+      active: false, notification_group_id: 7,
     }] })
     api.monitoring.createPortMonitor.mockResolvedValue({ success: true, data: {} })
 
@@ -105,6 +105,8 @@ describe('PortMonitorPage', () => {
       intervalSeconds: 900, timeoutMs: 7000,
       confirmAttempts: 5, confirmIntervalSeconds: 45, recoveryChecks: 4, recoveryIntervalSeconds: 90,
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
+      // Bildirim grubu da kopyalanir: kopya, kaynagin alarmini ALAN ekibe gitmeye devam etsin.
+      notificationGroupId: 7,
     })
   })
 

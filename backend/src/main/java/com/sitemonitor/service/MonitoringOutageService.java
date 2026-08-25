@@ -115,6 +115,7 @@ public class MonitoringOutageService {
      *  teamId: standalone monitör için takım (alarmı doğru takıma yönlendirir); envanter-türevinde null. */
     public record DnsChange(String domain, String recordType,
                             String previousValue, String newValue, String detectedAt, Long teamId,
+                            Long notificationGroupId,
                             Supplier<Map<String, Object>> recheck) {}
 
     /** Teyit re-check'leri için küçük daemon havuzu — eşzamanlı çok-domain DOWN'da
@@ -732,6 +733,10 @@ public class MonitoringOutageService {
         // NOT: günlük re-alert reconstructChangeCtx'ten gelir (team_id taşımaz) → standalone re-alert
         // alıcısı global'e düşer; açılan event'in teamId'si (çözüm bildirimi) doğru kalır.
         if (c.teamId() != null) ctx.put("team_id", c.teamId());
+        // K5 damgasi: alarm acilirken AlertEvent'e yazilir (re-alert ctx'i tasimasa da
+        // damga olayda kalir -- bkz. yukaridaki team_id notu).
+        if (c.notificationGroupId() != null)
+            ctx.put("notification_group_id", c.notificationGroupId());
         return ctx;
     }
 

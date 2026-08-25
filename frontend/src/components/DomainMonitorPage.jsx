@@ -12,6 +12,7 @@ import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import NotificationGroupSelect from './ui/NotificationGroupSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
@@ -35,7 +36,7 @@ const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 const REFRESH_INTERVAL = 60
 const SORTS = ['days_asc', 'days_desc', 'name']
 const emptyForm = {
-  name: '', domain: '', groupName: '', teamId: '',
+  name: '', domain: '', groupName: '', notificationGroupId: '', teamId: '',
   thresholdsCsv: '60,30,14,7,3,1', warningDays: 30, criticalDays: 7, intervalSeconds: 86400, active: true,
   checkTimeoutMs: '',
 }
@@ -150,7 +151,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   }
   /** Monitör (snake_case) → form state eşlemesi. Edit ve Kopyala AYNI eşlemeyi kullanır → alan kaçmaz. */
   function formFrom(m) {
-    return { name: m.name || '', domain: m.domain || '', groupName: m.group_name || '',
+    return { name: m.name || '', domain: m.domain || '', groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
       teamId: m.team_id != null ? String(m.team_id) : '',
       thresholdsCsv: m.thresholds_csv || '60,30,14,7,3,1',
       warningDays: m.warning_days ?? 30, criticalDays: m.critical_days ?? 7,
@@ -554,6 +555,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
                 <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
                   options={[{ value: '', label: t('dom.noGroup') }, ...groupSelectOptions]}
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('dom.noGroup')} /></label>
+              <NotificationGroupSelect teamId={form.teamId} value={form.notificationGroupId}
+                onChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
               <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('dom.groupInfo')}</div>
 
               <label><span>{t('dom.warningDays')}</span>

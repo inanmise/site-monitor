@@ -1,0 +1,331 @@
+import { useState, useEffect, useMemo } from 'react'
+import { Users, Star, Mail, Plus, Trash2, Pencil } from 'lucide-react'
+import { api } from '../../api/client'
+import { useT } from '../../i18n/index.jsx'
+import { useToast } from '../ui/Toast.jsx'
+import { useDialog } from '../ui/Dialog.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
+import StatusBlock from '../ui/StatusBlock.jsx'
+import ModalShell from '../ui/ModalShell.jsx'
+import Field from '../ui/Field.jsx'
+import TagInput from '../ui/TagInput.jsx'
+import SearchableSelect from '../ui/SearchableSelect.jsx'
+import KebabMenu from '../ui/KebabMenu.jsx'
+
+/** Grup başına adres tavanı — backend {@code NotificationGroupService.MAX_EMAILS_PER_GROUP} ile AYNI. */
+const MAX_EMAILS = 15
+
+const emptyForm = { team_id: '', name: '', emails: '', is_default: false }
+
+/**
+ * Takım Bildirim Grupları — alarm e-postalarının gideceği adlandırılmış alıcı listeleri.
+ *
+ * <p><b>Sınıf dağarcığı:</b> ekran yeni sınıf UYDURMAZ; kardeş yönetim ekranlarının (özellikle
+ * {@code EscalationContacts}) kullandığı sınıfları yeniden kullanır — {@code admin-section},
+ * {@code admin-table-wrap}/{@code admin-table}, {@code audit-filters}, {@code badge badge-ok},
+ * {@code checkbox-label}, {@code field-hint}. İlk sürümde uydurulmuş adlar ({@code ng-panel},
+ * {@code data-table}, {@code text-danger} …) hiçbir CSS dosyasında tanımlı değildi: tarayıcı
+ * bilinmeyen sınıfı sessizce yok sayar, ekran biçimsiz çizilir ve HİÇBİR yerde hata görünmez.
+ * Kapı: {@code cssClasses.test.js}.
+ *
+ * <p><b>Dürüst boş durum:</b> grup yoksa ekran "hiçbir şey yok" demez; alarmların ŞU AN nereye
+ * gittiğini (takımın kendi adresi) açıkça yazar. Kullanıcı grubun bir EK katman olduğunu, bir
+ * şeyin bozuk olmadığını görsün.
+ */
+export default function NotificationGroups({ teams = [], systemRole }) {
+  const t = useT()
+  const toast = useToast()
+  const { showConfirm } = useDialog()
+
+  const [groups, setGroups] = useState([])
+  const [writableTeamIds, setWritableTeamIds] = useState([])
+  const [teamEmails, setTeamEmails] = useState({})
+  const [loading, setLoading] = useState(true)
+  const [modal, setModal] = useState(null)          // null | 'add' | 'edit'
+  const [form, setForm] = useState(emptyForm)
+  const [editing, setEditing] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+  const [fTeam, setFTeam] = useState('')
+
+  const teamMap = useMemo(() => Object.fromEntries(teams.map(x => [String(x.id), x.name])), [teams])
+
+  useEffect(() => { load() }, [])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function load() {
+    setLoading(true)
+    try {
+      const res = await api.notificationGroups.list()
+      if (res?.success) {
+        setGroups(res.data?.groups ?? [])
+        setWritableTeamIds((res.data?.writable_team_ids ?? []).map(String))
+        setTeamEmails(res.data?.team_emails ?? {})
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const visible = useMemo(
+    () => (fTeam ? groups.filter(g => String(g.team_id) === String(fTeam)) : groups),
+    [groups, fTeam],
+  )
+
+  /** Grubu olmayan takımlar — dürüst boş durum satırı bunlar için çizilir. */
+  const teamsWithoutGroup = useMemo(() => {
+    const withGroup = new Set(groups.map(g => String(g.team_id)))
+    return writableTeamIds.filter(id => !withGroup.has(id))
+  }, [groups, writableTeamIds])
+
+  const emailList = (form.emails || '').split(',').map(s => s.trim()).filter(Boolean)
+  const overLimit = emailList.length > MAX_EMAILS
+
+  function openAdd() {
+    setError(null)
+    setEditing(null)
+    setForm({ ...emptyForm, team_id: writableTeamIds[0] ?? '' })
+    setModal('add')
+  }
+
+  function openEdit(g) {
+    setError(null)
+    setEditing(g)
+    setForm({
+      team_id: String(g.team_id),
+      name: g.name ?? '',
+      emails: (g.emails ?? []).join(', '),
+      is_default: !!g.is_default,
+    })
+    setModal('edit')
+  }
+
+  async function save() {
+    setError(null)
+    if (!form.name.trim()) { setError(t('ng.errNameRequired')); return }
+    if (emailList.length === 0) { setError(t('ng.errEmailsRequired')); return }
+    if (overLimit) { setError(t('ng.errTooMany').replace('{max}', MAX_EMAILS)); return }
+
+    setSaving(true)
+    try {
+      const payload = {
+        team_id: form.team_id ? Number(form.team_id) : null,
+        name: form.name.trim(),
+        emails: emailList,
+        is_default: form.is_default,
+      }
+      const res = editing
+        ? await api.notificationGroups.update(editing.id, payload)
+        : await api.notificationGroups.create(payload)
+      if (res?.success) {
+        toast.success(editing ? t('ng.updated') : t('ng.created'))
+        setModal(null)
+        load()
+      } else {
+        setError(res?.error || t('ng.errSave'))
+      }
+    } catch (e) {
+      setError(e?.message || t('ng.errSave'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function makeDefault(g) {
+    const res = await api.notificationGroups.makeDefault(g.id)
+    if (res?.success) { toast.success(t('ng.defaultSet').replace('{name}', g.name)); load() }
+    else toast.error(res?.error || t('ng.errSave'))
+  }
+
+  async function remove(g) {
+    const teamEmail = teamEmails[String(g.team_id)]
+    const ok = await showConfirm({
+      title: t('ng.deleteTitle'),
+      // Ne kaybedildiğini AÇIKÇA söyler: bu grubu kullanan izlemeler nereye düşecek?
+      message: t('ng.deleteMsg')
+        .replace('{name}', g.name)
+        .replace('{fallback}', teamEmail || t('ng.noTeamEmail')),
+      confirmText: t('ng.delete'),
+    })
+    if (!ok) return
+    const res = await api.notificationGroups.remove(g.id)
+    if (res?.success) { toast.success(t('ng.deleted')); load() }
+    else toast.error(res?.error || t('ng.errSave'))
+  }
+
+  const teamOptions = writableTeamIds.map(id => ({ value: id, label: teamMap[id] ?? `#${id}` }))
+
+  return (
+    <div className="admin-section">
+      <div className="admin-section-header">
+        <div>
+          <h3>{t('ng.title')}</h3>
+          <p className="section-desc">{t('ng.howBody')}</p>
+        </div>
+        {writableTeamIds.length > 0 && (
+          <button className="btn btn-success" onClick={openAdd}>
+            <Plus size={15} aria-hidden="true" /> {t('ng.add')}
+          </button>
+        )}
+      </div>
+
+      {teams.length > 1 && (
+        <div className="audit-filters">
+          <SearchableSelect
+            value={fTeam}
+            onChange={setFTeam}
+            options={[{ value: '', label: t('ng.allTeams') },
+                      ...teams.map(x => ({ value: String(x.id), label: x.name }))]}
+            placeholder={t('ng.allTeams')}
+            searchThreshold={2}
+          />
+        </div>
+      )}
+
+      {loading ? (
+        <StatusBlock tone="neutral" title={t('ng.loading')} />
+      ) : visible.length === 0 ? (
+        <StatusBlock
+          tone="neutral"
+          icon={Mail}
+          title={t('ng.emptyTitle')}
+          description={
+            teamsWithoutGroup.length > 0 && teamEmails[teamsWithoutGroup[0]]
+              ? t('ng.emptyDesc').replace('{email}', teamEmails[teamsWithoutGroup[0]])
+              : t('ng.emptyDescNoEmail')
+          }
+        />
+      ) : (
+        <div className="admin-table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>{t('ng.colName')}</th>
+                <th>{t('ng.colTeam')}</th>
+                <th>{t('ng.colEmails')}</th>
+                <th>{t('ng.colIssue')}</th>
+                <th>{t('ng.actions')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map(g => {
+                const count = (g.emails ?? []).length
+                const teamEmail = teamEmails[String(g.team_id)]
+                return (
+                  <tr key={g.id}>
+                    <td>
+                      <strong>{g.name}</strong>
+                      {g.is_default && (
+                        <> <span className="badge badge-ok">
+                          <Star size={11} aria-hidden="true" /> {t('ng.default')}
+                        </span></>
+                      )}
+                      {!g.active && <> <span className="badge badge-deleted">{t('ng.deletedBadge')}</span></>}
+                    </td>
+                    <td>{teamMap[String(g.team_id)] ?? `#${g.team_id}`}</td>
+                    <td title={(g.emails ?? []).join(', ')}>
+                      {t('ng.emailCount').replace('{n}', count)}
+                    </td>
+                    <td>
+                      {/* "Sorun" sütunu: sessizce yanlış davranacak kurulumları GÖRÜNÜR kılar. */}
+                      {count === 0 && <span className="badge badge-err">{t('ng.issueEmpty')}</span>}
+                      {count > 0 && !g.is_default && !teamEmail && (
+                        <span className="badge badge-warn">{t('ng.issueNoFallback')}</span>
+                      )}
+                      {count > 0 && (g.is_default || teamEmail) && '—'}
+                    </td>
+                    <td>
+                      <KebabMenu
+                        label={t('ng.actions')}
+                        items={g.can_write ? [
+                          { label: t('ng.edit'), icon: <Pencil size={14} />, onClick: () => openEdit(g) },
+                          ...(g.active && !g.is_default
+                            ? [{ label: t('ng.makeDefault'), icon: <Star size={14} />, onClick: () => makeDefault(g) }]
+                            : []),
+                          ...(g.active
+                            ? [{ label: t('ng.delete'), icon: <Trash2 size={14} />, danger: true, onClick: () => remove(g) }]
+                            : []),
+                        ] : []}
+                      />
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <ModalShell
+        open={!!modal}
+        onClose={() => setModal(null)}
+        title={editing ? t('ng.editTitle') : t('ng.addTitle')}
+        icon={Users}
+        busy={saving}
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => setModal(null)} disabled={saving}>
+              {t('ng.cancel')}
+            </button>
+            <button className="btn btn-primary" onClick={save} disabled={saving || overLimit}>
+              {saving ? t('ng.saving') : t('ng.save')}
+            </button>
+          </>
+        }
+      >
+        {error && <AlertBanner tone="error" role="alert">{error}</AlertBanner>}
+
+        {!editing && (
+          <Field label={t('ng.fieldTeam')} required>
+            {() => (
+              <SearchableSelect
+                ariaLabel={t('ng.fieldTeam')}
+                value={String(form.team_id)}
+                onChange={v => setForm(f => ({ ...f, team_id: v }))}
+                options={teamOptions}
+                placeholder={t('ng.pickTeam')}
+                searchThreshold={2}
+              />
+            )}
+          </Field>
+        )}
+
+        <Field label={t('ng.fieldName')} required hint={t('ng.fieldNameHint')}>
+          {({ id, describedBy }) => (
+            <input
+              id={id} aria-describedby={describedBy} className="input" maxLength={100}
+              value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+              placeholder={t('ng.namePlaceholder')}
+            />
+          )}
+        </Field>
+
+        <Field
+          label={t('ng.fieldEmails')}
+          required
+          hint={t('ng.emailCounter').replace('{n}', emailList.length).replace('{max}', MAX_EMAILS)}
+          // Field YALNIZ 'warn' tonunu tanır; 'danger' sessizce yok sayılıyordu.
+          hintTone={overLimit ? 'warn' : undefined}
+          error={overLimit ? t('ng.errTooMany').replace('{max}', MAX_EMAILS) : undefined}
+        >
+          {() => (
+            <TagInput
+              value={form.emails}
+              onChange={v => setForm(f => ({ ...f, emails: v }))}
+              placeholder={t('ng.emailsPlaceholder')}
+            />
+          )}
+        </Field>
+
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={form.is_default}
+            onChange={e => setForm(f => ({ ...f, is_default: e.target.checked }))}
+          />
+          <span>{t('ng.makeDefaultField')}</span>
+        </label>
+        <span className="field-hint">{t('ng.makeDefaultHint')}</span>
+      </ModalShell>
+    </div>
+  )
+}

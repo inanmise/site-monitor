@@ -289,7 +289,9 @@ function ReNotifyConfirmModal({ domain, recipients, sending, onSend, onClose }) 
                   onChange={() => toggle(r.email)}
                 />
                 <strong>{r.name || r.email}</strong>
-                <span className="role-badge">{r.kind === 'TEAM' ? t('alh.renotifyModal.kindTeam') : (r.role || '')}</span>
+                {/* K9: takim satirinda kaynak etiketi ("Grup: X" / "Takim maili") -- backend role
+                    alaninda gonderir. Gelmezse eski sabit "Takim" etiketine duser. */}
+                <span className="role-badge">{r.kind === 'TEAM' ? (r.role || t('alh.renotifyModal.kindTeam')) : (r.role || '')}</span>
                 <span className="nl-email">{r.email}</span>
               </label>
             ))}

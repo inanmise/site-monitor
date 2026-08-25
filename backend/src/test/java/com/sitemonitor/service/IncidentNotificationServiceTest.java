@@ -38,12 +38,15 @@ class IncidentNotificationServiceTest {
     @Mock AppUserRepository userRepo;
     @Mock IncidentImageRepository imageRepo;
     @Mock AppSettingsService appSettings;
+    /** Bilerek STUB'LANMAZ: null donus = "hic grup yok" -> eski Team.email yolu isler (birinci yasa). */
+    @Mock NotificationGroupService notificationGroups;
 
     IncidentNotificationService service;
 
     @BeforeEach
     void setUp() {
-        service = new IncidentNotificationService(emailService, teamRepo, userRepo, imageRepo, appSettings);
+        service = new IncidentNotificationService(emailService, teamRepo, userRepo, imageRepo, appSettings,
+                notificationGroups);
         ReflectionTestUtils.setField(service, "appBaseUrl", "https://cm.example.com/");
         // Canlı DB değeri yok → getString fallback (@Value = reflection ile set edilen appBaseUrl) döner.
         when(appSettings.getString(eq("site.monitor.app.base-url"), any())).thenAnswer(inv -> inv.getArgument(1));
@@ -92,6 +95,44 @@ class IncidentNotificationServiceTest {
         verify(emailService).buildIncidentNotificationHtml(anyMap(), mgrName.capture(), eq("NEW"), cta.capture());
         assertThat(mgrName.getValue()).isEqualTo("Müdür Bey");
         assertThat(cta.getValue()).isEqualTo("https://cm.example.com/?tab=incident-history"); // trailing / kırpıldı
+    }
+
+    @Test
+    @DisplayName("Takımın varsayılan bildirim grubu, takım mailinin YERİNE geçer — müdür YİNE eklenir")
+    void notify_defaultGroupReplacesTeamEmail() {
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(team("takim@bank.com", 42L)));
+        AppUser mgr = new AppUser();
+        mgr.setId(42L);
+        mgr.setDisplayName("Müdür Bey");
+        mgr.setEmail("mudur@bank.com");
+        when(userRepo.findById(42L)).thenReturn(Optional.of(mgr));
+        // Olay bildiriminde DAMGA yoktur: olayın monitörü yok, çözüm takım seviyesindedir.
+        when(notificationGroups.overrideFor(7L)).thenReturn(new NotificationGroupService.Override(
+                java.util.List.of("nobet@bank.com", "yedek@bank.com"),
+                NotificationGroupService.Source.TEAM_DEFAULT_GROUP, 20L, "Takım Nöbet"));
+
+        service.doNotify(dto(), "NEW");
+
+        ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
+        verify(emailService).sendHtml(to.capture(), isNull(), anyString(), anyString(), isNull());
+        // Grup takım adresinin YERİNE geçer...
+        assertThat(to.getValue()).contains("nobet@bank.com", "yedek@bank.com");
+        assertThat(to.getValue()).doesNotContain("takim@bank.com");
+        // ...ama müdür ÜSTÜNE eklenmeye devam eder (K4): grup müdürün haberini KESMEZ.
+        assertThat(to.getValue()).contains("mudur@bank.com");
+    }
+
+    @Test
+    @DisplayName("Grup yoksa davranış BUGÜNKÜNÜN AYNISI — takım maili kullanılır")
+    void notify_noGroup_keepsTeamEmail() {
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(team("takim@bank.com", null)));
+        when(notificationGroups.overrideFor(7L)).thenReturn(NotificationGroupService.Override.NONE);
+
+        service.doNotify(dto(), "NEW");
+
+        ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
+        verify(emailService).sendHtml(to.capture(), isNull(), anyString(), anyString(), isNull());
+        assertThat(to.getValue()).containsExactly("takim@bank.com");
     }
 
     @Test

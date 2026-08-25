@@ -135,4 +135,11 @@ public class PageMonitor {
     @Column(name = "updated_by_name")
     private String updatedByName;
 
+
+    /**
+     * Bu izlemenin alarmlarinin gidecegi Bildirim Grubu — NULL ise zincirin kalani islet:
+     * takimin varsayilan grubu, o da yoksa {@code Team.email} (bugunku davranis).
+     */
+    @jakarta.persistence.Column(name = "notification_group_id")
+    private Long notificationGroupId;
 }

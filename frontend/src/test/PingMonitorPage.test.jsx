@@ -69,7 +69,7 @@ describe('PingMonitorPage', () => {
       ip_version: 'v6', group_name: 'Kurumsal', team_id: 5, team_name: 'SY-A',
       interval_seconds: 900, timeout_ms: 7000, packet_count: 7,
       confirm_attempts: 5, confirm_interval_seconds: 45, recovery_checks: 4, recovery_interval_seconds: 90,
-      active: false,
+      active: false, notification_group_id: 7,
     }] })
     api.monitoring.createPingMonitor.mockResolvedValue({ success: true, data: {} })
 
@@ -101,6 +101,8 @@ describe('PingMonitorPage', () => {
       intervalSeconds: 900, timeoutMs: 7000, packetCount: 7,
       confirmAttempts: 5, confirmIntervalSeconds: 45, recoveryChecks: 4, recoveryIntervalSeconds: 90,
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
+      // Bildirim grubu da kopyalanır: kopya, kaynağın alarmını ALAN ekibe gitmeye devam etsin.
+      notificationGroupId: 7,
     })
   })
 

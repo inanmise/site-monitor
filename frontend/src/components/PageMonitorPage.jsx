@@ -12,6 +12,7 @@ import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import NotificationGroupSelect from './ui/NotificationGroupSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
@@ -59,7 +60,7 @@ const RES_ICON = { IMG: Image, CSS: FileCode, JS: FileCode, LINK: Link2, IFRAME:
 const PAGE_ISSUE_COLS = '1fr 0.9fr 2fr 0.7fr 0.45fr 0.5fr 0.85fr 0.4fr'
 // Hariç desenleri check-time'da 50 satırda kırpılır (PageCheckerService.EXCLUDE_MAX_LINES) — istemci de aynı sınırı uygular.
 const EXCLUDE_MAX_LINES = 50
-const emptyForm = { name: '', url: '', groupName: '', teamId: '', tags: '', notifyEmail: true,
+const emptyForm = { name: '', url: '', groupName: '', notificationGroupId: '', teamId: '', tags: '', notifyEmail: true,
   mode: 'SINGLE_PAGE', crawlDepth: 2, crawlMaxPages: 50, excludePatterns: '', slowResourceMs: 2000,
   alertThirdParty: false, alertMixedContent: true, alertTimeout: true, resourceConcurrency: 5,
   intervalSeconds: 300, timeoutMs: 4000, confirmAttempts: 3, confirmIntervalSeconds: 30,
@@ -186,7 +187,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   }
   /** Monitör (snake_case) → form state eşlemesi. Edit ve Kopyala AYNI eşlemeyi kullanır → alan kaçmaz. */
   function formFrom(m) {
-    return { name: m.name || '', url: m.url || '', groupName: m.group_name || '',
+    return { name: m.name || '', url: m.url || '', groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
       teamId: m.team_id != null ? String(m.team_id) : '',
       tags: m.tags || '', notifyEmail: m.notify_email !== false,
       mode: m.mode || 'SINGLE_PAGE', crawlDepth: m.crawl_depth ?? 2, crawlMaxPages: m.crawl_max_pages ?? 50,
@@ -733,6 +734,8 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                 <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
                   options={[{ value: '', label: t('page.noGroup') }, ...groupSelectOptions]}
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('page.noGroup')} /></label>
+              <NotificationGroupSelect teamId={form.teamId} value={form.notificationGroupId}
+                onChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
 
               {/* Mod seçimi */}
               <label><span>{t('page.mode')}</span>

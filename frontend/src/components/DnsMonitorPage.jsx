@@ -15,6 +15,7 @@ import { Play, Pencil, Copy, Trash2, Plus, ChevronDown, Globe, Info, Network, Al
 import { duplicateName } from '../utils/duplicateName.js'
 import DnsDetailModal from './DnsDetailModal.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import NotificationGroupSelect from './ui/NotificationGroupSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 
@@ -43,7 +44,7 @@ const INFO_ITEMS = [
   { type: 'TTL',   descKey: 'dns.ttlExplain' },
 ]
 
-const emptyForm = { name: '', domain: '', recordType: 'A', intervalSeconds: 300, teamId: '', groupName: '', expectedValue: '', slowThresholdMs: '', propagationCheck: false, dnsChangeAlertEnabled: true, active: true }
+const emptyForm = { name: '', domain: '', recordType: 'A', intervalSeconds: 300, teamId: '', groupName: '', notificationGroupId: '', expectedValue: '', slowThresholdMs: '', propagationCheck: false, dnsChangeAlertEnabled: true, active: true }
 
 function truncateValue(val, max = 50) {
   if (!val) return '—'
@@ -140,7 +141,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
       recordType: m.record_type,
       intervalSeconds: m.interval_seconds,
       teamId: m.team_id != null ? String(m.team_id) : '',
-      groupName: m.group_name || '',
+      groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
       expectedValue: m.expected_value || '',
       slowThresholdMs: m.slow_threshold_ms ?? '',
       propagationCheck: m.propagation_check === true,
@@ -179,6 +180,9 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
       expectedValue: (form.expectedValue || '').trim(),
       slowThresholdMs: form.slowThresholdMs === '' ? null : Number(form.slowThresholdMs),
       groupName: form.groupName?.trim() || null,
+      // Bos = takim varsayilani -> takim adresi (zincirin kalani).
+      notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
+        ? null : Number(form.notificationGroupId),
       propagationCheck: !!form.propagationCheck,
       dnsChangeAlertEnabled: !!form.dnsChangeAlertEnabled,
       active: form.active,
@@ -542,6 +546,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
                   placeholder={t('dns.noGroup')}
                 />
               </label>
+              <NotificationGroupSelect teamId={form.teamId} value={form.notificationGroupId}
+                onChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
               <label>
                 <span>{t('dns.recordType')} <span className="req-star">*</span></span>
                 <SearchableSelect

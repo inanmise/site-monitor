@@ -42,6 +42,8 @@ class AdminControllerTest {
     @Autowired
     MockMvc mvc;
 
+    /** Bildirim gruplari: dilim baglami icin gerekli; stub YOK -> "hic grup yok" (birinci yasa). */
+    @MockitoBean com.sitemonitor.repository.NotificationGroupRepository notificationGroupRepo;
     @MockitoBean
     RememberMeService rememberMeService;
 

@@ -12,6 +12,12 @@ const tagHue = (s) => {
  * Paylaşımlı etiket chip input — text yazıp Enter (veya virgül) → chip. Değer CSV string
  * ("a, b, c") olarak saklanır; onChange(nextCsv). placeholder field içi ipucudur.
  * IncidentHistoryPage'teki TagInput'tan lift edildi; .tag-chips/.tag-chip CSS'i paylaşır.
+ *
+ * Giriş kutusu `.input` sınıfını KENDİ taşır — dış kapsayıcıya güvenmez. Eskiden sınıfsızdı ve
+ * yalnız `.form-grid label input` kuralının kapsamında doğru görünüyordu; ilk kez bir `.form-grid`
+ * DIŞINDA (Bildirim Grupları modalı) kullanılınca tarayıcı varsayılanı olarak çizildi. `.form-grid`
+ * içindeki mevcut kullanımlar değişmez: o kural daha yüksek özgüllükte ve `.input`'u ezmeye
+ * devam eder.
  */
 export default function TagInput({ label, value, onChange, disabled, placeholder }) {
   const [text, setText] = useState('')
@@ -39,7 +45,7 @@ export default function TagInput({ label, value, onChange, disabled, placeholder
     <label className="full-width">
       {label && <span>{label}</span>}
       {!disabled && (
-        <input type="text" value={text} placeholder={placeholder}
+        <input type="text" className="input" value={text} placeholder={placeholder}
           onChange={e => setText(e.target.value)} onBlur={add}
           onKeyDown={e => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add() } }} />
       )}

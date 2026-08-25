@@ -32,6 +32,10 @@ import static org.mockito.Mockito.atLeast;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class EscalationServiceTest {
 
+    /** Bilerek STUB'LANMAZ: null donus = "hic grup yok" -> eski Team.email yolu isler.
+     *  Bu dosyanin tamami boylece "grupsuz kurulum" regresyon kaniti olur (birinci yasa). */
+    @Mock private com.sitemonitor.service.NotificationGroupService notificationGroups;
+
     @Mock AlertEventRepository alertEventRepo;
     @Mock AlertThresholdRepository thresholdRepo;
     @Mock EscalationContactRepository contactRepo;
@@ -58,7 +62,7 @@ class EscalationServiceTest {
     void setUp() {
         service = new EscalationService(alertEventRepo, thresholdRepo, contactRepo,
                 inventoryRepo, emailService, weeklyAvailability, webhookService, new ObjectMapper(), notificationLogRepo, latestCheckRepo, teamRepo, smtpSettings, maintenanceService, stormService,
-                domainMonitorRepo, domainCheckRepo, dnsRecordRepo, pageCheckRepo);
+                domainMonitorRepo, domainCheckRepo, dnsRecordRepo, pageCheckRepo, notificationGroups);
 
         // Self-injection bypass for @Async dispatch in tests (runs synchronously)
         ReflectionTestUtils.setField(service, "self", service);
