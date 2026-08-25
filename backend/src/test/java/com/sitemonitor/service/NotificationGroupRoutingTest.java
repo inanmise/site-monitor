@@ -81,7 +81,7 @@ class NotificationGroupRoutingTest {
     @DisplayName("ÜÇ YOL: aynı damga → ilk alarm, çözüm ve yeniden-gönderim AYNI alıcıyı bulur")
     void sameStamp_sameRecipientsOnAllThreePaths() {
         when(groupRepo.findById(10L)).thenReturn(Optional.of(
-                g(10L, SY, "Ödeme Nöbetçi", "odeme@akbank.com", false, true)));
+                g(10L, SY, "Ödeme Nöbetçi", "odeme@example.com", false, true)));
         var s = service();
 
         // Üç yol da AlertEvent'teki AYNI damgayı okur (sendCombinedAlert/sendResolutionNotification/
@@ -99,12 +99,12 @@ class NotificationGroupRoutingTest {
     void stampWins_evenIfMonitorGroupChangedMeanwhile() {
         // Damgalı grup (alarm açılırken) — monitör bu arada 20'ye geçmiş olsun.
         when(groupRepo.findById(10L)).thenReturn(Optional.of(
-                g(10L, SY, "Eski Nöbet", "eski@akbank.com", false, true)));
+                g(10L, SY, "Eski Nöbet", "eski@example.com", false, true)));
         when(groupRepo.findFirstByTeamIdAndIsDefaultTrueAndActiveTrue(SY)).thenReturn(Optional.of(
-                g(20L, SY, "Yeni Nöbet", "yeni@akbank.com", true, true)));
+                g(20L, SY, "Yeni Nöbet", "yeni@example.com", true, true)));
 
         // Çözüm bildirimi DAMGAYI geçirir → alarmı açan ekip kapandığını öğrenir.
-        assertThat(service().overrideFor(SY, 10L).emails()).containsExactly("eski@akbank.com");
+        assertThat(service().overrideFor(SY, 10L).emails()).containsExactly("eski@example.com");
     }
 
     // ── Storm ve olay bildirimi: takım seviyesi, damga YOK ───────────────────
@@ -114,15 +114,15 @@ class NotificationGroupRoutingTest {
     void stormAndIncident_resolveTeamDefaultOnly() {
         // Bu takımda hem monitöre özel bir grup (10) hem de varsayılan (20) var.
         when(groupRepo.findById(10L)).thenReturn(Optional.of(
-                g(10L, SY, "Ödeme Nöbetçi", "odeme@akbank.com", false, true)));
+                g(10L, SY, "Ödeme Nöbetçi", "odeme@example.com", false, true)));
         when(groupRepo.findFirstByTeamIdAndIsDefaultTrueAndActiveTrue(SY)).thenReturn(Optional.of(
-                g(20L, SY, "Takım Nöbet", "nobet@akbank.com", true, true)));
+                g(20L, SY, "Takım Nöbet", "nobet@example.com", true, true)));
 
         // Storm birçok monitörü TEK maile topluyor, olayın ise monitörü hiç yok:
         // içlerinden birinin grubunu seçmek keyfî olurdu → damgasız çağrı.
         var ov = service().overrideFor(SY);
 
-        assertThat(ov.emails()).containsExactly("nobet@akbank.com");
+        assertThat(ov.emails()).containsExactly("nobet@example.com");
         assertThat(ov.source()).isEqualTo(NotificationGroupService.Source.TEAM_DEFAULT_GROUP);
     }
 
@@ -132,21 +132,21 @@ class NotificationGroupRoutingTest {
     @DisplayName("ÇİFT TAKIM: her takım KENDİ zincirinden çözülür, damga yalnız sahibine uygulanır")
     void twoTeams_resolvedIndependently() {
         when(groupRepo.findById(10L)).thenReturn(Optional.of(
-                g(10L, SY, "SY Nöbet", "sy-nobet@akbank.com", false, true)));
+                g(10L, SY, "SY Nöbet", "sy-nobet@example.com", false, true)));
         when(groupRepo.findFirstByTeamIdAndIsDefaultTrueAndActiveTrue(UG)).thenReturn(Optional.of(
-                g(30L, UG, "UG Nöbet", "ug-nobet@akbank.com", true, true)));
+                g(30L, UG, "UG Nöbet", "ug-nobet@example.com", true, true)));
         var s = service();
 
         // Sahibi takım damgayı alır; UG takımına damga UYGULANMAZ (o, izlemenin sahibi değil).
-        assertThat(s.overrideFor(SY, 10L).emails()).containsExactly("sy-nobet@akbank.com");
-        assertThat(s.overrideFor(UG, null).emails()).containsExactly("ug-nobet@akbank.com");
+        assertThat(s.overrideFor(SY, 10L).emails()).containsExactly("sy-nobet@example.com");
+        assertThat(s.overrideFor(UG, null).emails()).containsExactly("ug-nobet@example.com");
     }
 
     @Test
     @DisplayName("ÇİFT TAKIM: yalnız birinde grup varsa DİĞERİ eski yoluna (Team.email) düşer")
     void twoTeams_onlyOneHasGroup() {
         when(groupRepo.findFirstByTeamIdAndIsDefaultTrueAndActiveTrue(SY)).thenReturn(Optional.of(
-                g(20L, SY, "SY Nöbet", "sy-nobet@akbank.com", true, true)));
+                g(20L, SY, "SY Nöbet", "sy-nobet@example.com", true, true)));
         when(groupRepo.findFirstByTeamIdAndIsDefaultTrueAndActiveTrue(UG)).thenReturn(Optional.empty());
         var s = service();
 

@@ -325,6 +325,73 @@ class EmailTemplateBuilderTest {
         assertThat(html).contains("<td bgcolor='#EEF1F4'");
     }
 
+    // ── Sorumlu Ekipler (sertifikayı kim yenileyecek) ──────────────────────────
+
+    /** ctx'e konan harita; EscalationService {@code CertificateInventoryContacts.filled} ile üretir. */
+    private static Map<String, Object> contacts(String... labelValuePairs) {
+        Map<String, String> m = new LinkedHashMap<>();
+        for (int i = 0; i + 1 < labelValuePairs.length; i += 2) m.put(labelValuePairs[i], labelValuePairs[i + 1]);
+        return Map.of("inv_contacts", m);
+    }
+
+    @Test
+    @DisplayName("Sorumlu Ekipler: HTML kartı dolu alanları etiket/değer olarak basar")
+    void contactsSection_html() {
+        String html = b.buildHtml(certMail(contacts(
+                "Servis Yönetimi", "Ad Soyad - ad.soyad@example.com",
+                "IISAdmin Ekibi", "iis@example.com")));
+
+        assertThat(html).contains("Sorumlu Ekipler")
+                        .contains("Servis Yönetimi").contains("Ad Soyad")
+                        .contains("IISAdmin Ekibi");
+        // Gönderilmeyen alan hiç geçmez — liste zaten filtrelenmiş gelir.
+        assertThat(html).doesNotContain("WAFAdmin Ekibi");
+    }
+
+    @Test
+    @DisplayName("Sorumlu Ekipler: e-posta mailto bağlantısı olur, çevresindeki metin düz kalır")
+    void contactsSection_mailtoLink() {
+        String html = b.buildHtml(certMail(contacts(
+                "Servis Yönetimi", "Ad Soyad - ad.soyad@example.com")));
+
+        assertThat(html).contains("<a href='mailto:ad.soyad@example.com'");
+        // Adresin ÖNÜNDEKİ serbest metin link DEĞİL, düz metin olarak kalır.
+        assertThat(html).contains("Ad Soyad - <a href='mailto:");
+    }
+
+    @Test
+    @DisplayName("PARİTE: düz metin sürümünde de Sorumlu Ekipler satırları var (adres aynen)")
+    void contactsSection_plainTextParity() {
+        String text = b.buildText(certMail(contacts(
+                "Servis Yönetimi", "ad.soyad@example.com",
+                "WAFAdmin Ekibi", "waf@example.com")));
+
+        assertThat(text).contains("Sorumlu Ekipler:")
+                        .contains("Servis Yönetimi: ad.soyad@example.com")
+                        .contains("WAFAdmin Ekibi: waf@example.com");
+        // Düz metinde mailto sarmalaması OLMAZ; adres okunabilir kalmalı.
+        assertThat(text).doesNotContain("mailto:");
+    }
+
+    @Test
+    @DisplayName("Hiç sorumlu ekip yoksa kart HİÇ render edilmez (HTML ve düz metin)")
+    void contactsSection_absentWhenEmpty() {
+        assertThat(b.buildHtml(certMail(Map.of()))).doesNotContain("Sorumlu Ekipler");
+        assertThat(b.buildText(certMail(Map.of()))).doesNotContain("Sorumlu Ekipler");
+    }
+
+    @Test
+    @DisplayName("KAÇIŞ: değerdeki HTML yorumlanmaz")
+    void contactsSection_escapesHtml() {
+        String html = b.buildHtml(certMail(contacts(
+                "Servis Yönetimi", "<script>alert(1)</script> ad@example.com")));
+
+        assertThat(html).doesNotContain("<script>");
+        assertThat(html).contains("&lt;script&gt;");
+        // Kaçış, aynı değerdeki geçerli adresin linklenmesini ENGELLEMEZ.
+        assertThat(html).contains("mailto:ad@example.com");
+    }
+
     @Test
     @DisplayName("Değişiklik Açıklaması: satır sonları korunur, HTML kaçırılır, Markdown yorumlanmaz")
     void changeDescriptionSection() {

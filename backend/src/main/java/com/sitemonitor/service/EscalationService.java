@@ -1486,6 +1486,12 @@ public class EscalationService {
                 if (!ops.isEmpty()) enrichedCtx.putIfAbsent("inv_ops", ops);
                 String desc = inv.getChangeDescription();
                 if (desc != null && !desc.isBlank()) enrichedCtx.putIfAbsent("inv_change_desc", desc);
+                // Sorumlu Ekipler — "bu sertifikayı kim yenileyecek". Aynı envanter okumasına
+                // biniyor, EK SORGU YOK. Bu tek nokta ilk uyarı / escalation / günlük re-alert /
+                // yeniden-gönderim yollarının DÖRDÜNÜ birden besler: hepsi sendCombinedAlert'ten
+                // geçer ve içerik her gönderimde envanterden YENİDEN okunur (bayat kopya yok).
+                var invContacts = CertificateInventoryContacts.filled(inv);
+                if (!invContacts.isEmpty()) enrichedCtx.putIfAbsent("inv_contacts", invContacts);
             });
         }
         certContext = enrichedCtx;

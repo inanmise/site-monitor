@@ -79,6 +79,11 @@ class EmailPreviewHarnessTest {
         m.put("subject", "CN=www.akbank.com");
         m.put("fingerprint", "EB0B59B1AA31C0F5C2D8E4A76B93F1D0C4A85E2739BD61FA0C8E7B4D53B8DD8C3");
         m.put("inv_ops", List.of("Netscaler", "WAF'ta Var", "Kullanım Durumu"));
+        // Sorumlu Ekipler kartı — önizlemede de görünsün ki şablon değişikliği gözle kontrol edilebilsin.
+        m.put("inv_contacts", new java.util.LinkedHashMap<>(java.util.Map.of(
+                "Servis Yönetimi", "Ad Soyad - ad.soyad@example.com",
+                "Uygulama Geliştirme", "ekip@example.com",
+                "IISAdmin Ekibi", "iisadmin@example.com")));
         m.put("inv_change_desc",
                 "1. Sertifika alım süreci IISAdmins tarafından yapılır. IISAdmins PFX halindeki sertifikayı "
                 + "AdcAdmins ve Güvenlik ekibi ile paylaşır.\n"

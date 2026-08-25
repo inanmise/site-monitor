@@ -412,8 +412,9 @@ export const api = {
     // Kalıcı sil (geri alınamaz) — yalnız admin. Envanter + o domain'in kontrol geçmişi.
     purgeInventory: (id) => request(`/admin/inventory/${id}/permanent`, { method: 'DELETE' }),
     purgeDeletedInventory: () => request('/admin/inventory/purge-deleted', { method: 'POST' }),
-    bulkInventory: (ids, action) => request('/admin/inventory/bulk', {
-      method: 'POST', body: JSON.stringify({ ids, action }),
+    /** extra: yalniz set-contacts icin — GONDERILEN alanlar yazilir, otekilere dokunulmaz. */
+    bulkInventory: (ids, action, extra) => request('/admin/inventory/bulk', {
+      method: 'POST', body: JSON.stringify({ ids, action, ...(extra ?? {}) }),
     }),
     runDiagnostics: (domain, port = 443) => request('/admin/diagnostics', {
       method: 'POST', body: JSON.stringify({ domain, port }),

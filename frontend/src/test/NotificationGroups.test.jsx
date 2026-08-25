@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor, act } from './test-utils'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 
-const state = vi.hoisted(() => ({ groups: [], writable: ['1'], teamEmails: { 1: 'sy-a@akbank.com' } }))
+const state = vi.hoisted(() => ({ groups: [], writable: ['1'], teamEmails: { 1: 'sy-a@example.com' } }))
 
 vi.mock('../api/client', () => ({
   api: withApiFallback({
@@ -38,7 +38,7 @@ const NotificationGroups = (await import('../components/admin/NotificationGroups
 const TEAMS = [{ id: 1, name: 'SY-A' }]
 
 const group = (over = {}) => ({
-  id: 10, team_id: 1, name: 'Ödeme Nöbetçi', emails: ['odeme@akbank.com', 'yedek@akbank.com'],
+  id: 10, team_id: 1, name: 'Ödeme Nöbetçi', emails: ['odeme@example.com', 'yedek@example.com'],
   is_default: false, active: true, can_write: true, ...over,
 })
 
@@ -47,14 +47,14 @@ describe('NotificationGroups', () => {
     vi.clearAllMocks()
     state.groups = []
     state.writable = ['1']
-    state.teamEmails = { 1: 'sy-a@akbank.com' }
+    state.teamEmails = { 1: 'sy-a@example.com' }
     dialog.confirm = true
   })
 
   it('DÜRÜST BOŞ DURUM: grup yokken alarmların ŞU AN nereye gittiğini söyler', async () => {
     render(<NotificationGroups teams={TEAMS} systemRole="USER" />)
     // "Hiçbir şey yok" demek yetmez — kullanıcı bir şeyin bozuk olmadığını görmeli.
-    expect(await screen.findByText(/sy-a@akbank\.com/)).toBeTruthy()
+    expect(await screen.findByText(/sy-a@example\.com/)).toBeTruthy()
   })
 
   it('Grupları listeler; varsayılan rozetli, adres sayısı görünür', async () => {
@@ -66,11 +66,32 @@ describe('NotificationGroups', () => {
     expect(screen.getByText('2 addresses')).toBeTruthy()
   })
 
-  it('SORUN sütunu: adressiz grup görünür biçimde işaretlenir', async () => {
-    state.groups = [group({ emails: [] })]
+  it('RİSK UYARISI: varsayılan grubu ve takım adresi olmayan takım için TEK uyarı çıkar', async () => {
+    // Eskiden bu satır başına "Sorun" sütunuydu; yanlış nesneyi işaret ediyor ve aynı takımın
+    // her satırında tekrarlıyordu. Risk TAKIM özelliğidir → takım başına bir kez söylenir.
+    state.groups = [group({ is_default: false })]
+    state.teamEmails = { 1: '' }
     render(<NotificationGroups teams={TEAMS} systemRole="USER" />)
-    // Sessizce kimseye gitmeyen bir grup ekranda SESSİZ kalmamalı.
-    expect(await screen.findByText(/No addresses/)).toBeTruthy()
+
+    expect(await screen.findByText(/Some alerts may reach nobody/)).toBeTruthy()
+    expect(screen.getByText(/no default group/)).toBeTruthy()
+  })
+
+  it('RİSK UYARISI: varsayılan grup VARSA uyarı ÇIKMAZ', async () => {
+    state.groups = [group({ is_default: true })]
+    state.teamEmails = { 1: '' }          // takım adresi yok ama varsayılan grup zinciri kapatıyor
+    render(<NotificationGroups teams={TEAMS} systemRole="USER" />)
+    await screen.findByText('Ödeme Nöbetçi')
+
+    expect(screen.queryByText(/Some alerts may reach nobody/)).toBeNull()
+  })
+
+  it('RİSK UYARISI: takım adresi VARSA uyarı ÇIKMAZ', async () => {
+    state.groups = [group({ is_default: false })]
+    render(<NotificationGroups teams={TEAMS} systemRole="USER" />)
+    await screen.findByText('Ödeme Nöbetçi')
+
+    expect(screen.queryByText(/Some alerts may reach nobody/)).toBeNull()
   })
 
   it('Boş adres listesiyle kaydetmeye izin verilmez ve API çağrılmaz', async () => {
@@ -91,13 +112,13 @@ describe('NotificationGroups', () => {
 
     fireEvent.change(await screen.findByPlaceholderText(/Payments on-call/), { target: { value: 'Yeni Nöbet' } })
     const tag = screen.getByPlaceholderText(/Type an address and press Enter/)
-    fireEvent.change(tag, { target: { value: 'a@akbank.com' } })
+    fireEvent.change(tag, { target: { value: 'a@example.com' } })
     fireEvent.keyDown(tag, { key: 'Enter' })
     fireEvent.click(screen.getByRole('button', { name: /^Save$/ }))
 
     await waitFor(() => expect(api.notificationGroups.create).toHaveBeenCalled())
     expect(api.notificationGroups.create.mock.calls[0][0]).toEqual({
-      team_id: 1, name: 'Yeni Nöbet', emails: ['a@akbank.com'], is_default: false,
+      team_id: 1, name: 'Yeni Nöbet', emails: ['a@example.com'], is_default: false,
     })
   })
 

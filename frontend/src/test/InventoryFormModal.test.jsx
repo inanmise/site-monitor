@@ -42,6 +42,10 @@ const RECORD = {
   expected_fingerprint: 'AA:BB:CC', expected_subject: 'CN=a.akbank.com',
   change_description: '2026-01 yenilendi',
   external_vendor: true, in_use: true,
+  svc_mgmt_contact: 'Ad Soyad - ad.soyad@example.com',
+  app_dev_contact: 'ekip@example.com',
+  iis_admin_contact: 'iis@example.com',
+  waf_admin_contact: 'waf@example.com',
 }
 
 const saveBtn = () => screen.getByRole('button', { name: /^Kaydet$|^Save$/i })
@@ -85,6 +89,43 @@ describe('InventoryFormModal', () => {
     expect(payload.tls_mode).toBe('browser')
     expect(payload.purchased_by).toBe('ACME')
     expect(payload.external_vendor).toBe(true)
+  })
+
+  it('Sorumlu Ekipler: dort alan da render olur ve payloada girer', async () => {
+    render(<InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+
+    // Kayitli degerler forma yuklenir (formFrom ...item ile tasir).
+    expect(screen.getByDisplayValue('Ad Soyad - ad.soyad@example.com')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('waf@example.com')).toBeInTheDocument()
+
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(api.admin.updateInventory).toHaveBeenCalled())
+    const payload = api.admin.updateInventory.mock.calls[0][1]
+    expect(payload.svc_mgmt_contact).toBe('Ad Soyad - ad.soyad@example.com')
+    expect(payload.app_dev_contact).toBe('ekip@example.com')
+    expect(payload.iis_admin_contact).toBe('iis@example.com')
+    expect(payload.waf_admin_contact).toBe('waf@example.com')
+  })
+
+  it('Sorumlu Ekipler: bos birakilan alan payloadda null gider (bos string DEGIL)', async () => {
+    const rec = { ...RECORD, waf_admin_contact: '   ' }
+    render(<InventoryFormModal mode="edit" record={rec} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+    fireEvent.click(saveBtn())
+
+    await waitFor(() => expect(api.admin.updateInventory).toHaveBeenCalled())
+    expect(api.admin.updateInventory.mock.calls[0][1].waf_admin_contact).toBeNull()
+  })
+
+  it('Sorumlu Ekipler: bozuk e-posta UYARI verir ama kaydi ENGELLEMEZ', async () => {
+    // Alan serbest metindir; engelleseydik "Ad Soyad (izinde)" gibi mesru degerler de reddedilirdi.
+    const rec = { ...RECORD, svc_mgmt_contact: 'ad.soyad@' }
+    render(<InventoryFormModal mode="edit" record={rec} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+
+    expect(screen.getByText(/looks incomplete|eksik g/i)).toBeInTheDocument()
+
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(api.admin.updateInventory).toHaveBeenCalled())
+    expect(api.admin.updateInventory.mock.calls[0][1].svc_mgmt_contact).toBe('ad.soyad@')
   })
 
   it('duplicate: domain KAYNAKTAN dolu gelir; expected_* ve change_description kopyalanmaz', async () => {

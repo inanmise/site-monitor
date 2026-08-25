@@ -86,6 +86,29 @@ public class CertificateInventory {
     @Column(name = "tls_mode", length = 16)
     private String tlsMode;
 
+    // ── Sorumlu Ekipler ───────────────────────────────────────────────────────
+    /**
+     * Bu sertifikanın yenilenmesinde kimin ne yapacağını gösteren SERBEST METİN alanları.
+     * "Ad Soyad - ad.soyad@example.com", yalnız e-posta ya da yalnız ad — üçü de kabul; üretimdeki
+     * kullanım bu üç biçimi de içeriyor, o yüzden yapılandırılmış ad+e-posta çifti YAPILMADI.
+     *
+     * <p><b>Alarm YÖNLENDİRMESİNE girmez.</b> Alıcıyı {@code teamId}/{@code ugTeamId} ve
+     * {@code notificationGroupId} zinciri belirler; bu dört alan yalnız BİLGİLENDİRMEDİR
+     * (uyarı e-postasında "Sorumlu Ekipler" kartı + envanter detayında gösterim). Alıcı listesine
+     * eklenselerdi, kimin haber alacağı iki ayrı yerden yönetilir ve zamanla sapardı.
+     */
+    @Column(name = "svc_mgmt_contact", length = 300)
+    private String svcMgmtContact;
+
+    @Column(name = "app_dev_contact", length = 300)
+    private String appDevContact;
+
+    @Column(name = "iis_admin_contact", length = 300)
+    private String iisAdminContact;
+
+    @Column(name = "waf_admin_contact", length = 300)
+    private String wafAdminContact;
+
     // ── Süreç ve açıklama alanları ────────────────────────────────────────────
     @Column(name = "purchased_by", length = 200)
     private String purchasedBy;

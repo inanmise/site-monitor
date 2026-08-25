@@ -601,6 +601,15 @@ public class SchedulerService {
         }
         patch("CREATE INDEX IF NOT EXISTS idx_ng_team ON notification_groups(team_id)");
         patch("CREATE INDEX IF NOT EXISTS idx_ng_team_default ON notification_groups(team_id, is_default)");
+
+        // Sorumlu Ekipler — sertifikayı kimin yenileyeceğini gösteren dört serbest metin alanı.
+        // Yönlendirmeye GİRMEZ, yalnız uyarı e-postasında ve envanter detayında gösterilir.
+        // Nullable: dolu tabloya NOT NULL eklemek Postgres'te reddedilir, Hibernate yutar ve
+        // kolon HİÇ oluşmaz — sonra her sorgu 500 verir (projede yaşanmış tuzak).
+        for (String c : new String[]{
+                "svc_mgmt_contact", "app_dev_contact", "iis_admin_contact", "waf_admin_contact" }) {
+            patch("ALTER TABLE certificate_inventory ADD COLUMN " + c + " VARCHAR(300)");
+        }
         // Widen varchar(255) columns to TEXT — markdown editor / long descriptions can overflow
         patch("ALTER TABLE certificate_inventory ALTER COLUMN change_description TYPE TEXT");
         patch("ALTER TABLE certificate_inventory ALTER COLUMN description TYPE TEXT");

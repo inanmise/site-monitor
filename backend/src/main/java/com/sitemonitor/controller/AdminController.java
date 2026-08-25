@@ -74,7 +74,8 @@ public class AdminController {
         "actionRequired", "openshift", "sslPinning", "internalCert", "jksKeystore", "serverUpdate",
         "netscaler", "wafEnabled", "inUse", "evCertificate", "transferredToSy", "useProxy",
         "tlsMode", "purchasedBy", "changeDescription", "expectedFingerprint", "expectedSubject",
-        "teamId", "groupName", "deletedAt", "notificationGroupId"
+        "teamId", "groupName", "deletedAt", "notificationGroupId",
+        "svcMgmtContact", "appDevContact", "iisAdminContact", "wafAdminContact"
     };
     private final CertificateInventoryRepository inventoryRepo;
     /** Envantere secilen bildirim grubunun sahipligini dogrulamak icin. */
@@ -296,6 +297,12 @@ public class AdminController {
         // (monitor tarafindaki applyNotificationGroup ile ayni kural).
         existing.setNotificationGroupId(
                 validInventoryGroup(item.getNotificationGroupId(), existing.getTeamId()));
+        // Sorumlu Ekipler — DORT setter da sart. Biri atlanirsa o alan formda kaydedilmis
+        // GORUNUR ama sayfa yenilenince kaybolur (CLAUDE.md'deki 1 numarali envanter bug'i).
+        existing.setSvcMgmtContact(item.getSvcMgmtContact());
+        existing.setAppDevContact(item.getAppDevContact());
+        existing.setIisAdminContact(item.getIisAdminContact());
+        existing.setWafAdminContact(item.getWafAdminContact());
         existing.setExternalVendor(item.getExternalVendor());
         existing.setActionRequired(item.getActionRequired());
         existing.setOpenshift(item.getOpenshift());
@@ -361,6 +368,10 @@ public class AdminController {
         fieldDiff(sb, "expectedFingerprint",o.getExpectedFingerprint(),  n.getExpectedFingerprint());
         fieldDiff(sb, "expectedSubject",    o.getExpectedSubject(),      n.getExpectedSubject());
         fieldDiff(sb, "notificationGroupId", o.getNotificationGroupId(), n.getNotificationGroupId());
+        fieldDiff(sb, "svcMgmtContact",  o.getSvcMgmtContact(),  n.getSvcMgmtContact());
+        fieldDiff(sb, "appDevContact",   o.getAppDevContact(),   n.getAppDevContact());
+        fieldDiff(sb, "iisAdminContact", o.getIisAdminContact(), n.getIisAdminContact());
+        fieldDiff(sb, "wafAdminContact", o.getWafAdminContact(), n.getWafAdminContact());
         if (isAdmin && n.getTeamId() != null)
             fieldDiff(sb, "teamId",         o.getTeamId(),               n.getTeamId());
         if (sb.length() > 1 && sb.charAt(sb.length() - 1) == ',') sb.deleteCharAt(sb.length() - 1);
@@ -710,6 +721,26 @@ public class AdminController {
      * activate/deactivate için atlanır (geri yükleme ayrı akıştır).
      */
     @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
+    /**
+     * Toplu "sorumlu ekip ata" — YALNIZ gövdede GÖNDERİLEN alanları yazar.
+     *
+     * <p>Gönderilmeyen alana DOKUNULMAZ (boş string ile ezilmez): kullanıcı yalnız IISAdmin'i
+     * doldurup 200 kayda uygulamak istediğinde diğer üç alanın silinmesi sessiz bir veri kaybı
+     * olurdu. Bir alanı KASITLI temizlemek için değeri açıkça boş string gönderilir.
+     */
+    private void applyBulkContacts(CertificateInventory inv, Map<String, Object> body) {
+        if (body.containsKey("svc_mgmt_contact"))  inv.setSvcMgmtContact(trimOrNull(body.get("svc_mgmt_contact")));
+        if (body.containsKey("app_dev_contact"))   inv.setAppDevContact(trimOrNull(body.get("app_dev_contact")));
+        if (body.containsKey("iis_admin_contact")) inv.setIisAdminContact(trimOrNull(body.get("iis_admin_contact")));
+        if (body.containsKey("waf_admin_contact")) inv.setWafAdminContact(trimOrNull(body.get("waf_admin_contact")));
+    }
+
+    private static String trimOrNull(Object o) {
+        if (o == null) return null;
+        String v = o.toString().trim();
+        return v.isEmpty() ? null : v;
+    }
+
     @PostMapping("/inventory/bulk")
     @Transactional
     public ResponseEntity<Map<String, Object>> bulkInventoryAction(
@@ -717,8 +748,8 @@ public class AdminController {
         requireAdminOrTeamAdmin(session);
         requirePerm(session, "inventory.crud", "edit");
         String action = body.get("action") != null ? body.get("action").toString().trim().toLowerCase() : "";
-        if (!Set.of("activate", "deactivate", "delete").contains(action)) {
-            throw new IllegalArgumentException("action must be one of: activate, deactivate, delete");
+        if (!Set.of("activate", "deactivate", "delete", "set-contacts").contains(action)) {
+            throw new IllegalArgumentException("action must be one of: activate, deactivate, delete, set-contacts");
         }
         LinkedHashSet<Long> ids = new LinkedHashSet<>();
         if (body.get("ids") instanceof List<?> raw) {
@@ -744,6 +775,15 @@ public class AdminController {
                         inv.setActive(false); inv.setUpdatedAt(ts); inventoryRepo.save(inv);
                         // Pasife alınan domain artık taranmaz → açık alarmlarını sessizce kapat
                         if (wasActive) alertsClosed += escalationService.closeAlertsOnDeactivate(inv.getDomain());
+                        processed++;
+                    }
+                }
+                case "set-contacts" -> {
+                    if (deleted) { skipped++; }            // silinmiş kayda toplu yazma yapılmaz
+                    else {
+                        applyBulkContacts(inv, body);
+                        inv.setUpdatedAt(ts);
+                        inventoryRepo.save(inv);
                         processed++;
                     }
                 }
