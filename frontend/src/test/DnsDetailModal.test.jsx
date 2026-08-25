@@ -25,12 +25,12 @@ import { api } from '../api/client'
 
 const monitor = {
   id: 7, name: 'iyi', domain: 'www.iyigelecegeyatirim.com', record_type: 'A',
-  standalone: true, team_id: 5, value: '192.168.10.249',
-  expected_value: '192.168.10.249\n217.169.196.197',
+  standalone: true, team_id: 5, value: '192.168.1.10',
+  expected_value: '192.168.1.10\n217.169.196.197',
 }
 
 const details = {
-  records: { A: { values: ['192.168.10.249'], ttl: 599, response_ms: 2, success: true } },
+  records: { A: { values: ['192.168.1.10'], ttl: 599, response_ms: 2, success: true } },
   soa: { success: false },
   authoritative_servers: [],
   monitor,
@@ -46,7 +46,7 @@ const details = {
 
 const historyRows = [
   {
-    id: 1, monitor_id: 7, record_type: 'A', value: '192.168.10.249',
+    id: 1, monitor_id: 7, record_type: 'A', value: '192.168.1.10',
     changed: true, rotated: false, previous_value: '217.169.196.197',
     checked_at: '2026-08-02T01:32:00', ttl: 788, response_ms: 2,
   },

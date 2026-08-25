@@ -101,7 +101,7 @@ class KeywordCheckerServiceTest {
         HttpServer server = serve("<p>nothing here</p>");
         try {
             Map<String, Object> r = newChecker()
-                    .check("http://127.0.0.1:" + server.getAddress().getPort() + "/", "akbank", 3000);
+                    .check("http://127.0.0.1:" + server.getAddress().getPort() + "/", "example", 3000);
             assertThat(r.get("found")).isEqualTo(false);
             assertThat(r.get("count")).isEqualTo(0);
             assertThat(r.get("http_status")).isEqualTo(200);

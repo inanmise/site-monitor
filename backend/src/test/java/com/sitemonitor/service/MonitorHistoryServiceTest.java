@@ -59,7 +59,7 @@ class MonitorHistoryServiceTest {
 
     private HttpSession session() {
         MockHttpSession s = new MockHttpSession();
-        s.setAttribute("username", "N70678");
+        s.setAttribute("username", "N23456");
         s.setAttribute("userId", 42L);
         s.setAttribute("fullName", "Ada Lovelace");
         return s;
@@ -103,7 +103,7 @@ class MonitorHistoryServiceTest {
         assertThat(row.getTeamId()).isEqualTo(5L);
         // "Hangi değerlerle doğdu" sorusunun cevabı: CREATE'te diff yok, snapshot VAR.
         assertThat(row.getSnapshot()).contains("\"intervalSeconds\":300");
-        assertThat(row.getActor()).isEqualTo("N70678");
+        assertThat(row.getActor()).isEqualTo("N23456");
         assertThat(row.getActorId()).isEqualTo(42L);
         assertThat(row.getIpAddress()).isEqualTo("10.20.30.40");
         assertThat(row.getUserAgent()).contains("Chrome/126");
@@ -274,10 +274,10 @@ class MonitorHistoryServiceTest {
         service.stampUpdated(bean, session());
         service.stampCreated(new Object(), session()); // setter yok → istisna FIRLATMAZ
 
-        assertThat(bean.createdBy).isEqualTo("N70678");
+        assertThat(bean.createdBy).isEqualTo("N23456");
         assertThat(bean.createdByName).isEqualTo("Ada Lovelace");
         assertThat(bean.createdIp).isEqualTo("10.0.0.9");
-        assertThat(bean.updatedBy).isEqualTo("N70678");
+        assertThat(bean.updatedBy).isEqualTo("N23456");
     }
 
     public static class Stamped {

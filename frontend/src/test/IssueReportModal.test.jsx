@@ -30,10 +30,10 @@ describe('IssueReportModal', () => {
   })
 
   it('profil e-postası VARKEN: e-posta alanı SORULMAZ, readonly bilgi satırı görünür', async () => {
-    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@akbank.com' })
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
     render(<IssueReportModal open onClose={() => {}} />)
     await waitFor(() => expect(api.getMe).toHaveBeenCalled())
-    expect(await screen.findByText('ben@akbank.com')).toBeInTheDocument()
+    expect(await screen.findByText('ben@example.com')).toBeInTheDocument()
     // e-posta input'u yok (test EN locale: "Your email address")
     expect(screen.queryByPlaceholderText('you@company.com')).toBeNull()
   })
@@ -51,7 +51,7 @@ describe('IssueReportModal', () => {
   })
 
   it('kural 1: otomatik bağlam readonly özettedir — kullanıcıdan URL/sürüm/tema İSTEYEN input yoktur', async () => {
-    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@akbank.com' })
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
     render(<IssueReportModal open onClose={() => {}} />)
     await waitFor(() => expect(api.getMe).toHaveBeenCalled())
     // Readonly özet başlığı var
@@ -64,7 +64,7 @@ describe('IssueReportModal', () => {
   })
 
   it('gönderim: payload otomatik bağlamı taşır; başarıda referans no gösterilir', async () => {
-    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@akbank.com' })
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
     render(<IssueReportModal open onClose={() => {}} errorText="TypeError: boom" linkedReference="LIR-2026-000077" />)
     await waitFor(() => expect(api.getMe).toHaveBeenCalled())
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Grafik açılınca ekran çöktü' } })
@@ -85,7 +85,7 @@ describe('IssueReportModal', () => {
   // ── Modal kabuğu davranışı (eskiden hiçbiri yoktu) ──────────────────────────
 
   it('dialog semantiği: role + başlığa bağlı aria-labelledby', async () => {
-    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@akbank.com' })
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
     render(<IssueReportModal open onClose={() => {}} />)
     const dlg = await screen.findByRole('dialog')
     expect(dlg.getAttribute('aria-modal')).toBe('true')
@@ -94,7 +94,7 @@ describe('IssueReportModal', () => {
   })
 
   it('Escape kapatır; gönderim sürerken kapatmaz', async () => {
-    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@akbank.com' })
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
     const onClose = vi.fn()
     // Gönderim asla bitmesin → busy durumu kalıcı olsun
     api.sendIssueReport.mockImplementation(() => new Promise(() => {}))
@@ -113,7 +113,7 @@ describe('IssueReportModal', () => {
   })
 
   it('gönderim sırasında butonda aria-busy + spinner vardır', async () => {
-    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@akbank.com' })
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
     api.sendIssueReport.mockImplementation(() => new Promise(() => {}))
     render(<IssueReportModal open onClose={() => {}} />)
     await waitFor(() => expect(api.getMe).toHaveBeenCalled())
@@ -125,7 +125,7 @@ describe('IssueReportModal', () => {
   })
 
   it('odak açılışta modala girer, kapanışta tetikleyiciye döner', async () => {
-    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@akbank.com' })
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
     function Host() {
       const [open, setOpen] = useState(false)
       return (
@@ -155,7 +155,7 @@ describe('IssueReportModal', () => {
   })
 
   it('önem seçimi aria-pressed taşır; "Not specified" seçimi temizler', async () => {
-    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@akbank.com' })
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
     render(<IssueReportModal open onClose={() => {}} />)
     await waitFor(() => expect(api.getMe).toHaveBeenCalled())
 
@@ -186,7 +186,7 @@ describe('IssueReportModal', () => {
   })
 
   it('sunucu hatası tek bir alert olarak gösterilir', async () => {
-    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@akbank.com' })
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
     api.sendIssueReport.mockResolvedValue({ success: false, error: 'Sunucu reddetti' })
     render(<IssueReportModal open onClose={() => {}} />)
     await waitFor(() => expect(api.getMe).toHaveBeenCalled())
@@ -199,7 +199,7 @@ describe('IssueReportModal', () => {
   // ── Ekran görüntüleri ───────────────────────────────────────────────────────
 
   it('sürükle-bırak görsel ekler ve silinebilir', async () => {
-    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@akbank.com' })
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
     const { container } = render(<IssueReportModal open onClose={() => {}} />)
     await waitFor(() => expect(api.getMe).toHaveBeenCalled())
 
@@ -212,7 +212,7 @@ describe('IssueReportModal', () => {
   })
 
   it('desteklenmeyen dosya SESSİZCE atılmaz — görünür uyarı çıkar', async () => {
-    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@akbank.com' })
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
     const { container } = render(<IssueReportModal open onClose={() => {}} />)
     await waitFor(() => expect(api.getMe).toHaveBeenCalled())
 
@@ -225,7 +225,7 @@ describe('IssueReportModal', () => {
   })
 
   it('5 görsel sınırı aşılınca uyarı çıkar (fazlası sessizce kırpılmaz)', async () => {
-    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@akbank.com' })
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
     const { container } = render(<IssueReportModal open onClose={() => {}} />)
     await waitFor(() => expect(api.getMe).toHaveBeenCalled())
 
@@ -239,7 +239,7 @@ describe('IssueReportModal', () => {
   })
 
   it('küçük resme tıklayınca iç içe büyütme penceresi açılır ve Escape yalnız onu kapatır', async () => {
-    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@akbank.com' })
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
     const onClose = vi.fn()
     const { container } = render(<IssueReportModal open onClose={onClose} />)
     await waitFor(() => expect(api.getMe).toHaveBeenCalled())

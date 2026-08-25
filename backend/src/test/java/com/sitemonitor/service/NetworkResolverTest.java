@@ -20,7 +20,7 @@ class NetworkResolverTest {
         assertThat(NetworkResolver.isIpLiteral("172.31.129.6")).isTrue();
         assertThat(NetworkResolver.isIpLiteral("::1")).isTrue();
         assertThat(NetworkResolver.isIpLiteral("2001:db8::1")).isTrue();
-        assertThat(NetworkResolver.isIpLiteral("callcenterfacechat.akbank.com")).isFalse();
+        assertThat(NetworkResolver.isIpLiteral("callcenterfacechat.example.com")).isFalse();
         assertThat(NetworkResolver.isIpLiteral("")).isFalse();
         assertThat(NetworkResolver.isIpLiteral(null)).isFalse();
     }

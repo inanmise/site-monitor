@@ -22,14 +22,14 @@ class OpensslDiagnosticsServiceTest {
             depth=2 C = US, O = Example Root
             ---
             Certificate chain
-             0 s:CN = www.akbank.com
+             0 s:CN = www.example.com
                i:CN = Example CA
             -----BEGIN CERTIFICATE-----
             MIID...
             -----END CERTIFICATE-----
             ---
             Server certificate
-            subject=CN = www.akbank.com
+            subject=CN = www.example.com
             issuer=CN = Example CA
             ---
             Server public key is 2048 bit
@@ -57,10 +57,10 @@ class OpensslDiagnosticsServiceTest {
     @DisplayName("buildProtocolArgs: shell yok, doğru flag dizisi")
     void buildProtocolArgs_structure() {
         ReflectionTestUtils.setField(svc, "opensslBin", "openssl");
-        List<String> args = svc.buildProtocolArgs("www.akbank.com", 443, "-tls1_2");
+        List<String> args = svc.buildProtocolArgs("www.example.com", 443, "-tls1_2");
         assertThat(args).containsExactly(
-                "openssl", "s_client", "-connect", "www.akbank.com:443",
-                "-servername", "www.akbank.com", "-tls1_2");
+                "openssl", "s_client", "-connect", "www.example.com:443",
+                "-servername", "www.example.com", "-tls1_2");
     }
 
     @Test
@@ -84,7 +84,7 @@ class OpensslDiagnosticsServiceTest {
     @DisplayName("parseCertificate: subject/issuer/anahtar/doğrulama")
     void parseCertificate() {
         Map<String, Object> c = OpensslDiagnosticsService.parseCertificate(OK_OUTPUT);
-        assertThat(c.get("subject")).isEqualTo("CN = www.akbank.com");
+        assertThat(c.get("subject")).isEqualTo("CN = www.example.com");
         assertThat(c.get("issuer")).isEqualTo("CN = Example CA");
         assertThat(c.get("key_bits")).isEqualTo(2048);
         assertThat(c.get("verify_code")).isEqualTo(0);

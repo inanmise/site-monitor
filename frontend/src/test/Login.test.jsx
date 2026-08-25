@@ -175,13 +175,13 @@ describe('Login', () => {
     fireEvent.change(within(dialog).getByPlaceholderText(/describe the issue in detail/i), { target: { value: 'My account is locked' } })
     // email zorunlu — hâlâ pasif
     expect(sendBtn.disabled).toBe(true)
-    fireEvent.change(within(dialog).getByLabelText(/your email/i), { target: { value: 'user@akbank.com' } })
+    fireEvent.change(within(dialog).getByLabelText(/your email/i), { target: { value: 'user@example.com' } })
     expect(sendBtn.disabled).toBe(false)
 
     api.sendLoginHelp.mockResolvedValueOnce({ success: true, reference: 'LIR-2026-000042' })
     fireEvent.click(sendBtn)
     await waitFor(() => expect(api.sendLoginHelp).toHaveBeenCalledWith({
-      username: 'N12345', email: 'user@akbank.com', errorText: 'HTTP 423 Locked',
+      username: 'N12345', email: 'user@example.com', errorText: 'HTTP 423 Locked',
       message: 'My account is locked', images: [],
     }))
     // Başarı ekranında referans numarası görünür (mesaj + vurgulu kod)

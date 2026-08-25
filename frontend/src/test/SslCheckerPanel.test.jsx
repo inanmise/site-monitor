@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { render, screen } from './test-utils.jsx'
 import SslCheckerPanel from '../components/SslCheckerPanel.jsx'
 
-// Okunabilir ama public CA ile DOĞRULANMAYAN iç host (ucms.akbank.com senaryosu):
+// Okunabilir ama public CA ile DOĞRULANMAYAN iç host (ucms.example.com senaryosu):
 // artık "Could not reach" değil, sertifika + "güvenilmeyen zincir" rozeti gösterilmeli.
 const base = {
   status: 'ok',
@@ -14,7 +14,7 @@ const base = {
   not_before: '2026-01-01T00:00:00',
   not_after: '2027-01-01T00:00:00',
   san: ['ucms.example.com'],
-  issuer: 'Akbank Internal CA',
+  issuer: 'Example Internal CA',
   hsts: true,
 }
 

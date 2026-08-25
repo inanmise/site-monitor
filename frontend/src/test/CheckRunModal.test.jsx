@@ -4,8 +4,8 @@ import CheckRunModal from '../components/check/CheckRunModal.jsx'
 import CheckTeamPicker, { teamBuckets, NO_TEAM } from '../components/check/CheckTeamPicker.jsx'
 
 const certIndex = {
-  'a.akbank.com': { team_name: 'SY-Dijital', tier: 1, port: 443 },
-  'b.akbank.com': { team_name: 'SY-Kart', tier: 3, port: 8443 },
+  'a.example.com': { team_name: 'SY-Dijital', tier: 1, port: 443 },
+  'b.example.com': { team_name: 'SY-Kart', tier: 3, port: 8443 },
 }
 
 const run = {
@@ -13,9 +13,9 @@ const run = {
   done: true,
   teamLabel: 'SY-Dijital',
   rows: [
-    { domain: 'a.akbank.com', start: new Date('2026-08-08T10:00:00'), end: new Date(), ms: 191, ok: true,
+    { domain: 'a.example.com', start: new Date('2026-08-08T10:00:00'), end: new Date(), ms: 191, ok: true,
       data: { days_remaining: 31, not_after: '2026-09-09T02:59:00', http_status: 200, port: 443 } },
-    { domain: 'b.akbank.com', start: new Date('2026-08-08T10:00:01'), end: new Date(), ms: 5002, ok: false,
+    { domain: 'b.example.com', start: new Date('2026-08-08T10:00:01'), end: new Date(), ms: 5002, ok: false,
       error: 'connect timed out',
       data: { status: 'error', error: 'connect timed out', http_status: null, port: 8443 } },
   ],
@@ -25,7 +25,7 @@ describe('CheckRunModal', () => {
   it('sonuç kolonlarını basar: takım, tier, port, HTTP, kalan gün, bitiş tarihi', () => {
     render(<CheckRunModal run={run} certIndex={certIndex} onClose={() => {}} onCancel={() => {}} />)
 
-    expect(screen.getByText('a.akbank.com')).toBeInTheDocument()
+    expect(screen.getByText('a.example.com')).toBeInTheDocument()
     // Takım hem satır kolonunda hem özet şeridinde geçer (kapsam etiketi) → ikisi de beklenir.
     expect(screen.getAllByText('SY-Dijital').length).toBe(2)
     expect(screen.getByText('T1')).toBeInTheDocument()
@@ -73,10 +73,10 @@ describe('CheckRunModal', () => {
 
 describe('CheckTeamPicker', () => {
   const certs = [
-    { domain: 'a.akbank.com', team_id: 1, team_name: 'SY-Dijital' },
-    { domain: 'b.akbank.com', team_id: 1, team_name: 'SY-Dijital' },
-    { domain: 'c.akbank.com', team_id: 2, team_name: 'SY-Kart' },
-    { domain: 'd.akbank.com', team_id: null, team_name: null },
+    { domain: 'a.example.com', team_id: 1, team_name: 'SY-Dijital' },
+    { domain: 'b.example.com', team_id: 1, team_name: 'SY-Dijital' },
+    { domain: 'c.example.com', team_id: 2, team_name: 'SY-Kart' },
+    { domain: 'd.example.com', team_id: null, team_name: null },
   ]
 
   it('takımları certs\'ten türetir, sayar; takımsız en sonda', () => {

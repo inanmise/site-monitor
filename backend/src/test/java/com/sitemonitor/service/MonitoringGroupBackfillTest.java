@@ -27,12 +27,12 @@ class MonitoringGroupBackfillTest {
 
     @ParameterizedTest
     @CsvSource({
-        "https://a.akbank.com/x/y,  a.akbank.com",
-        "http://a.akbank.com,       a.akbank.com",
-        "a.akbank.com:8443,         a.akbank.com",
-        "https://a.akbank.com:8443/p, a.akbank.com",
-        "a.akbank.com,              a.akbank.com",
-        "'  a.akbank.com  ',        a.akbank.com",
+        "https://a.example.com/x/y,  a.example.com",
+        "http://a.example.com,       a.example.com",
+        "a.example.com:8443,         a.example.com",
+        "https://a.example.com:8443/p, a.example.com",
+        "a.example.com,              a.example.com",
+        "'  a.example.com  ',        a.example.com",
     })
     @DisplayName("host(): şema, port ve path soyulur — eşleşme anahtarı saf ana makine olur")
     void host_stripsSchemePortPath(String raw, String expected) {
@@ -54,8 +54,8 @@ class MonitoringGroupBackfillTest {
     void fill_existingTeam_notOverwritten() {
         AtomicReference<Long> assigned = new AtomicReference<>(null);
 
-        int r = MonitoringGroupBackfill.fill(7L, "a.akbank.com",
-                Map.of("a.akbank.com", 99L), assigned::set, "Prod");
+        int r = MonitoringGroupBackfill.fill(7L, "a.example.com",
+                Map.of("a.example.com", 99L), assigned::set, "Prod");
 
         assertThat(r).isZero();
         assertThat(assigned.get()).isNull();   // setter HİÇ çağrılmadı
@@ -66,8 +66,8 @@ class MonitoringGroupBackfillTest {
     void fill_inventoryMatch_assignsTeam() {
         AtomicReference<Long> assigned = new AtomicReference<>(null);
 
-        int r = MonitoringGroupBackfill.fill(null, "A.Akbank.COM",
-                Map.of("a.akbank.com", 5L), assigned::set, null);
+        int r = MonitoringGroupBackfill.fill(null, "A.Example.COM",
+                Map.of("a.example.com", 5L), assigned::set, null);
 
         assertThat(r).isEqualTo(1);
         assertThat(assigned.get()).isEqualTo(5L);
@@ -79,9 +79,9 @@ class MonitoringGroupBackfillTest {
         AtomicReference<Long> assigned = new AtomicReference<>(null);
 
         int orphan = MonitoringGroupBackfill.fill(null, "bilinmeyen.example.com",
-                Map.of("a.akbank.com", 5L), assigned::set, "Prod");
+                Map.of("a.example.com", 5L), assigned::set, "Prod");
         int silent = MonitoringGroupBackfill.fill(null, "bilinmeyen.example.com",
-                Map.of("a.akbank.com", 5L), assigned::set, null);
+                Map.of("a.example.com", 5L), assigned::set, null);
 
         assertThat(orphan).isEqualTo(-1);   // grubu var → öksüz sayacına
         assertThat(silent).isZero();        // grubu yok → sessiz geç
@@ -93,7 +93,7 @@ class MonitoringGroupBackfillTest {
     void fill_nullDomain_noAssignment() {
         AtomicReference<Long> assigned = new AtomicReference<>(null);
 
-        int r = MonitoringGroupBackfill.fill(null, null, Map.of("a.akbank.com", 5L), assigned::set, "Prod");
+        int r = MonitoringGroupBackfill.fill(null, null, Map.of("a.example.com", 5L), assigned::set, "Prod");
 
         assertThat(r).isEqualTo(-1);
         assertThat(assigned.get()).isNull();

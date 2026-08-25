@@ -20,9 +20,9 @@ describe('useUrlQuerySync', () => {
     vi.advanceTimersByTime(150)
     expect(url()).toBe('/?tab=keyword&group=callcenterfacewebmon')
 
-    rerender({ m: { group: null, q: 'akbank' } })
+    rerender({ m: { group: null, q: 'example' } })
     vi.advanceTimersByTime(150)
-    expect(url()).toBe('/?tab=keyword&q=akbank')
+    expect(url()).toBe('/?tab=keyword&q=example')
   })
 
   it('tüm değerler varsayılan (null) → URL temiz kalır, replaceState gereksiz çağrılmaz', () => {

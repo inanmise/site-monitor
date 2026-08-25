@@ -62,7 +62,7 @@ class IssueReportControllerTest {
     @BeforeEach
     void setUp(TestInfo info) {
         when(clientIpResolver.resolve(any())).thenReturn("10.1.2.3");
-        when(appSettings.getString(eq("site.monitor.system-admin.email"), anyString())).thenReturn("admin@akbank.com");
+        when(appSettings.getString(eq("site.monitor.system-admin.email"), anyString())).thenReturn("admin@example.com");
         when(appSettings.getBoolean(eq("site.monitor.issue-reports.daily-digest"), anyBoolean())).thenReturn(false);
         LoginIssueReport saved = new LoginIssueReport();
         saved.setId(88L); saved.setReportedAt("2026-08-07T00:00:00");
@@ -85,26 +85,26 @@ class IssueReportControllerTest {
     @Test
     @DisplayName("Profil e-postası VARSA: payload e-postası YOK SAYILIR, profil adresi kullanılır; kimlik oturumdan")
     void report_profileEmail_wins() throws Exception {
-        when(appUserRepository.findByUsername(username)).thenReturn(Optional.of(userWithEmail("profil@akbank.com")));
+        when(appUserRepository.findByUsername(username)).thenReturn(Optional.of(userWithEmail("profil@example.com")));
         mvc.perform(post("/api/issue-reports").session(session)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"message\":\"Grafik bos gorunuyor\",\"category\":\"BLOCKER\","
                                 + "\"email\":\"sahte@x.com\",\"username\":\"BASKASI\","
-                                + "\"url\":\"https://cm.akbank.com/?tab=scripted\",\"tabKey\":\"scripted\","
+                                + "\"url\":\"https://cm.example.com/?tab=scripted\",\"tabKey\":\"scripted\","
                                 + "\"appVersion\":\"20.1.0\",\"theme\":\"dark\",\"lang\":\"tr\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.reference").value("LIR-2026-000088"))
                 .andExpect(jsonPath("$.emailSavedToProfile").value(false));
 
-        verify(loginIssueService).save(eq(username), eq("profil@akbank.com"), any(), eq("Grafik bos gorunuyor"),
+        verify(loginIssueService).save(eq(username), eq("profil@example.com"), any(), eq("Grafik bos gorunuyor"),
                 anyList(), eq("10.1.2.3"), any(), anyString(),
                 argThat((LoginIssueService.ReportMeta m) -> "USER_REPORT".equals(m.source())
                         && "BLOCKER".equals(m.category()) && "scripted".equals(m.tabKey())
                         && m.autoContextJson() != null && m.autoContextJson().contains("dark")));
-        verify(loginIssueMailService).dispatchUserReport(eq(88L), eq("LIR-2026-000088"), eq("admin@akbank.com"),
-                eq(username), eq("profil@akbank.com"), eq("BLOCKER"), anyString(), any(), any(),
+        verify(loginIssueMailService).dispatchUserReport(eq(88L), eq("LIR-2026-000088"), eq("admin@example.com"),
+                eq(username), eq("profil@example.com"), eq("BLOCKER"), anyString(), any(), any(),
                 eq("scripted"), eq("20.1.0"), anyList(), eq("10.1.2.3"), any(), anyString());
-        verify(loginIssueMailService).dispatchAck(eq(88L), anyString(), eq("profil@akbank.com"),
+        verify(loginIssueMailService).dispatchAck(eq(88L), anyString(), eq("profil@example.com"),
                 eq(username), any(), anyString(), anyList(), anyString());
         // Profil e-postası varken profil GÜNCELLENMEZ.
         verify(appUserRepository, never()).save(any());
@@ -127,10 +127,10 @@ class IssueReportControllerTest {
         when(appUserRepository.findByUsername(username)).thenReturn(Optional.of(u));
         mvc.perform(post("/api/issue-reports").session(session)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"message\":\"sorun var\",\"email\":\"yeni@akbank.com\",\"saveEmailToProfile\":true}"))
+                        .content("{\"message\":\"sorun var\",\"email\":\"yeni@example.com\",\"saveEmailToProfile\":true}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.emailSavedToProfile").value(true));
-        verify(appUserRepository).save(argThat((AppUser saved) -> "yeni@akbank.com".equals(saved.getEmail())));
+        verify(appUserRepository).save(argThat((AppUser saved) -> "yeni@example.com".equals(saved.getEmail())));
     }
 
     @Test

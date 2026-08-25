@@ -23,8 +23,8 @@ import { withApiFallback } from '../apiMock.js'
 export const TEMPLATE_ROWS = [
   {
     id: 101, name: 'Sistem sağlık kontrolü (smoke)', name_en: 'System health check (smoke)',
-    description: 'env GEREKTİRMEZ; www.akbank.com adresine GET atıp içeriği doğrular.',
-    description_en: 'No env needed; GETs www.akbank.com and validates its content.',
+    description: 'env GEREKTİRMEZ; www.example.com adresine GET atıp içeriği doğrular.',
+    description_en: 'No env needed; GETs www.example.com and validates its content.',
     when_to_use: 'Sentetik İzleme\'yi ilk kez kurarken.', when_to_use_en: 'When setting up Synthetic Monitoring.',
     category: 'availability',
     tags: [], team_id: null, team_name: null, scope: 'general',
@@ -69,7 +69,7 @@ export const TEMPLATE_ROWS = [
 
 /** Tekil ucun döndürdüğü gövdeler (id → script). */
 export const TEMPLATE_SCRIPTS = {
-  101: "import http from 'k6/http';\nimport { check } from 'k6';\n\nexport default function () {\n  const res = http.get('https://www.akbank.com/', { timeout: '20s' });\n  check(res, { 'status 200': (r) => r.status === 200 });\n}\n",
+  101: "import http from 'k6/http';\nimport { check } from 'k6';\n\nexport default function () {\n  const res = http.get('https://www.example.com/', { timeout: '20s' });\n  check(res, { 'status 200': (r) => r.status === 200 });\n}\n",
   102: "import http from 'k6/http';\nimport { check } from 'k6';\n\nexport default function () {\n  const res = http.get(__ENV.BASE_URL + '/actuator/health', { timeout: '20s' });\n  check(res, { 'UP': (r) => r.json('status') === 'UP' });\n}\n",
   103: "import http from 'k6/http';\nimport { check } from 'k6';\n\nexport default function () {\n  const tok = http.post(__ENV.TOKEN_URL, { grant_type: 'client_credentials', client_id: __ENV.CLIENT_ID, client_secret: __ENV.CLIENT_SECRET }, { timeout: '20s' });\n  check(tok, { 'token': (r) => r.status === 200 });\n}\n",
 }

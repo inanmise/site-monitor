@@ -151,23 +151,23 @@ class UserServiceTest {
     @Test
     @DisplayName("provisionLdapUser: new AD user → USER, no team, NULL password, authSource LDAP")
     void provisionLdapUser_new_noPasswordStored() {
-        when(userRepo.findByUsername("N64954")).thenReturn(Optional.empty());
+        when(userRepo.findByUsername("N34567")).thenReturn(Optional.empty());
 
-        AppUser u = service.provisionLdapUser("n64954", "Erdi İnanmış", "erdi@akbank.com");
+        AppUser u = service.provisionLdapUser("n34567", "Erdi İnanmış", "erdi@example.com");
 
-        assertThat(u.getUsername()).isEqualTo("N64954");   // username HER ZAMAN büyük harf
+        assertThat(u.getUsername()).isEqualTo("N34567");   // username HER ZAMAN büyük harf
         assertThat(u.getSystemRole()).isEqualTo("USER");
         assertThat(u.getTeamId()).isNull();
         assertThat(u.getAuthSource()).isEqualTo("LDAP");
         assertThat(u.getPasswordHash()).isNull();   // no app password for LDAP users
         assertThat(u.getDisplayName()).isEqualTo("Erdi İnanmış");
-        assertThat(u.getEmail()).isEqualTo("erdi@akbank.com");
+        assertThat(u.getEmail()).isEqualTo("erdi@example.com");
     }
 
     @Test
     @DisplayName("normalizeUsername: trim + ASCII büyük harf (Locale.ROOT — 'i'→'I', Türkçe 'İ' DEĞİL)")
     void normalizeUsername_uppercaseAsciiSafe() {
-        assertThat(UserService.normalizeUsername("  n68753 ")).isEqualTo("N68753");
+        assertThat(UserService.normalizeUsername("  n12345 ")).isEqualTo("N12345");
         assertThat(UserService.normalizeUsername("Admin")).isEqualTo("ADMIN");   // 'i' → ASCII 'I', 'İ' DEĞİL
         assertThat(UserService.normalizeUsername(null)).isNull();
     }
@@ -175,16 +175,16 @@ class UserServiceTest {
     @Test
     @DisplayName("provisionLdapUser: existing user → returned and display/email refreshed, still no password")
     void provisionLdapUser_existing_refreshes() {
-        AppUser existing = user("n64954", null);
+        AppUser existing = user("n34567", null);
         existing.setAuthSource("LDAP");
         existing.setSystemRole("USER");
         existing.setDisplayName("Old Name");
-        when(userRepo.findByUsername("n64954")).thenReturn(Optional.of(existing));
+        when(userRepo.findByUsername("n34567")).thenReturn(Optional.of(existing));
 
-        AppUser u = service.provisionLdapUser("n64954", "New Name", "new@akbank.com");
+        AppUser u = service.provisionLdapUser("n34567", "New Name", "new@example.com");
 
         assertThat(u.getDisplayName()).isEqualTo("New Name");
-        assertThat(u.getEmail()).isEqualTo("new@akbank.com");
+        assertThat(u.getEmail()).isEqualTo("new@example.com");
         assertThat(u.getPasswordHash()).isNull();
     }
 
@@ -1063,7 +1063,7 @@ class UserServiceTest {
         body.put("department", "TEKNOLOJİ");
         body.put("company_level", "Uzman");
         body.put("mudurluk_name", "TEKN.MİM.");
-        body.put("manager_sicil", "63535");
+        body.put("manager_sicil", "99999");
         body.put("email", "x@y.com");      // profil alanı değil → yok sayılır
 
         service.applyProfileFields(u, body);
@@ -1074,7 +1074,7 @@ class UserServiceTest {
         assertThat(u.getDepartment()).isEqualTo("TEKNOLOJİ");
         assertThat(u.getCompanyLevel()).isEqualTo("Uzman");
         assertThat(u.getMudurlukName()).isEqualTo("TEKN.MİM.");
-        assertThat(u.getManagerSicil()).isEqualTo("63535");
+        assertThat(u.getManagerSicil()).isEqualTo("99999");
         assertThat(u.getTitle()).isEqualTo("ESKI ÜNVAN");   // body'de yok → dokunulmadı
     }
 

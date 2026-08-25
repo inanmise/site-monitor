@@ -53,9 +53,9 @@ describe('clipboardToMarkdownTable', () => {
 
   it('returns null for a pasted exception stack trace (ilk satır = mesaj, tab yok → tablo değil)', () => {
     const stack = [
-      'com.akbank.bsa.core.exception.BSAException: Teknik bir hata oluştu. İşleminizi kontrol ediniz.',
-      '\tat deployment.BSAWEB.war//com.akbank.channel.AbstractChannelDispatcher.dispach(AbstractChannelDispatcher.java:134)',
-      '\tat deployment.BSAWEB.war//com.akbank.channel.ChannelWsDispatcher.dispach(ChannelWsDispatcher.java:11)',
+      'com.example.bsa.core.exception.BSAException: Teknik bir hata oluştu. İşleminizi kontrol ediniz.',
+      '\tat deployment.BSAWEB.war//com.example.channel.AbstractChannelDispatcher.dispach(AbstractChannelDispatcher.java:134)',
+      '\tat deployment.BSAWEB.war//com.example.channel.ChannelWsDispatcher.dispach(ChannelWsDispatcher.java:11)',
     ].join('\r\n')
     expect(clipboardToMarkdownTable(clip({ text: stack }))).toBeNull()
   })

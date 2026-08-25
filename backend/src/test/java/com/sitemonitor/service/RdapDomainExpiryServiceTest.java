@@ -104,7 +104,7 @@ class RdapDomainExpiryServiceTest {
     @Test
     @DisplayName("registrableDomain_twoLevelTld_takesThreeLabels")
     void registrableDomain_twoLevelTld_takesThreeLabels() {
-        assertThat(RdapDomainExpiryService.registrableDomain("www.akbank.com.tr")).isEqualTo("akbank.com.tr");
+        assertThat(RdapDomainExpiryService.registrableDomain("www.example.com.tr")).isEqualTo("example.com.tr");
     }
 
     @Test

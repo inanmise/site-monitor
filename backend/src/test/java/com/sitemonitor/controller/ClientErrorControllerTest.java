@@ -55,7 +55,7 @@ class ClientErrorControllerTest {
         when(clientIpResolver.resolve(any())).thenReturn("10.1.2.3");
         when(appSettings.getBoolean(eq("site.monitor.client-errors.enabled"), anyBoolean())).thenReturn(true);
         when(appSettings.getString(eq("site.monitor.system-admin.email"), anyString()))
-                .thenReturn("admin@akbank.com");
+                .thenReturn("admin@example.com");
         LoginIssueReport saved = new LoginIssueReport();
         saved.setId(77L); saved.setReportedAt("2026-08-06T20:00:00");
         when(loginIssueService.save(anyString(), anyString(), anyString(), anyString(),
@@ -72,7 +72,7 @@ class ClientErrorControllerTest {
         mvc.perform(post("/api/client-error-report").session(session)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"errorText\":\"TypeError: Cannot read properties of undefined (reading 'endsWith')\","
-                                + "\"url\":\"https://certmonitor-test.akbank.com/?tab=scripted\","
+                                + "\"url\":\"https://certmonitor-test.example.com/?tab=scripted\","
                                 + "\"username\":\"HACKER-BEYANI\"}"))   // istemci beyanı YOK SAYILIR
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
@@ -85,7 +85,7 @@ class ClientErrorControllerTest {
                 any(), eq("10.1.2.3"), any(), anyString(),
                 argThat((com.sitemonitor.service.LoginIssueService.ReportMeta m) ->
                         "CLIENT_ERROR".equals(m.source()) && "scripted".equals(m.tabKey())));
-        verify(loginIssueMailService).dispatchClientError(eq(77L), eq("LIR-2026-000077"), eq("admin@akbank.com"),
+        verify(loginIssueMailService).dispatchClientError(eq(77L), eq("LIR-2026-000077"), eq("admin@example.com"),
                 eq("N12345"), contains("endsWith"), contains("?tab=scripted"),
                 eq("10.1.2.3"), any(), anyString());
         verify(auditService).recordAction(eq("CLIENT_ERROR_REPORT"), eq("N12345"),

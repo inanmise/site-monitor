@@ -185,6 +185,9 @@ class ScriptedTemplateCatalogTest {
         JsonNode smoke = templates.stream().filter(t -> "smoke-health".equals(key(t))).findFirst().orElseThrow();
         assertThat(smoke.path("env")).as("smoke-health env BOŞ olmalı — kurulum gerektirmeden çalışır").isEmpty();
         assertThat(script(smoke)).doesNotContain("__ENV");
+        // Bu iki deger scripted-templates.json'daki CALISAN smoke script'ini yansitir; sablon
+        // gercekten o adrese GET atiyor. Kurumsal alan adi burada BILINCLI durur -- hedefi
+        // degistirmek urun karari (bkz. kimlik-tarama muafiyet listesi).
         assertThat(script(smoke)).contains("https://www.akbank.com").contains("indexOf('Akbank')");
 
         // Süreç timeout'u varsayılan 60 sn; istek timeout'u ondan KISA olmalı ki istek kendi

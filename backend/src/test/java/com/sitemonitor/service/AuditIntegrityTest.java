@@ -88,7 +88,7 @@ class AuditIntegrityTest {
         em.flush();
         Long id = repo.findTopByOrderBySeqDesc().orElseThrow().getId();
 
-        repo.updateGeo(id, "Türkiye", "İstanbul", "Akbank", "host.example");
+        repo.updateGeo(id, "Türkiye", "İstanbul", "Example", "host.example");
         em.flush(); em.clear();
 
         assertThat(svc.verifyChain().ok()).isTrue();   // geo alanları hash kapsamı dışında

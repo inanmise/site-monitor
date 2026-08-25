@@ -444,10 +444,10 @@ class AdminControllerTest {
                 .andExpect(status().isForbidden());
 
         when(clientIpResolver.debugInfo(any())).thenReturn(Map.of(
-                "remote_addr", "172.21.116.251", "resolved", "10.218.204.187"));
+                "remote_addr", "172.16.0.51", "resolved", "10.0.0.7"));
         mvc.perform(get("/api/admin/client-ip-debug").session(authSession()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.resolved").value("10.218.204.187"));
+                .andExpect(jsonPath("$.data.resolved").value("10.0.0.7"));
     }
 
     @Test
@@ -2071,11 +2071,11 @@ class AdminControllerTest {
     void listAlerts_search_isLowercasedAndWrapped() throws Exception {
         stubEmptyAlerts();
 
-        mvc.perform(get("/api/admin/alerts?q=AkBank").session(authSession()))
+        mvc.perform(get("/api/admin/alerts?q=Example").session(authSession()))
                 .andExpect(status().isOk());
 
         org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
-                eq("%akbank%"), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
+                eq("%example%"), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
     }
 
     @Test
@@ -2158,7 +2158,7 @@ class AdminControllerTest {
         assertThat(AdminController.csvCell("-2+3")).startsWith("'-");
         assertThat(AdminController.csvCell("@SUM(A1)")).startsWith("'@");
         // Zararsiz degerler DOKUNULMADAN gecer
-        assertThat(AdminController.csvCell("www.akbank.com")).isEqualTo("www.akbank.com");
+        assertThat(AdminController.csvCell("www.example.com")).isEqualTo("www.example.com");
         assertThat(AdminController.csvCell("EXPIRY")).isEqualTo("EXPIRY");
     }
 

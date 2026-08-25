@@ -28,7 +28,7 @@ class ScriptedTimeoutBudgetTest {
             import http from 'k6/http';
             import { check } from 'k6';
             export default function () {
-              const r = http.get('https://www.akbank.com', { timeout: '20s' });
+              const r = http.get('https://www.example.com', { timeout: '20s' });
               check(r, { 'status 200': (res) => res.status === 200 });
             }
             """;
@@ -147,12 +147,12 @@ class ScriptedTimeoutBudgetTest {
     @DisplayName("Başarısız koşum bağlamı: bütçe, istek timeout'u, ÇIKIŞ YOLU ve CA tek satırda")
     void contextNoteCarriesEgressPath() {
         String note = ScriptedCheckerService.runContextNote(
-                FIELD_SCRIPT, 10, true, "proxy.akbank.com:8080", true);
+                FIELD_SCRIPT, 10, true, "proxy.example.com:8080", true);
 
         assertThat(note)
                 .contains("süreç bütçesi=10s")
                 .contains("script istek timeout'u=20s")
-                .contains("vekil (proxy.akbank.com:8080)")
+                .contains("vekil (proxy.example.com:8080)")
                 .contains("kurumsal CA=verildi")
                 // Ters bütçe varsa ÖNCE o anlatılır: sebebin neden hiç yazılamadığını açıklayan
                 // tek cümle odur ve kullanıcı bunu başka hiçbir yerden göremez.

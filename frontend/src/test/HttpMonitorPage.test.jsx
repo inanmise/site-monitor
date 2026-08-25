@@ -27,7 +27,7 @@ vi.mock('../api/client', () => ({
 import { api } from '../api/client'
 
 const monitor = {
-  id: 1, name: 'Akbank', url: 'https://www.akbank.com/', method: 'GET', expected_status: '201-204',
+  id: 1, name: 'Example', url: 'https://www.example.com/', method: 'GET', expected_status: '201-204',
   group_name: 'X Sistemleri', team_id: 5, team_name: 'SY-A', status: 'up', http_status: 200, response_ms: 12,
   interval_seconds: 600, timeout_ms: 7000, active: true, checked_at: '2026-06-24T00:00:00',
 }
@@ -48,7 +48,7 @@ describe('HttpMonitorPage', () => {
   it('izleme kartını (url) listeler', async () => {
     render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getHttpMonitors).toHaveBeenCalled())
-    expect(await screen.findByText('https://www.akbank.com/')).toBeInTheDocument()
+    expect(await screen.findByText('https://www.example.com/')).toBeInTheDocument()
   })
 
   // ── Şemasız URL sahte alarmı (2026-08-04): giriş normalizasyonu ────────────
@@ -72,7 +72,7 @@ describe('HttpMonitorPage', () => {
     // Her alan varsayılandan FARKLI → bir alan formFrom'dan düşerse veya save() içinde
     // sessizce varsayılana dönerse tam-payload karşılaştırması kırılır.
     api.monitoring.getHttpMonitors.mockResolvedValue({ success: true, data: [{
-      id: 1, name: 'Akbank', url: 'https://www.akbank.com/', status: 'up', checked_at: '2026-06-24T00:00:00',
+      id: 1, name: 'Example', url: 'https://www.example.com/', status: 'up', checked_at: '2026-06-24T00:00:00',
       method: 'POST', expected_status: '201-204', follow_redirects: false, verify_ssl: true,
       group_name: 'Kurumsal', team_id: 5, team_name: 'SY-A', tags: 'prod,kritik', notify_email: false,
       check_ssl_errors: true, ssl_expiry_reminders: true, domain_expiry_reminders: true,
@@ -84,21 +84,21 @@ describe('HttpMonitorPage', () => {
 
     render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getHttpMonitors).toHaveBeenCalled())
-    await screen.findByText('https://www.akbank.com/')
+    await screen.findByText('https://www.example.com/')
 
     fireEvent.click(screen.getByRole('button', { name: /kopyala|duplicate/i }))
 
     // Kopya rozeti + ipucu görünür (yeni-kayıt modu, kaynak belli)
     expect(document.querySelector('.mon-dup-badge')).not.toBeNull()
     expect(document.querySelector('.mon-dup-hint')).not.toBeNull()
-    expect(screen.getByPlaceholderText('https://www.akbank.com/').value).toMatch(/\(Kopya\)$/)
+    expect(screen.getByPlaceholderText('https://www.example.com/').value).toMatch(/\(Kopya\)$/)
 
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
     await waitFor(() => expect(api.monitoring.createHttpMonitor).toHaveBeenCalled())
     expect(api.monitoring.updateHttpMonitor).not.toHaveBeenCalled()
 
     expect(api.monitoring.createHttpMonitor.mock.calls[0][0]).toEqual({
-      name: 'Akbank (Kopya)', url: 'https://www.akbank.com/', method: 'POST',
+      name: 'Example (Kopya)', url: 'https://www.example.com/', method: 'POST',
       expectedStatus: '201-204', followRedirects: false, verifySsl: true,
       groupName: 'Kurumsal', teamId: 5, tags: 'prod,kritik', notifyEmail: false,
       checkSslErrors: true, sslExpiryReminders: true, domainExpiryReminders: true,
@@ -116,7 +116,7 @@ describe('HttpMonitorPage', () => {
     })
     render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getHttpMonitors).toHaveBeenCalled())
-    await screen.findByText('https://www.akbank.com/')
+    await screen.findByText('https://www.example.com/')
 
     fireEvent.click(screen.getByRole('button', { name: /kopyala|duplicate/i }))
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))

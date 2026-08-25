@@ -80,7 +80,7 @@ class BrandingControllerTest {
         when(settingsService.getCatalogForClient()).thenReturn(List.of());
         mvc.perform(put("/api/admin/branding/settings").session(userSession("admin"))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"values\":{\"site.monitor.branding.app-name\":\"Akbank Monitor\"}}"))
+                        .content("{\"values\":{\"site.monitor.branding.app-name\":\"Example Monitor\"}}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
         mvc.perform(put("/api/admin/branding/settings").session(userSession("sre1"))

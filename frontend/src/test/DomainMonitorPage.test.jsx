@@ -31,9 +31,9 @@ vi.mock('../api/client', () => ({
 import { api } from '../api/client'
 
 const monitor = {
-  id: 1, name: 'akbank', domain: 'akbank.com.tr', team_name: 'SY-A', group_name: 'Kurumsal',
+  id: 1, name: 'example', domain: 'example.com.tr', team_name: 'SY-A', group_name: 'Kurumsal',
   status: 'OK', source: 'RDAP', days_remaining: 120, expiry_date: '2026-08-13', registrar: 'TR Registry',
-  status_codes: ['clientTransferProhibited'], nameservers: ['ns1.akbank.com.tr'], ns_resolves: true,
+  status_codes: ['clientTransferProhibited'], nameservers: ['ns1.example.com.tr'], ns_resolves: true,
   active: true, interval_seconds: 86400, warning_days: 30, critical_days: 7, checked_at: '2026-07-10T00:00:00',
 }
 
@@ -49,7 +49,7 @@ describe('DomainMonitorPage', () => {
   it('alan adı monitörünü listeler', async () => {
     render(<DomainMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getDomainMonitors).toHaveBeenCalled())
-    expect(await screen.findByText('akbank.com.tr')).toBeInTheDocument()
+    expect(await screen.findByText('example.com.tr')).toBeInTheDocument()
     expect(screen.getByText('TR Registry')).toBeInTheDocument()
   })
 
@@ -74,7 +74,7 @@ describe('DomainMonitorPage', () => {
   it('Kopyala: TÜM kullanıcı ayarları birebir kopyalanır (yalnız ad "(Kopya)" olur)', async () => {
     // Her alan varsayılandan FARKLI → bir alan formFrom'dan düşerse tam-payload karşılaştırması kırılır.
     api.monitoring.getDomainMonitors.mockResolvedValue({ success: true, data: [{
-      id: 1, name: 'akbank', domain: 'akbank.com.tr', status: 'OK', source: 'RDAP',
+      id: 1, name: 'example', domain: 'example.com.tr', status: 'OK', source: 'RDAP',
       checked_at: '2026-07-10T00:00:00',
       team_id: 3, team_name: 'SY-A', group_name: 'Kurumsal',
       thresholds_csv: '90,45,10,2', warning_days: 45, critical_days: 9,
@@ -84,21 +84,21 @@ describe('DomainMonitorPage', () => {
 
     render(<DomainMonitorPage systemRole="ADMIN" teamId={3} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getDomainMonitors).toHaveBeenCalled())
-    await screen.findByText('akbank.com.tr')
+    await screen.findByText('example.com.tr')
 
     fireEvent.click(screen.getByRole('button', { name: /kopyala|duplicate/i }))
 
     // Kopya rozeti + ipucu görünür (yeni-kayıt modu, kaynak belli)
     expect(document.querySelector('.mon-dup-badge')).not.toBeNull()
     expect(document.querySelector('.mon-dup-hint')).not.toBeNull()
-    expect(screen.getByPlaceholderText('akbank.com.tr').value).toMatch(/\(Kopya\)$/)
+    expect(screen.getByPlaceholderText('example.com.tr').value).toMatch(/\(Kopya\)$/)
 
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
     await waitFor(() => expect(api.monitoring.createDomainMonitor).toHaveBeenCalled())
     expect(api.monitoring.updateDomainMonitor).not.toHaveBeenCalled()
 
     expect(api.monitoring.createDomainMonitor.mock.calls[0][0]).toEqual({
-      name: 'akbank (Kopya)', domain: 'akbank.com.tr', groupName: 'Kurumsal', teamId: 3,
+      name: 'example (Kopya)', domain: 'example.com.tr', groupName: 'Kurumsal', teamId: 3,
       thresholdsCsv: '90,45,10,2', warningDays: 45, criticalDays: 9,
       intervalSeconds: 43200, checkTimeoutMs: 12000,
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar

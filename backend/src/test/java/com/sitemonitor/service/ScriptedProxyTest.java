@@ -31,10 +31,10 @@ class ScriptedProxyTest {
     @Test
     @DisplayName("Vekil URL'i: kimliksiz ve kimlikli biçim")
     void proxyUrl() {
-        assertThat(settings("proxy.akbank.com", 8080, "", "", "").proxyUrl())
-                .isEqualTo("http://proxy.akbank.com:8080");
-        assertThat(settings("proxy.akbank.com", 8080, "svc", "p@ss:1", "").proxyUrl())
-                .isEqualTo("http://svc:p%40ss%3A1@proxy.akbank.com:8080");
+        assertThat(settings("proxy.example.com", 8080, "", "", "").proxyUrl())
+                .isEqualTo("http://proxy.example.com:8080");
+        assertThat(settings("proxy.example.com", 8080, "svc", "p@ss:1", "").proxyUrl())
+                .isEqualTo("http://svc:p%40ss%3A1@proxy.example.com:8080");
     }
 
     @Test
@@ -90,7 +90,7 @@ class ScriptedProxyTest {
 
         // REGRESYON: URL'deki `//` satır yorumu SANILMAMALI — sanılırsa aynı satırdaki timeout
         // silinir ve doğru yazılmış script'e yanlış uyarı basılır (bu testte yakalandı).
-        String urlSameLine = "export default function(){ http.get('https://www.akbank.com', { timeout: '20s' }); }";
+        String urlSameLine = "export default function(){ http.get('https://www.example.com', { timeout: '20s' }); }";
         assertThat(ScriptedCheckerService.auditRequestTimeouts(urlSameLine)).isEmpty();
         assertThat(ScriptedCheckerService.stripComments("const u = 'https://x'; // yorum"))
                 .contains("https://x").doesNotContain("yorum");
@@ -152,7 +152,7 @@ class ScriptedProxyTest {
     void blacklistUntouchedWithoutProxy() {
         // Eski hâli bu adı taşıyıp gövdesinde SsrfGuard'ı çağırıyordu: blacklistFor HİÇ koşmuyordu
         // ve denetimde "vekil kara-liste muafiyeti test edildi" yanılgısı üretiyordu.
-        var svc = serviceWithGuard(settings("proxy.akbank.com", 8080, "", "", ""));
+        var svc = serviceWithGuard(settings("proxy.example.com", 8080, "", "", ""));
         assertThat(svc.blacklistFor(false)).isEqualTo(STRICT);
     }
 
@@ -190,20 +190,20 @@ class ScriptedProxyTest {
     @Test
     @DisplayName("Vekil değişkenleri GERÇEKTEN env haritasına giriyor (URL + NO_PROXY)")
     void proxyVarsReachProcessEnv() {
-        var svc = service(settings("dmzproxy.aknet.akb", 8080, "", "", "akbank.com,localhost"));
+        var svc = service(settings("dmzproxy.intranet.local", 8080, "", "", "example.com,localhost"));
         var secrets = new java.util.ArrayList<String>();
 
         var e = svc.buildProcessEnv(List.of(), ScriptedCheckerService.ProxyUse.AUTO, null, secrets);
 
-        assertThat(e).containsEntry("HTTPS_PROXY", "http://dmzproxy.aknet.akb:8080")
-                     .containsEntry("HTTP_PROXY", "http://dmzproxy.aknet.akb:8080")
-                     .containsEntry("NO_PROXY", "akbank.com,localhost");
+        assertThat(e).containsEntry("HTTPS_PROXY", "http://dmzproxy.intranet.local:8080")
+                     .containsEntry("HTTP_PROXY", "http://dmzproxy.intranet.local:8080")
+                     .containsEntry("NO_PROXY", "example.com,localhost");
     }
 
     @Test
     @DisplayName("viaProxy=false → hiçbir vekil değişkeni konmaz (OFF gerçekten doğrudan)")
     void noProxyVarsWhenOff() {
-        var svc = service(settings("dmzproxy.aknet.akb", 8080, "", "", "akbank.com"));
+        var svc = service(settings("dmzproxy.intranet.local", 8080, "", "", "example.com"));
 
         var e = svc.buildProcessEnv(List.of(), ScriptedCheckerService.ProxyUse.DIRECT, null, new java.util.ArrayList<>());
 
@@ -213,7 +213,7 @@ class ScriptedProxyTest {
     @Test
     @DisplayName("Kullanıcının kendi HTTPS_PROXY'si EZİLMEZ (putIfAbsent sırası)")
     void userEnvWins() {
-        var svc = service(settings("dmzproxy.aknet.akb", 8080, "", "", ""));
+        var svc = service(settings("dmzproxy.intranet.local", 8080, "", "", ""));
 
         var e = svc.buildProcessEnv(
                 env(new ScriptedCheckerService.EnvVar("HTTPS_PROXY", "http://kendi:1234", false)),
@@ -289,13 +289,13 @@ class ScriptedProxyTest {
 
     // ── "Her zaman vekil üzerinden" (ON) GERÇEKTEN vekilden geçirir ──────────────────────────
     // ON uzun süre AUTO ile aynı env'i üretiyordu: NO_PROXY konduğu için Go, sonek eşleşen
-    // (`akbank.com` ⇒ tüm alt alanlar) hedefleri doğrudan çıkarıyordu. Kullanıcı ON seçiyor,
+    // (`example.com` ⇒ tüm alt alanlar) hedefleri doğrudan çıkarıyordu. Kullanıcı ON seçiyor,
     // ekran "vekil üzerinden" diyor, paket vekile hiç uğramıyordu.
 
     @Test
     @DisplayName("proxyUseFor: AUTO/boş ⇒ AUTO, ON ⇒ FORCED, OFF ⇒ DIRECT; vekil yoksa hepsi DIRECT")
     void proxyModeMapping() {
-        var svc = service(settings("dmzproxy.aknet.akb", 8080, "", "", "akbank.com"));
+        var svc = service(settings("dmzproxy.intranet.local", 8080, "", "", "example.com"));
         assertThat(svc.proxyUseFor(null)).isEqualTo(ScriptedCheckerService.ProxyUse.AUTO);
         assertThat(svc.proxyUseFor("AUTO")).isEqualTo(ScriptedCheckerService.ProxyUse.AUTO);
         assertThat(svc.proxyUseFor("on")).isEqualTo(ScriptedCheckerService.ProxyUse.FORCED);
@@ -308,20 +308,20 @@ class ScriptedProxyTest {
     @Test
     @DisplayName("FORCED: vekil değişkenleri konur ama NO_PROXY KONMAZ (seçim gerçekten uygulanır)")
     void forcedOmitsNoProxy() {
-        var svc = service(settings("dmzproxy.aknet.akb", 8080, "", "", "akbank.com,localhost"));
+        var svc = service(settings("dmzproxy.intranet.local", 8080, "", "", "example.com,localhost"));
 
         var e = svc.buildProcessEnv(List.of(), ScriptedCheckerService.ProxyUse.FORCED, null,
                 new java.util.ArrayList<>());
 
-        assertThat(e).containsEntry("HTTPS_PROXY", "http://dmzproxy.aknet.akb:8080")
-                     .containsEntry("HTTP_PROXY", "http://dmzproxy.aknet.akb:8080")
+        assertThat(e).containsEntry("HTTPS_PROXY", "http://dmzproxy.intranet.local:8080")
+                     .containsEntry("HTTP_PROXY", "http://dmzproxy.intranet.local:8080")
                      .doesNotContainKey("NO_PROXY");
     }
 
     @Test
     @DisplayName("FORCED ile AUTO'nun TEK farkı NO_PROXY — vekil URL'i ve maskeleme aynı kalır")
     void forcedDiffersOnlyByNoProxy() {
-        var svc = service(settings("p.x", 3128, "svc", "gizli", "akbank.com"));
+        var svc = service(settings("p.x", 3128, "svc", "gizli", "example.com"));
         var autoSecrets = new java.util.ArrayList<String>();
         var forcedSecrets = new java.util.ArrayList<String>();
 

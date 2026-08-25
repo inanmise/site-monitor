@@ -38,7 +38,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @WebMvcTest(LoginHelpController.class)
 class LoginHelpControllerTest {
 
-    private static final String EMAIL = "user@akbank.com";
+    private static final String EMAIL = "user@example.com";
 
     @Autowired MockMvc mvc;
 
@@ -57,7 +57,7 @@ class LoginHelpControllerTest {
         when(clientIpResolver.resolve(any())).thenReturn("10.1.2.3");
         when(appSettings.getBoolean(eq("site.monitor.login-issues.enabled"), anyBoolean())).thenReturn(true);
         when(appSettings.getString(eq("site.monitor.system-admin.email"), anyString()))
-                .thenReturn("admin@akbank.com");
+                .thenReturn("admin@example.com");
         LoginIssueReport saved = new LoginIssueReport();
         saved.setId(42L); saved.setReportedAt("2026-07-24T09:00:00");
         when(loginIssueService.save(anyString(), anyString(), anyString(), anyString(),
@@ -84,7 +84,7 @@ class LoginHelpControllerTest {
                         imgs != null && imgs.size() == 1 && "image/png".equals(imgs.get(0).contentType())),
                 eq("10.1.2.3"), any(), anyString());
         // Mailler ASYNC + loglu (loginIssueMailService.dispatch*) — reportId=42, refCode, admin-alıcı, bildiren-e-postası, görsel.
-        verify(loginIssueMailService).dispatchReport(eq(42L), eq("LIR-2026-000042"), eq("admin@akbank.com"), eq(EMAIL), eq("N12345"),
+        verify(loginIssueMailService).dispatchReport(eq(42L), eq("LIR-2026-000042"), eq("admin@example.com"), eq(EMAIL), eq("N12345"),
                 eq("HTTP 423 Locked"), eq("Hesabım kilitlendi, giriş yapamıyorum"),
                 argThat((List<InlineImage> imgs) -> imgs != null && imgs.size() == 1
                         && imgs.get(0).data().length == 6 && "image/png".equals(imgs.get(0).contentType())),

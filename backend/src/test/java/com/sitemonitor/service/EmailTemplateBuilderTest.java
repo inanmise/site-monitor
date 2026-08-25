@@ -206,13 +206,13 @@ class EmailTemplateBuilderTest {
     @DisplayName("PAGE_INTEGRITY: sayfa aksiyon adımları + sorunlu kaynak listesi; sertifika (CA/PKI) içeriği SIZMAZ")
     void pageIntegrity_actionsAndResources_noCertLeak() {
         Map<String, Object> ctx = new LinkedHashMap<>();
-        ctx.put("url", "https://www.akbank.com/");
+        ctx.put("url", "https://www.example.com/");
         ctx.put("page_status", "DEGRADED");
         ctx.put("broken_resources", 3);
         ctx.put("mixed_content_count", 0);
-        ctx.put("problem_rows", "BROKEN\thttps://www.akbank.com/x.png\t404\nBROKEN\thttps://www.akbank.com/a.css\t404");
+        ctx.put("problem_rows", "BROKEN\thttps://www.example.com/x.png\t404\nBROKEN\thttps://www.example.com/a.css\t404");
         ctx.put("problem_total", 2);
-        var m = new EmailTemplateBuilder.AlertMail("PAGE_INTEGRITY", "HIGH", "https://www.akbank.com/",
+        var m = new EmailTemplateBuilder.AlertMail("PAGE_INTEGRITY", "HIGH", "https://www.example.com/",
                 "Sayfada bütünlük sorunu.", null, ctx, "DijitalSY");
         String html = b.buildHtml(m);
         // Sayfa-özel aksiyon + kaynak listesi görünür
@@ -230,7 +230,7 @@ class EmailTemplateBuilderTest {
     @DisplayName("PAGE_INTEGRITY: Mod + Alarm Kapsamı + Doğrulama satırları; sorunlu kaynak ≤10 (overflow); HATA=null gizli")
     void pageIntegrity_enrichedRows_maxTenAndNoNull() {
         Map<String, Object> ctx = new LinkedHashMap<>();
-        ctx.put("url", "https://www.akbank.com/");
+        ctx.put("url", "https://www.example.com/");
         ctx.put("page_status", "DEGRADED");
         ctx.put("page_mode", "SITE_CRAWL");
         ctx.put("broken_resources", 12);
@@ -245,7 +245,7 @@ class EmailTemplateBuilderTest {
         for (int i = 1; i <= 10; i++) rows.append("TIMEOUT\thttps://cdn.example.com/asset-").append(i).append(".js\t\n");
         ctx.put("problem_rows", rows.toString().trim());   // 10 satır gösterilir
         ctx.put("problem_total", 12);                       // toplam 12 → "2 kaynak daha"
-        var m = new EmailTemplateBuilder.AlertMail("PAGE_INTEGRITY", "HIGH", "https://www.akbank.com/",
+        var m = new EmailTemplateBuilder.AlertMail("PAGE_INTEGRITY", "HIGH", "https://www.example.com/",
                 "Sayfada bütünlük sorunu.", null, ctx, "DijitalSY");
         String html = b.buildHtml(m);
         assertThat(html)
@@ -292,12 +292,12 @@ class EmailTemplateBuilderTest {
     void certRows() {
         Map<String, Object> ctx = new LinkedHashMap<>();
         ctx.put("not_after", "2026-08-06T12:37:46Z");
-        ctx.put("issuer_cn", "Akbank Internal CA");
-        ctx.put("subject", "CN=app.akbank.com");
+        ctx.put("issuer_cn", "Example Internal CA");
+        ctx.put("subject", "CN=app.example.com");
         ctx.put("fingerprint", "AB12CD34EF56AB12CD34EF56AB12CD34EF56AB12CD34EF56AB12CD34EF56AB12");
-        var m = new EmailTemplateBuilder.AlertMail("EXPIRY", "HIGH", "app.akbank.com", "özet", 25, ctx, null);
+        var m = new EmailTemplateBuilder.AlertMail("EXPIRY", "HIGH", "app.example.com", "özet", 25, ctx, null);
         String html = b.buildHtml(m);
-        assertThat(html).contains("Akbank Internal CA").contains("CN=app.akbank.com")
+        assertThat(html).contains("Example Internal CA").contains("CN=app.example.com")
                         .contains("SHA-256 Parmak İzi").contains("AB12CD34…");
     }
 
@@ -308,8 +308,8 @@ class EmailTemplateBuilderTest {
         ctx.put("not_after", "2026-09-09T02:59:00Z");
         ctx.put("issuer_cn", "DigiCert EV RSA CA G2");
         if (extra != null) ctx.putAll(extra);
-        return new EmailTemplateBuilder.AlertMail("EXPIRY", "MEDIUM", "www.akbank.com",
-                "www.akbank.com adresindeki sertifikanın süresi 30 gün içinde doluyor.", 30, ctx, "SY-Dijital Bankacilik");
+        return new EmailTemplateBuilder.AlertMail("EXPIRY", "MEDIUM", "www.example.com",
+                "www.example.com adresindeki sertifikanın süresi 30 gün içinde doluyor.", 30, ctx, "Takim B");
     }
 
     @Test

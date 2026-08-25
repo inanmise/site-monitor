@@ -24,7 +24,7 @@ vi.mock('../api/client', () => ({
 import { api } from '../api/client'
 
 const monitor = {
-  id: 1, name: 'akbank', domain: 'www.akbank.com', record_type: 'A', standalone: true,
+  id: 1, name: 'example', domain: 'www.example.com', record_type: 'A', standalone: true,
   team_id: 5, team_name: 'SY-A', value: '1.2.3.4', ttl: 300, response_ms: 20, active: true,
   checked_at: '2026-07-06T00:00:00', slow_threshold_ms: null,
 }
@@ -42,7 +42,7 @@ describe('DnsMonitorPage', () => {
     ] })
     const { container } = render(<DnsMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
-    await screen.findByText('www.akbank.com')
+    await screen.findByText('www.example.com')
     expect(container.querySelector('.upt-alarm-ico')).not.toBeNull()
   })
 
@@ -52,18 +52,18 @@ describe('DnsMonitorPage', () => {
     ] })
     render(<DnsMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
-    await screen.findByText('www.akbank.com')
+    await screen.findByText('www.example.com')
     // Takım hücresindeki grup rozeti metni görünür
     expect(screen.getByText('X Sistemleri')).not.toBeNull()
   })
 
   it('Düzenle: domain editable (readonly değil) + Test butonu testDnsMonitor çağırır', async () => {
     api.monitoring.testDnsMonitor.mockResolvedValue({ success: true, data: {
-      success: true, host: 'www.akbank.com', values: ['1.2.3.4'], ttl: 300, response_ms: 20, slow: false, unexpected: [],
+      success: true, host: 'www.example.com', values: ['1.2.3.4'], ttl: 300, response_ms: 20, slow: false, unexpected: [],
     } })
     render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
-    await screen.findByText('www.akbank.com')
+    await screen.findByText('www.example.com')
 
     fireEvent.click(screen.getByTitle(/edit|düzenle/i))
     // Domain artık düzenlenebilir → eski "değiştirilemez" ipucu YOK
@@ -77,7 +77,7 @@ describe('DnsMonitorPage', () => {
     api.monitoring.updateDnsMonitor.mockResolvedValue({ success: true, data: {} })
     render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
-    await screen.findByText('www.akbank.com')
+    await screen.findByText('www.example.com')
 
     fireEvent.click(screen.getByTitle(/edit|düzenle/i))
     const checkbox = screen.getByRole('checkbox', { name: /dns değişikliği alarmı|dns change alarm/i })
@@ -96,7 +96,7 @@ describe('DnsMonitorPage', () => {
     ] })
     render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
-    await screen.findByText('www.akbank.com')
+    await screen.findByText('www.example.com')
 
     fireEvent.click(screen.getByTitle(/edit|düzenle/i))
     const checkbox = screen.getByRole('checkbox', { name: /dns değişikliği alarmı|dns change alarm/i })
@@ -106,7 +106,7 @@ describe('DnsMonitorPage', () => {
   it('Kopyala: TÜM kullanıcı ayarları birebir kopyalanır (yalnız ad "(Kopya)" olur)', async () => {
     // Her alan varsayılandan FARKLI → bir alan formFrom'dan düşerse tam-payload karşılaştırması kırılır.
     api.monitoring.getDnsMonitors.mockResolvedValue({ success: true, data: [{
-      id: 1, name: 'akbank', domain: 'www.akbank.com', record_type: 'CNAME', standalone: true,
+      id: 1, name: 'example', domain: 'www.example.com', record_type: 'CNAME', standalone: true,
       team_id: 5, team_name: 'SY-A', value: '1.2.3.4', ttl: 300, checked_at: '2026-07-06T00:00:00',
       interval_seconds: 900, group_name: 'Kurumsal',
       expected_value: '1.2.3.4\n5.6.7.8', slow_threshold_ms: 2500,
@@ -117,7 +117,7 @@ describe('DnsMonitorPage', () => {
 
     render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
-    await screen.findByText('www.akbank.com')
+    await screen.findByText('www.example.com')
 
     fireEvent.click(screen.getByRole('button', { name: /kopyala|duplicate/i }))
 
@@ -125,14 +125,14 @@ describe('DnsMonitorPage', () => {
     expect(document.querySelector('.mon-dup-badge')).not.toBeNull()
     expect(document.querySelector('.mon-dup-hint')).not.toBeNull()
     // Ad "(Kopya)" sonekli — ad input'unun placeholder'ı form.domain'dir
-    expect(screen.getByPlaceholderText('www.akbank.com').value).toMatch(/\(Kopya\)$/)
+    expect(screen.getByPlaceholderText('www.example.com').value).toMatch(/\(Kopya\)$/)
 
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
     await waitFor(() => expect(api.monitoring.createDnsMonitor).toHaveBeenCalled())
     expect(api.monitoring.updateDnsMonitor).not.toHaveBeenCalled()
 
     expect(api.monitoring.createDnsMonitor.mock.calls[0][0]).toEqual({
-      name: 'akbank (Kopya)', domain: 'www.akbank.com', recordType: 'CNAME',
+      name: 'example (Kopya)', domain: 'www.example.com', recordType: 'CNAME',
       intervalSeconds: 900, teamId: 5, groupName: 'Kurumsal',
       expectedValue: '1.2.3.4\n5.6.7.8', slowThresholdMs: 2500,
       propagationCheck: true, dnsChangeAlertEnabled: false,
@@ -149,7 +149,7 @@ describe('DnsMonitorPage', () => {
     })
     render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
-    await screen.findByText('www.akbank.com')
+    await screen.findByText('www.example.com')
 
     fireEvent.click(screen.getByRole('button', { name: /kopyala|duplicate/i }))
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
@@ -162,20 +162,20 @@ describe('DnsMonitorPage', () => {
 
   it('Düzenle: "listeye ekle" butonu mevcut değeri beklenen listeye EKLER (üzerine yazmaz, dedupe)', async () => {
     api.monitoring.getDnsMonitors.mockResolvedValue({ success: true, data: [
-      { ...monitor, expected_value: '217.169.196.197', value: '192.168.10.249' },
+      { ...monitor, expected_value: '217.169.196.197', value: '192.168.1.10' },
     ] })
     render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
-    await screen.findByText('www.akbank.com')
+    await screen.findByText('www.example.com')
 
     fireEvent.click(screen.getByTitle(/edit|düzenle/i))
     const addBtn = screen.getByRole('button', { name: /^şu anki değeri listeye ekle$|^add current value to list$/i })
     fireEvent.click(addBtn)
     const textarea = screen.getByPlaceholderText(/beklenen değer|expected value/i)
-    expect(textarea.value).toBe('217.169.196.197\n192.168.10.249')
+    expect(textarea.value).toBe('217.169.196.197\n192.168.1.10')
     // İkinci tık: aynı değer tekrar eklenmez (dedupe)
     fireEvent.click(addBtn)
-    expect(textarea.value).toBe('217.169.196.197\n192.168.10.249')
+    expect(textarea.value).toBe('217.169.196.197\n192.168.1.10')
   })
 
   it('sayfalama: 120 kayıt → 50 satır + "Page 1 of 3"; Sonraki → 51.; tek sayfada nav yok', async () => {

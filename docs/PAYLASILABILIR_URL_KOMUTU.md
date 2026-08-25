@@ -13,7 +13,7 @@ Hedef: **o an ekranda görünen durumun tamamı URL'de yaşasın** ve URL her an
 ```
 /?tab=keyword&group=callcenterfacewebmon
 /?tab=http&team=SY-Dijital%20Bankacilik&stat=alarm&page=3&ps=50
-/?tab=ping&q=akbank&monitor=42
+/?tab=ping&q=example&monitor=42
 ```
 
 - Filtre/arama/sayfa/detay-modalı değiştikçe URL **anlık** güncellenir (adres çubuğundan kopyala-yapıştır yeter).
@@ -113,7 +113,7 @@ Her sayfada aynı desen:
 | `tab` | Sekme (mevcut) | `keyword` |
 | `group` | Grup filtresi (grup adı veya `__none__`) | `callcenterfacewebmon` |
 | `team` | Takım filtresi (takım adı veya `__none__`) | `SY-Dijital%20Bankacilik` |
-| `q` | Arama metni | `akbank` |
+| `q` | Arama metni | `example` |
 | `stat` | Stat kartı filtresi | `alarm` |
 | `page` | Sayfa (yalnız >1 iken) | `3` |
 | `ps` | Sayfa boyutu (yalnız `page` varken veya ≠50) | `100` |

@@ -25,7 +25,7 @@ class GeoIpServiceLookupTest {
     private GeoIpService svc;
     private final AtomicInteger hits = new AtomicInteger();
     private volatile int status = 200;
-    private volatile String body = "{\"status\":\"success\",\"country\":\"Turkey\",\"city\":\"Istanbul\",\"org\":\"Akbank\"}";
+    private volatile String body = "{\"status\":\"success\",\"country\":\"Turkey\",\"city\":\"Istanbul\",\"org\":\"Example\"}";
 
     @BeforeEach
     void setUp() throws Exception {
@@ -54,7 +54,7 @@ class GeoIpServiceLookupTest {
         GeoIpService.GeoInfo g = svc.lookup("8.8.8.8");
         assertThat(g.country()).isEqualTo("Turkey");
         assertThat(g.city()).isEqualTo("Istanbul");
-        assertThat(g.org()).isEqualTo("Akbank");
+        assertThat(g.org()).isEqualTo("Example");
         assertThat(hits.get()).isEqualTo(1);
 
         GeoIpService.GeoInfo again = svc.lookup("8.8.8.8");

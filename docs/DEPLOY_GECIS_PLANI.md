@@ -6,7 +6,7 @@
 > (veya bakım pencereli) geçişin adımlarını tanımlar.
 >
 > Değişmeyenler: **DB şeması ve DB kimliği** (`dbName/dbUser: certmonitor`), tüm
-> `/api/...` yolları, prod host (`certmonitor-prod.akbank.com` — DNS/URL kapsam dışı,
+> `/api/...` yolları, prod host (`certmonitor-prod.example.com` — DNS/URL kapsam dışı,
 > ayrıca ele alınacak), uygulama verisi.
 
 ## 0. Ön koşullar
@@ -41,7 +41,7 @@ Taze install ÖNCESİ eski release'ten dök ve karşılaştır:
 | Değer | Values anahtarı | Env | Not |
 |---|---|---|---|
 | Outbound proxy host/port | `config.httpProxyHost/httpProxyPort` | `HTTP_PROXY_HOST/PORT` | prod'da `environments/master.yaml`'da KALICI — elle Deployment patch'i yapmayın |
-| Proxy bypass | `config.noProxy` | `NO_PROXY` | iç sonekler (akbank.com,aknet.akb,…) |
+| Proxy bypass | `config.noProxy` | `NO_PROXY` | iç sonekler (example.com,intranet.local,…) |
 | Proxy kimlik (varsa) | `secret.httpProxyUser/Pass` | `HTTP_PROXY_USER/PASS` | |
 | WHOIS kararı | `config.whoisEnabled` | `DOMAIN_WHOIS_ENABLED` | port-43 proxy'den geçemez → prod'da `false` doğru; `.tr` verisi web-whois'ten gelir (`tr-web-whois-enabled` varsayılan açık) |
 | Kurumsal CA paketi | `config.caBundlePem` veya DB `site.monitor.trust.ca-bundle-pem` | `TRUST_CA_BUNDLE_PEM` | SSL-inspection proxy'de RDAP PKIX için |

@@ -10,7 +10,7 @@ const HTTP_TR = `
 Sağ üstteki **+ Yeni Monitör** butonuna tıklayın ve formu doldurun.
 
 ### Zorunlu alanlar
-- **İzlenecek URL** — Tam adres, şema dahil: \`https://www.akbank.com\`. \`http://\`/\`https://\` yoksa istek çalışmaz.
+- **İzlenecek URL** — Tam adres, şema dahil: \`https://www.example.com\`. \`http://\`/\`https://\` yoksa istek çalışmaz.
 - **Takım** — İzlemenin sahibi ekip; alarm/rapor buraya gider (yönetici birden çok ekip seçebilir).
 
 ### Diğer alanlar
@@ -40,7 +40,7 @@ const HTTP_EN = `
 Click **+ New Monitor** (top right) and fill the form.
 
 ### Required
-- **URL to monitor** — Full address including scheme: \`https://www.akbank.com\`. Without \`http(s)://\` the request won't run.
+- **URL to monitor** — Full address including scheme: \`https://www.example.com\`. Without \`http(s)://\` the request won't run.
 - **Team** — The owning team; alerts/reports go to it (admins can pick multiple).
 
 ### Other fields
@@ -70,7 +70,7 @@ const PORT_TR = `
 **+ Yeni Monitör** ile formu açın.
 
 ### Zorunlu alanlar
-- **Host** — Sunucu adı veya IP (ör. \`smtp.akbank.com\` / \`1.2.3.4\`). URL değil, yalnız host.
+- **Host** — Sunucu adı veya IP (ör. \`smtp.example.com\` / \`1.2.3.4\`). URL değil, yalnız host.
 - **Port** — 1–65535 (ör. \`25\`, \`443\`, \`8443\`).
 - **Takım** — İzlemenin sahibi ekip.
 
@@ -94,7 +94,7 @@ const PORT_EN = `
 Open the form with **+ New Monitor**.
 
 ### Required
-- **Host** — Hostname or IP (e.g. \`smtp.akbank.com\` / \`1.2.3.4\`). Host only, not a URL.
+- **Host** — Hostname or IP (e.g. \`smtp.example.com\` / \`1.2.3.4\`). Host only, not a URL.
 - **Port** — 1–65535 (e.g. \`25\`, \`443\`, \`8443\`).
 - **Team** — The owning team.
 
@@ -118,7 +118,7 @@ const DNS_TR = `
 **+ Yeni Monitör** ile formu açın.
 
 ### Zorunlu alanlar
-- **Domain** — Sorgulanacak ad (ör. \`www.akbank.com\`).
+- **Domain** — Sorgulanacak ad (ör. \`www.example.com\`).
 - **Takım** — İzlemenin sahibi ekip.
 - **Kayıt Tipi** — Formda: A, AAAA, CNAME, MX, TXT, NS (varsayılan **A**).
 - **Kontrol Sıklığı** — 30 sn … 24 saat (varsayılan 5 dk).
@@ -150,7 +150,7 @@ const DNS_EN = `
 Open the form with **+ New Monitor**.
 
 ### Required
-- **Domain** — The name to query (e.g. \`www.akbank.com\`).
+- **Domain** — The name to query (e.g. \`www.example.com\`).
 - **Team** — The owning team.
 - **Record type** — In the form: A, AAAA, CNAME, MX, TXT, NS (default **A**).
 - **Check interval** — 30s … 24h (default 5m).
@@ -182,7 +182,7 @@ const KEYWORD_TR = `
 **+ Yeni Monitör** ile formu açın.
 
 ### Zorunlu alanlar
-- **URL** — Tam adres, şema dahil (ör. \`https://www.akbank.com\`).
+- **URL** — Tam adres, şema dahil (ör. \`https://www.example.com\`).
 - **Anahtar Kelime** — Sayfa gövdesinde aranacak metin (ör. \`Bireysel\`).
 - **Takım** — İzlemenin sahibi ekip.
 
@@ -207,7 +207,7 @@ const KEYWORD_EN = `
 Open the form with **+ New Monitor**.
 
 ### Required
-- **URL** — Full address including scheme (e.g. \`https://www.akbank.com\`).
+- **URL** — Full address including scheme (e.g. \`https://www.example.com\`).
 - **Keyword** — The text to search for in the page body (e.g. \`Personal\`).
 - **Team** — The owning team.
 
@@ -280,7 +280,7 @@ Bir sayfanın tüm kaynaklarının (görsel, CSS, JS, link, iframe, font) erişi
 **+ Yeni Monitör** ile formu açın.
 
 ### Zorunlu alanlar
-- **URL** — İncelenecek sayfa/site adresi (ör. \`https://www.akbank.com/kampanya\`).
+- **URL** — İncelenecek sayfa/site adresi (ör. \`https://www.example.com/kampanya\`).
 - **Takım** — İzlemenin sahibi ekip.
 
 ### Diğer alanlar
@@ -324,7 +324,7 @@ Monitors that all of a page's resources (images, CSS, JS, links, iframes, fonts)
 Open the form with **+ New Monitor**.
 
 ### Required
-- **URL** — The page/site to inspect (e.g. \`https://www.akbank.com/campaign\`).
+- **URL** — The page/site to inspect (e.g. \`https://www.example.com/campaign\`).
 - **Team** — The owning team.
 
 ### Other fields
@@ -368,7 +368,7 @@ Bir alan adının **tescil süresinin (whois/RDAP)** bitişini izler ve yaklaş�
 **+ Yeni Monitör** ile formu açın.
 
 ### Zorunlu alanlar
-- **Alan adı** — İzlenecek kayıtlı domain (ör. \`akbank.com\`). Alt alan/URL verseniz de kayıtlı domaine (eTLD+1) indirgenir (\`www.x.com.tr → x.com.tr\`).
+- **Alan adı** — İzlenecek kayıtlı domain (ör. \`example.com\`). Alt alan/URL verseniz de kayıtlı domaine (eTLD+1) indirgenir (\`www.x.com.tr → x.com.tr\`).
 - **Takım** — İzlemenin sahibi ekip.
 
 ### Diğer alanlar
@@ -392,7 +392,7 @@ Monitors a domain's **registration expiry (whois/RDAP)** and warns as it approac
 Open the form with **+ New Monitor**.
 
 ### Required
-- **Domain** — The registrable domain to watch (e.g. \`akbank.com\`). A subdomain/URL is reduced to the registrable domain (eTLD+1): \`www.x.com.tr → x.com.tr\`.
+- **Domain** — The registrable domain to watch (e.g. \`example.com\`). A subdomain/URL is reduced to the registrable domain (eTLD+1): \`www.x.com.tr → x.com.tr\`.
 - **Team** — The owning team.
 
 ### Other fields
@@ -428,7 +428,7 @@ Sağ üstteki **+ Yeni Monitör** ile formu açın.
 - **Yavaş koşum alarmı** + **Yavaşlık eşiği (ms)** — Opsiyonel. Açılırsa senaryo GEÇTİĞİ hâlde toplam koşum süresi eşiği aşarsa ayrı bir “yavaş” alarmı açılır; kesinti alarmından bağımsızdır ve aynı doğrulama/kurtarma sayılarını kullanır. Login akışının çalışıyor ama yavaşlamış olması — sessiz bozulma — ancak böyle görünür olur.
 - **Kurtarma kontrolü** — "Düzeldi" demek için gereken başarılı koşu (1–10, varsayılan 3).
 - **Ortam Değişkenleri** — Script'in \`__ENV\` ile okuduğu değerler. **Değişken Ekle** ile satır ekleyin: AD + değer + **Gizli**. Sırları (parola/secret) **script gövdesine YAZMAYIN**; "Gizli" işaretleyin — şifreli saklanır, çıktı/loglarda maskelenir, geri okunamaz.
-- **Vekil (proxy)** — Kurumsal çıkış vekilinin kullanımı. **Otomatik**: vekil tanımlıysa kullanılır, ama NO_PROXY listesine **sonek** olarak uyan hedefler (ör. \`akbank.com\` ⇒ tüm alt alanlar) doğrudan çıkar. **Her zaman vekil üzerinden**: NO_PROXY yok sayılır, hedef ne olursa olsun vekile uğrar. **Doğrudan**: vekil hiç kullanılmaz — iç ağ hedefleri için bunu seçin.
+- **Vekil (proxy)** — Kurumsal çıkış vekilinin kullanımı. **Otomatik**: vekil tanımlıysa kullanılır, ama NO_PROXY listesine **sonek** olarak uyan hedefler (ör. \`example.com\` ⇒ tüm alt alanlar) doğrudan çıkar. **Her zaman vekil üzerinden**: NO_PROXY yok sayılır, hedef ne olursa olsun vekile uğrar. **Doğrudan**: vekil hiç kullanılmaz — iç ağ hedefleri için bunu seçin.
 - **E-posta bildirimi gönder**, **Aktif** — standart.
 
 ### Desteklenen JavaScript (bunu atlamayın)
@@ -490,7 +490,7 @@ Open the form with **+ New Monitor** (top right).
 - **Slow-run alert** + **Slow threshold (ms)** — Optional. When enabled, a run that PASSES but exceeds the threshold raises a separate “slow” alert, independent of the outage alert and using the same confirm/recovery counts. A login flow that still works but got slower — silent degradation — only becomes visible this way.
 - **Recovery checks** — Successful runs to declare "recovered" (1–10, default 3).
 - **Environment variables** — Values the script reads via \`__ENV\`. Use **Add variable** for a row: NAME + value + **Secret**. Do **NOT** put secrets in the script body; mark them "Secret" — stored encrypted, masked in output/logs, never readable back.
-- **Proxy** — Whether to use the corporate egress proxy. **Automatic**: used when a proxy is configured, but targets matching NO_PROXY as a **suffix** (e.g. \`akbank.com\` ⇒ all subdomains) still go direct. **Always via proxy**: NO_PROXY is ignored, every target goes through the proxy. **Direct**: never use the proxy — choose this for internal targets.
+- **Proxy** — Whether to use the corporate egress proxy. **Automatic**: used when a proxy is configured, but targets matching NO_PROXY as a **suffix** (e.g. \`example.com\` ⇒ all subdomains) still go direct. **Always via proxy**: NO_PROXY is ignored, every target goes through the proxy. **Direct**: never use the proxy — choose this for internal targets.
 - **Send email notification**, **Active** — standard.
 
 ### Supported JavaScript (don't skip this)
@@ -541,7 +541,7 @@ Bir sayfanın **ne kadar sürede yüklendiğini** ve **ne kadar ağırlaştığ�
 **+ İzleme Ekle** ile formu açın.
 
 ### Zorunlu alanlar
-- **Sayfa URL'i** — Ölçülecek sayfanın tam adresi (ör. \`https://www.akbank.com/kampanya\`). Şema yazmazsanız \`https://\` eklenir.
+- **Sayfa URL'i** — Ölçülecek sayfanın tam adresi (ör. \`https://www.example.com/kampanya\`). Şema yazmazsanız \`https://\` eklenir.
 - **Takım** — İzlemenin sahibi ekip. Alarmlar bu takıma gider.
 
 ### Alarm eşikleri (dördü de opsiyonel)
@@ -589,7 +589,7 @@ Measures, at a regular interval, **how long a page takes to load** and **how hea
 Open the form with **+ Add Monitor**.
 
 ### Required fields
-- **Page URL** — The full address of the page to measure (e.g. \`https://www.akbank.com/campaign\`). Leave out the scheme and \`https://\` is added for you.
+- **Page URL** — The full address of the page to measure (e.g. \`https://www.example.com/campaign\`). Leave out the scheme and \`https://\` is added for you.
 - **Team** — The team that owns the monitor. Alerts go to them.
 
 ### Alert thresholds (all four optional)

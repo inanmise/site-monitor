@@ -373,7 +373,7 @@ class SchedulerServiceTest {
     @SuppressWarnings("unchecked")
     void pageSweep_realOutage_stillAlarms() {
         com.sitemonitor.model.PageMonitor m = new com.sitemonitor.model.PageMonitor();
-        m.setId(22L); m.setName("akbank"); m.setUrl("https://www.akbank.com/"); m.setMode("SINGLE_PAGE"); m.setActive(true);
+        m.setId(22L); m.setName("example"); m.setUrl("https://www.example.com/"); m.setMode("SINGLE_PAGE"); m.setActive(true);
         when(pageMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
         when(pageCheckerService.check(anyString(), anyString(), anyInt(), anyInt(), anyInt(), any(), anyInt(), anyInt(), anyInt()))
                 .thenReturn(new PageCheckerService.PageCheckResult("DOWN", false, null, 40L,

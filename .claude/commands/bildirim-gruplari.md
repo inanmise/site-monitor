@@ -141,7 +141,7 @@ IncidentNotificationService…) — alarm-dışı posta akışlarından hangiler
   seçim korunur ama çözümleme fallback'e düşer. Onaylat.
 - **K8 — Adres doğrulama/kısıt:** format doğrulaması + grup başına adres tavanı (öneri 15) +
   opsiyonel kurumsal domain kısıtı (`site.monitor.notification.allowed-email-domains` AppSettings
-  anahtarı — boş=serbest; kurumsal ortam için `*@akbank.com` gibi). Karar: kısıt v1'de var mı?
+  anahtarı — boş=serbest; kurumsal ortam için `*@example.com` gibi). Karar: kısıt v1'de var mı?
 - **K9 — Görünürlük:** yeniden-gönderim ÖNİZLEMESİ (recipients_queued, ~402–433) ve alarm
   detayında alıcıların HANGİ kaynaktan geldiği görünür ("Grup: Ödeme-Nöbetçi" / "Takım maili" /
   "Eskalasyon: müdür") — `collectTeamRecipients` çifti kaynak etiketiyle zenginleşir;

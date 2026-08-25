@@ -502,11 +502,11 @@ class MonitoringControllerTest {
     void testKeyword_returnsResult() throws Exception {
         java.util.Map<String, Object> cr = new java.util.HashMap<>();
         cr.put("count", 5); cr.put("http_status", 200); cr.put("response_ms", 12L);
-        when(keywordChecker.check(eq("https://x.example.com"), eq("akbank"), anyInt(), any(), anyBoolean())).thenReturn(cr);
+        when(keywordChecker.check(eq("https://x.example.com"), eq("example"), anyInt(), any(), anyBoolean())).thenReturn(cr);
 
         mvc.perform(post("/api/monitoring/keyword/test").session(session("USER"))
                 .contentType("application/json")
-                .content("{\"url\":\"https://x.example.com\",\"keyword\":\"akbank\",\"operator\":\"GTE\",\"matchCount\":3,\"timeoutMs\":5000}"))
+                .content("{\"url\":\"https://x.example.com\",\"keyword\":\"example\",\"operator\":\"GTE\",\"matchCount\":3,\"timeoutMs\":5000}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.occurrences").value(5))
                 .andExpect(jsonPath("$.data.condition_met").value(true))   // 5 >= 3
@@ -1118,7 +1118,7 @@ class MonitoringControllerTest {
                 .andExpect(status().isBadRequest());
         mvc.perform(post("/api/monitoring/keyword").session(admin)
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"url\":\"https://x.example.com\",\"keyword\":\"akbank\"}"))
+                .content("{\"url\":\"https://x.example.com\",\"keyword\":\"example\"}"))
                 .andExpect(status().isBadRequest());
         mvc.perform(post("/api/monitoring/domain").session(admin)
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
@@ -1227,13 +1227,13 @@ class MonitoringControllerTest {
     @DisplayName("POST /dns: aynı (domain, kayıt tipi) standalone varken → 400; sessiz no-op YOK, kayıt oluşmaz")
     void createDns_duplicateDomainRecordType_returns400() throws Exception {
         com.sitemonitor.model.DnsMonitor existing = new com.sitemonitor.model.DnsMonitor();
-        existing.setId(8L); existing.setDomain("www.akbank.com"); existing.setRecordType("A"); existing.setStandalone(true);
-        when(dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrue("www.akbank.com", "A"))
+        existing.setId(8L); existing.setDomain("www.example.com"); existing.setRecordType("A"); existing.setStandalone(true);
+        when(dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrue("www.example.com", "A"))
                 .thenReturn(Optional.of(existing));
 
         mvc.perform(post("/api/monitoring/dns").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"domain\":\"www.akbank.com\",\"recordType\":\"A\",\"teamId\":3,\"name\":\"akbank (Kopya)\"}"))
+                .content("{\"domain\":\"www.example.com\",\"recordType\":\"A\",\"teamId\":3,\"name\":\"example (Kopya)\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("zaten bir izleme var")));
 
@@ -1315,7 +1315,7 @@ class MonitoringControllerTest {
 
         mvc.perform(post("/api/monitoring/keyword").session(session("ADMIN"))
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"url\":\"  x.example.com/a?t={timestamp}  \",\"keyword\":\"akbank\",\"teamId\":3}"))
+                        .content("{\"url\":\"  x.example.com/a?t={timestamp}  \",\"keyword\":\"example\",\"teamId\":3}"))
                 .andExpect(status().isOk());
 
         org.mockito.ArgumentCaptor<com.sitemonitor.model.KeywordMonitor> cap =
@@ -1884,7 +1884,7 @@ class MonitoringControllerTest {
             com.sitemonitor.model.MonitorChangeLog r = new com.sitemonitor.model.MonitorChangeLog();
             r.setId(1L); r.setResourceKind("PORT"); r.setResourceId(7L); r.setResourceName("Ödeme portu");
             r.setSeq(0); r.setEventType("CREATE"); r.setTeamId(teamId);
-            r.setActor("N70678"); r.setActorName("Ada Lovelace"); r.setIpAddress("10.20.30.40");
+            r.setActor("N23456"); r.setActorName("Ada Lovelace"); r.setIpAddress("10.20.30.40");
             r.setSnapshot("{\"name\":\"Odeme portu\"}"); r.setCreatedAt("2026-08-22T10:00:00");
             return r;
         }

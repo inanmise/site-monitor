@@ -54,9 +54,9 @@ class LdapSettingsServiceTest {
     void savePasswordIsWriteOnly() {
         Map<String, Object> body = Map.of(
                 "enabled", true,
-                "host", "aknwinldaps.akbank.com",
+                "host", "aknwinldaps.example.com",
                 "port", 3269,
-                "bind_dn", "CN=ocpbind,OU=ServiceAccounts,DC=aknet,DC=akb",
+                "bind_dn", "CN=ocpbind,OU=ServiceAccounts,DC=example,DC=com",
                 "bind_password", "topsecret");
 
         LdapSettings saved = service.save(body, "admin");
@@ -68,7 +68,7 @@ class LdapSettingsServiceTest {
         assertThat(client).doesNotContainKey("bind_password");
         assertThat(client).doesNotContainKey("bind_password_enc");
         assertThat(client.get("bind_password_set")).isEqualTo(true);
-        assertThat(client.get("host")).isEqualTo("aknwinldaps.akbank.com");
+        assertThat(client.get("host")).isEqualTo("aknwinldaps.example.com");
         assertThat(client.get("port")).isEqualTo(3269);
     }
 

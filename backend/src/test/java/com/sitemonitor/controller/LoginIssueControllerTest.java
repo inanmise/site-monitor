@@ -113,18 +113,18 @@ class LoginIssueControllerTest {
     void resolve_notifiesReporterByEmail() throws Exception {
         LoginIssueReport r = new LoginIssueReport();
         r.setId(9L); r.setStatus("RESOLVED"); r.setReportedAt("2026-07-24T09:00:00");
-        r.setReporterEmail("reporter@akbank.com"); r.setResolutionNote("Hesap açıldı"); r.setResolvedAt("2026-07-24T10:00:00");
+        r.setReporterEmail("reporter@example.com"); r.setResolutionNote("Hesap açıldı"); r.setResolvedAt("2026-07-24T10:00:00");
         when(loginIssueService.get(9L)).thenReturn(Optional.of(r));
         when(loginIssueService.updateStatus(eq(9L), eq("RESOLVED"), any(), anyString())).thenReturn(r);
         when(loginIssueService.images(9L)).thenReturn(List.of());
-        when(appSettings.getString(eq("site.monitor.system-admin.email"), anyString())).thenReturn("admin@akbank.com");
+        when(appSettings.getString(eq("site.monitor.system-admin.email"), anyString())).thenReturn("admin@example.com");
         mvc.perform(put("/api/admin/login-issues/9/status").session(authed())
                         .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"RESOLVED\",\"resolutionNote\":\"Hesap açıldı\"}"))
                 .andExpect(status().isOk());
         // Çözüldü maili ASYNC + loglu (dispatchResolved): reportId, refCode, reporter, admin + zenginleştirilmiş
         // içerik (username/errorText/message/reportedAt null/eq), çözüm notu, çözülme zamanı, görseller.
         verify(loginIssueMailService).dispatchResolved(eq(9L), eq("LIR-2026-000009"),
-                eq("reporter@akbank.com"), eq("admin@akbank.com"),
+                eq("reporter@example.com"), eq("admin@example.com"),
                 any(), any(), any(), eq("2026-07-24T09:00:00"),
                 eq("Hesap açıldı"), eq("2026-07-24T10:00:00"), any());
     }
@@ -188,7 +188,7 @@ class LoginIssueControllerTest {
         r.setUsername("N9"); r.setMessage("giriş yok");
         when(loginIssueService.get(9L)).thenReturn(Optional.of(r));
         LoginIssueMailLog m = new LoginIssueMailLog();
-        m.setMailType("RESOLVED"); m.setRecipientTo("reporter@akbank.com"); m.setCc("admin@akbank.com");
+        m.setMailType("RESOLVED"); m.setRecipientTo("reporter@example.com"); m.setCc("admin@example.com");
         m.setEmailFrom("noreply@sitemonitor"); m.setSubject("[SiteMonitor] ✅ ... LIR-2026-000009");
         m.setBodyHtml("<html>çözüldü</html>");
         m.setStatus("SENT"); m.setForced(true); m.setSentAt("2026-07-24T10:00:00");
@@ -198,8 +198,8 @@ class LoginIssueControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.mailHistory[0].mailType").value("RESOLVED"))
                 .andExpect(jsonPath("$.data.mailHistory[0].from").value("noreply@sitemonitor"))
-                .andExpect(jsonPath("$.data.mailHistory[0].to").value("reporter@akbank.com"))
-                .andExpect(jsonPath("$.data.mailHistory[0].cc").value("admin@akbank.com"))
+                .andExpect(jsonPath("$.data.mailHistory[0].to").value("reporter@example.com"))
+                .andExpect(jsonPath("$.data.mailHistory[0].cc").value("admin@example.com"))
                 .andExpect(jsonPath("$.data.mailHistory[0].subject").value("[SiteMonitor] ✅ ... LIR-2026-000009"))
                 .andExpect(jsonPath("$.data.mailHistory[0].body").value("<html>çözüldü</html>"))
                 .andExpect(jsonPath("$.data.mailHistory[0].status").value("SENT"))
@@ -213,7 +213,7 @@ class LoginIssueControllerTest {
         r.setId(id);
         r.setReportedAt("2026-08-24T10:00:00");
         r.setSource("USER_REPORT");
-        r.setUsername("N68753");
+        r.setUsername("N12345");
         return r;
     }
 

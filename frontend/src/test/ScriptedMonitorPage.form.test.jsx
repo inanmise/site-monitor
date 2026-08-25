@@ -234,7 +234,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       const opt = sourceOptions().find(o => /smoke/i.test(o.textContent))
       expect(opt).toBeTruthy()
       fireEvent.mouseDown(opt)
-      await waitFor(() => expect(screen.getByTestId('code-editor').value).toContain('www.akbank.com'))
+      await waitFor(() => expect(screen.getByTestId('code-editor').value).toContain('www.example.com'))
     })
 
     it('şablon seçilince panel KAYBOLUR (asıl şikayet) ve script şablonunkiyle değişir', async () => {
@@ -245,14 +245,14 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
 
       expect(inModal('.sc-testrun')).toBeNull()
       // Şablonun GÖVDESİ liste yanıtında gelmez (bilinçli), tekil uçtan asenkron çekilir → bekle.
-      await waitFor(() => expect(screen.getByTestId('code-editor').value).toContain('www.akbank.com'))
+      await waitFor(() => expect(screen.getByTestId('code-editor').value).toContain('www.example.com'))
     })
 
     it('kayıtlı script seçilince o monitörün script+env\'i yüklenir ve paneli geri gelir', async () => {
       await openEditFor(FAILING)
       pickSource(/smoke/i)
       expect(inModal('.sc-testrun')).toBeNull()
-      await waitFor(() => expect(screen.getByTestId('code-editor').value).toContain('www.akbank.com'))
+      await waitFor(() => expect(screen.getByTestId('code-editor').value).toContain('www.example.com'))
 
       pickSource(/llm-test/)
 
@@ -287,7 +287,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       expect(document.querySelector('.sc-source-select .ss-opt-placeholder')).not.toBeNull()
 
       pickSource(/smoke/i)
-      await waitFor(() => expect(screen.getByTestId('code-editor').value).toContain('www.akbank.com'))
+      await waitFor(() => expect(screen.getByTestId('code-editor').value).toContain('www.example.com'))
       openSource()
       fireEvent.mouseDown(document.querySelector('.sc-source-select .ss-opt-placeholder'))
       expect(screen.getByTestId('code-editor').value).toBe('')

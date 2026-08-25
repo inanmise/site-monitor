@@ -49,7 +49,7 @@ describe('usePagination', () => {
       { initialProps: { q: '' } })
     act(() => result.current.setPage(2))
     expect(result.current.page).toBe(2)
-    rerender({ q: 'akbank' })
+    rerender({ q: 'example' })
     expect(result.current.page).toBe(1)
   })
 

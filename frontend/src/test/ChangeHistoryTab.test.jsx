@@ -38,7 +38,7 @@ const t = (k, ...a) => LABELS[k] ?? (a.length ? `${k}:${a.join('|')}` : k)
 
 const CREATE_ROW = {
   seq: 0, kind: 'PORT', resource_id: 4, resource_name: 'Ödeme portu', event_type: 'CREATE',
-  team_id: 5, team_name: 'Kanal', actor: 'N70678', actor_name: 'Ada Lovelace',
+  team_id: 5, team_name: 'Kanal', actor: 'N23456', actor_name: 'Ada Lovelace',
   ip_address: '10.20.30.40', user_agent: 'Mozilla/5.0 (Windows NT 10.0) Chrome/126.0.0.0',
   changes: null, note: null, at: '2026-08-22T09:00:00',
 }

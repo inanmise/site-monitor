@@ -97,11 +97,11 @@ class EmailAttachmentTest {
     @Test
     @DisplayName("CSV + PDF ekleri ATTACHMENT olarak iliştirilir; ad ve içerik tipi korunur")
     void attachmentsAreAttached() throws Exception {
-        byte[] csv = "domain,port\nwww.akbank.com,443\n".getBytes(StandardCharsets.UTF_8);
+        byte[] csv = "domain,port\nwww.example.com,443\n".getBytes(StandardCharsets.UTF_8);
         byte[] pdf = "%PDF-1.7\n%fake".getBytes(StandardCharsets.ISO_8859_1);
 
         String status = service.sendHtmlWithAttachments(
-                new String[]{ "sertifika@akbank.com" }, null, "[Site Monitor] Envanter", HTML, null,
+                new String[]{ "sertifika@example.com" }, null, "[Site Monitor] Envanter", HTML, null,
                 List.of(new EmailNotificationService.MailAttachment("envanter.csv", csv, "text/csv"),
                         new EmailNotificationService.MailAttachment("envanter.pdf", pdf, "application/pdf")));
 

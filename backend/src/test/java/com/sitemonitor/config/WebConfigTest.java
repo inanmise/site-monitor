@@ -69,12 +69,12 @@ class WebConfigTest {
     @Test
     @DisplayName("'*' listede DİĞER origin'lerle birlikteyse yalnız o elenir, gerçekler kalır")
     void cors_wildcardStrippedFromList() {
-        WebConfig cfg = configWith("https://a.akbank.com, *, https://b.akbank.com", null);
+        WebConfig cfg = configWith("https://a.example.com, *, https://b.example.com", null);
 
         CorsConfiguration c = corsFor(cfg, "/api/certificates");
 
         assertThat(c).isNotNull();
-        assertThat(c.getAllowedOrigins()).containsExactly("https://a.akbank.com", "https://b.akbank.com");
+        assertThat(c.getAllowedOrigins()).containsExactly("https://a.example.com", "https://b.example.com");
         assertThat(c.getAllowCredentials()).isTrue();
     }
 
@@ -82,18 +82,18 @@ class WebConfigTest {
     @DisplayName("CANLI ayar @Value varsayılanını EZER (çalışma anında origin değiştirilebilir)")
     void cors_liveSettingsOverrideDefaults() {
         AppSettingsService live = mock(AppSettingsService.class);
-        when(live.getCsv(anyString(), anyString())).thenReturn(List.of("https://canli.akbank.com"));
-        WebConfig cfg = configWith("https://eski.akbank.com", live);
+        when(live.getCsv(anyString(), anyString())).thenReturn(List.of("https://canli.example.com"));
+        WebConfig cfg = configWith("https://eski.example.com", live);
 
         CorsConfiguration c = corsFor(cfg, "/api/certificates");
 
-        assertThat(c.getAllowedOrigins()).containsExactly("https://canli.akbank.com");
+        assertThat(c.getAllowedOrigins()).containsExactly("https://canli.example.com");
     }
 
     @Test
     @DisplayName("CORS yalnız /api/** için üretilir (statik varlıklar kapsam dışı)")
     void cors_onlyForApiPaths() {
-        WebConfig cfg = configWith("https://a.akbank.com", null);
+        WebConfig cfg = configWith("https://a.example.com", null);
 
         assertThat(corsFor(cfg, "/assets/index-abc.js")).isNull();
         assertThat(corsFor(cfg, "/")).isNull();

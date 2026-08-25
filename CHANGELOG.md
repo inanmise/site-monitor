@@ -30,7 +30,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 ### Added
 - **Paylaşılabilir URL / derin bağlantı.** İzleme sayfalarında ekranda görünen durumun tamamı artık adres
   çubuğunda yaşıyor: takım/grup filtresi, arama metni, stat kartı filtresi, sıralama, sayfa/sayfa boyutu ve
-  açık detay modalı (`/?tab=keyword&group=X&q=akbank&page=2&monitor=42`). URL'i kopyalayıp paylaşan herkes
+  açık detay modalı (`/?tab=keyword&group=X&q=example&page=2&monitor=42`). URL'i kopyalayıp paylaşan herkes
   birebir aynı görünümü açar; varsayılan değerler param üretmez (temiz URL), yazım debounce'lu ve tarayıcı
   geçmişini şişirmez. Her izleme sayfasına ve detay modalına tek tıkla **"Bağlantıyı Kopyala"** butonu
   eklendi (pano + bildirim). Kapsam: 8 izleme türü + Uptime + Dashboard sertifika kartları + Olay Geçmişi +

@@ -32,14 +32,14 @@ class DiagnosticHistoryServiceTest {
     @Test
     @DisplayName("record: sonucu JSON'a çevirip kim/nereden/sonuç ile kaydeder")
     void record_serializesAndSaves() {
-        service.record("www.akbank.com", 443, "OPENSSL",
+        service.record("www.example.com", 443, "OPENSSL",
                 "admin", 1L, 2L, "10.0.0.5", true, "Zayıf protokol yok",
                 Map.of("available", true, "version", "OpenSSL 3.0"));
 
         ArgumentCaptor<DiagnosticRun> cap = ArgumentCaptor.forClass(DiagnosticRun.class);
         verify(repo).save(cap.capture());
         DiagnosticRun d = cap.getValue();
-        assertThat(d.getDomain()).isEqualTo("www.akbank.com");
+        assertThat(d.getDomain()).isEqualTo("www.example.com");
         assertThat(d.getRunType()).isEqualTo("OPENSSL");
         assertThat(d.getExecutedBy()).isEqualTo("admin");
         assertThat(d.getSourceIp()).isEqualTo("10.0.0.5");

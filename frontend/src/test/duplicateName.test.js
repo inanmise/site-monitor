@@ -25,6 +25,6 @@ describe('duplicateName', () => {
   })
 
   it('URL/host gibi adlarda da çalışır', () => {
-    expect(duplicateName('callcenterfacewebmon1.akbank.com')).toBe('callcenterfacewebmon1.akbank.com (Kopya)')
+    expect(duplicateName('callcenterfacewebmon1.example.com')).toBe('callcenterfacewebmon1.example.com (Kopya)')
   })
 })

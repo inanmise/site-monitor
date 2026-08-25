@@ -85,12 +85,12 @@ class CertificateInventoryReportServiceTest {
                 inv("b.example.com", 1L, null),      // aynı takım tekrar → tek adres
                 inv("c.example.com", 3L, null)));
         when(teamRepo.findAllById(any())).thenReturn(List.of(
-                team(1, "SY-Dijital", "sy@akbank.com"),
-                team(2, "UG-Kanal", "ug@akbank.com"),
-                team(3, "SY-Ödeme", "odeme@akbank.com")));
+                team(1, "SY-Dijital", "sy@example.com"),
+                team(2, "UG-Kanal", "ug@example.com"),
+                team(3, "SY-Ödeme", "odeme@example.com")));
 
         assertThat(service.recipients())
-                .containsExactlyInAnyOrder("sy@akbank.com", "ug@akbank.com", "odeme@akbank.com");
+                .containsExactlyInAnyOrder("sy@example.com", "ug@example.com", "odeme@example.com");
     }
 
     @Test
@@ -99,10 +99,10 @@ class CertificateInventoryReportServiceTest {
         when(inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc())
                 .thenReturn(List.of(inv("a.example.com", 1L, 2L)));
         when(teamRepo.findAllById(any())).thenReturn(List.of(
-                team(1, "SY-Dijital", "sy@akbank.com"),
+                team(1, "SY-Dijital", "sy@example.com"),
                 team(2, "UG-Kanal", "   ")));            // adres yok
 
-        assertThat(service.recipients()).containsExactly("sy@akbank.com");
+        assertThat(service.recipients()).containsExactly("sy@example.com");
         assertThat(service.ownerTeamsWithoutEmail()).containsExactly("UG-Kanal");
     }
 
@@ -111,11 +111,11 @@ class CertificateInventoryReportServiceTest {
     void extraRecipientsAreAdded() {
         when(inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc())
                 .thenReturn(List.of(inv("a.example.com", 1L, null)));
-        when(teamRepo.findAllById(any())).thenReturn(List.of(team(1, "SY", "sy@akbank.com")));
+        when(teamRepo.findAllById(any())).thenReturn(List.of(team(1, "SY", "sy@example.com")));
         when(appSettings.getString(eq(CertificateInventoryReportService.EXTRA_TO_KEY), any()))
-                .thenReturn("pki@akbank.com, sy@akbank.com");   // biri zaten var → tekilleşir
+                .thenReturn("pki@example.com, sy@example.com");   // biri zaten var → tekilleşir
 
-        assertThat(service.recipients()).containsExactly("sy@akbank.com", "pki@akbank.com");
+        assertThat(service.recipients()).containsExactly("sy@example.com", "pki@example.com");
     }
 
     @Test

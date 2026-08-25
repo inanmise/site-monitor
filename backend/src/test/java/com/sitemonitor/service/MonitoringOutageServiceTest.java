@@ -265,12 +265,12 @@ class MonitoringOutageServiceTest {
         DnsRecord changedRow = new DnsRecord();
         changedRow.setMonitorId(43L);
         changedRow.setRecordType("A");
-        changedRow.setValue("192.168.10.249");
+        changedRow.setValue("192.168.1.10");
         changedRow.setCheckedAt("2026-06-10T09:00:00");
         when(dnsRecordRepo.findChangedByDomain(eq("flip.example.com"), any(Pageable.class)))
                 .thenReturn(List.of(changedRow));
         com.sitemonitor.model.DnsMonitor mon = new com.sitemonitor.model.DnsMonitor();
-        mon.setExpectedValue("192.168.10.249\n217.169.196.197");   // her iki bilinen IP sabitli
+        mon.setExpectedValue("192.168.1.10\n217.169.196.197");   // her iki bilinen IP sabitli
         when(dnsMonitorRepo.findById(43L)).thenReturn(java.util.Optional.of(mon));
 
         service.handleDnsSweep(
@@ -622,7 +622,7 @@ class MonitoringOutageServiceTest {
         assertThat(MonitoringOutageService.isOutageClass("Ping request could not find host 1.2.3.4", "x")).isTrue();
         // UnknownHostException.getMessage() SADECE host adını döndürür — canlıda uptime_checks'te
         // bu biçimde 1000+ satır var. Bu dal olmadan gerçek DNS kesintilerinin çoğu elenirdi.
-        assertThat(MonitoringOutageService.isOutageClass("www.akbank.com", "www.akbank.com")).isTrue();
+        assertThat(MonitoringOutageService.isOutageClass("www.example.com", "www.example.com")).isTrue();
 
         // Yapılandırma / politika — ASLA kesinti kanıtı değil
         assertThat(MonitoringOutageService.isOutageClass(

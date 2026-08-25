@@ -264,7 +264,7 @@ export default function CertInventoryReportSettings() {
       <Field label={t('cir.recipients')} hint={t('cir.recipientsHint')}>
         {({ id, describedBy }) => (
           <input id={id} aria-describedby={describedBy} className="input"
-            value={recipients} placeholder="pki@akbank.com"
+            value={recipients} placeholder="pki@example.com"
             onChange={e => { setRecipients(e.target.value); setDirty(true) }} />
         )}
       </Field>

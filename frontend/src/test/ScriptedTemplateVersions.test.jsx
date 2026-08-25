@@ -39,11 +39,11 @@ const TPL = { id: 7, name: 'Ödeme akışı', current_version: '1.1.0' }
 
 const VERSIONS = [
   { id: 30, version: '1.1.0', sequence_no: 3, event_type: 'PROMOTE', created_at: '2026-08-20T12:00:00',
-    created_by: 'N70678', note: 'Kanal takımından genele açıldı', current: true },
+    created_by: 'N23456', note: 'Kanal takımından genele açıldı', current: true },
   { id: 20, version: '1.1.0', sequence_no: 2, event_type: 'EDIT', created_at: '2026-08-20T11:00:00',
-    created_by: 'N70678', note: null },
+    created_by: 'N23456', note: null },
   { id: 10, version: '1.0.0', sequence_no: 0, event_type: 'CREATE', created_at: '2026-08-20T10:00:00',
-    created_by: 'N70678', note: null },
+    created_by: 'N23456', note: null },
 ]
 
 const OLD_SCRIPT = 'http.get(URL);'

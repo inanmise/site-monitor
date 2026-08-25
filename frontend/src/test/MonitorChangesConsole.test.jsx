@@ -25,7 +25,7 @@ import MonitorChangesConsole from '../components/admin/MonitorChangesConsole.jsx
 
 const ROW = {
   kind: 'SCRIPTED', resource_id: 12, resource_name: 'Ödeme akışı', seq: 3, event_type: 'UPDATE',
-  team_id: 5, team_name: 'Kanal takımı', actor: 'N70678', actor_name: 'Ada Lovelace',
+  team_id: 5, team_name: 'Kanal takımı', actor: 'N23456', actor_name: 'Ada Lovelace',
   ip_address: '10.20.30.40', user_agent: 'Mozilla/5.0 (Windows NT 10.0) Chrome/126.0.0.0',
   at: '2026-08-22T14:03:11', note: 'Zaman aşımı yetmiyordu',
   changes: JSON.stringify({

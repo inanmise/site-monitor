@@ -50,7 +50,7 @@ class DeviceHistoryServiceTest {
     @BeforeEach
     void setUp() {
         user = new AppUser();
-        user.setUsername("N68753");
+        user.setUsername("N12345");
         user.setLastSeenAt("2026-08-24T18:00:00");
         when(appSettings.getInt(anyString(), org.mockito.ArgumentMatchers.anyInt())).thenReturn(365);
         when(auditLogRepo.findLatestOwnLogin(anyString())).thenReturn(Optional.empty());
@@ -85,7 +85,7 @@ class DeviceHistoryServiceTest {
         t.setId(3L);
         t.setToken("GIZLI-TOKEN-HASHI");
         t.setUaSummary("Windows · Chrome");
-        when(rememberRepo.findByUsername("N68753")).thenReturn(List.of(t));
+        when(rememberRepo.findByUsername("N12345")).thenReturn(List.of(t));
 
         String json = String.valueOf(service.devicesFor(user, "GIZLI-TOKEN-HASHI"));
 
@@ -102,7 +102,7 @@ class DeviceHistoryServiceTest {
         mine.setId(1L); mine.setToken("HASH-A");
         RememberMeToken other = new RememberMeToken();
         other.setId(2L); other.setToken("HASH-B");
-        when(rememberRepo.findByUsername("N68753")).thenReturn(List.of(mine, other));
+        when(rememberRepo.findByUsername("N12345")).thenReturn(List.of(mine, other));
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> rows =
