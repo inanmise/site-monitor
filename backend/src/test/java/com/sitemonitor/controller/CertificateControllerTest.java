@@ -198,7 +198,7 @@ class CertificateControllerTest {
                 "status", "valid",
                 "days_remaining", 90
         );
-        when(checkerService.check("example.com", 443, false, null)).thenReturn(new java.util.LinkedHashMap<>(checkResult));
+        when(checkerService.check("example.com", 443, false, null, null)).thenReturn(new java.util.LinkedHashMap<>(checkResult));
         when(inventoryRepo.findByDomain("example.com")).thenReturn(java.util.Optional.of(invOf("example.com", null)));
 
         mvc.perform(get("/api/check/example.com").session(authSession()))
@@ -218,7 +218,7 @@ class CertificateControllerTest {
         inv.setDomain("example.com");
         inv.setTlsMode("default");
         when(inventoryRepo.findByDomain("example.com")).thenReturn(java.util.Optional.of(inv));
-        when(checkerService.check("example.com", 443, false, "default"))
+        when(checkerService.check("example.com", 443, false, "default", null))
                 .thenReturn(new java.util.LinkedHashMap<>(Map.of(
                         "domain", "example.com", "status", "valid", "days_remaining", 90)));
 
@@ -226,7 +226,7 @@ class CertificateControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
 
-        org.mockito.Mockito.verify(checkerService).check("example.com", 443, false, "default");
+        org.mockito.Mockito.verify(checkerService).check("example.com", 443, false, "default", null);
     }
 
     @Test
@@ -486,13 +486,13 @@ class CertificateControllerTest {
     void healthRefresh_usesInventoryPort() throws Exception {
         when(inventoryRepo.findByDomain("a.example.com")).thenReturn(java.util.Optional.of(invOf(5L, 8443)));
         when(latestCheckRepo.findById("a.example.com")).thenReturn(java.util.Optional.of(latestOf()));
-        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any()))
+        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any(), any()))
                 .thenReturn(new java.util.LinkedHashMap<>(java.util.Map.of("status", "valid")));
 
         mvc.perform(post("/api/certificates/a.example.com/health/refresh").session(teamSession(5L)))
                 .andExpect(status().isOk());
 
-        verify(checkerService).check(eq("a.example.com"), eq(8443), anyBoolean(), any());
+        verify(checkerService).check(eq("a.example.com"), eq(8443), anyBoolean(), any(), any());
         verify(certService).saveResult(any());
         verify(auditService).recordAction(eq("CERT_HEALTH_REFRESH"), any(), eq("CERTIFICATE"),
                 eq("a.example.com"), any(), any());
@@ -512,13 +512,13 @@ class CertificateControllerTest {
         inv.setUseProxy(false);                                  // "Proxy Üzerinden Kontrol Et = Hayır"
         when(inventoryRepo.findByDomain("prox.example.com")).thenReturn(java.util.Optional.of(inv));
         when(latestCheckRepo.findById("prox.example.com")).thenReturn(java.util.Optional.of(latestOf()));
-        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any()))
+        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any(), any()))
                 .thenReturn(new java.util.LinkedHashMap<>(java.util.Map.of("status", "valid")));
 
         mvc.perform(post("/api/certificates/prox.example.com/health/refresh").session(teamSession(5L)))
                 .andExpect(status().isOk());
 
-        verify(checkerService).check(eq("prox.example.com"), anyInt(), eq(false), any());
+        verify(checkerService).check(eq("prox.example.com"), anyInt(), eq(false), any(), any());
         verify(appLayerProbe).refresh("prox.example.com", 443, false);
     }
 
@@ -530,7 +530,7 @@ class CertificateControllerTest {
         inv.setUseProxy(true);
         when(inventoryRepo.findByDomain("prox2.example.com")).thenReturn(java.util.Optional.of(inv));
         when(latestCheckRepo.findById("prox2.example.com")).thenReturn(java.util.Optional.of(latestOf()));
-        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any()))
+        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any(), any()))
                 .thenReturn(new java.util.LinkedHashMap<>(java.util.Map.of("status", "valid")));
 
         mvc.perform(post("/api/certificates/prox2.example.com/health/refresh").session(teamSession(5L)))
@@ -544,7 +544,7 @@ class CertificateControllerTest {
     void healthRefresh_isRateLimited() throws Exception {
         when(inventoryRepo.findByDomain("cool.example.com")).thenReturn(java.util.Optional.of(invOf(5L, 443)));
         when(latestCheckRepo.findById("cool.example.com")).thenReturn(java.util.Optional.empty());
-        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any()))
+        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any(), any()))
                 .thenReturn(new java.util.LinkedHashMap<>(java.util.Map.of("status", "valid")));
 
         mvc.perform(post("/api/certificates/cool.example.com/health/refresh").session(teamSession(5L)))
@@ -552,7 +552,7 @@ class CertificateControllerTest {
         mvc.perform(post("/api/certificates/cool.example.com/health/refresh").session(teamSession(5L)))
                 .andExpect(status().is(429));
 
-        verify(checkerService, times(1)).check(eq("cool.example.com"), anyInt(), anyBoolean(), any());
+        verify(checkerService, times(1)).check(eq("cool.example.com"), anyInt(), anyBoolean(), any(), any());
     }
 
     @Test
@@ -570,26 +570,26 @@ class CertificateControllerTest {
     @DisplayName("check-preview envanter PORTUNU kullanır (443 sabiti kaldırıldı)")
     void preview_usesInventoryPort() throws Exception {
         when(inventoryRepo.findByDomain("a.example.com")).thenReturn(java.util.Optional.of(invOf(5L, 8443)));
-        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any()))
+        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any(), any()))
                 .thenReturn(new java.util.LinkedHashMap<>(java.util.Map.of("status", "valid")));
 
         mvc.perform(get("/api/check-preview/a.example.com").session(authSession()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.port").value(8443));
 
-        verify(checkerService).check(eq("a.example.com"), eq(8443), anyBoolean(), any());
+        verify(checkerService).check(eq("a.example.com"), eq(8443), anyBoolean(), any(), any());
     }
 
     @Test
     @DisplayName("check-preview envanterde OLMAYAN domainde 443'e düşer (SSL Checker aracı çalışsın)")
     void preview_unknownDomainFallsBackTo443() throws Exception {
         when(inventoryRepo.findByDomain("serbest.example.com")).thenReturn(java.util.Optional.empty());
-        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any()))
+        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any(), any()))
                 .thenReturn(new java.util.LinkedHashMap<>(java.util.Map.of("status", "valid")));
 
         mvc.perform(get("/api/check-preview/serbest.example.com").session(authSession()))
                 .andExpect(status().isOk());
 
-        verify(checkerService).check(eq("serbest.example.com"), eq(443), anyBoolean(), any());
+        verify(checkerService).check(eq("serbest.example.com"), eq(443), anyBoolean(), any(), any());
     }
 }

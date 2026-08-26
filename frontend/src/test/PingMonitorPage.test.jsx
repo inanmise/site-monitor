@@ -175,7 +175,7 @@ describe('PingMonitorPage', () => {
       render(<PingMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
       await waitFor(() => expect(api.monitoring.getPingMonitors).toHaveBeenCalled())
 
-      const runBtn = document.querySelector('.mon-btn-check')
+      const runBtn = document.querySelector('.mon-act--check')
       expect(runBtn).not.toBeNull()
       fireEvent.click(runBtn)
 

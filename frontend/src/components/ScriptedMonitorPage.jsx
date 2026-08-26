@@ -39,6 +39,8 @@ import { exitLabel, exitHint, diagnosisHint, k6SyntaxLevel, readPhases, formatBy
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
+import { CheckNowButton, CheckRunningStrip } from './ui/CheckRunning.jsx'
+import { useRunningChecks } from '../hooks/useRunningChecks.js'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
@@ -206,7 +208,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   const [saveWarnings, setSaveWarnings] = useState([])   // kaydetme sonrası engellemeyen uyarılar
   // Kaydetmeyi ENGELLEYEN sözdizimi hatası — kalıcı gösterilir ve satırı cetvelde işaretlenir.
   const [saveError, setSaveError] = useState(null)
-  const [checking, setChecking] = useState(null)
+  // Tek kimlik yerine KUME: uzun suren bir kosum digerlerini bekletmesin ve
+  // once biten, hala sureni kilitten cikarmasin.
+  const { isRunning, track } = useRunningChecks()
   const [selected, setSelected] = useState(null) // detail monitor
   const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
   const [detailTab, setDetailTab] = useState('control')
@@ -804,29 +808,29 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   }
 
   async function checkNow(m) {
-    setChecking(m.id)
-    const res = await api.monitoring.triggerScriptedCheck(m.id)
-    if (res?.success) {
-      // queued: koşum sunucunun bekleme penceresini aştı, arka planda sürüyor. Satırı ESKİ sonuçla
-      // güncellemek yanıltıcı olurdu (kullanıcı bunu yeni sonuç sanar) — dokunmayıp haber veriyoruz.
-      // Sonuç kendiliğinden gelir: liste 60 sn'de, Kontrol Geçmişi 30 sn'de canlı yeniliyor.
-      // skipped: kontrol HİÇ yürütülemedi (k6 havuzu dolu / k6 yok) ve bu yüzden kayıt da
-      // yazılmadı. Satırı güncellemek kullanıcıya ESKİ sonucu "yeni" gibi gösterirdi; sebebi
-      // söylüyoruz. Uyarı tonunda: hedefte bir sorun YOK, kapasite darlığı var.
-      if (res.data?.skipped) {
-        toast.info(t('scripted.triggerSkipped', res.data.skipped_reason || ''), 6000)
-      } else if (res.data?.queued) {
-        toast.success(t('scripted.triggerQueued'))
-      } else {
-        setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
-        // Geçmiş yenilemesi BİLİNÇLİ olarak yok: CheckHistoryTab kendi live polling'ini yapıyor.
-        // Buradaki eski loadHistory(m.id, rangeDays) çağrısı geçmiş yönetimi o bileşene taşınırken
-        // temizlenmemişti; ikisi de tanımsız olduğu için modal açıkken "Şimdi Çalıştır" ReferenceError
-        // atıyor, aşağıdaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
-        if (selected?.id === m.id) setSelected(res.data)
-      }
-    } else if (res) toast.error(res.error || t('scripted.triggerError'))
-    setChecking(null)
+    await track(m.id, async () => {
+      const res = await api.monitoring.triggerScriptedCheck(m.id)
+      if (res?.success) {
+        // queued: koşum sunucunun bekleme penceresini aştı, arka planda sürüyor. Satırı ESKİ sonuçla
+        // güncellemek yanıltıcı olurdu (kullanıcı bunu yeni sonuç sanar) — dokunmayıp haber veriyoruz.
+        // Sonuç kendiliğinden gelir: liste 60 sn'de, Kontrol Geçmişi 30 sn'de canlı yeniliyor.
+        // skipped: kontrol HİÇ yürütülemedi (k6 havuzu dolu / k6 yok) ve bu yüzden kayıt da
+        // yazılmadı. Satırı güncellemek kullanıcıya ESKİ sonucu "yeni" gibi gösterirdi; sebebi
+        // söylüyoruz. Uyarı tonunda: hedefte bir sorun YOK, kapasite darlığı var.
+        if (res.data?.skipped) {
+          toast.info(t('scripted.triggerSkipped', res.data.skipped_reason || ''), 6000)
+        } else if (res.data?.queued) {
+          toast.success(t('scripted.triggerQueued'))
+        } else {
+          setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
+          // Geçmiş yenilemesi BİLİNÇLİ olarak yok: CheckHistoryTab kendi live polling'ini yapıyor.
+          // Buradaki eski loadHistory(m.id, rangeDays) çağrısı geçmiş yönetimi o bileşene taşınırken
+          // temizlenmemişti; ikisi de tanımsız olduğu için modal açıkken "Şimdi Çalıştır" ReferenceError
+          // atıyor, aşağıdaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
+          if (selected?.id === m.id) setSelected(res.data)
+        }
+      } else if (res) toast.error(res.error || t('scripted.triggerError'))
+    })
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -996,11 +1000,14 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
               <div className="upt-card-foot">
                 <span>{m.checked_at ? formatDateSec(m.checked_at) : t('scripted.neverRun')}</span>
                 {canManageRow(m) && (
-                  <span style={{ display: 'flex', gap: 6 }} onClick={e => e.stopPropagation()}>
-                    <button className="btn btn-sm mon-btn-check" disabled={checking === m.id || !k6.available}
-                      onClick={() => checkNow(m)} title={t('scripted.runNow')}><Play size={12} /></button>
-                    <button className="btn btn-sm mon-btn-edit" onClick={() => openEdit(m)} title={t('scripted.edit')}><Pencil size={12} /></button>
-                    <button className="btn btn-sm mon-btn-edit" onClick={() => openDuplicate(m)} title={t('mon.duplicate')} aria-label={t('mon.duplicate')}><Copy size={12} /></button>
+                  <span className="mon-actions" onClick={e => e.stopPropagation()}>
+                    <CheckRunningStrip running={isRunning(m.id)} />
+                    <CheckNowButton running={isRunning(m.id)} disabled={!k6.available}
+                      onClick={() => checkNow(m)} title={t('scripted.runNow')} />
+                    <button type="button" className="mon-act mon-act--edit" onClick={() => openEdit(m)}
+                      title={t('scripted.edit')} aria-label={t('scripted.edit')}><Pencil size={13} /></button>
+                    <button type="button" className="mon-act mon-act--copy" onClick={() => openDuplicate(m)}
+                      title={t('mon.duplicate')} aria-label={t('mon.duplicate')}><Copy size={13} /></button>
                   </span>
                 )}
               </div>
@@ -1021,7 +1028,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
                 <span className="upt-modal-domain">{selected.name}</span>
               </div>
               {canManageRow(selected) && (
-                <button className="btn btn-sm btn-primary" disabled={checking === selected.id || !k6.available}
+                <button className="btn btn-sm btn-primary" disabled={isRunning(selected.id) || !k6.available}
                   onClick={() => checkNow(selected)}><Play size={14} />{t('scripted.runNow')}</button>
               )}
               {/* CSV butonu kaldırıldı: mükerrerdi ve bozuktu (tanımsız `history` → window.history →

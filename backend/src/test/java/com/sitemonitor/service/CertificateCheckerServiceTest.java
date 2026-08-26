@@ -55,6 +55,47 @@ class CertificateCheckerServiceTest {
                 trustEvaluator, mock(SsrfGuard.class), new ProxySettings());
     }
 
+    // ── Kayıt bazlı zaman aşımı ────────────────────────────────────────────────
+
+    /**
+     * Zaman aşımı KAYIT BAZLI olmalı.
+     *
+     * <p>Global {@code check-timeout-seconds} 6 sn. Yavaş ama ÇALIŞAN bir iç hedef bu sürede
+     * yetişemiyordu ve kullanıcının tek çaresi TÜM envanteri yavaşlatan global ayarı
+     * büyütmekti — tek kayıt için süre veremiyordu.
+     */
+    @Test
+    @DisplayName("Kayıt zaman aşımı verirse O kullanılır; vermezse global ayar")
+    void recordTimeoutOverridesGlobal() {
+        ReflectionTestUtils.setField(service, "timeoutSeconds", 6);
+        ReflectionTestUtils.setField(service, "tlsMode", "browser");
+
+        assertThat(service.resolveOptions(false, null, "a.example.com", 25).timeoutSeconds()).isEqualTo(25);
+        assertThat(service.resolveOptions(false, null, "a.example.com", null).timeoutSeconds()).isEqualTo(6);
+    }
+
+    @Test
+    @DisplayName("0/negatif 'sınırsız' DEĞİL geçersizdir → global ayara düşer")
+    void nonPositiveTimeoutFallsBackToGlobal() {
+        ReflectionTestUtils.setField(service, "timeoutSeconds", 6);
+        ReflectionTestUtils.setField(service, "tlsMode", "browser");
+
+        // Sıfır zaman aşımı her kontrolü ANINDA düşürürdü; "sınırsız" diye okumak da
+        // süpürmeyi tek bir yanıt vermeyen hedefte kilitlerdi.
+        assertThat(service.resolveOptions(false, null, "a.example.com", 0).timeoutSeconds()).isEqualTo(6);
+        assertThat(service.resolveOptions(false, null, "a.example.com", -5).timeoutSeconds()).isEqualTo(6);
+    }
+
+    @Test
+    @DisplayName("Kayıt zaman aşımı TAVANLA sınırlı — tek kayıt süpürmeyi kilitlemesin")
+    void recordTimeoutIsCapped() {
+        ReflectionTestUtils.setField(service, "timeoutSeconds", 6);
+        ReflectionTestUtils.setField(service, "tlsMode", "browser");
+
+        assertThat(service.resolveOptions(false, null, "a.example.com", 9999).timeoutSeconds())
+                .isEqualTo(CertificateCheckerService.MAX_TIMEOUT_SECONDS);
+    }
+
     // ── SAN serialization ──────────────────────────────────────────────────────
 
     @Test

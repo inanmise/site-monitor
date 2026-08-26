@@ -240,6 +240,27 @@ describe('InventoryFormModal', () => {
     expect(document.querySelector(`label[for="${ta.id}"]`)).not.toBeNull()
   })
 
+  /**
+   * Kayit bazli zaman asimi: BOS birakilirsa null gonderilir (genel ayar kullanilir),
+   * dolu ise SAYI olarak gider. Bu kesimin bir numarali sessiz hatasi alanin payload'a
+   * hic girmemesi; ekranda kaydeder gorunup yeniden acilista kayboluyordu.
+   */
+  it("zaman asimi: bos -> null, dolu -> sayi", async () => {
+    render(<InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+
+    const field = screen.getByRole('spinbutton', { name: /timeout|zaman asimi|zaman aşımı/i })
+    fireEvent.change(field, { target: { value: '25' } })
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(api.admin.updateInventory).toHaveBeenCalled())
+    expect(api.admin.updateInventory.mock.calls[0][1].timeout_seconds).toBe(25)
+
+    vi.clearAllMocks()
+    fireEvent.change(field, { target: { value: '' } })
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(api.admin.updateInventory).toHaveBeenCalled())
+    expect(api.admin.updateInventory.mock.calls[0][1].timeout_seconds).toBeNull()
+  })
+
 describe('InventoryFormModalForDomain', () => {
   beforeEach(() => { vi.clearAllMocks() })
 

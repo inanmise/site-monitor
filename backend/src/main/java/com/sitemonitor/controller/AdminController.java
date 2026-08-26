@@ -75,7 +75,8 @@ public class AdminController {
         "netscaler", "wafEnabled", "inUse", "evCertificate", "transferredToSy", "useProxy",
         "tlsMode", "purchasedBy", "changeDescription", "expectedFingerprint", "expectedSubject",
         "teamId", "groupName", "deletedAt", "notificationGroupId",
-        "svcMgmtContact", "appDevContact", "iisAdminContact", "wafAdminContact"
+        "svcMgmtContact", "appDevContact", "iisAdminContact", "wafAdminContact",
+        "timeoutSeconds"
     };
     private final CertificateInventoryRepository inventoryRepo;
     /** Envantere secilen bildirim grubunun sahipligini dogrulamak icin. */
@@ -321,6 +322,9 @@ public class AdminController {
         existing.setEvCertificate(item.getEvCertificate());
         existing.setTransferredToSy(item.getTransferredToSy());
         existing.setUseProxy(item.getUseProxy());
+        // SETTER UNUTULURSA alan kaydeder GÖRÜNÜR ama yeniden açılışta kaybolur — bu kesimin
+        // bir numaralı sessiz hatası; kontrol listesinde ayrıca yazılı.
+        existing.setTimeoutSeconds(item.getTimeoutSeconds());
         existing.setTlsMode(item.getTlsMode());
         existing.setPurchasedBy(item.getPurchasedBy());
         existing.setChangeDescription(item.getChangeDescription());
@@ -367,6 +371,7 @@ public class AdminController {
         fieldDiff(sb, "evCertificate",      o.getEvCertificate(),        n.getEvCertificate());
         fieldDiff(sb, "transferredToSy",    o.getTransferredToSy(),      n.getTransferredToSy());
         fieldDiff(sb, "useProxy",           o.getUseProxy(),             n.getUseProxy());
+        fieldDiff(sb, "timeoutSeconds",     o.getTimeoutSeconds(),       n.getTimeoutSeconds());
         fieldDiff(sb, "tlsMode",            o.getTlsMode(),              n.getTlsMode());
         fieldDiff(sb, "purchasedBy",        o.getPurchasedBy(),          n.getPurchasedBy());
         fieldDiff(sb, "changeDescription",  o.getChangeDescription(),    n.getChangeDescription());

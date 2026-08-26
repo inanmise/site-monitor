@@ -38,8 +38,8 @@ describe('ScriptedMonitorPage — liste ve kartlar', () => {
     expect(card.querySelector('.upt-badge')).not.toBeNull()
     expect(card.querySelector('.upt-card-domain')).not.toBeNull()
     // Aksiyonlar .upt-card-foot İÇİNDE (2026-08 şikayeti: butonlar kayıyordu)
-    expect(card.querySelector('.upt-card-foot .mon-btn-check')).not.toBeNull()
-    expect(card.querySelector('.upt-card-foot .mon-btn-edit')).not.toBeNull()
+    expect(card.querySelector('.upt-card-foot .mon-act--check')).not.toBeNull()
+    expect(card.querySelector('.upt-card-foot .mon-act--edit')).not.toBeNull()
     // Tanımsız eski sınıflar terk edildi
     expect(container.querySelector('.mon-card')).toBeNull()
     expect(container.querySelector('.btn-xs')).toBeNull()
@@ -199,7 +199,7 @@ describe('ScriptedMonitorPage — liste ve kartlar', () => {
     await waitFor(() => expect(screen.getByText('OIDC Login')).toBeInTheDocument())
 
     const card = container.querySelector('.upt-card')
-    const editBtn = card.querySelector('.mon-btn-edit')
+    const editBtn = card.querySelector('.mon-act--edit')
     fireEvent.keyDown(editBtn, { key: 'Enter', bubbles: true })
 
     // Düzenleme düğmesinin kendi davranışı tarayıcıda click'e döner; burada önemli olan
