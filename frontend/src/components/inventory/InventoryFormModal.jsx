@@ -27,6 +27,7 @@ const EMPTY = {
   team_id: '', group_name: '', notification_group_id: '', tier: null,
   ...emptyFlags(),          // 13 operasyonel bayrak — tek kaynak: utils/inventoryFlags.js
   tls_mode: '',
+  timeout_seconds: '',
   purchased_by: '',
   svc_mgmt_contact: '', app_dev_contact: '', iis_admin_contact: '', waf_admin_contact: '',
   change_description: '',
@@ -70,6 +71,7 @@ function formFrom(item) {
     transferred_to_sy:  item.transferred_to_sy ?? false,
     use_proxy:          item.use_proxy        ?? false,
     tls_mode:           item.tls_mode         ?? '',
+    timeout_seconds:    item.timeout_seconds != null ? String(item.timeout_seconds) : '',
     purchased_by:       item.purchased_by     ?? '',
     change_description: item.change_description ?? '',
     expected_fingerprint: item.expected_fingerprint ?? '',
@@ -213,6 +215,10 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
       transferred_to_sy:  form.transferred_to_sy,
       use_proxy:          form.use_proxy,
       tls_mode:           form.tls_mode || null,
+      // BOŞ = global ayar. 0/negatif GÖNDERİLMEZ: sunucu onu geçersiz sayıp global'e
+      // düşüyor, ama burada da elemek "kaydettim ama olmadı" turunu engelliyor.
+      timeout_seconds:    form.timeout_seconds && Number(form.timeout_seconds) > 0
+                            ? Number(form.timeout_seconds) : null,
       purchased_by:       form.purchased_by || null,
       change_description: form.change_description || null,
       // DİKKAT: payload'ın tek camelCase çifti (entity Jackson adlarıyla eşleşsin diye).
@@ -320,6 +326,15 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
                 { value: '4', label: t('inv.tier4') },
               ]}
             />
+          </label>
+
+          <label>
+            {t('inv.formTimeout')}
+            <input type="number" className="input" min="1" max="60"
+              value={form.timeout_seconds}
+              placeholder={t('inv.formTimeoutPlaceholder')}
+              onChange={e => f('timeout_seconds', e.target.value)} />
+            <span className="field-hint">{t('inv.formTimeoutHint')}</span>
           </label>
 
           <label>

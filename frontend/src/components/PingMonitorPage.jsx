@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react
 import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
+import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
@@ -68,7 +69,9 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
   const [defaults, setDefaults] = useState(null)   // per-tip varsayılan aralık/timeout (Kontrol Sıklığı ayarı)
   const [saving, setSaving] = useState(false)
-  const [checking, setChecking] = useState(null)
+  // Tek kimlik yerine KUME: uzun suren bir kontrol digerlerini bekletmesin ve
+  // once biten, hala sureni kilitten cikarmasin.
+  const { isRunning, track } = useRunningChecks()
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState(null)
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
@@ -195,17 +198,17 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   }
 
   async function checkNow(m) {
-    setChecking(m.id)
-    const res = await api.monitoring.triggerPingCheck(m.id)
-    if (res?.success) {
-      setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
-      // Geçmiş yenilemesi BİLİNÇLİ olarak yok: CheckHistoryTab kendi live polling'ini yapıyor.
-      // Buradaki eski loadHistory(m.id, rangeDays) çağrısı geçmiş yönetimi o bileşene taşınırken
-      // temizlenmemişti; ikisi de TANIMSIZ olduğu için modal açıkken kontrol butonu ReferenceError
-      // atıyor, altındaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
-      if (selected?.id === m.id) setSelected(res.data)
-    }
-    setChecking(null)
+    await track(m.id, async () => {
+      const res = await api.monitoring.triggerPingCheck(m.id)
+      if (res?.success) {
+        setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
+        // Geçmiş yenilemesi BİLİNÇLİ olarak yok: CheckHistoryTab kendi live polling'ini yapıyor.
+        // Buradaki eski loadHistory(m.id, rangeDays) çağrısı geçmiş yönetimi o bileşene taşınırken
+        // temizlenmemişti; ikisi de TANIMSIZ olduğu için modal açıkken kontrol butonu ReferenceError
+        // atıyor, altındaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
+        if (selected?.id === m.id) setSelected(res.data)
+      }
+    })
   }
 
   // Türetilmiş listeler memoize — 1sn countdown her saniye render tetikler.
@@ -399,7 +402,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
                 <span>{m.checked_at ? formatDateSec(m.checked_at) : ''}</span>
                 {canManageRow(m) && (
                   <MonitorCardActions
-                    checking={checking} monitorId={m.id}
+                    running={isRunning(m.id)}
                     onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
                     checkTitle={t('ping.check')} editTitle={t('ping.edit')} />
                 )}

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } fro
 import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
+import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { usePagination } from '../hooks/usePagination.js'
@@ -144,7 +145,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
   const [defaults, setDefaults] = useState(null)
   const [advOpen, setAdvOpen] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [checking, setChecking] = useState(null)
+  // Tek kimlik yerine KUME: uzun suren bir kontrol digerlerini bekletmesin ve
+  // once biten, hala sureni kilitten cikarmasin.
+  const { isRunning, track } = useRunningChecks()
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState(null)
   const [detailTab, setDetailTab] = useState('resources')
@@ -327,15 +330,15 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
   }
 
   async function checkNow(m) {
-    setChecking(m.id)
-    const res = await api.monitoring.triggerPageSpeedCheck(m.id)
-    if (res?.success) {
-      setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
-      if (selected?.id === m.id) { setSelected(res.data); setResCheckId(null); loadResources(m.id) }
-    } else {
-      toast.error(res?.error || 'Error')
-    }
-    setChecking(null)
+    await track(m.id, async () => {
+      const res = await api.monitoring.triggerPageSpeedCheck(m.id)
+      if (res?.success) {
+        setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
+        if (selected?.id === m.id) { setSelected(res.data); setResCheckId(null); loadResources(m.id) }
+      } else {
+        toast.error(res?.error || 'Error')
+      }
+    })
   }
 
   function exportResourcesCsv() {
@@ -555,7 +558,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
                 <span>{m.last_check ? formatDateSec(m.last_check) : ''}</span>
                 {canManageRow(m) && (
                   <MonitorCardActions
-                    checking={checking} monitorId={m.id}
+                    running={isRunning(m.id)}
                     onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
                     checkTitle={t('pspd.check')} editTitle={t('pspd.edit')} />
                 )}

@@ -402,6 +402,7 @@ public class SchedulerService {
         patch("ALTER TABLE notification_logs ADD COLUMN message TEXT");
         patch("ALTER TABLE certificate_inventory ADD COLUMN team_id INTEGER");
         patch("ALTER TABLE certificate_inventory ADD COLUMN use_proxy BOOLEAN DEFAULT false");
+        patch("ALTER TABLE certificate_inventory ADD COLUMN timeout_seconds INTEGER");
         patch("ALTER TABLE certificate_inventory ADD COLUMN tls_mode TEXT");
         // Alan adı (registrar) süre bitişi — Alan Adı Tanılama aracı eşleşen envanter satırlarına yazar (TLS sertifika bitişinden ayrı).
         patch("ALTER TABLE certificate_inventory ADD COLUMN domain_expiry TEXT");
@@ -1688,7 +1689,8 @@ public class SchedulerService {
                             (String) d.get("domain"),
                             (int) d.get("port"),
                             Boolean.TRUE.equals(d.get("use_proxy")),
-                            blankToNull((String) d.get("tls_mode"))))
+                            blankToNull((String) d.get("tls_mode")),
+                            (Integer) d.get("timeout_seconds")))
                     .toList();
 
             List<Map<String, Object>> results = futures.stream()
@@ -1997,12 +1999,15 @@ public class SchedulerService {
         List<CertificateInventory> items = inventoryRepo.findByActiveTrueOrderByDomainAsc();
         List<Map<String, Object>> result = new ArrayList<>();
         for (CertificateInventory item : items) {
-            result.add(Map.of(
-                "domain",    item.getDomain(),
-                "port",      item.getPort(),
-                "use_proxy", Boolean.TRUE.equals(item.getUseProxy()),
-                "tls_mode",  item.getTlsMode() == null ? "" : item.getTlsMode()
-            ));
+            // Map.of null DEĞER KABUL ETMEZ; zaman aşımı çoğu kayıtta boştur (global ayar
+            // kullanılır) — o yüzden değiştirilebilir harita ve yalnız DOLU ise konur.
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("domain",    item.getDomain());
+            row.put("port",      item.getPort());
+            row.put("use_proxy", Boolean.TRUE.equals(item.getUseProxy()));
+            row.put("tls_mode",  item.getTlsMode() == null ? "" : item.getTlsMode());
+            if (item.getTimeoutSeconds() != null) row.put("timeout_seconds", item.getTimeoutSeconds());
+            result.add(row);
         }
         log.info("Loaded {} active domains from inventory", result.size());
         return result;

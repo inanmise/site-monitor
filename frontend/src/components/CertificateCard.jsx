@@ -3,6 +3,7 @@ import { ShieldAlert, ShieldCheck, MailWarning, BellOff, Clock, Calendar, Networ
 import { memo } from 'react'
 import { formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
+import { CheckNowButton, CheckRunningStrip } from './ui/CheckRunning.jsx'
 import { ProgressBar } from './ui/Progress.jsx'
 
 /** DN içinden bir alanı çıkar (örn. O=...) — SslCheckerPanel ile aynı desen. */
@@ -207,22 +208,20 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
               stopPropagation: aksi halde her tıklama kart detayını da açardı. */}
           {hasActions && (
             <span className="cc-footer-actions" onClick={(e) => e.stopPropagation()}>
+              <CheckRunningStrip running={!!checking} />
               {onCheckNow && (
-                <button type="button" className="btn btn-sm mon-btn-check" disabled={checking}
-                  onClick={onCheckNow} title={t('app.checkNow')} aria-label={t('app.checkNow')}>
-                  <Play size={12} />
-                </button>
+                <CheckNowButton running={!!checking} onClick={onCheckNow} title={t('app.checkNow')} />
               )}
               {onEdit && (
-                <button type="button" className="btn btn-sm mon-btn-edit"
+                <button type="button" className="mon-act mon-act--edit"
                   onClick={onEdit} title={t('inv.edit')} aria-label={t('inv.edit')}>
-                  <Pencil size={12} />
+                  <Pencil size={13} />
                 </button>
               )}
               {onDuplicate && (
-                <button type="button" className="btn btn-sm mon-btn-edit"
+                <button type="button" className="mon-act mon-act--copy"
                   onClick={onDuplicate} title={t('mon.duplicate')} aria-label={t('mon.duplicate')}>
-                  <Copy size={12} />
+                  <Copy size={13} />
                 </button>
               )}
             </span>

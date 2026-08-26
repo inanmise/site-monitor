@@ -163,7 +163,7 @@ describe('PortMonitorPage', () => {
       render(<PortMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
       await waitFor(() => expect(api.monitoring.getPortMonitors).toHaveBeenCalled())
 
-      const runBtn = document.querySelector('.mon-btn-check')
+      const runBtn = document.querySelector('.mon-act--check')
       expect(runBtn).not.toBeNull()
       fireEvent.click(runBtn)
 

@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
+import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
@@ -18,6 +19,7 @@ import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
+import { CheckNowButton, CheckRunningStrip } from './ui/CheckRunning.jsx'
 import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
@@ -87,7 +89,9 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const [changeNote, setChangeNote] = useState('')
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState(null)
-  const [checking, setChecking] = useState(null)
+  // Tek kimlik yerine KUME: uzun suren bir kontrol digerlerini bekletmesin ve
+  // once biten, hala sureni kilitten cikarmasin.
+  const { isRunning, track } = useRunningChecks()
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
@@ -234,17 +238,17 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   }
 
   async function checkNow(m) {
-    setChecking(m.id)
-    const res = await api.monitoring.triggerPortCheck(m.id)
-    if (res?.success) {
-      setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
-      // Geçmiş yenilemesi BİLİNÇLİ olarak yok: CheckHistoryTab kendi live polling'ini yapıyor.
-      // Buradaki eski loadHistory(m.id, rangeDays) çağrısı geçmiş yönetimi o bileşene taşınırken
-      // temizlenmemişti; ikisi de TANIMSIZ olduğu için modal açıkken kontrol butonu ReferenceError
-      // atıyor, altındaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
-      if (selected?.id === m.id) setSelected(res.data)
-    }
-    setChecking(null)
+    await track(m.id, async () => {
+      const res = await api.monitoring.triggerPortCheck(m.id)
+      if (res?.success) {
+        setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
+        // Geçmiş yenilemesi BİLİNÇLİ olarak yok: CheckHistoryTab kendi live polling'ini yapıyor.
+        // Buradaki eski loadHistory(m.id, rangeDays) çağrısı geçmiş yönetimi o bileşene taşınırken
+        // temizlenmemişti; ikisi de TANIMSIZ olduğu için modal açıkken kontrol butonu ReferenceError
+        // atıyor, altındaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
+        if (selected?.id === m.id) setSelected(res.data)
+      }
+    })
   }
 
   // Takım filtresi seçenekleri — listeden türetilir (dashboard deseni).
@@ -431,20 +435,21 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
                   <td className="mon-cell-actions" onClick={e => e.stopPropagation()}>
                     {/* Kart değil TABLO satırı: paylaşım düğmesi eylem hücresine girer.
                         Yetkiden bağımsız — bağlantı kopyalamak salt-okunur bir iştir. */}
-                    <CopyLinkButton iconOnly url={monitorDeepLink('port', m.id)} className="btn btn-sm mon-btn-edit" />
+                    <CheckRunningStrip running={isRunning(m.id)} />
+                    <CopyLinkButton iconOnly url={monitorDeepLink('port', m.id)} className="mon-act mon-act--copy" />
                     {canManageRow(m) && (
-                      <button className="btn btn-sm mon-btn-check" disabled={checking === m.id} onClick={() => checkNow(m)} title={t('port.check')}>
-                        <Play size={12} />
+                      <CheckNowButton running={isRunning(m.id)} onClick={() => checkNow(m)} title={t('port.check')} />
+                    )}
+                    {canManageRow(m) && (
+                      <button type="button" className="mon-act mon-act--edit" onClick={() => openEdit(m)}
+                        title={t('port.edit')} aria-label={t('port.edit')}>
+                        <Pencil size={13} />
                       </button>
                     )}
                     {canManageRow(m) && (
-                      <button className="btn btn-sm mon-btn-edit" onClick={() => openEdit(m)} title={t('port.edit')}>
-                        <Pencil size={12} />
-                      </button>
-                    )}
-                    {canManageRow(m) && (
-                      <button className="btn btn-sm mon-btn-edit" onClick={() => openDuplicate(m)} title={t('mon.duplicate')} aria-label={t('mon.duplicate')}>
-                        <Copy size={12} />
+                      <button type="button" className="mon-act mon-act--copy" onClick={() => openDuplicate(m)}
+                        title={t('mon.duplicate')} aria-label={t('mon.duplicate')}>
+                        <Copy size={13} />
                       </button>
                     )}
                   </td>

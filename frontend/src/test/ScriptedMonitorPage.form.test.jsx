@@ -142,7 +142,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       // düşer ve konsolu uyarıyla doldurur (kural: test çıktısı temiz kalır).
       await waitFor(() => expect(api.monitoring.getScriptedTemplates).toHaveBeenCalled())
       await screen.findByText(row.name)
-      fireEvent.click(utils.container.querySelector('.mon-btn-edit'))
+      fireEvent.click(utils.container.querySelector('.mon-act--edit'))
       return utils
     }
 
@@ -189,7 +189,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       const utils = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
       await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
       await screen.findByText('llm-test')
-      fireEvent.click(utils.container.querySelector('.mon-btn-edit'))
+      fireEvent.click(utils.container.querySelector('.mon-act--edit'))
 
       openSource()
       const labels = sourceOptions().map(o => o.textContent)
@@ -342,7 +342,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       // Sonuc: kullanici bir sonraki acilista "kaydedilmemis taslaginiz var" gorup onu yukluyor ve
       // ARADA baskasinin yaptigi degisikligi sessizce geri aliyordu.
       await renderPage()
-      fireEvent.click(document.querySelector('.mon-btn-edit'))
+      fireEvent.click(document.querySelector('.mon-act--edit'))
       fireEvent.change(screen.getByTestId('code-editor'), { target: { value: 'export default function(){ /* duzeltme */ }' } })
 
       api.monitoring.saveScriptedDraft.mockClear()
@@ -357,7 +357,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
       api.monitoring.deleteScriptedMonitor.mockResolvedValue({ success: true })
       await renderPage()
-      fireEvent.click(document.querySelector('.mon-btn-edit'))
+      fireEvent.click(document.querySelector('.mon-act--edit'))
       fireEvent.change(screen.getByTestId('code-editor'), { target: { value: 'kirli icerik' } })
 
       api.monitoring.saveScriptedDraft.mockClear()
@@ -479,7 +479,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
           updated_at: '2026-08-13T09:30:00' },
       ] } })
       const { container } = await renderPage()
-      fireEvent.click(container.querySelector('.mon-btn-edit'))
+      fireEvent.click(container.querySelector('.mon-act--edit'))
 
       // Kaydedilmiş script yüklü kalır; taslak yalnız TEKLİF edilir
       expect(screen.getByTestId('code-editor').value).toBe(MON.script)
@@ -531,7 +531,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       })
       api.monitoring.triggerScriptedCheck.mockResolvedValue({ success: true, data: { queued: true } })
 
-      fireEvent.click(container.querySelector('.mon-btn-edit'))
+      fireEvent.click(container.querySelector('.mon-act--edit'))
       fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
 
       await waitFor(() => expect(api.monitoring.triggerScriptedCheck).toHaveBeenCalledWith(MON.id))
@@ -545,7 +545,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
         success: true, data: { id: MON.id, script_version: '1.0.2' },   // MON ile AYNI sürüm
       })
 
-      fireEvent.click(container.querySelector('.mon-btn-edit'))
+      fireEvent.click(container.querySelector('.mon-act--edit'))
       fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
 
       await waitFor(() => expect(api.monitoring.updateScriptedMonitor).toHaveBeenCalled())
@@ -609,7 +609,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
     } })
     const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(screen.getByText('OIDC Login')).toBeInTheDocument())
-    fireEvent.click(container.querySelector('.mon-btn-edit'))
+    fireEvent.click(container.querySelector('.mon-act--edit'))
 
     const thresholdInput = await waitFor(() => {
       const el = document.querySelector('input[type="number"][max="180000"]')
@@ -656,7 +656,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
     } })
     const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(screen.getByText('OIDC Login')).toBeInTheDocument())
-    fireEvent.click(container.querySelector('.mon-btn-edit'))
+    fireEvent.click(container.querySelector('.mon-act--edit'))
 
     const slow = await screen.findByRole('checkbox', { name: /yavaş koşum alarmı|slow-run alert/i })
     expect(slow.closest('label').className).toContain('checkbox-label')

@@ -127,7 +127,8 @@ public class CertificateController {
         // Envanterdeki GERÇEK port (zamanlayıcı da böyle yapıyor); 443'e sabitlemek 8443 gibi
         // portlardaki sertifikayı yanlış hedeften okutuyor ve UI'da yanlış port gösteriyordu.
         int port = inv.getPort() != null ? inv.getPort() : 443;
-        Map<String, Object> result = new LinkedHashMap<>(checkerService.check(domain, port, forceProxy, tlsOverride));
+        Map<String, Object> result = new LinkedHashMap<>(
+                checkerService.check(domain, port, forceProxy, tlsOverride, inv.getTimeoutSeconds()));
         result.put("run_id", "manual");
         result.put("port", port);
         certService.saveResult(result);
@@ -151,7 +152,8 @@ public class CertificateController {
         boolean forceProxy = inv.map(ci -> Boolean.TRUE.equals(ci.getUseProxy())).orElse(false);
         String tlsOverride = inv.map(ci -> ci.getTlsMode()).orElse(null);
         int port = inv.map(CertificateInventory::getPort).filter(p -> p != null && p > 0).orElse(443);
-        Map<String, Object> result = new LinkedHashMap<>(checkerService.check(domain, port, forceProxy, tlsOverride));
+        Map<String, Object> result = new LinkedHashMap<>(checkerService.check(domain, port, forceProxy,
+                tlsOverride, inv.map(CertificateInventory::getTimeoutSeconds).orElse(null)));
         result.put("port", port);
         return ok(Map.of("success", true, "data", result, "timestamp", now()));
     }
@@ -345,7 +347,8 @@ public class CertificateController {
 
         int port = inv.getPort() != null ? inv.getPort() : 443;
         Map<String, Object> result = new LinkedHashMap<>(checkerService.check(
-                domain, port, Boolean.TRUE.equals(inv.getUseProxy()), inv.getTlsMode()));
+                domain, port, Boolean.TRUE.equals(inv.getUseProxy()), inv.getTlsMode(),
+                inv.getTimeoutSeconds()));
         result.put("run_id", "health-refresh");
         result.put("port", port);
         certService.saveResult(result);

@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
+import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
+import { CheckNowButton, CheckRunningStrip } from './ui/CheckRunning.jsx'
 import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
@@ -75,7 +77,9 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const [form, setForm] = useState(emptyForm)
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
   const [saving, setSaving] = useState(false)
-  const [checking, setChecking] = useState(null)
+  // Tek kimlik yerine KUME: uzun suren bir kontrol digerlerini bekletmesin ve
+  // once biten, hala sureni kilitten cikarmasin.
+  const { isRunning, track } = useRunningChecks()
   const [deleting, setDeleting] = useState(null)
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
@@ -207,12 +211,12 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   }
 
   async function checkNow(m) {
-    setChecking(m.id)
-    const res = await api.monitoring.triggerDnsCheck(m.id)
-    if (res?.success) {
-      setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
-    }
-    setChecking(null)
+    await track(m.id, async () => {
+      const res = await api.monitoring.triggerDnsCheck(m.id)
+      if (res?.success) {
+        setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
+      }
+    })
   }
 
   async function deleteMonitor(m) {
@@ -453,28 +457,28 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
                   <td className="dns-cell-actions" onClick={e => e.stopPropagation()}>
                     {/* Kart değil TABLO satırı: paylaşım düğmesi eylem hücresine girer.
                         Yetkiden bağımsız — bağlantı kopyalamak salt-okunur bir iştir. */}
-                    <CopyLinkButton iconOnly url={monitorDeepLink('dns', m.id)} className="btn btn-sm mon-btn-edit" />
+                    <CheckRunningStrip running={isRunning(m.id)} />
+                    <CopyLinkButton iconOnly url={monitorDeepLink('dns', m.id)} className="mon-act mon-act--copy" />
                     {canManageRow(m) && (
-                      <button className="btn btn-sm mon-btn-check" disabled={checking === m.id}
-                        onClick={() => checkNow(m)} title={t('dns.check')}>
-                        <Play size={12} />
+                      <CheckNowButton running={isRunning(m.id)} onClick={() => checkNow(m)} title={t('dns.check')} />
+                    )}
+                    {canManageRow(m) && (
+                      <button type="button" className="mon-act mon-act--edit" onClick={() => openEdit(m)}
+                        title={t('dns.edit')} aria-label={t('dns.edit')}>
+                        <Pencil size={13} />
                       </button>
                     )}
                     {canManageRow(m) && (
-                      <button className="btn btn-sm dns-btn-edit" onClick={() => openEdit(m)} title={t('dns.edit')}>
-                        <Pencil size={12} />
-                      </button>
-                    )}
-                    {canManageRow(m) && (
-                      <button className="btn btn-sm dns-btn-edit" onClick={e => { e.stopPropagation(); openDuplicate(m) }}
+                      <button type="button" className="mon-act mon-act--copy"
+                        onClick={e => { e.stopPropagation(); openDuplicate(m) }}
                         title={t('mon.duplicate')} aria-label={t('mon.duplicate')}>
-                        <Copy size={12} />
+                        <Copy size={13} />
                       </button>
                     )}
                     {canDeleteRow(m) && (
-                      <button className="btn btn-sm dns-btn-del" disabled={deleting === m.id}
-                        onClick={() => deleteMonitor(m)} title={t('dns.delete')}>
-                        <Trash2 size={12} />
+                      <button type="button" className="mon-act mon-act--danger" disabled={deleting === m.id}
+                        onClick={() => deleteMonitor(m)} title={t('dns.delete')} aria-label={t('dns.delete')}>
+                        <Trash2 size={13} />
                       </button>
                     )}
                   </td>

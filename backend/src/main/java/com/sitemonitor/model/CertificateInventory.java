@@ -81,6 +81,15 @@ public class CertificateInventory {
     @Column(name = "transferred_to_sy")  private Boolean transferredToSy;
     @Column(name = "use_proxy")          private Boolean useProxy;
 
+    /**
+     * Bu kayda özgü bağlantı zaman aşımı (saniye). {@code null} → global ayar
+     * ({@code site.monitor.check-timeout-seconds}, varsayılan 6 sn).
+     *
+     * <p>Neden kayıt bazlı: yavaş ama ÇALIŞAN bir iç hedef 6 saniyede yetişemiyordu ve
+     * kullanıcının tek çaresi TÜM envanteri yavaşlatan global ayarı büyütmekti.
+     */
+    @Column(name = "timeout_seconds")    private Integer timeoutSeconds;
+
     /** Per-domain TLS handshake mode override: null=inherit global setting,
      *  "browser" (TLS 1.2 + ALPN) or "default" (JDK defaults, TLS 1.3). */
     @Column(name = "tls_mode", length = 16)

@@ -150,6 +150,14 @@ public class CertificateCheckerService {
         return CompletableFuture.completedFuture(check(domain, port, forceProxy, tlsModeOverride));
     }
 
+    /** Zamanlanmış süpürme yolu — kayda özgü zaman aşımı burada da geçerli olmalı; yalnız
+     *  elle tetiklemede uygulamak, kullanıcının ayarını süpürmede sessizce yok saymak olurdu. */
+    @Async("certCheckExecutor")
+    public CompletableFuture<Map<String, Object>> checkAsync(String domain, int port, boolean forceProxy,
+                                                             String tlsModeOverride, Integer timeoutOverride) {
+        return CompletableFuture.completedFuture(check(domain, port, forceProxy, tlsModeOverride, timeoutOverride));
+    }
+
     public Map<String, Object> check(String domain, int port) {
         return check(domain, port, false);
     }
@@ -159,13 +167,26 @@ public class CertificateCheckerService {
     }
 
     public Map<String, Object> check(String domain, int port, boolean forceProxy, String tlsModeOverride) {
+        return check(domain, port, forceProxy, tlsModeOverride, null);
+    }
+
+    /**
+     * @param timeoutOverride kayda özgü zaman aşımı (sn); {@code null} → global ayar.
+     *
+     * <p>Neden kayıt bazlı: global {@code check-timeout-seconds} 6 sn. Yavaş ama ÇALIŞAN bir
+     * iç hedef için bu yetmiyor ve kullanıcı o tek kayıt için süreyi uzatamıyordu — tek çare
+     * tüm envanteri yavaşlatan global ayarı büyütmekti.
+     */
+    public Map<String, Object> check(String domain, int port, boolean forceProxy,
+                                     String tlsModeOverride, Integer timeoutOverride) {
         // SSRF: hedef host'u bağlanmadan önce doğrula (cloud-metadata/loopback/link-local blok; iç ağ ayara bağlı).
         try {
             ssrfGuard.validate(domain);
         } catch (SsrfGuard.BlockedException be) {
             return errorWithClass(domain, be.getMessage(), "BLOCKED");
         }
-        CheckOptions opts = resolveOptions(forceProxy, tlsModeOverride, domain);
+        CheckOptions opts = resolveOptions(forceProxy, tlsModeOverride, domain, timeoutOverride);
+        long attemptsStartMs = System.currentTimeMillis();
         Map<String, Object> result = tryCheckOnce(domain, port, opts);
 
         if (!retryOnTransient || maxAttempts < 2) return result;
@@ -195,6 +216,17 @@ public class CertificateCheckerService {
         }
         if ("error".equals(retry.get("status"))) {
             retry.put("retry_attempted", true);
+            // Kullanıcı ekranda sayacın 11-12 sn'ye çıktığını görüp hatada "6s" yazınca haklı
+            // olarak "hangisi doğru" diye soruyor. İkisi de doğru: 6 sn DENEME BAŞINA zaman
+            // aşımı, 11-12 sn ise İKİ deneme + aradaki bekleme. Rakamların ilişkisi mesajda
+            // yazılı olmazsa çelişki gibi okunuyor.
+            retry.put("attempts_total", 2);
+            retry.put("attempts_elapsed_ms", System.currentTimeMillis() - attemptsStartMs);
+            Object err = retry.get("error");
+            if (err instanceof String e && !e.contains("attempt")) {
+                retry.put("error", e + " · 2 attempts, "
+                        + Math.round((System.currentTimeMillis() - attemptsStartMs) / 1000.0) + "s total");
+            }
             log.warn("Certificate check failed after retry: domain={} via={} tlsMode={} final_error={}",
                     domain, retryOpts.viaProxy() ? "proxy" : "direct", retryOpts.tlsMode(),
                     truncate((String) retry.get("error"), 200));
@@ -269,10 +301,22 @@ public class CertificateCheckerService {
     }
 
     CheckOptions resolveOptions(boolean forceProxy, String tlsModeOverride, String domain) {
+        return resolveOptions(forceProxy, tlsModeOverride, domain, null);
+    }
+
+    CheckOptions resolveOptions(boolean forceProxy, String tlsModeOverride, String domain,
+                                Integer timeoutOverride) {
         boolean viaProxy = forceProxy && proxyEnabled() && !shouldBypassProxy(domain);
         String mode = (tlsModeOverride != null && !tlsModeOverride.isBlank()) ? tlsModeOverride : tlsMode;
-        return new CheckOptions(viaProxy, mode, timeoutSeconds, false);
+        // 0/negatif "sınırsız" değil GEÇERSİZ sayılır: sıfır zaman aşımı her kontrolü anında
+        // düşürürdü. Tavan da var — tek kayıt yüzünden süpürme kilitlenmesin.
+        int timeout = (timeoutOverride != null && timeoutOverride > 0)
+                ? Math.min(timeoutOverride, MAX_TIMEOUT_SECONDS) : timeoutSeconds;
+        return new CheckOptions(viaProxy, mode, timeout, false);
     }
+
+    /** Kayıt bazlı zaman aşımı tavanı — iki deneme yapıldığı için gerçek bekleme bunun 2 katına yaklaşır. */
+    static final int MAX_TIMEOUT_SECONDS = 60;
 
     Map<String, Object> tryCheckOnce(String domain, int port, boolean forceProxy) {
         return tryCheckOnce(domain, port, resolveOptions(forceProxy, null, domain));

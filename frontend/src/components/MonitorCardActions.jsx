@@ -1,5 +1,6 @@
-import { Play, Pencil, Copy } from 'lucide-react'
+import { Pencil, Copy } from 'lucide-react'
 import { useT } from '../i18n/index.jsx'
+import { CheckNowButton, CheckRunningStrip } from './ui/CheckRunning.jsx'
 
 /**
  * İzleme kartının sağ alt köşesindeki eylem düğmeleri: Şimdi Kontrol Et / Düzenle / Kopyala.
@@ -8,16 +9,19 @@ import { useT } from '../i18n/index.jsx'
  * i18n anahtarlarının öneki ({@code http.check} / {@code dom.check} …), o da prop olarak
  * dışarı alındı. Sentetik İzleme sayfası KAPSAM DIŞI: orada kontrol düğmesinin ek bir koşulu
  * var (k6 kurulu mu) ve "hiç çalışmadı" metni farklı — zorla birleştirmek o farkları gizlerdi.
+ * (Düğmenin KENDİSİ yine de paylaşılıyor: {@link CheckNowButton}. Böylece farklar bozulmadan
+ * görünüm ve "çalışıyor" davranışı on sayfada tek yerden geliyor.)
  *
  * <p>Kritik ayrıntı — <b>{@code stopPropagation} şart</b>: kart gövdesinin kendi
  * {@code onClick}'i detay modalını açıyor. Sarmalayıcıdaki durdurma olmazsa "Düzenle"ye basmak
  * hem düzenleme formunu hem detay modalını açar; kullanıcı üst üste iki pencere görür. Beş
  * kopyada yaşayan bir ayrıntıydı ve testi yoktu.
  *
- * <p>Kontrol düğmesi o satır kontrol edilirken devre dışı kalır (çift tetikleme yok).
+ * <p>Kontrol çalışırken düğme kilitlenir VE döner; yanında geçen süre sayacı belirir. Eskiden
+ * tek geri bildirim düğmenin grileşmesiydi: sayfa hızı gibi 12–15 saniyelik bir kontrolde
+ * kullanıcı hiçbir şey olmadığını sanıp tekrar tıklıyordu.
  *
- * @param {number|string|null} checking   şu an kontrol edilen monitörün id'si
- * @param {number|string} monitorId       bu satırın id'si
+ * @param {boolean} running               bu monitör ŞU AN kontrol ediliyor
  * @param {Function} onCheck              "Şimdi Kontrol Et"
  * @param {Function} onEdit               "Düzenle"
  * @param {Function} onDuplicate          "Kopyala"
@@ -25,17 +29,17 @@ import { useT } from '../i18n/index.jsx'
  * @param {string} editTitle              düzenle düğmesinin ipucu metni (sayfaya özgü i18n)
  */
 export default function MonitorCardActions({
-  checking, monitorId, onCheck, onEdit, onDuplicate, checkTitle, editTitle,
+  running, onCheck, onEdit, onDuplicate, checkTitle, editTitle,
 }) {
   const t = useT()
   return (
-    <span style={{ display: 'flex', gap: 6 }} onClick={e => e.stopPropagation()}>
-      <button className="btn btn-sm mon-btn-check" disabled={checking === monitorId}
-        onClick={onCheck} title={checkTitle}><Play size={12} /></button>
-      <button className="btn btn-sm mon-btn-edit"
-        onClick={onEdit} title={editTitle}><Pencil size={12} /></button>
-      <button className="btn btn-sm mon-btn-edit"
-        onClick={onDuplicate} title={t('mon.duplicate')} aria-label={t('mon.duplicate')}><Copy size={12} /></button>
+    <span className="mon-actions" onClick={e => e.stopPropagation()}>
+      <CheckRunningStrip running={running} />
+      <CheckNowButton running={running} onClick={onCheck} title={checkTitle} />
+      <button type="button" className="mon-act mon-act--edit"
+        onClick={onEdit} title={editTitle} aria-label={editTitle}><Pencil size={13} /></button>
+      <button type="button" className="mon-act mon-act--copy"
+        onClick={onDuplicate} title={t('mon.duplicate')} aria-label={t('mon.duplicate')}><Copy size={13} /></button>
     </span>
   )
 }
