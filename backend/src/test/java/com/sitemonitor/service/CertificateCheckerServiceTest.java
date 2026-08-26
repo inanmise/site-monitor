@@ -240,6 +240,61 @@ class CertificateCheckerServiceTest {
         assertThat(result.get("retry_attempted")).isEqualTo(true);
     }
 
+    /**
+     * {@code max-attempts} ARTIK GERÇEKTEN uygulanıyor.
+     *
+     * <p>Eskiden burada döngü yoktu: ayar yalnızca "yeniden deneme açık mı" kapısıydı
+     * ({@code maxAttempts < 2}) ve 2'den büyük her değer SESSİZCE yok sayılıyordu — 3 yazan da
+     * 10 yazan da 2 deneme alıyordu. Ayarın adı ile davranışı ayrışmıştı; kullanıcı hata
+     * mesajındaki deneme sayısını sorunca ortaya çıktı.
+     */
+    @Test
+    @DisplayName("max-attempts KAÇ diyorsa o kadar denenir (3 → 3 deneme)")
+    void maxAttemptsIsHonoured() {
+        CertificateCheckerService spy = spyWithRetry(true);
+        ReflectionTestUtils.setField(spy, "maxAttempts", 3);
+        doReturn(err("NETWORK", "Socket error: Connection reset"))
+                .when(spy).tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
+
+        Map<String, Object> result = spy.check("test.example.com", 443);
+
+        verify(spy, times(3)).tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
+        assertThat(result.get("attempts_total")).isEqualTo(3);
+        // Mesajdaki rakam SAYILAN denemeden gelir, sabit bir literalden değil.
+        assertThat((String) result.get("error")).contains("3 attempts");
+    }
+
+    @Test
+    @DisplayName("Ara denemede düzelirse KALAN denemeler koşmaz")
+    void recoversMidChainAndStops() {
+        CertificateCheckerService spy = spyWithRetry(true);
+        ReflectionTestUtils.setField(spy, "maxAttempts", 4);
+        doReturn(err("NETWORK", "Socket error: Connection reset"))
+                .doReturn(ok())
+                .when(spy).tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
+
+        Map<String, Object> result = spy.check("test.example.com", 443);
+
+        verify(spy, times(2)).tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
+        assertThat(result.get("retry_recovered")).isEqualTo(true);
+        assertThat(result.get("attempts_total")).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("Deneme sayısı TAVANLA sınırlı — tek hedef süpürmeyi dakikalarca kilitlemesin")
+    void attemptsAreCapped() {
+        CertificateCheckerService spy = spyWithRetry(true);
+        ReflectionTestUtils.setField(spy, "maxAttempts", 99);
+        doReturn(err("NETWORK", "Socket error: Connection reset"))
+                .when(spy).tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
+
+        Map<String, Object> result = spy.check("test.example.com", 443);
+
+        verify(spy, times(CertificateCheckerService.MAX_ATTEMPTS_CAP))
+                .tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
+        assertThat(result.get("attempts_total")).isEqualTo(CertificateCheckerService.MAX_ATTEMPTS_CAP);
+    }
+
     @Test
     @DisplayName("check does NOT retry SSL handshake errors (real cert problem)")
     void check_sslHandshakeError_noRetry() {
