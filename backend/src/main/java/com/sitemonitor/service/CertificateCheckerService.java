@@ -187,57 +187,83 @@ public class CertificateCheckerService {
         }
         CheckOptions opts = resolveOptions(forceProxy, tlsModeOverride, domain, timeoutOverride);
         long attemptsStartMs = System.currentTimeMillis();
+        // Deneme sayısı SAYILIR, sabit yazılmaz: rakam mesajda kullanıcıya gösteriliyor ve
+        // sabit bir literal, kod bir gün gerçekten döngüye dönerse sessizce yalan söylerdi.
+        int attemptsMade = 1;
         Map<String, Object> result = tryCheckOnce(domain, port, opts);
 
-        if (!retryOnTransient || maxAttempts < 2) return result;
-        if (!isTransientError(result)) return result;
+        if (!retryOnTransient) return result;
+        // Ayar KAC diyorsa o kadar denenir. Eskiden burada dongu YOKTU: maxAttempts yalnizca
+        // "yeniden deneme acik mi" kapisiydi ve 2'den buyuk her deger SESSIZCE yok sayiliyordu
+        // (3 yazan da 10 yazan da 2 deneme aliyordu). Ayarin adi ile davranisi ayrisiyordu.
+        int maxTries = Math.min(Math.max(maxAttempts, 1), MAX_ATTEMPTS_CAP);
+        if (maxTries < 2) return result;
 
-        CheckOptions retryOpts = retryFallback ? chooseFallback(opts, result, domain) : opts;
-        if (!retryOpts.equals(opts)) {
-            log.info("Certificate check fallback retry: domain={} from={} to={} prev_stage={} prev_error={}",
-                    domain, opts.describe(), retryOpts.describe(),
-                    result.get("error_stage"),
-                    truncate((String) result.get("error"), 100));
-        } else {
-            log.info("Certificate check retry: domain={} attempt=2 prev_class={} prev_error={}",
-                    domain, result.get("error_class"),
-                    truncate((String) result.get("error"), 100));
+        CheckOptions currentOpts = opts;
+        Map<String, Object> latest = result;
+
+        while (attemptsMade < maxTries && isTransientError(latest)) {
+            CheckOptions nextOpts = retryFallback ? chooseFallback(currentOpts, latest, domain) : currentOpts;
+            if (!nextOpts.equals(currentOpts)) {
+                log.info("Certificate check fallback retry: domain={} from={} to={} attempt={} prev_stage={} prev_error={}",
+                        domain, currentOpts.describe(), nextOpts.describe(), attemptsMade + 1,
+                        latest.get("error_stage"), truncate((String) latest.get("error"), 100));
+            } else {
+                log.info("Certificate check retry: domain={} attempt={} prev_class={} prev_error={}",
+                        domain, attemptsMade + 1, latest.get("error_class"),
+                        truncate((String) latest.get("error"), 100));
+            }
+
+            try { Thread.sleep(retryDelayMs); }
+            catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return latest;          // kesildi: elimizdeki EN SON sonucu dondur
+            }
+
+            attemptsMade++;
+            Map<String, Object> attempt = tryCheckOnce(domain, port, nextOpts);
+            // Yedek yol raporu ILK secenege gore yazilir: kullanici "neyle basladi, neye dondu"
+            // gormeli; ara adimi gostermek zinciri okunmaz yapardi.
+            if (!nextOpts.equals(opts)) {
+                attempt.put("retry_fallback", opts.describe() + "→" + nextOpts.describe());
+            }
+            currentOpts = nextOpts;
+            latest = attempt;
         }
 
-        try { Thread.sleep(retryDelayMs); }
-        catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-            return result;
-        }
+        if (attemptsMade == 1) return latest;   // hic yeniden denenmedi (kalici hata)
 
-        Map<String, Object> retry = tryCheckOnce(domain, port, retryOpts);
-        if (!retryOpts.equals(opts)) {
-            retry.put("retry_fallback", opts.describe() + "→" + retryOpts.describe());
-        }
-        if ("error".equals(retry.get("status"))) {
-            retry.put("retry_attempted", true);
-            // Kullanıcı ekranda sayacın 11-12 sn'ye çıktığını görüp hatada "6s" yazınca haklı
-            // olarak "hangisi doğru" diye soruyor. İkisi de doğru: 6 sn DENEME BAŞINA zaman
-            // aşımı, 11-12 sn ise İKİ deneme + aradaki bekleme. Rakamların ilişkisi mesajda
-            // yazılı olmazsa çelişki gibi okunuyor.
-            retry.put("attempts_total", 2);
-            retry.put("attempts_elapsed_ms", System.currentTimeMillis() - attemptsStartMs);
-            Object err = retry.get("error");
+        if ("error".equals(latest.get("status"))) {
+            latest.put("retry_attempted", true);
+            // Kullanici ekranda sayacin 11-12 sn'ye ciktigini gorup hatada "6s" yazinca hakli
+            // olarak "hangisi dogru" diye soruyor. Ikisi de dogru: 6 sn DENEME BASINA zaman
+            // asimi, 11-12 sn ise denemelerin toplami + aradaki beklemeler. Iliski mesajda
+            // yazili olmazsa celiski gibi okunuyor.
+            latest.put("attempts_total", attemptsMade);
+            latest.put("attempts_elapsed_ms", System.currentTimeMillis() - attemptsStartMs);
+            Object err = latest.get("error");
             if (err instanceof String e && !e.contains("attempt")) {
-                retry.put("error", e + " · 2 attempts, "
+                latest.put("error", e + " · " + attemptsMade + " attempts, "
                         + Math.round((System.currentTimeMillis() - attemptsStartMs) / 1000.0) + "s total");
             }
-            log.warn("Certificate check failed after retry: domain={} via={} tlsMode={} final_error={}",
-                    domain, retryOpts.viaProxy() ? "proxy" : "direct", retryOpts.tlsMode(),
-                    truncate((String) retry.get("error"), 200));
+            log.warn("Certificate check failed after {} attempts: domain={} via={} tlsMode={} final_error={}",
+                    attemptsMade, domain, currentOpts.viaProxy() ? "proxy" : "direct", currentOpts.tlsMode(),
+                    truncate((String) latest.get("error"), 200));
         } else {
-            retry.put("retry_recovered", true);
-            log.info("Certificate check recovered on retry: domain={} via={} tlsMode={} prev_error={}",
-                    domain, retryOpts.viaProxy() ? "proxy" : "direct", retryOpts.tlsMode(),
-                    truncate((String) result.get("error"), 80));
+            latest.put("retry_recovered", true);
+            latest.put("attempts_total", attemptsMade);
+            log.info("Certificate check recovered on attempt {}: domain={} via={} tlsMode={}",
+                    attemptsMade, domain, currentOpts.viaProxy() ? "proxy" : "direct", currentOpts.tlsMode());
         }
-        return retry;
+        return latest;
     }
+
+    /**
+     * Deneme sayisi tavani. Her deneme zaman asimi kadar surebilir; kayit bazli zaman asimi
+     * 60 sn'ye kadar cikabildigi icin sinirsiz deneme tek bir hedefte supurmeyi dakikalarca
+     * kilitlerdi.
+     */
+    static final int MAX_ATTEMPTS_CAP = 5;
 
     /** Decision table for the alternate-combo retry, evaluated top-down:
      *  1. TLS handshake stalls (no ServerHello: timeout/reset) → flip TLS mode,
