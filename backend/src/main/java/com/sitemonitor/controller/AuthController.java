@@ -338,6 +338,25 @@ public class AuthController {
         return ResponseEntity.ok(Map.of("success", true));
     }
 
+    /**
+     * Hareketsizlik oturum kapatma süresi (dakika). Varsayılan 60.
+     *
+     * <p>ALT SINIR 1 dakika: 0/negatif bir değer herkesi anında dışarı atardı ve ayarı yanlış
+     * giren kişi kendi düzeltemezdi (giriş yapar yapmaz atılırdı). ÜST SINIR sunucu oturum
+     * ömrüyle (24 sa) hizalı — ötesini vaat etmek yalan olurdu, sunucu zaten oturumu düşürür.
+     */
+    private int inactivityMinutes() {
+        int v = appSettings.getInt("site.monitor.ui.inactivity-minutes", 60);
+        return Math.max(1, Math.min(v, 24 * 60));
+    }
+
+    /** Kapatmadan önceki uyarı penceresi (sn). Toplam süreyi AŞAMAZ; aşarsa uyarı hiç görünmezdi. */
+    private int inactivityWarnSeconds() {
+        int v = appSettings.getInt("site.monitor.ui.inactivity-warn-seconds", 60);
+        int max = Math.max(1, inactivityMinutes() * 60 - 1);
+        return Math.max(1, Math.min(v, max));
+    }
+
     @GetMapping("/me")
     public ResponseEntity<Map<String, Object>> me(HttpSession session) {
         String username = (String) session.getAttribute("username");
@@ -353,6 +372,10 @@ public class AuthController {
         resp.put("system_role", session.getAttribute("systemRole"));
         resp.put("must_change_password",
                 Boolean.TRUE.equals(session.getAttribute("mustChangePassword")));
+        // Hareketsizlik ayari: arayuz zamanlayicisi bunu okur. Ayri uc/istek yok — zamanlayici
+        // zaten yalniz oturum acikken kosuyor, yani /me tam da dogru tasiyici.
+        resp.put("inactivity_minutes", inactivityMinutes());
+        resp.put("inactivity_warn_seconds", inactivityWarnSeconds());
         // Profile fields (AD-provisioned). Loaded fresh so they reflect the latest sync.
         userService.findByUsername(username).ifPresent(u -> {
             resp.put("display_name", u.getDisplayName());
@@ -775,6 +798,11 @@ public class AuthController {
         putTeams(resp, user);
         resp.put("system_role", user.getSystemRole());
         resp.put("must_change_password", Boolean.TRUE.equals(user.getMustChangePassword()));
+        // Giris yanitina da konur: /me yalnizca acilista kosuyor, taze girişten sonra tekrar
+        // cagrilmiyor. Konmazsa kullanicinin ayarladigi sure ancak SAYFA YENILENINCE gecerli
+        // olurdu ve "ayari degistirdim ama olmadi" diye okunurdu.
+        resp.put("inactivity_minutes", inactivityMinutes());
+        resp.put("inactivity_warn_seconds", inactivityWarnSeconds());
         // Faz 3b: scope flags so the UI hides global-only tabs from scoped müdür-admins.
         resp.put("global_admin", SessionScope.isGlobalAdmin(session));
         resp.put("scoped", session.getAttribute("viewTeamIds") != null);

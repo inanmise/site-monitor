@@ -37,6 +37,10 @@ public final class AppSettingsCatalog {
         // Login provizyonunda müdürü otomatik MANAGER eskalasyon kontağı yapma — varsayılan KAPALI
         // (kullanıcı kararı 2026-08-03); açılırsa D7+ müdürler otomatik eklenir. Mevcut kayıtlar silinmez.
         new Setting("site.monitor.escalation.auto-add-managers", "general",    Type.BOOL),
+        // Hareketsizlik oturum kapatma. Eskiden YALNIZ derleme zamani (VITE_INACTIVITY_MS)
+        // ayarlanabiliyordu: degistirmek icin yeniden derleyip dagitmak gerekiyordu.
+        new Setting("site.monitor.ui.inactivity-minutes",         "general",    Type.INT),
+        new Setting("site.monitor.ui.inactivity-warn-seconds",    "general",    Type.INT),
         new Setting("site.monitor.network.error-rate-threshold", "outage",     Type.DOUBLE),
         new Setting("site.monitor.network.min-errors",           "outage",     Type.INT),
         new Setting("site.monitor.scheduler.stale-minutes",      "scheduler",  Type.INT),
