@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
-import { RefreshCw, ShieldCheck, ShieldOff, Server, Globe, Building2, CalendarClock } from 'lucide-react'
+import { RefreshCw, ShieldCheck, ShieldOff, ShieldAlert, ListX, History,
+  Server, Globe, Building2, CalendarClock } from 'lucide-react'
 import { Spinner, LoadingBlock } from './ui/Progress.jsx'
 
 /** Bitiş tarihi — insan-okur ("6 Ağustos 2026 15:37"), tr-TR; date-only ("2029-10-26") ve datetime güvenli. */
@@ -124,7 +125,57 @@ export default function DomainRegistrationTab({ monitor }) {
           : d.dnssec === 'unsigned' ? <><ShieldOff size={15} className="dreg-muted" /> {t('dreg.dnssecUnsigned')}</>
           : <span className="dreg-empty">{t('dreg.dnssecUnknown')}</span>}
       </div>
+      {/* ── Koruma durumu ────────────────────────────────────────────────────────
+          Üç sinyal de ÜÇ/DÖRT durumlu: "doğrulanamadı" ayrı bir cevaptır, "sorun yok"
+          değil. Kilit yalnız RDAP'ta doğrulanabiliyor, kara liste sorgusu kurumsal ağdan
+          reddedilebiliyor — ikisini de "temiz" saymak korumanın çalıştığı yanılsaması olurdu. */}
+      <div className="dreg-section-hdr"><ShieldCheck size={15} /> {t('dreg.protection')}</div>
+      <div className="dreg-protect">
+        <span className="dreg-protect-lbl">{t('dom.transferLock')}</span>
+        <LockBadge value={d.transfer_lock} t={t} />
+
+        <span className="dreg-protect-lbl">{t('dom.blacklist')}</span>
+        <BlacklistBadge status={d.blacklist_status} detail={d.blacklist_detail} t={t} />
+
+        {d.change_detail && (<>
+          <span className="dreg-protect-lbl"><History size={13} /> {t('dom.lastChange')}</span>
+          <span className="dreg-protect-change">{d.change_detail}</span>
+        </>)}
+      </div>
+
       {/* Kontrol Geçmişi buradan kaldırıldı — "Kontrol" sekmesindeki geçmiş tablosuyla aynıydı (tekrar). */}
     </div>
   )
+}
+
+/**
+ * Transfer kilidi rozeti. DÖRT durum: registry+registrar / yalnız registry / yalnız registrar /
+ * kilit yok / doğrulanamadı.
+ *
+ * <p>Registry kilidi (serverTransferProhibited) registrar kilidinden daha güçlüdür: registrar
+ * hesabı ele geçse bile transfer engellenir. İkisini tek kovaya koymak bu farkı görünmez yapardı.
+ */
+function LockBadge({ value, t }) {
+  const v = String(value || 'UNKNOWN').toUpperCase()
+  if (v === 'BOTH')   return <span className="dreg-badge dreg-badge--ok"><ShieldCheck size={13} /> {t('dom.lockBoth')}</span>
+  if (v === 'SERVER') return <span className="dreg-badge dreg-badge--ok"><ShieldCheck size={13} /> {t('dom.lockServer')}</span>
+  if (v === 'CLIENT') return <span className="dreg-badge dreg-badge--ok"><ShieldCheck size={13} /> {t('dom.lockClient')}</span>
+  if (v === 'NONE')   return <span className="dreg-badge dreg-badge--bad"><ShieldAlert size={13} /> {t('dom.lockNone')}</span>
+  return <span className="dreg-badge dreg-badge--unknown"><ShieldOff size={13} /> {t('dom.lockUnknown')}</span>
+}
+
+/** Kara liste rozeti. LISTED'de kanıt (hangi liste) ipucunda taşınır — rakam tek başına iş görmez. */
+function BlacklistBadge({ status, detail, t }) {
+  const v = String(status || 'UNKNOWN').toUpperCase()
+  if (v === 'CLEAN')   return <span className="dreg-badge dreg-badge--ok"><ShieldCheck size={13} /> {t('dom.blClean')}</span>
+  if (v === 'SKIPPED') return <span className="dreg-badge dreg-badge--muted">{t('dom.blSkipped')}</span>
+  if (v === 'LISTED') {
+    const lists = String(detail || '').split(';').map(x => x.split('=')[0].trim()).filter(Boolean)
+    return (
+      <span className="dreg-badge dreg-badge--bad" title={detail || undefined}>
+        <ListX size={13} /> {t('dom.blListed').replace('{n}', lists.length || '?')}
+      </span>
+    )
+  }
+  return <span className="dreg-badge dreg-badge--unknown"><ShieldOff size={13} /> {t('dom.blUnknown')}</span>
 }

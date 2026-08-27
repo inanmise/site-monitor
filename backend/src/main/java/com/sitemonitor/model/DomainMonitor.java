@@ -62,6 +62,25 @@ public class DomainMonitor {
     @Column(name = "critical_days")
     private Integer criticalDays = 7;
 
+    /**
+     * Transfer kilidi alarmı. Varsayılan AÇIK: kilit yokluğu bugün de (EPP uyarısına OR'lanarak)
+     * alarm üretiyordu — ayrı tipe taşınırken kullanıcının fiilî korumasını kapatmak olmaz.
+     */
+    @Column(name = "transfer_lock_alert")
+    private Boolean transferLockAlert = true;
+
+    /**
+     * Kara liste (DNSBL) izleme. Varsayılan KAPALI: her kontrolde dış DNS sorgusu üretir;
+     * bunun bilinçli açılması gerekir. Kurumsal ağda çözüm reddedilirse sonuç "Doğrulanamadı"
+     * olur, ASLA yanlış alarm değil.
+     */
+    @Column(name = "blacklist_enabled")
+    private Boolean blacklistEnabled = false;
+
+    /** Kayıt değişikliği alarmı (registrar / NS / EPP / DNSSEC). Varsayılan AÇIK — bugünkü davranış. */
+    @Column(name = "change_alert")
+    private Boolean changeAlert = true;
+
     @Column(name = "created_at")
     private String createdAt;
 

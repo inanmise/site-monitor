@@ -35,7 +35,9 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
       const res = await api.admin.runDiagnostics(it.domain, it.port || 443)
       setDiag(res?.success
         ? { item: it, data: res.data }
-        : { item: it, error: res?.error || t('inv.diagError') })
+        // suggested_host YAPISAL alan: Türkçe hata metnini ayrıştırmak TR/EN arasında ve
+        // mesaj her düzenlendiğinde sessizce kırılırdı.
+        : { item: it, error: res?.error || t('inv.diagError'), suggested: res?.suggested_host || null })
     } catch {
       setDiag({ item: it, error: t('inv.diagError') })
     }
@@ -389,7 +391,20 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
               )}
 
               {diag.error && (
-                <div className="alert-msg">{diag.error}</div>
+                <div className="alert-msg">
+                  {diag.error}
+                  {/* Tek tık: kullanıcı host'u elle yeniden yazmasın. Sunucu ÖNERMEDİYSE düğme
+                      hiç çıkmaz — "www" uydurup çözülmeyen bir hedefe koşturmak, aynı hatayı
+                      ikinci kez göstermekten başka işe yaramazdı. */}
+                  {diag.suggested && (
+                    <div style={{ marginTop: 8 }}>
+                      <button className="btn btn-sm btn-primary"
+                        onClick={() => runDiag({ ...diag.item, domain: diag.suggested })}>
+                        {t('inv.diagTrySuggested').replace('{0}', diag.suggested)}
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
 
               {diag.data && (

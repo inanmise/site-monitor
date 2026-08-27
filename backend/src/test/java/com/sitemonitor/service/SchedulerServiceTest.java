@@ -711,6 +711,106 @@ class SchedulerServiceTest {
         assertThat(cap.getValue().get(0).up()).isTrue();          // yenilenme = recovery → açık alarm kapanır
     }
 
+    // ── Yeni koruma aileleri (transfer kilidi / kara liste) ──────────────────
+
+    @SuppressWarnings("unchecked")
+    private List<MonitoringOutageService.SweepItem> captureSweep(String type) {
+        org.mockito.ArgumentCaptor<List<MonitoringOutageService.SweepItem>> cap =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(monitoringOutageService).handleSweepResults(eq(type), cap.capture());
+        return cap.getValue();
+    }
+
+    private Map<String, Object> protectionResult(String lock, String blacklist) {
+        Map<String, Object> r = checkResult("OK", 400);
+        r.put("transfer_lock", lock);
+        r.put("blacklist_status", blacklist);
+        return r;
+    }
+
+    /**
+     * DOĞRULANAMADI ≠ SORUN. Kilit yalnız RDAP'ta doğrulanabiliyor, kara liste sorgusu kurumsal
+     * ağdan reddedilebiliyor. İkisini de "sorun" saymak, .tr envanterinin ve DNSBL'e çıkamayan
+     * her kurulumun TAMAMINI sahte alarma boğardı.
+     */
+    @Test
+    @DisplayName("UNKNOWN kilit ve UNKNOWN kara liste ALARM ÜRETMEZ (up=true)")
+    void unknownProtectionSignalsDoNotAlarm() {
+        com.sitemonitor.model.DomainMonitor m = activeDomain(1L, "example.com", 7L);
+        when(domainCheckRepo.findLatestPerMonitor()).thenReturn(List.of(latestCheck(1L, 3)));
+        when(domainMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+        when(domainCheckerService.check(m)).thenReturn(protectionResult("UNKNOWN", "UNKNOWN"));
+
+        scheduler.runCriticalDomainChecks();
+
+        assertThat(captureSweep(EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK).get(0).up()).isTrue();
+        assertThat(captureSweep(EscalationService.TYPE_DOMAINMON_BLACKLIST).get(0).up()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Kilit KESİN yok + anahtar açık → TRANSFER_LOCK alarmı (down)")
+    void missingLockAlarms() {
+        com.sitemonitor.model.DomainMonitor m = activeDomain(1L, "example.com", 7L);
+        m.setTransferLockAlert(true);
+        when(domainCheckRepo.findLatestPerMonitor()).thenReturn(List.of(latestCheck(1L, 3)));
+        when(domainMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+        when(domainCheckerService.check(m)).thenReturn(protectionResult("NONE", "CLEAN"));
+
+        scheduler.runCriticalDomainChecks();
+
+        assertThat(captureSweep(EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK).get(0).up()).isFalse();
+        assertThat(captureSweep(EscalationService.TYPE_DOMAINMON_BLACKLIST).get(0).up()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Kilit anahtarı KAPALIYSA kilit yok olsa da alarm ÜRETİLMEZ")
+    void lockAlertOffSuppressesAlarm() {
+        com.sitemonitor.model.DomainMonitor m = activeDomain(1L, "example.com", 7L);
+        m.setTransferLockAlert(false);
+        when(domainCheckRepo.findLatestPerMonitor()).thenReturn(List.of(latestCheck(1L, 3)));
+        when(domainMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+        when(domainCheckerService.check(m)).thenReturn(protectionResult("NONE", "SKIPPED"));
+
+        scheduler.runCriticalDomainChecks();
+
+        assertThat(captureSweep(EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK).get(0).up()).isTrue();
+    }
+
+    @Test
+    @DisplayName("LISTED → BLACKLIST alarmı ve kanıt bağlamda taşınır")
+    void listedAlarmsWithEvidence() {
+        com.sitemonitor.model.DomainMonitor m = activeDomain(1L, "example.com", 7L);
+        when(domainCheckRepo.findLatestPerMonitor()).thenReturn(List.of(latestCheck(1L, 3)));
+        when(domainMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+        Map<String, Object> r = protectionResult("BOTH", "LISTED");
+        r.put("blacklist_detail", "zen.spamhaus.org=1.2.3.4");
+        r.put("blacklist_hits", 1);
+        when(domainCheckerService.check(m)).thenReturn(r);
+
+        scheduler.runCriticalDomainChecks();
+
+        var item = captureSweep(EscalationService.TYPE_DOMAINMON_BLACKLIST).get(0);
+        assertThat(item.up()).isFalse();
+        // Kanıt olmadan alarmı alan kişi hangi listeden çıkacağını bilemez.
+        assertThat(item.ctxExtra()).containsEntry("blacklist_detail", "zen.spamhaus.org=1.2.3.4");
+    }
+
+    @Test
+    @DisplayName("Değişiklik anahtarı KAPALIYSA CHANGED alarmı üretilmez")
+    void changeAlertOffSuppressesChanged() {
+        com.sitemonitor.model.DomainMonitor m = activeDomain(1L, "example.com", 7L);
+        m.setChangeAlert(false);
+        when(domainCheckRepo.findLatestPerMonitor()).thenReturn(List.of(latestCheck(1L, 3)));
+        when(domainMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+        Map<String, Object> r = protectionResult("BOTH", "CLEAN");
+        r.put("changed", true);
+        when(domainCheckerService.check(m)).thenReturn(r);
+
+        scheduler.runCriticalDomainChecks();
+
+        assertThat(captureSweep(EscalationService.TYPE_DOMAINMON_CHANGED)).isEmpty();
+    }
+
     @Test
     @DisplayName("runCriticalDomainChecks: critical-check-enabled=false → hiç çalışmaz")
     void runCriticalDomainChecks_disabled_noop() {

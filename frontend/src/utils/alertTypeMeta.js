@@ -1,6 +1,7 @@
 import {
   Globe, ShieldAlert, Network, Plug, Server, Clock, Shuffle, AlertCircle,
   Target, Radio, ScanSearch, FlaskConical, CalendarDays, Link2, Ban, Zap, Gauge, Bell,
+  ListX,
 } from 'lucide-react'
 
 /**
@@ -58,6 +59,8 @@ export const ALERT_TYPE_META = {
   DOMAINMON_UNKNOWN:  { icon: AlertCircle,  color: '#78716c' },
   DOMAINMON_STATUS:   { icon: ShieldAlert,  color: '#9a3412' },
   DOMAINMON_CHANGED:  { icon: Shuffle,      color: '#7c2d12' },
+  DOMAINMON_TRANSFER_LOCK: { icon: ShieldAlert, color: '#b45309' },
+  DOMAINMON_BLACKLIST:     { icon: ListX,       color: '#b42318' },
 
   // ── Sayfa bütünlüğü ───────────────────────────────────────────────────────
   PAGE_DOWN:         { icon: ScanSearch,   color: '#dc2626' },

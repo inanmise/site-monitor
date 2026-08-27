@@ -650,6 +650,13 @@ public class SchedulerService {
         patch("ALTER TABLE domain_checks ADD COLUMN dnssec TEXT");
         patch("ALTER TABLE domain_checks ADD COLUMN resolved_ips TEXT");
         patch("ALTER TABLE domain_checks ADD COLUMN hostnames TEXT");
+        patch("ALTER TABLE domain_monitors ADD COLUMN transfer_lock_alert BOOLEAN DEFAULT true");
+        patch("ALTER TABLE domain_monitors ADD COLUMN blacklist_enabled BOOLEAN DEFAULT false");
+        patch("ALTER TABLE domain_monitors ADD COLUMN change_alert BOOLEAN DEFAULT true");
+        patch("ALTER TABLE domain_checks ADD COLUMN transfer_lock VARCHAR(20)");
+        patch("ALTER TABLE domain_checks ADD COLUMN blacklist_status VARCHAR(20)");
+        patch("ALTER TABLE domain_checks ADD COLUMN blacklist_detail TEXT");
+        patch("ALTER TABLE domain_checks ADD COLUMN change_detail TEXT");
         // Sorun bildirimleri genelleştirmesi (2026-08): login_issue_reports artık üç kaynağı taşır
         // (LOGIN | CLIENT_ERROR | USER_REPORT) + otomatik bağlam alanları. Eski satırlar LOGIN'e backfill edilir.
         patch("ALTER TABLE login_issue_reports ADD COLUMN source TEXT");
@@ -3971,13 +3978,16 @@ public class SchedulerService {
         List<MonitoringOutageService.SweepItem> unknownSweep = new ArrayList<>();
         List<MonitoringOutageService.SweepItem> statusSweep = new ArrayList<>();
         List<MonitoringOutageService.SweepItem> changedSweep = new ArrayList<>();
+        List<MonitoringOutageService.SweepItem> lockSweep = new ArrayList<>();
+        List<MonitoringOutageService.SweepItem> blacklistSweep = new ArrayList<>();
         int checked = 0;
         for (DomainMonitor m : monitors) {
             if (!checkDue("domain", m.getId(), jitteredInterval(m.getIntervalSeconds()))) continue;
             try {
                 Map<String, Object> r = domainCheckerService.check(m);   // DomainCheck persist eder
                 checked++;
-                addDomainSweepItems(m, r, unknownSweep, expirySweep, statusSweep, changedSweep);
+                addDomainSweepItems(m, r, unknownSweep, expirySweep, statusSweep, changedSweep,
+                        lockSweep, blacklistSweep);
             } catch (Exception e) {
                 log.warn("Domain check failed for {}: {}", m.getDomain(), e.getMessage());
             }
@@ -3986,6 +3996,8 @@ public class SchedulerService {
         handleDomainSweep(EscalationService.TYPE_DOMAINMON_EXPIRY, expirySweep);
         handleDomainSweep(EscalationService.TYPE_DOMAINMON_STATUS, statusSweep);
         handleDomainSweep(EscalationService.TYPE_DOMAINMON_CHANGED, changedSweep);
+        handleDomainSweep(EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK, lockSweep);
+        handleDomainSweep(EscalationService.TYPE_DOMAINMON_BLACKLIST, blacklistSweep);
         log.debug("Domain checks complete: {} monitors", checked);
     }
 
@@ -3995,7 +4007,9 @@ public class SchedulerService {
             List<MonitoringOutageService.SweepItem> unknownSweep,
             List<MonitoringOutageService.SweepItem> expirySweep,
             List<MonitoringOutageService.SweepItem> statusSweep,
-            List<MonitoringOutageService.SweepItem> changedSweep) {
+            List<MonitoringOutageService.SweepItem> changedSweep,
+            List<MonitoringOutageService.SweepItem> lockSweep,
+            List<MonitoringOutageService.SweepItem> blacklistSweep) {
         String status = String.valueOf(r.get("status"));
         Integer days = r.get("days_remaining") instanceof Number n ? n.intValue() : null;
         boolean eppCritical = Boolean.TRUE.equals(r.get("epp_critical"));
@@ -4015,7 +4029,16 @@ public class SchedulerService {
         statusSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_STATUS, m, r,
                 !(eppCritical || eppWarn), eppCritical ? "CRITICAL" : "HIGH"));
         // CHANGED — yalnız değişimde (up gönderilmez → manuel ack'e kadar açık; hijack sinyali)
-        if (changed) changedSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_CHANGED, m, r, false, "HIGH"));
+        if (changed && !Boolean.FALSE.equals(m.getChangeAlert()))
+            changedSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_CHANGED, m, r, false, "HIGH"));
+        // TRANSFER_LOCK — YALNIZ kesin "NONE" alarm üretir. UNKNOWN (WHOIS/.tr, veri yok) up
+        // sayılır: kilidi doğrulayamamak, kilit olmadığı anlamına GELMEZ.
+        lockSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK, m, r,
+                !(isLockMissing(r) && !Boolean.FALSE.equals(m.getTransferLockAlert())), "HIGH"));
+        // BLACKLIST — yalnız LISTED alarm üretir; UNKNOWN/SKIPPED up. Doğrulanamayan bir
+        // sorgudan alarm üretmek, kurumsal resolver kısıtında tüm envanteri sahte alarma boğardı.
+        blacklistSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_BLACKLIST, m, r,
+                !DnsblCheckerService.LISTED.equals(r.get("blacklist_status")), "HIGH"));
     }
 
     /**
@@ -4028,12 +4051,20 @@ public class SchedulerService {
         if (m == null || r == null) return;
         if (!appSettings.getBoolean("site.monitor.domain.alert-enabled", true)) return;
         List<MonitoringOutageService.SweepItem> unknown = new ArrayList<>(), expiry = new ArrayList<>(),
-                status = new ArrayList<>(), changed = new ArrayList<>();
-        addDomainSweepItems(m, r, unknown, expiry, status, changed);
+                status = new ArrayList<>(), changed = new ArrayList<>(),
+                lock = new ArrayList<>(), blacklist = new ArrayList<>();
+        addDomainSweepItems(m, r, unknown, expiry, status, changed, lock, blacklist);
         handleDomainSweep(EscalationService.TYPE_DOMAINMON_UNKNOWN, unknown);
         handleDomainSweep(EscalationService.TYPE_DOMAINMON_EXPIRY, expiry);
         handleDomainSweep(EscalationService.TYPE_DOMAINMON_STATUS, status);
         handleDomainSweep(EscalationService.TYPE_DOMAINMON_CHANGED, changed);
+        handleDomainSweep(EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK, lock);
+        handleDomainSweep(EscalationService.TYPE_DOMAINMON_BLACKLIST, blacklist);
+    }
+
+    /** Kilit KESİN yok mu? UNKNOWN (WHOIS/.tr, veri yok) alarm üretmez — kural: doğrulanamadı ≠ yok. */
+    private static boolean isLockMissing(Map<String, Object> r) {
+        return "NONE".equals(String.valueOf(r.get("transfer_lock")));
     }
 
     private void handleDomainSweep(String type, List<MonitoringOutageService.SweepItem> sweep) {
@@ -4069,6 +4100,11 @@ public class SchedulerService {
             ctx.put("nameservers", ns.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(", ")));
         ctx.put("checked_at", r.get("checked_at") != null ? r.get("checked_at") : ISO.format(Instant.now()));
         if (r.get("change_detail") != null) ctx.put("change_detail", r.get("change_detail"));
+        if (r.get("transfer_lock") != null) ctx.put("transfer_lock", r.get("transfer_lock"));
+        if (r.get("blacklist_status") != null) ctx.put("blacklist_status", r.get("blacklist_status"));
+        if (r.get("blacklist_detail") != null) ctx.put("blacklist_detail", r.get("blacklist_detail"));
+        if (r.get("blacklist_hits") != null) ctx.put("blacklist_hits", r.get("blacklist_hits"));
+        if (r.get("blacklist_delta") != null) ctx.put("blacklist_delta", r.get("blacklist_delta"));
         if (r.get("error") != null) ctx.put("last_error", r.get("error"));
         return new MonitoringOutageService.SweepItem(type, m.getDomain(), m.getDomain(),
                 up, (String) r.get("error"), ctx, () -> recheckDomainFor(m, type));
@@ -4083,6 +4119,12 @@ public class SchedulerService {
             case EscalationService.TYPE_DOMAINMON_UNKNOWN -> !"UNKNOWN".equals(status);
             case EscalationService.TYPE_DOMAINMON_EXPIRY  -> !(days != null && days <= warn);
             case EscalationService.TYPE_DOMAINMON_STATUS  -> !(Boolean.TRUE.equals(r.get("epp_critical")) || Boolean.TRUE.equals(r.get("epp_warn")));
+            // Yeni tipler BURAYA da yazılmalı: default -> true onları sessizce "düzeldi" sayar
+            // ve alarm hiç açılmazdı.
+            case EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK ->
+                    !(isLockMissing(r) && !Boolean.FALSE.equals(m.getTransferLockAlert()));
+            case EscalationService.TYPE_DOMAINMON_BLACKLIST ->
+                    !DnsblCheckerService.LISTED.equals(r.get("blacklist_status"));
             default -> true;
         };
         Map<String, Object> out = new LinkedHashMap<>();

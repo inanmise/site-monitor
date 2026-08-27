@@ -2341,10 +2341,32 @@ public class AdminController {
         String host = validateDomain(domain);
         try {
             ssrfGuard.validate(host);
+        } catch (SsrfGuard.UnresolvableHostException ue) {
+            // ÇÖZÜLEMEYEN host bir politika reddi DEĞİL. Eskiden ikisi de "İzin verilmeyen
+            // tanılama hedefi" diye çıkıyordu ve kullanıcı aracın kendisini engellediğini
+            // sanıyordu; oysa çözüm host adını düzeltmek. Apex'in A kaydı olmayıp yalnız
+            // "www" yayınlanması çok yaygın olduğu için, varsa doğrudan o önerilir.
+            String hint = wwwAlternative(host);
+            throw new com.sitemonitor.config.GlobalExceptionHandler.UnresolvableTargetException(
+                    "Çözümlenemeyen host: " + host + " — DNS'te A/AAAA kaydı yok."
+                            + (hint != null ? " Bunu deneyin: " + hint : ""),
+                    host, hint);
         } catch (SsrfGuard.BlockedException be) {
             throw new IllegalArgumentException("İzin verilmeyen tanılama hedefi: " + be.getMessage());
         }
         return host;
+    }
+
+    /** {@code www.<host>} çözülüyor mu — yalnız HATA yolunda, tek ek sorgu. Çözülmüyorsa null. */
+    private String wwwAlternative(String host) {
+        if (host == null || host.startsWith("www.")) return null;
+        String candidate = "www." + host;
+        try {
+            ssrfGuard.validate(candidate);
+            return candidate;
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private Long toLong(Object v) {

@@ -137,9 +137,15 @@ public class EscalationService {
     public static final String TYPE_DOMAINMON_UNKNOWN = "DOMAINMON_UNKNOWN";
     public static final String TYPE_DOMAINMON_STATUS  = "DOMAINMON_STATUS";
     public static final String TYPE_DOMAINMON_CHANGED = "DOMAINMON_CHANGED";
+    /** Transfer kilidi yok — eskiden STATUS'a warn olarak karışıyordu. "autoRenewPeriod" ile
+     *  "kilit yok" operasyonel olarak farklı işlerdir; tek alarmda ayırt edilemiyordu. */
+    public static final String TYPE_DOMAINMON_TRANSFER_LOCK = "DOMAINMON_TRANSFER_LOCK";
+    /** Alan adı / IP'leri e-posta kara listesinde. */
+    public static final String TYPE_DOMAINMON_BLACKLIST = "DOMAINMON_BLACKLIST";
     public static boolean isDomainMon(String t) {
         return TYPE_DOMAINMON_EXPIRY.equals(t) || TYPE_DOMAINMON_UNKNOWN.equals(t)
-            || TYPE_DOMAINMON_STATUS.equals(t) || TYPE_DOMAINMON_CHANGED.equals(t);
+            || TYPE_DOMAINMON_STATUS.equals(t) || TYPE_DOMAINMON_CHANGED.equals(t)
+            || TYPE_DOMAINMON_TRANSFER_LOCK.equals(t) || TYPE_DOMAINMON_BLACKLIST.equals(t);
     }
 
     /** Sayfa-bütünlüğü (9. tür) alarmları: DOWN = ana sayfa alınamıyor (CRITICAL); INTEGRITY = kırık kaynak /
@@ -174,6 +180,7 @@ public class EscalationService {
                    TYPE_DNS_SLOW, TYPE_DNS_UNEXPECTED, TYPE_DNS_INCONSISTENT,
                    TYPE_KEYWORD, TYPE_PING_DOWN, TYPE_HTTP_DOWN, TYPE_HTTP_SSL, TYPE_DOMAIN_EXPIRY,
                    TYPE_DOMAINMON_EXPIRY, TYPE_DOMAINMON_UNKNOWN, TYPE_DOMAINMON_STATUS, TYPE_DOMAINMON_CHANGED,
+                   TYPE_DOMAINMON_TRANSFER_LOCK, TYPE_DOMAINMON_BLACKLIST,
                    TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY, TYPE_PORT_SLOW,
                    TYPE_PAGE_DOWN, TYPE_PAGE_INTEGRITY, TYPE_SCRIPTED_FAIL, TYPE_SCRIPTED_SLOW,
                    TYPE_PAGESPEED_DOWN, TYPE_PAGESPEED_SLOW);
@@ -749,7 +756,8 @@ public class EscalationService {
             orphanDomains.add(e.getDomain());
         }
         for (String d : orphanDomains) {
-            resolveOpenAlertsSilently(d, Set.of(TYPE_DOMAINMON_EXPIRY, TYPE_DOMAINMON_UNKNOWN, TYPE_DOMAINMON_STATUS, TYPE_DOMAINMON_CHANGED),
+            resolveOpenAlertsSilently(d, Set.of(TYPE_DOMAINMON_EXPIRY, TYPE_DOMAINMON_UNKNOWN, TYPE_DOMAINMON_STATUS,
+                            TYPE_DOMAINMON_CHANGED, TYPE_DOMAINMON_TRANSFER_LOCK, TYPE_DOMAINMON_BLACKLIST),
                     "Sistem (öksüz alarm — eşleşen domain izlemesi yok)");
         }
         if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz Domain alarmı temizlendi: {} domain {}", orphanDomains.size(), orphanDomains);
@@ -1097,9 +1105,38 @@ public class EscalationService {
             case TYPE_DOMAINMON_STATUS -> {
                 Object dom = ctx.getOrDefault("domain", domain);
                 Object codes = ctx.get("status_codes");
+                // Transfer kilidi önerisi BURADAN ÇIKTI: artık kendi alarmı var ve iki farklı iş
+                // (EPP durumu ile kilit) tek mailde birleşince ikisi de gölgeleniyordu.
                 return ("CRITICAL".equals(alertLevel) ? "KRİTİK" : "YÜKSEK") + ": " + dom + " alan adında dikkat gerektiren EPP durum kodları: " +
-                        (codes != null && !codes.toString().isBlank() ? codes : "—") + ". redemptionPeriod/pendingDelete/hold → derhal müdahale; " +
-                        "transfer kilidi (clientTransferProhibited) yoksa etkinleştirin.";
+                        (codes != null && !codes.toString().isBlank() ? codes : "—") +
+                        ". redemptionPeriod/pendingDelete/hold → derhal müdahale gerekir.";
+            }
+            case TYPE_DOMAINMON_TRANSFER_LOCK -> {
+                Object dom = ctx.getOrDefault("domain", domain);
+                return "YÜKSEK: " + dom + " alan adında TRANSFER KİLİDİ YOK. Kilitsiz bir alan adı, "
+                        + "registrar hesabı ele geçirilirse başka bir registrar'a taşınabilir. "
+                        + "Önerilen aksiyon: registrar panelinden clientTransferProhibited kilidini etkinleştirin "
+                        + "(mümkünse registry seviyesinde serverTransferProhibited de). "
+                        + "Kilit görüldüğünde alarm otomatik kapanır.";
+            }
+            case TYPE_DOMAINMON_BLACKLIST -> {
+                Object dom = ctx.getOrDefault("domain", domain);
+                Object det = ctx.get("blacklist_detail");
+                Object hits = ctx.get("blacklist_hits");
+                StringBuilder sb = new StringBuilder("YÜKSEK: " + dom + " alan adı ya da IP'leri e-posta KARA LİSTESİNDE"
+                        + (hits != null ? " (" + hits + " liste)" : "") + ".");
+                // Kanıt maile GİRER: "hangi liste, hangi IP" olmadan alarmı alan kişi hiçbir şey yapamaz.
+                for (var e : DnsblCheckerService.parseDetail(det == null ? null : det.toString()).entrySet()) {
+                    sb.append(" ").append(e.getKey()).append(" → ").append(e.getValue());
+                    String url = DnsblCheckerService.delistUrl(e.getKey());
+                    if (url != null) sb.append(" (çıkarma: ").append(url).append(")");
+                    sb.append(";");
+                }
+                Object delta = ctx.get("blacklist_delta");
+                // Delist ilerlemesi: "hâlâ 2 listede" / "çıktı: bl.spamcop.net".
+                if (delta != null && !delta.toString().isBlank()) sb.append(" Durum: ").append(delta).append(".");
+                sb.append(" Listeden çıkınca alarm otomatik kapanır.");
+                return sb.toString();
             }
             case TYPE_DOMAINMON_CHANGED -> {
                 Object dom = ctx.getOrDefault("domain", domain);

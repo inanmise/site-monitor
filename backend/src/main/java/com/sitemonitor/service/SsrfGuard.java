@@ -34,6 +34,19 @@ public class SsrfGuard {
         public BlockedException(String message) { super(message); }
     }
 
+    /**
+     * Host DNS'te ÇÖZÜLMEDİ — bir politika reddi DEĞİL.
+     *
+     * <p>Ayrı tip olmasının sebebi kullanıcı geri bildirimi: "izin verilmeyen tanılama hedefi"
+     * mesajı, aslında DNS'te kaydı olmayan bir host için de basılıyordu ve kullanıcı aracın
+     * kendisini engellediğini sanıyordu. İki durumun ÇÖZÜMÜ tamamen farklı: biri host adını
+     * düzeltmek, diğeri ayar/yetki işi. {@link BlockedException} alt tipi olduğu için mevcut
+     * yakalayanların hepsi eskisi gibi çalışır.
+     */
+    public static class UnresolvableHostException extends BlockedException {
+        public UnresolvableHostException(String message) { super(message); }
+    }
+
     /** Hostu çöz + tüm çözülen IP'leri doğrula. Engelliyse {@link BlockedException}. Döndürülen adreslere bağlanılmalı. */
     public List<InetAddress> validate(String host) {
         if (host == null || host.isBlank()) throw new BlockedException("boş hedef host");
@@ -41,7 +54,7 @@ public class SsrfGuard {
         try {
             addrs = InetAddress.getAllByName(host.trim());
         } catch (UnknownHostException e) {
-            throw new BlockedException("çözümlenemeyen host: " + host);
+            throw new UnresolvableHostException("çözümlenemeyen host: " + host);
         }
         boolean allowInternal = appSettings.getBoolean("site.monitor.monitoring.allow-internal-targets", true);
         boolean allowLoopback = appSettings.getBoolean("site.monitor.monitoring.allow-loopback-targets", false);
