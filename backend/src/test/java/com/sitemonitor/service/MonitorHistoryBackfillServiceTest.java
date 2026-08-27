@@ -16,6 +16,7 @@ import org.mockito.quality.Strictness;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -57,9 +58,26 @@ class MonitorHistoryBackfillServiceTest {
         return a;
     }
 
+    /** Gercekten yazildi diyen taklit — sayac artik YALNIZ yazilan satiri sayiyor. */
+    private void writesEverything() {
+        when(history.recordBackfill(anyString(), anyLong(), any(), any(), anyString(),
+                any(), any(), any(), any(), any())).thenReturn(true);
+    }
+
+    /** Belirtilen kapsam surumunde bir nisan satiri. */
+    private void markerAtVersion(int version) {
+        MonitorChangeLog m = new MonitorChangeLog();
+        m.setResourceKind("SYSTEM");
+        m.setEventType("AUDIT_BACKFILL");
+        m.setSeq(version);
+        when(changeRepo.findFirstByResourceKindAndEventTypeOrderByIdDesc("SYSTEM", "AUDIT_BACKFILL"))
+                .thenReturn(Optional.of(m));
+    }
+
     @Test
     @DisplayName("Denetim satırları geçmişe taşınır; ad ve IP korunur")
     void movesAuditRowsIntoHistory() {
+        writesEverything();
         when(auditRepo.findByEventTypeInOrderByEventTimeAsc(any())).thenReturn(List.of(
                 audit("MONITOR_CREATE", "PORT_MONITOR", "7", "Ödeme portu", "N23456", "2026-01-01T09:00:00"),
                 audit("MONITOR_UPDATE", "PORT_MONITOR", "7", "Ödeme portu", "N23456", "2026-02-01T09:00:00")));
@@ -73,9 +91,9 @@ class MonitorHistoryBackfillServiceTest {
     }
 
     @Test
-    @DisplayName("İKİNCİ koşuda hiçbir şey yapılmaz — geçmiş çiftlenmez")
+    @DisplayName("AYNI kapsam sürümünde ikinci koşu hiçbir şey yapmaz — geçmiş çiftlenmez")
     void secondRunIsNoOp() {
-        when(changeRepo.existsByResourceKindAndEventType("SYSTEM", "AUDIT_BACKFILL")).thenReturn(true);
+        markerAtVersion(2);
 
         assertThat(service.runOnce()).isEqualTo(-1);
 
@@ -88,6 +106,7 @@ class MonitorHistoryBackfillServiceTest {
     @Test
     @DisplayName("Koşu bitince nişan satırı yazılır — kaç satır taşındığı da orada durur")
     void writesMarkerRow() {
+        writesEverything();
         when(auditRepo.findByEventTypeInOrderByEventTimeAsc(any())).thenReturn(List.of(
                 audit("MONITOR_CREATE", "PORT_MONITOR", "7", "p", "N1", "2026-01-01T09:00:00")));
 
@@ -121,6 +140,7 @@ class MonitorHistoryBackfillServiceTest {
     @Test
     @DisplayName("Tanınmayan kaynak türü ve sayı olmayan kimlik ATLANIR, koşu düşmez")
     void skipsUnknownRows() {
+        writesEverything();
         when(auditRepo.findByEventTypeInOrderByEventTimeAsc(any())).thenReturn(List.of(
                 audit("MONITOR_CREATE", "TEAM", "7", "takım", "N1", "2026-01-01T09:00:00"),
                 audit("MONITOR_CREATE", "PORT_MONITOR", "hepsi", "p", "N1", "2026-01-02T09:00:00"),
@@ -138,5 +158,73 @@ class MonitorHistoryBackfillServiceTest {
         assertThat(service.runOnce()).isZero();
 
         verify(changeRepo, never()).save(any());
+    }
+
+    /**
+     * Kullanici bildirimi (2026-08-27): degisiklik ekraninda PAGESPEED turu kart uretiyor ama
+     * ozellik ONCESI degisiklikleri gorunmuyordu. Kok neden: tur, geri doldurma haritasina hic
+     * yazilmamisti ve "kostu" nisani ikinci kosuyu sonsuza dek engelliyordu.
+     */
+    @Test
+    @DisplayName("PAGESPEED denetim satirlari da tasinir (kapsam disinda kalmisti)")
+    void movesPagespeedRows() {
+        writesEverything();
+        when(auditRepo.findByEventTypeInOrderByEventTimeAsc(any())).thenReturn(List.of(
+                audit("MONITOR_CREATE", "PAGESPEED_MONITOR", "9", "Kampanya sayfasi",
+                        "N23456", "2026-03-01T09:00:00")));
+
+        assertThat(service.runOnce()).isEqualTo(1);
+
+        verify(history).recordBackfill("PAGESPEED", 9L, "Kampanya sayfasi", 5L, "CREATE", null,
+                "N23456", 42L, "10.20.30.40", "2026-03-01T09:00:00");
+        // Olusturan kunyesi de dogru tabloya yazilmali; tablo eslemesi de eksikti.
+        verify(jdbcTemplate).update(org.mockito.ArgumentMatchers.contains("pagespeed_monitors"),
+                any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("ESKI surum nisani kosuyu ENGELLEMEZ — kapsam buyudugunde bir kez daha kosulur")
+    void olderMarkerVersionRunsAgain() {
+        writesEverything();
+        markerAtVersion(1);
+        when(auditRepo.findByEventTypeInOrderByEventTimeAsc(any())).thenReturn(List.of(
+                audit("MONITOR_CREATE", "PAGESPEED_MONITOR", "9", "s", "N1", "2026-03-01T09:00:00")));
+
+        assertThat(service.runOnce()).isEqualTo(1);
+
+        verify(history).recordBackfill(org.mockito.ArgumentMatchers.eq("PAGESPEED"), anyLong(), any(),
+                any(), anyString(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Nisan KAPSAM SURUMUNU tasir — yoksa sonraki genisleme bir daha kosamaz")
+    void markerCarriesScopeVersion() {
+        writesEverything();
+        when(auditRepo.findByEventTypeInOrderByEventTimeAsc(any())).thenReturn(List.of(
+                audit("MONITOR_CREATE", "PORT_MONITOR", "7", "p", "N1", "2026-01-01T09:00:00")));
+
+        service.runOnce();
+
+        ArgumentCaptor<MonitorChangeLog> cap = ArgumentCaptor.forClass(MonitorChangeLog.class);
+        verify(changeRepo).save(cap.capture());
+        assertThat(cap.getValue().getSeq())
+                .as("nisan surumsuz yazilirsa kapsam genisledi diye tekrar kosulamaz")
+                .isGreaterThanOrEqualTo(2);
+    }
+
+    /**
+     * Ikinci kosuda satirlarin cogu satir-bazli kontrolle ATLANIR. Sayac atlananlari da sayarsa
+     * nisan "N satir tasindi" derken yalan soyler ve loga bakan kisi tasima olmadigini goremez.
+     */
+    @Test
+    @DisplayName("Sayac YALNIZ gercekten yazilan satiri sayar (atlananlar sayilmaz)")
+    void countsOnlyWrittenRows() {
+        when(history.recordBackfill(anyString(), anyLong(), any(), any(), anyString(),
+                any(), any(), any(), any(), any())).thenReturn(false);
+        when(auditRepo.findByEventTypeInOrderByEventTimeAsc(any())).thenReturn(List.of(
+                audit("MONITOR_CREATE", "PORT_MONITOR", "7", "p", "N1", "2026-01-01T09:00:00"),
+                audit("MONITOR_UPDATE", "PORT_MONITOR", "7", "p", "N1", "2026-02-01T09:00:00")));
+
+        assertThat(service.runOnce()).isZero();
     }
 }

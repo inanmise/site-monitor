@@ -65,6 +65,15 @@ beforeEach(() => {
   api.monitoring.getRecentChanges.mockResolvedValue(reply([ROW, DELETED]))
 })
 
+/**
+ * Ozet serit + tur kartlari VARSAYILAN KAPALI (izleme sayfalarindaki istatistik seridiyle ayni).
+ * Onlari sinayan testler once basligi acmali; asagida ayrica varsayilanin kapali oldugu ve
+ * basligin gercekten actigi da sinaniyor.
+ */
+function openStats(container) {
+  fireEvent.click(container.querySelector('.stats-collapse-bar'))
+}
+
 describe('MonitorChangesConsole', () => {
   it('tüm türlerdeki değişiklikleri tek listede, künyesiyle gösterir', async () => {
     render(<MonitorChangesConsole />)
@@ -82,6 +91,7 @@ describe('MonitorChangesConsole', () => {
   it('özet şeridi PENCERENİN tamamını özetler, sayfalanan listeyi değil', async () => {
     const { container } = render(<MonitorChangesConsole />)
     await screen.findByText('Ödeme akışı')
+    openStats(container)
 
     // Toplam = olay sayaçlarının toplamı (4+11+2), sunucunun sayfa "total"i (2) DEĞİL.
     // Kırılım sayaçları tür/aktör/arama süzgeçlerinden etkilenmiyor; toplam sayfa sayısından
@@ -180,6 +190,7 @@ describe('MonitorChangesConsole — tür kartları', () => {
   it('her tür için toplam ve olay kırılımı gösterir, hareketsiz türü ÇİZMEZ', async () => {
     const { container } = render(<MonitorChangesConsole />)
     await screen.findByText('Ödeme akışı')
+    openStats(container)
 
     const cards = [...container.querySelectorAll('.chg-kpi')]
     // "Tümü" + Sentetik + Port = 3; DNS'in hiç kaydı yok, kart üretmez (11 boş kutu gürültüdür).
@@ -196,6 +207,7 @@ describe('MonitorChangesConsole — tür kartları', () => {
   it('sıfır olan olay kırılımı çipi çizilmez', async () => {
     const { container } = render(<MonitorChangesConsole />)
     await screen.findByText('Ödeme akışı')
+    openStats(container)
 
     // PORT kartında DELETE yok → 3 değil 2 çip.
     const portCard = [...container.querySelectorAll('.chg-kpi')]
@@ -207,6 +219,7 @@ describe('MonitorChangesConsole — tür kartları', () => {
   it('karta tıklamak listeyi o türe daraltır, tekrar tıklamak açar', async () => {
     const { container } = render(<MonitorChangesConsole />)
     await screen.findByText('Ödeme akışı')
+    openStats(container)
     api.monitoring.getRecentChanges.mockClear()
 
     const portCard = [...container.querySelectorAll('.chg-kpi')]
@@ -226,6 +239,7 @@ describe('MonitorChangesConsole — tür kartları', () => {
   it('"Tümü" kartı seçili türü temizler', async () => {
     const { container } = render(<MonitorChangesConsole />)
     await screen.findByText('Ödeme akışı')
+    openStats(container)
 
     const cards = () => [...container.querySelectorAll('.chg-kpi')]
     fireEvent.click(cards().find(c => c.textContent.includes('Port')))
@@ -247,6 +261,7 @@ describe('MonitorChangesConsole — tür kartları', () => {
   it('özet şeridi STİLLİ kart sınıfını kullanır (.audit-stat diye bir kural yok)', async () => {
     const { container } = render(<MonitorChangesConsole />)
     await screen.findByText('Ödeme akışı')
+    openStats(container)
 
     expect(container.querySelectorAll('.chg-stats-row .audit-stat-card')).toHaveLength(4)
   })
@@ -377,5 +392,65 @@ describe('MonitorChangesConsole — zaman aralığı', () => {
 
     pick(container, '15d')
     await waitFor(() => expect(lastCall().page).toBe(0))
+  })
+})
+
+/**
+ * Kullanici bildirimi (2026-08-27): kartlar sayfa acilir acilmaz ekrani dolduruyordu; asil is
+ * olan "kim neyi degistirdi" listesi katlamanin altinda kaliyordu. Izleme sayfalarindaki
+ * istatistik seridiyle ayni davranis istendi: VARSAYILAN KAPALI, baslikla acilir.
+ */
+describe('MonitorChangesConsole — istatistik katlamasi', () => {
+  it('kartlar VARSAYILAN KAPALI; baslik yerinde durur', async () => {
+    const { container } = render(<MonitorChangesConsole />)
+    await screen.findByText('Ödeme akışı')
+
+    expect(container.querySelector('.stats-collapse-bar')).toBeInTheDocument()
+    expect(container.querySelectorAll('.chg-kpi')).toHaveLength(0)
+    expect(container.querySelectorAll('.audit-stat-value')).toHaveLength(0)
+    // Liste kapaliyken de gorunur: katlama asil isi gizlemez.
+    expect(screen.getByText('Ödeme akışı')).toBeInTheDocument()
+  })
+
+  it('basliga tiklamak acar, tekrar tiklamak kapatir', async () => {
+    const { container } = render(<MonitorChangesConsole />)
+    await screen.findByText('Ödeme akışı')
+
+    openStats(container)
+    expect(container.querySelectorAll('.chg-kpi').length).toBeGreaterThan(0)
+    expect(container.querySelectorAll('.audit-stat-value')).toHaveLength(4)
+
+    openStats(container)
+    expect(container.querySelectorAll('.chg-kpi')).toHaveLength(0)
+  })
+
+  it('tur suzgeci kartlar KAPALIYKEN de erisilebilir (katlama hicbir yolu kapatmaz)', async () => {
+    const { container } = render(<MonitorChangesConsole />)
+    await screen.findByText('Ödeme akışı')
+
+    expect(container.querySelectorAll('.chg-kpi')).toHaveLength(0)
+    // Tur suzgeci kartlarin DISINDA duruyor: kartlar kapaliyken de tur secilebilir.
+    expect(container.querySelector('.chg-filters')).toBeInTheDocument()
+  })
+})
+
+/**
+ * Kullanici bildirimi (2026-08-27): kartta tur adi yerine ham anahtar goruluyordu —
+ * "chg.kind.pagespeed". Backend'e PAGESPEED turu eklenmis, arayuzun uc listesi (KINDS, i18n,
+ * ICONS) guncellenmemisti. `change-kinds-sync` bekcisi tekrarini engelliyor; bu test de
+ * ekranda GERCEKTEN cevrilmis adin ciktigini kanitlar.
+ */
+describe('MonitorChangesConsole — PAGESPEED turu', () => {
+  it('Sayfa Hizi karti cevrilmis adla cizilir, ham anahtarla degil', async () => {
+    api.monitoring.getRecentChanges.mockResolvedValue(
+      reply([ROW], { kind_counts: { PAGESPEED: { CREATE: 1, UPDATE: 2 } } }))
+    const { container } = render(<MonitorChangesConsole />)
+    await screen.findByText('Ödeme akışı')
+    openStats(container)
+
+    const card = [...container.querySelectorAll('.chg-kpi')]
+      .find(c => c.textContent.includes('Page Speed'))
+    expect(card, 'PAGESPEED karti cizilmedi').toBeTruthy()
+    expect(container.textContent).not.toContain('chg.kind.')
   })
 })

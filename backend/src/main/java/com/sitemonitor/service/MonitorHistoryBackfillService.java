@@ -37,6 +37,23 @@ public class MonitorHistoryBackfillService {
     static final String MARKER_KIND = "SYSTEM";
     private static final Long MARKER_ID = 0L;
 
+    /**
+     * Geri doldurma KAPSAMININ sürümü; nişanın {@code seq} kolonunda saklanır.
+     *
+     * <p>Neden gerekli: kapsam sonradan genişleyebiliyor. {@code PAGESPEED} türü aşağıdaki
+     * haritalara ilk sürümde yazılmamıştı; nişan "koştu" dediği için ikinci koşu hiç
+     * başlamıyordu ve o türün özellik ÖNCESİ değişiklikleri {@code audit_log}'da kilitli
+     * kalıyordu — ekranda kart çıkıyor ama geçmişi eksik görünüyordu. Sürüm artınca bir kez
+     * daha koşulur; satır bazındaki kaynak+olay+zaman kontrolü zaten taşınmış satırları
+     * yeniden yazmaz, yani ikinci koşu YALNIZ yeni türün satırlarını taşır.
+     *
+     * <p>Sürüm ARTTIRMA kuralı: {@link #KIND_BY_RESOURCE} ya da {@link #EVENT_BY_ACTION}
+     * genişlediğinde artır. Yalnız kod düzeltmesi yapıldıysa artırma — gereksiz tam tarama olur.
+     *
+     * <p>v1: ilk sürüm (8 tür) · v2: PAGESPEED eklendi.
+     */
+    private static final int BACKFILL_VERSION = 2;
+
     /** Denetimdeki kaynak türü → geçmiş türü. Buraya girmeyen kayıt taşınmaz (sessiz değil: sayılır). */
     private static final Map<String, String> KIND_BY_RESOURCE = Map.of(
             "PORT_MONITOR", MonitorHistoryService.PORT,
@@ -46,7 +63,8 @@ public class MonitorHistoryBackfillService {
             "PAGE_MONITOR", MonitorHistoryService.PAGE,
             "SCRIPTED_MONITOR", MonitorHistoryService.SCRIPTED,
             "DOMAIN_MONITOR", MonitorHistoryService.DOMAIN,
-            "PING_MONITOR", MonitorHistoryService.PING);
+            "PING_MONITOR", MonitorHistoryService.PING,
+            "PAGESPEED_MONITOR", MonitorHistoryService.PAGESPEED);
 
     /** Denetim olayı → geçmiş olayı. */
     private static final Map<String, String> EVENT_BY_ACTION = Map.of(
@@ -63,7 +81,8 @@ public class MonitorHistoryBackfillService {
             MonitorHistoryService.PAGE, "page_monitors",
             MonitorHistoryService.SCRIPTED, "scripted_monitors",
             MonitorHistoryService.DOMAIN, "domain_monitors",
-            MonitorHistoryService.PING, "ping_monitors");
+            MonitorHistoryService.PING, "ping_monitors",
+            MonitorHistoryService.PAGESPEED, "pagespeed_monitors");
 
     private final AuditLogRepository auditRepo;
     private final MonitorChangeLogRepository changeRepo;
@@ -77,7 +96,13 @@ public class MonitorHistoryBackfillService {
      */
     public int runOnce() {
         try {
-            if (changeRepo.existsByResourceKindAndEventType(MARKER_KIND, MonitorHistoryService.AUDIT_BACKFILL)) {
+            // Nişan VARSA ama sürümü eskiyse kapsam büyümüş demektir: bir kez daha koşulur.
+            Integer marked = changeRepo
+                    .findFirstByResourceKindAndEventTypeOrderByIdDesc(
+                            MARKER_KIND, MonitorHistoryService.AUDIT_BACKFILL)
+                    .map(MonitorChangeLog::getSeq)
+                    .orElse(null);
+            if (marked != null && marked >= BACKFILL_VERSION) {
                 return -1;
             }
             int moved = 0, stamped = 0;
@@ -95,9 +120,10 @@ public class MonitorHistoryBackfillService {
                 // Denetimde ayrı bir "ad" kolonu yok: monitörün adı `detail` alanında taşınıyor
                 // (recordAction(..., resourceId, detail, changes) imzası). Geçmişte kaynak adı olarak
                 // onu kullanıyoruz — aksi halde taşınan satırlar adsız kalırdı.
-                history.recordBackfill(kind, id, a.getDetail(), a.getActorTeamId(), event,
-                        a.getChanges(), a.getActor(), a.getActorId(), a.getIpAddress(), a.getEventTime());
-                moved++;
+                if (history.recordBackfill(kind, id, a.getDetail(), a.getActorTeamId(), event,
+                        a.getChanges(), a.getActor(), a.getActorId(), a.getIpAddress(), a.getEventTime())) {
+                    moved++;
+                }
 
                 // İlk CREATE satırı = kaydı kimin oluşturduğu. Kolon zaten doluysa dokunulmaz.
                 String key = kind + ":" + id;
@@ -138,9 +164,10 @@ public class MonitorHistoryBackfillService {
         marker.setResourceKind(MARKER_KIND);
         marker.setResourceId(MARKER_ID);
         marker.setResourceName("audit-backfill");
-        marker.setSeq(0);
+        marker.setSeq(BACKFILL_VERSION);
         marker.setEventType(MonitorHistoryService.AUDIT_BACKFILL);
-        marker.setNote("Denetim kaydından " + moved + " satır taşındı");
+        marker.setNote("Denetim kaydından " + moved + " satır taşındı (kapsam sürümü "
+                + BACKFILL_VERSION + ")");
         marker.setActor("system");
         marker.setCreatedAt(java.time.format.DateTimeFormatter
                 .ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(java.time.ZoneOffset.UTC)
