@@ -64,7 +64,16 @@ class SsrfGuardTest {
         assertThatThrownBy(() -> g.validate("")).isInstanceOf(SsrfGuard.BlockedException.class);
         // çözülemeyen host → UnknownHostException → BlockedException (fail-safe)
         // (wildcard-DNS'li ağlarda var olmayan adlar çözüldüğü için sözdizimsel geçersiz ad — TestHosts)
-        assertThatThrownBy(() -> g.validate(TestHosts.UNRESOLVABLE)).isInstanceOf(SsrfGuard.BlockedException.class);
+        // ÇÖZÜLEMEYEN host AYRI tiptir: politika reddiyle aynı mesaja düşünce kullanıcı aracın
+        // kendisini engellediğini sanıyordu, oysa çözüm host adını düzeltmek. Alt tip olduğu için
+        // BlockedException yakalayan mevcut çağıranların hepsi eskisi gibi çalışır.
+        assertThatThrownBy(() -> g.validate(TestHosts.UNRESOLVABLE))
+                .isInstanceOf(SsrfGuard.UnresolvableHostException.class)
+                .isInstanceOf(SsrfGuard.BlockedException.class);
+        // Politika reddi ise ÇÖZÜLEMEYEN sayılmamalı — ikisi karışırsa mesaj yine yanlış olur.
+        assertThatThrownBy(() -> g.validate("127.0.0.1"))
+                .isInstanceOf(SsrfGuard.BlockedException.class)
+                .isNotInstanceOf(SsrfGuard.UnresolvableHostException.class);
         assertThatCode(() -> g.validate("10.1.2.3")).doesNotThrowAnyException();   // iç ağ açık
         assertThat(g.validate("8.8.8.8")).isNotEmpty();
     }

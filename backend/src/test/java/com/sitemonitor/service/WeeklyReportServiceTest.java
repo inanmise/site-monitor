@@ -61,7 +61,10 @@ class WeeklyReportServiceTest {
     @BeforeEach
     void setUp() {
         service = new WeeklyReportService(reportRepo, imageRepo, mailRepo, teamRepo, userRepo,
-                contactRepo, emailService, new ObjectMapper(), appSettings, permissionService, kpiService, monitoringStatsService);
+                contactRepo, emailService, new ObjectMapper(), appSettings, permissionService, kpiService, monitoringStatsService,
+                // Alan adi koruma ozeti: bu testlerin hicbiri alan adi izlemesi kurmuyor -> bolum cizilmez.
+                org.mockito.Mockito.mock(com.sitemonitor.repository.DomainMonitorRepository.class),
+                org.mockito.Mockito.mock(com.sitemonitor.repository.DomainCheckRepository.class));
         ReflectionTestUtils.setField(service, "imageMaxBytes", 2L * 1024 * 1024);
         // TEAM_ADMIN'in haftalık rapor onay yetkisi artık matris üzerinden (varsayılan true).
         when(permissionService.allows("TEAM_ADMIN", "weekly_reports.approve", "execute")).thenReturn(true);

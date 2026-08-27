@@ -77,6 +77,31 @@ public class DomainCheck {
     private Boolean changed = false;
 
     /** Ham yanıt özeti (UI/denetim — kısaltılmış). */
+    /**
+     * Transfer kilidi: {@code CLIENT} / {@code SERVER} / {@code BOTH} / {@code NONE} /
+     * {@code UNKNOWN}.
+     *
+     * <p>UNKNOWN ≠ NONE: EPP statü listesi yalnız RDAP kaynağında standarttır; WHOIS/.tr
+     * yollarında kilit biçimi TLD'ye göre değişir ve "yok" diye okumak yanlış alarm üretirdi.
+     * Registrar (client) ve registry (server) kilidi AYRI tutulur — ikincisi kurumsal
+     * domainlerde çok daha güçlü bir koruma sinyalidir.
+     */
+    @Column(name = "transfer_lock", length = 20)
+    private String transferLock;
+
+    /** Kara liste sonucu: CLEAN / LISTED / UNKNOWN / SKIPPED (izleme kapalı). */
+    @Column(name = "blacklist_status", length = 20)
+    private String blacklistStatus;
+
+    /** Eşleşme kanıtı: "liste=eşleşen değer" satırları (hangi liste, hangi IP). */
+    @Column(name = "blacklist_detail", columnDefinition = "TEXT")
+    private String blacklistDetail;
+
+    /** Neyin değiştiği (okunur özet). {@code changed} boolean'ı tek başına "ne değişti"
+     *  sorusunu cevaplamıyordu; kayıt sekmesindeki son-değişim kartı bunu okur. */
+    @Column(name = "change_detail", columnDefinition = "TEXT")
+    private String changeDetail;
+
     @Column(name = "raw_summary", columnDefinition = "TEXT")
     private String rawSummary;
 

@@ -71,6 +71,78 @@ describe('DomainMonitorPage', () => {
     expect(api.monitoring.createDomainMonitor.mock.calls[0][0].domain).toBe('example.org')
   })
 
+  /**
+   * Koruma anahtarlarinin VARSAYILANLARI payload'a girmeli.
+   *
+   * Kilit ve degisiklik ACIK (bugunku fiili davranisin devami), kara liste KAPALI: her kontrolde
+   * dis DNS sorgusu uretir ve bilincli acilmalidir. Bir anahtar payload'a hic girmezse backend
+   * kendi varsayilanini yazar ve kullanicinin ekranda gordugu ile kaydedilen AYRISIR.
+   */
+  /**
+   * Sunucu alan adini KAYITLI alan adina (eTLD+1) indirgiyor: kayit bilgisi bir HOST'a degil
+   * alan adinin kendisine aittir. Kullanici "www.x.com yazdim ama www silindi" diye bildirdi;
+   * alan altindaki ipucu bunu yaziyordu ama surpriz KAYDETTIKTEN sonra yasaniyordu.
+   *
+   * Indirgeme SUNUCUNUN dondurdugu degerle duyurulur — eTLD+1 kurali JS'te ikinci kez
+   * yazilmaz (iki kopya kacinilmaz olarak ayrisir).
+   */
+  it("indirgeme olduysa kaydedilen alan adi kullaniciya SOYLENIR", async () => {
+    api.monitoring.createDomainMonitor.mockResolvedValue({
+      success: true, data: { id: 9, domain: 'example.com' },   // www. sunucuda dustu
+    })
+    render(<DomainMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getDomainMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
+    fireEvent.change(screen.getByPlaceholderText('example.com'), { target: { value: 'www.example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+
+    await waitFor(() => expect(api.monitoring.createDomainMonitor).toHaveBeenCalled())
+    // Sessizce degistirmek "kaydim bozuldu" hissi veriyordu; ne olduğu yazili olmali.
+    expect(await screen.findByText(/www\.example\.com/)).toBeInTheDocument()
+  })
+
+  it("indirgemeYOKSA sade kaydedildi mesaji cikar", async () => {
+    api.monitoring.createDomainMonitor.mockResolvedValue({
+      success: true, data: { id: 9, domain: 'example.org' },
+    })
+    render(<DomainMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getDomainMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
+    fireEvent.change(screen.getByPlaceholderText('example.com'), { target: { value: 'example.org' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+
+    await waitFor(() => expect(api.monitoring.createDomainMonitor).toHaveBeenCalled())
+    expect(screen.queryByText(/olarak kaydedildi|Saved as/i)).toBeNull()
+  })
+
+  it("yeni izleme: koruma anahtarlarinin varsayilanlari payload'a girer", async () => {
+    api.monitoring.createDomainMonitor.mockResolvedValue({ success: true, data: {} })
+    render(<DomainMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getDomainMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
+    fireEvent.change(screen.getByPlaceholderText('example.com'), { target: { value: 'example.org' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+
+    await waitFor(() => expect(api.monitoring.createDomainMonitor).toHaveBeenCalled())
+    const p = api.monitoring.createDomainMonitor.mock.calls[0][0]
+    expect(p.transferLockAlert).toBe(true)
+    expect(p.changeAlert).toBe(true)
+    expect(p.blacklistEnabled).toBe(false)
+  })
+
+  it("kara liste anahtari acilabilir ve payload'a AÇIK gider", async () => {
+    api.monitoring.createDomainMonitor.mockResolvedValue({ success: true, data: {} })
+    render(<DomainMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getDomainMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
+    fireEvent.change(screen.getByPlaceholderText('example.com'), { target: { value: 'example.org' } })
+    fireEvent.click(screen.getByLabelText(/blacklist|kara liste/i))
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+
+    await waitFor(() => expect(api.monitoring.createDomainMonitor).toHaveBeenCalled())
+    expect(api.monitoring.createDomainMonitor.mock.calls[0][0].blacklistEnabled).toBe(true)
+  })
+
   it('Kopyala: TÜM kullanıcı ayarları birebir kopyalanır (yalnız ad "(Kopya)" olur)', async () => {
     // Her alan varsayılandan FARKLI → bir alan formFrom'dan düşerse tam-payload karşılaştırması kırılır.
     api.monitoring.getDomainMonitors.mockResolvedValue({ success: true, data: [{
@@ -79,6 +151,9 @@ describe('DomainMonitorPage', () => {
       team_id: 3, team_name: 'SY-A', group_name: 'Kurumsal',
       thresholds_csv: '90,45,10,2', warning_days: 45, critical_days: 9,
       interval_seconds: 43200, check_timeout_ms: 12000, active: false, notification_group_id: 7,
+      // Koruma anahtarlari da varsayilanin TERSI: biri formFrom'dan duserse
+      // tam-payload karsilastirmasi kirilir (bu testin varlik sebebi).
+      transfer_lock_alert: false, blacklist_enabled: true, change_alert: false,
     }] })
     api.monitoring.createDomainMonitor.mockResolvedValue({ success: true, data: {} })
 
@@ -104,6 +179,7 @@ describe('DomainMonitorPage', () => {
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
       // Bildirim grubu da kopyalanir: kopya, kaynagin alarmini ALAN ekibe gitsin.
       notificationGroupId: 7,
+      transferLockAlert: false, blacklistEnabled: true, changeAlert: false,
     })
   })
 

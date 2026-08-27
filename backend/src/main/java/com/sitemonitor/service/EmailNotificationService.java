@@ -3617,8 +3617,47 @@ public class EmailNotificationService {
     /** Özet + KPI şeridini "Haftalık Özet ve Göstergeler" başlıklı rapor bölümüne sarar (ekrandaki akordeonla tutarlı).
      *  İçerik yoksa (eski/veri-yok) boş bölüm ÇİZMEZ. */
     private String weeklyOverviewSection(Map<String, Object> kpiSummary, String accent) {
-        String body = weeklySummaryBlock(kpiSummary) + weeklyKpiBlock(kpiSummary) + weeklyMonitoringBlock(kpiSummary);
+        String body = weeklySummaryBlock(kpiSummary) + weeklyKpiBlock(kpiSummary)
+                + weeklyMonitoringBlock(kpiSummary) + weeklyDomainProtectionBlock(kpiSummary);
         return body.isBlank() ? "" : reportSection("Haftalık Özet ve Göstergeler", body, accent);
+    }
+
+    /**
+     * Alan adı koruması — kara listede / transfer kilidi olmayan domain sayısı. Outlook-safe
+     * (satır içi hex, rgba yok, tablo düzeni).
+     *
+     * <p>"Doğrulanamadı" AYRI yazılır: kilidi doğrulayamamak ile kilidin olmaması aynı şey
+     * değildir ve tek rakama katmak yönetime yanlış bir tablo gösterirdi. Sorun yoksa bölüm
+     * yine çizilir — "her şey yolunda" da bir bilgidir.
+     */
+    @SuppressWarnings("unchecked")
+    private String weeklyDomainProtectionBlock(Map<String, Object> k) {
+        Object p = k == null ? null : k.get("domain_protection");
+        if (!(p instanceof Map<?, ?> prot)) return "";
+        int total = prot.get("total") instanceof Number n ? n.intValue() : 0;
+        if (total == 0) return "";
+        int listed = prot.get("listed") instanceof Number n ? n.intValue() : 0;
+        int unlocked = prot.get("unlocked") instanceof Number n ? n.intValue() : 0;
+        int unverified = prot.get("lock_unverified") instanceof Number n ? n.intValue() : 0;
+
+        String head = "<div style='font-size:10px;font-weight:700;letter-spacing:.08em;color:#64748b;"
+                + "text-transform:uppercase;margin:12px 0 4px'>Alan Adı Koruması</div>";
+        StringBuilder rows = new StringBuilder();
+        rows.append(protRow("İzlenen alan adı", total, "#334155"));
+        rows.append(protRow("Kara listede", listed, listed > 0 ? "#dc2626" : "#16a34a"));
+        rows.append(protRow("Transfer kilidi yok", unlocked, unlocked > 0 ? "#dc2626" : "#16a34a"));
+        if (unverified > 0) rows.append(protRow("Kilit doğrulanamadı", unverified, "#64748b"));
+        return head + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' "
+                + "style='margin:0 0 12px;border-collapse:collapse'>" + rows + "</table>";
+    }
+
+    private String protRow(String label, int value, String color) {
+        return "<tr>"
+             + "<td style='padding:5px 8px;font-size:13px;color:#334155;border-bottom:1px solid #eef1f4'>"
+             + escHtml(label) + "</td>"
+             + "<td align='right' style='padding:5px 8px;font-size:13px;font-weight:700;color:" + color
+             + ";border-bottom:1px solid #eef1f4'>" + value + "</td>"
+             + "</tr>";
     }
 
     /** İzleme göstergeleri — tür başına tek satır (tür · izleme · erişim% · sorun), Outlook-safe.

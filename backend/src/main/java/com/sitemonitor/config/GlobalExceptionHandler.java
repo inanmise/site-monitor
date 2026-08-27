@@ -50,8 +50,34 @@ public class GlobalExceptionHandler {
     /** Validation errors from controllers (e.g. blank domain). */
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleBadRequest(IllegalArgumentException e) {
+        // Öneri YAPISAL alanla taşınır: arayüz metni ayrıştırmak zorunda kalırsa TR/EN
+        // arasında ya da mesaj her düzenlendiğinde sessizce kırılır.
+        if (e instanceof UnresolvableTargetException ue && ue.getSuggestion() != null) {
+            return ResponseEntity.status(400).body(Map.of(
+                    "success", false, "error", e.getMessage(),
+                    "unresolvable_host", ue.getHost(),
+                    "suggested_host", ue.getSuggestion()));
+        }
         return ResponseEntity.status(400)
                 .body(Map.of("success", false, "error", e.getMessage()));
+    }
+
+    /**
+     * Tanılama hedefi DNS'te çözülmedi; varsa çalışan bir alternatif ({@code www.<host>}) taşır.
+     *
+     * <p>Bir politika reddi DEĞİL — kullanıcı "izin verilmeyen hedef" mesajını aracın kendisini
+     * engellediği sanmıştı; çözümü host adını düzeltmek.
+     */
+    public static class UnresolvableTargetException extends IllegalArgumentException {
+        private final String host;
+        private final String suggestion;
+        public UnresolvableTargetException(String message, String host, String suggestion) {
+            super(message);
+            this.host = host;
+            this.suggestion = suggestion;
+        }
+        public String getHost() { return host; }
+        public String getSuggestion() { return suggestion; }
     }
 
     /** Access denied — yetkisiz/oturumsuz/IDOR erişim denemesi. GÜVENLİK OLAYI olarak denetlenir (BLOCKED). */

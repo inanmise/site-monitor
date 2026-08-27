@@ -18,6 +18,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -35,11 +36,23 @@ class DomainCheckerServiceTest {
 
     DomainCheckerService svc;
 
+    /** DNSBL varsayilanlarini donen hafif AppSettings mock'u (bu testlerde hic sorgulanmaz). */
+    private static AppSettingsService appSettingsForDnsbl() {
+        AppSettingsService a = org.mockito.Mockito.mock(AppSettingsService.class);
+        org.mockito.Mockito.lenient().when(a.getString(anyString(), any()))
+                .thenAnswer(i -> i.getArgument(1));
+        org.mockito.Mockito.lenient().when(a.getInt(anyString(), org.mockito.ArgumentMatchers.anyInt()))
+                .thenAnswer(i -> i.getArgument(1));
+        return a;
+    }
+
     @BeforeEach
     void setup() {
         PublicSuffixService psl = new PublicSuffixService();
         psl.load();
-        svc = new DomainCheckerService(psl, rdap, whois, dns, checkRepo, activityLog);
+        // Kara liste izlemesi monitor bazli opt-in; bu testlerin hicbiri acmiyor -> sorgu kosmaz.
+        DnsblCheckerService dnsbl = new DnsblCheckerService(dns, appSettingsForDnsbl());
+        svc = new DomainCheckerService(psl, rdap, whois, dns, checkRepo, activityLog, dnsbl);
         lenient().when(whois.enabled()).thenReturn(false);
         lenient().when(dns.check(anyString(), eq("NS"))).thenReturn(Map.of("success", true));
         // A/AAAA çözümü (Domain Kaydı): varsayılan boş → çoğu test reverse-DNS PTR beklemesine takılmasın (hız).
@@ -55,6 +68,132 @@ class DomainCheckerServiceTest {
         m.put("status_codes", status);
         m.put("nameservers", List.of("ns1.example.com"));
         return m;
+    }
+
+    // ── Transfer kilidi (K1) ─────────────────────────────────────────────────
+
+    private static final String FUTURE = java.time.LocalDate.now().plusDays(400) + "T00:00:00Z";
+
+    @Test
+    @DisplayName("Kilit DÖRT durumlu: registry ve registrar kilidi AYRI raporlanır")
+    void transferLockStates() {
+        lenient().when(whois.anySourceEnabled()).thenReturn(false);
+
+        when(rdap.lookup(eq("example.com"), any())).thenReturn(rdapOk(FUTURE, List.of("clientTransferProhibited")));
+        assertThat(svc.test("example.com", 30, 7).get("transfer_lock")).isEqualTo("CLIENT");
+
+        when(rdap.lookup(eq("example.net"), any())).thenReturn(rdapOk(FUTURE, List.of("serverTransferProhibited")));
+        assertThat(svc.test("example.net", 30, 7).get("transfer_lock")).isEqualTo("SERVER");
+
+        when(rdap.lookup(eq("example.org"), any()))
+                .thenReturn(rdapOk(FUTURE, List.of("clientTransferProhibited", "serverTransferProhibited")));
+        assertThat(svc.test("example.org", 30, 7).get("transfer_lock")).isEqualTo("BOTH");
+
+        when(rdap.lookup(eq("test.com"), any())).thenReturn(rdapOk(FUTURE, List.of("ok")));
+        assertThat(svc.test("test.com", 30, 7).get("transfer_lock")).isEqualTo("NONE");
+    }
+
+    /**
+     * UNKNOWN ≠ NONE. EPP statü listesi yalnız RDAP'ta standarttır; WHOIS/.tr yollarında kilit
+     * biçimi TLD'ye göre değişir. "Kilit yok" diye okumak, .tr envanterinin TAMAMINI sahte
+     * alarma boğardı.
+     */
+    @Test
+    @DisplayName("WHOIS kaynağında kilit DOĞRULANAMAZ — 'yok' DENMEZ, alarm üretilmez")
+    void whoisSourceYieldsUnknownLock() {
+        when(rdap.lookup(anyString(), any())).thenReturn(Map.of("source", "NONE", "error", "no rdap"));
+        when(whois.anySourceEnabled()).thenReturn(true);
+        Map<String, Object> w = new HashMap<>(rdapOk(FUTURE, List.of()));
+        w.put("source", "WHOIS");
+        when(whois.lookup(anyString())).thenReturn(w);
+
+        Map<String, Object> r = svc.test("example.com.tr", 30, 7);
+
+        assertThat(r.get("transfer_lock")).isEqualTo("UNKNOWN");
+        assertThat(r.get("no_transfer_lock")).isEqualTo(false);
+    }
+
+    /**
+     * K1 AYRIŞMA KAPISI. Kilit yokluğu eskiden {@code epp_warn}'a OR'lanıyordu: "autoRenewPeriod"
+     * ile "transfer kilidi yok" aynı alarma düşüyor ve ayırt edilemiyordu. Artık STATUS yalnız
+     * EPP kodlarına bakar.
+     */
+    @Test
+    @DisplayName("Kilit yokluğu artık epp_warn'a KARIŞMAZ (STATUS alarmı yalnız EPP kodları)")
+    void missingLockNoLongerPollutesEppWarn() {
+        lenient().when(whois.anySourceEnabled()).thenReturn(false);
+        when(rdap.lookup(eq("test.com"), any())).thenReturn(rdapOk(FUTURE, List.of("ok")));
+
+        Map<String, Object> r = svc.test("test.com", 30, 7);
+
+        assertThat(r.get("no_transfer_lock")).isEqualTo(true);
+        assertThat(r.get("epp_warn")).as("kilit yokluğu EPP uyarısı DEĞİLDİR").isEqualTo(false);
+        // Kart durumu yine WARNING: sorun görünür kalmalı, yalnız alarm ailesi ayrıştı.
+        assertThat(r.get("status")).isEqualTo("WARNING");
+    }
+
+    @Test
+    @DisplayName("Kilit alarmı KAPALIYSA kart durumunu da etkilemez ('kapalı' gerçekten kapalı)")
+    void lockAlertOffLeavesStatusClean() {
+        lenient().when(whois.anySourceEnabled()).thenReturn(false);
+        when(rdap.lookup(eq("test.com"), any())).thenReturn(rdapOk(FUTURE, List.of("ok")));
+        when(checkRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(anyLong(), anyString()))
+                .thenReturn(java.util.Optional.empty());
+
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(1L); m.setDomain("test.com");
+        m.setTransferLockAlert(false);
+        m.setBlacklistEnabled(false);
+
+        Map<String, Object> r = svc.check(m);
+
+        assertThat(r.get("no_transfer_lock")).isEqualTo(true);
+        assertThat(r.get("status")).as("anahtar kapalıyken kilit kart rengini etkilemez").isEqualTo("OK");
+    }
+
+    // ── Kara liste opt-in (K2/K3) ────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Kara liste KAPALIYKEN hiç sorgulanmaz — durum SKIPPED")
+    void blacklistDisabledIsSkipped() {
+        lenient().when(whois.anySourceEnabled()).thenReturn(false);
+        when(rdap.lookup(eq("example.org"), any())).thenReturn(rdapOk(FUTURE, List.of("clientTransferProhibited")));
+        when(checkRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(anyLong(), anyString()))
+                .thenReturn(java.util.Optional.empty());
+
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(2L); m.setDomain("example.org");
+        m.setBlacklistEnabled(false);
+
+        assertThat(svc.check(m).get("blacklist_status")).isEqualTo(DnsblCheckerService.SKIPPED);
+    }
+
+    // ── Değişiklik tespiti: DNSSEC (K4) ──────────────────────────────────────
+
+    /** DNSSEC geçişi (imzalıdan imzasıza) ciddi bir ele geçirme sinyali ve buraya HİÇ bakılmıyordu. */
+    @Test
+    @DisplayName("DNSSEC değişimi DEĞİŞİKLİK sayılır ve detayda yazar")
+    void dnssecChangeIsDetected() {
+        lenient().when(whois.anySourceEnabled()).thenReturn(false);
+        Map<String, Object> now = new HashMap<>(rdapOk(FUTURE, List.of("clientTransferProhibited")));
+        now.put("dnssec", "unsigned");
+        when(rdap.lookup(eq("example.net"), any())).thenReturn(now);
+
+        com.sitemonitor.model.DomainCheck prev = new com.sitemonitor.model.DomainCheck();
+        prev.setRegistrar("Test Registrar");
+        prev.setNameservers("ns1.example.com");
+        prev.setStatusCodes("clientTransferProhibited");
+        prev.setDnssec("signed");
+        when(checkRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(anyLong(), anyString()))
+                .thenReturn(java.util.Optional.of(prev));
+
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(3L); m.setDomain("example.net");
+
+        Map<String, Object> r = svc.check(m);
+
+        assertThat(r.get("changed")).isEqualTo(true);
+        assertThat(String.valueOf(r.get("change_detail"))).contains("DNSSEC");
     }
 
     @Test
@@ -83,7 +222,7 @@ class DomainCheckerServiceTest {
     void allWhoisSourcesDisabled_lookupNeverCalled() {
         when(rdap.lookup(eq("example.com"), any()))
                 .thenReturn(Map.of("source", "NONE", "error", "rdap fail"));
-        when(whois.anySourceEnabled()).thenReturn(false);
+        lenient().when(whois.anySourceEnabled()).thenReturn(false);
 
         Map<String, Object> r = svc.test("example.com", 30, 7);
 

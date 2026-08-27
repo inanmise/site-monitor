@@ -66,6 +66,9 @@ public class WeeklyReportService {
     private final PermissionService permissionService;
     private final WeeklyReportKpiService kpiService;   // e-posta hero KPI özeti (read-only, durum makinesinden bağımsız)
     private final MonitoringWeeklyStatsService monitoringStatsService;   // e-posta izleme göstergeleri (read-only)
+    // Alan adı koruma özeti (kara liste / transfer kilidi) — salt okuma, iki basit depo.
+    private final com.sitemonitor.repository.DomainMonitorRepository domainMonitorRepo;
+    private final com.sitemonitor.repository.DomainCheckRepository domainCheckRepo;
 
     /** static resetTemplate için paylaşılan, thread-safe mapper — her çağrıda
      *  yeni ObjectMapper kurma maliyetini önler (Jackson 3 mapper'ları yeniden
@@ -790,11 +793,51 @@ public class WeeklyReportService {
             } catch (Exception e) {
                 log.warn("Haftalık rapor e-posta izleme özeti hesaplanamadı: report={} — {}", r.getId(), e.getMessage());
             }
+            // Alan adı koruması — tekil alarmları kaçıran ekipler için toplu resim.
+            try {
+                Map<String, Object> prot = domainProtection(r.getTeamId());
+                if (prot != null) m.put("domain_protection", prot);
+            } catch (Exception e) {
+                log.warn("Haftalık rapor alan adı koruma özeti hesaplanamadı: report={} — {}", r.getId(), e.getMessage());
+            }
             return m;
         } catch (Exception e) {
             log.warn("Haftalık rapor e-posta KPI özeti hesaplanamadı: report={} — {}", r.getId(), e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Alan adı koruma özeti: kaç domain kara listede, kaçında transfer kilidi YOK.
+     *
+     * <p>"Doğrulanamadı" olanlar HİÇBİR kovaya girmez ve ayrıca sayılır: kilidi RDAP dışı bir
+     * TLD'de doğrulayamamak ile kilidin gerçekten olmaması aynı şey değildir. İkisini
+     * birleştirmek raporu yalancı yapardı.
+     *
+     * @return {@code null} — gösterilecek alan adı izlemesi yoksa (bölüm hiç çizilmez)
+     */
+    private Map<String, Object> domainProtection(Long teamId) {
+        List<com.sitemonitor.model.DomainMonitor> monitors = domainMonitorRepo.findByActiveTrue().stream()
+                .filter(m -> teamId == null || teamId.equals(m.getTeamId()))
+                .toList();
+        if (monitors.isEmpty()) return null;
+
+        java.util.Set<Long> ids = monitors.stream()
+                .map(com.sitemonitor.model.DomainMonitor::getId).collect(java.util.stream.Collectors.toSet());
+        int listed = 0, unlocked = 0, unverified = 0;
+        for (com.sitemonitor.model.DomainCheck c : domainCheckRepo.findLatestPerMonitor()) {
+            if (!ids.contains(c.getMonitorId())) continue;
+            if ("LISTED".equals(c.getBlacklistStatus())) listed++;
+            String lock = c.getTransferLock();
+            if ("NONE".equals(lock)) unlocked++;
+            else if (lock == null || "UNKNOWN".equals(lock)) unverified++;
+        }
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("total", monitors.size());
+        out.put("listed", listed);
+        out.put("unlocked", unlocked);
+        out.put("lock_unverified", unverified);
+        return out;
     }
 
     /** ActionItem listesi → e-posta builder'ının okuduğu sade map listesi. */

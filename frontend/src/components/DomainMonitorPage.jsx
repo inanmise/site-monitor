@@ -40,6 +40,9 @@ const emptyForm = {
   name: '', domain: '', groupName: '', notificationGroupId: '', teamId: '',
   thresholdsCsv: '60,30,14,7,3,1', warningDays: 30, criticalDays: 7, intervalSeconds: 86400, active: true,
   checkTimeoutMs: '',
+  // Koruma anahtarlari: kilit ve degisiklik ACIK (bugunku fiili davranis), kara liste KAPALI
+  // (her kontrolde dis DNS sorgusu uretir — bilincli acilmali).
+  transferLockAlert: true, blacklistEnabled: false, changeAlert: true,
 }
 
 /** URL yapıştırılmış girdiyi host'a indirger: https://www.x.com.tr/path → www.x.com.tr
@@ -159,7 +162,10 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
       thresholdsCsv: m.thresholds_csv || '60,30,14,7,3,1',
       warningDays: m.warning_days ?? 30, criticalDays: m.critical_days ?? 7,
       intervalSeconds: m.interval_seconds ?? 86400, active: m.active !== false,
-      checkTimeoutMs: m.check_timeout_ms ?? '' }
+      checkTimeoutMs: m.check_timeout_ms ?? '',
+      transferLockAlert: m.transfer_lock_alert !== false,
+      blacklistEnabled: m.blacklist_enabled === true,
+      changeAlert: m.change_alert !== false }
   }
   function openEdit(m) {
     setTestResult(null); setDupSource(null)
@@ -201,6 +207,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
       warningDays: Number(form.warningDays), criticalDays: Number(form.criticalDays),
       intervalSeconds: Number(form.intervalSeconds), active: form.active,
       checkTimeoutMs: form.checkTimeoutMs === '' || form.checkTimeoutMs == null ? null : Number(form.checkTimeoutMs),
+      transferLockAlert: !!form.transferLockAlert,
+      blacklistEnabled: !!form.blacklistEnabled,
+      changeAlert: !!form.changeAlert,
     }
     // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
     if (changeNote.trim()) payload.changeNote = changeNote.trim()
@@ -209,7 +218,19 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
       : await api.monitoring.updateDomainMonitor(modal.id, payload)
     await load(); setSaving(false)
     if (!res?.success) { toast.error(res?.error || 'Error'); return }
-    toast.success(t('dom.saved')); closeEdit()
+    // Sunucu alan adini KAYITLI alan adina (eTLD+1) indirger: kayit bilgisi bir HOST'a degil
+    // alan adinin kendisine aittir (RDAP/WHOIS'te www.x.com diye bir kayit yoktur). Alan
+    // altindaki ipucu bunu yaziyor ama surpriz KAYDETTIKTEN sonra yasaniyor: kullanici
+    // "www yazdim, silindi" diye okuyor. Indirgeme olduysa SUNUCUNUN dondurdugu degerle
+    // soylenir — kural ikinci kez (bu kez JS'te) yazilmaz, kopyalar kaciniilmaz olarak ayrisir.
+    const savedDomain = res?.data?.domain
+    const typed = normalizeDomainInput(form.domain)
+    if (savedDomain && typed && savedDomain !== typed) {
+      toast.success(t('dom.savedReduced').replace('{0}', typed).replace('{1}', savedDomain))
+    } else {
+      toast.success(t('dom.saved'))
+    }
+    closeEdit()
   }
 
   async function del() {
@@ -579,6 +600,28 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
               <label className="checkbox-label">
                 <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('dom.active')}</label>
               <div className="full-width field-hint">{t('dom.unknownHint')}</div>
+
+              {/* Koruma anahtarlari. Sure bitisi BILEREK toggle DEGIL: bizde esik alanlariyla
+                  (uyari/kritik gun + esik listesi) zaten var ve acik/kapali bir anahtar onu
+                  fakirlestirirdi. */}
+              <div className="full-width form-section-header">{t('dom.alarmSettings')}</div>
+              <label className="checkbox-label full-width">
+                <input type="checkbox" checked={form.transferLockAlert}
+                  onChange={e => setForm(f => ({ ...f, transferLockAlert: e.target.checked }))} />
+                {t('dom.transferLockAlert')}</label>
+              <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('dom.transferLockHint')}</div>
+
+              <label className="checkbox-label full-width">
+                <input type="checkbox" checked={form.blacklistEnabled}
+                  onChange={e => setForm(f => ({ ...f, blacklistEnabled: e.target.checked }))} />
+                {t('dom.blacklistEnabled')}</label>
+              <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('dom.blacklistHint')}</div>
+
+              <label className="checkbox-label full-width">
+                <input type="checkbox" checked={form.changeAlert}
+                  onChange={e => setForm(f => ({ ...f, changeAlert: e.target.checked }))} />
+                {t('dom.changeAlert')}</label>
+              <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('dom.changeAlertHint')}</div>
             </div>
 
             {testResult && (

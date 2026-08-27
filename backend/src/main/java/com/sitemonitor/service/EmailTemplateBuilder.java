@@ -159,6 +159,8 @@ public class EmailTemplateBuilder {
             case "DOMAINMON_STATUS"  -> "ALAN ADI DURUM UYARISI";
             case "DOMAINMON_CHANGED" -> "ALAN ADI DEĞİŞİKLİK UYARISI";
             case "DOMAINMON_UNKNOWN" -> "ALAN ADI VERİ UYARISI";
+            case "DOMAINMON_TRANSFER_LOCK" -> "ALAN ADI TRANSFER KİLİDİ";
+            case "DOMAINMON_BLACKLIST" -> "ALAN ADI KARA LİSTE";
             case "REVOKED"      -> "SERTİFİKA İPTAL UYARISI";
             case "MISMATCH"     -> "SERTİFİKA DAĞITIM UYARISI";
             case "CHAIN_BROKEN" -> "SERTİFİKA ZİNCİR UYARISI";

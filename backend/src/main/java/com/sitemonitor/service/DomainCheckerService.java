@@ -39,6 +39,7 @@ public class DomainCheckerService {
     private final DnsCheckerService dns;
     private final DomainCheckRepository checkRepo;
     private final ActivityLogService activityLog;   // birleşik aktivite akışı (best-effort)
+    private final DnsblCheckerService dnsbl;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -51,7 +52,7 @@ public class DomainCheckerService {
     /** İzleme/manuel kontrol — kontrol + persist + değişiklik tespiti. */
     public Map<String, Object> check(DomainMonitor m) {
         Map<String, Object> r = evaluate(m.getDomain(), m.getWarningDays() != null ? m.getWarningDays() : 30,
-                m.getCriticalDays() != null ? m.getCriticalDays() : 7, m.getId(), m.getCheckTimeoutMs());
+                m.getCriticalDays() != null ? m.getCriticalDays() : 7, m.getId(), m.getCheckTimeoutMs(), m);
         activityLog.recordCheck(ActivityLogService.DOMAIN, m.getId(), m.getName(),
                 m.getDomain(), m.getTeamId(), false, "scheduler", r);
         return r;
@@ -59,10 +60,12 @@ public class DomainCheckerService {
 
     /** Test (kaydetmeden) — persist yok, değişiklik tespiti yok. */
     public Map<String, Object> test(String domainInput, int warningDays, int criticalDays) {
-        return evaluate(domainInput, warningDays, criticalDays, null, null);
+        return evaluate(domainInput, warningDays, criticalDays, null, null, null);
     }
 
-    private Map<String, Object> evaluate(String input, int warningDays, int criticalDays, Long monitorId, Integer timeoutMs) {
+    /** @param m kayıtlı izleme (koruma anahtarları için); {@code null} = kaydetmeden deneme */
+    private Map<String, Object> evaluate(String input, int warningDays, int criticalDays, Long monitorId,
+                                         Integer timeoutMs, DomainMonitor m) {
         String checkedAt = ISO.format(Instant.now());
         String reg = psl.registrableDomain(input);
         if (reg == null || reg.isBlank()) {
@@ -95,13 +98,28 @@ public class DomainCheckerService {
         boolean eppWarn = lc.stream().anyMatch(EPP_WARN::contains);
         // "Transfer kilidi yok" uyarısı yalnız RDAP kaynağı için (EPP kodları standarttır); WHOIS'te lock formatı
         // TLD'ye göre değişir → yanlış-pozitif önlemek için WHOIS'te bu uyarı üretilmez.
-        boolean noTransferLock = hasData && "RDAP".equals(source)
-                && !lc.contains("clienttransferprohibited") && !lc.contains("servertransferprohibited");
+        // Transfer kilidi DÖRT durumlu. UNKNOWN ≠ NONE: EPP statü listesi yalnız RDAP'ta
+        // standarttır; WHOIS/.tr yollarında kilit biçimi TLD'ye göre değişir ve "yok" diye
+        // okumak yanlış alarm üretirdi. Registrar (client) ve registry (server) kilidi AYRI:
+        // ikincisi kurumsal domainlerde çok daha güçlü bir koruma sinyalidir.
+        boolean lockKnown = hasData && "RDAP".equals(source);
+        boolean clientLock = lc.contains("clienttransferprohibited");
+        boolean serverLock = lc.contains("servertransferprohibited");
+        String transferLockState = !lockKnown ? "UNKNOWN"
+                : (clientLock && serverLock) ? "BOTH"
+                : serverLock ? "SERVER"
+                : clientLock ? "CLIENT"
+                : "NONE";
+        boolean noTransferLock = "NONE".equals(transferLockState);
+        // Kilit alarmı AYRI bir tipe taşındı; anahtarı kapalıysa kart durumunu da etkilemez
+        // ("kapalı" gerçekten kapalı demek olmalı). Kayıtsız denemede varsayılan AÇIK sayılır.
+        boolean lockAlert = m == null || !Boolean.FALSE.equals(m.getTransferLockAlert());
+        boolean lockProblem = noTransferLock && lockAlert;
 
         String status;
         if (!hasData) status = "UNKNOWN";
         else if (eppCritical || days < 0 || days <= criticalDays) status = "CRITICAL";
-        else if (eppWarn || noTransferLock || days <= warningDays) status = "WARNING";
+        else if (eppWarn || lockProblem || days <= warningDays) status = "WARNING";
         else status = "OK";
 
         // DNS çapraz doğrulama — NS kayıtları çözülüyor mu (best-effort)
@@ -114,9 +132,15 @@ public class DomainCheckerService {
         try { resolvedIps.addAll(asList(dns.check(reg, "AAAA").get("values"))); } catch (Exception ignore) {}
         List<String> hostnames = reverseDns(resolvedIps);
 
+        // Kara liste: yalnız AÇIKSA sorgulanır (her kontrolde dış DNS sorgusu üretir).
+        DnsblCheckerService.Result bl = (m != null && Boolean.TRUE.equals(m.getBlacklistEnabled()))
+                ? dnsbl.check(reg, resolvedIps)
+                : DnsblCheckerService.Result.skipped();
+
         // Değişiklik tespiti (yalnız persisted + veri var)
         boolean changed = false;
         String changeDetail = null;
+        String blacklistDelta = null;
         if (monitorId != null && hasData) {
             var prevOpt = checkRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(monitorId, "NONE");
             if (prevOpt.isPresent()) {
@@ -126,7 +150,15 @@ public class DomainCheckerService {
                     ch.append("registrar: ").append(prev.getRegistrar()).append(" → ").append(registrar).append("; ");
                 if (setChanged(prev.getNameservers(), nameservers)) ch.append("nameserver seti değişti; ");
                 if (setChanged(prev.getStatusCodes(), statusCodes)) ch.append("EPP status kodları değişti; ");
+                // DNSSEC geçişi (imzalıdan imzasıza) ciddi bir ele geçirme sinyali ve buraya
+                // hiç bakılmıyordu — sessizce kaçıyordu.
+                String prevSec = prev.getDnssec(), nowSec = (String) info.get("dnssec");
+                if (prevSec != null && nowSec != null && !prevSec.equalsIgnoreCase(nowSec))
+                    ch.append("DNSSEC: ").append(prevSec).append(" → ").append(nowSec).append("; ");
                 if (ch.length() > 0) { changed = true; changeDetail = ch.toString().trim(); }
+                // Delist takibi: alarm açıkken "ilerliyor mu" sorusunu mailde cevaplar.
+                // Kara listeden çıkma süreci günler sürer; operatör her gün elle bakmasın.
+                blacklistDelta = blacklistDelta(prev.getBlacklistDetail(), bl.detail());
             }
         }
 
@@ -150,8 +182,17 @@ public class DomainCheckerService {
         out.put("changed", changed);
         out.put("change_detail", changeDetail);
         out.put("epp_critical", eppCritical);
-        out.put("epp_warn", eppWarn || noTransferLock);
+        // Kilit yokluğu ARTIK epp_warn'a karışmaz: "autoRenewPeriod" ile "transfer kilidi yok"
+        // operasyonel olarak farklı işlerdi ve tek alarmda birleşince ayırt edilemiyordu.
+        out.put("epp_warn", eppWarn);
         out.put("no_transfer_lock", noTransferLock);
+        out.put("transfer_lock", transferLockState);
+        out.put("transfer_lock_alert", lockAlert);
+
+        out.put("blacklist_status", bl.status());
+        out.put("blacklist_delta", blacklistDelta);
+        out.put("blacklist_detail", bl.detail());
+        out.put("blacklist_hits", bl.hits());
         out.put("error", info.get("error"));
         out.put("checked_at", checkedAt);
         persist(monitorId, out, changed);
@@ -179,6 +220,10 @@ public class DomainCheckerService {
             dc.setHostnames(join(asList(out.get("hostnames"))));
             dc.setNsResolves((Boolean) out.get("ns_resolves"));
             dc.setChanged(changed);
+            dc.setChangeDetail((String) out.get("change_detail"));
+            dc.setTransferLock((String) out.get("transfer_lock"));
+            dc.setBlacklistStatus((String) out.get("blacklist_status"));
+            dc.setBlacklistDetail((String) out.get("blacklist_detail"));
             dc.setRawSummary(summary(out));
             dc.setError((String) out.get("error"));
             dc.setCheckedAt((String) out.get("checked_at"));
@@ -211,11 +256,41 @@ public class DomainCheckerService {
         out.put("status_codes", List.of()); out.put("nameservers", List.of()); out.put("ns_resolves", null);
         out.put("changed", false); out.put("change_detail", null);
         out.put("epp_critical", false); out.put("epp_warn", false); out.put("no_transfer_lock", false);
+        // Veri yokken "kilit yok" ya da "temiz" DEMEK YOK — ikisi de doğrulanamadı.
+        out.put("transfer_lock", "UNKNOWN"); out.put("transfer_lock_alert", true);
+        out.put("blacklist_status", DnsblCheckerService.UNKNOWN);
+        out.put("blacklist_detail", null); out.put("blacklist_hits", 0);
         out.put("error", error); out.put("checked_at", checkedAt);
         return out;
     }
 
     // ── Yardımcılar ─────────────────────────────────────────────────────────────
+
+    /**
+     * Önceki ve şimdiki kara liste kanıtını karşılaştırır: "hâlâ N listede" / "M listeden çıktı".
+     *
+     * <p>Rakamı tek başına yazmak yetmiyor: operatör delist talebinden sonra ilerlemeyi görmek
+     * istiyor. Değişiklik yoksa {@code null} — mail dipnotu ancak söyleyecek bir şey varsa çıkar.
+     */
+    static String blacklistDelta(String prevDetail, String nowDetail) {
+        var before = DnsblCheckerService.parseDetail(prevDetail).keySet();
+        var after = DnsblCheckerService.parseDetail(nowDetail).keySet();
+        if (before.isEmpty() && after.isEmpty()) return null;
+        java.util.Set<String> gone = new java.util.LinkedHashSet<>(before);
+        gone.removeAll(after);
+        java.util.Set<String> added = new java.util.LinkedHashSet<>(after);
+        added.removeAll(before);
+        if (gone.isEmpty() && added.isEmpty()) {
+            return after.isEmpty() ? null : "hâlâ " + after.size() + " listede";
+        }
+        StringBuilder sb = new StringBuilder();
+        if (!gone.isEmpty()) sb.append("çıktı: ").append(String.join(", ", gone));
+        if (!added.isEmpty()) {
+            if (sb.length() > 0) sb.append(" · ");
+            sb.append("yeni: ").append(String.join(", ", added));
+        }
+        return sb.toString();
+    }
 
     /** ISO tarihten bugüne kalan tam gün (negatif = geçmiş). Parse edilemezse null. */
     static Integer daysUntil(String iso) {

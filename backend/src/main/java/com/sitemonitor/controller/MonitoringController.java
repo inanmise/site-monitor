@@ -117,7 +117,8 @@ public class MonitoringController {
         "expectedStatus", "method", "matchOperator", "matchCount", "active", "teamId", "groupName",
         "intervalSeconds", "timeoutMs", "warningDays", "criticalDays", "protocol", "verifySsl", "followRedirects",
         "mode", "crawlDepth", "crawlMaxPages", "excludePatterns", "slowResourceMs", "alertThirdParty", "alertMixedContent", "alertTimeout", "resourceConcurrency",
-        "notificationGroupId"
+        "notificationGroupId",
+        "transferLockAlert", "blacklistEnabled", "changeAlert"
     };
 
     /**
@@ -4384,6 +4385,9 @@ public class MonitoringController {
         if (body.get("warningDays") instanceof Number n) m.setWarningDays(Math.max(1, n.intValue()));
         if (body.get("criticalDays") instanceof Number n) m.setCriticalDays(Math.max(1, n.intValue()));
         if (body.get("intervalSeconds") instanceof Number n) m.setIntervalSeconds(Math.max(3600, n.intValue()));
+        if (body.get("transferLockAlert") instanceof Boolean b) m.setTransferLockAlert(b);
+        if (body.get("blacklistEnabled")  instanceof Boolean b) m.setBlacklistEnabled(b);
+        if (body.get("changeAlert")       instanceof Boolean b) m.setChangeAlert(b);
         // RDAP kontrol timeout'u (ms) — boş/null = global ayar; girilirse 1–30 sn'ye kısılır.
         if (body.containsKey("checkTimeoutMs")) {
             Object v = body.get("checkTimeoutMs");
@@ -4394,7 +4398,8 @@ public class MonitoringController {
 
     private AlertEvent openDomainMonAlarm(String domain) {
         for (String t : List.of(EscalationService.TYPE_DOMAINMON_EXPIRY, EscalationService.TYPE_DOMAINMON_UNKNOWN,
-                EscalationService.TYPE_DOMAINMON_STATUS, EscalationService.TYPE_DOMAINMON_CHANGED)) {
+                EscalationService.TYPE_DOMAINMON_STATUS, EscalationService.TYPE_DOMAINMON_CHANGED,
+                EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK, EscalationService.TYPE_DOMAINMON_BLACKLIST)) {
             var a = alertEventRepo.findOpenAlert(domain, t);
             if (a.isPresent()) return a.get();
         }
@@ -4419,6 +4424,9 @@ public class MonitoringController {
         item.put("active_alarm",       openAlarm != null);
         item.put("alarm_level",        openAlarm != null ? openAlarm.getAlertLevel() : null);
         item.put("alarm_acknowledged", openAlarm != null ? openAlarm.getAcknowledged() : null);
+        item.put("transfer_lock_alert", !Boolean.FALSE.equals(m.getTransferLockAlert()));
+        item.put("blacklist_enabled",   Boolean.TRUE.equals(m.getBlacklistEnabled()));
+        item.put("change_alert",        !Boolean.FALSE.equals(m.getChangeAlert()));
         if (latest != null) {
             item.put("status",            latest.getStatus());
             item.put("source",            latest.getSource());
@@ -4436,6 +4444,10 @@ public class MonitoringController {
             item.put("hostnames",         csvList(latest.getHostnames()));
             item.put("ns_resolves",       latest.getNsResolves());
             item.put("changed",           latest.getChanged());
+            item.put("change_detail",     latest.getChangeDetail());
+            item.put("transfer_lock",     latest.getTransferLock());
+            item.put("blacklist_status",  latest.getBlacklistStatus());
+            item.put("blacklist_detail",  latest.getBlacklistDetail());
             item.put("error",             latest.getError());
             item.put("checked_at",        latest.getCheckedAt());
         } else {
@@ -4444,7 +4456,11 @@ public class MonitoringController {
             item.put("registrar", null); item.put("registrar_iana_id", null); item.put("dnssec", null);
             item.put("status_codes", List.of()); item.put("nameservers", List.of());
             item.put("resolved_ips", List.of()); item.put("hostnames", List.of());
-            item.put("ns_resolves", null); item.put("changed", false); item.put("error", null); item.put("checked_at", null);
+            item.put("ns_resolves", null); item.put("changed", false); item.put("change_detail", null);
+            // Kontrol YOKKEN "kilitli" ya da "temiz" demek yok — ikisi de doğrulanamadı.
+            item.put("transfer_lock", "UNKNOWN"); item.put("blacklist_status", "UNKNOWN");
+            item.put("blacklist_detail", null);
+            item.put("error", null); item.put("checked_at", null);
         }
         return item;
     }
