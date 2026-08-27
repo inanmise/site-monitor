@@ -39,6 +39,9 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.escalation.auto-add-managers", "general",    Type.BOOL),
         // Hareketsizlik oturum kapatma. Eskiden YALNIZ derleme zamani (VITE_INACTIVITY_MS)
         // ayarlanabiliyordu: degistirmek icin yeniden derleyip dagitmak gerekiyordu.
+        // k6 REST API adresi. Varsayilan 127.0.0.1:0 = efemer port (cakisma imkansiz).
+        // BOS birakilirsa bayrak hic eklenmez — beklenmedik bir k6 surumunde ani geri donus.
+        new Setting("site.monitor.scripted.k6-api-address",      "monitoring", Type.STRING),
         new Setting("site.monitor.ui.inactivity-minutes",         "general",    Type.INT),
         new Setting("site.monitor.ui.inactivity-warn-seconds",    "general",    Type.INT),
         new Setting("site.monitor.network.error-rate-threshold", "outage",     Type.DOUBLE),

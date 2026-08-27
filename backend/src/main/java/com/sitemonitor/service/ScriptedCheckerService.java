@@ -216,6 +216,7 @@ public class ScriptedCheckerService {
             List<String> args = new ArrayList<>(List.of(
                     k6Bin(), "archive", "--quiet",
                     "-O", archiveFile.toAbsolutePath().toString()));
+            addApiAddress(args);
             for (String cidr : ssrfGuard.blacklistCidrs()) { args.add("--blacklist-ip"); args.add(cidr); }
             args.add(scriptFile.toAbsolutePath().toString());
 
@@ -534,6 +535,41 @@ public class ScriptedCheckerService {
 
     private String k6Bin() { return appSettings.getString("site.monitor.scripted.k6-bin", "k6"); }
 
+    /**
+     * k6'nın REST API sunucusu için EFEMER port ({@code :0} → işletim sistemi boş bir port seçer).
+     *
+     * <p>Neden gerekli: k6 her koşumda {@code localhost:6565} üzerinde bir REST API açar. Senaryo
+     * kontrolleri EŞZAMANLI koştuğu için ilk süreç portu alıyor, sonrakiler alamayıp
+     * {@code level=warning msg="Error from API server" ... bind: address already in use} yazıyordu.
+     * Koşum etkilenmiyordu (checks %100 geçiyor) ama uyarı kullanıcıya gösterilen "Teknik detay"
+     * çıktısının İLK satırında duruyor ve SAĞLIKLI bir koşumu bozuk gösteriyordu.
+     *
+     * <p>Bu API'yi projede HİÇBİR YER kullanmıyor (6565 için tek referans yok) — yani uyarı,
+     * kullanmadığımız bir özelliğin açılamamasından geliyordu.
+     *
+     * <p>Ölçüldü (k6 v0.49.0): bayrak gerçekten okunuyor — bağlanamayacak bir adres verilince
+     * k6 {@code exit 106} ile ÖLÜMCÜL hata veriyor. {@code 127.0.0.1:0} ise her zaman bağlanır,
+     * yani çakışma imkânsız hale gelir. {@code archive} alt komutu da bayrağı kabul ediyor.
+     */
+    private static final String K6_API_ADDRESS = "127.0.0.1:0";
+
+    /**
+     * Bayrağı komuta ekler — BOŞ ayar verilirse hiç eklenmez (eski davranışa dönüş).
+     *
+     * <p>Kaçış kapısı bilinçli: ortamda 16 senaryo izlemesi var ve bu bayrak HEM {@code run}
+     * HEM {@code archive} yolunda. Beklenmedik bir k6 sürümünde sorun çıkarsa ops tek ayarla
+     * geri alabilmeli — yeniden derleme/dağıtım beklemeden.
+     */
+    private void addApiAddress(List<String> args) {
+        String addr = k6ApiAddress();
+        if (!addr.isBlank()) { args.add("--address"); args.add(addr); }
+    }
+
+    private String k6ApiAddress() {
+        String v = appSettings.getString("site.monitor.scripted.k6-api-address", K6_API_ADDRESS);
+        return v == null ? "" : v.trim();
+    }
+
     // ── Giriş noktaları ──────────────────────────────────────────────────────
 
     /** Kaydedilmiş monitör (scheduler/manuel). */
@@ -827,6 +863,7 @@ public class ScriptedCheckerService {
                     k6Bin(), "run", "--quiet", "--no-usage-report",
                     "--summary-export=" + summaryFile.toAbsolutePath(),
                     "--vus", "1", "--iterations", "1"));
+            addApiAddress(args);
             // ── L2 sert tavan: istek/sn ────────────────────────────────────────────────────
             // Statik analiz `for (i=0;i<n;i++)` gibi değişken sınırlı bir döngüde kaç istek
             // atılacağını KANITLAYAMAZ. Bu bayrak kanıt gerektirmez: script 10.000 istek yazsa
