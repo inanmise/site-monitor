@@ -660,6 +660,39 @@ class AdminControllerTest {
         verify(domainExpiryDiagnosticsService).diagnose("www.wingscard.com.tr");
     }
 
+    /**
+     * KAYIT sorgusu hedefin ÇÖZÜLMESİNİ gerektirmez.
+     *
+     * <p>Süre-bitişi tanılaması hedefe BAĞLANMAZ: PSL → IANA bootstrap → registry RDAP →
+     * WHOIS zinciriyle registry sunucularına sorar. Bir alan adının A/AAAA kaydı olmayabilir
+     * ama KAYDI vardır (apex yayınlanmamış, yalnız {@code www} var — kurumsal alan adlarında
+     * çok yaygın). Eskiden SSRF hedef doğrulaması burada da koşuyor ve bu alan adları
+     * "çözümlenemeyen host" diye REDDEDİLİYORDU: uyarı çıkıyor ama teşhis hiç yapılmıyordu.
+     */
+    @Test
+    @DisplayName("domain-expiry: A kaydı OLMAYAN alan adı yine de tanılanır (registry sorgusu)")
+    void runDomainExpiryDiagnostics_unresolvableDomainStillDiagnosed() throws Exception {
+        // Biçimi geçerli ama .invalid TLD'si gereği ASLA çözülmeyen ad — burada REDDEDİLMEMELİ.
+        final String UNRESOLVABLE_DOMAIN = "cozulmeyen-host.invalid";
+        // KAPI VAKUM OLMASIN: bu dilimde SsrfGuard mock'lu ve validate() varsayılan olarak
+        // hiçbir şey yapmaz — kural kaldırılsa bile test yeşil kalırdı (mutasyonla ölçüldü).
+        // Muhafız burada ÇAĞRILIRSA patlayacak şekilde kuruluyor: uç onu çağırmamalı.
+        org.mockito.Mockito.doThrow(new com.sitemonitor.service.SsrfGuard.UnresolvableHostException(
+                        "çözümlenemeyen host: " + UNRESOLVABLE_DOMAIN))
+                .when(ssrfGuard).validate(UNRESOLVABLE_DOMAIN);
+        when(domainExpiryDiagnosticsService.diagnose(UNRESOLVABLE_DOMAIN))
+                .thenReturn(Map.of("domain", UNRESOLVABLE_DOMAIN,
+                        "source", "RDAP", "expiry_date", "2030-01-01T00:00:00Z", "steps", List.of()));
+
+        mvc.perform(post("/api/admin/diagnostics/domain-expiry")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"" + UNRESOLVABLE_DOMAIN + "\"}"))
+                .andExpect(status().isOk());
+
+        verify(domainExpiryDiagnosticsService).diagnose(UNRESOLVABLE_DOMAIN);
+    }
+
     @Test
     @DisplayName("POST /api/admin/diagnostics/openssl as ADMIN returns probe; USER 403")
     void runOpenssl_adminAndUser() throws Exception {

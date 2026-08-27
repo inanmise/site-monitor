@@ -544,14 +544,16 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> runDomainExpiryDiagnostics(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
-        domain = validateDiagTarget(domain);
+        domain = validateRegistryTarget(domain);
         requireAdminOrMonitoredDomain(session, domain);
         requirePerm(session, "diagnostics.run", "execute");
         // Kullanıcı-başı hız sınırı (10/dk) — RDAP/WHOIS registry'lerini dövmemek için.
         Long uid = userIdFromSession(session);
         checkDomainDiagRate(uid != null ? "u" + uid : "ip" + clientIp(request));
 
-        Map<String, Object> data = domainExpiryDiagnosticsService.diagnose(domain);
+        // DEĞİŞTİRİLEBİLİR kopya: aşağıda data.put(...) yapılıyor ve servis bir gün
+        // değiştirilemez harita dönerse uç 500 verirdi (sessiz, yalnız o dalda).
+        Map<String, Object> data = new LinkedHashMap<>(domainExpiryDiagnosticsService.diagnose(domain));
         String source = String.valueOf(data.get("source"));
         boolean ok = !"FAILED".equals(source) && data.get("expiry_date") != null;
 
@@ -2355,6 +2357,25 @@ public class AdminController {
             throw new IllegalArgumentException("İzin verilmeyen tanılama hedefi: " + be.getMessage());
         }
         return host;
+    }
+
+    /**
+     * KAYIT sorgusu hedefi — biçim doğrulanır, DNS çözümü ARANMAZ.
+     *
+     * <p>Süre-bitişi tanılaması hedefe BAĞLANMAZ: PSL → IANA bootstrap → registry RDAP →
+     * WHOIS zinciriyle REGISTRY sunucularına sorar. Bu yüzden alan adının A/AAAA kaydı
+     * olması gerekmez — kaydı olan ama yalnız {@code www} host'u yayınlanmış bir alan adı
+     * (kurumsal alan adlarında çok yaygın) tanılanabilmeli. Eskiden {@link #validateDiagTarget}
+     * kullanıldığı için bu alan adları "çözümlenemeyen host" diye REDDEDİLİYORDU.
+     *
+     * <p>Öneri de anlamsızdı: servis girdiyi zaten kayıtlı alan adına indirgiyor
+     * ({@code www.x.com} → {@code x.com}), yani "www ile deneyin" AYNI sonucu verirdi.
+     *
+     * <p>SSRF riski yok: bağlanılan yer kullanıcının host'u değil, TLD'nin registry'si.
+     * Yetki kapısı ({@code requireAdminOrMonitoredDomain}) yerinde kalır.
+     */
+    private String validateRegistryTarget(String domain) {
+        return validateDomain(domain);
     }
 
     /** {@code www.<host>} çözülüyor mu — yalnız HATA yolunda, tek ek sorgu. Çözülmüyorsa null. */
