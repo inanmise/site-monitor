@@ -7848,6 +7848,159 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   font-size: .85em; color: var(--text); border-radius: 0 6px 6px 0;
 }
 
+
+/* ── Kişi-webhook (push) bildirim ayarları ─────────────────────────────────────
+   SmtpSettings/StormSettings kart düzeni üstüne yalnız bu sayfaya özgü ızgara ve
+   günlük satırları. Tonlar App token'larından — hayalet var() yok. */
+.userpush-settings { display: block; }
+
+/* ── Webhook Bildirimleri: executive yüzey (up-*) ──────────────────────────────
+   namethatui desenlerinin proje dağarcığına uyarlanışı: switch = perm-pill (mevcut),
+   KPI kartları = chg-kpi görsel dili, toggle chip'ler, seçilebilir grup kartları ve
+   push bildirim maketi. Tüm renkler App token'larından — hayalet var() yok. */
+
+/* KPI şeridi */
+.up-kpis { gap: 10px; }
+.up-kpi { display: flex; flex-direction: column; gap: 4px; min-width: 150px;
+  padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-surface); }
+.up-kpi-label { font-size: .74em; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--text-muted); }
+.up-kpi-nums { display: flex; align-items: baseline; gap: 5px; }
+.up-kpi-nums b { font-size: 1.25em; }
+.up-kpi-nums small { color: var(--text-muted); font-size: .68em; margin-right: 8px; }
+.up-kpi-ok { color: var(--success); }
+.up-kpi-fail { color: var(--danger); }
+.up-kpi--circuit { flex-direction: row; align-items: center; gap: 8px;
+  color: var(--danger); font-weight: 700; border-color: var(--danger); }
+
+/* Global anahtar + callout */
+.up-master { padding-top: 16px; }
+.up-master-row { display: flex; align-items: center; gap: 14px; }
+.up-master-title { font-weight: 700; margin-bottom: 2px; }
+.up-callout { display: flex; align-items: center; gap: 8px; }
+.up-dimmed { opacity: .55; }
+
+/* Unvan grubu kartları (seçilebilir kart deseni) */
+.up-group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.up-group-card { border: 1px solid var(--border); border-radius: 12px; padding: 14px;
+  background: var(--bg-surface); transition: border-color .15s ease, box-shadow .15s ease; }
+.up-group-card--on { border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 12%, transparent); }
+.up-group-head { display: flex; align-items: center; gap: 9px; }
+.up-group-head .perm-pill { margin-left: auto; }
+.up-group-icon { display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 9px; flex: none;
+  background: color-mix(in srgb, var(--primary) 12%, transparent); color: var(--primary); }
+.up-group-card:not(.up-group-card--on) .up-group-icon { background: var(--bg-hover); color: var(--text-muted); }
+.up-group-name { font-weight: 700; }
+.up-group-desc { font-size: .82em; color: var(--text-muted); margin: 8px 0 6px; min-height: 2.4em; }
+.up-group-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.up-group-patterns { margin-top: 2px; }
+
+/* Rozetler */
+.up-badge { font-size: .7em; font-weight: 700; padding: 2px 8px; border-radius: 10px; letter-spacing: .02em; }
+.up-badge--warn { background: color-mix(in srgb, var(--warning) 20%, transparent); color: #b45309; }
+[data-theme="dark"] .up-badge--warn { color: #fbbf24; }
+.up-badge--muted { background: var(--bg-hover); color: var(--text-muted); }
+
+/* Toggle chip grubu (tip + takım matrisi) */
+.up-chip-grid { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 4px; }
+.up-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px;
+  border-radius: 999px; border: 1px solid var(--border); background: var(--bg-surface);
+  color: var(--text-muted); font: inherit; font-size: .86em; cursor: pointer;
+  transition: background .15s ease, color .15s ease, border-color .15s ease, box-shadow .15s ease; }
+.up-chip:hover { border-color: var(--primary); color: var(--text); }
+.up-chip:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.up-chip--on { background: color-mix(in srgb, var(--primary) 12%, transparent);
+  border-color: var(--primary); color: var(--primary); font-weight: 700; }
+.up-chip-check { flex: none; }
+
+/* Takım araç çubuğu */
+.up-team-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+.up-team-search { max-width: 220px; }
+
+/* Sessiz saat satırı */
+.up-quiet-row { display: grid; grid-template-columns: repeat(3, minmax(140px, 220px)); gap: 12px; }
+@media (max-width: 760px) { .up-quiet-row { grid-template-columns: 1fr; } }
+
+/* Şablon kartları + push bildirim maketi */
+.up-template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.up-template-card { border: 1px solid var(--border); border-radius: 12px; padding: 12px;
+  background: var(--bg-surface); display: flex; flex-direction: column; gap: 8px; }
+.up-template-head { display: flex; align-items: center; gap: 8px; }
+.up-template-name { font-weight: 700; font-size: .92em; }
+.up-template-icon { display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 8px; flex: none; }
+.up-template-icon--danger { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.up-template-icon--warn { background: color-mix(in srgb, var(--warning) 20%, transparent); color: #b45309; }
+[data-theme="dark"] .up-template-icon--warn { color: #fbbf24; }
+.up-template-icon--ok { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); }
+.up-template-icon--info { background: color-mix(in srgb, var(--info) 14%, transparent); color: var(--info); }
+
+.up-notif { border-radius: 12px; padding: 9px 12px; background: var(--bg-hover);
+  border: 1px solid var(--border); border-left-width: 3px; max-width: 420px; }
+.up-notif--danger { border-left-color: var(--danger); }
+.up-notif--warn { border-left-color: var(--warning); }
+.up-notif--ok { border-left-color: var(--success); }
+.up-notif--info { border-left-color: var(--info); }
+.up-notif-head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.up-notif-appdot { display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 5px; flex: none;
+  background: var(--primary); color: #fff; }
+.up-notif-app { font-size: .74em; font-weight: 700; letter-spacing: .03em;
+  text-transform: uppercase; color: var(--text-muted); }
+.up-notif-when { margin-left: auto; font-size: .72em; color: var(--text-muted); }
+.up-notif-msg { font-size: .9em; line-height: 1.45; word-break: break-word; }
+.my-push-optout { margin: 10px 0 14px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; }
+.userpush-modal-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.userpush-modal-trigger { font-size: .78em; color: var(--text-muted); }
+.userpush-modal-msg { font-style: italic; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; flex-basis: 100%; }
+.userpush-log-who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.userpush-stats-row { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 8px; font-size: .9em; }
+.userpush-stat b { color: var(--success, #16a34a); }
+.userpush-stat .userpush-fail { color: var(--danger, #dc2626); }
+.userpush-circuit { color: var(--danger, #dc2626); font-weight: 700; }
+.userpush-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.userpush-grid4 { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 12px; }
+@media (max-width: 760px) { .userpush-grid4 { grid-template-columns: 1fr 1fr; } }
+.userpush-subsub { margin: 14px 0 4px; font-size: .95em; }
+.userpush-header-row { display: grid; grid-template-columns: 1fr 1.4fr auto auto; gap: 8px; align-items: center; margin-bottom: 8px; }
+.userpush-secret-toggle { white-space: nowrap; }
+.userpush-group-row { display: grid; grid-template-columns: 180px 1fr auto; gap: 10px; align-items: start; margin-bottom: 10px; }
+@media (max-width: 760px) { .userpush-group-row { grid-template-columns: 1fr; } }
+.userpush-group-name { font-weight: 600; }
+.userpush-minlevel { white-space: nowrap; }
+.userpush-matrix { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 6px 0 4px; }
+.userpush-matrix-cell { min-width: 150px; }
+.userpush-template-row { margin-bottom: 12px; }
+.userpush-preview { font-size: .85em; color: var(--text-muted); margin-top: 3px; }
+.userpush-placeholders { word-break: break-all; }
+.userpush-test-row { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
+.userpush-test-result { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.userpush-test-msg { font-style: italic; color: var(--text-muted); margin-top: 4px; }
+.userpush-log-filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+.userpush-log { display: flex; flex-direction: column; gap: 4px; }
+.userpush-log-row { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.userpush-log-head { display: grid; grid-template-columns: auto 1fr 1.2fr auto auto; gap: 10px; align-items: center;
+  width: 100%; padding: 7px 10px; background: none; border: 0; cursor: pointer; text-align: left;
+  color: inherit; font: inherit; }
+.userpush-log-head:hover { background: var(--bg-hover); }
+.userpush-log-mon { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.userpush-log-trigger { font-size: .8em; color: var(--text-muted); }
+.userpush-log-when { font-size: .8em; color: var(--text-muted); }
+.userpush-badge { font-size: .72em; font-weight: 700; padding: 2px 7px; border-radius: 10px; letter-spacing: .02em; }
+.userpush-badge--ok { background: color-mix(in srgb, var(--success, #16a34a) 15%, transparent); color: var(--success, #16a34a); }
+.userpush-badge--danger { background: color-mix(in srgb, var(--danger, #dc2626) 14%, transparent); color: var(--danger, #dc2626); }
+.userpush-badge--info { background: color-mix(in srgb, var(--info, #2563eb) 14%, transparent); color: var(--info, #2563eb); }
+.userpush-badge--muted { background: var(--bg-hover); color: var(--text-muted); }
+.userpush-log-detail { padding: 8px 12px 10px; border-top: 1px dashed var(--border); }
+.userpush-log-msg { font-style: italic; margin: 0 0 6px; }
+.userpush-log-meta { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 0; font-size: .85em; }
+.userpush-log-meta dt { color: var(--text-muted); }
+.userpush-log-meta dd { margin: 0; }
+.userpush-log-err { color: var(--danger, #dc2626); word-break: break-all; }
+
 /* ── İzleme Değişiklikleri konsolu: özet şeridi + tür kartları ─────────────────
    Şerit ve kartlar seçili ZAMAN PENCERESİNİN tamamını özetler, sayfalanan listeyi değil.
    Kartlar aynı zamanda tür süzgeci; bu yüzden düğme (basılabilir olduğu görünsün). */

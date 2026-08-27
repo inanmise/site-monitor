@@ -42,6 +42,38 @@ public final class AppSettingsCatalog {
         // k6 REST API adresi. Varsayilan 127.0.0.1:0 = efemer port (cakisma imkansiz).
         // BOS birakilirsa bayrak hic eklenmez — beklenmedik bir k6 surumunde ani geri donus.
         new Setting("site.monitor.scripted.k6-api-address",      "monitoring", Type.STRING),
+
+        // ── Kişi-bazlı webhook (push) bildirim kanalı ─────────────────────────────
+        // Mail hattından TAMAMEN bağımsız ikinci kanal. Global anahtar vars. KAPALI:
+        // açılmadıkça sistemin gözlenen davranışı bugünün birebir aynısıdır.
+        new Setting("site.monitor.userpush.enabled",             "userpush",   Type.BOOL),
+        new Setting("site.monitor.userpush.url",                 "userpush",   Type.STRING),
+        // JSON: [{name, value(SecretCipher ile şifreli), secret}] — değerler API'den asla düz dönmez.
+        new Setting("site.monitor.userpush.headers",             "userpush",   Type.STRING),
+        new Setting("site.monitor.userpush.pipeline",            "userpush",   Type.STRING),
+        new Setting("site.monitor.userpush.title",               "userpush",   Type.STRING),
+        new Setting("site.monitor.userpush.timeout-connect-seconds", "userpush", Type.INT),
+        new Setting("site.monitor.userpush.timeout-total-seconds",   "userpush", Type.INT),
+        new Setting("site.monitor.userpush.retry-max",           "userpush",   Type.INT),
+        new Setting("site.monitor.userpush.retry-backoff-seconds",   "userpush", Type.CSV),
+        new Setting("site.monitor.userpush.circuit-threshold",   "userpush",   Type.INT),
+        new Setting("site.monitor.userpush.circuit-cooldown-seconds","userpush", Type.INT),
+        new Setting("site.monitor.userpush.hourly-cap",          "userpush",   Type.INT),
+        // JSON: {grup: {enabled, source: orgRole|title, patterns:[..]}} — K2 karma model.
+        new Setting("site.monitor.userpush.role-groups",         "userpush",   Type.STRING),
+        new Setting("site.monitor.userpush.template.down",       "userpush",   Type.STRING),
+        new Setting("site.monitor.userpush.template.slow",       "userpush",   Type.STRING),
+        new Setting("site.monitor.userpush.template.expiry",     "userpush",   Type.STRING),
+        new Setting("site.monitor.userpush.template.changed",    "userpush",   Type.STRING),
+        new Setting("site.monitor.userpush.template.resolved",   "userpush",   Type.STRING),
+        new Setting("site.monitor.userpush.template.test",       "userpush",   Type.STRING),
+        // K8: mail neyi gönderiyorsa webhook da — günlük re-alert dahil (vars. AÇIK).
+        new Setting("site.monitor.userpush.realert-enabled",     "userpush",   Type.BOOL),
+        // E2 sessiz saatler: pencerede yalnız min seviye ve üstü gider (örn. 22:00-07:00 CRITICAL).
+        new Setting("site.monitor.userpush.quiet-start",         "userpush",   Type.STRING),
+        new Setting("site.monitor.userpush.quiet-end",           "userpush",   Type.STRING),
+        new Setting("site.monitor.userpush.quiet-min-level",     "userpush",   Type.STRING),
+        new Setting("site.monitor.userpush.retention-days",      "userpush",   Type.INT),
         new Setting("site.monitor.ui.inactivity-minutes",         "general",    Type.INT),
         new Setting("site.monitor.ui.inactivity-warn-seconds",    "general",    Type.INT),
         new Setting("site.monitor.network.error-rate-threshold", "outage",     Type.DOUBLE),

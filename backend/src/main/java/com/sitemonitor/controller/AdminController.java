@@ -85,6 +85,7 @@ public class AdminController {
     private final EscalationContactRepository contactRepo;
     private final AlertEventRepository alertEventRepo;
     private final NotificationLogRepository notificationLogRepo;
+    private final com.sitemonitor.repository.UserPushDeliveryRepository userPushDeliveryRepo;
     private final EscalationService escalationService;
     private final LatestCheckRepository latestCheckRepo;
     private final CertificateCheckRepository certificateCheckRepo;
@@ -1555,6 +1556,18 @@ public class AdminController {
         requirePerm(session, "alerts.read", "view");
         requireAlertScope(session, id);   // takım kapsamı (IDOR engeli)
         return ok(Map.of("data", notificationLogRepo.findByAlertEventIdOrderBySentAtDesc(id)));
+    }
+
+    /**
+     * Alarm modalının kanal-ayrımlı "Webhook" bölümü: olayın kişi-push teslimatları.
+     * E-posta satırlarıyla (üstteki uç) AYNI yetki kapısı — alerts.read + takım kapsamı.
+     */
+    @GetMapping("/alerts/{id}/push-deliveries")
+    public ResponseEntity<Map<String, Object>> getAlertPushDeliveries(
+            @PathVariable Long id, HttpSession session) {
+        requirePerm(session, "alerts.read", "view");
+        requireAlertScope(session, id);   // takım kapsamı (IDOR engeli)
+        return ok(Map.of("data", userPushDeliveryRepo.findByAlertEventIdOrderByIdAsc(id)));
     }
 
     // ── Alarm takım kapsamı (IDOR engeli) ─────────────────────────────────────

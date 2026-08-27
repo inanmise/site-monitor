@@ -178,7 +178,7 @@ describe('PageMonitorPage', () => {
 
     expect(api.monitoring.createPageMonitor.mock.calls[0][0]).toEqual({
       name: 'Example (Kopya)', url: 'https://www.example.com/',
-      groupName: 'Kurumsal', teamId: 5, tags: 'prod,kritik', notifyEmail: false,
+      groupName: 'Kurumsal', teamId: 5, tags: 'prod,kritik', notifyEmail: false, notifyWebhook: true,
       mode: 'CRAWL', crawlDepth: 3, crawlMaxPages: 80, excludePatterns: '/ads/\n/tracker/',
       slowResourceMs: 1500, alertThirdParty: true, alertMixedContent: false, alertTimeout: false,
       resourceConcurrency: 8, intervalSeconds: 600, timeoutMs: 6000,

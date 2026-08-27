@@ -55,7 +55,7 @@ const intervalIdx = (secs) => {
 const REFRESH_INTERVAL = 60
 const PORT_TYPES = ['TCP', 'TLS', 'HTTP', 'BANNER', 'UDP']
 const emptyForm = { name: '', host: '', port: '', protocol: 'TCP', expect: '', sendData: '', teamId: '', groupName: '', notificationGroupId: '',
-  tags: '', notifyEmail: true, ipVersion: 'auto', slowResponseEnabled: false, slowThresholdMs: 3000,
+  tags: '', notifyEmail: true, notifyWebhook: true, ipVersion: 'auto', slowResponseEnabled: false, slowThresholdMs: 3000,
   intervalSeconds: 300, timeoutMs: 5000,
   confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true }
 
@@ -163,7 +163,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     return { name: m.name || '', host: m.host || '', port: m.port ?? '', protocol: m.protocol || 'TCP',
       expect: m.expect || '', sendData: m.send_data || '',
       teamId: m.team_id != null ? String(m.team_id) : (derivedTeam ? String(derivedTeam.id) : ''), groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
-      tags: m.tags || '', notifyEmail: m.notify_email !== false, ipVersion: m.ip_version || 'auto',
+      tags: m.tags || '', notifyEmail: m.notify_email !== false, notifyWebhook: m.notify_webhook !== false, ipVersion: m.ip_version || 'auto',
       slowResponseEnabled: !!m.slow_response_enabled, slowThresholdMs: m.slow_threshold_ms ?? 3000,
       intervalSeconds: m.interval_seconds ?? 300, timeoutMs: m.timeout_ms ?? 5000,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
@@ -197,7 +197,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
       // Bos = takim varsayilani -> takim adresi (zincirin kalani).
       notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
         ? null : Number(form.notificationGroupId),
-      tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, ipVersion: form.ipVersion,
+      tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, notifyWebhook: form.notifyWebhook, ipVersion: form.ipVersion,
       slowResponseEnabled: form.slowResponseEnabled, slowThresholdMs: Number(form.slowThresholdMs),
       intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
       confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
@@ -649,7 +649,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
                   <label className="port-channel port-channel--disabled" title={t('port.soonHint')}>
                     <input type="checkbox" disabled /><Phone size={14} /><span>{t('port.chVoice')}</span><span className="port-ch-soon">{t('port.soon')}</span></label>
                   <label className="port-channel port-channel--disabled" title={t('port.soonHint')}>
-                    <input type="checkbox" disabled /><Smartphone size={14} /><span>{t('port.chPush')}</span><span className="port-ch-soon">{t('port.soon')}</span></label>
+                    <input type="checkbox" checked={form.notifyWebhook} onChange={e => setForm(f => ({ ...f, notifyWebhook: e.target.checked }))} /><Smartphone size={14} /><span>{t('userpush.monitorToggle')}</span></label>
                 </div>
               </div>
 

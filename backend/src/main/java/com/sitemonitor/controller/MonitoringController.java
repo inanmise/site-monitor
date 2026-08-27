@@ -118,7 +118,7 @@ public class MonitoringController {
         "intervalSeconds", "timeoutMs", "warningDays", "criticalDays", "protocol", "verifySsl", "followRedirects",
         "mode", "crawlDepth", "crawlMaxPages", "excludePatterns", "slowResourceMs", "alertThirdParty", "alertMixedContent", "alertTimeout", "resourceConcurrency",
         "notificationGroupId",
-        "transferLockAlert", "blacklistEnabled", "changeAlert"
+        "transferLockAlert", "blacklistEnabled", "changeAlert", "notifyWebhook"
     };
 
     /**
@@ -1383,6 +1383,7 @@ public class MonitoringController {
         item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
         item.put("tags",                      m.getTags());
         item.put("notify_email",              m.getNotifyEmail());
+        item.put("notify_webhook",              m.getNotifyWebhook());
         item.put("slow_response_enabled",     m.getSlowResponseEnabled());
         item.put("slow_threshold_ms",         m.getSlowThresholdMs());
         item.put("ip_version",                m.getIpVersion());
@@ -1410,6 +1411,7 @@ public class MonitoringController {
     private void applyPortFeatureFields(PortMonitor m, Map<String, Object> body) {
         if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
         if (body.get("notifyEmail")         instanceof Boolean b) m.setNotifyEmail(b);
+        if (body.get("notifyWebhook")          instanceof Boolean b) m.setNotifyWebhook(b);
         if (body.get("slowResponseEnabled") instanceof Boolean b) m.setSlowResponseEnabled(b);
         if (body.get("slowThresholdMs")     instanceof Number n)  m.setSlowThresholdMs(Math.max(1, n.intValue()));
         if (body.get("ipVersion") != null) {
@@ -1566,6 +1568,7 @@ public class MonitoringController {
             }
             if (body.get("recordType")      != null) m.setRecordType(((String) body.get("recordType")).toUpperCase());
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
+            if (body.get("notifyWebhook")   instanceof Boolean b) m.setNotifyWebhook(b);
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (Boolean.TRUE.equals(m.getStandalone()) && body.containsKey("teamId"))
                 m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
@@ -1729,6 +1732,7 @@ public class MonitoringController {
                 ? teamById.get(m.getTeamId()) : teamMap.get(m.getDomain()));
         item.put("record_type",     m.getRecordType());
         item.put("active",          m.getActive());
+        item.put("notify_webhook", m.getNotifyWebhook());
         item.put("interval_seconds",m.getIntervalSeconds());
         item.put("created_at",      m.getCreatedAt());
         item.put("updated_at",      m.getUpdatedAt());
@@ -2220,6 +2224,7 @@ public class MonitoringController {
         item.put("case_sensitive",            m.getCaseSensitive());
         item.put("tags",                      m.getTags());
         item.put("notify_email",              m.getNotifyEmail());
+        item.put("notify_webhook",              m.getNotifyWebhook());
         item.put("slow_response_enabled",     m.getSlowResponseEnabled());
         item.put("slow_threshold_ms",         m.getSlowThresholdMs());
         item.put("check_ssl_errors",          m.getCheckSslErrors());
@@ -2253,6 +2258,7 @@ public class MonitoringController {
         if (body.get("caseSensitive")         instanceof Boolean b) m.setCaseSensitive(b);
         if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
         if (body.get("notifyEmail")           instanceof Boolean b) m.setNotifyEmail(b);
+        if (body.get("notifyWebhook")            instanceof Boolean b) m.setNotifyWebhook(b);
         if (body.get("slowResponseEnabled")   instanceof Boolean b) m.setSlowResponseEnabled(b);
         if (body.get("slowThresholdMs")       instanceof Number n)  m.setSlowThresholdMs(Math.max(1, n.intValue()));
         if (body.get("checkSslErrors")        instanceof Boolean b) m.setCheckSslErrors(b);
@@ -2479,6 +2485,7 @@ public class MonitoringController {
     private void applyHttpFeatureFields(HttpMonitor m, Map<String, Object> body) {
         if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
         if (body.get("notifyEmail")           instanceof Boolean b) m.setNotifyEmail(b);
+        if (body.get("notifyWebhook")            instanceof Boolean b) m.setNotifyWebhook(b);
         if (body.get("checkSslErrors")        instanceof Boolean b) m.setCheckSslErrors(b);
         if (body.get("sslExpiryReminders")    instanceof Boolean b) m.setSslExpiryReminders(b);
         if (body.get("domainExpiryReminders") instanceof Boolean b) m.setDomainExpiryReminders(b);
@@ -2508,6 +2515,7 @@ public class MonitoringController {
         item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
         item.put("tags",                      m.getTags());
         item.put("notify_email",              m.getNotifyEmail());
+        item.put("notify_webhook",              m.getNotifyWebhook());
         item.put("check_ssl_errors",          m.getCheckSslErrors());
         item.put("ssl_expiry_reminders",      m.getSslExpiryReminders());
         item.put("domain_expiry_reminders",   m.getDomainExpiryReminders());
@@ -2789,7 +2797,7 @@ public class MonitoringController {
             "userAgent", "sendDnt", "excludeTrackers", "trackerPatterns",
             "basicAuthUser", "basicAuthPassEnc", "customHeadersEnc", "resourceConcurrency",
             "confirmAttempts", "confirmIntervalSeconds", "recoveryChecks", "recoveryIntervalSeconds",
-            "tags", "notifyEmail" };
+            "tags", "notifyEmail", "notifyWebhook" };
 
     @GetMapping("/pagespeed")
     public ResponseEntity<Map<String, Object>> listPageSpeed(HttpSession session) {
@@ -3110,6 +3118,7 @@ public class MonitoringController {
         if (body.get("recoveryIntervalSeconds") instanceof Number n) m.setRecoveryIntervalSeconds(clampInterval(n.intValue()));
         if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
         if (body.get("notifyEmail") instanceof Boolean b) m.setNotifyEmail(b);
+        if (body.get("notifyWebhook")  instanceof Boolean b) m.setNotifyWebhook(b);
 
         if (body.containsKey("basicAuthUser")) m.setBasicAuthUser(blank(body.get("basicAuthUser")) ? null : body.get("basicAuthUser").toString().trim());
         // Write-only sır deseni (scripted env emsali): alan hiç gelmediyse dokunma, BOŞ geldiyse mevcut
@@ -3204,6 +3213,7 @@ public class MonitoringController {
         item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
         item.put("tags",                      m.getTags());
         item.put("notify_email",              m.getNotifyEmail());
+        item.put("notify_webhook",              m.getNotifyWebhook());
         item.put("created_at",                m.getCreatedAt());
         item.put("created_by_name",           m.getCreatedByName());
         item.put("active_alarm",       openAlarm != null);
@@ -3257,6 +3267,7 @@ public class MonitoringController {
         if (body.get("resourceConcurrency") instanceof Number n) m.setResourceConcurrency(Math.max(1, Math.min(20, n.intValue())));
         if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
         if (body.get("notifyEmail") instanceof Boolean b) m.setNotifyEmail(b);
+        if (body.get("notifyWebhook")  instanceof Boolean b) m.setNotifyWebhook(b);
     }
 
     private Map<String, Object> enrichPage(com.sitemonitor.model.PageMonitor m, com.sitemonitor.model.PageCheck latest,
@@ -3287,6 +3298,7 @@ public class MonitoringController {
         item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
         item.put("tags",                      m.getTags());
         item.put("notify_email",              m.getNotifyEmail());
+        item.put("notify_webhook",              m.getNotifyWebhook());
         item.put("active_alarm",       openAlarm != null);
         item.put("alarm_level",        openAlarm != null ? openAlarm.getAlertLevel() : null);
         item.put("alarm_acknowledged", openAlarm != null ? openAlarm.getAcknowledged() : null);
@@ -3896,7 +3908,7 @@ public class MonitoringController {
 
     private static final String[] SCRIPTED_FIELDS = {
             "name", "description", "script", "timeoutSeconds", "intervalSeconds",
-            "confirmAttempts", "recoveryChecks", "active", "groupName", "notifyEmail",
+            "confirmAttempts", "recoveryChecks", "active", "groupName", "notifyEmail", "notifyWebhook",
             "slowResponseEnabled", "slowThresholdMs" };
 
     /** Script gövde desen taraması → BLOCK politikasında hit varsa hata mesajı, aksi halde null (WARN sadece bilgi). */
@@ -3955,6 +3967,7 @@ public class MonitoringController {
             m.setTimeoutSeconds(Math.max(5, Math.min(180, n.intValue())));
         if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
         if (body.get("notifyEmail") instanceof Boolean b) m.setNotifyEmail(b);
+        if (body.get("notifyWebhook")  instanceof Boolean b) m.setNotifyWebhook(b);
         // Vekil tercihi: yalnız bilinen üç değer kabul edilir; tanınmayan girdi AUTO'ya düşer
         // (koşum tarafı da null'ı AUTO sayıyor — iki uçta aynı varsayılan).
         // Yavas kosum alarmi (SCRIPTED_SLOW) — opt-in. Esik makul araliga kirpilir: 500 ms altinda
@@ -4160,6 +4173,7 @@ public class MonitoringController {
         item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
         item.put("tags", m.getTags());
         item.put("notify_email", m.getNotifyEmail());
+        item.put("notify_webhook", m.getNotifyWebhook());
         item.put("use_proxy", m.getUseProxy() == null ? "AUTO" : m.getUseProxy());
         item.put("slow_response_enabled", Boolean.TRUE.equals(m.getSlowResponseEnabled()));
         item.put("slow_threshold_ms", m.getSlowThresholdMs());
@@ -4403,6 +4417,7 @@ public class MonitoringController {
         if (body.get("transferLockAlert") instanceof Boolean b) m.setTransferLockAlert(b);
         if (body.get("blacklistEnabled")  instanceof Boolean b) m.setBlacklistEnabled(b);
         if (body.get("changeAlert")       instanceof Boolean b) m.setChangeAlert(b);
+        if (body.get("notifyWebhook")     instanceof Boolean b) m.setNotifyWebhook(b);
         // RDAP kontrol timeout'u (ms) — boş/null = global ayar; girilirse 1–30 sn'ye kısılır.
         if (body.containsKey("checkTimeoutMs")) {
             Object v = body.get("checkTimeoutMs");
@@ -4431,6 +4446,7 @@ public class MonitoringController {
         item.put("notification_group_id",          m.getNotificationGroupId());
         item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
         item.put("active",           m.getActive());
+        item.put("notify_webhook", m.getNotifyWebhook());
         item.put("interval_seconds", m.getIntervalSeconds());
         item.put("check_timeout_ms", m.getCheckTimeoutMs());
         item.put("thresholds_csv",   m.getThresholdsCsv());
@@ -4530,6 +4546,7 @@ public class MonitoringController {
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
         if (body.get("packetCount")     != null) m.setPacketCount(((Number) body.get("packetCount")).intValue());
+        if (body.get("notifyWebhook")   instanceof Boolean b) m.setNotifyWebhook(b);
         if (body.get("confirmAttempts") != null)        m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
         if (body.get("confirmIntervalSeconds") != null) m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
         if (body.get("recoveryChecks") != null)         m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
@@ -4574,6 +4591,7 @@ public class MonitoringController {
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
+            if (body.get("notifyWebhook")   instanceof Boolean b) m.setNotifyWebhook(b);
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
             if (body.get("packetCount")     != null) m.setPacketCount(((Number) body.get("packetCount")).intValue());
@@ -4678,6 +4696,7 @@ public class MonitoringController {
         item.put("notification_group_id",          m.getNotificationGroupId());
         item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
         item.put("active",           m.getActive());
+        item.put("notify_webhook", m.getNotifyWebhook());
         item.put("interval_seconds", m.getIntervalSeconds());
         item.put("timeout_ms",       m.getTimeoutMs());
         item.put("packet_count",     m.getPacketCount());

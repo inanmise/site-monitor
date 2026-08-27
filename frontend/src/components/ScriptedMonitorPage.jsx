@@ -58,7 +58,7 @@ function intervalIdx(secs) {
 const REFRESH_INTERVAL = 60
 
 const emptyForm = {
-  name: '', description: '', groupName: '', notificationGroupId: '', teamId: '', tags: '', notifyEmail: true,
+  name: '', description: '', groupName: '', notificationGroupId: '', teamId: '', tags: '', notifyEmail: true, notifyWebhook: true,
   intervalSeconds: 300, timeoutSeconds: 60, confirmAttempts: 3, confirmIntervalSeconds: 30,
   recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true, script: '', env: [], template: '',
   slowResponseEnabled: false, slowThresholdMs: 15000,
@@ -469,7 +469,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   function formFrom(m) {
     return {
       name: m.name || '', description: m.description || '', groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
-      teamId: m.team_id != null ? String(m.team_id) : '', tags: m.tags || '', notifyEmail: m.notify_email !== false,
+      teamId: m.team_id != null ? String(m.team_id) : '', tags: m.tags || '', notifyEmail: m.notify_email !== false, notifyWebhook: m.notify_webhook !== false,
       intervalSeconds: m.interval_seconds ?? 300, timeoutSeconds: m.timeout_seconds ?? 60,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
       recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
@@ -684,7 +684,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
       // Bos = takim varsayilani -> takim adresi (zincirin kalani).
       notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
         ? null : Number(form.notificationGroupId),
-      tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail,
+      tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, notifyWebhook: form.notifyWebhook,
       intervalSeconds: Number(form.intervalSeconds), timeoutSeconds: Number(form.timeoutSeconds),
       confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
       recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
@@ -1643,6 +1643,8 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
 
           <label className="checkbox-label full-width">
             <input type="checkbox" checked={form.notifyEmail} onChange={e => setForm(f => ({ ...f, notifyEmail: e.target.checked }))} /> {t('scripted.notifyEmail')}</label>
+          <label className="checkbox-label" title={t('userpush.monitorToggleHint')}>
+            <input type="checkbox" checked={form.notifyWebhook} onChange={e => setForm(f => ({ ...f, notifyWebhook: e.target.checked }))} /> {t('userpush.monitorToggle')}</label>
           <label className="checkbox-label full-width">
             <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} /> {t('scripted.active')}</label>
 

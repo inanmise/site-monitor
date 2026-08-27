@@ -88,6 +88,10 @@ public class HttpMonitor {
     @Column(name = "notify_email")
     private Boolean notifyEmail = true;
 
+    /** Kişi-webhook (push) bildirimi açık mı (vars. true — üst katmanlar zaten vars. KAPALI, çifte emniyet). */
+    @Column(name = "notify_webhook")
+    private Boolean notifyWebhook = true;
+
     /** SSL hata kontrolü: TLS zinciri/geçerliliği bozuksa alarm (yavaş döngü). */
     @Column(name = "check_ssl_errors")
     private Boolean checkSslErrors = false;

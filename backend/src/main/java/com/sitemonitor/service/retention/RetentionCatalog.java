@@ -98,6 +98,13 @@ public final class RetentionCatalog {
                 + "denetim değeri yüksek, hacim düşük (yapılandırma değişiklikleri kontrol kayıtları gibi akmaz). "
                 + "SYSTEM satırları HARİÇ: geri doldurmanın 'koştu' nişanı orada duruyor; silinirse bir "
                 + "sonraki açılış geçmişi ikinci kez doldurmaya kalkardı."),
+        age("user-push-deliveries", "user_push_deliveries", "created_at",
+                "site.monitor.userpush.retention-days",
+                1095, 90, true, DataClass.PERSONAL,
+                "Kişi-bazlı webhook (push) teslimat günlüğü — kime, ne zaman, hangi içerikle, hangi "
+                + "alarm için, sonuç ne + API'nin verdiği notificationId. ÇOK UZUN saklama (3 yıl) "
+                + "bilinçli ürün kararı (2026-08-27): kurum tarafında iz sürme ve denetim için "
+                + "kanıt zinciri. Sicil içerir → PERSONAL."),
         age("notification-logs", "notification_logs", "sent_at", "site.monitor.notification.retention-days",
                 365, 30, true, DataClass.PERSONAL,
                 "Gönderilen bildirim geçmişi (alıcı adı/e-postası içerir). Kişisel veri saklama süreleri "

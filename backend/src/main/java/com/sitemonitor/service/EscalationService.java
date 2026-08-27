@@ -49,6 +49,9 @@ public class EscalationService {
     private final SmtpSettingsService smtpSettings;
     private final MaintenanceService maintenanceService;
     private final StormService stormService;
+    // Kişi-webhook (push) kanalı — mail hattından TAMAMEN bağımsız; tetik her zaman try/catch
+    // zarfında ve enqueue kendi içinde de istisna yutar (kanal bağımsızlığı sözleşmesi).
+    private final UserPushService userPushService;
     // Domain monitör alarmlarının resend/çözüm mailine EN GÜNCEL kayıt bağlamını (bitiş/registrar/EPP) kurmak için.
     private final com.sitemonitor.repository.DomainMonitorRepository domainMonitorRepo;
     private final com.sitemonitor.repository.DomainCheckRepository domainCheckRepo;
@@ -1354,6 +1357,12 @@ public class EscalationService {
                     event.getCreatedAt(), certContext, teamNames, uptime);
             saveLog(event.getId(), teamNames, String.join(", ", allEmails), subject, htmlBody, status, "SKIPPED", trigger);
             log.info("Çözüm bildirimi → [{}] status={}", String.join(", ", allEmails), status);
+            // Kişi-webhook çözüm push'u — mail sonucundan bağımsız (kanal bağımsızlığı sözleşmesi).
+            try {
+                userPushService.enqueueResolve(event, certContext);
+            } catch (Exception ex) {
+                log.warn("user-push çözüm tetiği atlandı (mail yolu etkilenmedi): {}", ex.toString());
+            }
         } catch (Exception e) {
             log.warn("Çözüm bildirimi gönderilemedi: {} — {}", event.getDomain(), e.getMessage());
         }
@@ -1636,6 +1645,16 @@ public class EscalationService {
 
         log.info("Combined alert: {} [{}] → TO=[{}] | webhooks={} | trigger={}",
                 domain, level, String.join(", ", allEmails), contacts.size(), trigger);
+
+        // Kişi-webhook (push) — K8: mail neyi gönderiyorsa webhook da. Tetik bu hunide durduğu
+        // için fırtına/bakım/toplu-kesinti bastırmaları kendiliğinden miras kalır (bastırılan
+        // olay bu satıra hiç gelmez). Mail SONUCUNDAN bağımsız: emailStatus FAILED olsa da koşar;
+        // istisna yayılamaz — mail yolu bu kanalın hiçbir arızasından etkilenmez.
+        try {
+            userPushService.enqueueAlert(alertEventId, trigger, syTeamId, certContext);
+        } catch (Exception e) {
+            log.warn("user-push tetiği atlandı (mail yolu etkilenmedi): {}", e.toString());
+        }
         return details;
     }
 

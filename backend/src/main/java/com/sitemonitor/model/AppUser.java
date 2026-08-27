@@ -119,6 +119,10 @@ public class AppUser {
     @Column(nullable = false)
     private Boolean active = true;
 
+    /** E1: kişi kendi profilinden webhook push'unu kapatabilir. Günlükte SKIPPED_USER_OPT_OUT olarak görünür. */
+    @Column(name = "push_opt_out")
+    private Boolean pushOptOut = false;
+
     /** Authentication source: "LOCAL" (BCrypt password) or "LDAP" (AD bind).
      *  Null (legacy rows) is treated as LOCAL. LDAP users carry a sentinel
      *  password hash that never matches, so they can only sign in via AD. */

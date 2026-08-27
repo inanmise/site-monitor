@@ -87,7 +87,10 @@ export default function GeneralSettings() {
   const order = []
   const byGroup = {}
   for (const it of items) {
-    if (it.group === 'branding' || it.group === 'retention') continue
+    // userpush: kendi ÖZEL sayfası var (Webhook Bildirimleri) — burada ham anahtar listesi
+    // olarak İKİNCİ bir yönetim yüzeyi açmak şifreli headers blob'unu ve role-groups JSON'unu
+    // düz metin kutusunda bozulmaya açardı.
+    if (it.group === 'branding' || it.group === 'retention' || it.group === 'userpush') continue
     if (!byGroup[it.group]) { byGroup[it.group] = []; order.push(it.group) }
     byGroup[it.group].push(it)
   }

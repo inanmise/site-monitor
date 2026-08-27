@@ -46,6 +46,9 @@ class AdminControllerTest {
     MockMvc mvc;
 
     /** Bildirim gruplari: dilim baglami icin gerekli; stub YOK -> "hic grup yok" (birinci yasa). */
+    @MockitoBean
+    com.sitemonitor.repository.UserPushDeliveryRepository userPushDeliveryRepo;
+
     @MockitoBean com.sitemonitor.repository.NotificationGroupRepository notificationGroupRepo;
     @MockitoBean
     RememberMeService rememberMeService;

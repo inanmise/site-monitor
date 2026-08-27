@@ -142,6 +142,12 @@ public class UserService {
         }
     }
 
+    /** E1 opt-out kalıcılığı — tek alanlık bilinçli dar yüzey (genel save açmıyoruz). */
+    @Transactional
+    public void savePushOptOut(AppUser user) {
+        userRepo.save(user);
+    }
+
     public Optional<AppUser> findByUsername(String username) {
         return userRepo.findByUsername(username);
     }

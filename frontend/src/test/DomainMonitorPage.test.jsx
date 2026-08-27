@@ -180,6 +180,7 @@ describe('DomainMonitorPage', () => {
       // Bildirim grubu da kopyalanir: kopya, kaynagin alarmini ALAN ekibe gitsin.
       notificationGroupId: 7,
       transferLockAlert: false, blacklistEnabled: true, changeAlert: false,
+      notifyWebhook: true,
     })
   })
 

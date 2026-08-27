@@ -389,6 +389,8 @@ public class AuthController {
             resp.put("company_level", u.getCompanyLevel());
             resp.put("org_role", u.getOrgRole());
             resp.put("mudurluk_name", u.getMudurlukName());
+            // E1: kişi kendi push tercihi — Ayarlar sayfasındaki anahtar bunu okur.
+            resp.put("push_opt_out", Boolean.TRUE.equals(u.getPushOptOut()));
             resp.put("manager_sicil", u.getManagerSicil());
             resp.put("has_photo", u.getPhotoBase64() != null && !u.getPhotoBase64().isBlank());
             // Giriş güvenliği özeti — kullanıcı satırından okunur, EK SORGU YOK. Değerler kaydırma
@@ -440,6 +442,30 @@ public class AuthController {
      * password by re-proving knowledge of the current one — no admin role
      * required. Same UserService rules apply (length, history, archive).
      */
+    /**
+     * E1 kişi opt-out: kullanıcı YALNIZ KENDİ push bayrağını yazar (id/sicil parametresi yok —
+     * IDOR yüzeyi hiç açılmaz). Kapatan kişi teslimat günlüğünde SKIPPED_USER_OPT_OUT görünür,
+     * yani "neden bana gelmedi" sorusunun cevabı kayıtlıdır.
+     */
+    @PostMapping("/me/push-opt-out")
+    public ResponseEntity<Map<String, Object>> setPushOptOut(
+            @RequestBody Map<String, Object> body, HttpSession session) {
+        String username = (String) session.getAttribute("username");
+        if (username == null) throw new SecurityException("Not authenticated");
+        var userOpt = userService.findByUsername(username);
+        if (userOpt.isEmpty()) throw new SecurityException("Not authenticated");
+        boolean optOut = Boolean.TRUE.equals(body.get("opt_out"));
+        var u = userOpt.get();
+        u.setPushOptOut(optOut);
+        userService.savePushOptOut(u);
+        auditService.recordAction("USER_PUSH_OPT_OUT", session, "USER", String.valueOf(u.getId()),
+                optOut ? "Kişi webhook push bildirimini KAPATTI" : "Kişi webhook push bildirimini AÇTI", null);
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("success", true);
+        resp.put("push_opt_out", optOut);
+        return ResponseEntity.ok(resp);
+    }
+
     @PostMapping("/me/change-password")
     public ResponseEntity<Map<String, Object>> changeOwnPassword(
             @RequestBody Map<String, String> body,

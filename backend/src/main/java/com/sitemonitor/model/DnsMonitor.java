@@ -39,6 +39,10 @@ public class DnsMonitor {
     @Column(name = "team_id")
     private Long teamId;
 
+    /** Kişi-webhook (push) bildirimi açık mı (vars. true — üst katmanlar zaten vars. KAPALI, çifte emniyet). */
+    @Column(name = "notify_webhook")
+    private Boolean notifyWebhook = true;
+
     /** Beklenen-değer kilidi (baseline): kullanıcının sabitlediği bilinen-iyi değer(ler), satır (\n) ayrılmış.
      *  Boş = kilit kapalı. Doluyken canlı sonuçta BEKLENMEYEN (bu sette olmayan) değer çıkarsa DNS_UNEXPECTED
      *  alarmı (esnek/hijack-odaklı: beklenenin alt kümesi = rotasyon, alarm üretmez). */

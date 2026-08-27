@@ -100,7 +100,7 @@ describe('HttpMonitorPage', () => {
     expect(api.monitoring.createHttpMonitor.mock.calls[0][0]).toEqual({
       name: 'Example (Kopya)', url: 'https://www.example.com/', method: 'POST',
       expectedStatus: '201-204', followRedirects: false, verifySsl: true,
-      groupName: 'Kurumsal', teamId: 5, tags: 'prod,kritik', notifyEmail: false,
+      groupName: 'Kurumsal', teamId: 5, tags: 'prod,kritik', notifyEmail: false, notifyWebhook: true,
       checkSslErrors: true, sslExpiryReminders: true, domainExpiryReminders: true,
       sslReminderDays: '45,20,5', domainReminderDays: '60,30,10',
       intervalSeconds: 600, timeoutMs: 7000,
