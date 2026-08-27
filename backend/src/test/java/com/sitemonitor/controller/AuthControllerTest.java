@@ -418,6 +418,62 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.username").value("testuser"));
     }
 
+    /**
+     * Hareketsizlik süresi AYARDAN gelir ve /me ile taşınır.
+     *
+     * <p>Eskiden yalnız derleme zamanı ayarlanabiliyordu (VITE_INACTIVITY_MS, 5 dk): süreyi
+     * değiştirmek yeniden derleyip dağıtmayı gerektiriyordu.
+     */
+    @Test
+    @DisplayName("/me hareketsizlik ayarını taşır (varsayılan 60 dk)")
+    void me_carriesIdleConfig() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute("authenticated", Boolean.TRUE);
+        session.setAttribute("username", "testuser");
+        when(appSettings.getInt(eq("site.monitor.ui.inactivity-minutes"), anyInt())).thenReturn(60);
+        when(appSettings.getInt(eq("site.monitor.ui.inactivity-warn-seconds"), anyInt())).thenReturn(60);
+
+        mvc.perform(get("/api/me").session(session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.inactivity_minutes").value(60))
+                .andExpect(jsonPath("$.inactivity_warn_seconds").value(60));
+    }
+
+    /**
+     * SINIRLAR. 0/negatif bir değer herkesi ANINDA dışarı atardı ve ayarı yanlış giren kişi
+     * kendi düzeltemezdi — giriş yapar yapmaz atılırdı. Üst sınır sunucu oturum ömrüyle (24 sa)
+     * hizalı: ötesini vaat etmek yalan olurdu, sunucu oturumu zaten düşürür.
+     */
+    @Test
+    @DisplayName("/me: 0 ve aşırı değerler SINIRLANIR (kendini dışarı kilitleme yok)")
+    void me_idleConfigIsClamped() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute("authenticated", Boolean.TRUE);
+        session.setAttribute("username", "testuser");
+
+        when(appSettings.getInt(eq("site.monitor.ui.inactivity-minutes"), anyInt())).thenReturn(0);
+        when(appSettings.getInt(eq("site.monitor.ui.inactivity-warn-seconds"), anyInt())).thenReturn(60);
+        mvc.perform(get("/api/me").session(session))
+                .andExpect(jsonPath("$.inactivity_minutes").value(1));
+
+        when(appSettings.getInt(eq("site.monitor.ui.inactivity-minutes"), anyInt())).thenReturn(99999);
+        mvc.perform(get("/api/me").session(session))
+                .andExpect(jsonPath("$.inactivity_minutes").value(24 * 60));
+    }
+
+    @Test
+    @DisplayName("/me: uyarı süresi TOPLAMI aşamaz — aşarsa uyarı hiç görünmezdi")
+    void me_warnCannotExceedTotal() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute("authenticated", Boolean.TRUE);
+        session.setAttribute("username", "testuser");
+        when(appSettings.getInt(eq("site.monitor.ui.inactivity-minutes"), anyInt())).thenReturn(2);
+        when(appSettings.getInt(eq("site.monitor.ui.inactivity-warn-seconds"), anyInt())).thenReturn(9999);
+
+        mvc.perform(get("/api/me").session(session))
+                .andExpect(jsonPath("$.inactivity_warn_seconds").value(2 * 60 - 1));
+    }
+
     @Test
     @DisplayName("GET /api/me without session returns 401")
     void me_unauthenticated_returns401() throws Exception {

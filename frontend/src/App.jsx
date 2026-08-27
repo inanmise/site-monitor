@@ -73,8 +73,25 @@ const ExpiryForecastPage = lazy(() => import('./pages/ExpiryForecastPage'))
 const InventoryFormModalForDomain = lazy(() =>
   import('./components/inventory/InventoryFormModal.jsx').then(m => ({ default: m.InventoryFormModalForDomain })))
 
-const INACTIVITY_MS   = Number(import.meta.env.VITE_INACTIVITY_MS   ?? 300_000)
+/**
+ * Hareketsizlik oturum kapatma — SUNUCUDAN gelir (Genel Ayarlar), varsayılan 60 dk.
+ *
+ * <p>Eskiden yalnız derleme zamanı ayarlanabiliyordu (VITE_INACTIVITY_MS, 5 dk): süreyi
+ * değiştirmek yeniden derleyip dağıtmayı gerektiriyordu. Aşağıdaki sabitler artık YALNIZ
+ * yedek: sunucu değeri gelmezse (eski sürüm, ağ hatası) kullanılır.
+ */
+const INACTIVITY_MS   = Number(import.meta.env.VITE_INACTIVITY_MS   ?? 3_600_000)
 const WARN_BEFORE_MS  = Number(import.meta.env.VITE_WARN_BEFORE_MS  ?? 60_000)
+
+/** Sunucu yanıtından hareketsizlik ayarını çıkarır; alan yoksa yedeğe düşer. */
+function idleConfigFrom(res) {
+  const mins = Number(res?.inactivity_minutes)
+  const warn = Number(res?.inactivity_warn_seconds)
+  const totalMs = Number.isFinite(mins) && mins > 0 ? mins * 60_000 : INACTIVITY_MS
+  const warnMs = Number.isFinite(warn) && warn > 0 ? warn * 1000 : WARN_BEFORE_MS
+  // Uyarı toplam süreyi AŞAMAZ; aşarsa uyarı hiç görünmez ve kullanıcı habersiz atılırdı.
+  return { totalMs, warnMs: Math.min(warnMs, Math.max(1000, totalMs - 1000)) }
+}
 
 /** "Şimdi Kontrol Et" eşzamanlı kontrol sayısı. Erişilemeyen bir host'ta tek kontrol timeout'a
  *  (~6 sn) kadar sürüyor; sıralı koşumda bu, arkasındaki tüm domainleri bekletiyordu. Sınır küçük
@@ -187,6 +204,7 @@ export default function App() {
   const [teamPickerOpen, setTeamPickerOpen] = useState(false)   // kontrol öncesi takım seçimi
   const [lastUpdate, setLastUpdate] = useState(null)
   const [inactivityWarning, setInactivityWarning] = useState(false)
+  const [idleCfg, setIdleCfg] = useState(() => ({ totalMs: INACTIVITY_MS, warnMs: WARN_BEFORE_MS }))
   const [countdown, setCountdown] = useState(60)
   const [statsFilter, setStatsFilter] = useState(null)
   const [statusFilter, setStatusFilter] = useState('all')
@@ -214,6 +232,7 @@ export default function App() {
         setTeamName(res.team_name ?? null)
         setMyTeamIds(Array.isArray(res.team_ids) ? res.team_ids : [])
         setMustChangePwd(!!res.must_change_password)
+        setIdleCfg(idleConfigFrom(res))
         // Giriş güvenliği özeti — F5 sonrası login yanıtı yoktur, bu yüzden /me de aynı bloğu
         // döndürür; alınmazsa özet ve kullanıcı menüsü sayfa yenilemede boşalır.
         setLoginInfo(res.login_info ?? null)
@@ -274,7 +293,7 @@ export default function App() {
 
       warnTimer.current = setTimeout(() => {
         setInactivityWarning(true)
-        setCountdown(60)
+        setCountdown(Math.round(idleCfg.warnMs / 1000))
         countdownInterval.current = setInterval(() => {
           setCountdown((prev) => {
             if (prev <= 1) {
@@ -284,9 +303,9 @@ export default function App() {
             return prev - 1
           })
         }, 1000)
-      }, INACTIVITY_MS - WARN_BEFORE_MS)
+      }, Math.max(1000, idleCfg.totalMs - idleCfg.warnMs))
 
-      logoutTimer.current = setTimeout(doAutoLogout, INACTIVITY_MS)
+      logoutTimer.current = setTimeout(doAutoLogout, idleCfg.totalMs)
     }
 
     const events = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click']
@@ -299,7 +318,9 @@ export default function App() {
       clearInterval(countdownInterval.current)
       events.forEach((e) => document.removeEventListener(e, resetTimer))
     }
-  }, [user])
+    // idleCfg bağımlılıkta: ayar değiştiğinde (yeniden giriş / F5) zamanlayıcı YENİ süreyle
+    // kurulmalı, yoksa eski süre oturum boyunca yaşamaya devam ederdi.
+  }, [user, idleCfg])
 
   // Logout / unmount sonrası gelen geç response'lar setState etmesin → ref ile guard.
   const loadAliveRef = useRef(true)
@@ -558,6 +579,7 @@ export default function App() {
     setTeamId(userData.team_id ?? null)
     setTeamName(userData.team_name ?? null)
     setMyTeamIds(Array.isArray(userData.team_ids) ? userData.team_ids : [])
+    setIdleCfg(idleConfigFrom(userData))
     setMustChangePwd(!!userData.must_change_password)
     setLoginInfo(userData.login_info ?? null)
   }
