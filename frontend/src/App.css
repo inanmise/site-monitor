@@ -7851,6 +7851,10 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* ── İzleme Değişiklikleri konsolu: özet şeridi + tür kartları ─────────────────
    Şerit ve kartlar seçili ZAMAN PENCERESİNİN tamamını özetler, sayfalanan listeyi değil.
    Kartlar aynı zamanda tür süzgeci; bu yüzden düğme (basılabilir olduğu görünsün). */
+/* Kapsam notu: takım kapsamlı kullanıcıya "yalnız kendi takımını görüyorsun" bilgisi.
+   field-hint tipografisini miras alır; buradaki tek iş katlama başlığından önce nefes payı. */
+.chg-scope-note { margin: -4px 0 12px; color: var(--text-muted); }
+
 .chg-stats-row { grid-template-columns: repeat(4, 1fr); }
 @media (max-width: 900px) { .chg-stats-row { grid-template-columns: repeat(2, 1fr); } }
 

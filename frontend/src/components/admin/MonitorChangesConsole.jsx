@@ -44,7 +44,12 @@ const TAB_BY_KIND = {
   scripted: 'scripted', domain: 'domain', ping: 'ping',
 }
 
-export default function MonitorChangesConsole() {
+/**
+ * @param {boolean} globalViewer  Backend'deki SessionScope.isGlobalViewer karşılığı — global
+ *   admin ya da AUDIT. Yalnız SUNUM için kullanılır (kapsam notu, takım rozeti); gerçek kapsam
+ *   uçta uygulanır. Kapsamlı müdür-admin buraya girmez.
+ */
+export default function MonitorChangesConsole({ globalViewer = false }) {
   const t = useT()
   const [rows, setRows] = useState(null)
   const [counts, setCounts] = useState({})
@@ -68,11 +73,15 @@ export default function MonitorChangesConsole() {
   // erisilebilir kalir (asagidaki acilir liste), yani katlamak hicbir yolu kapatmaz.
   const [statsVisible, setStatsVisible] = useState(false)
   const [error, setError] = useState(null)
+  const [teamId, setTeamId] = useState('')
+  const [teams, setTeams] = useState([])
 
   const load = useCallback(async () => {
     setRows(null)
     try {
-      const res = await api.monitoring.getRecentChanges({ page, size, kind, eventType, actor, q, from, to })
+      const res = await api.monitoring.getRecentChanges({
+        page, size, kind, eventType, actor, q, from, to, ...(teamId ? { teamId } : {}),
+      })
       if (res?.success) {
         setRows(res.data?.changes || [])
         setTotal(res.data?.total || 0)
@@ -87,9 +96,35 @@ export default function MonitorChangesConsole() {
       setRows([])
       setError(e?.message || String(e))
     }
-  }, [page, size, kind, eventType, actor, q, from, to, t])
+  }, [page, size, kind, eventType, actor, q, from, to, teamId, t])
 
   useEffect(() => { load() }, [load])
+
+  // Takım listesi uçtan GÖRÜŞ KAPSAMINA göre süzülü gelir (AdminController.listTeams): yönetici
+  // hepsini, diğerleri yalnız kendi takımlarını görür. Yani seçenekleri burada ayrıca elemeye
+  // gerek yok — kapsam tek yerde, sunucuda.
+  // Patlarsa sessiz geçilir: takım seçici çıkmaz ama liste çalışmaya devam eder (AlertHistory
+  // ile aynı duruş). Süzgeç bir kolaylık, ekranın çalışma şartı değil.
+  useEffect(() => {
+    api.admin.getTeams()
+      .then(res => setTeams(Array.isArray(res?.data) ? res.data : []))
+      .catch(() => {})
+  }, [])
+
+  /**
+   * Seçici ancak BİRDEN FAZLA takım görünüyorsa çizilir ("Tüm takımlar" + en az iki takım).
+   * Tek takımlı kullanıcıda tek seçenekli bir açılır liste hiçbir şey yapmaz, yalnız araç
+   * çubuğunu doldurur.
+   *
+   * <p>Bu koşul YALNIZ seçiciyi kapatır. Satırdaki takım adı gibi İÇERİK buna bağlanmaz:
+   * takım listesi yardımcı bir istektir (yetki/ağ nedeniyle boş gelebilir) ve boş gelmesi
+   * satırın kendi taşıdığı bilgiyi gizlememeli.
+   */
+  const teamOptions = useMemo(() => [
+    { value: '', label: t('chg.allTeams') },
+    ...teams.map(tm => ({ value: String(tm.id), label: tm.name })),
+  ], [teams, t])
+  const multiTeam = teamOptions.length > 2
 
   /** Aktör seçenekleri görünen satırlardan türetilir — ayrı bir uç açmaya değmez. */
   const actorOptions = useMemo(() => {
@@ -146,13 +181,18 @@ export default function MonitorChangesConsole() {
   function clearFilters() {
     setPage(0)
     setRangeKey('all')
-    setFrom(''); setTo(''); setEventType(''); setActor(''); setKind(''); setQ('')
+    setFrom(''); setTo(''); setEventType(''); setActor(''); setKind(''); setQ(''); setTeamId('')
   }
 
   const totalPages = Math.max(1, Math.ceil(total / size))
 
   return (
     <div className="audit-viewer chg-console">
+      {/* Kapsam notu — yalnız takım kapsamlı kullanıcıya. İki şeyi birden söyler: liste
+          kapsamla sınırlıdır VE takımsız kayıtlar burada görünmez. Yazılmasaydı kullanıcı eksik
+          gördüğünü fark edemez, "demek hiç değişmemiş" diye okurdu. */}
+      {!globalViewer && <p className="field-hint chg-scope-note">{t('chg.scopeNote')}</p>}
+
       {/* Katlama başlığı — izleme sayfalarındaki `stats-collapse-bar` ile AYNI şekil ve
           aynı sözlük anahtarları: kullanıcı burada yeni bir kalıp öğrenmez. */}
       <div className="stats-collapse-bar" onClick={() => setStatsVisible(v => !v)}
@@ -213,6 +253,10 @@ export default function MonitorChangesConsole() {
           <button className="audit-filter-btn" onClick={clearFilters}>{t('chg.presetClear')}</button>
         </div>
         <div className="audit-toolbar-actions chg-filters">
+          {multiTeam && (
+            <SearchableSelect value={teamId} onChange={(v) => { setTeamId(v); setPage(0) }}
+              options={teamOptions} searchThreshold={2} ariaLabel={t('chg.teamFilter')} />
+          )}
           <SearchableSelect value={kind} onChange={(v) => { setKind(v); setPage(0) }}
             options={kindOptions} searchThreshold={6} />
           <SearchableSelect value={actor} onChange={(v) => { setActor(v); setPage(0) }}
