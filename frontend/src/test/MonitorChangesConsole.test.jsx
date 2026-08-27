@@ -10,7 +10,7 @@ const { apiMock } = vi.hoisted(() => {
       return t[prop]
     },
   })
-  return { apiMock: deep({ monitoring: {} }) }
+  return { apiMock: deep({ monitoring: {}, admin: {} }) }
 })
 
 vi.mock('../api/client', () => ({
@@ -63,6 +63,8 @@ function reply(rows, extra = {}) {
 beforeEach(() => {
   vi.clearAllMocks()
   api.monitoring.getRecentChanges.mockResolvedValue(reply([ROW, DELETED]))
+  // Varsayilan: takim listesi BOS -> secici cizilmez. Suzgeci sinayan testler kendi verisini kurar.
+  api.admin.getTeams.mockResolvedValue({ success: true, data: [] })
 })
 
 /**
@@ -452,5 +454,88 @@ describe('MonitorChangesConsole — PAGESPEED turu', () => {
       .find(c => c.textContent.includes('Page Speed'))
     expect(card, 'PAGESPEED karti cizilmedi').toBeTruthy()
     expect(container.textContent).not.toContain('chg.kind.')
+  })
+})
+
+/**
+ * Kullanici istegi (2026-08-27): ekran TUM takim kullanicilarina acildi; herkes yalniz kendi
+ * kapsamindaki takimlarin degisikliklerini gorur, yonetici takim bazli suzer.
+ *
+ * Kapsamin KENDISI ucta uygulanir (viewTeamIds); buradaki testler SUNUM tarafini pinler.
+ */
+describe('MonitorChangesConsole — takim suzgeci', () => {
+  const lastCall = () => api.monitoring.getRecentChanges.mock.calls.at(-1)[0]
+  const twoTeams = () => api.admin.getTeams.mockResolvedValue(
+    { success: true, data: [{ id: 5, name: 'Takım A' }, { id: 7, name: 'Takım B' }] })
+  const oneTeam = () => api.admin.getTeams.mockResolvedValue(
+    { success: true, data: [{ id: 5, name: 'Takım A' }] })
+
+  it('TEK takim goren kullanicida secici HIC cizilmez', async () => {
+    oneTeam()
+    const { container } = render(<MonitorChangesConsole />)
+    await screen.findByText('Ödeme akışı')
+
+    // "Tüm takımlar" + tek takim = iki secenek; secici hicbir sey yapmaz, yalniz cubugu doldurur.
+    await waitFor(() => expect(api.admin.getTeams).toHaveBeenCalled())
+    expect(screen.queryByLabelText('Filter by team')).toBeNull()
+  })
+
+  it('COK takim gorulunce secici cizilir ve secim teamId olarak istege girer', async () => {
+    twoTeams()
+    render(<MonitorChangesConsole />)
+    await screen.findByText('Ödeme akışı')
+
+    // SearchableSelect yerli <select> degil: tetigi mouseDown ile ac, secenegi mouseDown ile sec.
+    const trigger = await screen.findByLabelText('Filter by team')
+    api.monitoring.getRecentChanges.mockClear()
+    fireEvent.mouseDown(trigger)
+    fireEvent.mouseDown([...document.querySelectorAll('.ss-option')]
+      .find(el => el.textContent.includes('Takım B')))
+
+    await waitFor(() => expect(lastCall().teamId).toBe('7'))
+    // Sayfalama BASA doner: 3. sayfada takim degistirip bos liste gormeyelim.
+    expect(lastCall().page).toBe(0)
+  })
+
+  it('takim secilmemisken teamId istege HIC konmaz', async () => {
+    twoTeams()
+    render(<MonitorChangesConsole />)
+    await screen.findByText('Ödeme akışı')
+
+    expect(lastCall()).not.toHaveProperty('teamId')
+  })
+
+  /**
+   * Suzgec bir KOLAYLIK, ekranin calisma sarti degil: takim ucu patlarsa liste calismaya
+   * devam etmeli. Aksi halde tek bir yardimci istek butun ekrani goturur.
+   */
+  it('takim ucu PATLARSA konsol cokmez, liste calisir', async () => {
+    api.admin.getTeams.mockRejectedValue(new Error('403'))
+    render(<MonitorChangesConsole />)
+
+    expect(await screen.findByText('Ödeme akışı')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Filter by team')).toBeNull()
+  })
+
+})
+
+/**
+ * Kapsam notu: takim kullanicisi listenin kendi kapsamiyla sinirli oldugunu VE takimsiz
+ * kayitlarin burada gorunmedigini bilmeli. Yazilmasaydi eksik gordugunu fark edemez,
+ * "demek hic degismemis" diye okurdu.
+ */
+describe('MonitorChangesConsole — kapsam notu', () => {
+  it('takim kullanicisina gosterilir', async () => {
+    render(<MonitorChangesConsole globalViewer={false} />)
+    await screen.findByText('Ödeme akışı')
+
+    expect(screen.getByText(/Only changes for the teams you can see/)).toBeInTheDocument()
+  })
+
+  it('global yoneticide gosterilmez (onun icin dogru degil)', async () => {
+    render(<MonitorChangesConsole globalViewer />)
+    await screen.findByText('Ödeme akışı')
+
+    expect(screen.queryByText(/Only changes for the teams you can see/)).toBeNull()
   })
 })

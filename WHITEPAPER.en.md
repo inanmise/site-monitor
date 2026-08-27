@@ -1563,7 +1563,7 @@ Logging:
 | `site.monitor.lockout.durations-seconds` | `30,120,600,1800` | The wait at each stage |
 | `site.monitor.lockout.permanent-failures` | 5 | When the permanent lock applies |
 | `site.monitor.remember-me.validity-seconds` | 604800 | "Remember me" lifetime, seven days |
-| `PASSWORD_MIN_LENGTH` / `MAX_LENGTH` / `HISTORY_COUNT` | 12 / 64 / 5 | Password policy |
+| `PASSWORD_MIN_LENGTH` / `MAX_LENGTH` / `HISTORY_COUNT` | 6 / 64 / 5 | Password policy |
 
 ### 18.4 Email
 

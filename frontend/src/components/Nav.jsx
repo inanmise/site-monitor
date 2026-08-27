@@ -83,7 +83,12 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
         { id: 'system',     Icon: Server,        labelKey: 'nav.system',     show: isGlobalAdmin || isAudit },
         // Denetim konsolunun YANINDA: ikisi de "kim ne yaptı" sorusuna bakar — biri güvenlik
         // kaydına (audit_log), diğeri izleme yapılandırmasının ürün geçmişine.
-        { id: 'monitorchanges', Icon: History,   labelKey: 'nav.monitorChanges', show: isGlobalAdmin || isAudit },
+        //
+        // İkisi AYNI kapıda DEĞİL, olmamalı da: Denetim Logu sistem-genelidir (tüm takımlar,
+        // tüm kullanıcılar) ve admin/AUDIT'te kalır. Bu ekran ürün geçmişidir ve takım-kapsamlı
+        // sorgulanır — herkes kendi takımının değişikliklerini görür. Uç zaten viewTeamIds ile
+        // sınırlıyor; menüyü gizlemek yalnız kullanıcıyı kendi verisinden mahrum bırakırdı.
+        { id: 'monitorchanges', Icon: History,   labelKey: 'nav.monitorChanges', show: true },
       ],
     },
     {

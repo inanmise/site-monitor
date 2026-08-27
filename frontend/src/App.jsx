@@ -196,6 +196,9 @@ export default function App() {
   // manage-scope listesi yok (/me yalnız üyelik döndürür); yönetilebilir bir takımı yanlışlıkla
   // gizlemektense backend'in 403'üne güveniyoruz (InventoryManager da böyle yapıyor).
   const canManageInventory = systemRole === 'ADMIN' || systemRole === 'TEAM_ADMIN'
+  // Backend'deki SessionScope.isGlobalViewer'ın birebir karşılığı: kapsamsız (global) admin ya da
+  // AUDIT. Kapsamlı müdür-admin buraya GİRMEZ — o da takım süzgeciyle çalışır.
+  const globalViewer = globalAdmin || systemRole === 'AUDIT'
   const [caModal, setCaModal]     = useState(false)
   const [newDomain,    setNewDomain]    = useState('')
   const [checkLoading, setCheckLoading] = useState(false)
@@ -1230,14 +1233,22 @@ export default function App() {
               </div>
             )}
 
-            {/* İzleme değişiklik konsolu — denetim konsoluyla AYNI kapıda (globalAdmin || AUDIT).
-                Denetim güvenlik kaydını gösterir; bu ekran ürün geçmişini: kim hangi izlemeyi
-                ekledi/değiştirdi, hangi değerlerle. */}
-            {tab === 'monitorchanges' && (globalAdmin || systemRole === 'AUDIT') && (
+            {/* İzleme değişiklik konsolu — TÜM takım kullanıcılarına açık, takım-kapsamlı.
+                Denetim konsolu (system sekmesi) güvenlik kaydını gösterir ve sistem-geneli
+                olduğu için admin/AUDIT'te kalır; bu ekran ürün geçmişini gösterir: kim hangi
+                izlemeyi ekledi/değiştirdi, hangi değerlerle. Uç zaten viewTeamIds ile
+                sınırlıyor — menüyü gizlemek kullanıcıyı yalnız KENDİ verisinden mahrum bırakırdı.
+
+                globalViewer, backend'deki SessionScope.isGlobalViewer'ın birebir karşılığı:
+                kapsamlı müdür-admin systemRole==='ADMIN' olsa da globalAdmin DEĞİLDİR (yukarıdaki
+                tanıma bakınız), yani o da takım süzgeciyle çalışır. */}
+            {tab === 'monitorchanges' && (
               <div className="tab-content active">
                 <h2>{t('chg.consoleTitle')}</h2>
-                <p className="upt-subtitle">{t('chg.consoleSubtitle')}</p>
-                <MonitorChangesConsole />
+                <p className="upt-subtitle">
+                  {globalViewer ? t('chg.consoleSubtitle') : t('chg.consoleSubtitleTeam')}
+                </p>
+                <MonitorChangesConsole globalViewer={globalViewer} />
               </div>
             )}
 

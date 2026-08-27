@@ -518,8 +518,17 @@ public class MonitoringController {
      * Tüm izlemelerin değişiklikleri — yönetici konsolunun tek noktadan sayfalanan akışı.
      *
      * <p>Global admin/AUDIT her şeyi görür; diğer roller {@code viewTeamIds} kesişimiyle sınırlanır.
-     * Kapsam mantığı baştan doğru yazılıyor ki uç ileride takıma açılmak istendiğinde yeniden
-     * yazılması gerekmesin — arayüzde ekran şimdilik yalnız yöneticiye gösteriliyor.
+     * Ekran 2026-08-27'de TÜM takım kullanıcılarına açıldı — kapsam mantığı bu gün için baştan
+     * doğru yazılmıştı, uç yeniden yazılmadı.
+     *
+     * <p><b>{@code teamId} bir SÜZGEÇTİR, kapsam değil.</b> Kapsam koruması ({@code teamScopeAll} /
+     * {@code teamIds}) sorguda ayrıca AND'lendiği için yabancı bir takım id'si zaten veri
+     * sızdıramaz; yine de sessizce BOŞ liste dönmek yanlış cevap olurdu — kullanıcı süzgecin
+     * çalıştığını sanır, o takımda hiç değişiklik olmadığı sonucuna varırdı. Kapsam dışı id
+     * açıkça 403 alır.
+     *
+     * <p>Süzgeç ÜÇ sorguya birden geçer (liste + özet şerit + tür kartları). Yalnız listeye
+     * geçseydi yönetici bir takım seçtiğinde rakamlar listeyle çelişirdi.
      */
     @GetMapping("/changes/recent")
     public ResponseEntity<Map<String, Object>> recentChanges(
@@ -530,6 +539,12 @@ public class MonitoringController {
             @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "25") int size,
             HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
+
+        // Kapsam DIŞI takım süzgeci: 403. Burada 404 kullanılmaz — takımın varlığı zaten
+        // GET /teams ile bilinen bir şey, gizlenecek bir varlık yok (resourceChanges'teki
+        // varlık-gizleme gerekçesi bu uçta geçerli değil).
+        if (teamId != null && !SessionScope.canView(session, teamId))
+            return forbidden("Bu takımın değişikliklerini görme yetkiniz yok");
 
         boolean all = SessionScope.isGlobalViewer(session);
         List<Long> view = SessionScope.viewTeamIds(session);
@@ -545,13 +560,13 @@ public class MonitoringController {
                 PageRequest.of(Math.max(0, page), Math.max(1, Math.min(size, 200))));
 
         Map<String, Object> counts = new LinkedHashMap<>();
-        for (Object[] row : changeLogRepo.countByEventType(blankToNull(from), blankToNull(to), all, scope)) {
+        for (Object[] row : changeLogRepo.countByEventType(blankToNull(from), blankToNull(to), teamId, all, scope)) {
             counts.put(String.valueOf(row[0]), row[1]);
         }
         // Tür kartları: (tür → olay → adet). Sayfalanan listeden türetilemez (o yalnız görünen
         // sayfayı taşır); kartlar seçili zaman penceresinin TAMAMINI özetler.
         Map<String, Map<String, Object>> byKind = new LinkedHashMap<>();
-        for (Object[] row : changeLogRepo.countByKindAndEventType(blankToNull(from), blankToNull(to), all, scope)) {
+        for (Object[] row : changeLogRepo.countByKindAndEventType(blankToNull(from), blankToNull(to), teamId, all, scope)) {
             byKind.computeIfAbsent(String.valueOf(row[0]), k -> new LinkedHashMap<>())
                   .put(String.valueOf(row[1]), row[2]);
         }

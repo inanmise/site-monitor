@@ -1732,7 +1732,7 @@ Güvenlik ve ağ:
 | `site.monitor.lockout.permanent-failures` | 5 | Kalıcı kilit eşiği |
 | `site.monitor.remember-me.validity-seconds` | 604800 | "Beni Hatırla" süresi (7 gün) |
 | `site.monitor.inactivity-timeout-minutes` | 5 | Hareketsizlik zaman aşımı |
-| `PASSWORD_MIN_LENGTH` / `MAX_LENGTH` / `HISTORY_COUNT` | 12 / 64 / 5 | Parola politikası |
+| `PASSWORD_MIN_LENGTH` / `MAX_LENGTH` / `HISTORY_COUNT` | 6 / 64 / 5 | Parola politikası |
 
 ### 18.4 E-posta Konfigürasyonu
 
@@ -1853,7 +1853,7 @@ Varsayılan konfigürasyon yerel geliştirme içindir ve kasıtlı olarak güven
 | `SYSTEM_ADMIN_EMAIL` | Ağ kesintisi ve sistem bildirimlerinin alıcısı |
 | `SITE_MONITOR_EMAIL_ENABLED=true` + SMTP | E-posta kapalıyken alarm bildirimleri sessizce gönderilmez |
 | `SPRING_SESSION_STORE_TYPE=jdbc` | Pod yeniden başlatmalarında oturumlar korunur |
-| `PASSWORD_MIN_LENGTH` vb. | Varsayılanlar prod uyumlu (12/64/5); kurumsal politikaya göre artırın |
+| `PASSWORD_MIN_LENGTH` vb. | Varsayılanlar 6/64/5; alt sınır kurum kararıyla düşürüldü, kurumsal politikaya göre artırın |
 
 ### 20.3 Erişim ve Yetki Kontrolleri
 

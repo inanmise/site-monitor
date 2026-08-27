@@ -293,7 +293,7 @@ class HistoryQueryGrammarTest {
 
         // 5) Özet şeridi de aynı kapsam + SYSTEM dışlaması ile çalışmalı.
         Map<String, Long> counts = new LinkedHashMap<>();
-        for (Object[] r : changeRepo.countByEventType(null, null, true, all)) {
+        for (Object[] r : changeRepo.countByEventType(null, null, null, true, all)) {
             counts.put(String.valueOf(r[0]), ((Number) r[1]).longValue());
         }
         assertThat(counts).containsEntry("CREATE", 2L).containsEntry("UPDATE", 1L);
@@ -301,13 +301,32 @@ class HistoryQueryGrammarTest {
 
         // 5b) Tür kartları: (tür × olay) kırılımı — konsolun "hangi izlemede ne kadar" sorusu.
         Map<String, Map<String, Long>> byKind = new LinkedHashMap<>();
-        for (Object[] r : changeRepo.countByKindAndEventType(null, null, true, all)) {
+        for (Object[] r : changeRepo.countByKindAndEventType(null, null, null, true, all)) {
             byKind.computeIfAbsent(String.valueOf(r[0]), k -> new LinkedHashMap<>())
                   .put(String.valueOf(r[1]), ((Number) r[2]).longValue());
         }
         assertThat(byKind.keySet()).containsExactlyInAnyOrder("PORT", "SCRIPTED");
         assertThat(byKind.get("PORT")).containsEntry("CREATE", 1L).containsEntry("UPDATE", 1L);
         assertThat(byKind.get("SCRIPTED")).containsEntry("CREATE", 1L);
+
+        // 5c) TAKIM süzgeci ÜÇ sorguda da daraltmalı. Yalnız listeye uygulansaydı yönetici bir
+        //     takım seçtiğinde liste daralır ama şerit ve kartlar tüm takımları saymaya devam
+        //     eder, rakamlar ekranda listeyle çelişirdi.
+        assertThat(changeRepo.search(null, null, null, 7L, null, null, null, true, all,
+                PageRequest.of(0, 25)).getTotalElements()).isEqualTo(1);
+
+        Map<String, Long> team7 = new LinkedHashMap<>();
+        for (Object[] r : changeRepo.countByEventType(null, null, 7L, true, all)) {
+            team7.put(String.valueOf(r[0]), ((Number) r[1]).longValue());
+        }
+        assertThat(team7).containsExactly(java.util.Map.entry("CREATE", 1L));
+
+        Map<String, Map<String, Long>> byKind7 = new LinkedHashMap<>();
+        for (Object[] r : changeRepo.countByKindAndEventType(null, null, 7L, true, all)) {
+            byKind7.computeIfAbsent(String.valueOf(r[0]), k -> new LinkedHashMap<>())
+                   .put(String.valueOf(r[1]), ((Number) r[2]).longValue());
+        }
+        assertThat(byKind7.keySet()).containsExactly("SCRIPTED");
 
         // 6) Kaynak bazlı geçmiş + tek olay + nişan sorgusu.
         assertThat(changeRepo.findByResourceKindAndResourceIdOrderByCreatedAtDescIdDesc(

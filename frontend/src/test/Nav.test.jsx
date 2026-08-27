@@ -20,6 +20,25 @@ describe('Nav', () => {
     expect(screen.getByText('Admin Panel')).toBeInTheDocument()
   })
 
+  /**
+   * Kullanici istegi (2026-08-27): Izleme Degisiklikleri ekrani TUM takim kullanicilarina acildi.
+   * Onceden `isGlobalAdmin || isAudit` kapisindaydi. Uc zaten viewTeamIds ile sinirliyor; menuyu
+   * gizlemek kullaniciyi yalniz KENDI takiminin verisinden mahrum birakiyordu.
+   *
+   * DEFAULT_PROPS'ta systemRole/globalAdmin YOK -> siradan kullanici. Kapi geri kapatilirsa
+   * bu test kirilir.
+   */
+  it('shows Monitor Changes to a plain team user (no admin props)', () => {
+    render(<Nav {...DEFAULT_PROPS} />)
+    expect(screen.getByText('Monitor Changes')).toBeInTheDocument()
+  })
+
+  /** Denetim Logu AYNI kapida DEGIL: sistem-geneli guvenlik kaydi, admin/AUDIT'te kalir. */
+  it('still hides the system audit log from a plain team user', () => {
+    render(<Nav {...DEFAULT_PROPS} />)
+    expect(screen.queryByText('Audit Log')).toBeNull()
+  })
+
   it('marks the active tab with the sb-active class', () => {
     render(<Nav {...DEFAULT_PROPS} activeTab="warnings" />)
     const warningsBtn = screen.getByRole('button', { name: /Warnings/ })

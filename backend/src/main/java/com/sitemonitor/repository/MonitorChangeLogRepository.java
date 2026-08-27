@@ -71,10 +71,17 @@ public interface MonitorChangeLogRepository extends JpaRepository<MonitorChangeL
                                   @Param("teamIds") Collection<Long> teamIds,
                                   Pageable pageable);
 
-    /** Konsolun özet şeridi: olay tipi dağılımı (aynı kapsam kuralıyla). */
+    /**
+     * Konsolun özet şeridi: olay tipi dağılımı (aynı kapsam kuralıyla).
+     *
+     * <p>{@code teamId} süzgecini {@link #countByKindAndEventType} ile AYNI gerekçeyle alır —
+     * oradaki uzun açıklamaya bakınız: takım bir GÖRÜNÜRLÜK daraltmasıdır, tür ise bir gezinme
+     * süzgeci.
+     */
     @Query("""
            SELECT c.eventType, COUNT(c) FROM MonitorChangeLog c
            WHERE c.resourceKind <> 'SYSTEM'
+             AND (:teamId IS NULL OR c.teamId = :teamId)
              AND (:from IS NULL OR c.createdAt >= :from)
              AND (:to IS NULL OR c.createdAt <= :to)
              AND (:teamScopeAll = TRUE OR c.teamId IN :teamIds)
@@ -82,6 +89,7 @@ public interface MonitorChangeLogRepository extends JpaRepository<MonitorChangeL
            """)
     List<Object[]> countByEventType(@Param("from") String from,
                                     @Param("to") String to,
+                                    @Param("teamId") Long teamId,
                                     @Param("teamScopeAll") boolean teamScopeAll,
                                     @Param("teamIds") Collection<Long> teamIds);
 
@@ -92,14 +100,21 @@ public interface MonitorChangeLogRepository extends JpaRepository<MonitorChangeL
      * Sayfalanan listeden hesaplanamaz — o yalnız GÖRÜNEN sayfayı taşır; kartlar tüm pencereyi
      * özetlemek zorunda.
      *
-     * <p>Kasten yalnız TARİH ARALIĞI + kapsam süzgecini alır: kartlar tür seçmenin GİRİŞ noktası,
-     * tür süzgeci uygulanırsa tek karta düşer ve karşılaştırma imkânı kaybolurdu. Aralık ise
-     * uygulanmalı — kullanıcı 30 günü seçmişken kartların 90 günü sayması şeridi ile kartları
-     * çelişirdi.
+     * <p><b>TÜR süzgecini kasten ALMAZ:</b> kartlar tür seçmenin GİRİŞ noktası, tür süzgeci
+     * uygulanırsa tek karta düşer ve karşılaştırma imkânı kaybolurdu.
+     *
+     * <p><b>TAKIM süzgecini ise ALIR</b> — ikisi aynı şey değil. Tür, kartların kendi ürettiği
+     * bir gezinme süzgeci; takım ise NE KADARINA BAKTIĞIMIZI belirleyen bir görünürlük
+     * daraltmasıdır. Alınmasaydı yönetici bir takım seçtiğinde liste daralır ama kartlar tüm
+     * takımları saymaya devam eder, rakamlar listeyle çelişirdi.
+     *
+     * <p>Tarih aralığı da aynı sebeple uygulanır — kullanıcı 30 günü seçmişken kartların 90 günü
+     * sayması şeridi ile kartları çelişirdi.
      */
     @Query("""
            SELECT c.resourceKind, c.eventType, COUNT(c) FROM MonitorChangeLog c
            WHERE c.resourceKind <> 'SYSTEM'
+             AND (:teamId IS NULL OR c.teamId = :teamId)
              AND (:from IS NULL OR c.createdAt >= :from)
              AND (:to IS NULL OR c.createdAt <= :to)
              AND (:teamScopeAll = TRUE OR c.teamId IN :teamIds)
@@ -107,6 +122,7 @@ public interface MonitorChangeLogRepository extends JpaRepository<MonitorChangeL
            """)
     List<Object[]> countByKindAndEventType(@Param("from") String from,
                                            @Param("to") String to,
+                                           @Param("teamId") Long teamId,
                                            @Param("teamScopeAll") boolean teamScopeAll,
                                            @Param("teamIds") Collection<Long> teamIds);
 
