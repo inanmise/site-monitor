@@ -1,5 +1,5 @@
 import { Globe, CalendarDays, Network, Search, Target, Radio, ScanSearch, FlaskConical,
-  ShieldCheck, Folder, Wrench, Layers, FilePlus2, Pencil, Trash2 } from 'lucide-react'
+  Gauge, ShieldCheck, Folder, Wrench, Layers, FilePlus2, Pencil, Trash2 } from 'lucide-react'
 
 /**
  * Tür kartları — "hangi izlemede ne kadar oluşturma / değişiklik / silme oldu" tek bakışta.
@@ -18,7 +18,7 @@ import { Globe, CalendarDays, Network, Search, Target, Radio, ScanSearch, FlaskC
 
 const ICONS = {
   http: Globe, domain: CalendarDays, port: Network, dns: Search, keyword: Target,
-  ping: Radio, page: ScanSearch, scripted: FlaskConical,
+  ping: Radio, page: ScanSearch, pagespeed: Gauge, scripted: FlaskConical,
   inventory: ShieldCheck, group: Folder, maintenance: Wrench,
 }
 

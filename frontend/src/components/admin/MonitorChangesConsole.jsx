@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Search, ChevronRight, Copy } from 'lucide-react'
+import { Search, ChevronRight, Copy, BarChart3, ChevronDown } from 'lucide-react'
 import { api, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
@@ -30,8 +30,8 @@ import { copyText } from '../../utils/copyText.js'
  * açmak yalnız bir görünürlük kararı olur.
  */
 
-const KINDS = ['port', 'dns', 'keyword', 'http', 'page', 'scripted', 'domain', 'ping',
-  'inventory', 'group', 'maintenance']
+const KINDS = ['port', 'dns', 'keyword', 'http', 'page', 'pagespeed', 'scripted', 'domain',
+  'ping', 'inventory', 'group', 'maintenance']
 const EVENTS = ['CREATE', 'UPDATE', 'DELETE', 'RESTORE', 'GROUP_RENAME']
 
 /** Zaman pencereleri. Saklama süresi 730 gün; 90 günden uzun pencereler için özel aralık var. */
@@ -62,6 +62,11 @@ export default function MonitorChangesConsole() {
   // tahmin işi olurdu ve gün sınırındaki bir yenilemede seçim kayardı.
   const [rangeKey, setRangeKey] = useState('all')
   const [open, setOpen] = useState(null)
+  // Ozet serit + tur kartlari VARSAYILAN KAPALI — izleme sayfalarindaki istatistik seridiyle
+  // ayni davranis. Bu ekranin isi "kim neyi degistirdi" listesi; kartlar 12 tur x 3 olay ile
+  // ilk ekrani doldurup asil listeyi katlamanin altina itiyordu. Tur suzgeci kapaliyken de
+  // erisilebilir kalir (asagidaki acilir liste), yani katlamak hicbir yolu kapatmaz.
+  const [statsVisible, setStatsVisible] = useState(false)
   const [error, setError] = useState(null)
 
   const load = useCallback(async () => {
@@ -148,17 +153,31 @@ export default function MonitorChangesConsole() {
 
   return (
     <div className="audit-viewer chg-console">
-      {/* Özet şeridi — seçili zaman penceresinin TAMAMI (sayfalanan liste değil). */}
-      <div className="audit-stats-row chg-stats-row">
-        <Stat label={t('chg.statTotal')} value={counts.TOTAL ?? sumCounts(counts)} />
-        <Stat label={t('chg.eventCREATE')} value={counts.CREATE ?? 0} tone="new" />
-        <Stat label={t('chg.eventUPDATE')} value={counts.UPDATE ?? 0} tone="edit" />
-        <Stat label={t('chg.eventDELETE')} value={counts.DELETE ?? 0} tone="danger" />
+      {/* Katlama başlığı — izleme sayfalarındaki `stats-collapse-bar` ile AYNI şekil ve
+          aynı sözlük anahtarları: kullanıcı burada yeni bir kalıp öğrenmez. */}
+      <div className="stats-collapse-bar" onClick={() => setStatsVisible(v => !v)}
+        title={statsVisible ? t('app.collapseStats') : t('app.expandStats')}>
+        <span className="stats-collapse-icon"><BarChart3 size={18} /></span>
+        <span className="stats-collapse-label">{t('app.statistics')}</span>
+        {!statsVisible && <span className="stats-collapse-hint">{t('app.expandStats')}</span>}
+        <span className={`stats-collapse-chevron${statsVisible ? ' open' : ''}`}><ChevronDown size={18} /></span>
       </div>
 
-      {/* Tür kartları: hangi izlemede ne kadar oluşturma/değişiklik/silme — ve tür süzgeci. */}
-      <ChangeKindCards t={t} kindCounts={kindCounts} selected={kind}
-        onSelect={(v) => { setKind(v); setPage(0) }} />
+      {statsVisible && (
+        <>
+          {/* Özet şeridi — seçili zaman penceresinin TAMAMI (sayfalanan liste değil). */}
+          <div className="audit-stats-row chg-stats-row">
+            <Stat label={t('chg.statTotal')} value={counts.TOTAL ?? sumCounts(counts)} />
+            <Stat label={t('chg.eventCREATE')} value={counts.CREATE ?? 0} tone="new" />
+            <Stat label={t('chg.eventUPDATE')} value={counts.UPDATE ?? 0} tone="edit" />
+            <Stat label={t('chg.eventDELETE')} value={counts.DELETE ?? 0} tone="danger" />
+          </div>
+
+          {/* Tür kartları: hangi izlemede ne kadar oluşturma/değişiklik/silme — ve tür süzgeci. */}
+          <ChangeKindCards t={t} kindCounts={kindCounts} selected={kind}
+            onSelect={(v) => { setKind(v); setPage(0) }} />
+        </>
+      )}
 
       {/* Zaman aralığı: hazır pencereler + özel tarih. Kısa etiket (7g) ile uzun açıklama
           (Son 7 gün) ayrı: şerit dar kalsın ama ne olduğu tooltip'te tam yazsın. */}

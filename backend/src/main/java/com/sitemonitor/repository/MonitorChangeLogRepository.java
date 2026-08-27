@@ -125,6 +125,16 @@ public interface MonitorChangeLogRepository extends JpaRepository<MonitorChangeL
     boolean existsByResourceKindAndEventType(String resourceKind, String eventType);
 
     /**
+     * Nişanın SÜRÜMÜ ({@code seq} kolonunda). Geri doldurma kapsamı sonradan genişleyebilir:
+     * yeni bir izleme türü eklendiğinde o türün eski denetim satırları hâlâ taşınmamıştır ve
+     * "koştu" nişanı ikinci koşuyu sonsuza dek engellerdi — tür sessizce geçmişsiz kalırdı.
+     * Sürüm karşılaştırması yalnız kapsam büyüdüğünde bir kez daha koşmayı mümkün kılar;
+     * satır bazındaki kaynak+olay+zaman kontrolü çiftlemeyi zaten engelliyor.
+     */
+    Optional<MonitorChangeLog> findFirstByResourceKindAndEventTypeOrderByIdDesc(
+            String resourceKind, String eventType);
+
+    /**
      * Elle/test temizliği. Saklama süresi temizliğini {@code RetentionCatalog} yapıyor (doğrudan
      * SQL, tüm tablolar için tek motor) — bu metot onun yerine geçmez, ondan bağımsızdır.
      *

@@ -122,13 +122,17 @@ public class MonitorHistoryService {
     }
 
     /** Geriye dönük doldurma için: aktör/IP/zaman DIŞARIDAN verilir (oturum bağlamı yoktur). */
-    public void recordBackfill(String kind, Long id, String name, Long teamId, String eventType,
-                               String changes, String actor, Long actorId, String ip,
-                               String createdAt) {
+    public boolean recordBackfill(String kind, Long id, String name, Long teamId, String eventType,
+                                  String changes, String actor, Long actorId, String ip,
+                                  String createdAt) {
         try {
             // Aynı kaynak+olay+zaman üçlüsü zaten varsa ATLA — backfill iki kez koşarsa geçmiş
             // çiftlenirdi ve bunu geri almak elle temizlik gerektirirdi.
-            if (repo.existsByResourceKindAndResourceIdAndEventTypeAndCreatedAt(kind, id, eventType, createdAt)) return;
+            // Dönüş değeri GERÇEKTEN yazıldı mı bilgisidir: kapsam genişleyince geri doldurma
+            // ikinci kez koşuyor ve o koşuda satırların çoğu atlanıyor. Çağıran "N satır taşındı"
+            // derken atlananları sayarsa nişan yalan söyler.
+            if (repo.existsByResourceKindAndResourceIdAndEventTypeAndCreatedAt(kind, id, eventType, createdAt))
+                return false;
 
             MonitorChangeLog row = new MonitorChangeLog();
             row.setResourceKind(kind);
@@ -146,8 +150,10 @@ public class MonitorHistoryService {
             row.setIpAddress(ip);
             row.setCreatedAt(createdAt);
             repo.save(row);
+            return true;
         } catch (Exception e) {
             log.warn("Geçmiş geri-doldurma satırı yazılamadı ({} {}): {}", kind, id, e.toString());
+            return false;
         }
     }
 
