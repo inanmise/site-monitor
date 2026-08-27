@@ -59,13 +59,19 @@ public class UserService {
     @Value("${site.monitor.lockout.failures-needed:5,3,2,1}")
     private List<Integer> lockoutFailuresNeeded;
 
-    @Value("${site.monitor.password.min-length:12}")
+    /**
+     * Alt sınır. Gerçek değer {@code application.properties}'ten gelir; buradaki 6 yalnız
+     * özellik dosyası hiç yüklenmediğinde (birim testi, gömülü bağlam) geçerli olan yedektir.
+     * İkisi AYNI olmalı — ayrışırsa aynı kural iki farklı ortamda iki farklı şey söyler;
+     * {@code PasswordPolicyDefaultTest} bunu pinliyor.
+     */
+    @Value("${site.monitor.password.min-length:6}")
     private int passwordMinLength;
 
-    @Value("${site.monitor.password.max-length:128}")
+    @Value("${site.monitor.password.max-length:64}")
     private int passwordMaxLength;
 
-    @Value("${site.monitor.password.history-count:3}")
+    @Value("${site.monitor.password.history-count:5}")
     private int passwordHistoryCount;
 
     /** "Aktif oturum" tazelik penceresi (sn): son ping bu süre içindeyse oturum canlı sayılır.
