@@ -42,7 +42,7 @@ const INTERVALS = [
 ]
 const REFRESH_INTERVAL = 60
 const emptyForm = { name: '', host: '', ipVersion: 'auto', groupName: '', notificationGroupId: '', teamId: '',
-  intervalSeconds: 60, timeoutMs: 5000, packetCount: 4, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true }
+  intervalSeconds: 60, timeoutMs: 5000, packetCount: 4, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, notifyWebhook: true, active: true }
 
 export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
@@ -135,7 +135,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
       teamId: m.team_id != null ? String(m.team_id) : '', intervalSeconds: m.interval_seconds ?? 60,
       timeoutMs: m.timeout_ms ?? 5000, packetCount: m.packet_count ?? 4,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30, recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
-      active: m.active !== false }
+      notifyWebhook: m.notify_webhook !== false, active: m.active !== false }
   }
   function openEdit(m) {
     setDupSource(null)
@@ -165,7 +165,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
       teamId: form.teamId === '' ? null : Number(form.teamId), intervalSeconds: Number(form.intervalSeconds),
       timeoutMs: Number(form.timeoutMs), packetCount: Number(form.packetCount),
       confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds), recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
-      active: form.active,
+      notifyWebhook: !!form.notifyWebhook, active: form.active,
     }
     // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
     if (changeNote.trim()) payload.changeNote = changeNote.trim()
@@ -536,6 +536,8 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
               <div className="full-width" style={{ fontSize: '.8em', color: 'var(--text-muted)', marginTop: -2, lineHeight: 1.5 }}>
                 ⓘ {t('ping.confirmHint')}
               </div>
+              <label className="checkbox-label" title={t('userpush.monitorToggleHint')}>
+                <input type="checkbox" checked={form.notifyWebhook} onChange={e => setForm(f => ({ ...f, notifyWebhook: e.target.checked }))} />{t('userpush.monitorToggle')}</label>
               <label className="checkbox-label">
                 <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('ping.active')}</label>
             </div>

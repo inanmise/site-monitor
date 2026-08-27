@@ -42,7 +42,7 @@ const emptyForm = {
   checkTimeoutMs: '',
   // Koruma anahtarlari: kilit ve degisiklik ACIK (bugunku fiili davranis), kara liste KAPALI
   // (her kontrolde dis DNS sorgusu uretir — bilincli acilmali).
-  transferLockAlert: true, blacklistEnabled: false, changeAlert: true,
+  transferLockAlert: true, blacklistEnabled: false, changeAlert: true, notifyWebhook: true,
 }
 
 /** URL yapıştırılmış girdiyi host'a indirger: https://www.x.com.tr/path → www.x.com.tr
@@ -165,7 +165,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
       checkTimeoutMs: m.check_timeout_ms ?? '',
       transferLockAlert: m.transfer_lock_alert !== false,
       blacklistEnabled: m.blacklist_enabled === true,
-      changeAlert: m.change_alert !== false }
+      changeAlert: m.change_alert !== false, notifyWebhook: m.notify_webhook !== false }
   }
   function openEdit(m) {
     setTestResult(null); setDupSource(null)
@@ -210,6 +210,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
       transferLockAlert: !!form.transferLockAlert,
       blacklistEnabled: !!form.blacklistEnabled,
       changeAlert: !!form.changeAlert,
+      notifyWebhook: !!form.notifyWebhook,
     }
     // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
     if (changeNote.trim()) payload.changeNote = changeNote.trim()
@@ -609,6 +610,10 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
                 <input type="checkbox" checked={form.transferLockAlert}
                   onChange={e => setForm(f => ({ ...f, transferLockAlert: e.target.checked }))} />
                 {t('dom.transferLockAlert')}</label>
+              <label className="checkbox-label" title={t('userpush.monitorToggleHint')}>
+                <input type="checkbox" checked={form.notifyWebhook}
+                  onChange={e => setForm(f => ({ ...f, notifyWebhook: e.target.checked }))} />
+                {t('userpush.monitorToggle')}</label>
               <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('dom.transferLockHint')}</div>
 
               <label className="checkbox-label full-width">

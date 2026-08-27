@@ -98,7 +98,7 @@ describe('PingMonitorPage', () => {
 
     expect(api.monitoring.createPingMonitor.mock.calls[0][0]).toEqual({
       name: 'GW (Kopya)', host: '10.0.0.9', ipVersion: 'v6', groupName: 'Kurumsal', teamId: 5,
-      intervalSeconds: 900, timeoutMs: 7000, packetCount: 7,
+      intervalSeconds: 900, timeoutMs: 7000, packetCount: 7, notifyWebhook: true,
       confirmAttempts: 5, confirmIntervalSeconds: 45, recoveryChecks: 4, recoveryIntervalSeconds: 90,
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
       // Bildirim grubu da kopyalanır: kopya, kaynağın alarmını ALAN ekibe gitmeye devam etsin.

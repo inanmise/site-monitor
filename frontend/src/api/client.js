@@ -114,6 +114,7 @@ export const api = {
     directory: () => request('/users/directory'),
   },
   me: {
+    setPushOptOut: (optOut) => request('/auth/me/push-opt-out', { method: 'POST', body: JSON.stringify({ opt_out: optOut }) }),
     changePassword: (currentPwd, newPwd) => request('/me/change-password', {
       method: 'POST',
       body: JSON.stringify({ current_password: currentPwd, new_password: newPwd }),
@@ -415,6 +416,16 @@ export const api = {
   },
 
   admin: {
+    // Kişi-webhook (push) bildirim kanalı — yalnız admin
+    userPush: {
+      getSettings:  () => request('/admin/user-push/settings'),
+      saveSettings: (data) => request('/admin/user-push/settings', { method: 'POST', body: JSON.stringify(data) }),
+      saveScopes:   (rows) => request('/admin/user-push/scopes', { method: 'POST', body: JSON.stringify(rows) }),
+      sendTest:     (data) => request('/admin/user-push/test', { method: 'POST', body: JSON.stringify(data) }),
+      getDeliveries: (params) => request(`/admin/user-push/deliveries?${new URLSearchParams(params)}`),
+      getStats:     () => request('/admin/user-push/stats'),
+      exportUrl:    (params) => `/api/admin/user-push/deliveries/export?${new URLSearchParams(params)}`,
+    },
     // Inventory
     getInventory: (showDeleted = false) => request(`/admin/inventory?showDeleted=${showDeleted}`),
     getInventoryByDomain: (domain) => request(`/admin/inventory/by-domain?domain=${encodeURIComponent(domain)}`),
@@ -673,6 +684,7 @@ export const api = {
       method: 'POST', body: JSON.stringify({ action, ids, ...(note ? { note } : {}) }),
     }),
     getAlertNotifications: (id) => request(`/admin/alerts/${id}/notifications`),
+    getAlertPushDeliveries: (id) => request(`/admin/alerts/${id}/push-deliveries`),
 
     // Teams
     getTeams: () => request('/admin/teams'),

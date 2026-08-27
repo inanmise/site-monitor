@@ -38,6 +38,10 @@ public class PingMonitor {
     @Column(name = "team_id")
     private Long teamId;
 
+    /** Kişi-webhook (push) bildirimi açık mı (vars. true — üst katmanlar zaten vars. KAPALI, çifte emniyet). */
+    @Column(name = "notify_webhook")
+    private Boolean notifyWebhook = true;
+
     @Column(nullable = false)
     private Boolean active = true;
 

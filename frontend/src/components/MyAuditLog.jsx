@@ -37,7 +37,7 @@ function eventClass(et) {
  * gorunum Cihaz Gecmisi'dir — "hesabim guvende mi" sorusu ham olay listesinden daha sik
  * sorulur; denetim tablosu tek tikla, davranisi ve filtreleriyle AYNEN duruyor.
  */
-export default function MyAuditLog({ loginInfo = null, onChangePassword = null }) {
+export default function MyAuditLog({ loginInfo = null, onChangePassword = null, pushOptOut = false, onPushOptOutChange = null }) {
   const t = useT()
   const [view, setView] = useState('devices')
   const [rows, setRows] = useState([])
@@ -66,6 +66,18 @@ export default function MyAuditLog({ loginInfo = null, onChangePassword = null }
       {/* Ham olay listesinden ÖNCE özet: kullanıcının ilk sorduğu soru "son ne zaman girdim,
           adıma başarısız deneme oldu mu". Veri prop'tan gelir — ek fetch yok. */}
       <LastLoginSummary info={loginInfo} />
+
+      {/* E1: kişi webhook push tercihi — kullanıcı YALNIZ kendi bayrağını yazar. Günlükte
+          SKIPPED_USER_OPT_OUT olarak görünür; "neden bana gelmedi" sorusunun cevabı kayıtlıdır. */}
+      {onPushOptOutChange && (
+        <div className="my-push-optout">
+          <label className="checkbox-label" title={t('userpush.optOutHint')}>
+            <input type="checkbox" checked={pushOptOut}
+              onChange={(e) => onPushOptOutChange(e.target.checked)} />
+            <span>{t('userpush.optOut')}</span>
+          </label>
+        </div>
+      )}
 
       <div className="audit-view-switch">
         <SegmentedControl

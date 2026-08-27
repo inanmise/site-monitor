@@ -100,7 +100,7 @@ describe('PortMonitorPage', () => {
     expect(api.monitoring.createPortMonitor.mock.calls[0][0]).toEqual({
       name: 'mail (Kopya)', host: '10.0.0.1', port: 8443, protocol: 'HTTP',
       expect: '2xx', sendData: '/health',
-      teamId: 3, groupName: 'Kurumsal', tags: 'prod,kritik', notifyEmail: false,
+      teamId: 3, groupName: 'Kurumsal', tags: 'prod,kritik', notifyEmail: false, notifyWebhook: true,
       ipVersion: 'v4', slowResponseEnabled: true, slowThresholdMs: 4500,
       intervalSeconds: 900, timeoutMs: 7000,
       confirmAttempts: 5, confirmIntervalSeconds: 45, recoveryChecks: 4, recoveryIntervalSeconds: 90,

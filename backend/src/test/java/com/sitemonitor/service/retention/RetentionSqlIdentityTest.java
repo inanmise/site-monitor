@@ -92,7 +92,8 @@ class RetentionSqlIdentityTest {
                         "series-certificate", "series-port", "series-keyword", "series-ping",
                         "series-http", "page-resource-issues", "page-checks", "series-scripted",
                         "activity-log",
-                        "pagespeed-checks");   // Sayfa Hızı ölçüm serisi (2026-08)
+                        "pagespeed-checks",    // Sayfa Hızı ölçüm serisi (2026-08)
+                        "user-push-deliveries");   // Kişi-webhook teslimat günlüğü (2026-08, 3 yıl saklama)
     }
 
     @Test

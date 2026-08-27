@@ -49,6 +49,7 @@ class EscalationServiceTest {
     @Mock SmtpSettingsService smtpSettings;
     @Mock MaintenanceService maintenanceService;
     @Mock StormService stormService;
+    @Mock UserPushService userPushService;
     @Mock com.sitemonitor.repository.DomainMonitorRepository domainMonitorRepo;
     @Mock com.sitemonitor.repository.DomainCheckRepository domainCheckRepo;
     @Mock com.sitemonitor.repository.DnsRecordRepository dnsRecordRepo;
@@ -62,6 +63,7 @@ class EscalationServiceTest {
     void setUp() {
         service = new EscalationService(alertEventRepo, thresholdRepo, contactRepo,
                 inventoryRepo, emailService, weeklyAvailability, webhookService, new ObjectMapper(), notificationLogRepo, latestCheckRepo, teamRepo, smtpSettings, maintenanceService, stormService,
+                userPushService,
                 domainMonitorRepo, domainCheckRepo, dnsRecordRepo, pageCheckRepo, notificationGroups);
 
         // Self-injection bypass for @Async dispatch in tests (runs synchronously)
@@ -105,6 +107,40 @@ class EscalationServiceTest {
         assertThat(saved.getResolved()).isFalse();
         // Süre-bitişi ailesinde subject severity yerine kalan günü taşır
         verify(emailService).sendAlert(any(String[].class), contains("[Site Monitor] 25 GÜN KALDI · " + domain), anyString(), any(), any(), any(), any(), any());
+    }
+
+    /**
+     * KANAL BAĞIMSIZLIĞI SÖZLEŞMESİ (kişi-webhook, kural 1): push tetiği ne yaparsa yapsın —
+     * istisna dahil — mail yolu ETKİLENMEZ. Mutasyon kanıtı: sendCombinedAlert'teki try/catch
+     * zarfı kaldırılırsa bu test kırmızıya döner.
+     */
+    @Test
+    @DisplayName("user-push tetiği İSTİSNA atsa da mail gönderilir — kanal bağımsızlığı")
+    void userPushFailure_doesNotAffectMail() {
+        String domain = "expiring.example.com";
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        org.mockito.Mockito.doThrow(new RuntimeException("push kanalı çöktü"))
+                .when(userPushService).enqueueAlert(any(), any(), any(), any());
+
+        service.processResults(List.of(expiryResult(domain, 25, true)));
+
+        verify(emailService).sendAlert(any(String[].class), anyString(), anyString(), any(), any(), any(), any(), any());
+    }
+
+    /** K8 aynası: mail hunisinden geçen HER tetik push tetiğini de çağırır (mail sonucundan bağımsız). */
+    @Test
+    @DisplayName("Mail hunisi user-push tetiğini de çağırır (K8: mail neyi gönderiyorsa webhook da)")
+    void mailFunnel_triggersUserPush() {
+        String domain = "expiring.example.com";
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.processResults(List.of(expiryResult(domain, 25, true)));
+
+        verify(userPushService).enqueueAlert(any(), org.mockito.ArgumentMatchers.eq("INITIAL"), any(), any());
     }
 
     @Test

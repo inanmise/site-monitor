@@ -14,6 +14,7 @@ import LoginAnomalySettings from './LoginAnomalySettings'
 import DomainDiagnostics from './DomainDiagnostics'
 import BrandingSettings from './BrandingSettings'
 import RetentionSettings from './RetentionSettings'
+import UserPushSettings from './UserPushSettings'
 
 // Left-menu sections. More land in later phases.
 const SECTIONS = [
@@ -24,6 +25,7 @@ const SECTIONS = [
   { id: 'weeklyavail', labelKey: 'settings.navWeeklyAvail' },
   { id: 'certinvreport', labelKey: 'settings.navCertInvReport' },
   { id: 'storm', labelKey: 'settings.navStorm' },
+  { id: 'userpush', labelKey: 'settings.navUserPush' },
   { id: 'loginanomaly', labelKey: 'settings.navLoginAnomaly' },
   { id: 'ldap', labelKey: 'settings.navLdap' },
   { id: 'domaindiag', labelKey: 'settings.navDomainDiag' },
@@ -106,6 +108,7 @@ export default function AdminSettings() {
         {active === 'weeklyavail' && <WeeklyAvailabilitySettings />}
         {active === 'certinvreport' && <CertInventoryReportSettings />}
         {active === 'storm' && <StormSettings />}
+        {active === 'userpush' && <UserPushSettings />}
         {active === 'loginanomaly' && <LoginAnomalySettings />}
         {active === 'ldap' && <LdapSettings />}
         {active === 'domaindiag' && <DomainDiagnostics />}

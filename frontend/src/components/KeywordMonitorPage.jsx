@@ -57,7 +57,7 @@ const intervalIdx = (secs) => {
 const REFRESH_INTERVAL = 60
 const OP_SYM = { GTE: '≥', LTE: '≤', EQ: '=', GT: '>', LT: '<' }
 const emptyForm = { name: '', url: '', keyword: '', operator: 'GTE', matchCount: 1, groupName: '', notificationGroupId: '', teamId: '',
-  caseSensitive: false, tags: '', notifyEmail: true,
+  caseSensitive: false, tags: '', notifyEmail: true, notifyWebhook: true,
   checkSslErrors: false, sslExpiryReminders: false, domainExpiryReminders: false,
   sslReminderDays: '30,14,7', domainReminderDays: '30,14,7',
   slowResponseEnabled: false, slowThresholdMs: 3000,
@@ -154,7 +154,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     return { name: m.name || '', url: m.url || '', keyword: m.keyword || '',
       operator: m.operator || 'GTE', matchCount: m.match_count ?? 1, groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
       teamId: m.team_id != null ? String(m.team_id) : '',
-      caseSensitive: !!m.case_sensitive, tags: m.tags || '', notifyEmail: m.notify_email !== false,
+      caseSensitive: !!m.case_sensitive, tags: m.tags || '', notifyEmail: m.notify_email !== false, notifyWebhook: m.notify_webhook !== false,
       checkSslErrors: !!m.check_ssl_errors, sslExpiryReminders: !!m.ssl_expiry_reminders, domainExpiryReminders: !!m.domain_expiry_reminders,
       sslReminderDays: m.ssl_reminder_days || '30,14,7', domainReminderDays: m.domain_reminder_days || '30,14,7',
       slowResponseEnabled: !!m.slow_response_enabled, slowThresholdMs: m.slow_threshold_ms ?? 3000,
@@ -201,7 +201,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
       // Bos = takim varsayilani -> takim adresi (zincirin kalani).
       notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
         ? null : Number(form.notificationGroupId),
-      caseSensitive: form.caseSensitive, tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail,
+      caseSensitive: form.caseSensitive, tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, notifyWebhook: form.notifyWebhook,
       checkSslErrors: form.checkSslErrors, sslExpiryReminders: form.sslExpiryReminders, domainExpiryReminders: form.domainExpiryReminders,
       sslReminderDays: form.sslReminderDays?.trim() || '30,14,7', domainReminderDays: form.domainReminderDays?.trim() || '30,14,7',
       slowResponseEnabled: form.slowResponseEnabled, slowThresholdMs: Number(form.slowThresholdMs),
@@ -649,7 +649,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                   <label className="kw-channel kw-channel--disabled" title={t('keyword.soonHint')}>
                     <input type="checkbox" disabled /><Phone size={14} /><span>{t('keyword.chVoice')}</span><span className="kw-ch-soon">{t('keyword.soon')}</span></label>
                   <label className="kw-channel kw-channel--disabled" title={t('keyword.soonHint')}>
-                    <input type="checkbox" disabled /><Smartphone size={14} /><span>{t('keyword.chPush')}</span><span className="kw-ch-soon">{t('keyword.soon')}</span></label>
+                    <input type="checkbox" checked={form.notifyWebhook} onChange={e => setForm(f => ({ ...f, notifyWebhook: e.target.checked }))} /><Smartphone size={14} /><span>{t('userpush.monitorToggle')}</span></label>
                 </div>
               </div>
 

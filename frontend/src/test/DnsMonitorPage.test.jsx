@@ -135,7 +135,7 @@ describe('DnsMonitorPage', () => {
       name: 'example (Kopya)', domain: 'www.example.com', recordType: 'CNAME',
       intervalSeconds: 900, teamId: 5, groupName: 'Kurumsal',
       expectedValue: '1.2.3.4\n5.6.7.8', slowThresholdMs: 2500,
-      propagationCheck: true, dnsChangeAlertEnabled: false,
+      propagationCheck: true, dnsChangeAlertEnabled: false, notifyWebhook: true,
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
       // Bildirim grubu da kopyalanir: kopya, kaynagin alarmini ALAN ekibe gitmeye devam etsin.
       notificationGroupId: 7,

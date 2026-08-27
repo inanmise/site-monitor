@@ -46,7 +46,7 @@ const INFO_ITEMS = [
   { type: 'TTL',   descKey: 'dns.ttlExplain' },
 ]
 
-const emptyForm = { name: '', domain: '', recordType: 'A', intervalSeconds: 300, teamId: '', groupName: '', notificationGroupId: '', expectedValue: '', slowThresholdMs: '', propagationCheck: false, dnsChangeAlertEnabled: true, active: true }
+const emptyForm = { name: '', domain: '', recordType: 'A', intervalSeconds: 300, teamId: '', groupName: '', notificationGroupId: '', expectedValue: '', slowThresholdMs: '', propagationCheck: false, dnsChangeAlertEnabled: true, notifyWebhook: true, active: true }
 
 function truncateValue(val, max = 50) {
   if (!val) return '—'
@@ -150,6 +150,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
       slowThresholdMs: m.slow_threshold_ms ?? '',
       propagationCheck: m.propagation_check === true,
       dnsChangeAlertEnabled: m.dns_change_alert_enabled !== false,   // null/undefined = açık
+      notifyWebhook: m.notify_webhook !== false,
       active: m.active !== false,
     }
   }
@@ -189,6 +190,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
         ? null : Number(form.notificationGroupId),
       propagationCheck: !!form.propagationCheck,
       dnsChangeAlertEnabled: !!form.dnsChangeAlertEnabled,
+      notifyWebhook: !!form.notifyWebhook,
       active: form.active,
     }
     // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
@@ -627,6 +629,14 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
                 {t('dns.propagationCheck')}
               </label>
               <span className="field-hint full-width dns-prop-hint">{t('dns.propagationHint')}</span>
+              <label className="checkbox-label full-width" title={t('userpush.monitorToggleHint')}>
+                <input
+                  type="checkbox"
+                  checked={form.notifyWebhook}
+                  onChange={e => setForm(f => ({ ...f, notifyWebhook: e.target.checked }))}
+                />
+                {t('userpush.monitorToggle')}
+              </label>
               <label className="checkbox-label">
                 <input
                   type="checkbox"

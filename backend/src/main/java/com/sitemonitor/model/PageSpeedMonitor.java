@@ -153,6 +153,10 @@ public class PageSpeedMonitor {
     @Column(name = "notify_email")
     private Boolean notifyEmail = true;
 
+    /** Kişi-webhook (push) bildirimi açık mı (vars. true — üst katmanlar zaten vars. KAPALI, çifte emniyet). */
+    @Column(name = "notify_webhook")
+    private Boolean notifyWebhook = true;
+
     @Column(name = "created_at")
     private String createdAt;
 

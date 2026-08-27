@@ -110,6 +110,10 @@ public class ScriptedMonitor {
     @Column(name = "notify_email")
     private Boolean notifyEmail = true;
 
+    /** Kişi-webhook (push) bildirimi açık mı (vars. true — üst katmanlar zaten vars. KAPALI, çifte emniyet). */
+    @Column(name = "notify_webhook")
+    private Boolean notifyWebhook = true;
+
     /**
      * Otomatik devre dışı bırakma SEBEBİ — doluysa izleme sistem tarafından kapatılmıştır.
      *

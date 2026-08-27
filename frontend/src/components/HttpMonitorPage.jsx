@@ -58,7 +58,7 @@ const REFRESH_INTERVAL = 60
 const METHODS = ['GET', 'HEAD', 'POST']
 const emptyForm = {
   name: '', url: '', method: 'GET', expectedStatus: '200-399', followRedirects: true, verifySsl: false,
-  groupName: '', notificationGroupId: '', teamId: '', tags: '', notifyEmail: true,
+  groupName: '', notificationGroupId: '', teamId: '', tags: '', notifyEmail: true, notifyWebhook: true,
   checkSslErrors: false, sslExpiryReminders: false, domainExpiryReminders: false,
   sslReminderDays: '30,14,7', domainReminderDays: '30,14,7',
   intervalSeconds: 300, timeoutMs: 10000,
@@ -152,7 +152,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
     return { name: m.name || '', url: m.url || '', method: m.method || 'GET',
       expectedStatus: m.expected_status || '200-399', followRedirects: m.follow_redirects !== false, verifySsl: !!m.verify_ssl,
       groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '', teamId: m.team_id != null ? String(m.team_id) : '', tags: m.tags || '',
-      notifyEmail: m.notify_email !== false,
+      notifyEmail: m.notify_email !== false, notifyWebhook: m.notify_webhook !== false,
       checkSslErrors: !!m.check_ssl_errors, sslExpiryReminders: !!m.ssl_expiry_reminders, domainExpiryReminders: !!m.domain_expiry_reminders,
       sslReminderDays: m.ssl_reminder_days || '30,14,7', domainReminderDays: m.domain_reminder_days || '30,14,7',
       intervalSeconds: m.interval_seconds ?? 300, timeoutMs: m.timeout_ms ?? 10000,
@@ -197,7 +197,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
       // Bos = takim varsayilani -> takim adresi (zincirin kalani).
       notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
         ? null : Number(form.notificationGroupId),
-      notifyEmail: form.notifyEmail,
+      notifyEmail: form.notifyEmail, notifyWebhook: form.notifyWebhook,
       checkSslErrors: form.checkSslErrors, sslExpiryReminders: form.sslExpiryReminders, domainExpiryReminders: form.domainExpiryReminders,
       sslReminderDays: form.sslReminderDays?.trim() || '30,14,7', domainReminderDays: form.domainReminderDays?.trim() || '30,14,7',
       intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
@@ -585,8 +585,9 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
                     <input type="checkbox" disabled /><MessageSquare size={14} /><span>{t('http.chSms')}</span><span className="http-ch-soon">{t('http.soon')}</span></label>
                   <label className="http-channel http-channel--disabled" title={t('http.soonHint')}>
                     <input type="checkbox" disabled /><Phone size={14} /><span>{t('http.chVoice')}</span><span className="http-ch-soon">{t('http.soon')}</span></label>
-                  <label className="http-channel http-channel--disabled" title={t('http.soonHint')}>
-                    <input type="checkbox" disabled /><Smartphone size={14} /><span>{t('http.chPush')}</span><span className="http-ch-soon">{t('http.soon')}</span></label>
+                  <label className="http-channel" title={t('userpush.monitorToggleHint')}>
+                    <input type="checkbox" checked={form.notifyWebhook} onChange={e => setForm(f => ({ ...f, notifyWebhook: e.target.checked }))} />
+                    <Smartphone size={14} /><span>{t('userpush.monitorToggle')}</span></label>
                 </div>
               </div>
 

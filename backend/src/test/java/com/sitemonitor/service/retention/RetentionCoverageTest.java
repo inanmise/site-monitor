@@ -44,6 +44,7 @@ class RetentionCoverageTest {
             Map.entry("escalation_contacts", "Eskalasyon kontakları — elle yönetilir."),
             Map.entry("notification_groups", "Bildirim grubu — takım başına birkaç satır, yumuşak silinir (elle yönetilir)."),
             Map.entry("maintenance_windows", "Bakım pencereleri — elle yönetilir."),
+            Map.entry("user_push_scopes", "Kişi-webhook tip/takım aç-kapa matrisi — tip sayısı + takım sayısı kadar satır, elle yönetilir."),
             Map.entry("certificate_inventory", "Envanter: izlenen domain sayısı kadar (soft delete)."),
             Map.entry("latest_checks", "Domain başına TEK satır (PK = domain)."),
             Map.entry("smtp_settings", "Tekil ayar satırı."),

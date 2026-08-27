@@ -198,4 +198,27 @@ ERROR (sentaks hatası) / TIMEOUT (sleep — sürecin öldüğü + temp dosyalar
 `--blacklist-ip`'in iç ağ isteğini engellediği test edilir. k6 yoksa `ScriptedCheckerService.isAvailable()` false döner
 ve bu testler anlamlı şekilde **atlanır** (`org.junit.jupiter.api.Assumptions.assumeTrue(...)`), açılış/derleme bozulmaz.
 
+## Kişi-Webhook (Push) Bildirim Kanalı testleri
+
+Mail hattından bağımsız ikinci bildirim kanalı (2026-08). Kapsam:
+
+- **`UserPushServiceTest`** — karar matrisi (global/tip/takım/izleme/sessiz-saat katmanları, her
+  reddin günlük satırı), anti-loop (dedupe erken çıkışı, saat tavanı RATE_LIMITED, çözüm
+  simetrisi), **gerçek yerel HTTP sunucusuyla** gövde sözleşmesi (`{title,message,pipeline,userIds}`
+  alan adları ve SIRASI + tek toplu istek) ve yanıt işleme (`notificationId` tüm alt satırlara;
+  bozuk yanıt gövdesi gönderimi FAILED yapmaz), 5xx → FAILED, şablon ailesi/kırpma/canlı okuma.
+- **`UserPushRecipientResolverTest`** — K2 karma unvan modeli (PO=orgRole kesin, Yönetici/Uzman
+  title deseni), Yönetici yalnız HIGH/CRITICAL, opt-out satırı, tekilleştirme, bozuk JSON'da
+  güvenli-kapalı.
+- **`EscalationServiceTest`** — kanal bağımsızlığı: push tetiği istisna atarken mail yolunun
+  ETKİLENMEDİĞİ (mutasyon: try/catch zarfını kaldır → kırmızı) + mail hunisinin tetiği çağırdığı.
+- **`UserPushControllerUnitTest`** — şablonda bilinmeyen yer tutucu kaydetmede reddedilir.
+- Frontend **`UserPushSettings.test.jsx`** — maskeli sır (write-only), kapsam varsayılanı
+  (kayıt yok=açık), şablon önizleme, teslimat günlüğünde notificationId, katman karar satırı,
+  test gönderim parametreleri, global-kapalı durumu, E3 istatistik şeridi.
+
+Anti-loop'un DB garantisi `UNIQUE(alert_event_id, dedupe_key, username)` kısıtıdır; dedupeKey
+kuralı `UserPushDelivery` javadoc'unda. Global anahtar KAPALIYKEN (varsayılan) hiçbir satır
+yazılmaz — regresyon yasağının kanıtı `globalOff_noRows`.
+
 If you change anything that would invalidate this document, update it in the same commit.

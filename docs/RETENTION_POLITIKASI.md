@@ -27,6 +27,7 @@ BDDK/iç denetim süreleri esas alınmalıdır.
 
 | Tablo | Süre | Taban | Ayar anahtarı | Kural | Gerekçe |
 |---|---|---|---|---|---|
+| `user_push_deliveries` | 1095 gün | 90 g | `site.monitor.userpush.retention-days` | `created_at < ?` | Kişi-bazlı webhook (push) teslimat günlüğü — kime, ne zaman, hangi içerikle, hangi alarm için, sonuç ne + API'nin verdiği notificationId. ÇOK UZUN saklama (3 yıl) bilinçli ürün kararı (2026-08-27): kurum tarafında iz sürme ve denetim için kanıt zinciri. Sicil içerir → PERSONAL. |
 | `notification_logs` | 365 gün | 30 g | `site.monitor.notification.retention-days` | `sent_at < ?` | Gönderilen bildirim geçmişi (alıcı adı/e-postası içerir). Kişisel veri saklama süreleri 1 yılda eşitlendi (2026-08 kullanıcı kararı) — denetimde tek bir pencere savunulur. |
 | `diagnostic_runs` | 365 gün | 7 g | `site.monitor.diagnostics.retention-days` | `executed_at < ?` | Elle çalıştırılan tanılamalar (çalıştıran kullanıcı ve kaynak IP içerir). Kişisel veri penceresiyle aynı 1 yıl (2026-08 kararı). |
 | `alert_events` | 365 gün | 90 g | `site.monitor.alert.retention-days` | `resolved = true AND resolved_at < ?` | Alarm olayları. Yalnız ÇÖZÜLMÜŞ alarmlar silinir — açık/onaylanmış alarmlar ASLA silinmez. |

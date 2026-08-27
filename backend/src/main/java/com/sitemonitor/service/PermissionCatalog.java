@@ -36,6 +36,9 @@ public final class PermissionCatalog {
         new Resource("notification.groups", "communication", List.of(VIEW, EDIT), Set.of()),
 
         // ── Yönetim (Takım & Kullanıcı) ───────────────────────────────────
+        // Kişi-webhook (push) kanalı yönetimi: bağlantı/katmanlar/şablonlar/test/teslimat günlüğü.
+        // Sicil listesi ve API kimlik başlıkları içerir → yalnız global admin (uçlar ayrıca requireAdmin).
+        r("notifications.userpush", "management", EDIT),
         r("teams.list",         "management", VIEW),
         r("teams.update",       "management", EDIT),
         // Yalnız takımın haftalık e-posta anahtarları (Cuma hatırlatması + Pazartesi erişilebilirlik).

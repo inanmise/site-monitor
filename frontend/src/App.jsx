@@ -151,6 +151,8 @@ export default function App() {
   // Kullanıcının kendi giriş güvenliği özeti (backend `login_info`): giriş yanıtından VE /me'den
   // gelir. AuthContext yok — üç tüketiciye (uyarı şeridi, Etkinliklerim, kullanıcı menüsü) prop.
   const [loginInfo, setLoginInfo] = useState(null)
+  // E1: kişi webhook push tercihi — /me ve login yanıtından gelir, Etkinliklerim'den yazılır.
+  const [pushOptOut, setPushOptOut] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
   // Oturum düşüşünde (401 → /?session=expired) giriş formunda "oturum süresi doldu" bildirimi göster (AUTH-1).
   const [sessionExpiredNotice, setSessionExpiredNotice] = useState(initialSessionExpired)
@@ -239,6 +241,7 @@ export default function App() {
         // Giriş güvenliği özeti — F5 sonrası login yanıtı yoktur, bu yüzden /me de aynı bloğu
         // döndürür; alınmazsa özet ve kullanıcı menüsü sayfa yenilemede boşalır.
         setLoginInfo(res.login_info ?? null)
+        setPushOptOut(!!res.push_opt_out)
         // Oturum aktif bayrağı: login yalnız bu sekmede yapılmamış olabilir (cookie reauth ya da
         // başka sekmede login). Bayrağı burada da set et ki oturum sonradan düş/süpersede olunca
         // client.js 401'i yakalayıp temiz /?session=expired'a yönlendirsin ("Yüklenemedi" yerine).
@@ -585,6 +588,7 @@ export default function App() {
     setIdleCfg(idleConfigFrom(userData))
     setMustChangePwd(!!userData.must_change_password)
     setLoginInfo(userData.login_info ?? null)
+    setPushOptOut(!!userData.push_opt_out)
   }
 
   const weakDomainSet = useMemo(
@@ -1175,7 +1179,14 @@ export default function App() {
             {tab === 'myactivity' && (
               <div className="tab-content active">
                 <h2>{t('app.myAuditTitle')}</h2>
-                <MyAuditLog loginInfo={loginInfo} onChangePassword={() => setSelfPwdModalOpen(true)} />
+                <MyAuditLog loginInfo={loginInfo} onChangePassword={() => setSelfPwdModalOpen(true)}
+                  pushOptOut={pushOptOut}
+                  onPushOptOutChange={async (v) => {
+                    // İyimser güncelleme YOK: sunucu onayı gelmeden işaret değişmez — başarısız
+                    // yazmada kullanıcı "kapattım" sanıp push almaya devam ederdi (tersi de kötü).
+                    const res = await api.me.setPushOptOut(v)
+                    if (res?.success) setPushOptOut(!!res.push_opt_out)
+                  }} />
               </div>
             )}
 

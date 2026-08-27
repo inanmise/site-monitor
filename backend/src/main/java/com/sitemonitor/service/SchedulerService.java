@@ -384,7 +384,32 @@ public class SchedulerService {
     }
 
     /** Idempotent DDL patches for columns that ddl-auto=update may miss on existing tables. */
+    /**
+     * Kişi-webhook izleme bayrağı (notifyWebhook=false) sweep bağlamına damgalanır: alarm hunisi
+     * (EscalationService.sendCombinedAlert → UserPushService.enqueueAlert) monitör nesnesini hiç
+     * görmez, kararı buradan okur (SKIPPED_MONITOR_OFF). Bayrak açıkken ctx AYNEN döner — mail
+     * yolunun bağlamına hiçbir şey eklenmez.
+     */
+    private static Map<String, Object> pushCtx(Map<String, Object> ctx, Boolean notifyWebhook) {
+        if (!Boolean.FALSE.equals(notifyWebhook)) return ctx;
+        Map<String, Object> out = new LinkedHashMap<>(ctx == null ? Map.of() : ctx);
+        out.put("push_disabled", true);
+        return out;
+    }
+
     private void applySchemaPatches() {
+        // Kişi-webhook kanalı (2026-08): izleme-bazlı bayrak + kişi opt-out. Dolu tablolara
+        // NOT NULL eklenmez (Hibernate yutar, kolon oluşmaz) — nullable + kod tarafında vars. true.
+        patch("ALTER TABLE http_monitors ADD COLUMN notify_webhook BOOLEAN DEFAULT true");
+        patch("ALTER TABLE port_monitors ADD COLUMN notify_webhook BOOLEAN DEFAULT true");
+        patch("ALTER TABLE dns_monitors ADD COLUMN notify_webhook BOOLEAN DEFAULT true");
+        patch("ALTER TABLE keyword_monitors ADD COLUMN notify_webhook BOOLEAN DEFAULT true");
+        patch("ALTER TABLE ping_monitors ADD COLUMN notify_webhook BOOLEAN DEFAULT true");
+        patch("ALTER TABLE page_monitors ADD COLUMN notify_webhook BOOLEAN DEFAULT true");
+        patch("ALTER TABLE pagespeed_monitors ADD COLUMN notify_webhook BOOLEAN DEFAULT true");
+        patch("ALTER TABLE scripted_monitors ADD COLUMN notify_webhook BOOLEAN DEFAULT true");
+        patch("ALTER TABLE domain_monitors ADD COLUMN notify_webhook BOOLEAN DEFAULT true");
+        patch("ALTER TABLE app_users ADD COLUMN push_opt_out BOOLEAN DEFAULT false");
         patch("ALTER TABLE certificate_checks ADD COLUMN run_id TEXT");
         patch("ALTER TABLE uptime_checks ADD COLUMN maintenance BOOLEAN DEFAULT false");
         patch("ALTER TABLE certificate_checks ADD COLUMN maintenance BOOLEAN DEFAULT false");
@@ -2314,7 +2339,7 @@ public class SchedulerService {
                         EscalationService.TYPE_PORT_DOWN, m.getHost(),
                         m.getPort() + "/" + m.getProtocol(),
                         "up".equals(r.get("status")), (String) r.get("error"),
-                        ctx,
+                        pushCtx(ctx, m.getNotifyWebhook()),
                         () -> recheckPort(m)));
                 // PORT_SLOW: yanıt süresi eşiği (opsiyonel; kapalı/ölçülemedi/erişim-hatası → sentetik up = lingering kurtar)
                 Map<String, Object> slowCtx = new LinkedHashMap<>();
@@ -2337,7 +2362,7 @@ public class SchedulerService {
                         EscalationService.TYPE_PORT_SLOW, m.getHost(),
                         respMs != null ? respMs + " ms" : "slow",
                         !slowDown, null,
-                        slowCtx, () -> evalPortSlow(m)));
+                        pushCtx(slowCtx, m.getNotifyWebhook()), () -> evalPortSlow(m)));
                 checked++;
             } catch (Exception e) {
                 log.warn("Port check failed for {}:{}: {}", m.getHost(), m.getPort(), e.getMessage());
@@ -2463,7 +2488,7 @@ public class SchedulerService {
                         EscalationService.TYPE_KEYWORD, m.getUrl(),
                         kw.length() > 40 ? kw.substring(0, 40) : kw,
                         "up".equals(r.get("status")), (String) r.get("error"),
-                        ctx, () -> recheckKeyword(m)));
+                        pushCtx(ctx, m.getNotifyWebhook()), () -> recheckKeyword(m)));
                 // KEYWORD_SLOW: yanıt süresi eşiği (opsiyonel; kapalı/ölçülemedi/HTTP-hatası → sentetik up = lingering kurtar)
                 Map<String, Object> slowCtx = new LinkedHashMap<>();
                 slowCtx.put("url", m.getUrl());
@@ -2484,7 +2509,7 @@ public class SchedulerService {
                         EscalationService.TYPE_KEYWORD_SLOW, m.getUrl(),
                         respMs != null ? respMs + " ms" : "slow",
                         !slowDown, null,
-                        slowCtx, () -> evalKeywordSlow(m)));
+                        pushCtx(slowCtx, m.getNotifyWebhook()), () -> evalKeywordSlow(m)));
                 checked++;
             } catch (Exception e) {
                 log.warn("Keyword check failed for {}: {}", m.getUrl(), e.getMessage());
@@ -2603,7 +2628,7 @@ public class SchedulerService {
                         EscalationService.TYPE_HTTP_DOWN, m.getUrl(),
                         m.getMethod() != null ? m.getMethod() : "GET",
                         "up".equals(r.get("status")), (String) r.get("error"),
-                        ctx, () -> recheckHttp(m)));
+                        pushCtx(ctx, m.getNotifyWebhook()), () -> recheckHttp(m)));
                 checked++;
             } catch (Exception e) {
                 log.warn("HTTP check failed for {}: {}", m.getUrl(), e.getMessage());
@@ -2765,7 +2790,7 @@ public class SchedulerService {
         String err = cfgError ? null : (String) r.get("error");
         downSweep.add(new MonitoringOutageService.SweepItem(
                 EscalationService.TYPE_PAGE_DOWN, m.getUrl(), "sayfa",
-                mainUp, err, new LinkedHashMap<>(ctx),
+                mainUp, err, pushCtx(new LinkedHashMap<>(ctx), m.getNotifyWebhook()),
                 () -> { Map<String, Object> p = recheckPage(m, false, "SINGLE_PAGE");
                         return Map.of("status", Boolean.TRUE.equals(p.get("config_error"))
                                 || Boolean.TRUE.equals(p.get("main_up")) ? "up" : "down"); }));
@@ -2773,7 +2798,7 @@ public class SchedulerService {
         integ.put("detail", pageIntegrityDetail(r));
         integritySweep.add(new MonitoringOutageService.SweepItem(
                 EscalationService.TYPE_PAGE_INTEGRITY, m.getUrl(), pageIntegrityDetail(r),
-                integrityUp, integrityUp ? null : pageIntegrityDetail(r), integ,
+                integrityUp, integrityUp ? null : pageIntegrityDetail(r), pushCtx(integ, m.getNotifyWebhook()),
                 () -> { Map<String, Object> p = recheckPage(m, false, "SINGLE_PAGE");
                         return Map.of("status", Boolean.TRUE.equals(p.get("config_error"))
                                 || Boolean.TRUE.equals(p.get("integrity_up")) ? "up" : "down"); }));
@@ -3013,7 +3038,7 @@ public class SchedulerService {
 
         downSweep.add(new MonitoringOutageService.SweepItem(
                 EscalationService.TYPE_PAGESPEED_DOWN, m.getUrl(), "sayfa hızı",
-                up, err, new LinkedHashMap<>(ctx),
+                up, err, pushCtx(new LinkedHashMap<>(ctx), m.getNotifyWebhook()),
                 () -> { Map<String, Object> p = recheckPageSpeed(m, false);
                         return Map.of("status", Boolean.TRUE.equals(p.get("config_error"))
                                 || Boolean.TRUE.equals(p.get("reachable")) ? "up" : "down"); }));
@@ -3025,7 +3050,7 @@ public class SchedulerService {
         slowCtx.put("detail", slowDetail);
         slowSweep.add(new MonitoringOutageService.SweepItem(
                 EscalationService.TYPE_PAGESPEED_SLOW, m.getUrl(), slowDetail,
-                withinThresholds, withinThresholds ? null : slowDetail, slowCtx,
+                withinThresholds, withinThresholds ? null : slowDetail, pushCtx(slowCtx, m.getNotifyWebhook()),
                 () -> { Map<String, Object> p = recheckPageSpeed(m, false);
                         return Map.of("status", Boolean.TRUE.equals(p.get("config_error"))
                                 || !Boolean.TRUE.equals(p.get("reachable"))
@@ -3313,7 +3338,7 @@ public class SchedulerService {
         String detail = (String) r.get("detail");
         sweep.add(new MonitoringOutageService.SweepItem(
                 EscalationService.TYPE_SCRIPTED_FAIL, m.getName(), detail,
-                up, up ? null : detail, new LinkedHashMap<>(ctx),
+                up, up ? null : detail, pushCtx(new LinkedHashMap<>(ctx), m.getNotifyWebhook()),
                 () -> { Map<String, Object> p = recheckScripted(m, false);
                         // "skipped" ÜÇÜNCÜ bir cevap: kontrol yürütülemediyse ne up ne down deriz.
                         // "down" desek havuz darlığı sahte kesinti TEYİT ederdi; "up" desek gerçek
@@ -3337,7 +3362,7 @@ public class SchedulerService {
         slowSweep.add(new MonitoringOutageService.SweepItem(
                 EscalationService.TYPE_SCRIPTED_SLOW, m.getName(),
                 durMs != null ? durMs + " ms" : "slow",
-                !slowDown, null, slowCtx,
+                !slowDown, null, pushCtx(slowCtx, m.getNotifyWebhook()),
                 () -> evalScriptedSlow(m)));
     }
 
@@ -3638,7 +3663,7 @@ public class SchedulerService {
                             EscalationService.TYPE_HTTP_SSL, m.getUrl(),
                             String.valueOf(ev.getOrDefault("detail", "SSL")),
                             "up".equals(ev.get("status")), (String) ev.get("error"),
-                            ctx, () -> evalHttpSsl(m)));
+                            pushCtx(ctx, m.getNotifyWebhook()), () -> evalHttpSsl(m)));
                 } else {
                     sslSweep.add(upItem(EscalationService.TYPE_HTTP_SSL, m, "SSL"));   // toggle kapalı → lingering alarmı kurtar
                 }
@@ -3651,7 +3676,7 @@ public class SchedulerService {
                             EscalationService.TYPE_DOMAIN_EXPIRY, m.getUrl(),
                             String.valueOf(ev.getOrDefault("domain", "domain")),
                             "up".equals(ev.get("status")), (String) ev.get("error"),
-                            ctx, () -> evalHttpDomain(m)));
+                            pushCtx(ctx, m.getNotifyWebhook()), () -> evalHttpDomain(m)));
                 } else {
                     domainSweep.add(upItem(EscalationService.TYPE_DOMAIN_EXPIRY, m, "domain"));
                 }
@@ -3803,7 +3828,7 @@ public class SchedulerService {
                             EscalationService.TYPE_KEYWORD_SSL, m.getUrl(),
                             String.valueOf(ev.getOrDefault("detail", "SSL")),
                             "up".equals(ev.get("status")), (String) ev.get("error"),
-                            ctx, () -> evalKeywordSsl(m)));
+                            pushCtx(ctx, m.getNotifyWebhook()), () -> evalKeywordSsl(m)));
                 } else {
                     sslSweep.add(upItemKeyword(EscalationService.TYPE_KEYWORD_SSL, m, "SSL"));   // toggle kapalı → lingering kurtar
                 }
@@ -3816,7 +3841,7 @@ public class SchedulerService {
                             EscalationService.TYPE_KEYWORD_DOMAIN_EXPIRY, m.getUrl(),
                             String.valueOf(ev.getOrDefault("domain", "domain")),
                             "up".equals(ev.get("status")), (String) ev.get("error"),
-                            ctx, () -> evalKeywordDomain(m)));
+                            pushCtx(ctx, m.getNotifyWebhook()), () -> evalKeywordDomain(m)));
                 } else {
                     domainSweep.add(upItemKeyword(EscalationService.TYPE_KEYWORD_DOMAIN_EXPIRY, m, "domain"));
                 }
@@ -4107,7 +4132,7 @@ public class SchedulerService {
         if (r.get("blacklist_delta") != null) ctx.put("blacklist_delta", r.get("blacklist_delta"));
         if (r.get("error") != null) ctx.put("last_error", r.get("error"));
         return new MonitoringOutageService.SweepItem(type, m.getDomain(), m.getDomain(),
-                up, (String) r.get("error"), ctx, () -> recheckDomainFor(m, type));
+                up, (String) r.get("error"), pushCtx(ctx, m.getNotifyWebhook()), () -> recheckDomainFor(m, type));
     }
 
     private Map<String, Object> recheckDomainFor(DomainMonitor m, String type) {
@@ -4193,7 +4218,7 @@ public class SchedulerService {
                 sweep.add(new MonitoringOutageService.SweepItem(
                         EscalationService.TYPE_PING_DOWN, m.getHost(), "ICMP",
                         "up".equals(r.get("status")), (String) r.get("error"),
-                        ctx, () -> recheckPing(m)));
+                        pushCtx(ctx, m.getNotifyWebhook()), () -> recheckPing(m)));
                 checked++;
             } catch (Exception e) {
                 log.warn("Ping check failed for {}: {}", m.getHost(), e.getMessage());
@@ -4354,7 +4379,7 @@ public class SchedulerService {
                 sweep.add(new MonitoringOutageService.SweepItem(
                         EscalationService.TYPE_DNS_FAILURE, m.getDomain(), m.getRecordType(),
                         success, (String) r.get("error"),
-                        failCtx,
+                        pushCtx(failCtx, m.getNotifyWebhook()),
                         () -> recheckDns(m)));
 
                 // YAVAŞ/TIMEOUT'lu çözümleme: çözüm BAŞARILI ama response_ms eşiği aşıyor (primary DNS timeout
@@ -4374,7 +4399,7 @@ public class SchedulerService {
                     slowSweep.add(new MonitoringOutageService.SweepItem(
                             EscalationService.TYPE_DNS_SLOW, m.getDomain(), m.getRecordType(),
                             !slow, slow ? responseMs + " ms" : null,
-                            slowCtx, () -> recheckDnsSlow(m, effSlow)));
+                            pushCtx(slowCtx, m.getNotifyWebhook()), () -> recheckDnsSlow(m, effSlow)));
                 }
 
                 // BEKLENEN-DEĞER KİLİDİ: sabitlenen "beklenen değer"de OLMAYAN bir değer çözümlenirse
@@ -4390,7 +4415,7 @@ public class SchedulerService {
                     unexpectedSweep.add(new MonitoringOutageService.SweepItem(
                             EscalationService.TYPE_DNS_UNEXPECTED, m.getDomain(), m.getRecordType(),
                             unexpected.isEmpty(), unexpected.isEmpty() ? null : String.join(", ", unexpected),
-                            unexpCtx, () -> recheckDnsUnexpected(m)));
+                            pushCtx(unexpCtx, m.getNotifyWebhook()), () -> recheckDnsUnexpected(m)));
                 }
 
                 if (changed) {
@@ -4436,7 +4461,7 @@ public class SchedulerService {
                     inconsistentSweep.add(new MonitoringOutageService.SweepItem(
                             EscalationService.TYPE_DNS_INCONSISTENT, m.getDomain(), m.getRecordType(),
                             !inconsistent, inconsistent ? detail : null,
-                            incCtx, () -> recheckDnsPropagation(m, dnsResolvers)));
+                            pushCtx(incCtx, m.getNotifyWebhook()), () -> recheckDnsPropagation(m, dnsResolvers)));
                 } catch (Exception ex) {
                     log.debug("DNS propagation check failed for {}: {}", m.getDomain(), ex.getMessage());
                 }

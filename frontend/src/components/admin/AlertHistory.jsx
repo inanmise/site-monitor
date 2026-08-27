@@ -194,12 +194,17 @@ function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
   const t = useT()
   const [history, setHistory]       = useState([])
   const [loadingHistory, setLoading] = useState(true)
+  const [pushRows, setPushRows] = useState([])
 
   useEffect(() => {
     api.admin.getAlertNotifications(alertId).then(res => {
       setLoading(false)
       if (res?.success) setHistory(res.data)
     })
+    // Kanal-ayrımlı webhook (push) teslimatları — uç patlarsa bölüm boş kalır, modal çalışır.
+    api.admin.getAlertPushDeliveries(alertId)
+      .then(res => { if (res?.success) setPushRows(Array.isArray(res.data) ? res.data : []) })
+      .catch(() => {})
   }, [alertId])
 
   const { notifications = [], contacts_attempted } = currentResult?.data ?? {}
@@ -250,6 +255,27 @@ function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
 
           {!loadingHistory && history.map((l, i) => (
             <NotifLogCard key={l.id ?? i} log={l} alertLevel={alertInfo?.alert_level} />
+          ))}
+        </div>
+
+        {/* Webhook (push) teslimatları — kanal AYRIMLI: kime, ne zaman, mesaj, sonuç. Çözüm
+            teslimatları da burada (tetik etiketi ayırır). Kayıt yoksa kısa notla yine çizilir:
+            "hiç gitmedi" bilgisi de bilgidir. */}
+        <div className="nl-section" style={{ marginTop: 20 }}>
+          <div className="nl-section-title">
+            {t('alh.webhookSection')}
+            <span className="nl-count">{t('alh.notifModal.records', pushRows.length)}</span>
+          </div>
+          {pushRows.length === 0 && <div className="nl-empty">{t('alh.webhookNone')}</div>}
+          {pushRows.map((p) => (
+            <div key={p.id} className="nl-quick-row userpush-modal-row">
+              <span className={`userpush-badge userpush-badge--${p.status === 'SENT' ? 'ok' : (p.status === 'FAILED' || p.status === 'CIRCUIT_OPEN') ? 'danger' : 'muted'}`}>{p.status}</span>
+              {p.username === '-' ? <em>{t('userpush.systemRow')}</em>
+                : <UserBadge username={p.username} displayName={p.display_name} size="sm" inline nameOnly />}
+              <span className="userpush-modal-trigger">{t('userpush.trigger.' + p.trigger)}</span>
+              <span className="nl-email">{p.sent_at || p.created_at}</span>
+              {p.message && <span className="userpush-modal-msg" title={p.message}>{p.message}</span>}
+            </div>
           ))}
         </div>
 

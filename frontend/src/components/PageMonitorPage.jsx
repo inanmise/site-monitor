@@ -61,7 +61,7 @@ const RES_ICON = { IMG: Image, CSS: FileCode, JS: FileCode, LINK: Link2, IFRAME:
 const PAGE_ISSUE_COLS = '1fr 0.9fr 2fr 0.7fr 0.45fr 0.5fr 0.85fr 0.4fr'
 // Hariç desenleri check-time'da 50 satırda kırpılır (PageCheckerService.EXCLUDE_MAX_LINES) — istemci de aynı sınırı uygular.
 const EXCLUDE_MAX_LINES = 50
-const emptyForm = { name: '', url: '', groupName: '', notificationGroupId: '', teamId: '', tags: '', notifyEmail: true,
+const emptyForm = { name: '', url: '', groupName: '', notificationGroupId: '', teamId: '', tags: '', notifyEmail: true, notifyWebhook: true,
   mode: 'SINGLE_PAGE', crawlDepth: 2, crawlMaxPages: 50, excludePatterns: '', slowResourceMs: 2000,
   alertThirdParty: false, alertMixedContent: true, alertTimeout: true, resourceConcurrency: 5,
   intervalSeconds: 300, timeoutMs: 4000, confirmAttempts: 3, confirmIntervalSeconds: 30,
@@ -192,7 +192,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   function formFrom(m) {
     return { name: m.name || '', url: m.url || '', groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
       teamId: m.team_id != null ? String(m.team_id) : '',
-      tags: m.tags || '', notifyEmail: m.notify_email !== false,
+      tags: m.tags || '', notifyEmail: m.notify_email !== false, notifyWebhook: m.notify_webhook !== false,
       mode: m.mode || 'SINGLE_PAGE', crawlDepth: m.crawl_depth ?? 2, crawlMaxPages: m.crawl_max_pages ?? 50,
       excludePatterns: m.exclude_patterns || '', slowResourceMs: m.slow_resource_ms ?? 2000,
       alertThirdParty: !!m.alert_third_party, alertMixedContent: m.alert_mixed_content !== false, alertTimeout: m.alert_timeout !== false, resourceConcurrency: m.resource_concurrency ?? 5,
@@ -234,7 +234,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
       // Bos = takim varsayilani -> takim adresi (zincirin kalani).
       notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
         ? null : Number(form.notificationGroupId),
-      tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail,
+      tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, notifyWebhook: form.notifyWebhook,
       mode: form.mode, crawlDepth: Number(form.crawlDepth), crawlMaxPages: Number(form.crawlMaxPages),
       excludePatterns: form.excludePatterns?.trim() || null, slowResourceMs: Number(form.slowResourceMs),
       alertThirdParty: form.alertThirdParty, alertMixedContent: form.alertMixedContent, alertTimeout: form.alertTimeout, resourceConcurrency: Number(form.resourceConcurrency),
@@ -785,6 +785,8 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                 <div className="field-hint" style={{ marginBottom: 8 }}>{t('page.notifyInfo').replace('{0}', selectedTeamLabel)}</div>
                 <label className="checkbox-label">
                   <input type="checkbox" checked={form.notifyEmail} onChange={e => setForm(f => ({ ...f, notifyEmail: e.target.checked }))} />{t('page.notifyEmail')}</label>
+                <label className="checkbox-label" title={t('userpush.monitorToggleHint')}>
+                  <input type="checkbox" checked={form.notifyWebhook} onChange={e => setForm(f => ({ ...f, notifyWebhook: e.target.checked }))} />{t('userpush.monitorToggle')}</label>
               </div>
 
               {/* Kontrol aralığı */}

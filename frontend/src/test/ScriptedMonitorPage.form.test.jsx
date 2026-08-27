@@ -65,7 +65,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
 
     expect(api.monitoring.createScriptedMonitor.mock.calls[0][0]).toEqual({
       name: 'OIDC Login (Kopya)', description: 'Giriş senaryosu',
-      groupName: 'Senaryolar', teamId: 5, tags: 'prod,kritik', notifyEmail: false,
+      groupName: 'Senaryolar', teamId: 5, tags: 'prod,kritik', notifyEmail: false, notifyWebhook: true,
       intervalSeconds: 900, timeoutSeconds: 45,
       confirmAttempts: 5, confirmIntervalSeconds: 45, recoveryChecks: 4, recoveryIntervalSeconds: 90,
       // Bildirim grubu da kopyalanir: kopya, kaynagin alarmini ALAN ekibe gitsin.
