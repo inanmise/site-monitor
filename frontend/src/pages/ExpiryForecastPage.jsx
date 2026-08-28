@@ -50,6 +50,16 @@ function useCountUp(target, duration = 1200) {
 
 // ── Data computation ───────────────────────────────────────────────────────────
 
+/** O7: backend UTC yazar ama 'Z' eki koymaz; JS zone-eksiz datetime'ı YEREL sayar. İstanbul'da
+ *  (UTC+3) UTC gününün son 3 saatinde dolan sertifikalar takvim/bar/liste'de bir gün erken
+ *  görünüyordu. Kural client.js toUtc ile aynı: zone bilgisi yoksa 'Z' ekle. */
+function parseApiDate(s) {
+  if (!s) return new Date(NaN)
+  const str = String(s)
+  const hasZone = str.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(str)
+  return new Date(hasZone || !str.includes('T') ? str : str + 'Z')
+}
+
 function computeForecast(certs) {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
@@ -61,7 +71,7 @@ function computeForecast(certs) {
 
   certs.forEach(cert => {
     if (!cert.not_after) return
-    const d = new Date(cert.not_after)
+    const d = parseApiDate(cert.not_after)
     if (isNaN(d.getTime())) return
     if (d < today || d > in30) return
     if ((cert.days_remaining ?? -1) < 0) return
@@ -115,7 +125,7 @@ function computeChartData(certs, days) {
   const byDate = {}
   certs.forEach(cert => {
     if (!cert.not_after) return
-    const d = new Date(cert.not_after)
+    const d = parseApiDate(cert.not_after)
     if (isNaN(d.getTime())) return
     if (d < today || d > inEnd) return
     if ((cert.days_remaining ?? -1) < 0) return
@@ -247,7 +257,7 @@ function CalendarHeatmap({ certs, t, onSelectDomain }) {
     const map = {}
     certs.forEach(cert => {
       if (!cert.not_after) return
-      const d = new Date(cert.not_after)
+      const d = parseApiDate(cert.not_after)
       if (isNaN(d.getTime())) return
       if (d < today || d > inEnd) return
       if ((cert.days_remaining ?? -1) < 0) return

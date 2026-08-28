@@ -364,6 +364,10 @@ function NotesTab({ domain, t, currentUser, isAdmin }) {
 export default function CertificateModal({ domain, alertLevel, onClose, initialData, previewMode, currentUser, currentUserRole }) {
   const t = useT()
   const [certData, setCertData]       = useState(null)
+  // O3/D12: modal kalıcı mount'lu, yalnız domain prop'u değişiyor — uçuşan yanıt guard'ları
+  // "istek anındaki domain hâlâ ekranda mı" sorusunu bu ref'ten okur (her render'da tazelenir).
+  const domainRef = useRef(null)
+  domainRef.current = domain
   const [sslData, setSslData]         = useState(null)
   const [sslLoading, setSslLoading]   = useState(false)
   const [activeTab, setActiveTab]     = useState('ssl')
@@ -383,9 +387,12 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
       return
     }
 
-    // Details / Alerts / Notes için geçmiş veri
+    // Details / Alerts / Notes için geçmiş veri. Guard (D12): A'nın geç dönen yanıtı B'nin
+    // modalını doldurmasın.
+    const reqDomain = domain
     api.getHistory(domain).then((res) => {
-      if (res?.success && res.data.length > 0) setCertData(res.data[0])
+      if (reqDomain !== domainRef.current) return
+      if (res?.success && Array.isArray(res.data) && res.data.length > 0) setCertData(res.data[0])
     })
 
   }, [domain])
@@ -397,13 +404,18 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
    * izlenen sunucuyla TLS el sıkışması yapılıyor, modal onu bekliyordu. Sağlık sekmesi zaten
    * kalıcı son kontrolle anında çiziliyor; canlı probe artık istemli.
    */
+  // O3: canlı TLS probe'u yavaştır; kullanıcı A'yı kapatıp B'yi açtığında A'nın geç dönen
+  // probe'u B modalında A'nın SSL verisini gösterebiliyordu. Yanıt yalnız istek anındaki
+  // domain hâlâ ekrandaysa yazılır.
   useEffect(() => {
     if (!domain || activeTab !== 'ssl' || sslData || sslLoading) return
     setSslLoading(true)
+    const reqDomain = domain
     api.checkDomainPreview(domain).then((res) => {
+      if (reqDomain !== domainRef.current) return
       setSslData(res?.data ?? null)
       setSslLoading(false)
-    }).catch(() => setSslLoading(false))
+    }).catch(() => { if (reqDomain === domainRef.current) setSslLoading(false) })
   }, [domain, activeTab, sslData, sslLoading])
 
   function switchTab(tab) { setActiveTab(tab) }

@@ -223,7 +223,9 @@ public class WeeklyReportKpiService {
         int n = 0;
         for (CertificateInventory ci : inv) {
             LocalDate exp = parseDate(ci.getDomainExpiry());
-            if (exp != null && ChronoUnit.DAYS.between(today, exp) <= 7) n++;
+            // D6: alt sınır — çoktan dolmuş domainler "bu hafta kritik" KPI'sını şişirmesin.
+            long dd = exp == null ? Long.MAX_VALUE : ChronoUnit.DAYS.between(today, exp);
+            if (dd >= 0 && dd <= 7) n++;
         }
         return n;
     }

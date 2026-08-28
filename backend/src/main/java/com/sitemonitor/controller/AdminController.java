@@ -1701,8 +1701,23 @@ public class AdminController {
     public ResponseEntity<byte[]> userPhoto(@PathVariable Long id, HttpSession session) {
         requireAdminOrTeamAdmin(session);
         return userRepo.findById(id)
+                // IDOR: takım yöneticisi id deneyerek HERHANGİ takımdaki kullanıcının fotoğrafını
+                // çekebiliyordu. Kapsam kuralı listTeamUsers ile aynı: global viewer her kullanıcıyı,
+                // kapsamlı rol yalnız görüş kapsamındaki takımların üyelerini görür; dışı 404
+                // (403 "kullanıcı var" bilgisini sızdırırdı).
+                .filter(u -> isPhotoViewable(session, u))
                 .map(u -> AuthController.photoResponse(u.getPhotoBase64()))
                 .orElse(ResponseEntity.notFound().build());
+    }
+
+    /** Fotoğraf görünürlüğü: global admin/AUDIT → herkes; kapsamlı rol → hedefin herhangi bir
+     *  takımı çağıranın {@code viewTeamIds} kapsamındaysa. */
+    private boolean isPhotoViewable(HttpSession session, com.sitemonitor.model.AppUser u) {
+        if (SessionScope.isGlobalViewer(session)) return true;
+        List<Long> scope = SessionScope.viewTeamIds(session);
+        if (scope == null || scope.isEmpty()) return false;
+        if (u.getTeamId() != null && scope.contains(u.getTeamId())) return true;
+        return u.getTeamIds() != null && u.getTeamIds().stream().anyMatch(scope::contains);
     }
 
     @GetMapping("/teams/{id}/users")
@@ -2265,7 +2280,11 @@ public class AdminController {
     }
 
     /** Tanılama (diagnostics) admin'e her domain için, diğer rollere YALNIZ envanterde
-     *  kayıtlı (izlenen) domainler için açıktır — rastgele host+port probe'u (SSRF) engellenir. */
+     *  kayıtlı (izlenen) domainler için açıktır — rastgele host+port probe'u (SSRF) engellenir.
+     *  D13 notu: TAKIM izolasyonu burada BİLİNÇLİ uygulanmıyor — kapının amacı SSRF önlemek,
+     *  veri gizlemek değil; tanılama çıktısı hedefin HERKESE açık yüzeyidir (TLS/DNS/HTTP el
+     *  sıkışması), takıma özel yapılandırma içermez. İzolasyon istenirse buraya
+     *  canView(inv.getTeamId()) eklenmeli. */
     private void requireAdminOrMonitoredDomain(HttpSession session, String domain) {
         if (isAdminOrAudit(session)) return;
         if (domain != null && inventoryRepo.findByDomain(domain.trim()).isPresent()) return;

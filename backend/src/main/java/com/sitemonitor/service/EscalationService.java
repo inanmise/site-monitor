@@ -288,7 +288,7 @@ public class EscalationService {
                     event.setLastReAlertAt(now());
                     alertEventRepo.save(event);
 
-                } else if (!event.getAcknowledged()) {
+                } else if (!Boolean.TRUE.equals(event.getAcknowledged())) {   // NULL-güvenli (O6)
                     String lastAlertTime = event.getLastReAlertAt() != null
                             ? event.getLastReAlertAt() : event.getCreatedAt();
                     if (reAlertDue(lastAlertTime, now(), reAlertIv)) {
@@ -429,7 +429,7 @@ public class EscalationService {
         int recipientCount = 0;
         for (String e : teamEmails) {
             if (e != null && !e.isBlank() && !excluded.contains(e.trim().toLowerCase())
-                    && seen.add(e.toLowerCase())) recipientCount++;
+                    && seen.add(e.trim().toLowerCase())) recipientCount++;   // D8
         }
         for (EscalationContact c : contacts) {
             if (c.getEmail() != null && !c.getEmail().isBlank()
@@ -594,6 +594,18 @@ public class EscalationService {
         }
         List<AlertEvent> openAlerts = alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(domain, types);
         for (AlertEvent event : openAlerts) {
+            // D9: sorgu ile save arasında biri ELLE resolve etmiş olabilir — save körlemesine
+            // yazarsa resolvedBy ezilir ve İKİNCİ bir "çözüldü" maili gider. Atomik koşullu
+            // UPDATE (resolved=false iken) yarışın kazananını tek yapar; kaybeden sessizce geçer.
+            // id null = henüz kaydedilmemiş entity (üretimde olmaz; repo'dan yükleniyor). O durumda
+            // atomik guard uygulanamaz — eski davranışa düş, alarm kapansın (guard bir YARIŞ
+            // koruması; kimliksiz satırda yarış da yoktur).
+            if (event.getId() != null
+                    && alertEventRepo.markResolvedIfOpen(event.getId(), now(), "system") == 0) {
+                log.debug("Alarm zaten çözülmüş (yarış) — otomatik kapanış atlandı: {} [{}]",
+                        domain, event.getAlertType());
+                continue;
+            }
             event.setResolved(true);
             event.setResolvedAt(now());
             event.setResolvedBy("system");
@@ -814,7 +826,7 @@ public class EscalationService {
             ugTeamId     = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null);
         }
         // Standalone izleme (keyword/ping/http/domain) takım-özeldir; AMA KRİTİK domain alarmında müdür de eklenir.
-        boolean teamOnly = isStandaloneMon(alertType) && !includeManagerContacts(alertType, alertLevel);
+        boolean teamOnly = teamOnlyRecipients(alertType, alertLevel);
 
         String message = monitoringMessage(domain, alertType, alertLevel, outageContext);
         Optional<AlertEvent> existing = alertEventRepo.findOpenAlert(domain, alertType);
@@ -851,12 +863,27 @@ public class EscalationService {
                         outageContext != null ? outageContext.getOrDefault("detail", "") : "");
             }
 
-        } else if (!existing.get().getAcknowledged()) {
+        } else if (!Boolean.TRUE.equals(existing.get().getAcknowledged())) {
+            // NULL-güvenli unbox (O6): acknowledged nullable Boolean — NULL satırda unbox NPE'si
+            // sweep'in KALAN domain'lerinin alarm işlemesini de iptal ediyordu.
             AlertEvent event = existing.get();
             // Storm üyesi + storm hâlâ aktif → bireysel günlük re-alert YOK (toplu re-alert storm sweep'inden gider).
             if (event.getStormId() != null && stormService.isActive(event.getStormId())) {
                 log.debug("İzleme alarmı storm üyesi — bireysel re-alert atlandı: {} [{}]", domain, alertType);
                 return;
+            }
+            // O5: alarm AÇIKKEN monitör başka takıma atanırsa çözüm bildirimi event.teamId'den
+            // gider (damga) — re-alert canlı ctx'ten giderse iki yol FARKLI takıma düşer.
+            // Üç yol da (ilk/re-alert/çözüm) aynı damgayı kullansın; ctx yalnız damga boşken.
+            if (event.getTeamId() != null) {
+                domainTeamId = event.getTeamId();
+            }
+            // Y5: ctx seviyesi damgadan YÜKSEKSE terfi KALICI olsun — yoksa kritik re-alert alan
+            // müdür, çözüm bildirimini alamaz (includeManagerContacts event seviyesine bakar) ve
+            // çözüm maili seviyeyi yanlış gösterir. processResults'taki escalation davranışının
+            // izleme-yolu eşleniği.
+            if (levelValue(alertLevel) > levelValue(event.getAlertLevel())) {
+                event.setAlertLevel(alertLevel);
             }
             // İLK bildirim hiç tamamlanmadıysa (lastReAlertAt null) onu ŞİMDİ gönder.
             //
@@ -1093,7 +1120,10 @@ public class EscalationService {
                 Object days = ctx.get("days");
                 Object exp = ctx.get("expiry_date");
                 Object reg = ctx.get("registrar");
-                return ("CRITICAL".equals(alertLevel) ? "KRİTİK" : "YÜKSEK") + ": " + dom + " alan adının kaydı" +
+                // D7: iki kollu etiket WARNING'de "YÜKSEK" yazıyordu; rozet ise "ORTA" → aynı
+                // mailde çelişki. Üç kollu.
+                return ("CRITICAL".equals(alertLevel) ? "KRİTİK"
+                        : "HIGH".equals(alertLevel) ? "YÜKSEK" : "ORTA") + ": " + dom + " alan adının kaydı" +
                         (days != null ? " " + days + " gün içinde doluyor" : " dolmak üzere") +
                         (exp != null ? " (bitiş: " + exp + ")" : "") + (reg != null ? ", registrar: " + reg : "") +
                         ". Önerilen aksiyon: registrar üzerinden yenileyin. Yenilenince alarm otomatik kapanır.";
@@ -1251,7 +1281,7 @@ public class EscalationService {
             Set<String> seen = new HashSet<>();
             List<String> allEmails = new ArrayList<>();
             for (String e : teamEmails) {
-                if (seen.add(e.toLowerCase())) allEmails.add(e);
+                if (e != null && seen.add(e.trim().toLowerCase())) allEmails.add(e.trim());   // D8: kontak tarafıyla aynı normalizasyon
             }
             for (EscalationContact c : contacts) {
                 if (c.getEmail() != null && !c.getEmail().isBlank()
@@ -1970,6 +2000,19 @@ public class EscalationService {
      *  izleme (keyword/ping/http) her zaman yalnız takım. */
     private static boolean includeManagerContacts(String alertType, String level) {
         return (isDomainMon(alertType) || TYPE_DOMAIN_EXPIRY.equals(alertType)) && "CRITICAL".equals(level);
+    }
+
+    /**
+     * "Bu alarmın alıcıları yalnız TAKIM mı?" — bireysel yol ({@code processConfirmedOutage}) ile
+     * fırtına dağıtımının ({@code StormService.resolveRecipients}) PAYLAŞTIĞI tek karar.
+     *
+     * <p>Neden public: StormService bu mantığın 3-tipli bir kopyasını taşıyordu (KEYWORD/PING/HTTP)
+     * ve PAGE/SCRIPTED/PAGESPEED tiplerini kaçırıyordu — geniş kesintide storm'a terfi eden bu
+     * monitörler, bireysel alarmda ASLA mail almayacak müdürlere toplu alarm + toplu "düzeldi"
+     * gönderiyordu. Kopya yerine tek kaynak: DOMAINMON-KRİTİK müdür istisnası da otomatik doğru gelir.
+     */
+    public static boolean teamOnlyRecipients(String alertType, String level) {
+        return isStandaloneMon(alertType) && !includeManagerContacts(alertType, level);
     }
 
     /** Domain monitör alarmı (DOMAINMON_*) için e-posta detay bağlamını EN GÜNCEL DomainCheck'ten kurar.

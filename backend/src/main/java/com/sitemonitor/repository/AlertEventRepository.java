@@ -74,6 +74,15 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
 
     /** Storm bağı (KOŞULLU, atomik) — yalnız HÂLÂ AÇIK + bağsız satırı bağlar. linkPeers'ın full-entity save'i
      *  eşzamanlı bir recovery ile çözülmüş bir incident'i diriltebiliyordu; bu koşullu UPDATE onu önler (M6). */
+    /** D9: otomatik kapanışın manuel resolve'a karşı serileştirilmesi — yalnız hâlâ AÇIKSA
+     *  kapatır; 0 dönerse yarışı başkası kazanmış demektir (ikinci "çözüldü" maili gitmez,
+     *  resolvedBy ezilmez). */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE AlertEvent e SET e.resolved = true, e.resolvedAt = :at, e.resolvedBy = :by "
+            + "WHERE e.id = :id AND e.resolved = false")
+    int markResolvedIfOpen(@Param("id") Long id, @Param("at") String at, @Param("by") String by);
+
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE AlertEvent e SET e.stormId = :stormId WHERE e.id = :id AND e.resolved = false AND e.stormId IS NULL")

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, lazy, Suspense, Fragment } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense, Fragment } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -142,10 +142,18 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
 
   useMonitorDeepLink(monitors, openDetail)
 
+  // O2: üç eşzamanlı çağıran var (filtre tıklaması, checkNow, 30sn sessiz refreshModal) ve
+  // yavaş bir 'all' yanıtı kullanıcının sonradan seçtiği filtrenin sonucunu ezebiliyordu: çip
+  // 'SLOW' gösterirken liste 'all' kalıyordu. PageSpeed sayfası aynı sınıf için resSeq guard'ı
+  // taşıyor — desen buraya da taşındı (yalnız EN SON isteğin yanıtı ekrana yazılır).
+  const issuesSeq = useRef(0)
+  const confSeq = useRef(0)
   async function loadIssues(id, filter = issueFilter, silent = false) {
+    const seq = ++issuesSeq.current
     if (!silent) setIssuesLoading(true)                              // silent: 30sn oto-yenilemede spinner flaşlamasın
     const issueType = (filter === 'all' || filter === 'firstParty') ? null : filter
     const res = await api.monitoring.getPageIssues(id, { issueType })
+    if (seq !== issuesSeq.current) return          // daha yeni bir istek var → bu yanıtı AT
     let rows = res?.success ? (res.data ?? []) : []
     if (filter === 'firstParty') rows = rows.filter(r => r.first_party)
     setIssues(rows)
@@ -153,7 +161,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   }
   function selectIssueFilter(id, f) { setIssueFilter(f); loadIssues(id, f) }
   async function loadConfirmations(url) {
+    const seq = ++confSeq.current
     const res = await api.monitoring.getConfirmations(url)
+    if (seq !== confSeq.current) return
     setConfirmations(res?.success ? (res.data ?? []) : [])
   }
   function openDetail(m) {

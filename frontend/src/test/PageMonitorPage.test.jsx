@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
 import PageMonitorPage from '../components/PageMonitorPage.jsx'
 
@@ -31,6 +31,54 @@ const monitor = {
   group_name: 'X Sistemleri', team_name: 'SY-A', status: 'DEGRADED',
   broken_resources: 2, mixed_content_count: 0, total_resources: 12, active: true, checked_at: '2026-06-24T00:00:00',
 }
+
+/**
+ * O2: loadIssues'un üç eşzamanlı çağıranı var (filtre tıklaması, checkNow, 30sn sessiz
+ * refreshModal) ve sıra guard'ı yoktu — yavaş bir 'all' yanıtı, kullanıcının sonradan seçtiği
+ * filtrenin sonucunu EZEBİLİYORDU (çip 'Kırıklar' iken liste 'Hepsi'). Kardeş PageSpeed sayfası
+ * aynı sınıf için resSeq guard'ı taşıyor; desen buraya taşındı.
+ *
+ * İzole describe: mockImplementationOnce kuyruğu diğer testlere sızmasın diye sonunda
+ * mockReset ile temizlenir (clearAllMocks implementasyon kuyruğunu TEMİZLEMEZ).
+ */
+describe("PageMonitorPage — yarış guardı (O2)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.monitoring.getPageMonitors.mockResolvedValue({ success: true, data: [monitor] })
+    api.monitoring.getPageHistory.mockResolvedValue({ success: true, data: { checks: [], total: 0, down: 0 } })
+    api.monitoring.getConfirmations.mockResolvedValue({ success: true, data: [] })
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [] })
+  })
+  // mockImplementationOnce kuyrugu diger testlere sizmasin (clearAllMocks onu TEMIZLEMEZ).
+  afterEach(() => { api.monitoring.getPageIssues.mockReset() })
+
+  it('GECİKEN eski yanıt, sonradan gelen yeni yanıtı EZMEZ', async () => {
+    let resolveOld
+    api.monitoring.getPageIssues
+      .mockImplementationOnce(() => new Promise(r => { resolveOld = () => r({ success: true, data: [
+        { id: 1, issue_type: 'MIXED_CONTENT', resource_url: 'http://eski.example.com/a.js', first_party: true },
+      ] }) }))
+      .mockResolvedValue({ success: true, data: [
+        { id: 2, issue_type: 'BROKEN', resource_url: 'https://yeni.example.com/b.js', first_party: true },
+      ] })
+
+    render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await screen.findByText('https://www.example.com/'))
+    await waitFor(() => expect(api.monitoring.getPageIssues).toHaveBeenCalledTimes(1))
+
+    // Kullanıcı filtreyi değiştiriyor → İKİNCİ istek hızlı döner ve ekranı doldurur.
+    fireEvent.click(screen.getByRole('button', { name: /Kırıklar|Broken/ }))
+    // Metin birden cok elemana bolunebiliyor (URL kirpma) -> govde metninden dogrula.
+    // Metin birden çok elemana bölünebiliyor → gövde metninden doğrula.
+    await waitFor(() => expect(document.body.textContent).toContain('yeni.example.com'))
+
+    // ŞİMDİ eski (yavaş) yanıt geliyor — guard onu ATMALI.
+    resolveOld()
+    await new Promise(r => setTimeout(r, 30))
+    expect(document.body.textContent).not.toContain('eski.example.com')
+    expect(document.body.textContent).toContain('yeni.example.com')
+  })
+})
 
 describe('PageMonitorPage', () => {
   beforeEach(() => {

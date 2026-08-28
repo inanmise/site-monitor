@@ -389,6 +389,51 @@ class StormServiceTest {
         return emails;
     }
 
+    /**
+     * Y4: storm alıcı kararı EscalationService ile AYNI kaynaktan gelmeli. Eskiden StormService
+     * kendi 3-tipli kopyasını taşıyordu (KEYWORD/PING/HTTP_DOWN) ve PAGE/SCRIPTED/PAGESPEED
+     * tiplerini kaçırıyordu: geniş kesintide storm'a terfi eden bu monitörler, bireysel alarmda
+     * ASLA mail almayacak müdürlere toplu alarm + toplu "düzeldi" gönderiyordu.
+     *
+     * <p>Karar tablosu doğrudan sınanır (dağıtım yolu e-posta/webhook da tetiklediği için).
+     */
+    @Test
+    @DisplayName("Y4: storm alıcı kararı — page/scripted/pagespeed de TAKIM-ÖZEL (müdür eklenmez)")
+    void storm_teamOnlyDecision_coversAllStandaloneTypes() {
+        // Bireysel yolda müdür ALMAYAN tipler → storm'da da almamalı.
+        for (String type : java.util.List.of(
+                EscalationService.TYPE_KEYWORD, EscalationService.TYPE_PING_DOWN,
+                EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_PAGE_DOWN,
+                EscalationService.TYPE_PAGE_INTEGRITY, EscalationService.TYPE_SCRIPTED_FAIL,
+                EscalationService.TYPE_SCRIPTED_SLOW, EscalationService.TYPE_PAGESPEED_DOWN,
+                EscalationService.TYPE_PAGESPEED_SLOW)) {
+            assertThat(EscalationService.teamOnlyRecipients(type, "CRITICAL"))
+                    .as("%s storm'da takım-özel olmalı (müdür eklenmez)", type).isTrue();
+        }
+        // Envanter-türevli tip (sertifika erişilebilirliği) takım-özel DEĞİL → müdür eklenir.
+        assertThat(EscalationService.teamOnlyRecipients(EscalationService.TYPE_ACCESSIBILITY, "CRITICAL")).isFalse();
+        // DOMAINMON istisnası korunur: yalnız KRİTİK'te müdür girer.
+        assertThat(EscalationService.teamOnlyRecipients(EscalationService.TYPE_DOMAINMON_EXPIRY, "WARNING")).isTrue();
+        assertThat(EscalationService.teamOnlyRecipients(EscalationService.TYPE_DOMAINMON_EXPIRY, "CRITICAL")).isFalse();
+    }
+
+    @Test
+    @DisplayName("Y4: SCRIPTED_FAIL üyeli storm'da eskalasyon kontakları SORGULANMAZ")
+    void storm_scriptedMember_doesNotQueryManagerContacts() {
+        AlertEvent m = new AlertEvent();
+        m.setId(1L); m.setDomain("Ödeme akışı"); m.setAlertType(EscalationService.TYPE_SCRIPTED_FAIL);
+        m.setAlertLevel("CRITICAL"); m.setTeamId(7L);
+
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                storm, "resolveRecipients", java.util.List.of(m));
+
+        // Takım-özel tipte kontak deposuna HİÇ gidilmemeli (müdür eklenmez).
+        verify(contactRepo, org.mockito.Mockito.never()).findByActiveTrueOrderByRoleAsc();
+        verify(contactRepo, org.mockito.Mockito.never()).findByTeamIdAndActiveTrueOrderByRoleAsc(org.mockito.ArgumentMatchers.anyLong());
+        // Envanter araması da yapılmamalı (teamOnly dalında hiç okunmaz).
+        verify(inventoryRepo, org.mockito.Mockito.never()).findByDomain(org.mockito.ArgumentMatchers.anyString());
+    }
+
     @Test
     @DisplayName("STORM: takımın varsayılan grubu takım mailinin YERİNE geçer")
     void storm_defaultGroupReplacesTeamEmail() {

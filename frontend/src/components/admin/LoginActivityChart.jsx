@@ -6,6 +6,9 @@ import { formatDate } from '../../api/client'
 
 // Kova ISO'su (UTC, Z'siz) → kısa yerel etiket. gün → GG.AA; saat/dakika → SS:dd.
 function tickLabel(ts, gran) {
+  // ResponseTimeChart:137 kuralı (2026-08 scripted çökme dersi): dış veri ts-string güvencesi
+  // olmadan işlenmez — null/number bir kova tüm SystemHealth ekranını ErrorBoundary'ye düşürürdü.
+  if (typeof ts !== 'string' || !ts) return ''
   const d = new Date(ts.endsWith('Z') ? ts : ts + 'Z')
   const p = (n) => String(n).padStart(2, '0')
   if (gran === 'day') return `${p(d.getDate())}.${p(d.getMonth() + 1)}`
@@ -41,7 +44,7 @@ function LoginTooltip({ active, payload, t }) {
  */
 export default function LoginActivityChart({ buckets = [], gran = 'day' }) {
   const t = useT()
-  const data = buckets.map(b => ({
+  const data = buckets.filter(b => typeof b?.ts === 'string' && b.ts).map(b => ({
     ts: b.ts, label: tickLabel(b.ts, gran),
     total: Number(b.total) || 0, success: Number(b.success) || 0, failed: Number(b.failed) || 0,
   }))

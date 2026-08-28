@@ -873,7 +873,10 @@ public class CertificateCheckerService {
             Instant notAfter = cert.getNotAfter().toInstant();
             Instant now = Instant.now();
 
-            long daysRemaining = (notAfter.toEpochMilli() - now.toEpochMilli()) / 86_400_000L;
+            // D5: '/' sıfıra doğru kırpar — 12 saat önce dolmuş sertifika -0.5 → 0 gün verir ve
+            // ilk ~24 saat "expired" yerine "0 gün kaldı" görünürdü. floorDiv negatifi korur
+            // (DomainCheckerService.daysUntil ile aynı kural).
+            long daysRemaining = Math.floorDiv(notAfter.toEpochMilli() - now.toEpochMilli(), 86_400_000L);
             boolean warning = daysRemaining <= warningDays;
 
             String subjectCn = extractCn(cert.getSubjectX500Principal().getName());

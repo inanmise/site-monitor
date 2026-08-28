@@ -302,7 +302,9 @@ public class DomainCheckerService {
                 try { when = Instant.parse(iso); }
                 catch (Exception e2) { when = LocalDate.parse(iso.substring(0, 10)).atStartOfDay(ZoneOffset.UTC).toInstant(); }
             }
-            return (int) ChronoUnit.DAYS.between(Instant.now(), when);
+            // D5: ChronoUnit.DAYS sıfıra doğru kırpar — dolalı <24 saat olmuş domain 0 gün
+            // gösterirdi. floorDiv negatifi korur (CertificateCheckerService ile aynı kural).
+            return (int) Math.floorDiv(when.toEpochMilli() - Instant.now().toEpochMilli(), 86_400_000L);
         } catch (Exception e) { return null; }
     }
 

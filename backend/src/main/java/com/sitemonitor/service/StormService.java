@@ -498,7 +498,7 @@ public class StormService {
         Map<Long, TeamInfo> teamCache = new HashMap<>();
 
         for (AlertEvent m : members) {
-            boolean teamOnly = isTeamOnly(m.getAlertType());
+            boolean teamOnly = EscalationService.teamOnlyRecipients(m.getAlertType(), m.getAlertLevel());
             Long teamId = m.getTeamId();
             Long ugTeamId = null;
             List<EscalationContact> contacts = List.of();
@@ -572,12 +572,9 @@ public class StormService {
         };
     }
 
-    /** EscalationService.processConfirmedOutage'daki teamOnly mantığının down-tipleri için aynası. */
-    private boolean isTeamOnly(String alertType) {
-        return EscalationService.TYPE_KEYWORD.equals(alertType)
-                || EscalationService.TYPE_PING_DOWN.equals(alertType)
-                || EscalationService.TYPE_HTTP_DOWN.equals(alertType);
-    }
+    // isTeamOnly kaldırıldı (Y4): EscalationService.teamOnlyRecipients tek doğruluk kaynağı.
+    // Buradaki 3-tipli kopya PAGE/SCRIPTED/PAGESPEED tiplerini kaçırıyor, geniş kesintide bu
+    // monitörlerin storm'una müdürleri ekliyordu.
 
     private List<String> sampleTargets(List<AlertEvent> members) {
         final int MAX = 12;
