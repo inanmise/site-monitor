@@ -64,17 +64,34 @@ public class HttpCheckerService {
     // thread/FD/heap sızıntısıydı. Erişim-sıralı LinkedHashMap; kapasiteyi aşınca en eski client KAPATILIR
     // (JDK 21+ HttpClient AutoCloseable). Erişim synchronized (LinkedHashMap thread-safe değil + LRU mutasyonu).
     private static final int MAX_PINNED_CLIENTS = 64;
+    // D3: tahliye edilen client KİLİT ALTINDA kapatılmaz — JDK21 HttpClient.close() uçuşan
+    // istekleri bekler; synchronized(pinnedClients) içinde beklemek TÜM lookup'ları bloklardı.
+    // removeEldestEntry yalnız bu listeye bırakır; kapatma kilit bırakıldıktan sonra yapılır.
+    private final List<HttpClient> evictedClients = new ArrayList<>();
     private final Map<String, HttpClient> pinnedClients =
             new LinkedHashMap<>(16, 0.75f, true) {
                 @Override
                 protected boolean removeEldestEntry(Map.Entry<String, HttpClient> eldest) {
                     if (size() > MAX_PINNED_CLIENTS) {
-                        try { eldest.getValue().close(); } catch (Exception ignore) { /* best-effort */ }
+                        evictedClients.add(eldest.getValue());
                         return true;
                     }
                     return false;
                 }
             };
+
+    /** Kilit dışında, birikmiş tahliyeleri kapatır (D3). */
+    private void closeEvictedClients() {
+        List<HttpClient> toClose;
+        synchronized (pinnedClients) {
+            if (evictedClients.isEmpty()) return;
+            toClose = new ArrayList<>(evictedClients);
+            evictedClients.clear();
+        }
+        for (HttpClient c : toClose) {
+            try { c.close(); } catch (Exception ignore) { /* best-effort */ }
+        }
+    }
 
     private static final Pattern CN_PATTERN = Pattern.compile("CN=([^,]+)", Pattern.CASE_INSENSITIVE);
 
@@ -291,8 +308,9 @@ public class HttpCheckerService {
         if (ctx == null) return null;
         String key = host + "|" + verifySsl + "|" + followRedirects;
         // synchronized: LinkedHashMap (LRU) thread-safe değil; computeIfAbsent + removeEldestEntry atomik olmalı.
+        HttpClient client;
         synchronized (pinnedClients) {
-            return pinnedClients.computeIfAbsent(key, k -> {
+            client = pinnedClients.computeIfAbsent(key, k -> {
                 SSLParameters sp = ctx.getDefaultSSLParameters();
                 sp.setServerNames(List.of(new SNIHostName(host)));
                 sp.setEndpointIdentificationAlgorithm(null);
@@ -304,6 +322,8 @@ public class HttpCheckerService {
                         .build();
             });
         }
+        closeEvictedClients();   // D3: kapatma kilit DIŞINDA
+        return client;
     }
 
     /** Kapanışta pinned client'ları serbest bırak (selector-thread + FD). Best-effort; paylaşılan 4 client JVM ile gider. */

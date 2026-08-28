@@ -279,6 +279,79 @@ class MonitoringControllerTest {
                 .andExpect(status().isForbidden());
     }
 
+    /** Y1: bu uç oturum parametresi bile taşımadan dönüyordu — canlı DNS sorgusu dahil. */
+    @Test
+    @DisplayName("Y1 IDOR: GET /dns/{id}/details başka takımda 403 ve canlı DNS sorgusu HİÇ koşmaz")
+    void dnsDetails_foreignTeam_forbidden() throws Exception {
+        com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();
+        m.setId(9L); m.setDomain("x.example.com"); m.setRecordType("A"); m.setTeamId(2L); m.setActive(true);
+        when(dnsMonitorRepo.findById(9L)).thenReturn(Optional.of(m));
+        MockHttpSession s = session("USER");
+        s.setAttribute("viewTeamIds", java.util.List.of(1L));
+
+        mvc.perform(get("/api/monitoring/dns/9/details").session(s))
+                .andExpect(status().isForbidden());
+
+        // Sızıntının asıl bedeli her çağrıda CANLI sorguydu — reddedilen istekte hiç koşmamalı.
+        org.mockito.Mockito.verify(dnsChecker, org.mockito.Mockito.never()).enrichedQuery(anyString());
+    }
+
+    /** Y2: izin (domain.registration.view) USER'a açık ama kaynak TAKIMA ait. */
+    @Test
+    @DisplayName("Y2 IDOR: GET /domain/{id}/registration başka takımda 404 (varlık sızdırmaz)")
+    void domainRegistration_foreignTeam_notFound() throws Exception {
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(9L); m.setDomain("x.example.com"); m.setTeamId(2L); m.setActive(true);
+        when(domainMonitorRepo.findById(9L)).thenReturn(Optional.of(m));
+        MockHttpSession s = session("USER");
+        s.setAttribute("viewTeamIds", java.util.List.of(1L));
+
+        mvc.perform(get("/api/monitoring/domain/9/registration").session(s))
+                .andExpect(status().isNotFound());
+    }
+
+    /** Y2b: live=true SALT OKUMA DEĞİL (dış sorgu + persist + alarm) — görüntüleme yetkisi yetmez. */
+    @Test
+    @DisplayName("Y2 IDOR: registration?live=true görüntüleyebilen ama YÖNETEMEYEN kullanıcıya 403")
+    void domainRegistrationLive_viewOnlyUser_forbidden() throws Exception {
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(9L); m.setDomain("x.example.com"); m.setTeamId(2L); m.setActive(true);
+        when(domainMonitorRepo.findById(9L)).thenReturn(Optional.of(m));
+        // Takım 2'yi GÖREBİLİYOR (view scope) ama üyesi/yöneticisi değil.
+        MockHttpSession s = sessionWithTeam("USER", 1L);
+        s.setAttribute("viewTeamIds", java.util.List.of(1L, 2L));
+
+        mvc.perform(get("/api/monitoring/domain/9/registration?live=true").session(s))
+                .andExpect(status().isForbidden());
+    }
+
+    /** Y3: kardeş 7 uç denyIfNotViewable taşırken port/dns existsById ile desenden sapmıştı. */
+    @Test
+    @DisplayName("Y3 IDOR: GET /port/{id}/response-series başka takımda 403")
+    void portResponseSeries_foreignTeam_forbidden() throws Exception {
+        com.sitemonitor.model.PortMonitor m = new com.sitemonitor.model.PortMonitor();
+        m.setId(9L); m.setHost("x"); m.setPort(443); m.setTeamId(2L); m.setActive(true);
+        when(portMonitorRepo.findById(9L)).thenReturn(Optional.of(m));
+        MockHttpSession s = session("USER");
+        s.setAttribute("viewTeamIds", java.util.List.of(1L));
+
+        mvc.perform(get("/api/monitoring/port/9/response-series").session(s))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("Y3 IDOR: GET /dns/{id}/response-series başka takımda 403")
+    void dnsResponseSeries_foreignTeam_forbidden() throws Exception {
+        com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();
+        m.setId(9L); m.setDomain("x.example.com"); m.setRecordType("A"); m.setTeamId(2L); m.setActive(true);
+        when(dnsMonitorRepo.findById(9L)).thenReturn(Optional.of(m));
+        MockHttpSession s = session("USER");
+        s.setAttribute("viewTeamIds", java.util.List.of(1L));
+
+        mvc.perform(get("/api/monitoring/dns/9/response-series").session(s))
+                .andExpect(status().isForbidden());
+    }
+
     @Test
     @DisplayName("H1c: POST /page/{id}/check per-monitör cooldown içinde ikinci tetik → 429")
     void triggerPage_cooldownReturns429() throws Exception {
@@ -685,10 +758,14 @@ class MonitoringControllerTest {
         specs.put("ping",     new Spec(() -> { when(pingMonitorRepo.findById(1L)).thenReturn(Optional.of(pg));
             when(pingCheckRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); },
             "/api/monitoring/ping/1/response-series"));
-        specs.put("port",     new Spec(() -> { when(portMonitorRepo.existsById(1L)).thenReturn(true);
+        com.sitemonitor.model.PortMonitor pom = new com.sitemonitor.model.PortMonitor();
+        pom.setId(1L); pom.setHost("x"); pom.setPort(443); pom.setTeamId(1L); pom.setActive(true);
+        com.sitemonitor.model.DnsMonitor dmo = new com.sitemonitor.model.DnsMonitor();
+        dmo.setId(1L); dmo.setDomain("x.example.com"); dmo.setRecordType("A"); dmo.setTeamId(1L); dmo.setActive(true);
+        specs.put("port",     new Spec(() -> { when(portMonitorRepo.findById(1L)).thenReturn(Optional.of(pom));
             when(portCheckRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); },
             "/api/monitoring/port/1/response-series"));
-        specs.put("dns",      new Spec(() -> { when(dnsMonitorRepo.existsById(1L)).thenReturn(true);
+        specs.put("dns",      new Spec(() -> { when(dnsMonitorRepo.findById(1L)).thenReturn(Optional.of(dmo));
             when(dnsRecordRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); },
             "/api/monitoring/dns/1/response-series"));
         specs.put("http",     new Spec(() -> { when(httpMonitorRepo.findById(1L)).thenReturn(Optional.of(hm));
@@ -860,7 +937,10 @@ class MonitoringControllerTest {
     @Test
     @DisplayName("GET /port/{id}/response-series: kovalar avg/min/max/p95/down döner (open=up bayrağı)")
     void portResponseSeries_buckets() throws Exception {
-        when(portMonitorRepo.existsById(7L)).thenReturn(true);
+        // Y3: uç artık monitörü yüklüyor (takım kapsamı için) — stub findById'ye geçti.
+        com.sitemonitor.model.PortMonitor pm7 = new com.sitemonitor.model.PortMonitor();
+        pm7.setId(7L); pm7.setHost("x"); pm7.setPort(443); pm7.setTeamId(1L); pm7.setActive(true);
+        when(portMonitorRepo.findById(7L)).thenReturn(Optional.of(pm7));
         // Aynı saat kovasında 3 kayıt (100/200/300 ms), biri down (open=false)
         List<Object[]> rows = List.of(
                 new Object[]{ "2026-06-24T10:05:00", 100L, true },
@@ -868,7 +948,7 @@ class MonitoringControllerTest {
                 new Object[]{ "2026-06-24T10:45:00", 200L, false });
         when(portCheckRepo.responseSeriesRaw(eq(7L), anyString(), anyString(), anyInt())).thenReturn(rows);
 
-        mvc.perform(get("/api/monitoring/port/7/response-series?days=7").session(session("USER")))
+        mvc.perform(get("/api/monitoring/port/7/response-series?days=7").session(session("ADMIN")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.bucket").value("hour"))
                 .andExpect(jsonPath("$.data.series[0].count").value(3))
@@ -890,14 +970,17 @@ class MonitoringControllerTest {
     @Test
     @DisplayName("GET /dns/{id}/response-series: kovalar avg/down döner (value boş=down, süre null istatistiğe girmez)")
     void dnsResponseSeries_buckets() throws Exception {
-        when(dnsMonitorRepo.existsById(3L)).thenReturn(true);
+        // Y3: uç artık monitörü yüklüyor (takım kapsamı için) — stub findById'ye geçti.
+        com.sitemonitor.model.DnsMonitor dm3 = new com.sitemonitor.model.DnsMonitor();
+        dm3.setId(3L); dm3.setDomain("x.example.com"); dm3.setRecordType("A"); dm3.setTeamId(1L); dm3.setActive(true);
+        when(dnsMonitorRepo.findById(3L)).thenReturn(Optional.of(dm3));
         List<Object[]> rows = List.of(
                 new Object[]{ "2026-06-24T10:05:00", 20L, true },
                 new Object[]{ "2026-06-24T10:25:00", 60L, true },
                 new Object[]{ "2026-06-24T10:45:00", null, false });   // çözümleme başarısız → down, süre null
         when(dnsRecordRepo.responseSeriesRaw(eq(3L), anyString(), anyString(), anyInt())).thenReturn(rows);
 
-        mvc.perform(get("/api/monitoring/dns/3/response-series?days=7").session(session("USER")))
+        mvc.perform(get("/api/monitoring/dns/3/response-series?days=7").session(session("ADMIN")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.bucket").value("hour"))
                 .andExpect(jsonPath("$.data.series[0].count").value(3))

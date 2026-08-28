@@ -621,6 +621,7 @@ public class CertificateService {
     private Map<String, Object> computeStats(List<CertificateDto> all, List<CertificateDto> warnings,
                                              int critDays, int highDays) {
         long errors = 0, criticalCount = 0, highCount = 0, expiring30 = 0, expiring7 = 0, expired = 0;
+        long expiredActive = 0;   // hatasız + d<0: warningOnly türetiminde düşülür (O1a yan etkisi)
         List<String> warningDomains  = new ArrayList<>();
         List<String> highDomains     = new ArrayList<>();
         List<String> criticalDomains = new ArrayList<>();
@@ -634,19 +635,30 @@ public class CertificateService {
             Integer d = c.getDaysRemaining();
             if (isError) { errors++; errorDomains.add(c.getDomain()); }
             if (!isError && d != null) {
-                if (d <= critDays) criticalCount++;
-                else if (d <= highDays) highCount++;
+                // O1a: alt sınır ŞART — dolmuş (d<0) sertifika hem critical_count'a hem expired'a
+                // sayılıyordu (çift sayım) ve drill-down listesi (criticalDomains, d>=0 süzer)
+                // sayaçla çelişiyordu: "kritik: 1" görünür, liste boş gelirdi. Dolmuşların yeri
+                // yalnız expired.
+                if (d >= 0 && d <= critDays) criticalCount++;
+                else if (d >= 0 && d <= highDays) highCount++;
+                else if (d < 0) expiredActive++;
                 if (d > highDays) warningDomains.add(c.getDomain());
                 if (d > critDays && d <= highDays) highDomains.add(c.getDomain());
                 if (d >= 0 && d <= critDays) criticalDomains.add(c.getDomain());
             }
             if (d != null) {
-                if (d > 0 && d <= 30) expiring30++;
+                // O1b: sınır kuralı iki pencerede AYNI olmalı — d==0 (bugün dolan; tamsayı
+                // kırpmasıyla çok yaygın) "7 gün içinde"ye girip "30 gün içinde"ye girmiyordu →
+                // 30-gün sayısı 7-gün sayısından küçük görünebiliyordu (mantıksal imkânsız).
+                if (d >= 0 && d <= 30) expiring30++;
                 if (d >= 0 && d <= 7)  expiring7++;
                 if (d < 0) { expired++; expiredDomains.add(c.getDomain()); }
             }
         }
-        long warningOnly = warnings.size() - errors - criticalCount - highCount;
+        // O1a düzeltmesinin yan etkisi: dolmuşlar critical'dan çıkınca bu türetimde
+        // "warning" kovasına sızarlardı — onlar da düşülür (yalnız hatasız olanlar; hatalılar
+        // zaten errors ile düşülüyor, çifte düşme olmasın).
+        long warningOnly = warnings.size() - errors - criticalCount - highCount - expiredActive;
 
         long valid = 0, revoked = 0, mismatch = 0, chainBroken = 0;
         List<String> validDomains = new ArrayList<>();

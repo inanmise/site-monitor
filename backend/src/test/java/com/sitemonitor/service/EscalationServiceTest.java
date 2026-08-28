@@ -69,6 +69,12 @@ class EscalationServiceTest {
         // Self-injection bypass for @Async dispatch in tests (runs synchronously)
         ReflectionTestUtils.setField(service, "self", service);
 
+        // D9: otomatik kapanış artık ATOMİK koşullu UPDATE ile yarışı çözüyor (manuel resolve'a
+        // karşı). Mock varsayılanı 0 (= "başkası kapatmış") olduğundan tüm auto-resolve yolları
+        // sessizce atlanırdı — varsayılan "yarışı BİZ kazandık" olmalı; yarışı sınayan test
+        // kendi stub'ını verir.
+        when(alertEventRepo.markResolvedIfOpen(any(), any(), any())).thenReturn(1);
+
         // SMTP settings (pacing delays) — return entity defaults.
         when(smtpSettings.getOrDefaults()).thenReturn(new com.sitemonitor.model.SmtpSettings());
 
@@ -1261,6 +1267,95 @@ class EscalationServiceTest {
         assertThat(saved.getTeamId()).isEqualTo(9L);
         assertThat(saved.getContextJson()).isNotNull();
         assertThat(saved.getContextJson()).contains("example");   // snapshot → çözüldü mailinde kelime detayı
+    }
+
+    /**
+     * Y5: re-alert dalı seviyeyi CANLI ctx'ten okuyor ama event'e YAZMIYORDU. WARNING açılan bir
+     * DOMAINMON_EXPIRY, gün geçince CRITICAL re-alert gönderip müdürü ekliyordu; alarm çözülünce
+     * çözüm bildirimi event'in BAYAT WARNING seviyesine bakıp müdürü listeden düşürüyordu —
+     * kritik uyarıyı alan müdür "düzeldi"yi hiç almıyordu.
+     */
+    @Test
+    @DisplayName("Y5: re-alert seviyeyi YÜKSELTİRSE event'e KALICI yazılır (çözüm alıcısı doğru olsun)")
+    void reAlert_levelPromotion_isPersisted() {
+        String domain = "expiring.example.com";
+        AlertEvent open = new AlertEvent();
+        open.setId(11L); open.setDomain(domain); open.setAlertType(EscalationService.TYPE_DOMAINMON_EXPIRY);
+        open.setAlertLevel("WARNING"); open.setAcknowledged(false); open.setResolved(false);
+        open.setTeamId(4L);
+        open.setCreatedAt(ISO.format(java.time.Instant.now().minus(java.time.Duration.ofDays(5))));
+        open.setLastReAlertAt(ISO.format(java.time.Instant.now().minus(java.time.Duration.ofDays(2))));
+        when(alertEventRepo.findOpenAlert(domain, EscalationService.TYPE_DOMAINMON_EXPIRY))
+                .thenReturn(Optional.of(open));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("alert_level", "CRITICAL");   // sweep artık kritik diyor
+        service.processConfirmedOutage(domain, EscalationService.TYPE_DOMAINMON_EXPIRY, "WARNING", ctx);
+
+        ArgumentCaptor<AlertEvent> cap = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(cap.capture());
+        assertThat(cap.getValue().getAlertLevel())
+                .as("terfi kalıcı olmalı — çözüm bildirimi bu alanı okur")
+                .isEqualTo("CRITICAL");
+    }
+
+    /**
+     * O5: alarm AÇIKKEN monitör başka takıma atanırsa, re-alert canlı ctx.team_id'ye giderken
+     * çözüm bildirimi event.teamId'ye gidiyordu — iki bildirim FARKLI takıma düşüyordu.
+     */
+    @Test
+    @DisplayName("O5: re-alert damgalı takımı kullanır (çözüm bildirimiyle AYNI takım)")
+    void reAlert_usesStampedTeam_notLiveContext() {
+        String domain = "https://kw.example.com/";
+        AlertEvent open = new AlertEvent();
+        open.setId(12L); open.setDomain(domain); open.setAlertType(EscalationService.TYPE_KEYWORD);
+        open.setAlertLevel("CRITICAL"); open.setAcknowledged(false); open.setResolved(false);
+        open.setTeamId(4L);   // DAMGA: alarm açılırken bu takıma yazılmıştı
+        open.setCreatedAt(ISO.format(java.time.Instant.now().minus(java.time.Duration.ofDays(5))));
+        open.setLastReAlertAt(ISO.format(java.time.Instant.now().minus(java.time.Duration.ofDays(2))));
+        when(alertEventRepo.findOpenAlert(domain, EscalationService.TYPE_KEYWORD)).thenReturn(Optional.of(open));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        com.sitemonitor.model.Team t4 = new com.sitemonitor.model.Team();
+        t4.setId(4L); t4.setName("Takım A"); t4.setEmail("takim-a@example.com");
+        com.sitemonitor.model.Team t9 = new com.sitemonitor.model.Team();
+        t9.setId(9L); t9.setName("Takım B"); t9.setEmail("takim-b@example.com");
+        when(teamRepo.findById(4L)).thenReturn(Optional.of(t4));
+        when(teamRepo.findById(9L)).thenReturn(Optional.of(t9));
+
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("team_id", 9L);   // monitör SONRADAN 9'a atanmış
+        service.processConfirmedOutage(domain, EscalationService.TYPE_KEYWORD, "CRITICAL", ctx);
+
+        ArgumentCaptor<String[]> toCap = ArgumentCaptor.forClass(String[].class);
+        verify(emailService).sendAlert(toCap.capture(), anyString(), anyString(), any(), any(), any(), any(), any());
+        assertThat(toCap.getValue()).as("re-alert damgalı takıma gitmeli").contains("takim-a@example.com");
+        assertThat(toCap.getValue()).doesNotContain("takim-b@example.com");
+    }
+
+    /**
+     * O6: {@code acknowledged} nullable Boolean; kolon eski satırlar dururken eklendiyse NULL
+     * kalabilir. Korumasız unbox NPE'si {@code runCheckForDomains} dış catch'ine kadar fırlayıp
+     * O SWEEP'TEKİ KALAN TÜM domain'lerin alarm işlemesini iptal ediyordu.
+     */
+    @Test
+    @DisplayName("O6: acknowledged NULL açık alarm NPE'siz işlenir (sweep iptal olmaz)")
+    void acknowledgedNull_doesNotThrow() {
+        String domain = "https://kw2.example.com/";
+        AlertEvent open = new AlertEvent();
+        open.setId(13L); open.setDomain(domain); open.setAlertType(EscalationService.TYPE_KEYWORD);
+        open.setAlertLevel("CRITICAL"); open.setResolved(false);
+        open.setAcknowledged(null);   // eski satır — backfill yok
+        open.setTeamId(4L);
+        open.setCreatedAt(ISO.format(java.time.Instant.now().minus(java.time.Duration.ofDays(5))));
+        open.setLastReAlertAt(ISO.format(java.time.Instant.now().minus(java.time.Duration.ofDays(2))));
+        when(alertEventRepo.findOpenAlert(domain, EscalationService.TYPE_KEYWORD)).thenReturn(Optional.of(open));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // İstisna FIRLARSA test patlar — fırlamaması sözleşmenin kendisi.
+        service.processConfirmedOutage(domain, EscalationService.TYPE_KEYWORD, "CRITICAL", new LinkedHashMap<>());
+
+        verify(alertEventRepo, atLeast(1)).save(any());
     }
 
     @Test

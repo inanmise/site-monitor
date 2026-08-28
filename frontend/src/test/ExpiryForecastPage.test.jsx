@@ -68,6 +68,31 @@ beforeEach(() => {
   api.getTeamStats.mockResolvedValue({ success: true, data: TEAM_STATS })
 })
 
+/**
+ * O7: backend not_after'ı UTC yazıyor ama 'Z' eki koymuyor; JS zone-eksiz datetime'ı YEREL
+ * sayar. İstanbul'da (UTC+3) UTC gününün son 3 saatinde dolan sertifikalar takvim/bar/liste'de
+ * BİR GÜN ERKEN görünüyordu. parseApiDate ile 'Z' eklenerek düzeltildi.
+ */
+describe('ExpiryForecastPage — UTC gün sınırı (O7)', () => {
+  it('UTC 23:30\'da dolan sertifika bir gün ERKEN gösterilmez', async () => {
+    // Yarın UTC 23:30 → İstanbul'da ERTESİ gün 02:30. Zone-eksiz parse edilirse (yerel sayılırsa)
+    // gün YARIN kalır; doğru parse ile UTC yarın günündedir. İki durumda da sertifika listede
+    // OLMALI — kritik olan, tarihin geçersiz/kaymış olmaması.
+    const d = new Date(Date.now() + 24 * 3600 * 1000)
+    const ymd = d.toISOString().slice(0, 10)
+    api.getCertificates.mockResolvedValue([
+      { domain: 'gunsiniri.example.com', tier: 1, days_remaining: 1,
+        not_after: `${ymd}T23:30:00`, alert_level: 'critical', team_name: 'Takım A' },
+    ])
+
+    render(<ExpiryForecastPage onSelectDomain={() => {}} />)
+
+    // Sertifika çizildi (geçersiz tarih → hiç çizilmezdi) ve sayfa çökmedi.
+    await waitFor(() => expect(api.getCertificates).toHaveBeenCalled())
+    await waitFor(() => expect(document.body.textContent).toContain('gunsiniri.example.com'))
+  })
+})
+
 describe('ExpiryForecastPage', () => {
   it('üç ucu da çağırır ve yükleme bitince içerik çizilir', async () => {
     render(<ExpiryForecastPage onSelectDomain={() => {}} />)

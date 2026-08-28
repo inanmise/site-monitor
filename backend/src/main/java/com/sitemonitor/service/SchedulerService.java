@@ -448,12 +448,15 @@ public class SchedulerService {
         patch("ALTER TABLE latest_checks ADD COLUMN hsts_status TEXT");
         patch("ALTER TABLE latest_checks ADD COLUMN hsts_at TEXT");
         patch("ALTER TABLE latest_checks ADD COLUMN hsts_note TEXT");
-        patch("ALTER TABLE page_speed_checks ADD COLUMN dns_ms INTEGER");
-        patch("ALTER TABLE page_speed_checks ADD COLUMN connect_ms INTEGER");
-        patch("ALTER TABLE page_speed_checks ADD COLUMN tls_ms INTEGER");
-        patch("ALTER TABLE page_speed_checks ADD COLUMN server_ms INTEGER");
-        patch("ALTER TABLE page_speed_checks ADD COLUMN skipped_lazy INTEGER");
-        patch("ALTER TABLE page_speed_checks ADD COLUMN breach_detail TEXT");
+        // D1: tablo adı yanlıştı (page_speed_checks — fazladan alt çizgi); patch() istisnayı yuttuğu
+        // için 6 satır SESSİZ no-op idi. Entity tablosu pagespeed_checks; ddl-auto maskeliyordu
+        // ama güvenlik ağı kırıktı. PatchTableNamesTest tekrarını engelliyor.
+        patch("ALTER TABLE pagespeed_checks ADD COLUMN dns_ms INTEGER");
+        patch("ALTER TABLE pagespeed_checks ADD COLUMN connect_ms INTEGER");
+        patch("ALTER TABLE pagespeed_checks ADD COLUMN tls_ms INTEGER");
+        patch("ALTER TABLE pagespeed_checks ADD COLUMN server_ms INTEGER");
+        patch("ALTER TABLE pagespeed_checks ADD COLUMN skipped_lazy INTEGER");
+        patch("ALTER TABLE pagespeed_checks ADD COLUMN breach_detail TEXT");
         // Otomatik parmak izi pini (TOFU) — sertifikanın sessizce değişmesini görünür kılar.
         patch("ALTER TABLE latest_checks ADD COLUMN pinned_fingerprint TEXT");
         patch("ALTER TABLE latest_checks ADD COLUMN pinned_at TEXT");
@@ -1832,14 +1835,21 @@ public class SchedulerService {
                 "INSERT INTO scheduler_lock(name, locked_by, locked_until) VALUES(?, ?, ?)",
                 lockName, INSTANCE_ID, until);
             return true;
-        } catch (Exception e) {
-            // Unique constraint violation → another instance holds the lock
-            if (e.getMessage() != null && (e.getMessage().contains("UNIQUE") || e.getMessage().contains("unique"))) {
-                return false;
-            }
-            // Lock table unavailable — allow single-instance fallback
+        } catch (org.springframework.dao.DuplicateKeyException e) {
+            return false;   // kilit başka pod'da — tipli yakalama, mesaj metnine bağımlılık yok
+        } catch (org.springframework.jdbc.BadSqlGrammarException e) {
+            // Kilit TABLOSU yok (ör. ilk açılışta ddl-auto henüz koşmadı) — bilinçli tek-pod
+            // geri düşüşü: kilitsiz çalışmak, hiç çalışmamaktan iyi.
             log.warn("Distributed lock table unavailable (HA degraded): {}", e.getMessage());
             return true;
+        } catch (Exception e) {
+            // D2: eskiden buradaki HER istisna (deadlock, statement-timeout, bağlantı kopması)
+            // fail-open'dı → çok-pod'da geçici DB hatasında ÇİFT sweep. Mesaj-metni unique
+            // kontrolü de sürücüye/dile bağımlıydı. Artık güvenli taraf: bu turu ATLA — sweep
+            // periyodik, bir sonraki tur telafi eder; çift koşmanın bedeli (çift alarm/mail)
+            // bir turu kaçırmaktan büyüktür.
+            log.warn("Scheduler lock acquire failed — bu tur atlanıyor (güvenli taraf): {}", e.getMessage());
+            return false;
         }
     }
 

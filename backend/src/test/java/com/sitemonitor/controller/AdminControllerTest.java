@@ -1206,6 +1206,29 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.data[0].email_failed_count").value(0));
     }
 
+    /** O8: takım yöneticisi id deneyerek HERHANGİ takımdaki kullanıcının fotoğrafını çekebiliyordu. */
+    @Test
+    @DisplayName("O8 IDOR: GET /users/{id}/photo — kapsam dışı kullanıcıya 404, kapsam içine 200")
+    void userPhoto_scopedByViewTeams() throws Exception {
+        com.sitemonitor.model.AppUser target = new com.sitemonitor.model.AppUser();
+        target.setId(9L); target.setUsername("n00001"); target.setTeamId(2L);
+        // 1x1 JPEG'e gerek yok — photoResponse yalnız base64 decode eder.
+        target.setPhotoBase64(java.util.Base64.getEncoder().encodeToString(new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF}));
+        org.mockito.Mockito.when(userRepo.findById(9L)).thenReturn(java.util.Optional.of(target));
+
+        // Kapsamı takım 1 olan takım yöneticisi → hedef takım 2 → 404 (403 varlık sızdırırdı).
+        org.springframework.mock.web.MockHttpSession scoped = teamAdminSession();
+        scoped.setAttribute("viewTeamIds", java.util.List.of(1L));
+        mvc.perform(get("/api/admin/users/9/photo").session(scoped))
+                .andExpect(status().isNotFound());
+
+        // Kapsamına takım 2 girince → 200.
+        org.springframework.mock.web.MockHttpSession inScope = teamAdminSession();
+        inScope.setAttribute("viewTeamIds", java.util.List.of(1L, 2L));
+        mvc.perform(get("/api/admin/users/9/photo").session(inScope))
+                .andExpect(status().isOk());
+    }
+
     @Test
     @DisplayName("POST /api/admin/users/{id}/auto-reset-password without admin_password returns 400")
     void autoResetPassword_missingAdminPassword_returns400() throws Exception {

@@ -64,7 +64,17 @@ public class CaAutoPinService {
 
     private final ConcurrentHashMap<String, TmEntry> tmCache             = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Long>    lastPinAttempt      = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Object>  hostLocks           = new ConcurrentHashMap<>();
+    // D4: eskiden ConcurrentHashMap + tavan aşımında clear() idi — clear, o anda TUTULAN bir
+    // kilidi haritadan düşürünce aynı host için ikinci thread YENİ kilit nesnesi alır ve
+    // karşılıklı dışlama kaybolurdu (DB unique son savunmaydı). Erişim-sıralı LRU: yalnız en
+    // eski (büyük olasılıkla kullanılmayan) kilit düşer, tavan sabit kalır.
+    private final java.util.Map<String, Object> hostLocks =
+            java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(java.util.Map.Entry<String, Object> eldest) {
+                    return size() > MAX_MAP_ENTRIES;
+                }
+            });
     private final ConcurrentHashMap<String, Long>    recentTrustFailures = new ConcurrentHashMap<>();
 
     public boolean isEnabled() {
@@ -108,8 +118,7 @@ public class CaAutoPinService {
         if (last != null && now - last < PIN_RATE_LIMIT_MS) return false;
         if (lastPinAttempt.size() > MAX_MAP_ENTRIES) lastPinAttempt.clear();
         lastPinAttempt.put(key, now);
-        if (hostLocks.size() > MAX_MAP_ENTRIES) hostLocks.clear();
-        Object lock = hostLocks.computeIfAbsent(key, k -> new Object());
+        Object lock = hostLocks.computeIfAbsent(key, k -> new Object());   // LRU tavanı harita kendisi uygular (D4)
         synchronized (lock) {
             try {
                 X509Certificate[] chain;

@@ -1693,8 +1693,14 @@ public class MonitoringController {
 
     /** Domain için tüm temel kayıt tipleri + SOA + authoritative NS — detail modal'da kullanılır. */
     @GetMapping("/dns/{id}/details")
-    public ResponseEntity<Map<String, Object>> dnsDetails(@PathVariable Long id) {
+    public ResponseEntity<Map<String, Object>> dnsDetails(@PathVariable Long id, HttpSession session) {
+        // IDOR: bu uc oturum parametresi bile tasimadan findById donuyordu — id artirarak baska
+        // takimin DNS yapilandirmasi + her cagride CANLI DNS sorgusu + resolver yapilandirmasi
+        // okunabiliyordu. Kardes uclar (/history, /response-series, /check) hep korumaliydi.
+        permissionService.require(session, "monitoring.read", "view");
         return dnsMonitorRepo.findById(id).map(m -> {
+            var deny = denyIfNotViewable(session, m.getTeamId());   // IDOR (H3)
+            if (deny != null) return deny;
             Map<String, Object> data = new LinkedHashMap<>(dnsChecker.enrichedQuery(m.getDomain()));
             data.put("monitor", enrichDns(m, dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(m.getId()).orElse(null), certificateService.domainTeamNameMap(), teamNameMap(), openDnsAlarm(m.getDomain())));
             data.put("slow_threshold_ms", m.getSlowThresholdMs() != null ? m.getSlowThresholdMs()
@@ -2079,7 +2085,10 @@ public class MonitoringController {
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @RequestParam(defaultValue = "30") int days, HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
-        if (!portMonitorRepo.existsById(id)) return notFound("Port monitor not found");
+        PortMonitor pomon = portMonitorRepo.findById(id).orElse(null);
+        if (pomon == null) return notFound("Port monitor not found");
+        var deny = denyIfNotViewable(session, pomon.getTeamId());   // IDOR (H3)
+        if (deny != null) return deny;
         String[] range = resolveRange(from, to, days);
         return ok(buildResponseSeries(portCheckRepo.responseSeriesRaw(id, range[0], range[1], SERIES_RAW_CAP),
                 range[0], range[1], false));   // withLoss=false — port'ta paket kaybı yok
@@ -2090,7 +2099,10 @@ public class MonitoringController {
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @RequestParam(defaultValue = "30") int days, HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
-        if (!dnsMonitorRepo.existsById(id)) return notFound("DNS monitor not found");
+        DnsMonitor dmon = dnsMonitorRepo.findById(id).orElse(null);
+        if (dmon == null) return notFound("DNS monitor not found");
+        var deny = denyIfNotViewable(session, dmon.getTeamId());   // IDOR (H3)
+        if (deny != null) return deny;
         String[] range = resolveRange(from, to, days);
         return ok(buildResponseSeries(dnsRecordRepo.responseSeriesRaw(id, range[0], range[1], SERIES_RAW_CAP),
                 range[0], range[1], false));   // withLoss=false — DNS'te paket kaybı yok
@@ -4388,7 +4400,15 @@ public class MonitoringController {
             @RequestParam(defaultValue = "false") boolean live, HttpSession session) {
         permissionService.require(session, "domain.registration.view", "view");
         return domainMonitorRepo.findById(id).map(m -> {
+            // IDOR: izin USER'a varsayilan acik ama kaynak TAKIMA ait — kapsam disina 404
+            // (varlik sizdirmamak icin 403 degil; resourceChanges ile ayni gerekce).
+            if (!SessionScope.canView(session, m.getTeamId()))
+                return notFound("Domain monitor not found");
             if (live) {
+                // live=true SALT OKUMA DEGIL: dis RDAP/WHOIS sorgusu + persist + alarm
+                // degerlendirmesi tetikler — yazma/calistirma yetkisi ister.
+                if (!canOperateTeam(session, m.getTeamId()))
+                    return forbidden("Bu izleme üzerinde canlı sorgu yetkiniz yok");
                 Map<String, Object> r = domainChecker.check(m);   // taze RDAP/WHOIS + persist
                 try { schedulerService.evaluateDomainAlarmsNow(m, r); }
                 catch (Exception e) { log.warn("Registration live alarm değerlendirmesi başarısız: {} — {}", m.getDomain(), e.getMessage()); }

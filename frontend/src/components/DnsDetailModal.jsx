@@ -1,4 +1,4 @@
-import { useState, useEffect, Fragment, lazy, Suspense } from 'react'
+import { useState, useEffect, useRef, Fragment, lazy, Suspense } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -39,6 +39,9 @@ function withinExpected(expectedJoined, valueJoined) {
 export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canManage = false }) {
   const t = useT()
   const [details, setDetails] = useState(null)
+  // D12: monitör hızla değiştirilirse eskinin geç yanıtı yeni modalı doldurmasın.
+  const monitorIdRef = useRef(null)
+  monitorIdRef.current = monitor?.id ?? null
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState(
     monitor?.record_type && RECORD_TYPES.includes(monitor.record_type) ? monitor.record_type : 'A'
@@ -57,7 +60,9 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
     if (monitor.record_type && RECORD_TYPES.includes(monitor.record_type)) {
       setActiveTab(monitor.record_type)
     }
+    const reqId = monitor.id
     api.monitoring.getDnsDetails(monitor.id).then(d => {
+      if (reqId !== monitorIdRef.current) return   // D12: uçuşan yanıt guard'ı
       if (d?.success) setDetails(d.data)
       setLoading(false)
     })

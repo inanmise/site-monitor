@@ -608,6 +608,49 @@ class CertificateServiceTest {
         return m;
     }
 
+    /**
+     * O1: sayaç ile drill-down LİSTESİ aynı kuralı kullanmalı ve pencere sınırları tutarlı olmalı.
+     *
+     * <p>Yakalanan iki kusur: (a) {@code criticalCount} alt sınırsızdı → SÜRESİ DOLMUŞ (d<0)
+     * sertifika hem critical_count'a hem expired'a sayılıyordu, ama liste (criticalDomains)
+     * onları eliyordu → "kritik: 1" görünüp liste boş geliyordu. (b) expiring30 {@code d>0},
+     * expiring7 {@code d>=0} idi → bugün dolan (d==0; tamsayı kırpmasıyla çok yaygın) 7-gün
+     * penceresine girip 30-gün penceresine girmiyordu; 30-gün sayısı 7-günden KÜÇÜK olabiliyordu.
+     */
+    @Test
+    @DisplayName("O1: dolmuş sertifika yalnız expired'a sayılır; sayaç == drill-down listesi")
+    void stats_expiredNotCountedAsCritical_andWindowsConsistent() {
+        List<LatestCheck> allChecks = List.of(
+                latestCheck("ok.example.com",      "valid",   false, 90,  "VALID", "OK"),
+                latestCheck("today.example.com",   "warning", true,  0,   "VALID", "OK"),   // bugün doluyor
+                latestCheck("crit.example.com",    "warning", true,  5,   "VALID", "OK"),   // 5 ≤ 7 → kritik
+                latestCheck("expired.example.com", "warning", true,  -3,  "VALID", "OK"));  // DOLMUŞ
+        when(latestRepo.findAllByOrderByDomainAsc()).thenReturn(allChecks);
+        when(latestRepo.findByWarningTrueOrStatus("error")).thenReturn(
+                allChecks.stream().filter(c -> Boolean.TRUE.equals(c.getWarning())).collect(Collectors.toList()));
+
+        Map<String, Object> stats = service.getStats();
+
+        // (a) dolmuş kritik DEĞİL; sayaç listeyle birebir (today + crit = 2)
+        assertThat(stats.get("critical_count")).isEqualTo(2L);
+        assertThat((List<?>) stats.get("critical_domains")).hasSize(2);
+        assertThat(stats.get("expired")).isEqualTo(1L);
+        assertThat((List<String>) stats.get("expired_domains")).containsExactly("expired.example.com");
+
+        // (b) pencereler tutarlı: bugün dolan İKİSİNE de girer, 30 >= 7 değişmezi korunur
+        assertThat(stats.get("expiring_in_7_days")).isEqualTo(2L);    // today(0) + crit(5)
+        assertThat(stats.get("expiring_in_30_days")).isEqualTo(2L);
+        assertThat((Long) stats.get("expiring_in_30_days"))
+                .as("30-gün penceresi 7-günü KAPSAR")
+                .isGreaterThanOrEqualTo((Long) stats.get("expiring_in_7_days"));
+
+        // Kova toplamı bozulmadı: uyarı listesi = kritik + yüksek + uyarı + hata + dolmuş
+        long sum = (Long) stats.get("critical_count") + (Long) stats.get("high_count")
+                + (Long) stats.get("warning_count") + (Long) stats.get("error_count")
+                + (Long) stats.get("expired");
+        assertThat(sum).as("kovalar uyarı listesini tam böler").isEqualTo(3L);
+    }
+
     private LatestCheck latestCheck(String domain, String status, boolean warning,
                                      Integer days, String chainStatus, String deploymentStatus) {
         LatestCheck c = new LatestCheck();

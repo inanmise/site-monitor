@@ -1,5 +1,5 @@
 import { LoadingBlock } from './ui/Progress.jsx'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useToast } from './ui/Toast.jsx'
@@ -32,10 +32,14 @@ export default function MonitorNotes({ type, target }) {
 
   useEffect(() => { load()   }, [type, target])
 
+  // D12: type/target hızla değişirse eskinin geç yanıtı yeni hedefin notlarını ezmesin.
+  const loadSeq = useRef(0)
   async function load() {
     if (!target) { setLoading(false); return }
+    const seq = ++loadSeq.current
     setLoading(true)
     const res = await api.monitoring.getMonitorNotes(type, target)
+    if (seq !== loadSeq.current) return
     setLoading(false)
     if (res?.success) { setGuide(res.data.guide || null); setNotes(res.data.notes || []) }
     else toast.error(res?.error || 'Error')

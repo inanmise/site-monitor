@@ -1167,13 +1167,37 @@ class SchedulerServiceTest {
     @Test
     @DisplayName("Kilit tablosu ERİŞİLEMEZSE tek-pod fallback: iş yine de çalışır (HA bozulur, işlev ölmez)")
     void runWithSchedulerLock_runsWhenLockTableUnavailable() {
+        // D2: fixture GERÇEK istisna tipini kullanır — Spring, olmayan tablo için
+        // BadSqlGrammarException atar. Eskiden ham RuntimeException'dı ve kilit edinimi de
+        // "her istisnada fail-open" olduğu için geçiyordu; artık YALNIZ bu tip fail-open,
+        // geçici hatalar (deadlock/timeout) turu ATLATIR. Aşağıdaki ikinci test onu pinliyor.
         lenient().when(jdbcTemplate.update(startsWith("INSERT INTO scheduler_lock"), anyString(), anyString(), anyString()))
-                .thenThrow(new RuntimeException("relation \"scheduler_lock\" does not exist"));
+                .thenThrow(new org.springframework.jdbc.BadSqlGrammarException(
+                        "insert", "INSERT INTO scheduler_lock",
+                        new java.sql.SQLException("relation \"scheduler_lock\" does not exist")));
         java.util.concurrent.atomic.AtomicInteger runs = new java.util.concurrent.atomic.AtomicInteger();
 
         scheduler.runWithSchedulerLock("aylik-rapor", runs::incrementAndGet);
 
         assertThat(runs.get()).isEqualTo(1);
+    }
+
+    /**
+     * D2: kilit ediniminde fail-open YALNIZ "tablo yok" halinde olmalı. Eskiden mesaj metninde
+     * "unique" geçmeyen HER istisna (deadlock, statement-timeout, bağlantı kopması) true
+     * dönüyordu → çok-pod'da geçici bir DB hatasında İKİ pod aynı sweep'i koşar, çift alarm
+     * ve çift mail üretirdi. Sweep periyodiktir: bir turu atlamak, çift koşmaktan ucuzdur.
+     */
+    @Test
+    @DisplayName("D2: geçici DB hatasında kilit alınamaz — tur ATLANIR (fail-open değil)")
+    void runWithSchedulerLock_transientDbError_skipsRun() {
+        lenient().when(jdbcTemplate.update(startsWith("INSERT INTO scheduler_lock"), anyString(), anyString(), anyString()))
+                .thenThrow(new org.springframework.dao.QueryTimeoutException("statement timeout"));
+        java.util.concurrent.atomic.AtomicInteger runs = new java.util.concurrent.atomic.AtomicInteger();
+
+        scheduler.runWithSchedulerLock("aylik-rapor", runs::incrementAndGet);
+
+        assertThat(runs.get()).as("geçici hatada çift koşmaktansa turu atla").isZero();
     }
 
     // ── Sayfa Hızı: kaynak kırılımı saklama kararının KAPISI ───────────────────────────────
