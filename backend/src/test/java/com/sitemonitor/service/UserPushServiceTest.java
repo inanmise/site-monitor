@@ -55,6 +55,8 @@ class UserPushServiceTest {
     @Mock UserPushRecipientResolver resolver;
     @Mock AlertEventRepository alertEventRepo;
     @Mock SecretCipher secretCipher;
+    @Mock TrustEvaluator trustEvaluator;
+    @Mock CaAutoPinService caAutoPinService;
 
     private UserPushService service;
     private HttpServer server;
@@ -66,7 +68,10 @@ class UserPushServiceTest {
     @BeforeEach
     void setUp() {
         service = new UserPushService(appSettings, deliveryRepo, scopeRepo, resolver,
-                alertEventRepo, secretCipher);
+                alertEventRepo, secretCipher, trustEvaluator, caAutoPinService);
+        // Kurumsal güven zinciri: mock null döner → istemci VARSAYILAN güvene düşer, yerel
+        // test sunucusu (düz HTTP) etkilenmez. Null dalı ayrıca aşağıda ayrı testle pinli.
+        when(trustEvaluator.pinAwareOutboundSslContext(any(), any())).thenReturn(null);
 
         // Varsayılan ayar seti: kanal AÇIK, tavanlar bol — testler daraltmak istediğini kendisi daraltır.
         when(appSettings.getBoolean(anyString(), any(Boolean.class)))
@@ -373,6 +378,65 @@ class UserPushServiceTest {
                 .until(() -> store.stream().allMatch(d -> "FAILED".equals(d.getStatus())));
 
         assertThat(store).allSatisfy(d -> assertThat(d.getError()).contains("503"));
+    }
+
+    // ── Kurumsal TLS güveni (2026-08-28 prod hatası) ───────────────────────────────────────
+
+    /**
+     * PROD HATASI: düz HttpClient yalnız JVM cacerts'e bakıyordu; bildirim API'si kurumsal CA
+     * ile imzalı olduğundan HER gönderim "PKIX path building failed" ile düştü. İstemci artık
+     * projenin ortak güven zincirini (cacerts → kurumsal CA paketi → TOFU auto-pin) kullanmalı.
+     */
+    @Test
+    @DisplayName("TLS: giden istemci kurumsal güven zincirini KULLANIR (PKIX prod hatası)")
+    void outboundClientUsesCorporateTrustChain() throws Exception {
+        startServer();
+        when(alertEventRepo.findById(1L)).thenReturn(Optional.of(event(1L, "HIGH", "HTTP_DOWN")));
+        recipients("N00001");
+
+        service.enqueueAlert(1L, "INITIAL", 5L, Map.of());
+        await().atMost(java.time.Duration.ofSeconds(5)).until(() -> !receivedBodies.isEmpty());
+
+        // Güven zinciri auto-pin geri çağrılarıyla birlikte istenmiş olmalı (RDAP/.tr-whois deseni).
+        verify(trustEvaluator, org.mockito.Mockito.atLeastOnce())
+                .pinAwareOutboundSslContext(any(), any());
+    }
+
+    @Test
+    @DisplayName("TLS: bağlam kurulamazsa (null) gönderim yine yapılır — varsayılan güvene düşer")
+    void nullSslContext_stillSends() throws Exception {
+        startServer();
+        when(trustEvaluator.pinAwareOutboundSslContext(any(), any())).thenReturn(null);
+        when(alertEventRepo.findById(1L)).thenReturn(Optional.of(event(1L, "HIGH", "HTTP_DOWN")));
+        recipients("N00001");
+
+        service.enqueueAlert(1L, "INITIAL", 5L, Map.of());
+
+        await().atMost(java.time.Duration.ofSeconds(5))
+                .until(() -> store.stream().allMatch(d -> "SENT".equals(d.getStatus())));
+    }
+
+    /**
+     * Ham istisna operatöre ne yapacağını söylemiyordu: teslimat günlüğünde yalnız
+     * "SSLHandshakeException ... PKIX path building failed" görünüyordu. Tanıdık arızalarda
+     * satır artık YÖN veriyor; ham istisna da korunuyor (teşhis kaybolmasın).
+     */
+    @Test
+    @DisplayName("Hata metni tanıdık arızada YÖN verir, ham istisnayı da korur")
+    void errorMessagesAreActionable() {
+        String pkix = UserPushService.explain(new javax.net.ssl.SSLHandshakeException(
+                "PKIX path building failed: unable to find valid certification path"));
+        assertThat(pkix).contains("kurumsal CA paketine");
+        assertThat(pkix).contains("PKIX path building failed");   // ham teşhis korunur
+
+        assertThat(UserPushService.explain(new java.net.ConnectException("conn refused")))
+                .contains("Bağlantı kurulamadı");
+        assertThat(UserPushService.explain(new java.net.http.HttpTimeoutException("timeout")))
+                .contains("zaman aşımına");
+
+        // Tanınmayan arızada metin DEĞİŞMEZ — uydurma yön verilmez.
+        String odd = UserPushService.explain(new IllegalStateException("beklenmedik"));
+        assertThat(odd).isEqualTo("java.lang.IllegalStateException: beklenmedik");
     }
 
     // ── Bağımsızlık sözleşmesi (kural 1) ───────────────────────────────────────────────────
