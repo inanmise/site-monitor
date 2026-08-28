@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PreDestroy;
+import javax.net.ssl.SSLContext;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -70,6 +71,8 @@ public class UserPushService {
     private final UserPushRecipientResolver resolver;
     private final AlertEventRepository alertEventRepo;
     private final SecretCipher secretCipher;
+    private final TrustEvaluator trustEvaluator;
+    private final CaAutoPinService caAutoPinService;
 
     /** Tek worker: outbox'ı sırayla boşaltır — API'ye eşzamanlı yığılma olmaz. */
     private final ScheduledExecutorService worker =
@@ -86,13 +89,16 @@ public class UserPushService {
     @Autowired
     public UserPushService(AppSettingsService appSettings, UserPushDeliveryRepository deliveryRepo,
                            UserPushScopeRepository scopeRepo, UserPushRecipientResolver resolver,
-                           AlertEventRepository alertEventRepo, SecretCipher secretCipher) {
+                           AlertEventRepository alertEventRepo, SecretCipher secretCipher,
+                           TrustEvaluator trustEvaluator, CaAutoPinService caAutoPinService) {
         this.appSettings = appSettings;
         this.deliveryRepo = deliveryRepo;
         this.scopeRepo = scopeRepo;
         this.resolver = resolver;
         this.alertEventRepo = alertEventRepo;
         this.secretCipher = secretCipher;
+        this.trustEvaluator = trustEvaluator;
+        this.caAutoPinService = caAutoPinService;
     }
 
     @PreDestroy
@@ -341,8 +347,30 @@ public class UserPushService {
                 fail(rows, resp.statusCode(), "HTTP " + resp.statusCode() + " — " + raw, true);
             }
         } catch (Exception e) {
-            fail(rows, null, e.toString(), true);
+            fail(rows, null, explain(e), true);
         }
+    }
+
+    /**
+     * Teslimat günlüğüne yazılan hata metni. Ham istisna operatöre ne yapacağını söylemiyor —
+     * PKIX/hostname/timeout gibi TANIDIK arızalarda tek cümlelik yön verilir. Metin satırda
+     * saklandığı için ekrandan okunur; ham istisna da korunur (teşhis kaybolmasın).
+     */
+    static String explain(Exception e) {
+        String raw = e.toString();
+        String hint = null;
+        if (raw.contains("PKIX path building failed") || raw.contains("SSLHandshakeException")) {
+            hint = "TLS güven zinciri kurulamadı — Ayarlar → Genel'deki kurumsal CA paketine "
+                    + "(site.monitor.trust.ca-bundle-pem) API'nin kök/ara CA'sını ekleyin.";
+        } else if (raw.contains("CertificateException") && raw.contains("No subject alternative")) {
+            hint = "Sertifika host adıyla uyuşmuyor — URL'deki host sertifikadaki SAN ile aynı olmalı.";
+        } else if (raw.contains("HttpConnectTimeoutException") || raw.contains("ConnectException")) {
+            hint = "Bağlantı kurulamadı — adres/port doğru mu, pod'dan bu hedefe çıkış açık mı?";
+        } else if (raw.contains("HttpTimeoutException")) {
+            hint = "Yanıt zaman aşımına uğradı — timeout ayarını yükseltmeyi ya da API tarafını "
+                    + "kontrol etmeyi deneyin.";
+        }
+        return hint == null ? raw : hint + " (" + raw + ")";
     }
 
     /** Hata işleme: tavanlı retry (PENDING kalır + backoff'la yeniden dene) ya da kalıcı FAILED. */
@@ -377,12 +405,29 @@ public class UserPushService {
 
     // ── Yardımcılar ────────────────────────────────────────────────────────────────────────
 
+    /**
+     * Giden istemci — kurumsal TLS güveniyle.
+     *
+     * <p><b>2026-08-28 prod hatası:</b> düz {@code HttpClient.newBuilder()} yalnız JVM cacerts'e
+     * bakıyordu; bildirim API'si kurumsal bir CA ile imzalı olduğundan her gönderim
+     * {@code PKIX path building failed} ile düşüyordu (üç deneme de aynı). Kanal bağımsızlığı
+     * sayesinde mail etkilenmedi ama push HİÇ gitmedi.
+     *
+     * <p>Çözüm YENİ kod değil, projedeki hazır zincir: cacerts → admin'in yapıştırdığı kurumsal
+     * CA paketi ({@code site.monitor.trust.ca-bundle-pem}, canlı reload) → host'un otomatik
+     * pinlenmiş CA'sı (TOFU). RDAP/.tr-whois/HTTP monitör istemcileri de bunu kullanıyor —
+     * kurumsal CA bundle'a elle girilmemiş olsa bile auto-pin devreye girer.
+     *
+     * <p>Çıkış YOLU değişmedi (K3): proxy'ye girilmez, API iç ağdadır.
+     */
     private HttpClient client() {
-        // K3: doğrudan çıkış — kurumsal proxy'ye GİRMEZ (API iç ağda; 6 checker'ın deseniyle aynı).
-        return HttpClient.newBuilder()
+        HttpClient.Builder b = HttpClient.newBuilder()
                 .proxy(HttpClient.Builder.NO_PROXY)
-                .connectTimeout(Duration.ofSeconds(connectTimeout()))
-                .build();
+                .connectTimeout(Duration.ofSeconds(connectTimeout()));
+        SSLContext ssl = trustEvaluator.pinAwareOutboundSslContext(
+                caAutoPinService::trustManagerForHost, caAutoPinService::recordTrustFailure);
+        if (ssl != null) b.sslContext(ssl);   // null = kurulamadı → varsayılan güvene düş
+        return b.build();
     }
 
     /** Ayarlardaki başlık listesi: [{name, value(şifreli), secret}] → çözülmüş ad-değer çiftleri. */

@@ -410,6 +410,15 @@ public class SchedulerService {
         patch("ALTER TABLE scripted_monitors ADD COLUMN notify_webhook BOOLEAN DEFAULT true");
         patch("ALTER TABLE domain_monitors ADD COLUMN notify_webhook BOOLEAN DEFAULT true");
         patch("ALTER TABLE app_users ADD COLUMN push_opt_out BOOLEAN DEFAULT false");
+        // Kişi-webhook ANTI-LOOP garantisi DB seviyesindedir; ddl-auto'ya bırakılamaz. Prod
+        // açılışında Hibernate 'constraint "ux_push_event_phase_user" ... does not exist, skipping'
+        // yazdı: ddl-auto=update MEVCUT tabloya unique kısıt eklemeyi güvenilir biçimde yapmaz.
+        // Kısıt olmazsa aynı olayın aynı fazı aynı kişiye iki kez yazılabilirdi (kod tarafındaki
+        // dedupe kontrolü yarışta son sözü söyleyemez). İdempotent index — TEST satırlarında
+        // alert_event_id NULL'dır ve Postgres'te NULL'lar çakışmaz, yani test tekrarı serbest kalır.
+        patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_push_event_phase_user "
+                + "ON user_push_deliveries(alert_event_id, dedupe_key, username)");
+        patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_push_scope ON user_push_scopes(scope_type, scope_key)");
         patch("ALTER TABLE certificate_checks ADD COLUMN run_id TEXT");
         patch("ALTER TABLE uptime_checks ADD COLUMN maintenance BOOLEAN DEFAULT false");
         patch("ALTER TABLE certificate_checks ADD COLUMN maintenance BOOLEAN DEFAULT false");
