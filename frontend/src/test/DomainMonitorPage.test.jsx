@@ -180,7 +180,10 @@ describe('DomainMonitorPage', () => {
       // Bildirim grubu da kopyalanir: kopya, kaynagin alarmini ALAN ekibe gitsin.
       notificationGroupId: 7,
       transferLockAlert: false, blacklistEnabled: true, changeAlert: false,
-      notifyWebhook: true,
+      notifyEmail: true, notifyWebhook: true,
+      // B3: dogrulama/kurtarma alanlari bu iki ture eklendi (eskiden yalniz global ayar vardi).
+      // "TUM ayarlar birebir kopyalanir" iddiasi degismedi; kume dort alan buyudu.
+      confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30,
     })
   })
 

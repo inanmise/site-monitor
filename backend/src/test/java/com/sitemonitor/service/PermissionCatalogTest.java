@@ -45,6 +45,41 @@ class PermissionCatalogTest {
     }
 
     @Test
+    @DisplayName("AUDIT SÜPÜRME: hiçbir kaynakta edit/execute YOK — salt-okunur rolün tanımı")
+    void auditHasNoWriteActionAnywhere() {
+        // Yukarıdaki test ÜÇ anahtarı noktasal kontrol ediyor; `notification.groups` tam da bu yüzden
+        // gözden kaçtı. auditDefaults() `actions.contains(VIEW)` sonucunu kaynağın TÜM eylemlerine
+        // uyguluyor, yani tek satırda List.of(VIEW, EDIT) yazılan HER kaynak AUDIT'e sessizce yazma
+        // yetkisi verir. Kural noktasal değil SÜPÜRME olarak pinlenir — dördüncü tekrarı keser.
+        Map<String, Map<String, Boolean>> audit = PermissionCatalog.defaultsFor("AUDIT");
+        for (PermissionCatalog.Resource r : PermissionCatalog.ALL) {
+            Map<String, Boolean> actions = audit.get(r.key);
+            if (actions == null) continue;
+            assertThat(actions.get(PermissionCatalog.EDIT))
+                    .as("AUDIT salt-okunurdur ama %s/edit AÇIK", r.key)
+                    .isNotEqualTo(true);
+            assertThat(actions.get(PermissionCatalog.EXECUTE))
+                    .as("AUDIT salt-okunurdur ama %s/execute AÇIK", r.key)
+                    .isNotEqualTo(true);
+        }
+    }
+
+    @Test
+    @DisplayName("notification.groups: AUDIT görür ama DÜZENLEYEMEZ; USER/TEAM_ADMIN düzenleyebilir")
+    void notificationGroupsSplitPreservesTeamAccess() {
+        // Bölme yalnız AUDIT'i etkilemeli — takımın kendi nöbetçi listesini yönetmesi (K2) korunur.
+        Map<String, Map<String, Boolean>> audit = PermissionCatalog.defaultsFor("AUDIT");
+        assertThat(audit.get("notification.groups").get("view")).isTrue();
+        assertThat(audit.get("notification.groups").get("edit")).isFalse();
+
+        for (String role : new String[]{"USER", "TEAM_ADMIN", "ADMIN"}) {
+            Map<String, Map<String, Boolean>> m = PermissionCatalog.defaultsFor(role);
+            assertThat(m.get("notification.groups").get("view")).as(role + "/view").isTrue();
+            assertThat(m.get("notification.groups").get("edit")).as(role + "/edit").isTrue();
+        }
+    }
+
+    @Test
     @DisplayName("defaultsFor: bilinmeyen rol → boş map (fail-safe), null rol → NPE değil boş davranış")
     void unknownRoleEmpty() {
         assertThat(PermissionCatalog.defaultsFor("WHATEVER")).isEmpty();

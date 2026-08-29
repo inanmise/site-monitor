@@ -184,6 +184,19 @@ public class IncidentController {
         }
         Long teamId = longVal(body.get("team_id"));
         String teamName = body.get("team_name") == null ? null : String.valueOf(body.get("team_name"));
+        // Takım kapsamı (IDOR engeli) — kardeş uçların (update/delete/uploadImage) deseni burada EKSİKTİ:
+        // yalnız incidents.manage isteniyordu ve o yetki USER'a açık, yani bir kullanıcı BAŞKA takımın
+        // olayını kendi takımına (ya da kendi olayını yabancı bir takıma) taşıyabiliyordu.
+        // KISMİ BAŞARI YOK: ekran toplu seçimle çalışıyor; yetkisiz TEK kayıt varsa hiçbiri taşınmaz —
+        // yarım transfer kullanıcıya "hepsi taşındı" izlenimi verirdi.
+        for (Long id : ids) {
+            try {
+                requireIncidentWrite(session, service.get(id));
+            } catch (java.util.NoSuchElementException ignore) {
+                /* kayıt yok → transfer da atlayacak (findAllById); doğrulama dışı bırakılır */
+            }
+        }
+        requireTransferTarget(session, teamId);
         int n = service.transfer(ids, teamId, teamName, (String) session.getAttribute("username"));
         auditService.recordAction("INCIDENT_TRANSFER", session, request,
                 "INCIDENT", String.valueOf(teamId),
@@ -276,6 +289,20 @@ public class IncidentController {
     /** Yazma sınırı = okuma sınırı (takım üyeliği). Eylem yetkisini requireManage/requireDelete kontrol eder. */
     private void requireIncidentWrite(HttpSession session, IncidentRecord e) {
         requireIncidentRead(session, e);
+    }
+
+    /**
+     * Transfer HEDEFİ de kapsam içinde olmalı — kaynak kaydı doğrulamak tek başına yetmez.
+     *
+     * <p>Aksi halde kullanıcı kendi takımının olayını yabancı bir takıma taşıyıp kaydı KENDİ görüş
+     * alanından çıkarabilirdi: geri alması mümkün olmayan tek yönlü bir veri kaybı (artık okuma
+     * yetkisi de yok). Sınır, {@link #requireIncidentRead} ile aynı üyelik sınırıdır.
+     */
+    private void requireTransferTarget(HttpSession session, Long teamId) {
+        if (SessionScope.isGlobalViewer(session)) return;
+        List<Long> v = SessionScope.viewTeamIds(session);
+        if (v != null && v.contains(teamId)) return;
+        throw new SecurityException("Hedef takım sizin takım(lar)ınız arasında değil");
     }
 
     /** Silme yalnız TEAM_ADMIN/ADMIN (incidents.delete/execute); USER gir/düzenle yapar, silemez. */

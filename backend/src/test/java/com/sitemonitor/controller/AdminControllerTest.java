@@ -50,6 +50,8 @@ class AdminControllerTest {
     com.sitemonitor.repository.UserPushDeliveryRepository userPushDeliveryRepo;
 
     @MockitoBean com.sitemonitor.repository.NotificationGroupRepository notificationGroupRepo;
+    // AdminController "Tekrar Bildir" onizlemesinde webhook alicilarini da cozuyor (A2).
+    @MockitoBean com.sitemonitor.service.UserPushService userPushService;
     @MockitoBean
     RememberMeService rememberMeService;
 

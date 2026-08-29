@@ -1,5 +1,6 @@
 package com.sitemonitor.service.page;
 
+import com.sitemonitor.service.SafeRedirect;
 import com.sitemonitor.service.SsrfGuard;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -217,11 +218,14 @@ public class PageFetchCore {
                 if (sc >= 300 && sc < 400) {
                     String loc = resp.headers().firstValue("location").orElse(null);
                     try (InputStream is = resp.body()) { is.readNBytes(4096); } catch (Exception ignore) { /* gövde iadesi */ }
-                    if (loc == null || loc.isBlank()) {   // yönlendirme hedefi yok → olduğu gibi dön
+                    // Hedef yok / http(s) DIŞI şema (file:, gopher:) / host'suz → olduğu gibi dön.
+                    // Politika SafeRedirect'te tek kopya: aynı kural keyword/HTTP/HSTS için de geçerli.
+                    String next = SafeRedirect.nextHop(current, loc);
+                    if (next == null) {
                         return new Fetch(sc, ttfb, System.currentTimeMillis() - start, 0L, null, null, false, false);
                     }
-                    current = resolve(current, loc);
-                    if ("HEAD".equals(m) && sc == 303) m = "GET";   // 303 See Other → GET
+                    current = next;
+                    m = SafeRedirect.nextMethod(sc, m);   // 303 See Other → GET
                     continue;
                 }
                 byte[] body = null;
@@ -268,19 +272,41 @@ public class PageFetchCore {
         try (java.io.ByteArrayInputStream in = new java.io.ByteArrayInputStream(raw)) {
             if (enc.contains("gzip")) {
                 try (java.util.zip.GZIPInputStream g = new java.util.zip.GZIPInputStream(in)) {
-                    return g.readAllBytes();
+                    return readCapped(g, raw.length, enc);
                 }
             }
             if (enc.contains("deflate")) {
                 try (java.util.zip.InflaterInputStream d =
                              new java.util.zip.InflaterInputStream(in, new java.util.zip.Inflater(true))) {
-                    return d.readAllBytes();
+                    return readCapped(d, raw.length, enc);
                 }
             }
         } catch (Exception e) {
             log.debug("Gövde açılamadı ({}), ham bayt kullanılıyor: {}", enc, e.getMessage());
         }
         return raw;
+    }
+
+    /**
+     * Açılmış gövde tavanı — <b>sıkıştırma bombası</b> koruması.
+     *
+     * <p>Telden okunan gövde {@link #MAX_BODY_BYTES} ile zaten sınırlı, ama AÇILMIŞ boyut değildi:
+     * 1000:1 oranlı 2 MB'lık bir yanıt 2 GB'a açılıp heap'i tüketebiliyordu. Prod TEK pod ve
+     * OOM = kesinti, üstelik hedef URL'i sıradan bir kullanıcı tanımlayabiliyor.
+     *
+     * <p>Tavan tel tavanının 10 katı: gerçek sayfalar burnunu bile sürtmez (HTML tipik olarak
+     * 5:1 sıkışır, yani 2 MB tel ≈ 10 MB HTML), bomba ise burada durur.
+     */
+    public static final int MAX_DECODED_BYTES = 10 * MAX_BODY_BYTES;
+
+    private static byte[] readCapped(InputStream in, int rawLen, String enc) throws java.io.IOException {
+        byte[] out = in.readNBytes(MAX_DECODED_BYTES);
+        if (out.length >= MAX_DECODED_BYTES) {
+            // Sessizce kırpmak "sayfa değişti" sanrısı üretir — kırpma GÖRÜNÜR olmalı.
+            log.warn("Açılmış gövde {} bayt tavanına dayandı ({}, telde {} bayt) — kaynak envanteri EKSİK olabilir; "
+                    + "sıkıştırma bombası olabilir", MAX_DECODED_BYTES, enc, rawLen);
+        }
+        return out;
     }
 
     /**

@@ -115,11 +115,15 @@ export function useCheckHistory({ kind, id, listKey, presets = [1, 7, 15, 30], d
     page, setPage: setPageRaw, pageSize, setPageSize,
     liveActive, reload: load,
     fixedMode: !!fixedFrom,
-    // CSV
+    // CSV — `days` ifadesi load()'takiyle BİREBİR aynı olmalı: ikisi tek kuralın iki yüzü.
+    // "Özel Aralık" seçilip tarihler henüz uygulanmadıysa isCustom false kalır ve ham `preset`
+    // yazılırsa CSV bağlantısı `?days=custom` üretip backend'i 500'e düşürüyordu (load() bu
+    // durumu :57'de guard'lıyor, csvParams guard'sızdı). undefined historyQuery'de düşürülür.
     csvParams: {
       status: status !== 'all' ? status : undefined,
       ...(fixedFrom ? { from: fixedFrom, to: fixedTo }
-        : isCustom ? { from: toUtcIso(customFrom), to: toUtcIso(customTo) } : { days: preset }),
+        : isCustom ? { from: toUtcIso(customFrom), to: toUtcIso(customTo) }
+        : { days: Number.isFinite(Number(preset)) ? Number(preset) : undefined }),
       ...(extraParams || {}),
     },
   }

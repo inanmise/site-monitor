@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -61,6 +62,9 @@ public class UserPushService {
     private static final DateTimeFormatter HHMM = DateTimeFormatter.ofPattern("HH:mm");
     private static final int MAX_MESSAGE_CHARS = 200;
     private static final int MAX_RAW_RESPONSE = 500;
+    /** Yanit govdesinden okunacak BAYT tavani (bkz. sendBatch) — notificationId birkac bayt,
+     *  gunluge yazilan onizleme MAX_RAW_RESPONSE karakter; fazlasi bellekte tutulmaz. */
+    private static final int MAX_RESPONSE_BYTES = 64 * 1024;
 
     /** Katman/karar satırlarında kullanılan sistem-sicili: kapsam reddi kişiye değil olaya aittir. */
     static final String SYSTEM_USER = "-";
@@ -101,8 +105,28 @@ public class UserPushService {
         this.caAutoPinService = caAutoPinService;
     }
 
+    /**
+     * Giden istemci — gönderim başına DEĞİL, bir kez kurulur.
+     *
+     * <p>Önceden her {@code sendBatch} çağrısı yeni bir {@link HttpClient} kuruyor ve hiç
+     * kapatmıyordu: her JDK istemcisi kendi selector-thread'ini, bağlantı havuzunu ve FD'lerini
+     * tutar. Alarm başına bir istemci demek, yoğun bir günde yüzlerce ölü istemci demekti — üstelik
+     * bağlantı yeniden kullanımı da her seferinde sıfırlanıyordu.
+     *
+     * <p>Yalnız {@code connectTimeout} kurulum-zamanı bir ayardır; değişirse istemci yeniden kurulur.
+     * Güven bağlamı (kurumsal CA paketi / pin) HER handshake'te canlı okunur, o yüzden CA değişikliği
+     * yeniden kurma gerektirmez.
+     */
+    private volatile HttpClient httpClient;
+    private volatile int httpClientTimeout = -1;
+    private final Object clientLock = new Object();
+
     @PreDestroy
-    void shutdown() { worker.shutdownNow(); }
+    void shutdown() {
+        worker.shutdownNow();
+        HttpClient c = httpClient;
+        if (c != null) try { c.close(); } catch (Exception ignore) { /* best-effort */ }
+    }
 
     // ── Ayarlar (CANLI okunur — şablon/timeout değişikliği anında etkir) ───────────────────
 
@@ -130,6 +154,16 @@ public class UserPushService {
      */
     public void enqueueAlert(Long alertEventId, String mailTrigger, Long fallbackTeamId,
                              Map<String, Object> ctx) {
+        enqueueAlert(alertEventId, mailTrigger, fallbackTeamId, ctx, Set.of());
+    }
+
+    /**
+     * @param excludeUsernames "Tekrar Bildir" onay pop-up'inda kullanicinin webhook listesinden
+     *                         CIKARDIGI sicil(ler). Mail tarafindaki {@code excludeEmails}'in
+     *                         karsiligi: iki kanal ayri ayri secilebilir.
+     */
+    public void enqueueAlert(Long alertEventId, String mailTrigger, Long fallbackTeamId,
+                             Map<String, Object> ctx, Set<String> excludeUsernames) {
         try {
             if (!enabled() || alertEventId == null) return;   // global KAPALI = bugünün davranışı; satır bile yazılmaz
             AlertEvent event = alertEventRepo.findById(alertEventId).orElse(null);
@@ -146,7 +180,7 @@ public class UserPushService {
                 skipRow(event, trigger, "SKIPPED_REALERT_OFF");
                 return;
             }
-            enqueueInternal(event, trigger, fallbackTeamId, ctx);
+            enqueueInternal(event, trigger, fallbackTeamId, ctx, excludeUsernames);
         } catch (Exception e) {
             log.warn("user-push enqueue atlandı (alarm yolu etkilenmedi): {}", e.toString());
         }
@@ -164,38 +198,24 @@ public class UserPushService {
                 skipRow(event, "RESOLVE", "SKIPPED_NO_PRIOR");
                 return;
             }
-            enqueueInternal(event, "RESOLVE", event.getTeamId(), ctx);
+            enqueueInternal(event, "RESOLVE", event.getTeamId(), ctx, Set.of());
         } catch (Exception e) {
             log.warn("user-push çözüm enqueue atlandı: {}", e.toString());
         }
     }
 
     private void enqueueInternal(AlertEvent event, String trigger, Long fallbackTeamId,
-                                 Map<String, Object> ctx) {
+                                 Map<String, Object> ctx, Set<String> excludeUsernames) {
         Long teamId = event.getTeamId() != null ? event.getTeamId() : fallbackTeamId;
         String family = MonitorTypeCatalog.typeOfAlert(event.getAlertType());
 
-        // Katman matrisi — reddin HER dalı günlükte görünür (görünmez sessizlik yok).
-        if (!scopeEnabled("TYPE", family)) { skipRow(event, trigger, "SKIPPED_TYPE_OFF"); return; }
-        if (teamId != null && !scopeEnabled("TEAM", String.valueOf(teamId))) {
-            skipRow(event, trigger, "SKIPPED_TEAM_OFF"); return;
-        }
-        if (ctx != null && Boolean.TRUE.equals(ctx.get("push_disabled"))) {
-            skipRow(event, trigger, "SKIPPED_MONITOR_OFF"); return;
-        }
-        // İzleme bayrağı kararı KALICIDIR: OPEN'da yazılan SKIPPED_MONITOR_OFF satırı sonraki
-        // fazları da bağlar. Gerekli çünkü bayrak ctx ile taşınır ve her yol taşımaz — örn.
-        // manuel "yeniden gönder" izleme tiplerinde certContext'i null kurar; satır olmasaydı
-        // kapalı izlemeye RESEND push'u sızardı. (OPEN/RESOLVE hariç: OPEN kararı zaten kendisi
-        // verir, RESOLVE simetri kuralıyla — önce SENT yoksa — zaten gitmez.)
-        if (!"OPEN".equals(trigger) && !"RESOLVE".equals(trigger)
-                && deliveryRepo.existsByAlertEventIdAndStatus(event.getId(), "SKIPPED_MONITOR_OFF")) {
-            skipRow(event, trigger, "SKIPPED_MONITOR_OFF");
-            return;
-        }
-        if (quietHoursBlock(event.getAlertLevel())) { skipRow(event, trigger, "SKIPPED_QUIET_HOURS"); return; }
+        String block = channelBlockReason(event, trigger, teamId, family, ctx);
+        if (block != null) { skipRow(event, trigger, block); return; }
 
-        List<UserPushRecipientResolver.Recipient> recipients = resolver.resolve(teamId, event.getAlertLevel());
+        // Onay pop-up'inda cikarilan sicillere SATIR YAZILMAZ (mail tarafindaki filtreyle simetrik).
+        Set<String> excluded = excludeUsernames == null ? Set.of() : excludeUsernames;
+        List<UserPushRecipientResolver.Recipient> recipients = resolver.resolve(teamId, event.getAlertLevel())
+                .stream().filter(r -> !excluded.contains(r.username())).toList();
         if (recipients.isEmpty()) { skipRow(event, trigger, "SKIPPED_NO_RECIPIENTS"); return; }
 
         String dedupeKey = dedupeKeyFor(trigger, event);
@@ -231,6 +251,72 @@ public class UserPushService {
             log.info("user-push kuyruğa alındı: {} alıcı (olay #{}, {})", queued, event.getId(), trigger);
             worker.execute(this::drainOutbox);
         }
+    }
+
+    /**
+     * KANAL düzeyi katman kararı — {@code null} = geçti, aksi halde {@code SKIPPED_*} sebebi.
+     *
+     * <p>Ayrı metot olması ZORUNLU: gerçek gönderim ({@link #enqueueInternal}) ile onay
+     * pop-up'ının önizlemesi ({@link #preview}) BUNU paylaşır. Mail tarafında aynı disiplin
+     * zaten var ({@code EscalationService.resolveReNotifyTargets}) — önizleme, gerçekten
+     * gönderilecek olandan sapamaz; saparsa kullanıcı onayladığı şeyden başkasını göndermiş olur.
+     */
+    private String channelBlockReason(AlertEvent event, String trigger, Long teamId,
+                                      String family, Map<String, Object> ctx) {
+        if (!scopeEnabled("TYPE", family)) return "SKIPPED_TYPE_OFF";
+        if (teamId != null && !scopeEnabled("TEAM", String.valueOf(teamId))) return "SKIPPED_TEAM_OFF";
+        if (ctx != null && Boolean.TRUE.equals(ctx.get("push_disabled"))) return "SKIPPED_MONITOR_OFF";
+        // İzleme bayrağı kararı KALICIDIR: OPEN'da yazılan SKIPPED_MONITOR_OFF satırı sonraki
+        // fazları da bağlar. Gerekli çünkü bayrak ctx ile taşınır ve her yol taşımaz — örn.
+        // manuel "yeniden gönder" izleme tiplerinde certContext'i null kurar; satır olmasaydı
+        // kapalı izlemeye RESEND push'u sızardı. (OPEN/RESOLVE hariç: OPEN kararı zaten kendisi
+        // verir, RESOLVE simetri kuralıyla — önce SENT yoksa — zaten gitmez.)
+        if (!"OPEN".equals(trigger) && !"RESOLVE".equals(trigger)
+                && deliveryRepo.existsByAlertEventIdAndStatus(event.getId(), "SKIPPED_MONITOR_OFF"))
+            return "SKIPPED_MONITOR_OFF";
+        if (quietHoursBlock(event.getAlertLevel())) return "SKIPPED_QUIET_HOURS";
+        return null;
+    }
+
+    /** Onay pop-up'ındaki tek webhook alıcı satırı. {@code status}: PENDING = gidecek, aksi halde sebep. */
+    public record PushPreviewRow(String username, String displayName, String status) {}
+
+    /**
+     * Webhook kanalının "kime gider" önizlemesi — HİÇBİR yazma yapmaz.
+     *
+     * @param blockReason kanal tamamen kapalıysa sebebi (satır listesi boş olur), aksi halde null
+     */
+    public record PushPreview(boolean channelEnabled, String blockReason, List<PushPreviewRow> recipients) {}
+
+    /**
+     * "Tekrar Bildir" onayı için webhook alıcılarını çözer. Kanal kararı ve alıcı çözümü
+     * gerçek gönderimle AYNI kodu kullanır ({@link #channelBlockReason} + {@code resolver.resolve}).
+     *
+     * <p>ctx verilmez: manuel yol zaten {@code certContext}'i null kuruyor; izleme bayrağı kararı
+     * kalıcı {@code SKIPPED_MONITOR_OFF} satırından okunur (yukarıdaki dal).
+     */
+    public PushPreview preview(Long alertEventId, Long fallbackTeamId) {
+        if (!enabled()) return new PushPreview(false, "CHANNEL_DISABLED", List.of());
+        AlertEvent event = alertEventRepo.findById(alertEventId).orElse(null);
+        if (event == null) return new PushPreview(true, "ALERT_NOT_FOUND", List.of());
+        Long teamId = event.getTeamId() != null ? event.getTeamId() : fallbackTeamId;
+        String family = MonitorTypeCatalog.typeOfAlert(event.getAlertType());
+
+        String block = channelBlockReason(event, "RESEND", teamId, family, null);
+        if (block != null) return new PushPreview(true, block, List.of());
+
+        List<PushPreviewRow> rows = new ArrayList<>();
+        String since = ISO.format(Instant.now().minus(Duration.ofHours(1)).atZone(ZONE).toLocalDateTime());
+        for (var r : resolver.resolve(teamId, event.getAlertLevel())) {
+            String status;
+            if (r.skipReason() != null) status = r.skipReason();
+            else if (deliveryRepo.countRecentForUser(r.username(), since) >= hourlyCap()) status = "RATE_LIMITED";
+            else if (circuitOpen()) status = "CIRCUIT_OPEN";
+            else status = "PENDING";
+            rows.add(new PushPreviewRow(r.username(), r.displayName(), status));
+        }
+        if (rows.isEmpty()) return new PushPreview(true, "SKIPPED_NO_RECIPIENTS", List.of());
+        return new PushPreview(true, null, rows);
     }
 
     /** Test gönderimi — gerçek istek, TEST satırı; dakikada 3 tavanı çağıran uç denetler. */
@@ -319,9 +405,17 @@ public class UserPushService {
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body));
             for (String[] h : headerPairs()) req.header(h[0], h[1]);
-            HttpResponse<String> resp = client().send(req.build(), HttpResponse.BodyHandlers.ofString());
-            String raw = resp.body() == null ? "" : resp.body();
-            if (raw.length() > MAX_RAW_RESPONSE) raw = raw.substring(0, MAX_RAW_RESPONSE);
+            // Yanıt TAVANLI okunur: ofString() hedefin gönderdiği HER ŞEYİ belleğe alıyordu. Bize
+            // yalnız notificationId (birkaç bayt) ve günlüğe yazılacak ilk MAX_RAW_RESPONSE karakter
+            // lazım; tek pod'da sınırsız okuma gereksiz bir OOM yüzeyi. Tavanda kesilen gövde
+            // ayrıştırılamazsa notificationId null kalır — gönderim YİNE başarılıdır.
+            HttpResponse<java.io.InputStream> resp =
+                    client().send(req.build(), HttpResponse.BodyHandlers.ofInputStream());
+            String bodyText;
+            try (java.io.InputStream is = resp.body()) {
+                bodyText = new String(is.readNBytes(MAX_RESPONSE_BYTES), java.nio.charset.StandardCharsets.UTF_8);
+            }
+            String raw = bodyText.length() > MAX_RAW_RESPONSE ? bodyText.substring(0, MAX_RAW_RESPONSE) : bodyText;
 
             if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
                 consecutiveFailures.set(0);
@@ -329,7 +423,7 @@ public class UserPushService {
                 // gönderim YİNE başarılıdır (SENT + null) — kimlik alınamadı diye FAILED yazılmaz.
                 String notificationId = null;
                 try {
-                    JsonNode n = MAPPER.readTree(resp.body());
+                    JsonNode n = MAPPER.readTree(bodyText);
                     if (n.hasNonNull("notificationId")) notificationId = n.get("notificationId").asText();
                 } catch (Exception ignored) { }
                 String sentAt = ISO.format(Instant.now().atZone(ZONE).toLocalDateTime());
@@ -421,13 +515,27 @@ public class UserPushService {
      * <p>Çıkış YOLU değişmedi (K3): proxy'ye girilmez, API iç ağdadır.
      */
     private HttpClient client() {
-        HttpClient.Builder b = HttpClient.newBuilder()
-                .proxy(HttpClient.Builder.NO_PROXY)
-                .connectTimeout(Duration.ofSeconds(connectTimeout()));
-        SSLContext ssl = trustEvaluator.pinAwareOutboundSslContext(
-                caAutoPinService::trustManagerForHost, caAutoPinService::recordTrustFailure);
-        if (ssl != null) b.sslContext(ssl);   // null = kurulamadı → varsayılan güvene düş
-        return b.build();
+        int ct = connectTimeout();
+        HttpClient cached = httpClient;
+        if (cached != null && ct == httpClientTimeout) return cached;
+        HttpClient stale;
+        HttpClient fresh;
+        synchronized (clientLock) {
+            if (httpClient != null && ct == httpClientTimeout) return httpClient;
+            stale = httpClient;
+            HttpClient.Builder b = HttpClient.newBuilder()
+                    .proxy(HttpClient.Builder.NO_PROXY)
+                    .connectTimeout(Duration.ofSeconds(ct));
+            SSLContext ssl = trustEvaluator.pinAwareOutboundSslContext(
+                    caAutoPinService::trustManagerForHost, caAutoPinService::recordTrustFailure);
+            if (ssl != null) b.sslContext(ssl);   // null = kurulamadı → varsayılan güvene düş
+            fresh = b.build();
+            httpClient = fresh;
+            httpClientTimeout = ct;
+        }
+        // close() uçuşan istekleri BEKLER → kilit DIŞINDA kapatılır (HttpCheckerService'teki D3 dersi).
+        if (stale != null) try { stale.close(); } catch (Exception ignore) { /* best-effort */ }
+        return fresh;
     }
 
     /** Ayarlardaki başlık listesi: [{name, value(şifreli), secret}] → çözülmüş ad-değer çiftleri. */

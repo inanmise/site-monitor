@@ -43,7 +43,10 @@ const LINKS = [
   { name: 'EMPTY varsayılanı', re: /notificationGroupId:\s*''/ },
   { name: 'düzenlemede yükleme', re: /notificationGroupId:\s*m\.notification_group_id/ },
   { name: 'kaydetme yükü', re: /notificationGroupId:\s*form\.notificationGroupId/ },
-  { name: 'JSX seçici', re: /<NotificationGroupSelect/ },
+  // Seçici artık ORTAK bildirim bloğunun (NotifyChannels) içinde de olabilir — B1'de üç form
+  // o bloğa taşındı. Kural DEĞİŞMEDİ ("form grubu bağlamalı"), yalnız iki meşru bağlama
+  // biçimi var: doğrudan seçici ya da onu saran ortak blok.
+  { name: 'JSX seçici', re: /<NotificationGroupSelect|<NotifyChannels/ },
 ]
 
 describe('İzleme formu bağlantı kapısı (Bildirim Grubu)', () => {
@@ -63,7 +66,9 @@ describe('İzleme formu bağlantı kapısı (Bildirim Grubu)', () => {
   it('seçici bileşeni gerçekten import ediliyor (JSX var ama import yoksa ekran çöker)', () => {
     const missing = MONITOR_FORMS.filter(form => {
       const src = fs.readFileSync(path.join(COMPONENTS, `${form}.jsx`), 'utf8')
-      return !/import\s+NotificationGroupSelect\s+from/.test(src)
+      // Doğrudan seçici YA DA onu saran ortak blok — ikisi de meşru; JSX'te ne
+      // kullanılıyorsa importu da o olmalı (import yoksa ekran çöker).
+      return !/import\s+(NotificationGroupSelect|NotifyChannels)\s+from/.test(src)
     })
     expect(missing).toEqual([])
   })

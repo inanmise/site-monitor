@@ -139,4 +139,89 @@ class KeywordCheckerServiceTest {
         assertThat(r.get("count")).isEqualTo(0);
         assertThat(r).containsKey("error");
     }
+
+    // ── Yönlendirme güvenliği (her hop SsrfGuard'dan geçer) ──────────────────
+
+    /** Verilen hedefe 302 ile yönlendiren sunucu. */
+    private static HttpServer redirectTo(String location) throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", ex -> {
+            ex.getResponseHeaders().add("Location", location);
+            ex.sendResponseHeaders(302, -1);
+            ex.close();
+        });
+        server.start();
+        return server;
+    }
+
+    @Test
+    @DisplayName("Yönlendirme ZİNCİRİ takip edilir — kelime son hop'ta bulunur (davranış korunur)")
+    void check_followsRedirectChain() throws IOException {
+        HttpServer target = serve("<p>redirected abc</p>");
+        HttpServer entry = redirectTo("http://127.0.0.1:" + target.getAddress().getPort() + "/");
+        try {
+            Map<String, Object> r = newChecker()
+                    .check("http://127.0.0.1:" + entry.getAddress().getPort() + "/", "abc", 3000);
+            assertThat(r.get("found")).isEqualTo(true);
+            assertThat(r.get("count")).isEqualTo(1);
+            assertThat(r.get("http_status")).isEqualTo(200);
+        } finally {
+            entry.stop(0);
+            target.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("SSRF: cloud-metadata ucuna YÖNLENDİRME engellenir — gövde/snippet DÖNMEZ")
+    void check_redirectToMetadata_blocked() throws IOException {
+        // Redirect.NORMAL kullanılırken yalnız İLK host doğrulanıyordu; hedef sunucu bizi
+        // 169.254.169.254'e yönlendirip yanıt gövdesini snippet olarak GERİ ALDIRABİLİYORDU.
+        HttpServer entry = redirectTo("http://169.254.169.254/latest/meta-data/");
+        try {
+            Map<String, Object> r = newChecker()
+                    .check("http://127.0.0.1:" + entry.getAddress().getPort() + "/", "ami-id", 3000);
+            assertThat(r.get("found")).isEqualTo(false);
+            assertThat(r.get("count")).isEqualTo(0);
+            assertThat((String) r.get("error")).contains("cloud-metadata");
+            assertThat(r).doesNotContainKey("snippet");
+            assertThat(r).doesNotContainKey("http_status");   // son hop hiç tamamlanmadı
+        } finally {
+            entry.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("SSRF: http/https DIŞI şemaya yönlendirme takip edilmez — 3xx olduğu gibi döner")
+    void check_redirectToFileScheme_notFollowed() throws IOException {
+        HttpServer entry = redirectTo("file:///etc/passwd");
+        try {
+            Map<String, Object> r = newChecker()
+                    .check("http://127.0.0.1:" + entry.getAddress().getPort() + "/", "root", 3000);
+            assertThat(r.get("found")).isEqualTo(false);
+            assertThat(r.get("http_status")).isEqualTo(302);   // takip edilmedi, hata da değil
+            assertThat(r).doesNotContainKey("snippet");
+        } finally {
+            entry.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("SSRF: yönlendirme DÖNGÜSÜ hop sınırında durur (sonsuz takip yok)")
+    void check_redirectLoop_stopsAtHopLimit() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", ex -> {
+            ex.getResponseHeaders().add("Location", "/next");   // kendine döner
+            ex.sendResponseHeaders(302, -1);
+            ex.close();
+        });
+        server.start();
+        try {
+            Map<String, Object> r = newChecker()
+                    .check("http://127.0.0.1:" + server.getAddress().getPort() + "/", "x", 3000);
+            assertThat(r.get("found")).isEqualTo(false);
+            assertThat((String) r.get("error")).contains("yönlendirme");
+        } finally {
+            server.stop(0);
+        }
+    }
 }

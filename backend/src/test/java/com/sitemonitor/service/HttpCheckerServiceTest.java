@@ -268,4 +268,78 @@ class HttpCheckerServiceTest {
                 + Base64.getMimeEncoder(64, new byte[]{'\n'}).encodeToString(cert.getEncoded())
                 + "\n-----END CERTIFICATE-----\n";
     }
+
+    // -- Yonlendirme guvenligi (her hop SsrfGuard'dan gecer) ------------------
+
+    /** Verilen hedefe 302 ile yonlendiren duz HTTP sunucusu. */
+    private static com.sun.net.httpserver.HttpServer plainRedirect(String location) throws Exception {
+        com.sun.net.httpserver.HttpServer s = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        s.createContext("/", ex -> {
+            ex.getResponseHeaders().add("Location", location);
+            ex.sendResponseHeaders(302, -1);
+            ex.close();
+        });
+        s.start();
+        return s;
+    }
+
+    private static com.sun.net.httpserver.HttpServer plainOk() throws Exception {
+        com.sun.net.httpserver.HttpServer s = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        s.createContext("/", ex -> { ex.sendResponseHeaders(200, -1); ex.close(); });
+        s.start();
+        return s;
+    }
+
+    @Test
+    @DisplayName("Yonlendirme takip edilir - zincirin sonundaki 200 raporlanir (davranis korunur)")
+    void followRedirects_chainStillFollowed() throws Exception {
+        com.sun.net.httpserver.HttpServer target = plainOk();
+        com.sun.net.httpserver.HttpServer entry =
+                plainRedirect("http://127.0.0.1:" + target.getAddress().getPort() + "/");
+        try {
+            Fixture f = fixture("", false);
+            Map<String, Object> r = f.service().check(
+                    "http://127.0.0.1:" + entry.getAddress().getPort() + "/",
+                    "GET", "200-399", 3000, false, true);
+            assertThat(r.get("ok")).isEqualTo(true);
+            assertThat(r.get("http_status")).isEqualTo(200);
+        } finally {
+            entry.stop(0);
+            target.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("SSRF: cloud-metadata ucuna YONLENDIRME engellenir (Redirect.NORMAL bunu kacirirdi)")
+    void followRedirects_toMetadata_blocked() throws Exception {
+        com.sun.net.httpserver.HttpServer entry = plainRedirect("http://169.254.169.254/latest/meta-data/");
+        try {
+            Fixture f = fixture("", false);
+            Map<String, Object> r = f.service().check(
+                    "http://127.0.0.1:" + entry.getAddress().getPort() + "/",
+                    "GET", "200-399", 3000, false, true);
+            assertThat(r.get("ok")).isEqualTo(false);
+            assertThat((String) r.get("error")).contains("cloud-metadata");
+        } finally {
+            entry.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("followRedirects=false ise hic hop yapilmaz - 302 oldugu gibi raporlanir")
+    void followRedirectsOff_reportsRedirectStatus() throws Exception {
+        com.sun.net.httpserver.HttpServer entry = plainRedirect("http://169.254.169.254/");
+        try {
+            Fixture f = fixture("", false);
+            Map<String, Object> r = f.service().check(
+                    "http://127.0.0.1:" + entry.getAddress().getPort() + "/",
+                    "GET", "200-399", 3000, false, false);
+            assertThat(r.get("http_status")).isEqualTo(302);
+            assertThat(r.get("ok")).isEqualTo(true);   // 200-399 kaliba uyuyor
+        } finally {
+            entry.stop(0);
+        }
+    }
 }

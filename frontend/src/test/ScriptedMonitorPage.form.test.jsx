@@ -665,7 +665,10 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
     // kutular kapsam dışı, onlar ızgara hücresi değil.
     const gridCheckboxLabels = [...document.querySelectorAll('.form-grid > label')]
       .filter(l => l.querySelector('input[type="checkbox"]'))
-    expect(gridCheckboxLabels.length).toBeGreaterThanOrEqual(3)   // yavaş alarm + e-posta + aktif
+    // B1: e-posta ve webhook kutuları ortak bildirim bloğuna (NotifyChannels) taşındı, artık
+    // ızgara hücresi değiller. KURAL değişmedi — ızgaradaki her kutu paylaşılan sınıfı taşır;
+    // taban yalnız "seçici boşa düşmesin" güvencesi olarak kalıyor (yavaş alarm + aktif).
+    expect(gridCheckboxLabels.length).toBeGreaterThanOrEqual(2)
     for (const label of gridCheckboxLabels) {
       expect(label.className, `sınıfsız/ölü sınıflı tik kutusu: "${label.textContent.trim()}"`)
         .toContain('checkbox-label')

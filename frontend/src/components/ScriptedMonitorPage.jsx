@@ -8,7 +8,8 @@ import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import CodeEditor from './ui/CodeEditor.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
-import NotificationGroupSelect from './ui/NotificationGroupSelect.jsx'
+import NotifyChannels from './ui/NotifyChannels.jsx'
+import IntervalSlider from './ui/IntervalSlider.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
 import ScriptedTemplateInfo from './scripted/ScriptedTemplateInfo.jsx'
@@ -46,9 +47,17 @@ const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
+// Ortak IntervalSlider `labelKey` bekliyor; senaryo kodu calistiran bu turde taban 1 dk
+// (her kosum bir alt surec baslatir) — ust sinir digerleriyle hizalandi.
 const INTERVALS = [
-  { value: 60, k: 'scripted.iv1m' }, { value: 300, k: 'scripted.iv5m' }, { value: 600, k: 'scripted.iv10m' },
-  { value: 900, k: 'scripted.iv15m' }, { value: 1800, k: 'scripted.iv30m' }, { value: 3600, k: 'scripted.iv1h' },
+  { value: 60,    labelKey: 'notify.iv1m'  },
+  { value: 300,   labelKey: 'notify.iv5m'  },
+  { value: 600,   labelKey: 'notify.iv10m' },
+  { value: 900,   labelKey: 'notify.iv15m' },
+  { value: 1800,  labelKey: 'notify.iv30m' },
+  { value: 3600,  labelKey: 'notify.iv1h'  },
+  { value: 43200, labelKey: 'notify.iv12h' },
+  { value: 86400, labelKey: 'notify.iv24h' },
 ]
 function intervalIdx(secs) {
   let idx = 0, best = Infinity
@@ -392,7 +401,10 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     return pred ? scoped.filter(pred) : scoped
   }, [scoped, statFilter])
 
-  // Sayfalama filtrelenmiş listenin ÜZERİNE; sayaç/istatistikler tam listeden hesaplanmaya devam eder.
+  // Sayfalama filtrelenmiş listenin ÜZERİNE. İstatistik kartları ise KAPSAM listesinden
+  // (`scoped` = takım + grup + arama) sayılır; kart filtresi (statFilter) sayima GIRMEZ.
+  // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
+  // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(displayMonitors, {
     listKey: 'scripted-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
@@ -1394,6 +1406,12 @@ function CheckDetail({ t, check, k6Version }) {
 
 // ── Create/Edit modal ────────────────────────────────────────────────────────
 function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke = null, dismissSmoke, save, del, closeEdit, runTest, isAdminish, canDelete, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts = [], savedSource = null, templates = [], draftSavedAt = null, pendingDraft = null, applyDraft, discardDraft, bumpType = 'patch', setBumpType }) {
+  // Ortak bildirim blogunun "kime gidecek" satiri. Form AYRI bir bilesende oldugu icin
+  // etiket burada, elde olan props'tan (teamSelectOptions/teamName) turetilir.
+  const selectedTeamLabel =
+    (teamSelectOptions || []).find(o => String(o.value) === String(form.teamId))?.label
+    || teamName || t('app.noTeam')
+
   // Seçili kayıtlı script'in adı — "hangi monitörden yüklendi" notu için.
   const selectedSavedName = form.template?.startsWith('saved:')
     ? savedScripts.find(s => `saved:${s.id}` === form.template)?.name
@@ -1413,7 +1431,6 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
   const scriptSourceOptions = buildScriptSourceOptions({
     savedScripts, templates, savedSourceId: savedSource?.id, lang, t,
   })
-  const ivIdx = intervalIdx(Number(form.intervalSeconds))
   return (
     <div className="modal-overlay">
       <div className="modal-box" style={{ maxWidth: 860, width: '92vw', maxHeight: '92vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
@@ -1464,13 +1481,15 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
               onCreate={() => {}}
               searchThreshold={2}
               placeholder={t('scripted.groupPick')} /></label>
-          <NotificationGroupSelect teamId={form.teamId} value={form.notificationGroupId}
-            onChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+          <NotifyChannels
+            notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+            onChange={patch => setForm(f => ({ ...f, ...patch }))}
+            teamLabel={selectedTeamLabel} teamId={form.teamId}
+            groupId={form.notificationGroupId}
+            onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
 
-          <label><span>{t('scripted.interval')}</span>
-            <input type="range" min="0" max={INTERVALS.length - 1} value={ivIdx}
-              onChange={e => setForm(f => ({ ...f, intervalSeconds: INTERVALS[Number(e.target.value)].value }))} />
-            <span className="field-hint">{t(INTERVALS[ivIdx].k)}</span></label>
+          <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
+            onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
           <label><span>{t('scripted.timeout')}</span>
             <input type="number" min="5" max="180" value={form.timeoutSeconds}
               onChange={e => setForm(f => ({ ...f, timeoutSeconds: e.target.value }))} />
@@ -1641,10 +1660,6 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
             <span className="field-hint">{t('scripted.envHint')}</span>
           </div>
 
-          <label className="checkbox-label full-width">
-            <input type="checkbox" checked={form.notifyEmail} onChange={e => setForm(f => ({ ...f, notifyEmail: e.target.checked }))} /> {t('scripted.notifyEmail')}</label>
-          <label className="checkbox-label" title={t('userpush.monitorToggleHint')}>
-            <input type="checkbox" checked={form.notifyWebhook} onChange={e => setForm(f => ({ ...f, notifyWebhook: e.target.checked }))} /> {t('userpush.monitorToggle')}</label>
           <label className="checkbox-label full-width">
             <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} /> {t('scripted.active')}</label>
 

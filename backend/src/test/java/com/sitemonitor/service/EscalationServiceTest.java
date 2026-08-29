@@ -146,7 +146,10 @@ class EscalationServiceTest {
 
         service.processResults(List.of(expiryResult(domain, 25, true)));
 
-        verify(userPushService).enqueueAlert(any(), org.mockito.ArgumentMatchers.eq("INITIAL"), any(), any());
+        // A2 ile imza 5 parametreye cikti (kanal bazli haric tutma listesi); IDDIA AYNI:
+        // mail hunisi push tetigini INITIAL ile calistirir.
+        verify(userPushService).enqueueAlert(any(), org.mockito.ArgumentMatchers.eq("INITIAL"),
+                any(), any(), any());
     }
 
     @Test
@@ -1870,5 +1873,77 @@ class EscalationServiceTest {
         var cap = org.mockito.ArgumentCaptor.forClass(AlertEvent.class);
         verify(alertEventRepo, atLeastOnce()).save(cap.capture());
         assertThat(cap.getAllValues().get(0).getAlertLevel()).isEqualTo("CRITICAL");   // 3 gün ≤ 7 varsayılanı
+    }
+
+    // -- B2: KANAL MATRISI - notify_email bayragi gercekten uygulanir ---------
+    // Bayrak backend'de HICBIR yerde okunmuyordu: formdaki "E-mail" kutusu sustu, isaretini
+    // kaldirmak mail gonderimini durdurmuyordu. Artik SchedulerService ctx'e mail_disabled
+    // damgasi basiyor ve sendCombinedAlert bunu okuyup maili atliyor.
+
+    private java.util.Map<String, Object> monCtx(Boolean mailDisabled, Boolean pushDisabled) {
+        var ctx = new java.util.LinkedHashMap<String, Object>();
+        ctx.put("monitor_id", 1L);
+        ctx.put("team_id", 7L);
+        if (Boolean.TRUE.equals(mailDisabled)) ctx.put("mail_disabled", true);
+        if (Boolean.TRUE.equals(pushDisabled)) ctx.put("push_disabled", true);
+        return ctx;
+    }
+
+    private void outageFixture(String domain) {
+        // Standalone izleme alarminda alicilar EVENT.teamId'den cozulur; takim maili olmadan
+        // allEmails bos kalir ve "mail gitti mi" iddiasi anlamsizlasirdi.
+        var team = new com.sitemonitor.model.Team();
+        team.setId(7L); team.setName("Takim A"); team.setEmail("takim-a@example.com");
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
+        when(alertEventRepo.findOpenAlert(eq(domain), anyString())).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> {
+            AlertEvent e = inv.getArgument(0);
+            if (e.getId() == null) e.setId(4242L);
+            return e;
+        });
+    }
+
+    @Test
+    @DisplayName("B2: notifyEmail KAPALI -> mail GITMEZ, webhook YINE gider (kanal bagimsizligi)")
+    void mailDisabled_skipsMailButKeepsPush() {
+        String domain = "http://mail-off.example.com/";
+        outageFixture(domain);
+
+        service.processConfirmedOutage(domain, "HTTP_DOWN", "CRITICAL", monCtx(true, false));
+
+        verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(),
+                any(), any(), any(), any(), any());
+        // KRITIK: mailin atlanmasi push'u DUSURMEZ. Eskiden push tetigi metodun SONUNDA idi ve
+        // erken return eden her dal webhook'u da sessizce dusuruyordu.
+        verify(userPushService).enqueueAlert(any(), eq("INITIAL"), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("B2: notifyWebhook KAPALI -> mail GIDER (bayraklar birbirini etkilemez)")
+    void pushDisabled_stillSendsMail() {
+        String domain = "http://push-off.example.com/";
+        outageFixture(domain);
+        when(contactRepo.findByMinAlertLevelAndActiveTrue(anyString()))
+                .thenReturn(List.of(contact("po@example.com", "PO", "CRITICAL")));
+
+        service.processConfirmedOutage(domain, "HTTP_DOWN", "CRITICAL", monCtx(false, true));
+
+        verify(emailService).sendAlert(any(String[].class), anyString(), anyString(),
+                any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("B2: iki bayrak da ACIK -> her iki kanal da calisir")
+    void bothEnabled_bothChannels() {
+        String domain = "http://both-on.example.com/";
+        outageFixture(domain);
+        when(contactRepo.findByMinAlertLevelAndActiveTrue(anyString()))
+                .thenReturn(List.of(contact("po@example.com", "PO", "CRITICAL")));
+
+        service.processConfirmedOutage(domain, "HTTP_DOWN", "CRITICAL", monCtx(false, false));
+
+        verify(emailService).sendAlert(any(String[].class), anyString(), anyString(),
+                any(), any(), any(), any(), any());
+        verify(userPushService).enqueueAlert(any(), eq("INITIAL"), any(), any(), any());
     }
 }

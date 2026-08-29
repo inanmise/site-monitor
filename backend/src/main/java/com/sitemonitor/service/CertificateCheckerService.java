@@ -636,7 +636,15 @@ public class CertificateCheckerService {
         int timeoutMs = timeoutSec * 1000;
         if (resolvedIps == null || resolvedIps.isEmpty()) {
             SSLSocket s = (SSLSocket) factory.createSocket();
-            s.connect(new InetSocketAddress(domain, port), timeoutMs);
+            try {
+                s.connect(new InetSocketAddress(domain, port), timeoutMs);
+            } catch (IOException e) {
+                // Çok-A dalı (aşağıda) hatada soketi kapatıyor, bu dal kapatmıyordu. Asimetri gerçek
+                // bir sızıntıydı: ulaşılamayan her hedef bir soket + FD bırakıyordu ve bu yol
+                // ÇÖZÜMLENEMEYEN/tek-A host'ların yolu — yani tam da sürekli hata veren hedeflerin.
+                try { s.close(); } catch (IOException ignore) { /* zaten kapandı */ }
+                throw e;
+            }
             return s;
         }
         // Tek-A: tam timeout, tek deneme. Çok-A: ilk NetworkResolver.MAX_A_ATTEMPTS IP + IP başına connect'i

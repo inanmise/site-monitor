@@ -997,7 +997,7 @@ class UserServiceTest {
     }
 
     @Test
-    @DisplayName("computeViewTeamIds: AD ADMIN (müdür) → subordinates' distinct teams, not global")
+    @DisplayName("computeViewTeamIds: AD ADMIN (müdür) → KENDİ takımları ∪ astların takımları, global DEĞİL")
     void computeViewTeamIds_adAdmin_subordinateTeams() {
         AppUser mudur = scopeUser(10L, "ADMIN", "LDAP", 1L);
         when(userRepo.findByManagerId(10L)).thenReturn(List.of(
@@ -1006,7 +1006,9 @@ class UserServiceTest {
                 scopeUser(22L, "USER", "LDAP", 7L),
                 scopeUser(23L, "USER", "LDAP", null) // no team → ignored
         ));
-        assertThat(service.computeViewTeamIds(mudur)).containsExactly(3L, 7L);
+        // Kendi takımı (1) ARTIK dahil: eskiden yalnız astların takımları dönüyordu ve astı olmayan
+        // bir ADMIN hiçbir şey göremiyordu. Sıra: önce kendi, sonra astlar (LinkedHashSet).
+        assertThat(service.computeViewTeamIds(mudur)).containsExactly(1L, 3L, 7L);
     }
 
     @Test
@@ -1030,9 +1032,9 @@ class UserServiceTest {
     }
 
     @Test
-    @DisplayName("computeManageTeamIds: müdür (AD ADMIN) → empty (read-only)")
-    void computeManageTeamIds_mudur_empty() {
-        assertThat(service.computeManageTeamIds(scopeUser(10L, "ADMIN", "LDAP", 1L))).isEmpty();
+    @DisplayName("computeManageTeamIds: AD ADMIN → KENDİ takımları (eskiden boştu — kendi izlemesini düzenleyemiyordu)")
+    void computeManageTeamIds_adAdmin_ownTeams() {
+        assertThat(service.computeManageTeamIds(scopeUser(10L, "ADMIN", "LDAP", 1L))).containsExactly(1L);
     }
 
     @Test
@@ -1047,6 +1049,50 @@ class UserServiceTest {
     @DisplayName("computeManageTeamIds: USER → empty (no management)")
     void computeManageTeamIds_user_empty() {
         assertThat(service.computeManageTeamIds(scopeUser(40L, "USER", "LDAP", 9L))).isEmpty();
+    }
+
+
+    // -- A1: ADMIN rolu verilen takim uyesi (PO) kendi takimini GORMELI -------
+    // Kok neden: computeViewTeamIds AD+ADMIN dalinda YALNIZ subordinateTeamIds donuyordu.
+    // Asti olmayan bir PO ADMIN yapilinca liste BOS kaliyor -> rol yukseltmesi gorunurlugu
+    // AZALTIYORDU (kendi takiminin izlemelerini bile goremiyordu).
+
+    @Test
+    @DisplayName("A1: ASTI OLMAYAN AD ADMIN kendi takimini GORUR (bos liste degil)")
+    void computeViewTeamIds_adAdminWithoutSubordinates_seesOwnTeam() {
+        AppUser po = scopeUser(50L, "ADMIN", "LDAP", 8L);
+        when(userRepo.findByManagerId(50L)).thenReturn(List.of());   // ast YOK
+        assertThat(service.computeViewTeamIds(po)).containsExactly(8L);
+    }
+
+    @Test
+    @DisplayName("A1: ASTI OLMAYAN AD ADMIN kendi takimini YONETIR")
+    void computeManageTeamIds_adAdminWithoutSubordinates_managesOwnTeam() {
+        AppUser po = scopeUser(50L, "ADMIN", "LDAP", 8L);
+        when(userRepo.findByManagerId(50L)).thenReturn(List.of());
+        assertThat(service.computeManageTeamIds(po)).containsExactly(8L);
+    }
+
+    @Test
+    @DisplayName("A1: cok takimli AD ADMIN tum uyeliklerini + astlarini gorur, TEKIL")
+    void computeViewTeamIds_adAdminMultiTeam_dedupes() {
+        AppUser mudur = scopeUser(60L, "ADMIN", "LDAP", 2L);
+        mudur.setTeamIds(new java.util.LinkedHashSet<>(List.of(2L, 4L)));   // birincil + ek uyelik
+        when(userRepo.findByManagerId(60L)).thenReturn(List.of(
+                scopeUser(61L, "USER", "LDAP", 4L),   // kendi uyeligiyle CAKISIR -> tekillesir
+                scopeUser(62L, "USER", "LDAP", 9L)));
+        assertThat(service.computeViewTeamIds(mudur)).containsExactly(2L, 4L, 9L);
+    }
+
+    @Test
+    @DisplayName("A1: AD ADMIN global admin DEGILDIR - kapsam listesi DOLU doner (null degil)")
+    void computeViewTeamIds_adAdmin_isNeverGlobal() {
+        // SessionScope.isGlobalAdmin/isGlobalViewer 'viewTeamIds == null' ile karar veriyor.
+        // Liste dolu kaldigi surece mudur global admin olmaz - bu duzeltmenin guvenlik siniri.
+        AppUser mudur = scopeUser(70L, "ADMIN", "LDAP", 3L);
+        when(userRepo.findByManagerId(70L)).thenReturn(List.of());
+        assertThat(service.computeViewTeamIds(mudur)).isNotNull().isNotEmpty();
+        assertThat(service.computeManageTeamIds(mudur)).isNotNull().isNotEmpty();
     }
 
     // ── applyProfileFields (AD-mirrored profil alanları) ──────────────────────

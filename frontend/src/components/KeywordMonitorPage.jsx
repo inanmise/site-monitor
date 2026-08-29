@@ -9,10 +9,11 @@ import { useToast } from './ui/Toast.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
-import NotificationGroupSelect from './ui/NotificationGroupSelect.jsx'
+import NotifyChannels from './ui/NotifyChannels.jsx'
+import IntervalSlider from './ui/IntervalSlider.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { X, RefreshCw, Plus, Trash2, Target, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, ShieldCheck, Mail, MessageSquare, Phone, Smartphone } from 'lucide-react'
+import { X, RefreshCw, Plus, Trash2, Target, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, ShieldCheck } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
@@ -296,7 +297,10 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     return pred ? scoped.filter(pred) : scoped
   }, [scoped, statFilter])
 
-  // Sayfalama filtrelenmiş listenin ÜZERİNE; sayaç/istatistikler tam listeden hesaplanmaya devam eder.
+  // Sayfalama filtrelenmiş listenin ÜZERİNE. İstatistik kartları ise KAPSAM listesinden
+  // (`scoped` = takım + grup + arama) sayılır; kart filtresi (statFilter) sayima GIRMEZ.
+  // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
+  // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(displayMonitors, {
     listKey: 'keyword-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
@@ -369,7 +373,6 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const selectedTeamLabel = isAdmin
     ? (teams.find(tm => String(tm.id) === String(form.teamId))?.name || t('keyword.noTeam'))
     : (teamName || t('keyword.noTeam'))
-  const ivIdx = intervalIdx(Number(form.intervalSeconds))
 
   return (
     <div className="upt-page">
@@ -624,8 +627,14 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                 <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
                   options={[{ value: '', label: t('keyword.noGroup') }, ...groupSelectOptions]}
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('keyword.noGroup')} /></label>
-              <NotificationGroupSelect teamId={form.teamId} value={form.notificationGroupId}
-                onChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+              <NotifyChannels
+                notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+                onChange={patch => setForm(f => ({ ...f, ...patch }))}
+                teamLabel={selectedTeamLabel} teamId={form.teamId}
+                groupId={form.notificationGroupId}
+                onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+              <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
+                onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
 
               {/* Etiketler */}
               <div className="full-width kw-tags-block">
@@ -634,37 +643,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                 <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('keyword.tagsPlaceholder')} />
               </div>
 
-              {/* Bildirimler */}
-              <div className="full-width kw-notify-section">
-                <div className="kw-block-title">{t('keyword.notifyTitle')}</div>
-                <div className="field-hint" style={{ marginBottom: 8 }}>{t('keyword.notifyInfo').replace('{0}', selectedTeamLabel)}</div>
-                <div className="kw-channels">
-                  <label className="kw-channel">
-                    <input type="checkbox" checked={form.notifyEmail} onChange={e => setForm(f => ({ ...f, notifyEmail: e.target.checked }))} />
-                    <Mail size={14} /><span>{t('keyword.chEmail')}</span>
-                    <span className="kw-ch-target">{selectedTeamLabel}</span>
-                  </label>
-                  <label className="kw-channel kw-channel--disabled" title={t('keyword.soonHint')}>
-                    <input type="checkbox" disabled /><MessageSquare size={14} /><span>{t('keyword.chSms')}</span><span className="kw-ch-soon">{t('keyword.soon')}</span></label>
-                  <label className="kw-channel kw-channel--disabled" title={t('keyword.soonHint')}>
-                    <input type="checkbox" disabled /><Phone size={14} /><span>{t('keyword.chVoice')}</span><span className="kw-ch-soon">{t('keyword.soon')}</span></label>
-                  <label className="kw-channel kw-channel--disabled" title={t('keyword.soonHint')}>
-                    <input type="checkbox" checked={form.notifyWebhook} onChange={e => setForm(f => ({ ...f, notifyWebhook: e.target.checked }))} /><Smartphone size={14} /><span>{t('userpush.monitorToggle')}</span></label>
-                </div>
-              </div>
 
-              {/* Kontrol aralığı — kaydırmalı çubuk */}
-              <div className="full-width kw-interval-block">
-                <div className="kw-block-title">{t('keyword.intervalTitle')}</div>
-                <div className="field-hint" style={{ marginBottom: 8 }}>{t('keyword.intervalEvery').replace('{0}', t(INTERVALS[ivIdx].labelKey))}</div>
-                <input type="range" className="kw-interval-slider" min={0} max={INTERVALS.length - 1} step={1}
-                  value={ivIdx} onChange={e => setForm(f => ({ ...f, intervalSeconds: INTERVALS[Number(e.target.value)].value }))} />
-                <div className="kw-interval-ticks">
-                  {INTERVALS.map((o, j) => (
-                    <span key={o.value} className={`kw-interval-tick${j === ivIdx ? ' active' : ''}`}>{t(o.labelKey)}</span>
-                  ))}
-                </div>
-              </div>
 
               {/* SSL + Domain kontrolleri */}
               <div className="full-width kw-ssl-section">

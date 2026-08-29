@@ -335,12 +335,15 @@ export default function MonitorChangesConsole({ globalViewer = false }) {
             })}
           </div>
 
+          {/* TABAN DÖNÜŞÜMÜ ŞART: `page` state'i ve API 0-tabanlı (bkz. :83), PaginationBar
+              1-tabanlı. Dönüşüm yokken state=0'da hiçbir sayfa aktif görünmüyor ve "1" düğmesi
+              API'nin 2. sayfasına gidiyordu. rangeStart/rangeEnd 0-tabanlı kalır. */}
           <PaginationBar
-            page={page} totalPages={totalPages} totalItems={total}
+            page={page + 1} totalPages={totalPages} totalItems={total}
             rangeStart={total === 0 ? 0 : page * size + 1}
             rangeEnd={Math.min(total, (page + 1) * size)}
             pageSize={size}
-            onPageChange={setPage}
+            onPageChange={(p) => setPage(p - 1)}
             onPageSizeChange={(s) => { setSize(s); setPage(0) }} />
         </>)}
     </div>

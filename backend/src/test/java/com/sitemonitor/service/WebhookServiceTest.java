@@ -25,19 +25,22 @@ import static org.mockito.Mockito.*;
 class WebhookServiceTest {
 
     @Mock HttpClient httpClient;
-    @Mock HttpResponse<String> httpResponse;
+    @Mock HttpResponse<java.io.InputStream> httpResponse;
+    @Mock com.sitemonitor.service.TrustEvaluator trustEvaluator;
+    @Mock com.sitemonitor.service.CaAutoPinService caAutoPinService;
 
     private WebhookService service;
 
     @BeforeEach
     void setUp() throws Exception {
-        service = new WebhookService(new ObjectMapper());
+        service = new WebhookService(new ObjectMapper(), permissiveGuard(), trustEvaluator, caAutoPinService);
         ReflectionTestUtils.setField(service, "timeoutSeconds", 10);
         service.init();
         ReflectionTestUtils.setField(service, "httpClient", httpClient);
 
         when(httpResponse.statusCode()).thenReturn(200);
-        when(httpResponse.body()).thenReturn("ok");
+        when(httpResponse.body()).thenAnswer(inv ->
+                new java.io.ByteArrayInputStream("ok".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
                 .thenReturn(httpResponse);
     }
@@ -200,5 +203,35 @@ class WebhookServiceTest {
                 .containsEntry("title", "Baslik")
                 .containsEntry("text", "Mesaj")
                 .containsEntry("footer", "SiteMonitor Enterprise");
+    }
+
+    /** Testler localhost'a POST eder -> SsrfGuard izin verici (loopback + ic ag acik);
+     *  metadata/link-local YINE bloklu. PortCheckerServiceTest ile ayni desen. */
+    private static SsrfGuard permissiveGuard() {
+        AppSettingsService a = mock(AppSettingsService.class);
+        when(a.getBoolean("site.monitor.monitoring.allow-loopback-targets", false)).thenReturn(true);
+        when(a.getBoolean("site.monitor.monitoring.allow-internal-targets", true)).thenReturn(true);
+        return new SsrfGuard(a);
+    }
+
+    @Test
+    @DisplayName("SSRF: cloud-metadata webhook adresine istek HIC atilmaz (alarm metni sizmaz)")
+    void post_metadataUrl_neverSends() throws Exception {
+        // Webhook govdesi ALARM METNI tasiyor; dogrulanmamis bir hedef, ic agdaki bir uca alarm
+        // icerigini POST etmenin yoluydu. sendTeams istisnayi yutar -> cagirana yayilmaz, ama
+        // asil sozlesme: istek HIC atilmaz.
+        service.sendTeams("http://169.254.169.254/hook", "T", "M", "FF0000");
+        verify(httpClient, never()).send(any(), any());
+    }
+
+    @Test
+    @DisplayName("Yanit govdesi TAVANLI okunur — dev yanit bellege tam alinmaz")
+    void post_hugeResponse_readsCapped() throws Exception {
+        // 4 MB'lik yanit: ofString() hepsini bellege alirdi. Akis tavanla okunur; gonderim yine basarili.
+        byte[] huge = new byte[4 * 1024 * 1024];
+        java.util.Arrays.fill(huge, (byte) 'x');
+        when(httpResponse.body()).thenAnswer(inv -> new java.io.ByteArrayInputStream(huge));
+        service.sendTeams("http://localhost/hook", "T", "M", "FF0000");
+        verify(httpClient, atLeastOnce()).send(any(), any());
     }
 }

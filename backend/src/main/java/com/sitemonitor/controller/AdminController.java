@@ -87,6 +87,7 @@ public class AdminController {
     private final NotificationLogRepository notificationLogRepo;
     private final com.sitemonitor.repository.UserPushDeliveryRepository userPushDeliveryRepo;
     private final EscalationService escalationService;
+    private final com.sitemonitor.service.UserPushService userPushService;
     private final LatestCheckRepository latestCheckRepo;
     private final CertificateCheckRepository certificateCheckRepo;
     private final CertificateNoteRepository noteRepo;
@@ -1475,7 +1476,29 @@ public class AdminController {
                     m.put("kind",  r.kind());
                     return m;
                 }).toList();
-        return ok(Map.of("data", Map.of("alert_id", id, "recipients", recipients)));
+        // Webhook (push) kanali AYRI listelenir: kullanici "kime mail, kime push" gidecegini
+        // gonderim ONCESI gorup tek tek cikarabilmeli. Kanal tamamen kapaliysa sebebi de doner
+        // (SKIPPED_TEAM_OFF / _NO_RECIPIENTS ...) — sessiz "gitmedi" yerine gorunur bir neden.
+        // Fallback takim, gercek gonderimin kullandigiyla AYNI kaynaktan gelir
+        // (resolveReNotifyTargets) — onizleme gonderimden sapmasin.
+        var push = userPushService.preview(id, escalationService.reNotifyFallbackTeamId(id));
+        List<Map<String, Object>> pushRows = push.recipients().stream()
+                .map(r -> {
+                    Map<String, Object> m = new LinkedHashMap<String, Object>();
+                    m.put("username",     r.username());
+                    m.put("display_name", r.displayName());
+                    m.put("status",       r.status());
+                    return m;
+                }).toList();
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("alert_id",   id);
+        data.put("recipients", recipients);          // e-posta kanali (mevcut sozlesme korunur)
+        Map<String, Object> webhook = new LinkedHashMap<>();
+        webhook.put("channel_enabled", push.channelEnabled());
+        webhook.put("block_reason",    push.blockReason());
+        webhook.put("recipients",      pushRows);
+        data.put("webhook", webhook);
+        return ok(Map.of("data", data));
     }
 
     @PostMapping("/alerts/{id}/re-notify")
@@ -1489,7 +1512,13 @@ public class AdminController {
         if (body != null && body.get("excludeEmails") instanceof List<?> raw) {
             for (Object o : raw) if (o != null && !o.toString().isBlank()) excludes.add(o.toString());
         }
-        return ok(Map.of("data", escalationService.reNotify(id, excludes), "message", "Notification triggered"));
+        // Webhook alicilari AYRI liste: kullanici bir kisiye mail gitmesin ama push gitsin diyebilir.
+        Set<String> excludeUsers = new LinkedHashSet<>();
+        if (body != null && body.get("excludeUsernames") instanceof List<?> raw) {
+            for (Object o : raw) if (o != null && !o.toString().isBlank()) excludeUsers.add(o.toString());
+        }
+        return ok(Map.of("data", escalationService.reNotify(id, excludes, excludeUsers),
+                "message", "Notification triggered"));
     }
 
     /** Toplu alarm işlemi (Alarm Geçmişi çoklu seçim): acknowledge | resolve | re-notify.

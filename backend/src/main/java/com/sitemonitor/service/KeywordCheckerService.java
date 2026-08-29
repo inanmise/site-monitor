@@ -46,7 +46,11 @@ public class KeywordCheckerService {
     public void init() {
         HttpClient.Builder b = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
-                .followRedirects(HttpClient.Redirect.NORMAL);
+                // Yönlendirmeler MANUEL takip edilir → her hop SsrfGuard'dan geçsin. Redirect.NORMAL
+                // zinciri kütüphane içinde takip ediyordu: ilk host doğrulansa bile hedef sunucu bizi
+                // 302 ile iç ağa/metadata ucuna yönlendirebiliyordu ve gövdeden alınan snippet
+                // KULLANICIYA dönüyordu. Desen PageFetchCore'dan (bkz. SafeRedirect).
+                .followRedirects(HttpClient.Redirect.NEVER);
         try {
             SSLContext ssl = SSLContext.getInstance("TLS");
             ssl.init(null, new TrustManager[]{ new X509TrustManager() {
@@ -91,23 +95,9 @@ public class KeywordCheckerService {
             result.put("error", com.sitemonitor.util.MonitorUrls.CONFIG_ERROR_MSG);
             return result;
         }
-        // SSRF: hedef host'u istekten önce doğrula (metadata/loopback/link-local blok; iç ağ ayara bağlı).
         try {
-            String host = URI.create(applyTimestamp(url)).getHost();
-            if (host != null) ssrfGuard.validate(host);
-        } catch (SsrfGuard.BlockedException be) {
-            result.put("found", false);
-            result.put("error", be.getMessage());
-            return result;
-        } catch (Exception ignore) { /* URL parse hatası → aşağıdaki normal akış ele alır */ }
-        try {
-            HttpRequest.Builder rb = HttpRequest.newBuilder()
-                    .uri(URI.create(applyTimestamp(url)))
-                    .timeout(Duration.ofMillis(Math.max(1000, timeoutMs)))
-                    .header("User-Agent", "SiteMonitor-KeywordMonitor/1.0");
-            applyCustomHeaders(rb, customHeaders);
-            HttpRequest req = rb.GET().build();
-            HttpResponse<InputStream> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofInputStream());
+            // SSRF: hedef host HER hop'ta doğrulanır (metadata/loopback/link-local blok; iç ağ ayara bağlı).
+            HttpResponse<InputStream> resp = sendFollowingSafely(applyTimestamp(url), timeoutMs, customHeaders);
             byte[] bytes;
             try (InputStream is = resp.body()) {
                 bytes = is.readNBytes(MAX_BODY_BYTES);   // bellek koruması: gövde tavanı
@@ -135,6 +125,11 @@ public class KeywordCheckerService {
                 if (snip.length() > 200) snip = snip.substring(0, 200);
                 result.put("snippet", snip);
             }
+        } catch (SsrfGuard.BlockedException be) {
+            // Politika reddi — dış istek HİÇ atılmadı. response_ms yazılmaz: ölçülen bir yanıt yok.
+            result.put("found", false);
+            result.put("count", 0);
+            result.put("error", be.getMessage());
         } catch (Exception e) {
             result.put("found", false);
             result.put("count", 0);
@@ -143,6 +138,41 @@ public class KeywordCheckerService {
             log.debug("Keyword check failed for {}: {}", url, e.getMessage());
         }
         return result;
+    }
+
+    /**
+     * İsteği gönderir; yönlendirmeleri MANUEL takip eder ve HER hop'ta {@link SsrfGuard}'ı çalıştırır.
+     *
+     * <p>Bu uç, eşleşen metnin çevresinden 200 karakterlik bir {@code snippet} DÖNDÜRÜYOR; yani
+     * takip edilen son hop'un gövdesi kullanıcıya ulaşıyor. Otomatik takipte (Redirect.NORMAL)
+     * yalnız ilk host doğrulanıyordu ve keyword izlemesi sıradan kullanıcı yetkisiyle
+     * tanımlanabildiği için bu gerçek bir veri sızıntısı yüzeyiydi.
+     *
+     * <p>Takip edilemeyen bir {@code Location} (http/https dışı şema, host'suz hedef) hata değildir:
+     * 3xx yanıt OLDUĞU GİBİ döner ve gövdesi TÜKETİLMEZ — çağıran okuyacaktır.
+     */
+    private HttpResponse<InputStream> sendFollowingSafely(String url, int timeoutMs, String customHeaders)
+            throws java.io.IOException, InterruptedException {
+        URI current = URI.create(url);
+        for (int hop = 0; hop <= SafeRedirect.MAX_HOPS; hop++) {
+            String host = current.getHost();
+            if (host == null || host.isBlank())
+                throw new SsrfGuard.BlockedException("geçersiz hedef URL: " + current);
+            ssrfGuard.validate(host);
+            HttpRequest.Builder rb = HttpRequest.newBuilder()
+                    .uri(current)
+                    .timeout(Duration.ofMillis(Math.max(1000, timeoutMs)))
+                    .header("User-Agent", "SiteMonitor-KeywordMonitor/1.0");
+            applyCustomHeaders(rb, customHeaders);
+            HttpResponse<InputStream> resp =
+                    httpClient.send(rb.GET().build(), HttpResponse.BodyHandlers.ofInputStream());
+            if (!SafeRedirect.isRedirect(resp.statusCode())) return resp;
+            URI next = SafeRedirect.nextHop(current, resp.headers().firstValue("location").orElse(null));
+            if (next == null) return resp;   // takip edilemez → gövde tüketilmeden çağırana bırakılır
+            try (InputStream is = resp.body()) { is.readNBytes(4096); } catch (Exception ignore) { /* bağlantı iadesi */ }
+            current = next;
+        }
+        throw new java.io.IOException("çok fazla yönlendirme (" + SafeRedirect.MAX_HOPS + " hop aşıldı)");
     }
 
     /** {timestamp} → güncel Unix saniye (her kontrolde benzersiz URL → ara cache bypass). */

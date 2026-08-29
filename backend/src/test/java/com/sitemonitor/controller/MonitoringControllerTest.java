@@ -2741,4 +2741,66 @@ class MonitoringControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.series[0].avg").value(30));
     }
+
+    // -- B3: DNS/Domain'de dogrulama-kurtarma + kanal bayraklari -------------
+    // Bu iki turde confirm/recovery alanlari HIC yoktu (tek anlik hata dogrudan alarm aciyordu)
+    // ve createDns kanal bayraklarini HIC okumuyordu -- "Kopyala" ile e-posta KAPALI bir izlemenin
+    // kopyasi ACIK doguyordu.
+
+    @Test
+    @DisplayName("B3: createDns dogrulama/kurtarma alanlarini VE kanal bayraklarini KAYDEDER")
+    void createDns_persistsConfirmAndChannelFlags() throws Exception {
+        when(dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrue(anyString(), anyString()))
+                .thenReturn(Optional.empty());
+        when(dnsMonitorRepo.save(any())).thenAnswer(inv -> {
+            com.sitemonitor.model.DnsMonitor d = inv.getArgument(0);
+            if (d.getId() == null) d.setId(99L);
+            return d;
+        });
+
+        mvc.perform(post("/api/monitoring/dns").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"domain\":\"kayit.example.com\",\"recordType\":\"A\",\"teamId\":3,"
+                        + "\"notifyEmail\":false,\"notifyWebhook\":false,"
+                        + "\"confirmAttempts\":5,\"confirmIntervalSeconds\":45,"
+                        + "\"recoveryChecks\":2,\"recoveryIntervalSeconds\":15}"))
+                .andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DnsMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DnsMonitor.class);
+        verify(dnsMonitorRepo).save(cap.capture());
+        var saved = cap.getValue();
+        assertThat(saved.getNotifyEmail()).isFalse();
+        assertThat(saved.getNotifyWebhook()).isFalse();
+        assertThat(saved.getConfirmAttempts()).isEqualTo(5);
+        assertThat(saved.getConfirmIntervalSeconds()).isEqualTo(45);
+        assertThat(saved.getRecoveryChecks()).isEqualTo(2);
+        assertThat(saved.getRecoveryIntervalSeconds()).isEqualTo(15);
+    }
+
+    @Test
+    @DisplayName("B3: gonderilmeyen alanlar VARSAYILANDA kalir (3/30/3/30) - sessiz sifirlama yok")
+    void createDns_absentFields_keepDefaults() throws Exception {
+        when(dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrue(anyString(), anyString()))
+                .thenReturn(Optional.empty());
+        when(dnsMonitorRepo.save(any())).thenAnswer(inv -> {
+            com.sitemonitor.model.DnsMonitor d = inv.getArgument(0);
+            if (d.getId() == null) d.setId(98L);
+            return d;
+        });
+
+        mvc.perform(post("/api/monitoring/dns").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"domain\":\"vars.example.com\",\"recordType\":\"A\",\"teamId\":3}"))
+                .andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DnsMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DnsMonitor.class);
+        verify(dnsMonitorRepo).save(cap.capture());
+        var saved = cap.getValue();
+        assertThat(saved.getConfirmAttempts()).isEqualTo(3);
+        assertThat(saved.getRecoveryChecks()).isEqualTo(3);
+        assertThat(saved.getNotifyEmail()).isTrue();
+        assertThat(saved.getNotifyWebhook()).isTrue();
+    }
 }

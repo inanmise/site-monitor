@@ -118,7 +118,7 @@ public class MonitoringController {
         "intervalSeconds", "timeoutMs", "warningDays", "criticalDays", "protocol", "verifySsl", "followRedirects",
         "mode", "crawlDepth", "crawlMaxPages", "excludePatterns", "slowResourceMs", "alertThirdParty", "alertMixedContent", "alertTimeout", "resourceConcurrency",
         "notificationGroupId",
-        "transferLockAlert", "blacklistEnabled", "changeAlert", "notifyWebhook"
+        "transferLockAlert", "blacklistEnabled", "changeAlert", "notifyEmail", "notifyWebhook"
     };
 
     /**
@@ -1525,6 +1525,14 @@ public class MonitoringController {
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));   // mantıksal grup (serbest-form)
         m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
+        // Kanal bayraklari burada HIC okunmuyordu: "Kopyala" akisinda e-posta/webhook KAPALI bir
+        // izlemenin kopyasi ACIK doguyordu — kullanicinin bilincli tercihi sessizce kayboluyordu.
+        if (body.get("notifyEmail")   instanceof Boolean nb) m.setNotifyEmail(nb);
+        if (body.get("notifyWebhook") instanceof Boolean wb) m.setNotifyWebhook(wb);
+        if (body.get("confirmAttempts")         instanceof Number cn) m.setConfirmAttempts(cn.intValue());
+        if (body.get("confirmIntervalSeconds")  instanceof Number cn) m.setConfirmIntervalSeconds(cn.intValue());
+        if (body.get("recoveryChecks")          instanceof Number cn) m.setRecoveryChecks(cn.intValue());
+        if (body.get("recoveryIntervalSeconds") instanceof Number cn) m.setRecoveryIntervalSeconds(cn.intValue());
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         DnsMonitor saved = dnsMonitorRepo.save(m);
@@ -1568,7 +1576,12 @@ public class MonitoringController {
             }
             if (body.get("recordType")      != null) m.setRecordType(((String) body.get("recordType")).toUpperCase());
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
+            if (body.get("notifyEmail")   instanceof Boolean b) m.setNotifyEmail(b);
             if (body.get("notifyWebhook")   instanceof Boolean b) m.setNotifyWebhook(b);
+            if (body.get("confirmAttempts")         instanceof Number cn) m.setConfirmAttempts(cn.intValue());
+            if (body.get("confirmIntervalSeconds")  instanceof Number cn) m.setConfirmIntervalSeconds(cn.intValue());
+            if (body.get("recoveryChecks")          instanceof Number cn) m.setRecoveryChecks(cn.intValue());
+            if (body.get("recoveryIntervalSeconds") instanceof Number cn) m.setRecoveryIntervalSeconds(cn.intValue());
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (Boolean.TRUE.equals(m.getStandalone()) && body.containsKey("teamId"))
                 m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
@@ -1738,7 +1751,12 @@ public class MonitoringController {
                 ? teamById.get(m.getTeamId()) : teamMap.get(m.getDomain()));
         item.put("record_type",     m.getRecordType());
         item.put("active",          m.getActive());
+        item.put("notify_email",   m.getNotifyEmail());
         item.put("notify_webhook", m.getNotifyWebhook());
+        item.put("confirm_attempts",          m.getConfirmAttempts());
+        item.put("confirm_interval_seconds",  m.getConfirmIntervalSeconds());
+        item.put("recovery_checks",           m.getRecoveryChecks());
+        item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
         item.put("interval_seconds",m.getIntervalSeconds());
         item.put("created_at",      m.getCreatedAt());
         item.put("updated_at",      m.getUpdatedAt());
@@ -4437,7 +4455,12 @@ public class MonitoringController {
         if (body.get("transferLockAlert") instanceof Boolean b) m.setTransferLockAlert(b);
         if (body.get("blacklistEnabled")  instanceof Boolean b) m.setBlacklistEnabled(b);
         if (body.get("changeAlert")       instanceof Boolean b) m.setChangeAlert(b);
+        if (body.get("notifyEmail")     instanceof Boolean b) m.setNotifyEmail(b);
         if (body.get("notifyWebhook")     instanceof Boolean b) m.setNotifyWebhook(b);
+        if (body.get("confirmAttempts")         instanceof Number cn) m.setConfirmAttempts(cn.intValue());
+        if (body.get("confirmIntervalSeconds")  instanceof Number cn) m.setConfirmIntervalSeconds(cn.intValue());
+        if (body.get("recoveryChecks")          instanceof Number cn) m.setRecoveryChecks(cn.intValue());
+        if (body.get("recoveryIntervalSeconds") instanceof Number cn) m.setRecoveryIntervalSeconds(cn.intValue());
         // RDAP kontrol timeout'u (ms) — boş/null = global ayar; girilirse 1–30 sn'ye kısılır.
         if (body.containsKey("checkTimeoutMs")) {
             Object v = body.get("checkTimeoutMs");
@@ -4466,7 +4489,12 @@ public class MonitoringController {
         item.put("notification_group_id",          m.getNotificationGroupId());
         item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
         item.put("active",           m.getActive());
+        item.put("notify_email",   m.getNotifyEmail());
         item.put("notify_webhook", m.getNotifyWebhook());
+        item.put("confirm_attempts",          m.getConfirmAttempts());
+        item.put("confirm_interval_seconds",  m.getConfirmIntervalSeconds());
+        item.put("recovery_checks",           m.getRecoveryChecks());
+        item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
         item.put("interval_seconds", m.getIntervalSeconds());
         item.put("check_timeout_ms", m.getCheckTimeoutMs());
         item.put("thresholds_csv",   m.getThresholdsCsv());
@@ -4566,6 +4594,7 @@ public class MonitoringController {
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
         if (body.get("packetCount")     != null) m.setPacketCount(((Number) body.get("packetCount")).intValue());
+        if (body.get("notifyEmail")   instanceof Boolean b) m.setNotifyEmail(b);
         if (body.get("notifyWebhook")   instanceof Boolean b) m.setNotifyWebhook(b);
         if (body.get("confirmAttempts") != null)        m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
         if (body.get("confirmIntervalSeconds") != null) m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
@@ -4611,6 +4640,7 @@ public class MonitoringController {
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
+            if (body.get("notifyEmail")   instanceof Boolean b) m.setNotifyEmail(b);
             if (body.get("notifyWebhook")   instanceof Boolean b) m.setNotifyWebhook(b);
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
@@ -4716,6 +4746,7 @@ public class MonitoringController {
         item.put("notification_group_id",          m.getNotificationGroupId());
         item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
         item.put("active",           m.getActive());
+        item.put("notify_email",   m.getNotifyEmail());
         item.put("notify_webhook", m.getNotifyWebhook());
         item.put("interval_seconds", m.getIntervalSeconds());
         item.put("timeout_ms",       m.getTimeoutMs());

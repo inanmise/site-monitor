@@ -7,6 +7,7 @@ import PaginationBar from '../ui/PaginationBar.jsx'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../../hooks/useUrlQuerySync.js'
 import { readPageSize, writePageSize } from '../../hooks/usePagination.js'
 import UserBadge from '../ui/UserBadge.jsx'
+import { systemResolverKey } from '../../utils/resolvedBy.js'
 import { mailPreviewSrcDoc, mailLogoVariant, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import { ALERT_TYPES, alertTypeMeta, alertTypeLabel } from '../../utils/alertTypeMeta.js'
@@ -287,15 +288,32 @@ function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
   )
 }
 
-/** "Tekrar Bildir" onay pop-up'ı: gönderim ÖNCESİ alıcı listesi; kullanıcı istemediklerini
- *  işaretten çıkarır (çıkarılana e-posta da webhook da gitmez). Hepsi çıkarılırsa Gönder pasif. */
-function ReNotifyConfirmModal({ domain, recipients, sending, onSend, onClose }) {
+/**
+ * "Tekrar Bildir" onay pop-up'i: gonderim ONCESI alici listesi, KANAL KANAL.
+ *
+ * <p>Kullanici e-posta ve webhook alicilarini AYRI AYRI cikarabilir — "bu kisiye mail gitmesin
+ * ama push gitsin" mesru bir istek. Gonderilemeyecek webhook alicilari da GORUNUR (sebebiyle,
+ * pasif satir olarak): sessiz bir "gitmedi" yerine operatorun neden gitmedigini gordugu bir liste.
+ */
+function ReNotifyConfirmModal({ domain, recipients, webhook, sending, onSend, onClose }) {
   const t = useT()
-  const [unchecked, setUnchecked] = useState(() => new Set())
-  const toggle = (email) => setUnchecked(s => {
-    const n = new Set(s); if (n.has(email)) n.delete(email); else n.add(email); return n
+  const [uncheckedEmails, setUncheckedEmails] = useState(() => new Set())
+  const [uncheckedUsers, setUncheckedUsers] = useState(() => new Set())
+
+  const pushRows = webhook?.recipients || []
+  const sendableUsers = pushRows.filter(r => r.status === 'PENDING')
+  const blockReason = webhook?.channel_enabled === false
+    ? 'CHANNEL_DISABLED' : (webhook?.block_reason || null)
+
+  const toggleIn = (setter) => (key) => setter(s => {
+    const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n
   })
-  const selectedCount = recipients.length - unchecked.size
+  const toggleEmail = toggleIn(setUncheckedEmails)
+  const toggleUser = toggleIn(setUncheckedUsers)
+
+  const selectedEmails = recipients.length - uncheckedEmails.size
+  const selectedUsers = sendableUsers.length - uncheckedUsers.size
+  const selectedCount = selectedEmails + selectedUsers
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -303,29 +321,48 @@ function ReNotifyConfirmModal({ domain, recipients, sending, onSend, onClose }) 
         <h3 style={{ marginTop: 0 }}>{t('alh.renotifyModal.title')}</h3>
         <p style={{ fontSize: '.88em', color: 'var(--text-light)' }}>{t('alh.renotifyModal.desc', domain)}</p>
 
-        {recipients.length === 0 ? (
-          <div className="nl-empty">{t('alh.renotifyModal.noRecipients')}</div>
-        ) : (
-          <div className="nl-section">
-            {recipients.map(r => (
-              <label key={r.email} className="checkbox-label nl-quick-row" style={{ width: '100%' }}>
-                <input
-                  type="checkbox"
-                  checked={!unchecked.has(r.email)}
-                  onChange={() => toggle(r.email)}
-                />
-                <strong>{r.name || r.email}</strong>
-                {/* K9: takim satirinda kaynak etiketi ("Grup: X" / "Takim maili") -- backend role
-                    alaninda gonderir. Gelmezse eski sabit "Takim" etiketine duser. */}
-                <span className="role-badge">{r.kind === 'TEAM' ? (r.role || t('alh.renotifyModal.kindTeam')) : (r.role || '')}</span>
-                <span className="nl-email">{r.email}</span>
+        <div className="nl-section">
+          <strong>{t('alh.renotifyModal.emailSection')}</strong>
+          {recipients.length === 0 ? (
+            <div className="nl-empty">{t('alh.renotifyModal.noRecipients')}</div>
+          ) : recipients.map(r => (
+            <label key={r.email} className="checkbox-label nl-quick-row" style={{ width: '100%' }}>
+              <input type="checkbox" checked={!uncheckedEmails.has(r.email)} onChange={() => toggleEmail(r.email)} />
+              <strong>{r.name || r.email}</strong>
+              {/* K9: takim satirinda kaynak etiketi ("Grup: X" / "Takim maili") -- backend role
+                  alaninda gonderir. Gelmezse eski sabit "Takim" etiketine duser. */}
+              <span className="role-badge">{r.kind === 'TEAM' ? (r.role || t('alh.renotifyModal.kindTeam')) : (r.role || '')}</span>
+              <span className="nl-email">{r.email}</span>
+            </label>
+          ))}
+        </div>
+
+        <div className="nl-section">
+          <strong>{t('alh.renotifyModal.webhookSection')}</strong>
+          {blockReason ? (
+            <div className="nl-empty">{t('alh.renotifyModal.webhookOff', blockReason)}</div>
+          ) : pushRows.length === 0 ? (
+            <div className="nl-empty">{t('alh.renotifyModal.noRecipients')}</div>
+          ) : pushRows.map(r => {
+            const willSend = r.status === 'PENDING'
+            return (
+              <label key={r.username} className="checkbox-label nl-quick-row" style={{ width: '100%' }}
+                title={willSend ? undefined : r.status}>
+                <input type="checkbox" disabled={!willSend}
+                  checked={willSend && !uncheckedUsers.has(r.username)}
+                  onChange={() => toggleUser(r.username)} />
+                <strong>{r.display_name || r.username}</strong>
+                <span className="role-badge">
+                  {willSend ? t('alh.renotifyModal.willSend') : t('alh.renotifyModal.wontSend')}
+                </span>
+                <span className="nl-email">{willSend ? r.username : r.status}</span>
               </label>
-            ))}
-          </div>
-        )}
+            )
+          })}
+        </div>
 
         <div style={{ fontSize: '.82em', color: 'var(--text-light)', marginTop: 10 }}>
-          {t('alh.renotifyModal.selected', selectedCount)}
+          {t('alh.renotifyModal.selectedTotal', selectedCount, selectedEmails, selectedUsers)}
         </div>
 
         <div className="modal-actions">
@@ -335,7 +372,7 @@ function ReNotifyConfirmModal({ domain, recipients, sending, onSend, onClose }) 
           <button
             className="btn btn-warning"
             disabled={sending || selectedCount === 0}
-            onClick={() => onSend([...unchecked])}
+            onClick={() => onSend([...uncheckedEmails], [...uncheckedUsers])}
           >
             {t('alh.renotifyModal.send')}
           </button>
@@ -720,17 +757,21 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
     setNotifying(null)
     if (res?.success) {
       const alert = alerts.find(a => a.id === id)
-      setRenotifyModal({ alertId: id, domain: alert?.domain || '', recipients: res.data?.recipients || [] })
+      setRenotifyModal({ alertId: id, domain: alert?.domain || '',
+        recipients: res.data?.recipients || [], webhook: res.data?.webhook || null })
     } else {
       toast.error(res?.error || t('alh.renotifyModal.previewError'))
     }
   }
 
-  async function sendReNotify(excludeEmails) {
+  async function sendReNotify(excludeEmails, excludeUsernames = []) {
     if (!renotifyModal) return
     setRenotifySending(true)
+    const body = {}
+    if (excludeEmails.length) body.excludeEmails = excludeEmails
+    if (excludeUsernames.length) body.excludeUsernames = excludeUsernames
     const res = await api.admin.reNotifyAlert(renotifyModal.alertId,
-      excludeEmails.length ? { excludeEmails } : undefined)
+      Object.keys(body).length ? body : undefined)
     setRenotifySending(false)
     if (res?.success) {
       const count = res.data?.recipients_queued ?? res.data?.contacts_queued ?? 0
@@ -1177,8 +1218,11 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
                       <div>
                         <div className="ahc-tl-label">{t('alh.tlResolved')}</div>
                         <div className="ahc-tl-val">
-                          {a.resolved_by === 'system'
-                            ? <strong>{t('alh.autoResolved')}</strong>
+                          {/* Deger bir SICIL ya da SISTEM JETONU olabilir. Eskiden yalniz 'system'
+                              ozel-durumlaniyordu; 'inventory_delete' gibi jetonlar KISI ROZETI olarak
+                              ciziliyor ve kullanici alarmin neden kapandigini anlayamiyordu. */}
+                          {systemResolverKey(a.resolved_by)
+                            ? <strong>{t(systemResolverKey(a.resolved_by))}</strong>
                             : <UserBadge username={a.resolved_by} inline size="sm" />}
                           {a.resolved_at && <> &nbsp;·&nbsp; {formatDate(a.resolved_at)}</>}
                         </div>
@@ -1240,6 +1284,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
         <ReNotifyConfirmModal
           domain={renotifyModal.domain}
           recipients={renotifyModal.recipients}
+          webhook={renotifyModal.webhook}
           sending={renotifySending}
           onSend={sendReNotify}
           onClose={() => { if (!renotifySending) setRenotifyModal(null) }}

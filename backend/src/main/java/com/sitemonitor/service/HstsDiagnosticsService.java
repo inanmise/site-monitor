@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 import javax.net.ssl.*;
 import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
+import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.cert.X509Certificate;
@@ -29,9 +30,11 @@ import java.util.regex.Pattern;
 public class HstsDiagnosticsService {
 
     private final ProxySettings proxySettings;
+    private final SsrfGuard ssrfGuard;
 
-    public HstsDiagnosticsService(ProxySettings proxySettings) {
+    public HstsDiagnosticsService(ProxySettings proxySettings, SsrfGuard ssrfGuard) {
         this.proxySettings = proxySettings;
+        this.ssrfGuard = ssrfGuard;
     }
 
     @Value("${site.monitor.diagnostics.timeout-seconds:5}")
@@ -89,14 +92,12 @@ public class HstsDiagnosticsService {
         List<Map<String, Object>> responseHeaders = new ArrayList<>();
         HttpURLConnection hc = null;
         try {
-            hc = open(url, useProxy, "HEAD", timeoutMs, true);
-            hc.connect();
+            hc = openFollowingSafely(url, useProxy, "HEAD", timeoutMs);
             httpStatus = hc.getResponseCode();
             stsRaw = hc.getHeaderField("Strict-Transport-Security");
             if (stsRaw == null && (httpStatus == 405 || httpStatus == 501)) {
                 hc.disconnect();
-                hc = open(url, useProxy, "GET", timeoutMs, true);
-                hc.connect();
+                hc = openFollowingSafely(url, useProxy, "GET", timeoutMs);
                 httpStatus = hc.getResponseCode();
                 stsRaw = hc.getHeaderField("Strict-Transport-Security");
             }
@@ -201,8 +202,56 @@ public class HstsDiagnosticsService {
 
     // ── helpers ────────────────────────────────────────────────────────────────
 
-    private HttpURLConnection open(String urlStr, boolean useProxy, String method,
-                                   int timeoutMs, boolean followRedirects) throws Exception {
+    /**
+     * SSRF-güvenli bağlantı: HER hop'ta host doğrulanır, yönlendirmeler ELLE takip edilir.
+     *
+     * <p>Bu tanılama daha önce hiç {@link SsrfGuard} çağırmıyordu ve
+     * {@code setInstanceFollowRedirects(true)} ile zinciri JDK'ya bırakıyordu. Sonuç raporunda
+     * sunucunun döndürdüğü TÜM yanıt başlıkları ({@code response_headers}) kullanıcıya gösterildiği
+     * için, iç bir adrese yönlendiren hedef üzerinden başlık sızdırılabilirdi.
+     *
+     * <p>Dönen bağlantı AÇIKTIR; kapatmak çağıranın işidir (mevcut {@code finally} bloğu yapar).
+     */
+    private HttpURLConnection openFollowingSafely(String urlStr, boolean useProxy, String method, int timeoutMs)
+            throws Exception {
+        String current = urlStr;
+        String m = method;
+        for (int hop = 0; hop <= SafeRedirect.MAX_HOPS; hop++) {
+            URI uri = URI.create(current);
+            guardHost(uri.getHost(), useProxy);
+            HttpURLConnection hc = open(current, useProxy, m, timeoutMs);
+            hc.connect();
+            int code = hc.getResponseCode();
+            if (!SafeRedirect.isRedirect(code)) return hc;
+            URI next = SafeRedirect.nextHop(uri, hc.getHeaderField("Location"));
+            if (next == null) return hc;   // takip edilemeyen hedef → yanıt olduğu gibi raporlanır
+            hc.disconnect();
+            m = SafeRedirect.nextMethod(code, m);
+            current = next.toString();
+        }
+        throw new java.io.IOException("çok fazla yönlendirme (" + SafeRedirect.MAX_HOPS + " hop aşıldı)");
+    }
+
+    /**
+     * Politika reddi bağlantıyı DURDURUR (metadata/loopback/link-local; iç ağ ayara bağlı).
+     *
+     * <p>ÇÖZÜLEMEYEN host durdurmaz: yerel çözümleyicinin görüşü burada belirleyici değil — vekil
+     * arkasında (split-DNS) pod host'u çözemese bile vekil çözebilir. Bu tanılama bugüne kadar hiç
+     * doğrulama yapmıyordu; "çözülemedi" diye reddetmek çalışan kurulumları bozardı. Bağlantı yine
+     * denenir ve doğal hatası zaten {@code CONNECT_FAILED} olarak raporlanır.
+     */
+    private void guardHost(String host, boolean useProxy) {
+        if (host == null || host.isBlank()) throw new SsrfGuard.BlockedException("geçersiz hedef URL");
+        try {
+            ssrfGuard.validate(host);
+        } catch (SsrfGuard.UnresolvableHostException ue) {
+            log.debug("HSTS: {} yerelde çözülemedi (vekil={}), bağlantı yine denenecek", host, useProxy);
+        }
+    }
+
+    /** Yönlendirme takibi KAPALI kurulur — zincir {@link #openFollowingSafely} içinde, her hop
+     *  {@link SsrfGuard}'dan geçerek ilerler. */
+    private HttpURLConnection open(String urlStr, boolean useProxy, String method, int timeoutMs) throws Exception {
         URL url = new URL(urlStr);
         HttpURLConnection hc;
         if (useProxy) {
@@ -226,7 +275,7 @@ public class HstsDiagnosticsService {
         hc.setRequestMethod(method);
         hc.setConnectTimeout(timeoutMs);
         hc.setReadTimeout(timeoutMs);
-        hc.setInstanceFollowRedirects(followRedirects);
+        hc.setInstanceFollowRedirects(false);
         return hc;
     }
 
@@ -234,7 +283,7 @@ public class HstsDiagnosticsService {
     private Boolean checkHttpRedirect(String domain, int timeoutMs, boolean useProxy) {
         HttpURLConnection hc = null;
         try {
-            hc = open("http://" + domain + "/", useProxy, "HEAD", timeoutMs, false);
+            hc = open("http://" + domain + "/", useProxy, "HEAD", timeoutMs);
             hc.connect();
             int code = hc.getResponseCode();
             String loc = hc.getHeaderField("Location");

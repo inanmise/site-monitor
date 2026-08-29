@@ -36,6 +36,9 @@ import java.util.Map;
  */
 class InventoryPdfWriter implements AutoCloseable {
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(InventoryPdfWriter.class);
+
     private static final PDRectangle PAGE = PDRectangle.A4;
     private static final float MARGIN = 40f;
     private static final float BOTTOM = 52f;
@@ -49,6 +52,8 @@ class InventoryPdfWriter implements AutoCloseable {
     private static final float[] OK_GREEN = { 6 / 255f, 95 / 255f, 70 / 255f };
 
     private final PDDocument doc = new PDDocument();
+    /** Gömülü (Roboto) font kullanılabildi mi. false ise TÜM metin ASCII'ye indirgenir
+     *  (Türkçe erir) — bu yüzden durum test edilebilir olmalı, bkz. {@link #fontsEmbedded()}. */
     private final boolean embedded;
     private final PDFont regular;
     private final PDFont bold;
@@ -68,10 +73,24 @@ class InventoryPdfWriter implements AutoCloseable {
         this.bold = embedded ? b : new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
     }
 
+    /** Gömülü font kullanılabiliyor mu — kapı testi bunu okur (raporun Türkçe taşıyıp
+     *  taşıyamayacağının TEK belirleyicisi). */
+    boolean fontsEmbedded() { return embedded; }
+
     private PDType0Font loadFont(String name) {
+        // SESSİZ düşmek yasak: font yüklenemezse rapor üretilmeye devam eder ama Türkçe erir
+        // ve kimse NEDENİNİ bilmez. Prod'da "PDF'te Türkçe bozuk" şikâyeti tam bu sessizlikten
+        // teşhis edilemiyordu — artık günlükte sebebiyle görünür.
         try (InputStream in = InventoryPdfWriter.class.getResourceAsStream("/report-fonts/" + name)) {
-            return in == null ? null : PDType0Font.load(doc, in, true);
+            if (in == null) {
+                log.warn("Rapor fontu bulunamadı: /report-fonts/{} — PDF ASCII'ye indirgenecek "
+                        + "(Türkçe karakterler kaybolur)", name);
+                return null;
+            }
+            return PDType0Font.load(doc, in, true);
         } catch (Exception e) {
+            log.warn("Rapor fontu yüklenemedi ({}): {} — PDF ASCII'ye indirgenecek "
+                    + "(Türkçe karakterler kaybolur)", name, e.toString());
             return null;
         }
     }

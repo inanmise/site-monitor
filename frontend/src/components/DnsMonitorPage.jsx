@@ -17,7 +17,8 @@ import { Play, Pencil, Copy, Trash2, Plus, ChevronDown, Globe, Info, Network, Al
 import { duplicateName } from '../utils/duplicateName.js'
 import DnsDetailModal from './DnsDetailModal.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
-import NotificationGroupSelect from './ui/NotificationGroupSelect.jsx'
+import NotifyChannels from './ui/NotifyChannels.jsx'
+import IntervalSlider from './ui/IntervalSlider.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 
@@ -27,10 +28,17 @@ import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS']
 
+// Kaydirma cubugu icin sirali aralik seti. DNS'in tabani 30 sn olabilir (tek sorgu ucuz);
+// Sayfa Hizi gibi agir turlerde taban bilincli olarak yuksek kalir.
 const INTERVALS = [
-  { value: 300,  labelKey: 'dns.interval5m'  },
-  { value: 900,  labelKey: 'dns.interval15m' },
-  { value: 3600, labelKey: 'dns.interval1h'  },
+  { value: 30,    labelKey: 'notify.iv30s' },
+  { value: 60,    labelKey: 'notify.iv1m'  },
+  { value: 300,   labelKey: 'notify.iv5m'  },
+  { value: 900,   labelKey: 'notify.iv15m' },
+  { value: 1800,  labelKey: 'notify.iv30m' },
+  { value: 3600,  labelKey: 'notify.iv1h'  },
+  { value: 43200, labelKey: 'notify.iv12h' },
+  { value: 86400, labelKey: 'notify.iv24h' },
 ]
 
 const REFRESH_INTERVAL = 60
@@ -46,7 +54,7 @@ const INFO_ITEMS = [
   { type: 'TTL',   descKey: 'dns.ttlExplain' },
 ]
 
-const emptyForm = { name: '', domain: '', recordType: 'A', intervalSeconds: 300, teamId: '', groupName: '', notificationGroupId: '', expectedValue: '', slowThresholdMs: '', propagationCheck: false, dnsChangeAlertEnabled: true, notifyWebhook: true, active: true }
+const emptyForm = { name: '', domain: '', recordType: 'A', intervalSeconds: 300, teamId: '', groupName: '', notificationGroupId: '', expectedValue: '', slowThresholdMs: '', propagationCheck: false, dnsChangeAlertEnabled: true, notifyEmail: true, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, notifyWebhook: true, active: true }
 
 function truncateValue(val, max = 50) {
   if (!val) return '—'
@@ -127,6 +135,10 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   // E-posta CTA deep-link: ?monitor=<id> → ilgili DNS monitörünün detayını aç (bir kez), paramı temizle.
   useMonitorDeepLink(monitors, setDetailMonitor)
 
+  // Ortak bildirim blogunun "kime gidecek" satiri icin hedef takim adi (HttpMonitorPage deseni).
+  const selectedTeamLabel = isAdmin
+    ? (teams.find(tm => String(tm.id) === String(form.teamId))?.name || t('app.noTeam'))
+    : (teamName || t('app.noTeam'))
   const teamSelectOptions = [{ value: '', label: t('app.noTeam') },
     ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))]
 
@@ -144,6 +156,9 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
       domain: m.domain || '',
       recordType: m.record_type,
       intervalSeconds: m.interval_seconds,
+      notifyEmail: m.notify_email !== false,
+      confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
+      recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
       teamId: m.team_id != null ? String(m.team_id) : '',
       groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
       expectedValue: m.expected_value || '',
@@ -182,6 +197,9 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
       name: (form.name || '').trim(),
       recordType: form.recordType,
       intervalSeconds: form.intervalSeconds,
+      notifyEmail: form.notifyEmail,
+      confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
+      recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
       expectedValue: (form.expectedValue || '').trim(),
       slowThresholdMs: form.slowThresholdMs === '' ? null : Number(form.slowThresholdMs),
       groupName: form.groupName?.trim() || null,
@@ -273,14 +291,26 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
     ...groupNames.map(g => ({ value: g, label: g })),
     ...(groupMonitors.some(m => !m.group_name) ? [{ value: '__none__', label: t('dns.noGroup') }] : [])]
 
-  const dnsCounts = {
-    total: monitors.length,
-    ok: monitors.filter(m => m.active !== false && !m.active_alarm).length,
-    alarm: monitors.filter(m => m.active_alarm).length,
-    unacked: monitors.filter(m => m.active_alarm && !m.alarm_acknowledged).length,
-    changed: monitors.filter(m => m.changed).length,
-    paused: monitors.filter(m => m.active === false).length,
-  }
+  // Takım + grup + arama kapsamı — istatistik kartlarının TABANI. statFilter BİLEREK dahil değil:
+  // kartlar aynı zamanda filtre düğmesi, statFilter'a göre sayılsalardı seçili olmayan her kart 0
+  // okur ve tıklanamaz hale gelirdi. (Kartlar ham `monitors`'dan sayılıyordu: kullanıcı bir takım
+  // seçince liste daralıyor ama kartlar küresel sayıyı göstermeye devam ediyordu — "alarm 5" tıkla,
+  // 2 sonuç gel. HttpMonitorPage deseni.)
+  const scoped = useMemo(() => monitors.filter(m => {
+    if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
+    if (!search.trim()) return true
+    const s = search.toLowerCase()
+    return m.domain?.toLowerCase().includes(s) || m.record_type?.toLowerCase().includes(s)
+  }), [monitors, teamFilter, groupFilter, search])
+
+  const dnsCounts = useMemo(() => ({
+    total: scoped.length,
+    ok: scoped.filter(m => m.active !== false && !m.active_alarm).length,
+    alarm: scoped.filter(m => m.active_alarm).length,
+    unacked: scoped.filter(m => m.active_alarm && !m.alarm_acknowledged).length,
+    changed: scoped.filter(m => m.changed).length,
+    paused: scoped.filter(m => m.active === false).length,
+  }), [scoped])
   const statItems = [
     { key: 'total',   Icon: Network,        label: t('dns.statTotal'),    value: dnsCounts.total,   cls: 'total'    },
     { key: 'ok',      Icon: Check,          label: t('dns.statOk'),       value: dnsCounts.ok,      cls: 'valid'    },
@@ -292,25 +322,27 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const onStatClick = (key) => setStatFilter(k => k === key ? null : key)
   const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }
 
-  const filtered = useMemo(() => monitors.filter(m => {
-    if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
-    if (statFilter && statFilter !== 'total') {
+  // Listelenen küme = kapsam + kart filtresi (takım/grup/arama zaten `scoped`'ta uygulandı).
+  const filtered = useMemo(() => {
+    if (!statFilter || statFilter === 'total') return scoped
+    return scoped.filter(m => {
       if (statFilter === 'alarm' && !m.active_alarm) return false
       if (statFilter === 'ok' && (m.active === false || m.active_alarm)) return false
       if (statFilter === 'unacked' && !(m.active_alarm && !m.alarm_acknowledged)) return false
       if (statFilter === 'changed' && !m.changed) return false
       if (statFilter === 'paused' && m.active !== false) return false
-    }
-    if (!search.trim()) return true
-    const s = search.toLowerCase()
-    return m.domain?.toLowerCase().includes(s) || m.record_type?.toLowerCase().includes(s)
-  }), [monitors, teamFilter, groupFilter, statFilter, search])
+      return true
+    })
+  }, [scoped, statFilter])
 
   // Değişiklik geçmişi `teamId` farkını ADA çevirebilsin — çıplak sayı okunmuyor.
   const teamNameById = useMemo(
     () => Object.fromEntries(teams.map(tm => [tm.id, tm.name])), [teams])
 
-  // Sayfalama filtrelenmiş listenin ÜZERİNE; sayaç/istatistikler tam listeden hesaplanmaya devam eder.
+  // Sayfalama filtrelenmiş listenin ÜZERİNE. İstatistik kartları ise KAPSAM listesinden
+  // (`scoped` = takım + grup + arama) sayılır; kart filtresi (statFilter) sayima GIRMEZ.
+  // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
+  // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(filtered, {
     listKey: 'dns-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
@@ -552,8 +584,12 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
                   placeholder={t('dns.noGroup')}
                 />
               </label>
-              <NotificationGroupSelect teamId={form.teamId} value={form.notificationGroupId}
-                onChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+              <NotifyChannels
+                notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+                onChange={patch => setForm(f => ({ ...f, ...patch }))}
+                teamLabel={selectedTeamLabel} teamId={form.teamId}
+                groupId={form.notificationGroupId}
+                onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
               <label>
                 <span>{t('dns.recordType')} <span className="req-star">*</span></span>
                 <SearchableSelect
@@ -562,14 +598,21 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
                   options={RECORD_TYPES.map(rt => ({ value: rt, label: rt }))}
                 />
               </label>
-              <label>
-                <span>{t('dns.interval')} <span className="req-star">*</span></span>
-                <SearchableSelect
-                  value={form.intervalSeconds}
-                  onChange={v => setForm(f => ({ ...f, intervalSeconds: Number(v) }))}
-                  options={INTERVALS.map(opt => ({ value: opt.value, label: t(opt.labelKey) }))}
-                />
-              </label>
+              <label><span>{t('verify.attempts')}</span>
+                <input type="number" min="0" max="10" value={form.confirmAttempts}
+                  onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} /></label>
+              <label><span>{t('verify.attemptEvery')}</span>
+                <input type="number" min="10" max="600" value={form.confirmIntervalSeconds}
+                  onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} /></label>
+              <label><span>{t('verify.recoveryChecks')}</span>
+                <input type="number" min="1" max="20" value={form.recoveryChecks}
+                  onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} /></label>
+              <label><span>{t('verify.recoveryEvery')}</span>
+                <input type="number" min="10" max="600" value={form.recoveryIntervalSeconds}
+                  onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} /></label>
+              <div className="full-width field-hint">ⓘ {t('verify.hint')}</div>
+              <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
+                onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
               <label>
                 <span>{t('dns.slowThresholdField')}</span>
                 <input
@@ -629,14 +672,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
                 {t('dns.propagationCheck')}
               </label>
               <span className="field-hint full-width dns-prop-hint">{t('dns.propagationHint')}</span>
-              <label className="checkbox-label full-width" title={t('userpush.monitorToggleHint')}>
-                <input
-                  type="checkbox"
-                  checked={form.notifyWebhook}
-                  onChange={e => setForm(f => ({ ...f, notifyWebhook: e.target.checked }))}
-                />
-                {t('userpush.monitorToggle')}
-              </label>
+
               <label className="checkbox-label">
                 <input
                   type="checkbox"

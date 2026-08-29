@@ -482,4 +482,134 @@ class UserPushServiceTest {
 
         assertThat(service.buildMessage(e, "OPEN", Map.of())).isEqualTo("YENİ ŞABLON example.com");
     }
+
+    // -- Giden istemci omru (O14) --------------------------------------------
+
+    @Test
+    @DisplayName("Istemci gonderim basina DEGIL bir kez kurulur - selector-thread/FD sizintisi kapisi")
+    void client_isReusedAcrossCalls() {
+        // Onceden her sendBatch yeni bir HttpClient kuruyor ve HIC kapatmiyordu: her JDK istemcisi
+        // kendi selector-thread'ini, baglanti havuzunu ve FD'lerini tutar.
+        Object a = org.springframework.test.util.ReflectionTestUtils.invokeMethod(service, "client");
+        Object b = org.springframework.test.util.ReflectionTestUtils.invokeMethod(service, "client");
+        assertThat(a).isNotNull();
+        assertThat(a).isSameAs(b);
+        // Guven baglami da her cagrida yeniden kurulmaz
+        verify(trustEvaluator, org.mockito.Mockito.times(1)).pinAwareOutboundSslContext(any(), any());
+    }
+
+    @Test
+    @DisplayName("connectTimeout ayari DEGISIRSE istemci yeniden kurulur (ayar canli okunur)")
+    void client_rebuiltWhenConnectTimeoutChanges() {
+        Object a = org.springframework.test.util.ReflectionTestUtils.invokeMethod(service, "client");
+        when(appSettings.getInt(eq("site.monitor.userpush.timeout-connect-seconds"), any(Integer.class)))
+                .thenReturn(9);
+        Object b = org.springframework.test.util.ReflectionTestUtils.invokeMethod(service, "client");
+        assertThat(b).isNotSameAs(a);
+    }
+
+    // -- A2: onay pop-up'i (kanal kanal haric tutma + onizleme) ---------------
+
+    @Test
+    @DisplayName("A2: onay ekraninda CIKARILAN sicile satir YAZILMAZ, digerleri gider")
+    void excludeUsernames_noRowForExcluded() {
+        when(alertEventRepo.findById(1L)).thenReturn(Optional.of(event(1L, "HIGH", "HTTP_DOWN")));
+        when(deliveryRepo.existsByAlertEventIdAndStatus(1L, "SKIPPED_MONITOR_OFF")).thenReturn(false);
+        recipients("N00001", "N00002", "N00003");
+
+        service.enqueueAlert(1L, "MANUAL", 5L, null, java.util.Set.of("N00002"));
+
+        var users = savedRows().stream().map(UserPushDelivery::getUsername).toList();
+        assertThat(users).contains("N00001", "N00003");
+        assertThat(users).doesNotContain("N00002");
+    }
+
+    @Test
+    @DisplayName("A2: TUM sicilller cikarilirsa alici kalmaz -> SKIPPED_NO_RECIPIENTS karar satiri")
+    void excludeUsernames_allExcluded_writesDecisionRow() {
+        when(alertEventRepo.findById(1L)).thenReturn(Optional.of(event(1L, "HIGH", "HTTP_DOWN")));
+        when(deliveryRepo.existsByAlertEventIdAndStatus(1L, "SKIPPED_MONITOR_OFF")).thenReturn(false);
+        recipients("N00001", "N00002");
+
+        service.enqueueAlert(1L, "MANUAL", 5L, null, java.util.Set.of("N00001", "N00002"));
+
+        assertThat(savedRows()).allSatisfy(r ->
+                assertThat(r.getStatus()).isEqualTo("SKIPPED_NO_RECIPIENTS"));
+    }
+
+    @Test
+    @DisplayName("A2: haric tutma VERILMEYEN eski imza davranisi DEGISMEZ (geriye uyum)")
+    void enqueueAlert_legacySignature_unchanged() {
+        when(alertEventRepo.findById(1L)).thenReturn(Optional.of(event(1L, "HIGH", "HTTP_DOWN")));
+        when(deliveryRepo.existsByAlertEventIdAndStatus(1L, "SKIPPED_MONITOR_OFF")).thenReturn(false);
+        recipients("N00001", "N00002");
+
+        service.enqueueAlert(1L, "MANUAL", 5L, null);
+
+        assertThat(savedRows().stream().map(UserPushDelivery::getUsername).toList())
+                .contains("N00001", "N00002");
+    }
+
+    @Test
+    @DisplayName("A2: onizleme alicilari ve durumlarini doner, HICBIR satir YAZMAZ")
+    void preview_listsRecipients_writesNothing() {
+        when(alertEventRepo.findById(1L)).thenReturn(Optional.of(event(1L, "HIGH", "HTTP_DOWN")));
+        when(deliveryRepo.existsByAlertEventIdAndStatus(1L, "SKIPPED_MONITOR_OFF")).thenReturn(false);
+        recipients("N00001", "N00002");
+
+        var p = service.preview(1L, 5L);
+
+        assertThat(p.channelEnabled()).isTrue();
+        assertThat(p.blockReason()).isNull();
+        assertThat(p.recipients()).extracting(UserPushService.PushPreviewRow::username)
+                .containsExactly("N00001", "N00002");
+        assertThat(p.recipients()).allSatisfy(r -> assertThat(r.status()).isEqualTo("PENDING"));
+        verify(deliveryRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("A2: onizleme kanal KAPALI oldugunu SEBEBIYLE soyler (sessiz 'gitmedi' yok)")
+    void preview_reportsBlockReason() {
+        when(appSettings.getBoolean(eq("site.monitor.userpush.enabled"), any(Boolean.class))).thenReturn(false);
+
+        var p = service.preview(1L, 5L);
+
+        assertThat(p.channelEnabled()).isFalse();
+        assertThat(p.blockReason()).isEqualTo("CHANNEL_DISABLED");
+        assertThat(p.recipients()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("A2: alici hic yoksa onizleme SKIPPED_NO_RECIPIENTS sebebini doner")
+    void preview_noRecipients_reportsReason() {
+        when(alertEventRepo.findById(1L)).thenReturn(Optional.of(event(1L, "HIGH", "HTTP_DOWN")));
+        when(deliveryRepo.existsByAlertEventIdAndStatus(1L, "SKIPPED_MONITOR_OFF")).thenReturn(false);
+        recipients();   // bos
+
+        var p = service.preview(1L, 5L);
+
+        assertThat(p.blockReason()).isEqualTo("SKIPPED_NO_RECIPIENTS");
+        verify(deliveryRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("A2: onizleme KANAL duzeyi reddi de bildirir (TAKIM kapali) - alici cozumune hic gitmez")
+    void preview_channelLevelBlock_reported() {
+        // Mutasyon turunda cikan bosluk: onceki testler yalnizca CHANNEL_DISABLED (erken donus) ve
+        // SKIPPED_NO_RECIPIENTS (gec donus) dallarini tutuyordu; ARADAKI katman matrisi kararini
+        // (tip/takim/izleme/sessiz saat) hicbir test pinlemiyordu. channelBlockReason cagrisi
+        // silinse bile suit yesil kaliyordu.
+        when(alertEventRepo.findById(1L)).thenReturn(Optional.of(event(1L, "HIGH", "HTTP_DOWN")));
+        when(deliveryRepo.existsByAlertEventIdAndStatus(1L, "SKIPPED_MONITOR_OFF")).thenReturn(false);
+        UserPushScope off = new UserPushScope();
+        off.setEnabled(false);
+        when(scopeRepo.findByScopeTypeAndScopeKey("TEAM", "5")).thenReturn(Optional.of(off));
+
+        var p = service.preview(1L, 5L);
+
+        assertThat(p.blockReason()).isEqualTo("SKIPPED_TEAM_OFF");
+        assertThat(p.recipients()).isEmpty();
+        verify(resolver, never()).resolve(any(), any());
+        verify(deliveryRepo, never()).save(any());
+    }
 }

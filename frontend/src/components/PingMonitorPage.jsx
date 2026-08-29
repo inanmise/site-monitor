@@ -9,7 +9,8 @@ import { useToast } from './ui/Toast.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
-import NotificationGroupSelect from './ui/NotificationGroupSelect.jsx'
+import NotifyChannels from './ui/NotifyChannels.jsx'
+import IntervalSlider from './ui/IntervalSlider.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import { X, RefreshCw, Plus, Trash2, Radio, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
@@ -34,20 +35,27 @@ const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
+// Ortak kaydirma cubugu seti (bkz. IntervalSlider). Ping tek ICMP paketi kadar ucuz,
+// taban 30 sn kalir; ust sinir digerleriyle hizalandi.
 const INTERVALS = [
-  { value: 30,  labelKey: 'ping.interval30s' },
-  { value: 60,  labelKey: 'ping.interval1m'  },
-  { value: 300, labelKey: 'ping.interval5m'  },
-  { value: 900, labelKey: 'ping.interval15m' },
+  { value: 30,    labelKey: 'notify.iv30s' },
+  { value: 60,    labelKey: 'notify.iv1m'  },
+  { value: 300,   labelKey: 'notify.iv5m'  },
+  { value: 900,   labelKey: 'notify.iv15m' },
+  { value: 1800,  labelKey: 'notify.iv30m' },
+  { value: 3600,  labelKey: 'notify.iv1h'  },
+  { value: 43200, labelKey: 'notify.iv12h' },
+  { value: 86400, labelKey: 'notify.iv24h' },
 ]
 const REFRESH_INTERVAL = 60
 const emptyForm = { name: '', host: '', ipVersion: 'auto', groupName: '', notificationGroupId: '', teamId: '',
-  intervalSeconds: 60, timeoutMs: 5000, packetCount: 4, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, notifyWebhook: true, active: true }
+  intervalSeconds: 60, timeoutMs: 5000, packetCount: 4, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, notifyEmail: true, notifyWebhook: true, active: true }
 
 export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
   const toast = useToast()
   const isAdmin = systemRole === 'ADMIN'
+  // Ortak bildirim blogunun hedef satiri icin takim adi (HttpMonitorPage deseni).
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'      // USER ve üstü: kendi takımı için oluştur/düzenle/kontrol
   const myTeam = teamId != null ? String(teamId) : null
@@ -66,6 +74,9 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const [changeNote, setChangeNote] = useState('')
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
+  const selectedTeamLabel = isAdmin
+    ? (teams.find(tm => String(tm.id) === String(form.teamId))?.name || t('app.noTeam'))
+    : (teamName || t('app.noTeam'))
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
   const [defaults, setDefaults] = useState(null)   // per-tip varsayılan aralık/timeout (Kontrol Sıklığı ayarı)
   const [saving, setSaving] = useState(false)
@@ -133,6 +144,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   function formFrom(m) {
     return { name: m.name || '', host: m.host || '', ipVersion: m.ip_version || 'auto', groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
       teamId: m.team_id != null ? String(m.team_id) : '', intervalSeconds: m.interval_seconds ?? 60,
+      notifyEmail: m.notify_email !== false,
       timeoutMs: m.timeout_ms ?? 5000, packetCount: m.packet_count ?? 4,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30, recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
       notifyWebhook: m.notify_webhook !== false, active: m.active !== false }
@@ -163,6 +175,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
       notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
         ? null : Number(form.notificationGroupId),
       teamId: form.teamId === '' ? null : Number(form.teamId), intervalSeconds: Number(form.intervalSeconds),
+      notifyEmail: form.notifyEmail,
       timeoutMs: Number(form.timeoutMs), packetCount: Number(form.packetCount),
       confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds), recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
       notifyWebhook: !!form.notifyWebhook, active: form.active,
@@ -262,7 +275,10 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
     return pred ? scoped.filter(pred) : scoped
   }, [scoped, statFilter])
 
-  // Sayfalama filtrelenmiş listenin ÜZERİNE; sayaç/istatistikler tam listeden hesaplanmaya devam eder.
+  // Sayfalama filtrelenmiş listenin ÜZERİNE. İstatistik kartları ise KAPSAM listesinden
+  // (`scoped` = takım + grup + arama) sayılır; kart filtresi (statFilter) sayima GIRMEZ.
+  // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
+  // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(displayMonitors, {
     listKey: 'ping-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
@@ -517,12 +533,14 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
                 <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
                   options={[{ value: '', label: t('ping.noGroup') }, ...groupSelectOptions]}
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('ping.noGroup')} /></label>
-              <NotificationGroupSelect teamId={form.teamId} value={form.notificationGroupId}
-                onChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
-              <label><span>{t('ping.interval')}</span>
-                <select value={form.intervalSeconds} onChange={e => setForm(f => ({ ...f, intervalSeconds: Number(e.target.value) }))}>
-                  {INTERVALS.map(o => <option key={o.value} value={o.value}>{t(o.labelKey)}</option>)}
-                </select></label>
+              <NotifyChannels
+                notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+                onChange={patch => setForm(f => ({ ...f, ...patch }))}
+                teamLabel={selectedTeamLabel} teamId={form.teamId}
+                groupId={form.notificationGroupId}
+                onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+              <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
+                onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
               <label><span>{t('ping.timeout')}</span>
                 <input type="number" value={form.timeoutMs} onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) }))} /></label>
               <label><span>{t('ping.confirmAttempts')}</span>
@@ -536,8 +554,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
               <div className="full-width" style={{ fontSize: '.8em', color: 'var(--text-muted)', marginTop: -2, lineHeight: 1.5 }}>
                 ⓘ {t('ping.confirmHint')}
               </div>
-              <label className="checkbox-label" title={t('userpush.monitorToggleHint')}>
-                <input type="checkbox" checked={form.notifyWebhook} onChange={e => setForm(f => ({ ...f, notifyWebhook: e.target.checked }))} />{t('userpush.monitorToggle')}</label>
+
               <label className="checkbox-label">
                 <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('ping.active')}</label>
             </div>
