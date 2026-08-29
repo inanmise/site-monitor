@@ -122,6 +122,22 @@ describe('CheckHistoryTab', () => {
     }
   })
 
+  it('Ozel Aralik uygulanmadan CSV baglantisi da days=custom URETMEZ (D20)', async () => {
+    // load() bu durumu guard'liyordu ama csvParams ham `preset` yaziyordu: kullanici
+    // "Ozel Aralik"i secip tarih uygulamadan CSV'ye basarsa `?days=custom` gidip backend
+    // 500 veriyordu. Ayni kuralin iki yuzu - ifade load() ile BIREBIR ayni olmali.
+    renderTab()
+    await screen.findByText('2026-08-07T10:00:00')
+
+    fireEvent.click(screen.getByRole('button', { name: /ozel aralik|özel aralık|custom range/i }))
+    await new Promise(r => setTimeout(r, 50))
+
+    const csvCalls = api.monitoring.getCheckHistoryCsvUrl.mock.calls
+    expect(csvCalls.length).toBeGreaterThan(0)
+    const params = csvCalls.at(-1)[2]
+    expect(params.days).toBeUndefined()   // 'custom' de degil, hic YOK
+  })
+
   it('server-side sayfalama: 120 kayıt / 50 → 3 sayfa; ileri gitmek page=1 ile istek atar', async () => {
     renderTab()
     await screen.findByText('2026-08-07T10:00:00')

@@ -68,7 +68,7 @@ class HstsDiagnosticsServiceTest {
         server.start();
 
         int port = server.getAddress().getPort();
-        HstsDiagnosticsService svc = new HstsDiagnosticsService(new ProxySettings());
+        HstsDiagnosticsService svc = new HstsDiagnosticsService(new ProxySettings(), permissiveGuard());
         ReflectionTestUtils.setField(svc, "timeoutSeconds", 5);
         return svc.diagnose("localhost", port);
     }
@@ -111,7 +111,7 @@ class HstsDiagnosticsServiceTest {
     @Test
     @DisplayName("diagnose: kapalı porta bağlanılamaz → CONNECT_FAILED + status=error")
     void diagnose_connectFailure_connectFailed() {
-        HstsDiagnosticsService svc = new HstsDiagnosticsService(new ProxySettings());
+        HstsDiagnosticsService svc = new HstsDiagnosticsService(new ProxySettings(), permissiveGuard());
         ReflectionTestUtils.setField(svc, "timeoutSeconds", 2);
 
         Map<String, Object> r = svc.diagnose("localhost", 1);   // 1 numaralı port kapalı
@@ -136,7 +136,7 @@ class HstsDiagnosticsServiceTest {
         ReflectionTestUtils.setField(proxy, "host", "proxy.example.com");
         ReflectionTestUtils.setField(proxy, "port", 8080);
         ReflectionTestUtils.setField(proxy, "noProxy", "");
-        HstsDiagnosticsService svc = new HstsDiagnosticsService(proxy);
+        HstsDiagnosticsService svc = new HstsDiagnosticsService(proxy, permissiveGuard());
         ReflectionTestUtils.setField(svc, "timeoutSeconds", 1);
 
         assertThat(svc.diagnose("hedef.example.com", 443, false).get("proxy_used")).isEqualTo(false);
@@ -150,7 +150,7 @@ class HstsDiagnosticsServiceTest {
         ReflectionTestUtils.setField(proxy, "host", "proxy.example.com");
         ReflectionTestUtils.setField(proxy, "port", 8080);
         ReflectionTestUtils.setField(proxy, "noProxy", "example.com");
-        HstsDiagnosticsService svc = new HstsDiagnosticsService(proxy);
+        HstsDiagnosticsService svc = new HstsDiagnosticsService(proxy, permissiveGuard());
         ReflectionTestUtils.setField(svc, "timeoutSeconds", 1);
 
         assertThat(svc.diagnose("hedef.example.com", 443, false).get("proxy_reason"))
@@ -178,5 +178,28 @@ class HstsDiagnosticsServiceTest {
                 new GeneralNames(new GeneralName(GeneralName.dNSName, "localhost")));
         ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA").build(kp.getPrivate());
         return new JcaX509CertificateConverter().getCertificate(builder.build(signer));
+    }
+
+    /** Testler 127.0.0.1'e baglanir -> SsrfGuard izin verici kurulur (loopback + ic ag acik);
+     *  metadata/link-local YINE bloklu. PortCheckerServiceTest ile ayni desen. */
+    private static SsrfGuard permissiveGuard() {
+        AppSettingsService s = org.mockito.Mockito.mock(AppSettingsService.class);
+        org.mockito.Mockito.when(s.getBoolean("site.monitor.monitoring.allow-loopback-targets", false)).thenReturn(true);
+        org.mockito.Mockito.when(s.getBoolean("site.monitor.monitoring.allow-internal-targets", true)).thenReturn(true);
+        return new SsrfGuard(s);
+    }
+
+    @Test
+    @DisplayName("SSRF: cloud-metadata hedefi baglanmadan ONCE reddedilir (CONNECT_FAILED)")
+    void diagnose_metadataTarget_blocked() {
+        // Bu tanilama HIC SsrfGuard cagirmiyordu ve sonucta sunucunun TUM yanit basliklarini
+        // (response_headers) kullaniciya gosteriyor - ic bir uca yonlendiren hedef uzerinden
+        // baslik sizdirmanin yoluydu. Guard izin verici kurulsa bile metadata HER ZAMAN bloklu.
+        HstsDiagnosticsService svc = new HstsDiagnosticsService(new ProxySettings(), permissiveGuard());
+        ReflectionTestUtils.setField(svc, "timeoutSeconds", 2);
+        Map<String, Object> r = svc.diagnose("169.254.169.254", 443, false);
+        assertThat(r.get("verdict")).isEqualTo("CONNECT_FAILED");
+        assertThat((String) r.get("error")).contains("cloud-metadata");
+        assertThat((java.util.List<?>) r.get("response_headers")).isEmpty();
     }
 }

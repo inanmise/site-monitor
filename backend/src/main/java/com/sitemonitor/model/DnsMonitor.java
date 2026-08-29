@@ -39,6 +39,34 @@ public class DnsMonitor {
     @Column(name = "team_id")
     private Long teamId;
 
+    /** Per-monitor teyit: alarm öncesi doğrulama denemesi sayısı (vars. 3; 0 = anında alarm).
+     *
+     *  <p>Bu tür bu alanları HİÇ taşımıyordu; davranış GLOBAL varsayılana
+     *  ({@code site.monitor.uptime.confirm-attempts}, 3) sabitliydi ve izleme bazında
+     *  ayarlanamıyordu. Diğer yedi türde bu soru formda soruluyor, burada sorulmuyordu.
+     *  Kolon sonradan eklendi → eski satırlar {@code null} taşır ve global varsayılana düşer,
+     *  yani mevcut izlemelerin davranışı DEĞİŞMEZ. */
+    @Column(name = "confirm_attempts")
+    private Integer confirmAttempts = 3;
+
+    /** Per-monitor teyit: denemeler arası saniye (vars. 30). */
+    @Column(name = "confirm_interval_seconds")
+    private Integer confirmIntervalSeconds = 30;
+
+    /** Kurtarma: alarmın otomatik kapanması için gereken ardışık BAŞARILI kontrol sayısı (vars. 3). */
+    @Column(name = "recovery_checks")
+    private Integer recoveryChecks = 3;
+
+    /** Kurtarma aktif re-check aralığı (sn). */
+    @Column(name = "recovery_interval_seconds")
+    private Integer recoveryIntervalSeconds = 30;
+
+    /** E-posta bildirimi açık mı (vars. true). {@code notifyWebhook} ile SİMETRİK: iki kanal
+     *  ayrı ayrı kapatılabilir. Kolon sonradan eklendiği için ESKİ satırlar {@code null} taşır ve
+     *  null-güvenli okuma sayesinde mail almaya devam eder — kimsenin maili sessizce kesilmez. */
+    @Column(name = "notify_email")
+    private Boolean notifyEmail = true;
+
     /** Kişi-webhook (push) bildirimi açık mı (vars. true — üst katmanlar zaten vars. KAPALI, çifte emniyet). */
     @Column(name = "notify_webhook")
     private Boolean notifyWebhook = true;

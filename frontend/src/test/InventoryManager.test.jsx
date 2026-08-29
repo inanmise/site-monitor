@@ -216,4 +216,44 @@ describe('InventoryManager', () => {
 
     await waitFor(() => expect(api.admin.deleteInventory).toHaveBeenCalledWith(1))
   })
+
+  // -- teams: turetilmis state senkronu (D22) ---------------------------------
+  // `useState(teamsProp)` prop'u state'e KOPYALIYOR; mount efekti prop'u senkronlamiyor,
+  // api.admin.getTeams() ile CEKIYOR ve yalniz canManage iken. Sonuc: yonetemeyen rollerde
+  // (AUDIT/USER) teams prop'un ILK degerinde donuyordu.
+  //
+  // DIKKAT - kosulsuz bir prop-senkron efekti YANLIS olurdu: canManage'de cekilen (takim-kapsamli)
+  // listeyi ezer, ustelik `teamsProp = []` varsayilani her parent render'inda yeni dizi kimligi
+  // oldugundan surekli tetiklenirdi. Senkron YALNIZ !canManage icin.
+
+  const rowNoTeamName = [{ id: 9, domain: 'takimsiz.example.com', port: 443, active: true, team_id: 7 }]
+
+  it('AUDIT: teams prop SONRADAN gelirse takim adi hucresi guncellenir', async () => {
+    api.admin.getInventory.mockResolvedValue({ success: true, data: rowNoTeamName })
+
+    const { rerender } = render(
+      <LangProvider><InventoryManager systemRole="AUDIT" teams={[]} /></LangProvider>)
+    await screen.findByText('takimsiz.example.com')
+    expect(screen.queryByText('Takim A')).toBeNull()
+
+    rerender(<LangProvider><InventoryManager systemRole="AUDIT" teams={[{ id: 7, name: 'Takim A' }]} /></LangProvider>)
+
+    expect(await screen.findByText('Takim A')).toBeInTheDocument()
+  })
+
+  it('ADMIN: CEKILEN takim listesi prop tarafindan EZILMEZ', async () => {
+    api.admin.getInventory.mockResolvedValue({ success: true, data: rowNoTeamName })
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 7, name: 'Cekilen' }] })
+
+    const { rerender } = render(
+      <LangProvider><InventoryManager systemRole="ADMIN" teams={[{ id: 7, name: 'Proptan' }]} /></LangProvider>)
+
+    expect(await screen.findByText('Cekilen')).toBeInTheDocument()
+
+    // Parent yeniden render edip prop'u tazeler (yeni dizi kimligi) -> cekilen liste KALMALI.
+    rerender(<LangProvider><InventoryManager systemRole="ADMIN" teams={[{ id: 7, name: 'Proptan' }]} /></LangProvider>)
+
+    await waitFor(() => expect(screen.getByText('Cekilen')).toBeInTheDocument())
+    expect(screen.queryByText('Proptan')).toBeNull()
+  })
 })

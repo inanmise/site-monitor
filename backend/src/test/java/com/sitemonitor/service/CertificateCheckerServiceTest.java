@@ -610,4 +610,48 @@ class CertificateCheckerServiceTest {
             throw new RuntimeException(e);
         }
     }
+
+    // -- Soket sizintisi simetrisi (D14) --------------------------------------
+
+    @Test
+    @DisplayName("connectFirstReachable: TEK-A/cozumlenmemis dalda baglanti hatasinda soket KAPATILIR")
+    void connectFirstReachable_singleAddressPath_closesSocketOnFailure() throws Exception {
+        // Cok-A dali hatada soketi kapatiyordu, bu dal kapatmiyordu. Asimetri gercek bir sizintiydi:
+        // ulasilamayan her hedef bir soket + FD birakiyordu ve bu yol tam da SUREKLI hata veren
+        // (cozumlenemeyen / tek-A) hedeflerin yolu. Tek pod'da FD tukenmesi gercek bir risk.
+        javax.net.ssl.SSLSocket sock = mock(javax.net.ssl.SSLSocket.class);
+        org.mockito.Mockito.doThrow(new java.io.IOException("Connection refused"))
+                .when(sock).connect(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyInt());
+        javax.net.ssl.SSLSocketFactory factory = mock(javax.net.ssl.SSLSocketFactory.class);
+        when(factory.createSocket()).thenReturn(sock);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                        service, "connectFirstReachable", factory, "example.com", 443, 1, null))
+                .hasRootCauseInstanceOf(java.io.IOException.class);   // ReflectionTestUtils kontrollu istisnayi sarar
+
+        verify(sock).close();
+    }
+
+    @Test
+    @DisplayName("connectFirstReachable: COK-A dalinda da her basarisiz deneme soketi kapatir")
+    void connectFirstReachable_multiAddressPath_closesEachSocket() throws Exception {
+        javax.net.ssl.SSLSocket s1 = mock(javax.net.ssl.SSLSocket.class);
+        javax.net.ssl.SSLSocket s2 = mock(javax.net.ssl.SSLSocket.class);
+        for (javax.net.ssl.SSLSocket s : new javax.net.ssl.SSLSocket[]{s1, s2}) {
+            org.mockito.Mockito.doThrow(new java.io.IOException("Connection refused"))
+                    .when(s).connect(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyInt());
+        }
+        javax.net.ssl.SSLSocketFactory factory = mock(javax.net.ssl.SSLSocketFactory.class);
+        when(factory.createSocket()).thenReturn(s1, s2);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                        service, "connectFirstReachable", factory, "example.com", 443, 1,
+                        java.util.List.of("192.0.2.1", "192.0.2.2")))
+                .hasRootCauseInstanceOf(java.io.IOException.class);   // ReflectionTestUtils kontrollu istisnayi sarar
+
+        verify(s1).close();
+        verify(s2).close();
+    }
 }

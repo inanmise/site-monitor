@@ -733,4 +733,83 @@ describe('AlertHistory — tema sözleşmesi', () => {
     expect(chip.classList.contains('tier-badge-2')).toBe(true)
     expect(chip.getAttribute('style')).toBeNull()
   })
+
+  it('Tekrar Bildir: webhook alicilari AYRI listelenir ve ayri cikarilabilir (A2)', async () => {
+    // Onceden onay ekrani yalniz mail alicilarini gosteriyordu; webhook kanalina kimin
+    // alacagi hic gorunmuyordu ve cikarilamiyordu.
+    api.admin.getAlerts.mockResolvedValue({
+      success: true,
+      data: [{ ...closedAlert, id: 301, resolved: false, acknowledged: false }],
+      total: 1, page: 0, size: 20,
+    })
+    api.admin.previewReNotify.mockResolvedValue({
+      success: true,
+      data: {
+        alert_id: 301,
+        recipients: [{ email: 'dijitalsy@example.com', name: 'SY-Dijital', role: null, kind: 'TEAM' }],
+        webhook: {
+          channel_enabled: true,
+          block_reason: null,
+          recipients: [
+            { username: 'N00001', display_name: 'Kisi Bir', status: 'PENDING' },
+            { username: 'N00002', display_name: 'Kisi Iki', status: 'PENDING' },
+            { username: 'N00003', display_name: 'Kisi Uc', status: 'RATE_LIMITED' },
+          ],
+        },
+      },
+    })
+    api.admin.reNotifyAlert.mockResolvedValue({ success: true, data: { recipients_queued: 1 } })
+
+    render(<AlertHistory />)
+    await waitFor(() => expect(screen.getByText('foo.example.com')).toBeDefined())
+    const card = document.querySelector('.alert-card')
+    fireEvent.click(Array.from(card.querySelectorAll('.alert-actions button'))
+      .find(b => /tekrar bildir|re-notify/i.test(b.textContent)))
+    await screen.findByText(/alıcıları onayla|confirm recipients/i)
+
+    // Her iki kanal da gorunur; gonderilemeyecek satir SEBEBIYLE ve PASIF cizilir
+    expect(screen.getByText('Kisi Bir')).toBeDefined()
+    expect(screen.getByText('RATE_LIMITED')).toBeDefined()
+    const modal = document.querySelector('.nl-modal')
+    const boxes = Array.from(modal.querySelectorAll('input[type="checkbox"]'))
+    expect(boxes.some(b => b.disabled)).toBe(true)          // RATE_LIMITED satiri secilemez
+    // 1 mail + 2 gonderilebilir webhook = 3
+    expect(screen.getByText(/3 alıcı seçili|3 recipients selected/i)).toBeDefined()
+
+    // Ikinci webhook alicisini cikar -> excludeUsernames tasinir, excludeEmails BOS kalir
+    fireEvent.click(screen.getByText('Kisi Iki'))
+    fireEvent.click(Array.from(modal.querySelectorAll('button'))
+      .find(b => /gönder|send/i.test(b.textContent)))
+
+    await waitFor(() => expect(api.admin.reNotifyAlert)
+      .toHaveBeenCalledWith(301, { excludeUsernames: ['N00002'] }))
+  })
+
+  it('Tekrar Bildir: webhook kanali kapaliysa SEBEBI gosterilir, mail yine gonderilebilir (A2)', async () => {
+    api.admin.getAlerts.mockResolvedValue({
+      success: true,
+      data: [{ ...closedAlert, id: 301, resolved: false, acknowledged: false }],
+      total: 1, page: 0, size: 20,
+    })
+    api.admin.previewReNotify.mockResolvedValue({
+      success: true,
+      data: {
+        alert_id: 301,
+        recipients: [{ email: 'dijitalsy@example.com', name: 'SY-Dijital', role: null, kind: 'TEAM' }],
+        webhook: { channel_enabled: true, block_reason: 'SKIPPED_TEAM_OFF', recipients: [] },
+      },
+    })
+    api.admin.reNotifyAlert.mockResolvedValue({ success: true, data: { recipients_queued: 1 } })
+
+    render(<AlertHistory />)
+    await waitFor(() => expect(screen.getByText('foo.example.com')).toBeDefined())
+    const card = document.querySelector('.alert-card')
+    fireEvent.click(Array.from(card.querySelectorAll('.alert-actions button'))
+      .find(b => /tekrar bildir|re-notify/i.test(b.textContent)))
+    await screen.findByText(/alıcıları onayla|confirm recipients/i)
+
+    expect(screen.getByText(/SKIPPED_TEAM_OFF/)).toBeDefined()
+    // Mail kanali etkilenmez: 1 alici secili, gonderim mumkun
+    expect(screen.getByText(/1 alıcı seçili|1 recipients selected/i)).toBeDefined()
+  })
 })

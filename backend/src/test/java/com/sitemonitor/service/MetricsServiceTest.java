@@ -84,4 +84,30 @@ class MetricsServiceTest {
 
         assertThat(service.getHistory()).hasSize(1440);
     }
+
+    // -- GC delta tabani (D19) -------------------------------------------------
+
+    @Test
+    @DisplayName("Ilk ornek TABAN kurar: gc_delta_ms 0 - JVM omru boyu birikmis GC DEGIL")
+    void sample_firstSample_gcDeltaIsZero() {
+        // lastGcMs 0'dan basladigi icin ilk nokta "son orneklemeden bu yana" yerine surecin
+        // acilisindan beri biriken toplam GC suresini gosteriyordu: grafigin ilk noktasi her
+        // acilista sahte bir sicrama ciziyordu.
+        MetricsService fresh = new MetricsService();
+        fresh.sample();
+
+        Object delta = fresh.getHistory().get(0).get("gc_delta_ms");
+        org.assertj.core.api.Assertions.assertThat(((Number) delta).longValue()).isZero();
+    }
+
+    @Test
+    @DisplayName("Sonraki ornekler gercek delta uretir (negatif olmaz)")
+    void sample_subsequentSamples_nonNegativeDelta() {
+        MetricsService fresh = new MetricsService();
+        fresh.sample();
+        fresh.sample();
+
+        Object delta = fresh.getHistory().get(1).get("gc_delta_ms");
+        org.assertj.core.api.Assertions.assertThat(((Number) delta).longValue()).isGreaterThanOrEqualTo(0L);
+    }
 }

@@ -92,7 +92,7 @@ class ExtendedHealthServiceTest {
         Map<String, Object> result = service.getSmtpStats();
 
         assertThat(result.get("alarm")).isEqualTo(false);
-        assertThat((Long) result.get("rate")).isEqualTo(100L);
+        assertThat(((Number) result.get("rate")).doubleValue()).isEqualTo(100.0);
     }
 
     @Test
@@ -105,7 +105,7 @@ class ExtendedHealthServiceTest {
         Map<String, Object> result = service.getSmtpStats();
 
         assertThat(result.get("alarm")).isEqualTo(false);
-        assertThat((Long) result.get("rate")).isEqualTo(100L);
+        assertThat(((Number) result.get("rate")).doubleValue()).isEqualTo(100.0);
     }
 
     @Test
@@ -130,7 +130,7 @@ class ExtendedHealthServiceTest {
         Map<String, Object> result = service.getSmtpStats();
 
         assertThat(result.get("alarm")).isEqualTo(false);
-        assertThat((Long) result.get("rate")).isEqualTo(96L);
+        assertThat(((Number) result.get("rate")).doubleValue()).isEqualTo(96.0);
     }
 
     @Test
@@ -143,7 +143,7 @@ class ExtendedHealthServiceTest {
         Map<String, Object> result = service.getSmtpStats();
 
         assertThat(result.get("alarm")).isEqualTo(true);
-        assertThat((Long) result.get("rate")).isEqualTo(94L);
+        assertThat(((Number) result.get("rate")).doubleValue()).isEqualTo(94.0);
     }
 
     @Test
@@ -157,7 +157,7 @@ class ExtendedHealthServiceTest {
         Map<String, Object> result = service.getSmtpStats();
 
         assertThat(result.get("alarm")).isEqualTo(false);
-        assertThat((Long) result.get("rate")).isEqualTo(100L);
+        assertThat(((Number) result.get("rate")).doubleValue()).isEqualTo(100.0);
         assertThat(result.get("total")).isEqualTo(10L);
         assertThat(result.get("attempted")).isEqualTo(5L);
     }
@@ -216,5 +216,51 @@ class ExtendedHealthServiceTest {
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).get("kind")).isEqualTo("SKIPPED");
+    }
+
+    // -- getSmtpStats: oran ONDALIGI (O15) -------------------------------------
+    // `Math.round(rate * 10) / 10L` TAMSAYI bolmesiydi: "*10 ... /10" ile hedeflenen tek ondalik
+    // aninda atiliyordu (96,7 -> 967/10L -> 96). Daha kotusu ekran ile alarm celisiyordu.
+
+    @Test
+    @DisplayName("SMTP orani tek ondalik korur - 967/1000 -> 96.7 (96 DEGIL)")
+    void getSmtpStats_keepsOneDecimal() {
+        when(notificationLogRepo.countAttemptedSince(anyString())).thenReturn(1000L);
+        when(notificationLogRepo.countSentSince(anyString())).thenReturn(967L);
+        when(notificationLogRepo.countAllSince(anyString())).thenReturn(1000L);
+
+        Map<String, Object> m = service.getSmtpStats();
+
+        assertThat(((Number) m.get("rate")).doubleValue()).isEqualTo(96.7);
+        assertThat(m.get("alarm")).isEqualTo(false);
+    }
+
+    @Test
+    @DisplayName("Ekran ile alarm CELISMEZ: rate 94.96 -> gosterilen deger 95'e cikmaz ve alarm ACIK")
+    void getSmtpStats_displayAgreesWithAlarm() {
+        // Alarm ham `rate < 95.0` uzerinden hesaplaniyor. Tamsayi bolmesi doneminde pano
+        // Math.round(949.6)=950/10L=95 gosterip "saglikli" gorunurken alarm ACIK oluyordu.
+        when(notificationLogRepo.countAttemptedSince(anyString())).thenReturn(10000L);
+        when(notificationLogRepo.countSentSince(anyString())).thenReturn(9496L);
+        when(notificationLogRepo.countAllSince(anyString())).thenReturn(10000L);
+
+        Map<String, Object> m = service.getSmtpStats();
+
+        assertThat(m.get("alarm")).isEqualTo(true);
+        // ASAGI yuvarlama sart: yukari yuvarlansaydi 94.96 -> 95.0 cikip alarmla CELISIRDI.
+        assertThat(((Number) m.get("rate")).doubleValue()).isEqualTo(94.9);
+    }
+
+    @Test
+    @DisplayName("Hic deneme yoksa oran 100 - tam sayi gibi cizilir, artefakt yok")
+    void getSmtpStats_noAttempts_isHundred() {
+        when(notificationLogRepo.countAttemptedSince(anyString())).thenReturn(0L);
+        when(notificationLogRepo.countSentSince(anyString())).thenReturn(0L);
+        when(notificationLogRepo.countAllSince(anyString())).thenReturn(0L);
+
+        Map<String, Object> m = service.getSmtpStats();
+
+        assertThat(((Number) m.get("rate")).doubleValue()).isEqualTo(100.0);
+        assertThat(m.get("alarm")).isEqualTo(false);
     }
 }

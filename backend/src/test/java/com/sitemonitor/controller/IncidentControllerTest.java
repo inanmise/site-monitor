@@ -240,4 +240,90 @@ class IncidentControllerTest {
         s.setAttribute("manageTeamIds", new java.util.ArrayList<Long>());
         return s;
     }
+
+    // -- POST /api/incidents/transfer takim kapsami (O9) ----------------------
+    // Bu uc yalniz incidents.manage istiyordu; o yetki USER'a acik oldugundan bir kullanici
+    // BASKA takimin olayini kendi takimina, ya da kendi olayini yabanci bir takima tasiyabiliyordu.
+    // Kardes uclar (update/delete/uploadImage) requireIncidentWrite kullaniyordu - burada eksikti.
+
+    private static IncidentRecord recOfTeam(Long id, Long teamId) {
+        IncidentRecord e = new IncidentRecord();
+        e.setId(id);
+        e.setTitle("kayit-" + id);
+        e.setTeamId(teamId);
+        return e;
+    }
+
+    private void allowManage() {
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class),
+                eq("incidents.manage"), eq("edit"))).thenReturn(true);
+    }
+
+    @Test
+    @DisplayName("transfer: KENDI takiminin kaydi, KENDI takimina -> 200")
+    void transfer_ownRecordOwnTeam_200() throws Exception {
+        allowManage();
+        when(service.get(1L)).thenReturn(recOfTeam(1L, 7L));
+        when(service.transfer(anyList(), eq(7L), any(), any())).thenReturn(1);
+
+        mvc.perform(post("/api/incidents/transfer").session(userSessionTeam(7L))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"ids\":[1],\"team_id\":7,\"team_name\":\"Takim A\"}"))
+                .andExpect(status().isOk());
+        verify(service).transfer(anyList(), eq(7L), any(), any());
+    }
+
+    @Test
+    @DisplayName("transfer: YABANCI takimin kaydi -> 403 ve HICBIR kayit tasinmaz")
+    void transfer_foreignRecord_403() throws Exception {
+        allowManage();
+        when(service.get(1L)).thenReturn(recOfTeam(1L, 99L));   // baska takimin olayi
+
+        mvc.perform(post("/api/incidents/transfer").session(userSessionTeam(7L))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"ids\":[1],\"team_id\":7,\"team_name\":\"Takim A\"}"))
+                .andExpect(status().isForbidden());
+        verify(service, never()).transfer(anyList(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("transfer: HEDEF takim kapsam disi -> 403 (kayit gorus alanindan cikarilamaz)")
+    void transfer_targetTeamOutOfScope_403() throws Exception {
+        allowManage();
+        when(service.get(1L)).thenReturn(recOfTeam(1L, 7L));    // kaynak kendi takimi
+
+        mvc.perform(post("/api/incidents/transfer").session(userSessionTeam(7L))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"ids\":[1],\"team_id\":42,\"team_name\":\"Takim B\"}"))
+                .andExpect(status().isForbidden());
+        verify(service, never()).transfer(anyList(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("transfer: KARISIK toplu secimde KISMI basari YOK - tek yetkisiz kayit hepsini durdurur")
+    void transfer_mixedBatch_allOrNothing() throws Exception {
+        allowManage();
+        when(service.get(1L)).thenReturn(recOfTeam(1L, 7L));    // kendi
+        when(service.get(2L)).thenReturn(recOfTeam(2L, 99L));   // yabanci
+
+        mvc.perform(post("/api/incidents/transfer").session(userSessionTeam(7L))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"ids\":[1,2],\"team_id\":7,\"team_name\":\"Takim A\"}"))
+                .andExpect(status().isForbidden());
+        verify(service, never()).transfer(anyList(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("transfer: global admin her takima tasiyabilir (davranis korunur)")
+    void transfer_admin_unrestricted() throws Exception {
+        allowManage();
+        when(service.get(1L)).thenReturn(recOfTeam(1L, 99L));
+        when(service.transfer(anyList(), eq(42L), any(), any())).thenReturn(1);
+
+        mvc.perform(post("/api/incidents/transfer").session(adminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"ids\":[1],\"team_id\":42,\"team_name\":\"Takim B\"}"))
+                .andExpect(status().isOk());
+        verify(service).transfer(anyList(), eq(42L), any(), any());
+    }
 }

@@ -326,7 +326,18 @@ public class ExtendedHealthService {
         long sent      = notificationLogRepo.countSentSince(cutoff);
         long total     = notificationLogRepo.countAllSince(cutoff);
         double rate    = attempted == 0 ? 100.0 : (sent * 100.0 / attempted);
-        long rateRounded = Math.round(rate * 10) / 10L;
+        // İKİ ayrı kusur vardı, ikisi de burada:
+        //
+        // 1) `/10L` TAMSAYI bölmesiydi — Math.round long döndürdüğü için "*10 … /10" ile hedeflenen
+        //    tek ondalık anında atılıyordu (96,7 → 967/10L → 96).
+        // 2) YUVARLAMA, ekranı alarmla çelişkiye düşürüyordu: alarm ham `rate < 95.0` üzerinden
+        //    hesaplanıyor, ama 94,96 yukarı yuvarlanınca pano "95" (sağlıklı) gösteriyordu. Bunu
+        //    ondalık eklemek TEK BAŞINA çözmez — 94,96 bir ondalıkla da 95,0'a yuvarlanır.
+        //
+        // Çözüm AŞAĞI yuvarlamak: gösterilen oran gerçek oranı ASLA olduğundan iyi göstermez, yani
+        // eşiği yukarı doğru geçemez. Projede aynı gerekçenin emsali var — WeeklyAvailabilityReport
+        // `pct >= 100 && up < total` iken 99.99 yazar: "tamamlanmamış olanı tam gösterme".
+        double rateRounded = Math.floor(rate * 10) / 10.0;
         boolean alarm  = attempted > 0 && rate < 95.0;
         Map<String, Object> p = new LinkedHashMap<>();
         p.put("total",     total);

@@ -10,11 +10,11 @@ import { useToast } from './ui/Toast.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
-import NotificationGroupSelect from './ui/NotificationGroupSelect.jsx'
+import NotifyChannels from './ui/NotifyChannels.jsx'
+import IntervalSlider from './ui/IntervalSlider.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { Play, Pencil, Copy, X, RefreshCw, Plug, Plus, Trash2, FlaskConical, AlertTriangle, Network, Check, Pause, ChevronDown, BellDot,
-  Mail, MessageSquare, Phone, Smartphone } from 'lucide-react'
+import { Play, Pencil, Copy, X, RefreshCw, Plug, Plus, Trash2, FlaskConical, AlertTriangle, Network, Check, Pause, ChevronDown, BellDot } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
@@ -278,14 +278,24 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     ...groupNames.map(g => ({ value: g, label: g })),
     ...(monitors.some(m => !m.group_name) ? [{ value: '__none__', label: t('port.noGroup') }] : [])]
 
-  const portCounts = {
-    total: monitors.length,
-    up: monitors.filter(m => m.status === 'open').length,
-    down: monitors.filter(m => m.status === 'closed').length,
-    alarm: monitors.filter(m => m.active_alarm).length,
-    unacked: monitors.filter(m => m.active_alarm && !m.alarm_acknowledged).length,
-    paused: monitors.filter(m => m.active === false).length,
-  }
+  // Takım + grup + arama kapsamı — istatistik kartlarının TABANI. statFilter BİLEREK dahil değil:
+  // kartlar aynı zamanda filtre düğmesi, statFilter'a göre sayılsalardı seçili olmayan her kart 0
+  // okur ve tıklanamaz hale gelirdi. (Kartlar ham `monitors`'dan sayılıyordu: kullanıcı bir takım
+  // seçince liste daralıyor ama kartlar küresel sayıyı göstermeye devam ediyordu. HttpMonitorPage deseni.)
+  const scoped = useMemo(() => monitors.filter(m => {
+    if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
+    if (!search.trim()) return true
+    return m.host.toLowerCase().includes(search.trim().toLowerCase())
+  }), [monitors, teamFilter, groupFilter, search])
+
+  const portCounts = useMemo(() => ({
+    total: scoped.length,
+    up: scoped.filter(m => m.status === 'open').length,
+    down: scoped.filter(m => m.status === 'closed').length,
+    alarm: scoped.filter(m => m.active_alarm).length,
+    unacked: scoped.filter(m => m.active_alarm && !m.alarm_acknowledged).length,
+    paused: scoped.filter(m => m.active === false).length,
+  }), [scoped])
   const statItems = [
     { key: 'total',   Icon: Network,       label: t('port.statTotal'),    value: portCounts.total,   cls: 'total'    },
     { key: 'up',      Icon: Check,         label: t('port.statUp'),       value: portCounts.up,      cls: 'valid'    },
@@ -300,20 +310,23 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   // Geçmiş sayfalaması (DNS ile aynı 50/100/200)
   // Geçmiş modalı sayfalaması — 30 sn modal yenilemesi history referansını değiştirir; sayfa korunur.
 
-  const displayMonitors = useMemo(() => monitors.filter(m => {
-    if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
-    if (statFilter && statFilter !== 'total') {
+  // Listelenen küme = kapsam + kart filtresi (takım/grup/arama zaten `scoped`'ta uygulandı).
+  const displayMonitors = useMemo(() => {
+    if (!statFilter || statFilter === 'total') return scoped
+    return scoped.filter(m => {
       if (statFilter === 'up' && m.status !== 'open') return false
       if (statFilter === 'down' && m.status !== 'closed') return false
       if (statFilter === 'alarm' && !m.active_alarm) return false
       if (statFilter === 'unacked' && !(m.active_alarm && !m.alarm_acknowledged)) return false
       if (statFilter === 'paused' && m.active !== false) return false
-    }
-    if (!search.trim()) return true
-    return m.host.toLowerCase().includes(search.trim().toLowerCase())
-  }), [monitors, teamFilter, groupFilter, statFilter, search])
+      return true
+    })
+  }, [scoped, statFilter])
 
-  // Sayfalama filtrelenmiş listenin ÜZERİNE; sayaç/istatistikler tam listeden hesaplanmaya devam eder.
+  // Sayfalama filtrelenmiş listenin ÜZERİNE. İstatistik kartları ise KAPSAM listesinden
+  // (`scoped` = takım + grup + arama) sayılır; kart filtresi (statFilter) sayima GIRMEZ.
+  // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
+  // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(displayMonitors, {
     listKey: 'port-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
@@ -349,7 +362,6 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const selectedTeamLabel = isAdmin
     ? (teams.find(tm => String(tm.id) === String(form.teamId))?.name || t('app.noTeam'))
     : (teamName || t('app.noTeam'))
-  const ivIdx = intervalIdx(Number(form.intervalSeconds))
 
   return (
     <div className="mon-page">
@@ -625,8 +637,14 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
                 <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
                   options={[{ value: '', label: t('port.noGroup') }, ...groupSelectOptions]}
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('port.noGroup')} /></label>
-              <NotificationGroupSelect teamId={form.teamId} value={form.notificationGroupId}
-                onChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+              <NotifyChannels
+                notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+                onChange={patch => setForm(f => ({ ...f, ...patch }))}
+                teamLabel={selectedTeamLabel} teamId={form.teamId}
+                groupId={form.notificationGroupId}
+                onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+              <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
+                onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
               {/* Etiketler */}
               <div className="full-width port-tags-block">
                 <div className="port-block-title">{t('port.tagsTitle')}</div>
@@ -634,37 +652,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
                 <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('port.tagsPlaceholder')} />
               </div>
 
-              {/* Bildirimler */}
-              <div className="full-width port-notify-section">
-                <div className="port-block-title">{t('port.notifyTitle')}</div>
-                <div className="field-hint" style={{ marginBottom: 8 }}>{t('port.notifyInfo').replace('{0}', selectedTeamLabel)}</div>
-                <div className="port-channels">
-                  <label className="port-channel">
-                    <input type="checkbox" checked={form.notifyEmail} onChange={e => setForm(f => ({ ...f, notifyEmail: e.target.checked }))} />
-                    <Mail size={14} /><span>{t('port.chEmail')}</span>
-                    <span className="port-ch-target">{selectedTeamLabel}</span>
-                  </label>
-                  <label className="port-channel port-channel--disabled" title={t('port.soonHint')}>
-                    <input type="checkbox" disabled /><MessageSquare size={14} /><span>{t('port.chSms')}</span><span className="port-ch-soon">{t('port.soon')}</span></label>
-                  <label className="port-channel port-channel--disabled" title={t('port.soonHint')}>
-                    <input type="checkbox" disabled /><Phone size={14} /><span>{t('port.chVoice')}</span><span className="port-ch-soon">{t('port.soon')}</span></label>
-                  <label className="port-channel port-channel--disabled" title={t('port.soonHint')}>
-                    <input type="checkbox" checked={form.notifyWebhook} onChange={e => setForm(f => ({ ...f, notifyWebhook: e.target.checked }))} /><Smartphone size={14} /><span>{t('userpush.monitorToggle')}</span></label>
-                </div>
-              </div>
 
-              {/* Kontrol aralığı — kaydırmalı çubuk */}
-              <div className="full-width port-interval-block">
-                <div className="port-block-title">{t('port.intervalTitle')}</div>
-                <div className="field-hint" style={{ marginBottom: 8 }}>{t('port.intervalEvery').replace('{0}', t(INTERVALS[ivIdx].labelKey))}</div>
-                <input type="range" className="port-interval-slider" min={0} max={INTERVALS.length - 1} step={1}
-                  value={ivIdx} onChange={e => setForm(f => ({ ...f, intervalSeconds: INTERVALS[Number(e.target.value)].value }))} />
-                <div className="port-interval-ticks">
-                  {INTERVALS.map((o, j) => (
-                    <span key={o.value} className={`port-interval-tick${j === ivIdx ? ' active' : ''}`}>{t(o.labelKey)}</span>
-                  ))}
-                </div>
-              </div>
 
               {/* IP sürümü */}
               <label><span>{t('port.ipVersion')}</span>

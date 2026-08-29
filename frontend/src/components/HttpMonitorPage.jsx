@@ -9,10 +9,11 @@ import { useToast } from './ui/Toast.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
-import NotificationGroupSelect from './ui/NotificationGroupSelect.jsx'
+import NotifyChannels from './ui/NotifyChannels.jsx'
+import IntervalSlider from './ui/IntervalSlider.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { X, RefreshCw, Plus, Trash2, Globe, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ShieldCheck, Mail, MessageSquare, Phone, Smartphone } from 'lucide-react'
+import { X, RefreshCw, Plus, Trash2, Globe, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ShieldCheck } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { normalizeUrl } from '../utils/normalizeUrl.js'
 import { usePagination } from '../hooks/usePagination.js'
@@ -287,7 +288,10 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
     return pred ? scoped.filter(pred) : scoped
   }, [scoped, statFilter])
 
-  // Sayfalama filtrelenmiş listenin ÜZERİNE; sayaç/istatistikler tam listeden hesaplanmaya devam eder.
+  // Sayfalama filtrelenmiş listenin ÜZERİNE. İstatistik kartları ise KAPSAM listesinden
+  // (`scoped` = takım + grup + arama) sayılır; kart filtresi (statFilter) sayima GIRMEZ.
+  // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
+  // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(displayMonitors, {
     listKey: 'http-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
@@ -338,7 +342,6 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
   const selectedTeamLabel = isAdmin
     ? (teams.find(tm => String(tm.id) === String(form.teamId))?.name || t('http.noTeam'))
     : (teamName || t('http.noTeam'))
-  const ivIdx = intervalIdx(Number(form.intervalSeconds))
 
   return (
     <div className="upt-page">
@@ -560,8 +563,14 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
                 <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
                   options={[{ value: '', label: t('http.noGroup') }, ...groupSelectOptions]}
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('http.noGroup')} /></label>
-              <NotificationGroupSelect teamId={form.teamId} value={form.notificationGroupId}
-                onChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+              <NotifyChannels
+                notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+                onChange={patch => setForm(f => ({ ...f, ...patch }))}
+                teamLabel={selectedTeamLabel} teamId={form.teamId}
+                groupId={form.notificationGroupId}
+                onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+              <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
+                onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
               <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('http.groupInfo')}</div>
 
               {/* Etiketler */}
@@ -571,38 +580,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
                 <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('http.tagsPlaceholder')} />
               </div>
 
-              {/* Bildirimler */}
-              <div className="full-width http-notify-section">
-                <div className="http-block-title">{t('http.notifyTitle')}</div>
-                <div className="field-hint" style={{ marginBottom: 8 }}>{t('http.notifyInfo').replace('{0}', selectedTeamLabel)}</div>
-                <div className="http-channels">
-                  <label className="http-channel">
-                    <input type="checkbox" checked={form.notifyEmail} onChange={e => setForm(f => ({ ...f, notifyEmail: e.target.checked }))} />
-                    <Mail size={14} /><span>{t('http.chEmail')}</span>
-                    <span className="http-ch-target">{selectedTeamLabel}</span>
-                  </label>
-                  <label className="http-channel http-channel--disabled" title={t('http.soonHint')}>
-                    <input type="checkbox" disabled /><MessageSquare size={14} /><span>{t('http.chSms')}</span><span className="http-ch-soon">{t('http.soon')}</span></label>
-                  <label className="http-channel http-channel--disabled" title={t('http.soonHint')}>
-                    <input type="checkbox" disabled /><Phone size={14} /><span>{t('http.chVoice')}</span><span className="http-ch-soon">{t('http.soon')}</span></label>
-                  <label className="http-channel" title={t('userpush.monitorToggleHint')}>
-                    <input type="checkbox" checked={form.notifyWebhook} onChange={e => setForm(f => ({ ...f, notifyWebhook: e.target.checked }))} />
-                    <Smartphone size={14} /><span>{t('userpush.monitorToggle')}</span></label>
-                </div>
-              </div>
 
-              {/* Kontrol aralığı — kaydırmalı çubuk */}
-              <div className="full-width http-interval-block">
-                <div className="http-block-title">{t('http.intervalTitle')}</div>
-                <div className="field-hint" style={{ marginBottom: 8 }}>{t('http.intervalEvery').replace('{0}', t(INTERVALS[ivIdx].labelKey))}</div>
-                <input type="range" className="http-interval-slider" min={0} max={INTERVALS.length - 1} step={1}
-                  value={ivIdx} onChange={e => setForm(f => ({ ...f, intervalSeconds: INTERVALS[Number(e.target.value)].value }))} />
-                <div className="http-interval-ticks">
-                  {INTERVALS.map((o, j) => (
-                    <span key={o.value} className={`http-interval-tick${j === ivIdx ? ' active' : ''}`}>{t(o.labelKey)}</span>
-                  ))}
-                </div>
-              </div>
 
               {/* SSL + Domain kontrolleri */}
               <div className="full-width http-ssl-section">

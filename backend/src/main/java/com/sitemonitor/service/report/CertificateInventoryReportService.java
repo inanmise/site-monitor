@@ -259,8 +259,13 @@ public class CertificateInventoryReportService {
         LocalDate today = LocalDate.now(IST);
         int year = today.getYear(), month = today.getMonthValue();
 
-        if (!force && logRepo.findByReportYearAndMonthNo(year, month).isPresent()) {
-            log.info("Aylık envanter raporu {}-{} için zaten gönderilmiş — atlanıyor", year, month);
+        // İdempotenslik AY değil GÜN bazlıdır. Guard'ın amacı çok-pod'da kilit kaçarsa ikinci
+        // mailin gitmemesi (aynı dakikada iki tetik = aynı gün); "bu ay bir kez" DEĞİL.
+        // Ay bazlı olduğu sürece ay içinde yapılan MANUEL bir gönderim, ayın SON CUMA'sındaki
+        // planlı gönderimi sessizce iptal ediyordu — oysa son cuma raporu ayın kapanış hâlidir
+        // ve her koşulda gitmelidir. Tek satırlık (yıl, ay) şeması korunur; ayrım sentAt'ten gelir.
+        if (!force && sentToday(year, month)) {
+            log.info("Aylık envanter raporu {}-{} BUGÜN zaten gönderilmiş — atlanıyor", year, month);
             return new SendResult("ALREADY_SENT", 0, 0, new String[0], null);
         }
 
@@ -372,6 +377,29 @@ public class CertificateInventoryReportService {
     }
 
     // ── Kayıt ────────────────────────────────────────────────────────────────
+
+    /**
+     * Bu ayın rapor satırı BUGÜN (Europe/Istanbul) mü damgalanmış?
+     *
+     * <p>{@code sentAt} UTC yazılıyor ({@code UTC_ISO}, ofset son eki YOK) ama cron IST'e göre
+     * koşuyor; karşılaştırma IST gününde yapılmazsa gece yarısına yakın gönderimler yanlış güne
+     * düşer. Ayrıştırılamayan bir damga gönderimi ENGELLEMEZ — guard bir kolaylık, kapı değil.
+     */
+    private boolean sentToday(int year, int month) {
+        return logRepo.findByReportYearAndMonthNo(year, month)
+                .map(CertInventoryReportLog::getSentAt)
+                .filter(v -> v != null && !v.isBlank())
+                .map(v -> {
+                    try {
+                        return java.time.LocalDateTime.parse(v)
+                                .atZone(ZoneOffset.UTC).withZoneSameInstant(IST).toLocalDate()
+                                .equals(LocalDate.now(IST));
+                    } catch (Exception e) {
+                        return false;
+                    }
+                })
+                .orElse(false);
+    }
 
     private void record(int year, int month, String status, Built built, String recipients) {
         try {

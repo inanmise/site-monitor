@@ -24,6 +24,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
@@ -160,5 +161,68 @@ class CertificateInventoryReportServiceTest {
     @DisplayName("nextRuns() ayın son cumalarını sırayla verir")
     void nextRunsListsUpcomingOccurrences() {
         assertThat(service.nextRuns(3)).hasSize(3);
+    }
+
+    // -- A4: son cuma garantisi (idempotenslik AY degil GUN bazli) ------------
+    // Guard'in amaci cok-pod'da kilit kacarsa ikinci mailin gitmemesi. Ay bazli oldugu surece
+    // ay icinde yapilan MANUEL bir gonderim, ayin SON CUMA'sindaki planli gonderimi sessizce
+    // iptal ediyordu -- oysa son cuma raporu ayin kapanis halidir ve her kosulda gitmelidir.
+
+    private com.sitemonitor.model.CertInventoryReportLog logRow(String sentAtUtc) {
+        var l = new com.sitemonitor.model.CertInventoryReportLog();
+        l.setReportYear(java.time.LocalDate.now(java.time.ZoneId.of("Europe/Istanbul")).getYear());
+        l.setMonthNo(java.time.LocalDate.now(java.time.ZoneId.of("Europe/Istanbul")).getMonthValue());
+        l.setSentAt(sentAtUtc);
+        return l;
+    }
+
+    @Test
+    @DisplayName("A4: AY ICINDE gonderilmis olsa da (dun) planli calisma GONDERIR")
+    void sendMonthlyReport_sentEarlierThisMonth_stillSends() {
+        when(appSettings.getBoolean(eq(CertificateInventoryReportService.ENABLED_KEY),
+                org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(true);
+        // build() yolunun kosabilmesi icin en az bu iki mock gerekli; testin ILGISI
+        // guard'in gecilip gecilmedigi, rapor icerigi degil.
+        when(hygieneService.analyze(any()))
+                .thenReturn(new InventoryHygieneService.Result(List.of(), 0));
+        when(hygieneService.counts(any())).thenReturn(java.util.Map.of());
+        // Dun UTC olarak damgalanmis bir satir: ay ayni, GUN farkli -> atlanmamali.
+        String yesterday = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusDays(1)
+                .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
+        when(logRepo.findByReportYearAndMonthNo(anyInt(), anyInt()))
+                .thenReturn(java.util.Optional.of(logRow(yesterday)));
+
+        var r = service.sendMonthlyReport(false);
+
+        assertThat(r.status()).isNotEqualTo("ALREADY_SENT");
+    }
+
+    @Test
+    @DisplayName("A4: AYNI GUN ikinci tetik GONDERMEZ (kilit kacsa bile tek mail)")
+    void sendMonthlyReport_sameDay_skips() {
+        when(appSettings.getBoolean(eq(CertificateInventoryReportService.ENABLED_KEY),
+                org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(true);
+        String today = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC)
+                .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
+        when(logRepo.findByReportYearAndMonthNo(anyInt(), anyInt()))
+                .thenReturn(java.util.Optional.of(logRow(today)));
+
+        assertThat(service.sendMonthlyReport(false).status()).isEqualTo("ALREADY_SENT");
+    }
+
+    @Test
+    @DisplayName("A4: AYRISTIRILAMAYAN damga gonderimi ENGELLEMEZ (guard kapi degil kolaylik)")
+    void sendMonthlyReport_unparsableStamp_stillSends() {
+        when(appSettings.getBoolean(eq(CertificateInventoryReportService.ENABLED_KEY),
+                org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(true);
+        // build() yolunun kosabilmesi icin en az bu iki mock gerekli; testin ILGISI
+        // guard'in gecilip gecilmedigi, rapor icerigi degil.
+        when(hygieneService.analyze(any()))
+                .thenReturn(new InventoryHygieneService.Result(List.of(), 0));
+        when(hygieneService.counts(any())).thenReturn(java.util.Map.of());
+        when(logRepo.findByReportYearAndMonthNo(anyInt(), anyInt()))
+                .thenReturn(java.util.Optional.of(logRow("bozuk-damga")));
+
+        assertThat(service.sendMonthlyReport(false).status()).isNotEqualTo("ALREADY_SENT");
     }
 }

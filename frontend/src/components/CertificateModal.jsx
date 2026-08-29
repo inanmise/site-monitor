@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, lazy, Suspense } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useDialog } from './ui/Dialog.jsx'
+import { useToast } from './ui/Toast.jsx'
 import UserBadge from './ui/UserBadge.jsx'
 import { Trash2, Globe, X, Pencil, Clock, User, History, Undo2, Stethoscope } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory'
@@ -363,6 +364,8 @@ function NotesTab({ domain, t, currentUser, isAdmin }) {
 
 export default function CertificateModal({ domain, alertLevel, onClose, initialData, previewMode, currentUser, currentUserRole }) {
   const t = useT()
+  const toast = useToast()
+  const { showConfirm } = useDialog()
   const [certData, setCertData]       = useState(null)
   // O3/D12: modal kalıcı mount'lu, yalnız domain prop'u değişiyor — uçuşan yanıt guard'ları
   // "istek anındaki domain hâlâ ekranda mı" sorusunu bu ref'ten okur (her render'da tazelenir).
@@ -374,6 +377,10 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   const [showDiag, setShowDiag]       = useState(false)
   const isAdmin = currentUserRole === 'ADMIN' || currentUserRole === 'TEAM_ADMIN'
   const canViewInventory = usePermissions().canView('inventory.list')
+  // Silme yetkisi backend'deki kapinin AYNISI: inventory.crud/edit (uc ayrica takim kapsami arar).
+  // Yetkisi olmayana dugme HIC cizilmez — gorunup 403 vermek kullaniciyi bosuna umutlandirir.
+  const canDeleteCert = usePermissions().canEdit('inventory.crud')
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     if (!domain) return
@@ -422,6 +429,27 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
 
   if (!domain) return null
 
+  // Sertifikayi envanterden sil — YENI uc YOK, mevcut DELETE /admin/inventory/{id} cagrilir:
+  // denetim kaydi, soft-delete ve acik alarmlarin kapatilmasi kendiliginden miras kalir.
+  async function deleteCertificate() {
+    const ok = await showConfirm({
+      title: t('inv.deleteTitle'),
+      message: t('inv.deleteMsg', domain),
+      confirmText: t('inv.deleteConfirm'),
+      cancelText: t('inv.deleteCancel'),
+      variant: 'danger',
+    })
+    if (!ok) return
+    setDeleting(true)
+    const found = await api.admin.getInventoryByDomain(domain)
+    const id = found?.success ? found.data?.id : null
+    if (!id) { setDeleting(false); toast.error(t('inv.deleteNotFound')); return }
+    const res = await api.admin.deleteInventory(id)
+    setDeleting(false)
+    if (res?.success) { toast.success(t('inv.deleted')); onClose?.({ deleted: true, domain }) }
+    else toast.error(res?.error || t('inv.deleteError'))
+  }
+
   const d = certData
 
   return (
@@ -436,6 +464,12 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
             {!previewMode && isAdmin && (
               <button className="modal-header-diag-btn" onClick={() => setShowDiag(true)} title={t('inv.diagnose')}>
                 <Stethoscope size={13} /> {t('inv.diagnose')}
+              </button>
+            )}
+            {!previewMode && canDeleteCert && (
+              <button className="modal-header-diag-btn" onClick={deleteCertificate}
+                disabled={deleting} title={t('inv.delete')}>
+                <Trash2 size={13} /> {t('inv.delete')}
               </button>
             )}
           </div>

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from './test-utils.jsx'
+import { render, screen, waitFor, fireEvent } from './test-utils.jsx'
 import userEvent from '@testing-library/user-event'
 
 /**
@@ -34,6 +34,7 @@ vi.mock('../api/client', () => ({
       addNote:      vi.fn().mockResolvedValue({ success: true, data: {} }),
       updateNote:   vi.fn().mockResolvedValue({ success: true, data: {} }),
       deleteNote:   vi.fn().mockResolvedValue({ success: true }),
+      deleteInventory: vi.fn().mockResolvedValue({ success: true }),
       getNoteRevisions: vi.fn().mockResolvedValue({ success: true, data: [] }),
       restoreNote:  vi.fn().mockResolvedValue({ success: true, data: {} }),
       getAlerts:    vi.fn().mockResolvedValue({ success: true, data: [], pagination: { totalPages: 0 } }),
@@ -41,6 +42,9 @@ vi.mock('../api/client', () => ({
       resolveAlert: vi.fn().mockResolvedValue({ success: true }),
       reNotify:     vi.fn().mockResolvedValue({ success: true }),
       getInventoryByDomain: vi.fn().mockResolvedValue({ success: true, data: {
+        // id URETIMDE de doner (CertificateInventory entity'si serilestiriliyor); silme
+        // akisi bunu kullaniyor. Fixture uretimin GERCEGINI yansitmali.
+        id: 77,
         domain: 'example.com', port: 443, tier: 2, team_name: 'Team X', tls_mode: '',
         purchased_by: 'ACME-Buyer', external_vendor: true, action_required: false,
         openshift: false, ssl_pinning: false, internal_cert: false, jks_keystore: false,
@@ -59,6 +63,7 @@ vi.mock('../contexts/PermissionsProvider.jsx', () => ({
   usePermissions: () => ({ canView: () => true, canEdit: () => true, canExecute: () => true, perms: {} }),
 }))
 
+import { api } from '../api/client'
 import CertificateModal from '../components/CertificateModal.jsx'
 
 describe('CertificateModal', () => {
@@ -215,5 +220,42 @@ describe('CertificateModal — tüm sekmeler açılır', () => {
     await user.click(tabs[0])
 
     expect(document.querySelector('.modal-tab.active')).toBeTruthy()
+  })
+
+  // -- A5: sertifika silme (dashboard karti) --------------------------------
+  // Modal'da tek silme akisi NOT silmekti; sertifikanin kendisi buradan silinemiyordu.
+  // Yeni dugme YENI uc acmaz: mevcut DELETE /admin/inventory/{id} cagrilir, boylece denetim
+  // kaydi + soft-delete + acik alarmlarin kapatilmasi kendiliginden miras kalir.
+
+  it('A5: silme yetkisi VARSA sil dugmesi cizilir ve onay sonrasi mevcut ucu cagirir', async () => {
+    api.admin.deleteInventory = vi.fn().mockResolvedValue({ success: true })
+    const onClose = vi.fn()
+    render(
+      <CertificateModal domain="example.com" onClose={onClose}
+        currentUser="admin" currentUserRole="ADMIN" />
+    )
+    const btn = await screen.findByTitle(/^sil$|^delete$/i)
+    fireEvent.click(btn)
+
+    // Onay diyalogu: onayla. Baslik dugmesi de ayni ada sahip (title="Sil") -> SON eslesme
+    // diyalogun onay dugmesidir (diyalog sonradan aciliyor).
+    await screen.findByText(/domain sil|delete domain/i)
+    fireEvent.click(screen.getAllByRole('button', { name: /^sil$|^delete$/i }).at(-1))
+
+    await waitFor(() => expect(api.admin.getInventoryByDomain).toHaveBeenCalledWith('example.com'))
+    await waitFor(() => expect(api.admin.deleteInventory).toHaveBeenCalled())
+  })
+
+  it('A5: onay IPTAL edilirse silme ucu HIC cagrilmaz', async () => {
+    api.admin.deleteInventory = vi.fn().mockResolvedValue({ success: true })
+    render(
+      <CertificateModal domain="example.com" onClose={() => {}}
+        currentUser="admin" currentUserRole="ADMIN" />
+    )
+    fireEvent.click(await screen.findByTitle(/^sil$|^delete$/i))
+    fireEvent.click(await screen.findByRole('button', { name: /vazgeç|cancel/i }))
+
+    await new Promise(r => setTimeout(r, 30))
+    expect(api.admin.deleteInventory).not.toHaveBeenCalled()
   })
 })

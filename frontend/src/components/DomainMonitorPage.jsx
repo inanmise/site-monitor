@@ -13,7 +13,8 @@ import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
-import NotificationGroupSelect from './ui/NotificationGroupSelect.jsx'
+import NotifyChannels from './ui/NotifyChannels.jsx'
+import IntervalSlider from './ui/IntervalSlider.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
@@ -36,13 +37,23 @@ const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
 const REFRESH_INTERVAL = 60
 const SORTS = ['days_asc', 'days_desc', 'name']
+// Domain kaydi gunde birkac kez sorgulanir; taban SAAT olcegindedir (WHOIS/RDAP nezaketi).
+// Diger turlerdeki dakika olcegi burada anlamsiz olurdu — bu yuzden liste TURE OZEL.
+const INTERVALS = [
+  { value: 3600,  labelKey: 'notify.iv1h'  },
+  { value: 21600, labelKey: 'notify.iv6h'  },
+  { value: 43200, labelKey: 'notify.iv12h' },
+  { value: 86400, labelKey: 'notify.iv24h' },
+]
+
 const emptyForm = {
   name: '', domain: '', groupName: '', notificationGroupId: '', teamId: '',
   thresholdsCsv: '60,30,14,7,3,1', warningDays: 30, criticalDays: 7, intervalSeconds: 86400, active: true,
   checkTimeoutMs: '',
   // Koruma anahtarlari: kilit ve degisiklik ACIK (bugunku fiili davranis), kara liste KAPALI
   // (her kontrolde dis DNS sorgusu uretir — bilincli acilmali).
-  transferLockAlert: true, blacklistEnabled: false, changeAlert: true, notifyWebhook: true,
+  transferLockAlert: true, blacklistEnabled: false, changeAlert: true,
+  notifyEmail: true, notifyWebhook: true, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30,
 }
 
 /** URL yapıştırılmış girdiyi host'a indirger: https://www.x.com.tr/path → www.x.com.tr
@@ -92,6 +103,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   const [changeNote, setChangeNote] = useState('')
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
+  const selectedTeamLabel = isAdmin
+    ? (teams.find(tm => String(tm.id) === String(form.teamId))?.name || t('app.noTeam'))
+    : (teamName || t('app.noTeam'))
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
   const [defaults, setDefaults] = useState(null)
   const [saving, setSaving] = useState(false)
@@ -162,6 +176,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
       thresholdsCsv: m.thresholds_csv || '60,30,14,7,3,1',
       warningDays: m.warning_days ?? 30, criticalDays: m.critical_days ?? 7,
       intervalSeconds: m.interval_seconds ?? 86400, active: m.active !== false,
+      notifyEmail: m.notify_email !== false,
+      confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
+      recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
       checkTimeoutMs: m.check_timeout_ms ?? '',
       transferLockAlert: m.transfer_lock_alert !== false,
       blacklistEnabled: m.blacklist_enabled === true,
@@ -206,6 +223,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
       thresholdsCsv: form.thresholdsCsv?.trim() || '60,30,14,7,3,1',
       warningDays: Number(form.warningDays), criticalDays: Number(form.criticalDays),
       intervalSeconds: Number(form.intervalSeconds), active: form.active,
+      notifyEmail: form.notifyEmail,
+      confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
+      recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
       checkTimeoutMs: form.checkTimeoutMs === '' || form.checkTimeoutMs == null ? null : Number(form.checkTimeoutMs),
       transferLockAlert: !!form.transferLockAlert,
       blacklistEnabled: !!form.blacklistEnabled,
@@ -325,7 +345,10 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
     return sorted
   }, [scoped, statFilter, sortBy])
 
-  // Sayfalama filtrelenmiş listenin ÜZERİNE; sayaç/istatistikler tam listeden hesaplanmaya devam eder.
+  // Sayfalama filtrelenmiş listenin ÜZERİNE. İstatistik kartları ise KAPSAM listesinden
+  // (`scoped` = takım + grup + arama) sayılır; kart filtresi (statFilter) sayima GIRMEZ.
+  // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
+  // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(displayMonitors, {
     listKey: 'domain-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter, sortBy],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
@@ -583,9 +606,28 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
                 <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
                   options={[{ value: '', label: t('dom.noGroup') }, ...groupSelectOptions]}
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('dom.noGroup')} /></label>
-              <NotificationGroupSelect teamId={form.teamId} value={form.notificationGroupId}
-                onChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+              <NotifyChannels
+                notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+                onChange={patch => setForm(f => ({ ...f, ...patch }))}
+                teamLabel={selectedTeamLabel} teamId={form.teamId}
+                groupId={form.notificationGroupId}
+                onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
               <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('dom.groupInfo')}</div>
+              <label><span>{t('verify.attempts')}</span>
+                <input type="number" min="0" max="10" value={form.confirmAttempts}
+                  onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} /></label>
+              <label><span>{t('verify.attemptEvery')}</span>
+                <input type="number" min="10" max="600" value={form.confirmIntervalSeconds}
+                  onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} /></label>
+              <label><span>{t('verify.recoveryChecks')}</span>
+                <input type="number" min="1" max="20" value={form.recoveryChecks}
+                  onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} /></label>
+              <label><span>{t('verify.recoveryEvery')}</span>
+                <input type="number" min="10" max="600" value={form.recoveryIntervalSeconds}
+                  onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} /></label>
+              <div className="full-width field-hint">ⓘ {t('verify.hint')}</div>
+              <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
+                onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
 
               <label><span>{t('dom.warningDays')}</span>
                 <input type="number" min="1" value={form.warningDays} onChange={e => setForm(f => ({ ...f, warningDays: Number(e.target.value) }))} /></label>
@@ -610,10 +652,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
                 <input type="checkbox" checked={form.transferLockAlert}
                   onChange={e => setForm(f => ({ ...f, transferLockAlert: e.target.checked }))} />
                 {t('dom.transferLockAlert')}</label>
-              <label className="checkbox-label" title={t('userpush.monitorToggleHint')}>
-                <input type="checkbox" checked={form.notifyWebhook}
-                  onChange={e => setForm(f => ({ ...f, notifyWebhook: e.target.checked }))} />
-                {t('userpush.monitorToggle')}</label>
+
               <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('dom.transferLockHint')}</div>
 
               <label className="checkbox-label full-width">

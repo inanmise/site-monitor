@@ -23,7 +23,8 @@ public class MetricsService {
     private final com.sun.management.OperatingSystemMXBean osMx;
 
     private final Deque<Map<String, Object>> history = new ArrayDeque<>(MAX_SAMPLES + 1);
-    private long lastGcMs = 0;
+    /** -1 = henüz taban kurulmadı (ilk örnek). 0 olsaydı ilk delta = JVM ömrü boyu birikmiş GC. */
+    private long lastGcMs = -1;
 
     public MetricsService() {
         com.sun.management.OperatingSystemMXBean os = null;
@@ -70,7 +71,10 @@ public class MetricsService {
         // Son örneklemeden bu yana GC duraklama (pause) deltası (ms)
         long gcNow = ManagementFactory.getGarbageCollectorMXBeans()
                 .stream().mapToLong(GarbageCollectorMXBean::getCollectionTime).sum();
-        p.put("gc_delta_ms", Math.max(0, gcNow - lastGcMs));
+        // İLK örnek TABAN kurar, delta üretmez. lastGcMs 0'dan başladığı için ilk nokta
+        // "son örneklemeden bu yana" değil JVM ÖMRÜ BOYUNCA birikmiş GC süresini gösteriyordu:
+        // grafiğin ilk noktası her açılışta sahte bir sıçrama çiziyordu.
+        p.put("gc_delta_ms", lastGcMs < 0 ? 0L : Math.max(0, gcNow - lastGcMs));
         lastGcMs = gcNow;
 
         history.addLast(p);

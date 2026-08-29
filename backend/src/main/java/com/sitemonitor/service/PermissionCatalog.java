@@ -33,7 +33,13 @@ public final class PermissionCatalog {
         // gruplar takim-kapsamli ve dusuk riskli (yalniz e-posta adresleri), kisiler gibi
         // ayri "list"/"crud" ayrimina ihtiyac duymuyor. TEAM_ADMIN + USER'a acik (K2):
         // takim kendi nobetci listesini yonetir; uc ayrica UYELIK dogrular.
-        new Resource("notification.groups", "communication", List.of(VIEW, EDIT), Set.of()),
+        // İKİ AYRI SATIR — tek çok-eylemli Resource DEĞİL. auditDefaults() `actions.contains(VIEW)`
+        // sonucunu putAll ile kaynağın TÜM eylemlerine uyguluyor; tek satırda List.of(VIEW, EDIT)
+        // yazıldığı sürece salt-okunur AUDIT rolü sessizce alarm ALICI LİSTELERİNİ düzenleme yetkisi
+        // kazanıyordu. monitoring.group / monitoring.scripted_templates aynı sebeple bölünmüştü;
+        // bu satır o düzeltmede atlanmıştı. Ayrı satırlarda VIEW=true, EDIT=false doğru hesaplanır.
+        r("notification.groups", "communication", VIEW),
+        r("notification.groups", "communication", EDIT),
 
         // ── Yönetim (Takım & Kullanıcı) ───────────────────────────────────
         // Kişi-webhook (push) kanalı yönetimi: bağlantı/katmanlar/şablonlar/test/teslimat günlüğü.

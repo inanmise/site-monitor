@@ -88,6 +88,15 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     if (canManage) api.admin.getTeams().then(res => { if (res?.success) setTeams(res.data) })
   }, [])
 
+  // Prop senkronu YALNIZ yönetemeyenler için. `teams` iki farklı sahibi olan bir state:
+  // canManage ise yukarıdaki çekim sahiplenir (team-admin'e kapsamlı liste döner), aksi halde
+  // prop. Koşulsuz bir senkron çekilen listeyi EZERDİ — üstelik `teamsProp = []` varsayılanı her
+  // parent render'ında yeni dizi kimliği olduğundan efekt sürekli tetiklenir ve team-admin kalıcı
+  // olarak yanlış takım listesi görürdü. Yönetemeyenlerde state prop'un ilk değerinde donuyordu.
+  useEffect(() => {
+    if (!canManage) setTeams(teamsProp)
+  }, [canManage, teamsProp])
+
   useEffect(() => {
     if (!exportOpen) return
     const onClick = (e) => { if (!exportRef.current?.contains(e.target)) setExportOpen(false) }

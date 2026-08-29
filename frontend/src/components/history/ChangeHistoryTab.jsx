@@ -185,15 +185,19 @@ export default function ChangeHistoryTab({ t, kind, monitorId, teamNames = {}, c
         )}
 
         {/* Sunucu tarafı sayfalama: usePagination istemci dizisini böler, burada sayfa SUNUCUDAN
-            geliyor — bu yüzden PaginationBar'a değerler elle veriliyor. */}
+            geliyor — bu yüzden PaginationBar'a değerler elle veriliyor.
+            TABAN DÖNÜŞÜMÜ ŞART: `page` state'i ve API 0-tabanlı, PaginationBar 1-tabanlı
+            (clamp min 1, ilk/önceki `page <= 1`'de kapalı). Dönüşüm yapılmadığında state=0'da
+            hiçbir sayfa aktif görünmüyor ve "1" düğmesi API'nin 2. sayfasına gidiyordu.
+            rangeStart/rangeEnd 0-tabanlı kalır — onlar state'i doğrudan kullanır. */}
         <PaginationBar
-          page={page}
+          page={page + 1}
           totalPages={Math.max(1, Math.ceil(total / size))}
           totalItems={total}
           rangeStart={total === 0 ? 0 : page * size + 1}
           rangeEnd={Math.min(total, (page + 1) * size)}
           pageSize={size}
-          onPageChange={setPage}
+          onPageChange={(p) => setPage(p - 1)}
           onPageSizeChange={(s) => { setSize(s); setPage(0) }} />
       </>)}
     </div>

@@ -13,7 +13,8 @@ import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
-import NotificationGroupSelect from './ui/NotificationGroupSelect.jsx'
+import NotifyChannels from './ui/NotifyChannels.jsx'
+import IntervalSlider from './ui/IntervalSlider.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
@@ -409,7 +410,10 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
     return pred ? scoped.filter(pred) : scoped
   }, [scoped, statFilter])
 
-  // Sayfalama filtrelenmiş listenin ÜZERİNE; sayaç/istatistikler tam listeden hesaplanmaya devam eder.
+  // Sayfalama filtrelenmiş listenin ÜZERİNE. İstatistik kartları ise KAPSAM listesinden
+  // (`scoped` = takım + grup + arama) sayılır; kart filtresi (statFilter) sayima GIRMEZ.
+  // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
+  // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(displayMonitors, {
     listKey: 'page-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
@@ -461,7 +465,6 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   const selectedTeamLabel = isAdmin
     ? (teams.find(tm => String(tm.id) === String(form.teamId))?.name || t('page.noTeam'))
     : (teamName || t('page.noTeam'))
-  const ivIdx = intervalIdx(Number(form.intervalSeconds))
   const issueFilters = ['all', 'BROKEN', 'TIMEOUT', 'BLOCKED', 'MIXED_CONTENT', 'SLOW', 'firstParty']
 
   return (
@@ -750,8 +753,14 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                 <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
                   options={[{ value: '', label: t('page.noGroup') }, ...groupSelectOptions]}
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('page.noGroup')} /></label>
-              <NotificationGroupSelect teamId={form.teamId} value={form.notificationGroupId}
-                onChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+              <NotifyChannels
+                notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+                onChange={patch => setForm(f => ({ ...f, ...patch }))}
+                teamLabel={selectedTeamLabel} teamId={form.teamId}
+                groupId={form.notificationGroupId}
+                onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+              <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
+                onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
 
               {/* Mod seçimi */}
               <label><span>{t('page.mode')}</span>
@@ -789,28 +798,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                 <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('page.tagsPlaceholder')} />
               </div>
 
-              {/* Bildirim */}
-              <div className="full-width kw-notify-section">
-                <div className="kw-block-title">{t('page.notifyTitle')}</div>
-                <div className="field-hint" style={{ marginBottom: 8 }}>{t('page.notifyInfo').replace('{0}', selectedTeamLabel)}</div>
-                <label className="checkbox-label">
-                  <input type="checkbox" checked={form.notifyEmail} onChange={e => setForm(f => ({ ...f, notifyEmail: e.target.checked }))} />{t('page.notifyEmail')}</label>
-                <label className="checkbox-label" title={t('userpush.monitorToggleHint')}>
-                  <input type="checkbox" checked={form.notifyWebhook} onChange={e => setForm(f => ({ ...f, notifyWebhook: e.target.checked }))} />{t('userpush.monitorToggle')}</label>
-              </div>
 
-              {/* Kontrol aralığı */}
-              <div className="full-width kw-interval-block">
-                <div className="kw-block-title">{t('page.intervalTitle')}</div>
-                <div className="field-hint" style={{ marginBottom: 8 }}>{t('page.intervalEvery').replace('{0}', t(INTERVALS[ivIdx].labelKey))}</div>
-                <input type="range" className="kw-interval-slider" min={0} max={INTERVALS.length - 1} step={1}
-                  value={ivIdx} onChange={e => setForm(f => ({ ...f, intervalSeconds: INTERVALS[Number(e.target.value)].value }))} />
-                <div className="kw-interval-ticks">
-                  {INTERVALS.map((o, j) => (
-                    <span key={o.value} className={`kw-interval-tick${j === ivIdx ? ' active' : ''}`}>{t(o.labelKey)}</span>
-                  ))}
-                </div>
-              </div>
 
               {/* Gelişmiş */}
               <div className="full-width kw-adv">

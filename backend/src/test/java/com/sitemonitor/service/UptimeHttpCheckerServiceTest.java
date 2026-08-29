@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class UptimeHttpCheckerServiceTest {
 
-    private final UptimeHttpCheckerService service = new UptimeHttpCheckerService();
+    private final UptimeHttpCheckerService service = new UptimeHttpCheckerService(permissiveGuard());
 
     @Test
     @DisplayName("check returns status=up + response_ms when target accepts TCP")
@@ -52,5 +52,25 @@ class UptimeHttpCheckerServiceTest {
     void check_failure_responseMsNull() {
         Map<String, Object> r = service.check("192.0.2.1", 443, 50);
         assertThat(r.get("response_ms")).isNull();
+    }
+
+    /** Testler 127.0.0.1'e baglanir -> SsrfGuard izin verici kurulur (loopback + ic ag acik);
+     *  metadata/link-local YINE bloklu. PortCheckerServiceTest ile ayni desen. */
+    private static SsrfGuard permissiveGuard() {
+        AppSettingsService s = org.mockito.Mockito.mock(AppSettingsService.class);
+        org.mockito.Mockito.when(s.getBoolean("site.monitor.monitoring.allow-loopback-targets", false)).thenReturn(true);
+        org.mockito.Mockito.when(s.getBoolean("site.monitor.monitoring.allow-internal-targets", true)).thenReturn(true);
+        return new SsrfGuard(s);
+    }
+
+    @Test
+    @DisplayName("SSRF: cloud-metadata hedefi baglanmadan ONCE reddedilir (down + neden)")
+    void check_metadataTarget_blocked() {
+        // Bu checker hic dogrulama yapmiyordu: hedefi tanimlayabilen kullanici, pod'un ulasabildigi
+        // herhangi bir ic adrese TCP yoklamasi yaptirip up/down cevabindan varlik haritasi cikarabilirdi.
+        Map<String, Object> r = service.check("169.254.169.254", 80, 500);
+        assertThat(r.get("status")).isEqualTo("down");
+        assertThat(r.get("response_ms")).isNull();
+        assertThat((String) r.get("error")).contains("cloud-metadata");
     }
 }

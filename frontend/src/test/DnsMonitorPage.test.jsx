@@ -135,7 +135,13 @@ describe('DnsMonitorPage', () => {
       name: 'example (Kopya)', domain: 'www.example.com', recordType: 'CNAME',
       intervalSeconds: 900, teamId: 5, groupName: 'Kurumsal',
       expectedValue: '1.2.3.4\n5.6.7.8', slowThresholdMs: 2500,
-      propagationCheck: true, dnsChangeAlertEnabled: false, notifyWebhook: true,
+      propagationCheck: true, dnsChangeAlertEnabled: false,
+      // B1: e-posta kanal bayragi DNS formuna eklendi (eskiden bu turde HIC yoktu).
+      // "Tum ayarlar birebir kopyalanir" iddiasi degismedi; kume bir alan buyudu.
+      notifyEmail: true, notifyWebhook: true,
+      // B3: dogrulama/kurtarma alanlari bu iki ture eklendi (eskiden yalniz global ayar vardi).
+      // "TUM ayarlar birebir kopyalanir" iddiasi degismedi; kume dort alan buyudu.
+      confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30,
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
       // Bildirim grubu da kopyalanir: kopya, kaynagin alarmini ALAN ekibe gitmeye devam etsin.
       notificationGroupId: 7,
@@ -201,5 +207,55 @@ describe('DnsMonitorPage', () => {
     await screen.findByText('d1.example.com')
     expect(screen.getByText('1–30 of 30 records')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Next' })).toBeNull()
+  })
+
+  // -- Istatistik kartlari filtreyi IZLER (O16) -------------------------------
+  // Kartlar ham `monitors` uzerinden sayiliyordu: kullanici takim secince / arama yazinca liste
+  // daraliyor ama kartlar KURESEL sayiyi gostermeye devam ediyordu. Kartlar ayni zamanda filtre
+  // dugmesi oldugu icin tutarsizdi ("alarm 5" tikla -> 2 sonuc gel).
+
+  const threeMonitors = () => api.monitoring.getDnsMonitors.mockResolvedValue({
+    success: true,
+    data: [
+      { ...monitor, id: 1, domain: 'alfa.example.com' },
+      { ...monitor, id: 2, domain: 'beta.example.com' },
+      { ...monitor, id: 3, domain: 'gama.example.com', team_id: 9, team_name: 'SY-B', active_alarm: true },
+    ],
+  })
+
+  async function openStats(container) {
+    await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
+    await screen.findByText('alfa.example.com')
+    fireEvent.click(container.querySelector('.stats-collapse-bar'))
+    return () => container.querySelector('.stat-value-total')?.textContent
+  }
+
+  it('istatistik kartlari ARAMA ile daralir (kuresel sayida donup kalmaz)', async () => {
+    threeMonitors()
+    const { container } = render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    const totalText = await openStats(container)
+
+    expect(totalText()).toBe('3')
+
+    fireEvent.change(container.querySelector('.dns-search-input'), { target: { value: 'alfa' } })
+    await waitFor(() => expect(totalText()).toBe('1'))
+
+    // Alarm sayaci da kapsamdan gelir: alarmli monitor arama disinda kaldi.
+    expect(container.querySelector('.stat-value-critical')?.textContent).toBe('0')
+  })
+
+  it('arama HICBIR seyi eslestirmese bile istatistik seridi CIZILMEYE devam eder', async () => {
+    // Regresyon kapisi: MonitorStatsSection `total` prop'u FILTRE ONCESI sayidir ve yalnizca
+    // seridin cizilip cizilmeyecegine karar verir. Oraya kapsam sayisi verilseydi bos sonucta
+    // serit tamamen kaybolur ve kullanici filtreyi seritten TEMIZLEYEMEZDI.
+    threeMonitors()
+    const { container } = render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    const totalText = await openStats(container)
+
+    fireEvent.change(container.querySelector('.dns-search-input'), { target: { value: 'hicbiryerde-yok' } })
+
+    await waitFor(() => expect(totalText()).toBe('0'))
+    expect(container.querySelector('.stats-collapse-bar')).not.toBeNull()
+    expect(container.querySelector('.stats-panel')).not.toBeNull()
   })
 })

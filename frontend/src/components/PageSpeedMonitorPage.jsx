@@ -13,7 +13,8 @@ import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
-import NotificationGroupSelect from './ui/NotificationGroupSelect.jsx'
+import NotifyChannels from './ui/NotifyChannels.jsx'
+import IntervalSlider from './ui/IntervalSlider.jsx'
 import SegmentedControl from './ui/SegmentedControl.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
@@ -456,7 +457,6 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
   const selectedTeamLabel = isAdmin
     ? (teams.find(tm => String(tm.id) === String(form.teamId))?.name || t('pspd.noTeam'))
     : (teamName || t('pspd.noTeam'))
-  const ivIdx = intervalIdx(Number(form.intervalSeconds))
   const activeMetric = METRICS.find(x => x.key === metric) ?? METRICS[0]
 
   return (
@@ -795,8 +795,14 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
                 <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
                   options={[{ value: '', label: t('pspd.noGroup') }, ...groupSelectOptions]}
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('pspd.noGroup')} /></label>
-              <NotificationGroupSelect teamId={form.teamId} value={form.notificationGroupId}
-                onChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+              <NotifyChannels
+                notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+                onChange={patch => setForm(f => ({ ...f, ...patch }))}
+                teamLabel={selectedTeamLabel} teamId={form.teamId}
+                groupId={form.notificationGroupId}
+                onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+              <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
+                onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
 
               {/* ── Alarm eşikleri: DÖRDÜ DE opsiyonel ── */}
               <div className="full-width kw-tags-block">
@@ -824,29 +830,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
                 <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('pspd.tagsPlaceholder')} />
               </div>
 
-              {/* Bildirim */}
-              <div className="full-width kw-notify-section">
-                <div className="kw-block-title">{t('pspd.notifyTitle')}</div>
-                <div className="field-hint" style={{ marginBottom: 8 }}>{t('pspd.notifyInfo').replace('{0}', selectedTeamLabel)}</div>
-                <label className="checkbox-label">
-                  <input type="checkbox" checked={form.notifyEmail} onChange={e => setForm(f => ({ ...f, notifyEmail: e.target.checked }))} />{t('pspd.notifyEmail')}</label>
-                <label className="checkbox-label" title={t('userpush.monitorToggleHint')}>
-                  <input type="checkbox" checked={form.notifyWebhook} onChange={e => setForm(f => ({ ...f, notifyWebhook: e.target.checked }))} />{t('userpush.monitorToggle')}</label>
-              </div>
 
-              {/* Kontrol aralığı */}
-              <div className="full-width kw-interval-block">
-                <div className="kw-block-title">{t('pspd.intervalTitle')}</div>
-                <div className="field-hint" style={{ marginBottom: 8 }}>{t('pspd.intervalEvery').replace('{0}', t(INTERVALS[ivIdx].labelKey))}</div>
-                <input type="range" className="kw-interval-slider" min={0} max={INTERVALS.length - 1} step={1}
-                  value={ivIdx} onChange={e => setForm(f => ({ ...f, intervalSeconds: INTERVALS[Number(e.target.value)].value }))} />
-                <div className="kw-interval-ticks">
-                  {INTERVALS.map((o, j) => (
-                    <span key={o.value} className={`kw-interval-tick${j === ivIdx ? ' active' : ''}`}>{t(o.labelKey)}</span>
-                  ))}
-                </div>
-                <div className="field-hint" style={{ marginTop: 6 }}>ⓘ {t('pspd.intervalFloorHint')}</div>
-              </div>
 
               {/* ── Gelişmiş ── */}
               <div className="full-width kw-adv">

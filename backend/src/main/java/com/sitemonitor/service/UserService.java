@@ -362,8 +362,15 @@ public class UserService {
         if ("AUDIT".equals(role)) return null;                  // system-wide read
         boolean ldap = "LDAP".equalsIgnoreCase(u.getAuthSource());
         if ("ADMIN".equals(role)) {
-            // Local/bootstrap ADMIN → global; AD ADMIN (müdür) → only subordinates' teams.
-            return ldap ? subordinateTeamIds(u.getId()) : null;
+            // Yerel/bootstrap ADMIN → global (null). AD ADMIN (müdür) → KENDİ takımları + astların
+            // takımları.
+            //
+            // Kendi takımları eskiden DAHİL DEĞİLDİ ve bu sessiz bir kilitlenmeydi: astı OLMAYAN bir
+            // kullanıcı (ör. bir takımın PO'su) ADMIN yapıldığında liste BOŞ kalıyor, yani rolü
+            // yükseltilen kişi kendi takımının izlemelerini bile göremiyordu — yetki artışının
+            // görünürlüğü AZALTMASI. Müdür kavramı korunuyor: liste dolu kaldığı için
+            // SessionScope.isGlobalAdmin (viewTeamIds == null) YİNE false, kimse fazladan takım görmez.
+            return ldap ? ownPlusSubordinateTeamIds(u) : null;
         }
         if ("TEAM_ADMIN".equals(role)) return ledPlusOwnTeamIds(u);
         // USER — üye olduğu TÜM takımlar (birincil dahil)
@@ -402,9 +409,14 @@ public class UserService {
         if (u == null) return List.of();
         String role = u.getSystemRole();
         boolean ldap = "LDAP".equalsIgnoreCase(u.getAuthSource());
-        if ("ADMIN".equals(role) && !ldap) return null;         // global manage
+        if ("ADMIN".equals(role)) {
+            // Yerel ADMIN → global. AD ADMIN artık KENDİ takımlarını (+ astlarınkini) YÖNETİR:
+            // eskiden List.of() düşüyordu, yani ADMIN rolü verilen kişi kendi takımının izlemesini
+            // düzenleyemiyordu bile. Görüş kapsamıyla aynı küme — "gördüğünü yönetir" tutarlılığı.
+            return ldap ? ownPlusSubordinateTeamIds(u) : null;
+        }
         if ("TEAM_ADMIN".equals(role)) return ledPlusOwnTeamIds(u);
-        // müdür (AD admin), USER, AUDIT → no team management
+        // USER, AUDIT → no team management
         return List.of();
     }
 
@@ -415,6 +427,13 @@ public class UserService {
             if (sub.getTeamIds() != null) for (Long t : sub.getTeamIds()) if (t != null) ids.add(t);
             if (sub.getTeamId() != null) ids.add(sub.getTeamId());
         }
+        return new ArrayList<>(ids);
+    }
+
+    /** AD ADMIN (müdür) kapsamı: kendi üye olduğu takımlar + astlarının takımları. Sıralı + tekil. */
+    private List<Long> ownPlusSubordinateTeamIds(AppUser u) {
+        LinkedHashSet<Long> ids = new LinkedHashSet<>(ownTeamIds(u));
+        ids.addAll(subordinateTeamIds(u.getId()));
         return new ArrayList<>(ids);
     }
 

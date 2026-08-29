@@ -1377,4 +1377,38 @@ class SchedulerServiceTest {
 
         assertThat(out.get("config_error")).isEqualTo(true);
     }
+
+    // -- B2: kanal bayraklarinin ctx'e DAMGALANMASI -------------------------
+    // Mutasyon turu bu boslugu ortaya cikardi: EscalationServiceTest ctx'i ELLE kuruyor,
+    // yani "damga basiliyor mu" sorusunu hicbir test sormuyordu. mailCtx tamamen etkisiz
+    // hale getirilse bile suit yesil kaliyordu -- ozellik olu, testler mutlu.
+
+    @Test
+    @DisplayName("B2: notifyEmail=false ise ctx'e mail_disabled damgasi BASILIR")
+    void mailCtx_stampsWhenDisabled() {
+        var out = SchedulerService.mailCtx(new java.util.LinkedHashMap<>(java.util.Map.of("a", 1)), false);
+        assertThat(out).containsEntry("mail_disabled", true).containsEntry("a", 1);
+    }
+
+    @Test
+    @DisplayName("B2: notifyEmail true/null ise ctx'e DOKUNULMAZ (eski satirlar mail almaya devam eder)")
+    void mailCtx_untouchedWhenEnabledOrNull() {
+        var base = new java.util.LinkedHashMap<String, Object>(java.util.Map.of("a", 1));
+        assertThat(SchedulerService.mailCtx(base, true)).isSameAs(base);
+        // Kolon sonradan eklendi: ESKI satirlar null tasir ve susturulmamali.
+        assertThat(SchedulerService.mailCtx(base, null)).isSameAs(base);
+    }
+
+    @Test
+    @DisplayName("B2: iki kanal bayragi BIRBIRINDEN bagimsiz damgalanir")
+    void chanCtx_stampsIndependently() {
+        var only = SchedulerService.chanCtx(new java.util.LinkedHashMap<>(), false, true);
+        assertThat(only).containsEntry("mail_disabled", true).doesNotContainKey("push_disabled");
+
+        var push = SchedulerService.chanCtx(new java.util.LinkedHashMap<>(), true, false);
+        assertThat(push).containsEntry("push_disabled", true).doesNotContainKey("mail_disabled");
+
+        var both = SchedulerService.chanCtx(new java.util.LinkedHashMap<>(), false, false);
+        assertThat(both).containsEntry("mail_disabled", true).containsEntry("push_disabled", true);
+    }
 }

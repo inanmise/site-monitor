@@ -240,4 +240,49 @@ describe('PortMonitorPage — değişiklik nedeni', () => {
     await waitFor(() => expect(document.getElementById('port-change-note')).not.toBeNull())
     expect(document.getElementById('port-change-note').value).toBe('')
   })
+
+  // -- Istatistik kartlari filtreyi IZLER (O16) -------------------------------
+  // Kartlar ham `monitors` uzerinden sayiliyordu; DnsMonitorPage ile ayni kusur.
+
+  const threePorts = () => api.monitoring.getPortMonitors.mockResolvedValue({
+    success: true,
+    data: [
+      { ...monitor, id: 1, host: '10.0.0.1' },
+      { ...monitor, id: 2, host: '10.0.0.2' },
+      { ...monitor, id: 3, host: '192.0.2.9', status: 'closed', active_alarm: true },
+    ],
+  })
+
+  async function openPortStats(container) {
+    await waitFor(() => expect(api.monitoring.getPortMonitors).toHaveBeenCalled())
+    await screen.findByText('10.0.0.1')
+    fireEvent.click(container.querySelector('.stats-collapse-bar'))
+    return () => container.querySelector('.stat-value-total')?.textContent
+  }
+
+  it('istatistik kartlari ARAMA ile daralir (kuresel sayida donup kalmaz)', async () => {
+    threePorts()
+    const { container } = render(<PortMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    const totalText = await openPortStats(container)
+
+    expect(totalText()).toBe('3')
+
+    fireEvent.change(container.querySelector('.upt-search'), { target: { value: '192.0.2' } })
+    await waitFor(() => expect(totalText()).toBe('1'))
+
+    // Kapali/alarm sayaclari da kapsamdan gelir.
+    expect(container.querySelector('.stat-value-critical')?.textContent).toBe('1')
+  })
+
+  it('arama HICBIR seyi eslestirmese bile istatistik seridi CIZILMEYE devam eder', async () => {
+    threePorts()
+    const { container } = render(<PortMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    const totalText = await openPortStats(container)
+
+    fireEvent.change(container.querySelector('.upt-search'), { target: { value: 'hicbiryerde-yok' } })
+
+    await waitFor(() => expect(totalText()).toBe('0'))
+    expect(container.querySelector('.stats-collapse-bar')).not.toBeNull()
+    expect(container.querySelector('.stats-panel')).not.toBeNull()
+  })
 })

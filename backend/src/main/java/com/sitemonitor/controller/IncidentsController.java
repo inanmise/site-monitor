@@ -137,6 +137,11 @@ public class IncidentsController {
         dto.put("alert_level",   e.getAlertLevel());
         dto.put("started_at",    e.getCreatedAt());
         dto.put("resolved_at",   e.getResolvedAt());
+        // "Neden kapandı?" ekrandan cevaplanabilmeli. Envanterden bir sertifika silinince
+        // alarm otomatik çözülüyor ({@code inventory_delete}) ama bu ekran sebebi HİÇ
+        // döndürmüyordu: kullanıcı kaydı "Çözüldü" görüyor, kimin/neyin kapattığını
+        // bilmiyordu. Değer bir SİCİL ya da SİSTEM JETONU olabilir — ayrımı arayüz yapar.
+        dto.put("resolved_by",   e.getResolvedBy());
         dto.put("acknowledged",  e.getAcknowledged());
         dto.put("domain",        e.getDomain());
         dto.put("message",       e.getMessage());

@@ -38,6 +38,12 @@ public class PingMonitor {
     @Column(name = "team_id")
     private Long teamId;
 
+    /** E-posta bildirimi açık mı (vars. true). {@code notifyWebhook} ile SİMETRİK: iki kanal
+     *  ayrı ayrı kapatılabilir. Kolon sonradan eklendiği için ESKİ satırlar {@code null} taşır ve
+     *  null-güvenli okuma sayesinde mail almaya devam eder — kimsenin maili sessizce kesilmez. */
+    @Column(name = "notify_email")
+    private Boolean notifyEmail = true;
+
     /** Kişi-webhook (push) bildirimi açık mı (vars. true — üst katmanlar zaten vars. KAPALI, çifte emniyet). */
     @Column(name = "notify_webhook")
     private Boolean notifyWebhook = true;

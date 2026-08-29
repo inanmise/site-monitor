@@ -184,4 +184,46 @@ describe('ChangeHistoryTab', () => {
     expect(screen.getByText('Oluşturuldu')).toBeInTheDocument()
     expect(api.monitoring.getChanges).toHaveBeenCalledTimes(1)
   })
+
+  // ── Sayfalama taban dönüşümü ──────────────────────────────────────────────
+  // `page` state'i ve API 0-tabanlı, PaginationBar 1-tabanlı. Dönüşüm yokken state=0'da hiçbir
+  // sayfa aktif görünmüyor ve "1" düğmesi API'nin İKİNCİ sayfasına gidiyordu; "Sonraki" son
+  // sayfanın ötesindeki boş sayfaya ulaşıyordu. Widget 9 izleme türünün sekmesinde ortak.
+
+  const manyPages = () => api.monitoring.getChanges.mockResolvedValue({
+    success: true, data: { changes: [UPDATE_ROW, CREATE_ROW], total: 60, page: 0, size: 25 },
+  })
+
+  it('ilk açılışta 1. sayfa AKTİF ve "önceki" kapalı (0-tabanlı state, 1-tabanlı widget)', async () => {
+    manyPages()
+    draw()
+    await waitFor(() => expect(api.monitoring.getChanges).toHaveBeenCalledWith('port', 4, { page: 0, size: 25 }))
+
+    const one = await screen.findByRole('button', { name: 'Page 1' })
+    expect(one.className).toContain('pg-btn--active')
+    expect(one).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('button', { name: 'Previous' })).toBeDisabled()
+  })
+
+  it('"2"ye tıklayınca API 0-tabanlı page=1 ister (bir-kaydırma yok)', async () => {
+    manyPages()
+    draw()
+    await waitFor(() => expect(api.monitoring.getChanges).toHaveBeenCalledWith('port', 4, { page: 0, size: 25 }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Page 2' }))
+
+    await waitFor(() => expect(api.monitoring.getChanges).toHaveBeenCalledWith('port', 4, { page: 1, size: 25 }))
+    expect(screen.getByRole('button', { name: 'Previous' })).not.toBeDisabled()
+  })
+
+  it('"Son" gerçek son sayfaya gider — ötesindeki boş sayfaya DEĞİL', async () => {
+    manyPages()   // total 60 / size 25 → 3 sayfa → son sayfa API'de page=2
+    draw()
+    await waitFor(() => expect(api.monitoring.getChanges).toHaveBeenCalledWith('port', 4, { page: 0, size: 25 }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Last page' }))
+
+    await waitFor(() => expect(api.monitoring.getChanges).toHaveBeenCalledWith('port', 4, { page: 2, size: 25 }))
+    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled()
+  })
 })

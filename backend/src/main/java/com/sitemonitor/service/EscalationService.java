@@ -377,6 +377,18 @@ public class EscalationService {
      * e-postaları, sonra kontaklar) dedupe'lu liste döner. HİÇBİR yazma yapmaz (notifiedContacts /
      * lastReAlertAt / log / async gönderim yok); hata semantiği reNotify ile birebir aynı.
      */
+    /**
+     * Webhook onizlemesinin kullanacagi FALLBACK takim — gercek gonderimin
+     * ({@code reNotifyAsync} -> {@code sendCombinedAlert} -> {@code enqueueAlert}) gectigi
+     * {@code domainTeamId} ile AYNI kaynak. Ayri hesaplansaydi onizleme "gidecek" deyip
+     * gonderim baska bir takima cozerdi.
+     */
+    public Long reNotifyFallbackTeamId(Long alertId) {
+        return alertEventRepo.findById(alertId)
+                .map(ev -> resolveReNotifyTargets(ev).domainTeamId())
+                .orElse(null);
+    }
+
     public List<ReNotifyRecipient> previewReNotify(Long alertId) {
         AlertEvent event = alertEventRepo.findById(alertId)
                 .orElseThrow(() -> new NoSuchElementException("Alert not found: " + alertId));
@@ -406,6 +418,15 @@ public class EscalationService {
      * önizleme ile gönderim arasında EKLENEN kontak maili alır (kabul edilen yarış durumu).
      */
     public Map<String, Object> reNotify(Long alertId, Set<String> excludeEmails) {
+        return reNotify(alertId, excludeEmails, Set.of());
+    }
+
+    /**
+     * Onay pop-up'indan gelen haric tutmalar KANAL KANAL: {@code excludeEmails} mail alicilarini,
+     * {@code excludeUsernames} webhook (push) alicilarini cikarir. Kullanici "bu kisiye mail
+     * gitmesin ama push gitsin" diyebilmeli — iki kanal ayri kararlar.
+     */
+    public Map<String, Object> reNotify(Long alertId, Set<String> excludeEmails, Set<String> excludeUsernames) {
         AlertEvent event = alertEventRepo.findById(alertId)
                 .orElseThrow(() -> new NoSuchElementException("Alert not found: " + alertId));
         if (Boolean.TRUE.equals(event.getResolved())) {
@@ -450,7 +471,8 @@ public class EscalationService {
         // Fire-and-forget async (self-proxy needed for @Async to engage)
         self.reNotifyAsync(event.getId(), domainTeamId, ugTeamId, contacts,
                            event.getDomain(), event.getAlertLevel(), event.getAlertType(),
-                           event.getDaysRemaining(), excluded);
+                           event.getDaysRemaining(), excluded,
+                           excludeUsernames == null ? Set.of() : excludeUsernames);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("alert_id",          event.getId());
@@ -468,7 +490,7 @@ public class EscalationService {
     public void reNotifyAsync(Long alertEventId, Long domainTeamId, Long ugTeamId,
                               List<EscalationContact> contacts, String domain,
                               String alertLevel, String alertType, Integer daysRemainingFallback,
-                              Set<String> excludeEmails) {
+                              Set<String> excludeEmails, Set<String> excludeUsernames) {
         try {
             // İçerik bağlamı (mail detay tablosu): domain monitörü → EN GÜNCEL domain_checks (bitiş/registrar/EPP);
             // DNS_CHANGED → son changed dns_records kaydından eski/yeni değerler (günlük re-alert ile aynı kaynak;
@@ -495,7 +517,8 @@ public class EscalationService {
                     : buildMessage(domain, alertType, alertLevel, effectiveDays);
             sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
                     freshMessage, "[RE-ALERT] ", alertEventId, "MANUAL",
-                    effectiveDays, certContext, excludeEmails == null ? Set.of() : excludeEmails);
+                    effectiveDays, certContext, excludeEmails == null ? Set.of() : excludeEmails,
+                    excludeUsernames == null ? Set.of() : excludeUsernames);
         } catch (Exception e) {
             log.error("Async reNotify failed for alertEventId={}: {}", alertEventId, e.getMessage(), e);
         }
@@ -1482,7 +1505,7 @@ public class EscalationService {
                                                           Map<String, Object> certContext) {
         // INITIAL/ESCALATION/DAILY_REALERT yolları hariç tutmasız — mevcut imza korunur.
         return sendCombinedAlert(syTeamId, ugTeamId, contacts, domain, level, alertType, message,
-                subjectPrefix, alertEventId, trigger, daysRemaining, certContext, Set.of());
+                subjectPrefix, alertEventId, trigger, daysRemaining, certContext, Set.of(), Set.of());
     }
 
     /** Subject'te görünen hedef adı: monitör adı > şema-soyulmuş adres. Çıplak http(s):// subject'e girmez. */
@@ -1506,7 +1529,8 @@ public class EscalationService {
                                                           Long alertEventId, String trigger,
                                                           Integer daysRemaining,
                                                           Map<String, Object> certContext,
-                                                          Set<String> excludeEmails) {
+                                                          Set<String> excludeEmails,
+                                                          Set<String> excludeUsernames) {
         // 1. TO listesi: takım email'leri + kontaklar (dedup). excludeEmails (lowercase) — manuel
         // re-notify onay pop-up'ında kullanıcının çıkardığı adresler; takım e-postaları burada
         // çözüldüğünden filtre de burada uygulanır (kontaklar reNotify'da zaten filtrelenmiş gelir).
@@ -1530,8 +1554,17 @@ public class EscalationService {
                     && seen.add(c.getEmail().trim().toLowerCase()))
                 allEmails.add(c.getEmail().trim());
         }
-        if (allEmails.isEmpty()) {
-            log.warn("No recipients for {} [{}] — skipping", domain, level);
+        // İzlemenin "E-posta" kanalı KAPALI mı (notifyEmail=false → mailCtx damgası). Bayrak
+        // bugüne kadar hiçbir yerde okunmuyordu; kutu süstü, kapatmak maili durdurmuyordu.
+        boolean mailDisabled = certContext != null && Boolean.TRUE.equals(certContext.get("mail_disabled"));
+        if (mailDisabled || allEmails.isEmpty()) {
+            // KANAL BAĞIMSIZLIĞI: mailin atlanması webhook'u DÜŞÜRMEZ. Eskiden bu dal doğrudan
+            // return ediyordu ve push tetiği metodun sonunda kaldığı için alıcı-yok durumunda
+            // webhook de sessizce gitmiyordu. notify_email uygulanınca "mail yok" YAYGIN bir
+            // durum hâline geliyor; o hatayla birlikte yaşanamazdı.
+            if (mailDisabled) log.info("E-posta kanalı kapalı ({} [{}]) — yalnız webhook", domain, level);
+            else log.warn("No recipients for {} [{}] — skipping", domain, level);
+            triggerUserPush(alertEventId, trigger, syTeamId, certContext, excludeUsernames);
             return List.of();
         }
 
@@ -1676,16 +1709,25 @@ public class EscalationService {
         log.info("Combined alert: {} [{}] → TO=[{}] | webhooks={} | trigger={}",
                 domain, level, String.join(", ", allEmails), contacts.size(), trigger);
 
-        // Kişi-webhook (push) — K8: mail neyi gönderiyorsa webhook da. Tetik bu hunide durduğu
-        // için fırtına/bakım/toplu-kesinti bastırmaları kendiliğinden miras kalır (bastırılan
-        // olay bu satıra hiç gelmez). Mail SONUCUNDAN bağımsız: emailStatus FAILED olsa da koşar;
-        // istisna yayılamaz — mail yolu bu kanalın hiçbir arızasından etkilenmez.
+        triggerUserPush(alertEventId, trigger, syTeamId, certContext, excludeUsernames);
+        return details;
+    }
+
+    /**
+     * Kişi-webhook (push) tetiği — K8: mail neyi gönderiyorsa webhook da.
+     *
+     * <p>Tetik mail hunisinde durduğu için fırtına/bakım/toplu-kesinti bastırmaları kendiliğinden
+     * miras kalır (bastırılan olay buraya hiç gelmez). Mail SONUCUNDAN bağımsız: mail FAILED olsa
+     * da, hiç alıcı olmasa da, kanal kapalı olsa da koşar. İstisna yayılamaz — mail yolu bu
+     * kanalın hiçbir arızasından etkilenmez.
+     */
+    private void triggerUserPush(Long alertEventId, String trigger, Long syTeamId,
+                                 Map<String, Object> certContext, Set<String> excludeUsernames) {
         try {
-            userPushService.enqueueAlert(alertEventId, trigger, syTeamId, certContext);
+            userPushService.enqueueAlert(alertEventId, trigger, syTeamId, certContext, excludeUsernames);
         } catch (Exception e) {
             log.warn("user-push tetiği atlandı (mail yolu etkilenmedi): {}", e.toString());
         }
-        return details;
     }
 
     private void saveLog(Long alertEventId, EscalationContact c,

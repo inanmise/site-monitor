@@ -39,8 +39,8 @@ import java.util.regex.Pattern;
  * pinlenmiş CA'sı ({@link TrustEvaluator}, {@link CaAutoPinService}; canlı reload) ile doğrulama;
  * TLS hatası bağlantı hatası olarak down sayılır. PKIX güven hatasında auto-pin açıksa CA sunucudan
  * çekilip pinlenir ve kontrol BİR kez tekrarlanır (sonuçta {@code repinned=true}).
- * Yönlendirme takibi client düzeyinde olduğundan (java.net.http) 4 istemci ön-kurulur:
- * {trustAll, strict} × {redirect NORMAL, NEVER}.
+ * Yönlendirmeler UYGULAMA katmanında takip edilir ({@link #sendFollowing}) — her hop {@link SsrfGuard}'dan
+ * geçsin diye. Bu yüzden yalnız 2 istemci ön-kurulur: {trustAll, strict} × {redirect NEVER}.
  */
 @Slf4j
 @Service
@@ -51,9 +51,10 @@ public class HttpCheckerService {
     private final CaAutoPinService caAutoPinService;
     private final SsrfGuard ssrfGuard;
 
-    private HttpClient trustAllFollow;
+    // Yönlendirme takibi UYGULAMA katmanında (bkz. sendFollowing + SafeRedirect): kütüphane içi takipte
+    // ara hop'lar SsrfGuard'a hiç uğramıyordu. Bu yüzden yalnız NEVER client'ları kurulur — ayrıca iki
+    // client (+ selector-thread + connection pool) eksilir; tek pod'da bu da bir kazanç.
     private HttpClient trustAllNoFollow;
-    private HttpClient strictFollow;
     private HttpClient strictNoFollow;
 
     // Çok-A pin yolu için saklanan SSLContext'ler (paylaşılan client'larla aynı güven) + per-host pinned client cache.
@@ -114,23 +115,20 @@ public class HttpCheckerService {
                 caAutoPinService::trustManagerForHost, caAutoPinService::recordTrustFailure);
         this.trustAllCtx = trustAll;
         this.strictCtx   = strict;
-        trustAllFollow   = build(trustAll, HttpClient.Redirect.NORMAL);
-        trustAllNoFollow = build(trustAll, HttpClient.Redirect.NEVER);
-        strictFollow     = build(strict,   HttpClient.Redirect.NORMAL);
-        strictNoFollow   = build(strict,   HttpClient.Redirect.NEVER);
+        trustAllNoFollow = build(trustAll);
+        strictNoFollow   = build(strict);
     }
 
-    private HttpClient build(SSLContext ssl, HttpClient.Redirect redirect) {
+    private HttpClient build(SSLContext ssl) {
         HttpClient.Builder b = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
-                .followRedirects(redirect);
+                .followRedirects(HttpClient.Redirect.NEVER);
         if (ssl != null) b.sslContext(ssl);
         return b.build();
     }
 
-    private HttpClient client(boolean verifySsl, boolean followRedirects) {
-        if (verifySsl) return followRedirects ? strictFollow : strictNoFollow;
-        return followRedirects ? trustAllFollow : trustAllNoFollow;
+    private HttpClient client(boolean verifySsl) {
+        return verifySsl ? strictNoFollow : trustAllNoFollow;
     }
 
     /** Bir deneme sonucu + yakalanan hata (trust-failure sınıflandırması için). */
@@ -218,7 +216,7 @@ public class HttpCheckerService {
         Exception failure = null;
         try {
             String m = method == null ? "GET" : method.trim().toUpperCase(Locale.ROOT);
-            HttpResponse<Void> resp = sendMultiAware(
+            HttpResponse<Void> resp = sendFollowing(
                     URI.create(url.trim()), m, timeoutMs, verifySsl, followRedirects);
             long ms = System.currentTimeMillis() - start;
             int status = resp.statusCode();
@@ -241,10 +239,46 @@ public class HttpCheckerService {
      * (davranış AYNEN korunur, regresyon yok). Birden çok A kaydında: erişilebilir bir IP'ye pinleyip
      * SNI=domain ile gönderir; <b>herhangi bir sorunda eski yola düşer</b> (en kötü durumda bugünle aynı).
      */
-    private HttpResponse<Void> sendMultiAware(URI baseUri, String method, int timeoutMs,
-                                              boolean verifySsl, boolean followRedirects)
+    /**
+     * Yönlendirmeleri MANUEL takip eder ve HER hop'ta {@link SsrfGuard}'ı çalıştırır.
+     *
+     * <p>Önceden {@code Redirect.NORMAL} client'ı kullanılıyordu: zincir kütüphane içinde takip
+     * edildiği için yalnız İLK host doğrulanıyor, hedef sunucunun {@code 302 Location:} ile
+     * gösterdiği iç adresler denetimden kaçıyordu. Bu uç gövde döndürmez (yalnız durum kodu +
+     * süre) ama yine de bir varlık/zamanlama oracle'ıdır.
+     *
+     * <p>Davranış korunur: {@code followRedirects=false} ise hiç hop yapılmaz (bugünkü yolun
+     * birebir aynısı) ve HTTPS → düz HTTP düşürmesi {@code Redirect.NORMAL} gibi TAKİP EDİLMEZ.
+     * Çok-A pin yolu ({@link #sendMultiAware}) her hop için ayrı ayrı çalışır.
+     */
+    private HttpResponse<Void> sendFollowing(URI baseUri, String method, int timeoutMs,
+                                             boolean verifySsl, boolean followRedirects)
             throws java.io.IOException, InterruptedException {
-        HttpClient shared = client(verifySsl, followRedirects);
+        if (!followRedirects) return sendMultiAware(baseUri, method, timeoutMs, verifySsl);
+        URI current = baseUri;
+        String m = method;
+        for (int hop = 0; hop <= SafeRedirect.MAX_HOPS; hop++) {
+            // İlk hop check() içinde zaten doğrulandı; sonrakiler burada (aynı politika, aynı mesaj).
+            if (hop > 0) {
+                String host = current.getHost();
+                if (host == null || host.isBlank())
+                    throw new SsrfGuard.BlockedException("geçersiz yönlendirme hedefi: " + current);
+                ssrfGuard.validate(host);
+            }
+            HttpResponse<Void> resp = sendMultiAware(current, m, timeoutMs, verifySsl);
+            if (!SafeRedirect.isRedirect(resp.statusCode())) return resp;
+            URI next = SafeRedirect.nextHop(current, resp.headers().firstValue("location").orElse(null));
+            // Takip edilemeyen hedef (şema dışı / host'suz / güvenlik düşürmesi) → 3xx olduğu gibi döner.
+            if (next == null || SafeRedirect.isDowngrade(current, next)) return resp;
+            m = SafeRedirect.nextMethod(resp.statusCode(), m);
+            current = next;
+        }
+        throw new java.io.IOException("çok fazla yönlendirme (" + SafeRedirect.MAX_HOPS + " hop aşıldı)");
+    }
+
+    private HttpResponse<Void> sendMultiAware(URI baseUri, String method, int timeoutMs, boolean verifySsl)
+            throws java.io.IOException, InterruptedException {
+        HttpClient shared = client(verifySsl);
         String host = baseUri.getHost();
         if (host == null || NetworkResolver.isIpLiteral(host)) {
             return shared.send(buildRequest(baseUri, method, timeoutMs, null), HttpResponse.BodyHandlers.discarding());
@@ -261,7 +295,7 @@ public class HttpCheckerService {
         int port = baseUri.getPort() != -1 ? baseUri.getPort() : (https ? 443 : 80);
         InetAddress reachable = verifySsl ? null
                 : NetworkResolver.firstReachable(addrs, port, Math.min(Math.max(1000, timeoutMs), 4000));
-        HttpClient pinned = reachable != null ? pinnedClient(host, false, followRedirects) : null;
+        HttpClient pinned = reachable != null ? pinnedClient(host, false) : null;
         if (pinned != null) {
             try {
                 URI pinnedUri = rewriteHostToIp(baseUri, reachable, port);
@@ -303,10 +337,10 @@ public class HttpCheckerService {
     }
 
     /** Per-host pinned client: SNI=host, yerleşik endpoint-identification kapalı (URI=IP). Güven paylaşılan ctx'ten. */
-    private HttpClient pinnedClient(String host, boolean verifySsl, boolean followRedirects) {
+    private HttpClient pinnedClient(String host, boolean verifySsl) {
         SSLContext ctx = verifySsl ? strictCtx : trustAllCtx;
         if (ctx == null) return null;
-        String key = host + "|" + verifySsl + "|" + followRedirects;
+        String key = host + "|" + verifySsl;
         // synchronized: LinkedHashMap (LRU) thread-safe değil; computeIfAbsent + removeEldestEntry atomik olmalı.
         HttpClient client;
         synchronized (pinnedClients) {
@@ -316,7 +350,7 @@ public class HttpCheckerService {
                 sp.setEndpointIdentificationAlgorithm(null);
                 return HttpClient.newBuilder()
                         .connectTimeout(Duration.ofSeconds(10))
-                        .followRedirects(followRedirects ? HttpClient.Redirect.NORMAL : HttpClient.Redirect.NEVER)
+                        .followRedirects(HttpClient.Redirect.NEVER)
                         .sslContext(ctx)
                         .sslParameters(sp)
                         .build();
