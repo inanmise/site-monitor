@@ -259,3 +259,56 @@ describe('CertificateModal — tüm sekmeler açılır', () => {
     expect(api.admin.deleteInventory).not.toHaveBeenCalled()
   })
 })
+
+/**
+ * S11 (uçuşan istek yarışı) — SSL probe'unun TUR guard'ı.
+ *
+ * Modal kalıcı mount'ludur (App.jsx onu `key` vermeden render eder), yalnız `domain` prop'u
+ * değişir. Eski guard yanıtı "istek anındaki domain hâlâ ekranda mı" diye eliyordu ama
+ * elenen dalda `sslLoading` bayrağını TEMİZLEMİYORDU: kullanıcı A'yı canlı probe uçarken
+ * kapatıp B'yi açtığında bayrak true kaldığı için B'nin probe'u HİÇ başlamıyor, SSL sekmesi
+ * sonsuza kadar "yükleniyor" gösteriyordu. Sayfa yenilemeden çıkış yoktu.
+ */
+describe('CertificateModal — SSL probe tur guard (S11)', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  const modal = (domain) => (
+    <CertificateModal domain={domain} onClose={() => {}}
+      currentUser="admin" currentUserRole="ADMIN" />
+  )
+
+  it('A uçarken modal KAPATILIP B açılırsa B için yeni probe koşar', async () => {
+    let resolveA
+    api.checkDomainPreview = vi.fn()
+      .mockImplementationOnce(() => new Promise(r => { resolveA = r }))
+      .mockResolvedValue({ success: true, data: { host: 'b.example.com' } })
+
+    const { rerender } = render(modal('a.example.com'))
+    await waitFor(() => expect(api.checkDomainPreview).toHaveBeenCalledWith('a.example.com'))
+
+    rerender(modal(null))                 // kapat — A'nın probe'u HÂLÂ uçuyor
+    rerender(modal('b.example.com'))      // yeniden aç, başka domain
+
+    // Kusurlu hâlde sslLoading true kaldığı için bu çağrı HİÇ yapılmıyordu.
+    await waitFor(() => expect(api.checkDomainPreview).toHaveBeenCalledWith('b.example.com'))
+    expect(api.checkDomainPreview).toHaveBeenCalledTimes(2)
+
+    // A geç döndüğünde turu eskidiği için yok sayılır: yeni istek tetiklenmez, B'nin durumu bozulmaz.
+    resolveA({ success: true, data: { host: 'a.example.com' } })
+    await new Promise(r => setTimeout(r, 30))
+    expect(api.checkDomainPreview).toHaveBeenCalledTimes(2)
+    expect(screen.getByText('b.example.com')).toBeDefined()
+  })
+
+  it('kapatmadan A→B geçişinde de B probe edilir', async () => {
+    api.checkDomainPreview = vi.fn()
+      .mockImplementationOnce(() => new Promise(() => {}))   // A hiç dönmez
+      .mockResolvedValue({ success: true, data: { host: 'b.example.com' } })
+
+    const { rerender } = render(modal('a.example.com'))
+    await waitFor(() => expect(api.checkDomainPreview).toHaveBeenCalledWith('a.example.com'))
+
+    rerender(modal('b.example.com'))
+    await waitFor(() => expect(api.checkDomainPreview).toHaveBeenCalledWith('b.example.com'))
+  })
+})
