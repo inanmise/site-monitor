@@ -64,6 +64,8 @@ public class EscalationService {
      * yoksa asagidaki metotlar KENDI mevcut {@code Team.email} kollarini aynen isletir.
      */
     private final NotificationGroupService notificationGroups;
+    /** Güven alarmlarının aç/kapa anahtarları CANLI okunur (trust.ca-bundle-pem deseni). */
+    private final AppSettingsService appSettings;
 
     // Self-injection (@Lazy avoids circular dep) — needed to invoke @Async methods via proxy
     @Autowired @Lazy
@@ -191,8 +193,14 @@ public class EscalationService {
     /** Sertifika kaynaklı alarm tipleri — cert sweep'inin auto-resolve kapsamı.
      *  İzleme tipleri bilinçli olarak DIŞINDA: sertifika kontrolünün düzelmesi
      *  site erişiminin/portun/DNS'in düzeldiği anlamına gelmez (ve tersi). */
+    /** İstenen host sertifikada kapsanmıyor (tarayıcı: ERR_CERT_COMMON_NAME_INVALID). */
+    public static final String TYPE_HOSTNAME_MISMATCH = "HOSTNAME_MISMATCH";
+    /** Zincir hiçbir güven köküne bağlanmıyor (tarayıcı: ERR_CERT_AUTHORITY_INVALID). */
+    public static final String TYPE_UNTRUSTED_CA = "UNTRUSTED_CA";
+
     public static final Set<String> CERT_ALERT_TYPES =
-            Set.of("EXPIRY", "CHAIN_BROKEN", "REVOKED", "MISMATCH");
+            Set.of("EXPIRY", "CHAIN_BROKEN", "REVOKED", "MISMATCH",
+                   TYPE_HOSTNAME_MISMATCH, TYPE_UNTRUSTED_CA);
 
     /** "Erişilemez/çöktü" (DOWN) alarm tipleri — alarm fırtınası (storm) toplaması YALNIZ bunları sayar.
      *  Slow/SSL/expiry/changed/domainmon/cert bilinçli DIŞINDA (bunlar kesinti değildir). */
@@ -232,84 +240,90 @@ public class EscalationService {
 
         for (Map<String, Object> result : results) {
             String domain = (String) result.get("domain");
-            String alertType = determineAlertType(result);
-            if (alertType == null) {
-                // Sertifika sağlıklı — SADECE cert tiplerini kapat; açık bir
-                // ACCESSIBILITY alarmı uptime sweep'inin sorumluluğundadır.
-                resolveOpenAlertsForDomain(domain, CERT_ALERT_TYPES);
-                continue;
-            }
+            List<String> alertTypes = determineAlertTypes(result);
 
-            String alertLevel = determineAlertLevel(result, alertType, threshold);
-            if (alertLevel == null) continue;
+            // Bu turda ÜRETİLMEYEN cert tipleri kapanır — SADECE cert tipleri; açık bir
+            // ACCESSIBILITY alarmı uptime sweep'inin sorumluluğundadır. Eskiden bu kapanış yalnız
+            // "hiç alarm yok" dalında çalışıyordu; bir tip başka bir tipi maskelediğinde eski
+            // olay asılı kalıyordu.
+            Set<String> stale = new LinkedHashSet<>(CERT_ALERT_TYPES);
+            stale.removeAll(alertTypes);
+            if (!stale.isEmpty()) resolveOpenAlertsForDomain(domain, stale);
+            if (alertTypes.isEmpty()) continue;
 
-            // Route alert to the team that owns this cert — batch'ten lookup
-            var inventoryOpt  = Optional.ofNullable(invByDomain.get(domain));
-            Long domainTeamId = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
-            Long ugTeamId     = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null);
+            for (String alertType : alertTypes) {
+                String alertLevel = determineAlertLevel(result, alertType, threshold);
+                if (alertLevel == null) continue;
 
-            Integer daysRemaining = toInt(result.get("days_remaining"));
-            String message = buildMessage(domain, alertType, alertLevel, daysRemaining);
+                // Route alert to the team that owns this cert — batch'ten lookup
+                var inventoryOpt  = Optional.ofNullable(invByDomain.get(domain));
+                Long domainTeamId = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
+                Long ugTeamId     = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null);
 
-            Optional<AlertEvent> existing = Optional.ofNullable(openAlertByKey.get(domain + "|" + alertType));
+                Integer daysRemaining = toInt(result.get("days_remaining"));
+                String message = buildMessage(domain, alertType, alertLevel, daysRemaining)
+                        + securityEvidence(alertType, result);
 
-            if (existing.isEmpty()) {
-                AlertEvent event = newEvent(domain, alertLevel, alertType, message, daysRemaining);
-                // K5: envanterin bildirim grubu alarma DAMGALANIR -- cozum ve yeniden-gonderim
-                // ayni aliciya gitsin diye (canli okuma yapilsaydi grup degisiminde saparlardi).
-                event.setNotificationGroupId(inventoryOpt
-                        .map(com.sitemonitor.model.CertificateInventory::getNotificationGroupId)
-                        .orElse(null));
-                event = alertEventRepo.save(event);
+                Optional<AlertEvent> existing = Optional.ofNullable(openAlertByKey.get(domain + "|" + alertType));
 
-                List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId);
-                sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType, message,
-                        "", event.getId(), "INITIAL", daysRemaining, result);
-
-                event.setNotifiedContacts(serializeContacts(contacts));
-                event.setLastReAlertAt(now());
-                alertEventRepo.save(event);
-
-            } else {
-                AlertEvent event = existing.get();
-                boolean escalated = levelValue(alertLevel) > levelValue(event.getAlertLevel());
-
-                if (escalated) {
-                    event.setAlertLevel(alertLevel);
-                    event.setMessage(message);
-                    event.setDaysRemaining(daysRemaining);
-                    event.setAcknowledged(false);
+                if (existing.isEmpty()) {
+                    AlertEvent event = newEvent(domain, alertLevel, alertType, message, daysRemaining);
+                    // K5: envanterin bildirim grubu alarma DAMGALANIR -- cozum ve yeniden-gonderim
+                    // ayni aliciya gitsin diye (canli okuma yapilsaydi grup degisiminde saparlardi).
+                    event.setNotificationGroupId(inventoryOpt
+                            .map(com.sitemonitor.model.CertificateInventory::getNotificationGroupId)
+                            .orElse(null));
+                    event = alertEventRepo.save(event);
 
                     List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId);
                     sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType, message,
-                            "", event.getId(), "ESCALATION", daysRemaining, result);
+                            "", event.getId(), "INITIAL", daysRemaining, result);
 
                     event.setNotifiedContacts(serializeContacts(contacts));
                     event.setLastReAlertAt(now());
                     alertEventRepo.save(event);
 
-                } else if (!Boolean.TRUE.equals(event.getAcknowledged())) {   // NULL-güvenli (O6)
-                    String lastAlertTime = event.getLastReAlertAt() != null
-                            ? event.getLastReAlertAt() : event.getCreatedAt();
-                    if (reAlertDue(lastAlertTime, now(), reAlertIv)) {
-                        List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId);
-                        sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
-                                "[RE-ALERT] " + message, "[RE-ALERT] ",
-                                event.getId(), "DAILY_REALERT", daysRemaining, result);
+                } else {
+                    AlertEvent event = existing.get();
+                    boolean escalated = levelValue(alertLevel) > levelValue(event.getAlertLevel());
 
-                        event.setLastReAlertAt(now());
-                        event.setRealertCount((event.getRealertCount() == null ? 0 : event.getRealertCount()) + 1);
-                        event.setDaysRemaining(daysRemaining);
+                    if (escalated) {
+                        event.setAlertLevel(alertLevel);
                         event.setMessage(message);
+                        event.setDaysRemaining(daysRemaining);
+                        event.setAcknowledged(false);
+
+                        List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId);
+                        sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType, message,
+                                "", event.getId(), "ESCALATION", daysRemaining, result);
+
+                        event.setNotifiedContacts(serializeContacts(contacts));
+                        event.setLastReAlertAt(now());
                         alertEventRepo.save(event);
-                        log.info("Re-alert sent: {} [{}] — previous day: {}",
-                                domain, alertLevel, lastAlertTime.substring(0, 10));
-                    } else {
-                        log.debug("Alert already sent today, skipping: {} [{}] — last: {}",
-                                domain, alertLevel, lastAlertTime.substring(0, 10));
+
+                    } else if (!Boolean.TRUE.equals(event.getAcknowledged())) {   // NULL-güvenli (O6)
+                        String lastAlertTime = event.getLastReAlertAt() != null
+                                ? event.getLastReAlertAt() : event.getCreatedAt();
+                        if (reAlertDue(lastAlertTime, now(), reAlertIv)) {
+                            List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId);
+                            sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
+                                    "[RE-ALERT] " + message, "[RE-ALERT] ",
+                                    event.getId(), "DAILY_REALERT", daysRemaining, result);
+
+                            event.setLastReAlertAt(now());
+                            event.setRealertCount((event.getRealertCount() == null ? 0 : event.getRealertCount()) + 1);
+                            event.setDaysRemaining(daysRemaining);
+                            event.setMessage(message);
+                            alertEventRepo.save(event);
+                            log.info("Re-alert sent: {} [{}] — previous day: {}",
+                                    domain, alertLevel, lastAlertTime.substring(0, 10));
+                        } else {
+                            log.debug("Alert already sent today, skipping: {} [{}] — last: {}",
+                                    domain, alertLevel, lastAlertTime.substring(0, 10));
+                        }
                     }
                 }
-            }
+            }   // tip döngüsü (bir sonuç birden fazla alarm tipi doğurabilir)
         }
     }
 
@@ -366,7 +380,9 @@ public class EscalationService {
             return new ReNotifyTargets(event.getTeamId(), null, contacts, event.getNotificationGroupId());
         }
         var inventoryOpt = inventoryRepo.findByDomain(event.getDomain());
-        Long domainTeamId = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
+        // Çözüm yoluyla AYNI kural: damgalanmış takım önceliklidir (bkz. sendResolutionNotification).
+        Long invTeamId = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
+        Long domainTeamId = event.getTeamId() != null ? event.getTeamId() : invTeamId;
         Long ugTeamId     = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null);
         return new ReNotifyTargets(domainTeamId, ugTeamId,
                 getContactsForLevel(event.getAlertLevel(), domainTeamId), event.getNotificationGroupId());
@@ -907,6 +923,11 @@ public class EscalationService {
             // izleme-yolu eşleniği.
             if (levelValue(alertLevel) > levelValue(event.getAlertLevel())) {
                 event.setAlertLevel(alertLevel);
+                // KALICILASTIR: asagidaki "re-alert vakti gelmedi" dali save cagirmiyor ve sinifta
+                // @Transactional da yok — dirty-checking kurtarmiyordu. Terfi bellekte kalip
+                // kayboluyor, araya giren bir cozum bildirimini ESKI (dusuk) seviyeyle gonderiyor
+                // ve mudur atlanabiliyordu (Y5'in alt-dali).
+                alertEventRepo.save(event);
             }
             // İLK bildirim hiç tamamlanmadıysa (lastReAlertAt null) onu ŞİMDİ gönder.
             //
@@ -1292,7 +1313,13 @@ public class EscalationService {
                         : List.of();
             } else {
                 var inventoryOpt = inventoryRepo.findByDomain(event.getDomain());
-                domainTeamId = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
+                // DAMGALANMIŞ takım önceliklidir. PORT/DNS alarmları isStandaloneMon listesinde
+                // olmadığı için buraya düşüyor; envanterde OLMAYAN bir host'ta (ör. kullanıcı Port
+                // izlemesinin host'unu düzenledi → detachIfIdentityChanged) teamId null kalıyor ve
+                // çözüm bildirimi KİMSEYE gitmiyordu. Açılışta takım event'e yazılmıştı; onu okumak
+                // üç yolu (açılış / çözüm / tekrar-bildir) tek doğruluk kaynağına bağlar.
+                Long invTeamId = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
+                domainTeamId = event.getTeamId() != null ? event.getTeamId() : invTeamId;
                 ugTeamId     = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null);
                 contacts = getContactsForLevel(event.getAlertLevel(), domainTeamId);
             }
@@ -1311,8 +1338,25 @@ public class EscalationService {
                         && seen.add(c.getEmail().trim().toLowerCase()))
                     allEmails.add(c.getEmail().trim());
             }
-            if (allEmails.isEmpty()) {
-                log.warn("Çözüm bildirimi — alıcı bulunamadı: {}", event.getDomain());
+            // Bulgu 13: izlemede "E-posta" kapalıysa AÇILIŞ maili gitmiyor ama ÇÖZÜLDÜ maili
+            // gidiyordu — bastırma paritesi kırıktı. Damga artık contextJson'a kalıcılaşıyor
+            // (snapshotContext), böylece çözüm yolu da aynı kararı okuyabiliyor.
+            // certContext aşağıda kurulur; damga olayın KENDİ contextJson'ında saklı olduğu için
+            // burada erkenden okunabilir (cert alarmlarında contextJson yok → null → bugünkü davranış).
+            Map<String, Object> earlyCtx = deserializeContext(event.getContextJson());
+            boolean mailDisabled = earlyCtx != null && Boolean.TRUE.equals(earlyCtx.get("mail_disabled"));
+            if (mailDisabled || allEmails.isEmpty()) {
+                log.info("Çözüm bildirimi — mail atlandı ({}): {}",
+                        mailDisabled ? "izlemede e-posta kapalı" : "alıcı yok", event.getDomain());
+                // Kanal BAĞIMSIZLIĞI: e-posta alıcısı yoksa push da düşmemeli. Açılış yolunda bu
+                // düzeltilmişti (N10), çözüm yolunda erken dönüş enqueueResolve'dan ÖNCE olduğu için
+                // duruyordu: e-postasız takım açılış push'unu alıp "DÜZELDİ" push'unu ASLA almıyor,
+                // telefonda alarm sonsuza dek açık kalıyordu.
+                try {
+                    userPushService.enqueueResolve(event, earlyCtx);
+                } catch (Exception ex) {
+                    log.warn("user-push çözüm tetiği atlandı (mail-dışı dal): {}", ex.toString());
+                }
                 return;
             }
 
@@ -1320,6 +1364,8 @@ public class EscalationService {
                 case "REVOKED"          -> "İptal";
                 case "MISMATCH"         -> "Dağıtım Eksik";
                 case "CHAIN_BROKEN"     -> "Zincir Sorunu";
+                case TYPE_HOSTNAME_MISMATCH -> "Alan Adı Uyuşmazlığı";
+                case TYPE_UNTRUSTED_CA      -> "Güvenilmeyen Sertifika";
                 case TYPE_ACCESSIBILITY -> "Erişim Kesintisi";
                 case TYPE_PORT_DOWN     -> "Port Kesintisi";
                 case TYPE_PORT_SLOW     -> "Port Yavaş Yanıt";
@@ -1421,19 +1467,69 @@ public class EscalationService {
         }
     }
 
-    private String determineAlertType(Map<String, Object> result) {
+    /**
+     * Bir sertifika sonucundan doğan alarm tipleri — <b>birden fazla olabilir</b>.
+     *
+     * <p><b>Neden liste.</b> Eskiden tek tip dönülüyordu ve güvenlik hükmü {@code EXPIRY}'nin
+     * önündeydi. Hostname uyuşmazlığı — REVOKED/CHAIN_BROKEN'ın aksine — <b>kalıcı</b> bir durum
+     * olabilir (sertifika yalnız {@code www.x.com} kapsıyor ama izleme {@code x.com}). Böyle bir
+     * domainde her taramada güvenlik tipi dönüyor, sertifikanın süresi dolsa bile EXPIRY alarmı
+     * HİÇ açılmıyordu; üstelik önceden açılmış bir EXPIRY olayı da anahtar eşleşmediği için
+     * kapanmıyor, "açık ama sessiz" kalıyordu. Bir sertifika izleme aracının birincil vaadi buydu.
+     *
+     * <p><b>Sıra ve dışlama.</b> REVOKED / MISMATCH / CHAIN_BROKEN birbirini dışlar ve — bugünkü
+     * davranış aynen korunarak — tek başlarına dönerler: sertifikanın kendisi bozukken süreyi
+     * ayrıca alarma bağlamak gürültüdür. Güvenlik ve süre ise birbirinden bağımsızdır, ikisi de
+     * doğruysa İKİSİ birden döner.
+     */
+    private List<String> determineAlertTypes(Map<String, Object> result) {
         String revocationStatus = (String) result.get("revocation_status");
         String deploymentStatus = (String) result.get("deployment_status");
         String chainStatus = (String) result.get("chain_status");
         Boolean warning = (Boolean) result.get("warning");
         String status = (String) result.get("status");
 
-        if ("REVOKED".equals(revocationStatus)) return "REVOKED";
-        if ("INCOMPLETE".equals(deploymentStatus)) return "MISMATCH";
-        if ("BROKEN".equals(chainStatus)) return "CHAIN_BROKEN";
-        if (Boolean.TRUE.equals(warning) || "error".equals(status)) return "EXPIRY";
+        if ("REVOKED".equals(revocationStatus)) return List.of("REVOKED");
+        if ("INCOMPLETE".equals(deploymentStatus)) return List.of("MISMATCH");
+        if ("BROKEN".equals(chainStatus)) return List.of("CHAIN_BROKEN");
+
+        List<String> types = new ArrayList<>(2);
+        String security = securityAlertType(result);
+        if (security != null) types.add(security);
+        if (Boolean.TRUE.equals(warning) || "error".equals(status)) types.add("EXPIRY");
+        return types;
+    }
+
+    /**
+     * Güvenlik bayrakları → alarm tipi; her biri kendi ayarıyla kapılı.
+     *
+     * <p><b>Varsayılanlar neden farklı.</b> Hostname uyuşmazlığı meşru olarak neredeyse hiç
+     * olmaz → AÇIK. Güvenilmeyen CA ise kurumsal gerçekliğe bağlı: {@code trust.ca-bundle-pem}
+     * boşsa (helm varsayılanı) iç host'ların TÜMU UNTRUSTED görünür ve açık gelseydi yayın
+     * anında alarm seli olurdu → KAPALI, admin CA paketini doldurduktan sonra açar.
+     *
+     * <p>Ayarlar yalnız ALARM ÜRETİMİNİ yönetir; rozet ve sağlık satırları koşulsuz doğruyu söyler.
+     */
+    private String securityAlertType(Map<String, Object> result) {
+        Object sanRaw = result.get("san");
+        java.util.List<String> san = sanRaw instanceof java.util.List<?> l
+                ? l.stream().filter(java.util.Objects::nonNull).map(String::valueOf).toList()
+                : java.util.List.of();
+        java.util.List<String> flags = CertificateHealthRules.securityFlags(
+                (String) result.get("domain"), san, (String) result.get("trust_status"));
+        if (flags.contains(CertificateHealthRules.FLAG_HOSTNAME_MISMATCH)
+                && appSettings.getBoolean(SETTING_ALERT_HOSTNAME_MISMATCH, true)) {
+            return TYPE_HOSTNAME_MISMATCH;
+        }
+        if (flags.contains(CertificateHealthRules.FLAG_UNTRUSTED_CA)
+                && appSettings.getBoolean(SETTING_ALERT_UNTRUSTED, false)) {
+            return TYPE_UNTRUSTED_CA;
+        }
         return null;
     }
+
+    public static final String SETTING_ALERT_HOSTNAME_MISMATCH = "site.monitor.trust.alert-hostname-mismatch";
+    public static final String SETTING_ALERT_UNTRUSTED = "site.monitor.trust.alert-untrusted";
 
     /** Sertifikaya erişilemediğini / sertifika bilgilerinin alınamadığını gösteren,
      *  ağ veya firewall kaynaklı ulaşılabilirlik hata sınıfları. Bunlar gerçek bir
@@ -1445,7 +1541,8 @@ public class EscalationService {
                                         AlertThreshold threshold) {
         // Doğrulanmış sertifika kusurları → her zaman KRİTİK (müdüre eskalasyon haklı).
         if ("REVOKED".equals(alertType) || "MISMATCH".equals(alertType)
-                || "CHAIN_BROKEN".equals(alertType)) {
+                || "CHAIN_BROKEN".equals(alertType)
+                || TYPE_HOSTNAME_MISMATCH.equals(alertType) || TYPE_UNTRUSTED_CA.equals(alertType)) {
             return "CRITICAL";
         }
         // Sertifikaya erişilemedi / bilgileri alınamadı (status=error). Ağ veya firewall
@@ -1616,6 +1713,8 @@ public class EscalationService {
             case "REVOKED"          -> "İptal Edildi";
             case "MISMATCH"         -> "Dağıtım Eksik";
             case "CHAIN_BROKEN"     -> "Zincir Sorunu";
+            case TYPE_HOSTNAME_MISMATCH -> "Alan Adı Uyuşmazlığı";
+            case TYPE_UNTRUSTED_CA      -> "Güvenilmeyen Sertifika";
             case TYPE_ACCESSIBILITY -> "Erişim Kesintisi";
             case TYPE_PORT_DOWN     -> "Port Kesintisi";
             case TYPE_PORT_SLOW     -> "Port Yavaş Yanıt";
@@ -1665,7 +1764,7 @@ public class EscalationService {
                     : typeTr;
         };
         // Süre-bitişi ailesinde severity yerine kalan gün öne çıkar: "15 GÜN KALDI" / "ACİL 2 GÜN KALDI".
-        String daysSeg = daysRemaining == null ? levelTr
+        String daysSeg = (daysRemaining == null || !isDurationAlert(alertType)) ? levelTr
                 : (daysRemaining <= 3 ? "ACİL " + daysRemaining + " GÜN KALDI" : daysRemaining + " GÜN KALDI");
         // Subject standardı: [Site Monitor] SEVERITY · monitör ADI · kısa sorun — çıplak URL subject'e
         // girmez (ctx.monitor_name; yoksa domain'in şema-soyulmuş hali). AlertEvent.domain (yönlendirme/
@@ -1894,6 +1993,52 @@ public class EscalationService {
         return ctx;
     }
 
+    /**
+     * Güvenlik alarmına KANIT ekler: çözümlenen IP ve sunulan sertifikanın CN'i.
+     *
+     * <p>NXDOMAIN-hijack vakasında kullanıcının tek bakışta görmesi gereken şey buydu:
+     * alan adı bir ev modeminin iç IP'sine çözülüyor ve modemin kendi paneli sunuluyor.
+     *
+     * <p><b>Tek başına ASLA alarm değildir</b> — kurumda bir iç host'un 10.x.x.x'e çözülmesi
+     * tamamen normaldir. Yalnız zaten açılmış bir güvenlik alarmını açıklar.
+     */
+    static String securityEvidence(String alertType, Map<String, Object> result) {
+        if (!TYPE_HOSTNAME_MISMATCH.equals(alertType) && !TYPE_UNTRUSTED_CA.equals(alertType)) return "";
+        if (result == null) return "";
+        String ip = result.get("resolved_ip") instanceof String v && !v.isBlank() ? v : null;
+        String cn = result.get("subject") instanceof String v && !v.isBlank() ? v : null;
+        if (ip == null && cn == null) return "";
+        StringBuilder sb = new StringBuilder(" [");
+        if (ip != null) sb.append("çözümlenen IP: ").append(ip).append(isInternalIp(ip) ? " (iç ağ)" : "");
+        if (ip != null && cn != null) sb.append("; ");
+        if (cn != null) sb.append("sunulan CN: ").append(cn);
+        return sb.append("]").toString();
+    }
+
+    /** Metin zaten bir IP olduğu için {@code getByName} DNS'e gitmez; ad verilirse sessizce false. */
+    private static boolean isInternalIp(String ip) {
+        try {
+            java.net.InetAddress a = java.net.InetAddress.getByName(ip);
+            return a.isSiteLocalAddress() || a.isLoopbackAddress() || a.isLinkLocalAddress();
+        } catch (Exception e) { return false; }
+    }
+
+    /**
+     * Bu alarm tipi SÜRE-BİTİŞİ ailesinden mi — yani "N gün kaldı" ifadesi anlamlı mı?
+     *
+     * <p>Sertifika kusurları (iptal / dağıtım / zincir / alan adı uyuşmazlığı / güvenilmeyen CA)
+     * süreden BAĞIMSIZDIR: 1775 gün geçerli bir sertifika da bu host için kabul edilemez olabilir.
+     * Bu ayrım yapılmadığında konu satırı "[Site Monitor] 1775 GÜN KALDI · host · Alan Adı
+     * Uyuşmazlığı" oluyordu — KRİTİK etiketi kayboluyor ve konu, alarmın gerekçesinin tam tersini
+     * söylüyordu. Konu satırı ve e-posta hero'su bu tek yüklemden karar verir.
+     */
+    static boolean isDurationAlert(String alertType) {
+        if (alertType == null || alertType.isBlank()) return true;   // eski/bilinmeyen: bugünkü davranış
+        return !("REVOKED".equals(alertType) || "MISMATCH".equals(alertType)
+                || "CHAIN_BROKEN".equals(alertType)
+                || TYPE_HOSTNAME_MISMATCH.equals(alertType) || TYPE_UNTRUSTED_CA.equals(alertType));
+    }
+
     private String buildMessage(String domain, String alertType, String alertLevel, Integer days) {
         return switch (alertType) {
             case TYPE_ACCESSIBILITY -> "KRİTİK: " + domain +
@@ -1925,6 +2070,12 @@ public class EscalationService {
                     " için yenilenmiş bir sertifika mevcut ancak uç nokta eski sertifikayı sunmaya devam ediyor.";
             case "CHAIN_BROKEN" -> "ZİNCİR SORUNU: " + domain +
                     " sertifika zincirindeki bir ara veya kök CA sertifikası süresi dolmuş ya da geçersiz.";
+            case TYPE_HOSTNAME_MISMATCH -> "KRİTİK: " + domain +
+                    " adresinde sunulan sertifika BU ALAN ADINI KAPSAMIYOR. " +
+                    "Tarayıcılar bağlantıyı reddeder; yanlış yönlendirme ya da DNS ele geçirme olabilir.";
+            case TYPE_UNTRUSTED_CA -> "KRİTİK: " + domain +
+                    " adresindeki sertifika güvenilir bir kök CA'ya bağlanmıyor. " +
+                    "Kurumsal CA ise Genel Ayarlar'daki güven paketine ekleyin; değilse trafik doğrulanmalıdır.";
             case TYPE_HTTP_DOWN -> "KRİTİK: " + domain +
                     " adresine HTTP isteği başarısız — site erişilemez durumda. " +
                     "Erişim geri geldiğinde alarm otomatik kapanacaktır.";
@@ -2015,7 +2166,11 @@ public class EscalationService {
                                  // Sayfa Bütünlüğü (PAGE_DOWN/PAGE_INTEGRITY) — çözüm maili "sorun neydi" bloğu
                                  "page_status", "page_mode", "broken_resources", "timeout_count",
                                  "mixed_content_count", "total_resources",
-                                 "problem_resources", "problem_rows", "problem_total", "detail")) {
+                                 "problem_resources", "problem_rows", "problem_total", "detail",
+                                 // Kanal bastirma damgalari: cozum yolu ctx'i olaydan geri okuyor;
+                                 // bu anahtarlar kalicilastirilmazsa "e-postayi kapattim ama COZULDU
+                                 // maili geliyor" paritesizligi olusuyordu.
+                                 "mail_disabled", "push_disabled")) {
             if (ctx.get(k) != null) snap.put(k, ctx.get(k));
         }
         if (snap.isEmpty()) return null;
@@ -2036,6 +2191,7 @@ public class EscalationService {
                 || isDomainMon(alertType) || isKeywordAux(alertType) || isPage(alertType) || isScripted(alertType)
                 || isPageSpeed(alertType);
     }
+
 
     /** Domain süre-bitişi alarmında müdür (eskalasyon kontağı) da eklensin mi? Kullanıcı politikası:
      *  YALNIZ KRİTİK domain alarmında müdür bilgilendirilir; ORTA/WARNING'de yalnız takım. Diğer standalone

@@ -213,8 +213,8 @@ public class LdapProvisioningService {
      * (ör. "SY-MevduatMuhasebeSigorta"), bu yüzden yalnız İLK tireden böl (rol önekini at), kalanı
      * virgülle ayır. Örnekler:
      * <pre>
-     *   "PRODUCT OWNER-SY-MevduatMuhasebeSigorta,SY-Dijital Mobil Servis"
-     *        → [SY-MevduatMuhasebeSigorta, SY-Dijital Mobil Servis]
+     *   "PRODUCT OWNER-SY-MevduatMuhasebeSigorta,SY-Takım A Mobil Servis"
+     *        → [SY-MevduatMuhasebeSigorta, SY-Takım A Mobil Servis]
      *   "YAZILIM UZMANI-SY-MevduatMuhasebeSigorta" → [SY-MevduatMuhasebeSigorta]
      * </pre>
      */

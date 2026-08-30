@@ -72,6 +72,108 @@ function EmailStatusBadge({ status }) {
   return <span className="nl-status nl-status-muted">{status}</span>
 }
 
+/**
+ * Ayni mesaji ayni tetikte alan alicilari TEK satirda toplar.
+ *
+ * <p>Bir alarm bes kisiye gittiginde bes ayni satir aliniyordu; ekranin tamami tek bir gonderimin
+ * tekrarina gidiyor, mesajin kendisi ise hicbir yerde okunamiyordu. Anahtar (tetik + durum +
+ * mesaj): metin farkliysa gruplanmazlar, cunku o zaman gercekten farkli gonderimlerdir.
+ */
+export function groupPushRows(rows) {
+  const by = new Map()
+  for (const p of rows ?? []) {
+    const key = `${p.trigger}|${p.status}|${p.message ?? ''}`
+    if (!by.has(key)) by.set(key, [])
+    by.get(key).push(p)
+  }
+  return [...by.values()]
+}
+
+/**
+ * Saklanan damga -> yerel okunur tarih. Push teslimat damgalari da artik UTC yaziliyor
+ * (UserPushService.ISO), dolayisiyla mail kartiyla AYNI kural gecerli: zone tasimayan damgaya
+ * 'Z' eklenir. Ham ISO basmak ayni modalda iki farkli zaman dili uretiyordu.
+ */
+function fmtStamp(iso, locale) {
+  if (!iso) return '—'
+  try {
+    const s = iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z'
+    return new Date(s).toLocaleString(locale, {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    })
+  } catch { return iso }
+}
+
+/** Push tetigi -> mevcut nl-card renk varyanti (yeni CSS sinifi uydurulmaz). */
+const PUSH_TRIGGER_CLS = {
+  OPEN: 'initial', ESCALATION: 'escalation', RE_ALERT: 'daily',
+  RESEND: 'manual', RESOLVE: 'resolution',
+}
+
+/**
+ * Tek webhook gonderimi (ya da ayni mesaji alan alici grubu) — TIKLANINCA acilir ve
+ * kullaniciya GERCEKTEN giden metni gosterir. Duzen ve siniflar NotifLogCard ile ayni;
+ * mail ve webhook ayni modalda iki farkli sekilde davranmasin.
+ */
+function PushDeliveryGroup({ rows }) {
+  const t = useT()
+  const locale = useDateLocale()
+  const [open, setOpen] = useState(false)
+  const head = rows[0]
+  const many = rows.length > 1
+  const uniqueRecipients = new Set(rows.map(r => r.username)).size
+  const cls = PUSH_TRIGGER_CLS[head.trigger] ?? 'other'
+  const statusCls = head.status === 'SENT' ? 'ok'
+    : (head.status === 'FAILED' || head.status === 'CIRCUIT_OPEN') ? 'danger' : 'muted'
+
+  const who = (p) => (p.username === '-'
+    ? <em key={p.id}>{t('userpush.systemRow')}</em>
+    : <UserBadge key={p.id} username={p.username} displayName={p.display_name} size="sm" inline nameOnly />)
+
+  return (
+    <div className={`nl-card nl-card--${cls}${open ? ' is-open' : ''}`}>
+      <div className="nl-card-header" role="button" tabIndex={0} aria-expanded={open}
+        onClick={() => setOpen(o => !o)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o) } }}>
+        <span className={`userpush-badge userpush-badge--${statusCls}`}>{head.status}</span>
+        <div className="nl-recipient">
+          {/* BENZERSIZ alici sayilir: ayni alarma iki kez "Tekrar Bildir" basildiginda
+              iki satir ayni gruba duser ve rows.length "2 alici" derdi — oysa tek kisiye
+              iki kez gidilmistir. */}
+          {many ? <strong>{t('alh.push.recipients', uniqueRecipients)}</strong> : who(head)}
+        </div>
+        <div className="nl-right">
+          <span className="userpush-modal-trigger">{t('userpush.trigger.' + head.trigger)}</span>
+          <span className="nl-time">{fmtStamp(head.sent_at || head.created_at, locale)}</span>
+          <span className="nl-chevron">{open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}</span>
+        </div>
+      </div>
+
+      {open && (
+        <div className="nl-card-body">
+          <div className="nl-detail-row nl-detail-row--body">
+            <span className="nl-detail-label">{t('alh.push.message')}</span>
+            <span className="nl-detail-val nl-message">{head.message || '\u2014'}</span>
+          </div>
+          {many && (
+            <div className="nl-detail-row nl-detail-row--body">
+              <span className="nl-detail-label">{t('alh.push.who')}</span>
+              <span className="nl-detail-val">{rows.map(who)}</span>
+            </div>
+          )}
+          {head.http_status != null && (
+            <div className="nl-detail-row">
+              <span className="nl-detail-label">HTTP</span>
+              <span className="nl-detail-val">{head.http_status}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function NotifLogCard({ log: l, alertLevel }) {
   const t = useT()
   const locale = useDateLocale()
@@ -268,15 +370,8 @@ function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
             <span className="nl-count">{t('alh.notifModal.records', pushRows.length)}</span>
           </div>
           {pushRows.length === 0 && <div className="nl-empty">{t('alh.webhookNone')}</div>}
-          {pushRows.map((p) => (
-            <div key={p.id} className="nl-quick-row userpush-modal-row">
-              <span className={`userpush-badge userpush-badge--${p.status === 'SENT' ? 'ok' : (p.status === 'FAILED' || p.status === 'CIRCUIT_OPEN') ? 'danger' : 'muted'}`}>{p.status}</span>
-              {p.username === '-' ? <em>{t('userpush.systemRow')}</em>
-                : <UserBadge username={p.username} displayName={p.display_name} size="sm" inline nameOnly />}
-              <span className="userpush-modal-trigger">{t('userpush.trigger.' + p.trigger)}</span>
-              <span className="nl-email">{p.sent_at || p.created_at}</span>
-              {p.message && <span className="userpush-modal-msg" title={p.message}>{p.message}</span>}
-            </div>
+          {groupPushRows(pushRows).map((g, i) => (
+            <PushDeliveryGroup key={g[0].id ?? i} rows={g} />
           ))}
         </div>
 

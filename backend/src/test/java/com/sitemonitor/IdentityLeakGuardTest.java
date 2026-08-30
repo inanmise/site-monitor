@@ -48,7 +48,20 @@ class IdentityLeakGuardTest {
     private static final List<String> FORBIDDEN = List.of(
             "akb" + "ank",     // kurumsal alan adı / kurum adı
             "ak" + "net",      // iç ağ soneki ve AD kök alanı
-            "ocp" + "int");    // iç OpenShift platform adı
+            "ocp" + "int",     // iç OpenShift platform adı
+            // ── Gerçek TAKIM adları ──────────────────────────────────────────
+            // Kural 0 "takım isimleri" diyor ama kapı yalnız kurum/ağ/platform arıyordu; sayı
+            // sessizce büyüyordu (78 geçiş / 12 dosya). Jenerik yer tutucular ("SY-Team-A",
+            // "SY-Takım A") KASITLI olarak serbest — yasaklanan yalnız GERÇEK adlar.
+            "SY-Dij" + "ital",
+            "SY-K" + "art",
+            "Dijital Ban" + "kacılık",
+            "Dijital Ban" + "kacilik",
+            // ── Gerçek KİŞİ adı / kurum içi posta kutusu yerel-adı ────────────
+            // Test fixture'larına sızmıştı; git geçmişi kalıcı olduğu için girişte durdurulur.
+            "dijit" + "alsy",
+            "Kav" + "ruk",
+            "Ekme" + "kçi");
 
     private static final Set<String> SCAN_EXT = Set.of(
             ".java", ".jsx", ".js", ".json", ".md", ".yaml", ".yml", ".properties", ".css", ".sql");
@@ -200,5 +213,40 @@ class IdentityLeakGuardTest {
                 .map(Map.Entry::getKey)
                 .toList();
         assertThat(missing).isEmpty();
+    }
+
+    // ── Denetim 5. tur, bulgu 22: arsiv kapinin KOR NOKTASI ───────────────────
+
+    @Test
+    @DisplayName("Depoda izlenen arsiv YOK — kapi .gz icine bakamaz, denetlenmemis kaynak kopyasi olusur")
+    void noTrackedArchives() throws Exception {
+        Path root = repoRoot();
+        // SCAN_EXT listesi .gz icermez ve iceremez (ikili). Bir arsiv depoya girerse o anki
+        // kaynagin TAMAMI — o gunku kimlik izleriyle birlikte — kapinin goremedigi bir yerde
+        // kalicilasir; muafiyet listesinin "yalniz kuculur" circiri de orada islemez.
+        try (Stream<Path> walk = Files.walk(root, 1)) {
+            List<String> archives = walk.filter(Files::isRegularFile)
+                    .map(p -> rel(root, p))
+                    .filter(n -> n.endsWith(".tar.gz") || n.endsWith(".tgz") || n.endsWith(".zip"))
+                    .filter(IdentityLeakGuardTest::isTracked)
+                    .toList();
+            assertThat(archives)
+                    .as("depo kokunde izlenen arsiv — .gitignore'a alinmali (git rm --cached)")
+                    .isEmpty();
+        }
+    }
+
+    /** Dosya git tarafindan izleniyor mu — calisma agacinda DURAN ama ignore edilen arsiv sorun degil. */
+    private static boolean isTracked(String relPath) {
+        try {
+            Process p = new ProcessBuilder("git", "ls-files", "--error-unmatch", relPath)
+                    .directory(repoRoot().toFile())
+                    .redirectErrorStream(true)
+                    .start();
+            boolean done = p.waitFor(15, java.util.concurrent.TimeUnit.SECONDS);
+            return done && p.exitValue() == 0;
+        } catch (Exception e) {
+            return false;   // git yoksa kapi sessizce gecer (CI disi ortamlarda kirmizi vermesin)
+        }
     }
 }

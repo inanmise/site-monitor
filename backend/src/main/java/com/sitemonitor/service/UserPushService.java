@@ -22,6 +22,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -58,7 +59,21 @@ public class UserPushService {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final ZoneId ZONE = ZoneId.of("Europe/Istanbul");
-    private static final DateTimeFormatter ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
+    /**
+     * Teslimat damgalari — <b>UTC</b>.
+     *
+     * <p>Eskiden Istanbul yereliyle yaziliyordu ({@code Instant.now().atZone(ZONE)}), oysa
+     * {@code AlertEvent.createdAt} ve {@code MonitoringOutageService} UTC yaziyor ve arayuzdeki
+     * {@code toUtc} zone tasimayan HER damgaya 'Z' ekliyor. Sonuc: 14:03'te giden bir push
+     * teslimat gunlugunde 17:03 gorunuyordu — yanindaki alarm saati dogru oldugu icin ikisi
+     * yan yana 3 saat kayik duruyordu. Ayni asimetri CSV export'ta da vardi.
+     *
+     * <p><b>Gecis notu:</b> yayindan once yazilmis satirlar Istanbul yerelidir ve 3 saat ileri
+     * gorunur; yeni satirlar dogrudur. Saatlik gonderim tavani (countRecentForUser) esik
+     * penceresini ayni saate gore hesapladigi icin gecis suresince yalnizca daha TEMKINLI davranir.
+     */
+    private static final DateTimeFormatter ISO =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
     private static final DateTimeFormatter HHMM = DateTimeFormatter.ofPattern("HH:mm");
     private static final int MAX_MESSAGE_CHARS = 200;
     private static final int MAX_RAW_RESPONSE = 500;
@@ -221,8 +236,8 @@ public class UserPushService {
         String dedupeKey = dedupeKeyFor(trigger, event);
         String message = buildMessage(event, trigger, ctx);
         String batchId = UUID.randomUUID().toString().substring(0, 8);
-        String now = ISO.format(Instant.now().atZone(ZONE).toLocalDateTime());
-        String since = ISO.format(Instant.now().minus(Duration.ofHours(1)).atZone(ZONE).toLocalDateTime());
+        String now = ISO.format(Instant.now());
+        String since = ISO.format(Instant.now().minus(Duration.ofHours(1)));
 
         int queued = 0;
         for (var r : recipients) {
@@ -306,7 +321,7 @@ public class UserPushService {
         if (block != null) return new PushPreview(true, block, List.of());
 
         List<PushPreviewRow> rows = new ArrayList<>();
-        String since = ISO.format(Instant.now().minus(Duration.ofHours(1)).atZone(ZONE).toLocalDateTime());
+        String since = ISO.format(Instant.now().minus(Duration.ofHours(1)));
         for (var r : resolver.resolve(teamId, event.getAlertLevel())) {
             String status;
             if (r.skipReason() != null) status = r.skipReason();
@@ -322,14 +337,25 @@ public class UserPushService {
     /** Test gönderimi — gerçek istek, TEST satırı; dakikada 3 tavanı çağıran uç denetler. */
     public Map<String, Object> sendTest(List<String> usernames, String templateKey, String note) {
         String batchId = UUID.randomUUID().toString().substring(0, 8);
-        String now = ISO.format(Instant.now().atZone(ZONE).toLocalDateTime());
+        String now = ISO.format(Instant.now());
         Map<String, String> sample = new LinkedHashMap<>();
         sample.put("seviye", "TEST"); sample.put("ad", "Örnek İzleme"); sample.put("hedef", "example.com");
         sample.put("neden", "deneme"); sample.put("metrik", "yanıt süresi"); sample.put("deger", "1200ms");
         sample.put("esik", "1000ms"); sample.put("ne", "sertifika"); sample.put("gun", "30");
         sample.put("tarih", "2026-12-31"); sample.put("degisen", "kayıt"); sample.put("sure", "5 dk");
-        sample.put("saat", HHMM.format(Instant.now().atZone(ZONE)));
-        String message = fillTemplate(template(templateKey == null ? "test" : templateKey), sample);
+        // fillTemplate YALNIZ haritada bulunan anahtari degistirir: burada eksik birakilan bir yer
+        // tutucu, kullaniciya giden test mesajinda ciplak "{baslangic}" olarak KALIRDI. Kapi testi
+        // her KNOWN_PLACEHOLDER'in hem burada hem buildMessage'da doldurulmasini zorunlu kilar.
+        String sampleClock = PushText.istClockNow(Instant.now());
+        sample.put("saat", sampleClock);
+        sample.put("baslangic", sampleClock);
+        sample.put("bitis", sampleClock);
+        sample.put("ip", "192.0.2.10"); sample.put("cn", "ornek.example.com");
+        // Gercek gonderimle AYNI islem sirasi (pushSafe -> truncate): admin testte tam goren
+        // ama gercek alarmda sessizce kesilen bir sablonu dogrulamis olmasin.
+        String message = PushText.truncate(
+                PushText.pushSafe(fillTemplate(template(templateKey == null ? "test" : templateKey), sample)),
+                MAX_MESSAGE_CHARS);
         List<UserPushDelivery> rows = new ArrayList<>();
         for (String u : usernames) {
             if (u == null || u.isBlank()) continue;
@@ -426,7 +452,7 @@ public class UserPushService {
                     JsonNode n = MAPPER.readTree(bodyText);
                     if (n.hasNonNull("notificationId")) notificationId = n.get("notificationId").asText();
                 } catch (Exception ignored) { }
-                String sentAt = ISO.format(Instant.now().atZone(ZONE).toLocalDateTime());
+                String sentAt = ISO.format(Instant.now());
                 for (UserPushDelivery d : rows) {
                     d.setStatus("SENT");
                     d.setHttpStatus(resp.statusCode());
@@ -610,7 +636,7 @@ public class UserPushService {
             UserPushDelivery d = row(event, trigger, dedupeKey, event.getTeamId(),
                     MonitorTypeCatalog.typeOfAlert(event.getAlertType()), SYSTEM_USER,
                     "(katman kararı)", null, reason,
-                    ISO.format(Instant.now().atZone(ZONE).toLocalDateTime()));
+                    ISO.format(Instant.now()));
             deliveryRepo.save(d);
         } catch (Exception ignored) { /* karar satırı yazılamadıysa gönderim mantığı etkilenmez */ }
     }
@@ -642,17 +668,27 @@ public class UserPushService {
     // ── Şablonlar (K6) ─────────────────────────────────────────────────────────────────────
 
     public static final Map<String, String> DEFAULT_TEMPLATES = Map.of(
-            "down", "{seviye} ▸ {ad}: {hedef} yanıt vermiyor — {neden}. {saat}",
-            "slow", "{seviye} ▸ {ad}: {metrik} eşiği aşıldı ({deger}, eşik {esik}). {saat}",
-            "expiry", "{seviye} ▸ {ad}: {ne} {gun} gün içinde doluyor ({tarih}).",
-            "changed", "{seviye} ▸ {ad}: {degisen} değişti — kontrol edin. {saat}",
-            "resolved", "DÜZELDİ ▸ {ad}: {sure} sonra normale döndü. {saat}",
-            "test", "Deneme ▸ SiteMonitor webhook testi — {saat}");
+            "down",     "{seviye}: {ad} yanıt vermiyor. Başlangıç {baslangic}. {neden}",
+            "slow",     "{seviye}: {ad} yavaş - {metrik} {deger} (eşik {esik}). Başlangıç {baslangic}.",
+            "expiry",   "{seviye}: {ad} - {ne} {gun} gün içinde doluyor ({tarih}).",
+            "changed",  "{seviye}: {ad} - {degisen} değişti. Başlangıç {baslangic}.",
+            // Sertifika kusuru "yanıt vermiyor" DEĞİLDİR: host gayet iyi cevap veriyor olabilir.
+            // Kanıt (IP/CN) sebepten ÖNCE gelir — 200 karakter tavanında ilk düşen kuyruk olur.
+            "cert",     "{seviye}: {ad} sertifikası kabul edilemez (IP {ip}, CN {cn}). {neden}",
+            "resolved", "DÜZELDİ: {ad} normale döndü. Süre {sure} (başlangıç {baslangic}, bitiş {bitis}).",
+            "test",     "Deneme: SiteMonitor webhook testi - {saat}");
 
     /** Kaydetmede bilinen yer tutucular — bilinmeyeni reddet (sessiz bozulma olmasın). */
     public static final List<String> KNOWN_PLACEHOLDERS = List.of(
             "seviye", "ad", "hedef", "neden", "metrik", "deger", "esik",
-            "ne", "gun", "tarih", "degisen", "sure", "saat");
+            "ne", "gun", "tarih", "degisen", "sure", "saat",
+            // Sertifika güvenlik alarmının KANITI: çözümlenen IP ve sunulan sertifikanın CN'i.
+            // Ayrı yer tutucu olmaları şart — alarm metninin sonuna eklenselerdi {neden}'in
+            // 120 karakter kırpması onları HER ZAMAN düşürürdü (özelliğin ana kanıtı kaybolurdu).
+            "ip", "cn",
+            // Sorunun BAŞLADIĞI ve (çözümde) BİTTİĞİ saat — kullanıcı bildirime bakıp olayın
+            // penceresini görebilmeli. İkisi de İstanbul saatiyle {@code HH:mm}.
+            "baslangic", "bitis");
 
     String template(String key) {
         return appSettings.getString("site.monitor.userpush.template." + key,
@@ -666,6 +702,9 @@ public class UserPushService {
         if (t.contains("EXPIRY")) return "expiry";
         if (t.contains("CHANGED") || t.contains("TRANSFER_LOCK") || t.contains("BLACKLIST")) return "changed";
         if (t.contains("SLOW") || t.contains("THRESHOLD")) return "slow";
+        // Sertifika kusurları: "yanıt vermiyor" metni yanlış teşhise yönlendiriyordu.
+        if ("REVOKED".equals(t) || "MISMATCH".equals(t) || t.contains("CHAIN")
+                || t.contains("HOSTNAME_MISMATCH") || t.contains("UNTRUSTED")) return "cert";
         return "down";
     }
 
@@ -679,19 +718,29 @@ public class UserPushService {
         vals.put("seviye", levelTr);
         vals.put("ad", nz(event.getDomain(), "-"));
         vals.put("hedef", nz(event.getDomain(), "-"));
-        vals.put("neden", firstLine(nz(event.getMessage(), "")));
+        // Alarm metni E-POSTA icin yazilmis tam bir cumle ve zaten "KRITIK: <adres> ..." ile
+        // basliyor; sablon ayrica {seviye} ve {ad} koydugu icin seviye IKI, adres UC kez cikiyordu.
+        vals.put("neden", PushText.capitalize(PushText.reasonOf(event.getMessage(), event.getDomain())));
         vals.put("metrik", ctxStr(ctx, "metric", "yanıt"));
         vals.put("deger", ctxStr(ctx, "value", "-"));
         vals.put("esik", ctxStr(ctx, "threshold", "-"));
         vals.put("ne", "süre");
         vals.put("gun", event.getDaysRemaining() == null ? "-" : String.valueOf(event.getDaysRemaining()));
         vals.put("tarih", ctxStr(ctx, "expiry_date", "-"));
-        vals.put("degisen", firstLine(nz(event.getMessage(), "kayıt")));
+        // {neden} ile AYNI çekirdek: seviye öneki ve adres tekrarı burada da kırpılır. İkizin
+        // atlanması telefona "KRİTİK: x - UYARI: x DNS kaydı değişti değişti." düşürüyordu.
+        vals.put("degisen", PushText.capitalize(PushText.reasonOf(event.getMessage(), event.getDomain())));
+        vals.put("ip", ctxStr(ctx, "resolved_ip", "-"));
+        vals.put("cn", ctxStr(ctx, "subject", "-"));
         vals.put("sure", durationSince(event.getCreatedAt()));
-        vals.put("saat", HHMM.format(Instant.now().atZone(ZONE)));
+        vals.put("baslangic", PushText.istClock(event.getCreatedAt()));
+        String nowClock = PushText.istClockNow(Instant.now());
+        vals.put("saat", nowClock);
+        vals.put("bitis", nowClock);   // çözüm tetiginde "şimdi" = normale dönüş anı
         String msg = fillTemplate(template(templateKeyFor(event.getAlertType(), trigger)), vals);
-        if (msg.length() > MAX_MESSAGE_CHARS) msg = msg.substring(0, MAX_MESSAGE_CHARS - 1) + "…";
-        return msg;
+        // Kanal ISO-8859-9 tasiyor: tipografik isaretler burada karsiligina cevrilir, aksi halde
+        // kullanicinin telefonunda soru isaretine donuyorlar (kirpma isareti "..." dahil).
+        return PushText.truncate(PushText.pushSafe(msg), MAX_MESSAGE_CHARS);
     }
 
     static String fillTemplate(String template, Map<String, String> vals) {
@@ -713,15 +762,18 @@ public class UserPushService {
         return line.length() > 120 ? line.substring(0, 120) : line;
     }
 
+    /**
+     * Alarm açılışından bu yana geçen süre.
+     *
+     * <p><b>İki kusur birden düzeltildi.</b> (1) {@code AlertEvent.createdAt} UTC yazılıyor
+     * ({@code EscalationService.now()}), burası ise onu çıplak yerel-zaman sanıp İstanbul
+     * saatinden çıkarıyordu — her süreye sabit <b>+3 saat</b> ekleniyordu (5 dakikalık kesinti
+     * telefonda "3 sa 5 dk" görünüyordu). (2) Birimler ürünün kendi standardından
+     * ({@code incidentMeta.js}) sapıyordu ve gün sınırında saat bilgisi tamamen düşüyordu.
+     */
     private String durationSince(String createdAt) {
-        try {
-            var start = java.time.LocalDateTime.parse(createdAt, ISO);
-            var mins = Duration.between(start, java.time.LocalDateTime.now(ZONE)).toMinutes();
-            if (mins < 60) return mins + " dk";
-            if (mins < 24 * 60) return (mins / 60) + " sa " + (mins % 60) + " dk";
-            return (mins / (24 * 60)) + " gün";
-        } catch (Exception e) {
-            return "-";
-        }
+        Instant start = PushText.parseStoredUtc(createdAt);
+        if (start == null) return "-";
+        return PushText.compactDuration(Duration.between(start, Instant.now()));
     }
 }

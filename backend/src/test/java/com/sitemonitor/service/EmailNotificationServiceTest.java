@@ -282,7 +282,7 @@ class EmailNotificationServiceTest {
     @DisplayName("Onay-bekleyen mail: rapor + 'Onayla' CTA + onay linki içerir")
     void buildWeeklyReportSubmittedHtml_containsApproveCta() {
         String url = "https://cm.example.com/api/weekly-reports/approve-link?token=ABC123";
-        String html = service.buildWeeklyReportSubmittedHtml("DijitalSY", "2026-W24", "Erdi", url);
+        String html = service.buildWeeklyReportSubmittedHtml("TakimA", "2026-W24", "Erdi", url);
         assertThat(html).contains(url);
         assertThat(html).contains("onaylamak için tıklayınız");
     }
@@ -291,7 +291,7 @@ class EmailNotificationServiceTest {
     @DisplayName("İade maili: düzeltme notu + iade eden içerir")
     void buildWeeklyReportRejectedHtml_containsNoteAndRejecter() {
         String html = service.buildWeeklyReportRejectedHtml(
-                "DijitalSY", "2026-W24", "Madde 2 eksik, düzeltiniz", "PO Bey");
+                "TakimA", "2026-W24", "Madde 2 eksik, düzeltiniz", "PO Bey");
         assertThat(html).contains("Madde 2 eksik, düzeltiniz");
         assertThat(html).contains("PO Bey");
     }
@@ -516,9 +516,9 @@ class EmailNotificationServiceTest {
         String html = service.buildResolutionEmailHtml(
                 "down.example.com", "ACCESSIBILITY", "CRITICAL", null,
                 "Sistem (otomatik)", "2026-06-11T12:14:00", "2026-06-11T10:00:00", null,
-                "SY-Dijital", uptime);
+                "SY-Takım A", uptime);
         assertThat(html)
-                .contains("Neden bu e-postayı aldınız?").contains("SY-Dijital")
+                .contains("Neden bu e-postayı aldınız?").contains("SY-Takım A")
                 .contains("ERİŞİLEBİLİRLİK ÖZETİ").contains("99.95% uptime").contains("99.80% uptime")
                 .contains("1 kesinti");
     }
@@ -547,7 +547,7 @@ class EmailNotificationServiceTest {
     @Test
     @DisplayName("Weekly report HTML: hitap, hafta etiketi, 4 madde, markdown tablo render")
     void buildWeeklyReportHtml_structure() {
-        String html = service.buildWeeklyReportHtml("DijitalSY", "2026-W24 (8–12 Haziran 2026)",
+        String html = service.buildWeeklyReportHtml("TakimA", "2026-W24 (8–12 Haziran 2026)",
                 "Ali Müdür", WR_CONTENT, false);
 
         assertThat(html).contains("Sayın Ali Müdür,");
@@ -584,7 +584,7 @@ class EmailNotificationServiceTest {
     @Test
     @DisplayName("Weekly report HTML (mail): markdown blokları inline stilli (Outlook=önizleme); footer IST + onay")
     void buildWeeklyReportHtml_emailInlineAndFooter() {
-        String html = service.buildWeeklyReportHtml("DijitalSY", "2026-W24 (8–12 Haziran 2026)",
+        String html = service.buildWeeklyReportHtml("TakimA", "2026-W24 (8–12 Haziran 2026)",
                 "Ali Müdür", WR_CONTENT, true, null,
                 "Onaylayan Kişi", "2026-06-13T09:00:00", "2026-06-13T09:05:00");
 
@@ -602,7 +602,7 @@ class EmailNotificationServiceTest {
     @Test
     @DisplayName("Weekly report HTML: footer onay bilgisi yoksa (DRAFT önizleme) yalnız Oluşturuldu satırı")
     void buildWeeklyReportHtml_footerNoApprovalInfo() {
-        String html = service.buildWeeklyReportHtml("DijitalSY", "2026-W24 (8–12 Haziran 2026)",
+        String html = service.buildWeeklyReportHtml("TakimA", "2026-W24 (8–12 Haziran 2026)",
                 "Ali Müdür", WR_CONTENT, false);
         assertThat(html).contains("Oluşturuldu:")
                 .doesNotContain("Onaylayan:").doesNotContain("Gönderim:");
@@ -928,7 +928,7 @@ class EmailNotificationServiceTest {
     void keywordAlert_ownTemplate() {
         Map<String, Object> ctx = new HashMap<>();
         ctx.put("url", "https://www.example.com/");
-        ctx.put("keyword", "Melih Ekmekçi");
+        ctx.put("keyword", "Can Demir");
         ctx.put("operator", "GTE");
         ctx.put("match_count", 3);
         ctx.put("occurrences", 1);
@@ -939,7 +939,7 @@ class EmailNotificationServiceTest {
                 "KRİTİK: kelime bulunamıyor", "https://www.example.com/", "CRITICAL", "KEYWORD", null, ctx);
         assertThat(html).contains("İÇERİK (KEYWORD) İZLEME");
         assertThat(html).contains("Aranan kelime");
-        assertThat(html).contains("Melih Ekmekçi");
+        assertThat(html).contains("Can Demir");
         assertThat(html).contains("en az 3 kez");                 // opPhrase
         assertThat(html).contains("tab=keyword");                 // CTA deep-link (&amp; ile escape'li)
         assertThat(html).contains("monitor=42");

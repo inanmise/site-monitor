@@ -50,6 +50,7 @@ import org.springframework.boot.availability.ReadinessState;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -2399,24 +2400,8 @@ public class SchedulerService {
             try {
                 Map<String, Object> r = entry.getValue().get();
                 // ctxExtra: port/protocol + per-monitor teyit/recovery override'ları (ping/keyword ile aynı → tunable + aktif recovery)
-                Map<String, Object> ctx = new LinkedHashMap<>();
-                ctx.put("monitor_name", m.getName());   // subject standardı: ad > çıplak URL
-                ctx.put("port", m.getPort());
-                ctx.put("protocol", m.getProtocol() != null ? m.getProtocol() : "TCP");
-                ctx.put("monitor_id", m.getId());
-                ctx.put("monitor_confirm_attempts", m.getConfirmAttempts());
-                ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
-                ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
-                ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
-                if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
-                if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
                 // Hata fırlatan monitör item üretmez — yanlış all-up resolve olmaz
-                sweep.add(new MonitoringOutageService.SweepItem(
-                        EscalationService.TYPE_PORT_DOWN, m.getHost(),
-                        m.getPort() + "/" + m.getProtocol(),
-                        "up".equals(r.get("status")), (String) r.get("error"),
-                        chanCtx(ctx, m.getNotifyEmail(), m.getNotifyWebhook()),
-                        () -> recheckPort(m)));
+                sweep.add(portSweepItem(m, r));
                 // PORT_SLOW: yanıt süresi eşiği (opsiyonel; kapalı/ölçülemedi/erişim-hatası → sentetik up = lingering kurtar)
                 Map<String, Object> slowCtx = new LinkedHashMap<>();
                 slowCtx.put("port", m.getPort());
@@ -2476,11 +2461,7 @@ public class SchedulerService {
         }
         activityLog.recordCheck(ActivityLogService.PORT, m.getId(), m.getName(),
                 m.getHost() + ":" + m.getPort(), m.getTeamId(), false, "scheduler", r);
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("status", open ? "up" : "down");
-        out.put("error", r.get("error"));
-        out.put("response_ms", r.get("response_ms"));   // slow sweep + alarm metriği için (recheckPort şimdiye dek düşürüyordu)
-        return out;
+        return portOutcome(r);
     }
 
     /** Yavaş yanıt yeniden-ölçümü (PORT_SLOW confirm/recovery re-check'i) — taze check, PortCheck PERSIST ETMEZ.
@@ -2541,30 +2522,7 @@ public class SchedulerService {
             KeywordMonitor m = entry.getKey();
             try {
                 Map<String, Object> r = entry.getValue().get();
-                Map<String, Object> ctx = new LinkedHashMap<>();
-                ctx.put("monitor_name", m.getName());   // subject standardı: ad > çıplak URL
-                ctx.put("url", m.getUrl());
-                ctx.put("keyword", m.getKeyword());
-                ctx.put("condition", m.getAlertCondition());
-                ctx.put("operator", m.getMatchOperator());
-                ctx.put("match_count", m.getMatchCount());
-                ctx.put("monitor_id", m.getId());
-                ctx.put("monitor_confirm_attempts", m.getConfirmAttempts());
-                ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
-                ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
-                ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
-                if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
-                if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
-                if (r.get("http_status") != null) ctx.put("http_status", r.get("http_status"));
-                if (r.get("response_ms") != null) ctx.put("response_ms", r.get("response_ms"));
-                if (r.get("snippet") != null)     ctx.put("snippet", r.get("snippet"));
-                if (r.get("occurrences") != null) ctx.put("occurrences", r.get("occurrences"));
-                String kw = m.getKeyword() != null ? m.getKeyword() : "";
-                sweep.add(new MonitoringOutageService.SweepItem(
-                        EscalationService.TYPE_KEYWORD, m.getUrl(),
-                        kw.length() > 40 ? kw.substring(0, 40) : kw,
-                        "up".equals(r.get("status")), (String) r.get("error"),
-                        chanCtx(ctx, m.getNotifyEmail(), m.getNotifyWebhook()), () -> recheckKeyword(m)));
+                sweep.add(keywordSweepItem(m, r));
                 // KEYWORD_SLOW: yanıt süresi eşiği (opsiyonel; kapalı/ölçülemedi/HTTP-hatası → sentetik up = lingering kurtar)
                 Map<String, Object> slowCtx = new LinkedHashMap<>();
                 slowCtx.put("url", m.getUrl());
@@ -2634,17 +2592,7 @@ public class SchedulerService {
         r.put("ok", ok);   // aktivite özeti için sağlıklı-mı bayrağı (found + adet koşulu)
         activityLog.recordCheck(ActivityLogService.KEYWORD, m.getId(), m.getName(),
                 m.getUrl(), m.getTeamId(), false, "scheduler", r);
-        Map<String, Object> out = new LinkedHashMap<>();
-        // Yapılandırma hatası (URL'de host yok) kesinti DEĞİL → "up" raporlanır: alarm/teyit zinciri
-        // başlamaz, askıda alarm varsa sessizce kapanır. Kontrol kaydı + hata mesajı yine yazıldı.
-        boolean cfgError = Boolean.TRUE.equals(r.get("config_error"));
-        out.put("status", (ok || cfgError) ? "up" : "down");
-        out.put("error", cfgError ? null : r.get("error"));
-        out.put("http_status", r.get("http_status"));   // alarm e-postası için zengin metrik
-        out.put("response_ms", r.get("response_ms"));
-        out.put("snippet", r.get("snippet"));
-        out.put("occurrences", count);
-        return out;
+        return keywordOutcome(m, r);
     }
 
     // ── HTTP / Website monitor sweep (serbest-form; envanter filtresi YOK) ────────
@@ -2688,23 +2636,7 @@ public class SchedulerService {
             HttpMonitor m = entry.getKey();
             try {
                 Map<String, Object> r = entry.getValue().get();
-                Map<String, Object> ctx = new LinkedHashMap<>();
-                ctx.put("monitor_name", m.getName());   // subject standardı: ad > çıplak URL
-                ctx.put("url", m.getUrl());
-                ctx.put("monitor_id", m.getId());
-                ctx.put("monitor_confirm_attempts", m.getConfirmAttempts());
-                ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
-                ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
-                ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
-                if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
-                if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
-                if (r.get("http_status") != null) ctx.put("http_status", r.get("http_status"));
-                if (r.get("response_ms") != null) ctx.put("response_ms", r.get("response_ms"));
-                sweep.add(new MonitoringOutageService.SweepItem(
-                        EscalationService.TYPE_HTTP_DOWN, m.getUrl(),
-                        m.getMethod() != null ? m.getMethod() : "GET",
-                        "up".equals(r.get("status")), (String) r.get("error"),
-                        chanCtx(ctx, m.getNotifyEmail(), m.getNotifyWebhook()), () -> recheckHttp(m)));
+                sweep.add(httpSweepItem(m, r));
                 checked++;
             } catch (Exception e) {
                 log.warn("HTTP check failed for {}: {}", m.getUrl(), e.getMessage());
@@ -2716,6 +2648,314 @@ public class SchedulerService {
             log.warn("HTTP outage processing failed: {}", e.getMessage(), e);
         }
         log.debug("HTTP checks complete: {} monitors", checked);
+    }
+
+    /** Tek DNS monitörü için BİRİNCİL (çözümleme hatası) değerlendirme öğesi — sweep VE manuel
+     *  çalıştırma bunu PAYLAŞIR. */
+    private MonitoringOutageService.SweepItem dnsFailureSweepItem(DnsMonitor m, Map<String, Object> r,
+                                                                  boolean success) {
+        Map<String, Object> failCtx = new LinkedHashMap<>();
+        failCtx.put("record_type", m.getRecordType());
+        failCtx.put("monitor_id", m.getId());   // e-posta CTA deep-link (?tab=dns&monitor=<id>)
+        if (m.getTeamId() != null) failCtx.put("team_id", m.getTeamId());   // standalone → alarm takıma
+        if (m.getNotificationGroupId() != null) failCtx.put("notification_group_id", m.getNotificationGroupId());
+        return new MonitoringOutageService.SweepItem(
+                EscalationService.TYPE_DNS_FAILURE, m.getDomain(), m.getRecordType(),
+                success, (String) r.get("error"),
+                chanCtx(confirmCtx(failCtx, m.getConfirmAttempts(), m.getConfirmIntervalSeconds(),
+                        m.getRecoveryChecks(), m.getRecoveryIntervalSeconds()),
+                        m.getNotifyEmail(), m.getNotifyWebhook()),
+                () -> recheckDns(m));
+    }
+
+    // ── Ham kontrol sonucu → sweep şekli ───────────────────────────────────────────────────
+    //
+    // Manuel "Çalıştır" ucu kontrolü ZATEN koşup satırı kaydediyor. evaluate*Now eskiden
+    // recheck*'i çağırıyordu; o da kendi kontrolünü koşup KENDİ satırını yazıyordu → tek tıkla
+    // hedefe iki istek, geçmişe iki satır ve uptime yüzdesinin manuel kontrolü ÇİFT sayması.
+    // Şekillendirme buraya alındı: recheck* de, manuel yol da aynı saf fonksiyonu kullanır.
+
+    /** HTTP ham sonucu → {"status","error","http_status","response_ms"}. */
+    static Map<String, Object> httpOutcome(Map<String, Object> r) {
+        boolean ok = Boolean.TRUE.equals(r.get("ok"));
+        // Yapılandırma hatası (URL'de host yok) kesinti DEĞİL → "up": alarm/teyit zinciri başlamaz,
+        // askıda alarm varsa sessizce kapanır. Kontrol kaydı + hata mesajı yine yazıldı.
+        boolean cfgError = Boolean.TRUE.equals(r.get("config_error"));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", (ok || cfgError) ? "up" : "down");
+        out.put("error", cfgError ? null : r.get("error"));
+        out.put("http_status", r.get("http_status"));
+        out.put("response_ms", r.get("response_ms"));
+        return out;
+    }
+
+    /** Port ham sonucu → {"status","error","response_ms"}. */
+    static Map<String, Object> portOutcome(Map<String, Object> r) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", Boolean.TRUE.equals(r.getOrDefault("open", false)) ? "up" : "down");
+        out.put("error", r.get("error"));
+        out.put("response_ms", r.get("response_ms"));
+        return out;
+    }
+
+    /** Ping ham sonucu → {"status","error","rtt_ms","packet_loss","na"}. */
+    static Map<String, Object> pingOutcome(Map<String, Object> r) {
+        boolean up = Boolean.TRUE.equals(r.getOrDefault("up", false));
+        boolean na = Boolean.TRUE.equals(r.get("na"));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", (up || na) ? "up" : "down");
+        out.put("error", r.get("error"));
+        out.put("rtt_ms", r.get("rtt_ms"));
+        out.put("packet_loss", r.get("packet_loss"));
+        out.put("na", na);
+        return out;
+    }
+
+    /** Keyword ham sonucu → sweep şekli; adet koşulu izlemenin operatör/eşiğinden gelir. */
+    static Map<String, Object> keywordOutcome(KeywordMonitor m, Map<String, Object> r) {
+        boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
+        int count = r.get("count") instanceof Number cn ? cn.intValue() : (found ? 1 : 0);
+        int threshold = m.getMatchCount() != null ? m.getMatchCount() : 1;
+        boolean hadError = r.get("error") != null;
+        boolean ok = !hadError && KeywordCheckerService.evaluate(count, m.getMatchOperator(), threshold);
+        boolean cfgError = Boolean.TRUE.equals(r.get("config_error"));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", (ok || cfgError) ? "up" : "down");
+        out.put("error", cfgError ? null : r.get("error"));
+        out.put("http_status", r.get("http_status"));
+        out.put("response_ms", r.get("response_ms"));
+        out.put("snippet", r.get("snippet"));
+        out.put("occurrences", count);
+        return out;
+    }
+
+    /**
+     * Manuel "Çalıştır" — DNS'in BİRİNCİL alarmını (çözümleme hatası) zamanlayıcıyla AYNI hatta sokar.
+     *
+     * <p>Yavaş/beklenmeyen-değer/tutarsızlık alarmları KAPSAM DIŞI: her birinin kendi özel teyit
+     * ayarı var (ör. yavaş için 3×60 sn) ve manuel yola taşınmaları ayrı bir ürün kararıdır;
+     * onlar zamanlanmış turlarında değerlendirilmeye devam eder.
+     */
+    @Async("certCheckExecutor")
+    public void evaluateDnsNow(DnsMonitor m, Map<String, Object> rawCheckResult) {
+        try {
+            // HAM sonuc kullanilir: recheckDns {"status","error"} donduruyor ve "success" anahtari
+            // YOK — bu yuzden success DAIMA false oluyordu, yani manuel DNS calistirmasi cozumleme
+            // basarili olsa bile hata teyit zinciri baslatiyordu. Zamanlayici da (runDnsChecksLocked)
+            // ham sonucun "success" anahtarina bakiyor; iki yol artik AYNI ifadeyi kullaniyor.
+            Map<String, Object> r = rawCheckResult;
+            boolean success = Boolean.TRUE.equals(r.get("success"));
+            monitoringOutageService.handleSweepResults(
+                    EscalationService.TYPE_DNS_FAILURE, List.of(dnsFailureSweepItem(m, r, success)), true);
+        } catch (Exception e) {
+            log.warn("Manuel DNS değerlendirmesi başarısız {}: {}", m.getDomain(), e.getMessage());
+        }
+    }
+
+    /** Tek keyword monitörü için değerlendirme öğesi — sweep VE manuel çalıştırma bunu PAYLAŞIR. */
+    private MonitoringOutageService.SweepItem keywordSweepItem(KeywordMonitor m, Map<String, Object> r) {
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("monitor_name", m.getName());   // subject standardı: ad > çıplak URL
+        ctx.put("url", m.getUrl());
+        ctx.put("keyword", m.getKeyword());
+        ctx.put("condition", m.getAlertCondition());
+        ctx.put("operator", m.getMatchOperator());
+        ctx.put("match_count", m.getMatchCount());
+        ctx.put("monitor_id", m.getId());
+        ctx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+        ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+        ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
+        ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+        if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+        if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
+        if (r.get("http_status") != null) ctx.put("http_status", r.get("http_status"));
+        if (r.get("response_ms") != null) ctx.put("response_ms", r.get("response_ms"));
+        if (r.get("snippet") != null)     ctx.put("snippet", r.get("snippet"));
+        if (r.get("occurrences") != null) ctx.put("occurrences", r.get("occurrences"));
+        String kw = m.getKeyword() != null ? m.getKeyword() : "";
+        return new MonitoringOutageService.SweepItem(
+                EscalationService.TYPE_KEYWORD, m.getUrl(),
+                kw.length() > 40 ? kw.substring(0, 40) : kw,
+                "up".equals(r.get("status")), (String) r.get("error"),
+                chanCtx(ctx, m.getNotifyEmail(), m.getNotifyWebhook()), () -> recheckKeyword(m));
+    }
+
+    /** Manuel "Çalıştır" — bkz. evaluatePageNow. */
+    @Async("certCheckExecutor")
+    public void evaluateKeywordNow(KeywordMonitor m, Map<String, Object> rawCheckResult) {
+        try {
+            Map<String, Object> r = keywordOutcome(m, rawCheckResult);
+            monitoringOutageService.handleSweepResults(
+                    EscalationService.TYPE_KEYWORD, List.of(keywordSweepItem(m, r)), true);
+        } catch (Exception e) {
+            log.warn("Manuel keyword değerlendirmesi başarısız {}: {}", m.getUrl(), e.getMessage());
+        }
+    }
+
+    /**
+     * Manuel "Çalıştır" — zamanlayıcıyla AYNI değerlendirme hattı. Bu dört türde tek-monitör
+     * sweep kurucusu ZATEN vardı; ctx kopyalanmaz, olduğu gibi yeniden kullanılır — aksi halde
+     * bir anahtar eksik kalıp alarm sessizce yanlış takıma giderdi.
+     *
+     * <p>ASENKRON: doğrulama varsayılan 3 × 30 sn sürer. manual=true → toplu-kesinti bastırması atlanır.
+     */
+    @Async("certCheckExecutor")
+    public void evaluatePageNow(com.sitemonitor.model.PageMonitor m, Map<String, Object> checkResult) {
+        try {
+            List<MonitoringOutageService.SweepItem> down = new ArrayList<>(), integrity = new ArrayList<>();
+            addPageSweepItems(m, checkResult, down, integrity);
+            monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGE_DOWN, down, true);
+            monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGE_INTEGRITY, integrity, true);
+        } catch (Exception e) {
+            log.warn("Manuel sayfa değerlendirmesi başarısız {}: {}", m.getUrl(), e.getMessage());
+        }
+    }
+
+    /** Manuel "Çalıştır" — bkz. evaluatePageNow. */
+    @Async("certCheckExecutor")
+    public void evaluatePageSpeedNow(com.sitemonitor.model.PageSpeedMonitor m, Map<String, Object> checkResult) {
+        try {
+            List<MonitoringOutageService.SweepItem> down = new ArrayList<>(), slow = new ArrayList<>();
+            addPageSpeedSweepItems(m, checkResult, down, slow);
+            monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGESPEED_DOWN, down, true);
+            monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGESPEED_SLOW, slow, true);
+        } catch (Exception e) {
+            log.warn("Manuel sayfa-hızı değerlendirmesi başarısız {}: {}", m.getUrl(), e.getMessage());
+        }
+    }
+
+    /** Manuel "Çalıştır" — bkz. evaluatePageNow. */
+    @Async("certCheckExecutor")
+    public void evaluateScriptedNow(com.sitemonitor.model.ScriptedMonitor m, Map<String, Object> checkResult) {
+        try {
+            List<MonitoringOutageService.SweepItem> fail = new ArrayList<>(), slow = new ArrayList<>();
+            addScriptedSweepItems(m, checkResult, fail, slow);
+            monitoringOutageService.handleSweepResults(EscalationService.TYPE_SCRIPTED_FAIL, fail, true);
+            monitoringOutageService.handleSweepResults(EscalationService.TYPE_SCRIPTED_SLOW, slow, true);
+        } catch (Exception e) {
+            log.warn("Manuel senaryo değerlendirmesi başarısız {}: {}", m.getName(), e.getMessage());
+        }
+    }
+
+    /**
+     * Tek port monitörü için değerlendirme öğesi — sweep döngüsü VE manuel "Çalıştır" bunu PAYLAŞIR.
+     * Manuel yol kendi ctx'ini kursaydı bir anahtar (team_id / notification_group_id) eksik kalıp
+     * alarmı SESSİZCE yanlış takıma gönderebilirdi.
+     */
+    private MonitoringOutageService.SweepItem portSweepItem(PortMonitor m, Map<String, Object> r) {
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("monitor_name", m.getName());
+        ctx.put("port", m.getPort());
+        ctx.put("protocol", m.getProtocol() != null ? m.getProtocol() : "TCP");
+        ctx.put("monitor_id", m.getId());
+        ctx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+        ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+        ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
+        ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+        if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+        if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
+        return new MonitoringOutageService.SweepItem(
+                EscalationService.TYPE_PORT_DOWN, m.getHost(),
+                m.getPort() + "/" + m.getProtocol(),
+                "up".equals(r.get("status")), (String) r.get("error"),
+                chanCtx(ctx, m.getNotifyEmail(), m.getNotifyWebhook()),
+                () -> recheckPort(m));
+    }
+
+    /**
+     * Manuel "Çalıştır" — zamanlayıcıyla AYNI değerlendirme hattı (doğrulama + kurtarma).
+     * ASENKRON: doğrulama varsayılan 3 × 30 sn sürer. manual=true → toplu-kesinti bastırması atlanır.
+     */
+    @Async("certCheckExecutor")
+    public void evaluatePortNow(PortMonitor m, Map<String, Object> rawCheckResult) {
+        try {
+            Map<String, Object> r = portOutcome(rawCheckResult);
+            monitoringOutageService.handleSweepResults(
+                    EscalationService.TYPE_PORT_DOWN, List.of(portSweepItem(m, r)), true);
+        } catch (Exception e) {
+            log.warn("Manuel port değerlendirmesi başarısız {}: {}", m.getHost(), e.getMessage());
+        }
+    }
+
+    /** Tek ping monitörü için değerlendirme öğesi — sweep VE manuel çalıştırma bunu PAYLAŞIR. */
+    private MonitoringOutageService.SweepItem pingSweepItem(PingMonitor m, Map<String, Object> r) {
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("monitor_name", m.getName());
+        ctx.put("host", m.getHost());
+        ctx.put("ip_version", m.getIpVersion());
+        ctx.put("monitor_id", m.getId());
+        ctx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+        ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+        ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
+        ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+        if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+        if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
+        if (r.get("rtt_ms") != null)      ctx.put("rtt_ms", r.get("rtt_ms"));
+        if (r.get("packet_loss") != null) ctx.put("packet_loss", r.get("packet_loss"));
+        if (Boolean.TRUE.equals(r.get("na"))) ctx.put("na", true);
+        return new MonitoringOutageService.SweepItem(
+                EscalationService.TYPE_PING_DOWN, m.getHost(), "ICMP",
+                "up".equals(r.get("status")), (String) r.get("error"),
+                chanCtx(ctx, m.getNotifyEmail(), m.getNotifyWebhook()), () -> recheckPing(m));
+    }
+
+    /** Manuel "Çalıştır" — bkz. evaluatePortNow. */
+    @Async("certCheckExecutor")
+    public void evaluatePingNow(PingMonitor m, Map<String, Object> rawCheckResult) {
+        try {
+            Map<String, Object> r = pingOutcome(rawCheckResult);
+            monitoringOutageService.handleSweepResults(
+                    EscalationService.TYPE_PING_DOWN, List.of(pingSweepItem(m, r)), true);
+        } catch (Exception e) {
+            log.warn("Manuel ping değerlendirmesi başarısız {}: {}", m.getHost(), e.getMessage());
+        }
+    }
+
+    /**
+     * Tek HTTP monitörü için değerlendirme öğesi — sweep döngüsü VE manuel "Çalıştır" bunu PAYLAŞIR.
+     *
+     * <p>Ayrı metot olması ZORUNLU: manuel yol kendi ctx'ini kursaydı bir anahtar (ör. team_id ya da
+     * notification_group_id) eksik kalabilir ve alarm SESSİZCE yanlış takıma/gruba giderdi. Tek
+     * kaynak olduğu sürece iki yol sapamaz.
+     */
+    private MonitoringOutageService.SweepItem httpSweepItem(HttpMonitor m, Map<String, Object> r) {
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("monitor_name", m.getName());   // subject standardı: ad > çıplak URL
+        ctx.put("url", m.getUrl());
+        ctx.put("monitor_id", m.getId());
+        ctx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+        ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+        ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
+        ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+        if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+        if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
+        if (r.get("http_status") != null) ctx.put("http_status", r.get("http_status"));
+        if (r.get("response_ms") != null) ctx.put("response_ms", r.get("response_ms"));
+        return new MonitoringOutageService.SweepItem(
+                EscalationService.TYPE_HTTP_DOWN, m.getUrl(),
+                m.getMethod() != null ? m.getMethod() : "GET",
+                "up".equals(r.get("status")), (String) r.get("error"),
+                chanCtx(ctx, m.getNotifyEmail(), m.getNotifyWebhook()), () -> recheckHttp(m));
+    }
+
+    /**
+     * Manuel "Çalıştır" — zamanlayıcıyla AYNI değerlendirme hattı: hata doğrulama denemelerinden
+     * geçer, teyit edilirse alarm AÇILIR; düzelme kurtarma sayacından geçer.
+     *
+     * <p>ASENKRON olmak zorunda: doğrulama varsayılan 3 × 30 sn sürer, HTTP isteği o kadar
+     * bekleyemez. Uç hemen döner, kart "çalışıyor" durumunu gösterir.
+     *
+     * <p>{@code manual=true} → toplu-kesinti bastırması atlanır (bkz. handleSweepResults).
+     */
+    @Async("certCheckExecutor")
+    public void evaluateHttpNow(HttpMonitor m, Map<String, Object> rawCheckResult) {
+        try {
+            Map<String, Object> r = httpOutcome(rawCheckResult);
+            monitoringOutageService.handleSweepResults(
+                    EscalationService.TYPE_HTTP_DOWN, List.of(httpSweepItem(m, r)), true);
+        } catch (Exception e) {
+            log.warn("Manuel HTTP değerlendirmesi başarısız {}: {}", m.getUrl(), e.getMessage());
+        }
     }
 
     /** HTTP uptime check + http_checks persist'i. {"status","error","http_status","response_ms"} döner. */
@@ -2738,15 +2978,7 @@ public class SchedulerService {
         }
         activityLog.recordCheck(ActivityLogService.HTTP, m.getId(), m.getName(),
                 m.getUrl(), m.getTeamId(), false, "scheduler", r);
-        Map<String, Object> out = new LinkedHashMap<>();
-        // Yapılandırma hatası (URL'de host yok) kesinti DEĞİL → "up" raporlanır: alarm/teyit zinciri
-        // başlamaz, askıda alarm varsa sessizce kapanır. Kontrol kaydı + hata mesajı yine yazıldı.
-        boolean cfgError = Boolean.TRUE.equals(r.get("config_error"));
-        out.put("status", (ok || cfgError) ? "up" : "down");
-        out.put("error", cfgError ? null : r.get("error"));
-        out.put("http_status", r.get("http_status"));
-        out.put("response_ms", r.get("response_ms"));
-        return out;
+        return httpOutcome(r);
     }
 
     // ── Sayfa Bütünlüğü (9. tür) sweep — sık: her monitörün ANA sayfası (SINGLE_PAGE) ────────────────
@@ -3689,7 +3921,14 @@ public class SchedulerService {
     public Future<Map<String, Object>> triggerScriptedCheckAsync(com.sitemonitor.model.ScriptedMonitor m) {
         return manualRunPool.submit(() -> {
             try {
-                return recheckScripted(m, true);
+                Map<String, Object> r = recheckScripted(m, true);
+                // Değerlendirme BURADA yapılır, ucun beklemesinden BAĞIMSIZ olarak. Eskiden uç ayrıca
+                // evaluateScriptedNow(m) çağırıyordu; o da kendi k6 koşumunu başlatıyordu → tek tıkla
+                // İKİ süreç, iki ScriptedCheck satırı, iki permit. Yarışta recheckScripted "skipped"
+                // dönünce teyit zinciri "kanıt yok ⇒ iptal" deyip alarmı sessizce düşürüyordu.
+                // Uç kısa bekleme sonunda zaman aşımına düşse bile alarm değerlendirmesi kaybolmaz.
+                evaluateScriptedNow(m, r);
+                return r;
             } catch (RuntimeException e) {
                 log.error("Manuel senaryo kontrolü başarısız (monitor={} id={})", m.getName(), m.getId(), e);
                 throw e;
@@ -3792,6 +4031,32 @@ public class SchedulerService {
         return u;
     }
 
+    /**
+     * Sunulan sertifikanın GÜVENLİK kusuru — HTTP/Keyword SSL dalı için.
+     *
+     * <p>Sertifika izlemesindeki kararla aynı çekirdeğe ({@code CertificateHealthRules.securityFlags})
+     * ve AYNI ayarlara bağlıdır: ayarlar kapalıyken davranış bugünküyle birebir aynı kalır.
+     *
+     * @return alarm detayı ya da null (kusur yok / ayar kapalı)
+     */
+    private String sslSecurityDetail(Map<String, Object> cr) {
+        Object sanRaw = cr.get("san");
+        java.util.List<String> san = sanRaw instanceof java.util.List<?> l
+                ? l.stream().filter(java.util.Objects::nonNull).map(String::valueOf).toList()
+                : java.util.List.of();
+        var flags = CertificateHealthRules.securityFlags(
+                (String) cr.get("domain"), san, (String) cr.get("trust_status"));
+        if (flags.contains(CertificateHealthRules.FLAG_HOSTNAME_MISMATCH)
+                && appSettings.getBoolean(EscalationService.SETTING_ALERT_HOSTNAME_MISMATCH, true)) {
+            return "Sertifika bu alan adını kapsamıyor";
+        }
+        if (flags.contains(CertificateHealthRules.FLAG_UNTRUSTED_CA)
+                && appSettings.getBoolean(EscalationService.SETTING_ALERT_UNTRUSTED, false)) {
+            return "Sertifika güvenilir bir CA'ya bağlanmıyor";
+        }
+        return null;
+    }
+
     /** HTTP monitörünün URL host'u için TLS sertifika değerlendirmesi (checkSslErrors + sslExpiryReminders).
      *  {"status":"up"|"down","error"?,"ssl_days_remaining"?,"detail"?} döner. */
     private Map<String, Object> evalHttpSsl(HttpMonitor m) {
@@ -3808,6 +4073,12 @@ public class SchedulerService {
             if ("error".equals(status))       { problem = true; detail = "TLS erişim/doğrulama hatası"; }
             else if ("BROKEN".equals(chain))  { problem = true; detail = "Sertifika zinciri bozuk"; }
             else if ("REVOKED".equals(chain)) { problem = true; detail = "Sertifika iptal edilmiş"; }
+            else {
+                // Sertifika izlemesiyle AYNI hüküm: süresi uzak ama bu host için kabul edilemez bir
+                // sertifika (tarayıcının reddettiği şekil) buradan da kaçıyordu.
+                String sec = sslSecurityDetail(cr);
+                if (sec != null) { problem = true; detail = sec; }
+            }
         }
         if (!problem && Boolean.TRUE.equals(m.getSslExpiryReminders()) && days != null) {
             int threshold = maxDays(m.getSslReminderDays(), 30);
@@ -3966,6 +4237,12 @@ public class SchedulerService {
             if ("error".equals(status))       { problem = true; detail = "TLS erişim/doğrulama hatası"; }
             else if ("BROKEN".equals(chain))  { problem = true; detail = "Sertifika zinciri bozuk"; }
             else if ("REVOKED".equals(chain)) { problem = true; detail = "Sertifika iptal edilmiş"; }
+            else {
+                // Sertifika izlemesiyle AYNI hüküm: süresi uzak ama bu host için kabul edilemez bir
+                // sertifika (tarayıcının reddettiği şekil) buradan da kaçıyordu.
+                String sec = sslSecurityDetail(cr);
+                if (sec != null) { problem = true; detail = sec; }
+            }
         }
         if (!problem && Boolean.TRUE.equals(m.getSslExpiryReminders()) && days != null) {
             int threshold = maxDays(m.getSslReminderDays(), 30);
@@ -4187,8 +4464,16 @@ public class SchedulerService {
         ctx.put("domain", m.getDomain());
         ctx.put("monitor_id", m.getId());
         ctx.put("alert_level", level);
-        ctx.put("monitor_confirm_attempts", 0);   // eşik durumu — anında alarm (teyit zinciri yok)
-        ctx.put("monitor_recovery_checks", 1);
+        // EşİK durumları (EXPIRY/STATUS/CHANGED) anında alarm açar: "30 gün kaldı" sorusunu
+        // 30 sn sonra tekrar sormak cevabı değiştirmez, yalnızca alarmı geciktirir.
+        // UNKNOWN farklıdır — sorgu BAŞARISIZ demektir ve bu gerçekten geçici olabilir;
+        // yalnız orada izlemenin kendi doğrulama ayarı uygulanır (aksi halde formdaki alan
+        // hiçbir şey yapmayan bir süs olurdu — notify_email hatasının aynısı).
+        boolean transientType = EscalationService.TYPE_DOMAINMON_UNKNOWN.equals(type);
+        ctx.put("monitor_confirm_attempts", transientType ? m.getConfirmAttempts() : Integer.valueOf(0));
+        if (transientType && m.getConfirmIntervalSeconds() != null)
+            ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() * 1000L);
+        ctx.put("monitor_recovery_checks", transientType ? m.getRecoveryChecks() : Integer.valueOf(1));
         if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
         if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
         if (r.get("days_remaining") != null) ctx.put("days", r.get("days_remaining"));
@@ -4208,7 +4493,7 @@ public class SchedulerService {
         if (r.get("blacklist_delta") != null) ctx.put("blacklist_delta", r.get("blacklist_delta"));
         if (r.get("error") != null) ctx.put("last_error", r.get("error"));
         return new MonitoringOutageService.SweepItem(type, m.getDomain(), m.getDomain(),
-                up, (String) r.get("error"), chanCtx(confirmCtx(ctx, m.getConfirmAttempts(), m.getConfirmIntervalSeconds(), m.getRecoveryChecks(), m.getRecoveryIntervalSeconds()), m.getNotifyEmail(), m.getNotifyWebhook()), () -> recheckDomainFor(m, type));
+                up, (String) r.get("error"), chanCtx(ctx, m.getNotifyEmail(), m.getNotifyWebhook()), () -> recheckDomainFor(m, type));
     }
 
     private Map<String, Object> recheckDomainFor(DomainMonitor m, String type) {
@@ -4277,24 +4562,7 @@ public class SchedulerService {
             PingMonitor m = entry.getKey();
             try {
                 Map<String, Object> r = entry.getValue().get();
-                Map<String, Object> ctx = new LinkedHashMap<>();
-                ctx.put("monitor_name", m.getName());   // subject standardı: ad > çıplak URL
-                ctx.put("host", m.getHost());
-                ctx.put("ip_version", m.getIpVersion());
-                ctx.put("monitor_id", m.getId());
-                ctx.put("monitor_confirm_attempts", m.getConfirmAttempts());
-                ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
-                ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
-                ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
-                if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
-                if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
-                if (r.get("rtt_ms") != null)      ctx.put("rtt_ms", r.get("rtt_ms"));
-                if (r.get("packet_loss") != null) ctx.put("packet_loss", r.get("packet_loss"));
-                if (Boolean.TRUE.equals(r.get("na"))) ctx.put("na", true);
-                sweep.add(new MonitoringOutageService.SweepItem(
-                        EscalationService.TYPE_PING_DOWN, m.getHost(), "ICMP",
-                        "up".equals(r.get("status")), (String) r.get("error"),
-                        chanCtx(ctx, m.getNotifyEmail(), m.getNotifyWebhook()), () -> recheckPing(m)));
+                sweep.add(pingSweepItem(m, r));
                 checked++;
             } catch (Exception e) {
                 log.warn("Ping check failed for {}: {}", m.getHost(), e.getMessage());
@@ -4330,13 +4598,7 @@ public class SchedulerService {
         }
         activityLog.recordCheck(ActivityLogService.PING, m.getId(), m.getName(),
                 m.getHost(), m.getTeamId(), false, "scheduler", r);
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("status", (up || na) ? "up" : "down");
-        out.put("error", r.get("error"));
-        out.put("rtt_ms", r.get("rtt_ms"));            // alarm e-postası için zengin metrik
-        out.put("packet_loss", r.get("packet_loss"));
-        out.put("na", na);
-        return out;
+        return pingOutcome(r);
     }
 
     @Scheduled(fixedDelayString = "${site.monitor.dns.interval-ms:300000}", initialDelayString = "60000")
@@ -4447,16 +4709,7 @@ public class SchedulerService {
                 activityLog.recordCheck(ActivityLogService.DNS, m.getId(), m.getName(),
                         m.getDomain() + " " + m.getRecordType(), m.getTeamId(), false, "scheduler", r);
 
-                Map<String, Object> failCtx = new LinkedHashMap<>();
-                failCtx.put("record_type", m.getRecordType());
-                failCtx.put("monitor_id", m.getId());   // e-posta CTA deep-link (?tab=dns&monitor=<id>)
-                if (m.getTeamId() != null) failCtx.put("team_id", m.getTeamId());   // standalone → alarm takıma
-                if (m.getNotificationGroupId() != null) failCtx.put("notification_group_id", m.getNotificationGroupId());
-                sweep.add(new MonitoringOutageService.SweepItem(
-                        EscalationService.TYPE_DNS_FAILURE, m.getDomain(), m.getRecordType(),
-                        success, (String) r.get("error"),
-                        chanCtx(confirmCtx(failCtx, m.getConfirmAttempts(), m.getConfirmIntervalSeconds(), m.getRecoveryChecks(), m.getRecoveryIntervalSeconds()), m.getNotifyEmail(), m.getNotifyWebhook()),
-                        () -> recheckDns(m)));
+                sweep.add(dnsFailureSweepItem(m, r, success));
 
                 // YAVAŞ/TIMEOUT'lu çözümleme: çözüm BAŞARILI ama response_ms eşiği aşıyor (primary DNS timeout
                 // → fallback). Ayrı DNS_SLOW alarmı; 1 dk arayla 3 yeniden ölçümde de yavaşsa doğrulanır (ctxExtra).
@@ -4475,7 +4728,7 @@ public class SchedulerService {
                     slowSweep.add(new MonitoringOutageService.SweepItem(
                             EscalationService.TYPE_DNS_SLOW, m.getDomain(), m.getRecordType(),
                             !slow, slow ? responseMs + " ms" : null,
-                            chanCtx(confirmCtx(slowCtx, m.getConfirmAttempts(), m.getConfirmIntervalSeconds(), m.getRecoveryChecks(), m.getRecoveryIntervalSeconds()), m.getNotifyEmail(), m.getNotifyWebhook()), () -> recheckDnsSlow(m, effSlow)));
+                            chanCtx(slowCtx, m.getNotifyEmail(), m.getNotifyWebhook()), () -> recheckDnsSlow(m, effSlow)));
                 }
 
                 // BEKLENEN-DEĞER KİLİDİ: sabitlenen "beklenen değer"de OLMAYAN bir değer çözümlenirse

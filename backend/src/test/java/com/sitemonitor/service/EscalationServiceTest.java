@@ -55,6 +55,9 @@ class EscalationServiceTest {
     @Mock com.sitemonitor.repository.DnsRecordRepository dnsRecordRepo;
     @Mock com.sitemonitor.repository.PageCheckRepository pageCheckRepo;
 
+    /** Güven alarm anahtarları CANLI okunuyor; stub'sizken varsayılan (arg1) döndürülür. */
+    @org.mockito.Mock AppSettingsService appSettings;
+
     private EscalationService service;
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -64,7 +67,13 @@ class EscalationServiceTest {
         service = new EscalationService(alertEventRepo, thresholdRepo, contactRepo,
                 inventoryRepo, emailService, weeklyAvailability, webhookService, new ObjectMapper(), notificationLogRepo, latestCheckRepo, teamRepo, smtpSettings, maintenanceService, stormService,
                 userPushService,
-                domainMonitorRepo, domainCheckRepo, dnsRecordRepo, pageCheckRepo, notificationGroups);
+                domainMonitorRepo, domainCheckRepo, dnsRecordRepo, pageCheckRepo, notificationGroups,
+                appSettings);
+
+        // Ayar okumaları varsayılanı döndürsün: hostname uyuşmazlığı AÇIK, güvenilmeyen CA KAPALI.
+        org.mockito.Mockito.lenient().when(appSettings.getBoolean(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenAnswer(i -> i.getArgument(1));
 
         // Self-injection bypass for @Async dispatch in tests (runs synchronously)
         ReflectionTestUtils.setField(service, "self", service);
@@ -445,7 +454,7 @@ class EscalationServiceTest {
         when(alertEventRepo.findById(31L)).thenReturn(Optional.of(event));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
-        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@example.com");
+        team.setId(7L); team.setName("SY-Takım A"); team.setEmail("takim-a@example.com");
         when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
         com.sitemonitor.model.PageCheck latest = new com.sitemonitor.model.PageCheck();
         latest.setMonitorId(55L); latest.setStatus("OK"); latest.setTotalResources(135);
@@ -799,7 +808,7 @@ class EscalationServiceTest {
 
         // Takım e-postası (collectTeamEmails → teamRepo)
         com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
-        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@example.com");
+        team.setId(7L); team.setName("SY-Takım A"); team.setEmail("takim-a@example.com");
         when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
 
         // GLOBAL müdür kontağı MEVCUT — eski hatalı davranışta buna düşerdi; teamOnly ile ARTIK eklenmemeli.
@@ -829,7 +838,7 @@ class EscalationServiceTest {
         verify(emailService).sendAlert(toCap.capture(), contains("[RE-ALERT]"), anyString(),
                 eq("kartfree.com"), any(), any(), any(), ctxCap.capture());
         // TO = SADECE takım e-postası; müdür DEĞİL
-        assertThat(toCap.getValue()).containsExactly("dijitalsy@example.com");
+        assertThat(toCap.getValue()).containsExactly("takim-a@example.com");
         // İçerik zengin — registrar + bitiş bağlamı geçti (detay tablosu dolu)
         assertThat(ctxCap.getValue()).containsEntry("registrar", "GoDaddy.com, LLC");
         assertThat(ctxCap.getValue()).containsKey("expiry_date");
@@ -846,7 +855,7 @@ class EscalationServiceTest {
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
-        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@example.com");
+        team.setId(7L); team.setName("SY-Takım A"); team.setEmail("takim-a@example.com");
         when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
         // KRİTİK seviye eskalasyon kontağı (müdür) — kritik domainde EKLENİR
         when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(7L))
@@ -867,7 +876,7 @@ class EscalationServiceTest {
         ArgumentCaptor<String[]> toCap = ArgumentCaptor.forClass(String[].class);
         verify(emailService).sendAlert(toCap.capture(), contains("[RE-ALERT]"), anyString(),
                 eq("kritik.example.com"), any(), any(), any(), any());
-        assertThat(toCap.getValue()).containsExactlyInAnyOrder("dijitalsy@example.com", "mudur@example.com");
+        assertThat(toCap.getValue()).containsExactlyInAnyOrder("takim-a@example.com", "mudur@example.com");
     }
 
     // ── previewReNotify + excludeEmails (Tekrar Bildir onay pop-up'ı) ────────────
@@ -879,7 +888,7 @@ class EscalationServiceTest {
         event.setId(301L); event.setTeamId(7L);
         when(alertEventRepo.findById(301L)).thenReturn(Optional.of(event));
         com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
-        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@example.com");
+        team.setId(7L); team.setName("SY-Takım A"); team.setEmail("takim-a@example.com");
         when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
         when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(7L))
                 .thenReturn(List.of(contact("mudur@example.com", "MANAGER", "CRITICAL")));
@@ -887,9 +896,9 @@ class EscalationServiceTest {
         List<EscalationService.ReNotifyRecipient> out = service.previewReNotify(301L);
 
         assertThat(out).hasSize(2);
-        assertThat(out.get(0).email()).isEqualTo("dijitalsy@example.com");
+        assertThat(out.get(0).email()).isEqualTo("takim-a@example.com");
         assertThat(out.get(0).kind()).isEqualTo("TEAM");
-        assertThat(out.get(0).name()).isEqualTo("SY-Dijital");
+        assertThat(out.get(0).name()).isEqualTo("SY-Takım A");
         assertThat(out.get(1).email()).isEqualTo("mudur@example.com");
         assertThat(out.get(1).kind()).isEqualTo("CONTACT");
         assertThat(out.get(1).role()).isEqualTo("MANAGER");
@@ -916,7 +925,7 @@ class EscalationServiceTest {
         when(alertEventRepo.findById(303L)).thenReturn(Optional.of(event));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
-        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@example.com");
+        team.setId(7L); team.setName("SY-Takım A"); team.setEmail("takim-a@example.com");
         when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
         when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(7L))
                 .thenReturn(List.of(contact("mudur@example.com", "MANAGER", "CRITICAL")));
@@ -936,7 +945,7 @@ class EscalationServiceTest {
         ArgumentCaptor<String[]> toCap = ArgumentCaptor.forClass(String[].class);
         verify(emailService).sendAlert(toCap.capture(), contains("[RE-ALERT]"), anyString(),
                 eq("excl.example.com"), any(), any(), any(), any());
-        assertThat(toCap.getValue()).containsExactly("dijitalsy@example.com");
+        assertThat(toCap.getValue()).containsExactly("takim-a@example.com");
     }
 
     @Test
@@ -946,12 +955,12 @@ class EscalationServiceTest {
         event.setId(304L); event.setTeamId(7L);
         when(alertEventRepo.findById(304L)).thenReturn(Optional.of(event));
         com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
-        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@example.com");
+        team.setId(7L); team.setName("SY-Takım A"); team.setEmail("takim-a@example.com");
         when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
         when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(7L))
                 .thenReturn(List.of(contact("mudur@example.com", "MANAGER", "CRITICAL")));
 
-        assertThatThrownBy(() -> service.reNotify(304L, Set.of("dijitalsy@example.com", "mudur@example.com")))
+        assertThatThrownBy(() -> service.reNotify(304L, Set.of("takim-a@example.com", "mudur@example.com")))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(alertEventRepo, never()).save(any());
         verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(),
@@ -970,7 +979,7 @@ class EscalationServiceTest {
         inv.setTeamId(7L);
         when(inventoryRepo.findByDomain("www.iyigelecegeyatirim.com")).thenReturn(Optional.of(inv));
         com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
-        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@example.com");
+        team.setId(7L); team.setName("SY-Takım A"); team.setEmail("takim-a@example.com");
         when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
         com.sitemonitor.model.DnsRecord rec = new com.sitemonitor.model.DnsRecord();
         rec.setRecordType("A"); rec.setPreviousValue("192.168.1.10"); rec.setValue("217.169.196.197");
@@ -1001,7 +1010,7 @@ class EscalationServiceTest {
         inv.setTeamId(7L);
         when(inventoryRepo.findByDomain("nohist.example.com")).thenReturn(Optional.of(inv));
         com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
-        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@example.com");
+        team.setId(7L); team.setName("SY-Takım A"); team.setEmail("takim-a@example.com");
         when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
         when(dnsRecordRepo.findChangedByDomain(anyString(),
                 any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of());
@@ -1681,8 +1690,12 @@ class EscalationServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Collection<String>> typesCaptor = ArgumentCaptor.forClass(Collection.class);
         verify(alertEventRepo).findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), typesCaptor.capture());
+        // Kanonik küme BÜYÜDÜ: hostname uyuşmazlığı ve güvenilmeyen CA da sertifika alarmlarıdır,
+        // dolayısıyla sağlıklı bir kontrolde onlar da kapatılmalı. Testin ASIL iddiası (izleme
+        // tipine, özellikle ACCESSIBILITY'ye DOKUNMAZ) aynen korunuyor.
         assertThat(typesCaptor.getValue())
-                .containsExactlyInAnyOrder("EXPIRY", "CHAIN_BROKEN", "REVOKED", "MISMATCH")
+                .containsExactlyInAnyOrder("EXPIRY", "CHAIN_BROKEN", "REVOKED", "MISMATCH",
+                        "HOSTNAME_MISMATCH", "UNTRUSTED_CA")
                 .doesNotContain("ACCESSIBILITY");
     }
 
@@ -1748,7 +1761,7 @@ class EscalationServiceTest {
 
         Team team = new Team();
         team.setId(7L);
-        team.setName("SY-Dijital");
+        team.setName("SY-Takım A");
         team.setEmail("team@example.com");
         when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
 
@@ -1945,5 +1958,329 @@ class EscalationServiceTest {
         verify(emailService).sendAlert(any(String[].class), anyString(), anyString(),
                 any(), any(), any(), any(), any());
         verify(userPushService).enqueueAlert(any(), eq("INITIAL"), any(), any(), any());
+    }
+
+    // ── A: tarayıcının reddettiği sertifika ALARM üretmeli ─────────────────────
+    //
+    // Var olmayan bir alan adı NXDOMAIN-hijack ile bir ev modeminin yönetim paneline çözüldü;
+    // modem kendi sertifikasını sundu (CN=192.168.1.1, issuer ZTE-ROOT-CA, 1775 gün kalan).
+    // Chrome adresi ERR_CERT_AUTHORITY_INVALID ile reddederken SiteMonitor "Geçerli" gösterdi ve
+    // hiç alarm üretmedi: karar YALNIZ kalan güne bakıyordu.
+
+    /** Hijack edilmiş modem paneli — süre tertemiz, güvenlik iki koldan bozuk. */
+    private Map<String, Object> hijackedResult(String domain) {
+        Map<String, Object> r = new java.util.LinkedHashMap<>(okResult(domain));
+        r.put("days_remaining", 1775);
+        r.put("san", List.of("192.0.2.1"));       // istenen alan adını KAPSAMIYOR
+        r.put("trust_status", "UNTRUSTED");        // hiçbir köke bağlanmıyor
+        r.put("subject", "192.0.2.1");
+        r.put("resolved_ip", "192.168.1.1");
+        return r;
+    }
+
+    private String typeOfSavedAlert() {
+        ArgumentCaptor<AlertEvent> cap = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(cap.capture());
+        return cap.getAllValues().get(0).getAlertType();
+    }
+
+    @Test
+    @DisplayName("A: süresi uzak ama alan adını kapsamayan sertifika HOSTNAME_MISMATCH alarmı açar")
+    void hijackedCert_raisesHostnameMismatch() {
+        String domain = "olmayan.example.com";
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection()))
+                .thenReturn(List.of());
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        service.processResults(List.of(hijackedResult(domain)));
+
+        assertThat(typeOfSavedAlert()).isEqualTo(EscalationService.TYPE_HOSTNAME_MISMATCH);
+    }
+
+    @Test
+    @DisplayName("A: uyuşmazlık alarmı KRİTİK seviyededir (doğrulanmış sertifika kusuru)")
+    void hijackedCert_isCritical() {
+        String domain = "olmayan.example.com";
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection()))
+                .thenReturn(List.of());
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        service.processResults(List.of(hijackedResult(domain)));
+
+        ArgumentCaptor<AlertEvent> cap = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(cap.capture());
+        assertThat(cap.getAllValues().get(0).getAlertLevel()).isEqualTo("CRITICAL");
+    }
+
+    @Test
+    @DisplayName("A: alarm metni KANIT taşır — çözümlenen iç IP ve sunulan CN")
+    void hijackedCert_messageCarriesEvidence() {
+        String domain = "olmayan.example.com";
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection()))
+                .thenReturn(List.of());
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        service.processResults(List.of(hijackedResult(domain)));
+
+        ArgumentCaptor<AlertEvent> cap = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(cap.capture());
+        String msg = cap.getAllValues().get(0).getMessage();
+        assertThat(msg).contains("192.168.1.1").contains("iç ağ").contains("192.0.2.1");
+    }
+
+    @Test
+    @DisplayName("A: uyuşmazlık ayarı KAPALIYKEN bugünkü davranış korunur (alarm yok)")
+    void hijackedCert_settingOff_noAlert() {
+        String domain = "olmayan.example.com";
+        when(appSettings.getBoolean(eq(EscalationService.SETTING_ALERT_HOSTNAME_MISMATCH), anyBoolean()))
+                .thenReturn(false);
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection()))
+                .thenReturn(List.of());
+
+        service.processResults(List.of(hijackedResult(domain)));
+
+        verify(alertEventRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("A: güvenilmeyen CA varsayılan KAPALI — tek başına alarm üretmez (CA paketi boşken sel olurdu)")
+    void untrustedOnly_defaultOff() {
+        String domain = "ic-host.example.com";
+        Map<String, Object> r = new java.util.LinkedHashMap<>(okResult(domain));
+        r.put("san", List.of(domain));              // alan adı KAPSANIYOR
+        r.put("trust_status", "UNTRUSTED");         // ama kurumsal CA truststore'da yok
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection()))
+                .thenReturn(List.of());
+
+        service.processResults(List.of(r));
+
+        verify(alertEventRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("A: güven ayarı AÇILINCA aynı sertifika UNTRUSTED_CA alarmı açar")
+    void untrustedOnly_settingOn_raises() {
+        String domain = "ic-host.example.com";
+        Map<String, Object> r = new java.util.LinkedHashMap<>(okResult(domain));
+        r.put("san", List.of(domain));
+        r.put("trust_status", "UNTRUSTED");
+        when(appSettings.getBoolean(eq(EscalationService.SETTING_ALERT_UNTRUSTED), anyBoolean()))
+                .thenReturn(true);
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection()))
+                .thenReturn(List.of());
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        service.processResults(List.of(r));
+
+        assertThat(typeOfSavedAlert()).isEqualTo(EscalationService.TYPE_UNTRUSTED_CA);
+    }
+
+    @Test
+    @DisplayName("A: SAĞLIKLI sertifika hiç etkilenmez — yanlış pozitif üretilmez")
+    void healthyCert_stillSilent() {
+        String domain = "saglikli.example.com";
+        Map<String, Object> r = new java.util.LinkedHashMap<>(okResult(domain));
+        r.put("san", List.of(domain, "www." + domain));
+        r.put("trust_status", "TRUSTED");
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection()))
+                .thenReturn(List.of());
+
+        service.processResults(List.of(r));
+
+        verify(alertEventRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("A: SAN bilgisi hiç gelmemişse alarm üretilmez (UNKNOWN, FAIL değildir)")
+    void missingSan_noAlert() {
+        String domain = "bilinmeyen.example.com";
+        Map<String, Object> r = new java.util.LinkedHashMap<>(okResult(domain));
+        r.put("trust_status", "UNKNOWN");   // hafif kontrol: güven de SAN da hesaplanmadı
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection()))
+                .thenReturn(List.of());
+
+        service.processResults(List.of(r));
+
+        verify(alertEventRepo, never()).save(any());
+    }
+
+    // ── Denetim 5. tur, bulgu 3: güvenlik alarmı SÜRE alarmını maskelemez ──────
+    //
+    // determineAlertType tek tip döndürüyor ve güvenlik dalı EXPIRY'nin önündeydi. Hostname
+    // uyuşmazlığı KALICI bir durum olabildiği için (cert yalnız www.x.com kapsıyor, izleme x.com)
+    // o domainde sertifikanın süresi dolsa bile EXPIRY alarmı HİÇ açılmıyordu.
+
+    /** Hem güvenlik kusuru hem süre uyarısı taşıyan sonuç — ikisi birden doğru. */
+    private Map<String, Object> insecureAndExpiringResult(String domain) {
+        Map<String, Object> r = new java.util.LinkedHashMap<>(okResult(domain));
+        r.put("san", List.of("192.0.2.1"));     // alan adını kapsamıyor
+        r.put("trust_status", "UNTRUSTED");
+        r.put("warning", true);                  // ve süresi de dolmak üzere
+        r.put("days_remaining", 3);
+        return r;
+    }
+
+    private List<String> savedAlertTypes() {
+        ArgumentCaptor<AlertEvent> cap = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(cap.capture());
+        return cap.getAllValues().stream().map(AlertEvent::getAlertType).distinct().toList();
+    }
+
+    @Test
+    @DisplayName("Bulgu 3: güvenlik kusuru VE süre uyarısı birlikteyse İKİ alarm da açılır")
+    void securityDoesNotMaskExpiry() {
+        String domain = "hem-guvensiz-hem-doluyor.example.com";
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection()))
+                .thenReturn(List.of());
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        service.processResults(List.of(insecureAndExpiringResult(domain)));
+
+        assertThat(savedAlertTypes())
+                .contains(EscalationService.TYPE_HOSTNAME_MISMATCH)
+                .contains("EXPIRY");
+    }
+
+    @Test
+    @DisplayName("Bulgu 3: REVOKED tek başına döner — bozuk sertifikada süreyi ayrıca alarma bağlamayız")
+    void revokedStaysExclusive() {
+        String domain = "iptal.example.com";
+        Map<String, Object> r = new java.util.LinkedHashMap<>(insecureAndExpiringResult(domain));
+        r.put("revocation_status", "REVOKED");
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection()))
+                .thenReturn(List.of());
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        service.processResults(List.of(r));
+
+        assertThat(savedAlertTypes()).containsExactly("REVOKED");
+    }
+
+    @Test
+    @DisplayName("Bulgu 3: bu turda ÜRETİLMEYEN cert tipleri kapatılır (asılı alarm kalmaz)")
+    void staleTypesAreResolved() {
+        String domain = "hem-guvensiz-hem-doluyor.example.com";
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection()))
+                .thenReturn(List.of());
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        service.processResults(List.of(insecureAndExpiringResult(domain)));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Collection<String>> types = ArgumentCaptor.forClass(Collection.class);
+        verify(alertEventRepo).findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), types.capture());
+        // Üretilen iki tip kapatma kümesinde OLMAMALI; kalan cert tipleri kapatılmalı.
+        assertThat(types.getValue())
+                .doesNotContain(EscalationService.TYPE_HOSTNAME_MISMATCH, "EXPIRY")
+                .contains("REVOKED", "CHAIN_BROKEN", "MISMATCH", EscalationService.TYPE_UNTRUSTED_CA);
+    }
+
+    // ── Bulgu 12: süre-DIŞI alarmda "N GÜN KALDI" yazılmaz ────────────────────
+
+    @Test
+    @DisplayName("Bulgu 12: sertifika kusurları süre-bitişi ailesinden DEĞİLDİR")
+    void isDurationAlert_excludesCertDefects() {
+        assertThat(EscalationService.isDurationAlert("EXPIRY")).isTrue();
+        assertThat(EscalationService.isDurationAlert(EscalationService.TYPE_DOMAINMON_EXPIRY)).isTrue();
+        assertThat(EscalationService.isDurationAlert(null)).isTrue();   // bilinmeyen → bugünkü davranış
+
+        assertThat(EscalationService.isDurationAlert("REVOKED")).isFalse();
+        assertThat(EscalationService.isDurationAlert("MISMATCH")).isFalse();
+        assertThat(EscalationService.isDurationAlert("CHAIN_BROKEN")).isFalse();
+        assertThat(EscalationService.isDurationAlert(EscalationService.TYPE_HOSTNAME_MISMATCH)).isFalse();
+        assertThat(EscalationService.isDurationAlert(EscalationService.TYPE_UNTRUSTED_CA)).isFalse();
+    }
+
+    @Test
+    @DisplayName("Bulgu 12: güvenlik alarmının e-posta KONUSU '1775 GÜN KALDI' demez, seviyeyi yazar")
+    void securityAlertSubjectShowsLevelNotDays() {
+        String domain = "olmayan.example.com";
+        // Alici olmadan mail hic gonderilmez; konu satirini gozlemleyebilmek icin takim adresi sart.
+        com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();
+        inv.setDomain(domain); inv.setTeamId(7L);
+        when(inventoryRepo.findByDomainIn(anyCollection())).thenReturn(List.of(inv));
+        com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
+        team.setId(7L); team.setName("Takim A"); team.setEmail("takim-a@example.com");
+        when(teamRepo.findById(7L)).thenReturn(java.util.Optional.of(team));
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection()))
+                .thenReturn(List.of());
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        service.processResults(List.of(hijackedResult(domain)));
+
+        ArgumentCaptor<String> subject = ArgumentCaptor.forClass(String.class);
+        verify(emailService, atLeast(1)).sendAlert(any(String[].class), subject.capture(),
+                anyString(), anyString(), anyString(), anyString(), any(), any());
+        assertThat(subject.getAllValues()).isNotEmpty();
+        assertThat(subject.getAllValues().get(0)).doesNotContain("GÜN KALDI").contains("KRİTİK");
+    }
+
+    // ── Denetim 5. tur: bildirim paritesi (bulgu 6 · 7 · 13) ──────────────────
+
+    private AlertEvent resolvableEvent(String type, Long teamId, String contextJson) {
+        AlertEvent e = new AlertEvent();
+        e.setId(77L);
+        e.setDomain("izleme.example.com");
+        e.setAlertType(type);
+        e.setAlertLevel("CRITICAL");
+        e.setTeamId(teamId);
+        e.setContextJson(contextJson);
+        e.setCreatedAt(ISO.format(java.time.Instant.now().minus(java.time.Duration.ofMinutes(5))));
+        return e;
+    }
+
+    @Test
+    @DisplayName("Bulgu 6: e-posta alıcısı YOKKEN bile 'DÜZELDİ' push'u tetiklenir")
+    void resolution_pushFiresWithoutEmailRecipients() {
+        // Takım yok → collectTeamEmails boş → eski kodda erken return, push HİÇ tetiklenmiyordu.
+        AlertEvent e = resolvableEvent(EscalationService.TYPE_PORT_DOWN, null, null);
+
+        service.sendResolutionNotificationAsync(e, "Sistem", "AUTO");
+
+        verify(userPushService).enqueueResolve(eq(e), any());
+    }
+
+    @Test
+    @DisplayName("Bulgu 13: izlemede e-posta KAPALIYSA çözüm maili de gitmez ama push gider")
+    void resolution_respectsMailDisabled() {
+        AlertEvent e = resolvableEvent(EscalationService.TYPE_PORT_DOWN, 5L,
+                "{\"mail_disabled\":true,\"monitor_id\":9}");
+        com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
+        team.setId(5L); team.setName("Takim A"); team.setEmail("takim-a@example.com");
+        when(teamRepo.findById(5L)).thenReturn(java.util.Optional.of(team));
+
+        service.sendResolutionNotificationAsync(e, "Sistem", "AUTO");
+
+        verify(emailService, never()).sendResolutionAlert(any(String[].class), anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any(), any(), any(), any());
+        verify(userPushService).enqueueResolve(eq(e), any());
+    }
+
+    @Test
+    @DisplayName("Bulgu 13: e-posta AÇIKKEN çözüm maili gitmeye devam eder (regresyon)")
+    void resolution_sendsMailWhenEnabled() {
+        AlertEvent e = resolvableEvent(EscalationService.TYPE_PORT_DOWN, 5L, "{\"monitor_id\":9}");
+        com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
+        team.setId(5L); team.setName("Takim A"); team.setEmail("takim-a@example.com");
+        when(teamRepo.findById(5L)).thenReturn(java.util.Optional.of(team));
+
+        service.sendResolutionNotificationAsync(e, "Sistem", "AUTO");
+
+        verify(emailService, atLeast(1)).sendResolutionAlert(any(String[].class), anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Bulgu 7: envanterde OLMAYAN Port alarmında çözüm, DAMGALANMIŞ takıma gider")
+    void resolution_prefersStampedTeamOverInventory() {
+        // detachIfIdentityChanged sonrası tipik durum: host envanterde yok, takım event'te damgalı.
+        AlertEvent e = resolvableEvent(EscalationService.TYPE_PORT_DOWN, 5L, "{\"monitor_id\":9}");
+        when(inventoryRepo.findByDomain("izleme.example.com")).thenReturn(java.util.Optional.empty());
+        com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
+        team.setId(5L); team.setName("Takim A"); team.setEmail("takim-a@example.com");
+        when(teamRepo.findById(5L)).thenReturn(java.util.Optional.of(team));
+
+        service.sendResolutionNotificationAsync(e, "Sistem", "AUTO");
+
+        // Takım çözülemeseydi alıcı listesi boş kalır ve mail hiç gitmezdi.
+        verify(emailService, atLeast(1)).sendResolutionAlert(any(String[].class), anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any(), any(), any(), any());
     }
 }

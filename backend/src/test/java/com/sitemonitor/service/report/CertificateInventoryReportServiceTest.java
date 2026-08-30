@@ -86,7 +86,7 @@ class CertificateInventoryReportServiceTest {
                 inv("b.example.com", 1L, null),      // aynı takım tekrar → tek adres
                 inv("c.example.com", 3L, null)));
         when(teamRepo.findAllById(any())).thenReturn(List.of(
-                team(1, "SY-Dijital", "sy@example.com"),
+                team(1, "SY-Takım A", "sy@example.com"),
                 team(2, "UG-Kanal", "ug@example.com"),
                 team(3, "SY-Ödeme", "odeme@example.com")));
 
@@ -100,7 +100,7 @@ class CertificateInventoryReportServiceTest {
         when(inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc())
                 .thenReturn(List.of(inv("a.example.com", 1L, 2L)));
         when(teamRepo.findAllById(any())).thenReturn(List.of(
-                team(1, "SY-Dijital", "sy@example.com"),
+                team(1, "SY-Takım A", "sy@example.com"),
                 team(2, "UG-Kanal", "   ")));            // adres yok
 
         assertThat(service.recipients()).containsExactly("sy@example.com");

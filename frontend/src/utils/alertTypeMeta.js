@@ -27,6 +27,9 @@ export const ALERT_TYPE_META = {
   CHAIN_BROKEN:      { icon: Link2,        color: '#7c3aed' },
   REVOKED:           { icon: Ban,          color: '#be123c' },
   MISMATCH:          { icon: Zap,          color: '#0891b2' },
+  // Güvenlik kusurları: tarayıcının reddettiği sertifika — süre alarmlarından ayrı renk.
+  HOSTNAME_MISMATCH: { icon: ShieldAlert,  color: '#b91c1c' },
+  UNTRUSTED_CA:      { icon: ShieldAlert,  color: '#9f1239' },
   ACCESSIBILITY:     { icon: Globe,        color: '#dc2626' },
 
   // ── DNS (mevcut renkler korundu) ──────────────────────────────────────────

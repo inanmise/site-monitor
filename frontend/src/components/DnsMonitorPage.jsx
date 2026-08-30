@@ -12,6 +12,8 @@ import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
+import MonitorCardMeta from './MonitorCardMeta.jsx'
+import MonitorCardActions from './MonitorCardActions.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import { Play, Pencil, Copy, Trash2, Plus, ChevronDown, Globe, Info, Network, AlertTriangle, FlaskConical, Check, Layers, RefreshCw, Pause, BellDot, ArrowLeftRight } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
@@ -227,6 +229,9 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
     setSaving(false)
     if (!res?.success) { toast.error(res?.error || 'Error'); return }
     toast.success(t('dns.saved'))
+    // Envanter bagi koptuysa kullaniciyi bilgilendir: duzenleme kalici, envanter domain'i
+    // icin AYRI bir izleme surecek (bkz. MonitoringController.detachIfIdentityChanged).
+    if (res.data?.detached_from_inventory) toast.info(t('mon.detachedFromInventory'), 8000)
     closeEditModal()
   }
 
@@ -262,6 +267,15 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   }
 
   const alarmLevelColor = (lvl) => lvl === 'CRITICAL' ? '#c0392b' : lvl === 'HIGH' ? '#e07b00' : '#f0a500'
+  /**
+   * Kart durum sınıfı. HTTP/Port'tan farklı olarak DNS'te {@code status} alanı YOK:
+   * "çözümlüyor mu" sorusunun cevabı alarmın varlığından okunur.
+   */
+  function cardClass(m) {
+    if (m.active === false) return 'upt-card--unknown'
+    return m.active_alarm ? 'upt-card--down' : 'upt-card--up'
+  }
+
   function alarmBadge(m) {
     if (!m?.active_alarm) return null
     const title = `${t('dns.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
@@ -439,89 +453,77 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
       ) : monitors.length === 0 ? (
         <div className="mon-empty">{t('dns.noMonitors')}</div>
       ) : (
-        <div className="admin-table-wrap dns-table-wrap">
-          <table className="admin-table dns-table">
-            <thead>
-              <tr>
-                <th>{t('dns.domain')}</th>
-                <th>{t('dns.colTeam')}</th>
-                <th>{t('dns.recordType')}</th>
-                <th>{t('dns.currentValue')}</th>
-                <th>{t('dns.ttl')}</th>
-                <th>{t('dns.responseMs')}</th>
-                <th>{t('dns.lastCheck')}</th>
-                <th>{t('dns.actions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pager.pageItems.map(m => (
-                <tr
-                  key={m.id}
-                  className={`dns-row${!m.active ? ' dns-row-inactive' : ''}${m.active_alarm ? ' dns-row--alarm' : ''}`}
-                  onClick={() => setDetailMonitor(m)}
-                >
-                  <td className="dns-cell-mono">
-                    {alarmBadge(m)}<MaintenanceBadge target={m.domain} />
-                    <strong>{m.domain}</strong>
-                    {m.standalone && (
-                      <span className="dns-standalone-badge" title={t('dns.standaloneHint')}>{t('dns.standalone')}</span>
-                    )}
-                  </td>
-                  <td>
-                    {m.team_name || '—'}
-                    {m.group_name && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '.78em', color: 'var(--text-muted)', marginTop: 2 }}>
-                        <Layers size={12} />{m.group_name}
-                      </div>
-                    )}
-                  </td>
-                  <td>
-                    <span className="dns-type-badge">{m.record_type}</span>
-                  </td>
-                  <td className="dns-cell-value">
-                    {m.changed && <span className="dns-changed-badge">{t('dns.changed')}</span>}
-                    {!m.changed && m.rotated && (
-                      <span className="dns-rotated-badge" title={t('dns.rotationTitle')}>{t('dns.rotated')}</span>
-                    )}
-                    <span className="dns-cell-mono">{truncateValue(m.value)}</span>
-                  </td>
-                  <td className="dns-cell-num">{m.ttl != null ? `${m.ttl}s` : '—'}</td>
-                  <td className="dns-cell-num">{m.response_ms != null ? `${m.response_ms}ms` : '—'}</td>
-                  <td className="dns-cell-time">{m.checked_at ? formatDate(m.checked_at) : '—'}</td>
-                  <td className="dns-cell-actions" onClick={e => e.stopPropagation()}>
-                    {/* Kart değil TABLO satırı: paylaşım düğmesi eylem hücresine girer.
-                        Yetkiden bağımsız — bağlantı kopyalamak salt-okunur bir iştir. */}
-                    <CheckRunningStrip running={isRunning(m.id)} />
-                    <CopyLinkButton iconOnly url={monitorDeepLink('dns', m.id)} className="mon-act mon-act--copy" />
-                    {canManageRow(m) && (
-                      <CheckNowButton running={isRunning(m.id)} onClick={() => checkNow(m)} title={t('dns.check')} />
-                    )}
-                    {canManageRow(m) && (
-                      <button type="button" className="mon-act mon-act--edit" onClick={() => openEdit(m)}
-                        title={t('dns.edit')} aria-label={t('dns.edit')}>
-                        <Pencil size={13} />
-                      </button>
-                    )}
-                    {canManageRow(m) && (
-                      <button type="button" className="mon-act mon-act--copy"
-                        onClick={e => { e.stopPropagation(); openDuplicate(m) }}
-                        title={t('mon.duplicate')} aria-label={t('mon.duplicate')}>
-                        <Copy size={13} />
-                      </button>
-                    )}
-                    {canDeleteRow(m) && (
-                      <button type="button" className="mon-act mon-act--danger" disabled={deleting === m.id}
-                        onClick={() => deleteMonitor(m)} title={t('dns.delete')} aria-label={t('dns.delete')}>
-                        <Trash2 size={13} />
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <PaginationBar {...pager} />
+        <>
+        <div className="upt-grid">
+          {pager.pageItems.map(m => (
+            <div key={m.id}
+              className={`upt-card ${cardClass(m)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
+              onClick={() => setDetailMonitor(m)}>
+              <div className="upt-card-top">
+                {alarmBadge(m)}<MaintenanceBadge target={m.domain} />
+                {m.standalone && (
+                  <span className="dns-standalone-badge" title={t('dns.standaloneHint')}>{t('dns.standalone')}</span>
+                )}
+                <span className="upt-card-top-right">
+                  <span className="upt-port-tag">{m.record_type}</span>
+                  <CopyLinkButton iconOnly url={monitorDeepLink('dns', m.id)} className="btn btn-sm upt-card-copy" />
+                </span>
+              </div>
+              <div className="upt-card-domain" title={m.domain}>{m.domain}</div>
+              <MonitorCardMeta monitor={m} />
+              <div className="upt-card-divider" />
+              {/* DEĞİŞTİ/ROTASYON rozetleri kartın içinde kalır: DNS'te asıl sinyal "değer
+                  değişti mi" sorusudur, tabloda da en görünür yerdeydi. */}
+              <div className="upt-card-metrics">
+                <div className="upt-metric">
+                  <span className="upt-metric-val dns-cell-mono" title={m.value || ''}>{truncateValue(m.value, 22)}</span>
+                  <span className="upt-metric-lbl">
+                    {m.changed
+                      ? <span className="dns-changed-badge">{t('dns.changed')}</span>
+                      : m.rotated
+                        ? <span className="dns-rotated-badge" title={t('dns.rotationTitle')}>{t('dns.rotated')}</span>
+                        : t('dns.currentValue')}
+                  </span>
+                </div>
+                {m.ttl != null && (
+                  <div className="upt-metric">
+                    <span className="upt-metric-val">{m.ttl}s</span>
+                    <span className="upt-metric-lbl">{t('dns.ttl')}</span>
+                  </div>
+                )}
+                {m.response_ms != null && (
+                  <div className="upt-metric">
+                    <span className="upt-metric-val">{m.response_ms}ms</span>
+                    <span className="upt-metric-lbl">{t('dns.responseMs')}</span>
+                  </div>
+                )}
+              </div>
+              <div className="upt-card-foot">
+                <span>{m.checked_at ? formatDate(m.checked_at) : ''}</span>
+                {/* Sinifsiz sarmalayici: MonitorCardActions kendi kokunu zaten
+                    "mon-actions" yapiyor; ayni sinifi ic ice uygulamak gap/margin'i iki
+                    kez sayip ScriptedMonitorPage'den farkli bir bosluk uretiyordu. */}
+                <span onClick={e => e.stopPropagation()}>
+                  {canManageRow(m) && (
+                    <MonitorCardActions
+                      running={isRunning(m.id)}
+                      onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
+                      checkTitle={t('dns.check')} editTitle={t('dns.edit')} />
+                  )}
+                  {/* Silme kartta KALIR: tabloda vardı ve kaldırılması yetenek kaybı olurdu. */}
+                  {canDeleteRow(m) && (
+                    <button type="button" className="mon-act mon-act--danger" disabled={deleting === m.id}
+                      onClick={() => deleteMonitor(m)} title={t('dns.delete')} aria-label={t('dns.delete')}>
+                      <Trash2 size={13} />
+                    </button>
+                  )}
+                </span>
+              </div>
+            </div>
+          ))}
         </div>
+        <PaginationBar {...pager} />
+        </>
       )}
 
       {detailMonitor && (

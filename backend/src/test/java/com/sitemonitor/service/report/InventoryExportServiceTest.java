@@ -57,7 +57,7 @@ class InventoryExportServiceTest {
         return i;
     }
 
-    private final Map<Long, String> teams = Map.of(7L, "SY-Dijital Bankacılık");
+    private final Map<Long, String> teams = Map.of(7L, "SY-Takım A");
 
     @Test
     @DisplayName("CSV: BOM + CRLF, 13 bayrak kolonu, Evet/Hayır ve tırnak kaçışı")
@@ -74,7 +74,7 @@ class InventoryExportServiceTest {
         assertThat(header).contains("Proxy Üzerinden Kontrol Et");
 
         String dataRow = csv.split("\r\n")[1];
-        assertThat(dataRow).contains("www.example.com").contains("SY-Dijital Bankacılık").contains("Aktif");
+        assertThat(dataRow).contains("www.example.com").contains("SY-Takım A").contains("Aktif");
         assertThat(dataRow).contains("Evet").contains("Hayır");
     }
 
@@ -125,7 +125,7 @@ class InventoryExportServiceTest {
             // (Bölüm başlıkları büyük harfe çevrilir, bu yüzden gövde metinleri üzerinden bakılır.)
             assertThat(text).as("Türkçe glyph kaybı — PDF metni: <%s>", text)
                     .contains("Takım")
-                    .contains("SY-Dijital Bankacılık");
+                    .contains("SY-Takım A");
         }
     }
 
@@ -180,12 +180,12 @@ class InventoryExportServiceTest {
     void teamNamesLoadsOnlyReferenced() {
         Team t = new Team();
         t.setId(7L);
-        t.setName("SY-Dijital Bankacılık");
+        t.setName("SY-Takım A");
         org.mockito.Mockito.when(teamRepo.findAllById(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(List.of(t));
 
         assertThat(service.teamNames(List.of(row("a.example.com", 1, true))))
-                .containsEntry(7L, "SY-Dijital Bankacılık");
+                .containsEntry(7L, "SY-Takım A");
         assertThat(service.teamNames(List.of())).isEmpty();
     }
 }

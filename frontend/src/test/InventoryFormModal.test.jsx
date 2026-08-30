@@ -15,7 +15,7 @@ vi.mock('../api/client', () => ({
     admin: {
       addInventory:    vi.fn().mockResolvedValue({ success: true }),
       updateInventory: vi.fn().mockResolvedValue({ success: true }),
-      getTeams:        vi.fn().mockResolvedValue({ success: true, data: [{ id: 1, name: 'SY-Dijital' }] }),
+      getTeams:        vi.fn().mockResolvedValue({ success: true, data: [{ id: 1, name: 'SY-Takım A' }] }),
       getInventoryByDomain: vi.fn().mockResolvedValue({ success: true, data: null }),
     },
     monitoring: { listGroups: vi.fn().mockResolvedValue({ success: true, data: [] }) },
@@ -34,7 +34,7 @@ vi.mock('@uiw/react-md-editor', () => ({
 import { api } from '../api/client'
 import InventoryFormModal, { InventoryFormModalForDomain } from '../components/inventory/InventoryFormModal.jsx'
 
-const TEAMS = [{ id: 1, name: 'SY-Dijital' }, { id: 2, name: 'SY-Kart' }]
+const TEAMS = [{ id: 1, name: 'SY-Takım A' }, { id: 2, name: 'SY-Takım B' }]
 
 /** Forma RENDER EDİLMEYEN ama payload'a giden alanları da taşıyan tam kayıt. */
 const RECORD = {

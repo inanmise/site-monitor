@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, FlaskConical, Trash2, RefreshCw } from 'lucide-react'
 import MDEditor from '@uiw/react-md-editor'
 import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
@@ -12,6 +12,8 @@ import { INVENTORY_FLAGS, emptyFlags } from '../../utils/inventoryFlags.js'
 import { CONTACT_FIELDS, looksLikeBrokenEmail } from '../../utils/inventoryContacts.js'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import Field from '../ui/Field.jsx'
+import DiagnosticsModal from '../admin/DiagnosticsModal.jsx'
+import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 
 /**
  * Envanter (sertifika) kayıt formu — InventoryManager'dan ÇIKARILDI ki dashboard kartındaki
@@ -114,9 +116,16 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
   const [showScrollHint, setShowScrollHint] = useState(false)
+  const [showDiag, setShowDiag] = useState(false)
+  const [running, setRunning]   = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const formGridRef = useRef(null)
 
   const isDuplicate = mode === 'duplicate'
+  // Silme yetkisi: CertificateModal ile AYNI kapı (inventory.crud) — ikinci bir yetki yolu açılmaz.
+  const canDelete = usePermissions().canEdit('inventory.crud')
+  // Kayıtlı alan adı: "Çalıştır" bunu kullanır (formdaki HENÜZ KAYDEDİLMEMİŞ değeri değil).
+  const savedDomain = mode === 'edit' ? (record?.domain || null) : null
 
   // Takım listesi: InventoryManager kendi listesini geçer (ekstra istek yok); dashboard geçmez.
   useEffect(() => {
@@ -155,6 +164,52 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
     if (!form.domain.trim()) return t('inv.formDomain') + ' zorunlu'
     if (!form.team_id) return t('inv.teamRequired')
     return null
+  }
+
+  /**
+   * Test et — YAZILAN değeri kullanır, KAYDETMEZ, alarm ÜRETMEZ.
+   *
+   * <p>Dokuz izleme formundaki {@code runTest} ile aynı sözleşme: kullanıcı kaydetmeden önce
+   * adresin gerçekten çalışıp çalışmadığını görür. Başlıktaki "Tanılama" ile AYNI bileşen
+   * açılır — ikinci bir tanılama yüzeyi kurulmaz.
+   */
+  function runTest() {
+    if (!form.domain.trim()) { setMsg(t('inv.formDomain') + ' zorunlu'); return }
+    setMsg(null)
+    setShowDiag(true)
+  }
+
+  /**
+   * Çalıştır — KAYITLI kaydın alan adıyla gerçek bir kontrol koşturur (kalıcı yazılır,
+   * alarm üretebilir). Bilinçli olarak formdaki değeri KULLANMAZ: kaydedilmemiş bir adresle
+   * kalıcı kontrol yazmak, kullanıcının istemediği sessiz bir yazma işlemi olurdu.
+   */
+  async function runNow() {
+    if (!savedDomain) return
+    setRunning(true); setMsg(null)
+    const res = await api.refreshCertificateHealth(savedDomain)
+    setRunning(false)
+    if (res?.success) { toast.success(t('inv.runDone', savedDomain)); onSaved?.() }
+    else toast.error(res?.error || t('inv.runError'))
+  }
+
+  /** Sil — mevcut DELETE /admin/inventory/{id}: denetim kaydı, soft-delete ve açık alarmların
+   *  kapatılması kendiliğinden miras kalır. Yeni uç YOK. */
+  async function del() {
+    if (!record?.id) return
+    const ok = await showConfirm({
+      title: t('inv.deleteTitle'),
+      message: t('inv.deleteMsg', record.domain),
+      confirmText: t('inv.deleteConfirm'),
+      cancelText: t('inv.deleteCancel'),
+      variant: 'danger',
+    })
+    if (!ok) return
+    setDeleting(true)
+    const res = await api.admin.deleteInventory(record.id)
+    setDeleting(false)
+    if (res?.success) { toast.success(t('inv.deleted')); onSaved?.(); onClose?.() }
+    else toast.error(res?.error || t('inv.deleteError'))
   }
 
   async function save() {
@@ -419,7 +474,26 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
           </button>
         )}
 
+        {/* Alt bar — dokuz izleme formunun KANONİK düzeni (bkz. HttpMonitorPage):
+            [Test et (solda)] … [Sil] [İptal] [Kaydet]. Envanter formu bu düzene uymayan
+            tek düzenleme formuydu. */}
         <div className="modal-actions">
+          <button className="btn btn-secondary" style={{ marginRight: 'auto' }} onClick={runTest}
+            disabled={!form.domain.trim()}>
+            <FlaskConical size={14} />{t('inv.test')}
+          </button>
+          {/* Çalıştır ve Sil YALNIZ kayıtlı kayıtta: yeni/kopya modunda henüz ortada bir kayıt yok. */}
+          {savedDomain && (
+            <button className="btn btn-secondary" onClick={runNow} disabled={running}
+              title={t('inv.runTitle', savedDomain)}>
+              <RefreshCw size={14} />{running ? t('inv.running') : t('inv.run')}
+            </button>
+          )}
+          {savedDomain && canDelete && (
+            <button className="btn btn-danger" onClick={del} disabled={deleting}>
+              <Trash2 size={14} />{t('inv.delete')}
+            </button>
+          )}
           <button className="btn btn-secondary" onClick={onClose}>{t('inv.cancel')}</button>
           <button className="btn btn-primary" onClick={save}
             disabled={saving || !form.domain.trim() || !form.team_id}>
@@ -427,6 +501,11 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
           </button>
         </div>
       </div>
+      {/* Tanılama YAZILAN değerle koşar — kaydetmeden deneme. */}
+      {showDiag && (
+        <DiagnosticsModal domain={form.domain.trim()} port={Number(form.port) || 443}
+          onClose={() => setShowDiag(false)} />
+      )}
     </div>
   )
 }

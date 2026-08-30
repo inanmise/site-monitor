@@ -8,13 +8,15 @@ import AlertBanner from './ui/AlertBanner.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
+import MonitorCardMeta from './MonitorCardMeta.jsx'
+import MonitorCardActions from './MonitorCardActions.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { Play, Pencil, Copy, X, RefreshCw, Plug, Plus, Trash2, FlaskConical, AlertTriangle, Network, Check, Pause, ChevronDown, BellDot } from 'lucide-react'
+import { X, RefreshCw, Plug, Plus, Trash2, FlaskConical, AlertTriangle, Network, Check, Pause, ChevronDown, BellDot } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
@@ -84,6 +86,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const [advOpen, setAdvOpen] = useState(false)               // "Gelişmiş ayarlar" accordion
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(null)
+  const [deleting, setDeleting] = useState(null)   // cift-tik korumasi (DNS ikizi)
   // Opsiyonel "değişiklik nedeni" — form nesnesine DEĞİL ayrı tutulur: taslak/kirlilik
   // karşılaştırması form üzerinden yapılıyor ve not bir ayar değil, tek seferlik açıklama.
   const [changeNote, setChangeNote] = useState('')
@@ -212,6 +215,9 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     setSaving(false)
     if (!res?.success) { setSaveError(res?.error || t('port.saveError')); return }
     toast.success(t('port.saved'))
+    // Envanter bagi koptuysa kullaniciyi bilgilendir: duzenleme kalici, envanter domain'i
+    // icin AYRI bir izleme surecek (bkz. MonitoringController.detachIfIdentityChanged).
+    if (res.data?.detached_from_inventory) toast.info(t('mon.detachedFromInventory'), 8000)
     await load(); closeEdit()
   }
 
@@ -228,13 +234,24 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     setTesting(false)
   }
 
-  async function del() {
-    if (!modal || modal === 'new') return
+  /**
+   * Silme — KARTTAN (satir) ya da duzenleme modalinden cagrilir; hedef her zaman ACIK bir
+   * argumandir. {@code onClick={deleteMonitor}} bicimde BAGLANMAZ: React olay nesnesini ilk
+   * arguman olarak gecirir ve hedef sessizce yanlis olurdu. (DnsMonitorPage ile ayni imza.)
+   */
+  async function deleteMonitor(m) {
+    if (!m || m === 'new') return
     if (!window.confirm(t('port.deleteConfirm'))) return
-    const res = await api.monitoring.deletePortMonitor(modal.id)
-    if (!res?.success) { setSaveError(res?.error || t('port.saveError')); return }
+    setDeleting(m.id)
+    const res = await api.monitoring.deletePortMonitor(m.id)
+    setDeleting(null)
+    // HATA TOAST ile bildirilir: saveError YALNIZ duzenleme modalinin icinde ciziliyor,
+    // karttan silerken modal KAPALI oldugu icin 403/409 sessizce yutuluyordu — kullanici
+    // silindi saniyordu. DnsMonitorPage ikiziyle ayni desen.
+    if (!res?.success) { toast.error(res?.error || t('port.saveError')); return }
     toast.success(t('port.deleted'))
-    await load(); closeEdit()
+    await load()
+    if (modal) closeEdit()
   }
 
   async function checkNow(m) {
@@ -341,6 +358,14 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
   })
 
+  /** Kart durum sınıfı — Port'ta {@code status} open/closed/unknown değerini taşır. */
+  function cardClass(m) {
+    if (m.active === false) return 'upt-card--unknown'
+    if (m.status === 'open') return 'upt-card--up'
+    if (m.status === 'closed') return 'upt-card--down'
+    return 'upt-card--unknown'
+  }
+
   function statusBadge(status) {
     const cls = status === 'open' ? 'upt-badge--up' : status === 'closed' ? 'upt-badge--down' : 'upt-badge--unknown'
     const label = status === 'open' ? t('port.statusOpen') : status === 'closed' ? t('port.statusClosed') : t('port.statusUnknown')
@@ -418,59 +443,62 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
       ) : monitors.length === 0 ? (
         <div className="mon-empty">{t('port.noMonitors')}</div>
       ) : (
-        <div className="mon-table-wrap">
-          <table className="mon-table">
-            <thead>
-              <tr>
-                <th>{t('port.host')}</th>
-                <th>{t('port.colTeam')}</th>
-                <th>{t('port.port')}</th>
-                <th>{t('port.status')}</th>
-                <th>{t('port.responseMs')}</th>
-                <th>{t('port.lastCheck')}</th>
-                <th>{t('port.actions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pager.pageItems.map(m => (
-                <tr
-                  key={m.id}
-                  className={`mon-row${!m.active ? ' mon-row-inactive' : ''}${m.active_alarm ? ' mon-row--alarm' : ''}`}
-                  onClick={() => openModal(m)}
-                >
-                  <td className="mon-cell-mono">{m.host}</td>
-                  <td>{m.team_name || '—'}</td>
-                  <td className="mon-cell-num">{m.port}</td>
-                  <td>{statusBadge(m.status)}{alarmBadge(m)}<MaintenanceBadge target={m.host} /></td>
-                  <td className="mon-cell-num">{m.response_ms != null ? `${m.response_ms}ms` : '—'}</td>
-                  <td className="mon-cell-time">{m.checked_at ? formatDate(m.checked_at) : '—'}</td>
-                  <td className="mon-cell-actions" onClick={e => e.stopPropagation()}>
-                    {/* Kart değil TABLO satırı: paylaşım düğmesi eylem hücresine girer.
-                        Yetkiden bağımsız — bağlantı kopyalamak salt-okunur bir iştir. */}
-                    <CheckRunningStrip running={isRunning(m.id)} />
-                    <CopyLinkButton iconOnly url={monitorDeepLink('port', m.id)} className="mon-act mon-act--copy" />
-                    {canManageRow(m) && (
-                      <CheckNowButton running={isRunning(m.id)} onClick={() => checkNow(m)} title={t('port.check')} />
-                    )}
-                    {canManageRow(m) && (
-                      <button type="button" className="mon-act mon-act--edit" onClick={() => openEdit(m)}
-                        title={t('port.edit')} aria-label={t('port.edit')}>
-                        <Pencil size={13} />
-                      </button>
-                    )}
-                    {canManageRow(m) && (
-                      <button type="button" className="mon-act mon-act--copy" onClick={() => openDuplicate(m)}
-                        title={t('mon.duplicate')} aria-label={t('mon.duplicate')}>
-                        <Copy size={13} />
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <PaginationBar {...pager} />
+        <>
+        <div className="upt-grid">
+          {pager.pageItems.map(m => (
+            <div key={m.id}
+              className={`upt-card ${cardClass(m)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
+              onClick={() => openModal(m)}>
+              <div className="upt-card-top">
+                {statusBadge(m.status)}
+                {alarmBadge(m)}<MaintenanceBadge target={m.host} />
+                <span className="upt-card-top-right">
+                  <span className="upt-port-tag">:{m.port} {m.protocol || 'TCP'}</span>
+                  <CopyLinkButton iconOnly url={monitorDeepLink('port', m.id)} className="btn btn-sm upt-card-copy" />
+                </span>
+              </div>
+              {/* Baslik YALNIZ host: port ust-sag rozette ve olcum satirinda zaten var.
+              Host'u ":" ile bolmek onu tek bir metin dugumu olmaktan cikariyordu. */}
+              <div className="upt-card-domain" title={`${m.host}:${m.port}`}>{m.host}</div>
+              <MonitorCardMeta monitor={m} />
+              <div className="upt-card-divider" />
+              <div className="upt-card-metrics">
+                <div className="upt-metric">
+                  <span className="upt-metric-val">{m.port}</span>
+                  <span className="upt-metric-lbl">{t('port.port')}</span>
+                </div>
+                {m.response_ms != null && (
+                  <div className="upt-metric">
+                    <span className="upt-metric-val">{m.response_ms}ms</span>
+                    <span className="upt-metric-lbl">{t('port.colResponse')}</span>
+                  </div>
+                )}
+              </div>
+              <div className="upt-card-foot">
+                <span>{m.checked_at ? formatDate(m.checked_at) : ''}</span>
+                {/* Sinifsiz sarmalayici: MonitorCardActions kendi kokunu zaten
+                    "mon-actions" yapiyor; ayni sinifi ic ice uygulamak gap/margin'i iki
+                    kez sayip ScriptedMonitorPage'den farkli bir bosluk uretiyordu. */}
+                <span onClick={e => e.stopPropagation()}>
+                  {canManageRow(m) && (
+                    <MonitorCardActions
+                      running={isRunning(m.id)}
+                      onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
+                      checkTitle={t('port.check')} editTitle={t('port.edit')} />
+                  )}
+                  {canDeleteRow(m) && (
+                    <button type="button" className="mon-act mon-act--danger" disabled={deleting === m.id}
+                      onClick={() => deleteMonitor(m)} title={t('port.delete')} aria-label={t('port.delete')}>
+                      <Trash2 size={13} />
+                    </button>
+                  )}
+                </span>
+              </div>
+            </div>
+          ))}
         </div>
+        <PaginationBar {...pager} />
+        </>
       )}
 
       {/* ── Detail Modal ── */}
@@ -724,7 +752,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
                   <FlaskConical size={14} />{testing ? t('port.testing') : t('port.test')}
                 </button>
                 {modal !== 'new' && canDeleteRow(modal) && (
-                  <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('port.delete')}</button>
+                  <button className="btn btn-danger" onClick={() => deleteMonitor(modal)}><Trash2 size={14} />{t('port.delete')}</button>
                 )}
               </div>
               <button className="btn btn-secondary" onClick={closeEdit}>{t('port.cancel')}</button>

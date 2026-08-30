@@ -14,7 +14,7 @@
  * süit kırılır. Elle senkron tutulan iki liste, tam da bu ekranın düştüğü hata sınıfıdır.
  */
 export const MONITOR_ALERT_TYPES = {
-  cert:      ['EXPIRY', 'CHAIN_BROKEN', 'REVOKED', 'MISMATCH'],
+  cert:      ['EXPIRY', 'CHAIN_BROKEN', 'REVOKED', 'MISMATCH', 'HOSTNAME_MISMATCH', 'UNTRUSTED_CA'],
   http:      ['ACCESSIBILITY', 'HTTP_DOWN', 'HTTP_SSL', 'DOMAIN_EXPIRY'],
   port:      ['PORT_DOWN', 'PORT_SLOW'],
   dns:       ['DNS_FAILURE', 'DNS_CHANGED', 'DNS_SLOW', 'DNS_UNEXPECTED', 'DNS_INCONSISTENT'],

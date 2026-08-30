@@ -4,6 +4,7 @@ import { useT } from '../i18n/index.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { readPageSize, writePageSize } from '../hooks/usePagination.js'
+import { isInsecure, securityTitle } from '../utils/certSecurity.js'
 
 export default function CertificatesTable({ onRowClick }) {
   const t = useT()
@@ -175,10 +176,21 @@ export default function CertificatesTable({ onRowClick }) {
 function TableRow({ cert, onClick }) {
   const t = useT()
   const days = cert.days_remaining
-  const isCritical = cert.status !== 'error' && days !== null && days !== undefined && days >= 0 && days <= 30
-  let statusClass = cert.status === 'error' ? 'status-error' : (cert.warning ? 'status-warning' : 'status-valid')
-  let statusText  = cert.status === 'error' ? t('tbl.statusError') : (cert.warning ? t('tbl.statusWarning') : t('tbl.statusValid'))
-  if (isCritical) { statusClass = 'status-critical'; statusText = t('tbl.statusCritical') }
+  // Hüküm SUNUCUDAN gelir (CertificateService.computeAlertLevel: expired/critical/high/warning/valid)
+  // ve eşikler ayarlanabilir. Tablo kendi sabit 30 gün merdivenini kullanıyordu: days=20 satırda
+  // "Kritik", kartta "Yüksek" görünüyordu; daha kötüsü days<0 (SÜRESİ DOLMUŞ) sertifika
+  // days>=0 koşuluna takılmadığı için "Uyarı" görünüyor ve tabloda "Süresi doldu" hiç yoktu.
+  const level = cert.alert_level
+    ?? (cert.status === 'error' ? 'error'
+      : days == null ? 'valid'
+      : days < 0 ? 'expired'
+      : cert.warning ? 'warning' : 'valid')
+  const LEVEL_CLASS = { error: 'status-error', expired: 'status-critical', critical: 'status-critical',
+    high: 'status-warning', warning: 'status-warning', valid: 'status-valid' }
+  const LEVEL_TEXT = { error: 'tbl.statusError', expired: 'tbl.statusExpired', critical: 'tbl.statusCritical',
+    high: 'tbl.statusHigh', warning: 'tbl.statusWarning', valid: 'tbl.statusValid' }
+  const statusClass = LEVEL_CLASS[level] ?? 'status-valid'
+  const statusText  = t(LEVEL_TEXT[level] ?? 'tbl.statusValid')
 
   return (
     <tr data-domain={cert.domain} onClick={() => onClick(cert.domain)} style={{ cursor: 'pointer' }}>
@@ -187,7 +199,14 @@ function TableRow({ cert, onClick }) {
       <td>{cert.subject || 'N/A'}</td>
       <td>{formatDate(cert.not_after)}</td>
       <td><strong>{days ?? 'N/A'}</strong></td>
-      <td><span className={`table-status ${statusClass}`}></span>{statusText}</td>
+      <td>
+        <span className={`table-status ${statusClass}`}></span>{statusText}
+        {isInsecure(cert) && (
+          <span className="cc-pill cc-pill-error" style={{ marginLeft: 6 }} title={securityTitle(cert, t)}>
+            {t('cert.sec.insecure')}
+          </span>
+        )}
+      </td>
       <td>{formatDate(cert.checked_at)}</td>
     </tr>
   )

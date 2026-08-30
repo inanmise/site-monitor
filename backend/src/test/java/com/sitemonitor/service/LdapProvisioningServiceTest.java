@@ -312,14 +312,14 @@ class LdapProvisioningServiceTest {
         org.mockito.ArgumentCaptor<Team> cap = org.mockito.ArgumentCaptor.forClass(Team.class);
         Map<String, Object> attrs = Map.of(
                 "cn", "80005",
-                "company", "PRODUCT OWNER-SY-MevduatMuhasebeSigorta,SY-Dijital Mobil Servis");
+                "company", "PRODUCT OWNER-SY-MevduatMuhasebeSigorta,SY-Takım A Mobil Servis");
 
         AppUser u = service.provisionFromAd("po3", "CN=po3,DC=akb", attrs);
 
         assertThat(u.getTeamIds()).hasSize(2);
         org.mockito.Mockito.verify(teamRepo, org.mockito.Mockito.atLeastOnce()).save(cap.capture());
         java.util.List<String> names = cap.getAllValues().stream().map(Team::getName).toList();
-        assertThat(names).contains("SY-MevduatMuhasebeSigorta", "SY-Dijital Mobil Servis");
+        assertThat(names).contains("SY-MevduatMuhasebeSigorta", "SY-Takım A Mobil Servis");
         // PO her iki takımın da lideri olmalı (lider boştu)
         assertThat(cap.getAllValues())
                 .filteredOn(t -> t.getName() != null && t.getName().startsWith("SY-"))
@@ -348,12 +348,12 @@ class LdapProvisioningServiceTest {
     @DisplayName("companyTeamNames: rol önekini at, yalnız ilk tireden böl, virgülle ayır")
     void companyTeamNamesHelper() {
         assertThat(LdapProvisioningService.companyTeamNames(
-                "PRODUCT OWNER-SY-MevduatMuhasebeSigorta,SY-Dijital Mobil Servis"))
-                .containsExactly("SY-MevduatMuhasebeSigorta", "SY-Dijital Mobil Servis");
+                "PRODUCT OWNER-SY-MevduatMuhasebeSigorta,SY-Takım A Mobil Servis"))
+                .containsExactly("SY-MevduatMuhasebeSigorta", "SY-Takım A Mobil Servis");
         assertThat(LdapProvisioningService.companyTeamNames("YAZILIM UZMANI-SY-MevduatMuhasebeSigorta"))
                 .containsExactly("SY-MevduatMuhasebeSigorta");
-        assertThat(LdapProvisioningService.companyTeamNames("SCRUM MASTER-SY-Dijital Mobil Servis"))
-                .containsExactly("SY-Dijital Mobil Servis");
+        assertThat(LdapProvisioningService.companyTeamNames("SCRUM MASTER-SY-Takım A Mobil Servis"))
+                .containsExactly("SY-Takım A Mobil Servis");
         assertThat(LdapProvisioningService.companyTeamNames("PRODUCT OWNER")).isEmpty();  // tire yok
         assertThat(LdapProvisioningService.companyTeamNames(null)).isEmpty();
     }

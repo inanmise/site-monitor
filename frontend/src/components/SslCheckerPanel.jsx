@@ -85,7 +85,10 @@ export default function SslCheckerPanel({ data }) {
     ? t('ssl.dnsOk',   data.domain, data.resolved_ip)
     : t('ssl.dnsFail', data.domain)
 
-  const trustOk = data.chain_status === 'VALID'
+  // Bu satır ZINCIR BÜTÜNLÜĞÜNÜ ölçer (chain_status), GÜVENİ değil. Metni "tüm büyük
+  // tarayıcılar tarafından güvenilir" diyordu ve hemen altındaki çapa satırı "güvenilmeyen zincir"
+  // derken yeşil kalıyordu: kendinden imzalı bir modem sertifikasında ikisi aynı anda görünüyordu.
+  const chainOk = data.chain_status === 'VALID' 
 
   const caName = data.issuer || data.issuer_cn || '?'
 
@@ -119,12 +122,16 @@ export default function SslCheckerPanel({ data }) {
     <div className="ssl-checker-panel">
       <div className="ssl-checks">
         <CheckRow ok={dnsOk}      text={dnsText} />
-        <CheckRow ok={trustOk}    text={t(trustOk ? 'ssl.trustOk' : 'ssl.trustFail')} />
+        <CheckRow ok={chainOk}    text={t(chainOk ? 'ssl.trustOk' : 'ssl.trustFail')} />
         {(data.trust_status === 'TRUSTED' || data.trust_status === 'UNTRUSTED') && (
           <CheckRow ok={data.trust_status === 'TRUSTED'}
             text={t(data.trust_status === 'TRUSTED' ? 'ssl.anchorOk' : 'ssl.anchorFail')} />
         )}
-        <CheckRow ok={!!caName}   text={t('ssl.issuedBy', caName)} />
+        {/* İhraç eden satırı eskiden {@code ok={!!caName}} ile HER ZAMAN yeşildi: kendinden imzalı
+            bir router CA'sı da "Sertifika ZTE tarafından düzenlendi" ✓ alıyordu. Artık güven
+            durumuna bağlı; bilinmiyorsa (UNKNOWN) eski davranış korunur. */}
+        <CheckRow ok={data.trust_status !== 'UNTRUSTED' && !!caName}
+          text={t('ssl.issuedBy', caName)} />
         <CheckRow ok={expiryOk}   text={expiryText} />
         <CheckRow ok={hostnameOk} text={t(hostnameOk ? 'ssl.hostnameOk' : 'ssl.hostnameFail', data.domain)} />
         <CheckRow ok={revOk}      text={revText} />

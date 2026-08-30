@@ -164,6 +164,8 @@ public class EmailTemplateBuilder {
             case "REVOKED"      -> "SERTİFİKA İPTAL UYARISI";
             case "MISMATCH"     -> "SERTİFİKA DAĞITIM UYARISI";
             case "CHAIN_BROKEN" -> "SERTİFİKA ZİNCİR UYARISI";
+            case "HOSTNAME_MISMATCH" -> "SERTİFİKA ALAN ADI UYUŞMAZLIĞI";
+            case "UNTRUSTED_CA" -> "GÜVENİLMEYEN SERTİFİKA UYARISI";
             default -> "İZLEME UYARISI";
         };
     }
@@ -210,8 +212,9 @@ public class EmailTemplateBuilder {
           .append("<table role='presentation' cellpadding='0' cellspacing='0' border='0'><tr>")
           .append("<td bgcolor='").append(color).append("' style='background-color:").append(color).append(";border-radius:4px;padding:4px 10px;font-size:11px;font-weight:700;letter-spacing:.08em;color:#FFFFFF'>").append(esc(badge)).append("</td>")
           .append("</tr></table>");
-        // Hero — dev gün sayacı ya da tip etiketi
-        if (days != null) {
+        // Hero — dev gün sayacı ya da tip etiketi. Süre-DIŞI sertifika kusurlarında gün sayacı
+        // yanıltıcıdır (1775 gün geçerli ama kabul edilemez sertifika) → tip etiketi gösterilir.
+        if (days != null && EscalationService.isDurationAlert(m.alertType())) {
             sb.append("<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='margin:16px 0 2px'><tr>")
               .append("<td style='font-size:72px;line-height:1;font-weight:300;color:").append(color).append("'>").append(days).append("</td>")
               .append("<td valign='bottom' style='padding:0 0 8px 12px;font-size:13px;font-weight:700;letter-spacing:.14em;color:").append(MUTED).append("'>GÜN<br>KALDI</td>")

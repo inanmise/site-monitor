@@ -41,7 +41,7 @@ class EmailTemplateBuilderTest {
         ctx.put("source", "RDAP");
         ctx.put("status_codes", "client transfer prohibited, client delete prohibited");
         return new EmailTemplateBuilder.AlertMail("DOMAINMON_EXPIRY", level, "kartfree.com",
-                "kartfree.com alan adının kaydı " + days + " gün içinde doluyor.", days, ctx, "SY-Dijital");
+                "kartfree.com alan adının kaydı " + days + " gün içinde doluyor.", days, ctx, "SY-Takım A");
     }
 
     // ── PAGE_INTEGRITY çözüm maili — "sorun neydi + ne çözüldü" (2026-08-04) ──
@@ -63,7 +63,7 @@ class EmailTemplateBuilderTest {
     @DisplayName("PAGE_INTEGRITY çözüm HTML'i: sorun detayı + giderilen kaynaklar + güncel durum satırları")
     void resolvedHtml_pageIntegrity_showsProblemAndCurrentState() {
         String html = b.buildResolvedHtml("https://x.example.com/", "PAGE_INTEGRITY",
-                "Sistem (otomatik)", "2026-08-04T06:42:00", "2026-08-03T16:35:00", pageResolvedCtx(), "SY-Dijital");
+                "Sistem (otomatik)", "2026-08-04T06:42:00", "2026-08-03T16:35:00", pageResolvedCtx(), "SY-Takım A");
         assertThat(html)
                 .contains("Çözülen Alarm").contains("Sayfa Bütünlüğü")
                 .contains("1 kırık, 1 zaman aşımı, 0 mixed content")     // sorun neydi
@@ -80,7 +80,7 @@ class EmailTemplateBuilderTest {
         Map<String, Object> bare = new LinkedHashMap<>();
         bare.put("url", "https://x.example.com/");   // eski snapshot yalnız url/monitor_id taşırdı
         String html = b.buildResolvedHtml("https://x.example.com/", "PAGE_INTEGRITY",
-                "Sistem (otomatik)", "2026-08-04T06:42:00", "2026-08-03T16:35:00", bare, "SY-Dijital");
+                "Sistem (otomatik)", "2026-08-04T06:42:00", "2026-08-03T16:35:00", bare, "SY-Takım A");
         assertThat(html).contains("Alan Adı").contains("Alarm Süresi").contains("Çözen")
                 .doesNotContain("Giderilen Sorunlu Kaynaklar").doesNotContain("Güncel Durum");
     }
@@ -101,14 +101,14 @@ class EmailTemplateBuilderTest {
     @DisplayName("Alarm maili: 'Neden bu e-postayı aldınız?' şeffaflık bloğu + takım adı görünür")
     void alarm_whyReceivingBlock() {
         String html = b.buildHtml(domainMail("HIGH", 20));
-        assertThat(html).contains("Neden bu e-postayı aldınız?").contains("SY-Dijital")
+        assertThat(html).contains("Neden bu e-postayı aldınız?").contains("SY-Takım A")
                         .contains("yöneticinize başvurun");
     }
 
     @Test
     @DisplayName("whyReceivingBlock: takım varsa adı; yoksa jenerik ifade (çökme yok)")
     void whyReceivingBlock_teamOrGeneric() {
-        assertThat(EmailTemplateBuilder.whyReceivingBlock("SY-Dijital")).contains("SY-Dijital").contains("ekibine");
+        assertThat(EmailTemplateBuilder.whyReceivingBlock("SY-Takım A")).contains("SY-Takım A").contains("ekibine");
         assertThat(EmailTemplateBuilder.whyReceivingBlock(null)).contains("Neden bu e-postayı aldınız?")
                 .doesNotContain("null");
     }
@@ -213,7 +213,7 @@ class EmailTemplateBuilderTest {
         ctx.put("problem_rows", "BROKEN\thttps://www.example.com/x.png\t404\nBROKEN\thttps://www.example.com/a.css\t404");
         ctx.put("problem_total", 2);
         var m = new EmailTemplateBuilder.AlertMail("PAGE_INTEGRITY", "HIGH", "https://www.example.com/",
-                "Sayfada bütünlük sorunu.", null, ctx, "DijitalSY");
+                "Sayfada bütünlük sorunu.", null, ctx, "TakimA");
         String html = b.buildHtml(m);
         // Sayfa-özel aksiyon + kaynak listesi görünür
         assertThat(html).contains("Sayfa Bütünlüğü İzleme")
@@ -246,7 +246,7 @@ class EmailTemplateBuilderTest {
         ctx.put("problem_rows", rows.toString().trim());   // 10 satır gösterilir
         ctx.put("problem_total", 12);                       // toplam 12 → "2 kaynak daha"
         var m = new EmailTemplateBuilder.AlertMail("PAGE_INTEGRITY", "HIGH", "https://www.example.com/",
-                "Sayfada bütünlük sorunu.", null, ctx, "DijitalSY");
+                "Sayfada bütünlük sorunu.", null, ctx, "TakimA");
         String html = b.buildHtml(m);
         assertThat(html)
                 .contains("Site Tarama")                       // Mod

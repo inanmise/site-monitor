@@ -56,6 +56,19 @@ public class CertificateDto {
     @JsonProperty("trust_status")
     private String trustStatus;
 
+    /**
+     * Güvenlik kusuru bayrakları — {@code HOSTNAME_MISMATCH} / {@code UNTRUSTED_CA}.
+     *
+     * <p>Süreden BAĞIMSIZ: bir sertifika 1775 gün geçerli olup yine de bu host için kabul
+     * edilemez olabilir (tarayıcının reddettiği durum). Rozet katmanı buna bakar; süre
+     * merdiveni ve süre süzgeçleri DEĞİŞMEZ.
+     */
+    @JsonProperty("security_flags")
+    private java.util.List<String> securityFlags;
+
+    /** {@code security_flags} boş mu — arayuz "güvensiz mi" sorusunu tersine çevirmek zorunda kalmasın. */
+    private Boolean secure;
+
     // Extended certificate metadata
     @JsonProperty("serial_number")
     private String serialNumber;
@@ -144,6 +157,10 @@ public class CertificateDto {
         dto.crlUrl = c.getCrlUrl();
         dto.via = c.getVia();
         dto.tlsModeUsed = c.getTlsModeUsed();
+        // TEK hüküm çekirdeği: aynı kural sağlık satırlarını, rozeti ve alarmı besler.
+        dto.securityFlags = com.sitemonitor.service.CertificateHealthRules.securityFlags(
+                c.getDomain(), sanList, c.getTrustStatus());
+        dto.secure = dto.securityFlags.isEmpty();
         return dto;
     }
 }

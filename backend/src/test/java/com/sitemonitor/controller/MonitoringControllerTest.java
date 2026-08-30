@@ -164,7 +164,10 @@ class MonitoringControllerTest {
         when(certCheckRepo.aggregateStatusCountsSince(anyString()))
                 .thenReturn(List.<Object[]>of(new Object[]{"a.com", 4L, 1L}));
 
-        mvc.perform(get("/api/monitoring/uptime/overview").session(session("USER")))
+        // ADMIN (global gorus): envanter satirlari artik takim kapsamina TABI (IDOR kapisi) ve
+        // bu fixture'daki inv(...) takimsiz. Testin konusu uptime/http_ok hesabi; kapsam
+        // ayri testte pinli (uptimeOverview_hidesOtherTeamsInventory).
+        mvc.perform(get("/api/monitoring/uptime/overview").session(session("ADMIN")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].domain").value("a.com"))
                 .andExpect(jsonPath("$.data[0].uptime_30d").value(75.0))
@@ -208,7 +211,9 @@ class MonitoringControllerTest {
         com.sitemonitor.model.AlertEvent fail = openDnsEvent("a.com", com.sitemonitor.service.EscalationService.TYPE_DNS_FAILURE, "CRITICAL");
         when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(slow, fail));
 
-        mvc.perform(get("/api/monitoring/dns").session(session("USER")))
+        // ADMIN (global gorus): envanter satirlari artik takim kapsamina tabi ve bu fixture'da
+        // inv("a.com") takimsiz. Testin konusu ALARM ROZETI; kapsam ayri testlerde pinli.
+        mvc.perform(get("/api/monitoring/dns").session(session("ADMIN")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].active_alarm").value(true))
                 .andExpect(jsonPath("$.data[0].alarm_level").value("CRITICAL"));   // SLOW+FAILURE → en severe
@@ -438,7 +443,10 @@ class MonitoringControllerTest {
                 new Object[]{"a.com", 2L, 2L},    // 2 kontrol, 2 up → http_ok true
                 new Object[]{"b.com", 2L, 1L}));  // 2 kontrol, 1 up → http_ok false (c.com yok → null)
 
-        mvc.perform(get("/api/monitoring/uptime/overview").session(session("USER")))
+        // ADMIN (global gorus): envanter satirlari artik takim kapsamina TABI (IDOR kapisi) ve
+        // bu fixture'daki inv(...) takimsiz. Testin konusu uptime/http_ok hesabi; kapsam
+        // ayri testte pinli (uptimeOverview_hidesOtherTeamsInventory).
+        mvc.perform(get("/api/monitoring/uptime/overview").session(session("ADMIN")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].domain").value("a.com"))
                 .andExpect(jsonPath("$.data[0].http_ok").value(true))
@@ -2802,5 +2810,399 @@ class MonitoringControllerTest {
         assertThat(saved.getRecoveryChecks()).isEqualTo(3);
         assertThat(saved.getNotifyEmail()).isTrue();
         assertThat(saved.getNotifyWebhook()).isTrue();
+    }
+
+    // ── D: envanter-türevi monitörde KİMLİK değişimi ───────────────────────────
+    //
+    // listPort/listDns envanter-türevi monitörü host:port (DNS'te domain) DEĞERİNİN KENDİSİYLE
+    // eşleştiriyor. Kullanıcı hedefi değiştirdiğinde o anahtar kaybolur; satır ne envanter
+    // döngüsünde ne standalone listesinde yer alır → EKRANDAN TAMAMEN KAYBOLUR, üstelik liste
+    // envanter alan adını eksik sanıp ESKİ hedefle yeni bir monitör üretir. Kullanıcıya
+    // "kaydettim, eski haline döndü" olarak görünen sessiz veri kaybı buydu.
+
+    private com.sitemonitor.model.PortMonitor inventoryPort(long id, String host, Long teamId) {
+        com.sitemonitor.model.PortMonitor m = new com.sitemonitor.model.PortMonitor();
+        m.setId(id); m.setHost(host); m.setPort(443); m.setTeamId(teamId);
+        m.setActive(true); m.setStandalone(false);   // envanter-türevi
+        return m;
+    }
+
+    @Test
+    @DisplayName("PUT /port/{id}: host değişince envanter bağı kopar (standalone=true) ve yanıt bunu bildirir")
+    void updatePort_hostChanged_detachesFromInventory() throws Exception {
+        when(portMonitorRepo.findById(1L)).thenReturn(Optional.of(inventoryPort(1L, "eski.example.com", 3L)));
+        when(portMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(put("/api/monitoring/port/1").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"host\":\"yeni.example.com\",\"port\":443,\"teamId\":3}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.host").value("yeni.example.com"))
+                .andExpect(jsonPath("$.data.standalone").value(true))
+                .andExpect(jsonPath("$.data.detached_from_inventory").value(true));
+
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.PortMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.PortMonitor.class);
+        verify(portMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getHost()).isEqualTo("yeni.example.com");
+        assertThat(cap.getValue().getStandalone()).isTrue();
+    }
+
+    @Test
+    @DisplayName("PUT /port/{id}: yalnız port değişse de bağ kopar (anahtar host:port'un TAMAMI)")
+    void updatePort_portChanged_detachesFromInventory() throws Exception {
+        when(portMonitorRepo.findById(1L)).thenReturn(Optional.of(inventoryPort(1L, "a.example.com", 3L)));
+        when(portMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(put("/api/monitoring/port/1").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"port\":8443,\"teamId\":3}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.detached_from_inventory").value(true));
+    }
+
+    @Test
+    @DisplayName("PUT /port/{id}: kimlik DEĞİŞMEDEN yapılan düzenleme envanter bağını KOPARMAZ")
+    void updatePort_identityUnchanged_keepsInventoryLink() throws Exception {
+        when(portMonitorRepo.findById(1L)).thenReturn(Optional.of(inventoryPort(1L, "a.example.com", 3L)));
+        when(portMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(put("/api/monitoring/port/1").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"host\":\"a.example.com\",\"port\":443,\"intervalSeconds\":600,\"teamId\":3}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.standalone").value(false))
+                .andExpect(jsonPath("$.data.detached_from_inventory").value(false));
+    }
+
+    @Test
+    @DisplayName("PUT /port/{id}: zaten standalone olan monitörde koptu bildirimi ÜRETİLMEZ")
+    void updatePort_alreadyStandalone_noDetachNotice() throws Exception {
+        com.sitemonitor.model.PortMonitor m = inventoryPort(1L, "a.example.com", 3L);
+        m.setStandalone(true);   // kullanıcı-eklediği monitör
+        when(portMonitorRepo.findById(1L)).thenReturn(Optional.of(m));
+        when(portMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(put("/api/monitoring/port/1").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"host\":\"b.example.com\",\"port\":443,\"teamId\":3}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.standalone").value(true))
+                .andExpect(jsonPath("$.data.detached_from_inventory").value(false));
+    }
+
+    @Test
+    @DisplayName("GET /port: koparılmış monitör listede DURUR; envanter alan adı ayrıca yeniden türetilir")
+    void listPort_detachedMonitorStaysVisible() throws Exception {
+        // Düzeltmeden SONRAKİ dünya: düzenlenen satır standalone damgalı.
+        com.sitemonitor.model.PortMonitor edited = inventoryPort(1L, "yeni.example.com", 3L);
+        edited.setStandalone(true);
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv("eski.example.com")));
+        when(portMonitorRepo.findAll()).thenReturn(List.of(edited));
+        when(portMonitorRepo.findByStandaloneTrueAndActiveTrue()).thenReturn(List.of(edited));
+        when(portMonitorRepo.saveAll(anyList())).thenAnswer(i -> i.getArgument(0));
+        when(portCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+
+        mvc.perform(get("/api/monitoring/port").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                // envanter alan adı için yeniden türetilen satır + kullanıcının düzenlediği satır
+                .andExpect(jsonPath("$.data[?(@.host=='eski.example.com')]").isNotEmpty())
+                .andExpect(jsonPath("$.data[?(@.host=='yeni.example.com')]").isNotEmpty());
+    }
+
+    @Test
+    @DisplayName("GET /port: standalone damgası OLMAYAN, envanterle eşleşmeyen monitör görünmez — damga bu yüzden şart")
+    void listPort_undetachedOrphanIsInvisible() throws Exception {
+        // Düzeltme OLMASAYDI oluşacak durum: host değişmiş ama satır hâlâ envanter-türevi sayılıyor.
+        com.sitemonitor.model.PortMonitor orphan = inventoryPort(1L, "yeni.example.com", 3L);
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv("eski.example.com")));
+        when(portMonitorRepo.findAll()).thenReturn(List.of(orphan));
+        when(portMonitorRepo.findByStandaloneTrueAndActiveTrue()).thenReturn(List.of());
+        when(portMonitorRepo.saveAll(anyList())).thenAnswer(i -> i.getArgument(0));
+        when(portCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+
+        mvc.perform(get("/api/monitoring/port").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.host=='yeni.example.com')]").isEmpty());
+    }
+
+    @Test
+    @DisplayName("PUT /dns/{id}: domain değişince envanter bağı kopar (standalone=true)")
+    void updateDns_domainChanged_detachesFromInventory() throws Exception {
+        com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();
+        m.setId(1L); m.setDomain("eski.example.com"); m.setRecordType("A");
+        m.setTeamId(3L); m.setActive(true); m.setStandalone(false);
+        when(dnsMonitorRepo.findById(1L)).thenReturn(Optional.of(m));
+        when(dnsMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(put("/api/monitoring/dns/1").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"domain\":\"yeni.example.com\",\"recordType\":\"A\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.domain").value("yeni.example.com"))
+                .andExpect(jsonPath("$.data.standalone").value(true))
+                .andExpect(jsonPath("$.data.detached_from_inventory").value(true));
+    }
+
+    @Test
+    @DisplayName("PUT /dns/{id}: domain DEĞİŞMEDEN yapılan düzenleme envanter bağını KOPARMAZ")
+    void updateDns_domainUnchanged_keepsInventoryLink() throws Exception {
+        com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();
+        m.setId(1L); m.setDomain("a.example.com"); m.setRecordType("A");
+        m.setTeamId(3L); m.setActive(true); m.setStandalone(false);
+        when(dnsMonitorRepo.findById(1L)).thenReturn(Optional.of(m));
+        when(dnsMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(put("/api/monitoring/dns/1").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"domain\":\"a.example.com\",\"recordType\":\"A\",\"intervalSeconds\":600}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.standalone").value(false))
+                .andExpect(jsonPath("$.data.detached_from_inventory").value(false));
+    }
+
+    // ── Denetim 5. tur, bulgu 1: envanter satırları takım kapsamına tabi ───────
+    //
+    // listPort/listDns'in envanter döngüsü hiç süzmüyordu: monitoring.read yetkisi olan HERKES
+    // tüm envanter alan adlarını (host:port, takım adı, son kontrol, açık alarm) görüyordu —
+    // oysa AYNI metodun standalone döngüsü ve diğer yedi liste ucu süzüyordu.
+
+    /** viewTeamIds ile kapsamlı USER oturumu — SessionScope.canView bu listeye bakar. */
+    private MockHttpSession sessionScoped(Long... teamIds) {
+        MockHttpSession s = session("USER");
+        s.setAttribute("viewTeamIds", java.util.List.of(teamIds));
+        return s;
+    }
+
+    private static CertificateInventory invT(String domain, Long teamId) {
+        CertificateInventory i = new CertificateInventory();
+        i.setDomain(domain); i.setPort(443); i.setActive(true); i.setTeamId(teamId);
+        return i;
+    }
+
+    @Test
+    @DisplayName("GET /port: BAŞKA takımın envanter satırı listede GÖRÜNMEZ (IDOR)")
+    void listPort_hidesOtherTeamsInventory() throws Exception {
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc())
+                .thenReturn(List.of(invT("benim.example.com", 1L), invT("baskasi.example.com", 99L)));
+        when(portMonitorRepo.findAll()).thenReturn(List.of());
+        when(portMonitorRepo.findByStandaloneTrueAndActiveTrue()).thenReturn(List.of());
+        when(portMonitorRepo.saveAll(anyList())).thenAnswer(i -> i.getArgument(0));
+        when(portCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+
+        mvc.perform(get("/api/monitoring/port").session(sessionScoped(1L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.host=='benim.example.com')]").isNotEmpty())
+                .andExpect(jsonPath("$.data[?(@.host=='baskasi.example.com')]").isEmpty());
+    }
+
+    @Test
+    @DisplayName("GET /dns: BAŞKA takımın envanter satırı listede GÖRÜNMEZ (IDOR)")
+    void listDns_hidesOtherTeamsInventory() throws Exception {
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc())
+                .thenReturn(List.of(invT("benim.example.com", 1L), invT("baskasi.example.com", 99L)));
+        when(dnsMonitorRepo.findAll()).thenReturn(List.of());
+        when(dnsMonitorRepo.findByStandaloneTrueAndActiveTrue()).thenReturn(List.of());
+        when(dnsMonitorRepo.saveAll(anyList())).thenAnswer(i -> i.getArgument(0));
+        when(dnsRecordRepo.findLatestPerMonitor()).thenReturn(List.of());
+
+        mvc.perform(get("/api/monitoring/dns").session(sessionScoped(1L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.domain=='benim.example.com')]").isNotEmpty())
+                .andExpect(jsonPath("$.data[?(@.domain=='baskasi.example.com')]").isEmpty());
+    }
+
+    @Test
+    @DisplayName("GET /port: UG (uç gözetim) takımı da görebilir — kapı iki takımı da sayar")
+    void listPort_ugTeamCanView() throws Exception {
+        CertificateInventory inv = invT("ug.example.com", 99L);
+        inv.setUgTeamId(1L);
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv));
+        when(portMonitorRepo.findAll()).thenReturn(List.of());
+        when(portMonitorRepo.findByStandaloneTrueAndActiveTrue()).thenReturn(List.of());
+        when(portMonitorRepo.saveAll(anyList())).thenAnswer(i -> i.getArgument(0));
+        when(portCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+
+        mvc.perform(get("/api/monitoring/port").session(sessionScoped(1L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.host=='ug.example.com')]").isNotEmpty());
+    }
+
+    @Test
+    @DisplayName("GET /port: global görüş (ADMIN) tüm envanteri görmeye DEVAM eder")
+    void listPort_adminStillSeesAll() throws Exception {
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc())
+                .thenReturn(List.of(invT("a.example.com", 1L), invT("b.example.com", 99L)));
+        when(portMonitorRepo.findAll()).thenReturn(List.of());
+        when(portMonitorRepo.findByStandaloneTrueAndActiveTrue()).thenReturn(List.of());
+        when(portMonitorRepo.saveAll(anyList())).thenAnswer(i -> i.getArgument(0));
+        when(portCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+
+        mvc.perform(get("/api/monitoring/port").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.host=='a.example.com')]").isNotEmpty())
+                .andExpect(jsonPath("$.data[?(@.host=='b.example.com')]").isNotEmpty());
+    }
+
+    // ── Denetim 5. tur, bulgu 17 + 18: kimlik karşılaştırması ve mükerrer ──────
+
+    @Test
+    @DisplayName("Bulgu 17: yalnız HARF KASASI değişimi envanter bağını KOPARMAZ")
+    void updatePort_caseOnlyChange_keepsInventoryLink() throws Exception {
+        when(portMonitorRepo.findById(1L)).thenReturn(Optional.of(inventoryPort(1L, "a.Example.com", 3L)));
+        when(portMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(portMonitorRepo.findFirstByHostAndPortOrderByIdAsc(anyString(), anyInt())).thenReturn(Optional.empty());
+
+        mvc.perform(put("/api/monitoring/port/1").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"host\":\"a.example.com\",\"port\":443,\"teamId\":3}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.detached_from_inventory").value(false))
+                .andExpect(jsonPath("$.data.standalone").value(false));
+    }
+
+    @Test
+    @DisplayName("Bulgu 17: DNS'te de harf kasası değişimi bağı koparmaz")
+    void updateDns_caseOnlyChange_keepsInventoryLink() throws Exception {
+        com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();
+        m.setId(1L); m.setDomain("a.Example.com"); m.setRecordType("A");
+        m.setTeamId(3L); m.setActive(true); m.setStandalone(false);
+        when(dnsMonitorRepo.findById(1L)).thenReturn(Optional.of(m));
+        when(dnsMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(put("/api/monitoring/dns/1").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"domain\":\"a.example.com\",\"recordType\":\"A\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.detached_from_inventory").value(false));
+    }
+
+    @Test
+    @DisplayName("Bulgu 18: PUT /port/{id} host:port'u BAŞKA aktif monitörünkiyle aynı yapamaz")
+    void updatePort_rejectsDuplicateHostPort() throws Exception {
+        com.sitemonitor.model.PortMonitor other = inventoryPort(2L, "baska.example.com", 3L);
+        other.setStandalone(true);
+        when(portMonitorRepo.findById(1L)).thenReturn(Optional.of(inventoryPort(1L, "benim.example.com", 3L)));
+        when(portMonitorRepo.findFirstByHostAndPortOrderByIdAsc("baska.example.com", 443))
+                .thenReturn(Optional.of(other));
+
+        mvc.perform(put("/api/monitoring/port/1").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"host\":\"baska.example.com\",\"port\":443,\"teamId\":3}"))
+                .andExpect(status().isBadRequest());
+
+        verify(portMonitorRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Bulgu 18: kimlik DEĞİŞMEDEN yapılan düzenleme mükerrer kontrolüne TAKILMAZ")
+    void updatePort_sameIdentity_skipsDuplicateCheck() throws Exception {
+        when(portMonitorRepo.findById(1L)).thenReturn(Optional.of(inventoryPort(1L, "a.example.com", 3L)));
+        when(portMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(put("/api/monitoring/port/1").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"host\":\"a.example.com\",\"port\":443,\"intervalSeconds\":600,\"teamId\":3}"))
+                .andExpect(status().isOk());
+
+        // Kendisiyle karşılaştırma sorgusu hiç yapılmamalı (gereksiz DB turu + yanlış 400 riski).
+        verify(portMonitorRepo, never()).findFirstByHostAndPortOrderByIdAsc(anyString(), anyInt());
+    }
+
+    // ── Denetim 5. tur, bulgu 8: restore YETKI alanini yazamaz ─────────────────
+    //
+    // updateDns envanter-turevi bir monitor icin requireAdmin isterken restoreChange yalniz
+    // canManage istiyor. standalone bu turda MON_FIELDS'e eklendigi icin restore ile
+    // yazilabilir hale gelmisti: bir TEAM_ADMIN monitorun YETKI SINIFINI cevirebiliyordu
+    // (standalone -> yalniz takim yonetimi + gercek silme kapsami) ve kismi unique index ile
+    // cakisip 500 uretebiliyordu.
+
+    @Test
+    @DisplayName("Bulgu 8: restore 'standalone' alanini GERI YUKLEMEZ (yetki sinifi degismez)")
+    void restoreChange_doesNotWriteStandalone() throws Exception {
+        com.sitemonitor.model.DnsMonitor live = new com.sitemonitor.model.DnsMonitor();
+        live.setId(4L); live.setDomain("yeni.example.com"); live.setRecordType("A");
+        live.setTeamId(3L); live.setActive(true); live.setStandalone(true);   // koparilmis
+        when(dnsMonitorRepo.findById(4L)).thenReturn(Optional.of(live));
+        when(dnsMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        com.sitemonitor.model.MonitorChangeLog row = new com.sitemonitor.model.MonitorChangeLog();
+        row.setId(1L); row.setResourceKind("DNS"); row.setResourceId(4L); row.setSeq(1);
+        row.setTeamId(3L);
+        // Eski anlik goruntu: envanter-turevi hali.
+        row.setSnapshot("{\"domain\":\"eski.example.com\",\"standalone\":false,\"recordType\":\"A\"}");
+        when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("DNS", 4L, 1))
+                .thenReturn(Optional.of(row));
+
+        mvc.perform(post("/api/monitoring/changes/dns/4/1/restore").session(session("ADMIN")))
+                .andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DnsMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DnsMonitor.class);
+        verify(dnsMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getStandalone())
+                .as("standalone geri yuklenirse monitorun yetki sinifi restore ile cevrilebilir")
+                .isTrue();
+        assertThat(cap.getValue().getDomain())
+                .as("kimlik DISI alanlar normal sekilde geri yuklenmeye devam etmeli")
+                .isEqualTo("eski.example.com");
+    }
+
+    // ── Regresyon turu (2026-08-30): UCUNCU envanter donguu de suzulur ─────────
+    //
+    // listPort/listDns'e IDOR kapisi eklendi ama uptimeOverview atlandi — ayni veri (host/port,
+    // takim adi, SSL bitisi, kesinti sayaclari) oradan akmaya devam ediyordu. Bu, projenin
+    // tekrar eden "kanonik zincirin son halkasi" sinifi.
+
+    @Test
+    @DisplayName("REGRESYON KAPISI: /uptime/overview BASKA takimin envanterini gostermez")
+    void uptimeOverview_hidesOtherTeamsInventory() throws Exception {
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc())
+                .thenReturn(List.of(invT("benim.example.com", 1L), invT("baskasi.example.com", 99L)));
+        when(latestCheckRepo.findAllByOrderByDomainAsc()).thenReturn(List.of());
+        when(certCheckRepo.aggregateStatusCountsSince(anyString())).thenReturn(List.of());
+
+        mvc.perform(get("/api/monitoring/uptime/overview").session(sessionScoped(1L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.domain=='benim.example.com')]").isNotEmpty())
+                .andExpect(jsonPath("$.data[?(@.domain=='baskasi.example.com')]").isEmpty());
+    }
+
+    @Test
+    @DisplayName("REGRESYON KAPISI: envanteri listeleyen UC ucun UCU de ayni kapiyi kullanir")
+    void allInventoryLoopsAreScoped() throws Exception {
+        String src = java.nio.file.Files.readString(
+                java.nio.file.Path.of("src/main/java/com/sitemonitor/controller/MonitoringController.java"));
+        // findByActiveTrueOrderByDomainAsc() cagiran her uc, sonucu inventoryViewable ile
+        // suzmeli. Sayilar degisebilir; kural "her cagrinin yakininda suzgec var" olmali.
+        int calls = countOccurrences(src, "inventoryRepo.findByActiveTrueOrderByDomainAsc()");
+        int filters = countOccurrences(src, "inventoryViewable(session, inv)");
+        assertThat(filters)
+                .as("envanter listeleyen %d ucun hepsi suzulmeli; suzgec sayisi: %d", calls, filters)
+                .isGreaterThanOrEqualTo(3);
+    }
+
+    /** Duz metin sayimi — regex kacislari kaynakta gurultu yaratmasin. */
+    private static int countOccurrences(String haystack, String needle) {
+        int n = 0, i = 0;
+        while ((i = haystack.indexOf(needle, i)) >= 0) { n++; i += needle.length(); }
+        return n;
+    }
+
+    @Test
+    @DisplayName("KAPI: teyit/kurtarma alanlari SUNUCUDA kirpilir — sinir yalniz formda kalmaz")
+    void confirmFieldsAreClampedServerSide() throws Exception {
+        String src = java.nio.file.Files.readString(
+                java.nio.file.Path.of("src/main/java/com/sitemonitor/controller/MonitoringController.java"));
+        // Ham setter (kirpmasiz) yasak: API'ye dogrudan confirmIntervalSeconds=2000000000
+        // gonderilirse teyit zinciri pratikte sonsuza ertelenir ve o izlemenin kesinti alarmi
+        // HIC acilmaz — hicbir hata satiri da dusmez. Dokuz turde tek yardimci seti.
+        java.util.List<String> raw = new java.util.ArrayList<>();
+        for (String field : List.of("setConfirmAttempts", "setConfirmIntervalSeconds",
+                                    "setRecoveryChecks", "setRecoveryIntervalSeconds")) {
+            if (src.contains(field + "(cn.intValue())")) raw.add(field);
+            if (src.contains(field + "(((Number) body.get")) raw.add(field + " (cast)");
+        }
+        assertThat(raw).as("kirpmasiz teyit/kurtarma setter'i").isEmpty();
     }
 }

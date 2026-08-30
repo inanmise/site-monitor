@@ -1411,4 +1411,47 @@ class SchedulerServiceTest {
         var both = SchedulerService.chanCtx(new java.util.LinkedHashMap<>(), false, false);
         assertThat(both).containsEntry("mail_disabled", true).containsEntry("push_disabled", true);
     }
+
+    // -- B3: domainItem ESIK vs GECICI ayrimi --------------------------------
+    // Kendi degisikligimde yakalanan hata: confirmCtx sarmalayicisi domainItem'in BILINCLI
+    // "aninda alarm" ayarini (0 deneme) eziyordu. Esik durumunda ("30 gun kaldi") 30 sn sonra
+    // tekrar sormak cevabi degistirmez, yalnizca alarmi 90 sn geciktirir. UNKNOWN farklidir:
+    // sorgu BASARISIZ demektir ve gercekten gecici olabilir.
+
+    private com.sitemonitor.model.DomainMonitor domainMon() {
+        var m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(1L); m.setName("ornek"); m.setDomain("ornek.example.com"); m.setTeamId(5L);
+        m.setConfirmAttempts(4); m.setConfirmIntervalSeconds(45);
+        m.setRecoveryChecks(2); m.setRecoveryIntervalSeconds(15);
+        return m;
+    }
+
+    @SuppressWarnings("unchecked")
+    private java.util.Map<String, Object> itemCtx(Object item) {
+        return (java.util.Map<String, Object>) org.springframework.test.util.ReflectionTestUtils
+                .invokeGetterMethod(item, "ctxExtra");
+    }
+
+    @Test
+    @DisplayName("B3: ESIK alarmi (EXPIRY) ANINDA acilir - izlemenin dogrulama ayari UYGULANMAZ")
+    void domainItem_thresholdType_immediate() {
+        Object item = org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                scheduler, "domainItem", EscalationService.TYPE_DOMAINMON_EXPIRY,
+                domainMon(), java.util.Map.of("days_remaining", 30), false, "WARNING");
+        var ctx = itemCtx(item);
+        assertThat(((Number) ctx.get("monitor_confirm_attempts")).intValue()).isZero();
+        assertThat(((Number) ctx.get("monitor_recovery_checks")).intValue()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("B3: GECICI alarm (UNKNOWN) izlemenin dogrulama ayarini KULLANIR")
+    void domainItem_transientType_usesMonitorSettings() {
+        Object item = org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                scheduler, "domainItem", EscalationService.TYPE_DOMAINMON_UNKNOWN,
+                domainMon(), java.util.Map.of(), false, "WARNING");
+        var ctx = itemCtx(item);
+        assertThat(((Number) ctx.get("monitor_confirm_attempts")).intValue()).isEqualTo(4);
+        assertThat(((Number) ctx.get("monitor_confirm_interval_ms")).longValue()).isEqualTo(45_000L);
+        assertThat(((Number) ctx.get("monitor_recovery_checks")).intValue()).isEqualTo(2);
+    }
 }

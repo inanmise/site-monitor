@@ -4,14 +4,14 @@ import CheckRunModal from '../components/check/CheckRunModal.jsx'
 import CheckTeamPicker, { teamBuckets, NO_TEAM } from '../components/check/CheckTeamPicker.jsx'
 
 const certIndex = {
-  'a.example.com': { team_name: 'SY-Dijital', tier: 1, port: 443 },
-  'b.example.com': { team_name: 'SY-Kart', tier: 3, port: 8443 },
+  'a.example.com': { team_name: 'SY-Takım A', tier: 1, port: 443 },
+  'b.example.com': { team_name: 'SY-Takım B', tier: 3, port: 8443 },
 }
 
 const run = {
   total: 2,
   done: true,
-  teamLabel: 'SY-Dijital',
+  teamLabel: 'SY-Takım A',
   rows: [
     { domain: 'a.example.com', start: new Date('2026-08-08T10:00:00'), end: new Date(), ms: 191, ok: true,
       data: { days_remaining: 31, not_after: '2026-09-09T02:59:00', http_status: 200, port: 443 } },
@@ -27,7 +27,7 @@ describe('CheckRunModal', () => {
 
     expect(screen.getByText('a.example.com')).toBeInTheDocument()
     // Takım hem satır kolonunda hem özet şeridinde geçer (kapsam etiketi) → ikisi de beklenir.
-    expect(screen.getAllByText('SY-Dijital').length).toBe(2)
+    expect(screen.getAllByText('SY-Takım A').length).toBe(2)
     expect(screen.getByText('T1')).toBeInTheDocument()
     expect(screen.getByText('8443')).toBeInTheDocument()
     expect(screen.getByText('200')).toBeInTheDocument()
@@ -73,9 +73,9 @@ describe('CheckRunModal', () => {
 
 describe('CheckTeamPicker', () => {
   const certs = [
-    { domain: 'a.example.com', team_id: 1, team_name: 'SY-Dijital' },
-    { domain: 'b.example.com', team_id: 1, team_name: 'SY-Dijital' },
-    { domain: 'c.example.com', team_id: 2, team_name: 'SY-Kart' },
+    { domain: 'a.example.com', team_id: 1, team_name: 'SY-Takım A' },
+    { domain: 'b.example.com', team_id: 1, team_name: 'SY-Takım A' },
+    { domain: 'c.example.com', team_id: 2, team_name: 'SY-Takım B' },
     { domain: 'd.example.com', team_id: null, team_name: null },
   ]
 
@@ -91,7 +91,7 @@ describe('CheckTeamPicker', () => {
     const onStart = vi.fn()
     render(<CheckTeamPicker certs={certs} onStart={onStart} onClose={() => {}} />)
 
-    fireEvent.click(screen.getByText('SY-Kart'))          // 2 numaralı takımı çıkar
+    fireEvent.click(screen.getByText('SY-Takım B'))          // 2 numaralı takımı çıkar
     fireEvent.click(screen.getByText(/takımsız|no team/i))
     fireEvent.click(screen.getByRole('button', { name: /kontrolü başlat|start check/i }))
 

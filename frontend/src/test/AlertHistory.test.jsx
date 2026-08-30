@@ -139,8 +139,8 @@ describe('AlertHistory closed-alert details', () => {
     api.admin.previewReNotify.mockResolvedValue({
       success: true,
       data: { alert_id: 301, recipients: [
-        { email: 'dijitalsy@example.com', name: 'SY-Dijital', role: null, kind: 'TEAM' },
-        { email: 'mudur@example.com', name: 'Cenk Çil', role: 'MANAGER', kind: 'CONTACT' },
+        { email: 'takim-a@example.com', name: 'SY-Takım A', role: null, kind: 'TEAM' },
+        { email: 'mudur@example.com', name: 'Ayşe Yılmaz', role: 'MANAGER', kind: 'CONTACT' },
       ] },
     })
     api.admin.reNotifyAlert.mockResolvedValue({ success: true, data: { recipients_queued: 1 } })
@@ -157,7 +157,7 @@ describe('AlertHistory closed-alert details', () => {
 
     // Pop-up iki alıcıyı listeler
     await screen.findByText(/alıcıları onayla|confirm recipients/i)
-    expect(screen.getByText('dijitalsy@example.com')).toBeDefined()
+    expect(screen.getByText('takim-a@example.com')).toBeDefined()
     expect(screen.getByText('mudur@example.com')).toBeDefined()
     expect(screen.getByText(/2 alıcı seçili|2 recipients selected/i)).toBeDefined()
 
@@ -746,7 +746,7 @@ describe('AlertHistory — tema sözleşmesi', () => {
       success: true,
       data: {
         alert_id: 301,
-        recipients: [{ email: 'dijitalsy@example.com', name: 'SY-Dijital', role: null, kind: 'TEAM' }],
+        recipients: [{ email: 'takim-a@example.com', name: 'SY-Takım A', role: null, kind: 'TEAM' }],
         webhook: {
           channel_enabled: true,
           block_reason: null,
@@ -795,7 +795,7 @@ describe('AlertHistory — tema sözleşmesi', () => {
       success: true,
       data: {
         alert_id: 301,
-        recipients: [{ email: 'dijitalsy@example.com', name: 'SY-Dijital', role: null, kind: 'TEAM' }],
+        recipients: [{ email: 'takim-a@example.com', name: 'SY-Takım A', role: null, kind: 'TEAM' }],
         webhook: { channel_enabled: true, block_reason: 'SKIPPED_TEAM_OFF', recipients: [] },
       },
     })

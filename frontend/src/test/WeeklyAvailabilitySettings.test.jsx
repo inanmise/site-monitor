@@ -44,7 +44,7 @@ describe('WeeklyAvailabilitySettings — kesinti PDF indirme', () => {
       success: true,
       data: {
         enabled: true, cron: '0 0 10 ? * MON', week_label: '3–9 Ağustos 2026',
-        teams: [{ id: 5, name: 'DijitalSY', domain_count: 14, to: ['a@x.com'], cc: [] }],
+        teams: [{ id: 5, name: 'TakimA', domain_count: 14, to: ['a@x.com'], cc: [] }],
         weeks: [{ offset: 0, label: 'Bu hafta', current: true, emailed: false },
                 { offset: 1, label: '3–9 Ağustos 2026', current: false, emailed: true }],
       },

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import {
   Save, Send, BellRing, Plus, Trash2, Copy, RefreshCw, Search as SearchIcon,
   Crown, UserCog, Briefcase, Globe, Network, Target, Radio, CalendarDays,
@@ -37,7 +37,10 @@ import { copyText } from '../../utils/copyText.js'
  */
 
 const KEY = (k) => `site.monitor.userpush.${k}`
-const TEMPLATE_KEYS = ['down', 'slow', 'expiry', 'changed', 'resolved', 'test']
+// 'cert' sunucuda VAR (UserPushService.DEFAULT_TEMPLATES) ama listede yoktu: sertifika
+// guvenlik alarminin {ip}/{cn} kanitini tasiyan sablon duzenlenemiyor, onizlenemiyor ve
+// test gonderiminde secilemiyordu.
+const TEMPLATE_KEYS = ['down', 'slow', 'expiry', 'changed', 'cert', 'resolved', 'test']
 const STATUS_OPTIONS = ['SENT', 'FAILED', 'PENDING', 'RATE_LIMITED', 'CIRCUIT_OPEN',
   'SKIPPED_TYPE_OFF', 'SKIPPED_TEAM_OFF', 'SKIPPED_MONITOR_OFF', 'SKIPPED_QUIET_HOURS',
   'SKIPPED_REALERT_OFF', 'SKIPPED_NO_RECIPIENTS', 'SKIPPED_USER_OPT_OUT', 'SKIPPED_NO_PRIOR']
@@ -64,6 +67,7 @@ const TEMPLATE_META = {
   slow: { Icon: Timer, tone: 'warn' },
   expiry: { Icon: CalendarClock, tone: 'warn' },
   changed: { Icon: ArrowLeftRight, tone: 'info' },
+  cert: { Icon: ShieldCheck, tone: 'danger' },
   resolved: { Icon: CheckCircle2, tone: 'ok' },
   test: { Icon: FlaskConical, tone: 'info' },
 }
@@ -73,6 +77,7 @@ const PREVIEW_VALS = {
   seviye: 'KRİTİK', ad: 'Örnek İzleme', hedef: 'example.com', neden: 'bağlantı zaman aşımı',
   metrik: 'yanıt süresi', deger: '1200ms', esik: '1000ms', ne: 'sertifika', gun: '30',
   tarih: '2026-12-31', degisen: 'kayıt', sure: '25 dk', saat: '14:03',
+  baslangic: '13:38', bitis: '14:03', ip: '192.0.2.10', cn: 'ornek.example.com',
 }
 
 function preview(template) {
@@ -146,6 +151,7 @@ export default function UserPushSettings() {
   const [rows, setRows] = useState(null)
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
+  const [pageSize, setPageSize] = useState(25)   // secici artik CANLI (bkz. PaginationBar)
   const [fUser, setFUser] = useState('')
   const [fStatus, setFStatus] = useState('')
   const [fTrigger, setFTrigger] = useState('')
@@ -246,21 +252,27 @@ export default function UserPushSettings() {
     else toast.error(res?.error || t('userpush.testFailed'))
   }
 
+  // SON-ISTEK-KAZANIR: fUser/fNotifId metin filtreleri HER TUSTA istek atiyor. Yavas (eski) yanit
+  // hizlidan sonra donerse bayat listeyi yaziyordu. Sira sayaci, gecikmis yanitlari sessizce eler.
+  const seqRef = useRef(0)
+
   const loadDeliveries = useCallback(async () => {
+    const mySeq = ++seqRef.current
     setRows(null)
-    const params = { page, size: 25 }
+    const params = { page, size: pageSize }
     if (fUser) params.username = fUser
     if (fStatus) params.status = fStatus
     if (fTrigger) params.trigger = fTrigger
     if (fNotifId) params.notificationId = fNotifId
     const res = await api.admin.userPush.getDeliveries(params)
+    if (mySeq !== seqRef.current) return   // daha yeni bir istek var -> bu yaniti YOK SAY
     if (res?.success) {
       setRows(res.data?.deliveries || [])
       setTotal(res.data?.total || 0)
     } else {
       setRows([])
     }
-  }, [page, fUser, fStatus, fTrigger, fNotifId])
+  }, [page, pageSize, fUser, fStatus, fTrigger, fNotifId])
 
   useEffect(() => { loadDeliveries() }, [loadDeliveries])
 
@@ -488,7 +500,13 @@ export default function UserPushSettings() {
           </p>
           <div className="up-template-grid">
             {TEMPLATE_KEYS.map((k) => {
-              const cur = val(`template.${k}`) || defaults.templates?.[k] || ''
+              // HAM ayar okunur: val() kendi icinde `?? ''` uyguladigi icin hic kaydedilmemis
+              // bir sablonda BOS DIZE dondurur — `??` zinciri o zaman defaults dalina HIC
+              // gecmez ve temiz kurulumda kutular bos cizilirdi (2026-08-30 regresyonu).
+              // Ham deger: kaydedilmemis -> undefined (varsayilan gelir), kullanici sildi -> ''
+              // (bos KALIR). Iki durum ancak boyle ayrilabilir.
+              const saved = settings[KEY(`template.${k}`)]
+              const cur = saved ?? defaults.templates?.[k] ?? ''
               const meta = TEMPLATE_META[k]
               const MIcon = meta.Icon
               return (
@@ -608,10 +626,14 @@ export default function UserPushSettings() {
                 })}
               </div>
             )}
-        <PaginationBar page={page + 1} totalPages={Math.max(1, Math.ceil(total / 25))}
-          totalItems={total} pageSize={25}
-          rangeStart={total === 0 ? 0 : page * 25 + 1} rangeEnd={Math.min(total, (page + 1) * 25)}
-          onPageChange={(p) => setPage(p - 1)} />
+        {/* "Sayfa basina" secicisi ONCEDEN OLU kontroldu: onPageSizeChange verilmediginden
+            50/100/200'e tiklamak hicbir sey yapmiyor, secici yine de goruluyordu. */}
+        <PaginationBar page={page + 1} totalPages={Math.max(1, Math.ceil(total / pageSize))}
+          totalItems={total} pageSize={pageSize}
+          rangeStart={total === 0 ? 0 : page * pageSize + 1}
+          rangeEnd={Math.min(total, (page + 1) * pageSize)}
+          onPageChange={(p) => setPage(p - 1)}
+          onPageSizeChange={(n) => { setPageSize(n); setPage(0) }} />
       </div>
     </div>
   )

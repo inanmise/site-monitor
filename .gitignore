@@ -62,3 +62,9 @@ frontend/node_modules.stale/
 # Playwright çıktıları (rapor + izler) — CI artefakt olarak yükler, repoda durmaz
 frontend/playwright-report/
 frontend/test-results/
+
+# /bug-denetle komutunun kaynak arsivi — depoya ALINMAZ.
+# Kimlik sizintisi kapisi .gz icine bakamaz (SCAN_EXT); arsiv depoda kalirsa
+# denetlenmemis ikinci bir kaynak kopyasi olusur ve her klonda 3+ MB olu agirlik tasir.
+_review_src.tar.gz
+*.tar.gz

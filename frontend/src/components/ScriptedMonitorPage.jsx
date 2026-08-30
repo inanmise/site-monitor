@@ -41,6 +41,7 @@ import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import { CheckNowButton, CheckRunningStrip } from './ui/CheckRunning.jsx'
+import MonitorCardActions from './MonitorCardActions.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
@@ -1012,15 +1013,10 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
               <div className="upt-card-foot">
                 <span>{m.checked_at ? formatDateSec(m.checked_at) : t('scripted.neverRun')}</span>
                 {canManageRow(m) && (
-                  <span className="mon-actions" onClick={e => e.stopPropagation()}>
-                    <CheckRunningStrip running={isRunning(m.id)} />
-                    <CheckNowButton running={isRunning(m.id)} disabled={!k6.available}
-                      onClick={() => checkNow(m)} title={t('scripted.runNow')} />
-                    <button type="button" className="mon-act mon-act--edit" onClick={() => openEdit(m)}
-                      title={t('scripted.edit')} aria-label={t('scripted.edit')}><Pencil size={13} /></button>
-                    <button type="button" className="mon-act mon-act--copy" onClick={() => openDuplicate(m)}
-                      title={t('mon.duplicate')} aria-label={t('mon.duplicate')}><Copy size={13} /></button>
-                  </span>
+                  <MonitorCardActions
+                    running={isRunning(m.id)} checkDisabled={!k6.available}
+                    onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
+                    checkTitle={t('scripted.runNow')} editTitle={t('scripted.edit')} />
                 )}
               </div>
             </div>

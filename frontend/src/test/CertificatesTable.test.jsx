@@ -27,9 +27,12 @@ describe('CertificatesTable', () => {
 
   it('sertifika satırlarını alan adı + duruma göre doğru CSS sınıfıyla gösterir', async () => {
     api.getCertificatesPaginated.mockResolvedValue(paged([
-      cert({ domain: 'valid.com', days_remaining: 200, warning: false, status: 'valid' }),
-      cert({ domain: 'crit.com', days_remaining: 10, warning: true, status: 'warning' }),   // 0..30 → KRİTİK (warning'i ezer)
-      cert({ domain: 'err.com', days_remaining: null, warning: true, status: 'error' }),
+      // Hüküm SUNUCUDAN gelir (alert_level). Tablo eskiden kendi sabit 30 gün merdivenini
+      // kullanıyordu: days=10 burada "Kritik", kartta "Yüksek" görünüyordu. Artık iki ekran
+      // aynı hükmü okuyor; days=10 varsayılan eşiklerde (kritik<=7, yüksek<=15) YÜKSEK'tir.
+      cert({ domain: 'valid.com', days_remaining: 200, warning: false, status: 'valid', alert_level: 'valid' }),
+      cert({ domain: 'crit.com', days_remaining: 3, warning: true, status: 'warning', alert_level: 'critical' }),
+      cert({ domain: 'err.com', days_remaining: null, warning: true, status: 'error', alert_level: 'error' }),
     ]))
 
     const { container } = render(<CertificatesTable onRowClick={() => {}} />)
@@ -38,7 +41,7 @@ describe('CertificatesTable', () => {
     expect(screen.getByText('crit.com')).toBeInTheDocument()
     expect(screen.getByText('err.com')).toBeInTheDocument()
 
-    // days_remaining 10 → KRİTİK sınıfı (valid/warning değil)
+    // alert_level=critical → KRİTİK sınıfı (valid/warning değil)
     expect(container.querySelector('tr[data-domain="crit.com"] .status-critical')).not.toBeNull()
     expect(container.querySelector('tr[data-domain="valid.com"] .status-valid')).not.toBeNull()
     expect(container.querySelector('tr[data-domain="err.com"] .status-error')).not.toBeNull()
@@ -62,5 +65,31 @@ describe('CertificatesTable', () => {
 
     await waitFor(() => expect(api.getCertificatesPaginated).toHaveBeenCalled())
     await waitFor(() => expect(container.querySelectorAll('tr[data-domain]')).toHaveLength(0))
+  })
+  // ── Denetim 5. tur, bulgu 20: tablo ile kart AYNI hükmü okur ───────────────
+  //
+  // Tablo sabit `days >= 0 && days <= 30` kullanıyordu. days<0 (SÜRESİ DOLMUŞ) bu koşula
+  // takılmadığı için satır "Uyarı" görünüyordu ve tabloda "Süresi doldu" durumu HİÇ yoktu.
+
+  it('süresi DOLMUŞ sertifika "Süresi doldu" olarak gösterilir (eskiden "Uyarı" görünüyordu)', async () => {
+    api.getCertificatesPaginated.mockResolvedValue(paged([
+      cert({ domain: 'expired.com', days_remaining: -5, warning: true, status: 'valid', alert_level: 'expired' }),
+    ]))
+    const { container } = render(<CertificatesTable onRowClick={() => {}} />)
+    await screen.findByText('expired.com')
+
+    expect(container.querySelector('tr[data-domain="expired.com"] .status-critical')).not.toBeNull()
+    // Satirin KENDI hucresinde yazmali (sutun basligi/filtre metniyle karistirma).
+    const row = container.querySelector('tr[data-domain="expired.com"]')
+    expect(row.textContent).toMatch(/Süresi doldu|Expired/i)
+  })
+
+  it('sunucu hükmü YOKSA satır çökmez; süre bilgisinden makul bir duruma düşer', async () => {
+    api.getCertificatesPaginated.mockResolvedValue(paged([
+      cert({ domain: 'eski.com', days_remaining: -1, warning: true, status: 'valid' }),   // alert_level YOK
+    ]))
+    const { container } = render(<CertificatesTable onRowClick={() => {}} />)
+    await screen.findByText('eski.com')
+    expect(container.querySelector('tr[data-domain="eski.com"] .status-critical')).not.toBeNull()
   })
 })

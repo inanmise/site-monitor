@@ -9,6 +9,7 @@ import AlertHistory from './admin/AlertHistory'
 import SslCheckerPanel from './SslCheckerPanel.jsx'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
+import { isInsecure, securityTitle } from '../utils/certSecurity.js'
 import { InventoryTab } from './inventory/InventoryDetails.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
@@ -461,6 +462,11 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
             <span className="modal-header-icon"><Globe size={16} /></span>
             <h2 className="modal-title">{domain}</h2>
             {d && <span className={`modal-status-pill modal-status-${alertLevel ?? statusKey(d)}`}>{statusLabel(alertLevel ?? statusKey(d), t)}</span>}
+            {d && isInsecure(d) && (
+              <span className="modal-status-pill modal-status-error" title={securityTitle(d, t)}>
+                {t('cert.sec.insecure')}
+              </span>
+            )}
             {!previewMode && isAdmin && (
               <button className="modal-header-diag-btn" onClick={() => setShowDiag(true)} title={t('inv.diagnose')}>
                 <Stethoscope size={13} /> {t('inv.diagnose')}
