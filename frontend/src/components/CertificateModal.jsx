@@ -372,6 +372,11 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   // "istek anındaki domain hâlâ ekranda mı" sorusunu bu ref'ten okur (her render'da tazelenir).
   const domainRef = useRef(null)
   domainRef.current = domain
+  // Canlı SSL probe'unun tur sayacı. domainRef TEK BAŞINA yetmiyordu: uçuşan yanıt "artık
+  // ekranda değilim" deyip sslLoading'i TEMİZLEMEDEN dönüyor, bayrak true kalıyordu. Modal
+  // kalıcı mount'lu olduğu için o bayrak bir sonraki domain'e taşınıyor ve SSL sekmesi
+  // sonsuza kadar yükleniyor görünüyordu (bkz. sıfırlama: domain effect'i).
+  const sslSeq = useRef(0)
   const [sslData, setSslData]         = useState(null)
   const [sslLoading, setSslLoading]   = useState(false)
   const [activeTab, setActiveTab]     = useState('ssl')
@@ -384,6 +389,10 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
+    // Domain değişimi (modalı KAPATMAK dahil) uçuşan probe'u geçersizler ve yükleme bayrağını
+    // sıfırlar — `!domain` dalından ÖNCE, çünkü kapanış tam da bayrağın sızdığı yoldu.
+    sslSeq.current++
+    setSslLoading(false)
     if (!domain) return
     setCertData(null)
     setSslData(null)
@@ -413,17 +422,18 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
    * kalıcı son kontrolle anında çiziliyor; canlı probe artık istemli.
    */
   // O3: canlı TLS probe'u yavaştır; kullanıcı A'yı kapatıp B'yi açtığında A'nın geç dönen
-  // probe'u B modalında A'nın SSL verisini gösterebiliyordu. Yanıt yalnız istek anındaki
-  // domain hâlâ ekrandaysa yazılır.
+  // probe'u B modalında A'nın SSL verisini gösterebiliyordu. Yanıt yalnız İSTEK ANINDAKİ tur
+  // hâlâ güncelse yazılır (sslSeq) — ve hangi dalda dönerse dönsün yükleme bayrağı, turu
+  // geçersizleyen domain effect'i tarafından sıfırlanır.
   useEffect(() => {
     if (!domain || activeTab !== 'ssl' || sslData || sslLoading) return
     setSslLoading(true)
-    const reqDomain = domain
+    const mySeq = ++sslSeq.current
     api.checkDomainPreview(domain).then((res) => {
-      if (reqDomain !== domainRef.current) return
+      if (mySeq !== sslSeq.current) return          // daha yeni bir tur var → bu yanıtı AT
       setSslData(res?.data ?? null)
       setSslLoading(false)
-    }).catch(() => { if (reqDomain === domainRef.current) setSslLoading(false) })
+    }).catch(() => { if (mySeq === sslSeq.current) setSslLoading(false) })
   }, [domain, activeTab, sslData, sslLoading])
 
   function switchTab(tab) { setActiveTab(tab) }
