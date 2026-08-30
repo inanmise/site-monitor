@@ -393,6 +393,16 @@ export default function UserPushSettings() {
               <input type="number" className="input" min={1} max={500} value={val('hourly-cap', '30')}
                 onChange={(e) => setVal('hourly-cap', e.target.value)} />
             </label>
+            {/* Mesaj uzunlugu: ikisi de gomulu sabitti. Ust sinirlar bilerek dar - max-message
+                urun sozlesmesi (K6: <=200 karakter, tek satir), kaldirmak kanali sessizce deler. */}
+            <label className="threshold-field">{t('userpush.maxMessageChars')}
+              <input type="number" className="input" min={80} max={320} value={val('max-message-chars', '200')}
+                onChange={(e) => setVal('max-message-chars', e.target.value)} />
+            </label>
+            <label className="threshold-field">{t('userpush.reasonMaxChars')}
+              <input type="number" className="input" min={40} max={280} value={val('reason-max-chars', '160')}
+                onChange={(e) => setVal('reason-max-chars', e.target.value)} />
+            </label>
           </div>
         </div>
 

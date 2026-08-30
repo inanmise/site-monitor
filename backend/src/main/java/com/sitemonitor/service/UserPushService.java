@@ -75,6 +75,12 @@ public class UserPushService {
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
     private static final DateTimeFormatter HHMM = DateTimeFormatter.ofPattern("HH:mm");
+    /**
+     * Mesaj tavanının VARSAYILANI. Ürün sözleşmesi (webhook-bildirim K6: "şablon metinleri
+     * ≤200 karakter, tek satır") — keyfi bir sayı değil. Yönetici
+     * {@code site.monitor.userpush.max-message-chars} ile değiştirebilir; arayüz üst sınır
+     * uygular, çünkü tavanı kaldırmak kanal sözleşmesini sessizce delerdi.
+     */
     private static final int MAX_MESSAGE_CHARS = 200;
     private static final int MAX_RAW_RESPONSE = 500;
     /** Yanit govdesinden okunacak BAYT tavani (bkz. sendBatch) — notificationId birkac bayt,
@@ -153,6 +159,30 @@ public class UserPushService {
     private int circuitThreshold() { return appSettings.getInt("site.monitor.userpush.circuit-threshold", 5); }
     private int circuitCooldownSec() { return appSettings.getInt("site.monitor.userpush.circuit-cooldown-seconds", 300); }
     private int hourlyCap() { return appSettings.getInt("site.monitor.userpush.hourly-cap", 30); }
+    /**
+     * Mesaj tavanı — yönetici ayarı (vars. {@link #MAX_MESSAGE_CHARS}), <b>sunucuda kırpılır</b>.
+     *
+     * <p>Arayüz 80-320 aralığını dayatıyor ama {@code AppSettingsService.validate} yalnız TİP
+     * doğruluyor, ARALIK doğrulamıyor: API'den 0 gönderilirse her push mesajı {@code "..."}
+     * olurdu. Aynı sınıf bulgu DNS/Domain teyit-kurtarma alanlarında da çıkmıştı ve orada da
+     * sunucu tarafı kırpmayla çözülmüştü — aynı karar burada da uygulanıyor.
+     */
+    private int maxMessageChars() {
+        int raw = appSettings.getInt("site.monitor.userpush.max-message-chars", MAX_MESSAGE_CHARS);
+        return Math.min(320, Math.max(80, raw));
+    }
+
+    /**
+     * Sebep ({@code neden}/{@code degisen}) tavanı — yönetici ayarı, sunucuda kırpılır.
+     *
+     * <p>{@code <= 0} bilinçli "tavan yok" demektir: dıştaki mesaj tavanı zaten üç noktayla
+     * taşmayı hallediyor. Pozitif değerler 40-280 aralığına çekilir.
+     */
+    private int reasonMaxChars() {
+        int raw = appSettings.getInt("site.monitor.userpush.reason-max-chars", PushText.DEFAULT_REASON_CHARS);
+        if (raw <= 0) return 0;
+        return Math.min(280, Math.max(40, raw));
+    }
 
     private List<Integer> backoffSeconds() {
         List<String> raw = appSettings.getCsv("site.monitor.userpush.retry-backoff-seconds", "30,120");
@@ -355,7 +385,7 @@ public class UserPushService {
         // ama gercek alarmda sessizce kesilen bir sablonu dogrulamis olmasin.
         String message = PushText.truncate(
                 PushText.pushSafe(fillTemplate(template(templateKey == null ? "test" : templateKey), sample)),
-                MAX_MESSAGE_CHARS);
+                maxMessageChars());
         List<UserPushDelivery> rows = new ArrayList<>();
         for (String u : usernames) {
             if (u == null || u.isBlank()) continue;
@@ -720,7 +750,8 @@ public class UserPushService {
         vals.put("hedef", nz(event.getDomain(), "-"));
         // Alarm metni E-POSTA icin yazilmis tam bir cumle ve zaten "KRITIK: <adres> ..." ile
         // basliyor; sablon ayrica {seviye} ve {ad} koydugu icin seviye IKI, adres UC kez cikiyordu.
-        vals.put("neden", PushText.capitalize(PushText.reasonOf(event.getMessage(), event.getDomain())));
+        vals.put("neden", PushText.capitalize(
+                PushText.reasonOf(event.getMessage(), event.getDomain(), reasonMaxChars())));
         vals.put("metrik", ctxStr(ctx, "metric", "yanıt"));
         vals.put("deger", ctxStr(ctx, "value", "-"));
         vals.put("esik", ctxStr(ctx, "threshold", "-"));
@@ -729,7 +760,8 @@ public class UserPushService {
         vals.put("tarih", ctxStr(ctx, "expiry_date", "-"));
         // {neden} ile AYNI çekirdek: seviye öneki ve adres tekrarı burada da kırpılır. İkizin
         // atlanması telefona "KRİTİK: x - UYARI: x DNS kaydı değişti değişti." düşürüyordu.
-        vals.put("degisen", PushText.capitalize(PushText.reasonOf(event.getMessage(), event.getDomain())));
+        vals.put("degisen", PushText.capitalize(
+                PushText.reasonOf(event.getMessage(), event.getDomain(), reasonMaxChars())));
         vals.put("ip", ctxStr(ctx, "resolved_ip", "-"));
         vals.put("cn", ctxStr(ctx, "subject", "-"));
         vals.put("sure", durationSince(event.getCreatedAt()));
@@ -740,7 +772,7 @@ public class UserPushService {
         String msg = fillTemplate(template(templateKeyFor(event.getAlertType(), trigger)), vals);
         // Kanal ISO-8859-9 tasiyor: tipografik isaretler burada karsiligina cevrilir, aksi halde
         // kullanicinin telefonunda soru isaretine donuyorlar (kirpma isareti "..." dahil).
-        return PushText.truncate(PushText.pushSafe(msg), MAX_MESSAGE_CHARS);
+        return PushText.truncate(PushText.pushSafe(msg), maxMessageChars());
     }
 
     static String fillTemplate(String template, Map<String, String> vals) {

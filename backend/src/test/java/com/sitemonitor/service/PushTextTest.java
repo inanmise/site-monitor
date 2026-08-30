@@ -160,4 +160,61 @@ class PushTextTest {
         String r = PushText.reasonOf("KRİTİK: a.example.com yanıt vermiyor", "a.example.com");
         assertThat(PushText.capitalize(r)).isEqualTo("Yanıt vermiyor");
     }
+
+    // ── Sebep tavanı: sessiz kırpma → görünür + yapılandırılabilir ───────────
+    //
+    // Eski hâl çıplak substring(0,120) idi: ne üç nokta koyuyor ne kelime sınırına saygı
+    // duyuyordu. Kullanıcıya giden gerçek mesaj "…alarm otomatik kapan" diye bitiyordu ve
+    // kırpıldığı ANLAŞILMIYORDU — cümle bitmiş gibi duruyordu.
+
+    /** Kullanıcının telefonuna düşen gerçek HTTP_DOWN metni (EscalationService:1095-1101). */
+    private static final String HTTP_DOWN_MSG =
+            "KRİTİK: https://www.example.com/ adresine HTTP isteği başarısız. "
+          + "Ardışık doğrulama denemeleri başarısız oldu. "
+          + "Erişim geri geldiğinde alarm otomatik kapanacaktır.";
+    private static final String HTTP_DOWN_DOMAIN = "https://www.example.com/";
+
+    @Test
+    @DisplayName("reasonOf: 120 tavanı kelimeyi ORTADAN kesiyordu — regresyon kilidi")
+    void reasonOf_oldCap_cutMidWord_isFixed() {
+        String r = PushText.reasonOf(HTTP_DOWN_MSG, HTTP_DOWN_DOMAIN, 120);
+
+        assertThat(r).as("kelime ortasından kesilmemeli").doesNotEndWith("kapan");
+        assertThat(r).as("kırpıldığı görünmeli").endsWith("...");
+        assertThat(r.length()).isLessThanOrEqualTo(120);
+        assertThat(PushText.isChannelSafe(r)).isTrue();
+    }
+
+    @Test
+    @DisplayName("reasonOf: varsayılan tavanda bu mesaj HİÇ kırpılmıyor (128 < 160)")
+    void reasonOf_defaultCap_keepsWholeReason() {
+        String r = PushText.reasonOf(HTTP_DOWN_MSG, HTTP_DOWN_DOMAIN);
+
+        assertThat(r).endsWith("kapanacaktır.");
+        assertThat(r).doesNotContain("...");
+    }
+
+    @Test
+    @DisplayName("reasonOf: tavan yapılandırılabilir; 0 = tavan yok")
+    void reasonOf_capIsConfigurable() {
+        assertThat(PushText.reasonOf(HTTP_DOWN_MSG, HTTP_DOWN_DOMAIN, 40).length())
+                .isLessThanOrEqualTo(40);
+        assertThat(PushText.reasonOf(HTTP_DOWN_MSG, HTTP_DOWN_DOMAIN, 0))
+                .as("0 → tavan uygulanmaz")
+                .endsWith("kapanacaktır.");
+    }
+
+    @Test
+    @DisplayName("truncate: kelime sınırından böler, tek uzun jetonda sert kesime düşer")
+    void truncate_prefersWordBoundary() {
+        // TAM eşitlik: "doesNotContain" zayıftı — sert kesim "alarm otomatik ka..." üretir ve
+        // o iddiadan da geçerdi (mutasyon hayatta kalmıştı).
+        assertThat(PushText.truncate("alarm otomatik kapanacaktır", 20))
+                .isEqualTo("alarm otomatik...");
+
+        // Boşluksuz tek jeton: tavan yine korunur (sert kesim).
+        String hard = PushText.truncate("aaaaaaaaaaaaaaaaaaaaaaaa", 10);
+        assertThat(hard).endsWith("...");
+        assertThat(hard.length()).isLessThanOrEqualTo(10);
+    }
 }
