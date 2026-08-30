@@ -133,4 +133,94 @@ class MonitorNotesControllerTest {
         mvc.perform(delete("/api/monitoring/notes/9").session(session("USER")))
                 .andExpect(status().isForbidden());
     }
+
+    // ── Takım izolasyonu ─────────────────────────────────────────────
+    //
+    // Not içeriği operasyoneldir ("Sorun / Yapılan işlem / Kök neden / Bakılacak yerler") — başka
+    // bir takımın iç altyapı bilgisi. Kayıt oluşturulurken takım ZATEN damgalanıyordu ama hiçbir
+    // okuma/yazma yolunda kullanılmıyordu: okuma tamamen kapsamsızdı, yazma kapısı ise yalnız ROL
+    // DİZESİNE bakıyordu ("TEAM_ADMIN".equals(role)) — hangi takım olduğuna değil.
+
+    /** Takım kapsamlı oturum: görüş ve yönetim yalnız verilen takımda. */
+    private MockHttpSession teamSession(String role, Long teamId) {
+        MockHttpSession s = session(role);
+        s.setAttribute("viewTeamIds", List.of(teamId));
+        s.setAttribute("manageTeamIds", List.of(teamId));
+        s.setAttribute("teamId", teamId);
+        return s;
+    }
+
+    private MonitorNote note(long id, Long teamId, String author) {
+        MonitorNote n = new MonitorNote();
+        n.setId(id); n.setMonitorType("PING"); n.setTarget("1.2.3.4");
+        n.setProblem("p-" + id); n.setTeamId(teamId); n.setAuthorUsername(author);
+        return n;
+    }
+
+    @Test
+    @DisplayName("GET /notes: başka takımın notu listeden elenir, kendi takımınınki kalır")
+    void get_otherTeamNote_filteredOut() throws Exception {
+        when(guideRepo.findByMonitorTypeAndTarget("PING", "1.2.3.4")).thenReturn(Optional.empty());
+        when(noteRepo.findByMonitorTypeAndTargetAndDeletedAtIsNullOrderByCreatedAtDesc("PING", "1.2.3.4"))
+                .thenReturn(List.of(note(1L, 1L, "a"), note(2L, 2L, "b")));
+
+        mvc.perform(get("/api/monitoring/notes?type=PING&target=1.2.3.4")
+                        .session(teamSession("USER", 1L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.notes.length()").value(1))
+                .andExpect(jsonPath("$.data.notes[0].problem").value("p-1"));
+    }
+
+    @Test
+    @DisplayName("GET /notes: takımsız (eski) not görünür kalır — mevcut içerik sessizce yok olmaz")
+    void get_legacyNoteWithoutTeam_stillVisible() throws Exception {
+        when(guideRepo.findByMonitorTypeAndTarget("PING", "1.2.3.4")).thenReturn(Optional.empty());
+        when(noteRepo.findByMonitorTypeAndTargetAndDeletedAtIsNullOrderByCreatedAtDesc("PING", "1.2.3.4"))
+                .thenReturn(List.of(note(1L, null, "a")));
+
+        mvc.perform(get("/api/monitoring/notes?type=PING&target=1.2.3.4")
+                        .session(teamSession("USER", 1L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.notes.length()").value(1));
+    }
+
+    @Test
+    @DisplayName("DELETE /notes/{id}: A takımı yöneticisi B takımının notunu SİLEMEZ -> 403")
+    void deleteNote_otherTeamAdmin_returns403() throws Exception {
+        when(noteRepo.findById(9L)).thenReturn(Optional.of(note(9L, 2L, "b")));
+
+        mvc.perform(delete("/api/monitoring/notes/9").session(teamSession("TEAM_ADMIN", 1L)))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("PUT /notes/{id}: A takımı yöneticisi B takımının notunu DÜZENLEYEMEZ -> 403")
+    void updateNote_otherTeamAdmin_returns403() throws Exception {
+        when(noteRepo.findById(9L)).thenReturn(Optional.of(note(9L, 2L, "b")));
+
+        mvc.perform(put("/api/monitoring/notes/9").session(teamSession("TEAM_ADMIN", 1L))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"problem\":\"ele geçirildi\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("DELETE /notes/{id}: KENDİ takımının notunu yönetici silebilir -> 200")
+    void deleteNote_ownTeamAdmin_returns200() throws Exception {
+        when(noteRepo.findById(9L)).thenReturn(Optional.of(note(9L, 1L, "b")));
+        when(noteRepo.save(any(MonitorNote.class))).thenAnswer(a -> a.getArgument(0));
+
+        mvc.perform(delete("/api/monitoring/notes/9").session(teamSession("TEAM_ADMIN", 1L)))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("DELETE /notes/{id}: kendi notunu her kullanıcı silebilir (takım kapsın ya da kapsamasın)")
+    void deleteNote_ownNoteAcrossTeams_returns200() throws Exception {
+        when(noteRepo.findById(9L)).thenReturn(Optional.of(note(9L, 2L, "u")));   // oturum username = "u"
+        when(noteRepo.save(any(MonitorNote.class))).thenAnswer(a -> a.getArgument(0));
+
+        mvc.perform(delete("/api/monitoring/notes/9").session(teamSession("USER", 1L)))
+                .andExpect(status().isOk());
+    }
 }

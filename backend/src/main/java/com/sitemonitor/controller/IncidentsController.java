@@ -311,13 +311,13 @@ public class IncidentsController {
         // olduguna bakmiyordu -> A takiminin TEAM_ADMIN'i id artirarak B takiminin yorumlarini
         // silebiliyordu (geri alma arayuzu de yok). Ayrica yorumun varligi istisna ile
         // numaralandirilabiliyordu; kapsam kontrolu once gelince o da kapanir.
-        requireIncidentScope(session, requireAlert(c.getAlertEventId()));
+        AlertEvent ev = requireAlert(c.getAlertEventId());
+        requireIncidentScope(session, ev);
         if (c.getDeletedAt() != null) return ok(Map.of("message", "Zaten silinmiş"));
         String user = (String) session.getAttribute("username");
-        String role = (String) session.getAttribute("systemRole");
-        boolean elevated = SessionScope.isGlobalAdmin(session) || "ADMIN".equals(role) || "TEAM_ADMIN".equals(role);
-        if (!elevated && (user == null || !user.equals(c.getAuthorUsername())))
-            throw new SecurityException("Yalnız yorumu ekleyen veya takım yöneticisi silebilir");
+        boolean own = user != null && user.equals(c.getAuthorUsername());
+        if (!own && !canManageIncident(session, ev))
+            throw new SecurityException("Yalnız yorumu ekleyen veya bu incident'ın takımının yöneticisi silebilir");
         c.setDeletedAt(now());
         c.setDeletedBy(user != null ? user : "anonymous");
         commentRepo.save(c);
@@ -352,14 +352,38 @@ public class IncidentsController {
     /** Takım kapsamı (IDOR): global viewer serbest; aksi halde alarmın takımı (teamId veya domain→envanter SY/UG) kapsamda olmalı. */
     private void requireIncidentScope(HttpSession session, AlertEvent ev) {
         if (SessionScope.isGlobalViewer(session)) return;
-        List<Long> scope = SessionScope.viewTeamIds(session);
-        boolean ok = scope != null && !scope.isEmpty() && (
-                (ev.getTeamId() != null && scope.contains(ev.getTeamId()))
-                || (ev.getDomain() != null && inventoryRepo.findByDomain(ev.getDomain())
-                        .map(inv -> (inv.getTeamId() != null && scope.contains(inv.getTeamId()))
-                                 || (inv.getUgTeamId() != null && scope.contains(inv.getUgTeamId())))
-                        .orElse(false)));
-        if (!ok) throw new SecurityException("Bu incident üzerinde yetkiniz yok");
+        if (!incidentTeamInScope(ev, SessionScope.viewTeamIds(session)))
+            throw new SecurityException("Bu incident üzerinde yetkiniz yok");
+    }
+
+    /**
+     * Incident'ın takimi verilen kapsamda mi. Damgalanmis {@code teamId} önce; yoksa envanter
+     * kolu (envanter-türevi izlemelerde alarm takimsiz açılabiliyor).
+     *
+     * <p>Kapsam parametreli: OKUMA {@code viewTeamIds}, YAZMA {@code manageTeamIds} ile çağırır.
+     * İkisi aynı şey değildir — müdürün görüş alanı astlarının takimlarını kapsar, yönetim
+     * yetkisi kapsamaz.
+     */
+    private boolean incidentTeamInScope(AlertEvent ev, List<Long> scope) {
+        if (scope == null || scope.isEmpty()) return false;
+        if (ev.getTeamId() != null && scope.contains(ev.getTeamId())) return true;
+        return ev.getDomain() != null && inventoryRepo.findByDomain(ev.getDomain())
+                .map(inv -> (inv.getTeamId() != null && scope.contains(inv.getTeamId()))
+                         || (inv.getUgTeamId() != null && scope.contains(inv.getUgTeamId())))
+                .orElse(false);
+    }
+
+    /**
+     * Bu incident'ın kayitlarini DÜZENLEYEBİLİR Mİ — <b>yönetim</b> kapsamıyla sorar.
+     *
+     * <p>Eski hâl yalnızca ROL DİZESİNE bakıyordu ({@code "TEAM_ADMIN".equals(role)}) ve tek öncesi
+     * {@code requireIncidentScope} idi — o da OKUMA kapsamı. Sonuç: A takımının yöneticisi,
+     * görüş alanına giren B takımının yorumlarını silebiliyordu — okuma yetkisiyle
+     * yetkilendirilmiş bir YAZMA. Silme yumuşak ve geri alma arayüzü yok.
+     */
+    private boolean canManageIncident(HttpSession session, AlertEvent ev) {
+        return SessionScope.isGlobalAdmin(session)
+                || incidentTeamInScope(ev, SessionScope.manageTeamIds(session));
     }
 
     private Map<String, Object> deserialize(String json) {

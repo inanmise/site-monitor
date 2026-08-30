@@ -35,6 +35,13 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 @Service
 public class ChainValidationService {
 
+    /**
+     * OCSP/CRL hedefleri SUNUCUNUN KONTROLİNDEKİ sertifikadan gelir (AIA / CRL-DP uzantıları),
+     * yani saldırgan-kontrollü bir URL'dir. Bağlanmadan önce politika kapısı şart.
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    private SsrfGuard ssrfGuard;
+
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
@@ -333,7 +340,25 @@ public class ChainValidationService {
      * CertificateCheckerService proxy desenini yansıtır; böylece OCSP/CRL trafiği de
      * kurumsal çıkış (egress) proxy'sinden geçer (OpenShift / kısıtlı ağlar).
      */
-    private HttpURLConnection openWithProxy(String url) throws IOException {
+    /**
+     * OCSP/CRL indirmesi için bağlantı açar — <b>politika kapısından geçerek</b>.
+     *
+     * <p><b>Neden gerekti.</b> Hedef URL, izlenen sunucunun sunduğu sertifikanın AIA / CRL-DP
+     * uzantısından okunuyor ({@link #getOcspUrl} / {@link #getCrlUrls}) — tamamen karşı tarafın
+     * yazdığı bir dize. Kapı yokken AIA'sı {@code http://169.254.169.254/...} ya da bir iç servis
+     * olan bir sertifika, uygulamaya iç ağa POST (OCSP) ve GET (CRL) attırabiliyordu; sonuç
+     * {@code revocation_status} ve zamanlama üzerinden kör bir orakl olarak okunabiliyordu.
+     *
+     * <p><b>Yönlendirme KAPALI.</b> {@code HttpURLConnection} varsayılanı takip eder; OCSP/CRL'nin
+     * yönlendirmeye ihtiyacı yoktur ve takip, kapıdan geçen ilk host'tan sonra başka bir hedefe
+     * sıçramak demektir (SafeRedirect'in çözdüğü sınıfın ta kendisi).
+     *
+     * <p>Çözülemeyen host bağlantıyı DURDURMAZ: vekil arkasında (split-DNS) pod çözemese de vekil
+     * çözebilir — {@code HstsDiagnosticsService.guardHost} ile aynı hoşgörü.
+     */
+    // Paket-gorunur: kapi testi (OcspCrlSsrfGuardTest) dogrudan cagirir.
+    HttpURLConnection openWithProxy(String url) throws IOException {
+        guardTarget(url);
         HttpURLConnection conn;
         if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
             Proxy proxy = new Proxy(Proxy.Type.HTTP,
@@ -347,6 +372,29 @@ public class ChainValidationService {
         } else {
             conn = (HttpURLConnection) new URL(url).openConnection();
         }
+        conn.setInstanceFollowRedirects(false);
         return conn;
+    }
+
+    /** Şema allow-list + {@link SsrfGuard}; çözülemeyen host geçer (vekil senaryosu). */
+    void guardTarget(String url) throws IOException {
+        java.net.URI uri;
+        try {
+            uri = java.net.URI.create(url);
+        } catch (Exception e) {
+            throw new IOException("geçersiz OCSP/CRL URL'si");
+        }
+        String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(java.util.Locale.ROOT);
+        if (!scheme.equals("http") && !scheme.equals("https")) {
+            // ldap:// CRL-DP'leri sahada görülür; HttpURLConnection zaten açamaz, burada açıkça reddedilir.
+            throw new IOException("desteklenmeyen OCSP/CRL şeması: " + scheme);
+        }
+        String host = uri.getHost();
+        if (host == null || host.isBlank()) throw new IOException("OCSP/CRL URL'sinde host yok");
+        try {
+            ssrfGuard.validate(host);
+        } catch (SsrfGuard.UnresolvableHostException ue) {
+            log.debug("OCSP/CRL: {} yerelde çözülemedi, bağlantı yine denenecek", host);
+        }
     }
 }

@@ -55,8 +55,12 @@ public class MonitorNotesController {
         String t = normType(type);
         String tg = reqTarget(target);
         MonitorGuide guide = guideRepo.findByMonitorTypeAndTarget(t, tg).orElse(null);
+        // TAKIM İZOLASYONU: not içeriği operasyoneldir ("Sorun / Yapılan işlem / Kök neden /
+        // Bakılacak yerler") — başka bir takımın iç altyapı bilgisi. Kayıt oluşturulurken takım
+        // ZATEN damgalanıyordu ({@code n.setTeamId}) ama hiçbir okuma/yazma yolunda kullanılmıyordu.
         List<MonitorNote> notes =
-                noteRepo.findByMonitorTypeAndTargetAndDeletedAtIsNullOrderByCreatedAtDesc(t, tg);
+                noteRepo.findByMonitorTypeAndTargetAndDeletedAtIsNullOrderByCreatedAtDesc(t, tg)
+                        .stream().filter(n -> noteVisible(session, n)).toList();
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("guide", guide);
         data.put("notes", notes);
@@ -172,13 +176,35 @@ public class MonitorNotesController {
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
+    /**
+     * Düzenleme/silme yetkisi — <b>hangi takımın</b> yöneticisi olduğuna bakar.
+     *
+     * <p>Eski hâl yalnızca ROL DİZESİNE bakıyordu ({@code "TEAM_ADMIN".equals(role)}): A takımının
+     * yöneticisi, B takımının notunu düzenleyip silebiliyordu (silme yumuşak, geri alma arayüzü
+     * de yok). Kapı artık notun kendi takım damgasına bağlı.
+     */
     private void requireModify(HttpSession session, MonitorNote n) {
         String user = (String) session.getAttribute("username");
-        String role = (String) session.getAttribute("systemRole");
-        boolean elevated = SessionScope.isGlobalAdmin(session)
-                || "ADMIN".equals(role) || "TEAM_ADMIN".equals(role);
-        if (!elevated && (user == null || !user.equals(n.getAuthorUsername())))
-            throw new SecurityException("Yalnız notu ekleyen veya takım yöneticisi düzenleyebilir/silebilir");
+        if (user != null && user.equals(n.getAuthorUsername())) return;   // kendi notu
+        if (SessionScope.isGlobalAdmin(session)) return;
+        // Takımsız (eski) kayıt: kime ait olduğu bilinmediği için yalnız global admin ya da yazarı
+        // değiştirebilir — rol dizesine geri düşmek kapıyı yeniden açardı.
+        if (n.getTeamId() == null)
+            throw new SecurityException("Bu notu yalnız ekleyen ya da yönetici değiştirebilir");
+        if (!SessionScope.canManage(session, n.getTeamId()))
+            throw new SecurityException("Bu not sizin takımınıza ait değil");
+    }
+
+    /**
+     * Not bu oturumda GÖRÜNMELİ mi.
+     *
+     * <p>Takımsız (eski ya da global admin tarafından yazılmış) notlar görünür kalır: kime ait
+     * oldukları bilinmiyor ve gizlemek mevcut içeriği sessizce yok ederdi. Yeni notların hepsi
+     * takım damgası taşıyor, dolayısıyla kapı ileriye dönük tam.
+     */
+    private boolean noteVisible(HttpSession session, MonitorNote n) {
+        if (n.getTeamId() == null) return true;
+        return SessionScope.canView(session, n.getTeamId());
     }
 
     private static String normType(String type) {
