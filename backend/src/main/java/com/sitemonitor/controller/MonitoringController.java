@@ -118,7 +118,15 @@ public class MonitoringController {
         "intervalSeconds", "timeoutMs", "warningDays", "criticalDays", "protocol", "verifySsl", "followRedirects",
         "mode", "crawlDepth", "crawlMaxPages", "excludePatterns", "slowResourceMs", "alertThirdParty", "alertMixedContent", "alertTimeout", "resourceConcurrency",
         "notificationGroupId",
-        "transferLockAlert", "blacklistEnabled", "changeAlert", "notifyEmail", "notifyWebhook"
+        "transferLockAlert", "blacklistEnabled", "changeAlert", "notifyEmail", "notifyWebhook",
+        // Teyit/kurtarma ayarlari: 6 noktanin 5'inde vardi (patch, create, update, gosterim, form)
+        // ama DIFF'te yoktu. Yalniz bu alanlari degistiren bir duzenleme AuditDiff'te bos donuyor,
+        // noteConfigChanged erken cikiyor ve denetim kaydi / izleme gecmisi / aktivite akisi
+        // HICBIR iz tasimiyordu.
+        "confirmAttempts", "confirmIntervalSeconds", "recoveryChecks", "recoveryIntervalSeconds",
+        // Kimlik alani degisince envanter bagi kopar (bkz. detachIfIdentityChanged) — bu, kullaniciya
+        // gorunen bir davranis degisikligi oldugu icin audit ve degisiklik gecmisinde de yer almali.
+        "standalone"
     };
 
     /**
@@ -465,8 +473,11 @@ public class MonitoringController {
             return badRequest("Durum kaydı okunamadı");
         }
         // teamId: takım taşımak ayrı bir karar. groupName: grup kaydı silinmiş olabilir.
+        // standalone: KİMLİK/YETKİ alanı — envanter-türevi DNS'i düzenlemek/silmek requireAdmin
+        // isterken restore yalnız canManage istiyor. Geri yüklenebilseydi bir TEAM_ADMIN monitörün
+        // yetki sınıfını çevirebilir (ve kısmi unique index ile çakışıp 500 üretebilirdi).
         var result = MonitorHistoryService.applySnapshot(entity, snapshot, fields,
-                java.util.Set.of("teamId", "groupName"));
+                java.util.Set.of("teamId", "groupName", "standalone"));
         List<String> maskedSkipped = result.get(1);
 
         // "Yazılan alan" ile "DEĞİŞEN alan" aynı şey değil: snapshot güncel değerin aynısını
@@ -755,7 +766,11 @@ public class MonitoringController {
         Map<String, LatestCheck> checkMap = latestChecks.stream()
                 .collect(Collectors.toMap(LatestCheck::getDomain, lc -> lc));
 
-        List<CertificateInventory> inventory = inventoryRepo.findByActiveTrueOrderByDomainAsc();
+        // IDOR: envanter satirlari takim kapsamina TABI (listPort/listDns ile ayni kapi).
+        // Bu ucun dondurdugu satir da host/port + takim adi + SSL bitisi + kesinti sayaclari
+        // tasiyor; kardesleri suzulurken burasi atlanmisti (bkz. inventoryViewable).
+        List<CertificateInventory> inventory = inventoryRepo.findByActiveTrueOrderByDomainAsc().stream()
+                .filter(inv -> inventoryViewable(session, inv)).toList();
         Map<String, String> teamMap = certificateService.domainTeamNameMap();
 
         String cutoff30d = ISO.format(Instant.now().minus(30, ChronoUnit.DAYS));
@@ -1055,9 +1070,22 @@ public class MonitoringController {
     private ResponseEntity<Map<String, Object>> denyIfDomainNotViewable(HttpSession session, String domain) {
         var inv = inventoryRepo.findByDomain(domain).orElse(null);
         if (inv == null) return notFound("Domain envanterde bulunamadı");
-        if (SessionScope.canView(session, inv.getTeamId())) return null;
-        if (inv.getUgTeamId() != null && SessionScope.canView(session, inv.getUgTeamId())) return null;
+        if (inventoryViewable(session, inv)) return null;
         return forbidden("Bu domain'in geçmişini görüntüleme yetkiniz yok");
+    }
+
+    /**
+     * Envanter satırı bu oturumun görüş kapsamında mı — sorumlu (SY) VEYA uç gözetim (UG) takımı.
+     *
+     * <p>{@link #denyIfDomainNotViewable}'ın LISTE karşılığı. {@code listPort}/{@code listDns}
+     * envanter döngüsü bu kapıyı atladığı için {@code monitoring.read} yetkisi olan HERKES tüm
+     * envanter alan adlarını (host:port, takım adı, son kontrol, açık alarm) görüyordu — oysa aynı
+     * metodun standalone döngüsü ve diğer yedi liste ucu süzüyordu. Kapı artık TEK yerde.
+     */
+    private boolean inventoryViewable(HttpSession session, CertificateInventory inv) {
+        if (inv == null) return false;
+        if (SessionScope.canView(session, inv.getTeamId())) return true;
+        return inv.getUgTeamId() != null && SessionScope.canView(session, inv.getUgTeamId());
     }
 
     /**
@@ -1141,12 +1169,15 @@ public class MonitoringController {
         Map<Long, String> teamById = teamNameMap();
         List<PortMonitor> standaloneMonitors = portMonitorRepo.findByStandaloneTrueAndActiveTrue();
         // Açık PORT_DOWN alarmları host→AlertEvent (envanter + standalone host'ları) — liste rozeti, tek sorgu.
+        // IDOR: yalnız görüş kapsamındaki envanter satırları listelenir (bkz. inventoryViewable).
+        List<CertificateInventory> visibleInventory = inventory.stream()
+                .filter(inv -> inventoryViewable(session, inv)).toList();
         Set<String> alarmHosts = new HashSet<>();
-        for (PortMonitor m : monitorByKey.values()) alarmHosts.add(m.getHost());
+        for (CertificateInventory inv : visibleInventory) alarmHosts.add(inv.getDomain());
         for (PortMonitor m : standaloneMonitors) if (m.getHost() != null) alarmHosts.add(m.getHost());
         Map<String, AlertEvent> portAlarms = openAlarmsByDomain(alarmHosts, EscalationService.TYPE_PORT_DOWN);
         List<Map<String, Object>> result = new ArrayList<>();
-        for (CertificateInventory inv : inventory) {
+        for (CertificateInventory inv : visibleInventory) {
             int invPort = inv.getPort() != null ? inv.getPort() : 443;
             PortMonitor monitor = monitorByKey.get(inv.getDomain() + ":" + invPort);
             // Yarış sonrası hâlâ eksikse SATIRI ATLA. Eskiden burada monitor DAİMA dolu varsayılıyordu
@@ -1223,12 +1254,24 @@ public class MonitoringController {
         java.util.Map<String, Object> _before = portMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return portMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu izleme üzerinde yetkiniz yok");
+            final String  _prevHost = m.getHost();
+            final Integer _prevPort = m.getPort();
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("host")            != null) m.setHost(((String) body.get("host")).trim());
             if (body.get("port")            != null) {
                 int np = ((Number) body.get("port")).intValue();
                 if (np < 1 || np > 65535) return badRequest("port 1-65535 aralığında olmalı");
                 m.setPort(np);
+            }
+            // Mükerrer koruması: createPort ve updateDns bu guard'ı taşıyor, updatePort taşımıyordu →
+            // kullanıcı mevcut bir monitörün host/port'unu başkasınınkiyle aynı yapabiliyordu.
+            // DB kısıtı da yakalamaz (uq_pm_host_port … WHERE standalone IS NOT TRUE).
+            if (!eqHost(_prevHost, m.getHost()) || !Objects.equals(_prevPort, m.getPort())) {
+                boolean dup = portMonitorRepo.findFirstByHostAndPortOrderByIdAsc(m.getHost(), m.getPort())
+                        .filter(x -> !x.getId().equals(id))
+                        .filter(x -> Boolean.TRUE.equals(x.getActive()))
+                        .isPresent();
+                if (dup) return badRequest("Bu host:port zaten izleniyor");
             }
             if (body.get("protocol")        != null) m.setProtocol(normalizePortType(body.get("protocol")));
             if (body.containsKey("expect"))    m.setExpect(blank(body.get("expect")) ? null : body.get("expect").toString().trim());
@@ -1247,6 +1290,7 @@ public class MonitoringController {
             if (body.get("recoveryChecks") != null)          m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
             if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
             applyPortFeatureFields(m, body);
+            boolean detached = detachIfIdentityChanged(m, _prevHost, _prevPort);
             m.setUpdatedAt(ISO.format(Instant.now()));
             monitorHistory.stampUpdated(m, session);
             PortMonitor saved = portMonitorRepo.save(m);
@@ -1256,9 +1300,11 @@ public class MonitoringController {
             var changeRow = monitorHistory.record(MonitorHistoryService.PORT, saved.getId(), saved.getName(), saved.getTeamId(),
                     MonitorHistoryService.UPDATE, _before, AuditDiff.snapshot(saved, MON_FIELDS), changeNote(body), session);
             noteConfigChanged(changeRow, ActivityLogService.PORT, saved.getHost() + ":" + saved.getPort(), session);
-            return ok(enrichPort(saved, portCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
+            Map<String, Object> item = enrichPort(saved, portCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
                     certificateService.domainTeamNameMap(), teamNameMap(),
-                    alertEventRepo.findOpenAlert(saved.getHost(), EscalationService.TYPE_PORT_DOWN).orElse(null)));
+                    alertEventRepo.findOpenAlert(saved.getHost(), EscalationService.TYPE_PORT_DOWN).orElse(null));
+            item.put("detached_from_inventory", detached);
+            return ok(item);
         }).orElse(notFound("Port monitor not found"));
     }
 
@@ -1326,6 +1372,11 @@ public class MonitoringController {
             check.setCheckedAt(now);
             portCheckRepo.save(check);
             auditService.recordAction("MONITOR_TRIGGER", session, "PORT_MONITOR", String.valueOf(m.getId()), m.getName(), null);
+            // ...ve ARDINDAN zamanlayıcıyla AYNI değerlendirme hattı ASENKRON başlar: hata
+            // doğrulama denemelerinden geçer, teyit edilirse alarm açılır; düzelme kurtarma
+            // sayacından geçer. Eskiden manuel çalıştırma tek kontrol yapıp bırakıyordu —
+            // ekranda "hata" görünüyor ama alarm hiç açılmıyordu (iki farklı gerçek).
+            schedulerService.evaluatePortNow(m, r);   // AYNI sonuç — ikinci kontrol/kayıt YOK
             return ok(enrichPort(m, check, certificateService.domainTeamNameMap(), teamNameMap(),
                     alertEventRepo.findOpenAlert(m.getHost(), EscalationService.TYPE_PORT_DOWN).orElse(null)));
         }).orElse(notFound("Port monitor not found"));
@@ -1408,6 +1459,46 @@ public class MonitoringController {
     }
 
     /** Ortak: port feature alanlarını (tags/notifyEmail/slow-response/ipVersion) body'den uygular. */
+    /**
+     * Envanter-turevi bir monitorun KIMLIK alani degistiyse envanter bagini kopar.
+     *
+     * <p><b>Neden sart.</b> {@code listPort}/{@code listDns} envanter-turevi monitoru
+     * {@code host:port} (DNS'te {@code domain}) DEGERININ KENDISIYLE eslestiriyor. Kullanici hedefi
+     * degistirince o anahtar ortadan kalkar, liste envanter domain'ini "eksik" sanar ve ESKI hedefle
+     * yepyeni bir monitor uretip kaydeder. Kullanicinin duzenlemesi geri donmus gorunur (sessiz veri
+     * kaybi) ve her duzenleme bir satir daha dogurur.
+     *
+     * <p>Kullanici hedefi envanterdekinden baska bir yere cevirdiyse o satir artik envantere bagli
+     * degildir — {@code standalone}'un tanimi zaten budur. Envanter domain'i bir sonraki listede
+     * yeniden turetilir: bu DOGRU davranis, cunku envanterde duran domain'in kapsamasi surmelidir.
+     * Fark su ki artik kullanicinin kaydini EZEREK degil, yaninda oluyor.
+     *
+     * @return baglantinin bu istekte koparilmis olup olmadigi (arayuz kullaniciyi bilgilendirir)
+     */
+    /** Host/alan adı karşılaştırması — DNS harf duyarsızdır. */
+    private static boolean eqHost(String a, String b) {
+        return a == null ? b == null : a.equalsIgnoreCase(b);
+    }
+
+    private static boolean detachIfIdentityChanged(PortMonitor m, String prevHost, Integer prevPort) {
+        if (Boolean.TRUE.equals(m.getStandalone())) return false;
+        // equalsIgnoreCase: "Example.com" → "example.com" AYNI hedeftir. Duyarlı karşılaştırma
+        // yalnız harf kasası değişen bir düzenlemede envanter bağını koparıp mükerrer satır
+        // doğuruyordu — düzeltmenin engellemeyi amaçladığı sınıfın ta kendisi. updateDns'in
+        // guard'ı (:1608) aynı soruyu zaten equalsIgnoreCase ile soruyor.
+        if (eqHost(prevHost, m.getHost()) && Objects.equals(prevPort, m.getPort())) return false;
+        m.setStandalone(true);
+        return true;
+    }
+
+    /** {@link #detachIfIdentityChanged(PortMonitor, String, Integer)} DNS ikizi — kimlik = domain. */
+    private static boolean detachIfIdentityChanged(DnsMonitor m, String prevDomain) {
+        if (Boolean.TRUE.equals(m.getStandalone())) return false;
+        if (eqHost(prevDomain, m.getDomain())) return false;
+        m.setStandalone(true);
+        return true;
+    }
+
     private void applyPortFeatureFields(PortMonitor m, Map<String, Object> body) {
         if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
         if (body.get("notifyEmail")         instanceof Boolean b) m.setNotifyEmail(b);
@@ -1470,12 +1561,15 @@ public class MonitoringController {
         Map<Long, String> teamById = teamNameMap();
         List<DnsMonitor> standaloneMonitors = dnsMonitorRepo.findByStandaloneTrueAndActiveTrue();
         // Açık DNS alarmlarını tek sorguda çek → satırlarda aktif-alarm rozeti (envanter + standalone domainleri).
+        // IDOR: yalnız görüş kapsamındaki envanter satırları listelenir (bkz. inventoryViewable).
+        List<CertificateInventory> visibleInventory = inventory.stream()
+                .filter(inv -> inventoryViewable(session, inv)).toList();
         Set<String> alarmDomains = new HashSet<>();
-        for (CertificateInventory inv : inventory) alarmDomains.add(inv.getDomain());
+        for (CertificateInventory inv : visibleInventory) alarmDomains.add(inv.getDomain());
         for (DnsMonitor m : standaloneMonitors) if (m.getDomain() != null) alarmDomains.add(m.getDomain());
         Map<String, AlertEvent> dnsAlarms = openDnsAlarmsByDomain(alarmDomains);
         List<Map<String, Object>> result = new ArrayList<>();
-        for (CertificateInventory inv : inventory) {
+        for (CertificateInventory inv : visibleInventory) {
             DnsMonitor monitor = monitorByDomain.get(inv.getDomain());
             if (monitor == null) continue;   // yarış sonrası eksikse satırı atla (bkz. port yolu)
             DnsRecord latest = monitor.getId() != null ? latestByMonitor.get(monitor.getId()) : null;
@@ -1529,10 +1623,14 @@ public class MonitoringController {
         // izlemenin kopyasi ACIK doguyordu — kullanicinin bilincli tercihi sessizce kayboluyordu.
         if (body.get("notifyEmail")   instanceof Boolean nb) m.setNotifyEmail(nb);
         if (body.get("notifyWebhook") instanceof Boolean wb) m.setNotifyWebhook(wb);
-        if (body.get("confirmAttempts")         instanceof Number cn) m.setConfirmAttempts(cn.intValue());
-        if (body.get("confirmIntervalSeconds")  instanceof Number cn) m.setConfirmIntervalSeconds(cn.intValue());
-        if (body.get("recoveryChecks")          instanceof Number cn) m.setRecoveryChecks(cn.intValue());
-        if (body.get("recoveryIntervalSeconds") instanceof Number cn) m.setRecoveryIntervalSeconds(cn.intValue());
+        // KIRPMA sunucuda: diger yedi tur clampAttempts/clampInterval/clampRecovery kullaniyor,
+        // DNS ve Domain'de sinir yalnizca FORMDA vardi. API'ye dogrudan
+        // confirmIntervalSeconds=2000000000 gonderilirse teyit zinciri pratikte sonsuza ertelenir
+        // ve o izlemenin kesinti alarmi HIC acilmaz — hicbir hata satiri da dusmez.
+        if (body.get("confirmAttempts")         instanceof Number cn) m.setConfirmAttempts(clampAttempts(cn.intValue()));
+        if (body.get("confirmIntervalSeconds")  instanceof Number cn) m.setConfirmIntervalSeconds(clampInterval(cn.intValue()));
+        if (body.get("recoveryChecks")          instanceof Number cn) m.setRecoveryChecks(clampRecovery(cn.intValue()));
+        if (body.get("recoveryIntervalSeconds") instanceof Number cn) m.setRecoveryIntervalSeconds(clampInterval(cn.intValue()));
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         DnsMonitor saved = dnsMonitorRepo.save(m);
@@ -1557,6 +1655,7 @@ public class MonitoringController {
             } else {
                 requireAdmin(session);
             }
+            final String _prevDomain = m.getDomain();
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("domain") != null) {
                 String newDomain = ((String) body.get("domain")).trim();
@@ -1578,10 +1677,11 @@ public class MonitoringController {
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.get("notifyEmail")   instanceof Boolean b) m.setNotifyEmail(b);
             if (body.get("notifyWebhook")   instanceof Boolean b) m.setNotifyWebhook(b);
-            if (body.get("confirmAttempts")         instanceof Number cn) m.setConfirmAttempts(cn.intValue());
-            if (body.get("confirmIntervalSeconds")  instanceof Number cn) m.setConfirmIntervalSeconds(cn.intValue());
-            if (body.get("recoveryChecks")          instanceof Number cn) m.setRecoveryChecks(cn.intValue());
-            if (body.get("recoveryIntervalSeconds") instanceof Number cn) m.setRecoveryIntervalSeconds(cn.intValue());
+            // KIRPMA: createDns kirpiyor, updateDns kirpmiyordu — ayni sinifin son halkasi.
+            if (body.get("confirmAttempts")         instanceof Number cn) m.setConfirmAttempts(clampAttempts(cn.intValue()));
+            if (body.get("confirmIntervalSeconds")  instanceof Number cn) m.setConfirmIntervalSeconds(clampInterval(cn.intValue()));
+            if (body.get("recoveryChecks")          instanceof Number cn) m.setRecoveryChecks(clampRecovery(cn.intValue()));
+            if (body.get("recoveryIntervalSeconds") instanceof Number cn) m.setRecoveryIntervalSeconds(clampInterval(cn.intValue()));
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (Boolean.TRUE.equals(m.getStandalone()) && body.containsKey("teamId"))
                 m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
@@ -1597,6 +1697,7 @@ public class MonitoringController {
                 m.setDnsChangeAlertEnabled(Boolean.TRUE.equals(body.get("dnsChangeAlertEnabled")));
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+            boolean detached = detachIfIdentityChanged(m, _prevDomain);
             m.setUpdatedAt(ISO.format(Instant.now()));
             monitorHistory.stampUpdated(m, session);
             DnsMonitor saved = dnsMonitorRepo.save(m);
@@ -1606,8 +1707,10 @@ public class MonitoringController {
             var changeRow = monitorHistory.record(MonitorHistoryService.DNS, saved.getId(), saved.getName(), saved.getTeamId(),
                     MonitorHistoryService.UPDATE, _before, AuditDiff.snapshot(saved, MON_FIELDS), changeNote(body), session);
             noteConfigChanged(changeRow, ActivityLogService.DNS, saved.getDomain() + " " + saved.getRecordType(), session);
-            return ok(enrichDns(saved, dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
-                    certificateService.domainTeamNameMap(), teamNameMap(), openDnsAlarm(saved.getDomain())));
+            Map<String, Object> item = enrichDns(saved, dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
+                    certificateService.domainTeamNameMap(), teamNameMap(), openDnsAlarm(saved.getDomain()));
+            item.put("detached_from_inventory", detached);
+            return ok(item);
         }).orElse(notFound("DNS monitor not found"));
     }
 
@@ -1700,6 +1803,9 @@ public class MonitoringController {
             record.setResponseMs(r.get("response_ms") instanceof Number rn ? rn.longValue() : null);
             dnsRecordRepo.save(record);
             auditService.recordAction("MONITOR_TRIGGER", session, "DNS_MONITOR", String.valueOf(m.getId()), m.getName(), null);
+            // ...ve ARDINDAN zamanlayiciyla AYNI degerlendirme hatti ASENKRON baslar
+            // (birincil cozumleme-hatasi alarmi: dogrulama denemeleri + kurtarma sayaci).
+            schedulerService.evaluateDnsNow(m, r);   // AYNI sonuç — ikinci çözümleme YOK
             return ok(enrichDns(m, record, certificateService.domainTeamNameMap(), teamNameMap(), openDnsAlarm(m.getDomain())));
         }).orElse(notFound("DNS monitor not found"));
     }
@@ -1970,6 +2076,9 @@ public class MonitoringController {
             res.setCheckedAt(ISO.format(Instant.now()));
             keywordResultRepo.save(res);
             auditService.recordAction("MONITOR_TRIGGER", session, "KEYWORD_MONITOR", String.valueOf(m.getId()), m.getName(), null);
+            // ...ve ARDINDAN zamanlayiciyla AYNI degerlendirme hatti ASENKRON baslar
+            // (dogrulama denemeleri + kurtarma sayaci).
+            schedulerService.evaluateKeywordNow(m, r);   // AYNI sonuç — ikinci kontrol/kayıt YOK
             return ok(enrichKeyword(m, res, teamNameMap(),
                     alertEventRepo.findOpenAlert(m.getUrl(), EscalationService.TYPE_KEYWORD).orElse(null)));
         }).orElse(notFound("Keyword monitor not found"));
@@ -2458,6 +2567,7 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.trigger", "execute");
         return httpMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
+            // İLK kontrol burada koşar: kullanıcı sonucu ANINDA görsün (kart boş dönmesin).
             Map<String, Object> r = httpChecker.check(m.getUrl(), m.getMethod(), m.getExpectedStatus(),
                     m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000,
                     Boolean.TRUE.equals(m.getVerifySsl()), !Boolean.FALSE.equals(m.getFollowRedirects()));
@@ -2470,6 +2580,12 @@ public class MonitoringController {
             res.setCheckedAt(ISO.format(Instant.now()));
             httpCheckRepo.save(res);
             auditService.recordAction("MONITOR_TRIGGER", session, "HTTP_MONITOR", String.valueOf(m.getId()), m.getName(), null);
+            // ...ve ARDINDAN zamanlayıcıyla AYNI değerlendirme hattı ASENKRON başlar: hata
+            // doğrulama denemelerinden geçer, teyit edilirse alarm açılır; düzelme kurtarma
+            // sayacından geçer. Eskiden manuel çalıştırma tek kontrol yapıp bırakıyordu —
+            // ekranda "hata" görünüyor ama alarm hiç açılmıyordu (iki farklı gerçek).
+            // Senkron beklenemez: doğrulama varsayılan 3 × 30 sn sürer.
+            schedulerService.evaluateHttpNow(m, r);   // AYNI sonuç — ikinci kontrol/kayıt YOK
             return ok(enrichHttp(m, res, teamNameMap(),
                     alertEventRepo.findOpenAlert(m.getUrl(), EscalationService.TYPE_HTTP_DOWN).orElse(null)));
         }).orElse(notFound("HTTP monitor not found"));
@@ -2760,8 +2876,12 @@ public class MonitoringController {
                         "error", "Bu monitör için çok sık manuel kontrol; " + (cooldownMs / 1000) + " sn bekleyin."));
             }
             pageManualTriggerAt.put(id, nowMs);
-            schedulerService.triggerPageCheck(m);   // tam kontrol + persist (page_checks + issues + activity)
+            Map<String, Object> pageResult = schedulerService.triggerPageCheck(m);   // tam kontrol + persist
             auditService.recordAction("MONITOR_TRIGGER", session, "PAGE_MONITOR", String.valueOf(m.getId()), m.getName(), null);
+            // Değerlendirme (doğrulama denemeleri → alarm) koşumun KENDİ içinde yapılır
+            // (triggerScriptedCheckAsync): ayrı bir evaluate* çağrısı ikinci bir k6 koşumu
+            // başlatıyor ve iki permit yiyordu.
+            schedulerService.evaluatePageNow(m, pageResult);   // AYNI sonuç — ikinci TAM TARAMA yok
             return ok(enrichPage(m, pageCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
                     alertEventRepo.findOpenAlert(m.getUrl(), EscalationService.TYPE_PAGE_DOWN)
                             .or(() -> alertEventRepo.findOpenAlert(m.getUrl(), EscalationService.TYPE_PAGE_INTEGRITY)).orElse(null)));
@@ -2993,8 +3113,12 @@ public class MonitoringController {
                         "error", "Bu izleme için çok sık manuel ölçüm; " + (cooldownMs / 1000) + " sn bekleyin."));
             }
             pageSpeedManualTriggerAt.put(id, nowMs);
-            schedulerService.triggerPageSpeedCheck(m);   // tam ölçüm + persist (checks + resources + activity)
+            Map<String, Object> speedResult = schedulerService.triggerPageSpeedCheck(m);   // tam ölçüm + persist
             auditService.recordAction("MONITOR_TRIGGER", session, "PAGESPEED_MONITOR", String.valueOf(m.getId()), m.getName(), null);
+            // Değerlendirme (doğrulama denemeleri → alarm) koşumun KENDİ içinde yapılır
+            // (triggerScriptedCheckAsync): ayrı bir evaluate* çağrısı ikinci bir k6 koşumu
+            // başlatıyor ve iki permit yiyordu.
+            schedulerService.evaluatePageSpeedNow(m, speedResult);   // AYNI sonuç — ikinci ölçüm yok
             return ok(enrichPageSpeed(m, pageSpeedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
                     teamNameMap(), openPageSpeedAlarm(m.getUrl()), SessionScope.isGlobalAdmin(session)));
         }).orElse(notFound("Sayfa hızı izlemesi bulunamadı"));
@@ -3786,6 +3910,9 @@ public class MonitoringController {
             }
             scriptedManualTriggerAt.put(id, nowMs);
             auditService.recordAction("MONITOR_TRIGGER", session, "SCRIPTED_MONITOR", String.valueOf(m.getId()), m.getName(), null);
+            // Değerlendirme (doğrulama denemeleri → alarm) koşumun KENDİ içinde yapılır
+            // (triggerScriptedCheckAsync): ayrı bir evaluate* çağrısı ikinci bir k6 koşumu
+            // başlatıyor ve iki permit yiyordu.
 
             // Kontrol istek thread'inin DIŞINDA koşar; burada yalnız SINIRLI süre beklenir.
             // Senaryo kontrolü script timeout'u kadar sürebiliyor (tavan 180 sn) ve senkron
@@ -4457,10 +4584,14 @@ public class MonitoringController {
         if (body.get("changeAlert")       instanceof Boolean b) m.setChangeAlert(b);
         if (body.get("notifyEmail")     instanceof Boolean b) m.setNotifyEmail(b);
         if (body.get("notifyWebhook")     instanceof Boolean b) m.setNotifyWebhook(b);
-        if (body.get("confirmAttempts")         instanceof Number cn) m.setConfirmAttempts(cn.intValue());
-        if (body.get("confirmIntervalSeconds")  instanceof Number cn) m.setConfirmIntervalSeconds(cn.intValue());
-        if (body.get("recoveryChecks")          instanceof Number cn) m.setRecoveryChecks(cn.intValue());
-        if (body.get("recoveryIntervalSeconds") instanceof Number cn) m.setRecoveryIntervalSeconds(cn.intValue());
+        // KIRPMA sunucuda: diger yedi tur clampAttempts/clampInterval/clampRecovery kullaniyor,
+        // DNS ve Domain'de sinir yalnizca FORMDA vardi. API'ye dogrudan
+        // confirmIntervalSeconds=2000000000 gonderilirse teyit zinciri pratikte sonsuza ertelenir
+        // ve o izlemenin kesinti alarmi HIC acilmaz — hicbir hata satiri da dusmez.
+        if (body.get("confirmAttempts")         instanceof Number cn) m.setConfirmAttempts(clampAttempts(cn.intValue()));
+        if (body.get("confirmIntervalSeconds")  instanceof Number cn) m.setConfirmIntervalSeconds(clampInterval(cn.intValue()));
+        if (body.get("recoveryChecks")          instanceof Number cn) m.setRecoveryChecks(clampRecovery(cn.intValue()));
+        if (body.get("recoveryIntervalSeconds") instanceof Number cn) m.setRecoveryIntervalSeconds(clampInterval(cn.intValue()));
         // RDAP kontrol timeout'u (ms) — boş/null = global ayar; girilirse 1–30 sn'ye kısılır.
         if (body.containsKey("checkTimeoutMs")) {
             Object v = body.get("checkTimeoutMs");
@@ -4730,6 +4861,11 @@ public class MonitoringController {
             check.setCheckedAt(ISO.format(Instant.now()));
             pingCheckRepo.save(check);
             auditService.recordAction("MONITOR_TRIGGER", session, "PING_MONITOR", String.valueOf(m.getId()), m.getName(), null);
+            // ...ve ARDINDAN zamanlayıcıyla AYNI değerlendirme hattı ASENKRON başlar: hata
+            // doğrulama denemelerinden geçer, teyit edilirse alarm açılır; düzelme kurtarma
+            // sayacından geçer. Eskiden manuel çalıştırma tek kontrol yapıp bırakıyordu —
+            // ekranda "hata" görünüyor ama alarm hiç açılmıyordu (iki farklı gerçek).
+            schedulerService.evaluatePingNow(m, r);   // AYNI sonuç — ikinci kontrol/kayıt YOK
             return ok(enrichPing(m, check, teamNameMap(),
                     alertEventRepo.findOpenAlert(m.getHost(), EscalationService.TYPE_PING_DOWN).orElse(null)));
         }).orElse(notFound("Ping monitor not found"));

@@ -56,7 +56,8 @@ public class MonitoringGroupService {
 
     /** İzleme türü → o türe ait AlertEvent.alertType kümesi (alert_events type-scope rename için). */
     private static final Map<String, Set<String>> TYPE_ALERTS = Map.of(
-            "cert",    Set.of("EXPIRY", "CHAIN_BROKEN", "REVOKED", "MISMATCH"),
+            "cert",    Set.of("EXPIRY", "CHAIN_BROKEN", "REVOKED", "MISMATCH",
+                              "HOSTNAME_MISMATCH", "UNTRUSTED_CA"),
             "http",    Set.of("ACCESSIBILITY", "HTTP_DOWN", "HTTP_SSL", "DOMAIN_EXPIRY"),
             "port",    Set.of("PORT_DOWN", "PORT_SLOW"),
             "dns",     Set.of("DNS_FAILURE", "DNS_CHANGED", "DNS_SLOW", "DNS_UNEXPECTED", "DNS_INCONSISTENT"),

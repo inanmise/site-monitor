@@ -29,7 +29,9 @@ public class SqlPlaygroundService {
 
     /** Forbidden DML/DDL/admin keywords; matched with word boundaries anywhere in the query. */
     private static final Pattern FORBIDDEN = Pattern.compile(
-        "\\b(insert|update|delete|drop|alter|truncate|create|grant|revoke|comment|"
+        // "into": SELECT * INTO yeni_tablo FROM ... SELECT ile BASLAR, tek statement'tir ve
+        // eski kara-listeye takilmazdi — yeni tablo olusturup veri kopyalayan bir DDL+DML.
+        "\\b(insert|into|update|delete|drop|alter|truncate|create|grant|revoke|comment|"
       + "copy|lock|vacuum|analyze|reindex|cluster|set|reset|call|execute|do|"
       + "begin|commit|rollback|savepoint|listen|notify|prepare|deallocate|discard|"
       + "refresh|security|policy|function|procedure|trigger)\\b",
@@ -69,6 +71,20 @@ public class SqlPlaygroundService {
             tableName);
     }
 
+    /**
+     * Sorguyu kosturur.
+     *
+     * <p><b>Salt-okunurluk savunma DERINLIGIYLE saglanir.</b> Metin kontrolleri (SELECT/WITH ile
+     * baslama, tek statement, kelime + fonksiyon kara-listesi) ilk kapidir;
+     * {@code SELECT * INTO yeni_tablo FROM x} bu kapiyi geciyordu (SELECT ile baslar, tek
+     * statement'tir) ve TABLO OLUSTURUYORDU — {@code into} artik kara-listede.
+     *
+     * <p><b>Kalan is (ops).</b> Kesin guvence uygulama katmaninda degil DB'dedir: bu havuzun
+     * salt-okunur bir Postgres ROLU ile baglanmasi. JPA kullanildigi icin
+     * {@code @Transactional(readOnly = true)} JDBC baglantisini salt-okunur YAPMAZ (Hibernate
+     * yalnizca flush'i kapatir); hicbir sey yapmayan bir anotasyon yanlis guven verecegi icin
+     * bilerek EKLENMEDI. Guvenlik denetiminin "SQL RO rol" maddesi bu isi izliyor.
+     */
     public Map<String, Object> execute(String rawSql, String executedBy) {
         String sanitized = sanitize(rawSql);
         validateReadOnly(sanitized);
@@ -140,19 +156,29 @@ public class SqlPlaygroundService {
         }
     }
 
+    /**
+     * Satir tavanini EN DIS sorguya uygular.
+     *
+     * <p>Eski surum yalnizca ilk {@code LIMIT}'e bakiyordu; deger tavanin altindaysa disariya
+     * hicbir sinir EKLEMIYORDU. Oysa o LIMIT bir ALT sorguda olabilir:
+     * {@code SELECT * FROM buyuk a, buyuk b WHERE a.id IN (SELECT id FROM buyuk LIMIT 5)}
+     * — dis kartezyen carpim milyonlarca satir dondurur ve {@code queryForList} hepsini
+     * bellege alir; yalniz 30 sn'lik timeout sinirlar, o sure boyunca heap dolar.
+     *
+     * <p>Sarmalamak guvenli: giris tek statement ve salt-okunurdur (bkz. validateReadOnly +
+     * execute'un salt-okunur islemi), dolayisiyla alt sorgu olarak kosmasi anlami degistirmez.
+     */
     private String enforceLimit(String sql) {
-        String noTrailingSemi = sql.endsWith(";") ? sql.substring(0, sql.length() - 1) : sql;
-        Matcher m = LIMIT_CLAUSE.matcher(noTrailingSemi);
-        if (m.find()) {
-            int n = Integer.parseInt(m.group(1));
-            if (n > MAX_ROWS) {
-                return noTrailingSemi.substring(0, m.start())
-                     + "LIMIT " + MAX_ROWS
-                     + noTrailingSemi.substring(m.end());
-            }
-            return noTrailingSemi;
+        String inner = sql.endsWith(";") ? sql.substring(0, sql.length() - 1) : sql;
+        // 1) Tavani ASAN acik bir LIMIT varsa dusurulur — DB'nin bosuna 5000 satir uretmesini onler.
+        Matcher m = LIMIT_CLAUSE.matcher(inner);
+        if (m.find() && Integer.parseInt(m.group(1)) > MAX_ROWS) {
+            inner = inner.substring(0, m.start()) + "LIMIT " + MAX_ROWS + inner.substring(m.end());
         }
-        return noTrailingSemi + " LIMIT " + MAX_ROWS;
+        // 2) DIS tavan HER KOSULDA eklenir. Eskiden ic LIMIT tavanin altindaysa hicbir sinir
+        //    konmuyordu; oysa o LIMIT bir ALT sorguda olabilir ve dis kartezyen carpim milyonlarca
+        //    satir dondurup queryForList ile hepsini bellege alabilir (yalniz 30 sn timeout sinirlar).
+        return "SELECT * FROM (" + inner + ") AS _capped LIMIT " + MAX_ROWS;
     }
 
     private void validateIdentifier(String name) {

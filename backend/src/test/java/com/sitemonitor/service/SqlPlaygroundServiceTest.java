@@ -256,4 +256,38 @@ class SqlPlaygroundServiceTest {
         List<Map<String, Object>> result = service.listColumns("teams");
         assertThat(result).hasSize(1);
     }
+
+    // ── Denetim 5. tur, bulgu 9 + 33 ──────────────────────────────────────────
+
+    @Test
+    @DisplayName("Bulgu 9: SELECT ... INTO reddedilir — SELECT ile baslayan bir DDL+DML'dir")
+    void execute_selectInto_rejected() {
+        assertThatThrownBy(() -> service.execute("SELECT * INTO yeni_tablo FROM teams", "admin"))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(jdbc, never()).queryForList(anyString());
+    }
+
+    @Test
+    @DisplayName("Bulgu 9: 'into' kelimesi sutun adinin PARCASI ise engellenmez (yanlis pozitif yok)")
+    void execute_columnContainingInto_allowed() {
+        when(jdbc.queryForList(anyString())).thenReturn(List.of());
+        service.execute("SELECT into_date FROM teams", "admin");
+        verify(jdbc).queryForList(anyString());
+    }
+
+    @Test
+    @DisplayName("Bulgu 33: IC LIMIT tavanin ALTINDA olsa da DIS tavan eklenir")
+    void execute_innerLimitBelowCap_stillWrapped() {
+        when(jdbc.queryForList(anyString())).thenReturn(List.of());
+        ArgumentCaptor<String> cap = ArgumentCaptor.forClass(String.class);
+
+        service.execute("SELECT * FROM a, b WHERE a.id IN (SELECT id FROM c LIMIT 5)", "admin");
+
+        verify(jdbc).queryForList(cap.capture());
+        String executed = cap.getValue();
+        assertThat(executed)
+                .as("dis tavan yoksa kartezyen carpim milyonlarca satiri bellege alir: %s", executed)
+                .startsWith("SELECT * FROM (")
+                .endsWith("LIMIT 1000");
+    }
 }

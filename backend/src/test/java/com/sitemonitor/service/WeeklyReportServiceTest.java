@@ -72,7 +72,7 @@ class WeeklyReportServiceTest {
         when(reportRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(mailRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(emailService.fromAddress()).thenReturn("sitemonitor@test");
-        when(teamRepo.findById(2L)).thenReturn(Optional.of(team(2L, "DijitalSY", "takim@test.com")));
+        when(teamRepo.findById(2L)).thenReturn(Optional.of(team(2L, "TakimA", "takim@test.com")));
         when(emailService.sendHtml(any(), any(), anyString(), anyString(), any())).thenReturn("SENT");
         when(emailService.buildWeeklyReportSubmittedHtml(any(), any(), any(), any())).thenReturn("<html/>");
         when(emailService.buildWeeklyReportRejectedHtml(any(), any(), any(), any())).thenReturn("<html/>");
@@ -593,11 +593,11 @@ class WeeklyReportServiceTest {
         ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
         ArgumentCaptor<String[]> cc = ArgumentCaptor.forClass(String[].class);
         verify(emailService).sendHtml(to.capture(), cc.capture(),
-                eq("[DijitalSY] Haftalık Rapor — 2026-W24 (8–12 Haziran 2026)"),
+                eq("[TakimA] Haftalık Rapor — 2026-W24 (8–12 Haziran 2026)"),
                 anyString(), any());
         assertThat(to.getValue()).containsExactly("mudur@test.com");
         assertThat(cc.getValue()).containsExactly("takim@test.com");
-        verify(emailService).buildWeeklyReportHtml(eq("DijitalSY"), anyString(),
+        verify(emailService).buildWeeklyReportHtml(eq("TakimA"), anyString(),
                 eq("Ali Müdür"), anyString(), eq(true), any(), any(), any(), any(), any(), any());
     }
 
@@ -651,7 +651,7 @@ class WeeklyReportServiceTest {
         assertThat(rejected.getRejectNote()).contains("internet kanalı eksik");
         verify(emailService).sendHtml(eq(new String[]{"takim@test.com"}), isNull(),
                 contains("iade edildi"), anyString(), isNull());
-        verify(emailService).buildWeeklyReportRejectedHtml(eq("DijitalSY"), anyString(),
+        verify(emailService).buildWeeklyReportRejectedHtml(eq("TakimA"), anyString(),
                 contains("internet kanalı eksik"), eq("PO İki"));
     }
 
@@ -903,7 +903,7 @@ class WeeklyReportServiceTest {
         assertThat(out.get("mail_status")).isNotNull();
         verify(emailService).sendHtml(eq(new String[]{"takim@test.com"}), isNull(),
                 contains("iade edildi"), anyString(), isNull());
-        verify(emailService).buildWeeklyReportRejectedHtml(eq("DijitalSY"), anyString(),
+        verify(emailService).buildWeeklyReportRejectedHtml(eq("TakimA"), anyString(),
                 contains("Madde 4 eksik"), anyString());
     }
 

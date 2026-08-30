@@ -226,6 +226,12 @@ public final class AppSettingsCatalog {
         // CA otomatik sabitleme (TOFU) — PKIX hatasında CA sunucudan çekilip host bazında pinlenir,
         // rotasyon/bitişte otomatik yenilenir (CaAutoPinService). Kapsam: HTTP uptime strict + RDAP çıkışı.
         new Setting("site.monitor.trust.auto-pin.enabled",       "security",   Type.BOOL),
+        // Güvenlik alarmları (sunulan sertifika bu host için kabul edilebilir mi):
+        //  • hostname uyuşmazlığı → varsayılan AÇIK (meşru olarak neredeyse hiç olmaz);
+        //  • güvenilmeyen CA → varsayılan KAPALI, çünkü ca-bundle-pem boşken iç host'ların TÜMÜ
+        //    UNTRUSTED görünür; açık gelseydi yayın anında alarm seli olurdu.
+        new Setting("site.monitor.trust.alert-hostname-mismatch", "security", Type.BOOL),
+        new Setting("site.monitor.trust.alert-untrusted",         "security", Type.BOOL),
         // ── Branding (beyaz etiket) — BrandingController üzerinden yönetilir; /api/branding public okur.
         //    Boş değer = varsayılan SiteMonitor kimliği. banner-version otomatik yönetilir (UI'da gizli).
         new Setting("site.monitor.branding.app-name",            "branding",   Type.STRING),

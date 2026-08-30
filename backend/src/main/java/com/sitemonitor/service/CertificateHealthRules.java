@@ -204,6 +204,40 @@ public final class CertificateHealthRules {
         return !label.isEmpty() && label.indexOf('.') < 0;
     }
 
+    // ── Güvenlik hükmü (sunulan sertifika bu host için kabul edilebilir mi) ──────
+
+    /** İstenen host sertifikada kapsanmıyor — tarayıcının {@code ERR_CERT_COMMON_NAME_INVALID}'i. */
+    public static final String FLAG_HOSTNAME_MISMATCH = "HOSTNAME_MISMATCH";
+    /** Zincir hiçbir güven köküne bağlanmıyor — {@code ERR_CERT_AUTHORITY_INVALID}. */
+    public static final String FLAG_UNTRUSTED_CA = "UNTRUSTED_CA";
+
+    /**
+     * Sunulan sertifikanın <b>güvenlik</b> kusurları — süreden BAĞIMSIZ.
+     *
+     * <p><b>Neden gerekti.</b> Sertifika durumu yalnız kalan günden türetiliyordu
+     * ({@code CertificateCheckerService.parseLeafCert}): bitis tarihi uzak olan her sertifika
+     * "Geçerli" sayılıyordu. Var olmayan bir alan adı NXDOMAIN-hijack ile bir ev
+     * modeminin yönetim paneline çözüldüğünde, modemin kendinden imzalı sertifikası
+     * ({@code CN=192.168.1.1}) yeşil "Geçerli" görünüyor ve alarm ÜRETMİYORDU — oysa
+     * tarayıcı aynı adresi reddediyor. Bir SSL izleme aracının yakalaması gereken şekil tam
+     * olarak budur: DNS hijack / MITM imzası.
+     *
+     * <p>Hükmün kendisi zaten hesaplanıyordu ({@code CertificateHealthService} sağlık satırları);
+     * eksik olan, rozet ve alarm katmanının onu TÜKETMESİYDİ. Bu metot o tek hükmün adıdır.
+     *
+     * <p><b>UNKNOWN bayrak ÜRETMEZ</b> — sınıfın "UNKNOWN, FAIL DEĞİLDİR" sözleşmesi burada da
+     * geçerli: SAN listesi boş gelmiş olabilir, {@code trust_status} hafif kontrolde hiç
+     * hesaplanmamış olabilir. Bilinmeyeni kırmızıya boyamak yanlış alarm üretir.
+     *
+     * @return boş liste = bilinen bir güvenlik kusuru yok (kanıt yokluğu dahil)
+     */
+    public static List<String> securityFlags(String domain, java.util.List<String> san, String trustStatus) {
+        List<String> flags = new ArrayList<>(2);
+        if (sanCoverage(domain, san) == Status.FAIL) flags.add(FLAG_HOSTNAME_MISMATCH);
+        if (fromStatusLabel(trustStatus, "TRUSTED", "UNTRUSTED") == Status.FAIL) flags.add(FLAG_UNTRUSTED_CA);
+        return flags;
+    }
+
     // ── Süre ────────────────────────────────────────────────────────────────
 
     /**

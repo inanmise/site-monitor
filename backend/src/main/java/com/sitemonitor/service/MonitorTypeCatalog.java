@@ -39,12 +39,15 @@ public final class MonitorTypeCatalog {
     /**
      * Tür → o türe ait {@code AlertEvent.alertType} kümesi.
      *
-     * <p>Sertifika tipleri (EXPIRY/CHAIN_BROKEN/REVOKED/MISMATCH) EscalationService'te sabit
-     * DEĞİL, kod içinde string literal olarak geçiyor; donmuş bir küme oldukları için burada
-     * açıkça yazılılar. Büyüyen listeler {@code TYPE_*} sabitlerinden gelir ve kapı onları dener.
+     * <p>Sertifika tipleri burada LITERAL yazılır. {@code HOSTNAME_MISMATCH}/{@code UNTRUSTED_CA}
+     * için EscalationService'te artık sabit var ama {@code monitorTypeSurfaces} kapısı bu dosyayı
+     * KAYNAK OLARAK okuyup frontend aynasıyla karşılaştırıyor; sabit kullanılsa tipler kapıya
+     * görünmez ve aynı alarm arayuzde sekmesiz kalırdı. Büyüyen listeler {@code TYPE_*}
+     * sabitlerinden gelir ve kapı onları dener.
      */
     public static final Map<String, Set<String>> ALERT_TYPES = Map.of(
-            "cert",     Set.of("EXPIRY", "CHAIN_BROKEN", "REVOKED", "MISMATCH"),
+            "cert",     Set.of("EXPIRY", "CHAIN_BROKEN", "REVOKED", "MISMATCH",
+                                   "HOSTNAME_MISMATCH", "UNTRUSTED_CA"),
             "http",     Set.of("ACCESSIBILITY", "HTTP_DOWN", "HTTP_SSL", "DOMAIN_EXPIRY"),
             "port",     Set.of("PORT_DOWN", "PORT_SLOW"),
             "dns",      Set.of("DNS_FAILURE", "DNS_CHANGED", "DNS_SLOW", "DNS_UNEXPECTED", "DNS_INCONSISTENT"),

@@ -267,6 +267,20 @@ public class MonitoringOutageService {
 
     /** Uptime/Port/DNS-failure sweep'leri her tur sonunda bir kez çağırır. */
     public void handleSweepResults(String alertType, List<SweepItem> items) {
+        handleSweepResults(alertType, items, false);
+    }
+
+    /**
+     * @param manual kullanıcının "Çalıştır" tuşundan gelen TEK-monitör değerlendirmesi mi.
+     *
+     * <p>Manuel yolda toplu-kesinti bastırması ATLANIR. Sebep: bastırma
+     * {@code networkDown / byDomain.size()} oranına bakıyor ve tek öğede bu oran her zaman
+     * 1.0'dır. Bugün {@code min-errors} varsayılanı (3) kazara koruyor, ama admin onu 1'e
+     * çekerse HER manuel çalıştırma bir bastırma olayı yazar ve alarm hiç açılmaz — üstelik
+     * sebebi ekranda görünmez. Heuristik "aynı anda çok sayıda monitör düştü" sinyali için
+     * vardır; kullanıcının bilerek tetiklediği tek kontrol için anlamsızdır.
+     */
+    public void handleSweepResults(String alertType, List<SweepItem> items, boolean manual) {
         if (!alertEnabled(alertType) || items == null || items.isEmpty()) return;
 
         // Domain bazlı agregasyon: any-down = domain down; all-up = recovered
@@ -282,7 +296,7 @@ public class MonitoringOutageService {
                 .filter(e -> e.getValue().stream()
                         .anyMatch(it -> !it.up() && isOutageClass(it.error(), e.getKey())))
                 .count();
-        if (networkDown >= bulkMinErrors
+        if (!manual && networkDown >= bulkMinErrors
                 && (double) networkDown / byDomain.size() >= bulkRateThreshold) {
             noteSuppression(alertType, (int) networkDown, byDomain.size());
             return;

@@ -48,6 +48,17 @@ public class WebhookService {
         httpClient = b.build();
     }
 
+    /**
+     * Istemciyi kapat — UserPushService.shutdown() ile simetrik.
+     *
+     * <p>Tek pod omru boyunca zararsizdi ama context refresh ve testlerde her yeniden kurulum bir
+     * SelectorManager thread'i + FD sizdiriyordu. Kardes servis kapatiyor, bu kapatmiyordu.
+     */
+    @jakarta.annotation.PreDestroy
+    public void shutdown() {
+        try { if (httpClient != null) httpClient.close(); } catch (Exception ignored) { }
+    }
+
     /** Teams MessageCard gövdesi. AYRI metot: gövde post() içinde serileştirildiği için testten
      *  okunamıyordu ve "renk/format" iddia eden testler aslında yalnız URI'yi doğruluyordu. */
     static Map<String, Object> buildTeamsPayload(String title, String message, String color) {

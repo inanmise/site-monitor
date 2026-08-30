@@ -30,12 +30,15 @@ import { CheckNowButton, CheckRunningStrip } from './ui/CheckRunning.jsx'
  */
 export default function MonitorCardActions({
   running, onCheck, onEdit, onDuplicate, checkTitle, editTitle,
+  // Kontrol dugmesi PASIF olabilmeli: senaryo izlemesinde k6 yoksa calistirmak anlamsiz.
+  // Bu tek fark yuzunden ScriptedMonitorPage bloğun tamamini kopyalamisti.
+  checkDisabled = false,
 }) {
   const t = useT()
   return (
     <span className="mon-actions" onClick={e => e.stopPropagation()}>
       <CheckRunningStrip running={running} />
-      <CheckNowButton running={running} onClick={onCheck} title={checkTitle} />
+      <CheckNowButton running={running} disabled={checkDisabled} onClick={onCheck} title={checkTitle} />
       <button type="button" className="mon-act mon-act--edit"
         onClick={onEdit} title={editTitle} aria-label={editTitle}><Pencil size={13} /></button>
       <button type="button" className="mon-act mon-act--copy"

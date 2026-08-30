@@ -108,7 +108,7 @@ class WeeklyReportControllerTest {
         com.sitemonitor.model.WeeklyReportMail m = new com.sitemonitor.model.WeeklyReportMail();
         m.setId(9L); m.setReportId(5L); m.setMailType("APPROVE_MANAGER");
         m.setFromAddress("sitemonitor@test"); m.setToAddresses("mudur@test.com");
-        m.setCcAddresses("takim@test.com"); m.setSubject("[DijitalSY] Haftalık Rapor — W24");
+        m.setCcAddresses("takim@test.com"); m.setSubject("[TakimA] Haftalık Rapor — W24");
         m.setStatus("SENT"); m.setBodyHtml("<html>rapor</html>");
         when(service.mails(eq(5L), any())).thenReturn(List.of(m));
 
@@ -382,7 +382,7 @@ class WeeklyReportControllerTest {
     @DisplayName("GET /approve-link geçerli token → sayfada hem Onayla hem İade Et (name='reason' textarea) var")
     void approveLinkPage_valid_hasApproveAndReject() throws Exception {
         when(service.approvalTokenStatus("T1")).thenReturn(Map.of(
-                "valid", true, "team_name", "DijitalSY", "week_label", "2026-W24"));
+                "valid", true, "team_name", "TakimA", "week_label", "2026-W24"));
 
         mvc.perform(get("/api/weekly-reports/approve-link").param("token", "T1"))
                 .andExpect(status().isOk())

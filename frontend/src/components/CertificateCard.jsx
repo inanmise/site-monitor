@@ -4,6 +4,7 @@ import { memo } from 'react'
 import { formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { CheckNowButton, CheckRunningStrip } from './ui/CheckRunning.jsx'
+import { isInsecure, securityTitle } from '../utils/certSecurity.js'
 import { ProgressBar } from './ui/Progress.jsx'
 
 /** DN içinden bir alanı çıkar (örn. O=...) — SslCheckerPanel ile aynı desen. */
@@ -101,6 +102,14 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
           <span className="cc-pill-dot" />
           {pillLabel}
         </span>
+        {/* GÜVENLİK çipi AYRI durur: süre rozeti ("110 gün kaldı") doğru bilgidir ve kalmalı,
+            ama bu host için kabul edilemez bir sertifika sunuluyorsa kullanıcı bunu GÖRMELİ.
+            Ayrı çip olması süre süzgeçlerini ve raporları da hiç etkilemez. */}
+        {isInsecure(cert) && (
+          <span className="cc-pill cc-pill-error" title={securityTitle(cert, t)}>
+            {t('cert.sec.insecure')}
+          </span>
+        )}
         {cert.checked_at && (
           <span className="cc-meta" title={t('card.lastCheck')}>
             <Clock size={11} />

@@ -174,7 +174,9 @@ public class IncidentsController {
         else if ("DNS_FAILURE".equals(type))      { code = "DNS";  cat = "dns_failure"; }
         else if (type.startsWith("DNS_"))         { code = "DNS";  cat = "dns"; }
         else if (type.startsWith("DOMAINMON_"))   { code = "DOMAIN"; cat = "domain"; }
-        else if ("REVOKED".equals(type) || "MISMATCH".equals(type) || "CHAIN_BROKEN".equals(type)) { code = type; cat = "cert"; }
+        else if ("REVOKED".equals(type) || "MISMATCH".equals(type) || "CHAIN_BROKEN".equals(type)
+                 || com.sitemonitor.service.EscalationService.TYPE_HOSTNAME_MISMATCH.equals(type)
+                 || com.sitemonitor.service.EscalationService.TYPE_UNTRUSTED_CA.equals(type)) { code = type; cat = "cert"; }
         else if ("SCRIPTED_FAIL".equals(type))    { code = "SYNTHETIC"; cat = "down"; }
         else if ("PAGE_DOWN".equals(type))        { code = "DOWN";      cat = "down"; }
         else if ("PAGE_INTEGRITY".equals(type))   { code = "INTEGRITY"; cat = "content"; }
@@ -304,6 +306,12 @@ public class IncidentsController {
         permissionService.require(session, "alerts.actions", "execute");
         AlertComment c = commentRepo.findById(commentId)
                 .orElseThrow(() -> new NoSuchElementException("Yorum bulunamadı: " + commentId));
+        // TAKIM KAPSAMI: kardes uclar (get/listComments/addComment) requireIncidentScope tasiyor,
+        // silme tasimiyordu. "elevated" yalniz ROL dizesine bakiyor, HANGI takimin yoneticisi
+        // olduguna bakmiyordu -> A takiminin TEAM_ADMIN'i id artirarak B takiminin yorumlarini
+        // silebiliyordu (geri alma arayuzu de yok). Ayrica yorumun varligi istisna ile
+        // numaralandirilabiliyordu; kapsam kontrolu once gelince o da kapanir.
+        requireIncidentScope(session, requireAlert(c.getAlertEventId()));
         if (c.getDeletedAt() != null) return ok(Map.of("message", "Zaten silinmiş"));
         String user = (String) session.getAttribute("username");
         String role = (String) session.getAttribute("systemRole");

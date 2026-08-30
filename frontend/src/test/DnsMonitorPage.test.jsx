@@ -191,7 +191,7 @@ describe('DnsMonitorPage', () => {
     const { container, unmount } = render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
     await screen.findByText('d1.example.com')
-    expect(container.querySelectorAll('tbody tr')).toHaveLength(50)
+    expect(container.querySelectorAll('.upt-card')).toHaveLength(50)
     expect(screen.getByText('Page 1 of 3')).toBeInTheDocument()
     expect(screen.getByText('1–50 of 120 records')).toBeInTheDocument()
 

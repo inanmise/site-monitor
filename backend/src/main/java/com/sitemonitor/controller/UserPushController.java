@@ -282,12 +282,17 @@ public class UserPushController {
      * Desen {@code MonitoringController.scriptedEnvJson} ile aynı.
      */
     private String encryptHeaders(Object incoming) {
-        Map<String, String> existingSecrets = new LinkedHashMap<>();
+        // Kayitli degerler AD bazinda tutulur — yalniz secret=true satirlardan degil. Kullanici
+        // "sir" kutusunu KALDIRIP kaydettiginde de kurtarma yapabilmek icin gerekli (asagiya bkz.).
+        Map<String, String> existingValues = new LinkedHashMap<>();
+        Map<String, Boolean> existingSecretFlags = new LinkedHashMap<>();
         try {
             JsonNode cur = MAPPER.readTree(appSettings.getString("site.monitor.userpush.headers", "[]"));
-            if (cur.isArray()) for (JsonNode n : cur)
-                if (n.path("secret").asBoolean(false))
-                    existingSecrets.put(n.path("name").asText(""), n.path("value").asText(""));
+            if (cur.isArray()) for (JsonNode n : cur) {
+                String nm = n.path("name").asText("");
+                existingValues.put(nm, n.path("value").asText(""));
+                existingSecretFlags.put(nm, n.path("secret").asBoolean(false));
+            }
         } catch (Exception ignored) { }
         List<Map<String, Object>> out = new ArrayList<>();
         if (incoming instanceof List<?> list) {
@@ -296,12 +301,21 @@ public class UserPushController {
                 Object nm = e.get("name");
                 if (nm == null || nm.toString().isBlank()) continue;
                 String name = nm.toString().trim();
-                boolean secret = Boolean.TRUE.equals(e.get("secret")) || "true".equals(String.valueOf(e.get("secret")));
+                boolean secret = Boolean.TRUE.equals(e.get("secret")) || "true".equals(String.valueOf(e.get("secret")));   // maskeli degerde asagida korunur
                 String val = e.get("value") == null ? "" : e.get("value").toString();
                 String stored;
-                if (secret) {
-                    if (val.isBlank() || MASKED.equals(val)) stored = existingSecrets.getOrDefault(name, "");
-                    else stored = secretCipher.encrypt(val);
+                // MASKELI deger = "kullanici bu alani DEGISTIRMEDI". Karar bayraktan BAGIMSIZ
+                // verilmeli: eskiden secret kutusu kaldirilinca else daline dusuluyor ve
+                // stored = "*****" yaziliyordu — sifreli token GERI ALINAMAZ bicimde siliniyor,
+                // sonraki her push "Authorization: *****" ile gidip FAILED oluyordu.
+                boolean unchangedMasked = MASKED.equals(val);
+                if (unchangedMasked) {
+                    stored = existingValues.getOrDefault(name, "");
+                    // Deger sifreli saklaniyorsa "sir" bayragi da korunur: cozup duz metne
+                    // yazmak, kullanicinin gormedigi bir sirri acikta birakmak olurdu.
+                    if (Boolean.TRUE.equals(existingSecretFlags.get(name))) secret = true;
+                } else if (secret) {
+                    stored = val.isBlank() ? existingValues.getOrDefault(name, "") : secretCipher.encrypt(val);
                 } else {
                     stored = val;
                 }

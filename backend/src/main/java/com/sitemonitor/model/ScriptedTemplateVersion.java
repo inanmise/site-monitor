@@ -62,7 +62,7 @@ public class ScriptedTemplateVersion {
     /** O andaki kapsam: null = Genel, dolu = takım. PROMOTE/DEMOTE satırını okunur kılar. */
     private Long teamId;
 
-    /** Serbest not: "1.0.2 sürümünden geri yüklendi", "DijitalSY takımından genele açıldı" gibi. */
+    /** Serbest not: "1.0.2 sürümünden geri yüklendi", "TakimA takımından genele açıldı" gibi. */
     @Column(columnDefinition = "TEXT")
     private String note;
 

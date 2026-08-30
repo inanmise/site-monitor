@@ -134,7 +134,7 @@ describe('PortMonitorPage', () => {
     const { container, unmount } = render(<PortMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPortMonitors).toHaveBeenCalled())
     await screen.findByText('h1.example.com')
-    expect(container.querySelectorAll('tbody tr')).toHaveLength(50)
+    expect(container.querySelectorAll('.upt-card')).toHaveLength(50)
     expect(screen.getByText('Page 1 of 3')).toBeInTheDocument()
     expect(screen.getByText('1–50 of 120 records')).toBeInTheDocument()
 

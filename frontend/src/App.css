@@ -1852,9 +1852,13 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   background: linear-gradient(90deg, transparent, rgba(201,168,106,.55), transparent);
 }
 /* Kullanıcı adı/şifre paneli — koyu (dark) kart; beyaz zemin üzerinde yüzer */
+/* max-width 400 iken oturum-dustu bildirimi ("Oturumunuzun suresi doldu. Lutfen tekrar
+   giris yapin.") iki satira kiriliyordu: 52 karakter + 16px ikon + 8px bosluk, 328px'lik
+   ic genisige sigmiyor. 460px hem bu cumleyi tek satirda tasiyor hem de <768px kiriliminda
+   zaten width:100% ile daralıyor (lp-right padding'i tasmayi onluyor). */
 .lp-form-wrap {
   width: 100%;
-  max-width: 400px;
+  max-width: 460px;
   display: flex;
   flex-direction: column;
   gap: 28px;
@@ -1993,6 +1997,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   margin-bottom: 16px;
 }
 .lp-notice svg { flex-shrink: 0; }
+/* Cok daha uzun bir cevirinin tasmasini engelle: sigmazsa duzgun sarsin. */
+.lp-notice { min-width: 0; }
+.lp-notice > :not(svg) { min-width: 0; }
 
 /* Rate-limit full block screen */
 .lp-blocked {

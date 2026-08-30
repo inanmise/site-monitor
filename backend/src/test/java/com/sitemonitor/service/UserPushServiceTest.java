@@ -469,7 +469,9 @@ class UserPushServiceTest {
         e.setMessage("x".repeat(500));
         String msg = service.buildMessage(e, "OPEN", Map.of());
         assertThat(msg).hasSizeLessThanOrEqualTo(200);
-        assertThat(msg).endsWith("…");
+        // Kirpma isareti ARTIK "..." — tek karakterli "…" alici kanalda (ISO-8859-9) soru
+        // isaretine donuyordu; kullanicinin telefonunda gordugu "?" dizisinin bir parcasiydi.
+        assertThat(msg).endsWith("...");
         assertThat(msg).startsWith("KRİTİK");
     }
 
