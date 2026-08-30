@@ -177,4 +177,80 @@ class IncidentsControllerTest {
                 .as("kok-neden kategorisi olmayan alarm tipleri")
                 .isEmpty();
     }
+
+    // ── Yorum silme: OKUMA kapsamı YAZMA yetkisi vermez ─────────────────────
+    //
+    // requireIncidentScope viewTeamIds ile sorar; silme kapısı ise yalnız ROL DİZESİNE bakıyordu
+    // ("TEAM_ADMIN".equals(role)). Müdürün görüş alanı astlarının takımlarını kapsadığı için
+    // A takımının yöneticisi, yalnızca GÖREBİLDİĞİ B takımının yorumlarını silebiliyordu.
+
+    /** Görüş alanı iki takımı kapsıyor, yönetim yetkisi yalnız birini (müdür deseni). */
+    private MockHttpSession scopedSession(String role, java.util.List<Long> view, java.util.List<Long> manage) {
+        MockHttpSession s = session(role);
+        s.setAttribute("viewTeamIds", view);
+        s.setAttribute("manageTeamIds", manage);
+        return s;
+    }
+
+    private static AlertEvent teamAlert(long id, Long teamId) {
+        AlertEvent e = httpDown500();
+        e.setId(id);
+        e.setTeamId(teamId);
+        return e;
+    }
+
+    private static AlertComment comment(long id, long alertId, String author) {
+        AlertComment c = new AlertComment();
+        c.setId(id); c.setAlertEventId(alertId); c.setAuthorUsername(author); c.setBody("x");
+        return c;
+    }
+
+    @Test
+    @DisplayName("DELETE /comments: yalnız GÖRDÜĞÜ takımın yorumunu TEAM_ADMIN silemez -> 403")
+    void deleteComment_viewOnlyTeam_returns403() throws Exception {
+        when(commentRepo.findById(5L)).thenReturn(Optional.of(comment(5L, 1L, "baskasi")));
+        when(alertEventRepo.findById(1L)).thenReturn(Optional.of(teamAlert(1L, 2L)));   // B takımı
+
+        mvc.perform(delete("/api/monitoring/incidents/comments/5")
+                        .session(scopedSession("TEAM_ADMIN", List.of(1L, 2L), List.of(1L))))
+                .andExpect(status().isForbidden());
+        verify(commentRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("DELETE /comments: YÖNETTİĞİ takımın yorumunu silebilir -> 200")
+    void deleteComment_managedTeam_returns200() throws Exception {
+        when(commentRepo.findById(5L)).thenReturn(Optional.of(comment(5L, 1L, "baskasi")));
+        when(alertEventRepo.findById(1L)).thenReturn(Optional.of(teamAlert(1L, 1L)));   // A takımı
+        when(commentRepo.save(any(AlertComment.class))).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(delete("/api/monitoring/incidents/comments/5")
+                        .session(scopedSession("TEAM_ADMIN", List.of(1L, 2L), List.of(1L))))
+                .andExpect(status().isOk());
+        verify(commentRepo).save(any(AlertComment.class));
+    }
+
+    @Test
+    @DisplayName("DELETE /comments: kendi yorumunu her kullanıcı silebilir -> 200")
+    void deleteComment_ownComment_returns200() throws Exception {
+        when(commentRepo.findById(5L)).thenReturn(Optional.of(comment(5L, 1L, "u")));   // oturum username = "u"
+        when(alertEventRepo.findById(1L)).thenReturn(Optional.of(teamAlert(1L, 1L)));
+        when(commentRepo.save(any(AlertComment.class))).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(delete("/api/monitoring/incidents/comments/5")
+                        .session(scopedSession("USER", List.of(1L), List.of())))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("DELETE /comments: kapsam dışı incident -> 403 (yorumun varlığı numaralandırılamaz)")
+    void deleteComment_outOfViewScope_returns403() throws Exception {
+        when(commentRepo.findById(5L)).thenReturn(Optional.of(comment(5L, 1L, "baskasi")));
+        when(alertEventRepo.findById(1L)).thenReturn(Optional.of(teamAlert(1L, 9L)));
+        when(inventoryRepo.findByDomain(any())).thenReturn(Optional.empty());
+
+        mvc.perform(delete("/api/monitoring/incidents/comments/5")
+                        .session(scopedSession("TEAM_ADMIN", List.of(1L), List.of(1L))))
+                .andExpect(status().isForbidden());
+    }
 }

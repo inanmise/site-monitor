@@ -18,6 +18,7 @@ import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.URI;
 import java.net.URL;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
@@ -500,29 +501,7 @@ public class CertificateCheckerService {
                 // HSTS check via HTTP HEAD — reuse the SSLSocketFactory that already succeeded
                 HttpURLConnection hc = null;
                 try {
-                    URL url = new URL("https://" + domain + "/");
-                    if (useProxy) {
-                        java.net.Proxy p = new java.net.Proxy(java.net.Proxy.Type.HTTP,
-                                new InetSocketAddress(proxyHost, proxyPort));
-                        hc = (HttpURLConnection) url.openConnection(p);
-                        if (proxyUser != null && !proxyUser.isBlank()) {
-                            String creds = java.util.Base64.getEncoder().encodeToString(
-                                (proxyUser + ":" + proxyPass).getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                            hc.setRequestProperty("Proxy-Authorization", "Basic " + creds);
-                        }
-                    } else {
-                        // Direct = KESİN direct: JVM ProxySelector / sistem proxy env'ini baypas et (Proxy.NO_PROXY),
-                        // böylece use_proxy=false iken HSTS HEAD'i de proxy'ye sızmaz.
-                        hc = (HttpURLConnection) url.openConnection(java.net.Proxy.NO_PROXY);
-                    }
-                    if (hc instanceof HttpsURLConnection https) {
-                        https.setSSLSocketFactory(factory);
-                    }
-                    hc.setRequestMethod("HEAD");
-                    hc.setConnectTimeout(4000);
-                    hc.setReadTimeout(4000);
-                    hc.setInstanceFollowRedirects(true);
-                    hc.connect();
+                    hc = openHstsFollowingSafely("https://" + domain + "/", useProxy, factory);
                     result.put("hsts", hc.getHeaderField("Strict-Transport-Security") != null);
                     // Aynı HEAD'den HTTP durum kodu — ek istek YOK. "Şimdi Kontrol Et" tablosunda
                     // erişilebilirlik kolonunu besler (sertifika geçerli ama uygulama 503 olabilir).
@@ -872,6 +851,79 @@ public class CertificateCheckerService {
             log.warn("[cert-proxy] step=ssl-wrap FAILED domain={} err={}", domain, e.toString());
             try { raw.close(); } catch (Exception ignored) {}
             throw e;
+        }
+    }
+
+    /**
+     * HSTS HEAD probe'u — yönlendirmeleri <b>her hop {@link SsrfGuard}'dan geçirerek</b> takip eder.
+     *
+     * <p><b>Neden gerekti.</b> Önceki hal {@code setInstanceFollowRedirects(true)} ile JDK'nın kör
+     * zincir takibini kullanıyordu. {@code ssrfGuard.validate} yalnız İLK host için çalışıyor;
+     * izlenen sunucu {@code 302 Location: http://169.254.169.254/...} derse ara hop hiçbir kapıdan
+     * geçmiyordu ve sonuç {@code http_status} olarak kullanıcıya dönüyordu — iç servisler için
+     * durum-kodu oraklı. Hedefi envantere ekleyebilen herkes tetikleyebiliyordu.
+     *
+     * <p>Desen {@code HstsDiagnosticsService.openFollowingSafely} ile aynı: takip KAPALI kurulur,
+     * zincir burada {@link SafeRedirect} kurallarıyla ilerler (şema allow-list, host zorunluluğu,
+     * https→http düşürümü engeli, hop tavanı).
+     */
+    // Paket-gorunur: kapi testi (HstsProbeRedirectGuardTest) yerel sunucuya karsi dogrudan surer.
+    HttpURLConnection openHstsFollowingSafely(String startUrl, boolean useProxy,
+                                              SSLSocketFactory factory) throws Exception {
+        String current = startUrl;
+        String method = "HEAD";
+        for (int hop = 0; hop < SafeRedirect.MAX_HOPS; hop++) {
+            URI uri = URI.create(current);
+            guardHstsHost(uri.getHost());
+            HttpURLConnection hc = openHstsConnection(uri, useProxy, factory, method);
+            hc.connect();
+            int code = hc.getResponseCode();
+            if (!SafeRedirect.isRedirect(code)) return hc;
+            URI next = SafeRedirect.nextHop(uri, hc.getHeaderField("Location"));
+            // Takip edilemeyen hedef (şema dışı/host'suz) ya da https→http düşürümü → son yanıtı
+            // olduğu gibi raporla; yönlendirmenin kendisi bilgidir, hata değil.
+            if (next == null || SafeRedirect.isDowngrade(uri, next)) return hc;
+            hc.disconnect();
+            method = SafeRedirect.nextMethod(code, method);
+            current = next.toString();
+        }
+        throw new java.io.IOException("çok fazla yönlendirme (" + SafeRedirect.MAX_HOPS + " hop aşıldı)");
+    }
+
+    /** Tek hop için bağlantı — vekil/doğrudan seçimi ve TLS factory'si korunur; takip KAPALI. */
+    HttpURLConnection openHstsConnection(URI uri, boolean useProxy,
+                                         SSLSocketFactory factory, String method) throws Exception {
+        URL url = uri.toURL();
+        HttpURLConnection hc;
+        if (useProxy) {
+            java.net.Proxy p = new java.net.Proxy(java.net.Proxy.Type.HTTP,
+                    new InetSocketAddress(proxyHost, proxyPort));
+            hc = (HttpURLConnection) url.openConnection(p);
+            if (proxyUser != null && !proxyUser.isBlank()) {
+                String creds = java.util.Base64.getEncoder().encodeToString(
+                    (proxyUser + ":" + proxyPass).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                hc.setRequestProperty("Proxy-Authorization", "Basic " + creds);
+            }
+        } else {
+            // Direct = KESİN direct: JVM ProxySelector / sistem proxy env'ini baypas et (Proxy.NO_PROXY),
+            // böylece use_proxy=false iken HSTS HEAD'i de proxy'ye sızmaz.
+            hc = (HttpURLConnection) url.openConnection(java.net.Proxy.NO_PROXY);
+        }
+        if (hc instanceof HttpsURLConnection https) https.setSSLSocketFactory(factory);
+        hc.setRequestMethod(method);
+        hc.setConnectTimeout(4000);
+        hc.setReadTimeout(4000);
+        hc.setInstanceFollowRedirects(false);
+        return hc;
+    }
+
+    /** Çözülemeyen host DURDURMAZ (vekil arkasında split-DNS) — politika reddi durdurur. */
+    void guardHstsHost(String host) {
+        if (host == null || host.isBlank()) throw new SsrfGuard.BlockedException("geçersiz HSTS hedefi");
+        try {
+            ssrfGuard.validate(host);
+        } catch (SsrfGuard.UnresolvableHostException ue) {
+            log.debug("HSTS: {} yerelde çözülemedi, bağlantı yine denenecek", host);
         }
     }
 
