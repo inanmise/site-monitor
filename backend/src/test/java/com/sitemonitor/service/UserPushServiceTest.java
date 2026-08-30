@@ -464,7 +464,7 @@ class UserPushServiceTest {
         assertThat(UserPushService.templateKeyFor("HTTP_DOWN", "RESOLVE")).isEqualTo("resolved");
 
         AlertEvent e = event(1L, "CRITICAL", "HTTP_DOWN");
-        // {neden} zaten 120'de kırpılır; 200 tavanını AD/HEDEF uzunluğuyla zorla.
+        // {neden} kendi tavanında kırpılır; 200 tavanını AD/HEDEF uzunluğuyla zorla.
         e.setDomain("cok-uzun-alt-alan-adi-".repeat(8) + "example.com");
         e.setMessage("x".repeat(500));
         String msg = service.buildMessage(e, "OPEN", Map.of());
@@ -614,4 +614,69 @@ class UserPushServiceTest {
         verify(resolver, never()).resolve(any(), any());
         verify(deliveryRepo, never()).save(any());
     }
+    // ── Ayar kırpması: arayüz aralığı dayatıyor, sunucu da dayatmalı ────────────────────────
+    //
+    // AppSettingsService.validate yalnız TİP doğruluyor, ARALIK doğrulamıyor. API'den 0
+    // gönderilirse her push mesajı "..." olurdu. Aynı sınıf bulgu DNS/Domain teyit-kurtarma
+    // alanlarında da çıkmış ve orada da sunucu tarafı kırpmayla çözülmüştü.
+
+    private AlertEvent longEvent() {
+        AlertEvent e = event(1L, "CRITICAL", "HTTP_DOWN");
+        e.setDomain("a.example.com");
+        e.setMessage("KRİTİK: a.example.com " + "uzun sebep metni ".repeat(40));
+        return e;
+    }
+
+    @Test
+    @DisplayName("Ayar kırpması: max-message-chars=0 mesajı '...' yapmaz, tabana çekilir")
+    void maxMessageChars_zero_isClampedToFloor() {
+        when(appSettings.getInt(eq("site.monitor.userpush.max-message-chars"), any(Integer.class)))
+                .thenReturn(0);
+
+        String msg = service.buildMessage(longEvent(), "OPEN", Map.of());
+
+        assertThat(msg).isNotEqualTo("...");
+        assertThat(msg.length()).isGreaterThanOrEqualTo(40).isLessThanOrEqualTo(80);
+    }
+
+    @Test
+    @DisplayName("Ayar kırpması: max-message-chars çok büyükse tavana çekilir (kanal sözleşmesi)")
+    void maxMessageChars_huge_isClampedToCeiling() {
+        when(appSettings.getInt(eq("site.monitor.userpush.max-message-chars"), any(Integer.class)))
+                .thenReturn(99999);
+
+        String msg = service.buildMessage(longEvent(), "OPEN", Map.of());
+
+        assertThat(msg.length()).isLessThanOrEqualTo(320);
+    }
+
+    @Test
+    @DisplayName("Ayar kırpması: reason-max-chars=0 bilinçli 'tavan yok' — dış tavan yine korur")
+    void reasonMaxChars_zero_meansNoReasonCap() {
+        when(appSettings.getInt(eq("site.monitor.userpush.reason-max-chars"), any(Integer.class)))
+                .thenReturn(0);
+
+        String msg = service.buildMessage(longEvent(), "OPEN", Map.of());
+
+        assertThat(msg.length()).isLessThanOrEqualTo(200);   // dış tavan devrede
+    }
+
+    @Test
+    @DisplayName("Ayar kırpması: reason-max-chars aralık dışı değerler tabana/tavana çekilir")
+    void reasonMaxChars_outOfRange_isClamped() {
+        // Çok küçük: sebep tamamen yok olmamalı, tabana (40) çekilmeli.
+        when(appSettings.getInt(eq("site.monitor.userpush.reason-max-chars"), any(Integer.class)))
+                .thenReturn(5);
+        String kucuk = service.buildMessage(longEvent(), "OPEN", Map.of());
+
+        // Çok büyük: sebep tavanı 280'i aşmamalı.
+        when(appSettings.getInt(eq("site.monitor.userpush.reason-max-chars"), any(Integer.class)))
+                .thenReturn(99999);
+        String buyuk = service.buildMessage(longEvent(), "OPEN", Map.of());
+
+        assertThat(kucuk).as("5 tabana çekilmeli — sebep okunur kalmalı").contains("uzun sebep");
+        assertThat(kucuk.length()).isLessThan(buyuk.length());
+        assertThat(buyuk.length()).isLessThanOrEqualTo(200);
+    }
+
 }

@@ -74,6 +74,10 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.userpush.quiet-end",           "userpush",   Type.STRING),
         new Setting("site.monitor.userpush.quiet-min-level",     "userpush",   Type.STRING),
         new Setting("site.monitor.userpush.retention-days",      "userpush",   Type.INT),
+        // Mesaj uzunlugu: ikisi de GOMULU sabitti, hicbir yerden yonetilemiyordu. reason tavani
+        // (eski 120) sessizce kelime ortasindan kesiyordu; max-message urun sozlesmesi (K6, <=200).
+        new Setting("site.monitor.userpush.max-message-chars",   "userpush",   Type.INT),
+        new Setting("site.monitor.userpush.reason-max-chars",    "userpush",   Type.INT),
         new Setting("site.monitor.ui.inactivity-minutes",         "general",    Type.INT),
         new Setting("site.monitor.ui.inactivity-warn-seconds",    "general",    Type.INT),
         new Setting("site.monitor.network.error-rate-threshold", "outage",     Type.DOUBLE),

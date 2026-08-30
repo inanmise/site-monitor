@@ -163,6 +163,23 @@ public final class PushText {
      * @param domain  şablonun {@code {ad}} olarak zaten yazdığı adres (null olabilir)
      */
     public static String reasonOf(String message, String domain) {
+        return reasonOf(message, domain, DEFAULT_REASON_CHARS);
+    }
+
+    /**
+     * Sebep metni — <b>yapılandırılabilir tavanla</b>.
+     *
+     * <p><b>Neden parametre oldu.</b> Tavan burada çıplak bir {@code substring(0, 120)} idi:
+     * ne üç nokta koyuyor ne kelime sınırına saygı duyuyordu. 128 karakterlik bir sebep
+     * "…alarm otomatik kapan" diye kesiliyor, kullanıcı mesajın KİRPILDIĞINI anlamıyordu —
+     * cümle bitmiş gibi duruyordu. Üstelik sayının ne yorumu, ne testi, ne de belgesi vardı;
+     * sınıftaki diğer kırpma ({@link #truncate}) aynı işi ZATEN doğru yapıyordu.
+     *
+     * @param message  alarm metni (çok satırlıysa ilk satır)
+     * @param domain   şablonun {@code {ad}} olarak zaten yazdığı adres (null olabilir)
+     * @param maxChars sebep tavanı; {@code <= 0} ise tavan uygulanmaz (dış 200'lük kapak yine çalışır)
+     */
+    public static String reasonOf(String message, String domain, int maxChars) {
         if (message == null || message.isBlank()) return "";
         int nl = message.indexOf('\n');
         String line = (nl < 0 ? message : message.substring(0, nl)).trim();
@@ -175,7 +192,8 @@ public final class PushText {
                 while (!line.isEmpty() && ":-,".indexOf(line.charAt(0)) >= 0) line = line.substring(1).trim();
             }
         }
-        if (line.length() > 120) line = line.substring(0, 120).trim();
+        // Kırpma ART IK GÖRÜNÜR: aynı sınıfın test edilmiş yardımcısı kullanılıyor.
+        if (maxChars > 0) line = truncate(line, maxChars);
         return line;
     }
 
@@ -191,9 +209,29 @@ public final class PushText {
         return CHANNEL.newEncoder().canEncode(s);
     }
 
-    /** Kırpma işareti de kanal-güvenli olmalı: {@code …} tek başına soru işaretine dönüyordu. */
+    /**
+     * Sebep tavanının varsayılanı. Eski değer 120 idi ve SIRADAN mesajlarda boşuna
+     * tetikleniyordu: örnek bir HTTP_DOWN push'u toplam 193 karakter (200 tavanının altında)
+     * olmasına rağmen sebep 128 karakter olduğu için kuyruğu düşüyordu. 160, tipik bir
+     * "{seviye}: {hedef} … Başlangıç {saat}." önekinden sonra kalan payı karşılıyor; gerçek
+     * taşmayı zaten montaj anındaki 200'lük kapak üç noktayla hallediyor.
+     * Yönetici {@code site.monitor.userpush.reason-max-chars} ile değiştirebilir.
+     */
+    public static final int DEFAULT_REASON_CHARS = 160;
+
+    /**
+     * Kırpma işareti de kanal-güvenli olmalı: {@code …} tek başına soru işaretine dönüyordu.
+     *
+     * <p>Kesim KELİME SINIRINA saygı duyar: son boşluktan bölünür, böylece
+     * "…otomatik kapan..." yerine "…otomatik ..." okunur. Boşluk yoksa (tek uzun jeton)
+     * sert kesime düşülür — tavan her koşulda korunur.
+     */
     public static String truncate(String s, int max) {
         if (s == null || s.length() <= max) return s;
-        return s.substring(0, Math.max(0, max - 3)).trim() + "...";
+        String head = s.substring(0, Math.max(0, max - 3));
+        int sp = head.lastIndexOf(' ');
+        // Boşluk çok erken geliyorsa (başta) sert kesim daha çok bilgi taşır.
+        if (sp >= head.length() / 2) head = head.substring(0, sp);
+        return head.trim() + "...";
     }
 }
