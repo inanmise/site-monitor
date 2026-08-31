@@ -280,12 +280,25 @@ public class CertificateHealthService {
      */
     private HealthRow certificateChangeRow(LatestCheck lc) {
         Map<String, Object> ev = ev("pinned", lc.getPinnedFingerprint(), "pinned_at", lc.getPinnedAt(),
-                "previous", lc.getPreviousFingerprint(), "changed_at", lc.getFingerprintChangedAt());
+                "previous", lc.getPreviousFingerprint(), "changed_at", lc.getFingerprintChangedAt(),
+                "served", lc.getFingerprint());
 
         if (lc.getPinnedFingerprint() == null || lc.getPinnedFingerprint().isBlank()) {
             // Henüz hiç parmak izi görülmemiş (erişilemeyen domain) — hüküm verecek veri yok.
             return new HealthRow("pinnedFingerprint", GROUP_CERTIFICATE, Status.UNKNOWN, "unverified",
                     List.of(), "runCheck", List.of(), ev);
+        }
+
+        // Sunulan ≠ sabitlenen: pin, güven kapısı yüzünden KORUNMUŞ demektir
+        // ({@code CertificateService.applyAutoPin}) — sunulan sertifika ya bu adı kapsamıyor ya da
+        // güvenilmiyor. Kapı olmasaydı burası sessizce yeniden sabitlenir ve araya giren taraf
+        // pini kendi lehine yazdırırdı; kapıyla birlikte durum GÖRÜNÜR olmalı, yoksa yalnızca
+        // sessizleşmiş olurduk. Araya girme/DNS yönlendirme imzası olduğu için WARN değil FAIL.
+        String served = lc.getFingerprint();
+        if (served != null && !served.isBlank()
+                && !lc.getPinnedFingerprint().equalsIgnoreCase(served)) {
+            return new HealthRow("pinnedFingerprint", GROUP_CERTIFICATE, Status.FAIL, "certPinMismatch",
+                    List.of(), "investigateInterception", List.of(), ev);
         }
 
         String changedAt = lc.getFingerprintChangedAt();

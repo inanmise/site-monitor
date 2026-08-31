@@ -541,6 +541,50 @@ class SchedulerServiceTest {
         org.springframework.test.util.ReflectionTestUtils.invokeMethod(scheduler, "cleanupFalseDnsChangeFlags");
     }
 
+    /**
+     * Araya girmeden dogan sahte sertifika "degisti" damgalari — DNS temizliginin kardesi.
+     *
+     * <p>Kapsam DAR: yalniz ilgili parmak izinin O DOMAIN'de UNTRUSTED gozlendigi satirlar. Yeni
+     * guven kapisi (CertificateService.applyAutoPin) bu gozlemi zaten sabitlemezdi, yani temizlik
+     * gecmisi guncel mantikla tutarli hale getirir. Gercek bir yenileme iki GUVENILIR gozlem
+     * gerektirdiginden bu WHERE hicbir gercek degisimi silemez.
+     */
+    @Test
+    @DisplayName("applySchemaPatches: sahte sertifika damgasi YALNIZ UNTRUSTED gozlemli satirlarda temizlenir")
+    void cleanupInterceptedCertPins_narrowWhere() {
+        org.mockito.ArgumentCaptor<String> sql = org.mockito.ArgumentCaptor.forClass(String.class);
+        when(jdbcTemplate.update(sql.capture())).thenReturn(1);
+
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(scheduler, "cleanupInterceptedCertPins");
+
+        // Iki ayri hasar, iki ayri cumle: kirlenmis PIN sifirlanir, sahte DAMGA silinir.
+        assertThat(sql.getAllValues()).hasSize(2);
+        String poisoned = sql.getAllValues().get(0);
+        String stamps = sql.getAllValues().get(1);
+
+        // (1) Pin'in KENDISI araya giren sertifikadan geliyorsa pin tamamen sifirlanir (TOFU yeniden kurar).
+        assertThat(poisoned).startsWith("UPDATE latest_checks lc SET pinned_fingerprint = NULL");
+        assertThat(poisoned).contains("cc.fingerprint = lc.pinned_fingerprint");
+        assertThat(poisoned).contains("cc.trust_status = 'UNTRUSTED'");
+        // Farkli domainlerin ayni parmak izini tasimasi satirlari birbirine baglamamali.
+        assertThat(poisoned).contains("cc.domain = lc.domain");
+
+        // (2) Yalniz ONCEKI taraf kirliyse pin dogrudur; sadece sahte damga silinir.
+        assertThat(stamps).startsWith("UPDATE latest_checks lc SET previous_fingerprint = NULL");
+        assertThat(stamps).contains("cc.fingerprint = lc.previous_fingerprint");
+        assertThat(stamps).contains("cc.trust_status = 'UNTRUSTED'");
+        assertThat(stamps).contains("lc.fingerprint_changed_at IS NOT NULL");
+        // Pin'e DOKUNMAZ: gercek sertifika geri donmusse sabitlenen dogrudur.
+        assertThat(stamps).doesNotContain("SET pinned_fingerprint");
+    }
+
+    @Test
+    @DisplayName("applySchemaPatches: sertifika pin temizligi hatasi ACILISI DURDURMAZ")
+    void cleanupInterceptedCertPins_failureIsSwallowed() {
+        when(jdbcTemplate.update(anyString())).thenThrow(new RuntimeException("db kapali"));
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(scheduler, "cleanupInterceptedCertPins");
+    }
+
     @Test
     @DisplayName("runDnsChecks: CHANGED only on success vs last successful record; failure emits no change")
     void runDnsChecks_changeDetection_andFailureRegression() {

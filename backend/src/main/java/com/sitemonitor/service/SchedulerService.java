@@ -1055,6 +1055,7 @@ public class SchedulerService {
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_mon_groups_team_type_lname ON monitoring_groups(team_id, type, name_lower)");
 
         cleanupFalseDnsChangeFlags();
+        cleanupInterceptedCertPins();
     }
 
     /**
@@ -1091,6 +1092,53 @@ public class SchedulerService {
         } catch (Exception e) {
             // Acilis bu yuzden DURMAZ: kozmetik bir gecmis duzeltmesi, izlemenin kendisi degil.
             log.warn("Sahte DNS 'değişti' temizliği atlandı: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * GEÇMİŞE DÖNÜK VERİ DÜZELTMESİ — araya girmeden doğan sahte sertifika "değişti" damgaları
+     * ve kirlenmiş pinler.
+     *
+     * <p><b>Neden.</b> Otomatik pin (TOFU) farklı bir parmak izi görünce güveni sormadan yeniden
+     * sabitliyordu. Bir alan adı geçici olarak yerel modeme çözüldüğünde ({@code CN=192.168.1.1},
+     * kendinden imzalı) sistem bunu "sertifika değişti" saydı, modemin parmak izini SABİTLEDİ ve
+     * gerçek sertifika döndüğünde İKİNCİ bir sahte damga daha bastı. Kök neden
+     * {@code CertificateService.applyAutoPin} güven kapısıyla kapatıldı — ama geçmiş satırlar
+     * damgayı taşımaya devam eder ve sağlık listesi kırmızı kalırdı.
+     *
+     * <p><b>Kapsam DAR ve kanıtlanabilir:</b> yalnız ilgili parmak izinin o domain'de
+     * {@code UNTRUSTED} gözlendiği satırlar. Yeni kapı bu gözlemi zaten sabitlemezdi, yani
+     * düzeltme geçmişi GÜNCEL mantıkla tutarlı hâle getirir — hüküm değiştirmez. Gerçek bir
+     * yenileme iki güvenilir gözlem gerektirdiğinden bu WHERE hiçbir gerçek değişimi silemez.
+     *
+     * <p>İki ayrı cümle, çünkü iki ayrı hasar var: (1) pin'in KENDİSİ araya giren sertifikadan
+     * geliyorsa pin tamamen temizlenir ve bir sonraki temiz kontrolde TOFU yeniden sabitler;
+     * (2) yalnız ÖNCEKİ taraf kirliyse pin doğrudur, sahte damga silinir.
+     *
+     * <p>Idempotent: alanlar NULL'a çekildiği için ilk koşudan sonra hiçbir satır eşleşmez.
+     * Hata AÇILIŞI DURDURMAZ — kozmetik bir geçmiş düzeltmesi, izlemenin kendisi değil.
+     */
+    private void cleanupInterceptedCertPins() {
+        try {
+            int poisoned = jdbcTemplate.update(
+                    "UPDATE latest_checks lc SET pinned_fingerprint = NULL, pinned_at = NULL, "
+                  + "previous_fingerprint = NULL, fingerprint_changed_at = NULL "
+                  + "WHERE lc.pinned_fingerprint IS NOT NULL AND EXISTS ("
+                  + "SELECT 1 FROM certificate_checks cc WHERE cc.domain = lc.domain "
+                  + "AND cc.fingerprint = lc.pinned_fingerprint AND cc.trust_status = 'UNTRUSTED')");
+            int stamps = jdbcTemplate.update(
+                    "UPDATE latest_checks lc SET previous_fingerprint = NULL, fingerprint_changed_at = NULL "
+                  + "WHERE lc.fingerprint_changed_at IS NOT NULL AND EXISTS ("
+                  + "SELECT 1 FROM certificate_checks cc WHERE cc.domain = lc.domain "
+                  + "AND cc.fingerprint = lc.previous_fingerprint AND cc.trust_status = 'UNTRUSTED')");
+            if (poisoned > 0 || stamps > 0) {
+                log.info("Araya girmeden doğan pin kirliliği temizlendi: {} pin sıfırlandı, {} sahte 'değişti' damgası silindi",
+                        poisoned, stamps);
+            } else {
+                log.debug("Araya girmeden doğan sahte sertifika damgası bulunamadı — temiz.");
+            }
+        } catch (Exception e) {
+            log.warn("Sahte sertifika 'değişti' temizliği atlandı: {}", e.getMessage());
         }
     }
 
