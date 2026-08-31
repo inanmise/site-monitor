@@ -5,11 +5,12 @@ import { useT } from '../i18n/index.jsx'
 import { useUrlQuerySync, readUrlParam } from '../hooks/useUrlQuerySync.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
-import { X, Activity, Clock, Server, FileText, Globe, Route } from 'lucide-react'
+import { Activity, Clock, Server, FileText, Globe, Route } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import MonitorNotes from './MonitorNotes.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
+import MonitorModalActions from './ui/MonitorModalActions.jsx'
 // Süre grafiği artık paylaşımlı ResponseTimeChart (ping/keyword/port ile aynı: 90g/özel aralık + avg/min-max/p95).
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
@@ -36,7 +37,12 @@ function withinExpected(expectedJoined, valueJoined) {
   return values.length > 0 && values.every(v => expected.has(v))
 }
 
-export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canManage = false }) {
+export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canManage = false,
+                                        // Hızlı eylemler DnsMonitorPage'ten prop olarak gelir: tetikleyiciler
+                                        // (checkNow/openEdit/openDuplicate/deleteMonitor) orada yaşıyor ve
+                                        // burada ikinci bir kopyası ÜRETİLMEZ.
+                                        running = false, onCheck, onEdit, onDuplicate, onDelete, deleting = false,
+                                        histReload = 0 }) {
   const t = useT()
   const [details, setDetails] = useState(null)
   // D12: monitör hızla değiştirilirse eskinin geç yanıtı yeni modalı doldurmasın.
@@ -84,10 +90,16 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
             <strong>{monitor.domain}</strong>
             <span className="dns-modal-subtitle">— {t('dns.detailTitle')}</span>
           </div>
-          <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
-          <button className="dns-modal-close" onClick={onClose} aria-label={t('dns.close')}>
-            <X size={18} />
-          </button>
+          {/* Eylemler KARTIN aynısı (MonitorModalActions) — sekiz izleme türüyle tek desen. */}
+          <MonitorModalActions
+            running={running}
+            onCheck={onCheck} checkTitle={t('dns.check')}
+            onEdit={onEdit} editTitle={t('dns.edit')}
+            onDuplicate={onDuplicate}
+            onDelete={onDelete} deleting={deleting} deleteTitle={t('dns.delete')}
+            onClose={onClose} closeLabel={t('dns.close')} closeClassName="dns-modal-close">
+            <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+          </MonitorModalActions>
         </div>
 
         <div className="dns-modal-summary">
@@ -236,7 +248,7 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
               <h4 className="dns-section-title">
                 <Clock size={14} /> {t('dns.recentChecks')}
               </h4>
-              <CheckHistoryTab kind="dns" monitorId={monitor.id} listKey="dns-history"
+              <CheckHistoryTab kind="dns" monitorId={monitor.id} listKey="dns-history" reloadSignal={histReload}
                 filterMode="changed" gridClass="dns-rt-grid"
                 columns={[t('dns.lastCheck'), t('dns.currentValue'), t('dns.ttl'), t('dns.responseMs'), t('dns.status')]}
                 renderRow={(h) => {

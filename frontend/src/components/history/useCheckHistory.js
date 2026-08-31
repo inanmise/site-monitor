@@ -20,7 +20,8 @@ export const toUtcIso = (d) => new Date(d).toISOString().slice(0, 19)
  */
 export function useCheckHistory({ kind, id, listKey, presets = [1, 7, 15, 30], defaultPreset = 1,
                                   filterMode = 'fail', extraParams = null, live = true,
-                                  fixed = null /* {from: Date, to: Date} — sayfa aralığı kontrol eder (Uptime) */ }) {
+                                  fixed = null /* {from: Date, to: Date} — sayfa aralığı kontrol eder (Uptime) */,
+                                  reloadSignal = 0 /* dışarıdan tazeleme sayacı; 0 = hiç */ }) {
   const initialRange = readUrlParam('range', null)
   const initialPreset = presets.includes(Number(initialRange)) ? Number(initialRange)
     : (initialRange === 'custom' ? 'custom' : defaultPreset)
@@ -82,6 +83,24 @@ export function useCheckHistory({ kind, id, listKey, presets = [1, 7, 15, 30], d
   // Canlı yenileme: sekme görünürken 30 sn'de bir SESSİZ tazeleme (spinner yakmadan).
   const liveActive = live && page === 1 && preset !== 'custom' && !fixedFrom
   useVisibleInterval(() => load(true), liveActive ? 30000 : 0, false)
+
+  /**
+   * Dışarıdan tazeleme. Sertifika modalındaki "Çalıştır" kontrolü SENKRON koşturuyor; koşu
+   * bitince yeni kayıt burada da görünmeli, yoksa kullanıcı kontrolü tetikleyip geçmişte
+   * hiçbir şey değişmediğini görüyor (canlı yenileme 30 sn'ye kadar bekletirdi; 1. sayfa
+   * dışında ya da özel aralıkta ise HİÇ gelmezdi).
+   *
+   * <p>Sinyal, bileşeni remount ETMEDEN çalışır: `key` ile yeniden kurmak kullanıcının seçtiği
+   * aralığı/sayfayı/filtreyi sıfırlardı. `load` bilerek bağımlılık DEĞİL — kimliği her
+   * filtre değişiminde değişiyor ve buraya konsaydı her filtre değişimi ikinci bir istek
+   * daha atardı (üstteki `useEffect(load)` zaten atıyor).
+   */
+  const loadRef = useRef(load); loadRef.current = load
+  const firstSignal = useRef(true)
+  useEffect(() => {
+    if (firstSignal.current) { firstSignal.current = false; return }
+    loadRef.current(true)
+  }, [reloadSignal])
 
   // Aralık/filtre/boyut değişiminde sayfa 1'e döner — id değişimi de (başka monitör açıldı).
   const firstRun = useRef(true)

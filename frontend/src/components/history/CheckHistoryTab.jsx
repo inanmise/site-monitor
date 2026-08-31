@@ -27,6 +27,7 @@ export default function CheckHistoryTab({
   columns = [], gridClass = '', renderRow,
   extraParams = null,                        // uptime-http: { port }
   csv = true, live = true, urlSync = true,
+  reloadSignal = 0,                          // dışarıdan tazeleme (modaldaki "Çalıştır") — sayfa/filtre korunur
   onCounts = null,                           // modal başlık özeti için {total, fail} bildirimi
   range = null, onRangeChange = null,        // kontrollü aralık (Uptime: tek picker iki kolonu sürer)
   // ── Ardışık aynı sonuçları tek satırda topla (OPT-IN, varsayılan KAPALI) ──
@@ -38,7 +39,7 @@ export default function CheckHistoryTab({
 }) {
   const t = useT()
   const h = useCheckHistory({ kind, id: monitorId, listKey, presets, defaultPreset, filterMode, extraParams,
-    live: range ? false : live, fixed: range })
+    live: range ? false : live, fixed: range, reloadSignal })
   const [showPicker, setShowPicker] = useState(false)
   const [openGroups, setOpenGroups] = useState({})
   const fixedMode = !!range

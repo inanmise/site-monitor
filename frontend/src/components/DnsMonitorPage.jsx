@@ -7,7 +7,6 @@ import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
-import { CheckNowButton, CheckRunningStrip } from './ui/CheckRunning.jsx'
 import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
@@ -15,7 +14,7 @@ import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
-import { Play, Pencil, Copy, Trash2, Plus, ChevronDown, Globe, Info, Network, AlertTriangle, FlaskConical, Check, Layers, RefreshCw, Pause, BellDot, ArrowLeftRight } from 'lucide-react'
+import { Trash2, Plus, ChevronDown, Globe, Info, Network, AlertTriangle, FlaskConical, Check, RefreshCw, Pause, BellDot, ArrowLeftRight } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import DnsDetailModal from './DnsDetailModal.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
@@ -79,6 +78,9 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const [loadError, setLoadError] = useState(null)
   const [teams, setTeams] = useState([])
   const [detailMonitor, setDetailMonitor] = useState(null)
+  // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin (diğer sekiz türle aynı):
+  // sekmenin kendi 30 sn'lik canlı yenilemesi 1. sayfa dışında ve özel aralıkta KAPALI.
+  const [histReload, setHistReload] = useState(0)
   const [modal, setModal] = useState(null)
   // Opsiyonel "değişiklik nedeni" — form nesnesine DEĞİL ayrı tutulur: taslak/kirlilik
   // karşılaştırması form üzerinden yapılıyor ve not bir ayar değil, tek seferlik açıklama.
@@ -240,6 +242,11 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
       const res = await api.monitoring.triggerDnsCheck(m.id)
       if (res?.success) {
         setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
+        // Detay modalı AÇIKSA onun kendi kopyası da tazelenmeli — diğer sekiz sayfa bunu zaten
+        // yapıyordu, DNS yapmıyordu: modalden kontrol koşturunca üstteki özet eski değerde kalıyor,
+        // kullanıcı "çalıştı mı?" diye ikinci kez basıyordu.
+        setDetailMonitor(prev => (prev?.id === m.id ? { ...prev, ...res.data } : prev))
+        setHistReload(k => k + 1)
       }
     })
   }
@@ -528,7 +535,14 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
 
       {detailMonitor && (
         <DnsDetailModal monitor={detailMonitor} onClose={() => setDetailMonitor(null)} teamNames={teamNameById}
-          canManage={canManageRow(detailMonitor)} />
+          canManage={canManageRow(detailMonitor)}
+          running={isRunning(detailMonitor.id)}
+          onCheck={canManageRow(detailMonitor) ? () => checkNow(detailMonitor) : undefined}
+          onEdit={canManageRow(detailMonitor) ? () => openEdit(detailMonitor) : undefined}
+          onDuplicate={canManageRow(detailMonitor) ? () => openDuplicate(detailMonitor) : undefined}
+          onDelete={canDeleteRow(detailMonitor) ? () => deleteMonitor(detailMonitor) : undefined}
+          deleting={deleting === detailMonitor.id}
+          histReload={histReload} />
       )}
 
       {modal && (

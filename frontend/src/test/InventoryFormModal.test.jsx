@@ -280,3 +280,61 @@ describe('InventoryFormModalForDomain', () => {
     expect(screen.queryByRole('button', { name: /^Kaydet$|^Save$/i })).toBeNull()
   })
 })
+
+/**
+ * Kaydetmenin ardından OTOMATİK ilk kontrol.
+ *
+ * Yeni eklenen domain, zamanlayıcı sırası gelene kadar kartta "kontrol edilmedi" duruyordu ve
+ * kullanıcı kaydedip ayrıca calistir'a basmak zorundaydı. Düzenlemede de gerekli: port / TLS
+ * modu / proxy değişince saklanan son sonuç artık O AYARIN sonucu değil.
+ */
+describe('InventoryFormModal — kaydetme sonrası otomatik ilk kontrol', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.refreshCertificateHealth = vi.fn().mockResolvedValue({ success: true })
+  })
+
+  // YENİ KAYIT dallanması `duplicate` ile sürülür: `add` modunda takım boş olduğu için Kaydet
+  // devre dışı ve takımı SearchableSelect'ten seçmek kırılgan (üstteki 'add' testinin notu).
+  // İki mod da AYNI ucu (`addInventory`) çağırır — doğrulanan dallanma aynıdır.
+  it('YENİ KAYITTA kontrol KAYDEDİLEN alan adıyla koşar ve sonra kapanır', async () => {
+    const onSaved = vi.fn()
+    render(<InventoryFormModal mode="duplicate" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={onSaved} />)
+    fireEvent.change(screen.getByDisplayValue('a.example.com'), { target: { value: 'yeni.example.com' } })
+    fireEvent.click(saveBtn())
+
+    await waitFor(() => expect(api.admin.addInventory).toHaveBeenCalled())
+    await waitFor(() => expect(api.refreshCertificateHealth).toHaveBeenCalledWith('yeni.example.com'))
+    // Form kontrol BİTTİKTEN sonra kapanır: erken kapatmak kartın bir an "kontrol edilmedi"
+    // gösterip sonra sessizce değişmesi demekti.
+    await waitFor(() => expect(onSaved).toHaveBeenCalled())
+    expect(onSaved.mock.calls[0][1]).toBe('yeni.example.com')
+  })
+
+  it('DÜZENLEMEDE de koşar (port/TLS değişince saklanan sonuç bayatlar)', async () => {
+    render(<InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(api.admin.updateInventory).toHaveBeenCalled())
+    await waitFor(() => expect(api.refreshCertificateHealth).toHaveBeenCalledWith('a.example.com'))
+  })
+
+  it('KAYIT BAŞARISIZSA kontrol HİÇ koşmaz', async () => {
+    api.admin.addInventory = vi.fn().mockResolvedValue({ success: false, error: 'mükerrer' })
+    render(<InventoryFormModal mode="duplicate" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+    fireEvent.change(screen.getByDisplayValue('a.example.com'), { target: { value: 'yeni.example.com' } })
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(api.admin.addInventory).toHaveBeenCalled())
+    expect(api.refreshCertificateHealth).not.toHaveBeenCalled()
+  })
+
+  it('kontrol düşerse KAYIT YİNE BAŞARILI sayılır (form kapanır)', async () => {
+    api.admin.addInventory = vi.fn().mockResolvedValue({ success: true })
+    api.refreshCertificateHealth = vi.fn().mockRejectedValue(new Error('ağ yok'))
+    const onSaved = vi.fn()
+    render(<InventoryFormModal mode="duplicate" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={onSaved} />)
+    fireEvent.change(screen.getByDisplayValue('a.example.com'), { target: { value: 'yeni.example.com' } })
+    fireEvent.click(saveBtn())
+    // Ağ hatası kullanıcıya "kaydedilmedi" gibi görünmemeli: akış onSaved ile TAMAMLANIR.
+    await waitFor(() => expect(onSaved).toHaveBeenCalled())
+  })
+})

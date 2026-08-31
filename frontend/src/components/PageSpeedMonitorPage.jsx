@@ -9,6 +9,7 @@ import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
+import MonitorModalActions from './ui/MonitorModalActions.jsx'
 import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
@@ -20,9 +21,7 @@ import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { X, RefreshCw, Plus, Trash2, Gauge, FlaskConical, Check, AlertTriangle, LayoutDashboard,
-  CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, Image, FileCode, Frame,
-  Type, Download, Link2, Wand2 } from 'lucide-react'
+import { RefreshCw, Plus, Trash2, Gauge, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, Image, FileCode, Frame, Type, Download, Link2, Wand2 } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { normalizeUrl } from '../utils/normalizeUrl.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
@@ -152,6 +151,10 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState(null)
   const [detailTab, setDetailTab] = useState('resources')
+  // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin. Sekmenin kendi 30 sn'lik
+  // canlı yenilemesi yetmiyor: 1. sayfa dışındaysan ya da özel aralık seçtiysen KAPALI. Sinyal,
+  // sekmeyi remount ETMEDEN yeniden okutur (remount seçilen aralığı/sayfayı/filtreyi sıfırlardı).
+  const [histReload, setHistReload] = useState(0)
   const [metric, setMetric] = useState('load')
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
@@ -336,6 +339,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
       if (res?.success) {
         setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
         if (selected?.id === m.id) { setSelected(res.data); setResCheckId(null); loadResources(m.id) }
+        setHistReload(k => k + 1)
       } else {
         toast.error(res?.error || 'Error')
       }
@@ -580,8 +584,19 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
                 {statusBadge(selected)}
                 <span className="upt-modal-domain">{selected.url}</span>
               </div>
-              <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
-              <button className="upt-modal-close" onClick={closeDetail}><X size={18} /></button>
+              {/* Hızlı eylemler KARTIN aynısı (MonitorModalActions): detayı açan kişi kontrol
+                  koşturmak ya da ayarı düzeltmek için modalı kapatıp karta dönmesin. Yetki
+                  kapıları da kartla birebir — modal ayrı bir yetki yüzeyi DEĞİL. */}
+              <MonitorModalActions
+                running={isRunning(selected.id)}
+                onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
+                checkTitle={t('pspd.check')}
+                onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
+                editTitle={t('pspd.edit')}
+                onDuplicate={canManageRow(selected) ? () => openDuplicate(selected) : undefined}
+                onClose={closeDetail}>
+                <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+              </MonitorModalActions>
             </div>
             <div className="upt-modal-divider" />
             <div className="upt-modal-summary">
@@ -721,7 +736,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
             {detailTab === 'control' && (
               /* columns + renderRow ZORUNLU: CheckHistoryTab satirlari cizmeyi cagirana birakir.
                  Gecilmezse map icinde "renderRow is not a function" ile sekme comple coker. */
-              <CheckHistoryTab kind="pagespeed" monitorId={selected.id} listKey="pagespeed-history"
+              <CheckHistoryTab kind="pagespeed" monitorId={selected.id} listKey="pagespeed-history" reloadSignal={histReload}
                 defaultPreset={7} gridClass="pspd-rt-grid"
                 columns={[t('pspd.colTime'), t('pspd.colStatus'), t('pspd.mLoad'),
                           t('pspd.mTtfb'), t('pspd.mSize'), t('pspd.mRequests')]}

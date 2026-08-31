@@ -15,7 +15,7 @@ import TagInput from './ui/TagInput.jsx'
 import ScriptedTemplateInfo from './scripted/ScriptedTemplateInfo.jsx'
 import { useScriptedTemplates } from '../hooks/useScriptedTemplates.js'
 import { buildScriptSourceOptions, resolveTemplate } from '../utils/scriptSourceOptions.js'
-import { FlaskConical, Play, Pencil, Plus, Trash2, X, RefreshCw, Eye, EyeOff, Copy, AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, ChevronDown, Terminal, FileCode2 } from 'lucide-react'
+import { FlaskConical, Play, Plus, Trash2, RefreshCw, Eye, EyeOff, AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, ChevronDown, Terminal, FileCode2 } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { collectK6Markers } from '../utils/k6Errors.js'
 import { usePagination } from '../hooks/usePagination.js'
@@ -40,7 +40,7 @@ import { exitLabel, exitHint, diagnosisHint, k6SyntaxLevel, readPhases, formatBy
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
-import { CheckNowButton, CheckRunningStrip } from './ui/CheckRunning.jsx'
+import MonitorModalActions from './ui/MonitorModalActions.jsx'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
@@ -224,6 +224,10 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   const [selected, setSelected] = useState(null) // detail monitor
   const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
   const [detailTab, setDetailTab] = useState('control')
+  // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin. Sekmenin kendi 30 sn'lik
+  // canlı yenilemesi yetmiyor: 1. sayfa dışındaysan ya da özel aralık seçtiysen KAPALI. Sinyal,
+  // sekmeyi remount ETMEDEN yeniden okutur (remount seçilen aralığı/sayfayı/filtreyi sıfırlardı).
+  const [histReload, setHistReload] = useState(0)
   const [selCheck, setSelCheck] = useState(null)
   const deepLinkDone = useRef(false)
   // ── Otomatik taslak ──
@@ -836,11 +840,15 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
           toast.success(t('scripted.triggerQueued'))
         } else {
           setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
-          // Geçmiş yenilemesi BİLİNÇLİ olarak yok: CheckHistoryTab kendi live polling'ini yapıyor.
+          // Geçmiş ARTIK tazeleniyor (setHistReload): sekmenin kendi 30 sn'lik canlı yenilemesi
+          // 1. sayfa dışında ve özel aralıkta KAPALI, dolayısıyla modaldan koşturulan kontrolün
+          // sonucu hiç görünmeyebiliyordu. Sinyal remount ETMEZ — seçilen aralık/sayfa/filtre kalır.
+          // (Eski hatalı loadHistory(m.id, rangeDays) çağrısı geri GELMEDİ; not aşağıda duruyor.)
           // Buradaki eski loadHistory(m.id, rangeDays) çağrısı geçmiş yönetimi o bileşene taşınırken
           // temizlenmemişti; ikisi de tanımsız olduğu için modal açıkken "Şimdi Çalıştır" ReferenceError
           // atıyor, aşağıdaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
           if (selected?.id === m.id) setSelected(res.data)
+          setHistReload(k => k + 1)
         }
       } else if (res) toast.error(res.error || t('scripted.triggerError'))
     })
@@ -1035,15 +1043,24 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
                 {statusBadge(selected)}
                 <span className="upt-modal-domain">{selected.name}</span>
               </div>
-              {canManageRow(selected) && (
-                <button className="btn btn-sm btn-primary" disabled={isRunning(selected.id) || !k6.available}
-                  onClick={() => checkNow(selected)}><Play size={14} />{t('scripted.runNow')}</button>
-              )}
               {/* CSV butonu kaldırıldı: mükerrerdi ve bozuktu (tanımsız `history` → window.history →
                   "history.map is not a function"). Çalışan, sunucu-taraflı CSV linkini Kontrol
                   Geçmişi sekmesi zaten sunuyor (CheckHistoryTab). */}
-              <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
-              <button className="upt-modal-close" onClick={closeDetail}><X size={18} /></button>
+              {/* Eylemler KARTIN aynısı (MonitorModalActions). Buradaki "Çalıştır" eskiden tek
+                  başına, etiketli bir `btn-primary` idi: diğer sekiz türde aynı iş ikon düğmesi,
+                  burada birincil düğmeydi ve Düzenle/Kopyala hiç yoktu. k6 koşulu KORUNUR —
+                  k6 kurulu değilken sentetik koşu anlamsız (`checkDisabled`). */}
+              <MonitorModalActions
+                running={isRunning(selected.id)}
+                checkDisabled={!k6.available}
+                onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
+                checkTitle={t('scripted.runNow')}
+                onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
+                editTitle={t('scripted.edit')}
+                onDuplicate={canManageRow(selected) ? () => openDuplicate(selected) : undefined}
+                onClose={closeDetail}>
+                <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+              </MonitorModalActions>
             </div>
             <div className="upt-modal-divider" />
             <div className="upt-modal-summary">
@@ -1102,7 +1119,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
               {/* gridClass ZORUNLU: sürüm kolonuyla birlikte 5 kolon olduk, ortak `.upt-rt-grid`
                   tabanı ise 4 kolonluk. Kendi şablonumuzu geçmezsek 5. hücre taşar — ve tabanı
                   değiştirmek CheckHistoryTab'ı paylaşan diğer 9 izleme sayfasını bozardı. */}
-              <CheckHistoryTab kind="scripted" monitorId={selected.id} listKey="scripted-history"
+              <CheckHistoryTab kind="scripted" monitorId={selected.id} listKey="scripted-history" reloadSignal={histReload}
                 gridClass="sc-rt-grid"
                 columns={[t('scripted.colTime'), t('scripted.colStatus'), t('scripted.versionColVersion'),
                   t('scripted.colDuration'), t('scripted.colDetail')]}

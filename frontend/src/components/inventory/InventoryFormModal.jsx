@@ -11,6 +11,7 @@ import NotificationGroupSelect from '../ui/NotificationGroupSelect.jsx'
 import { INVENTORY_FLAGS, emptyFlags } from '../../utils/inventoryFlags.js'
 import { CONTACT_FIELDS, looksLikeBrokenEmail } from '../../utils/inventoryContacts.js'
 import { LoadingBlock } from '../ui/Progress.jsx'
+import { CheckRunningStrip } from '../ui/CheckRunning.jsx'
 import Field from '../ui/Field.jsx'
 import DiagnosticsModal from '../admin/DiagnosticsModal.jsx'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
@@ -118,6 +119,9 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
   const [showScrollHint, setShowScrollHint] = useState(false)
   const [showDiag, setShowDiag] = useState(false)
   const [running, setRunning]   = useState(false)
+  // Kaydetmenin ardından koşan OTOMATİK ilk kontrol (elle "Çalıştır"dan ayrı bayrak: ikisi
+  // farklı düğmeleri kilitliyor ve şeridin metni aynı olsa da tetikleyicisi farklı).
+  const [firstRun, setFirstRun] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const formGridRef = useRef(null)
 
@@ -291,7 +295,24 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
       if ((res.alertsClosed ?? 0) > 0) {
         toast.success(t('inv.deactivatedAlerts', res.alertsClosed))
       }
-      onSaved?.(res)
+      // ── Kaydetmenin ARDINDAN otomatik ilk kontrol ────────────────────────────────────
+      // Yeni eklenen domain, zamanlayıcı sırası gelene kadar kartta "kontrol edilmedi" diye
+      // duruyordu; kullanıcı kaydedip ayrıca ▶'ye basmak zorundaydı. Düzenlemede de gerekli:
+      // port / TLS modu / proxy değişince saklanan son sonuç ARTIK O AYARIN sonucu değil.
+      //
+      // Elle "Çalıştır" ile AYNI uç (`refreshCertificateHealth`) — ikinci bir kontrol yolu
+      // üretilmiyor. Beklenir (fire-and-forget değil): sonucu görmeden kapatmak, kartın bir
+      // an "kontrol edilmedi" gösterip sonra sessizce değişmesi demekti.
+      //
+      // Kontrol düşerse KAYIT YİNE BAŞARILIDIR: ayrı bir bildirimle söylenir, form kapanır.
+      // Aksi hâlde ağ hatası kullanıcıya "kaydedilmedi" gibi görünürdü.
+      const savedNow = form.domain.trim()
+      setFirstRun(true)
+      let chk = null
+      try { chk = await api.refreshCertificateHealth(savedNow) } catch (e) { chk = { success: false, error: e?.message } }
+      setFirstRun(false)
+      if (!chk?.success) toast.error(t('inv.saveRunFailed', chk?.error || '—'))
+      onSaved?.(res, savedNow)
     } else {
       // Sunucu hatası → tek bildirim (toast); modal AÇIK kalır (mükerrer domain 409'u burada görünür).
       // Inline setMsg yalnız form validation için.
@@ -494,10 +515,13 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
               <Trash2 size={14} />{t('inv.delete')}
             </button>
           )}
-          <button className="btn btn-secondary" onClick={onClose}>{t('inv.cancel')}</button>
+          {/* Otomatik ilk kontrolün geri bildirimi — kartlardaki şeridin AYNISI. Kontrol canlı bir
+              TLS el sıkışması ve saniyeler sürebiliyor; şerit olmadan form "takıldı" gibi durur. */}
+          <CheckRunningStrip running={firstRun} />
+          <button className="btn btn-secondary" onClick={onClose} disabled={firstRun}>{t('inv.cancel')}</button>
           <button className="btn btn-primary" onClick={save}
-            disabled={saving || !form.domain.trim() || !form.team_id}>
-            {saving ? t('inv.saving') : t('inv.save')}
+            disabled={saving || firstRun || !form.domain.trim() || !form.team_id}>
+            {saving ? t('inv.saving') : firstRun ? t('inv.saveRunning') : t('inv.save')}
           </button>
         </div>
       </div>
