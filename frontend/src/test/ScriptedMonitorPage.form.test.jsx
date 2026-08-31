@@ -361,7 +361,11 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       fireEvent.change(screen.getByTestId('code-editor'), { target: { value: 'kirli icerik' } })
 
       api.monitoring.saveScriptedDraft.mockClear()
-      fireEvent.click(screen.getByRole('button', { name: /^(delete|sil)$/i }))
+      // Hedef DÜZENLEME MODALININ silme düğmesi (`.btn-danger`). Kartta da artık bir silme
+      // düğmesi var (`.mon-act--danger`, dokuz türün tamamına eklendi), bu yüzden yalnız
+      // erişilebilir adla sorgulamak iki eşleşme döndürüyor. Satır 360'taki `.mon-act--edit`
+      // ile aynı ayrıştırma.
+      fireEvent.click(document.querySelector('.modal-box .btn-danger, .btn-danger'))
       await waitFor(() => expect(api.monitoring.deleteScriptedMonitor).toHaveBeenCalled())
 
       expect(api.monitoring.saveScriptedDraft).not.toHaveBeenCalled()

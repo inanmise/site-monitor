@@ -7166,7 +7166,15 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .upt-page { padding: 0 4px; }
 .upt-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
 .upt-title { font-size: 18px; font-weight: 700; color: var(--text); margin: 0 0 4px; }
-.upt-subtitle { font-size: 12px; color: var(--text-muted); margin: 0; }
+/* SATIR UZUNLUĞU TAVANI. İki işi birden yapıyor:
+   1) Okunabilirlik: 12px'lik soluk bir paragrafın 1100px boyunca tek satır akması zor okunur.
+   2) Başlık düzenini KARARLI kılar. `.upt-header` sarmalı bir flex satır; alt başlık uzun olduğunda
+      sol blok satırın tamamını kapıyor ve sağdaki eylem kümesi KENDİ SATIRINA düşüyordu
+      (Sentetik İzleme'de ölçüldü: ~1250px altı içerik genişliğinde başlık 94px → 133px). Sentetik
+      sayfasında bunun ikinci bir yüzü var: Şablonlar görünümünde sağ küme HİÇ çizilmiyor, yani
+      görünüm değiştirince başlık/alt başlık/görünüm anahtarı yukarı-aşağı zıplıyordu. Tavan sol
+      sütunun genişliğini kardeşinden BAĞIMSIZ kılar → iki görünümde de aynı yerde dururlar. */
+.upt-subtitle { font-size: 12px; color: var(--text-muted); margin: 0; max-width: 78ch; }
 /* margin-left:auto + flex-end: .upt-header sarmalandığında (Sentetik izlemede buton grubu en geniş
    olduğu için alt satıra düşüyordu) tek başına kalan satır space-between yüzünden SOLA yaslanıyordu. */
 .upt-header-right { display: flex; align-items: center; gap: 12px; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
@@ -8162,13 +8170,19 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   display: block; margin: 0 0 12px; padding: 10px 12px;
   border: 1px dashed var(--border); border-radius: 8px;
   background: var(--bg-surface);
+  /* Taban `.form-grid label` ile AYNI (.88em). İçerideki `.input` boyutunu `.95em` olarak
+     göreli veriyor: taban eşitlenmezse 16px üstünden 15.2px çıkıyor ve aynı formdaki diğer
+     alanlardan (13.4px) gözle görülür biçimde büyük duruyordu. */
+  font-size: .88em;
 }
 .chg-note-field > span:first-child {
   display: inline-flex; align-items: center; gap: 5px; margin-bottom: 6px;
-  font-size: .82em; font-weight: 600; color: var(--text-muted);
+  /* Taban .88em'e indiği için başlık/ipucu oranı buna göre tazelendi — ikisi de eskisiyle
+     aynı piksel boyunda kalır (~13px), yalnız input hizalanır. */
+  font-size: .93em; font-weight: 600; color: var(--text-muted);
 }
-.chg-note-field input { width: 100%; }
-.chg-note-field .field-hint { color: var(--text-light); }
+/* Genişlik `.input`ten gelir (width:100%); burada ayrıca tanımlamak ikinci bir kaynak olurdu. */
+.chg-note-field .field-hint { font-size: .93em; color: var(--text-light); }
 
 /* İlk değerler paneli — iki sütunlu tanım listesi. */
 .chg-dl { margin: 6px 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; }
@@ -11749,7 +11763,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .sc-ver-runs { margin-left: 8px; font-size: .72em; color: var(--text-muted); white-space: nowrap; }
 .sc-ver-runs--bad { color: var(--danger, #dc2626); font-weight: 700; }
 
-.upt-card-top-right { display: flex; align-items: center; gap: 6px; }
+/* `margin-left: auto` ŞART — hizalama `.upt-card-top`un `space-between`ine BIRAKILAMAZ.
+   O kural yalnız iki veya daha fazla çocuk varken sağa yaslar; tek çocuk kalınca flex-start'a
+   düşer. DNS kartı üst satırda durum rozeti ÇİZMİYOR (sinyali kart gövdesinde veriyor), yani
+   alarm ve bakım rozeti de yoksa geriye tek bu grup kalıyor ve kayıt-tipi etiketiyle bağlantı
+   kopyalama düğmesi kartın SOLUNA düşüyordu. `auto` kenar boşluğu kardeş sayısından bağımsız. */
+.upt-card-top-right { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .upt-card-copy { padding: 2px 5px; opacity: .45; transition: opacity .15s; line-height: 1; }
 .upt-card:hover .upt-card-copy, .upt-card-copy:focus-visible { opacity: 1; }
 .dns-diff-cell { padding: 8px 10px; border-left: 3px solid var(--danger); border-radius: 4px;

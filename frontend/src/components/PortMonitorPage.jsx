@@ -7,6 +7,7 @@ import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
+import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorCardActions from './MonitorCardActions.jsx'
@@ -64,6 +65,7 @@ const emptyForm = { name: '', host: '', port: '', protocol: 'TCP', expect: '', s
 export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
   const toast = useToast()
+  const { showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin                          // ekle/düzenle/sil butonu (takım-kapsamlı)
@@ -245,7 +247,17 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
    */
   async function deleteMonitor(m) {
     if (!m || m === 'new') return
-    if (!window.confirm(t('port.deleteConfirm'))) return
+    // Onay projenin diyaloğuyla alınır. `window.confirm` tarayıcı-varsayılanı bir kutu
+    // çiziyordu (tasarım sistemi dışı) ve hedefin adını göstermiyordu; kart üzerindeki
+    // tek tık yıkıcı bir işlem tetiklediği için mesaj NEYİN silineceğini söylemeli.
+    const ok = await showConfirm({
+      title: t('mon.deleteTitle'),
+      message: t('mon.deleteMsg', m.name || (m.host + ":" + m.port)),
+      confirmText: t('port.delete'),
+      cancelText: t('port.cancel'),
+      variant: 'danger',
+    })
+    if (!ok) return
     setDeleting(m.id)
     const res = await api.monitoring.deletePortMonitor(m.id)
     setDeleting(null)
@@ -487,20 +499,14 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
                 {/* Sinifsiz sarmalayici: MonitorCardActions kendi kokunu zaten
                     "mon-actions" yapiyor; ayni sinifi ic ice uygulamak gap/margin'i iki
                     kez sayip ScriptedMonitorPage'den farkli bir bosluk uretiyordu. */}
-                <span onClick={e => e.stopPropagation()}>
-                  {canManageRow(m) && (
-                    <MonitorCardActions
-                      running={isRunning(m.id)}
-                      onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
-                      checkTitle={t('port.check')} editTitle={t('port.edit')} />
-                  )}
-                  {canDeleteRow(m) && (
-                    <button type="button" className="mon-act mon-act--danger" disabled={deleting === m.id}
-                      onClick={() => deleteMonitor(m)} title={t('port.delete')} aria-label={t('port.delete')}>
-                      <Trash2 size={13} />
-                    </button>
-                  )}
-                </span>
+                {canManageRow(m) && (
+                  <MonitorCardActions
+                    running={isRunning(m.id)}
+                    onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
+                    checkTitle={t('port.check')} editTitle={t('port.edit')}
+                    onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
+                    deleting={deleting === m.id} deleteTitle={t('port.delete')} />
+                )}
               </div>
             </div>
           ))}

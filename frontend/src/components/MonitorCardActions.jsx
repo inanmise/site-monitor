@@ -1,4 +1,4 @@
-import { Pencil, Copy } from 'lucide-react'
+import { Pencil, Copy, Trash2 } from 'lucide-react'
 import { useT } from '../i18n/index.jsx'
 import { CheckNowButton, CheckRunningStrip } from './ui/CheckRunning.jsx'
 
@@ -27,12 +27,21 @@ import { CheckNowButton, CheckRunningStrip } from './ui/CheckRunning.jsx'
  * @param {Function} onDuplicate          "Kopyala"
  * @param {string} checkTitle             kontrol düğmesinin ipucu metni (sayfaya özgü i18n)
  * @param {string} editTitle              düzenle düğmesinin ipucu metni (sayfaya özgü i18n)
+ * @param {Function} onDelete             "Sil" — verilmezse düğme çizilmez (yetkisi olmayan
+ *                                        ya da silinemeyen satırda sayfa undefined geçirir)
+ * @param {boolean} deleting              bu satır ŞU AN siliniyor (çift tık koruması)
+ * @param {string} deleteTitle            sil düğmesinin ipucu metni (sayfaya özgü i18n)
  */
 export default function MonitorCardActions({
   running, onCheck, onEdit, onDuplicate, checkTitle, editTitle,
   // Kontrol dugmesi PASIF olabilmeli: senaryo izlemesinde k6 yoksa calistirmak anlamsiz.
   // Bu tek fark yuzunden ScriptedMonitorPage bloğun tamamini kopyalamisti.
   checkDisabled = false,
+  // Silme BU BİLEŞENİN İÇİNDE. Dışarıda kardeş olarak çizilseydi yukarıdaki `stopPropagation`
+  // sarmalayıcısının DIŞINDA kalırdı: silmeye basmak kart gövdesinin `onClick`ini de tetikler,
+  // kullanıcı hem onay diyaloğunu hem detay modalını görürdü — Düzenle için düzeltilen kusurun
+  // YIKICI eylemdeki hâli. Port/DNS bunu kendi ek sarmalayıcısıyla çözüyordu; artık tek sarmalayıcı.
+  onDelete, deleting = false, deleteTitle,
 }) {
   const t = useT()
   return (
@@ -43,6 +52,10 @@ export default function MonitorCardActions({
         onClick={onEdit} title={editTitle} aria-label={editTitle}><Pencil size={13} /></button>
       <button type="button" className="mon-act mon-act--copy"
         onClick={onDuplicate} title={t('mon.duplicate')} aria-label={t('mon.duplicate')}><Copy size={13} /></button>
+      {onDelete && (
+        <button type="button" className="mon-act mon-act--danger" disabled={deleting}
+          onClick={onDelete} title={deleteTitle} aria-label={deleteTitle}><Trash2 size={13} /></button>
+      )}
     </span>
   )
 }

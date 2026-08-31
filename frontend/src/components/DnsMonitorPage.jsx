@@ -10,11 +10,12 @@ import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
+import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
-import { Trash2, Plus, ChevronDown, Globe, Info, Network, AlertTriangle, FlaskConical, Check, RefreshCw, Pause, BellDot, ArrowLeftRight } from 'lucide-react'
+import { Plus, ChevronDown, Globe, Info, Network, AlertTriangle, FlaskConical, Check, RefreshCw, Pause, BellDot, ArrowLeftRight } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import DnsDetailModal from './DnsDetailModal.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
@@ -65,6 +66,7 @@ function truncateValue(val, max = 50) {
 export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
   const toast = useToast()
+  const { showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'   // USER ve üstü: kendi takımı için standalone DNS ekler
@@ -252,7 +254,17 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   }
 
   async function deleteMonitor(m) {
-    if (!window.confirm(t('dns.deleteConfirm'))) return
+    // Onay projenin diyaloğuyla alınır. `window.confirm` tarayıcı-varsayılanı bir kutu
+    // çiziyordu (tasarım sistemi dışı) ve hedefin adını göstermiyordu; kart üzerindeki
+    // tek tık yıkıcı bir işlem tetiklediği için mesaj NEYİN silineceğini söylemeli.
+    const ok = await showConfirm({
+      title: t('mon.deleteTitle'),
+      message: t('mon.deleteMsg', m.name || m.domain),
+      confirmText: t('dns.delete'),
+      cancelText: t('dns.cancel'),
+      variant: 'danger',
+    })
+    if (!ok) return
     setDeleting(m.id)
     const res = await api.monitoring.deleteDnsMonitor(m.id)
     if (res?.success) { toast.success(t('dns.deleted')); await load() }
@@ -281,6 +293,31 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   function cardClass(m) {
     if (m.active === false) return 'upt-card--unknown'
     return m.active_alarm ? 'upt-card--down' : 'upt-card--up'
+  }
+
+  /**
+   * Kart durum rozeti — diğer sekiz türde olan, DNS'te EKSİK olan bilgi.
+   *
+   * <p>DNS kartı üst satırda hiçbir durum yazmıyordu: kartın rengi ve alarm ikonu dışında
+   * "bu monitör iyi mi" sorusunun sözle cevabı yoktu (kullanıcı bildirdi). Yan etkisi de vardı —
+   * rozet çizilmeyince üst satırda tek çocuk kalıyor ve `justify-content: space-between` onu
+   * sola yaslıyordu, yani kayıt-tipi + bağlantı kopyalama kartın soluna düşüyordu.
+   *
+   * <p><b>Sözcükler UYDURULMADI:</b> istatistik şeridinin ve filtre çiplerinin sözlüğü aynen
+   * kullanılır (`statOk`/`statAlarm`/`statPaused`) ve koşullar o filtrelerin koşullarıyla
+   * BİREBİR aynıdır — "Alarmlı" çipine tıklayan kişi "Alarmlı" rozetli kartları görür.
+   *
+   * <p>Alarm dalında "çözümlenmiyor" DENMEZ: DNS alarmı beş tipten biri olabiliyor
+   * (DNS_FAILURE / DNS_CHANGED / DNS_SLOW / DNS_UNEXPECTED / DNS_INCONSISTENT) ve kart
+   * yanıtında tip yok — "çözümlenmiyor" bir DNS_CHANGED alarmında düpedüz yanlış olurdu.
+   */
+  function statusBadge(m) {
+    const [cls, label] =
+      m.active === false ? ['upt-badge--unknown', t('dns.statPaused')]
+      : m.active_alarm   ? ['upt-badge--down',    t('dns.statAlarm')]
+      : !m.checked_at    ? ['upt-badge--unknown', t('dns.statNeverChecked')]
+      :                    ['upt-badge--up',      t('dns.statOk')]
+    return <span className={`upt-badge ${cls}`}><span className="upt-badge-dot" />{label}</span>
   }
 
   function alarmBadge(m) {
@@ -467,6 +504,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
               className={`upt-card ${cardClass(m)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
               onClick={() => setDetailMonitor(m)}>
               <div className="upt-card-top">
+                {statusBadge(m)}
                 {alarmBadge(m)}<MaintenanceBadge target={m.domain} />
                 {m.standalone && (
                   <span className="dns-standalone-badge" title={t('dns.standaloneHint')}>{t('dns.standalone')}</span>
@@ -511,18 +549,15 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
                     "mon-actions" yapiyor; ayni sinifi ic ice uygulamak gap/margin'i iki
                     kez sayip ScriptedMonitorPage'den farkli bir bosluk uretiyordu. */}
                 <span onClick={e => e.stopPropagation()}>
+                  {/* Silme kartta KALIR: tabloda vardı ve kaldırılması yetenek kaybı olurdu.
+                      Artık ortak bileşenin içinde — dokuz türde tek düğme, tek stopPropagation. */}
                   {canManageRow(m) && (
                     <MonitorCardActions
                       running={isRunning(m.id)}
                       onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
-                      checkTitle={t('dns.check')} editTitle={t('dns.edit')} />
-                  )}
-                  {/* Silme kartta KALIR: tabloda vardı ve kaldırılması yetenek kaybı olurdu. */}
-                  {canDeleteRow(m) && (
-                    <button type="button" className="mon-act mon-act--danger" disabled={deleting === m.id}
-                      onClick={() => deleteMonitor(m)} title={t('dns.delete')} aria-label={t('dns.delete')}>
-                      <Trash2 size={13} />
-                    </button>
+                      checkTitle={t('dns.check')} editTitle={t('dns.edit')}
+                      onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
+                      deleting={deleting === m.id} deleteTitle={t('dns.delete')} />
                   )}
                 </span>
               </div>
@@ -548,7 +583,12 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
       {modal && (
         // Dış/overlay tıklamada KAPANMAZ — veri kaybı önlenir; yalnız İptal/Kaydet (keyword/ping ile aynı).
         <div className="modal-overlay">
-          <div className="modal-box" onClick={e => e.stopPropagation()}>
+          {/* İÇ KAYDIRMA ŞART (maxHeight + overflowY). Yoksa taşan içerik `.modal-overlay`in
+              `overflow-y: auto`una düşüyor: kaydırma çubuğu modalın kenarında değil EKRANIN en
+              sağında çıkıyor ve kaydırınca başlık da yukarı kayıyor. Diğer sekiz düzenleme
+              modalı bunu taşıyordu, DNS taşımıyordu — kapı: modalScroll.test.jsx. */}
+          <div className="modal-box" onClick={e => e.stopPropagation()}
+            style={{ maxWidth: 640, width: '92vw', maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="modal-icon-hdr modal-icon-hdr--dns">
               <div className="modal-icon-hdr-badge">
                 <Network size={20} />

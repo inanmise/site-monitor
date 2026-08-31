@@ -82,6 +82,36 @@ describe('MonitorCardActions', () => {
     expect(onCheck).toHaveBeenCalledTimes(1)
   })
 
+  /**
+   * SİLME — dokuz izleme türünün tamamında karta eklendi (eskiden yalnız Port/DNS'te vardı ve
+   * onlar da düğmeyi bu bileşenin DIŞINDA, kendi ek sarmalayıcılarıyla çiziyordu).
+   *
+   * <p>Kritik ayrıntı, Düzenle için düzeltilen kusurun YIKICI eylemdeki hâli: düğme bileşenin
+   * `stopPropagation` sarmalayıcısının dışında kalırsa silmeye basmak kart gövdesinin
+   * `onClick`ini de tetikler — kullanıcı hem onay diyaloğunu hem detay modalını görür.
+   */
+  it('Sil YALNIZ onDelete verilince çizilir (yetkisi olmayan satırda çıkmamalı)', () => {
+    setup()
+    expect(screen.queryByRole('button', { name: /^Sil$/ })).toBeNull()
+  })
+
+  it('Sil kendi geri cagrisini tetikler ve kart govdesinin onClick metodunu TETIKLEMEZ', () => {
+    const onDelete = vi.fn()
+    const { onCardClick } = setup({ onDelete, deleteTitle: 'Sil' })
+    fireEvent.click(byName(/^Sil$/))
+    expect(onDelete).toHaveBeenCalledTimes(1)
+    expect(onCardClick).not.toHaveBeenCalled()
+  })
+
+  it('silme sürerken düğme kilitli (çift tık aynı kaydı iki kez silmeye çalışmasın)', () => {
+    const onDelete = vi.fn()
+    setup({ onDelete, deleteTitle: 'Sil', deleting: true })
+    const btn = byName(/^Sil$/)
+    expect(btn).toBeDisabled()
+    fireEvent.click(btn)
+    expect(onDelete).not.toHaveBeenCalled()
+  })
+
   it('ipucu metinleri sayfadan gelir; her düğmenin erişilebilir adı vardır', () => {
     setup({ checkTitle: 'Şimdi kontrol et', editTitle: 'Kaydı düzenle' })
     // Yalnız ikon içerirler → aria-label olmazsa ekran okuyucuda isimsiz kalırlar.
