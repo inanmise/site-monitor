@@ -592,4 +592,75 @@ class CertificateControllerTest {
 
         verify(checkerService).check(eq("serbest.example.com"), eq(443), anyBoolean(), any(), any());
     }
+
+    // ── Ad-hoc sertifika testi (envanter formundaki "Test et") ─────────────────
+
+    @Test
+    @DisplayName("POST /api/certificates/test oturumsuz 401 döner")
+    void testCertificate_unauthenticated_returns401() throws Exception {
+        mvc.perform(post("/api/certificates/test")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"a.example.com\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("test, GÖVDEDEKİ port/TLS/proxy ile koşar — envantere hiç bakmaz")
+    void testCertificate_usesBodyValuesNotInventory() throws Exception {
+        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any(), any()))
+                .thenReturn(new java.util.LinkedHashMap<>(java.util.Map.of("status", "valid")));
+
+        mvc.perform(post("/api/certificates/test").session(authSession())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"yeni.example.com\",\"port\":8443,"
+                                + "\"tlsMode\":\"browser\",\"useProxy\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.port").value(8443));
+
+        // Henüz KAYDEDİLMEMİŞ bir kayıtta envanterden okumak 443'ün sertifikasını gösterirdi:
+        // test, kaydedilecek değerlerin AYNISIYLA koşmalı.
+        verify(checkerService).check(eq("yeni.example.com"), eq(8443), eq(true), eq("browser"), any());
+        verify(inventoryRepo, never()).findByDomain(anyString());
+    }
+
+    @Test
+    @DisplayName("test, yapıştırılan URL'yi çıplak host'a indirir (form da böyle kaydeder)")
+    void testCertificate_stripsUrlToHost() throws Exception {
+        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any(), any()))
+                .thenReturn(new java.util.LinkedHashMap<>(java.util.Map.of("status", "valid")));
+
+        mvc.perform(post("/api/certificates/test").session(authSession())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"https://a.example.com/yol\"}"))
+                .andExpect(status().isOk());
+
+        verify(checkerService).check(eq("a.example.com"), eq(443), anyBoolean(), any(), any());
+    }
+
+    @Test
+    @DisplayName("test, geçersiz portta 400 döner ve HİÇBİR el sıkışması açmaz")
+    void testCertificate_rejectsInvalidPort() throws Exception {
+        mvc.perform(post("/api/certificates/test").session(authSession())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"a.example.com\",\"port\":70000}"))
+                .andExpect(status().isBadRequest());
+
+        verify(checkerService, never()).check(anyString(), anyInt(), anyBoolean(), any(), any());
+    }
+
+    @Test
+    @DisplayName("test, envanter DÜZENLEME yetkisi ister (oturum yetmez)")
+    void testCertificate_requiresInventoryEditPermission() throws Exception {
+        org.mockito.Mockito.doThrow(new SecurityException("yetki yok"))
+                .when(permissionService).require(any(jakarta.servlet.http.HttpSession.class),
+                        eq("inventory.crud"), eq("edit"));
+
+        mvc.perform(post("/api/certificates/test").session(authSession())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"a.example.com\"}"))
+                .andExpect(status().isForbidden());
+
+        // Keyfi host:port'a canlı el sıkışması açtırabilen bir uç: kapı KAPALIYKEN ağa çıkılmamalı.
+        verify(checkerService, never()).check(anyString(), anyInt(), anyBoolean(), any(), any());
+    }
 }

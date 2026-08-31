@@ -138,6 +138,61 @@ public class CertificateController {
     }
 
     /**
+     * Ad-hoc SERTIFIKA testi — envanter formundaki "Test et" dugmesi. KAYIT OLUSTURMAZ,
+     * alarm URETMEZ, cache bosaltmaz.
+     *
+     * <p><b>Neden yeni bir uc.</b> Form "Test et"e basinca {@code DiagnosticsModal}'i aciyordu,
+     * yani basliktaki "Tanilama" ile BIREBIR ayni isi yapiyordu: iki etiketli tek eylem, ve
+     * sertifikanin kendisi (veren / bitis / kalan gun) hic test edilmiyordu. Dokuz izleme
+     * formunun sozlesmesi ise "yazilan degerlerle gercek kontrolu kosur, sonucu formda goster".
+     *
+     * <p><b>Neden {@code check-preview} yetmedi.</b> O uc portu/TLS modunu/proxy'yi ENVANTERDEN
+     * okuyor; envanterde OLMAYAN yeni bir kayit icin formda yazilan 8443 dikkate alinmiyor ve
+     * kullanici 443'un sertifikasini goruyordu. Test, kaydedilecek olan degerlerin AYNISIYLA
+     * kosmali -- yoksa testin dogruladigi sey kaydedilen sey degildir.
+     *
+     * <p>Emsal: {@code POST /monitoring/dns/test}. Yetki envanteri duzenleme yetkisidir
+     * ({@code inventory.crud/edit}) -- serbest arama kutusundaki {@code check-preview}'dan
+     * daha DAR: bu uc keyfi host:port'a canli el sikismasi actirabildigi icin oturum
+     * yetmemeli. Hedef {@code CertificateCheckerService.check} icinde SsrfGuard'dan gecer.
+     */
+    @PostMapping("/certificates/test")
+    public ResponseEntity<Map<String, Object>> testCertificate(
+            @RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "inventory.crud", "edit");
+
+        Object rawDomain = body.get("domain");
+        String domain = rawDomain == null ? "" : rawDomain.toString().trim();
+        if (domain.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "error", "domain zorunlu"));
+        }
+        // Kullanici "https://x.example.com/yol" yapistirabilir; ciplak host'a indir (form da boyle kaydeder).
+        String host = com.sitemonitor.util.MonitorUrls.hostOrNull(domain);
+        if (host != null && !host.isBlank()) domain = host;
+
+        int port = 443;
+        if (body.get("port") instanceof Number pn) port = pn.intValue();
+        else if (body.get("port") != null && !body.get("port").toString().isBlank()) {
+            try { port = Integer.parseInt(body.get("port").toString().trim()); } catch (NumberFormatException ignored) { /* 443 */ }
+        }
+        if (port < 1 || port > 65535) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "error", "Gecersiz port: " + port));
+        }
+
+        boolean useProxy = Boolean.TRUE.equals(body.get("useProxy"))
+                || "true".equalsIgnoreCase(String.valueOf(body.get("useProxy")));
+        Object tlsRaw = body.get("tlsMode");
+        String tlsMode = (tlsRaw == null || tlsRaw.toString().isBlank()) ? null : tlsRaw.toString().trim();
+        Integer timeout = null;
+        if (body.get("timeoutSeconds") instanceof Number tn) timeout = tn.intValue();
+
+        Map<String, Object> r = new LinkedHashMap<>(checkerService.check(domain, port, useProxy, tlsMode, timeout));
+        // Testin NE ILE kostugu yanitta durur: kullanici "hangi porta baktin" diye sormasin.
+        r.put("port", port);
+        return ok(Map.of("success", true, "data", r, "timestamp", now()));
+    }
+
+    /**
      * SSL Checker önizlemesi — envanterde OLMAYAN domainler de sorgulanabilir (Dashboard'daki
      * serbest arama kutusu bunu kullanır), bu yüzden takım kapsamı UYGULANMAZ.
      *
