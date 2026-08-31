@@ -36,6 +36,28 @@ describe('DnsMonitorPage', () => {
     api.admin.getTeams.mockResolvedValue({ success: true, data: [] })
   })
 
+  /**
+   * Kart durum rozeti — diğer sekiz türde vardı, DNS'te YOKTU (kullanıcı bildirdi). Rozet
+   * çizilmeyince kartın üst satırında tek çocuk kalıyor ve `space-between` onu sola yaslıyor:
+   * kayıt-tipi + bağlantı kopyalama kartın SOLUNA düşüyordu. Sözcükler istatistik şeridiyle
+   * AYNI sözlükten gelir ve koşullar filtre çipleriyle birebir eşleşir.
+   */
+  it.each([
+    [{ active: true },                        /sağlıklı|healthy/i],
+    [{ active: true, active_alarm: true },    /alarmlı|alarming/i],
+    [{ active: false },                       /duraklatıldı|paused/i],
+    [{ active: true, checked_at: null },      /kontrol edilmedi|not checked/i],
+  ])('kart durum rozeti: %o → %s', async (patch, expected) => {
+    api.monitoring.getDnsMonitors.mockResolvedValue({ success: true, data: [{ ...monitor, ...patch }] })
+    const { container } = render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await screen.findByText('www.example.com')
+    const badge = container.querySelector('.upt-card-top .upt-badge')
+    expect(badge).toBeTruthy()
+    expect(badge.textContent).toMatch(expected)
+    // Rozet üst satırın İLK çocuğu olmalı — sağ gruptaki kopyalama düğmesini sola itmesin.
+    expect(container.querySelector('.upt-card-top').firstElementChild).toBe(badge)
+  })
+
   it('aktif alarmlı satırda alarm ikonu (.upt-alarm-ico) render olur', async () => {
     api.monitoring.getDnsMonitors.mockResolvedValue({ success: true, data: [
       { ...monitor, active_alarm: true, alarm_level: 'CRITICAL', alarm_acknowledged: false },

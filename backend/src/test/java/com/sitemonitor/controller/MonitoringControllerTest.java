@@ -200,6 +200,68 @@ class MonitoringControllerTest {
         org.mockito.Mockito.verify(dnsRecordRepo, org.mockito.Mockito.never()).save(any());
     }
 
+    /**
+     * ELLE TETIKLEME de degisiklik tespitini son BASARILI kayda karsi yapmali.
+     *
+     * <p>Kullanici bildirimi: kayit saatlerdir ayni IP'ye cozumleniyordu, bir tur basarisiz oldu
+     * (deger "" yazildi), sonraki basarili elle kontrol AYNI IP'yi dondurdu ve satir "DEGISTI!"
+     * damgasi yedi. Sebep: bu uc son kaydi (basarisizlar DAHIL) aliyordu; bos kume ile dolu kume
+     * AYRIK gorunuyor, ayriklik da CHANGED demek.
+     *
+     * <p>SchedulerService bu duzeltmeyi zaten tasiyordu (SchedulerServiceTest'te pinli); ikiz olan
+     * elle tetikleme yolu guncellenmemisti -- duzeltmenin cagri yerlerinden birine uygulanmamasi
+     * sinifi. Bu test o ikizi pinler.
+     */
+    @Test
+    @DisplayName("POST /dns/{id}/check: son BASARILI kayda karsi karsilastirir — cozumleme kurtulusu sahte DEGISTI uretmez")
+    void triggerDns_comparesAgainstLastSuccessfulRecord() throws Exception {
+        com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();
+        m.setId(7L); m.setDomain("x.example.com"); m.setRecordType("A");
+        when(dnsMonitorRepo.findById(7L)).thenReturn(java.util.Optional.of(m));
+
+        // Son BASARILI kayit ayni IP'yi tasiyor; arada bir basarisiz ("" degerli) tur var.
+        com.sitemonitor.model.DnsRecord prevOk = new com.sitemonitor.model.DnsRecord();
+        prevOk.setValue("217.169.192.122");
+        when(dnsRecordRepo.findTopByMonitorIdAndValueNotOrderByCheckedAtDesc(7L, ""))
+                .thenReturn(java.util.Optional.of(prevOk));
+        when(dnsChecker.check("x.example.com", "A")).thenReturn(
+                java.util.Map.of("success", true, "values", List.of("217.169.192.122"),
+                                 "ttl", 300L, "response_ms", 12L));
+
+        mvc.perform(post("/api/monitoring/dns/7/check").session(session("ADMIN")))
+                .andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DnsRecord> rec =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DnsRecord.class);
+        verify(dnsRecordRepo).save(rec.capture());
+        assertThat(rec.getValue().getChanged()).isFalse();
+        assertThat(rec.getValue().getRotated()).isFalse();
+        assertThat(rec.getValue().getPreviousValue()).isEqualTo("217.169.192.122");
+        // Son kayit (basarisizlar dahil) sorgusu ARTIK KULLANILMAZ.
+        verify(dnsRecordRepo, never()).findTopByMonitorIdOrderByCheckedAtDesc(anyLong());
+    }
+
+    @Test
+    @DisplayName("POST /dns/{id}/check: basarisiz sorguda degisiklik HIC hesaplanmaz")
+    void triggerDns_failureEmitsNoChange() throws Exception {
+        com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();
+        m.setId(8L); m.setDomain("y.example.com"); m.setRecordType("A");
+        when(dnsMonitorRepo.findById(8L)).thenReturn(java.util.Optional.of(m));
+        when(dnsChecker.check("y.example.com", "A"))
+                .thenReturn(java.util.Map.of("success", false, "error", "no answer"));
+
+        mvc.perform(post("/api/monitoring/dns/8/check").session(session("ADMIN")))
+                .andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DnsRecord> rec =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DnsRecord.class);
+        verify(dnsRecordRepo).save(rec.capture());
+        assertThat(rec.getValue().getChanged()).isFalse();
+        // Basarisiz turda son-basarili-kayit lookup'i bile yapilmaz.
+        verify(dnsRecordRepo, never())
+                .findTopByMonitorIdAndValueNotOrderByCheckedAtDesc(anyLong(), anyString());
+    }
+
     @Test
     @DisplayName("GET /dns: domain'de açık DNS alarmı varsa active_alarm=true + en yüksek seviye (CRITICAL)")
     void listDns_marksActiveAlarm() throws Exception {

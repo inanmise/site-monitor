@@ -306,6 +306,14 @@ public class DnsCheckerService {
      *
      * <ul>
      *   <li>{@code prev == null} → first ever check, neither changed nor rotated.</li>
+     *   <li><b>either side has NO records</b> (null/blank) → neither. Bir "degisiklik" iddiasi
+     *       KARSILASTIRILABILIR IKI gozlem ister; cozumlemenin basarisiz oldugu bir tur, kaydin
+     *       degistigini degil OKUNAMADIGINI soyler. Bu dal olmadan bos<->dolu gecisi AYRIK kume
+     *       gorunup CHANGED uretiyordu: gecici bir DNS hatasi, once dususte sonra kurtulusta olmak
+     *       uzere IKI sahte "DEGISTI" damgasi biraktigi icin kullanici tarafindan bildirildi.
+     *       Cagiranlar zaten yalnizca basarili turlari karsilastirmali (Scheduler + elle tetikleme
+     *       oyle yapar); bu dal o kuralin SURUKLENMESINE karsi son savunma -- gercek bir
+     *       degisikligi maskeleyemez, cunku gercek degisiklik iki dolu kume gerektirir.</li>
      *   <li>identical strings → neither.</li>
      *   <li>same line-set (different order) → neither (identical content).</li>
      *   <li>sets share at least one line → rotation (e.g. CDN returning a
@@ -323,6 +331,8 @@ public class DnsCheckerService {
         nextSet.remove("");
 
         if (prevSet.equals(nextSet)) return ChangeKind.NONE;
+        // Taraflardan biri BOSSA karsilastirilacak bir sey yok (bkz. javadoc).
+        if (prevSet.isEmpty() || nextSet.isEmpty()) return ChangeKind.NONE;
 
         Set<String> intersect = new HashSet<>(prevSet);
         intersect.retainAll(nextSet);

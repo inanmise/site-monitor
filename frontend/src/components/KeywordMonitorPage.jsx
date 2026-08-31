@@ -6,6 +6,7 @@ import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
+import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
@@ -68,6 +69,7 @@ const emptyForm = { name: '', url: '', keyword: '', operator: 'GTE', matchCount:
 export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
   const toast = useToast()
+  const { showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'      // USER ve üstü: kendi takımı için oluştur/düzenle/kontrol
@@ -96,6 +98,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   // once biten, hala sureni kilitten cikarmasin.
   const { isRunning, track } = useRunningChecks()
   const [testing, setTesting] = useState(false)
+  const [deleting, setDeleting] = useState(null)   // satir bazli cift-tik korumasi
   const [testResult, setTestResult] = useState(null)
   const [detailTab, setDetailTab] = useState('control')
   // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin. Sekmenin kendi 30 sn'lik
@@ -225,6 +228,65 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     if (!res?.success) { toast.error(res?.error || 'Error'); return }
     toast.success(t('keyword.saved')); closeEdit()
   }
+
+  /**
+
+   * Silme — KARTTAN (satır). Hedef her zaman AÇIK bir argümandır: {@code onClick={deleteMonitor}}
+
+   * biçiminde bağlanırsa React olay nesnesini ilk argüman yapar ve hedef sessizce yanlış olur.
+
+   *
+
+   * <p>Onay ŞART ve projenin diyaloğuyla alınır: kart üzerindeki tek tık yıkıcı bir işlemi
+
+   * tetikliyor, sunucu HARD delete yapıyor ve açık alarmları kapatıyor. Mesaj hedefin ADINI
+
+   * taşır — "bu monitör" demek hangi kartta olduğumuzu doğrulamıyordu.
+
+   *
+
+   * <p>Hata TOAST ile bildirilir: {@code saveError} yalnız düzenleme modalının içinde
+
+   * çiziliyor, karttan silerken modal KAPALI olduğu için 403/409 sessizce yutulur ve
+
+   * kullanıcı silindi sanırdı.
+
+   */
+
+  async function deleteMonitor(m) {
+
+    if (!m || m === 'new') return
+
+    const ok = await showConfirm({
+
+      title: t('mon.deleteTitle'),
+
+      message: t('mon.deleteMsg', m.name || m.url),
+
+      confirmText: t('keyword.delete'),
+
+      cancelText: t('keyword.cancel'),
+
+      variant: 'danger',
+
+    })
+
+    if (!ok) return
+
+    setDeleting(m.id)
+
+    const res = await api.monitoring.deleteKeywordMonitor(m.id)
+
+    setDeleting(null)
+
+    if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
+
+    toast.success(t('keyword.deleted'))
+
+    await load()
+
+  }
+
 
   async function del() {
     if (!modal || modal === 'new') return
@@ -478,7 +540,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                   <MonitorCardActions
                     running={isRunning(m.id)}
                     onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
-                    checkTitle={t('keyword.check')} editTitle={t('keyword.edit')} />
+                    checkTitle={t('keyword.check')} editTitle={t('keyword.edit')}
+                    onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
+                    deleting={deleting === m.id} deleteTitle={t('keyword.delete')} />
                 )}
               </div>
             </div>
@@ -507,6 +571,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                 onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
                 editTitle={t('keyword.edit')}
                 onDuplicate={canManageRow(selected) ? () => openDuplicate(selected) : undefined}
+                onDelete={canDeleteRow(selected) ? () => deleteMonitor(selected) : undefined}
+                deleting={deleting === selected.id}
+                deleteTitle={t('keyword.delete')}
                 onClose={closeDetail}>
                 <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
               </MonitorModalActions>
@@ -771,7 +838,11 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
 
       {showCacheHelp && createPortal(
         <div className="modal-overlay" onClick={() => setShowCacheHelp(false)}>
-          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 560 }}>
+          {/* Kısa bir yardım diyaloğu — bugünkü metinle taşmıyor. İç kaydırma yine de beyan
+              edilir: kural muaf listesi tutmaz (kısa/zoom'lu ekranda taşarsa kaydırma çubuğu
+              ekranın en sağında çıkar), ve taşma olmadıkça hiçbir görsel etkisi yok. */}
+          <div className="modal-box" onClick={e => e.stopPropagation()}
+            style={{ maxWidth: 560, maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="modal-icon-hdr modal-icon-hdr--keyword">
               <div className="modal-icon-hdr-badge"><Target size={20} /></div>
               <h3>{t('keyword.cacheBustTitle')}</h3>

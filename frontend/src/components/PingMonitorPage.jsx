@@ -6,6 +6,7 @@ import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
+import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
@@ -55,6 +56,7 @@ const emptyForm = { name: '', host: '', ipVersion: 'auto', groupName: '', notifi
 export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
   const toast = useToast()
+  const { showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
   // Ortak bildirim blogunun hedef satiri icin takim adi (HttpMonitorPage deseni).
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
@@ -85,6 +87,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   // once biten, hala sureni kilitten cikarmasin.
   const { isRunning, track } = useRunningChecks()
   const [testing, setTesting] = useState(false)
+  const [deleting, setDeleting] = useState(null)   // satir bazli cift-tik korumasi
   const [testResult, setTestResult] = useState(null)
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
@@ -206,6 +209,65 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
     setTestResult(res?.success ? res.data : { error: res?.error || t('ping.testError') })
     setTesting(false)
   }
+
+  /**
+
+   * Silme — KARTTAN (satır). Hedef her zaman AÇIK bir argümandır: {@code onClick={deleteMonitor}}
+
+   * biçiminde bağlanırsa React olay nesnesini ilk argüman yapar ve hedef sessizce yanlış olur.
+
+   *
+
+   * <p>Onay ŞART ve projenin diyaloğuyla alınır: kart üzerindeki tek tık yıkıcı bir işlemi
+
+   * tetikliyor, sunucu HARD delete yapıyor ve açık alarmları kapatıyor. Mesaj hedefin ADINI
+
+   * taşır — "bu monitör" demek hangi kartta olduğumuzu doğrulamıyordu.
+
+   *
+
+   * <p>Hata TOAST ile bildirilir: {@code saveError} yalnız düzenleme modalının içinde
+
+   * çiziliyor, karttan silerken modal KAPALI olduğu için 403/409 sessizce yutulur ve
+
+   * kullanıcı silindi sanırdı.
+
+   */
+
+  async function deleteMonitor(m) {
+
+    if (!m || m === 'new') return
+
+    const ok = await showConfirm({
+
+      title: t('mon.deleteTitle'),
+
+      message: t('mon.deleteMsg', m.name || m.host),
+
+      confirmText: t('ping.delete'),
+
+      cancelText: t('ping.cancel'),
+
+      variant: 'danger',
+
+    })
+
+    if (!ok) return
+
+    setDeleting(m.id)
+
+    const res = await api.monitoring.deletePingMonitor(m.id)
+
+    setDeleting(null)
+
+    if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
+
+    toast.success(t('ping.deleted'))
+
+    await load()
+
+  }
+
 
   async function del() {
     if (!modal || modal === 'new') return
@@ -429,7 +491,9 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
                   <MonitorCardActions
                     running={isRunning(m.id)}
                     onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
-                    checkTitle={t('ping.check')} editTitle={t('ping.edit')} />
+                    checkTitle={t('ping.check')} editTitle={t('ping.edit')}
+                    onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
+                    deleting={deleting === m.id} deleteTitle={t('ping.delete')} />
                 )}
               </div>
             </div>
@@ -458,6 +522,9 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
                 onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
                 editTitle={t('ping.edit')}
                 onDuplicate={canManageRow(selected) ? () => openDuplicate(selected) : undefined}
+                onDelete={canDeleteRow(selected) ? () => deleteMonitor(selected) : undefined}
+                deleting={deleting === selected.id}
+                deleteTitle={t('ping.delete')}
                 onClose={closeDetail}>
                 <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
               </MonitorModalActions>

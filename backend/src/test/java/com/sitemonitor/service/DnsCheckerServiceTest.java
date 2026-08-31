@@ -162,6 +162,40 @@ class DnsCheckerServiceTest {
             .isEqualTo(DnsCheckerService.ChangeKind.ROTATED);
     }
 
+    /**
+     * Gecici cozumleme hatasi SAHTE "DEGISTI" uretmemeli (kullanici bildirimi).
+     *
+     * <p>Gercek vaka: kayit saatlerdir ayni IP'ye cozumleniyordu, bir tur basarisiz oldu (deger ""
+     * yazildi), bir sonraki basarili tur AYNI IP'yi dondurdu -- ve satir "DEGISTI!" damgasi yedi.
+     * Bos kume ile dolu kume AYRIK gorunuyor, ayriklik da CHANGED demek. Tersi de olurdu: dolu ->
+     * bos gecisi de CHANGED sayiliyordu, yani tek bir gecici hata IKI sahte degisiklik uretiyordu.
+     *
+     * <p>Cagiranlar zaten yalnizca basarili turlari karsilastirmali; bu dal o kuralin
+     * SURUKLENMESINE karsi son savunma. Gercek bir degisikligi maskeleyemez -- gercek degisiklik
+     * iki DOLU kume gerektirir.
+     */
+    @Test
+    @DisplayName("detectChange: bos -> dolu (cozumleme kurtuldu) NONE, sahte CHANGED degil")
+    void detectChange_emptyToValue_isNone() {
+        assertThat(DnsCheckerService.detectChange("", "217.169.192.122"))
+            .isEqualTo(DnsCheckerService.ChangeKind.NONE);
+    }
+
+    @Test
+    @DisplayName("detectChange: dolu -> bos (cozumleme dustu) NONE -- bu DNS_FAILURE'in isi")
+    void detectChange_valueToEmpty_isNone() {
+        assertThat(DnsCheckerService.detectChange("217.169.192.122", ""))
+            .isEqualTo(DnsCheckerService.ChangeKind.NONE);
+    }
+
+    @Test
+    @DisplayName("detectChange: bos taraf ELENIR ama gercek degisiklik hala CHANGED")
+    void detectChange_realChangeStillDetected() {
+        // Bos-taraf dali gercek degisikligi maskelemiyor: iki taraf da dolu.
+        assertThat(DnsCheckerService.detectChange("1.2.3.4", "9.9.9.9"))
+            .isEqualTo(DnsCheckerService.ChangeKind.CHANGED);
+    }
+
     @Test
     @DisplayName("detectChange: new IP added with one shared is ROTATED")
     void detectChange_partialOverlap_isRotated() {

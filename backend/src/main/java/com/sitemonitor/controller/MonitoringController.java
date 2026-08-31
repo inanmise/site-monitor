@@ -1786,10 +1786,25 @@ public class MonitoringController {
             List<String> values = (List<String>) r.getOrDefault("values", List.of());
             String valueStr = String.join("\n", values);
 
-            // Smart change detection: distinguishes rotation (round-robin) from real changes.
-            DnsRecord prev = dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(m.getId()).orElse(null);
+            // Degisiklik tespiti SADECE basarili sorguda ve son BASARILI kayda karsi yapilir.
+            //
+            // ONCEDEN: son kayit (findTopByMonitorId...) alINIyordu -- basarisiz kayitlar DAHIL.
+            // Cozumleme bir kez basarisiz olunca o satirin degeri "" olarak yaziliyor; bir sonraki
+            // BASARILI elle kontrol bos kumeyle karsilastirilinca kumeler AYRIK oluyor ve satir
+            // "DEGISTI!" damgasini yiyordu -- oysa IP hic degismemisti, arada sadece bir cozumleme
+            // hatasi vardi. Tersi de olurdu: dolu -> bos(hata) gecisi de sahte CHANGED uretirdi,
+            // yani her gecici DNS hatasi IKI sahte degisiklik doguruyordu.
+            //
+            // SchedulerService bu duzeltmeyi zaten tasiyordu (bkz. ayni gerekce oradaki yorumda);
+            // elle tetikleme yolu ikizi olmasina ragmen guncellenmemisti. Iki yol artik birebir.
+            boolean dnsOk = Boolean.TRUE.equals(r.get("success"));
+            DnsRecord prev = dnsOk
+                    ? dnsRecordRepo.findTopByMonitorIdAndValueNotOrderByCheckedAtDesc(m.getId(), "").orElse(null)
+                    : null;
             String prevValue = prev != null ? prev.getValue() : null;
-            DnsCheckerService.ChangeKind kind = DnsCheckerService.detectChange(prevValue, valueStr);
+            DnsCheckerService.ChangeKind kind = dnsOk
+                    ? DnsCheckerService.detectChange(prevValue, valueStr)
+                    : DnsCheckerService.ChangeKind.NONE;
 
             DnsRecord record = new DnsRecord();
             record.setMonitorId(m.getId());

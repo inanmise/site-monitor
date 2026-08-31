@@ -4,6 +4,7 @@ import { api, formatDateSec } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
+import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import CodeEditor from './ui/CodeEditor.jsx'
@@ -179,6 +180,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
   const { lang } = useLanguage()
   const toast = useToast()
+  const { showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const isAdminish = isAdmin || isTeamAdmin            // form/team-select davranışı (mevcut semantik korunur)
@@ -214,6 +216,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   const [defaults, setDefaults] = useState(null)     // per-tip varsayılan aralık/timeout (Kontrol Sıklığı ayarı)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [deleting, setDeleting] = useState(null)   // satir bazli cift-tik korumasi
   const [testResult, setTestResult] = useState(null)
   const [saveWarnings, setSaveWarnings] = useState([])   // kaydetme sonrası engellemeyen uyarılar
   // Kaydetmeyi ENGELLEYEN sözdizimi hatası — kalıcı gösterilir ve satırı cetvelde işaretlenir.
@@ -796,6 +799,51 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     else { setSmoke(null); toast.error(res?.error || t('scripted.triggerError')) }
   }
 
+  /**
+
+   * Silme — KARTTAN (satır). Hedef AÇIK argüman: {@code onClick={deleteMonitor}} biçiminde
+
+   * bağlanırsa React olay nesnesini ilk argüman yapar ve hedef sessizce yanlış olur.
+
+   * Onay projenin diyaloğuyla alınır ve mesaj hedefin ADINI taşır (sunucu HARD delete yapıyor).
+
+   */
+
+  async function deleteMonitor(m) {
+
+    if (!m || m === 'new') return
+
+    const ok = await showConfirm({
+
+      title: t('mon.deleteTitle'),
+
+      message: t('mon.deleteMsg', m.name),
+
+      confirmText: t('scripted.delete'),
+
+      cancelText: t('scripted.cancel'),
+
+      variant: 'danger',
+
+    })
+
+    if (!ok) return
+
+    setDeleting(m.id)
+
+    const res = await api.monitoring.deleteScriptedMonitor(m.id)
+
+    setDeleting(null)
+
+    if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
+
+    toast.success(t('scripted.deleted'))
+
+    await load()
+
+  }
+
+
   async function del() {
     if (!modal?.id) return
     if (!window.confirm(t('scripted.confirmDelete'))) return
@@ -1024,7 +1072,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
                   <MonitorCardActions
                     running={isRunning(m.id)} checkDisabled={!k6.available}
                     onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
-                    checkTitle={t('scripted.runNow')} editTitle={t('scripted.edit')} />
+                    checkTitle={t('scripted.runNow')} editTitle={t('scripted.edit')}
+                    onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
+                    deleting={deleting === m.id} deleteTitle={t('scripted.delete')} />
                 )}
               </div>
             </div>
@@ -1058,6 +1108,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
                 onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
                 editTitle={t('scripted.edit')}
                 onDuplicate={canManageRow(selected) ? () => openDuplicate(selected) : undefined}
+                onDelete={canDeleteRow(selected) ? () => deleteMonitor(selected) : undefined}
+                deleting={deleting === selected.id}
+                deleteTitle={t('scripted.delete')}
                 onClose={closeDetail}>
                 <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
               </MonitorModalActions>

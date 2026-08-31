@@ -13,6 +13,7 @@ import MonitorModalActions from './ui/MonitorModalActions.jsx'
 import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
+import { useDialog } from './ui/Dialog.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
@@ -119,6 +120,7 @@ function BreachEvidence({ metrics, detail, t }) {
 export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
   const toast = useToast()
+  const { showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'
@@ -149,6 +151,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
   // once biten, hala sureni kilitten cikarmasin.
   const { isRunning, track } = useRunningChecks()
   const [testing, setTesting] = useState(false)
+  const [deleting, setDeleting] = useState(null)   // satir bazli cift-tik korumasi
   const [testResult, setTestResult] = useState(null)
   const [detailTab, setDetailTab] = useState('resources')
   // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin. Sekmenin kendi 30 sn'lik
@@ -324,6 +327,65 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
     if (!res?.success) { toast.error(res?.error || 'Error'); return }
     toast.success(t('pspd.saved')); closeEdit()
   }
+
+  /**
+
+   * Silme — KARTTAN (satır). Hedef her zaman AÇIK bir argümandır: {@code onClick={deleteMonitor}}
+
+   * biçiminde bağlanırsa React olay nesnesini ilk argüman yapar ve hedef sessizce yanlış olur.
+
+   *
+
+   * <p>Onay ŞART ve projenin diyaloğuyla alınır: kart üzerindeki tek tık yıkıcı bir işlemi
+
+   * tetikliyor, sunucu HARD delete yapıyor ve açık alarmları kapatıyor. Mesaj hedefin ADINI
+
+   * taşır — "bu monitör" demek hangi kartta olduğumuzu doğrulamıyordu.
+
+   *
+
+   * <p>Hata TOAST ile bildirilir: {@code saveError} yalnız düzenleme modalının içinde
+
+   * çiziliyor, karttan silerken modal KAPALI olduğu için 403/409 sessizce yutulur ve
+
+   * kullanıcı silindi sanırdı.
+
+   */
+
+  async function deleteMonitor(m) {
+
+    if (!m || m === 'new') return
+
+    const ok = await showConfirm({
+
+      title: t('mon.deleteTitle'),
+
+      message: t('mon.deleteMsg', m.name || m.url),
+
+      confirmText: t('pspd.delete'),
+
+      cancelText: t('pspd.cancel'),
+
+      variant: 'danger',
+
+    })
+
+    if (!ok) return
+
+    setDeleting(m.id)
+
+    const res = await api.monitoring.deletePageSpeedMonitor(m.id)
+
+    setDeleting(null)
+
+    if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
+
+    toast.success(t('pspd.deleted'))
+
+    await load()
+
+  }
+
 
   async function del() {
     if (!modal || modal === 'new') return
@@ -564,7 +626,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
                   <MonitorCardActions
                     running={isRunning(m.id)}
                     onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
-                    checkTitle={t('pspd.check')} editTitle={t('pspd.edit')} />
+                    checkTitle={t('pspd.check')} editTitle={t('pspd.edit')}
+                    onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
+                    deleting={deleting === m.id} deleteTitle={t('pspd.delete')} />
                 )}
               </div>
             </div>
@@ -594,6 +658,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
                 onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
                 editTitle={t('pspd.edit')}
                 onDuplicate={canManageRow(selected) ? () => openDuplicate(selected) : undefined}
+                onDelete={canDeleteRow(selected) ? () => deleteMonitor(selected) : undefined}
+                deleting={deleting === selected.id}
+                deleteTitle={t('pspd.delete')}
                 onClose={closeDetail}>
                 <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
               </MonitorModalActions>

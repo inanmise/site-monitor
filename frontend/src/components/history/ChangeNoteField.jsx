@@ -14,7 +14,13 @@ export default function ChangeNoteField({ t, value, onChange, id }) {
   return (
     <label className="full-width chg-note-field" htmlFor={id}>
       <span><MessageSquare size={13} aria-hidden="true" /> {t('chg.changeNote')}</span>
-      <input id={id} type="text" maxLength={300} value={value}
+      {/* `.input` ŞART: bu alan `.form-grid`in DIŞINDA duruyor (modal gövdesinin son satırı,
+          eylem çubuğunun hemen üstünde), dolayısıyla `.form-grid label input` kuralı ona hiç
+          uymuyor. Sınıfsız hâli tarayıcı varsayılanına düşüyordu: dolgu yok, ince gri kenarlık,
+          odak halkası yok, tema token'ları (--input-bg/--input-text) yok — üstündeki form
+          alanlarıyla yan yana durunca fark bariz. Aynı kusur şablon editöründeki textarea'larda
+          da yaşanmıştı; çözüm orada da tek standarda (`.input` görünümü) bağlamak olmuştu. */}
+      <input id={id} type="text" className="input" maxLength={300} value={value}
         placeholder={t('chg.changeNotePlaceholder')}
         onChange={(e) => onChange(e.target.value)} />
       <span className="field-hint">{t('chg.changeNoteHint')}</span>

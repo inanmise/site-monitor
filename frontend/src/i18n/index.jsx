@@ -2288,6 +2288,12 @@ export const TR = {
   'inv.noGroup':       '— Grup Yok —',
   'mon.teamRequired':  'Takım seçimi zorunludur; izleme kaydedilemez.',
   'mon.detachedFromInventory': 'Hedef değiştirildiği için bu izleme artık envanterden bağımsız. Envanterdeki alan adı için ayrı bir izleme sürmeye devam edecek.',
+  'mon.deleteTitle':    'Monitörü sil',
+  'mon.deleteError':    'Monitör silinemedi.',
+  // Hedefin ADI mesajda GEÇER: karttan silme tek tıklık bir yıkıcı eylem, "bu monitör" demek
+  // hangi kartta olduğunu doğrulamıyor. Sunucu HARD delete yapıyor (repo.delete) ve açık
+  // alarmları sessizce kapatıyor — mesaj bunu olduğu gibi söyler.
+  'mon.deleteMsg':      '{0} kalıcı olarak silinecek. Açık alarmları kapatılır ve bu işlem geri alınamaz.',
   'mon.duplicate':      'Kopyala',
   'mon.checkRunning':   'Kontrol ediliyor…',
   'mon.secShort':       'sn',
@@ -5130,6 +5136,7 @@ export const TR = {
   'dns.statPaused':       'Duraklatıldı',
   'dns.statUnacked':      'Doğrulanmamış',
   'dns.statChanged':      'Değişti',
+  'dns.statNeverChecked': 'Kontrol edilmedi',
   'dns.infoTitle':        'DNS Hakkında — Temel Bilgiler',
   'dns.infoIntro':        'DNS (Domain Name System), alan adlarını IP adreslerine çeviren küresel bir veritabanıdır. Her kayıt tipi farklı bir amaca hizmet eder; bu sayfada izlediğiniz değerler bir saldırı veya yanlış yapılandırma erken uyarısı sağlar.',
   'dns.recA':             'IPv4 adres kaydı (örn. 93.184.216.34).',
@@ -7475,6 +7482,9 @@ export const EN = {
   'inv.noGroup':       '— No Group —',
   'mon.teamRequired':  'A team is required; the monitor cannot be saved.',
   'mon.detachedFromInventory': 'Because the target changed, this monitor is now independent of the inventory. The inventory domain will keep its own separate monitor.',
+  'mon.deleteTitle':    'Delete monitor',
+  'mon.deleteError':    'The monitor could not be deleted.',
+  'mon.deleteMsg':      '{0} will be deleted for good. Its open alerts are closed and this cannot be undone.',
   'mon.duplicate':      'Duplicate',
   'mon.checkRunning':   'Checking…',
   'mon.secShort':       's',
@@ -10311,6 +10321,7 @@ export const EN = {
   'dns.statPaused':       'Paused',
   'dns.statUnacked':      'Unacked',
   'dns.statChanged':      'Changed',
+  'dns.statNeverChecked': 'Not checked yet',
   'dns.infoTitle':        'About DNS — Basics',
   'dns.infoIntro':        'DNS (Domain Name System) is the global database that maps domain names to IP addresses. Each record type serves a different purpose; the values you monitor here give you an early signal of an attack or a misconfiguration.',
   'dns.recA':             'IPv4 address record (e.g. 93.184.216.34).',

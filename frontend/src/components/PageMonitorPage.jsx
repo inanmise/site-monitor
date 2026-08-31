@@ -72,7 +72,7 @@ const emptyForm = { name: '', url: '', groupName: '', notificationGroupId: '', t
 export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
   const toast = useToast()
-  const { showPrompt } = useDialog()
+  const { showPrompt, showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'
@@ -103,6 +103,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   // once biten, hala sureni kilitten cikarmasin.
   const { isRunning, track } = useRunningChecks()
   const [testing, setTesting] = useState(false)
+  const [deleting, setDeleting] = useState(null)   // satir bazli cift-tik korumasi
   const [testResult, setTestResult] = useState(null)
   const [detailTab, setDetailTab] = useState('issues')
   // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin. Sekmenin kendi 30 sn'lik
@@ -268,6 +269,65 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
     if (!res?.success) { toast.error(res?.error || 'Error'); return }
     toast.success(t('page.saved')); closeEdit()
   }
+
+  /**
+
+   * Silme — KARTTAN (satır). Hedef her zaman AÇIK bir argümandır: {@code onClick={deleteMonitor}}
+
+   * biçiminde bağlanırsa React olay nesnesini ilk argüman yapar ve hedef sessizce yanlış olur.
+
+   *
+
+   * <p>Onay ŞART ve projenin diyaloğuyla alınır: kart üzerindeki tek tık yıkıcı bir işlemi
+
+   * tetikliyor, sunucu HARD delete yapıyor ve açık alarmları kapatıyor. Mesaj hedefin ADINI
+
+   * taşır — "bu monitör" demek hangi kartta olduğumuzu doğrulamıyordu.
+
+   *
+
+   * <p>Hata TOAST ile bildirilir: {@code saveError} yalnız düzenleme modalının içinde
+
+   * çiziliyor, karttan silerken modal KAPALI olduğu için 403/409 sessizce yutulur ve
+
+   * kullanıcı silindi sanırdı.
+
+   */
+
+  async function deleteMonitor(m) {
+
+    if (!m || m === 'new') return
+
+    const ok = await showConfirm({
+
+      title: t('mon.deleteTitle'),
+
+      message: t('mon.deleteMsg', m.name || m.url),
+
+      confirmText: t('page.delete'),
+
+      cancelText: t('page.cancel'),
+
+      variant: 'danger',
+
+    })
+
+    if (!ok) return
+
+    setDeleting(m.id)
+
+    const res = await api.monitoring.deletePageMonitor(m.id)
+
+    setDeleting(null)
+
+    if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
+
+    toast.success(t('page.deleted'))
+
+    await load()
+
+  }
+
 
   async function del() {
     if (!modal || modal === 'new') return
@@ -566,7 +626,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                   <MonitorCardActions
                     running={isRunning(m.id)}
                     onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
-                    checkTitle={t('page.check')} editTitle={t('page.edit')} />
+                    checkTitle={t('page.check')} editTitle={t('page.edit')}
+                    onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
+                    deleting={deleting === m.id} deleteTitle={t('page.delete')} />
                 )}
               </div>
             </div>
@@ -595,6 +657,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                 onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
                 editTitle={t('page.edit')}
                 onDuplicate={canManageRow(selected) ? () => openDuplicate(selected) : undefined}
+                onDelete={canDeleteRow(selected) ? () => deleteMonitor(selected) : undefined}
+                deleting={deleting === selected.id}
+                deleteTitle={t('page.delete')}
                 onClose={closeDetail}>
                 <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
               </MonitorModalActions>
