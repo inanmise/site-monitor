@@ -1,18 +1,20 @@
-import { useEffect, useState, useRef, lazy, Suspense } from 'react'
+import { useCallback, useEffect, useState, useRef, lazy, Suspense } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 import { useToast } from './ui/Toast.jsx'
 import UserBadge from './ui/UserBadge.jsx'
-import { Trash2, Globe, X, Pencil, Clock, User, History, Undo2, Stethoscope } from 'lucide-react'
+import { Trash2, Globe, X, Pencil, Clock, User, History, Undo2, Stethoscope, Play, RefreshCw } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory'
 import SslCheckerPanel from './SslCheckerPanel.jsx'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 import { isInsecure, securityTitle } from '../utils/certSecurity.js'
 import { InventoryTab } from './inventory/InventoryDetails.jsx'
-import { LoadingBlock } from './ui/Progress.jsx'
+import { LoadingBlock, Spinner } from './ui/Progress.jsx'
+import { CheckRunningStrip } from './ui/CheckRunning.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
+import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 
 // Grafik recharts çekiyor; diğer izleme sayfalarındaki gibi (PingMonitorPage) tembel yüklenir.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
@@ -363,7 +365,8 @@ function NotesTab({ domain, t, currentUser, isAdmin }) {
   )
 }
 
-export default function CertificateModal({ domain, alertLevel, onClose, initialData, previewMode, currentUser, currentUserRole }) {
+export default function CertificateModal({ domain, alertLevel, onClose, initialData, previewMode, currentUser, currentUserRole,
+                                          onCheckNow, checking = false, onEdit, refreshSignal = 0 }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -387,12 +390,74 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   // Yetkisi olmayana dugme HIC cizilmez — gorunup 403 vermek kullaniciyi bosuna umutlandirir.
   const canDeleteCert = usePermissions().canEdit('inventory.crud')
   const [deleting, setDeleting] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  // Bağımlı sekmeler (Sağlık / Alarm / Envanter) kendi verilerini bir kez çekip tutuyor. Bu
+  // sayaç `key` olarak verilir: değişince o sekmeler yeniden kurulur = tazelenir. Kontrol
+  // Geçmişi sekmesi BİLEREK dışarıda — kendi 30 sn'lik canlı yenilemesi var ve remount
+  // kullanıcının seçtiği tarih aralığını/sayfasını sıfırlardı.
+  const [reloadKey, setReloadKey] = useState(0)
+  // En son görülen kontrol damgası. Yeni bir kontrol geçmişi kaydı düştüğünü BUNDAN anlıyoruz.
+  const lastCheckedRef = useRef(null)
+  // `refreshCert` MUTLAK KARARLI olmalı: domain effect'inin bağımlılığı ve kimliği değişirse
+  // effect yeniden koşup sekmeyi 'ssl'e sıfırlıyor. `toast` ToastProvider'ın her render'ında
+  // YENİ bir nesne (context değeri memo'lu değil) — yani dependency yapılsaydı ekranda beliren
+  // HERHANGİ bir toast kullanıcıyı bulunduğu sekmeden atardı. İkisi de ref üzerinden okunur.
+  const toastRef = useRef(toast); toastRef.current = toast
+  const tRef = useRef(t); tRef.current = t
+
+  /**
+   * Kart verisini yeniden çeker.
+   *
+   * <p>Sekmeyi ve mevcut içeriği KORUR (boşaltmaz): tazeleme kullanıcıyı bulunduğu yerden
+   * koparmamalı. `silent` (poll) turunda hiçbir yükleme göstergesi çizilmez; yalnız GERÇEKTEN
+   * yeni bir kontrol kaydı geldiyse bağımlı sekmeler tazelenir ve kullanıcı bilgilendirilir.
+   * Elle tazelemede ise sonuç aynı olsa bile sekmeler yeniden kurulur — düğmeye basan kişi
+   * "hiçbir şey olmadı" hissi almamalı.
+   */
+  const refreshCert = useCallback(async (silent = false) => {
+    const reqDomain = domainRef.current
+    if (!reqDomain) return
+    if (!silent) setRefreshing(true)
+    let res = null
+    try { res = await api.getHistory(reqDomain) } catch { /* ağ hatası: mevcut veri ekranda kalsın */ }
+    // Bayrak guard'DAN ÖNCE düşer. Elenen dalda bırakılırsa `refreshing` true kalır ve Yenile
+    // düğmesi kalıcı olarak devre dışı olurdu — `sslLoading`in v20.44.1'de düştüğü tuzağın aynısı.
+    if (!silent) setRefreshing(false)
+    // D12 guard: A'nın geç dönen yanıtı B'nin modalını doldurmasın.
+    if (reqDomain !== domainRef.current) return
+    const latest = res?.success && Array.isArray(res.data) && res.data.length > 0 ? res.data[0] : null
+    let isNew = false
+    if (latest) {
+      const stamp = latest.checked_at ?? null
+      isNew = lastCheckedRef.current !== null && stamp !== lastCheckedRef.current
+      lastCheckedRef.current = stamp
+      setCertData(latest)
+    }
+    // Elle tazeleme bağımlı sekmeleri KOŞULSUZ tazeler — kart verisi boş dönse bile ("henüz
+    // kontrol edilmemiş" domain) kullanıcı düğmeye bastı; Sağlık/Alarm/Envanter/Kontrol Geçmişi
+    // yine de yeniden okunmalı. Önce `latest` yoksa erken dönüyordu: "Çalıştır"ın ardından
+    // geçmiş sekmesi tazelenmiyordu, çünkü kart geçmişi henüz boştu.
+    if (isNew || !silent) setReloadKey(k => k + 1)
+    if (isNew && silent) toastRef.current.success(tRef.current('modal.newCheck'))
+  }, [])
+
+  // Envanter formu kaydedince (başlıktaki Düzenle) modal verisi hemen tazelenir. 0 = ilk mount,
+  // tazeleme yok.
+  useEffect(() => { if (refreshSignal) refreshCert(false) }, [refreshSignal, refreshCert])
+
+  // Modal açıkken yeni bir kontrol geçmişi kaydı düşerse kendiliğinden tazelenir. Cadence ve
+  // görünürlük kuralı Kontrol Geçmişi sekmesinin canlı yenilemesiyle AYNI (30 sn, gizli sekmede
+  // durur). immediate=false: ilk yüklemeyi zaten aşağıdaki domain effect'i yapıyor.
+  useVisibleInterval(() => refreshCert(true),
+    domain && !previewMode ? 30000 : 0, false)
 
   useEffect(() => {
     // Domain değişimi (modalı KAPATMAK dahil) uçuşan probe'u geçersizler ve yükleme bayrağını
     // sıfırlar — `!domain` dalından ÖNCE, çünkü kapanış tam da bayrağın sızdığı yoldu.
     sslSeq.current++
     setSslLoading(false)
+    setRefreshing(false)
+    lastCheckedRef.current = null   // yeni domain = yeni damga çizgisi; ilk yükleme "yeni kontrol" sayılmaz
     if (!domain) return
     setCertData(null)
     setSslData(null)
@@ -404,15 +469,10 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
       return
     }
 
-    // Details / Alerts / Notes için geçmiş veri. Guard (D12): A'nın geç dönen yanıtı B'nin
-    // modalını doldurmasın.
-    const reqDomain = domain
-    api.getHistory(domain).then((res) => {
-      if (reqDomain !== domainRef.current) return
-      if (res?.success && Array.isArray(res.data) && res.data.length > 0) setCertData(res.data[0])
-    })
+    // Details / Alerts / Notes için geçmiş veri — elle tazeleme ve poll ile AYNI yol.
+    refreshCert(true)
 
-  }, [domain])
+  }, [domain, refreshCert])
 
   /**
    * SSL sekmesindeki CANLI kontrol yalnız o sekme açıldığında koşar (K2).
@@ -439,6 +499,17 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   function switchTab(tab) { setActiveTab(tab) }
 
   if (!domain) return null
+
+  /**
+   * Başlıktaki "Çalıştır" — kartın ▶ düğmesiyle AYNI iş (`runSingleCheck`, App.jsx'ten prop).
+   * Yeni bir uç ya da ikinci bir kontrol yolu YOK: koşu bitince modal kendi verisini de tazeler,
+   * yoksa kullanıcı kontrolü modalın içinden başlatıp sonucunu modalın dışında görürdü.
+   */
+  async function handleCheckNow() {
+    if (!onCheckNow || checking) return
+    await onCheckNow()
+    await refreshCert(false)
+  }
 
   // Sertifikayi envanterden sil — YENI uc YOK, mevcut DELETE /admin/inventory/{id} cagrilir:
   // denetim kaydi, soft-delete ve acik alarmlarin kapatilmasi kendiliginden miras kalir.
@@ -477,21 +548,59 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
                 {t('cert.sec.insecure')}
               </span>
             )}
+          </div>
+          {/* Aksiyonlar başlık metninden AYRI bir grupta ve ikon-only.
+              Neden: beş etiketli hap ~430px yiyordu; alan adı sığmayıp iki satıra kırılıyor
+              (`word-break: break-all` "…akban / k.com" gibi bölüyor) ve grup kapatma düğmesine
+              değiyordu. İkonlar ~215px sürüyor, ad tek satırda kalıyor. Etiket kaybolmuyor:
+              hepsinde `title` (ipucu) + `aria-label` var — kart aksiyonlarının (`mon-act`)
+              zaten kullandığı desen. Yıkıcı olan "Sil" en sonda ve kırmızı vurgulu; kapatma
+              düğmesi ince bir ayraçla kendi bölmesinde durur. */}
+          <div className="modal-header-actions">
+            {/* "Kontrol ediliyor… N sn" şeridi — kartlardakiyle AYNI bileşen. Kontrol senkron ve
+                10+ sn sürebiliyor; tek geri bildirim düğmenin grileşmesi olursa kullanıcı
+                hiçbir şey olmadığını sanıp tekrar basıyor. Kartta vardı, modalda yoktu. */}
+            {!previewMode && <span className="modal-header-running"><CheckRunningStrip running={!!checking} /></span>}
+            {!previewMode && onCheckNow && (
+              <button type="button" className="modal-header-act" onClick={handleCheckNow}
+                disabled={checking} title={t('inv.runTitle', domain)}
+                aria-label={checking ? t('mon.checkRunning') : t('inv.run')}
+                aria-busy={checking || undefined}>
+                {checking ? <Spinner size={12} inline decorative /> : <Play size={14} />}
+              </button>
+            )}
+            {!previewMode && onEdit && (
+              <button type="button" className="modal-header-act" onClick={onEdit}
+                title={t('inv.edit')} aria-label={t('inv.edit')}>
+                <Pencil size={14} />
+              </button>
+            )}
+            {!previewMode && (
+              <button type="button" className="modal-header-act" onClick={() => refreshCert(false)}
+                disabled={refreshing} title={t('modal.refreshTitle')} aria-label={t('modal.refresh')}>
+                <RefreshCw size={14} className={refreshing ? 'spin' : undefined} />
+              </button>
+            )}
             {!previewMode && isAdmin && (
-              <button className="modal-header-diag-btn" onClick={() => setShowDiag(true)} title={t('inv.diagnose')}>
-                <Stethoscope size={13} /> {t('inv.diagnose')}
+              <button type="button" className="modal-header-act" onClick={() => setShowDiag(true)}
+                title={t('inv.diagnose')} aria-label={t('inv.diagnose')}>
+                <Stethoscope size={14} />
               </button>
             )}
             {!previewMode && canDeleteCert && (
-              <button className="modal-header-diag-btn" onClick={deleteCertificate}
-                disabled={deleting} title={t('inv.delete')}>
-                <Trash2 size={13} /> {t('inv.delete')}
+              <button type="button" className="modal-header-act modal-header-act--danger"
+                onClick={deleteCertificate} disabled={deleting}
+                title={t('inv.delete')} aria-label={t('inv.delete')}>
+                <Trash2 size={14} />
               </button>
             )}
+            {/* Ayraç YALNIZ solunda düğme varken çizilir; önizleme modunda tek başına kalan
+                dikey çizgi olarak görünüyordu. */}
+            {!previewMode && <span className="modal-header-actions-sep" aria-hidden="true" />}
+            <button className="modal-close-btn" onClick={onClose} aria-label="Close">
+              <X size={16} />
+            </button>
           </div>
-          <button className="modal-close-btn" onClick={onClose} aria-label="Close">
-            <X size={16} />
-          </button>
         </div>
 
         <div className="modal-tabs">
@@ -568,7 +677,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
         {!previewMode && activeTab === 'health' && (
           <div className="modal-body">
             <Suspense fallback={<LoadingBlock label={t('modal.loading')} fullWidth />}>
-              <CertHealthPanel domain={domain} />
+              <CertHealthPanel key={reloadKey} domain={domain} />
             </Suspense>
           </div>
         )}
@@ -701,6 +810,10 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
             <CheckHistoryTab
               kind="uptime-ssl"
               monitorId={domain}
+              /* Başlıktaki "Çalıştır"/"Yenile" ve yeni kontrol yakalayan yoklama burayı da
+                 tazeler. `key` YERİNE sinyal: remount kullanıcının seçtiği aralığı, sayfayı ve
+                 filtreyi sıfırlardı. */
+              reloadSignal={reloadKey}
               listKey="cert-ssl-history"
               presets={[1, 7, 30, 90]}
               defaultPreset={7}
@@ -720,7 +833,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
         )}
 
         {!previewMode && activeTab === 'alerts' && (
-          <AlertHistory domain={domain} />
+          <AlertHistory key={reloadKey} domain={domain} />
         )}
 
         {!previewMode && activeTab === 'chart' && (
@@ -732,7 +845,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
         )}
 
         {!previewMode && canViewInventory && activeTab === 'inventory' && (
-          <InventoryTab domain={domain} />
+          <InventoryTab key={reloadKey} domain={domain} />
         )}
 
         {!previewMode && activeTab === 'notes' && (

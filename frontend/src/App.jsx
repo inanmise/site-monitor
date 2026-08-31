@@ -192,6 +192,10 @@ export default function App() {
   const [sortOrder, setSortOrder] = useState('default')
   const [modalCert, setModalCert] = useState(null)
   const [checkingDomain, setCheckingDomain] = useState(null)   // kart bazlı "çalıştır" kilidi
+  // Envanter formu kaydedince açık sertifika modalına "verini tazele" der. Modal kendi 30 sn'lik
+  // yoklamasıyla YALNIZ yeni bir KONTROL kaydını yakalıyor; envanter düzenlemesi kontrol üretmez,
+  // dolayısıyla modalın Envanter sekmesi elle tazelenene kadar eski değerleri gösterirdi.
+  const [certModalRefresh, setCertModalRefresh] = useState(0)
   const [invForm, setInvForm] = useState(null)                 // { domain, mode } — kart → envanter formu
   // Envanter yazma yetkisi: inventory.crud yalnız bu iki rolde. Kart aksiyonları ve "Domain Ekle"
   // butonu aynı koşulu paylaşır. Kart bazında takım karşılaştırması YAPILMAZ — frontend'de
@@ -1334,7 +1338,12 @@ export default function App() {
         </div>
       </main>
 
-      <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} currentUser={user} currentUserRole={systemRole} onClose={() => setModalCert(null)} />
+      {/* Çalıştır/Düzenle KARTLA AYNI kaynaktan (`cardActions`) gelir — modal içinde ikinci bir
+          kontrol/düzenleme yolu tanımlanmaz. Önizleme (envanterde olmayan domain) modunda ikisi
+          de anlamsız: kayıtlı adres yok, düzenlenecek envanter satırı yok. */}
+      <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} currentUser={user} currentUserRole={systemRole} onClose={() => setModalCert(null)}
+        refreshSignal={certModalRefresh}
+        {...(modalCert && !modalCert._preview ? cardActions(modalCert) : {})} />
       {caModal && <CaDiversityModal certs={certs} onClose={() => setCaModal(false)} />}
 
       {/* Kart → envanter formu (Düzenle / Kopyala). Kendi Suspense sınırı: yukarıdaki sınır sekme
@@ -1345,7 +1354,7 @@ export default function App() {
             domain={invForm.domain}
             mode={invForm.mode}
             onClose={() => setInvForm(null)}
-            onSaved={() => { setInvForm(null); loadData() }}
+            onSaved={() => { setInvForm(null); loadData(); setCertModalRefresh(k => k + 1) }}
           />
         </Suspense>
       )}

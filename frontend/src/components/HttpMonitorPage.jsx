@@ -13,13 +13,14 @@ import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { X, RefreshCw, Plus, Trash2, Globe, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ShieldCheck } from 'lucide-react'
+import { RefreshCw, Plus, Trash2, Globe, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ShieldCheck } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { normalizeUrl } from '../utils/normalizeUrl.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
+import MonitorModalActions from './ui/MonitorModalActions.jsx'
 import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
@@ -97,6 +98,10 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState(null)
   const [detailTab, setDetailTab] = useState('control')
+  // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin. Sekmenin kendi 30 sn'lik
+  // canlı yenilemesi yetmiyor: 1. sayfa dışındaysan ya da özel aralık seçtiysen KAPALI. Sinyal,
+  // sekmeyi remount ETMEDEN yeniden okutur (remount seçilen aralığı/sayfayı/filtreyi sıfırlardı).
+  const [histReload, setHistReload] = useState(0)
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
@@ -229,11 +234,15 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
       const res = await api.monitoring.triggerHttpCheck(m.id)
       if (res?.success) {
         setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
-        // Geçmiş yenilemesi BİLİNÇLİ olarak yok: CheckHistoryTab kendi live polling'ini yapıyor.
+        // Geçmiş ARTIK tazeleniyor (setHistReload): sekmenin kendi 30 sn'lik canlı yenilemesi
+        // 1. sayfa dışında ve özel aralıkta KAPALI, dolayısıyla modaldan koşturulan kontrolün
+        // sonucu hiç görünmeyebiliyordu. Sinyal remount ETMEZ — seçilen aralık/sayfa/filtre kalır.
+        // (Eski hatalı loadHistory(m.id, rangeDays) çağrısı geri GELMEDİ; not aşağıda duruyor.)
         // Buradaki eski loadHistory(m.id, rangeDays) çağrısı geçmiş yönetimi o bileşene taşınırken
         // temizlenmemişti; ikisi de TANIMSIZ olduğu için modal açıkken kontrol butonu ReferenceError
         // atıyor, altındaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
         if (selected?.id === m.id) setSelected(res.data)
+        setHistReload(k => k + 1)
       }
     })
   }
@@ -446,8 +455,19 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
                 {statusBadge(selected)}
                 <span className="upt-modal-domain">{selected.url}</span>
               </div>
-              <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
-              <button className="upt-modal-close" onClick={closeDetail}><X size={18} /></button>
+              {/* Hızlı eylemler KARTIN aynısı (MonitorModalActions): detayı açan kişi kontrol
+                  koşturmak ya da ayarı düzeltmek için modalı kapatıp karta dönmesin. Yetki
+                  kapıları da kartla birebir — modal ayrı bir yetki yüzeyi DEĞİL. */}
+              <MonitorModalActions
+                running={isRunning(selected.id)}
+                onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
+                checkTitle={t('http.check')}
+                onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
+                editTitle={t('http.edit')}
+                onDuplicate={canManageRow(selected) ? () => openDuplicate(selected) : undefined}
+                onClose={closeDetail}>
+                <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+              </MonitorModalActions>
             </div>
             <div className="upt-modal-divider" />
             <div className="upt-modal-summary">
@@ -483,7 +503,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
             </div>
 
             {detailTab === 'control' && (
-              <CheckHistoryTab kind="http" monitorId={selected.id} listKey="http-history"
+              <CheckHistoryTab kind="http" monitorId={selected.id} listKey="http-history" reloadSignal={histReload}
                 columns={[t('http.colTime'), t('http.colStatus'), 'HTTP', t('http.colDetail')]}
                 onCounts={(c) => setSummary({ total: c.total, down: c.fail })}
                 renderRow={(c) => (<>

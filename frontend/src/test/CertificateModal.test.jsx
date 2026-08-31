@@ -312,3 +312,137 @@ describe('CertificateModal — SSL probe tur guard (S11)', () => {
     await waitFor(() => expect(api.checkDomainPreview).toHaveBeenCalledWith('b.example.com'))
   })
 })
+
+/**
+ * Başlıktaki hızlı aksiyonlar + tazeleme.
+ *
+ * Çalıştır/Düzenle App.jsx'in `cardActions`'ından prop olarak gelir (modal ikinci bir yol
+ * tanımlamaz), bu yüzden burada prop düzeyinde doğrulanır. Tazeleme iki yoldan gelir: elle
+ * düğme ve yeni bir kontrol geçmişi kaydını gören 30 sn'lik yoklama.
+ */
+describe('CertificateModal — başlık aksiyonları ve tazeleme', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  const openModal = (extra = {}) => render(
+    <CertificateModal domain="example.com" onClose={() => {}}
+      currentUser="admin" currentUserRole="ADMIN" {...extra} />
+  )
+
+  it('Çalıştır ve Düzenle YALNIZ prop verildiğinde çizilir', async () => {
+    openModal()
+    await screen.findByText('example.com')
+    expect(screen.queryByRole('button', { name: /^çalıştır$|^run$/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^düzenle$|^edit$/i })).toBeNull()
+  })
+
+  it('Çalıştır kartın koşusunu tetikler ve ardından modal verisini tazeler', async () => {
+    const onCheckNow = vi.fn().mockResolvedValue(undefined)
+    openModal({ onCheckNow })
+    const runBtn = await screen.findByRole('button', { name: /^çalıştır$|^run$/i })
+    expect(api.getHistory).toHaveBeenCalledTimes(1)      // açılıştaki ilk yükleme
+
+    fireEvent.click(runBtn)
+    await waitFor(() => expect(onCheckNow).toHaveBeenCalled())
+    // Koşu bittikten SONRA yeniden okunur; yoksa kullanıcı sonucu modalın dışında görürdü.
+    await waitFor(() => expect(api.getHistory).toHaveBeenCalledTimes(2))
+  })
+
+  it('Çalıştır koşu sürerken devre dışı (çift tetikleme yok)', async () => {
+    const onCheckNow = vi.fn()
+    openModal({ onCheckNow, checking: true })
+    const runBtn = await screen.findByRole('button', { name: /kontrol ediliyor|checking/i })
+    expect(runBtn).toBeDisabled()
+    fireEvent.click(runBtn)
+    expect(onCheckNow).not.toHaveBeenCalled()
+  })
+
+  it('Düzenle prop olarak doğrudan çağrılır (envanter formunu App açar)', async () => {
+    const onEdit = vi.fn()
+    openModal({ onEdit })
+    fireEvent.click(await screen.findByRole('button', { name: /^düzenle$|^edit$/i }))
+    expect(onEdit).toHaveBeenCalled()
+  })
+
+  it('Yenile düğmesi kart verisini yeniden okur', async () => {
+    openModal()
+    const btn = await screen.findByRole('button', { name: /^yenile$|^refresh$/i })
+    await waitFor(() => expect(api.getHistory).toHaveBeenCalledTimes(1))
+    fireEvent.click(btn)
+    await waitFor(() => expect(api.getHistory).toHaveBeenCalledTimes(2))
+  })
+
+  it('önizleme modunda hiçbir aksiyon düğmesi çizilmez (envanter kaydı yok)', async () => {
+    render(
+      <CertificateModal domain="example.com" previewMode initialData={{ domain: 'example.com', status: 'valid' }}
+        onClose={() => {}} onCheckNow={vi.fn()} onEdit={vi.fn()}
+        currentUser="admin" currentUserRole="ADMIN" />
+    )
+    await screen.findByText('example.com')
+    expect(screen.queryByRole('button', { name: /^çalıştır$|^run$/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^düzenle$|^edit$/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^yenile$|^refresh$/i })).toBeNull()
+  })
+
+  it('refreshSignal artınca (envanter kaydedildi) modal kendini tazeler', async () => {
+    const { rerender } = render(
+      <CertificateModal domain="example.com" onClose={() => {}} refreshSignal={0}
+        currentUser="admin" currentUserRole="ADMIN" />
+    )
+    await waitFor(() => expect(api.getHistory).toHaveBeenCalledTimes(1))
+    rerender(
+      <CertificateModal domain="example.com" onClose={() => {}} refreshSignal={1}
+        currentUser="admin" currentUserRole="ADMIN" />
+    )
+    await waitFor(() => expect(api.getHistory).toHaveBeenCalledTimes(2))
+  })
+})
+
+/**
+ * "Çalıştır" ile Kontrol Geçmişi arasındaki bağ.
+ *
+ * Kontrol senkron koşuyor ve YENİ bir kayıt üretiyor; kullanıcı kontrolü modalın içinden
+ * tetikleyip geçmişte hiçbir şey değişmediğini görmemeli. Sekme kendi 30 sn'lik canlı
+ * yenilemesine bırakılamaz: 1. sayfa dışında ya da özel aralıkta canlı yenileme KAPALI.
+ */
+describe('CertificateModal — Çalıştır sonrası Kontrol Geçmişi tazelenir', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('koşu bitince geçmiş ucu YENİDEN çağrılır (sekme remount edilmeden)', async () => {
+    const onCheckNow = vi.fn().mockResolvedValue(undefined)
+    render(
+      <CertificateModal domain="example.com" onClose={() => {}} onCheckNow={onCheckNow}
+        currentUser="admin" currentUserRole="ADMIN" />
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Check History' }))
+    await waitFor(() => expect(api.monitoring.getCheckHistory).toHaveBeenCalledTimes(1))
+
+    fireEvent.click(screen.getByRole('button', { name: /^çalıştır$|^run$/i }))
+    await waitFor(() => expect(onCheckNow).toHaveBeenCalled())
+    await waitFor(() => expect(api.monitoring.getCheckHistory).toHaveBeenCalledTimes(2))
+
+    // Remount OLMAMALI: aksi hâlde kullanıcının seçtiği aralık/sayfa/filtre sıfırlanırdı.
+    // İkinci çağrı da aynı parametrelerle gider (sayfa 0, aynı aralık).
+    const [, , p1] = api.monitoring.getCheckHistory.mock.calls[0]
+    const [, , p2] = api.monitoring.getCheckHistory.mock.calls[1]
+    expect(p2.page).toBe(p1.page)
+    expect(p2.days).toBe(p1.days)
+  })
+
+  it('koşu sürerken başlıkta "Kontrol ediliyor" şeridi belirir', async () => {
+    const { rerender } = render(
+      <CertificateModal domain="example.com" onClose={() => {}} onCheckNow={vi.fn()} checking={false}
+        currentUser="admin" currentUserRole="ADMIN" />
+    )
+    await screen.findByText('example.com')
+    expect(screen.queryByRole('status')).toBeNull()
+
+    rerender(
+      <CertificateModal domain="example.com" onClose={() => {}} onCheckNow={vi.fn()} checking
+        currentUser="admin" currentUserRole="ADMIN" />
+    )
+    // Şerit role="status" + saniye sayacı taşır (kartlardaki CheckRunningStrip ile aynı bileşen).
+    const strip = await screen.findByRole('status')
+    expect(strip.textContent).toMatch(/kontrol ediliyor|checking/i)
+    expect(strip.textContent).toMatch(/[0-9]+ ?(sn|s)/i)   // saniye sayaci ilerliyor
+  })
+})

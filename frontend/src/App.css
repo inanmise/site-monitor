@@ -4181,6 +4181,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   align-items: center;
   gap: 10px;
   min-width: 0;
+  /* Alan adı + durum rozetleri kalan TÜM genişliği alır; aksiyon grubu sabit kalır. Aksi hâlde
+     uzun bir alan adı grubu iterek kapatma düğmesine değdiriyordu. */
+  flex: 1 1 auto;
 }
 
 .modal-header-icon {
@@ -4208,16 +4211,52 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   white-space: nowrap;
 }
 /* Tanıla butonu — durum pill'inin yanında, header dark-temasıyla uyumlu (translucent). */
-.modal-header-diag-btn {
-  flex-shrink: 0;
-  display: inline-flex; align-items: center; gap: 5px;
-  font-size: .72em; font-weight: 700;
-  padding: 3px 10px; border-radius: 20px;
-  border: 1px solid rgba(255,255,255,.35);
-  background: rgba(255,255,255,.12); color: #fff;
-  cursor: pointer; transition: background .15s, border-color .15s;
+/* Başlık aksiyonları — ikon-only. Etiketli hap hâli beş düğmede ~430px sürüyordu ve alan adını
+   iki satıra kırıp kapatma düğmesine değiyordu; ad artık tek satırda kalıyor. Etiket `title` +
+   `aria-label` olarak duruyor (kart aksiyonlarındaki `mon-act` deseniyle aynı). */
+.modal-header-actions {
+  display: flex; align-items: center; gap: 6px;
+  flex-shrink: 0;            /* asla ezilme: uzun alan adı bu grubu daraltmasın */
+  margin-left: 12px;
 }
-.modal-header-diag-btn:hover { background: rgba(255,255,255,.22); border-color: rgba(255,255,255,.6); }
+.modal-header-act {
+  width: 30px; height: 30px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,.22);
+  background: rgba(255,255,255,.10); color: #fff;
+  cursor: pointer; transition: background .15s, border-color .15s, color .15s;
+}
+.modal-header-act:hover:not(:disabled) { background: rgba(255,255,255,.22); border-color: rgba(255,255,255,.55); }
+/* Yıkıcı eylem ikon-only olduğu için renkle ayrışmalı — "başka bir gri ikon" gibi durmamalı. */
+.modal-header-act--danger:hover:not(:disabled) {
+  background: rgba(239,68,68,.28); border-color: rgba(248,113,113,.75); color: #fecaca;
+}
+/* Koşan/silen/tazeleyen düğmelerin devre dışı hâli görünür olmalı, yoksa tıklanabilir görünüp
+   sessizce hiçbir şey yapmıyorlar. */
+.modal-header-act:disabled { opacity: .5; cursor: default; }
+/* "Kontrol ediliyor… N sn" şeridi (kartlarla aynı bileşen) koyu başlıkta. Şeridin kendi
+   token'ları AÇIK zemin için ayarlı: --success (#28a745) ve spinner'ın gri halkası burada
+   sönük kalıyor, o yüzden yalnız renkler bu bağlamda tazeleniyor — yerleşim paylaşılan
+   kuralda kalır. Kontrol koşmuyorken şerit null döner; boş sarmalayıcı grubun gap'inde
+   hayalet boşluk bırakmasın diye :empty gizlenir. */
+.modal-header-running { display: inline-flex; align-items: center; }
+.modal-header-running:empty { display: none; }
+.modal-header-running .mon-running { color: #6ee7b7; }
+.modal-header-running .mon-running-sec { background: rgba(110,231,183,.16); color: #a7f3d0; }
+.modal-header-running .pg-spinner { border-color: rgba(255,255,255,.28); border-top-color: #6ee7b7; }
+/* Çalıştır düğmesinin içindeki spinner: varsayılan gri halka koyu zeminde kayboluyor. */
+.modal-header-act .pg-spinner { border-color: rgba(255,255,255,.35); border-top-color: #fff; }
+/* Koşarken düğme kilitli ama SÖNÜK değil: "devre dışı" opaklığı spinner'ı da soldurup
+   çalıştığını okunmaz hâle getiriyordu. Kilit aria-busy ile ayrışıyor. */
+.modal-header-act[aria-busy="true"]:disabled { opacity: .9; }
+
+/* Kapatma düğmesi kendi bölmesinde: ekran görüntüsünde "Sil"e değiyordu. */
+.modal-header-actions-sep {
+  width: 1px; height: 20px; flex-shrink: 0;
+  margin: 0 2px;
+  background: rgba(255,255,255,.22);
+}
 .modal-status-valid    { background: rgba(34,197,94,.2);   color: #86efac; }
 .modal-status-warning  { background: rgba(245,158,11,.2);  color: #fcd34d; }
 .modal-status-high     { background: rgba(249,115,22,.2);  color: #fdba74; }
@@ -4240,6 +4279,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   transition: background .15s, color .15s;
 }
 .modal-close-btn:hover { background: rgba(255,255,255,.18); color: #fff; }
+/* Aksiyon grubunun içindeyken komşularıyla aynı boyda dursun (grup dışında 32px kalır —
+   kapatma düğmesi tek başına duran onlarca modalda kullanılıyor, oraya dokunulmuyor). */
+.modal-header-actions .modal-close-btn { width: 30px; height: 30px; }
 
 .modal-tabs {
   display: flex;
@@ -7318,6 +7360,20 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   font-size: 18px; font-weight: 700; color: var(--text);
   letter-spacing: -.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* Detay modalı başlığının sağ eylem grubu (MonitorModalActions) — dokuz izleme türünde ortak.
+   Kartlarla AYNI ikon düğmesi dili (`mon-act`), çünkü bu başlık da açık yüzeyde duruyor;
+   sertifika modalının koyu başlığı kendi `modal-header-act`ini kullanır. */
+.upt-modal-actions {
+  display: flex; align-items: center; gap: 6px;
+  flex-shrink: 0;              /* uzun adres/ad grubu daraltmasın */
+}
+/* Kapatma düğmesi kendi bölmesinde: yıkıcı düğmeye değmesin. */
+.upt-modal-actions-sep {
+  width: 1px; height: 20px; flex-shrink: 0;
+  margin: 0 2px;
+  background: var(--border);
+}
+
 .upt-modal-close {
   background: none; border: none; cursor: pointer;
   color: var(--text-muted); padding: 4px; border-radius: 6px;
