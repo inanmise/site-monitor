@@ -1053,6 +1053,45 @@ public class SchedulerService {
             )
             """);
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_mon_groups_team_type_lname ON monitoring_groups(team_id, type, name_lower)");
+
+        cleanupFalseDnsChangeFlags();
+    }
+
+    /**
+     * GECMISE DONUK VERI DUZELTMESI — sahte DNS "DEGISTI" damgalari.
+     *
+     * <p><b>Neden.</b> Cozumleme bir tur basarisiz oldugunda o satirin degeri {@code ""} yaziliyor.
+     * Degisiklik tespiti bos kume ile dolu kumeyi AYRIK gorup CHANGED damgasi basiyordu; oysa
+     * kayit degismemis, sadece OKUNAMAMISTI. Tek bir gecici hata iki sahte damga birakiyordu
+     * (dususte ve kurtulusta). Kok neden kapatildi -- ama gecmis satirlar damgayi tasimaya devam
+     * ediyor ve "Degisenler" filtresi/sayaci onlari saymaya devam ederdi.
+     *
+     * <p><b>Kapsam DAR ve kanitlanabilir:</b> yalnizca taraflardan biri BOS olan satirlar. Yeni
+     * {@code detectChange} bu satirlar icin zaten NONE donuyor, yani duzeltme gecmisi GUNCEL
+     * mantikla tutarli hale getirir -- hukum degistirmez. Gercek bir degisiklik iki DOLU kume
+     * gerektirdiginden bu WHERE hicbir gercek degisikligi silemez.
+     *
+     * <p>{@code rotated} DOKUNULMAZ: bos tarafla kesisim daima bos olur, yani bos taraf ROTATED
+     * uretemez -- temizlenecek bir sey yok.
+     *
+     * <p>Idempotent: ilk kosudan sonra hicbir satir eslesmez. Alarm tarafina dokunmaz; manuel
+     * tetikleme yolu DNS_CHANGED alarmi uretmiyordu (evaluateDnsNow yalniz DNS_FAILURE isler),
+     * dolayisiyla temizlenecek sahte alarm YOK.
+     */
+    private void cleanupFalseDnsChangeFlags() {
+        try {
+            int fixed = jdbcTemplate.update(
+                    "UPDATE dns_records SET changed = FALSE "
+                  + "WHERE changed = TRUE AND (COALESCE(previous_value, '') = '' OR COALESCE(value, '') = '')");
+            if (fixed > 0) {
+                log.info("Sahte DNS 'değişti' damgası temizlendi: {} satır (bir tarafı boş karşılaştırma)", fixed);
+            } else {
+                log.debug("Sahte DNS 'değişti' damgası bulunamadı — temiz.");
+            }
+        } catch (Exception e) {
+            // Acilis bu yuzden DURMAZ: kozmetik bir gecmis duzeltmesi, izlemenin kendisi degil.
+            log.warn("Sahte DNS 'değişti' temizliği atlandı: {}", e.getMessage());
+        }
     }
 
     /**

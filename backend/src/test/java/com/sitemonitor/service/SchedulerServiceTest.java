@@ -506,6 +506,41 @@ class SchedulerServiceTest {
         org.mockito.Mockito.verifyNoInteractions(pingMonitorRepo, pingCheckerService, monitoringOutageService);
     }
 
+    /**
+     * Gecmise donuk veri duzeltmesi: sahte DNS "DEGISTI" damgalari.
+     *
+     * <p>WHERE'in DAR olmasi kritik: yalnizca bir tarafi BOS olan karsilastirmalar temizlenir.
+     * Gercek bir degisiklik iki DOLU kume gerektirdiginden bu cumle hicbir gercek degisikligi
+     * silemez; test bunu SQL metni uzerinde pinler (mantik veritabaninda calisiyor).
+     */
+    @Test
+    @DisplayName("applySchemaPatches: sahte DNS 'degisti' damgasi YALNIZ bir tarafi bos satirlarda temizlenir")
+    void cleanupFalseDnsChangeFlags_narrowWhere() {
+        org.mockito.ArgumentCaptor<String> sql = org.mockito.ArgumentCaptor.forClass(String.class);
+        when(jdbcTemplate.update(sql.capture())).thenReturn(2);
+
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(scheduler, "cleanupFalseDnsChangeFlags");
+
+        // Not: SQL tek satir olarak kuruluyor (string birlestirme, satir sonu yok) — normalizasyon
+        // gereksiz. Ters-bolulu bir regex yazmaktan da bilerek kacinildi.
+        String q = sql.getValue();
+        assertThat(q).startsWith("UPDATE dns_records SET changed = FALSE");
+        // Yalniz damgalı satirlar taranir ve YALNIZ bir tarafi bos olanlar temizlenir.
+        assertThat(q).contains("changed = TRUE");
+        assertThat(q).contains("COALESCE(previous_value, '') = ''");
+        assertThat(q).contains("COALESCE(value, '') = ''");
+        // rotated DOKUNULMAZ: bos tarafla kesisim daima bos olur, ROTATED uretilemez.
+        assertThat(q).doesNotContain("rotated");
+    }
+
+    @Test
+    @DisplayName("applySchemaPatches: temizlik hatasi ACILISI DURDURMAZ")
+    void cleanupFalseDnsChangeFlags_failureIsSwallowed() {
+        when(jdbcTemplate.update(anyString())).thenThrow(new RuntimeException("db kapali"));
+        // Firlatmamali: kozmetik bir gecmis duzeltmesi izlemenin acilisini bloke edemez.
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(scheduler, "cleanupFalseDnsChangeFlags");
+    }
+
     @Test
     @DisplayName("runDnsChecks: CHANGED only on success vs last successful record; failure emits no change")
     void runDnsChecks_changeDetection_andFailureRegression() {
