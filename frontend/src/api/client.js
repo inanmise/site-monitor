@@ -244,6 +244,10 @@ export const api = {
 
   checkDomain: (domain) => request(`/check/${encodeURIComponent(domain)}`),
   checkDomainPreview: (domain) => request(`/check-preview/${encodeURIComponent(domain)}`),
+  // Envanter formundaki "Test et": YAZILAN degerlerle canli el sikismasi, KAYIT YOK.
+  // check-preview'dan farki portu/TLS modunu/proxy'yi envanterden degil GOVDEDEN almasi —
+  // henuz kaydedilmemis bir kayitta formdaki 8443 ancak boyle test edilebiliyor.
+  testCertificate: (body) => request('/certificates/test', { method: 'POST', body: JSON.stringify(body) }),
   // Sertifika sağlık kontrol listesi: KALICI son kontrolden anında gelir (ağ beklemez).
   getCertificateHealth: (domain) => request(`/certificates/${encodeURIComponent(domain)}/health`),
   // "Şimdi kontrol et" — canlı el sıkışması koşar, sonucu kalıcılaştırır, listeyi tazeler.

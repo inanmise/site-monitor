@@ -20,8 +20,15 @@ const confirmMock = vi.fn(() => Promise.resolve(true))
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 
 vi.mock('../api/client', () => ({
+  // Sonuç kutusu bitiş tarihini biçimlendiriyor: mock'ta ADI GEÇMEYEN named export
+  // ESM'de import anında patlar (bileşen artık formatDateOnly'yi de içe aktarıyor).
+  formatDateOnly: (s) => String(s ?? ''),
   api: withApiFallback({
     refreshCertificateHealth: vi.fn().mockResolvedValue({ success: true }),
+    testCertificate: vi.fn().mockResolvedValue({
+      success: true,
+      data: { status: 'valid', issuer: 'Test CA', not_after: '2027-01-01T00:00:00', days_remaining: 120, port: 8443, via: 'direct' },
+    }),
     admin: {
       updateInventory: vi.fn().mockResolvedValue({ success: true }),
       deleteInventory: vi.fn().mockResolvedValue({ success: true }),
@@ -88,15 +95,40 @@ describe('envanter formu eylem çubuğu', () => {
     expect(btn(TEST_RE)).toBeTruthy()
   })
 
-  it('Test et, KAYDEDİLMEMİŞ (formda yazılan) adresle tanılamayı açar', async () => {
+  it('Test et, KAYDEDİLMEMİŞ (formda yazılan) değerlerle GERÇEK sertifika testi koşar', async () => {
     renderEdit()
     const input = screen.getByDisplayValue('kayitli.example.com')
     fireEvent.change(input, { target: { value: 'yazilan.example.com' } })
     fireEvent.click(btn(TEST_RE))
-    await waitFor(() => expect(screen.getByTestId('diag').textContent).toBe('yazilan.example.com:8443'))
+    // Test, KAYDEDİLECEK değerlerin aynısıyla koşmalı: envanterden okuyan check-preview
+    // henüz kaydedilmemiş kayıtta formdaki portu görmez, 443'ün sertifikasını gösterirdi.
+    await waitFor(() => expect(api.testCertificate).toHaveBeenCalledWith(
+      expect.objectContaining({ domain: 'yazilan.example.com', port: 8443 })))
     // Kaydetmeden deneme: hiçbir kalıcı yazma yapılmaz.
     expect(api.admin.updateInventory).not.toHaveBeenCalled()
     expect(api.refreshCertificateHealth).not.toHaveBeenCalled()
+  })
+
+  it('Test sonucu FORMDA gösterilir — tanılama penceresi AÇILMAZ', async () => {
+    renderEdit()
+    fireEvent.click(btn(TEST_RE))
+    await waitFor(() => expect(screen.getByText(/Sertifika geçerli|Certificate is valid/i)).toBeTruthy())
+    expect(screen.getByText('Test CA')).toBeTruthy()
+    // Eski davranış: düğme doğrudan DiagnosticsModal'ı açıyordu — başlıktaki "Tanılama" ile
+    // birebir aynı iş. Sertifikanın kendisi hiç test edilmiyordu.
+    expect(screen.queryByTestId('diag')).toBeNull()
+  })
+
+  it('test BAŞARISIZ olursa hata gösterilir ve tanılama oradan açılabilir', async () => {
+    api.testCertificate.mockResolvedValueOnce({
+      success: true, data: { status: 'error', error: 'Connection refused', port: 8443 },
+    })
+    renderEdit()
+    fireEvent.click(btn(TEST_RE))
+    await waitFor(() => expect(screen.getByText('Connection refused')).toBeTruthy())
+    // "Neden başarısız" sorusunun cevabı tanılamada; form kapanmadan, YAZILAN host:port ile açılır.
+    fireEvent.click(btn(/Tanılama|Diagnose/i))
+    await waitFor(() => expect(screen.getByTestId('diag').textContent).toBe('kayitli.example.com:8443'))
   })
 
   it('Çalıştır, formdaki yeni değeri DEĞİL, KAYITLI adresi kullanır', async () => {

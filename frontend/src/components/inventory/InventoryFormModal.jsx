@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { ChevronDown, FlaskConical, Trash2, RefreshCw } from 'lucide-react'
 import MDEditor from '@uiw/react-md-editor'
-import { api } from '../../api/client'
+import { api, formatDateOnly } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useT } from '../../i18n/index.jsx'
@@ -12,6 +12,7 @@ import { INVENTORY_FLAGS, emptyFlags } from '../../utils/inventoryFlags.js'
 import { CONTACT_FIELDS, looksLikeBrokenEmail } from '../../utils/inventoryContacts.js'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import { CheckRunningStrip } from '../ui/CheckRunning.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
 import Field from '../ui/Field.jsx'
 import DiagnosticsModal from '../admin/DiagnosticsModal.jsx'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
@@ -122,12 +123,17 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
   // Kaydetmenin ardından koşan OTOMATİK ilk kontrol (elle "Çalıştır"dan ayrı bayrak: ikisi
   // farklı düğmeleri kilitliyor ve şeridin metni aynı olsa da tetikleyicisi farklı).
   const [firstRun, setFirstRun] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState(null)   // {status, issuer, not_after, days_remaining, ...} | {error}
   const [deleting, setDeleting] = useState(false)
   const formGridRef = useRef(null)
 
   const isDuplicate = mode === 'duplicate'
   // Silme yetkisi: CertificateModal ile AYNI kapı (inventory.crud) — ikinci bir yetki yolu açılmaz.
   const canDelete = usePermissions().canEdit('inventory.crud')
+  // Tanilama BASKA bir kapidan gecer (diagnostics.run/execute); test sonucundaki eylem, yetkisi
+  // olmayan kullaniciya 403 alacagi bir dugme gostermesin.
+  const canDiagnose = usePermissions().canExecute('diagnostics.run')
   // Kayıtlı alan adı: "Çalıştır" bunu kullanır (formdaki HENÜZ KAYDEDİLMEMİŞ değeri değil).
   const savedDomain = mode === 'edit' ? (record?.domain || null) : null
 
@@ -171,16 +177,37 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
   }
 
   /**
-   * Test et — YAZILAN değeri kullanır, KAYDETMEZ, alarm ÜRETMEZ.
+   * Test et — YAZILAN değerlerle canlı el sıkışması. KAYDETMEZ, alarm ÜRETMEZ.
    *
-   * <p>Dokuz izleme formundaki {@code runTest} ile aynı sözleşme: kullanıcı kaydetmeden önce
-   * adresin gerçekten çalışıp çalışmadığını görür. Başlıktaki "Tanılama" ile AYNI bileşen
-   * açılır — ikinci bir tanılama yüzeyi kurulmaz.
+   * <p><b>Eskiden ne yapıyordu.</b> Doğrudan {@code DiagnosticsModal}'ı açıyordu, yani
+   * başlıktaki "Tanılama" ile BİREBİR aynı iş: iki etiketli tek eylem. Sertifikanın kendisi
+   * (veren / bitiş / kalan gün) hiç test edilmiyordu — oysa dokuz izleme formunun sözleşmesi
+   * "yazılan değerlerle gerçek kontrolü koştur, sonucu FORMDA göster". Kod yorumu bu
+   * sözleşmeye atıf yapıyordu ama davranış onu tutmuyordu.
+   *
+   * <p>Test, KAYDEDİLECEK olan değerlerin aynısıyla koşar (port / TLS modu / proxy / zaman
+   * aşımı) — yoksa testin doğruladığı şey kaydedilen şey olmaz. Bu yüzden envanterden okuyan
+   * {@code check-preview} kullanılamadı: henüz kaydedilmemiş bir kayıtta formdaki 8443'ü
+   * görmez, 443'ün sertifikasını gösterirdi.
    */
-  function runTest() {
+  async function runTest() {
     if (!form.domain.trim()) { setMsg(t('inv.formDomain') + ' zorunlu'); return }
-    setMsg(null)
-    setShowDiag(true)
+    setMsg(null); setTesting(true); setTestResult(null)
+    let res = null
+    try {
+      res = await api.testCertificate({
+        domain: form.domain.trim(),
+        port: parseInt(form.port) || 443,
+        tlsMode: form.tls_mode || null,
+        useProxy: !!form.use_proxy,
+        timeoutSeconds: form.timeout_seconds && Number(form.timeout_seconds) > 0
+          ? Number(form.timeout_seconds) : null,
+      })
+    } catch (e) {
+      res = { success: false, error: e?.message || String(e) }
+    }
+    setTesting(false)
+    setTestResult(res?.success ? res.data : { status: 'error', error: res?.error || t('inv.testError') })
   }
 
   /**
@@ -495,13 +522,47 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
           </button>
         )}
 
+        {/* Test sonucu — dokuz izleme formunun sözleşmesinin ikinci yarısı: kontrol YAZILAN
+            değerlerle koşar ve sonucu FORMDA gösterir (modal açmaz, kayıt bırakmaz).
+            Kutuyu elle kurmak yerine AlertBanner: token'lı ve koyu-tema uyumlu tek yüzey —
+            emsal sayfalardaki gömülü hex'li kutular koyu temada okunmuyor.
+            Başarısızlıkta "Tanılama" eylemi BURAYA asılır: "neden başarısız" sorusunun cevabı
+            orada ve form kapanmadan, yazılan host:port ile açılır. */}
+        {testResult && (
+          <AlertBanner
+            tone={testResult.status === 'error' ? 'danger'
+              : testResult.status === 'warning' ? 'warning' : 'success'}
+            title={testResult.status === 'error' ? t('inv.testFailed')
+              : testResult.status === 'warning' ? t('inv.testExpiring') : t('inv.testValid')}
+            actions={testResult.status === 'error' && canDiagnose
+              ? <button className="btn btn-sm btn-secondary" onClick={() => setShowDiag(true)}>
+                  {t('inv.diagnose')}
+                </button>
+              : null}>
+            {testResult.status === 'error'
+              ? (testResult.error || t('inv.testError'))
+              : (
+                <>
+                  {testResult.issuer && <>{t('inv.testIssuer')}: <b>{testResult.issuer}</b> · </>}
+                  {t('inv.testExpiry')}: <b>{formatDateOnly(testResult.not_after)}</b>
+                  {testResult.days_remaining != null && <> · {t('inv.testDaysLeft', testResult.days_remaining)}</>}
+                </>
+              )}
+            {/* "Hangi portu, nasıl denedin" — testin kaydedilecek değerlerle koştuğunun kanıtı. */}
+            <div className="field-hint" style={{ marginTop: 4 }}>
+              {t('inv.testRanWith', testResult.port ?? (Number(form.port) || 443),
+                testResult.via === 'proxy' ? t('inv.testViaProxy') : t('inv.testViaDirect'))}
+            </div>
+          </AlertBanner>
+        )}
+
         {/* Alt bar — dokuz izleme formunun KANONİK düzeni (bkz. HttpMonitorPage):
             [Test et (solda)] … [Sil] [İptal] [Kaydet]. Envanter formu bu düzene uymayan
             tek düzenleme formuydu. */}
         <div className="modal-actions">
           <button className="btn btn-secondary" style={{ marginRight: 'auto' }} onClick={runTest}
-            disabled={!form.domain.trim()}>
-            <FlaskConical size={14} />{t('inv.test')}
+            disabled={testing || !form.domain.trim()}>
+            <FlaskConical size={14} />{testing ? t('inv.testing') : t('inv.test')}
           </button>
           {/* Çalıştır ve Sil YALNIZ kayıtlı kayıtta: yeni/kopya modunda henüz ortada bir kayıt yok. */}
           {savedDomain && (
