@@ -291,6 +291,32 @@ class CertificateHealthServiceTest {
     }
 
     @Test
+    @DisplayName("Sunulan sertifika pinden FARKLIYSA satır KIRMIZI — araya girme imzası")
+    void servedDifferingFromPinIsFailure() {
+        LatestCheck lc = healthy();
+        // Güven kapısı yeniden sabitlemeyi engelledi (CertificateService.applyAutoPin): pin duruyor,
+        // sunulan başka. Kapı olmasaydı bu satır sessizce yeşile döner, araya giren taraf pini
+        // kendi lehine yazdırırdı.
+        lc.setFingerprint("MODEM");
+
+        var r = row(lc, "pinnedFingerprint");
+
+        assertThat(r.status()).isEqualTo(Status.FAIL);
+        assertThat(r.valueKey()).isEqualTo("certPinMismatch");
+        assertThat(r.actionKey()).isEqualTo("investigateInterception");
+        assertThat(r.evidence()).containsEntry("served", "MODEM").containsEntry("pinned", "AA:BB:CC");
+    }
+
+    @Test
+    @DisplayName("Sunulan pinle aynıysa (harf farkı dahil) satır TEMİZ kalır")
+    void servedMatchingThePinStaysClean() {
+        LatestCheck lc = healthy();
+        lc.setFingerprint("aa:bb:cc");
+
+        assertThat(row(lc, "pinnedFingerprint").status()).isEqualTo(Status.OK);
+    }
+
+    @Test
     @DisplayName("Hiç parmak izi görülmemişse UNKNOWN (erişilemeyen domain)")
     void noFingerprintSeenIsUnknown() {
         LatestCheck lc = healthy();

@@ -1,6 +1,8 @@
 package com.sitemonitor.service;
 
 import com.sitemonitor.model.LatestCheck;
+
+import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -20,8 +22,19 @@ class CertificateAutoPinTest {
 
     private static final String NOW = "2026-08-23T12:00:00";
 
-    private static LatestCheck pinned(String fp, String at) {
+    private static final String HOST = "a.example.com";
+    /** Kusursuz gözlem: sertifika bu adı kapsıyor ve zinciri güven köküne bağlanıyor. */
+    private static final List<String> SAN = List.of(HOST);
+
+    private static LatestCheck fresh() {
         LatestCheck lc = new LatestCheck();
+        lc.setDomain(HOST);
+        lc.setTrustStatus("TRUSTED");
+        return lc;
+    }
+
+    private static LatestCheck pinned(String fp, String at) {
+        LatestCheck lc = fresh();
         lc.setPinnedFingerprint(fp);
         lc.setPinnedAt(at);
         return lc;
@@ -30,9 +43,9 @@ class CertificateAutoPinTest {
     @Test
     @DisplayName("İLK görüşte sessizce sabitlenir — değişim olarak raporlanmaz")
     void firstSightPinsSilently() {
-        LatestCheck lc = new LatestCheck();
+        LatestCheck lc = fresh();
 
-        CertificateService.applyAutoPin(lc, "AA:BB", NOW);
+        CertificateService.applyAutoPin(lc, "AA:BB", NOW, SAN);
 
         assertThat(lc.getPinnedFingerprint()).isEqualTo("AA:BB");
         assertThat(lc.getPinnedAt()).isEqualTo(NOW);
@@ -46,7 +59,7 @@ class CertificateAutoPinTest {
     void unchangedCertificateIsLeftAlone() {
         LatestCheck lc = pinned("AA:BB", "2026-06-01T00:00:00");
 
-        CertificateService.applyAutoPin(lc, "AA:BB", NOW);
+        CertificateService.applyAutoPin(lc, "AA:BB", NOW, SAN);
 
         assertThat(lc.getPinnedAt()).isEqualTo("2026-06-01T00:00:00");
         assertThat(lc.getFingerprintChangedAt()).isNull();
@@ -57,7 +70,7 @@ class CertificateAutoPinTest {
     void caseDifferenceIsNotAChange() {
         LatestCheck lc = pinned("aa:bb:cc", "2026-06-01T00:00:00");
 
-        CertificateService.applyAutoPin(lc, "AA:BB:CC", NOW);
+        CertificateService.applyAutoPin(lc, "AA:BB:CC", NOW, SAN);
 
         assertThat(lc.getFingerprintChangedAt()).isNull();
     }
@@ -67,7 +80,7 @@ class CertificateAutoPinTest {
     void changeRepinsAndRecords() {
         LatestCheck lc = pinned("ESKI", "2026-06-01T00:00:00");
 
-        CertificateService.applyAutoPin(lc, "YENI", NOW);
+        CertificateService.applyAutoPin(lc, "YENI", NOW, SAN);
 
         assertThat(lc.getPreviousFingerprint()).isEqualTo("ESKI");
         assertThat(lc.getPinnedFingerprint()).isEqualTo("YENI");
@@ -79,9 +92,9 @@ class CertificateAutoPinTest {
     @DisplayName("Yeniden sabitlemeden SONRA aynı sertifika sürerse ikinci uyarı üretilmez")
     void afterRepinTheNewCertIsTheBaseline() {
         LatestCheck lc = pinned("ESKI", "2026-06-01T00:00:00");
-        CertificateService.applyAutoPin(lc, "YENI", NOW);
+        CertificateService.applyAutoPin(lc, "YENI", NOW, SAN);
 
-        CertificateService.applyAutoPin(lc, "YENI", "2026-08-23T13:00:00");
+        CertificateService.applyAutoPin(lc, "YENI", "2026-08-23T13:00:00", SAN);
 
         // Değişim anı İLK fark edildiği anda kalır; her kontrolde tazelenirse satır hiç yeşile dönmez.
         assertThat(lc.getFingerprintChangedAt()).isEqualTo(NOW);
@@ -93,11 +106,78 @@ class CertificateAutoPinTest {
     void missingFingerprintKeepsThePin() {
         LatestCheck lc = pinned("AA:BB", "2026-06-01T00:00:00");
 
-        CertificateService.applyAutoPin(lc, null, NOW);
-        CertificateService.applyAutoPin(lc, "   ", NOW);
+        CertificateService.applyAutoPin(lc, null, NOW, SAN);
+        CertificateService.applyAutoPin(lc, "   ", NOW, SAN);
 
         assertThat(lc.getPinnedFingerprint()).isEqualTo("AA:BB");
         assertThat(lc.getFingerprintChangedAt()).isNull();
         assertThat(lc.getPreviousFingerprint()).isNull();
+    }
+
+    // ── Güven kapısı: araya giren sertifika pini EZEMEZ ────────────────────────
+
+    @Test
+    @DisplayName("Sunulan sertifika bu adı KAPSAMIYORSA pin korunur, damga basılmaz")
+    void hostnameMismatchKeepsThePin() {
+        LatestCheck lc = pinned("GERCEK", "2026-06-01T00:00:00");
+
+        // NXDOMAIN-hijack imzası: alan adı yerel modeme çözülmüş, sertifika CN=192.168.1.1.
+        CertificateService.applyAutoPin(lc, "MODEM", NOW, List.of("192.168.1.1"));
+
+        assertThat(lc.getPinnedFingerprint()).isEqualTo("GERCEK");
+        assertThat(lc.getPreviousFingerprint()).isNull();
+        assertThat(lc.getFingerprintChangedAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("Sunulan sertifika GÜVENİLMİYORSA pin korunur, damga basılmaz")
+    void untrustedCertificateKeepsThePin() {
+        LatestCheck lc = pinned("GERCEK", "2026-06-01T00:00:00");
+        lc.setTrustStatus("UNTRUSTED");
+
+        CertificateService.applyAutoPin(lc, "ARAYA_GIREN", NOW, SAN);
+
+        assertThat(lc.getPinnedFingerprint()).isEqualTo("GERCEK");
+        assertThat(lc.getFingerprintChangedAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("Kusurlu gözlem İLK sabitlemeyi de yapmaz — pin baştan kirletilemez")
+    void defectiveObservationDoesNotSeedThePin() {
+        LatestCheck lc = fresh();
+        lc.setTrustStatus("UNTRUSTED");
+
+        CertificateService.applyAutoPin(lc, "MODEM", NOW, List.of("192.168.1.1"));
+
+        assertThat(lc.getPinnedFingerprint()).isNull();
+        assertThat(lc.getPinnedAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("Araya girme geçtikten sonra GERÇEK sertifika ikinci bir sahte damga üretmez")
+    void realCertificateAfterInterceptionIsNotAChange() {
+        LatestCheck lc = pinned("GERCEK", "2026-06-01T00:00:00");
+        lc.setTrustStatus("UNTRUSTED");
+        CertificateService.applyAutoPin(lc, "MODEM", NOW, List.of("192.168.1.1"));
+
+        // Ağ düzeldi: aynı gerçek sertifika geri döndü. Pin hiç kirlenmediği için bu bir DEĞİŞİM değil.
+        lc.setTrustStatus("TRUSTED");
+        CertificateService.applyAutoPin(lc, "GERCEK", "2026-08-23T13:00:00", SAN);
+
+        assertThat(lc.getPinnedFingerprint()).isEqualTo("GERCEK");
+        assertThat(lc.getFingerprintChangedAt()).isNull();
+        assertThat(lc.getPreviousFingerprint()).isNull();
+    }
+
+    @Test
+    @DisplayName("KANIT YOKLUĞU kapıyı kapatmaz: SAN boş / güven hesaplanmamışsa TOFU çalışır")
+    void unknownEvidenceStillPins() {
+        LatestCheck lc = fresh();
+        lc.setTrustStatus(null);
+
+        CertificateService.applyAutoPin(lc, "AA:BB", NOW, List.of());
+
+        // Hafif kontroller SAN/trust üretmeyebilir; bilinmeyeni kusur sayarsak hiçbir pin kurulmaz.
+        assertThat(lc.getPinnedFingerprint()).isEqualTo("AA:BB");
     }
 }

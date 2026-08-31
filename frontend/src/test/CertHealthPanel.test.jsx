@@ -179,8 +179,52 @@ describe('CertHealthPanel', () => {
 
     expect(await screen.findByText('Certificate chain is intact')).toBeInTheDocument()
     expect(container.querySelector('.hlth-mark--fail')).not.toBeNull()
-    // Künyede veri yoksa tire gösterilir, boş kutu değil.
-    expect(container.querySelectorAll('.hlth-chip-v')[0].textContent).toBe('—')
+    // Künyede veri yoksa tire gösterilir, boş kutu değil. [0] artık HOST çipi (hangi kayda
+    // baktığımız), geçerlilik başlangıcı [1].
+    expect(container.querySelectorAll('.hlth-chip-v')[1].textContent).toBe('—')
+  })
+
+  // ── Hangi kayda bakıyoruz (kalıcı mount'lu modalın tuzağı) ────────────────
+  //
+  // Panel domain adını hiçbir yerde yazmıyordu ve modal kalıcı mount'lu: domain değişince
+  // önceki kaydın satırları ekranda kalıyor, kullanıcı A kartını açıp B'nin parmak izlerini
+  // A'ya ait sanabiliyordu. Sertifika sağlığında bu, yanlış domain hakkında hüküm kurdurur.
+
+  it('künyede HANGİ host olduğunu yazar (443 dışı port dahil)', async () => {
+    api.getCertificateHealth.mockResolvedValue({ success: true, data: { ...DATA, port: 8443 } })
+    draw()
+
+    expect(await screen.findByText('a.example.com:8443')).toBeInTheDocument()
+  })
+
+  it('domain değişince ÖNCEKİ kaydın satırları ekranda KALMAZ', async () => {
+    const { rerender } = draw()
+    await screen.findByText('a.example.com')
+
+    // İkinci domainin yanıtı henüz dönmedi: eski liste gösterilmeye DEVAM etmemeli.
+    let release
+    api.getCertificateHealth.mockReturnValue(new Promise(res => { release = res }))
+    rerender(<CertHealthPanel domain="b.example.com" />)
+
+    await waitFor(() => expect(screen.queryByText('a.example.com')).toBeNull())
+
+    release({ success: true, data: { ...DATA, domain: 'b.example.com' } })
+    expect(await screen.findByText('b.example.com')).toBeInTheDocument()
+  })
+
+  it('GEÇ dönen eski yanıt yeni domainin verisini EZEMEZ', async () => {
+    let releaseOld
+    api.getCertificateHealth.mockReturnValueOnce(new Promise(res => { releaseOld = res }))
+    const { rerender } = draw()
+
+    api.getCertificateHealth.mockResolvedValue({ success: true, data: { ...DATA, domain: 'b.example.com' } })
+    rerender(<CertHealthPanel domain="b.example.com" />)
+    await screen.findByText('b.example.com')
+
+    // A'nın yanıtı şimdi düşüyor; sayaç guard'ı olmasaydı ekran A'ya geri dönerdi.
+    releaseOld({ success: true, data: DATA })
+    await waitFor(() => expect(screen.getByText('b.example.com')).toBeInTheDocument())
+    expect(screen.queryByText('a.example.com')).toBeNull()
   })
 
   it('bilinmeyen durum etiketiyle gelen satır NÖTR çizilir (sessiz boşluk olmaz)', async () => {

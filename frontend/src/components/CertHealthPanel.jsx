@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, X, HelpCircle, TriangleAlert, RefreshCw, ChevronRight, ShieldCheck, Lock, Globe } from 'lucide-react'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -50,14 +50,30 @@ export default function CertHealthPanel({ domain, canRefresh = true }) {
   const [error, setError] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
   const [open, setOpen] = useState(null)
+  // Uçuşan istek sayacı: yanıt döndüğünde "hâlâ bu domain mi" sorusunun cevabı.
+  const seqRef = useRef(0)
 
+  /**
+   * Sağlık listesini yükler.
+   *
+   * <p><b>Neden sayaç ve neden `setData(null)`.</b> Modal KALICI mount'lu, yalnız `domain` prop'u
+   * değişiyor. Eski hâlde domain değiştiğinde panel önceki domainin satırlarını ekranda TUTUYORDU
+   * (yeni yanıt gelene kadar) ve iki yanıt yarışırsa geç dönen ESKİ domainin verisi kazanabiliyordu.
+   * Sonuç: A kartını açan kullanıcı B'nin parmak izlerini/uyarısını A'ya ait sanıyor — sertifika
+   * sağlığı gibi bir yüzeyde bu, yanlış domain hakkında hüküm kurdurur. Veri artık domain
+   * değişiminde sıfırlanır (yükleniyor gösterilir) ve yalnız EN SON isteğin yanıtı yazılır.
+   */
   const load = useCallback(async () => {
+    const seq = ++seqRef.current
     setError(null)
+    setData(null)
     try {
       const res = await api.getCertificateHealth(domain)
+      if (seq !== seqRef.current) return
       if (res?.success) setData(res.data)
       else { setData(null); setError(res?.error || t('hlth.loadError')) }
     } catch (e) {
+      if (seq !== seqRef.current) return
       setData(null)
       setError(e?.message || String(e))
     }
@@ -66,15 +82,19 @@ export default function CertHealthPanel({ domain, canRefresh = true }) {
   useEffect(() => { load() }, [load])
 
   async function refresh() {
+    const seq = seqRef.current
     setRefreshing(true)
     try {
       const res = await api.refreshCertificateHealth(domain)
+      // Kullanıcı bu arada başka bir domaine geçtiyse yanıt BAŞKA bir kaydın canlı kontrolüdür.
+      if (seq !== seqRef.current) return
       if (res?.success) { setData(res.data); setError(null) }
       else setError(res?.error || t('hlth.refreshError'))
     } catch (e) {
+      if (seq !== seqRef.current) return
       setError(e?.message || String(e))
     } finally {
-      setRefreshing(false)
+      if (seq === seqRef.current) setRefreshing(false)
     }
   }
 
@@ -89,8 +109,17 @@ export default function CertHealthPanel({ domain, canRefresh = true }) {
     <div className="hlth-panel">
       {error && <AlertBanner tone="warning" title={t('hlth.refreshError')}>{error}</AlertBanner>}
 
-      {/* Üst künye — geçerlilik penceresi ve kontrol zamanları tek satırda. */}
+      {/* Üst künye — geçerlilik penceresi ve kontrol zamanları tek satırda.
+          İLK çip HANGİ HOST: liste, kaydın adını hiçbir yerde yazmıyordu; kalıcı mount'lu modalda
+          yanlış domaine bakıp doğru sanmak bu yüzden mümkündü (parmak izi satırı bunun en pahalı
+          örneği). Künye, sunucunun DÖNDÜĞÜ domaini gösterir — formdakini değil. */}
       <div className="hlth-meta">
+        <span className="hlth-chip">
+          <span className="hlth-chip-k">{t('hlth.host')}</span>
+          <span className="hlth-chip-v">
+            {data.domain || domain}{data.port && data.port !== 443 ? `:${data.port}` : ''}
+          </span>
+        </span>
         <span className="hlth-chip">
           <span className="hlth-chip-k">{t('hlth.validFrom')}</span>
           <span className="hlth-chip-v">{data.not_before ? formatDateSec(data.not_before) : '—'}</span>

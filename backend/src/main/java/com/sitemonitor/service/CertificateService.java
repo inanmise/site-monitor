@@ -175,7 +175,9 @@ public class CertificateService {
             latest.setTlsVersion((String) result.get("tls_version"));
             latest.setCipherSuite((String) result.get("cipher_suite"));
             // TOFU pin: ilk görüşte sabitle, değiştiği anda yenisini sabitle ve değişimi kaydet.
-            applyAutoPin(latest, servedFingerprint, now);
+            // SAN listesi ayrıca geçilir: pin, sunulan sertifikanın bu host için KABUL EDİLEBİLİR
+            // olmasına bağlı (aşağıya bakın) ve hüküm SAN + trust_status'tan çıkıyor.
+            applyAutoPin(latest, servedFingerprint, now, sanList);
             latest.setCheckedAt((String) result.get("checked_at"));
             latest.setUpdatedAt(now);
             latestRepo.save(latest);
@@ -201,16 +203,50 @@ public class CertificateService {
      *
      * <p>Sunulan parmak izi yoksa (erişilemedi/hata) pin KORUNUR — erişim sorununu sertifika
      * değişimi gibi göstermek yanlış alarm olurdu.
+     *
+     * <p><b>GÜVEN KAPISI (2026-09-01).</b> Sabitleme, sunulan sertifikanın bu host için kabul
+     * edilebilir olmasına bağlıdır: adı kapsamıyorsa ({@code HOSTNAME_MISMATCH}) ya da zinciri
+     * bir güven köküne bağlanmıyorsa ({@code UNTRUSTED_CA}) pin'e HİÇ dokunulmaz — ne yeniden
+     * sabitlenir ne de değişim damgası basılır.
+     *
+     * <p><b>Neden.</b> Kapısız hâlde pin, araya giren tarafın sertifikasıyla EZİLİYORDU. Yerel
+     * ağda bir alan adı geçici olarak modeme çözüldüğünde ({@code CN=192.168.1.1}, kendinden
+     * imzalı) sistem bunu "sertifika değişti" sayıp modemin parmak izini sabitledi; gerçek
+     * sertifika döndüğünde İKİNCİ bir sahte "değişti" uyarısı daha üretti. Yani pin, tam olarak
+     * yakalaması gereken şeyin lehine yeniden yazılıyordu — MITM tespiti için konmuş bir
+     * mekanizmanın tersine dönmesi. Kapı, "parmak izi okunamadıysa pini koru" kuralının aynı
+     * sınıftan kardeşidir: kusurlu gözlem hüküm değiştirmez.
+     *
+     * <p>Kusur sabitlemeyi engellediğinde sunulan parmak izi pinden farklı kalır; sağlık
+     * listesindeki {@code pinnedFingerprint} satırı bunu "sabitlenenden farklı" olarak KIRMIZI
+     * gösterir (bkz. {@code CertificateHealthService.certificateChangeRow}) — durum sessizce
+     * yutulmaz, yalnızca pin kirletilmez.
+     *
+     * <p>{@code securityFlags} sözleşmesi gereği BİLİNMEYEN kusur üretmez: SAN listesi boş ya da
+     * {@code trust_status} hesaplanmamışsa kapı açık kalır ve TOFU eskisi gibi çalışır (hafif
+     * kontroller ve iç CA'lı ortamlar pin'siz kalmasın).
+     *
+     * @param san sunulan sertifikanın SAN listesi (host kapsanıyor mu hükmü buradan çıkar)
      */
-    static void applyAutoPin(LatestCheck latest, String servedFingerprint, String now) {
+    static void applyAutoPin(LatestCheck latest, String servedFingerprint, String now, List<String> san) {
         if (servedFingerprint == null || servedFingerprint.isBlank()) return;
         String pinned = latest.getPinnedFingerprint();
+        // Aynı sertifika sürüyor: hiçbir yazma gerekmiyor (güven kapısını sormaya bile gerek yok).
+        if (pinned != null && pinned.equalsIgnoreCase(servedFingerprint)) return;
+
+        List<String> flags = CertificateHealthRules.securityFlags(
+                latest.getDomain(), san, latest.getTrustStatus());
+        if (!flags.isEmpty()) {
+            log.warn("Pin KORUNDU — sunulan sertifika {} için kabul edilebilir değil: {}",
+                    latest.getDomain(), flags);
+            return;
+        }
+
         if (pinned == null || pinned.isBlank()) {
             latest.setPinnedFingerprint(servedFingerprint);
             latest.setPinnedAt(now);
             return;
         }
-        if (pinned.equalsIgnoreCase(servedFingerprint)) return;
         latest.setPreviousFingerprint(pinned);
         latest.setPinnedFingerprint(servedFingerprint);
         latest.setPinnedAt(now);

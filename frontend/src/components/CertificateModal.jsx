@@ -677,7 +677,9 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
         {!previewMode && activeTab === 'health' && (
           <div className="modal-body">
             <Suspense fallback={<LoadingBlock label={t('modal.loading')} fullWidth />}>
-              <CertHealthPanel key={reloadKey} domain={domain} />
+              {/* key'e DOMAIN de girer: modal kalıcı mount'lu, domain değişince panel
+                  remount olmazsa önceki kaydın satırları ekranda kalıyordu. */}
+              <CertHealthPanel key={`${domain}:${reloadKey}`} domain={domain} />
             </Suspense>
           </div>
         )}
