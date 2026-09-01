@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment, lazy, Suspense } from 'react'
 import { api, formatDate, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
+import { useDialog } from '../ui/Dialog.jsx'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval'
 import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail, ChevronRight, Check, Server, Database, Globe, Cpu, ChevronDown, Users, LogIn, ShieldAlert, UserCheck } from 'lucide-react'
 import MiniChart from './MiniChart'
@@ -91,6 +92,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
   // Sağlık sekmesi herkese görünür; yetkisiz kullanıcıda bu bölümü hiç çağırma/gösterme → 403/"Yüklenemedi" olmaz.
   const canViewUserActivity = !!globalAdmin || systemRole === 'AUDIT'
   const t = useT()
+  const { showConfirm } = useDialog()
   const [health, setHealth]           = useState(null)
   const [metrics, setMetrics]         = useState([])
   const [httpMetrics, setHttpMetrics] = useState(null)
@@ -240,7 +242,11 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
 
   const handleTerminateSession = useCallback(async (username) => {
     if (!username) return
-    if (!window.confirm(t('uact.terminateConfirm', username))) return
+    // Tarayıcı-varsayılanı kutu DEĞİL: proje diyaloğu (tasarım sistemi + hedefin adı).
+    if (!await showConfirm({
+      title: t('uact.terminate'), message: t('uact.terminateConfirm', username),
+      confirmText: t('uact.terminate'), variant: 'danger',
+    })) return
     setTerminatingUser(username)
     const res = await api.admin.terminateUserSession(username)
     if (res?.success) {
@@ -325,11 +331,21 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
   }, [smtpLogs, smtpFilters])
 
   const handleForceRelease = async () => {
-    if (!window.confirm(t('sys.lockReleaseConfirm'))) return
+    if (!await showConfirm({
+      title: t('sys.forceRelease'), message: t('sys.lockReleaseConfirm'),
+      confirmText: t('sys.forceRelease'), variant: 'danger',
+    })) return
     setReleasing(true)
-    const res = await api.admin.forceReleaseLock()
-    setMsg(res?.success ? t('sys.lockReleased') : t('sys.error'))
-    setReleasing(false)
+    // try/finally ŞART: request() ağ hatasında THROW ediyor (client.js) ve bayrak
+    // temizlenmezse düğme remount'a kadar kilitli kalır — kullanıcı için "buton bozuldu".
+    try {
+      const res = await api.admin.forceReleaseLock()
+      setMsg(res?.success ? t('sys.lockReleased') : t('sys.error'))
+    } catch (e) {
+      setMsg(t('sys.error'))
+    } finally {
+      setReleasing(false)
+    }
     load()
   }
 
@@ -359,9 +375,14 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
 
   const handleForceRun = async () => {
     setTriggering(true)
-    await api.runScheduler()
-    setMsg(t('sys.checkTriggered'))
-    setTriggering(false)
+    try {
+      await api.runScheduler()
+      setMsg(t('sys.checkTriggered'))
+    } catch (e) {
+      setMsg(t('sys.error'))
+    } finally {
+      setTriggering(false)   // bkz. handleForceRelease: ağ hatası bayrağı sızdırmasın
+    }
     startScanPoll(health?.scan?.last_run)
   }
 

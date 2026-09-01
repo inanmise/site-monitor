@@ -242,6 +242,7 @@ const PING_TR = `
 - **Kontrol Sıklığı** — Varsayılan **1 dk**.
 - **Zaman Aşımı (ms)** — Varsayılan 5000.
 - **Doğrulama denemesi** (0–10, def 3) + **Deneme aralığı (sn)**; **Kurtarma** (1–20, def 3) + aralık.
+- **Yavaşlık alarmı** — Varsayılan KAPALI. Açılınca iki alan gelir: **Taban çizgisi penceresi (dk, def 10)** ve **Sapma eşiği (%, def 20)**. Eşik sabit bir ms değeri DEĞİL: host'un son N dakikadaki başarılı ping ortalaması taban çizgisidir, ölçüm bunun %X üstüne çıkarsa alarm üretilir. Doğrulama/kurtarma sayıları burada da geçerlidir; taban çizgisi için en az 3 ölçüm gerekir ve host erişilemezken yavaşlık alarmı üretilmez (o durum Ping alarmıdır).
 - **Aktif** — Aç/kapat.
 
 ### İpuçları
@@ -265,6 +266,7 @@ Open the form with **+ New Monitor**.
 - **Check interval** — Default **1m**.
 - **Timeout (ms)** — Default 5000.
 - **Confirm attempts** (0–10, def 3) + **Attempt interval (s)**; **Recovery** (1–20, def 3) + interval.
+- **Slowness alarm** — Off by default. Switching it on reveals two fields: **Baseline window (min, def 10)** and **Deviation threshold (%, def 20)**. The threshold is not a fixed millisecond figure: the baseline is the host's average over its successful pings in the last N minutes, and an alarm is raised when a measurement climbs more than X% above it. The confirm/recovery settings apply here too; the baseline needs at least 3 measurements, and no slowness alarm is raised while the host is unreachable (that is the Ping alarm's job).
 - **Active** — Enable/disable.
 
 ### Tips

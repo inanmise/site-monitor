@@ -846,7 +846,10 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
 
   async function del() {
     if (!modal?.id) return
-    if (!window.confirm(t('scripted.confirmDelete'))) return
+    if (!await showConfirm({
+      title: t('scripted.delete'), message: t('scripted.confirmDelete'),
+      confirmText: t('scripted.delete'), variant: 'danger',
+    })) return
     const res = await api.monitoring.deleteScriptedMonitor(modal.id)
     if (res?.success) {
       // skipDraft: silinen monitör için taslak yazılırsa hiçbir arayüzden erişilemeyen

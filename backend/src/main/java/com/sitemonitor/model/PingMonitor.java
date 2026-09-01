@@ -48,6 +48,25 @@ public class PingMonitor {
     @Column(name = "notify_webhook")
     private Boolean notifyWebhook = true;
 
+    /**
+     * Yavaşlık alarmı açık mı (vars. KAPALI — opt-in).
+     *
+     * <p>Port izlemesindeki {@code slowResponseEnabled}'ın GÖRECELİ kardeşi: orada eşik sabit bir
+     * ms değeri, burada host'un KENDİ son N dakikalık ortalaması. Ping gecikmesi hatta, mesafeye
+     * ve donanıma göre 5 ms ile 250 ms arasında normal olabilir; sabit bir ms eşiği ya her hostta
+     * yanlış alarm üretir ya da hiç ötmez. Taban çizgisi host başına kendiliğinden oluşur.
+     */
+    @Column(name = "slow_response_enabled")
+    private Boolean slowResponseEnabled = false;
+
+    /** Taban çizgisi penceresi (dk): son bu kadar dakikanın BAŞARILI ping ortalaması. */
+    @Column(name = "slow_baseline_window_minutes")
+    private Integer slowBaselineWindowMinutes = 10;
+
+    /** Sapma eşiği (%): ölçüm, taban çizgisinin bu yüzde kadar üstündeyse YAVAŞ sayılır. */
+    @Column(name = "slow_threshold_percent")
+    private Integer slowThresholdPercent = 20;
+
     @Column(nullable = false)
     private Boolean active = true;
 

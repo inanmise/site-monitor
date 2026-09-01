@@ -1,5 +1,5 @@
 import { ShieldAlert, ShieldCheck, MailWarning, BellOff, Clock, Calendar, Network, Globe, Users, Building2,
-  Play, Pencil, Copy } from 'lucide-react'
+  Play, Pencil, Copy, Trash2 } from 'lucide-react'
 import { memo } from 'react'
 import { formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -15,7 +15,8 @@ function parseDn(dn, field) {
 
 function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure = false,
                                           onMailFailureClick, isWeak,
-                                          onCheckNow, onEdit, onDuplicate, checking = false }) {
+                                          onCheckNow, onEdit, onDuplicate, onDelete,
+                                          checking = false, deleting = false }) {
   const t = useT()
   const days = cert.days_remaining
   const al = cert.alert_level
@@ -58,7 +59,7 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
   const hasDetail  = !!cert.not_after || showAlgo
   // Aksiyon butonları handler VARLIĞINA bağlı: Bitiş Tahmini ekranı yalnız cert+onClick geçiyor,
   // orada footer bugünkü koşullu davranışına döner (ek bayrak/prop gerekmez).
-  const hasActions = !!(onCheckNow || onEdit || onDuplicate)
+  const hasActions = !!(onCheckNow || onEdit || onDuplicate || onDelete)
   const hasFooter  = hasSilentAlert || hasMailFailure || hasActions
 
   // Kontrol yolu rozeti: hata kartlarında her zaman, sağlıklı kartlarda
@@ -231,6 +232,17 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
                 <button type="button" className="mon-act mon-act--copy"
                   onClick={onDuplicate} title={t('mon.duplicate')} aria-label={t('mon.duplicate')}>
                   <Copy size={13} />
+                </button>
+              )}
+              {/* Sil, dokuz izleme kartındaki (MonitorCardActions) düğmenin AYNISI: envanter
+                  kartı bu kısayolu taşımayan tek karttı, silmek için önce detay modalını açmak
+                  gerekiyordu. Sarmalayıcının İÇİNDE durur — dışında kalsaydı silmeye basmak
+                  kartın kendi onClick'ini de tetikler, kullanıcı onay diyaloğuyla birlikte
+                  detay modalini da görürdü (Düzenle'de düzeltilen kusurun yıkıcı eylemdeki hâli). */}
+              {onDelete && (
+                <button type="button" className="mon-act mon-act--danger" disabled={deleting}
+                  onClick={onDelete} title={t('inv.delete')} aria-label={t('inv.delete')}>
+                  <Trash2 size={13} />
                 </button>
               )}
             </span>

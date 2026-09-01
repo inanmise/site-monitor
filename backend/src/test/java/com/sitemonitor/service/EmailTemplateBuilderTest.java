@@ -445,6 +445,35 @@ class EmailTemplateBuilderTest {
         assertThat(text.indexOf("Operasyonel Bilgiler:")).isLessThan(text.indexOf("Önerilen Aksiyon:"));
     }
 
+    // ── Alarm TÜRÜ AİLESİ: yavaşlık alarmı da kendi izlemesine ait ────────────
+    //
+    // tabFor/subsystemLabel yalnız ailenin "DOWN" üyesini tanıyordu: PING_SLOW/PORT_SLOW/
+    // KEYWORD_SLOW son dala düşüp e-postada "Sertifika İzleme" başlığı ve pano linki
+    // alıyordu. Yanlış başlık, yanlış hedef — ve alarmı alan ekip yanlış ekrana bakar.
+
+    private EmailTemplateBuilder.AlertMail mailOf(String type, String target) {
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("host", target);
+        return new EmailTemplateBuilder.AlertMail(type, "HIGH", target,
+                target + " yanıt süresi taban çizgisinin üstüne çıktı.", null, ctx, "Takım A");
+    }
+
+    @Test
+    @DisplayName("yavaşlık alarmı e-postası KENDİ izleme türünü söyler (sertifika değil) ve o sekmeye linkler")
+    void slowAlerts_useTheirOwnSubsystemAndTab() {
+        String ping = b.buildHtml(mailOf("PING_SLOW", "gw.example.com"));
+        assertThat(ping).contains("Ping İzleme").doesNotContain("Sertifika İzleme");
+        assertThat(ping).contains("tab=ping");
+
+        String port = b.buildHtml(mailOf("PORT_SLOW", "db.example.com"));
+        assertThat(port).contains("Port İzleme").doesNotContain("Sertifika İzleme");
+        assertThat(port).contains("tab=port");
+
+        String keyword = b.buildHtml(mailOf("KEYWORD_SLOW", "https://x.example.com/"));
+        assertThat(keyword).contains("Keyword İzleme").doesNotContain("Sertifika İzleme");
+        assertThat(keyword).contains("tab=keyword");
+    }
+
     @Test
     @DisplayName("insan-okur tarih: UTC ISO → Europe/Istanbul (+3); kısa format timeline için")
     void humanDate() {

@@ -7,6 +7,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -216,5 +217,66 @@ class PushTextTest {
         String hard = PushText.truncate("aaaaaaaaaaaaaaaaaaaaaaaa", 10);
         assertThat(hard).endsWith("...");
         assertThat(hard.length()).isLessThanOrEqualTo(10);
+    }
+
+    // ── "slow" şablonunun ölçü alanları ─────────────────────────────────────
+    //
+    // Şablon {metrik}/{deger}/{esik} arıyordu, üreticiler ölçüyü kendi adıyla koyuyordu; ikisi
+    // hiç buluşmadığı için yavaşlık bildirimleri telefona "... yavaş - yanıt - (eşik -)" diye
+    // düşüyor, alarmın tek sayısal kanıtı kayboluyordu.
+
+    @Test
+    @DisplayName("slowFields: ping'in GÖRECELİ eşiği telefona mutlak ms olarak iner")
+    void slowFields_ping() {
+        Map<String, Object> ctx = Map.of("rtt_ms", 240L, "baseline_ms", 150L,
+                "limit_ms", 180L, "threshold_percent", 20);
+        assertThat(PushText.slowFields(ctx))
+                .containsEntry("metric", "ping")
+                .containsEntry("value", "240 ms")
+                .containsEntry("threshold", "180 ms");
+    }
+
+    @Test
+    @DisplayName("slowFields: port/içerik yanıt süresi (response_ms + threshold_ms)")
+    void slowFields_responseTime() {
+        assertThat(PushText.slowFields(Map.of("response_ms", 4200L, "threshold_ms", 3000)))
+                .containsEntry("metric", "yanıt")
+                .containsEntry("value", "4200 ms")
+                .containsEntry("threshold", "3000 ms");
+    }
+
+    @Test
+    @DisplayName("slowFields: DNS eşiğini kendi adıyla taşır (slow_threshold_ms)")
+    void slowFields_dnsThresholdName() {
+        assertThat(PushText.slowFields(Map.of("response_ms", 1200L, "slow_threshold_ms", 800)))
+                .containsEntry("value", "1200 ms")
+                .containsEntry("threshold", "800 ms");
+    }
+
+    @Test
+    @DisplayName("slowFields: sentetik koşum süresi ölçünün ADIYLA ayrışır (duration_ms)")
+    void slowFields_scriptedDuration() {
+        assertThat(PushText.slowFields(Map.of("duration_ms", 12000L, "threshold_ms", 9000)))
+                .containsEntry("metric", "koşum")
+                .containsEntry("value", "12000 ms")
+                .containsEntry("threshold", "9000 ms");
+    }
+
+    @Test
+    @DisplayName("slowFields: sayfa hızı çok metrikli — özet değer olur, UYDURMA eşik konmaz")
+    void slowFields_pageSpeedSummary() {
+        Map<String, Object> ctx = Map.of("pagespeed_status", "SLOW",
+                "detail", "yükleme 4200 ms, TTFB 900 ms", "response_ms", 4200L);
+        assertThat(PushText.slowFields(ctx))
+                .containsEntry("metric", "sayfa hızı")
+                .containsEntry("value", "yükleme 4200 ms, TTFB 900 ms")
+                .doesNotContainKey("threshold");
+    }
+
+    @Test
+    @DisplayName("slowFields: tanınmayan bağlam BOŞ döner (çağıranın kendi varsayılanı korunur)")
+    void slowFields_unknownContext() {
+        assertThat(PushText.slowFields(Map.of("monitor_id", 7L))).isEmpty();
+        assertThat(PushText.slowFields(null)).isEmpty();
     }
 }

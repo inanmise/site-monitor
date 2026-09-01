@@ -62,7 +62,7 @@ public class MonitoringGroupService {
             "port",    Set.of("PORT_DOWN", "PORT_SLOW"),
             "dns",     Set.of("DNS_FAILURE", "DNS_CHANGED", "DNS_SLOW", "DNS_UNEXPECTED", "DNS_INCONSISTENT"),
             "keyword", Set.of("KEYWORD", "KEYWORD_SLOW", "KEYWORD_SSL", "KEYWORD_DOMAIN_EXPIRY"),
-            "ping",    Set.of("PING_DOWN"),
+            "ping",    Set.of("PING_DOWN", "PING_SLOW"),
             "domain",  Set.of("DOMAINMON_EXPIRY", "DOMAINMON_UNKNOWN", "DOMAINMON_STATUS", "DOMAINMON_CHANGED"),
             // İki tür SONRADAN grup taşımaya başladı (typeOf zaten "page"/"scripted" üretiyor) ama bu haritaya
             // hiç girmemişti: grup yeniden adlandırıldığında o türün alarm geçmişindeki group_name ESKİ kalıyordu.

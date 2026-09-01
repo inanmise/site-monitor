@@ -128,6 +128,9 @@ public class EscalationService {
     /** Ping (ICMP) kesintisi alarmı — ping sweep'i tarafından yönetilir. */
     public static final String TYPE_PING_DOWN = "PING_DOWN";
 
+    /** Ping yavaşlık — host yanıt veriyor ama KENDİ taban çizgisinin üstünde (göreli eşik). */
+    public static final String TYPE_PING_SLOW = "PING_SLOW";
+
     /** HTTP/Website erişilebilirlik kesintisi alarmı — HTTP sweep'i tarafından yönetilir. */
     public static final String TYPE_HTTP_DOWN = "HTTP_DOWN";
 
@@ -186,7 +189,7 @@ public class EscalationService {
                    TYPE_KEYWORD, TYPE_PING_DOWN, TYPE_HTTP_DOWN, TYPE_HTTP_SSL, TYPE_DOMAIN_EXPIRY,
                    TYPE_DOMAINMON_EXPIRY, TYPE_DOMAINMON_UNKNOWN, TYPE_DOMAINMON_STATUS, TYPE_DOMAINMON_CHANGED,
                    TYPE_DOMAINMON_TRANSFER_LOCK, TYPE_DOMAINMON_BLACKLIST,
-                   TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY, TYPE_PORT_SLOW,
+                   TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY, TYPE_PORT_SLOW, TYPE_PING_SLOW,
                    TYPE_PAGE_DOWN, TYPE_PAGE_INTEGRITY, TYPE_SCRIPTED_FAIL, TYPE_SCRIPTED_SLOW,
                    TYPE_PAGESPEED_DOWN, TYPE_PAGESPEED_SLOW);
 
@@ -696,12 +699,12 @@ public class EscalationService {
         if (existingHosts == null) return 0;
         Set<String> orphanDomains = new HashSet<>();
         for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
-            if (!TYPE_PING_DOWN.equals(e.getAlertType())) continue;
+            if (!TYPE_PING_DOWN.equals(e.getAlertType()) && !TYPE_PING_SLOW.equals(e.getAlertType())) continue;
             if (e.getDomain() == null || existingHosts.contains(e.getDomain())) continue;  // eşleşen monitör var → dokunma
             orphanDomains.add(e.getDomain());
         }
         for (String d : orphanDomains) {
-            resolveOpenAlertsSilently(d, Set.of(TYPE_PING_DOWN), "Sistem (öksüz alarm — eşleşen ping izlemesi yok)");
+            resolveOpenAlertsSilently(d, Set.of(TYPE_PING_DOWN, TYPE_PING_SLOW), "Sistem (öksüz alarm — eşleşen ping izlemesi yok)");
         }
         if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz ping alarmı temizlendi: {} domain {}", orphanDomains.size(), orphanDomains);
         return orphanDomains.size();
@@ -1084,6 +1087,19 @@ public class EscalationService {
                         (days != null ? " " + days + " gün içinde doluyor" : " dolmak üzere") + ". " +
                         "Kayıt yenilendiğinde alarm otomatik kapanır.";
             }
+            case TYPE_PING_SLOW -> {
+                Object host = ctx.getOrDefault("host", domain);
+                Object ms = ctx.get("rtt_ms");
+                Object base = ctx.get("baseline_ms");
+                Object pct = ctx.get("threshold_percent");
+                Object win = ctx.get("baseline_window_minutes");
+                return "YÜKSEK: " + host + " ping yanıt süresi kendi taban çizgisinin üstüne çıktı" +
+                        (ms != null ? " — " + ms + " ms" : "") +
+                        (base != null ? " (son " + (win != null ? win : "?") + " dk ortalaması " + base + " ms" +
+                                (pct != null ? ", eşik +%" + pct : "") + ")" : "") + ". " +
+                        "Ardışık doğrulama ölçümleri de eşiğin üstünde kaldı. " +
+                        "Süre taban çizgisine döndüğünde alarm otomatik kapanır.";
+            }
             case TYPE_PING_DOWN -> {
                 Object host = ctx.get("host");
                 if (host != null) {
@@ -1379,6 +1395,7 @@ public class EscalationService {
                 case TYPE_KEYWORD_SSL   -> "İçerik SSL Sorunu";
                 case TYPE_KEYWORD_DOMAIN_EXPIRY -> "İçerik Domain Bitişi";
                 case TYPE_PING_DOWN     -> "Erişilebilirlik (Ping)";
+                case TYPE_PING_SLOW     -> "Ping Yavaş Yanıt";
                 case TYPE_HTTP_DOWN     -> "HTTP/Website Erişilemez";
                 case TYPE_HTTP_SSL      -> "SSL Sertifika Sorunu";
                 case TYPE_PAGE_DOWN     -> "Sayfa Yüklenemiyor";
@@ -1728,6 +1745,7 @@ public class EscalationService {
             case TYPE_KEYWORD_SSL   -> "İçerik SSL Sorunu";
             case TYPE_KEYWORD_DOMAIN_EXPIRY -> "İçerik Domain Bitişi";
             case TYPE_PING_DOWN     -> "Erişilebilirlik (Ping)";
+            case TYPE_PING_SLOW     -> "Ping Yavaş Yanıt";
             case TYPE_HTTP_DOWN     -> "HTTP/Website Erişilemez";
             case TYPE_HTTP_SSL      -> "SSL Sertifika Sorunu";
             case TYPE_PAGE_DOWN     -> "Sayfa Yüklenemiyor";

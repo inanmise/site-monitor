@@ -672,7 +672,8 @@ public class MonitoringOutageService {
                  EscalationService.TYPE_KEYWORD_SSL,
                  EscalationService.TYPE_KEYWORD_DOMAIN_EXPIRY ->
                     appSettings.getBoolean("site.monitor.keyword.alert-enabled", keywordAlertEnabled);
-            case EscalationService.TYPE_PING_DOWN   ->
+            case EscalationService.TYPE_PING_DOWN,
+                 EscalationService.TYPE_PING_SLOW   ->
                     appSettings.getBoolean("site.monitor.ping.alert-enabled", pingAlertEnabled);
             case EscalationService.TYPE_HTTP_DOWN,
                  EscalationService.TYPE_HTTP_SSL,
@@ -710,6 +711,7 @@ public class MonitoringOutageService {
                 || EscalationService.TYPE_DOMAIN_EXPIRY.equals(alertType)
                 || EscalationService.isKeywordAux(alertType)
                 || EscalationService.TYPE_PORT_SLOW.equals(alertType)
+                || EscalationService.TYPE_PING_SLOW.equals(alertType)
                 || EscalationService.TYPE_SCRIPTED_SLOW.equals(alertType)
                 || EscalationService.TYPE_PAGE_INTEGRITY.equals(alertType)
                 // Sayfa yavaş ama AYAKTA → HIGH; CRITICAL yalnız gerçekten alınamadığında.

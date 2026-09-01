@@ -8,6 +8,7 @@ import { Trash2, Globe, X, Pencil, Clock, User, History, Undo2, Stethoscope, Pla
 import AlertHistory from './admin/AlertHistory'
 import SslCheckerPanel from './SslCheckerPanel.jsx'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
+import { deleteInventoryByDomain } from '../utils/deleteInventory.js'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 import { isInsecure, securityTitle } from '../utils/certSecurity.js'
 import { InventoryTab } from './inventory/InventoryDetails.jsx'
@@ -514,22 +515,17 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   // Sertifikayi envanterden sil — YENI uc YOK, mevcut DELETE /admin/inventory/{id} cagrilir:
   // denetim kaydi, soft-delete ve acik alarmlarin kapatilmasi kendiliginden miras kalir.
   async function deleteCertificate() {
-    const ok = await showConfirm({
-      title: t('inv.deleteTitle'),
-      message: t('inv.deleteMsg', domain),
-      confirmText: t('inv.deleteConfirm'),
-      cancelText: t('inv.deleteCancel'),
-      variant: 'danger',
-    })
-    if (!ok) return
     setDeleting(true)
-    const found = await api.admin.getInventoryByDomain(domain)
-    const id = found?.success ? found.data?.id : null
-    if (!id) { setDeleting(false); toast.error(t('inv.deleteNotFound')); return }
-    const res = await api.admin.deleteInventory(id)
-    setDeleting(false)
-    if (res?.success) { toast.success(t('inv.deleted')); onClose?.({ deleted: true, domain }) }
-    else toast.error(res?.error || t('inv.deleteError'))
+    // Akışın kendisi ORTAK: Genel Bakış kartındaki kısayol da aynı onayı ve aynı uçları kullanır.
+    // Bayrak try/finally ile temizlenir: aksi halde tek bir ağ hatası çöp kutusunu modal
+    // kapanana kadar kilitler (SystemHealth'te bugün düzeltilen kusurun aynısı).
+    let deleted = false
+    try {
+      deleted = await deleteInventoryByDomain({ domain, showConfirm, toast, t })
+    } finally {
+      setDeleting(false)
+    }
+    if (deleted) onClose?.({ deleted: true, domain })
   }
 
   const d = certData

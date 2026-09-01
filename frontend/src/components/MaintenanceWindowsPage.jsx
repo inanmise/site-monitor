@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import { api } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useToast } from './ui/Toast.jsx'
+import { useDialog } from './ui/Dialog.jsx'
 import { usePagination } from '../hooks/usePagination.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import MultiTeamSelect from './ui/MultiTeamSelect.jsx'
@@ -51,6 +52,7 @@ function todInTz(utcIso, tz) {
 
 export default function MaintenanceWindowsPage({ systemRole }) {
   const t = useT()
+  const { showConfirm } = useDialog()
   const toast = useToast()
   const canManage = systemRole === 'ADMIN' || systemRole === 'TEAM_ADMIN'
 
@@ -153,7 +155,10 @@ export default function MaintenanceWindowsPage({ systemRole }) {
     load()
   }
   async function del(w) {
-    if (!window.confirm(t('mw.deleteConfirm'))) return
+    if (!await showConfirm({
+      title: t('mw.delete'), message: t('mw.deleteConfirm'),
+      confirmText: t('mw.delete'), variant: 'danger',
+    })) return
     const res = await api.monitoring.maintenance.remove(w.id)
     if (!res?.success) { toast.error(res?.error || t('mw.deleteError')); return }
     toast.success(t('mw.deleted')); load()

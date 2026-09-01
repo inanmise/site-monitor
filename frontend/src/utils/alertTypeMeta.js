@@ -42,6 +42,7 @@ export const ALERT_TYPE_META = {
   // ── Port (PORT_DOWN rengi korundu) ────────────────────────────────────────
   PORT_DOWN:         { icon: Plug,         color: '#db2777' },
   PORT_SLOW:         { icon: Gauge,        color: '#c2410c' },
+  PING_SLOW:         { icon: Gauge,        color: '#c2410c' },
 
   // ── HTTP / Website ────────────────────────────────────────────────────────
   HTTP_DOWN:         { icon: Globe,        color: '#b91c1c' },

@@ -3,6 +3,7 @@ import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock } fro
 
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
+import { deleteInventoryByDomain } from './utils/deleteInventory.js'
 import { useToast } from './components/ui/Toast.jsx'
 import { useT } from './i18n/index.jsx'
 import { usePagination } from './hooks/usePagination.js'
@@ -197,6 +198,7 @@ export default function App() {
   // dolayısıyla modalın Envanter sekmesi elle tazelenene kadar eski değerleri gösterirdi.
   const [certModalRefresh, setCertModalRefresh] = useState(0)
   const [invForm, setInvForm] = useState(null)                 // { domain, mode } — kart → envanter formu
+  const [deletingDomain, setDeletingDomain] = useState(null)   // kart silme sürerken çift tıklamayı kapatır
   // Envanter yazma yetkisi: inventory.crud yalnız bu iki rolde. Kart aksiyonları ve "Domain Ekle"
   // butonu aynı koşulu paylaşır. Kart bazında takım karşılaştırması YAPILMAZ — frontend'de
   // manage-scope listesi yok (/me yalnız üyelik döndürür); yönetilebilir bir takımı yanlışlıkla
@@ -549,12 +551,41 @@ export default function App() {
     setModalCert(certsRef.current.find(c => c.domain === d) ?? null)
   }, [])
 
+  /**
+   * Karttan silme — detay modalinin başlığındaki çöp kutusuyla AYNI akış (ortak yardımcı):
+   * aynı onay metni, aynı uçlar, aynı geri bildirim. Kart kısayolu eklenirken ikinci bir kopya
+   * yazılsaydı yıkıcı bir eylemin onayı yüzeyden yüzeye ayrışırdı.
+   *
+   * <p>Silinen kart açık bir detay modaline aitse modal kapatılır: arkasında artık var olmayan
+   * bir kaydın verisi durur ve oradaki her düğme 404 üretirdi.
+   */
+  async function deleteCertFromCard(domain) {
+    setDeletingDomain(domain)
+    // try/finally: yardımcı ağ hatasını yutuyor ama bayrağın temizlenmesi ÇAĞIRANIN işi —
+    // beklenmedik bir istisnada düğme, kart yeniden çizilene kadar kilitli kalırdı.
+    let deleted = false
+    try {
+      deleted = await deleteInventoryByDomain({ domain, showConfirm, toast, t })
+    } finally {
+      setDeletingDomain(null)
+    }
+    if (!deleted) return
+    setModalCert(prev => (prev?.domain === domain ? null : prev))
+    loadData()
+  }
+
   function cardActions(cert) {
     return {
       onCheckNow: () => runSingleCheck(cert.domain),
       checking: checkingDomain === cert.domain || refreshing,
       onEdit:      canManageInventory ? () => setInvForm({ domain: cert.domain, mode: 'edit' }) : undefined,
       onDuplicate: canManageInventory ? () => setInvForm({ domain: cert.domain, mode: 'duplicate' }) : undefined,
+      // Kapı Düzenle/Kopyala ile AYNI: rol tabanlı. usePermissions BURADA çalışmaz —
+      // PermissionsProvider App'in KENDİ içinde render ediliyor, App gövdesi context'in
+      // ÜSTÜNDE kalır ve canEdit daima false döner (düğme hiç çizilmezdi). Yetkinin asıl
+      // kapısı zaten uçta: inventory.crud/edit + takım kapsamı; reddedilirse toast hatayı gösterir.
+      onDelete: canManageInventory ? () => deleteCertFromCard(cert.domain) : undefined,
+      deleting: deletingDomain === cert.domain,
     }
   }
 

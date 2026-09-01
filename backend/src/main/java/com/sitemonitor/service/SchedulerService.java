@@ -457,6 +457,11 @@ public class SchedulerService {
         // null-guvenli okuma sayesinde mail almaya DEVAM eder.
         patch("ALTER TABLE dns_monitors ADD COLUMN notify_email BOOLEAN DEFAULT true");
         patch("ALTER TABLE ping_monitors ADD COLUMN notify_email BOOLEAN DEFAULT true");
+        // Ping yavaşlık alarmı (göreli eşik) — üçü de nullable + DEFAULT'lu: dolu tabloda
+        // ddl-auto NOT NULL kolonu SESSİZCE eklemiyor, açık patch şart (bkz. sınıf başı notu).
+        patch("ALTER TABLE ping_monitors ADD COLUMN slow_response_enabled BOOLEAN DEFAULT false");
+        patch("ALTER TABLE ping_monitors ADD COLUMN slow_baseline_window_minutes INTEGER DEFAULT 10");
+        patch("ALTER TABLE ping_monitors ADD COLUMN slow_threshold_percent INTEGER DEFAULT 20");
         patch("ALTER TABLE domain_monitors ADD COLUMN notify_email BOOLEAN DEFAULT true");
         // Dogrulama/kurtarma alanlari DNS ve Domain turlerinde HIC yoktu: tek anlik hata
         // dogrudan alarm aciyordu, digerlerinde ise N deneme bekleniyordu. Ayni soru her
@@ -2965,6 +2970,115 @@ public class SchedulerService {
     }
 
     /** Tek ping monitörü için değerlendirme öğesi — sweep VE manuel çalıştırma bunu PAYLAŞIR. */
+    /**
+     * Ping yavaşlık hükmü — GÖRECELİ eşik: ölçüm, host'un kendi son N dakikalık ortalamasının
+     * %X üstündeyse yavaş.
+     *
+     * <p><b>Neden sabit ms değil.</b> Port izlemesindeki {@code slowThresholdMs} sabittir; ping'de
+     * aynısını yapmak işe yaramaz: aynı eşik yerel bir sunucuda (2 ms) her dalgalanmada öter,
+     * denizaşırı bir host'ta (180 ms) hiç ötmez. Taban çizgisi host başına kendiliğinden oluşur.
+     *
+     * <p><b>Sessiz kalınan haller</b> (hepsi "up" döner, yani alarm YOK):
+     * <ul>
+     *   <li>özellik kapalı (opt-in),</li>
+     *   <li>ölçüm yok — host DOWN ya da ICMP kapalı: erişilemezlik PING_DOWN'ın işi, aynı olayı
+     *       iki alarmla anlatmak kullanıcıyı ikinci bildirimle cezalandırır,</li>
+     *   <li>taban çizgisi yetersiz ({@code SLOW_BASELINE_MIN_SAMPLES} altında örnek): tek ölçümlük
+     *       bir ortalamaya göre yüzde kıyaslaması gürültüyü alarma çevirir. Yeni kurulan izleme
+     *       pencere dolana kadar sessiz kalır.</li>
+     * </ul>
+     *
+     * <p>Teyit ve kurtarma sayıları/aralıkları AYRI DEĞİL: izlemenin kendi
+     * {@code confirmAttempts}/{@code recoveryChecks} ayarları burada da geçerli (ctx'e aynı
+     * anahtarlarla konur), böylece tek bir sıçrama alarm üretmez ve düzelme aynı kurala uyar.
+     *
+     * @param rttMs bu turun ölçümü ({@code null} → ölçüm yok, sessiz kal)
+     * @param until taban çizgisi penceresinin ÜST sınırı (bu ölçümün damgası; {@code null} → şimdi)
+     */
+    Map<String, Object> pingSlowVerdict(PingMonitor m, Long rttMs, String until) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        int pct = m.getSlowThresholdPercent() != null ? m.getSlowThresholdPercent() : 20;
+        int win = m.getSlowBaselineWindowMinutes() != null ? m.getSlowBaselineWindowMinutes() : 10;
+        out.put("threshold_percent", pct);
+        out.put("baseline_window_minutes", win);
+        if (rttMs != null) out.put("rtt_ms", rttMs);
+        if (!Boolean.TRUE.equals(m.getSlowResponseEnabled()) || rttMs == null) {
+            out.put("status", "up");
+            return out;
+        }
+        Instant now = Instant.now();
+        String since = ISO.format(now.minusSeconds(Math.max(1, win) * 60L));
+        String end = (until != null && !until.isBlank()) ? until : ISO.format(now);
+        Double avg = null;
+        long samples = 0;
+        try {
+            List<Object[]> rows = pingCheckRepo.slowBaseline(m.getId(), since, end);
+            if (!rows.isEmpty() && rows.get(0) != null) {
+                Object[] row = rows.get(0);
+                if (row.length > 0 && row[0] instanceof Number n) avg = n.doubleValue();
+                if (row.length > 1 && row[1] instanceof Number n2) samples = n2.longValue();
+            }
+        } catch (Exception e) {
+            // Taban çizgisi okunamadıysa SESSİZ kal: ölçemediğimiz bir şey için alarm üretmeyiz.
+            log.warn("Ping taban çizgisi okunamadı ({}): {}", m.getHost(), e.getMessage());
+            out.put("status", "up");
+            return out;
+        }
+        out.put("baseline_samples", samples);
+        if (avg == null || avg <= 0 || samples < SLOW_BASELINE_MIN_SAMPLES) {
+            out.put("status", "up");
+            return out;
+        }
+        long limit = Math.round(avg * (1 + pct / 100.0));
+        out.put("baseline_ms", Math.round(avg));
+        out.put("limit_ms", limit);
+        out.put("status", rttMs > limit ? "down" : "up");
+        return out;
+    }
+
+    /** Yavaşlık değerlendirme öğesi — PING_DOWN öğesinin kardeşi. Teyit/kurtarma re-check'i taze
+     *  ölçüm alır ve ping_checks'e YAZMAZ (port deseninin aynısı: teyit turu tabanı kaydırmasın). */
+    private MonitoringOutageService.SweepItem pingSlowSweepItem(PingMonitor m, Map<String, Object> r) {
+        Long rtt = r.get("rtt_ms") instanceof Number n ? n.longValue() : null;
+        boolean measured = "up".equals(r.get("status")) && !Boolean.TRUE.equals(r.get("na"));
+        Map<String, Object> v = pingSlowVerdict(m, measured ? rtt : null, (String) r.get("checked_at"));
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("monitor_name", m.getName());
+        ctx.put("host", m.getHost());
+        ctx.put("ip_version", m.getIpVersion());
+        ctx.put("monitor_id", m.getId());
+        ctx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+        ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+        ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
+        ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+        if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+        if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
+        v.forEach((k, val) -> { if (!"status".equals(k)) ctx.put(k, val); });
+        return new MonitoringOutageService.SweepItem(
+                EscalationService.TYPE_PING_SLOW, m.getHost(),
+                rtt != null ? rtt + " ms" : "slow",
+                !"down".equals(v.get("status")), null,
+                chanCtx(ctx, m.getNotifyEmail(), m.getNotifyWebhook()), () -> evalPingSlow(m));
+    }
+
+    /** Yavaşlık yeniden-ölçümü (PING_SLOW confirm/recovery re-check'i) — taze ping, PingCheck PERSIST ETMEZ. */
+    private Map<String, Object> evalPingSlow(PingMonitor m) {
+        if (!Boolean.TRUE.equals(m.getSlowResponseEnabled())) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("status", "up");
+            return out;
+        }
+        Map<String, Object> r = pingCheckerService.check(m.getHost(), m.getIpVersion(),
+                m.getPacketCount() != null ? m.getPacketCount() : 4,
+                m.getTimeoutMs() != null ? m.getTimeoutMs() : 5000);
+        boolean up = Boolean.TRUE.equals(r.getOrDefault("up", false));
+        Long rtt = r.get("rtt_ms") instanceof Number n ? n.longValue() : null;
+        return pingSlowVerdict(m, up ? rtt : null, null);
+    }
+
+    /** Yavaşlık taban çizgisi için gereken en az örnek — altında SESSİZ kalınır (bkz. pingSlowVerdict). */
+    static final int SLOW_BASELINE_MIN_SAMPLES = 3;
+
     private MonitoringOutageService.SweepItem pingSweepItem(PingMonitor m, Map<String, Object> r) {
         Map<String, Object> ctx = new LinkedHashMap<>();
         ctx.put("monitor_name", m.getName());
@@ -2993,6 +3107,10 @@ public class SchedulerService {
             Map<String, Object> r = pingOutcome(rawCheckResult);
             monitoringOutageService.handleSweepResults(
                     EscalationService.TYPE_PING_DOWN, List.of(pingSweepItem(m, r)), true);
+            // Manuel "Çalıştır" da yavaşlığı değerlendirir: sweep ile manuel yolun ayrışması,
+            // kullanıcının elle koşturduğu kontrolde alarmın açılmaması/kapanmaması demekti.
+            monitoringOutageService.handleSweepResults(
+                    EscalationService.TYPE_PING_SLOW, List.of(pingSlowSweepItem(m, r)), true);
         } catch (Exception e) {
             log.warn("Manuel ping değerlendirmesi başarısız {}: {}", m.getHost(), e.getMessage());
         }
@@ -4638,6 +4756,9 @@ public class SchedulerService {
         if (monitors.isEmpty()) return;
         int checked = 0;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
+        // Yavaşlık AYRI pipeline: PING_DOWN ile aynı listede taşınsaydı tek bir alarm türü iki
+        // farklı olayı (erişilemiyor / yavaşladı) anlatır, biri diğerini kapatırdı (port deseni).
+        List<MonitoringOutageService.SweepItem> slowSweep = new ArrayList<>();
         // Faz 1: gating sweep thread'inde; ağ kontrolü certCheckExecutor'da paralel başlar (F1).
         List<Map.Entry<PingMonitor, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
         for (PingMonitor m : monitors) {
@@ -4650,6 +4771,7 @@ public class SchedulerService {
             try {
                 Map<String, Object> r = entry.getValue().get();
                 sweep.add(pingSweepItem(m, r));
+                slowSweep.add(pingSlowSweepItem(m, r));
                 checked++;
             } catch (Exception e) {
                 log.warn("Ping check failed for {}: {}", m.getHost(), e.getMessage());
@@ -4660,12 +4782,18 @@ public class SchedulerService {
         } catch (Exception e) {
             log.warn("Ping outage processing failed: {}", e.getMessage(), e);
         }
+        try {
+            monitoringOutageService.handleSweepResults(EscalationService.TYPE_PING_SLOW, slowSweep);
+        } catch (Exception e) {
+            log.warn("Ping slow outage processing failed: {}", e.getMessage());
+        }
         log.debug("Ping checks complete: {} monitors", checked);
     }
 
     /** Ping check + ping_checks persist'i. N/A (ortam ICMP'ye izin vermiyor) → DOWN sayılmaz
      *  (yanlış alarm önlemek için status=up); kayıt up=false + error ile tutulur. */
     private Map<String, Object> recheckPing(PingMonitor m) {
+        String persistedAt = null;
         Map<String, Object> r = pingCheckerService.check(m.getHost(), m.getIpVersion(),
                 m.getPacketCount() != null ? m.getPacketCount() : 4,
                 m.getTimeoutMs() != null ? m.getTimeoutMs() : 5000);
@@ -4680,12 +4808,17 @@ public class SchedulerService {
             check.setError((String) r.get("error"));
             check.setCheckedAt(ISO.format(Instant.now()));
             pingCheckRepo.save(check);
+            persistedAt = check.getCheckedAt();
         } catch (Exception e) {
             log.warn("Ping kaydı yazılamadı: {} — {}", m.getHost(), e.getMessage());
         }
         activityLog.recordCheck(ActivityLogService.PING, m.getId(), m.getName(),
                 m.getHost(), m.getTeamId(), false, "scheduler", r);
-        return pingOutcome(r);
+        Map<String, Object> out = pingOutcome(r);
+        // Taban çizgisi bu ölçümün KENDİSİNİ içermemeli: kayıt zaten yazıldı, pencerenin üst
+        // sınırı olarak damgası taşınır (yoksa ölçüm kendi ortalamasını yukarı çekip sapmayı gizler).
+        if (persistedAt != null) out.put("checked_at", persistedAt);
+        return out;
     }
 
     @Scheduled(fixedDelayString = "${site.monitor.dns.interval-ms:300000}", initialDelayString = "60000")

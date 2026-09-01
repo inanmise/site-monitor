@@ -74,7 +74,12 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const isOwnTeam = (m) => myTeam != null && String(m.team_id) === myTeam
   // Envanter-türevi monitörü yalnız admin yönetir; standalone'u (sertifikadan bağımsız) sahip takım yönetir.
   const canManageRow = (m) => isAdmin || (m.standalone && isOwnTeam(m))
-  const canDeleteRow = (m) => m.standalone && (isAdmin || isOwnTeam(m))
+  // Silme kapısı ucun AYNISI (MonitoringController.deleteDns): standalone → gerçek silme,
+  // sahip takım ya da admin; envanter-türevi → yalnız ADMIN ve GERÇEK SİLME DEĞİL, izleme
+  // pasifleştirilir (satır envanterden türediği için listede "Duraklatıldı" olarak kalır,
+  // envanter senkronu yeniden açabilir). Eski kapı türevlerde düğmeyi HİÇ çizmiyordu: ucun
+  // izin verdiği işlem arayüzden ulaşılamıyordu ve kullanıcı "DNS'te silme yok" diyordu.
+  const canDeleteRow = (m) => m.standalone ? (isAdmin || isOwnTeam(m)) : isAdmin
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
@@ -257,17 +262,21 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
     // Onay projenin diyaloğuyla alınır. `window.confirm` tarayıcı-varsayılanı bir kutu
     // çiziyordu (tasarım sistemi dışı) ve hedefin adını göstermiyordu; kart üzerindeki
     // tek tık yıkıcı bir işlem tetiklediği için mesaj NEYİN silineceğini söylemeli.
+    // Türev satırda metin FARKLI olmalı: orada "sil" gerçekte "izlemeyi durdur"dur ve kayıt
+    // envanterden türediği için listede kalır. Aynı metni kullanmak kullanıcıya yapılmayan bir
+    // şeyi onaylatırdı.
+    const derived = !m.standalone
     const ok = await showConfirm({
       title: t('mon.deleteTitle'),
-      message: t('mon.deleteMsg', m.name || m.domain),
-      confirmText: t('dns.delete'),
+      message: derived ? t('dns.deleteDerivedMsg', m.name || m.domain) : t('mon.deleteMsg', m.name || m.domain),
+      confirmText: derived ? t('dns.deleteDerivedConfirm') : t('dns.delete'),
       cancelText: t('dns.cancel'),
       variant: 'danger',
     })
     if (!ok) return
     setDeleting(m.id)
     const res = await api.monitoring.deleteDnsMonitor(m.id)
-    if (res?.success) { toast.success(t('dns.deleted')); await load() }
+    if (res?.success) { toast.success(derived ? t('dns.deletedDerived') : t('dns.deleted')); await load() }
     else toast.error(res?.error || 'Error')
     setDeleting(null)
   }
@@ -557,7 +566,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
                       onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
                       checkTitle={t('dns.check')} editTitle={t('dns.edit')}
                       onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
-                      deleting={deleting === m.id} deleteTitle={t('dns.delete')} />
+                      deleting={deleting === m.id}
+                      deleteTitle={m.standalone ? t('dns.delete') : t('dns.deleteDerivedTitle')} />
                   )}
                 </span>
               </div>

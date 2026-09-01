@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useToast } from './ui/Toast.jsx'
+import { useDialog } from './ui/Dialog.jsx'
 import MarkdownEditor from './ui/MarkdownEditor.jsx'
 import { BookOpen, Plus, Pencil, Trash2, Save, ChevronRight, ChevronDown } from 'lucide-react'
 
@@ -16,6 +17,7 @@ const EMPTY = { problem: '', action_taken: '', root_cause: '', refs: '' }
 
 export default function MonitorNotes({ type, target }) {
   const t = useT()
+  const { showConfirm } = useDialog()
   const toast = useToast()
   const [guide, setGuide] = useState(null)
   const [notes, setNotes] = useState([])
@@ -72,7 +74,10 @@ export default function MonitorNotes({ type, target }) {
   }
 
   async function del(n) {
-    if (!window.confirm(t('mnote.deleteConfirm'))) return
+    if (!await showConfirm({
+      title: t('mnote.delete'), message: t('mnote.deleteConfirm'),
+      confirmText: t('mnote.delete'), variant: 'danger',
+    })) return
     const res = await api.monitoring.deleteMonitorNote(n.id)
     if (res?.success) { toast.success(t('mnote.deleted')); load() }
     else toast.error(res?.error || 'Error')

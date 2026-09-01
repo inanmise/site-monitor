@@ -399,7 +399,9 @@ public class StormService {
                         scriptedRepo != null ? scriptedRepo.findFirstByNameOrderByIdAsc(d).map(m -> m.getGroupName()).orElse(null) : null;
                 case EscalationService.TYPE_PAGESPEED_DOWN, EscalationService.TYPE_PAGESPEED_SLOW ->
                         pageSpeedRepo != null ? pageSpeedRepo.findFirstByUrlOrderByIdAsc(d).map(m -> m.getGroupName()).orElse(null) : null;
-                case EscalationService.TYPE_PING_DOWN ->
+                // Yavaşlık da AYNI monitörden gelir: türü ayrı tutup grubu çözmemek alarmı
+                // "Grupsuz" fırtına kovasına düşürürdü (Sayfa/Sentetik aileleri gibi çiftli).
+                case EscalationService.TYPE_PING_DOWN, EscalationService.TYPE_PING_SLOW ->
                         pingRepo.findFirstByHostOrderByIdAsc(d).map(m -> m.getGroupName()).orElse(null);
                 case EscalationService.TYPE_DNS_FAILURE ->
                         dnsRepo.findFirstByDomainOrderByIdAsc(d).map(m -> m.getGroupName()).orElse(null);
