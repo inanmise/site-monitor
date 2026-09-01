@@ -2964,6 +2964,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .toast-info    { background: #2563eb; }
 .toast-icon { display: flex; align-items: center; flex-shrink: 0; }
 .toast-msg  { flex: 1; line-height: 1.35; }
+/* Tekrarlanan bildirim sayacı: aynı mesaj yığılmak yerine "×N" ile sayılır. */
+.toast-count { flex: 0 0 auto; margin-left: 6px; padding: 1px 6px; border-radius: 999px;
+  background: rgba(0,0,0,.18); font-size: .82em; font-weight: 700; font-variant-numeric: tabular-nums; }
 .toast-close {
   background: transparent; border: none; color: inherit; cursor: pointer;
   display: flex; align-items: center; padding: 2px; opacity: .85;

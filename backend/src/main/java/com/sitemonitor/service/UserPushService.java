@@ -752,9 +752,13 @@ public class UserPushService {
         // basliyor; sablon ayrica {seviye} ve {ad} koydugu icin seviye IKI, adres UC kez cikiyordu.
         vals.put("neden", PushText.capitalize(
                 PushText.reasonOf(event.getMessage(), event.getDomain(), reasonMaxChars())));
-        vals.put("metrik", ctxStr(ctx, "metric", "yanıt"));
-        vals.put("deger", ctxStr(ctx, "value", "-"));
-        vals.put("esik", ctxStr(ctx, "threshold", "-"));
+        // Ölçü alanları: her izleme türü ölçüyü kendi adıyla koyuyor (rtt_ms / response_ms /
+        // duration_ms), şablon ise metric/value/threshold arıyor. Eşleme sınırda yapılır; açık
+        // anahtar yazan bir üretici olursa YİNE o kazanır (ctxStr önce ctx'e bakar).
+        Map<String, String> slow = PushText.slowFields(ctx);
+        vals.put("metrik", ctxStr(ctx, "metric",    slow.getOrDefault("metric", "yanıt")));
+        vals.put("deger",  ctxStr(ctx, "value",     slow.getOrDefault("value", "-")));
+        vals.put("esik",   ctxStr(ctx, "threshold", slow.getOrDefault("threshold", "-")));
         vals.put("ne", "süre");
         vals.put("gun", event.getDaysRemaining() == null ? "-" : String.valueOf(event.getDaysRemaining()));
         vals.put("tarih", ctxStr(ctx, "expiry_date", "-"));

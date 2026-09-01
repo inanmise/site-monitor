@@ -4746,6 +4746,7 @@ public class MonitoringController {
         if (body.get("confirmIntervalSeconds") != null) m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
         if (body.get("recoveryChecks") != null)         m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
         if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
+        applyPingSlowFields(m, body);
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         PingMonitor saved = pingMonitorRepo.save(m);
@@ -4777,7 +4778,8 @@ public class MonitoringController {
                     // Host DEĞİŞTİ → eski host'un açık alarmını sessizce kapat. Aksi halde recovery yeni host
                     // ile arar, "domain=eskiHost" alarmı öksüz kalır ve asla resolve edilmez (BUG: takılı PING_DOWN).
                     escalationService.resolveOpenAlertsSilently(m.getHost(),
-                            Set.of(EscalationService.TYPE_PING_DOWN), "Sistem (host değişti)");
+                            Set.of(EscalationService.TYPE_PING_DOWN, EscalationService.TYPE_PING_SLOW),
+                            "Sistem (host değişti)");
                 }
                 m.setHost(newHost);
             }
@@ -4795,6 +4797,7 @@ public class MonitoringController {
             if (body.get("confirmIntervalSeconds") != null) m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
             if (body.get("recoveryChecks") != null)         m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
             if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
+            applyPingSlowFields(m, body);
             m.setUpdatedAt(ISO.format(Instant.now()));
             monitorHistory.stampUpdated(m, session);
             PingMonitor saved = pingMonitorRepo.save(m);
@@ -4818,7 +4821,8 @@ public class MonitoringController {
             if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
             // Silme kaynaklı kapanma: açık alarmı sessizce resolved'a geçir (çözüldü maili YOK).
             escalationService.resolveOpenAlertsSilently(m.getHost(),
-                    Set.of(EscalationService.TYPE_PING_DOWN), "Sistem (izleme silindi)");
+                    Set.of(EscalationService.TYPE_PING_DOWN, EscalationService.TYPE_PING_SLOW),
+                    "Sistem (izleme silindi)");
             pingMonitorRepo.delete(m);   // hard delete — "Sil" listeden kaldırır ("Aktif" toggle ayrı)
             activityLog.recordLifecycle(ActivityLogService.PING, m.getId(), m.getName(),
                     m.getHost(), m.getTeamId(), "DELETED", actor(session));
@@ -4886,6 +4890,23 @@ public class MonitoringController {
         }).orElse(notFound("Ping monitor not found"));
     }
 
+    /**
+     * Ping yavaşlık alanlarını gövdeden uygular — create ve update TEK yerden.
+     *
+     * <p>İki kopya olsaydı klasik sonuç: alan create'te işlenir, update'te unutulur; kullanıcı
+     * değeri değiştirir, kaydeder, form eski değeri geri okur ("kaydedilmiyor" hatası).
+     *
+     * <p>Sınırlar burada: pencere 1–1440 dk (bir günden uzun taban çizgisi "şu an yavaş mı"
+     * sorusunu cevaplamaz), sapma 1–1000%. Eşik 0 olsaydı her dalgalanma alarm olurdu.
+     */
+    private void applyPingSlowFields(PingMonitor m, Map<String, Object> body) {
+        if (body.get("slowResponseEnabled") instanceof Boolean b) m.setSlowResponseEnabled(b);
+        if (body.get("slowBaselineWindowMinutes") instanceof Number n)
+            m.setSlowBaselineWindowMinutes(Math.max(1, Math.min(1440, n.intValue())));
+        if (body.get("slowThresholdPercent") instanceof Number n)
+            m.setSlowThresholdPercent(Math.max(1, Math.min(1000, n.intValue())));
+    }
+
     private Map<String, Object> enrichPing(PingMonitor m, PingCheck latest, Map<Long, String> teams, AlertEvent openAlarm) {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("id",               m.getId());
@@ -4906,6 +4927,9 @@ public class MonitoringController {
         item.put("confirm_interval_seconds", m.getConfirmIntervalSeconds());
         item.put("recovery_checks",           m.getRecoveryChecks());
         item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
+        item.put("slow_response_enabled",        m.getSlowResponseEnabled());
+        item.put("slow_baseline_window_minutes", m.getSlowBaselineWindowMinutes());
+        item.put("slow_threshold_percent",       m.getSlowThresholdPercent());
         item.put("active_alarm",       openAlarm != null);
         item.put("alarm_level",        openAlarm != null ? openAlarm.getAlertLevel() : null);
         item.put("alarm_acknowledged", openAlarm != null ? openAlarm.getAcknowledged() : null);

@@ -107,6 +107,35 @@ describe('CertificateCard — aksiyon butonları', () => {
     expect(onClick).not.toHaveBeenCalled()
   })
 
+  it("Sil handlerı geçilince dördüncü buton çıkar ve KART DETAYINI açmaz", () => {
+    const onDelete = vi.fn(), onClick = vi.fn()
+    render(<CertificateCard cert={makeCert()} onClick={onClick}
+      onCheckNow={() => {}} onEdit={() => {}} onDuplicate={() => {}} onDelete={onDelete} />)
+
+    const btns = actionBtns()
+    expect(btns).toHaveLength(4)
+    fireEvent.click(btns[3])
+    expect(onDelete).toHaveBeenCalledTimes(1)
+    // Yıkıcı eylemde çift açılış EN pahalı hata: onay diyaloğuyla birlikte detay modali da açılırdı.
+    expect(onClick).not.toHaveBeenCalled()
+  })
+
+  it('yetkisi olmayanda (onDelete yok) Sil butonu HİÇ çizilmez', () => {
+    render(<CertificateCard cert={makeCert()} onClick={() => {}}
+      onCheckNow={() => {}} onEdit={() => {}} onDuplicate={() => {}} />)
+    expect(actionBtns()).toHaveLength(3)
+  })
+
+  it('deleting=true iken YALNIZ Sil kilitlenir (çift tık koruması)', () => {
+    render(<CertificateCard cert={makeCert()} onClick={() => {}} deleting
+      onCheckNow={() => {}} onEdit={() => {}} onDuplicate={() => {}} onDelete={() => {}} />)
+    const [run, edit, dup, del] = actionBtns()
+    expect(del.disabled).toBe(true)
+    expect(run.disabled).toBe(false)
+    expect(edit.disabled).toBe(false)
+    expect(dup.disabled).toBe(false)
+  })
+
   it('checking=true iken Çalıştır devre dışı, diğerleri değil', () => {
     render(<CertificateCard cert={makeCert()} onClick={() => {}} checking
       onCheckNow={() => {}} onEdit={() => {}} onDuplicate={() => {}} />)

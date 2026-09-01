@@ -126,6 +126,21 @@ public class EmailTemplateBuilder {
     private static boolean isPageSpeed(String t) {
         return "PAGESPEED_DOWN".equals(t) || "PAGESPEED_SLOW".equals(t);
     }
+    /**
+     * AİLE tanımları — tek tip yerine tür ailesi.
+     *
+     * <p><b>Neden gerekti.</b> {@code tabFor}/{@code subsystemLabel} yalnız ailenin "DOWN"
+     * üyesini tanıyordu; {@code PORT_SLOW}/{@code KEYWORD_SLOW} (ve yeni {@code PING_SLOW})
+     * son dala düşüyordu. Sonuç: yavaşlık alarmının e-postası "Sertifika İzleme" başlığıyla
+     * gidiyor ve linki izleme sayfası yerine panoya çıkıyordu — yanlış bilgi, yanlış hedef.
+     * Sayfa/Sentetik/Sayfa-Hızı aileleri bu yüzden zaten aile olarak tanımlıydı; port, ping ve
+     * keyword eksik kalmıştı.
+     */
+    private static boolean isPing(String t) { return "PING_DOWN".equals(t) || "PING_SLOW".equals(t); }
+    private static boolean isPort(String t) { return "PORT_DOWN".equals(t) || "PORT_SLOW".equals(t); }
+    private static boolean isKeyword(String t) {
+        return t != null && (t.equals("KEYWORD") || t.startsWith("KEYWORD_"));
+    }
     /** Sertifika alarmı mı (EXPIRY/REVOKED/MISMATCH/CHAIN_BROKEN — "dashboard" sekmesine düşen default dal).
      *  Paket görünürlüğü: {@code EscalationService} envanter zenginleştirmesini aynı tanıma bağlar. */
     static boolean isCert(String t) { return tabFor(t).equals("dashboard"); }
@@ -141,10 +156,10 @@ public class EmailTemplateBuilder {
         if (t == null) return "dashboard";
         if (isDomain(t)) return "domain";
         if ("ACCESSIBILITY".equals(t)) return "status";
-        if ("PORT_DOWN".equals(t)) return "port";
+        if (isPort(t)) return "port";
         if (t.startsWith("DNS_")) return "dns";
-        if ("KEYWORD".equals(t)) return "keyword";
-        if ("PING_DOWN".equals(t)) return "ping";
+        if (isKeyword(t)) return "keyword";
+        if (isPing(t)) return "ping";
         if (isPage(t)) return "page";
         if (isPageSpeed(t)) return "pagespeed";
         if (isScripted(t)) return "scripted";
@@ -760,10 +775,10 @@ public class EmailTemplateBuilder {
     private static String subsystemLabel(String t) {
         if (isDomain(t)) return "Alan Adı İzleme";
         if ("ACCESSIBILITY".equals(t)) return "Durum İzleme";
-        if ("PORT_DOWN".equals(t)) return "Port İzleme";
+        if (isPort(t)) return "Port İzleme";
         if (t != null && t.startsWith("DNS_")) return "DNS İzleme";
-        if ("KEYWORD".equals(t)) return "Keyword İzleme";
-        if ("PING_DOWN".equals(t)) return "Ping İzleme";
+        if (isKeyword(t)) return "Keyword İzleme";
+        if (isPing(t)) return "Ping İzleme";
         if (isPage(t)) return "Sayfa Bütünlüğü İzleme";
         if (isPageSpeed(t)) return "Sayfa Hızı İzleme";
         if (isScripted(t)) return "Sentetik İzleme";

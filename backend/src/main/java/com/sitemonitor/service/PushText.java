@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -233,5 +234,66 @@ public final class PushText {
         // Boşluk çok erken geliyorsa (başta) sert kesim daha çok bilgi taşır.
         if (sp >= head.length() / 2) head = head.substring(0, sp);
         return head.trim() + "...";
+    }
+
+    // ── 5) "slow" şablonunun ölçü alanları ──────────────────────────────────
+
+    /**
+     * {@code slow} şablonundaki {@code {metrik}} / {@code {deger}} / {@code {esik}} üçlüsünü
+     * alarm bağlamından türetir.
+     *
+     * <p><b>Neden burada.</b> Şablon bu üçlüyü olay bağlamında {@code metric} / {@code value} /
+     * {@code threshold} adlarıyla arıyor; oysa hiçbir üretici bu adları yazmıyor — her izleme türü
+     * ölçüyü KENDİ dilinde koyuyor ({@code rtt_ms}, {@code response_ms}, {@code duration_ms}) ve
+     * eşiği de öyle ({@code limit_ms}, {@code threshold_ms}, {@code slow_threshold_ms}). Sonuç,
+     * yavaşlık bildirimlerinin telefona {@code "... yavaş - yanıt - (eşik -)"} diye düşmesiydi:
+     * alarmın TEK sayısal kanıtı kayıptı. Eşlemeyi üreticilere tek tek yazdırmak yerine sınırda
+     * yapmak, yeni bir yavaşlık türü eklendiğinde güncellenecek yeri tek tutuyor.
+     *
+     * <p>Açık {@code metric}/{@code value}/{@code threshold} anahtarları YİNE ÖNCELİKLİ: çağıran
+     * onları bunun üstüne yazar, burası yalnız yedek eşlemedir.
+     *
+     * @return doldurulabilen alanlar ({@code metric} / {@code value} / {@code threshold});
+     *         tanınmayan bağlamda boş harita — çağıranın kendi varsayılanı geçerli kalır
+     */
+    public static Map<String, String> slowFields(Map<String, Object> ctx) {
+        if (ctx == null || ctx.isEmpty()) return Map.of();
+        Map<String, String> out = new LinkedHashMap<>();
+
+        // Sayfa hızı ÇOK metriklidir (yükleme + TTFB + boyut + istek): tek bir "değer/eşik" sayısı
+        // yok. Aşılan eşiklerin okunur özeti zaten bağlamda hazır, onu değer olarak kullanırız;
+        // {esik} bilerek doldurulmaz — uydurulmuş tek bir sayı yanlış karşılaştırma davet ederdi.
+        String detail = text(ctx.get("detail"));
+        if (ctx.get("pagespeed_status") != null && detail != null) {
+            out.put("metric", "sayfa hızı");
+            out.put("value", detail);
+            return out;
+        }
+
+        Long rtt = num(ctx.get("rtt_ms"));
+        Long duration = num(ctx.get("duration_ms"));
+        Long response = num(ctx.get("response_ms"));
+        if (rtt != null)             { out.put("metric", "ping");   out.put("value", rtt + " ms"); }
+        else if (duration != null)   { out.put("metric", "koşum");  out.put("value", duration + " ms"); }
+        else if (response != null)   { out.put("metric", "yanıt");  out.put("value", response + " ms"); }
+
+        // Ping'in eşiği GÖRECELİdir (taban çizgisi + %X) ama hesabın SONUCU mutlak bir ms değeri:
+        // telefonda ölçümle karşılaştırılabilecek tek sayı odur. Tabanın kendisi ve yüzde,
+        // e-postadaki tam cümlede ve {neden} parçasında zaten anlatılıyor.
+        Long limit = num(ctx.get("limit_ms"));
+        if (limit == null) limit = num(ctx.get("threshold_ms"));
+        if (limit == null) limit = num(ctx.get("slow_threshold_ms"));
+        if (limit != null) out.put("threshold", limit + " ms");
+        return out;
+    }
+
+    private static Long num(Object v) {
+        return v instanceof Number n ? n.longValue() : null;
+    }
+
+    private static String text(Object v) {
+        if (v == null) return null;
+        String s = String.valueOf(v).trim();
+        return s.isEmpty() ? null : s;
     }
 }

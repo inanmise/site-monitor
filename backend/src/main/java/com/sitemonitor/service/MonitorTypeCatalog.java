@@ -52,7 +52,7 @@ public final class MonitorTypeCatalog {
             "port",     Set.of("PORT_DOWN", "PORT_SLOW"),
             "dns",      Set.of("DNS_FAILURE", "DNS_CHANGED", "DNS_SLOW", "DNS_UNEXPECTED", "DNS_INCONSISTENT"),
             "keyword",  Set.of("KEYWORD", "KEYWORD_SLOW", "KEYWORD_SSL", "KEYWORD_DOMAIN_EXPIRY"),
-            "ping",     Set.of("PING_DOWN"),
+            "ping",     Set.of("PING_DOWN", "PING_SLOW"),
             "domain",   Set.of("DOMAINMON_EXPIRY", "DOMAINMON_UNKNOWN", "DOMAINMON_STATUS", "DOMAINMON_CHANGED",
                                "DOMAINMON_TRANSFER_LOCK", "DOMAINMON_BLACKLIST"),
             "page",     Set.of("PAGE_DOWN", "PAGE_INTEGRITY"),

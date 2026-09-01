@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import ScriptedMonitorPage, { invalidNumericField, SCRIPTED_NUM_FIELDS }
   from '../components/ScriptedMonitorPage.jsx'
@@ -354,7 +354,6 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
     })
 
     it('F1: SİLME sonrası da taslak yazılmaz (erişilemez yetim satır kalmasın)', async () => {
-      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
       api.monitoring.deleteScriptedMonitor.mockResolvedValue({ success: true })
       await renderPage()
       fireEvent.click(document.querySelector('.mon-act--edit'))
@@ -366,10 +365,14 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       // erişilebilir adla sorgulamak iki eşleşme döndürüyor. Satır 360'taki `.mon-act--edit`
       // ile aynı ayrıştırma.
       fireEvent.click(document.querySelector('.modal-box .btn-danger, .btn-danger'))
+      // Onay artık PROJENİN diyaloğu (window.confirm değil): tarayıcı-varsayılanı kutu tasarım
+      // sisteminin dışındaydı ve jsdom'da hiç çalışmadığı için bu yol yalnız spy ile test
+      // edilebiliyordu — yani gerçek onay akışı test EDİLMİYORDU.
+      const dlg = await screen.findByRole('dialog')
+      fireEvent.click(within(dlg).getByRole('button', { name: /^sil$|^delete$/i }))
       await waitFor(() => expect(api.monitoring.deleteScriptedMonitor).toHaveBeenCalled())
 
       expect(api.monitoring.saveScriptedDraft).not.toHaveBeenCalled()
-      confirmSpy.mockRestore()
     })
 
     it('F2: yarım kalmış "new" taslağı varken Yeni/Kopyala onu EZMEZ, sorar', async () => {

@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import { api } from '../api/client'
 import { useT, useDateLocale } from '../i18n/index.jsx'
 import { useToast } from './ui/Toast.jsx'
+import { useDialog } from './ui/Dialog.jsx'
 import { rcMeta, durationMs, formatDuration, formatIncidentTime } from '../utils/incidentMeta.js'
 import { Siren, RefreshCw, Trash2, MessageSquare, X, ExternalLink, ChevronLeft, ChevronRight,
   CheckCircle2, Send, Info, ArrowUp, ArrowDown } from 'lucide-react'
@@ -13,6 +14,7 @@ const SORTABLE = { started: 'started', status: 'status', severity: 'severity', r
 
 export default function IncidentsPage({ systemRole }) {
   const t = useT()
+  const { showConfirm } = useDialog()
   const dateLocale = useDateLocale()
   const toast = useToast()
   const isAdmin = systemRole === 'ADMIN'
@@ -107,7 +109,10 @@ export default function IncidentsPage({ systemRole }) {
   }, [typeCounts])
 
   async function del(inc) {
-    if (!window.confirm(t('incov.deleteConfirm'))) return
+    if (!await showConfirm({
+      title: t('incov.delete'), message: t('incov.deleteConfirm'),
+      confirmText: t('incov.delete'), variant: 'danger',
+    })) return
     const res = await api.monitoring.incidents.remove(inc.id)
     if (!res?.success) { toast.error(res?.error || t('incov.deleteError')); return }
     toast.success(t('incov.deleted'))

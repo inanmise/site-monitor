@@ -68,6 +68,18 @@ public interface PingCheckRepository extends JpaRepository<PingCheck, Long> {
     List<Object[]> weeklyStatsByMonitor(@Param("ids") java.util.Collection<Long> ids,
                                         @Param("from") String from, @Param("to") String to);
 
+    /**
+     * Yavaşlık taban çizgisi: [ortalama_rtt, örnek_sayısı] — pencere içindeki BAŞARILI ölçümler.
+     *
+     * <p>Yalnız {@code up=true} ve {@code rtt_ms} dolu satırlar sayılır: başarısız bir kontrolün
+     * rtt'si yoktur, sıfır sayılsaydı taban çizgisi düşer ve kurtulan host "yavaşladı" diye
+     * alarm üretirdi. Örnek sayısı da dönüyor — tek ölçümlük bir tabana göre yüzde kıyaslaması
+     * gürültüyü alarma çevirir, çağıran alt sınır uygular.
+     */
+    @Query("SELECT AVG(c.rttMs), COUNT(c.rttMs) FROM PingCheck c WHERE c.monitorId = :id "
+         + "AND c.up = true AND c.rttMs IS NOT NULL AND c.checkedAt >= :since AND c.checkedAt < :until")
+    List<Object[]> slowBaseline(@Param("id") Long id, @Param("since") String since, @Param("until") String until);
+
     /** Saklama seffafligi: bu izlemenin elde TUTULAN en eski ve en yeni kaydi ([min, max]).
      *  Kullanici Kontrol Gecmisi'nde "veri su tarihten itibaren tutuluyor" bilgisini gorur.
      *  Zaman kolonu indexli oldugundan MIN/MAX index-seek'tir (tablo taramasi yok). */

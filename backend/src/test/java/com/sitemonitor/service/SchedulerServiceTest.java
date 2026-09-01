@@ -549,6 +549,106 @@ class SchedulerServiceTest {
      * gecmisi guncel mantikla tutarli hale getirir. Gercek bir yenileme iki GUVENILIR gozlem
      * gerektirdiginden bu WHERE hicbir gercek degisimi silemez.
      */
+    // ── Ping yavaslik alarmi (goreli esik) ────────────────────────────────────
+    //
+    // Esik SABIT bir ms degeri degil: host'un KENDI son N dakikalik ortalamasi. Sabit esik yerel
+    // bir sunucuda (2 ms) her dalgalanmada oter, denizasiri bir host'ta (180 ms) hic otmez.
+    // Asagidaki testler hukmun UC sessizlik dalini da pinler: kapali ozellik, olcum yoklugu ve
+    // yetersiz taban cizgisi. Ucunde de alarm URETILMEZ.
+
+    private com.sitemonitor.model.PingMonitor pingMon() {
+        com.sitemonitor.model.PingMonitor m = new com.sitemonitor.model.PingMonitor();
+        m.setId(7L);
+        m.setHost("host.example.com");
+        m.setSlowResponseEnabled(true);
+        m.setSlowBaselineWindowMinutes(10);
+        m.setSlowThresholdPercent(20);
+        return m;
+    }
+
+    /** slowBaseline(...) -> [ortalama, ornek_sayisi] */
+    private void baseline(Double avg, long samples) {
+        when(pingCheckRepo.slowBaseline(eq(7L), anyString(), anyString()))
+                .thenReturn(java.util.List.<Object[]>of(new Object[]{ avg, samples }));
+    }
+
+    @Test
+    @DisplayName("ping yavaslik: olcum taban cizgisinin %20 ustundeyse DOWN (alarm)")
+    void pingSlow_aboveBaselineIsDown() {
+        baseline(100.0, 8);
+
+        Map<String, Object> v = scheduler.pingSlowVerdict(pingMon(), 130L, null);
+
+        assertThat(v.get("status")).isEqualTo("down");
+        assertThat(v.get("baseline_ms")).isEqualTo(100L);
+        assertThat(v.get("limit_ms")).isEqualTo(120L);
+    }
+
+    @Test
+    @DisplayName("ping yavaslik: esigin TAM sinirinda alarm YOK (kesin buyuk olmali)")
+    void pingSlow_atTheLimitIsUp() {
+        baseline(100.0, 8);
+
+        assertThat(scheduler.pingSlowVerdict(pingMon(), 120L, null).get("status")).isEqualTo("up");
+    }
+
+    @Test
+    @DisplayName("ping yavaslik: taban cizgisi 3 ornekten azsa SESSIZ — gurultu alarma cevrilmez")
+    void pingSlow_thinBaselineStaysSilent() {
+        baseline(10.0, 2);
+
+        Map<String, Object> v = scheduler.pingSlowVerdict(pingMon(), 900L, null);
+
+        assertThat(v.get("status")).isEqualTo("up");
+        assertThat(v).doesNotContainKey("limit_ms");
+    }
+
+    @Test
+    @DisplayName("ping yavaslik: OLCUM YOKSA sessiz — erisilemezlik PING_DOWN'in isi, cift alarm olmaz")
+    void pingSlow_noMeasurementStaysSilent() {
+        Map<String, Object> v = scheduler.pingSlowVerdict(pingMon(), null, null);
+
+        assertThat(v.get("status")).isEqualTo("up");
+        // Taban cizgisi sorgusu hic kosmamali: olcum yokken kiyaslanacak bir sey de yok.
+        verify(pingCheckRepo, never()).slowBaseline(anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("ping yavaslik: ozellik KAPALIYKEN hicbir sey degerlendirilmez (opt-in)")
+    void pingSlow_disabledStaysSilent() {
+        com.sitemonitor.model.PingMonitor m = pingMon();
+        m.setSlowResponseEnabled(false);
+
+        assertThat(scheduler.pingSlowVerdict(m, 5000L, null).get("status")).isEqualTo("up");
+        verify(pingCheckRepo, never()).slowBaseline(anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("ping yavaslik: taban cizgisi okunamazsa SESSIZ kalinir (olcemedigimiz sey alarm olmaz)")
+    void pingSlow_baselineErrorStaysSilent() {
+        when(pingCheckRepo.slowBaseline(eq(7L), anyString(), anyString()))
+                .thenThrow(new RuntimeException("db kapali"));
+
+        assertThat(scheduler.pingSlowVerdict(pingMon(), 900L, null).get("status")).isEqualTo("up");
+    }
+
+    @Test
+    @DisplayName("ping yavaslik: esik ve pencere IZLEMEDEN gelir, sabit degil")
+    void pingSlow_usesPerMonitorSettings() {
+        com.sitemonitor.model.PingMonitor m = pingMon();
+        m.setSlowThresholdPercent(50);
+        m.setSlowBaselineWindowMinutes(30);
+        baseline(100.0, 8);
+
+        Map<String, Object> v = scheduler.pingSlowVerdict(m, 140L, null);
+
+        // %50 esikte 140 ms hala esigin altinda (limit 150) — %20 olsaydi alarm verirdi.
+        assertThat(v.get("status")).isEqualTo("up");
+        assertThat(v.get("limit_ms")).isEqualTo(150L);
+        assertThat(v.get("threshold_percent")).isEqualTo(50);
+        assertThat(v.get("baseline_window_minutes")).isEqualTo(30);
+    }
+
     @Test
     @DisplayName("applySchemaPatches: sahte sertifika damgasi YALNIZ UNTRUSTED gozlemli satirlarda temizlenir")
     void cleanupInterceptedCertPins_narrowWhere() {

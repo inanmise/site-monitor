@@ -281,4 +281,59 @@ class PushMessageContractTest {
                 .as("damga Istanbul yereliyle yazilirsa UTC olarak okundugunda 3 saat sapar: %s", stamp)
                 .isLessThan(120);
     }
+
+    // ── Yavaşlık bildirimi ölçüyü TAŞIMALI ──────────────────────────────────
+    //
+    // "slow" şablonu ölçü ve eşiği olay bağlamından okur. Bağlamdaki adlar tür tür değiştiği
+    // (rtt_ms / response_ms / duration_ms, limit_ms / threshold_ms / slow_threshold_ms) ve şablon
+    // sabit metric/value/threshold aradığı için bu üçlü telefona "-" olarak düşüyordu: kullanıcı
+    // "yavaş" diye bir bildirim alıyor ama NE KADAR yavaş olduğunu göremiyordu.
+
+    @Test
+    @DisplayName("KAPI: PING_SLOW bildiriminde ölçüm ve eşik SAYIYLA görünür")
+    void pingSlow_carriesMeasurement() {
+        AlertEvent e = event("HIGH", "sunucu1.example.com",
+                "YÜKSEK: sunucu1.example.com ping yanıt süresi kendi taban çizgisinin üstüne çıktı",
+                Instant.now());
+        e.setAlertType(EscalationService.TYPE_PING_SLOW);
+
+        String msg = service.buildMessage(e, "OPEN", Map.of(
+                "rtt_ms", 240L, "baseline_ms", 150L, "limit_ms", 180L,
+                "threshold_percent", 20, "baseline_window_minutes", 10));
+
+        assertThat(msg).as("ölçüm mesajda yok: %s", msg).contains("240 ms");
+        assertThat(msg).as("eşik mesajda yok: %s", msg).contains("180 ms");
+    }
+
+    @Test
+    @DisplayName("KAPI: BÜTÜN yavaşlık türleri ölçü+eşik doldurur (yeni tür eklenince burası da güncellenmeli)")
+    void everySlowType_fillsMeasurement() {
+        Map<String, Map<String, Object>> ctxByType = new java.util.LinkedHashMap<>();
+        ctxByType.put(EscalationService.TYPE_PING_SLOW,     Map.of("rtt_ms", 240L, "limit_ms", 180L));
+        ctxByType.put(EscalationService.TYPE_PORT_SLOW,     Map.of("response_ms", 4200L, "threshold_ms", 3000));
+        ctxByType.put(EscalationService.TYPE_KEYWORD_SLOW,  Map.of("response_ms", 4200L, "threshold_ms", 3000));
+        ctxByType.put(EscalationService.TYPE_DNS_SLOW,      Map.of("response_ms", 1200L, "slow_threshold_ms", 800));
+        ctxByType.put(EscalationService.TYPE_SCRIPTED_SLOW, Map.of("duration_ms", 12000L, "threshold_ms", 9000));
+
+        for (var en : ctxByType.entrySet()) {
+            AlertEvent e = event("HIGH", "a.example.com", "YÜKSEK: a.example.com yavaş", Instant.now());
+            e.setAlertType(en.getKey());
+            String msg = service.buildMessage(e, "OPEN", en.getValue());
+            assertThat(msg).as("%s: eşik doldurulmamış — %s", en.getKey(), msg).doesNotContain("eşik -");
+            assertThat(msg).as("%s: ölçüm doldurulmamış — %s", en.getKey(), msg).doesNotContain("yavaş - yanıt -");
+        }
+    }
+
+    @Test
+    @DisplayName("Üreticinin AÇIK metric/value/threshold anahtarı türetmeyi EZER")
+    void explicitContextKeysWin() {
+        AlertEvent e = event("HIGH", "a.example.com", "YÜKSEK: a.example.com yavaş", Instant.now());
+        e.setAlertType(EscalationService.TYPE_PORT_SLOW);
+
+        String msg = service.buildMessage(e, "OPEN", Map.of(
+                "response_ms", 4200L, "threshold_ms", 3000,
+                "metric", "el ile", "value", "9 br", "threshold", "5 br"));
+
+        assertThat(msg).contains("el ile", "9 br", "5 br").doesNotContain("4200 ms");
+    }
 }

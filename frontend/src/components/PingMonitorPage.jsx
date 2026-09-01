@@ -51,7 +51,10 @@ const INTERVALS = [
 ]
 const REFRESH_INTERVAL = 60
 const emptyForm = { name: '', host: '', ipVersion: 'auto', groupName: '', notificationGroupId: '', teamId: '',
-  intervalSeconds: 60, timeoutMs: 5000, packetCount: 4, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, notifyEmail: true, notifyWebhook: true, active: true }
+  intervalSeconds: 60, timeoutMs: 5000, packetCount: 4, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, notifyEmail: true, notifyWebhook: true, active: true,
+  // Yavaşlık alarmı OPT-IN: varsayılan kapalı — mevcut izlemelerin hiçbiri bir gün sabah
+  // birden yeni bir alarm türü üretmeye başlamasın.
+  slowResponseEnabled: false, slowBaselineWindowMinutes: 10, slowThresholdPercent: 20 }
 
 export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
@@ -155,7 +158,10 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
       notifyEmail: m.notify_email !== false,
       timeoutMs: m.timeout_ms ?? 5000, packetCount: m.packet_count ?? 4,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30, recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
-      notifyWebhook: m.notify_webhook !== false, active: m.active !== false }
+      notifyWebhook: m.notify_webhook !== false, active: m.active !== false,
+      slowResponseEnabled: !!m.slow_response_enabled,
+      slowBaselineWindowMinutes: m.slow_baseline_window_minutes ?? 10,
+      slowThresholdPercent: m.slow_threshold_percent ?? 20 }
   }
   function openEdit(m) {
     setDupSource(null)
@@ -187,6 +193,9 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
       timeoutMs: Number(form.timeoutMs), packetCount: Number(form.packetCount),
       confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds), recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
       notifyWebhook: !!form.notifyWebhook, active: form.active,
+      slowResponseEnabled: !!form.slowResponseEnabled,
+      slowBaselineWindowMinutes: Number(form.slowBaselineWindowMinutes),
+      slowThresholdPercent: Number(form.slowThresholdPercent),
     }
     // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
     if (changeNote.trim()) payload.changeNote = changeNote.trim()
@@ -641,6 +650,24 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
               <div className="full-width" style={{ fontSize: '.8em', color: 'var(--text-muted)', marginTop: -2, lineHeight: 1.5 }}>
                 ⓘ {t('ping.confirmHint')}
               </div>
+
+              {/* Yavaşlık alarmı — port izlemesindeki blokla aynı yerleşim, farkı eşiğin GÖRECELİ
+                  olması: sabit bir ms değeri yerine host'un kendi son N dakikalık ortalaması.
+                  Alanlar yalnız kutucuk işaretliyken açılır; kapalıyken ekranda ölü sayı durmaz. */}
+              <label className="checkbox-label full-width">
+                <input type="checkbox" checked={form.slowResponseEnabled}
+                  onChange={e => setForm(f => ({ ...f, slowResponseEnabled: e.target.checked }))} />{t('ping.slowEnable')}</label>
+              {form.slowResponseEnabled && (
+                <>
+                  <label><span>{t('ping.slowWindow')}</span>
+                    <input type="number" min="1" max="1440" value={form.slowBaselineWindowMinutes}
+                      onChange={e => setForm(f => ({ ...f, slowBaselineWindowMinutes: Number(e.target.value) }))} /></label>
+                  <label><span>{t('ping.slowPercent')}</span>
+                    <input type="number" min="1" max="1000" value={form.slowThresholdPercent}
+                      onChange={e => setForm(f => ({ ...f, slowThresholdPercent: Number(e.target.value) }))} /></label>
+                </>
+              )}
+              <div className="full-width field-hint" style={{ marginTop: -2 }}>{t('ping.slowHint')}</div>
 
               <label className="checkbox-label">
                 <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('ping.active')}</label>

@@ -69,6 +69,7 @@ describe('PingMonitorPage', () => {
       ip_version: 'v6', group_name: 'Kurumsal', team_id: 5, team_name: 'SY-A',
       interval_seconds: 900, timeout_ms: 7000, packet_count: 7,
       confirm_attempts: 5, confirm_interval_seconds: 45, recovery_checks: 4, recovery_interval_seconds: 90,
+      slow_response_enabled: true, slow_baseline_window_minutes: 25, slow_threshold_percent: 35,
       active: false, notification_group_id: 7,
     }] })
     api.monitoring.createPingMonitor.mockResolvedValue({ success: true, data: {} })
@@ -100,10 +101,45 @@ describe('PingMonitorPage', () => {
       name: 'GW (Kopya)', host: '10.0.0.9', ipVersion: 'v6', groupName: 'Kurumsal', teamId: 5,
       intervalSeconds: 900, timeoutMs: 7000, packetCount: 7, notifyEmail: true, notifyWebhook: true,
       confirmAttempts: 5, confirmIntervalSeconds: 45, recoveryChecks: 4, recoveryIntervalSeconds: 90,
+      // Yavaşlık ayarı da kopyalanır: kopyanın "sessiz" doğması, kullanıcının kurduğu eşiği
+      // sessizce düşürmek olurdu.
+      slowResponseEnabled: true, slowBaselineWindowMinutes: 25, slowThresholdPercent: 35,
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
       // Bildirim grubu da kopyalanır: kopya, kaynağın alarmını ALAN ekibe gitmeye devam etsin.
       notificationGroupId: 7,
     })
+  })
+
+  it('yavaşlık alarmı: varsayılan KAPALI, açılınca pencere/yüzde alanları gelir ve payload\'a girer', async () => {
+    api.monitoring.getPingMonitors.mockResolvedValue({ success: true, data: [] })
+    api.monitoring.createPingMonitor.mockResolvedValue({ success: true, data: {} })
+
+    // USER rolü: takım formda hazır gelir (ADMIN'de takım seçilene dek Kaydet kilitli).
+    render(<PingMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getPingMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitor/i }))
+
+    // Opt-in: kutucuk işaretlenmeden eşik alanları EKRANDA DURMAZ (kapalıyken ölü sayı gösterilmez).
+    const box = screen.getByLabelText(/slowness alarm|yavaşlık alarmı/i)
+    expect(box.checked).toBe(false)
+    expect(screen.queryByLabelText(/baseline window|taban çizgisi penceresi/i)).toBeNull()
+
+    fireEvent.click(box)
+    const win = screen.getByLabelText(/baseline window|taban çizgisi penceresi/i)
+    const pct = screen.getByLabelText(/deviation threshold|sapma eşiği/i)
+    expect(win.value).toBe('10')
+    expect(pct.value).toBe('20')
+    fireEvent.change(win, { target: { value: '15' } })
+    fireEvent.change(pct, { target: { value: '40' } })
+
+    fireEvent.change(screen.getByPlaceholderText('1.2.3.4 / host.example.com'), { target: { value: '10.0.0.5' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+
+    await waitFor(() => expect(api.monitoring.createPingMonitor).toHaveBeenCalled())
+    const payload = api.monitoring.createPingMonitor.mock.calls[0][0]
+    expect(payload.slowResponseEnabled).toBe(true)
+    expect(payload.slowBaselineWindowMinutes).toBe(15)
+    expect(payload.slowThresholdPercent).toBe(40)
   })
 
   it('istatistik panosu: sayımlar doğru + karta tıklayınca grid filtrelenir/temizlenir', async () => {

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { ToastProvider, useToast } from '../components/ui/Toast.jsx'
 
-function Trigger({ kind = 'success', message = 'Hello', duration }) {
+function Trigger({ kind = 'success', message = 'Hello', duration, label = 'Show' }) {
   const toast = useToast()
   return (
     <button
@@ -12,7 +12,7 @@ function Trigger({ kind = 'success', message = 'Hello', duration }) {
         : toast.info(message, duration)
       }
     >
-      Show
+      {label}
     </button>
   )
 }
@@ -92,17 +92,61 @@ describe('Toast', () => {
     expect(screen.queryByText('Closable')).toBeNull()
   })
 
-  it('stacks multiple toasts', () => {
+  // Yığılma sözleşmesi: FARKLI mesajlar yığılır, AYNI mesaj sayılır.
+  //
+  // Eskiden her çağrı yeni bir kutuydu: backend bir an cevap veremediğinde (deploy/restart)
+  // paralel yükleyiciler + 30 sn'lik oto-yenileme aynı hatayı arka arkaya raporluyor ve ekranın
+  // sağı 15–20 özdeş kutuyla kaplanıyordu — altındaki içerik görünmez oluyordu.
+
+  it('AYNI mesaj yığılmaz, tek kutuda sayılır (×N)', () => {
     render(
       <ToastProvider>
-        <Trigger message="First" />
+        <Trigger kind="error" message="Sunucu hatası (HTTP 500)" />
       </ToastProvider>
     )
     const btn = screen.getByText('Show')
     fireEvent.click(btn)
     fireEvent.click(btn)
     fireEvent.click(btn)
-    expect(document.querySelectorAll('.toast').length).toBe(3)
+
+    expect(document.querySelectorAll('.toast').length).toBe(1)
+    expect(document.querySelector('.toast-count').textContent).toBe('×3')
+  })
+
+  it('FARKLI mesajlar yığılır ama görünür yığın TAVANLIDIR (en eski düşer)', () => {
+    render(
+      <ToastProvider>
+        <Trigger message="Bir" label="A" />
+        <Trigger message="Iki" label="B" />
+        <Trigger message="Uc" label="C" />
+        <Trigger message="Dort" label="D" />
+        <Trigger message="Bes" label="E" />
+      </ToastProvider>
+    )
+    for (const l of ['A', 'B', 'C', 'D']) fireEvent.click(screen.getByText(l))
+    expect(document.querySelectorAll('.toast').length).toBe(4)
+
+    fireEvent.click(screen.getByText('E'))
+    expect(document.querySelectorAll('.toast').length).toBe(4)   // tavan
+    expect(screen.queryByText('Bir')).toBeNull()                 // en eski düştü
+    expect(screen.getByText('Bes')).toBeTruthy()
+  })
+
+  it('tekrar eden mesajın süresi BAŞTAN başlar (son tekrar da okunabilsin)', () => {
+    render(
+      <ToastProvider>
+        <Trigger kind="error" message="Tekrar" duration={5000} />
+      </ToastProvider>
+    )
+    const btn = screen.getByText('Show')
+    fireEvent.click(btn)
+    act(() => { vi.advanceTimersByTime(4000) })
+    fireEvent.click(btn)                    // 2. tekrar → sayaç ×2, süre sıfırlanır
+    act(() => { vi.advanceTimersByTime(4000) })
+    expect(screen.getByText('Tekrar')).toBeTruthy()
+
+    act(() => { vi.advanceTimersByTime(1500) })
+    expect(screen.queryByText('Tekrar')).toBeNull()
   })
 
   it('throws if useToast is called outside ToastProvider', () => {
@@ -146,5 +190,69 @@ describe('Toast', () => {
     expect(screen.queryByText('Hello')).toBeNull()
     expect(() => act(() => { vi.advanceTimersByTime(10_000) })).not.toThrow()
     clearSpy.mockRestore()
+  })
+
+  // ── Aynı tick / aynı yığın: gerçek arıza tam burada oluyordu ───────────────
+  //
+  // Üretimdeki senaryo tek bir çağrı değil: backend bir an cevap veremediğinde sayfanın
+  // PARALEL yükleyicileri aynı turda arka arkaya toast açıyor. React bu çağrıları tek partide
+  // topluyor ve ikinci `setState` güncelleyicisi ARTIK ANINDA çalışmıyor — güncelleyicinin
+  // içinden okunan her şey (id, "aynısı var mı") o an yanlıştır.
+
+  it('AYNI TICK: farklı iki mesaj da otomatik kapanır (zamanlayıcı çalınmaz)', () => {
+    function Double() {
+      const toast = useToast()
+      return <button onClick={() => { toast.error('Bir', 5000); toast.error('Iki', 5000) }}>Ikisi</button>
+    }
+    render(<ToastProvider><Double /></ToastProvider>)
+    fireEvent.click(screen.getByText('Ikisi'))
+    expect(document.querySelectorAll('.toast').length).toBe(2)
+
+    act(() => { vi.advanceTimersByTime(6000) })
+    expect(screen.queryByText('Bir'), 'ilk kutu ekranda kaldı').toBeNull()
+    expect(screen.queryByText('Iki'), 'ikinci kutu zamanlayıcısız kaldı — sonsuza kadar ekranda').toBeNull()
+  })
+
+  it('AYNI TICK: aynı mesaj iki kez → tek kutu, ×2', () => {
+    function Double() {
+      const toast = useToast()
+      return <button onClick={() => { toast.error('Sunucu hatası'); toast.error('Sunucu hatası') }}>Ikisi</button>
+    }
+    render(<ToastProvider><Double /></ToastProvider>)
+    fireEvent.click(screen.getByText('Ikisi'))
+    expect(document.querySelectorAll('.toast').length).toBe(1)
+    expect(document.querySelector('.toast-count').textContent).toBe('×2')
+  })
+
+  it('tavan aşıldığında DÜŞEN kutunun zamanlayıcısı da iptal edilir (sarkan zamanlayıcı yok)', () => {
+    render(
+      <ToastProvider>
+        <Trigger message="Bir" label="A" /><Trigger message="Iki" label="B" />
+        <Trigger message="Uc" label="C" /><Trigger message="Dort" label="D" />
+        <Trigger message="Bes" label="E" />
+      </ToastProvider>
+    )
+    for (const l of ['A', 'B', 'C', 'D']) fireEvent.click(screen.getByText(l))
+    const clearSpy = vi.spyOn(globalThis, 'clearTimeout')
+    clearSpy.mockClear()
+    fireEvent.click(screen.getByText('E'))            // tavan → "Bir" düşer
+    expect(clearSpy, 'düşen kutunun zamanlayıcısı iptal edilmedi').toHaveBeenCalled()
+    clearSpy.mockRestore()
+  })
+
+  it('toast API kimliği render boyunca SABİT (bağımlılık dizisinde döngü kurmaz)', () => {
+    // Bu nesne her render'da yeniden kurulsaydı, `useCallback(..., [toast])` / `useEffect(..., [toast])`
+    // kullanan sayfalar (CertInventoryReportSettings, RetentionSettings, SqlPlayground) her
+    // bildirimde yeniden yükleme tetiklerdi.
+    const seen = new Set()
+    function Probe() {
+      const toast = useToast()
+      seen.add(toast)
+      return <button onClick={() => toast.success('x')}>Show</button>
+    }
+    render(<ToastProvider><Probe /></ToastProvider>)
+    fireEvent.click(screen.getByText('Show'))         // durum değişti → yeniden render
+    expect(screen.getByText('x')).toBeTruthy()
+    expect(seen.size, 'toast API kimliği değişti').toBe(1)
   })
 })
