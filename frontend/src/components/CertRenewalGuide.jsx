@@ -29,9 +29,12 @@ export default function CertRenewalGuide({ isAdmin }) {
 
   async function load() {
     setLoading(true)
-    const res = await api.guideLinks.list()
-    if (res?.success) setLinks(res.data || [])
-    setLoading(false)
+    try {
+      const res = await api.guideLinks.list()
+      if (res?.success) setLinks(res.data || [])
+    } finally {
+      setLoading(false)
+    }
   }
 
   const grouped = useMemo(() => {
@@ -70,25 +73,28 @@ export default function CertRenewalGuide({ isAdmin }) {
       return
     }
     setSaving(true)
-    const payload = {
-      category:    form.category.trim(),
-      title:       form.title.trim(),
-      url:         form.url.trim(),
-      description: form.description.trim(),
-      // Uc @RequestBody GuideLink ile bagliyor (Jackson SNAKE_CASE): camelCase anahtar
-      // sessizce dusuyordu. Entity varsayilani 0 oldugu icin null-kontrolu de GECIYOR ve
-      // her duzenleme siralamayi 0'a ceviriyordu.
-      sort_order:  Number(form.sortOrder) || 0,
-    }
-    const res = modal === 'add'
-      ? await api.guideLinks.create(payload)
-      : await api.guideLinks.update(modal.id, payload)
-    setSaving(false)
-    if (res?.success) {
-      setModal(null)
-      load()
-    } else {
-      setMsg(res?.error || 'Error')
+    try {
+      const payload = {
+        category:    form.category.trim(),
+        title:       form.title.trim(),
+        url:         form.url.trim(),
+        description: form.description.trim(),
+        // Uc @RequestBody GuideLink ile bagliyor (Jackson SNAKE_CASE): camelCase anahtar
+        // sessizce dusuyordu. Entity varsayilani 0 oldugu icin null-kontrolu de GECIYOR ve
+        // her duzenleme siralamayi 0'a ceviriyordu.
+        sort_order:  Number(form.sortOrder) || 0,
+      }
+      const res = modal === 'add'
+        ? await api.guideLinks.create(payload)
+        : await api.guideLinks.update(modal.id, payload)
+      if (res?.success) {
+        setModal(null)
+        load()
+      } else {
+        setMsg(res?.error || 'Error')
+      }
+    } finally {
+      setSaving(false)
     }
   }
 

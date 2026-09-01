@@ -86,37 +86,40 @@ export default function ScriptedTemplateEditor({
 
   async function save() {
     setSaving(true); setError(null); setWarnings([])
-    const payload = {
-      name: form.name.trim(),
-      nameEn: nullIfBlank(form.nameEn),
-      description: nullIfBlank(form.description),
-      descriptionEn: nullIfBlank(form.descriptionEn),
-      whenToUse: nullIfBlank(form.whenToUse),
-      whenToUseEn: nullIfBlank(form.whenToUseEn),
-      script: form.script,
-      tags: form.tags,
-      // Boş seçim null gider: sunucu bilinmeyen/boş anahtarı zaten null'a düşürüyor.
-      category: form.category === '' ? null : form.category,
-      // DEĞER YOK: yalnız tanım. `value` anahtarı sunucuda reddedilir.
-      env: form.env.filter(e => (e.name || '').trim())
-        .map(e => ({ name: e.name.trim(), secret: !!e.secret, desc: nullIfBlank(e.desc) })),
+    try {
+      const payload = {
+        name: form.name.trim(),
+        nameEn: nullIfBlank(form.nameEn),
+        description: nullIfBlank(form.description),
+        descriptionEn: nullIfBlank(form.descriptionEn),
+        whenToUse: nullIfBlank(form.whenToUse),
+        whenToUseEn: nullIfBlank(form.whenToUseEn),
+        script: form.script,
+        tags: form.tags,
+        // Boş seçim null gider: sunucu bilinmeyen/boş anahtarı zaten null'a düşürüyor.
+        category: form.category === '' ? null : form.category,
+        // DEĞER YOK: yalnız tanım. `value` anahtarı sunucuda reddedilir.
+        env: form.env.filter(e => (e.name || '').trim())
+          .map(e => ({ name: e.name.trim(), secret: !!e.secret, desc: nullIfBlank(e.desc) })),
+      }
+      if (isNew) {
+        // `teamId: null` AÇIK bir Genel talebidir; sunucu bunu yalnız admin'e verir ve sessizce
+        // takıma düşürmez. Bu yüzden anahtar her iki dalda da gönderilir.
+        payload.teamId = form.scope === 'general' ? null : Number(form.scope)
+      } else {
+        payload.bumpType = form.bumpType
+        if (form.restoredFrom) payload.restoredFrom = form.restoredFrom
+      }
+      const res = isNew ? await api.monitoring.createScriptedTemplate(payload)
+                        : await api.monitoring.updateScriptedTemplate(template.id, payload)
+      if (!res?.success) { setError(res?.error || t('tpl.saveError')); return }
+      // Uyarılar KAYDETMEYİ engellemez ama modal kapanmadan gösterilir: kullanıcı isterse düzeltir.
+      const warn = res.data?.warnings || []
+      if (warn.length > 0) { setWarnings(warn); onSaved?.(res.data, { keepOpen: true }); return }
+      onSaved?.(res.data)
+    } finally {
+      setSaving(false)
     }
-    if (isNew) {
-      // `teamId: null` AÇIK bir Genel talebidir; sunucu bunu yalnız admin'e verir ve sessizce
-      // takıma düşürmez. Bu yüzden anahtar her iki dalda da gönderilir.
-      payload.teamId = form.scope === 'general' ? null : Number(form.scope)
-    } else {
-      payload.bumpType = form.bumpType
-      if (form.restoredFrom) payload.restoredFrom = form.restoredFrom
-    }
-    const res = isNew ? await api.monitoring.createScriptedTemplate(payload)
-                      : await api.monitoring.updateScriptedTemplate(template.id, payload)
-    setSaving(false)
-    if (!res?.success) { setError(res?.error || t('tpl.saveError')); return }
-    // Uyarılar KAYDETMEYİ engellemez ama modal kapanmadan gösterilir: kullanıcı isterse düzeltir.
-    const warn = res.data?.warnings || []
-    if (warn.length > 0) { setWarnings(warn); onSaved?.(res.data, { keepOpen: true }); return }
-    onSaved?.(res.data)
   }
 
   const title = readOnly ? t('tpl.modalView') : isNew ? t('tpl.modalNew') : t('tpl.modalEdit')

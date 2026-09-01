@@ -112,12 +112,15 @@ export default function SqlPlayground() {
   const run = useCallback(async () => {
     if (!sql?.trim() || running) return
     setRunning(true)
-    setResult(null)
-    const r = await api.admin.sqlExecute(sql)
-    setRunning(false)
-    setResult(r)
-    loadHistory()
-    if (r?.error) toast.error(r.error)
+    try {
+      setResult(null)
+      const r = await api.admin.sqlExecute(sql)
+      setResult(r)
+      loadHistory()
+      if (r?.error) toast.error(r.error)
+    } finally {
+      setRunning(false)
+    }
   }, [sql, running, toast])
 
   const onEditorKeyDown = (e) => {

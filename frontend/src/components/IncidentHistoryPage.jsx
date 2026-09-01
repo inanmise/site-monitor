@@ -285,13 +285,16 @@ export default function IncidentHistoryPage() {
     if (!allowView) return
     setLoading(true)
     try {
-      const res = await api.incidents.list({ ...filters,
-        since: localDayToUtcIso(filters.since, false),
-        until: localDayToUtcIso(filters.until, true), page, size })
-      if (res?.success) { setRows(res.data ?? []); setTotal(res.total ?? 0) }
-      else toast.error(res?.error || t('inc.loadError'))
-    } catch { toast.error(t('inc.loadError')) }
-    setLoading(false)
+      try {
+        const res = await api.incidents.list({ ...filters,
+          since: localDayToUtcIso(filters.since, false),
+          until: localDayToUtcIso(filters.until, true), page, size })
+        if (res?.success) { setRows(res.data ?? []); setTotal(res.total ?? 0) }
+        else toast.error(res?.error || t('inc.loadError'))
+      } catch { toast.error(t('inc.loadError')) }
+    } finally {
+      setLoading(false)
+    }
   }, [filters, page, size, allowView]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadTrends = useCallback(async () => {
@@ -474,13 +477,16 @@ export default function IncidentHistoryPage() {
     if (payload.duration_minutes === '') delete payload.duration_minutes
     setSaving(true)
     try {
-      const res = modal.mode === 'create'
-        ? await api.incidents.create(payload)
-        : await api.incidents.update(modal.form.id, payload)
+      try {
+        const res = modal.mode === 'create'
+          ? await api.incidents.create(payload)
+          : await api.incidents.update(modal.form.id, payload)
+        if (res?.success) { toast.success(t('inc.saved')); setModal(null); load(); loadTrends(); loadTrendDaily() }
+        else toast.error(res?.error || t('inc.saveError'))
+      } catch { setSaving(false); toast.error(t('inc.saveError')) }
+    } finally {
       setSaving(false)
-      if (res?.success) { toast.success(t('inc.saved')); setModal(null); load(); loadTrends(); loadTrendDaily() }
-      else toast.error(res?.error || t('inc.saveError'))
-    } catch { setSaving(false); toast.error(t('inc.saveError')) }
+    }
   }
 
   async function remove(rec) {
@@ -767,11 +773,14 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, all
     payload.kind = modal.mode === 'create' ? 'NEW' : (f.status === 'RESOLVED' ? 'RESOLVED' : 'UPDATED')
     setPreviewing(true)
     try {
-      const res = await api.incidents.previewNotification(payload)
-      if (res?.success) setPreviewHtml(res.html ?? '')
-      else toast.error(res?.error || t('inc.saveError'))
-    } catch { toast.error(t('inc.saveError')) }
-    setPreviewing(false)
+      try {
+        const res = await api.incidents.previewNotification(payload)
+        if (res?.success) setPreviewHtml(res.html ?? '')
+        else toast.error(res?.error || t('inc.saveError'))
+      } catch { toast.error(t('inc.saveError')) }
+    } finally {
+      setPreviewing(false)
+    }
   }
 
   // Takım seçenekleri — seçili takım yüklenen listede yoksa (kapsam dışı/eski kayıt) yine de göster

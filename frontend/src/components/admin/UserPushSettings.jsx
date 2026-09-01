@@ -204,17 +204,20 @@ export default function UserPushSettings() {
 
   async function save() {
     setSaving(true)
-    const body = { ...settings }
-    body[KEY('headers')] = headers
-    body[KEY('role-groups')] = JSON.stringify(groupsSafe)
-    const res = await api.admin.userPush.saveSettings(body)
-    setSaving(false)
-    if (res?.success) {
-      toast.success(t('userpush.saved'))
-      setSettings(res.data?.settings || {})
-      setHeaders(Array.isArray(res.data?.settings?.[KEY('headers')]) ? res.data.settings[KEY('headers')] : [])
-    } else {
-      toast.error(res?.error || t('settings.saveError'))
+    try {
+      const body = { ...settings }
+      body[KEY('headers')] = headers
+      body[KEY('role-groups')] = JSON.stringify(groupsSafe)
+      const res = await api.admin.userPush.saveSettings(body)
+      if (res?.success) {
+        toast.success(t('userpush.saved'))
+        setSettings(res.data?.settings || {})
+        setHeaders(Array.isArray(res.data?.settings?.[KEY('headers')]) ? res.data.settings[KEY('headers')] : [])
+      } else {
+        toast.error(res?.error || t('settings.saveError'))
+      }
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -246,10 +249,13 @@ export default function UserPushSettings() {
     const usernames = testSicils.split(',').map((s) => s.trim()).filter(Boolean)
     if (!usernames.length) { toast.error(t('userpush.testNeedSicil')); return }
     setTesting(true)
-    const res = await api.admin.userPush.sendTest({ usernames, template: testTemplate })
-    setTesting(false)
-    if (res?.success) { setTestResult(res.data?.data ?? res.data); toast.success(t('userpush.testQueued')) }
-    else toast.error(res?.error || t('userpush.testFailed'))
+    try {
+      const res = await api.admin.userPush.sendTest({ usernames, template: testTemplate })
+      if (res?.success) { setTestResult(res.data?.data ?? res.data); toast.success(t('userpush.testQueued')) }
+      else toast.error(res?.error || t('userpush.testFailed'))
+    } finally {
+      setTesting(false)
+    }
   }
 
   // SON-ISTEK-KAZANIR: fUser/fNotifId metin filtreleri HER TUSTA istek atiyor. Yavas (eski) yanit

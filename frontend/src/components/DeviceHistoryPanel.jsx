@@ -93,16 +93,19 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
 
   const loadLogins = useCallback(async (p = 0) => {
     setLoginsLoading(true)
-    const res = isAdminView
-      ? await api.admin.getUserDeviceLogins(userId, { page: p, size: SIZE })
-      : await api.me.getMyDeviceLogins({ page: p, size: SIZE })
-    if (res?.success) {
-      setLogins(res.data?.rows ?? [])
-      setLoginTotal(res.data?.total ?? 0)
-      setLoginPage(res.data?.page ?? p)
-      if (res.data?.retention_days) setRetentionDays(res.data.retention_days)
+    try {
+      const res = isAdminView
+        ? await api.admin.getUserDeviceLogins(userId, { page: p, size: SIZE })
+        : await api.me.getMyDeviceLogins({ page: p, size: SIZE })
+      if (res?.success) {
+        setLogins(res.data?.rows ?? [])
+        setLoginTotal(res.data?.total ?? 0)
+        setLoginPage(res.data?.page ?? p)
+        if (res.data?.retention_days) setRetentionDays(res.data.retention_days)
+      }
+    } finally {
+      setLoginsLoading(false)
     }
-    setLoginsLoading(false)
   }, [isAdminView, userId])
 
   const loadFailed = useCallback(async () => {

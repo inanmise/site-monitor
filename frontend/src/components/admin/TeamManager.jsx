@@ -148,9 +148,12 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
     setExpandedId(teamId)
     if (!membersCache[teamId]) {
       setMembersLoading(true)
-      const res = await api.admin.getTeamUsers(teamId)
-      if (res?.success) setMembersCache(prev => ({ ...prev, [teamId]: res.data }))
-      setMembersLoading(false)
+      try {
+        const res = await api.admin.getTeamUsers(teamId)
+        if (res?.success) setMembersCache(prev => ({ ...prev, [teamId]: res.data }))
+      } finally {
+        setMembersLoading(false)
+      }
     }
   }
 
@@ -190,28 +193,31 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       return
     }
     setSaving(true)
-    const payload = {
-      name: form.name.trim(),
-      email: form.email.trim(),
-      description: form.description,
-      active: form.active,
-      leader_id: form.leader_id ? Number(form.leader_id) : null,  // PO optional
-      weekly_reminder_enabled: !!form.weekly_reminder_enabled,
-      weekly_availability_enabled: !!form.weekly_availability_enabled,
-    }
-    const isAdd = modal === 'add'
-    const editedId = isAdd ? null : modal.id
-    const res = isAdd
-      ? await api.admin.createTeam(payload)
-      : await api.admin.updateTeam(editedId, payload)
-    setSaving(false)
-    if (res?.success) {
-      toast.success(t('team.saved'))
-      load(); onTeamsChange?.()
-      if (!isAdd) setMembersCache(prev => { const n = { ...prev }; delete n[editedId]; return n })
-      closeModal()
-    } else {
-      setMsg(res?.error || 'Error')
+    try {
+      const payload = {
+        name: form.name.trim(),
+        email: form.email.trim(),
+        description: form.description,
+        active: form.active,
+        leader_id: form.leader_id ? Number(form.leader_id) : null,  // PO optional
+        weekly_reminder_enabled: !!form.weekly_reminder_enabled,
+        weekly_availability_enabled: !!form.weekly_availability_enabled,
+      }
+      const isAdd = modal === 'add'
+      const editedId = isAdd ? null : modal.id
+      const res = isAdd
+        ? await api.admin.createTeam(payload)
+        : await api.admin.updateTeam(editedId, payload)
+      if (res?.success) {
+        toast.success(t('team.saved'))
+        load(); onTeamsChange?.()
+        if (!isAdd) setMembersCache(prev => { const n = { ...prev }; delete n[editedId]; return n })
+        closeModal()
+      } else {
+        setMsg(res?.error || 'Error')
+      }
+    } finally {
+      setSaving(false)
     }
   }
 

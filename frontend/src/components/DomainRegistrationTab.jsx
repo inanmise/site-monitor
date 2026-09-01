@@ -40,20 +40,23 @@ export default function DomainRegistrationTab({ monitor }) {
     if (!id) return
     setLoading(true); setErr(null); setStale(false)
     try {
-      const res = await api.monitoring.getDomainRegistration(id, { live })
-      if (res?.success) { setReg(res.data) }
-      else if (live) {
-        // live başarısız → DB'deki son bilgiye düş
-        const fb = await api.monitoring.getDomainRegistration(id)
-        if (fb?.success) { setReg(fb.data); setStale(true) } else setErr(res?.error || t('dreg.error'))
-      } else setErr(res?.error || t('dreg.error'))
-    } catch {
       try {
-        const fb = await api.monitoring.getDomainRegistration(id)
-        if (fb?.success) { setReg(fb.data); setStale(true) } else setErr(t('dreg.error'))
-      } catch { setErr(t('dreg.error')) }
+        const res = await api.monitoring.getDomainRegistration(id, { live })
+        if (res?.success) { setReg(res.data) }
+        else if (live) {
+          // live başarısız → DB'deki son bilgiye düş
+          const fb = await api.monitoring.getDomainRegistration(id)
+          if (fb?.success) { setReg(fb.data); setStale(true) } else setErr(res?.error || t('dreg.error'))
+        } else setErr(res?.error || t('dreg.error'))
+      } catch {
+        try {
+          const fb = await api.monitoring.getDomainRegistration(id)
+          if (fb?.success) { setReg(fb.data); setStale(true) } else setErr(t('dreg.error'))
+        } catch { setErr(t('dreg.error')) }
+      }
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }, [id, t])
 
   useEffect(() => { load(true) }, [load])

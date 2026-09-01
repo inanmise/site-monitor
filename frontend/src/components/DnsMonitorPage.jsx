@@ -203,45 +203,48 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
       toast.error(t('mon.teamRequired')); return
     }
     setSaving(true)
-    const isNew = modal === 'new'
-    const payload = {
-      name: (form.name || '').trim(),
-      recordType: form.recordType,
-      intervalSeconds: form.intervalSeconds,
-      notifyEmail: form.notifyEmail,
-      confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
-      recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
-      expectedValue: (form.expectedValue || '').trim(),
-      slowThresholdMs: form.slowThresholdMs === '' ? null : Number(form.slowThresholdMs),
-      groupName: form.groupName?.trim() || null,
-      // Bos = takim varsayilani -> takim adresi (zincirin kalani).
-      notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
-        ? null : Number(form.notificationGroupId),
-      propagationCheck: !!form.propagationCheck,
-      dnsChangeAlertEnabled: !!form.dnsChangeAlertEnabled,
-      notifyWebhook: !!form.notifyWebhook,
-      active: form.active,
+    try {
+      const isNew = modal === 'new'
+      const payload = {
+        name: (form.name || '').trim(),
+        recordType: form.recordType,
+        intervalSeconds: form.intervalSeconds,
+        notifyEmail: form.notifyEmail,
+        confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
+        recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
+        expectedValue: (form.expectedValue || '').trim(),
+        slowThresholdMs: form.slowThresholdMs === '' ? null : Number(form.slowThresholdMs),
+        groupName: form.groupName?.trim() || null,
+        // Bos = takim varsayilani -> takim adresi (zincirin kalani).
+        notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
+          ? null : Number(form.notificationGroupId),
+        propagationCheck: !!form.propagationCheck,
+        dnsChangeAlertEnabled: !!form.dnsChangeAlertEnabled,
+        notifyWebhook: !!form.notifyWebhook,
+        active: form.active,
+      }
+      // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
+      if (changeNote.trim()) payload.changeNote = changeNote.trim()
+      let res
+      if (isNew) {
+        payload.domain = (form.domain || '').trim()
+        payload.teamId = form.teamId === '' ? null : Number(form.teamId)
+        res = await api.monitoring.createDnsMonitor(payload)
+      } else {
+        payload.domain = (form.domain || '').trim()   // domain artık düzenlenebilir
+        if (modal.standalone) payload.teamId = form.teamId === '' ? null : Number(form.teamId)
+        res = await api.monitoring.updateDnsMonitor(modal.id, payload)
+      }
+      await load()
+      if (!res?.success) { toast.error(res?.error || 'Error'); return }
+      toast.success(t('dns.saved'))
+      // Envanter bagi koptuysa kullaniciyi bilgilendir: duzenleme kalici, envanter domain'i
+      // icin AYRI bir izleme surecek (bkz. MonitoringController.detachIfIdentityChanged).
+      if (res.data?.detached_from_inventory) toast.info(t('mon.detachedFromInventory'), 8000)
+      closeEditModal()
+    } finally {
+      setSaving(false)
     }
-    // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
-    if (changeNote.trim()) payload.changeNote = changeNote.trim()
-    let res
-    if (isNew) {
-      payload.domain = (form.domain || '').trim()
-      payload.teamId = form.teamId === '' ? null : Number(form.teamId)
-      res = await api.monitoring.createDnsMonitor(payload)
-    } else {
-      payload.domain = (form.domain || '').trim()   // domain artık düzenlenebilir
-      if (modal.standalone) payload.teamId = form.teamId === '' ? null : Number(form.teamId)
-      res = await api.monitoring.updateDnsMonitor(modal.id, payload)
-    }
-    await load()
-    setSaving(false)
-    if (!res?.success) { toast.error(res?.error || 'Error'); return }
-    toast.success(t('dns.saved'))
-    // Envanter bagi koptuysa kullaniciyi bilgilendir: duzenleme kalici, envanter domain'i
-    // icin AYRI bir izleme surecek (bkz. MonitoringController.detachIfIdentityChanged).
-    if (res.data?.detached_from_inventory) toast.info(t('mon.detachedFromInventory'), 8000)
-    closeEditModal()
   }
 
   async function checkNow(m) {
@@ -275,23 +278,29 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
     })
     if (!ok) return
     setDeleting(m.id)
-    const res = await api.monitoring.deleteDnsMonitor(m.id)
-    if (res?.success) { toast.success(derived ? t('dns.deletedDerived') : t('dns.deleted')); await load() }
-    else toast.error(res?.error || 'Error')
-    setDeleting(null)
+    try {
+      const res = await api.monitoring.deleteDnsMonitor(m.id)
+      if (res?.success) { toast.success(derived ? t('dns.deletedDerived') : t('dns.deleted')); await load() }
+      else toast.error(res?.error || 'Error')
+    } finally {
+      setDeleting(null)
+    }
   }
 
   // Canlı DNS testi — kaydetmeden formdaki domain/kayıt-tipi ile bir kez çözer; URL girilse host ayıklanır.
   async function runTest() {
     if (!form.domain.trim()) return
     setTesting(true); setTestResult(null)
-    const res = await api.monitoring.testDnsMonitor({
-      domain: form.domain.trim(), recordType: form.recordType,
-      expectedValue: (form.expectedValue || '').trim() || null,
-      slowThresholdMs: form.slowThresholdMs === '' ? null : Number(form.slowThresholdMs),
-    })
-    setTestResult(res?.success ? res.data : { error: res?.error || t('dns.testError') })
-    setTesting(false)
+    try {
+      const res = await api.monitoring.testDnsMonitor({
+        domain: form.domain.trim(), recordType: form.recordType,
+        expectedValue: (form.expectedValue || '').trim() || null,
+        slowThresholdMs: form.slowThresholdMs === '' ? null : Number(form.slowThresholdMs),
+      })
+      setTestResult(res?.success ? res.data : { error: res?.error || t('dns.testError') })
+    } finally {
+      setTesting(false)
+    }
   }
 
   const alarmLevelColor = (lvl) => lvl === 'CRITICAL' ? '#c0392b' : lvl === 'HIGH' ? '#e07b00' : '#f0a500'

@@ -43,16 +43,19 @@ export default function CertificatesTable({ onRowClick }) {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [sb, sd] = sortBy.split('|')
-    const data = await api.getCertificatesPaginated({
-      page, per_page: perPage, sort_by: sb, sort_dir: sd,
-      filter_domain: filterDomain, filter_issuer: filterIssuer, filter_status: filterStatus,
-    })
-    if (data?.success) {
-      setCerts(data.data)
-      setPagination(data.pagination)
+    try {
+      const [sb, sd] = sortBy.split('|')
+      const data = await api.getCertificatesPaginated({
+        page, per_page: perPage, sort_by: sb, sort_dir: sd,
+        filter_domain: filterDomain, filter_issuer: filterIssuer, filter_status: filterStatus,
+      })
+      if (data?.success) {
+        setCerts(data.data)
+        setPagination(data.pagination)
+      }
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }, [page, perPage, sortBy, filterDomain, filterIssuer, filterStatus])
 
   useEffect(() => { load() }, [load])

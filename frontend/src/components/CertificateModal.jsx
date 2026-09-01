@@ -68,9 +68,12 @@ function NotesTab({ domain, t, currentUser, isAdmin }) {
 
   async function loadNotes() {
     setLoading(true)
-    const res = await api.admin.getNotes(domain)
-    setNotes(res?.data ?? [])
-    setLoading(false)
+    try {
+      const res = await api.admin.getNotes(domain)
+      setNotes(res?.data ?? [])
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function addNote() {
@@ -81,14 +84,17 @@ function NotesTab({ domain, t, currentUser, isAdmin }) {
       return
     }
     setSaving(true)
-    const res = await api.admin.addNote(domain, newNote.trim(), newCategory)
-    setSaving(false)
-    if (res?.success) {
-      setNewNote('')
-      setNewCategory('NOTE')
-      loadNotes()
-    } else {
-      setError(res?.error || t('notes.saveFailed'))
+    try {
+      const res = await api.admin.addNote(domain, newNote.trim(), newCategory)
+      if (res?.success) {
+        setNewNote('')
+        setNewCategory('NOTE')
+        loadNotes()
+      } else {
+        setError(res?.error || t('notes.saveFailed'))
+      }
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -109,15 +115,18 @@ function NotesTab({ domain, t, currentUser, isAdmin }) {
       return
     }
     setEditSaving(true)
-    const res = await api.admin.updateNote(domain, editingId, editBody.trim())
-    setEditSaving(false)
-    if (res?.success) {
-      // Invalidate cached revisions so accordion reloads with new EDIT entry
-      setRevisions(prev => { const c = { ...prev }; delete c[editingId]; return c })
-      cancelEdit()
-      loadNotes()
-    } else {
-      setError(res?.error || t('notes.saveFailed'))
+    try {
+      const res = await api.admin.updateNote(domain, editingId, editBody.trim())
+      if (res?.success) {
+        // Invalidate cached revisions so accordion reloads with new EDIT entry
+        setRevisions(prev => { const c = { ...prev }; delete c[editingId]; return c })
+        cancelEdit()
+        loadNotes()
+      } else {
+        setError(res?.error || t('notes.saveFailed'))
+      }
+    } finally {
+      setEditSaving(false)
     }
   }
 

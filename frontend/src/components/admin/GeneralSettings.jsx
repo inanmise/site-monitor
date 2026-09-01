@@ -33,14 +33,17 @@ export default function GeneralSettings() {
   async function save() {
     if (Object.keys(edited).length === 0) { toast.success(t('settings.saved')); return }
     setSaving(true)
-    const res = await api.admin.saveGeneralSettings({ values: edited })
-    setSaving(false)
-    if (res?.success) {
-      toast.success(res.message || t('settings.saved'))
-      setItems(res.data || [])
-      setEdited({})
-    } else {
-      toast.error(res?.error || t('settings.saveError'))
+    try {
+      const res = await api.admin.saveGeneralSettings({ values: edited })
+      if (res?.success) {
+        toast.success(res.message || t('settings.saved'))
+        setItems(res.data || [])
+        setEdited({})
+      } else {
+        toast.error(res?.error || t('settings.saveError'))
+      }
+    } finally {
+      setSaving(false)
     }
   }
 

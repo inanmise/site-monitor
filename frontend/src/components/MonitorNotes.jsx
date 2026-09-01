@@ -40,19 +40,25 @@ export default function MonitorNotes({ type, target }) {
     if (!target) { setLoading(false); return }
     const seq = ++loadSeq.current
     setLoading(true)
-    const res = await api.monitoring.getMonitorNotes(type, target)
-    if (seq !== loadSeq.current) return
-    setLoading(false)
-    if (res?.success) { setGuide(res.data.guide || null); setNotes(res.data.notes || []) }
-    else toast.error(res?.error || 'Error')
+    try {
+      const res = await api.monitoring.getMonitorNotes(type, target)
+      if (seq !== loadSeq.current) return
+      if (res?.success) { setGuide(res.data.guide || null); setNotes(res.data.notes || []) }
+      else toast.error(res?.error || 'Error')
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function saveGuide() {
     setSavingGuide(true)
-    const res = await api.monitoring.saveMonitorGuide(type, target, guideDraft)
-    setSavingGuide(false)
-    if (res?.success) { setGuide(res.data); setEditingGuide(false); toast.success(t('mnote.guideSaved')) }
-    else toast.error(res?.error || 'Error')
+    try {
+      const res = await api.monitoring.saveMonitorGuide(type, target, guideDraft)
+      if (res?.success) { setGuide(res.data); setEditingGuide(false); toast.success(t('mnote.guideSaved')) }
+      else toast.error(res?.error || 'Error')
+    } finally {
+      setSavingGuide(false)
+    }
   }
 
   function startAdd() { setForm(EMPTY); setEditId(null); setAdding(true) }
@@ -65,12 +71,15 @@ export default function MonitorNotes({ type, target }) {
   async function saveNote() {
     if (!form.problem.trim()) { toast.error(t('mnote.problemRequired')); return }
     setSaving(true)
-    const res = editId
-      ? await api.monitoring.updateMonitorNote(editId, form)
-      : await api.monitoring.addMonitorNote({ type, target, ...form })
-    setSaving(false)
-    if (res?.success) { toast.success(editId ? t('mnote.saved') : t('mnote.added')); cancelForm(); load() }
-    else toast.error(res?.error || 'Error')
+    try {
+      const res = editId
+        ? await api.monitoring.updateMonitorNote(editId, form)
+        : await api.monitoring.addMonitorNote({ type, target, ...form })
+      if (res?.success) { toast.success(editId ? t('mnote.saved') : t('mnote.added')); cancelForm(); load() }
+      else toast.error(res?.error || 'Error')
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function del(n) {

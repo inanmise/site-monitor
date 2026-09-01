@@ -82,13 +82,16 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
 
   async function load(p = page, s = size) {
     setLoading(true)
-    const res = await api.admin.searchUsers({
-      page: p, size: s, q: q.trim(), systemRole: fRole, orgRole: fOrgRole, teamId: fTeam,
-    })
-    setLoading(false)
-    if (res?.success) {
-      setUsers(res.data); setTotal(res.total ?? 0); setPage(res.page ?? 0)
-      setActiveAdminCount(res.active_admin_count ?? 0)
+    try {
+      const res = await api.admin.searchUsers({
+        page: p, size: s, q: q.trim(), systemRole: fRole, orgRole: fOrgRole, teamId: fTeam,
+      })
+      if (res?.success) {
+        setUsers(res.data); setTotal(res.total ?? 0); setPage(res.page ?? 0)
+        setActiveAdminCount(res.active_admin_count ?? 0)
+      }
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -130,37 +133,40 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
       return
     }
     setSaving(true)
-    const teamIds = isTeamAdmin
-      ? (ownTeamId != null ? [ownTeamId] : [])
-      : (form.team_ids || [])
-    const payload = {
-      username: form.username.trim(),
-      display_name: form.display_name,
-      email: form.email,
-      employee_id: form.employee_id,
-      system_role: form.system_role,
-      team_ids: teamIds,
-      team_id: teamIds[0] ?? null,
-      org_role: form.org_role || null,
-      active: form.active,
-      first_name: form.first_name,
-      last_name: form.last_name,
-      title: form.title,
-      phone: form.phone,
-      department: form.department,
-      company_level: form.company_level,
-      mudurluk_name: form.mudurluk_name,
-      manager_sicil: form.manager_sicil,
+    try {
+      const teamIds = isTeamAdmin
+        ? (ownTeamId != null ? [ownTeamId] : [])
+        : (form.team_ids || [])
+      const payload = {
+        username: form.username.trim(),
+        display_name: form.display_name,
+        email: form.email,
+        employee_id: form.employee_id,
+        system_role: form.system_role,
+        team_ids: teamIds,
+        team_id: teamIds[0] ?? null,
+        org_role: form.org_role || null,
+        active: form.active,
+        first_name: form.first_name,
+        last_name: form.last_name,
+        title: form.title,
+        phone: form.phone,
+        department: form.department,
+        company_level: form.company_level,
+        mudurluk_name: form.mudurluk_name,
+        manager_sicil: form.manager_sicil,
+      }
+      let res
+      if (modal === 'add') {
+        res = await api.admin.createUser({ ...payload, password: form.password })
+      } else {
+        res = await api.admin.updateUser(modal.id, payload)
+      }
+      if (res?.success) { setModal(null); toast.success(t('usr.saved')); load() }
+      else setMsg(res?.error || 'Error')
+    } finally {
+      setSaving(false)
     }
-    let res
-    if (modal === 'add') {
-      res = await api.admin.createUser({ ...payload, password: form.password })
-    } else {
-      res = await api.admin.updateUser(modal.id, payload)
-    }
-    setSaving(false)
-    if (res?.success) { setModal(null); toast.success(t('usr.saved')); load() }
-    else setMsg(res?.error || 'Error')
   }
 
   async function unlock(id) {

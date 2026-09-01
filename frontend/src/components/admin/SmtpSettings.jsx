@@ -37,38 +37,47 @@ export default function SmtpSettings() {
 
   async function save() {
     setSaving(true)
-    const dto = { ...form }
-    if (pw.trim()) dto.password = pw
-    const res = await api.admin.saveSmtpSettings(dto)
-    setSaving(false)
-    if (res?.success) {
-      toast.success(res.message || t('settings.saved'))
-      setPw('')
-      setForm({ ...res.data })
-    } else {
-      toast.error(res?.error || t('settings.saveError'))
+    try {
+      const dto = { ...form }
+      if (pw.trim()) dto.password = pw
+      const res = await api.admin.saveSmtpSettings(dto)
+      if (res?.success) {
+        toast.success(res.message || t('settings.saved'))
+        setPw('')
+        setForm({ ...res.data })
+      } else {
+        toast.error(res?.error || t('settings.saveError'))
+      }
+    } finally {
+      setSaving(false)
     }
   }
 
   async function test() {
     setTesting(true)
-    setTestResult(null)
-    const res = await api.admin.testSmtp()
-    setTesting(false)
-    setTestResult(res)
-    if (res?.success) toast.success(res.message || t('smtp.testOk'))
-    else toast.error(res?.error || t('smtp.testFail'))
+    try {
+      setTestResult(null)
+      const res = await api.admin.testSmtp()
+      setTestResult(res)
+      if (res?.success) toast.success(res.message || t('smtp.testOk'))
+      else toast.error(res?.error || t('smtp.testFail'))
+    } finally {
+      setTesting(false)
+    }
   }
 
   async function sendTest() {
     if (!recipient.trim()) return
     setSending(true)
-    setSendResult(null)
-    const res = await api.admin.sendSmtpTest(recipient.trim())
-    setSending(false)
-    setSendResult(res)
-    if (res?.success) toast.success(res.message || t('smtp.sendOk'))
-    else toast.error(res?.error || t('smtp.sendFail'))
+    try {
+      setSendResult(null)
+      const res = await api.admin.sendSmtpTest(recipient.trim())
+      setSendResult(res)
+      if (res?.success) toast.success(res.message || t('smtp.sendOk'))
+      else toast.error(res?.error || t('smtp.sendFail'))
+    } finally {
+      setSending(false)
+    }
   }
 
   if (!form) {

@@ -218,10 +218,13 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
   async function runNow() {
     if (!savedDomain) return
     setRunning(true); setMsg(null)
-    const res = await api.refreshCertificateHealth(savedDomain)
-    setRunning(false)
-    if (res?.success) { toast.success(t('inv.runDone', savedDomain)); onSaved?.() }
-    else toast.error(res?.error || t('inv.runError'))
+    try {
+      const res = await api.refreshCertificateHealth(savedDomain)
+      if (res?.success) { toast.success(t('inv.runDone', savedDomain)); onSaved?.() }
+      else toast.error(res?.error || t('inv.runError'))
+    } finally {
+      setRunning(false)
+    }
   }
 
   /** Sil — mevcut DELETE /admin/inventory/{id}: denetim kaydı, soft-delete ve açık alarmların
@@ -237,10 +240,13 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
     })
     if (!ok) return
     setDeleting(true)
-    const res = await api.admin.deleteInventory(record.id)
-    setDeleting(false)
-    if (res?.success) { toast.success(t('inv.deleted')); onSaved?.(); onClose?.() }
-    else toast.error(res?.error || t('inv.deleteError'))
+    try {
+      const res = await api.admin.deleteInventory(record.id)
+      if (res?.success) { toast.success(t('inv.deleted')); onSaved?.(); onClose?.() }
+      else toast.error(res?.error || t('inv.deleteError'))
+    } finally {
+      setDeleting(false)
+    }
   }
 
   async function save() {
@@ -265,85 +271,89 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
     }
 
     setSaving(true)
-    setMsg(null)
-    const payload = {
-      domain:             form.domain.trim(),
-      port:               parseInt(form.port) || 443,
-      owner:              form.owner,
-      description:        form.description,
-      // Sorumlu Ekipler — bilgilendirme alanlari; alarm YONLENDIRMESINE girmez.
-      svc_mgmt_contact:   form.svc_mgmt_contact?.trim() || null,
-      app_dev_contact:    form.app_dev_contact?.trim() || null,
-      iis_admin_contact:  form.iis_admin_contact?.trim() || null,
-      waf_admin_contact:  form.waf_admin_contact?.trim() || null,
-      active:             form.active,
-      team_id:            form.team_id ? Number(form.team_id) : null,
-      // Bos = takim varsayilani -> takim adresi (zincirin kalani).
-      // Anahtar SNAKE_CASE olmak ZORUNDA: uc @RequestBody CertificateInventory ile baglaniyor ve
-      // Jackson spring.jackson.property-naming-strategy=SNAKE_CASE altinda calisiyor. camelCase
-      // gonderilen anahtar SESSIZCE yok sayilir (bilinmeyen alan) -> deger null baglanir ve
-      // updateInventory onu mevcut kaydin UZERINE yazar. Monitor uclari farkli: onlar
-      // @RequestBody Map alip anahtari duz okuyor, orada camelCase DOGRU.
-      notification_group_id: form.notification_group_id ? Number(form.notification_group_id) : null,
-      group_name:         form.group_name?.trim() || null,
-      ug_team_id:         null,   // tek takım modeli — UG ayrımı kaldırıldı
-      external_vendor:    form.external_vendor,
-      action_required:    form.action_required,
-      openshift:          form.openshift,
-      ssl_pinning:        form.ssl_pinning,
-      internal_cert:      form.internal_cert,
-      jks_keystore:       form.jks_keystore,
-      server_update:      form.server_update,
-      netscaler:          form.netscaler,
-      waf_enabled:        form.waf_enabled,
-      in_use:             form.in_use,
-      ev_certificate:     form.ev_certificate,
-      transferred_to_sy:  form.transferred_to_sy,
-      use_proxy:          form.use_proxy,
-      tls_mode:           form.tls_mode || null,
-      // BOŞ = global ayar. 0/negatif GÖNDERİLMEZ: sunucu onu geçersiz sayıp global'e
-      // düşüyor, ama burada da elemek "kaydettim ama olmadı" turunu engelliyor.
-      timeout_seconds:    form.timeout_seconds && Number(form.timeout_seconds) > 0
-                            ? Number(form.timeout_seconds) : null,
-      purchased_by:       form.purchased_by || null,
-      change_description: form.change_description || null,
-      // DİKKAT: payload'ın tek camelCase çifti (entity Jackson adlarıyla eşleşsin diye).
-      // snake_case'e "düzeltilirse" iki alan sessizce null gider.
-      expected_fingerprint: form.expected_fingerprint || null,
-      expected_subject:    form.expected_subject || null,
-      tier:               form.tier ? Number(form.tier) : null,
-    }
-    const res = mode === 'edit'
-      ? await api.admin.updateInventory(record.id, payload)
-      : await api.admin.addInventory(payload)
-    setSaving(false)
-    if (res?.success) {
-      toast.success(t('inv.saved'))
-      if ((res.alertsClosed ?? 0) > 0) {
-        toast.success(t('inv.deactivatedAlerts', res.alertsClosed))
+    try {
+      setMsg(null)
+      const payload = {
+        domain:             form.domain.trim(),
+        port:               parseInt(form.port) || 443,
+        owner:              form.owner,
+        description:        form.description,
+        // Sorumlu Ekipler — bilgilendirme alanlari; alarm YONLENDIRMESINE girmez.
+        svc_mgmt_contact:   form.svc_mgmt_contact?.trim() || null,
+        app_dev_contact:    form.app_dev_contact?.trim() || null,
+        iis_admin_contact:  form.iis_admin_contact?.trim() || null,
+        waf_admin_contact:  form.waf_admin_contact?.trim() || null,
+        active:             form.active,
+        team_id:            form.team_id ? Number(form.team_id) : null,
+        // Bos = takim varsayilani -> takim adresi (zincirin kalani).
+        // Anahtar SNAKE_CASE olmak ZORUNDA: uc @RequestBody CertificateInventory ile baglaniyor ve
+        // Jackson spring.jackson.property-naming-strategy=SNAKE_CASE altinda calisiyor. camelCase
+        // gonderilen anahtar SESSIZCE yok sayilir (bilinmeyen alan) -> deger null baglanir ve
+        // updateInventory onu mevcut kaydin UZERINE yazar. Monitor uclari farkli: onlar
+        // @RequestBody Map alip anahtari duz okuyor, orada camelCase DOGRU.
+        notification_group_id: form.notification_group_id ? Number(form.notification_group_id) : null,
+        group_name:         form.group_name?.trim() || null,
+        ug_team_id:         null,   // tek takım modeli — UG ayrımı kaldırıldı
+        external_vendor:    form.external_vendor,
+        action_required:    form.action_required,
+        openshift:          form.openshift,
+        ssl_pinning:        form.ssl_pinning,
+        internal_cert:      form.internal_cert,
+        jks_keystore:       form.jks_keystore,
+        server_update:      form.server_update,
+        netscaler:          form.netscaler,
+        waf_enabled:        form.waf_enabled,
+        in_use:             form.in_use,
+        ev_certificate:     form.ev_certificate,
+        transferred_to_sy:  form.transferred_to_sy,
+        use_proxy:          form.use_proxy,
+        tls_mode:           form.tls_mode || null,
+        // BOŞ = global ayar. 0/negatif GÖNDERİLMEZ: sunucu onu geçersiz sayıp global'e
+        // düşüyor, ama burada da elemek "kaydettim ama olmadı" turunu engelliyor.
+        timeout_seconds:    form.timeout_seconds && Number(form.timeout_seconds) > 0
+                              ? Number(form.timeout_seconds) : null,
+        purchased_by:       form.purchased_by || null,
+        change_description: form.change_description || null,
+        // DİKKAT: payload'ın tek camelCase çifti (entity Jackson adlarıyla eşleşsin diye).
+        // snake_case'e "düzeltilirse" iki alan sessizce null gider.
+        expected_fingerprint: form.expected_fingerprint || null,
+        expected_subject:    form.expected_subject || null,
+        tier:               form.tier ? Number(form.tier) : null,
       }
-      // ── Kaydetmenin ARDINDAN otomatik ilk kontrol ────────────────────────────────────
-      // Yeni eklenen domain, zamanlayıcı sırası gelene kadar kartta "kontrol edilmedi" diye
-      // duruyordu; kullanıcı kaydedip ayrıca ▶'ye basmak zorundaydı. Düzenlemede de gerekli:
-      // port / TLS modu / proxy değişince saklanan son sonuç ARTIK O AYARIN sonucu değil.
-      //
-      // Elle "Çalıştır" ile AYNI uç (`refreshCertificateHealth`) — ikinci bir kontrol yolu
-      // üretilmiyor. Beklenir (fire-and-forget değil): sonucu görmeden kapatmak, kartın bir
-      // an "kontrol edilmedi" gösterip sonra sessizce değişmesi demekti.
-      //
-      // Kontrol düşerse KAYIT YİNE BAŞARILIDIR: ayrı bir bildirimle söylenir, form kapanır.
-      // Aksi hâlde ağ hatası kullanıcıya "kaydedilmedi" gibi görünürdü.
-      const savedNow = form.domain.trim()
-      setFirstRun(true)
-      let chk = null
-      try { chk = await api.refreshCertificateHealth(savedNow) } catch (e) { chk = { success: false, error: e?.message } }
-      setFirstRun(false)
-      if (!chk?.success) toast.error(t('inv.saveRunFailed', chk?.error || '—'))
-      onSaved?.(res, savedNow)
-    } else {
-      // Sunucu hatası → tek bildirim (toast); modal AÇIK kalır (mükerrer domain 409'u burada görünür).
-      // Inline setMsg yalnız form validation için.
-      toast.error(res?.error || t('inv.saveError'))
+      const res = mode === 'edit'
+        ? await api.admin.updateInventory(record.id, payload)
+        : await api.admin.addInventory(payload)
+      setSaving(false)
+      if (res?.success) {
+        toast.success(t('inv.saved'))
+        if ((res.alertsClosed ?? 0) > 0) {
+          toast.success(t('inv.deactivatedAlerts', res.alertsClosed))
+        }
+        // ── Kaydetmenin ARDINDAN otomatik ilk kontrol ────────────────────────────────────
+        // Yeni eklenen domain, zamanlayıcı sırası gelene kadar kartta "kontrol edilmedi" diye
+        // duruyordu; kullanıcı kaydedip ayrıca ▶'ye basmak zorundaydı. Düzenlemede de gerekli:
+        // port / TLS modu / proxy değişince saklanan son sonuç ARTIK O AYARIN sonucu değil.
+        //
+        // Elle "Çalıştır" ile AYNI uç (`refreshCertificateHealth`) — ikinci bir kontrol yolu
+        // üretilmiyor. Beklenir (fire-and-forget değil): sonucu görmeden kapatmak, kartın bir
+        // an "kontrol edilmedi" gösterip sonra sessizce değişmesi demekti.
+        //
+        // Kontrol düşerse KAYIT YİNE BAŞARILIDIR: ayrı bir bildirimle söylenir, form kapanır.
+        // Aksi hâlde ağ hatası kullanıcıya "kaydedilmedi" gibi görünürdü.
+        const savedNow = form.domain.trim()
+        setFirstRun(true)
+        let chk = null
+        try { chk = await api.refreshCertificateHealth(savedNow) } catch (e) { chk = { success: false, error: e?.message } }
+        setFirstRun(false)
+        if (!chk?.success) toast.error(t('inv.saveRunFailed', chk?.error || '—'))
+        onSaved?.(res, savedNow)
+      } else {
+        // Sunucu hatası → tek bildirim (toast); modal AÇIK kalır (mükerrer domain 409'u burada görünür).
+        // Inline setMsg yalnız form validation için.
+        toast.error(res?.error || t('inv.saveError'))
+      }
+    } finally {
+      setSaving(false)
     }
   }
 

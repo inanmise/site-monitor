@@ -43,12 +43,15 @@ export default function PermissionMatrix() {
 
   async function load() {
     setLoading(true)
-    const res = await api.admin.getPermissionMatrix()
-    if (res?.success) {
-      setCatalog(res.catalog || [])
-      setGrants(res.grants || [])
+    try {
+      const res = await api.admin.getPermissionMatrix()
+      if (res?.success) {
+        setCatalog(res.catalog || [])
+        setGrants(res.grants || [])
+      }
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   function isAllowed(role, resourceKey, action) {

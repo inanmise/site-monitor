@@ -197,28 +197,31 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
   const loadTrend = useCallback(async () => {
     if (!canViewUserActivity) return
     setTrendLoading(true)
-    const iso = d => d.toISOString().slice(0, 19)
-    let fromD, toD, gran
-    if (trendPreset) {
-      const hrs = trendPreset === '1h' ? 1 : 6
-      toD = new Date(); fromD = new Date(toD.getTime() - hrs * 3_600_000); gran = 'minute'   // hızlı küçük-aralık → dakika
-    } else if (trendCustom) {
-      fromD = new Date(trendCustom.from + 'Z'); toD = new Date(trendCustom.to + 'Z')
-      const span = toD - fromD
-      // Adaptif granülerlik: aralık küçüldükçe daha ince kova — ≤6 saat → DAKİKA, ≤2 gün → saat, üstü → gün.
-      gran = span <= 6 * 3_600_000 ? 'minute' : span <= 2 * 86_400_000 ? 'hour' : 'day'
-    } else if (trendDate) {
-      fromD = new Date(`${trendDate}T00:00:00`)          // yerel gün başı
-      toD   = new Date(`${trendDate}T23:59:59`)          // AYNI gün sonu (ertesi güne taşmaz)
-      gran  = 'hour'
-    } else if (trendDays === 1) {
-      toD = new Date(); fromD = new Date(toD.getTime() - 86_400_000); gran = 'hour'
-    } else {
-      toD = new Date(); fromD = new Date(toD.getTime() - trendDays * 86_400_000); gran = 'day'
+    try {
+      const iso = d => d.toISOString().slice(0, 19)
+      let fromD, toD, gran
+      if (trendPreset) {
+        const hrs = trendPreset === '1h' ? 1 : 6
+        toD = new Date(); fromD = new Date(toD.getTime() - hrs * 3_600_000); gran = 'minute'   // hızlı küçük-aralık → dakika
+      } else if (trendCustom) {
+        fromD = new Date(trendCustom.from + 'Z'); toD = new Date(trendCustom.to + 'Z')
+        const span = toD - fromD
+        // Adaptif granülerlik: aralık küçüldükçe daha ince kova — ≤6 saat → DAKİKA, ≤2 gün → saat, üstü → gün.
+        gran = span <= 6 * 3_600_000 ? 'minute' : span <= 2 * 86_400_000 ? 'hour' : 'day'
+      } else if (trendDate) {
+        fromD = new Date(`${trendDate}T00:00:00`)          // yerel gün başı
+        toD   = new Date(`${trendDate}T23:59:59`)          // AYNI gün sonu (ertesi güne taşmaz)
+        gran  = 'hour'
+      } else if (trendDays === 1) {
+        toD = new Date(); fromD = new Date(toD.getTime() - 86_400_000); gran = 'hour'
+      } else {
+        toD = new Date(); fromD = new Date(toD.getTime() - trendDays * 86_400_000); gran = 'day'
+      }
+      const res = await api.admin.getLoginSeries(iso(fromD), iso(toD), gran)
+      if (res?.success) setTrendData(res.data)
+    } finally {
+      setTrendLoading(false)
     }
-    const res = await api.admin.getLoginSeries(iso(fromD), iso(toD), gran)
-    if (res?.success) setTrendData(res.data)
-    setTrendLoading(false)
   }, [canViewUserActivity, trendDays, trendDate, trendCustom, trendPreset])
 
   useEffect(() => { if (usersVisible) loadTrend() }, [usersVisible, loadTrend])
@@ -226,18 +229,24 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
   // Veritabanı analitiği — DB bölümü açıkken / pencere değişince çek
   const loadDbAnalytics = useCallback(async () => {
     setDbLoading(true)
-    const res = await api.admin.getDbAnalytics(dbDays)
-    if (res?.success) setDbData(res.data)
-    setDbLoading(false)
+    try {
+      const res = await api.admin.getDbAnalytics(dbDays)
+      if (res?.success) setDbData(res.data)
+    } finally {
+      setDbLoading(false)
+    }
   }, [dbDays])
 
   useEffect(() => { if (dbVisible) loadDbAnalytics() }, [dbVisible, loadDbAnalytics])
 
   const refreshHeartbeat = useCallback(async () => {
     setHbRefreshing(true)
-    const res = await api.admin.triggerHeartbeat()
-    if (res?.success) setHealth(prev => ({ ...prev, heartbeat: res.data }))
-    setHbRefreshing(false)
+    try {
+      const res = await api.admin.triggerHeartbeat()
+      if (res?.success) setHealth(prev => ({ ...prev, heartbeat: res.data }))
+    } finally {
+      setHbRefreshing(false)
+    }
   }, [])
 
   const handleTerminateSession = useCallback(async (username) => {
@@ -259,20 +268,26 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
 
   const refreshPool = useCallback(async () => {
     setPoolCardRefreshing(true)
-    const res = await api.admin.getSystemHealth()
-    if (res?.success) {
-      setHealth(prev => ({ ...prev, ...res.data }))
-      setPoolLastRefreshed(new Date())
+    try {
+      const res = await api.admin.getSystemHealth()
+      if (res?.success) {
+        setHealth(prev => ({ ...prev, ...res.data }))
+        setPoolLastRefreshed(new Date())
+      }
+    } finally {
+      setPoolCardRefreshing(false)
     }
-    setPoolCardRefreshing(false)
   }, [])
 
   // Kullanıcı Etkinliği'ni manuel tazele (aktif oturum/sayaçlar/grafikler) — buton tıklamasıyla.
   const refreshUserActivity = useCallback(async () => {
     setUactRefreshing(true)
-    const res = await api.admin.getUserActivity()
-    if (res?.success) setUserActivity(res.data)
-    setUactRefreshing(false)
+    try {
+      const res = await api.admin.getUserActivity()
+      if (res?.success) setUserActivity(res.data)
+    } finally {
+      setUactRefreshing(false)
+    }
   }, [])
 
   // (Kaldırıldı) 60 sn'lik refreshPool auto-timer — 30 sn'lik `load` zaten getSystemHealth'i
@@ -283,19 +298,25 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
     setSmtpLogs(null)
     setSmtpFilters({ from: '', to: '', subject: '', status: '', domain: '', ...(overrides ?? {}) })
     setSmtpLoading(true)
-    const days = parseInt(smtpPeriod) || 30
-    const res = await api.admin.getSmtpLogs(days)
-    setSmtpLogs(res?.success ? res.data : [])
-    setSmtpLoading(false)
+    try {
+      const days = parseInt(smtpPeriod) || 30
+      const res = await api.admin.getSmtpLogs(days)
+      setSmtpLogs(res?.success ? res.data : [])
+    } finally {
+      setSmtpLoading(false)
+    }
   }, [smtpPeriod])
 
   const openWaLogsModal = useCallback(async () => {
     setWaLogsModal(true)
     setWaLogs(null)
     setWaLogsLoading(true)
-    const res = await api.admin.getWeeklyAvailHistory(100, true)
-    setWaLogs(res?.success ? res.data : [])
-    setWaLogsLoading(false)
+    try {
+      const res = await api.admin.getWeeklyAvailHistory(100, true)
+      setWaLogs(res?.success ? res.data : [])
+    } finally {
+      setWaLogsLoading(false)
+    }
   }, [])
 
   const openWaItem = useCallback(async (row) => {

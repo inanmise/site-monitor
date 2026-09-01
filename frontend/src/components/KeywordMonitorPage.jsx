@@ -190,43 +190,50 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   async function runTest() {
     if (!form.url.trim() || !form.keyword.trim()) return
     setTesting(true); setTestResult(null)
-    const res = await api.monitoring.testKeyword({
-      url: normalizeUrl(form.url), keyword: form.keyword, operator: form.operator,
-      matchCount: Number(form.matchCount), timeoutMs: Number(form.timeoutMs),
-      customHeaders: form.customHeaders?.trim() || null, caseSensitive: form.caseSensitive,
-    })
-    setTestResult(res?.success ? res.data : { error: res?.error || t('keyword.testError') })
-    setTesting(false)
+    try {
+      const res = await api.monitoring.testKeyword({
+        url: normalizeUrl(form.url), keyword: form.keyword, operator: form.operator,
+        matchCount: Number(form.matchCount), timeoutMs: Number(form.timeoutMs),
+        customHeaders: form.customHeaders?.trim() || null, caseSensitive: form.caseSensitive,
+      })
+      setTestResult(res?.success ? res.data : { error: res?.error || t('keyword.testError') })
+    } finally {
+      setTesting(false)
+    }
   }
 
   async function save() {
     if (!form.url.trim() || !form.keyword.trim()) return
     if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
     setSaving(true)
-    const payload = {
-      name: (form.name || form.url).trim(), url: normalizeUrl(form.url), keyword: form.keyword,
-      operator: form.operator, matchCount: Number(form.matchCount),
-      groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId),
-      // Bos = takim varsayilani -> takim adresi (zincirin kalani).
-      notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
-        ? null : Number(form.notificationGroupId),
-      caseSensitive: form.caseSensitive, tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, notifyWebhook: form.notifyWebhook,
-      checkSslErrors: form.checkSslErrors, sslExpiryReminders: form.sslExpiryReminders, domainExpiryReminders: form.domainExpiryReminders,
-      sslReminderDays: form.sslReminderDays?.trim() || '30,14,7', domainReminderDays: form.domainReminderDays?.trim() || '30,14,7',
-      slowResponseEnabled: form.slowResponseEnabled, slowThresholdMs: Number(form.slowThresholdMs),
-      intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
-      confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds), recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
-      customHeaders: form.customHeaders?.trim() || null,
-      active: form.active,
+    try {
+      const payload = {
+        name: (form.name || form.url).trim(), url: normalizeUrl(form.url), keyword: form.keyword,
+        operator: form.operator, matchCount: Number(form.matchCount),
+        groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId),
+        // Bos = takim varsayilani -> takim adresi (zincirin kalani).
+        notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
+          ? null : Number(form.notificationGroupId),
+        caseSensitive: form.caseSensitive, tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, notifyWebhook: form.notifyWebhook,
+        checkSslErrors: form.checkSslErrors, sslExpiryReminders: form.sslExpiryReminders, domainExpiryReminders: form.domainExpiryReminders,
+        sslReminderDays: form.sslReminderDays?.trim() || '30,14,7', domainReminderDays: form.domainReminderDays?.trim() || '30,14,7',
+        slowResponseEnabled: form.slowResponseEnabled, slowThresholdMs: Number(form.slowThresholdMs),
+        intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
+        confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds), recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
+        customHeaders: form.customHeaders?.trim() || null,
+        active: form.active,
+      }
+      // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
+      if (changeNote.trim()) payload.changeNote = changeNote.trim()
+      const res = modal === 'new'
+        ? await api.monitoring.createKeywordMonitor(payload)
+        : await api.monitoring.updateKeywordMonitor(modal.id, payload)
+      await load(); setSaving(false)
+      if (!res?.success) { toast.error(res?.error || 'Error'); return }
+      toast.success(t('keyword.saved')); closeEdit()
+    } finally {
+      setSaving(false)
     }
-    // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
-    if (changeNote.trim()) payload.changeNote = changeNote.trim()
-    const res = modal === 'new'
-      ? await api.monitoring.createKeywordMonitor(payload)
-      : await api.monitoring.updateKeywordMonitor(modal.id, payload)
-    await load(); setSaving(false)
-    if (!res?.success) { toast.error(res?.error || 'Error'); return }
-    toast.success(t('keyword.saved')); closeEdit()
   }
 
   /**
@@ -274,17 +281,20 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     if (!ok) return
 
     setDeleting(m.id)
+    try {
 
-    const res = await api.monitoring.deleteKeywordMonitor(m.id)
+      const res = await api.monitoring.deleteKeywordMonitor(m.id)
 
-    setDeleting(null)
+      setDeleting(null)
 
-    if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
+      if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
 
-    toast.success(t('keyword.deleted'))
+      toast.success(t('keyword.deleted'))
 
-    await load()
-
+      await load()
+    } finally {
+      setDeleting(null)
+    }
   }
 
 

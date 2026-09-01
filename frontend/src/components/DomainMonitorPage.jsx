@@ -210,56 +210,63 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   async function runTest() {
     if (!form.domain.trim()) return
     setTesting(true); setTestResult(null)
-    const res = await api.monitoring.testDomain({
-      domain: normalizeDomainInput(form.domain), warningDays: Number(form.warningDays), criticalDays: Number(form.criticalDays),
-    })
-    setTestResult(res?.success ? res.data : { error: res?.error || t('dom.testError'), status: 'UNKNOWN' })
-    setTesting(false)
+    try {
+      const res = await api.monitoring.testDomain({
+        domain: normalizeDomainInput(form.domain), warningDays: Number(form.warningDays), criticalDays: Number(form.criticalDays),
+      })
+      setTestResult(res?.success ? res.data : { error: res?.error || t('dom.testError'), status: 'UNKNOWN' })
+    } finally {
+      setTesting(false)
+    }
   }
 
   async function save() {
     if (!form.domain.trim()) return
     if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
     setSaving(true)
-    const payload = {
-      // Serbest metin isimler korunur (backend URL'li isimleri host'a indirger); boşsa normalize domain.
-      name: form.name.trim() || normalizeDomainInput(form.domain), domain: normalizeDomainInput(form.domain),
-      groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId),
-      // Bos = takim varsayilani -> takim adresi (zincirin kalani).
-      notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
-        ? null : Number(form.notificationGroupId),
-      thresholdsCsv: form.thresholdsCsv?.trim() || '60,30,14,7,3,1',
-      warningDays: Number(form.warningDays), criticalDays: Number(form.criticalDays),
-      intervalSeconds: Number(form.intervalSeconds), active: form.active,
-      notifyEmail: form.notifyEmail,
-      confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
-      recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
-      checkTimeoutMs: form.checkTimeoutMs === '' || form.checkTimeoutMs == null ? null : Number(form.checkTimeoutMs),
-      transferLockAlert: !!form.transferLockAlert,
-      blacklistEnabled: !!form.blacklistEnabled,
-      changeAlert: !!form.changeAlert,
-      notifyWebhook: !!form.notifyWebhook,
+    try {
+      const payload = {
+        // Serbest metin isimler korunur (backend URL'li isimleri host'a indirger); boşsa normalize domain.
+        name: form.name.trim() || normalizeDomainInput(form.domain), domain: normalizeDomainInput(form.domain),
+        groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId),
+        // Bos = takim varsayilani -> takim adresi (zincirin kalani).
+        notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
+          ? null : Number(form.notificationGroupId),
+        thresholdsCsv: form.thresholdsCsv?.trim() || '60,30,14,7,3,1',
+        warningDays: Number(form.warningDays), criticalDays: Number(form.criticalDays),
+        intervalSeconds: Number(form.intervalSeconds), active: form.active,
+        notifyEmail: form.notifyEmail,
+        confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
+        recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
+        checkTimeoutMs: form.checkTimeoutMs === '' || form.checkTimeoutMs == null ? null : Number(form.checkTimeoutMs),
+        transferLockAlert: !!form.transferLockAlert,
+        blacklistEnabled: !!form.blacklistEnabled,
+        changeAlert: !!form.changeAlert,
+        notifyWebhook: !!form.notifyWebhook,
+      }
+      // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
+      if (changeNote.trim()) payload.changeNote = changeNote.trim()
+      const res = modal === 'new'
+        ? await api.monitoring.createDomainMonitor(payload)
+        : await api.monitoring.updateDomainMonitor(modal.id, payload)
+      await load(); setSaving(false)
+      if (!res?.success) { toast.error(res?.error || 'Error'); return }
+      // Sunucu alan adini KAYITLI alan adina (eTLD+1) indirger: kayit bilgisi bir HOST'a degil
+      // alan adinin kendisine aittir (RDAP/WHOIS'te www.x.com diye bir kayit yoktur). Alan
+      // altindaki ipucu bunu yaziyor ama surpriz KAYDETTIKTEN sonra yasaniyor: kullanici
+      // "www yazdim, silindi" diye okuyor. Indirgeme olduysa SUNUCUNUN dondurdugu degerle
+      // soylenir — kural ikinci kez (bu kez JS'te) yazilmaz, kopyalar kaciniilmaz olarak ayrisir.
+      const savedDomain = res?.data?.domain
+      const typed = normalizeDomainInput(form.domain)
+      if (savedDomain && typed && savedDomain !== typed) {
+        toast.success(t('dom.savedReduced').replace('{0}', typed).replace('{1}', savedDomain))
+      } else {
+        toast.success(t('dom.saved'))
+      }
+      closeEdit()
+    } finally {
+      setSaving(false)
     }
-    // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
-    if (changeNote.trim()) payload.changeNote = changeNote.trim()
-    const res = modal === 'new'
-      ? await api.monitoring.createDomainMonitor(payload)
-      : await api.monitoring.updateDomainMonitor(modal.id, payload)
-    await load(); setSaving(false)
-    if (!res?.success) { toast.error(res?.error || 'Error'); return }
-    // Sunucu alan adini KAYITLI alan adina (eTLD+1) indirger: kayit bilgisi bir HOST'a degil
-    // alan adinin kendisine aittir (RDAP/WHOIS'te www.x.com diye bir kayit yoktur). Alan
-    // altindaki ipucu bunu yaziyor ama surpriz KAYDETTIKTEN sonra yasaniyor: kullanici
-    // "www yazdim, silindi" diye okuyor. Indirgeme olduysa SUNUCUNUN dondurdugu degerle
-    // soylenir — kural ikinci kez (bu kez JS'te) yazilmaz, kopyalar kaciniilmaz olarak ayrisir.
-    const savedDomain = res?.data?.domain
-    const typed = normalizeDomainInput(form.domain)
-    if (savedDomain && typed && savedDomain !== typed) {
-      toast.success(t('dom.savedReduced').replace('{0}', typed).replace('{1}', savedDomain))
-    } else {
-      toast.success(t('dom.saved'))
-    }
-    closeEdit()
   }
 
   /**
@@ -307,17 +314,20 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
     if (!ok) return
 
     setDeleting(m.id)
+    try {
 
-    const res = await api.monitoring.deleteDomainMonitor(m.id)
+      const res = await api.monitoring.deleteDomainMonitor(m.id)
 
-    setDeleting(null)
+      setDeleting(null)
 
-    if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
+      if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
 
-    toast.success(t('dom.deleted'))
+      toast.success(t('dom.deleted'))
 
-    await load()
-
+      await load()
+    } finally {
+      setDeleting(null)
+    }
   }
 
 

@@ -698,62 +698,65 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     const bad = invalidNumericField(form)
     if (bad) { toast.error(t('scripted.numRange', t(bad.labelKey), bad.min, bad.max)); return }
     setSaving(true)
-    const payload = {
-      name: form.name.trim(), description: form.description?.trim() || null,
-      groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId),
-      // Bos = takim varsayilani -> takim adresi (zincirin kalani).
-      notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
-        ? null : Number(form.notificationGroupId),
-      tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, notifyWebhook: form.notifyWebhook,
-      intervalSeconds: Number(form.intervalSeconds), timeoutSeconds: Number(form.timeoutSeconds),
-      confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
-      recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
-      slowResponseEnabled: !!form.slowResponseEnabled, slowThresholdMs: Number(form.slowThresholdMs),
-      active: form.active, script: form.script, env: envPayload(),
-      useProxy: form.useProxy || 'AUTO',
-      // Sürüm YALNIZ içerik değiştiyse yazılır; bump türü o zaman uygulanır (varsayılan yama).
-      bumpType,
-      // Eski sürümden yüklendiyse yeni sürüm RESTORE olarak işaretlenir ve notuna kaynağı yazılır.
-      restoredFrom: form.restoredFrom || null,
-    }
-    const res = modal?.id ? await api.monitoring.updateScriptedMonitor(modal.id, payload)
-                          : await api.monitoring.createScriptedMonitor(payload)
-    setSaving(false)
-    if (res?.success) {
-      // Kayıt başarılı → taslak artık gereksiz (backend de siliyor; liste burada tazelenir).
-      setDrafts(d => d.filter(x => x.monitor_key !== (modal?.id ? String(modal.id) : 'new')))
-      setForm(f => ({ ...f, restoredFrom: null }))
-      // TASLAK TABANINI GÜNCELLE — yoksa taslak DİRİLİYOR:
-      // `isFormDirty()` formu `modal`'daki (kayıt ÖNCESİNDEKİ) değerlerle karşılaştırıyor.
-      // Taban eski kalınca kaydettikten sonra bile "kirli" görünüyor, `closeEdit()` içindeki
-      // `flushDraft()` backend'in az önce SİLDİĞİ taslağı yeniden yazıyordu. Sonuç: kullanıcı
-      // bir sonraki açılışta "kaydedilmemiş taslağınız var" teklifi görüyor; onu yükleyip
-      // kaydederse ARADA BAŞKASININ yaptığı değişikliği sessizce geri alıyordu.
-      // Yeni kayıtta taban sunucudan dönen monitör olur (artık id'si var); düzenlemede kaydedilen
-      // içerik olur. Kullanıcı tekrar yazmaya başlarsa doğal olarak yine kirli sayılır.
-      setModal(m => ({ ...(m || {}), ...(res.data?.id ? res.data : {}),
-                       script: payload.script, name: payload.name }))
-      // Engellemeyen uyarılar (eksik/kullanılmayan __ENV, sonuçsuz sözdizimi doğrulaması) KALICI
-      // gösterilir — toast kaybolur, bu bilgi kaydettikten sonra da lazım.
-      const w = res.data?.warnings
-      if (Array.isArray(w) && w.length) setSaveWarnings(w)
-      else if (shouldSmokeRun(res.data)) {
-        // Kaydetme sonrası DOĞRULAMA KOŞUMU. Modal açık kalır; sürüm ZATEN kalıcı, koşum
-        // kaydı bloklamıyor — banner metni bunu açıkça söylüyor.
-        toast.success(t('scripted.saved'))
-        runSmokeCheck(res.data?.id ?? modal?.id)
+    try {
+      const payload = {
+        name: form.name.trim(), description: form.description?.trim() || null,
+        groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId),
+        // Bos = takim varsayilani -> takim adresi (zincirin kalani).
+        notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
+          ? null : Number(form.notificationGroupId),
+        tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, notifyWebhook: form.notifyWebhook,
+        intervalSeconds: Number(form.intervalSeconds), timeoutSeconds: Number(form.timeoutSeconds),
+        confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
+        recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
+        slowResponseEnabled: !!form.slowResponseEnabled, slowThresholdMs: Number(form.slowThresholdMs),
+        active: form.active, script: form.script, env: envPayload(),
+        useProxy: form.useProxy || 'AUTO',
+        // Sürüm YALNIZ içerik değiştiyse yazılır; bump türü o zaman uygulanır (varsayılan yama).
+        bumpType,
+        // Eski sürümden yüklendiyse yeni sürüm RESTORE olarak işaretlenir ve notuna kaynağı yazılır.
+        restoredFrom: form.restoredFrom || null,
       }
-      else { toast.success(t('scripted.saved')); closeEdit({ skipDraft: true }) }
-      load()
-    }
-    else {
-      // Sözdizimi hatası kaydetmeyi ENGELLER (prod politikası BLOCK) ve mesaj çok satırlı bir
-      // Babel kod çerçevesidir. Eskiden yalnız 5 sn'lik toast'ta gösteriliyordu: `.toast-msg`'de
-      // `white-space` ayarı olmadığı için `\n`'ler eziliyor, kod çerçevesi ve caret hizası
-      // tamamen kayboluyordu — kullanıcı 5 sn sonra elinde hiçbir iz kalmadan modalda kalıyordu.
-      // Artık KALICI: hizayı koruyan çerçeveyle basılır ve satır numarası cetvelde işaretlenir.
-      setSaveError(res?.error || null)
-      toast.error(res?.error || t('scripted.saveError'))
+      const res = modal?.id ? await api.monitoring.updateScriptedMonitor(modal.id, payload)
+                            : await api.monitoring.createScriptedMonitor(payload)
+      if (res?.success) {
+        // Kayıt başarılı → taslak artık gereksiz (backend de siliyor; liste burada tazelenir).
+        setDrafts(d => d.filter(x => x.monitor_key !== (modal?.id ? String(modal.id) : 'new')))
+        setForm(f => ({ ...f, restoredFrom: null }))
+        // TASLAK TABANINI GÜNCELLE — yoksa taslak DİRİLİYOR:
+        // `isFormDirty()` formu `modal`'daki (kayıt ÖNCESİNDEKİ) değerlerle karşılaştırıyor.
+        // Taban eski kalınca kaydettikten sonra bile "kirli" görünüyor, `closeEdit()` içindeki
+        // `flushDraft()` backend'in az önce SİLDİĞİ taslağı yeniden yazıyordu. Sonuç: kullanıcı
+        // bir sonraki açılışta "kaydedilmemiş taslağınız var" teklifi görüyor; onu yükleyip
+        // kaydederse ARADA BAŞKASININ yaptığı değişikliği sessizce geri alıyordu.
+        // Yeni kayıtta taban sunucudan dönen monitör olur (artık id'si var); düzenlemede kaydedilen
+        // içerik olur. Kullanıcı tekrar yazmaya başlarsa doğal olarak yine kirli sayılır.
+        setModal(m => ({ ...(m || {}), ...(res.data?.id ? res.data : {}),
+                         script: payload.script, name: payload.name }))
+        // Engellemeyen uyarılar (eksik/kullanılmayan __ENV, sonuçsuz sözdizimi doğrulaması) KALICI
+        // gösterilir — toast kaybolur, bu bilgi kaydettikten sonra da lazım.
+        const w = res.data?.warnings
+        if (Array.isArray(w) && w.length) setSaveWarnings(w)
+        else if (shouldSmokeRun(res.data)) {
+          // Kaydetme sonrası DOĞRULAMA KOŞUMU. Modal açık kalır; sürüm ZATEN kalıcı, koşum
+          // kaydı bloklamıyor — banner metni bunu açıkça söylüyor.
+          toast.success(t('scripted.saved'))
+          runSmokeCheck(res.data?.id ?? modal?.id)
+        }
+        else { toast.success(t('scripted.saved')); closeEdit({ skipDraft: true }) }
+        load()
+      }
+      else {
+        // Sözdizimi hatası kaydetmeyi ENGELLER (prod politikası BLOCK) ve mesaj çok satırlı bir
+        // Babel kod çerçevesidir. Eskiden yalnız 5 sn'lik toast'ta gösteriliyordu: `.toast-msg`'de
+        // `white-space` ayarı olmadığı için `\n`'ler eziliyor, kod çerçevesi ve caret hizası
+        // tamamen kayboluyordu — kullanıcı 5 sn sonra elinde hiçbir iz kalmadan modalda kalıyordu.
+        // Artık KALICI: hizayı koruyan çerçeveyle basılır ve satır numarası cetvelde işaretlenir.
+        setSaveError(res?.error || null)
+        toast.error(res?.error || t('scripted.saveError'))
+      }
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -830,17 +833,20 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     if (!ok) return
 
     setDeleting(m.id)
+    try {
 
-    const res = await api.monitoring.deleteScriptedMonitor(m.id)
+      const res = await api.monitoring.deleteScriptedMonitor(m.id)
 
-    setDeleting(null)
+      setDeleting(null)
 
-    if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
+      if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
 
-    toast.success(t('scripted.deleted'))
+      toast.success(t('scripted.deleted'))
 
-    await load()
-
+      await load()
+    } finally {
+      setDeleting(null)
+    }
   }
 
 
@@ -863,16 +869,19 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   async function runTest() {
     if (!form.script.trim()) { toast.error(t('scripted.scriptRequired')); return }
     setTesting(true); setTestResult(null)
-    const res = await api.monitoring.testScripted({
-      script: form.script, timeoutSeconds: Number(form.timeoutSeconds),
-      // Test koşumu da formdaki vekil tercihini kullanır; aksi halde "Test Çalıştır" yeşil,
-      // kaydedilen monitör kırmızı olur ve aradaki fark görünmez.
-      useProxy: form.useProxy || 'AUTO',
-      env: form.env.filter(e => (e.name || '').trim()).map(e => ({ name: e.name.trim(), value: e.value || '' })),
-    })
-    const data = res?.success ? res.data : { status: 'ERROR', error: res?.error || t('scripted.testError') }
-    setTestResult({ ...data, _source: 'test' })
-    setTesting(false)
+    try {
+      const res = await api.monitoring.testScripted({
+        script: form.script, timeoutSeconds: Number(form.timeoutSeconds),
+        // Test koşumu da formdaki vekil tercihini kullanır; aksi halde "Test Çalıştır" yeşil,
+        // kaydedilen monitör kırmızı olur ve aradaki fark görünmez.
+        useProxy: form.useProxy || 'AUTO',
+        env: form.env.filter(e => (e.name || '').trim()).map(e => ({ name: e.name.trim(), value: e.value || '' })),
+      })
+      const data = res?.success ? res.data : { status: 'ERROR', error: res?.error || t('scripted.testError') }
+      setTestResult({ ...data, _source: 'test' })
+    } finally {
+      setTesting(false)
+    }
   }
 
   async function checkNow(m) {

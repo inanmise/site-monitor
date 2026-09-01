@@ -79,15 +79,18 @@ export default function ChangeHistoryTab({ t, kind, monitorId, teamNames = {}, c
     })
     if (!res?.confirmed) return
     setRestoring(true)
-    const r = await api.monitoring.restoreChange(kind, monitorId, sel.seq, res.note)
-    setRestoring(false)
-    if (!r?.success) { toast.error(r?.error || t('chg.restoreError')); return }
-    const skipped = r.data?.skipped_masked || []
-    toast.success(t('chg.restoreDone', (r.data?.fields || []).length))
-    // Atlanan gizli alanlar SESSİZ geçilmez: kullanıcı parolanın dönmediğini bilmeli.
-    if (skipped.length) toast.info(t('chg.restoreMasked', skipped.length))
-    setSel(null)
-    load()
+    try {
+      const r = await api.monitoring.restoreChange(kind, monitorId, sel.seq, res.note)
+      if (!r?.success) { toast.error(r?.error || t('chg.restoreError')); return }
+      const skipped = r.data?.skipped_masked || []
+      toast.success(t('chg.restoreDone', (r.data?.fields || []).length))
+      // Atlanan gizli alanlar SESSİZ geçilmez: kullanıcı parolanın dönmediğini bilmeli.
+      if (skipped.length) toast.info(t('chg.restoreMasked', skipped.length))
+      setSel(null)
+      load()
+    } finally {
+      setRestoring(false)
+    }
   }
 
   const eventLabel = (ev) => {

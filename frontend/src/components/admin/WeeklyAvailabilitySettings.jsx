@@ -58,41 +58,50 @@ export default function WeeklyAvailabilitySettings() {
 
   async function loadHistory() {
     setHistoryLoading(true)
-    const res = await api.admin.getWeeklyAvailHistory(50, includeTest)
-    setHistoryLoading(false)
-    if (res?.success) setHistory(res.data || [])
-    else toast.error(res?.error || t('weeklyavail.historyFail'))
+    try {
+      const res = await api.admin.getWeeklyAvailHistory(50, includeTest)
+      if (res?.success) setHistory(res.data || [])
+      else toast.error(res?.error || t('weeklyavail.historyFail'))
+    } finally {
+      setHistoryLoading(false)
+    }
   }
 
   async function toggleEnabled(next) {
     setEnabled(next) // optimistik
     setSavingEnabled(true)
-    const res = await api.admin.setWeeklyAvailEnabled(next)
-    setSavingEnabled(false)
-    if (res?.success) {
-      toast.success(next ? t('weeklyavail.enabledOn') : t('weeklyavail.enabledOff'))
-    } else {
-      setEnabled(!next) // geri al
-      toast.error(res?.error || t('settings.saveError'))
+    try {
+      const res = await api.admin.setWeeklyAvailEnabled(next)
+      if (res?.success) {
+        toast.success(next ? t('weeklyavail.enabledOn') : t('weeklyavail.enabledOff'))
+      } else {
+        setEnabled(!next) // geri al
+        toast.error(res?.error || t('settings.saveError'))
+      }
+    } finally {
+      setSavingEnabled(false)
     }
   }
 
   async function doPreview() {
     if (!previewTeamId) return
     setPreviewing(true)
-    const res = await api.admin.getWeeklyAvailPreview(previewTeamId, previewWeekOffset)
-    setPreviewing(false)
-    if (res?.success) {
-      const d = res.data
-      setViewer({
-        title: `${t('weeklyavail.previewTitle')} — ${d.team_name} · ${d.week_label}`,
-        to: d.no_recipients ? '' : (d.to || []).join(', '),
-        cc: (d.cc || []).join(', '),
-        html: d.html,
-        noRecipients: d.no_recipients,
-      })
-    } else {
-      toast.error(res?.error || t('weeklyavail.previewFail'))
+    try {
+      const res = await api.admin.getWeeklyAvailPreview(previewTeamId, previewWeekOffset)
+      if (res?.success) {
+        const d = res.data
+        setViewer({
+          title: `${t('weeklyavail.previewTitle')} — ${d.team_name} · ${d.week_label}`,
+          to: d.no_recipients ? '' : (d.to || []).join(', '),
+          cc: (d.cc || []).join(', '),
+          html: d.html,
+          noRecipients: d.no_recipients,
+        })
+      } else {
+        toast.error(res?.error || t('weeklyavail.previewFail'))
+      }
+    } finally {
+      setPreviewing(false)
     }
   }
 
@@ -105,39 +114,48 @@ export default function WeeklyAvailabilitySettings() {
   async function downloadPdf() {
     if (!previewTeamId) return
     setDownloadingPdf(true)
-    const res = await api.admin.downloadWeeklyOutagePdf(previewTeamId, previewWeekOffset)
-    setDownloadingPdf(false)
-    if (!res?.success) toast.error(t('weeklyavail.pdfFail'))
+    try {
+      const res = await api.admin.downloadWeeklyOutagePdf(previewTeamId, previewWeekOffset)
+      if (!res?.success) toast.error(t('weeklyavail.pdfFail'))
+    } finally {
+      setDownloadingPdf(false)
+    }
   }
 
   async function openArchived(item) {
     setOpeningId(item.id)
-    const res = await api.admin.getWeeklyAvailHistoryItem(item.id)
-    setOpeningId(null)
-    if (res?.success) {
-      const d = res.data
-      const isTest = d.trigger === 'WEEKLY_AVAILABILITY_TEST'
-      setViewer({
-        title: `${isTest ? `[${t('weeklyavail.testTag')}] ` : ''}${d.team} · ${formatDate(d.sent_at)}`,
-        to: d.to || '',
-        cc: d.cc || '',
-        html: d.html,
-        noRecipients: !(d.to && d.to.trim()),
-      })
-    } else {
-      toast.error(res?.error || t('weeklyavail.previewFail'))
+    try {
+      const res = await api.admin.getWeeklyAvailHistoryItem(item.id)
+      if (res?.success) {
+        const d = res.data
+        const isTest = d.trigger === 'WEEKLY_AVAILABILITY_TEST'
+        setViewer({
+          title: `${isTest ? `[${t('weeklyavail.testTag')}] ` : ''}${d.team} · ${formatDate(d.sent_at)}`,
+          to: d.to || '',
+          cc: d.cc || '',
+          html: d.html,
+          noRecipients: !(d.to && d.to.trim()),
+        })
+      } else {
+        toast.error(res?.error || t('weeklyavail.previewFail'))
+      }
+    } finally {
+      setOpeningId(null)
     }
   }
 
   async function sendTest() {
     if (!testTeamId || !testEmail.trim()) return
     setSending(true)
-    setSendResult(null)
-    const res = await api.admin.sendWeeklyAvailTest(testTeamId, testEmail.trim())
-    setSending(false)
-    setSendResult(res)
-    if (res?.success) { toast.success(res.message || t('weeklyavail.sendOk')); loadHistory() }
-    else toast.error(res?.error || res?.message || t('weeklyavail.sendFail'))
+    try {
+      setSendResult(null)
+      const res = await api.admin.sendWeeklyAvailTest(testTeamId, testEmail.trim())
+      setSendResult(res)
+      if (res?.success) { toast.success(res.message || t('weeklyavail.sendOk')); loadHistory() }
+      else toast.error(res?.error || res?.message || t('weeklyavail.sendFail'))
+    } finally {
+      setSending(false)
+    }
   }
 
   if (!status) {

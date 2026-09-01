@@ -187,41 +187,48 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
   async function runTest() {
     if (!form.url.trim()) return
     setTesting(true); setTestResult(null)
-    const res = await api.monitoring.testHttp({
-      url: normalizeUrl(form.url), method: form.method, expectedStatus: form.expectedStatus?.trim() || '200-399',
-      timeoutMs: Number(form.timeoutMs), verifySsl: form.verifySsl, followRedirects: form.followRedirects,
-    })
-    setTestResult(res?.success ? res.data : { error: res?.error || t('http.testError') })
-    setTesting(false)
+    try {
+      const res = await api.monitoring.testHttp({
+        url: normalizeUrl(form.url), method: form.method, expectedStatus: form.expectedStatus?.trim() || '200-399',
+        timeoutMs: Number(form.timeoutMs), verifySsl: form.verifySsl, followRedirects: form.followRedirects,
+      })
+      setTestResult(res?.success ? res.data : { error: res?.error || t('http.testError') })
+    } finally {
+      setTesting(false)
+    }
   }
 
   async function save() {
     if (!form.url.trim()) return
     if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
     setSaving(true)
-    const payload = {
-      name: (form.name || form.url).trim(), url: normalizeUrl(form.url), method: form.method,
-      expectedStatus: form.expectedStatus?.trim() || '200-399', followRedirects: form.followRedirects, verifySsl: form.verifySsl,
-      groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId), tags: form.tags?.trim() || null,
-      // Bos = takim varsayilani -> takim adresi (zincirin kalani).
-      notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
-        ? null : Number(form.notificationGroupId),
-      notifyEmail: form.notifyEmail, notifyWebhook: form.notifyWebhook,
-      checkSslErrors: form.checkSslErrors, sslExpiryReminders: form.sslExpiryReminders, domainExpiryReminders: form.domainExpiryReminders,
-      sslReminderDays: form.sslReminderDays?.trim() || '30,14,7', domainReminderDays: form.domainReminderDays?.trim() || '30,14,7',
-      intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
-      confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
-      recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
-      active: form.active,
+    try {
+      const payload = {
+        name: (form.name || form.url).trim(), url: normalizeUrl(form.url), method: form.method,
+        expectedStatus: form.expectedStatus?.trim() || '200-399', followRedirects: form.followRedirects, verifySsl: form.verifySsl,
+        groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId), tags: form.tags?.trim() || null,
+        // Bos = takim varsayilani -> takim adresi (zincirin kalani).
+        notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
+          ? null : Number(form.notificationGroupId),
+        notifyEmail: form.notifyEmail, notifyWebhook: form.notifyWebhook,
+        checkSslErrors: form.checkSslErrors, sslExpiryReminders: form.sslExpiryReminders, domainExpiryReminders: form.domainExpiryReminders,
+        sslReminderDays: form.sslReminderDays?.trim() || '30,14,7', domainReminderDays: form.domainReminderDays?.trim() || '30,14,7',
+        intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
+        confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
+        recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
+        active: form.active,
+      }
+      // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
+      if (changeNote.trim()) payload.changeNote = changeNote.trim()
+      const res = modal === 'new'
+        ? await api.monitoring.createHttpMonitor(payload)
+        : await api.monitoring.updateHttpMonitor(modal.id, payload)
+      await load(); setSaving(false)
+      if (!res?.success) { toast.error(res?.error || 'Error'); return }
+      toast.success(t('http.saved')); closeEdit()
+    } finally {
+      setSaving(false)
     }
-    // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
-    if (changeNote.trim()) payload.changeNote = changeNote.trim()
-    const res = modal === 'new'
-      ? await api.monitoring.createHttpMonitor(payload)
-      : await api.monitoring.updateHttpMonitor(modal.id, payload)
-    await load(); setSaving(false)
-    if (!res?.success) { toast.error(res?.error || 'Error'); return }
-    toast.success(t('http.saved')); closeEdit()
   }
 
   /**
@@ -269,17 +276,20 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
     if (!ok) return
 
     setDeleting(m.id)
+    try {
 
-    const res = await api.monitoring.deleteHttpMonitor(m.id)
+      const res = await api.monitoring.deleteHttpMonitor(m.id)
 
-    setDeleting(null)
+      setDeleting(null)
 
-    if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
+      if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
 
-    toast.success(t('http.deleted'))
+      toast.success(t('http.deleted'))
 
-    await load()
-
+      await load()
+    } finally {
+      setDeleting(null)
+    }
   }
 
 

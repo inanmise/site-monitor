@@ -65,22 +65,25 @@ export default function PasswordChangeModal({ mode, targetUser, onClose, onSucce
     if (newPwd.length < 6 || newPwd.length > 10) { setMsg(t('usr.pwdLengthRule')); return }
     if (newPwd !== confirmPwd) { setMsg(t('usr.pwdMismatch')); return }
     setSaving(true)
-    const res = await api.me.changePassword(verifyPwd, newPwd)
-    setSaving(false)
-    if (res?.success) {
-      onSuccess?.()
-      onClose()
-    } else {
-      const err = res?.error || ''
-      if (/FORBIDDEN|Current password|Invalid admin/i.test(err) || res?.status === 403) {
-        setMsg(t(wrongVerifyKey))
-      } else if (/recently used/i.test(err)) {
-        setMsg(t('usr.pwdReused'))
-      } else if (/too short|too long/i.test(err)) {
-        setMsg(t('usr.pwdLengthRule'))
+    try {
+      const res = await api.me.changePassword(verifyPwd, newPwd)
+      if (res?.success) {
+        onSuccess?.()
+        onClose()
       } else {
-        setMsg(err || 'Error')
+        const err = res?.error || ''
+        if (/FORBIDDEN|Current password|Invalid admin/i.test(err) || res?.status === 403) {
+          setMsg(t(wrongVerifyKey))
+        } else if (/recently used/i.test(err)) {
+          setMsg(t('usr.pwdReused'))
+        } else if (/too short|too long/i.test(err)) {
+          setMsg(t('usr.pwdLengthRule'))
+        } else {
+          setMsg(err || 'Error')
+        }
       }
+    } finally {
+      setSaving(false)
     }
   }
 

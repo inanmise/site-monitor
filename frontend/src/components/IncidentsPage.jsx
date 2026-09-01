@@ -39,14 +39,17 @@ export default function IncidentsPage({ systemRole }) {
   const load = useCallback(async () => {
     const myId = ++reqIdRef.current
     setLoading(true)
-    const res = await api.monitoring.incidents.list({
-      status: filters.status === 'all' ? '' : filters.status,
-      rootCause: filters.rootCause, q: filters.q, since: filters.since, until: filters.until,
-      sort: sort.by || undefined, dir: sort.dir, page, size,
-    })
-    if (myId !== reqIdRef.current) return   // yalnız EN SON isteğin yanıtını uygula — bayat yanıt grid'i ezmesin (M4)
-    if (res?.success) { setRows(res.data ?? []); setTotal(res.total ?? 0); setTypeCounts(res.type_counts ?? {}) }
-    setLoading(false)
+    try {
+      const res = await api.monitoring.incidents.list({
+        status: filters.status === 'all' ? '' : filters.status,
+        rootCause: filters.rootCause, q: filters.q, since: filters.since, until: filters.until,
+        sort: sort.by || undefined, dir: sort.dir, page, size,
+      })
+      if (myId !== reqIdRef.current) return   // yalnız EN SON isteğin yanıtını uygula — bayat yanıt grid'i ezmesin (M4)
+      if (res?.success) { setRows(res.data ?? []); setTotal(res.total ?? 0); setTypeCounts(res.type_counts ?? {}) }
+    } finally {
+      setLoading(false)
+    }
   }, [filters, sort, page, size])
 
   useEffect(() => { load() }, [load])
@@ -315,9 +318,12 @@ function CommentThread({ incident, onClose, onChanged }) {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const res = await api.monitoring.incidents.comments(incident.id)
-    if (res?.success) setComments(res.data ?? [])
-    setLoading(false)
+    try {
+      const res = await api.monitoring.incidents.comments(incident.id)
+      if (res?.success) setComments(res.data ?? [])
+    } finally {
+      setLoading(false)
+    }
   }, [incident.id])
   useEffect(() => { load() }, [load])
 
@@ -325,10 +331,13 @@ function CommentThread({ incident, onClose, onChanged }) {
     const text = body.trim()
     if (!text) return
     setSaving(true)
-    const res = await api.monitoring.incidents.addComment(incident.id, text)
-    setSaving(false)
-    if (!res?.success) { toast.error(res?.error || t('incov.commentError')); return }
-    setBody(''); onChanged?.(1); load()
+    try {
+      const res = await api.monitoring.incidents.addComment(incident.id, text)
+      if (!res?.success) { toast.error(res?.error || t('incov.commentError')); return }
+      setBody(''); onChanged?.(1); load()
+    } finally {
+      setSaving(false)
+    }
   }
   async function remove(id) {
     const res = await api.monitoring.incidents.deleteComment(id)

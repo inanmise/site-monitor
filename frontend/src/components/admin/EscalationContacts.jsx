@@ -90,21 +90,24 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
 
   async function save() {
     setSaving(true)
-    const payload = {
-      user_id: form.user_id ? Number(form.user_id) : null,
-      role: form.role,
-      min_alert_level: form.min_alert_level,
-      webhook_url: form.webhook_url || null,
-      webhook_type: form.webhook_type || null,
-      active: form.active,
-      team_id: form.team_id ? Number(form.team_id) : null,
+    try {
+      const payload = {
+        user_id: form.user_id ? Number(form.user_id) : null,
+        role: form.role,
+        min_alert_level: form.min_alert_level,
+        webhook_url: form.webhook_url || null,
+        webhook_type: form.webhook_type || null,
+        active: form.active,
+        team_id: form.team_id ? Number(form.team_id) : null,
+      }
+      const res = modal === 'add'
+        ? await api.admin.addContact(payload)
+        : await api.admin.updateContact(modal.id, payload)
+      if (res?.success) { setModal(null); toast.success(t('ec.saved')); load() }
+      else setMsg(res?.error || 'Error')
+    } finally {
+      setSaving(false)
     }
-    const res = modal === 'add'
-      ? await api.admin.addContact(payload)
-      : await api.admin.updateContact(modal.id, payload)
-    setSaving(false)
-    if (res?.success) { setModal(null); toast.success(t('ec.saved')); load() }
-    else setMsg(res?.error || 'Error')
   }
 
   async function del(id) {
