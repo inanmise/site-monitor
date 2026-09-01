@@ -43,15 +43,18 @@ export default function BrandingSettings() {
   async function save() {
     if (Object.keys(edited).length === 0) { toast.success(t('settings.saved')) ; return }
     setSaving(true)
-    const res = await api.admin.saveBrandingSettings({ values: edited })
-    setSaving(false)
-    if (res?.success) {
-      toast.success(res.message || t('settings.saved'))
-      setItems(res.data || [])
-      setEdited({})
-      refreshBranding(true)   // cache-bust: sekme başlığı / uygulama adı / renk / banner ANINDA yansır
-    } else {
-      toast.error(res?.error || t('settings.saveError'))
+    try {
+      const res = await api.admin.saveBrandingSettings({ values: edited })
+      if (res?.success) {
+        toast.success(res.message || t('settings.saved'))
+        setItems(res.data || [])
+        setEdited({})
+        refreshBranding(true)   // cache-bust: sekme başlığı / uygulama adı / renk / banner ANINDA yansır
+      } else {
+        toast.error(res?.error || t('settings.saveError'))
+      }
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -67,16 +70,19 @@ export default function BrandingSettings() {
     })
     if (!ok) return
     setSaving(true)
-    const values = Object.fromEntries((items || []).map((it) => [it.key, '']))
-    const res = await api.admin.saveBrandingSettings({ values })
-    setSaving(false)
-    if (res?.success) {
-      toast.success(t('branding.resetDone'))
-      setItems(res.data || [])
-      setEdited({})
-      refreshBranding(true)   // cache-bust: varsayılana dönüş anında yansır
-    } else {
-      toast.error(res?.error || t('settings.saveError'))
+    try {
+      const values = Object.fromEntries((items || []).map((it) => [it.key, '']))
+      const res = await api.admin.saveBrandingSettings({ values })
+      if (res?.success) {
+        toast.success(t('branding.resetDone'))
+        setItems(res.data || [])
+        setEdited({})
+        refreshBranding(true)   // cache-bust: varsayılana dönüş anında yansır
+      } else {
+        toast.error(res?.error || t('settings.saveError'))
+      }
+    } finally {
+      setSaving(false)
     }
   }
 

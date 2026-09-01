@@ -566,24 +566,27 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   async function save(showToast = true) {
     if (!report || !content) return false
     setBusy(true)
-    const res = await api.weeklyReports.save(report.id, JSON.stringify(content), report.version)
-    setBusy(false)
-    if (res?.success) {
-      if (showToast) toast.success(t('wr.saved'))
-      setDirty(false)
-      try { localStorage.removeItem(DRAFT_BACKUP_PREFIX + report.id) } catch { /* */ }
-      setReport((p) => ({ ...p, status: res.data.status, version: res.data.version }))
-      loadList()
-      return true
-    }
-    if (res?.error?.includes('VERSION_CONFLICT')) {
-      // Başka kullanıcı araya kaydetmiş — yazılanlar yerel yedekte; banner çözüm sunar
-      writeBackupNow()
-      setConflict(res.error)
+    try {
+      const res = await api.weeklyReports.save(report.id, JSON.stringify(content), report.version)
+      if (res?.success) {
+        if (showToast) toast.success(t('wr.saved'))
+        setDirty(false)
+        try { localStorage.removeItem(DRAFT_BACKUP_PREFIX + report.id) } catch { /* */ }
+        setReport((p) => ({ ...p, status: res.data.status, version: res.data.version }))
+        loadList()
+        return true
+      }
+      if (res?.error?.includes('VERSION_CONFLICT')) {
+        // Başka kullanıcı araya kaydetmiş — yazılanlar yerel yedekte; banner çözüm sunar
+        writeBackupNow()
+        setConflict(res.error)
+        return false
+      }
+      toast.error(res?.error || t('wr.saveFailed'))
       return false
+    } finally {
+      setBusy(false)
     }
-    toast.error(res?.error || t('wr.saveFailed'))
-    return false
   }
 
   // ── Autosave + oturum kesintisi yedeği + kilit ────────────────────────────
@@ -723,13 +726,16 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   async function submit() {
     if (dirty && !(await save(false))) return
     setBusy(true)
-    const res = await api.weeklyReports.submit(report.id)
-    setBusy(false)
-    if (res?.success) {
-      toast.success(res.po_mail === 'SKIPPED_NO_CONTACT' ? t('wr.poMailSkipped') : t('wr.submitOk'))
-      loadReport(report.id); loadList()
-    } else {
-      toast.error(res?.error || t('wr.actionFailed'))
+    try {
+      const res = await api.weeklyReports.submit(report.id)
+      if (res?.success) {
+        toast.success(res.po_mail === 'SKIPPED_NO_CONTACT' ? t('wr.poMailSkipped') : t('wr.submitOk'))
+        loadReport(report.id); loadList()
+      } else {
+        toast.error(res?.error || t('wr.actionFailed'))
+      }
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -742,13 +748,16 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     })
     if (!ok) return
     setBusy(true)
-    const res = await api.weeklyReports.approve(report.id)
-    setBusy(false)
-    if (res?.success) {
-      toast.success(t('wr.approveOk'))
-      loadReport(report.id); loadList()
-    } else {
-      toast.error(res?.error || t('wr.actionFailed'))
+    try {
+      const res = await api.weeklyReports.approve(report.id)
+      if (res?.success) {
+        toast.success(t('wr.approveOk'))
+        loadReport(report.id); loadList()
+      } else {
+        toast.error(res?.error || t('wr.actionFailed'))
+      }
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -762,13 +771,16 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     })
     if (!ok) return
     setBusy(true)
-    const res = await api.weeklyReports.reopen(report.id)
-    setBusy(false)
-    if (res?.success) {
-      toast.success(t('wr.reopenOk'))
-      loadReport(report.id); loadList()
-    } else {
-      toast.error(res?.error || t('wr.actionFailed'))
+    try {
+      const res = await api.weeklyReports.reopen(report.id)
+      if (res?.success) {
+        toast.success(t('wr.reopenOk'))
+        loadReport(report.id); loadList()
+      } else {
+        toast.error(res?.error || t('wr.actionFailed'))
+      }
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -782,27 +794,33 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     })
     if (!ok) return
     setBusy(true)
-    const res = await api.weeklyReports.resend(report.id)
-    setBusy(false)
-    if (res?.success) {
-      toast.success(t('wr.resendOk'))
-      loadReport(report.id); loadList()
-    } else {
-      toast.error(res?.error || t('wr.actionFailed'))
+    try {
+      const res = await api.weeklyReports.resend(report.id)
+      if (res?.success) {
+        toast.success(t('wr.resendOk'))
+        loadReport(report.id); loadList()
+      } else {
+        toast.error(res?.error || t('wr.actionFailed'))
+      }
+    } finally {
+      setBusy(false)
     }
   }
 
   async function doReject() {
     if (!rejectModal?.note?.trim()) { toast.error(t('wr.rejectNoteRequired')); return }
     setBusy(true)
-    const res = await api.weeklyReports.reject(report.id, rejectModal.note.trim())
-    setBusy(false)
-    if (res?.success) {
-      setRejectModal(null)
-      toast.success(t('wr.rejectOk'))
-      loadReport(report.id); loadList()
-    } else {
-      toast.error(res?.error || t('wr.actionFailed'))
+    try {
+      const res = await api.weeklyReports.reject(report.id, rejectModal.note.trim())
+      if (res?.success) {
+        setRejectModal(null)
+        toast.success(t('wr.rejectOk'))
+        loadReport(report.id); loadList()
+      } else {
+        toast.error(res?.error || t('wr.actionFailed'))
+      }
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -871,17 +889,20 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     })
     if (!ok) return
     setBusy(true)
-    const res = await api.weeklyReports.remove(r.id)
-    setBusy(false)
-    if (res?.success) {
-      toast.success(t('wr.deleted'))
-      try { localStorage.removeItem(DRAFT_BACKUP_PREFIX + r.id) } catch { /* */ }
-      if (selectedId === r.id) setSelectedId(null)
-      loadList()
-      loadYears()
-      setWeekMarks({})
-    } else {
-      toast.error(res?.error || t('wr.actionFailed'))
+    try {
+      const res = await api.weeklyReports.remove(r.id)
+      if (res?.success) {
+        toast.success(t('wr.deleted'))
+        try { localStorage.removeItem(DRAFT_BACKUP_PREFIX + r.id) } catch { /* */ }
+        if (selectedId === r.id) setSelectedId(null)
+        loadList()
+        loadYears()
+        setWeekMarks({})
+      } else {
+        toast.error(res?.error || t('wr.actionFailed'))
+      }
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -906,19 +927,22 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   async function doTransfer() {
     if (!transferModal || !transferTeamId) return
     setTransferring(true)
-    const res = await api.weeklyReports.transfer(transferModal.ids, Number(transferTeamId))
-    setTransferring(false)
-    if (res?.success) {
-      const n = res.transferred ?? 0
-      const skipped = res.skipped ?? []
-      if (n > 0) toast.success(t('wr.transferDone', n))
-      if (skipped.length) toast.error(t('wr.transferSkipped', skipped.length))
-      if (n === 0 && skipped.length === 0) toast.info?.(t('wr.transferNone'))
-      setTransferModal(null)
-      setSelectedIds(new Set())
-      loadList()
-    } else {
-      toast.error(res?.error || t('wr.transferError'))
+    try {
+      const res = await api.weeklyReports.transfer(transferModal.ids, Number(transferTeamId))
+      if (res?.success) {
+        const n = res.transferred ?? 0
+        const skipped = res.skipped ?? []
+        if (n > 0) toast.success(t('wr.transferDone', n))
+        if (skipped.length) toast.error(t('wr.transferSkipped', skipped.length))
+        if (n === 0 && skipped.length === 0) toast.info?.(t('wr.transferNone'))
+        setTransferModal(null)
+        setSelectedIds(new Set())
+        loadList()
+      } else {
+        toast.error(res?.error || t('wr.transferError'))
+      }
+    } finally {
+      setTransferring(false)
     }
   }
 

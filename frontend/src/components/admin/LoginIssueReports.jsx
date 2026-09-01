@@ -122,14 +122,17 @@ export default function LoginIssueReports() {
     })
     if (!ok) return
     setBusy(true)
-    const res = await api.admin.purgeLoginIssue(detail.id)
-    setBusy(false)
-    if (res?.success) {
-      toast.success(t('loginIssues.purgeDone'))
-      setDetail(null)
-      load()
-    } else {
-      toast.error(res?.error || t('loginIssues.purgeFailed'))
+    try {
+      const res = await api.admin.purgeLoginIssue(detail.id)
+      if (res?.success) {
+        toast.success(t('loginIssues.purgeDone'))
+        setDetail(null)
+        load()
+      } else {
+        toast.error(res?.error || t('loginIssues.purgeFailed'))
+      }
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -137,19 +140,22 @@ export default function LoginIssueReports() {
     if (!detail) return
     if (newStatus === 'RESOLVED' && !note.trim()) { toast.error(t('loginIssues.noteRequired')); return }
     setBusy(true)
-    // Not her durumda gönderilir (İşleme Al'da da) — kalıcı çalışma notu; boşsa backend mevcut notu korur.
-    const res = await api.admin.updateLoginIssueStatus(detail.id, {
-      status: newStatus,
-      resolutionNote: note.trim() || undefined,
-    })
-    setBusy(false)
-    if (res?.success) {
-      toast.success(t('loginIssues.statusUpdated'))
-      setDetail(res.data)
-      setNote(res.data.resolutionNote || '')
-      load()
-    } else {
-      toast.error(res?.error || t('loginIssues.statusError'))
+    try {
+      // Not her durumda gönderilir (İşleme Al'da da) — kalıcı çalışma notu; boşsa backend mevcut notu korur.
+      const res = await api.admin.updateLoginIssueStatus(detail.id, {
+        status: newStatus,
+        resolutionNote: note.trim() || undefined,
+      })
+      if (res?.success) {
+        toast.success(t('loginIssues.statusUpdated'))
+        setDetail(res.data)
+        setNote(res.data.resolutionNote || '')
+        load()
+      } else {
+        toast.error(res?.error || t('loginIssues.statusError'))
+      }
+    } finally {
+      setBusy(false)
     }
   }
 

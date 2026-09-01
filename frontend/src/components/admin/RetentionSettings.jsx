@@ -105,17 +105,20 @@ export default function RetentionSettings() {
 
   async function confirmSave() {
     setSaving(true)
-    const values = {}
-    for (const c of pending) values[c.key] = String(c.to)
-    const res = await api.admin.saveRetentionSettings(values)
-    setSaving(false)
-    setReview(null)
-    if (res?.success) {
-      toast.success(res.message || t('settings.saved'))
-      setChanges(null)                       // geçmiş tazelensin
-      load(true)
-    } else {
-      toast.error(res?.error || t('settings.saveError'))
+    try {
+      const values = {}
+      for (const c of pending) values[c.key] = String(c.to)
+      const res = await api.admin.saveRetentionSettings(values)
+      setReview(null)
+      if (res?.success) {
+        toast.success(res.message || t('settings.saved'))
+        setChanges(null)                       // geçmiş tazelensin
+        load(true)
+      } else {
+        toast.error(res?.error || t('settings.saveError'))
+      }
+    } finally {
+      setSaving(false)
     }
   }
 

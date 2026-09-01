@@ -466,49 +466,52 @@ export default function App() {
     if (!domains.length) return
 
     setRefreshing(true)
-    checkCancelRef.current = false
-    setCheckRun({ rows: [], total: domains.length, done: false, teamLabel: teamLabel || null,
-      startedAt: Date.now(), finishedAt: null })
-
-    async function checkOne(domain) {
-      const start = new Date()
-      const t0 = Date.now()
-      let ok = false, data = null, error = null
-      try {
-        const r = await api.checkDomain(domain)
-        ok = !!r?.success
-        data = r?.data ?? null
-        if (!ok) error = r?.error || null
-      } catch (e) { ok = false; error = e?.message || null }
-      const end = new Date()
-      // Sunucunun ölçtüğü süre daha doğru (ağ gecikmesi hariç); yoksa istemci kronometresi.
-      const ms = Number.isFinite(data?.elapsed_ms) ? data.elapsed_ms : Date.now() - t0
-      if (data?.status === 'error') { ok = false; error = error || data.error }
-      // Satırlar TAMAMLANMA sırasında eklenir (alfabetik değil): yavaş bir domain arkasındakileri
-      // bekletmesin. setCheckRun fonksiyonel güncelleme kullanır — eşzamanlı işçiler birbirinin
-      // eklediği satırı ezmez.
-      setCheckRun(cr => cr ? { ...cr, rows: [...cr.rows, { domain, start, end, ms, ok, data, error }] } : cr)
-    }
-
-    // Kuyruğu SINIRLI sayıda işçiyle tüket. Eskiden döngü sıralıydı: timeout alan tek bir sertifika
-    // (6 sn) arkasındaki TÜM domainleri bekletiyordu. Sunucu tarafı zaten paralel çalışabiliyor
-    // (cert-check executor: core 20 / max 50). "Durdur" → uçuştakiler biter, yenisi başlamaz.
-    await runWithConcurrency(domains, checkOne, {
-      limit: CHECK_CONCURRENCY,
-      shouldStop: () => checkCancelRef.current,
-    })
-
     try {
-      const [certsRes, statsRes, silentRes] = await Promise.all([
-        api.getCertificates(), api.getStats(), api.getSilentAlertDomains(),
-      ])
-      if (certsRes?.success) { setCerts(certsRes.data); setLastUpdate(certsRes.timestamp) }
-      if (statsRes?.success) setStats(statsRes.data)
-      if (silentRes?.success) setSilentAlertDomains(new Set(silentRes.data))
-    } catch { /* tazeleme hatası yoksay — modal yine de tamamlanır */ }
-    setActivityRefreshKey(k => k + 1)
-    setCheckRun(cr => cr ? { ...cr, done: true, finishedAt: Date.now() } : cr)
-    setRefreshing(false)
+      checkCancelRef.current = false
+      setCheckRun({ rows: [], total: domains.length, done: false, teamLabel: teamLabel || null,
+        startedAt: Date.now(), finishedAt: null })
+
+      async function checkOne(domain) {
+        const start = new Date()
+        const t0 = Date.now()
+        let ok = false, data = null, error = null
+        try {
+          const r = await api.checkDomain(domain)
+          ok = !!r?.success
+          data = r?.data ?? null
+          if (!ok) error = r?.error || null
+        } catch (e) { ok = false; error = e?.message || null }
+        const end = new Date()
+        // Sunucunun ölçtüğü süre daha doğru (ağ gecikmesi hariç); yoksa istemci kronometresi.
+        const ms = Number.isFinite(data?.elapsed_ms) ? data.elapsed_ms : Date.now() - t0
+        if (data?.status === 'error') { ok = false; error = error || data.error }
+        // Satırlar TAMAMLANMA sırasında eklenir (alfabetik değil): yavaş bir domain arkasındakileri
+        // bekletmesin. setCheckRun fonksiyonel güncelleme kullanır — eşzamanlı işçiler birbirinin
+        // eklediği satırı ezmez.
+        setCheckRun(cr => cr ? { ...cr, rows: [...cr.rows, { domain, start, end, ms, ok, data, error }] } : cr)
+      }
+
+      // Kuyruğu SINIRLI sayıda işçiyle tüket. Eskiden döngü sıralıydı: timeout alan tek bir sertifika
+      // (6 sn) arkasındaki TÜM domainleri bekletiyordu. Sunucu tarafı zaten paralel çalışabiliyor
+      // (cert-check executor: core 20 / max 50). "Durdur" → uçuştakiler biter, yenisi başlamaz.
+      await runWithConcurrency(domains, checkOne, {
+        limit: CHECK_CONCURRENCY,
+        shouldStop: () => checkCancelRef.current,
+      })
+
+      try {
+        const [certsRes, statsRes, silentRes] = await Promise.all([
+          api.getCertificates(), api.getStats(), api.getSilentAlertDomains(),
+        ])
+        if (certsRes?.success) { setCerts(certsRes.data); setLastUpdate(certsRes.timestamp) }
+        if (statsRes?.success) setStats(statsRes.data)
+        if (silentRes?.success) setSilentAlertDomains(new Set(silentRes.data))
+      } catch { /* tazeleme hatası yoksay — modal yine de tamamlanır */ }
+      setActivityRefreshKey(k => k + 1)
+      setCheckRun(cr => cr ? { ...cr, done: true, finishedAt: Date.now() } : cr)
+    } finally {
+      setRefreshing(false)
+    }
   }
 
   /** Tek kart için "şimdi koştur". Toplu taramayla aynı ucu kullanır (kalıcı kaydeder). */

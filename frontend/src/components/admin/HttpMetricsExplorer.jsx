@@ -57,14 +57,17 @@ export default function HttpMetricsExplorer() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { from, to } = resolveRange(range)
-    const [epRes, srRes] = await Promise.all([
-      api.admin.getHttpMetricsEndpoints(from, to),
-      api.admin.getHttpMetricsSeries(from, to, endpoint),
-    ])
-    if (epRes?.success) setEndpoints(epRes.data ?? [])
-    if (srRes?.success) setSeries(srRes.data ?? null)
-    setLoading(false)
+    try {
+      const { from, to } = resolveRange(range)
+      const [epRes, srRes] = await Promise.all([
+        api.admin.getHttpMetricsEndpoints(from, to),
+        api.admin.getHttpMetricsSeries(from, to, endpoint),
+      ])
+      if (epRes?.success) setEndpoints(epRes.data ?? [])
+      if (srRes?.success) setSeries(srRes.data ?? null)
+    } finally {
+      setLoading(false)
+    }
   }, [range, endpoint])
 
   useEffect(() => { load() }, [load])
@@ -84,11 +87,14 @@ export default function HttpMetricsExplorer() {
     if (!Number.isFinite(d) || d < 1) { toast.error(t('http.exp.retentionInvalid')); return }
     setSavingRet(true)
     try {
-      const res = await api.admin.saveGeneralSettings({ values: { [RETENTION_KEY]: String(d) } })
-      if (res?.success) toast.success(t('http.exp.retentionSaved', d))
-      else toast.error(res?.error || t('http.exp.saveError'))
-    } catch { toast.error(t('http.exp.saveError')) }
-    setSavingRet(false)
+      try {
+        const res = await api.admin.saveGeneralSettings({ values: { [RETENTION_KEY]: String(d) } })
+        if (res?.success) toast.success(t('http.exp.retentionSaved', d))
+        else toast.error(res?.error || t('http.exp.saveError'))
+      } catch { toast.error(t('http.exp.saveError')) }
+    } finally {
+      setSavingRet(false)
+    }
   }
 
   const gran = series?.granularity

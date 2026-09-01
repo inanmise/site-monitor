@@ -59,14 +59,17 @@ export default function ScriptedTemplateVersions({ t, template, canEdit, onClose
     const body = bodies[sel.id]
     if (!body) return
     setBusy(true); setError(null)
-    const res = await api.monitoring.updateScriptedTemplate(template.id, {
-      script: body.script,
-      env: (body.env || []).map(e => ({ name: e.name, secret: !!e.secret, desc: e.desc || null })),
-      restoredFrom: `v${sel.version}`,
-    })
-    setBusy(false)
-    if (!res?.success) { setError(res?.error || t('tpl.restoreError')); return }
-    onRestored?.(res.data, sel.version)
+    try {
+      const res = await api.monitoring.updateScriptedTemplate(template.id, {
+        script: body.script,
+        env: (body.env || []).map(e => ({ name: e.name, secret: !!e.secret, desc: e.desc || null })),
+        restoredFrom: `v${sel.version}`,
+      })
+      if (!res?.success) { setError(res?.error || t('tpl.restoreError')); return }
+      onRestored?.(res.data, sel.version)
+    } finally {
+      setBusy(false)
+    }
   }
 
   const detail = sel ? bodies[sel.id] : null

@@ -182,41 +182,48 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
     if (!form.host.trim()) return
     if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
     setSaving(true)
-    const payload = {
-      name: (form.name || form.host).trim(), host: form.host.trim(), ipVersion: form.ipVersion,
-      groupName: form.groupName?.trim() || null,
-      // Bos = takim varsayilani -> takim adresi (zincirin kalani).
-      notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
-        ? null : Number(form.notificationGroupId),
-      teamId: form.teamId === '' ? null : Number(form.teamId), intervalSeconds: Number(form.intervalSeconds),
-      notifyEmail: form.notifyEmail,
-      timeoutMs: Number(form.timeoutMs), packetCount: Number(form.packetCount),
-      confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds), recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
-      notifyWebhook: !!form.notifyWebhook, active: form.active,
-      slowResponseEnabled: !!form.slowResponseEnabled,
-      slowBaselineWindowMinutes: Number(form.slowBaselineWindowMinutes),
-      slowThresholdPercent: Number(form.slowThresholdPercent),
+    try {
+      const payload = {
+        name: (form.name || form.host).trim(), host: form.host.trim(), ipVersion: form.ipVersion,
+        groupName: form.groupName?.trim() || null,
+        // Bos = takim varsayilani -> takim adresi (zincirin kalani).
+        notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
+          ? null : Number(form.notificationGroupId),
+        teamId: form.teamId === '' ? null : Number(form.teamId), intervalSeconds: Number(form.intervalSeconds),
+        notifyEmail: form.notifyEmail,
+        timeoutMs: Number(form.timeoutMs), packetCount: Number(form.packetCount),
+        confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds), recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
+        notifyWebhook: !!form.notifyWebhook, active: form.active,
+        slowResponseEnabled: !!form.slowResponseEnabled,
+        slowBaselineWindowMinutes: Number(form.slowBaselineWindowMinutes),
+        slowThresholdPercent: Number(form.slowThresholdPercent),
+      }
+      // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
+      if (changeNote.trim()) payload.changeNote = changeNote.trim()
+      const res = modal === 'new'
+        ? await api.monitoring.createPingMonitor(payload)
+        : await api.monitoring.updatePingMonitor(modal.id, payload)
+      await load(); setSaving(false)
+      if (!res?.success) { toast.error(res?.error || 'Error'); return }
+      toast.success(t('ping.saved')); closeEdit()
+    } finally {
+      setSaving(false)
     }
-    // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
-    if (changeNote.trim()) payload.changeNote = changeNote.trim()
-    const res = modal === 'new'
-      ? await api.monitoring.createPingMonitor(payload)
-      : await api.monitoring.updatePingMonitor(modal.id, payload)
-    await load(); setSaving(false)
-    if (!res?.success) { toast.error(res?.error || 'Error'); return }
-    toast.success(t('ping.saved')); closeEdit()
   }
 
   // Kaydetmeden formdaki host/parametrelerle bir kez ping atar; ping atılabildi mi + koşul (erişilebilirlik) sağlandı mı.
   async function runTest() {
     if (!form.host.trim()) return
     setTesting(true); setTestResult(null)
-    const res = await api.monitoring.testPingMonitor({
-      host: form.host.trim(), ipVersion: form.ipVersion,
-      packetCount: Number(form.packetCount), timeoutMs: Number(form.timeoutMs),
-    })
-    setTestResult(res?.success ? res.data : { error: res?.error || t('ping.testError') })
-    setTesting(false)
+    try {
+      const res = await api.monitoring.testPingMonitor({
+        host: form.host.trim(), ipVersion: form.ipVersion,
+        packetCount: Number(form.packetCount), timeoutMs: Number(form.timeoutMs),
+      })
+      setTestResult(res?.success ? res.data : { error: res?.error || t('ping.testError') })
+    } finally {
+      setTesting(false)
+    }
   }
 
   /**
@@ -264,17 +271,20 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
     if (!ok) return
 
     setDeleting(m.id)
+    try {
 
-    const res = await api.monitoring.deletePingMonitor(m.id)
+      const res = await api.monitoring.deletePingMonitor(m.id)
 
-    setDeleting(null)
+      setDeleting(null)
 
-    if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
+      if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
 
-    toast.success(t('ping.deleted'))
+      toast.success(t('ping.deleted'))
 
-    await load()
-
+      await load()
+    } finally {
+      setDeleting(null)
+    }
   }
 
 

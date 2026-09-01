@@ -198,46 +198,53 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     if (!form.host.trim() || !form.port) { setSaveError(t('port.hostRequired')); return }
     if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
     setSaving(true); setSaveError(null)
-    const payload = {
-      name: (form.name || form.host).trim(), host: form.host.trim(), port: Number(form.port),
-      protocol: form.protocol?.trim() || 'TCP',
-      expect: form.expect?.trim() || null, sendData: form.sendData || null,
-      teamId: form.teamId === '' ? null : Number(form.teamId), groupName: form.groupName?.trim() || null,
-      // Bos = takim varsayilani -> takim adresi (zincirin kalani).
-      notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
-        ? null : Number(form.notificationGroupId),
-      tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, notifyWebhook: form.notifyWebhook, ipVersion: form.ipVersion,
-      slowResponseEnabled: form.slowResponseEnabled, slowThresholdMs: Number(form.slowThresholdMs),
-      intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
-      confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
-      recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
-      active: form.active,
-      // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
-      ...(changeNote.trim() ? { changeNote: changeNote.trim() } : {}),
+    try {
+      const payload = {
+        name: (form.name || form.host).trim(), host: form.host.trim(), port: Number(form.port),
+        protocol: form.protocol?.trim() || 'TCP',
+        expect: form.expect?.trim() || null, sendData: form.sendData || null,
+        teamId: form.teamId === '' ? null : Number(form.teamId), groupName: form.groupName?.trim() || null,
+        // Bos = takim varsayilani -> takim adresi (zincirin kalani).
+        notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
+          ? null : Number(form.notificationGroupId),
+        tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, notifyWebhook: form.notifyWebhook, ipVersion: form.ipVersion,
+        slowResponseEnabled: form.slowResponseEnabled, slowThresholdMs: Number(form.slowThresholdMs),
+        intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
+        confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
+        recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
+        active: form.active,
+        // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
+        ...(changeNote.trim() ? { changeNote: changeNote.trim() } : {}),
+      }
+      const res = modal === 'new'
+        ? await api.monitoring.createPortMonitor(payload)
+        : await api.monitoring.updatePortMonitor(modal.id, payload)
+      setSaving(false)
+      if (!res?.success) { setSaveError(res?.error || t('port.saveError')); return }
+      toast.success(t('port.saved'))
+      // Envanter bagi koptuysa kullaniciyi bilgilendir: duzenleme kalici, envanter domain'i
+      // icin AYRI bir izleme surecek (bkz. MonitoringController.detachIfIdentityChanged).
+      if (res.data?.detached_from_inventory) toast.info(t('mon.detachedFromInventory'), 8000)
+      await load(); closeEdit()
+    } finally {
+      setSaving(false)
     }
-    const res = modal === 'new'
-      ? await api.monitoring.createPortMonitor(payload)
-      : await api.monitoring.updatePortMonitor(modal.id, payload)
-    setSaving(false)
-    if (!res?.success) { setSaveError(res?.error || t('port.saveError')); return }
-    toast.success(t('port.saved'))
-    // Envanter bagi koptuysa kullaniciyi bilgilendir: duzenleme kalici, envanter domain'i
-    // icin AYRI bir izleme surecek (bkz. MonitoringController.detachIfIdentityChanged).
-    if (res.data?.detached_from_inventory) toast.info(t('mon.detachedFromInventory'), 8000)
-    await load(); closeEdit()
   }
 
   // Kaydetmeden formdaki ayarlarla bir kez kontrol eder: ne döndü (HTTP durum/banner/TLS) + alarm koşulu sağlandı mı.
   async function runTest() {
     if (!form.host.trim() || !form.port) { setSaveError(t('port.hostRequired')); return }
     setTesting(true); setTestResult(null); setSaveError(null)
-    const res = await api.monitoring.testPortMonitor({
-      host: form.host.trim(), port: Number(form.port), protocol: form.protocol,
-      expect: form.expect?.trim() || null, sendData: form.sendData || null, timeoutMs: Number(form.timeoutMs),
-      ipVersion: form.ipVersion,
-    })
-    setTestResult(res?.success ? res.data : { error: res?.error || t('port.testError') })
-    setTesting(false)
+    try {
+      const res = await api.monitoring.testPortMonitor({
+        host: form.host.trim(), port: Number(form.port), protocol: form.protocol,
+        expect: form.expect?.trim() || null, sendData: form.sendData || null, timeoutMs: Number(form.timeoutMs),
+        ipVersion: form.ipVersion,
+      })
+      setTestResult(res?.success ? res.data : { error: res?.error || t('port.testError') })
+    } finally {
+      setTesting(false)
+    }
   }
 
   /**
@@ -259,15 +266,19 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     })
     if (!ok) return
     setDeleting(m.id)
-    const res = await api.monitoring.deletePortMonitor(m.id)
-    setDeleting(null)
-    // HATA TOAST ile bildirilir: saveError YALNIZ duzenleme modalinin icinde ciziliyor,
-    // karttan silerken modal KAPALI oldugu icin 403/409 sessizce yutuluyordu — kullanici
-    // silindi saniyordu. DnsMonitorPage ikiziyle ayni desen.
-    if (!res?.success) { toast.error(res?.error || t('port.saveError')); return }
-    toast.success(t('port.deleted'))
-    await load()
-    if (modal) closeEdit()
+    try {
+      const res = await api.monitoring.deletePortMonitor(m.id)
+      setDeleting(null)
+      // HATA TOAST ile bildirilir: saveError YALNIZ duzenleme modalinin icinde ciziliyor,
+      // karttan silerken modal KAPALI oldugu icin 403/409 sessizce yutuluyordu — kullanici
+      // silindi saniyordu. DnsMonitorPage ikiziyle ayni desen.
+      if (!res?.success) { toast.error(res?.error || t('port.saveError')); return }
+      toast.success(t('port.deleted'))
+      await load()
+      if (modal) closeEdit()
+    } finally {
+      setDeleting(null)
+    }
   }
 
   async function checkNow(m) {

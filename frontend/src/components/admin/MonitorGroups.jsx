@@ -28,19 +28,22 @@ export default function MonitorGroups() {
 
   async function load() {
     setLoading(true)
-    const res = await api.monitoring.listGroups()   // admin → tüm takımlar (server-side scope)
-    setLoading(false)
-    if (res?.success) {
-      // Backend snake_case → normalize; camelCase fallback.
-      setGroups((res.data || []).map((g) => ({
-        id: g.id,
-        teamId: g.team_id ?? g.teamId ?? null,
-        teamName: g.team_name ?? g.teamName ?? null,
-        type: g.type,
-        name: g.name,
-        count: g.count ?? 0,
-      })))
-    } else toast.error(res?.error || t('settings.loadError'))
+    try {
+      const res = await api.monitoring.listGroups()   // admin → tüm takımlar (server-side scope)
+      if (res?.success) {
+        // Backend snake_case → normalize; camelCase fallback.
+        setGroups((res.data || []).map((g) => ({
+          id: g.id,
+          teamId: g.team_id ?? g.teamId ?? null,
+          teamName: g.team_name ?? g.teamName ?? null,
+          type: g.type,
+          name: g.name,
+          count: g.count ?? 0,
+        })))
+      } else toast.error(res?.error || t('settings.loadError'))
+    } finally {
+      setLoading(false)
+    }
   }
 
   const filtered = useMemo(() => {
@@ -59,10 +62,13 @@ export default function MonitorGroups() {
     if (!newName) { toast.error(t('grp.emptyNameError')); return }
     if (newName === g.name) { setEditing(null); return }
     setSaving(true)
-    const res = await api.monitoring.renameGroup(g.id, newName)
-    setSaving(false)
-    if (res?.success) { setEditing(null); toast.success(t('grp.renamed', res.data?.affected ?? 0)); load() }
-    else toast.error(res?.error || t('grp.renameError'))   // 409 çakışma mesajı backend'den gelir
+    try {
+      const res = await api.monitoring.renameGroup(g.id, newName)
+      if (res?.success) { setEditing(null); toast.success(t('grp.renamed', res.data?.affected ?? 0)); load() }
+      else toast.error(res?.error || t('grp.renameError'))   // 409 çakışma mesajı backend'den gelir
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (

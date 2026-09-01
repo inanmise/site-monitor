@@ -117,46 +117,58 @@ export default function CertInventoryReportSettings() {
 
   async function saveRecipients() {
     setSaving(true)
-    const res = await api.admin.saveCertInvReportSettings({ recipients, cc, cron })
-    setSaving(false)
-    if (res?.success) {
-      setStatus(res.data)
-      setCron(res.data.cron ?? cron)
-      setRule(parseCron(res.data.cron ?? cron))
-      setDirty(false)
-      toast.success(t('settings.saved'))
-    } else {
-      // Geçersiz cron backend'de reddedilir; mesaj kullanıcıya aynen gösterilir.
-      toast.error(res?.error || t('settings.saveError'))
+    try {
+      const res = await api.admin.saveCertInvReportSettings({ recipients, cc, cron })
+      if (res?.success) {
+        setStatus(res.data)
+        setCron(res.data.cron ?? cron)
+        setRule(parseCron(res.data.cron ?? cron))
+        setDirty(false)
+        toast.success(t('settings.saved'))
+      } else {
+        // Geçersiz cron backend'de reddedilir; mesaj kullanıcıya aynen gösterilir.
+        toast.error(res?.error || t('settings.saveError'))
+      }
+    } finally {
+      setSaving(false)
     }
   }
 
   async function preview() {
     setPreviewing(true)
-    const res = await api.admin.getCertInvReportPreview()
-    setPreviewing(false)
-    if (res?.success) setViewer(res.data.html)
-    else toast.error(res?.error || t('settings.loadError'))
+    try {
+      const res = await api.admin.getCertInvReportPreview()
+      if (res?.success) setViewer(res.data.html)
+      else toast.error(res?.error || t('settings.loadError'))
+    } finally {
+      setPreviewing(false)
+    }
   }
 
   async function runNow() {
     setRunning(true)
-    const res = await api.admin.runCertInvReport()
-    setRunning(false)
-    if (res?.success) {
-      setResult(res.data)
-      toast.success(t('cir.runDone', res.data.rows ?? 0, res.data.findings ?? 0))
-      load()
-      api.admin.getCertInvReportHistory(24).then(r => { if (r?.success) setHistory(r.data) })
-    } else toast.error(res?.error || t('cir.actionFailed'))
+    try {
+      const res = await api.admin.runCertInvReport()
+      if (res?.success) {
+        setResult(res.data)
+        toast.success(t('cir.runDone', res.data.rows ?? 0, res.data.findings ?? 0))
+        load()
+        api.admin.getCertInvReportHistory(24).then(r => { if (r?.success) setHistory(r.data) })
+      } else toast.error(res?.error || t('cir.actionFailed'))
+    } finally {
+      setRunning(false)
+    }
   }
 
   async function sendTest() {
     setSending(true)
-    const res = await api.admin.sendCertInvReportTest(testEmail.trim())
-    setSending(false)
-    if (res?.success) { setResult(res.data); toast.success(t('cir.testSent', testEmail.trim())) }
-    else toast.error(res?.error || t('cir.actionFailed'))
+    try {
+      const res = await api.admin.sendCertInvReportTest(testEmail.trim())
+      if (res?.success) { setResult(res.data); toast.success(t('cir.testSent', testEmail.trim())) }
+      else toast.error(res?.error || t('cir.actionFailed'))
+    } finally {
+      setSending(false)
+    }
   }
 
   if (!status) return <LoadingBlock label={t('settings.loading')} />

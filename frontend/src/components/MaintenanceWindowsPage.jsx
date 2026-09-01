@@ -69,9 +69,12 @@ export default function MaintenanceWindowsPage({ systemRole }) {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const res = await api.monitoring.maintenance.list()
-    if (res?.success) setRows(res.data ?? [])
-    setLoading(false)
+    try {
+      const res = await api.monitoring.maintenance.list()
+      if (res?.success) setRows(res.data ?? [])
+    } finally {
+      setLoading(false)
+    }
   }, [])
   useEffect(() => { load() }, [load])
 
@@ -124,29 +127,35 @@ export default function MaintenanceWindowsPage({ systemRole }) {
     if (form.recurrence === 'WEEKLY' && form.daysOfWeek.length === 0) { toast.error(t('mw.weekdayRequired')); return }
     if (form.recurrence === 'MONTHLY' && !(Number(form.dayOfMonth) >= 1 && Number(form.dayOfMonth) <= 31)) { toast.error(t('mw.dayOfMonthRequired')); return }
     setSaving(true)
-    const payload = {
-      name: form.name.trim(), description: form.description?.trim() || null, allMonitors: form.allMonitors,
-      targets: form.allMonitors ? [] : targetObjs(form.targets),
-      timezone: form.timezone, startAt: form.startAt, durationMinutes: Number(form.durationMinutes), recurrence: form.recurrence,
-      daysOfWeek: form.recurrence === 'WEEKLY' ? form.daysOfWeek.join(',') : null,
-      dayOfMonth: form.recurrence === 'MONTHLY' ? Number(form.dayOfMonth) : null,
+    try {
+      const payload = {
+        name: form.name.trim(), description: form.description?.trim() || null, allMonitors: form.allMonitors,
+        targets: form.allMonitors ? [] : targetObjs(form.targets),
+        timezone: form.timezone, startAt: form.startAt, durationMinutes: Number(form.durationMinutes), recurrence: form.recurrence,
+        daysOfWeek: form.recurrence === 'WEEKLY' ? form.daysOfWeek.join(',') : null,
+        dayOfMonth: form.recurrence === 'MONTHLY' ? Number(form.dayOfMonth) : null,
+      }
+      const res = modal === 'new' ? await api.monitoring.maintenance.create(payload) : await api.monitoring.maintenance.update(modal.id, payload)
+      if (!res?.success) { toast.error(res?.error || t('mw.saveError')); return }
+      toast.success(t('mw.saved')); close(); load()
+    } finally {
+      setSaving(false)
     }
-    const res = modal === 'new' ? await api.monitoring.maintenance.create(payload) : await api.monitoring.maintenance.update(modal.id, payload)
-    setSaving(false)
-    if (!res?.success) { toast.error(res?.error || t('mw.saveError')); return }
-    toast.success(t('mw.saved')); close(); load()
   }
 
   async function saveQuick() {
     if (!quickForm.allMonitors && quickForm.targets.length === 0) { toast.error(t('mw.targetsRequired')); return }
     setSaving(true)
-    const res = await api.monitoring.maintenance.quick({
-      name: quickForm.name?.trim() || null, allMonitors: quickForm.allMonitors,
-      targets: quickForm.allMonitors ? [] : targetObjs(quickForm.targets), minutes: Number(quickForm.minutes),
-    })
-    setSaving(false)
-    if (!res?.success) { toast.error(res?.error || t('mw.saveError')); return }
-    toast.success(t('mw.started')); close(); load()
+    try {
+      const res = await api.monitoring.maintenance.quick({
+        name: quickForm.name?.trim() || null, allMonitors: quickForm.allMonitors,
+        targets: quickForm.allMonitors ? [] : targetObjs(quickForm.targets), minutes: Number(quickForm.minutes),
+      })
+      if (!res?.success) { toast.error(res?.error || t('mw.saveError')); return }
+      toast.success(t('mw.started')); close(); load()
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function togglePause(w) {

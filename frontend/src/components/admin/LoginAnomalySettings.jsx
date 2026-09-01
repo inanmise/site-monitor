@@ -40,10 +40,13 @@ export default function LoginAnomalySettings() {
 
   async function load() {
     setLoading(true)
-    const res = await api.admin.getLoginAnomalySettings()
-    setLoading(false)
-    if (res?.success) setForm(res.data)
-    else toast.error(res?.error || t('settings.loadError'))
+    try {
+      const res = await api.admin.getLoginAnomalySettings()
+      if (res?.success) setForm(res.data)
+      else toast.error(res?.error || t('settings.loadError'))
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function loadIncidents() {
@@ -55,19 +58,25 @@ export default function LoginAnomalySettings() {
 
   async function save() {
     setSaving(true)
-    const res = await api.admin.saveLoginAnomalySettings(form)
-    setSaving(false)
-    if (res?.success) { setForm(res.data); toast.success(t('loginAnomaly.saved')) }
-    else toast.error(res?.error || res?.message || t('settings.saveError'))
+    try {
+      const res = await api.admin.saveLoginAnomalySettings(form)
+      if (res?.success) { setForm(res.data); toast.success(t('loginAnomaly.saved')) }
+      else toast.error(res?.error || res?.message || t('settings.saveError'))
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function sendTest() {
     if (!testEmail.trim()) { toast.error(t('loginAnomaly.testNeedEmail')); return }
     setTesting(true)
-    const res = await api.admin.testLoginAnomalyEmail(testEmail.trim())
-    setTesting(false)
-    if (res?.success && res.data?.sent) toast.success(t('loginAnomaly.testSent'))
-    else toast.error((res?.data?.status) || res?.error || t('loginAnomaly.testFailed'))
+    try {
+      const res = await api.admin.testLoginAnomalyEmail(testEmail.trim())
+      if (res?.success && res.data?.sent) toast.success(t('loginAnomaly.testSent'))
+      else toast.error((res?.data?.status) || res?.error || t('loginAnomaly.testFailed'))
+    } finally {
+      setTesting(false)
+    }
   }
 
   if (loading || !form) {

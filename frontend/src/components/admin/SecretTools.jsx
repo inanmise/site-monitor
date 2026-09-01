@@ -44,13 +44,16 @@ export default function SecretTools() {
     if (!k) return
     setBusy(true)
     try {
-      const res = await api.admin.decryptSecrets(k)
-      if (res?.success) { setRows(res.data || []); setReveal({}); setUsedKey(k) }
-      else toast.error(res?.error || t('settings.saveError'))
-    } catch {
-      toast.error(t('settings.saveError'))
+      try {
+        const res = await api.admin.decryptSecrets(k)
+        if (res?.success) { setRows(res.data || []); setReveal({}); setUsedKey(k) }
+        else toast.error(res?.error || t('settings.saveError'))
+      } catch {
+        toast.error(t('settings.saveError'))
+      }
+    } finally {
+      setBusy(false)
     }
-    setBusy(false)
   }
 
   return (

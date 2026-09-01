@@ -119,16 +119,19 @@ export default function Login({ onLogin, sessionExpired = false }) {
     if (!helpUser.trim() || !helpMsg.trim() || helpSending) return
     if (!EMAIL_RE.test(helpEmail.trim())) { setHelpErr(t('login.helpEmailInvalid')); setHelpErrDetail(''); return }
     setHelpSending(true); setHelpErr(''); setHelpErrDetail(''); setHelpErrShowDetail(false)
-    const r = await api.sendLoginHelp({
-      username: helpUser.trim(),
-      email: helpEmail.trim(),
-      errorText: helpErrorText.trim(),
-      message: helpMsg.trim(),
-      images: helpShots,
-    })
-    if (r?.success) { setHelpRef(r.reference || ''); setHelpSent(true) }
-    else { setHelpErr(helpReason(r)); setHelpErrDetail(helpDetail(r)) }
-    setHelpSending(false)
+    try {
+      const r = await api.sendLoginHelp({
+        username: helpUser.trim(),
+        email: helpEmail.trim(),
+        errorText: helpErrorText.trim(),
+        message: helpMsg.trim(),
+        images: helpShots,
+      })
+      if (r?.success) { setHelpRef(r.reference || ''); setHelpSent(true) }
+      else { setHelpErr(helpReason(r)); setHelpErrDetail(helpDetail(r)) }
+    } finally {
+      setHelpSending(false)
+    }
   }
 
   useEffect(() => {

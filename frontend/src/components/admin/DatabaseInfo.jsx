@@ -30,13 +30,16 @@ export default function DatabaseInfo() {
   async function load() {
     setLoading(true)
     try {
-      const res = await api.admin.getDatabaseInfo()
-      if (res?.success) setInfo(res.data || {})
-      else toast.error(res?.error || t('db.loadError'))
-    } catch {
-      toast.error(t('db.loadError'))
+      try {
+        const res = await api.admin.getDatabaseInfo()
+        if (res?.success) setInfo(res.data || {})
+        else toast.error(res?.error || t('db.loadError'))
+      } catch {
+        toast.error(t('db.loadError'))
+      }
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   useEffect(() => { load() }, [])

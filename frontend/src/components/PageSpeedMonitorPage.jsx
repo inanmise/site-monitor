@@ -309,23 +309,30 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
   async function runTest() {
     if (!form.url.trim()) return
     setTesting(true); setTestResult(null)
-    const res = await api.monitoring.testPageSpeed(payloadFromForm())
-    setTestResult(res?.success ? res.data : { error: res?.error || t('pspd.testError') })
-    setTesting(false)
+    try {
+      const res = await api.monitoring.testPageSpeed(payloadFromForm())
+      setTestResult(res?.success ? res.data : { error: res?.error || t('pspd.testError') })
+    } finally {
+      setTesting(false)
+    }
   }
 
   async function save() {
     if (!form.url.trim()) return
     if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
     setSaving(true)
-    const payload = payloadFromForm()
-    if (changeNote.trim()) payload.changeNote = changeNote.trim()
-    const res = modal === 'new'
-      ? await api.monitoring.createPageSpeedMonitor(payload)
-      : await api.monitoring.updatePageSpeedMonitor(modal.id, payload)
-    await load(); setSaving(false)
-    if (!res?.success) { toast.error(res?.error || 'Error'); return }
-    toast.success(t('pspd.saved')); closeEdit()
+    try {
+      const payload = payloadFromForm()
+      if (changeNote.trim()) payload.changeNote = changeNote.trim()
+      const res = modal === 'new'
+        ? await api.monitoring.createPageSpeedMonitor(payload)
+        : await api.monitoring.updatePageSpeedMonitor(modal.id, payload)
+      await load(); setSaving(false)
+      if (!res?.success) { toast.error(res?.error || 'Error'); return }
+      toast.success(t('pspd.saved')); closeEdit()
+    } finally {
+      setSaving(false)
+    }
   }
 
   /**
@@ -373,17 +380,20 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
     if (!ok) return
 
     setDeleting(m.id)
+    try {
 
-    const res = await api.monitoring.deletePageSpeedMonitor(m.id)
+      const res = await api.monitoring.deletePageSpeedMonitor(m.id)
 
-    setDeleting(null)
+      setDeleting(null)
 
-    if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
+      if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
 
-    toast.success(t('pspd.deleted'))
+      toast.success(t('pspd.deleted'))
 
-    await load()
-
+      await load()
+    } finally {
+      setDeleting(null)
+    }
   }
 
 

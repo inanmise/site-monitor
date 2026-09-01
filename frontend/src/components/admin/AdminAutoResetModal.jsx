@@ -23,20 +23,23 @@ export default function AdminAutoResetModal({ targetUser, onClose, onSuccess }) 
   async function submit() {
     if (!adminPwd) { setMsg(t('usr.pwdAdminConfirmRequired')); return }
     setSaving(true)
-    const res = await api.admin.autoResetPassword(targetUser.id, adminPwd)
-    setSaving(false)
-    if (res?.success) {
-      onSuccess?.(res.email_status)
-      onClose()
-    } else {
-      const err = res?.error || ''
-      if (/Invalid admin password|FORBIDDEN/i.test(err) || res?.status === 403) {
-        setMsg(t('usr.pwdWrongAdmin'))
-      } else if (/no email/i.test(err)) {
-        setMsg(t('usr.autoResetNoEmail'))
+    try {
+      const res = await api.admin.autoResetPassword(targetUser.id, adminPwd)
+      if (res?.success) {
+        onSuccess?.(res.email_status)
+        onClose()
       } else {
-        setMsg(err || 'Error')
+        const err = res?.error || ''
+        if (/Invalid admin password|FORBIDDEN/i.test(err) || res?.status === 403) {
+          setMsg(t('usr.pwdWrongAdmin'))
+        } else if (/no email/i.test(err)) {
+          setMsg(t('usr.autoResetNoEmail'))
+        } else {
+          setMsg(err || 'Error')
+        }
       }
+    } finally {
+      setSaving(false)
     }
   }
 

@@ -56,16 +56,19 @@ export default function LdapSettings() {
   // ── actions ────────────────────────────────────────────────────────────────
   async function save() {
     setSaving(true)
-    const dto = { ...form }
-    if (bindPw.trim()) dto.bind_password = bindPw
-    const res = await api.admin.saveLdapSettings(dto)
-    setSaving(false)
-    if (res?.success) {
-      toast.success(res.message || t('settings.saved'))
-      setBindPw('')
-      setForm({ ...res.data, role_mappings: res.data.role_mappings || [] })
-    } else {
-      toast.error(res?.error || t('settings.saveError'))
+    try {
+      const dto = { ...form }
+      if (bindPw.trim()) dto.bind_password = bindPw
+      const res = await api.admin.saveLdapSettings(dto)
+      if (res?.success) {
+        toast.success(res.message || t('settings.saved'))
+        setBindPw('')
+        setForm({ ...res.data, role_mappings: res.data.role_mappings || [] })
+      } else {
+        toast.error(res?.error || t('settings.saveError'))
+      }
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -73,21 +76,27 @@ export default function LdapSettings() {
   // yeşil dönerse ayar güvenle kapatılabilir (aksi halde tüm LDAP girişleri kırılırdı).
   async function test(verify = false) {
     setTesting(true)
-    setTestResult(null)
-    const res = await api.admin.testLdap(verify)
-    setTesting(false)
-    setTestResult(res)
-    if (res?.success) toast.success(res.message || t('ldap.testOk'))
-    else toast.error(res?.error || t('ldap.testFail'))
+    try {
+      setTestResult(null)
+      const res = await api.admin.testLdap(verify)
+      setTestResult(res)
+      if (res?.success) toast.success(res.message || t('ldap.testOk'))
+      else toast.error(res?.error || t('ldap.testFail'))
+    } finally {
+      setTesting(false)
+    }
   }
 
   async function runQuery() {
     if (!queryName.trim()) return
     setQuerying(true)
-    setQueryResult(null)
-    const res = await api.admin.queryLdapUser(queryName.trim(), queryAttr || null)
-    setQuerying(false)
-    setQueryResult(res)
+    try {
+      setQueryResult(null)
+      const res = await api.admin.queryLdapUser(queryName.trim(), queryAttr || null)
+      setQueryResult(res)
+    } finally {
+      setQuerying(false)
+    }
   }
 
   if (!form) {

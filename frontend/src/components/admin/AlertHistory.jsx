@@ -745,34 +745,37 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
 
   const load = useCallback(async () => {
     setLoading(true)
-    const params = {
-      resolved: tab === 'closed' ? 'true' : 'false',
-      page,
-      size: pageSize,
-    }
-    if (tab === 'closed') {
-      if (closedFrom) params.resolvedSince = closedFrom
-      if (closedTo)   params.resolvedUntil = closedTo
-    }
-    if (domain) params.domain = domain
-    if (typesParam) params.alertTypes = typesParam
-    if (typeFilter) params.alertType = typeFilter
-    if (searchTerm.trim()) params.q = searchTerm.trim()
-    if (levelFilter) params.level = levelFilter
-    if (teamFilter)  params.teamId = teamFilter
-    if (ackFilter)   params.acknowledged = ackFilter === 'ack' ? 'true' : 'false'
-    const res = await api.admin.getAlerts(params)
-    setLoading(false)
-    if (res?.success) {
-      setAlerts(res.data ?? [])
-      setTotal(res.total ?? 0)
-      setTypeCounts(res.type_counts ?? {})
-      setLevelCounts(res.level_counts ?? {})
-      setUnackedTotal(res.unacked_total ?? 0)
-      setStaleTotal(res.stale_total ?? 0)
-      setStaleHours(res.stale_hours ?? 24)
-    } else if (res != null) {
-      toast.error(res?.error || t('alh.loadError'))
+    try {
+      const params = {
+        resolved: tab === 'closed' ? 'true' : 'false',
+        page,
+        size: pageSize,
+      }
+      if (tab === 'closed') {
+        if (closedFrom) params.resolvedSince = closedFrom
+        if (closedTo)   params.resolvedUntil = closedTo
+      }
+      if (domain) params.domain = domain
+      if (typesParam) params.alertTypes = typesParam
+      if (typeFilter) params.alertType = typeFilter
+      if (searchTerm.trim()) params.q = searchTerm.trim()
+      if (levelFilter) params.level = levelFilter
+      if (teamFilter)  params.teamId = teamFilter
+      if (ackFilter)   params.acknowledged = ackFilter === 'ack' ? 'true' : 'false'
+      const res = await api.admin.getAlerts(params)
+      if (res?.success) {
+        setAlerts(res.data ?? [])
+        setTotal(res.total ?? 0)
+        setTypeCounts(res.type_counts ?? {})
+        setLevelCounts(res.level_counts ?? {})
+        setUnackedTotal(res.unacked_total ?? 0)
+        setStaleTotal(res.stale_total ?? 0)
+        setStaleHours(res.stale_hours ?? 24)
+      } else if (res != null) {
+        toast.error(res?.error || t('alh.loadError'))
+      }
+    } finally {
+      setLoading(false)
     }
   }, [tab, page, pageSize, closedFrom, closedTo, domain, typesParam, typeFilter,
       searchTerm, levelFilter, teamFilter, ackFilter, t, toast])
@@ -862,19 +865,22 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
   async function sendReNotify(excludeEmails, excludeUsernames = []) {
     if (!renotifyModal) return
     setRenotifySending(true)
-    const body = {}
-    if (excludeEmails.length) body.excludeEmails = excludeEmails
-    if (excludeUsernames.length) body.excludeUsernames = excludeUsernames
-    const res = await api.admin.reNotifyAlert(renotifyModal.alertId,
-      Object.keys(body).length ? body : undefined)
-    setRenotifySending(false)
-    if (res?.success) {
-      const count = res.data?.recipients_queued ?? res.data?.contacts_queued ?? 0
-      toast.success(t('alh.notifyQueued', count))
-      setRenotifyModal(null)
-      load()
-    } else {
-      toast.error(res?.error || 'Error')
+    try {
+      const body = {}
+      if (excludeEmails.length) body.excludeEmails = excludeEmails
+      if (excludeUsernames.length) body.excludeUsernames = excludeUsernames
+      const res = await api.admin.reNotifyAlert(renotifyModal.alertId,
+        Object.keys(body).length ? body : undefined)
+      if (res?.success) {
+        const count = res.data?.recipients_queued ?? res.data?.contacts_queued ?? 0
+        toast.success(t('alh.notifyQueued', count))
+        setRenotifyModal(null)
+        load()
+      } else {
+        toast.error(res?.error || 'Error')
+      }
+    } finally {
+      setRenotifySending(false)
     }
   }
 

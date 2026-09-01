@@ -111,21 +111,24 @@ export default function ResponseTimeChart({ monitorId, kind, metric, unit = 'ms'
   const load = useCallback(async () => {
     const seq = ++seqRef.current
     setLoading(true)
-    const fetcher = { ping: api.monitoring.getPingResponseSeries, keyword: api.monitoring.getKeywordResponseSeries,
-      port: api.monitoring.getPortResponseSeries, dns: api.monitoring.getDnsResponseSeries, http: api.monitoring.getHttpResponseSeries,
-      page: api.monitoring.getPageResponseSeries, scripted: api.monitoring.getScriptedResponseSeries,
-      pagespeed: api.monitoring.getPageSpeedSeries,
-      ssl: api.monitoring.getSslResponseSeries }[kind] ?? api.monitoring.getKeywordResponseSeries
-    const sel = PRESETS.find(p => p.key === preset)
-    // Saatlik pencereler gun cinsinden ifade edilemez: acik from/to gonderilir (ozel aralikla ayni yol).
-    const params = custom ? { from: custom.from, to: custom.to }
-      : sel?.hours ? { from: toIso(Date.now() - sel.hours * 3600_000), to: toIso(Date.now()) }
-      : { days: sel?.days ?? 30 }
-    // metric yalnız sayfa hızında dolu; diğer uçlarda undefined kalır ve istemci onu URL'e koymaz.
-    const res = await fetcher(monitorId, metric ? { ...params, metric } : params)
-    if (seq !== seqRef.current) return          // daha yeni bir istek var: bu yanıtı YOK SAY
-    setData(res?.success ? res.data : null)
-    setLoading(false)
+    try {
+      const fetcher = { ping: api.monitoring.getPingResponseSeries, keyword: api.monitoring.getKeywordResponseSeries,
+        port: api.monitoring.getPortResponseSeries, dns: api.monitoring.getDnsResponseSeries, http: api.monitoring.getHttpResponseSeries,
+        page: api.monitoring.getPageResponseSeries, scripted: api.monitoring.getScriptedResponseSeries,
+        pagespeed: api.monitoring.getPageSpeedSeries,
+        ssl: api.monitoring.getSslResponseSeries }[kind] ?? api.monitoring.getKeywordResponseSeries
+      const sel = PRESETS.find(p => p.key === preset)
+      // Saatlik pencereler gun cinsinden ifade edilemez: acik from/to gonderilir (ozel aralikla ayni yol).
+      const params = custom ? { from: custom.from, to: custom.to }
+        : sel?.hours ? { from: toIso(Date.now() - sel.hours * 3600_000), to: toIso(Date.now()) }
+        : { days: sel?.days ?? 30 }
+      // metric yalnız sayfa hızında dolu; diğer uçlarda undefined kalır ve istemci onu URL'e koymaz.
+      const res = await fetcher(monitorId, metric ? { ...params, metric } : params)
+      if (seq !== seqRef.current) return          // daha yeni bir istek var: bu yanıtı YOK SAY
+      setData(res?.success ? res.data : null)
+    } finally {
+      setLoading(false)
+    }
   }, [monitorId, kind, preset, custom, metric])
 
   useEffect(() => { load() }, [load])

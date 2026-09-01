@@ -46,33 +46,36 @@ export default function UserEditModal({ user, teams, onClose, onSaved, readOnly 
       return
     }
     setSaving(true)
-    const payload = {
-      username:     form.username.trim(),
-      display_name: form.display_name,
-      email:        form.email,
-      employee_id:  form.employee_id,
-      system_role:  form.system_role,
-      team_ids:     form.team_ids,
-      team_id:      form.team_ids[0] ?? null,
-      org_role:     form.org_role || null,
-      active:       form.active,
-      first_name:    form.first_name,
-      last_name:     form.last_name,
-      title:         form.title,
-      phone:         form.phone,
-      department:    form.department,
-      company_level: form.company_level,
-      mudurluk_name: form.mudurluk_name,
-      manager_sicil: form.manager_sicil,
-    }
-    const res = await api.admin.updateUser(user.id, payload)
-    setSaving(false)
-    if (res?.success) {
-      toast.success(t('usr.saved'))
-      onSaved?.(res.data ?? null)
-      onClose?.()
-    } else {
-      setMsg(res?.error || 'Error')
+    try {
+      const payload = {
+        username:     form.username.trim(),
+        display_name: form.display_name,
+        email:        form.email,
+        employee_id:  form.employee_id,
+        system_role:  form.system_role,
+        team_ids:     form.team_ids,
+        team_id:      form.team_ids[0] ?? null,
+        org_role:     form.org_role || null,
+        active:       form.active,
+        first_name:    form.first_name,
+        last_name:     form.last_name,
+        title:         form.title,
+        phone:         form.phone,
+        department:    form.department,
+        company_level: form.company_level,
+        mudurluk_name: form.mudurluk_name,
+        manager_sicil: form.manager_sicil,
+      }
+      const res = await api.admin.updateUser(user.id, payload)
+      if (res?.success) {
+        toast.success(t('usr.saved'))
+        onSaved?.(res.data ?? null)
+        onClose?.()
+      } else {
+        setMsg(res?.error || 'Error')
+      }
+    } finally {
+      setSaving(false)
     }
   }
 

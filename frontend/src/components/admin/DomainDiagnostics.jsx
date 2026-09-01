@@ -29,24 +29,30 @@ export default function DomainDiagnostics() {
     if (!d) return
     setLoading(true); setError(null); setResult(null)
     try {
-      const res = await api.admin.runDomainExpiryDiagnostics(d)
-      if (res?.success) setResult(res.data)
-      else { setError(res?.error || t('dexp.error')); if (res?.error) toast.error(res.error) }
-    } catch (e) {
-      setError(e?.message || t('dexp.error'))
+      try {
+        const res = await api.admin.runDomainExpiryDiagnostics(d)
+        if (res?.success) setResult(res.data)
+        else { setError(res?.error || t('dexp.error')); if (res?.error) toast.error(res.error) }
+      } catch (e) {
+        setError(e?.message || t('dexp.error'))
+      }
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   async function captureCa() {
     setCaLoading(true); setCa(null); setCopied(false)
     try {
-      const res = await api.admin.captureProxyCaChain()   // varsayılan host: data.iana.org
-      setCa(res?.success ? res.data : { ok: false, error: res?.error || t('dexp.caError') })
-    } catch (e) {
-      setCa({ ok: false, error: e?.message || t('dexp.caError') })
+      try {
+        const res = await api.admin.captureProxyCaChain()   // varsayılan host: data.iana.org
+        setCa(res?.success ? res.data : { ok: false, error: res?.error || t('dexp.caError') })
+      } catch (e) {
+        setCa({ ok: false, error: e?.message || t('dexp.caError') })
+      }
+    } finally {
+      setCaLoading(false)
     }
-    setCaLoading(false)
   }
 
   async function copyPem() {

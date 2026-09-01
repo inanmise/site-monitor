@@ -27,10 +27,13 @@ export default function StormSettings() {
 
   async function load() {
     setLoading(true)
-    const res = await api.monitoring.storm.getSettings()
-    setLoading(false)
-    if (res?.success) applyData(res.data)
-    else toast.error(res?.error || t('settings.loadError'))
+    try {
+      const res = await api.monitoring.storm.getSettings()
+      if (res?.success) applyData(res.data)
+      else toast.error(res?.error || t('settings.loadError'))
+    } finally {
+      setLoading(false)
+    }
   }
 
   function applyData(d) {
@@ -57,16 +60,19 @@ export default function StormSettings() {
     const err = validate()
     if (err) { toast.error(err); return }
     setSaving(true)
-    const res = await api.monitoring.storm.saveSettings({
-      enabled,
-      threshold_unit: unit,
-      threshold_value: Number(value),
-      window_minutes: Number(windowMin),
-      per_group: perGroup,
-    })
-    setSaving(false)
-    if (res?.success) { applyData(res.data); toast.success(t('storm.saved')) }
-    else toast.error(res?.error || res?.message || t('settings.saveError'))
+    try {
+      const res = await api.monitoring.storm.saveSettings({
+        enabled,
+        threshold_unit: unit,
+        threshold_value: Number(value),
+        window_minutes: Number(windowMin),
+        per_group: perGroup,
+      })
+      if (res?.success) { applyData(res.data); toast.success(t('storm.saved')) }
+      else toast.error(res?.error || res?.message || t('settings.saveError'))
+    } finally {
+      setSaving(false)
+    }
   }
 
   if (loading) {

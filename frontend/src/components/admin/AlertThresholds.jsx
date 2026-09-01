@@ -23,10 +23,13 @@ export default function AlertThresholds() {
 
   async function save() {
     setSaving(true)
-    const res = await api.admin.updateThreshold(editing.id, editing)
-    setSaving(false)
-    if (res?.success) { setEditing(null); toast.success(t('thr.saved')); load() }
-    else toast.error(res?.error || 'Error')
+    try {
+      const res = await api.admin.updateThreshold(editing.id, editing)
+      if (res?.success) { setEditing(null); toast.success(t('thr.saved')); load() }
+      else toast.error(res?.error || 'Error')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (

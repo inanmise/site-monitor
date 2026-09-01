@@ -376,21 +376,23 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     const changed = transferTeamId !== String(transferModal.team_id ?? '')
     if (!changed || !transferTeamId) { setTransferModal(null); return }
     setSaving(true)
-    let res
     try {
-      res = await api.admin.transferCertSy(transferModal.id, Number(transferTeamId))
-    } catch (e) {
+      let res
+      try {
+        res = await api.admin.transferCertSy(transferModal.id, Number(transferTeamId))
+      } catch (e) {
+        toast.error(e?.message || t('inv.transferError'))
+        return
+      }
+      if (res?.success) {
+        setTransferModal(null)
+        toast.success(t('inv.transferred'))
+        load()
+      } else {
+        toast.error(res?.error || t('inv.transferError'))
+      }
+    } finally {
       setSaving(false)
-      toast.error(e?.message || t('inv.transferError'))
-      return
-    }
-    setSaving(false)
-    if (res?.success) {
-      setTransferModal(null)
-      toast.success(t('inv.transferred'))
-      load()
-    } else {
-      toast.error(res?.error || t('inv.transferError'))
     }
   }
 

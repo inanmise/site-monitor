@@ -236,38 +236,45 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   async function runTest() {
     if (!form.url.trim()) return
     setTesting(true); setTestResult(null)
-    const res = await api.monitoring.testPage({ url: normalizeUrl(form.url), timeoutMs: Number(form.timeoutMs) })
-    setTestResult(res?.success ? res.data : { error: res?.error || t('page.testError') })
-    setTesting(false)
+    try {
+      const res = await api.monitoring.testPage({ url: normalizeUrl(form.url), timeoutMs: Number(form.timeoutMs) })
+      setTestResult(res?.success ? res.data : { error: res?.error || t('page.testError') })
+    } finally {
+      setTesting(false)
+    }
   }
 
   async function save() {
     if (!form.url.trim()) return
     if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
     setSaving(true)
-    const payload = {
-      name: (form.name || form.url).trim(), url: normalizeUrl(form.url),
-      groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId),
-      // Bos = takim varsayilani -> takim adresi (zincirin kalani).
-      notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
-        ? null : Number(form.notificationGroupId),
-      tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, notifyWebhook: form.notifyWebhook,
-      mode: form.mode, crawlDepth: Number(form.crawlDepth), crawlMaxPages: Number(form.crawlMaxPages),
-      excludePatterns: form.excludePatterns?.trim() || null, slowResourceMs: Number(form.slowResourceMs),
-      alertThirdParty: form.alertThirdParty, alertMixedContent: form.alertMixedContent, alertTimeout: form.alertTimeout, resourceConcurrency: Number(form.resourceConcurrency),
-      intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
-      confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
-      recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
-      active: form.active,
+    try {
+      const payload = {
+        name: (form.name || form.url).trim(), url: normalizeUrl(form.url),
+        groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId),
+        // Bos = takim varsayilani -> takim adresi (zincirin kalani).
+        notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
+          ? null : Number(form.notificationGroupId),
+        tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, notifyWebhook: form.notifyWebhook,
+        mode: form.mode, crawlDepth: Number(form.crawlDepth), crawlMaxPages: Number(form.crawlMaxPages),
+        excludePatterns: form.excludePatterns?.trim() || null, slowResourceMs: Number(form.slowResourceMs),
+        alertThirdParty: form.alertThirdParty, alertMixedContent: form.alertMixedContent, alertTimeout: form.alertTimeout, resourceConcurrency: Number(form.resourceConcurrency),
+        intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
+        confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
+        recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
+        active: form.active,
+      }
+      // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
+      if (changeNote.trim()) payload.changeNote = changeNote.trim()
+      const res = modal === 'new'
+        ? await api.monitoring.createPageMonitor(payload)
+        : await api.monitoring.updatePageMonitor(modal.id, payload)
+      await load(); setSaving(false)
+      if (!res?.success) { toast.error(res?.error || 'Error'); return }
+      toast.success(t('page.saved')); closeEdit()
+    } finally {
+      setSaving(false)
     }
-    // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
-    if (changeNote.trim()) payload.changeNote = changeNote.trim()
-    const res = modal === 'new'
-      ? await api.monitoring.createPageMonitor(payload)
-      : await api.monitoring.updatePageMonitor(modal.id, payload)
-    await load(); setSaving(false)
-    if (!res?.success) { toast.error(res?.error || 'Error'); return }
-    toast.success(t('page.saved')); closeEdit()
   }
 
   /**
@@ -315,17 +322,20 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
     if (!ok) return
 
     setDeleting(m.id)
+    try {
 
-    const res = await api.monitoring.deletePageMonitor(m.id)
+      const res = await api.monitoring.deletePageMonitor(m.id)
 
-    setDeleting(null)
+      setDeleting(null)
 
-    if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
+      if (!res?.success) { toast.error(res?.error || t('mon.deleteError')); return }
 
-    toast.success(t('page.deleted'))
+      toast.success(t('page.deleted'))
 
-    await load()
-
+      await load()
+    } finally {
+      setDeleting(null)
+    }
   }
 
 
