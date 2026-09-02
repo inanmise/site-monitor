@@ -1,6 +1,8 @@
 package com.sitemonitor.controller;
 
 import com.sitemonitor.service.AppSettingsService;
+import com.sitemonitor.service.AuditDetail;
+import com.sitemonitor.service.AuditDiff;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.PermissionService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -44,10 +46,21 @@ public class GeneralSettingsController {
     public ResponseEntity<Map<String, Object>> saveSettings(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         requireSettingsAccess(session, "settings.general", "edit");
+        // Eskiden yalnız anahtar SAYISI yazılıyordu ("3 ayar değişti") — hangi ayarın neyden neye
+        // geçtiği hiçbir yerde yoktu. Değerler save'DEN ÖNCE okunmalı: AppSettingsService.save
+        // void döner ve override önbelleğini anında tazeler.
+        @SuppressWarnings("unchecked")
+        Map<String, Object> values = body.get("values") instanceof Map<?, ?> m
+                ? (Map<String, Object>) m : Map.of();
+        Map<String, Object> before = new java.util.LinkedHashMap<>();
+        for (String k : values.keySet()) before.put(k, settingsService.getString(k, null));
+
         settingsService.save(body, actor(session));
+
+        // Hassas anahtarların değeri AuditDiff tarafından maskelenir (tek kara-liste).
         auditService.recordAction("GENERAL_SETTINGS_SAVE", session, request,
-                "SETTINGS", "general", "{\"keys\":" + (body.get("values") != null
-                        ? ((Map<?, ?>) body.get("values")).keySet().size() : 0) + "}");
+                "SETTINGS", "general", AuditDetail.of("keys", values.size()),
+                AuditDiff.diff(before, values));
         return ok(Map.of(
                 "data", settingsService.getCatalogForClient(),
                 "message", "Ayarlar kaydedildi (yeniden başlatma gerekmez)"));

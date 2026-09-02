@@ -890,13 +890,30 @@ public class WeeklyReportService {
         return img;
     }
 
-    public void deleteImage(Long imageId, Actor actor) {
+    /**
+     * Görseli siler ve <b>silinen görselin künyesini döner</b>.
+     *
+     * <p>Künye denetim içindir: eskiden uç {@code "{}"} yazıyordu, yani "bir görsel silindi"
+     * biliniyor ama HANGİ raporun hangi görseli olduğu hiçbir yerde kalmıyordu. Görsel verisi
+     * ({@code data}) bilerek dönmez — denetime yazılacak olan künye, içerik değil.
+     */
+    public Map<String, Object> deleteImage(Long imageId, Actor actor) {
         WeeklyReportImage img = imageRepo.findById(imageId)
                 .orElseThrow(() -> new NoSuchElementException("Image not found: " + imageId));
         WeeklyReport r = reportRepo.findById(img.getReportId())
                 .orElseThrow(() -> new NoSuchElementException("Report not found for image: " + imageId));
         requireCanModify(r, actor);
         imageRepo.delete(img);
+
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("image_id", img.getId());
+        meta.put("report_id", img.getReportId());
+        meta.put("team_id", img.getTeamId());
+        meta.put("week_label", r.getWeekLabel());
+        meta.put("caption", img.getCaption());
+        meta.put("content_type", img.getContentType());
+        meta.put("size_bytes", img.getSizeBytes());
+        return meta;
     }
 
     /** Raporu görselleriyle birlikte siler. Silme yetkisi = düzenleme yetkisi:

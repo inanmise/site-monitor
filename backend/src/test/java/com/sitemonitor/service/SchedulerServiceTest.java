@@ -1035,6 +1035,43 @@ class SchedulerServiceTest {
     }
 
     @Test
+    @DisplayName("forceReleaseLock() BIRAKILAN kilidin durumunu döner (denetim 'kim tutuyordu'yu yazabilsin)")
+    void forceReleaseLock_returnsLockStateBeforeRelease() {
+        // Kilit satırı silindikten sonra "kimin koşumu takılmıştı" sorusu cevapsız kalıyordu;
+        // denetim satırı da bu yüzden detaysız yazılıyordu.
+        when(jdbcTemplate.queryForList(contains("SELECT * FROM scheduler_lock"), any(Object[].class)))
+                .thenReturn(java.util.List.of(java.util.Map.of(
+                        "name", "cert-check", "instance_id", "pod-7", "acquired_at", "2026-09-02T10:00:00")));
+
+        Map<String, Object> before = scheduler.forceReleaseLock();
+
+        assertThat(before).containsEntry("held", true)
+                .containsEntry("instance_id", "pod-7")
+                .containsKey("acquired_at")
+                .containsKey("run_id_before");
+    }
+
+    @Test
+    @DisplayName("forceReleaseLock(): kilit YOKKEN de serbest bırakma çalışır, held=false döner")
+    void forceReleaseLock_noLockHeld() {
+        when(jdbcTemplate.queryForList(contains("SELECT * FROM scheduler_lock"), any(Object[].class)))
+                .thenReturn(java.util.List.of());
+
+        assertThat(scheduler.forceReleaseLock()).containsEntry("held", false);
+        verify(jdbcTemplate).update(contains("DELETE FROM scheduler_lock"), any(Object[].class));
+    }
+
+    @Test
+    @DisplayName("forceReleaseLock(): kilit OKUNAMASA bile serbest bırakma yapılır (tanı işlemin önüne geçmez)")
+    void forceReleaseLock_readFailureStillReleases() {
+        when(jdbcTemplate.queryForList(contains("SELECT * FROM scheduler_lock"), any(Object[].class)))
+                .thenThrow(new RuntimeException("db down"));
+
+        assertThat(scheduler.forceReleaseLock()).containsEntry("held", "unknown");
+        verify(jdbcTemplate).update(contains("DELETE FROM scheduler_lock"), any(Object[].class));
+    }
+
+    @Test
     @DisplayName("runDomainExpiryRefresh: kilit alınır (degrade-true) → DomainExpiryRefreshService.refreshAll çağrılır")
     void runDomainExpiryRefresh_callsRefresh() {
         when(domainExpiryRefreshService.refreshAll()).thenReturn(3);

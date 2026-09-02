@@ -17,6 +17,17 @@ import { useEffect, useRef } from 'react'
 /** Sekme değişince App.handleTabChange'in temizlediği sayfa-durumu paramları (tek doğruluk kaynağı). */
 export const PAGE_STATE_PARAMS = ['group', 'team', 'q', 'stat', 'sort', 'page', 'ps', 'monitor', 'range', 'mtab', 'domain', 'incident', 'sec']
 
+/**
+ * Sekme değişince temizlenecek param AİLELERİ (önek eşleşmesi).
+ *
+ * <p>Bazı ekranların durumu sabit bir ad listesiyle sayılamaz: Denetim Kaydı 10 filtresini
+ * `a_actor`, `a_eventType`, `a_since` … diye önekli paramlarda taşıyor. Bunlar
+ * {@link PAGE_STATE_PARAMS}'ta olmadığı için sekme değiştirildiğinde URL'de ASILI kalıyordu —
+ * kullanıcı başka bir sekmeye geçip geri döndüğünde kendisinin kurmadığı bir filtreyle
+ * karşılaşıyor, boş listeyi "kayıt yok" sanıyordu.
+ */
+export const PAGE_STATE_PREFIXES = ['a_']
+
 /** Mount'ta URL'den string param okur (useState initializer'ında kullanılır — flicker yok). */
 export function readUrlParam(key, fallback = null) {
   try {

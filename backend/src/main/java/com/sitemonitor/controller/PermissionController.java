@@ -2,6 +2,8 @@ package com.sitemonitor.controller;
 
 import com.sitemonitor.model.PermissionGrant;
 import com.sitemonitor.repository.PermissionGrantRepository;
+import com.sitemonitor.service.AuditDetail;
+import com.sitemonitor.service.AuditDiff;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.PermissionCatalog;
 import com.sitemonitor.service.PermissionService;
@@ -69,7 +71,7 @@ public class PermissionController {
         PermissionGrant g = permissionService.upsertGrant(role, resourceKey, action, allowed, updatedBy);
         auditService.recordAction("PERMISSION_UPDATE", session, request,
             "PERMISSION", role + "/" + resourceKey + "/" + action,
-            "{\"allowed\":" + allowed + "}");
+            AuditDetail.of("role", role, "resource", resourceKey, "action", action, "allowed", allowed));
         return ResponseEntity.ok(Map.of("success", true, "data", g));
     }
 
@@ -77,10 +79,35 @@ public class PermissionController {
     public ResponseEntity<Map<String, Object>> resetToDefaults(
             HttpSession session, HttpServletRequest request) {
         requireAdmin(session);
+
+        // Bu uç BÜTÜN izin matrisini varsayılana döndürür — sistemdeki en geniş kapsamlı tek
+        // yetki işlemi. Denetimde detay `null`du: "izinler sıfırlandı" yazıyor ama ÖNCEKİ matris
+        // hiçbir yerde kalmıyordu, dolayısıyla "hangi yetki kaybedildi/kazanıldı" sorusu
+        // cevapsızdı. Artık öncesi/sonrası düzleştirilmiş halde diff'leniyor.
+        Map<String, Object> before = flattenGrants();
         permissionService.seedDefaults();
-        auditService.recordAction("PERMISSION_RESET", session, request,
-            "PERMISSION", "ALL", null);
+        Map<String, Object> after = flattenGrants();
+
+        String changes = AuditDiff.diff(before, after);
+        // Çok büyük matriste diff satırı şişirir; sayılar yine de yazılır ve kırpma GÖRÜNÜR olur.
+        boolean truncated = changes != null && changes.length() > MAX_RESET_DIFF_CHARS;
+        auditService.recordAction("PERMISSION_RESET", session, request, "PERMISSION", "ALL",
+            AuditDetail.of("grants_before", before.size(), "grants_after", after.size(),
+                    "truncated", truncated),
+            truncated ? null : changes);
         return ResponseEntity.ok(Map.of("success", true, "message", "Permissions reset to defaults"));
+    }
+
+    /** Diff satırının tavanı — aşarsa `changes` yazılmaz ama kırpıldığı detayda AÇIKÇA belirtilir. */
+    private static final int MAX_RESET_DIFF_CHARS = 20_000;
+
+    /** İzin matrisi → düz harita ({@code rol/kaynak/eylem → izinli mi}); diff bunun üzerinde çalışır. */
+    private Map<String, Object> flattenGrants() {
+        Map<String, Object> flat = new java.util.LinkedHashMap<>();
+        for (PermissionGrant g : repo.findAll()) {
+            flat.put(g.getRole() + "/" + g.getResourceKey() + "/" + g.getAction(), g.getAllowed());
+        }
+        return flat;
     }
 
     private void requireAdmin(HttpSession session) {

@@ -1,5 +1,7 @@
 package com.sitemonitor.controller;
 
+import com.sitemonitor.service.AuditDetail;
+import com.sitemonitor.service.SecretMask;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.PermissionService;
 import com.sitemonitor.service.SqlPlaygroundService;
@@ -66,15 +68,44 @@ public class SqlPlaygroundController {
         String actor = (String) session.getAttribute("username");
         Map<String, Object> result = service.execute(sql, actor != null ? actor : "anonymous");
 
-        String detail = String.format(
-            "{\"ok\":%s,\"rows\":%d,\"ms\":%d,\"sqlLen\":%d}",
-            result.get("ok"), result.get("rowCount"),
-            result.get("durationMs"), sql == null ? 0 : sql.length());
-        auditService.recordAction("SQL_EXECUTE", session, request, "QUERY", null, detail);
+        // resource_id NULL'du: bu satırlar "kaynak geçmişi" sorgusuna HİÇ düşmüyordu, yani
+        // "bu sorgu kaç kez, kim tarafından koşturuldu" sorusu cevaplanamıyordu. Normalize
+        // edilmiş sorgunun kararlı parmak izi kimlik olur.
+        String fingerprint = sqlFingerprint(sql);
+        String detail = AuditDetail.of(
+            "ok", result.get("ok"),
+            "rows", result.get("rowCount"),
+            "ms", result.get("durationMs"),
+            "sql_len", sql == null ? 0 : sql.length(),
+            // Alıntı, "bir admin sorgu koşturdu" ile "bir admin app_users'a sorgu koşturdu"
+            // arasındaki farktır; gövde SecretMask'ten geçer.
+            "excerpt", SecretMask.maskUrlQuery(excerpt(sql)));
+        auditService.recordAction("SQL_EXECUTE", session, request, "QUERY", fingerprint, detail);
 
         Map<String, Object> response = new LinkedHashMap<>(result);
         response.put("success", true);
         return ResponseEntity.ok(response);
+    }
+
+    /** Sorgunun kararlı kimliği: boşluk/satır sonu normalize edilir, SHA-256'nın ilk 16 hanesi. */
+    private static String sqlFingerprint(String sql) {
+        String norm = (sql == null ? "" : sql).trim().replaceAll("\\s+", " ").toLowerCase(java.util.Locale.ROOT);
+        try {
+            byte[] d = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(norm.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < 8; i++) sb.append(String.format("%02x", d[i]));
+            return sb.toString();
+        } catch (Exception e) {
+            return "unknown";
+        }
+    }
+
+    /** Denetimde saklanan sorgu alıntısı — tam metin DEĞİL (gövde kişisel veri içerebilir). */
+    private static String excerpt(String sql) {
+        if (sql == null) return null;
+        String one = sql.trim().replaceAll("\\s+", " ");
+        return one.length() <= 200 ? one : one.substring(0, 200) + "…";
     }
 
     @GetMapping("/history")

@@ -10,7 +10,15 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
 import { ProgressBar, LoadingBlock } from '../ui/Progress.jsx'
 
-const EVENT_TYPES = [
+/**
+ * Sunucu kataloğu gelmezse kullanılacak YEDEK liste.
+ *
+ * <p>Bu liste eskiden tek kaynaktı ve sürüklenmişti: 162 türün yalnız 32'sini tanıyordu —
+ * bütün `MAINTENANCE_*`, `SQL_EXECUTE`, `MONITOR_TRIGGER` ve 12 `WEEKLY_REPORT_*` türü
+ * filtrede hiç yoktu, yani o olaylar arayüzden ARANAMIYORDU. Artık `/audit/event-types`
+ * kanonik kaynak; bu liste yalnız uç düşerse filtrenin tamamen boş kalmaması içindir.
+ */
+const EVENT_TYPES_FALLBACK = [
   'LOGIN', 'LOGIN_FAILED', 'LOGOUT',
   'DOMAIN_ADD', 'DOMAIN_DELETE', 'DOMAIN_EDIT',
   'TEAM_CREATE', 'TEAM_UPDATE', 'TEAM_DELETE',
@@ -25,6 +33,22 @@ const EVENT_TYPES = [
 
 const OUTCOMES = ['SUCCESS', 'FAILURE', 'BLOCKED']
 
+/**
+ * Sonuç etiketleri. Anahtarlar DÜZ string olarak `t(...)`'e geçer (şablon literali değil) —
+ * `i18n-used-keys` kapısı ancak böyle görebiliyor; kart etiketi hatası tam da bu yüzden kaçmıştı.
+ *
+ * <p>`event_type` / `resource_type` / `actor_role` bilerek ham bırakıldı: onların sözlüğü
+ * sunucudaki olay kataloğuyla birlikte doğacak (tek doğruluk kaynağı orada), burada ikinci bir
+ * kopya kurmak sonradan uzlaştırılması gereken bir borç olurdu.
+ */
+function outcomeLabels(t) {
+  return {
+    SUCCESS: t('audit.outcome.success'),
+    FAILURE: t('audit.outcome.failure'),
+    BLOCKED: t('audit.outcome.blocked'),
+  }
+}
+
 // Hazır görünümler (preset views) — bir tıkla sık denetim senaryoları.
 const PRESETS = [
   { key: 'security',  filter: { outcome: 'BLOCKED', eventType: '' } },
@@ -32,14 +56,6 @@ const PRESETS = [
   { key: 'failed',    filter: { eventType: 'LOGIN_FAILED', outcome: '' } },
   { key: 'config',    filter: { eventType: 'THRESHOLD_CREATE,THRESHOLD_UPDATE,CONTACT_CREATE,CONTACT_UPDATE,CONTACT_DELETE,GENERAL_SETTINGS_SAVE,SMTP_SETTINGS_SAVE,STORM_SETTINGS_SAVE', outcome: '' } },
 ]
-
-const ANOMALY_COLORS = {
-  OFF_HOURS:    '#f59e0b',
-  UNUSUAL_IP:   '#8b5cf6',
-  GEO_VELOCITY: '#ef4444',
-  BRUTE_FORCE:  '#dc2626',
-  RATE_LIMITED: '#64748b',
-}
 
 function isoMinus(seconds) {
   return new Date(Date.now() - seconds * 1000).toISOString().slice(0, 19)
@@ -99,25 +115,44 @@ function DistBar({ title, items }) {
   )
 }
 
+/**
+ * İstatistik kartları. `labelKey` AÇIKÇA yazılır — üretilen anahtar (`audit.${card.key}`) DEĞİL.
+ *
+ * <p>Neden: `key` alanları sunucunun snake_case istatistik adlarıydı (`total_24h`), sözlükte ise
+ * camelCase karşılıkları var (`audit.total24h`). Şablon literaliyle üretilen anahtar hiçbir
+ * sözlükte bulunmadığı için `useT` anahtarın KENDİSİNİ döndürüyor ve altı kartın etiketi ekranda
+ * ham `audit.total_24h` olarak yazıyordu — hem TR hem EN'de. `i18n-used-keys` kapısı şablon
+ * literallerini taramadığı için de kaçmıştı. Düz string, kapının yeniden görebilmesini sağlar.
+ */
 const CARD_DEFS = [
-  { key: 'total_24h',        statKey: 'total_24h',         warn: false, filter: () => ({ since: isoMinus(86400),       anomalyOnly: false, eventType: '' }) },
-  { key: 'anomalies_24h',    statKey: 'anomalies_24h',     warn: true,  filter: () => ({ since: isoMinus(86400),       anomalyOnly: true,  eventType: '' }) },
-  { key: 'failed_logins_24h',statKey: 'failed_logins_24h', warn: true,  filter: () => ({ since: isoMinus(86400),       anomalyOnly: false, eventType: 'LOGIN_FAILED' }) },
-  { key: 'total_7d',         statKey: 'total_7d',          warn: false, filter: () => ({ since: isoMinus(7*86400),     anomalyOnly: false, eventType: '' }) },
-  { key: 'anomalies_7d',     statKey: 'anomalies_7d',      warn: true,  filter: () => ({ since: isoMinus(7*86400),     anomalyOnly: true,  eventType: '' }) },
-  { key: 'failed_logins_7d', statKey: 'failed_logins_7d',  warn: true,  filter: () => ({ since: isoMinus(7*86400),     anomalyOnly: false, eventType: 'LOGIN_FAILED' }) },
+  { key: 'total_24h',        labelKey: 'audit.total24h',      statKey: 'total_24h',         warn: false, filter: () => ({ since: isoMinus(86400),       anomalyOnly: false, eventType: '' }) },
+  { key: 'anomalies_24h',    labelKey: 'audit.anomalies24h',  statKey: 'anomalies_24h',     warn: true,  filter: () => ({ since: isoMinus(86400),       anomalyOnly: true,  eventType: '' }) },
+  { key: 'failed_logins_24h',labelKey: 'audit.failLogins24h', statKey: 'failed_logins_24h', warn: true,  filter: () => ({ since: isoMinus(86400),       anomalyOnly: false, eventType: 'LOGIN_FAILED' }) },
+  { key: 'total_7d',         labelKey: 'audit.total7d',       statKey: 'total_7d',          warn: false, filter: () => ({ since: isoMinus(7*86400),     anomalyOnly: false, eventType: '' }) },
+  { key: 'anomalies_7d',     labelKey: 'audit.anomalies7d',   statKey: 'anomalies_7d',      warn: true,  filter: () => ({ since: isoMinus(7*86400),     anomalyOnly: true,  eventType: '' }) },
+  { key: 'failed_logins_7d', labelKey: 'audit.failLogins7d',  statKey: 'failed_logins_7d',  warn: true,  filter: () => ({ since: isoMinus(7*86400),     anomalyOnly: false, eventType: 'LOGIN_FAILED' }) },
 ]
 
-function AnomalyChips({ flags }) {
+/**
+ * Anomali çipleri. Renk satır-içi hex DEĞİL sınıf üzerinden gelir (`an-<bayrak>`): satır-içi stil
+ * `cssTokens` kapısına görünmüyordu ve koyu temada hiç uyarlanmıyordu. Etiket de artık ham
+ * `OFF HOURS` değil — `dev.flag.*` çevirileri sözlükte YILLARDIR vardı, kullanılmıyordu.
+ */
+function AnomalyChips({ flags, t }) {
   if (!flags) return null
   return (
     <span className="audit-anomalies">
-      {flags.split(',').map(f => (
-        <span key={f} className="audit-anomaly-chip"
-          style={{ background: ANOMALY_COLORS[f] || '#64748b' }}>
-          {f.replace(/_/g, ' ')}
-        </span>
-      ))}
+      {flags.split(',').filter(Boolean).map(f => {
+        const flag = f.trim()
+        // useT bilinmeyen anahtarda ANAHTARIN KENDİSİNİ döndürür; sunucu ileride yeni bir bayrak
+        // eklerse ekranda "dev.flag.XYZ" yazmasın diye okunur biçime düşülür.
+        const label = t(`dev.flag.${flag}`)
+        return (
+          <span key={flag} className={`audit-anomaly-chip an-${flag.toLowerCase()}`} title={flag}>
+            {label === `dev.flag.${flag}` ? flag.replace(/_/g, ' ') : label}
+          </span>
+        )
+      })}
     </span>
   )
 }
@@ -139,14 +174,43 @@ function StatCard({ label, value, warn, active, onClick }) {
 const EMPTY_FILTERS = { actor: '', eventType: '', outcome: '', since: '', until: '', anomalyOnly: false,
   resourceType: '', resourceId: '', ip: '', q: '' }
 
-function parseDiff(changes) {
-  if (!changes) return null
+function tryJson(s) {
+  if (!s) return null
   try {
-    const obj = JSON.parse(changes)
-    const entries = Object.entries(obj)
-    if (entries.length === 0) return null
-    return entries
+    const v = JSON.parse(s)
+    return v && typeof v === 'object' ? v : null
   } catch { return null }
+}
+
+/**
+ * Bir denetim satırının anlatılabilir parçalarını ayırır.
+ *
+ * <p><b>`detail` ASLA diff ayrıştırıcısına verilmez.</b> Eski kod `parseDiff(row.changes ||
+ * row.detail)` diyordu: `changes` yoksa `detail` yapısal diff sanılıyor, düz metin bir ayrıntıda
+ * `JSON.parse` patlıyor ve `null` dönüyordu. Sonuç: yazılan ayrıntı ekranda HİÇ görünmüyordu —
+ * ne diff olarak, ne metin olarak. Bu, denetim kaydının varlık sebebini sessizce boşa çıkarıyordu.
+ *
+ * @returns {{changes: Array|null, detailObj: Object|null, detailText: string|null}}
+ *   `changes` = [alan, {from,to}] çiftleri (yalnız gerçek diff) · `detailObj` = JSON ayrıntı ·
+ *   `detailText` = ayrıştırılamayan ham metin (artık gösterilir)
+ */
+function parseDetail(row) {
+  const changesObj = tryJson(row?.changes)
+  const changes = changesObj ? Object.entries(changesObj) : null
+  const detailObj = tryJson(row?.detail)
+  const raw = row?.detail
+  return {
+    changes: changes && changes.length ? changes : null,
+    detailObj: detailObj && Object.keys(detailObj).length ? detailObj : null,
+    detailText: detailObj ? null : (raw && String(raw).trim() ? String(raw) : null),
+  }
+}
+
+/** Diff/ayrıntı hücresi: nesne ve diziler `[object Object]` yerine okunur JSON olarak yazılır. */
+function fmtDiffValue(v) {
+  if (v === null || v === undefined || v === '') return '—'
+  if (typeof v === 'object') return JSON.stringify(v)
+  return String(v)
 }
 
 // ── URL senkronizasyonu: filtreler `a_` önekli query paramlarında yaşar (paylaşılabilir/derin-link) ──
@@ -173,10 +237,23 @@ function writeUrlFilters(f) {
 }
 
 // ── Kaydedilebilir görünümler (localStorage) ──
-const SAVED_VIEWS_KEY = 'auditSavedViews'
+const SAVED_VIEWS_KEY = 'sm.audit.savedViews'
+/** Önek konvansiyonundan önce kullanılan ad — okunur, taşınır, sonra silinir (bir kerelik göç). */
+const SAVED_VIEWS_KEY_LEGACY = 'auditSavedViews'
+
 function loadSavedViews() {
-  try { const v = JSON.parse(localStorage.getItem(SAVED_VIEWS_KEY)); return Array.isArray(v) ? v : [] }
-  catch { return [] }
+  try {
+    const cur = JSON.parse(localStorage.getItem(SAVED_VIEWS_KEY))
+    if (Array.isArray(cur)) return cur
+    // Göç: kullanıcı kaydettiği görünümleri anahtar yeniden adlandırıldı diye kaybetmemeli.
+    const old = JSON.parse(localStorage.getItem(SAVED_VIEWS_KEY_LEGACY))
+    if (Array.isArray(old) && old.length) {
+      localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(old))
+      localStorage.removeItem(SAVED_VIEWS_KEY_LEGACY)
+      return old
+    }
+    return []
+  } catch { return [] }   // kota/gizli mod/bozuk JSON — görünümsüz devam
 }
 function persistSavedViews(views) {
   try { localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(views)) } catch { /* kota/gizli mod — sessiz geç */ }
@@ -210,6 +287,8 @@ function TimeDensityChart({ data, title }) {
 
 export default function AuditLogViewer() {
   const t = useT()
+  const outcomeText = outcomeLabels(t)
+  const [eventCatalog, setEventCatalog] = useState(null)   // [{type, category, count}] | null
   const [stats, setStats]         = useState(null)
   const [rows, setRows]           = useState([])
   const [total, setTotal]         = useState(0)
@@ -302,6 +381,29 @@ export default function AuditLogViewer() {
 
   useEffect(() => { loadStats(); loadLogs(readUrlInt('page', 1) - 1) }, [])
 
+  // Olay türü kataloğu — filtre listesinin kaynağı. Hata sessiz YUTULUR ama sonucu görünür:
+  // katalog gelmezse yedek listeye düşülür, filtre çalışmaya devam eder.
+  useEffect(() => {
+    let alive = true
+    api.admin.getAuditEventTypes?.()
+      .then(r => { if (alive && r?.success && Array.isArray(r.data)) setEventCatalog(r.data) })
+      .catch(() => { /* yedek liste devrede */ })
+    return () => { alive = false }
+  }, [])
+
+  /**
+   * Filtre seçenekleri: katalog varsa kategori BAŞLIKLARIYLA gruplanır (162 düz seçenek
+   * kullanılamaz), hiç kaydı olmayan türler sayıyla işaretlenir ki kullanıcı baştan boş
+   * döneceğini bildiği bir filtreyi uygulamasın.
+   */
+  const eventTypeOptions = eventCatalog
+    ? eventCatalog.map(e => ({
+        value: e.type,
+        label: e.count ? `${e.type} (${e.count})` : e.type,
+        group: e.category,
+      }))
+    : EVENT_TYPES_FALLBACK.map(et => ({ value: et, label: et }))
+
   // Canlı tazeleme: açıkken 15sn'de bir mevcut sayfayı + özeti yeniler (sekme gizliyken duraklar).
   useVisibleInterval(() => { loadLogs(page, filters); loadStats() }, autoRefresh ? 15000 : 0, false)
 
@@ -362,7 +464,7 @@ export default function AuditLogViewer() {
           {CARD_DEFS.map(card => (
             <StatCard
               key={card.key}
-              label={t(`audit.${card.key}`)}
+              label={t(card.labelKey)}
               value={stats[card.statKey]}
               warn={card.warn}
               active={activeCard === card.key}
@@ -475,7 +577,7 @@ export default function AuditLogViewer() {
           placeholder={t('audit.allEvents')}
           options={[
             { value: '', label: t('audit.allEvents') },
-            ...EVENT_TYPES.map(et => ({ value: et, label: et })),
+            ...eventTypeOptions,
           ]}
         />
         <SearchableSelect
@@ -484,7 +586,7 @@ export default function AuditLogViewer() {
           placeholder={t('audit.allOutcomes')}
           options={[
             { value: '', label: t('audit.allOutcomes') },
-            ...OUTCOMES.map(o => ({ value: o, label: o })),
+            ...OUTCOMES.map(o => ({ value: o, label: outcomeText[o] || o })),
           ]}
         />
         <input
@@ -534,7 +636,7 @@ export default function AuditLogViewer() {
               <tr><td colSpan={10} className="audit-empty">{t('audit.empty')}</td></tr>
             )}
             {rows.map(row => {
-              const diff = parseDiff(row.changes || row.detail)
+              const { changes: diff, detailObj, detailText } = parseDetail(row)
               const isExpanded = expandedId === row.id
               return [
                 <tr key={row.id} className={row.anomaly_flags ? 'audit-row-anomaly' : ''}>
@@ -576,12 +678,13 @@ export default function AuditLogViewer() {
                     ) : (row.resource_type ? <span className="audit-sub">{row.resource_type}</span> : '—')}
                   </td>
                   <td>
-                    <span className={`audit-outcome-badge ${row.outcome?.toLowerCase()}`}>
-                      {row.outcome || '—'}
+                    <span className={`audit-outcome-badge ${row.outcome?.toLowerCase()}`}
+                      title={row.outcome || ''}>
+                      {outcomeText[row.outcome] || row.outcome || '—'}
                     </span>
                     {row.failure_reason && <div className="audit-sub">{row.failure_reason}</div>}
                   </td>
-                  <td><AnomalyChips flags={row.anomaly_flags} /></td>
+                  <td><AnomalyChips flags={row.anomaly_flags} t={t} /></td>
                   <td>
                     <button
                       className={`audit-detail-toggle${isExpanded ? ' active' : ''}`}
@@ -612,13 +715,35 @@ export default function AuditLogViewer() {
                               {diff.map(([field, change]) => (
                                 <tr key={field}>
                                   <td className="audit-diff-field">{field}</td>
-                                  <td className="audit-diff-from">{String(change.from ?? '—')}</td>
-                                  <td className="audit-diff-to">{String(change.to ?? '—')}</td>
+                                  <td className="audit-diff-from">{fmtDiffValue(change?.from)}</td>
+                                  <td className="audit-diff-to">{fmtDiffValue(change?.to)}</td>
                                 </tr>
                               ))}
                             </tbody>
                           </table>
                         )}
+
+                        {/* Ayrıntı (JSON) — bugüne kadar yalnız diff aranıyordu, JSON ayrıntı
+                            hiçbir yerde gösterilmiyordu. */}
+                        {detailObj && (
+                          <table className="audit-diff-table">
+                            <thead>
+                              <tr><th>{t('audit.detailField')}</th><th colSpan={2}>{t('audit.detailValue')}</th></tr>
+                            </thead>
+                            <tbody>
+                              {Object.entries(detailObj).map(([field, value]) => (
+                                <tr key={field}>
+                                  <td className="audit-diff-field">{field}</td>
+                                  <td className="audit-diff-to" colSpan={2}>{fmtDiffValue(value)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+
+                        {/* Düz metin ayrıntı — JSON'a çevrilemeyen eski kayıtlar. Bugüne kadar
+                            SESSİZCE düşüyordu; artık olduğu gibi gösterilir. */}
+                        {detailText && <pre className="audit-detail-text">{detailText}</pre>}
 
                         {detailExtra[row.id]?.correlated?.length > 1 && (
                           <div className="audit-related">
@@ -682,7 +807,7 @@ export default function AuditLogViewer() {
             ) : (
               <ol className="audit-timeline-list">
                 {timeline.rows.map(e => {
-                  const d = parseDiff(e.changes || e.detail)
+                  const d = parseDetail(e).changes
                   return (
                     <li key={e.id} className="audit-timeline-item">
                       <span className={`audit-timeline-dot ${eventClass(e.event_type)}`} />

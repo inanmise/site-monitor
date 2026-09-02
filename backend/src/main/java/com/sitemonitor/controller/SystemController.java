@@ -130,8 +130,11 @@ public class SystemController {
     public ResponseEntity<Map<String, Object>> forceReleaseLock(HttpSession session) {
         requireAdmin(session);   // sistem-geneli yıkıcı işlem → admin-only (defense-in-depth)
         permissionService.require(session, "system_health.scheduler_lock", "execute"); // dedike + sensitive (matriste görünür)
-        schedulerService.forceReleaseLock();
-        auditService.recordAction("SCHEDULER_LOCK_RELEASE", session, "SCHEDULER", "lock", null, null);
+        // Kilidi KIMIN tuttugu, birakildiktan sonra hicbir yerde kalmiyordu — oysa bu ucun
+        // varlik sebebi "takilmis bir kosum" ve o kosumun sahibi tanının kendisi.
+        var lockBefore = schedulerService.forceReleaseLock();
+        auditService.recordAction("SCHEDULER_LOCK_RELEASE", session, "SCHEDULER", "lock",
+                com.sitemonitor.service.AuditDetail.ofMap(lockBefore), null);
         return ok(Map.of("message", "Scheduler lock released"));
     }
 
@@ -194,7 +197,10 @@ public class SystemController {
         requireAdmin(session);
         permissionService.require(session, "system_health.actions", "execute");
         var result = weeklyAvailabilityReportService.sendWeeklyReports(true);
-        auditService.recordAction("WEEKLY_AVAILABILITY_RUN", session, "REPORT", "weekly-availability", null, null);
+        // Sonuc yazilir: "rapor kosuldu" tek basina, kac takima gitti / gonderim tuttu mu
+        // sorularini cevaplamiyordu.
+        auditService.recordAction("WEEKLY_AVAILABILITY_RUN", session, "REPORT", "weekly-availability",
+                com.sitemonitor.service.AuditDetail.of("result", result, "trigger", "manual"), null);
         return ok(Map.of("data", result));
     }
 

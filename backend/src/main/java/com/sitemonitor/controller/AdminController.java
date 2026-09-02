@@ -4,6 +4,7 @@ import com.sitemonitor.model.*;
 import com.sitemonitor.repository.*;
 import com.sitemonitor.service.AlertActionNote;
 import com.sitemonitor.service.AuditDiff;
+import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.ClientIpResolver;
 import com.sitemonitor.service.ConnectionDiagnosticsService;
@@ -559,8 +560,11 @@ public class AdminController {
         String source = String.valueOf(data.get("source"));
         boolean ok = !"FAILED".equals(source) && data.get("expiry_date") != null;
 
+        // Tani SONUCU yaziliyor: ayni degerler zaten diagnosticHistoryService'e gidiyor,
+        // denetimde "bir tani kosuldu" demek tek basina hicbir soruyu cevaplamiyordu.
         auditService.recordAction("DIAGNOSTICS_DOMAIN_EXPIRY", session, request,
-                "DOMAIN", domain, "{}");
+                "DOMAIN", domain, AuditDetail.of("source", source, "ok", ok,
+                        "expiry_date", data.get("expiry_date"), "registrar", data.get("registrar")));
         diagnosticHistoryService.record(domain, null, "DOMAIN_EXPIRY",
                 actor(session), userIdFromSession(session), teamId(session), clientIp(request),
                 ok, "DOMAIN_EXPIRY: " + source, data);
@@ -850,8 +854,15 @@ public class AdminController {
             requireAdmin(session);
         }
         requirePerm(session, "inventory.crud", "edit");
+        // Silmeden ONCE oku: bu uc bugune kadar KOR siliyordu — hangi durumdaki kayit
+        // gitti (gecerli miydi, ne zaman doluyordu) hicbir yerde kalmiyordu.
+        String checkBefore = latestCheckRepo.findById(domain)
+                .map(c -> AuditDiff.snapshotJson(AuditDiff.snapshot(c,
+                        "status", "notAfter", "issuer", "daysRemaining")))
+                .orElse(null);
         latestCheckRepo.deleteById(domain);
-        auditService.recordAction("DOMAIN_DELETE_CHECK", session, request, "CERTIFICATE", domain, null);
+        auditService.recordAction("DOMAIN_DELETE_CHECK", session, request, "CERTIFICATE", domain,
+                checkBefore != null ? checkBefore : AuditDetail.of("existed", false));
         return ok(Map.of("message", "Deleted"));
     }
 
@@ -1517,8 +1528,19 @@ public class AdminController {
         if (body != null && body.get("excludeUsernames") instanceof List<?> raw) {
             for (Object o : raw) if (o != null && !o.toString().isBlank()) excludeUsers.add(o.toString());
         }
-        return ok(Map.of("data", escalationService.reNotify(id, excludes, excludeUsers),
-                "message", "Notification triggered"));
+        Object result = escalationService.reNotify(id, excludes, excludeUsers);
+
+        // Toplu hâli (ALERT_BULK_RENOTIFY) yıllardır denetleniyordu, tekil hâli hiç: aynı yıkıcı
+        // olmayan ama DIŞARIYA e-posta/webhook gönderen işlem, tek tıkla iz bırakmadan yapılabiliyordu.
+        // Hariç tutulanlar SAYIYLA değil LİSTEYLE yazılır: "neden X'e bildirim gitmedi?" sorusunun
+        // tek cevabı, bir insanın onay kutusunda onu listeden çıkarmış olmasıdır — denetlenmesi
+        // gereken karar tam olarak budur.
+        auditService.recordAction("ALERT_RENOTIFY", session, "ALERT_EVENT", String.valueOf(id),
+                AuditDetail.of("excluded_emails", excludes,
+                        "excluded_usernames", excludeUsers,
+                        "excluded_count", excludes.size() + excludeUsers.size()), null);
+
+        return ok(Map.of("data", result, "message", "Notification triggered"));
     }
 
     /** Toplu alarm işlemi (Alarm Geçmişi çoklu seçim): acknowledge | resolve | re-notify.
@@ -1675,6 +1697,13 @@ public class AdminController {
             @PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         requireTeamScopedAdmin(session, id);
         requirePerm(session, "teams.update", "edit");
+        // ONCEKI durum servis cagrisindan ONCE, ENTITY uzerinden alinir. Eskiden
+        // `AuditDiff.diff(null, body)` yaziliyordu: (a) `from` her zaman null oluyordu,
+        // (b) entity yerine HAM ISTEK GOVDESI diff'leniyordu — alan adlari snake_case
+        // oldugu icin entity alanlariyla eslesmiyor, gonderilmeyen alanlar hic gorunmuyordu.
+        Map<String, Object> teamBefore = teamRepo.findById(id)
+                .map(t -> AuditDiff.snapshot(t, TEAM_AUDIT_FIELDS))
+                .orElseGet(java.util.LinkedHashMap::new);
         Team team = userService.updateTeam(id,
                 (String) body.get("name"),
                 (String) body.get("email"),
@@ -1683,7 +1712,9 @@ public class AdminController {
                 toLong(body.get("leader_id")),
                 bool(body.get("weekly_reminder_enabled")),
                 bool(body.get("weekly_availability_enabled")));
-        auditService.recordAction("TEAM_UPDATE", session, "TEAM", id.toString(), team.getName(), AuditDiff.diff(null, body));
+        auditService.recordAction("TEAM_UPDATE", session, "TEAM", id.toString(),
+                AuditDetail.of("name", team.getName()),
+                AuditDiff.diff(teamBefore, AuditDiff.snapshot(team, TEAM_AUDIT_FIELDS)));
         return ok(Map.of("data", team));
     }
 
@@ -1701,11 +1732,15 @@ public class AdminController {
         requirePerm(session, "teams.weekly_notifications", "edit");
         if (!isAdmin(session) && !isTeamMember(session, id))
             throw new SecurityException("Bu takımın haftalık e-posta ayarlarını değiştiremezsiniz");
+        Map<String, Object> wnBefore = teamRepo.findById(id)
+                .map(t -> AuditDiff.snapshot(t, TEAM_AUDIT_FIELDS))
+                .orElseGet(java.util.LinkedHashMap::new);
         Team team = userService.updateTeamWeeklyNotifications(id,
                 bool(body.get("weekly_reminder_enabled")),
                 bool(body.get("weekly_availability_enabled")));
-        auditService.recordAction("TEAM_WEEKLY_NOTIFICATIONS", session, "TEAM", id.toString(), team.getName(),
-                AuditDiff.diff(null, body));
+        auditService.recordAction("TEAM_WEEKLY_NOTIFICATIONS", session, "TEAM", id.toString(),
+                AuditDetail.of("name", team.getName()),
+                AuditDiff.diff(wnBefore, AuditDiff.snapshot(team, TEAM_AUDIT_FIELDS)));
         return ok(Map.of("data", team));
     }
 
@@ -1765,13 +1800,25 @@ public class AdminController {
                         || (u.getTeamIds() != null && u.getTeamIds().contains(id))).toList()));
     }
 
+    /** Takim denetiminde izlenen alanlar — silme anlik goruntusu ve guncelleme diff'i AYNI listeyi kullanir
+     *  ki "silinen takimda ne vardi" ile "takimda ne degisti" karsilastirilabilir kalsin. */
+    private static final String[] TEAM_AUDIT_FIELDS = {
+            "name", "email", "description", "active", "leaderId",
+            "weeklyReminderEnabled", "weeklyAvailabilityEnabled" };
+
     @DeleteMapping("/teams/{id}")
     public ResponseEntity<Map<String, Object>> deleteTeam(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
         requireAdmin(session);
         requirePerm(session, "teams.lifecycle", "execute");
+        // Silmeden ONCE: takim gittikten sonra adi/lideri/uye sayisi hicbir yerde kalmiyordu.
+        Map<String, Object> before = teamRepo.findById(id)
+                .map(t -> AuditDiff.snapshot(t, TEAM_AUDIT_FIELDS))
+                .orElseGet(java.util.LinkedHashMap::new);
+        before.put("member_count", userRepo.findByTeamIdOrderByUsernameAsc(id).size());
         userService.deleteTeam(id);
-        auditService.recordAction("TEAM_DELETE", session, request, "TEAM", id.toString(), null);
+        auditService.recordAction("TEAM_DELETE", session, request, "TEAM", id.toString(),
+                AuditDiff.snapshotJson(before));
         return ok(Map.of("message", "Team deleted"));
     }
 
@@ -1966,8 +2013,13 @@ public class AdminController {
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
         requirePerm(session, "users.actions", "execute");
+        // Kilit kalkinca kaybolan gercek: NE KADAR kilitliydi, kac denemeden sonra, kalici miydi.
+        String detail = AuditDetail.of("username", target.getUsername(),
+                "lockout_until_before", target.getLockoutUntil(),
+                "failed_blocks_before", target.getFailedBlockCount(),
+                "permanent_lock_before", target.getPermanentLock());
         userService.unlockUser(id);
-        auditService.recordAction("USER_UNLOCK", session, request, "USER", id.toString(), null);
+        auditService.recordAction("USER_UNLOCK", session, request, "USER", id.toString(), detail);
         return ok(Map.of("message", "User unlocked"));
     }
 
@@ -1979,8 +2031,11 @@ public class AdminController {
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
         requirePerm(session, "users.crud", "edit");
+        // Kilit kalkinca rol AD yonetimine doner; kaybolan gercek SABITLENMIS roldur.
+        String detail = AuditDetail.of("username", target.getUsername(),
+                "role_before", target.getSystemRole());
         userService.unlockRole(id);
-        auditService.recordAction("USER_ROLE_UNLOCK", session, request, "USER", id.toString(), null);
+        auditService.recordAction("USER_ROLE_UNLOCK", session, request, "USER", id.toString(), detail);
         return ok(Map.of("message", "User role unlocked"));
     }
 
@@ -1992,8 +2047,10 @@ public class AdminController {
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
         requirePerm(session, "users.crud", "edit");
+        String detail = AuditDetail.of("username", target.getUsername(),
+                "org_role_before", target.getOrgRole());
         userService.unlockOrgRole(id);
-        auditService.recordAction("USER_ORG_ROLE_UNLOCK", session, request, "USER", id.toString(), null);
+        auditService.recordAction("USER_ORG_ROLE_UNLOCK", session, request, "USER", id.toString(), detail);
         return ok(Map.of("message", "User org role unlocked"));
     }
 
@@ -2009,8 +2066,11 @@ public class AdminController {
         requireTeamScopedAdmin(session, target.getTeamId());
         requirePerm(session, "users.crud", "edit");
         guardLastActiveAdmin(target, false);
+        // Silmede yok olan durum yazilir: kayit gittikten sonra kimse arayip bulamaz.
+        String detail = AuditDiff.snapshotJson(AuditDiff.snapshot(target,
+                "username", "displayName", "email", "teamId", "systemRole", "orgRole", "active", "authSource"));
         userService.deleteUser(id);
-        auditService.recordAction("USER_DELETE", session, request, "USER", id.toString(), null);
+        auditService.recordAction("USER_DELETE", session, request, "USER", id.toString(), detail);
         return ok(Map.of("message", "User deleted"));
     }
 

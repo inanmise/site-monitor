@@ -756,6 +756,10 @@ export const api = {
     },
     getAuditStats: () => request('/admin/audit/stats'),
     getAuditIntegrity: () => request('/admin/audit/integrity'),
+    // Olay türü kataloğu (tür + kategori + son 90 günün sayısı). Filtre listesi buradan gelir;
+    // elle tutulan liste 162 türün yalnız 32'sini tanıyacak kadar sürüklenmişti.
+    getAuditEventTypes: () => request('/admin/audit/event-types'),
+    getAuditEntry: (id) => request(`/admin/audit/${id}`),
     getAuditResourceHistory: (type, id, limit = 100) =>
       request(`/admin/audit/resource/${encodeURIComponent(type)}/${encodeURIComponent(id)}?limit=${limit}`),
     getAuditActorHistory: (actorId, limit = 100) => request(`/admin/audit/actor/${actorId}?limit=${limit}`),

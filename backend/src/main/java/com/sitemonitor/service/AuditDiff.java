@@ -9,12 +9,42 @@ import java.util.Set;
  * Denetim before/after diff üretici + hassas-alan maskeleyici. Çıktı: {@code {"alan":{"from":x,"to":y}}} JSON.
  * Yalnız DEĞİŞEN alanlar yazılır; fark yoksa {@code null}. Parola/token/secret/apiKey içeren anahtarların
  * from/to değerleri ASLA düz metin taşımaz ({@code ***} maskelenir) — kurcalanamazlık + gizlilik.
+ *
+ * <p><b>Değer sertleştirmesi (2026-09).</b> Anahtar adına bakan maskeleme TEK BAŞINA yetmiyordu; üç
+ * boşluk vardı ve üçü de ayar uçlarına diff açıldığı anda gerçek bir sızıntıya/şişmeye dönüşürdü:
+ * <ul>
+ *   <li><b>Adı masum, değeri kimlik bilgisi.</b> {@code site.monitor.userpush.webhook-url} içinde
+ *       {@code url} geçiyor, kara listede {@code url} yok → webhook adresi (yol parçasında token
+ *       taşır) düz metin yazılırdı. Artık değer GÖVDESİ de temizleniyor ({@code //user:pass@},
+ *       {@code ?token=…}).</li>
+ *   <li><b>İkili içerik.</b> {@code logo-data} yüzlerce KB base64 — {@code changes} sütununa akıp
+ *       satırı da, ekranı da boğardı. Artık {@code {"bytes":n}} olarak daralıyor.</li>
+ *   <li><b>Uzun değer.</b> Tavan {@link #MAX_VALUE_LEN}; aşan değer görünür biçimde kırpılır
+ *       (sessiz kesme, denetimde "değer buydu" yanılgısı üretir).</li>
+ * </ul>
+ * Sertleştirme {@link #diff} ve {@link #snapshotJson}'ın İÇİNE konuldu (ayrı bir {@code diffMasked}
+ * adı yerine): 20 mevcut çağrı yerinin hepsi tek satır değişiklik olmadan korunsun, ve "hangisini
+ * çağırmalıyım" sorusu hiç doğmasın. Hash yalnız SAKLANAN metinden hesaplandığı için eski satırlar
+ * etkilenmez, zincir kırılmaz.
  */
 public final class AuditDiff {
 
     private AuditDiff() {}
 
     public static final String MASK = "***";
+
+    /** Tek bir değerin denetim çıktısındaki tavanı; aşan değer görünür biçimde kırpılır. */
+    public static final int MAX_VALUE_LEN = 512;
+
+    /** Kırpılmamış hâlin baş kısmı — kuyruk atılırken okunabilir bir bağlam kalsın. */
+    private static final int TRUNCATED_HEAD = 200;
+
+    /** Bir koleksiyon değerinde yazılacak en fazla öğe; fazlası tek bir "+N daha" öğesiyle özetlenir. */
+    static final int MAX_LIST_ITEMS = 20;
+
+    /** Değeri ikili/gömülü varlık olan anahtarlar — içerik değil BOYUT yazılır. */
+    private static final java.util.regex.Pattern BINARY_KEY = java.util.regex.Pattern.compile(
+            "(?i)(^|[._-])(logo|icon|favicon|image|avatar)([._-]?data)?$|[._-]data$");
 
     /** İki durum haritasını karşılaştırır; yalnız değişen alanları JSON diff olarak döner. Fark yoksa {@code null}. */
     public static String diff(Map<String, Object> before, Map<String, Object> after) {
@@ -29,13 +59,12 @@ public final class AuditDiff {
         for (String k : keys) {
             Object from = b.get(k), to = a.get(k);
             if (Objects.equals(norm(from), norm(to))) continue;   // değişmemiş → atla
-            boolean sensitive = isSensitive(k);
             if (!first) sb.append(",");
             first = false;
             sb.append(jsonStr(k)).append(":{\"from\":")
-              .append(sensitive ? jsonStr(MASK) : jsonVal(from))
+              .append(safeVal(k, from))
               .append(",\"to\":")
-              .append(sensitive ? jsonStr(MASK) : jsonVal(to))
+              .append(safeVal(k, to))
               .append("}");
         }
         sb.append("}");
@@ -88,7 +117,7 @@ public final class AuditDiff {
             if (!first) sb.append(",");
             first = false;
             sb.append(jsonStr(e.getKey())).append(":")
-              .append(isSensitive(e.getKey()) ? jsonStr(MASK) : jsonVal(e.getValue()));
+              .append(safeVal(e.getKey(), e.getValue()));
         }
         return sb.append("}").toString();
     }
@@ -100,13 +129,86 @@ public final class AuditDiff {
 
     private static String norm(Object o) { return o == null ? null : String.valueOf(o); }
 
-    private static String jsonVal(Object o) {
+    /**
+     * Bir değeri denetime yazılabilir JSON parçasına çevirir — sınıf başındaki üç sertleştirme
+     * kuralı burada uygulanır. {@link AuditDetail} de aynı yolu kullanır: "hangi değer nasıl
+     * yazılır" kararının İKİ kopyası olmaz.
+     *
+     * <p>Sıra önemlidir: önce anahtar-adı maskesi (en güçlü kural), sonra ikili daraltma (uzunluk
+     * kırpma base64'ü yine de yazardı), sonra gövde temizleme, en sonda uzunluk tavanı.
+     */
+    static String safeVal(String key, Object value) {
+        if (isSensitive(key)) return jsonStr(MASK);
+        if (value == null) return "null";
+        if (value instanceof Number || value instanceof Boolean) return value.toString();
+
+        if (value instanceof java.util.Map<?, ?> m) return mapVal(m);
+        if (value instanceof java.util.Collection<?> c) return listVal(key, c);
+        if (value.getClass().isArray()) return listVal(key, java.util.Arrays.asList((Object[]) value));
+
+        String s = String.valueOf(value);
+        if (isBinary(key, s)) return "{\"bytes\":" + s.length() + "}";
+        s = scrubCredentials(s);
+        if (s.length() > MAX_VALUE_LEN) {
+            s = s.substring(0, TRUNCATED_HEAD) + "…(+" + (s.length() - TRUNCATED_HEAD) + ")";
+        }
+        return jsonStr(s);
+    }
+
+    /** Anahtar ikili varlık mı, ya da değer bir data-URI mi (ad bilgi vermese de içerik ele veriyor). */
+    private static boolean isBinary(String key, String value) {
+        return (key != null && BINARY_KEY.matcher(key).find()) || value.startsWith("data:");
+    }
+
+    /**
+     * Değer GÖVDESİNDEKİ kimlik bilgilerini temizler. Yalnız URL/query görünümlü metinlere dokunur:
+     * {@code SecretMask.maskJdbcUrl} boş girdide {@code "(ayarsız)"} döndürdüğü için her metne
+     * uygulanamaz — sıradan bir boş alan denetimde "(ayarsız)" diye görünürdü.
+     */
+    private static String scrubCredentials(String s) {
+        if (s == null || s.isBlank()) return s;
+        String out = s;
+        if (out.contains("://")) out = SecretMask.maskJdbcUrl(out);
+        if (out.indexOf('?') >= 0 || out.indexOf('&') >= 0) out = SecretMask.maskUrlQuery(out);
+        return out;
+    }
+
+    /** Koleksiyon → JSON dizi; {@link #MAX_LIST_ITEMS} üstü tek bir "+N daha" öğesiyle GÖRÜNÜR biçimde özetlenir. */
+    private static String listVal(String key, java.util.Collection<?> c) {
+        StringBuilder sb = new StringBuilder("[");
+        int i = 0;
+        for (Object o : c) {
+            if (i == MAX_LIST_ITEMS) {
+                sb.append(i > 0 ? "," : "").append(jsonStr("+" + (c.size() - MAX_LIST_ITEMS) + " daha"));
+                break;
+            }
+            if (i > 0) sb.append(",");
+            sb.append(safeVal(key, o));
+            i++;
+        }
+        return sb.append("]").toString();
+    }
+
+    /** İç içe harita → JSON nesnesi (anahtar başına maskeleme yine geçerli). */
+    private static String mapVal(java.util.Map<?, ?> m) {
+        StringBuilder sb = new StringBuilder("{");
+        boolean first = true;
+        for (Map.Entry<?, ?> e : m.entrySet()) {
+            if (!first) sb.append(",");
+            first = false;
+            String k = String.valueOf(e.getKey());
+            sb.append(jsonStr(k)).append(":").append(safeVal(k, e.getValue()));
+        }
+        return sb.append("}").toString();
+    }
+
+    static String jsonVal(Object o) {
         if (o == null) return "null";
         if (o instanceof Number || o instanceof Boolean) return o.toString();
         return jsonStr(String.valueOf(o));
     }
 
-    private static String jsonStr(String s) {
+    static String jsonStr(String s) {
         StringBuilder b = new StringBuilder("\"");
         for (int i = 0; i < s.length(); i++) {
             char c = s.charAt(i);

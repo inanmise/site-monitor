@@ -186,6 +186,13 @@ public class CertificateController {
         Integer timeout = null;
         if (body.get("timeoutSeconds") instanceof Number tn) timeout = tn.intValue();
 
+        // Denetim el sikismasindan ONCE: bu uc keyfi host:port'a canli TLS baglantisi actirir
+        // (javadoc'un kendisi bunu "oturum yetmemeli" diye isaretliyor). Baglanti timeout'a
+        // dusse de "kim neye baktirdi" sorusu cevaplanabilmeli.
+        auditService.recordAction("MONITOR_TEST", session, "CERTIFICATE", "test",
+                com.sitemonitor.service.AuditDetail.of("domain", domain, "port", port,
+                        "use_proxy", useProxy, "tls_mode", tlsMode), null);
+
         Map<String, Object> r = new LinkedHashMap<>(checkerService.check(domain, port, useProxy, tlsMode, timeout));
         // Testin NE ILE kostugu yanitta durur: kullanici "hangi porta baktin" diye sormasin.
         r.put("port", port);
@@ -241,7 +248,10 @@ public class CertificateController {
         requireAdmin(session);
         permissionService.require(session, "scheduler.run", "execute");
         schedulerService.triggerManualCheck();   // raw Thread yerine havuz (F4, CPU denetimi)
-        auditService.recordAction("SCHEDULER_RUN", session, "SCHEDULER", "certificate-sweep", null, null);
+        // triggerManualCheck() void doner; UYDURMA sayi yazmak yerine kapsam ve tetigin ELLE
+        // oldugu yazilir — "zamanlanmis mi, insan mi tetikledi" denetimdeki asil sorudur.
+        auditService.recordAction("SCHEDULER_RUN", session, "SCHEDULER", "certificate-sweep",
+                com.sitemonitor.service.AuditDetail.of("scope", "certificate-sweep", "trigger", "manual"), null);
         return ok(Map.of("success", true, "message", "Check started", "timestamp", now()));
     }
 
@@ -418,7 +428,8 @@ public class CertificateController {
             log.debug("Uygulama katmanı kontrolleri atlandı ({}): {}", domain, e.toString());
         }
         certService.evictAllCaches();
-        auditService.recordAction("CERT_HEALTH_REFRESH", session, "CERTIFICATE", domain, null, null);
+        auditService.recordAction("CERT_HEALTH_REFRESH", session, "CERTIFICATE", domain,
+                com.sitemonitor.service.AuditDetail.of("domain", domain, "caches_evicted", true), null);
 
         return certificateHealth(domain, session, request);
     }

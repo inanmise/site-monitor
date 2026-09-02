@@ -3,6 +3,7 @@ package com.sitemonitor.controller;
 import com.sitemonitor.model.MaintenanceWindow;
 import com.sitemonitor.repository.MaintenanceWindowRepository;
 import com.sitemonitor.service.AuditDiff;
+import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.MaintenanceService;
 import com.sitemonitor.service.MonitorHistoryService;
@@ -42,11 +43,65 @@ public class MaintenanceController {
     private final AuditService auditService;
     private final MonitorHistoryService monitorHistory;
 
-    /** Bakım penceresinin geçmişte tutulan alanları (denetim burada yalnız "{}" yazıyordu). */
+    /** Bakım penceresinin geçmişte tutulan alanları. */
     private static final String[] MAINTENANCE_FIELDS = {
         "name", "description", "targetsJson", "startAt", "durationMinutes",
         "daysOfWeek", "dayOfMonth", "active", "teamId"
     };
+
+    /** Denetimde gösterilecek hedef anahtarı sayısı — tamamı ürün geçmişinde zaten duruyor. */
+    private static final int AUDIT_TARGET_HEAD = 10;
+
+    /**
+     * Denetim için pencere anlık görüntüsü.
+     *
+     * <p>Bakım penceresi ALARMLARI BASTIRIR; "hangi pencere, hangi izlemeler, ne kadar süre"
+     * sorusu bir olay incelemesinin ilk sorusudur ("neden alarm gelmedi?"). Denetim buraya
+     * yalnız <code>{}</code> yazıyordu — kodun kendi yorumu bunu itiraf ediyordu.
+     *
+     * <p>Ham {@code targetsJson} YAZILMAZ: yüzlerce izleme anahtarı içerebilir ve tam hâli
+     * {@code monitor_change_log}'da zaten duruyor. Yerine kapsamın ÖZETİ yazılır: tümü mü,
+     * kaç hedef, ilk {@value #AUDIT_TARGET_HEAD} tanesi.
+     */
+    private static Map<String, Object> auditFields(MaintenanceWindow w) {
+        Map<String, Object> m = AuditDiff.snapshot(w, MAINTENANCE_FIELDS);
+        Object targets = m.remove("targetsJson");
+        List<String> keys = targetKeys(targets);
+        m.put("all_monitors", w.getAllMonitors());
+        m.put("target_count", keys.size());
+        m.put("targets_head", keys.size() > AUDIT_TARGET_HEAD ? keys.subList(0, AUDIT_TARGET_HEAD) : keys);
+        m.put("recurrence", w.getRecurrence());
+        return m;
+    }
+
+    /** Aynısı, ürün geçmişi için alınmış HAM snapshot haritasından (before) türetilir. */
+    private static Map<String, Object> auditFieldsOf(Map<String, Object> snapshot) {
+        Map<String, Object> m = new LinkedHashMap<>(snapshot == null ? Map.of() : snapshot);
+        List<String> keys = targetKeys(m.remove("targetsJson"));
+        m.put("target_count", keys.size());
+        m.put("targets_head", keys.size() > AUDIT_TARGET_HEAD ? keys.subList(0, AUDIT_TARGET_HEAD) : keys);
+        return m;
+    }
+
+    private static String auditDetailOf(MaintenanceWindow w) {
+        return AuditDiff.snapshotJson(auditFields(w));
+    }
+
+    /** {@code targetsJson} → anahtar listesi; bozuk/boş JSON'da BOŞ liste (denetim yazımı asla patlamaz). */
+    private static List<String> targetKeys(Object targetsJson) {
+        if (targetsJson == null) return List.of();
+        String raw = String.valueOf(targetsJson).trim();
+        if (raw.isEmpty() || "null".equals(raw)) return List.of();
+        try {
+            List<String> out = new java.util.ArrayList<>();
+            for (com.fasterxml.jackson.databind.JsonNode n : MAPPER.readTree(raw)) {
+                out.add(n.isTextual() ? n.asText() : n.toString());
+            }
+            return out;
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
 
     // ── Liste ──────────────────────────────────────────────────────────────────
     @GetMapping
@@ -88,9 +143,9 @@ public class MaintenanceController {
         w.setTeamId(sessionTeamId(session));
         MaintenanceWindow saved = repo.save(w);
         maintenanceService.refresh();
-        auditService.recordAction("MAINTENANCE_CREATE", session, request, "MAINTENANCE_WINDOW", String.valueOf(saved.getId()), "{}");
-        // Denetim burada detay olarak "{}" yazıyor — yani "bir pencere oluşturuldu" bilinir ama
-        // HANGİ değerlerle bilinmez. Ürün geçmişi ilk değerleri taşır.
+        auditService.recordAction("MAINTENANCE_CREATE", session, request, "MAINTENANCE_WINDOW",
+                String.valueOf(saved.getId()), auditDetailOf(saved));
+        // Ürün geçmişi HAM alanları (targetsJson dâhil) taşır; denetim özetlenmiş hâlini.
         monitorHistory.record(MonitorHistoryService.MAINTENANCE, saved.getId(), saved.getName(), saved.getTeamId(),
                 MonitorHistoryService.CREATE, null, AuditDiff.snapshot(saved, MAINTENANCE_FIELDS), null, session);
         return ok(Map.of("data", dto(saved, Instant.now()), "message", "Maintenance window created"));
@@ -107,7 +162,9 @@ public class MaintenanceController {
         w.setUpdatedAt(now());
         MaintenanceWindow saved = repo.save(w);
         maintenanceService.refresh();
-        auditService.recordAction("MAINTENANCE_UPDATE", session, request, "MAINTENANCE_WINDOW", String.valueOf(id), "{}");
+        auditService.recordAction("MAINTENANCE_UPDATE", session, request, "MAINTENANCE_WINDOW",
+                String.valueOf(id), auditDetailOf(saved),
+                AuditDiff.diff(auditFieldsOf(_before), auditFields(saved)));
         monitorHistory.record(MonitorHistoryService.MAINTENANCE, saved.getId(), saved.getName(), saved.getTeamId(),
                 MonitorHistoryService.UPDATE, _before, AuditDiff.snapshot(saved, MAINTENANCE_FIELDS), null, session);
         return ok(Map.of("data", dto(saved, Instant.now()), "message", "Maintenance window updated"));
@@ -124,7 +181,8 @@ public class MaintenanceController {
         Long teamId = doomed.getTeamId();
         repo.deleteById(id);
         maintenanceService.refresh();
-        auditService.recordAction("MAINTENANCE_DELETE", session, request, "MAINTENANCE_WINDOW", String.valueOf(id), "{}");
+        auditService.recordAction("MAINTENANCE_DELETE", session, request, "MAINTENANCE_WINDOW",
+                String.valueOf(id), AuditDiff.snapshotJson(auditFieldsOf(_before)));
         monitorHistory.record(MonitorHistoryService.MAINTENANCE, id, name, teamId,
                 MonitorHistoryService.DELETE, _before, null, null, session);
         return ok(Map.of("message", "Maintenance window deleted"));
@@ -148,7 +206,8 @@ public class MaintenanceController {
         MaintenanceWindow saved = repo.save(w);
         maintenanceService.refresh();
         auditService.recordAction(active ? "MAINTENANCE_RESUME" : "MAINTENANCE_PAUSE", session, request,
-                "MAINTENANCE_WINDOW", String.valueOf(id), "{}");
+                "MAINTENANCE_WINDOW", String.valueOf(id),
+                AuditDetail.of("name", saved.getName(), "active", active, "team_id", saved.getTeamId()));
         return ok(Map.of("data", dto(saved, Instant.now()), "message", active ? "Resumed" : "Paused"));
     }
 
@@ -174,7 +233,8 @@ public class MaintenanceController {
         w.setTeamId(sessionTeamId(session));
         MaintenanceWindow saved = repo.save(w);
         maintenanceService.refresh();
-        auditService.recordAction("MAINTENANCE_QUICK", session, request, "MAINTENANCE_WINDOW", String.valueOf(saved.getId()), "{}");
+        auditService.recordAction("MAINTENANCE_QUICK", session, request, "MAINTENANCE_WINDOW",
+                String.valueOf(saved.getId()), auditDetailOf(saved));
         return ok(Map.of("data", dto(saved, Instant.now()), "message", "Maintenance started"));
     }
 
