@@ -42,17 +42,24 @@ describe('AuditLogViewer', () => {
     ] })
   })
 
-  it('denetim satırını gösterir + before/after diff genişletilebilir', async () => {
-    render(<AuditLogViewer />)
-    expect(await screen.findByText('USER_UPDATE')).toBeInTheDocument()
-    // Değişiklik sayısı toggle'ına tıkla → diff tablosu from/to gösterir
+  it('satır ÇEVRİLMİŞ etiket gösterir, ham tür TITLE içinde kalır (denetçi onunla filtreler)', async () => {
     const { container } = render(<AuditLogViewer />)
-    await screen.findAllByText('USER_UPDATE')
-    const toggle = container.querySelector('.audit-detail-toggle')
-    if (toggle) {
-      fireEvent.click(toggle)
-      expect(container.querySelector('.audit-diff-to')).not.toBeNull()
-    }
+    const badge = await screen.findByTitle('USER_UPDATE')
+    expect(badge).toHaveClass('audit-event-badge')
+    expect(badge.textContent, 'ham SNAKE_CASE basılmamalı').not.toBe('USER_UPDATE')
+    expect(container.querySelector('.aud-row')).not.toBeNull()
+  })
+
+  it('satır seçilince DETAY paneli açılır ve diff gösterir', async () => {
+    render(<AuditLogViewer />)
+    fireEvent.click(await screen.findByTitle('USER_UPDATE'))
+
+    // Satır-içi genişletme kalktı: ayrıntı ayrı panelde. Dar ekranda (test ortamının
+    // matchMedia mock'u matches:false döner) ModalShell yolu çalışır ve PORTAL'a çizilir —
+    // bu yüzden sorgu `container` değil `document` üzerinden yapılır.
+    expect(await screen.findByText(/Bütünlük zinciri|Integrity chain/)).toBeInTheDocument()
+    expect(document.querySelector('.audit-diff-to')).not.toBeNull()
+    expect(document.querySelector('.aud-detail'), 'dar ekranda yan panel OLMAMALI').toBeNull()
   })
 
   it('preset (Güvenlik olayları) → getAuditLogs BLOCKED filtresiyle çağrılır', async () => {
@@ -127,9 +134,8 @@ describe('AuditLogViewer', () => {
                detail: 'test → ops@example.com', changes: null }],
     })
 
-    const { container } = render(<AuditLogViewer />)
-    await screen.findByText('USER_PUSH_TEST')
-    fireEvent.click(container.querySelector('.audit-detail-toggle'))
+    render(<AuditLogViewer />)
+    fireEvent.click(await screen.findByTitle('USER_PUSH_TEST'))
 
     expect(await screen.findByText('test → ops@example.com')).toBeInTheDocument()
   })
@@ -142,9 +148,8 @@ describe('AuditLogViewer', () => {
                detail: '{"host":"db-01","port":5432}', changes: null }],
     })
 
-    const { container } = render(<AuditLogViewer />)
-    await screen.findByText('MONITOR_TEST')
-    fireEvent.click(container.querySelector('.audit-detail-toggle'))
+    render(<AuditLogViewer />)
+    fireEvent.click(await screen.findByTitle('MONITOR_TEST'))
 
     expect(await screen.findByText('db-01')).toBeInTheDocument()
     expect(screen.getByText('5432')).toBeInTheDocument()
@@ -168,7 +173,7 @@ describe('AuditLogViewer', () => {
     })
 
     const { container } = render(<AuditLogViewer />)
-    await screen.findByText('LOGIN_FAILED')
+    await screen.findByTitle('LOGIN_FAILED')
 
     expect(container.querySelector('.an-off_hours')).not.toBeNull()
     expect(container.querySelector('.an-brute_force')).not.toBeNull()
@@ -212,14 +217,76 @@ describe('AuditLogViewer', () => {
     expect(await screen.findByText('LOGIN_FAILED')).toBeInTheDocument()
   })
 
+  it('GENİŞ ekranda yan panel açılır, modal AÇILMAZ (aynı içerik iki kez DOM/da olmamalı)', async () => {
+    // Test ortamının matchMedia mock'u varsayılan olarak matches:false döner (dar ekran).
+    const orig = window.matchMedia
+    window.matchMedia = (q) => ({ matches: true, media: q, addEventListener() {}, removeEventListener() {},
+      addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })
+    try {
+      render(<AuditLogViewer />)
+      fireEvent.click(await screen.findByTitle('USER_UPDATE'))
+
+      expect(document.querySelector('.aud-detail'), 'yan panel açılmalı').not.toBeNull()
+      expect(document.querySelector('.modal-shell-overlay'), 'modal AÇILMAMALI').toBeNull()
+      // Yan panel bir diyalog DEĞİL: odak tabloda kalmalı ki ok tuşlarıyla gezinme sürsün.
+      expect(document.querySelector('.aud-detail').getAttribute('role')).toBe('complementary')
+    } finally {
+      window.matchMedia = orig
+    }
+  })
+
+  it('klavye: ok tuşlarıyla satır gezinir, Esc seçimi temizler', async () => {
+    api.admin.getAuditLogs.mockResolvedValue({
+      success: true, page: 0, total: 2,
+      data: [row({ id: 1, event_type: 'USER_UPDATE' }), row({ id: 2, event_type: 'USER_DELETE' })],
+    })
+
+    const { container } = render(<AuditLogViewer />)
+    fireEvent.click(await screen.findByTitle('USER_UPDATE'))
+    const tbody = container.querySelector('tbody')
+
+    fireEvent.keyDown(tbody, { key: 'ArrowDown' })
+    await waitFor(() => expect(container.querySelectorAll('.aud-row')[1]).toHaveAttribute('aria-selected', 'true'))
+
+    fireEvent.keyDown(tbody, { key: 'ArrowUp' })
+    await waitFor(() => expect(container.querySelectorAll('.aud-row')[0]).toHaveAttribute('aria-selected', 'true'))
+
+    fireEvent.keyDown(tbody, { key: 'Escape' })
+    await waitFor(() => expect(container.querySelector('.aud-row.is-selected')).toBeNull())
+  })
+
+  it('liste hatası SESSİZ değil: uyarı + yeniden dene', async () => {
+    api.admin.getAuditLogs.mockResolvedValue({ success: false, error: 'boom' })
+
+    render(<AuditLogViewer />)
+
+    expect(await screen.findByText(/yüklenemedi|Could not load/)).toBeInTheDocument()
+    const before = api.admin.getAuditLogs.mock.calls.length
+    fireEvent.click(screen.getByText(/Yeniden dene|Retry/))
+    await waitFor(() => expect(api.admin.getAuditLogs.mock.calls.length).toBeGreaterThan(before))
+  })
+
+  it('boş sonuç: filtre varken TEMİZLE eylemi sunulur, filtresizken sunulmaz', async () => {
+    api.admin.getAuditLogs.mockResolvedValue({ success: true, data: [], total: 0, page: 0 })
+
+    render(<AuditLogViewer />)
+    expect(await screen.findByText(/Kayıt bulunamadı|No records/)).toBeInTheDocument()
+
+    // Preset uygulayınca filtre aktif olur → boş durum artık 'temizle' eylemi sunmalı.
+    fireEvent.click(screen.getByText(/Güvenlik olaylar|Security events/))
+    expect(await screen.findByText(/Bu filtrelerle kayıt yok|No records match/)).toBeInTheDocument()
+  })
+
   it('kaynak zaman-çizelgesi düğmesi → drawer kaynak geçmişini yükler', async () => {
     const { container } = render(<AuditLogViewer />)
-    await screen.findByText('USER_UPDATE')
+    await screen.findByTitle('USER_UPDATE')
     const tlBtn = container.querySelector('.audit-timeline-btn')
     expect(tlBtn).not.toBeNull()
     fireEvent.click(tlBtn)
     await waitFor(() => expect(api.admin.getAuditResourceHistory).toHaveBeenCalledWith('USER', '5', 100))
-    expect(container.querySelector('.audit-timeline-drawer')).not.toBeNull()
-    expect(await screen.findByText('MONITOR_UPDATE')).toBeInTheDocument()
+    // Drawer artık ModalShell: elle kurulmuş overlay'de role/aria-modal/ESC/focus trap yoktu.
+    expect(document.querySelector('.modal-shell-overlay'), 'ModalShell açılmalı').not.toBeNull()
+    expect(document.querySelector('.audit-timeline-list')).not.toBeNull()
+    expect(await screen.findAllByTitle('MONITOR_UPDATE')).not.toHaveLength(0)
   })
 })

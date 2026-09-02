@@ -6334,27 +6334,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 
 /* Audit detail toggle & diff table */
-.audit-detail-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 10px;
-  border-radius: 5px;
-  border: 1px solid #d97706;
-  background: #fef3c7;
-  color: #92400e;
-  font-size: .75em;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all .15s;
-  white-space: nowrap;
-}
-.audit-detail-toggle:hover { background: #fde68a; }
 .audit-detail-toggle.active { background: #f59e0b; color: #fff; border-color: #d97706; }
-.audit-detail-arrow { font-size: .7em; margin-left: 2px; }
 
-.audit-detail-tr { background: var(--bg, #f8fafc); }
-.audit-detail-tr > td { padding: 8px 16px 12px; }
 
 .audit-diff-table {
   width: auto;
@@ -6384,10 +6365,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .audit-diff-from  { color: #dc2626; text-decoration: line-through; }
 .audit-diff-to    { color: #16a34a; }
 
-[data-theme="dark"] .audit-detail-toggle { background: #422006; color: #fcd34d; border-color: #92400e; }
 [data-theme="dark"] .audit-detail-toggle:hover { background: #78350f; }
 [data-theme="dark"] .audit-detail-toggle.active { background: #d97706; color: #fff; }
-[data-theme="dark"] .audit-detail-tr { background: rgba(255,255,255,.03); }
 [data-theme="dark"] .audit-diff-table th { background: #422006; color: #fcd34d; border-color: #78350f; }
 [data-theme="dark"] .audit-diff-from { color: #fca5a5; }
 [data-theme="dark"] .audit-diff-to   { color: #86efac; }
@@ -6418,7 +6397,6 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .audit-dist-count { font-variant-numeric: tabular-nums; color: var(--text-light); min-width: 2.5ch; text-align: right; }
 
 /* ── Ayrıntı paneli: cümle + ilişkili olaylar ── */
-.audit-detail-panel { display: flex; flex-direction: column; gap: 12px; padding: 4px 2px; }
 .audit-sentence { font-size: .9em; color: var(--text); line-height: 1.5; }
 .audit-related { border-top: 1px dashed var(--border); padding-top: 8px; }
 .audit-related-title { font-size: .72em; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-light); margin-bottom: 6px; }
@@ -6457,10 +6435,6 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .audit-timeline-btn:hover { opacity: 1; }
 
 /* ── Kaynak geçmişi drawer (dikey zaman-çizelgesi) ── */
-.audit-timeline-overlay { position: fixed; inset: 0; background: rgba(15,23,42,.45); z-index: 1200; display: flex; justify-content: flex-end; }
-.audit-timeline-drawer { width: min(480px, 92vw); height: 100%; background: var(--bg-card); border-left: 1px solid var(--border); box-shadow: -8px 0 24px rgba(0,0,0,.18); display: flex; flex-direction: column; overflow-y: auto; padding: 16px; }
-.audit-timeline-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
-.audit-timeline-title { font-weight: 700; font-size: .95em; color: var(--text); }
 .audit-timeline-list { list-style: none; margin: 0; padding: 0 0 0 6px; }
 .audit-timeline-item { position: relative; display: flex; gap: 12px; padding: 0 0 16px 14px; border-left: 2px solid var(--border); }
 .audit-timeline-item:last-child { border-left-color: transparent; padding-bottom: 2px; }
@@ -6508,6 +6482,123 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .audit-outcome-badge.failure { background: #450a0a; color: #fca5a5; }
 [data-theme="dark"] .audit-outcome-badge.blocked { background: #422006; color: #fcd34d; }
 [data-theme="dark"] .audit-row-anomaly td { background: rgba(245,158,11,.08); }
+
+/* ═══ DENETİM — ANA-DETAY DÜZENİ (aud-*) ═══════════════════════════════════════
+   Yeni sınıflar BİLEREK ayrı önek alıyor. `audit-*` ailesi üç ekran tarafından
+   paylaşılıyor (AuditLogViewer, MonitorChangesConsole, NotificationGroupHistory);
+   oraya yeni kutu modeli eklemek o ekranları sessizce bozardı. `aud-*` yalnız bu
+   sayfanın yerleşimidir ve grep'le ayrılabilir. */
+
+.aud-split { display: grid; grid-template-columns: 1fr; gap: 14px; align-items: start; }
+.aud-list { min-width: 0; }   /* min-width:0 ŞART: grid çocuğu tabloyu taşırmasın */
+
+@media (min-width: 1100px) {
+  .aud-split[data-open="true"] { grid-template-columns: minmax(0, 1fr) minmax(380px, 34%); }
+}
+
+.aud-detail {
+  position: sticky; top: 16px;
+  max-height: calc(100vh - 120px);
+  overflow: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+.aud-detail-body { padding: 14px 16px; }
+.aud-detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.aud-detail-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.aud-detail-close {
+  background: transparent; border: none; color: var(--text-light); cursor: pointer;
+  display: flex; align-items: center; padding: 4px; border-radius: 6px; flex-shrink: 0;
+}
+.aud-detail-close:hover { background: var(--bg-hover); color: var(--text); }
+.aud-detail-reason { margin: 8px 0; }
+
+.aud-section-title {
+  margin: 14px 0 6px; padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: .78em; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--text-muted);
+}
+
+/* Anahtar/değer ızgarası — dar panelde iki sütun, çok dar ekranda alt alta. */
+.aud-kv { display: grid; grid-template-columns: minmax(90px, 34%) 1fr; gap: 4px 10px; margin: 0; font-size: .85em; }
+.aud-kv dt { color: var(--text-muted); }
+.aud-kv dd { margin: 0; color: var(--text); word-break: break-word; }
+.aud-kv-row { display: contents; }
+.aud-kv--mono dd { font-family: 'Consolas', 'Monaco', monospace; font-size: .92em; }
+.aud-hash { word-break: break-all; }
+.aud-ua { word-break: break-word; }
+.aud-copy { padding: 1px 5px; margin-left: 6px; vertical-align: middle; }
+
+.aud-disclosure {
+  display: flex; align-items: center; gap: 5px;
+  margin-top: 12px; padding: 4px 0;
+  background: transparent; border: none; cursor: pointer;
+  color: var(--text-light); font-size: .8em; font-weight: 600;
+}
+.aud-disclosure:hover { color: var(--primary); }
+
+.aud-raw { position: relative; margin-top: 6px; }
+.aud-raw pre {
+  margin: 0; padding: 10px; max-height: 320px; overflow: auto;
+  background: var(--bg-surface); border: 1px solid var(--border); border-radius: 6px;
+  font-family: 'Consolas', 'Monaco', monospace; font-size: .75em; line-height: 1.45;
+  color: var(--text); white-space: pre-wrap; word-break: break-word;
+}
+.aud-raw-copy { position: absolute; top: 6px; right: 6px; }
+
+/* ── Satır seçimi ────────────────────────────────────────────────────────── */
+.aud-row { cursor: pointer; }
+.aud-row:hover { background: var(--bg-hover); }
+.aud-row.is-selected { background: var(--bg-hover); box-shadow: inset 3px 0 0 var(--primary); }
+.aud-row:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+
+.aud-col-chevron { width: 44px; text-align: right; white-space: nowrap; }
+.aud-row-chevron { color: var(--text-muted); vertical-align: middle; transition: transform .12s ease; }
+.aud-row.is-selected .aud-row-chevron { transform: rotate(90deg); color: var(--primary); }
+.aud-change-count {
+  display: inline-block; margin-right: 4px; padding: 0 5px;
+  border-radius: 999px; background: var(--bg-surface); border: 1px solid var(--border);
+  font-size: .72em; font-weight: 700; color: var(--text-light);
+}
+
+/* Yapışkan başlık: uzun listede sütun adları kaybolmasın. Arka plan AÇIKÇA verilir —
+   şeffaf yapışkan başlık altındaki satırların üstüne biner (klasik hata). */
+.audit-table thead th {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--bg-card);
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+
+/* ── Dar ekran: bilgi yoğunluğu düşük sütunlar sırayla düşer ─────────────── */
+@media (max-width: 1000px) {
+  .audit-table [data-col="geo"], .audit-table [data-col="browser"] { display: none; }
+}
+@media (max-width: 760px) {
+  .audit-table [data-col="anomalies"], .audit-table [data-col="ip"] { display: none; }
+}
+
+/* Yalnız ekran okuyucu için — sütun başlığı görsel olarak gereksiz ama adsız kalmamalı. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* ── Yeni olay rozeti sınıfları (7 → 11) ─────────────────────────────────── */
+.audit-event-badge.ev-denied { background: #7f1d1d; color: #fff; }
+.audit-event-badge.ev-test   { background: #e0f2fe; color: #075985; }
+.audit-event-badge.ev-system { background: #ede9fe; color: #5b21b6; }
+.audit-event-badge.ev-export { background: #ffedd5; color: #9a3412; }
+
+[data-theme="dark"] .audit-event-badge.ev-denied { background: #991b1b; color: #fee2e2; }
+[data-theme="dark"] .audit-event-badge.ev-test   { background: #0c4a6e; color: #bae6fd; }
+[data-theme="dark"] .audit-event-badge.ev-system { background: #4c1d95; color: #ddd6fe; }
+[data-theme="dark"] .audit-event-badge.ev-export { background: #7c2d12; color: #fed7aa; }
+
+[data-theme="dark"] .aud-detail { background: var(--bg-card); border-color: var(--border); }
+[data-theme="dark"] .aud-raw pre { background: var(--bg-surface); }
 
 /* ═══════════════════════  YES/NO TOGGLE + FORM SECTIONS  ═════════════ */
 .yn-group { display: flex; }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -6,9 +6,16 @@ import PaginationBar from '../ui/PaginationBar.jsx'
 import { useUrlQuerySync, readUrlInt } from '../../hooks/useUrlQuerySync.js'
 import { readPageSize, writePageSize } from '../../hooks/usePagination.js'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval.js'
+import { useIsWide } from '../../hooks/useIsWide.js'
+import { History, ChevronRight } from 'lucide-react'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
 import { ProgressBar, LoadingBlock } from '../ui/Progress.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
+import StatusBlock from '../ui/StatusBlock.jsx'
+import ModalShell from '../ui/ModalShell.jsx'
+import AuditDetailPanel from './audit/AuditDetailPanel.jsx'
+import { eventClass, eventLabel, parseDetail, actionSentence } from './audit/auditFormat.js'
 
 /**
  * Sunucu kataloğu gelmezse kullanılacak YEDEK liste.
@@ -61,40 +68,7 @@ function isoMinus(seconds) {
   return new Date(Date.now() - seconds * 1000).toISOString().slice(0, 19)
 }
 
-// Olay türü → insan-okur fiil (eylem cümlesi için).
-function verbFor(et, t) {
-  if (!et) return t('audit.verb.did')
-  if (et === 'LOGIN') return t('audit.verb.login')
-  if (et === 'LOGIN_FAILED') return t('audit.verb.loginFailed')
-  if (et === 'LOGOUT') return t('audit.verb.logout')
-  if (et === 'ACCESS_DENIED' || et === 'AUTH_REQUIRED') return t('audit.verb.denied')
-  if (et === 'MONITOR_TRIGGER' || et === 'SCHEDULER_RUN') return t('audit.verb.triggered')
-  if (et === 'AUDIT_EXPORT') return t('audit.verb.exported')
-  if (et === 'ACCOUNT_LOCKED') return t('audit.verb.locked')
-  if (et === 'SESSION_TERMINATE') return t('audit.verb.terminated')
-  if (et.endsWith('_DELETE')) return t('audit.verb.deleted')
-  if (et.endsWith('_CREATE') || et.endsWith('_ADD')) return t('audit.verb.created')
-  if (et.endsWith('_EDIT') || et.endsWith('_UPDATE')) return t('audit.verb.updated')
-  return t('audit.verb.did')
-}
 
-// "alice, PORT_MONITOR:7 izlemesini güncelledi (warningDays: 30 → 15)" tarzı insan-okur cümle.
-function actionSentence(row, t, diff) {
-  const actor = row.actor || t('audit.systemActor')
-  const verb = verbFor(row.event_type, t)
-  const res = row.resource_type
-    ? `${row.resource_type}${row.resource_id ? ':' + row.resource_id : ''}`
-    : (row.resource_id || '')
-  let tail = ''
-  if (diff && diff.length) {
-    tail = ' — ' + diff.slice(0, 2)
-      .map(([f, c]) => `${f}: ${c.from ?? '∅'} → ${c.to ?? '∅'}`)
-      .join(', ') + (diff.length > 2 ? ` (+${diff.length - 2})` : '')
-  } else if (row.failure_reason) {
-    tail = ' — ' + row.failure_reason
-  }
-  return `${actor} · ${verb}${res ? ' · ' + res : ''}${tail}`
-}
 
 // Basit dağılım çubuğu (recharts'sız, hafif) — özet paneli için.
 function DistBar({ title, items }) {
@@ -174,44 +148,6 @@ function StatCard({ label, value, warn, active, onClick }) {
 const EMPTY_FILTERS = { actor: '', eventType: '', outcome: '', since: '', until: '', anomalyOnly: false,
   resourceType: '', resourceId: '', ip: '', q: '' }
 
-function tryJson(s) {
-  if (!s) return null
-  try {
-    const v = JSON.parse(s)
-    return v && typeof v === 'object' ? v : null
-  } catch { return null }
-}
-
-/**
- * Bir denetim satırının anlatılabilir parçalarını ayırır.
- *
- * <p><b>`detail` ASLA diff ayrıştırıcısına verilmez.</b> Eski kod `parseDiff(row.changes ||
- * row.detail)` diyordu: `changes` yoksa `detail` yapısal diff sanılıyor, düz metin bir ayrıntıda
- * `JSON.parse` patlıyor ve `null` dönüyordu. Sonuç: yazılan ayrıntı ekranda HİÇ görünmüyordu —
- * ne diff olarak, ne metin olarak. Bu, denetim kaydının varlık sebebini sessizce boşa çıkarıyordu.
- *
- * @returns {{changes: Array|null, detailObj: Object|null, detailText: string|null}}
- *   `changes` = [alan, {from,to}] çiftleri (yalnız gerçek diff) · `detailObj` = JSON ayrıntı ·
- *   `detailText` = ayrıştırılamayan ham metin (artık gösterilir)
- */
-function parseDetail(row) {
-  const changesObj = tryJson(row?.changes)
-  const changes = changesObj ? Object.entries(changesObj) : null
-  const detailObj = tryJson(row?.detail)
-  const raw = row?.detail
-  return {
-    changes: changes && changes.length ? changes : null,
-    detailObj: detailObj && Object.keys(detailObj).length ? detailObj : null,
-    detailText: detailObj ? null : (raw && String(raw).trim() ? String(raw) : null),
-  }
-}
-
-/** Diff/ayrıntı hücresi: nesne ve diziler `[object Object]` yerine okunur JSON olarak yazılır. */
-function fmtDiffValue(v) {
-  if (v === null || v === undefined || v === '') return '—'
-  if (typeof v === 'object') return JSON.stringify(v)
-  return String(v)
-}
 
 // ── URL senkronizasyonu: filtreler `a_` önekli query paramlarında yaşar (paylaşılabilir/derin-link) ──
 const URL_PREFIX = 'a_'
@@ -297,26 +233,48 @@ export default function AuditLogViewer() {
   const [loading, setLoading]     = useState(false)
   const [activeCard, setActiveCard] = useState(null)
   const [filters, setFilters]     = useState(readUrlFilters)   // derin-link: URL'den başlat
-  const [expandedId, setExpandedId] = useState(null)
+  const [selectedId, setSelectedId] = useState(() => readUrlInt(URL_PREFIX + "sel", null))
   const [integrity, setIntegrity] = useState(null)
   const [activePreset, setActivePreset] = useState(null)
-  const [detailExtra, setDetailExtra] = useState({})   // id → {correlated, recent}
   const [savedViews, setSavedViews] = useState(loadSavedViews)
   const [viewName, setViewName]   = useState('')
   const [timeline, setTimeline]   = useState(null)     // {type, id, rows, loading} | null
   const [autoRefresh, setAutoRefresh] = useState(false)
+  const [loadError, setLoadError] = useState(false)
 
-  function openDetail(row) {
-    if (expandedId === row.id) { setExpandedId(null); return }
-    setExpandedId(row.id)
-    if (detailExtra[row.id]) return
-    const load = {}
-    const p = []
-    if (row.correlation_id) p.push(api.admin.getAuditCorrelated(row.correlation_id)
-      .then(r => { if (r?.success) load.correlated = r.data }).catch(() => {}))
-    if (row.actor_id) p.push(api.admin.getAuditActorHistory(row.actor_id, 6)
-      .then(r => { if (r?.success) load.recent = r.data }).catch(() => {}))
-    Promise.all(p).finally(() => setDetailExtra(d => ({ ...d, [row.id]: load })))
+  // Yan panel mi modal mi: TEK JS esigi. Yerlesim CSS-onceliklidir; bu esik yalnizca
+  // "hangi bilesen render edilecek" sorusunu cevaplar (ikisi ayni anda DOM/da olmamali).
+  const wide = useIsWide(1100)
+  const selectedRowRef = useRef(null)
+
+  const selectedRow = rows.find(r => r.id === selectedId) || null
+  const hasActiveFilters = Object.entries(filters)
+    .some(([, v]) => (typeof v === "boolean" ? v : v !== "" && v != null))
+
+  /** Satir secimi — URL/de de yasar ki paylasilan bir baglanti dogru olayi acsin. */
+  function selectRow(id) {
+    setSelectedId(prev => (prev === id ? null : id))
+  }
+
+  /**
+   * Tablo klavye gezinmesi. Odak SECILI satirdadir (gezici tabindex): Tab tabloyu tek
+   * durakta gecer, ok tuslari satir degistirir. Sayfa sinirinda sonraki/onceki sayfaya
+   * gecilmez (sunucu sayfalamasi) — sinirda durur, kullanici sayfalayiciyi kullanir.
+   */
+  function onRowsKeyDown(e) {
+    const idx = rows.findIndex(r => r.id === selectedId)
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault()
+      if (!rows.length) return
+      const next = idx < 0 ? 0 : Math.min(rows.length - 1, Math.max(0, idx + (e.key === "ArrowDown" ? 1 : -1)))
+      setSelectedId(rows[next].id)
+    } else if (e.key === "Home") {
+      e.preventDefault(); if (rows.length) setSelectedId(rows[0].id)
+    } else if (e.key === "End") {
+      e.preventDefault(); if (rows.length) setSelectedId(rows[rows.length - 1].id)
+    } else if (e.key === "Escape") {
+      setSelectedId(null)
+    }
   }
 
   function applyPreset(p) {
@@ -374,9 +332,12 @@ export default function AuditLogViewer() {
 
   const loadLogs = useCallback((p = 0, f = filters, sz = size) => {
     setLoading(true)
+    // Hata ARTIK SESSIZ DEGIL: eskiden `r.success` false ise hicbir sey olmuyordu ve
+    // kullanici bos tabloya bakip "kayit yok" saniyordu.
     api.admin.getAuditLogs({ page: p, size: sz, ...f }).then(r => {
-      if (r?.success) { setRows(r.data); setTotal(r.total); setPage(r.page) }
-    }).finally(() => setLoading(false))
+      if (r?.success) { setRows(r.data); setTotal(r.total); setPage(r.page); setLoadError(false) }
+      else setLoadError(true)
+    }).catch(() => setLoadError(true)).finally(() => setLoading(false))
   }, [filters, size])
 
   useEffect(() => { loadStats(); loadLogs(readUrlInt('page', 1) - 1) }, [])
@@ -405,6 +366,14 @@ export default function AuditLogViewer() {
     : EVENT_TYPES_FALLBACK.map(et => ({ value: et, label: et }))
 
   // Canlı tazeleme: açıkken 15sn'de bir mevcut sayfayı + özeti yeniler (sekme gizliyken duraklar).
+  // Secim degisince odak ve gorunurluk secili satira tasinir: ok tuslariyla gezerken
+  // satirin ekran disina kaymasi gezinmeyi imkansiz kiliyordu.
+  useEffect(() => {
+    if (!selectedId || !selectedRowRef.current) return
+    selectedRowRef.current.focus({ preventScroll: true })
+    selectedRowRef.current.scrollIntoView({ block: 'nearest' })
+  }, [selectedId])
+
   useVisibleInterval(() => { loadLogs(page, filters); loadStats() }, autoRefresh ? 15000 : 0, false)
 
   function handleCardClick(card) {
@@ -451,7 +420,9 @@ export default function AuditLogViewer() {
   const totalPages = Math.ceil(total / size)
 
   // Paylaşılabilir URL: sayfa/boyut (URL'de HEP 1-tabanlı). İlk yükleme page paramını dikkate alır (aşağıdaki effect).
+  // Secili satir URL/de: paylasilan bir baglanti dogru olayi acar (a_ ailesiyle tutarli).
   useUrlQuerySync({
+    [URL_PREFIX + 'sel']: selectedId || null,
     page: page > 0 ? page + 1 : null,
     ps: (size !== 50 || page > 0) ? size : null,
   })
@@ -614,230 +585,176 @@ export default function AuditLogViewer() {
       </div>
 
       {/* Table */}
-      <div className="audit-table-wrap">
-        {loading && <LoadingBlock label={t('app.loading')} className="audit-loading" />}
-        <table className="audit-table">
-          <thead>
-            <tr>
-              <th>{t('audit.colTime')}</th>
-              <th>{t('audit.colEvent')}</th>
-              <th>{t('audit.colActor')}</th>
-              <th>{t('audit.colIp')}</th>
-              <th>{t('audit.colBrowser')}</th>
-              <th>{t('audit.colGeo')}</th>
-              <th>{t('audit.colResource')}</th>
-              <th>{t('audit.colOutcome')}</th>
-              <th>{t('audit.colAnomalies')}</th>
-              <th>{t('audit.colDetail')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 && !loading && (
-              <tr><td colSpan={10} className="audit-empty">{t('audit.empty')}</td></tr>
-            )}
-            {rows.map(row => {
-              const { changes: diff, detailObj, detailText } = parseDetail(row)
-              const isExpanded = expandedId === row.id
-              return [
-                <tr key={row.id} className={row.anomaly_flags ? 'audit-row-anomaly' : ''}>
-                  <td className="audit-cell-time">{formatDate(row.event_time)}</td>
-                  <td>
-                    <span className={`audit-event-badge ${eventClass(row.event_type)}`}>
-                      {row.event_type}
-                    </span>
-                  </td>
-                  <td>
-                    <div>{row.actor ? <UserBadge username={row.actor} inline size="sm" /> : '—'}</div>
-                    {row.actor_role && <div className="audit-sub">{row.actor_role}</div>}
-                  </td>
-                  <td className="audit-mono">{row.ip_address || '—'}</td>
-                  <td>
-                    {/* Ozet SUNUCUDAN gelir (ua_summary); ham UA tooltip'te kalir.
-                        Taninmayan UA'da ozet null olur — ham dizeyi sutuna dokmek yerine
-                        tire gosteririz, cunku ham UA sutunu okunmaz hale getiriyordu. */}
-                    {row.ua_summary
-                      ? <span title={row.user_agent}>{row.ua_summary}</span>
-                      : (row.user_agent ? <span title={row.user_agent}>—</span> : '—')}
-                  </td>
-                  <td>
-                    {row.ip_country && (
-                      <div>{row.ip_country}{row.ip_city ? `, ${row.ip_city}` : ''}</div>
-                    )}
-                    {row.ip_org && <div className="audit-sub">{row.ip_org}</div>}
-                  </td>
-                  <td>
-                    {row.resource_id ? (
-                      <span className="audit-resource-cell">
-                        <button className="audit-link" title={t('audit.resourceHistory')}
-                          onClick={() => drillResource(row.resource_type, row.resource_id)}>
-                          {row.resource_type && <span className="audit-sub">{row.resource_type}: </span>}{row.resource_id}
-                        </button>
-                        <button className="audit-timeline-btn" title={t('audit.resourceTimeline')}
-                          onClick={() => openTimeline(row.resource_type, row.resource_id)}>🕘</button>
-                      </span>
-                    ) : (row.resource_type ? <span className="audit-sub">{row.resource_type}</span> : '—')}
-                  </td>
-                  <td>
-                    <span className={`audit-outcome-badge ${row.outcome?.toLowerCase()}`}
-                      title={row.outcome || ''}>
-                      {outcomeText[row.outcome] || row.outcome || '—'}
-                    </span>
-                    {row.failure_reason && <div className="audit-sub">{row.failure_reason}</div>}
-                  </td>
-                  <td><AnomalyChips flags={row.anomaly_flags} t={t} /></td>
-                  <td>
-                    <button
-                      className={`audit-detail-toggle${isExpanded ? ' active' : ''}`}
-                      onClick={() => openDetail(row)}
-                      title={t('audit.showDetail')}
-                    >
-                      {diff ? `${diff.length} ${t('audit.changesCount')}` : t('audit.detail')}
-                      <span className="audit-detail-arrow">{isExpanded ? '▲' : '▼'}</span>
-                    </button>
-                  </td>
-                </tr>,
-                isExpanded && (
-                  <tr key={`${row.id}-detail`} className="audit-detail-tr">
-                    <td colSpan={10}>
-                      <div className="audit-detail-panel">
-                        <div className="audit-sentence">{actionSentence(row, t, diff)}</div>
+      {/* ── Ana-detay: solda akış, sağda seçili kaydın tam ayrıntısı ─────────────
+          Satır-içi genişletme kaldırıldı: açılan panel tabloyu aşağı itiyor, kullanıcı
+          okurken satırını kaybediyordu. Yan panel yapışık kalır; dar ekranda ModalShell'e
+          geçer (ikisi AYNI anda render EDİLMEZ — DOM'da tek düğüm). */}
+      <div className="aud-split" data-open={selectedRow ? 'true' : 'false'}>
+        <div className="aud-list">
+          {loadError && (
+            <AlertBanner tone="danger" title={t('audit.loadErrorTitle')}
+              actions={<button className="btn btn-sm" onClick={() => loadLogs(page)}>{t('audit.retry')}</button>}>
+              {t('audit.loadErrorBody')}
+            </AlertBanner>
+          )}
 
-                        {diff && (
-                          <table className="audit-diff-table">
-                            <thead>
-                              <tr>
-                                <th>{t('audit.diffField')}</th>
-                                <th>{t('audit.diffFrom')}</th>
-                                <th>{t('audit.diffTo')}</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {diff.map(([field, change]) => (
-                                <tr key={field}>
-                                  <td className="audit-diff-field">{field}</td>
-                                  <td className="audit-diff-from">{fmtDiffValue(change?.from)}</td>
-                                  <td className="audit-diff-to">{fmtDiffValue(change?.to)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        )}
-
-                        {/* Ayrıntı (JSON) — bugüne kadar yalnız diff aranıyordu, JSON ayrıntı
-                            hiçbir yerde gösterilmiyordu. */}
-                        {detailObj && (
-                          <table className="audit-diff-table">
-                            <thead>
-                              <tr><th>{t('audit.detailField')}</th><th colSpan={2}>{t('audit.detailValue')}</th></tr>
-                            </thead>
-                            <tbody>
-                              {Object.entries(detailObj).map(([field, value]) => (
-                                <tr key={field}>
-                                  <td className="audit-diff-field">{field}</td>
-                                  <td className="audit-diff-to" colSpan={2}>{fmtDiffValue(value)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        )}
-
-                        {/* Düz metin ayrıntı — JSON'a çevrilemeyen eski kayıtlar. Bugüne kadar
-                            SESSİZCE düşüyordu; artık olduğu gibi gösterilir. */}
-                        {detailText && <pre className="audit-detail-text">{detailText}</pre>}
-
-                        {detailExtra[row.id]?.correlated?.length > 1 && (
-                          <div className="audit-related">
-                            <div className="audit-related-title">{t('audit.relatedEvents')}</div>
-                            {detailExtra[row.id].correlated.map(e => (
-                              <div key={e.id} className="audit-related-row">
-                                <span className={`audit-event-badge ${eventClass(e.event_type)}`}>{e.event_type}</span>
-                                <span className="audit-related-sub">{[e.resource_type, e.resource_id].filter(Boolean).join(':') || '—'}</span>
-                                <span className="audit-related-time">{formatDate(e.event_time)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
-                        {detailExtra[row.id]?.recent?.length > 0 && (
-                          <div className="audit-related">
-                            <div className="audit-related-title">{t('audit.actorRecent')}</div>
-                            {detailExtra[row.id].recent.map(e => (
-                              <div key={e.id} className="audit-related-row">
-                                <span className={`audit-event-badge ${eventClass(e.event_type)}`}>{e.event_type}</span>
-                                <span className="audit-related-sub">{[e.resource_type, e.resource_id].filter(Boolean).join(':') || '—'}</span>
-                                <span className="audit-related-time">{formatDate(e.event_time)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                )
-              ]
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Pagination */}
-      <PaginationBar
-        page={page + 1} totalPages={totalPages || 1} totalItems={total}
-        rangeStart={total === 0 ? 0 : page * size + 1}
-        rangeEnd={Math.min((page + 1) * size, total)}
-        pageSize={size}
-        onPageChange={p => loadLogs(p - 1)}
-        onPageSizeChange={n => { setSize(n); writePageSize('audit-log', n); loadLogs(0, filters, n) }}
-      />
-
-      {/* Kaynak geçmişi — dikey zaman-çizelgesi drawer */}
-      {timeline && (
-        <div className="audit-timeline-overlay" onClick={() => setTimeline(null)}>
-          <div className="audit-timeline-drawer" onClick={e => e.stopPropagation()}>
-            <div className="audit-timeline-head">
-              <div className="audit-timeline-title">
-                {t('audit.timelineTitle', `${timeline.type ? timeline.type + ':' : ''}${timeline.id}`)}
-              </div>
-              <button className="audit-filter-btn" onClick={() => setTimeline(null)}>{t('audit.close')}</button>
-            </div>
-            {timeline.loading ? (
-              <LoadingBlock label={t('app.loading')} className="audit-loading" />
-            ) : timeline.rows.length === 0 ? (
-              <div className="audit-empty">{t('audit.timelineEmpty')}</div>
-            ) : (
-              <ol className="audit-timeline-list">
-                {timeline.rows.map(e => {
-                  const d = parseDetail(e).changes
+          <div className="audit-table-wrap">
+            {loading && <LoadingBlock label={t('app.loading')} className="audit-loading" />}
+            <table className="audit-table">
+              <thead>
+                <tr>
+                  <th>{t('audit.colTime')}</th>
+                  <th>{t('audit.colEvent')}</th>
+                  <th>{t('audit.colActor')}</th>
+                  <th data-col="ip">{t('audit.colIp')}</th>
+                  <th data-col="browser">{t('audit.colBrowser')}</th>
+                  <th data-col="geo">{t('audit.colGeo')}</th>
+                  <th>{t('audit.colResource')}</th>
+                  <th>{t('audit.colOutcome')}</th>
+                  <th data-col="anomalies">{t('audit.colAnomalies')}</th>
+                  <th className="aud-col-chevron"><span className="sr-only">{t('audit.colDetail')}</span></th>
+                </tr>
+              </thead>
+              <tbody onKeyDown={onRowsKeyDown}>
+                {rows.map(row => {
+                  const { changes } = parseDetail(row)
+                  const selected = selectedId === row.id
                   return (
-                    <li key={e.id} className="audit-timeline-item">
-                      <span className={`audit-timeline-dot ${eventClass(e.event_type)}`} />
-                      <div className="audit-timeline-body">
-                        <div className="audit-timeline-row1">
-                          <span className={`audit-event-badge ${eventClass(e.event_type)}`}>{e.event_type}</span>
-                          <span className="audit-timeline-actor">{e.actor || t('audit.systemActor')}</span>
-                          <span className="audit-timeline-time">{formatDate(e.event_time)}</span>
-                        </div>
-                        <div className="audit-timeline-sentence">{actionSentence(e, t, d)}</div>
-                      </div>
-                    </li>
+                    <tr key={row.id}
+                        ref={selected ? selectedRowRef : null}
+                        className={`aud-row${row.anomaly_flags ? ' audit-row-anomaly' : ''}${selected ? ' is-selected' : ''}`}
+                        aria-selected={selected}
+                        tabIndex={selected ? 0 : -1}
+                        onClick={() => selectRow(row.id)}>
+                      <td className="audit-cell-time">{formatDate(row.event_time)}</td>
+                      <td>
+                        {/* Ham tür `title`'da KALIR: denetçi ham kodla filtreler ve kopyalar. */}
+                        <span className={`audit-event-badge ${eventClass(row.event_type)}`} title={row.event_type}>
+                          {eventLabel(row.event_type, t)}
+                        </span>
+                      </td>
+                      <td>
+                        <div>{row.actor ? <UserBadge username={row.actor} inline size="sm" /> : '—'}</div>
+                        {row.actor_role && <div className="audit-sub">{row.actor_role}</div>}
+                      </td>
+                      <td className="audit-mono" data-col="ip">{row.ip_address || '—'}</td>
+                      <td data-col="browser">
+                        {row.ua_summary
+                          ? <span title={row.user_agent}>{row.ua_summary}</span>
+                          : (row.user_agent ? <span title={row.user_agent}>—</span> : '—')}
+                      </td>
+                      <td data-col="geo">
+                        {row.ip_country && (
+                          <div>{row.ip_country}{row.ip_city ? `, ${row.ip_city}` : ''}</div>
+                        )}
+                        {row.ip_org && <div className="audit-sub">{row.ip_org}</div>}
+                      </td>
+                      <td>
+                        {row.resource_id ? (
+                          <span className="audit-resource-cell">
+                            <button className="audit-link" title={t('audit.resourceHistory')}
+                              onClick={e => { e.stopPropagation(); drillResource(row.resource_type, row.resource_id) }}>
+                              {row.resource_type && <span className="audit-sub">{row.resource_type}: </span>}{row.resource_id}
+                            </button>
+                            <button className="audit-timeline-btn" title={t('audit.resourceTimeline')}
+                              onClick={e => { e.stopPropagation(); openTimeline(row.resource_type, row.resource_id) }}>
+                              <History size={13} />
+                            </button>
+                          </span>
+                        ) : (row.resource_type ? <span className="audit-sub">{row.resource_type}</span> : '—')}
+                      </td>
+                      <td>
+                        <span className={`audit-outcome-badge ${row.outcome?.toLowerCase()}`} title={row.outcome || ''}>
+                          {outcomeText[row.outcome] || row.outcome || '—'}
+                        </span>
+                        {row.failure_reason && <div className="audit-sub">{row.failure_reason}</div>}
+                      </td>
+                      <td data-col="anomalies"><AnomalyChips flags={row.anomaly_flags} t={t} /></td>
+                      <td className="aud-col-chevron">
+                        {changes && <span className="aud-change-count">{changes.length}</span>}
+                        <ChevronRight size={14} className="aud-row-chevron" />
+                      </td>
+                    </tr>
                   )
                 })}
-              </ol>
+              </tbody>
+            </table>
+
+            {/* Boş durumun İKİ hâli ayrı: filtre yüzünden mi boş, gerçekten kayıt yok mu? */}
+            {rows.length === 0 && !loading && !loadError && (
+              hasActiveFilters ? (
+                <StatusBlock tone="neutral" title={t('audit.emptyFiltered')}
+                  description={t('audit.emptyFilteredHint')}
+                  actions={<button className="btn btn-sm" onClick={clearFilters}>{t('audit.clear')}</button>} />
+              ) : (
+                <StatusBlock tone="neutral" title={t('audit.empty')} />
+              )
             )}
           </div>
+
+          <PaginationBar
+            page={page + 1} totalPages={totalPages || 1} totalItems={total}
+            rangeStart={total === 0 ? 0 : page * size + 1}
+            rangeEnd={Math.min((page + 1) * size, total)}
+            pageSize={size}
+            onPageChange={p => loadLogs(p - 1)}
+            onPageSizeChange={n => { setSize(n); writePageSize('audit-log', n); loadLogs(0, filters, n) }}
+          />
         </div>
+
+        {/* Yan panel bir DİYALOG DEĞİLDİR: odak tabloda kalmalı ki kullanıcı ok tuşlarıyla
+            gezinmeye devam edebilsin. Bu yüzden focus trap/aria-modal YOK. */}
+        {wide && selectedRow && (
+          <aside className="aud-detail" role="complementary" aria-label={t('audit.detailPanel')}>
+            <AuditDetailPanel row={selectedRow} onClose={() => setSelectedId(null)}
+              onOpenTimeline={openTimeline} onDrill={drillResource} />
+          </aside>
+        )}
+      </div>
+
+      {/* Dar ekranda gerçek diyalog: ModalShell ESC/focus trap/aria sözleşmesini taşır. */}
+      {!wide && selectedRow && (
+        <ModalShell open onClose={() => setSelectedId(null)} size="lg" scrollBody
+          title={eventLabel(selectedRow.event_type, t)}>
+          <AuditDetailPanel row={selectedRow} onOpenTimeline={openTimeline} onDrill={drillResource} />
+        </ModalShell>
+      )}
+
+      {/* Kaynak geçmişi — ModalShell tabanlı. Eskiden elle kurulmuş bir overlay'di: `role`
+          yok, `aria-modal` yok, ESC kapatmıyor, focus trap yok. ModalShell bu sözleşmenin
+          tamamını zaten taşıyor (DialogAccessibility kapısı da onu bekliyor). */}
+      {timeline && (
+        <ModalShell open onClose={() => setTimeline(null)} size="md" scrollBody
+          title={t('audit.timelineTitle', `${timeline.type ? timeline.type + ':' : ''}${timeline.id}`)}>
+          {timeline.loading ? (
+            <LoadingBlock label={t('app.loading')} className="audit-loading" />
+          ) : timeline.rows.length === 0 ? (
+            <StatusBlock tone="neutral" title={t('audit.timelineEmpty')} />
+          ) : (
+            <ol className="audit-timeline-list">
+              {timeline.rows.map(e => {
+                const d = parseDetail(e).changes
+                return (
+                  <li key={e.id} className="audit-timeline-item">
+                    <span className={`audit-timeline-dot ${eventClass(e.event_type)}`} />
+                    <div className="audit-timeline-body">
+                      <div className="audit-timeline-row1">
+                        <span className={`audit-event-badge ${eventClass(e.event_type)}`} title={e.event_type}>
+                          {eventLabel(e.event_type, t)}
+                        </span>
+                        <span className="audit-timeline-actor">{e.actor || t('audit.systemActor')}</span>
+                        <span className="audit-timeline-time">{formatDate(e.event_time)}</span>
+                      </div>
+                      <div className="audit-timeline-sentence">{actionSentence(e, t, d)}</div>
+                    </div>
+                  </li>
+                )
+              })}
+            </ol>
+          )}
+        </ModalShell>
       )}
     </div>
   )
 }
 
-function eventClass(et) {
-  if (!et) return ''
-  if (et === 'LOGIN')          return 'ev-login'
-  if (et === 'LOGIN_FAILED')   return 'ev-failed'
-  if (et === 'LOGOUT')         return 'ev-logout'
-  if (et.endsWith('_DELETE'))  return 'ev-delete'
-  if (et.endsWith('_CREATE') || et.endsWith('_ADD')) return 'ev-create'
-  if (et.endsWith('_EDIT') || et.endsWith('_UPDATE')) return 'ev-edit'
-  return 'ev-other'
-}
