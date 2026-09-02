@@ -7,6 +7,8 @@ import com.sitemonitor.model.UserPushScope;
 import com.sitemonitor.repository.UserPushDeliveryRepository;
 import com.sitemonitor.repository.UserPushScopeRepository;
 import com.sitemonitor.service.AppSettingsService;
+import com.sitemonitor.service.AuditDetail;
+import com.sitemonitor.service.AuditDiff;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.SecretCipher;
 import com.sitemonitor.service.UserPushService;
@@ -114,9 +116,16 @@ public class UserPushController {
         if (body.containsKey("site.monitor.userpush.headers")) {
             toSave.put("site.monitor.userpush.headers", encryptHeaders(body.get("site.monitor.userpush.headers")));
         }
+        // Değerler save'DEN ÖNCE okunur (save void döner + önbelleği anında tazeler).
+        // Maskeleme kritik: `...webhook-url` hassas ANAHTAR sayılmıyor (kara listede "url" yok)
+        // ama DEĞERİ yol/query içinde token taşıyabilir — AuditDiff değer gövdesini de temizler.
+        Map<String, Object> pushBefore = new java.util.LinkedHashMap<>();
+        for (String k : toSave.keySet()) pushBefore.put(k, appSettings.getString(k, null));
+
         appSettings.save(toSave, actor(session));
+
         auditService.recordAction("USER_PUSH_SETTINGS", session, "USER_PUSH", "settings",
-                "Webhook bildirim ayarları güncellendi (" + toSave.size() + " anahtar)", null);
+                AuditDetail.of("keys", toSave.size()), AuditDiff.diff(pushBefore, toSave));
         return getSettings(session);
     }
 
@@ -126,6 +135,10 @@ public class UserPushController {
             @RequestBody List<Map<String, Object>> body, HttpSession session) {
         requireAdmin(session);
         int changed = 0;
+        // Bildirim KAPSAMI bir yetki ayarıdır ("hangi takım/tür push alır"): hangi anahtarın
+        // açılıp kapandığı yazılmadan "N kapsam güncellendi" demek denetimde işe yaramıyordu.
+        Map<String, Object> scopeBefore = new java.util.LinkedHashMap<>();
+        Map<String, Object> scopeAfter  = new java.util.LinkedHashMap<>();
         for (Map<String, Object> e : body) {
             String type = String.valueOf(e.get("scopeType"));
             String key = String.valueOf(e.get("scopeKey"));
@@ -138,11 +151,14 @@ public class UserPushController {
                 return s;
             });
             if (row.getId() == null || !row.getEnabled().equals(enabled)) changed++;
+            scopeBefore.put(type + "/" + key, row.getId() == null ? null : row.getEnabled());
+            scopeAfter.put(type + "/" + key, enabled);
             row.setEnabled(enabled);
             scopeRepo.save(row);
         }
         auditService.recordAction("USER_PUSH_SCOPES", session, "USER_PUSH", "scopes",
-                changed + " kapsam anahtarı güncellendi", null);
+                AuditDetail.of("changed", changed, "submitted", body.size()),
+                AuditDiff.diff(scopeBefore, scopeAfter));
         return ok(Map.of("data", scopeRepo.findAll()));
     }
 

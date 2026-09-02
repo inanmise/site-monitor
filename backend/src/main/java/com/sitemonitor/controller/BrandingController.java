@@ -1,6 +1,8 @@
 package com.sitemonitor.controller;
 
 import com.sitemonitor.service.AppSettingsService;
+import com.sitemonitor.service.AuditDetail;
+import com.sitemonitor.service.AuditDiff;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.PermissionService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -85,9 +87,16 @@ public class BrandingController {
             values.put(BANNER_VERSION_KEY, String.valueOf(version + 1));
         }
 
+        // Logo gibi ikili degerler AuditDiff tarafindan {"bytes":n} olarak daraltilir —
+        // yuz kilobaytlik base64 denetim satirina akmaz ama DEGISTIGI gorunur.
+        Map<String, Object> brandBefore = new java.util.LinkedHashMap<>();
+        for (String k : values.keySet()) brandBefore.put(k, settingsService.getString(k, null));
+
         settingsService.save(Map.of("values", values), actor(session));
+
         auditService.recordAction("BRANDING_SAVE", session, request,
-                "SETTINGS", "branding", "{\"keys\":" + values.size() + "}");
+                "SETTINGS", "branding", AuditDetail.of("keys", values.size()),
+                AuditDiff.diff(brandBefore, values));
         return ok(Map.of(
                 "data", brandingCatalog(),
                 "message", "Ayarlar kaydedildi (yeniden başlatma gerekmez)"));

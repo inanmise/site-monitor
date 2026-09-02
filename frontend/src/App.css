@@ -10,6 +10,14 @@
   --info: #17a2b8;
   /* Severity scale — alert/badge accents (light theme) */
   --severity-warn:     #f0a500;
+  /* Denetim anomali bayrakları — sınıf üzerinden kullanılır (.an-*). Eskiden JSX'te satır-içi
+     hex'lerdi: kapı testi göremiyor, koyu tema uyarlanamıyordu. Sıralama şiddete göredir:
+     bilgi (mor) < uyarı (kehribar) < tehlike (kırmızı) < kritik (koyu kırmızı); nötr gri. */
+  --anomaly-info:      #8b5cf6;
+  --anomaly-warn:      #f59e0b;
+  --anomaly-danger:    #ef4444;
+  --anomaly-critical:  #dc2626;
+  --anomaly-muted:     #64748b;
   --severity-high:     #e07b00;
   --severity-critical: #c0392b;
   --bg: #f8f9fa;
@@ -4511,6 +4519,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   --input-bg: #1e293b;
   --input-text: #e2e8f0;
   --ok: #4ade80;
+  /* Anomali çipleri koyu zeminde: aynı doygunluk okunmuyordu, bir tık açılır. */
+  --anomaly-info:      #a78bfa;
+  --anomaly-warn:      #fbbf24;
+  --anomaly-danger:    #f87171;
+  --anomaly-critical:  #ef4444;
+  --anomaly-muted:     #94a3b8;
 }
 
 [data-theme="dark"] body { background: var(--bg); color: var(--text); }
@@ -6290,6 +6304,33 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   font-weight: 600;
   color: #fff;
   white-space: nowrap;
+  background: var(--anomaly-muted);   /* tanınmayan bayrak için nötr taban */
+}
+/* Anomali renkleri artık SINIFTAN gelir. Eskiden JSX'te satır-içi hex vardı: cssTokens kapısı
+   göremiyordu ve koyu temada hiç uyarlanmıyordu (koyu zeminde aynı doygun kırmızı). */
+.an-off_hours    { background: var(--anomaly-warn); }
+.an-unusual_ip   { background: var(--anomaly-info); }
+.an-geo_velocity { background: var(--anomaly-danger); }
+.an-brute_force  { background: var(--anomaly-critical); }
+.an-rate_limited { background: var(--anomaly-muted); }
+.an-replayed     { background: var(--anomaly-muted); }
+
+/* Düz metin denetim ayrıntısı — JSON'a çevrilemeyen (eski) kayıtlar. Bugüne kadar hiç
+   gösterilmiyordu; kırpma YOK, sarmalama var: denetimde metnin tamamı okunabilmeli. */
+.audit-detail-text {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text);
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: .78em;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow: auto;
 }
 
 /* Audit detail toggle & diff table */

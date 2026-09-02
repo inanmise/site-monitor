@@ -167,6 +167,52 @@ public class AuditController {
         return ok(Map.of("data", auditService.buildStats()));
     }
 
+    /**
+     * Olay türü kataloğu — arayüzdeki filtre listesinin KAYNAĞI.
+     *
+     * <p>Liste ön yüzde elle tutulduğu sürece sürükleniyordu: 162 türün yalnız 32'si
+     * seçilebiliyor, bütün {@code MAINTENANCE_*}, {@code SQL_EXECUTE} ve 12 {@code WEEKLY_REPORT_*}
+     * türü filtrede hiç görünmüyordu. Katalog sunucudan gelince yeni bir tür eklendiğinde arayüze
+     * dokunmak gerekmez.
+     *
+     * <p>{@code count} son 90 günün tür başına sayısıdır: sıfır olan türler arayüzde soluk
+     * gösterilir, böylece kullanıcı boş döneceğini bildiği bir filtreyi uygulamaz.
+     */
+    @GetMapping("/audit/event-types")
+    public ResponseEntity<Map<String, Object>> auditEventTypes(HttpSession session) {
+        requireAuditAccess(session);
+        permissionService.require(session, "audit_log.read", "view");
+
+        Map<String, Long> counts = auditService.eventTypeCounts();
+        List<Map<String, Object>> data = new ArrayList<>();
+        for (com.sitemonitor.service.AuditEventCatalog.Event e : com.sitemonitor.service.AuditEventCatalog.all()) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("type", e.type());
+            row.put("category", e.category());
+            row.put("count", counts.getOrDefault(e.type(), 0L));
+            data.add(row);
+        }
+        return ok(Map.of("data", data,
+                "categories", com.sitemonitor.service.AuditEventCatalog.CATEGORY_ORDER));
+    }
+
+    /**
+     * Tek bir denetim satırı — olay bağlantısının ("şu olaya bak") çalışabilmesi için.
+     *
+     * <p>Bugüne kadar tekil satır çekmenin yolu yoktu: paylaşılan bir bağlantı, satır o anda
+     * listelenen sayfada değilse sessizce hiçbir şey açmıyordu.
+     */
+    @GetMapping("/audit/{id}")
+    public ResponseEntity<Map<String, Object>> auditById(@PathVariable Long id, HttpSession session) {
+        requireAuditAccess(session);
+        permissionService.require(session, "audit_log.read", "view");
+
+        return auditLogRepo.findById(id)
+                .map(row -> ok(Map.of("data", row)))
+                .orElseGet(() -> ResponseEntity.status(404)
+                        .body(Map.of("success", false, "error", "Denetim kaydı bulunamadı")));
+    }
+
     @GetMapping("/audit/weak-algorithms")
     public ResponseEntity<Map<String, Object>> weakAlgorithmReport(HttpSession session) {
         permissionService.require(session, "weak_algo.read", "view");
@@ -326,13 +372,14 @@ public class AuditController {
 
     private String toCsv(List<AuditLog> rows) {
         StringBuilder sb = new StringBuilder("﻿");
-        sb.append("seq,event_time,event_type,actor,actor_role,ip_address,resource_type,resource_id,outcome,failure_reason,changes,correlation_id\n");
+        sb.append("seq,event_time,event_type,actor,actor_role,ip_address,resource_type,resource_id,outcome,failure_reason,detail,changes,correlation_id\n");
         for (AuditLog a : rows) {
             sb.append(csvCell(a.getSeq())).append(',').append(csvCell(a.getEventTime())).append(',')
               .append(csvCell(a.getEventType())).append(',').append(csvCell(a.getActor())).append(',')
               .append(csvCell(a.getActorRole())).append(',').append(csvCell(a.getIpAddress())).append(',')
               .append(csvCell(a.getResourceType())).append(',').append(csvCell(a.getResourceId())).append(',')
               .append(csvCell(a.getOutcome())).append(',').append(csvCell(a.getFailureReason())).append(',')
+              .append(csvCell(a.getDetail())).append(',')
               .append(csvCell(a.getChanges())).append(',').append(csvCell(a.getCorrelationId())).append('\n');
         }
         return sb.toString();
@@ -362,6 +409,7 @@ public class AuditController {
               .append(",\"resource_id\":").append(js(a.getResourceId()))
               .append(",\"outcome\":").append(js(a.getOutcome()))
               .append(",\"failure_reason\":").append(js(a.getFailureReason()))
+              .append(",\"detail\":").append(js(a.getDetail()))
               .append(",\"changes\":").append(js(a.getChanges()))
               .append(",\"row_hash\":").append(js(a.getRowHash()))
               .append(",\"correlation_id\":").append(js(a.getCorrelationId()))

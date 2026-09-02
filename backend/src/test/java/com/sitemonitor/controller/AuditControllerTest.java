@@ -82,6 +82,43 @@ class AuditControllerTest {
     }
 
     @Test
+    @DisplayName("event-types: katalog + kategori + sayac doner; /audit/{id} yoluna YUTULMAZ")
+    void eventTypes_returnsCatalog() throws Exception {
+        // Kritik yonlendirme sinavi: "/audit/event-types" literal yolu, "/audit/{id}" sablonundan
+        // ONCE eslesmeli. Aksi halde uc, "event-types" dizesini Long'a cevirmeye calisip patlardi.
+        when(auditService.eventTypeCounts()).thenReturn(java.util.Map.of("LOGIN", 42L));
+
+        mvc.perform(get("/api/admin/audit/event-types").session(session("AUDIT")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.type == 'LOGIN')].count").value(42))
+                .andExpect(jsonPath("$.data[?(@.type == 'LOGIN')].category").value("AUTH"))
+                .andExpect(jsonPath("$.categories").isArray());
+
+        mvc.perform(get("/api/admin/audit/event-types").session(session("USER")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("audit/{id}: tekil satir doner; yoksa 404 (paylasilan olay baglantisinin sarti)")
+    void auditById_singleRow() throws Exception {
+        AuditLog row = new AuditLog();
+        row.setId(77L);
+        row.setEventType("USER_DELETE");
+        when(auditLogRepo.findById(77L)).thenReturn(java.util.Optional.of(row));
+        when(auditLogRepo.findById(999L)).thenReturn(java.util.Optional.empty());
+
+        mvc.perform(get("/api/admin/audit/77").session(session("AUDIT")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.event_type").value("USER_DELETE"));
+
+        mvc.perform(get("/api/admin/audit/999").session(session("AUDIT")))
+                .andExpect(status().isNotFound());
+
+        mvc.perform(get("/api/admin/audit/77").session(session("USER")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     @DisplayName("resourceHistory: AUDIT 200 + kayıt sayısı; USER 403 (izolasyon)")
     void resourceHistory_access() throws Exception {
         when(auditLogRepo.findByResourceTypeAndResourceIdOrderByEventTimeDesc(eq("PORT_MONITOR"), eq("7"), any()))

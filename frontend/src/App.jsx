@@ -8,7 +8,7 @@ import { useToast } from './components/ui/Toast.jsx'
 import { useT } from './i18n/index.jsx'
 import { usePagination } from './hooks/usePagination.js'
 import PaginationBar from './components/ui/PaginationBar.jsx'
-import { useUrlQuerySync, readUrlParam, readUrlInt, PAGE_STATE_PARAMS } from './hooks/useUrlQuerySync.js'
+import { useUrlQuerySync, readUrlParam, readUrlInt, PAGE_STATE_PARAMS, PAGE_STATE_PREFIXES } from './hooks/useUrlQuerySync.js'
 import SearchableSelect from './components/ui/SearchableSelect.jsx'
 import Login, { REMEMBER_KEY } from './pages/Login'
 import Nav from './components/Nav'
@@ -172,6 +172,10 @@ export default function App() {
         // Sekme değişince önceki sayfanın TÜM durum paramları temizlenir (bayat filtre/sayfa/modal
         // başka sekmeye taşınmasın) — liste useUrlQuerySync.PAGE_STATE_PARAMS'ta merkezî.
         for (const p of PAGE_STATE_PARAMS) url.searchParams.delete(p)
+        // Önekli aileler (ör. Denetim Kaydı'nın `a_*` filtreleri) sabit adla sayılamaz.
+        for (const k of [...url.searchParams.keys()]) {
+          if (PAGE_STATE_PREFIXES.some(pre => k.startsWith(pre))) url.searchParams.delete(k)
+        }
         const qs = url.searchParams.toString()
         window.history.pushState({ tab: id }, '', url.pathname + (qs ? `?${qs}` : '') + url.hash)
       } catch { /* history yoksay */ }

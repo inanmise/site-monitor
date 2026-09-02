@@ -81,9 +81,16 @@ public class GuideLinkController {
         if (!repo.existsById(id)) {
             throw new NoSuchElementException("Guide link not found: " + id);
         }
+        // Silmeden ONCE anlik goruntu: baglantinin basligi/URL'i gittikten sonra hicbir yerde yok.
+        // Alan listesi guncelleme dalindakiyle AYNI (gf) — iki liste ayrisirsa karsilastirma bozulur.
+        String before = repo.findById(id)
+                .map(g -> AuditDiff.snapshotJson(AuditDiff.snapshot(g,
+                        "category", "title", "url", "description", "sortOrder")))
+                .orElse(null);
         repo.deleteById(id);
         log.info("Guide link deleted id={} by={}", id, actor(session));
-        auditService.recordAction("GUIDE_LINK_DELETE", session, "GUIDE_LINK", String.valueOf(id), null, null);
+        auditService.recordAction("GUIDE_LINK_DELETE", session, "GUIDE_LINK", String.valueOf(id),
+                before != null ? before : com.sitemonitor.service.AuditDetail.of("existed", false), null);
         return ok(Map.of("message", "Deleted"));
     }
 

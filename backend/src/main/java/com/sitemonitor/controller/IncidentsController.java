@@ -296,7 +296,11 @@ public class IncidentsController {
         c.setAuthorName(name);
         c.setCreatedAt(now());
         AlertComment saved = commentRepo.save(c);
-        auditService.recordAction("INCIDENT_COMMENT_ADD", session, request, "ALERT_EVENT", String.valueOf(id), "{}");
+        // Yorum GOVDESI yazilmaz (kendi tablosunda duruyor); denetimin sorusu "kim ne zaman
+        // yorum yapti" — hangi yoruma ve ne kadar uzunlukta oldugu izi yeterli.
+        auditService.recordAction("INCIDENT_COMMENT_ADD", session, request, "ALERT_EVENT", String.valueOf(id),
+                com.sitemonitor.service.AuditDetail.of("comment_id", saved.getId(),
+                        "length", text.length()));
         return ok(Map.of("data", saved, "message", "Comment added"));
     }
 
@@ -321,8 +325,14 @@ public class IncidentsController {
         c.setDeletedAt(now());
         c.setDeletedBy(user != null ? user : "anonymous");
         commentRepo.save(c);
+        // SILMEDE alinti GEREKLI: yok olan sey tam da govdenin kendisi. Ilk 120 karakter,
+        // "hangi yorum silindi" sorusunu cevaplamaya yeter, tam metni kopyalamadan.
         auditService.recordAction("INCIDENT_COMMENT_DELETE", session, request, "ALERT_EVENT",
-                String.valueOf(c.getAlertEventId()), "{}");
+                String.valueOf(c.getAlertEventId()),
+                com.sitemonitor.service.AuditDetail.of("comment_id", c.getId(),
+                        "author", c.getAuthorUsername(), "created_at", c.getCreatedAt(),
+                        "excerpt", c.getBody() == null ? null
+                                : c.getBody().substring(0, Math.min(120, c.getBody().length()))));
         return ok(Map.of("message", "Comment deleted"));
     }
 

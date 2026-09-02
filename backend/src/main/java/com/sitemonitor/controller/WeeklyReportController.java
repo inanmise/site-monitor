@@ -2,6 +2,7 @@ package com.sitemonitor.controller;
 
 import com.sitemonitor.model.WeeklyReport;
 import com.sitemonitor.model.WeeklyReportImage;
+import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.MonitoringWeeklyStatsService;
 import com.sitemonitor.service.WeeklyReportKpiService;
@@ -297,9 +298,9 @@ public class WeeklyReportController {
     @DeleteMapping("/images/{imageId}")
     public ResponseEntity<Map<String, Object>> deleteImage(
             @PathVariable Long imageId, HttpSession session, HttpServletRequest request) {
-        service.deleteImage(imageId, actor(session));
+        Map<String, Object> deleted = service.deleteImage(imageId, actor(session));
         auditService.recordAction("WEEKLY_REPORT_IMAGE_DELETE", session, request,
-                "WEEKLY_REPORT", imageId.toString(), "{}");
+                "WEEKLY_REPORT", imageId.toString(), AuditDetail.ofMap(deleted));
         return ok(Map.of("message", "Deleted"));
     }
 
@@ -343,10 +344,12 @@ public class WeeklyReportController {
 
     /** Onayla butonu POST eder → token ile onay. (GET değil; e-posta ön-yüklemesi onaylamaz.) */
     @PostMapping(value = "/approve-link/confirm", produces = MediaType.TEXT_HTML_VALUE)
-    public ResponseEntity<String> approveLinkConfirm(@RequestParam(required = false) String token) {
+    public ResponseEntity<String> approveLinkConfirm(@RequestParam(required = false) String token,
+                                                     HttpServletRequest request) {
         try {
             Map<String, Object> res = service.approveViaToken(token);
             String mail = String.valueOf(res.get("mail_status"));
+            auditTokenDecision("WEEKLY_REPORT_APPROVE", request, res, null);
             String note = (mail != null && (mail.startsWith("SENT") || mail.equals("QUEUED_RETRY")))
                 ? "Rapor müdüre e-posta ile iletildi."
                 : "Rapor onaylandı; müdür e-postası gönderilemedi/atlandı (" + esc(mail) + "). Uygulamadan tekrar gönderebilirsiniz.";
@@ -354,6 +357,10 @@ public class WeeklyReportController {
                 "<p class='msg'><strong>Rapor onaylandı.</strong><br>" + note + "</p>", "#15803d");
         } catch (Exception e) {
             String msg = e.getMessage() != null ? e.getMessage() : "Onay işlemi başarısız.";
+            // Başarısız token denemesi de iz bırakır: sızmış/süresi dolmuş bir bağlantının
+            // kullanılmaya çalışılması, denetimde görülmesi gereken ilk sinyaldir.
+            auditService.recordSecurityEvent("WEEKLY_REPORT_APPROVE", request, null,
+                    "WEEKLY_REPORT", "email-token", msg);
             return htmlPage("Onay Başarısız", "<p class='msg'>" + esc(msg) + "</p>", "#dc2626");
         }
     }
@@ -361,10 +368,12 @@ public class WeeklyReportController {
     /** İade Et butonu POST eder → token ile iade (opsiyonel neden). Rapor DRAFT'a döner, ekibe iade-maili gider. */
     @PostMapping(value = "/approve-link/reject", produces = MediaType.TEXT_HTML_VALUE)
     public ResponseEntity<String> approveLinkReject(@RequestParam(required = false) String token,
-                                                    @RequestParam(required = false) String reason) {
+                                                    @RequestParam(required = false) String reason,
+                                                    HttpServletRequest request) {
         try {
             Map<String, Object> res = service.rejectViaToken(token, reason);
             String mail = String.valueOf(res.get("mail_status"));
+            auditTokenDecision("WEEKLY_REPORT_REJECT", request, res, reason);
             String note = (mail != null && (mail.startsWith("SENT") || mail.equals("QUEUED_RETRY")))
                 ? "İade bilgisi ve notunuz ekibe e-posta ile iletildi."
                 : "Rapor iade edildi; ekip bilgilendirme e-postası gönderilemedi/atlandı (" + esc(mail) + ").";
@@ -372,7 +381,52 @@ public class WeeklyReportController {
                 "<p class='msg'><strong>Rapor iade edildi.</strong><br>" + note + "</p>", "#d97706");
         } catch (Exception e) {
             String msg = e.getMessage() != null ? e.getMessage() : "İade işlemi başarısız.";
+            auditService.recordSecurityEvent("WEEKLY_REPORT_REJECT", request, null,
+                    "WEEKLY_REPORT", "email-token", msg);
             return htmlPage("İade Başarısız", "<p class='msg'>" + esc(msg) + "</p>", "#dc2626");
+        }
+    }
+
+    /**
+     * E-posta bağlantısıyla verilen onay/iade kararını denetime yazar.
+     *
+     * <p>Bu iki uç <b>oturumsuzdur</b> ve raporun durumunu değiştirir; uygulama içinden yapılan
+     * aynı geçiş yıllardır denetleniyordu ({@code WEEKLY_REPORT_APPROVE}/{@code _REJECT}), token
+     * yolundan yapılınca hiçbir iz kalmıyordu. Yeni bir olay TÜRÜ icat edilmez — aynı türler
+     * kullanılıp {@code via} alanıyla ayrılır; aksi halde "bu rapor kim tarafından onaylandı"
+     * sorusu iki ayrı filtre gerektirirdi.
+     *
+     * <p>Çözülen kişi adı {@code approver} alanına yazılır, {@code actor} sütununa DEĞİL: belirteç
+     * bir posta kutusuna erişimi kanıtlar, o kişinin kimliğini değil.
+     */
+    private void auditTokenDecision(String eventType, HttpServletRequest request,
+                                    Map<String, Object> res, String reason) {
+        try {
+            Object data = res == null ? null : res.get("data");
+            Long reportId = null;
+            Long teamId = null;
+            String weekLabel = null;
+            if (data instanceof com.sitemonitor.model.WeeklyReport r) {
+                reportId = r.getId();
+                teamId = r.getTeamId();
+                weekLabel = r.getWeekLabel();
+            }
+            Map<String, Object> detail = new java.util.LinkedHashMap<>();
+            detail.put("via", "email_token");
+            detail.put("week_label", weekLabel);
+            detail.put("mail_status", res == null ? null : res.get("mail_status"));
+            if (reason != null || "WEEKLY_REPORT_REJECT".equals(eventType)) {
+                // İade gerekçesi bugüne kadar HİÇBİR yerde saklanmıyordu — ekibe giden e-postada
+                // görünüp kayboluyordu.
+                detail.put("reason", reason);
+                detail.put("reason_provided", reason != null && !reason.isBlank());
+            }
+            auditService.recordTokenAction(eventType, request, "email-approval", teamId,
+                    "WEEKLY_REPORT", reportId == null ? null : String.valueOf(reportId),
+                    AuditDetail.ofMap(detail));
+        } catch (Exception e) {
+            // Denetim yazımı kullanıcı akışını ASLA bozmaz: onay zaten gerçekleşti, ekran dönmeli.
+            log.warn("Token kararı denetime yazılamadı ({}): {}", eventType, e.toString());
         }
     }
 

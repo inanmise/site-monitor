@@ -8,6 +8,7 @@ import com.sitemonitor.service.CheckHistoryService.CsvColumn;
 import com.sitemonitor.service.DnsCheckerService;
 import com.sitemonitor.service.ActivityLogService;
 import com.sitemonitor.service.AuditDiff;
+import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.MonitorHistoryService;
 import com.sitemonitor.service.PageSpeedCheckerService;
@@ -1397,6 +1398,12 @@ public class MonitoringController {
         String send = blank(body.get("sendData")) ? null : body.get("sendData").toString();
         if (send != null) requireAdmin(session);   // ham payload (BANNER/UDP arbitrary bayt) → yalnız admin (iç-servis SSRF payload'u)
         String expect = blank(body.get("expect")) ? null : body.get("expect").toString().trim();
+        // Denetim: dış bağlantıdan ÖNCE. Bu uç sunucudan keyfi host:port'a el sıkışması açtırır;
+        // "kim sunucuya neye bağlanmasını söyledi" sorusu, çağrı timeout'a düşse de cevaplanmalı.
+        // Payload İÇERİĞİ yazılmaz (iç-servis komutu olabilir) — yalnız varlığı.
+        auditService.recordAction("MONITOR_TEST", session, "PORT_MONITOR", "test",
+                AuditDetail.of("host", host, "port", port, "protocol", type,
+                        "send_data", send != null, "expect", expect != null), null);
         String ipVersion = body.get("ipVersion") != null && java.util.Set.of("v4", "v6", "auto").contains(body.get("ipVersion").toString())
                 ? body.get("ipVersion").toString() : "auto";
         Map<String, Object> r = portChecker.check(host, port, timeoutMs, type, send, expect, ipVersion);
@@ -2116,6 +2123,10 @@ public class MonitoringController {
         int timeoutMs = body.get("timeoutMs") instanceof Number tn ? tn.intValue() : 10000;
         String customHeaders = body.get("customHeaders") != null ? body.get("customHeaders").toString() : null;
         boolean caseSensitive = Boolean.TRUE.equals(body.get("caseSensitive"));
+        // Başlıkların İÇERİĞİ yazılmaz: Authorization taşıyabiliyor. Hedef URL'in query'si de düşer.
+        auditService.recordAction("MONITOR_TEST", session, "KEYWORD_MONITOR", "test",
+                AuditDetail.of("url", AuditDetail.safeTarget(url), "operator", op,
+                        "match_count", threshold, "custom_headers", customHeaders != null), null);
         Map<String, Object> r = keywordChecker.check(url, keyword, timeoutMs, customHeaders, caseSensitive);
         int count = r.get("count") instanceof Number cn ? cn.intValue() : 0;
         boolean met = r.get("error") == null && KeywordCheckerService.evaluate(count, op, threshold);
@@ -2142,6 +2153,8 @@ public class MonitoringController {
         String ipVersion = body.get("ipVersion") != null ? body.get("ipVersion").toString() : "auto";
         int count     = body.get("packetCount") instanceof Number cn ? cn.intValue() : 4;
         int timeoutMs = body.get("timeoutMs")   instanceof Number tn ? tn.intValue() : 5000;
+        auditService.recordAction("MONITOR_TEST", session, "PING_MONITOR", "test",
+                AuditDetail.of("host", host, "ip_version", ipVersion, "packet_count", count), null);
         Map<String, Object> r = pingChecker.check(host, ipVersion, Math.max(1, Math.min(count, 10)), timeoutMs);
         boolean na = Boolean.TRUE.equals(r.get("na"));
         boolean up = Boolean.TRUE.equals(r.get("up"));
@@ -2168,6 +2181,8 @@ public class MonitoringController {
         String domain = body.get("domain").toString().trim();
         String recordType = body.get("recordType") != null ? body.get("recordType").toString().trim().toUpperCase() : "A";
         if (!DNS_RECORD_TYPES.contains(recordType)) return badRequest("Geçersiz DNS kayıt tipi: " + recordType);
+        auditService.recordAction("MONITOR_TEST", session, "DNS_MONITOR", "test",
+                AuditDetail.of("domain", domain, "record_type", recordType), null);
         Map<String, Object> r = dnsChecker.check(domain, recordType);
         @SuppressWarnings("unchecked")
         List<String> values = (List<String>) r.getOrDefault("values", List.of());
@@ -2618,6 +2633,12 @@ public class MonitoringController {
         int timeoutMs = body.get("timeoutMs") instanceof Number tn ? tn.intValue() : 10000;
         boolean verifySsl = Boolean.TRUE.equals(body.get("verifySsl"));
         boolean followRedirects = !Boolean.FALSE.equals(body.get("followRedirects"));
+        // `verify_ssl=false` denetimde AÇIKÇA görünür: doğrulamayı kapatarak yapılan bir prob,
+        // güvenlik incelemesinde diğerlerinden farklı bir sorudur.
+        auditService.recordAction("MONITOR_TEST", session, "HTTP_MONITOR", "test",
+                AuditDetail.of("url", AuditDetail.safeTarget(url), "method", method,
+                        "expected", expected, "verify_ssl", verifySsl,
+                        "follow_redirects", followRedirects), null);
         Map<String, Object> r = httpChecker.check(url, method, expected, timeoutMs, verifySsl, followRedirects);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("http_status",     r.get("http_status"));
@@ -2911,6 +2932,8 @@ public class MonitoringController {
         if (url.isEmpty()) return badRequest("url zorunlu");
         if (!MonitorUrls.isCheckable(url)) return badRequest(INVALID_URL_MSG);
         int timeoutMs = body.get("timeoutMs") instanceof Number tn ? tn.intValue() : 4000;
+        auditService.recordAction("MONITOR_TEST", session, "PAGE_MONITOR", "test",
+                AuditDetail.of("url", AuditDetail.safeTarget(url)), null);
         com.sitemonitor.service.PageCheckerService.PageCheckResult r = pageChecker.test(url, timeoutMs);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("status",              r.status());
@@ -3167,6 +3190,8 @@ public class MonitoringController {
         applyPageSpeedFields(draft, body, session);
         // Denemede eşik DEĞERLENDİRİLMEZ (checker null eşikle çağrılır) — kullanıcı önce ham ölçümü görsün,
         // eşiği ona bakarak koysun.
+        auditService.recordAction("MONITOR_TEST", session, "PAGESPEED_MONITOR", "test",
+                AuditDetail.of("url", AuditDetail.safeTarget(url)), null);
         PageSpeedCheckerService.Result r = pageSpeedChecker.test(draft);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("status",         r.status());
@@ -3804,6 +3829,10 @@ public class MonitoringController {
     @DeleteMapping("/scripted/draft/{monitorKey}")
     public ResponseEntity<Map<String, Object>> deleteScriptedDraft(@PathVariable String monitorKey, HttpSession session) {
         permissionService.require(session, "monitoring.scripted", "edit");
+        // Kalıcı silme; taslak k6 script gövdesi taşıyabilir. Gövde denetime YAZILMAZ (sırlar
+        // env'de olabilir), ne silindiği yazılır.
+        auditService.recordAction("SCRIPTED_DRAFT_DELETE", session, "SCRIPTED_MONITOR",
+                draftKey(monitorKey), AuditDetail.of("monitor_key", draftKey(monitorKey)), null);
         scriptedDraftRepo.deleteByOwnerAndMonitorKey(actor(session), draftKey(monitorKey));
         return ok(Map.of("deleted", true));
     }
@@ -3973,7 +4002,13 @@ public class MonitoringController {
         Integer timeout = body.get("timeoutSeconds") instanceof Number tn ? tn.intValue() : null;
         // Test env: frontend ham gönderir (secret değerler düz; henüz şifreli değil) → checker.test decrypt=false ile alır.
         String envJson = testEnvJson(body.get("env"));
-        auditService.recordAction("MONITOR_TRIGGER", session, "SCRIPTED_MONITOR", "test", "ad-hoc test", null);
+        // MONITOR_TRIGGER değil MONITOR_TEST: tetikleme KAYITLI bir monitörü zorla koşturur (kontrol
+        // satırı yazar, alarm açabilir); ad-hoc test hiçbir şey yazmaz ama sunucudan dışarı bağlantı
+        // açar. İkisini tek türde tutup yalnız resource_id="test" ile ayırmak, hiçbir filtrenin
+        // göstermediği bir konvansiyona bel bağlamaktı. Script GÖVDESİ yazılmaz, ölçüsü yazılır.
+        auditService.recordAction("MONITOR_TEST", session, "SCRIPTED_MONITOR", "test",
+                AuditDetail.of("kind", "ad-hoc", "script_len", script == null ? 0 : script.length(),
+                        "use_proxy", normalizeUseProxy(body.get("useProxy"))), null);
         // Test koşumu da monitörün vekil tercihini kullanır: aksi halde "Test Çalıştır" yeşil,
         // kaydedilmiş koşum kırmızı olur ve fark teşhis edilemez.
         com.sitemonitor.service.ScriptedCheckerService.ScriptedResult r =
@@ -4585,7 +4620,10 @@ public class MonitoringController {
         if (blank(body.get("domain"))) return badRequest("domain zorunlu");
         int warn = body.get("warningDays") instanceof Number n ? n.intValue() : 30;
         int crit = body.get("criticalDays") instanceof Number n ? n.intValue() : 7;
-        return ok(domainChecker.test(body.get("domain").toString(), warn, crit));
+        String domain = body.get("domain").toString();
+        auditService.recordAction("MONITOR_TEST", session, "DOMAIN_MONITOR", "test",
+                AuditDetail.of("domain", domain), null);
+        return ok(domainChecker.test(domain, warn, crit));
     }
 
     /** Domain form alanlarını (thresholds/warning/critical/interval) body'den uygular. */

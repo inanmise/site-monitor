@@ -2184,16 +2184,42 @@ public class SchedulerService {
         return h;
     }
 
-    /** Force-releases the scheduler lock and resets the in-process guard. ADMIN only. */
-    public void forceReleaseLock() {
+    /**
+     * Force-releases the scheduler lock and resets the in-process guard. ADMIN only.
+     *
+     * <p><b>Bırakılan kilidin durumunu DÖNER</b> (kim tutuyordu, ne zamandan beri, hangi koşum).
+     * Bu ucun varlık sebebi "takılmış bir koşum"dur ve o koşumun sahibi tanının kendisidir; kilit
+     * silindikten sonra o bilgi hiçbir yerde kalmıyordu, denetim satırı da boş yazılıyordu.
+     *
+     * @return silinen kilit satırının alanları; kilit yoksa {@code {"held": false}}
+     */
+    public Map<String, Object> forceReleaseLock() {
+        Map<String, Object> before = new LinkedHashMap<>();
+        try {
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                    "SELECT * FROM scheduler_lock WHERE name = ?", "cert-check");
+            if (rows.isEmpty()) {
+                before.put("held", false);
+            } else {
+                before.put("held", true);
+                before.putAll(rows.get(0));
+            }
+        } catch (Exception e) {
+            // Okunamadıysa serbest bırakma YİNE yapılır: tanı bilgisi işlemin önüne geçmez.
+            before.put("held", "unknown");
+            log.warn("forceReleaseLock: kilit satırı okunamadı: {}", e.getMessage());
+        }
         try {
             jdbcTemplate.update("DELETE FROM scheduler_lock WHERE name = ?", "cert-check");
         } catch (Exception e) {
             log.warn("forceReleaseLock: could not delete lock row: {}", e.getMessage());
         }
+        before.put("in_process_running_before", running.get());
+        before.put("run_id_before", currentRunId.get());
         running.set(false);
         currentRunId.set("");
         log.warn("Scheduler lock force-released by admin [instance={}]", INSTANCE_ID);
+        return before;
     }
 
     private List<Map<String, Object>> loadDomainsFromInventory() {

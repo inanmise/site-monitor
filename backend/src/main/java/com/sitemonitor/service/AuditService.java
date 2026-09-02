@@ -413,6 +413,43 @@ public class AuditService {
         persist(e);
     }
 
+    // ── Taşıyıcı-belirteçle (e-posta magic-link) yapılan eylemler ────────────────
+
+    /**
+     * Oturumsuz ama YETKİLİ eylem: kimlik oturumdan değil, e-postayla gönderilen tek kullanımlık
+     * belirteçten gelir (haftalık rapor onay/red bağlantıları).
+     *
+     * <p><b>Actor bir KİMLİK değil, bir KANAL adıdır.</b> Belirteç yalnız bir posta kutusuna
+     * erişimi kanıtlar, tuşa basan insanın kim olduğunu değil. Çözülen kişi adını {@code actor}
+     * sütununa yazmak, kanıtlanmamış bir kimliği kanıtlanmış gibi göstermek olurdu — denetim
+     * kaydının varlık sebebine aykırı. O ad {@code detail} içinde taşınır.
+     *
+     * <p>{@code actor_role = "TOKEN"}: "yetki oturumdan değil belirteçten geldi". {@code "SYSTEM"}
+     * yalan olurdu (bunu bir insan tetikledi), {@code "anonymous"} yanlış olurdu (o,
+     * {@link #recordSecurityEvent}'in kimliksiz BAŞARISIZLIK değeri).
+     *
+     * <p>IP ve User-Agent ZORUNLU taşınır: bunlar gerçek HTTP istekleridir ve elimizdeki tek
+     * somut kanıttır — bu yüzden {@link #recordSystemEvent} (IP taşımaz) kullanılamaz.
+     */
+    public void recordTokenAction(String eventType, HttpServletRequest request, String tokenActor,
+                                  Long actorTeamId, String resourceType, String resourceId, String detail) {
+        AuditLog e = new AuditLog();
+        e.setEventType(eventType);
+        e.setEventTime(now());
+        e.setActor(tokenActor == null || tokenActor.isBlank() ? "token" : tokenActor);
+        e.setActorRole("TOKEN");
+        e.setActorTeamId(actorTeamId);
+        e.setIpAddress(resolveIp(request));
+        e.setUserAgent(resolveUa(request));
+        e.setResourceType(resourceType);
+        e.setResourceId(resourceId);
+        e.setDetail(detail);
+        e.setOutcome("SUCCESS");
+        e.setCorrelationId(CorrelationIdFilter.get(request));
+        e.setAnomalyFlags(isOffHours() ? "OFF_HOURS" : null);
+        persist(e);
+    }
+
     // ── Sistem olayları (startup/shutdown/schema-patch/retention) ────────────────
 
     public void recordSystemEvent(String eventType, String resourceType, String resourceId, String detail) {
@@ -426,6 +463,32 @@ public class AuditService {
         e.setDetail(detail);
         e.setOutcome("SUCCESS");
         persist(e);
+    }
+
+    /**
+     * Olay türü → son 90 gündeki sayı (katalog ucu için).
+     *
+     * <p>Sayıya ihtiyaç var çünkü katalog 162 tür içeriyor: hiç kaydı olmayan bir türü seçmek
+     * kullanıcıya boş liste döndürüyor ve "veri kaybolmuş" izlenimi veriyor. Sayıyla birlikte
+     * arayüz onları soluk gösterebiliyor.
+     *
+     * <p>Pencere 90 gün: istatistik kartlarının 7 günlük penceresi filtre listesi için fazla dar
+     * (ayda bir koşan bir bakım işi "hiç olmamış" gibi görünürdü), 365 gün ise tam tarama.
+     *
+     * <p><b>Cache adı AYRI olmak zorunda.</b> Aynı cache'te iki parametresiz metot aynı anahtarı
+     * ({@code SimpleKey.EMPTY}) paylaşır: önce hangisi çağrılırsa diğerinin sonucu olarak dönerdi.
+     * Varsayılan 60 sn TTL {@code buildStats} ile aynı, cache yalnız isim olarak ayrıdır.
+     */
+    @Cacheable("audit-event-types")
+    public Map<String, Long> eventTypeCounts() {
+        String since = ISO.format(Instant.now().minusSeconds(90 * 86_400L));
+        Map<String, Long> out = new java.util.LinkedHashMap<>();
+        for (Object[] row : auditLogRepo.countByEventTypeSince(since)) {
+            if (row != null && row.length > 1 && row[0] != null && row[1] instanceof Number n) {
+                out.put(String.valueOf(row[0]), n.longValue());
+            }
+        }
+        return out;
     }
 
     // ── Denetim özet istatistikleri (dashboard) — CACHE'li ───────────────────────
