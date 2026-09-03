@@ -6,15 +6,15 @@ export const TEAMS_KEY = 'sm.checkRun.teams'
 /** Takımsız sertifikalar için sanal anahtar (gerçek team_id null). */
 export const NO_TEAM = '__none__'
 
-export function readSavedTeams() {
+export function readSavedTeams(key = TEAMS_KEY) {
   try {
-    const raw = localStorage.getItem(TEAMS_KEY)
+    const raw = localStorage.getItem(key)
     const arr = raw ? JSON.parse(raw) : null
     return Array.isArray(arr) ? arr.map(String) : null
   } catch { return null }
 }
-function writeSavedTeams(keys) {
-  try { localStorage.setItem(TEAMS_KEY, JSON.stringify(keys)) } catch { /* yoksay */ }
+function writeSavedTeams(key, keys) {
+  try { localStorage.setItem(key, JSON.stringify(keys)) } catch { /* yoksay */ }
 }
 
 /** certs → [{key, label, count}] (takım adına göre sıralı, takımsız en sonda). */
@@ -27,7 +27,34 @@ export function teamBuckets(certs) {
     if (cur) cur.count += 1
     else map.set(key, { key, label: c.team_name || null, count: 1 })
   }
-  return [...map.values()].sort((a, b) => {
+  return sortBuckets([...map.values()])
+}
+
+/**
+ * İzleme listesi → takım kovaları. Sertifika ikizinden AYRI bir fonksiyon çünkü ANAHTAR farklı:
+ * burada takım kimliği {@code team_name}'dir, {@code team_id} değil.
+ *
+ * <p><b>Neden:</b> Port ve DNS izlemeleri çift kaynaklı — envanterden türeyen satırlarda
+ * {@code team_id} NULL kalır ama {@code team_name} domain→takım haritasından DOLU gelir
+ * (MonitoringController.enrichPort/enrichDns). {@code team_id} ile kovalamak bu satırların
+ * hepsini "Takımsız"a düşürürdü; oysa sayfanın kendi takım filtresi (monitorFilters
+ * matchesTeamAndGroup) ve {@code useTeamOptions} zaten {@code team_name} karşılaştırıyor.
+ * Aynı ekranda iki farklı takım tanımı olamaz — anahtar tek olmalı.
+ */
+export function monitorTeamBuckets(monitors) {
+  const map = new Map()
+  for (const m of monitors || []) {
+    if (!m) continue
+    const key = m.team_name || NO_TEAM
+    const cur = map.get(key)
+    if (cur) cur.count += 1
+    else map.set(key, { key, label: m.team_name || null, count: 1 })
+  }
+  return sortBuckets([...map.values()])
+}
+
+function sortBuckets(buckets) {
+  return buckets.sort((a, b) => {
     if (a.key === NO_TEAM) return 1
     if (b.key === NO_TEAM) return -1
     return (a.label || '').localeCompare(b.label || '', 'tr')
@@ -37,16 +64,23 @@ export function teamBuckets(certs) {
 /**
  * Kontrol öncesi takım seçimi. Kullanıcı bir, birkaç veya tüm takımları seçer;
  * seçim localStorage'da saklanır ve bir sonraki açılışta ön-seçili gelir.
- * Takım listesi App state'indeki certs'ten türetilir — kullanıcı zaten göremediği
+ * Takım listesi çağıranın elindeki kayıtlardan türetilir — kullanıcı zaten göremediği
  * takımı seçemez, ek uç nokta/izin gerekmez.
+ *
+ * <p>Sertifika panosu {@code certs} geçer (kovalar burada türetilir); izleme sayfaları hazır
+ * {@code buckets} ve kendi {@code storageKey}'ini geçer. Anahtarın tür başına ayrılması ŞART:
+ * tek anahtar paylaşılsaydı HTTP sayfasında yapılan takım seçimi panonun seçimini ezerdi.
  */
-export default function CheckTeamPicker({ certs, onStart, onClose }) {
+export default function CheckTeamPicker({
+  certs, buckets: bucketsProp, storageKey = TEAMS_KEY,
+  descText, totalText, emptyText, onStart, onClose,
+}) {
   const t = useT()
-  const buckets = useMemo(() => teamBuckets(certs), [certs])
+  const buckets = useMemo(() => bucketsProp ?? teamBuckets(certs), [bucketsProp, certs])
   const allKeys = useMemo(() => buckets.map(b => b.key), [buckets])
 
   const [selected, setSelected] = useState(() => {
-    const saved = readSavedTeams()
+    const saved = readSavedTeams(storageKey)
     const valid = saved ? saved.filter(k => allKeys.includes(k)) : null
     return valid && valid.length ? valid : allKeys
   })
@@ -61,7 +95,7 @@ export default function CheckTeamPicker({ certs, onStart, onClose }) {
     setSelected(allSelected ? [] : allKeys)
   }
   function start() {
-    writeSavedTeams(selected)
+    writeSavedTeams(storageKey, selected)
     const label = allSelected
       ? t('app.checkTeamAllLabel')
       : buckets.filter(b => selected.includes(b.key))
@@ -76,10 +110,10 @@ export default function CheckTeamPicker({ certs, onStart, onClose }) {
           <div className="modal-icon-hdr-badge"><Users size={20} /></div>
           <h3>{t('app.checkTeamTitle')}</h3>
         </div>
-        <p className="chk-team-desc">{t('app.checkTeamDesc')}</p>
+        <p className="chk-team-desc">{descText || t('app.checkTeamDesc')}</p>
 
         {buckets.length === 0 ? (
-          <p className="chk-team-empty">{t('app.checkTeamEmpty')}</p>
+          <p className="chk-team-empty">{emptyText || t('app.checkTeamEmpty')}</p>
         ) : (
           <>
             <label className="chk-team-row chk-team-all">
@@ -100,7 +134,7 @@ export default function CheckTeamPicker({ certs, onStart, onClose }) {
         )}
 
         <div className="modal-actions">
-          <span className="chk-team-total">{t('app.checkTeamTotal', total)}</span>
+          <span className="chk-team-total">{totalText ? totalText(total) : t('app.checkTeamTotal', total)}</span>
           <button className="btn btn-secondary" onClick={onClose}>{t('app.cancel')}</button>
           <button className="btn btn-primary" onClick={start} disabled={total === 0}>
             <Play size={14} />{t('app.checkTeamStart')}

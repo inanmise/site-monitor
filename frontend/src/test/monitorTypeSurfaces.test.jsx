@@ -3,6 +3,7 @@ import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { MONITOR_GUIDES } from '../components/monitorGuides.js'
 import { MONITOR_ALERT_TYPES } from '../utils/monitorAlertTypes.js'
+import { monitorCheckColumns, CHECK_CONCURRENCY_BY_TYPE } from '../components/check/monitorCheckColumns.jsx'
 
 /**
  * YENİ İZLEME TÜRÜ EKLEYENİ DURDURAN KAPI — arayüz yüzeyleri.
@@ -224,6 +225,35 @@ describe('İzleme türü yüzeyleri — yeni tür eklenince hepsi güncellenmeli
       const src = read(file)
       expect(src, `${file}: AlertHistory'ye types gecilmemis`)
         .toContain(`types={alertTypesFor('${type}')}`)
+    }
+  })
+
+  it('Her izleme sayfası sayfa düzeyi TOPLU kontrol yüzeyini taşır', () => {
+    // Eksik sayfa hata VERMEZ; o türde toplu kontrol yalnızca yok olur — MonitorHowBox /
+    // MonitorGuideButton kapısıyla aynı hata sınıfı. Depolama anahtarı da tür başına ayrı
+    // olmalı: tek anahtar paylaşılırsa bir sayfadaki takım seçimi panonunkini ezer.
+    for (const type of MONITOR_TYPES) {
+      const file = pageFileFor(type)
+      const src = read(file)
+      expect(src, `${file}: CheckAllButton yok`).toContain('CheckAllButton')
+      expect(src, `${file}: MonitorCheckRunModal yok`).toContain('MonitorCheckRunModal')
+      expect(src, `${file}: useCheckRun yok`).toContain('useCheckRun')
+      expect(src, `${file}: takım seçici tür başına anahtar kullanmıyor`)
+        .toContain(`sm.checkRun.teams.${type}`)
+    }
+  })
+
+  it('Her izleme türünün kontrol tablosu kolonu ve eşzamanlılık tavanı var', () => {
+    for (const type of MONITOR_TYPES) {
+      expect(CHECK_CONCURRENCY_BY_TYPE, `eşzamanlılık tavanı yok: ${type}`).toHaveProperty(type)
+      const { targetOf, columns } = monitorCheckColumns(type, (k) => k)
+      expect(typeof targetOf, `${type}: targetOf yok`).toBe('function')
+      expect(columns.length, `${type}: kolon üretilmedi`).toBeGreaterThan(0)
+      // 403/429/ağ hatası satırında gövde YOKTUR; tek bir kolon orada patlarsa tüm koşum
+      // tablosu çizilemez ve kullanıcı boş ekrana bakar.
+      expect(() => columns.forEach(c => c.render({ monitor: {}, data: null })),
+        `${type}: data yokken kolon patlıyor`).not.toThrow()
+      expect(() => targetOf(undefined), `${type}: monitör yokken targetOf patlıyor`).not.toThrow()
     }
   })
 

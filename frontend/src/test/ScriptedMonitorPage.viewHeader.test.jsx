@@ -43,6 +43,8 @@ describe('ScriptedMonitorPage — başlık eylemleri görünüme göre', () => {
     expect(screen.getByText(/otomatik yenileme|auto-refresh/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^(yenile|refresh)$/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /nasıl doldurulur|how to fill/i })).toBeInTheDocument()
+    // Toplu kontrol düğmesi de MONİTÖR görünümüne ait: şablon listesini kontrol etmez.
+    expect(screen.getByTitle(/bu sayfadaki .* izlemenin|check all .* monitors/i)).toBeInTheDocument()
     // k6 sürümü artık eylem kümesinde DEĞİL, başlığın künyesinde.
     expect(container.querySelector('.upt-header-right .sc-k6ver')).toBeNull()
     expect(container.querySelector('.upt-title .sc-title-k6')).not.toBeNull()
@@ -54,6 +56,7 @@ describe('ScriptedMonitorPage — başlık eylemleri görünüme göre', () => {
     expect(screen.queryByText(/otomatik yenileme|auto-refresh/i)).toBeNull()
     expect(screen.queryByRole('button', { name: /^(yenile|refresh)$/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /nasıl doldurulur|how to fill/i })).toBeNull()
+    expect(screen.queryByTitle(/bu sayfadaki .* izlemenin|check all .* monitors/i)).toBeNull()
     // Başlık künyesi KALIR ve bu BİLİNÇLİ: şablonlar da k6 script'idir, hangi motora
     // yazıldıkları burada da geçerli bir bilgi. Kalkan şey EYLEM kümesiydi.
     expect(container.querySelector('.upt-title .sc-title-k6')).not.toBeNull()

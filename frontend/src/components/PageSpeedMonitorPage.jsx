@@ -9,6 +9,11 @@ import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
+import CheckAllButton from './check/CheckAllButton.jsx'
+import MonitorCheckRunModal from './check/MonitorCheckRunModal.jsx'
+import CheckTeamPicker, { monitorTeamBuckets } from './check/CheckTeamPicker.jsx'
+import { CHECK_CONCURRENCY_BY_TYPE } from './check/monitorCheckColumns.jsx'
+import { useCheckRun } from '../hooks/useCheckRun.js'
 import MonitorModalActions from './ui/MonitorModalActions.jsx'
 import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
@@ -127,6 +132,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
   const myTeam = teamId != null ? String(teamId) : null
   const isOwnTeam = (m) => myTeam != null && String(m.team_id) === myTeam
   const canManageRow = (m) => isAdmin || isOwnTeam(m)
+  // Toplu kontrolün adayı = kullanıcının TEK TEK de çalıştırabileceği satırlar. Yeni bir izin
+  // kuralı UYDURULMUYOR; kartın ▶ düğmesiyle birebir aynı yüzey.
+  const canCheckRow = canManageRow
   const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))
 
   const [monitors, setMonitors] = useState([])
@@ -175,7 +183,20 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
     setLoading(false); setSecondsSince(0)
   }, [])
 
-  useVisibleInterval(load, REFRESH_INTERVAL * 1000)
+  const checkable = monitors.filter(canCheckRow)
+  const checkRun = useCheckRun({
+    items: checkable,
+    // Tekil yolun ta kendisi: kartın "kontrol ediliyor" göstergesi (track) ve sonucun
+    // satıra işlenmesi toplu koşumda da AYNI koddan geçer — ikinci bir merge yolu yok.
+    runOne: (m) => checkNow(m, { silent: true }),
+    concurrency: CHECK_CONCURRENCY_BY_TYPE.pagespeed,
+  })
+
+  // Koşum sırasında 60 sn'lik tazeleme DURUR: ortada gelen bir load() satırları sunucu anlık
+  // görüntüsüyle değiştirip listeyi yeniden sıralar, kullanıcının baktığı kart zıplardı.
+  // Koşum bitince ms 0'dan geri dönerken hook bir kez tetiklenir → merge edilmiş satırların
+  // üzerine kanonik sunucu verisi gelir (panodaki açık yeniden çekmenin karşılığı).
+  useVisibleInterval(load, checkRun.running ? 0 : REFRESH_INTERVAL * 1000)
   useVisibleInterval(() => setSecondsSince(s => s + 1), 1000, false)
 
   useEffect(() => {
@@ -405,16 +426,21 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
     toast.success(t('pspd.deleted')); closeEdit()
   }
 
-  async function checkNow(m) {
-    await track(m.id, async () => {
+  async function checkNow(m, { silent = false } = {}) {
+    // DÖNÜŞ DEĞERİ toplu koşum içindir: satırın ✓/✕ tik'ini ve hata metnini o belirler.
+    // Tekil çağıran (kart/modal düğmesi) sonucu yok sayar — davranışı değişmez.
+    return track(m.id, async () => {
       const res = await api.monitoring.triggerPageSpeedCheck(m.id)
       if (res?.success) {
         setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
         if (selected?.id === m.id) { setSelected(res.data); setResCheckId(null); loadResources(m.id) }
         setHistReload(k => k + 1)
-      } else {
-        toast.error(res?.error || 'Error')
+        return { ok: true, data: res.data }
       }
+      // Toplu koşumda toast SUSAR: 40 monitörlük bir koşumda 40 hata bildirimi ekranı
+      // gömerdi; mesaj zaten koşum tablosunun satırında duruyor.
+      if (!silent) toast.error(res?.error || 'Error')
+      return { ok: false, error: res?.error || null, data: res?.data ?? null }
     })
   }
 
@@ -549,6 +575,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
           <button className="btn btn-sm upt-refresh-btn" onClick={load}>
             <RefreshCw size={14} />{t('pspd.refresh')}
           </button>
+          <CheckAllButton count={checkable.length} running={checkRun.running}
+            done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
+            onClick={checkRun.openPicker} />
           <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
           <MonitorGuideButton type="pagespeed" />
           {canWrite && (
@@ -1083,6 +1112,22 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
         </div>,
         document.body
       )}
+
+      {/* Sayfa düzeyi toplu kontrol: önce takım seçimi, sonra akan sonuç tablosu.
+          Depolama anahtarı TÜR BAŞINA ayrı — tek anahtar paylaşılsaydı buradaki seçim
+          panonun sertifika seçimini ezerdi. */}
+      {checkRun.pickerOpen && (
+        <CheckTeamPicker
+          buckets={monitorTeamBuckets(checkable)}
+          storageKey="sm.checkRun.teams.pagespeed"
+          descText={t('mon.checkAllTeamDesc')}
+          totalText={(n) => t('mon.checkAllTeamTotal', n)}
+          emptyText={t('mon.checkAllTeamEmpty')}
+          onClose={checkRun.closePicker}
+          onStart={(keys, label) => { checkRun.closePicker(); checkRun.start(keys, label) }} />
+      )}
+      <MonitorCheckRunModal run={checkRun.run} type="pagespeed"
+        onCancel={checkRun.cancel} onClose={checkRun.close} />
     </div>
   )
 }

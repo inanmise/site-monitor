@@ -23,6 +23,11 @@ import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
+import CheckAllButton from './check/CheckAllButton.jsx'
+import MonitorCheckRunModal from './check/MonitorCheckRunModal.jsx'
+import CheckTeamPicker, { monitorTeamBuckets } from './check/CheckTeamPicker.jsx'
+import { CHECK_CONCURRENCY_BY_TYPE } from './check/monitorCheckColumns.jsx'
+import { useCheckRun } from '../hooks/useCheckRun.js'
 import ScriptedVersionsTab from './scripted/ScriptedVersionsTab.jsx'
 import ScriptedTemplatesTab from './scripted/ScriptedTemplatesTab.jsx'
 import SegmentedControl from './ui/SegmentedControl.jsx'
@@ -244,6 +249,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
 
   // Satır-bazlı yetki: global monitoring.scripted izni (can_manage) + takım sahipliği (kanonik desen).
   const canManageRow = (m) => k6.canManage && (isAdmin || isOwnTeam(m))
+  // k6 kurulu değilse aday YOK → düğme hiç çizilmez; kartın checkDisabled={!k6.available}
+  // kapısıyla aynı sonuç, basılıp 4xx yiyen bir düğme gösterilmiyor.
+  const canCheckRow = (m) => k6.available && canManageRow(m)
   const canDeleteRow = (m) => k6.canManage && (isAdmin || (isTeamAdmin && isOwnTeam(m)))
 
   const load = useCallback(async () => {
@@ -257,7 +265,20 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     setLoading(false); setSecondsSince(0)
   }, [])
 
-  useVisibleInterval(load, REFRESH_INTERVAL * 1000)   // gizli sekmede polling durur
+  const checkable = monitors.filter(canCheckRow)
+  const checkRun = useCheckRun({
+    items: checkable,
+    // Tekil yolun ta kendisi: kartın "kontrol ediliyor" göstergesi (track) ve sonucun
+    // satıra işlenmesi toplu koşumda da AYNI koddan geçer — ikinci bir merge yolu yok.
+    runOne: (m) => checkNow(m, { silent: true }),
+    concurrency: CHECK_CONCURRENCY_BY_TYPE.scripted,
+  })
+
+  // Koşum sırasında 60 sn'lik tazeleme DURUR: ortada gelen bir load() satırları sunucu anlık
+  // görüntüsüyle değiştirip listeyi yeniden sıralar, kullanıcının baktığı kart zıplardı.
+  // Koşum bitince ms 0'dan geri dönerken hook bir kez tetiklenir → merge edilmiş satırların
+  // üzerine kanonik sunucu verisi gelir (panodaki açık yeniden çekmenin karşılığı).
+  useVisibleInterval(load, checkRun.running ? 0 : REFRESH_INTERVAL * 1000)   // gizli sekmede polling durur
   useVisibleInterval(() => setSecondsSince(s => s + 1), 1000, false)   // countdown da durur
 
   const loadDrafts = useCallback(async () => {
@@ -884,8 +905,10 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     }
   }
 
-  async function checkNow(m) {
-    await track(m.id, async () => {
+  async function checkNow(m, { silent = false } = {}) {
+    // DÖNÜŞ DEĞERİ toplu koşum içindir: satırın ✓/✕ tik'ini ve hata metnini o belirler.
+    // Tekil çağıran (kart/modal düğmesi) sonucu yok sayar — davranışı değişmez.
+    return track(m.id, async () => {
       const res = await api.monitoring.triggerScriptedCheck(m.id)
       if (res?.success) {
         // queued: koşum sunucunun bekleme penceresini aştı, arka planda sürüyor. Satırı ESKİ sonuçla
@@ -895,22 +918,29 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
         // yazılmadı. Satırı güncellemek kullanıcıya ESKİ sonucu "yeni" gibi gösterirdi; sebebi
         // söylüyoruz. Uyarı tonunda: hedefte bir sorun YOK, kapasite darlığı var.
         if (res.data?.skipped) {
-          toast.info(t('scripted.triggerSkipped', res.data.skipped_reason || ''), 6000)
-        } else if (res.data?.queued) {
-          toast.success(t('scripted.triggerQueued'))
-        } else {
-          setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
-          // Geçmiş ARTIK tazeleniyor (setHistReload): sekmenin kendi 30 sn'lik canlı yenilemesi
-          // 1. sayfa dışında ve özel aralıkta KAPALI, dolayısıyla modaldan koşturulan kontrolün
-          // sonucu hiç görünmeyebiliyordu. Sinyal remount ETMEZ — seçilen aralık/sayfa/filtre kalır.
-          // (Eski hatalı loadHistory(m.id, rangeDays) çağrısı geri GELMEDİ; not aşağıda duruyor.)
-          // Buradaki eski loadHistory(m.id, rangeDays) çağrısı geçmiş yönetimi o bileşene taşınırken
-          // temizlenmemişti; ikisi de tanımsız olduğu için modal açıkken "Şimdi Çalıştır" ReferenceError
-          // atıyor, aşağıdaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
-          if (selected?.id === m.id) setSelected(res.data)
-          setHistReload(k => k + 1)
+          const msg = t('scripted.triggerSkipped', res.data.skipped_reason || '')
+          if (!silent) toast.info(msg, 6000)
+          // Atlanan koşum BAŞARISIZ sayılır: kontrol hiç yürüttürülmedi, satır bunu söylemeli.
+          return { ok: false, data: res.data, error: msg }
         }
-      } else if (res) toast.error(res.error || t('scripted.triggerError'))
+        if (res.data?.queued) {
+          if (!silent) toast.success(t('scripted.triggerQueued'))
+          // Kuyruğa alınan koşum BAŞARILI: tetikleme kabul edildi, sonucu arkada gelecek.
+          return { ok: true, data: res.data }
+        }
+        setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
+        // Geçmiş ARTIK tazeleniyor (setHistReload): sekmenin kendi 30 sn'lik canlı yenilemesi
+        // 1. sayfa dışında ve özel aralıkta KAPALI, dolayısıyla modaldan koşturulan kontrolün
+        // sonucu hiç görünmeyebiliyordu. Sinyal remount ETMEZ — seçilen aralık/sayfa/filtre kalır.
+        // (Eski hatalı loadHistory(m.id, rangeDays) çağrısı geri GELMEDİ; not aşağıda duruyor.)
+        // Buradaki eski loadHistory(m.id, rangeDays) çağrısı geçmiş yönetimi o bileşene taşınırken
+        // temizlenmemişti; ikisi de tanımsız olduğu için modal açıkken "Şimdi Çalıştır" ReferenceError
+        // atıyor, aşağıdaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
+        if (selected?.id === m.id) setSelected(res.data)
+        setHistReload(k => k + 1)
+        return { ok: true, data: res.data }
+      } else if (res && !silent) toast.error(res.error || t('scripted.triggerError'))
+      return { ok: false, error: res?.error || null, data: res?.data ?? null }
     })
   }
 
@@ -962,6 +992,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
             </button>
             {/* iconOnly (10 izleme sayfasında da aynı): "Bağlantıyı kopyala" tam metniyle başlık
                 satırının en geniş öğesiydi. Anlam kaybı yok — metin title/aria-label'da duruyor. */}
+            <CheckAllButton count={checkable.length} running={checkRun.running}
+              done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
+              onClick={checkRun.openPicker} />
             <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
             {/* k6 sürümü buradan BAŞLIĞA taşındı (yukarıdaki nota bakın). K6VersionBadge yaşamaya
                 devam ediyor: düzenleme formunda sözdizimi notuyla birlikte kullanılıyor. */}
@@ -1269,6 +1302,22 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
       </>)}
 
       {modal && createPortal(<EditModal {...{ t, lang, k6Version: k6.version, proxy, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke, dismissSmoke: () => { setSmoke(null); closeEdit({ skipDraft: true }) }, save, del, closeEdit, runTest, isAdminish, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts, savedSource, templates: scriptTemplates, draftSavedAt, pendingDraft, applyDraft, discardDraft, bumpType, setBumpType }} />, document.body)}
+
+      {/* Sayfa düzeyi toplu kontrol: önce takım seçimi, sonra akan sonuç tablosu.
+          Depolama anahtarı TÜR BAŞINA ayrı — tek anahtar paylaşılsaydı buradaki seçim
+          panonun sertifika seçimini ezerdi. */}
+      {checkRun.pickerOpen && (
+        <CheckTeamPicker
+          buckets={monitorTeamBuckets(checkable)}
+          storageKey="sm.checkRun.teams.scripted"
+          descText={t('mon.checkAllTeamDesc')}
+          totalText={(n) => t('mon.checkAllTeamTotal', n)}
+          emptyText={t('mon.checkAllTeamEmpty')}
+          onClose={checkRun.closePicker}
+          onStart={(keys, label) => { checkRun.closePicker(); checkRun.start(keys, label) }} />
+      )}
+      <MonitorCheckRunModal run={checkRun.run} type="scripted"
+        onCancel={checkRun.cancel} onClose={checkRun.close} />
     </div>
   )
 }

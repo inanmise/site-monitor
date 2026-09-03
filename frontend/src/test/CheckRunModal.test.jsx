@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from './test-utils.jsx'
 import CheckRunModal from '../components/check/CheckRunModal.jsx'
-import CheckTeamPicker, { teamBuckets, NO_TEAM } from '../components/check/CheckTeamPicker.jsx'
+import CheckTeamPicker, { teamBuckets, monitorTeamBuckets, NO_TEAM } from '../components/check/CheckTeamPicker.jsx'
 
 const certIndex = {
   'a.example.com': { team_name: 'SY-Takım A', tier: 1, port: 443 },
@@ -98,5 +98,45 @@ describe('CheckTeamPicker', () => {
     expect(onStart).toHaveBeenCalled()
     expect(onStart.mock.calls[0][0]).toEqual(['1'])
     expect(JSON.parse(localStorage.getItem('sm.checkRun.teams'))).toEqual(['1'])
+  })
+})
+
+describe('CheckTeamPicker — izleme varyantı', () => {
+  const monitors = [
+    // Envanterden TÜREYEN satır: team_id NULL, team_name DOLU. Kimlikle kovalasaydık
+    // bu iki satır "Takımsız"a düşer ve kullanıcı kendi takımını seçtiğinde kapsam dışı kalırdı.
+    { id: 1, name: 'api', team_id: null, team_name: 'SY-Takım A' },
+    { id: 2, name: 'web', team_id: null, team_name: 'SY-Takım A' },
+    { id: 3, name: 'db',  team_id: 9,    team_name: 'SY-Takım B' },
+    { id: 4, name: 'x',   team_id: null, team_name: null },
+  ]
+
+  it('kovalar team_name ile kurulur, takımsız en sonda', () => {
+    const b = monitorTeamBuckets(monitors)
+    expect(b.map(x => x.key)).toEqual(['SY-Takım A', 'SY-Takım B', NO_TEAM])
+    expect(b[0].count).toBe(2)
+  })
+
+  it('tür başına anahtara yazar; panonun seçimine DOKUNMAZ', () => {
+    localStorage.clear()
+    localStorage.setItem('sm.checkRun.teams', JSON.stringify(['1']))
+    const onStart = vi.fn()
+    render(<CheckTeamPicker buckets={monitorTeamBuckets(monitors)} storageKey="sm.checkRun.teams.http"
+      totalText={(n) => `${n} izleme`} onStart={onStart} onClose={() => {}} />)
+
+    fireEvent.click(screen.getByText('SY-Takım B'))
+    fireEvent.click(screen.getByText(/takımsız|no team/i))
+    fireEvent.click(screen.getByRole('button', { name: /kontrolü başlat|start check/i }))
+
+    expect(onStart.mock.calls[0][0]).toEqual(['SY-Takım A'])
+    expect(JSON.parse(localStorage.getItem('sm.checkRun.teams.http'))).toEqual(['SY-Takım A'])
+    expect(JSON.parse(localStorage.getItem('sm.checkRun.teams'))).toEqual(['1'])
+  })
+
+  it('toplam metni çağırandan gelir (sertifika değil "izleme" der)', () => {
+    localStorage.clear()
+    render(<CheckTeamPicker buckets={monitorTeamBuckets(monitors)} storageKey="sm.checkRun.teams.http"
+      totalText={(n) => `${n} izleme`} onStart={() => {}} onClose={() => {}} />)
+    expect(screen.getByText('4 izleme')).toBeInTheDocument()
   })
 })
