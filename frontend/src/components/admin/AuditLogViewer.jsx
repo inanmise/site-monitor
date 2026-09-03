@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { Fragment, useState, useEffect, useCallback, useRef } from 'react'
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -262,6 +262,9 @@ export default function AuditLogViewer() {
    * gecilmez (sunucu sayfalamasi) — sinirda durur, kullanici sayfalayiciyi kullanir.
    */
   function onRowsKeyDown(e) {
+    // Satır-içi panel <tbody> ALTINDA yaşıyor: içindeki bir alanda ok tuşuna basılınca olay
+    // buraya kabarır ve kullanıcının okuduğu kayıt altından değişirdi.
+    if (e.target !== e.currentTarget && e.target.closest?.('.aud-inline')) return
     const idx = rows.findIndex(r => r.id === selectedId)
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault()
@@ -585,11 +588,14 @@ export default function AuditLogViewer() {
       </div>
 
       {/* Table */}
-      {/* ── Ana-detay: solda akış, sağda seçili kaydın tam ayrıntısı ─────────────
-          Satır-içi genişletme kaldırıldı: açılan panel tabloyu aşağı itiyor, kullanıcı
-          okurken satırını kaybediyordu. Yan panel yapışık kalır; dar ekranda ModalShell'e
-          geçer (ikisi AYNI anda render EDİLMEZ — DOM'da tek düğüm). */}
-      <div className="aud-split" data-open={selectedRow ? 'true' : 'false'}>
+      {/* ── Ana-detay — iki yerleşim, TEK içerik ──────────────────────────
+          Geniş ekranda yapışkan yan panel: tablo yerinde kalır, satırdan satıra geçerken
+          sağdaki içerik değişir. Dar ekranda yan panele yer yok — ayrıntı seçili satırın
+          HEMEN ALTINDA açılır. Diyalog kullanılmıyor: modal ayrıntıyı bağlamından koparıyor,
+          kullanıcı hangi satıra baktığını kaybediyordu.
+          İkisi AYNI anda render EDİLMEZ (ekran okuyucu aynı içeriği iki kez okumasın). */}
+      <div className="aud-split" data-open={selectedRow ? 'true' : 'false'}
+        data-wide={wide ? 'true' : 'false'}>
         <div className="aud-list">
           {loadError && (
             <AlertBanner tone="danger" title={t('audit.loadErrorTitle')}
@@ -619,9 +625,11 @@ export default function AuditLogViewer() {
                 {rows.map(row => {
                   const { changes } = parseDetail(row)
                   const selected = selectedId === row.id
+                  const inline = selected && !wide
                   return (
-                    <tr key={row.id}
-                        ref={selected ? selectedRowRef : null}
+                    <Fragment key={row.id}>
+                    <tr ref={selected ? selectedRowRef : null}
+                        aria-expanded={inline || undefined}
                         className={`aud-row${row.anomaly_flags ? ' audit-row-anomaly' : ''}${selected ? ' is-selected' : ''}`}
                         aria-selected={selected}
                         tabIndex={selected ? 0 : -1}
@@ -675,6 +683,15 @@ export default function AuditLogViewer() {
                         <ChevronRight size={14} className="aud-row-chevron" />
                       </td>
                     </tr>
+                    {inline && (
+                      <tr className="aud-inline">
+                        <td colSpan={10}>
+                          <AuditDetailPanel row={row} onClose={() => setSelectedId(null)}
+                            onOpenTimeline={openTimeline} onDrill={drillResource} />
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   )
                 })}
               </tbody>
@@ -711,14 +728,6 @@ export default function AuditLogViewer() {
           </aside>
         )}
       </div>
-
-      {/* Dar ekranda gerçek diyalog: ModalShell ESC/focus trap/aria sözleşmesini taşır. */}
-      {!wide && selectedRow && (
-        <ModalShell open onClose={() => setSelectedId(null)} size="lg" scrollBody
-          title={eventLabel(selectedRow.event_type, t)}>
-          <AuditDetailPanel row={selectedRow} onOpenTimeline={openTimeline} onDrill={drillResource} />
-        </ModalShell>
-      )}
 
       {/* Kaynak geçmişi — ModalShell tabanlı. Eskiden elle kurulmuş bir overlay'di: `role`
           yok, `aria-modal` yok, ESC kapatmıyor, focus trap yok. ModalShell bu sözleşmenin

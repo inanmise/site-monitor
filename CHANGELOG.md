@@ -9,6 +9,17 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Sayfa düzeyi "Şimdi Kontrol Et" — dokuz izleme sayfasının hepsinde.** Panodaki toplu
+  kontrolün karşılığı: araç çubuğundaki düğme önce takım seçtirir, sonra seçilen izlemeleri
+  sınırlı eşzamanlılıkla koşturur ve sonuçları panoyla AYNI akan tabloda gösterir (ilerleme
+  çubuğu, başarılı/hatalı sayacı, duvar saati, "Durdur"). Kolonlar türe uyarlanır: HTTP durum
+  kodu, yanıt süresi, DNS değeri, RTT/kayıp, kalan gün, kırık kaynak, TTFB/boyut, k6 kontrol
+  sayıları. Yeni bir sunucu ucu YOK — koşum, var olan tekil tetikleme uçları üzerinden istemci
+  tarafında dağıtılır; kartların kendi "kontrol ediliyor" göstergeleri de yanar. Eşzamanlılık
+  tavanı tür başına: sentetikte 2 (k6 süreç havuzuyla aynı), sayfa bütünlüğü/hızında 3, diğerlerinde 6.
+  Aday kümesi kullanıcının tek tek çalıştırabildiği satırlarla sınırlı; DNS'te ucın yönetici
+  şartı nedeniyle düğme yalnız yöneticiye çizilir. Koşum sırasında sayfanın 60 sn'lik otomatik
+  tazelemesi durur (liste altından kaymasın), biter bitmez bir kez tazelenir.
 - **Marka logosu (mor turp) uygulama genelinde.** Navbar, sekme ikonu (favicon), login, yardım,
   yükleme ekranı, PDF dışa aktarımları ve dokümanlar — uygulama içinde logo daima nötr yeşildir
   (marka durumla renk değiştirmez; filo sağlığı rozet/sayaçlarda). Alarm e-postaları severity'ye

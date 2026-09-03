@@ -9,6 +9,11 @@ import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
+import CheckAllButton from './check/CheckAllButton.jsx'
+import MonitorCheckRunModal from './check/MonitorCheckRunModal.jsx'
+import CheckTeamPicker, { monitorTeamBuckets } from './check/CheckTeamPicker.jsx'
+import { CHECK_CONCURRENCY_BY_TYPE } from './check/monitorCheckColumns.jsx'
+import { useCheckRun } from '../hooks/useCheckRun.js'
 import MonitorModalActions from './ui/MonitorModalActions.jsx'
 import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
@@ -94,6 +99,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   const myTeam = teamId != null ? String(teamId) : null
   const isOwnTeam = (m) => myTeam != null && String(m.team_id) === myTeam
   const canManageRow = (m) => isAdmin || isOwnTeam(m)
+  // Toplu kontrolün adayı = kullanıcının TEK TEK de çalıştırabileceği satırlar. Yeni bir izin
+  // kuralı UYDURULMUYOR; kartın ▶ düğmesiyle birebir aynı yüzey.
+  const canCheckRow = canManageRow
   const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
@@ -142,7 +150,20 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
     setLoading(false); setSecondsSince(0)
   }, [])
 
-  useVisibleInterval(load, REFRESH_INTERVAL * 1000)   // görünürlük-farkındalıklı: gizli sekmede polling durur
+  const checkable = monitors.filter(canCheckRow)
+  const checkRun = useCheckRun({
+    items: checkable,
+    // Tekil yolun ta kendisi: kartın "kontrol ediliyor" göstergesi (track) ve sonucun
+    // satıra işlenmesi toplu koşumda da AYNI koddan geçer — ikinci bir merge yolu yok.
+    runOne: checkNow,
+    concurrency: CHECK_CONCURRENCY_BY_TYPE.domain,
+  })
+
+  // Koşum sırasında 60 sn'lik tazeleme DURUR: ortada gelen bir load() satırları sunucu anlık
+  // görüntüsüyle değiştirip listeyi yeniden sıralar, kullanıcının baktığı kart zıplardı.
+  // Koşum bitince ms 0'dan geri dönerken hook bir kez tetiklenir → merge edilmiş satırların
+  // üzerine kanonik sunucu verisi gelir (panodaki açık yeniden çekmenin karşılığı).
+  useVisibleInterval(load, checkRun.running ? 0 : REFRESH_INTERVAL * 1000)   // görünürlük-farkındalıklı: gizli sekmede polling durur
 
   // Form açıkken seçili takımın + bu türün gruplarını sunucudan getir (başka takım sızmaz).
   useEffect(() => {
@@ -340,7 +361,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   }
 
   async function checkNow(m) {
-    await track(m.id, async () => {
+    // DÖNÜŞ DEĞERİ toplu koşum içindir: satırın ✓/✕ tik'ini ve hata metnini o belirler.
+    // Tekil çağıran (kart/modal düğmesi) sonucu yok sayar — davranışı değişmez.
+    return track(m.id, async () => {
       const res = await api.monitoring.triggerDomainCheck(m.id)
       if (res?.success) {
         setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
@@ -353,7 +376,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
         // atıyor, altındaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
         if (selected?.id === m.id) setSelected(res.data)
         setHistReload(k => k + 1)
+        return { ok: true, data: res.data }
       }
+      return { ok: false, error: res?.error || null, data: res?.data ?? null }
     })
   }
 
@@ -493,6 +518,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
         <div className="upt-header-right">
           <span className="upt-last-check">{t('dom.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}</span>
           <button className="btn btn-sm upt-refresh-btn" onClick={load}><RefreshCw size={14} />{t('dom.refresh')}</button>
+          <CheckAllButton count={checkable.length} running={checkRun.running}
+            done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
+            onClick={checkRun.openPicker} />
           <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
           <MonitorGuideButton type="domain" />
           {canWrite && <button className="btn btn-sm btn-primary" onClick={openNew}><Plus size={14} />{t('dom.addMonitor')}</button>}
@@ -826,6 +854,22 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
         </div>,
         document.body
       )}
+
+      {/* Sayfa düzeyi toplu kontrol: önce takım seçimi, sonra akan sonuç tablosu.
+          Depolama anahtarı TÜR BAŞINA ayrı — tek anahtar paylaşılsaydı buradaki seçim
+          panonun sertifika seçimini ezerdi. */}
+      {checkRun.pickerOpen && (
+        <CheckTeamPicker
+          buckets={monitorTeamBuckets(checkable)}
+          storageKey="sm.checkRun.teams.domain"
+          descText={t('mon.checkAllTeamDesc')}
+          totalText={(n) => t('mon.checkAllTeamTotal', n)}
+          emptyText={t('mon.checkAllTeamEmpty')}
+          onClose={checkRun.closePicker}
+          onStart={(keys, label) => { checkRun.closePicker(); checkRun.start(keys, label) }} />
+      )}
+      <MonitorCheckRunModal run={checkRun.run} type="domain"
+        onCancel={checkRun.cancel} onClose={checkRun.close} />
     </div>
   )
 }

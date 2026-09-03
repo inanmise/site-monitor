@@ -280,4 +280,22 @@ describe('DnsMonitorPage', () => {
     expect(container.querySelector('.stats-collapse-bar')).not.toBeNull()
     expect(container.querySelector('.stats-panel')).not.toBeNull()
   })
+
+  /**
+   * DNS'in izin uyumsuzluğu: MonitoringController.triggerDns kardeşlerinden farklı olarak
+   * requireAdmin çağırıyor. Kendi standalone monitörünü yönetebilen bir TEAM_ADMIN toplu
+   * koşumda satır başına 403 alırdı ve her 403 bir ACCESS_DENIED denetim kaydı yazardı —
+   * bu yüzden toplu düğme YALNIZ yöneticiye çizilir. Kartın tekil ▶ düğmesi yerinde kalır
+   * (o uyumsuzluk ayrı bir iş).
+   */
+  it('toplu kontrol düğmesi YALNIZ yöneticide çıkar', async () => {
+    const { unmount } = render(<DnsMonitorPage systemRole="TEAM_ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
+    expect(screen.queryByTitle(/bu sayfadaki .* izlemenin|check all .* monitors/i)).toBeNull()
+    unmount()
+
+    render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalledTimes(2))
+    expect(screen.getByTitle(/bu sayfadaki 1 izlemenin|check all 1 monitors/i)).toBeInTheDocument()
+  })
 })

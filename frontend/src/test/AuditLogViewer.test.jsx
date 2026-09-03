@@ -54,12 +54,18 @@ describe('AuditLogViewer', () => {
     render(<AuditLogViewer />)
     fireEvent.click(await screen.findByTitle('USER_UPDATE'))
 
-    // Satır-içi genişletme kalktı: ayrıntı ayrı panelde. Dar ekranda (test ortamının
-    // matchMedia mock'u matches:false döner) ModalShell yolu çalışır ve PORTAL'a çizilir —
-    // bu yüzden sorgu `container` değil `document` üzerinden yapılır.
+    // Test ortamının matchMedia mock'u matches:false döner → DAR ekran yolu: ayrıntı
+    // seçili satırın HEMEN ALTINDA açılır (modal DEĞİL — modal ayrıntıyı bağlamından koparmıştı).
     expect(await screen.findByText(/Bütünlük zinciri|Integrity chain/)).toBeInTheDocument()
     expect(document.querySelector('.audit-diff-to')).not.toBeNull()
     expect(document.querySelector('.aud-detail'), 'dar ekranda yan panel OLMAMALI').toBeNull()
+    expect(document.querySelector('.modal-shell-overlay'), 'dar ekranda modal OLMAMALI').toBeNull()
+
+    const inline = document.querySelector('.aud-inline')
+    expect(inline, 'satır-içi ayrıntı satırı açılmalı').not.toBeNull()
+    // Konum sözleşmesi: gövde seçili satırın HEMEN ardında gelir; aksi hâlde kullanıcı
+    // ayrıntının hangi kayda ait olduğunu kaybeder (bu ekranda yaşanan aslı hata buydu).
+    expect(inline.previousElementSibling, 'seçili satırın hemen altında olmalı').toHaveClass('is-selected')
   })
 
   it('preset (Güvenlik olayları) → getAuditLogs BLOCKED filtresiyle çağrılır', async () => {
@@ -228,6 +234,7 @@ describe('AuditLogViewer', () => {
 
       expect(document.querySelector('.aud-detail'), 'yan panel açılmalı').not.toBeNull()
       expect(document.querySelector('.modal-shell-overlay'), 'modal AÇILMAMALI').toBeNull()
+      expect(document.querySelector('.aud-inline'), 'satır-içi gövde de AÇILMAMALI').toBeNull()
       // Yan panel bir diyalog DEĞİL: odak tabloda kalmalı ki ok tuşlarıyla gezinme sürsün.
       expect(document.querySelector('.aud-detail').getAttribute('role')).toBe('complementary')
     } finally {

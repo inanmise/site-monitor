@@ -220,4 +220,23 @@ describe('HttpMonitorPage', () => {
     await waitFor(() => expect(api.monitoring.getHttpMonitors).toHaveBeenCalled())
     expect(screen.queryByRole('alert')).toBeNull()
   })
+
+  // ── Sayfa düzeyi toplu kontrol ──────────────────────────────────────
+  it('toplu kontrol: takım seçici → başlat → aday başına bir tetikleme + koşum tablosu', async () => {
+    localStorage.clear()
+    api.monitoring.triggerHttpCheck.mockResolvedValue({
+      success: true, data: { ...monitor, http_status: 200, response_ms: 42 },
+    })
+    render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getHttpMonitors).toHaveBeenCalled())
+
+    // Araç çubuğu düğmesi kartın tekil ▶ düğmesinden AYRI: erişilebilir adı sayfa kapsamını söyler.
+    fireEvent.click(screen.getByTitle(/bu sayfadaki 1 izlemenin|check all 1 monitors/i))
+    fireEvent.click(await screen.findByRole('button', { name: /kontrolü başlat|start check/i }))
+
+    await waitFor(() => expect(api.monitoring.triggerHttpCheck).toHaveBeenCalledTimes(1))
+    expect(api.monitoring.triggerHttpCheck).toHaveBeenCalledWith(1)
+    await waitFor(() => expect(document.querySelector('.chk-modal')).not.toBeNull())
+    expect(document.querySelectorAll('.chk-td-status').length).toBe(1)
+  })
 })

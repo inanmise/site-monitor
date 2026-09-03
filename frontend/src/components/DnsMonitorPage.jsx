@@ -7,6 +7,11 @@ import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
+import CheckAllButton from './check/CheckAllButton.jsx'
+import MonitorCheckRunModal from './check/MonitorCheckRunModal.jsx'
+import CheckTeamPicker, { monitorTeamBuckets } from './check/CheckTeamPicker.jsx'
+import { CHECK_CONCURRENCY_BY_TYPE } from './check/monitorCheckColumns.jsx'
+import { useCheckRun } from '../hooks/useCheckRun.js'
 import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
@@ -74,6 +79,12 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const isOwnTeam = (m) => myTeam != null && String(m.team_id) === myTeam
   // Envanter-türevi monitörü yalnız admin yönetir; standalone'u (sertifikadan bağımsız) sahip takım yönetir.
   const canManageRow = (m) => isAdmin || (m.standalone && isOwnTeam(m))
+  // DNS'te toplu kontrolün adayı YALNIZ yöneticidir — canManageRow DEĞİL.
+  // MonitoringController.triggerDns kardeşlerinden farklı olarak requireAdmin çağırıyor:
+  // standalone + kendi takımı kuralını geçen bir TEAM_ADMIN yine 403 alır ve
+  // GlobalExceptionHandler her 403 için bir ACCESS_DENIED denetim kaydı yazar — 40 monitörlük
+  // bir sayfada tek tıklama 40 sahte güvenlik olayı demekti.
+  const canCheckRow = () => isAdmin
   // Silme kapısı ucun AYNISI (MonitoringController.deleteDns): standalone → gerçek silme,
   // sahip takım ya da admin; envanter-türevi → yalnız ADMIN ve GERÇEK SİLME DEĞİL, izleme
   // pasifleştirilir (satır envanterden türediği için listede "Duraklatıldı" olarak kalır,
@@ -122,7 +133,20 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
     setSecondsSince(0)
   }, [])
 
-  useVisibleInterval(load, REFRESH_INTERVAL * 1000)   // gizli sekmede polling durur
+  const checkable = monitors.filter(canCheckRow)
+  const checkRun = useCheckRun({
+    items: checkable,
+    // Tekil yolun ta kendisi: kartın "kontrol ediliyor" göstergesi (track) ve sonucun
+    // satıra işlenmesi toplu koşumda da AYNI koddan geçer — ikinci bir merge yolu yok.
+    runOne: checkNow,
+    concurrency: CHECK_CONCURRENCY_BY_TYPE.dns,
+  })
+
+  // Koşum sırasında 60 sn'lik tazeleme DURUR: ortada gelen bir load() satırları sunucu anlık
+  // görüntüsüyle değiştirip listeyi yeniden sıralar, kullanıcının baktığı kart zıplardı.
+  // Koşum bitince ms 0'dan geri dönerken hook bir kez tetiklenir → merge edilmiş satırların
+  // üzerine kanonik sunucu verisi gelir (panodaki açık yeniden çekmenin karşılığı).
+  useVisibleInterval(load, checkRun.running ? 0 : REFRESH_INTERVAL * 1000)   // gizli sekmede polling durur
   useVisibleInterval(() => setSecondsSince(s => s + 1), 1000, false)   // countdown da durur
 
   useEffect(() => {
@@ -248,7 +272,9 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   }
 
   async function checkNow(m) {
-    await track(m.id, async () => {
+    // DÖNÜŞ DEĞERİ toplu koşum içindir: satırın ✓/✕ tik'ini ve hata metnini o belirler.
+    // Tekil çağıran (kart/modal düğmesi) sonucu yok sayar — davranışı değişmez.
+    return track(m.id, async () => {
       const res = await api.monitoring.triggerDnsCheck(m.id)
       if (res?.success) {
         setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
@@ -257,7 +283,9 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
         // kullanıcı "çalıştı mı?" diye ikinci kez basıyordu.
         setDetailMonitor(prev => (prev?.id === m.id ? { ...prev, ...res.data } : prev))
         setHistReload(k => k + 1)
+        return { ok: true, data: res.data }
       }
+      return { ok: false, error: res?.error || null, data: res?.data ?? null }
     })
   }
 
@@ -445,6 +473,9 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 'auto' }}>
           <span className="upt-last-check">{t('dns.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}</span>
           <button className="btn btn-sm upt-refresh-btn" onClick={load}><RefreshCw size={14} />{t('dns.refreshBtn')}</button>
+          <CheckAllButton count={checkable.length} running={checkRun.running}
+            done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
+            onClick={checkRun.openPicker} />
           <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
           <MonitorGuideButton type="dns" />
           {canWrite && (
@@ -803,6 +834,22 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
           </div>
         </div>
       )}
+
+      {/* Sayfa düzeyi toplu kontrol: önce takım seçimi, sonra akan sonuç tablosu.
+          Depolama anahtarı TÜR BAŞINA ayrı — tek anahtar paylaşılsaydı buradaki seçim
+          panonun sertifika seçimini ezerdi. */}
+      {checkRun.pickerOpen && (
+        <CheckTeamPicker
+          buckets={monitorTeamBuckets(checkable)}
+          storageKey="sm.checkRun.teams.dns"
+          descText={t('mon.checkAllTeamDesc')}
+          totalText={(n) => t('mon.checkAllTeamTotal', n)}
+          emptyText={t('mon.checkAllTeamEmpty')}
+          onClose={checkRun.closePicker}
+          onStart={(keys, label) => { checkRun.closePicker(); checkRun.start(keys, label) }} />
+      )}
+      <MonitorCheckRunModal run={checkRun.run} type="dns"
+        onCancel={checkRun.cancel} onClose={checkRun.close} />
     </div>
   )
 }
