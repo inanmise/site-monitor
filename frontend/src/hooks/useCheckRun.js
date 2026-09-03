@@ -42,7 +42,16 @@ export function useCheckRun({ items, runOne, concurrency = 6 }) {
   // YOK). O anda uçuşta kalan istekler ölü bileşene setState çağırırdı — React 18 bunu artık
   // uyarmıyor, yani hata SESSİZ kalırdı. `cancelRef` ayrıca yeni gönderimi de durdurur.
   const aliveRef = useRef(true)
-  useEffect(() => () => { aliveRef.current = false; cancelRef.current = true }, [])
+  useEffect(() => {
+    // Bayrak KURULUMDA da geri kaldırılır. React.StrictMode geliştirmede her efekti
+    // kur → temizle → kur diye iki kez çalıştırır; yalnız temizlikte indirmek bileşeni
+    // ikinci kurulumdan sonra KALICI olarak "ölü" bırakıyordu. Sonuç sinsiydi: kontroller
+    // gerçekten koşuyor ve kartlara işleniyordu (o yol bu bayrağa bakmıyor) ama koşum
+    // tablosuna tek satır düşmüyor ve koşum hiç "bitti"ye geçmiyordu — kullanıcı 0/2'de
+    // donmuş bir ilerleme görüyordu.
+    aliveRef.current = true
+    return () => { aliveRef.current = false; cancelRef.current = true }
+  }, [])
 
   const openPicker = useCallback(() => setPickerOpen(true), [])
   const closePicker = useCallback(() => setPickerOpen(false), [])

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import { StrictMode } from 'react'
 import { render, screen, fireEvent, waitFor, act } from './test-utils.jsx'
 import { useCheckRun } from '../hooks/useCheckRun.js'
 
@@ -146,6 +147,24 @@ describe('useCheckRun', () => {
 
     expect(errSpy).not.toHaveBeenCalled()
     errSpy.mockRestore()
+  })
+
+  it('StrictMode: çift kurulan efekt koşumu ÖLDÜRMEZ', async () => {
+    // Sahada çıkan hata: StrictMode efektleri kur → temizle → kur diye iki kez çalıştırıyor.
+    // "Yaşıyor" bayrağı yalnız temizlikte indirilip kurulumda geri kaldırılmayınca bileşen
+    // kalıcı olarak ölü sayılıyordu: kontroller gerçekten koşup kartlara işleniyor ama koşum
+    // tablosuna tek satır düşmüyor ve ilerleme 0/N'de donuyordu. Testler bunu KAÇIRMIŞTI
+    // çünkü testing-library varsayılanı StrictMode kullanmıyor.
+    const items = [{ id: 1, name: 'a' }, { id: 2, name: 'b' }]
+    const runOne = vi.fn(async () => ok())
+    render(<StrictMode><Harness items={items} runOne={runOne} /></StrictMode>)
+
+    fireEvent.click(screen.getByText('start'))
+    await waitFor(() => expect(screen.getByTestId('done')).toHaveTextContent('true'))
+    const rows = screen.getByTestId('rows').textContent
+    expect(rows).toContain('a:ok')
+    expect(rows).toContain('b:ok')
+    expect(screen.getByTestId('running')).toHaveTextContent('false')
   })
 
   it('aday yokken koşum HİÇ başlamaz', async () => {
