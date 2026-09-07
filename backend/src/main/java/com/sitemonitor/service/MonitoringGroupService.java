@@ -44,7 +44,8 @@ import java.util.Set;
  * görür/yeniden adlandırır. Monitör + envanter create/update {@link #getOrCreate} ile grubu (türüyle) kaydeder (kanonik ad);
  * {@link #rename} registry'yi + YALNIZ o türün tablosunu + o türün alarm geçmişini tek transaction'da günceller.
  * Grup-taşıyan türler: cert (envanter), http, ping, port, dns, keyword, domain, page, scripted.
- * YENİ TÜR EKLERKEN: typeOf + TYPE_ALERTS + sayım (listForScope/groupCountRows) + cascadeRename + MonitoringGroupBackfill
+ * YENİ TÜR EKLERKEN: typeOf + MonitorTypeCatalog.ALERT_TYPES + sayım (listForScope/groupCountRows)
+ * + cascadeRename + MonitoringGroupBackfill
  * (seed & renameRows) + frontend TYPE_LABEL — hepsi bağlanmalı; biri eksikse grup sessizce kopar.
  */
 @Slf4j
@@ -53,22 +54,6 @@ import java.util.Set;
 public class MonitoringGroupService {
 
     private static final DateTimeFormatter ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
-
-    /** İzleme türü → o türe ait AlertEvent.alertType kümesi (alert_events type-scope rename için). */
-    private static final Map<String, Set<String>> TYPE_ALERTS = Map.of(
-            "cert",    Set.of("EXPIRY", "CHAIN_BROKEN", "REVOKED", "MISMATCH",
-                              "HOSTNAME_MISMATCH", "UNTRUSTED_CA"),
-            "http",    Set.of("ACCESSIBILITY", "HTTP_DOWN", "HTTP_SSL", "DOMAIN_EXPIRY"),
-            "port",    Set.of("PORT_DOWN", "PORT_SLOW"),
-            "dns",     Set.of("DNS_FAILURE", "DNS_CHANGED", "DNS_SLOW", "DNS_UNEXPECTED", "DNS_INCONSISTENT"),
-            "keyword", Set.of("KEYWORD", "KEYWORD_SLOW", "KEYWORD_SSL", "KEYWORD_DOMAIN_EXPIRY"),
-            "ping",    Set.of("PING_DOWN", "PING_SLOW"),
-            "domain",  Set.of("DOMAINMON_EXPIRY", "DOMAINMON_UNKNOWN", "DOMAINMON_STATUS", "DOMAINMON_CHANGED"),
-            // İki tür SONRADAN grup taşımaya başladı (typeOf zaten "page"/"scripted" üretiyor) ama bu haritaya
-            // hiç girmemişti: grup yeniden adlandırıldığında o türün alarm geçmişindeki group_name ESKİ kalıyordu.
-            "page",     Set.of("PAGE_DOWN", "PAGE_INTEGRITY"),
-            "scripted", Set.of("SCRIPTED_FAIL", "SCRIPTED_SLOW"),
-            "pagespeed", Set.of("PAGESPEED_DOWN", "PAGESPEED_SLOW"));
 
     private final MonitoringGroupRepository groupRepo;
     private final CertificateInventoryRepository certRepo;
@@ -250,7 +235,12 @@ public class MonitoringGroupService {
             throw new IllegalStateException("Bu takım + izleme türünde '" + newName + "' adlı grup zaten var.");
         }
         int affected = cascadeRename(type, teamId, oldName, newName);
-        Set<String> alertTypes = TYPE_ALERTS.getOrDefault(type, Set.of());
+        // TEK KAYNAK: burada TYPE_ALERTS adiyla ucuncu bir kopya duruyordu ve `domain`
+        // girdisi DORT tip sayiyordu (TRANSFER_LOCK + BLACKLIST eksikti): grup yeniden
+        // adlandirilinca o iki tipin alarm gecmisi ESKI grup adinda kaliyor, grup
+        // suzgecinde kayboluyor ve StormService onlari artik var olmayan bir gruba
+        // kovaliyordu. Katalogla birebir ayni olan kopya kaldirildi.
+        Set<String> alertTypes = MonitorTypeCatalog.ALERT_TYPES.getOrDefault(type, Set.of());
         if (!alertTypes.isEmpty()) alertEventRepo.renameGroupForTeamAndTypes(teamId, oldName, newName, alertTypes);
         log.info("Monitoring group renamed: team={} type={} id={} '{}' → '{}' (records={})", teamId, type, groupId, oldName, newName, affected);
         // Denetim izi: kim, hangi grubu, eski→yeni (audit_log). IP/UA yok (servis katmanı, request bağımsız).

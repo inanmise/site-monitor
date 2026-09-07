@@ -656,7 +656,19 @@ public class MonitoringOutageService {
         }
     }
 
-    private boolean alertEnabled(String alertType) {
+    /** Paket-özel: kapı testi (MonitoringOutageServiceTest) her alarm tipi için doğru
+     *  ayar anahtarının sorulduğunu doğrudan doğrular. */
+    boolean alertEnabled(String alertType) {
+        // ELLE SAYMA YOK. Asagidaki switch'te domain dali DORT tip yaziyordu, oysa
+        // EscalationService ALTI DOMAINMON_* sabiti tanimliyor: TRANSFER_LOCK ve BLACKLIST
+        // switch'ten dusup `default` dalina, yani UPTIME anahtarina bagliyordu. Sonuc iki
+        // yonlu yanlisti — yonetici "alan adi alarmlarini sustur" dediginde
+        // (`site.monitor.domain.alert-enabled=false`) bu iki tip YINE mail/push gonderiyor,
+        // uptime alarmlarini kapattiginda ise domain alarmlari acikken SESSIZCE susuyorlardi.
+        // Tipleri sayan TEK kaynak isDomainMon; liste buraya kopyalanmaz.
+        if (EscalationService.isDomainMon(alertType)) {
+            return appSettings.getBoolean("site.monitor.domain.alert-enabled", true);
+        }
         return switch (alertType) {
             case EscalationService.TYPE_PORT_DOWN,
                  EscalationService.TYPE_PORT_SLOW   ->
@@ -692,11 +704,6 @@ public class MonitoringOutageService {
                  EscalationService.TYPE_SCRIPTED_SLOW ->
                     appSettings.getBoolean("site.monitor.scripted.alert-enabled", true)
                     && appSettings.getBoolean("site.monitor.scripted.enabled", true);
-            case EscalationService.TYPE_DOMAINMON_EXPIRY,
-                 EscalationService.TYPE_DOMAINMON_UNKNOWN,
-                 EscalationService.TYPE_DOMAINMON_STATUS,
-                 EscalationService.TYPE_DOMAINMON_CHANGED ->
-                    appSettings.getBoolean("site.monitor.domain.alert-enabled", true);
             default                                 ->
                     appSettings.getBoolean("site.monitor.uptime.alert-enabled", uptimeAlertEnabled);
         };

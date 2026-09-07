@@ -837,4 +837,72 @@ class MonitoringOutageServiceTest {
                 eq("ikinci.example.com"), eq(EscalationService.TYPE_PORT_DOWN), anyString(), anyMap());
         assertThat(service.activeConfirmations(null)).isEmpty();
     }
+
+    // ── A4 kapisi: her alarm tipi DOGRU `*.alert-enabled` anahtarina bagli mi ────────────
+    //
+    // Domain dali switch'te ELLE dort tip sayiyordu, oysa EscalationService ALTI DOMAINMON_*
+    // sabiti tanimliyor. TRANSFER_LOCK ve BLACKLIST `default` dalina, yani UPTIME anahtarina
+    // dusuyordu: yonetici "alan adi alarmlarini sustur" dediginde bu iki tip YINE gonderiyor,
+    // uptime'i kapattiginda ise domain alarmlari acikken SESSIZCE susuyorlardi. Hicbir test
+    // bu eslemeye bakmiyordu.
+
+    /** Alarm tipi → beklenen ayar anahtari. Katalogdaki HER tip burada karsiligini bulmali. */
+    private static String expectedKeyFor(String type, String alertType) {
+        // ACCESSIBILITY katalogda "http" altinda ama alarmi UPTIME suzgeci uretiyor
+        // (SchedulerService sertifika envanteri uzerinden) — anahtari da uptime'dir.
+        if ("ACCESSIBILITY".equals(alertType)) return "site.monitor.uptime.alert-enabled";
+        return "site.monitor." + type + ".alert-enabled";
+    }
+
+    @Test
+    @DisplayName("SOZLESME: katalogdaki her alarm tipi kendi turunun alert-enabled anahtarina bagli")
+    void alertEnabled_everyCatalogAlertType_readsItsOwnSettingKey() {
+        java.util.Map<String, String> wrong = new java.util.LinkedHashMap<>();
+
+        MonitorTypeCatalog.ALERT_TYPES.forEach((type, alertTypes) -> {
+            // cert alarmlari bu servisten GECMEZ (ayri sertifika hatti) — kapsam disi.
+            if ("cert".equals(type)) return;
+            for (String alertType : alertTypes) {
+                String expected = expectedKeyFor(type, alertType);
+                reset(appSettings);
+                // Beklenen anahtar KAPALI, digerleri ACIK: dogru anahtar okunuyorsa false doner.
+                when(appSettings.getBoolean(anyString(), anyBoolean())).thenReturn(true);
+                when(appSettings.getBoolean(eq(expected), anyBoolean())).thenReturn(false);
+
+                if (service.alertEnabled(alertType)) {
+                    wrong.put(alertType, "beklenen anahtar okunmadi: " + expected);
+                }
+            }
+        });
+
+        assertThat(wrong).as("yanlis ayar anahtarina bagli alarm tipleri").isEmpty();
+    }
+
+    @Test
+    @DisplayName("A4: domain anahtari kapaliyken ALTI DOMAINMON tipinin hepsi susar")
+    void alertEnabled_domainDisabled_silencesAllSixDomainTypes() {
+        when(appSettings.getBoolean(anyString(), anyBoolean())).thenReturn(true);
+        when(appSettings.getBoolean(eq("site.monitor.domain.alert-enabled"), anyBoolean())).thenReturn(false);
+
+        assertThat(MonitorTypeCatalog.ALERT_TYPES.get("domain"))
+                .as("katalog alti domain tipi tanimlamali")
+                .hasSize(6);
+
+        for (String t : MonitorTypeCatalog.ALERT_TYPES.get("domain")) {
+            assertThat(service.alertEnabled(t)).as("susmali: " + t).isFalse();
+        }
+    }
+
+    @Test
+    @DisplayName("A4: uptime anahtari kapaliyken domain alarmlari ETKILENMEZ")
+    void alertEnabled_uptimeDisabled_doesNotSilenceDomainTypes() {
+        // Ters yon: TRANSFER_LOCK/BLACKLIST `default` dalina dustugu icin uptime kapatilinca
+        // domain alarmi acik olmasina ragmen susuyordu.
+        when(appSettings.getBoolean(anyString(), anyBoolean())).thenReturn(true);
+        when(appSettings.getBoolean(eq("site.monitor.uptime.alert-enabled"), anyBoolean())).thenReturn(false);
+
+        for (String t : MonitorTypeCatalog.ALERT_TYPES.get("domain")) {
+            assertThat(service.alertEnabled(t)).as("acik kalmali: " + t).isTrue();
+        }
+    }
 }
