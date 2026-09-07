@@ -87,13 +87,20 @@ export default function GeneralSettings() {
 
   // Grupları ilk görülme sırasına göre koru. branding ve retention'ın KENDİ sayfaları var —
   // burada göstermek çevrilmemiş ham anahtar adları üretiyordu (retention: 7 satır, 2026-08).
+  // KENDI sayfasi olan gruplar burada GOSTERILMEZ: ayni ayar icin ikinci bir yuzey,
+  // sifreli blob'lari duz metin kutusunda bozulmaya acar ve etiketsiz ham anahtar dizer.
+  const SKIP_GROUPS = new Set(['branding', 'retention', 'userpush', 'storm', 'login-anomaly'])
   const order = []
   const byGroup = {}
   for (const it of items) {
     // userpush: kendi ÖZEL sayfası var (Webhook Bildirimleri) — burada ham anahtar listesi
     // olarak İKİNCİ bir yönetim yüzeyi açmak şifreli headers blob'unu ve role-groups JSON'unu
     // düz metin kutusunda bozulmaya açardı.
-    if (it.group === 'branding' || it.group === 'retention' || it.group === 'userpush') continue
+    // storm ve login-anomaly de KENDI panellerine sahip (AdminSettings.jsx:110/112 →
+    // StormSettings, LoginAnomalySettings). Atlama listesine girmedikleri icin burada
+    // etiketsiz, ham anahtarli IKINCI bir yonetim yuzeyi aciliyorlardi — yukarida
+    // retention icin anlatilan hatanin ta kendisi.
+    if (SKIP_GROUPS.has(it.group)) continue
     if (!byGroup[it.group]) { byGroup[it.group] = []; order.push(it.group) }
     byGroup[it.group].push(it)
   }
