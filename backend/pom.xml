@@ -234,30 +234,88 @@
                                 <rule>
                                     <element>BUNDLE</element>
                                     <limits>
-                                        <limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.65</minimum></limit>
-                                        <limit><counter>INSTRUCTION</counter><value>COVEREDRATIO</value><minimum>0.62</minimum></limit>
+                                        <limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.71</minimum></limit>
+                                        <limit><counter>INSTRUCTION</counter><value>COVEREDRATIO</value><minimum>0.69</minimum></limit>
                                     </limits>
                                 </rule>
                                 <!-- Kritik sertifika/alarm sınıfları — her biri kendi tabanında (kademeli yukarı çekilir). -->
+                                <!-- C3: ASAGIDAKI SINIFLARIN HIC KURALI YOKTU ve kapsamlari
+                                     dusuk (LdapDirectoryService %14.6, DatabaseInfoService %2.0).
+                                     Yalniz BUNDLE kuralina tabiydiler; orada 8 puan bosluk oldugu
+                                     icin sessizce daha da gerileyebilirlerdi. Esikler olculenin
+                                     2 puan altina konuldu: amac kapsami YUKSELTMEK degil,
+                                     GERILEMEYI durdurmak. Test yazildikca yukari cekilir.
+                                     DatabaseInfoService (%2.0) bilerek DISARIDA: bu kadar dusuk
+                                     bir tabani cimentolamak yanlis guven verir; once testi yazilmali. -->
+                                <rule>
+                                    <element>CLASS</element>
+                                    <includes><include>com.sitemonitor.service.LdapDirectoryService</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.12</minimum></limit></limits>
+                                </rule>
+                                <rule>
+                                    <element>CLASS</element>
+                                    <includes><include>com.sitemonitor.controller.UserPushController</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.22</minimum></limit></limits>
+                                </rule>
+                                <rule>
+                                    <element>CLASS</element>
+                                    <includes><include>com.sitemonitor.controller.SystemController</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.45</minimum></limit></limits>
+                                </rule>
+                                <rule>
+                                    <element>CLASS</element>
+                                    <includes><include>com.sitemonitor.service.SqlPlaygroundService</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.42</minimum></limit></limits>
+                                </rule>
+                                <rule>
+                                    <element>CLASS</element>
+                                    <includes><include>com.sitemonitor.service.ExtendedHealthService</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.37</minimum></limit></limits>
+                                </rule>
+                                <rule>
+                                    <element>CLASS</element>
+                                    <includes><include>com.sitemonitor.service.ChainValidationService</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.45</minimum></limit></limits>
+                                </rule>
+                                <rule>
+                                    <element>CLASS</element>
+                                    <includes><include>com.sitemonitor.service.TrWebWhoisClient</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.31</minimum></limit></limits>
+                                </rule>
+                                <rule>
+                                    <element>CLASS</element>
+                                    <includes><include>com.sitemonitor.service.WhoisDomainClient</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.3</minimum></limit></limits>
+                                </rule>
+                                <rule>
+                                    <element>CLASS</element>
+                                    <includes><include>com.sitemonitor.service.SmtpMailService</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.31</minimum></limit></limits>
+                                </rule>
+                                <rule>
+                                    <element>CLASS</element>
+                                    <includes><include>com.sitemonitor.service.NetworkDiagnosticsService</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.16</minimum></limit></limits>
+                                </rule>
                                 <rule>
                                     <element>CLASS</element>
                                     <includes><include>com.sitemonitor.service.SsrfGuard</include></includes>
-                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.95</minimum></limit></limits>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.98</minimum></limit></limits>
                                 </rule>
                                 <rule>
                                     <element>CLASS</element>
                                     <includes><include>com.sitemonitor.service.MonitoringOutageService</include></includes>
-                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.80</minimum></limit></limits>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.85</minimum></limit></limits>
                                 </rule>
                                 <rule>
                                     <element>CLASS</element>
                                     <includes><include>com.sitemonitor.service.EscalationService</include></includes>
-                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.62</minimum></limit></limits>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.66</minimum></limit></limits>
                                 </rule>
                                 <rule>
                                     <element>CLASS</element>
                                     <includes><include>com.sitemonitor.service.DomainCheckerService</include></includes>
-                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.53</minimum></limit></limits>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.8</minimum></limit></limits>
                                 </rule>
                                 <rule>
                                     <element>CLASS</element>
@@ -267,7 +325,7 @@
                                 <rule>
                                     <element>CLASS</element>
                                     <includes><include>com.sitemonitor.service.CertificateCheckerService</include></includes>
-                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.42</minimum></limit></limits>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.47</minimum></limit></limits>
                                 </rule>
                                 <!-- Sentetik motorun kendisi: kullanıcı kodunu alt süreçte koşturan tek sınıf
                                      (sandbox, vekil/CA, maskeleme, sonuç sınıflama). Bundle kuralı bunun
@@ -275,7 +333,7 @@
                                 <rule>
                                     <element>CLASS</element>
                                     <includes><include>com.sitemonitor.service.ScriptedCheckerService</include></includes>
-                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.55</minimum></limit></limits>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.6</minimum></limit></limits>
                                 </rule>
                                 <!-- 2026-08 denetimiyle testi yazılan sınıflar. Bunlar BUNDLE kuralının içinde
                                      eriyordu: her biri tek başına %0'a düşse bile genel oran görünür şekilde
@@ -284,37 +342,37 @@
                                 <rule>   <!-- ölçülen 1.000 — CORS fail-safe + SPA cache politikası -->
                                     <element>CLASS</element>
                                     <includes><include>com.sitemonitor.config.WebConfig</include></includes>
-                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.90</minimum></limit></limits>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.98</minimum></limit></limits>
                                 </rule>
                                 <rule>   <!-- ölçülen 0.912 — 8 izleme ucunun ORTAK geçmiş motoru -->
                                     <element>CLASS</element>
                                     <includes><include>com.sitemonitor.service.CheckHistoryService</include></includes>
-                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.85</minimum></limit></limits>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.89</minimum></limit></limits>
                                 </rule>
                                 <rule>   <!-- ölçülen 0.868 — bakım penceresi IDOR kapıları -->
                                     <element>CLASS</element>
                                     <includes><include>com.sitemonitor.controller.MaintenanceController</include></includes>
-                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.80</minimum></limit></limits>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.82</minimum></limit></limits>
                                 </rule>
                                 <rule>   <!-- ölçülen 1.000 — Teams/Slack gövde üreticileri + seviye→renk -->
                                     <element>CLASS</element>
                                     <includes><include>com.sitemonitor.service.WebhookService</include></includes>
-                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.90</minimum></limit></limits>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.94</minimum></limit></limits>
                                 </rule>
                                 <rule>   <!-- ölçülen 0.751 — dashboard cache'lerinin sahibi -->
                                     <element>CLASS</element>
                                     <includes><include>com.sitemonitor.service.CertificateService</include></includes>
-                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.70</minimum></limit></limits>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.74</minimum></limit></limits>
                                 </rule>
                                 <rule>   <!-- ölçülen 0.594 — açılışta 9 tabloda toplu UPDATE, takım atar -->
                                     <element>CLASS</element>
                                     <includes><include>com.sitemonitor.service.MonitoringGroupBackfill</include></includes>
-                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.55</minimum></limit></limits>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.57</minimum></limit></limits>
                                 </rule>
                                 <rule>   <!-- ölçülen 0.525 — geri alınamaz saklama/purge uçları -->
                                     <element>CLASS</element>
                                     <includes><include>com.sitemonitor.controller.RetentionAdminController</include></includes>
-                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.48</minimum></limit></limits>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.5</minimum></limit></limits>
                                 </rule>
                                 <rule>   <!-- ölçülen 1.000 — trigger null dönerse aylık rapor sessizce ölür -->
                                     <element>CLASS</element>
