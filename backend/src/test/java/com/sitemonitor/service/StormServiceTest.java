@@ -458,4 +458,39 @@ class StormServiceTest {
 
         assertThat(collectFor(7L)).containsExactly("takim@bank.com");
     }
+
+    // ── A7 kapisi: firtinaya girebilen HER tip kendi kok-neden etiketini almali ──────────
+    //
+    // rootCauseLabel'da alti tip yaziliydi; DOWN_ALERT_TYPES'a sonradan eklenen PAGE_DOWN,
+    // SCRIPTED_FAIL ve PAGESPEED_DOWN atlanmis ve `default` dalina dusuyorlardi. Bes Sayfa
+    // Hizi monitoru ayni anda coktugunde toplu alarm maili ve webhook'u "Kok-neden: Kesinti."
+    // diyordu — hangi izleme ailesinin gittigi HICBIR yerde yazmiyordu, oysa HTTP/Port/Ping/DNS
+    // firtinalarinda yaziyor. Kaynak kume elle sayilmaz: DOWN_ALERT_TYPES uzerinden gezilir.
+
+    @Test
+    @DisplayName("SOZLESME: DOWN_ALERT_TYPES'taki her tip jenerik 'Kesinti' DISINDA bir etiket alir")
+    void rootCauseLabel_everyStormCapableType_hasOwnLabel() {
+        java.util.List<String> generic = EscalationService.DOWN_ALERT_TYPES.stream()
+                .filter(t -> "Kesinti".equals(storm.rootCauseLabel(t)))
+                .sorted()
+                .toList();
+
+        assertThat(generic)
+                .as("kendi kok-neden etiketi olmayan (jenerik 'Kesinti'ye dusen) firtina tipleri")
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("A7: etiketler benzersiz ve MIXED/bilinmeyen davranisi korunur")
+    void rootCauseLabel_labelsAreDistinct_andFallbacksKept() {
+        // Iki tip ayni etiketi alirsa toplu alarm hangi ailenin coktugunu yine soylemez.
+        java.util.Set<String> labels = EscalationService.DOWN_ALERT_TYPES.stream()
+                .map(storm::rootCauseLabel)
+                .collect(java.util.stream.Collectors.toSet());
+        assertThat(labels).hasSize(EscalationService.DOWN_ALERT_TYPES.size());
+
+        assertThat(storm.rootCauseLabel("MIXED")).isEqualTo("Karışık (çok tipli)");
+        assertThat(storm.rootCauseLabel(null)).isEqualTo("Kesinti");        // null → jenerik
+        assertThat(storm.rootCauseLabel("BILINMEYEN")).isEqualTo("Kesinti"); // firtinaya giremez
+    }
 }
