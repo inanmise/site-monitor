@@ -1110,7 +1110,6 @@ export const TR = {
   // ekle (AppSettingsCatalog dosya basindaki 3 adimli kural bunu zaten soyluyor);
   // `settings-labels-sync.test.jsx` kapisi unutulursa build'i kirar.
   'general.lbl.site.monitor.activity.retention-days': 'Etkinlik kaydı saklama (gün)',
-  'general.lbl.site.monitor.audit.archive-enabled': 'Denetim kaydı arşivleme açık',
   'general.lbl.site.monitor.audit.retention-days': 'Denetim kaydı saklama (gün)',
   'general.lbl.site.monitor.cert-inventory-report.cc': 'Sertifika envanter raporu bilgi (CC)',
   'general.lbl.site.monitor.cert-inventory-report.cron': 'Sertifika envanter raporu zamanlaması (cron)',
@@ -6574,7 +6573,6 @@ export const EN = {
   // ekle (AppSettingsCatalog dosya basindaki 3 adimli kural bunu zaten soyluyor);
   // `settings-labels-sync.test.jsx` kapisi unutulursa build'i kirar.
   'general.lbl.site.monitor.activity.retention-days': 'Activity log retention (days)',
-  'general.lbl.site.monitor.audit.archive-enabled': 'Audit log archiving enabled',
   'general.lbl.site.monitor.audit.retention-days': 'Audit log retention (days)',
   'general.lbl.site.monitor.cert-inventory-report.cc': 'Certificate inventory report CC',
   'general.lbl.site.monitor.cert-inventory-report.cron': 'Certificate inventory report schedule (cron)',

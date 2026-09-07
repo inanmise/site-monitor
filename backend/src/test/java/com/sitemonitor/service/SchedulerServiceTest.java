@@ -1085,8 +1085,8 @@ class SchedulerServiceTest {
         var empty = new com.sitemonitor.service.retention.RetentionService.RunResult(
                 1L, "2026-08-08T03:30:00", "2026-08-08T03:30:05", false, false, 0, 0, 5, java.util.List.of());
         when(retentionService.runCleanup()).thenReturn(empty);
-        when(retentionService.holdActive()).thenReturn(false);
-        when(retentionService.cutoffFor(any())).thenReturn("2025-08-08T03:30:00");
+        // holdActive()/cutoffFor() stub'ları KALDIRILDI: yalnızca silme öncesi JSONL arşivleme
+        // adımı onları çağırıyordu, o adım da kaldırıldı (bkz. RetentionNoFileArchiveTest).
 
         scheduler.cleanupOldLogs();
 
@@ -1099,11 +1099,13 @@ class SchedulerServiceTest {
     }
 
     @Test
-    @DisplayName("cleanupOldLogs: legal hold açıkken denetim kaydı yazılır, arşiv rotasyonu yapılmaz")
-    void cleanupOldLogs_legalHold_auditsAndSkipsArchive() {
+    @DisplayName("cleanupOldLogs: legal hold açıkken HOLD kaydı yazılır, purge kaydı yazılmaz")
+    void cleanupOldLogs_legalHold_recordsHoldNotPurge() {
+        // Eski ad "…SkipsArchive" idi; silme öncesi arşivleme kaldırıldığı için o yarısı düştü.
+        // Kalan sözleşme aynen geçerli: hold altında purge denetim kaydı ÜRETİLMEZ — aksi halde
+        // hiçbir şey silinmemişken "silindi" diyen bir iz kalırdı.
         var held = new com.sitemonitor.service.retention.RetentionService.RunResult(
                 2L, "2026-08-08T03:30:00", "2026-08-08T03:30:00", false, true, 0, 0, 1, java.util.List.of());
-        when(retentionService.holdActive()).thenReturn(true);
         when(retentionService.runCleanup()).thenReturn(held);
 
         scheduler.cleanupOldLogs();
