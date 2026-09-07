@@ -53,10 +53,23 @@ export function usePagination(items, { listKey, defaultSize = DEFAULT_PAGE_SIZE,
     if (totalItems > 0 && page > totalPages) setPageRaw(totalPages)
   }, [page, totalPages, totalItems])
 
-  // Reset: filtre/arama değişince sayfa 1'e döner. İlk mount'ta resetleme (sayfa zaten 1).
-  const firstRun = useRef(true)
+  // Reset: filtre/arama DEĞİŞİNCE sayfa 1'e döner.
+  //
+  // Eskiden "ilk koşum mu" bayrağıyla yapılıyordu (`firstRun` ref). Ref'ler StrictMode'un
+  // mount → temizlik → mount döngüsünde KORUNUR ve bu efektin temizliği yok: ikinci kurulumda
+  // bayrak zaten false olduğu için `setPageRaw(1)` çalışıyor ve `?page=3` gibi bir derin
+  // bağlantı geliştirme modunda sessizce 1'e düşüyordu (ardından useUrlQuerySync param'ı
+  // adresten de siliyordu). Üretim derlemesinde efektler çift çalışmadığı için görünmezdi.
+  //
+  // Artık bayrak değil DEĞER karşılaştırılıyor: StrictMode'un ikinci kurulumunda bağımlılıklar
+  // AYNI olduğu için reset tetiklenmez; gerçek bir filtre değişiminde tetiklenir. Aynı sınıf
+  // hata `useCheckRun.aliveRef` için de yaşanmıştı (af6332e0).
+  const prevDeps = useRef(null)
   useEffect(() => {
-    if (firstRun.current) { firstRun.current = false; return }
+    const cur = JSON.stringify(resetDeps)
+    if (prevDeps.current === null) { prevDeps.current = cur; return }   // ilk kurulum
+    if (prevDeps.current === cur) return                                 // StrictMode çift-mount
+    prevDeps.current = cur
     setPageRaw(1)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, resetDeps)

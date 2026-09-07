@@ -1796,6 +1796,7 @@ export const TR = {
   'tbl.statusExpired':'Süresi doldu',
   'tbl.statusHigh':'Yüksek',
   'tbl.statusError':   'Hata',
+  'check.noneInScope':  'Seçilen kapsamda kontrol edilecek izleme yok.',
 
   'modal.detailsTab':  'Sertifika Detayları',
   'modal.alertsTab':   'Alarm Geçmişi',
@@ -7254,6 +7255,7 @@ export const EN = {
   'tbl.statusExpired':'Expired',
   'tbl.statusHigh':'High',
   'tbl.statusError':   'Error',
+  'check.noneInScope':  'No monitors to check in the selected scope.',
 
   'modal.detailsTab':  'Certificate Details',
   'modal.alertsTab':   'Alert History',

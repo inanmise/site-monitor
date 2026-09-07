@@ -506,7 +506,14 @@ public class MonitoringOutageService {
             log.debug("Teyit zaten devam ediyor, atlanıyor: {}", key);
             return;
         }
-        List<Map<String, Object>> attempts = new ArrayList<>(); // tek thread'li executor → senkronizasyon gereksiz
+        // Bu liste TEK bir teyit zincirine aittir ve senkronize değildir. GEREKÇE ÖNEMLİ:
+        // eskiden burada "tek thread'li executor" yazıyordu — YANLIŞ. `confirmExecutor`
+        // dört thread'li (bkz. :124). Güvenli olmasının sebebi havuzun boyutu değil, her
+        // denemenin bir ÖNCEKİNİN İÇİNDEN planlanması: `schedule()` happens-before kurar,
+        // yani aynı zincirin iki denemesi asla eşzamanlı koşmaz ve listeye tek thread dokunur.
+        // Biri "havuz zaten tek thread" diye denemeleri PARALEL planlarsa bu liste yarışa girer;
+        // o durumda burada eşzamanlı bir koleksiyon gerekir.
+        List<Map<String, Object>> attempts = new ArrayList<>();
         if (effAttempts(item) <= 0) {
             // Immediate (confirmation period = 0) — DOWN tespitinde incident'ı HEMEN aç, teyit bekleme.
             log.warn("{} DOWN tespit edildi: {} [{}] — immediate mod (teyit yok), incident hemen açılıyor",

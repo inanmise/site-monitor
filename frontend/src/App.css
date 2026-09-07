@@ -158,6 +158,15 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 .ret-num-unit { font-size: 11.5px; color: var(--text-muted); }
 .ret-mode-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-surface); color: var(--text-muted); font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+/* Saklama modu cipleri — TON. Modifikator PolicyRow'da uretiliyordu ama karsiligi yoktu:
+   AGE / EXTERNAL / ORPHAN_ONLY birebir ayni goruniyor ve mod YALNIZ bu cipte tasindigi icin
+   (yanindaki metin de ayni cipin icinde) kullanici modlari ancak okuyarak ayirt edebiliyordu.
+   Mevcut ton degiskenleri ve color-mix deseni .up-template-icon--* ile ayni. */
+.ret-mode-chip--age { border-color: color-mix(in srgb, var(--info) 45%, var(--border)); background: color-mix(in srgb, var(--info) 10%, transparent); color: var(--info); }
+.ret-mode-chip--external { border-color: color-mix(in srgb, var(--warning) 55%, var(--border)); background: color-mix(in srgb, var(--warning) 16%, transparent); color: #b45309; }
+.ret-mode-chip--orphan_only { border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--ok); }
+[data-theme="dark"] .ret-mode-chip--external { color: #fbbf24; }
+
 
 /* -- Olcum kumesi -- */
 .ret-metrics { display: grid; grid-template-columns: repeat(4, auto); gap: 4px 18px; align-items: end; justify-content: end; position: relative; padding-bottom: 8px; }

@@ -467,7 +467,11 @@ export default function App() {
       ? certs.filter(c => keys.includes(c.team_id != null ? String(c.team_id) : NO_TEAM))
       : certs
     const domains = [...new Set(scoped.map(c => c.domain).filter(Boolean))].sort((a, b) => a.localeCompare(b))
-    if (!domains.length) return
+    if (!domains.length) {
+      // Bkz. useCheckRun: sessiz erken donus, tiklamanin kaybolmasi gibi okunuyordu.
+      toast.info(t('check.noneInScope'))
+      return
+    }
 
     setRefreshing(true)
     try {
