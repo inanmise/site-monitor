@@ -302,6 +302,13 @@ public class UserPushController {
         // "sir" kutusunu KALDIRIP kaydettiginde de kurtarma yapabilmek icin gerekli (asagiya bkz.).
         Map<String, String> existingValues = new LinkedHashMap<>();
         Map<String, Boolean> existingSecretFlags = new LinkedHashMap<>();
+        // BOZUK KAYIT SESSIZCE SIR SILMEZ. Ayristirma hatasi eskiden yutuluyordu; existingValues
+        // bos kalinca hem maskeli ("degistirilmedi") hem de bos-secret dali `getOrDefault(name, "")`
+        // ile BOS DIZE yaziyordu — kullanici yalnizca bir baslik ADINI degistirse bile kayitli
+        // Authorization token'i geri alinamaz bicimde siliniyor, hicbir hata/log cikmiyor ve
+        // sonraki her push kimlik dogrulama hatasiyla dusuyordu. Artik loglanir ve KORUNMASI
+        // GEREKEN bir deger varsa istek 409 ile reddedilir (kullanici degeri yeniden girip onarir).
+        boolean existingUnreadable = false;
         try {
             JsonNode cur = MAPPER.readTree(appSettings.getString("site.monitor.userpush.headers", "[]"));
             if (cur.isArray()) for (JsonNode n : cur) {
@@ -309,7 +316,10 @@ public class UserPushController {
                 existingValues.put(nm, n.path("value").asText(""));
                 existingSecretFlags.put(nm, n.path("secret").asBoolean(false));
             }
-        } catch (Exception ignored) { }
+        } catch (Exception ex) {
+            existingUnreadable = true;
+            log.warn("userpush.headers ayristirilamadi — kayitli deger korunamiyor: {}", ex.toString());
+        }
         List<Map<String, Object>> out = new ArrayList<>();
         if (incoming instanceof List<?> list) {
             for (Object o : list) {
@@ -325,6 +335,11 @@ public class UserPushController {
                 // stored = "*****" yaziliyordu — sifreli token GERI ALINAMAZ bicimde siliniyor,
                 // sonraki her push "Authorization: *****" ile gidip FAILED oluyordu.
                 boolean unchangedMasked = MASKED.equals(val);
+                if (unchangedMasked || (secret && val.isBlank())) {
+                    if (existingUnreadable)
+                        throw new IllegalStateException("Kayitli push basliklari okunamadi (bozuk kayit): '"
+                                + name + "' degeri korunamaz. Degeri yeniden girip kaydedin.");
+                }
                 if (unchangedMasked) {
                     stored = existingValues.getOrDefault(name, "");
                     // Deger sifreli saklaniyorsa "sir" bayragi da korunur: cozup duz metne

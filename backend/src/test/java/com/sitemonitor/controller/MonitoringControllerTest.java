@@ -806,6 +806,57 @@ class MonitoringControllerTest {
                 .andExpect(status().isBadRequest());
     }
 
+    // ── A10: bozuk env_json SESSIZCE sir silmemeli ─────────────────────────────
+    //
+    // buildEnvJson'daki `catch (Exception ignored)` yutulunca existingSecrets bos kaliyor ve
+    // "deger degismedi" dali getOrDefault(name, "") ile BOS DIZE yaziyordu. Kullanici monitorun
+    // yalnizca ADINI degistirip kaydettiginde (form sir alanlarini bos getirir — yazma-yalniz
+    // sozlesmesi) tum secret env degiskenleri kalici olarak "" oluyordu: hicbir hata, hicbir log,
+    // k6 kosumu bir sonraki turda kimlik dogrulama hatasiyla dusuyor ve sebebi gorunmuyordu.
+
+    @Test
+    @DisplayName("A10: env_json BOZUKKEN bos gelen sir, sessizce silinmez — 409 ve kayit YAZILMAZ")
+    void scriptedUpdate_corruptEnvJson_refusesInsteadOfBlankingSecret() throws Exception {
+        com.sitemonitor.model.ScriptedMonitor m = new com.sitemonitor.model.ScriptedMonitor();
+        m.setId(51L); m.setName("bozuk-env");
+        m.setEnvJson("{bu gecerli JSON degil");          // yarim yazma / elle SQL duzeltmesi
+        when(scriptedMonitorRepo.findById(51L)).thenReturn(Optional.of(m));
+        when(scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(51L)).thenReturn(Optional.empty());
+
+        // Form sir alanini BOS getirir = "bu degeri degistirmedim" → eski enc korunmali.
+        mvc.perform(put("/api/monitoring/scripted/51").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"env\":[{\"name\":\"TOKEN\",\"secret\":true,\"value\":\"\"}]}"))
+                .andExpect(status().isConflict());
+
+        // En onemlisi: bozuk kayit UZERINE yazilmadi — sir hala kurtarilabilir durumda.
+        verify(scriptedMonitorRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("A10: env_json bozuk olsa da DEGER verilen sir kaydedilir (gereksiz yere engellenmez)")
+    void scriptedUpdate_corruptEnvJson_stillSavesWhenValueSupplied() throws Exception {
+        // Korunacak bir sey yoksa istek reddedilmemeli: kullanici degeri yeniden girerek
+        // bozuk satiri ONARABILMELI.
+        com.sitemonitor.model.ScriptedMonitor m = new com.sitemonitor.model.ScriptedMonitor();
+        m.setId(52L); m.setName("bozuk-env-2");
+        m.setEnvJson("{bu gecerli JSON degil");
+        when(scriptedMonitorRepo.findById(52L)).thenReturn(Optional.of(m));
+        when(scriptedMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(52L)).thenReturn(Optional.empty());
+        when(secretCipher.encrypt(anyString())).thenReturn("ENC(yeni)");
+
+        mvc.perform(put("/api/monitoring/scripted/52").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"env\":[{\"name\":\"TOKEN\",\"secret\":true,\"value\":\"yeni-token\"}]}"))
+                .andExpect(status().isOk());
+
+        // updateScripted save'i IKI kez cagirir (surum defteri sonrasi yeniden kaydeder) —
+        // burada onemli olan kaydedilen env'in yeni sifreli degeri tasimasi.
+        verify(scriptedMonitorRepo, org.mockito.Mockito.atLeastOnce()).save(org.mockito.ArgumentMatchers.argThat(
+                sm -> sm.getEnvJson() != null && sm.getEnvJson().contains("ENC(yeni)")));
+    }
+
     @Test
     @DisplayName("PUT /scripted/{id} rename: açık SCRIPTED_FAIL alarmının domain bağı YENİ ada taşınır")
     void scriptedRename_movesOpenAlarmToNewName() throws Exception {
