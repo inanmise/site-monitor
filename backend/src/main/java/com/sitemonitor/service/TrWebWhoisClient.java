@@ -138,7 +138,7 @@ public class TrWebWhoisClient {
         String base = appSettings.getString("site.monitor.domain.isimtescil-whois-url", "https://www.isimtescil.net/whois");
         URI uri = URI.create(base + (base.contains("?") ? "&" : "?") + "domainname=" + enc(domain));
         HttpClient client = sharedClient(hostOf(uri));   // paylaşılan (cookie gerekmez) — per-call client YOK
-        HttpResponse<String> resp = send(client, get(uri), hostOf(uri));
+        Resp resp = send(client, get(uri), hostOf(uri));
         return resp.statusCode() == 200 ? extractWhois(resp.body()) : null;
     }
 
@@ -150,7 +150,7 @@ public class TrWebWhoisClient {
         // Domain başına taze oturum (çerez/token desync'i engeller); 302 elle takip edilir (POST redirect quirk'ünden kaçın).
         // try-with-resources: taze client GC beklemeden anında kapatılır → selector-thread/pool churn'ü önler (leak #1).
         try (HttpClient client = newClient(new CookieManager(null, CookiePolicy.ACCEPT_ALL), HttpClient.Redirect.NEVER, useProxy)) {
-            HttpResponse<String> form = send(client, get(URI.create(base + "/whois")), host);
+            Resp form = send(client, get(URI.create(base + "/whois")), host);
             if (form.statusCode() != 200) return null;
             String token = extractToken(form.body());
             if (token == null) return null;
@@ -162,14 +162,14 @@ public class TrWebWhoisClient {
                     .header("Content-Type", "application/x-www-form-urlencoded")
                     .header("Referer", base + "/whois")
                     .POST(HttpRequest.BodyPublishers.ofString(body)).build();
-            HttpResponse<String> resp = send(client, post, host);
+            Resp resp = send(client, post, host);
 
             String html;
             if (resp.statusCode() / 100 == 3) {                       // 302 → sonuç sayfası (aynı çerezle)
                 String loc = resp.headers().firstValue("location").orElse(base + "/whois");
                 URI locUri = URI.create(loc);
                 if (!locUri.isAbsolute()) locUri = URI.create(base).resolve(loc);
-                HttpResponse<String> res = send(client, get(locUri), host);
+                Resp res = send(client, get(locUri), host);
                 html = res.statusCode() == 200 ? res.body() : null;
             } else if (resp.statusCode() == 200) {
                 html = resp.body();
@@ -229,17 +229,37 @@ public class TrWebWhoisClient {
     }
 
     /** send + PKIX güven hatasında hedef host CA'sını otomatik pinle ve isteği bir kez tekrarla (RdapDomainClient deseni). */
-    private HttpResponse<String> send(HttpClient client, HttpRequest req, String host) throws Exception {
+    /**
+     * Tavanli okunmus yanit. {@code HttpResponse<String>} yerine kullanilir: {@code ofString()}
+     * TAVANSIZDIR ve bu istemcinin hedefleri YONETICI TARAFINDAN AYARLANABILIR
+     * (rdap-bootstrap-url / tr-web-whois-providers) — yanlis ya da ele gecmis tek bir adres
+     * dev bir govde donduerup tek-pod uretimi OOM ile dusurebilirdi. Erisimci adlari
+     * bilerek `statusCode` ve `body`: cagiran kod aynen calisir.
+     */
+    record Resp(int statusCode, String body, java.net.http.HttpHeaders headers) {}
+
+    /** web-WHOIS HTML govdesi icin tavan. Ham soket yolu zaten bayt sayaciyla kirpiyordu;
+     *  eksik olan YALNIZ HTTP yoluydu. */
+    private static final int MAX_BODY_BYTES = 1_000_000;
+
+    private Resp send(HttpClient client, HttpRequest req, String host) throws Exception {
         try {
-            return client.send(req, HttpResponse.BodyHandlers.ofString());
+            return capped(client.send(req, HttpResponse.BodyHandlers.ofInputStream()));
         } catch (Exception e) {
             int port = req.uri().getPort() == -1 ? 443 : req.uri().getPort();
             if (CaAutoPinService.isTrustFailure(e) && caAutoPinService.pinFromServer(host, port, "tr-web-whois")) {
                 log.info(".tr web-whois auto-pin sonrası tekrar: {}", host);
-                return client.send(req, HttpResponse.BodyHandlers.ofString());
+                return capped(client.send(req, HttpResponse.BodyHandlers.ofInputStream()));
             }
             throw e;
         }
+    }
+
+    private static Resp capped(HttpResponse<java.io.InputStream> r) throws java.io.IOException {
+        // headers de tasinir: 302 yolunda `location` basligi okunuyor (yonlendirilen sonuc sayfasi).
+        return new Resp(r.statusCode(),
+                com.sitemonitor.util.HttpBodies.readCapped(r, MAX_BODY_BYTES, ".tr web-WHOIS"),
+                r.headers());
     }
 
     private Duration timeout() {

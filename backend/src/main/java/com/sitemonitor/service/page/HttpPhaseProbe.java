@@ -95,11 +95,19 @@ public class HttpPhaseProbe {
 
             // SSRF: sayfa çekimiyle AYNI kapı. Prob ayrı bir bağlantı açtığı için burada da
             // doğrulanmalı, aksi halde muhafızın kapattığı bir hedefe prob sızardı.
-            ssrfGuard.validate(host);
-
+            //
+            // DOĞRULANAN ADRESE bağlanılır — `validate` zaten çözülmüş IP listesini DÖNDÜRÜYOR ve
+            // eskiden bu liste ATILIP host `InetAddress.getByName` ile YENİDEN çözülüyordu. İki
+            // çözüm arasında DNS yanıtı değişirse (rebind) prob, muhafızın onayladığından BAŞKA
+            // bir adrese bağlanırdı: ilk sorguda genel bir IP, ikincisinde 169.254.169.254 gibi
+            // bir bulut metadata ucu. PortCheckerService:66-69 tam bu nedenle döneni kullanıyor.
+            // PageFetchCore:188-191'deki *kabul edilmiş* TOCTOU gerekçesi (HttpClient + SNI)
+            // burada geçerli DEĞİL: prob zaten ham soketle, InetAddress üzerinden bağlanıyor.
             long t0 = System.nanoTime();
-            InetAddress addr = InetAddress.getByName(host);
+            java.util.List<java.net.InetAddress> vetted = ssrfGuard.validate(host);
             int dnsMs = msSince(t0);
+            if (vetted.isEmpty()) return new Phases(dnsMs, null, null, null, "adres çözülemedi");
+            InetAddress addr = vetted.get(0);
 
             long t1 = System.nanoTime();
             plain = new Socket();

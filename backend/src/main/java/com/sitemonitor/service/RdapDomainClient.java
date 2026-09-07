@@ -118,17 +118,33 @@ public class RdapDomainClient {
     /** HTTP GET — PKIX güven hatasında hedef host'un CA'sı otomatik pinlenir (direct; olmuyorsa proxy
      *  üzerinden yakalanır) ve istek BİR kez tekrarlanır. pinFromServer rate-limit'li olduğundan
      *  döngü riski yok; pin edilemezse orijinal hata fırlar. */
-    private HttpResponse<String> send(HttpRequest req, String host) throws Exception {
+    /**
+     * Tavanli okunmus yanit. {@code HttpResponse<String>} yerine kullanilir: {@code ofString()}
+     * TAVANSIZDIR ve bu istemcinin hedefleri YONETICI TARAFINDAN AYARLANABILIR
+     * (rdap-bootstrap-url / tr-web-whois-providers) — yanlis ya da ele gecmis tek bir adres
+     * dev bir govde donduerup tek-pod uretimi OOM ile dusurebilirdi. Erisimci adlari
+     * bilerek `statusCode` ve `body`: cagiran kod aynen calisir.
+     */
+    record Resp(int statusCode, String body) {}
+
+    /** RDAP JSON govdesi icin tavan — tipik yanit < 50 KB; 1 MB fazlasiyla genis. */
+    private static final int MAX_BODY_BYTES = 1_000_000;
+
+    private Resp send(HttpRequest req, String host) throws Exception {
         try {
-            return clientFor(host).send(req, HttpResponse.BodyHandlers.ofString());
+            return capped(clientFor(host).send(req, HttpResponse.BodyHandlers.ofInputStream()));
         } catch (Exception e) {
             int port = req.uri().getPort() == -1 ? 443 : req.uri().getPort();
             if (CaAutoPinService.isTrustFailure(e) && caAutoPinService.pinFromServer(host, port, "rdap")) {
                 log.info("RDAP auto-pin sonrası tekrar deneniyor: {}", host);
-                return clientFor(host).send(req, HttpResponse.BodyHandlers.ofString());
+                return capped(clientFor(host).send(req, HttpResponse.BodyHandlers.ofInputStream()));
             }
             throw e;
         }
+    }
+
+    private static Resp capped(HttpResponse<java.io.InputStream> r) throws java.io.IOException {
+        return new Resp(r.statusCode(), com.sitemonitor.util.HttpBodies.readCapped(r, MAX_BODY_BYTES, "RDAP"));
     }
 
     private boolean shouldBypass(String host) {
@@ -231,7 +247,7 @@ public class RdapDomainClient {
                         .header("Accept", "application/rdap+json")
                         .header("User-Agent", "SiteMonitor-DomainMonitor/1.0")
                         .GET().build();
-                HttpResponse<String> resp = send(req, host);
+                Resp resp = send(req, host);
                 int sc = resp.statusCode();
                 if (sc == 429 && attempts < 2) { attempts++; sleep(backoff); backoff *= 2; continue; }
                 if (sc != 200) return err("rdap http " + sc);
@@ -359,7 +375,7 @@ public class RdapDomainClient {
             String host = URI.create(url).getHost();
             HttpRequest req = HttpRequest.newBuilder().uri(URI.create(url)).timeout(Duration.ofSeconds(8))
                     .header("User-Agent", "SiteMonitor-DomainMonitor/1.0").GET().build();
-            HttpResponse<String> resp = send(req, host);
+            Resp resp = send(req, host);
             if (resp.statusCode() != 200) { log.warn("IANA RDAP bootstrap http {}", resp.statusCode()); return null; }
             Map<String, String> map = parseBootstrap(resp.body());
             log.info("IANA RDAP bootstrap yüklendi: {} TLD", map.size());
@@ -474,7 +490,7 @@ public class RdapDomainClient {
             HttpRequest req = HttpRequest.newBuilder().uri(URI.create(url)).timeout(Duration.ofMillis(timeoutMs))
                     .header("Accept", "application/rdap+json")
                     .header("User-Agent", "SiteMonitor-DomainMonitor/1.0").GET().build();
-            HttpResponse<String> resp = send(req, host);   // PKIX → auto-pin + tek retry (tanılama da kendini onarır)
+            Resp resp = send(req, host);   // PKIX → auto-pin + tek retry (tanılama da kendini onarır)
             step.put("elapsed_ms", System.currentTimeMillis() - t0);
             step.put("http_status", resp.statusCode());
             if (resp.statusCode() == 200) { step.put("status", "ok"); step.put("_body", resp.body()); }
