@@ -35,8 +35,15 @@ class MonitorTypeCatalogTest {
     private static final Path ESCALATION =
             Path.of("src/main/java/com/sitemonitor/service/EscalationService.java");
 
-    /** Sertifika tipleri EscalationService'te sabit DEĞİL — kod içinde string literal. Donmuş küme. */
-    private static final Set<String> CERT_TYPES = Set.of("EXPIRY", "CHAIN_BROKEN", "REVOKED", "MISMATCH");
+    /**
+     * Sertifika alarm tipleri — {@link EscalationService#CERT_ALERT_TYPES}'tan gelir, ELLE YAZILMAZ.
+     *
+     * <p>Burada dört tip donmuş olarak listeliydi ve yorumu "EscalationService'te sabit DEĞİL"
+     * diyordu; o not BAYATLAMIŞTI — {@code CERT_ALERT_TYPES} mevcut ve ALTI tip içeriyor
+     * (dördü literal, ikisi {@code TYPE_*} sabiti). Donmuş liste yüzünden kümeye eklenen yeni
+     * bir sertifika tipi bu kapıya HİÇ görünmezdi.
+     */
+    private static final Set<String> CERT_TYPES = EscalationService.CERT_ALERT_TYPES;
 
     private static Set<String> canonicalTypesFromSource() throws IOException {
         String src = new String(Files.readAllBytes(ESCALATION), StandardCharsets.UTF_8);
