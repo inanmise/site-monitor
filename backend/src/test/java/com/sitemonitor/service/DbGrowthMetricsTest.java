@@ -66,4 +66,41 @@ class DbGrowthMetricsTest {
         metrics.sample();   // fırlatmamalı
         assertThat(metrics.rows("port_checks")).isZero();   // registerGauges 0'la başlattı
     }
+
+    // ── Eşik varsayılanı: properties ↔ kod yedeği ─────────────────────────────
+
+    /**
+     * Eşik İKİ yerde yazılı ve ikisi AYNI olmalı — {@code PasswordPolicyDefaultTest} ile aynı
+     * gerekçe: {@code application.properties} çalışan uygulamanın değeri, {@code getInt(...)}
+     * ikinci argümanı ise ayar silindiğinde/okunamadığında devreye giren yedek. Ayrışırlarsa
+     * eşik sessizce eski değerine döner ve kimse fark etmez.
+     *
+     * <p><b>Değer neden pinleniyor:</b> 5M eşiği {@code activity_log} 90 gün saklanırken
+     * konmuştu; 2026-08'de saklama 365 güne çıkarılınca satır sayısı beklendiği gibi ~4 katına
+     * çıktı ve eşik üretimde 5 dakikada bir yanmaya başladı. 2026-09'da kullanıcı kararıyla
+     * 20M'ye alındı — ölçüm doğruydu, ölçek eskiydi; veri KISALTILMADI. Testin kırılması
+     * "yanlış yaptın" demez, "bu eşiği gerçekten değiştirmek istediğine emin misin" der.
+     */
+    @Test
+    @DisplayName("Buyume esigi varsayilani 20M ve properties ile kod yedegi AYNI")
+    void growthThresholdDefault_matchesProperties() throws Exception {
+        java.util.regex.Matcher p = java.util.regex.Pattern
+                .compile("db[.]growth-warn-rows=[$][{]DB_GROWTH_WARN_ROWS:([0-9]+)[}]")
+                .matcher(java.nio.file.Files.readString(
+                        java.nio.file.Path.of("src/main/resources/application.properties")));
+        assertThat(p.find()).as("properties'te esik satiri bulunamadi").isTrue();
+
+        java.util.regex.Matcher c = java.util.regex.Pattern
+                .compile("\"site[.]monitor[.]db[.]growth-warn-rows\",\\s*([0-9_]+)")
+                .matcher(java.nio.file.Files.readString(java.nio.file.Path.of(
+                        "src/main/java/com/sitemonitor/service/DbGrowthMetrics.java")));
+        assertThat(c.find()).as("koddaki yedek deger bulunamadi").isTrue();
+
+        long fromProps = Long.parseLong(p.group(1));
+        long fromCode  = Long.parseLong(c.group(1).replace("_", ""));
+
+        assertThat(fromProps).as("bilincli karar: 20M").isEqualTo(20_000_000L);
+        assertThat(fromCode).as("kod yedegi properties ile ayrismis - ayar silinince eski esige doner")
+                .isEqualTo(fromProps);
+    }
 }
