@@ -238,12 +238,20 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
   async function loadResources(id, checkId = null, silent = false) {
     const seq = ++resSeq.current
     if (!silent) setResLoading(true)
-    const res = await api.monitoring.getPageSpeedResources(id, { checkId: checkId ?? undefined })
-    if (seq !== resSeq.current) return          // daha yeni bir istek var → bu yaniti AT
-    setResources(res?.success ? (res.data?.resources ?? []) : [])
-    setResTotal(res?.success ? (res.data?.total ?? 0) : 0)
-    setBreaches(res?.success ? (res.data?.breaches ?? []) : [])
-    setResLoading(false)
+    // try/finally YOKTU: istek reject olursa setResLoading(false) hic calismiyor ve kaynak
+    // tablosunun spinner'i modal kapatilip yeniden acilana kadar donuyordu. Bayrak YALNIZ bu
+    // istek hala guncelse indirilir (bastirilan eski yanit yenisinin spinner'ini SONDURMESIN).
+    try {
+      const res = await api.monitoring.getPageSpeedResources(id, { checkId: checkId ?? undefined })
+      if (seq !== resSeq.current) return        // daha yeni bir istek var → bu yaniti AT
+      setResources(res?.success ? (res.data?.resources ?? []) : [])
+      setResTotal(res?.success ? (res.data?.total ?? 0) : 0)
+      setBreaches(res?.success ? (res.data?.breaches ?? []) : [])
+    } catch {
+      if (seq === resSeq.current) { setResources([]); setResTotal(0); setBreaches([]) }
+    } finally {
+      if (seq === resSeq.current) setResLoading(false)
+    }
   }
 
   function openDetail(m) {

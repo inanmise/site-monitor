@@ -10,6 +10,7 @@ import AlertHistory from './admin/AlertHistory'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import MonitorNotes from './MonitorNotes.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
+import AlertBanner from './ui/AlertBanner.jsx'
 import MonitorModalActions from './ui/MonitorModalActions.jsx'
 // Süre grafiği artık paylaşımlı ResponseTimeChart (ping/keyword/port ile aynı: 90g/özel aralık + avg/min-max/p95).
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
@@ -45,6 +46,7 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
                                         histReload = 0 }) {
   const t = useT()
   const [details, setDetails] = useState(null)
+  const [loadError, setLoadError] = useState(null)
   // D12: monitör hızla değiştirilirse eskinin geç yanıtı yeni modalı doldurmasın.
   const monitorIdRef = useRef(null)
   monitorIdRef.current = monitor?.id ?? null
@@ -67,11 +69,22 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
       setActiveTab(monitor.record_type)
     }
     const reqId = monitor.id
-    api.monitoring.getDnsDetails(monitor.id).then(d => {
-      if (reqId !== monitorIdRef.current) return   // D12: uçuşan yanıt guard'ı
-      if (d?.success) setDetails(d.data)
-      setLoading(false)
-    })
+    // .catch YOKTU: request() ag hatasinda throw eder ve setLoading(false) hic calismiyordu —
+    // modal "ayrintilar yukleniyor"da asili kaliyordu. Yaris guard'ina DOKUNULMADI: bastirilan
+    // ESKI yanitta loading'i temizlemek YANLIS olurdu, cunku yeni istek hala ucusta ve onu o
+    // temizleyecek; guard yalnizca kendi sonucunu yazmaktan vazgeciyor.
+    api.monitoring.getDnsDetails(monitor.id)
+      .then(d => {
+        if (reqId !== monitorIdRef.current) return   // D12: uçuşan yanıt guard'ı
+        if (d?.success) { setDetails(d.data); setLoadError(null) }
+        else setLoadError(d?.error || 'load failed')
+        setLoading(false)
+      })
+      .catch(e => {
+        if (reqId !== monitorIdRef.current) return
+        setLoadError(e?.message || 'network error')
+        setLoading(false)
+      })
   }, [monitor])
 
   if (!monitor) return null
@@ -132,6 +145,8 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
 
         {detailTab === 'control' && (loading ? (
           <LoadingBlock label={t('dns.loadingDetails')} className="dns-modal-loading" />
+        ) : loadError ? (
+          <AlertBanner tone="danger" title={t('mon.loadError')} role="alert">{String(loadError)}</AlertBanner>
         ) : (
           <div className="dns-modal-body">
             {/* Record type tabs */}

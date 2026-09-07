@@ -606,10 +606,18 @@ export default function App() {
     setCheckLoading(true)
     try {
       const res = await api.checkDomainPreview(domain)
-      setNewDomain('')
       if (res?.data) {
+        setNewDomain('')
         setModalCert({ ...res.data, domain: res.data.domain || domain, _preview: true })
+      } else {
+        // BASARISIZLIK SESSIZDI: giris kutusu temizleniyor, modal acilmiyor, hicbir toast
+        // cikmiyordu — kullanici tiklamanin islenip islenmedigini anlayamiyordu. Girdi de
+        // artik yalnizca BASARIDA temizleniyor ki kullanici yazdigini duzeltebilsin.
+        toast.error(t('card.checkFailed', domain, res?.error || '—'))
       }
+    } catch (e) {
+      // Ag hatasinda ayrica YAKALANMAMIS promise reddi olusuyordu.
+      toast.error(t('card.checkFailed', domain, e?.message || '—'))
     } finally {
       setCheckLoading(false)
     }

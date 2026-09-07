@@ -191,12 +191,21 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
     const seq = ++issuesSeq.current
     if (!silent) setIssuesLoading(true)                              // silent: 30sn oto-yenilemede spinner flaşlamasın
     const issueType = (filter === 'all' || filter === 'firstParty') ? null : filter
-    const res = await api.monitoring.getPageIssues(id, { issueType })
-    if (seq !== issuesSeq.current) return          // daha yeni bir istek var → bu yanıtı AT
-    let rows = res?.success ? (res.data ?? []) : []
-    if (filter === 'firstParty') rows = rows.filter(r => r.first_party)
-    setIssues(rows)
-    setIssuesLoading(false)
+    // try/finally YOKTU: istek reject olursa setIssuesLoading(false) hic calismiyor ve
+    // "Sorunlar" sekmesindeki spinner modal kapatilip yeniden acilana kadar donuyordu.
+    // Bayrak YALNIZ bu istek hala guncelse indirilir — bastirilan eski yanitta indirmek
+    // YANLIS olurdu, cunku yeni istek hala ucusta ve onu o temizleyecek.
+    try {
+      const res = await api.monitoring.getPageIssues(id, { issueType })
+      if (seq !== issuesSeq.current) return        // daha yeni bir istek var → bu yanıtı AT
+      let rows = res?.success ? (res.data ?? []) : []
+      if (filter === 'firstParty') rows = rows.filter(r => r.first_party)
+      setIssues(rows)
+    } catch {
+      if (seq === issuesSeq.current) setIssues([])
+    } finally {
+      if (seq === issuesSeq.current) setIssuesLoading(false)
+    }
   }
   function selectIssueFilter(id, f) { setIssueFilter(f); loadIssues(id, f) }
   async function loadConfirmations(url) {
