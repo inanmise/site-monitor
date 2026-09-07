@@ -19,6 +19,8 @@ import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.never;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -311,6 +313,81 @@ class SystemControllerTest {
     void weeklyAvailHistoryItem_asUser_returns403() throws Exception {
         mvc.perform(get("/api/admin/system/weekly-availability/history/7").session(userSession()))
                 .andExpect(status().isForbidden());
+    }
+
+    // ── system_health.read izin kapisi (A1) ────────────────────────────────────
+    //
+    // Bu dort uc `HttpSession` parametresini ALIYOR ama hic kullanmiyordu: AuthInterceptor
+    // yalniz kimlik dogruluyor ve `/api/admin/**` onekinin rol kapisi yok, yani izin
+    // matrisinden `system_health.read` geri alinsa bile ucler veri dondurmeye devam ediyordu.
+    // En agiri `smtp-logs`: 365 gune kadar HER takimin alici e-postasi, konusu ve alarm
+    // govdesi. Asagidaki dortlu, kapinin varligini uctan uca pinler — kapi silinirse kirmizi.
+
+    @Test
+    @DisplayName("GET /smtp-logs: system_health.read reddedilirse 403 (izin kapisi)")
+    void smtpLogs_permissionDenied_returns403() throws Exception {
+        denySystemHealthRead();
+        mvc.perform(get("/api/admin/system/smtp-logs?days=365").session(userSession()))
+                .andExpect(status().isForbidden());
+        // Kapi ACTUALLY calisti mi: reddedilen istek servise HIC ulasmamali.
+        verify(extendedHealthService, never()).getSmtpFailures(anyInt());
+    }
+
+    @Test
+    @DisplayName("GET /db-stats: system_health.read reddedilirse 403 (izin kapisi)")
+    void dbStats_permissionDenied_returns403() throws Exception {
+        denySystemHealthRead();
+        mvc.perform(get("/api/admin/system/db-stats").session(userSession()))
+                .andExpect(status().isForbidden());
+        verify(extendedHealthService, never()).getTableStats();
+    }
+
+    @Test
+    @DisplayName("GET /metrics: system_health.read reddedilirse 403 (izin kapisi)")
+    void metrics_permissionDenied_returns403() throws Exception {
+        denySystemHealthRead();
+        mvc.perform(get("/api/admin/system/metrics").session(userSession()))
+                .andExpect(status().isForbidden());
+        verify(metricsService, never()).getHistory();
+    }
+
+    @Test
+    @DisplayName("GET /http-metrics: system_health.read reddedilirse 403 (izin kapisi)")
+    void httpMetrics_permissionDenied_returns403() throws Exception {
+        denySystemHealthRead();
+        mvc.perform(get("/api/admin/system/http-metrics").session(userSession()))
+                .andExpect(status().isForbidden());
+        verify(httpMetricsService, never()).getSummary();
+    }
+
+    // Regresyon: Sistem Sagligi sekmesi TUM rollere acik (Nav `show: true`) ve
+    // `system_health.read` USER varsayilanlarinda VAR — kapi eklendi diye siradan
+    // kullanicinin ekrani kirilmamali. Dordu de izin varken 200 donmeli.
+
+    @Test
+    @DisplayName("Dort sistem ucu: izin varken USER icin 200 (ekran kirilmadi)")
+    void systemReadEndpoints_asUserWithPermission_return200() throws Exception {
+        when(extendedHealthService.getSmtpFailures(anyInt())).thenReturn(java.util.List.of());
+        when(extendedHealthService.getTableStats()).thenReturn(java.util.List.of());
+        when(metricsService.getHistory()).thenReturn(java.util.List.of());
+        when(httpMetricsService.getSummary()).thenReturn(Map.of("count", 0));
+        when(httpMetricsService.getHistory()).thenReturn(java.util.List.of());
+
+        for (String path : java.util.List.of("/smtp-logs", "/db-stats", "/metrics", "/http-metrics")) {
+            mvc.perform(get("/api/admin/system" + path).session(userSession()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.success").value(true));
+        }
+        // Kapi dogru kaynak/eylem ciftiyle soruldu (yanlis anahtar = sessizce her zaman gecen kapi).
+        verify(permissionService, org.mockito.Mockito.times(4))
+                .require(any(jakarta.servlet.http.HttpSession.class), eq("system_health.read"), eq("view"));
+    }
+
+    /** `system_health.read` reddi: PermissionService.require SecurityException atar → 403. */
+    private void denySystemHealthRead() {
+        org.mockito.Mockito.doThrow(new SecurityException("Bu islem icin yetkiniz yok: system_health.read/view"))
+                .when(permissionService)
+                .require(any(jakarta.servlet.http.HttpSession.class), eq("system_health.read"), eq("view"));
     }
 
     private MockHttpSession userSession() {
