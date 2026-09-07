@@ -386,9 +386,16 @@ describe('PageSpeedMonitorPage', () => {
       [/^changes$|^değişiklikler$/i,     () => api.monitoring.getChanges],
       [/^resources$|^kaynaklar$/i,       () => api.monitoring.getPageSpeedResources],
     ]
+    // ZAMAN ASIMI NEDEN 15 sn: alti sekmenin UCU lazy() + Suspense arkasinda
+    // (ResponseTimeChart, MonitorNotes, ChangeHistoryTab — PageSpeedMonitorPage:37,47,48).
+    // Dinamik import cozumu + render + efekt + istek, TAM SUIT paralel kosarken 5 sn'yi
+    // asabiliyor: bu test 2026-09-07'de tam suitte BIR KEZ boyle dustu (yigin izi bu satiri
+    // gosterdi), izole kosumda ve tekrar kosumda gecti. IDDIA DEGISMEDI — yalnizca sabir
+    // artti; testler hizli oldugunda bu deger hicbir sey maliyet etmez, yavas bir runner'da
+    // ise sahte kirmizi uretmez.
     for (const [name, apiFn] of tabs) {
       fireEvent.click(screen.getByRole('button', { name }))
-      await waitFor(() => expect(apiFn()).toHaveBeenCalled(), { timeout: 5000 })
+      await waitFor(() => expect(apiFn()).toHaveBeenCalled(), { timeout: 15000 })
       expect(screen.getAllByText('https://x.com/odeme').length).toBeGreaterThan(0)
     }
   })
