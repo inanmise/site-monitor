@@ -180,7 +180,6 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.activity.retention-days",           "monitoring", Type.INT),
         // Denetim (audit) kayıt saklama süresi (gün) + silmeden önce JSONL arşiv üretimi (append-only + arşiv).
         new Setting("site.monitor.audit.retention-days",             "monitoring", Type.INT),
-        new Setting("site.monitor.audit.archive-enabled",            "monitoring", Type.BOOL),
         // İzleme YAPILANDIRMASI değişiklik geçmişi (kim/ne zaman/hangi IP/neyi değiştirdi).
         // audit'ten UZUN tutulur (varsayılan 730 gün): ayrı tablo olmasının sebeplerinden biri de budur.
         new Setting("site.monitor.monitoring.change-retention-days", "monitoring", Type.INT),
@@ -302,7 +301,6 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.retention.purge-batch-size",        "retention", Type.INT),
         new Setting("site.monitor.network-outage.retention-days",     "retention", Type.INT),
         new Setting("site.monitor.incident.retention-days",           "retention", Type.INT),
-        new Setting("site.monitor.audit.archive-retention-days",      "retention", Type.INT),
         new Setting("site.monitor.rollup.lookback-days",              "retention", Type.INT),
         new Setting("site.monitor.rollup.retention-days",             "retention", Type.INT),
         new Setting("site.monitor.rollup.hourly-retention-days",      "retention", Type.INT),

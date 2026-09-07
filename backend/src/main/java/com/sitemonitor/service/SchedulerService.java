@@ -1425,16 +1425,16 @@ public class SchedulerService {
             rollupDailyStats();
             rollupHourlyStats();
 
-            // Denetim arşivi: audit_log SİLİNMEDEN ÖNCE JSONL'e yazılmalı (append-only + arşiv).
-            // Bu adım retention politikasının parçası değil, ön koşuludur → burada kalır.
-            boolean hold = retentionService.holdActive();
-            int archived = 0;
-            if (!hold) {
-                var auditPolicy = RetentionCatalog.byId("audit-log").orElseThrow();
-                archived = archiveAuditBeforePurge(retentionService.cutoffFor(auditPolicy));
-            }
-
-            // ── Asıl temizlik: bildirimsel RetentionCatalog üzerinden ──────────────────────────
+            // NOT (2026-09): audit_log silinmeden önce JSONL'e arşivleme KALDIRILDI.
+            // Arşiv `logs/audit-archive/*.jsonl` altına, yani `/app` içindeki konteyner yazılabilir
+            // katmanına yazılıyordu; pod'da mount edilmiş volume yalnız /tmp ve /var/log ve ikisi de
+            // emptyDir. Yani dosyalar bir sonraki yeniden başlatmaya kadar yaşıyordu — bu proje
+            // günde birkaç kez sürüm çıkarıyor, dolayısıyla arşiv pratikte her rollout'ta
+            // sıfırlanıyordu. DB'den silme ise kalıcıydı: "arşivlendi" diyen bir adım, gerçekte
+            // kaydı kaybettiriyordu. Kullanıcı kararı: silinecek bir kaydı JSONL'e çevirip
+            // saklamayalım. Saklama süresi artık YALNIZ site.monitor.audit.retention-days ile
+            // yönetilir; daha uzun tutulması gerekiyorsa o değer büyütülür.
+            // ── Temizlik: bildirimsel RetentionCatalog üzerinden ───────────────────────────────
             RetentionService.RunResult run = retentionService.runCleanup();
 
             if (run.holdActive()) {
@@ -1446,19 +1446,15 @@ public class SchedulerService {
                         .findFirst().orElse(0);
                 // Retention/purge job'ın kendisi de denetlenir (silme sonrası → yeni zincir ucuna yazılır).
                 auditService.recordSystemEvent("AUDIT_RETENTION_PURGE", "AUDIT_LOG", "cleanup",
-                        "{\"deleted\":" + auditDeleted + ",\"archived\":" + archived
+                        "{\"deleted\":" + auditDeleted
                                 + ",\"total_rows\":" + run.totalRows() + ",\"failed\":" + run.failedCount() + "}");
             }
 
-            // Denetim JSONL arşiv dosyaları (logs/audit-archive/*.jsonl) — dosya sistemi, tablo değil.
-            int arcRetDays = Math.max(30, appSettings.getInt("site.monitor.audit.archive-retention-days", 365));
-            int arc = hold ? 0 : rotateAuditArchive(arcRetDays);
             // In-memory: silinen monitörlerin checkDue anahtarları birikmesin (uzun uptime sızıntısı).
             int pruned = pruneMonitorCheckState(collectLiveMonitorKeys());
-            log.info("Gece temizliği: {} politika, {} satır, {} hata, {} ms · arşivlenen={}, arşiv dosyası silinen={}, "
-                    + "checkState anahtarı={}{}",
+            log.info("Gece temizliği: {} politika, {} satır, {} hata, {} ms · checkState anahtarı={}{}",
                     run.items().size(), run.totalRows(), run.failedCount(), run.durationMs(),
-                    archived, arc, pruned, run.holdActive() ? " · LEGAL HOLD AKTİF" : "");
+                    pruned, run.holdActive() ? " · LEGAL HOLD AKTİF" : "");
         } catch (Exception e) {
             log.warn("Nightly cleanup failed: {}", e.getMessage());
         } finally {
@@ -1469,28 +1465,8 @@ public class SchedulerService {
     // NOT: safeDelete / safeDeleteBatched buradan KALDIRILDI (2026-08). Silme mantığı artık
     // RetentionService içinde, RetentionCatalog'daki bildirimsel politikalardan üretiliyor.
 
-    /** Denetim arşiv dosyalarını (logs/audit-archive/*.jsonl) N günden eskiyse sil — bugün disk sınırsız. */
-    private int rotateAuditArchive(int retentionDays) {
-        try {
-            String dir = appSettings.getString("site.monitor.audit.archive-dir", "logs/audit-archive");
-            java.nio.file.Path p = java.nio.file.Path.of(dir);
-            if (!java.nio.file.Files.isDirectory(p)) return 0;
-            long cutoffMs = System.currentTimeMillis() - retentionDays * 86_400_000L;
-            int deleted = 0;
-            try (var stream = java.nio.file.Files.list(p)) {
-                for (java.nio.file.Path f : stream.filter(x -> x.toString().endsWith(".jsonl")).toList()) {
-                    if (java.nio.file.Files.getLastModifiedTime(f).toMillis() < cutoffMs) {
-                        java.nio.file.Files.deleteIfExists(f);
-                        deleted++;
-                    }
-                }
-            }
-            return deleted;
-        } catch (Exception e) {
-            log.warn("Audit arşiv rotasyonu başarısız: {}", e.getMessage());
-            return -1;
-        }
-    }
+    // NOT (2026-09): rotateAuditArchive KALDIRILDI — arşiv dosyası üretilmediği için döndürülecek
+    // bir dosya da yok. Bkz. yukarıdaki gece temizliği notu.
 
     /**
      * Günlük ROLLUP: son {@code lookback-days} TAMAMLANMIŞ günü ham kontrol serilerinden
@@ -1626,63 +1602,12 @@ public class SchedulerService {
             + "avg_response_ms = EXCLUDED.avg_response_ms, max_response_ms = EXCLUDED.max_response_ms";
     }
 
-    /** Denetim kayıtlarını silmeden ÖNCE tarihli JSONL arşive yazar (append-only + arşiv gerekliliği).
-     *  archive-enabled kapalıysa/hata olursa 0 döner (silme yine de yapılır; en kötü ihtimalle arşivsiz). */
-    /** Arşiv okuma sayfası. Tüm tabloyu tek List'e almak yerine keyset ile ilerlenir (aşağıya bakın). */
-    static final int AUDIT_ARCHIVE_BATCH = 5_000;
-
-    private int archiveAuditBeforePurge(String cutoff) {
-        try {
-            if (!appSettings.getBoolean("site.monitor.audit.archive-enabled", true)) return 0;
-            String dir = appSettings.getString("site.monitor.audit.archive-dir", "logs/audit-archive");
-            java.nio.file.Path p = java.nio.file.Path.of(dir, "audit-" + cutoff.substring(0, 10) + ".jsonl");
-            if (p.getParent() != null) java.nio.file.Files.createDirectories(p.getParent());
-
-            // KEYSET SAYFALAMA + akan yazım. Eskiden "SELECT *" LIMIT'siz tek List'e alınıyor, sonra
-            // TAMAMI tek StringBuilder + tek String'e kopyalanıyordu (bellekte ~3 kat). Retention ilk kez
-            // devreye girdiğinde veya legal-hold kalktığında bu milyonlarca satır olabilir → gece 03:30'da
-            // OOM → pod restart (üstelik catch(Exception) OutOfMemoryError'ı YAKALAMAZ). Silme tarafı
-            // zaten batch'liydi; ön adım da artık öyle.
-            long lastSeq = Long.MIN_VALUE;
-            int total = 0;
-            try (java.io.BufferedWriter w = java.nio.file.Files.newBufferedWriter(p,
-                    java.nio.charset.StandardCharsets.UTF_8,
-                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND)) {
-                while (true) {
-                    List<java.util.Map<String, Object>> rows = jdbcTemplate.queryForList(
-                            "SELECT * FROM audit_log WHERE event_time < ? AND seq > ? ORDER BY seq ASC LIMIT " + AUDIT_ARCHIVE_BATCH,
-                            cutoff, lastSeq);
-                    if (rows.isEmpty()) break;
-                    for (java.util.Map<String, Object> r : rows) {
-                        StringBuilder sb = new StringBuilder(256);
-                        sb.append('{');
-                        boolean first = true;
-                        for (var e : r.entrySet()) {
-                            if (!first) sb.append(',');
-                            first = false;
-                            sb.append('"').append(e.getKey()).append("\":");
-                            Object v = e.getValue();
-                            if (v == null) sb.append("null");
-                            else if (v instanceof Number || v instanceof Boolean) sb.append(v);
-                            else sb.append('"').append(v.toString().replace("\\", "\\\\").replace("\"", "\\\"")
-                                    .replace("\n", " ").replace("\r", " ")).append('"');
-                        }
-                        sb.append('}');
-                        w.write(sb.toString());
-                        w.newLine();
-                        Object seq = r.get("seq");
-                        if (seq instanceof Number n) lastSeq = n.longValue();
-                    }
-                    total += rows.size();
-                    if (rows.size() < AUDIT_ARCHIVE_BATCH) break;
-                }
-            }
-            return total;
-        } catch (Exception e) {
-            log.warn("Audit arşivleme başarısız (silme yine yapılacak): {}", e.getMessage());
-            return 0;
-        }
-    }
+    // NOT (2026-09): archiveAuditBeforePurge + AUDIT_ARCHIVE_BATCH KALDIRILDI.
+    // Silinecek denetim kaydini JSONL'e cevirip saklamiyoruz: yazilan dosya kalici olmayan
+    // konteyner katmanindaydi (mount edilmis volume'lar yalniz /tmp ve /var/log, ikisi de
+    // emptyDir), yani her rollout'ta kayboluyordu. "Arsivlendi" diyen bir adimin ardindan
+    // satirlari KALICI olarak silmek, kaydi korumak degil kaybetmekti. Saklama suresi artik
+    // yalniz site.monitor.audit.retention-days ile yonetilir.
 
     /**
      * Her Cuma 09:00 Europe/Istanbul — o anki ISO haftası raporunu henüz onaya

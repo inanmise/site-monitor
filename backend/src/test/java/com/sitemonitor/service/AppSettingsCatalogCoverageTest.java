@@ -44,10 +44,9 @@ class AppSettingsCatalogCoverageTest {
      * bunu yeniden kusur olarak bulur.
      */
     private static final Map<String, String> INTENTIONALLY_UNMANAGED = Map.of(
-            "site.monitor.audit.archive-dir",
-            "Dosya sistemi YOLU. Yönetici arayüzünden değiştirilebilir olması, denetim "
-            + "arşivinin pod üzerinde herhangi bir dizine yazılmasına izin verirdi; "
-            + "ortam değişkeni / properties ile yönetilir."
+            // 2026-09: tek girdi olan site.monitor.audit.archive-dir ÇIKARILDI — denetim arşivi
+            // (silme öncesi JSONL yazımı) tamamen kaldırıldığı için o anahtar artık hiç okunmuyor.
+            // exemptionList_hasNoStaleEntries zaten bunu zorunlu kılıyordu.
     );
 
     /** {@code appSettings.getBoolean("site.monitor.x", …)} — dize LİTERALİ olan çağrılar. */
