@@ -32,7 +32,11 @@ describe('CheckRunModal', () => {
     expect(screen.getByText('8443')).toBeInTheDocument()
     expect(screen.getByText('200')).toBeInTheDocument()
     expect(screen.getByText(/31 (gün|days)/)).toBeInTheDocument()
-    expect(screen.getByText('09.09.2026')).toBeInTheDocument()
+    // TARİH BİÇİMİ ARTIK DİLE BAĞLI (E7). CheckRunShell sabit 'tr-TR' yazıyordu; test
+    // varsayılan dille (en) render ettiği için İngilizce arayüzde Türkçe biçim basılıyordu —
+    // aynı ekranda iki farklı tarih biçimi görünmesinin nedenlerinden biri buydu.
+    // Beklenen artık en-GB: 09/09/2026.
+    expect(screen.getByText('09/09/2026')).toBeInTheDocument()
   })
 
   it('durum kendi kolonunda ve hata satırı mesajı gösterir', () => {

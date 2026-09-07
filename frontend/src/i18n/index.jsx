@@ -1,6 +1,10 @@
 import { createContext, useContext, useState, useCallback, useEffect } from 'react'
 
-const STORAGE_KEY = 'site-monitor-lang'
+import { LANG_STORAGE_KEY, localeFor, setDateLocale } from './dateLocale.js'
+
+// Anahtar ve dil→yerel eslemesi dateLocale.js'te TEK kaynakta: `api/client.js`'teki duz
+// formatlayicilar da oradan okuyor, iki yerde yazilsa sessizce ayrisirlardi.
+const STORAGE_KEY = LANG_STORAGE_KEY
 
 // ── Dictionaries ──────────────────────────────────────────────────────────────
 
@@ -10916,6 +10920,8 @@ export function LangProvider({ children }) {
 
   useEffect(() => {
     document.documentElement.lang = lang
+    // Hook kullanamayan duz formatlayicilar (api/client.js formatDate*) icin ayna.
+    setDateLocale(lang)
   }, [lang])
 
   const toggle = useCallback(() => {
@@ -10960,5 +10966,5 @@ export function useT() {
 
 export function useDateLocale() {
   const { lang } = useLanguage()
-  return lang === 'en' ? 'en-GB' : 'tr-TR'
+  return localeFor(lang)
 }

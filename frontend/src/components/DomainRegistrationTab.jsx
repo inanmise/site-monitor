@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { dateLocale } from '../i18n/dateLocale.js'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { RefreshCw, ShieldCheck, ShieldOff, ShieldAlert, ListX, History,
@@ -11,7 +12,7 @@ function fmtDateHuman(iso) {
   const s = String(iso).length <= 10 ? iso + 'T00:00:00Z' : (iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z')
   const d = new Date(s)
   if (isNaN(d.getTime())) return String(iso).substring(0, 10)
-  return d.toLocaleString('tr-TR', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return d.toLocaleString(dateLocale(), { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 function daysColor(d) {
   if (d == null) return 'var(--text-muted, #64748b)'

@@ -1,3 +1,8 @@
+// Tarih yereli i18n'den CANLI okunur: bu dosyadaki formatlayicilar duz fonksiyon,
+// hook degil — sabit 'tr-TR' yazdiklari icin Ingilizce arayuzde ayni ekranda iki
+// farkli tarih bicimi goruluyordu (bkz. i18n/dateLocale.js).
+import { dateLocale } from '../i18n/dateLocale.js'
+
 const BASE = import.meta.env.VITE_API_BASE ?? '/api'
 
 function nonJsonErrorPayload(status) {
@@ -1090,14 +1095,34 @@ export const api = {
   },
 }
 
+/**
+ * Sunucu damgasını `new Date(...)`'ın UTC olarak okuyacağı biçime getirir.
+ *
+ * Backend damgaları saat dilimi eki OLMADAN gelir ("2026-09-07T10:00:00"); JS bunları YEREL
+ * saat sayar, o yüzden sonuna `Z` eklenir. Eski hâli iki girdide bozuluyordu:
+ *
+ * 1. NEGATİF ofset — yalnız `'+'` aranıyordu, "2026-09-07T10:00:00-03:00" onu içermediği için
+ *    sonuna `Z` ekleniyor ve "…-03:00Z" çıkıyordu → `Invalid Date`. `toLocaleString`
+ *    FIRLATMADIĞI için catch dalı da çalışmıyor, ekrana düpedüz "Invalid Date" yazılıyordu.
+ * 2. YALNIZ TARİH — "2026-09-07" + "Z" = "2026-09-07Z", yine `Invalid Date`
+ *    (formatDateOnly tam da bu biçimi alıyor).
+ *
+ * Ayrıca dize olmayan girdide `.endsWith` FIRLATIYORDU; artık olduğu gibi geçiriliyor
+ * (`new Date` zaten Date/number kabul eder).
+ */
 function toUtc(iso) {
-  return iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z'
+  if (typeof iso !== 'string') return iso
+  const s = iso.trim()
+  if (/[zZ]$/.test(s)) return s                                  // zaten UTC
+  if (/[+-]\d{2}:?\d{2}$/.test(s)) return s                      // ofset taşıyor (+03:00 / -0300)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s + 'T00:00:00Z'     // yalnız tarih
+  return s + 'Z'
 }
 
 export function formatDate(iso) {
   if (!iso) return 'N/A'
   try {
-    return new Date(toUtc(iso)).toLocaleString('tr-TR', {
+    return new Date(toUtc(iso)).toLocaleString(dateLocale(), {
       year: 'numeric', month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit',
     })
@@ -1110,7 +1135,7 @@ export function formatDate(iso) {
 export function formatDateSec(iso) {
   if (!iso) return 'N/A'
   try {
-    return new Date(toUtc(iso)).toLocaleString('tr-TR', {
+    return new Date(toUtc(iso)).toLocaleString(dateLocale(), {
       year: 'numeric', month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit', second: '2-digit',
     })
@@ -1122,7 +1147,7 @@ export function formatDateSec(iso) {
 export function formatTime(iso) {
   if (!iso) return '—'
   try {
-    return new Date(toUtc(iso)).toLocaleTimeString('tr-TR', {
+    return new Date(toUtc(iso)).toLocaleTimeString(dateLocale(), {
       hour: '2-digit', minute: '2-digit', second: '2-digit',
     })
   } catch {
@@ -1133,7 +1158,7 @@ export function formatTime(iso) {
 export function formatDateOnly(iso) {
   if (!iso) return '—'
   try {
-    return new Date(toUtc(iso)).toLocaleDateString('tr-TR', {
+    return new Date(toUtc(iso)).toLocaleDateString(dateLocale(), {
       year: 'numeric', month: '2-digit', day: '2-digit',
     })
   } catch {

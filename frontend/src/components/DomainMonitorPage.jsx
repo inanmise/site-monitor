@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
+import { dateLocale } from '../i18n/dateLocale.js'
 import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -77,7 +78,7 @@ function fmtExpiry(iso) {
   const s = String(iso).length <= 10 ? iso + 'T00:00:00Z' : (iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z')
   const d = new Date(s)
   return isNaN(d.getTime()) ? String(iso).substring(0, 10)
-    : d.toLocaleDateString('tr-TR', { year: 'numeric', month: '2-digit', day: '2-digit' })
+    : d.toLocaleDateString(dateLocale(), { year: 'numeric', month: '2-digit', day: '2-digit' })
 }
 
 /** .tr WHOIS kaynak anahtarı → okunur etiket (cevabı hangi kaynak verdi). */

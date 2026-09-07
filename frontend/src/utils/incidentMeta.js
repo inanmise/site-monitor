@@ -1,3 +1,5 @@
+import { dateLocale } from '../i18n/dateLocale.js'
+
 // Incident root-cause meta — sunucu {code, category} döndürür; burada kategori → renk + i18n etiket anahtarı eşlenir.
 // Renkler AlertHistory.typeMeta paletiyle uyumlu (kırmızı=down, mavi=client/dns, turuncu=slow, amber=ssl/expiry).
 export const RC_META = {
@@ -64,7 +66,7 @@ export function formatDuration(ms, t) {
 // Tam yerel timestamp + timezone (ör. "16 Ağu 2023 14:44:23 GMT+3").
 // locale: uygulama dilinden ('tr-TR'/'en-GB', useDateLocale). undefined bırakılırsa çalışma-ortamı
 // dili kullanılır → İngilizce Windows'ta "Jul 12" gibi görünür; bu yüzden çağıran locale geçmeli.
-export function formatIncidentTime(s, locale = 'tr-TR') {
+export function formatIncidentTime(s, locale = dateLocale()) {
   const d = parseUtc(s)
   if (!d) return '—'
   try {
