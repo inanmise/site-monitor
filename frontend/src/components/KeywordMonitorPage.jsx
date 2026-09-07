@@ -121,13 +121,24 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const [secondsSince, setSecondsSince] = useState(0)
 
   const load = useCallback(async () => {
-    const res = await api.monitoring.getKeywordMonitors()
     // HATA DALI: eskiden else yoktu → API düşünce liste boş kalıyor ve ekran
     // "Henüz izleme yok, ekleyin" diyordu; kullanıcı monitörlerinin SİLİNDİĞİNİ sanıyordu.
     // Ayrıca useVisibleInterval her 60 sn sessizce başarısız olmaya devam ediyordu.
-    if (res?.success) { setMonitors(res.data); setLoadError(null) }
-    else setLoadError(res?.error || 'load failed')
-    setLoading(false); setSecondsSince(0)
+    // AG HATASI DA BU DALA DUSMELI: api/client.js request() ag hatasinda {success:false} DONDURMEZ,
+    // throw eder (yalniz AbortError yumusak payload doner) ve bu cagrida timeoutMs verilmedigi
+    // icin varsayilan 0 = timeout YOK. try/catch olmadan promise reject oluyordu: setLoadError de
+    // setLoading(false) de HIC calismiyor, ekran iskelette kaliyor, hata bandi cikmiyor ve konsolda
+    // yalnizca "unhandled rejection" goruluyordu. Yani hata dali yazilmisti ama EN SIK tetiklenen
+    // hata turu ona hic ulasmiyordu.
+    try {
+      const res = await api.monitoring.getKeywordMonitors()
+      if (res?.success) { setMonitors(res.data); setLoadError(null) }
+      else setLoadError(res?.error || 'load failed')
+    } catch (e) {
+      setLoadError(e?.message || 'network error')
+    } finally {
+      setLoading(false); setSecondsSince(0)
+    }
   }, [])
 
   const checkable = monitors.filter(canCheckRow)

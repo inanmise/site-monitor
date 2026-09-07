@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
@@ -110,5 +111,56 @@ class UserPushHeaderSecretTest {
     void blankSecret_keepsStored() throws Exception {
         var out = encrypt(List.of(row("Authorization", "", true)));
         assertThat(out.get(0).get("value")).isEqualTo("ENC(gercek-token)");
+    }
+
+    // ── A10: BOZUK kayıt sessizce sır silmemeli ────────────────────────────────
+    //
+    // Ayrıştırma hatası `catch (Exception ignored)` ile yutuluyordu; existingValues boş kalınca
+    // hem maskeli ("değiştirmedim") hem de boş-sır dalı `getOrDefault(name, "")` ile BOŞ DİZE
+    // yazıyordu. Kullanıcı yalnızca bir başlık ADINI değiştirse bile kayıtlı token geri
+    // alınamaz biçimde siliniyor, hiçbir hata/log çıkmıyor ve sonraki her push FAILED oluyordu.
+
+    @Test
+    @DisplayName("A10: kayıt BOZUKKEN maskeli değer sessizce silinmez — istek REDDEDİLİR")
+    void corruptStored_maskedValue_refusesInsteadOfBlanking() {
+        when(appSettings.getString("site.monitor.userpush.headers", "[]"))
+                .thenReturn("{bu gecerli JSON degil");
+
+        // ReflectionTestUtils sarmalayiciyi acar — istisna DOGRUDAN gelir.
+        assertThatThrownBy(() -> encrypt(List.of(row("Authorization", "*****", true))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Authorization");
+    }
+
+    @Test
+    @DisplayName("A10: kayıt BOZUKKEN boş bırakılan sır da sessizce silinmez")
+    void corruptStored_blankSecret_refusesInsteadOfBlanking() {
+        when(appSettings.getString("site.monitor.userpush.headers", "[]"))
+                .thenReturn("{bu gecerli JSON degil");
+
+        assertThatThrownBy(() -> encrypt(List.of(row("Authorization", "", true))))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("A10: kayıt bozuk olsa da DEĞER verilen başlık yazılır (onarım yolu açık)")
+    void corruptStored_newValue_stillWrites() throws Exception {
+        // Korunacak bir şey yoksa engellemek gereksiz olurdu: kullanıcı değeri yeniden
+        // girerek bozuk satırı ONARABİLMELİ.
+        when(appSettings.getString("site.monitor.userpush.headers", "[]"))
+                .thenReturn("{bu gecerli JSON degil");
+
+        var out = encrypt(List.of(row("Authorization", "yeni-token", true)));
+        assertThat(out.get(0).get("value")).isEqualTo("ENC(yeni-token)");
+    }
+
+    @Test
+    @DisplayName("A10: kayıt bozuk olsa da SIR OLMAYAN başlık etkilenmez")
+    void corruptStored_plainHeader_unaffected() throws Exception {
+        when(appSettings.getString("site.monitor.userpush.headers", "[]"))
+                .thenReturn("{bu gecerli JSON degil");
+
+        var out = encrypt(List.of(row("X-Env", "test", false)));
+        assertThat(out.get(0).get("value")).isEqualTo("test");
     }
 }

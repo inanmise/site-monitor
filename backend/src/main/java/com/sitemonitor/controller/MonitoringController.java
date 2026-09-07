@@ -4259,16 +4259,32 @@ public class MonitoringController {
         return ("ON".equals(v) || "OFF".equals(v)) ? v : "AUTO";
     }
 
-    /** Gelen env dizisini kalıcı JSON'a çevirir: secret değerler şifrelenir; secret değeri boş gelirse eski enc korunur. */
+    /**
+     * Gelen env dizisini kalıcı JSON'a çevirir: secret değerler şifrelenir; secret değeri boş
+     * gelirse eski şifreli değer KORUNUR (yazma-yalnız sözleşmesi — form sır alanlarını boş getirir).
+     *
+     * <p>BOZUK KAYIT SESSİZCE SIR SİLMEZ. Ayrıştırma hatası eskiden yutuluyordu
+     * ({@code catch (Exception ignored)}); {@code existingSecrets} boş kalınca "değer değişmedi"
+     * dalı {@code getOrDefault(name, "")} ile boş dize yazıyordu. Sonuç: kullanıcı monitörün
+     * yalnızca ADINI değiştirip kaydettiğinde tüm secret env değişkenleri kalıcı olarak "" oluyor,
+     * hiçbir hata ve hiçbir log satırı çıkmıyor, k6 koşumu bir sonraki turda kimlik doğrulama
+     * hatasıyla düşüyor ve sebebi görünmüyordu. Artık: hata loglanır ve KORUNMASI GEREKEN bir
+     * değer varsa istek 409 ile reddedilir — kullanıcı sırrı yeniden girerek satırı onarabilir.
+     * Gelen istek tüm sırların değerini taşıyorsa korunacak bir şey yoktur ve kayıt normal işler.
+     */
     private String buildEnvJson(String existingJson, Object incoming) {
         Map<String, String> existingSecrets = new LinkedHashMap<>();
+        boolean existingUnreadable = false;
         try {
             if (existingJson != null && !existingJson.isBlank()) {
                 com.fasterxml.jackson.databind.JsonNode arr = SCRIPTED_MAPPER.readTree(existingJson);
                 if (arr.isArray()) for (var n : arr)
                     if (n.path("secret").asBoolean(false)) existingSecrets.put(n.path("name").asText(""), n.path("value").asText(""));
             }
-        } catch (Exception ignored) { }
+        } catch (Exception ex) {
+            existingUnreadable = true;
+            log.warn("scripted env_json ayrıştırılamadı — kayıtlı sırlar korunamıyor: {}", ex.toString());
+        }
         List<Map<String, Object>> out = new ArrayList<>();
         if (incoming instanceof List<?> list) {
             for (Object o : list) {
@@ -4281,6 +4297,9 @@ public class MonitoringController {
                 String stored;
                 if (secret) {
                     if (val != null && !val.toString().isBlank()) stored = secretCipher.encrypt(val.toString());
+                    else if (existingUnreadable)
+                        throw new IllegalStateException("Kayıtlı ortam değişkenleri okunamadı (bozuk kayıt): '"
+                                + name + "' sırrı korunamaz. Değeri yeniden girip kaydedin.");
                     else stored = existingSecrets.getOrDefault(name, "");   // değer değişmedi → eski enc'i koru
                 } else {
                     stored = val == null ? "" : val.toString();

@@ -25,6 +25,34 @@ beforeEach(() => resetScriptedMocks(api))
 
 describe('ScriptedMonitorPage — liste ve kartlar', () => {
 
+  // ── E2: yukleme hatasi "hic izleme yok" gibi gorunmemeli ────────────────────
+  //
+  // Diger 8 izleme sayfasinda hata dali VARDI, bu sayfada ve UptimePage'de HIC yoktu:
+  // `if (res?.success)` basarisizken yalniz setLoading(false) kosuyor, monitors bos kaliyor ve
+  // ekran "Henuz sentetik izleme yok, ekleyin" diyordu — kullanici izlemelerinin SILINDIGINI
+  // saniyordu. HttpMonitorPage'de yorumla belgelenmis hatanin iki kopyaya tasinmamis hali.
+
+  it('E2: {success:false} donerse hata bandi cizilir, "hic izleme yok" GORUNMEZ', async () => {
+    api.monitoring.getScriptedMonitors.mockResolvedValue({ success: false, error: '403 Forbidden' })
+
+    render(<ScriptedMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+
+    expect(await screen.findByText(/izleme listesi yüklenemedi|could not load the monitor list/i))
+      .toBeInTheDocument()
+    expect(screen.getByText(/403 forbidden/i)).toBeInTheDocument()
+    expect(screen.queryByText(/henüz.*yok|no .*monitors/i)).not.toBeInTheDocument()
+  })
+
+  it('E2: api REJECT ederse de ayni hata bandi cizilir (ag hatasi yolu)', async () => {
+    api.monitoring.getScriptedMonitors.mockRejectedValue(new Error('Failed to fetch'))
+
+    render(<ScriptedMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+
+    expect(await screen.findByText(/izleme listesi yüklenemedi|could not load the monitor list/i))
+      .toBeInTheDocument()
+    expect(screen.getByText(/failed to fetch/i)).toBeInTheDocument()
+  })
+
   it('izleme kartını KANONİK upt-card yapısıyla listeler + "Yeni Monitör" görünür', async () => {
     const { container } = render(<ScriptedMonitorPage systemRole="TEAM_ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())

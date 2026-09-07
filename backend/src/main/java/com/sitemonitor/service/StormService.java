@@ -593,7 +593,18 @@ public class StormService {
         return UNGROUPED.equals(storm.getScopeKey()) ? "Grupsuz" : storm.getScopeKey();
     }
 
-    private String rootCauseLabel(String rootCause) {
+    /**
+     * Fırtınanın kök-neden etiketi (toplu alarm e-postasının ve webhook metninin başlığı).
+     *
+     * <p>Kaynak küme {@link EscalationService#DOWN_ALERT_TYPES} — fırtınaya girebilen TEK küme.
+     * Burada altı tip yazılıydı; o kümeye sonradan eklenen {@code PAGE_DOWN},
+     * {@code SCRIPTED_FAIL} ve {@code PAGESPEED_DOWN} atlanmıştı ve {@code default} dalına
+     * düşüyorlardı: beş Sayfa Hızı monitörü aynı anda çöktüğünde toplu alarm "Kök-neden:
+     * Kesinti." diyordu — hangi izleme ailesinin gittiği hiçbir yerde yazmıyordu, oysa
+     * HTTP/Port/Ping/DNS fırtınalarında yazıyor. {@code StormServiceTest} bu eşlemeyi
+     * DOWN_ALERT_TYPES üzerinden gezip pinliyor, yani 11. tip de kapıya takılır.
+     */
+    String rootCauseLabel(String rootCause) {   // paket-özel: kapı testi doğrudan çağırır
         return switch (rootCause != null ? rootCause : "") {
             case EscalationService.TYPE_ACCESSIBILITY -> "Erişim Kesintisi";
             case EscalationService.TYPE_HTTP_DOWN     -> "HTTP/Website Erişilemez";
@@ -601,6 +612,9 @@ public class StormService {
             case EscalationService.TYPE_PING_DOWN     -> "Ping Yanıtsız";
             case EscalationService.TYPE_DNS_FAILURE   -> "DNS Çözümleme Hatası";
             case EscalationService.TYPE_KEYWORD       -> "İçerik Doğrulama";
+            case EscalationService.TYPE_PAGE_DOWN     -> "Sayfa Erişilemez";
+            case EscalationService.TYPE_SCRIPTED_FAIL -> "Sentetik Senaryo Başarısız";
+            case EscalationService.TYPE_PAGESPEED_DOWN-> "Sayfa Hızı Erişilemez";
             case "MIXED"                              -> "Karışık (çok tipli)";
             default                                   -> "Kesinti";
         };
