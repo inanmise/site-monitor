@@ -1235,7 +1235,13 @@ export const TR = {
   'ldap.removeMapping': 'Eşlemeyi sil',
   'ldap.noMappings':   'Henüz eşleme yok.',
   'ldap.defaultRole':  'Varsayılan rol',
-  'ldap.defaultRoleHint': 'Hiçbir grup eşleşmediğinde uygulanır.',
+  'ldap.defaultRoleHint': 'Kaydedilir ama girişte okunmaz — yukarıdaki uyarıya bakın.',
+  'ldap.roleMappingInactiveTitle': 'Bu bölüm şu anda uygulanmıyor',
+  'ldap.roleMappingInactive':
+    'Rol, kullanıcının dizin kaydından türetiliyor: başkalarını yöneten ya da ürün sahibi olan ' +
+    'kullanıcılar TEAM_ADMIN, diğer herkes USER olur. ADMIN yalnızca yerel yönetici hesabıyla ' +
+    'ya da bu panelden elle verilir. Aşağıdaki eşlemeler ve varsayılan rol kaydedilir, ancak ' +
+    'giriş sırasında hiç okunmaz.',
   'ldap.testConnection': 'Bağlantıyı test et',
   'ldap.testOk':       'Bağlantı başarılı',
   'ldap.testFail':     'Bağlantı başarısız',
@@ -6693,7 +6699,13 @@ export const EN = {
   'ldap.removeMapping': 'Remove mapping',
   'ldap.noMappings':   'No mappings yet.',
   'ldap.defaultRole':  'Default role',
-  'ldap.defaultRoleHint': 'Applied when no group matches.',
+  'ldap.defaultRoleHint': 'Saved, but never read at sign-in — see the notice above.',
+  'ldap.roleMappingInactiveTitle': 'These settings are not currently applied',
+  'ldap.roleMappingInactive':
+    'A role is worked out from the user\'s directory record: anyone who manages other people or ' +
+    'owns a product becomes TEAM_ADMIN, and everyone else becomes USER. ADMIN is only granted ' +
+    'through the local administrator account or by hand from this panel. The mappings and ' +
+    'default role below are saved, but never read at sign-in.',
   'ldap.testConnection': 'Test connection',
   'ldap.testOk':       'Connection successful',
   'ldap.testFail':     'Connection failed',

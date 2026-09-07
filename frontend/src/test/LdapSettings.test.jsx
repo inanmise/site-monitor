@@ -63,4 +63,26 @@ describe('LdapSettings — sertifika doğrulama uyarısı', () => {
     await waitFor(() => expect(api.admin.testLdap).toHaveBeenCalledWith(true))
     expect(api.admin.saveLdapSettings).not.toHaveBeenCalled()   // ayar DEĞİŞMEZ
   })
+
+  /**
+   * Grup→rol eşleme bölümü YANLIŞ BİR ŞEY VAAT EDİYORDU.
+   *
+   * Eski yardım metni "Hiçbir grup eşleşmediğinde uygulanır" diyordu; oysa hem `role_mappings`
+   * hem `default_role` kaydediliyor ama giriş yolunda HİÇ okunmuyor — rol dizin niteliklerinden
+   * türetiliyor (LdapProvisioningService: yönetici/ürün sahibi → TEAM_ADMIN, diğerleri → USER).
+   * Üretimde bu alan bir ortamda `ADMIN` seçili duruyordu: metni okuyan bir yönetici,
+   * eşleşmeyen HERKESİN admin olduğu sonucuna varabilirdi. Güvenlik açısından yanıltıcı bir
+   * ekran, ölü bir ayardan daha tehlikelidir.
+   */
+  it('GÜVENLİK VAADİ: eşleme bölümü "uygulanmıyor" uyarısı taşır ve rolün nereden geldiğini söyler', async () => {
+    const { container } = render(<LdapSettings />)
+    await waitFor(() => expect(api.admin.getLdapSettings).toHaveBeenCalled())
+    await screen.findByDisplayValue('ldap.example.com')
+
+    expect(screen.getByText(/uygulanmıyor|not currently applied/i)).toBeInTheDocument()
+    // Yalnız "çalışmıyor" demek yetmez; kullanıcı rolün NEREDEN geldiğini öğrenmeli.
+    expect(container.textContent).toMatch(/TEAM_ADMIN/)
+    // Ve eski yanlış vaat geri gelmemeli.
+    expect(container.textContent).not.toMatch(/Hiçbir grup eşleşmediğinde|Applied when no group matches/i)
+  })
 })
