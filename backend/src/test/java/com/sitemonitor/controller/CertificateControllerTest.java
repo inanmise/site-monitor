@@ -663,4 +663,76 @@ class CertificateControllerTest {
         // Keyfi host:port'a canlı el sıkışması açtırabilen bir uç: kapı KAPALIYKEN ağa çıkılmamalı.
         verify(checkerService, never()).check(anyString(), anyInt(), anyBoolean(), any(), any());
     }
+
+    // ── A2: rozet uclarinin takim kapsami ──────────────────────────────────────
+    //
+    // `/alerts/silent-domains` ve `/notifications/failure-domains` eskiden `HttpSession`
+    // parametresi BILE almiyordu: `monitoring.read` yetkisi olan herhangi bir kullanici
+    // sistemdeki TUM takimlarin domain adlarini cekebiliyordu. Ayni sinifin kardes uclari
+    // (`/certificates`, `/renewal-advice`, `/history/{domain}`) kapsamli.
+
+    @Test
+    @DisplayName("A2: /alerts/silent-domains kapsamli oturumda YABANCI domaini dusurur")
+    void silentDomains_scopedSession_dropsForeignDomains() throws Exception {
+        when(alertEventRepo.findDomainsWithUnnotifiedOpenAlerts())
+                .thenReturn(List.of("benim.example.com", "yabanci.example.com"));
+        when(inventoryRepo.findDomainsForTeams(anyList()))
+                .thenReturn(List.of("benim.example.com"));
+
+        mvc.perform(get("/api/alerts/silent-domains").session(scopedSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0]").value("benim.example.com"));
+    }
+
+    @Test
+    @DisplayName("A2: /notifications/failure-domains kapsamli oturumda YABANCI domaini dusurur")
+    void failureDomains_scopedSession_dropsForeignDomains() throws Exception {
+        when(extendedHealthService.findDomainsWithConsecutiveMailFailures(anyInt(), anyInt()))
+                .thenReturn(List.of("benim.example.com", "yabanci.example.com"));
+        when(inventoryRepo.findDomainsForTeams(anyList()))
+                .thenReturn(List.of("benim.example.com"));
+
+        mvc.perform(get("/api/notifications/failure-domains?consecutive=2&days=90").session(scopedSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0]").value("benim.example.com"))
+                // `count` suzulmus listeyle tutarli olmali — ham sayiyi raporlamak sizintiyi surdururdu
+                .andExpect(jsonPath("$.count").value(1));
+    }
+
+    @Test
+    @DisplayName("A2: global admin SUZULMEZ — envanter sorgusuna hic gidilmez")
+    void silentDomains_globalAdmin_returnsAllWithoutInventoryLookup() throws Exception {
+        when(alertEventRepo.findDomainsWithUnnotifiedOpenAlerts())
+                .thenReturn(List.of("a.example.com", "b.example.com"));
+
+        mvc.perform(get("/api/alerts/silent-domains").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2));
+
+        // Kapsamsiz gorunturleyicide suzme YOK: gereksiz envanter sorgusu da atilmamali
+        // (bu uc her pano yuklemesinde cagriliyor).
+        verify(inventoryRepo, never()).findDomainsForTeams(anyList());
+    }
+
+    @Test
+    @DisplayName("A2: gorus kapsami OLMAYAN oturum bos liste alir (depoya gidilmez)")
+    void silentDomains_noViewScope_returnsEmpty() throws Exception {
+        when(alertEventRepo.findDomainsWithUnnotifiedOpenAlerts())
+                .thenReturn(List.of("a.example.com"));
+
+        MockHttpSession noScope = new MockHttpSession();
+        noScope.setAttribute("authenticated", Boolean.TRUE);
+        noScope.setAttribute("username", "u0");
+        noScope.setAttribute("systemRole", "USER");
+        noScope.setAttribute("viewTeamIds", new java.util.ArrayList<Long>());   // hicbir takim
+
+        mvc.perform(get("/api/alerts/silent-domains").session(noScope))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(0));
+
+        // Bos kapsamla sorgu `IN ()` uretirdi — depoya HIC gidilmemeli.
+        verify(inventoryRepo, never()).findDomainsForTeams(anyList());
+    }
 }
