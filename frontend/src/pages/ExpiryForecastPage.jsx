@@ -447,7 +447,7 @@ function ExpiryList({ upcomingList, t }) {
       </div>
       <div className="fc-expiry-list">
         {visible.map((item, idx) => (
-          <div key={`${item.domain}-${idx}`} className={`fc-exp-row fc-sev-${item.severity}`}>
+          <div key={`${item.domain}-${idx}`} className="fc-exp-row">
             <span className="fc-exp-sev-dot" style={{ background: SEV_COLORS[item.severity] }} />
             <span className="fc-exp-domain">{item.domain}</span>
             <span className="fc-exp-date">{item.date}</span>

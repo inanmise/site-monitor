@@ -27,7 +27,7 @@ function ActionList({ items, t }) {
         return (
           <div key={`${a.name}#${i}`} className={`wr-sum-row wr-sum-tier${a.tier ?? 0}`}>
             <span className="wr-sum-name" title={a.name}>{a.name}</span>
-            <span className={`wr-sum-type wr-sum-type--${a.type}`}>
+            <span className="wr-sum-type">
               {t(a.type === 'domain' ? 'wr.sumTypeDomain' : 'wr.sumTypeCert')}
             </span>
             <span className="wr-sum-days">{a.daysLeft != null ? t('wr.sumDaysLeft', a.daysLeft) : '—'}</span>

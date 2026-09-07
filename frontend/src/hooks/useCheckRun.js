@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useToast } from '../components/ui/Toast.jsx'
+import { useT } from '../i18n/index.jsx'
 import { runWithConcurrency } from '../utils/concurrentQueue.js'
 import { NO_TEAM } from '../components/check/CheckTeamPicker.jsx'
-import { useT } from '../i18n/index.jsx'
 
 /**
  * Sayfa düzeyi "Şimdi Kontrol Et" akışı: takım seçici durumu, sınırlı eşzamanlı fan-out,
@@ -59,6 +60,8 @@ export function useCheckRun({ items, runOne, concurrency = 6 }) {
   const cancel = useCallback(() => { cancelRef.current = true }, [])
   const close = useCallback(() => { cancelRef.current = true; setRun(null) }, [])
 
+  const toast = useToast()
+
   const start = useCallback(async (teamKeys, teamLabel) => {
     if (runningRef.current) return
     const keys = Array.isArray(teamKeys) && teamKeys.length ? teamKeys : null
@@ -69,7 +72,13 @@ export function useCheckRun({ items, runOne, concurrency = 6 }) {
     // Kuyruk adına göre sıralı girer (satırlar yine TAMAMLANMA sırasında düşer): yavaş bir
     // kontrol arkasındakileri bekletmesin ama kuyruk sırası öngörülebilir olsun.
     const queue = [...scoped].sort((a, b) => (a?.name || '').localeCompare(b?.name || '', 'tr'))
-    if (!queue.length) return
+    if (!queue.length) {
+      // SESSIZ DEGIL: takim seciciyi kapatip hicbir sey yapmamak, kullaniciya tiklamanin
+      // kaybolmus gibi gelmesine yol aciyordu (secilen takimda kosturulabilir izleme yoksa
+      // ilerleme modali da hic acilmiyor). Artik sebebi soyleniyor.
+      toast.info(t('check.noneInScope'))
+      return
+    }
 
     runningRef.current = true
     cancelRef.current = false

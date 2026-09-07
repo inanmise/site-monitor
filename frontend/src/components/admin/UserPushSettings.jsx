@@ -526,7 +526,7 @@ export default function UserPushSettings() {
               const meta = TEMPLATE_META[k]
               const MIcon = meta.Icon
               return (
-                <div key={k} className={`up-template-card up-template-card--${meta.tone}`}>
+                <div key={k} className="up-template-card">
                   <div className="up-template-head">
                     <span className={`up-template-icon up-template-icon--${meta.tone}`}>
                       <MIcon size={15} aria-hidden="true" />

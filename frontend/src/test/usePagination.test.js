@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
+import { StrictMode } from 'react'
 import { usePagination, readPageSize, writePageSize } from '../hooks/usePagination.js'
 
 const items = (n) => Array.from({ length: n }, (_, i) => ({ id: i + 1 }))
@@ -84,5 +85,38 @@ describe('usePagination', () => {
     rerender({ data: items(120) })   // yeni referans, aynı boyut (polling simülasyonu)
     expect(result.current.page).toBe(2)
     expect(result.current.rangeStart).toBe(51)
+  })
+
+  // ── E12: StrictMode cift-mount `initialPage`'i EZMEMELI ────────────────────
+  //
+  // Reset efekti "ilk kosum mu" bayragiyla (`firstRun` ref) korunuyordu. Ref'ler StrictMode'un
+  // mount -> temizlik -> mount dongusunde KORUNUR ve efektin temizligi yoktu: ikinci kurulumda
+  // bayrak zaten false oldugu icin setPageRaw(1) calisiyor ve `?page=3` derin baglantisi
+  // gelistirme modunda sessizce 1'e dusuyordu (ardindan useUrlQuerySync param'i adresten de
+  // siliyordu). Uretim derlemesinde efektler cift calismadigi icin GORUNMEZDI — ve mevcut
+  // testler tek-mount render kullandigi icin de gorunmuyordu.
+
+  it('E12: StrictMode altinda initialPage KORUNUR (cift-mount 1e dusurmez)', () => {
+    const { result } = renderHook(
+      () => usePagination(items(120), { listKey: 'strict1', initialPage: 3 }),
+      { wrapper: StrictMode },
+    )
+    expect(result.current.page).toBe(3)
+    expect(result.current.rangeStart).toBe(101)
+  })
+
+  it('E12: StrictMode altinda GERCEK filtre degisimi sayfayi YINE 1e dondurur', () => {
+    // Duzeltmenin resetleme davranisini oldurmedigini pinler: bagimliligin DEGERI degisince
+    // reset calismali, yalnizca cift-mount'ta calismamali.
+    let filter = 'a'
+    const { result, rerender } = renderHook(
+      () => usePagination(items(120), { listKey: 'strict2', initialPage: 3, resetDeps: [filter] }),
+      { wrapper: StrictMode },
+    )
+    expect(result.current.page).toBe(3)
+
+    filter = 'b'
+    act(() => rerender())
+    expect(result.current.page).toBe(1)
   })
 })

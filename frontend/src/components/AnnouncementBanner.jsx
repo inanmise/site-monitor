@@ -62,7 +62,7 @@ export default function AnnouncementBanner({ heroOnMount = false }) {
 
   const body = (
     <>
-      <span className={`ann-badge ann-badge--${tone.mod}`} aria-hidden="true"><Icon size={15} /></span>
+      <span className="ann-badge" aria-hidden="true"><Icon size={15} /></span>
       <span className="ann-body">
         <span className="ann-tone">{t(tone.labelKey)}</span>
         <span className="ann-text">{text}</span>
