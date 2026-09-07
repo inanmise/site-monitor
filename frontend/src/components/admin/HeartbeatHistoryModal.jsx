@@ -4,6 +4,7 @@ import { X, Activity } from 'lucide-react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
 
 const RANGE_OPTIONS = [1, 7, 15, 30]
 
@@ -14,14 +15,21 @@ export default function HeartbeatHistoryModal({ onClose }) {
   const [loading, setLoading] = useState(true)
   const [hovered, setHovered] = useState(null)
   const [selected, setSelected] = useState(null)
+  const [loadError, setLoadError] = useState(null)
 
+  // .catch YOKTU: request() ag hatasinda throw eder, promise reject olunca setLoading(false)
+  // HIC calismiyor ve modal SONSUZA KADAR "yukleniyor" kaliyordu — kullanicinin tek cikisi
+  // modali kapatmakti, hata hakkinda hicbir sey gormeden.
   useEffect(() => {
     setLoading(true)
     setSelected(null)
-    api.admin.getHeartbeatTimeline(rangeDays).then(res => {
-      if (res?.success) setTimeline(res.data)
-      setLoading(false)
-    })
+    api.admin.getHeartbeatTimeline(rangeDays)
+      .then(res => {
+        if (res?.success) { setTimeline(res.data); setLoadError(null) }
+        else setLoadError(res?.error || 'load failed')
+      })
+      .catch(e => setLoadError(e?.message || 'network error'))
+      .finally(() => setLoading(false))
   }, [rangeDays])
 
   useEffect(() => {
@@ -89,6 +97,10 @@ export default function HeartbeatHistoryModal({ onClose }) {
 
         {loading ? (
           <LoadingBlock label={t('sys.loading')} className="hb-modal-loading" />
+        ) : loadError ? (
+          <AlertBanner tone="danger" title={t('mon.loadError')} role="alert">
+            {String(loadError)}
+          </AlertBanner>
         ) : (
           <>
             <div className="hb-timeline-grid">

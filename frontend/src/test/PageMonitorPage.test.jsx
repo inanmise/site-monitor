@@ -167,6 +167,25 @@ describe('PageMonitorPage', () => {
     expect(screen.getByRole('button', { name: /chart|grafik/i })).toBeInTheDocument()
   })
 
+  it('E5: issues istegi REJECT ederse spinner kalici kalmaz (modal kapanmadan cozulur)', async () => {
+    // setIssuesLoading(true) ile setIssuesLoading(false) arasinda `await` vardi ama try/finally
+    // yoktu: istek reject olunca bayrak hic indirilmiyor ve "Sorunlar" sekmesindeki spinner
+    // modal kapatilip yeniden acilana kadar donuyordu.
+    api.monitoring.getPageIssues.mockRejectedValue(new Error('Failed to fetch'))
+
+    render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByText('https://www.example.com/'))
+    await waitFor(() => expect(api.monitoring.getPageIssues).toHaveBeenCalled())
+
+    // Sinif adi ayirt edici DEGIL: yukleme bloguyla "sorun yok" blogu ayni `upt-modal-loading`
+    // sinifini kullaniyor (PageMonitorPage:763-764). Ayirt eden sey METIN — bayrak inmezse
+    // "Yukleniyor..." kalir, inerse bos-durum metni gelir.
+    expect(await screen.findByText(/sorunlu kaynak yok|no resource issues/i)).toBeInTheDocument()
+    expect(screen.queryByText(/^yükleniyor\.\.\.$|^loading\.\.\.$/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /issues|sorunlar/i })).toBeInTheDocument()
+  })
+
   it('istatistik panosu: OK/DEGRADED/DOWN ayrımı + filtreleme', async () => {
     api.monitoring.getPageMonitors.mockResolvedValue({ success: true, data: [
       { id: 1, url: 'https://a.example.com', status: 'OK',       active: true },

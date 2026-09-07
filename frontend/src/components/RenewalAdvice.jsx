@@ -3,6 +3,7 @@ import { api, formatDateOnly } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
+import AlertBanner from './ui/AlertBanner.jsx'
 
 const PRIORITY_COLOR = { critical: '#dc3545', warning: '#fd7e14', info: '#0d6efd' }
 
@@ -11,12 +12,20 @@ export default function RenewalAdvice({ onSelectDomain }) {
   const [advice, setAdvice] = useState([])
   const [loading, setLoading] = useState(true)
   const [diag, setDiag] = useState(null)   // { domain, port } → DiagnosticsModal
+  const [loadError, setLoadError] = useState(null)
 
+  // .catch YOKTU: request() ag hatasinda {success:false} DONDURMEZ, throw eder ve burada
+  // timeoutMs de verilmiyor (varsayilan 0 = timeout yok). Promise reject olunca setLoading(false)
+  // HIC calismiyor, bu sekmede spinner SONSUZA KADAR donuyordu — hata mesaji da yoktu ve
+  // sekme degistirip geri gelmeden duzelmiyordu.
   useEffect(() => {
-    api.getRenewalAdvice().then((res) => {
-      if (res?.success) setAdvice(res.data)
-      setLoading(false)
-    })
+    api.getRenewalAdvice()
+      .then((res) => {
+        if (res?.success) { setAdvice(res.data); setLoadError(null) }
+        else setLoadError(res?.error || 'load failed')
+      })
+      .catch((e) => setLoadError(e?.message || 'network error'))
+      .finally(() => setLoading(false))
   }, [])
 
   const PRIORITY_LABEL = {
@@ -26,6 +35,14 @@ export default function RenewalAdvice({ onSelectDomain }) {
   }
 
   if (loading) return <LoadingBlock label={t('renewal.loading')} fullWidth />
+  // Hata bandi "her sey yolunda" bos durumunun ONUNDE: aksi halde yukleme hatasi
+  // "yenilenecek sertifika yok" gibi okunurdu.
+  if (loadError && advice.length === 0)
+    return (
+      <AlertBanner tone="danger" title={t('mon.loadError')} role="alert">
+        {String(loadError)}
+      </AlertBanner>
+    )
   if (advice.length === 0)
     return <LoadingBlock label={t('renewal.allGood')} fullWidth />
 
