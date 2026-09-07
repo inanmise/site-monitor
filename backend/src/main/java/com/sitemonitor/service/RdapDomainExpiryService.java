@@ -103,9 +103,13 @@ public class RdapDomainExpiryService {
                     .header("Accept", "application/rdap+json")
                     .header("User-Agent", "SiteMonitor-HttpMonitor/1.0")
                     .GET().build();
-            HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+            // TAVANLI okuma: ofString() tavansizdir ve RDAP hedefi ayarlanabilir bir adres —
+            // dev bir govde tek-pod uretimi OOM ile dusururdu. Tavan asilirsa acik hata atilir,
+            // sessizce kirpilmaz (kirpik JSON "gecersiz yanit" gibi gorunup asil nedeni gizlerdi).
+            HttpResponse<java.io.InputStream> resp = http.send(req, HttpResponse.BodyHandlers.ofInputStream());
             if (resp.statusCode() != 200) return unknown(domain, "rdap http " + resp.statusCode());
-            JsonNode root = mapper.readTree(resp.body());
+            String rawBody = com.sitemonitor.util.HttpBodies.readCapped(resp, 1_000_000, "RDAP");
+            JsonNode root = mapper.readTree(rawBody);
             JsonNode events = root.get("events");
             if (events != null && events.isArray()) {
                 for (JsonNode ev : events) {

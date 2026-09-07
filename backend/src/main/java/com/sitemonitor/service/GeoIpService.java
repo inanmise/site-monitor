@@ -56,9 +56,11 @@ public class GeoIpService {
                     .timeout(Duration.ofMillis(timeoutMillis))
                     .GET()
                     .build();
-            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            // TAVANLI okuma (64 KB): ip-api yaniti birkac yuz bayt; ofString() tavansiz oldugu
+            // icin ele gecmis/yanlis bir ucun dev govdesi tek-pod uretimi dusurebilirdi.
+            HttpResponse<java.io.InputStream> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofInputStream());
             if (resp.statusCode() == 200) {
-                GeoInfo info = parse(resp.body());
+                GeoInfo info = parse(com.sitemonitor.util.HttpBodies.readCapped(resp, 65_536, "GeoIP"));
                 // Sayı tavanına ulaşıldıysa cache'i boşalt (kaba ama bounded; nadiren tetiklenir)
                 if (cache.size() >= MAX_CACHE_ENTRIES) cache.clear();
                 cache.put(ip, new CachedGeo(info, System.currentTimeMillis()));
