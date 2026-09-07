@@ -50,6 +50,7 @@ public class IncidentsController {
     private final DomainMonitorRepository domainMonitorRepo;
     private final PageMonitorRepository pageMonitorRepo;
     private final ScriptedMonitorRepository scriptedMonitorRepo;
+    private final PageSpeedMonitorRepository pageSpeedMonitorRepo;
     private final CertificateInventoryRepository inventoryRepo;
     private final PermissionService permissionService;
     private final AuditService auditService;
@@ -201,6 +202,9 @@ public class IncidentsController {
         if (fams.contains("domain"))  idx.put("domain",  index(domainMonitorRepo.findAll(),  m -> m.getDomain(), m -> m.getName(), m -> m.getId()));
         if (fams.contains("page"))     idx.put("page",     index(pageMonitorRepo.findAll(),     m -> m.getUrl(),  m -> m.getName(), m -> m.getId()));
         if (fams.contains("scripted")) idx.put("scripted", index(scriptedMonitorRepo.findAll(), m -> m.getName(), m -> m.getName(), m -> m.getId()));
+        // PAGESPEED alarmlari AlertEvent.domain'e m.getUrl() yaziyor (SchedulerService.addPageSpeedSweepItems)
+        // — page/http ile ayni anahtarlama.
+        if (fams.contains("pagespeed")) idx.put("pagespeed", index(pageSpeedMonitorRepo.findAll(), m -> m.getUrl(), m -> m.getName(), m -> m.getId()));
         for (AlertEvent e : events) {
             String fam = family(e.getAlertType());
             Object[] ref = idx.containsKey(fam) ? idx.get(fam).get(e.getDomain()) : null;
@@ -223,24 +227,33 @@ public class IncidentsController {
         return m;
     }
 
-    private static String family(String type) {
+    /** Paket-ozel: {@code rootCause} gibi, kapi testi (IncidentsControllerTest) dogrudan cagirir. */
+    static String family(String type) {
         if (type == null) return "cert";
         if (type.startsWith("KEYWORD"))   return "keyword";
         if (type.startsWith("PORT_"))     return "port";
         if (type.startsWith("PING"))      return "ping";
         if (type.startsWith("DNS_"))      return "dns";
         if (type.startsWith("DOMAINMON_"))return "domain";
+        // PAGESPEED once gelmeli DEGIL ama okunurluk icin burada: "PAGESPEED_DOWN".startsWith("PAGE_")
+        // FALSE'tur (5. karakter 'S', '_' degil) — tam da bu yakin-kacirma yuzunden PAGESPEED
+        // alarmlari asagidaki "cert" fallback'ine dusuyordu: olay ekraninda tip "cert", sekme
+        // "dashboard", monitor_id null ve ad yerine ham URL. rootCause() ayni hatayi bir kez
+        // yasayip duzeltmis (bkz. :183-185), bu uclu atlanmisti.
+        if (type.startsWith("PAGESPEED_")) return "pagespeed";
         if (type.startsWith("PAGE_"))     return "page";
         if (type.startsWith("SCRIPTED_")) return "scripted";
         if ("HTTP_DOWN".equals(type) || "HTTP_SSL".equals(type) || "DOMAIN_EXPIRY".equals(type)) return "http";
         return "cert";   // EXPIRY / CHAIN_BROKEN / REVOKED / MISMATCH / ACCESSIBILITY
     }
 
-    private static String tabFor(String fam) {
+    /** Paket-ozel: kapi testi dogrudan cagirir. */
+    static String tabFor(String fam) {
         return switch (fam) {
             case "http" -> "http"; case "port" -> "port"; case "keyword" -> "keyword";
             case "ping" -> "ping"; case "dns" -> "dns";  case "domain" -> "domain";
             case "page" -> "page"; case "scripted" -> "scripted";
+            case "pagespeed" -> "pagespeed";
             default -> "dashboard";
         };
     }

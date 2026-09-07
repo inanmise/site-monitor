@@ -25,6 +25,15 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     long countByDeletedAtIsNotNull();
     List<CertificateInventory> findByUgTeamIdAndActiveTrueOrderByDomainAsc(Long ugTeamId);
 
+    /** Görüş kapsamındaki domain ADLARI — `CertificateController.requireViewableDomain` ile AYNI
+     *  kural (birincil VEYA UG takımı), ama tekil değil LİSTE için ve yalnız `domain` kolonunu
+     *  çeken hafif projeksiyon: rozet uçları her pano yüklemesinde çağrılıyor, tüm envanter
+     *  satırlarını nesneye çevirmek gereksiz. Soft-delete SÜZÜLMEZ — tekil kapı da süzmüyor.
+     *  Çağıran boş `teamIds` ile ÇAĞIRMAMALI (`IN ()` üretir): kapsamsız oturum zaten hiçbir
+     *  şey göremez, orada erkenden boş liste dönülür. */
+    @Query("SELECT c.domain FROM CertificateInventory c WHERE c.teamId IN :teamIds OR c.ugTeamId IN :teamIds")
+    List<String> findDomainsForTeams(@Param("teamIds") Collection<Long> teamIds);
+
     // Faz 3b — çok-takım kapsamı (müdür/PO): teamId VEYA ugTeamId ∈ ids
     List<CertificateInventory> findByTeamIdInAndActiveTrueOrderByDomainAsc(Collection<Long> teamIds);
     List<CertificateInventory> findByUgTeamIdInAndActiveTrueOrderByDomainAsc(Collection<Long> ugTeamIds);

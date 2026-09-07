@@ -38,10 +38,21 @@ const EVENTS = ['CREATE', 'UPDATE', 'DELETE', 'RESTORE', 'GROUP_RENAME']
 const RANGE_KEYS = ['all', 'today', '7', '15', '30', '45', '60', '90', 'custom']
 
 
-/** İzleme türü → uygulama sekmesi (satırdan izlemenin kendi geçmişine gitmek için). */
+/**
+ * İzleme türü → uygulama sekmesi (satırdan izlemenin kendi geçmişine gitmek için).
+ *
+ * KINDS'teki her İZLEME türü burada olmak ZORUNDA: eksik olan tür için satırda "İzlemeyi aç"
+ * bağlantısı hiç çizilmez (`{tab && <a …>}`) ve kullanıcı değişikliği gördüğü monitöre atlayamaz.
+ * `pagespeed` tam olarak böyle eksikti — KINDS'e, etiketlere ve ikonlara eklenmiş, buraya
+ * eklenmemişti; `change-kinds-sync` kapısı da yalnız o üçlüyü sayıyordu.
+ *
+ * İzleme OLMAYAN üç tür bilinçli olarak dışarıda (kapı testindeki muafiyet listesiyle birebir):
+ * `inventory` (kendi monitör sayfası yok — envanter sekmesi `?monitor=` parametresi taşımaz),
+ * `group` ve `maintenance` (tekil monitör kaydı yok).
+ */
 const TAB_BY_KIND = {
   port: 'port', dns: 'dns', keyword: 'keyword', http: 'http', page: 'page',
-  scripted: 'scripted', domain: 'domain', ping: 'ping',
+  pagespeed: 'pagespeed', scripted: 'scripted', domain: 'domain', ping: 'ping',
 }
 
 /**

@@ -156,6 +156,44 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("A6: 2000 kontrolde 1 hata → %100 DEGIL 99.95 (kesinti varken asla 100 gosterilmez)")
+    void uptimeOverview_singleFailureInLargeSample_neverShows100() throws Exception {
+        // Eski formul 1 ondalikla yuvarliyordu ve korumasizdi: up*1000/total = 999.5 →
+        // Math.round → 1000 → 100.0. Sonuc, AYNI satirda `uptime_30d: 100.0` ve
+        // `incidents_30d: 1` — kendi kendisiyle celisen bir satir; haftalik rapor ise ayni
+        // monitor icin 99.95 diyordu. Formul artik kardes yuzeyle (WeeklyAvailabilityReportService)
+        // birebir ayni: 2 ondalik + "hic down ornegi varsa asla 100" korumasi.
+        when(latestCheckRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(lc("a.com", "valid")));
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv("a.com")));
+        when(certCheckRepo.aggregateStatusCountsSince(anyString()))
+                .thenReturn(List.<Object[]>of(new Object[]{"a.com", 2000L, 1L}));
+
+        mvc.perform(get("/api/monitoring/uptime/overview").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].uptime_30d").value(99.95))
+                .andExpect(jsonPath("$.data[0].incidents_30d").value(1));
+    }
+
+    @Test
+    @DisplayName("A6: yuvarlama 100'e cikarsa 99.99'a kirpilir; GERCEKTEN hatasizsa 100.0 kalir")
+    void uptimeOverview_clampsRoundedHundred_butKeepsTrue100() throws Exception {
+        // 20000/1: 2 ondalikta bile 99.995 → yuvarlama 100.00 verir. Koruma burada devreye girer.
+        when(latestCheckRepo.findAllByOrderByDomainAsc())
+                .thenReturn(List.of(lc("a.com", "valid"), lc("b.com", "valid")));
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc())
+                .thenReturn(List.of(inv("a.com"), inv("b.com")));
+        when(certCheckRepo.aggregateStatusCountsSince(anyString()))
+                .thenReturn(List.<Object[]>of(
+                        new Object[]{"a.com", 20000L, 1L},     // yuvarlama 100 → kirpilir
+                        new Object[]{"b.com", 500L, 0L}));     // gercekten hatasiz → 100.0
+
+        mvc.perform(get("/api/monitoring/uptime/overview").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].uptime_30d").value(99.99))
+                .andExpect(jsonPath("$.data[1].uptime_30d").value(100.0));
+    }
+
+    @Test
     @DisplayName("uptimeOverview: uptime% domain-bazlı toplu sorgudan (4 toplam/1 hata → %75), lc'siz domain → 'unknown'")
     void uptimeOverview_computesUptimeAndHandlesMissingCheck() throws Exception {
         when(latestCheckRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(lc("a.com", "valid")));

@@ -14,9 +14,11 @@ import com.sitemonitor.repository.PingMonitorRepository;
 import com.sitemonitor.repository.PortMonitorRepository;
 import com.sitemonitor.repository.ScriptedMonitorRepository;
 import com.sitemonitor.repository.TeamRepository;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -108,6 +110,28 @@ class MonitoringGroupServiceTest {
         verify(dnsRepo).renameGroupForTeam(1L, "old", "new");
         verify(httpRepo, never()).renameGroupForTeam(anyLong(), anyString(), anyString());   // YALNIZ o tür
         verify(alertEventRepo).renameGroupForTeamAndTypes(eq(1L), eq("old"), eq("new"), any());
+    }
+
+    @Test
+    @DisplayName("A5: domain grubu yeniden adlandirilinca ALTI DOMAINMON tipinin hepsi tasinir")
+    void rename_domainType_movesAllSixDomainAlertTypes() {
+        // Servis icinde TYPE_ALERTS adiyla kataloğun ucuncu bir kopyasi duruyordu ve `domain`
+        // girdisi DORT tip sayiyordu. TRANSFER_LOCK + BLACKLIST alarmlarinin group_name'i ESKI
+        // adda kaliyor, grup suzgecinde kayboluyor ve StormService onlari artik var olmayan bir
+        // gruba kovaliyordu. Kopya kaldirildi; bu test kumeyi katalogla karsilastirir, elle
+        // saymaz — 7. bir domain tipi eklendiginde de gecerli kalir.
+        when(groupRepo.findById(5L)).thenReturn(Optional.of(grp(5, 1, "domain", "old")));
+        when(groupRepo.findByTeamIdAndTypeAndNameLower(1L, "domain", "new")).thenReturn(Optional.empty());
+        when(domainRepo.renameGroupForTeam(1L, "old", "new")).thenReturn(2);
+
+        service.rename(5L, "new", adminSession());
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.Set<String>> types = ArgumentCaptor.forClass(java.util.Set.class);
+        verify(alertEventRepo).renameGroupForTeamAndTypes(eq(1L), eq("old"), eq("new"), types.capture());
+        assertThat(types.getValue())
+                .containsExactlyInAnyOrderElementsOf(MonitorTypeCatalog.ALERT_TYPES.get("domain"))
+                .hasSize(6);
     }
 
     @Test

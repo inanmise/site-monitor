@@ -44,6 +44,21 @@ function iconKinds() {
   return [...m[1].matchAll(/(\w+)\s*:/g)].map(x => x[1])
 }
 
+/** const TAB_BY_KIND = { port: 'port', ... } → ['port', 'dns', ...] */
+function tabKinds() {
+  const src = read(path.join(FRONT, 'components/admin/MonitorChangesConsole.jsx'))
+  const m = /const TAB_BY_KIND\s*=\s*\{([\s\S]*?)\}/.exec(src)
+  if (!m) return []
+  return [...m[1].matchAll(/(\w+)\s*:/g)].map(x => x[1])
+}
+
+/**
+ * İzleme OLMAYAN türler: bunların tekil bir monitör sayfası yok, dolayısıyla "İzlemeyi aç"
+ * bağlantısı da olamaz. Listeye ekleme yapmak, o tür için derin bağlantıdan BİLİNÇLİ olarak
+ * vazgeçtiğin anlamına gelir — yeni bir izleme türünü buraya yazarak testi susturma.
+ */
+const NO_TAB = new Set(['inventory', 'group', 'maintenance'])
+
 describe('Değişiklik geçmişi tür listesi — backend ile senkron', () => {
   const kinds = backendKinds()
 
@@ -70,5 +85,17 @@ describe('Değişiklik geçmişi tür listesi — backend ile senkron', () => {
     const icons = iconKinds()
     expect(icons.length, 'ICONS okunamadı').toBeGreaterThan(8)
     expect(kinds.filter(k => !icons.includes(k))).toEqual([])
+  })
+
+  it('her İZLEME türünün sekme eşlemesi var (yoksa "İzlemeyi aç" bağlantısı hiç çizilmez)', () => {
+    // Dördüncü halka. Üstteki üç kapı (KINDS + etiket + ikon) `pagespeed` için YEŞİLDİ; eksik
+    // olan TAB_BY_KIND'dı ve satırdaki derin bağlantı sessizce kayboluyordu.
+    const tabs = tabKinds()
+    expect(tabs.length, 'TAB_BY_KIND okunamadı').toBeGreaterThan(5)
+    expect(kinds.filter(k => !NO_TAB.has(k) && !tabs.includes(k))).toEqual([])
+  })
+
+  it('sekme eşlemesinde ölü/muaf tür yok (muafiyet listesiyle çelişmesin)', () => {
+    expect(tabKinds().filter(k => !kinds.includes(k) || NO_TAB.has(k))).toEqual([])
   })
 })

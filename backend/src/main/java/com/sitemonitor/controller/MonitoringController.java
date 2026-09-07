@@ -868,11 +868,25 @@ public class MonitoringController {
         return m;
     }
 
-    /** toplam/hata → uptime yüzdesi (eski calcUptime ile aynı yuvarlama; "error" dışı = up). */
+    /**
+     * toplam/hata → uptime yüzdesi ("error" dışı = up).
+     *
+     * <p>Formül {@code WeeklyAvailabilityReportService}'teki kardeşiyle BİREBİR aynı olmak
+     * zorunda: aynı monitör için iki yüzey farklı sayı gösteriyordu. Burası 1 ondalıkla
+     * yuvarlıyor ve korumasızdı — 2000 kontrolde 1 hata {@code 999.5 → Math.round → 1000 → 100.0}
+     * veriyordu, yani izleme listesinde AYNI satır {@code uptime_30d: 100.0} ile
+     * {@code incidents_30d: 1} gösteriyor, haftalık rapor ise aynı monitör için 99.95 diyordu.
+     *
+     * <p>İki değişiklik: 2 ondalık hassasiyet (kardeşle aynı) ve "hiç down örneği varsa asla
+     * 100 gösterme" koruması. Arayüz bu alanı ham basıyor (UptimePage {@code {item.uptime_7d}%}),
+     * ek bir yuvarlama katmanı yok — yani 99.99 ekrana da 99.99 olarak çıkar.
+     */
     private static double uptimePct(long total, long errors) {
         if (total == 0) return 100.0;
         long up = total - errors;
-        return Math.round((up * 1000.0 / total)) / 10.0;
+        double pct = Math.round(up * 10000.0 / total) / 100.0;
+        if (pct >= 100.0 && up < total) pct = 99.99;
+        return pct;
     }
 
     /** Normalize date/datetime strings to full ISO-8601 (19 chars) for "from" range end. */

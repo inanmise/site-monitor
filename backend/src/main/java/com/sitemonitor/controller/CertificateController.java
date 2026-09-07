@@ -297,22 +297,57 @@ public class CertificateController {
         return m;
     }
 
+    /**
+     * Rozet kumesi: acik ama bildirimi GITMEMIS alarmi olan domainler.
+     *
+     * <p>TAKIM KAPSAMI (A2): bu uc ve kardesi `/notifications/failure-domains` eskiden
+     * `HttpSession` parametresi BILE almiyordu ve sistemdeki TUM takimlarin domain adlarini
+     * donuyordu. Ayni sinifin diger uclari kapsamli: `/certificates` ve `/renewal-advice`
+     * `SessionScope.viewTeamIds`, `/history/{domain}` ise `requireViewableDomain` kullaniyor.
+     * Domain adi bu uründe izolasyon konusudur.
+     *
+     * <p>Gorunur davranis DEGISMEZ: arayuz bu listeleri yalniz `silentAlertDomains.has(cert.domain)`
+     * seklinde bir arama kumesi olarak kullaniyor ve kart listesi zaten takim kapsamli geliyor —
+     * yani suzulen adlar hicbir zaman ekrana cizilmiyordu, sadece yanitta sizyorlardi.
+     */
     @GetMapping("/alerts/silent-domains")
-    public ResponseEntity<Map<String, Object>> getSilentAlertDomains() {
-        List<String> domains = alertEventRepository.findDomainsWithUnnotifiedOpenAlerts();
+    public ResponseEntity<Map<String, Object>> getSilentAlertDomains(HttpSession session) {
+        List<String> domains = retainViewableDomains(session,
+                alertEventRepository.findDomainsWithUnnotifiedOpenAlerts());
         return ok(Map.of("success", true, "data", domains, "timestamp", now()));
     }
 
     /** Domains whose last N consecutive mail delivery attempts (within {days}d) have all failed.
-     *  Surfaced as a warning badge on the certificate card. */
+     *  Surfaced as a warning badge on the certificate card. Takim kapsami icin bkz.
+     *  {@link #getSilentAlertDomains}. */
     @GetMapping("/notifications/failure-domains")
     public ResponseEntity<Map<String, Object>> getMailFailureDomains(
             @RequestParam(defaultValue = "3") int consecutive,
-            @RequestParam(defaultValue = "7") int days) {
+            @RequestParam(defaultValue = "7") int days,
+            HttpSession session) {
         int c = Math.max(2, Math.min(consecutive, 10));
         int d = Math.max(1, Math.min(days, 90));
-        List<String> domains = extendedHealthService.findDomainsWithConsecutiveMailFailures(c, d);
+        List<String> domains = retainViewableDomains(session,
+                extendedHealthService.findDomainsWithConsecutiveMailFailures(c, d));
         return ok(Map.of("success", true, "data", domains, "count", domains.size(), "timestamp", now()));
+    }
+
+    /**
+     * {@link #requireViewableDomain} kuralinin LISTE karsiligi: birincil VEYA UG takimi gorus
+     * kapsamindaysa domain kalir, degilse dusulur.
+     *
+     * <p>Envanterde HIC olmayan bir domain (ornegin standalone bir izlemenin alarmi) kapsamli
+     * oturumda dusulur — takima baglanamayan bir adi gostermek, tekil kapinin reddettigi seyi
+     * liste uzerinden vermek olurdu. Global goruntuleyici (admin/AUDIT) icin suzme yapilmaz.
+     */
+    private List<String> retainViewableDomains(HttpSession session, List<String> domains) {
+        if (domains.isEmpty() || SessionScope.isGlobalViewer(session)) return domains;
+        List<Long> teams = SessionScope.viewTeamIds(session);
+        // null/bos kapsam = hicbir takimi goremez (SessionScope.canView ile ayni sonuc).
+        // Ayrica bos liste ile sorgu `IN ()` uretecegi icin depoya HIC gidilmemeli.
+        if (teams == null || teams.isEmpty()) return List.of();
+        java.util.Set<String> viewable = new java.util.HashSet<>(inventoryRepo.findDomainsForTeams(teams));
+        return domains.stream().filter(viewable::contains).toList();
     }
 
     @GetMapping("/renewal-advice")
