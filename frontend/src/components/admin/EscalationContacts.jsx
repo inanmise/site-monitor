@@ -6,6 +6,7 @@ import { useToast } from '../ui/Toast.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
 
 const ROLES  = ['PO', 'TECH', 'MANAGER', 'CLEVEL']
 const LEVELS = ['WARNING', 'HIGH', 'CRITICAL']
@@ -20,6 +21,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
   const canManage = isAdmin || isTeamAdmin
   const { showConfirm } = useDialog()
   const [contacts, setContacts] = useState([])
+  const [loadError, setLoadError] = useState(null)
   const [users, setUsers]       = useState([])
   const [modal, setModal]   = useState(null)
   const [form, setForm]     = useState(emptyContact)
@@ -62,8 +64,16 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
   useEffect(() => { load(); loadUsers() }, [])
 
   async function load() {
-    const res = await api.admin.getContacts()
-    if (res?.success) setContacts(res.data)
+    // Bos liste ile YUKLENEMEDI ayni ekrani uretiyordu (ne else ne catch vardi).
+    // Tirmanma kisileri alarmin KIME gidecegini belirliyor: "kisi yok" goren yonetici
+    // eksik sanip yeniden ekler, gercekte kayitlar duruyordur.
+    try {
+      const res = await api.admin.getContacts()
+      if (res?.success) { setContacts(res.data); setLoadError(null) }
+      else setLoadError(res?.error || t('settings.loadError'))
+    } catch (e) {
+      setLoadError(e?.message || t('settings.loadError'))
+    }
   }
 
   async function loadUsers() {
@@ -134,6 +144,9 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
         <div>
           <h3>{t('ec.title')}</h3>
           <p className="section-desc">{t('ec.desc')}</p>
+          {loadError && contacts.length === 0 && (
+            <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
+          )}
           <div className="escalation-legend">
             <span>{t('ec.legendWarn')}</span>
             <span>{t('ec.legendHigh')}</span>

@@ -6,12 +6,14 @@ import { useToast } from '../ui/Toast.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { mailPreviewSrcDoc, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
 import { Spinner } from '../ui/Progress.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
 
 export default function WeeklyAvailabilitySettings() {
   const t = useT()
   const toast = useToast()
 
   const [status, setStatus] = useState(null)
+  const [loadError, setLoadError] = useState(null)
   const [enabled, setEnabled] = useState(false)
   const [savingEnabled, setSavingEnabled] = useState(false)
 
@@ -45,14 +47,23 @@ export default function WeeklyAvailabilitySettings() {
   }, [viewer])
 
   async function load() {
-    const res = await api.admin.getWeeklyAvailStatus()
-    if (res?.success) {
-      setStatus(res.data)
-      setEnabled(!!res.data.enabled)
-      const first = res.data.teams?.[0]
-      if (first) { setPreviewTeamId(String(first.id)); setTestTeamId(String(first.id)) }
-    } else {
-      toast.error(res?.error || t('settings.loadError'))
+    // AG HATASI DA GORUNUR OLMALI: api/client.js request() ag hatasinda {success:false}
+    // DONDURMEZ, throw eder. try/catch olmadan promise reject oluyor ve ekran sonsuza
+    // kadar yukleniyor durumunda kaliyordu (yalnizca konsolda unhandled rejection).
+    try {
+      const res = await api.admin.getWeeklyAvailStatus()
+      if (res?.success) {
+        setStatus(res.data)
+        setEnabled(!!res.data.enabled)
+        const first = res.data.teams?.[0]
+        if (first) { setPreviewTeamId(String(first.id)); setTestTeamId(String(first.id)) }
+        setLoadError(null)
+      } else {
+        const msg = res?.error || t('settings.loadError')
+        toast.error(msg); setLoadError(msg)
+      }
+    } catch (e) {
+      setLoadError(e?.message || t('settings.loadError'))
     }
   }
 
@@ -159,6 +170,16 @@ export default function WeeklyAvailabilitySettings() {
   }
 
   if (!status) {
+    // Yukleme BASARISIZ olduysa spinner sonsuza kadar donerdi: load() try/catch tasimadigi
+    // icin ag hatasinda promise reject oluyor, hicbir durum guncellenmiyordu. Artik ayni
+    // yerde hatanin KENDISI gosteriliyor (SystemHealth.jsx:163 loadErrors deseninin esdegeri).
+    if (loadError) {
+      return (
+        <div className="admin-section">
+          <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
+        </div>
+      )
+    }
     return <div className="admin-section"><Spinner size={20} inline decorative /> {t('settings.loading')}</div>
   }
 

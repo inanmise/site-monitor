@@ -67,6 +67,7 @@ export default function CertInventoryReportSettings() {
   const toast = useToast()
 
   const [status, setStatus] = useState(null)
+  const [loadError, setLoadError] = useState(null)
   const [recipients, setRecipients] = useState('')
   const [cc, setCc] = useState('')
   const [cron, setCron] = useState('')
@@ -82,16 +83,25 @@ export default function CertInventoryReportSettings() {
   const [viewer, setViewer] = useState(null)
 
   const load = useCallback(async () => {
-    const res = await api.admin.getCertInvReportStatus()
-    if (res?.success) {
-      setStatus(res.data)
-      setRecipients(res.data.extra_recipients ?? '')
-      setCc(res.data.cc ?? '')
-      setCron(res.data.cron ?? '')
-      setRule(parseCron(res.data.cron))
-      setDirty(false)
-    } else {
-      toast.error(res?.error || t('settings.loadError'))
+    // AG HATASI DA GORUNUR OLMALI: api/client.js request() ag hatasinda {success:false}
+    // DONDURMEZ, throw eder. try/catch olmadan promise reject oluyor ve ekran sonsuza
+    // kadar yukleniyor durumunda kaliyordu (yalnizca konsolda unhandled rejection).
+    try {
+      const res = await api.admin.getCertInvReportStatus()
+      if (res?.success) {
+        setStatus(res.data)
+        setRecipients(res.data.extra_recipients ?? '')
+        setCc(res.data.cc ?? '')
+        setCron(res.data.cron ?? '')
+        setRule(parseCron(res.data.cron))
+        setDirty(false)
+        setLoadError(null)
+      } else {
+        const msg = res?.error || t('settings.loadError')
+        toast.error(msg); setLoadError(msg)
+      }
+    } catch (e) {
+      setLoadError(e?.message || t('settings.loadError'))
     }
   }, [toast, t])
 
@@ -171,7 +181,17 @@ export default function CertInventoryReportSettings() {
     }
   }
 
-  if (!status) return <LoadingBlock label={t('settings.loading')} />
+  if (!status) {
+    // Yukleme basarisizsa LoadingBlock sonsuza kadar donerdi.
+    if (loadError) {
+      return (
+        <div className="admin-section">
+          <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
+        </div>
+      )
+    }
+    return <LoadingBlock label={t('settings.loading')} />
+  }
 
   const noRecipients = !status.recipients
 
