@@ -56,7 +56,9 @@ public class DbGrowthMetrics {
     @Scheduled(fixedDelayString = "${site.monitor.db.metrics-refresh-ms:300000}", initialDelayString = "60000")
     public void sample() {
         try {
-            long warnRows = appSettings.getInt("site.monitor.db.growth-warn-rows", 5_000_000);
+            // Kod fallback'i properties varsayılanıyla AYNI kalmalı: ikisi ayrışırsa ayar
+            // silindiğinde eşik sessizce eski değere döner (2026-09: 5M → 20M).
+            long warnRows = appSettings.getInt("site.monitor.db.growth-warn-rows", 20_000_000);
             jdbcTemplate.query(
                     "SELECT relname, n_live_tup, pg_total_relation_size(relid) FROM pg_stat_user_tables",
                     rs -> {
