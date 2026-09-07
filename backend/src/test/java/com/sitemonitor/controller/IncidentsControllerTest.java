@@ -40,6 +40,7 @@ class IncidentsControllerTest {
     @MockitoBean DomainMonitorRepository domainMonitorRepo;
     @MockitoBean PageMonitorRepository pageMonitorRepo;
     @MockitoBean ScriptedMonitorRepository scriptedMonitorRepo;
+    @MockitoBean PageSpeedMonitorRepository pageSpeedMonitorRepo;
     @MockitoBean CertificateInventoryRepository inventoryRepo;
     @MockitoBean PermissionService permissionService;
     @MockitoBean AuditService auditService;
@@ -175,6 +176,35 @@ class IncidentsControllerTest {
                 });
         org.assertj.core.api.Assertions.assertThat(unknown)
                 .as("kok-neden kategorisi olmayan alarm tipleri")
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("SOZLESME: katalogdaki HER alarm tipi DOGRU izleme ailesine ve SEKMESINE duser")
+    void familyAndTab_everyCatalogAlertType_resolvesToItsOwnType() {
+        // Kardes kapi: yukaridaki test yalniz rootCause()'u geziyordu, family()/tabFor() ikilisi
+        // kapsam DISIydi — PAGESPEED_DOWN tam bu bosluktan gecti. `"PAGESPEED_DOWN"
+        // .startsWith("PAGE_")` FALSE oldugu icin tip "cert" fallback'ine, sekme de "dashboard"a
+        // dusuyordu: olay ekraninda alarm sertifika olayi gibi gruplaniyor, "izlemeye git" linki
+        // Sayfa Hizi sekmesi yerine Panoya gidiyor ve monitor_id null kaliyordu.
+        //
+        // KASITLI ISTISNA: cert ailesi. ACCESSIBILITY katalogda "http" altinda toplanmis (haftalik
+        // rapor ekseni) ama alarmi SchedulerService sertifika ENVANTERI satirlarindan uretiyor
+        // (AlertEvent.domain = inv.getDomain()), yani olay ekraninda "cert"/pano DOGRU hedeftir.
+        java.util.Map<String, String> wrong = new java.util.LinkedHashMap<>();
+        com.sitemonitor.service.MonitorTypeCatalog.ALERT_TYPES.forEach((type, alertTypes) -> {
+            if ("cert".equals(type)) return;                       // ayri eksen, yukaridaki nota bak
+            for (String alertType : alertTypes) {
+                if ("ACCESSIBILITY".equals(alertType)) continue;   // kasitli istisna
+                String fam = IncidentsController.family(alertType);
+                String tab = IncidentsController.tabFor(fam);
+                if (!type.equals(fam) || "dashboard".equals(tab)) {
+                    wrong.put(alertType, "aile=" + fam + " (beklenen " + type + "), sekme=" + tab);
+                }
+            }
+        });
+        org.assertj.core.api.Assertions.assertThat(wrong)
+                .as("yanlis aileye/sekmeye dusen alarm tipleri")
                 .isEmpty();
     }
 
