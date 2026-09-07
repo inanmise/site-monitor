@@ -5,9 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import javax.net.ssl.SSLContext;
+import java.net.InetSocketAddress;
+import java.net.ProxySelector;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -45,6 +48,18 @@ public class RdapDomainExpiryService {
     private final CaAutoPinService caAutoPinService;
     private final SsrfGuard ssrfGuard;
 
+    // Vekil ayarları — RdapDomainClient ile AYNI anahtarlar. Bu sınıfta HİÇ YOKTU: aynı hedeflere
+    // (iana / rdap.org) giden kardeş istemci vekil üzerinden çıkarken bu servis doğrudan çıkıyor ve
+    // kurumsal ağda her sorgu "HTTP connect timed out" ile düşüyordu. Sonuç sessizdi: days=null →
+    // SchedulerService.evalHttpDomain "up" yazıyor, yani alan adı bitiş hatırlatıcısı hiç uyarmıyordu.
+    @Value("${site.monitor.proxy.host:}")     private String proxyHost;
+    @Value("${site.monitor.proxy.port:0}")    private int    proxyPort;
+    @Value("${site.monitor.proxy.user:}")     private String proxyUser;
+    @Value("${site.monitor.proxy.pass:}")     private String proxyPass;
+    @Value("${site.monitor.proxy.no-proxy:}") private String noProxyList;
+
+    private HttpClient proxied;
+
     private static final long CACHE_TTL_MS = 12 * 60 * 60 * 1000L;   // 12 saat
     private static final int  MAX_CACHE_ENTRIES = 5_000;             // sert üst sınır (heap koruması)
     private final ObjectMapper mapper = new ObjectMapper();
@@ -59,12 +74,51 @@ public class RdapDomainExpiryService {
     void init() {
         SSLContext ssl = trustEvaluator.pinAwareOutboundSslContext(
                 caAutoPinService::trustManagerForHost, caAutoPinService::recordTrustFailure);
+        this.http = newClient(ssl, null, null);
+        if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
+            java.net.Authenticator auth =
+                    ProxyAuthSupport.proxyAuthenticatorOrNull(proxyUser, proxyPass, log, "RDAP expiry");
+            this.proxied = newClient(ssl, ProxySelector.of(new InetSocketAddress(proxyHost, proxyPort)), auth);
+            log.info("RDAP expiry istemcisi proxy üzerinden: {}:{} (kimlik: {})", proxyHost, proxyPort,
+                    auth != null ? "Basic/" + proxyUser : "anonim");
+        } else {
+            this.proxied = this.http;
+            // RdapDomainClient ile aynı görünürlük kuralı: sessiz düşüş 2026-08 prod kesintisinde
+            // teşhisi geciktirmişti. Bu servis için düşüşün sonucu ayrıca SESSİZ (days=null → "up").
+            log.warn("RDAP expiry istemcisi DOĞRUDAN çıkışta — proxy tanımsız (HTTP_PROXY_HOST boş). "
+                    + "Kurumsal ağda dış RDAP erişimi firewall'a takılır ve alan adı bitiş "
+                    + "hatırlatıcısı sessizce çalışmaz.");
+        }
+    }
+
+    private HttpClient newClient(SSLContext ssl, ProxySelector proxy, java.net.Authenticator auth) {
         HttpClient.Builder b = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
                 // Redirect.NEVER: hop'lar asagida ELLE takip edilir, her biri SsrfGuard'dan gecer.
                 .followRedirects(HttpClient.Redirect.NEVER);
         if (ssl != null) b.sslContext(ssl);
-        this.http = b.build();
+        if (proxy != null) b.proxy(proxy);
+        if (auth != null) b.authenticator(auth);
+        return b.build();
+    }
+
+    /** Hedefe göre istemci: NO_PROXY eşleşen host doğrudan, diğerleri vekil üzerinden. */
+    private HttpClient clientFor(String host) {
+        if (proxied == http) return http;
+        return shouldBypass(host) ? http : proxied;
+    }
+
+    /** NO_PROXY eşleşmesi — RdapDomainClient/TrWebWhoisClient ile aynı kural. */
+    private boolean shouldBypass(String host) {
+        if (noProxyList == null || noProxyList.isBlank() || host == null) return false;
+        String h = host.toLowerCase(Locale.ROOT);
+        for (String raw : noProxyList.split(",")) {
+            String e = raw.trim().toLowerCase(Locale.ROOT);
+            if (e.isEmpty()) continue;
+            if (e.startsWith(".")) e = e.substring(1);
+            if (h.equals(e) || h.endsWith("." + e)) return true;
+        }
+        return false;
     }
 
     /** İki-seviyeli public ekler (eTLD+1 çıkarımı için; tam PSL değil, yaygın olanlar + .tr). */
@@ -124,7 +178,7 @@ public class RdapDomainExpiryService {
             req.timeout().ifPresent(b::timeout);
             req.headers().map().forEach((n, vs) -> vs.forEach(v -> b.header(n, v)));
             HttpResponse<java.io.InputStream> resp =
-                    http.send(b.GET().build(), HttpResponse.BodyHandlers.ofInputStream());
+                    clientFor(host).send(b.GET().build(), HttpResponse.BodyHandlers.ofInputStream());
             if (!SafeRedirect.isRedirect(resp.statusCode())) return resp;
             URI next = SafeRedirect.nextHop(current, resp.headers().firstValue("location").orElse(null));
             if (next == null) return resp;   // takip edilemez sema/host -> 3xx oldugu gibi doner

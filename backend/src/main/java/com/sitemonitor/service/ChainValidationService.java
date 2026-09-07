@@ -66,6 +66,14 @@ public class ChainValidationService {
     @Value("${site.monitor.proxy.pass:}")
     private String proxyPass;
 
+    /**
+     * NO_PROXY listesi. Bu sınıfta EKSİKTİ: proxy tanımlıyken CRL/OCSP adreslerinin HEPSİ vekile
+     * gidiyordu — İÇ ağdaki dağıtım noktaları dâhil. Kardeş giden-istek sınıflarının üçünde
+     * (CertificateCheckerService, RdapDomainClient, TrWebWhoisClient) bu atlama zaten vardı.
+     */
+    @Value("${site.monitor.proxy.no-proxy:}")
+    private String noProxyList;
+
     private Cache<String, X509CRL> crlCache;
 
     @PostConstruct
@@ -243,19 +251,38 @@ public class ChainValidationService {
         }
     }
 
-    private String checkCrl(X509Certificate cert) {
+    /**
+     * CRL üzerinden iptal durumu — VALID yalnız GERÇEKTEN DANIŞILMIŞ bir listeye dayanır.
+     *
+     * <p><b>Neden bu ayrım.</b> Eski hâli {@code return urls.isEmpty() ? "UNKNOWN" : "VALID"}
+     * diyordu: dağıtım noktası TANIMLI ama hiçbiri indirilemediğinde döngü hiçbir şey kontrol
+     * etmeden bitiyor ve sonuç "iptal edilmemiş" oluyordu. {@link #downloadCrl} başarısızlıkta
+     * fırlatmaz, {@code null} döner — yani hata bu metoda hiç ulaşmıyordu.
+     *
+     * <p>Üretimde teorik değildi: iç CA ile imzalı sertifikalarda dağıtım noktalarının biri
+     * {@code ldap://} (bu istemcinin desteklemediği şema), diğeri erişilemeyen bir HTTP adresi;
+     * ikisi de düşüyor, sertifika yine de "iptal edilmemiş" raporlanıyordu. Bir sertifika izleme
+     * ürününde bu en pahalı hata türü: İPTAL EDİLMİŞ bir sertifika temiz görünür.
+     *
+     * <p>Doğru anlam: hiçbir listeye danışılamadıysa cevap "hayır" değil, BİLİNMİYOR.
+     * {@code urls} boş olduğu durum da bu ifadeye dahildir (danışılan liste yok → UNKNOWN).
+     */
+    // Paket-gorunur: kapi testi (ChainValidationServiceTest) dogrudan cagirir.
+    String checkCrl(X509Certificate cert) {
         try {
-            List<String> urls = getCrlUrls(cert);
-            for (String url : urls) {
+            boolean consulted = false;
+            for (String url : getCrlUrls(cert)) {
                 // Herhangi bir cache kilidi tutmadan kontrol et; bloklamayı önlemek için ayrı indir
                 X509CRL crl = crlCache.getIfPresent(url);
                 if (crl == null) {
                     crl = downloadCrl(url);
                     if (crl != null) crlCache.put(url, crl);
                 }
-                if (crl != null && crl.isRevoked(cert)) return "REVOKED";
+                if (crl == null) continue;   // indirilemedi → bu listeye DANIŞILMADI
+                consulted = true;
+                if (crl.isRevoked(cert)) return "REVOKED";
             }
-            return urls.isEmpty() ? "UNKNOWN" : "VALID";
+            return consulted ? "VALID" : "UNKNOWN";
         } catch (Exception e) {
             log.debug("CRL check failed: {}", e.getMessage());
             return "UNKNOWN";
@@ -313,6 +340,15 @@ public class ChainValidationService {
     }
 
     private X509CRL downloadCrl(String url) {
+        // BEKLENEN durum, hata değil: AD ortamlarında CRL dağıtım noktası çoğu kez ldap:// olur ve
+        // bu istemci yalnız http/https konuşur (guardTarget şema allow-list'i). Her kontrolde, her
+        // iç sertifika için WARN basmak kalıcı gürültü üretiyordu — asıl indirme hataları bu
+        // gürültünün içinde kayboluyor. Şema reddi DEBUG, gerçek başarısızlıklar WARN kalır.
+        String scheme = url == null ? "" : url.toLowerCase(Locale.ROOT);
+        if (!scheme.startsWith("http://") && !scheme.startsWith("https://")) {
+            log.debug("CRL atlandı (desteklenmeyen şema): {}", url);
+            return null;
+        }
         try {
             HttpURLConnection conn = openWithProxy(url);
             try {
@@ -360,7 +396,9 @@ public class ChainValidationService {
     HttpURLConnection openWithProxy(String url) throws IOException {
         guardTarget(url);
         HttpURLConnection conn;
-        if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
+        String targetHost;
+        try { targetHost = java.net.URI.create(url).getHost(); } catch (Exception e) { targetHost = null; }
+        if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0 && !shouldBypass(targetHost)) {
             Proxy proxy = new Proxy(Proxy.Type.HTTP,
                     new InetSocketAddress(proxyHost, proxyPort));
             conn = (HttpURLConnection) new URL(url).openConnection(proxy);
@@ -374,6 +412,26 @@ public class ChainValidationService {
         }
         conn.setInstanceFollowRedirects(false);
         return conn;
+    }
+
+    /**
+     * NO_PROXY eşleşmesi — vekil ATLANMALI mı? (RdapDomainClient/TrWebWhoisClient ile aynı kural:
+     * tam ad ya da nokta-sınırlı sonek; baştaki nokta yok sayılır.)
+     *
+     * <p>İç CA'ların CRL dağıtım noktaları iç adreslerdir; onları DMZ vekiline göndermek indirmeyi
+     * düşürür ve iptal durumu doğrulanamaz hâle gelir. Not: bu atlama ancak NO_PROXY tanımlıysa
+     * çalışır — liste boşken davranış eskisiyle aynıdır (ortam tarafı ayrıca ayarlanmalı).
+     */
+    private boolean shouldBypass(String host) {
+        if (noProxyList == null || noProxyList.isBlank() || host == null) return false;
+        String h = host.toLowerCase(Locale.ROOT);
+        for (String raw : noProxyList.split(",")) {
+            String e = raw.trim().toLowerCase(Locale.ROOT);
+            if (e.isEmpty()) continue;
+            if (e.startsWith(".")) e = e.substring(1);
+            if (h.equals(e) || h.endsWith("." + e)) return true;
+        }
+        return false;
     }
 
     /** Şema allow-list + {@link SsrfGuard}; çözülemeyen host geçer (vekil senaryosu). */

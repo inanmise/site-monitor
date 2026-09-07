@@ -28,6 +28,15 @@ class ChainValidationServiceTest {
     @BeforeEach
     void setUp() {
         service = new ChainValidationService();
+        // CRL testleri icin: onbellek @PostConstruct'ta kuruluyor ve boyutu @Value'dan geliyor;
+        // ciplak new'de 0 kalir (hicbir sey onbelleklenmez). SsrfGuard da enjekte edilmemis olur —
+        // izin verici bir mock, indirme yolunun GERCEKTEN denendigi testler icin gerekli
+        // (OcspCrlSsrfGuardTest ile ayni desen). Blok kararlari orada olculuyor.
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "ssrfGuard",
+                org.mockito.Mockito.mock(SsrfGuard.class));
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "crlCacheMaxSize", 100);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "crlCacheTtlHours", 1);
+        service.init();
     }
 
     // ── Fingerprint ───────────────────────────────────────────────────────────
@@ -143,10 +152,138 @@ class ChainValidationServiceTest {
         };
         // Self-signed certs have no AIA extension → OCSP returns UNKNOWN, CRL returns UNKNOWN
         String result = service.checkRevocation(chain);
-        assertThat(result).isIn("UNKNOWN", "VALID");
+        // Eskiden isIn("UNKNOWN","VALID") idi — iki zit cevabi birden kabul ettigi icin
+        // hicbir sey pinlemiyordu. Danisilan liste yoksa cevap KESIN olarak UNKNOWN.
+        assertThat(result).isEqualTo("UNKNOWN");
+    }
+
+    // ── CRL iptal durumu: "VALID" yalniz DANISILMIS listeye dayanir ────────────
+
+    /**
+     * Bu dort test, uretimde kanitlanmis bir sessiz yanlis-negatifi pinliyor.
+     *
+     * <p>Eski kod {@code return urls.isEmpty() ? "UNKNOWN" : "VALID"} diyordu: dagitim noktasi
+     * TANIMLI ama hicbiri indirilemediginde dongu hicbir sey kontrol etmeden bitiyor ve sonuc
+     * "iptal edilmemis" oluyordu ({@code downloadCrl} hata firlatmaz, null doner).
+     *
+     * <p>Uretim log'unda ic CA ile imzali her sertifikada iki dagitim noktasi da dusuyordu
+     * (biri ldap:// = desteklenmeyen sema, digeri erisilemeyen HTTP) ve sertifika yine de
+     * temiz raporlaniyordu. Sertifika izleme urununde en pahali hata turu: IPTAL EDILMIS bir
+     * sertifika temiz gorunur.
+     */
+    @Test
+    @DisplayName("KAPI: hicbir CRL indirilemezse sonuc UNKNOWN (eski kod VALID donerdi)")
+    void checkCrl_noCrlDownloadable_isUnknownNotValid() throws Exception {
+        // ldap:// bu istemcinin desteklemedigi semadir → indirme YOK, danisilan liste YOK.
+        X509Certificate cert = generateCertWithCrlDp("leaf.example.com",
+                "ldap:///CN=Test%20CA,CN=CDP?certificateRevocationList");
+
+        assertThat(service.checkCrl(cert))
+                .as("danisilamayan CRL 'iptal edilmemis' sayiliyor")
+                .isEqualTo("UNKNOWN");
+    }
+
+    @Test
+    @DisplayName("KAPI: dagitim noktalarinin HEPSI duserse yine UNKNOWN")
+    void checkCrl_allDistributionPointsFail_isUnknown() throws Exception {
+        // Uretimdeki birebir sekil: bir ldap:// + bir erisilemeyen http://
+        X509Certificate cert = generateCertWithCrlDp("leaf.example.com",
+                "ldap:///CN=Test%20CA?certificateRevocationList",
+                "http://" + TestHosts.UNRESOLVABLE + "/CertEnroll/Test%20CA.crl");
+
+        assertThat(service.checkCrl(cert)).isEqualTo("UNKNOWN");
+    }
+
+    @Test
+    @DisplayName("CRL gercekten indirilip sertifika listede DEGILSE VALID")
+    void checkCrl_consultedAndNotListed_isValid() throws Exception {
+        String url = "http://crl.example.com/test.crl";
+        X509Certificate cert = generateCertWithCrlDp("leaf.example.com", url);
+        // Onbellege GERCEK bir CRL koyuyoruz → danisilmis sayilir (indirme yolu I/O oldugu icin
+        // atlanir; olculen sey "danisildi mi" ayrimi, HTTP tasimasi degil).
+        primeCrlCache(url, buildCrl(cert, null));
+
+        assertThat(service.checkCrl(cert)).isEqualTo("VALID");
+    }
+
+    @Test
+    @DisplayName("CRL indirilip sertifika listedeyse REVOKED")
+    void checkCrl_consultedAndListed_isRevoked() throws Exception {
+        String url = "http://crl.example.com/test.crl";
+        X509Certificate cert = generateCertWithCrlDp("leaf.example.com", url);
+        primeCrlCache(url, buildCrl(cert, cert.getSerialNumber()));
+
+        assertThat(service.checkCrl(cert)).isEqualTo("REVOKED");
     }
 
     // ── Test Cert Utilities ───────────────────────────────────────────────────
+
+    /** CRL onbellegine hazir bir liste koyar (indirme yolunu atlar). */
+    private void primeCrlCache(String url, java.security.cert.X509CRL crl) {
+        @SuppressWarnings("unchecked")
+        com.github.benmanes.caffeine.cache.Cache<String, java.security.cert.X509CRL> cache =
+                (com.github.benmanes.caffeine.cache.Cache<String, java.security.cert.X509CRL>)
+                        org.springframework.test.util.ReflectionTestUtils.getField(service, "crlCache");
+        cache.put(url, crl);
+    }
+
+    /**
+     * Imzali bir CRL; {@code revokedSerial} null degilse o seri numarasi listeye girer.
+     *
+     * <p>CRL, sertifikanin KENDI issuer DN'i adina kurulur: {@code X509CRL.isRevoked(Certificate)}
+     * seri numarasinin yani sira issuer eslesmesine de bakar, farkli bir CA adiyla kurulan liste
+     * sertifikayi hic gormez (ilk yazimda "Test CA" kullanip testi bosa dusurmustum).
+     */
+    private static java.security.cert.X509CRL buildCrl(X509Certificate cert, BigInteger revokedSerial)
+            throws Exception {
+        KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
+        kpg.initialize(1024);
+        KeyPair ca = kpg.generateKeyPair();
+
+        // DN'i METINDEN kurmak yetmiyor: BC yeniden kodlarken DER farkli cikabiliyor (PrintableString
+        // vs UTF8String) ve X500Principal esitligi bozuluyor -> isRevoked sertifikayi hic gormuyor.
+        // Kodlanmis DN'den kurmak birebir ayni DER'i korur.
+        org.bouncycastle.cert.X509v2CRLBuilder b = new org.bouncycastle.cert.X509v2CRLBuilder(
+                org.bouncycastle.asn1.x500.X500Name.getInstance(
+                        cert.getIssuerX500Principal().getEncoded()), new Date());
+        b.setNextUpdate(new Date(System.currentTimeMillis() + 86_400_000L));
+        if (revokedSerial != null) {
+            b.addCRLEntry(revokedSerial, new Date(),
+                    org.bouncycastle.asn1.x509.CRLReason.privilegeWithdrawn);
+        }
+        ContentSigner signer = new JcaContentSignerBuilder("SHA256WithRSA").build(ca.getPrivate());
+        return new org.bouncycastle.cert.jcajce.JcaX509CRLConverter().getCRL(b.build(signer));
+    }
+
+    /** CRL dagitim noktasi (CRL-DP) uzantisi tasiyan self-signed sertifika. */
+    private static X509Certificate generateCertWithCrlDp(String cn, String... crlUrls) throws Exception {
+        KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
+        kpg.initialize(1024);
+        KeyPair kp = kpg.generateKeyPair();
+
+        Date notBefore = new Date(System.currentTimeMillis() - 1000);
+        Date notAfter = new Date(System.currentTimeMillis() + 90L * 86_400_000L);
+        X500Principal subject = new X500Principal("CN=" + cn + ", O=Test, C=TR");
+
+        JcaX509v3CertificateBuilder builder = new JcaX509v3CertificateBuilder(
+                subject, BigInteger.valueOf(System.nanoTime()), notBefore, notAfter, subject, kp.getPublic());
+
+        org.bouncycastle.asn1.x509.DistributionPoint[] points =
+                new org.bouncycastle.asn1.x509.DistributionPoint[crlUrls.length];
+        for (int i = 0; i < crlUrls.length; i++) {
+            org.bouncycastle.asn1.x509.GeneralName gn = new org.bouncycastle.asn1.x509.GeneralName(
+                    org.bouncycastle.asn1.x509.GeneralName.uniformResourceIdentifier, crlUrls[i]);
+            points[i] = new org.bouncycastle.asn1.x509.DistributionPoint(
+                    new org.bouncycastle.asn1.x509.DistributionPointName(
+                            new org.bouncycastle.asn1.x509.GeneralNames(gn)), null, null);
+        }
+        builder.addExtension(org.bouncycastle.asn1.x509.Extension.cRLDistributionPoints, false,
+                new org.bouncycastle.asn1.x509.CRLDistPoint(points));
+
+        ContentSigner signer = new JcaContentSignerBuilder("SHA256WithRSA").build(kp.getPrivate());
+        X509CertificateHolder holder = builder.build(signer);
+        return new JcaX509CertificateConverter().getCertificate(holder);
+    }
 
     private static X509Certificate generateCert(String cn, int daysValid) throws Exception {
         KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");

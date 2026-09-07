@@ -263,6 +263,15 @@ export default function LdapSettings() {
       <div className="admin-section">
         <h4 className="ldap-subhdr">{t('ldap.roleMapping')}</h4>
         <p className="section-desc">{t('ldap.roleMappingDesc')}</p>
+        {/* Bu bölümün İKİ kontrolü de (eşlemeler ve varsayılan rol) kaydediliyor ama giriş
+            yolunda HİÇ okunmuyor: rol dizin niteliklerinden türetiliyor
+            (LdapProvisioningService — yönetici/ürün sahibi → TEAM_ADMIN, diğerleri → USER).
+            Eski yardım metni "hiçbir grup eşleşmediğinde uygulanır" diyordu; bu YANLIŞ bir
+            vaatti ve güvenlik açısından yanıltıcıydı: "Varsayılan rol: ADMIN" seçen bir
+            yönetici, eşleşmeyen herkesin admin olduğunu sanabilirdi. */}
+        <AlertBanner tone="warning" title={t('ldap.roleMappingInactiveTitle')}>
+          {t('ldap.roleMappingInactive')}
+        </AlertBanner>
         <div className="admin-table-wrap">
           <table className="admin-table">
             <thead>
