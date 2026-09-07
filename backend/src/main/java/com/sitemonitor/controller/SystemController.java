@@ -59,10 +59,18 @@ public class SystemController {
         return ok(Map.of("data", data));
     }
 
+    // IZIN KAPISI (system_health.read): asagidaki dort uc `session` parametresini ALIYOR ama
+    // hic kullanmiyordu — AuthInterceptor yalniz kimlik dogruluyor, `/api/admin/**` onekinin
+    // rol kapisi YOK. Yani izin matrisinden `system_health.read` geri alinsa bile bu dortlu
+    // veri dondurmeye devam ediyordu (smtp-logs: her takimin alici e-postasi + alarm govdesi).
+    // Tier bilincli olarak `heartbeat-timeline` ile ayni: requireSystemRead DEGIL, cunku Sistem
+    // Sagligi sekmesi tum rollere acik (Nav `show: true`) ve `system_health.read` USER
+    // varsayilanlarinda VAR — admin/AUDIT daraltmasi ekrani siradan kullaniciya kirardi.
     @GetMapping("/smtp-logs")
     public ResponseEntity<Map<String, Object>> getSmtpLogs(
             @RequestParam(defaultValue = "30") int days,
             HttpSession session) {
+        permissionService.require(session, "system_health.read", "view");
         int d = Math.max(1, Math.min(days, 365));
         return ok(Map.of(
                 "data", extendedHealthService.getSmtpFailures(d),
@@ -71,16 +79,19 @@ public class SystemController {
 
     @GetMapping("/db-stats")
     public ResponseEntity<Map<String, Object>> getDbStats(HttpSession session) {
+        permissionService.require(session, "system_health.read", "view");
         return ok(Map.of("data", extendedHealthService.getTableStats()));
     }
 
     @GetMapping("/metrics")
     public ResponseEntity<Map<String, Object>> getMetrics(HttpSession session) {
+        permissionService.require(session, "system_health.read", "view");
         return ok(Map.of("data", metricsService.getHistory()));
     }
 
     @GetMapping("/http-metrics")
     public ResponseEntity<Map<String, Object>> getHttpMetrics(HttpSession session) {
+        permissionService.require(session, "system_health.read", "view");
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("summary", httpMetricsService.getSummary());
         data.put("history", httpMetricsService.getHistory());

@@ -95,7 +95,17 @@ describe('CheckHistoryTab', () => {
   })
 
   it('retention kırpma bildirimi: dönen range.from istenenden çok gerideyse uyarı basılır', async () => {
-    // 30g preset istenecek ama backend 06 Ağustos'tan başlatmış (clamp) → notice
+    // 30g preset istenir ama backend yalnız son 5 günü döndürür (retention clamp) → uyarı.
+    //
+    // TARİH SABİT YAZILAMAZ. Bileşenin koşulu `range.from > now - preset` (CheckHistoryTab:75-85),
+    // yani istenen pencereye GÖRE değerlendiriliyor. Fixture eskiden '2026-08-06' diye sabitti;
+    // takvim ilerleyip o gün 30 günlük pencerenin dışına düşünce koşul sessizce false oldu ve
+    // uyarı hiç çizilmedi — süit üretim koduna hiç dokunulmadan kızardı (2026-09-07 CI).
+    // Referansı "şimdi"den türet: clamp mesafesi her koşumda 5 gün, yani daima pencerenin içinde.
+    const clampedFrom = new Date(Date.now() - 5 * 86400000).toISOString().slice(0, 19)
+    api.monitoring.getCheckHistory.mockResolvedValue(envelope({
+      range: { from: clampedFrom, to: new Date().toISOString().slice(0, 19) },
+    }))
     renderTab({ defaultPreset: 30 })
     await screen.findByText(/gösteriliyor|starting from/i)
   })
