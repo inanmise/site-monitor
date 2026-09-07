@@ -254,15 +254,29 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   const canCheckRow = (m) => k6.available && canManageRow(m)
   const canDeleteRow = (m) => k6.canManage && (isAdmin || (isTeamAdmin && isOwnTeam(m)))
 
+  // Diger 8 izleme sayfasinda hata dali VARDI, bu sayfada ve UptimePage'de HIC yoktu:
+  // `if (res?.success)` basarisizken yalniz setLoading(false) kosuyor, monitors bos kaliyor ve
+  // ekran "Henuz sentetik izleme yok, ekleyin" diyordu — kullanici izlemelerinin SILINDIGINI
+  // saniyordu (HttpMonitorPage'de yorumla belgelenmis hatanin kopyaya tasinmamis hali).
+  const [loadError, setLoadError] = useState(null)
+
   const load = useCallback(async () => {
-    const res = await api.monitoring.getScriptedMonitors()
-    if (res?.success) {
-      const d = res.data || {}
-      setMonitors(d.monitors || [])
-      setK6({ available: d.k6_available !== false, version: d.k6_version, canManage: !!d.can_manage })
-      setProxy({ configured: !!d.proxy_configured, noProxy: d.no_proxy || '' })
+    // AG HATASI DA BU DALA DUSMELI: request() ag hatasinda {success:false} DONDURMEZ, throw eder
+    // ve timeoutMs verilmedigi icin abort yolu da devrede degil.
+    try {
+      const res = await api.monitoring.getScriptedMonitors()
+      if (res?.success) {
+        const d = res.data || {}
+        setMonitors(d.monitors || [])
+        setK6({ available: d.k6_available !== false, version: d.k6_version, canManage: !!d.can_manage })
+        setProxy({ configured: !!d.proxy_configured, noProxy: d.no_proxy || '' })
+        setLoadError(null)
+      } else setLoadError(res?.error || 'load failed')
+    } catch (e) {
+      setLoadError(e?.message || 'network error')
+    } finally {
+      setLoading(false); setSecondsSince(0)
     }
-    setLoading(false); setSecondsSince(0)
   }, [])
 
   const checkable = monitors.filter(canCheckRow)
@@ -1051,7 +1065,13 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
         </div>
       )}
 
-      {loading ? <LoadingBlock label={t('tbl.loading')} fullWidth /> : monitors.length === 0 ? (
+      {loading ? <LoadingBlock label={t('tbl.loading')} fullWidth /> : loadError && monitors.length === 0 ? (
+        /* Hata bandi bos durumun ONUNDE: aksi halde yukleme hatasi "hic izleme yok" gibi gorunur. */
+        <AlertBanner tone="danger" title={t('mon.loadError')} role="alert"
+          actions={<button className="btn btn-sm btn-secondary" onClick={load}>{t('hist.retry')}</button>}>
+          {String(loadError)}
+        </AlertBanner>
+      ) : monitors.length === 0 ? (
         /* Boş durum: eskiden LoadingBlock ile (dönen spinner) gösteriliyordu — "yükleniyor" ile
            "hiç kayıt yok" görsel olarak ayrışmıyordu. */
         <StatusBlock icon={FlaskConical}

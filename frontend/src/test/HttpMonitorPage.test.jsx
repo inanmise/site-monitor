@@ -45,6 +45,43 @@ describe('HttpMonitorPage', () => {
     api.monitoring.createHttpMonitor.mockResolvedValue({ success: true, data: {} })
   })
 
+  // ── AG HATASI YOLU (E3) ────────────────────────────────────────────────────
+  //
+  // api/client.js request() ag hatasinda {success:false} DONDURMEZ, throw eder (yalniz
+  // AbortError yumusak payload doner) ve bu cagrida timeoutMs verilmedigi icin abort yolu da
+  // devrede degil. `load` try/catch tasimadigi icin promise reject oluyor, setLoadError de
+  // setLoading(false) de HIC calismiyordu: ekran iskelette kaliyor, hata bandi cikmiyordu.
+  //
+  // apiMock yalnizca RESOLVE eden yanitlar uretiyordu; bu yol tum sayfa testlerinde kapsam
+  // disiydi ve hata dali yazili olmasina ragmen en sik tetiklenen hata turunde calismiyordu.
+
+  it('E3: api REJECT ederse hata bandi cizilir ve spinner kaybolur (sonsuz iskelet YOK)', async () => {
+    api.monitoring.getHttpMonitors.mockRejectedValue(new Error('Failed to fetch'))
+
+    render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+
+    expect(await screen.findByText(/izleme listesi yüklenemedi|could not load the monitor list/i))
+      .toBeInTheDocument()
+    // Hatanin kendisi de gosterilmeli — kullanici "neden" sorusuna cevap alsin.
+    expect(screen.getByText(/failed to fetch/i)).toBeInTheDocument()
+    // "Henuz izleme yok" bos durumu GORUNMEMELI: silinmis sanma hatasinin ta kendisi.
+    expect(screen.queryByText(/henüz.*izleme yok|no monitors/i)).not.toBeInTheDocument()
+  })
+
+  it('E3: yeniden dene basarili olunca hata bandi kalkar ve liste cizilir', async () => {
+    api.monitoring.getHttpMonitors.mockRejectedValueOnce(new Error('Failed to fetch'))
+
+    render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await screen.findByText(/izleme listesi yüklenemedi|could not load the monitor list/i)
+
+    api.monitoring.getHttpMonitors.mockResolvedValue({ success: true, data: [monitor] })
+    fireEvent.click(screen.getByRole('button', { name: /yeniden dene|retry/i }))
+
+    expect(await screen.findByText('https://www.example.com/')).toBeInTheDocument()
+    expect(screen.queryByText(/izleme listesi yüklenemedi|could not load the monitor list/i))
+      .not.toBeInTheDocument()
+  })
+
   it('izleme kartını (url) listeler', async () => {
     render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getHttpMonitors).toHaveBeenCalled())

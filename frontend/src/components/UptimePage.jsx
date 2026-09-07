@@ -14,6 +14,7 @@ import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
+import AlertBanner from './ui/AlertBanner.jsx'
 
 const REFRESH_INTERVAL = 60
 
@@ -35,14 +36,26 @@ export default function UptimePage({ systemRole }) {
   const [secondsSince, setSecondsSince] = useState(0)
   const lastFetched = useRef(null)
 
+  // Diger 8 izleme sayfasinda hata dali VARDI, burada ve ScriptedMonitorPage'de HIC yoktu:
+  // basarisizlikta yalniz setLoading(false) kosuyor, items bos kaliyor ve ekran "veri yok"
+  // diyordu — kullanici kayitlarinin silindigini saniyordu.
+  const [loadError, setLoadError] = useState(null)
+
   const fetchOverview = useCallback(async () => {
-    const res = await api.monitoring.getUptimeOverview()
-    if (res?.success) {
-      setItems(res.data)
-      lastFetched.current = Date.now()
-      setSecondsSince(0)
+    // AG HATASI DA BU DALA DUSMELI: request() ag hatasinda {success:false} DONDURMEZ, throw eder.
+    try {
+      const res = await api.monitoring.getUptimeOverview()
+      if (res?.success) {
+        setItems(res.data)
+        lastFetched.current = Date.now()
+        setSecondsSince(0)
+        setLoadError(null)
+      } else setLoadError(res?.error || 'load failed')
+    } catch (e) {
+      setLoadError(e?.message || 'network error')
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }, [])
 
   useVisibleInterval(fetchOverview, REFRESH_INTERVAL * 1000)   // gizli sekmede polling durur
@@ -222,6 +235,12 @@ export default function UptimePage({ systemRole }) {
 
       {loading ? (
         <LoadingBlock label={t('uptime.checking')} fullWidth />
+      ) : loadError && items.length === 0 ? (
+        /* Hata bandi bos durumun ONUNDE: aksi halde yukleme hatasi "veri yok" gibi gorunur. */
+        <AlertBanner tone="danger" title={t('mon.loadError')} role="alert"
+          actions={<button className="btn btn-sm btn-secondary" onClick={fetchOverview}>{t('hist.retry')}</button>}>
+          {String(loadError)}
+        </AlertBanner>
       ) : items.length === 0 ? (
         <LoadingBlock label={t('uptime.noData')} fullWidth />
       ) : (
