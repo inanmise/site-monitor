@@ -216,6 +216,86 @@ class ChainValidationServiceTest {
         assertThat(service.checkCrl(cert)).isEqualTo("REVOKED");
     }
 
+    // ── Indirme tavani: dev CRL heap'i doldurmasin ────────────────────────────
+
+    /**
+     * CRL adresi sertifikanin CRL-DP uzantisindan, yani IZLENEN SUNUCUNUN yazdigi bir dizeden
+     * geliyor ve izleme hedefini siradan bir kullanici tanimlayabiliyor. Tavansiz okuma, tek-pod
+     * uretimde OOM = kesinti demekti; {@code setReadTimeout} de korumuyor, cunku o okumalar ARASI
+     * suredir — surekli akan bir govdede hic tetiklenmez. Ayrica indirilen CRL 200 kayitlik
+     * onbellege giriyor, yani tavan iki kez onemli.
+     *
+     * <p>Tavan asilinca indirme BASARISIZ sayilir → {@code consulted} false kalir → sonuc
+     * {@code UNKNOWN}. Yani sessiz bir "temiz" degil, gorunur bir "dogrulanamadi".
+     *
+     * <p><b>DURUSTLUK NOTU — bu test tavani IZOLE ETMEZ.</b> Tavan kaldirilsa da yesil kalir,
+     * cunku o durumda dev govde tamamen okunur ama gecerli bir CRL olmadigi icin ayristirma
+     * duser ve sonuc yine UNKNOWN olur. Burada olculen sey uctan uca DAVRANIS: dev bir govde
+     * ne cokme uretir ne de "iptal edilmemis" sonucu. Tavanin KENDISI bulundugu yerde
+     * pinleniyor: {@code HttpBodiesTest} — tavan kaldirilirsa ORASI kirilir.
+     */
+    @Test
+    @DisplayName("Uctan uca: dev CRL govdesi ne cokertir ne de VALID uretir (sonuc UNKNOWN)")
+    void downloadCrl_oversizedBody_rejected() throws Exception {
+        com.sun.net.httpserver.HttpServer server = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/big.crl", ex -> {
+            byte[] chunk = new byte[64 * 1024];
+            ex.sendResponseHeaders(200, 0);   // chunked — Content-Length ile onceden reddedilmesin
+            try (java.io.OutputStream os = ex.getResponseBody()) {
+                for (int i = 0; i < 96; i++) os.write(chunk);   // ~6 MB > 5 MB tavan
+            } catch (java.io.IOException ignored) {
+                // Tavan asilinca istemci baglantiyi kapatir; sunucu tarafi yazamaz — beklenen.
+            }
+            ex.close();
+        });
+        server.start();
+        try {
+            String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/big.crl";
+            X509Certificate cert = generateCertWithCrlDp("leaf.example.com", url);
+
+            assertThat(service.checkCrl(cert))
+                    .as("tavani asan govde 'iptal edilmemis' sayilmamali")
+                    .isEqualTo("UNKNOWN");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    /**
+     * Tavanin NORMAL yolu bozmadigini olcer — ve gercekten INDIRIR (onbellek doldurulmaz).
+     * Aksi halde test adi "indirilip ayristirilir" derken indirme hic calismaz, yani hicbir sey
+     * pinlemez. Govde sunucudan gelecegi icin handler mutable bir tutucudan okuyor: sertifika
+     * ancak port belli olduktan SONRA kurulabiliyor, CRL de o sertifikaya gore uretiliyor.
+     */
+    @Test
+    @DisplayName("Tavan NORMAL yolu bozmaz: gercek boyutlu CRL INDIRILIP ayristirilir")
+    void downloadCrl_normalSizedBody_isDownloadedAndParsed() throws Exception {
+        byte[][] body = new byte[1][];
+        com.sun.net.httpserver.HttpServer server = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/ok.crl", ex -> {
+            ex.sendResponseHeaders(200, body[0].length);
+            try (java.io.OutputStream os = ex.getResponseBody()) { os.write(body[0]); }
+            ex.close();
+        });
+        server.start();
+        try {
+            String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/ok.crl";
+            X509Certificate cert = generateCertWithCrlDp("leaf.example.com", url);
+            body[0] = buildCrl(cert, cert.getSerialNumber()).getEncoded();
+            assertThat(body[0].length).as("uretilen CRL tavanin altinda olmali").isLessThan(MAX_CRL);
+
+            // Onbellek BOS → gercek HTTP indirmesi + tavanli okuma + ayristirma calisir.
+            assertThat(service.checkCrl(cert)).isEqualTo("REVOKED");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    /** Uretim sabitiyle ayni tavan (ChainValidationService.MAX_CRL_BYTES). */
+    private static final int MAX_CRL = 5 * 1024 * 1024;
+
     // ── Test Cert Utilities ───────────────────────────────────────────────────
 
     /** CRL onbellegine hazir bir liste koyar (indirme yolunu atlar). */

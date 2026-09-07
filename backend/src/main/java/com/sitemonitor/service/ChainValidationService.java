@@ -48,6 +48,19 @@ public class ChainValidationService {
     private static final String OID_AIA = "1.3.6.1.5.5.7.1.1";
     private static final String OID_CRL_DP = "2.5.29.31";
 
+    /**
+     * OCSP/CRL gövde tavanları. İkisinin de adresi izlenen sunucunun sertifikasından okunuyor
+     * (AIA / CRL-DP), yani karşı tarafın yazdığı dizeler — tavansız okuma tek-pod üretimde
+     * OOM ile kesinti demekti. Aynı desen dört kardeş istemcide zaten vardı
+     * ({@code HttpBodies.readCapped}); bu sınıf o süpürmede atlanmıştı.
+     *
+     * <p>Ölçek: OCSP yanıtları birkaç KB, CRL'ler çoğunlukla &lt; 1 MB. Tavan aşılırsa indirme
+     * başarısız sayılır ve iptal durumu {@code UNKNOWN} olur — yani sessiz bir "temiz" değil,
+     * görünür bir "doğrulanamadı".
+     */
+    private static final int MAX_OCSP_BYTES = 256 * 1024;
+    private static final int MAX_CRL_BYTES  = 5 * 1024 * 1024;
+
     @Value("${site.monitor.cache.crl-max-size:200}")
     private int crlCacheMaxSize;
 
@@ -232,7 +245,12 @@ public class ChainValidationService {
                 conn.getOutputStream().write(request.getEncoded());
 
                 try (InputStream is = conn.getInputStream()) {
-                    OCSPResp response = new OCSPResp(is);
+                    // TAVANLI: OCSP yanıtı ayrıştırılıyor ve adresi sertifikanın AIA uzantısından,
+                    // yani izlenen sunucunun yazdığı bir dizeden geliyor. Gerçek yanıtlar birkaç KB;
+                    // 256 KB fazlasıyla geniş. Tavan yokken sunucu istediği kadar veri akıtabilirdi
+                    // (setReadTimeout okumalar ARASI süredir — sürekli akan bir gövdede hiç tetiklenmez).
+                    OCSPResp response = new OCSPResp(
+                            com.sitemonitor.util.HttpBodies.readCapped(is, MAX_OCSP_BYTES, "OCSP"));
                     if (response.getStatus() != OCSPRespBuilder.SUCCESSFUL) return "UNKNOWN";
                     BasicOCSPResp basicResp = (BasicOCSPResp) response.getResponseObject();
                     SingleResp[] singleResps = basicResp.getResponses();
@@ -355,8 +373,15 @@ public class ChainValidationService {
                 conn.setConnectTimeout(10000);
                 conn.setReadTimeout(10000);
                 try (InputStream is = conn.getInputStream()) {
+                    // TAVANLI: CRL adresi sertifikanın CRL-DP uzantısından geliyor — izlenen
+                    // sunucunun yazdığı bir dize. İzleme hedefini sıradan bir kullanıcı
+                    // tanımlayabildiği için tavansız okuma, tek-pod üretimde OOM ile kesinti
+                    // demekti. AYRICA: indirilen CRL crlCache'e giriyor ve cache 200 KAYIT
+                    // tutuyor (bayt değil) — tavan olmadan 200 büyük liste heap'i tek başına
+                    // doldurabilirdi. Gerçek CRL'ler çoğunlukla < 1 MB.
+                    byte[] der = com.sitemonitor.util.HttpBodies.readCapped(is, MAX_CRL_BYTES, "CRL");
                     CertificateFactory cf = CertificateFactory.getInstance("X.509");
-                    return (X509CRL) cf.generateCRL(is);
+                    return (X509CRL) cf.generateCRL(new java.io.ByteArrayInputStream(der));
                 }
             } finally {
                 conn.disconnect();
