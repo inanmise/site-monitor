@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment, lazy, Suspense } from 'react'
+import { dateLocale } from '../../i18n/dateLocale.js'
 import { api, formatDate, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
@@ -641,7 +642,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
           {poolLastRefreshed && (
             <div className="pool-updated-at">
               {t('sys.poolUpdatedAt').replace('{t}',
-                poolLastRefreshed.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                poolLastRefreshed.toLocaleTimeString(dateLocale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' })
               )}
             </div>
           )}

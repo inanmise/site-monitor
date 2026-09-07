@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
+import { dateLocale } from '../i18n/dateLocale.js'
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid,
   Tooltip as RTooltip, ResponsiveContainer,
@@ -96,7 +97,7 @@ function computeForecast(certs) {
     cumulative += total
     dailyData.push({
       date: key,
-      label: d.toLocaleDateString('tr-TR', { day: '2-digit', month: 'short' }),
+      label: d.toLocaleDateString(dateLocale(), { day: '2-digit', month: 'short' }),
       critical: slot.critical.length,
       high: slot.high.length,
       warning: slot.warning.length,
@@ -147,7 +148,7 @@ function computeChartData(certs, days) {
     cumulative += total
     out.push({
       date: key,
-      label: d.toLocaleDateString('tr-TR', { day: '2-digit', month: 'short' }),
+      label: d.toLocaleDateString(dateLocale(), { day: '2-digit', month: 'short' }),
       critical: slot.critical.length,
       high: slot.high.length,
       warning: slot.warning.length,
@@ -498,8 +499,8 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
     return data.certs ? computeChartData(data.certs, chartRangeDays) : data.dailyData
   }, [data, chartRangeDays])
 
-  const timeStr = time.toLocaleTimeString('tr-TR', { hour12: false })
-  const dateStr = time.toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', year: 'numeric' })
+  const timeStr = time.toLocaleTimeString(dateLocale(), { hour12: false })
+  const dateStr = time.toLocaleDateString(dateLocale(), { day: '2-digit', month: 'short', year: 'numeric' })
 
   return (
     <div className="forecast-page">

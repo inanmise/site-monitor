@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { dateLocale } from '../../i18n/dateLocale.js'
 import { RefreshCw, Check, X } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { ProgressBar, Spinner } from '../ui/Progress.jsx'
@@ -13,7 +14,7 @@ export const fmtDur = (ms) => (ms == null ? '' : ms < 1000 ? `${ms} ms` : `${(ms
 export const fmtDay = (iso) => {
   if (!iso) return '—'
   const d = new Date(iso)
-  return isNaN(d) ? '—' : d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  return isNaN(d) ? '—' : d.toLocaleDateString(dateLocale(), { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
 /** Kalan gün → renk sınıfı (kart/rozet token'larıyla aynı eşikler: <0 dolmuş, <7 kritik, <15 yüksek, <30 uyarı). */
