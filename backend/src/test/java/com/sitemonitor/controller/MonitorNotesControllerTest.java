@@ -22,6 +22,7 @@ import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -58,6 +59,41 @@ class MonitorNotesControllerTest {
         mvc.perform(get("/api/monitoring/notes?type=PING&target=1.2.3.4").session(session("ADMIN")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("SOZLESME: katalogdaki HER izleme turu Notlar sekmesinde gecerli (cert haric)")
+    void everyCatalogType_isAcceptedByNotes() throws Exception {
+        // Tip listesi ELLE yaziliydi ve hicbir kapi ona bakmiyordu: yeni bir izleme turu
+        // eklendiginde o turun Notlar sekmesi sessizce "Gecersiz izleme tipi" (400) donuyordu.
+        // Gercekten yasandi (PAGE, 2026-08-03). Liste artik MonitorTypeCatalog'dan turetiliyor;
+        // bu kapi da UCTAN UCA dogruluyor — katalog buyudugunde burasi da buyumus olmali.
+        java.util.List<String> rejected = new java.util.ArrayList<>();
+        for (String type : com.sitemonitor.service.MonitorTypeCatalog.ORDER) {
+            if (MonitorNotesController.NOTE_EXCLUDED_TYPES.contains(type)) continue;
+            String upper = type.toUpperCase(java.util.Locale.ROOT);
+            when(guideRepo.findByMonitorTypeAndTarget(upper, "hedef")).thenReturn(Optional.empty());
+            when(noteRepo.findByMonitorTypeAndTargetAndDeletedAtIsNullOrderByCreatedAtDesc(upper, "hedef"))
+                    .thenReturn(List.of());
+
+            int status = mvc.perform(get("/api/monitoring/notes?type=" + upper + "&target=hedef")
+                            .session(session("ADMIN")))
+                    .andReturn().getResponse().getStatus();
+            if (status != 200) rejected.add(upper + " → " + status);
+        }
+        org.assertj.core.api.Assertions.assertThat(rejected)
+                .as("Notlar sekmesinin reddettigi katalog turleri")
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("cert BILEREK disarida — sertifikalarin kendi not yuzeyi var")
+    void certType_isRejected_deliberately() throws Exception {
+        // Muafiyetin KASITLI oldugunu pinler: biri cert'i listeye eklerse bu test kirilir ve
+        // karari bilerek vermek zorunda kalir.
+        assertThat(MonitorNotesController.NOTE_EXCLUDED_TYPES).containsExactly("cert");
+        mvc.perform(get("/api/monitoring/notes?type=CERT&target=x").session(session("ADMIN")))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

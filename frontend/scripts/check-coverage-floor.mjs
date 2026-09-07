@@ -20,12 +20,21 @@ import { fileURLToPath } from 'node:url'
 const FRONTEND = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SUMMARY = join(FRONTEND, 'coverage', 'coverage-summary.json')
 
-const LARGE_LINES = 500
+// 500 → 250 (denetim önerisi). Eşiğin hemen ALTI denetimsizdi ve orada gerçek boşluk vardı:
+// CertInventoryReportSettings.jsx 294 satır / %2.04, exportInventory.js 294 / %23.8. İkisine de
+// test yazıldı ve eşik indirildi — muafiyet listesi BÜYÜTÜLMEDİ (o cırcır 2026-08-20'de sıfıra
+// inmişti, yeniden doldurmak kazanımı geri almak olurdu).
+const LARGE_LINES = 250
 const FLOOR = 40          // satır kapsamı %
 
 /** Ölçüye hiç girmeyenler — gerekçesiyle. */
 const EXCLUDED = new Set([
   'src/i18n/index.jsx',   // saf çeviri sözlüğü; mantık yok, kapsam anlamsız
+  // Yapı/araç script'leri UYGULAMA KODU DEĞİL: tarayıcıda çalışmazlar, vitest onları hiç
+  // yüklemez ve kapsamları yapısal olarak %0'dır. Eşik 250'ye inince ölçüye girdiler.
+  'scripts/gen-whitepaper-pdf.mjs',
+  'scripts/gen-mail-logos.mjs',
+  'scripts/check-coverage-floor.mjs',
 ])
 
 /**

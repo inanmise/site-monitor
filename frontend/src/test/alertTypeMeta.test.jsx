@@ -41,13 +41,31 @@ function canonicalTypesFromBackend() {
 }
 
 /**
- * Sertifika alarm tipleri. Bunlar EscalationService'te SABİT DEĞİL, kod içinde string literal
- * olarak geçiyor (tek kaynak yok) — o yüzden burada açıkça listeleniyor. Bu küme DONMUŞ durumda;
- * büyüyen liste yukarıda otomatik türetiliyor.
+ * Sertifika alarm tipleri — Java kaynağındaki {@code CERT_ALERT_TYPES} kümesinden AYRIŞTIRILIR.
+ *
+ * Burada dört tip ELLE yazılıydı ve yorumu "EscalationService'te sabit DEĞİL" diyordu; o not
+ * bayatlamıştı. `CERT_ALERT_TYPES` mevcut ve altı tip içeriyor: dördü düz literal, ikisi
+ * `TYPE_*` sabiti (sabit olanlar zaten yukarıdaki otomatik türetmeye giriyordu). Donmuş liste
+ * yüzünden kümeye eklenen yeni bir sertifika tipi bu kapıya HİÇ görünmezdi.
  */
-const CERT_TYPES = ['EXPIRY', 'CHAIN_BROKEN', 'REVOKED', 'MISMATCH']
+function certTypesFromBackend(all) {
+  const src = readFileSync(
+    resolve(__dirname, '../../../backend/src/main/java/com/sitemonitor/service/EscalationService.java'),
+    'utf8')
+  const block = /CERT_ALERT_TYPES\s*=\s*Set\.of\(([\s\S]*?)\);/.exec(src)
+  if (!block) throw new Error('CERT_ALERT_TYPES bulunamadı — regex/yol bozulmuş')
+  const literals = [...block[1].matchAll(/"(\w+)"/g)].map(m => m[1])
+  // Sabitle verilenler (TYPE_HOSTNAME_MISMATCH gibi) zaten TYPE_* türetmesinde var;
+  // kesişimi almak yerine ikisini birleştirmek yeterli.
+  const consts = [...block[1].matchAll(/TYPE_(\w+)/g)]
+    .map(m => all.find(t => t === m[1]) ?? m[1])
+  const out = [...new Set([...literals, ...consts])]
+  if (out.length < 4) throw new Error('CERT_ALERT_TYPES ayrıştırıldı ama beklenenden az tip çıktı')
+  return out
+}
 
-const canonicalTypes = [...canonicalTypesFromBackend(), ...CERT_TYPES]
+const backendTypes = canonicalTypesFromBackend()
+const canonicalTypes = [...new Set([...backendTypes, ...certTypesFromBackend(backendTypes)])]
 
 // renderHook'un kanonik deseni: callback React'in kendi render bağlamında çağrılıyor,
 // lint bunu göremediği için yanlış alarm veriyor (kural yalnız bu satırda susturuluyor).

@@ -5,6 +5,7 @@ import com.sitemonitor.model.MonitorNote;
 import com.sitemonitor.repository.MonitorGuideRepository;
 import com.sitemonitor.repository.MonitorNoteRepository;
 import com.sitemonitor.service.AuditService;
+import com.sitemonitor.service.MonitorTypeCatalog;
 import com.sitemonitor.service.PermissionService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
@@ -35,10 +36,23 @@ public class MonitorNotesController {
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
-    // Frontend'in Rehber & Notlar sekmesinde kullandığı tüm monitör tipleri (MonitorNotes type=...).
-    // PAGE eksikti → Sayfa Bütünlüğü modalındaki Notlar sekmesi "Geçersiz izleme tipi: PAGE" veriyordu (2026-08-03).
-    // SCRIPTED ileriye dönük eklendi (Sentetik İzleme'ye notlar sekmesi geldiğinde hazır).
-    private static final Set<String> TYPES = Set.of("KEYWORD", "PING", "DNS", "PORT", "DOMAIN", "HTTP", "PAGE", "SCRIPTED", "PAGESPEED");
+    /**
+     * Notlar sekmesinin desteklediği izleme tipleri — {@link MonitorTypeCatalog#ORDER}'dan TÜRETİLİR.
+     *
+     * <p>Eskiden dokuz tip ELLE yazılıydı ve hiçbir kapı ona bakmıyordu: yeni bir izleme türü
+     * eklendiğinde o türün Notlar sekmesi sessizce "Geçersiz izleme tipi" (400) döndürüyordu.
+     * Bu gerçekten yaşandı — PAGE eksikti ve Sayfa Bütünlüğü modalında notlar açılmıyordu
+     * (2026-08-03). Liste artık katalogla birlikte büyür.
+     *
+     * <p>{@code cert} BİLEREK dışarıda: sertifikaların kendi not yüzeyi var (sertifika modalı
+     * ayrı uçları kullanır), buradaki hedef anahtarı monitör kimliği/host'udur.
+     */
+    static final Set<String> NOTE_EXCLUDED_TYPES = Set.of("cert");
+
+    static final Set<String> TYPES = MonitorTypeCatalog.ORDER.stream()
+            .filter(t -> !NOTE_EXCLUDED_TYPES.contains(t))
+            .map(t -> t.toUpperCase(java.util.Locale.ROOT))
+            .collect(java.util.stream.Collectors.toUnmodifiableSet());
     private static final int MAX = 5000;
 
     private final MonitorGuideRepository guideRepo;

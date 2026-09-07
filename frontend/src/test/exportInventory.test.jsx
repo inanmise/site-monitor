@@ -12,9 +12,42 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
  */
 
 vi.mock('../api/client', () => ({ formatDate: (s) => (s ? `D:${s}` : '') }))
-vi.mock('../utils/pdfBrand.js', () => ({ drawBrandHeader: vi.fn() }))
+vi.mock('../utils/pdfBrand.js', () => ({ drawBrandHeader: vi.fn(async () => 60) }))
 
-const { exportInventoryCsv } = await import('../utils/exportInventory')
+// ── PDF yolu icin sahte jsPDF ──────────────────────────────────────────────
+// Amac jsPDF'i test etmek DEGIL: PDF disa aktariminin INVENTORY_FLAGS'in TAMAMINI tasidigini
+// dogrulamak. CSV tarafindaki "bir sutun eklenip digeri unutulur" hatasinin ikizi burada da
+// var (exportInventory.js:221-222 uclu satirlar halinde bayrak geziyor) ve PDF yolu tamamen
+// test disiydi — dosyanin kapsanmayan kismi neredeyse butunuyle burasi.
+const pdfCalls = { text: [], autoTable: [] }
+vi.mock('jspdf', () => {
+  class FakeDoc {
+    constructor() {
+      this.internal = { pageSize: { getWidth: () => 595, getHeight: () => 842 }, getNumberOfPages: () => 1 }
+      this.lastAutoTable = { finalY: 100 }
+    }
+    setFont() { return this }
+    setFontSize() { return this }
+    setTextColor() { return this }
+    setDrawColor() { return this }
+    setFillColor() { return this }
+    setPage() { return this }
+    addPage() { this.lastAutoTable = { finalY: 100 }; return this }
+    addFileToVFS() { return this }
+    addFont() { return this }
+    line() { return this }
+    roundedRect() { return this }
+    getTextWidth() { return 10 }
+    splitTextToSize(txt) { return [String(txt)] }
+    text(t) { pdfCalls.text.push(String(t)); return this }
+    autoTable(opts) { pdfCalls.autoTable.push(opts); this.lastAutoTable = { finalY: 100 }; return this }
+    save() { return this }
+  }
+  return { jsPDF: FakeDoc }
+})
+vi.mock('jspdf-autotable', () => ({ default: {} }))
+
+const { exportInventoryCsv, exportInventoryPdf } = await import('../utils/exportInventory')
 const { INVENTORY_FLAGS } = await import('../utils/inventoryFlags.js')
 
 /** Etiketi anahtarın kendisi yapan t(): başlıklar okunabilir ve karşılaştırılabilir kalır. */
@@ -115,5 +148,81 @@ describe('exportInventoryCsv', () => {
 
     // Başlık + tek veri satırı: açıklamadaki satır sonu kaçmış olsaydı 3 satır olurdu.
     expect(lastCsv.replace(/^﻿/, '').split('\r\n')).toHaveLength(2)
+  })
+
+  // ── Denetim eklemeleri: bayrak listesinin TAMAMI + kacis sozlesmesi ────────
+
+  it('INVENTORY_FLAGS listesinin TAMAMI baslikta yer alir', () => {
+    exportInventoryCsv([ITEM], TEAMS, t)
+    const [head] = lastCsv.replace(/^﻿/, '').split('\r\n')
+    for (const f of INVENTORY_FLAGS) {
+      expect(head, `baslikta eksik bayrak: ${f.key}`).toContain(f.labelKey)
+    }
+  })
+
+  it('bayraklarin hepsi true iken satirda da hepsi tasinir (hizali)', () => {
+    const allTrue = Object.fromEntries(INVENTORY_FLAGS.map(f => [f.key, true]))
+    exportInventoryCsv([{ ...ITEM, ...allTrue }], TEAMS, t)
+    const [head, row] = lastCsv.replace(/^﻿/, '').split('\r\n')
+    const cells = splitCsvLine(row)
+    expect(cells.filter(c => c === 'inv.yes')).toHaveLength(INVENTORY_FLAGS.length)
+    expect(cells).toHaveLength(splitCsvLine(head).length)
+  })
+
+  it('use_proxy REGRESYONU: bayrak listesinde VE disa aktarimda', () => {
+    // Gecmiste tam bu alan envantere eklenip disa aktarima baglanmamisti.
+    const flag = INVENTORY_FLAGS.find(f => f.key === 'use_proxy')
+    expect(flag, 'use_proxy INVENTORY_FLAGS listesinden dusmus').toBeTruthy()
+    exportInventoryCsv([{ ...ITEM, use_proxy: true }], TEAMS, t)
+    expect(lastCsv).toContain(flag.labelKey)
+  })
+
+  it('formul enjeksiyonu notrlenir: "=" ile baslayan domain FORMUL olarak acilmaz', () => {
+    // csvCell sozlesmesi (CWE-1236). Disa aktarimin onu gercekten kullandigini pinler:
+    // kendi kacisini yazan bir disa aktarim burada kirilir.
+    exportInventoryCsv([{ ...ITEM, domain: '=cmd|calc!A1' }], TEAMS, t)
+    expect(lastCsv).not.toMatch(/(^|,)=cmd/m)
+  })
+
+  it('bos envanterde yalniz baslik satiri uretilir (cokmez)', () => {
+    expect(exportInventoryCsv([], TEAMS, t)).toBe(0)
+    expect(lastCsv.replace(/^﻿/, '').split('\r\n')).toHaveLength(1)
+  })
+})
+
+describe('exportInventoryPdf', () => {
+  beforeEach(() => {
+    pdfCalls.text.length = 0
+    pdfCalls.autoTable.length = 0
+    global.fetch = vi.fn(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) }))
+  })
+
+  it('PDF yolu da INVENTORY_FLAGS listesinin TAMAMINI tasir (CSV ile ayni sozlesme)', async () => {
+    await exportInventoryPdf([ITEM], TEAMS, t)
+
+    // Bayraklar uclu satirlar halinde bir autoTable govdesine yaziliyor (exportInventory.js:221).
+    const opsCells = pdfCalls.autoTable.flatMap(o => (o.body ?? []).flat())
+    for (const f of INVENTORY_FLAGS) {
+      expect(opsCells, `PDF operasyonel tabloda eksik bayrak: ${f.key}`).toContain(f.labelKey)
+    }
+  })
+
+  it('bayrak degeri PDF hucresine yansir (evet/hayir ayrimi kayboluyor mu)', async () => {
+    const flag = INVENTORY_FLAGS[0]
+    await exportInventoryPdf([{ ...ITEM, [flag.key]: true }], TEAMS, t)
+    const cells = pdfCalls.autoTable.flatMap(o => (o.body ?? []).flat())
+    expect(cells.some(c => String(c).includes('inv.yes'))).toBe(true)
+  })
+
+  it('her envanter satiri PDF dosyasina yazilir (biri sessizce dusmez)', async () => {
+    await exportInventoryPdf(
+      [{ ...ITEM, domain: 'bir.example.com' }, { ...ITEM, domain: 'iki.example.com' }], TEAMS, t)
+    const printed = pdfCalls.text.join(' ')
+    expect(printed).toContain('bir.example.com')
+    expect(printed).toContain('iki.example.com')
+  })
+
+  it('bos envanterde cokmez', async () => {
+    await expect(exportInventoryPdf([], TEAMS, t)).resolves.not.toThrow()
   })
 })
