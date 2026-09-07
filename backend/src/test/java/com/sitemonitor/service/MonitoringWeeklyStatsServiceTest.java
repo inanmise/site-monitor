@@ -57,7 +57,16 @@ class MonitoringWeeklyStatsServiceTest {
 
     @InjectMocks MonitoringWeeklyStatsService service;
 
-    private final LocalDate baseMon = WeeklyAvailabilityReportService.mondayOfIsoWeek(2026, 28);
+    // REFERANS HAFTA KAYAR — sabit yazilamaz. compute(), MAX_WEEKS_AGO(8) haftadan eski
+    // istekleri null dondurur; sabit bir ISO hafta (eskiden 2026-28) takvim ilerledikce o
+    // pencerenin disina dusuyor ve suiti KODA HIC DOKUNULMADAN kizartiyor. 2026-09-07
+    // Pazartesi tam bu oldu: 28. hafta 9 hafta geride kalinca compute() null dondu ve dort
+    // test birden kirildi. Servisin kendi saat dilimini kullan (CI runner UTC, gelistirici IST).
+    private final LocalDate baseMon = LocalDate.now(java.time.ZoneId.of("Europe/Istanbul"))
+            .with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+            .minusWeeks(1);
+    private final int isoYear = baseMon.get(WeekFields.ISO.weekBasedYear());
+    private final int isoWeek = baseMon.get(WeekFields.ISO.weekOfWeekBasedYear());
     private final String curFrom = baseMon + "T00:00:00";
 
     /** Object[] satırlarını güvenle sarar — List.of(new Object[]{...}) tek elemanı varargs olarak YAYAR (ClassCast tuzağı). */
@@ -125,7 +134,7 @@ class MonitoringWeeklyStatsServiceTest {
                             : rows();  // önceki hafta
                 });
 
-        var stats = service.compute(teamId, 2026, 28);
+        var stats = service.compute(teamId, isoYear, isoWeek);
         assertThat(stats).isNotNull();
         var http = stats.types().stream().filter(t -> t.type().equals("http")).findFirst().orElseThrow();
         assertThat(http.activeMonitors()).isEqualTo(2);
@@ -166,7 +175,7 @@ class MonitoringWeeklyStatsServiceTest {
                         ? rows(new Object[]{20L, 30L, 30L}, new Object[]{21L, 10L, 8L})
                         : rows());
 
-        var stats = service.compute(teamId, 2026, 28);
+        var stats = service.compute(teamId, isoYear, isoWeek);
         assertThat(stats).isNotNull();
         var dns = stats.types().stream().filter(t -> t.type().equals("dns")).findFirst().orElseThrow();
         assertThat(dns.activeMonitors()).isEqualTo(2);   // x.com (envanter-türevi) + s.com (standalone); z.com hariç
@@ -180,7 +189,7 @@ class MonitoringWeeklyStatsServiceTest {
     @DisplayName("compute: teamId null → null")
     void compute_nullTeam() {
         stubWindows();
-        assertThat(service.compute(null, 2026, 28)).isNull();
+        assertThat(service.compute(null, isoYear, isoWeek)).isNull();
     }
 
     @Test
@@ -200,7 +209,7 @@ class MonitoringWeeklyStatsServiceTest {
         // Sayfa Hizi izlemelerini tamamen yok sayiyordu (dosyanin kendi yorumu ayni hatayi
         // `scripted` ve `page` icin de anlatiyor). Bu kapi 11. tur icin de calisir.
         stubWindows();
-        var stats = service.compute(5L, 2026, 28);
+        var stats = service.compute(5L, isoYear, isoWeek);
 
         assertThat(stats).isNotNull();
         var reported = stats.types().stream().map(MonitoringWeeklyStatsService.TypeStats::type).toList();

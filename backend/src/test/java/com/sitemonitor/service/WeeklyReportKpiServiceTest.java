@@ -42,6 +42,17 @@ class WeeklyReportKpiServiceTest {
 
     @InjectMocks WeeklyReportKpiService service;
 
+    // REFERANS HAFTA KAYAR — sabit yazilamaz. compute(), MAX_WEEKS_AGO(8) haftadan eski
+    // istekleri null dondurur; sabit bir ISO hafta (eskiden 2026-28) takvim ilerledikce o
+    // pencerenin disina dusuyor ve suiti KODA HIC DOKUNULMADAN kizartiyor. 2026-09-07
+    // Pazartesi tam bu oldu: 28. hafta 9 hafta geride kalinca compute() null dondu ve dort
+    // test birden kirildi. Servisin kendi saat dilimini kullan (CI runner UTC, gelistirici IST).
+    private final LocalDate baseMon = LocalDate.now(java.time.ZoneId.of("Europe/Istanbul"))
+            .with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+            .minusWeeks(1);
+    private final int isoYear = baseMon.get(WeekFields.ISO.weekBasedYear());
+    private final int isoWeek = baseMon.get(WeekFields.ISO.weekOfWeekBasedYear());
+
     private LatestCheck lc(String domain, String notAfter, String notBefore) {
         LatestCheck c = new LatestCheck();
         c.setDomain(domain); c.setNotAfter(notAfter); c.setNotBefore(notBefore);
@@ -60,7 +71,6 @@ class WeeklyReportKpiServiceTest {
     @DisplayName("compute: windowed delta (expiring cur>prev), snapshot kartlar, uptime delege, 8-hafta trend")
     void compute_fullAggregation() {
         long teamId = 5L;
-        LocalDate baseMon = WeeklyAvailabilityReportService.mondayOfIsoWeek(2026, 28);
         LocalDate prevMon = baseMon.minusWeeks(1);
 
         // Envanter: biri registrar bitişi ≤7 gün (kritik domain), biri değil.
@@ -97,7 +107,7 @@ class WeeklyReportKpiServiceTest {
         when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), anyList(), any()))
                 .thenReturn(org.springframework.data.domain.Page.empty());
 
-        WeeklyReportKpiService.WeeklyReportKpis k = service.compute(teamId, 2026, 28);
+        WeeklyReportKpiService.WeeklyReportKpis k = service.compute(teamId, isoYear, isoWeek);
 
         // Snapshot kartlar
         assertThat(k.current().totalCerts()).isEqualTo(10);
@@ -150,7 +160,7 @@ class WeeklyReportKpiServiceTest {
         when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), anyList(), any()))
                 .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(alertOn("t1a.com"))));
 
-        WeeklyReportKpiService.WeeklyReportKpis k = service.compute(teamId, 2026, 28);
+        WeeklyReportKpiService.WeeklyReportKpis k = service.compute(teamId, isoYear, isoWeek);
 
         assertThat(k.summary()).isNotNull();
         assertThat(k.summary().actions()).extracting(WeeklyReportKpiService.ActionItem::name)
