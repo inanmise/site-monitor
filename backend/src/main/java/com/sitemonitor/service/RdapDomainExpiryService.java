@@ -43,6 +43,7 @@ public class RdapDomainExpiryService {
     private final AppSettingsService appSettings;
     private final TrustEvaluator trustEvaluator;
     private final CaAutoPinService caAutoPinService;
+    private final SsrfGuard ssrfGuard;
 
     private static final long CACHE_TTL_MS = 12 * 60 * 60 * 1000L;   // 12 saat
     private static final int  MAX_CACHE_ENTRIES = 5_000;             // sert üst sınır (heap koruması)
@@ -60,7 +61,8 @@ public class RdapDomainExpiryService {
                 caAutoPinService::trustManagerForHost, caAutoPinService::recordTrustFailure);
         HttpClient.Builder b = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
-                .followRedirects(HttpClient.Redirect.NORMAL);
+                // Redirect.NEVER: hop'lar asagida ELLE takip edilir, her biri SsrfGuard'dan gecer.
+                .followRedirects(HttpClient.Redirect.NEVER);
         if (ssl != null) b.sslContext(ssl);
         this.http = b.build();
     }
@@ -94,6 +96,44 @@ public class RdapDomainExpiryService {
         return res;
     }
 
+    /**
+     * Yonlendirmeleri ELLE takip eden gonderim — her hop {@link SsrfGuard}'dan gecer.
+     *
+     * <p>Bu istemci {@code Redirect.NORMAL} kullaniyordu: zincir kutuphane icinde takip ediliyor,
+     * ara hop'lar uygulamaya gorunmuyordu. Hedef ({@code site.monitor.http.rdap-base-url})
+     * YONETICI TARAFINDAN AYARLANABILIR ve DIS bir sunucu: ele gecmis bir RDAP ucu
+     * {@code 302 Location: http://169.254.169.254/} ile pod'u ic aga yonlendirebiliyordu.
+     * Ayni sinif KeywordChecker/HttpChecker/HstsDiagnostics'te duzeltilmisti; bu servis atlanmis.
+     *
+     * <p>{@code UnresolvableHostException} TOLERE EDILIR (proxy/split-DNS) —
+     * {@code ChainValidationService.guardTarget} ile ayni hosgoru.
+     */
+    private HttpResponse<java.io.InputStream> sendFollowingSafely(HttpRequest req)
+            throws java.io.IOException, InterruptedException {
+        URI current = req.uri();
+        for (int hop = 0; hop <= SafeRedirect.MAX_HOPS; hop++) {
+            String host = current.getHost();
+            if (host == null || host.isBlank())
+                throw new SsrfGuard.BlockedException("gecersiz RDAP hedefi: " + current);
+            try {
+                ssrfGuard.validate(host);
+            } catch (SsrfGuard.UnresolvableHostException ue) {
+                log.debug("RDAP: {} yerelde cozulemedi, baglanti yine denenecek (proxy senaryosu)", host);
+            }
+            HttpRequest.Builder b = HttpRequest.newBuilder().uri(current);
+            req.timeout().ifPresent(b::timeout);
+            req.headers().map().forEach((n, vs) -> vs.forEach(v -> b.header(n, v)));
+            HttpResponse<java.io.InputStream> resp =
+                    http.send(b.GET().build(), HttpResponse.BodyHandlers.ofInputStream());
+            if (!SafeRedirect.isRedirect(resp.statusCode())) return resp;
+            URI next = SafeRedirect.nextHop(current, resp.headers().firstValue("location").orElse(null));
+            if (next == null) return resp;   // takip edilemez sema/host -> 3xx oldugu gibi doner
+            try (java.io.InputStream is = resp.body()) { is.readNBytes(4096); } catch (Exception ignore) { /* baglanti iadesi */ }
+            current = next;
+        }
+        throw new java.io.IOException("cok fazla yonlendirme (" + SafeRedirect.MAX_HOPS + " hop asildi)");
+    }
+
     private Map<String, Object> query(String domain) {
         String base = appSettings.getString("site.monitor.http.rdap-base-url", "https://rdap.org/domain/");
         try {
@@ -106,7 +146,7 @@ public class RdapDomainExpiryService {
             // TAVANLI okuma: ofString() tavansizdir ve RDAP hedefi ayarlanabilir bir adres —
             // dev bir govde tek-pod uretimi OOM ile dusururdu. Tavan asilirsa acik hata atilir,
             // sessizce kirpilmaz (kirpik JSON "gecersiz yanit" gibi gorunup asil nedeni gizlerdi).
-            HttpResponse<java.io.InputStream> resp = http.send(req, HttpResponse.BodyHandlers.ofInputStream());
+            HttpResponse<java.io.InputStream> resp = sendFollowingSafely(req);
             if (resp.statusCode() != 200) return unknown(domain, "rdap http " + resp.statusCode());
             String rawBody = com.sitemonitor.util.HttpBodies.readCapped(resp, 1_000_000, "RDAP");
             JsonNode root = mapper.readTree(rawBody);

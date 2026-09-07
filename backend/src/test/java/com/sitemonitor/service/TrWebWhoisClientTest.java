@@ -13,6 +13,18 @@ import static org.assertj.core.api.Assertions.assertThat;
  * isimtescil {@code <p>...<br/>...</p>}. Süre bitişi her ikisinden de {@code 2029-10-26} olarak gelmelidir.
  */
 class TrWebWhoisClientTest {
+    /**
+     * Izin verici SsrfGuard — bu testler LOOPBACK'teki yerel bir sunucuya baglaniyor; varsayilan
+     * guard onu bloklar ve testler kod dogruyken kirmizi doner. Blok kararlarinin KENDISI ayri
+     * bir kapida olculuyor: OutboundRedirectSsrfGuardTest.
+     */
+    private static SsrfGuard permissiveGuard() {
+        AppSettingsService s = org.mockito.Mockito.mock(AppSettingsService.class);
+        org.mockito.Mockito.when(s.getBoolean("site.monitor.monitoring.allow-loopback-targets", false)).thenReturn(true);
+        org.mockito.Mockito.when(s.getBoolean("site.monitor.monitoring.allow-internal-targets", true)).thenReturn(true);
+        return new SsrfGuard(s);
+    }
+
 
     // TRABIS (BTK) resmi sayfası — sonuç <pre> bloğu içinde (gerçek çıktı).
     private static final String TRABIS_HTML = """
@@ -105,7 +117,7 @@ class TrWebWhoisClientTest {
         try {
             AppSettingsService appSettings = org.mockito.Mockito.mock(AppSettingsService.class);
             c = new TrWebWhoisClient(appSettings, new TrustEvaluator(appSettings),
-                    org.mockito.Mockito.mock(CaAutoPinService.class));
+                    org.mockito.Mockito.mock(CaAutoPinService.class), permissiveGuard());
             org.springframework.test.util.ReflectionTestUtils.setField(c, "proxyHost", "proxy.local");
             org.springframework.test.util.ReflectionTestUtils.setField(c, "proxyPort", 8080);
             org.springframework.test.util.ReflectionTestUtils.setField(c, "proxyUser", "svc-mon");

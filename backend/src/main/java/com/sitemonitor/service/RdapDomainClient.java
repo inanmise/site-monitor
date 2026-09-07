@@ -44,12 +44,16 @@ public class RdapDomainClient {
     private final TrustEvaluator trustEvaluator;
     private final CaAutoPinService caAutoPinService;
 
+    private final SsrfGuard ssrfGuard;
+
     public RdapDomainClient(AppSettingsService appSettings, PublicSuffixService psl,
-                            TrustEvaluator trustEvaluator, CaAutoPinService caAutoPinService) {
+                            TrustEvaluator trustEvaluator, CaAutoPinService caAutoPinService,
+                            SsrfGuard ssrfGuard) {
         this.appSettings = appSettings;
         this.psl = psl;
         this.trustEvaluator = trustEvaluator;
         this.caAutoPinService = caAutoPinService;
+        this.ssrfGuard = ssrfGuard;
     }
 
     @Value("${site.monitor.proxy.host:}")     private String proxyHost;
@@ -103,7 +107,9 @@ public class RdapDomainClient {
     }
 
     private static HttpClient newClient(Duration ct, ProxySelector proxy, SSLContext ssl, java.net.Authenticator auth) {
-        HttpClient.Builder b = HttpClient.newBuilder().connectTimeout(ct).followRedirects(HttpClient.Redirect.NORMAL);
+        // Redirect.NEVER: zinciri KUTUPHANE ICINDE takip etmek ara hop'lari uygulamaya gorunmez
+        // kilar; hop'lar asagida ELLE takip edilir ve her biri SsrfGuard'dan gecer (SafeRedirect).
+        HttpClient.Builder b = HttpClient.newBuilder().connectTimeout(ct).followRedirects(HttpClient.Redirect.NEVER);
         if (proxy != null) b.proxy(proxy);
         if (ssl != null) b.sslContext(ssl);
         if (auth != null) b.authenticator(auth);
@@ -130,14 +136,68 @@ public class RdapDomainClient {
     /** RDAP JSON govdesi icin tavan — tipik yanit < 50 KB; 1 MB fazlasiyla genis. */
     private static final int MAX_BODY_BYTES = 1_000_000;
 
+    /**
+     * Yonlendirmeleri ELLE takip eden gonderim — her hop {@link SsrfGuard}'dan gecer.
+     *
+     * <p><b>Neden gerekti.</b> Istemci {@code Redirect.NORMAL} kullaniyordu: zincir kutuphane
+     * icinde takip ediliyor, ara hop'lar uygulamaya hic gorunmuyordu. Bu istemcinin hedefleri
+     * YONETICI TARAFINDAN AYARLANABILIR ({@code rdap-bootstrap-url}, {@code rdap-fallback-url})
+     * ve hedefler DIS sunucular: ele gecmis ya da kotu niyetli tek bir RDAP sunucusu
+     * {@code 302 Location: http://169.254.169.254/} ile pod'u ic aga yonlendirebiliyordu.
+     * Proxy tanimliyken hop proxy'ye gider, ama proxy TANIMSIZ oldugunda (desteklenen ve
+     * yalnizca log'lanan bir durum) cikis DOGRUDAN olur ve ic adres gercekten aciliyordu.
+     *
+     * <p>Yuzey teorik degil: {@code traceStep} yanit govdesini {@code _body} olarak yonetici
+     * tanilama ekranina DONDURUYOR — yani ic bir ucun govdesi disari sizabilirdi. Ayni sinif
+     * KeywordChecker/HttpChecker/HstsDiagnostics'te duzeltilmisti; bu istemci o supurmede atlanmis.
+     *
+     * <p>{@code UnresolvableHostException} TOLERE EDILIR: kurumsal proxy arkasinda (split-DNS)
+     * pod dis host'u cozemeyebilir ama proxy cozer — {@code ChainValidationService.guardTarget}
+     * ile ayni hosgoru. Cozulemeyen host bloklanirsa RDAP proxy'li ortamda tamamen kirilirdi.
+     */
     private Resp send(HttpRequest req, String host) throws Exception {
+        URI current = req.uri();
+        for (int hop = 0; hop <= SafeRedirect.MAX_HOPS; hop++) {
+            String h = current.getHost();
+            if (h == null || h.isBlank())
+                throw new SsrfGuard.BlockedException("gecersiz RDAP hedefi: " + current);
+            guard(h);
+            HttpResponse<java.io.InputStream> raw = sendOnce(rebuild(req, current), h);
+            if (!SafeRedirect.isRedirect(raw.statusCode())) return capped(raw);
+            URI next = SafeRedirect.nextHop(current, raw.headers().firstValue("location").orElse(null));
+            if (next == null) return capped(raw);   // takip edilemez sema/host -> 3xx oldugu gibi doner
+            try (java.io.InputStream is = raw.body()) { is.readNBytes(4096); } catch (Exception ignore) { /* baglanti iadesi */ }
+            current = next;
+        }
+        throw new java.io.IOException("cok fazla yonlendirme (" + SafeRedirect.MAX_HOPS + " hop asildi)");
+    }
+
+    /** Cozulemeyen host baglantiyi DURDURMAZ (proxy/split-DNS); blok kararlari aynen gecerlidir. */
+    private void guard(String host) {
         try {
-            return capped(clientFor(host).send(req, HttpResponse.BodyHandlers.ofInputStream()));
+            ssrfGuard.validate(host);
+        } catch (SsrfGuard.UnresolvableHostException ue) {
+            log.debug("RDAP: {} yerelde cozulemedi, baglanti yine denenecek (proxy senaryosu)", host);
+        }
+    }
+
+    /** Ayni istegi yeni hop URI'siyle yeniden kurar (basliklar ve timeout korunur; caginlar GET). */
+    private static HttpRequest rebuild(HttpRequest original, URI uri) {
+        HttpRequest.Builder b = HttpRequest.newBuilder().uri(uri);
+        original.timeout().ifPresent(b::timeout);
+        original.headers().map().forEach((n, vs) -> vs.forEach(v -> b.header(n, v)));
+        return b.GET().build();
+    }
+
+    /** Tek hop — PKIX guven hatasinda hedef host'un CA'si pinlenir ve istek BIR kez tekrarlanir. */
+    private HttpResponse<java.io.InputStream> sendOnce(HttpRequest req, String host) throws Exception {
+        try {
+            return clientFor(host).send(req, HttpResponse.BodyHandlers.ofInputStream());
         } catch (Exception e) {
             int port = req.uri().getPort() == -1 ? 443 : req.uri().getPort();
             if (CaAutoPinService.isTrustFailure(e) && caAutoPinService.pinFromServer(host, port, "rdap")) {
                 log.info("RDAP auto-pin sonrası tekrar deneniyor: {}", host);
-                return capped(clientFor(host).send(req, HttpResponse.BodyHandlers.ofInputStream()));
+                return clientFor(host).send(req, HttpResponse.BodyHandlers.ofInputStream());
             }
             throw e;
         }
