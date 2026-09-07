@@ -93,8 +93,13 @@ class SqlPlaygroundServiceTest {
     @DisplayName("WITH CTE pure SELECT allowed")
     void execute_withCte_allowed() {
         when(jdbc.queryForList(contains("WITH"))).thenReturn(List.of());
+        ArgumentCaptor<String> cap = ArgumentCaptor.forClass(String.class);
         service.execute("WITH t AS (SELECT 1 AS x) SELECT * FROM t", "admin");
-        verify(jdbc).queryForList(anyString());
+        // "Izin verildi" yetmez: HANGI SQL kostugu da dogrulanmali. Eskiden yalniz
+        // `verify(jdbc).queryForList(anyString())` vardi — sanitizasyon SELECT'i bozsa,
+        // yanlis ifadeyi calistirsa ya da DIS TAVANI atlasa test yine yesil kalirdi.
+        verify(jdbc).queryForList(cap.capture());
+        assertThat(cap.getValue()).contains("WITH t AS").contains("SELECT * FROM t").endsWith("LIMIT 1000");
     }
 
     @Test
@@ -155,26 +160,47 @@ class SqlPlaygroundServiceTest {
     @DisplayName("Line comments stripped before validation")
     void execute_lineCommentsStripped() {
         when(jdbc.queryForList(anyString())).thenReturn(List.of());
+        ArgumentCaptor<String> cap = ArgumentCaptor.forClass(String.class);
         service.execute("-- only a comment line\nSELECT 1", "admin");
-        verify(jdbc).queryForList(anyString());
+        // "Izin verildi" yetmez: HANGI SQL kostugu da dogrulanmali. Eskiden yalniz
+        // `verify(jdbc).queryForList(anyString())` vardi — sanitizasyon SELECT'i bozsa,
+        // yanlis ifadeyi calistirsa ya da DIS TAVANI atlasa test yine yesil kalirdi.
+        verify(jdbc).queryForList(cap.capture());
+        // Yorum satiri ATILIR, SELECT KALIR — yorumla birlikte sorgu da silinseydi bos/bozuk
+        // bir ifade calisirdi ve eski iddia bunu goremezdi.
+        assertThat(cap.getValue()).contains("SELECT 1").doesNotContain("only a comment line");
     }
 
     @Test
     @DisplayName("Trailing semicolon allowed (single statement)")
     void execute_trailingSemi_allowed() {
         when(jdbc.queryForList(anyString())).thenReturn(List.of());
+        ArgumentCaptor<String> cap = ArgumentCaptor.forClass(String.class);
         service.execute("SELECT 1;", "admin");
-        verify(jdbc).queryForList(anyString());
+        // "Izin verildi" yetmez: HANGI SQL kostugu da dogrulanmali. Eskiden yalniz
+        // `verify(jdbc).queryForList(anyString())` vardi — sanitizasyon SELECT'i bozsa,
+        // yanlis ifadeyi calistirsa ya da DIS TAVANI atlasa test yine yesil kalirdi.
+        verify(jdbc).queryForList(cap.capture());
+        // Sondaki `;` atilir — birakilsaydi sarmalanan ifade sozdizimi hatasi verirdi.
+        assertThat(cap.getValue()).contains("SELECT 1").doesNotContain("1;");
     }
 
     @Test
     @DisplayName("Yasak kelimeyi İÇEREN sütun adları reddedilmez (kelime sınırı)")
     void execute_columnNamesContainingKeywords_allowed() {
         when(jdbc.queryForList(anyString())).thenReturn(List.of());
+        ArgumentCaptor<String> cap = ArgumentCaptor.forClass(String.class);
         // insertion_date/updated_at/created_at → insert/update/create alt-dizisi içerir
         // ama \b sınırı nedeniyle FORBIDDEN eşleşmemeli (yanlış pozitif olmamalı).
         service.execute("SELECT insertion_date, updated_at, created_at FROM teams", "admin");
-        verify(jdbc).queryForList(anyString());
+        // "Izin verildi" yetmez: HANGI SQL kostugu da dogrulanmali. Eskiden yalniz
+        // `verify(jdbc).queryForList(anyString())` vardi — sanitizasyon SELECT'i bozsa,
+        // yanlis ifadeyi calistirsa ya da DIS TAVANI atlasa test yine yesil kalirdi.
+        verify(jdbc).queryForList(cap.capture());
+        // Sutun adlari BOZULMADAN gecmeli: sanitizasyon "insert" alt-dizisini kirpsaydi
+        // sorgu sessizce baska bir sey calistirirdi.
+        assertThat(cap.getValue())
+                .contains("insertion_date").contains("updated_at").contains("created_at");
     }
 
     // ── listTables / listColumns ──────────────────────────────────────────────
@@ -271,8 +297,13 @@ class SqlPlaygroundServiceTest {
     @DisplayName("Bulgu 9: 'into' kelimesi sutun adinin PARCASI ise engellenmez (yanlis pozitif yok)")
     void execute_columnContainingInto_allowed() {
         when(jdbc.queryForList(anyString())).thenReturn(List.of());
+        ArgumentCaptor<String> cap = ArgumentCaptor.forClass(String.class);
         service.execute("SELECT into_date FROM teams", "admin");
-        verify(jdbc).queryForList(anyString());
+        // "Izin verildi" yetmez: HANGI SQL kostugu da dogrulanmali. Eskiden yalniz
+        // `verify(jdbc).queryForList(anyString())` vardi — sanitizasyon SELECT'i bozsa,
+        // yanlis ifadeyi calistirsa ya da DIS TAVANI atlasa test yine yesil kalirdi.
+        verify(jdbc).queryForList(cap.capture());
+        assertThat(cap.getValue()).contains("into_date").endsWith("LIMIT 1000");
     }
 
     @Test

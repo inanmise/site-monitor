@@ -45,6 +45,39 @@ class WebhookServiceTest {
                 .thenReturn(httpResponse);
     }
 
+
+    // ── Istek GOVDESINI okuma yardimcisi ──────────────────────────────────────
+    //
+    // Asagidaki gonderim testleri eskiden yalniz "send() cagrildi mi"yi ya da URI'yi
+    // dogruluyordu; ADLARI ise renk/format iddia ediyordu. Dort seviye ayni rengi dondurse,
+    // hatta Teams govdesi Slack'e gonderilse HEPSI YESIL kalirdi. HttpRequest.BodyPublisher
+    // dogrudan okunamaz ama abone olunarak tuketilebilir — sozlesme artik UCTAN UCA dogrulanir.
+    private static String bodyOf(HttpRequest req) {
+        var publisher = req.bodyPublisher().orElseThrow();
+        var out = new java.io.ByteArrayOutputStream();
+        var done = new java.util.concurrent.CountDownLatch(1);
+        publisher.subscribe(new java.util.concurrent.Flow.Subscriber<java.nio.ByteBuffer>() {
+            public void onSubscribe(java.util.concurrent.Flow.Subscription sub) { sub.request(Long.MAX_VALUE); }
+            public void onNext(java.nio.ByteBuffer buf) {
+                byte[] b = new byte[buf.remaining()];
+                buf.get(b);
+                out.writeBytes(b);
+            }
+            public void onError(Throwable t) { done.countDown(); }
+            public void onComplete() { done.countDown(); }
+        });
+        try { done.await(5, java.util.concurrent.TimeUnit.SECONDS); }
+        catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        return out.toString(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /** send(...) cagrisinin HTTP istegine yazdigi govdeyi dondurur. */
+    private String sentBody() throws Exception {
+        ArgumentCaptor<HttpRequest> captor = ArgumentCaptor.forClass(HttpRequest.class);
+        verify(httpClient, atLeastOnce()).send(captor.capture(), any());
+        return bodyOf(captor.getValue());
+    }
+
     // ── sendTeams ─────────────────────────────────────────────────────────────
 
     @Test
@@ -69,11 +102,12 @@ class WebhookServiceTest {
     // ── sendSlack ─────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("sendSlack → posts JSON with attachments")
+    @DisplayName("sendSlack → govdede attachments ve verilen renk")
     void sendSlack_postsJsonWithAttachments() throws Exception {
         service.sendSlack("http://localhost/slack", "Title", "Message", "good");
 
-        verify(httpClient).send(any(), any());
+        String body = sentBody();
+        assertThat(body).contains("attachments").contains("good").contains("Title");
     }
 
     @Test
@@ -87,17 +121,23 @@ class WebhookServiceTest {
     // ── send (dispatch) ───────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("send type=TEAMS → calls httpClient (Teams path)")
+    @DisplayName("send type=TEAMS → GOVDE Teams sekli (MessageCard), Slack sekli SIZMAZ")
     void send_typeTeams_usesTeamsFormat() throws Exception {
         service.send("TEAMS", "http://localhost/hook", "Title", "Msg", "CRITICAL");
-        verify(httpClient, atLeastOnce()).send(any(), any());
+
+        String body = sentBody();
+        assertThat(body).contains("MessageCard").contains("themeColor");
+        assertThat(body).doesNotContain("attachments");
     }
 
     @Test
-    @DisplayName("send type=SLACK → calls httpClient (Slack path)")
+    @DisplayName("send type=SLACK → GOVDE Slack sekli (attachments), Teams sekli SIZMAZ")
     void send_typeSlack_usesSlackFormat() throws Exception {
         service.send("SLACK", "http://localhost/slack", "Title", "Msg", "HIGH");
-        verify(httpClient, atLeastOnce()).send(any(), any());
+
+        String body = sentBody();
+        assertThat(body).contains("attachments");
+        assertThat(body).doesNotContain("MessageCard").doesNotContain("themeColor");
     }
 
     @Test
@@ -129,31 +169,31 @@ class WebhookServiceTest {
         ArgumentCaptor<HttpRequest> captor = ArgumentCaptor.forClass(HttpRequest.class);
         service.send("TEAMS", "http://localhost/hook", "T", "M", "CRITICAL");
         verify(httpClient).send(captor.capture(), any());
-        // body publisher is present — we verify color via serialization side-channel through Teams path
-        // (we can't easily read body from HttpRequest.BodyPublisher without consuming it)
-        // Verify the call was made with the correct URL at minimum
         assertThat(captor.getValue().uri().toString()).isEqualTo("http://localhost/hook");
+        // Renk GOVDEDE dogrulanir: eskiden yalniz URI iddia ediliyordu, yani her seviye ayni
+        // rengi dondurse bu test yine yesildi.
+        assertThat(bodyOf(captor.getValue())).contains("FF0000");
     }
 
     @Test
-    @DisplayName("HIGH alert level → FF8C00 (httpClient called)")
+    @DisplayName("HIGH alert level → govdede FF8C00")
     void send_highLevel_orangeColor() throws Exception {
         service.send("TEAMS", "http://localhost/hook", "T", "M", "HIGH");
-        verify(httpClient, atLeastOnce()).send(any(), any());
+        assertThat(sentBody()).contains("FF8C00").doesNotContain("FF0000");
     }
 
     @Test
-    @DisplayName("WARNING alert level → FFC107 (httpClient called)")
+    @DisplayName("WARNING alert level → govdede FFC107")
     void send_warningLevel_yellowColor() throws Exception {
         service.send("TEAMS", "http://localhost/hook", "T", "M", "WARNING");
-        verify(httpClient, atLeastOnce()).send(any(), any());
+        assertThat(sentBody()).contains("FFC107");
     }
 
     @Test
-    @DisplayName("RESOLVED (default) alert level → FFC107 (httpClient called)")
+    @DisplayName("RESOLVED (default) alert level → govdede FFC107")
     void send_resolvedLevel_defaultColor() throws Exception {
         service.send("TEAMS", "http://localhost/hook", "T", "M", "RESOLVED");
-        verify(httpClient, atLeastOnce()).send(any(), any());
+        assertThat(sentBody()).contains("FFC107");
     }
 
     // ── GÖVDE SÖZLEŞMESİ ─────────────────────────────────────────────────────────
