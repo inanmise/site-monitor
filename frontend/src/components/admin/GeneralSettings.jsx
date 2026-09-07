@@ -4,6 +4,7 @@ import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { Spinner } from '../ui/Progress.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
 
 /**
  * Genel Ayarlar — küratörlü, tipli proje config'leri (key/value). Backend kataloğundan
@@ -16,15 +17,26 @@ export default function GeneralSettings() {
   const toast = useToast()
 
   const [items, setItems] = useState(null)   // backend kataloğu
+  const [loadError, setLoadError] = useState(null)
   const [edited, setEdited] = useState({})    // yalnız dokunulan key'ler
   const [saving, setSaving] = useState(false)
 
   useEffect(() => { load() }, [])
 
   async function load() {
-    const res = await api.admin.getGeneralSettings()
-    if (res?.success) { setItems(res.data || []); setEdited({}) }
-    else toast.error(res?.error || t('settings.loadError'))
+    // AG HATASI DA GORUNUR OLMALI: api/client.js request() ag hatasinda {success:false}
+    // DONDURMEZ, throw eder. try/catch olmadan promise reject oluyor ve ekran sonsuza
+    // kadar yukleniyor durumunda kaliyordu (yalnizca konsolda unhandled rejection).
+    try {
+      const res = await api.admin.getGeneralSettings()
+      if (res?.success) { setItems(res.data || []); setEdited({}); setLoadError(null) }
+      else {
+        const msg = res?.error || t('settings.loadError')
+        toast.error(msg); setLoadError(msg)
+      }
+    } catch (e) {
+      setLoadError(e?.message || t('settings.loadError'))
+    }
   }
 
   function set(key, val) { setEdited((e) => ({ ...e, [key]: val })) }
@@ -82,6 +94,16 @@ export default function GeneralSettings() {
   }
 
   if (!items) {
+    // Yukleme BASARISIZ olduysa spinner sonsuza kadar donerdi: load() try/catch tasimadigi
+    // icin ag hatasinda promise reject oluyor, hicbir durum guncellenmiyordu. Artik ayni
+    // yerde hatanin KENDISI gosteriliyor (SystemHealth.jsx:163 loadErrors deseninin esdegeri).
+    if (loadError) {
+      return (
+        <div className="admin-section">
+          <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
+        </div>
+      )
+    }
     return <div className="admin-section"><Spinner size={20} inline decorative /> {t('settings.loading')}</div>
   }
 

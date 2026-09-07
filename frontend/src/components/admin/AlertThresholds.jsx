@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
 
 export default function AlertThresholds() {
   const t = useT()
@@ -9,12 +10,21 @@ export default function AlertThresholds() {
   const [thresholds, setThresholds] = useState([])
   const [editing, setEditing] = useState(null)
   const [saving, setSaving] = useState(false)
+  // Yukleme hatasi GORUNUR olmali: eskiden ne else ne catch vardi; API 403/500 donunce de
+  // ag koparken de liste bos kaliyor ve ekran "esik yok" diyordu. Esikler alarm siddetini
+  // belirledigi icin yonetici bunu "esikler silinmis" diye okuyup elle yeniden giriyordu.
+  const [loadError, setLoadError] = useState(null)
 
   useEffect(() => { load() }, [])
 
   async function load() {
-    const res = await api.admin.getThresholds()
-    if (res?.success) setThresholds(res.data)
+    try {
+      const res = await api.admin.getThresholds()
+      if (res?.success) { setThresholds(res.data); setLoadError(null) }
+      else setLoadError(res?.error || t('settings.loadError'))
+    } catch (e) {
+      setLoadError(e?.message || t('settings.loadError'))
+    }
   }
 
   function startEdit(thr) {
@@ -36,6 +46,9 @@ export default function AlertThresholds() {
     <div className="admin-section">
       <h3>{t('thr.title')}</h3>
       <p className="section-desc">{t('thr.desc')}</p>
+      {loadError && thresholds.length === 0 && (
+        <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
+      )}
       {thresholds.map((thr) => (
         <div key={thr.id} className="threshold-card">
           {editing?.id === thr.id ? (

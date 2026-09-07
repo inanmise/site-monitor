@@ -7,6 +7,7 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import { UsersRound, PenLine } from 'lucide-react'
 import UserEditModal from './UserEditModal.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
 
 // Haftalık e-postalar opt-in: YENİ takım ikisi de kapalı doğar (backend de createTeam'de false yazar).
 const emptyTeam = { name: '', email: '', description: '', active: true, leader_id: '',
@@ -104,6 +105,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   const canToggleWeekly = (rowTeamId) => isAdmin || memberOf.has(Number(rowTeamId))
   const { showConfirm } = useDialog()
   const [teams, setTeams]   = useState([])
+  const [loadError, setLoadError] = useState(null)
   const [users, setUsers]   = useState([])
   const [modal, setModal]   = useState(null)
   const [form, setForm]     = useState(emptyTeam)
@@ -134,8 +136,17 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   useEffect(() => { load(); loadUsers() }, [])
 
   async function load() {
-    const res = await api.admin.getTeams()
-    if (res?.success) setTeams(res.data)
+    // EN TEHLIKELI yalanci bos durum: hata dali hic yoktu, "hic takim yok" ekrani
+    // basarisiz yuklemeden ayirt edilemiyordu. Takimlar tum yetkilendirmenin temeli
+    // (viewTeamIds/manageTeamIds) — yonetici silinmis sanip yeniden olusturursa
+    // uyelikler ve takim kapsamli alarmlar ikiye bolunur.
+    try {
+      const res = await api.admin.getTeams()
+      if (res?.success) { setTeams(res.data); setLoadError(null) }
+      else setLoadError(res?.error || t('settings.loadError'))
+    } catch (e) {
+      setLoadError(e?.message || t('settings.loadError'))
+    }
   }
 
   async function loadUsers() {
@@ -268,6 +279,9 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
         {isAdmin && <button className="btn btn-success" onClick={openAdd}>{t('team.addBtn')}</button>}
       </div>
       {msg && !modal && <div className={`alert-msg${msg.startsWith('✓') ? '' : ' alert-msg--err'}`}>{msg}</div>}
+      {loadError && teams.length === 0 && (
+        <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
+      )}
 
       {/* Filtre çubuğu — ad/e-posta araması */}
       <div className="audit-filters">

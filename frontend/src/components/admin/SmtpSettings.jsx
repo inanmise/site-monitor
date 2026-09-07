@@ -5,12 +5,14 @@ import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import SecretKeyWarning from './SecretKeyWarning.jsx'
 import { Spinner } from '../ui/Progress.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
 
 export default function SmtpSettings() {
   const t = useT()
   const toast = useToast()
 
   const [form, setForm] = useState(null)
+  const [loadError, setLoadError] = useState(null)
   const [pw, setPw] = useState('')
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -23,9 +25,19 @@ export default function SmtpSettings() {
   useEffect(() => { load() }, [])
 
   async function load() {
-    const res = await api.admin.getSmtpSettings()
-    if (res?.success) { setForm({ ...res.data }); setSecretKeySet(res.secret_key_set !== false) }
-    else toast.error(res?.error || t('settings.loadError'))
+    // AG HATASI DA GORUNUR OLMALI: api/client.js request() ag hatasinda {success:false}
+    // DONDURMEZ, throw eder. try/catch olmadan promise reject oluyor ve ekran sonsuza
+    // kadar yukleniyor durumunda kaliyordu (yalnizca konsolda unhandled rejection).
+    try {
+      const res = await api.admin.getSmtpSettings()
+      if (res?.success) { setForm({ ...res.data }); setSecretKeySet(res.secret_key_set !== false); setLoadError(null) }
+      else {
+        const msg = res?.error || t('settings.loadError')
+        toast.error(msg); setLoadError(msg)
+      }
+    } catch (e) {
+      setLoadError(e?.message || t('settings.loadError'))
+    }
   }
 
   function set(key, value) {
@@ -81,6 +93,16 @@ export default function SmtpSettings() {
   }
 
   if (!form) {
+    // Yukleme BASARISIZ olduysa spinner sonsuza kadar donerdi: load() try/catch tasimadigi
+    // icin ag hatasinda promise reject oluyor, hicbir durum guncellenmiyordu. Artik ayni
+    // yerde hatanin KENDISI gosteriliyor (SystemHealth.jsx:163 loadErrors deseninin esdegeri).
+    if (loadError) {
+      return (
+        <div className="admin-section">
+          <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
+        </div>
+      )
+    }
     return <div className="admin-section"><Spinner size={20} inline decorative /> {t('settings.loading')}</div>
   }
 

@@ -12,6 +12,7 @@ import PolicyRow, { fmtBytes, fmtNum } from './retention/PolicyRow.jsx'
 import RetentionReviewModal from './retention/RetentionReviewModal.jsx'
 import RetentionChangeLog from './retention/RetentionChangeLog.jsx'
 import { Spinner, LoadingBlock } from '../ui/Progress.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
 
 /** Veri sınıfı sırası — uyum onayı gerektirenler üstte. */
 const CLASSES = [
@@ -32,6 +33,7 @@ export default function RetentionSettings() {
   const { showConfirm, showPrompt } = useDialog()
 
   const [data, setData] = useState(null)
+  const [loadError, setLoadError] = useState(null)
   const [edited, setEdited] = useState({})            // settingKey → yeni değer (string)
   const [openClasses, setOpenClasses] = useState(() => new Set())   // çoklu açılabilir
   const [openRows, setOpenRows] = useState(() => new Set())
@@ -44,9 +46,19 @@ export default function RetentionSettings() {
   const [changes, setChanges] = useState(null)
 
   const load = useCallback(async (estimate = true) => {
-    const res = await api.admin.getRetentionOverview(estimate)
-    if (res?.success) { setData(res.data); setEdited({}) }
-    else toast.error(res?.error || t('settings.loadError'))
+    // AG HATASI DA GORUNUR OLMALI: api/client.js request() ag hatasinda {success:false}
+    // DONDURMEZ, throw eder. try/catch olmadan promise reject oluyor ve ekran sonsuza
+    // kadar yukleniyor durumunda kaliyordu (yalnizca konsolda unhandled rejection).
+    try {
+      const res = await api.admin.getRetentionOverview(estimate)
+      if (res?.success) { setData(res.data); setEdited({}); setLoadError(null) }
+      else {
+        const msg = res?.error || t('settings.loadError')
+        toast.error(msg); setLoadError(msg)
+      }
+    } catch (e) {
+      setLoadError(e?.message || t('settings.loadError'))
+    }
   }, [toast, t])
 
   useEffect(() => { load(true) }, [load])
@@ -180,6 +192,16 @@ export default function RetentionSettings() {
   }
 
   if (!data) {
+    // Yukleme BASARISIZ olduysa spinner sonsuza kadar donerdi: load() try/catch tasimadigi
+    // icin ag hatasinda promise reject oluyor, hicbir durum guncellenmiyordu. Artik ayni
+    // yerde hatanin KENDISI gosteriliyor (SystemHealth.jsx:163 loadErrors deseninin esdegeri).
+    if (loadError) {
+      return (
+        <div className="admin-section">
+          <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
+        </div>
+      )
+    }
     return <div className="admin-section"><Spinner size={20} inline decorative /> {t('settings.loading')}</div>
   }
 

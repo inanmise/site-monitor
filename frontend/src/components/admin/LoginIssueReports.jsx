@@ -10,6 +10,7 @@ import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import DateTimeField from '../ui/DateTimeField.jsx'
 import { mailPreviewSrcDoc } from '../../utils/mailPreview.js'
 import { Spinner } from '../ui/Progress.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
 
 // Durum → rozet sınıfı (kırmızı YOK — sistem alarmlarına saklı). OPEN/IN_PROGRESS amber, RESOLVED yeşil.
 const STATUS_BADGE = { OPEN: 'badge badge-warn', IN_PROGRESS: 'badge badge-warn', RESOLVED: 'badge badge-ok' }
@@ -63,6 +64,7 @@ export default function LoginIssueReports() {
   const canPurge = canExecute('issues.login-reports.purge')
 
   const [rows, setRows] = useState(null)       // null = yükleniyor
+  const [loadError, setLoadError] = useState(null)
   const [counts, setCounts] = useState({ OPEN: 0, IN_PROGRESS: 0, RESOLVED: 0 })
   const [statusFilter, setStatusFilter] = useState('OPEN')  // '' = tümü
   const [sourceFilter, setSourceFilter] = useState('')      // '' = tümü | LOGIN | CLIENT_ERROR | USER_REPORT
@@ -82,17 +84,31 @@ export default function LoginIssueReports() {
 
   const load = useCallback(async () => {
     if (!allowView) { setRows([]); return }   // izin yoksa 403 fetch + toast tetikleme
-    const res = await api.admin.getLoginIssues({
-      status: statusFilter || undefined,
-      source: sourceFilter || undefined,
-      category: categoryFilter || undefined,
-      q: q.trim() || undefined,
-      since: localDayToUtcIso(since, false),
-      until: localDayToUtcIso(until, true),
-      page, size,
-    })
-    if (res?.success) { setRows(res.data || []); setTotal(res.total || 0); setCounts(res.counts || counts) }
-    else toast.error(res?.error || t('settings.loadError'))
+    // AG HATASI DA GORUNUR OLMALI: api/client.js request() ag hatasinda {success:false}
+    // DONDURMEZ, throw eder. try/catch olmadan promise reject oluyor ve ekran sonsuza
+    // kadar yukleniyor durumunda kaliyordu (yalnizca konsolda unhandled rejection).
+    let res
+    try {
+      res = await api.admin.getLoginIssues({
+        status: statusFilter || undefined,
+        source: sourceFilter || undefined,
+        category: categoryFilter || undefined,
+        q: q.trim() || undefined,
+        since: localDayToUtcIso(since, false),
+        until: localDayToUtcIso(until, true),
+        page, size,
+      })
+    } catch (e) {
+      // rows'a DOKUNMUYORUZ: ilk yuklemede null kalmali ki asagidaki hata guard'i cizsin
+      // (bos diziye cekmek ekrani "kayit yok" tablosuna dusurur -- duzeltilen hatanin ayni).
+      // Tazeleme hatasinda da bayat satirlar korunur, altlarinda bant cikar.
+      setLoadError(e?.message || t('settings.loadError')); return
+    }
+    if (res?.success) { setRows(res.data || []); setTotal(res.total || 0); setCounts(res.counts || counts); setLoadError(null) }
+    else {
+      const msg = res?.error || t('settings.loadError')
+      toast.error(msg); setLoadError(msg)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter, sourceFilter, categoryFilter, q, since, until, page, size, allowView])
 
@@ -163,6 +179,13 @@ export default function LoginIssueReports() {
     return <div className="admin-section"><div className="empty-state">{t('loginIssues.noAccess')}</div></div>
   }
   if (!rows) {
+    if (loadError) {
+      return (
+        <div className="admin-section">
+          <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
+        </div>
+      )
+    }
     return <div className="admin-section"><Spinner size={20} inline decorative /> {t('settings.loading')}</div>
   }
 
@@ -176,6 +199,9 @@ export default function LoginIssueReports() {
     <div className="admin-section">
       <h3>{t('loginIssues.title')}</h3>
       <p className="section-desc">{t('loginIssues.desc')}</p>
+      {loadError && (
+        <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
+      )}
 
       {/* Sayaçlar (son 30 gün) — tıklayınca durum filtresi */}
       <div className="audit-stats-row">
