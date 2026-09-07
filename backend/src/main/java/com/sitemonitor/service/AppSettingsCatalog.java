@@ -83,6 +83,8 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.network.error-rate-threshold", "outage",     Type.DOUBLE),
         new Setting("site.monitor.network.min-errors",           "outage",     Type.INT),
         new Setting("site.monitor.scheduler.stale-minutes",      "scheduler",  Type.INT),
+        // A12: gunluk alan-adi bitis tazelemesi ac/kapa — kodda okunuyordu, katalogda yoktu.
+        new Setting("site.monitor.scheduler.domain-expiry-refresh.enabled", "scheduler", Type.BOOL),
         new Setting("site.monitor.uptime.alert-enabled",         "monitoring", Type.BOOL),
         new Setting("site.monitor.port.alert-enabled",           "monitoring", Type.BOOL),
         // SSRF koruması — giden izleme/tanılama hedefleri (SsrfGuard). Metadata/loopback/link-local her zaman blok.
@@ -201,6 +203,23 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.page.default-crawl-max-pages",      "frequency", Type.INT),
         new Setting("site.monitor.pagespeed.default-interval-seconds", "frequency", Type.INT),
         new Setting("site.monitor.pagespeed.default-timeout-ms",       "frequency", Type.INT),
+        // A12: bu iki tur MonitoringController tarafindan `getInt` ile OKUNUYORDU ama katalogda
+        // YOKTU. AppSettingsService katalog disi anahtari IllegalArgumentException ile reddettigi
+        // icin Genel Ayarlar > Siklik listesinde 8 tur gorunup DNS ile Sentetik hic cikmiyordu:
+        // varsayilanlarini degistirmenin tek yolu application.properties duzenleyip yeniden
+        // baslatmakti. Kod "canli okunuyor" gibi gorunuyordu, degildi.
+        new Setting("site.monitor.dns.default-interval-seconds",      "frequency", Type.INT),
+        new Setting("site.monitor.scripted.default-interval-seconds", "frequency", Type.INT),
+        // A12 — kodda okunan ama katalogda olmayan anahtarlar (canli duzenlenemiyorlardi):
+        // gunluk ikinci kritik-domain kontrolu (SchedulerService.runCriticalDomainChecks),
+        // kara liste (DNSBL) sorgusu ve uptime kurtarma zinciri.
+        new Setting("site.monitor.domain.critical-check-enabled",         "monitoring", Type.BOOL),
+        new Setting("site.monitor.domain.critical-check-threshold-days",  "monitoring", Type.INT),
+        new Setting("site.monitor.domain.dnsbl-lists",                    "monitoring", Type.CSV),
+        new Setting("site.monitor.domain.dnsbl-max-ips",                  "monitoring", Type.INT),
+        new Setting("site.monitor.domain.dnsbl-budget-ms",                "monitoring", Type.INT),
+        new Setting("site.monitor.uptime.recovery-checks",                "monitoring", Type.INT),
+        new Setting("site.monitor.uptime.recovery-interval-ms",           "monitoring", Type.INT),
         // Haftalık erişilebilirlik e-postası (Pazartesi 10:00) aç/kapa — canlı.
         new Setting("site.monitor.weekly-availability.enabled",  "monitoring", Type.BOOL),
         // Aylık sertifika envanteri raporu (ayın son cuması 10:00) — aç/kapa + alıcılar, canlı.
@@ -226,6 +245,8 @@ public final class AppSettingsCatalog {
         // posta hacmi bir karardır, yönetici açar. Tespit ham UA değil CİHAZ ÖZETİ ile
         // yapılır — yoksa her tarayıcı güncellemesi yanlış alarm üretirdi.
         new Setting("site.monitor.security.new-device-email",   "security",   Type.BOOL),
+        // A12: giris sorunu bildirimi, kullanici "sustur" demis olsa bile gonderilsin mi.
+        new Setting("site.monitor.login-issues.force-email",     "security",   Type.BOOL),
         new Setting("site.monitor.trust.ca-bundle-pem",          "security",   Type.TEXT),
         // CA otomatik sabitleme (TOFU) — PKIX hatasında CA sunucudan çekilip host bazında pinlenir,
         // rotasyon/bitişte otomatik yenilenir (CaAutoPinService). Kapsam: HTTP uptime strict + RDAP çıkışı.
