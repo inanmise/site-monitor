@@ -23,6 +23,24 @@ const COMPONENTS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
  * dokuz dosyada birden yakalar.
  */
 
+/**
+ * Form adı → dosya, HARF DUYARSIZ çözülür.
+ *
+ * Aşağıdaki liste elle yazılmış PascalCase adlardan oluşuyor ve dosya yolu daha önce
+ * `path.join(COMPONENTS, `${form}.jsx`)` + `existsSync` ile kuruluyordu. Listeye bir harf
+ * hatası girseydi (ör. `PagespeedMonitorPage`) Windows'ta GÖRÜNMEZDİ — dosya sistemi harf
+ * duyarsız, `existsSync` true döner — ama CI Linux'ta kapı kırılırdı. Yani kapı, geliştiricinin
+ * işletim sistemine göre farklı davranıyordu. `monitorTypeSurfaces.test.jsx` tam bu tuzağa
+ * düşüp aynı şekilde düzeltilmişti; desen buraya da taşındı.
+ */
+const COMPONENT_FILES = fs.readdirSync(COMPONENTS)
+function formFile(form) {
+  const wanted = `${form.toLowerCase()}.jsx`
+  const hit = COMPONENT_FILES.find(f => f.toLowerCase() === wanted)
+  expect(hit, `${form}.jsx bulunamadı — liste güncel mi? (harf duyarsız arandı)`).toBeTruthy()
+  return path.join(COMPONENTS, hit)
+}
+
 /** Seçicinin bağlı olduğu tüm izleme formları. Yeni bir tür eklenirse buraya da eklenir. */
 const MONITOR_FORMS = [
   'PingMonitorPage', 'DnsMonitorPage', 'DomainMonitorPage', 'HttpMonitorPage',
@@ -53,9 +71,7 @@ describe('İzleme formu bağlantı kapısı (Bildirim Grubu)', () => {
   it('dokuz formun HEPSİ dört halkayı da taşır', () => {
     const missing = []
     for (const form of MONITOR_FORMS) {
-      const file = path.join(COMPONENTS, `${form}.jsx`)
-      expect(fs.existsSync(file), `${form}.jsx bulunamadı — liste güncel mi?`).toBe(true)
-      const src = fs.readFileSync(file, 'utf8')
+      const src = fs.readFileSync(formFile(form), 'utf8')
       for (const link of LINKS) {
         if (!link.re.test(src)) missing.push(`${form} → ${link.name}`)
       }
@@ -65,7 +81,7 @@ describe('İzleme formu bağlantı kapısı (Bildirim Grubu)', () => {
 
   it('seçici bileşeni gerçekten import ediliyor (JSX var ama import yoksa ekran çöker)', () => {
     const missing = MONITOR_FORMS.filter(form => {
-      const src = fs.readFileSync(path.join(COMPONENTS, `${form}.jsx`), 'utf8')
+      const src = fs.readFileSync(formFile(form), 'utf8')
       // Doğrudan seçici YA DA onu saran ortak blok — ikisi de meşru; JSX'te ne
       // kullanılıyorsa importu da o olmalı (import yoksa ekran çöker).
       return !/import\s+(NotificationGroupSelect|NotifyChannels)\s+from/.test(src)

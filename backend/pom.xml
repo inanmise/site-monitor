@@ -200,7 +200,14 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <argLine>@{argLine} -Xmx1g -Xss512k -XX:+HeapDumpOnOutOfMemoryError</argLine>
+                    <!-- SAAT DILIMI SABIT: CI runner UTC, gelistirici makinesi Europe/Istanbul.
+                         Sabitlenmeden once yerelde YESIL, CI'da KIRMIZI (ya da tersi) testler
+                         mumkundu ve bu 2026-09-07'de uc ayri zaman bombasi olarak patladi.
+                         UTC secildi ki YEREL kosum CI'i birebir uretsin — hata once burada
+                         gorunsun. Servisler zaten acik ZoneId.of("Europe/Istanbul") kullaniyor,
+                         yani uygulama davranisi bu bayraktan ETKILENMEZ; etkilenen tek sey
+                         testlerin ciplak now() cagrilaridir. -->
+                    <argLine>@{argLine} -Xmx1g -Xss512k -XX:+HeapDumpOnOutOfMemoryError -Duser.timezone=UTC</argLine>
                 </configuration>
             </plugin>
             <!-- Code coverage report. Run via `mvn test`; output in target/site/jacoco/index.html -->

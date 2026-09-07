@@ -29,6 +29,9 @@ import static org.mockito.Mockito.when;
  * {@code target/email-previews/<prefix>-<tur>-<severity>.html} olarak yazar; şablon değişiklikleri
  * gözle (tarayıcıda) doğrulanabilir olsun. SMTP YOK — yalnız HTML üretimi.
  *
+ * <p>DOSYA YAZIMI {@code -Demail.preview.write=true} ile açılır; kapalıyken harness yine koşar
+ * ve her şablonun boş/çökmeden render edildiğini doğrular (duman testi), yalnız diske yazmaz.
+ *
  * Önek {@code -Demail.preview.prefix=once} ile değiştirilebilir (varsayılan "sonra") —
  * /mail-denetim akışında değişiklik ÖNCESİ "once-*", sonrası "sonra-*" çiftleri karşılaştırılır.
  */
@@ -43,6 +46,7 @@ class EmailPreviewHarnessTest {
 
     private EmailNotificationService service;
     private Path outDir;
+    private boolean writeFiles;
     private String prefix;
 
     @BeforeEach
@@ -54,8 +58,15 @@ class EmailPreviewHarnessTest {
         SmtpSettings s = new SmtpSettings();
         s.setEnabled(false);
         when(settingsService.getOrDefaults()).thenReturn(s);
+        // DOSYA YAZIMI ARTIK KAPILI. Harness her `mvn test` kosumunda ~20 HTML dosyasi
+        // uretiyordu: hicbir testin ihtiyac duymadigi bir yan etki ve CI'da bos yere is.
+        // Ama uretimin KENDISI degerli — `write` her sablonun bos/cokmeden render edildigini
+        // dogruluyor, yani bu bir duman testi. O yuzden testi TAMAMEN kapatmak (RetentionDocTest
+        // kalibi) gerileme olurdu: iddialar HER ZAMAN kosar, yalniz dosyaya yazma bayraga baglidir.
+        //   Onizleme uretmek icin:  mvn test -Dtest=EmailPreviewHarnessTest -Demail.preview.write=true
+        writeFiles = Boolean.getBoolean("email.preview.write");
         outDir = Path.of("target", "email-previews");
-        Files.createDirectories(outDir);
+        if (writeFiles) Files.createDirectories(outDir);
         prefix = System.getProperty("email.preview.prefix", "sonra");
     }
 
@@ -104,8 +115,10 @@ class EmailPreviewHarnessTest {
                 "HIGH", "DNS_CHANGED", null, m);
     }
 
+    /** İDDİA her zaman koşar (şablon boş/çökmüş mü); DOSYAYA YAZMA yalnız bayrak açıkken. */
     private void write(String slug, String html) throws Exception {
-        assertThat(html).isNotBlank();
+        assertThat(html).as("şablon boş render etti: %s", slug).isNotBlank();
+        if (!writeFiles) return;
         Files.writeString(outDir.resolve(prefix + "-" + slug + ".html"), html, StandardCharsets.UTF_8);
     }
 
