@@ -19,6 +19,18 @@ import static org.mockito.Mockito.when;
 
 /** RDAP yanıt ayrıştırması (in-process HTTP sunucusu — gerçek ağ yok). */
 class RdapDomainClientTest {
+    /**
+     * Izin verici SsrfGuard — bu testler LOOPBACK'teki yerel bir sunucuya baglaniyor; varsayilan
+     * guard onu bloklar ve testler kod dogruyken kirmizi doner. Blok kararlarinin KENDISI ayri
+     * bir kapida olculuyor: OutboundRedirectSsrfGuardTest.
+     */
+    private static SsrfGuard permissiveGuard() {
+        AppSettingsService s = org.mockito.Mockito.mock(AppSettingsService.class);
+        org.mockito.Mockito.when(s.getBoolean("site.monitor.monitoring.allow-loopback-targets", false)).thenReturn(true);
+        org.mockito.Mockito.when(s.getBoolean("site.monitor.monitoring.allow-internal-targets", true)).thenReturn(true);
+        return new SsrfGuard(s);
+    }
+
 
     private static final String RDAP_JSON = """
         { "objectClassName":"domain","ldhName":"EXAMPLE.COM",
@@ -50,7 +62,7 @@ class RdapDomainClientTest {
         PublicSuffixService psl = new PublicSuffixService();
         psl.load();
         client = new RdapDomainClient(appSettings, psl, new TrustEvaluator(appSettings),
-                org.mockito.Mockito.mock(CaAutoPinService.class));   // @Value proxy alanları null/0 → direct client
+                org.mockito.Mockito.mock(CaAutoPinService.class), permissiveGuard());   // @Value proxy alanları null/0 → direct client
         client.init();
     }
 
@@ -87,7 +99,7 @@ class RdapDomainClientTest {
             PublicSuffixService psl = new PublicSuffixService();
             psl.load();
             RdapDomainClient c = new RdapDomainClient(appSettings, psl, new TrustEvaluator(appSettings),
-                    org.mockito.Mockito.mock(CaAutoPinService.class));
+                    org.mockito.Mockito.mock(CaAutoPinService.class), permissiveGuard());
             org.springframework.test.util.ReflectionTestUtils.setField(c, "proxyHost", "proxy.local");
             org.springframework.test.util.ReflectionTestUtils.setField(c, "proxyPort", 8080);
             org.springframework.test.util.ReflectionTestUtils.setField(c, "proxyUser", "svc-mon");

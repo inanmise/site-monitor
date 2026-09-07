@@ -52,6 +52,7 @@ public class TrWebWhoisClient {
     private final AppSettingsService appSettings;
     private final TrustEvaluator trustEvaluator;
     private final CaAutoPinService caAutoPinService;
+    private final SsrfGuard ssrfGuard;
 
     @Value("${site.monitor.proxy.host:}")     private String proxyHost;
     @Value("${site.monitor.proxy.port:0}")    private int    proxyPort;
@@ -80,8 +81,12 @@ public class TrWebWhoisClient {
             // RdapDomainClient ile aynı görünürlük kuralı (2026-08 prod: proxy'siz sessiz düşüş).
             log.warn(".tr web-whois istemcisi DOĞRUDAN çıkışta — proxy tanımsız (HTTP_PROXY_HOST boş).");
         }
-        this.directClient  = newClient(null, HttpClient.Redirect.NORMAL, false);
-        this.proxiedClient = (proxySelector != null) ? newClient(null, HttpClient.Redirect.NORMAL, true) : directClient;
+        // Redirect.NEVER: NORMAL zinciri kutuphane icinde takip ediyordu ve ara hop'lar
+        // uygulamaya gorunmuyordu — hedefler ({@code isimtescil-whois-url}/{@code trabis-whois-url})
+        // YONETICI TARAFINDAN AYARLANABILIR dis adresler. Hop'lar artik sendFollowingSafely
+        // icinde elle takip edilir ve her biri SsrfGuard'dan gecer.
+        this.directClient  = newClient(null, HttpClient.Redirect.NEVER, false);
+        this.proxiedClient = (proxySelector != null) ? newClient(null, HttpClient.Redirect.NEVER, true) : directClient;
     }
 
     @PreDestroy
@@ -138,7 +143,7 @@ public class TrWebWhoisClient {
         String base = appSettings.getString("site.monitor.domain.isimtescil-whois-url", "https://www.isimtescil.net/whois");
         URI uri = URI.create(base + (base.contains("?") ? "&" : "?") + "domainname=" + enc(domain));
         HttpClient client = sharedClient(hostOf(uri));   // paylaşılan (cookie gerekmez) — per-call client YOK
-        Resp resp = send(client, get(uri), hostOf(uri));
+        Resp resp = sendFollowingSafely(client, uri);
         return resp.statusCode() == 200 ? extractWhois(resp.body()) : null;
     }
 
@@ -166,9 +171,13 @@ public class TrWebWhoisClient {
 
             String html;
             if (resp.statusCode() / 100 == 3) {                       // 302 → sonuç sayfası (aynı çerezle)
-                String loc = resp.headers().firstValue("location").orElse(base + "/whois");
-                URI locUri = URI.create(loc);
-                if (!locUri.isAbsolute()) locUri = URI.create(base).resolve(loc);
+                // Ham URI.create + resolve, sema/host politikasi UYGULAMIYORDU: sonuc sayfasi
+                // adresi sunucunun verdigi Location'dan geliyor, yani hedefin kontrolunde.
+                // SafeRedirect http/https disi semayi ve host'suz hedefi reddeder; send() ise
+                // yeni host'u SsrfGuard'dan gecirir.
+                URI locUri = SafeRedirect.nextHop(URI.create(base + "/search-domain"),
+                        resp.headers().firstValue("location").orElse(base + "/whois"));
+                if (locUri == null) return null;
                 Resp res = send(client, get(locUri), host);
                 html = res.statusCode() == 200 ? res.body() : null;
             } else if (resp.statusCode() == 200) {
@@ -242,7 +251,36 @@ public class TrWebWhoisClient {
      *  eksik olan YALNIZ HTTP yoluydu. */
     private static final int MAX_BODY_BYTES = 1_000_000;
 
+    /** Cozulemeyen host baglantiyi DURDURMAZ (proxy/split-DNS); blok kararlari aynen gecerlidir. */
+    private void guard(String host) {
+        if (host == null || host.isBlank())
+            throw new SsrfGuard.BlockedException("gecersiz .tr web-whois hedefi");
+        try {
+            ssrfGuard.validate(host);
+        } catch (SsrfGuard.UnresolvableHostException ue) {
+            log.debug(".tr web-whois: {} yerelde cozulemedi, baglanti yine denenecek (proxy senaryosu)", host);
+        }
+    }
+
+    /**
+     * Yonlendirmeleri ELLE takip eden gonderim — her hop {@link SsrfGuard}'dan gecer.
+     * isimtescil akisi duz GET'tir ve eskiden {@code Redirect.NORMAL} ile zinciri kutuphaneye
+     * birakiyordu; ara hop'lar dogrulanmiyordu.
+     */
+    private Resp sendFollowingSafely(HttpClient client, URI start) throws Exception {
+        URI current = start;
+        for (int hop = 0; hop <= SafeRedirect.MAX_HOPS; hop++) {
+            Resp resp = send(client, get(current), hostOf(current));
+            if (!SafeRedirect.isRedirect(resp.statusCode())) return resp;
+            URI next = SafeRedirect.nextHop(current, resp.headers().firstValue("location").orElse(null));
+            if (next == null) return resp;   // takip edilemez sema/host -> 3xx oldugu gibi doner
+            current = next;
+        }
+        throw new java.io.IOException("cok fazla yonlendirme (" + SafeRedirect.MAX_HOPS + " hop asildi)");
+    }
+
     private Resp send(HttpClient client, HttpRequest req, String host) throws Exception {
+        guard(req.uri().getHost());   // her istek: ilk hop da, elle takip edilen hop da
         try {
             return capped(client.send(req, HttpResponse.BodyHandlers.ofInputStream()));
         } catch (Exception e) {
