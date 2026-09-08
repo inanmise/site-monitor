@@ -3021,7 +3021,23 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .threshold-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 16px; }
 .threshold-field { display: flex; flex-direction: column; gap: 6px; }
 .threshold-field label { font-weight: 700; font-size: .9em; }
-.threshold-field input { padding: 9px; border: 1px solid var(--border); border-radius: 4px; font-size: 1em; }
+/* input DEĞİL, alanların HEPSİ. Taban kural yalnız `input` seçiyordu; aynı kutunun içindeki
+   `select` ve `textarea` hiçbir stil almıyor, yani TARAYICI VARSAYILANI olarak çiziliyordu —
+   textarea'da monospace yazı tipi, dolgusuz, ince gri kenarlık. Boşluk daha önce fark edilmiş
+   ama ekran ekran yamanmıştı (`.ldap-settings`/`.smtp-settings` kapsayıcılarıyla, bkz. aşağıda);
+   o kapsayıcıların dışındaki her ekran açıkta kalıyordu — Sorun Bildirimleri'ndeki "Çözüm Notu"
+   böyle görüldü. Yama paylaşılan sınıfa taşındı ki sıradaki ekran için tekrar gerekmesin.
+   `font-family: inherit` şart: textarea'nın tarayıcı varsayılanı monospace'tir ve "basic"
+   görüntünün asıl kaynağı odur. Tema token'ları da eklendi (koyu temada beyaz-üstü-beyaz
+   kalmasın). font-size taban değerinde BIRAKILDI: ekran-özel kural .95em veriyor, tabanı ona
+   çekmek bütün formlarda görünür bir küçülme yapardı. */
+.threshold-field input,
+.threshold-field select,
+.threshold-field textarea {
+  padding: 9px; border: 1px solid var(--border); border-radius: 4px; font-size: 1em;
+  background: var(--input-bg); color: var(--input-text);
+  font-family: inherit; box-sizing: border-box;
+}
 .threshold-field .hint { font-size: .8em; color: var(--text-light); }
 .threshold-display { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
 .threshold-levels { display: flex; gap: 10px; flex-wrap: wrap; }

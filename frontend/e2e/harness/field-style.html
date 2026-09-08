@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Form alanı görünümü İZOLE HARNESS — yalnız Playwright içindir, ürüne GİRMEZ.
+
+      Neden gerekti: "Çözüm Notu" alanı tarayıcı varsayılanı olarak çiziliyordu (monospace,
+      dolgusuz, ince gri kenarlık). Sebep, paylaşılan `.threshold-field` kuralının yalnız
+      `input` seçmesiydi; `select`/`textarea` açıkta kalıyordu. Bu sınıf jsdom'da GÖRÜNMEZ —
+      düzen ve kaskad hesaplanmadığı için 1750 vitest testi yeşil kalır.
+    -->
+    <title>Field style harness</title>
+    <style>
+      body { margin: 0; padding: 16px; }
+    </style>
+  </head>
+  <body>
+    <div id="host"></div>
+    <script type="module" src="./field-style-harness.jsx"></script>
+  </body>
+</html>
