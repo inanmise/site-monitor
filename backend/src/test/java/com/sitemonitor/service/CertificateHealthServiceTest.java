@@ -453,6 +453,52 @@ class CertificateHealthServiceTest {
         assertThat(r.evidence()).containsEntry("source", "onDemand");
     }
 
+    /**
+     * KULLANICI BULGUSU: "Şimdi kontrol et" dedikten sonra karışık içerik satırı hâlâ
+     * "Kontrol edilmedi" kalıyordu.
+     *
+     * <p>Kontrol GERÇEKTEN koşuyordu — kanıtta zaman damgası ve {@code onDemand} kaynağı
+     * yazılıydı — ama sonuç belirlenemediğinde (API uçlarında {@code GET /} 401/403/404 döner,
+     * taranacak HTML yoktur) satır "hiç bakılmadı" ile AYNI etiketi alıyor ve önerilen eylem
+     * yine "kontrol edin" oluyordu. Ekran, az önce yapılan şeyi öneren kapalı bir döngüye
+     * giriyordu.
+     *
+     * <p>HSTS satırı bu ayrımı zaten yapıyordu ({@code notChecked} ↔ {@code unverified});
+     * karışık içerik satırı o düzeltmenin dışında kalmıştı.
+     */
+    @Test
+    @DisplayName("BAKILDI ama belirlenemedi: 'notChecked' DEĞİL 'unverified' + gerekçe")
+    void mixedContentUnknownAfterCheck_isUnverifiedWithReason() {
+        LatestCheck lc = healthy();
+        lc.setMixedContentStatus("UNKNOWN");
+        lc.setMixedContentAt("2026-09-08T00:20:43");
+        lc.setMixedContentNote("ana sayfa HTTP 404");
+
+        var r = service.evaluate(lc, inv(), false).rows().stream()
+                .filter(x -> x.key().equals("mixedContent")).findFirst().orElseThrow();
+
+        assertThat(r.status()).isEqualTo(Status.UNKNOWN);
+        assertThat(r.valueKey())
+                .as("bakilmis bir satir 'hic bakilmadi' diye etiketleniyor")
+                .isEqualTo("unverified");
+        // Tekrar "kontrol edin" demek ISE YARAMAZ: sayfa cekilemedigi icin sonuc ayni cikar.
+        assertThat(r.actionKey()).isEqualTo("addPageMonitor");
+        assertThat(r.evidence())
+                .as("UNKNOWN'un sebebi kullaniciya gorunmeli")
+                .containsEntry("note", "ana sayfa HTTP 404");
+    }
+
+    @Test
+    @DisplayName("Sayfa izlemesi VARSA belirlenemeyen sonucta tekrar denemek anlamli")
+    void mixedContentUnknownWithPageMonitor_suggestsRecheck() {
+        LatestCheck lc = healthy();
+        lc.setMixedContentStatus("UNKNOWN");
+        var r = row(lc, "mixedContent");
+
+        assertThat(r.valueKey()).isEqualTo("unverified");
+        assertThat(r.actionKey()).isEqualTo("checkOnDemand");
+    }
+
     @Test
     @DisplayName("Sayfa izlemesi VARSA karışık içerik aksiyonu oraya yönlendirir")
     void mixedContentWithPageMonitor() {

@@ -237,4 +237,49 @@ describe('CertHealthPanel', () => {
     await screen.findByText('Certificate has not expired')
     expect(container.querySelector('.hlth-mark--unknown')).not.toBeNull()
   })
+
+  /**
+   * KULLANICI İSTEĞİ: "11/12 kontrol temiz" özeti EKSİK olanı söylemiyordu; hangi satırın
+   * sorunlu olduğunu bulmak için 12 satır tek tek geziliyordu. Filtre bunu tek tıkla veriyor.
+   *
+   * UNKNOWN da "sorunlu" sayılır: doğrulanamamış bir satır kullanıcının bakması gereken şeydir.
+   * Onu "temiz" kovasına koymak, tam olarak karışık içerik satırının kaybolduğu yerdi.
+   */
+  it('FİLTRE: sorunlu satır sayısı gösterilir ve tıklayınca yalnız onlar kalır', async () => {
+    const { container } = draw()
+    await screen.findByText('Certificate has not expired')
+
+    // OK olmayan iki satır var (UNKNOWN + WARN).
+    const btn = await screen.findByRole('button', { name: /Needs attention \(2\)/i })
+    expect(container.querySelectorAll('.hlth-row-head')).toHaveLength(3)
+
+    fireEvent.click(btn)
+
+    await waitFor(() => expect(container.querySelectorAll('.hlth-row-head')).toHaveLength(2))
+    // Temiz satır elenmeli; kalanlar OK DEĞİL.
+    expect(screen.queryByText('Certificate has not expired')).toBeNull()
+    expect(btn).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('FİLTRE: geri alınca tüm satırlar döner', async () => {
+    const { container } = draw()
+    await screen.findByText('Certificate has not expired')
+
+    fireEvent.click(await screen.findByRole('button', { name: /Needs attention/i }))
+    await waitFor(() => expect(container.querySelectorAll('.hlth-row-head')).toHaveLength(2))
+
+    fireEvent.click(screen.getByRole('button', { name: /Show all/i }))
+    await waitFor(() => expect(container.querySelectorAll('.hlth-row-head')).toHaveLength(3))
+  })
+
+  it('FİLTRE: her satır temizken düğme HİÇ çizilmez (boş filtre sunma)', async () => {
+    api.getCertificateHealth.mockResolvedValue({
+      success: true,
+      data: { ...DATA, rows: [row(), row({ key: 'chain' })] },
+    })
+    draw()
+
+    await screen.findByText('Certificate has not expired')
+    expect(screen.queryByRole('button', { name: /Needs attention|Show all/i })).toBeNull()
+  })
 })

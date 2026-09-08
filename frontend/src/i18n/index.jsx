@@ -203,6 +203,8 @@ export const TR = {
   'hlth.lastCheck': 'Son kontrol',
   'hlth.nextCheck': 'Sonraki kontrol',
   'hlth.summary': '{0}/{1} kontrol temiz',
+  'hlth.onlyIssues': 'Yalnız sorunlular ({0})',
+  'hlth.showAll': 'Tümünü göster',
   'hlth.group.certificate': 'Sertifika',
   'hlth.group.transport': 'Protokol ve şifreleme',
   'hlth.group.application': 'Uygulama katmanı',
@@ -296,6 +298,7 @@ export const TR = {
   'hlth.act.checkOnDemand': 'Kontrol etmek için "Şimdi kontrol et" deyin',
   'hlth.act.checkOnDemandOrAddPageMonitor': 'Kontrol edin ya da bu adrese Sayfa İzleme ekleyin',
   'hlth.act.fixMixed': 'HTTP kaynakları HTTPS\'e taşıyın',
+  'hlth.act.addPageMonitor': 'Bu adrese Sayfa İzleme ekleyin — sayfa doğrudan çekilemiyor',
   'hlth.act.fixMixedSeePageMonitor': 'HTTP kaynakları HTTPS\'e taşıyın — ayrıntı Sayfa İzleme\'de',
 
   // Kanıt alan adları
@@ -5666,6 +5669,8 @@ export const EN = {
   'hlth.lastCheck': 'Last check',
   'hlth.nextCheck': 'Next check',
   'hlth.summary': '{0} of {1} checks clean',
+  'hlth.onlyIssues': 'Needs attention ({0})',
+  'hlth.showAll': 'Show all',
   'hlth.group.certificate': 'Certificate',
   'hlth.group.transport': 'Protocol and encryption',
   'hlth.group.application': 'Application layer',
@@ -5759,6 +5764,7 @@ export const EN = {
   'hlth.act.checkOnDemand': 'Use "Check now" to test this',
   'hlth.act.checkOnDemandOrAddPageMonitor': 'Check it, or add a Page monitor for this address',
   'hlth.act.fixMixed': 'Move the HTTP resources to HTTPS',
+  'hlth.act.addPageMonitor': 'Add a Page monitor for this address — the page cannot be fetched directly',
   'hlth.act.fixMixedSeePageMonitor': 'Move the HTTP resources to HTTPS — details in Page monitoring',
 
   // Evidence field names

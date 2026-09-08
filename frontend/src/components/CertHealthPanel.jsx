@@ -50,6 +50,9 @@ export default function CertHealthPanel({ domain, canRefresh = true }) {
   const [error, setError] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
   const [open, setOpen] = useState(null)
+  // "Yalnız sorunlular": liste 12+ satır ve çoğu temiz; "11/12 temiz" özeti EKSİK olanı
+  // söylemiyordu, kullanıcı hangi satırın sorunlu olduğunu bulmak için hepsini geziyordu.
+  const [onlyIssues, setOnlyIssues] = useState(false)
   // Uçuşan istek sayacı: yanıt döndüğünde "hâlâ bu domain mi" sorusunun cevabı.
   const seqRef = useRef(0)
 
@@ -101,7 +104,13 @@ export default function CertHealthPanel({ domain, canRefresh = true }) {
   if (error && !data) return <AlertBanner tone="danger" title={t('hlth.loadError')}>{error}</AlertBanner>
   if (!data) return <LoadingBlock label={t('modal.loading')} />
 
-  const rows = Array.isArray(data.rows) ? data.rows : []
+  const allRows = Array.isArray(data.rows) ? data.rows : []
+  // "Sorunlu" = temiz OLMAYAN. UNKNOWN da dahildir: doğrulanamamış bir satır, kullanıcının
+  // bakması gereken şeydir — "sorun yok" ile aynı kovaya konmamalı (bu ekranda karışık içerik
+  // satırı tam olarak orada kayboluyordu).
+  const isIssue = (r) => r.status !== 'OK' && r.status !== 'NA'
+  const issueCount = allRows.filter(isIssue).length
+  const rows = onlyIssues ? allRows.filter(isIssue) : allRows
   // Satır sırası SUNUCUDAN gelir; grup başlıkları yalnız görsel bölümlemedir.
   const byGroup = (g) => rows.filter(r => r.group === g)
 
@@ -147,6 +156,19 @@ export default function CertHealthPanel({ domain, canRefresh = true }) {
 
         {/* Özet (K7): doğrulanamayanlar paydaya girmez — "8/9" derken bilinmeyeni hata saymayız. */}
         <span className="hlth-summary">{t('hlth.summary', data.ok_count, data.evaluated_count)}</span>
+
+        {/* Sorunluları TEK tıkla süz. Sayı düğmenin üstünde: kaç satırın ilgi beklediği,
+            filtreyi açmadan da görünür. Sorun yoksa düğme hiç çizilmez — boş bir filtre
+            sunmak "bir şey kaçırdım mı" sorusunu üretir. */}
+        {issueCount > 0 && (
+          <button type="button"
+            className={`btn btn-sm hlth-filter${onlyIssues ? ' btn-primary' : ' btn-secondary'}`}
+            aria-pressed={onlyIssues}
+            onClick={() => setOnlyIssues(v => !v)}>
+            <TriangleAlert size={13} />
+            {onlyIssues ? t('hlth.showAll') : t('hlth.onlyIssues', issueCount)}
+          </button>
+        )}
 
         {canRefresh && (
           <button type="button" className="btn btn-sm btn-secondary hlth-refresh"
