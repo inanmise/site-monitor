@@ -34,13 +34,26 @@ public final class HttpBodies {
     public static String readCapped(HttpResponse<InputStream> response, int maxBytes, String what)
             throws IOException {
         try (InputStream is = response.body()) {
-            // Tavandan BİR fazlasını iste: dönen uzunluk tavanı geçiyorsa gövde kesilmiş demektir.
-            byte[] buf = is.readNBytes(maxBytes + 1);
-            if (buf.length > maxBytes) {
-                throw new IOException(what + " yanıt gövdesi çok büyük (> " + maxBytes
-                        + " bayt) — okuma reddedildi");
-            }
-            return new String(buf, StandardCharsets.UTF_8);
+            return new String(readCapped(is, maxBytes, what), StandardCharsets.UTF_8);
         }
+    }
+
+    /**
+     * Aynı tavan, ham bayt olarak — {@code HttpURLConnection} kullanan ve gövdeyi METİN değil
+     * İKİLİ ayrıştıran çağıranlar için (OCSP yanıtı, DER/PEM CRL).
+     *
+     * <p>Akışı KAPATMAZ: {@code HttpURLConnection} çağıranları bağlantıyı kendi
+     * {@code try-with-resources}/{@code disconnect()} akışlarında yönetiyor.
+     *
+     * @throws IOException gövde tavanı AŞARSA (kısmi içerik döndürülmez) ya da okuma hatasında
+     */
+    public static byte[] readCapped(InputStream body, int maxBytes, String what) throws IOException {
+        // Tavandan BİR fazlasını iste: dönen uzunluk tavanı geçiyorsa gövde kesilmiş demektir.
+        byte[] buf = body.readNBytes(maxBytes + 1);
+        if (buf.length > maxBytes) {
+            throw new IOException(what + " yanıt gövdesi çok büyük (> " + maxBytes
+                    + " bayt) — okuma reddedildi");
+        }
+        return buf;
     }
 }
