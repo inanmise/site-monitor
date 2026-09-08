@@ -760,8 +760,19 @@ public class UserPushService {
         vals.put("deger",  ctxStr(ctx, "value",     slow.getOrDefault("value", "-")));
         vals.put("esik",   ctxStr(ctx, "threshold", slow.getOrDefault("threshold", "-")));
         vals.put("ne", "süre");
-        vals.put("gun", event.getDaysRemaining() == null ? "-" : String.valueOf(event.getDaysRemaining()));
-        vals.put("tarih", ctxStr(ctx, "expiry_date", "-"));
+        // ÖNCE ctx, sonra event — dosyanın geri kalanındaki kural (bkz. metrik/deger/esik).
+        // Eskiden YALNIZ event.getDaysRemaining() okunuyordu: o değer alarm açılırken/tırmanırken
+        // yazılır, e-posta ise gönderim anında latest_check'ten TAZE değeri kullanır. İki kanal
+        // aynı olay için farklı gün söylüyordu — üretimde aynı saniyede push "15 gün", e-posta
+        // "14 gün" dedi (bitiş 22.09 23:59 UTC; floorDiv ile 14 doğru olan). Bir alarm ürününde
+        // iki kanalın farklı sayı söylemesi, hangisine inanılacağını belirsizleştirir.
+        vals.put("gun", ctxStr(ctx, "days_remaining",
+                event.getDaysRemaining() == null ? "-" : String.valueOf(event.getDaysRemaining())));
+        // expiry_date YALNIZ domain/whois bağlamında var; SERTİFİKA bağlamı not_after taşıyor
+        // (latestToCertContext). Şablon yalnız expiry_date aradığı için sertifika süre-bitişi
+        // push'larında tarih HER ZAMAN "-" çıkıyordu — kullanıcının gördüğü "(-)" buydu.
+        vals.put("tarih", ctxStr(ctx, "expiry_date",
+                PushText.istDate(ctxStr(ctx, "not_after", null))));
         // {neden} ile AYNI çekirdek: seviye öneki ve adres tekrarı burada da kırpılır. İkizin
         // atlanması telefona "KRİTİK: x - UYARI: x DNS kaydı değişti değişti." düşürüyordu.
         vals.put("degisen", PushText.capitalize(
