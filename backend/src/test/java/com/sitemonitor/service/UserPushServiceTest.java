@@ -679,4 +679,67 @@ class UserPushServiceTest {
         assertThat(buyuk.length()).isLessThanOrEqualTo(200);
     }
 
+
+    // ── Süre-bitişi metni: gün ve tarih ────────────────────────────────────
+
+    /**
+     * KULLANICI BULGUSU: aynı olay, aynı saniye — push "15 gün", e-posta "14 gün" dedi.
+     *
+     * <p>Kök neden: push {@code {gun}} yer tutucusunu YALNIZ {@code event.getDaysRemaining()}
+     * ile dolduruyordu. O değer alarm açılırken/tırmanırken yazılır; e-posta ise gönderim anında
+     * {@code latest_check}'ten TAZE değeri kullanır. Bir alarm ürününde iki kanalın aynı olay
+     * için farklı sayı söylemesi, operatörün hangisine inanacağını belirsizleştirir.
+     *
+     * <p>Kural artık dosyanın geri kalanıyla aynı: ÖNCE ctx, sonra event (bkz. metrik/deger/esik).
+     */
+    @Test
+    @DisplayName("gun: ctx TAZE degeri kazanir, event'teki bayat deger degil")
+    void expiryDays_prefersFreshCtxOverStaleEvent() {
+        AlertEvent e = event(1L, "HIGH", "EXPIRY");
+        e.setDaysRemaining(15);                       // alarm açılırken yazılmış BAYAT değer
+
+        String text = service.buildMessage(e, "DAILY_REALERT",
+                java.util.Map.of("days_remaining", 14));
+
+        assertThat(text).as("bayat gun sayisi push'a sizdi").contains("14");
+        assertThat(text).doesNotContain("15 gün");
+    }
+
+    @Test
+    @DisplayName("gun: ctx yoksa event degeri yedek kalir (davranis kaybolmaz)")
+    void expiryDays_fallsBackToEventWhenCtxMissing() {
+        AlertEvent e = event(2L, "HIGH", "EXPIRY");
+        e.setDaysRemaining(9);
+
+        assertThat(service.buildMessage(e, "DAILY_REALERT", java.util.Map.of())).contains("9");
+    }
+
+    /**
+     * Sertifika bağlamı {@code not_after} taşır, {@code expiry_date} TAŞIMAZ — o anahtar yalnız
+     * domain/whois tarafında var. Şablon yalnız {@code expiry_date} aradığı için sertifika
+     * süre-bitişi push'larında tarih HER ZAMAN "-" çıkıyordu: "… 14 gün içinde doluyor (-)".
+     */
+    @Test
+    @DisplayName("tarih: sertifika baglaminda not_after'a duser, '-' kalmaz")
+    void expiryDate_fallsBackToNotAfterForCertificates() {
+        AlertEvent e = event(3L, "HIGH", "EXPIRY");
+
+        String text = service.buildMessage(e, "DAILY_REALERT",
+                java.util.Map.of("days_remaining", 14, "not_after", "2026-09-22T23:59:59"));
+
+        assertThat(text).as("sertifika tarihi hala bos").doesNotContain("(-)");
+        assertThat(text).contains("23.09.2026");   // UTC damga → İstanbul takvimi
+    }
+
+    @Test
+    @DisplayName("tarih: domain baglaminda expiry_date ONCELIKLI kalir")
+    void expiryDate_keepsExplicitExpiryDate() {
+        AlertEvent e = event(4L, "HIGH", "DOMAINMON_EXPIRY");
+
+        String text = service.buildMessage(e, "DAILY_REALERT",
+                java.util.Map.of("days_remaining", 30, "expiry_date", "2027-01-01",
+                                 "not_after", "2026-09-22T23:59:59"));
+
+        assertThat(text).contains("2027-01-01");
+    }
 }

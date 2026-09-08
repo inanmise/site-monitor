@@ -181,4 +181,36 @@ describe('UserPushSettings', () => {
     expect(strip.textContent).toContain('4')
     expect(strip.textContent).toContain('1')
   })
+
+  /**
+   * KULLANICI BULGUSU: UYARI seviyesindeki bir alarm push alıcısı bulamıyordu
+   * (SKIPPED_NO_RECIPIENTS) ve bunu düzeltmenin arayüzde yolu yoktu.
+   *
+   * Grubun `minLevel` ayarı KALICI ve davranışı belirliyor
+   * (UserPushRecipientResolver: `level < levelValue(minLevel)` → aday elenir), ama ekranda
+   * yalnız `minLevel === 'HIGH'` olduğunda salt-okunur bir rozet çiziliyordu. Yani ayar
+   * vardı, çalışıyordu, DEĞİŞTİRİLEMİYORDU.
+   */
+  it('grup asgari seviyesi DÜZENLENEBİLİR ve UYARI seçilebilir', async () => {
+    render(<UserPushSettings />)
+    await screen.findByDisplayValue('Authorization')
+
+    // Her grup kartı kendi seviye kontrolünü taşır; UYARI artık bir seçenek.
+    const warnings = screen.getAllByRole('button', { name: /^UYARI$|^WARNING$/ })
+    expect(warnings.length).toBeGreaterThan(0)
+
+    // Seçim basılı duruma geçmeli (aria-pressed) — salt-okunur rozet değil, kontrol.
+    fireEvent.click(warnings[0])
+    await waitFor(() => expect(warnings[0]).toHaveAttribute('aria-pressed', 'true'))
+  })
+
+  it('sessiz saat asgari seviyesinde de UYARI seçeneği var', async () => {
+    render(<UserPushSettings />)
+    await screen.findByDisplayValue('Authorization')
+
+    // Sessiz saat kontrolü ayrı bir alan; UYARI eklenmeden önce yalnız KRİTİK/YÜKSEK vardı.
+    // Erisilebilir ad i18n'den gelir: 'Pencerede en dusuk seviye' / 'Minimum level in window'.
+    const group = screen.getByRole('group', { name: /en düşük seviye|Minimum level in window/i })
+    expect(within(group).getByRole('button', { name: /^UYARI$|^WARNING$/ })).toBeInTheDocument()
+  })
 })

@@ -86,7 +86,14 @@ export function groupPushRows(rows) {
     if (!by.has(key)) by.set(key, [])
     by.get(key).push(p)
   }
-  return [...by.values()]
+  // EN YENİDEN eskiye. Eskiden ekleme sırası korunuyordu ve liste sunucudan artan geldiği için
+  // en yeni teslimat EN ALTTA kalıyordu: operatör "az önce ne gitti" sorusunu listenin sonuna
+  // inerek cevaplıyordu. E-posta bölümü zaten azalan sıradaydı; iki bölüm ters yöndeydi.
+  const stamp = (g) => g.reduce((mx, r) => {
+    const v = r.sent_at || r.created_at || ''
+    return v > mx ? v : mx
+  }, '')
+  return [...by.values()].sort((a, b) => stamp(b).localeCompare(stamp(a)))
 }
 
 /**
@@ -116,6 +123,27 @@ const PUSH_TRIGGER_CLS = {
  * kullaniciya GERCEKTEN giden metni gosterir. Duzen ve siniflar NotifLogCard ile ayni;
  * mail ve webhook ayni modalda iki farkli sekilde davranmasin.
  */
+/**
+ * Teslimat durum kodunu okunur karşılığına çevirir; BİLİNMEYEN kodu ham hâliyle bırakır.
+ *
+ * <p>Neden eşleme tablosu: {@code t(key, arg)} ikinci argümanı yedek DEĞİL, {0} yerine geçen
+ * değerdir; anahtar yoksa {@code useT} ham anahtarı basar. Doğrudan {@code t('...' + status)}
+ * yazmak, arka uca yeni bir durum eklendiği gün ekrana {@code alh.push.status.YENI_KOD}
+ * yazdırırdı. Burada bilinen kümede karşılığı, dışında ham kod gösterilir.
+ *
+ * <p>Ham kod {@code title} olarak korunur: destek ve günlükler o kodla arıyor.
+ */
+const PUSH_STATUS_KEYS = new Set([
+  'SENT', 'FAILED', 'PENDING', 'CIRCUIT_OPEN',
+  'SKIPPED_DISABLED', 'SKIPPED_MONITOR_OFF', 'SKIPPED_NO_CONTACT', 'SKIPPED_NO_ID',
+  'SKIPPED_NO_PRIOR', 'SKIPPED_NO_RECIPIENT', 'SKIPPED_NO_RECIPIENTS', 'SKIPPED_QUIET_HOURS',
+  'SKIPPED_REALERT_OFF', 'SKIPPED_TEAM_OFF', 'SKIPPED_TYPE_OFF', 'SKIPPED_USER_OPT_OUT',
+])
+
+export function statusLabel(t, status) {
+  return PUSH_STATUS_KEYS.has(status) ? t('alh.push.status.' + status) : (status || '—')
+}
+
 function PushDeliveryGroup({ rows }) {
   const t = useT()
   const locale = useDateLocale()
@@ -127,16 +155,32 @@ function PushDeliveryGroup({ rows }) {
   const statusCls = head.status === 'SENT' ? 'ok'
     : (head.status === 'FAILED' || head.status === 'CIRCUIT_OPEN') ? 'danger' : 'muted'
 
+  // Her alıcı KENDİ kutusunda: eskiden yan yana ayırıcısız basılıyordu ve iki kusur üretiyordu —
+  // (1) kişiler birbirine yapışıp ayırt edilemiyordu, (2) "katman kararı" satırları tekrarlanınca
+  // "scope decisionscope decision…" gibi bozuk bir dize gibi görünüyordu (metin doğruydu, ayırıcı
+  // yoktu). Sicil de yanında: aynı ada sahip iki kişiyi ancak sicil ayırır ve operatör push
+  // ayarlarındaki kaydı sicille arar.
   const who = (p) => (p.username === '-'
-    ? <em key={p.id}>{t('userpush.systemRow')}</em>
-    : <UserBadge key={p.id} username={p.username} displayName={p.display_name} size="sm" inline nameOnly />)
+    ? <span key={p.id} className="nl-who nl-who--system"><em>{t('userpush.systemRow')}</em></span>
+    : (
+      <span key={p.id} className="nl-who">
+        <UserBadge username={p.username} displayName={p.display_name} size="sm" inline nameOnly />
+        <span className="nl-who-id">{p.username}</span>
+      </span>
+    ))
 
   return (
     <div className={`nl-card nl-card--${cls}${open ? ' is-open' : ''}`}>
       <div className="nl-card-header" role="button" tabIndex={0} aria-expanded={open}
         onClick={() => setOpen(o => !o)}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o) } }}>
-        <span className={`userpush-badge userpush-badge--${statusCls}`}>{head.status}</span>
+        {/* Ham durum kodu tek başına "bu bozuk mu?" sorusunu üretiyordu: SKIPPED_NO_RECIPIENTS
+            gören operatör bunu arıza sanıyor, oysa çoğu kez şiddet kuralının doğru çalışmasıdır
+            (grup asgari seviyesi YÜKSEK+ iken UYARI alarmı aday bulamaz). Kod korunuyor —
+            günlüklerde ve destekte aranan şey o — ama yanına okunur karşılığı yazılıyor. */}
+        <span className={`userpush-badge userpush-badge--${statusCls}`} title={head.status}>
+          {statusLabel(t, head.status)}
+        </span>
         <div className="nl-recipient">
           {/* BENZERSIZ alici sayilir: ayni alarma iki kez "Tekrar Bildir" basildiginda
               iki satir ayni gruba duser ve rows.length "2 alici" derdi — oysa tek kisiye
@@ -159,7 +203,7 @@ function PushDeliveryGroup({ rows }) {
           {many && (
             <div className="nl-detail-row nl-detail-row--body">
               <span className="nl-detail-label">{t('alh.push.who')}</span>
-              <span className="nl-detail-val">{rows.map(who)}</span>
+              <span className="nl-detail-val nl-who-list">{rows.map(who)}</span>
             </div>
           )}
           {head.http_status != null && (
@@ -295,6 +339,11 @@ function NotifLogCard({ log: l, alertLevel }) {
 
 function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
   const t = useT()
+  // Akordiyon: iki bölüm de KAPALI açılır, tıklanan açılır ve diğeri kapanır.
+  // Gerekçe: modal açılır açılmaz onlarca satır dökülüyordu; operatör önce hangi kanala
+  // bakacağını seçemiyor, aradığı kaydı bulmak için kaydırmak zorunda kalıyordu.
+  const [openSection, setOpenSection] = useState(null)   // null | 'email' | 'push'
+  const toggleSection = (k) => setOpenSection(cur => (cur === k ? null : k))
   const [history, setHistory]       = useState([])
   const [loadingHistory, setLoading] = useState(true)
   const [pushRows, setPushRows] = useState([])
@@ -345,34 +394,50 @@ function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
         )}
 
         <div className="nl-section" style={{ marginTop: notifications.length > 0 ? 20 : 0 }}>
-          <div className="nl-section-title">
+          <div className="nl-section-title nl-section-title--toggle" role="button" tabIndex={0}
+            aria-expanded={openSection === 'email'}
+            onClick={() => toggleSection('email')}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSection('email') } }}>
+            <span className="nl-section-caret">
+              {openSection === 'email' ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            </span>
             {t('alh.notifModal.allHistory')}
             {!loadingHistory && <span className="nl-count">{t('alh.notifModal.records', history.length)}</span>}
           </div>
 
-          {loadingHistory && <div className="nl-empty">{t('alh.loading')}</div>}
+          {openSection === 'email' && (<>
+            {loadingHistory && <div className="nl-empty">{t('alh.loading')}</div>}
 
-          {!loadingHistory && history.length === 0 && (
-            <div className="nl-empty">{t('alh.notifModal.noNotifs')}</div>
-          )}
+            {!loadingHistory && history.length === 0 && (
+              <div className="nl-empty">{t('alh.notifModal.noNotifs')}</div>
+            )}
 
-          {!loadingHistory && history.map((l, i) => (
-            <NotifLogCard key={l.id ?? i} log={l} alertLevel={alertInfo?.alert_level} />
-          ))}
+            {!loadingHistory && history.map((l, i) => (
+              <NotifLogCard key={l.id ?? i} log={l} alertLevel={alertInfo?.alert_level} />
+            ))}
+          </>)}
         </div>
 
         {/* Webhook (push) teslimatları — kanal AYRIMLI: kime, ne zaman, mesaj, sonuç. Çözüm
             teslimatları da burada (tetik etiketi ayırır). Kayıt yoksa kısa notla yine çizilir:
             "hiç gitmedi" bilgisi de bilgidir. */}
         <div className="nl-section" style={{ marginTop: 20 }}>
-          <div className="nl-section-title">
+          <div className="nl-section-title nl-section-title--toggle" role="button" tabIndex={0}
+            aria-expanded={openSection === 'push'}
+            onClick={() => toggleSection('push')}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSection('push') } }}>
+            <span className="nl-section-caret">
+              {openSection === 'push' ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            </span>
             {t('alh.webhookSection')}
             <span className="nl-count">{t('alh.notifModal.records', pushRows.length)}</span>
           </div>
-          {pushRows.length === 0 && <div className="nl-empty">{t('alh.webhookNone')}</div>}
-          {groupPushRows(pushRows).map((g, i) => (
-            <PushDeliveryGroup key={g[0].id ?? i} rows={g} />
-          ))}
+          {openSection === 'push' && (<>
+            {pushRows.length === 0 && <div className="nl-empty">{t('alh.webhookNone')}</div>}
+            {groupPushRows(pushRows).map((g, i) => (
+              <PushDeliveryGroup key={g[0].id ?? i} rows={g} />
+            ))}
+          </>)}
         </div>
 
         <div className="modal-actions">

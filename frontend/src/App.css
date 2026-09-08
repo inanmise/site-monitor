@@ -4020,6 +4020,13 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 
 .nl-section { margin-bottom: 4px; }
+/* Katlanabilir bölüm başlığı: iki kanal da KAPALI açılır, tıklanan açılır. Başlık artık bir
+   düğme gibi davrandığı için tıklanabilir olduğunu göstermeli (imleç + hover). */
+.nl-section-title--toggle { cursor: pointer; user-select: none; border-radius: 6px;
+  padding: 4px 6px; margin-left: -6px; transition: background .15s; }
+.nl-section-title--toggle:hover { background: var(--bg-hover); }
+.nl-section-title--toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.nl-section-caret { display: inline-flex; align-items: center; margin-right: 6px; color: var(--text-muted); }
 .nl-section-title {
   display: flex;
   align-items: center;
@@ -4181,6 +4188,17 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   white-space: pre-wrap;
 }
 .nl-detail-row--body { align-items: flex-start; }
+/* Alıcı listesi — her kişi KENDİ kutusunda. Eskiden yan yana ayırıcısız basılıyordu:
+   kişiler birbirine yapışıyor, tekrarlanan "katman kararı" satırları da bozuk tek bir dize
+   gibi görünüyordu. Sarma açık: 5+ alıcıda satır taşmasın. */
+.nl-who-list { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+.nl-who { display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 8px 2px 2px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg-card); }
+.nl-who--system { padding: 2px 10px; color: var(--text-muted); font-style: italic; }
+/* Sicil: adı bastırmayan, ama aynı adlı iki kişiyi ayıran ikincil kimlik. */
+.nl-who-id { font-size: .78em; font-weight: 700; color: var(--text-muted);
+  letter-spacing: .3px; white-space: nowrap; }
 .nl-message-iframe {
   flex: 1; border: 1px solid #e2e8f0; border-radius: 8px;
   background: #fff; min-height: 420px; width: 100%;
@@ -8196,6 +8214,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .up-group-desc { font-size: .82em; color: var(--text-muted); margin: 8px 0 6px; min-height: 2.4em; }
 .up-group-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
 .up-group-patterns { margin-top: 2px; }
+/* Grup asgari seviyesi — salt-okunur rozetin yerini alan DUZENLENEBILIR kontrol.
+   Kart dar oldugu icin etiket ustte, kontrol altta; ipucu diger alan ipuclariyla ayni dilde. */
+.up-group-level { display: flex; flex-direction: column; gap: 5px; margin: 2px 0 8px; }
+.up-group-level-label { font-size: .78em; font-weight: 700; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .5px; }
+.up-group-level .hint { font-size: .78em; color: var(--text-light); }
 
 /* Rozetler */
 .up-badge { font-size: .7em; font-weight: 700; padding: 2px 8px; border-radius: 10px; letter-spacing: .02em; }

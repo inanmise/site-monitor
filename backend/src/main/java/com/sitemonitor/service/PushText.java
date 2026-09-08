@@ -29,6 +29,8 @@ public final class PushText {
 
     private static final ZoneId IST = ZoneId.of("Europe/Istanbul");
     private static final DateTimeFormatter HHMM = DateTimeFormatter.ofPattern("HH:mm");
+    /** Bitiş TARİHİ için — {@link #istClock} saat verir, süre-bitişi metni gün ister. */
+    private static final DateTimeFormatter GUN_AY_YIL = DateTimeFormatter.ofPattern("dd.MM.yyyy");
     // ── 1) Kanalın taşıyabildiği karakter kümesi ────────────────────────────
 
     /**
@@ -137,6 +139,18 @@ public final class PushText {
     public static String istClock(String storedUtc) {
         Instant i = parseStoredUtc(storedUtc);
         return i == null ? "-" : HHMM.format(i.atZone(IST));
+    }
+
+    /**
+     * UTC damga → İstanbul takvimiyle {@code dd.MM.yyyy}; ayrıştırılamazsa {@code "-"}.
+     *
+     * <p>{@link #istClock} ile AYNI ayrıştırmayı kullanır (ikinci bir parser yazmak, iki
+     * damga biçiminden birinin sessizce desteklenmemesi demek olurdu). Süre-bitişi push
+     * metni saat değil TARİH istiyor: "… 14 gün içinde doluyor (22.09.2026)".
+     */
+    public static String istDate(String storedUtc) {
+        Instant i = parseStoredUtc(storedUtc);
+        return i == null ? "-" : GUN_AY_YIL.format(i.atZone(IST));
     }
 
     /** Şu anın İstanbul saatiyle {@code HH:mm} karşılığı. */

@@ -429,12 +429,28 @@ export default function UserPushSettings() {
                   </div>
                   <p className="up-group-desc">{t(`userpush.groupDesc.${key}`)}</p>
                   <div className="up-group-badges">
-                    {g.minLevel === 'HIGH' && (
-                      <span className="up-badge up-badge--warn">{t('userpush.groupHighOnly')}</span>
-                    )}
                     <span className="up-badge up-badge--muted">
                       {g.source === 'title' ? t('userpush.sourceTitle') : t('userpush.groupOrgRole')}
                     </span>
+                  </div>
+                  {/* Asgari seviye ARTIK DUZENLENEBILIR. Eskiden yalniz `minLevel === 'HIGH'`
+                      oldugunda salt-okunur bir rozet ciziliyordu: ayar kaliciydi ve davranisi
+                      belirliyordu (UserPushRecipientResolver:61 siddet kurali) ama arayuzden
+                      DEGISTIRILEMIYORDU. Uretimde UYARI seviyesindeki bir sertifika alarmi bu
+                      yuzden hic push alici bulamiyor, ekran da nedenini soylemiyordu.
+                      Merdiven backend ile ayni: KRITIK > YUKSEK > digerleri (UYARI). */}
+                  <div className="up-group-level">
+                    <span className="up-group-level-label">{t('userpush.groupMinLevel')}</span>
+                    <SegmentedControl
+                      value={g.minLevel || 'WARNING'}
+                      ariaLabel={`${t(`userpush.group.${key}`)} — ${t('userpush.groupMinLevel')}`}
+                      onChange={(v) => setRoleGroups({ ...groupsSafe, [key]: { ...g, minLevel: v } })}
+                      options={[
+                        { value: 'WARNING',  label: t('userpush.levelWarning') },
+                        { value: 'HIGH',     label: t('userpush.levelHigh') },
+                        { value: 'CRITICAL', label: t('userpush.levelCritical') },
+                      ]} />
+                    <span className="hint">{t('userpush.groupMinLevelHint')}</span>
                   </div>
                   {g.source === 'title' && (
                     <div className="up-group-patterns">
@@ -497,7 +513,17 @@ export default function UserPushSettings() {
               <SegmentedControl value={val('quiet-min-level', 'CRITICAL')}
                 ariaLabel={t('userpush.quietMinLevel')}
                 onChange={(v) => setVal('quiet-min-level', v)}
-                options={[{ value: 'CRITICAL', label: t('userpush.levelCritical') }, { value: 'HIGH', label: t('userpush.levelHigh') }]} />
+                options={[
+                  { value: 'CRITICAL', label: t('userpush.levelCritical') },
+                  { value: 'HIGH',     label: t('userpush.levelHigh') },
+                  { value: 'WARNING',  label: t('userpush.levelWarning') },
+                ]} />
+              {/* UYARI en alt basamak (levelValue: KRITIK 3 > YUKSEK 2 > digerleri 1), yani
+                  secilirse sessiz saatte hicbir sey bastirilmaz — bu bilincli bir tercih
+                  olabilir ama surpriz olmamali, ipucu bunu soyluyor. */}
+              {val('quiet-min-level', 'CRITICAL') === 'WARNING' && (
+                <span className="hint">{t('userpush.quietMinLevelWarnHint')}</span>
+              )}
             </div>
           </div>
           <div className="up-master-row" style={{ marginTop: 12 }}>
