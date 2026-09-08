@@ -421,10 +421,23 @@ public class CertificateHealthService {
                 "checkOnDemand", List.of(), ev);
     }
 
+    /**
+     * Karışık içerik satırı — HSTS ile AYNI ayrımı yapar: "hiç bakılmadı" ile "bakıldı ama
+     * belirlenemedi" farklı şeylerdir.
+     *
+     * <p><b>Neden değişti.</b> Eskiden her iki durum da {@code notChecked} ("Kontrol edilmedi")
+     * etiketiyle çıkıyor ve önerilen eylem yine "kontrol edin" oluyordu. Kullanıcı "Şimdi kontrol
+     * et"e basınca kontrol GERÇEKTEN koşuyor (zaman damgası ve kaynak kaydediliyor) ama satır
+     * hiç değişmiyordu — ekran, az önce yapılan şeyi öneren kapalı bir döngüye giriyordu.
+     * En sık sebebi API uçları: {@code GET /} 401/403/404 dönünce taranacak HTML yoktur.
+     * Artık o durum "Doğrulanamadı" olarak çıkar, gerekçesi kanıtta görünür ve "Sayfa İzleme
+     * ekleyin" önerisi anlam kazanır.
+     */
     private HealthRow mixedContentRow(LatestCheck lc, boolean hasPageMonitor) {
         String status = lc.getMixedContentStatus();
         Map<String, Object> ev = ev("raw", status, "checked_at", lc.getMixedContentAt(),
-                "source", hasPageMonitor ? "pageMonitor" : "onDemand");
+                "source", hasPageMonitor ? "pageMonitor" : "onDemand",
+                "note", lc.getMixedContentNote());
 
         if ("CLEAN".equalsIgnoreCase(status)) {
             return new HealthRow("mixedContent", GROUP_APPLICATION, Status.OK, "noMixedContent",
@@ -434,13 +447,16 @@ public class CertificateHealthService {
             return new HealthRow("mixedContent", GROUP_APPLICATION, Status.FAIL, "mixedFound",
                     List.of(), hasPageMonitor ? "fixMixedSeePageMonitor" : "fixMixed", List.of(), ev);
         }
-        if (!hasPageMonitor) {
-            // Sayfa izlemesi yoksa bu satır otomatik dolamaz; kullanıcıya iki yol sunulur.
+        if (status == null || status.isBlank()) {
+            // HİÇ bakılmamış: kullanıcıya ne yapabileceği söylenir.
             return new HealthRow("mixedContent", GROUP_APPLICATION, Status.UNKNOWN, "notChecked",
-                    List.of(), "checkOnDemandOrAddPageMonitor", List.of(), ev);
+                    List.of(), hasPageMonitor ? "checkOnDemand" : "checkOnDemandOrAddPageMonitor",
+                    List.of(), ev);
         }
-        return new HealthRow("mixedContent", GROUP_APPLICATION, Status.UNKNOWN, "notChecked",
-                List.of(), "checkOnDemand", List.of(), ev);
+        // Bakıldı ama belirlenemedi (UNKNOWN): tekrar "kontrol edin" demek işe yaramaz —
+        // sayfa çekilemediği için sonuç yine aynı olur. Kalıcı çözüm Sayfa İzleme'dir.
+        return new HealthRow("mixedContent", GROUP_APPLICATION, Status.UNKNOWN, "unverified",
+                List.of(), hasPageMonitor ? "checkOnDemand" : "addPageMonitor", List.of(), ev);
     }
 
     // ── Yardımcılar ─────────────────────────────────────────────────────────

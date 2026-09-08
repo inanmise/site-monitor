@@ -520,6 +520,7 @@ public class SchedulerService {
         patch("ALTER TABLE latest_checks ADD COLUMN hsts_status TEXT");
         patch("ALTER TABLE latest_checks ADD COLUMN hsts_at TEXT");
         patch("ALTER TABLE latest_checks ADD COLUMN hsts_note TEXT");
+        patch("ALTER TABLE latest_checks ADD COLUMN mixed_content_note TEXT");
         // D1: tablo adı yanlıştı (page_speed_checks — fazladan alt çizgi); patch() istisnayı yuttuğu
         // için 6 satır SESSİZ no-op idi. Entity tablosu pagespeed_checks; ddl-auto maskeliyordu
         // ama güvenlik ağı kırıktı. PatchTableNamesTest tekrarını engelliyor.

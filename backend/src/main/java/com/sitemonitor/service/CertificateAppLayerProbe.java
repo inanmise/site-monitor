@@ -66,8 +66,8 @@ public class CertificateAppLayerProbe {
      */
     public void refresh(String domain, int port, boolean forceProxy) {
         String now = ISO.format(Instant.now());
-        HstsOutcome hsts = safeHsts(domain, port, forceProxy);
-        String mixed = safe(() -> checkMixedContent(domain, port), "karışık içerik");
+        ProbeOutcome hsts = safeHsts(domain, port, forceProxy);
+        ProbeOutcome mixed = safeMixed(domain, port);
 
         try {
             LatestCheck lc = latestCheckRepo.findById(domain).orElse(null);
@@ -77,8 +77,12 @@ public class CertificateAppLayerProbe {
             // UNKNOWN'un SEBEBİ saklanır: sağlık satırında "Doğrulanamadı" yazıp nedenini
             // söylememek, kullanıcıyı tam olarak buraya bakmaya zorlayan şeydi.
             lc.setHstsNote(hsts.note());
-            lc.setMixedContentStatus(mixed);
+            lc.setMixedContentStatus(mixed.status());
             lc.setMixedContentAt(now);
+            // HSTS ile AYNI sözleşme: UNKNOWN'un sebebi saklanır. Sebep yazılmazsa satır
+            // "Kontrol edilmedi" görünür ve kullanıcı az önce yaptığı şeyi tekrar denemeye
+            // yönlendirilir.
+            lc.setMixedContentNote(mixed.note());
             latestCheckRepo.save(lc);
         } catch (Exception e) {
             log.warn("Uygulama katmanı sonuçları yazılamadı ({}): {}", domain, e.toString());
@@ -101,18 +105,18 @@ public class CertificateAppLayerProbe {
      * bu servis tekil (singleton) ve iki kullanıcı farklı domainler için aynı anda kontrol
      * tetikleyebilir — paylaşılan alan, birinin gerekçesini diğerinin satırına yazardı.
      */
-    private record HstsOutcome(String status, String note) {}
+    private record ProbeOutcome(String status, String note) {}
 
-    private HstsOutcome probeHsts(String domain, int port, boolean forceProxy) {
+    private ProbeOutcome probeHsts(String domain, int port, boolean forceProxy) {
         // forceProxy YUKARIDAN iner: izlemenin "vekilsiz" tercihi burada yeniden türetilirse
         // sertifika kontrolüyle ayrışır ve aynı domain için iki farklı cevap çıkar.
         Map<String, Object> r = hstsService.diagnose(domain, port, forceProxy);
         String verdict = String.valueOf(r.get("verdict"));
-        if ("ENFORCED".equals(verdict)) return new HstsOutcome(HSTS_ENABLED, null);
+        if ("ENFORCED".equals(verdict)) return new ProbeOutcome(HSTS_ENABLED, null);
         if ("ABSENT".equals(verdict) || "NOT_ENFORCED".equals(verdict)) {
-            return new HstsOutcome(HSTS_MISSING, null);
+            return new ProbeOutcome(HSTS_MISSING, null);
         }
-        return new HstsOutcome(UNKNOWN, note(verdict, r));   // CONNECT_FAILED ve beklenmeyenler
+        return new ProbeOutcome(UNKNOWN, note(verdict, r));   // CONNECT_FAILED ve beklenmeyenler
     }
 
     /** UNKNOWN'un okunur gerekçesi — sağlık satırının kanıtında gösterilir. */
@@ -124,13 +128,24 @@ public class CertificateAppLayerProbe {
     }
 
     /** {@link #safe} ile aynı best-effort sözleşmesi; gerekçeyi de taşır. */
-    private HstsOutcome safeHsts(String domain, int port, boolean forceProxy) {
+    private ProbeOutcome safeHsts(String domain, int port, boolean forceProxy) {
         try {
-            HstsOutcome o = probeHsts(domain, port, forceProxy);
-            return o == null ? new HstsOutcome(UNKNOWN, null) : o;
+            ProbeOutcome o = probeHsts(domain, port, forceProxy);
+            return o == null ? new ProbeOutcome(UNKNOWN, null) : o;
         } catch (Exception e) {
             log.debug("HSTS kontrolü başarısız: {}", e.toString());
-            return new HstsOutcome(UNKNOWN, e.toString());
+            return new ProbeOutcome(UNKNOWN, e.toString());
+        }
+    }
+
+    /** {@link #safeHsts} ile aynı best-effort sözleşmesi; gerekçeyi de taşır. */
+    private ProbeOutcome safeMixed(String domain, int port) {
+        try {
+            ProbeOutcome o = probeMixedContent(domain, port);
+            return o == null ? new ProbeOutcome(UNKNOWN, null) : o;
+        } catch (Exception e) {
+            log.debug("Karışık içerik kontrolü başarısız: {}", e.toString());
+            return new ProbeOutcome(UNKNOWN, e.toString());
         }
     }
 
@@ -141,13 +156,34 @@ public class CertificateAppLayerProbe {
      * içinde zaten yapılıyor.
      */
     public String checkMixedContent(String domain, int port) {
+        return probeMixedContent(domain, port).status();
+    }
+
+    /**
+     * Karışık içerik sonucu + (yalnız UNKNOWN'da) GEREKÇE — HSTS ile aynı sözleşme.
+     *
+     * <p><b>Neden gerekçe eklendi.</b> Bu satır yalnız {@code UNKNOWN} dönebiliyor ve sebebini
+     * hiçbir yere yazmıyordu. Kullanıcı "Şimdi kontrol et"e basıyor, kontrol GERÇEKTEN koşuyor
+     * (zaman damgası ve kaynak kaydediliyor), ama satır "Kontrol edilmedi" olarak kalıyor ve
+     * önerilen eylem yine "kontrol edin" oluyordu — yani ekran, az önce yapılan şeyi öneren
+     * kapalı bir döngüye giriyordu. En sık sebebi API uçları: {@code GET /} 401/403/404 dönünce
+     * taranacak HTML yoktur ({@code mainReachable == false}), bu bir hata değil ama kullanıcının
+     * bunu BİLMESİ gerekir — "Sayfa İzleme ekleyin" önerisi ancak o zaman anlam kazanır.
+     */
+    private ProbeOutcome probeMixedContent(String domain, int port) {
         String fromMonitor = fromPageMonitor(domain);
-        if (fromMonitor != null) return fromMonitor;
+        if (fromMonitor != null) return new ProbeOutcome(fromMonitor, null);
 
         String url = "https://" + domain + (port == 443 ? "" : ":" + port) + "/";
         var result = pageChecker.test(url, PAGE_TIMEOUT_MS);
-        if (result == null || !result.mainReachable()) return UNKNOWN;
-        return result.mixedContentCount() > 0 ? MIXED_FOUND : MIXED_CLEAN;
+        if (result == null) return new ProbeOutcome(UNKNOWN, "sayfa kontrolü sonuç döndürmedi");
+        if (!result.mainReachable()) {
+            String why = result.error() != null ? result.error()
+                    : (result.httpStatus() != null ? "ana sayfa HTTP " + result.httpStatus()
+                                                   : "ana sayfa alınamadı");
+            return new ProbeOutcome(UNKNOWN, why);
+        }
+        return new ProbeOutcome(result.mixedContentCount() > 0 ? MIXED_FOUND : MIXED_CLEAN, null);
     }
 
     /** Aktif sayfa izlemelerinin EN YENİ kontrolünden karışık içerik durumu; yoksa null. */

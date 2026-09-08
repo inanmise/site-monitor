@@ -88,6 +88,13 @@ public class LatestCheck {
     private String mixedContentStatus;
     private String mixedContentAt;
 
+    /** UNKNOWN'un gerekçesi — hstsNote ile aynı sözleşme. Bu alan EKSİKTİ: karışık içerik
+     *  kontrolü koşup sonuç belirlenemediğinde ("ana sayfa HTTP 404" gibi) arayüz hem sebebi
+     *  gösteremiyor hem de satırı "Kontrol edilmedi" diye etiketliyordu — kullanıcı "Şimdi
+     *  kontrol et"e basıyor, kontrol GERÇEKTEN koşuyor, ekran değişmiyordu.
+     *  Nullable: dolu tabloya NOT NULL kolon eklemek sessizce düşer. */
+    private String mixedContentNote;
+
     @Column(length = 20)
     private String hstsStatus;
     private String hstsAt;
