@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      "Kişi Ekle" modalı İZOLE HARNESS — yalnız Playwright içindir, ürüne GİRMEZ.
+
+      Neden ayrı sayfa: uygulamanın girişi Active Directory'ye gidiyor, bu yüzden gerçek
+      tarayıcı testinde tüm uygulamayı açmak mümkün değil (editor.html ile aynı gerekçe).
+
+      Neden gerekti: kullanıcı, modalın sağ sütununun (Takım / Asgari Alarm Seviyesi /
+      Webhook Türü) kutunun DIŞINA taştığını bildirdi. jsdom düzen yapmadığı için 1747
+      vitest testi bunu göremez; ölçüm ancak gerçek bir tarayıcıda yapılabilir.
+    -->
+    <title>Contact modal harness</title>
+    <style>
+      html, body { margin: 0; padding: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="host"></div>
+    <script type="module" src="./contact-modal-harness.jsx"></script>
+  </body>
+</html>

@@ -2510,8 +2510,17 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .ptr-row b { font-weight: 700; }
 .ptr-err { color: #b91c1c; }
 .ptr-note { margin-top: 6px; font-size: .92em; opacity: .85; }
-.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: end; }
-.form-grid label { display: flex; flex-direction: column; gap: 5px; font-size: .88em; font-weight: 600; }
+/* minmax(0, 1fr) — DÜZ `1fr` DEĞİL. `1fr` aslında `minmax(auto, 1fr)`, yani sütunun alt sınırı
+   içeriğinin min-content genişliğidir. Uzun bir değer (ör. "Ad Soyad (Uzun Bölüm Adı)
+   (uzun.eposta@example.com)") ilk sütunun tabanını yukarı iter; ölçülen hâli 539px + 139px +
+   12px boşluk = 690px iken kullanılabilir alan 584px'ti, yani SAĞ SÜTUN kutunun 106px dışına
+   taşıyordu (Kişi Ekle modalında Takım / Asgari Alarm Seviyesi / Webhook Türü ekranın dışına
+   kayıyordu). minmax(0, …) tabanı sıfıra çeker: sütunlar gerçekten eşit bölünür ve daralabilir.
+   `min-width: 0` de aynı nedenle gerekli — grid/flex ögeleri varsayılan olarak min-content'in
+   altına inmeyi reddeder. İçerideki alanlar zaten kısalma davranışına sahip (.ss-label ellipsis).
+   Ölçüm jsdom'da GÖRÜNMEZ; kapı e2e/contact-modal.spec.js'te. */
+.form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: end; }
+.form-grid label { display: flex; flex-direction: column; gap: 5px; font-size: .88em; font-weight: 600; min-width: 0; }
 /* Form alanı = `.input` ile AYNI görünüm — tek standart, iki tanım değil.
    İki eksik vardı ve ikisi de "stilsiz" görüntünün sebebiydi:
    1) `textarea` bu seçicinin DIŞINDAYDI → tarayıcı varsayılanı: monospace yazı tipi, dolgu yok,
@@ -4933,7 +4942,10 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .ss-option-del { flex-shrink: 0; color: var(--text-muted, #94a3b8); font-size: 1.15em; line-height: 1; padding: 0 2px; border-radius: 4px; }
 .ss-option-del:hover { color: var(--danger, #dc2626); background: rgba(220,38,38,.1); }
 
-.field-hint { display: block; font-size: .82em; margin-top: 5px; }
+/* İpucu metni alanın altında; içinde bölünme fırsatı olmayan uzun bir jeton bulunabilir
+   (e-posta adresi). break-word yalnız GEREKTİĞİNDE böler — normal sarma davranışı korunur —
+   ve sütunu şişirmesini engeller. */
+.field-hint { display: block; font-size: .82em; margin-top: 5px; overflow-wrap: break-word; }
 .field-hint--warn { color: var(--warning, #f59e0b); }
 /* Alan etiketinin yanindaki birim eki (ms/KB) — etiketi okurken birimi aramak zorunda
    kalmayin diye. Etiketten daha soluk ve daha kucuk, boylece etiketle yarismaz. */
