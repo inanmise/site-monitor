@@ -95,6 +95,9 @@ class CertificateHealthServiceTest {
     @DisplayName("Sağlıklı sertifikada her satır temiz ve hiçbirinde aksiyon yok")
     void healthyCertificateIsAllClear() {
         var result = service.evaluate(healthy(), inv(), true);
+        // BOSLUK KAPISI: bos listede allMatch TRUE doner ve okCount==evaluatedCount==0 da
+        // saglanir, yani "hic satir uretilmedi" hatasi bu testin tamamindan sizabilirdi.
+        assertThat(result.rows()).isNotEmpty();
         assertThat(result.rows()).allMatch(r -> r.status() == Status.OK);
         assertThat(result.rows()).allMatch(r -> r.actionKey().equals("none"));
         assertThat(result.allClear()).isTrue();
