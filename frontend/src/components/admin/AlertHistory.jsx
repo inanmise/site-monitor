@@ -676,7 +676,10 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
   const { showConfirm, showNoteConfirm } = useDialog()
   const toast = useToast()
   const [alerts,       setAlerts]       = useState([])
-  const [tab,          setTab]          = useState(() => (urlSync && readUrlParam('tab', null) === 'closed' ? 'closed' : 'open'))
+  // Alt sekme (açık/kapalı) URL anahtarı `view`: eskiden `tab` idi ve uygulamanın SEKME anahtarıyla
+  // çakışıyordu — açık görünüm `?tab=alerthistory`'yi siliyor, kapalı görünüm `tab=closed`'a çeviriyordu
+  // (App.VALID_TABS dışı). Sonuç: derin link/yenileme/kopyalanan bağlantı dashboard'a düşüyordu.
+  const [tab,          setTab]          = useState(() => (urlSync && readUrlParam('view', null) === 'closed' ? 'closed' : 'open'))
   const [page,         setPage]         = useState(() => (urlSync ? readUrlInt('page', 1) - 1 : 0))
   const [pageSize,     setPageSize]     = useState(() => (urlSync && readUrlInt('ps', null)) || readPageSize('alert-history'))
   const [total,        setTotal]        = useState(0)
@@ -1040,7 +1043,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
   // param üretmez (temiz URL). Bağlantıyı alan kişi AYNI listeyi açar — eskiden yalnız sayfa
   // numarası taşınıyordu, filtreler kayboluyordu.
   useUrlQuerySync({
-    tab: tab !== 'open' ? tab : null,
+    view: tab !== 'open' ? tab : null,   // `tab` DEĞİL — o anahtar uygulamanın sekmesi (bkz. state başlatıcısı)
     type: typeFilter || null,
     q: searchTerm.trim() || null,
     level: levelFilter || null,
