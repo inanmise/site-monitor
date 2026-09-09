@@ -68,8 +68,11 @@ public class RdapDomainExpiryService {
     private HttpClient http;
 
     // Kurumsal MITM-proxy'nin yeniden imzaladığı RDAP sertifikası → cacerts + admin kurumsal CA paketi +
-    // otomatik pinlenmiş CA (CaAutoPinService; RdapDomainClient ile aynı hedef hostlar — iana/rdap.org —
-    // olduğundan pinler oradan gelir, burada ayrıca pin tetikleyici gerekmez). @PostConstruct: bean hazır olur.
+    // otomatik pinlenmiş CA (CaAutoPinService). @PostConstruct: bean hazır olur.
+    //
+    // DÜZELTİLDİ: burada eskiden "RdapDomainClient ile aynı hedef hostlar olduğundan pinler oradan
+    // gelir, ayrıca pin tetikleyici gerekmez" yazıyordu. Varsayım yanlıştı — bootstrap data.iana.org'a,
+    // alan sorgusu ise TLD'nin YETKİLİ RDAP sunucusuna gider. Tetikleyici artık sendOnce'ta.
     @PostConstruct
     void init() {
         SSLContext ssl = trustEvaluator.pinAwareOutboundSslContext(
@@ -177,8 +180,8 @@ public class RdapDomainExpiryService {
             HttpRequest.Builder b = HttpRequest.newBuilder().uri(current);
             req.timeout().ifPresent(b::timeout);
             req.headers().map().forEach((n, vs) -> vs.forEach(v -> b.header(n, v)));
-            HttpResponse<java.io.InputStream> resp =
-                    clientFor(host).send(b.GET().build(), HttpResponse.BodyHandlers.ofInputStream());
+            int port = current.getPort() == -1 ? 443 : current.getPort();
+            HttpResponse<java.io.InputStream> resp = sendOnce(b.GET().build(), host, port);
             if (!SafeRedirect.isRedirect(resp.statusCode())) return resp;
             URI next = SafeRedirect.nextHop(current, resp.headers().firstValue("location").orElse(null));
             if (next == null) return resp;   // takip edilemez sema/host -> 3xx oldugu gibi doner
@@ -186,6 +189,40 @@ public class RdapDomainExpiryService {
             current = next;
         }
         throw new java.io.IOException("cok fazla yonlendirme (" + SafeRedirect.MAX_HOPS + " hop asildi)");
+    }
+
+    /**
+     * Tek hop — PKIX guven hatasinda hedef host'un CA'si pinlenir ve istek BIR kez tekrarlanir.
+     *
+     * <p>{@code RdapDomainClient.sendOnce} ile AYNI desen ve ayni gerekcesi var; bu servis
+     * atlanmisti. Atlanmanin dayanagi yukaridaki (artik duzeltilmis) yorumdu: "RdapDomainClient ile
+     * ayni hedef hostlar, pinler oradan gelir". Varsayim YANLISTI ve uretimde soyle gorundu:
+     *
+     * <pre>
+     * RdapDomainClient        : IANA RDAP bootstrap yuklendi: 1200 TLD          &lt;- basarili
+     * RdapDomainExpiryService : RDAP lookup failed for &lt;alan&gt;: (certificate_unknown)
+     *                           PKIX path building failed                        &lt;- kalici hata
+     * </pre>
+     *
+     * Bootstrap {@code data.iana.org}'a gider; alan sorgusu ise TLD'nin YETKILI RDAP sunucusuna
+     * (ornegin registry'nin kendi hostu) gider. O host hic pinlenmemis oldugu icin kurumsal
+     * TLS-araya-giren proxy'nin sertifikasi dogrulanamiyor ve alan adi sure-bitisi kontrolu
+     * SESSIZCE (log.debug) calismiyordu — kullanici alarm beklerken hicbir sey olmuyordu.
+     *
+     * <p>Pin-farkindali SSLContext'e sahip olmak YETMEZ: o yalnizca ZATEN pinlenmis CA'lari kabul
+     * eder, ilk karsilasmada pini KENDI olusturmaz. Tetikleyici burasidir.
+     */
+    private HttpResponse<java.io.InputStream> sendOnce(HttpRequest req, String host, int port)
+            throws java.io.IOException, InterruptedException {
+        try {
+            return clientFor(host).send(req, HttpResponse.BodyHandlers.ofInputStream());
+        } catch (java.io.IOException e) {
+            if (CaAutoPinService.isTrustFailure(e) && caAutoPinService.pinFromServer(host, port, "rdap")) {
+                log.info("RDAP expiry auto-pin sonrasi tekrar deneniyor: {}", host);
+                return clientFor(host).send(req, HttpResponse.BodyHandlers.ofInputStream());
+            }
+            throw e;
+        }
     }
 
     private Map<String, Object> query(String domain) {
@@ -221,7 +258,18 @@ public class RdapDomainExpiryService {
             }
             return unknown(domain, "no expiration event");
         } catch (Exception e) {
-            log.debug("RDAP lookup failed for {}: {}", domain, e.getMessage());
+            // GÜVEN hatası ile SIRADAN hata ayrılır. RDAP sorgusu pek çok normal sebeple düşer
+            // (TLD desteklemiyor, hız sınırı, geçici ağ) — hepsini WARN yapmak gürültü olurdu.
+            // Ama auto-pin'den SONRA da süren bir PKIX hatası KALICI bir yapılandırma sorunudur:
+            // alan adı süre-bitişi kontrolü tümüyle çalışmaz ve kullanıcı beklediği alarmı hiç almaz.
+            // DEBUG'da bırakıldığı için üretimde (INFO) tamamen görünmezdi.
+            if (CaAutoPinService.isTrustFailure(e)) {
+                log.warn("RDAP güven hatası ({}): {} — alan adı süre-bitişi kontrolü ÇALIŞMIYOR. "
+                        + "Kurumsal CA paketi (site.monitor.trust.ca-bundle-pem) veya proxy/NO_PROXY "
+                        + "ayarını denetleyin.", domain, e.getMessage());
+            } else {
+                log.debug("RDAP lookup failed for {}: {}", domain, e.getMessage());
+            }
             return unknown(domain, e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
         }
     }
