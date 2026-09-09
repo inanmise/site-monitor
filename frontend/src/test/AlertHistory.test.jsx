@@ -449,7 +449,7 @@ describe('AlertHistory — filtre çubuğu ve istatistik şeridi', () => {
   })
 
   it("URL'deki filtrelerle AÇILIR — bağlantıyı alan aynı listeyi görür", async () => {
-    window.history.replaceState({}, '', '/?level=HIGH&q=example&tab=closed')
+    window.history.replaceState({}, '', '/?level=HIGH&q=example&view=closed')
 
     render(<AlertHistory urlSync />)
 
@@ -457,8 +457,27 @@ describe('AlertHistory — filtre çubuğu ve istatistik şeridi', () => {
       const first = api.admin.getAlerts.mock.calls[0][0]
       expect(first.level).toBe('HIGH')
       expect(first.q).toBe('example')
-      expect(first.resolved).toBe('true')   // tab=closed
+      expect(first.resolved).toBe('true')   // view=closed
     })
+  })
+
+  // Regression: ISSUE-002 — alt sekme URL anahtarı `tab` uygulamanın `?tab=alerthistory` sekme
+  // parametresini siliyor/eziyordu; yenileme ve kopyalanan bağlantı dashboard'a düşüyordu.
+  // Found by /qa on 2026-09-10 · Report: .gstack/qa-reports/qa-report-localhost-2026-09-10.md
+  it("ISSUE-002: uygulamanın ?tab=alerthistory parametresi korunur; alt sekme `view` anahtarıyla yazılır", async () => {
+    window.history.replaceState({}, '', '/?tab=alerthistory')
+
+    render(<AlertHistory urlSync />)
+    await waitFor(() => expect(api.admin.getAlerts).toHaveBeenCalled())
+    // Açık görünüm (varsayılan) hiçbir şey yazmaz ve tab'ı ASLA silmez.
+    await new Promise(r => setTimeout(r, 400))
+    expect(window.location.search).toContain('tab=alerthistory')
+    expect(window.location.search).not.toContain('view=')
+
+    fireEvent.click(screen.getByRole('button', { name: /kapalı|closed/i }))
+    await waitFor(() => expect(window.location.search).toContain('view=closed'), { timeout: 2000 })
+    expect(window.location.search).toContain('tab=alerthistory')
+    expect(window.location.search).not.toContain('tab=closed')
   })
 
   it('UZUN SÜREDİR AÇIK kartı yalnız AÇIK sekmede çıkar', async () => {
