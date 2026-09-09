@@ -889,8 +889,16 @@ public class AdminController {
     /**
      * Kalıcı sil (purge) — yalnız SOFT-DELETE edilmiş bir envanter kaydını ve o domain'in
      * tüm kontrol verisini (latest_checks + certificate_checks) GERİ ALINAMAZ şekilde siler.
-     * Yalnız GLOBAL ADMIN ({@link #requireAdmin}); takım-admin yapamaz. Alarmlar zaten
-     * soft-delete sırasında kapandığı için burada ek alarm işlemi yok.
+     * Alarmlar zaten soft-delete sırasında kapandığı için burada ek alarm işlemi yok.
+     *
+     * <p>İKİ KAPI: {@code inventory.purge} izni VE kaydın takımı üzerinde yönetim yetkisi.
+     * İkincisi eskiden yoktu ve bu sessiz bir yetki aşımıydı: {@code requirePerm} yalnız
+     * {@code systemRole} dizesine bakar ({@code PermissionService.require}) ve
+     * {@code adminDefaults()} ADMIN'e her kaynağı açar. AD üzerinden gelen ADMIN ("müdür") ise
+     * global DEĞİLDİR — {@code UserService.computeViewTeamIds} ona kendi + astlarının takımlarını
+     * verir, yani {@code SessionScope.isGlobalAdmin} false kalır. Sonuç: müdür, başka takımın
+     * kaydını soft-delete EDEMEZKEN ({@code deleteInventory} → {@code requireTeamScopedAdmin})
+     * aynı kaydı KALICI silebiliyordu — geri alınamaz olan yol, kapsamsız olan yoldu.
      */
     @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
     @DeleteMapping("/inventory/{id}/permanent")
@@ -899,6 +907,9 @@ public class AdminController {
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
         requirePerm(session, "inventory.purge", "execute"); // dedike sensitive yetki (varsayılan ADMIN-only, matristen yönetilebilir)
         return inventoryRepo.findById(id).map(inv -> {
+            // Kapsam kontrolü deletedAt kontrolünden ÖNCE: yabancı takımın kaydı için 400 ile 403
+            // farkı, id numaralandırmasına "bu kayıt var ve silinmemiş" sinyali verirdi.
+            requireTeamScopedAdmin(session, inv.getTeamId());
             if (inv.getDeletedAt() == null) {
                 throw new IllegalArgumentException("Yalnız önce silinmiş (soft-delete) kayıtlar kalıcı silinebilir");
             }
@@ -913,8 +924,15 @@ public class AdminController {
     }
 
     /**
-     * Toplu kalıcı sil — TÜM soft-delete edilmiş envanter kayıtlarını ve ilgili kontrol
-     * verisini tek istekte GERİ ALINAMAZ şekilde temizler. Yalnız GLOBAL ADMIN.
+     * Toplu kalıcı sil — soft-delete edilmiş envanter kayıtlarını ve ilgili kontrol verisini
+     * tek istekte GERİ ALINAMAZ şekilde temizler.
+     *
+     * <p>KAYIT BAŞINA kapsam uygulanır — {@code bulkInventoryAction} ile AYNI desen. Tekil purge'ün
+     * (yukarıda) aksine burada id bilmeye bile gerek yok, yani kapsamsız bırakılması daha ağırdı:
+     * tek istek tüm organizasyonun çöp kutusunu silerdi. Atlananlar yanıtta ve denetim kaydında
+     * görünür ki kullanıcı "312 vardı, 40 gitti" ile sessizce karşılaşmasın.
+     *
+     * <p>Silinen domain listesi denetime YAZILIR: geri dönüş yok, forensics'in tek dayanağı bu.
      */
     @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
     @PostMapping("/inventory/purge-deleted")
@@ -923,21 +941,37 @@ public class AdminController {
             HttpSession session, HttpServletRequest request) {
         requirePerm(session, "inventory.purge", "execute");
         List<CertificateInventory> deleted = inventoryRepo.findByDeletedAtIsNotNullOrderByDomainAsc();
-        int purged = 0, checksDeleted = 0;
+        int purged = 0, checksDeleted = 0, skipped = 0;
+        List<String> purgedDomains = new ArrayList<>();
         for (CertificateInventory inv : deleted) {
+            if (!canManageTeamResource(session, inv.getTeamId())) { skipped++; continue; }
             String domain = inv.getDomain();
             checksDeleted += certificateCheckRepo.deleteByDomain(domain);
             latestCheckRepo.findById(domain).ifPresent(latestCheckRepo::delete);
             inventoryRepo.delete(inv);
             purged++;
+            purgedDomains.add(domain);
         }
         auditService.recordAction("DOMAIN_BULK_PURGE", session, request, "CERTIFICATE",
                 purged + " domain",
-                "{\"purged\":" + purged + ",\"checksDeleted\":" + checksDeleted + "}");
+                "{\"purged\":" + purged + ",\"skipped\":" + skipped
+                        + ",\"checksDeleted\":" + checksDeleted
+                        + ",\"domains\":" + toJsonArray(purgedDomains) + "}");
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("purged", purged);
+        data.put("skipped", skipped);
         data.put("checksDeleted", checksDeleted);
         return ok(Map.of("data", data, "message", "Purge complete"));
+    }
+
+    /** Denetim ayrıntısı için minimal JSON dizisi — tırnak ve ters bölü kaçırılır. */
+    private static String toJsonArray(List<String> values) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < values.size(); i++) {
+            if (i > 0) sb.append(',');
+            sb.append('"').append(values.get(i).replace("\\", "\\\\").replace("\"", "\\\"")).append('"');
+        }
+        return sb.append(']').toString();
     }
 
     @PostMapping("/inventory/{id}/transfer")

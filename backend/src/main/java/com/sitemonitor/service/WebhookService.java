@@ -85,19 +85,41 @@ public class WebhookService {
         return payload;
     }
 
+    /**
+     * Teslim edilemeyen webhook — çağırana YAYILIR.
+     *
+     * <p>Eskiden {@code sendTeams}/{@code sendSlack} her istisnayı içeride yutup {@code void}
+     * dönüyordu. Sonuç sessiz bir yalandı: {@code EscalationService}'teki
+     * {@code catch { webhookStatus = "FAILED" }} bloğuna ASLA girilemiyor, dolayısıyla
+     * {@code notification_log.webhook_status} teslim edilmemiş alarmlar için de "SENT" yazıyordu.
+     * Bildirim Geçmişi ekranı bunu yeşil "Gönderildi" rozetiyle gösteriyordu — bir izleme
+     * ürününde yanlış yeşil, kırmızıdan tehlikelidir.
+     *
+     * <p>Unchecked seçildi ki iki çağrının imzası değişmesin; ikisinin de {@code catch (Exception)}
+     * bloğu zaten var ve artık gerçekten çalışıyor.
+     */
+    public static class WebhookDeliveryException extends RuntimeException {
+        WebhookDeliveryException(String message, Throwable cause) { super(message, cause); }
+        WebhookDeliveryException(String message) { super(message); }
+    }
+
     public void sendTeams(String webhookUrl, String title, String message, String color) {
-        try {
-            post(webhookUrl, buildTeamsPayload(title, message, color));
-        } catch (Exception e) {
-            log.warn("Teams webhook failed {}: {}", webhookUrl, e.getMessage());
-        }
+        dispatch("Teams", webhookUrl, buildTeamsPayload(title, message, color));
     }
 
     public void sendSlack(String webhookUrl, String title, String message, String color) {
+        dispatch("Slack", webhookUrl, buildSlackPayload(title, message, color));
+    }
+
+    private void dispatch(String kind, String webhookUrl, Object payload) {
         try {
-            post(webhookUrl, buildSlackPayload(title, message, color));
+            post(webhookUrl, payload);
+        } catch (WebhookDeliveryException e) {
+            log.warn("{} webhook başarısız [{}]: {}", kind, maskUrl(webhookUrl), e.getMessage());
+            throw e;
         } catch (Exception e) {
-            log.warn("Slack webhook failed {}: {}", webhookUrl, e.getMessage());
+            log.warn("{} webhook başarısız [{}]: {}", kind, maskUrl(webhookUrl), e.getMessage());
+            throw new WebhookDeliveryException(e.getMessage(), e);
         }
     }
 
@@ -108,6 +130,27 @@ public class WebhookService {
             sendSlack(webhookUrl, title, message, color);
         } else {
             sendTeams(webhookUrl, title, message, color);
+        }
+    }
+
+    /**
+     * Günlüğe basılabilir webhook kimliği: {@code host/…<son 6 karakter>}.
+     *
+     * <p>Slack/Teams incoming-webhook ADRESİNİN KENDİSİ bir kimlik bilgisidir
+     * ({@code https://hooks.slack.com/services/T…/B…/<secret>}); tam URL WARN seviyesinde
+     * basılıyordu ve WARN prod'da açık, günlükler 30 gün saklanıyor. Log okuyabilen herkes o
+     * kanala mesaj atabilirdi. Sorunu ayıklamak için host + kısa kuyruk yeter.
+     */
+    static String maskUrl(String url) {
+        if (url == null || url.isBlank()) return "-";
+        try {
+            URI u = URI.create(url);
+            String host = u.getHost() == null ? "?" : u.getHost();
+            String path = u.getPath() == null ? "" : u.getPath();
+            String tail = path.length() <= 6 ? "" : path.substring(path.length() - 6);
+            return host + "/…" + tail;
+        } catch (Exception e) {
+            return "?";
         }
     }
 
@@ -132,7 +175,15 @@ public class WebhookService {
         try (java.io.InputStream is = response.body()) {
             preview = new String(is.readNBytes(MAX_RESPONSE_BYTES), java.nio.charset.StandardCharsets.UTF_8);
         }
-        log.debug("Webhook response {}: {}", response.statusCode(), preview);
+        int status = response.statusCode();
+        log.debug("Webhook response {}: {}", status, preview);
+        // DURUM KODU KONTROLÜ: eskiden yalnız debug'a yazılıyordu, dolayısıyla silinmiş bir
+        // webhook'un 404'ü ya da 403 de "başarı" sayılıyordu. Kardeş kanal UserPushService.sendBatch
+        // bu aralığı zaten doğru kontrol ediyor — burada aynı kural.
+        if (status < 200 || status >= 300) {
+            throw new WebhookDeliveryException("HTTP " + status
+                    + (preview.isBlank() ? "" : ": " + preview.strip()));
+        }
     }
 
     static String levelToColor(String level) {

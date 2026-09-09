@@ -655,7 +655,18 @@ public class EscalationService {
             // Storm üyesi + storm hâlâ aktif → bireysel çözüm e-postası GÖNDERME
             // (TEK toplu recovery, fırtına dağıldığında storm sweep'inden gider). Incident yine kapandı.
             if (saved.getStormId() != null && stormService.isActive(saved.getStormId())) {
-                log.info("✅ Alarm çözüldü (storm üyesi — bireysel çözüm maili yok): {} [{}]", domain, event.getAlertType());
+                // MAİL bastırılır (tek toplu recovery var) ama PUSH bastırılamaz: push'un toplu
+                // karşılığı YOK. Eskiden bu dal sendResolutionNotificationAsync'i tümüyle
+                // atladığı için telefondaki alarm sonsuza dek açık kalıyordu — hem de tam olarak
+                // şu senaryoda: monitör tek başına düşüp OPEN push'u ALDIKTAN sonra fırtınaya
+                // bağlanmışsa (linkPeers), kullanıcı "düştü" mesajını görmüş, "düzeldi"yi hiç
+                // görmemiş oluyordu.
+                //
+                // enqueueResolve kendi simetri kuralını taşıyor: açılışı push'lanmamış bir olayın
+                // çözümü zaten push'lanmaz. Yani fırtına en baştan bastırdıysa burada da sessiz.
+                userPushService.enqueueResolve(saved, deserializeContext(saved.getContextJson()));
+                log.info("✅ Alarm çözüldü (storm üyesi — bireysel çözüm maili yok, push simetrik): {} [{}]",
+                        domain, event.getAlertType());
                 continue;
             }
             self.sendResolutionNotificationAsync(saved, "Sistem (otomatik)", "RESOLUTION");
@@ -1671,15 +1682,25 @@ public class EscalationService {
         // İzlemenin "E-posta" kanalı KAPALI mı (notifyEmail=false → mailCtx damgası). Bayrak
         // bugüne kadar hiçbir yerde okunmuyordu; kutu süstü, kapatmak maili durdurmuyordu.
         boolean mailDisabled = certContext != null && Boolean.TRUE.equals(certContext.get("mail_disabled"));
-        if (mailDisabled || allEmails.isEmpty()) {
-            // KANAL BAĞIMSIZLIĞI: mailin atlanması webhook'u DÜŞÜRMEZ. Eskiden bu dal doğrudan
-            // return ediyordu ve push tetiği metodun sonunda kaldığı için alıcı-yok durumunda
-            // webhook de sessizce gitmiyordu. notify_email uygulanınca "mail yok" YAYGIN bir
-            // durum hâline geliyor; o hatayla birlikte yaşanamazdı.
-            if (mailDisabled) log.info("E-posta kanalı kapalı ({} [{}]) — yalnız webhook", domain, level);
-            else log.warn("No recipients for {} [{}] — skipping", domain, level);
-            triggerUserPush(alertEventId, trigger, syTeamId, certContext, excludeUsernames);
-            return List.of();
+        boolean skipMail = mailDisabled || allEmails.isEmpty();
+        boolean anyContactWebhook = contacts.stream()
+                .anyMatch(c -> c.getWebhookUrl() != null && !c.getWebhookUrl().isBlank());
+        if (skipMail) {
+            // KANAL BAĞIMSIZLIĞI: mailin atlanması webhook'u DÜŞÜRMEZ.
+            //
+            // Bu yorum burada zaten yazılıydı ama YARIM uygulanmıştı: dal yalnız triggerUserPush
+            // (KİŞİ push'u) çağırıp return ediyordu, aşağıdaki KONTAK webhook döngüsüne (Teams/Slack)
+            // hiç ulaşılmıyordu. İki gerçek senaryoyu sessizce öldürüyordu: (a) takımın e-postası
+            // tanımsız + kontaklar webhook-only → alarm hiçbir kanaldan gitmiyor; (b) kullanıcı
+            // monitörde yalnız "E-posta"yı kapatıyor (notifyWebhook açık) → Teams bildirimi de kesiliyor.
+            //
+            // Artık yalnız mail adımı atlanır; kontak webhook'u olan hiçbir alarm düşmez.
+            if (mailDisabled) log.info("E-posta kanalı kapalı ({} [{}]) — yalnız webhook/push", domain, level);
+            else log.warn("E-posta alıcısı yok ({} [{}]) — yalnız webhook/push", domain, level);
+            if (!anyContactWebhook) {
+                triggerUserPush(alertEventId, trigger, syTeamId, certContext, excludeUsernames);
+                return List.of();
+            }
         }
 
         // 1.5. ctx zenginleştirme — şablonun timeline/takım satırları için (mevcut anahtarlar EZİLMEZ).
@@ -1759,11 +1780,18 @@ public class EscalationService {
             case TYPE_DOMAINMON_UNKNOWN -> "Alan Adı Veri Yok";
             case TYPE_DOMAINMON_STATUS  -> "Alan Adı Durum Kodu";
             case TYPE_DOMAINMON_CHANGED -> "Alan Adı Değişikliği";
+            // Bu iki tip sonradan eklenmiş ve switch güncellenmemişti: default dalına düşüp
+            // konuya "Sertifika Süre Bitişi" yazıyorlardı. Mail GÖVDESİ ise doğruydu
+            // (EmailTemplateBuilder.heroLabel), yani tek mailin konusu ile başlığı çelişiyordu.
+            case TYPE_DOMAINMON_TRANSFER_LOCK -> "Alan Adı Transfer Kilidi";
+            case TYPE_DOMAINMON_BLACKLIST     -> "Alan Adı Kara Liste";
             default                 -> daysRemaining != null ? "Sertifika Süre Bitişi (" + daysRemaining + " gün kaldı)" : "Sertifika Süre Bitişi";
         };
         // Konu için doğal-dil özet (typeTr'e göre daha okunur); expiry tiplerinde gün ifadesi.
         String summaryTr = switch (alertType != null ? alertType : "") {
             case TYPE_DOMAINMON_EXPIRY, TYPE_DOMAIN_EXPIRY -> daysRemaining != null ? "Alan adı " + daysRemaining + " gün içinde doluyor" : "Alan adı süre bitişi";
+            case TYPE_DOMAINMON_TRANSFER_LOCK -> "Alan adı transfer kilidi kapalı";
+            case TYPE_DOMAINMON_BLACKLIST     -> "Alan adı kara listede";
             case TYPE_PAGE_DOWN     -> "Sayfa yüklenemiyor";
             case TYPE_PAGE_INTEGRITY -> "Sayfada kırık kaynak / mixed content";
             case TYPE_SCRIPTED_FAIL -> "Sentetik test (k6) başarısız";
@@ -1790,15 +1818,20 @@ public class EscalationService {
         String subject = subjectPrefix + "[Site Monitor] " + daysSeg + " · "
                 + subjectDisplayName(certContext, domain) + " · " + summaryTr;
 
-        // 3. Tek email — tüm alıcılara
+        // 3. Tek email — tüm alıcılara. skipMail ise gövde YİNE kurulur: webhook satırlarının
+        // saveLog'u ve Bildirim Geçmişi önizlemesi aynı gövdeyi kullanıyor.
         String[] toArr     = allEmails.toArray(new String[0]);
         String htmlBody    = emailService.buildAlertEmailHtml(
                 subject, message, domain, level, alertType, daysRemaining, certContext);
-        String emailStatus = emailService.sendAlert(
-                toArr, subject, message, domain, level, alertType, daysRemaining, certContext);
-
-        // 4. Email log — tek kayıt (teamNames yukarıda ctx zenginleştirmesinde hesaplandı)
-        saveLog(alertEventId, teamNames, String.join(", ", allEmails), subject, htmlBody, emailStatus, "SKIPPED", trigger);
+        String emailStatus;
+        if (skipMail) {
+            emailStatus = mailDisabled ? "SKIPPED: e-posta kanalı kapalı" : "SKIPPED: alıcı yok";
+        } else {
+            emailStatus = emailService.sendAlert(
+                    toArr, subject, message, domain, level, alertType, daysRemaining, certContext);
+            // 4. Email log — tek kayıt (teamNames yukarıda ctx zenginleştirmesinde hesaplandı)
+            saveLog(alertEventId, teamNames, String.join(", ", allEmails), subject, htmlBody, emailStatus, "SKIPPED", trigger);
+        }
 
         // 5. Webhook — kontaklara ayrı ayrı
         List<Map<String, String>> details = new ArrayList<>();
@@ -1823,8 +1856,10 @@ public class EscalationService {
             details.add(d);
         }
 
-        log.info("Combined alert: {} [{}] → TO=[{}] | webhooks={} | trigger={}",
-                domain, level, String.join(", ", allEmails), contacts.size(), trigger);
+        // Alıcı ADRESLERİ günlüğe yazılmaz — tam liste INFO seviyesinde 30 gün saklanıyordu ve
+        // kubectl logs ile okunabiliyordu. Adresler zaten notification_log'da; burada sayı yeter.
+        log.info("Combined alert: {} [{}] → alıcı={} | webhooks={} | olay={} | trigger={}",
+                domain, level, allEmails.size(), contacts.size(), alertEventId, trigger);
 
         triggerUserPush(alertEventId, trigger, syTeamId, certContext, excludeUsernames);
         return details;

@@ -92,11 +92,21 @@ class WebhookServiceTest {
     }
 
     @Test
-    @DisplayName("sendTeams: IOException → does not propagate exception")
-    void sendTeams_exceptionDuringPost_doesNotThrow() throws Exception {
+    @DisplayName("sendTeams: IOException → CAGIRANA YAYILIR (teslim edilmedi bilgisi kaybolmaz)")
+    void sendTeams_exceptionDuringPost_propagates() throws Exception {
         when(httpClient.send(any(), any())).thenThrow(new java.io.IOException("timeout"));
-        assertThatNoException().isThrownBy(
-                () -> service.sendTeams("http://localhost/hook", "T", "M", "FFC107"));
+
+        // Bu test eskiden "yutulur" davranisini pinliyordu ve KUSURU SOZLESME haline getirmisti:
+        // istisna iceride yutulup void donuldugu icin EscalationService'teki
+        // `catch { webhookStatus = "FAILED" }` blogu ERISILEMEZ oluyordu ve notification_log
+        // teslim edilmemis alarmlar icin de "SENT" yaziyordu. Bildirim Gecmisi ekrani bunu yesil
+        // rozetle gosteriyordu -- bir izleme urununde yanlis yesil, kirmizidan tehlikelidir.
+        //
+        // "Alarm akisi webhook yuzunden dusmemeli" niyeti KORUNUYOR; artik o koruma bir katman
+        // yukarida, gercek durumu KAYDEDEBILEN yerde (asagidaki caller testine bkz.).
+        assertThatThrownBy(() -> service.sendTeams("http://localhost/hook", "T", "M", "FFC107"))
+                .isInstanceOf(WebhookService.WebhookDeliveryException.class)
+                .hasMessageContaining("timeout");
     }
 
     // ── sendSlack ─────────────────────────────────────────────────────────────
@@ -111,11 +121,38 @@ class WebhookServiceTest {
     }
 
     @Test
-    @DisplayName("sendSlack: IOException → does not propagate exception")
-    void sendSlack_exceptionDuringPost_doesNotThrow() throws Exception {
+    @DisplayName("sendSlack: IOException → CAGIRANA YAYILIR")
+    void sendSlack_exceptionDuringPost_propagates() throws Exception {
         when(httpClient.send(any(), any())).thenThrow(new java.io.IOException("timeout"));
-        assertThatNoException().isThrownBy(
-                () -> service.sendSlack("http://localhost/slack", "T", "M", "good"));
+        assertThatThrownBy(() -> service.sendSlack("http://localhost/slack", "T", "M", "good"))
+                .isInstanceOf(WebhookService.WebhookDeliveryException.class);
+    }
+
+    @Test
+    @DisplayName("2xx DISI yanit BASARI sayilmaz — silinmis webhook'un 404'u de hatadir")
+    void post_nonSuccessStatus_marksFailure() throws Exception {
+        // Paylasilan httpResponse mock'u setUp'ta 200 donuyor; yalniz durumu degistiriyoruz.
+        when(httpResponse.statusCode()).thenReturn(404);
+        when(httpResponse.body()).thenAnswer(inv -> new java.io.ByteArrayInputStream(
+                "no_service".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+
+        // post() durum kodunu HIC kontrol etmiyordu (yalnizca log.debug): Slack silinmis bir
+        // webhook icin 404 donse bile "gonderildi" sayiliyordu.
+        assertThatThrownBy(() -> service.sendSlack("http://localhost/slack", "T", "M", "good"))
+                .isInstanceOf(WebhookService.WebhookDeliveryException.class)
+                .hasMessageContaining("404");
+    }
+
+    @Test
+    @DisplayName("Gunluge webhook ADRESI basilmaz — adresin kendisi kimlik bilgisidir")
+    void maskUrl_hidesSecretPath() {
+        // https://hooks.slack.com/services/T.../B.../<secret> — tam URL WARN seviyesinde
+        // basiliyordu ve gunlukler 30 gun saklaniyor; log okuyabilen herkes o kanala mesaj atabilirdi.
+        String masked = WebhookService.maskUrl(
+                "https://hooks.slack.com/services/T0001/B0002/SUPERSECRETTOKEN");
+        assertThat(masked).doesNotContain("SUPERSECRETTOKEN");
+        assertThat(masked).contains("hooks.slack.com");
+        assertThat(WebhookService.maskUrl(null)).isEqualTo("-");
     }
 
     // ── send (dispatch) ───────────────────────────────────────────────────────
@@ -258,9 +295,10 @@ class WebhookServiceTest {
     @DisplayName("SSRF: cloud-metadata webhook adresine istek HIC atilmaz (alarm metni sizmaz)")
     void post_metadataUrl_neverSends() throws Exception {
         // Webhook govdesi ALARM METNI tasiyor; dogrulanmamis bir hedef, ic agdaki bir uca alarm
-        // icerigini POST etmenin yoluydu. sendTeams istisnayi yutar -> cagirana yayilmaz, ama
-        // asil sozlesme: istek HIC atilmaz.
-        service.sendTeams("http://169.254.169.254/hook", "T", "M", "FF0000");
+        // icerigini POST etmenin yoluydu. ASIL sozlesme degismedi: istek HIC atilmaz.
+        // (Politika reddi artik cagirana da yayiliyor ki alarm "gonderildi" diye kaydedilmesin.)
+        assertThatThrownBy(() -> service.sendTeams("http://169.254.169.254/hook", "T", "M", "FF0000"))
+                .isInstanceOf(RuntimeException.class);
         verify(httpClient, never()).send(any(), any());
     }
 
