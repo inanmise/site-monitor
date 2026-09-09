@@ -77,20 +77,20 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'   // USER ve üstü: kendi takımı için standalone DNS ekler
   const myTeam = teamId != null ? String(teamId) : null
   const isOwnTeam = (m) => myTeam != null && String(m.team_id) === myTeam
-  // Envanter-türevi monitörü yalnız admin yönetir; standalone'u (sertifikadan bağımsız) sahip takım yönetir.
-  const canManageRow = (m) => isAdmin || (m.standalone && isOwnTeam(m))
-  // DNS'te toplu kontrolün adayı YALNIZ yöneticidir — canManageRow DEĞİL.
-  // MonitoringController.triggerDns kardeşlerinden farklı olarak requireAdmin çağırıyor:
-  // standalone + kendi takımı kuralını geçen bir TEAM_ADMIN yine 403 alır ve
-  // GlobalExceptionHandler her 403 için bir ACCESS_DENIED denetim kaydı yazar — 40 monitörlük
-  // bir sayfada tek tıklama 40 sahte güvenlik olayı demekti.
-  const canCheckRow = () => isAdmin
-  // Silme kapısı ucun AYNISI (MonitoringController.deleteDns): standalone → gerçek silme,
-  // sahip takım ya da admin; envanter-türevi → yalnız ADMIN ve GERÇEK SİLME DEĞİL, izleme
-  // pasifleştirilir (satır envanterden türediği için listede "Duraklatıldı" olarak kalır,
-  // envanter senkronu yeniden açabilir). Eski kapı türevlerde düğmeyi HİÇ çizmiyordu: ucun
-  // izin verdiği işlem arayüzden ulaşılamıyordu ve kullanıcı "DNS'te silme yok" diyordu.
-  const canDeleteRow = (m) => m.standalone ? (isAdmin || isOwnTeam(m)) : isAdmin
+  // Kapılar PortMonitorPage ile AYNI — uçlar da hizalandı (MonitoringController.updateDns/
+  // deleteDns/triggerDns artık canOperateTeam kullanıyor, sekiz kardeş türle aynı kural).
+  //
+  // Eskiden burada `m.standalone && isOwnTeam(m)` vardı ve envanter-türevi satırlarda kartın
+  // BÜTÜN düğmeleri kayboluyordu. Kullanıcının gördüğü şey bir yetki kuralı değil, boş bir
+  // kart köşesiydi: "düğmeler neden görünmüyor?" Oysa envanter-türevi DNS kaydı takımını
+  // envanterden alır, yani aynı takım yöneticisi aynı domainin Port izlemesini ve envanter
+  // kaydının kendisini zaten yönetebiliyordu — fazladan admin şartının koruyucu değeri yoktu.
+  const canManageRow = (m) => isAdmin || isOwnTeam(m)
+  // Toplu kontrolün adayı = tek tek de çalıştırılabilen satırlar; kartın ▶ düğmesiyle aynı yüzey.
+  const canCheckRow = canManageRow
+  // Silme SEMANTİĞİ hâlâ standalone'a göre ayrışır (standalone → gerçek silme; envanter-türevi →
+  // pasifleştirme, envanter senkronu yeniden açabilir); ayrışan yalnız DAVRANIŞ, yetki değil.
+  const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
