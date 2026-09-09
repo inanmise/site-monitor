@@ -241,4 +241,23 @@ class RetentionAdminControllerTest {
         verify(schedulerService).backfillHourlyRollup(cap.capture());
         org.junit.jupiter.api.Assertions.assertTrue(cap.getValue() > 0, "gün sayısı pozitif olmalı");
     }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("PUT /approval: politika id'siyle onay katalog önekli anahtara yazılır ve denetlenir")
+    void saveApproval_persistsApprovalKey() throws Exception {
+        mvc.perform(put("/api/admin/retention/approval").session(admin())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"policy_id\":\"user-push-deliveries\",\"note\":\"uygundur\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Onay kaydedildi"));
+        org.mockito.Mockito.verify(settingsService).save(org.mockito.ArgumentMatchers.argThat(m -> {
+            Object values = m.get("values");
+            return values instanceof java.util.Map<?, ?> v
+                    && v.containsKey(com.sitemonitor.service.AppSettingsCatalog.RETENTION_APPROVAL_PREFIX + "user-push-deliveries")
+                    && String.valueOf(v.values().iterator().next()).endsWith("|uygundur");
+        }), org.mockito.ArgumentMatchers.anyString());
+        org.mockito.Mockito.verify(auditService).recordAction(org.mockito.ArgumentMatchers.eq("RETENTION_APPROVAL_SAVE"),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq("RETENTION_POLICY"),
+                org.mockito.ArgumentMatchers.eq("user-push-deliveries"), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
 }

@@ -48,7 +48,7 @@ public class RetentionAdminController {
     private String cleanupCron;
 
     /** Uyum onayı (kim/ne zaman onayladı) ayar anahtarı öneki — politika id'siyle birleşir. */
-    private static final String APPROVAL_PREFIX = "site.monitor.retention.approval.";
+    private static final String APPROVAL_PREFIX = com.sitemonitor.service.AppSettingsCatalog.RETENTION_APPROVAL_PREFIX;
 
     private final RetentionService retentionService;
     private final RetentionRunRepository runRepo;

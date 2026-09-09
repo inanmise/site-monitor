@@ -24,8 +24,17 @@ public final class AppSettingsCatalog {
         }
     }
 
-    /** Operasyonel paket — UI'ı olmayan, canlı tuning'e uygun config'ler. */
-    public static final List<Setting> ALL = List.of(
+    /**
+     * Uyum onayı anahtar öneki: {@code site.monitor.retention.approval.<politikaId>}. Değer
+     * {@code aktör|ISO|not}; RetentionAdminController yazar/okur. Katalog girdileri
+     * {@link #ALL} kurulurken RetentionCatalog'dan ÜRETİLİR — eskiden hiç yoktu ve
+     * AppSettingsService.save "Bilinmeyen ayar" ile HER politikanın onayını reddediyordu
+     * (2026-09-10, "user push deliveries" bildirimi).
+     */
+    public static final String RETENTION_APPROVAL_PREFIX = "site.monitor.retention.approval.";
+
+    /** Operasyonel paket — UI'ı olmayan, canlı tuning'e uygun config'ler (elle yazılan kısım). */
+    private static final List<Setting> STATIC = List.of(
         new Setting("site.monitor.app.base-url",                 "general",    Type.STRING),
         new Setting("site.monitor.system-admin.email",           "general",    Type.STRING),
         new Setting("site.monitor.cors.allowed-origins",         "general",    Type.CSV),
@@ -334,6 +343,13 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.scripted.draft-retention-days", "retention", Type.INT),
         new Setting("site.monitor.retention.run-history-retention-days", "retention", Type.INT)
     );
+
+    /** Tam katalog: elle yazılan ayarlar + politika başına üretilen uyum-onayı anahtarları. */
+    public static final List<Setting> ALL = java.util.stream.Stream.concat(
+            STATIC.stream(),
+            RetentionCatalog.ALL.stream()
+                    .map(p -> new Setting(RETENTION_APPROVAL_PREFIX + p.id(), "retention", Type.STRING)))
+            .toList();
 
     public static Setting byKey(String key) {
         return ALL.stream().filter(s -> s.key().equals(key)).findFirst().orElse(null);

@@ -97,4 +97,17 @@ class AppSettingsServiceTest {
                 .filter(m -> "logging.level.com.sitemonitor".equals(m.get("key"))).findFirst().orElseThrow();
         assertThat(logLevel.get("options")).isEqualTo(List.of("TRACE", "DEBUG", "INFO", "WARN", "ERROR"));
     }
+
+    // 2026-09-10: uyum onayı anahtarları katalogda YOKTU → gerçek save "Bilinmeyen ayar" atıyordu
+    // (controller testi settingsService'i mock'ladığı için görünmüyordu).
+    @org.junit.jupiter.api.Test
+    void save_retentionApprovalKey_isKnownForEveryPolicy() {
+        for (com.sitemonitor.service.retention.RetentionPolicy p : com.sitemonitor.service.retention.RetentionCatalog.ALL) {
+            String key = AppSettingsCatalog.RETENTION_APPROVAL_PREFIX + p.id();
+            org.assertj.core.api.Assertions.assertThat(AppSettingsCatalog.byKey(key))
+                    .as("onay anahtarı katalogda olmalı: " + key).isNotNull();
+            org.assertj.core.api.Assertions.assertThatCode(() -> service.save(values(key, "admin|2026-09-10T00:00:00|uygundur"), "admin"))
+                    .as("gerçek save bilinmeyen-ayar atmamalı: " + key).doesNotThrowAnyException();
+        }
+    }
 }
