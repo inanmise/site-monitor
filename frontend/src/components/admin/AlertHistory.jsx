@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { api, formatDate } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -82,7 +82,11 @@ function EmailStatusBadge({ status }) {
 export function groupPushRows(rows) {
   const by = new Map()
   for (const p of rows ?? []) {
-    const key = `${p.trigger}|${p.status}|${p.message ?? ''}`
+    // dedupe_key = GÖNDERİM PARTİSİ kimliği: RESEND her tıkta rastgele, RE_ALERT gün başına,
+    // OPEN/RESOLVE sabit. Anahtarda yokken aynı alarma iki kez "Tekrar Bildir" (metin birebir aynı)
+    // tek karta birleşiyor ve açılan listede aynı kişi iki kez görünüyordu. Eski/dedupe_key'siz
+    // satırlar eski anahtara düşer (davranış değişmez).
+    const key = `${p.trigger}|${p.status}|${p.dedupe_key ?? ''}|${p.message ?? ''}`
     if (!by.has(key)) by.set(key, [])
     by.get(key).push(p)
   }
@@ -151,6 +155,9 @@ function PushDeliveryGroup({ rows }) {
   const head = rows[0]
   const many = rows.length > 1
   const uniqueRecipients = new Set(rows.map(r => r.username)).size
+  // Genişletilmiş liste de BENZERSİZ kişi basar (başlık sayacıyla aynı kural); sistem ('-')
+  // satırları ayrı kararlardır, olduğu gibi kalır.
+  const uniqueRows = rows.filter((r, i) => r.username === '-' || rows.findIndex(x => x.username === r.username) === i)
   const cls = PUSH_TRIGGER_CLS[head.trigger] ?? 'other'
   const statusCls = head.status === 'SENT' ? 'ok'
     : (head.status === 'FAILED' || head.status === 'CIRCUIT_OPEN') ? 'danger' : 'muted'
@@ -203,7 +210,7 @@ function PushDeliveryGroup({ rows }) {
           {many && (
             <div className="nl-detail-row nl-detail-row--body">
               <span className="nl-detail-label">{t('alh.push.who')}</span>
-              <span className="nl-detail-val nl-who-list">{rows.map(who)}</span>
+              <span className="nl-detail-val nl-who-list">{uniqueRows.map(who)}</span>
             </div>
           )}
           {head.http_status != null && (
@@ -348,6 +355,9 @@ function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
   const [loadingHistory, setLoading] = useState(true)
   const [loadFailed, setLoadFailed] = useState(false)
   const [pushRows, setPushRows] = useState([])
+  const pushGroups = useMemo(() => groupPushRows(pushRows), [pushRows])
+  const sentGroups = useMemo(() => pushGroups.filter(g => g[0]?.status === 'SENT').length, [pushGroups])
+  const skippedGroups = pushGroups.length - sentGroups
 
   useEffect(() => {
     // Ağ hatasında (pod restart / proxy) request() reject eder; eskiden .catch/.finally yoktu →
@@ -442,11 +452,16 @@ function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
               {openSection === 'push' ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
             </span>
             {t('alh.webhookSection')}
-            <span className="nl-count">{t('alh.notifModal.records', pushRows.length)}</span>
+            {/* Sayaç GÖNDERİM sayar, alıcı satırı değil: eskiden "37 kayıt" = 5 kişi × 7 gönderim
+                + sistem satırları; gövdede ise 3-4 kart vardı. Kişi sayısı her kartta zaten yazar. */}
+            <span className="nl-count">{t('alh.push.sendCount', sentGroups)}</span>
+            {skippedGroups > 0 && (
+              <span className="nl-count nl-count--muted">{t('alh.push.skipCount', skippedGroups)}</span>
+            )}
           </div>
           {openSection === 'push' && (<>
             {pushRows.length === 0 && <div className="nl-empty">{t('alh.webhookNone')}</div>}
-            {groupPushRows(pushRows).map((g, i) => (
+            {pushGroups.map((g, i) => (
               <PushDeliveryGroup key={g[0].id ?? i} rows={g} />
             ))}
           </>)}
