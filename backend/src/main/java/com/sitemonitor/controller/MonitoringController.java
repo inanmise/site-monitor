@@ -679,6 +679,19 @@ public class MonitoringController {
                 .orElse(storedTeamId);
     }
 
+    /**
+     * Duraklatma (active true→false) açık alarmları SESSİZCE kapatır — envanterin
+     * {@code closeAlertsOnDeactivate} eşleniği. Dokuz izleme türünde yoktu: sweep'ler
+     * {@code findByActiveTrue} yüklediğinden duraklatılan monitörün ne kurtarması ne re-alert'i
+     * koşuyor, açık olay alarm geçmişi/olaylar/haftalık kesinti rollup'ında süresi büyüyerek
+     * SONSUZA kadar açık kalıyordu.
+     */
+    private void closeAlertsOnPause(Boolean wasActive, Object nextActive, String key, Set<String> types) {
+        if (Boolean.TRUE.equals(wasActive) && Boolean.FALSE.equals(nextActive) && key != null) {
+            escalationService.resolveOpenAlertsSilently(key, types, "Sistem (izleme duraklatıldı)");
+        }
+    }
+
     /** Oluştururken hedef takımı çözer: global admin istediğini (veya takımsız) atar; diğerleri
      *  yalnız iş görebildikleri bir takıma — değilse kendi takımlarına düşer. */
     private Long resolveWriteTeam(HttpSession session, Map<String, Object> body) {
@@ -1259,13 +1272,15 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.crud", "edit");
         if (blank(body.get("host"))) return badRequest("host zorunlu");
         if (!(body.get("port") instanceof Number)) return badRequest("port zorunlu");
-        String host = body.get("host").toString().trim();
+        String host = body.get("host").toString().trim().toLowerCase(java.util.Locale.ROOT);   // envanterle aynı anahtar (küçük harf)
         int port = ((Number) body.get("port")).intValue();
         if (port < 1 || port > 65535) return badRequest("port 1-65535 aralığında olmalı");
         if (!blank(body.get("sendData"))) requireAdmin(session);   // ham payload → yalnız admin (iç-servis SSRF payload'u)
         // Aynı host:port zaten AKTİF izleniyorsa tekrar ekleme (otomatik :443 kayıtlarıyla çakışmayı da önler).
-        if (portMonitorRepo.findFirstByHostAndPortOrderByIdAsc(host, port)
-                .filter(ex -> Boolean.TRUE.equals(ex.getActive())).isPresent())
+        // findFirst…ByIdAsc EN ESKİ satırı döndürüyordu: o satır soft-delete (active=false) ise daha
+        // yeni aktif kopya guard'a görünmüyor, üçüncü aktif kopya oluşuyordu (iki kontrol, iki alarm
+        // akışı). "Herhangi bir aktif var mı?" sorusu doğrudan DB'de.
+        if (portMonitorRepo.existsByHostAndPortAndActiveTrue(host, port))
             return badRequest("Bu host:port zaten izleniyor");
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null)
@@ -1317,7 +1332,7 @@ public class MonitoringController {
             final String  _prevHost = m.getHost();
             final Integer _prevPort = m.getPort();
             if (body.get("name")            != null) m.setName((String) body.get("name"));
-            if (body.get("host")            != null) m.setHost(((String) body.get("host")).trim());
+            if (body.get("host")            != null) m.setHost(((String) body.get("host")).trim().toLowerCase(java.util.Locale.ROOT));
             if (body.get("port")            != null) {
                 int np = ((Number) body.get("port")).intValue();
                 if (np < 1 || np > 65535) return badRequest("port 1-65535 aralığında olmalı");
@@ -1327,10 +1342,7 @@ public class MonitoringController {
             // kullanıcı mevcut bir monitörün host/port'unu başkasınınkiyle aynı yapabiliyordu.
             // DB kısıtı da yakalamaz (uq_pm_host_port … WHERE standalone IS NOT TRUE).
             if (!eqHost(_prevHost, m.getHost()) || !Objects.equals(_prevPort, m.getPort())) {
-                boolean dup = portMonitorRepo.findFirstByHostAndPortOrderByIdAsc(m.getHost(), m.getPort())
-                        .filter(x -> !x.getId().equals(id))
-                        .filter(x -> Boolean.TRUE.equals(x.getActive()))
-                        .isPresent();
+                boolean dup = portMonitorRepo.existsByHostAndPortAndActiveTrueAndIdNot(m.getHost(), m.getPort(), id);
                 if (dup) return badRequest("Bu host:port zaten izleniyor");
             }
             if (body.get("protocol")        != null) m.setProtocol(normalizePortType(body.get("protocol")));
@@ -1339,6 +1351,7 @@ public class MonitoringController {
                 if (!blank(body.get("sendData"))) requireAdmin(session);   // ham payload → yalnız admin (iç-servis SSRF payload'u)
                 m.setSendData(blank(body.get("sendData")) ? null : body.get("sendData").toString());
             }
+            closeAlertsOnPause(m.getActive(), body.get("active"), m.getHost(), Set.of(EscalationService.TYPE_PORT_DOWN, EscalationService.TYPE_PORT_SLOW));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.containsKey("teamId"))    m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
@@ -1412,7 +1425,7 @@ public class MonitoringController {
             public List<Object[]> histogram(String f, String t, int len) { return portCheckRepo.historyHistogram(id, f, t, len); }
             public List<Object[]> bounds() { return portCheckRepo.historyBounds(id); }
         };
-        return runHistory(session, mon.getTeamId(), src, "port",
+        return runHistory(session, effectiveTeam(mon.getHost(), mon.getStandalone(), mon.getTeamId()), src, "port",
                 mon.getHost(), Set.of(EscalationService.TYPE_PORT_DOWN, EscalationService.TYPE_PORT_SLOW),
                 from, to, days, status, page, size, format, "port-history-" + id, List.of(
                 new CsvColumn<>("checked_at", PortCheck::getCheckedAt),
@@ -1663,7 +1676,7 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.crud", "edit");
         if (blank(body.get("domain")))     return badRequest("domain zorunludur");
         if (blank(body.get("recordType"))) return badRequest("recordType zorunludur");
-        String domain = body.get("domain").toString().trim();
+        String domain = body.get("domain").toString().trim().toLowerCase(java.util.Locale.ROOT);   // envanterle aynı anahtar
         String recordType = body.get("recordType").toString().trim().toUpperCase();
         if (!DNS_RECORD_TYPES.contains(recordType)) return badRequest("Geçersiz DNS kayıt tipi: " + recordType);
         // Aynı (domain, recordType) standalone monitör zaten varsa hata dön; sessizce mevcut kaydı
@@ -1745,7 +1758,7 @@ public class MonitoringController {
             final String _prevDomain = m.getDomain();
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("domain") != null) {
-                String newDomain = ((String) body.get("domain")).trim();
+                String newDomain = ((String) body.get("domain")).trim().toLowerCase(java.util.Locale.ROOT);
                 if (m.getDomain() != null && !m.getDomain().equalsIgnoreCase(newDomain)) {
                     String finalType = body.get("recordType") != null
                             ? ((String) body.get("recordType")).trim().toUpperCase() : m.getRecordType();
@@ -1761,6 +1774,7 @@ public class MonitoringController {
                 m.setDomain(newDomain);
             }
             if (body.get("recordType")      != null) m.setRecordType(((String) body.get("recordType")).toUpperCase());
+            closeAlertsOnPause(m.getActive(), body.get("active"), m.getDomain(), DNS_ALERT_TYPES);
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.get("notifyEmail")   instanceof Boolean b) m.setNotifyEmail(b);
             if (body.get("notifyWebhook")   instanceof Boolean b) m.setNotifyWebhook(b);
@@ -1854,7 +1868,7 @@ public class MonitoringController {
             public List<Object[]> histogram(String f, String t, int len) { return dnsRecordRepo.historyHistogram(id, f, t, len); }
             public List<Object[]> bounds() { return dnsRecordRepo.historyBounds(id); }
         };
-        return runHistory(session, mon.getTeamId(), src, "dns",
+        return runHistory(session, effectiveTeam(mon.getDomain(), mon.getStandalone(), mon.getTeamId()), src, "dns",
                 mon.getDomain(), Set.of(EscalationService.TYPE_DNS_FAILURE, EscalationService.TYPE_DNS_CHANGED,
                         EscalationService.TYPE_DNS_SLOW, EscalationService.TYPE_DNS_UNEXPECTED,
                         EscalationService.TYPE_DNS_INCONSISTENT),
@@ -1935,7 +1949,7 @@ public class MonitoringController {
         // okunabiliyordu. Kardes uclar (/history, /response-series, /check) hep korumaliydi.
         permissionService.require(session, "monitoring.read", "view");
         return dnsMonitorRepo.findById(id).map(m -> {
-            var deny = denyIfNotViewable(session, m.getTeamId());   // IDOR (H3)
+            var deny = denyIfNotViewable(session, effectiveTeam(m.getDomain(), m.getStandalone(), m.getTeamId()));   // IDOR (H3)
             if (deny != null) return deny;
             Map<String, Object> data = new LinkedHashMap<>(dnsChecker.enrichedQuery(m.getDomain()));
             data.put("monitor", enrichDns(m, dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(m.getId()).orElse(null), certificateService.domainTeamNameMap(), teamNameMap(), openDnsAlarm(m.getDomain())));
@@ -2098,6 +2112,7 @@ public class MonitoringController {
             if (body.containsKey("groupName"))       m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+            closeAlertsOnPause(m.getActive(), body.get("active"), m.getUrl(), Set.of(EscalationService.TYPE_KEYWORD, EscalationService.TYPE_KEYWORD_SLOW, EscalationService.TYPE_KEYWORD_SSL, EscalationService.TYPE_KEYWORD_DOMAIN_EXPIRY));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
@@ -2342,7 +2357,9 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.read", "view");
         PortMonitor pomon = portMonitorRepo.findById(id).orElse(null);
         if (pomon == null) return notFound("Port monitor not found");
-        var deny = denyIfNotViewable(session, pomon.getTeamId());   // IDOR (H3)
+        // Yazma kardeşleri (PUT/check/DELETE) effectiveTeam kullanır: envanter-türevi satırın team_id'si
+        // transferde tazelenmez → eski takım geçmişi okumaya devam ediyor, yeni takım 403 alıyordu.
+        var deny = denyIfNotViewable(session, effectiveTeam(pomon.getHost(), pomon.getStandalone(), pomon.getTeamId()));   // IDOR (H3)
         if (deny != null) return deny;
         String[] range = resolveRange(from, to, days);
         return ok(buildResponseSeries(portCheckRepo.responseSeriesRaw(id, range[0], range[1], SERIES_RAW_CAP),
@@ -2356,7 +2373,7 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.read", "view");
         DnsMonitor dmon = dnsMonitorRepo.findById(id).orElse(null);
         if (dmon == null) return notFound("DNS monitor not found");
-        var deny = denyIfNotViewable(session, dmon.getTeamId());   // IDOR (H3)
+        var deny = denyIfNotViewable(session, effectiveTeam(dmon.getDomain(), dmon.getStandalone(), dmon.getTeamId()));   // IDOR (H3)
         if (deny != null) return deny;
         String[] range = resolveRange(from, to, days);
         return ok(buildResponseSeries(dnsRecordRepo.responseSeriesRaw(id, range[0], range[1], SERIES_RAW_CAP),
@@ -2617,6 +2634,7 @@ public class MonitoringController {
             if (body.containsKey("groupName"))       m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+            closeAlertsOnPause(m.getActive(), body.get("active"), m.getUrl(), Set.of(EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SSL, EscalationService.TYPE_DOMAIN_EXPIRY));
             if (body.get("active")          instanceof Boolean b) m.setActive(b);
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
@@ -2903,6 +2921,7 @@ public class MonitoringController {
             if (body.containsKey("groupName"))       m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+            closeAlertsOnPause(m.getActive(), body.get("active"), m.getUrl(), Set.of(EscalationService.TYPE_PAGE_DOWN, EscalationService.TYPE_PAGE_INTEGRITY));
             if (body.get("active")          instanceof Boolean b) m.setActive(b);
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
@@ -3151,6 +3170,7 @@ public class MonitoringController {
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("teamId"))    m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+            closeAlertsOnPause(m.getActive(), body.get("active"), m.getUrl(), Set.of(EscalationService.TYPE_PAGESPEED_DOWN, EscalationService.TYPE_PAGESPEED_SLOW));
             if (body.get("active") instanceof Boolean b) m.setActive(b);
             applyPageSpeedFields(m, body, session);
             m.setUpdatedAt(ISO.format(Instant.now()));
@@ -3753,6 +3773,7 @@ public class MonitoringController {
                     m.setDisabledReason(null);
                     m.setDisabledAt(null);
                 }
+                closeAlertsOnPause(m.getActive(), body.get("active"), m.getName(), Set.of(EscalationService.TYPE_SCRIPTED_FAIL, EscalationService.TYPE_SCRIPTED_SLOW));
                 m.setActive(b);
             }
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
@@ -4606,6 +4627,7 @@ public class MonitoringController {
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("teamId")) m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+            closeAlertsOnPause(m.getActive(), body.get("active"), m.getDomain(), Set.of(EscalationService.TYPE_DOMAINMON_EXPIRY, EscalationService.TYPE_DOMAINMON_UNKNOWN, EscalationService.TYPE_DOMAINMON_STATUS, EscalationService.TYPE_DOMAINMON_CHANGED, EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK, EscalationService.TYPE_DOMAINMON_BLACKLIST));
             if (body.get("active") instanceof Boolean b) m.setActive(b);
             applyDomainFields(m, body);
             m.setUpdatedAt(ISO.format(Instant.now()));
@@ -4942,6 +4964,7 @@ public class MonitoringController {
             if (body.containsKey("groupName"))       m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+            closeAlertsOnPause(m.getActive(), body.get("active"), m.getHost(), Set.of(EscalationService.TYPE_PING_DOWN, EscalationService.TYPE_PING_SLOW));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.get("notifyEmail")   instanceof Boolean b) m.setNotifyEmail(b);
             if (body.get("notifyWebhook")   instanceof Boolean b) m.setNotifyWebhook(b);

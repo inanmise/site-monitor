@@ -4933,7 +4933,8 @@ public class SchedulerService {
                         changes.add(new MonitoringOutageService.DnsChange(
                                 m.getDomain(), m.getRecordType(), prevValue, valueStr, now, m.getTeamId(),
                                 m.getNotificationGroupId(),
-                                () -> recheckDnsChanged(m, prevValue)));
+                                () -> recheckDnsChanged(m, prevValue),
+                                m.getNotifyEmail(), m.getNotifyWebhook()));   // kanal bayrakları diğer 8 kalemle parite
                     } else {
                         log.info("DNS change suppressed for {} {} ({}): was='{}' now='{}'",
                                 m.getRecordType(), m.getDomain(),

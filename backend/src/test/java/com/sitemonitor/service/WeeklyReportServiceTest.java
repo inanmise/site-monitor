@@ -1014,4 +1014,20 @@ class WeeklyReportServiceTest {
         service.releaseLocksForUser(null);
         verify(reportRepo, never()).clearLocksByUser(anyLong());
     }
+
+    // ── Kod incelemesi 2026-09-09: kapsamlı müdür global ADMIN değildir ───────
+
+    @Test
+    @DisplayName("Kapsamlı müdür (ADMIN rolü, globalAdmin=false) başka takımın raporunu okuyamaz / transfer edemez")
+    void scopedAdmin_isNotGlobal_forWeeklyReports() {
+        Actor mudur = new Actor(20L, "mudur", "Müdür", 2L, "ADMIN", false);
+        WeeklyReport other = report(5L, 7L, "APPROVED");
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(other));
+
+        assertThat(mudur.isAdmin()).isFalse();
+        assertThat(ADMIN.isAdmin()).as("5-arg kurucu: rol ADMIN → global (geriye uyum)").isTrue();
+        assertThatThrownBy(() -> service.get(5L, mudur)).isInstanceOf(SecurityException.class);
+        assertThatThrownBy(() -> service.transfer(List.of(5L), 2L, mudur)).isInstanceOf(SecurityException.class);
+        assertThat(service.get(5L, ADMIN)).isNotNull();
+    }
 }

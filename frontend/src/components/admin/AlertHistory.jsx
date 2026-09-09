@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { api, formatDate } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -346,13 +346,21 @@ function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
   const toggleSection = (k) => setOpenSection(cur => (cur === k ? null : k))
   const [history, setHistory]       = useState([])
   const [loadingHistory, setLoading] = useState(true)
+  const [loadFailed, setLoadFailed] = useState(false)
   const [pushRows, setPushRows] = useState([])
 
   useEffect(() => {
-    api.admin.getAlertNotifications(alertId).then(res => {
-      setLoading(false)
-      if (res?.success) setHistory(res.data)
-    })
+    // Ağ hatasında (pod restart / proxy) request() reject eder; eskiden .catch/.finally yoktu →
+    // spinner sonsuza kadar dönüyor, hata görünmüyordu (HeartbeatHistoryModal/DnsDetailModal'da
+    // kapatılan sınıfın atlanmış kardeşi).
+    setLoading(true); setLoadFailed(false)
+    api.admin.getAlertNotifications(alertId)
+      .then(res => {
+        if (res?.success) setHistory(Array.isArray(res.data) ? res.data : [])
+        else setLoadFailed(true)
+      })
+      .catch(() => setLoadFailed(true))
+      .finally(() => setLoading(false))
     // Kanal-ayrımlı webhook (push) teslimatları — uç patlarsa bölüm boş kalır, modal çalışır.
     api.admin.getAlertPushDeliveries(alertId)
       .then(res => { if (res?.success) setPushRows(Array.isArray(res.data) ? res.data : []) })
@@ -408,7 +416,11 @@ function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
           {openSection === 'email' && (<>
             {loadingHistory && <div className="nl-empty">{t('alh.loading')}</div>}
 
-            {!loadingHistory && history.length === 0 && (
+            {!loadingHistory && loadFailed && (
+              <div className="nl-empty" role="alert">{t('alh.loadError')}</div>
+            )}
+
+            {!loadingHistory && !loadFailed && history.length === 0 && (
               <div className="nl-empty">{t('alh.notifModal.noNotifs')}</div>
             )}
 
@@ -808,7 +820,11 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
     setTypeFilter(''); setClosedFrom(null); setClosedTo(null)
   }
 
+  // Fetch yarışı: sekme/filtre değişince eski (sayfa N) istek yeni (sayfa 0) isteğin ARDINDAN
+  // dönebilir ve listeyi bayat sonuçla ezer. Yalnız en son başlatılan isteğin yanıtı uygulanır.
+  const loadSeq = useRef(0)
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current
     setLoading(true)
     try {
       const params = {
@@ -828,6 +844,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
       if (teamFilter)  params.teamId = teamFilter
       if (ackFilter)   params.acknowledged = ackFilter === 'ack' ? 'true' : 'false'
       const res = await api.admin.getAlerts(params)
+      if (seq !== loadSeq.current) return   // bayat yanıt — daha yeni bir istek yolda
       if (res?.success) {
         setAlerts(res.data ?? [])
         setTotal(res.total ?? 0)
@@ -840,7 +857,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
         toast.error(res?.error || t('alh.loadError'))
       }
     } finally {
-      setLoading(false)
+      if (seq === loadSeq.current) setLoading(false)
     }
   }, [tab, page, pageSize, closedFrom, closedTo, domain, typesParam, typeFilter,
       searchTerm, levelFilter, teamFilter, ackFilter, t, toast])

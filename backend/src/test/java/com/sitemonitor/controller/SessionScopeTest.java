@@ -81,4 +81,25 @@ class SessionScopeTest {
         assertThat(SessionScope.canManage(s, 9L)).isFalse();
         assertThat(SessionScope.canManage(s, null)).isFalse();
     }
+
+    // ── Kod incelemesi 2026-09-09: ayar yüzeyleri kapsamlı müdüre kapalı ──────
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("requireNotScopedAdmin: global ADMIN ve diğer roller geçer; kapsamlı ADMIN (müdür) 403")
+    void requireNotScopedAdmin_rejectsOnlyScopedAdmin() {
+        org.springframework.mock.web.MockHttpSession global = new org.springframework.mock.web.MockHttpSession();
+        global.setAttribute("systemRole", "ADMIN");
+        SessionScope.requireNotScopedAdmin(global, "settings.smtp");   // istisna yok
+
+        org.springframework.mock.web.MockHttpSession user = new org.springframework.mock.web.MockHttpSession();
+        user.setAttribute("systemRole", "USER");
+        user.setAttribute("viewTeamIds", new java.util.ArrayList<>(java.util.List.of(2L)));
+        SessionScope.requireNotScopedAdmin(user, "settings.smtp");     // matris ayrıca sorar; bu kapı rolü engellemez
+
+        org.springframework.mock.web.MockHttpSession scoped = new org.springframework.mock.web.MockHttpSession();
+        scoped.setAttribute("systemRole", "ADMIN");
+        scoped.setAttribute("viewTeamIds", new java.util.ArrayList<>(java.util.List.of(2L)));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> SessionScope.requireNotScopedAdmin(scoped, "settings.smtp"))
+                .isInstanceOf(SecurityException.class);
+    }
 }

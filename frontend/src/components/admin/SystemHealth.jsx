@@ -1704,7 +1704,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
           <div className="chart-modal chart-modal--wide" role="dialog" aria-modal="true">
             <div className="chart-modal-hdr">
               <h2 className="chart-modal-title">{t('http.exp.title')}</h2>
-              <button className="chart-modal-close" onClick={() => setHttpExpOpen(false)} aria-label="Kapat">✕</button>
+              <button className="chart-modal-close" onClick={() => setHttpExpOpen(false)} aria-label={t('app.close')}>✕</button>
             </div>
             <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}><HttpMetricsExplorer /></Suspense>
           </div>

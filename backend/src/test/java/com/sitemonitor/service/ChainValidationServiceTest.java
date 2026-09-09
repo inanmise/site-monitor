@@ -401,4 +401,34 @@ class ChainValidationServiceTest {
         X509CertificateHolder holder = builder.build(signer);
         return new JcaX509CertificateConverter().getCertificate(holder);
     }
+
+    @Test
+    @DisplayName("analyzeChain: 12 saat önce dolmuş ara sertifika da BROKEN (Y19 — düz bölme 0 gün sayıp VALID bırakıyordu)")
+    void analyzeChain_intermediateExpiredHoursAgo_returnsBroken() throws Exception {
+        Certificate[] chain = {
+            generateCert("leaf.example.com", 90),
+            generateCertExpiredHoursAgo("fresh-expired-intermediate-ca", 12),
+        };
+        Map<String, Object> result = service.analyzeChain(chain);
+        assertThat(result.get("chain_status")).isEqualTo("BROKEN");
+        @SuppressWarnings("unchecked")
+        java.util.List<Map<String, Object>> certs = (java.util.List<Map<String, Object>>) result.get("certificates");
+        if (certs != null && certs.size() > 1) assertThat(certs.get(1).get("expired")).isEqualTo(true);
+    }
+
+    private static X509Certificate generateCertExpiredHoursAgo(String cn, int hoursAgo) throws Exception {
+        KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
+        kpg.initialize(1024);
+        KeyPair kp = kpg.generateKeyPair();
+        long now = System.currentTimeMillis();
+        Date notBefore = new Date(now - 10 * 86_400_000L);
+        Date notAfter = new Date(now - hoursAgo * 3_600_000L);
+        X500Principal subject = new X500Principal("CN=" + cn + ", O=Test, C=TR");
+        BigInteger serial = BigInteger.valueOf(System.nanoTime());
+        JcaX509v3CertificateBuilder builder = new JcaX509v3CertificateBuilder(
+                subject, serial, notBefore, notAfter, subject, kp.getPublic());
+        ContentSigner signer = new JcaContentSignerBuilder("SHA256WithRSA").build(kp.getPrivate());
+        X509CertificateHolder holder = builder.build(signer);
+        return new JcaX509CertificateConverter().getCertificate(holder);
+    }
 }

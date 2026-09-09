@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Search, ChevronRight, Copy, BarChart3, ChevronDown } from 'lucide-react'
 import { api, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -72,6 +72,9 @@ export default function MonitorChangesConsole({ globalViewer = false }) {
   const [eventType, setEventType] = useState('')
   const [actor, setActor] = useState('')
   const [q, setQ] = useState('')
+  const [qTerm, setQTerm] = useState('')   // 300 ms debounce — her tuşta sunucu araması yok
+  useEffect(() => { const id = setTimeout(() => setQTerm(q), 300); return () => clearTimeout(id) }, [q])
+  const loadSeq = useRef(0)                // fetch yarışı: yalnız son isteğin yanıtı uygulanır
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   // Seçili aralık DÜĞMESİ ayrı tutulur: from/to'dan geri çıkarmak ("30 gün mü, özel mi")
@@ -88,11 +91,13 @@ export default function MonitorChangesConsole({ globalViewer = false }) {
   const [teams, setTeams] = useState([])
 
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current
     setRows(null)
     try {
       const res = await api.monitoring.getRecentChanges({
-        page, size, kind, eventType, actor, q, from, to, ...(teamId ? { teamId } : {}),
+        page, size, kind, eventType, actor, q: qTerm, from, to, ...(teamId ? { teamId } : {}),
       })
+      if (seq !== loadSeq.current) return   // bayat yanıt
       if (res?.success) {
         setRows(res.data?.changes || [])
         setTotal(res.data?.total || 0)
@@ -104,10 +109,11 @@ export default function MonitorChangesConsole({ globalViewer = false }) {
         setError(res?.error || t('chg.loadError'))
       }
     } catch (e) {
+      if (seq !== loadSeq.current) return
       setRows([])
       setError(e?.message || String(e))
     }
-  }, [page, size, kind, eventType, actor, q, from, to, teamId, t])
+  }, [page, size, kind, eventType, actor, qTerm, from, to, teamId, t])
 
   useEffect(() => { load() }, [load])
 

@@ -97,6 +97,7 @@ public class SmtpAdminController {
         // 'bootstrapAdmin' bayrağı (literal "admin" değil → admin yeniden adlandırılırsa kilitlenmez,
         // "admin" adlı başka kullanıcı bypass alamaz). Aksi halde matris izni gerekir.
         if (Boolean.TRUE.equals(session != null ? session.getAttribute("bootstrapAdmin") : null)) return;
+        SessionScope.requireNotScopedAdmin(session, key);   // kapsamlı müdür (AD ADMIN) geçemez
         permissionService.require(session, key, action);
     }
 

@@ -72,7 +72,7 @@ export default function AnnouncementBanner({ heroOnMount = false }) {
           {linkLabel}<ArrowUpRight size={13} />
         </a>
       )}
-      <button className="ann-close" aria-label="close" onClick={close}><X size={15} /></button>
+      <button className="ann-close" aria-label={t('app.close')} onClick={close}><X size={15} /></button>
     </>
   )
 

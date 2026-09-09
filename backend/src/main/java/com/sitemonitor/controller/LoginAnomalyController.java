@@ -179,6 +179,7 @@ public class LoginAnomalyController {
 
     private void requireSettingsAccess(HttpSession session) {
         if (Boolean.TRUE.equals(session != null ? session.getAttribute("bootstrapAdmin") : null)) return;
+        SessionScope.requireNotScopedAdmin(session, "settings.general");   // kapsamlı müdür (AD ADMIN) geçemez
         permissionService.require(session, "settings.general", "edit");
     }
     private String actor(HttpSession session) {

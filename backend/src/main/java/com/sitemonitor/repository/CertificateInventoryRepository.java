@@ -18,6 +18,8 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     List<CertificateInventory> findByTeamIdOrderByDomainAsc(Long teamId);
     Optional<CertificateInventory> findByDomain(String domain);
     boolean existsByDomain(String domain);
+    /** Rename çakışması: DB UNIQUE büyük/küçük harfe duyarlı, envanter ise küçük harf saklar. */
+    boolean existsByDomainIgnoreCase(String domain);
     boolean existsByTeamIdAndActiveTrue(Long teamId);
     long countByActiveTrue();
 

@@ -232,9 +232,7 @@ public class PortCheckerService {
      */
     private static Socket connectAny(InetAddress addr, List<InetAddress> vetted, int port, int timeoutMs) throws java.io.IOException {
         if (addr != null) {
-            Socket s = new Socket();
-            s.connect(new InetSocketAddress(addr, port), timeoutMs);
-            return s;
+            return NetworkResolver.connectSingle(new InetSocketAddress(addr, port), timeoutMs);
         }
         return NetworkResolver.connectFirstReachable(vetted, port, timeoutMs);
     }

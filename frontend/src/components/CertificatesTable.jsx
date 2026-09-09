@@ -26,6 +26,13 @@ export default function CertificatesTable({ onRowClick }) {
   const [sortBy, setSortBy]         = useState('priority|asc')
   const [filterDomain, setFilterDomain] = useState('')
   const [filterIssuer, setFilterIssuer] = useState('')
+  // Her tuşta istek atma — 300 ms sessizlikten sonra tek istek (AlertHistory/UserManager deseni).
+  const [domainTerm, setDomainTerm] = useState('')
+  const [issuerTerm, setIssuerTerm] = useState('')
+  useEffect(() => { const id = setTimeout(() => setDomainTerm(filterDomain), 300); return () => clearTimeout(id) }, [filterDomain])
+  useEffect(() => { const id = setTimeout(() => setIssuerTerm(filterIssuer), 300); return () => clearTimeout(id) }, [filterIssuer])
+  // Fetch yarışı: "ba" yanıtı "ban" yanıtından SONRA gelirse tabloyu ve sayfa sayısını ezerdi.
+  const loadSeq = useRef(0)
   const [filterStatus, setFilterStatus] = useState('')
   const [loading, setLoading]       = useState(false)
   const [statusDropOpen, setStatusDropOpen] = useState(false)
@@ -42,21 +49,23 @@ export default function CertificatesTable({ onRowClick }) {
   }, [])
 
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current
     setLoading(true)
     try {
       const [sb, sd] = sortBy.split('|')
       const data = await api.getCertificatesPaginated({
         page, per_page: perPage, sort_by: sb, sort_dir: sd,
-        filter_domain: filterDomain, filter_issuer: filterIssuer, filter_status: filterStatus,
+        filter_domain: domainTerm, filter_issuer: issuerTerm, filter_status: filterStatus,
       })
+      if (seq !== loadSeq.current) return   // bayat yanıt
       if (data?.success) {
         setCerts(data.data)
         setPagination(data.pagination)
       }
     } finally {
-      setLoading(false)
+      if (seq === loadSeq.current) setLoading(false)
     }
-  }, [page, perPage, sortBy, filterDomain, filterIssuer, filterStatus])
+  }, [page, perPage, sortBy, domainTerm, issuerTerm, filterStatus])
 
   useEffect(() => { load() }, [load])
 

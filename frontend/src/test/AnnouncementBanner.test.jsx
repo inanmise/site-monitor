@@ -40,7 +40,7 @@ describe('AnnouncementBanner', () => {
       banner_enabled: true, banner_text: 'Duyuru', banner_version: 3 } })
     wrap()
     await screen.findByRole('status')
-    fireEvent.click(screen.getByLabelText('close'))
+    fireEvent.click(screen.getByLabelText(/close/i))
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
     expect(localStorage.getItem('sm.banner.dismissedVersion')).toBe('3')
   })

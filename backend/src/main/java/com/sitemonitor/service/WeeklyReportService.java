@@ -141,8 +141,19 @@ public class WeeklyReportService {
 
     /** Controller session'dan kurar — servis testleri MockHttpSession istemez. */
     public record Actor(Long userId, String username, String displayName,
-                        Long teamId, String systemRole) {
-        public boolean isAdmin() { return "ADMIN".equals(systemRole); }
+                        Long teamId, String systemRole, boolean globalAdmin) {
+        /** Geriye uyumlu 5-arg kurucu: rol ADMIN ise GLOBAL sayılır (servis testleri / eski çağrılar). */
+        public Actor(Long userId, String username, String displayName, Long teamId, String systemRole) {
+            this(userId, username, displayName, teamId, systemRole, "ADMIN".equals(systemRole));
+        }
+        /**
+         * Sınırsız yönetici mi? Rol dizesi tek başına YETMEZ: AD-kaynaklı müdür de "ADMIN" rolüyle
+         * gelir ama takım kapsamlıdır (SessionScope.isGlobalAdmin false). Eskiden yalnız rol
+         * karşılaştırılıyordu → müdür başka takımın haftalık raporunu okuyor, düzenliyor,
+         * onaylıyor, siliyor ve TRANSFER edebiliyordu. Kapsamlı müdür artık kendi takımının
+         * kullanıcısı gibi davranır (takım eşleşmesi + düzenleme penceresi).
+         */
+        public boolean isAdmin() { return globalAdmin && "ADMIN".equals(systemRole); }
         public boolean isAudit() { return "AUDIT".equals(systemRole); }
         public boolean isTeamAdmin() { return "TEAM_ADMIN".equals(systemRole); }
         public String display() {

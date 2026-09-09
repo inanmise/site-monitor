@@ -602,7 +602,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
             {/* Ayraç YALNIZ solunda düğme varken çizilir; önizleme modunda tek başına kalan
                 dikey çizgi olarak görünüyordu. */}
             {!previewMode && <span className="modal-header-actions-sep" aria-hidden="true" />}
-            <button className="modal-close-btn" onClick={onClose} aria-label="Close">
+            <button className="modal-close-btn" onClick={onClose} aria-label={t('app.close')}>
               <X size={16} />
             </button>
           </div>

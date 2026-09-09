@@ -2368,4 +2368,93 @@ class AdminControllerTest {
         assertThat(AdminController.csvCell(null)).isEmpty();
         assertThat(AdminController.csvCell("")).isEmpty();
     }
+
+    // ── Kod incelemesi 2026-09-09: kapsamlı müdür kullanıcı yönetimi ──────────
+
+    /** AD-kaynaklı ADMIN (müdür): rol ADMIN ama görüş/yönetim kapsamı takım 2 ile sınırlı → global DEĞİL. */
+    private MockHttpSession scopedAdminSession() {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", Boolean.TRUE);
+        s.setAttribute("username", "mudur");
+        s.setAttribute("userId", 77L);
+        s.setAttribute("teamId", 2L);
+        s.setAttribute("systemRole", "ADMIN");
+        s.setAttribute("viewTeamIds", new java.util.ArrayList<>(java.util.List.of(2L)));
+        s.setAttribute("manageTeamIds", new java.util.ArrayList<>(java.util.List.of(2L)));
+        return s;
+    }
+
+    @Test
+    @DisplayName("KRİTİK: kapsamlı müdür system_role=ADMIN ile kullanıcı yaratamaz (global admin üretimi) → 403")
+    void createUser_asScopedAdmin_withAdminRole_returns403() throws Exception {
+        mvc.perform(post("/api/admin/users")
+                        .session(scopedAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"x\",\"password\":\"pw\",\"system_role\":\"ADMIN\",\"team_ids\":[]}"))
+                .andExpect(status().isForbidden());
+        org.mockito.Mockito.verify(userService, org.mockito.Mockito.never())
+                .createUser(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Kapsamlı müdür yönetim kapsamı DIŞINDAKİ takıma kullanıcı yazamaz → 403")
+    void createUser_asScopedAdmin_teamOutsideScope_returns403() throws Exception {
+        mvc.perform(post("/api/admin/users")
+                        .session(scopedAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"y\",\"password\":\"pw\",\"system_role\":\"USER\",\"team_id\":99}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("Kapsamlı müdür kendi takımına USER yaratabilir → 200")
+    void createUser_asScopedAdmin_inScope_returns200() throws Exception {
+        AppUser created = new AppUser();
+        created.setId(8L); created.setUsername("z"); created.setTeamId(2L); created.setSystemRole("USER");
+        when(userService.createUser(any(), any(), any(), any(), any(), eq("USER"), eq(java.util.List.of(2L)), any()))
+                .thenReturn(created);
+        mvc.perform(post("/api/admin/users")
+                        .session(scopedAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"z\",\"password\":\"pw\",\"system_role\":\"USER\",\"team_id\":2}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_id").value(2));
+    }
+
+    @Test
+    @DisplayName("TEAM_ADMIN kendi takımındaki GLOBAL ADMIN hesabını düzenleyemez/parolasını sıfırlayamaz → 403")
+    void updateUser_asTeamAdmin_onAdminTarget_returns403() throws Exception {
+        AppUser target = new AppUser();
+        target.setId(5L); target.setUsername("globaladmin"); target.setSystemRole("ADMIN"); target.setTeamId(2L); target.setActive(true);
+        when(userRepo.findById(5L)).thenReturn(Optional.of(target));
+
+        mvc.perform(put("/api/admin/users/5")
+                        .session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"display_name\":\"ele gecirildi\"}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/users/5/auto-reset-password")
+                        .session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"admin_password\":\"pw\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("PUT /api/admin/inventory/{id} domain'i oluşturma yoluyla aynı normalize eder (küçük harf)")
+    void updateInventory_normalizesDomainCase() throws Exception {
+        CertificateInventory existing = inventory("old.com");
+        existing.setId(1L);
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+        when(inventoryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        mvc.perform(put("/api/admin/inventory/1")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"OLD.COM\",\"port\":443,\"active\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.domain").value("old.com"));
+        // Harf farkı rename DEĞİLDİR: geçmiş tabloları taşınmaz, satır aynı anahtarla kalır.
+        org.mockito.Mockito.verify(latestCheckRepo, org.mockito.Mockito.never()).renameDomain(any(), any());
+    }
 }

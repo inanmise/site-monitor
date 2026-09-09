@@ -11,6 +11,12 @@ public interface CertificateNoteRevisionRepository extends JpaRepository<Certifi
 
     List<CertificateNoteRevision> findByNoteIdOrderBySequenceNoAsc(Long noteId);
 
+    /** Kalıcı purge: notların revizyonlarını da sil (öksüz revizyon kalmasın). */
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query("DELETE FROM CertificateNoteRevision r WHERE r.noteId IN :noteIds")
+    int deleteByNoteIdIn(@org.springframework.data.repository.query.Param("noteIds") java.util.Collection<Long> noteIds);
+
     @Query("SELECT MAX(r.sequenceNo) FROM CertificateNoteRevision r WHERE r.noteId = :noteId")
     Integer findMaxSequenceNo(@Param("noteId") Long noteId);
 

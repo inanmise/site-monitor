@@ -735,4 +735,29 @@ class CertificateControllerTest {
         // Bos kapsamla sorgu `IN ()` uretirdi — depoya HIC gidilmemeli.
         verify(inventoryRepo, never()).findDomainsForTeams(anyList());
     }
+
+    // ── Kod incelemesi 2026-09-09: check-preview takım kapsamı ────────────────
+
+    @Test
+    @DisplayName("GÜVENLİK: check-preview envanterdeki BAŞKA takımın domain'ine 403 (canlı TLS sonucu + port/proxy sızmaz)")
+    void preview_otherTeamInventoryDomain_returns403() throws Exception {
+        when(inventoryRepo.findByDomain("t9.example.com")).thenReturn(java.util.Optional.of(invOf("t9.example.com", 9L)));
+
+        mvc.perform(get("/api/check-preview/t9.example.com").session(scopedSession()))
+                .andExpect(status().isForbidden());
+
+        verify(checkerService, org.mockito.Mockito.never()).check(anyString(), anyInt(), anyBoolean(), any(), any());
+    }
+
+    @Test
+    @DisplayName("check-preview kendi takımının domain'inde ve envanter DIŞI ad-hoc host'ta çalışır")
+    void preview_ownTeamAndAdHoc_ok() throws Exception {
+        when(inventoryRepo.findByDomain("t5.example.com")).thenReturn(java.util.Optional.of(invOf("t5.example.com", 5L)));
+        when(inventoryRepo.findByDomain("adhoc.example.com")).thenReturn(java.util.Optional.empty());
+        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any(), any()))
+                .thenReturn(new java.util.LinkedHashMap<>(java.util.Map.of("status", "valid")));
+
+        mvc.perform(get("/api/check-preview/t5.example.com").session(scopedSession())).andExpect(status().isOk());
+        mvc.perform(get("/api/check-preview/adhoc.example.com").session(scopedSession())).andExpect(status().isOk());
+    }
 }

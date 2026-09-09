@@ -39,13 +39,14 @@ const EMPTY = {
 }
 
 function YesNo({ value, onChange }) {
+  const t = useT()   // "Evet/Hayır" sabitti: İngilizce arayüzde her envanter boolean'ı Türkçe kalıyordu
   const isYes = value === true
   return (
     <div className="yn-group">
       <button type="button" className={`yn-btn${isYes ? ' yn-active' : ''}`}
-        onClick={() => onChange(true)}>Evet</button>
+        onClick={() => onChange(true)}>{t('inv.yes')}</button>
       <button type="button" className={`yn-btn${!isYes ? ' yn-active' : ''}`}
-        onClick={() => onChange(false)}>Hayır</button>
+        onClick={() => onChange(false)}>{t('inv.no')}</button>
     </div>
   )
 }

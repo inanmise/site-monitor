@@ -130,4 +130,11 @@ class RdapDomainExpiryServiceTest {
     void registrableDomain_null_returnsNull() {
         assertThat(RdapDomainExpiryService.registrableDomain(null)).isNull();
     }
+
+    @Test
+    @DisplayName("daysUntil_expiredTwelveHoursAgo_returnsMinusOne (sıfıra kırpma yok — DomainCheckerService ile aynı kural)")
+    void daysUntil_expiredTwelveHoursAgo_returnsMinusOne() {
+        String iso = java.time.Instant.now().minus(java.time.Duration.ofHours(12)).toString();
+        assertThat(RdapDomainExpiryService.daysUntil(iso)).isEqualTo(-1);
+    }
 }

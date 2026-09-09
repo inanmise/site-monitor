@@ -321,4 +321,28 @@ class SqlPlaygroundServiceTest {
                 .startsWith("SELECT * FROM (")
                 .endsWith("LIMIT 1000");
     }
+
+    // ── Kod incelemesi 2026-09-09: paylaşılan JdbcTemplate'e dokunulmaz ───────
+
+    @Test
+    @DisplayName("execute PAYLAŞILAN JdbcTemplate'in zaman aşımını DEĞİŞTİRMEZ (retention/scheduler 30 sn tavana düşmesin)")
+    void execute_doesNotMutateSharedJdbcTemplate() {
+        when(jdbc.queryForList(contains("SELECT"))).thenReturn(List.of());
+        service.execute("SELECT 1", "n1");
+        org.mockito.Mockito.verify(jdbc, org.mockito.Mockito.never()).setQueryTimeout(org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    @Test
+    @DisplayName("DataSource varsa oyun alanı kendi ayrı, 30 sn zaman aşımlı JdbcTemplate örneğini kullanır (tek sefer kurulur)")
+    void playgroundTemplate_isSeparateTimedInstance() {
+        javax.sql.DataSource ds = org.mockito.Mockito.mock(javax.sql.DataSource.class);
+        when(jdbc.getDataSource()).thenReturn(ds);
+
+        JdbcTemplate t1 = service.playgroundTemplate();
+        JdbcTemplate t2 = service.playgroundTemplate();
+
+        assertThat(t1).isNotSameAs(jdbc).isSameAs(t2);
+        assertThat(t1.getQueryTimeout()).isEqualTo(30);
+        assertThat(t1.getDataSource()).isSameAs(ds);
+    }
 }

@@ -116,7 +116,15 @@ public class MonitoringOutageService {
     public record DnsChange(String domain, String recordType,
                             String previousValue, String newValue, String detectedAt, Long teamId,
                             Long notificationGroupId,
-                            Supplier<Map<String, Object>> recheck) {}
+                            Supplier<Map<String, Object>> recheck,
+                            Boolean notifyEmail, Boolean notifyWebhook) {
+        /** Geriye uyumlu 8-arg kurucu (kanal bayrakları bilinmiyor = her ikisi de AÇIK). */
+        public DnsChange(String domain, String recordType, String previousValue, String newValue,
+                         String detectedAt, Long teamId, Long notificationGroupId,
+                         Supplier<Map<String, Object>> recheck) {
+            this(domain, recordType, previousValue, newValue, detectedAt, teamId, notificationGroupId, recheck, null, null);
+        }
+    }
 
     /** Teyit re-check'leri için küçük daemon havuzu — eşzamanlı çok-domain DOWN'da
      *  teyit zincirleri paralel ilerlesin (tek-thread'de seri kuyruk → alarm gecikmesi).
@@ -404,11 +412,23 @@ public class MonitoringOutageService {
                     // Son changed kaydı BİR kez çekilir: hem monitör-bazlı bastırma kararı hem ctx için.
                     DnsRecord lastChanged = lastChangedRecord(e.getDomain());
                     if (dnsChangeRealertSuppressed(e.getDomain(), lastChanged)) return;
-                    Map<String, Object> ctx = reconstructChangeCtx(lastChanged);
+                    Map<String, Object> ctx = withDnsChannelFlags(reconstructChangeCtx(lastChanged), lastChanged);
                     withLock(EscalationService.TYPE_DNS_CHANGED, e.getDomain(), () ->
                             escalationService.processConfirmedOutage(e.getDomain(),
                                     EscalationService.TYPE_DNS_CHANGED, "HIGH", ctx));
                 });
+    }
+
+    /** Günlük re-alert ctx'ine monitörün kanal bayraklarını basar (açılış yolu changeCtx ile parite). */
+    private Map<String, Object> withDnsChannelFlags(Map<String, Object> ctx, DnsRecord lastChanged) {
+        if (lastChanged == null || lastChanged.getMonitorId() == null) return ctx;
+        try {
+            DnsMonitor mon = dnsMonitorRepo.findById(lastChanged.getMonitorId()).orElse(null);
+            if (mon == null) return ctx;
+            return SchedulerService.chanCtx(ctx, mon.getNotifyEmail(), mon.getNotifyWebhook());
+        } catch (Exception ex) {
+            return ctx;
+        }
     }
 
     /** Günlük DNS_CHANGED re-alert'i monitör bazında bastırılmalı mı?
@@ -773,7 +793,9 @@ public class MonitoringOutageService {
         // damga olayda kalir -- bkz. yukaridaki team_id notu).
         if (c.notificationGroupId() != null)
             ctx.put("notification_group_id", c.notificationGroupId());
-        return ctx;
+        // Diğer sekiz sweep kalemi chanCtx'ten geçer; DNS_CHANGED geçmiyordu → monitörde "E-posta"/
+        // "Webhook" kapalı olsa da değişiklik alarmı her iki kanaldan gidiyordu.
+        return SchedulerService.chanCtx(ctx, c.notifyEmail(), c.notifyWebhook());
     }
 
     /** Açık DNS_CHANGED alarmının günlük re-alert'i için domain'in son changed kaydı (yoksa null).
@@ -810,15 +832,24 @@ public class MonitoringOutageService {
                     "INSERT INTO scheduler_lock(name, locked_by, locked_until) VALUES(?, ?, ?)",
                     lockName, INSTANCE_ID, until);
             acquired = true;
+        } catch (org.springframework.dao.DuplicateKeyException e) {
+            log.debug("İzleme alarm kilidi başka replikada: {} — atlanıyor", lockName);
+            return;
+        } catch (org.springframework.jdbc.BadSqlGrammarException e) {
+            // Kilit TABLOSU yok (ilk açılışta ddl-auto henüz koşmadı) — bilinçli tek-pod geri düşüşü.
+            log.warn("Distributed lock table unavailable (HA degraded): {}", e.getMessage());
+            acquired = false; // degrade: kilitsiz devam — tek instance kurulumlarda güvenli
         } catch (Exception e) {
-            if (e.getMessage() != null
-                    && (e.getMessage().contains("UNIQUE") || e.getMessage().contains("unique")
-                        || e.getMessage().contains("duplicate"))) {
+            if (StormService.isUniqueViolation(e)) {
                 log.debug("İzleme alarm kilidi başka replikada: {} — atlanıyor", lockName);
                 return;
             }
-            log.warn("Distributed lock table unavailable (HA degraded): {}", e.getMessage());
-            acquired = false; // degrade: kilitsiz devam — tek instance kurulumlarda güvenli
+            // SchedulerService.tryAcquireSchedulerLock ile aynı kural: geçici DB hatasında (deadlock,
+            // statement-timeout, bağlantı kopması) kilitsiz devam etmek çok-pod'da aynı alarmı İKİ kez
+            // açmak (çift alert_event + çift eskalasyon maili/push) demekti. Güvenli taraf bu turu
+            // ATLAMAK — teyit zinciri bir sonraki sweep'te aynı sinyalle tekrar kurulur.
+            log.warn("İzleme alarm kilidi alınamadı — {} bu tur atlanıyor (güvenli taraf): {}", lockName, e.getMessage());
+            return;
         }
         try {
             action.run();

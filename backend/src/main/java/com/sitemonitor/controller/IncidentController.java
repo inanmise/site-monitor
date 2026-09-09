@@ -89,7 +89,7 @@ public class IncidentController {
         requireView(session);
         // Seçenekler takıma özel: kullanıcı global + kendi takımını görür; admin tümünü.
         return ok(Map.of("data", service.listOptions(type, longAttr(session, "teamId"),
-                "ADMIN".equals(session.getAttribute("systemRole")))));
+                SessionScope.isGlobalAdmin(session))));
     }
 
     @PostMapping("/options")
@@ -112,7 +112,7 @@ public class IncidentController {
         requireManage(session);
         // Kullanıcı yalnız kendi takımının seçeneğini silebilir; admin her şeyi.
         service.removeOption(type, value, longAttr(session, "teamId"),
-                "ADMIN".equals(session.getAttribute("systemRole")));
+                SessionScope.isGlobalAdmin(session));
         auditService.recordAction("INCIDENT_OPTION_DELETE", session, request,
                 "INCIDENT_OPTION", type, "{\"value\":\"" + safe(value) + "\"}");
         return ok(Map.of("message", "Deleted"));

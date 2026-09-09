@@ -67,7 +67,8 @@ class RepositoryWriteTransactionGuardTest {
             "CertificateCheckRepository#renameDomain",
             "CertificateNoteRepository#renameDomain",
             "LatestCheckRepository#renameDomain",
-            // Domain silme — CertificateService#deleteDomain (@Transactional): envanter + kontrol geçmişi tek adım.
+            // Kalıcı purge — AdminController#purgeInventory / #purgeAllDeleted (@Transactional):
+            // kontrol geçmişi + latest_checks + notlar + envanter satırı tek adım.
             "CertificateCheckRepository#deleteByDomain",
             // Haftalık rapor — WeeklyReportService (@Transactional): rapor + görsel + mail kaydı + kilitler birlikte.
             "WeeklyReportImageRepository#deleteByReportId",

@@ -581,7 +581,15 @@ public class UserService {
         Team team = teamRepo.findById(id).orElseThrow(() -> new NoSuchElementException("Team not found: " + id));
         if (weeklyReminderEnabled != null) team.setWeeklyReminderEnabled(weeklyReminderEnabled);
         if (weeklyAvailabilityEnabled != null) team.setWeeklyAvailabilityEnabled(weeklyAvailabilityEnabled);
-        if (name != null && !name.isBlank()) team.setName(name.trim());
+        if (name != null && !name.isBlank()) {
+            // createTeam'deki ad benzersizliği burada yoktu: mevcut ada rename DB UNIQUE'e çarpıp 500
+            // üretiyordu (oluşturma yolu 400 verir); harf farkıyla ("Ops"/"ops") iki takım oluşabiliyordu.
+            String trimmed = name.trim();
+            if (!trimmed.equalsIgnoreCase(team.getName()) && teamRepo.existsByNameIgnoreCase(trimmed)) {
+                throw new IllegalArgumentException("Team already exists: " + trimmed);
+            }
+            team.setName(trimmed);
+        }
         if (email != null && !email.isBlank()) team.setEmail(email.trim());
         else if (team.getEmail() == null || team.getEmail().isBlank())
             throw new IllegalArgumentException("Team email is required");

@@ -905,4 +905,42 @@ class MonitoringOutageServiceTest {
             assertThat(service.alertEnabled(t)).as("acik kalmali: " + t).isTrue();
         }
     }
+
+    // ── Kod incelemesi 2026-09-09 ─────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Kilit alınırken GEÇİCİ DB hatası (bağlantı kopması) → aksiyon ATLANIR (fail-closed; çift alarm yerine bir tur kaçırılır)")
+    void withLock_transientDbError_skipsAction() {
+        when(jdbcTemplate.update(startsWith("INSERT INTO scheduler_lock"), any(), any(), any()))
+                .thenThrow(new RuntimeException("connection reset by peer"));
+        when(alertEventRepo.findOpenByDomainIn(anyCollection()))
+                .thenReturn(List.of(openAlert("recovered2.example.com", EscalationService.TYPE_ACCESSIBILITY)));
+
+        service.handleSweepResults(EscalationService.TYPE_ACCESSIBILITY, List.of(
+                item(EscalationService.TYPE_ACCESSIBILITY, "recovered2.example.com", "443", true,
+                        Map.of(), MonitoringOutageServiceTest::up)));
+
+        verify(escalationService, never()).resolveMonitoringAlertsForDomain(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("DNS_CHANGED ctx'i monitörün E-posta/Webhook bayraklarını taşır (diğer 8 kalemle parite)")
+    void dnsChange_ctxCarriesChannelFlags() {
+        service.handleDnsSweep(
+                List.of(),
+                List.of(),
+                List.of(new MonitoringOutageService.DnsChange(
+                        "flags.example.com", "A", "1.2.3.4", "9.9.9.9", "2026-06-11T10:00:00", 3L, null,
+                        downThenUp(99, new AtomicInteger()), false, false)),
+                List.of(),
+                List.of());
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> ctx = ArgumentCaptor.forClass(Map.class);
+        verify(escalationService).processConfirmedOutage(
+                eq("flags.example.com"), eq(EscalationService.TYPE_DNS_CHANGED), eq("HIGH"), ctx.capture());
+        assertThat(ctx.getValue().get("mail_disabled")).isEqualTo(true);
+        assertThat(ctx.getValue().get("push_disabled")).isEqualTo(true);
+        assertThat(ctx.getValue().get("team_id")).isEqualTo(3L);
+    }
 }

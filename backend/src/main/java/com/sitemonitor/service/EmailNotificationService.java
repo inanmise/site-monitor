@@ -1872,6 +1872,15 @@ public class EmailNotificationService {
     public String buildStormRecoveryHtml(int recoveredCount, int stillDownCount, String scopeLabel,
                                          String startedAt, String resolvedAt,
                                          List<String> sampleTargets, int truncatedExtra) {
+        return buildStormRecoveryHtml(recoveredCount, stillDownCount, scopeLabel, startedAt, resolvedAt,
+                sampleTargets, truncatedExtra, List.of());
+    }
+
+    /** {@code stillDownTargets}: hâlâ erişilemeyen üyelerin adları — sayı yerine liste (hangileri?). */
+    public String buildStormRecoveryHtml(int recoveredCount, int stillDownCount, String scopeLabel,
+                                         String startedAt, String resolvedAt,
+                                         List<String> sampleTargets, int truncatedExtra,
+                                         List<String> stillDownTargets) {
         String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         String green = "#16a34a";
         String duration = formatOutageDuration(startedAt, resolvedAt);
@@ -1895,7 +1904,12 @@ public class EmailNotificationService {
             "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px;border:1px solid #bbf7d0;border-radius:10px;overflow:hidden'>"
             + "<tr><td bgcolor='#15803d' style='background-color:#15803d;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#dcfce7'>&#10003; KURTARILAN MONİTÖRLER</td></tr>"
             + stormRecoveredRows(sampleTargets, truncatedExtra)
-            + "</table>";
+            + "</table>"
+            + (stillDownTargets == null || stillDownTargets.isEmpty() ? "" :
+                "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px;border:1px solid #fecaca;border-radius:10px;overflow:hidden'>"
+                + "<tr><td bgcolor='#b91c1c' style='background-color:#b91c1c;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#fee2e2'>&#9888; HÂLÂ ERİŞİLEMEYEN (bireysel alarma döndü)</td></tr>"
+                + stormTargetRows(stillDownTargets, Math.max(0, stillDownCount - stillDownTargets.size()), "#ffffff")
+                + "</table>");
 
         String css = "<style>"
             + "body,table,td{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}"

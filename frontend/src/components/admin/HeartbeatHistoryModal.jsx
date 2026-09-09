@@ -74,7 +74,7 @@ export default function HeartbeatHistoryModal({ onClose }) {
             <Activity size={18} />
             <strong>{t('health.hbHistoryTitle')}</strong>
           </div>
-          <button className="hb-modal-close" onClick={onClose} aria-label="Close"><X size={18} /></button>
+          <button className="hb-modal-close" onClick={onClose} aria-label={t('app.close')}><X size={18} /></button>
         </div>
 
         <div className="hb-modal-controls">

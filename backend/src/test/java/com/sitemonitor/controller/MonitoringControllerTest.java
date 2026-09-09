@@ -571,7 +571,7 @@ class MonitoringControllerTest {
     void createPort_duplicateActive_rejected() throws Exception {
         com.sitemonitor.model.PortMonitor existing = new com.sitemonitor.model.PortMonitor();
         existing.setId(5L); existing.setHost("x.example.com"); existing.setPort(8443); existing.setActive(true);
-        when(portMonitorRepo.findFirstByHostAndPortOrderByIdAsc("x.example.com", 8443)).thenReturn(Optional.of(existing));
+        when(portMonitorRepo.existsByHostAndPortAndActiveTrue("x.example.com", 8443)).thenReturn(true);
         mvc.perform(post("/api/monitoring/port").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                 .content("{\"host\":\"x.example.com\",\"port\":8443}"))
@@ -3234,8 +3234,8 @@ class MonitoringControllerTest {
         com.sitemonitor.model.PortMonitor other = inventoryPort(2L, "baska.example.com", 3L);
         other.setStandalone(true);
         when(portMonitorRepo.findById(1L)).thenReturn(Optional.of(inventoryPort(1L, "benim.example.com", 3L)));
-        when(portMonitorRepo.findFirstByHostAndPortOrderByIdAsc("baska.example.com", 443))
-                .thenReturn(Optional.of(other));
+        when(portMonitorRepo.existsByHostAndPortAndActiveTrueAndIdNot("baska.example.com", 443, 1L))
+                .thenReturn(true);
 
         mvc.perform(put("/api/monitoring/port/1").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
@@ -3257,7 +3257,7 @@ class MonitoringControllerTest {
                 .andExpect(status().isOk());
 
         // Kendisiyle karşılaştırma sorgusu hiç yapılmamalı (gereksiz DB turu + yanlış 400 riski).
-        verify(portMonitorRepo, never()).findFirstByHostAndPortOrderByIdAsc(anyString(), anyInt());
+        verify(portMonitorRepo, never()).existsByHostAndPortAndActiveTrueAndIdNot(anyString(), anyInt(), any());
     }
 
     // ── Denetim 5. tur, bulgu 8: restore YETKI alanini yazamaz ─────────────────
@@ -3466,5 +3466,54 @@ class MonitoringControllerTest {
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"eski takim\"}"))
                 .andExpect(status().isForbidden());
+    }
+
+    // ── Kod incelemesi 2026-09-09 ─────────────────────────────────────────────
+
+    @Test
+    @DisplayName("PUT /http/{id} active:false (duraklatma) açık alarmları SESSİZCE kapatır — envanterin closeAlertsOnDeactivate eşleniği")
+    void pauseHttpMonitor_closesOpenAlertsSilently() throws Exception {
+        var m = new com.sitemonitor.model.HttpMonitor();
+        m.setId(1L); m.setUrl("https://pause.example.com/"); m.setActive(true); m.setTeamId(3L);
+        when(httpMonitorRepo.findById(1L)).thenReturn(Optional.of(m));
+        when(httpMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(put("/api/monitoring/http/1").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"active\":false}"))
+                .andExpect(status().isOk());
+
+        verify(escalationService).resolveOpenAlertsSilently(eq("https://pause.example.com/"), anySet(), contains("duraklat"));
+    }
+
+    @Test
+    @DisplayName("PUT /http/{id} active:true (zaten aktif) alarm kapatmaz")
+    void updateHttpMonitor_stayActive_noAlertClose() throws Exception {
+        var m = new com.sitemonitor.model.HttpMonitor();
+        m.setId(1L); m.setUrl("https://stay.example.com/"); m.setActive(true); m.setTeamId(3L);
+        when(httpMonitorRepo.findById(1L)).thenReturn(Optional.of(m));
+        when(httpMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(put("/api/monitoring/http/1").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"active\":true}"))
+                .andExpect(status().isOk());
+
+        verify(escalationService, never()).resolveOpenAlertsSilently(any(), anySet(), any());
+    }
+
+    @Test
+    @DisplayName("POST /port host'u küçük harfe normalize eder (envanter anahtarıyla aynı; mükerrer guard harf-duyarsız)")
+    void createPort_lowercasesHost() throws Exception {
+        when(portMonitorRepo.save(any(com.sitemonitor.model.PortMonitor.class)))
+                .thenAnswer(a -> { com.sitemonitor.model.PortMonitor p = a.getArgument(0); p.setId(9L); return p; });
+        mvc.perform(post("/api/monitoring/port").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"host\":\"MAIL.Example.com\",\"port\":25,\"teamId\":3}"))
+                .andExpect(status().isOk());
+        verify(portMonitorRepo).existsByHostAndPortAndActiveTrue("mail.example.com", 25);
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.PortMonitor> cap = org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.PortMonitor.class);
+        verify(portMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getHost()).isEqualTo("mail.example.com");
     }
 }

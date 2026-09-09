@@ -293,7 +293,9 @@ public class RdapDomainExpiryService {
                 try { when = Instant.parse(iso); }
                 catch (Exception e2) { when = LocalDate.parse(iso.substring(0, 10)).atStartOfDay(ZoneOffset.UTC).toInstant(); }
             }
-            return (int) ChronoUnit.DAYS.between(Instant.now(), when);
+            // ChronoUnit.DAYS sıfıra doğru kırpar — dolalı <24 saat olmuş domain 0 gün görünüyordu;
+            // DomainCheckerService.daysUntil (D5) ile aynı floorDiv kuralı: negatif korunur.
+            return (int) Math.floorDiv(when.toEpochMilli() - Instant.now().toEpochMilli(), 86_400_000L);
         } catch (Exception e) { return null; }
     }
 

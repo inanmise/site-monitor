@@ -48,6 +48,23 @@ public final class NetworkResolver {
     }
 
     /**
+     * Tek adrese bağlanır; connect BAŞARISIZSA soketi kapatıp hatayı yeniden fırlatır.
+     * {@code Socket.connect} bağlanamasa da FD ayırmış olur; çok-A dalı hatada kapatırken tek-A/
+     * çözümsüz dallar kapatmıyordu — DOWN durumdaki her port monitörü 30 sn'de bir FD sızdırıyordu
+     * (CertificateCheckerService.connectFirstReachable'daki aynı asimetri daha önce kapatılmıştı).
+     */
+    public static Socket connectSingle(InetSocketAddress target, int timeoutMs) throws IOException {
+        Socket s = new Socket();
+        try {
+            s.connect(target, timeoutMs);
+            return s;
+        } catch (IOException e) {
+            try { s.close(); } catch (IOException ignore) { /* zaten kapandı */ }
+            throw e;
+        }
+    }
+
+    /**
      * Çözümlenen adresleri sırayla dener, ilk TCP kabul edene bağlı Socket döndürür (çağıran kapatır).
      * Çözümleme boşsa hostname ile bağlanır (doğal UnknownHost/ConnectException korunur).
      * Hepsi başarısızsa son bağlantı hatasını fırlatır.
@@ -55,9 +72,7 @@ public final class NetworkResolver {
     public static Socket connectFirstReachable(String host, int port, int timeoutMs) throws IOException {
         List<InetAddress> addrs = allAddresses(host);
         if (addrs.isEmpty()) {
-            Socket s = new Socket();
-            s.connect(new InetSocketAddress(host, port), timeoutMs);
-            return s;
+            return connectSingle(new InetSocketAddress(host, port), timeoutMs);
         }
         // Tek-A: eski davranış (tam timeout, tek deneme). Çok-A: ilk MAX_A_ATTEMPTS IP + IP başına
         // connect'i CONNECT_CAP_MS'e clamp (çok-A amplifikasyonu; tek-A hiç etkilenmez → false-down riski yok).

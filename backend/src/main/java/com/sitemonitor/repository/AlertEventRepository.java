@@ -88,10 +88,17 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     @Query("UPDATE AlertEvent e SET e.stormId = :stormId WHERE e.id = :id AND e.resolved = false AND e.stormId IS NULL")
     int linkToStormIfOpen(@Param("id") Long id, @Param("stormId") Long stormId);
 
-    /** Storm bağını kaldır — yalnız hâlâ AÇIK satırda (çözülmüş üyeyi full-save ile diriltmeden). */
+    /**
+     * Storm bağını kaldır — yalnız hâlâ AÇIK satırda (çözülmüş üyeyi full-save ile diriltmeden).
+     *
+     * <p>{@code lastReAlertAt} de sıfırlanır: üye storm'a eklenirken bireysel bildirim GİTMEDEN
+     * damgalanmıştı (SUPPRESSED); bağ kopunca izleme yolu "bugün zaten gönderildi" deyip bir
+     * re-alert aralığı (24 sa) susuyordu — "sonraki sweep bireysel alarm" sözü tutulmuyordu.
+     * null damga = "ilk bildirim yarıda kaldı" dalı → sonraki sweep INITIAL'ı hemen gönderir.
+     */
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query("UPDATE AlertEvent e SET e.stormId = null WHERE e.id = :id AND e.resolved = false")
+    @Query("UPDATE AlertEvent e SET e.stormId = null, e.lastReAlertAt = null WHERE e.id = :id AND e.resolved = false")
     int unlinkFromStorm(@Param("id") Long id);
 
     @Query("""
