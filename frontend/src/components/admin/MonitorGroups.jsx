@@ -4,10 +4,10 @@ import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 
 // İzleme türü etiketleri — mevcut İzleme Göstergeleri anahtarlarını yeniden kullan (yeni i18n gerekmez).
-const TYPE_LABEL = {
+export const TYPE_LABEL = {
   cert: 'wr.monTypeCert', http: 'wr.monTypeHttp', ping: 'wr.monTypePing',
   port: 'wr.monTypePort', dns: 'wr.monTypeDns', keyword: 'wr.monTypeKeyword', domain: 'wr.monTypeDomain',
-  page: 'wr.monTypePage', scripted: 'wr.monTypeScripted',
+  page: 'wr.monTypePage', scripted: 'wr.monTypeScripted', pagespeed: 'wr.monTypePageSpeed',
 }
 
 /**
