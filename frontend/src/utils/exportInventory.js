@@ -149,7 +149,10 @@ async function registerRobotoFont(doc) {
 /* ── PDF — per-domain detail (mirrors show modal) ─────────── */
 export async function exportInventoryPdf(items, teams, t) {
   const { jsPDF } = await import('jspdf')
-  await import('jspdf-autotable')
+  // autotable v5 ARTIK eklenti DEĞİL: doc.autoTable(...) metodu kaldırıldı, tablo
+  // fonksiyona dokümanı vererek çizilir. Yükseltmenin sebebi jspdf 2.x/3.x zincirindeki
+  // kritik + yüksek CVE'lerdi (npm audit prod bağımlılıklarında 3 bulgu veriyordu).
+  const { default: autoTable } = await import('jspdf-autotable')
 
   const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' })
   // Embed Roboto with Latin Extended (covers Turkish glyphs ş ğ ç ö ü ı İ)
@@ -234,7 +237,7 @@ export async function exportInventoryPdf(items, teams, t) {
       }
       opsRows.push(row)
     }
-    doc.autoTable({
+    autoTable(doc, {
       startY: y,
       body: opsRows,
       theme: 'grid',

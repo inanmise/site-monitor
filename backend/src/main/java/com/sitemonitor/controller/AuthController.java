@@ -20,6 +20,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.web.bind.annotation.*;
@@ -225,12 +227,20 @@ public class AuthController {
                 String token = rememberMeService.generateToken(
                         user.getUsername(),                       // CANONICAL — iptal yolu da bununla arıyor
                         clientIp, request.getHeader("User-Agent"));
-                Cookie cookie = new Cookie(RememberMeService.COOKIE_NAME, token);
-                cookie.setMaxAge(rememberTtlSeconds);
-                cookie.setHttpOnly(true);
-                cookie.setSecure(cookieSecure);
-                cookie.setPath("/");
-                response.addCookie(cookie);
+                // SameSite=Strict ZORUNLU — oturum çerezi prod'da zaten Strict ve bu uygulamanın
+                // TEK CSRF savunması. Remember-me çerezi jakarta Cookie ile yazılıyordu ve o sınıfın
+                // setSameSite'ı yok; bayrak sessizce eksik kalıyordu. AuthInterceptor bu çerezle
+                // TAM OTURUMU yeniden kurduğu için, Lax-varsayılanı uygulamayan bir tarayıcıda
+                // cross-site POST kimlikli çalışıyor ve oturum çerezindeki Strict etkisiz kalıyordu.
+                // (Gövdesiz POST uçları düz HTML formuyla tetiklenebilir — purge-deleted dâhil.)
+                ResponseCookie cookie = ResponseCookie.from(RememberMeService.COOKIE_NAME, token)
+                        .maxAge(rememberTtlSeconds)
+                        .httpOnly(true)
+                        .secure(cookieSecure)
+                        .path("/")
+                        .sameSite("Strict")
+                        .build();
+                response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
             }
             return ResponseEntity.ok(buildMeResponse(user, newSession, loginStamp));
         }

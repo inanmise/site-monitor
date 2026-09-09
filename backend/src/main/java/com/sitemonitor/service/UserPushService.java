@@ -735,6 +735,11 @@ public class UserPushService {
         // Sertifika kusurları: "yanıt vermiyor" metni yanlış teşhise yönlendiriyordu.
         if ("REVOKED".equals(t) || "MISMATCH".equals(t) || t.contains("CHAIN")
                 || t.contains("HOSTNAME_MISMATCH") || t.contains("UNTRUSTED")) return "cert";
+        // İzleme tarafının SSL tipleri (HTTP_SSL / KEYWORD_SSL) yukarıdaki cert-sweep adlarının
+        // hiçbirine uymuyor ve "down" şablonuna düşüyordu: site ayaktayken telefona "yanıt
+        // vermiyor" gidiyor, e-posta ise "SSL Sertifika Sorunu" diyordu. Mesaj kendi içinde de
+        // çelişiyordu ("yanıt vermiyor … TLS sertifikası sorunu — bitişe 12 gün").
+        if (t.endsWith("_SSL")) return "cert";
         return "down";
     }
 
@@ -766,8 +771,17 @@ public class UserPushService {
         // aynı olay için farklı gün söylüyordu — üretimde aynı saniyede push "15 gün", e-posta
         // "14 gün" dedi (bitiş 22.09 23:59 UTC; floorDiv ile 14 doğru olan). Bir alarm ürününde
         // iki kanalın farklı sayı söylemesi, hangisine inanılacağını belirsizleştirir.
-        vals.put("gun", ctxStr(ctx, "days_remaining",
-                event.getDaysRemaining() == null ? "-" : String.valueOf(event.getDaysRemaining())));
+        //
+        // ALIAS ZİNCİRİ: üreticiler aynı büyüklüğü ÜÇ farklı adla yazıyor —
+        // sertifika/DOMAIN_EXPIRY yolları "days_remaining", DOMAINMON_EXPIRY "days"
+        // (SchedulerService:4636), DOMAIN_EXPIRY/KEYWORD_DOMAIN_EXPIRY ise
+        // "domain_days_remaining" (SchedulerService:4146, 4262, 4343, 4425). Yalnız ilki
+        // okunduğu için alan adı süre-bitişi push'larında "… - gün içinde doluyor" yazıyordu.
+        // Mail tarafı (EmailTemplateBuilder:377) days_remaining→days alias'ını zaten tanıyor;
+        // burada aynı zincir + mail'in de tanımadığı domain_days_remaining tamamlanıyor.
+        vals.put("gun", firstCtx(ctx,
+                event.getDaysRemaining() == null ? "-" : String.valueOf(event.getDaysRemaining()),
+                "days_remaining", "days", "domain_days_remaining", "ssl_days_remaining"));
         // expiry_date YALNIZ domain/whois bağlamında var; SERTİFİKA bağlamı not_after taşıyor
         // (latestToCertContext). Şablon yalnız expiry_date aradığı için sertifika süre-bitişi
         // push'larında tarih HER ZAMAN "-" çıkıyordu — kullanıcının gördüğü "(-)" buydu.
@@ -799,6 +813,20 @@ public class UserPushService {
     private static String ctxStr(Map<String, Object> ctx, String key, String fallback) {
         Object v = ctx == null ? null : ctx.get(key);
         return v == null || String.valueOf(v).isBlank() ? fallback : String.valueOf(v);
+    }
+
+    /**
+     * ctx'te SIRAYLA denenen anahtarlardan ilk dolu olanı; hiçbiri yoksa {@code fallback}.
+     *
+     * <p>Aynı büyüklüğü farklı adla yazan üreticiler için. Sıra ANLAMLIDIR: en özel ad önce gelir,
+     * böylece açık anahtar yazan bir üretici genel alias'ı her zaman yener.
+     */
+    private static String firstCtx(Map<String, Object> ctx, String fallback, String... keys) {
+        for (String k : keys) {
+            String v = ctxStr(ctx, k, null);
+            if (v != null) return v;
+        }
+        return fallback;
     }
 
     private static String nz(String s, String fallback) { return s == null || s.isBlank() ? fallback : s; }

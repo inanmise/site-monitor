@@ -160,7 +160,12 @@ secret:
   # stays the SAME across pods/restarts (otherwise saved secrets can't be decrypted).
   # If left empty the app falls back to an insecure built-in dev key — set a real
   # value (≥32 random chars) via --set or external-secrets before production use.
-  secretKey: "REPLACE_WITH_RANDOM_SECRET_KEY"
+  secretKey: ""   # ZORUNLU: deploy sirasinda --set secret.secretKey=$SECRET_KEY
+  #   Yer tutucu bir DIZE BIRAKILAMAZ: SecretCipher fail-fast'i yalnizca "bos ya da
+  #   gomulu dev anahtari" durumunu yakalar, dolayisiyla "REPLACE_WITH_..." gibi bir
+  #   metin kapidan GECIYOR ve LDAP/SMTP secret'lari git'te duran bir anahtarla
+  #   sifreleniyordu (UI ise secret_key_set: true diyordu). Bos birakilirsa prod
+  #   profilinde uygulama ACILMAZ — istenen davranis budur.
 
   # Corporate proxy auth (Basic). Leave empty for anonymous proxies.
   # Inject real values via --set or external-secrets; do NOT commit them.

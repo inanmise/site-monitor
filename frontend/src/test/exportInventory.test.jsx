@@ -40,12 +40,16 @@ vi.mock('jspdf', () => {
     getTextWidth() { return 10 }
     splitTextToSize(txt) { return [String(txt)] }
     text(t) { pdfCalls.text.push(String(t)); return this }
-    autoTable(opts) { pdfCalls.autoTable.push(opts); this.lastAutoTable = { finalY: 100 }; return this }
     save() { return this }
   }
   return { jsPDF: FakeDoc }
 })
-vi.mock('jspdf-autotable', () => ({ default: {} }))
+// autotable v5: eklenti metodu (doc.autoTable) kaldirildi; tablo default export'a
+// dokuman verilerek cizilir. Mock GERCEK sozlesmeyi taklit etmeli, yoksa uretim kodu
+// degisirken test yesil kalir ve gocu kacirir (bu goc tam da bu testlerle yakalandi).
+vi.mock('jspdf-autotable', () => ({
+  default: (doc, opts) => { pdfCalls.autoTable.push(opts); doc.lastAutoTable = { finalY: 100 } },
+}))
 
 const { exportInventoryCsv, exportInventoryPdf } = await import('../utils/exportInventory')
 const { INVENTORY_FLAGS } = await import('../utils/inventoryFlags.js')

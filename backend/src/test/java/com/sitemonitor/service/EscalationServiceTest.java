@@ -1,5 +1,6 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.model.NotificationLog;
 import com.sitemonitor.model.*;
 import com.sitemonitor.repository.*;
 import tools.jackson.databind.ObjectMapper;
@@ -9,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.mockito.ArgumentCaptor;
 import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -660,6 +662,37 @@ class EscalationServiceTest {
 
         verify(webhookService).send(eq("TEAMS"), eq("https://teams.example.com/webhook"),
                 anyString(), anyString(), eq("WARNING"));
+    }
+
+    @Test
+    @DisplayName("Webhook TESLIM EDILEMEZSE kayit FAILED olur — 'SENT' yazilmaz")
+    void processResults_webhookThrows_recordsFailedNotSent() {
+        // ASIL KUSUR BUYDU: WebhookService her istisnayi iceride yutup void donuyordu, dolayisiyla
+        // asagidaki catch blogu ERISILEMEZDI ve notification_log teslim edilmemis alarmlar icin de
+        // "SENT" yaziyordu. Bildirim Gecmisi ekrani bunu yesil "Gonderildi" rozetiyle gosteriyordu:
+        // operator alarmin ulastigini saniyordu. Kapi, durumun GERCEGI yansittigini pinler.
+        String domain = "webhook-fail.example.com";
+        EscalationContact c = contact("dev@test.com", "TECH", "WARNING");
+        c.setWebhookUrl("https://teams.example.com/webhook");
+        c.setWebhookType("TEAMS");
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(c));
+        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        doThrow(new WebhookService.WebhookDeliveryException("HTTP 404: no_service"))
+                .when(webhookService).send(any(), any(), any(), any(), any());
+
+        service.processResults(List.of(expiryResult(domain, 25, true)));
+
+        ArgumentCaptor<NotificationLog> captor = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(notificationLogRepo, atLeastOnce()).save(captor.capture());
+        List<String> webhookStatuses = captor.getAllValues().stream()
+                .map(NotificationLog::getWebhookStatus)
+                .filter(st -> st != null && !"SKIPPED".equals(st))
+                .toList();
+        assertThat(webhookStatuses)
+                .as("teslim edilemeyen webhook 'SENT' olarak kaydedilemez")
+                .isNotEmpty()
+                .allSatisfy(st -> assertThat(st).startsWith("FAILED"));
     }
 
     // ── reNotify (async) ─────────────────────────────────────────────────────

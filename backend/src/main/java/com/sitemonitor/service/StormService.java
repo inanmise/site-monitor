@@ -453,7 +453,12 @@ public class StormService {
             String whText = downMembers.size() + " monitör birden erişilemez (" + scopeLabel + "). Kök-neden: " + rootCauseLabel + ".";
             for (Map.Entry<String, String> w : r.webhooks.entrySet()) {
                 try { webhookService.send(w.getValue(), w.getKey(), subject, whText, "CRITICAL"); }
-                catch (Exception ex) { log.debug("Storm webhook hatası ({}): {}", w.getKey(), ex.getMessage()); }
+                catch (Exception ex) {
+                    // Fırtına en kritik olaydır; teslim hatası DEBUG'da (prod=INFO) hiçbir yere
+                    // yazılmıyordu. Adres maskelenir — webhook URL'inin kendisi kimlik bilgisidir.
+                    log.warn("Storm #{} webhook başarısız [{}]: {}",
+                            storm.getId(), WebhookService.maskUrl(w.getKey()), ex.getMessage());
+                }
             }
 
             storm.setNotifiedTeams(String.join(", ", r.teamNames));
@@ -485,6 +490,19 @@ public class StormService {
 
             String[] to = r.emails.toArray(new String[0]);
             if (to.length > 0) emailService.sendHtml(to, null, subject, html, List.of());
+
+            // Webhook (Teams/Slack) — açılışın AYNASI. Eskiden yalnız e-posta gidiyordu: aynı kişi
+            // Teams'te "🌩 12 monitör birden erişilemez" görüyor, "✅ fırtına sona erdi" mesajını
+            // hiç almıyordu. Kanal, olayın yalnız yarısını anlatıyordu.
+            String whText = recovered.size() + " monitör kurtarıldı (" + scopeLabel + ")."
+                    + (stillDown.isEmpty() ? "" : " Hâlâ erişilemeyen: " + stillDown.size() + ".");
+            for (Map.Entry<String, String> w : r.webhooks.entrySet()) {
+                try { webhookService.send(w.getValue(), w.getKey(), subject, whText, "INFO"); }
+                catch (Exception ex) {
+                    log.warn("Storm #{} recovery webhook başarısız [{}]: {}",
+                            storm.getId(), WebhookService.maskUrl(w.getKey()), ex.getMessage());
+                }
+            }
         } catch (Exception e) {
             log.warn("Storm #{} toplu recovery gönderilemedi: {}", storm.getId(), e.getMessage());
         }

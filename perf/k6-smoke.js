@@ -34,7 +34,15 @@ export default function () {
 
   // /api/system/network-status requires auth, so a 401 is the "healthy" answer
   // for an anonymous probe -- we just want to know the route is alive.
-  const net = http.get(`${BASE_URL}/api/system/network-status`, { tags: { name: 'network-status' } })
+  //
+  // responseCallback ZORUNLU: k6 varsayilan olarak 2xx disini "failed" sayar, dolayisiyla bu
+  // KASITLI yetkisiz istek http_req_failed'i her kosuda %50'ye cikariyordu (yineleme basina iki
+  // istekten biri). Esik rate<0.01 oldugu icin duman testi YAPISI GEREGI hic gecemiyordu:
+  // uygulama kusursuz kosarken bile k6 exit 99 donuyordu. Kapinin kendisi bozuktu, urun degil.
+  const net = http.get(`${BASE_URL}/api/system/network-status`, {
+    tags: { name: 'network-status' },
+    responseCallback: http.expectedStatuses(200, 401),
+  })
   check(net, {
     'network-status auth-gated': (r) => r.status === 401 || r.status === 200,
   })

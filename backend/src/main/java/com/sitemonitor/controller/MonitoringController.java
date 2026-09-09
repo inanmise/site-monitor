@@ -144,6 +144,22 @@ public class MonitoringController {
      *       varsayilani), sessiz bir yanlis yonlendirme yerine.</li>
      * </ul>
      */
+    /*
+     * ÇAĞRI SIRASI ZORUNLU: bu metot NİHAİ takımla çağrılmalıdır.
+     *
+     * Dört create ucunda (keyword/http/domain/ping) çağrı `m.setTeamId(teamId)`'den ÖNCE
+     * geliyordu; `m` yeni nesne olduğu için `m.getTeamId()` null'dı, `ownedByTeam` daima false
+     * kalıyordu ve aşağıdaki "başka takımın grubu" dalı fırlıyordu. Sonuç: bildirim grubu SEÇEREK
+     * izleme oluşturmak her seferinde 400 veriyordu — üstelik mesaj gerçek dışıydı, grup
+     * kullanıcının kendi takımınındı. Diğer beş tür doğru sıradaydı.
+     *
+     * Dokuz update ucunda ise çağrı `resolveTeamChange`'den ÖNCEydi: grup ESKİ takıma göre
+     * doğrulanıp izleme sonra yeni takıma taşınıyordu, yani {teamId: B, group: A'nın grubu} tek
+     * istekte kabul ediliyordu — tam da aşağıdaki yorumun yasakladığı şey.
+     *
+     * Kapı: NotificationGroupOrderingTest kaynağı tarar; her iki satırı da içeren bir metotta
+     * setTeamId önce gelmezse kırılır.
+     */
     private Long applyNotificationGroup(Map<String, Object> body, Long teamId, Long current) {
         boolean supplied = body != null && body.containsKey("notificationGroupId");
         Object raw = supplied ? body.get("notificationGroupId") : null;
@@ -1967,8 +1983,8 @@ public class MonitoringController {
         if (body.get("customHeaders") != null) m.setCustomHeaders((String) body.get("customHeaders"));
         applyKeywordCondition(m, body);
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
-        m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
         m.setTeamId(teamId);
+        m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
         m.setActive(true);                                            // varsayılan: yeni izleme aktif
         if (body.get("active") instanceof Boolean b) m.setActive(b);  // Kopyala: pasif kaynağın kopyası da pasif doğsun
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
@@ -2012,8 +2028,8 @@ public class MonitoringController {
             if (body.containsKey("customHeaders"))    m.setCustomHeaders((String) body.get("customHeaders"));
             if (body.get("operator") != null || body.get("matchCount") != null || body.get("condition") != null) applyKeywordCondition(m, body);
             if (body.containsKey("groupName"))       m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
-            m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
+            m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
@@ -2490,8 +2506,8 @@ public class MonitoringController {
         if (body.get("followRedirects") instanceof Boolean b) m.setFollowRedirects(b);
         if (body.get("verifySsl")       instanceof Boolean b) m.setVerifySsl(b);
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
-        m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
         m.setTeamId(teamId);
+        m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
         m.setActive(true);                                                // varsayılan: yeni izleme aktif
         if (body.get("active") instanceof Boolean ab) m.setActive(ab);    // Kopyala: pasif kaynağın kopyası da pasif doğsun
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
@@ -2531,8 +2547,8 @@ public class MonitoringController {
             if (body.get("followRedirects") instanceof Boolean b) m.setFollowRedirects(b);
             if (body.get("verifySsl")       instanceof Boolean b) m.setVerifySsl(b);
             if (body.containsKey("groupName"))       m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
-            m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
+            m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             if (body.get("active")          instanceof Boolean b) m.setActive(b);
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
@@ -2817,8 +2833,8 @@ public class MonitoringController {
                 m.setUrl(u);
             }
             if (body.containsKey("groupName"))       m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
-            m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
+            m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             if (body.get("active")          instanceof Boolean b) m.setActive(b);
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
@@ -3065,8 +3081,8 @@ public class MonitoringController {
                 m.setUrl(u);
             }
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
-            m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             if (body.containsKey("teamId"))    m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
+            m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             if (body.get("active") instanceof Boolean b) m.setActive(b);
             applyPageSpeedFields(m, body, session);
             m.setUpdatedAt(ISO.format(Instant.now()));
@@ -3657,8 +3673,8 @@ public class MonitoringController {
                 }
             }
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
-            m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             if (body.containsKey("teamId"))    m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
+            m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             if (body.get("active") instanceof Boolean b) {
                 // Kullanıcı izlemeyi YENİDEN AÇIYORSA anomali kapatmasının sebebi düşer: uyarı,
                 // düzeltilmiş bir izlemenin üstünde sonsuza kadar asılı kalmamalı. Kapatma kararı
@@ -4490,8 +4506,8 @@ public class MonitoringController {
         m.setName(blank(body.get("name")) ? reg : normalizeMonitorName(body.get("name").toString()));
         m.setDomain(reg);
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
-        m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
         m.setTeamId(teamId);
+        m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
         m.setActive(true);                                            // varsayılan: yeni izleme aktif
         if (body.get("active") instanceof Boolean b) m.setActive(b);  // Kopyala: pasif kaynağın kopyası da pasif doğsun
         applyDomainFields(m, body);
@@ -4520,8 +4536,8 @@ public class MonitoringController {
                 if (reg != null && !reg.isBlank()) m.setDomain(reg);
             }
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
-            m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             if (body.containsKey("teamId")) m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
+            m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             if (body.get("active") instanceof Boolean b) m.setActive(b);
             applyDomainFields(m, body);
             m.setUpdatedAt(ISO.format(Instant.now()));
@@ -4804,8 +4820,8 @@ public class MonitoringController {
         String ipv = body.get("ipVersion") != null ? body.get("ipVersion").toString() : "auto";
         m.setIpVersion(Set.of("v4", "v6", "auto").contains(ipv) ? ipv : "auto");
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
-        m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
         m.setTeamId(teamId);
+        m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
         m.setActive(true);                                            // varsayılan: yeni izleme aktif
         if (body.get("active") instanceof Boolean b) m.setActive(b);  // Kopyala: pasif kaynağın kopyası da pasif doğsun
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
@@ -4856,8 +4872,8 @@ public class MonitoringController {
             }
             if (body.get("ipVersion")       != null) { String v = body.get("ipVersion").toString(); m.setIpVersion(Set.of("v4","v6","auto").contains(v) ? v : "auto"); }
             if (body.containsKey("groupName"))       m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
-            m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
+            m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.get("notifyEmail")   instanceof Boolean b) m.setNotifyEmail(b);
             if (body.get("notifyWebhook")   instanceof Boolean b) m.setNotifyWebhook(b);

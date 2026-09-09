@@ -355,8 +355,13 @@ class UserPushServiceTest {
 
         service.enqueueAlert(1L, "INITIAL", 5L, Map.of());
         await().atMost(java.time.Duration.ofSeconds(5))
-                .until(() -> store.stream().allMatch(d -> "SENT".equals(d.getStatus())));
+                .until(() -> !store.isEmpty()
+                        && store.stream().allMatch(d -> "SENT".equals(d.getStatus())));
 
+        // BOSLUK KAPISI: bos stream'de allMatch/allSatisfy TRUE doner. Bu iddialar tek
+        // basinaykan test SIFIR teslimatla da yesildi — enqueueAlert her istisnayi yuttugu
+        // icin alici cozumu ya da kuyruk kirilsa kimse gormezdi.
+        assertThat(store).hasSize(1);
         assertThat(store).allSatisfy(d -> {
             assertThat(d.getNotificationId()).isNull();
             assertThat(d.getRawResponse()).contains("tesekkurler");
@@ -375,8 +380,13 @@ class UserPushServiceTest {
 
         service.enqueueAlert(1L, "INITIAL", 5L, Map.of());
         await().atMost(java.time.Duration.ofSeconds(5))
-                .until(() -> store.stream().allMatch(d -> "FAILED".equals(d.getStatus())));
+                .until(() -> !store.isEmpty()
+                        && store.stream().allMatch(d -> "FAILED".equals(d.getStatus())));
 
+        // BOSLUK KAPISI: bos stream'de allMatch/allSatisfy TRUE doner. Bu iddialar tek
+        // basinaykan test SIFIR teslimatla da yesildi — enqueueAlert her istisnayi yuttugu
+        // icin alici cozumu ya da kuyruk kirilsa kimse gormezdi.
+        assertThat(store).hasSize(1);
         assertThat(store).allSatisfy(d -> assertThat(d.getError()).contains("503"));
     }
 
@@ -413,7 +423,16 @@ class UserPushServiceTest {
         service.enqueueAlert(1L, "INITIAL", 5L, Map.of());
 
         await().atMost(java.time.Duration.ofSeconds(5))
-                .until(() -> store.stream().allMatch(d -> "SENT".equals(d.getStatus())));
+                .until(() -> !store.isEmpty()
+                        && store.stream().allMatch(d -> "SENT".equals(d.getStatus())));
+
+        // BOSLUK KAPISI: bos stream'de allMatch/allSatisfy TRUE doner. Bu iddialar tek
+        // basinaykan test SIFIR teslimatla da yesildi — enqueueAlert her istisnayi yuttugu
+        // icin alici cozumu ya da kuyruk kirilsa kimse gormezdi.
+        // Adi "gonderim YINE yapilir" diyen testin bunu gercekten olcmesi gerekir:
+        // tam bir satir SENT ve sunucuya gercekten bir istek ulasmis olmali.
+        assertThat(store).hasSize(1);
+        assertThat(receivedBodies).isNotEmpty();
     }
 
     /**
@@ -535,6 +554,8 @@ class UserPushServiceTest {
 
         service.enqueueAlert(1L, "MANUAL", 5L, null, java.util.Set.of("N00001", "N00002"));
 
+        // "karar satiri YAZILIR" iddiasi, satir hic yazilmasa da geciyordu.
+        assertThat(savedRows()).isNotEmpty();
         assertThat(savedRows()).allSatisfy(r ->
                 assertThat(r.getStatus()).isEqualTo("SKIPPED_NO_RECIPIENTS"));
     }
