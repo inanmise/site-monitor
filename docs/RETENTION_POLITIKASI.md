@@ -75,7 +75,8 @@ BDDK/iç denetim süreleri esas alınmalıdır.
 | `port_checks` | 180 gün | 30 g | `site.monitor.series.port.retention-days` | `checked_at < ?` | Port kontrol ham serisi (30 sn kadans). |
 | `keyword_results` | 180 gün | 30 g | `site.monitor.series.keyword.retention-days` | `checked_at < ?` | İçerik kontrol ham serisi (sayfa parçacığı içerebilir). |
 | `ping_checks` | 180 gün | 30 g | `site.monitor.series.ping.retention-days` | `checked_at < ?` | Ping ham serisi (30 sn kadans). |
-| `dns_records` | 180 gün | 30 g | `site.monitor.series.dns.retention-days` | `checked_at < ? AND id NOT IN (SELECT MAX(id) FROM dns_records GROUP BY monitor_id)` | DNS kayıt serisi. Her monitörün EN YENİ satırı baseline'dır (değişiklik tespiti ona bakar) → asla silinmez. |
+| `dns_records` | 180 gün | 30 g | `site.monitor.series.dns.retention-days` | `checked_at < ? AND monitor_id IN (SELECT id FROM dns_monitors) AND id NOT IN (SELECT MAX(id) FROM dns_recor…` | DNS kayıt serisi. Yaşayan her monitörün EN YENİ satırı baseline'dır (değişiklik tespiti ona bakar) → asla silinmez. |
+| `dns_records` | öksüz temizliği | — | — | `monitor_id NOT IN (SELECT id FROM dns_monitors)` | Monitörü kalıcı silinmiş DNS serisi. FK/CASCADE yok; öksüz satırlar hiçbir yaş kuralına takılmıyordu. |
 | `http_metric_minute` | 7 gün | 1 g | `site.monitor.metrics.http.retention-days` | `bucket_minute < ?` | Uygulamanın kendi HTTP metrik kovaları (dakikalık). Kısa tutulur; hacmi yüksektir. |
 | `http_checks` | 180 gün | 30 g | `site.monitor.series.http.retention-days` | `checked_at < ?` | HTTP kontrol ham serisi (en hızlı büyüyen serilerden). |
 | `page_resource_issues` | 90 gün | 1 g | `site.monitor.metrics.page-issues.retention-days` | `checked_at < ?` | Sayfa kaynak sorunları — kontrol başına 0..N satır. Ana kayıttan ÖNCE silinir (çocuk-ebeveyn sırası). |

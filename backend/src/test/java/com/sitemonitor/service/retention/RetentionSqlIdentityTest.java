@@ -32,8 +32,13 @@ class RetentionSqlIdentityTest {
         m.put("series-port", "DELETE FROM port_checks WHERE checked_at < ?");
         m.put("series-keyword", "DELETE FROM keyword_results WHERE checked_at < ?");
         m.put("series-ping", "DELETE FROM ping_checks WHERE checked_at < ?");
+        // Baseline koruması artık YAŞAYAN monitörlerle sınırlı. Eski hâlde GROUP BY monitor_id
+        // silinmiş monitörlerin id'lerini de gruplar, dolayısıyla her ÖKSÜZ için en yeni satır
+        // sonsuza kadar korunurdu; koruma, temizlenemeyen bir kalıntıya dönüşmüştü.
         m.put("series-dns", "DELETE FROM dns_records WHERE checked_at < ? "
-                + "AND id NOT IN (SELECT MAX(id) FROM dns_records GROUP BY monitor_id)");
+                + "AND monitor_id IN (SELECT id FROM dns_monitors) "
+                + "AND id NOT IN (SELECT MAX(id) FROM dns_records "
+                + "WHERE monitor_id IN (SELECT id FROM dns_monitors) GROUP BY monitor_id)");
         m.put("http-metric-minute", "DELETE FROM http_metric_minute WHERE bucket_minute < ?");
         m.put("login-anomaly", "DELETE FROM login_anomaly_incident WHERE resolved = true AND opened_at < ?");
         m.put("series-http", "DELETE FROM http_checks WHERE checked_at < ?");

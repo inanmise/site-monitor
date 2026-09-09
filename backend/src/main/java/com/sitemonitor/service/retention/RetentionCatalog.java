@@ -127,9 +127,18 @@ public final class RetentionCatalog {
                 180, 30, true, DataClass.OPERATIONAL, "Ping ham serisi (30 sn kadans)."),
         guarded("series-dns", "dns_records", "checked_at", "site.monitor.series.dns.retention-days",
                 180, 30,
-                "{t} AND id NOT IN (SELECT MAX(id) FROM dns_records GROUP BY monitor_id)",
+                // Baseline koruması YALNIZ yaşayan monitörler için. Eskiden GROUP BY monitor_id
+                // silinmiş monitörlerin id'lerini de grupluyordu, dolayısıyla her ÖKSÜZ monitör
+                // için en yeni satır sonsuza kadar korunuyordu — koruma, temizlenemeyen bir
+                // kalıntıya dönüşmüştü. Öksüzlerin tamamını aşağıdaki dns-records-orphan alır.
+                "{t} AND monitor_id IN (SELECT id FROM dns_monitors) "
+                + "AND id NOT IN (SELECT MAX(id) FROM dns_records "
+                + "WHERE monitor_id IN (SELECT id FROM dns_monitors) GROUP BY monitor_id)",
                 DataClass.OPERATIONAL,
-                "DNS kayıt serisi. Her monitörün EN YENİ satırı baseline'dır (değişiklik tespiti ona bakar) → asla silinmez."),
+                "DNS kayıt serisi. Yaşayan her monitörün EN YENİ satırı baseline'dır (değişiklik tespiti ona bakar) → asla silinmez."),
+        orphan("dns-records-orphan", "dns_records",
+                "monitor_id NOT IN (SELECT id FROM dns_monitors)", DataClass.OPERATIONAL,
+                "Monitörü kalıcı silinmiş DNS serisi. FK/CASCADE yok; öksüz satırlar hiçbir yaş kuralına takılmıyordu."),
         age("http-metric-minute", "http_metric_minute", "bucket_minute", "site.monitor.metrics.http.retention-days",
                 7, 1, false, DataClass.OPERATIONAL,
                 "Uygulamanın kendi HTTP metrik kovaları (dakikalık). Kısa tutulur; hacmi yüksektir."),

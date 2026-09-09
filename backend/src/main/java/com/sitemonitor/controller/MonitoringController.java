@@ -651,6 +651,34 @@ public class MonitoringController {
         return teamId.equals(sessionTeamId(session));               // USER kendi takımı
     }
 
+    /**
+     * Bir izlemenin ETKİN takımı — yetki ve gösterim için TEK doğruluk kaynağı.
+     *
+     * <p>Envanter-türevi satırın ({@code standalone != true}) takımı ENVANTERİN takımıdır.
+     * Satırdaki {@code team_id} yalnız lazy-provision anında kopyalanır ve bir daha ASLA
+     * tazelenmez: ne {@code transferInventory}, ne {@code updateInventory}, ne
+     * {@code MonitoringGroupBackfill} (yalnız NULL doldurur), ne de bir zamanlanmış iş dokunur.
+     *
+     * <p>Sonuç, envanter başka takıma taşındığında ikiye bölünen bir gerçeklikti: liste satırı
+     * YENİ takımın adını yazıyordu (ad domain→envanter eşlemesinden geliyor) ama {@code team_id}
+     * ESKİ takımdı. Yeni takım kendi kaydını düzenleyemiyor (403, kartta düğme çizilmiyor —
+     * dba22f1a'nın düzelttiği şikâyetin aynısı), eski takım ise listede göremediği satırı id ile
+     * yönetmeye devam edebiliyordu.
+     *
+     * <p>Ad ile kimliği AYNI kaynaktan beslemek bu ayrışmayı yapısal olarak imkânsız kılar:
+     * {@code enrich*} bu değeri {@code team_id} olarak döndürür, yetki kapıları da aynı değeri
+     * kullanır, dolayısıyla frontend'in {@code isOwnTeam} karşılaştırması kendiliğinden doğrular.
+     *
+     * <p>Standalone satır envanterden bağımsızdır; onun takımı kendi alanıdır. Envanter kaydı
+     * yoksa (silinmiş/pasif) saklanan değere düşülür — kapsamı daraltmak yetkiyi kaybettirirdi.
+     */
+    private Long effectiveTeam(String domain, Boolean standalone, Long storedTeamId) {
+        if (Boolean.TRUE.equals(standalone) || domain == null) return storedTeamId;
+        return inventoryRepo.findByDomain(domain)
+                .map(CertificateInventory::getTeamId)
+                .orElse(storedTeamId);
+    }
+
     /** Oluştururken hedef takımı çözer: global admin istediğini (veya takımsız) atar; diğerleri
      *  yalnız iş görebildikleri bir takıma — değilse kendi takımlarına düşer. */
     private Long resolveWriteTeam(HttpSession session, Map<String, Object> body) {
@@ -1284,7 +1312,8 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.crud", "edit");
         java.util.Map<String, Object> _before = portMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return portMonitorRepo.findById(id).map(m -> {
-            if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu izleme üzerinde yetkiniz yok");
+            if (!canOperateTeam(session, effectiveTeam(m.getHost(), m.getStandalone(), m.getTeamId())))
+                return forbidden("Bu izleme üzerinde yetkiniz yok");
             final String  _prevHost = m.getHost();
             final Integer _prevPort = m.getPort();
             if (body.get("name")            != null) m.setName((String) body.get("name"));
@@ -1345,7 +1374,11 @@ public class MonitoringController {
         // Silme ÖNCESİ durum: aşağıda active=false yapılıyor, sonra almak farkı kaybettirirdi.
         Map<String, Object> _before = portMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return portMonitorRepo.findById(id).map(m -> {
-            if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu izleme üzerinde yetkiniz yok");
+            // Silme kapısı kardeşlerin yedisiyle aynı: canManage (TEAM_ADMIN+). Port, DNS ile
+            // birlikte canOperateTeam kullanan iki aykırıydı; arayüz zaten USER'a silme
+            // göstermiyordu, dolayısıyla bu yalnız API-only boşluğu kapatır.
+            Long team = effectiveTeam(m.getHost(), m.getStandalone(), m.getTeamId());
+            if (!SessionScope.canManage(session, team)) return forbidden("Bu izleme üzerinde yetkiniz yok");
             m.setActive(false);
             m.setUpdatedAt(ISO.format(Instant.now()));
             monitorHistory.stampUpdated(m, session);
@@ -1392,7 +1425,8 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> triggerPort(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.trigger", "execute");
         return portMonitorRepo.findById(id).map(m -> {
-            if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu izleme üzerinde yetkiniz yok");
+            if (!canOperateTeam(session, effectiveTeam(m.getHost(), m.getStandalone(), m.getTeamId())))
+                return forbidden("Bu izleme üzerinde yetkiniz yok");
             Map<String, Object> r = portChecker.check(m);
             String now = ISO.format(Instant.now());
             PortCheck check = new PortCheck();
@@ -1454,7 +1488,8 @@ public class MonitoringController {
         item.put("name",            m.getName());
         item.put("host",            m.getHost());
         // Manuel eklenen kayıt takımı teamId'den; otomatik üretilen (teamId=null) kayıt domain→takım haritasından.
-        item.put("team_id",         m.getTeamId());
+        // team_id ile team_name AYNI kaynaktan (effectiveTeam) — bkz. enrichDns.
+        item.put("team_id",         effectiveTeam(m.getHost(), m.getStandalone(), m.getTeamId()));
         item.put("notification_group_id",         m.getNotificationGroupId());
         item.put("team_name",       m.getTeamId() != null ? teamById.get(m.getTeamId()) : teamMap.get(m.getHost()));
         item.put("group_name",      m.getGroupName());
@@ -1633,10 +1668,20 @@ public class MonitoringController {
         if (!DNS_RECORD_TYPES.contains(recordType)) return badRequest("Geçersiz DNS kayıt tipi: " + recordType);
         // Aynı (domain, recordType) standalone monitör zaten varsa hata dön; sessizce mevcut kaydı
         // dönmek "kaydedildi" izlenimi verip Kopyala akışını fark edilmeden boşa düşürüyordu (Ping/Port ile aynı davranış).
-        if (dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrue(domain, recordType).isPresent())
+        // PASİF satır engel DEĞİLDİR, CANLANDIRILIR. Silme artık her zaman pasifleştirme olduğu
+        // için (bkz. deleteDns) satır tabloda kalıyor; guard "aktif mi" diye bakmasaydı kullanıcı
+        // sildiği domain'i bir daha ekleyemez ve sebebini anlamadığı bir "zaten var" hatası alırdı.
+        //
+        // Neden yeni satır değil de canlandırma: standalone satırlarda uq_dnsm_domain YOK (o indeks
+        // "WHERE standalone IS NOT TRUE"), yani ikinci bir satır DB'ce engellenmez ve o andan sonra
+        // findFirst... hangi satırı döndüreceği belirsiz hâle gelir — düzenleme guard'ı yanlış
+        // satırı yakalayabilirdi. Canlandırma tek satırı korur, geçmişi ve id'yi de saklar.
+        DnsMonitor revived = dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrue(domain, recordType)
+                .orElse(null);
+        if (revived != null && Boolean.TRUE.equals(revived.getActive()))
             return badRequest("Bu (domain, kayıt tipi) için zaten bir izleme var; mükerrer DNS monitörü oluşturulamaz.");
         String now = ISO.format(Instant.now());
-        DnsMonitor m = new DnsMonitor();
+        DnsMonitor m = revived != null ? revived : new DnsMonitor();
         m.setName(blank(body.get("name")) ? domain : body.get("name").toString().trim());
         m.setDomain(domain);
         m.setRecordType(recordType);
@@ -1668,7 +1713,8 @@ public class MonitoringController {
         if (body.get("confirmIntervalSeconds")  instanceof Number cn) m.setConfirmIntervalSeconds(clampInterval(cn.intValue()));
         if (body.get("recoveryChecks")          instanceof Number cn) m.setRecoveryChecks(clampRecovery(cn.intValue()));
         if (body.get("recoveryIntervalSeconds") instanceof Number cn) m.setRecoveryIntervalSeconds(clampInterval(cn.intValue()));
-        m.setCreatedAt(now);
+        // Canlandırılan satırda özgün oluşturma tarihi KORUNUR (yalnız yeni satırda yazılır).
+        if (m.getCreatedAt() == null) m.setCreatedAt(now);
         m.setUpdatedAt(now);
         DnsMonitor saved = dnsMonitorRepo.save(m);
         activityLog.recordLifecycle(ActivityLogService.DNS, saved.getId(), saved.getName(),
@@ -1694,7 +1740,8 @@ public class MonitoringController {
             // domainin Port izlemesini ve envanter kaydının KENDİSİNİ yönetebiliyordu. Tek ürettiği
             // sonuç, arayüzde açıklamasız bir çıkmazdı: kart üzerindeki bütün düğmeler kayboluyor,
             // kullanıcı bunu yetki kuralı değil ARIZA sanıyordu.
-            if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu monitörü düzenleme yetkiniz yok");
+            if (!canOperateTeam(session, effectiveTeam(m.getDomain(), m.getStandalone(), m.getTeamId())))
+                return forbidden("Bu monitörü düzenleme yetkiniz yok");
             final String _prevDomain = m.getDomain();
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("domain") != null) {
@@ -1760,16 +1807,22 @@ public class MonitoringController {
         // Silme ÖNCESİ durum: aşağıda active=false yapılıyor, sonra almak farkı kaybettirirdi.
         Map<String, Object> _before = dnsMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return dnsMonitorRepo.findById(id).map(m -> {
-            // Kapı tek: izlemenin takımı üzerinde yetki (deletePort ile aynı). SEMANTİK ise
-            // standalone'a göre ayrışmaya DEVAM eder — kaldırılan yalnız fazladan admin şartıdır.
-            if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu monitörü silme yetkiniz yok");
-            if (Boolean.TRUE.equals(m.getStandalone())) {
-                dnsMonitorRepo.delete(m);   // standalone → gerçek silme (envanterle bağı yok)
-            } else {
-                m.setActive(false);         // envanter-türevi → soft-delete (envanter senkronu yeniden açabilir)
-                m.setUpdatedAt(ISO.format(Instant.now()));
-                dnsMonitorRepo.save(m);
-            }
+            // KAPI: silme, kardeşlerin YEDİSİNDE olduğu gibi canManage — yani TEAM_ADMIN ve üstü.
+            // dba22f1a bunu canOperateTeam'e çekmişti; o, sıradan USER'ı da kendi takımı için
+            // geçirir ve silme sütununu 9 türün 7'sinden ayırırdı. USER kaybetmiyor: kendi satırını
+            // düzenleyebiliyor ve formdaki "aktif" anahtarıyla duraklatabiliyor.
+            Long team = effectiveTeam(m.getDomain(), m.getStandalone(), m.getTeamId());
+            if (!SessionScope.canManage(session, team)) return forbidden("Bu monitörü silme yetkiniz yok");
+            // HER ZAMAN pasifleştirme (deletePort ile simetri). Eskiden dal standalone'a bakıyordu
+            // ve KALICI silme oradan geliyordu; ama standalone, isteği yapanın AYNI AKIŞTA
+            // çevirebildiği bir alan: updateDns'teki detachIfIdentityChanged bir türev satırın
+            // domain'i değişince onu standalone yapıyor. İki çağrı (önce domain düzenle, sonra sil)
+            // geri alınabilir bir duraklatmayı kalıcı silmeye yükseltiyordu — üstelik kart düğmesi
+            // türev satırda "İzlemeyi durdur (envanter-türevi kayıt silinmez)" vaadini veriyordu.
+            // Kalıcılığı artık kullanıcının çevirebildiği bir alan belirlemiyor.
+            m.setActive(false);
+            m.setUpdatedAt(ISO.format(Instant.now()));
+            dnsMonitorRepo.save(m);
             activityLog.recordLifecycle(ActivityLogService.DNS, m.getId(), m.getName(),
                     m.getDomain() + " " + m.getRecordType(), m.getTeamId(), "DELETED", actor(session));
             auditService.recordAction("MONITOR_DELETE", session, "DNS_MONITOR", String.valueOf(m.getId()), m.getName(), null);
@@ -1826,7 +1879,8 @@ public class MonitoringController {
             // tetikleyebiliyordu. Zararı da ölçülmüştü: takım yöneticisi toplu kontrole bastığında
             // her satır 403 dönüyor ve GlobalExceptionHandler her biri için ACCESS_DENIED denetim
             // kaydı yazıyordu — 40 monitörlük sayfada tek tıklama 40 sahte güvenlik olayı.
-            if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu izleme üzerinde yetkiniz yok");
+            if (!canOperateTeam(session, effectiveTeam(m.getDomain(), m.getStandalone(), m.getTeamId())))
+                return forbidden("Bu izleme üzerinde yetkiniz yok");
             Map<String, Object> r = dnsChecker.check(m.getDomain(), m.getRecordType());
             String now = ISO.format(Instant.now());
 
@@ -1909,7 +1963,10 @@ public class MonitoringController {
         item.put("name",            m.getName());
         item.put("domain",          m.getDomain());
         item.put("standalone",      standalone);
-        item.put("team_id",         m.getTeamId());
+        // team_id ile team_name AYNI kaynaktan gelir (effectiveTeam): türev satırda ikisi de
+        // envanterin takımı. Eskiden ad tazeydi ama kimlik bayattı; frontend isOwnTeam
+        // karşılaştırması bu yüzden transferden sonra yanlış sonuç veriyordu.
+        item.put("team_id",         effectiveTeam(m.getDomain(), m.getStandalone(), m.getTeamId()));
         item.put("notification_group_id",         m.getNotificationGroupId());
         item.put("expected_value",  m.getExpectedValue());
         item.put("propagation_check", Boolean.TRUE.equals(m.getPropagationCheck()));
