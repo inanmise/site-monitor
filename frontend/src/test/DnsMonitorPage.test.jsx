@@ -282,20 +282,40 @@ describe('DnsMonitorPage', () => {
   })
 
   /**
-   * DNS'in izin uyumsuzluğu: MonitoringController.triggerDns kardeşlerinden farklı olarak
-   * requireAdmin çağırıyor. Kendi standalone monitörünü yönetebilen bir TEAM_ADMIN toplu
-   * koşumda satır başına 403 alırdı ve her 403 bir ACCESS_DENIED denetim kaydı yazardı —
-   * bu yüzden toplu düğme YALNIZ yöneticiye çizilir. Kartın tekil ▶ düğmesi yerinde kalır
-   * (o uyumsuzluk ayrı bir iş).
+   * DNS artik kardesleriyle AYNI kurali kullaniyor: kendi takiminin izlemesini TEAM_ADMIN de
+   * kontrol edebilir.
+   *
+   * Bu test eskiden TERSINI pinliyordu ("yalniz yoneticide cikar") ve o haliyle KUSURU SOZLESME
+   * haline getirmisti. Gerekce olarak triggerDns'in requireAdmin cagirdigi yaziliydi -- ama o
+   * cagri dokuz izleme turunun TEK istisnasiydi ve hicbir yerde gerekcesi yoktu. Kullaniciya
+   * yansimasi suydu: envanter-turevi DNS kartinda butun dugmeler kayboluyor, takim yoneticisi
+   * bunu bir yetki kurali degil ARIZA saniyordu. Uc de arayuz de kardeslere hizalandi
+   * (MonitoringController.triggerDns/updateDns/deleteDns -> canOperateTeam).
    */
-  it('toplu kontrol düğmesi YALNIZ yöneticide çıkar', async () => {
+  it('toplu kontrol dugmesi KENDI TAKIMININ satirlari icin takim yoneticisinde de cikar', async () => {
     const { unmount } = render(<DnsMonitorPage systemRole="TEAM_ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
-    expect(screen.queryByTitle(/bu sayfadaki .* izlemenin|check all .* monitors/i)).toBeNull()
+    expect(screen.getByTitle(/bu sayfadaki 1 izlemenin|check all 1 monitors/i)).toBeInTheDocument()
     unmount()
 
     render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalledTimes(2))
     expect(screen.getByTitle(/bu sayfadaki 1 izlemenin|check all 1 monitors/i)).toBeInTheDocument()
+  })
+
+  /**
+   * ASIL KULLANICI SIKAYETI: "DNS'te kartin sag alt kosesindeki dugmeleri goremiyorum."
+   * Envanter-turevi satir (standalone=false) takimini ENVANTERDEN alir; eski kapi
+   * `m.standalone && isOwnTeam(m)` oldugu icin o satirlarda MonitorCardActions hic cizilmiyordu.
+   */
+  it('ENVANTER-TUREVI satirda da kart dugmeleri cizilir (standalone=false)', async () => {
+    api.monitoring.getDnsMonitors.mockResolvedValueOnce({
+      success: true,
+      data: [{ id: 1, name: 'internetsubesi', domain: 'internetsubesi.example.com',
+               record_type: 'A', team_id: 5, standalone: false, active: true }],
+    })
+    const { container } = render(<DnsMonitorPage systemRole="TEAM_ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
+    await waitFor(() => expect(container.querySelector('.mon-actions')).not.toBeNull())
   })
 })

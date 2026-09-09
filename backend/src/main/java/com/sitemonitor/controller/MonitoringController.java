@@ -1686,12 +1686,15 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.crud", "edit");
         java.util.Map<String, Object> _before = dnsMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return dnsMonitorRepo.findById(id).map(m -> {
-            // Envanter-türevi monitör admin gerektirir; standalone'u sorumlu takımı yönetebilir.
-            if (Boolean.TRUE.equals(m.getStandalone())) {
-                if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu monitörü düzenleme yetkiniz yok");
-            } else {
-                requireAdmin(session);
-            }
+            // Kapı, sekiz kardeş türle AYNI: izlemenin takımı üzerinde yetki (bkz. updatePort).
+            //
+            // Eskiden envanter-türevi satır requireAdmin istiyordu ve DNS bunu yapan TEK türdü.
+            // Koruyucu bir değeri yoktu: envanter-türevi DNS kaydı takımını ENVANTERDEN alıyor
+            // (lazy-provision: setTeamId(inv.getTeamId())), yani aynı takım yöneticisi zaten aynı
+            // domainin Port izlemesini ve envanter kaydının KENDİSİNİ yönetebiliyordu. Tek ürettiği
+            // sonuç, arayüzde açıklamasız bir çıkmazdı: kart üzerindeki bütün düğmeler kayboluyor,
+            // kullanıcı bunu yetki kuralı değil ARIZA sanıyordu.
+            if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu monitörü düzenleme yetkiniz yok");
             final String _prevDomain = m.getDomain();
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("domain") != null) {
@@ -1757,11 +1760,12 @@ public class MonitoringController {
         // Silme ÖNCESİ durum: aşağıda active=false yapılıyor, sonra almak farkı kaybettirirdi.
         Map<String, Object> _before = dnsMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return dnsMonitorRepo.findById(id).map(m -> {
+            // Kapı tek: izlemenin takımı üzerinde yetki (deletePort ile aynı). SEMANTİK ise
+            // standalone'a göre ayrışmaya DEVAM eder — kaldırılan yalnız fazladan admin şartıdır.
+            if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu monitörü silme yetkiniz yok");
             if (Boolean.TRUE.equals(m.getStandalone())) {
-                if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu monitörü silme yetkiniz yok");
                 dnsMonitorRepo.delete(m);   // standalone → gerçek silme (envanterle bağı yok)
             } else {
-                requireAdmin(session);
                 m.setActive(false);         // envanter-türevi → soft-delete (envanter senkronu yeniden açabilir)
                 m.setUpdatedAt(ISO.format(Instant.now()));
                 dnsMonitorRepo.save(m);
@@ -1813,9 +1817,16 @@ public class MonitoringController {
 
     @PostMapping("/dns/{id}/check")
     public ResponseEntity<Map<String, Object>> triggerDns(@PathVariable Long id, HttpSession session) {
-        requireAdmin(session);
         permissionService.require(session, "monitoring.trigger", "execute");
         return dnsMonitorRepo.findById(id).map(m -> {
+            // Kapı, sekiz kardeş türle AYNI: izlemenin takımı üzerinde yetki. Burada eskiden
+            // requireAdmin vardı ve DNS bu konuda dokuz türün TEK istisnasıydı; hiçbir yerde
+            // gerekçesi yazılı değildi. "Şimdi kontrol et" salt-okunur bir işlemdir (DNS sorgusu
+            // atıp sonucu kaydeder) ve aynı kullanıcı aynı domainin Port izlemesini zaten
+            // tetikleyebiliyordu. Zararı da ölçülmüştü: takım yöneticisi toplu kontrole bastığında
+            // her satır 403 dönüyor ve GlobalExceptionHandler her biri için ACCESS_DENIED denetim
+            // kaydı yazıyordu — 40 monitörlük sayfada tek tıklama 40 sahte güvenlik olayı.
+            if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu izleme üzerinde yetkiniz yok");
             Map<String, Object> r = dnsChecker.check(m.getDomain(), m.getRecordType());
             String now = ISO.format(Instant.now());
 
