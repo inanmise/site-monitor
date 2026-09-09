@@ -31,6 +31,10 @@ import org.springframework.test.util.ReflectionTestUtils;
 import javax.sql.DataSource;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import com.sitemonitor.model.CertificateInventory;
+import com.sitemonitor.model.HttpMonitor;
+import com.sitemonitor.model.PortMonitor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -1671,5 +1675,57 @@ class SchedulerServiceTest {
         assertThat(((Number) ctx.get("monitor_confirm_attempts")).intValue()).isEqualTo(4);
         assertThat(((Number) ctx.get("monitor_confirm_interval_ms")).longValue()).isEqualTo(45_000L);
         assertThat(((Number) ctx.get("monitor_recovery_checks")).intValue()).isEqualTo(2);
+    }
+
+    // Regression: ISSUE-001 — teyit zinciri hedef canlılığı (silinen/duraklatılan monitör alarm açmasın)
+    // Found by /qa on 2026-09-10 · Report: .gstack/qa-reports/qa-report-localhost-2026-09-10.md
+
+    private static MonitoringOutageService.SweepItem sweepItem(String type, String domain, Map<String, Object> ctx) {
+        return new MonitoringOutageService.SweepItem(type, domain, "d", false, "timeout", ctx, java.util.Map::of);
+    }
+
+    @Test
+    @DisplayName("ISSUE-001: envanter silinmiş/pasif → ACCESSIBILITY zinciri için hedef izlenmiyor")
+    void isStillMonitored_inventoryDeleted_false() {
+        CertificateInventory gone = new CertificateInventory();
+        gone.setDomain("gone.example.com"); gone.setActive(false); gone.setDeletedAt("2026-09-10T00:00:00");
+        lenient().when(inventoryRepo.findByDomain("gone.example.com")).thenReturn(Optional.of(gone));
+        CertificateInventory live = new CertificateInventory();
+        live.setDomain("live.example.com"); live.setActive(true);
+        lenient().when(inventoryRepo.findByDomain("live.example.com")).thenReturn(Optional.of(live));
+
+        assertThat(scheduler.isStillMonitored(sweepItem(EscalationService.TYPE_ACCESSIBILITY, "gone.example.com", Map.of()))).isFalse();
+        assertThat(scheduler.isStillMonitored(sweepItem(EscalationService.TYPE_ACCESSIBILITY, "live.example.com", Map.of()))).isTrue();
+        assertThat(scheduler.isStillMonitored(sweepItem(EscalationService.TYPE_ACCESSIBILITY, "unknown.example.com", Map.of())))
+                .as("envanterde hiç yok = silinmiş/purge edilmiş").isFalse();
+    }
+
+    @Test
+    @DisplayName("ISSUE-001: HTTP monitörü silinmiş ya da duraklatılmış → izlenmiyor; aktifse ve kimlik yoksa → izleniyor")
+    void isStillMonitored_httpMonitorStates() {
+        HttpMonitor paused = new HttpMonitor(); paused.setId(7L); paused.setActive(false);
+        HttpMonitor active = new HttpMonitor(); active.setId(8L); active.setActive(true);
+        lenient().when(httpMonitorRepo.findById(7L)).thenReturn(Optional.of(paused));
+        lenient().when(httpMonitorRepo.findById(8L)).thenReturn(Optional.of(active));
+        lenient().when(httpMonitorRepo.findById(9L)).thenReturn(Optional.empty());
+
+        assertThat(scheduler.isStillMonitored(sweepItem(EscalationService.TYPE_HTTP_DOWN, "https://p/", Map.of("monitor_id", 7L)))).isFalse();
+        assertThat(scheduler.isStillMonitored(sweepItem(EscalationService.TYPE_HTTP_DOWN, "https://a/", Map.of("monitor_id", 8L)))).isTrue();
+        assertThat(scheduler.isStillMonitored(sweepItem(EscalationService.TYPE_HTTP_DOWN, "https://x/", Map.of("monitor_id", 9L)))).isFalse();
+        assertThat(scheduler.isStillMonitored(sweepItem(EscalationService.TYPE_HTTP_DOWN, "https://old/", Map.of())))
+                .as("kimliksiz kalem: eski davranış korunur").isTrue();
+    }
+
+    @Test
+    @DisplayName("ISSUE-001: envanter-türevi PORT satırı aktif ama envanteri silinmişse izlenmiyor; standalone ise envantere bakılmaz")
+    void isStillMonitored_derivedPortFollowsInventory() {
+        PortMonitor derived = new PortMonitor(); derived.setId(3L); derived.setActive(true); derived.setStandalone(false); derived.setHost("gone.example.com");
+        PortMonitor standalone = new PortMonitor(); standalone.setId(4L); standalone.setActive(true); standalone.setStandalone(true); standalone.setHost("gone.example.com");
+        lenient().when(portMonitorRepo.findById(3L)).thenReturn(Optional.of(derived));
+        lenient().when(portMonitorRepo.findById(4L)).thenReturn(Optional.of(standalone));
+        lenient().when(inventoryRepo.findByDomain("gone.example.com")).thenReturn(Optional.empty());
+
+        assertThat(scheduler.isStillMonitored(sweepItem(EscalationService.TYPE_PORT_DOWN, "gone.example.com", Map.of("monitor_id", 3L)))).isFalse();
+        assertThat(scheduler.isStillMonitored(sweepItem(EscalationService.TYPE_PORT_DOWN, "gone.example.com", Map.of("monitor_id", 4L)))).isTrue();
     }
 }
