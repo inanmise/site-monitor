@@ -627,6 +627,9 @@ public class UserPushService {
         if (start.isBlank() || end.isBlank()) return false;
         try {
             LocalTime s = LocalTime.parse(start), e = LocalTime.parse(end);
+            // Y20: start == end (ör. "22:00"-"22:00") gece-devrilen dalda (!before(s) || before(e))
+            // totolojiye dönüp 24 saat susturuyordu; sıfır uzunluklu pencere = pencere YOK.
+            if (s.equals(e)) return false;
             LocalTime now = LocalTime.now(ZONE);
             boolean inWindow = s.isBefore(e) ? (!now.isBefore(s) && now.isBefore(e))
                     : (!now.isBefore(s) || now.isBefore(e));   // gece devrilen pencere (22:00-07:00)

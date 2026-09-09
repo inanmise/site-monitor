@@ -38,6 +38,10 @@ public class WeeklyReportController {
 
     private final WeeklyReportService service;
     private final WeeklyReportReminderService reminderService;
+    // Matris izinleri weekly_reports.read / .crud katalogda tanımlıydı ama HİÇBİR uç sormuyordu:
+    // Yetki Matrisi'nde kapatmak etkisizdi (yalnız .approve serviste okunuyordu). Rol kapısı burada,
+    // takım kapsamı (Actor) serviste — diğer controller'larla aynı iki katman.
+    private final com.sitemonitor.service.PermissionService permissionService;
     private final AuditService auditService;
     private final WeeklyReportKpiService kpiService;
     private final MonitoringWeeklyStatsService monitoringStatsService;
@@ -50,6 +54,7 @@ public class WeeklyReportController {
             @RequestParam(required = false) Long teamId,
             @RequestParam(required = false) Integer year,
             HttpSession session) {
+        permissionService.require(session, "weekly_reports.read", "view");
         List<WeeklyReport> reports = service.list(teamId, year, actor(session));
         // Liste görünümünde content_json taşınmaz (boyut) — özet alanlar yeter
         Map<Long, String> mailStatuses = service.lastMailStatuses(
@@ -65,6 +70,7 @@ public class WeeklyReportController {
     /** Raporun mail gönderim geçmişi — Geçmiş modal'ı. */
     @GetMapping("/{id}/mails")
     public ResponseEntity<Map<String, Object>> mails(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "weekly_reports.read", "view");
         List<Map<String, Object>> data = service.mails(id, actor(session)).stream().map(m -> {
             Map<String, Object> x = new LinkedHashMap<String, Object>();
             x.put("id", m.getId());
@@ -85,11 +91,13 @@ public class WeeklyReportController {
     @GetMapping("/years")
     public ResponseEntity<Map<String, Object>> years(
             @RequestParam(required = false) Long teamId, HttpSession session) {
+        permissionService.require(session, "weekly_reports.read", "view");
         return ok(Map.of("data", service.years(teamId, actor(session))));
     }
 
     @GetMapping("/{id}")
     public ResponseEntity<Map<String, Object>> get(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "weekly_reports.read", "view");
         Actor a = actor(session);
         WeeklyReport r = service.get(id, a);
         List<Map<String, Object>> images = service.imagesMeta(r.getId()).stream()
@@ -110,6 +118,7 @@ public class WeeklyReportController {
      *  rapor görünümü tarafından ayrıca lazy çekilir. */
     @GetMapping("/{id}/kpis")
     public ResponseEntity<Map<String, Object>> kpis(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "weekly_reports.read", "view");
         WeeklyReport r = service.get(id, actor(session));   // yetki + yükleme (get ile aynı)
         return ok(Map.of("data", kpiService.compute(r.getTeamId(), r.getReportYear(), r.getWeekNo())));
     }
@@ -118,6 +127,7 @@ public class WeeklyReportController {
      *  açılınca çalışsın; eager report-open yolunu (tek pod) hafif tutar. YALNIZ-OKUMA, durum makinesine dokunmaz. */
     @GetMapping("/{id}/monitoring-stats")
     public ResponseEntity<Map<String, Object>> monitoringStats(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "weekly_reports.read", "view");
         WeeklyReport r = service.get(id, actor(session));
         return ok(Map.of("data", monitoringStatsService.compute(r.getTeamId(), r.getReportYear(), r.getWeekNo())));
     }
@@ -129,11 +139,13 @@ public class WeeklyReportController {
             @PathVariable Long id,
             @RequestParam(defaultValue = "false") boolean force,
             HttpSession session) {
+        permissionService.require(session, "weekly_reports.crud", "edit");
         return ok(Map.of("data", service.acquireLock(id, force, actor(session))));
     }
 
     @PostMapping("/{id}/unlock")
     public ResponseEntity<Map<String, Object>> unlock(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "weekly_reports.crud", "edit");
         service.releaseLock(id, actor(session));
         return ok(Map.of("message", "Released"));
     }
@@ -141,6 +153,7 @@ public class WeeklyReportController {
     @PostMapping
     public ResponseEntity<Map<String, Object>> create(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
+        permissionService.require(session, "weekly_reports.crud", "edit");
         Actor a = actor(session);
         Long teamId = toLong(body.get("team_id"));
         Integer year = toInt(body.get("year"));
@@ -159,6 +172,7 @@ public class WeeklyReportController {
     public ResponseEntity<Map<String, Object>> save(
             @PathVariable Long id, @RequestBody Map<String, Object> body,
             HttpSession session, HttpServletRequest request) {
+        permissionService.require(session, "weekly_reports.crud", "edit");
         String contentJson = body.get("content_json") != null ? body.get("content_json").toString() : null;
         WeeklyReport r = service.saveContent(id, contentJson, toLong(body.get("version")), actor(session));
         auditService.recordAction("WEEKLY_REPORT_SAVE", session, request,
@@ -170,6 +184,7 @@ public class WeeklyReportController {
     @PostMapping("/{id}/submit")
     public ResponseEntity<Map<String, Object>> submit(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+        permissionService.require(session, "weekly_reports.crud", "edit");
         Map<String, Object> result = service.submit(id, actor(session));
         WeeklyReport r = (WeeklyReport) result.get("data");
         auditService.recordAction("WEEKLY_REPORT_SUBMIT", session, request,
@@ -204,6 +219,7 @@ public class WeeklyReportController {
     @PostMapping("/{id}/reopen")
     public ResponseEntity<Map<String, Object>> reopen(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+        permissionService.require(session, "weekly_reports.crud", "edit");
         WeeklyReport r = service.reopen(id, actor(session));
         auditService.recordAction("WEEKLY_REPORT_REOPEN", session, request,
                 "WEEKLY_REPORT", id.toString(),
@@ -215,6 +231,7 @@ public class WeeklyReportController {
     @PostMapping("/{id}/resend")
     public ResponseEntity<Map<String, Object>> resend(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+        permissionService.require(session, "weekly_reports.crud", "edit");
         Map<String, Object> result = service.resend(id, actor(session));
         auditService.recordAction("WEEKLY_REPORT_RESEND", session, request,
                 "WEEKLY_REPORT", id.toString(),
@@ -259,6 +276,7 @@ public class WeeklyReportController {
     @DeleteMapping("/{id}")
     public ResponseEntity<Map<String, Object>> delete(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+        permissionService.require(session, "weekly_reports.crud", "edit");
         WeeklyReport r = service.delete(id, actor(session));
         auditService.recordAction("WEEKLY_REPORT_DELETE", session, request,
                 "WEEKLY_REPORT", id.toString(),
@@ -268,6 +286,7 @@ public class WeeklyReportController {
 
     @GetMapping("/{id}/preview")
     public ResponseEntity<Map<String, Object>> preview(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "weekly_reports.read", "view");
         return ok(Map.of("html", service.buildPreviewHtml(id, actor(session))));
     }
 
@@ -279,6 +298,7 @@ public class WeeklyReportController {
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "caption", required = false) String caption,
             HttpSession session, HttpServletRequest request) {
+        permissionService.require(session, "weekly_reports.crud", "edit");
         WeeklyReportImage img = service.storeImage(id, caption, file, actor(session));
         auditService.recordAction("WEEKLY_REPORT_IMAGE_ADD", session, request,
                 "WEEKLY_REPORT", id.toString(),
@@ -288,6 +308,7 @@ public class WeeklyReportController {
 
     @GetMapping("/images/{imageId}")
     public ResponseEntity<byte[]> serveImage(@PathVariable Long imageId, HttpSession session) {
+        permissionService.require(session, "weekly_reports.read", "view");
         WeeklyReportImage img = service.getImage(imageId, actor(session));
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(img.getContentType()))
@@ -298,6 +319,7 @@ public class WeeklyReportController {
     @DeleteMapping("/images/{imageId}")
     public ResponseEntity<Map<String, Object>> deleteImage(
             @PathVariable Long imageId, HttpSession session, HttpServletRequest request) {
+        permissionService.require(session, "weekly_reports.crud", "edit");
         Map<String, Object> deleted = service.deleteImage(imageId, actor(session));
         auditService.recordAction("WEEKLY_REPORT_IMAGE_DELETE", session, request,
                 "WEEKLY_REPORT", imageId.toString(), AuditDetail.ofMap(deleted));
@@ -485,7 +507,8 @@ public class WeeklyReportController {
                 (String) session.getAttribute("username"),
                 (String) session.getAttribute("displayName"),
                 teamId instanceof Long l ? l : (teamId != null ? Long.valueOf(teamId.toString()) : null),
-                (String) session.getAttribute("systemRole"));
+                (String) session.getAttribute("systemRole"),
+                SessionScope.isGlobalAdmin(session));   // rol dizesi değil, gerçek kapsam
     }
 
     private Map<String, Object> summary(WeeklyReport r) {

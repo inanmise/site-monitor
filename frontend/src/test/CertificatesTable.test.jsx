@@ -92,4 +92,21 @@ describe('CertificatesTable', () => {
     await screen.findByText('eski.com')
     expect(container.querySelector('tr[data-domain="eski.com"] .status-critical')).not.toBeNull()
   })
+
+  it('alan adı süzgeci tuş başına değil, 300 ms sessizlikten sonra TEK istek atar (fetch yarışı yok)', async () => {
+    api.getCertificatesPaginated.mockResolvedValue(paged([cert({ domain: 'a.com' })]))
+    render(<CertificatesTable onRowClick={() => {}} />)
+    await screen.findByText('a.com')
+    api.getCertificatesPaginated.mockClear()
+
+    const input = screen.getByPlaceholderText(/domain/i)
+    fireEvent.change(input, { target: { value: 'b' } })
+    fireEvent.change(input, { target: { value: 'ba' } })
+    fireEvent.change(input, { target: { value: 'ban' } })
+
+    await waitFor(() => expect(api.getCertificatesPaginated).toHaveBeenCalledWith(
+      expect.objectContaining({ filter_domain: 'ban' })))
+    // Ara tuş vuruşları ("b", "ba") sunucuya HİÇ gitmedi.
+    expect(api.getCertificatesPaginated.mock.calls.map(c => c[0].filter_domain)).toEqual(['ban'])
+  })
 })

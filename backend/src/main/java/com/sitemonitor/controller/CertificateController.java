@@ -209,8 +209,14 @@ public class CertificateController {
      * Envanterde yoksa 443 varsayılanı sürer.
      */
     @GetMapping("/check-preview/{domain}")
-    public ResponseEntity<Map<String, Object>> previewDomain(@PathVariable String domain) {
+    public ResponseEntity<Map<String, Object>> previewDomain(@PathVariable String domain, HttpSession session) {
+        // Kardeşi /check/{domain} requireViewableDomain ile korunuyordu; bu uç HİÇ oturum almıyordu:
+        // herhangi bir rol/takım başka takımın envanter satırının canlı TLS sonucunu (port/proxy/TLS
+        // modu dâhil) okuyabiliyordu. Envanterde varsa takım kapsamı; yoksa ad-hoc SSL Checker
+        // (dashboard) için yalnız rol kapısı — SsrfGuard check() içinde zaten uygulanıyor.
+        permissionService.require(session, "inventory.list", "view");
         var inv = inventoryRepo.findByDomain(domain);
+        if (inv.isPresent()) requireViewableDomain(session, domain);
         boolean forceProxy = inv.map(ci -> Boolean.TRUE.equals(ci.getUseProxy())).orElse(false);
         String tlsOverride = inv.map(ci -> ci.getTlsMode()).orElse(null);
         int port = inv.map(CertificateInventory::getPort).filter(p -> p != null && p > 0).orElse(443);

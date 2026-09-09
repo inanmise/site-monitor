@@ -88,6 +88,25 @@ public final class SessionScope {
         return m != null && teamId != null && m.contains(teamId);
     }
 
+    /**
+     * Sistem ayarı yüzeyleri (SMTP/LDAP/genel/marka/sır araçları/fırtına/anomali/DB) için ek kapı:
+     * <b>kapsamlı ADMIN (müdür) geçemez</b> — matris izni ({@code permissionService.require}) ayrıca
+     * sorulur.
+     *
+     * <p>ADMIN rolü matriste her izni taşır; AD-kaynaklı müdür de ADMIN rolüyle gelir ama
+     * {@code viewTeamIds} dolu olduğundan global değildir. Yalnız matris izniyle kapılı ayar uçları
+     * müdürü global admin sanıyordu: LDAP bind/SMTP host'unu kendi sunucusuna çevirip "test" ile
+     * saklı (çözülmüş) kimlik bilgisini alabiliyor, CA paketini ve SSRF allow-internal ayarını
+     * değiştirebiliyordu. Frontend sekmeyi zaten gizliyordu; backend artık aynı sınırı uygular.
+     * Diğer rollere verilen açık matris grant'ları etkilenmez.
+     */
+    public static void requireNotScopedAdmin(HttpSession session, String resourceKey) {
+        if (session != null && "ADMIN".equals(session.getAttribute("systemRole"))
+                && session.getAttribute("viewTeamIds") != null) {
+            throw new SecurityException("Bu ayar yalnız global yönetici tarafından değiştirilebilir: " + resourceKey);
+        }
+    }
+
     /** Whether the caller may VIEW a resource owned by {@code teamId}. Global viewer (admin/AUDIT)
      *  sees all; otherwise the team must be in the read scope. */
     public static boolean canView(HttpSession session, Long teamId) {

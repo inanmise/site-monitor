@@ -43,6 +43,7 @@ class WeeklyReportControllerTest {
     @MockitoBean AuditService auditService;
     @MockitoBean com.sitemonitor.service.WeeklyReportKpiService kpiService;
     @MockitoBean com.sitemonitor.service.MonitoringWeeklyStatsService monitoringStatsService;
+    @MockitoBean com.sitemonitor.service.PermissionService permissionService;   // rol kapısı (mock: izin verir)
 
     private static WeeklyReport report(Long id, Long teamId, String status) {
         WeeklyReport r = new WeeklyReport();

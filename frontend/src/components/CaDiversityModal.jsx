@@ -41,7 +41,7 @@ export default function CaDiversityModal({ certs, onClose }) {
               {t('cadiv.summary', grouped.length, totalDomains)}
             </span>
           </div>
-          <button className="modal-close-btn" onClick={onClose} aria-label="Close">
+          <button className="modal-close-btn" onClick={onClose} aria-label={t('app.close')}>
             <X size={16} />
           </button>
         </div>

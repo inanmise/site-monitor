@@ -251,7 +251,12 @@ public class EscalationService {
             // olay asılı kalıyordu.
             Set<String> stale = new LinkedHashSet<>(CERT_ALERT_TYPES);
             stale.removeAll(alertTypes);
-            if (!stale.isEmpty()) resolveOpenAlertsForDomain(domain, stale);
+            // status=error (timeout/ağ) HİÇBİR şeyi doğrulamamıştır: determineAlertTypes yalnız [EXPIRY]
+            // döndüğünden açık REVOKED/MISMATCH/CHAIN_BROKEN/HOSTNAME_MISMATCH/UNTRUSTED_CA "stale"
+            // sayılıp "✅ sorun giderildi" maili+push'uyla kapanıyor, bir sonraki temiz turda INITIAL
+            // olarak yeniden açılıyordu (tek zaman aşımı = dört mail + bir yalancı yeşil).
+            boolean unverified = "error".equals(result.get("status"));
+            if (!stale.isEmpty() && !unverified) resolveOpenAlertsForDomain(domain, stale);
             if (alertTypes.isEmpty()) continue;
 
             for (String alertType : alertTypes) {
@@ -271,6 +276,10 @@ public class EscalationService {
 
                 if (existing.isEmpty()) {
                     AlertEvent event = newEvent(domain, alertLevel, alertType, message, daysRemaining);
+                    // Sertifika olayına takım DAMGALANMIYORDU: açılış push'u syTeamId yedeğiyle gidiyor,
+                    // çözüm push'u ise yalnız event.teamId okuyor → alıcı yok → SKIPPED_NO_RECIPIENTS.
+                    // Telefon "KRİTİK: doluyor"u alıyor, "DÜZELDİ"yi hiç almıyordu (izleme yolu :889 ile aynı).
+                    event.setTeamId(domainTeamId);
                     // K5: envanterin bildirim grubu alarma DAMGALANIR -- cozum ve yeniden-gonderim
                     // ayni aliciya gitsin diye (canli okuma yapilsaydi grup degisiminde saparlardi).
                     event.setNotificationGroupId(inventoryOpt
@@ -288,6 +297,10 @@ public class EscalationService {
 
                 } else {
                     AlertEvent event = existing.get();
+                    if (event.getTeamId() == null && domainTeamId != null) {
+                        event.setTeamId(domainTeamId);          // eski (damgasız) açık olayları tek seferlik geri doldur
+                        alertEventRepo.save(event);
+                    }
                     boolean escalated = levelValue(alertLevel) > levelValue(event.getAlertLevel());
 
                     if (escalated) {
@@ -693,8 +706,21 @@ public class EscalationService {
             event.setResolved(true);
             event.setResolvedAt(now());
             event.setResolvedBy(by);
-            alertEventRepo.save(event);   // mail YOK — sendResolutionNotification çağrılmaz
+            AlertEvent saved = alertEventRepo.save(event);   // mail YOK — sendResolutionNotification çağrılmaz
+            // Push AÇILIŞTA gittiyse çözümü de gitsin (simetri kuralı enqueueResolve içinde): bakım
+            // penceresinde kurtarma / silme / duraklatma mail'siz kapanır ama telefon "DÜZELDİ"yi
+            // hiç görmüyordu — açık alarm bildirimi ekranda sonsuza kadar kalıyordu.
+            enqueueResolvePushQuietly(saved != null ? saved : event);
             log.info("✅ Alarm sessizce kapatıldı (izleme silindi, mail yok): {} [{}]", domain, event.getAlertType());
+        }
+    }
+
+    /** Sessiz kapanışlarda çözüm push'u — push katmanı hatası kapanışı ASLA geri almasın. */
+    private void enqueueResolvePushQuietly(AlertEvent event) {
+        try {
+            if (userPushService != null) userPushService.enqueueResolve(event, deserializeContext(event.getContextJson()));
+        } catch (Exception e) {
+            log.debug("Sessiz kapanış çözüm push'u atlandı: {}", e.toString());
         }
     }
 
@@ -916,32 +942,58 @@ public class EscalationService {
                         outageContext != null ? outageContext.getOrDefault("detail", "") : "");
             }
 
-        } else if (!Boolean.TRUE.equals(existing.get().getAcknowledged())) {
-            // NULL-güvenli unbox (O6): acknowledged nullable Boolean — NULL satırda unbox NPE'si
-            // sweep'in KALAN domain'lerinin alarm işlemesini de iptal ediyordu.
+        } else {
             AlertEvent event = existing.get();
-            // Storm üyesi + storm hâlâ aktif → bireysel günlük re-alert YOK (toplu re-alert storm sweep'inden gider).
-            if (event.getStormId() != null && stormService.isActive(event.getStormId())) {
-                log.debug("İzleme alarmı storm üyesi — bireysel re-alert atlandı: {} [{}]", domain, alertType);
-                return;
-            }
             // O5: alarm AÇIKKEN monitör başka takıma atanırsa çözüm bildirimi event.teamId'den
             // gider (damga) — re-alert canlı ctx'ten giderse iki yol FARKLI takıma düşer.
             // Üç yol da (ilk/re-alert/çözüm) aynı damgayı kullansın; ctx yalnız damga boşken.
             if (event.getTeamId() != null) {
                 domainTeamId = event.getTeamId();
             }
+            // NULL-güvenli unbox (O6): acknowledged nullable Boolean — NULL satırda unbox NPE'si
+            // sweep'in KALAN domain'lerinin alarm işlemesini de iptal ediyordu.
+            boolean acked = Boolean.TRUE.equals(event.getAcknowledged());
             // Y5: ctx seviyesi damgadan YÜKSEKSE terfi KALICI olsun — yoksa kritik re-alert alan
             // müdür, çözüm bildirimini alamaz (includeManagerContacts event seviyesine bakar) ve
             // çözüm maili seviyeyi yanlış gösterir. processResults'taki escalation davranışının
             // izleme-yolu eşleniği.
+            //
+            // Terfi ACK KAPISINDAN ÖNCE değerlendirilir. Eskiden bu blok "ack'li değilse" dalının
+            // içindeydi: 30 günde UYARI açılıp ack'lenen DOMAINMON_EXPIRY ≤7 günde KRİTİK'e çıkınca
+            // dal tümüyle atlanıyor, olay UYARI'da kalıyor, müdür (KRİTİK kapısı) hiç aranmıyor ve
+            // acknowledgedAt hiçbir yerde okunmadığından ack alarmı SONSUZA kadar susturuyordu.
+            // Sertifika yolu (processResults) ile aynı kural: terfi ack'i düşürür ve ESCALATION gönderir.
             if (levelValue(alertLevel) > levelValue(event.getAlertLevel())) {
                 event.setAlertLevel(alertLevel);
+                event.setMessage(message);
+                if (acked) {
+                    event.setAcknowledged(false);
+                    event.setAcknowledgedAt(null);
+                    event.setAcknowledgedBy(null);
+                }
                 // KALICILASTIR: asagidaki "re-alert vakti gelmedi" dali save cagirmiyor ve sinifta
                 // @Transactional da yok — dirty-checking kurtarmiyordu. Terfi bellekte kalip
                 // kayboluyor, araya giren bir cozum bildirimini ESKI (dusuk) seviyeyle gonderiyor
                 // ve mudur atlanabiliyordu (Y5'in alt-dali).
                 alertEventRepo.save(event);
+                boolean stormMember = event.getStormId() != null && stormService.isActive(event.getStormId());
+                if (!stormMember) {
+                    List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId);
+                    sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
+                            message, "", event.getId(), "ESCALATION", null, outageContext);
+                    event.setNotifiedContacts(serializeContacts(contacts));
+                    event.setLastReAlertAt(now());
+                    alertEventRepo.save(event);
+                    log.warn("⬆ İzleme alarmı {} seviyesine yükseltildi: {} [{}] — bildirim gönderildi{}",
+                            alertLevel, domain, alertType, acked ? " (ack düşürüldü)" : "");
+                }
+                return;
+            }
+            if (acked) return;   // ack'li ve terfi yok → sessiz (mevcut davranış)
+            // Storm üyesi + storm hâlâ aktif → bireysel günlük re-alert YOK (toplu re-alert storm sweep'inden gider).
+            if (event.getStormId() != null && stormService.isActive(event.getStormId())) {
+                log.debug("İzleme alarmı storm üyesi — bireysel re-alert atlandı: {} [{}]", domain, alertType);
+                return;
             }
             // İLK bildirim hiç tamamlanmadıysa (lastReAlertAt null) onu ŞİMDİ gönder.
             //
@@ -1286,7 +1338,8 @@ public class EscalationService {
             event.setResolved(true);
             event.setResolvedAt(now());
             event.setResolvedBy(resolvedBy);
-            alertEventRepo.save(event);
+            AlertEvent saved = alertEventRepo.save(event);
+            enqueueResolvePushQuietly(saved != null ? saved : event);   // resolveOpenAlertsSilently ile aynı gerekçe
             log.info("Alarm kapatıldı ({}): {} [{}]", reason, domain, event.getAlertType());
         }
         return openAlerts.size();
@@ -1387,41 +1440,7 @@ public class EscalationService {
                 return;
             }
 
-            String typeTr = switch (event.getAlertType() != null ? event.getAlertType() : "") {
-                case "REVOKED"          -> "İptal";
-                case "MISMATCH"         -> "Dağıtım Eksik";
-                case "CHAIN_BROKEN"     -> "Zincir Sorunu";
-                case TYPE_HOSTNAME_MISMATCH -> "Alan Adı Uyuşmazlığı";
-                case TYPE_UNTRUSTED_CA      -> "Güvenilmeyen Sertifika";
-                case TYPE_ACCESSIBILITY -> "Erişim Kesintisi";
-                case TYPE_PORT_DOWN     -> "Port Kesintisi";
-                case TYPE_PORT_SLOW     -> "Port Yavaş Yanıt";
-                case TYPE_DNS_FAILURE   -> "DNS Çözümleme Hatası";
-                case TYPE_DNS_SLOW      -> "DNS Yavaş/Timeout";
-                case TYPE_DNS_UNEXPECTED -> "DNS Beklenmeyen Değer";
-                case TYPE_DNS_INCONSISTENT -> "DNS Tutarsızlığı";
-                case TYPE_DNS_CHANGED   -> "DNS Değişikliği";
-                case TYPE_KEYWORD       -> "İçerik Doğrulama";
-                case TYPE_KEYWORD_SLOW  -> "İçerik Yavaş Yanıt";
-                case TYPE_KEYWORD_SSL   -> "İçerik SSL Sorunu";
-                case TYPE_KEYWORD_DOMAIN_EXPIRY -> "İçerik Domain Bitişi";
-                case TYPE_PING_DOWN     -> "Erişilebilirlik (Ping)";
-                case TYPE_PING_SLOW     -> "Ping Yavaş Yanıt";
-                case TYPE_HTTP_DOWN     -> "HTTP/Website Erişilemez";
-                case TYPE_HTTP_SSL      -> "SSL Sertifika Sorunu";
-                case TYPE_PAGE_DOWN     -> "Sayfa Yüklenemiyor";
-                case TYPE_PAGE_INTEGRITY -> "Sayfa Bütünlüğü";
-                case TYPE_SCRIPTED_FAIL -> "Sentetik İzleme";
-                case TYPE_SCRIPTED_SLOW -> "Sentetik Yavaş Koşum";
-                case TYPE_PAGESPEED_DOWN -> "Sayfa Hızı Ölçülemiyor";
-                case TYPE_PAGESPEED_SLOW -> "Sayfa Hızı Eşiği Aşıldı";
-                case TYPE_DOMAIN_EXPIRY -> "Domain Süre Bitişi";
-                case TYPE_DOMAINMON_EXPIRY  -> "Alan Adı Süre Bitişi";
-                case TYPE_DOMAINMON_UNKNOWN -> "Alan Adı Veri Yok";
-                case TYPE_DOMAINMON_STATUS  -> "Alan Adı Durum Kodu";
-                case TYPE_DOMAINMON_CHANGED -> "Alan Adı Değişikliği";
-                default                 -> "Sertifika Süre Bitişi";
-            };
+            String typeTr = resolvedTypeLabel(event.getAlertType());
             String subject = "[Site Monitor ✅ ÇÖZÜLDÜ] " + event.getDomain()
                     + " — " + typeTr + " sorunu giderildi";
             // İzleme çözüm mailleri süreyi createdAt→resolvedAt'ten hesaplar;
@@ -2205,6 +2224,53 @@ public class EscalationService {
         e.setResolved(false);
         e.setCreatedAt(now());
         return e;
+    }
+
+    /**
+     * ÇÖZÜM maili konusundaki tip etiketi. Alarm konusuyla (aşağıdaki typeTr switch'i) ayrı
+     * tutulmuştu ve K2'de eklenen iki alan-adı tipi yalnız alarm tarafına girmişti: kara liste
+     * temizlenince "Sertifika Süre Bitişi sorunu giderildi" yazıyordu. Kapı:
+     * EscalationServiceTest.resolvedTypeLabel_coversEveryAlertType.
+     */
+    static String resolvedTypeLabel(String alertType) {
+        return switch (alertType != null ? alertType : "") {
+
+                case "REVOKED"          -> "İptal";
+                case "MISMATCH"         -> "Dağıtım Eksik";
+                case "CHAIN_BROKEN"     -> "Zincir Sorunu";
+                case TYPE_HOSTNAME_MISMATCH -> "Alan Adı Uyuşmazlığı";
+                case TYPE_UNTRUSTED_CA      -> "Güvenilmeyen Sertifika";
+                case TYPE_ACCESSIBILITY -> "Erişim Kesintisi";
+                case TYPE_PORT_DOWN     -> "Port Kesintisi";
+                case TYPE_PORT_SLOW     -> "Port Yavaş Yanıt";
+                case TYPE_DNS_FAILURE   -> "DNS Çözümleme Hatası";
+                case TYPE_DNS_SLOW      -> "DNS Yavaş/Timeout";
+                case TYPE_DNS_UNEXPECTED -> "DNS Beklenmeyen Değer";
+                case TYPE_DNS_INCONSISTENT -> "DNS Tutarsızlığı";
+                case TYPE_DNS_CHANGED   -> "DNS Değişikliği";
+                case TYPE_KEYWORD       -> "İçerik Doğrulama";
+                case TYPE_KEYWORD_SLOW  -> "İçerik Yavaş Yanıt";
+                case TYPE_KEYWORD_SSL   -> "İçerik SSL Sorunu";
+                case TYPE_KEYWORD_DOMAIN_EXPIRY -> "İçerik Domain Bitişi";
+                case TYPE_PING_DOWN     -> "Erişilebilirlik (Ping)";
+                case TYPE_PING_SLOW     -> "Ping Yavaş Yanıt";
+                case TYPE_HTTP_DOWN     -> "HTTP/Website Erişilemez";
+                case TYPE_HTTP_SSL      -> "SSL Sertifika Sorunu";
+                case TYPE_PAGE_DOWN     -> "Sayfa Yüklenemiyor";
+                case TYPE_PAGE_INTEGRITY -> "Sayfa Bütünlüğü";
+                case TYPE_SCRIPTED_FAIL -> "Sentetik İzleme";
+                case TYPE_SCRIPTED_SLOW -> "Sentetik Yavaş Koşum";
+                case TYPE_PAGESPEED_DOWN -> "Sayfa Hızı Ölçülemiyor";
+                case TYPE_PAGESPEED_SLOW -> "Sayfa Hızı Eşiği Aşıldı";
+                case TYPE_DOMAIN_EXPIRY -> "Domain Süre Bitişi";
+                case TYPE_DOMAINMON_EXPIRY  -> "Alan Adı Süre Bitişi";
+                case TYPE_DOMAINMON_UNKNOWN -> "Alan Adı Veri Yok";
+                case TYPE_DOMAINMON_STATUS  -> "Alan Adı Durum Kodu";
+                case TYPE_DOMAINMON_CHANGED -> "Alan Adı Değişikliği";
+                                case TYPE_DOMAINMON_TRANSFER_LOCK -> "Alan Adı Transfer Kilidi";
+                case TYPE_DOMAINMON_BLACKLIST     -> "Alan Adı Kara Liste";
+                default                 -> "Sertifika Süre Bitişi";
+        };
     }
 
     /** Çözüldü e-postasında detay için alarm anı context'inin küçük JSON snapshot'ı.

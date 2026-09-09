@@ -256,6 +256,11 @@ public class AdminController {
                 .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
         requireTeamScopedAdmin(session, existing.getTeamId());
         requirePerm(session, "inventory.crud", "edit");
+        // Oluşturma yolu (addInventory) host'a normalize ediyor (trim + küçük harf); güncelleme
+        // etmiyordu. "Example.COM" gibi harf-farklı düzenleme rename sayılmıyor (equalsIgnoreCase)
+        // ama satıra yazılıyordu → latest_checks/geçmiş/notlar domain dizesiyle bağlı olduğundan
+        // kayıt geçmişsiz kalıyordu; "Other.com" ise exact-UNIQUE'i geçip ikinci satır oluşturuyordu.
+        item.setDomain(validateDomain(item.getDomain()));
         // TEAM_ADMIN cannot transfer an item to another team via this endpoint —
         // freeze teamId to its current value.
         if (isTeamAdmin(session)) {
@@ -279,7 +284,7 @@ public class AdminController {
         boolean renamed = newDomain != null && oldDomain != null
                 && !newDomain.equalsIgnoreCase(oldDomain);
         if (renamed) {
-            if (inventoryRepo.existsByDomain(newDomain)) {
+            if (inventoryRepo.existsByDomainIgnoreCase(newDomain)) {
                 throw new IllegalStateException(
                         "Bu domain (\"" + newDomain + "\") envanterde zaten var. "
                         + "Önce diğer kaydı silmelisin veya farklı bir isim seç.");
@@ -356,6 +361,20 @@ public class AdminController {
         monitorHistory.record(MonitorHistoryService.INVENTORY, saved.getId(), saved.getDomain(), saved.getTeamId(),
                 MonitorHistoryService.UPDATE, _histBefore, AuditDiff.snapshot(saved, INVENTORY_FIELDS), null, session);
         return ok(Map.of("data", saved, "alertsClosed", alertsClosed));
+    }
+
+    /**
+     * Kalıcı purge'ün domain-anahtarlı çocukları: notlar + revizyonları. Eskiden yalnız
+     * certificate_checks/latest_checks siliniyor, notlar kalıyordu; aynı domain haftalar sonra
+     * yeniden eklenince eski notlar yeni kaydın altında "diriliyordu" (retention da notları
+     * hiç kırpmaz). Çağıran @Transactional — hepsi ya birlikte gider ya hiç.
+     */
+    private void purgeDomainNotes(String domain) {
+        List<com.sitemonitor.model.CertificateNote> notes = noteRepo.findByDomainOrderByCreatedAtDesc(domain);
+        if (notes == null || notes.isEmpty()) return;
+        List<Long> ids = notes.stream().map(com.sitemonitor.model.CertificateNote::getId).filter(Objects::nonNull).toList();
+        if (!ids.isEmpty()) noteRevisionRepo.deleteByNoteIdIn(ids);
+        noteRepo.deleteAll(notes);
     }
 
     private String buildInventoryDiff(CertificateInventory o, CertificateInventory n, boolean isAdmin) {
@@ -596,6 +615,10 @@ public class AdminController {
 
         String host = (body != null && body.get("host") != null && !body.get("host").toString().isBlank())
                 ? body.get("host").toString().trim() : "data.iana.org";
+        // Kardeş tanılama uçları (/diagnostics, /openssl, /network, /hsts, /domain-expiry) admin
+        // olmayanı envanter domain'leriyle sınırlar; bu uç tek başına sınırsızdı (pod egress'inden
+        // keyfi host:port'a TLS el sıkışması). Aynı kapı burada da.
+        requireAdminOrMonitoredDomain(session, host);
         host = validateDiagTarget(host);
         Long portRaw = body != null ? toLong(body.get("port")) : null;
         int port = portRaw != null ? portRaw.intValue() : 443;
@@ -922,6 +945,7 @@ public class AdminController {
             String domain = inv.getDomain();
             int checks = certificateCheckRepo.deleteByDomain(domain);
             latestCheckRepo.findById(domain).ifPresent(latestCheckRepo::delete);
+            purgeDomainNotes(domain);
             inventoryRepo.delete(inv);
             auditService.recordAction("DOMAIN_PURGE", session, request, "CERTIFICATE", domain,
                     "{\"teamId\":" + inv.getTeamId() + ",\"checksDeleted\":" + checks + "}");
@@ -954,6 +978,7 @@ public class AdminController {
             String domain = inv.getDomain();
             checksDeleted += certificateCheckRepo.deleteByDomain(domain);
             latestCheckRepo.findById(domain).ifPresent(latestCheckRepo::delete);
+            purgeDomainNotes(domain);
             inventoryRepo.delete(inv);
             purged++;
             purgedDomains.add(domain);
@@ -1925,14 +1950,25 @@ public class AdminController {
         requirePerm(session, "users.crud", "edit");
         String requestedRole = (String) body.get("system_role");
         List<Long> requestedTeams = teamIdsFromBody(body);
-        if (isTeamAdmin(session)) {
-            // TEAM_ADMIN can only seed USER or TEAM_ADMIN; never ADMIN/AUDIT.
-            if (requestedRole != null && !TEAM_ADMIN_ASSIGNABLE_ROLES.contains(requestedRole)) {
-                throw new SecurityException("Team admin cannot assign role: " + requestedRole);
+        if (!isAdmin(session)) {
+            // GLOBAL OLMAYAN her yazar (TEAM_ADMIN VEYA kapsamlı müdür) yalnız USER/TEAM_ADMIN
+            // tohumlar; ADMIN/AUDIT asla. Eskiden bu dal yalnız isTeamAdmin() ile kapılıydı: AD-kaynaklı
+            // ADMIN (müdür, viewTeamIds dolu) system.global_admin iznini rol olarak taşıdığından
+            // isTeamAdmin() false dönüyor, kısıt atlanıyor ve müdür system_role=ADMIN + team_ids=[]
+            // ile SINIRSIZ bir yerel admin yaratabiliyordu (kendi seçtiği parolayla).
+            requireAssignableRole(requestedRole);
+            if (isTeamAdmin(session)) {
+                // TEAM_ADMIN: yeni kullanıcı kendi takımına düşer — payload ezemez.
+                Long own = teamId(session);
+                requestedTeams = own != null ? List.of(own) : List.of();
+            } else {
+                // Müdür: hedef takımlar YÖNETİM kapsamında olmalı; boşsa kendi takımına düşer.
+                if (requestedTeams == null || requestedTeams.isEmpty()) {
+                    Long own = teamId(session);
+                    requestedTeams = own != null ? List.of(own) : List.of();
+                }
+                requireTeamsInManageScope(session, requestedTeams);
             }
-            // And the new user lands in the team admin's team — payload can't override.
-            Long own = teamId(session);
-            requestedTeams = own != null ? List.of(own) : List.of();
         }
         AppUser user = userService.createUser(
                 (String) body.get("username"),
@@ -1959,6 +1995,7 @@ public class AdminController {
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
         requirePerm(session, "users.crud", "edit");
+        requireCanAdministerTarget(session, target);
         final String[] _uf = {"systemRole", "teamId", "teamIds", "active", "orgRole", "displayName", "email", "employeeId", "managerId"};
         java.util.Map<String, Object> _before = AuditDiff.snapshot(target, _uf);
         String requestedRole = (String) body.get("system_role");
@@ -1983,19 +2020,23 @@ public class AdminController {
                     ? (Boolean) body.get("active") : currentActive;
             guardLastActiveAdmin(target, "ADMIN".equals(nextRole) && nextActive);
         }
-        if (isTeamAdmin(session)) {
-            if (requestedRole != null && !TEAM_ADMIN_ASSIGNABLE_ROLES.contains(requestedRole)) {
-                throw new SecurityException("Team admin cannot assign role: " + requestedRole);
-            }
-            // TEAM_ADMIN kullanıcıyı kendi takımı dışına taşıyamaz / çoklu takım atayamaz.
-            if (requestedTeams != null) {
-                for (Long t : requestedTeams) {
-                    if (!t.equals(target.getTeamId())) {
-                        throw new SecurityException("Team admin cannot transfer users to another team");
+        if (!isAdmin(session)) {
+            // createUser ile aynı kural: global olmayan yazar ADMIN/AUDIT veremez (müdür dâhil).
+            requireAssignableRole(requestedRole);
+            if (isTeamAdmin(session)) {
+                // TEAM_ADMIN kullanıcıyı kendi takımı dışına taşıyamaz / çoklu takım atayamaz.
+                if (requestedTeams != null) {
+                    for (Long t : requestedTeams) {
+                        if (!t.equals(target.getTeamId())) {
+                            throw new SecurityException("Team admin cannot transfer users to another team");
+                        }
                     }
                 }
+                requestedTeams = null;   // üyeliği değiştirmesine izin verilmez
+            } else if (requestedTeams != null) {
+                // Müdür: kullanıcıyı ancak yönettiği takımlar arasında taşır.
+                requireTeamsInManageScope(session, requestedTeams);
             }
-            requestedTeams = null;   // üyeliği değiştirmesine izin verilmez
         }
         // Boş takım = takımsız; yalnız ADMIN rollü kullanıcı takımsız kalabilir.
         if (requestedTeams != null && requestedTeams.isEmpty()) {
@@ -2028,6 +2069,7 @@ public class AdminController {
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
         requirePerm(session, "users.actions", "execute");
+        requireCanAdministerTarget(session, target);   // ADMIN/AUDIT parolasını yalnız global admin sıfırlar
         String adminPwd = body.get("admin_password");
         if (adminPwd == null || adminPwd.isBlank()) {
             throw new IllegalArgumentException("Admin password required");
@@ -2109,6 +2151,7 @@ public class AdminController {
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
         requirePerm(session, "users.crud", "edit");
+        requireCanAdministerTarget(session, target);
         guardLastActiveAdmin(target, false);
         // Silmede yok olan durum yazilir: kayit gittikten sonra kimse arayip bulamaz.
         String detail = AuditDiff.snapshotJson(AuditDiff.snapshot(target,
@@ -2404,6 +2447,37 @@ public class AdminController {
 
     private static final Set<String> TEAM_ADMIN_ASSIGNABLE_ROLES =
             Set.of("USER", "TEAM_ADMIN");
+
+    /** Global olmayan yazar (TEAM_ADMIN ya da kapsamlı müdür) yalnız USER/TEAM_ADMIN atayabilir. */
+    private static void requireAssignableRole(String requestedRole) {
+        if (requestedRole != null && !TEAM_ADMIN_ASSIGNABLE_ROLES.contains(requestedRole)) {
+            throw new SecurityException("Only a global admin can assign role: " + requestedRole);
+        }
+    }
+
+    /** Hedef takımların HEPSİ çağıranın yönetim kapsamında olmalı (müdür başka takıma kullanıcı yazamaz). */
+    private static void requireTeamsInManageScope(HttpSession session, List<Long> teams) {
+        List<Long> scope = SessionScope.manageTeamIds(session);
+        for (Long t : teams) {
+            if (t == null || scope == null || !scope.contains(t)) {
+                throw new SecurityException("Cannot assign a team outside your management scope: " + t);
+            }
+        }
+    }
+
+    /**
+     * ADMIN/AUDIT hesabına (parola sıfırlama, pasife alma, silme, rol/takım değişimi) yalnız GLOBAL
+     * admin dokunabilir. Takım kapsamı tek başına yetmez: müdürün kendi takımına atanmış bir global
+     * admin, kapsam kontrolünden geçiyor ve parolası müdürce sıfırlanabiliyordu (hesap devralma).
+     */
+    private void requireCanAdministerTarget(HttpSession session, AppUser target) {
+        if (isAdmin(session)) return;
+        if (target != null && !TEAM_ADMIN_ASSIGNABLE_ROLES.contains(target.getSystemRole())) {
+            log.warn("Non-global admin attempted to administer {} account user={} target={}",
+                    target.getSystemRole(), actor(session), target.getUsername());
+            throw new SecurityException("Only a global admin can administer an " + target.getSystemRole() + " account");
+        }
+    }
 
     private void requireAdmin(HttpSession session) {
         if (!isAdmin(session)) {

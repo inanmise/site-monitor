@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
@@ -74,6 +74,12 @@ export default function LoginIssueReports() {
   const [since, setSince] = useState('')       // bildirim tarihi >= (yerel gün)
   const [until, setUntil] = useState('')       // bildirim tarihi <= (yerel gün)
   const [page, setPage] = useState(0)
+  // Arama 300 ms debounce: her tuşta sunucuya gitmesin; sayfa sıfırlama da yerleşen terime bağlı.
+  const [qTerm, setQTerm] = useState('')
+  useEffect(() => { const id = setTimeout(() => setQTerm(q), 300); return () => clearTimeout(id) }, [q])
+  // Fetch yarışı: filtre değişince (eski sayfa) + (sayfa 0) iki istek çıkar; eski sonra dönerse
+  // satırlar sayfa N'i, sayfalayıcı 1'i gösterirdi. Yalnız son isteğin yanıtı uygulanır.
+  const loadSeq = useRef(0)
   const [size, setSize] = useState(() => readPageSize('login-issues'))
   const [total, setTotal] = useState(0)
   const [detail, setDetail] = useState(null)   // seçili kaydın tam detayı
@@ -87,13 +93,14 @@ export default function LoginIssueReports() {
     // AG HATASI DA GORUNUR OLMALI: api/client.js request() ag hatasinda {success:false}
     // DONDURMEZ, throw eder. try/catch olmadan promise reject oluyor ve ekran sonsuza
     // kadar yukleniyor durumunda kaliyordu (yalnizca konsolda unhandled rejection).
+    const seq = ++loadSeq.current
     let res
     try {
       res = await api.admin.getLoginIssues({
         status: statusFilter || undefined,
         source: sourceFilter || undefined,
         category: categoryFilter || undefined,
-        q: q.trim() || undefined,
+        q: qTerm.trim() || undefined,
         since: localDayToUtcIso(since, false),
         until: localDayToUtcIso(until, true),
         page, size,
@@ -102,19 +109,21 @@ export default function LoginIssueReports() {
       // rows'a DOKUNMUYORUZ: ilk yuklemede null kalmali ki asagidaki hata guard'i cizsin
       // (bos diziye cekmek ekrani "kayit yok" tablosuna dusurur -- duzeltilen hatanin ayni).
       // Tazeleme hatasinda da bayat satirlar korunur, altlarinda bant cikar.
+      if (seq !== loadSeq.current) return
       setLoadError(e?.message || t('settings.loadError')); return
     }
+    if (seq !== loadSeq.current) return   // bayat yanıt — daha yeni bir istek yolda
     if (res?.success) { setRows(res.data || []); setTotal(res.total || 0); setCounts(res.counts || counts); setLoadError(null) }
     else {
       const msg = res?.error || t('settings.loadError')
       toast.error(msg); setLoadError(msg)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter, sourceFilter, categoryFilter, q, since, until, page, size, allowView])
+  }, [statusFilter, sourceFilter, categoryFilter, qTerm, since, until, page, size, allowView])
 
   useEffect(() => { load() }, [load])
   // Filtre/boyut değişince ilk sayfaya dön (page load'ı tekrar tetikler; zaten 0 ise load dep'lerden fırlar).
-  useEffect(() => { setPage(0) }, [statusFilter, sourceFilter, categoryFilter, q, since, until, size])
+  useEffect(() => { setPage(0) }, [statusFilter, sourceFilter, categoryFilter, qTerm, since, until, size])
 
   async function openDetail(id) {
     setOpenMail(null)

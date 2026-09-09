@@ -2316,4 +2316,122 @@ class EscalationServiceTest {
         // Takım çözülemeseydi alıcı listesi boş kalır ve mail hiç gitmezdi.
         verify(emailService, atLeast(1)).sendResolutionAlert(any(String[].class), anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any(), any(), any(), any());
     }
+
+    // ── Kod incelemesi 2026-09-09: alarm zinciri düzeltmeleri ─────────────────
+
+    @Test
+    @DisplayName("Sertifika alarmı olaya TAKIM damgalar — çözüm push'unun alıcısı olsun (event.teamId)")
+    void certAlert_stampsTeamId_forResolvePush() {
+        String domain = "team4.example.com";
+        com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();
+        inv.setDomain(domain); inv.setTeamId(4L); inv.setActive(true);
+        when(inventoryRepo.findByDomainIn(anyCollection())).thenReturn(List.of(inv));
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(alertEventRepo.save(any())).thenAnswer(inv2 -> inv2.getArgument(0));
+
+        service.processResults(List.of(expiryResult(domain, 25, true)));
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(captor.capture());
+        assertThat(captor.getAllValues().get(0).getTeamId())
+                .as("izleme yolu (:889) gibi sertifika yolu da takımı damgalamalı; aksi halde RESOLVE push SKIPPED_NO_RECIPIENTS")
+                .isEqualTo(4L);
+    }
+
+    @Test
+    @DisplayName("İzleme alarmı ACK'liyken seviye YÜKSELİRSE: terfi kalıcı, ack düşer, ESCALATION gider")
+    void monitoringAlert_promotion_clearsAck_andEscalates() {
+        String domain = "acked.example.com";
+        AlertEvent open = new AlertEvent();
+        open.setId(21L); open.setDomain(domain); open.setAlertType(EscalationService.TYPE_DOMAINMON_EXPIRY);
+        open.setAlertLevel("WARNING"); open.setAcknowledged(true); open.setAcknowledgedBy("ops"); open.setResolved(false);
+        open.setTeamId(4L);
+        open.setCreatedAt(ISO.format(java.time.Instant.now().minus(java.time.Duration.ofDays(20))));
+        open.setLastReAlertAt(ISO.format(java.time.Instant.now().minus(java.time.Duration.ofHours(1))));   // re-alert vakti DEĞİL
+        when(alertEventRepo.findOpenAlert(domain, EscalationService.TYPE_DOMAINMON_EXPIRY)).thenReturn(Optional.of(open));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("alert_level", "CRITICAL");
+        service.processConfirmedOutage(domain, EscalationService.TYPE_DOMAINMON_EXPIRY, "WARNING", ctx);
+
+        ArgumentCaptor<AlertEvent> cap = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(cap.capture());
+        AlertEvent last = cap.getValue();
+        assertThat(last.getAlertLevel()).isEqualTo("CRITICAL");
+        assertThat(last.getAcknowledged()).as("terfi ack'i düşürür — sertifika yoluyla aynı kural").isFalse();
+        assertThat(last.getLastReAlertAt()).as("ESCALATION gönderildi ve damgalandı")
+                .isNotEqualTo(ISO.format(java.time.Instant.now().minus(java.time.Duration.ofHours(1))));
+    }
+
+    @Test
+    @DisplayName("İzleme alarmı ACK'li ve seviye AYNI → sessiz (mevcut davranış korunur)")
+    void monitoringAlert_ackedSameLevel_staysSilent() {
+        String domain = "acked2.example.com";
+        AlertEvent open = new AlertEvent();
+        open.setId(22L); open.setDomain(domain); open.setAlertType(EscalationService.TYPE_HTTP_DOWN);
+        open.setAlertLevel("CRITICAL"); open.setAcknowledged(true); open.setResolved(false);
+        open.setLastReAlertAt(ISO.format(java.time.Instant.now().minus(java.time.Duration.ofDays(3))));   // vakti gelmiş olsa bile
+        when(alertEventRepo.findOpenAlert(domain, EscalationService.TYPE_HTTP_DOWN)).thenReturn(Optional.of(open));
+
+        service.processConfirmedOutage(domain, EscalationService.TYPE_HTTP_DOWN, "CRITICAL", new LinkedHashMap<>());
+
+        verify(alertEventRepo, never()).save(any());
+        verifyNoInteractions(emailService, webhookService);
+    }
+
+    @Test
+    @DisplayName("status=error (zaman aşımı/ağ) açık güvenlik/kusur alarmlarını 'çözmez' — hiçbir şey doğrulanmadı")
+    void transientError_doesNotResolveOpenDefectAlarms() {
+        String domain = "flaky.example.com";
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.processResults(List.of(errorResult(domain, "NETWORK")));
+
+        verify(alertEventRepo, never()).findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection());
+        verify(alertEventRepo, never()).markResolvedIfOpen(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Temiz sonuç ise bu turda üretilmeyen sertifika tiplerini yine kapatır (davranış korundu)")
+    void cleanResult_stillResolvesStaleTypes() {
+        String domain = "clean.example.com";
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection())).thenReturn(List.of());
+
+        service.processResults(List.of(okResult(domain)));
+
+        verify(alertEventRepo, atLeast(1)).findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection());
+    }
+
+    @Test
+    @DisplayName("Çözüm konusu etiketi HER alarm tipini kapsar — yalnız EXPIRY varsayılana düşer")
+    void resolvedTypeLabel_coversEveryAlertType() {
+        java.util.Set<String> all = new java.util.LinkedHashSet<>(EscalationService.MONITORING_ALERT_TYPES);
+        all.addAll(EscalationService.CERT_ALERT_TYPES);
+        assertThat(all).contains(EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK, EscalationService.TYPE_DOMAINMON_BLACKLIST);
+        for (String type : all) {
+            if ("EXPIRY".equals(type)) continue;
+            assertThat(EscalationService.resolvedTypeLabel(type))
+                    .as("tip %s çözüm konusunda varsayılan 'Sertifika Süre Bitişi' etiketine düşmemeli", type)
+                    .isNotEqualTo("Sertifika Süre Bitişi");
+        }
+        assertThat(EscalationService.resolvedTypeLabel(EscalationService.TYPE_DOMAINMON_BLACKLIST)).isEqualTo("Alan Adı Kara Liste");
+        assertThat(EscalationService.resolvedTypeLabel("EXPIRY")).isEqualTo("Sertifika Süre Bitişi");
+    }
+
+    @Test
+    @DisplayName("resolveOpenAlertsSilently: mail yok ama çözüm PUSH'u kuyruğa girer (simetri kuralı push katmanında)")
+    void resolveOpenAlertsSilently_enqueuesResolvePush() {
+        String domain = "https://paused.example.com/";
+        AlertEvent open = new AlertEvent();
+        open.setId(8L); open.setDomain(domain); open.setAlertType("HTTP_DOWN"); open.setResolved(false);
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection())).thenReturn(List.of(open));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.resolveOpenAlertsSilently(domain, Set.of("HTTP_DOWN"), "Sistem (izleme duraklatıldı)");
+
+        verify(userPushService).enqueueResolve(any(AlertEvent.class), any());
+        verifyNoInteractions(emailService, webhookService);
+    }
 }

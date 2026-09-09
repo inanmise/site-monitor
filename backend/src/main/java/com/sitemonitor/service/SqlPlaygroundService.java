@@ -55,6 +55,37 @@ public class SqlPlaygroundService {
     private final JdbcTemplate jdbcTemplate;
     private final SqlQueryHistoryRepository historyRepo;
 
+    /** Oyun alanı sorguları için ÖZEL, zaman aşımlı JdbcTemplate (tembel kurulur). */
+    private volatile JdbcTemplate timedTemplate;
+
+    /**
+     * Eskiden {@code jdbcTemplate.setQueryTimeout(30)} enjekte edilen PAYLAŞILAN bean'e uygulanıyordu:
+     * ilk oyun alanı sorgusundan sonra SchedulerService/RetentionService/StormService dâhil uygulamanın
+     * TÜM JDBC ifadeleri kalıcı 30 sn tavan taşıyordu — büyüyen geçmiş tablosunda gece retention'ın
+     * DELETE'i sessizce QueryTimeoutException ile düşüyordu. Zaman aşımı artık yalnız bu servise ait
+     * ayrı bir örneğe uygulanır; paylaşılan bean'e dokunulmaz. DataSource yoksa (mock) paylaşılan
+     * bean'i olduğu gibi kullanır (setter ÇAĞRILMAZ).
+     */
+    JdbcTemplate playgroundTemplate() {
+        JdbcTemplate t = timedTemplate;
+        if (t == null) {
+            synchronized (this) {
+                t = timedTemplate;
+                if (t == null) {
+                    javax.sql.DataSource ds = jdbcTemplate.getDataSource();
+                    if (ds != null) {
+                        t = new JdbcTemplate(ds);
+                        t.setQueryTimeout(QUERY_TIMEOUT_SEC);
+                    } else {
+                        t = jdbcTemplate;
+                    }
+                    timedTemplate = t;
+                }
+            }
+        }
+        return t;
+    }
+
     public List<Map<String, Object>> listTables() {
         return jdbcTemplate.queryForList(
             "SELECT table_name FROM information_schema.tables "
@@ -95,8 +126,7 @@ public class SqlPlaygroundService {
         String error = null;
         boolean ok = true;
         try {
-            jdbcTemplate.setQueryTimeout(QUERY_TIMEOUT_SEC);
-            rows = jdbcTemplate.queryForList(capped);
+            rows = playgroundTemplate().queryForList(capped);
         } catch (Exception e) {
             rows = List.of();
             error = e.getMessage();

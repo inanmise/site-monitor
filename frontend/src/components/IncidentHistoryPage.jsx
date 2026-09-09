@@ -267,6 +267,15 @@ export default function IncidentHistoryPage() {
   const [loading, setLoading] = useState(false)
   const [trends, setTrends]   = useState(null)
   const [filters, setFilters] = useState({ q: '', severity: '', category: '', status: '', channel: '', team_id: '', since: '', until: '' })
+  // Arama 300 ms debounce; diğer filtreler anında. effFilters yalnız yerleşen terimle değişir ki
+  // load her tuşta yeniden kurulmasın.
+  const [qTerm, setQTerm] = useState('')
+  useEffect(() => { const id = setTimeout(() => setQTerm(filters.q), 300); return () => clearTimeout(id) }, [filters.q])
+  const effFilters = useMemo(() => ({ ...filters, q: qTerm }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filters.severity, filters.category, filters.status, filters.channel, filters.team_id, filters.since, filters.until, qTerm])
+  // Fetch yarışı: (eski sayfa) + (sayfa 0) çift istekte eski yanıt sonra dönerse listeyi ezerdi.
+  const loadSeq = useRef(0)
   const [modal, setModal] = useState(null) // { mode:'view'|'edit'|'create', form }
   const [saving, setSaving] = useState(false)
   const [channelOpts, setChannelOpts] = useState([])
@@ -283,19 +292,21 @@ export default function IncidentHistoryPage() {
 
   const load = useCallback(async () => {
     if (!allowView) return
+    const seq = ++loadSeq.current
     setLoading(true)
     try {
       try {
-        const res = await api.incidents.list({ ...filters,
-          since: localDayToUtcIso(filters.since, false),
-          until: localDayToUtcIso(filters.until, true), page, size })
+        const res = await api.incidents.list({ ...effFilters,
+          since: localDayToUtcIso(effFilters.since, false),
+          until: localDayToUtcIso(effFilters.until, true), page, size })
+        if (seq !== loadSeq.current) return   // bayat yanıt
         if (res?.success) { setRows(res.data ?? []); setTotal(res.total ?? 0) }
         else toast.error(res?.error || t('inc.loadError'))
-      } catch { toast.error(t('inc.loadError')) }
+      } catch { if (seq === loadSeq.current) toast.error(t('inc.loadError')) }
     } finally {
-      setLoading(false)
+      if (seq === loadSeq.current) setLoading(false)
     }
-  }, [filters, page, size, allowView]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [effFilters, page, size, allowView]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadTrends = useCallback(async () => {
     if (!allowView) return
@@ -361,7 +372,7 @@ export default function IncidentHistoryPage() {
   useEffect(() => { loadTrendDaily() }, [loadTrendDaily])
   useEffect(() => { loadOptions() }, [loadOptions])
   useEffect(() => { loadTeams() }, [loadTeams])
-  useEffect(() => { setPage(0) }, [filters, size])
+  useEffect(() => { setPage(0) }, [effFilters, size])
   useEffect(() => { setSelected(new Set()) }, [filters, page, size]) // sayfa/filtre değişince seçim sıfırlanır
 
   // E-posta deep-link: ?incident=<id> → o olayı çekip detay modalını aç, sonra paramı temizle

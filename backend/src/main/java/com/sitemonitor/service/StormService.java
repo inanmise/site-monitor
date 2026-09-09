@@ -484,9 +484,12 @@ public class StormService {
                     + recovered.size() + " monitör kurtarıldı"
                     + ("ACCOUNT".equalsIgnoreCase(storm.getScopeType()) ? "" : " — " + scopeLabel);
 
+            // Hâlâ-down üyeler ADLARIYLA listelenir: eskiden yalnız sayı ("2 hâlâ izlemede") gidiyor,
+            // hangileri olduğu ne mailde ne webhook'ta söyleniyordu.
+            List<String> stillDownTargets = sampleTargets(stillDown);
             String html = emailService.buildStormRecoveryHtml(
                     recovered.size(), stillDown.size(), scopeLabel,
-                    storm.getCreatedAt(), storm.getResolvedAt(), targets, extra);
+                    storm.getCreatedAt(), storm.getResolvedAt(), targets, extra, stillDownTargets);
 
             String[] to = r.emails.toArray(new String[0]);
             if (to.length > 0) emailService.sendHtml(to, null, subject, html, List.of());
@@ -495,7 +498,8 @@ public class StormService {
             // Teams'te "🌩 12 monitör birden erişilemez" görüyor, "✅ fırtına sona erdi" mesajını
             // hiç almıyordu. Kanal, olayın yalnız yarısını anlatıyordu.
             String whText = recovered.size() + " monitör kurtarıldı (" + scopeLabel + ")."
-                    + (stillDown.isEmpty() ? "" : " Hâlâ erişilemeyen: " + stillDown.size() + ".");
+                    + (stillDown.isEmpty() ? "" : " Hâlâ erişilemeyen: " + stillDown.size()
+                        + " (" + String.join(", ", stillDownTargets) + ").");
             for (Map.Entry<String, String> w : r.webhooks.entrySet()) {
                 try { webhookService.send(w.getValue(), w.getKey(), subject, whText, "INFO"); }
                 catch (Exception ex) {
@@ -670,14 +674,25 @@ public class StormService {
             jdbcTemplate.update("INSERT INTO scheduler_lock(name, locked_by, locked_until) VALUES(?, ?, ?)",
                     lockName, INSTANCE_ID, until);
             return true;
-        } catch (Exception e) {
-            if (e.getMessage() != null && (e.getMessage().contains("UNIQUE") || e.getMessage().contains("unique")
-                    || e.getMessage().contains("duplicate"))) {
-                return false;   // başka pod yönetiyor
-            }
+        } catch (org.springframework.dao.DuplicateKeyException e) {
+            return false;   // başka pod yönetiyor — tipli yakalama, mesaj metnine bağımlılık yok
+        } catch (org.springframework.jdbc.BadSqlGrammarException e) {
+            // Kilit TABLOSU yok (ilk açılışta ddl-auto henüz koşmadı) — bilinçli tek-pod geri düşüşü.
             log.warn("Storm kilit tablosu erişilemez (HA degraded): {}", e.getMessage());
-            return true;        // degrade: tek instance güvenli
+            return true;
+        } catch (Exception e) {
+            if (isUniqueViolation(e)) return false;   // sürücü tipli istisna vermediyse metin yedeği
+            // SchedulerService.tryAcquireSchedulerLock ile aynı kural: geçici DB hatasında (deadlock,
+            // statement-timeout, bağlantı kopması) fail-OPEN çok-pod'da ÇİFT lifecycle sweep = çift
+            // fırtına mail/webhook demekti. Güvenli taraf bu turu ATLAMAK — 30 sn sonra tekrar denenir.
+            log.warn("Storm kilidi alınamadı — bu tur atlanıyor (güvenli taraf): {}", e.getMessage());
+            return false;
         }
+    }
+
+    static boolean isUniqueViolation(Exception e) {
+        String m = e.getMessage();
+        return m != null && (m.contains("UNIQUE") || m.contains("unique") || m.contains("duplicate"));
     }
 
     private void releaseLock() {

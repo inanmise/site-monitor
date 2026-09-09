@@ -159,7 +159,10 @@ public class ChainValidationService {
             if (!(peerCerts[i] instanceof X509Certificate x509)) continue;
 
             Instant notAfter = x509.getNotAfter().toInstant();
-            long daysRemaining = (notAfter.toEpochMilli() - now.toEpochMilli()) / 86_400_000L;
+            // Y19: düz `/` sıfıra doğru kırpar — 24 saatten az süre önce dolmuş ara sertifika 0 gün
+            // görünüp expired=false / zincir VALID kalıyordu. floorDiv negatifi korur
+            // (CertificateCheckerService ve DomainCheckerService.daysUntil ile aynı kural).
+            long daysRemaining = Math.floorDiv(notAfter.toEpochMilli() - now.toEpochMilli(), 86_400_000L);
             boolean isRoot = isRootCa(x509);
             boolean isLeaf = (i == 0);
 

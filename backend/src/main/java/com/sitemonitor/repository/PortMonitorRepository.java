@@ -16,6 +16,10 @@ public interface PortMonitorRepository extends JpaRepository<PortMonitor, Long> 
     long countByStandaloneTrueAndActiveTrue();
     List<PortMonitor> findAllByOrderByNameAsc();
     Optional<PortMonitor> findFirstByHostAndPortOrderByIdAsc(String host, int port);
+    /** Mükerrer guard'ı: HERHANGİ bir aktif satır var mı? (findFirst…ByIdAsc en ESKİ satırı döndürüyor;
+     *  o satır soft-delete ise daha yeni aktif kopya görünmez kalıyor, üçüncü kopya oluşuyordu.) */
+    boolean existsByHostAndPortAndActiveTrue(String host, int port);
+    boolean existsByHostAndPortAndActiveTrueAndIdNot(String host, int port, Long id);
 
     /** [teamId, grup adı, sayı] — TAKIM-bazlı grup listesi (boş/null hariç); satır çekmeden DB-side GROUP BY. */
     @Query("SELECT m.teamId, m.groupName, COUNT(m) FROM PortMonitor m WHERE m.groupName IS NOT NULL AND m.groupName <> '' GROUP BY m.teamId, m.groupName")

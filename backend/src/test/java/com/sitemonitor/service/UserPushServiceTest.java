@@ -763,4 +763,21 @@ class UserPushServiceTest {
 
         assertThat(text).contains("2027-01-01");
     }
+
+    // ── Kod incelemesi 2026-09-09: sıfır uzunluklu sessiz saat penceresi ──────
+
+    @Test
+    @DisplayName("Sessiz saat başlangıç == bitiş (\"22:00\"-\"22:00\") → pencere YOK, bildirim susturulmaz")
+    void quietHours_zeroLengthWindow_doesNotBlock() {
+        when(appSettings.getString(eq("site.monitor.userpush.quiet-start"), any())).thenReturn("22:00");
+        when(appSettings.getString(eq("site.monitor.userpush.quiet-end"), any())).thenReturn("22:00");
+        when(appSettings.getString(eq("site.monitor.userpush.quiet-min-level"), any())).thenReturn("CRITICAL");
+        when(alertEventRepo.findById(1L)).thenReturn(Optional.of(event(1L, "HIGH", "HTTP_DOWN")));
+        recipients("N00001");
+
+        service.enqueueAlert(1L, "INITIAL", 5L, Map.of());
+
+        assertThat(store).extracting(UserPushDelivery::getUsername).contains("N00001");
+        assertThat(store).extracting(UserPushDelivery::getStatus).doesNotContain("SKIPPED_QUIET_HOURS");
+    }
 }

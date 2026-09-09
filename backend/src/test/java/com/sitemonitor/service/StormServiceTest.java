@@ -493,4 +493,21 @@ class StormServiceTest {
         assertThat(storm.rootCauseLabel(null)).isEqualTo("Kesinti");        // null → jenerik
         assertThat(storm.rootCauseLabel("BILINMEYEN")).isEqualTo("Kesinti"); // firtinaya giremez
     }
+
+    // ── Kod incelemesi 2026-09-09: kilit fail-closed ──────────────────────────
+
+    @Test
+    @DisplayName("lifecycleSweep: kilit INSERT'i geçici DB hatasıyla düşerse tur ATLANIR (çift fırtına maili yerine)")
+    void lifecycleSweep_transientLockError_skipsSweep() {
+        com.sitemonitor.model.AlertStorm s = new com.sitemonitor.model.AlertStorm();
+        s.setId(1L); s.setResolved(false);
+        when(stormRepo.findByResolvedFalse()).thenReturn(List.of(s));
+        when(jdbcTemplate.update(startsWith("INSERT INTO scheduler_lock"), any(), any(), any()))
+                .thenThrow(new RuntimeException("statement timeout"));
+
+        storm.lifecycleSweep();
+
+        verify(stormRepo, never()).save(any());
+        verifyNoInteractions(emailService, webhookService);
+    }
 }

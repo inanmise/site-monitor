@@ -189,7 +189,7 @@ export default function ChartModal({ chart, onClose }) {
         {/* Header */}
         <div className="chart-modal-hdr">
           <h2 className="chart-modal-title">{label}</h2>
-          <button className="chart-modal-close" onClick={onClose} aria-label="Kapat">✕</button>
+          <button className="chart-modal-close" onClick={onClose} aria-label={t('app.close')}>✕</button>
         </div>
 
         {/* Aralık butonları — yalnız legacy zaman serileri (http/cpu). Trend grafiklerinde panel kontrol eder. */}
