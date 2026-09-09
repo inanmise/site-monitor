@@ -66,6 +66,7 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import jakarta.annotation.PostConstruct;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -433,6 +434,53 @@ public class SchedulerService {
         out.put("monitor_recovery_checks", recChecks);
         out.put("monitor_recovery_interval_ms", recSec != null ? recSec * 1000L : null);
         return out;
+    }
+
+    @PostConstruct
+    void registerStillMonitored() {
+        monitoringOutageService.setStillMonitored(this::isStillMonitored);
+    }
+
+    /**
+     * Teyit zinciri için hedef canlılığı: ctx'teki {@code monitor_id} ile ilgili tabloya bakar,
+     * satır yoksa ya da {@code active=false} ise {@code false}. Envanter kaynaklı ACCESSIBILITY
+     * domain ile envanterde aranır (aktif + silinmemiş). Envanter-türevi port/DNS satırlarında
+     * envanter de canlı olmalı. Kimlik yoksa (eski/ctx'siz kalem) {@code true} — davranış değişmez.
+     */
+    boolean isStillMonitored(MonitoringOutageService.SweepItem item) {
+        String t = item.alertType() == null ? "" : item.alertType();
+        Map<String, Object> ctx = item.ctxExtra();
+        Long id = ctx != null && ctx.get("monitor_id") instanceof Number n ? n.longValue() : null;
+        if (EscalationService.TYPE_ACCESSIBILITY.equals(t)) return inventoryLive(item.domain());
+        if (id == null) return true;
+        if (t.startsWith("HTTP_") || EscalationService.TYPE_DOMAIN_EXPIRY.equals(t))
+            return httpMonitorRepo.findById(id).map(m -> Boolean.TRUE.equals(m.getActive())).orElse(false);
+        if (t.startsWith("PORT_"))
+            return portMonitorRepo.findById(id).map(m -> Boolean.TRUE.equals(m.getActive())
+                    && (Boolean.TRUE.equals(m.getStandalone()) || inventoryLive(m.getHost()))).orElse(false);
+        if (t.startsWith("DNS_"))
+            return dnsMonitorRepo.findById(id).map(m -> Boolean.TRUE.equals(m.getActive())
+                    && (Boolean.TRUE.equals(m.getStandalone()) || inventoryLive(m.getDomain()))).orElse(false);
+        if (t.startsWith("KEYWORD"))
+            return keywordMonitorRepo.findById(id).map(m -> Boolean.TRUE.equals(m.getActive())).orElse(false);
+        if (t.startsWith("PING_"))
+            return pingMonitorRepo.findById(id).map(m -> Boolean.TRUE.equals(m.getActive())).orElse(false);
+        if (t.startsWith("PAGESPEED_"))
+            return pageSpeedMonitorRepo == null || pageSpeedMonitorRepo.findById(id).map(m -> Boolean.TRUE.equals(m.getActive())).orElse(false);
+        if (t.startsWith("PAGE_"))
+            return pageMonitorRepo == null || pageMonitorRepo.findById(id).map(m -> Boolean.TRUE.equals(m.getActive())).orElse(false);
+        if (t.startsWith("SCRIPTED_"))
+            return scriptedMonitorRepo == null || scriptedMonitorRepo.findById(id).map(m -> Boolean.TRUE.equals(m.getActive())).orElse(false);
+        if (t.startsWith("DOMAINMON_"))
+            return domainMonitorRepo.findById(id).map(m -> Boolean.TRUE.equals(m.getActive())).orElse(false);
+        return true;
+    }
+
+    private boolean inventoryLive(String domain) {
+        if (domain == null) return true;
+        return inventoryRepo.findByDomain(domain)
+                .map(i -> Boolean.TRUE.equals(i.getActive()) && i.getDeletedAt() == null)
+                .orElse(false);
     }
 
     /** İki kanal bayrağını birlikte uygular — çağrı yerlerinde tek sarmalayıcı kalsın. */

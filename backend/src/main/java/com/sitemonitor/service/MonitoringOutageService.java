@@ -59,6 +59,29 @@ public class MonitoringOutageService {
     private final AppSettingsService appSettings;
     private final com.sitemonitor.repository.NetworkOutageEventRepository networkOutageRepo;
 
+    /**
+     * Teyit zinciri her denemeden ÖNCE hedefin hâlâ izlendiğini sorar (SchedulerService kaydeder).
+     * {@code null} = her zaman izleniyor sayılır (eski davranış; birim testleri).
+     *
+     * <p>Neden: zincir 30 sn arayla N deneme sürer ve bu sürede kullanıcı monitörü/envanteri
+     * silebilir ya da duraklatabilir. Silme/duraklatma yolları AÇIK alarmları sessizce kapatır
+     * ama zincir bundan habersizdi: son deneme başarısız olunca artık VAR OLMAYAN hedef için
+     * alarm açıyor, e-posta/push atıyordu — ne sweep (findByActiveTrue) ne recovery bir daha
+     * dokunduğundan olay sonsuza kadar açık kalıyordu (QA 2026-09-10: #119 envanter, #120 HTTP).
+     */
+    private volatile java.util.function.Predicate<SweepItem> stillMonitored;
+
+    public void setStillMonitored(java.util.function.Predicate<SweepItem> stillMonitored) {
+        this.stillMonitored = stillMonitored;
+    }
+
+    boolean stillMonitored(SweepItem item) {
+        java.util.function.Predicate<SweepItem> p = stillMonitored;
+        if (p == null) return true;
+        try { return p.test(item); }
+        catch (Exception e) { return true; }   // kimlik çözümlenemezse eski davranış (fail-open)
+    }
+
     @Value("${site.monitor.uptime.alert-enabled:true}")
     private boolean uptimeAlertEnabled;
 
@@ -585,6 +608,11 @@ public class MonitoringOutageService {
     void runConfirmAttempt(String key, SweepItem item, String firstFailureAt,
                            List<Map<String, Object>> attempts, int n) {
         try {
+            if (!stillMonitored(item)) {
+                log.info("Teyit zinciri iptal — hedef artık izlenmiyor (silindi/duraklatıldı): {} ({}. deneme)", key, n);
+                inFlight.remove(key);
+                return;
+            }
             // Canlı durum: bu deneme koşuyor; sonraki (varsa) effDelayMs sonra — UI 30sn poll'unda "X/N" görünür.
             inFlight.computeIfPresent(key, (k, s) -> new ConfirmState(s.alertType(), s.domain(), s.detail(),
                     n, s.totalAttempts(), s.startedAt(), System.currentTimeMillis() + effDelayMs(item)));

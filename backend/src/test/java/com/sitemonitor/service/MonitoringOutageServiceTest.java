@@ -943,4 +943,36 @@ class MonitoringOutageServiceTest {
         assertThat(ctx.getValue().get("push_disabled")).isEqualTo(true);
         assertThat(ctx.getValue().get("team_id")).isEqualTo(3L);
     }
+
+    // Regression: ISSUE-001 — silinen/duraklatılan hedef için teyit zinciri alarm açıyordu
+    // Found by /qa on 2026-09-10 · Report: .gstack/qa-reports/qa-report-localhost-2026-09-10.md
+
+    @Test
+    @DisplayName("ISSUE-001: hedef artık izlenmiyorsa (silindi/duraklatıldı) teyit zinciri iptal, alarm AÇILMAZ, recheck koşmaz")
+    void confirmChain_targetNoLongerMonitored_cancelsWithoutAlarm() {
+        AtomicInteger calls = new AtomicInteger();
+        service.setStillMonitored(item -> false);
+
+        service.handleSweepResults(EscalationService.TYPE_ACCESSIBILITY, List.of(
+                item(EscalationService.TYPE_ACCESSIBILITY, "deleted.example.com", "443", false,
+                        Map.of("port", 443), downThenUp(99, calls))));
+
+        verify(escalationService, never()).processConfirmedOutage(anyString(), anyString(), anyString(), any());
+        assertThat(calls.get()).as("silinen hedef için ağ re-check'i de harcanmaz").isZero();
+        assertThat(service.activeConfirmations(null)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("ISSUE-001: kanca kayıtlı değilse (null) eski davranış — zincir tamamlanır ve alarm açılır")
+    void confirmChain_noLivenessHook_behavesAsBefore() {
+        AtomicInteger calls = new AtomicInteger();
+        service.setStillMonitored(null);
+
+        service.handleSweepResults(EscalationService.TYPE_ACCESSIBILITY, List.of(
+                item(EscalationService.TYPE_ACCESSIBILITY, "live.example.com", "443", false,
+                        Map.of("port", 443), downThenUp(99, calls))));
+
+        verify(escalationService).processConfirmedOutage(
+                eq("live.example.com"), eq(EscalationService.TYPE_ACCESSIBILITY), eq("CRITICAL"), any());
+    }
 }
