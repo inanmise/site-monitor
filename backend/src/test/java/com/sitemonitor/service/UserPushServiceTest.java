@@ -780,4 +780,62 @@ class UserPushServiceTest {
         assertThat(store).extracting(UserPushDelivery::getUsername).contains("N00001");
         assertThat(store).extracting(UserPushDelivery::getStatus).doesNotContain("SKIPPED_QUIET_HOURS");
     }
+
+    // ── 2026-09-10: RESOLVE = açılışta push ALANLARA, kapılardan bağımsız ────────────────────
+
+    private UserPushDelivery sentRow(long eventId, String username) {
+        UserPushDelivery d = new UserPushDelivery();
+        d.setAlertEventId(eventId); d.setUsername(username); d.setDisplayName(username);
+        d.setStatus("SENT"); d.setTrigger("OPEN"); d.setDedupeKey("OPEN");
+        return d;
+    }
+
+    @Test
+    @DisplayName("Çözüm: takım damgası OLMAYAN olayda bile açılışı alanlara gider (takım çözümlemesi yapılmaz, yedek takım satıra yazılır)")
+    void resolve_nullTeam_goesToPriorRecipients() {
+        when(deliveryRepo.existsByAlertEventIdAndStatus(1L, "SENT")).thenReturn(true);
+        when(deliveryRepo.findByAlertEventIdOrderByIdAsc(1L)).thenReturn(List.of(sentRow(1L, "N00001"), sentRow(1L, "N00002")));
+        when(resolver.resolvePrior(List.of("N00001", "N00002"))).thenReturn(List.of(
+                new UserPushRecipientResolver.Recipient("N00001", "Bir", null),
+                new UserPushRecipientResolver.Recipient("N00002", "İki", null)));
+        AlertEvent e = event(1L, "WARNING", "EXPIRY");
+        e.setTeamId(null);
+
+        service.enqueueResolve(e, Map.of(), 42L);
+
+        verify(resolver, never()).resolve(any(), any());
+        assertThat(store).extracting(UserPushDelivery::getUsername).containsExactlyInAnyOrder("N00001", "N00002");
+        assertThat(store).extracting(UserPushDelivery::getTeamId).containsOnly(42L);
+        assertThat(store).extracting(UserPushDelivery::getStatus).doesNotContain("SKIPPED_NO_RECIPIENTS");
+    }
+
+    @Test
+    @DisplayName("Çözüm sessiz saatte de gider — açılış push'u gitmişse telefondaki alarm gece de kapanmalı")
+    void resolve_ignoresQuietHours() {
+        when(appSettings.getString(eq("site.monitor.userpush.quiet-start"), any())).thenReturn("00:00");
+        when(appSettings.getString(eq("site.monitor.userpush.quiet-end"), any())).thenReturn("23:59");
+        when(appSettings.getString(eq("site.monitor.userpush.quiet-min-level"), any())).thenReturn("CRITICAL");
+        when(deliveryRepo.existsByAlertEventIdAndStatus(1L, "SENT")).thenReturn(true);
+        when(deliveryRepo.findByAlertEventIdOrderByIdAsc(1L)).thenReturn(List.of(sentRow(1L, "N00001")));
+        when(resolver.resolvePrior(List.of("N00001"))).thenReturn(List.of(
+                new UserPushRecipientResolver.Recipient("N00001", "Bir", null)));
+
+        service.enqueueResolve(event(1L, "HIGH", "HTTP_DOWN"), Map.of());
+
+        assertThat(store).extracting(UserPushDelivery::getUsername).contains("N00001");
+        assertThat(store).extracting(UserPushDelivery::getStatus).doesNotContain("SKIPPED_QUIET_HOURS");
+    }
+
+    @Test
+    @DisplayName("Çözüm: opt-out yapmış eski alıcıya satır SKIPPED_USER_OPT_OUT ile yazılır (resolver kararı)")
+    void resolve_respectsCurrentOptOut() {
+        when(deliveryRepo.existsByAlertEventIdAndStatus(1L, "SENT")).thenReturn(true);
+        when(deliveryRepo.findByAlertEventIdOrderByIdAsc(1L)).thenReturn(List.of(sentRow(1L, "N00001")));
+        when(resolver.resolvePrior(List.of("N00001"))).thenReturn(List.of(
+                new UserPushRecipientResolver.Recipient("N00001", "Bir", "SKIPPED_USER_OPT_OUT")));
+
+        service.enqueueResolve(event(1L, "HIGH", "HTTP_DOWN"), Map.of());
+
+        assertThat(store).singleElement().extracting(UserPushDelivery::getStatus).isEqualTo("SKIPPED_USER_OPT_OUT");
+    }
 }

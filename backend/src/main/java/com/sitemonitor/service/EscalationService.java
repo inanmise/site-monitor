@@ -677,7 +677,7 @@ public class EscalationService {
                 //
                 // enqueueResolve kendi simetri kuralını taşıyor: açılışı push'lanmamış bir olayın
                 // çözümü zaten push'lanmaz. Yani fırtına en baştan bastırdıysa burada da sessiz.
-                userPushService.enqueueResolve(saved, deserializeContext(saved.getContextJson()));
+                userPushService.enqueueResolve(saved, deserializeContext(saved.getContextJson()), resolveTeamFallback(saved));
                 log.info("✅ Alarm çözüldü (storm üyesi — bireysel çözüm maili yok, push simetrik): {} [{}]",
                         domain, event.getAlertType());
                 continue;
@@ -718,9 +718,28 @@ public class EscalationService {
     /** Sessiz kapanışlarda çözüm push'u — push katmanı hatası kapanışı ASLA geri almasın. */
     private void enqueueResolvePushQuietly(AlertEvent event) {
         try {
-            if (userPushService != null) userPushService.enqueueResolve(event, deserializeContext(event.getContextJson()));
+            if (userPushService != null)
+                userPushService.enqueueResolve(event, deserializeContext(event.getContextJson()), resolveTeamFallback(event));
         } catch (Exception e) {
             log.debug("Sessiz kapanış çözüm push'u atlandı: {}", e.toString());
+        }
+    }
+
+    /**
+     * Çözüm push satırı için takım yedeği: olay damgası, yoksa envanterin SY takımı. Eski sertifika
+     * olayları (takım damgası eklenmeden önce açılanlar) çözülürken damga null kalıyor, e-posta
+     * envanterden takımı bulurken push bulamıyordu (SKIPPED_NO_RECIPIENTS). UG takımı bilinçli
+     * dışarıda: push çözümleyicisi SY takım-kapsamlıdır.
+     */
+    private Long resolveTeamFallback(AlertEvent event) {
+        if (event == null) return null;
+        if (event.getTeamId() != null) return event.getTeamId();
+        if (event.getDomain() == null) return null;
+        try {
+            return inventoryRepo.findByDomain(event.getDomain())
+                    .map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -1402,6 +1421,12 @@ public class EscalationService {
                 domainTeamId = event.getTeamId() != null ? event.getTeamId() : invTeamId;
                 ugTeamId     = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null);
                 contacts = getContactsForLevel(event.getAlertLevel(), domainTeamId);
+                // Damgasız eski olayı çözümde tek seferlik damgala: push satırı ve "tekrar bildir"
+                // aynı takımı görsün (açılış yolundaki geri doldurmanın çözüm eşleniği).
+                if (event.getTeamId() == null && invTeamId != null) {
+                    event.setTeamId(invTeamId);
+                    try { alertEventRepo.save(event); } catch (Exception ignore) { /* damga best-effort */ }
+                }
             }
 
             // Build combined TO: team emails + contact emails (deduped)
@@ -1433,7 +1458,7 @@ public class EscalationService {
                 // duruyordu: e-postasız takım açılış push'unu alıp "DÜZELDİ" push'unu ASLA almıyor,
                 // telefonda alarm sonsuza dek açık kalıyordu.
                 try {
-                    userPushService.enqueueResolve(event, earlyCtx);
+                    userPushService.enqueueResolve(event, earlyCtx, domainTeamId);
                 } catch (Exception ex) {
                     log.warn("user-push çözüm tetiği atlandı (mail-dışı dal): {}", ex.toString());
                 }
@@ -1505,7 +1530,7 @@ public class EscalationService {
             log.info("Çözüm bildirimi → [{}] status={}", String.join(", ", allEmails), status);
             // Kişi-webhook çözüm push'u — mail sonucundan bağımsız (kanal bağımsızlığı sözleşmesi).
             try {
-                userPushService.enqueueResolve(event, certContext);
+                userPushService.enqueueResolve(event, certContext, domainTeamId);
             } catch (Exception ex) {
                 log.warn("user-push çözüm tetiği atlandı (mail yolu etkilenmedi): {}", ex.toString());
             }

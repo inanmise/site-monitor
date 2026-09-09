@@ -2270,7 +2270,7 @@ class EscalationServiceTest {
 
         service.sendResolutionNotificationAsync(e, "Sistem", "AUTO");
 
-        verify(userPushService).enqueueResolve(eq(e), any());
+        verify(userPushService).enqueueResolve(eq(e), any(), any());
     }
 
     @Test
@@ -2285,7 +2285,7 @@ class EscalationServiceTest {
         service.sendResolutionNotificationAsync(e, "Sistem", "AUTO");
 
         verify(emailService, never()).sendResolutionAlert(any(String[].class), anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any(), any(), any(), any());
-        verify(userPushService).enqueueResolve(eq(e), any());
+        verify(userPushService).enqueueResolve(eq(e), any(), any());
     }
 
     @Test
@@ -2431,7 +2431,30 @@ class EscalationServiceTest {
 
         service.resolveOpenAlertsSilently(domain, Set.of("HTTP_DOWN"), "Sistem (izleme duraklatıldı)");
 
-        verify(userPushService).enqueueResolve(any(AlertEvent.class), any());
+        verify(userPushService).enqueueResolve(any(AlertEvent.class), any(), any());
         verifyNoInteractions(emailService, webhookService);
+    }
+
+    // ── 2026-09-10: çözüm push'u damgasız sertifika olayında envanter takımına düşer ─────────
+
+    @Test
+    @DisplayName("Sertifika çözümü: olayda takım damgası yoksa push envanterin SY takımıyla tetiklenir ve damga geri doldurulur")
+    void certResolution_pushGetsInventoryTeamFallback() {
+        String domain = "renewed.example.com";
+        AlertEvent open = new AlertEvent();
+        open.setId(31L); open.setDomain(domain); open.setAlertType("EXPIRY"); open.setAlertLevel("WARNING");
+        open.setResolved(false); open.setTeamId(null);
+        open.setCreatedAt(ISO.format(java.time.Instant.now().minus(java.time.Duration.ofDays(3))));
+        com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();
+        inv.setDomain(domain); inv.setTeamId(7L); inv.setActive(true);
+        when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.of(inv));
+        when(alertEventRepo.findById(31L)).thenReturn(Optional.of(open));
+        when(alertEventRepo.save(any())).thenAnswer(inv2 -> inv2.getArgument(0));
+        when(teamRepo.findById(7L)).thenReturn(Optional.empty());
+
+        service.sendResolutionNotificationAsync(open, "Sistem (otomatik)", "RESOLUTION");
+
+        verify(userPushService).enqueueResolve(eq(open), any(), eq(7L));
+        assertThat(open.getTeamId()).as("çözümde tek seferlik damga").isEqualTo(7L);
     }
 }

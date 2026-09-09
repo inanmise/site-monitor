@@ -231,8 +231,18 @@ public class UserPushService {
         }
     }
 
-    /** Çözüm bildirimi tetiği. */
+    /** Çözüm bildirimi tetiği (takım yedeği yok — eski çağıranlar). */
     public void enqueueResolve(AlertEvent event, Map<String, Object> ctx) {
+        enqueueResolve(event, ctx, null);
+    }
+
+    /**
+     * Çözüm bildirimi tetiği. {@code fallbackTeamId}: olayda takım damgası yoksa satırın
+     * team_id'si için yedek (sertifika alarmlarında envanterin SY takımı). Eskiden yedek olarak
+     * yine {@code event.getTeamId()} geçiliyordu → damgasız sertifika olayında alıcı çözümü boş
+     * kalıp SKIPPED_NO_RECIPIENTS ("katman kararı") yazılıyor, e-posta giderken push gitmiyordu.
+     */
+    public void enqueueResolve(AlertEvent event, Map<String, Object> ctx, Long fallbackTeamId) {
         try {
             if (!enabled() || event == null || event.getId() == null) return;
             // Simetri kuralı: açılışı kimseye push'lanmamış bir olayın çözümü de push'lanmaz —
@@ -243,7 +253,7 @@ public class UserPushService {
                 skipRow(event, "RESOLVE", "SKIPPED_NO_PRIOR");
                 return;
             }
-            enqueueInternal(event, "RESOLVE", event.getTeamId(), ctx, Set.of());
+            enqueueInternal(event, "RESOLVE", fallbackTeamId, ctx, Set.of());
         } catch (Exception e) {
             log.warn("user-push çözüm enqueue atlandı: {}", e.toString());
         }
@@ -259,7 +269,11 @@ public class UserPushService {
 
         // Onay pop-up'inda cikarilan sicillere SATIR YAZILMAZ (mail tarafindaki filtreyle simetrik).
         Set<String> excluded = excludeUsernames == null ? Set.of() : excludeUsernames;
-        List<UserPushRecipientResolver.Recipient> recipients = resolver.resolve(teamId, event.getAlertLevel())
+        // RESOLVE: alıcı kümesi açılışta gerçekten push ALANLARDIR (seviye/grup/takım çözümlemesi
+        // yeniden yapılmaz) — bkz. resolver.resolvePrior. Diğer fazlar takım+seviye ile çözülür.
+        List<UserPushRecipientResolver.Recipient> recipients =
+                ("RESOLVE".equals(trigger) ? resolver.resolvePrior(priorSentUsernames(event))
+                                            : resolver.resolve(teamId, event.getAlertLevel()))
                 .stream().filter(r -> !excluded.contains(r.username())).toList();
         if (recipients.isEmpty()) { skipRow(event, trigger, "SKIPPED_NO_RECIPIENTS"); return; }
 
@@ -319,8 +333,21 @@ public class UserPushService {
         if (!"OPEN".equals(trigger) && !"RESOLVE".equals(trigger)
                 && deliveryRepo.existsByAlertEventIdAndStatus(event.getId(), "SKIPPED_MONITOR_OFF"))
             return "SKIPPED_MONITOR_OFF";
-        if (quietHoursBlock(event.getAlertLevel())) return "SKIPPED_QUIET_HOURS";
+        // Sessiz saat ÇÖZÜMÜ tutmaz: açılış push'u gitmişse (simetri kuralı) telefondaki alarm gece de
+        // kapanmalı; aksi halde kullanıcı sabaha kadar "düştü" ekranına bakıyordu (karar 2026-09-10).
+        if (!"RESOLVE".equals(trigger) && quietHoursBlock(event.getAlertLevel())) return "SKIPPED_QUIET_HOURS";
         return null;
+    }
+
+    /** Bu olay için daha önce SENT olmuş tekil kullanıcı adları (sistem satırı '-' hariç), ilk gönderim sırasıyla. */
+    private List<String> priorSentUsernames(AlertEvent event) {
+        List<String> out = new ArrayList<>();
+        for (UserPushDelivery d : deliveryRepo.findByAlertEventIdOrderByIdAsc(event.getId())) {
+            if (!"SENT".equals(d.getStatus()) || d.getUsername() == null) continue;
+            if (SYSTEM_USER.equals(d.getUsername()) || out.contains(d.getUsername())) continue;
+            out.add(d.getUsername());
+        }
+        return out;
     }
 
     /** Onay pop-up'ındaki tek webhook alıcı satırı. {@code status}: PENDING = gidecek, aksi halde sebep. */
