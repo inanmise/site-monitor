@@ -157,6 +157,15 @@ jobs:
 
       # Tarayıcı önbelleği BİLİNÇLİ olarak yok: repo tüm action'ları SHA ile pinliyor,
       # yalnız bunun için pinsiz bir `actions/cache` eklemek politikayı deler. İndirme ~30 sn.
+      # Runner imajı Google Chrome'un apt kaynağını taşır; Playwright'in KENDİ Chromium'u için
+      # GEREKSİZDİR (--with-deps yalnız Ubuntu depolarından sistem kütüphanesi kurar). 2026-09-09'da
+      # o depo bozuk indeks sunmaya başladı ("Hash Sum mismatch") ve apt-get update exit 100 verdi;
+      # üç ardışık koşumda aynı hata geldi, yani geçici dalgalanma değil. Kaynağı devre dışı
+      # bırakmak KAPIYI ZAYIFLATMAZ: hiçbir test atlanmaz, aynı tarayıcı ve aynı kütüphaneler
+      # kurulur — yalnız ilgisiz bir üçüncü taraf deposu apt'nin yolundan çekilir.
+      - name: Drop unrelated third-party apt sources
+        run: sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 

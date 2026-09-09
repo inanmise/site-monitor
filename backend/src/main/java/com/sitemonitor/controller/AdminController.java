@@ -80,6 +80,7 @@ public class AdminController {
         "timeoutSeconds"
     };
     private final CertificateInventoryRepository inventoryRepo;
+    private final com.sitemonitor.service.DerivedMonitorTeamSync derivedMonitorTeamSync;
     /** Envantere secilen bildirim grubunun sahipligini dogrulamak icin. */
     private final com.sitemonitor.repository.NotificationGroupRepository inventoryGroupRepo;
     private final AlertThresholdRepository thresholdRepo;
@@ -300,7 +301,12 @@ public class AdminController {
         existing.setActive(item.getActive() != null ? item.getActive() : true);
         existing.setExpectedFingerprint(item.getExpectedFingerprint());
         existing.setExpectedSubject(item.getExpectedSubject());
-        if (item.getTeamId() != null) existing.setTeamId(item.getTeamId());
+        if (item.getTeamId() != null) {
+            // Takım buradan da değişebiliyor (global admin) — transferInventory ile AYNI senkron.
+            boolean teamChanged = !java.util.Objects.equals(existing.getTeamId(), item.getTeamId());
+            existing.setTeamId(item.getTeamId());
+            if (teamChanged) derivedMonitorTeamSync.syncTeam(existing.getDomain(), item.getTeamId());
+        }
         existing.setUgTeamId(item.getUgTeamId());
         // Bildirim grubu: SAHIPLIK dogrulanir -- baska takimin grubu envantere yazilamaz
         // (monitor tarafindaki applyNotificationGroup ile ayni kural).
@@ -987,9 +993,13 @@ public class AdminController {
         inv.setTeamId(newTeamId);
         inv.setUpdatedAt(now());
         inventoryRepo.save(inv);
+        // Türev izlemelerin takımı da tazelenir: aksi hâlde yeni takım kendi kaydını
+        // düzenleyemez, ESKİ takım listede göremediği satırı yönetmeye devam eder ve kesinti
+        // alarmları eski takıma gider (zamanlayıcı oturumsuz çalışır, sütunu okur).
+        int synced = derivedMonitorTeamSync.syncTeam(inv.getDomain(), newTeamId);
         auditService.recordAction("DOMAIN_TRANSFER_SY", session, request,
                 "CERTIFICATE", inv.getDomain(),
-                "{\"from\":" + oldTeamId + ",\"to\":" + newTeamId + "}");
+                "{\"from\":" + oldTeamId + ",\"to\":" + newTeamId + ",\"derivedMonitorsSynced\":" + synced + "}");
         return ok(Map.of("data", inv, "message", "Transferred"));
     }
 

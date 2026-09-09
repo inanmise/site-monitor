@@ -3356,4 +3356,115 @@ class MonitoringControllerTest {
         }
         assertThat(raw).as("kirpmasiz teyit/kurtarma setter'i").isEmpty();
     }
+
+    // ── DNS silme kapısı ve semantiği (kod incelemesi B1 + B3) ────────────────────────────
+
+    /** Takımı 5 olan standalone DNS izlemesi; sessions aşağıda o takıma bağlanır. */
+    private com.sitemonitor.model.DnsMonitor standaloneDns(long id) {
+        com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();
+        m.setId(id); m.setDomain("own.example.com"); m.setRecordType("A");
+        m.setTeamId(5L); m.setStandalone(true); m.setActive(true);
+        return m;
+    }
+
+    private MockHttpSession teamSession(String role, Long teamId, Long... manageTeams) {
+        MockHttpSession s = session(role);
+        s.setAttribute("teamId", teamId);
+        s.setAttribute("manageTeamIds", java.util.List.of(manageTeams));
+        s.setAttribute("viewTeamIds", java.util.List.of(teamId));
+        return s;
+    }
+
+    @Test
+    @DisplayName("DELETE /dns/{id}: sıradan USER kendi standalone izlemesini SİLEMEZ (kardeş politikası)")
+    void deleteDns_plainUser_forbidden() throws Exception {
+        // Kardeşlerin YEDİSİ silmede canManage kullanıyor (deleteKeyword/Http/Ping/...); arayüz de
+        // "silme: TEAM_ADMIN/ADMIN" diyor. dba22f1a bunu canOperateTeam'e çekmişti ve sıradan USER
+        // kendi takımı için geçiyordu — silme sütununu 9 türün 7'sinden ayıran tek yer orasıydı.
+        when(dnsMonitorRepo.findById(31L)).thenReturn(java.util.Optional.of(standaloneDns(31L)));
+
+        mvc.perform(delete("/api/monitoring/dns/31").session(teamSession("USER", 5L)))
+                .andExpect(status().isForbidden());
+
+        verify(dnsMonitorRepo, never()).save(any());
+        verify(dnsMonitorRepo, never()).delete(any());
+    }
+
+    @Test
+    @DisplayName("DELETE /dns/{id}: TEAM_ADMIN siler — ama KALICI DEĞİL, satır pasifleşir")
+    void deleteDns_teamAdmin_deactivatesInsteadOfHardDelete() throws Exception {
+        // B3: eskiden standalone dalı dnsMonitorRepo.delete(m) çağırıyordu. standalone, isteği
+        // yapanın AYNI akışta çevirebildiği bir alan (updateDns → detachIfIdentityChanged), yani
+        // iki çağrı geri alınabilir bir duraklatmayı KALICI silmeye yükseltiyordu.
+        com.sitemonitor.model.DnsMonitor m = standaloneDns(32L);
+        when(dnsMonitorRepo.findById(32L)).thenReturn(java.util.Optional.of(m));
+        when(dnsMonitorRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        mvc.perform(delete("/api/monitoring/dns/32").session(teamSession("TEAM_ADMIN", 5L, 5L)))
+                .andExpect(status().isOk());
+
+        verify(dnsMonitorRepo, never()).delete(any());   // satır TABLODA KALIR
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DnsMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DnsMonitor.class);
+        verify(dnsMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getActive()).isFalse();
+    }
+
+    @Test
+    @DisplayName("POST /dns: PASİFLEŞTİRİLMİŞ domain+tip yeniden eklenebilir (satır canlandırılır)")
+    void createDns_revivesDeactivatedRow() throws Exception {
+        // Silme artık pasifleştirme olduğu için satır tabloda kalıyor. Mükerrer guard "aktif mi"
+        // diye bakmasaydı kullanıcı sildiği domain'i bir daha ekleyemez ve sebebini anlamadığı bir
+        // "zaten var" hatası alırdı. Yeni satır DEĞİL canlandırma: standalone'da uq_dnsm_domain yok.
+        com.sitemonitor.model.DnsMonitor dead = standaloneDns(33L);
+        dead.setActive(false);
+        dead.setCreatedAt("2026-01-01T00:00:00");
+        when(dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrue("own.example.com", "A"))
+                .thenReturn(java.util.Optional.of(dead));
+        when(dnsMonitorRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        mvc.perform(post("/api/monitoring/dns").session(teamSession("TEAM_ADMIN", 5L, 5L))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"own.example.com\",\"recordType\":\"A\",\"teamId\":5}"))
+                .andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DnsMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DnsMonitor.class);
+        verify(dnsMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getId()).isEqualTo(33L);              // AYNI satır
+        assertThat(cap.getValue().getActive()).isTrue();                 // canlandı
+        assertThat(cap.getValue().getCreatedAt()).isEqualTo("2026-01-01T00:00:00");  // özgün tarih korundu
+    }
+
+    @Test
+    @DisplayName("Envanter TRANSFERİNDEN sonra türev DNS'i YENİ takım yönetir, ESKİ takım yönetemez")
+    void updateDns_derivedRow_followsInventoryTeam() throws Exception {
+        // B2: türev satırın team_id'si lazy-provision'da kopyalanır ve bir daha tazelenmez.
+        // effectiveTeam olmasaydı: satır ekranda YENİ takımın adıyla görünür ama yetki ESKİ
+        // takımda kalırdı — yeni takım kendi kaydını düzenleyemez, eski takım listede görmediği
+        // satırı yönetmeye devam ederdi.
+        com.sitemonitor.model.DnsMonitor derived = new com.sitemonitor.model.DnsMonitor();
+        derived.setId(34L); derived.setDomain("moved.example.com"); derived.setRecordType("A");
+        derived.setTeamId(5L);              // BAYAT: transfer öncesi takım
+        derived.setStandalone(false);
+        derived.setActive(true);
+        when(dnsMonitorRepo.findById(34L)).thenReturn(java.util.Optional.of(derived));
+        when(dnsMonitorRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        CertificateInventory moved = inv("moved.example.com");
+        moved.setTeamId(9L);                // envanter ARTIK 9 numaralı takımda
+        when(inventoryRepo.findByDomain("moved.example.com")).thenReturn(java.util.Optional.of(moved));
+
+        // Yeni takım (9) düzenleyebilir
+        mvc.perform(put("/api/monitoring/dns/34").session(teamSession("TEAM_ADMIN", 9L, 9L))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"yeni ad\"}"))
+                .andExpect(status().isOk());
+
+        // Eski takım (5) artık düzenleyemez
+        mvc.perform(put("/api/monitoring/dns/34").session(teamSession("TEAM_ADMIN", 5L, 5L))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"eski takim\"}"))
+                .andExpect(status().isForbidden());
+    }
 }

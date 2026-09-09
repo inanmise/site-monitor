@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -37,7 +38,23 @@ class MonitorEndpointGateParityTest {
     private static final List<String> TYPES = List.of(
             "Port", "Dns", "Keyword", "Http", "Ping", "Page", "PageSpeed", "Domain", "Scripted");
 
-    private static final List<String> VERBS = List.of("trigger", "update", "delete");
+    /**
+     * Fiil → BEKLENEN yetki kuralı.
+     *
+     * <p>Test eskiden yalnız {@code requireAdmin} arıyordu; bu yüzden {@code canOperateTeam} ile
+     * {@code canManage} arasındaki ayrışmayı GÖREMİYORDU ve silme sütununda iki türün (DNS, Port)
+     * kardeşlerinden gevşek kalmasını yeşil geçirdi. Kapı artık "admin şartı var mı" yerine
+     * "HANGİ kural" sorusunu soruyor.
+     *
+     * <p>Silmenin daha dar olması bilinçlidir: oluşturmayı sıradan USER yapabilir, kalıcı
+     * kaldırmayı yalnız TEAM_ADMIN ve üstü.
+     */
+    private static final Map<String, String> EXPECTED_GATE = Map.of(
+            "trigger", "canOperateTeam",
+            "update",  "canOperateTeam",
+            "delete",  "canManage");
+
+    private static final List<String> VERBS = List.copyOf(new java.util.TreeSet<>(EXPECTED_GATE.keySet()));
 
     @Test
     @DisplayName("hiçbir izleme türü kardeşlerinden ayrı bir yetki kuralı kullanmaz")
@@ -47,25 +64,50 @@ class MonitorEndpointGateParityTest {
         int checked = 0;
 
         for (String verb : VERBS) {
+            String expected = EXPECTED_GATE.get(verb);
             for (String type : TYPES) {
                 int start = indexOfMethod(lines, verb + type);
-                if (start < 0) continue;          // o tür bu fiili desteklemiyor olabilir
+                if (start < 0) continue;          // sayıya girmez → aşağıdaki tam-sayı iddiası kırılır
                 checked++;
                 if (bodyUsesAdminGate(lines, start)) {
-                    offenders.add(verb + type + " (satır " + (start + 1) + ")");
+                    offenders.add(verb + type + " (satır " + (start + 1) + "): uç düzeyinde requireAdmin");
+                    continue;
+                }
+                String actual = gateOf(lines, start);
+                if (!expected.equals(actual)) {
+                    offenders.add(verb + type + " (satır " + (start + 1) + "): "
+                            + actual + " kullanıyor, kardeşleri " + expected);
                 }
             }
         }
 
-        // Vakum koruması: metot adı deseni kayarsa hiçbir gövde taranmaz ve iddia SESSİZCE geçerdi.
+        // Vakum koruması TAM SAYIYA bağlı: eşik ">= 20" iken 27 kombinasyonun tamamı çözülüyordu,
+        // yani DNS uçları başka bir controller'a taşınsa sayı 24'e düşer, eşiği yine geçer ve
+        // taşınan uçlardaki bir regresyon sessizce yeşil kalırdı. Eksik uç artık KIRMIZI.
         assertThat(checked)
-                .as("kaynak taraması hiçbir uç bulamadı — kapı gerçekte bir şey ölçmüyor olurdu")
-                .isGreaterThanOrEqualTo(20);
+                .as("her fiil × tür kombinasyonu bulunmalı; eksikse kapı o ucu hiç ölçmüyor demektir")
+                .isEqualTo(VERBS.size() * TYPES.size());
 
         assertThat(offenders)
                 .as("kardeşlerinden ayrı (daha dar) yetki kuralı kullanan uç: arayüzde açıklamasız "
                         + "bir çıkmaz üretir — düğmeler kaybolur, kullanıcı arıza sanır")
                 .isEmpty();
+    }
+
+    /**
+     * Metot gövdesindeki İLK yetki kuralının adı: {@code canOperateTeam} | {@code canManage} |
+     * {@code (yok)}. Yorum satırları atlanır — javadoc'lar bu adları bilerek anıyor.
+     */
+    private static String gateOf(List<String> lines, int start) {
+        for (int i = start + 1; i < lines.size(); i++) {
+            String l = lines.get(i);
+            if (l.equals("    }")) break;
+            String t = l.stripLeading();
+            if (t.startsWith("*") || t.startsWith("//") || t.startsWith("/*")) continue;
+            if (l.contains("canOperateTeam(")) return "canOperateTeam";
+            if (l.contains("SessionScope.canManage(")) return "canManage";
+        }
+        return "(yok)";
     }
 
     /** {@code public ResponseEntity<...> <ad>(} satırının indeksi; yoksa -1. */
