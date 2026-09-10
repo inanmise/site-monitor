@@ -4870,13 +4870,18 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 
 .sys-dl {
   display: grid;
-  grid-template-columns: auto 1fr;
+  /* Etiket sütunu en fazla kartın %55'i: uzun bir etiket ("Overflow tasks (caller-runs)") eskiden
+     nowrap ile tüm değer sütununu sıkıştırıp tarih/saat değerlerini bölüyordu (QA ISSUE-002).
+     Kısa etiketler için fit-content = kendi genişliği, görünüm değişmez. */
+  grid-template-columns: fit-content(48%) 1fr;
   gap: 5px 14px;
   font-size: .875em;
   margin-bottom: 16px;
 }
-.sys-dl dt { color: var(--text-light); white-space: nowrap; align-self: start; padding-top: 1px; }
-.sys-dl dd { color: var(--text); word-break: break-all; }
+.sys-dl dt { color: var(--text-light); white-space: normal; align-self: start; padding-top: 1px; }
+/* break-all tarihi ortasından bölüyordu ("10/09/2026, 0" / "8:38" — QA ISSUE-002); anywhere önce
+   boşlukta kırar, boşluksuz uzun değerleri (hash, URL) yine taşırmadan böler. */
+.sys-dl dd { color: var(--text); overflow-wrap: anywhere; word-break: normal; min-width: 0; }
 
 .sys-mono  { font-family: 'Consolas', 'Courier New', monospace; font-size: .9em; }
 .sys-small { font-size: .8em; }
