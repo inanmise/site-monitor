@@ -15,6 +15,7 @@ import DomainDiagnostics from './DomainDiagnostics'
 import BrandingSettings from './BrandingSettings'
 import RetentionSettings from './RetentionSettings'
 import UserPushSettings from './UserPushSettings'
+import AlertBanner from '../ui/AlertBanner.jsx'
 
 // Left-menu sections. More land in later phases.
 const SECTIONS = [
@@ -43,7 +44,14 @@ function initialSection() {
   return s && SECTION_IDS.has(s) ? s : DEFAULT_SECTION
 }
 
-export default function AdminSettings() {
+/**
+ * Kapsamlı müdür (AD ADMIN, globalAdmin=false) için KİLİTLİ bölümler: kimlik bilgisi/sır taşıyan
+ * dört yüzey. Backend aynı dördü requireNotScopedAdmin ile 403'ler; burada 403 dolu bir ekran yerine
+ * "yalnız global yönetici" notu çizilir. Sekme listede kalır (var olduğu görülsün).
+ */
+const GLOBAL_ONLY_SECTIONS = new Set(['smtp', 'ldap', 'database', 'secrets'])
+
+export default function AdminSettings({ globalAdmin = true }) {
   const t = useT()
   const [active, setActive] = useState(initialSection)
   const tabRefs = useRef({})
@@ -101,6 +109,14 @@ export default function AdminSettings() {
 
       <section className="settings-pane" role="tabpanel" id="settings-panel"
                aria-labelledby={`settings-tab-${active}`} tabIndex={0}>
+        {!globalAdmin && GLOBAL_ONLY_SECTIONS.has(active) && (
+          <div className="admin-section" data-testid="settings-global-only">
+            <AlertBanner tone="warning" title={t('settings.globalOnlyTitle')} role="status">
+              {t('settings.globalOnlyBody')}
+            </AlertBanner>
+          </div>
+        )}
+        {(globalAdmin || !GLOBAL_ONLY_SECTIONS.has(active)) && <>
         {active === 'general' && <GeneralSettings />}
         {active === 'branding' && <BrandingSettings />}
         {active === 'monitorgroups' && <MonitorGroups />}
@@ -115,6 +131,7 @@ export default function AdminSettings() {
         {active === 'retention' && <RetentionSettings />}
         {active === 'database' && <DatabaseInfo />}
         {active === 'secrets' && <SecretTools />}
+        </>}
       </section>
     </div>
   )

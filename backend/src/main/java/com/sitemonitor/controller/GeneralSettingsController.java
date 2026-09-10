@@ -73,7 +73,9 @@ public class GeneralSettingsController {
      *  login'de set edilen 'bootstrapAdmin' bayrağı); aksi halde matris izni (settings.general/edit). */
     private void requireSettingsAccess(HttpSession session, String key, String action) {
         if (Boolean.TRUE.equals(session != null ? session.getAttribute("bootstrapAdmin") : null)) return;
-        SessionScope.requireNotScopedAdmin(session, key);   // kapsamlı müdür (AD ADMIN) geçemez
+        // 2026-09-10: kapsamlı müdür (AD ADMIN) artık GİRER — operasyonel ayarları düzenler.
+        // GLOBAL_ONLY anahtarlar (SSRF/CA/k6/push URL/base-url/CORS/log) AppSettingsService.save'de
+        // sunucu tarafında reddedilir; katalog kalemleri read_only ile UI'da kilitlenir.
         permissionService.require(session, key, action);
     }
 

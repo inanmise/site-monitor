@@ -61,11 +61,14 @@ export default function GeneralSettings() {
 
   function renderInput(it) {
     const v = valueOf(it)
+    // read_only: sunucu, kapsamlı müdür (AD ADMIN) için GLOBAL_ONLY kalemleri işaretler — kilit
+    // yalnız görsel; AppSettingsService.save aynı anahtarı 403 ile reddeder.
+    const ro = !!it.read_only
     if (it.type === 'BOOL') {
       const on = String(v) === 'true'
       return (
         <label className="ldap-toggle">
-          <input type="checkbox" checked={on}
+          <input type="checkbox" checked={on} disabled={ro}
             onChange={(e) => set(it.key, e.target.checked ? 'true' : 'false')} />
           <span>{on ? t('general.on') : t('general.off')}</span>
         </label>
@@ -73,21 +76,21 @@ export default function GeneralSettings() {
     }
     if (it.type === 'ENUM') {
       return (
-        <select value={v} onChange={(e) => set(it.key, e.target.value)}>
+        <select value={v} disabled={ro} onChange={(e) => set(it.key, e.target.value)}>
           {(it.options || []).map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
       )
     }
     if (it.type === 'TEXT') {
       return (
-        <textarea value={v} rows={8} spellCheck={false}
+        <textarea value={v} rows={8} spellCheck={false} disabled={ro}
           style={{ width: '100%', fontFamily: 'monospace', resize: 'vertical' }}
           onChange={(e) => set(it.key, e.target.value)} />
       )
     }
     const numeric = it.type === 'INT' || it.type === 'DOUBLE'
     return (
-      <input type={numeric ? 'number' : 'text'} value={v}
+      <input type={numeric ? 'number' : 'text'} value={v} disabled={ro}
         step={it.type === 'DOUBLE' ? '0.01' : undefined}
         onChange={(e) => set(it.key, e.target.value)} />
     )
@@ -159,6 +162,7 @@ export default function GeneralSettings() {
                   <code>{it.key}</code>
                   {it.default != null && it.default !== ''
                     ? ' · ' + t('general.defaultHint', it.default) : ''}
+                  {it.read_only ? ' · ' + t('general.globalOnlyHint') : ''}
                 </span>
               </div>
             </div>

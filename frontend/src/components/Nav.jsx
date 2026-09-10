@@ -294,8 +294,9 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
               <MonitorSmartphone size={14} />
               <span>{t('dev.navLink')}</span>
             </button>
-            {/* Ayarlar: global admin (kullanıcı adı DEĞİL). Kapsamlı müdür backend'de zaten reddedilir. */}
-            {isGlobalAdmin && (
+            {/* Ayarlar: rol ADMIN — global admin VE kapsamlı müdür (2026-09-10 ürün kararı; müdür için
+                sır yüzeyleri AdminSettings içinde kilitli, backend GLOBAL_ONLY/requireNotScopedAdmin uygular). */}
+            {isAdmin && (
               <button
                 className="sb-user-popover-item"
                 onClick={() => { setUserMenuOpen(false); onTabChange('settings') }}

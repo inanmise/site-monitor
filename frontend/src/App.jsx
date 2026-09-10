@@ -1286,13 +1286,13 @@ export default function App() {
               </div>
             )}
 
-            {/* Uygulama ayarları — GLOBAL admin (kullanıcı adından bağımsız). Eskiden `user === 'admin'`
-                sabit kapısıydı: bootstrap dışı global admin hesapları retention/SMTP/LDAP ekranını hiç
-                göremiyordu (BUG_RAPORU_7 açık madde, 2026-09-10). Kapsamlı müdür (AD ADMIN) yine görmez —
-                backend dokuz ayar denetleyicisinde requireNotScopedAdmin ile reddeder; UI ile aynı hizada. */}
-            {tab === 'settings' && globalAdmin && (
+            {/* Uygulama ayarları — rol ADMIN (global VEYA kapsamlı müdür). Eskiden `user === 'admin'`
+                sabit kapısıydı; 2026-09-10'da önce global_admin bayrağına, aynı gün ürün kararıyla
+                kapsamlı müdüre de açıldı. Müdür için sır yüzeyleri (SMTP/LDAP/Secret Decryptor/Veritabanı)
+                AdminSettings içinde "yalnız global yönetici" notuyla kilitli; backend aynı kapıyı uygular. */}
+            {tab === 'settings' && systemRole === 'ADMIN' && (
               <div className="tab-content active">
-                <AdminSettings />
+                <AdminSettings globalAdmin={globalAdmin} />
               </div>
             )}
 

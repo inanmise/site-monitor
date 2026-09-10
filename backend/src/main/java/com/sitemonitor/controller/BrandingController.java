@@ -186,7 +186,7 @@ public class BrandingController {
     /** Konfigüre bootstrap admin HER ZAMAN erişir (kilitlenme-güvenli fallback); aksi halde matris izni. */
     private void requireSettingsAccess(HttpSession session, String key, String action) {
         if (Boolean.TRUE.equals(session != null ? session.getAttribute("bootstrapAdmin") : null)) return;
-        SessionScope.requireNotScopedAdmin(session, key);   // kapsamlı müdür (AD ADMIN) geçemez
+        // 2026-09-10: kapsamlı müdür (AD ADMIN) marka ayarlarını düzenleyebilir (sır taşımaz).
         permissionService.require(session, key, action);
     }
 

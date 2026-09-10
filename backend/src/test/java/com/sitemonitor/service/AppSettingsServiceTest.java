@@ -164,4 +164,51 @@ class AppSettingsServiceTest {
         assertThat(ev.touches("site.monitor.executor.queue-capacity")).isTrue();
         assertThat(ev.touches("site.monitor.app.base-url")).isFalse();
     }
+
+    // ── 2026-09-10: kapsamlı müdür (AD ADMIN) Ayarlar'a girer; GLOBAL_ONLY anahtarlar ona kapalı ──
+
+    private static void bindScopedAdminRequest() {
+        org.springframework.mock.web.MockHttpSession s = new org.springframework.mock.web.MockHttpSession();
+        s.setAttribute("systemRole", "ADMIN");
+        s.setAttribute("viewTeamIds", new java.util.ArrayList<>(List.of(3L)));
+        org.springframework.mock.web.MockHttpServletRequest req = new org.springframework.mock.web.MockHttpServletRequest();
+        req.setSession(s);
+        org.springframework.web.context.request.RequestContextHolder.setRequestAttributes(
+                new org.springframework.web.context.request.ServletRequestAttributes(req));
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void resetRequest() {
+        org.springframework.web.context.request.RequestContextHolder.resetRequestAttributes();
+    }
+
+    @Test
+    @DisplayName("müdür: GLOBAL_ONLY anahtar (SSRF izni) 403 — satır yazılmaz; operasyonel anahtar (stale-minutes) kaydedilir")
+    void scopedAdmin_globalOnlyRejected_operationalAllowed() {
+        bindScopedAdminRequest();
+        assertThatThrownBy(() -> service.save(values("site.monitor.monitoring.allow-internal-targets", "true"), "mudur"))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("allow-internal-targets");
+        assertThat(repo.findBySettingKey("site.monitor.monitoring.allow-internal-targets")).isEmpty();
+
+        service.save(values("site.monitor.scheduler.stale-minutes", "90"), "mudur");
+        assertThat(service.getInt("site.monitor.scheduler.stale-minutes", -1)).isEqualTo(90);
+    }
+
+    @Test
+    @DisplayName("müdür: katalog GLOBAL_ONLY kalemlerini read_only=true, diğerlerini false işaretler; global admin için hepsi false")
+    void catalog_readOnlyFlags_followScope() {
+        bindScopedAdminRequest();
+        Map<String, Map<String, Object>> byKey = new HashMap<>();
+        for (Map<String, Object> m : service.getCatalogForClient()) byKey.put((String) m.get("key"), m);
+        assertThat(byKey.get("site.monitor.userpush.url").get("global_only")).isEqualTo(true);
+        assertThat(byKey.get("site.monitor.userpush.url").get("read_only")).isEqualTo(true);
+        assertThat(byKey.get("site.monitor.scheduler.stale-minutes").get("global_only")).isEqualTo(false);
+        assertThat(byKey.get("site.monitor.scheduler.stale-minutes").get("read_only")).isEqualTo(false);
+
+        org.springframework.web.context.request.RequestContextHolder.resetRequestAttributes(); // global (bağlam yok)
+        for (Map<String, Object> m : service.getCatalogForClient()) {
+            assertThat(m.get("read_only")).as("global admin için kilit yok: " + m.get("key")).isEqualTo(false);
+        }
+    }
 }
