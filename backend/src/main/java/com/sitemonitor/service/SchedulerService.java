@@ -543,6 +543,8 @@ public class SchedulerService {
         patch("ALTER TABLE alert_events ADD COLUMN resolved_note TEXT");
         // Alarm fırtınası (alert storm) bağı + per-group scoping (ddl-auto zaten ekler — güvenlik ağı).
         patch("ALTER TABLE alert_events ADD COLUMN storm_id BIGINT");
+        // Sertifika alarmında gerçek son geçerlilik anı (kapalı alarm kartı artık hesaplamaz, okur).
+        patch("ALTER TABLE alert_events ADD COLUMN not_after TEXT");
         patch("ALTER TABLE alert_events ADD COLUMN group_name TEXT");
         patch("ALTER TABLE notification_logs ADD COLUMN message TEXT");
         patch("ALTER TABLE certificate_inventory ADD COLUMN team_id INTEGER");

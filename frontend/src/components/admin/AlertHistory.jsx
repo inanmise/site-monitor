@@ -30,13 +30,17 @@ const levelClass = (lvl) => ({ WARNING: 'warning', HIGH: 'high', CRITICAL: 'crit
 // fark edilmeden yaşamasının sebebiydi; diğer ikisi zaten dk/sa/g kullanıyor.
 // incidentMeta.formatDuration birimleri i18n'den alır (incov.unit.*), yani TR/EN tutarlıdır.
 
-// Snapshot expiry date at alarm-creation time: created_at + days_remaining × 1 day.
-// Reflects the cert's not_after as it was when the alert fired, not the current value.
-function alertExpiryDate(a) {
+// Kapalı alarm kartındaki "Son Geçerlilik": SUNUCUNUN damgaladığı gerçek not_after (alarm anı).
+// Eskiden created_at + days_remaining ile YENİDEN HESAPLANIYORDU: days_remaining eskalasyon/
+// re-alert'te güncellenip created_at sabit kaldığından tarih açık kaldığı gün kadar erken, zone'suz
+// created_at yerel parse edildiğinden saat hep ":00" çıkıyordu (23 Eylül 02:59 → "05/09 00:00").
+// Yaklaşık hesap yalnız son çare (not_after da LatestCheck yedeği de yoksa — pratikte eski satır yok).
+function alertExpiryIso(a) {
+  if (a?.not_after) return a.not_after
   if (!a?.created_at || a.days_remaining == null) return null
-  const created = new Date(a.created_at)
+  const created = new Date(a.created_at.endsWith('Z') ? a.created_at : a.created_at + 'Z')
   if (isNaN(created)) return null
-  return new Date(created.getTime() + a.days_remaining * 86_400_000)
+  return new Date(created.getTime() + a.days_remaining * 86_400_000).toISOString()
 }
 
 function AuditRow({ label, by, at, variant, note }) {
@@ -1352,14 +1356,21 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
                   </div>
 
                   {(() => {
-                    const expDate = a.alert_type === 'EXPIRY' ? alertExpiryDate(a) : null
-                    const hasMeta = a.sy_team_name || a.ug_team_name || a.cert_tier != null || expDate
+                    const expIso = a.alert_type === 'EXPIRY' ? alertExpiryIso(a) : null
+                    // Yenilenmişse güncel bitiş de yan yana: kapalı alarm "neden kapandı" sorusunu kendi anlatır.
+                    const renewedIso = expIso && a.current_not_after && a.current_not_after !== expIso ? a.current_not_after : null
+                    const hasMeta = a.sy_team_name || a.ug_team_name || a.cert_tier != null || expIso
                     if (!hasMeta) return null
                     return (
                       <div className="ahc-meta">
-                        {expDate && (
+                        {expIso && (
                           <span className="ahc-chip ahc-chip-expiry">
-                            <Calendar size={11}/> {t('alh.expiryWas')}: <strong>{formatDate(expDate.toISOString())}</strong>
+                            <Calendar size={11}/> {t('alh.expiryWas')}: <strong>{formatDate(expIso)}</strong>
+                          </span>
+                        )}
+                        {renewedIso && (
+                          <span className="ahc-chip ahc-chip-expiry ahc-chip-renewed" title={t('alh.expiryNowHint')}>
+                            <Calendar size={11}/> {t('alh.expiryNow')}: <strong>{formatDate(renewedIso)}</strong>
                           </span>
                         )}
                         {a.sy_team_name && (

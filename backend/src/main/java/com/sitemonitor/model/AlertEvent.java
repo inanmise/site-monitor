@@ -39,6 +39,17 @@ public class AlertEvent {
 
     private Integer daysRemaining;
 
+    /**
+     * Sertifika alarmlarında sertifikanın GERÇEK son geçerlilik anı (UTC, {@code yyyy-MM-ddTHH:mm:ss}),
+     * alarm açılırken damgalanır; eskalasyon/re-alert sonuç taşıyorsa güncellenir. Eskiden arayüz
+     * {@code created_at + days_remaining} ile YENİDEN HESAPLIYORDU: days_remaining sonradan
+     * güncellenip created_at sabit kaldığından kapalı alarm kartı 18 gün erken, saati hep ":00"
+     * bir tarih gösteriyordu (2026-09-10). Eski satırlarda NULL — AdminController.enrichAlerts
+     * LatestCheck'ten geri doldurur. Diğer izleme türlerinde null.
+     */
+    @Column(name = "not_after")
+    private String notAfter;
+
     /** Sorumlu takım — özellikle serbest-form izleme (keyword/ping) çözüm bildiriminde alıcıyı
      *  (yalnız takım) buradan bulmak için (url/host envanterde olmadığından). Oluşturulurken doldurulur. */
     private Long teamId;
@@ -107,6 +118,8 @@ public class AlertEvent {
      * geçmişi tarayarak fark edilirdi.
      */
     @Transient private Long    repeatCount;
+    /** Sertifikanın GÜNCEL son geçerlilik anı (LatestCheck) — alarm anındakinden farklıysa yenilenmiştir. */
+    @Transient private String  currentNotAfter;
 
     /**
      * Alarm ACILIRKEN damgalanan Bildirim Grubu ({@code teamId} emsali).

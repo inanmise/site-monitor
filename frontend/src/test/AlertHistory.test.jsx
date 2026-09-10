@@ -832,3 +832,34 @@ describe('AlertHistory — tema sözleşmesi', () => {
     expect(screen.getByText(/1 alıcı seçili|1 recipients selected/i)).toBeDefined()
   })
 })
+// 2026-09-10: "Son Geçerlilik" hesaplanmaz, sunucunun damgaladığı not_after okunur
+describe('AlertHistory closed-alert expiry (not_after)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  async function openClosed(alert) {
+    api.admin.getAlerts.mockResolvedValue({ success: true, data: [alert], total: 1, page: 0, size: 20 })
+    render(<AlertHistory />)
+    await waitFor(() => expect(api.admin.getAlerts).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /kapalı|closed/i }))
+    await waitFor(() => expect(screen.getByText('foo.example.com')).toBeDefined())
+  }
+
+  it('kapalı kart sunucunun not_after damgasını çizer, created_at+days hesabını kullanmaz', async () => {
+    await openClosed({ ...closedAlert, not_after: '2026-09-22T23:59:59' })
+    expect(screen.getByText('2026-09-22T23:59:59')).toBeDefined()
+    expect(screen.queryByText(/2026-06-08/)).toBeNull()   // created_at + 7 gün hesabı YOK
+  })
+
+  it('yenilenmiş sertifikada güncel bitiş ikinci rozet olarak yan yana gelir', async () => {
+    await openClosed({ ...closedAlert, not_after: '2026-09-22T23:59:59', current_not_after: '2026-12-31T23:59:59' })
+    expect(screen.getByText('2026-12-31T23:59:59')).toBeDefined()
+    expect(document.querySelector('.ahc-chip-renewed')).not.toBeNull()
+  })
+
+  it('not_after ile güncel bitiş AYNIYSA ikinci rozet çizilmez', async () => {
+    await openClosed({ ...closedAlert, not_after: '2026-09-22T23:59:59', current_not_after: '2026-09-22T23:59:59' })
+    expect(document.querySelector('.ahc-chip-renewed')).toBeNull()
+  })
+})

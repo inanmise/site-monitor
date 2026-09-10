@@ -276,6 +276,7 @@ public class EscalationService {
 
                 if (existing.isEmpty()) {
                     AlertEvent event = newEvent(domain, alertLevel, alertType, message, daysRemaining);
+                    event.setNotAfter(notAfterOf(result));   // gerçek bitiş anı; kart hesaplamaz, okur
                     // Sertifika olayına takım DAMGALANMIYORDU: açılış push'u syTeamId yedeğiyle gidiyor,
                     // çözüm push'u ise yalnız event.teamId okuyor → alıcı yok → SKIPPED_NO_RECIPIENTS.
                     // Telefon "KRİTİK: doluyor"u alıyor, "DÜZELDİ"yi hiç almıyordu (izleme yolu :889 ile aynı).
@@ -307,6 +308,7 @@ public class EscalationService {
                         event.setAlertLevel(alertLevel);
                         event.setMessage(message);
                         event.setDaysRemaining(daysRemaining);
+                        if (notAfterOf(result) != null) event.setNotAfter(notAfterOf(result));
                         event.setAcknowledged(false);
 
                         List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId);
@@ -329,6 +331,7 @@ public class EscalationService {
                             event.setLastReAlertAt(now());
                             event.setRealertCount((event.getRealertCount() == null ? 0 : event.getRealertCount()) + 1);
                             event.setDaysRemaining(daysRemaining);
+                            if (notAfterOf(result) != null) event.setNotAfter(notAfterOf(result));
                             event.setMessage(message);
                             alertEventRepo.save(event);
                             log.info("Re-alert sent: {} [{}] — previous day: {}",
@@ -601,6 +604,7 @@ public class EscalationService {
             event.setLastReAlertAt(now());
             event.setRealertCount((event.getRealertCount() == null ? 0 : event.getRealertCount()) + 1);
             event.setDaysRemaining(effectiveDays);
+            if (notAfterOf(certContext) != null) event.setNotAfter(notAfterOf(certContext));
             alertEventRepo.save(event);
             sent++;
             log.info("Startup catch-up: alert sent for {} [{}] — last was: {}",
@@ -2296,6 +2300,14 @@ public class EscalationService {
                 case TYPE_DOMAINMON_BLACKLIST     -> "Alan Adı Kara Liste";
                 default                 -> "Sertifika Süre Bitişi";
         };
+    }
+
+    /** Kontrol sonucundaki gerçek son geçerlilik anı (UTC ISO) — yoksa null. */
+    static String notAfterOf(Map<String, Object> result) {
+        Object v = result != null ? result.get("not_after") : null;
+        if (v == null) return null;
+        String s = String.valueOf(v).trim();
+        return s.isEmpty() ? null : s;
     }
 
     /** Çözüldü e-postasında detay için alarm anı context'inin küçük JSON snapshot'ı.

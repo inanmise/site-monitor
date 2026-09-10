@@ -2457,4 +2457,55 @@ class EscalationServiceTest {
         verify(userPushService).enqueueResolve(eq(open), any(), eq(7L));
         assertThat(open.getTeamId()).as("çözümde tek seferlik damga").isEqualTo(7L);
     }
+
+    // ── 2026-09-10: alarm olayına gerçek not_after damgalanır (kart hesaplamaz, okur) ───────
+
+    @Test
+    @DisplayName("Yeni EXPIRY alarmı kontrol sonucundaki not_after'ı olaya damgalar")
+    void newExpiryEvent_stampsNotAfter() {
+        String domain = "stamp.example.com";
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        Map<String, Object> r = expiryResult(domain, 25, true);
+        r.put("not_after", "2026-09-22T23:59:59");
+
+        service.processResults(List.of(r));
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(captor.capture());
+        assertThat(captor.getAllValues().get(0).getNotAfter()).isEqualTo("2026-09-22T23:59:59");
+    }
+
+    @Test
+    @DisplayName("Eskalasyonda sonuç not_after taşıyorsa güncellenir; taşımıyorsa eski damga korunur")
+    void escalation_updatesNotAfterOnlyWhenPresent() {
+        String domain = "esc.example.com";
+        AlertEvent open = new AlertEvent();
+        open.setId(41L); open.setDomain(domain); open.setAlertType("EXPIRY"); open.setAlertLevel("WARNING");
+        open.setResolved(false); open.setNotAfter("2026-09-22T23:59:59");
+        open.setCreatedAt(ISO.format(java.time.Instant.now().minus(java.time.Duration.ofDays(2))));
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(open));
+        when(contactRepo.findByMinAlertLevelAndActiveTrue(anyString())).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Map<String, Object> critical = expiryResult(domain, 3, true);   // WARNING → CRITICAL terfi
+        service.processResults(List.of(critical));
+        assertThat(open.getNotAfter()).as("sonuç not_after taşımıyor → damga korunur").isEqualTo("2026-09-22T23:59:59");
+
+        open.setAlertLevel("WARNING");
+        Map<String, Object> renewed = expiryResult(domain, 3, true);
+        renewed.put("not_after", "2026-12-31T23:59:59");
+        service.processResults(List.of(renewed));
+        assertThat(open.getNotAfter()).isEqualTo("2026-12-31T23:59:59");
+    }
+
+    @Test
+    @DisplayName("notAfterOf: null/boş → null, dolu → kırpılmış dize")
+    void notAfterOf_parsing() {
+        assertThat(EscalationService.notAfterOf(null)).isNull();
+        assertThat(EscalationService.notAfterOf(Map.of())).isNull();
+        assertThat(EscalationService.notAfterOf(Map.of("not_after", "  "))).isNull();
+        assertThat(EscalationService.notAfterOf(Map.of("not_after", " 2026-09-22T23:59:59 "))).isEqualTo("2026-09-22T23:59:59");
+    }
 }
