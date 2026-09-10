@@ -1,5 +1,6 @@
 package com.sitemonitor.controller;
 
+import com.sitemonitor.util.Msg;
 import com.sitemonitor.model.LdapSettings;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.LdapDirectoryService;
@@ -63,7 +64,7 @@ public class LdapAdminController {
                         + ",\"useLdaps\":" + saved.getUseLdaps() + "}");
         return ok(Map.of(
                 "data", settingsService.toClientMap(saved),
-                "message", "LDAP ayarları kaydedildi (yeniden başlatma gerekmez)"));
+                "message", Msg.t("LDAP ayarları kaydedildi (yeniden başlatma gerekmez)", "LDAP settings saved (no restart needed)")));
     }
 
     /** {@code verify=true}: kayıtlı "doğrulamayı atla" ayarı DEĞİŞMEDEN, sertifika doğrulaması açık

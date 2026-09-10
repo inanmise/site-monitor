@@ -1,5 +1,6 @@
 package com.sitemonitor.controller;
 
+import com.sitemonitor.util.Msg;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitemonitor.model.UserPushDelivery;
@@ -108,7 +109,7 @@ public class UserPushController {
             if (k.startsWith("site.monitor.userpush.template.") && v != null) {
                 String bad = unknownPlaceholder(String.valueOf(v));
                 if (bad != null)
-                    return badRequest("Bilinmeyen yer tutucu: {" + bad + "} — geçerli olanlar: "
+                    return badRequest(Msg.t("Bilinmeyen yer tutucu: {", "Unknown placeholder: {") + bad + Msg.t("} — geçerli olanlar: ", "} — valid placeholders: ")
                             + String.join(", ", UserPushService.KNOWN_PLACEHOLDERS));
             }
             toSave.put(k, v);
@@ -169,16 +170,16 @@ public class UserPushController {
             @RequestBody Map<String, Object> body, HttpSession session) {
         requireAdmin(session);
         if (!userPushService.enabled())
-            return badRequest("Kanal kapalı — önce global anahtarı açın");
+            return badRequest(Msg.t("Kanal kapalı — önce global anahtarı açın", "Channel is off — enable the global switch first"));
         // Dakikada 3 tavan: test ucu gerçek gönderim yapar, kazara döngüye alınmasın.
         String since = ISO.format(Instant.now().minus(Duration.ofMinutes(1)).atZone(ZONE).toLocalDateTime());
         if (deliveryRepo.countByTriggerAndCreatedAtGreaterThanEqual("TEST", since) >= 3)
-            return badRequest("Test tavanı: dakikada en çok 3 deneme");
+            return badRequest(Msg.t("Test tavanı: dakikada en çok 3 deneme", "Test limit: at most 3 attempts per minute"));
         List<String> usernames = new ArrayList<>();
         if (body.get("usernames") instanceof List<?> list)
             for (Object o : list) if (o != null && !o.toString().isBlank()) usernames.add(o.toString().trim());
         if (usernames.isEmpty()) return badRequest("En az bir sicil girin");
-        if (usernames.size() > 10) return badRequest("Tek denemede en çok 10 sicil");
+        if (usernames.size() > 10) return badRequest(Msg.t("Tek denemede en çok 10 sicil", "At most 10 users per attempt"));
         String template = body.get("template") == null ? "test" : String.valueOf(body.get("template"));
         Map<String, Object> result = userPushService.sendTest(usernames, template, "TEST — " + actor(session));
         // Kural 0 + gizlilik: audit'e sicil listesi DEĞİL yalnız adet yazılır.

@@ -1,5 +1,6 @@
 package com.sitemonitor.controller;
 
+import com.sitemonitor.util.Msg;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.PermissionService;
 import com.sitemonitor.service.SecretToolsService;
@@ -48,7 +49,7 @@ public class SecretToolsController {
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         requireSettingsAccess(session, "settings.secrets", "execute");
         String key = body.get("key") == null ? "" : String.valueOf(body.get("key")).trim();
-        if (key.isEmpty()) throw new IllegalArgumentException("Çözümleme için anahtar gerekli");
+        if (key.isEmpty()) throw new IllegalArgumentException(Msg.t("Çözümleme için anahtar gerekli", "A key is required to decrypt"));
         List<Map<String, Object>> data = service.decryptWithKey(key);
         long ok = data.stream().filter(d -> Boolean.TRUE.equals(d.get("ok"))).count();
         // Anahtar veya çözülen plaintext ASLA loglanmaz — yalnız alan sayısı + başarı adedi.

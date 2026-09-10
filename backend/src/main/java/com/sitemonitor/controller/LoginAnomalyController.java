@@ -1,5 +1,6 @@
 package com.sitemonitor.controller;
 
+import com.sitemonitor.util.Msg;
 import com.sitemonitor.model.LoginAnomalyIncident;
 import com.sitemonitor.model.NotificationLog;
 import com.sitemonitor.repository.LoginAnomalyIncidentRepository;
@@ -75,19 +76,19 @@ public class LoginAnomalyController {
 
         boolean enabled = asBool(body.get("enabled"), true);
         int windowMinutes = req(asInt(body.get("window_minutes"), 10), 1, 120, "Pencere (dk)");
-        int thTotal      = req(asInt(body.get("threshold_total"), 20), 1, 100000, "Genel hacim eşiği");
-        int thAccount    = req(asInt(body.get("threshold_per_account"), 5), 1, 100000, "Hesap eşiği");
-        int thIp         = req(asInt(body.get("threshold_per_ip"), 15), 1, 100000, "IP eşiği");
-        int thUsersPerIp = req(asInt(body.get("threshold_distinct_users_per_ip"), 5), 1, 100000, "IP→kullanıcı eşiği");
-        int thIpsPerAcc  = req(asInt(body.get("threshold_distinct_ips_per_account"), 5), 1, 100000, "Hesap→IP eşiği");
+        int thTotal      = req(asInt(body.get("threshold_total"), 20), 1, 100000, Msg.t("Genel hacim eşiği", "Overall volume threshold"));
+        int thAccount    = req(asInt(body.get("threshold_per_account"), 5), 1, 100000, Msg.t("Hesap eşiği", "Per-account threshold"));
+        int thIp         = req(asInt(body.get("threshold_per_ip"), 15), 1, 100000, Msg.t("IP eşiği", "Per-IP threshold"));
+        int thUsersPerIp = req(asInt(body.get("threshold_distinct_users_per_ip"), 5), 1, 100000, Msg.t("IP→kullanıcı eşiği", "Distinct users per IP threshold"));
+        int thIpsPerAcc  = req(asInt(body.get("threshold_distinct_ips_per_account"), 5), 1, 100000, Msg.t("Hesap→IP eşiği", "Distinct IPs per account threshold"));
         double relMul    = asDbl(body.get("relative_multiplier"), 3.0);
         int baselineH    = req(asInt(body.get("baseline_hours"), 24), 1, 168, "Taban (saat)");
-        int relFloor     = req(asInt(body.get("relative_floor"), 8), 0, 100000, "Görece zemin");
-        int catchupCap   = req(asInt(body.get("catchup_cap_minutes"), 60), 1, 1440, "Catch-up sınırı (dk)");
+        int relFloor     = req(asInt(body.get("relative_floor"), 8), 0, 100000, Msg.t("Görece zemin", "Relative floor"));
+        int catchupCap   = req(asInt(body.get("catchup_cap_minutes"), 60), 1, 1440, Msg.t("Catch-up sınırı (dk)", "Catch-up cap (min)"));
         int cooldown     = req(asInt(body.get("cooldown_minutes"), 60), 1, 10080, "Cooldown (dk)");
         boolean resolvedMail = asBool(body.get("resolved_email_enabled"), true);
-        int retention    = req(asInt(body.get("retention_days"), 90), 7, 3650, "Saklama (gün)");
-        if (relMul < 1.0 || relMul > 100.0) throw new IllegalArgumentException("Görece çarpan 1–100 aralığında olmalı");
+        int retention    = req(asInt(body.get("retention_days"), 90), 7, 3650, Msg.t("Saklama (gün)", "Retention (days)"));
+        if (relMul < 1.0 || relMul > 100.0) throw new IllegalArgumentException(Msg.t("Görece çarpan 1–100 aralığında olmalı", "Relative multiplier must be between 1 and 100"));
         String recipients = normalizeCsv(asStr(body.get("alert_recipients"), ""));
 
         Map<String, Object> v = new LinkedHashMap<>();
@@ -119,7 +120,7 @@ public class LoginAnomalyController {
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         requireSettingsAccess(session);
         String recipient = asStr(body.get("recipient"), "").trim();
-        if (recipient.isEmpty()) throw new IllegalArgumentException("Alıcı e-posta adresi gerekli");
+        if (recipient.isEmpty()) throw new IllegalArgumentException(Msg.t("Alıcı e-posta adresi gerekli", "Recipient e-mail address is required"));
 
         String status;
         try {
@@ -187,7 +188,7 @@ public class LoginAnomalyController {
         return u != null ? u.toString() : "anonymous";
     }
     private static int req(int v, int min, int max, String label) {
-        if (v < min || v > max) throw new IllegalArgumentException(label + " " + min + "–" + max + " aralığında olmalı");
+        if (v < min || v > max) throw new IllegalArgumentException(Msg.t(label + " " + min + "–" + max + " aralığında olmalı", label + " must be between " + min + " and " + max));
         return v;
     }
     private static String normalizeCsv(String csv) {
@@ -205,13 +206,13 @@ public class LoginAnomalyController {
         if (v instanceof Number n) return n.intValue();
         if (v == null) return def;
         try { return Integer.parseInt(v.toString().trim()); }
-        catch (Exception e) { throw new IllegalArgumentException("Sayısal değer bekleniyor: " + v); }
+        catch (Exception e) { throw new IllegalArgumentException(Msg.t("Sayısal değer bekleniyor: ", "A numeric value is expected: ") + v); }
     }
     private static double asDbl(Object v, double def) {
         if (v instanceof Number n) return n.doubleValue();
         if (v == null) return def;
         try { return Double.parseDouble(v.toString().trim()); }
-        catch (Exception e) { throw new IllegalArgumentException("Ondalık değer bekleniyor: " + v); }
+        catch (Exception e) { throw new IllegalArgumentException(Msg.t("Ondalık değer bekleniyor: ", "A decimal value is expected: ") + v); }
     }
     private static String asStr(Object v, String def) {
         return v != null ? v.toString().trim() : def;

@@ -91,7 +91,7 @@ public class WebConfig implements WebMvcConfigurer {
                 CorsConfiguration c = new CorsConfiguration();
                 c.setAllowedOrigins(origins);
                 c.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-                c.setAllowedHeaders(List.of("Content-Type", "X-Requested-With"));
+                c.setAllowedHeaders(List.of("Content-Type", "X-Requested-With", com.sitemonitor.util.Msg.HEADER));
                 c.setAllowCredentials(true);
                 c.setMaxAge(corsMaxAge);
                 return c;

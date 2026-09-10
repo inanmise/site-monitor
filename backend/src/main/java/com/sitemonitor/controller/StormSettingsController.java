@@ -1,5 +1,6 @@
 package com.sitemonitor.controller;
 
+import com.sitemonitor.util.Msg;
 import com.sitemonitor.service.AppSettingsService;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.PermissionService;
@@ -66,14 +67,14 @@ public class StormSettingsController {
 
         // ── Sunucu-tarafı aralık doğrulaması ──
         if (!"COUNT".equals(unit) && !"PERCENT".equals(unit)) {
-            throw new IllegalArgumentException("Geçersiz eşik birimi: COUNT veya PERCENT olmalı");
+            throw new IllegalArgumentException(Msg.t("Geçersiz eşik birimi: COUNT veya PERCENT olmalı", "Invalid threshold unit: must be COUNT or PERCENT"));
         }
         if ("PERCENT".equals(unit)) {
-            if (value < 1 || value > 100) throw new IllegalArgumentException("Yüzde eşiği 1–100 aralığında olmalı");
+            if (value < 1 || value > 100) throw new IllegalArgumentException(Msg.t("Yüzde eşiği 1–100 aralığında olmalı", "Percentage threshold must be between 1 and 100"));
         } else {
-            if (value < 2) throw new IllegalArgumentException("Sayı eşiği en az 2 olmalı (1'lik storm anlamsız)");
+            if (value < 2) throw new IllegalArgumentException(Msg.t("Sayı eşiği en az 2 olmalı (1'lik storm anlamsız)", "Count threshold must be at least 2 (a storm of 1 is meaningless)"));
         }
-        if (window < 1 || window > 15) throw new IllegalArgumentException("Zaman penceresi 1–15 dakika aralığında olmalı");
+        if (window < 1 || window > 15) throw new IllegalArgumentException(Msg.t("Zaman penceresi 1–15 dakika aralığında olmalı", "Time window must be between 1 and 15 minutes"));
 
         Map<String, Object> values = new LinkedHashMap<>();
         values.put(StormService.KEY_ENABLED,   String.valueOf(enabled));
@@ -113,7 +114,7 @@ public class StormSettingsController {
         if (v instanceof Number n) return n.intValue();
         if (v == null) return def;
         try { return Integer.parseInt(v.toString().trim()); }
-        catch (Exception e) { throw new IllegalArgumentException("Sayısal değer bekleniyor: " + v); }
+        catch (Exception e) { throw new IllegalArgumentException(Msg.t("Sayısal değer bekleniyor: ", "A numeric value is expected: ") + v); }
     }
 
     private static String asStr(Object v, String def) {
