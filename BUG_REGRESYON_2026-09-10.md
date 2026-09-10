@@ -53,3 +53,11 @@ require` duruyor; UserPush `isScopedAdmin` ile daraltıldı; dört sır yüzeyi 
 Eklenen satırlarda S2/S3/S4/S9/S10/S11/S12 imzası yok. Kapı: `SettingsScopedAdminGateTest`.
 v20.50.29 bulgusu KAPALI kalır (yüzeyi "tüm ayarlar"dan "sır yüzeyleri + riskli anahtarlar"a
 daraltıldı; bkz. CLAUDE.md). Sürüme engel yok.
+
+## Ek — dördüncü tur (aynı gün, `bfef865d..HEAD`)
+
+Kapsam: tam-mod QA'nın tek düzeltmesi (TeamBadge `as="span"`, MonitorChangesConsole) + regresyon testi +
+CLAUDE.md skill yönlendirme kuralları. Eklenen satırlarda S2/S3/S9/S11/S12 imzası yok. Aynı sınıf
+("button içinde TeamBadge") 10 diğer çağrı yerinde tarandı: hepsi `div`/`role=button` içinde ya da
+düğme dışı; tarayıcı taramasında 33 sekmede başka `validateDOMNesting` yok. Baseline dosyaları
+değişmedi → **REGRESYON YOK**. Sürüme engel yok.

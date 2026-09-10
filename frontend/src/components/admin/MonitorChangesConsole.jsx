@@ -316,7 +316,9 @@ export default function MonitorChangesConsole({ globalViewer = false }) {
                       <span className="chg-row-name">{r.resource_name || `#${r.resource_id}`}</span>
                       <span className="chg-row-meta">
                         {t('chg.kind.' + String(r.kind).toLowerCase()) }
-                        {r.team_name ? <> · <TeamBadge teamId={r.team_id} teamName={r.team_name} size={11} /></> : ''}
+                        {/* as="span": satır başlığı zaten <button>; button içinde button geçersiz HTML
+                            (React validateDOMNesting, QA ISSUE-001 2026-09-10). */}
+                        {r.team_name ? <> · <TeamBadge teamId={r.team_id} teamName={r.team_name} size={11} as="span" /></> : ''}
                       </span>
                     </span>
                     <span className="chg-row-who">
