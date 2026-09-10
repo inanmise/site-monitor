@@ -197,9 +197,11 @@ public class WebConfig implements WebMvcConfigurer {
         };
     }
 
+    // Boot değerleri @Value'dan (env/Helm); sonrası Genel Ayarlar → "Görev Havuzu" grubundan CANLI
+    // (ExecutorTuningService, AppSettingsChangedEvent). Kuyruk ResizableCapacityQueue ile kurulur.
     @Bean(name = "certCheckExecutor")
-    public ThreadPoolTaskExecutor certCheckExecutor() {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+    public TunableThreadPoolTaskExecutor certCheckExecutor() {
+        TunableThreadPoolTaskExecutor executor = new TunableThreadPoolTaskExecutor();
         executor.setCorePoolSize(executorCoreSize);
         executor.setMaxPoolSize(executorMaxSize);
         executor.setQueueCapacity(executorQueueCapacity);

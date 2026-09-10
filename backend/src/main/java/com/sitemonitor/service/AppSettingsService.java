@@ -36,6 +36,9 @@ public class AppSettingsService {
 
     private final AppSettingRepository repo;
     private final Environment environment;
+    // Durum taşıyan tüketiciler (executor havuzu) için değişiklik olayı — okuma-anı getter'lar
+    // olaysız da canlı; olay yalnız "kendine uygulaması gerekenler" içindir.
+    private final org.springframework.context.ApplicationEventPublisher publisher;
 
     /** key → override değeri (yalnız set edilmişler). Immutable snapshot; save'de yenisiyle değişir. */
     private volatile Map<String, String> overrides = Map.of();
@@ -65,9 +68,11 @@ public class AppSettingsService {
             }
             Map<String, String> next = Map.copyOf(m);
             if (!next.equals(overrides)) {
+                Map<String, String> prev = overrides;
                 this.overrides = next;
                 applyLogLevel();
                 log.info("AppSettings cache refreshed from DB (updated by another instance): {} override(s)", next.size());
+                publish(diffKeys(prev, next), "refresh");
             }
         } catch (Exception e) {
             log.debug("AppSettings refresh skipped: {}", e.getMessage());
@@ -143,24 +148,73 @@ public class AppSettingsService {
         @SuppressWarnings("unchecked")
         Map<String, Object> values = (raw instanceof Map) ? (Map<String, Object>) raw : body;
 
+        // 1) Önce HEPSİNİ doğrula (tip + alanlar-arası kural), sonra yaz: yarım kayıt yok.
         Map<String, String> next = new HashMap<>(overrides);
+        Map<String, String> normalized = new java.util.LinkedHashMap<>();
         for (Map.Entry<String, Object> e : values.entrySet()) {
             String key = e.getKey();
             AppSettingsCatalog.Setting s = AppSettingsCatalog.byKey(key);
             if (s == null) throw new IllegalArgumentException("Bilinmeyen ayar: " + key);
             String val = e.getValue() == null ? null : e.getValue().toString().trim();
             validate(s, val);
+            normalized.put(key, val);
+            if (val == null || val.isEmpty()) next.remove(key);
+            else next.put(key, val);
+        }
+        validateCrossField(next);
+
+        for (Map.Entry<String, String> e : normalized.entrySet()) {
+            String key = e.getKey();
+            String val = e.getValue();
             AppSetting row = repo.findBySettingKey(key).orElseGet(() -> new AppSetting(key, null, null, null));
             row.setSettingKey(key);
             row.setValue((val == null || val.isEmpty()) ? null : val);
             row.setUpdatedAt(now());
             row.setUpdatedBy(actor);
             repo.save(row);
-            if (val == null || val.isEmpty()) next.remove(key);
-            else next.put(key, val);
         }
         this.overrides = Map.copyOf(next); // cache ANINDA tazelenir → tüketiciler yeni değeri okur
         applyLogLevel();
+        publish(normalized.keySet(), "save");
+    }
+
+    /**
+     * Tek anahtar tipi doğru olsa da BİRLİKTE geçersiz olabilen ayarlar (executor core &gt; max).
+     * Efektif değer = yeni override haritası, yoksa Environment varsayılanı.
+     */
+    private void validateCrossField(Map<String, String> next) {
+        Integer core  = effectiveInt(next, ExecutorTuningService.CORE_KEY);
+        Integer max   = effectiveInt(next, ExecutorTuningService.MAX_KEY);
+        Integer queue = effectiveInt(next, ExecutorTuningService.QUEUE_KEY);
+        // Üçü de çözülemiyorsa (properties yüklenmeyen slice bağlamı) kural uygulanamaz; atla.
+        if (core == null || max == null || queue == null) return;
+        String problem = ExecutorTuningService.validate(core, max, queue);
+        if (problem != null) throw new IllegalArgumentException("Görev havuzu: " + problem);
+    }
+
+    /** Override → Environment sırasıyla tam sayı; hiçbiri yoksa ya da sayı değilse null. */
+    private Integer effectiveInt(Map<String, String> next, String key) {
+        String v = next.get(key);
+        if (v == null) v = environment.getProperty(key);
+        if (v == null) return null;
+        try { return Integer.parseInt(v.trim()); } catch (Exception e) { return null; }
+    }
+
+    private static java.util.Set<String> diffKeys(Map<String, String> a, Map<String, String> b) {
+        java.util.Set<String> keys = new java.util.HashSet<>(a.keySet());
+        keys.addAll(b.keySet());
+        keys.removeIf(k -> java.util.Objects.equals(a.get(k), b.get(k)));
+        return keys;
+    }
+
+    private void publish(java.util.Set<String> keys, String source) {
+        if (publisher == null) return;
+        try {
+            publisher.publishEvent(new AppSettingsChangedEvent(java.util.Set.copyOf(keys), source));
+        } catch (Exception e) {
+            // Dinleyici hatası kaydı GERİ ALMAMALI: değer DB'de ve cache'te; uygulanamayan tüketici loglar.
+            log.warn("AppSettingsChangedEvent listener failed ({}): {}", source, e.toString());
+        }
     }
 
     private void validate(AppSettingsCatalog.Setting s, String val) {
