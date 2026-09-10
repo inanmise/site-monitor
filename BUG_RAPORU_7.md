@@ -22,10 +22,21 @@ kuyruk doygunluk uyarısı) bu tura girdi.
 
 ## Doğrulama
 
-- Backend `mvn clean verify`, frontend `lint → test:coverage → coverage:floor → build`, `helm lint` (3 ortam) — bu turun sonunda koşuldu; sonuçlar sürüm notunda.
-- Tarayıcı: takım rozeti/modal, retention listesi, push geçmişi ve System Health kartı yerel örnekte gözle doğrulandı.
+- Yerel kapılar: backend `mvn clean verify` (3472 test), frontend `lint → test:coverage → coverage:floor → build` (197 test dosyası), `helm lint` (3 ortam) — hepsi yeşil.
+- CI `34422508580` (ad3c8a35): Backend / Frontend / Frontend E2E / Helm Lint dört iş **success**; `release.yml` success → etiket **v20.51.0** (feat commit'leri nedeniyle minor). Yerel main/develop ff-sync, jar yeniden derlendi, `/api/branding app_version = 20.51.0`, açılış logu `core 20 / max 50 / queue 5000`.
+- Tarayıcı + API (localhost:5173, v20.51.0, 2026-09-10):
+  - (8) `PUT /api/admin/retention/approval` `user-push-deliveries` + "uygundur" → **200**, overview'da onay `by/at/note` göründü (önce "Bilinmeyen ayar").
+  - (7) `GET /runs?kind=real`: son beş gerçek koşumun silme sayısı **2440 / 952 / 9637 / 1071 / 831** — yani bu örnekte "10 gündür 0" değil; her koşumda tek atlanan kalem `incident-records` (sebep: `opt-in-kapali`), hold kapalı, hata yok, en erken kesim 2023-09. Kullanıcının gördüğü 0 büyük olasılıkla kalem satırlarındaki (opt-in kapalı politika) sıfırdı; artık satırda "atlandı: opt-in kapalı" rozeti ve "neden 0" açıklaması çiziliyor.
+  - (6) System Health → System → Task Queue: `0 / 5000`, havuz `0 / 20`, `min 20 · max 50`, "Overflow tasks (caller-runs) 0", tooltip 50 thread'e göre dinamik; `executor_pool.caller_runs/saturated` API'de.
+  - (4) Alert History → Closed → Certificate Expiry → wingscard: **"Expiry was: 23/09/2026, 02:59"** (önce 05/09/2026 00:00). API `not_after = 2026-09-22T23:59:59`, `current_not_after` aynı (yenilenmemiş → tek rozet).
+  - (5) Dashboard kartındaki takım rozeti → modal "DijitalSY — Members": lider rozeti, mailto, sekmeler "Members" / "Escalation contacts (1)"; Admin Panel → Teams sekmesinde satır-içi genişletme yok (0 `.team-expand-btn`), rozet modalı açıyor ve kartlar düzenlenebilir. `/api/teams/{id}/members` projeksiyonu yalnız `id, username, display_name, first/last_name, org_role, title, department, mudurluk_name, company_level, email, manager_*` — telefon/sicil/sistem rolü/foto yok.
+  - (1/3) Bildirim geçmişi modalı Webhook(push) başlığı "N sends" biçiminde ("0 sends" — bu alarmda push satırı yok); grup/tekilleştirme mantığı `AlertHistoryPushGroups.test.jsx` ile pinli.
+  - (2) RESOLVE push sessiz saat muafiyeti ve önceki-SENT alıcı kuralı canlı tetiklenmedi (sertifika yenilenmesi gerekir); `UserPushServiceTest`/`EscalationServiceTest` ile pinli.
+  - (10) Logo CID `EmailBrandCidTest` ile altı metotta MIME düzeyinde doğrulandı; canlı test maili gönderilmedi (gerçek posta kutusuna düşer).
+  - (9) Retention koşum paneli UI'si `RetentionRunsPanel.test.jsx` ile pinli; Ayarlar sekmesi yalnız `admin` kullanıcı adına açıldığından yerel QA hesabıyla ekran görüntülenemedi (API sayfalama/filtre/`total` doğrulandı).
 
 ## Açık / izlenecek
 
-- Madde 7 için kesin teşhis kullanıcının örneğinde `Recent runs` satırındaki "Neden 0" açıklamasından okunur (hold mu, eşik mi, opt-in mi).
+- Madde 7: bu örnekte koşumlar siliyor; kullanıcının kendi örneğinde `Recent runs` satırındaki "neden 0" açıklaması (hold / opt-in kapalı / uygun kayıt yok + en erken kesim) kesin teşhisi verir.
 - Prod Helm değerleri 20/50/5000 bir sonraki `helm upgrade` ile devreye girer (master.yaml override etmez; values.yaml otoritatif).
+- Ayarlar sekmesi `user === 'admin'` sabit kapısı: müdür/global admin hesapları retention ekranını göremez — ayrı bir karar konusu, bu turda dokunulmadı.
