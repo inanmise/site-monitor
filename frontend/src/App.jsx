@@ -1286,8 +1286,11 @@ export default function App() {
               </div>
             )}
 
-            {/* Uygulama ayarları — yalnız yerel bootstrap admin. Case-insensitive: username artık BÜYÜK harf ('ADMIN'). */}
-            {tab === 'settings' && user?.toLowerCase() === 'admin' && (
+            {/* Uygulama ayarları — GLOBAL admin (kullanıcı adından bağımsız). Eskiden `user === 'admin'`
+                sabit kapısıydı: bootstrap dışı global admin hesapları retention/SMTP/LDAP ekranını hiç
+                göremiyordu (BUG_RAPORU_7 açık madde, 2026-09-10). Kapsamlı müdür (AD ADMIN) yine görmez —
+                backend dokuz ayar denetleyicisinde requireNotScopedAdmin ile reddeder; UI ile aynı hizada. */}
+            {tab === 'settings' && globalAdmin && (
               <div className="tab-content active">
                 <AdminSettings />
               </div>

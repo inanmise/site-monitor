@@ -72,4 +72,36 @@ describe('Nav', () => {
     fireEvent.click(screen.getByRole('button', { name: /Logout/ }))
     expect(onLogout).toHaveBeenCalledTimes(1)
   })
+
+  /**
+   * Ayarlar girdisi 2026-09-10'a kadar `username === 'admin'` sabit kapısıyla çiziliyordu:
+   * bootstrap dışı global admin hesapları (AD'den gelen, farklı kullanıcı adlı) retention/SMTP/LDAP
+   * ekranına hiç ulaşamıyordu (BUG_RAPORU_7 açık madde). Kapı artık global_admin bayrağı —
+   * backend'in requireNotScopedAdmin kuralıyla aynı hizada. Kullanıcı adı 'admin' bile olsa
+   * bayrak yoksa girdi yok (isim, yetki kanıtı DEĞİLDİR).
+   */
+  function openUserMenu(container) {
+    fireEvent.click(container.querySelector('.sb-user-trigger'))
+  }
+
+  it('shows the Settings entry to a global admin whose username is NOT "admin"', () => {
+    const onTabChange = vi.fn()
+    const { container } = render(
+      <Nav {...DEFAULT_PROPS} username="ops.lead" systemRole="ADMIN" globalAdmin onTabChange={onTabChange} />
+    )
+    openUserMenu(container)
+    fireEvent.click(screen.getByRole('button', { name: /Settings/ }))
+    expect(onTabChange).toHaveBeenCalledWith('settings')
+  })
+
+  it('hides the Settings entry from a scoped ADMIN (müdür) and from a plain user, even if named "admin"', () => {
+    const { container, unmount } = render(<Nav {...DEFAULT_PROPS} username="ADMIN" systemRole="ADMIN" />)
+    openUserMenu(container)
+    expect(screen.queryByRole('button', { name: /Settings/ })).toBeNull()
+    unmount()
+
+    const r2 = render(<Nav {...DEFAULT_PROPS} username="admin" />)
+    openUserMenu(r2.container)
+    expect(screen.queryByRole('button', { name: /Settings/ })).toBeNull()
+  })
 })

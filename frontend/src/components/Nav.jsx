@@ -294,7 +294,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
               <MonitorSmartphone size={14} />
               <span>{t('dev.navLink')}</span>
             </button>
-            {username?.toLowerCase() === 'admin' && (
+            {/* Ayarlar: global admin (kullanıcı adı DEĞİL). Kapsamlı müdür backend'de zaten reddedilir. */}
+            {isGlobalAdmin && (
               <button
                 className="sb-user-popover-item"
                 onClick={() => { setUserMenuOpen(false); onTabChange('settings') }}
