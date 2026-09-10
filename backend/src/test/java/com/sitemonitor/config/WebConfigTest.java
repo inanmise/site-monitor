@@ -76,6 +76,34 @@ class WebConfigTest {
         }
     }
 
+    /**
+     * 2026-09-10: /api/branding ve /api/public-stats "public, max-age=60" idi; NetScaler bunu kendi
+     * TTL'siyle sakladı, test ortamında dağıtımdan sonra giriş sayfası dakikalarca eski sürümü
+     * gösterdi. İki uç da artık diğer /api yanıtları gibi no-store; /assets/** immutable kalır,
+     * SPA kabuğu no-store kalır. Biri "public" ile geri gelirse bu test kırmızı.
+     */
+    @Test
+    @DisplayName("Cache-Control: hiçbir /api yanıtı (branding/public-stats dâhil) paylaşımlı önbelleğe saklanamaz")
+    void publicEndpoints_areNoStore() throws Exception {
+        WebConfig cfg = new WebConfig();
+        var filter = cfg.securityHeadersFilter();
+        for (String uri : new String[]{"/api/branding", "/api/public-stats", "/api/me", "/api/admin/system"}) {
+            var req = new org.springframework.mock.web.MockHttpServletRequest("GET", uri);
+            var res = new org.springframework.mock.web.MockHttpServletResponse();
+            filter.doFilter(req, res, new org.springframework.mock.web.MockFilterChain());
+            String cc = res.getHeader("Cache-Control");
+            assertThat(cc).as(uri).contains("no-store").doesNotContain("public").doesNotContain("max-age");
+        }
+        var asset = new org.springframework.mock.web.MockHttpServletResponse();
+        filter.doFilter(new org.springframework.mock.web.MockHttpServletRequest("GET", "/assets/index-abc123.js"),
+                asset, new org.springframework.mock.web.MockFilterChain());
+        assertThat(asset.getHeader("Cache-Control")).contains("immutable");
+        var shell = new org.springframework.mock.web.MockHttpServletResponse();
+        filter.doFilter(new org.springframework.mock.web.MockHttpServletRequest("GET", "/"),
+                shell, new org.springframework.mock.web.MockFilterChain());
+        assertThat(shell.getHeader("Cache-Control")).contains("no-store");
+    }
+
     private static String group(String text, String regex) {
         Matcher m = Pattern.compile(regex).matcher(text);
         assertThat(m.find()).as("desen bulunmalı: " + regex).isTrue();
