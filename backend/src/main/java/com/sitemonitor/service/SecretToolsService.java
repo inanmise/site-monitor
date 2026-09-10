@@ -1,5 +1,6 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.util.Msg;
 import com.sitemonitor.model.LdapSettings;
 import com.sitemonitor.model.SmtpSettings;
 import com.sitemonitor.repository.LdapSettingsRepository;
@@ -38,9 +39,9 @@ public class SecretToolsService {
     public List<Map<String, Object>> decryptWithKey(String key) {
         List<Map<String, Object>> out = new ArrayList<>();
         smtpRepo.findById(SmtpSettings.SINGLETON_ID).ifPresent(s ->
-                out.add(row("SMTP Parolası", "smtp_settings.password_enc", s.getPasswordEnc(), key)));
+                out.add(row(Msg.t("SMTP Parolası", "SMTP password"), "smtp_settings.password_enc", s.getPasswordEnc(), key)));
         ldapRepo.findById(LdapSettings.SINGLETON_ID).ifPresent(l ->
-                out.add(row("LDAP Bind Parolası", "ldap_settings.bind_password_enc", l.getBindPasswordEnc(), key)));
+                out.add(row(Msg.t("LDAP Bind Parolası", "LDAP bind password"), "ldap_settings.bind_password_enc", l.getBindPasswordEnc(), key)));
         return out;
     }
 

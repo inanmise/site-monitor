@@ -1,5 +1,6 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.util.Msg;
 import com.sitemonitor.config.TunableThreadPoolTaskExecutor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -89,9 +90,9 @@ public class ExecutorTuningService {
 
     /** Ortak kural — {@link AppSettingsService#save} de kayıt öncesi bunu çağırır. Null = geçerli. */
     public static String validate(int core, int max, int queue) {
-        if (core < 1)   return "core-size >= 1 olmalı (" + core + ")";
-        if (max < core) return "max-size core-size'dan küçük olamaz (core " + core + ", max " + max + ")";
-        if (queue < 1)  return "queue-capacity >= 1 olmalı (" + queue + ")";
+        if (core < 1)   return Msg.t("core-size >= 1 olmalı (", "core-size must be >= 1 (") + core + ")";
+        if (max < core) return Msg.t("max-size core-size'dan küçük olamaz (core ", "max-size cannot be smaller than core-size (core ") + core + ", max " + max + ")";
+        if (queue < 1)  return Msg.t("queue-capacity >= 1 olmalı (", "queue-capacity must be >= 1 (") + queue + ")";
         return null;
     }
 }

@@ -1,5 +1,6 @@
 package com.sitemonitor.controller;
 
+import com.sitemonitor.util.Msg;
 import com.sitemonitor.service.AppSettingsService;
 import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditDiff;
@@ -63,7 +64,7 @@ public class GeneralSettingsController {
                 AuditDiff.diff(before, values));
         return ok(Map.of(
                 "data", settingsService.getCatalogForClient(),
-                "message", "Ayarlar kaydedildi (yeniden başlatma gerekmez)"));
+                "message", Msg.t("Ayarlar kaydedildi (yeniden başlatma gerekmez)", "Settings saved (no restart needed)")));
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────

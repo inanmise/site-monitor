@@ -1,5 +1,6 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.util.Msg;
 import com.sitemonitor.model.AppSetting;
 import com.sitemonitor.repository.AppSettingRepository;
 import jakarta.annotation.PostConstruct;
@@ -154,7 +155,7 @@ public class AppSettingsService {
         for (Map.Entry<String, Object> e : values.entrySet()) {
             String key = e.getKey();
             AppSettingsCatalog.Setting s = AppSettingsCatalog.byKey(key);
-            if (s == null) throw new IllegalArgumentException("Bilinmeyen ayar: " + key);
+            if (s == null) throw new IllegalArgumentException(Msg.t("Bilinmeyen ayar: ", "Unknown setting: ") + key);
             String val = e.getValue() == null ? null : e.getValue().toString().trim();
             validate(s, val);
             normalized.put(key, val);
@@ -189,7 +190,7 @@ public class AppSettingsService {
         // Üçü de çözülemiyorsa (properties yüklenmeyen slice bağlamı) kural uygulanamaz; atla.
         if (core == null || max == null || queue == null) return;
         String problem = ExecutorTuningService.validate(core, max, queue);
-        if (problem != null) throw new IllegalArgumentException("Görev havuzu: " + problem);
+        if (problem != null) throw new IllegalArgumentException(Msg.t("Görev havuzu: ", "Task pool: ") + problem);
     }
 
     /** Override → Environment sırasıyla tam sayı; hiçbiri yoksa ya da sayı değilse null. */
@@ -222,19 +223,19 @@ public class AppSettingsService {
         switch (s.type()) {
             case INT -> {
                 try { Integer.parseInt(val); }
-                catch (Exception e) { throw new IllegalArgumentException(s.key() + ": tam sayı olmalı"); }
+                catch (Exception e) { throw new IllegalArgumentException(s.key() + Msg.t(": tam sayı olmalı", ": must be a whole number")); }
             }
             case DOUBLE -> {
                 try { Double.parseDouble(val); }
-                catch (Exception e) { throw new IllegalArgumentException(s.key() + ": sayı olmalı"); }
+                catch (Exception e) { throw new IllegalArgumentException(s.key() + Msg.t(": sayı olmalı", ": must be a number")); }
             }
             case BOOL -> {
                 if (!val.equalsIgnoreCase("true") && !val.equalsIgnoreCase("false"))
-                    throw new IllegalArgumentException(s.key() + ": true/false olmalı");
+                    throw new IllegalArgumentException(s.key() + Msg.t(": true/false olmalı", ": must be true/false"));
             }
             case ENUM -> {
                 if (!s.enumOptions().contains(val))
-                    throw new IllegalArgumentException(s.key() + ": geçersiz değer (" + s.enumOptions() + ")");
+                    throw new IllegalArgumentException(s.key() + Msg.t(": geçersiz değer (", ": invalid value (") + s.enumOptions() + ")");
             }
             default -> { /* STRING, CSV — serbest */ }
         }

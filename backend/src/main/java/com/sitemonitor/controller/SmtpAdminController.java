@@ -1,5 +1,6 @@
 package com.sitemonitor.controller;
 
+import com.sitemonitor.util.Msg;
 import com.sitemonitor.model.SmtpSettings;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.PermissionService;
@@ -61,7 +62,7 @@ public class SmtpAdminController {
                         + ",\"port\":" + saved.getPort() + "}");
         return ok(Map.of(
                 "data", settingsService.toClientMap(saved),
-                "message", "SMTP ayarları kaydedildi (yeniden başlatma gerekmez)"));
+                "message", Msg.t("SMTP ayarları kaydedildi (yeniden başlatma gerekmez)", "SMTP settings saved (no restart needed)")));
     }
 
     @PostMapping("/test")

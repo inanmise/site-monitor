@@ -1,5 +1,6 @@
 package com.sitemonitor.controller;
 
+import com.sitemonitor.util.Msg;
 import com.sitemonitor.service.AppSettingsService;
 import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditDiff;
@@ -99,7 +100,7 @@ public class BrandingController {
                 AuditDiff.diff(brandBefore, values));
         return ok(Map.of(
                 "data", brandingCatalog(),
-                "message", "Ayarlar kaydedildi (yeniden başlatma gerekmez)"));
+                "message", Msg.t("Ayarlar kaydedildi (yeniden başlatma gerekmez)", "Settings saved (no restart needed)")));
     }
 
     // ── Public: login/app kabuğu (auth YOK — AuthInterceptor.PUBLIC) ──────────
@@ -163,13 +164,13 @@ public class BrandingController {
         String logo = String.valueOf(logoVal).trim();
         var m = LOGO_DATA_URL.matcher(logo);
         if (!m.matches()) {
-            throw new IllegalArgumentException("Logo yalnız data:image/png|jpeg|svg+xml;base64 formatında olabilir");
+            throw new IllegalArgumentException(Msg.t("Logo yalnız data:image/png|jpeg|svg+xml;base64 formatında olabilir", "Logo must be a data:image/png|jpeg|svg+xml;base64 URI"));
         }
         byte[] decoded;
         try {
             decoded = Base64.getMimeDecoder().decode(m.group(2));
         } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Logo base64 içeriği çözümlenemedi");
+            throw new IllegalArgumentException(Msg.t("Logo base64 içeriği çözümlenemedi", "Logo base64 content could not be decoded"));
         }
         if (decoded.length > LOGO_MAX_BYTES) {
             throw new IllegalArgumentException("Logo en fazla 200KB olabilir (mevcut: " + (decoded.length / 1024) + "KB)");
@@ -177,7 +178,7 @@ public class BrandingController {
         if ("svg+xml".equalsIgnoreCase(m.group(1))) {
             String svg = new String(decoded, java.nio.charset.StandardCharsets.UTF_8);
             if (SVG_ACTIVE_CONTENT.matcher(svg).find()) {
-                throw new IllegalArgumentException("SVG logo script/event içeremez");
+                throw new IllegalArgumentException(Msg.t("SVG logo script/event içeremez", "SVG logo must not contain scripts or event handlers"));
             }
         }
     }

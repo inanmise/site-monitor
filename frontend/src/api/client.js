@@ -1,7 +1,13 @@
 // Tarih yereli i18n'den CANLI okunur: bu dosyadaki formatlayicilar duz fonksiyon,
 // hook degil — sabit 'tr-TR' yazdiklari icin Ingilizce arayuzde ayni ekranda iki
 // farkli tarih bicimi goruluyordu (bkz. i18n/dateLocale.js).
-import { dateLocale } from '../i18n/dateLocale.js'
+import { dateLocale, LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
+
+/** Arayüz dili (tr|en) — i18n/index.jsx'teki storedLang ile aynı anahtar; i18n modülünü
+ *  import etmemek için (React bağımlılığı, dairesel import riski) burada yalın okunur. */
+function uiLang() {
+  try { return localStorage.getItem(LANG_STORAGE_KEY) || 'en' } catch { return 'en' }
+}
 
 const BASE = import.meta.env.VITE_API_BASE ?? '/api'
 
@@ -77,7 +83,9 @@ async function request(path, options = {}) {
   try {
     res = await fetchWithTimeout(`${BASE}${path}`, {
       credentials: 'include',
-      headers: { ...(isForm ? {} : { 'Content-Type': 'application/json' }), ...opts.headers },
+      // X-Lang: sunucu tost/hata metinlerini arayüz dilinde döner (backend Msg.t). Eskiden her
+      // ayar sayfası İngilizce arayüzde Türkçe "Ayarlar kaydedildi…" basıyordu (QA ISSUE-001).
+      headers: { ...(isForm ? {} : { 'Content-Type': 'application/json' }), 'X-Lang': uiLang(), ...opts.headers },
       ...opts,
     }, timeoutMs)
   } catch (e) {

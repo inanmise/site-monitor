@@ -117,6 +117,7 @@ When you add a new boolean toggle: append to the `INVENTORY_FLAGS` array in `fro
 - API client is a flat `api.*` object in `api/client.js` — `fetch` with `credentials: 'include'`. A 401 after a successful login (flagged via `sessionStorage.cm.session.active`) forces `window.location.assign('/?session=expired')`. The initial bootstrap 401 returns `null` and lets `App.jsx` render `<Login>`.
 - i18n: `useT(key)` hook + `TR`/`EN` dicts in `i18n/index.jsx`. The parity test (`i18n-parity.test.jsx`) enforces both languages have every key, no empty values, matching placeholder counts.
 - Theme: `[data-theme="dark"]` on `<html>`, switched via `useTheme()` in `i18n/theme.jsx`. Persisted to localStorage.
+- **Server messages follow the UI language (2026-09-10).** `api/client.js` sends `X-Lang: tr|en` (read from `LANG_STORAGE_KEY`) on every request; backend `util/Msg.t(tr, en)` resolves it (X-Lang → Accept-Language → `tr`; no request context → `tr`). Any `"message"`/`IllegalArgumentException` text a settings page shows as a toast must go through `Msg.t` — never a bare Turkish literal (that was QA ISSUE-001: English UI, Turkish toast). Audit details and log lines stay Turkish on purpose; `MsgTest` pins the resolution order.
 - Icons: `lucide-react` only — never emoji.
 - Tests use `test-utils.jsx#render()` which wires up i18n + theme providers; mock the API client via `vi.mock('../api/client', ...)`. Never let a real `fetch` escape.
 

@@ -1,5 +1,6 @@
 package com.sitemonitor.controller;
 
+import com.sitemonitor.util.Msg;
 import com.sitemonitor.model.AuditLog;
 import com.sitemonitor.model.RetentionRun;
 import com.sitemonitor.repository.AuditLogRepository;
@@ -239,7 +240,7 @@ public class RetentionAdminController {
         auditService.recordAction("RETENTION_DRY_RUN", session, request, "RETENTION", "dry-run",
                 "{\"rows\":" + run.totalRows() + "}");
         return ok(Map.of("data", runResultToMap(run),
-                "message", "Dry-run tamamlandı — hiçbir kayıt silinmedi"));
+                "message", Msg.t("Dry-run tamamlandı — hiçbir kayıt silinmedi", "Dry run complete — no records were deleted")));
     }
 
     /** Elle temizlik — YIKICI. Legal hold açıkken reddedilir. */
@@ -248,13 +249,13 @@ public class RetentionAdminController {
         requireAccess(session);
         if (retentionService.holdActive()) {
             throw new IllegalStateException(
-                    "Yasal saklama (legal hold) açıkken temizlik çalıştırılamaz. Önce ayarı kapatın.");
+                    Msg.t("Yasal saklama (legal hold) açıkken temizlik çalıştırılamaz. Önce ayarı kapatın.", "Cleanup cannot run while legal hold is on. Turn the setting off first."));
         }
         RetentionService.RunResult run = retentionService.execute(false, actor(session));
         auditService.recordAction("RETENTION_RUN_MANUAL", session, request, "RETENTION", "run",
                 "{\"rows\":" + run.totalRows() + ",\"failed\":" + run.failedCount() + "}");
         return ok(Map.of("data", runResultToMap(run),
-                "message", run.totalRows() + " satır silindi"));
+                "message", run.totalRows() + Msg.t(" satır silindi", " rows deleted")));
     }
 
     /**
@@ -275,7 +276,7 @@ public class RetentionAdminController {
         auditService.recordAction("RETENTION_ROLLUP_BACKFILL", session, request, "RETENTION", "backfill-hourly",
                 "{\"days\":" + d + ",\"buckets\":" + buckets + ",\"ms\":" + ms + "}");
         return ok(Map.of("data", Map.of("days", d, "buckets", buckets, "duration_ms", ms),
-                "message", buckets + " saatlik kova dolduruldu (" + d + " gün)"));
+                "message", buckets + Msg.t(" saatlik kova dolduruldu (", " hourly buckets filled (") + d + Msg.t(" gün)", " days)")));
     }
 
     /** Ham kontrol serilerinin EN UZUN saklama süresi — geriye doldurmanın doğal üst sınırı. */
@@ -317,11 +318,11 @@ public class RetentionAdminController {
                 if (p.zeroMeansNever() && p.defaultDays() == 0) v = 0;
             } else {
                 try { v = Integer.parseInt(raw); }
-                catch (NumberFormatException ex) { throw new IllegalArgumentException(p.settingKey() + ": sayı bekleniyor"); }
+                catch (NumberFormatException ex) { throw new IllegalArgumentException(p.settingKey() + Msg.t(": sayı bekleniyor", ": a number is expected")); }
                 boolean zeroOk = p.zeroMeansNever() && v == 0;
                 if (!zeroOk && v < p.minDays()) {
                     throw new IllegalArgumentException(
-                            p.table() + " için en az " + p.minDays() + " gün girilmelidir (girilen: " + v + ")");
+                            Msg.t(p.table() + " için en az " + p.minDays() + " gün girilmelidir (girilen: " + v + ")", p.table() + " requires at least " + p.minDays() + " days (entered: " + v + ")"));
                 }
             }
             if (v != current) {
@@ -353,7 +354,7 @@ public class RetentionAdminController {
         }
         return ok(Map.of("data", retentionService.overview(false),
                 "changed", changed.size(),
-                "message", "Saklama ayarları kaydedildi (anında geçerli)"));
+                "message", Msg.t("Saklama ayarları kaydedildi (anında geçerli)", "Retention settings saved (effective immediately)")));
     }
 
     /**
