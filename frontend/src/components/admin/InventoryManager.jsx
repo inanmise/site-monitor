@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react'
 import { ChevronDown, Download, Users } from 'lucide-react'
 import ModalShell from '../ui/ModalShell.jsx'
+import TeamBadge from '../ui/TeamBadge.jsx'
 import Field from '../ui/Field.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { CONTACT_FIELDS } from '../../utils/inventoryContacts.js'
@@ -520,7 +521,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                     ? <span className={`tier-badge tier-badge-${item.tier}`}>T{item.tier}</span>
                     : <span style={{ color: 'var(--text-light)', fontSize: '.8em' }}>—</span>}
                 </td>
-                <td>{item.team_name || teamMap[String(item.team_id)] || '—'}</td>
+                <td>{(item.team_name || teamMap[String(item.team_id)]) ? <TeamBadge teamId={item.team_id} teamName={item.team_name || teamMap[String(item.team_id)]} /> : '—'}</td>
                 <td>
                   {item.deleted_at
                     ? <span className="badge badge-deleted">{t('inv.deletedBadge')}</span>

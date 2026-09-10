@@ -3,6 +3,7 @@ import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { AlertTriangle, ShieldAlert } from 'lucide-react'
 import { LoadingBlock } from '../ui/Progress.jsx'
+import TeamBadge from '../ui/TeamBadge.jsx'
 
 function SeverityBadge({ severity }) {
   const cls = severity === 'CRITICAL' ? 'wa-sev-critical' : 'wa-sev-high'
@@ -89,7 +90,7 @@ export default function WeakAlgorithmReport() {
                 </td>
                 <td>
                   {row.team_name
-                    ? <div>{row.team_name}{row.team_email && <div className="wa-sub">{row.team_email}</div>}</div>
+                    ? <div><TeamBadge teamId={row.team_id} teamName={row.team_name} />{row.team_email && <div className="wa-sub">{row.team_email}</div>}</div>
                     : <span className="wa-muted">{t('wa.noTeam')}</span>}
                 </td>
                 <td className="wa-mono">{row.signature_algorithm || '—'}</td>

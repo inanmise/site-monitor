@@ -4,6 +4,7 @@ import { memo } from 'react'
 import { formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { CheckNowButton, CheckRunningStrip } from './ui/CheckRunning.jsx'
+import TeamBadge from './ui/TeamBadge.jsx'
 import { isInsecure, securityTitle } from '../utils/certSecurity.js'
 import { ProgressBar } from './ui/Progress.jsx'
 
@@ -176,8 +177,7 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
         <div className="cc-detail-row">
           {cert.team_name ? (
             <span className="cc-meta" title={t('card.team')} style={{ marginLeft: 0 }}>
-              <Users size={12} />
-              {cert.team_name}
+              <TeamBadge teamId={cert.team_id} teamName={cert.team_name} />
             </span>
           ) : <span />}
           {showVia && (

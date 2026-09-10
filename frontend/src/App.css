@@ -7050,12 +7050,6 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .badge-role-BOLUM_BASKANI { background: #7c3aed; }
 
 /* ── Team member expand row ──────────────────────── */
-.team-expand-btn {
-  background: none; border: none; cursor: pointer; font-size: .85em;
-  color: var(--text-muted); padding: 0 6px 0 0; vertical-align: middle;
-}
-.team-members-row td { background: var(--bg-surface); padding: 8px 12px; }
-[data-theme="dark"] .team-members-row td { background: #1a2233; }
 .team-members-list { display: flex; flex-wrap: wrap; gap: 8px; }
 .team-member-chip {
   display: inline-flex; align-items: center; gap: 4px;
@@ -7071,6 +7065,20 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .pwd-strength-label { font-size: .78em; font-weight: 500; min-width: 50px; text-align: right; }
 
 /* ── Team Management — member business cards ─────────────── */
+/* ── Tıklanabilir takım rozeti + üye modalı (2026-09-10) ── */
+.team-badge { display: inline-flex; align-items: center; gap: 4px; padding: 0; margin: 0; border: 0; background: none; font: inherit; color: inherit; cursor: pointer; text-decoration: underline dotted transparent; text-underline-offset: 2px; border-radius: 4px; }
+.team-badge:hover, .team-badge:focus-visible { color: var(--primary, #2563eb); text-decoration-color: currentColor; outline: none; }
+.team-badge--static { cursor: default; }
+.tmm-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.tmm-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; font-size: 12px; border: 1px solid var(--border, #e2e8f0); background: var(--bg-surface, #f8fafc); color: inherit; text-decoration: none; }
+.tmm-leader { color: #92400e; border-color: #fde68a; background: #fffbeb; }
+[data-theme="dark"] .tmm-leader { color: #fde68a; border-color: #78350f; background: #451a03; }
+.tmm-count { font-weight: 600; }
+.tmm-tabs { display: flex; gap: 6px; margin-bottom: 12px; border-bottom: 1px solid var(--border, #e2e8f0); }
+.tmm-tab { display: inline-flex; align-items: center; gap: 5px; padding: 6px 10px; border: 0; background: none; font: inherit; color: var(--text-muted, #64748b); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tmm-tab.is-active { color: var(--primary, #2563eb); border-bottom-color: var(--primary, #2563eb); font-weight: 600; }
+.tmm-esc-table { width: 100%; }
+
 .tm-member-cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));

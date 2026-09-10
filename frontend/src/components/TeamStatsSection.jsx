@@ -1,4 +1,5 @@
 import { Users } from 'lucide-react'
+import TeamBadge from './ui/TeamBadge.jsx'
 import { useT } from '../i18n/index.jsx'
 
 const STATUSES = [
@@ -39,7 +40,7 @@ function TeamCard({ team, onStatClick }) {
     <div className={`ts-team-card${total === 0 ? ' ts-zero' : ''}`}>
       <div className="ts-team-card-header">
         <Users size={13} className="ts-team-icon" />
-        <span className="ts-team-name">{team.team_name}</span>
+        <span className="ts-team-name"><TeamBadge teamId={team.team_id} teamName={team.team_name} size={0} /></span>
         <span className="ts-team-grand-total">{total}</span>
       </div>
       <table className="ts-grid-table">

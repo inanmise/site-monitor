@@ -1495,6 +1495,8 @@ public class AdminController {
             if (inv != null) {
                 ev.setSyTeamName(inv.getTeamId()   != null ? teamNames.get(inv.getTeamId())   : null);
                 ev.setUgTeamName(inv.getUgTeamId() != null ? teamNames.get(inv.getUgTeamId()) : null);
+                ev.setSyTeamId(inv.getTeamId());
+                ev.setUgTeamId(inv.getUgTeamId());
                 ev.setCertTier(inv.getTier());
             }
             long[] counts = mailCounts.getOrDefault(ev.getId(), new long[]{0, 0});

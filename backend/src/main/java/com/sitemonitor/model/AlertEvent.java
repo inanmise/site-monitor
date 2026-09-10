@@ -107,6 +107,9 @@ public class AlertEvent {
     // ── Transient enrichment (populated by AdminController, not persisted) ──
     @Transient private String  syTeamName;
     @Transient private String  ugTeamName;
+    /** Takım rozeti (tıklanabilir) için kimlik — adla değil id ile modal açılsın. */
+    @Transient private Long    syTeamId;
+    @Transient private Long    ugTeamId;
     @Transient private Integer certTier;
     @Transient private Long    emailSentCount;
     @Transient private Long    emailFailedCount;

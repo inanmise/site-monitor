@@ -47,16 +47,16 @@ describe('TeamManager — business-card members', () => {
     await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
   })
 
-  it('expands a team row and shows member cards as label-value pairs', async () => {
+  it('takım adına tıklayınca üye kartları MODALDA açılır (etiket-değer çiftleri)', async () => {
     render(<TeamManager onTeamsChange={() => {}} />)
     await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
 
-    // Click the expand chevron (▶/▼ button)
-    const expandBtn = document.querySelector('.team-expand-btn')
-    expect(expandBtn).not.toBeNull()
-    fireEvent.click(expandBtn)
+    // Satır-içi genişletme yok: ad tıklanabilir rozet, üyeler ModalShell içinde
+    expect(document.querySelector('.team-expand-btn')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Payments/ }))
 
     await waitFor(() => expect(api.admin.getTeamUsers).toHaveBeenCalledWith(1))
+    await waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull())
     await waitFor(() => expect(document.querySelector('.tm-member-card')).not.toBeNull())
     // Label-value fields are rendered with i18n labels and raw values inside the card
     const card = document.querySelector('.tm-member-card')
@@ -69,7 +69,7 @@ describe('TeamManager — business-card members', () => {
   it('opens the user edit modal when a member card is clicked (admin only)', async () => {
     render(<TeamManager systemRole="ADMIN" onTeamsChange={() => {}} />)
     await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
-    fireEvent.click(document.querySelector('.team-expand-btn'))
+    fireEvent.click(screen.getByRole('button', { name: /Payments/ }))
     await waitFor(() => expect(document.querySelector('.tm-member-card-clickable')).not.toBeNull())
 
     const card = document.querySelector('.tm-member-card-clickable')
@@ -83,7 +83,7 @@ describe('TeamManager — business-card members', () => {
   it('member card is non-clickable for non-admin (read-only view)', async () => {
     render(<TeamManager onTeamsChange={() => {}} />)
     await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
-    fireEvent.click(document.querySelector('.team-expand-btn'))
+    fireEvent.click(screen.getByRole('button', { name: /Payments/ }))
     await waitFor(() => expect(document.querySelector('.tm-member-card')).not.toBeNull())
 
     expect(document.querySelector('.tm-member-card-clickable')).toBeNull()

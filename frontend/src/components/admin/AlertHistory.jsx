@@ -4,6 +4,7 @@ import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
+import TeamBadge from '../ui/TeamBadge.jsx'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../../hooks/useUrlQuerySync.js'
 import { readPageSize, writePageSize } from '../../hooks/usePagination.js'
 import UserBadge from '../ui/UserBadge.jsx'
@@ -1375,12 +1376,12 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
                         )}
                         {a.sy_team_name && (
                           <span className="ahc-chip ahc-chip-team">
-                            <Users size={11}/> {t('alh.syTeam')}: <strong>{a.sy_team_name}</strong>
+                            {t('alh.syTeam')}: <strong><TeamBadge teamId={a.sy_team_id} teamName={a.sy_team_name} size={11} /></strong>
                           </span>
                         )}
                         {a.ug_team_name && (
                           <span className="ahc-chip ahc-chip-team">
-                            <Users size={11}/> {t('alh.ugTeam')}: <strong>{a.ug_team_name}</strong>
+                            {t('alh.ugTeam')}: <strong><TeamBadge teamId={a.ug_team_id} teamName={a.ug_team_name} size={11} /></strong>
                           </span>
                         )}
                         {a.cert_tier != null && (

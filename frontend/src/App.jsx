@@ -26,6 +26,7 @@ import CertRenewalGuide from './components/CertRenewalGuide.jsx'
 import PasswordChangeModal from './components/admin/PasswordChangeModal.jsx'
 import { PermissionsProvider } from './contexts/PermissionsProvider.jsx'
 import { UserDirectoryProvider } from './components/ui/UserDirectory.jsx'
+import { TeamDirectoryProvider } from './components/ui/TeamDirectory.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import CheckRunModal from './components/check/CheckRunModal.jsx'
 import CheckTeamPicker, { NO_TEAM } from './components/check/CheckTeamPicker.jsx'
@@ -857,6 +858,7 @@ export default function App() {
   return (
     <PermissionsProvider user={user}>
     <UserDirectoryProvider>
+    <TeamDirectoryProvider>
     <div className="app-layout">
 
       {inactivityWarning && (
@@ -1424,6 +1426,7 @@ export default function App() {
         onClose={() => { checkCancelRef.current = true; setCheckRun(null) }}
       />
     </div>
+    </TeamDirectoryProvider>
     </UserDirectoryProvider>
     </PermissionsProvider>
   )

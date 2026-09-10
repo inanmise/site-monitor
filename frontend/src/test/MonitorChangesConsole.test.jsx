@@ -84,7 +84,8 @@ describe('MonitorChangesConsole', () => {
     expect(await screen.findByText('Ödeme akışı')).toBeInTheDocument()
     expect(screen.getByText('Eski port')).toBeInTheDocument()
     // Tür + takım aynı satırda: "nerede" sorusunun cevabı.
-    expect(screen.getByText(/Synthetic · Kanal takımı/)).toBeInTheDocument()
+    // Takım adı artık tıklanabilir rozet (ayrı element) → künye metni kapsayıcıdan okunur
+    expect([...document.querySelectorAll('.chg-row-meta')].some(e => /Synthetic · Kanal takımı/.test(e.textContent))).toBe(true)
     // "Silindi" hem olay süzgecinde hem satır rozetinde geçer — satırdakini arıyoruz.
     const rows = screen.getByText('Eski port').closest('.chg-rows')
     expect(within(rows).getByText('Deleted')).toBeInTheDocument()

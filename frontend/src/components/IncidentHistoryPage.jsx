@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
+import TeamBadge from './ui/TeamBadge.jsx'
 import { useUrlQuerySync, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import { readPageSize, writePageSize } from '../hooks/usePagination.js'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
@@ -723,7 +724,7 @@ export default function IncidentHistoryPage() {
                   </td>}
                   <td style={{ whiteSpace: 'nowrap' }}>{formatDate(r.occurred_at)}</td>
                   <td>{r.title}</td>
-                  <td>{r.team_name || '—'}</td>
+                  <td>{r.team_name ? <TeamBadge teamId={r.team_id} teamName={r.team_name} /> : '—'}</td>
                   <td>{r.channel || '—'}</td>
                   <td>{r.service || '—'}</td>
                   <td>{t('inc.cat' + r.category) || r.category}</td>

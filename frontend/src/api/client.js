@@ -115,6 +115,11 @@ async function request(path, options = {}) {
 
 export const api = {
   // Hafif kullanıcı dizini (her authenticated kullanıcı) — UserDirectory bağlamı bununla beslenir.
+  /** Kurum-geneli takım rehberi (oturum açmış herkes) — ad→id ve üye listesi (beyaz-listeli). */
+  teams: {
+    directory: () => request('/teams/directory'),
+    members: (id) => request(`/teams/${id}/members`),
+  },
   users: {
     directory: () => request('/users/directory'),
   },
