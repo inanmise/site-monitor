@@ -36,3 +36,10 @@ S1, S2, S3, S4, S5, S6, S7, S8, S9, S10, S11, S12, S13, S14, S15, S16, S17 — b
 
 ## Sonuç
 Tüm düzeltmeler tutmuş; imzaların hiçbiri bu sürümün diff'inde tekrar etmiyor. Sürüme engel yok.
+
+## Ek — ikinci tur (aynı gün, `d413a94a..HEAD`)
+
+Kapsam: sunucu mesajlarının arayüz dilini izlemesi (`X-Lang` + `Msg.t`, 12 dosyada 48 dize) ve
+Sistem Sağlığı kart CSS'i. Eklenen satırlarda S2/S3/S4/S9/S10/S11/S12 imzalarından hiçbiri yok.
+Dokuz ayar denetleyicisinde `Msg.t` dışında kalan Türkçe kullanıcı mesajı kalmadı (grep boş).
+Baseline dosyaları bu diff'te değişmedi → **REGRESYON YOK**. Sürüme engel yok.
