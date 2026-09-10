@@ -95,7 +95,7 @@ public class StormSettingsController {
 
     private void requireSettingsAccess(HttpSession session) {
         if (Boolean.TRUE.equals(session != null ? session.getAttribute("bootstrapAdmin") : null)) return;
-        SessionScope.requireNotScopedAdmin(session, "settings.general");   // kapsamlı müdür (AD ADMIN) geçemez
+        // 2026-09-10: kapsamlı müdür (AD ADMIN) alarm-fırtınası ayarlarını düzenleyebilir (sır taşımaz).
         permissionService.require(session, "settings.general", "edit");
     }
 

@@ -101,10 +101,33 @@ public final class SessionScope {
      * Diğer rollere verilen açık matris grant'ları etkilenmez.
      */
     public static void requireNotScopedAdmin(HttpSession session, String resourceKey) {
-        if (session != null && "ADMIN".equals(session.getAttribute("systemRole"))
-                && session.getAttribute("viewTeamIds") != null) {
-            throw new SecurityException("Bu ayar yalnız global yönetici tarafından değiştirilebilir: " + resourceKey);
+        if (isScopedAdmin(session)) {
+            throw new SecurityException(com.sitemonitor.util.Msg.t(
+                    "Bu ayar yalnız global yönetici tarafından değiştirilebilir: ",
+                    "Only a global administrator can change this setting: ") + resourceKey);
         }
+    }
+
+    /**
+     * Kapsamlı müdür: rol ADMIN ama {@code viewTeamIds} dolu (AD'den gelen takım-kapsamlı yönetici).
+     * 2026-09-10 ürün kararı: Ayarlar'ı GÖRÜR ve operasyonel bölümleri düzenler; yalnız
+     * {@link #requireNotScopedAdmin} ile kapılı dört sır yüzeyi (SMTP, LDAP, Secret Decryptor,
+     * Veritabanı) ve {@code AppSettingsCatalog.GLOBAL_ONLY} anahtarları global yöneticide kalır.
+     */
+    public static boolean isScopedAdmin(HttpSession session) {
+        return session != null && "ADMIN".equals(session.getAttribute("systemRole"))
+                && session.getAttribute("viewTeamIds") != null;
+    }
+
+    /** {@link #isScopedAdmin} — istek bağlamındaki oturum için (servis katmanı, HttpSession parametresi yokken). */
+    public static boolean isScopedAdminInRequest() {
+        try {
+            var ra = org.springframework.web.context.request.RequestContextHolder.getRequestAttributes();
+            if (ra instanceof org.springframework.web.context.request.ServletRequestAttributes sra) {
+                return isScopedAdmin(sra.getRequest().getSession(false));
+            }
+        } catch (Exception ignored) { /* bağlam yok → kapsamlı değil */ }
+        return false;
     }
 
     /** Whether the caller may VIEW a resource owned by {@code teamId}. Global viewer (admin/AUDIT)

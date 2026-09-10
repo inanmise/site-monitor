@@ -127,8 +127,12 @@ public class AppSettingsService {
 
     public List<Map<String, Object>> getCatalogForClient() {
         List<Map<String, Object>> out = new ArrayList<>();
+        // Kapsamlı müdür (AD ADMIN) için GLOBAL_ONLY kalemler salt-okunur işaretlenir; UI kilitler,
+        // save() yine de sunucu tarafında reddeder (UI'ya güvenilmez).
+        boolean scoped = com.sitemonitor.controller.SessionScope.isScopedAdminInRequest();
         for (AppSettingsCatalog.Setting s : AppSettingsCatalog.ALL) {
             String def = environment.getProperty(s.key());
+            boolean globalOnly = AppSettingsCatalog.isGlobalOnly(s.key());
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("key", s.key());
             m.put("group", s.group());
@@ -136,6 +140,8 @@ public class AppSettingsService {
             m.put("value", overrides.getOrDefault(s.key(), def));
             m.put("default", def);
             m.put("overridden", overrides.containsKey(s.key()));
+            m.put("global_only", globalOnly);
+            m.put("read_only", globalOnly && scoped);
             if (!s.enumOptions().isEmpty()) m.put("options", s.enumOptions());
             out.add(m);
         }
@@ -158,6 +164,13 @@ public class AppSettingsService {
             if (s == null) throw new IllegalArgumentException(Msg.t("Bilinmeyen ayar: ", "Unknown setting: ") + key);
             String val = e.getValue() == null ? null : e.getValue().toString().trim();
             validate(s, val);
+            // Kapsamlı müdür GLOBAL_ONLY anahtarı yazamaz — hangi denetleyiciden gelirse gelsin tek kapı.
+            if (AppSettingsCatalog.isGlobalOnly(key)
+                    && com.sitemonitor.controller.SessionScope.isScopedAdminInRequest()) {
+                throw new SecurityException(com.sitemonitor.util.Msg.t(
+                        "Bu ayar yalnız global yönetici tarafından değiştirilebilir: ",
+                        "Only a global administrator can change this setting: ") + key);
+            }
             normalized.put(key, val);
             if (val == null || val.isEmpty()) next.remove(key);
             else next.put(key, val);

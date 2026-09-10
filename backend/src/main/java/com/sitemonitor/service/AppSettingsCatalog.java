@@ -360,4 +360,46 @@ public final class AppSettingsCatalog {
     public static Setting byKey(String key) {
         return ALL.stream().filter(s -> s.key().equals(key)).findFirst().orElse(null);
     }
+
+    /**
+     * YALNIZ GLOBAL yöneticinin değiştirebileceği anahtarlar. 2026-09-10 ürün kararı: kapsamlı müdür
+     * (AD ADMIN, viewTeamIds dolu) Ayarlar'ı görür ve operasyonel ayarları düzenler; ama v20.50.29'un
+     * kapattığı sızıntı/RCE vektörleri kapalı kalır. Her satırın gerekçesi:
+     * <ul>
+     *   <li>SSRF kapıları + DNS çözücü: iç ağa/metadata'ya erişimi açar ya da izleme hedeflerini
+     *       saldırganın çözücüsüne yönlendirir.</li>
+     *   <li>CA paketi + TOFU: sahte sertifikaya güven → MITM; RDAP taban URL'i dış hedef.</li>
+     *   <li>k6 ikili yolu ve API adresi: sunucuda çalıştırılacak yürütülebilir dosyayı seçer (RCE).</li>
+     *   <li>Push URL + başlıklar: saklı gizli başlıklar "Test" ile saldırganın sunucusuna gider.</li>
+     *   <li>Uygulama taban URL'i + CORS + sistem yöneticisi e-postası: tüm e-posta bağlantılarını
+     *       sahte alana çevirme (oltalama) / kimlikli isteklere yabancı origin açma / yönetici
+     *       bildirimlerini yönlendirme.</li>
+     *   <li>Log seviyeleri: TRACE mail logu içerik/başlık sızdırır.</li>
+     * </ul>
+     * Zorlama TEK yerde: {@link AppSettingsService#save} (hangi denetleyici çağırırsa çağırsın);
+     * {@code getCatalogForClient} kalemi {@code global_only}/{@code read_only} ile işaretler, UI kilitler.
+     * Kapı: {@code SettingsScopedAdminGateTest}.
+     */
+    public static final java.util.Set<String> GLOBAL_ONLY = java.util.Set.of(
+        "site.monitor.monitoring.allow-internal-targets",
+        "site.monitor.monitoring.allow-loopback-targets",
+        "site.monitor.dns.resolvers",
+        "site.monitor.trust.ca-bundle-pem",
+        "site.monitor.trust.auto-pin.enabled",
+        "site.monitor.http.rdap-base-url",
+        "site.monitor.scripted.k6-bin",
+        "site.monitor.scripted.k6-api-address",
+        "site.monitor.scripted.hardcoded-secret-policy",
+        "site.monitor.userpush.url",
+        "site.monitor.userpush.headers",
+        "site.monitor.app.base-url",
+        "site.monitor.cors.allowed-origins",
+        "site.monitor.system-admin.email",
+        "logging.level.com.sitemonitor",
+        "logging.level.com.sitemonitor.mail"
+    );
+
+    public static boolean isGlobalOnly(String key) {
+        return key != null && GLOBAL_ONLY.contains(key);
+    }
 }

@@ -101,12 +101,13 @@ class UserPushControllerUnitTest {
     }
 
     @Test
-    @DisplayName("YETKI: kapsamli mudur-admin (viewTeamIds dolu) yonetim ucuna GIREMEZ")
-    void getSettings_scopedAdmin_rejected() {
-        // SessionScope.isGlobalAdmin: rol ADMIN ama viewTeamIds DOLU ise global admin degildir.
-        assertThatThrownBy(() -> controllerWith(mock(AppSettingsService.class))
+    @DisplayName("YETKI: kapsamli mudur-admin (viewTeamIds dolu) yonetim ucuna GIRER (2026-09-10 karari; url/headers GLOBAL_ONLY ile serviste kapali)")
+    void getSettings_scopedAdmin_allowed() {
+        // 2026-09-10: mudur operasyonel ayarlari yonetir; userpush.url/headers'i AppSettingsService.save
+        // GLOBAL_ONLY ile reddeder (AppSettingsServiceTest.scopedAdmin_globalOnlyRejected_operationalAllowed).
+        org.assertj.core.api.Assertions.assertThatCode(() -> controllerWith(mock(AppSettingsService.class))
                 .getSettings(session("ADMIN", true)))
-                .isInstanceOf(SecurityException.class);
+                .doesNotThrowAnyException();
     }
 
     @Test

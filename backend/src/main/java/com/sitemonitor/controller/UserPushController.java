@@ -371,7 +371,9 @@ public class UserPushController {
     }
 
     private void requireAdmin(HttpSession session) {
-        if (!SessionScope.isGlobalAdmin(session)) {
+        // 2026-09-10: kapsamlı müdür (AD ADMIN) de yönetir; userpush.url/headers GLOBAL_ONLY olduğundan
+        // AppSettingsService.save onları müdür için reddeder (gizli başlıklar saldırgan URL'ine gitmez).
+        if (!SessionScope.isGlobalAdmin(session) && !SessionScope.isScopedAdmin(session)) {
             log.warn("Yetkisiz user-push yönetim denemesi: {}", actor(session));
             throw new SecurityException("Admin access required");
         }

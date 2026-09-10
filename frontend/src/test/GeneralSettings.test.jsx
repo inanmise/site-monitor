@@ -176,3 +176,28 @@ describe('GeneralSettings', () => {
     expect(container.querySelector('input[type="number"]').value).toBe('9000')
   })
 })
+
+/**
+ * 2026-09-10: sunucu, kapsamlı müdür için GLOBAL_ONLY kalemleri read_only=true işaretler.
+ * Kilit görsel + ipucu; asıl kapı AppSettingsService.save (403). UI kilidi düşerse müdür
+ * kaydetmeyi dener ve 403 alır — bu test kilidin çizildiğini pinler.
+ */
+describe('GeneralSettings — read_only kalemler', () => {
+  it('read_only kalem disabled + "yalnız global yönetici" ipucu; diğerleri düzenlenebilir', async () => {
+    const items = [
+      { key: 'site.monitor.cors.allowed-origins', group: 'general', type: 'CSV', value: 'http://a', default: '', global_only: true, read_only: true },
+      { key: 'site.monitor.scheduler.stale-minutes', group: 'scheduler', type: 'INT', value: '60', default: '60', global_only: false, read_only: false },
+      { key: 'site.monitor.trust.auto-pin.enabled', group: 'security', type: 'BOOL', value: 'false', default: 'false', global_only: true, read_only: true },
+    ]
+    api.admin.getGeneralSettings.mockResolvedValue({ success: true, data: items })
+    const { container } = render(<GeneralSettings />)
+    await waitFor(() => expect(container.querySelector('.ldap-actions .btn-primary')).not.toBeNull())
+
+    const field = (key) => [...container.querySelectorAll('.threshold-field')].find(f => f.textContent.includes(key))
+    expect(field('site.monitor.cors.allowed-origins').querySelector('input').disabled).toBe(true)
+    expect(field('site.monitor.cors.allowed-origins').textContent).toMatch(/global (administrator|yönetici)/i)
+    expect(field('site.monitor.trust.auto-pin.enabled').querySelector('input[type=checkbox]').disabled).toBe(true)
+    expect(field('site.monitor.scheduler.stale-minutes').querySelector('input').disabled).toBe(false)
+    expect(field('site.monitor.scheduler.stale-minutes').textContent).not.toMatch(/global (administrator|yönetici)/i)
+  })
+})

@@ -94,13 +94,23 @@ describe('Nav', () => {
     expect(onTabChange).toHaveBeenCalledWith('settings')
   })
 
-  it('hides the Settings entry from a scoped ADMIN (müdür) and from a plain user, even if named "admin"', () => {
-    const { container, unmount } = render(<Nav {...DEFAULT_PROPS} username="ADMIN" systemRole="ADMIN" />)
+  it('shows the Settings entry to a scoped ADMIN (müdür) too — 2026-09-10 product decision', () => {
+    // globalAdmin YOK, rol ADMIN: kapsamlı müdür. Sır yüzeyleri AdminSettings içinde kilitli
+    // (AdminSettings.test), backend GLOBAL_ONLY/requireNotScopedAdmin uygular; giriş görünür.
+    const onTabChange = vi.fn()
+    const { container } = render(<Nav {...DEFAULT_PROPS} username="mudur" systemRole="ADMIN" onTabChange={onTabChange} />)
+    openUserMenu(container)
+    fireEvent.click(screen.getByRole('button', { name: /Settings/ }))
+    expect(onTabChange).toHaveBeenCalledWith('settings')
+  })
+
+  it('hides the Settings entry from non-ADMIN roles, even if named "admin"', () => {
+    const { container, unmount } = render(<Nav {...DEFAULT_PROPS} username="admin" />)
     openUserMenu(container)
     expect(screen.queryByRole('button', { name: /Settings/ })).toBeNull()
     unmount()
 
-    const r2 = render(<Nav {...DEFAULT_PROPS} username="admin" />)
+    const r2 = render(<Nav {...DEFAULT_PROPS} username="admin" systemRole="TEAM_ADMIN" />)
     openUserMenu(r2.container)
     expect(screen.queryByRole('button', { name: /Settings/ })).toBeNull()
   })

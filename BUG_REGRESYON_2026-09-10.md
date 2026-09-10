@@ -43,3 +43,13 @@ Kapsam: sunucu mesajlarının arayüz dilini izlemesi (`X-Lang` + `Msg.t`, 12 do
 Sistem Sağlığı kart CSS'i. Eklenen satırlarda S2/S3/S4/S9/S10/S11/S12 imzalarından hiçbiri yok.
 Dokuz ayar denetleyicisinde `Msg.t` dışında kalan Türkçe kullanıcı mesajı kalmadı (grep boş).
 Baseline dosyaları bu diff'te değişmedi → **REGRESYON YOK**. Sürüme engel yok.
+
+## Ek — üçüncü tur (aynı gün, `dc80c7c0..HEAD`)
+
+Kapsam: kapsamlı müdürün Ayarlar erişimi (seçenek B). Bu tur bilinçli bir kapı GEVŞETMESİ olduğundan
+S1 (yetki atlaması) imzası özel olarak tarandı: kapısı kaldırılan dört denetleyicide `permissionService.
+require` duruyor; UserPush `isScopedAdmin` ile daraltıldı; dört sır yüzeyi (SMTP/LDAP/Secret/DB)
+`requireNotScopedAdmin` taşıyor; `GLOBAL_ONLY` 16 anahtar `AppSettingsService.save`'de tek kapı.
+Eklenen satırlarda S2/S3/S4/S9/S10/S11/S12 imzası yok. Kapı: `SettingsScopedAdminGateTest`.
+v20.50.29 bulgusu KAPALI kalır (yüzeyi "tüm ayarlar"dan "sır yüzeyleri + riskli anahtarlar"a
+daraltıldı; bkz. CLAUDE.md). Sürüme engel yok.

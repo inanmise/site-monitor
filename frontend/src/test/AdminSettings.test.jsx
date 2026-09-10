@@ -112,3 +112,37 @@ describe('AdminSettings — sekme semantiği, klavye ve derin bağlantı', () =>
     expect(PAGE_STATE_PARAMS).toContain('sec')
   })
 })
+
+/**
+ * 2026-09-10 ürün kararı: kapsamlı müdür (globalAdmin=false) Ayarlar'ı görür; sır taşıyan dört
+ * bölüm (SMTP, LDAP, Veritabanı, Secret Decryptor) bileşen yerine "yalnız global yönetici" notu
+ * çizer (backend requireNotScopedAdmin ile 403'ler — 403 dolu ekran yerine açık not).
+ */
+describe('AdminSettings — kapsamlı müdür kilitleri', () => {
+  const clickTab = (re) => fireEvent.click(screen.getByRole('tab', { name: re }))
+
+  it('müdür: SMTP/LDAP/Veritabanı/Secret bölümleri not gösterir, bileşeni çizmez', () => {
+    render(<AdminSettings globalAdmin={false} />)
+    for (const [re, tid] of [[/SMTP/, 'sec-smtp'], [/LDAP/, 'sec-ldap'], [/Database/, 'sec-database'], [/Secret/, 'sec-secrets']]) {
+      clickTab(re)
+      expect(screen.getByTestId('settings-global-only')).toBeInTheDocument()
+      expect(screen.queryByTestId(tid), `${tid} müdüre çizildi`).toBeNull()
+    }
+  })
+
+  it('müdür: operasyonel bölümler (Genel, Storm, Data Retention) normal çizilir', () => {
+    render(<AdminSettings globalAdmin={false} />)
+    expect(screen.getByTestId('sec-general')).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-global-only')).toBeNull()
+    clickTab(/Alert Storm/)
+    expect(screen.getByTestId('sec-storm')).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-global-only')).toBeNull()
+  })
+
+  it('global admin (varsayılan prop): SMTP bileşeni çizilir, not yok', () => {
+    render(<AdminSettings />)
+    clickTab(/SMTP/)
+    expect(screen.getByTestId('sec-smtp')).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-global-only')).toBeNull()
+  })
+})
