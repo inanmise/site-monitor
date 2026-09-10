@@ -145,6 +145,11 @@ export default function GeneralSettings() {
       {order.map((g) => (
         <div className="admin-section" key={g}>
           <h4 className="ldap-subhdr">{t('general.grp.' + g)}</h4>
+          {/* İsteğe bağlı grup açıklaması (general.grpDesc.<grup>) — useT eksik anahtarda anahtarın
+              kendisini döndürür; yalnız gerçekten tanımlı olanlar çizilir (executor gibi kural taşıyanlar). */}
+          {t('general.grpDesc.' + g) !== 'general.grpDesc.' + g && (
+            <p className="section-desc">{t('general.grpDesc.' + g)}</p>
+          )}
           {byGroup[g].map((it) => (
             <div className="threshold-grid" key={it.key}>
               <div className="threshold-field">

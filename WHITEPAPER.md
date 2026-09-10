@@ -1679,9 +1679,9 @@ Gerçek değerler hiçbir zaman commit edilmez; `.env.example` ve `k8s/secret.ex
 | `site.monitor.alert.default-critical-days` | 7 | Kritik gün eşiği |
 | `site.monitor.alert.default-realert-hours` | 24 | Tekrar bildirim aralığı |
 | `site.monitor.scheduler.cleanup-cron` | `0 0 3 * * *` | Gece temizlik + özetleme cron'u |
-| `EXECUTOR_CORE_SIZE` | 20 | certCheckExecutor çekirdek thread |
-| `EXECUTOR_MAX_SIZE` | 50 | certCheckExecutor maksimum thread |
-| `EXECUTOR_QUEUE_CAPACITY` | 5000 | certCheckExecutor kuyruk boyutu |
+| `EXECUTOR_CORE_SIZE` | 20 | certCheckExecutor çekirdek thread (açılış değeri; Ayarlar → Genel → Görev Havuzu'ndan canlı değiştirilir) |
+| `EXECUTOR_MAX_SIZE` | 50 | certCheckExecutor maksimum thread (açılış değeri; canlı değiştirilir) |
+| `EXECUTOR_QUEUE_CAPACITY` | 5000 | certCheckExecutor kuyruk boyutu (açılış değeri; canlı değiştirilir) |
 | `mail.send.retry-delay-ms` | 90000 | SMTP 421 asenkron retry gecikmesi |
 | `NETWORK_ERROR_THRESHOLD` | 0.50 | Toplu ağ kesintisi oranı eşiği |
 | `NETWORK_MIN_ERRORS` | 3 | Toplu kesinti için asgari hata sayısı |

@@ -138,6 +138,7 @@ Rule: when you add a column an existing DB might not have, add a `patch()` line.
 ### Cert-check thread pool
 `WebConfig` registers a `certCheckExecutor` (`ThreadPoolTaskExecutor`) shared by `CertificateCheckerService` / `PortCheckerService` / `DnsCheckerService` / `UptimeHttpCheckerService`. Sized by env:
 - `EXECUTOR_CORE_SIZE` (default 20), `EXECUTOR_MAX_SIZE` (50), `EXECUTOR_QUEUE_CAPACITY` (5000). Prod Helm values mirror these (20/50/5000); the rejected-execution handler runs overflow on the caller thread and counts it in `WebConfig.CALLER_RUNS` (System Health → Task Queue).
+- **Live tuning (2026-09-10):** the same three keys are in `AppSettingsCatalog` (group `executor`) and editable under Settings → General → Task Pool. `AppSettingsService.save` publishes `AppSettingsChangedEvent`; `ExecutorTuningService` applies core/max/queue to the `TunableThreadPoolTaskExecutor` bean immediately (queue is a `ResizableCapacityQueue`, so capacity changes without restart). Env values are only the boot fallback; a stored override is re-applied on `ApplicationReadyEvent`. Cross-field rule (`core ≤ max`, `queue ≥ 1`) is enforced at save time.
 Bump these when inventory grows past a few hundred rows or you see queue backpressure in metrics.
 
 ### Other services in the codebase

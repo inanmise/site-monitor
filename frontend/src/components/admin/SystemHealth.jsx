@@ -908,6 +908,8 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                 </span>
               </div>
             </div>
+            {/* 2026-09-10: havuz/kuyruk artık Ayarlar'dan canlı — kart bunu söylesin, ops Helm'e koşmasın. */}
+            <p className="section-desc" style={{ marginTop: 0 }}>{t('health.queueTuneHint')}</p>
             <dl className="sys-dl">
               <dt title={t('health.queueTooltip', executor_pool.max_pool_size ?? executor_pool.core_pool_size ?? 0)}>
                 {t('health.queuePending')}

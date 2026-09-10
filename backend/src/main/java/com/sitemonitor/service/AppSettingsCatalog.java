@@ -92,6 +92,12 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.network.error-rate-threshold", "outage",     Type.DOUBLE),
         new Setting("site.monitor.network.min-errors",           "outage",     Type.INT),
         new Setting("site.monitor.scheduler.stale-minutes",      "scheduler",  Type.INT),
+        // ── Görev havuzu (certCheckExecutor) — 2026-09-10: eskiden yalnız EXECUTOR_* env + restart.
+        //    ExecutorTuningService AppSettingsChangedEvent ile CANLI uygular; core<=max ve kuyruk>=1
+        //    kuralı save'de (ExecutorTuningService.validate) reddedilir. Boş = env varsayılanına dön.
+        new Setting("site.monitor.executor.core-size",           "executor",   Type.INT),
+        new Setting("site.monitor.executor.max-size",            "executor",   Type.INT),
+        new Setting("site.monitor.executor.queue-capacity",      "executor",   Type.INT),
         // A12: gunluk alan-adi bitis tazelemesi ac/kapa — kodda okunuyordu, katalogda yoktu.
         new Setting("site.monitor.scheduler.domain-expiry-refresh.enabled", "scheduler", Type.BOOL),
         new Setting("site.monitor.uptime.alert-enabled",         "monitoring", Type.BOOL),

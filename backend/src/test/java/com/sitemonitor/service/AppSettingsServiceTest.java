@@ -23,7 +23,12 @@ import static org.assertj.core.api.Assertions.*;
 @TestPropertySource(properties = {
         "spring.jpa.hibernate.ddl-auto=create-drop",
         "site.monitor.scheduler.stale-minutes=65",
-        "logging.level.com.sitemonitor=DEBUG"
+        "logging.level.com.sitemonitor=DEBUG",
+        // Görev havuzu çapraz kuralı yalnız ÜÇÜ de çözülünce çalışır; src/test/resources/application.properties
+        // ana dosyayı gölgeler ve bu anahtarları taşımaz → burada prod varsayılanlarıyla verilir.
+        "site.monitor.executor.core-size=20",
+        "site.monitor.executor.max-size=50",
+        "site.monitor.executor.queue-capacity=5000"
 })
 class AppSettingsServiceTest {
 
@@ -109,5 +114,54 @@ class AppSettingsServiceTest {
             org.assertj.core.api.Assertions.assertThatCode(() -> service.save(values(key, "admin|2026-09-10T00:00:00|uygundur"), "admin"))
                     .as("gerçek save bilinmeyen-ayar atmamalı: " + key).doesNotThrowAnyException();
         }
+    }
+
+    // ── 2026-09-10: görev havuzu (executor) canlı ayar — alanlar-arası kural + değişiklik olayı ──
+
+    @org.springframework.boot.test.context.TestConfiguration
+    static class EventProbe {
+        static final java.util.List<AppSettingsChangedEvent> EVENTS =
+                java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        @org.springframework.context.event.EventListener
+        void on(AppSettingsChangedEvent ev) { EVENTS.add(ev); }
+    }
+
+    @Test
+    @DisplayName("executor: core > max tek başına tip-geçerli olsa da BİRLİKTE reddedilir; hiçbir satır yazılmaz")
+    void executor_crossFieldValidation_rejectsAtomically() {
+        // properties: core 20 / max 50 / queue 5000. core=70 → max(50) < core → red
+        assertThatThrownBy(() -> service.save(values("site.monitor.executor.core-size", "70"), "admin"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("max-size");
+        assertThat(repo.findBySettingKey("site.monitor.executor.core-size")).isEmpty();
+        assertThat(service.getInt("site.monitor.executor.core-size", -1)).isEqualTo(20);
+
+        // İkisi birlikte gelirse (70/90) geçerli — tek istekte tutarlı çift kabul edilir
+        Map<String, Object> inner = new HashMap<>();
+        inner.put("site.monitor.executor.core-size", "70");
+        inner.put("site.monitor.executor.max-size", "90");
+        Map<String, Object> body = new HashMap<>();
+        body.put("values", inner);
+        service.save(body, "admin");
+        assertThat(service.getInt("site.monitor.executor.core-size", -1)).isEqualTo(70);
+        assertThat(service.getInt("site.monitor.executor.max-size", -1)).isEqualTo(90);
+
+        // Kuyruk 0 reddedilir
+        assertThatThrownBy(() -> service.save(values("site.monitor.executor.queue-capacity", "0"), "admin"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("queue-capacity");
+    }
+
+    @Test
+    @DisplayName("save → AppSettingsChangedEvent yayınlanır (değişen anahtarlarla, source=save)")
+    void save_publishesChangedEvent() {
+        EventProbe.EVENTS.clear();
+        service.save(values("site.monitor.executor.queue-capacity", "6000"), "admin");
+        assertThat(EventProbe.EVENTS).hasSize(1);
+        AppSettingsChangedEvent ev = EventProbe.EVENTS.get(0);
+        assertThat(ev.source()).isEqualTo("save");
+        assertThat(ev.changedKeys()).containsExactly("site.monitor.executor.queue-capacity");
+        assertThat(ev.touches("site.monitor.executor.queue-capacity")).isTrue();
+        assertThat(ev.touches("site.monitor.app.base-url")).isFalse();
     }
 }
