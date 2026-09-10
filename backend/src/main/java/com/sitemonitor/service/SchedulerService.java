@@ -2113,6 +2113,11 @@ public class SchedulerService {
             ex.put("core_pool_size",  certCheckExecutor.getCorePoolSize());
             ex.put("max_pool_size",   certCheckExecutor.getMaxPoolSize());
             ex.put("completed_tasks", certCheckExecutor.getThreadPoolExecutor().getCompletedTaskCount());
+            // Doygunluk göstergeleri: taşan görev sayacı (CallerRuns) + kuyruk %80 eşiği.
+            ex.put("caller_runs",     com.sitemonitor.config.WebConfig.CALLER_RUNS.get());
+            ex.put("saturated",       certCheckExecutor.getQueueSize() > certCheckExecutor.getQueueCapacity() * 0.8
+                                      || (certCheckExecutor.getActiveCount() >= certCheckExecutor.getMaxPoolSize()
+                                          && certCheckExecutor.getQueueSize() > 0));
             ex.put("jvm_start_time", ISO.format(Instant.ofEpochMilli(
                     ManagementFactory.getRuntimeMXBean().getStartTime())));
             h.put("executor_pool", ex);

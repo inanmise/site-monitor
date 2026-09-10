@@ -26,6 +26,7 @@ config:
   # Küçük CPU → düşük paralellik (açılışta CPU oversubscription olmasın)
   executorCoreSize: "4"
   executorMaxSize: "8"
+  executorQueueCapacity: "2000"
 
 ingress:
   enabled: true

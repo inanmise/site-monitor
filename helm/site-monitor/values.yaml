@@ -84,10 +84,14 @@ config:
   weeklyAvailCron: "0 0 10 ? * MON"
   # Sertifika tarama executor'ı (paralel kontrol thread'leri). CPU-sınırlı küçük
   # ortamlarda düşür → açılışta CPU oversubscription olmasın.
-  # Tek pod: sweep TLS/OCSP kriptosu kullanıcı istekleriyle aynı çekirdekleri paylaşır. Peak thread'i
-  # 50→30'a çek (CallerRunsPolicy sayesinde taşan iş reddedilmez, caller'da koşar → güvenli).
-  executorCoreSize: "12"
-  executorMaxSize: "30"
+  # Tek pod: sweep TLS/OCSP kriptosu kullanıcı istekleriyle aynı çekirdekleri paylaşır; CallerRunsPolicy
+  # sayesinde taşan iş reddedilmez, caller'da koşar → güvenli. 2026-09-10: 12/30 → 20/50 (uygulama
+  # varsayılanı): işler ağ-bağımlı (soket bekleme), 50 thread ≈ 25 MB yığın (-Xss512k), CPU 2000m.
+  # Kuyruk 1000 → 5000: derinlik bellek-ucuz (görev başına küçük DTO), Görev Kuyruğu kartı %80'de
+  # doygunluk rozeti + caller-runs sayacı gösterir. Env: EXECUTOR_CORE_SIZE/MAX_SIZE/QUEUE_CAPACITY.
+  executorCoreSize: "20"
+  executorMaxSize: "50"
+  executorQueueCapacity: "5000"
   # Açılışta ağır tarama + escalation catch-up bu kadar ms geciktirilir; login/BCrypt
   # ilk dakikada CPU'yu serbest bulsun (açılışta ~1dk askıda kalma fix'i).
   startupCheckDelayMs: "60000"

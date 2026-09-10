@@ -908,7 +908,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
               </div>
             </div>
             <dl className="sys-dl">
-              <dt title={t('health.queueTooltip')}>
+              <dt title={t('health.queueTooltip', executor_pool.max_pool_size ?? executor_pool.core_pool_size ?? 0)}>
                 {t('health.queuePending')}
                 <span className="queue-info-ind" aria-hidden="true">ⓘ</span>
               </dt>
@@ -939,6 +939,13 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
               <dt>{t('health.queueCompleted')}</dt>
               <dd>{executor_pool.completed_tasks ?? 0}</dd>
 
+              {executor_pool.caller_runs != null && (
+                <>
+                  <dt title={t('health.queueCallerRunsTooltip')}>{t('health.queueCallerRuns')}</dt>
+                  <dd className={executor_pool.caller_runs > 0 ? 'queue-callerruns-hot' : undefined}>{executor_pool.caller_runs}</dd>
+                </>
+              )}
+
               {executor_pool.jvm_start_time && (
                 <>
                   <dt title={t('health.queueSinceStartTooltip')}>{t('health.queueSinceStart')}</dt>
@@ -949,6 +956,10 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
             <ProgressBar value={executor_pool.queue_size ?? 0}
               max={Math.max(1, executor_pool.queue_capacity ?? 1)} size="sm"
               label={t('health.queueTitle')} />
+            {/* Doygunluk uyarısı: havuz doluyken sweep sessizce yavaşlıyordu (CallerRuns); şimdi kartta yazar. */}
+            {(executor_pool.saturated || (executor_pool.queue_size ?? 0) > (executor_pool.queue_capacity ?? 1) * 0.8) && (
+              <div className="queue-saturated" role="status">{t('health.queueSaturated')}</div>
+            )}
           </div>
         )}
 

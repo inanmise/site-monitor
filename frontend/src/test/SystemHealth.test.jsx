@@ -159,3 +159,30 @@ describe('SystemHealth — ilerleme çubukları', () => {
     expect(document.querySelectorAll('progress').length).toBe(0)
   })
 })
+
+// 2026-09-10: Görev Kuyruğu kartı doygunluğu görünür kılar (kapasite 5000, thread 20/50)
+describe('SystemHealth — Görev Kuyruğu doygunluk göstergeleri', () => {
+  async function openSys(health) {
+    api.admin.getSystemHealth.mockResolvedValue({ success: true, data: health })
+    renderHealth()
+    await waitFor(() => expect(api.admin.getSystemHealth).toHaveBeenCalled())
+    const user = userEvent.setup()
+    await user.click(collapseBars()[0])
+  }
+
+  it('sağlıklı havuzda doygunluk uyarısı YOK, caller-runs satırı 0 gösterir, tooltip max thread sayısını yazar', async () => {
+    await openSys({ ...HEALTH, executor_pool: { ...HEALTH.executor_pool, queue_capacity: 5000, max_pool_size: 50, caller_runs: 0, saturated: false } })
+    await waitFor(() => expect(document.querySelector('.sys-dl')).not.toBeNull())
+    expect(document.querySelector('.queue-saturated')).toBeNull()
+    const tip = [...document.querySelectorAll('dt[title]')].map(d => d.getAttribute('title')).find(x => /50/.test(x))
+    expect(tip).toBeTruthy()
+    expect([...document.querySelectorAll('dt')].some(d => /caller-runs/i.test(d.textContent))).toBe(true)
+  })
+
+  it('kuyruk %80 üstünde ya da saturated=true iken uyarı bandı ve kırmızı sayaç', async () => {
+    await openSys({ ...HEALTH, executor_pool: { ...HEALTH.executor_pool, queue_size: 4500, queue_capacity: 5000, caller_runs: 12, saturated: true } })
+    await waitFor(() => expect(document.querySelector('.queue-saturated')).not.toBeNull())
+    expect(document.querySelector('.sys-card-alarm')).not.toBeNull()
+    expect(document.querySelector('.queue-callerruns-hot')?.textContent).toBe('12')
+  })
+})

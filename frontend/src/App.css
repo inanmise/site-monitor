@@ -4876,6 +4876,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 
 /* Alarm state for cards */
 .sys-card-alarm { border-color: #fca5a5 !important; }
+.queue-saturated { margin-top: 8px; padding: 6px 10px; border-radius: 8px; font-size: 12px; font-weight: 600; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; }
+[data-theme="dark"] .queue-saturated { color: #fecaca; background: #450a0a; border-color: #7f1d1d; }
+.queue-callerruns-hot { color: #b91c1c; font-weight: 700; }
 [data-theme="dark"] .sys-card-alarm { border-color: #7f1d1d !important; }
 
 /* Alarm banner */

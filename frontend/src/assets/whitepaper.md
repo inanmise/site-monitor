@@ -248,7 +248,7 @@ Uygulama tek sayfalıdır: `App.jsx` içindeki sekme durumu, doğrulanmış bir 
 ### 4.3 Eşzamanlılık ve Performans
 
 ```
-certCheckExecutor     : core 20, max 50, queue 1000 (EXECUTOR_* env ile ayarlanır)
+certCheckExecutor     : core 20, max 50, queue 5000 (EXECUTOR_* env ile ayarlanır)
 Kontrol timeout       : 10 saniye (site.monitor.check-timeout-seconds)
 CRL önbellek          : 1 saat TTL, 200 giriş (Caffeine)
 OCSP/CRL HTTP timeout : 5 sn OCSP, 10 sn CRL (connect+read)
@@ -1677,7 +1677,7 @@ Gerçek değerler hiçbir zaman commit edilmez; `.env.example` ve `k8s/secret.ex
 | `site.monitor.scheduler.cleanup-cron` | `0 0 3 * * *` | Gece temizlik + özetleme cron'u |
 | `EXECUTOR_CORE_SIZE` | 20 | certCheckExecutor çekirdek thread |
 | `EXECUTOR_MAX_SIZE` | 50 | certCheckExecutor maksimum thread |
-| `EXECUTOR_QUEUE_CAPACITY` | 1000 | certCheckExecutor kuyruk boyutu |
+| `EXECUTOR_QUEUE_CAPACITY` | 5000 | certCheckExecutor kuyruk boyutu |
 | `mail.send.retry-delay-ms` | 90000 | SMTP 421 asenkron retry gecikmesi |
 | `NETWORK_ERROR_THRESHOLD` | 0.50 | Toplu ağ kesintisi oranı eşiği |
 | `NETWORK_MIN_ERRORS` | 3 | Toplu kesinti için asgari hata sayısı |

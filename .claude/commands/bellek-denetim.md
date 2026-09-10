@@ -116,8 +116,8 @@ ama büyüyebilir — tavan ekle) / **SINIRLI-OK** (kanıtla ve Faz 3'te testle 
   mu (eski truststore/`SSLContext` referansı statikte kalıyor mu)?
 
 **1b. Executor / thread hijyeni** (her biri için: kim kapatıyor + kuyruk sınırı ne?):
-- `WebConfig` bean'leri: `certCheckExecutor` (20/50/kuyruk 1000, CallerRunsPolicy) ve
-  `loginIssueMailExecutor` (2/4/kuyruk 100) — Spring bean olarak kapanır (OK), ama kuyruk 1000 ×
+- `WebConfig` bean'leri: `certCheckExecutor` (20/50/kuyruk 5000, sayaçlı CallerRuns) ve
+  `loginIssueMailExecutor` (2/4/kuyruk 100) — Spring bean olarak kapanır (OK), ama kuyruk 5000 ×
   görev başına tutulan nesne (closure'ın yakaladığı envanter/DTO) boyutunu hesapla; CallerRunsPolicy
   taşmada üreticiyi yavaşlatır (bilinçli — koru).
 - `EmailNotificationService` — tek-thread'li `mail-retry` scheduler'ı: **421-retry kuyruğu sınırsız**
@@ -272,7 +272,7 @@ PostgreSQL ayakta olmalı. Faz 0b'deki bayraklarla + `-Xmx256m` gibi KASITLI DAR
    `JAVA_OPTS_DUSUK` (minimum ayak izi, SLA'yı geçen en dar ayar) ve `JAVA_OPTS_DENGELI`.
 3. Havuzları da bütçeye dahil et (her biri ölçümle, k6 kapısıyla): Tomcat `TOMCAT_MAX_THREADS`
    (100 → ölçülen eşzamanlılığa göre), Hikari `DB_POOL_MAX/MIN` (25/10 → düşür), 
-   `SCHEDULING_POOL_SIZE` (8), `EXECUTOR_CORE/MAX/QUEUE` (20/50/1000 — kuyruk 1000 nesne tutar).
+   `SCHEDULING_POOL_SIZE` (8), `EXECUTOR_CORE/MAX/QUEUE` (20/50/5000 — kuyruk 5000 nesne tutar).
    Envanter büyüklüğüne bağlı öneriyi formülle yaz ("N monitör başına ...").
 4. Önerileri uygulama noktaları: `start-local.ps1`/`.env.example` (yerel), Dockerfile
    `JAVA_OPTS` yorumu, `helm/site-monitor/environments/*.yaml` + `k8s/` resources

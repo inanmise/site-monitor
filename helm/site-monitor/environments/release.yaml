@@ -25,6 +25,7 @@ config:
   # CPU limiti orta → executor'ı kıs (açılışta CPU açlığını önle)
   executorCoreSize: "8"
   executorMaxSize: "16"
+  executorQueueCapacity: "2000"
 
 ingress:
   enabled: true
