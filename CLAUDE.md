@@ -203,3 +203,22 @@ Backend stores timestamps as UTC (audit, alerts, notifications). Log timestamps 
 - **Chart components must drop malformed records, not crash**: `ResponseTimeChart` filters entries without a string `ts` before mapping. Keep that defensive filter when refactoring; `ResponseTimeChart.test.jsx` pins it.
 - **A derived `deleteBy…` repository method without `@Transactional` fails on every call.** Spring Data only wraps `SimpleJpaRepository`'s own methods (`save`/`delete`/`deleteAll`/`deleteById`); query-derived deletes and `@Modifying` queries get no transaction, and with `open-in-view=false` plus non-transactional controllers the call throws `TransactionRequiredException: No EntityManager with actual transaction available`. Shipped 2026-08-21 as `ScriptedDraftRepository.deleteByOwnerAndMonitorKey`: the controller swallowed it at `log.debug` and the UI announced "draft discarded" without reading the response, so the "unfinished draft" banner came back forever with **zero** log lines. Mock-based service tests can't see this (mocks have no transaction) and `@DataJpaTest` *hides* it (it wraps every test in a transaction) — pin such paths with `@Transactional(propagation = Propagation.NOT_SUPPORTED)`, as `ScriptedRepositoriesTest` now does. `RepositoryWriteTransactionGuardTest` scans every repository interface and fails the build on any writing method that declares neither `@Transactional` nor an entry in its `CALLER_MANAGED_TX` allow-list; adding a line there is a promise that a `@Transactional` caller owns the transaction — verify the caller, don't just silence the test. Return `int`, not `void`, so callers can refuse to report success on 0 rows, and never announce success in the UI without checking `res?.success`.
 - When output contains mojibake (`Ã¶`, `ÃÂ¶`…), don't dismiss it as a console/terminal display artifact — verify the raw bytes end-to-end (`curl … | od -c`, check DB with `octet_length`, check the compiled class) before concluding. The 2026-08 branding bug shipped because the double-encoding was visible in a smoke output and got waved off as console encoding.
+
+## Skill routing
+
+When the user's request matches an available skill, invoke it via the Skill tool. When in doubt, invoke the skill.
+
+Key routing rules:
+- Product ideas/brainstorming → invoke /office-hours
+- Strategy/scope → invoke /plan-ceo-review
+- Architecture → invoke /plan-eng-review
+- Design system/plan review → invoke /design-consultation or /plan-design-review
+- Full review pipeline → invoke /autoplan
+- Bugs/errors → invoke /investigate
+- QA/testing site behavior → invoke /qa or /qa-only
+- Code review/diff check → invoke /review
+- Visual polish → invoke /design-review
+- Ship/deploy/PR → invoke /ship or /land-and-deploy
+- Save progress → invoke /context-save
+- Resume context → invoke /context-restore
+- Author a backlog-ready spec/issue → invoke /spec
