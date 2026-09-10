@@ -43,6 +43,7 @@ export default function RetentionSettings() {
   const [busy, setBusy] = useState(null)               // 'dry' | 'run'
   const [review, setReview] = useState(null)           // gözden geçirme penceresi içeriği
   const [lastRun, setLastRun] = useState(null)
+  const [runsNonce, setRunsNonce] = useState(0)   // 'Şimdi çalıştır' sonrası koşum listesi tazelensin
   const [changes, setChanges] = useState(null)
 
   const load = useCallback(async (estimate = true) => {
@@ -153,7 +154,7 @@ export default function RetentionSettings() {
     setBusy('run')
     const res = await api.admin.retentionRunNow()
     setBusy(null)
-    if (res?.success) { setLastRun(res.data); setRuns(null); toast.success(res.message); load(true) }
+    if (res?.success) { setLastRun(res.data); setRunsNonce(n => n + 1); toast.success(res.message); load(true) }
     else toast.error(res?.error || t('ret.actionFailed'))
   }
 
@@ -336,7 +337,7 @@ export default function RetentionSettings() {
           data.last_run ? formatDateSec(data.last_run.started_at) : t('ret.neverRun'))}
         {openPanel === 'runs' && (
           <div className="ret-panel">
-            <RetentionRunsPanel policies={policies} holdOn={holdOn} />
+            <RetentionRunsPanel policies={policies} holdOn={holdOn} refreshKey={runsNonce} />
           </div>
         )}
       </div>

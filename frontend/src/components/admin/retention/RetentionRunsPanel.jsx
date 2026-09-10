@@ -31,7 +31,7 @@ function isoLocalDay(d, endOfDay) {
   return x.toISOString().slice(0, 19)
 }
 
-export default function RetentionRunsPanel({ policies = [], holdOn = false }) {
+export default function RetentionRunsPanel({ policies = [], holdOn = false, refreshKey = 0 }) {
   const t = useT()
   const [q, setQ]           = useState(() => readUrlParam('r_q', ''))
   const [qTerm, setQTerm]   = useState(q)
@@ -77,7 +77,8 @@ export default function RetentionRunsPanel({ policies = [], holdOn = false }) {
       if (seq !== loadSeq.current) return
       setRows([]); setError(e?.message || t('settings.loadError'))
     }
-  }, [params, t])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params, t, refreshKey])
   useEffect(() => { load() }, [load])
   // Süzgeç/boyut değişince ilk sayfaya dön (sayfa 0 ise load dep'lerden fırlar; seq guard bayat yanıtı düşürür).
   useEffect(() => { setPage(0) }, [kind, failedOnly, policyId, since, until, qTerm, size, sort, dir])
