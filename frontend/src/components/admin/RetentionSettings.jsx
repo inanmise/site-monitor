@@ -11,6 +11,7 @@ import { useDialog } from '../ui/Dialog.jsx'
 import PolicyRow, { fmtBytes, fmtNum } from './retention/PolicyRow.jsx'
 import RetentionReviewModal from './retention/RetentionReviewModal.jsx'
 import RetentionChangeLog from './retention/RetentionChangeLog.jsx'
+import RetentionRunsPanel from './retention/RetentionRunsPanel.jsx'
 import { Spinner, LoadingBlock } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 
@@ -42,7 +43,6 @@ export default function RetentionSettings() {
   const [busy, setBusy] = useState(null)               // 'dry' | 'run'
   const [review, setReview] = useState(null)           // gözden geçirme penceresi içeriği
   const [lastRun, setLastRun] = useState(null)
-  const [runs, setRuns] = useState(null)
   const [changes, setChanges] = useState(null)
 
   const load = useCallback(async (estimate = true) => {
@@ -63,11 +63,11 @@ export default function RetentionSettings() {
 
   useEffect(() => { load(true) }, [load])
 
-  // Paneller yalnız açılınca yüklenir (SystemHealth deseni).
+  // Paneller yalnız açılınca yüklenir (SystemHealth deseni). Koşum listesi kendi panelinde
+  // (RetentionRunsPanel) sunucu-taraflı sayfalanır ve kendini yükler.
   useEffect(() => {
-    if (openPanel === 'runs' && !runs) api.admin.getRetentionRuns(10).then(r => r?.success && setRuns(r.data))
-    if (openPanel === 'changes' && !changes) api.admin.getRetentionChanges(25).then(r => r?.success && setChanges(r.data))
-  }, [openPanel, runs, changes])
+    if (openPanel === 'changes' && !changes) api.admin.getRetentionChanges(25).then(r => r?.success && setChanges(r.data)).catch(() => {})
+  }, [openPanel, changes])
 
   const policies = data?.policies ?? []
   const holdOn = !!data?.hold_active
@@ -336,39 +336,7 @@ export default function RetentionSettings() {
           data.last_run ? formatDateSec(data.last_run.started_at) : t('ret.neverRun'))}
         {openPanel === 'runs' && (
           <div className="ret-panel">
-            {!runs ? <LoadingBlock label={t('settings.loading')} className="ret-loading" size={16} />
-              : runs.length === 0 ? <p className="field-hint">{t('ret.historyEmpty')}</p> : (
-                <div className="health-table-wrap">
-                  <table className="health-dbtable">
-                    <thead><tr>
-                      <th className="dbtcol-th">{t('ret.colWhen')}</th>
-                      <th className="dbtcol-th">{t('ret.colKind')}</th>
-                      <th className="dbtcol-th-num">{t('ret.colDeleted')}</th>
-                      <th className="dbtcol-th-num">{t('ret.colFailed')}</th>
-                      <th className="dbtcol-th-num">{t('ret.colDuration')}</th>
-                      <th className="dbtcol-th">{t('ret.colBy')}</th>
-                      <th className="dbtcol-th">{t('ret.colTopTables')}</th>
-                    </tr></thead>
-                    <tbody>
-                      {runs.map(r => (
-                        <tr key={r.id}>
-                          <td className="sys-mono sys-small">{formatDateSec(r.started_at)}</td>
-                          <td>{r.hold_active ? t('ret.kindHold') : r.dry_run ? t('ret.kindDry') : t('ret.kindReal')}</td>
-                          <td className="dbtcol-num-cell sys-mono">{fmtNum(r.total_deleted)}</td>
-                          <td className={`dbtcol-num-cell sys-mono${r.failed_count > 0 ? ' sys-err-text' : ''}`}>{r.failed_count}</td>
-                          <td className="dbtcol-num-cell sys-mono">{r.duration_ms} ms</td>
-                          <td className="sys-small sys-muted">{r.triggered_by || t('ret.byScheduler')}</td>
-                          <td className="sys-small sys-muted">
-                            {(r.items || []).filter(i => i.rows > 0)
-                              .sort((a, b) => b.rows - a.rows).slice(0, 3)
-                              .map(i => `${i.table} ${fmtNum(i.rows)}`).join(' · ') || '—'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+            <RetentionRunsPanel policies={policies} holdOn={holdOn} />
           </div>
         )}
       </div>
