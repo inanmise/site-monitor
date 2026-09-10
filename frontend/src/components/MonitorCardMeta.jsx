@@ -1,4 +1,5 @@
-import { Users, Layers } from 'lucide-react'
+import { Layers } from 'lucide-react'
+import TeamBadge from './ui/TeamBadge.jsx'
 
 /**
  * İzleme kartındaki takım ve grup rozetleri.
@@ -23,7 +24,7 @@ export default function MonitorCardMeta({ monitor }) {
   return (
     <>
       {monitor.team_name && (
-        <div style={rowStyle}><Users size={12} />{monitor.team_name}</div>
+        <div style={rowStyle}><TeamBadge teamId={monitor.team_id} teamName={monitor.team_name} /></div>
       )}
       {monitor.group_name && (
         <div style={rowStyle}><Layers size={12} />{monitor.group_name}</div>

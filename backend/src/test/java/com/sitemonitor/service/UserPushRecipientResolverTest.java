@@ -155,4 +155,23 @@ class UserPushRecipientResolverTest {
         assertThat(UserPushRecipientResolver.matchesAny("PO", List.of("PO"), true)).isTrue();
         assertThat(UserPushRecipientResolver.matchesAny("PONY", List.of("PO"), true)).isFalse();
     }
+
+    // 2026-09-10: RESOLVE alicilari = acilista push ALANLAR; seviye/grup kurali uygulanmaz.
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("resolvePrior: aktif kullanici gider, opt-out sebebiyle isaretlenir, pasif/bilinmeyen/sistem satiri dusurulur, tekrar tekillesir")
+    void resolvePrior_activeOptOutInactive() {
+        AppUser ok = user("N1", "Uzman", "MEMBER");
+        AppUser optOut = user("N2", "Uzman", "MEMBER"); optOut.setPushOptOut(true);
+        AppUser gone = user("N3", "Uzman", "MEMBER"); gone.setActive(false);
+        when(userRepo.findByUsername("N1")).thenReturn(java.util.Optional.of(ok));
+        when(userRepo.findByUsername("N2")).thenReturn(java.util.Optional.of(optOut));
+        when(userRepo.findByUsername("N3")).thenReturn(java.util.Optional.of(gone));
+        when(userRepo.findByUsername("N9")).thenReturn(java.util.Optional.empty());
+
+        var out = resolver.resolvePrior(java.util.List.of("N1", "N2", "N3", "N9", "-", "N1"));
+
+        assertThat(out).extracting(UserPushRecipientResolver.Recipient::username).containsExactly("N1", "N2");
+        assertThat(out.get(0).skipReason()).isNull();
+        assertThat(out.get(1).skipReason()).isEqualTo("SKIPPED_USER_OPT_OUT");
+    }
 }

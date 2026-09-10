@@ -7,6 +7,8 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import { UsersRound, PenLine } from 'lucide-react'
 import UserEditModal from './UserEditModal.jsx'
+import TeamBadge from '../ui/TeamBadge.jsx'
+import TeamMembersModal from '../ui/TeamMembersModal.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 
 // Haftalık e-postalar opt-in: YENİ takım ikisi de kapalı doğar (backend de createTeam'de false yazar).
@@ -33,61 +35,6 @@ function WeeklyPill({ on, disabled, onToggle, label }) {
 }
 
 
-function computeInitials(name) {
-  if (!name) return '?'
-  const parts = String(name).trim().split(/\s+/).filter(Boolean)
-  if (parts.length === 0) return '?'
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-}
-
-const AVATAR_PALETTE = [
-  'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-  'linear-gradient(135deg, #0ea5e9 0%, #06b6d4 100%)',
-  'linear-gradient(135deg, #10b981 0%, #14b8a6 100%)',
-  'linear-gradient(135deg, #f59e0b 0%, #ef4444 100%)',
-  'linear-gradient(135deg, #ec4899 0%, #a855f7 100%)',
-]
-function avatarStyleFor(seed) {
-  const s = String(seed || '')
-  let hash = 0
-  for (let i = 0; i < s.length; i++) hash = ((hash << 5) - hash + s.charCodeAt(i)) | 0
-  return { background: AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length], color: '#fff' }
-}
-
-/** Ad + Soyad baş harfleri (AD'den); yoksa display_name'e düşer. Türkçe-uyumlu büyütme. */
-function adSoyadInitials(m) {
-  const fn = (m.first_name || '').trim()
-  const ln = (m.last_name || '').trim()
-  if (fn || ln) {
-    const ii = ((fn[0] || '') + (ln[0] || '')).toLocaleUpperCase('tr-TR')
-    if (ii) return ii
-  }
-  return computeInitials(m.display_name || m.username)
-}
-
-/** Üye kartı avatarı: LDAP fotoğrafı + altında Ad/Soyad baş harfleri; foto yoksa baş harf rozeti. */
-function MemberAvatar({ m }) {
-  const [err, setErr] = useState(false)
-  const initials = adSoyadInitials(m)
-  if (err) {
-    return (
-      <div className="tm-mc-avatar-wrap">
-        <div className="tm-mc-avatar" style={avatarStyleFor(m.username || m.display_name || String(m.id))}>{initials}</div>
-      </div>
-    )
-  }
-  return (
-    <div className="tm-mc-avatar-wrap">
-      {/* Takımlar sekmesi USER rolüne de AÇIK (AdminPanel adminOnly:false) → avatar admin'e özel
-          uçtan çekilemez: her üye için bir ACCESS_DENIED/BLOCKED denetim kaydı üretiyordu.
-          /api/users/{id}/photo tam bu iş için var (oturum açmış herkes; UserDirectoryController). */}
-      <img className="tm-mc-photo" alt="" src={`/api/users/${m.id}/photo`} onError={() => setErr(true)} />
-      <span className="tm-mc-initials">{initials}</span>
-    </div>
-  )
-}
-
 export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsChange }) {
   const t = useT()
   const toast = useToast()
@@ -111,9 +58,11 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   const [form, setForm]     = useState(emptyTeam)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg]       = useState(null)
-  const [expandedId, setExpandedId]     = useState(null)
-  const [membersCache, setMembersCache] = useState({})
-  const [membersLoading, setMembersLoading] = useState(false)
+  // Üye kartları artık MODALDA (satır-içi genişletme yerine): takım adı tıklanır, TeamMembersModal
+  // açılır. Yönetim ekranı kapsamlı /admin/teams/{id}/users ile tam alanları (telefon/sicil/rol)
+  // gösterir; eskalasyon kişileri kurum-geneli uçtan gelir.
+  const [membersTeam, setMembersTeam]   = useState(null)
+  const [membersNonce, setMembersNonce] = useState(0)
   const [editingUser, setEditingUser]   = useState(null)
 
   // İstemci-taraflı filtre + sayfalama (getTeams tüm listeyi döndürür — dropdown kaynağı bozulmasın)
@@ -154,24 +103,16 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
     if (res?.success) setUsers((res.data ?? []).filter(u => u.active))   // data null gelirse ekran cokmesin
   }
 
-  async function toggleExpand(teamId) {
-    if (expandedId === teamId) { setExpandedId(null); return }
-    setExpandedId(teamId)
-    if (!membersCache[teamId]) {
-      setMembersLoading(true)
-      try {
-        const res = await api.admin.getTeamUsers(teamId)
-        if (res?.success) setMembersCache(prev => ({ ...prev, [teamId]: res.data }))
-      } finally {
-        setMembersLoading(false)
-      }
-    }
-  }
-
-  async function reloadMembers(teamId) {
-    if (!teamId) return
-    const res = await api.admin.getTeamUsers(teamId)
-    if (res?.success) setMembersCache(prev => ({ ...prev, [teamId]: res.data }))
+  /** Yönetim ekranı yükleyicisi: kapsamlı tam üye listesi + kurum-geneli eskalasyon kişileri. */
+  const loadTeamMembers = async (teamId) => {
+    const [adm, dir] = await Promise.all([
+      api.admin.getTeamUsers(teamId),
+      Promise.resolve(api.teams?.members ? api.teams.members(teamId) : null).catch(() => null),
+    ])
+    if (!adm?.success) return adm
+    return { success: true, data: {
+      team: dir?.data?.team ?? null, members: adm.data ?? [], escalation_contacts: dir?.data?.escalation_contacts ?? [],
+    } }
   }
 
   const userMap = Object.fromEntries(users.map(u => [u.id, u.display_name || u.username]))
@@ -222,7 +163,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       if (res?.success) {
         toast.success(t('team.saved'))
         load(); onTeamsChange?.()
-        if (!isAdd) setMembersCache(prev => { const n = { ...prev }; delete n[editedId]; return n })
+        if (!isAdd) setMembersNonce(n => n + 1)
         closeModal()
       } else {
         setMsg(res?.error || 'Error')
@@ -248,8 +189,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       return
     }
     toast.success(t('team.deleted'))
-    setMembersCache(prev => { const n = { ...prev }; delete n[id]; return n })
-    if (expandedId === id) setExpandedId(null)
+    if (membersTeam?.id === id) setMembersTeam(null)
     load()
     onTeamsChange?.()
   }
@@ -312,14 +252,8 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
               <Fragment key={team.id}>
                 <tr>
                   <td>
-                    <button
-                      className="team-expand-btn"
-                      onClick={() => toggleExpand(team.id)}
-                      title={expandedId === team.id ? t('team.collapseMembers') : t('team.expandMembers')}
-                    >
-                      {expandedId === team.id ? '▼' : '▶'}
-                    </button>
-                    <strong>{team.name}</strong>
+                    <strong><TeamBadge teamId={team.id} teamName={team.name} size={13}
+                      onOpen={() => setMembersTeam(team)} title={t('team.expandMembers')} /></strong>
                   </td>
                   <td>{team.email || '—'}</td>
                   <td>{userMap[team.leader_id] ?? <span style={{ color: 'var(--danger)' }}>{t('team.noLeader')}</span>}</td>
@@ -346,107 +280,6 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
                     ]} />
                   </td>
                 </tr>
-                {expandedId === team.id && (
-                  <tr key={`${team.id}-members`} className="team-members-row">
-                    <td colSpan={7}>
-                      {membersLoading && !membersCache[team.id]
-                        ? <span className="field-hint">{t('team.loadingMembers')}</span>
-                        : (() => {
-                            const members = membersCache[team.id] || []
-                            if (members.length === 0)
-                              return <span className="field-hint">{t('team.noMembers')}</span>
-                            // Üyelerin yönetim zincirini (müdür + müdürün müdürü/bölüm başkanı) kart olarak
-                            // listele — üyeden 2 seviye yukarı özyinele. Bölüm başkanının takımı olmasa da görünür.
-                            const memberIds = new Set(members.map(x => x.id))
-                            const MANAGER_LEVELS = 2
-                            const managerIds = new Set()
-                            members.forEach(member => {
-                              let cur = member
-                              for (let lvl = 0; lvl < MANAGER_LEVELS; lvl++) {
-                                const mid = cur?.manager_id
-                                if (!mid) break
-                                const mgr = usersById[mid]
-                                if (!mgr) break
-                                if (!memberIds.has(mid)) managerIds.add(mid)
-                                cur = mgr
-                              }
-                            })
-                            const managerCards = [...managerIds].map(id => usersById[id]).filter(Boolean)
-                            // Sıralama: önce müdür kartı, sonra MANAGER rolü, sonra PO, sonra
-                            // seviye (companyLevel) büyükten küçüğe (sayı-duyarlı), sonra ada göre
-                            const rankOf = (c) => c.isManager ? 0
-                              : (c.m.org_role === 'MANAGER' ? 1
-                              : (c.m.org_role === 'PO' ? 2 : 3))
-                            const cards = [
-                              ...members.map(m => ({ m, isManager: false })),
-                              ...managerCards.map(m => ({ m, isManager: true })),
-                            ].sort((a, b) => {
-                              if (rankOf(a) !== rankOf(b)) return rankOf(a) - rankOf(b)
-                              const la = (a.m.company_level || '').toLowerCase()
-                              const lb = (b.m.company_level || '').toLowerCase()
-                              if (la !== lb) return lb.localeCompare(la, 'tr', { numeric: true })
-                              return (a.m.display_name || a.m.username || '').localeCompare(
-                                b.m.display_name || b.m.username || '', 'tr')
-                            })
-                            return (
-                                <div className="tm-member-cards">
-                                  {cards.map(({ m, isManager }) => {
-                                    return (
-                                      <div
-                                        key={m.id}
-                                        className={`tm-member-card${canManage ? ' tm-member-card-clickable' : ''}`}
-                                        role={canManage ? 'button' : undefined}
-                                        tabIndex={canManage ? 0 : undefined}
-                                        onClick={canManage ? () => setEditingUser(m) : undefined}
-                                        onKeyDown={canManage ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setEditingUser(m) } } : undefined}
-                                        title={canManage ? t('usr.editTitle') : undefined}
-                                      >
-                                        <MemberAvatar m={m} />
-                                        <div className="tm-mc-body">
-                                          <strong className="tm-mc-name">
-                                            {m.display_name || m.username}
-                                            {isManager && <span className="tm-mc-mgr-badge">{t('team.managerBadge')}</span>}
-                                          </strong>
-                                          <dl className="tm-mc-fields">
-                                            <dt>{t('usr.colUsername')}:</dt>
-                                            <dd>{m.username}</dd>
-                                            {m.employee_id && (<>
-                                              <dt>{t('usr.colEmployeeId')}:</dt>
-                                              <dd>{m.employee_id}</dd>
-                                            </>)}
-                                            {m.email && (<>
-                                              <dt>{t('usr.colEmail')}:</dt>
-                                              <dd title={m.email}>{m.email}</dd>
-                                            </>)}
-                                            {m.system_role && (<>
-                                              <dt>{t('usr.colRole')}:</dt>
-                                              <dd>
-                                                <span className={`role-badge role-${m.system_role.toLowerCase()}`}>{m.system_role}</span>
-                                              </dd>
-                                            </>)}
-                                            {m.org_role && (<>
-                                              <dt>{t('usr.colOrgRole')}:</dt>
-                                              <dd>
-                                                <span className={`badge-role badge-role-${m.org_role}`}>{t('usr.orgRoleVal.' + m.org_role)}</span>
-                                              </dd>
-                                            </>)}
-                                            {m.title && (<><dt>{t('usr.colTitle')}:</dt><dd>{m.title}</dd></>)}
-                                            {m.phone && (<><dt>{t('usr.colPhone')}:</dt><dd>{m.phone}</dd></>)}
-                                            {m.department && (<><dt>{t('usr.colDept')}:</dt><dd>{m.department}</dd></>)}
-                                            {m.mudurluk_name && (<><dt>{t('usr.colMudurluk')}:</dt><dd>{m.mudurluk_name}</dd></>)}
-                                            {managerLabelFor(m) && (<><dt>{t('team.memberManager')}:</dt><dd>{managerLabelFor(m)}</dd></>)}
-                                          </dl>
-                                        </div>
-                                      </div>
-                                    )
-                                  })}
-                                </div>
-                              )
-                          })()
-                      }
-                    </td>
-                  </tr>
-                )}
               </Fragment>
             ))}
           </tbody>
@@ -537,13 +370,16 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
         </div>
       )}
 
+      <TeamMembersModal open={!!membersTeam} team={membersTeam} onClose={() => setMembersTeam(null)}
+        canManage={canManage} onEditUser={setEditingUser} loadMembers={loadTeamMembers}
+        usersById={usersById} managerLabelFor={managerLabelFor} refreshKey={membersNonce} />
       <UserEditModal
         user={editingUser}
         teams={teams}
         onClose={() => setEditingUser(null)}
         onSaved={() => {
           loadUsers()
-          if (expandedId) reloadMembers(expandedId)
+          setMembersNonce(n => n + 1)
         }}
       />
     </div>

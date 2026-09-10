@@ -412,6 +412,27 @@ public class EmailNotificationService {
         }
     }
 
+    /**
+     * Elle kurulan admin/güvenlik mailleri için TEK huni: helper + setText + CID logo + doSend.
+     *
+     * <p>Eskiden altı metot (parola sıfırlama, yeni cihaz, ağ alarmı/çözümü, login anomalisi/çözümü)
+     * kendi MimeMessageHelper'ını kurup {@code setText} sonrası {@code BrandMailAssets.addInline}'ı
+     * ATLIYORDU: gövde {@code cid:brand-logo} referansı taşırken mesajda Content-ID parçası yoktu →
+     * istemci logonun yerinde kırık resim (X) gösteriyordu ("Failed-Login Anomaly test maili",
+     * 2026-09-10). sendAlert/sendResolutionAlert ve sendHtml hunisi doğruydu; sınıf-kapatıcı kapı
+     * {@code EmailBrandCidTest} (her elle kurulan gönderici Content-ID taşımalı + huni sayısı sabit).
+     */
+    private String sendFramedHtml(String[] to, String subject, String html, String variant) throws Exception {
+        MimeMessage msg = currentSender().createMimeMessage();
+        MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
+        helper.setTo(to);
+        applyFrom(helper);
+        helper.setSubject(subject);
+        helper.setText(html, true);
+        BrandMailAssets.addInline(helper, html, variant);   // setText SONRASI (Spring helper sırası)
+        return doSend(String.join(",", to), msg, 1);
+    }
+
     // ── Password reset — admin auto-reset flow ──────────────────────────────
 
     /**
@@ -426,13 +447,8 @@ public class EmailNotificationService {
             return "SKIPPED_DISABLED";
         }
         try {
-            MimeMessage msg = currentSender().createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
-            helper.setTo(toAddress);
-            applyFrom(helper);
-            helper.setSubject("[Site Monitor] Şifreniz sıfırlandı — lütfen güncelleyin");
-            helper.setText(buildPasswordResetHtml(username, displayName, tempPassword), true);
-            return doSend(toAddress, msg, 1);
+            return sendFramedHtml(new String[]{toAddress}, "[Site Monitor] Şifreniz sıfırlandı — lütfen güncelleyin",
+                    buildPasswordResetHtml(username, displayName, tempPassword), "ok");
         } catch (Exception e) {
             log.error("✗ Şifre sıfırlama e-postası hazırlanamadı: TO={} | HATA={}", toAddress, e.getMessage(), e);
             return "FAILED: " + e.getMessage();
@@ -455,13 +471,8 @@ public class EmailNotificationService {
             return "SKIPPED_DISABLED";
         }
         try {
-            MimeMessage msg = currentSender().createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
-            helper.setTo(toAddress);
-            applyFrom(helper);
-            helper.setSubject("[Site Monitor] Hesabınıza yeni bir cihazdan giriş yapıldı");
-            helper.setText(buildNewDeviceHtml(displayName, deviceSummary, ip, location, whenIso), true);
-            return doSend(toAddress, msg, 1);
+            return sendFramedHtml(new String[]{toAddress}, "[Site Monitor] Hesabınıza yeni bir cihazdan giriş yapıldı",
+                    buildNewDeviceHtml(displayName, deviceSummary, ip, location, whenIso), "ok");
         } catch (Exception e) {
             log.error("✗ Yeni cihaz e-postası hazırlanamadı: TO={} | HATA={}", toAddress, e.getMessage(), e);
             return "FAILED: " + e.getMessage();
@@ -548,14 +559,8 @@ public class EmailNotificationService {
             return "SKIPPED_DISABLED";
         }
         try {
-            MimeMessage msg = currentSender().createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
-            helper.setTo(to);
-            applyFrom(helper);
-            helper.setSubject("[Site Monitor] ⚠ Ağ Erişim Sorunu Tespit Edildi");
-            helper.setText(buildAdminNetworkAlertHtml(detectedAt, networkErrors, total,
-                    errorRate, threshold), true);
-            return doSend(to, msg, 1);
+            return sendFramedHtml(new String[]{to}, "[Site Monitor] ⚠ Ağ Erişim Sorunu Tespit Edildi",
+                    buildAdminNetworkAlertHtml(detectedAt, networkErrors, total, errorRate, threshold), "critical");
         } catch (Exception e) {
             log.error("✗ Admin network alert hazırlanamadı: TO={} | HATA={}", to, e.getMessage(), e);
             return "FAILED: " + e.getMessage();
@@ -570,14 +575,8 @@ public class EmailNotificationService {
             return "SKIPPED_DISABLED";
         }
         try {
-            MimeMessage msg = currentSender().createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
-            helper.setTo(to);
-            applyFrom(helper);
-            helper.setSubject("[Site Monitor] ✅ Ağ Erişim Sorunu Çözüldü");
-            helper.setText(buildAdminNetworkResolvedHtml(detectedAt, resolvedAt, durationMs,
-                    networkErrors, total, errorRate), true);
-            return doSend(to, msg, 1);
+            return sendFramedHtml(new String[]{to}, "[Site Monitor] ✅ Ağ Erişim Sorunu Çözüldü",
+                    buildAdminNetworkResolvedHtml(detectedAt, resolvedAt, durationMs, networkErrors, total, errorRate), "ok");
         } catch (Exception e) {
             log.error("✗ Admin network resolved hazırlanamadı: TO={} | HATA={}", to, e.getMessage(), e);
             return "FAILED: " + e.getMessage();
@@ -598,15 +597,10 @@ public class EmailNotificationService {
             return "SKIPPED_NO_RECIPIENT";
         }
         try {
-            MimeMessage msg = currentSender().createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
-            helper.setTo(recipients);
-            applyFrom(helper);
             int ruleCount = (r.hits() == null) ? 0 : r.hits().size();
-            helper.setSubject("[Site Monitor] ⚠ Anomali: " + r.total() + " başarısız login / "
-                    + r.windowMinutes() + "dk — " + ruleCount + " kural tetiklendi");
-            helper.setText(buildLoginAnomalyHtml(r, triggerLabel), true);
-            return doSend(String.join(",", recipients), msg, 1);
+            return sendFramedHtml(recipients, "[Site Monitor] ⚠ Anomali: " + r.total() + " başarısız login / "
+                    + r.windowMinutes() + "dk — " + ruleCount + " kural tetiklendi",
+                    buildLoginAnomalyHtml(r, triggerLabel), "critical");
         } catch (Exception e) {
             log.error("✗ Login anomaly alert hazırlanamadı: HATA={}", e.getMessage(), e);
             return "FAILED: " + e.getMessage();
@@ -619,13 +613,8 @@ public class EmailNotificationService {
         if (!isEnabled()) return "SKIPPED_DISABLED";
         if (recipients == null || recipients.length == 0) return "SKIPPED_NO_RECIPIENT";
         try {
-            MimeMessage msg = currentSender().createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
-            helper.setTo(recipients);
-            applyFrom(helper);
-            helper.setSubject("[Site Monitor] ✅ Login anomalisi normale döndü");
-            helper.setText(buildLoginAnomalyResolvedHtml(openedAt, resolvedAt, peakTotal), true);
-            return doSend(String.join(",", recipients), msg, 1);
+            return sendFramedHtml(recipients, "[Site Monitor] ✅ Login anomalisi normale döndü",
+                    buildLoginAnomalyResolvedHtml(openedAt, resolvedAt, peakTotal), "ok");
         } catch (Exception e) {
             log.error("✗ Login anomaly resolved hazırlanamadı: HATA={}", e.getMessage(), e);
             return "FAILED: " + e.getMessage();

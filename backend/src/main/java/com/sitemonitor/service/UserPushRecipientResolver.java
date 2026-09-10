@@ -46,6 +46,27 @@ public class UserPushRecipientResolver {
     /** Çözüm sonucu: gönderilecekler + nedenleriyle atlananlar (görünmez sessizlik yok). */
     public record Recipient(String username, String displayName, String skipReason) {}
 
+    /**
+     * ÇÖZÜM (RESOLVE) alıcıları: açılışta gerçekten push ALAN kullanıcılar. Seviye eşiği, grup
+     * kuralı, sessiz saat ve takım çözümlemesi burada UYGULANMAZ — karar açılışta verildi; "düştü"
+     * mesajını alan herkes "düzeldi"yi de almalı (kullanıcı kararı 2026-09-10). Yalnız iki güncel
+     * gerçek sorgulanır: hesap hâlâ aktif mi ve kişi o aradan opt-out yapmış mı.
+     */
+    public List<Recipient> resolvePrior(List<String> usernames) {
+        Map<String, Recipient> out = new LinkedHashMap<>();
+        for (String raw : usernames == null ? List.<String>of() : usernames) {
+            String username = raw == null ? "" : raw.trim();
+            if (username.isEmpty() || "-".equals(username) || out.containsKey(username)) continue;
+            AppUser u = userRepo.findByUsername(username).orElse(null);
+            if (u == null || !Boolean.TRUE.equals(u.getActive())) continue;   // ayrılmış/pasif hesaba çözüm gitmez
+            String display = u.getDisplayName() != null ? u.getDisplayName() : username;
+            out.put(username, Boolean.TRUE.equals(u.getPushOptOut())
+                    ? new Recipient(username, display, "SKIPPED_USER_OPT_OUT")
+                    : new Recipient(username, display, null));
+        }
+        return new ArrayList<>(out.values());
+    }
+
     public List<Recipient> resolve(Long teamId, String alertLevel) {
         if (teamId == null) return List.of();
         Map<String, GroupRule> groups = groupRules();

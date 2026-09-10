@@ -4,6 +4,7 @@ import { api, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
+import TeamBadge from '../ui/TeamBadge.jsx'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
 import DateTimeRangePicker from '../ui/DateTimeRangePicker.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
@@ -315,7 +316,7 @@ export default function MonitorChangesConsole({ globalViewer = false }) {
                       <span className="chg-row-name">{r.resource_name || `#${r.resource_id}`}</span>
                       <span className="chg-row-meta">
                         {t('chg.kind.' + String(r.kind).toLowerCase()) }
-                        {r.team_name ? ` · ${r.team_name}` : ''}
+                        {r.team_name ? <> · <TeamBadge teamId={r.team_id} teamName={r.team_name} size={11} /></> : ''}
                       </span>
                     </span>
                     <span className="chg-row-who">

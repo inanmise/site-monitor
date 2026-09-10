@@ -115,6 +115,11 @@ async function request(path, options = {}) {
 
 export const api = {
   // Hafif kullanıcı dizini (her authenticated kullanıcı) — UserDirectory bağlamı bununla beslenir.
+  /** Kurum-geneli takım rehberi (oturum açmış herkes) — ad→id ve üye listesi (beyaz-listeli). */
+  teams: {
+    directory: () => request('/teams/directory'),
+    members: (id) => request(`/teams/${id}/members`),
+  },
   users: {
     directory: () => request('/users/directory'),
   },
@@ -485,7 +490,20 @@ export const api = {
       request('/admin/retention/settings', { method: 'PUT', body: JSON.stringify({ values }) }),
     retentionDryRun: () => request('/admin/retention/dry-run', { method: 'POST' }),
     retentionRunNow: () => request('/admin/retention/run', { method: 'POST' }),
-    getRetentionRuns: (limit = 10) => request(`/admin/retention/runs?limit=${limit}`),
+    /** Koşum listesi — sayı verilirse eski `limit` biçimi; nesne verilirse sunucu-taraflı süzgeç/sayfa param'ları. */
+    getRetentionRuns: (params = 10) => {
+      if (typeof params === 'number') return request(`/admin/retention/runs?limit=${params}`)
+      const qs = new URLSearchParams()
+      for (const [k, v] of Object.entries(params)) if (v != null && v !== '' && v !== false) qs.set(k, String(v))
+      const s = qs.toString()
+      return request(`/admin/retention/runs${s ? `?${s}` : ''}`)
+    },
+    getRetentionRunsCsvUrl: (params = {}) => {
+      const qs = new URLSearchParams()
+      for (const [k, v] of Object.entries(params)) if (v != null && v !== '' && v !== false) qs.set(k, String(v))
+      const s = qs.toString()
+      return `/api/admin/retention/runs/export${s ? `?${s}` : ''}`
+    },
     /** Saklama süresi değişiklik geçmişi (kim/ne zaman/eski→yeni) — audit_log kaynaklı. */
     getRetentionChanges: (limit = 25, policyId) =>
       request(`/admin/retention/changes?limit=${limit}${policyId ? `&policyId=${encodeURIComponent(policyId)}` : ''}`),

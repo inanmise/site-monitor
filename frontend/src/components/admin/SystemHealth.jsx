@@ -10,6 +10,7 @@ import ChartModal from './ChartModal'
 import HeartbeatHistoryModal from './HeartbeatHistoryModal'
 import LoginHeatmap from './LoginHeatmap'
 import DateTimeField from '../ui/DateTimeField.jsx'
+import TeamBadge from '../ui/TeamBadge.jsx'
 import DateTimeRangePicker from '../ui/DateTimeRangePicker.jsx'
 
 import UserBadge from '../ui/UserBadge.jsx'   // proje-geneli ortak kullanıcı rozeti (avatar + ad-soyad)
@@ -908,7 +909,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
               </div>
             </div>
             <dl className="sys-dl">
-              <dt title={t('health.queueTooltip')}>
+              <dt title={t('health.queueTooltip', executor_pool.max_pool_size ?? executor_pool.core_pool_size ?? 0)}>
                 {t('health.queuePending')}
                 <span className="queue-info-ind" aria-hidden="true">ⓘ</span>
               </dt>
@@ -939,6 +940,13 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
               <dt>{t('health.queueCompleted')}</dt>
               <dd>{executor_pool.completed_tasks ?? 0}</dd>
 
+              {executor_pool.caller_runs != null && (
+                <>
+                  <dt title={t('health.queueCallerRunsTooltip')}>{t('health.queueCallerRuns')}</dt>
+                  <dd className={executor_pool.caller_runs > 0 ? 'queue-callerruns-hot' : undefined}>{executor_pool.caller_runs}</dd>
+                </>
+              )}
+
               {executor_pool.jvm_start_time && (
                 <>
                   <dt title={t('health.queueSinceStartTooltip')}>{t('health.queueSinceStart')}</dt>
@@ -949,6 +957,10 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
             <ProgressBar value={executor_pool.queue_size ?? 0}
               max={Math.max(1, executor_pool.queue_capacity ?? 1)} size="sm"
               label={t('health.queueTitle')} />
+            {/* Doygunluk uyarısı: havuz doluyken sweep sessizce yavaşlıyordu (CallerRuns); şimdi kartta yazar. */}
+            {(executor_pool.saturated || (executor_pool.queue_size ?? 0) > (executor_pool.queue_capacity ?? 1) * 0.8) && (
+              <div className="queue-saturated" role="status">{t('health.queueSaturated')}</div>
+            )}
           </div>
         )}
 
@@ -1504,7 +1516,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                           title={t('uact.detailHint')} onClick={() => setSessionDetail(u)}>
                           <td><UserBadge username={u.username} userId={u.user_id} displayName={u.display_name} /></td>
                           <td>{u.system_role || '—'}</td>
-                          <td>{u.team_name || '—'}</td>
+                          <td>{u.team_name ? <TeamBadge teamId={u.team_id} teamName={u.team_name} /> : '—'}</td>
                           <td className="sys-mono sys-small">{u.login_at ? formatDateSec(u.login_at) : '—'}</td>
                           <td className="dbtcol-num-cell">{fmtMins(u.duration_min)}</td>
                           <td className="sys-small">{u.ip ? <span className="sys-mono">{u.ip}</span> : '—'}{u.ip ? <span className="sys-muted"> {locStr(u.country, u.city)}</span> : null}</td>
@@ -1673,7 +1685,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                         <Fragment key={i}>
                           <tr style={r.users?.length ? { cursor: 'pointer' } : undefined}
                             onClick={r.users?.length ? () => setExpTeam(x => x === i ? null : i) : undefined}>
-                            <td>{r.users?.length ? (expTeam === i ? '▾ ' : '▸ ') : ''}{r.team_name || '—'}</td>
+                            <td>{r.users?.length ? (expTeam === i ? '▾ ' : '▸ ') : ''}{r.team_name ? <TeamBadge teamId={r.team_id} teamName={r.team_name} /> : '—'}</td>
                             <td className="dbtcol-num-cell">{r.count}</td>
                           </tr>
                           {expTeam === i && r.users?.length > 0 && (
@@ -2023,7 +2035,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                             onClick={() => setSessionDetail(u)}>
                             <td><UserBadge username={u.username} userId={u.user_id} displayName={u.display_name} /></td>
                             <td>{u.system_role || '—'}</td>
-                            <td>{u.team_name || '—'}</td>
+                            <td>{u.team_name ? <TeamBadge teamId={u.team_id} teamName={u.team_name} /> : '—'}</td>
                             <td className="sys-mono sys-small">{u.login_at ? formatDateSec(u.login_at) : '—'}</td>
                             <td className="dbtcol-num-cell">{fmtMins(u.duration_min)}</td>
                             <td className="sys-small">{u.ip ? <span className="sys-mono">{u.ip}</span> : '—'}{u.ip ? <span className="sys-muted"> {locStr(u.country, u.city)}</span> : null}</td>
@@ -2067,7 +2079,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                   {field(t('uact.detailEmployeeId'), u.employee_id, true)}
                   {field(t('uact.colRole'), u.system_role)}
                   {field(t('uact.detailOrgRole'), u.org_role)}
-                  {field(t('uact.colTeam'), u.team_name)}
+                  {field(t('uact.colTeam'), u.team_name ? <TeamBadge teamId={u.team_id} teamName={u.team_name} /> : null)}
                 </div>
 
                 <div className="show-section-header">{t('uact.detailSession')}</div>

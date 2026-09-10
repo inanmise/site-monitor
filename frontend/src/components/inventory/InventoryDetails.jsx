@@ -8,6 +8,7 @@ import { useTheme } from '../../i18n/theme.jsx'
 import { INVENTORY_FLAGS } from '../../utils/inventoryFlags.js'
 import { CONTACT_FIELDS } from '../../utils/inventoryContacts.js'
 import CopyButton from '../ui/CopyButton.jsx'
+import TeamBadge from '../ui/TeamBadge.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
 
 /** Serbest metin icindeki e-posta belirteci — mail sablonundaki EMAIL_IN_TEXT ile ayni gevseklik. */

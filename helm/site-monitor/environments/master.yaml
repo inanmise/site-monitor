@@ -38,7 +38,7 @@ config:
   # ── Veritabanı bağlantı havuzu ──────────────────────────────────────────────
   # Çalışan pod 10'da kalmıştı (dağıtılmış eski değer); chart varsayılanı 25, prod için 30'a
   # sabitleniyor. Gerekçe: oturumlar JDBC'de (spring.session.store-type=jdbc), yani HER istek
-  # DB'ye uğruyor; buna arka plan işleri (executor 30, parallel-workers 20, scheduling 8)
+  # DB'ye uğruyor; buna arka plan işleri (executor 50, parallel-workers 20, scheduling 8)
   # ekleniyor. 10 bağlantı 100 eşzamanlı kullanıcıda ilk darboğaz oluyordu.
   # minimum-idle 10'da bırakıldı (DB_POOL_MIN ezilmiyor): boşta tutulan bağlantı sayısı
   # artmaz, havuz yük geldikçe 30'a kadar büyür.

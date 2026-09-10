@@ -214,3 +214,60 @@ describe('Bildirim Geçmişi — akordiyon, sıralama, alıcı gösterimi', () =
     expect(badge).toHaveAttribute('title', 'SKIPPED_NO_RECIPIENTS')
   })
 })
+
+// ── 2026-09-10: RESEND partileri ayrı kart; sayaç GÖNDERİM sayar; kişi listesi tekil ─────────
+describe('gönderim partileri ve sayaç', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('groupPushRows: dedupe_key farklı iki RESEND partisi AYRI gruplanır, en yeni önce', () => {
+    const rows = [
+      { ...FIVE[0], id: 1, trigger: 'RESEND', dedupe_key: 'RESEND:aaaa', sent_at: '2026-06-01T08:00:00' },
+      { ...FIVE[1], id: 2, trigger: 'RESEND', dedupe_key: 'RESEND:aaaa', sent_at: '2026-06-01T08:00:00' },
+      { ...FIVE[0], id: 3, trigger: 'RESEND', dedupe_key: 'RESEND:bbbb', sent_at: '2026-06-02T09:00:00' },
+    ]
+    const groups = groupPushRows(rows)
+    expect(groups).toHaveLength(2)
+    expect(groups[0][0].dedupe_key).toBe('RESEND:bbbb')
+    expect(groups[1]).toHaveLength(2)
+  })
+
+  it('groupPushRows: dedupe_key OLMAYAN eski satırlar eskisi gibi tetik+durum+mesajla gruplanır', () => {
+    expect(groupPushRows(FIVE)).toHaveLength(1)
+  })
+
+  it('iki RESEND partisi iki kart olur ve açılan kartta kişi BİR kez listelenir', async () => {
+    const rows = [
+      { ...FIVE[0], id: 1, trigger: 'RESEND', dedupe_key: 'RESEND:aaaa', sent_at: '2026-06-01T08:00:00' },
+      { ...FIVE[1], id: 2, trigger: 'RESEND', dedupe_key: 'RESEND:aaaa', sent_at: '2026-06-01T08:00:00' },
+      { ...FIVE[0], id: 3, trigger: 'RESEND', dedupe_key: 'RESEND:bbbb', sent_at: '2026-06-02T09:00:00' },
+    ]
+    await openHistory(rows)
+    expect(document.querySelectorAll('.nl-modal .nl-card--manual')).toHaveLength(2)
+    fireEvent.click(document.querySelectorAll('.nl-modal .nl-card--manual .nl-card-header')[1])
+    await waitFor(() => expect(document.querySelectorAll('.nl-card-body .nl-who-id').length).toBe(2))
+    const ids = Array.from(document.querySelectorAll('.nl-card-body .nl-who-id')).map(e => e.textContent)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('aynı partide aynı kişi iki satırsa açılan liste yine BİR kez basar', async () => {
+    const twice = [
+      { ...FIVE[0], id: 90, trigger: 'RESEND', dedupe_key: 'RESEND:x' },
+      { ...FIVE[0], id: 91, trigger: 'RESEND', dedupe_key: 'RESEND:x' },
+    ]
+    await openHistory(twice)
+    fireEvent.click(document.querySelector('.nl-modal .nl-card--manual .nl-card-header'))
+    await waitFor(() => expect(screen.getByText(MESSAGE)).toBeDefined())
+    expect(document.querySelectorAll('.nl-who-id')).toHaveLength(1)
+  })
+
+  it('bölüm başlığı GÖNDERİM sayar (alıcı satırı değil) ve atlananları ayrı yazar', async () => {
+    const rows = [
+      ...FIVE.map((r, i) => ({ ...r, id: 100 + i, dedupe_key: 'OPEN' })),
+      { id: 200, username: '-', trigger: 'RESOLVE', status: 'SKIPPED_NO_PRIOR', message: MESSAGE, dedupe_key: 'RESOLVE', sent_at: '2026-06-02T08:00:00' },
+    ]
+    await openHistory(rows)
+    expect(screen.getByText(/1 gönderim|1 sends/i)).toBeDefined()
+    expect(screen.getByText(/1 atlandı|1 skipped/i)).toBeDefined()
+    expect(screen.queryByText(/6 kayıt|6 records/i)).toBeNull()
+  })
+})

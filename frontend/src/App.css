@@ -115,6 +115,20 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 .ret-class-body { padding: 2px 0 14px; }
 .ret-class-desc { font-size: 12.5px; color: var(--text-muted); margin: 0 2px 10px; line-height: 1.5; }
+.ret-runs { display: block; }
+.ret-runs-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.ret-runs-toolbar .filter-input { min-width: 200px; }
+.ret-runs-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.ret-runs-spacer { flex: 1; }
+.ret-th-sort { cursor: pointer; user-select: none; }
+.ret-th-btn { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+.ret-item-badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 999px; font-size: 11px; border: 1px solid var(--border, #e2e8f0); }
+.ret-item-badge--err { color: #b91c1c; border-color: #fecaca; background: #fef2f2; }
+.ret-item-badge--skip { color: #92400e; border-color: #fde68a; background: #fffbeb; }
+[data-theme="dark"] .ret-item-badge--err { color: #fecaca; background: #450a0a; border-color: #7f1d1d; }
+[data-theme="dark"] .ret-item-badge--skip { color: #fde68a; background: #451a03; border-color: #78350f; }
+.ret-why-zero { font-size: 12px; color: #64748b; padding: 4px 10px 10px; font-style: italic; }
+.ret-why-zero-row td { border-top: 0; }
 .ret-panel { padding: 2px 0 16px; }
 
 /* -- Politika satiri (CSS-grid; tablo degil) -- */
@@ -3347,6 +3361,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   border: 1px solid var(--border, #e2e8f0);
 }
 .ahc-chip-tier { color: #fff; font-weight: 600; border: none; }
+.ahc-chip-renewed { border-style: dashed; opacity: .9; }
 
 .ahc-stats {
   display: flex; flex-wrap: wrap; gap: 14px;
@@ -4038,6 +4053,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   color: #9ca3af;
   margin-bottom: 10px;
 }
+.nl-count--muted { opacity: .65; margin-left: 6px; }
 .nl-count {
   background: #f3f4f6;
   color: #6b7280;
@@ -4874,6 +4890,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 
 /* Alarm state for cards */
 .sys-card-alarm { border-color: #fca5a5 !important; }
+.queue-saturated { margin-top: 8px; padding: 6px 10px; border-radius: 8px; font-size: 12px; font-weight: 600; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; }
+[data-theme="dark"] .queue-saturated { color: #fecaca; background: #450a0a; border-color: #7f1d1d; }
+.queue-callerruns-hot { color: #b91c1c; font-weight: 700; }
 [data-theme="dark"] .sys-card-alarm { border-color: #7f1d1d !important; }
 
 /* Alarm banner */
@@ -7031,12 +7050,6 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .badge-role-BOLUM_BASKANI { background: #7c3aed; }
 
 /* ── Team member expand row ──────────────────────── */
-.team-expand-btn {
-  background: none; border: none; cursor: pointer; font-size: .85em;
-  color: var(--text-muted); padding: 0 6px 0 0; vertical-align: middle;
-}
-.team-members-row td { background: var(--bg-surface); padding: 8px 12px; }
-[data-theme="dark"] .team-members-row td { background: #1a2233; }
 .team-members-list { display: flex; flex-wrap: wrap; gap: 8px; }
 .team-member-chip {
   display: inline-flex; align-items: center; gap: 4px;
@@ -7052,6 +7065,20 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .pwd-strength-label { font-size: .78em; font-weight: 500; min-width: 50px; text-align: right; }
 
 /* ── Team Management — member business cards ─────────────── */
+/* ── Tıklanabilir takım rozeti + üye modalı (2026-09-10) ── */
+.team-badge { display: inline-flex; align-items: center; gap: 4px; padding: 0; margin: 0; border: 0; background: none; font: inherit; color: inherit; cursor: pointer; text-decoration: underline dotted transparent; text-underline-offset: 2px; border-radius: 4px; }
+.team-badge:hover, .team-badge:focus-visible { color: var(--primary, #2563eb); text-decoration-color: currentColor; outline: none; }
+.team-badge--static { cursor: default; }
+.tmm-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.tmm-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; font-size: 12px; border: 1px solid var(--border, #e2e8f0); background: var(--bg-surface, #f8fafc); color: inherit; text-decoration: none; }
+.tmm-leader { color: #92400e; border-color: #fde68a; background: #fffbeb; }
+[data-theme="dark"] .tmm-leader { color: #fde68a; border-color: #78350f; background: #451a03; }
+.tmm-count { font-weight: 600; }
+.tmm-tabs { display: flex; gap: 6px; margin-bottom: 12px; border-bottom: 1px solid var(--border, #e2e8f0); }
+.tmm-tab { display: inline-flex; align-items: center; gap: 5px; padding: 6px 10px; border: 0; background: none; font: inherit; color: var(--text-muted, #64748b); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tmm-tab.is-active { color: var(--primary, #2563eb); border-bottom-color: var(--primary, #2563eb); font-weight: 600; }
+.tmm-esc-table { width: 100%; }
+
 .tm-member-cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));

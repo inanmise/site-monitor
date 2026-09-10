@@ -57,8 +57,17 @@ public class WebConfig implements WebMvcConfigurer {
     @Value("${site.monitor.executor.max-size:50}")
     private int executorMaxSize;
 
-    @Value("${site.monitor.executor.queue-capacity:100}")
+    // Varsayılan application.properties ile AYNI olmalı (ExecutorDefaultsSyncTest). Eskiden burada
+    // 100, properties'te 1000 yazıyordu — properties yüklenmeyen bağlamda sessizce 100'lük kuyruk.
+    @Value("${site.monitor.executor.queue-capacity:5000}")
     private int executorQueueCapacity;
+
+    /**
+     * Havuz + kuyruk dolduğunda çağıran thread'de koşturulan görev sayısı (CallerRuns). Sistem
+     * Sağlığı → Görev Kuyruğu kartı bunu gösterir: eskiden doygunluk yalnızca "sweep yavaşladı"
+     * olarak sessizce yaşanıyordu, sayaç yoktu.
+     */
+    public static final java.util.concurrent.atomic.AtomicLong CALLER_RUNS = new java.util.concurrent.atomic.AtomicLong();
 
     /**
      * CORS — statik addCorsMappings yerine istek-anında AppSettingsService'ten origin
@@ -199,7 +208,13 @@ public class WebConfig implements WebMvcConfigurer {
         // (scheduler) thread'inde çalıştır. Böylece büyük ölçekte (1000 domain) tarama geri-basınçla
         // yavaşlar ama kullanıcı isteklerini aç bırakacak kadar thread açmaz + RejectedExecutionException
         // riski biter. Bu sayede max havuz güvenle küçültülebilir (values.yaml executorMaxSize).
-        executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
+        // CallerRunsPolicy'nin SAYAÇLI eşleniği: davranış aynı (kapanmamışsa çağıranda koştur), ama
+        // her taşma CALLER_RUNS'a yazılır → doygunluk Sistem Sağlığı'nda görünür olur.
+        executor.setRejectedExecutionHandler((r, ex) -> {
+            if (ex.isShutdown()) return;
+            CALLER_RUNS.incrementAndGet();
+            r.run();
+        });
         executor.initialize();
         return executor;
     }

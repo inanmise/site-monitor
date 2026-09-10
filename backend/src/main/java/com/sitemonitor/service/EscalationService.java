@@ -276,6 +276,7 @@ public class EscalationService {
 
                 if (existing.isEmpty()) {
                     AlertEvent event = newEvent(domain, alertLevel, alertType, message, daysRemaining);
+                    event.setNotAfter(notAfterOf(result));   // gerçek bitiş anı; kart hesaplamaz, okur
                     // Sertifika olayına takım DAMGALANMIYORDU: açılış push'u syTeamId yedeğiyle gidiyor,
                     // çözüm push'u ise yalnız event.teamId okuyor → alıcı yok → SKIPPED_NO_RECIPIENTS.
                     // Telefon "KRİTİK: doluyor"u alıyor, "DÜZELDİ"yi hiç almıyordu (izleme yolu :889 ile aynı).
@@ -307,6 +308,7 @@ public class EscalationService {
                         event.setAlertLevel(alertLevel);
                         event.setMessage(message);
                         event.setDaysRemaining(daysRemaining);
+                        if (notAfterOf(result) != null) event.setNotAfter(notAfterOf(result));
                         event.setAcknowledged(false);
 
                         List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId);
@@ -329,6 +331,7 @@ public class EscalationService {
                             event.setLastReAlertAt(now());
                             event.setRealertCount((event.getRealertCount() == null ? 0 : event.getRealertCount()) + 1);
                             event.setDaysRemaining(daysRemaining);
+                            if (notAfterOf(result) != null) event.setNotAfter(notAfterOf(result));
                             event.setMessage(message);
                             alertEventRepo.save(event);
                             log.info("Re-alert sent: {} [{}] — previous day: {}",
@@ -601,6 +604,7 @@ public class EscalationService {
             event.setLastReAlertAt(now());
             event.setRealertCount((event.getRealertCount() == null ? 0 : event.getRealertCount()) + 1);
             event.setDaysRemaining(effectiveDays);
+            if (notAfterOf(certContext) != null) event.setNotAfter(notAfterOf(certContext));
             alertEventRepo.save(event);
             sent++;
             log.info("Startup catch-up: alert sent for {} [{}] — last was: {}",
@@ -677,7 +681,7 @@ public class EscalationService {
                 //
                 // enqueueResolve kendi simetri kuralını taşıyor: açılışı push'lanmamış bir olayın
                 // çözümü zaten push'lanmaz. Yani fırtına en baştan bastırdıysa burada da sessiz.
-                userPushService.enqueueResolve(saved, deserializeContext(saved.getContextJson()));
+                userPushService.enqueueResolve(saved, deserializeContext(saved.getContextJson()), resolveTeamFallback(saved));
                 log.info("✅ Alarm çözüldü (storm üyesi — bireysel çözüm maili yok, push simetrik): {} [{}]",
                         domain, event.getAlertType());
                 continue;
@@ -718,9 +722,28 @@ public class EscalationService {
     /** Sessiz kapanışlarda çözüm push'u — push katmanı hatası kapanışı ASLA geri almasın. */
     private void enqueueResolvePushQuietly(AlertEvent event) {
         try {
-            if (userPushService != null) userPushService.enqueueResolve(event, deserializeContext(event.getContextJson()));
+            if (userPushService != null)
+                userPushService.enqueueResolve(event, deserializeContext(event.getContextJson()), resolveTeamFallback(event));
         } catch (Exception e) {
             log.debug("Sessiz kapanış çözüm push'u atlandı: {}", e.toString());
+        }
+    }
+
+    /**
+     * Çözüm push satırı için takım yedeği: olay damgası, yoksa envanterin SY takımı. Eski sertifika
+     * olayları (takım damgası eklenmeden önce açılanlar) çözülürken damga null kalıyor, e-posta
+     * envanterden takımı bulurken push bulamıyordu (SKIPPED_NO_RECIPIENTS). UG takımı bilinçli
+     * dışarıda: push çözümleyicisi SY takım-kapsamlıdır.
+     */
+    private Long resolveTeamFallback(AlertEvent event) {
+        if (event == null) return null;
+        if (event.getTeamId() != null) return event.getTeamId();
+        if (event.getDomain() == null) return null;
+        try {
+            return inventoryRepo.findByDomain(event.getDomain())
+                    .map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -1402,6 +1425,12 @@ public class EscalationService {
                 domainTeamId = event.getTeamId() != null ? event.getTeamId() : invTeamId;
                 ugTeamId     = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null);
                 contacts = getContactsForLevel(event.getAlertLevel(), domainTeamId);
+                // Damgasız eski olayı çözümde tek seferlik damgala: push satırı ve "tekrar bildir"
+                // aynı takımı görsün (açılış yolundaki geri doldurmanın çözüm eşleniği).
+                if (event.getTeamId() == null && invTeamId != null) {
+                    event.setTeamId(invTeamId);
+                    try { alertEventRepo.save(event); } catch (Exception ignore) { /* damga best-effort */ }
+                }
             }
 
             // Build combined TO: team emails + contact emails (deduped)
@@ -1433,7 +1462,7 @@ public class EscalationService {
                 // duruyordu: e-postasız takım açılış push'unu alıp "DÜZELDİ" push'unu ASLA almıyor,
                 // telefonda alarm sonsuza dek açık kalıyordu.
                 try {
-                    userPushService.enqueueResolve(event, earlyCtx);
+                    userPushService.enqueueResolve(event, earlyCtx, domainTeamId);
                 } catch (Exception ex) {
                     log.warn("user-push çözüm tetiği atlandı (mail-dışı dal): {}", ex.toString());
                 }
@@ -1505,7 +1534,7 @@ public class EscalationService {
             log.info("Çözüm bildirimi → [{}] status={}", String.join(", ", allEmails), status);
             // Kişi-webhook çözüm push'u — mail sonucundan bağımsız (kanal bağımsızlığı sözleşmesi).
             try {
-                userPushService.enqueueResolve(event, certContext);
+                userPushService.enqueueResolve(event, certContext, domainTeamId);
             } catch (Exception ex) {
                 log.warn("user-push çözüm tetiği atlandı (mail yolu etkilenmedi): {}", ex.toString());
             }
@@ -2271,6 +2300,14 @@ public class EscalationService {
                 case TYPE_DOMAINMON_BLACKLIST     -> "Alan Adı Kara Liste";
                 default                 -> "Sertifika Süre Bitişi";
         };
+    }
+
+    /** Kontrol sonucundaki gerçek son geçerlilik anı (UTC ISO) — yoksa null. */
+    static String notAfterOf(Map<String, Object> result) {
+        Object v = result != null ? result.get("not_after") : null;
+        if (v == null) return null;
+        String s = String.valueOf(v).trim();
+        return s.isEmpty() ? null : s;
     }
 
     /** Çözüldü e-postasında detay için alarm anı context'inin küçük JSON snapshot'ı.

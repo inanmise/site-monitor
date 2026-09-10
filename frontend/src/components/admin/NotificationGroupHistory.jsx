@@ -2,6 +2,7 @@ import { formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
+import TeamBadge from '../ui/TeamBadge.jsx'
 
 /**
  * "Kim, ne zaman, neyi değiştirdi" — bildirim gruplarının değişiklik geçmişi.
@@ -145,7 +146,7 @@ export default function NotificationGroupHistory({
                 <span className="ng-hist-who">{r.actor || '—'}</span>
                 <span className="ng-hist-what">
                   “{r.group_name || `#${r.group_id}`}”
-                  {r.team_name && <span className="audit-sub"> · {r.team_name}</span>}
+                  {r.team_name && <span className="audit-sub"> · <TeamBadge teamId={r.team_id} teamName={r.team_name} size={11} /></span>}
                 </span>
                 {r.ip && <span className="ng-hist-ip audit-mono">{r.ip}</span>}
               </div>

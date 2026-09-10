@@ -2457,4 +2457,29 @@ class AdminControllerTest {
         // Harf farkı rename DEĞİLDİR: geçmiş tabloları taşınmaz, satır aynı anahtarla kalır.
         org.mockito.Mockito.verify(latestCheckRepo, org.mockito.Mockito.never()).renameDomain(any(), any());
     }
+
+    // ── 2026-09-10: kapalı alarm kartı gerçek bitişi okur; eski satırlara LatestCheck yedeği ──
+
+    @Test
+    @DisplayName("GET /alerts: not_after damgasız EXPIRY olayına LatestCheck.not_after yedeği, current_not_after her sertifika olayına yazılır")
+    void listAlerts_enrichesNotAfterFromLatestCheck() throws Exception {
+        com.sitemonitor.model.AlertEvent stamped = new com.sitemonitor.model.AlertEvent();
+        stamped.setId(1L); stamped.setDomain("a.example.com"); stamped.setAlertType("EXPIRY"); stamped.setAlertLevel("WARNING");
+        stamped.setResolved(true); stamped.setNotAfter("2026-09-22T23:59:59"); stamped.setCreatedAt("2026-09-01T00:00:00");
+        com.sitemonitor.model.AlertEvent legacy = new com.sitemonitor.model.AlertEvent();
+        legacy.setId(2L); legacy.setDomain("b.example.com"); legacy.setAlertType("EXPIRY"); legacy.setAlertLevel("WARNING");
+        legacy.setResolved(true); legacy.setCreatedAt("2026-09-01T00:00:00");
+        com.sitemonitor.model.LatestCheck la = new com.sitemonitor.model.LatestCheck(); la.setDomain("a.example.com"); la.setNotAfter("2026-12-31T23:59:59");
+        com.sitemonitor.model.LatestCheck lb = new com.sitemonitor.model.LatestCheck(); lb.setDomain("b.example.com"); lb.setNotAfter("2026-10-05T10:00:00");
+        when(latestCheckRepo.findByDomainIn(any())).thenReturn(java.util.List.of(la, lb));
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(new PageImpl<>(java.util.List.of(stamped, legacy)));
+
+        mvc.perform(get("/api/admin/alerts?resolved=true").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].not_after").value("2026-09-22T23:59:59"))
+                .andExpect(jsonPath("$.data[0].current_not_after").value("2026-12-31T23:59:59"))
+                .andExpect(jsonPath("$.data[1].not_after").value("2026-10-05T10:00:00"))
+                .andExpect(jsonPath("$.data[1].current_not_after").value("2026-10-05T10:00:00"));
+    }
 }

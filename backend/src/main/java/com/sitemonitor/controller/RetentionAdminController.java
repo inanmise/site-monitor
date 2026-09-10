@@ -48,7 +48,7 @@ public class RetentionAdminController {
     private String cleanupCron;
 
     /** Uyum onayı (kim/ne zaman onayladı) ayar anahtarı öneki — politika id'siyle birleşir. */
-    private static final String APPROVAL_PREFIX = "site.monitor.retention.approval.";
+    private static final String APPROVAL_PREFIX = com.sitemonitor.service.AppSettingsCatalog.RETENTION_APPROVAL_PREFIX;
 
     private final RetentionService retentionService;
     private final RetentionRunRepository runRepo;
@@ -87,13 +87,38 @@ public class RetentionAdminController {
         return ok(Map.of("data", data));
     }
 
-    /** Son çalışmalar (dry-run'lar dahil) + tablo bazında detay. */
+    /** Sıralama beyaz-listesi: istemci anahtarı → entity alanı. Bilinmeyen anahtar → started_at. */
+    private static final Map<String, String> RUN_SORTS = Map.of(
+            "started_at", "startedAt", "total_deleted", "totalDeleted",
+            "duration_ms", "durationMs", "failed_count", "failedCount");
+    private static final int RUNS_MAX_SIZE = 100;
+    private static final int RUNS_CSV_MAX_ROWS = 5000;
+
+    /**
+     * Son çalışmalar (dry-run'lar dahil) + tablo bazında detay — sunucu-taraflı sayfalama,
+     * süzgeç (tür / hatalı / politika / tarih / metin) ve sıralama. Eski {@code limit} param'ı
+     * geriye uyumlu (sayfa boyutu sayılır). Yanıt: data/total/page/size/total_pages.
+     */
     @GetMapping("/runs")
     public ResponseEntity<Map<String, Object>> runs(
-            @RequestParam(defaultValue = "10") int limit, HttpSession session) {
+            @RequestParam(required = false) Integer limit,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(required = false) Integer size,
+            @RequestParam(defaultValue = "all") String kind,
+            @RequestParam(defaultValue = "false") boolean failed,
+            @RequestParam(required = false) String policyId,
+            @RequestParam(required = false) String since,
+            @RequestParam(required = false) String until,
+            @RequestParam(required = false) String q,
+            @RequestParam(defaultValue = "started_at") String sort,
+            @RequestParam(defaultValue = "desc") String dir,
+            HttpSession session) {
         requireAccess(session);
-        int n = Math.max(1, Math.min(limit, 50));
-        List<RetentionRun> list = runRepo.findAllByOrderByStartedAtDesc(PageRequest.of(0, n)).getContent();
+        int pageSize = size != null ? size : (limit != null ? limit : 20);
+        pageSize = Math.max(1, Math.min(pageSize, RUNS_MAX_SIZE));
+        var pg = runRepo.search(runKind(kind), failed, blank(since), blank(until), likeTerm(q), blank(policyId),
+                PageRequest.of(Math.max(0, page), pageSize, runSort(sort, dir)));
+        List<RetentionRun> list = pg.getContent();
         List<Long> ids = list.stream().map(RetentionRun::getId).toList();
         Map<Long, List<Map<String, Object>>> itemsByRun = new LinkedHashMap<>();
         if (!ids.isEmpty()) {
@@ -115,7 +140,93 @@ public class RetentionAdminController {
             m.put("items", itemsByRun.getOrDefault(r.getId(), List.of()));
             out.add(m);
         }
-        return ok(Map.of("data", out));
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("data", out);
+        body.put("total", pg.getTotalElements());
+        body.put("page", pg.getNumber());
+        body.put("size", pg.getSize());
+        body.put("total_pages", pg.getTotalPages());
+        return ok(body);
+    }
+
+    /** Ekranla AYNI süzgeçle CSV — en fazla {@value #RUNS_CSV_MAX_ROWS} koşum; kalemler tek hücrede. */
+    @GetMapping("/runs/export")
+    public ResponseEntity<Void> exportRuns(
+            @RequestParam(defaultValue = "all") String kind,
+            @RequestParam(defaultValue = "false") boolean failed,
+            @RequestParam(required = false) String policyId,
+            @RequestParam(required = false) String since,
+            @RequestParam(required = false) String until,
+            @RequestParam(required = false) String q,
+            @RequestParam(defaultValue = "started_at") String sort,
+            @RequestParam(defaultValue = "desc") String dir,
+            HttpSession session, jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
+        requireAccess(session);
+        response.setContentType("text/csv; charset=UTF-8");
+        response.setHeader("Content-Disposition", "attachment; filename=\"retention-runs.csv\"");
+        java.io.Writer w = response.getWriter();
+        w.write('\uFEFF');   // Excel UTF-8 BOM
+        csvRow(w, new String[]{"id", "started_at", "finished_at", "kind", "total_deleted", "failed_count",
+                "duration_ms", "triggered_by", "instance_id", "items"});
+        int rows = 0;
+        for (int p = 0; rows < RUNS_CSV_MAX_ROWS; p++) {
+            var chunk = runRepo.search(runKind(kind), failed, blank(since), blank(until), likeTerm(q), blank(policyId),
+                    PageRequest.of(p, RUNS_MAX_SIZE, runSort(sort, dir))).getContent();
+            if (chunk.isEmpty()) break;
+            List<Long> ids = chunk.stream().map(RetentionRun::getId).toList();
+            Map<Long, StringBuilder> itemsByRun = new LinkedHashMap<>();
+            for (var it : itemRepo.findByRunIdInOrderByIdAsc(ids)) {
+                StringBuilder sb = itemsByRun.computeIfAbsent(it.getRunId(), k -> new StringBuilder());
+                if (sb.length() > 0) sb.append("; ");
+                sb.append(it.getPolicyId()).append('=').append(it.getRowsDeleted() == null ? 0 : it.getRowsDeleted());
+                if (it.getSkipped() != null) sb.append(" [").append(it.getSkipped()).append(']');
+                if (it.getError() != null) sb.append(" !").append(it.getError());
+            }
+            for (RetentionRun r : chunk) {
+                csvRow(w, new String[]{
+                        String.valueOf(r.getId()), r.getStartedAt(), r.getFinishedAt(),
+                        Boolean.TRUE.equals(r.getHoldActive()) ? "hold" : Boolean.TRUE.equals(r.getDryRun()) ? "dry" : "real",
+                        String.valueOf(r.getTotalDeleted()), String.valueOf(r.getFailedCount()),
+                        r.getDurationMs() == null ? "" : String.valueOf(r.getDurationMs()),
+                        r.getTriggeredBy(), r.getInstanceId(),
+                        itemsByRun.getOrDefault(r.getId(), new StringBuilder()).toString()});
+                rows++;
+            }
+            if (chunk.size() < RUNS_MAX_SIZE) break;
+        }
+        w.flush();
+        return null;
+    }
+
+    static String runKind(String kind) {
+        String k = kind == null ? "all" : kind.trim().toLowerCase(Locale.ROOT);
+        return switch (k) { case "real", "dry", "hold" -> k; default -> "all"; };
+    }
+
+    static org.springframework.data.domain.Sort runSort(String sort, String dir) {
+        String prop = RUN_SORTS.getOrDefault(sort == null ? "" : sort.trim().toLowerCase(Locale.ROOT), "startedAt");
+        var d = "asc".equalsIgnoreCase(dir) ? org.springframework.data.domain.Sort.Direction.ASC
+                                            : org.springframework.data.domain.Sort.Direction.DESC;
+        return org.springframework.data.domain.Sort.by(d, prop)
+                .and(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "id"));
+    }
+
+    private static String blank(String s) { return s == null || s.isBlank() ? null : s.trim(); }
+
+    /** LIKE terimi: küçük harf + boş → null (sorgu %…% sarar). */
+    static String likeTerm(String q) {
+        String s = blank(q);
+        return s == null ? null : s.toLowerCase(Locale.ROOT);
+    }
+
+    private static void csvRow(java.io.Writer w, String[] cells) throws java.io.IOException {
+        for (int i = 0; i < cells.length; i++) {
+            if (i > 0) w.write(',');
+            String c = cells[i] == null ? "" : cells[i];
+            boolean quote = c.contains(",") || c.contains("\"") || c.contains("\n") || c.contains("\r");
+            w.write(quote ? "\"" + c.replace("\"", "\"\"") + "\"" : c);
+        }
+        w.write("\r\n");
     }
 
     // ── Eylemler ─────────────────────────────────────────────────────────────────

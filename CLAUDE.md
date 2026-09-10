@@ -137,7 +137,7 @@ Rule: when you add a column an existing DB might not have, add a `patch()` line.
 
 ### Cert-check thread pool
 `WebConfig` registers a `certCheckExecutor` (`ThreadPoolTaskExecutor`) shared by `CertificateCheckerService` / `PortCheckerService` / `DnsCheckerService` / `UptimeHttpCheckerService`. Sized by env:
-- `EXECUTOR_CORE_SIZE` (default 20), `EXECUTOR_MAX_SIZE` (50), `EXECUTOR_QUEUE_CAPACITY` (1000).
+- `EXECUTOR_CORE_SIZE` (default 20), `EXECUTOR_MAX_SIZE` (50), `EXECUTOR_QUEUE_CAPACITY` (5000). Prod Helm values mirror these (20/50/5000); the rejected-execution handler runs overflow on the caller thread and counts it in `WebConfig.CALLER_RUNS` (System Health → Task Queue).
 Bump these when inventory grows past a few hundred rows or you see queue backpressure in metrics.
 
 ### Other services in the codebase

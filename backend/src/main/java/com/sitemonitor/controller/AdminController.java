@@ -1475,12 +1475,28 @@ public class AdminController {
             }
         }
 
+        // Sertifika alarmlarında güncel bitiş (LatestCheck): eski damgasız satırlara görüntü yedeği,
+        // yeni satırlarda "alarm anı ≠ güncel" ise yenilenme rozeti. Tek toplu sorgu.
+        Map<String, String> latestNotAfter = new HashMap<>();
+        if (!domains.isEmpty()) {
+            for (com.sitemonitor.model.LatestCheck lc : latestCheckRepo.findByDomainIn(domains)) {
+                if (lc.getNotAfter() != null) latestNotAfter.putIfAbsent(lc.getDomain(), lc.getNotAfter());
+            }
+        }
+
         for (AlertEvent ev : events) {
             ev.setRepeatCount(repeatCounts.get(new RepeatKey(ev.getDomain(), ev.getAlertType())));
+            if (EscalationService.CERT_ALERT_TYPES.contains(ev.getAlertType())) {
+                String current = latestNotAfter.get(ev.getDomain());
+                ev.setCurrentNotAfter(current);
+                if (ev.getNotAfter() == null && current != null) ev.setNotAfter(current);   // yalnız görüntü — kaydedilmez
+            }
             CertificateInventory inv = invByDomain.get(ev.getDomain());
             if (inv != null) {
                 ev.setSyTeamName(inv.getTeamId()   != null ? teamNames.get(inv.getTeamId())   : null);
                 ev.setUgTeamName(inv.getUgTeamId() != null ? teamNames.get(inv.getUgTeamId()) : null);
+                ev.setSyTeamId(inv.getTeamId());
+                ev.setUgTeamId(inv.getUgTeamId());
                 ev.setCertTier(inv.getTier());
             }
             long[] counts = mailCounts.getOrDefault(ev.getId(), new long[]{0, 0});

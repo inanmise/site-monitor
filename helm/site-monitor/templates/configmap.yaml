@@ -43,6 +43,7 @@ data:
   PARALLEL_WORKERS: {{ .Values.config.parallelWorkers | quote }}
   EXECUTOR_CORE_SIZE: {{ .Values.config.executorCoreSize | quote }}
   EXECUTOR_MAX_SIZE: {{ .Values.config.executorMaxSize | quote }}
+  EXECUTOR_QUEUE_CAPACITY: {{ .Values.config.executorQueueCapacity | quote }}
   STARTUP_CHECK_DELAY_MS: {{ .Values.config.startupCheckDelayMs | quote }}
   JAVA_OPTS: {{ .Values.config.javaOpts | quote }}
   HTTP_PROXY_HOST: {{ .Values.config.httpProxyHost | quote }}

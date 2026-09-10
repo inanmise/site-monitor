@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { api, formatDate } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
+import TeamBadge from '../ui/TeamBadge.jsx'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../../hooks/useUrlQuerySync.js'
 import { readPageSize, writePageSize } from '../../hooks/usePagination.js'
 import UserBadge from '../ui/UserBadge.jsx'
@@ -30,13 +31,17 @@ const levelClass = (lvl) => ({ WARNING: 'warning', HIGH: 'high', CRITICAL: 'crit
 // fark edilmeden yaşamasının sebebiydi; diğer ikisi zaten dk/sa/g kullanıyor.
 // incidentMeta.formatDuration birimleri i18n'den alır (incov.unit.*), yani TR/EN tutarlıdır.
 
-// Snapshot expiry date at alarm-creation time: created_at + days_remaining × 1 day.
-// Reflects the cert's not_after as it was when the alert fired, not the current value.
-function alertExpiryDate(a) {
+// Kapalı alarm kartındaki "Son Geçerlilik": SUNUCUNUN damgaladığı gerçek not_after (alarm anı).
+// Eskiden created_at + days_remaining ile YENİDEN HESAPLANIYORDU: days_remaining eskalasyon/
+// re-alert'te güncellenip created_at sabit kaldığından tarih açık kaldığı gün kadar erken, zone'suz
+// created_at yerel parse edildiğinden saat hep ":00" çıkıyordu (23 Eylül 02:59 → "05/09 00:00").
+// Yaklaşık hesap yalnız son çare (not_after da LatestCheck yedeği de yoksa — pratikte eski satır yok).
+function alertExpiryIso(a) {
+  if (a?.not_after) return a.not_after
   if (!a?.created_at || a.days_remaining == null) return null
-  const created = new Date(a.created_at)
+  const created = new Date(a.created_at.endsWith('Z') ? a.created_at : a.created_at + 'Z')
   if (isNaN(created)) return null
-  return new Date(created.getTime() + a.days_remaining * 86_400_000)
+  return new Date(created.getTime() + a.days_remaining * 86_400_000).toISOString()
 }
 
 function AuditRow({ label, by, at, variant, note }) {
@@ -82,7 +87,11 @@ function EmailStatusBadge({ status }) {
 export function groupPushRows(rows) {
   const by = new Map()
   for (const p of rows ?? []) {
-    const key = `${p.trigger}|${p.status}|${p.message ?? ''}`
+    // dedupe_key = GÖNDERİM PARTİSİ kimliği: RESEND her tıkta rastgele, RE_ALERT gün başına,
+    // OPEN/RESOLVE sabit. Anahtarda yokken aynı alarma iki kez "Tekrar Bildir" (metin birebir aynı)
+    // tek karta birleşiyor ve açılan listede aynı kişi iki kez görünüyordu. Eski/dedupe_key'siz
+    // satırlar eski anahtara düşer (davranış değişmez).
+    const key = `${p.trigger}|${p.status}|${p.dedupe_key ?? ''}|${p.message ?? ''}`
     if (!by.has(key)) by.set(key, [])
     by.get(key).push(p)
   }
@@ -151,6 +160,9 @@ function PushDeliveryGroup({ rows }) {
   const head = rows[0]
   const many = rows.length > 1
   const uniqueRecipients = new Set(rows.map(r => r.username)).size
+  // Genişletilmiş liste de BENZERSİZ kişi basar (başlık sayacıyla aynı kural); sistem ('-')
+  // satırları ayrı kararlardır, olduğu gibi kalır.
+  const uniqueRows = rows.filter((r, i) => r.username === '-' || rows.findIndex(x => x.username === r.username) === i)
   const cls = PUSH_TRIGGER_CLS[head.trigger] ?? 'other'
   const statusCls = head.status === 'SENT' ? 'ok'
     : (head.status === 'FAILED' || head.status === 'CIRCUIT_OPEN') ? 'danger' : 'muted'
@@ -203,7 +215,7 @@ function PushDeliveryGroup({ rows }) {
           {many && (
             <div className="nl-detail-row nl-detail-row--body">
               <span className="nl-detail-label">{t('alh.push.who')}</span>
-              <span className="nl-detail-val nl-who-list">{rows.map(who)}</span>
+              <span className="nl-detail-val nl-who-list">{uniqueRows.map(who)}</span>
             </div>
           )}
           {head.http_status != null && (
@@ -348,6 +360,9 @@ function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
   const [loadingHistory, setLoading] = useState(true)
   const [loadFailed, setLoadFailed] = useState(false)
   const [pushRows, setPushRows] = useState([])
+  const pushGroups = useMemo(() => groupPushRows(pushRows), [pushRows])
+  const sentGroups = useMemo(() => pushGroups.filter(g => g[0]?.status === 'SENT').length, [pushGroups])
+  const skippedGroups = pushGroups.length - sentGroups
 
   useEffect(() => {
     // Ağ hatasında (pod restart / proxy) request() reject eder; eskiden .catch/.finally yoktu →
@@ -442,11 +457,16 @@ function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
               {openSection === 'push' ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
             </span>
             {t('alh.webhookSection')}
-            <span className="nl-count">{t('alh.notifModal.records', pushRows.length)}</span>
+            {/* Sayaç GÖNDERİM sayar, alıcı satırı değil: eskiden "37 kayıt" = 5 kişi × 7 gönderim
+                + sistem satırları; gövdede ise 3-4 kart vardı. Kişi sayısı her kartta zaten yazar. */}
+            <span className="nl-count">{t('alh.push.sendCount', sentGroups)}</span>
+            {skippedGroups > 0 && (
+              <span className="nl-count nl-count--muted">{t('alh.push.skipCount', skippedGroups)}</span>
+            )}
           </div>
           {openSection === 'push' && (<>
             {pushRows.length === 0 && <div className="nl-empty">{t('alh.webhookNone')}</div>}
-            {groupPushRows(pushRows).map((g, i) => (
+            {pushGroups.map((g, i) => (
               <PushDeliveryGroup key={g[0].id ?? i} rows={g} />
             ))}
           </>)}
@@ -1337,24 +1357,31 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
                   </div>
 
                   {(() => {
-                    const expDate = a.alert_type === 'EXPIRY' ? alertExpiryDate(a) : null
-                    const hasMeta = a.sy_team_name || a.ug_team_name || a.cert_tier != null || expDate
+                    const expIso = a.alert_type === 'EXPIRY' ? alertExpiryIso(a) : null
+                    // Yenilenmişse güncel bitiş de yan yana: kapalı alarm "neden kapandı" sorusunu kendi anlatır.
+                    const renewedIso = expIso && a.current_not_after && a.current_not_after !== expIso ? a.current_not_after : null
+                    const hasMeta = a.sy_team_name || a.ug_team_name || a.cert_tier != null || expIso
                     if (!hasMeta) return null
                     return (
                       <div className="ahc-meta">
-                        {expDate && (
+                        {expIso && (
                           <span className="ahc-chip ahc-chip-expiry">
-                            <Calendar size={11}/> {t('alh.expiryWas')}: <strong>{formatDate(expDate.toISOString())}</strong>
+                            <Calendar size={11}/> {t('alh.expiryWas')}: <strong>{formatDate(expIso)}</strong>
+                          </span>
+                        )}
+                        {renewedIso && (
+                          <span className="ahc-chip ahc-chip-expiry ahc-chip-renewed" title={t('alh.expiryNowHint')}>
+                            <Calendar size={11}/> {t('alh.expiryNow')}: <strong>{formatDate(renewedIso)}</strong>
                           </span>
                         )}
                         {a.sy_team_name && (
                           <span className="ahc-chip ahc-chip-team">
-                            <Users size={11}/> {t('alh.syTeam')}: <strong>{a.sy_team_name}</strong>
+                            {t('alh.syTeam')}: <strong><TeamBadge teamId={a.sy_team_id} teamName={a.sy_team_name} size={11} /></strong>
                           </span>
                         )}
                         {a.ug_team_name && (
                           <span className="ahc-chip ahc-chip-team">
-                            <Users size={11}/> {t('alh.ugTeam')}: <strong>{a.ug_team_name}</strong>
+                            {t('alh.ugTeam')}: <strong><TeamBadge teamId={a.ug_team_id} teamName={a.ug_team_name} size={11} /></strong>
                           </span>
                         )}
                         {a.cert_tier != null && (

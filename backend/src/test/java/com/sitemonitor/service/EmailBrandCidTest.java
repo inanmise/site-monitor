@@ -103,4 +103,53 @@ class EmailBrandCidTest {
         String html = service.buildAlertEmailHtml("[Site Monitor] keyword", "mesaj", "https://example.com", "WARNING", "KEYWORD", null, new java.util.HashMap<>());
         assertThat(html).contains("cid:brand-logo").contains("width=\"32\"");
     }
+
+    // ── Elle kurulan admin/güvenlik mailleri (2026-09-10: anomali test mailinde logo X çıkıyordu) ──
+
+    static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> handBuiltMails() {
+        FailedLoginAnomalyService.AnomalyReport report = new FailedLoginAnomalyService.AnomalyReport(
+                "2026-09-10T00:00:00", "2026-09-10T00:15:00", 15, 42L, 3L,
+                java.util.List.of(new FailedLoginAnomalyService.RuleHit("TOTAL", 42, 20, "eşik aşıldı")),
+                java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.Map.of());
+        return java.util.stream.Stream.of(
+            org.junit.jupiter.params.provider.Arguments.of("password-reset",
+                (java.util.function.Consumer<EmailNotificationService>) s -> s.sendPasswordResetEmail("u@example.com", "u", "Kullanıcı", "Temp1234!")),
+            org.junit.jupiter.params.provider.Arguments.of("new-device",
+                (java.util.function.Consumer<EmailNotificationService>) s -> s.sendNewDeviceEmail("u@example.com", "Kullanıcı", "Chrome / Windows", "10.0.0.1", "İstanbul", "2026-09-10T10:00:00")),
+            org.junit.jupiter.params.provider.Arguments.of("network-alert",
+                (java.util.function.Consumer<EmailNotificationService>) s -> s.sendSystemAdminNetworkAlert("admin@example.com", "2026-09-10T10:00:00", 5, 10, 0.5, 0.3)),
+            org.junit.jupiter.params.provider.Arguments.of("network-resolved",
+                (java.util.function.Consumer<EmailNotificationService>) s -> s.sendSystemAdminNetworkResolved("admin@example.com", "2026-09-10T10:00:00", "2026-09-10T10:30:00", 1_800_000L, 5, 10, 0.5)),
+            org.junit.jupiter.params.provider.Arguments.of("login-anomaly-alert",
+                (java.util.function.Consumer<EmailNotificationService>) s -> s.sendSystemAdminLoginAnomalyAlert(new String[]{"admin@example.com"}, report, "TEST")),
+            org.junit.jupiter.params.provider.Arguments.of("login-anomaly-resolved",
+                (java.util.function.Consumer<EmailNotificationService>) s -> s.sendSystemAdminLoginAnomalyResolved(new String[]{"admin@example.com"}, "2026-09-10T10:00:00", "2026-09-10T10:30:00", 42L))
+        );
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.MethodSource("handBuiltMails")
+    @DisplayName("Elle kurulan admin/güvenlik mailleri de marka logosunu CID inline taşır (kırık resim yok)")
+    void handBuiltMails_carryBrandLogo(String label, java.util.function.Consumer<EmailNotificationService> send) throws Exception {
+        send.accept(service);
+        String mime = sentMime();
+        assertThat(mime).as(label + " — Content-ID parçası").contains("Content-ID: <brand-logo>");
+        assertThat(mime).as(label + " — multipart/related").contains("multipart/related");
+    }
+
+    /**
+     * Sınıf-kapatıcı kapı: EmailNotificationService'te elle kurulan MimeMessageHelper sayısı sabittir
+     * (sendAlert×2, sendResolutionAlert×2, sendHtml, sendFramedHtml). Yeni bir elle kurulan gönderici
+     * eklenirse bu test kırılır — ya sendFramedHtml/sendHtml hunisini kullan ya da huniye
+     * BrandMailAssets.addInline ekleyip sayıyı bilinçli güncelle.
+     */
+    @Test
+    @DisplayName("Elle kurulan MimeMessageHelper sayısı sabit — yeni gönderici huniden geçmeli")
+    void handBuiltHelperCount_isPinned() throws Exception {
+        java.nio.file.Path src = java.nio.file.Path.of("src/main/java/com/sitemonitor/service/EmailNotificationService.java");
+        String code = java.nio.file.Files.readString(src);
+        long n = java.util.regex.Pattern.compile("new MimeMessageHelper\\(").matcher(code).results().count();
+        assertThat(n).as("elle kurulan helper sayısı (huniler: sendAlert×2, sendResolutionAlert×2, sendHtml, sendFramedHtml)")
+                .isEqualTo(6);
+    }
 }
