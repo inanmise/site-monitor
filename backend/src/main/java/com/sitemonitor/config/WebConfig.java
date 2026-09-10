@@ -180,11 +180,15 @@ public class WebConfig implements WebMvcConfigurer {
                 //   çağırır → React mount olamaz → BEYAZ EKRAN. (prod'da cache.period set değil,
                 //   bu yüzden framework Cache-Control yazmaz; buradaki header otoritedir.)
                 String uri = req.getRequestURI();
-                if (uri.equals("/api/branding") || uri.equals("/api/public-stats")) {
-                    // Public login-sayfası endpoint'leri (branding + hero istatistikleri) — 60 sn
-                    // cache'lenebilir; canlı değişim en geç 1 dk'da yansır (ETag yok/gerekmiyor).
-                    res.setHeader("Cache-Control", "public, max-age=60");
-                } else if (uri.startsWith("/api/")) {
+                // 2026-09-10: /api/branding ve /api/public-stats eskiden "public, max-age=60" idi.
+                // "public" paylaşımlı önbelleklere (NetScaler integrated cache, proxy) saklama izni
+                // verir; test ortamında dağıtımdan sonra giriş sayfası dakikalarca ESKİ sürüm numarasını
+                // gösterdi (cihaz kendi TTL'siyle sakladı, tarayıcı sert yenileme çare olmadı). Yük
+                // hafifletmesi HTTP katmanına ait değil: public-stats sunucu içinde cacheMs (5 dk)
+                // memo'lu, branding AppSettings belleğinden. Bu yüzden iki uç da diğer /api yanıtları
+                // gibi no-store: pod ayağa kalkar kalkmaz yeni sürüm/marka görünür.
+                // Kapı: WebConfigTest.publicEndpoints_areNoStore.
+                if (uri.startsWith("/api/")) {
                     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
                     res.setHeader("Pragma", "no-cache");
                 } else if (uri.startsWith("/assets/")) {

@@ -187,6 +187,7 @@ Backend stores timestamps as UTC (audit, alerts, notifications). Log timestamps 
 - `release.yml` — runs on `main`; detects bump from conventional commit prefix (`feat:` → minor, `fix:` → patch, `BREAKING CHANGE` → major), writes `VERSION`, publishes Helm chart. Does **not** re-run tests; trusts `ci.yml`.
 
 ## Things that bite
+- **Never mark an `/api/**` response `Cache-Control: public`.** `/api/branding` and `/api/public-stats` were `public, max-age=60`; the NetScaler in front of test/prod cached them with its own TTL, so after a deploy the login page showed the previous version number for minutes and a browser hard refresh could not fix it (2026-09-10). All `/api` responses are `no-store` now (`WebConfigTest.publicEndpoints_areNoStore`); if a public endpoint needs load relief, memoize server-side (see `PublicStatsController.cacheMs`), which also resets on pod restart.
 
 - After any backend change, the user expects: `mvn verify` → if green, `npm run build` (so the frontend is bundled) → restart backend → smoke. Don't skip the restart, login regressions show as 500.
 - `start-local.ps1` launches the **packaged jar** (`backend/target/*.jar`), not `spring-boot:run`. `mvn test` does **not** repackage — after a backend code change run `mvn package -DskipTests` (or `verify`) *before* restarting, or the running app serves stale code (e.g. a new response field comes back empty).

@@ -16,7 +16,9 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Login sayfası hero istatistikleri — PUBLIC (auth YOK; AuthInterceptor.PUBLIC + 60 sn HTTP cache).
+ * Login sayfası hero istatistikleri — PUBLIC (auth YOK; AuthInterceptor.PUBLIC). HTTP yanıtı diğer
+ * /api uçları gibi no-store (2026-09-10: eski "public, max-age=60" NetScaler'da bayat kopya bırakıyordu);
+ * yük hafifletmesi aşağıdaki sunucu-içi cache'tir, pod yeniden başlayınca sıfırdan dolar.
  * Yalnız iki toplam sayı döner (izlenen hedef adedi + 7 günlük erişilebilirlik yüzdesi) — domain
  * adı/detay sızmaz. Sunucu tarafında 5 dk in-memory cache: login sayfası açılışları DB'ye binmez.
  */

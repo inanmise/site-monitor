@@ -61,3 +61,14 @@ CLAUDE.md skill yönlendirme kuralları. Eklenen satırlarda S2/S3/S9/S11/S12 im
 ("button içinde TeamBadge") 10 diğer çağrı yerinde tarandı: hepsi `div`/`role=button` içinde ya da
 düğme dışı; tarayıcı taramasında 33 sekmede başka `validateDOMNesting` yok. Baseline dosyaları
 değişmedi → **REGRESYON YOK**. Sürüme engel yok.
+
+## Ek — beşinci tur (aynı gün, test ortamı bulgusu: bayat sürüm numarası)
+
+Bulgu (kullanıcı, test ortamı): pod 20.53.1 çalışırken giriş sayfası dakikalarca `v20.50.27` gösterdi;
+tarayıcı önbelleği temizlemek/sert yenileme işe yaramadı, bir süre sonra kendiliğinden düzeldi.
+Kök neden: `/api/branding` ve `/api/public-stats` yanıtları `Cache-Control: public, max-age=60` ile
+işaretliydi; `public` paylaşımlı önbelleğe (NetScaler integrated cache) saklama izni verir ve cihaz
+kendi TTL'siyle sakladı. Düzeltme: iki uç diğer `/api` yanıtları gibi `no-store` (yük hafifletmesi
+zaten sunucu-içi memo'da: public-stats `cacheMs`, branding AppSettings belleği). Kapı:
+`WebConfigTest.publicEndpoints_areNoStore` (`public`/`max-age` geri gelirse kırmızı). S-sınıfı
+imzalarında tekrar yok. Sürüme engel yok.
