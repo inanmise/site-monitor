@@ -61,7 +61,7 @@ describe('img src yetki bekçisi', () => {
 
   it('kullanıcı avatarları authenticated foto ucunu kullanıyor', () => {
     const consumers = [
-      'components/admin/TeamManager.jsx',
+      'components/ui/TeamMemberCards.jsx',   // üye kartları TeamManager'dan buraya taşındı (2026-09-10, takım modalı)
       'components/admin/UserManager.jsx',
       'components/admin/UserEditModal.jsx',
       'components/ui/UserBadge.jsx',
