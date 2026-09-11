@@ -1,9 +1,65 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-10T19:24:53Z",
+  "generatedAt": "2026-09-11T07:01:07Z",
   "repo": "inanmise/site-monitor",
-  "count": 629,
+  "count": 630,
   "releases": [
+    {
+      "version": "20.54.0",
+      "tag": "v20.54.0",
+      "releasedAt": "2026-09-11T07:01:02Z",
+      "commit": "738610fa12c3b67fa0f6e43f4fafc975f30cec9b",
+      "prevVersion": "20.53.2",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": "health",
+          "breaking": false,
+          "sha": "738610fa",
+          "subject": "ExtendedHealthService durum üreticileri pinlendi — CI jacoco tabanı sınırdan kurtarıldı, eşik 0,37 → 0,80"
+        },
+        {
+          "type": "docs",
+          "scope": "regresyon",
+          "breaking": false,
+          "sha": "5402d4c8",
+          "subject": "2026-09-11 turu — regresyon yok, CSV formül enjeksiyonu sınıfı (3 yüzey) kapatıldı"
+        },
+        {
+          "type": "feat",
+          "scope": "release-history",
+          "breaking": false,
+          "sha": "cba988de",
+          "subject": "Sürüm & Dağıtım Geçmişi — nav sürüm çipi, Yenilikler, dağıtım kayıtları, build meta zinciri"
+        },
+        {
+          "type": "fix",
+          "scope": "page-integrity",
+          "breaking": false,
+          "sha": "d7345453",
+          "subject": "pod'un göremediği link \"Broken\" değil \"Belirsiz\"; zaman aşımında retry yok (16 s → 4 s)"
+        },
+        {
+          "type": "fix",
+          "scope": "csv",
+          "breaking": false,
+          "sha": "e559bb56",
+          "subject": "dışa aktarımlar ortak Csv kuralına bağlandı — formül enjeksiyonu (CWE-1236) üç yüzeyde kapatıldı"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.53.2",
       "tag": "v20.53.2",
