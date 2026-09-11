@@ -51,6 +51,7 @@ $propMap = @{
     DOMAIN_WHOIS_ENABLED       = "site.monitor.domain.whois-enabled"
     DOMAIN_TR_WEB_WHOIS_ENABLED = "site.monitor.domain.tr-web-whois-enabled"
     SPRING_PROFILES_ACTIVE     = "spring.profiles.active"
+    SPRING_SESSION_STORE_TYPE  = "spring.session.store-type"   # jdbc: oturum yeniden baslatmada dusmez (2026-09-11)
     DB_HOST                    = "DB_HOST"
     DB_PORT                    = "DB_PORT"
     DB_NAME                    = "DB_NAME"

@@ -8,6 +8,42 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [20.54.3] — 2026-09-11
+
+### Changed
+- **Yerel geliştirme oturumları kalıcı.** `start-local.ps1` artık `SPRING_SESSION_STORE_TYPE`'ı geçirir; `.env.example` `jdbc` önerir — jar yeniden başlatmalarında oturum düşmez (prod ile aynı depo).
+- **Heartbeat zaman çizelgesi son kovayı düşürmüyor.** Kova sayısı yukarı yuvarlanır; son (kısmi) kovanın beklenen değeri kalan dakika kadardır — en yeni heartbeat'ler artık çizelgede görünür.
+- **Kimlik sızıntısı kapısı `.gstack/` altını taramaz** (gitignore'lu QA raporları yerel `verify`'ı düşürmesin).
+
+## [20.54.2] — 2026-09-11
+
+### Fixed
+- **İzleme modallarında React uyarısı.** Dokuz izleme sayfasında "Devamı için kaydırın" ipucuna hook nesnesi yayılıyor, `ref` fonksiyon bileşenine sızıyordu (`Function components cannot be given refs`); açık prop geçişine çevrildi, kaynak kapısı yayılımı reddeder.
+- **Sertifika Sağlığı cipher çipi.** Kopyalama düğmesi satır başlığı `<button>`'unun içinde ikinci bir `<button>` idi (geçersiz DOM); `CopyButton as="span"` (klavye + stopPropagation).
+
+## [20.54.1] — 2026-09-11
+
+### Added
+- **"Planlı yenilemeydi" onayı.** Sertifika Sağlığı'nda "sertifika değişti" uyarısının altında onay düğmesi: onay (kim / ne zaman / hangi parmak izi) kaydedilir, satır yeşile döner; parmak izi yeniden değişirse uyarı tekrar çıkar. Sunulan ≠ sabitlenen (araya girme imzası) onaylanamaz (409). Denetim olayı `CERT_RENEWAL_CONFIRMED`.
+
+### Fixed
+- **Yayın dizini `--check` sahte "bayat".** `--append` BUILD_TIME yazıyor, `--full` etiket tarihini okuyordu; saniyelik fark bir sonraki sürümü düşürüyordu. Toleranslı karşılaştırma + etiket tarihi BUILD_TIME'a sabitlendi.
+
+## [20.54.0] — 2026-09-11
+
+### Added
+- **Sürüm & Dağıtım Geçmişi.** Nav sürüm çipi popover'ı (yayın / devreye alma / gecikme / commit / uptime / helm rev), Yardım → Yenilikler (yayın dizini, "son ziyaretinizden beri"), Sistem Sağlığı → Sürüm & Dağıtım (KPI, zaman çizelgesi, tablo, CSV, denetimden geri doldurma, elle kayıt; `release_history.read/edit`). Uygulama açılış/kapanışını `deployment_history`'ye kendisi yazar; build meta imajdan (`APP_GIT_COMMIT`, `APP_BUILD_TIME`), Helm meta Downward API'den. Metrikler `sitemonitor_build_info`, `sitemonitor_deployment_started_seconds`. Haftalık rapora dağıtım bandı; isteğe bağlı dağıtım e-postası (`site.monitor.deploy.notify.enabled`).
+- **Kişi webhook "Kim alır?" paneli.** Takım + seviye seçince her üye için push kararı ve gerekçesi (grup eşleşmedi / seviye altı / opt-out / pasif / üyelik kaydı yok). Teslimat günlüğü test gönderiminden sonra kendini tazeler ve takım rozeti gösterir; 24 s / 7 g KPI kartları günlüğü süzer.
+- **Takım Müdürü tek kişi** + Edit Team'de elle müdür; LDAP özyinelemeli müdür kaydı sicil alır.
+- **Tanılama yetkisi** TEAM_ADMIN ve USER'a açıldı — yalnız kendi takımının envanter kayıtları için.
+- **SQL Playground tablo zamanları:** oluşturma ≈ ilk görülme / son veri değişimi + detayda Zaman & Aktivite.
+- **Dokuz izleme modalı:** sabit başlık + kaydırılan gövde + sabit alt bar + "Devamı için kaydırın".
+
+### Fixed
+- **Page Integrity:** pod'un SsrfGuard'ının reddettiği / kurumsal DNS'in çözemediği üçüncü-taraf link "Broken" değil "Belirsiz"; zaman aşımında retry yok (kaynak başına 16 s → 4 s).
+- **CSV formül enjeksiyonu (CWE-1236):** üç dışa aktarım ortak `Csv` kuralına bağlandı; kaynak-tarayan kapı.
+- My Activity "Webhook push istemiyorum" 404; kullanıcı yönetimi tablosu 11 → 7 sütun; üye kartından açılan düzenleme modalı üstte.
+
 ## [12.1.0 → 20.53.2] — 2026-05-24 … 2026-09-10 (toplu)
 
 > Bu aralıktaki ~480 sürüm CHANGELOG'a sürüm sürüm işlenmedi; aşağıdaki maddeler o dönemde
@@ -260,7 +296,11 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v12.1.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.54.3...HEAD
+[20.54.3]: https://github.com/inanmise/site-monitor/releases/tag/v20.54.3
+[20.54.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.54.2
+[20.54.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.54.1
+[20.54.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.54.0
 [12.1.0]: https://github.com/inanmise/site-monitor/releases/tag/v12.1.0
 [11.0.0]: https://github.com/inanmise/site-monitor/releases/tag/v11.0.0
 [10.5.0]: https://github.com/inanmise/site-monitor/releases/tag/v10.5.0
