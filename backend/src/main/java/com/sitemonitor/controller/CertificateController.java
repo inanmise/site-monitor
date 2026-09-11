@@ -475,6 +475,50 @@ public class CertificateController {
         return certificateHealth(domain, session, request);
     }
 
+    /**
+     * "Planlı yenilemeydi" onayı (2026-09-11). Sağlık listesindeki "sertifika değişti" uyarısı 7 gün
+     * sarı kalıyor ve kullanıcıdan "planlı mıydı doğrula" istiyordu ama doğrulayacak yer yoktu.
+     * Onay SABİTLENEN parmak izine bağlı kaydedilir (kim, ne zaman, hangi parmak izi): satır hemen
+     * yeşile döner; pin yeniden değişirse onay o değişimi kapsamaz ve satır yeniden uyarır.
+     *
+     * <p>Kapsam: sağlık listesini görebilen herkes (takım görüş alanı). 409: onaylanacak değişim yok
+     * ya da sunulan sertifika sabitlenenden farklı (araya girme imzası — bu bir yenileme değildir,
+     * onaylanamaz; önce incelenmeli).
+     */
+    @PostMapping("/certificates/{domain}/health/confirm-renewal")
+    public ResponseEntity<Map<String, Object>> confirmCertificateRenewal(
+            @PathVariable String domain, HttpSession session, HttpServletRequest request) {
+        CertificateInventory inv = requireViewableForHealth(session, domain, request);
+        if (inv == null) return notFoundBody();
+
+        LatestCheck lc = latestCheckRepo.findById(domain).orElse(null);
+        String pinned = lc == null ? null : lc.getPinnedFingerprint();
+        if (pinned == null || pinned.isBlank() || lc.getFingerprintChangedAt() == null) {
+            return ResponseEntity.status(409).body(Map.of("success", false, "error", com.sitemonitor.util.Msg.t(
+                    "Onaylanacak bir sertifika değişimi yok", "There is no certificate change to confirm")));
+        }
+        String served = lc.getFingerprint();
+        if (served != null && !served.isBlank() && !pinned.equalsIgnoreCase(served)) {
+            return ResponseEntity.status(409).body(Map.of("success", false, "error", com.sitemonitor.util.Msg.t(
+                    "Sunulan sertifika sabitlenenden farklı — bu bir yenileme değil, önce inceleyin",
+                    "The served certificate differs from the pinned one — this is not a renewal, investigate first")));
+        }
+
+        Object u = session != null ? session.getAttribute("username") : null;
+        String actor = u != null ? u.toString() : "anonymous";
+        lc.setFingerprintAckAt(now());
+        lc.setFingerprintAckBy(actor);
+        lc.setFingerprintAckFingerprint(pinned);
+        latestCheckRepo.save(lc);
+        certService.evictAllCaches();
+        auditService.recordAction("CERT_RENEWAL_CONFIRMED", session, "CERTIFICATE", domain,
+                com.sitemonitor.service.AuditDetail.of("domain", domain, "fingerprint", pinned,
+                        "previous_fingerprint", lc.getPreviousFingerprint(),
+                        "changed_at", lc.getFingerprintChangedAt()), null);
+
+        return certificateHealth(domain, session, request);
+    }
+
     /** Envanter kaydını takım kapsamıyla döndürür; yetkisizse güvenlik olayı yazıp null döner. */
     private CertificateInventory requireViewableForHealth(HttpSession session, String domain,
                                                           HttpServletRequest request) {

@@ -49,6 +49,7 @@ export default function CertHealthPanel({ domain, canRefresh = true }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [confirming, setConfirming] = useState(false)
   const [open, setOpen] = useState(null)
   // "Yalnız sorunlular": liste 12+ satır ve çoğu temiz; "11/12 temiz" özeti EKSİK olanı
   // söylemiyordu, kullanıcı hangi satırın sorunlu olduğunu bulmak için hepsini geziyordu.
@@ -98,6 +99,26 @@ export default function CertHealthPanel({ domain, canRefresh = true }) {
       setError(e?.message || String(e))
     } finally {
       if (seq === seqRef.current) setRefreshing(false)
+    }
+  }
+
+  /**
+   * "Planlı yenilemeydi" onayı — sunucu onayı kalıcılaştırır (kim/ne zaman/hangi parmak izi) ve
+   * güncel listeyi döner; satır yeşile döner. Aynı yarış koruması: domain değiştiyse yanıt yazılmaz.
+   */
+  async function confirmRenewal() {
+    const seq = seqRef.current
+    setConfirming(true)
+    try {
+      const res = await api.confirmCertificateRenewal(domain)
+      if (seq !== seqRef.current) return
+      if (res?.success) { setData(res.data); setError(null) }
+      else setError(res?.error || t('hlth.confirmError'))
+    } catch (e) {
+      if (seq !== seqRef.current) return
+      setError(e?.message || String(e))
+    } finally {
+      if (seq === seqRef.current) setConfirming(false)
     }
   }
 
@@ -190,6 +211,7 @@ export default function CertHealthPanel({ domain, canRefresh = true }) {
                 <HealthRow key={row.key} row={row} t={t}
                   tlsModeUsed={data.tls_mode_used}
                   expanded={open === row.key}
+                  confirming={confirming} onConfirmRenewal={confirmRenewal}
                   onToggle={() => setOpen(open === row.key ? null : row.key)} />
               ))}
             </div>
@@ -200,7 +222,7 @@ export default function CertHealthPanel({ domain, canRefresh = true }) {
   )
 }
 
-function HealthRow({ row, t, tlsModeUsed, expanded, onToggle }) {
+function HealthRow({ row, t, tlsModeUsed, expanded, onToggle, confirming = false, onConfirmRenewal }) {
   const style = STATUS_STYLE[row.status] || STATUS_STYLE.UNKNOWN
   const { Icon } = style
   const evidence = row.evidence && typeof row.evidence === 'object' ? row.evidence : {}
@@ -238,6 +260,18 @@ function HealthRow({ row, t, tlsModeUsed, expanded, onToggle }) {
 
         {hasEvidence && <ChevronRight size={15} className="hlth-row-caret" aria-hidden="true" />}
       </button>
+
+      {/* Onay düğmesi başlık <button>unun DIŞINDA: iç içe button geçersiz DOM'dur (TeamBadge dersi).
+          Yalnız "değişti — planlı mıydı doğrula" durumunda çizilir; onaylanınca satır OK gelir. */}
+      {row.key === 'pinnedFingerprint' && row.status === 'WARN' && row.action_key === 'confirmRenewal' && onConfirmRenewal && (
+        <div className="hlth-row-cta">
+          <button type="button" className="btn btn-sm btn-primary" onClick={onConfirmRenewal} disabled={confirming}>
+            <ShieldCheck size={13} /> {confirming ? t('hlth.btn.confirming') : t('hlth.btn.confirmRenewal')}
+          </button>
+          <span className="hlth-row-cta-hint">{t('hlth.cta.confirmHint')}</span>
+        </div>
+      )}
+
 
       {expanded && hasEvidence && (
         <dl className="hlth-evidence">

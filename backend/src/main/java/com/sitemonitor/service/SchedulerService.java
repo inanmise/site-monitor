@@ -608,6 +608,10 @@ public class SchedulerService {
         patch("ALTER TABLE latest_checks ADD COLUMN pinned_at TEXT");
         patch("ALTER TABLE latest_checks ADD COLUMN previous_fingerprint TEXT");
         patch("ALTER TABLE latest_checks ADD COLUMN fingerprint_changed_at TEXT");
+        // Planlı yenileme onayı (2026-09-11): kim, ne zaman, hangi parmak izini onayladı.
+        patch("ALTER TABLE latest_checks ADD COLUMN fingerprint_ack_at TEXT");
+        patch("ALTER TABLE latest_checks ADD COLUMN fingerprint_ack_by TEXT");
+        patch("ALTER TABLE latest_checks ADD COLUMN fingerprint_ack_fingerprint TEXT");
         patch("ALTER TABLE app_users ADD COLUMN role_locked BOOLEAN DEFAULT false");
         patch("ALTER TABLE app_users ADD COLUMN org_role_locked BOOLEAN DEFAULT false");
         // Giriş damgaları — kullanıcının kendi güvenlik özeti ("önceki girişiniz / son başarısız
