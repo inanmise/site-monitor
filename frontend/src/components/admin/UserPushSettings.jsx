@@ -17,6 +17,7 @@ import PaginationBar from '../ui/PaginationBar.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import HelpTip from '../ui/HelpTip.jsx'
+import ModalShell from '../ui/ModalShell.jsx'
 import { formatDateSec } from '../../api/client'
 import { copyText } from '../../utils/copyText.js'
 
@@ -57,6 +58,132 @@ const TYPES = [
 ]
 
 /** Unvan grubu kartları: ikon + kalıcı görsel kimlik. */
+
+/**
+ * Teslimat günlüğü satırı — başlık (durum · kişi · takım · izleme · tetik · zaman) + açılır ayrıntı.
+ * Günlük listesi ve KPI pencere modalı AYNI satırı çizer; iki kopya zamanla ayrışırdı.
+ */
+function DeliveryRow({ r, isOpen, onToggle, userTeams, t, statusTone }) {
+  return (
+    <div className={`userpush-log-row${isOpen ? ' is-open' : ''}`}>
+      <button type="button" className="userpush-log-head" aria-expanded={isOpen} onClick={onToggle}>
+        <span className={`userpush-badge userpush-badge--${statusTone(r.status)}`}>{r.status}</span>
+        <span className="userpush-log-who">
+          {r.username === '-' ? <em>{t('userpush.systemRow')}</em>
+            : <UserBadge username={r.username} displayName={r.display_name} size="sm" inline nameOnly />}
+          {/* Kişinin takım(lar)ı — satır bir <button>, bu yüzden TeamBadge span modunda. */}
+          {(userTeams[(r.username || '').toUpperCase()] || []).map((tn) => (
+            <TeamBadge key={tn} teamName={tn} size={11} as="span" className="userpush-log-team" />
+          ))}
+        </span>
+        <span className="userpush-log-mon">{r.monitor_name || '—'}</span>
+        <span className="userpush-log-trigger">{t('userpush.trigger.' + r.trigger)}</span>
+        <span className="userpush-log-when sys-mono">{formatDateSec(r.created_at)}</span>
+      </button>
+      {isOpen && (
+        <div className="userpush-log-detail">
+          {r.message && <NotifPreview title={r.title} message={r.message}
+            tone={statusTone(r.status) === 'danger' ? 'danger' : 'info'} />}
+          <dl className="userpush-log-meta">
+            {r.http_status != null && <><dt>HTTP</dt><dd>{r.http_status}</dd></>}
+            {r.attempts != null && <><dt>{t('userpush.attempts')}</dt><dd>{r.attempts}</dd></>}
+            {r.notification_id && (
+              <><dt>notificationId</dt>
+                <dd>
+                  <button type="button" className="chg-ip sys-mono"
+                    onClick={() => copyText(r.notification_id)}>
+                    {r.notification_id}<Copy size={10} aria-hidden="true" />
+                  </button>
+                </dd></>
+            )}
+            {r.batch_id && <><dt>batch</dt><dd className="sys-mono">{r.batch_id}</dd></>}
+            {r.error && <><dt>{t('userpush.error')}</dt><dd className="userpush-log-err">{r.error}</dd></>}
+          </dl>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * KPI pencere modalı (2026-09-11, kullanıcı): "Son 24 saat / Son 7 gün" kartına tıklayınca ayrıntı
+ * bir POP-UP'ta açılır — özet (durum başına sayı), durum süzgeci ve o penceredeki teslimatların listesi.
+ * Eski davranış (günlüğü süzüp kaydırmak) "Günlükte aç" düğmesinde bilinçli bir eylem olarak kaldı.
+ */
+function WindowModal({ win, status, counts, windowFrom, statusTone, userTeamsHint, onStatus, onOpenInLog, onClose, t }) {
+  const [rows, setRows] = useState(null)
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(0)
+  const [userTeams, setUserTeams] = useState(userTeamsHint || {})
+  const [openRow, setOpenRow] = useState(null)
+  const SIZE = 25
+  const from = windowFrom(win)
+
+  useEffect(() => { setPage(0) }, [win, status])
+  useEffect(() => {
+    let alive = true
+    setRows(null)
+    const params = { page, size: SIZE, from }
+    if (status) params.status = status
+    Promise.resolve(api.admin.userPush.getDeliveries(params))
+      .then((res) => {
+        if (!alive) return
+        if (res?.success) {
+          setRows(res.data?.deliveries || [])
+          setTotal(res.data?.total || 0)
+          setUserTeams((prev) => ({ ...prev, ...(res.data?.user_teams || {}) }))
+        } else setRows([])
+      })
+      .catch(() => { if (alive) setRows([]) })
+    return () => { alive = false }
+  }, [win, status, page, from])
+
+  const title = win === '24h' ? t('userpush.stat24h') : t('userpush.stat7d')
+  const sum = Object.entries(counts || {}).reduce((s, [, v]) => s + (Number(v) || 0), 0)
+  // Durum çipleri: Tümü + SENT + FAILED sabit; sayısı olan diğer durumlar (SKIPPED_*, PENDING…) dinamik.
+  const others = Object.keys(counts || {}).filter((k) => k !== 'SENT' && k !== 'FAILED' && Number(counts[k]) > 0)
+  const chips = [['', t('userpush.winAll'), sum], ['SENT', 'SENT', counts?.SENT || 0], ['FAILED', 'FAILED', counts?.FAILED || 0],
+    ...others.map((k) => [k, k, counts[k]])]
+
+  return (
+    <ModalShell open onClose={onClose} title={title} icon={BellRing} size="lg" scrollBody
+      closeLabel={t('userpush.winClose')}
+      footer={(
+        <>
+          <a className="btn btn-sm" href={api.admin.userPush.exportUrl({ from, ...(status ? { status } : {}) })} download>CSV</a>
+          <button type="button" className="btn btn-sm btn-secondary" onClick={onOpenInLog}>{t('userpush.winOpenInLog')}</button>
+          <button type="button" className="btn btn-sm btn-primary" onClick={onClose}>{t('userpush.winClose')}</button>
+        </>
+      )}>
+      <p className="section-desc">{t('userpush.winSince', formatDateSec(from + 'Z'))}</p>
+      <div className="up-chip-grid" role="group" aria-label={t('userpush.winStatusFilter')}>
+        {chips.map(([value, label, n]) => (
+          <button key={value || 'all'} type="button" className={`up-chip${status === value ? ' up-chip--on' : ''}`}
+            aria-pressed={status === value} onClick={() => onStatus(value)}>
+            <span>{label}</span><b className="up-chip-count">{n}</b>
+          </button>
+        ))}
+      </div>
+      {rows === null ? <LoadingBlock label={t('modal.loading')} />
+        : rows.length === 0 ? (
+          <StatusBlock tone="neutral" icon={BellRing} title={t('userpush.winEmpty')} description={t('userpush.logEmpty')} />
+        ) : (
+          <div className="userpush-log">
+            {rows.map((r) => (
+              <DeliveryRow key={r.id} r={r} isOpen={openRow === r.id} onToggle={() => setOpenRow(openRow === r.id ? null : r.id)}
+                userTeams={userTeams} t={t} statusTone={statusTone} />
+            ))}
+          </div>
+        )}
+      <PaginationBar page={page + 1} totalPages={Math.max(1, Math.ceil(total / SIZE))}
+        totalItems={total} pageSize={SIZE}
+        rangeStart={total === 0 ? 0 : page * SIZE + 1}
+        rangeEnd={Math.min(total, (page + 1) * SIZE)}
+        onPageChange={(p) => setPage(p - 1)} />
+    </ModalShell>
+  )
+}
+
 /**
  * Sabit kademeler (ürün kararı 2026-09-11): kartlar sistemdeki org rolü listesinin birebir karşılığı
  * (Kullanıcı ekranındaki "Organizasyonel Rol" seçenekleri) — her kart TEK org rolü: Uzman = TECH,
@@ -193,10 +320,16 @@ export default function UserPushSettings() {
     const ms = w === '24h' ? 24 * 3600e3 : w === '7d' ? 7 * 86400e3 : 0
     return ms ? new Date(Date.now() - ms).toISOString().slice(0, 19) : null   // createdAt biçimi yyyy-MM-ddTHH:mm:ss (UTC, Z'siz)
   }
-  const pickWindow = (w, status) => {
-    setFWindow(w)
-    if (status !== undefined) setFStatus(status)
+  // KPI kartı → pencere MODALI (2026-09-11, kullanıcı: "tıklayınca pop-up'ta ayrıntı sunmalı").
+  // Günlüğü süzüp kaydırmak artık modaldaki "Günlükte aç" eylemi (openInLog).
+  const [winModal, setWinModal] = useState(null)   // null | { win: '24h'|'7d', status: '' | 'SENT' | 'FAILED' | … }
+  const pickWindow = (w, status) => setWinModal({ win: w, status: status || '' })
+  const openInLog = () => {
+    if (!winModal) return
+    setFWindow(winModal.win)
+    setFStatus(winModal.status || '')
     setPage(0)
+    setWinModal(null)
     setTimeout(() => logRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }), 0)
   }
   const [openRow, setOpenRow] = useState(null)
@@ -764,49 +897,10 @@ export default function UserPushSettings() {
               description={t('userpush.logEmpty')} />
           ) : (
               <div className="userpush-log">
-                {rows.map((r) => {
-                  const isOpen = openRow === r.id
-                  return (
-                    <div key={r.id} className={`userpush-log-row${isOpen ? ' is-open' : ''}`}>
-                      <button type="button" className="userpush-log-head" aria-expanded={isOpen}
-                        onClick={() => setOpenRow(isOpen ? null : r.id)}>
-                        <span className={`userpush-badge userpush-badge--${statusTone(r.status)}`}>{r.status}</span>
-                        <span className="userpush-log-who">
-                          {r.username === '-' ? <em>{t('userpush.systemRow')}</em>
-                            : <UserBadge username={r.username} displayName={r.display_name} size="sm" inline nameOnly />}
-                          {/* Kişinin takım(lar)ı — satır bir <button>, bu yüzden TeamBadge span modunda. */}
-                          {(userTeams[(r.username || '').toUpperCase()] || []).map((tn) => (
-                            <TeamBadge key={tn} teamName={tn} size={11} as="span" className="userpush-log-team" />
-                          ))}
-                        </span>
-                        <span className="userpush-log-mon">{r.monitor_name || '—'}</span>
-                        <span className="userpush-log-trigger">{t('userpush.trigger.' + r.trigger)}</span>
-                        <span className="userpush-log-when sys-mono">{formatDateSec(r.created_at)}</span>
-                      </button>
-                      {isOpen && (
-                        <div className="userpush-log-detail">
-                          {r.message && <NotifPreview title={r.title} message={r.message}
-                            tone={statusTone(r.status) === 'danger' ? 'danger' : 'info'} />}
-                          <dl className="userpush-log-meta">
-                            {r.http_status != null && <><dt>HTTP</dt><dd>{r.http_status}</dd></>}
-                            {r.attempts != null && <><dt>{t('userpush.attempts')}</dt><dd>{r.attempts}</dd></>}
-                            {r.notification_id && (
-                              <><dt>notificationId</dt>
-                                <dd>
-                                  <button type="button" className="chg-ip sys-mono"
-                                    onClick={() => copyText(r.notification_id)}>
-                                    {r.notification_id}<Copy size={10} aria-hidden="true" />
-                                  </button>
-                                </dd></>
-                            )}
-                            {r.batch_id && <><dt>batch</dt><dd className="sys-mono">{r.batch_id}</dd></>}
-                            {r.error && <><dt>{t('userpush.error')}</dt><dd className="userpush-log-err">{r.error}</dd></>}
-                          </dl>
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
+                {rows.map((r) => (
+                  <DeliveryRow key={r.id} r={r} isOpen={openRow === r.id} onToggle={() => setOpenRow(openRow === r.id ? null : r.id)}
+                    userTeams={userTeams} t={t} statusTone={statusTone} />
+                ))}
               </div>
             )}
         {/* "Sayfa basina" secicisi ONCEDEN OLU kontroldu: onPageSizeChange verilmediginden
@@ -818,6 +912,14 @@ export default function UserPushSettings() {
           onPageChange={(p) => setPage(p - 1)}
           onPageSizeChange={(n) => { setPageSize(n); setPage(0) }} />
       </div>
+
+      {winModal && (
+        <WindowModal win={winModal.win} status={winModal.status}
+          counts={winModal.win === '24h' ? k24 : k7} windowFrom={windowFrom} statusTone={statusTone}
+          userTeamsHint={userTeams} t={t}
+          onStatus={(s) => setWinModal({ ...winModal, status: s })}
+          onOpenInLog={openInLog} onClose={() => setWinModal(null)} />
+      )}
     </div>
   )
 }

@@ -8440,6 +8440,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .up-chip--on { background: color-mix(in srgb, var(--primary) 12%, transparent);
   border-color: var(--primary); color: var(--primary); font-weight: 700; }
 .up-chip-check { flex: none; }
+.up-chip-count { font-size: .82em; padding: 0 6px; border-radius: 999px; background: var(--bg-hover); color: var(--text-muted); }
+.up-chip--on .up-chip-count { background: color-mix(in srgb, var(--primary) 18%, transparent); color: var(--primary); }
 
 /* Takım araç çubuğu */
 .up-team-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 16px; }

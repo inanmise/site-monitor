@@ -205,22 +205,42 @@ describe('UserPushSettings', () => {
       [{ scopeType: 'TEAM', scopeKey: '5', enabled: true }]))
   })
 
-  it('2026-09-11: KPI kartı tıklanınca teslimat günlüğü o pencereyle (from) süzülür; FAILED sayısı durumu da seçer; çip kaldırır', async () => {
+  it('2026-09-11: KPI kartı tıklanınca pencere MODALI açılır — başlık, durum çipleri, o pencerenin listesi; FAILED sayısı durumu seçer; "Günlükte aç" günlüğü süzer', async () => {
     render(<UserPushSettings />)
     await screen.findByDisplayValue('Authorization')
     const cards = document.querySelectorAll('.up-kpi--btn')
     expect(cards.length).toBe(2)
-    fireEvent.click(cards[1])                                  // Son 7 gün
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    fireEvent.click(cards[1])                                  // Son 7 gün → modal
+    const dlg = await screen.findByRole('dialog')
+    expect(within(dlg).getByText(/Last 7 days|Son 7 gün/)).toBeInTheDocument()
     await waitFor(() => expect(api.admin.userPush.getDeliveries).toHaveBeenLastCalledWith(
-      expect.objectContaining({ from: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/) })))
+      expect.objectContaining({ from: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/), size: 25 })))
     const from7 = api.admin.userPush.getDeliveries.mock.calls.at(-1)[0].from
     expect(Date.now() - Date.parse(from7 + 'Z')).toBeGreaterThan(6.9 * 86400e3)
-    expect(document.querySelector('.up-kpi--btn.is-active')).toBe(cards[1])
-    fireEvent.click(cards[0].querySelector('.up-kpi-fail'))    // Son 24 saat → FAILED
+    // Durum çipleri: Tümü / SENT / FAILED (sayılarıyla); satır listesi modalın içinde
+    expect(within(dlg).getByRole('button', { name: /^(Tümü|All)/ })).toHaveAttribute('aria-pressed', 'true')
+    expect([...dlg.querySelectorAll('.up-chip')].map((c) => c.textContent.replace(/\d+$/, ''))).toEqual(expect.arrayContaining(['SENT', 'FAILED']))
+    expect(await within(dlg).findByText('example.com')).toBeInTheDocument()
+    // Günlük (modal dışı) süzülmedi
+    expect(document.querySelector('.up-window-chip')).toBeNull()
+
+    fireEvent.click(within(dlg.querySelector('.modal-shell-footer')).getByRole('button', { name: /^(Kapat|Close)$/ }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    fireEvent.click(cards[0].querySelector('.up-kpi-fail'))    // Son 24 saat → FAILED ile açılır
+    const dlg2 = await screen.findByRole('dialog')
     await waitFor(() => expect(api.admin.userPush.getDeliveries).toHaveBeenLastCalledWith(
       expect.objectContaining({ status: 'FAILED' })))
     const from24 = api.admin.userPush.getDeliveries.mock.calls.at(-1)[0].from
     expect(Date.now() - Date.parse(from24 + 'Z')).toBeLessThan(1.1 * 86400e3)
+    expect([...dlg2.querySelectorAll('.up-chip')].find((c) => c.textContent.startsWith('FAILED'))).toHaveAttribute('aria-pressed', 'true')
+
+    // "Günlükte aç": modal kapanır, günlük aynı pencere + durumla süzülür, çip görünür
+    fireEvent.click(within(dlg2).getByRole('button', { name: /Günlükte aç|Open in log/ }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(document.querySelector('.up-window-chip')).not.toBeNull())
     fireEvent.click(document.querySelector('.up-window-chip'))
     await waitFor(() => expect(api.admin.userPush.getDeliveries.mock.calls.at(-1)[0].from).toBeUndefined())
   })
