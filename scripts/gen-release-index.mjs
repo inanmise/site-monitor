@@ -221,10 +221,28 @@ export function appendRelease(cwd, file, { version, prevTag, date, commit }) {
   return wrap(sortReleases([rel, ...rest]))
 }
 
-/** --check: generatedAt/count dışında fark var mı. */
+/**
+ * --check: generatedAt/count dışında fark var mı.
+ *
+ * `releasedAt` toleranslı karşılaştırılır: `--append` yayın anını CI'ın BUILD_TIME'ından yazar, `--full`
+ * ise etiketin taggerdate'inden türetir; etiket bump commit'inden birkaç saniye SONRA atıldığı için iki
+ * değer aynı sürümde birkaç saniye ayrışır (2026-09-11: v20.54.0 07:01:02Z ↔ 07:01:07Z, --check her
+ * sonraki sürümü "BAYAT" diye düşürdü). release.yml etiketi artık GIT_COMMITTER_DATE=BUILD_TIME ile
+ * atıyor (birebir eşleşme); tolerans elle atılmış / eski etiketlere karşı güvence.
+ */
+export const RELEASED_AT_TOLERANCE_MS = 15 * 60 * 1000
+
 export function indexDiffers(a, b) {
-  const norm = (x) => serialize({ ...x, generatedAt: '', count: x.releases.length })
-  return norm(a) !== norm(b)
+  const strip = (x) => serialize({ ...x, generatedAt: '', count: x.releases.length,
+    releases: x.releases.map(({ releasedAt, ...r }) => r) })
+  if (strip(a) !== strip(b)) return true
+  for (let i = 0; i < a.releases.length; i++) {
+    const ra = a.releases[i].releasedAt, rb = b.releases[i].releasedAt
+    if (ra === rb) continue   // birebir aynı (ya da ikisi de yok)
+    const ta = Date.parse(ra), tb = Date.parse(rb)
+    if (Number.isNaN(ta) || Number.isNaN(tb) || Math.abs(ta - tb) > RELEASED_AT_TOLERANCE_MS) return true
+  }
+  return false
 }
 
 function parseArgs(argv) {
