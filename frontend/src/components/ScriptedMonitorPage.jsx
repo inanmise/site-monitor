@@ -1866,7 +1866,7 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
 
         </div>
         </div>
-        <ModalScrollHint {...scrollHint} />
+        <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
         <div className="modal-actions">
           <div style={{ display: 'flex', gap: 8, marginRight: 'auto' }}>
             <button className="btn btn-secondary" onClick={runTest} disabled={testing} aria-busy={testing}>

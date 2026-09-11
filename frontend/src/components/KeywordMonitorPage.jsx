@@ -877,7 +877,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
               <ChangeNoteField t={t} id="keyword-change-note" value={changeNote} onChange={setChangeNote} />
             )}
             </div>
-            <ModalScrollHint {...scrollHint} />
+            <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
             <div className="modal-actions">
               <button className="btn btn-secondary" style={{ marginRight: 'auto' }} onClick={runTest}
                 disabled={testing || !form.url.trim() || !form.keyword.trim()}>

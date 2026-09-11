@@ -756,7 +756,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
               <ChangeNoteField t={t} id="ping-change-note" value={changeNote} onChange={setChangeNote} />
             )}
             </div>
-            <ModalScrollHint {...scrollHint} />
+            <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
             <div className="modal-actions">
               <div style={{ display: 'flex', gap: 8, marginRight: 'auto' }}>
                 <button className="btn btn-secondary" onClick={runTest} disabled={testing || !form.host.trim()}>
