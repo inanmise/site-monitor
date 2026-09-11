@@ -392,7 +392,9 @@ jobs:
             git tag -d "${{ steps.ver.outputs.tag }}" || true
             git push origin --delete "${{ steps.ver.outputs.tag }}" || true
           fi
-          git tag -a "${{ steps.ver.outputs.tag }}" \
+          # taggerdate = BUILD_TIME: yayın dizinindeki releasedAt (--append) ile etiket tarihi (--full) birebir
+          # eşleşsin; aksi hâlde birkaç saniyelik fark bir sonraki sürümün --check adımını düşürüyordu (v20.54.1).
+          GIT_COMMITTER_DATE="${{ steps.ver.outputs.build_time }}" git tag -a "${{ steps.ver.outputs.tag }}" \
             -m "Release ${{ steps.ver.outputs.tag }}"
           git push origin main --follow-tags
 

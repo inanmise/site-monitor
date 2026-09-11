@@ -303,11 +303,28 @@ public class CertificateHealthService {
 
         String changedAt = lc.getFingerprintChangedAt();
         if (changedAt != null && isRecent(changedAt)) {
+            // Kullanıcı "planlı yenilemeydi" dediyse satır yeşile döner ve kimin/ne zaman onayladığını
+            // taşır (2026-09-11 kullanıcı bildirimi: uyarı 7 gün sarı kalıyor, onaylayacak yer yoktu).
+            // Onay SABİTLENEN parmak izine bağlıdır — pin yeniden değişirse eski onay o değişimi
+            // kapsamaz, satır yeniden uyarır (aksi hâlde tek onay sonsuza dek susturur).
+            if (isRenewalConfirmed(lc)) {
+                ev.put("confirmed_by", lc.getFingerprintAckBy());
+                ev.put("confirmed_at", lc.getFingerprintAckAt());
+                return new HealthRow("pinnedFingerprint", GROUP_CERTIFICATE, Status.OK, "certRenewalConfirmed",
+                        List.of(shortDate(lc.getFingerprintAckAt())), "renewalConfirmed", List.of(), ev);
+            }
             return new HealthRow("pinnedFingerprint", GROUP_CERTIFICATE, Status.WARN, "certChanged",
                     List.of(shortDate(changedAt)), "confirmRenewal", List.of(), ev);
         }
         return new HealthRow("pinnedFingerprint", GROUP_CERTIFICATE, Status.OK, "certStable",
                 List.of(), "none", List.of(), ev);
+    }
+
+    /** Onay, ŞU AN sabitlenen parmak izi için mi verilmiş? (büyük/küçük harf duyarsız; eski onay sayılmaz) */
+    static boolean isRenewalConfirmed(LatestCheck lc) {
+        String ack = lc.getFingerprintAckFingerprint();
+        return ack != null && !ack.isBlank() && lc.getFingerprintAckAt() != null
+                && ack.equalsIgnoreCase(lc.getPinnedFingerprint());
     }
 
     /**

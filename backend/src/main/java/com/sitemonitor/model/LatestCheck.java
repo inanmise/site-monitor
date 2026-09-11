@@ -121,6 +121,18 @@ public class LatestCheck {
     private String previousFingerprint;
     private String fingerprintChangedAt;
 
+    /**
+     * Kullanıcının "planlı yenilemeydi" onayı (2026-09-11, kullanıcı bildirimi: uyarı 7 gün sarı
+     * kalıyor ve onaylayacak yer yoktu). Onay SABİTLENEN parmak izine bağlıdır: pin yeniden
+     * değişirse eski onay o değişimi kapsamaz, satır yeniden uyarır. Nullable kolonlar
+     * (dolu tabloya NOT NULL eklenmez — ddl-auto sessizce düşer).
+     */
+    private String fingerprintAckAt;
+    @Column(length = 100)
+    private String fingerprintAckBy;
+    @Column(length = 200)
+    private String fingerprintAckFingerprint;
+
     private String checkedAt;
     private String updatedAt;
 }

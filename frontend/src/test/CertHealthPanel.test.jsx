@@ -163,6 +163,51 @@ describe('CertHealthPanel', () => {
     expect(screen.getByText('Certificate has not expired')).toBeInTheDocument()
   })
 
+  // ── 2026-09-11: "planlı yenilemeydi" onayı ───────────────────────────────────────────
+
+  const changedRow = () => row({
+    key: 'pinnedFingerprint', status: 'WARN', value_key: 'certChanged', value_args: ['09.09.2026'],
+    action_key: 'confirmRenewal', evidence: { pinned: 'AA', previous: 'BB', changed_at: '2026-09-09T19:13:56' },
+  })
+
+  it('"değişti" uyarısında ONAY düğmesi çizilir; tıklayınca onay ucu çağrılır ve satır YEŞİLE döner', async () => {
+    api.getCertificateHealth.mockResolvedValue({ success: true, data: { ...DATA, rows: [changedRow()] } })
+    api.confirmCertificateRenewal.mockResolvedValue({
+      success: true,
+      data: { ...DATA, ok_count: 3, evaluated_count: 3, rows: [row({
+        key: 'pinnedFingerprint', status: 'OK', value_key: 'certRenewalConfirmed', value_args: ['11.09.2026'],
+        action_key: 'renewalConfirmed', evidence: { pinned: 'AA', confirmed_by: 'u5', confirmed_at: '2026-09-11T07:30:00Z' },
+      })] },
+    })
+    draw()
+    await screen.findByText('changed on 09.09.2026')
+
+    fireEvent.click(screen.getByRole('button', { name: /planned renewal — confirm/ }))
+
+    await waitFor(() => expect(api.confirmCertificateRenewal).toHaveBeenCalledWith('a.example.com'))
+    expect(await screen.findByText('Planned renewal — confirmed on 11.09.2026')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /planned renewal — confirm/ })).not.toBeInTheDocument()
+  })
+
+  it('onay ucu hata dönerse uyarı çıkar, düğme ve MEVCUT satır korunur', async () => {
+    api.getCertificateHealth.mockResolvedValue({ success: true, data: { ...DATA, rows: [changedRow()] } })
+    api.confirmCertificateRenewal.mockResolvedValue({ success: false, error: 'Onaylanacak bir sertifika değişimi yok' })
+    draw()
+    await screen.findByText('changed on 09.09.2026')
+
+    fireEvent.click(screen.getByRole('button', { name: /planned renewal — confirm/ }))
+
+    expect(await screen.findByText('Onaylanacak bir sertifika değişimi yok')).toBeInTheDocument()
+    expect(screen.getByText('changed on 09.09.2026')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /planned renewal — confirm/ })).toBeInTheDocument()
+  })
+
+  it('temiz ya da başka satırlarda onay düğmesi HİÇ çizilmez', async () => {
+    draw()
+    await screen.findByText('2 of 3 checks clean')
+    expect(screen.queryByRole('button', { name: /planned renewal — confirm/ })).not.toBeInTheDocument()
+  })
+
   it('yükleme hatası tek başına ekranı çökertmez', async () => {
     api.getCertificateHealth.mockResolvedValue({ success: false, error: 'Kayıt bulunamadı' })
     draw()

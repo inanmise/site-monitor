@@ -1,9 +1,58 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-11T07:01:07Z",
+  "generatedAt": "2026-09-11T08:14:56Z",
   "repo": "inanmise/site-monitor",
-  "count": 630,
+  "count": 631,
   "releases": [
+    {
+      "version": "20.54.1",
+      "tag": "v20.54.1",
+      "releasedAt": "2026-09-11T08:14:47Z",
+      "commit": "8c6a393262fcdfd75da740393485ad31f9544d7d",
+      "prevVersion": "20.54.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "release",
+          "breaking": false,
+          "sha": "8c6a3932",
+          "subject": "yayın dizini --check'i taggerdate/BUILD_TIME saniye farkında düşmesin; etiket tarihi BUILD_TIME'a sabitlendi"
+        },
+        {
+          "type": "docs",
+          "scope": "regresyon",
+          "breaking": false,
+          "sha": "ed7ddd95",
+          "subject": "ikinci tur eki — ISSUE-001 diffi imza suepuermesi temiz"
+        },
+        {
+          "type": "test",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "876fefd3",
+          "subject": "regression tests for ISSUE-001 — planlı yenileme onayı (servis, uç, panel)"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "837f4999",
+          "subject": "ISSUE-001 — sertifika sağlığında \"planlı yenilemeydi\" onayı: uyarı onaylanınca satır yeşile döner"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.54.0",
       "tag": "v20.54.0",

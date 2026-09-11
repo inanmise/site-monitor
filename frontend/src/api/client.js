@@ -295,6 +295,9 @@ export const api = {
   // "Şimdi kontrol et" — canlı el sıkışması koşar, sonucu kalıcılaştırır, listeyi tazeler.
   refreshCertificateHealth: (domain) =>
     request(`/certificates/${encodeURIComponent(domain)}/health/refresh`, { method: 'POST' }),
+  // "Planlı yenilemeydi" onayı: sabitlenen parmak izi için kalıcı onay yazar, satır yeşile döner.
+  confirmCertificateRenewal: (domain) =>
+    request(`/certificates/${encodeURIComponent(domain)}/health/confirm-renewal`, { method: 'POST' }),
 
   getStats: () => request('/stats'),
 

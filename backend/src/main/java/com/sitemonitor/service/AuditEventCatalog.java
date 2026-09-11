@@ -85,6 +85,7 @@ public final class AuditEventCatalog {
             "CERT_NOTE_DELETE",
             "CERT_NOTE_EDIT",
             "CERT_NOTE_RESTORE",
+            "CERT_RENEWAL_CONFIRMED",
             "CHANGE_LOG_DENIED",
             "CLIENT_ERROR_REPORT",
             "CONTACT_CREATE",

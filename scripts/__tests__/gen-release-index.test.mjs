@@ -60,6 +60,11 @@ test('indexDiffers: generatedAt/count farkı sayılmaz, sürüm farkı sayılır
   const b = wrap([{ version: '1.0.0' }], '2026-02-02T00:00:00Z')
   assert.equal(indexDiffers(a, b), false)
   assert.equal(indexDiffers(a, wrap([{ version: '1.0.1' }])), true)
+  // releasedAt: --append BUILD_TIME yazar, --full taggerdate okur → saniyeler ayrışır; tolerans içinde fark DEĞİL
+  const t1 = wrap([{ version: '1.0.0', releasedAt: '2026-09-11T07:01:02Z' }])
+  assert.equal(indexDiffers(t1, wrap([{ version: '1.0.0', releasedAt: '2026-09-11T07:01:07Z' }])), false)
+  assert.equal(indexDiffers(t1, wrap([{ version: '1.0.0', releasedAt: '2026-09-11T08:30:00Z' }])), true)
+  assert.equal(indexDiffers(t1, wrap([{ version: '1.0.0', releasedAt: 'bozuk' }])), true)
   assert.ok(serialize(a).endsWith('\n'))
 })
 

@@ -11352,6 +11352,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 
 .hlth-row-action { font-size: .8em; color: var(--text); }
 .hlth-row-action.is-none { color: var(--text-light); }
+/* Satır altı eylem şeridi — onay düğmesi başlık <button>unun DIŞINDA (iç içe button olmaz). */
+.hlth-row-cta { display: flex; align-items: center; gap: 8px; padding: 0 12px 10px 54px; }
+.hlth-row-cta .hlth-row-cta-hint { font-size: .76em; color: var(--text-muted); }
 
 .hlth-row-value { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
 .hlth-value-badge {
