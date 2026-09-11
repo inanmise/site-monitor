@@ -14,13 +14,15 @@ import { copyText } from '../../utils/copyText.js'
  *
  * Saf sunum: etiketler prop olarak gelir.
  */
-export default function CopyButton({ value, label, copiedLabel, className = 'btn btn-sm', size = 13 }) {
+export default function CopyButton({ value, label, copiedLabel, className = 'btn btn-sm', size = 13, as = 'button' }) {
   const [copied, setCopied] = useState(false)
   const timer = useRef(null)
 
   useEffect(() => () => clearTimeout(timer.current), [])
 
-  async function onCopy() {
+  async function onCopy(e) {
+    // `as="span"`: kapsayıcı bir <button>/satır başlığının içindeyiz — tıklama onu tetiklemesin.
+    if (e && as === 'span') e.stopPropagation()
     if (!(await copyText(value))) return   // sessiz: kullanıcı metni elle seçebilir
     setCopied(true)
     clearTimeout(timer.current)
@@ -28,9 +30,21 @@ export default function CopyButton({ value, label, copiedLabel, className = 'btn
   }
 
   const text = copied ? copiedLabel : label
+  const icon = copied ? <Check size={size} /> : <Copy size={size} />
+  // as="span": <button> içinde <button> geçersiz DOM'dur (validateDOMNesting — CertHealthPanel satır
+  // başlığındaki cipher çipi, 2026-09-11 QA ISSUE-003). TeamBadge ile aynı desen: span role=button,
+  // Enter/Space, stopPropagation.
+  if (as === 'span') {
+    return (
+      <span role="button" tabIndex={0} className={className} onClick={onCopy} aria-label={text} title={text}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onCopy(e) } }}>
+        {icon}
+      </span>
+    )
+  }
   return (
     <button type="button" className={className} onClick={onCopy} aria-label={text} title={text}>
-      {copied ? <Check size={size} /> : <Copy size={size} />}
+      {icon}
     </button>
   )
 }

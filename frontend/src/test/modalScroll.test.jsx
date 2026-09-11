@@ -41,7 +41,7 @@ describe('izleme düzenleme modalları — iç kaydırma', () => {
     const at = src.indexOf('className="modal-box modal-sticky-actions"')
     const after = src.slice(at)
     const body = after.indexOf('className="modal-scroll-body" ref={scrollHint.ref}')
-    const hint = after.indexOf('<ModalScrollHint {...scrollHint} />')
+    const hint = after.indexOf('<ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />')
     const actions = after.indexOf('className="modal-actions"')
     expect(body, 'kaydırılan gövde').toBeGreaterThan(0)
     expect(hint, 'ipucu').toBeGreaterThan(body)
@@ -72,4 +72,15 @@ describe('izleme düzenleme modalları — iç kaydırma', () => {
     }
     expect(offenders).toEqual([])
   })
+  // Regression: ISSUE-002 — `<ModalScrollHint {...scrollHint} />` yayılımı hook'un `ref`ini fonksiyon
+  // bileşenine prop olarak geçiriyordu → React "Function components cannot be given refs" uyarısı
+  // (dokuz sayfada). Found by /qa on 2026-09-11. Report: .gstack/qa-reports/qa-report-localhost-2026-09-11.md
+  it('ModalScrollHint hook nesnesiyle YAYILMAZ (ref prop olarak sızar); show/scrollMore açık verilir', () => {
+    for (const f of PAGES) {
+      const src = readFileSync(path.join(DIR, f), 'utf8')
+      expect(src, `${f}: {...scrollHint} yayılımı ref'i ModalScrollHint'e geçirir`).not.toMatch(/<ModalScrollHint\s+\{\.\.\./)
+      expect(src, `${f}: ModalScrollHint show/scrollMore ile çağrılmalı`).toMatch(/<ModalScrollHint\s+show=\{scrollHint\.show\}\s+scrollMore=\{scrollHint\.scrollMore\}/)
+    }
+  })
+
 })

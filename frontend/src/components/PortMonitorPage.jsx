@@ -830,7 +830,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
               <ChangeNoteField t={t} id="port-change-note" value={changeNote} onChange={setChangeNote} />
             )}
             </div>
-            <ModalScrollHint {...scrollHint} />
+            <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
             <div className="modal-actions">
               <div style={{ display: 'flex', gap: 8, marginRight: 'auto' }}>
                 <button className="btn btn-secondary" onClick={runTest} disabled={testing || !form.host.trim() || !form.port}>

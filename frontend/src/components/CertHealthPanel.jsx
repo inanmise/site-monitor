@@ -255,7 +255,7 @@ function HealthRow({ row, t, tlsModeUsed, expanded, onToggle, confirming = false
           <span className={`hlth-value-badge hlth-value-badge--${style.cls}`}>
             {t(`hlth.val.${row.value_key}`, ...(row.value_args || []))}
           </span>
-          {cipher && <span className="hlth-cipher sys-mono">{cipher}<CopyButton value={cipher} /></span>}
+          {cipher && <span className="hlth-cipher sys-mono">{cipher}<CopyButton value={cipher} as="span" /></span>}
         </span>
 
         {hasEvidence && <ChevronRight size={15} className="hlth-row-caret" aria-hidden="true" />}

@@ -1121,7 +1121,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
               <ChangeNoteField t={t} id="pagespeed-change-note" value={changeNote} onChange={setChangeNote} />
             )}
             </div>
-            <ModalScrollHint {...scrollHint} />
+            <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
             <div className="modal-actions">
               {/* URL boşken ölçüm yapılamaz. Buton zaten kapalı; title kapalı olma SEBEBİNİ söyler
                   (sessizce tıklanmayan bir buton kullanıcıya arıza gibi görünüyor). */}
