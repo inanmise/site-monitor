@@ -282,13 +282,24 @@ public class PageCheckerService {
         if (isMixedContent(pageHttps, r.type(), r.url())) {
             return new ResourceIssue(r.url(), r.type(), r.sourcePage(), "MIXED_CONTENT", firstParty, null, null);
         }
-        PageFetchCore.Fetch res = verifyWithRetry(r.url(), timeoutMs);
+        boolean thirdPartyLink = !firstParty && "LINK".equals(r.type());
+        PageFetchCore.Fetch res = verifyWithRetry(r.url(), timeoutMs, thirdPartyLink);
         if (res.blocked()) {
-            return new ResourceIssue(r.url(), r.type(), r.sourcePage(), "BROKEN", firstParty, null, res.durationMs());
+            // 2026-09-10 (kullanıcı bildirimi: tiktok.com/@… linki çalışıyor ama "Broken"): pod'un SsrfGuard'ı
+            // isteği hiç atmadan reddettiğinde (38 ms, HTTP yok) kaynak KIRIK DEĞİLDİR — pod'un görüş açısı
+            // kısıtlı. Kurum DNS'i engelli siteleri iç bir "engel" IP'sine çözer (politika reddi) ya da
+            // NXDOMAIN döner; kullanıcının tarayıcısı (proxy/iznin arkasında) siteyi açar.
+            //   • Politika reddi (iç/loopback/metadata IP) → BLOCKED (Belirsiz, alarm yok) — her taraf için.
+            //   • DNS çözülemedi: BİRİNCİ taraf → BROKEN (kendi alanımızın ölü kaydı her yerden ölüdür);
+            //     ÜÇÜNCÜ taraf → BLOCKED (filtreli kurumsal DNS'in NXDOMAIN'i link sağlığına kanıt değil;
+            //     2026-08-03 "ölü dış link alarmı" kararı bu vakayla daraltıldı — ölü dış link artık yalnız
+            //     404/410 ile kesinleşir).
+            boolean unresolvable = SsrfGuard.isUnresolvableMessage(res.error());
+            String type = (unresolvable && firstParty) ? "BROKEN" : "BLOCKED";
+            return new ResourceIssue(r.url(), r.type(), r.sourcePage(), type, firstParty, null, res.durationMs());
         }
         if (res.status() == 0) {   // transport hatası / timeout
-            String type = res.error() != null && res.error().toLowerCase(Locale.ROOT).contains("timed out")
-                    ? "TIMEOUT" : "BROKEN";
+            String type = isTimedOut(res) ? "TIMEOUT" : "BROKEN";
             return new ResourceIssue(r.url(), r.type(), r.sourcePage(), type, firstParty, null, res.durationMs());
         }
         if (res.status() >= 400) {
@@ -300,19 +311,36 @@ public class PageCheckerService {
         return null;   // sağlıklı
     }
 
-    /** HEAD → (405/501 ya da transport hatasında) GET; kırık/timeout kararı için kısa aralıklı tek retry. */
-    private PageFetchCore.Fetch verifyWithRetry(String url, int timeoutMs) {
-        PageFetchCore.Fetch r = verifyOnce(url, timeoutMs);
+    /** HEAD → (405/501 ya da transport hatasında) GET; kırık/timeout kararı için kısa aralıklı tek retry.
+     *
+     *  <p>2026-09-10 (kullanıcı: "execute 20 küsur sn sürüyor"): ZAMAN AŞIMINDA retry YOK. Bir kaynak zaten
+     *  HEAD+GET ile 2×timeout beklemişken 300 ms sonra aynı zinciri yinelemek (toplam 4×timeout+300 ms — 4 s
+     *  timeout'ta ~16 s) yeni kanıt üretmiyordu; TIMEOUT zaten "belirsiz" sınıfıdır ve 3P link için alarm
+     *  sayılmaz. Asılı kalan 5 sosyal-medya linki eşzamanlılık slotlarını 16 s tutup 160 sağlıklı kaynağı
+     *  arkasında bekletiyordu. Hızlı transport hatası (bağlantı reddi, RST) ve >=400 için retry sürer. */
+    private PageFetchCore.Fetch verifyWithRetry(String url, int timeoutMs, boolean thirdPartyLink) {
+        PageFetchCore.Fetch r = verifyOnce(url, timeoutMs, thirdPartyLink);
         boolean bad = r.blocked() || r.status() == 0 || r.status() >= 400;
         if (r.blocked() || !bad) return r;   // engellendi ya da zaten iyi → retry yok
+        if (isTimedOut(r)) return r;         // zaman aşımı: bütçe zaten 2× harcandı → retry yok
         try { Thread.sleep(300); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return r; }
         // Retry: en son gözlemi döndür (geçici takılma düzelmişse iyi sonuç kazanır; hâlâ kötüyse yine kırık sayılır).
-        return verifyOnce(url, timeoutMs);
+        return verifyOnce(url, timeoutMs, thirdPartyLink);
     }
 
-    private PageFetchCore.Fetch verifyOnce(String url, int timeoutMs) {
+    /** Transport zaman aşımı mı (HttpTimeoutException "request timed out")? Bağlantı reddi/NXDOMAIN DEĞİL. */
+    static boolean isTimedOut(PageFetchCore.Fetch f) {
+        return f != null && f.status() == 0 && !f.blocked() && f.error() != null
+                && f.error().toLowerCase(Locale.ROOT).contains("timed out");
+    }
+
+    private PageFetchCore.Fetch verifyOnce(String url, int timeoutMs, boolean thirdPartyLink) {
         PageFetchCore.Fetch head = fetchFollowing(url, "HEAD", false, timeoutMs);
         if (head.blocked()) return head;
+        // 3P a[href] linkinde HEAD zaman aşımı → GET teyidi de ATLANIR (bir timeout daha beklemek yerine):
+        // TIMEOUT bu sınıf için zaten alarm dışı/belirsizdir; "HEAD'e asılıp GET'e 200 dönen" nadir sunucu en
+        // kötü ihtimalle Zaman aşımı satırı olur, alarm/e-posta üretmez. Yüklenen alt-kaynak + 1P linkte teyit sürer.
+        if (thirdPartyLink && isTimedOut(head)) return head;
         // HEAD çoğu WAF/CDN/ASP.NET(.aspx) sunucusunda YANLIŞ ele alınır (405/501 değil; 400/403/404/500 dönebilir
         // ama aynı kaynak GET'te 200'dür). Bu yüzden HEAD transport hatası (0) VEYA herhangi bir >=400 dönerse
         // GET ile TEYİT et — GET de kötüyse gerçekten kırık, GET iyiyse sağlıklı (false-positive önleme).

@@ -135,14 +135,17 @@ class PageCheckerServiceTest {
     }
 
     @Test
-    @DisplayName("SSRF: link-local/metadata kaynağa istek engellenir → BROKEN (dış istek atılmaz)")
+    @DisplayName("SSRF: link-local/metadata kaynağa istek engellenir → BLOCKED/Belirsiz (dış istek atılmaz, alarm yok)")
     void ssrfResource_blocked() {
+        // 2026-09-10: politika reddi kaynağın KIRIK olduğunu göstermez (pod'un görüş açısı kısıtlı) — eskiden
+        // BROKEN sayılıyordu ve kurum DNS'inin iç "engel" IP'sine çözdüğü çalışan linkler kırık görünüyordu.
         var r = checker.check(base + "/ssrf", "SINGLE_PAGE", 5000, 2000, 5, null, 2, 50, 60);
-        assertThat(r.status()).isEqualTo("DEGRADED");
         assertThat(r.issues()).anySatisfy(i -> {
-            assertThat(i.issueType()).isEqualTo("BROKEN");
+            assertThat(i.issueType()).isEqualTo("BLOCKED");
             assertThat(i.resourceUrl()).contains("169.254.169.254");
+            assertThat(i.httpStatus()).isNull();
         });
+        assertThat(PageCheckerService.countsForAlarm("BLOCKED", "IMG", null)).isFalse();
     }
 
     @Test
@@ -159,13 +162,42 @@ class PageCheckerServiceTest {
     @DisplayName("H4: farklı kayıtlı-domain'deki kaynak ÜÇÜNCÜ-taraf işaretlenir (sameSite/PSL)")
     void thirdPartyResource_classified() {
         // Host çözülemez (TestHosts: geçersiz sözdizimi → wildcard-DNS'te bile çözülmez) → SSRF 'çözümlenemeyen
-        // host' → BROKEN; host farklı registrable domain → 3.-taraf.
+        // host'; host farklı registrable domain → 3.-taraf. 2026-09-10: 3P çözülemeyen host BLOCKED/Belirsiz
+        // (filtreli kurumsal DNS'in NXDOMAIN'i kanıt değil) → sayfa DEGRADED olmaz, alarm yok.
         var r = checker.check(base + "/thirdparty", "SINGLE_PAGE", 5000, 2000, 5, null, 2, 50, 60);
-        assertThat(r.status()).isEqualTo("DEGRADED");
+        assertThat(r.status()).isEqualTo("OK");
+        assertThat(r.brokenResources()).isZero();
         assertThat(r.issues()).anySatisfy(i -> {
             assertThat(i.resourceUrl()).contains(TestHosts.UNRESOLVABLE);
             assertThat(i.firstParty()).isFalse();   // 127.0.0.1 ile aynı-site DEĞİL
+            assertThat(i.issueType()).isEqualTo("BLOCKED");
         });
+    }
+
+    @Test
+    @DisplayName("2026-09-10: BİRİNCİ-taraf çözülemeyen host hâlâ BROKEN (kendi alanımızın ölü kaydı her yerden ölü)")
+    void firstPartyUnresolvable_staysBroken() {
+        // Sayfa host'u 127.0.0.1 → sameSite yalnız aynı host; 'localhost' farklı → bu test için 1P'yi
+        // doğrudan sınıflandırıcıyla pinliyoruz: alarm geçidi BROKEN+LINK+null → true, BLOCKED → false.
+        assertThat(PageCheckerService.countsForAlarm("BROKEN", "LINK", null)).isTrue();
+        assertThat(PageCheckerService.countsForAlarm("BLOCKED", "LINK", null)).isFalse();
+        assertThat(SsrfGuard.isUnresolvableMessage(SsrfGuard.UNRESOLVABLE_PREFIX + "x.example.com")).isTrue();
+        assertThat(SsrfGuard.isUnresolvableMessage("izin verilmeyen hedef x → 10.0.0.1 (iç)")).isFalse();
+        assertThat(SsrfGuard.isUnresolvableMessage(null)).isFalse();
+    }
+
+    @Test
+    @DisplayName("2026-09-10: zaman aşımına uğrayan kaynak için retry YOK — kaynak başına en çok ~2×timeout (HEAD+GET)")
+    void timedOutResource_noRetry_boundedCost() {
+        long t0 = System.currentTimeMillis();
+        var r = checker.check(base + "/hangres", "SINGLE_PAGE", 1500, 2000, 5, null, 2, 50, 60);
+        long dt = System.currentTimeMillis() - t0;
+        assertThat(r.issues()).anySatisfy(i -> {
+            assertThat(i.issueType()).isEqualTo("TIMEOUT");
+            assertThat(i.resourceUrl()).endsWith("/hang");
+        });
+        // Eski zincir: HEAD 1.5 s + GET 1.5 s + 300 ms + HEAD 1.5 s + GET 1.5 s ≈ 6.3 s. Yeni: ≈ 3 s.
+        assertThat(dt).isLessThan(5000);
     }
 
     @Test
@@ -298,6 +330,9 @@ class PageCheckerServiceTest {
 
         // Üçüncü-taraf: farklı kayıtlı-domain + çözülemeyen host (TestHosts — wildcard DNS'e dayanıklı)
         html("/thirdparty", "<html><body><img src='http://sub." + TestHosts.UNRESOLVABLE + "/x.png'></body></html>");
+
+        // Hung alt-kaynak: sayfa sağlam, tek img /hang'e gider (timeout → retry'siz TIMEOUT)
+        html("/hangres", "<html><body><img src='/hang'></body></html>");
 
         // Hung: ana sayfa yanıtı geciktirir (>timeout) → checker per-request timeout ile DOWN döner
         server.createContext("/hang", ex -> {
