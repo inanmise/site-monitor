@@ -180,7 +180,11 @@ public class ExtendedHealthService {
         cutoff = cutoff.minusMinutes(alignMin);
 
         long totalMinutes = ChronoUnit.MINUTES.between(cutoff, now);
-        int totalBuckets = (int)(totalMinutes / bucketMinutes);
+        // Kova sayısı YUKARI yuvarlanır: cutoff kova sınırına geri çekildiği için pencere tam kova
+        // katı değildir; aşağı yuvarlama "şimdi"yi içeren son (kısmi) kovayı düşürüyor, en yeni
+        // heartbeat'ler (< kova süresi) hiçbir kovaya düşmüyordu (2026-09-11). Son kovanın
+        // `expected`i kalan dakika kadardır — "10 beklenen / 3 gelen" yanlış kaybı üretmesin.
+        int totalBuckets = (int) Math.ceil(totalMinutes / (double) bucketMinutes);
         if (totalBuckets <= 0) totalBuckets = 1;
         long[] counts = new long[totalBuckets];
 
@@ -192,10 +196,12 @@ public class ExtendedHealthService {
         }
 
         List<Map<String, Object>> buckets = new ArrayList<>(totalBuckets);
-        int expected = bucketMinutes;
         for (int i = 0; i < totalBuckets; i++) {
             Map<String, Object> b = new LinkedHashMap<>();
-            b.put("start",    cutoff.plusMinutes((long)i * bucketMinutes).toString());
+            long bucketStartMin = (long) i * bucketMinutes;
+            // Son kova kısmi olabilir: beklenen = pencerede kalan dakika (en az 1).
+            int expected = (int) Math.max(1, Math.min(bucketMinutes, totalMinutes - bucketStartMin));
+            b.put("start",    cutoff.plusMinutes(bucketStartMin).toString());
             b.put("expected", expected);
             b.put("received", (int) counts[i]);
             buckets.add(b);

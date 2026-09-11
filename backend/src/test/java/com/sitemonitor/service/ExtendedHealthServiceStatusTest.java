@@ -213,10 +213,10 @@ class ExtendedHealthServiceStatusTest {
     // ── Heartbeat zaman çizelgesi ─────────────────────────────────────────────
 
     @Test
-    @DisplayName("getHeartbeatTimeline(1): 10 dk kovalar, 30 dk önceki tek heartbeat tam bir kovaya düşer")
+    @DisplayName("getHeartbeatTimeline(1): 10 dk kovalar; 3 dk önceki (en yeni) heartbeat son KISMİ kovaya düşer, kaybolmaz")
     void timeline_oneDay_tenMinuteBuckets() {
         SystemHeartbeat hb = new SystemHeartbeat();
-        hb.setRecordedAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(30));   // pencerenin son kısmi kovasından uzak
+        hb.setRecordedAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(3));   // EN YENİ heartbeat — son (kısmi) kovaya düşmeli
         when(heartbeatRepo.findByRecordedAtAfterOrderByRecordedAtAsc(any())).thenReturn(List.of(hb));
 
         Map<String, Object> out = service.getHeartbeatTimeline(1);
@@ -224,10 +224,25 @@ class ExtendedHealthServiceStatusTest {
         assertThat(out).containsEntry("days", 1).containsEntry("bucket_minutes", 10);
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> buckets = (List<Map<String, Object>>) out.get("buckets");
-        assertThat(buckets).hasSizeBetween(140, 145);   // 24 s × 6 kova (hizalama ±1)
+        assertThat(buckets).hasSizeBetween(144, 145);   // 24 s × 6 kova (+1 kısmi son kova)
         int received = buckets.stream().mapToInt(b -> (Integer) b.get("received")).sum();
         assertThat(received).isEqualTo(1);
         assertThat(buckets.get(0)).containsEntry("expected", 10).containsKey("start");
+    }
+
+    @Test
+    @DisplayName("getHeartbeatTimeline: son kova KISMİ — expected kalan dakika kadar (10/3 yanlış kaybı üretmez), önceki kovalar tam")
+    void timeline_lastBucketIsPartial() {
+        when(heartbeatRepo.findByRecordedAtAfterOrderByRecordedAtAsc(any())).thenReturn(List.of());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> buckets = (List<Map<String, Object>>) service.getHeartbeatTimeline(1).get("buckets");
+        Map<String, Object> last = buckets.get(buckets.size() - 1);
+        int lastExpected = (Integer) last.get("expected");
+        assertThat(lastExpected).isBetween(1, 10);
+        assertThat(buckets.subList(0, buckets.size() - 1)).allSatisfy(b -> assertThat(b).containsEntry("expected", 10));
+        // Son kovanın başlangıcı "şimdi"den en çok 10 dk önce: pencere şimdiye kadar uzanıyor.
+        LocalDateTime start = LocalDateTime.parse((String) last.get("start"));
+        assertThat(java.time.temporal.ChronoUnit.MINUTES.between(start, LocalDateTime.now(ZoneOffset.UTC))).isBetween(0L, 10L);
     }
 
     @Test
