@@ -312,12 +312,17 @@ public class EscalationService {
                         event.setAcknowledged(false);
 
                         List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId);
-                        sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType, message,
-                                "", event.getId(), "ESCALATION", daysRemaining, result);
-
+                        // Terfi ÖNCE kalıcılaşır, SONRA gönderilir (INITIAL dalıyla aynı sıra). Kişi-webhook tetiği
+                        // (UserPushService.enqueueAlert) olayı DB'den yeniden yükleyip alıcıyı event.alertLevel ile
+                        // çözer; save gönderimden sonra kaldığında eski seviye (WARNING) okunuyor ve ESCALATION
+                        // push'u "bu seviyede kimse yok" diye atlanıyordu — e-posta HIGH giderken (prod, 2026-09-07:
+                        // eskalasyon push'u SKIPPED, 13 saat sonraki elle yeniden gönderim 5 kişiye SENT).
                         event.setNotifiedContacts(serializeContacts(contacts));
                         event.setLastReAlertAt(now());
-                        alertEventRepo.save(event);
+                        event = alertEventRepo.save(event);
+
+                        sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType, message,
+                                "", event.getId(), "ESCALATION", daysRemaining, result);
 
                     } else if (!Boolean.TRUE.equals(event.getAcknowledged())) {   // NULL-güvenli (O6)
                         String lastAlertTime = event.getLastReAlertAt() != null
