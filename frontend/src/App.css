@@ -11839,6 +11839,22 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   font-size: 1.02em; font-weight: 700; margin: 0 0 10px;
   padding-bottom: 6px; border-bottom: 1px solid var(--border);
 }
+
+/* Açılır/kapanır bölümler (UserPushSettings) — başlık = düğme; kapalıyken içerik gizli. */
+.cs-page-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.cs-page-head h3 { margin: 0; }
+.cs-all { flex: none; }
+.cs-head { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.cs-toggle { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; padding: 4px 0; background: none; border: 0;
+  font: inherit; font-size: 1.02em; font-weight: 700; color: var(--text); text-align: left; cursor: pointer; border-radius: 4px; }
+.cs-toggle:hover { color: var(--primary); }
+.cs-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.cs-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cs-chevron { flex: none; color: var(--text-muted); transition: transform .15s; transform: rotate(-90deg); }
+.cs-chevron.is-open { transform: rotate(0deg); }
+.cs-section:not(.is-open) { padding-bottom: 6px; }
+.cs-section:not(.is-open) > .cs-head { margin-bottom: 0; border-bottom: 0; padding-bottom: 0; }
+.cs-section:not(.is-open) > :not(.cs-head) { display: none; }
 .ldap-meta { font-size: .8em; color: var(--text-light); margin-top: 4px; }
 /* Ayarlar uyarı banner'ı (secret-key yok / APP_BASE_URL localhost) — amber */
 .settings-warn { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 16px;

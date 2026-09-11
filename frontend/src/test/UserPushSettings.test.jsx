@@ -327,6 +327,31 @@ describe('UserPushSettings', () => {
     expect(within(groups[1]).queryByRole('button')).not.toBeInTheDocument()
   })
 
+  it('2026-09-11: bölümler açılır/kapanır — başlık düğmesi aria-expanded, kapalıyken içerik gizli, seçim localStorage\'da; "Tümünü daralt/genişlet"', async () => {
+    try { localStorage.removeItem('sm.userpush.sections') } catch {}
+    render(<UserPushSettings />)
+    await screen.findByDisplayValue('Authorization')
+    const heads = screen.getAllByRole('button', { expanded: true }).filter((b) => b.classList.contains('cs-toggle'))
+    expect(heads.map((b) => b.textContent)).toEqual(expect.arrayContaining([
+      expect.stringMatching(/Connection|Bağlantı/), expect.stringMatching(/Role Groups|Rol Grupları/), expect.stringMatching(/Delivery Log|Teslimat Günlüğü/)]))
+    expect(heads.length).toBe(8)
+
+    // Bağlantı bölümünü kapat → URL girişi gizlenir (CSS ile; sınıf iddiası), aria-expanded false, kalıcı
+    const conn = heads.find((b) => /Connection|Bağlantı/.test(b.textContent))
+    fireEvent.click(conn)
+    expect(conn).toHaveAttribute('aria-expanded', 'false')
+    expect(conn.closest('.cs-section')).not.toHaveClass('is-open')
+    expect(JSON.parse(localStorage.getItem('sm.userpush.sections')).conn).toBe(false)
+
+    // Biri kapalıyken düğme "Tümünü genişlet" der → hepsi açık; sonra "Tümünü daralt" → hepsi kapalı
+    fireEvent.click(screen.getByRole('button', { name: /Expand all|Tümünü genişlet/ }))
+    expect(document.querySelectorAll('.cs-section.is-open').length).toBe(8)
+    fireEvent.click(screen.getByRole('button', { name: /Collapse all|Tümünü daralt/ }))
+    expect(document.querySelectorAll('.cs-section.is-open').length).toBe(0)
+    expect(JSON.parse(localStorage.getItem('sm.userpush.sections')).log).toBe(false)
+    try { localStorage.removeItem('sm.userpush.sections') } catch {}
+  })
+
   it('sessiz saat asgari seviyesinde de UYARI seçeneği var', async () => {
     render(<UserPushSettings />)
     await screen.findByDisplayValue('Authorization')

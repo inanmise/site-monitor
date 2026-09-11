@@ -3,7 +3,7 @@ import {
   Save, Send, BellRing, Plus, Trash2, Copy, RefreshCw, Search as SearchIcon,
   Crown, UserCog, Briefcase, Globe, Network, Target, Radio, CalendarDays,
   ScanSearch, FlaskConical, Gauge, ShieldCheck, WifiOff, Timer, CalendarClock,
-  ArrowLeftRight, CheckCircle2, OctagonPause, Check, Landmark, Building2,
+  ArrowLeftRight, CheckCircle2, OctagonPause, Check, Landmark, Building2, ChevronDown,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -58,6 +58,36 @@ const TYPES = [
 ]
 
 /** Unvan grubu kartları: ikon + kalıcı görsel kimlik. */
+
+/** Açılır/kapanır bölüm anahtarları — sıra sayfadaki sıra; localStorage'da hatırlanır. */
+const SECTIONS = ['conn', 'groups', 'scopes', 'quiet', 'templates', 'test', 'explain', 'log']
+const SECTIONS_KEY = 'sm.userpush.sections'
+function readSections() {
+  try {
+    const raw = localStorage.getItem(SECTIONS_KEY)
+    if (!raw) return null
+    const o = JSON.parse(raw)
+    return o && typeof o === 'object' ? o : null
+  } catch { return null }
+}
+
+/**
+ * Bölüm başlığı = açılır/kapanır düğme (2026-09-11, kullanıcı: "başlıkları açılır kapanır menüye
+ * dönüştür, istediğim bölümü açıp değiştireyim"). Başlık düğmesi <button>; yardım ipucu (HelpTip)
+ * kendi düğmesi olduğu için başlığın DIŞINDA, aynı satırda (iç içe button olmaz — TeamBadge dersi).
+ * Kapalıyken bölüm içeriği CSS ile gizlenir (.cs-section:not(.is-open) > :not(.cs-head)).
+ */
+function SectionHead({ id, title, open, onToggle, children }) {
+  return (
+    <div className="cs-head">
+      <button type="button" className="cs-toggle" aria-expanded={open} aria-controls={`cs-${id}`} onClick={onToggle}>
+        <ChevronDown size={16} className={`cs-chevron${open ? ' is-open' : ''}`} aria-hidden="true" />
+        <span className="cs-title">{title}</span>
+      </button>
+      {children}
+    </div>
+  )
+}
 
 /**
  * Teslimat günlüğü satırı — başlık (durum · kişi · takım · izleme · tetik · zaman) + açılır ayrıntı.
@@ -323,6 +353,24 @@ export default function UserPushSettings() {
   // KPI kartı → pencere MODALI (2026-09-11, kullanıcı: "tıklayınca pop-up'ta ayrıntı sunmalı").
   // Günlüğü süzüp kaydırmak artık modaldaki "Günlükte aç" eylemi (openInLog).
   const [winModal, setWinModal] = useState(null)   // null | { win: '24h'|'7d', status: '' | 'SENT' | 'FAILED' | … }
+  // Bölüm açık/kapalı durumu — varsayılan hepsi AÇIK (ilk ziyarette hiçbir şey gizlenmez), seçim
+  // tarayıcıda hatırlanır; "Tümünü daralt / genişlet" başlık satırında.
+  const [sections, setSections] = useState(() => readSections() || {})
+  const isOpen = (id) => sections[id] !== false
+  const setAllSections = (open) => {
+    const next = Object.fromEntries(SECTIONS.map((k) => [k, open]))
+    setSections(next)
+    try { localStorage.setItem(SECTIONS_KEY, JSON.stringify(next)) } catch { /* yoksay */ }
+  }
+  const toggleSec = (id) => {
+    setSections((prev) => {
+      const next = { ...prev, [id]: !isOpen(id) }
+      try { localStorage.setItem(SECTIONS_KEY, JSON.stringify(next)) } catch { /* yoksay */ }
+      return next
+    })
+  }
+  const sec = (id, extra = '') => `admin-section cs-section${isOpen(id) ? ' is-open' : ''}${extra ? ' ' + extra : ''}`
+  const allOpen = SECTIONS.every(isOpen)
   const pickWindow = (w, status) => setWinModal({ win: w, status: status || '' })
   const openInLog = () => {
     if (!winModal) return
@@ -330,6 +378,7 @@ export default function UserPushSettings() {
     setFStatus(winModal.status || '')
     setPage(0)
     setWinModal(null)
+    if (!isOpen('log')) toggleSec('log')
     setTimeout(() => logRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }), 0)
   }
   const [openRow, setOpenRow] = useState(null)
@@ -510,7 +559,12 @@ export default function UserPushSettings() {
     <div className="ldap-settings userpush-settings">
       {/* ── Başlık + KPI şeridi ── */}
       <div className="admin-section">
-        <h3><BellRing size={18} style={{ verticalAlign: '-3px' }} /> {t('userpush.title')}</h3>
+        <div className="cs-page-head">
+          <h3><BellRing size={18} style={{ verticalAlign: '-3px' }} /> {t('userpush.title')}</h3>
+          <button type="button" className="btn btn-sm cs-all" onClick={() => setAllSections(!allOpen)}>
+            {allOpen ? t('userpush.collapseAll') : t('userpush.expandAll')}
+          </button>
+        </div>
         <p className="section-desc">{t('userpush.desc')}</p>
         {stats && (
           <div className="userpush-stats-row up-kpis">
@@ -564,8 +618,8 @@ export default function UserPushSettings() {
 
       <div className={enabled ? undefined : 'up-dimmed'}>
         {/* ── Bağlantı ── */}
-        <div className="admin-section">
-          <h4 className="ldap-subhdr">{t('userpush.connTitle')}</h4>
+        <div className={sec('conn')}>
+          <SectionHead id="conn" title={t('userpush.connTitle')} open={isOpen('conn')} onToggle={() => toggleSec('conn')}></SectionHead>
           <p className="section-desc">{t('userpush.connDesc')}</p>
           <label className="threshold-field"><span className="help-label-row">{t('userpush.url')}<HelpTip helpKey="help.set.site.monitor.userpush.url" label={t('userpush.url')} /></span>
             <input type="text" className="input" value={val('url')} placeholder="http://..."
@@ -635,8 +689,8 @@ export default function UserPushSettings() {
         </div>
 
         {/* ── Unvan grupları — SEÇİLEBİLİR KARTLAR ── */}
-        <div className="admin-section">
-          <h4 className="ldap-subhdr">{t('userpush.groupsTitle')}<HelpTip helpKey="help.set.site.monitor.userpush.role-groups" label={t('userpush.groupsTitle')} /></h4>
+        <div className={sec('groups')}>
+          <SectionHead id="groups" title={t('userpush.groupsTitle')} open={isOpen('groups')} onToggle={() => toggleSec('groups')}><HelpTip helpKey="help.set.site.monitor.userpush.role-groups" label={t('userpush.groupsTitle')} /></SectionHead>
           <p className="section-desc">{t('userpush.groupsDesc')}</p>
           <div className="up-group-grid">
             {Object.entries(groupsSafe).map(([key, g]) => {
@@ -684,8 +738,8 @@ export default function UserPushSettings() {
         </div>
 
         {/* ── Tip + Takım kapsamı — TOGGLE CHIP grupları ── */}
-        <div className="admin-section">
-          <h4 className="ldap-subhdr">{t('userpush.scopesTitle')}</h4>
+        <div className={sec('scopes')}>
+          <SectionHead id="scopes" title={t('userpush.scopesTitle')} open={isOpen('scopes')} onToggle={() => toggleSec('scopes')}></SectionHead>
           <p className="section-desc">{t('userpush.scopesDesc')}</p>
           <h5 className="userpush-subsub">{t('userpush.typeMatrix')}<HelpTip helpKey="help.userpush.typeMatrix" label={t('userpush.typeMatrix')} /></h5>
           <div className="up-chip-grid" role="group" aria-label={t('userpush.typeMatrix')}>
@@ -716,8 +770,8 @@ export default function UserPushSettings() {
         </div>
 
         {/* ── Sessiz saatler + tekrar kuralı ── */}
-        <div className="admin-section">
-          <h4 className="ldap-subhdr">{t('userpush.quietTitle')}</h4>
+        <div className={sec('quiet')}>
+          <SectionHead id="quiet" title={t('userpush.quietTitle')} open={isOpen('quiet')} onToggle={() => toggleSec('quiet')}></SectionHead>
           <p className="section-desc">{t('userpush.quietDesc')}</p>
           <div className="up-quiet-row">
             <label className="threshold-field"><span className="help-label-row">{t('userpush.quietStart')}<HelpTip helpKey="help.set.site.monitor.userpush.quiet-start" label={t('userpush.quietStart')} /></span>
@@ -756,8 +810,8 @@ export default function UserPushSettings() {
         </div>
 
         {/* ── Şablonlar — push bildirim MAKETİ önizlemeli ── */}
-        <div className="admin-section">
-          <h4 className="ldap-subhdr">{t('userpush.templatesTitle')}</h4>
+        <div className={sec('templates')}>
+          <SectionHead id="templates" title={t('userpush.templatesTitle')} open={isOpen('templates')} onToggle={() => toggleSec('templates')}></SectionHead>
           <p className="section-desc">{t('userpush.templatesDesc')}</p>
           <p className="hint userpush-placeholders">
             {t('userpush.placeholders')}: {(defaults.placeholders || []).map((p) => `{${p}}`).join(' ')}
@@ -799,8 +853,8 @@ export default function UserPushSettings() {
       </div>
 
       {/* ── Test gönderimi ── */}
-      <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('userpush.testTitle')}</h4>
+      <div className={sec('test')}>
+        <SectionHead id="test" title={t('userpush.testTitle')} open={isOpen('test')} onToggle={() => toggleSec('test')}></SectionHead>
         <p className="section-desc">{t('userpush.testDesc')}</p>
         <TagInput label={t('userpush.testSicils')} value={testSicils} onChange={setTestSicils}
           placeholder="N00001" />
@@ -821,8 +875,8 @@ export default function UserPushSettings() {
       </div>
 
       {/* ── Kim alır? (alıcı çözümü açıklaması) ── */}
-      <div className="admin-section up-explain">
-        <h4 className="ldap-subhdr">{t('userpush.explainTitle')}</h4>
+      <div className={sec('explain', 'up-explain')}>
+        <SectionHead id="explain" title={t('userpush.explainTitle')} open={isOpen('explain')} onToggle={() => toggleSec('explain')}></SectionHead>
         <p className="section-desc">{t('userpush.explainDesc')}</p>
         <div className="userpush-log-filters">
           <SearchableSelect value={exTeam} onChange={(v) => setExTeam(v)} placeholder={t('userpush.explainPickTeam')} searchThreshold={4}
@@ -861,8 +915,8 @@ export default function UserPushSettings() {
       </div>
 
       {/* ── Teslimat günlüğü ── */}
-      <div className="admin-section" ref={logRef}>
-        <h4 className="ldap-subhdr">{t('userpush.logTitle')}</h4>
+      <div className={sec('log')} ref={logRef}>
+        <SectionHead id="log" title={t('userpush.logTitle')} open={isOpen('log')} onToggle={() => toggleSec('log')} />
         <p className="section-desc">{t('userpush.logDesc')}</p>
         <div className="userpush-log-filters">
           {fWindow && (
