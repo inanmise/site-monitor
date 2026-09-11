@@ -20,6 +20,7 @@ replicaCount: 2
 
 config:
   springProfile: prod
+  environmentName: staging  # Sürüm & Dağıtım Geçmişi ortam etiketi
   logLevel: "INFO"
   corsAllowedOrigins: "https://site-monitor-staging.example.com"
   # CPU limiti orta → executor'ı kıs (açılışta CPU açlığını önle)

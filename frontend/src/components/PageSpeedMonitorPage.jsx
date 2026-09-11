@@ -28,6 +28,8 @@ import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import TagInput from './ui/TagInput.jsx'
 import { RefreshCw, Plus, Trash2, Gauge, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, Image, FileCode, Frame, Type, Download, Link2, Wand2 } from 'lucide-react'
+import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
+import ModalScrollHint from './ui/ModalScrollHint.jsx'
 import { duplicateName } from '../utils/duplicateName.js'
 import { normalizeUrl } from '../utils/normalizeUrl.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
@@ -148,6 +150,8 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
   const [resCheckId, setResCheckId] = useState(null)   // null = son ölçüm (LATEST)
   const [resLoading, setResLoading] = useState(false)
   const [modal, setModal] = useState(null)
+  // Düzenleme modalı: sabit başlık + kaydırılan gövde + sabit alt bar (useModalScrollHint).
+  const scrollHint = useModalScrollHint()
   const [changeNote, setChangeNote] = useState('')
   const [dupSource, setDupSource] = useState(null)
   const [form, setForm] = useState(emptyForm)
@@ -907,13 +911,14 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
       {/* ── Form modali ── */}
       {modal && createPortal(
         <div className="modal-overlay">
-          <div className="modal-box" onClick={e => e.stopPropagation()}
-            style={{ maxWidth: 720, width: '92vw', maxHeight: '90vh', overflowY: 'auto' }}>
+          <div className="modal-box modal-sticky-actions" onClick={e => e.stopPropagation()}
+            style={{ maxWidth: 720, width: '92vw' }}>
             <div className="modal-icon-hdr modal-icon-hdr--keyword">
               <div className="modal-icon-hdr-badge"><Gauge size={20} /></div>
               <h3>{modal === 'new' ? t('pspd.modalNew') : t('pspd.modalEdit')}
                 {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
             </div>
+            <div className="modal-scroll-body" ref={scrollHint.ref}>
 
             {dupSource
               ? <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>
@@ -1115,6 +1120,8 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
             {modal !== 'new' && (
               <ChangeNoteField t={t} id="pagespeed-change-note" value={changeNote} onChange={setChangeNote} />
             )}
+            </div>
+            <ModalScrollHint {...scrollHint} />
             <div className="modal-actions">
               {/* URL boşken ölçüm yapılamaz. Buton zaten kapalı; title kapalı olma SEBEBİNİ söyler
                   (sessizce tıklanmayan bir buton kullanıcıya arıza gibi görünüyor). */}

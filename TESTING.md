@@ -222,3 +222,10 @@ kuralı `UserPushDelivery` javadoc'unda. Global anahtar KAPALIYKEN (varsayılan)
 yazılmaz — regresyon yasağının kanıtı `globalOff_noRows`.
 
 If you change anything that would invalidate this document, update it in the same commit.
+
+## Sürüm & Dağıtım Geçmişi + 2026-09-11 kapıları
+
+- **Backend:** `SemverTest`, `DeploymentTransitionTest` (tür türetimi: FIRST_SEEN/UPGRADE/RESTART/ROLLBACK/UNKNOWN), `ReleaseIndexServiceTest`, `BuildInfoTest`, `DeploymentHistoryServiceTest`, `SystemInfoControllerTest`, `DeploymentHistoryControllerTest` (read/edit kapısı, kapsamlı müdür 403, CSV BOM), `DeploymentNotifyServiceTest` (E3), `SchemaTableRegistryServiceTest` (SQL Playground tablo defteri). `WebConfigTest.publicEndpoints_areNoStore` üç yeni URI'yi de pinler; `RetentionCoverageTest` yeni ham-DDL tabloları (`deployment_history`, `schema_table_registry`) katalogda ister; `RetentionDocTest` dokümanı katalogdan üretir (`-Dretention.doc.write=true`).
+- **Frontend:** `release-index.test.js` (docs/releases/index.json şema/boyut/yasak token), `releaseUi.test.js`, `VersionChip.test.jsx` (E1 nokta + storage-disabled), `ReleaseNotesPanel.test.jsx`, `DeploymentHistoryPanel.test.jsx` (`d_` URL param'ları), `VersionTimeline.test.jsx` (geriye-uyumlu genişleme), `TableDetailsModal.test.jsx`, `teamManager.test.js` (Takım Müdürü tek kişi kuralı). `SystemHealth.test.jsx` SECTIONS listesinde `releases` EN SONDA ve `PermissionsProvider` mock'ludur — yeni bölüm eklerken sona ekle. `modalScroll.test.jsx` artık dokuz izleme modalında `modal-sticky-actions` + `modal-scroll-body` + `ModalScrollHint` zincirini ister; ikincil modal-box'lar eski inline `maxHeight/overflowY` kuralına tabidir.
+- **İzin anahtarı tuzağı:** `usePermissions().canView('release_history')` sessizce false döner — anahtar TAM ad (`release_history.read`); `permission-labels-sync` her `r(...)` için `perm.res.<key>` TR+EN ister.
+- **Script:** `node --test "scripts/__tests__/*.test.mjs"` (dizin argümanı Node 24/Windows'ta dosya bulmuyor) (gen-release-index, promote-changelog); `node scripts/gen-release-index.mjs --check` (tam tag geçmişi ister — CI'da `fetch-depth: 0`, `ci.yml`'e EKLENMEZ).

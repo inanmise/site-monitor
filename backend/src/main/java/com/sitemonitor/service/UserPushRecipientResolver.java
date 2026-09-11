@@ -93,6 +93,61 @@ public class UserPushRecipientResolver {
         return new ArrayList<>(out.values());
     }
 
+    /**
+     * "Kim alır, kim almaz ve NEDEN?" — {@link #resolve} ile AYNI kuralları uygular ama elenenleri de
+     * gerekçesiyle döndürür (2026-09-11, kullanıcı: aynı takımdaki bir üyeye push gitmiyor, nedeni görünmüyor).
+     * resolve() elenen üyeyi hiç yazmaz (teslimat günlüğü yalnız adayları taşır) — bu yüzden ayrı yüzey.
+     */
+    public record Explanation(String username, String displayName, String title, String orgRole, boolean active,
+                              String group, Boolean groupEnabled, String minLevel, boolean optOut, String decision) {}
+
+    public List<Explanation> explain(Long teamId, String alertLevel) {
+        List<Explanation> out = new ArrayList<>();
+        if (teamId == null) return out;
+        Map<String, GroupRule> groups = groupRules();
+        boolean anyEnabled = groups.values().stream().anyMatch(g -> g.enabled);
+        int level = levelValue(alertLevel);
+        java.util.Set<String> seen = new java.util.LinkedHashSet<>();   // id null olabilir → ad+id anahtarı
+        for (AppUser u : userRepo.findByMembershipTeamId(teamId)) {
+            String username = u.getUsername() == null ? "" : u.getUsername().trim();
+            String display = u.getDisplayName() != null ? u.getDisplayName() : username;
+            boolean active = Boolean.TRUE.equals(u.getActive());
+            boolean optOut = Boolean.TRUE.equals(u.getPushOptOut());
+            GroupRule match = matchGroup(groups, u);
+            String decision;
+            if (!active) decision = "INACTIVE";
+            else if (!anyEnabled) decision = "ALL_GROUPS_OFF";
+            else if (match == null) decision = "NO_GROUP";
+            else if (!match.enabled) decision = "GROUP_DISABLED";
+            else if (level < levelValue(match.minLevel)) decision = "BELOW_MIN_LEVEL";
+            else if (username.isEmpty()) decision = "SKIPPED_NO_ID";
+            else if (optOut) decision = "SKIPPED_USER_OPT_OUT";
+            else decision = "RECIPIENT";
+            seen.add(seenKey(u));
+            out.add(new Explanation(username.isEmpty() ? "-" : username, display, u.getTitle(), u.getOrgRole(), active,
+                    match == null ? null : match.key, match == null ? null : match.enabled,
+                    match == null ? null : match.minLevel, optOut, decision));
+        }
+        // BİRİNCİL takımı bu takım olan ama app_user_teams'te SATIRI OLMAYAN kullanıcı: alıcı çözümü
+        // üyelik tablosundan yürüdüğü için böyle biri sessizce hiç aday olmaz. Bu bir VERİ kusurudur
+        // (çoklu-takım göçünün geri doldurması ıskalamış); ekranda ayrı kararla görünür.
+        for (AppUser u : userRepo.findByTeamIdOrderByUsernameAsc(teamId)) {
+            if (seen.contains(seenKey(u))) continue;
+            String username = u.getUsername() == null ? "" : u.getUsername().trim();
+            out.add(new Explanation(username.isEmpty() ? "-" : username,
+                    u.getDisplayName() != null ? u.getDisplayName() : username,
+                    u.getTitle(), u.getOrgRole(), Boolean.TRUE.equals(u.getActive()),
+                    null, null, null, Boolean.TRUE.equals(u.getPushOptOut()), "MISSING_MEMBERSHIP"));
+        }
+        return out;
+    }
+
+    /** Tekilleştirme anahtarı: id (varsa) + kullanıcı adı — henüz kalıcılaşmamış kayıtta id null olabilir. */
+    private static String seenKey(AppUser u) {
+        String name = u.getUsername() == null ? "" : u.getUsername().trim().toUpperCase(Locale.ROOT);
+        return (u.getId() == null ? "?" : u.getId().toString()) + "#" + name;
+    }
+
     /** Kullanıcının eşleştiği İLK açık grup; açık grup eşleşmezse kapalı eşleşme; hiç yoksa null. */
     private GroupRule matchGroup(Map<String, GroupRule> groups, AppUser u) {
         GroupRule fallback = null;

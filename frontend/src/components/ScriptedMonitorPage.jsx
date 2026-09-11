@@ -17,6 +17,8 @@ import ScriptedTemplateInfo from './scripted/ScriptedTemplateInfo.jsx'
 import { useScriptedTemplates } from '../hooks/useScriptedTemplates.js'
 import { buildScriptSourceOptions, resolveTemplate } from '../utils/scriptSourceOptions.js'
 import { FlaskConical, Play, Plus, Trash2, RefreshCw, Eye, EyeOff, AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, ChevronDown, Terminal, FileCode2 } from 'lucide-react'
+import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
+import ModalScrollHint from './ui/ModalScrollHint.jsx'
 import { duplicateName } from '../utils/duplicateName.js'
 import { collectK6Markers } from '../utils/k6Errors.js'
 import { usePagination } from '../hooks/usePagination.js'
@@ -1553,6 +1555,8 @@ function CheckDetail({ t, check, k6Version }) {
 
 // ── Create/Edit modal ────────────────────────────────────────────────────────
 function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke = null, dismissSmoke, save, del, closeEdit, runTest, isAdminish, canDelete, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts = [], savedSource = null, templates = [], draftSavedAt = null, pendingDraft = null, applyDraft, discardDraft, bumpType = 'patch', setBumpType }) {
+  // Düzenleme modalı: sabit başlık + kaydırılan gövde + sabit alt bar (useModalScrollHint).
+  const scrollHint = useModalScrollHint()
   // Ortak bildirim blogunun "kime gidecek" satiri. Form AYRI bir bilesende oldugu icin
   // etiket burada, elde olan props'tan (teamSelectOptions/teamName) turetilir.
   const selectedTeamLabel =
@@ -1580,7 +1584,7 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
   })
   return (
     <div className="modal-overlay">
-      <div className="modal-box" style={{ maxWidth: 860, width: '92vw', maxHeight: '92vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+      <div className="modal-box modal-sticky-actions" style={{ maxWidth: 860, width: '92vw' }} onClick={e => e.stopPropagation()}>
         <div className="modal-icon-hdr modal-icon-hdr--port">
           <div className="modal-icon-hdr-badge"><FlaskConical size={20} /></div>
           <h3>{modal.id ? t('scripted.modalEdit') : t('scripted.modalNew')}
@@ -1593,6 +1597,7 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
               </span>
             )}</h3>
         </div>
+        <div className="modal-scroll-body" ref={scrollHint.ref}>
         {dupSource && <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>}
 
         {/* Bu monitör için kaydedilmemiş taslak — OTOMATİK uygulanmaz, kullanıcı karar verir. */}
@@ -1860,6 +1865,8 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
           )}
 
         </div>
+        </div>
+        <ModalScrollHint {...scrollHint} />
         <div className="modal-actions">
           <div style={{ display: 'flex', gap: 8, marginRight: 'auto' }}>
             <button className="btn btn-secondary" onClick={runTest} disabled={testing} aria-busy={testing}>

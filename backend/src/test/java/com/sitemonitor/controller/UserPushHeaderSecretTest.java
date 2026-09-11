@@ -53,7 +53,10 @@ class UserPushHeaderSecretTest {
     @BeforeEach
     void setUp() {
         controller = new UserPushController(appSettings, userPushService, deliveryRepo,
-                scopeRepo, secretCipher, auditService);
+                scopeRepo, secretCipher, auditService,
+                org.mockito.Mockito.mock(com.sitemonitor.service.UserPushRecipientResolver.class),
+                org.mockito.Mockito.mock(com.sitemonitor.repository.AppUserRepository.class),
+                org.mockito.Mockito.mock(com.sitemonitor.repository.TeamRepository.class));
         when(appSettings.getString(anyString(), any())).thenAnswer(i -> i.getArgument(1));
         when(appSettings.getString("site.monitor.userpush.headers", "[]")).thenReturn(STORED);
         when(secretCipher.encrypt(anyString())).thenAnswer(i -> "ENC(" + i.getArgument(0) + ")");

@@ -4,6 +4,7 @@ import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { Spinner } from '../ui/Progress.jsx'
+import HelpTip from '../ui/HelpTip.jsx'
 
 /**
  * "Alert Settings" — Alarm fırtınası (alert storm) yapılandırması. Master toggle + eşik (sayı + birim)
@@ -94,7 +95,7 @@ export default function StormSettings() {
         <label className="ldap-toggle ldap-toggle-major">
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
           <span>{t('storm.enabled')}</span>
-        </label>
+        </label><HelpTip helpKey="help.set.site.monitor.storm.enabled" label={t('storm.enabled')} />
         <p className="hint">{t('storm.enabledHint')}</p>
         {!enabled && (
           <div className="alert-msg ldap-lookup-error" style={{ marginTop: 10 }}>
@@ -105,7 +106,7 @@ export default function StormSettings() {
 
       {/* Threshold: number + unit */}
       <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('storm.thresholdTitle')}</h4>
+        <h4 className="ldap-subhdr">{t('storm.thresholdTitle')}<HelpTip helpKey="help.set.site.monitor.storm.threshold-value" label={t('storm.thresholdTitle')} /></h4>
         <p className="section-desc">{t('storm.thresholdDesc')}</p>
         <div className="storm-threshold-row">
           <input
@@ -120,6 +121,7 @@ export default function StormSettings() {
             <option value="COUNT">{t('storm.unitCount')}</option>
             <option value="PERCENT">{t('storm.unitPercent')}</option>
           </select>
+          <HelpTip helpKey="help.set.site.monitor.storm.threshold-unit" label={t('storm.unitCount') + ' / ' + t('storm.unitPercent')} />
         </div>
         <p className="hint">
           {unit === 'PERCENT'
@@ -130,7 +132,7 @@ export default function StormSettings() {
 
       {/* Time window slider (1–15 min) */}
       <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('storm.windowTitle')}</h4>
+        <h4 className="ldap-subhdr">{t('storm.windowTitle')}<HelpTip helpKey="help.set.site.monitor.storm.window-minutes" label={t('storm.windowTitle')} /></h4>
         <p className="section-desc">{t('storm.windowDesc')}</p>
         <div className="storm-slider-wrap">
           <input
@@ -156,7 +158,7 @@ export default function StormSettings() {
         <label className="ldap-toggle">
           <input type="checkbox" checked={perGroup} onChange={(e) => setPerGroup(e.target.checked)} />
           <span>{t('storm.perGroup')}</span>
-        </label>
+        </label><HelpTip helpKey="help.set.site.monitor.storm.per-group" label={t('storm.perGroup')} />
         <p className="hint">{t('storm.perGroupHint')}</p>
       </div>
 

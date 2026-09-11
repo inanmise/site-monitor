@@ -3,6 +3,7 @@ import { Eye, EyeOff, KeyRound, RefreshCw, Copy } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
+import HelpTip from '../ui/HelpTip.jsx'
 
 /** Tarayıcıda kriptografik olarak güçlü rastgele anahtar üretir (32 bayt → base64). */
 function generateKey() {
@@ -67,7 +68,7 @@ export default function SecretTools() {
       <div className="admin-section">
         <div className="threshold-grid">
           <div className="threshold-field">
-            <label><KeyRound size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />{t('secret.keyLabel')}</label>
+            <label><KeyRound size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />{t('secret.keyLabel')}<HelpTip helpKey="help.secret.key" label={t('secret.keyLabel')} /></label>
             <input type="password" value={key} autoComplete="off" placeholder="SITE_MONITOR_SECRET_KEY"
               onChange={(e) => setKey(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') run() }} />

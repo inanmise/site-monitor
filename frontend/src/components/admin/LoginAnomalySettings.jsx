@@ -4,6 +4,7 @@ import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { Spinner } from '../ui/Progress.jsx'
+import HelpTip from '../ui/HelpTip.jsx'
 
 /**
  * "Login Anomali" — başarısız-login anomali tespiti + sistem-admin e-posta uyarısı yapılandırması.
@@ -95,13 +96,13 @@ export default function LoginAnomalySettings() {
         <label className="ldap-toggle ldap-toggle-major">
           <input type="checkbox" checked={!!form.enabled} onChange={(e) => set('enabled', e.target.checked)} />
           <span>{t('loginAnomaly.enabled')}</span>
-        </label>
+        </label><HelpTip helpKey="help.set.site.monitor.failed-login.enabled" label={t('loginAnomaly.enabled')} />
         <p className="hint">{t('loginAnomaly.enabledHint')}</p>
       </div>
 
       {/* Recipients */}
       <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('loginAnomaly.recipientsTitle')}</h4>
+        <h4 className="ldap-subhdr">{t('loginAnomaly.recipientsTitle')}<HelpTip helpKey="help.set.site.monitor.failed-login.alert-recipients" label={t('loginAnomaly.recipientsTitle')} /></h4>
         <input
           className="la-input-wide"
           placeholder={t('loginAnomaly.recipientsPh')}
@@ -118,7 +119,12 @@ export default function LoginAnomalySettings() {
         <div className="la-grid">
           {NUM_FIELDS.map((f) => (
             <label key={f.key} className="la-field">
-              <span>{t('loginAnomaly.f.' + f.key)}</span>
+              <span className="help-label-row">
+                {t('loginAnomaly.f.' + f.key)}
+                {/* form alanı adı snake_case, katalog anahtarı kebab-case */}
+                <HelpTip helpKey={'help.set.site.monitor.failed-login.' + f.key.replace(/_/g, '-')}
+                  label={t('loginAnomaly.f.' + f.key)} />
+              </span>
               <input
                 type="number"
                 min={f.min}
@@ -137,7 +143,7 @@ export default function LoginAnomalySettings() {
           <input type="checkbox" checked={!!form.resolved_email_enabled}
             onChange={(e) => set('resolved_email_enabled', e.target.checked)} />
           <span>{t('loginAnomaly.resolvedEmail')}</span>
-        </label>
+        </label><HelpTip helpKey="help.set.site.monitor.failed-login.resolved-email-enabled" label={t('loginAnomaly.resolvedEmail')} />
         <p className="hint">{t('loginAnomaly.resolvedEmailHint')}</p>
       </div>
 

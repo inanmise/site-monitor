@@ -1,6 +1,7 @@
 import { ChevronRight, CheckCircle2, AlertTriangle, Lock } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import { ProgressBar } from '../../ui/Progress.jsx'
+import HelpTip from '../../ui/HelpTip.jsx'
 
 /** Hızlı seçim çipleri — en sık kullanılan saklama pencereleri. */
 const QUICK_DAYS = [30, 90, 180, 365, 730]
@@ -51,6 +52,8 @@ export default function PolicyRow({
         <div className="ret-row-id">
           <div className="ret-row-name">
             {p.table}
+            {/* Ayarı olmayan (ORPHAN/EXTERNAL) politikada helpKey boştur → HelpTip hiç çizilmez. */}
+            <HelpTip helpKey={p.setting_key ? 'help.set.' + p.setting_key : ''} label={p.table} />
             {changed && (
               <span className={`ret-delta${shortened ? ' ret-delta--down' : ''}`}>
                 {original} → {value}

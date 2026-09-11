@@ -372,6 +372,18 @@ class UserServiceTest {
     }
 
     @Test
+    @DisplayName("2026-09-10: updateTeamManager atar, null temizler, bilinmeyen kullanıcı 400")
+    void updateTeamManager_setClearValidate() {
+        Team t = new Team(); t.setId(2L); t.setName("Takım A"); t.setEmail("a@example.com");
+        when(teamRepo.findById(2L)).thenReturn(Optional.of(t));
+        when(userRepo.existsById(5L)).thenReturn(true);
+        when(userRepo.existsById(99L)).thenReturn(false);
+        assertThat(service.updateTeamManager(2L, 5L).getManagerId()).isEqualTo(5L);
+        assertThat(service.updateTeamManager(2L, null).getManagerId()).isNull();
+        assertThatThrownBy(() -> service.updateTeamManager(2L, 99L)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     @DisplayName("createTeam: blank name → IllegalArgumentException")
     void createTeam_blankName_throwsIllegalArgument() {
         assertThatThrownBy(() -> service.createTeam("  ", "a@b.com", null, 1L))

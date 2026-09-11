@@ -219,7 +219,13 @@ public class PermissionService {
     private static final List<PolicyUpgrade> POLICY_UPGRADES = List.of(
             new PolicyUpgrade("USER", "monitoring.scripted", List.of("edit", "execute"),
                     "USER kendi takımının sentetik monitörünü yazamıyordu (2026-08-24); "
-                  + "takım izolasyonu canOperateTeam ile ayrıca korunuyor, silme TEAM_ADMIN'de kalıyor")
+                  + "takım izolasyonu canOperateTeam ile ayrıca korunuyor, silme TEAM_ADMIN'de kalıyor"),
+            new PolicyUpgrade("TEAM_ADMIN", "diagnostics.run", List.of("execute"),
+                    "Takım yöneticisi kendi takımının izlediği alan adları için tanılama koşturabilmeli (2026-09-11); "
+                  + "uç requireAdminOrMonitoredDomain ile takım kapsamına bağlı"),
+            new PolicyUpgrade("USER", "diagnostics.run", List.of("execute"),
+                    "USER kendi takımının izlediği alan adları için tanılama koşturabilmeli (2026-09-11); "
+                  + "uç takım kapsamını doğrular, proxy-ca-chain admin'de kalır")
     );
 
     /** Update single grant. ADMIN row'ları her zaman true; bypass yok. */

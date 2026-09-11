@@ -15,6 +15,8 @@ import IntervalSlider from './ui/IntervalSlider.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
 import { RefreshCw, Plus, Trash2, Target, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, ShieldCheck } from 'lucide-react'
+import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
+import ModalScrollHint from './ui/ModalScrollHint.jsx'
 import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
@@ -92,6 +94,8 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const [selected, setSelected] = useState(null)
   const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
   const [modal, setModal] = useState(null)          // 'new' | monitor | null
+  // Düzenleme modalı: sabit başlık + kaydırılan gövde + sabit alt bar (useModalScrollHint).
+  const scrollHint = useModalScrollHint()
   // Opsiyonel "değişiklik nedeni" — form nesnesine DEĞİL ayrı tutulur: taslak/kirlilik
   // karşılaştırması form üzerinden yapılıyor ve not bir ayar değil, tek seferlik açıklama.
   const [changeNote, setChangeNote] = useState('')
@@ -714,12 +718,13 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
       {/* ── Create / Edit Modal ── (dış/overlay tıklamada KAPANMAZ — veri kaybı önlenir; yalnız İptal/Kaydet) */}
       {modal && createPortal(
         <div className="modal-overlay">
-          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 720, width: '92vw', maxHeight: '90vh', overflowY: 'auto' }}>
+          <div className="modal-box modal-sticky-actions" onClick={e => e.stopPropagation()} style={{ maxWidth: 720, width: '92vw' }}>
             <div className="modal-icon-hdr modal-icon-hdr--keyword">
               <div className="modal-icon-hdr-badge"><Target size={20} /></div>
               <h3>{modal === 'new' ? t('keyword.modalNew') : t('keyword.modalEdit')}
                 {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
             </div>
+            <div className="modal-scroll-body" ref={scrollHint.ref}>
 
             {dupSource
               ? <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>
@@ -871,6 +876,8 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
             {modal !== 'new' && (
               <ChangeNoteField t={t} id="keyword-change-note" value={changeNote} onChange={setChangeNote} />
             )}
+            </div>
+            <ModalScrollHint {...scrollHint} />
             <div className="modal-actions">
               <button className="btn btn-secondary" style={{ marginRight: 'auto' }} onClick={runTest}
                 disabled={testing || !form.url.trim() || !form.keyword.trim()}>

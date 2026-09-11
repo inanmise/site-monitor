@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -79,8 +80,11 @@ export default function UserEditModal({ user, teams, onClose, onSaved, readOnly 
     }
   }
 
-  return (
-    <div className="modal-overlay" onClick={onClose}>
+  // 2026-09-10: body'ye PORTAL + üst katman. Takım üye kartlarından (TeamMembersModal = ModalShell, body'ye
+  // portal, z 2000) açılınca bu modal sayfa ağacında kaldığı için üye modalının ARKASINDA kalıyordu.
+  // Aynı z-index'te sonra çizilen kazanır; ModalShell derinlik başına +10 verir → burada 2100 (toast 9700 üstte).
+  return createPortal(
+    <div className="modal-overlay modal-overlay--top" onClick={onClose}>
       <div className="modal-box" onClick={(e) => e.stopPropagation()}>
         <div className="modal-icon-hdr modal-icon-hdr--user">
           <div className="modal-icon-hdr-badge">
@@ -209,7 +213,8 @@ export default function UserEditModal({ user, teams, onClose, onSaved, readOnly 
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 

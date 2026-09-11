@@ -174,4 +174,36 @@ class UserPushRecipientResolverTest {
         assertThat(out.get(0).skipReason()).isNull();
         assertThat(out.get(1).skipReason()).isEqualTo("SKIPPED_USER_OPT_OUT");
     }
+
+    @Test
+    @DisplayName("2026-09-11: explain() elenenleri de gerekçesiyle döndürür — 'aynı takımda ama push gitmiyor' sorusunun cevabı")
+    void explain_listsEveryMemberWithDecision() {
+        groups(GROUPS_ALL_ON);
+        AppUser optOut = user("N00004", "Kıdemli Uzman", null); optOut.setPushOptOut(true);
+        AppUser passive = user("N00005", "Uzman", null); passive.setActive(false);
+        AppUser noId = user("", "Uzman", null);
+        when(userRepo.findByMembershipTeamId(5L)).thenReturn(List.of(
+                user("N00001", "Kıdemli Uzman", null),          // RECIPIENT
+                user("N00002", "Takım Elemanı", "PO"),          // RECIPIENT (PO)
+                user("N00003", "Yazılım Geliştirici", null),    // NO_GROUP — desen eşleşmiyor (Emrullah vakası)
+                user("N00006", "Bölüm Müdürü", null),           // BELOW_MIN_LEVEL (yönetici HIGH+, olay WARNING)
+                optOut, passive, noId));
+        AppUser orphan = user("N00007", "Uzman", null);
+        orphan.setTeamIds(new java.util.LinkedHashSet<>());   // üyelik tablosunda satırı yok
+        orphan.setTeamId(5L);
+        when(userRepo.findByTeamIdOrderByUsernameAsc(5L)).thenReturn(List.of(orphan));
+
+        var out = resolver.explain(5L, "WARNING");
+
+        assertThat(out).extracting(UserPushRecipientResolver.Explanation::decision)
+                .containsExactly("RECIPIENT", "RECIPIENT", "NO_GROUP", "BELOW_MIN_LEVEL",
+                                 "SKIPPED_USER_OPT_OUT", "INACTIVE", "SKIPPED_NO_ID", "MISSING_MEMBERSHIP");
+        assertThat(out.get(2).group()).isNull();
+        assertThat(out.get(3).group()).isEqualTo("yonetici");
+        assertThat(out.get(3).minLevel()).isEqualTo("HIGH");
+        assertThat(out.get(4).optOut()).isTrue();
+        // resolve() ile tutarlı: yalnız RECIPIENT + SKIPPED_* satırları oradaki listede
+        assertThat(resolver.resolve(5L, "WARNING")).extracting(UserPushRecipientResolver.Recipient::username)
+                .containsExactly("N00001", "N00002", "N00004", "-");
+    }
 }

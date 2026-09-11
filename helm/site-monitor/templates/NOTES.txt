@@ -4,6 +4,8 @@ Site Monitor {{ .Chart.AppVersion }} has been deployed!
   Release   : {{ .Release.Name }}
   Namespace : {{ .Release.Namespace }}
   Version   : {{ .Chart.AppVersion }}
+  Revision  : {{ .Release.Revision }}  (Sistem Sağlığı → Sürüm & Dağıtım'da bu revizyon görünür)
+  Env label : {{ .Values.config.environmentName | default "(unset — environments/*.yaml doldurur)" }}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 {{- if .Values.ingress.enabled }}

@@ -15,6 +15,7 @@ vi.mock('../api/client', () => ({
         sendTest: vi.fn(),
         getDeliveries: vi.fn(),
         getStats: vi.fn(),
+        explain: vi.fn(),
         exportUrl: vi.fn(() => '/api/x'),
       },
     },
@@ -67,7 +68,8 @@ function stubAll({ deliveries = [DELIVERY], settings = SETTINGS } = {}) {
     success: true, data: { last24h: { SENT: 4, FAILED: 1 }, last7d: { SENT: 40 }, health: {} },
   })
   api.admin.userPush.getDeliveries.mockResolvedValue({
-    success: true, data: { deliveries, total: deliveries.length, page: 0, size: 25 },
+    success: true, data: { deliveries, total: deliveries.length, page: 0, size: 25,
+      user_teams: { N00001: ['Takım A', 'Takım B'] } },
   })
 }
 
@@ -132,6 +134,36 @@ describe('UserPushSettings', () => {
       expect.objectContaining({ usernames: ['N00001'], template: 'test' })))
   })
 
+  it('2026-09-11: test gönderiminden SONRA teslimat günlüğü kendiliğinden tazelenir (elle Yenile gerekmez)', async () => {
+    api.admin.userPush.sendTest.mockResolvedValue({ success: true, data: { data: { batch_id: 'x', queued: 1, message: 'm' } } })
+    render(<UserPushSettings />)
+    await screen.findByDisplayValue('Authorization')
+    await waitFor(() => expect(api.admin.userPush.getDeliveries).toHaveBeenCalled())
+    const before = api.admin.userPush.getDeliveries.mock.calls.length
+
+    const tagInput = screen.getByPlaceholderText('N00001')
+    fireEvent.change(tagInput, { target: { value: 'N00001' } })
+    fireEvent.blur(tagInput)
+    fireEvent.click(screen.getByRole('button', { name: /Test gönder|Send test/ }))
+
+    await waitFor(() => expect(api.admin.userPush.sendTest).toHaveBeenCalled())
+    // Elle "Yenile" tıklanMADAN liste yeniden çekilir (gönderim asenkron: PENDING → SENT/FAILED).
+    await waitFor(() => expect(api.admin.userPush.getDeliveries.mock.calls.length).toBeGreaterThan(before))
+  })
+
+  it('2026-09-11: günlük satırında kişinin TAKIMLARI rozetle görünür (satır buton olduğu için span modunda)', async () => {
+    render(<UserPushSettings />)
+    await screen.findByDisplayValue('Authorization')
+    await screen.findByText('example.com')
+
+    const who = document.querySelector('.userpush-log-who')
+    expect(who.textContent).toContain('Takım A')
+    expect(who.textContent).toContain('Takım B')
+    // Satırın kendisi <button>; içindeki takım rozeti BUTON OLMAMALI (geçersiz HTML).
+    expect(who.querySelectorAll('button').length).toBe(0)
+    expect(document.querySelectorAll('.userpush-log-team').length).toBe(2)
+  })
+
   it('global anahtar KAPALIYKEN uyarı notu görünür ve test düğmesi devre dışıdır', async () => {
     stubAll({ settings: { ...SETTINGS, 'site.monitor.userpush.enabled': 'false' } })
     render(<UserPushSettings />)
@@ -171,6 +203,48 @@ describe('UserPushSettings', () => {
 
     await waitFor(() => expect(api.admin.userPush.saveScopes).toHaveBeenCalledWith(
       [{ scopeType: 'TEAM', scopeKey: '5', enabled: true }]))
+  })
+
+  it('2026-09-11: KPI kartı tıklanınca teslimat günlüğü o pencereyle (from) süzülür; FAILED sayısı durumu da seçer; çip kaldırır', async () => {
+    render(<UserPushSettings />)
+    await screen.findByDisplayValue('Authorization')
+    const cards = document.querySelectorAll('.up-kpi--btn')
+    expect(cards.length).toBe(2)
+    fireEvent.click(cards[1])                                  // Son 7 gün
+    await waitFor(() => expect(api.admin.userPush.getDeliveries).toHaveBeenLastCalledWith(
+      expect.objectContaining({ from: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/) })))
+    const from7 = api.admin.userPush.getDeliveries.mock.calls.at(-1)[0].from
+    expect(Date.now() - Date.parse(from7 + 'Z')).toBeGreaterThan(6.9 * 86400e3)
+    expect(document.querySelector('.up-kpi--btn.is-active')).toBe(cards[1])
+    fireEvent.click(cards[0].querySelector('.up-kpi-fail'))    // Son 24 saat → FAILED
+    await waitFor(() => expect(api.admin.userPush.getDeliveries).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: 'FAILED' })))
+    const from24 = api.admin.userPush.getDeliveries.mock.calls.at(-1)[0].from
+    expect(Date.now() - Date.parse(from24 + 'Z')).toBeLessThan(1.1 * 86400e3)
+    fireEvent.click(document.querySelector('.up-window-chip'))
+    await waitFor(() => expect(api.admin.userPush.getDeliveries.mock.calls.at(-1)[0].from).toBeUndefined())
+  })
+
+  it('2026-09-11: "Kim alır?" — takım seçilince her üye için karar ve nedeni listelenir', async () => {
+    api.admin.userPush.explain.mockResolvedValue({ success: true, data: { teamId: 5, level: 'HIGH', members: [
+      { username: 'N1', display_name: 'Uzman Bir', title: 'Kıdemli Uzman', org_role: 'TECH', active: true, group: 'uzman', group_enabled: true, min_level: 'WARNING', opt_out: false, decision: 'RECIPIENT' },
+      { username: 'N2', display_name: 'Geliştirici İki', title: 'Yazılım Geliştirici', org_role: 'TECH', active: true, group: null, group_enabled: null, min_level: null, opt_out: false, decision: 'NO_GROUP' },
+      { username: 'N3', display_name: 'Uzman Üç', title: 'Uzman', org_role: 'TECH', active: true, group: 'uzman', group_enabled: true, min_level: 'WARNING', opt_out: true, decision: 'SKIPPED_USER_OPT_OUT' },
+    ] } })
+    render(<UserPushSettings />)
+    await screen.findByDisplayValue('Authorization')
+    expect(api.admin.userPush.explain).not.toHaveBeenCalled()
+    // Takım seçimi: SearchableSelect gizli native select ya da tetikleyici — değeri doğrudan state'e taşımak için
+    // bileşenin combobox'ını aç ve seçeneği tıkla.
+    const section = document.querySelector('.up-explain')
+    fireEvent.mouseDown(section.querySelector('.ss-trigger'))   // açılış onMouseDown ile
+    const opt = [...section.querySelectorAll('.ss-option')].find(o => o.textContent.trim() === 'Takım A')
+    fireEvent.mouseDown(opt)
+    await waitFor(() => expect(api.admin.userPush.explain).toHaveBeenCalledWith('5', 'HIGH'))
+    await screen.findByText('Geliştirici İki')
+    expect(screen.getByText(/Grup eşleşmedi|No group match/)).toBeInTheDocument()
+    expect(screen.getByText(/Kişi kapattı|Opted out/)).toBeInTheDocument()
+    expect(document.querySelectorAll('.up-decision--RECIPIENT').length).toBe(1)
   })
 
   it('istatistik şeridi son 24 saat SENT/FAILED sayılarını gösterir (E3)', async () => {

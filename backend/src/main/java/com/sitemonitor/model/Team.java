@@ -26,6 +26,12 @@ public class Team {
     @Column(name = "leader_id")
     private Long leaderId;
 
+    /** Elle atanmış takım müdürü (2026-09-10). NULL → Takım Yönetimi ekranı üyelerin AD müdür zincirinden
+     *  türetir (utils/teamManager.js). Dolu → ekranda bu kişi yazılır; AD zinciri ezilmez, yalnız öncelik alır.
+     *  Nullable kolon: ddl-auto=update dolu tabloya sorunsuz ekler (NOT NULL/UNIQUE değil). */
+    @Column(name = "manager_id")
+    private Long managerId;
+
     @Column(length = 200)
     private String email;
 

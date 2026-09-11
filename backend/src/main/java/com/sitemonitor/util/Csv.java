@@ -39,4 +39,18 @@ public final class Csv {
         String v = s.replace("\"", "\"\"");
         return needQuote ? "\"" + v + "\"" : v;
     }
+
+    /**
+     * Tam satır: her hücre {@link #cell(Object)} ile kaçırılır, virgülle birleşir, CRLF ile biter.
+     * Dışa aktarımlar kendi {@code csvRow} yardımcısını yazmasın diye (2026-09-11: iki controller aynı
+     * korumasız kopyayı taşıyordu — {@code CsvExportGuardTest}).
+     */
+    public static String row(Object... cells) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < cells.length; i++) {
+            if (i > 0) sb.append(',');
+            sb.append(cell(cells[i]));
+        }
+        return sb.append("\r\n").toString();
+    }
 }

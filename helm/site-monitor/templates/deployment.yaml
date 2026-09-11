@@ -55,6 +55,24 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: status.podIP
+            # Sürüm & Dağıtım Geçmişi (2026-09-10): pod kendi ortamını, Helm revizyonunu, imajını ve
+            # config checksum'ını bilsin → deployment_history "prod, helm rev 47, yalnız config değişti"
+            # diyebilir. Hepsi boş-toleranslı (uygulama env yoksa "bilinmiyor" der). NOT: .Release.Revision
+            # pod şablonunda olduğu için her `helm upgrade` pod'u döndürür (checksum/config zaten yapıyor).
+            - name: APP_ENVIRONMENT
+              value: {{ .Values.config.environmentName | default "" | quote }}
+            - name: HELM_RELEASE_NAME
+              value: {{ .Release.Name | quote }}
+            - name: HELM_RELEASE_REVISION
+              value: {{ .Release.Revision | quote }}
+            - name: HELM_CHART_VERSION
+              value: {{ .Chart.Version | quote }}
+            - name: APP_IMAGE_REF
+              value: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+            - name: CONFIG_CHECKSUM
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['checksum/config']
           envFrom:
             - configMapRef:
                 name: {{ include "site-monitor.fullname" . }}-config

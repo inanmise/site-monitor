@@ -12,6 +12,11 @@ on:
         type: choice
         default: auto
         options: [auto, patch, minor, major]
+      confirm_major:
+        description: "Onay: elle 'major' seçildiyse ya da anlamlı commit yokken sürüm zorlanıyorsa 'yes' yazın"
+        required: false
+        type: string
+        default: ''
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -149,34 +154,51 @@ jobs:
 
       - name: Detect bump type from commits
         id: detect
+        env:
+          MANUAL: ${{ inputs.bump }}
+          CONFIRM: ${{ inputs.confirm_major }}
         run: |
-          # Manuel override (workflow_dispatch ile auto dışında bir şey seçildiyse)
-          MANUAL="${{ inputs.bump }}"
-          if [ -n "$MANUAL" ] && [ "$MANUAL" != "auto" ]; then
+          set -euo pipefail
+
+          # Son tag'den bu yana commit'leri al. Başlıklar (%s) ve gövdeler (%b) AYRI okunur:
+          # başlık bump/skip kararını, gövde yalnız BREAKING CHANGE bayrağını besler.
+          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            SUBJECTS=$(git log "${PREV_TAG}..HEAD" --pretty=format:"%s" --no-merges)
+            BODIES=$(git log "${PREV_TAG}..HEAD" --pretty=format:"%b" --no-merges)
+          else
+            SUBJECTS=$(git log --pretty=format:"%s" --no-merges)
+            BODIES=$(git log --pretty=format:"%b" --no-merges)
+          fi
+
+          echo "Commits since ${PREV_TAG:-beginning}:"
+          echo "$SUBJECTS"
+          echo "---"
+
+          # Release/CI-only commit'lerini ele. Karar YALNIZ commit BAŞLIKLARINDAN
+          # ($SUBJECTS) verilir — çok satırlı gövde ci:/docs: skip'ini bozmasın diye
+          # %b dahil EDİLMEZ.
+          MEANINGFUL=$(echo "$SUBJECTS" | grep -vE '^\s*$|^chore\(release\)|^\[skip ci\]|^ci(\([^)]*\))?:' || true)
+
+          # Manuel override (workflow_dispatch ile auto dışında bir şey seçildiyse).
+          # İki durum onay ister (confirm_major=yes):
+          #   • 'major' her zaman — yanlışlıkla seçilen bir major, sürüm numarasını kalıcı ilerletir;
+          #   • minor/patch ama anlamlı commit YOK — boş bir sürüm çıkarılmak üzere.
+          if [ -n "${MANUAL:-}" ] && [ "$MANUAL" != "auto" ]; then
+            if [ "$MANUAL" = "major" ] && [ "${CONFIRM:-}" != "yes" ]; then
+              echo "::error::Elle 'major' bump için confirm_major=yes gerekir — sürüm durduruldu."
+              exit 1
+            fi
+            if [ -z "$MEANINGFUL" ] && [ "${CONFIRM:-}" != "yes" ]; then
+              echo "::error::Son tag'den bu yana anlamlı commit yok; yine de '${MANUAL}' sürüm çıkarmak için confirm_major=yes gerekir."
+              exit 1
+            fi
             echo "should_release=true" >> "$GITHUB_OUTPUT"
             echo "bump=${MANUAL}"      >> "$GITHUB_OUTPUT"
             echo "Manual bump: ${MANUAL}"
             exit 0
           fi
 
-          # Son tag'den bu yana commit'leri al
-          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          if [ -n "$PREV_TAG" ]; then
-            COMMITS=$(git log "${PREV_TAG}..HEAD" --pretty=format:"%s%n%b" --no-merges)
-            SUBJECTS=$(git log "${PREV_TAG}..HEAD" --pretty=format:"%s" --no-merges)
-          else
-            COMMITS=$(git log --pretty=format:"%s%n%b" --no-merges)
-            SUBJECTS=$(git log --pretty=format:"%s" --no-merges)
-          fi
-
-          echo "Commits since ${PREV_TAG:-beginning}:"
-          echo "$COMMITS"
-          echo "---"
-
-          # Release/CI-only commit'lerini ele. Karar YALNIZ commit BAŞLIKLARINDAN
-          # ($SUBJECTS) verilir — çok satırlı gövde ci:/docs: skip'ini bozmasın diye
-          # %b dahil EDİLMEZ. (BREAKING CHANGE taraması aşağıda gövdeyi kullanır.)
-          MEANINGFUL=$(echo "$SUBJECTS" | grep -vE '^\s*$|^chore\(release\)|^\[skip ci\]|^ci(\([^)]*\))?:' || true)
           if [ -z "$MEANINGFUL" ]; then
             echo "No meaningful commits — skipping release."
             echo "should_release=false" >> "$GITHUB_OUTPUT"
@@ -185,13 +207,15 @@ jobs:
           fi
 
           # Bump tipini belirle (en yüksek öncelikli kural kazanır)
-          # major: BREAKING CHANGE (gövde/footer) veya ! ile işaretlenmiş başlık
+          # major: başlıkta "type(scope)!:" YA DA gövdede satır başında "BREAKING CHANGE:" /
+          #        "BREAKING-CHANGE:" (Conventional Commits footer'ı; büyük harf ve iki nokta ŞART —
+          #        eskiden "breaking change" geçen sıradan bir cümle bile major üretiyordu)
           # minor: feat: / feat(scope): (başlık)
           # patch: fix:, chore:, docs:, refactor:, perf:, test:, style:, ci:, build:
           BUMP="patch"
-          if echo "$COMMITS" | grep -qiE "BREAKING[- ]CHANGE" || echo "$SUBJECTS" | grep -qE "^[a-z]+(\([^)]*\))?!:"; then
+          if echo "$SUBJECTS" | grep -qE '^[a-z]+(\([^)]*\))?!:' || echo "$BODIES" | grep -qE '^BREAKING[- ]CHANGE:'; then
             BUMP="major"
-          elif echo "$SUBJECTS" | grep -qE "^feat(\([^)]*\))?:"; then
+          elif echo "$SUBJECTS" | grep -qE '^feat(\([^)]*\))?:'; then
             BUMP="minor"
           fi
 
@@ -232,6 +256,11 @@ jobs:
           echo "next=${NEXT}"         >> "$GITHUB_OUTPUT"
           echo "tag=v${NEXT}"         >> "$GITHUB_OUTPUT"
           echo "prev_tag=v${CURRENT}" >> "$GITHUB_OUTPUT"
+          # build_time: imaj etiketi + yayın indeksi + BUILD_DATE tek kaynaktan (eskiden
+          # github.event.repository.updated_at kullanılıyordu — o "repo son güncellendi"dir, build anı değil).
+          # content_sha: bump commit'inden ÖNCEKİ içerik başı = pod'daki APP_GIT_COMMIT ile aynı.
+          echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "content_sha=$(git rev-parse HEAD)"          >> "$GITHUB_OUTPUT"
           echo "Next version: ${NEXT} (${CURRENT} + ${{ needs.detect.outputs.bump }})"
 
       # ── 2. Bump VERSION + Chart.yaml ─────────────────────────────────────
@@ -246,9 +275,33 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      # ── 2b. Yayın indeksi + CHANGELOG terfisi ─────────────────────────────
+      # docs/releases/index.json: "hangi sürüm ne zaman çıktı, ne içeriyordu" — Dockerfile imaja
+      # /app/releases.json olarak kopyalar, ReleaseIndexService okur (çalışma anında GitHub'a çıkılmaz).
+      # --check: mevcut dosya tag geçmişiyle tutarlı mı (tam tag geçmişi gerekir → checkout fetch-depth: 0).
+      # --append: bu sürümü BUMP COMMIT'İNDEN ÖNCE ekler; commit = content_sha, tarih = build_time.
+      - name: Set up Node 24
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+
+      - name: Update release index and changelog
+        env:
+          NEXT: ${{ steps.ver.outputs.next }}
+          PREV_TAG: ${{ steps.ver.outputs.prev_tag }}
+          BUILD_TIME: ${{ steps.ver.outputs.build_time }}
+          CONTENT_SHA: ${{ steps.ver.outputs.content_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force origin
+          node scripts/gen-release-index.mjs --check
+          node scripts/gen-release-index.mjs --append --version "$NEXT" --prev-tag "$PREV_TAG" --date "$BUILD_TIME" --commit "$CONTENT_SHA"
+          node scripts/promote-changelog.mjs --version "$NEXT" --date "$(date -u +%F)"
+          git status --short docs/releases/index.json CHANGELOG.md
+
       - name: Commit version bump
         run: |
-          git add VERSION helm/site-monitor/Chart.yaml
+          git add VERSION helm/site-monitor/Chart.yaml docs/releases/index.json CHANGELOG.md
           git commit -m "chore(release): bump version to ${{ steps.ver.outputs.next }} [skip ci]"
 
       # ── 3. Changelog ─────────────────────────────────────────────────────
@@ -264,10 +317,19 @@ jobs:
               | grep -v '\[skip ci\]' | grep -v 'chore(release)' || true)
           fi
           [ -z "$LOG" ] && LOG="- chore: maintenance release"
+          # Gruplu özet: başlık türüne göre sayılar (feat / fix / diğer). "- " öneki LOG'dan gelir.
+          FEAT=$(echo "$LOG" | grep -cE '^- feat(\([^)]*\))?!?:' || true)
+          FIX=$(echo "$LOG"  | grep -cE '^- fix(\([^)]*\))?!?:'  || true)
+          TOTAL=$(echo "$LOG" | grep -c '^- ' || true)
+          OTHER=$((TOTAL - FEAT - FIX))
           {
             echo "log<<ENDOFLOG"
             echo "$LOG"
             echo "ENDOFLOG"
+            echo "feat=${FEAT}"
+            echo "fix=${FIX}"
+            echo "other=${OTHER}"
+            echo "total=${TOTAL}"
           } >> "$GITHUB_OUTPUT"
 
       # ── 4. Docker build & push ───────────────────────────────────────────
@@ -291,7 +353,7 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/site-monitor:latest
           build-args: |
             VERSION=${{ steps.ver.outputs.next }}
-            BUILD_DATE=${{ github.event.repository.updated_at }}
+            BUILD_DATE=${{ steps.ver.outputs.build_time }}
             GIT_COMMIT=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -362,6 +424,12 @@ jobs:
             docker pull ghcr.io/${{ github.repository_owner }}/site-monitor:${{ steps.ver.outputs.tag }}
             ```
 
+            ## Summary
+
+            ${{ steps.changelog.outputs.total }} commit — feat: ${{ steps.changelog.outputs.feat }} · fix: ${{ steps.changelog.outputs.fix }} · diğer: ${{ steps.changelog.outputs.other }}
+
+            Yayın notları imajda `/app/releases.json` (kaynak: `docs/releases/index.json`).
+
             ## What's Changed
 
             ${{ steps.changelog.outputs.log }}
@@ -378,6 +446,8 @@ jobs:
           echo "| Docker | \`ghcr.io/${{ github.repository_owner }}/site-monitor:${{ steps.ver.outputs.tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Helm | \`oci://ghcr.io/${{ github.repository_owner }}/sitemonitor-chart:${{ steps.ver.outputs.next }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Bump type | \`${{ needs.detect.outputs.bump }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Changes | ${{ steps.ver.outputs.next }}: ${{ steps.changelog.outputs.total }} commit — feat ${{ steps.changelog.outputs.feat }} · fix ${{ steps.changelog.outputs.fix }} · diğer ${{ steps.changelog.outputs.other }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Release notes | \`/app/releases.json\` (docs/releases/index.json) |" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "### Helm install" >> "$GITHUB_STEP_SUMMARY"
           echo '```sh' >> "$GITHUB_STEP_SUMMARY"

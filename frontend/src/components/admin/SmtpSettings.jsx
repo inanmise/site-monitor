@@ -6,6 +6,7 @@ import { useToast } from '../ui/Toast.jsx'
 import SecretKeyWarning from './SecretKeyWarning.jsx'
 import { Spinner } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
+import HelpTip from '../ui/HelpTip.jsx'
 
 export default function SmtpSettings() {
   const t = useT()
@@ -125,7 +126,7 @@ export default function SmtpSettings() {
         <label className="ldap-toggle ldap-toggle-major">
           <input type="checkbox" checked={!!form.enabled} onChange={(e) => set('enabled', e.target.checked)} />
           <span>{t('smtp.enabled')}</span>
-        </label>
+        </label><HelpTip helpKey="help.smtp.enabled" label={t('smtp.enabled')} />
         <p className="hint">{t('smtp.enabledHint')}</p>
       </div>
 
@@ -134,23 +135,23 @@ export default function SmtpSettings() {
         <h4 className="ldap-subhdr">{t('smtp.connection')}</h4>
         <div className="threshold-grid">
           <div className="threshold-field">
-            <label>{t('smtp.host')}</label>
+            <label><span className="help-label-row">{t('smtp.host')}<HelpTip helpKey="help.smtp.host" label={t('smtp.host')} /></span></label>
             <input type="text" value={form.host || ''} placeholder="smtp.example.com"
               onChange={(e) => set('host', e.target.value)} />
           </div>
           <div className="threshold-field">
-            <label>{t('smtp.port')}</label>
+            <label><span className="help-label-row">{t('smtp.port')}<HelpTip helpKey="help.smtp.port" label={t('smtp.port')} /></span></label>
             <input type="number" value={form.port ?? ''} placeholder="587" onChange={(e) => num('port', e)} />
           </div>
         </div>
         <div className="threshold-grid">
           <div className="threshold-field">
-            <label>{t('smtp.username')}</label>
+            <label><span className="help-label-row">{t('smtp.username')}<HelpTip helpKey="help.smtp.username" label={t('smtp.username')} /></span></label>
             <input type="text" value={form.username || ''} autoComplete="off"
               onChange={(e) => set('username', e.target.value)} />
           </div>
           <div className="threshold-field">
-            <label>{t('smtp.password')}</label>
+            <label><span className="help-label-row">{t('smtp.password')}<HelpTip helpKey="help.smtp.password" label={t('smtp.password')} /></span></label>
             <input type="password" value={pw} autoComplete="new-password"
               placeholder={form.password_set ? t('smtp.pwSet') : t('smtp.pwEmpty')}
               onChange={(e) => setPw(e.target.value)} />
@@ -159,12 +160,12 @@ export default function SmtpSettings() {
         </div>
         <div className="threshold-grid">
           <div className="threshold-field">
-            <label>{t('smtp.fromAddress')}</label>
+            <label><span className="help-label-row">{t('smtp.fromAddress')}<HelpTip helpKey="help.smtp.fromAddress" label={t('smtp.fromAddress')} /></span></label>
             <input type="text" value={form.from_address || ''} placeholder="alerts@corp.com"
               onChange={(e) => set('from_address', e.target.value)} />
           </div>
           <div className="threshold-field">
-            <label>{t('smtp.fromName')}</label>
+            <label><span className="help-label-row">{t('smtp.fromName')}<HelpTip helpKey="help.smtp.fromName" label={t('smtp.fromName')} /></span></label>
             <input type="text" value={form.from_name || ''} placeholder="SiteMonitor"
               onChange={(e) => set('from_name', e.target.value)} />
           </div>
@@ -173,18 +174,18 @@ export default function SmtpSettings() {
           <label className="ldap-toggle">
             <input type="checkbox" checked={!!form.auth_enabled} onChange={(e) => set('auth_enabled', e.target.checked)} />
             <span>{t('smtp.auth')}</span>
-          </label>
+          </label><HelpTip helpKey="help.smtp.auth" label={t('smtp.auth')} />
           <label className="ldap-toggle">
             <input type="checkbox" checked={!!form.start_tls_enable} onChange={(e) => set('start_tls_enable', e.target.checked)} />
             <span>{t('smtp.startTls')}</span>
-          </label>
+          </label><HelpTip helpKey="help.smtp.startTls" label={t('smtp.startTls')} />
           <label className="ldap-toggle">
             <input type="checkbox" checked={!!form.start_tls_required} onChange={(e) => set('start_tls_required', e.target.checked)} />
             <span>{t('smtp.startTlsRequired')}</span>
-          </label>
+          </label><HelpTip helpKey="help.smtp.startTlsRequired" label={t('smtp.startTlsRequired')} />
         </div>
         <div className="threshold-field ldap-full">
-          <label>{t('smtp.sslTrust')}</label>
+          <label><span className="help-label-row">{t('smtp.sslTrust')}<HelpTip helpKey="help.smtp.sslTrust" label={t('smtp.sslTrust')} /></span></label>
           <input type="text" value={form.ssl_trust || ''} placeholder="smtp.example.com  (veya *)"
             onChange={(e) => set('ssl_trust', e.target.value)} />
           <span className="hint">{t('smtp.sslTrustHint')}</span>
@@ -197,27 +198,27 @@ export default function SmtpSettings() {
         <p className="section-desc">{t('smtp.advancedDesc')}</p>
         <div className="threshold-grid">
           <div className="threshold-field">
-            <label>{t('smtp.connTimeout')}</label>
+            <label><span className="help-label-row">{t('smtp.connTimeout')}<HelpTip helpKey="help.smtp.connTimeout" label={t('smtp.connTimeout')} /></span></label>
             <input type="number" value={form.connection_timeout_ms ?? ''} onChange={(e) => num('connection_timeout_ms', e)} />
           </div>
           <div className="threshold-field">
-            <label>{t('smtp.readTimeout')}</label>
+            <label><span className="help-label-row">{t('smtp.readTimeout')}<HelpTip helpKey="help.smtp.readTimeout" label={t('smtp.readTimeout')} /></span></label>
             <input type="number" value={form.read_timeout_ms ?? ''} onChange={(e) => num('read_timeout_ms', e)} />
           </div>
           <div className="threshold-field">
-            <label>{t('smtp.writeTimeout')}</label>
+            <label><span className="help-label-row">{t('smtp.writeTimeout')}<HelpTip helpKey="help.smtp.writeTimeout" label={t('smtp.writeTimeout')} /></span></label>
             <input type="number" value={form.write_timeout_ms ?? ''} onChange={(e) => num('write_timeout_ms', e)} />
           </div>
           <div className="threshold-field">
-            <label>{t('smtp.retryDelay')}</label>
+            <label><span className="help-label-row">{t('smtp.retryDelay')}<HelpTip helpKey="help.smtp.retryDelay" label={t('smtp.retryDelay')} /></span></label>
             <input type="number" value={form.retry_delay_ms ?? ''} onChange={(e) => num('retry_delay_ms', e)} />
           </div>
           <div className="threshold-field">
-            <label>{t('smtp.interContact')}</label>
+            <label><span className="help-label-row">{t('smtp.interContact')}<HelpTip helpKey="help.smtp.interContact" label={t('smtp.interContact')} /></span></label>
             <input type="number" value={form.inter_contact_delay_ms ?? ''} onChange={(e) => num('inter_contact_delay_ms', e)} />
           </div>
           <div className="threshold-field">
-            <label>{t('smtp.interDomain')}</label>
+            <label><span className="help-label-row">{t('smtp.interDomain')}<HelpTip helpKey="help.smtp.interDomain" label={t('smtp.interDomain')} /></span></label>
             <input type="number" value={form.inter_domain_delay_ms ?? ''} onChange={(e) => num('inter_domain_delay_ms', e)} />
           </div>
         </div>

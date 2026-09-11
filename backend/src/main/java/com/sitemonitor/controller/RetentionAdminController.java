@@ -1,5 +1,6 @@
 package com.sitemonitor.controller;
 
+import com.sitemonitor.util.Csv;
 import com.sitemonitor.util.Msg;
 import com.sitemonitor.model.AuditLog;
 import com.sitemonitor.model.RetentionRun;
@@ -167,8 +168,8 @@ public class RetentionAdminController {
         response.setHeader("Content-Disposition", "attachment; filename=\"retention-runs.csv\"");
         java.io.Writer w = response.getWriter();
         w.write('\uFEFF');   // Excel UTF-8 BOM
-        csvRow(w, new String[]{"id", "started_at", "finished_at", "kind", "total_deleted", "failed_count",
-                "duration_ms", "triggered_by", "instance_id", "items"});
+        w.write(Csv.row("id", "started_at", "finished_at", "kind", "total_deleted", "failed_count",
+                "duration_ms", "triggered_by", "instance_id", "items"));
         int rows = 0;
         for (int p = 0; rows < RUNS_CSV_MAX_ROWS; p++) {
             var chunk = runRepo.search(runKind(kind), failed, blank(since), blank(until), likeTerm(q), blank(policyId),
@@ -184,13 +185,13 @@ public class RetentionAdminController {
                 if (it.getError() != null) sb.append(" !").append(it.getError());
             }
             for (RetentionRun r : chunk) {
-                csvRow(w, new String[]{
+                w.write(Csv.row(
                         String.valueOf(r.getId()), r.getStartedAt(), r.getFinishedAt(),
                         Boolean.TRUE.equals(r.getHoldActive()) ? "hold" : Boolean.TRUE.equals(r.getDryRun()) ? "dry" : "real",
                         String.valueOf(r.getTotalDeleted()), String.valueOf(r.getFailedCount()),
                         r.getDurationMs() == null ? "" : String.valueOf(r.getDurationMs()),
                         r.getTriggeredBy(), r.getInstanceId(),
-                        itemsByRun.getOrDefault(r.getId(), new StringBuilder()).toString()});
+                        itemsByRun.getOrDefault(r.getId(), new StringBuilder()).toString()));
                 rows++;
             }
             if (chunk.size() < RUNS_MAX_SIZE) break;
@@ -218,16 +219,6 @@ public class RetentionAdminController {
     static String likeTerm(String q) {
         String s = blank(q);
         return s == null ? null : s.toLowerCase(Locale.ROOT);
-    }
-
-    private static void csvRow(java.io.Writer w, String[] cells) throws java.io.IOException {
-        for (int i = 0; i < cells.length; i++) {
-            if (i > 0) w.write(',');
-            String c = cells[i] == null ? "" : cells[i];
-            boolean quote = c.contains(",") || c.contains("\"") || c.contains("\n") || c.contains("\r");
-            w.write(quote ? "\"" + c.replace("\"", "\"\"") + "\"" : c);
-        }
-        w.write("\r\n");
     }
 
     // ── Eylemler ─────────────────────────────────────────────────────────────────

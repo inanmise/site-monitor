@@ -640,6 +640,21 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("2026-09-11: USER BAŞKA takımın izlediği domain'e tanılama koşturamaz (403) — yetki açıldı, kapsam uçta")
+    void runDiagnostics_asUser_otherTeamDomain_returns403() throws Exception {
+        com.sitemonitor.model.CertificateInventory otherTeam = new com.sitemonitor.model.CertificateInventory();
+        otherTeam.setDomain("example.org");
+        otherTeam.setTeamId(999L);                      // oturumun görüş kapsamında OLMAYAN takım
+        when(inventoryRepo.findByDomain("example.org")).thenReturn(Optional.of(otherTeam));
+
+        mvc.perform(post("/api/admin/diagnostics")
+                        .session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"example.org\",\"port\":443}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     @DisplayName("POST /api/admin/diagnostics with invalid domain returns 400")
     void runDiagnostics_invalidDomain_returns400() throws Exception {
         mvc.perform(post("/api/admin/diagnostics")

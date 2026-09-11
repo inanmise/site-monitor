@@ -8,6 +8,7 @@ import { useBranding } from '../../contexts/BrandingProvider.jsx'
 import { downscaleImage } from '../../utils/imageDownscale.js'
 import { Spinner } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
+import HelpTip from '../ui/HelpTip.jsx'
 
 const K = (s) => 'site.monitor.branding.' + s
 const LOGO_MAX_BYTES = 200 * 1024
@@ -131,7 +132,12 @@ export default function BrandingSettings() {
   const textField = (key, labelKey) => (
     <div className="threshold-grid" key={key}>
       <div className="threshold-field">
-        <label>{t(labelKey)}</label>
+        <label>
+          <span className="help-label-row">
+            {t(labelKey)}
+            <HelpTip helpKey={'help.set.' + K(key)} label={t(labelKey)} />
+          </span>
+        </label>
         <input type="text" value={valueOf(K(key))} placeholder={defaultOf(K(key))}
           onChange={(ev) => set(K(key), ev.target.value)} />
       </div>
@@ -163,7 +169,7 @@ export default function BrandingSettings() {
 
         <div className="threshold-grid">
           <div className="threshold-field">
-            <label>{t('branding.primaryColor')}</label>
+            <label><span className="help-label-row">{t('branding.primaryColor')}<HelpTip helpKey={'help.set.' + K('primary-color')} label={t('branding.primaryColor')} /></span></label>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <input type="text" value={primary} placeholder={t('branding.primaryPlaceholder')}
                 onChange={(ev) => set(K('primary-color'), ev.target.value)} style={{ flex: 1 }} />
@@ -176,7 +182,7 @@ export default function BrandingSettings() {
 
         <div className="threshold-grid">
           <div className="threshold-field">
-            <label>{t('branding.logo')}</label>
+            <label><span className="help-label-row">{t('branding.logo')}<HelpTip helpKey={'help.set.' + K('logo-data')} label={t('branding.logo')} /></span></label>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
               <button type="button" className="btn btn-secondary" onClick={() => fileRef.current?.click()}>
                 <Upload size={14} /> {t('branding.logoUpload')}
@@ -204,7 +210,7 @@ export default function BrandingSettings() {
         <p className="field-hint">{t('branding.bannerVersionHint')}</p>
         <div className="threshold-grid">
           <div className="threshold-field">
-            <label>{t('branding.bannerEnabled')}</label>
+            <label><span className="help-label-row">{t('branding.bannerEnabled')}<HelpTip helpKey={'help.set.' + K('banner-enabled')} label={t('branding.bannerEnabled')} /></span></label>
             {/* threshold-field input{width:100%} kuralı checkbox'ı yayıp hizayı bozuyordu →
                 inline-stilli gerçek on/off switch (input yok, CSS çakışması yok). */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -233,7 +239,7 @@ export default function BrandingSettings() {
         {textField('banner-link-label', 'branding.bannerLinkLabel')}
         <div className="threshold-grid">
           <div className="threshold-field">
-            <label>{t('branding.bannerTone')}</label>
+            <label><span className="help-label-row">{t('branding.bannerTone')}<HelpTip helpKey={'help.set.' + K('banner-tone')} label={t('branding.bannerTone')} /></span></label>
             <select value={valueOf(K('banner-tone')) || 'INFO'}
               onChange={(ev) => set(K('banner-tone'), ev.target.value)}>
               <option value="INFO">{t('branding.toneInfo')}</option>

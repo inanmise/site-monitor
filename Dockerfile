@@ -18,7 +18,10 @@ WORKDIR /app
 COPY backend/pom.xml .
 RUN mvn dependency:go-offline -q
 COPY backend/src ./src
-RUN mvn package -DskipTests -q
+# pom <version> = ${revision} (CI-friendly). Sürümün tek kaynağı kök VERSION dosyası: burada jar
+# manifest'ine de aynı sürüm yazılır → AppVersion'ın manifest yedeği artık bayat 7.2.0 değil.
+COPY VERSION /app/VERSION
+RUN mvn package -DskipTests -q -Drevision="$(tr -d '[:space:]' < /app/VERSION)"
 
 # ── Stage 3: Runtime ─────────────────────────────────
 FROM eclipse-temurin:25-jre-alpine
@@ -31,7 +34,8 @@ WORKDIR /app
 # iputils: ping monitor için non-root ICMP (net.ipv4.ping_group_range sysctl ile DGRAM-ICMP).
 RUN apk add --no-cache curl bash bind-tools busybox-extras less openssl iproute2 traceroute iputils
 
-ARG VERSION=1.0.0
+# Varsayılan YOK: parametresiz build eskiden sessizce "1.0.0" etiketliyordu; yanlış sürüm > boş sürüm.
+ARG VERSION=
 ARG BUILD_DATE
 ARG GIT_COMMIT
 # Senaryo İzleme (10. tür): sabitlenmiş sürümlü k6 binary'si — yukarıdaki named stage'den kopyalanır (alpine/musl
@@ -56,6 +60,9 @@ COPY --from=frontend-build --chown=appuser:appgroup /app/frontend/dist ./fronten
 # Ürün sürümü (AppVersion.resolve → /app/VERSION). Olmadığında jar manifest'ine (pom <version>, bayat)
 # düşülüyor ve pod logu yanlış sürüm raporluyordu — hangi release'in koştuğu loglardan doğrulanamıyordu.
 COPY --chown=appuser:appgroup VERSION /app/VERSION
+# Yayın indeksi (hangi sürüm ne zaman çıktı) — CI her release'te docs/releases/index.json'a ekler;
+# ReleaseIndexService /app/releases.json'dan okur. Uygulama çalışma anında GitHub'a ÇIKMAZ.
+COPY --chown=appuser:appgroup docs/releases/index.json /app/releases.json
 
 USER appuser
 
@@ -63,6 +70,12 @@ USER appuser
 # stdout/stderr yolları da UTF-8 olur (Türkçe karakterler kubectl/aggregator'da mojibake olmaz).
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
+# Build meta'yı ÇALIŞAN uygulamaya taşı (eskiden yalnız OCI LABEL'daydı; pod kendi commit'ini bilmiyordu).
+# application.properties: site.monitor.build.commit/time/image-version ← BuildInfo → /api/system/version,
+# dağıtım kaydı (deployment_history), StartupLogger, sitemonitor_build_info metriği.
+ENV APP_GIT_COMMIT=${GIT_COMMIT} \
+    APP_BUILD_TIME=${BUILD_DATE} \
+    APP_IMAGE_VERSION=${VERSION}
 
 EXPOSE 8080
 

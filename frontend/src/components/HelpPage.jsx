@@ -5,6 +5,10 @@ import remarkGfm from 'remark-gfm'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { slugify, parseToc } from '../utils/mdToc.js'
 import BrandLogo from './BrandLogo.jsx'
+import SegmentedControl from './ui/SegmentedControl.jsx'
+import ReleaseNotesPanel from './ReleaseNotesPanel.jsx'
+import { readUrlParam, useUrlQuerySync } from '../hooks/useUrlQuerySync.js'
+import { BookOpen, Sparkles } from 'lucide-react'
 import whitepaperTr from '../assets/whitepaper.md?raw'
 import whitepaperEn from '../assets/whitepaper.en.md?raw'
 
@@ -24,6 +28,16 @@ export default function HelpPage() {
   const guide = GUIDES[lang] ?? GUIDES.tr
   const contentRef = useRef(null)
   const [activeId, setActiveId] = useState('')
+  // Görünüm: kılavuz (markdown) | yenilikler (yayın dizini). URL `view` param'ı (PAGE_STATE_PARAMS'ta;
+  // sürüm çipi `?view=releases` ile gelir). Kılavuz varsayılan → param'sız.
+  const [view, setView] = useState(() => (readUrlParam('view', 'guide') === 'releases' ? 'releases' : 'guide'))
+  useUrlQuerySync({ view: view === 'releases' ? 'releases' : null })
+  // Aynı sekmedeyken (Yardım açıkken çipten "Yenilikler") App param'ı olayla iletir — mount tekrar olmaz.
+  useEffect(() => {
+    const on = (e) => { const v = e?.detail?.view; if (v === 'releases' || v === 'guide') setView(v) }
+    window.addEventListener('sm:tab-params', on)
+    return () => window.removeEventListener('sm:tab-params', on)
+  }, [])
 
   // Sürüm damgası kaynakta {{VERSION}} olarak durur ve BURADA çözülür. Elle yazılan bir
   // numara her sürümde eskiyordu (kılavuz 20.23.0 derken uygulama 20.24.1'di); doğruluk kaynağı
@@ -101,16 +115,32 @@ export default function HelpPage() {
             </span>
           </div>
         </div>
-        <a
-          href={guide.pdf}
-          download={guide.file}
-          title={t('help.downloadTitle')}
-          className="btn btn-sm help-download-btn"
-        >
-          {t('help.download')}
-        </a>
+        <div className="help-header-right">
+          <SegmentedControl value={view} onChange={setView} ariaLabel={t('help.title')}
+            options={[
+              { value: 'guide', label: t('help.view.guide'), icon: BookOpen },
+              { value: 'releases', label: t('help.view.releases'), icon: Sparkles },
+            ]} />
+          {view === 'guide' && (
+            <a
+              href={guide.pdf}
+              download={guide.file}
+              title={t('help.downloadTitle')}
+              className="btn btn-sm help-download-btn"
+            >
+              {t('help.download')}
+            </a>
+          )}
+        </div>
       </div>
 
+      {view === 'releases' && (
+        <div className="help-releases">
+          <ReleaseNotesPanel />
+        </div>
+      )}
+
+      {view === 'guide' && (
       <div className="help-layout">
         <nav className="help-toc">
           <h3 className="help-toc-heading">{t('help.toc')}</h3>
@@ -132,6 +162,7 @@ export default function HelpPage() {
           </ReactMarkdown>
         </div>
       </div>
+      )}
     </div>
   )
 }

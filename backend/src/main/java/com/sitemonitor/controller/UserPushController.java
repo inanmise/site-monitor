@@ -5,12 +5,15 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitemonitor.model.UserPushDelivery;
 import com.sitemonitor.model.UserPushScope;
+import com.sitemonitor.repository.AppUserRepository;
+import com.sitemonitor.repository.TeamRepository;
 import com.sitemonitor.repository.UserPushDeliveryRepository;
 import com.sitemonitor.repository.UserPushScopeRepository;
 import com.sitemonitor.service.AppSettingsService;
 import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditDiff;
 import com.sitemonitor.service.AuditService;
+import com.sitemonitor.service.UserPushRecipientResolver;
 import com.sitemonitor.service.SecretCipher;
 import com.sitemonitor.service.UserPushService;
 import com.sitemonitor.util.Csv;
@@ -30,6 +33,8 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.Set;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -77,6 +82,9 @@ public class UserPushController {
     private final UserPushScopeRepository scopeRepo;
     private final SecretCipher secretCipher;
     private final AuditService auditService;
+    private final UserPushRecipientResolver recipientResolver;   // /explain (2026-09-11)
+    private final AppUserRepository userRepo;                    // teslimat satırlarına takım adı (2026-09-11)
+    private final TeamRepository teamRepo;
 
     // ── Ayarlar ────────────────────────────────────────────────────────────────────────────
 
@@ -209,6 +217,10 @@ public class UserPushController {
         out.put("total", pg.getTotalElements());
         out.put("page", pg.getNumber());
         out.put("size", pg.getSize());
+        // 2026-09-11 (kullanıcı): "günlükte kişinin takımı da yazsın". Satırdaki team_id ALARMIN takımıdır
+        // ve test gönderiminde boştur; kişinin ÜYE olduğu takımlar ayrı harita olarak eklenir (entity
+        // serileştirmesine dokunulmaz → mevcut sözleşme bozulmaz).
+        out.put("user_teams", teamNamesFor(pg.getContent()));
         return ok(out);
     }
 
@@ -253,6 +265,20 @@ public class UserPushController {
     }
 
     /** E3 istatistik şeridi: 24 saat / 7 gün durum dağılımı. */
+    /** "Bu takım + bu seviye için kim alır, kim neden almaz?" — alıcı çözümünün açıklamalı hâli (2026-09-11). */
+    @GetMapping("/explain")
+    public ResponseEntity<Map<String, Object>> explain(@RequestParam Long teamId,
+                                                       @RequestParam(defaultValue = "HIGH") String level,
+                                                       HttpSession session) {
+        requireAdmin(session);
+        String lvl = level == null ? "HIGH" : level.trim().toUpperCase(java.util.Locale.ROOT);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("teamId", teamId);
+        out.put("level", lvl);
+        out.put("members", recipientResolver.explain(teamId, lvl));
+        return ok(out);
+    }
+
     @GetMapping("/stats")
     public ResponseEntity<Map<String, Object>> stats(HttpSession session) {
         requireAdmin(session);
@@ -368,6 +394,39 @@ public class UserPushController {
             if (!UserPushService.KNOWN_PLACEHOLDERS.contains(m.group(1))) return m.group(1);
         }
         return null;
+    }
+
+    /** username → ÜYE olduğu takım adları (sıralı, tekilleştirilmiş). Boş sayfada sorgu yapılmaz. */
+    private Map<String, List<String>> teamNamesFor(List<UserPushDelivery> rows) {
+        Map<String, List<String>> out = new LinkedHashMap<>();
+        try {
+            Set<String> usernames = new LinkedHashSet<>();
+            for (UserPushDelivery d : rows) {
+                String u = d.getUsername();
+                if (u != null && !u.isBlank() && !"-".equals(u)) usernames.add(u.trim().toUpperCase(java.util.Locale.ROOT));
+            }
+            if (usernames.isEmpty()) return out;
+            List<Object[]> pairs = userRepo.findTeamMembershipsByUsernames(usernames);
+            Map<String, Set<Long>> byUser = new LinkedHashMap<>();
+            Set<Long> teamIds = new LinkedHashSet<>();
+            for (Object[] row : pairs) {
+                String u = String.valueOf(row[0]).trim().toUpperCase(java.util.Locale.ROOT);
+                Long tid = ((Number) row[1]).longValue();
+                byUser.computeIfAbsent(u, k -> new LinkedHashSet<>()).add(tid);
+                teamIds.add(tid);
+            }
+            if (teamIds.isEmpty()) return out;
+            Map<Long, String> names = new LinkedHashMap<>();
+            teamRepo.findAllById(teamIds).forEach(t -> names.put(t.getId(), t.getName()));
+            byUser.forEach((u, ids) -> {
+                List<String> ns = new ArrayList<>();
+                for (Long id : ids) { String n = names.get(id); if (n != null) ns.add(n); }
+                if (!ns.isEmpty()) out.put(u, ns);
+            });
+        } catch (Exception e) {
+            log.debug("Teslimat günlüğü takım zenginleştirmesi atlandı: {}", e.toString());
+        }
+        return out;
     }
 
     private void requireAdmin(HttpSession session) {

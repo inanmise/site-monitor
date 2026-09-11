@@ -8,6 +8,14 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.1.0 → 20.53.2] — 2026-05-24 … 2026-09-10 (toplu)
+
+> Bu aralıktaki ~480 sürüm CHANGELOG'a sürüm sürüm işlenmedi; aşağıdaki maddeler o dönemde
+> yayınlanan değişikliklerin kürasyonlu özetidir. Sürüm bazında tarih, commit listesi ve bump
+> türü için **Yardım → Yenilikler** ekranına ya da `docs/releases/index.json`'a bakın
+> (`scripts/gen-release-index.mjs`). 2026-09-10'dan itibaren `[Unreleased]` doluysa her
+> release CI tarafından tarihlenir (`scripts/promote-changelog.mjs`).
+
 ### Added
 - **Sayfa düzeyi "Şimdi Kontrol Et" — dokuz izleme sayfasının hepsinde.** Panodaki toplu
   kontrolün karşılığı: araç çubuğundaki düğme önce takım seçtirir, sonra seçilen izlemeleri
@@ -252,4 +260,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-[1.0.0]: https://github.com/your-org/cert-monitor/releases/tag/v1.0.0
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v12.1.0...HEAD
+[12.1.0]: https://github.com/inanmise/site-monitor/releases/tag/v12.1.0
+[11.0.0]: https://github.com/inanmise/site-monitor/releases/tag/v11.0.0
+[10.5.0]: https://github.com/inanmise/site-monitor/releases/tag/v10.5.0
+[6.8.0]: https://github.com/inanmise/site-monitor/releases/tag/v6.8.0
+[1.0.0]: https://github.com/inanmise/site-monitor/releases/tag/v1.0.0

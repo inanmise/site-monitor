@@ -603,6 +603,17 @@ public class UserService {
         return teamRepo.save(team);
     }
 
+    /** Takım müdürünü elle atar/temizler (null = temizle → ekran AD zincirinden türetir). Var olmayan kullanıcı → 400. */
+    @Transactional
+    public Team updateTeamManager(Long id, Long managerId) {
+        Team team = teamRepo.findById(id).orElseThrow(() -> new NoSuchElementException("Team not found: " + id));
+        if (managerId != null && !userRepo.existsById(managerId))
+            throw new IllegalArgumentException("Manager user not found: " + managerId);
+        team.setManagerId(managerId);
+        team.setUpdatedAt(now());
+        return teamRepo.save(team);
+    }
+
     /** DAR yol: yalnız iki haftalık e-posta anahtarını çevirir (takım üyelerine açık olan uç bunu çağırır).
      *  Ad/e-posta/aktiflik gibi yönetici alanlarına buradan DOKUNULAMAZ; null = "bu anahtara dokunma". */
     @Transactional
@@ -766,7 +777,14 @@ public class UserService {
         if (body.containsKey("department"))    u.setDepartment(bodyStr(body.get("department")));
         if (body.containsKey("company_level")) u.setCompanyLevel(bodyStr(body.get("company_level")));
         if (body.containsKey("mudurluk_name")) u.setMudurlukName(bodyStr(body.get("mudurluk_name")));
-        if (body.containsKey("manager_sicil")) u.setManagerSicil(bodyStr(body.get("manager_sicil")));
+        if (body.containsKey("manager_sicil")) {
+            String sicil = bodyStr(body.get("manager_sicil"));
+            u.setManagerSicil(sicil);
+            // Elle girilen sicil DB'de bir kullanıcıya denk geliyorsa bağı da kur (Takım Müdürü sütunu ve
+            // müdür-zinciri managerId'den yürür; eskiden yalnız metin yazılıyor, bağ LDAP girişine kalıyordu).
+            u.setManagerId(sicil == null ? null
+                    : userRepo.findByEmployeeId(sicil).map(AppUser::getId).filter(id -> !id.equals(u.getId())).orElse(null));
+        }
     }
 
     private static String bodyStr(Object v) {

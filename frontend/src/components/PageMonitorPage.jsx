@@ -26,6 +26,8 @@ import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import TagInput from './ui/TagInput.jsx'
 import { RefreshCw, Plus, Trash2, ScanSearch, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, Image, FileCode, Link2, Frame, Type, ShieldAlert, Download, EyeOff } from 'lucide-react'
+import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
+import ModalScrollHint from './ui/ModalScrollHint.jsx'
 import { duplicateName } from '../utils/duplicateName.js'
 import { normalizeUrl } from '../utils/normalizeUrl.js'
 import { useDialog } from './ui/Dialog.jsx'
@@ -98,6 +100,8 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   const [confirmations, setConfirmations] = useState([])   // canlı teyit zincirleri (Teyit denemesi X/N)
   const [issueFilter, setIssueFilter] = useState('all')   // all | BROKEN | MIXED_CONTENT | SLOW | firstParty
   const [modal, setModal] = useState(null)
+  // Düzenleme modalı: sabit başlık + kaydırılan gövde + sabit alt bar (useModalScrollHint).
+  const scrollHint = useModalScrollHint()
   // Opsiyonel "değişiklik nedeni" — form nesnesine DEĞİL ayrı tutulur: taslak/kirlilik
   // karşılaştırması form üzerinden yapılıyor ve not bir ayar değil, tek seferlik açıklama.
   const [changeNote, setChangeNote] = useState('')
@@ -869,12 +873,13 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
       {/* ── Create / Edit Modal ── */}
       {modal && createPortal(
         <div className="modal-overlay">
-          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 720, width: '92vw', maxHeight: '90vh', overflowY: 'auto' }}>
+          <div className="modal-box modal-sticky-actions" onClick={e => e.stopPropagation()} style={{ maxWidth: 720, width: '92vw' }}>
             <div className="modal-icon-hdr modal-icon-hdr--keyword">
               <div className="modal-icon-hdr-badge"><ScanSearch size={20} /></div>
               <h3>{modal === 'new' ? t('page.modalNew') : t('page.modalEdit')}
                 {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
             </div>
+            <div className="modal-scroll-body" ref={scrollHint.ref}>
 
             {dupSource
               ? <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>
@@ -999,6 +1004,8 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
             {modal !== 'new' && (
               <ChangeNoteField t={t} id="page-change-note" value={changeNote} onChange={setChangeNote} />
             )}
+            </div>
+            <ModalScrollHint {...scrollHint} />
             <div className="modal-actions">
               <button className="btn btn-secondary" style={{ marginRight: 'auto' }} onClick={runTest}
                 disabled={testing || !form.url.trim()}>

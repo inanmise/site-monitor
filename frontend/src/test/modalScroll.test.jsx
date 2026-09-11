@@ -30,7 +30,32 @@ describe('izleme düzenleme modalları — iç kaydırma', () => {
     expect(PAGES.length).toBe(9)
   })
 
-  it.each(PAGES)('%s: her modal-box maxHeight + overflowY beyan eder', (file) => {
+  // 2026-09-10: DÜZENLEME modalı artık sabit alt barlı (`modal-sticky-actions`): başlık ve
+  // [Test][Sil][İptal][Kaydet] barı sabit, yalnız `.modal-scroll-body` kaydırılır, taşınca
+  // `ModalScrollHint` ("Devamı için kaydırın") görünür. Dokuz sayfada TEK kopya hook
+  // (useModalScrollHint) — kural aşağıda, sayfa başına değil.
+  it.each(PAGES)('%s: düzenleme modalı sabit alt barlı (sticky-actions + scroll-body + hint)', (file) => {
+    const src = readFileSync(path.join(DIR, file), 'utf8')
+    const boxes = src.match(/className="modal-box modal-sticky-actions"/g) || []
+    expect(boxes.length, 'tam bir düzenleme modalı sticky olmalı').toBe(1)
+    const at = src.indexOf('className="modal-box modal-sticky-actions"')
+    const after = src.slice(at)
+    const body = after.indexOf('className="modal-scroll-body" ref={scrollHint.ref}')
+    const hint = after.indexOf('<ModalScrollHint {...scrollHint} />')
+    const actions = after.indexOf('className="modal-actions"')
+    expect(body, 'kaydırılan gövde').toBeGreaterThan(0)
+    expect(hint, 'ipucu').toBeGreaterThan(body)
+    expect(actions, 'alt bar gövdeden SONRA').toBeGreaterThan(hint)
+    // Sticky kutu inline maxHeight/overflowY TAŞIMAZ — inline overflowY:auto CSS'in
+    // overflow:hidden'ını ezer ve kutu yine tek parça kaydırılır (alt bar kaçar).
+    const window_ = after.slice(0, 260)
+    expect(window_).not.toMatch(/overflowY/)
+    expect(window_).not.toMatch(/maxHeight/)
+    // Hook sayfada çağrılmış (koşullu portal içinde ref boş kalmasın diye callback ref).
+    expect(src).toMatch(/const scrollHint = useModalScrollHint\(\)/)
+  })
+
+  it.each(PAGES)('%s: geri kalan (ikincil) modal-box kutuları maxHeight + overflowY beyan eder', (file) => {
     const src = readFileSync(path.join(DIR, file), 'utf8')
     // Her `className="modal-box"` açılışından sonraki ~200 karakterde stil beyanı aranır;
     // eleman tek satıra sığmayabildiği için pencere satır sonlarını da kapsar.

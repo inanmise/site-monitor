@@ -25,6 +25,45 @@ class AuditLifecycleListenerTest {
         verify(audit).recordSystemEvent(eq("SYSTEM_SHUTDOWN"), eq("SYSTEM"), eq("application"), any());
     }
 
+    // ── 2026-09-10: detail JSON — sürüm/commit/ortam ile (Sürüm & Dağıtım Geçmişi) ──────────
+
+    @Test
+    @DisplayName("BuildInfo enjekte edilmişse başlangıç detayı JSON'dur: version + environment anahtarları")
+    void startup_detailIsJsonWithVersionAndEnvironment() {
+        AuditService audit = mock(AuditService.class);
+        AuditLifecycleListener listener = new AuditLifecycleListener(audit);
+        org.springframework.mock.env.MockEnvironment env = new org.springframework.mock.env.MockEnvironment()
+                .withProperty("site.monitor.version", "20.54.0")
+                .withProperty("site.monitor.environment", "prod")
+                .withProperty("site.monitor.build.commit", "0123456789abcdef0123456789abcdef01234567")
+                .withProperty("site.monitor.helm.revision", "42");
+        org.springframework.test.util.ReflectionTestUtils.setField(listener, "buildInfo", new com.sitemonitor.service.BuildInfo(env));
+
+        listener.onStartup();
+
+        org.mockito.ArgumentCaptor<String> detail = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(audit).recordSystemEvent(eq("SYSTEM_STARTUP"), eq("SYSTEM"), eq("application"), detail.capture());
+        String d = detail.getValue();
+        org.assertj.core.api.Assertions.assertThat(d).startsWith("{").endsWith("}")
+                .contains("\"version\":\"20.54.0\"")
+                .contains("\"environment\":\"prod\"")
+                .contains("\"commit\":\"01234567\"")
+                .contains("\"helmRevision\":\"42\"")
+                .contains("\"message\"");
+        // Kapanış detayı da aynı kimliği taşır
+        org.assertj.core.api.Assertions.assertThat(listener.shutdownDetail())
+                .contains("\"version\":\"20.54.0\"").contains("\"environment\":\"prod\"").contains("\"uptimeSeconds\"");
+    }
+
+    @Test
+    @DisplayName("BuildInfo yoksa (tek-argümanlı yapıcı) detay yine geçerli JSON — yalnız message")
+    void startup_detailWithoutBuildInfo_isStillJson() {
+        AuditService audit = mock(AuditService.class);
+        AuditLifecycleListener listener = new AuditLifecycleListener(audit);
+        org.assertj.core.api.Assertions.assertThat(listener.startupDetail())
+                .startsWith("{").endsWith("}").contains("\"message\"").doesNotContain("\"version\"");
+    }
+
     @Test
     @DisplayName("best-effort: audit patlarsa yaşam döngüsü olayı istisna fırlatmaz")
     void startup_auditThrows_swallowed() {

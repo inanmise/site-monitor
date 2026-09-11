@@ -131,8 +131,32 @@ export const api = {
   users: {
     directory: () => request('/users/directory'),
   },
+  /** Sürüm & yayın yüzeyi — kimlikli HERKES (K9). Nav çipi popover'ı + Yardım → Yenilikler. */
+  system: {
+    getVersion: () => request('/system/version'),
+    getReleases: (params = {}) => {
+      const qs = new URLSearchParams()
+      for (const [k, v] of Object.entries(params)) if (v != null && v !== '' && v !== false) qs.set(k, String(v))
+      const s = qs.toString()
+      return request(`/system/releases${s ? `?${s}` : ''}`)
+    },
+    getReleaseNotes: (since) => request(`/system/releases/notes${since ? `?since=${encodeURIComponent(since)}` : ''}`),
+  },
+  /** Sürüm & yayın yüzeyi — kimlikli HERKES (K9). Nav çipi popover'ı + Yardım → Yenilikler. */
+  system: {
+    getVersion: () => request('/system/version'),
+    getReleases: (params = {}) => {
+      const qs = new URLSearchParams()
+      for (const [k, v] of Object.entries(params)) if (v != null && v !== '' && v !== false) qs.set(k, String(v))
+      const s = qs.toString()
+      return request(`/system/releases${s ? `?${s}` : ''}`)
+    },
+    getReleaseNotes: (since) => request(`/system/releases/notes${since ? `?since=${encodeURIComponent(since)}` : ''}`),
+  },
   me: {
-    setPushOptOut: (optOut) => request('/auth/me/push-opt-out', { method: 'POST', body: JSON.stringify({ opt_out: optOut }) }),
+    // 2026-09-10: yol '/auth/me/push-opt-out' idi — AuthController '/api' tabanlı, uç '/api/me/push-opt-out'
+    // → 404; sunucu onayı gelmediği için "Webhook push istemiyorum" kutusu HİÇ işaretlenmiyordu.
+    setPushOptOut: (optOut) => request('/me/push-opt-out', { method: 'POST', body: JSON.stringify({ opt_out: optOut }) }),
     changePassword: (currentPwd, newPwd) => request('/me/change-password', {
       method: 'POST',
       body: JSON.stringify({ current_password: currentPwd, new_password: newPwd }),
@@ -446,6 +470,7 @@ export const api = {
       sendTest:     (data) => request('/admin/user-push/test', { method: 'POST', body: JSON.stringify(data) }),
       getDeliveries: (params) => request(`/admin/user-push/deliveries?${new URLSearchParams(params)}`),
       getStats:     () => request('/admin/user-push/stats'),
+      explain:      (teamId, level) => request(`/admin/user-push/explain?teamId=${encodeURIComponent(teamId)}&level=${encodeURIComponent(level || 'HIGH')}`),
       exportUrl:    (params) => `/api/admin/user-push/deliveries/export?${new URLSearchParams(params)}`,
     },
     // Inventory
@@ -512,6 +537,42 @@ export const api = {
       const s = qs.toString()
       return `/api/admin/retention/runs/export${s ? `?${s}` : ''}`
     },
+    // ── Sürüm & Dağıtım geçmişi (release_history.read / .edit) ──
+    getDeployments: (params = {}) => {
+      const qs = new URLSearchParams()
+      for (const [k, v] of Object.entries(params)) if (v != null && v !== '' && v !== false) qs.set(k, String(v))
+      const s = qs.toString()
+      return request(`/admin/deployments${s ? `?${s}` : ''}`)
+    },
+    getDeploymentsCsvUrl: (params = {}) => {
+      const qs = new URLSearchParams()
+      for (const [k, v] of Object.entries(params)) if (v != null && v !== '' && v !== false) qs.set(k, String(v))
+      const s = qs.toString()
+      return `/api/admin/deployments/export${s ? `?${s}` : ''}`
+    },
+    getDeploymentTimeline: (env) => request(`/admin/deployments/timeline${env ? `?env=${encodeURIComponent(env)}` : ''}`),
+    getDeploymentMatrix: (all = false) => request(`/admin/deployments/matrix${all ? '?all=true' : ''}`),
+    createDeployment: (body) => request('/admin/deployments', { method: 'POST', body: JSON.stringify(body) }),
+    backfillDeployments: (environment) => request('/admin/deployments/backfill', { method: 'POST', body: JSON.stringify({ environment }) }),
+    deleteDeployment: (id) => request(`/admin/deployments/${id}`, { method: 'DELETE' }),
+    // ── Sürüm & Dağıtım geçmişi (release_history.read / .edit) ──
+    getDeployments: (params = {}) => {
+      const qs = new URLSearchParams()
+      for (const [k, v] of Object.entries(params)) if (v != null && v !== '' && v !== false) qs.set(k, String(v))
+      const s = qs.toString()
+      return request(`/admin/deployments${s ? `?${s}` : ''}`)
+    },
+    getDeploymentsCsvUrl: (params = {}) => {
+      const qs = new URLSearchParams()
+      for (const [k, v] of Object.entries(params)) if (v != null && v !== '' && v !== false) qs.set(k, String(v))
+      const s = qs.toString()
+      return `/api/admin/deployments/export${s ? `?${s}` : ''}`
+    },
+    getDeploymentTimeline: (env) => request(`/admin/deployments/timeline${env ? `?env=${encodeURIComponent(env)}` : ''}`),
+    getDeploymentMatrix: (all = false) => request(`/admin/deployments/matrix${all ? '?all=true' : ''}`),
+    createDeployment: (body) => request('/admin/deployments', { method: 'POST', body: JSON.stringify(body) }),
+    backfillDeployments: (environment) => request('/admin/deployments/backfill', { method: 'POST', body: JSON.stringify({ environment }) }),
+    deleteDeployment: (id) => request(`/admin/deployments/${id}`, { method: 'DELETE' }),
     /** Saklama süresi değişiklik geçmişi (kim/ne zaman/eski→yeni) — audit_log kaynaklı. */
     getRetentionChanges: (limit = 25, policyId) =>
       request(`/admin/retention/changes?limit=${limit}${policyId ? `&policyId=${encodeURIComponent(policyId)}` : ''}`),

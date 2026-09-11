@@ -270,6 +270,13 @@ public final class RetentionCatalog {
                 "Gece temizliği çalışma özeti — sağlık sinyali ve ekrandaki geçmiş buradan beslenir."),
 
         // ── Bilgi satırları: bu uygulama silmez, ama kapsanmış sayılır ─────────────────────────
+        info("deployment-history", "deployment_history", Mode.BOUNDED, DataClass.OPERATIONAL,
+                "Sürüm & dağıtım geçmişi (K10, 2026-09-10): her pod açılışı bir satır (sürüm/commit/ortam/helm rev). "
+                + "ASLA silinmez — 'hangi sürüm ne zaman devreye alındı' sorusunun tek kalıcı kaynağı; yalnız elle "
+                + "girilen (MANUAL) satır admin tarafından silinebilir. Büyüme sınırlı (~günde birkaç satır)."),
+        info("schema-table-registry", "schema_table_registry", Mode.BOUNDED, DataClass.OPERATIONAL,
+                "Tablo kayıt defteri (SQL Playground, 2026-09-11): tablo başına TEK satır — ilk görülme anı ve son veri "
+                + "değişimi. Tablo sayısı kadar satır; asla silinmez (silinirse 'oluşturma' bilgisi kaybolur)."),
         info("spring-session", "spring_session", Mode.EXTERNAL, DataClass.PERSONAL,
                 "Spring Session JDBC deposu — Spring'in kendi dakikalık cleanup job'ı süresi dolan oturumları siler "
                 + "(spring.session.timeout=24h). Bu uygulama dokunmaz."),

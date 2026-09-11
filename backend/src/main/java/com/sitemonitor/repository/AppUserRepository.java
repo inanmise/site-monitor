@@ -38,6 +38,11 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     @Query("SELECT DISTINCT u FROM AppUser u JOIN u.teamIds tid WHERE tid = :teamId ORDER BY u.username ASC")
     List<AppUser> findByMembershipTeamId(@Param("teamId") Long teamId);
 
+    /** Teslimat günlüğü zenginleştirmesi (2026-09-11): kullanıcı adı → ÜYE olduğu takım id'leri.
+     *  Projeksiyon BİLİNÇLİ: entity çekmek her satırda base64 foto taşır, liste yolunda gereksiz yük. */
+    @Query("SELECT u.username, tid FROM AppUser u JOIN u.teamIds tid WHERE UPPER(u.username) IN :usernames")
+    List<Object[]> findTeamMembershipsByUsernames(@Param("usernames") java.util.Collection<String> usernames);
+
     /** Verilen takım kümesinden HERHANGİ birine üye kullanıcılar (scope filtresi). */
     @Query("SELECT DISTINCT u FROM AppUser u JOIN u.teamIds tid WHERE tid IN :teamIds ORDER BY u.username ASC")
     List<AppUser> findByAnyTeamId(@Param("teamIds") Collection<Long> teamIds);

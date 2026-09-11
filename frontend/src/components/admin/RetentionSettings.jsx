@@ -9,6 +9,7 @@ import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import PolicyRow, { fmtBytes, fmtNum } from './retention/PolicyRow.jsx'
+import HelpTip from '../ui/HelpTip.jsx'
 import RetentionReviewModal from './retention/RetentionReviewModal.jsx'
 import RetentionChangeLog from './retention/RetentionChangeLog.jsx'
 import RetentionRunsPanel from './retention/RetentionRunsPanel.jsx'
@@ -357,7 +358,8 @@ export default function RetentionSettings() {
         <label className="ldap-toggle ldap-toggle-major">
           <input type="checkbox" checked={holdOn} onChange={e => toggleHold(e.target.checked)} />
           <span>{t('ret.holdToggle')}</span>
-        </label>
+        </label><HelpTip helpKey="help.set.site.monitor.retention.hold-enabled"
+          label={t('ret.holdToggle')} />
         <p className="field-hint"><FileText size={12} /> {t('ret.docHint')}</p>
       </div>
 

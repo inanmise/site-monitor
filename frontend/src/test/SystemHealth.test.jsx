@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, waitFor } from './test-utils.jsx'
+import { render, waitFor, act } from './test-utils.jsx'
 import userEvent from '@testing-library/user-event'
 import SystemHealth from '../components/admin/SystemHealth.jsx'
+
+// Sürüm & Dağıtım bölümü release_history.read ister — mock: her şey görünür (bölüm sayısı 6).
+vi.mock('../contexts/PermissionsProvider.jsx', () => ({
+  usePermissions: () => ({ canView: () => true, canEdit: () => true, canExecute: () => true, perms: {} }),
+}))
 
 /**
  * Sistem Sağlığı — GERÇEK render testi.
@@ -89,7 +94,7 @@ const HEALTH = {
  * İki bölüm koşulludur: "http" `httpMetrics` dolu olmasını, "users" ise `globalAdmin`
  * (ya da AUDIT rolü) ister — bu yüzden aşağıda `globalAdmin` geçiliyor.
  */
-const SECTIONS = ['sys', 'http', 'cpu', 'db', 'users']
+const SECTIONS = ['sys', 'http', 'cpu', 'db', 'users', 'releases']   // releases EN SONDA (2026-09-11)
 
 function collapseBars() {
   return [...document.querySelectorAll('.stats-collapse-bar')]
@@ -108,7 +113,7 @@ beforeEach(() => {
 })
 
 describe('SystemHealth — akordiyon bölümleri hatasız render eder', () => {
-  it('yüklenince beş katlanabilir bölüm sunar', async () => {
+  it('yüklenince altı katlanabilir bölüm sunar', async () => {
     renderHealth()
     await waitFor(() => expect(api.admin.getSystemHealth).toHaveBeenCalled())
     expect(collapseBars().length).toBe(SECTIONS.length)
@@ -128,6 +133,16 @@ describe('SystemHealth — akordiyon bölümleri hatasız render eder', () => {
       expect(collapseBars().length).toBe(SECTIONS.length)
     }
   )
+})
+
+describe('SystemHealth — aynı sekmede param olayı (2026-09-11)', () => {
+  it("'sm:tab-params' {sec:'releases'} son bölümü açar", async () => {
+    renderHealth()
+    await waitFor(() => expect(api.admin.getSystemHealth).toHaveBeenCalled())
+    expect(document.querySelector('.deploy-panel')).toBeNull()
+    await act(async () => { window.dispatchEvent(new CustomEvent('sm:tab-params', { detail: { sec: 'releases' } })) })
+    await waitFor(() => expect(document.querySelector('.stats-collapse-chevron.open')).not.toBeNull())
+  })
 })
 
 describe('SystemHealth — ilerleme çubukları', () => {

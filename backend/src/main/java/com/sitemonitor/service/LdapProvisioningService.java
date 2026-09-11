@@ -103,8 +103,13 @@ public class LdapProvisioningService {
         resolveTeams(u, attrs, isPo);
 
         // ── Manager (extensionAttribute4 / manager → CN=sicil) ──
+        // 2026-09-10: müdür KAYDI özyinelemeli yoldan (resolveManager=false) gelince de kendi müdür
+        // sicili yazılır ve DB'de zaten varsa bağlanır — yalnız AD'ye gidip bir üst kademeyi
+        // PROVİZYON etmez (sonsuz zincir yok). Eskiden bu yol müdürün manager alanlarını hiç
+        // doldurmuyordu: kendisi hiç giriş yapmamış bir takım lideri/müdürün "Müdür (sicil)"
+        // alanı boş kalıyor, Takım Müdürü sütunu zinciri kuramıyordu (kullanıcı bildirimi).
+        resolveManagerLink(u, attrs, resolveManager);
         if (resolveManager) {
-            resolveManagerLink(u, attrs);
             // Takım↔müdür ilişkisi kurulduysa, müdürü otomatik MANAGER eskalasyon
             // kontağı yap (min seviye HIGH). Varsayılan KAPALI — yalnız
             // site.monitor.escalation.auto-add-managers açıksa (ensure içinde canlı okunur).
@@ -230,13 +235,35 @@ public class LdapProvisioningService {
         return names;
     }
 
-    private void resolveManagerLink(AppUser u, Map<String, Object> attrs) {
-        String sicil = cnOf(orElse(str(attrs, "extensionAttribute4"), str(attrs, "manager")));
+    /**
+     * Müdür sicilini AD niteliklerinden türetir. Sıra: extensionAttribute4 → manager. Her aday için:
+     * DN ise CN'i, düz sicil (yalnız rakam/harf, virgülsüz) ise kendisi. İLK ÇÖZÜLEN kazanır —
+     * eskiden {@code cnOf(orElse(ea4, manager))} idi: ea4 DOLU ama DN olmayan bir değer taşıyorsa
+     * ({@code CN=} yok) cnOf null dönüyor ve dolu {@code manager} DN'ine hiç düşülmüyordu → sicil boş.
+     */
+    static String managerSicilOf(Map<String, Object> attrs) {
+        for (String key : new String[]{"extensionAttribute4", "manager"}) {
+            String raw = str(attrs, key);
+            if (raw == null) continue;
+            String cn = cnOf(raw);
+            if (cn != null && !cn.isBlank()) return cn;
+            String plain = raw.trim();
+            if (!plain.contains(",") && !plain.contains("=") && plain.matches("[A-Za-z0-9_.-]{1,50}")) return plain;
+        }
+        return null;
+    }
+
+    /**
+     * @param provisionMissing true → müdür DB'de yoksa AD'den bulup (özyinelemesiz) provizyon eder;
+     *                         false → yalnız sicili yazar ve DB'de zaten varsa bağlar.
+     */
+    private void resolveManagerLink(AppUser u, Map<String, Object> attrs, boolean provisionMissing) {
+        String sicil = managerSicilOf(attrs);
         if (sicil == null || sicil.isBlank()) return;
         u.setManagerSicil(sicil);
         // Already in our DB?
         Optional<AppUser> mgr = userRepo.findByEmployeeId(sicil);
-        if (mgr.isEmpty()) {
+        if (mgr.isEmpty() && provisionMissing) {
             // Look the manager up in AD by cn=sicil and provision a minimal record.
             Optional<Map<String, Object>> mgrAttrs = directory.findOne("cn", sicil);
             if (mgrAttrs.isPresent()) {

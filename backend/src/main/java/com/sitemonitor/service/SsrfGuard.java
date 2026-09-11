@@ -47,6 +47,13 @@ public class SsrfGuard {
         public UnresolvableHostException(String message) { super(message); }
     }
 
+    /** Fetch.error() içinde DNS-çözülemedi ile politika reddini ayırt etmek için sabit önek (PageCheckerService). */
+    public static final String UNRESOLVABLE_PREFIX = "çözümlenemeyen host: ";
+
+    public static boolean isUnresolvableMessage(String error) {
+        return error != null && error.startsWith(UNRESOLVABLE_PREFIX);
+    }
+
     /** Hostu çöz + tüm çözülen IP'leri doğrula. Engelliyse {@link BlockedException}. Döndürülen adreslere bağlanılmalı. */
     public List<InetAddress> validate(String host) {
         if (host == null || host.isBlank()) throw new BlockedException("boş hedef host");
@@ -54,7 +61,7 @@ public class SsrfGuard {
         try {
             addrs = InetAddress.getAllByName(host.trim());
         } catch (UnknownHostException e) {
-            throw new UnresolvableHostException("çözümlenemeyen host: " + host);
+            throw new UnresolvableHostException(UNRESOLVABLE_PREFIX + host);
         }
         boolean allowInternal = appSettings.getBoolean("site.monitor.monitoring.allow-internal-targets", true);
         boolean allowLoopback = appSettings.getBoolean("site.monitor.monitoring.allow-loopback-targets", false);
