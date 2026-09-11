@@ -205,22 +205,42 @@ describe('UserPushSettings', () => {
       [{ scopeType: 'TEAM', scopeKey: '5', enabled: true }]))
   })
 
-  it('2026-09-11: KPI kartı tıklanınca teslimat günlüğü o pencereyle (from) süzülür; FAILED sayısı durumu da seçer; çip kaldırır', async () => {
+  it('2026-09-11: KPI kartı tıklanınca pencere MODALI açılır — başlık, durum çipleri, o pencerenin listesi; FAILED sayısı durumu seçer; "Günlükte aç" günlüğü süzer', async () => {
     render(<UserPushSettings />)
     await screen.findByDisplayValue('Authorization')
     const cards = document.querySelectorAll('.up-kpi--btn')
     expect(cards.length).toBe(2)
-    fireEvent.click(cards[1])                                  // Son 7 gün
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    fireEvent.click(cards[1])                                  // Son 7 gün → modal
+    const dlg = await screen.findByRole('dialog')
+    expect(within(dlg).getByText(/Last 7 days|Son 7 gün/)).toBeInTheDocument()
     await waitFor(() => expect(api.admin.userPush.getDeliveries).toHaveBeenLastCalledWith(
-      expect.objectContaining({ from: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/) })))
+      expect.objectContaining({ from: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/), size: 25 })))
     const from7 = api.admin.userPush.getDeliveries.mock.calls.at(-1)[0].from
     expect(Date.now() - Date.parse(from7 + 'Z')).toBeGreaterThan(6.9 * 86400e3)
-    expect(document.querySelector('.up-kpi--btn.is-active')).toBe(cards[1])
-    fireEvent.click(cards[0].querySelector('.up-kpi-fail'))    // Son 24 saat → FAILED
+    // Durum çipleri: Tümü / SENT / FAILED (sayılarıyla); satır listesi modalın içinde
+    expect(within(dlg).getByRole('button', { name: /^(Tümü|All)/ })).toHaveAttribute('aria-pressed', 'true')
+    expect([...dlg.querySelectorAll('.up-chip')].map((c) => c.textContent.replace(/\d+$/, ''))).toEqual(expect.arrayContaining(['SENT', 'FAILED']))
+    expect(await within(dlg).findByText('example.com')).toBeInTheDocument()
+    // Günlük (modal dışı) süzülmedi
+    expect(document.querySelector('.up-window-chip')).toBeNull()
+
+    fireEvent.click(within(dlg.querySelector('.modal-shell-footer')).getByRole('button', { name: /^(Kapat|Close)$/ }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    fireEvent.click(cards[0].querySelector('.up-kpi-fail'))    // Son 24 saat → FAILED ile açılır
+    const dlg2 = await screen.findByRole('dialog')
     await waitFor(() => expect(api.admin.userPush.getDeliveries).toHaveBeenLastCalledWith(
       expect.objectContaining({ status: 'FAILED' })))
     const from24 = api.admin.userPush.getDeliveries.mock.calls.at(-1)[0].from
     expect(Date.now() - Date.parse(from24 + 'Z')).toBeLessThan(1.1 * 86400e3)
+    expect([...dlg2.querySelectorAll('.up-chip')].find((c) => c.textContent.startsWith('FAILED'))).toHaveAttribute('aria-pressed', 'true')
+
+    // "Günlükte aç": modal kapanır, günlük aynı pencere + durumla süzülür, çip görünür
+    fireEvent.click(within(dlg2).getByRole('button', { name: /Günlükte aç|Open in log/ }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(document.querySelector('.up-window-chip')).not.toBeNull())
     fireEvent.click(document.querySelector('.up-window-chip'))
     await waitFor(() => expect(api.admin.userPush.getDeliveries.mock.calls.at(-1)[0].from).toBeUndefined())
   })
@@ -278,7 +298,7 @@ describe('UserPushSettings', () => {
     await waitFor(() => expect(warnings[0]).toHaveAttribute('aria-pressed', 'true'))
   })
 
-  it('2026-09-11: grup kartları ORG ROLÜ çipleri taşır, unvan deseni alanı YOK; eski title kaydı org-rol kümesine çevrilir', async () => {
+  it('2026-09-11: beş sabit kademe kartı (sistemdeki org rolleri: Uzman/PO/Yönetici/Bölüm Başkanı/C-Level), her biri TEK org rolü rozeti; unvan deseni alanı YOK; eski kayıt kademelere sabitlenir', async () => {
     // Eski biçimde kayıtlı yapılandırma (unvan desenleri) — ekran org rolüne çevirmeli.
     stubAll({ settings: { ...SETTINGS,
       'site.monitor.userpush.role-groups': JSON.stringify({
@@ -293,19 +313,43 @@ describe('UserPushSettings', () => {
     expect(screen.queryByPlaceholderText(/\*Yönetici\*|\*Manager\*/)).not.toBeInTheDocument()
     expect(screen.queryByText(/AD unvan deseni|AD title pattern/)).not.toBeInTheDocument()
 
-    // Her kartta org rolü çipleri; eski "uzman" kaydı TECH olarak işaretli gelir
+    // Beş kademe kartı (kayıtta "bolum_baskani"/"clevel" yoktu — kapalı eklenir), sıra: Uzman, PO, Yönetici, Bölüm Başkanı, C-Level
     const groups = screen.getAllByLabelText(/Bu gruba giren org rolleri|Org roles in this group/)
-    expect(groups).toHaveLength(3)
-    const uzmanChips = within(groups[1]).getAllByRole('button')
-    const tech = uzmanChips.find((b) => /^Uzman$|^Professional$/.test(b.textContent.trim()))
-    expect(tech).toHaveAttribute('aria-pressed', 'true')
-    // Yönetici kartında MANAGER + Bölüm Başkanı + C-Level işaretli
-    const yonChips = within(groups[0]).getAllByRole('button', { pressed: true }).map((b) => b.textContent.trim())
-    expect(yonChips).toEqual(expect.arrayContaining([expect.stringMatching(/Yönetici|Manager/), expect.stringMatching(/Bölüm Başkanı|Department Head/)]))
+    expect(groups).toHaveLength(5)
+    const roleOf = (el) => within(el).getAllByText(/./, { selector: '.up-badge' }).map((b) => b.textContent.trim()).slice(1)
+    expect(roleOf(groups[0])).toEqual([expect.stringMatching(/^Uzman$|^Professional$/)])
+    expect(roleOf(groups[1])).toEqual([expect.stringMatching(/PO/)])
+    expect(roleOf(groups[2])).toEqual([expect.stringMatching(/^Yönetici$|^Manager$/)])
+    expect(roleOf(groups[3])).toEqual([expect.stringMatching(/Bölüm Başkanı|Department Head/)])
+    expect(roleOf(groups[4])).toEqual([expect.stringMatching(/C-Level/)])
+    // PO kartında C-Level / Bölüm Başkanı gibi başka rol YOK, seçilebilir çip de yok
+    expect(within(groups[1]).queryByText(/C-Level|Üst Düzey|Department Head|Bölüm Başkanı/)).not.toBeInTheDocument()
+    expect(within(groups[1]).queryByRole('button')).not.toBeInTheDocument()
+  })
 
-    // Çipe tıklayınca gruptan çıkar (aria-pressed false)
-    fireEvent.click(tech)
-    await waitFor(() => expect(tech).toHaveAttribute('aria-pressed', 'false'))
+  it('2026-09-11: bölümler açılır/kapanır — başlık düğmesi aria-expanded, kapalıyken içerik gizli, seçim localStorage\'da; "Tümünü daralt/genişlet"', async () => {
+    try { localStorage.removeItem('sm.userpush.sections') } catch {}
+    render(<UserPushSettings />)
+    await screen.findByDisplayValue('Authorization')
+    const heads = screen.getAllByRole('button', { expanded: true }).filter((b) => b.classList.contains('cs-toggle'))
+    expect(heads.map((b) => b.textContent)).toEqual(expect.arrayContaining([
+      expect.stringMatching(/Connection|Bağlantı/), expect.stringMatching(/Role Groups|Rol Grupları/), expect.stringMatching(/Delivery Log|Teslimat Günlüğü/)]))
+    expect(heads.length).toBe(8)
+
+    // Bağlantı bölümünü kapat → URL girişi gizlenir (CSS ile; sınıf iddiası), aria-expanded false, kalıcı
+    const conn = heads.find((b) => /Connection|Bağlantı/.test(b.textContent))
+    fireEvent.click(conn)
+    expect(conn).toHaveAttribute('aria-expanded', 'false')
+    expect(conn.closest('.cs-section')).not.toHaveClass('is-open')
+    expect(JSON.parse(localStorage.getItem('sm.userpush.sections')).conn).toBe(false)
+
+    // Biri kapalıyken düğme "Tümünü genişlet" der → hepsi açık; sonra "Tümünü daralt" → hepsi kapalı
+    fireEvent.click(screen.getByRole('button', { name: /Expand all|Tümünü genişlet/ }))
+    expect(document.querySelectorAll('.cs-section.is-open').length).toBe(8)
+    fireEvent.click(screen.getByRole('button', { name: /Collapse all|Tümünü daralt/ }))
+    expect(document.querySelectorAll('.cs-section.is-open').length).toBe(0)
+    expect(JSON.parse(localStorage.getItem('sm.userpush.sections')).log).toBe(false)
+    try { localStorage.removeItem('sm.userpush.sections') } catch {}
   })
 
   it('sessiz saat asgari seviyesinde de UYARI seçeneği var', async () => {

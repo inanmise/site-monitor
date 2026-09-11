@@ -1,9 +1,65 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-11T14:56:25Z",
+  "generatedAt": "2026-09-11T18:11:31Z",
   "repo": "inanmise/site-monitor",
-  "count": 634,
+  "count": 635,
   "releases": [
+    {
+      "version": "20.56.0",
+      "tag": "v20.56.0",
+      "releasedAt": "2026-09-11T18:11:23Z",
+      "commit": "a54487f4e29e71c14f761fd30d3e7c579f46b068",
+      "prevVersion": "20.55.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 3,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 2,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": "regresyon",
+          "breaking": false,
+          "sha": "a54487f4",
+          "subject": "yedinci tur eki — KPI modali + acilir bolumler temiz"
+        },
+        {
+          "type": "feat",
+          "scope": "push",
+          "breaking": false,
+          "sha": "68421326",
+          "subject": "Webhook ayarları bölümleri açılır/kapanır — başlık düğmesi, hatırlanan durum, \"Tümünü daralt/genişlet\""
+        },
+        {
+          "type": "feat",
+          "scope": "push",
+          "breaking": false,
+          "sha": "ad241b81",
+          "subject": "\"Son 24 saat / Son 7 gün\" KPI kartları ayrıntıyı pencerede (modal) sunar"
+        },
+        {
+          "type": "docs",
+          "scope": "regresyon",
+          "breaking": false,
+          "sha": "d18199be",
+          "subject": "altinci tur eki — bes sabit kademe diffi temiz"
+        },
+        {
+          "type": "feat",
+          "scope": "push",
+          "breaking": false,
+          "sha": "b80d8eae",
+          "subject": "rol grupları = sistemdeki org rolleri, her kart tek rol (Uzman / PO / Yönetici / Bölüm Başkanı / C-Level)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.55.0",
       "tag": "v20.55.0",

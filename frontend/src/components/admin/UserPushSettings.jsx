@@ -3,7 +3,7 @@ import {
   Save, Send, BellRing, Plus, Trash2, Copy, RefreshCw, Search as SearchIcon,
   Crown, UserCog, Briefcase, Globe, Network, Target, Radio, CalendarDays,
   ScanSearch, FlaskConical, Gauge, ShieldCheck, WifiOff, Timer, CalendarClock,
-  ArrowLeftRight, CheckCircle2, OctagonPause, Check,
+  ArrowLeftRight, CheckCircle2, OctagonPause, Check, Landmark, Building2, ChevronDown,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -17,6 +17,7 @@ import PaginationBar from '../ui/PaginationBar.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import HelpTip from '../ui/HelpTip.jsx'
+import ModalShell from '../ui/ModalShell.jsx'
 import { formatDateSec } from '../../api/client'
 import { copyText } from '../../utils/copyText.js'
 
@@ -57,14 +58,177 @@ const TYPES = [
 ]
 
 /** Unvan grubu kartları: ikon + kalıcı görsel kimlik. */
-/** Org rolü kodları — UserEditModal'daki seçenek listesiyle birebir (usr.orgRoleVal.*). */
-const ORG_ROLES = ['TECH', 'PO', 'MANAGER', 'BOLUM_BASKANI', 'CLEVEL']
 
-const GROUP_META = {
-  yonetici: { Icon: Crown },
-  uzman: { Icon: UserCog },
-  po: { Icon: Briefcase },
+/** Açılır/kapanır bölüm anahtarları — sıra sayfadaki sıra; localStorage'da hatırlanır. */
+const SECTIONS = ['conn', 'groups', 'scopes', 'quiet', 'templates', 'test', 'explain', 'log']
+const SECTIONS_KEY = 'sm.userpush.sections'
+function readSections() {
+  try {
+    const raw = localStorage.getItem(SECTIONS_KEY)
+    if (!raw) return null
+    const o = JSON.parse(raw)
+    return o && typeof o === 'object' ? o : null
+  } catch { return null }
 }
+
+/**
+ * Bölüm başlığı = açılır/kapanır düğme (2026-09-11, kullanıcı: "başlıkları açılır kapanır menüye
+ * dönüştür, istediğim bölümü açıp değiştireyim"). Başlık düğmesi <button>; yardım ipucu (HelpTip)
+ * kendi düğmesi olduğu için başlığın DIŞINDA, aynı satırda (iç içe button olmaz — TeamBadge dersi).
+ * Kapalıyken bölüm içeriği CSS ile gizlenir (.cs-section:not(.is-open) > :not(.cs-head)).
+ */
+function SectionHead({ id, title, open, onToggle, children }) {
+  return (
+    <div className="cs-head">
+      <button type="button" className="cs-toggle" aria-expanded={open} aria-controls={`cs-${id}`} onClick={onToggle}>
+        <ChevronDown size={16} className={`cs-chevron${open ? ' is-open' : ''}`} aria-hidden="true" />
+        <span className="cs-title">{title}</span>
+      </button>
+      {children}
+    </div>
+  )
+}
+
+/**
+ * Teslimat günlüğü satırı — başlık (durum · kişi · takım · izleme · tetik · zaman) + açılır ayrıntı.
+ * Günlük listesi ve KPI pencere modalı AYNI satırı çizer; iki kopya zamanla ayrışırdı.
+ */
+function DeliveryRow({ r, isOpen, onToggle, userTeams, t, statusTone }) {
+  return (
+    <div className={`userpush-log-row${isOpen ? ' is-open' : ''}`}>
+      <button type="button" className="userpush-log-head" aria-expanded={isOpen} onClick={onToggle}>
+        <span className={`userpush-badge userpush-badge--${statusTone(r.status)}`}>{r.status}</span>
+        <span className="userpush-log-who">
+          {r.username === '-' ? <em>{t('userpush.systemRow')}</em>
+            : <UserBadge username={r.username} displayName={r.display_name} size="sm" inline nameOnly />}
+          {/* Kişinin takım(lar)ı — satır bir <button>, bu yüzden TeamBadge span modunda. */}
+          {(userTeams[(r.username || '').toUpperCase()] || []).map((tn) => (
+            <TeamBadge key={tn} teamName={tn} size={11} as="span" className="userpush-log-team" />
+          ))}
+        </span>
+        <span className="userpush-log-mon">{r.monitor_name || '—'}</span>
+        <span className="userpush-log-trigger">{t('userpush.trigger.' + r.trigger)}</span>
+        <span className="userpush-log-when sys-mono">{formatDateSec(r.created_at)}</span>
+      </button>
+      {isOpen && (
+        <div className="userpush-log-detail">
+          {r.message && <NotifPreview title={r.title} message={r.message}
+            tone={statusTone(r.status) === 'danger' ? 'danger' : 'info'} />}
+          <dl className="userpush-log-meta">
+            {r.http_status != null && <><dt>HTTP</dt><dd>{r.http_status}</dd></>}
+            {r.attempts != null && <><dt>{t('userpush.attempts')}</dt><dd>{r.attempts}</dd></>}
+            {r.notification_id && (
+              <><dt>notificationId</dt>
+                <dd>
+                  <button type="button" className="chg-ip sys-mono"
+                    onClick={() => copyText(r.notification_id)}>
+                    {r.notification_id}<Copy size={10} aria-hidden="true" />
+                  </button>
+                </dd></>
+            )}
+            {r.batch_id && <><dt>batch</dt><dd className="sys-mono">{r.batch_id}</dd></>}
+            {r.error && <><dt>{t('userpush.error')}</dt><dd className="userpush-log-err">{r.error}</dd></>}
+          </dl>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * KPI pencere modalı (2026-09-11, kullanıcı): "Son 24 saat / Son 7 gün" kartına tıklayınca ayrıntı
+ * bir POP-UP'ta açılır — özet (durum başına sayı), durum süzgeci ve o penceredeki teslimatların listesi.
+ * Eski davranış (günlüğü süzüp kaydırmak) "Günlükte aç" düğmesinde bilinçli bir eylem olarak kaldı.
+ */
+function WindowModal({ win, status, counts, windowFrom, statusTone, userTeamsHint, onStatus, onOpenInLog, onClose, t }) {
+  const [rows, setRows] = useState(null)
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(0)
+  const [userTeams, setUserTeams] = useState(userTeamsHint || {})
+  const [openRow, setOpenRow] = useState(null)
+  const SIZE = 25
+  const from = windowFrom(win)
+
+  useEffect(() => { setPage(0) }, [win, status])
+  useEffect(() => {
+    let alive = true
+    setRows(null)
+    const params = { page, size: SIZE, from }
+    if (status) params.status = status
+    Promise.resolve(api.admin.userPush.getDeliveries(params))
+      .then((res) => {
+        if (!alive) return
+        if (res?.success) {
+          setRows(res.data?.deliveries || [])
+          setTotal(res.data?.total || 0)
+          setUserTeams((prev) => ({ ...prev, ...(res.data?.user_teams || {}) }))
+        } else setRows([])
+      })
+      .catch(() => { if (alive) setRows([]) })
+    return () => { alive = false }
+  }, [win, status, page, from])
+
+  const title = win === '24h' ? t('userpush.stat24h') : t('userpush.stat7d')
+  const sum = Object.entries(counts || {}).reduce((s, [, v]) => s + (Number(v) || 0), 0)
+  // Durum çipleri: Tümü + SENT + FAILED sabit; sayısı olan diğer durumlar (SKIPPED_*, PENDING…) dinamik.
+  const others = Object.keys(counts || {}).filter((k) => k !== 'SENT' && k !== 'FAILED' && Number(counts[k]) > 0)
+  const chips = [['', t('userpush.winAll'), sum], ['SENT', 'SENT', counts?.SENT || 0], ['FAILED', 'FAILED', counts?.FAILED || 0],
+    ...others.map((k) => [k, k, counts[k]])]
+
+  return (
+    <ModalShell open onClose={onClose} title={title} icon={BellRing} size="lg" scrollBody
+      closeLabel={t('userpush.winClose')}
+      footer={(
+        <>
+          <a className="btn btn-sm" href={api.admin.userPush.exportUrl({ from, ...(status ? { status } : {}) })} download>CSV</a>
+          <button type="button" className="btn btn-sm btn-secondary" onClick={onOpenInLog}>{t('userpush.winOpenInLog')}</button>
+          <button type="button" className="btn btn-sm btn-primary" onClick={onClose}>{t('userpush.winClose')}</button>
+        </>
+      )}>
+      <p className="section-desc">{t('userpush.winSince', formatDateSec(from + 'Z'))}</p>
+      <div className="up-chip-grid" role="group" aria-label={t('userpush.winStatusFilter')}>
+        {chips.map(([value, label, n]) => (
+          <button key={value || 'all'} type="button" className={`up-chip${status === value ? ' up-chip--on' : ''}`}
+            aria-pressed={status === value} onClick={() => onStatus(value)}>
+            <span>{label}</span><b className="up-chip-count">{n}</b>
+          </button>
+        ))}
+      </div>
+      {rows === null ? <LoadingBlock label={t('modal.loading')} />
+        : rows.length === 0 ? (
+          <StatusBlock tone="neutral" icon={BellRing} title={t('userpush.winEmpty')} description={t('userpush.logEmpty')} />
+        ) : (
+          <div className="userpush-log">
+            {rows.map((r) => (
+              <DeliveryRow key={r.id} r={r} isOpen={openRow === r.id} onToggle={() => setOpenRow(openRow === r.id ? null : r.id)}
+                userTeams={userTeams} t={t} statusTone={statusTone} />
+            ))}
+          </div>
+        )}
+      <PaginationBar page={page + 1} totalPages={Math.max(1, Math.ceil(total / SIZE))}
+        totalItems={total} pageSize={SIZE}
+        rangeStart={total === 0 ? 0 : page * SIZE + 1}
+        rangeEnd={Math.min(total, (page + 1) * SIZE)}
+        onPageChange={(p) => setPage(p - 1)} />
+    </ModalShell>
+  )
+}
+
+/**
+ * Sabit kademeler (ürün kararı 2026-09-11): kartlar sistemdeki org rolü listesinin birebir karşılığı
+ * (Kullanıcı ekranındaki "Organizasyonel Rol" seçenekleri) — her kart TEK org rolü: Uzman = TECH,
+ * PO = PO, Yönetici = MANAGER, Bölüm Başkanı = BOLUM_BASKANI, C-Level = CLEVEL. Yönetici yalnız aç/kapa
+ * + asgari seviye seçer; rol rozet olarak yazılır. Backend (UserPushRecipientResolver.TIER_ROLES) aynı
+ * eşlemeyi zorunlu kılar. "Rol yok (üye)" hiçbir karta girmez.
+ */
+const TIERS = {
+  uzman:         { role: 'TECH',          minLevel: 'WARNING',  Icon: UserCog },
+  po:            { role: 'PO',            minLevel: 'WARNING',  Icon: Briefcase },
+  yonetici:      { role: 'MANAGER',       minLevel: 'HIGH',     Icon: Crown },
+  bolum_baskani: { role: 'BOLUM_BASKANI', minLevel: 'CRITICAL', Icon: Landmark },
+  clevel:        { role: 'CLEVEL',        minLevel: 'CRITICAL', Icon: Building2 },
+}
+const GROUP_META = TIERS
 
 /** Şablon aileleri: ikon + ton — önizleme maketinin vurgu rengi buradan. */
 const TEMPLATE_META = {
@@ -186,10 +350,35 @@ export default function UserPushSettings() {
     const ms = w === '24h' ? 24 * 3600e3 : w === '7d' ? 7 * 86400e3 : 0
     return ms ? new Date(Date.now() - ms).toISOString().slice(0, 19) : null   // createdAt biçimi yyyy-MM-ddTHH:mm:ss (UTC, Z'siz)
   }
-  const pickWindow = (w, status) => {
-    setFWindow(w)
-    if (status !== undefined) setFStatus(status)
+  // KPI kartı → pencere MODALI (2026-09-11, kullanıcı: "tıklayınca pop-up'ta ayrıntı sunmalı").
+  // Günlüğü süzüp kaydırmak artık modaldaki "Günlükte aç" eylemi (openInLog).
+  const [winModal, setWinModal] = useState(null)   // null | { win: '24h'|'7d', status: '' | 'SENT' | 'FAILED' | … }
+  // Bölüm açık/kapalı durumu — varsayılan hepsi AÇIK (ilk ziyarette hiçbir şey gizlenmez), seçim
+  // tarayıcıda hatırlanır; "Tümünü daralt / genişlet" başlık satırında.
+  const [sections, setSections] = useState(() => readSections() || {})
+  const isOpen = (id) => sections[id] !== false
+  const setAllSections = (open) => {
+    const next = Object.fromEntries(SECTIONS.map((k) => [k, open]))
+    setSections(next)
+    try { localStorage.setItem(SECTIONS_KEY, JSON.stringify(next)) } catch { /* yoksay */ }
+  }
+  const toggleSec = (id) => {
+    setSections((prev) => {
+      const next = { ...prev, [id]: !isOpen(id) }
+      try { localStorage.setItem(SECTIONS_KEY, JSON.stringify(next)) } catch { /* yoksay */ }
+      return next
+    })
+  }
+  const sec = (id, extra = '') => `admin-section cs-section${isOpen(id) ? ' is-open' : ''}${extra ? ' ' + extra : ''}`
+  const allOpen = SECTIONS.every(isOpen)
+  const pickWindow = (w, status) => setWinModal({ win: w, status: status || '' })
+  const openInLog = () => {
+    if (!winModal) return
+    setFWindow(winModal.win)
+    setFStatus(winModal.status || '')
     setPage(0)
+    setWinModal(null)
+    if (!isOpen('log')) toggleSec('log')
     setTimeout(() => logRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }), 0)
   }
   const [openRow, setOpenRow] = useState(null)
@@ -247,21 +436,21 @@ export default function UserPushSettings() {
   // farklı unvan var, desen listesi hiç tam olmuyordu. Org rolü AD kademesinden türer (PO / D6 →
   // MANAGER / D7 → BOLUM_BASKANI / diğer → TECH) ve kullanıcı ekranından elle sabitlenebilir.
   function defaultGroups() {
-    return {
-      yonetici: { enabled: false, source: 'orgRole', patterns: ['MANAGER', 'BOLUM_BASKANI', 'CLEVEL'], minLevel: 'HIGH' },
-      uzman: { enabled: false, source: 'orgRole', patterns: ['TECH'], minLevel: 'WARNING' },
-      po: { enabled: false, source: 'orgRole', patterns: ['PO'], minLevel: 'WARNING' },
-    }
-  }
-  // Eski kayıt (source:'title' + unvan desenleri) ekrana geldiğinde grup anahtarının org-rol kümesine
-  // çevrilir — backend aynı çeviriyi okurken yapıyor; kaydet'e basınca yeni biçim kalıcılaşır.
-  function normalizeGroups(g) {
-    const defs = defaultGroups()
     const out = {}
+    for (const [key, tier] of Object.entries(TIERS)) {
+      out[key] = { enabled: false, source: 'orgRole', patterns: [tier.role], minLevel: tier.minLevel }
+    }
+    return out
+  }
+  // Kayıt ekrana gelince kademelere SABİTLENİR: bilinen anahtarın rolü TIERS'tan (eski unvan desenleri
+  // ya da ara sürümün çoklu-rol kümesi yok sayılır), eksik kademe kapalı eklenir, bilinmeyen anahtar
+  // olduğu gibi kalır. Backend okurken aynı çeviriyi yapar; kaydet'e basınca yeni biçim kalıcılaşır.
+  function normalizeGroups(g) {
+    const out = defaultGroups()
     for (const [key, v] of Object.entries(g || {})) {
-      out[key] = v?.source === 'orgRole'
-        ? { ...v }
-        : { ...v, source: 'orgRole', patterns: defs[key]?.patterns || v?.patterns || [] }
+      out[key] = TIERS[key]
+        ? { ...out[key], ...v, source: 'orgRole', patterns: [TIERS[key].role] }
+        : { ...v, source: 'orgRole' }
     }
     return out
   }
@@ -370,7 +559,12 @@ export default function UserPushSettings() {
     <div className="ldap-settings userpush-settings">
       {/* ── Başlık + KPI şeridi ── */}
       <div className="admin-section">
-        <h3><BellRing size={18} style={{ verticalAlign: '-3px' }} /> {t('userpush.title')}</h3>
+        <div className="cs-page-head">
+          <h3><BellRing size={18} style={{ verticalAlign: '-3px' }} /> {t('userpush.title')}</h3>
+          <button type="button" className="btn btn-sm cs-all" onClick={() => setAllSections(!allOpen)}>
+            {allOpen ? t('userpush.collapseAll') : t('userpush.expandAll')}
+          </button>
+        </div>
         <p className="section-desc">{t('userpush.desc')}</p>
         {stats && (
           <div className="userpush-stats-row up-kpis">
@@ -424,8 +618,8 @@ export default function UserPushSettings() {
 
       <div className={enabled ? undefined : 'up-dimmed'}>
         {/* ── Bağlantı ── */}
-        <div className="admin-section">
-          <h4 className="ldap-subhdr">{t('userpush.connTitle')}</h4>
+        <div className={sec('conn')}>
+          <SectionHead id="conn" title={t('userpush.connTitle')} open={isOpen('conn')} onToggle={() => toggleSec('conn')}></SectionHead>
           <p className="section-desc">{t('userpush.connDesc')}</p>
           <label className="threshold-field"><span className="help-label-row">{t('userpush.url')}<HelpTip helpKey="help.set.site.monitor.userpush.url" label={t('userpush.url')} /></span>
             <input type="text" className="input" value={val('url')} placeholder="http://..."
@@ -495,8 +689,8 @@ export default function UserPushSettings() {
         </div>
 
         {/* ── Unvan grupları — SEÇİLEBİLİR KARTLAR ── */}
-        <div className="admin-section">
-          <h4 className="ldap-subhdr">{t('userpush.groupsTitle')}<HelpTip helpKey="help.set.site.monitor.userpush.role-groups" label={t('userpush.groupsTitle')} /></h4>
+        <div className={sec('groups')}>
+          <SectionHead id="groups" title={t('userpush.groupsTitle')} open={isOpen('groups')} onToggle={() => toggleSec('groups')}><HelpTip helpKey="help.set.site.monitor.userpush.role-groups" label={t('userpush.groupsTitle')} /></SectionHead>
           <p className="section-desc">{t('userpush.groupsDesc')}</p>
           <div className="up-group-grid">
             {Object.entries(groupsSafe).map(([key, g]) => {
@@ -510,20 +704,12 @@ export default function UserPushSettings() {
                       onToggle={() => setRoleGroups({ ...groupsSafe, [key]: { ...g, enabled: !g.enabled } })} />
                   </div>
                   <p className="up-group-desc">{t(`userpush.groupDesc.${key}`)}</p>
-                  <div className="up-group-badges">
+                  {/* Kademe = tek org rolü; rozet olarak yazılır, seçilemez (TIERS). */}
+                  <div className="up-group-badges" aria-label={t('userpush.groupRolesLabel')}>
                     <span className="up-badge up-badge--muted">{t('userpush.groupOrgRole')}</span>
-                  </div>
-                  {/* Org rolü çipleri: bu gruba hangi org rolleri girer. Bir rol birden çok grupta
-                      olabilir; alıcı çözümü İLK açık eşleşmeyi alır (backend ile aynı sıra). */}
-                  <div className="up-chip-grid" aria-label={t('userpush.groupRolesLabel')}>
-                    {ORG_ROLES.map((code) => {
-                      const on = (g.patterns || []).includes(code)
-                      return (
-                        <ToggleChip key={code} on={on} label={t(`usr.orgRoleVal.${code}`)}
-                          onToggle={() => setRoleGroups({ ...groupsSafe, [key]: { ...g, source: 'orgRole',
-                            patterns: on ? (g.patterns || []).filter((c) => c !== code) : [...(g.patterns || []), code] } })} />
-                      )
-                    })}
+                    {(g.patterns || []).map((code) => (
+                      <span key={code} className="up-badge up-badge--muted">{t(`usr.orgRoleVal.${code}`)}</span>
+                    ))}
                   </div>
                   {/* Asgari seviye ARTIK DUZENLENEBILIR. Eskiden yalniz `minLevel === 'HIGH'`
                       oldugunda salt-okunur bir rozet ciziliyordu: ayar kaliciydi ve davranisi
@@ -552,8 +738,8 @@ export default function UserPushSettings() {
         </div>
 
         {/* ── Tip + Takım kapsamı — TOGGLE CHIP grupları ── */}
-        <div className="admin-section">
-          <h4 className="ldap-subhdr">{t('userpush.scopesTitle')}</h4>
+        <div className={sec('scopes')}>
+          <SectionHead id="scopes" title={t('userpush.scopesTitle')} open={isOpen('scopes')} onToggle={() => toggleSec('scopes')}></SectionHead>
           <p className="section-desc">{t('userpush.scopesDesc')}</p>
           <h5 className="userpush-subsub">{t('userpush.typeMatrix')}<HelpTip helpKey="help.userpush.typeMatrix" label={t('userpush.typeMatrix')} /></h5>
           <div className="up-chip-grid" role="group" aria-label={t('userpush.typeMatrix')}>
@@ -584,8 +770,8 @@ export default function UserPushSettings() {
         </div>
 
         {/* ── Sessiz saatler + tekrar kuralı ── */}
-        <div className="admin-section">
-          <h4 className="ldap-subhdr">{t('userpush.quietTitle')}</h4>
+        <div className={sec('quiet')}>
+          <SectionHead id="quiet" title={t('userpush.quietTitle')} open={isOpen('quiet')} onToggle={() => toggleSec('quiet')}></SectionHead>
           <p className="section-desc">{t('userpush.quietDesc')}</p>
           <div className="up-quiet-row">
             <label className="threshold-field"><span className="help-label-row">{t('userpush.quietStart')}<HelpTip helpKey="help.set.site.monitor.userpush.quiet-start" label={t('userpush.quietStart')} /></span>
@@ -624,8 +810,8 @@ export default function UserPushSettings() {
         </div>
 
         {/* ── Şablonlar — push bildirim MAKETİ önizlemeli ── */}
-        <div className="admin-section">
-          <h4 className="ldap-subhdr">{t('userpush.templatesTitle')}</h4>
+        <div className={sec('templates')}>
+          <SectionHead id="templates" title={t('userpush.templatesTitle')} open={isOpen('templates')} onToggle={() => toggleSec('templates')}></SectionHead>
           <p className="section-desc">{t('userpush.templatesDesc')}</p>
           <p className="hint userpush-placeholders">
             {t('userpush.placeholders')}: {(defaults.placeholders || []).map((p) => `{${p}}`).join(' ')}
@@ -667,8 +853,8 @@ export default function UserPushSettings() {
       </div>
 
       {/* ── Test gönderimi ── */}
-      <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('userpush.testTitle')}</h4>
+      <div className={sec('test')}>
+        <SectionHead id="test" title={t('userpush.testTitle')} open={isOpen('test')} onToggle={() => toggleSec('test')}></SectionHead>
         <p className="section-desc">{t('userpush.testDesc')}</p>
         <TagInput label={t('userpush.testSicils')} value={testSicils} onChange={setTestSicils}
           placeholder="N00001" />
@@ -689,8 +875,8 @@ export default function UserPushSettings() {
       </div>
 
       {/* ── Kim alır? (alıcı çözümü açıklaması) ── */}
-      <div className="admin-section up-explain">
-        <h4 className="ldap-subhdr">{t('userpush.explainTitle')}</h4>
+      <div className={sec('explain', 'up-explain')}>
+        <SectionHead id="explain" title={t('userpush.explainTitle')} open={isOpen('explain')} onToggle={() => toggleSec('explain')}></SectionHead>
         <p className="section-desc">{t('userpush.explainDesc')}</p>
         <div className="userpush-log-filters">
           <SearchableSelect value={exTeam} onChange={(v) => setExTeam(v)} placeholder={t('userpush.explainPickTeam')} searchThreshold={4}
@@ -729,8 +915,8 @@ export default function UserPushSettings() {
       </div>
 
       {/* ── Teslimat günlüğü ── */}
-      <div className="admin-section" ref={logRef}>
-        <h4 className="ldap-subhdr">{t('userpush.logTitle')}</h4>
+      <div className={sec('log')} ref={logRef}>
+        <SectionHead id="log" title={t('userpush.logTitle')} open={isOpen('log')} onToggle={() => toggleSec('log')} />
         <p className="section-desc">{t('userpush.logDesc')}</p>
         <div className="userpush-log-filters">
           {fWindow && (
@@ -765,49 +951,10 @@ export default function UserPushSettings() {
               description={t('userpush.logEmpty')} />
           ) : (
               <div className="userpush-log">
-                {rows.map((r) => {
-                  const isOpen = openRow === r.id
-                  return (
-                    <div key={r.id} className={`userpush-log-row${isOpen ? ' is-open' : ''}`}>
-                      <button type="button" className="userpush-log-head" aria-expanded={isOpen}
-                        onClick={() => setOpenRow(isOpen ? null : r.id)}>
-                        <span className={`userpush-badge userpush-badge--${statusTone(r.status)}`}>{r.status}</span>
-                        <span className="userpush-log-who">
-                          {r.username === '-' ? <em>{t('userpush.systemRow')}</em>
-                            : <UserBadge username={r.username} displayName={r.display_name} size="sm" inline nameOnly />}
-                          {/* Kişinin takım(lar)ı — satır bir <button>, bu yüzden TeamBadge span modunda. */}
-                          {(userTeams[(r.username || '').toUpperCase()] || []).map((tn) => (
-                            <TeamBadge key={tn} teamName={tn} size={11} as="span" className="userpush-log-team" />
-                          ))}
-                        </span>
-                        <span className="userpush-log-mon">{r.monitor_name || '—'}</span>
-                        <span className="userpush-log-trigger">{t('userpush.trigger.' + r.trigger)}</span>
-                        <span className="userpush-log-when sys-mono">{formatDateSec(r.created_at)}</span>
-                      </button>
-                      {isOpen && (
-                        <div className="userpush-log-detail">
-                          {r.message && <NotifPreview title={r.title} message={r.message}
-                            tone={statusTone(r.status) === 'danger' ? 'danger' : 'info'} />}
-                          <dl className="userpush-log-meta">
-                            {r.http_status != null && <><dt>HTTP</dt><dd>{r.http_status}</dd></>}
-                            {r.attempts != null && <><dt>{t('userpush.attempts')}</dt><dd>{r.attempts}</dd></>}
-                            {r.notification_id && (
-                              <><dt>notificationId</dt>
-                                <dd>
-                                  <button type="button" className="chg-ip sys-mono"
-                                    onClick={() => copyText(r.notification_id)}>
-                                    {r.notification_id}<Copy size={10} aria-hidden="true" />
-                                  </button>
-                                </dd></>
-                            )}
-                            {r.batch_id && <><dt>batch</dt><dd className="sys-mono">{r.batch_id}</dd></>}
-                            {r.error && <><dt>{t('userpush.error')}</dt><dd className="userpush-log-err">{r.error}</dd></>}
-                          </dl>
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
+                {rows.map((r) => (
+                  <DeliveryRow key={r.id} r={r} isOpen={openRow === r.id} onToggle={() => setOpenRow(openRow === r.id ? null : r.id)}
+                    userTeams={userTeams} t={t} statusTone={statusTone} />
+                ))}
               </div>
             )}
         {/* "Sayfa basina" secicisi ONCEDEN OLU kontroldu: onPageSizeChange verilmediginden
@@ -819,6 +966,14 @@ export default function UserPushSettings() {
           onPageChange={(p) => setPage(p - 1)}
           onPageSizeChange={(n) => { setPageSize(n); setPage(0) }} />
       </div>
+
+      {winModal && (
+        <WindowModal win={winModal.win} status={winModal.status}
+          counts={winModal.win === '24h' ? k24 : k7} windowFrom={windowFrom} statusTone={statusTone}
+          userTeamsHint={userTeams} t={t}
+          onStatus={(s) => setWinModal({ ...winModal, status: s })}
+          onOpenInLog={openInLog} onClose={() => setWinModal(null)} />
+      )}
     </div>
   )
 }
