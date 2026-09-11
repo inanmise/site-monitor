@@ -353,10 +353,11 @@ export default function UserPushSettings() {
   // KPI kartı → pencere MODALI (2026-09-11, kullanıcı: "tıklayınca pop-up'ta ayrıntı sunmalı").
   // Günlüğü süzüp kaydırmak artık modaldaki "Günlükte aç" eylemi (openInLog).
   const [winModal, setWinModal] = useState(null)   // null | { win: '24h'|'7d', status: '' | 'SENT' | 'FAILED' | … }
-  // Bölüm açık/kapalı durumu — varsayılan hepsi AÇIK (ilk ziyarette hiçbir şey gizlenmez), seçim
-  // tarayıcıda hatırlanır; "Tümünü daralt / genişlet" başlık satırında.
+  // Bölüm açık/kapalı durumu — varsayılan hepsi KAPALI (kullanıcı kararı 2026-09-11: sayfa bir menü gibi
+  // açılsın, istenen bölüm açılıp düzenlensin); seçim tarayıcıda hatırlanır; "Tümünü daralt / genişlet"
+  // başlık satırında. KPI kartları, ana anahtar ve Kaydet düğmesi bölüm dışında, hep görünür.
   const [sections, setSections] = useState(() => readSections() || {})
-  const isOpen = (id) => sections[id] !== false
+  const isOpen = (id) => sections[id] === true
   const setAllSections = (open) => {
     const next = Object.fromEntries(SECTIONS.map((k) => [k, open]))
     setSections(next)
