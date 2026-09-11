@@ -4,7 +4,7 @@ ARG K6_VERSION=0.49.0
 FROM grafana/k6:${K6_VERSION} AS k6-bin
 
 # ── Stage 1: React build ─────────────────────────────
-FROM node:20-alpine AS frontend-build
+FROM node:25-alpine AS frontend-build
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci
