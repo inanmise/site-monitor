@@ -281,7 +281,7 @@
                                 <rule>
                                     <element>CLASS</element>
                                     <includes><include>com.sitemonitor.service.ExtendedHealthService</include></includes>
-                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.37</minimum></limit></limits>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.80</minimum></limit></limits>
                                 </rule>
                                 <rule>
                                     <element>CLASS</element>
