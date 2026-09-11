@@ -278,6 +278,36 @@ describe('UserPushSettings', () => {
     await waitFor(() => expect(warnings[0]).toHaveAttribute('aria-pressed', 'true'))
   })
 
+  it('2026-09-11: grup kartları ORG ROLÜ çipleri taşır, unvan deseni alanı YOK; eski title kaydı org-rol kümesine çevrilir', async () => {
+    // Eski biçimde kayıtlı yapılandırma (unvan desenleri) — ekran org rolüne çevirmeli.
+    stubAll({ settings: { ...SETTINGS,
+      'site.monitor.userpush.role-groups': JSON.stringify({
+        yonetici: { enabled: true, source: 'title', patterns: ['*Yönetici*'], minLevel: 'HIGH' },
+        uzman: { enabled: true, source: 'title', patterns: ['*Uzman*'], minLevel: 'WARNING' },
+        po: { enabled: false, source: 'orgRole', patterns: ['PO'], minLevel: 'WARNING' },
+      }) } })
+    render(<UserPushSettings />)
+    await screen.findByDisplayValue('Authorization')
+
+    // Unvan deseni girişi ve rozeti artık yok
+    expect(screen.queryByPlaceholderText(/\*Yönetici\*|\*Manager\*/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/AD unvan deseni|AD title pattern/)).not.toBeInTheDocument()
+
+    // Her kartta org rolü çipleri; eski "uzman" kaydı TECH olarak işaretli gelir
+    const groups = screen.getAllByLabelText(/Bu gruba giren org rolleri|Org roles in this group/)
+    expect(groups).toHaveLength(3)
+    const uzmanChips = within(groups[1]).getAllByRole('button')
+    const tech = uzmanChips.find((b) => /^Uzman$|^Professional$/.test(b.textContent.trim()))
+    expect(tech).toHaveAttribute('aria-pressed', 'true')
+    // Yönetici kartında MANAGER + Bölüm Başkanı + C-Level işaretli
+    const yonChips = within(groups[0]).getAllByRole('button', { pressed: true }).map((b) => b.textContent.trim())
+    expect(yonChips).toEqual(expect.arrayContaining([expect.stringMatching(/Yönetici|Manager/), expect.stringMatching(/Bölüm Başkanı|Department Head/)]))
+
+    // Çipe tıklayınca gruptan çıkar (aria-pressed false)
+    fireEvent.click(tech)
+    await waitFor(() => expect(tech).toHaveAttribute('aria-pressed', 'false'))
+  })
+
   it('sessiz saat asgari seviyesinde de UYARI seçeneği var', async () => {
     render(<UserPushSettings />)
     await screen.findByDisplayValue('Authorization')
