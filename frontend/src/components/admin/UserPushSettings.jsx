@@ -57,6 +57,9 @@ const TYPES = [
 ]
 
 /** Unvan grubu kartları: ikon + kalıcı görsel kimlik. */
+/** Org rolü kodları — UserEditModal'daki seçenek listesiyle birebir (usr.orgRoleVal.*). */
+const ORG_ROLES = ['TECH', 'PO', 'MANAGER', 'BOLUM_BASKANI', 'CLEVEL']
+
 const GROUP_META = {
   yonetici: { Icon: Crown },
   uzman: { Icon: UserCog },
@@ -240,15 +243,30 @@ export default function UserPushSettings() {
     }
   }
 
+  // Gruplar ORG ROLÜYLE eşleşir (ürün kararı 2026-09-11): unvan metni okunmaz — aynı rolde onlarca
+  // farklı unvan var, desen listesi hiç tam olmuyordu. Org rolü AD kademesinden türer (PO / D6 →
+  // MANAGER / D7 → BOLUM_BASKANI / diğer → TECH) ve kullanıcı ekranından elle sabitlenebilir.
   function defaultGroups() {
     return {
-      yonetici: { enabled: false, source: 'title', patterns: ['*Yönetici*', '*Müdür*'], minLevel: 'HIGH' },
-      uzman: { enabled: false, source: 'title', patterns: ['*Uzman*'], minLevel: 'WARNING' },
+      yonetici: { enabled: false, source: 'orgRole', patterns: ['MANAGER', 'BOLUM_BASKANI', 'CLEVEL'], minLevel: 'HIGH' },
+      uzman: { enabled: false, source: 'orgRole', patterns: ['TECH'], minLevel: 'WARNING' },
       po: { enabled: false, source: 'orgRole', patterns: ['PO'], minLevel: 'WARNING' },
     }
   }
+  // Eski kayıt (source:'title' + unvan desenleri) ekrana geldiğinde grup anahtarının org-rol kümesine
+  // çevrilir — backend aynı çeviriyi okurken yapıyor; kaydet'e basınca yeni biçim kalıcılaşır.
+  function normalizeGroups(g) {
+    const defs = defaultGroups()
+    const out = {}
+    for (const [key, v] of Object.entries(g || {})) {
+      out[key] = v?.source === 'orgRole'
+        ? { ...v }
+        : { ...v, source: 'orgRole', patterns: defs[key]?.patterns || v?.patterns || [] }
+    }
+    return out
+  }
 
-  const groupsSafe = Object.keys(roleGroups).length ? roleGroups : defaultGroups()
+  const groupsSafe = Object.keys(roleGroups).length ? normalizeGroups(roleGroups) : defaultGroups()
 
   async function save() {
     setSaving(true)
@@ -493,9 +511,19 @@ export default function UserPushSettings() {
                   </div>
                   <p className="up-group-desc">{t(`userpush.groupDesc.${key}`)}</p>
                   <div className="up-group-badges">
-                    <span className="up-badge up-badge--muted">
-                      {g.source === 'title' ? t('userpush.sourceTitle') : t('userpush.groupOrgRole')}
-                    </span>
+                    <span className="up-badge up-badge--muted">{t('userpush.groupOrgRole')}</span>
+                  </div>
+                  {/* Org rolü çipleri: bu gruba hangi org rolleri girer. Bir rol birden çok grupta
+                      olabilir; alıcı çözümü İLK açık eşleşmeyi alır (backend ile aynı sıra). */}
+                  <div className="up-chip-grid" aria-label={t('userpush.groupRolesLabel')}>
+                    {ORG_ROLES.map((code) => {
+                      const on = (g.patterns || []).includes(code)
+                      return (
+                        <ToggleChip key={code} on={on} label={t(`usr.orgRoleVal.${code}`)}
+                          onToggle={() => setRoleGroups({ ...groupsSafe, [key]: { ...g, source: 'orgRole',
+                            patterns: on ? (g.patterns || []).filter((c) => c !== code) : [...(g.patterns || []), code] } })} />
+                      )
+                    })}
                   </div>
                   {/* Asgari seviye ARTIK DUZENLENEBILIR. Eskiden yalniz `minLevel === 'HIGH'`
                       oldugunda salt-okunur bir rozet ciziliyordu: ayar kaliciydi ve davranisi
@@ -517,12 +545,6 @@ export default function UserPushSettings() {
                       ]} />
                     <span className="hint">{t('userpush.groupMinLevelHint')}</span>
                   </div>
-                  {g.source === 'title' && (
-                    <div className="up-group-patterns">
-                      <TagInput value={(g.patterns || []).join(', ')} placeholder={t('userpush.patternPlaceholder')}
-                        onChange={(csv) => setRoleGroups({ ...groupsSafe, [key]: { ...g, patterns: csv.split(',').map(s => s.trim()).filter(Boolean) } })} />
-                    </div>
-                  )}
                 </div>
               )
             })}

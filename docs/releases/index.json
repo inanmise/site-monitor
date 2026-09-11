@@ -1,9 +1,65 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-11T13:15:51Z",
+  "generatedAt": "2026-09-11T14:56:25Z",
   "repo": "inanmise/site-monitor",
-  "count": 633,
+  "count": 634,
   "releases": [
+    {
+      "version": "20.55.0",
+      "tag": "v20.55.0",
+      "releasedAt": "2026-09-11T14:56:18Z",
+      "commit": "cbe62a1c95522ab3fa61e61a68768b727c184dd8",
+      "prevVersion": "20.54.3",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 3,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "cbe62a1c",
+          "subject": "UserPushSettings — tanimsiz up-group-roles sinifi kaldirildi (cssClasses kapisi)"
+        },
+        {
+          "type": "docs",
+          "scope": "regresyon",
+          "breaking": false,
+          "sha": "b7f5b875",
+          "subject": "besinci tur eki — eskalasyon push seviyesi (S14) kapatildi, org rolu diffi temiz"
+        },
+        {
+          "type": "feat",
+          "scope": "push",
+          "breaking": false,
+          "sha": "f6580a35",
+          "subject": "rol grupları ORG ROLÜYLE eşleşir — unvan (AD title) alıcı kuralından çıkarıldı"
+        },
+        {
+          "type": "fix",
+          "scope": "push",
+          "breaking": false,
+          "sha": "0e5d5ba6",
+          "subject": "ESCALATION push'u yeni seviyeyle çözülüyor — terfi, push tetiğinden ÖNCE kalıcılaşıyor"
+        },
+        {
+          "type": "fix",
+          "scope": "i18n",
+          "breaking": false,
+          "sha": "30c077c2",
+          "subject": "sürüm popover'ında süre birimleri Türkçe kısaltmalarla — dakika \"dk\", saat \"sa\""
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.54.3",
       "tag": "v20.54.3",

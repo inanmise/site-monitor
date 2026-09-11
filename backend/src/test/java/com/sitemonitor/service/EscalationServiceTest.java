@@ -269,6 +269,37 @@ class EscalationServiceTest {
         verify(emailService).sendAlert(any(String[].class), contains("10 GÜN KALDI"), anyString(), any(), any(), any(), any(), any());
     }
 
+    @Test
+    @DisplayName("2026-09-11 (prod): ESCALATION push'u YENİ seviyeyle çözülür — terfi, push tetiğinden ÖNCE kalıcılaşır")
+    void processResults_levelEscalation_persistsLevelBeforePush() {
+        // Prod 2026-09-07: WARNING → HIGH terfisinde e-posta HIGH gitti, kişi-webhook "bu seviyede kimse yok"
+        // diye atlandı; 13 saat sonraki elle yeniden gönderim aynı olayı 5 kişiye iletti. Sebep: push tetiği
+        // olayı DB'den yeniden yükler (kendi EntityManager'ı), save ise gönderimden SONRA geliyordu.
+        String domain = "escalate-order.example.com";
+        AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(existing));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(contactRepo.findByMinAlertLevelInAndActiveTrue(List.of("WARNING", "HIGH")))
+                .thenReturn(List.of(contact("mgr@test.com", "MANAGER", "HIGH")));
+        java.util.concurrent.atomic.AtomicReference<String> levelAtPush = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicBoolean savedBeforePush = new java.util.concurrent.atomic.AtomicBoolean(false);
+        org.mockito.Mockito.doAnswer(inv -> {
+            levelAtPush.set(existing.getAlertLevel());
+            savedBeforePush.set(!org.mockito.Mockito.mockingDetails(alertEventRepo).getInvocations().stream()
+                    .filter(i -> i.getMethod().getName().equals("save")).toList().isEmpty());
+            return null;
+        }).when(userPushService).enqueueAlert(any(), eq("ESCALATION"), any(), any(), any());
+
+        service.processResults(List.of(expiryResult(domain, 10, true)));
+
+        verify(userPushService).enqueueAlert(any(), eq("ESCALATION"), any(), any(), any());
+        assertThat(levelAtPush.get()).as("push tetiklenirken olayın seviyesi").isEqualTo("HIGH");
+        assertThat(savedBeforePush.get()).as("save, push tetiğinden ÖNCE çağrıldı").isTrue();
+        org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(alertEventRepo, userPushService);
+        inOrder.verify(alertEventRepo).save(any());
+        inOrder.verify(userPushService).enqueueAlert(any(), eq("ESCALATION"), any(), any(), any());
+    }
+
     // ── processResults: re-alert ──────────────────────────────────────────────
 
     @Test

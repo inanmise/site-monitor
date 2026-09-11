@@ -17,10 +17,17 @@ import java.util.Map;
 /**
  * Kişi-webhook alıcı çözümü: alarm olayından (takım + seviye) sicil listesi üretir.
  *
- * <p>Zincir: aktif takım ÜYELERİ ({@code AppUser.teamIds ∋ event.teamId}) → unvan-grubu süzgeci
- * (K2 karma model: PO = orgRole kesin eşleşme; Yönetici/Uzman = AD title desen-eşleme) → şiddet
- * kuralı (Yönetici grubu yalnız HIGH/CRITICAL — mevcut müdür-eskalasyon sözleşmesinin kanal içi
- * eşleniği) → E1 opt-out. E-posta/bildirim-grupları bu çözüme KARIŞMAZ: kanal bağımsızlığı
+ * <p>Zincir: aktif takım ÜYELERİ ({@code AppUser.teamIds ∋ event.teamId}) → rol-grubu süzgeci
+ * (ORG ROLÜ ile kesin eşleşme: Yönetici = MANAGER/BOLUM_BASKANI/CLEVEL, Uzman = TECH, PO = PO)
+ * → şiddet kuralı (Yönetici grubu yalnız HIGH/CRITICAL — mevcut müdür-eskalasyon sözleşmesinin
+ * kanal içi eşleniği) → E1 opt-out.
+ *
+ * <p><b>Unvan (AD title) KULLANILMAZ (ürün kararı 2026-09-11).</b> Aynı rolde onlarca farklı unvan
+ * var ("Yazılım Geliştirici", "Kıdemli Uzman", "Takım Lideri"…); desen listesi hiçbir zaman tam
+ * olmuyor ve eşleşmeyen kişi sessizce dışarıda kalıyordu. Org rolü ({@code AppUser.orgRole}) zaten
+ * AD kademesinden türer (PO bayrağı / D6 → MANAGER / D7 → BOLUM_BASKANI / diğer → TECH) ve yönetici
+ * kullanıcı ekranından elle sabitleyebilir — tek ve denetlenebilir kaynak odur. Kayıtlı eski
+ * yapılandırma ({@code source:"title"}) okunurken grup anahtarına göre org-rol kümesine çevrilir. E-posta/bildirim-grupları bu çözüme KARIŞMAZ: kanal bağımsızlığı
  * yalnız gönderimde değil ALICI SEÇİMİNDE de geçerli.
  *
  * <p>Grup yapılandırması {@code site.monitor.userpush.role-groups} JSON'undan CANLI okunur —
@@ -34,9 +41,15 @@ public class UserPushRecipientResolver {
 
     /** Varsayılan grup seti — ayar boşken de tanımlı olsun (hepsi KAPALI). */
     static final String DEFAULT_GROUPS_JSON = """
-            {"yonetici":{"enabled":false,"source":"title","patterns":["*Yönetici*","*Müdür*"],"minLevel":"HIGH"},
-             "uzman":{"enabled":false,"source":"title","patterns":["*Uzman*"],"minLevel":"WARNING"},
+            {"yonetici":{"enabled":false,"source":"orgRole","patterns":["MANAGER","BOLUM_BASKANI","CLEVEL"],"minLevel":"HIGH"},
+             "uzman":{"enabled":false,"source":"orgRole","patterns":["TECH"],"minLevel":"WARNING"},
              "po":{"enabled":false,"source":"orgRole","patterns":["PO"],"minLevel":"WARNING"}}""";
+
+    /** Grup anahtarı → org-rol kümesi; eski {@code source:"title"} yapılandırmasını çevirmek için. */
+    static final Map<String, List<String>> LEGACY_ROLE_SETS = Map.of(
+            "yonetici", List.of("MANAGER", "BOLUM_BASKANI", "CLEVEL"),
+            "uzman",    List.of("TECH"),
+            "po",       List.of("PO"));
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -117,6 +130,7 @@ public class UserPushRecipientResolver {
             String decision;
             if (!active) decision = "INACTIVE";
             else if (!anyEnabled) decision = "ALL_GROUPS_OFF";
+            else if (u.getOrgRole() == null || u.getOrgRole().isBlank()) decision = "NO_ORG_ROLE";   // veri eksik: kullanıcı ekranından atanır
             else if (match == null) decision = "NO_GROUP";
             else if (!match.enabled) decision = "GROUP_DISABLED";
             else if (level < levelValue(match.minLevel)) decision = "BELOW_MIN_LEVEL";
@@ -148,13 +162,12 @@ public class UserPushRecipientResolver {
         return (u.getId() == null ? "?" : u.getId().toString()) + "#" + name;
     }
 
-    /** Kullanıcının eşleştiği İLK açık grup; açık grup eşleşmezse kapalı eşleşme; hiç yoksa null. */
+    /** Kullanıcının ORG ROLÜYLE eşleştiği İLK açık grup; açık grup eşleşmezse kapalı eşleşme; hiç yoksa null.
+     *  Unvan (title) burada OKUNMAZ — bkz. sınıf Javadoc'u. */
     private GroupRule matchGroup(Map<String, GroupRule> groups, AppUser u) {
         GroupRule fallback = null;
         for (GroupRule g : groups.values()) {
-            boolean hit = "orgRole".equalsIgnoreCase(g.source)
-                    ? matchesAny(u.getOrgRole(), g.patterns, true)
-                    : matchesAny(u.getTitle(), g.patterns, false);
+            boolean hit = matchesAny(u.getOrgRole(), g.patterns, true);
             if (!hit) continue;
             if (g.enabled) return g;
             if (fallback == null) fallback = g;
@@ -189,11 +202,15 @@ public class UserPushRecipientResolver {
             JsonNode root = MAPPER.readTree(json == null || json.isBlank() ? DEFAULT_GROUPS_JSON : json);
             root.properties().forEach(e -> {
                 JsonNode n = e.getValue();
-                List<String> pats = new ArrayList<>();
-                if (n.path("patterns").isArray()) n.path("patterns").forEach(x -> pats.add(x.asText()));
+                List<String> raw = new ArrayList<>();
+                if (n.path("patterns").isArray()) n.path("patterns").forEach(x -> raw.add(x.asText()));
+                // Eski kayıt (source:"title", unvan desenleri): desenler ANLAMSIZ — grup anahtarının org-rol
+                // kümesine çevrilir. Bilinmeyen anahtar için (özel grup) desenler org-rol kodu sayılır.
+                boolean legacy = !"orgRole".equalsIgnoreCase(n.path("source").asText("orgRole"));
+                List<String> pats = legacy ? new ArrayList<>(LEGACY_ROLE_SETS.getOrDefault(e.getKey(), raw)) : raw;
                 out.put(e.getKey(), new GroupRule(e.getKey(),
                         n.path("enabled").asBoolean(false),
-                        n.path("source").asText("title"),
+                        "orgRole",
                         pats,
                         n.path("minLevel").asText("WARNING")));
             });
