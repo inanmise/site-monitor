@@ -8,6 +8,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [20.54.3] — 2026-09-11
+
 ### Changed
 - **Yerel geliştirme oturumları kalıcı.** `start-local.ps1` artık `SPRING_SESSION_STORE_TYPE`'ı geçirir; `.env.example` `jdbc` önerir — jar yeniden başlatmalarında oturum düşmez (prod ile aynı depo).
 - **Heartbeat zaman çizelgesi son kovayı düşürmüyor.** Kova sayısı yukarı yuvarlanır; son (kısmi) kovanın beklenen değeri kalan dakika kadardır — en yeni heartbeat'ler artık çizelgede görünür.
@@ -294,7 +296,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.54.2...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.54.3...HEAD
+[20.54.3]: https://github.com/inanmise/site-monitor/releases/tag/v20.54.3
 [20.54.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.54.2
 [20.54.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.54.1
 [20.54.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.54.0

@@ -1,9 +1,58 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-11T11:19:41Z",
+  "generatedAt": "2026-09-11T13:15:51Z",
   "repo": "inanmise/site-monitor",
-  "count": 632,
+  "count": 633,
   "releases": [
+    {
+      "version": "20.54.3",
+      "tag": "v20.54.3",
+      "releasedAt": "2026-09-11T13:15:44Z",
+      "commit": "4052306d20c7673183556fae29686dae4c16c0c0",
+      "prevVersion": "20.54.2",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 2,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": "regresyon",
+          "breaking": false,
+          "sha": "4052306d",
+          "subject": "dorduncu tur eki — teknik borc diffi temiz"
+        },
+        {
+          "type": "docs",
+          "scope": "changelog",
+          "breaking": false,
+          "sha": "7aae5059",
+          "subject": "20.54.0 / 20.54.1 / 20.54.2 başlıkları + Unreleased (bu sürüm)"
+        },
+        {
+          "type": "chore",
+          "scope": "dev",
+          "breaking": false,
+          "sha": "cd4ddf9d",
+          "subject": "yerel oturumlar jdbc deposunda kalıcı; kimlik kapısı .gstack/ altını taramaz"
+        },
+        {
+          "type": "fix",
+          "scope": "health",
+          "breaking": false,
+          "sha": "d56a6dc2",
+          "subject": "heartbeat zaman çizelgesi son (kısmi) kovayı düşürmüyor — en yeni heartbeat'ler görünür"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.54.2",
       "tag": "v20.54.2",
