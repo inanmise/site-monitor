@@ -515,7 +515,7 @@ export default function UserPushSettings() {
                   </div>
                   {/* Org rolü çipleri: bu gruba hangi org rolleri girer. Bir rol birden çok grupta
                       olabilir; alıcı çözümü İLK açık eşleşmeyi alır (backend ile aynı sıra). */}
-                  <div className="up-chip-grid up-group-roles" aria-label={t('userpush.groupRolesLabel')}>
+                  <div className="up-chip-grid" aria-label={t('userpush.groupRolesLabel')}>
                     {ORG_ROLES.map((code) => {
                       const on = (g.patterns || []).includes(code)
                       return (
