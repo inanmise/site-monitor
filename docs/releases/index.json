@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-11T08:14:56Z",
+  "generatedAt": "2026-09-11T11:19:41Z",
   "repo": "inanmise/site-monitor",
-  "count": 631,
+  "count": 632,
   "releases": [
+    {
+      "version": "20.54.2",
+      "tag": "v20.54.2",
+      "releasedAt": "2026-09-11T11:19:35Z",
+      "commit": "b6a6b4ff92e782b619bb2628c71bcde24d369567",
+      "prevVersion": "20.54.1",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": "regresyon",
+          "breaking": false,
+          "sha": "b6a6b4ff",
+          "subject": "ucuncu tur eki — ISSUE-002/003 diffi temiz"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "a8c78d11",
+          "subject": "ISSUE-003 — sertifika sağlığı cipher çipindeki kopyalama düğmesi satır başlığı <button>unun içinde <button> idi"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "2db9b7d3",
+          "subject": "ISSUE-002 — ModalScrollHint'e hook nesnesi yayılıyordu, ref fonksiyon bileşenine sızıyordu (9 izleme sayfası)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.54.1",
       "tag": "v20.54.1",
