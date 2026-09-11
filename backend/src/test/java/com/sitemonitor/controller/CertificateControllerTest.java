@@ -371,6 +371,74 @@ class CertificateControllerTest {
 
     // ── Sertifika sağlık kontrol listesi ────────────────────────────────────
 
+    // ── 2026-09-11: "planlı yenilemeydi" onayı ─────────────────────────────────────────
+
+    @Test
+    @DisplayName("Onay: sabitlenen parmak izi için kim/ne zaman yazılır, denetlenir ve satır YEŞİL döner")
+    void confirmRenewal_recordsAckAndTurnsRowGreen() throws Exception {
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(java.util.Optional.of(invOf(5L, 443)));
+        com.sitemonitor.model.LatestCheck lc = latestOf();
+        lc.setFingerprint("AA:BB");
+        lc.setPinnedFingerprint("AA:BB");
+        lc.setPreviousFingerprint("00:11");
+        lc.setFingerprintChangedAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC)
+                .minusDays(1).withNano(0).toString());
+        when(latestCheckRepo.findById("a.example.com")).thenReturn(java.util.Optional.of(lc));
+
+        mvc.perform(post("/api/certificates/a.example.com/health/confirm-renewal").session(teamSession(5L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rows[?(@.key=='pinnedFingerprint')].status").value("OK"))
+                .andExpect(jsonPath("$.data.rows[?(@.key=='pinnedFingerprint')].value_key").value("certRenewalConfirmed"))
+                .andExpect(jsonPath("$.data.rows[?(@.key=='pinnedFingerprint')].evidence.confirmed_by").value("u"));
+
+        org.assertj.core.api.Assertions.assertThat(lc.getFingerprintAckFingerprint()).isEqualTo("AA:BB");
+        org.assertj.core.api.Assertions.assertThat(lc.getFingerprintAckBy()).isEqualTo("u");
+        org.assertj.core.api.Assertions.assertThat(lc.getFingerprintAckAt()).isNotBlank();
+        verify(latestCheckRepo).save(lc);
+        verify(auditService).recordAction(eq("CERT_RENEWAL_CONFIRMED"), any(), eq("CERTIFICATE"),
+                eq("a.example.com"), any(), any());
+    }
+
+    @Test
+    @DisplayName("Onay: onaylanacak değişim yoksa 409 — hiçbir şey yazılmaz")
+    void confirmRenewal_nothingToConfirm_isConflict() throws Exception {
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(java.util.Optional.of(invOf(5L, 443)));
+        when(latestCheckRepo.findById("a.example.com")).thenReturn(java.util.Optional.of(latestOf()));
+
+        mvc.perform(post("/api/certificates/a.example.com/health/confirm-renewal").session(teamSession(5L)))
+                .andExpect(status().isConflict());
+
+        verify(latestCheckRepo, never()).save(any());
+        verify(auditService, never()).recordAction(eq("CERT_RENEWAL_CONFIRMED"), any(), anyString(), anyString(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Onay: sunulan sertifika sabitlenenden FARKLIYSA 409 — araya girme imzası onaylanamaz")
+    void confirmRenewal_pinMismatch_isConflict() throws Exception {
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(java.util.Optional.of(invOf(5L, 443)));
+        com.sitemonitor.model.LatestCheck lc = latestOf();
+        lc.setFingerprint("CC:DD");
+        lc.setPinnedFingerprint("AA:BB");
+        lc.setFingerprintChangedAt("2026-09-09T19:13:56Z");
+        when(latestCheckRepo.findById("a.example.com")).thenReturn(java.util.Optional.of(lc));
+
+        mvc.perform(post("/api/certificates/a.example.com/health/confirm-renewal").session(teamSession(5L)))
+                .andExpect(status().isConflict());
+
+        verify(latestCheckRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Onay: başka takımın domaini 404 + güvenlik olayı (görüş alanı dışı)")
+    void confirmRenewal_otherTeam_isNotFound() throws Exception {
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(java.util.Optional.of(invOf(9L, 443)));
+
+        mvc.perform(post("/api/certificates/a.example.com/health/confirm-renewal").session(teamSession(5L)))
+                .andExpect(status().isNotFound());
+
+        verify(latestCheckRepo, never()).save(any());
+    }
+
     private MockHttpSession teamSession(Long teamId) {
         MockHttpSession s = new MockHttpSession();
         s.setAttribute("authenticated", Boolean.TRUE);

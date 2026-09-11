@@ -294,6 +294,46 @@ class CertificateHealthServiceTest {
     }
 
     @Test
+    @DisplayName("2026-09-11: planlı yenileme ONAYLANMIŞSA yeni değişim satırı YEŞİL — kim/ne zaman kanıtta")
+    void confirmedRenewalTurnsGreen() {
+        LatestCheck lc = healthy();
+        lc.setPinnedFingerprint("YENI");
+        lc.setPreviousFingerprint("ESKI");
+        lc.setFingerprintChangedAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC)
+                .minusDays(1).withNano(0).toString());
+        lc.setFingerprintAckFingerprint("yeni");   // büyük/küçük harf duyarsız eşleşir
+        lc.setFingerprintAckBy("u5");
+        lc.setFingerprintAckAt("2026-09-11T07:30:00Z");
+        var r = row(lc, "pinnedFingerprint");
+
+        assertThat(r.status()).isEqualTo(Status.OK);
+        assertThat(r.valueKey()).isEqualTo("certRenewalConfirmed");
+        assertThat(r.valueArgs()).containsExactly("11.09.2026");
+        assertThat(r.actionKey()).isEqualTo("renewalConfirmed");
+        assertThat(r.evidence()).containsEntry("confirmed_by", "u5")
+                .containsEntry("confirmed_at", "2026-09-11T07:30:00Z")
+                .containsEntry("previous", "ESKI");
+    }
+
+    @Test
+    @DisplayName("Onay ESKİ parmak izine aitse (pin yeniden değişti) satır yeniden UYARIR — tek onay sonsuza dek susturmaz")
+    void staleConfirmationDoesNotCoverNewChange() {
+        LatestCheck lc = healthy();
+        lc.setPinnedFingerprint("YENI-2");
+        lc.setPreviousFingerprint("YENI");
+        lc.setFingerprintChangedAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC)
+                .minusDays(1).withNano(0).toString());
+        lc.setFingerprintAckFingerprint("YENI");   // önceki değişimin onayı
+        lc.setFingerprintAckBy("u5");
+        lc.setFingerprintAckAt("2026-09-01T07:30:00Z");
+        var r = row(lc, "pinnedFingerprint");
+
+        assertThat(r.status()).isEqualTo(Status.WARN);
+        assertThat(r.actionKey()).isEqualTo("confirmRenewal");
+        assertThat(r.evidence()).doesNotContainKey("confirmed_by");
+    }
+
+    @Test
     @DisplayName("Sunulan sertifika pinden FARKLIYSA satır KIRMIZI — araya girme imzası")
     void servedDifferingFromPinIsFailure() {
         LatestCheck lc = healthy();
