@@ -1,5 +1,7 @@
 package com.sitemonitor.service.report;
 
+import com.sitemonitor.util.Csv;
+
 import com.sitemonitor.model.CertificateInventory;
 import com.sitemonitor.model.Team;
 import com.sitemonitor.repository.CertificateInventoryRepository;
@@ -94,12 +96,8 @@ public class InventoryExportService {
         return sb.toString().getBytes(StandardCharsets.UTF_8);
     }
 
-    static String csvEscape(String s) {
-        if (s == null) return "";
-        boolean quote = s.contains(",") || s.contains("\"") || s.contains("\n") || s.contains("\r") || s.contains(";");
-        String v = s.replace("\"", "\"\"");
-        return quote ? "\"" + v + "\"" : v;
-    }
+    /** Ortak kural: tırnaklama + formül nötrlemesi (CWE-1236) — {@link Csv#cell}. Yerel kopya 2026-09-11 kaldırıldı. */
+    static String csvEscape(String s) { return Csv.cell(s); }
 
     // ── PDF ──────────────────────────────────────────────────────────────────
 

@@ -85,6 +85,8 @@ class InventoryExportServiceTest {
         assertThat(InventoryExportService.csvEscape("de\"mo")).isEqualTo("\"de\"\"mo\"");
         assertThat(InventoryExportService.csvEscape("bir\niki")).isEqualTo("\"bir\niki\"");
         assertThat(InventoryExportService.csvEscape("sade")).isEqualTo("sade");
+        assertThat(InventoryExportService.csvEscape("=1+1")).isEqualTo("'=1+1");   // formül nötrlemesi (Csv.cell)
+        assertThat(InventoryExportService.csvEscape("-cmd")).isEqualTo("'-cmd");
         assertThat(InventoryExportService.csvEscape(null)).isEmpty();
     }
 
