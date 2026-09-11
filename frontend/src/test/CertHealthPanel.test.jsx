@@ -110,7 +110,7 @@ describe('CertHealthPanel', () => {
 
     const cipher = container.querySelector('.hlth-cipher')
     expect(cipher.textContent).toContain('TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384')
-    expect(cipher.querySelector('button')).not.toBeNull()   // CopyButton
+    expect(cipher.querySelector('[role=button]')).not.toBeNull()   // CopyButton (as="span": başlık <button>u içinde ikinci <button> geçersiz — ISSUE-003)
   })
 
   it('satır açılınca KANIT gösterilir; kanıtı olmayan satır açılmaz', async () => {
@@ -206,6 +206,18 @@ describe('CertHealthPanel', () => {
     draw()
     await screen.findByText('2 of 3 checks clean')
     expect(screen.queryByRole('button', { name: /planned renewal — confirm/ })).not.toBeInTheDocument()
+  })
+
+  // Regression: ISSUE-003 — cipher kopyalama kontrolü satır başlığı <button>unun içinde <button> idi
+  // (validateDOMNesting). Found by /qa on 2026-09-11. Report: .gstack/qa-reports/qa-report-localhost-2026-09-11.md
+  it('cipher kopyalama kontrolü satır başlığı düğmesinin içinde İKİNCİ bir <button> DEĞİL (span role=button)', async () => {
+    draw()
+    const cipher = await screen.findByText('TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384', { selector: '.hlth-cipher' })
+    const head = cipher.closest('.hlth-row-head')
+    expect(head.tagName).toBe('BUTTON')
+    expect(head.querySelectorAll('button')).toHaveLength(0)
+    const copy = within(cipher).getByRole('button')
+    expect(copy.tagName).toBe('SPAN')
   })
 
   it('yükleme hatası tek başına ekranı çökertmez', async () => {
