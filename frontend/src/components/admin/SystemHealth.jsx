@@ -16,6 +16,10 @@ import DateTimeRangePicker from '../ui/DateTimeRangePicker.jsx'
 import UserBadge from '../ui/UserBadge.jsx'   // proje-geneli ortak kullanıcı rozeti (avatar + ad-soyad)
 import { mailPreviewSrcDoc, mailLogoVariant } from '../../utils/mailPreview.js'
 import { Spinner, ProgressBar, LoadingBlock } from '../ui/Progress.jsx'
+import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
+import { readUrlParam } from '../../hooks/useUrlQuerySync.js'
+import { Rocket } from 'lucide-react'
+const DeploymentHistoryPanel = lazy(() => import('./DeploymentHistoryPanel.jsx'))   // yalnız bölüm açılınca
 const LoginActivityChart = lazy(() => import('./LoginActivityChart.jsx'))   // recharts → tembel yükle (bundle hafif)
 const HttpMetricsExplorer = lazy(() => import('./HttpMetricsExplorer.jsx'))  // recharts → tembel yükle
 
@@ -103,9 +107,19 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
   const [uactRefreshing, setUactRefreshing]         = useState(false)
   const [hbRefreshing, setHbRefreshing] = useState(false)
   const [hbModalOpen, setHbModalOpen] = useState(false)
-  const [openSection, setOpenSection] = useState(null) // varsayılan: tüm akordiyon kapalı
+  // varsayılan: tüm akordiyon kapalı; `?sec=releases` derin-linki (sürüm çipi) o bölümü açık getirir.
+  const [openSection, setOpenSection] = useState(() => (readUrlParam('sec', '') === 'releases' ? 'releases' : null))
   const toggleSection = (key) => setOpenSection(prev => prev === key ? null : key)
   const sysVisible  = openSection === 'sys'
+  const releasesVisible = openSection === 'releases'
+  // Aynı sekmedeyken (Sistem Sağlığı açıkken çipten "Dağıtım geçmişi") App `sec` param'ını olayla iletir.
+  useEffect(() => {
+    const on = (e) => { const s = e?.detail?.sec; if (s === 'releases') setOpenSection('releases') }
+    window.addEventListener('sm:tab-params', on)
+    return () => window.removeEventListener('sm:tab-params', on)
+  }, [])
+  const { canView: canViewRes, canEdit: canEditRes } = usePermissions()
+  const canViewReleases = canViewRes('release_history.read')
   const dbVisible   = openSection === 'db'
   const httpVisible = openSection === 'http'
   const cpuVisible  = openSection === 'cpu'
@@ -518,6 +532,14 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
             <dd>{scheduler?.last_run ? formatDate(scheduler.last_run) : t('sys.never')}</dd>
             <dt>{t('sys.nextRun')}</dt>
             <dd>{scheduler?.next_run ? formatDate(scheduler.next_run) : '—'}</dd>
+            {health?.build && (
+              <>
+                <dt>{t('sys.buildVersion')}</dt>
+                <dd className="sys-mono">v{health.build.version}{health.build.environment ? <span className="sys-muted"> · {health.build.environment}</span> : null}</dd>
+                <dt>{t('sys.buildCommit')}</dt>
+                <dd className="sys-mono">{health.build.commit || '—'}</dd>
+              </>
+            )}
             <dt>{isRunning ? t('sys.currentRunId') : t('sys.lastRunId')}</dt>
             <dd className="sys-mono">
               {isRunning
@@ -2375,6 +2397,33 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
             )}
           </div>
         </div>
+      )}
+
+      {/* Sürüm & Dağıtım — release_history.read (ADMIN + AUDIT). EN SONDA: SystemHealth.test.jsx SECTIONS sırası. */}
+      {canViewReleases && (
+      <div className="stats-section">
+        <div
+          className="stats-collapse-bar"
+          onClick={() => toggleSection('releases')}
+          title={releasesVisible ? t('app.collapseStats') : t('app.expandStats')}
+        >
+          <span className="stats-collapse-icon"><Rocket size={18} /></span>
+          <span className="stats-collapse-label">{t('deploy.section')}</span>
+          {!releasesVisible && (
+            <span className="stats-collapse-hint">{t('health.sectionShow', t('deploy.section'))}</span>
+          )}
+          <span className={`stats-collapse-chevron${releasesVisible ? ' open' : ''}`}>
+            <ChevronDown size={18} />
+          </span>
+        </div>
+        {releasesVisible && (
+        <div className="metrics-section">
+          <Suspense fallback={<LoadingBlock />}>
+            <DeploymentHistoryPanel canEdit={canEditRes('release_history.edit')} />
+          </Suspense>
+        </div>
+        )}
+      </div>
       )}
     </div>
   )

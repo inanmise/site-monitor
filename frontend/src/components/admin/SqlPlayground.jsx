@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { api, formatDate } from '../../api/client'
+import { api, formatDate, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import {
@@ -192,7 +192,16 @@ export default function SqlPlayground() {
                     ? <ChevronDown size={12} />
                     : <ChevronRight size={12} />}
                 </span>
-                <span className="sqlpg-table-name">{tbl.table_name}</span>
+                <span className="sqlpg-table-name">
+                  {tbl.table_name}
+                  {(tbl.first_seen_at || tbl.last_change_at) && (
+                    <span className="sqlpg-table-meta"
+                      title={`${t('sql.meta.created')}: ${tbl.first_seen_at ? (tbl.first_seen_approx ? '≈ ' : '') + formatDateSec(tbl.first_seen_at) : t('sql.meta.unknown')} · ${t('sql.meta.lastChange')}: ${tbl.last_change_at ? formatDateSec(tbl.last_change_at) : t('sql.meta.unknown')}`}>
+                      <span className="sqlpg-table-meta-item">+{tbl.first_seen_at ? (tbl.first_seen_approx ? '≈' : '') + formatDate(tbl.first_seen_at) : '?'}</span>
+                      <span className="sqlpg-table-meta-item">↻{tbl.last_change_at ? formatDate(tbl.last_change_at) : '—'}</span>
+                    </span>
+                  )}
+                </span>
                 <span
                   className="sqlpg-table-info"
                   onClick={(e) => openTableDetails(tbl.table_name, e)}

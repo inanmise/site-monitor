@@ -11,6 +11,8 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Locale;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -53,6 +55,10 @@ public class SqlPlaygroundService {
         Pattern.compile("\\blimit\\s+(\\d+)", Pattern.CASE_INSENSITIVE);
 
     private final JdbcTemplate jdbcTemplate;
+
+    /** Tablo kayıt defteri (oluşturma ≈ ilk görülme, son veri değişimi) — isteğe bağlı bean. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private SchemaTableRegistryService schemaRegistry;
     private final SqlQueryHistoryRepository historyRepo;
 
     /** Oyun alanı sorguları için ÖZEL, zaman aşımlı JdbcTemplate (tembel kurulur). */
@@ -87,9 +93,86 @@ public class SqlPlaygroundService {
     }
 
     public List<Map<String, Object>> listTables() {
-        return jdbcTemplate.queryForList(
+        List<Map<String, Object>> tables = jdbcTemplate.queryForList(
             "SELECT table_name FROM information_schema.tables "
           + "WHERE table_schema = 'public' ORDER BY table_name");
+        // 2026-09-11: "ne zaman oluştu / en son ne zaman değişti" — kayıt defteri + pg_stat (ikisi de
+        // isteğe bağlı; yoksa liste eskisi gibi çıplak döner, çağrı patlamaz).
+        Map<String, Map<String, Object>> reg = schemaRegistry == null ? Map.of() : schemaRegistry.all();
+        Map<String, Map<String, Object>> stats = tableStats();
+        List<Map<String, Object>> out = new ArrayList<>(tables.size());
+        for (Map<String, Object> t : tables) {
+            Map<String, Object> m = new LinkedHashMap<>(t);
+            String name = String.valueOf(t.get("table_name"));
+            Map<String, Object> r = reg.get(name);
+            if (r != null) m.putAll(r);
+            Map<String, Object> s = stats.get(name);
+            if (s != null) m.putAll(s);
+            out.add(m);
+        }
+        return out;
+    }
+
+    /** pg_stat_user_tables özeti: canlı satır tahmini, sayaçlar, son analyze/vacuum anı (ISO). Katalog yoksa boş. */
+    Map<String, Map<String, Object>> tableStats() {
+        Map<String, Map<String, Object>> out = new HashMap<>();
+        for (Map<String, Object> r : safeQuery(
+                "SELECT relname, n_live_tup, n_tup_ins, n_tup_upd, n_tup_del, "
+              + "GREATEST(last_analyze, last_autoanalyze, last_vacuum, last_autovacuum) AS last_maint "
+              + "FROM pg_stat_user_tables WHERE schemaname = 'public'")) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("live_rows", r.get("n_live_tup"));
+            m.put("tup_ins", r.get("n_tup_ins"));
+            m.put("tup_upd", r.get("n_tup_upd"));
+            m.put("tup_del", r.get("n_tup_del"));
+            m.put("last_maintenance_at", SchemaTableRegistryService.iso(r.get("last_maint")));
+            out.put(String.valueOf(r.get("relname")), m);
+        }
+        return out;
+    }
+
+    /**
+     * Tek tablo için zaman & aktivite: defter (first_seen / last_change) + pg_stat + boyut + zaman-damgası
+     * kolonlarından MAX ("en son kayıt"). MAX sorguları 5 sn sorgu zaman aşımıyla koşar — milyon satırlık
+     * seri tablosunda indekssiz kolon taraması modalı asılı bırakmasın; aşarsa alan boş kalır.
+     */
+    Map<String, Object> tableActivity(String tableName) {
+        Map<String, Object> a = new LinkedHashMap<>();
+        Map<String, Object> reg = schemaRegistry == null ? null : schemaRegistry.get(tableName);
+        if (reg != null) a.putAll(reg);
+        Map<String, Object> st = tableStats().get(tableName);
+        if (st != null) a.putAll(st);
+        List<Map<String, Object>> size = safeQuery(
+                "SELECT pg_size_pretty(pg_total_relation_size(c.oid)) AS total, pg_size_pretty(pg_relation_size(c.oid)) AS data "
+              + "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = ?", tableName);
+        if (!size.isEmpty()) { a.put("size_total", size.get(0).get("total")); a.put("size_data", size.get(0).get("data")); }
+        // Zaman-damgası adayları: timestamp tipli ya da *_at / *_time / *_ts adlı kolonlar (ISO string de MAX ile sıralanır).
+        List<Map<String, Object>> cols = safeQuery(
+                "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = 'public' AND table_name = ? "
+              + "ORDER BY ordinal_position", tableName);
+        String bestCol = null, bestVal = null;
+        int tried = 0;
+        JdbcTemplate quick = new JdbcTemplate(jdbcTemplate.getDataSource());
+        quick.setQueryTimeout(5);
+        for (Map<String, Object> c : cols) {
+            String col = String.valueOf(c.get("column_name"));
+            String type = String.valueOf(c.get("data_type")).toLowerCase(Locale.ROOT);
+            boolean tsType = type.startsWith("timestamp");
+            boolean tsName = col.endsWith("_at") || col.endsWith("_time") || col.endsWith("_ts") || col.equals("timestamp") || col.equals("event_time");
+            if (!tsType && !tsName) continue;
+            if (tried++ >= 4) break;
+            try {
+                validateIdentifier(col);
+                Object v = quick.queryForObject("SELECT MAX(" + col + ") FROM " + tableName, Object.class);
+                String iso = SchemaTableRegistryService.iso(v);
+                if (iso != null && (bestVal == null || iso.compareTo(bestVal) > 0)) { bestVal = iso; bestCol = col; }
+            } catch (Exception e) {
+                /* zaman aşımı / tip uyuşmazlığı → bu kolon atlanır */
+            }
+        }
+        a.put("last_record_at", bestVal);
+        a.put("last_record_column", bestCol);
+        return a;
     }
 
     public List<Map<String, Object>> listColumns(String tableName) {
@@ -266,6 +349,8 @@ public class SqlPlaygroundService {
             "SELECT trigger_name AS name, action_timing AS timing, event_manipulation AS event "
           + "FROM information_schema.triggers WHERE trigger_schema='public' AND event_object_table = ? "
           + "ORDER BY trigger_name, event_manipulation", tableName));
+
+        try { out.put("activity", tableActivity(tableName)); } catch (Exception e) { out.put("activity", Map.of()); }
 
         return out;
     }

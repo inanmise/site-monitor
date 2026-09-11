@@ -39,6 +39,7 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.system-admin.email",           "general",    Type.STRING),
         new Setting("site.monitor.cors.allowed-origins",         "general",    Type.CSV),
         new Setting("site.monitor.login-issues.enabled",         "general",    Type.BOOL),
+        new Setting("site.monitor.deploy.notify.enabled",        "general",    Type.BOOL),   // E3: dağıtım e-postası/push (opt-in)
         // ErrorBoundary otomatik çökme bildirimi (kayıt + admin maili) — varsayılan AÇIK.
         new Setting("site.monitor.client-errors.enabled",        "general",    Type.BOOL),
         // Sorun bildirimlerinde tekil admin maili yerine günlük özet — varsayılan KAPALI.

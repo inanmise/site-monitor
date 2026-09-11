@@ -24,6 +24,7 @@ replicaCount: 1
 
 config:
   springProfile: prod
+  environmentName: prod     # Sürüm & Dağıtım Geçmişi ortam etiketi
   logLevel: "INFO"          # prod: DEBUG pod başına on binlerce satır/gün üretir (console + dosya)
   corsAllowedOrigins: "https://sitemonitor.akbank.com"
   # ── Outbound proxy (kurumsal egress) ────────────────────────────────────────

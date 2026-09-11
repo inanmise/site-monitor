@@ -23,6 +23,10 @@ public class ShutdownLogger {
     private final HttpMetricsService httpMetricsService;
     private final MetricsService     metricsService;
 
+    /** Dağıtım kaydına kapanış damgası (ended_at/end_reason). İsteğe bağlı bean; hata içeride yutulur. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DeploymentHistoryService deploymentHistory;
+
     // Bir çökme (crash) kapanmayı tetiklerse UncaughtExceptionHandler tarafından ayarlanır
     private static final AtomicReference<String> CRASH_REASON = new AtomicReference<>();
     private final AtomicBoolean logged = new AtomicBoolean(false);
@@ -43,6 +47,7 @@ public class ShutdownLogger {
         String reason = CRASH_REASON.get() != null
                 ? "crash — " + CRASH_REASON.get()
                 : "graceful shutdown (SIGTERM / context close)";
+        if (deploymentHistory != null) deploymentHistory.recordShutdown(CRASH_REASON.get() != null ? "crash" : "graceful");
         writeShutdownLog(reason, true);
     }
 
@@ -50,6 +55,7 @@ public class ShutdownLogger {
     @EventListener(ApplicationFailedEvent.class)
     public void onApplicationFailed(ApplicationFailedEvent event) {
         Throwable cause = event.getException();
+        if (deploymentHistory != null) deploymentHistory.recordShutdown("failed-start");
         log.error("═══ APPLICATION STARTUP FAILED ═══ ts={}", Instant.now());
         log.error("[STARTUP-FAIL] {}: {}", cause.getClass().getName(), cause.getMessage(), cause);
     }

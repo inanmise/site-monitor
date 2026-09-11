@@ -17,7 +17,8 @@ $ErrorActionPreference = "Stop"
 $ImageName  = "site-monitor"
 $Branch     = & git rev-parse --abbrev-ref HEAD
 $GitSha     = & git rev-parse --short HEAD
-$BuildDate  = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+# UTC'ye çevir: eskiden yerel saate literal "Z" ekleniyordu (Europe/Istanbul makinede 3 saat ileri etiket).
+$BuildDate  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 $Version    = (Get-Content "VERSION" -Raw).Trim()
 
 # ── Determine tags based on branch ──────────────────────────

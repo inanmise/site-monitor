@@ -18,6 +18,8 @@ import IntervalSlider from './ui/IntervalSlider.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
 import { RefreshCw, Plug, Plus, Trash2, FlaskConical, AlertTriangle, Network, Check, X, Pause, ChevronDown, BellDot } from 'lucide-react'
+import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
+import ModalScrollHint from './ui/ModalScrollHint.jsx'
 import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
@@ -94,6 +96,8 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const [histReload, setHistReload] = useState(0)
   const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
   const [modal, setModal] = useState(null)
+  // Düzenleme modalı: sabit başlık + kaydırılan gövde + sabit alt bar (useModalScrollHint).
+  const scrollHint = useModalScrollHint()
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
@@ -696,12 +700,13 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
       {/* ── Create / Edit Modal ── (overlay tıklamada KAPANMAZ — veri kaybı önlenir; yalnız İptal/Kaydet) */}
       {modal && createPortal(
         <div className="modal-overlay">
-          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 640, width: '92vw', maxHeight: '90vh', overflowY: 'auto' }}>
+          <div className="modal-box modal-sticky-actions" onClick={e => e.stopPropagation()} style={{ maxWidth: 640, width: '92vw' }}>
             <div className="modal-icon-hdr modal-icon-hdr--port">
               <div className="modal-icon-hdr-badge"><Plug size={20} /></div>
               <h3>{modal === 'new' ? t('port.modalAdd') : t('port.modalEdit')}
                 {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
             </div>
+            <div className="modal-scroll-body" ref={scrollHint.ref}>
 
             {dupSource
               ? <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>
@@ -824,6 +829,8 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
             {modal !== 'new' && (
               <ChangeNoteField t={t} id="port-change-note" value={changeNote} onChange={setChangeNote} />
             )}
+            </div>
+            <ModalScrollHint {...scrollHint} />
             <div className="modal-actions">
               <div style={{ display: 'flex', gap: 8, marginRight: 'auto' }}>
                 <button className="btn btn-secondary" onClick={runTest} disabled={testing || !form.host.trim() || !form.port}>

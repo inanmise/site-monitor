@@ -15,6 +15,8 @@ import SegmentedControl from '../ui/SegmentedControl.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
+import TeamBadge from '../ui/TeamBadge.jsx'
+import HelpTip from '../ui/HelpTip.jsx'
 import { formatDateSec } from '../../api/client'
 import { copyText } from '../../utils/copyText.js'
 
@@ -156,7 +158,53 @@ export default function UserPushSettings() {
   const [fStatus, setFStatus] = useState('')
   const [fTrigger, setFTrigger] = useState('')
   const [fNotifId, setFNotifId] = useState('')
+  // 2026-09-11 (kullanıcı): KPI kartları tıklanabilir — "kime, ne zaman, ne içerikle gitti" sorusu
+  // aynı sayfadaki teslimat günlüğünde cevaplanır: kart pencereyi (24h/7d) süzgeç olarak uygular,
+  // SENT/FAILED sayıları ayrıca durumu seçer, liste o bloğa kaydırılır.
+  const [fWindow, setFWindow] = useState('')   // '' | '24h' | '7d'
+  // 2026-09-11 (kullanıcı): "aynı takımdaki üyeye push gitmiyor, nedenini göremiyorum". Alıcı çözümünün
+  // açıklamalı hâli: takım + seviye seç → her üye için karar (alır / grup yok / seviye altı / opt-out / pasif).
+  const [exTeam, setExTeam] = useState('')
+  const [exLevel, setExLevel] = useState('HIGH')
+  const [exRows, setExRows] = useState(null)
+  const [exLoading, setExLoading] = useState(false)
+  useEffect(() => {
+    if (!exTeam) { setExRows(null); return }
+    let alive = true
+    setExLoading(true)
+    Promise.resolve(api.admin.userPush.explain?.(exTeam, exLevel))
+      .then(r => { if (alive) setExRows(r?.success ? (r.data?.members || []) : []) })
+      .catch(() => { if (alive) setExRows([]) })
+      .finally(() => { if (alive) setExLoading(false) })
+    return () => { alive = false }
+  }, [exTeam, exLevel])
+  const logRef = useRef(null)
+  const windowFrom = (w) => {
+    const ms = w === '24h' ? 24 * 3600e3 : w === '7d' ? 7 * 86400e3 : 0
+    return ms ? new Date(Date.now() - ms).toISOString().slice(0, 19) : null   // createdAt biçimi yyyy-MM-ddTHH:mm:ss (UTC, Z'siz)
+  }
+  const pickWindow = (w, status) => {
+    setFWindow(w)
+    if (status !== undefined) setFStatus(status)
+    setPage(0)
+    setTimeout(() => logRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }), 0)
+  }
   const [openRow, setOpenRow] = useState(null)
+  const [userTeams, setUserTeams] = useState({})
+  // 2026-09-11 (kullanıcı): test gönderiminden sonra günlüğü ELLE tazelemek gerekiyordu. Gönderim
+  // ASENKRON (kuyruk → HTTP → SENT/FAILED), tek tazeleme PENDING'i yakalar; bu yüzden kısa bir
+  // zincir: hemen, 1,5 sn ve 4 sn sonra. Poll'lar SESSİZ (liste boşalmaz, yalnız içerik değişir).
+  const [logNonce, setLogNonce] = useState(0)
+  const quietRef = useRef(false)
+  const pollRef = useRef([])
+  useEffect(() => () => pollRef.current.forEach(clearTimeout), [])
+  const refreshLogSoon = useCallback(() => {
+    pollRef.current.forEach(clearTimeout)
+    pollRef.current = [0, 1500, 4000].map((ms) => setTimeout(() => {
+      quietRef.current = true
+      setLogNonce((n) => n + 1)
+    }, ms))
+  }, [])
 
   const enabled = settings[KEY('enabled')] === 'true'
 
@@ -251,7 +299,12 @@ export default function UserPushSettings() {
     setTesting(true)
     try {
       const res = await api.admin.userPush.sendTest({ usernames, template: testTemplate })
-      if (res?.success) { setTestResult(res.data?.data ?? res.data); toast.success(t('userpush.testQueued')) }
+      if (res?.success) {
+        setTestResult(res.data?.data ?? res.data)
+        toast.success(t('userpush.testQueued'))
+        setPage(0)            // yeni satır ilk sayfada doğar
+        refreshLogSoon()      // durum PENDING → SENT/FAILED akışını ekranda göster
+      }
       else toast.error(res?.error || t('userpush.testFailed'))
     } finally {
       setTesting(false)
@@ -264,21 +317,25 @@ export default function UserPushSettings() {
 
   const loadDeliveries = useCallback(async () => {
     const mySeq = ++seqRef.current
-    setRows(null)
+    if (!quietRef.current) setRows(null)   // sessiz poll listeyi boşaltmaz (titreme olmasın)
+    quietRef.current = false
     const params = { page, size: pageSize }
     if (fUser) params.username = fUser
     if (fStatus) params.status = fStatus
     if (fTrigger) params.trigger = fTrigger
     if (fNotifId) params.notificationId = fNotifId
+    const from = windowFrom(fWindow)
+    if (from) params.from = from
     const res = await api.admin.userPush.getDeliveries(params)
     if (mySeq !== seqRef.current) return   // daha yeni bir istek var -> bu yaniti YOK SAY
     if (res?.success) {
       setRows(res.data?.deliveries || [])
       setTotal(res.data?.total || 0)
+      setUserTeams(res.data?.user_teams || {})
     } else {
       setRows([])
     }
-  }, [page, pageSize, fUser, fStatus, fTrigger, fNotifId])
+  }, [page, pageSize, fUser, fStatus, fTrigger, fNotifId, fWindow, logNonce])   // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { loadDeliveries() }, [loadDeliveries])
 
@@ -299,18 +356,24 @@ export default function UserPushSettings() {
         <p className="section-desc">{t('userpush.desc')}</p>
         {stats && (
           <div className="userpush-stats-row up-kpis">
-            <div className="up-kpi">
+            <div className={`up-kpi up-kpi--btn${fWindow === '24h' ? ' is-active' : ''}`} role="button" tabIndex={0}
+              title={t('userpush.kpiHint')} aria-pressed={fWindow === '24h'}
+              onClick={() => pickWindow('24h', '')}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickWindow('24h', '') } }}>
               <span className="up-kpi-label">{t('userpush.stat24h')}</span>
               <span className="up-kpi-nums">
-                <b className="up-kpi-ok">{k24.SENT || 0}</b><small>SENT</small>
-                <b className="up-kpi-fail">{k24.FAILED || 0}</b><small>FAILED</small>
+                <b className="up-kpi-ok up-kpi-num" role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); pickWindow('24h', 'SENT') }}>{k24.SENT || 0}</b><small>SENT</small>
+                <b className="up-kpi-fail up-kpi-num" role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); pickWindow('24h', 'FAILED') }}>{k24.FAILED || 0}</b><small>FAILED</small>
               </span>
             </div>
-            <div className="up-kpi">
+            <div className={`up-kpi up-kpi--btn${fWindow === '7d' ? ' is-active' : ''}`} role="button" tabIndex={0}
+              title={t('userpush.kpiHint')} aria-pressed={fWindow === '7d'}
+              onClick={() => pickWindow('7d', '')}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickWindow('7d', '') } }}>
               <span className="up-kpi-label">{t('userpush.stat7d')}</span>
               <span className="up-kpi-nums">
-                <b className="up-kpi-ok">{k7.SENT || 0}</b><small>SENT</small>
-                <b className="up-kpi-fail">{k7.FAILED || 0}</b><small>FAILED</small>
+                <b className="up-kpi-ok up-kpi-num" role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); pickWindow('7d', 'SENT') }}>{k7.SENT || 0}</b><small>SENT</small>
+                <b className="up-kpi-fail up-kpi-num" role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); pickWindow('7d', 'FAILED') }}>{k7.FAILED || 0}</b><small>FAILED</small>
               </span>
             </div>
             {health.circuit_open && (
@@ -329,7 +392,8 @@ export default function UserPushSettings() {
           <PillSwitch on={enabled} label={t('userpush.enabled')}
             onToggle={() => setVal('enabled', enabled ? 'false' : 'true')} />
           <div>
-            <div className="up-master-title">{t('userpush.enabled')}</div>
+            <div className="up-master-title">{t('userpush.enabled')}
+              <HelpTip helpKey="help.set.site.monitor.userpush.enabled" label={t('userpush.enabled')} /></div>
             <p className="hint" style={{ margin: 0 }}>{t('userpush.enabledHint')}</p>
           </div>
         </div>
@@ -345,22 +409,22 @@ export default function UserPushSettings() {
         <div className="admin-section">
           <h4 className="ldap-subhdr">{t('userpush.connTitle')}</h4>
           <p className="section-desc">{t('userpush.connDesc')}</p>
-          <label className="threshold-field">{t('userpush.url')}
+          <label className="threshold-field"><span className="help-label-row">{t('userpush.url')}<HelpTip helpKey="help.set.site.monitor.userpush.url" label={t('userpush.url')} /></span>
             <input type="text" className="input" value={val('url')} placeholder="http://..."
               onChange={(e) => setVal('url', e.target.value)} />
           </label>
           <div className="userpush-grid2">
-            <label className="threshold-field">{t('userpush.pipeline')}
+            <label className="threshold-field"><span className="help-label-row">{t('userpush.pipeline')}<HelpTip helpKey="help.set.site.monitor.userpush.pipeline" label={t('userpush.pipeline')} /></span>
               <input type="text" className="input" value={val('pipeline')} placeholder=""
                 onChange={(e) => setVal('pipeline', e.target.value)} />
             </label>
-            <label className="threshold-field">{t('userpush.titleField')}
+            <label className="threshold-field"><span className="help-label-row">{t('userpush.titleField')}<HelpTip helpKey="help.set.site.monitor.userpush.title" label={t('userpush.titleField')} /></span>
               <input type="text" className="input" value={val('title', 'Site Monitor')}
                 onChange={(e) => setVal('title', e.target.value)} />
             </label>
           </div>
 
-          <h5 className="userpush-subsub">{t('userpush.headers')}</h5>
+          <h5 className="userpush-subsub">{t('userpush.headers')}<HelpTip helpKey="help.set.site.monitor.userpush.headers" label={t('userpush.headers')} /></h5>
           <p className="hint">{t('userpush.headersHint')}</p>
           {headers.map((h, i) => (
             <div key={i} className="userpush-header-row">
@@ -373,7 +437,7 @@ export default function UserPushSettings() {
                 <input type="checkbox" checked={!!h.secret}
                   onChange={(e) => setHeaders(headers.map((x, j) => j === i ? { ...x, secret: e.target.checked } : x))} />
                 <span>{t('userpush.headerSecret')}</span>
-              </label>
+              </label><HelpTip helpKey="help.userpush.headerRow" label={t('userpush.headerSecret')} />
               <button type="button" className="btn btn-sm" aria-label="Sil"
                 onClick={() => setHeaders(headers.filter((_, j) => j !== i))}><Trash2 size={14} /></button>
             </div>
@@ -383,29 +447,29 @@ export default function UserPushSettings() {
           </button>
 
           <div className="userpush-grid4" style={{ marginTop: 14 }}>
-            <label className="threshold-field">{t('userpush.timeoutConnect')}
+            <label className="threshold-field"><span className="help-label-row">{t('userpush.timeoutConnect')}<HelpTip helpKey="help.set.site.monitor.userpush.timeout-connect-seconds" label={t('userpush.timeoutConnect')} /></span>
               <input type="number" className="input" min={1} max={30} value={val('timeout-connect-seconds', '3')}
                 onChange={(e) => setVal('timeout-connect-seconds', e.target.value)} />
             </label>
-            <label className="threshold-field">{t('userpush.timeoutTotal')}
+            <label className="threshold-field"><span className="help-label-row">{t('userpush.timeoutTotal')}<HelpTip helpKey="help.set.site.monitor.userpush.timeout-total-seconds" label={t('userpush.timeoutTotal')} /></span>
               <input type="number" className="input" min={1} max={60} value={val('timeout-total-seconds', '5')}
                 onChange={(e) => setVal('timeout-total-seconds', e.target.value)} />
             </label>
-            <label className="threshold-field">{t('userpush.retryMax')}
+            <label className="threshold-field"><span className="help-label-row">{t('userpush.retryMax')}<HelpTip helpKey="help.set.site.monitor.userpush.retry-max" label={t('userpush.retryMax')} /></span>
               <input type="number" className="input" min={0} max={5} value={val('retry-max', '2')}
                 onChange={(e) => setVal('retry-max', e.target.value)} />
             </label>
-            <label className="threshold-field">{t('userpush.hourlyCap')}
+            <label className="threshold-field"><span className="help-label-row">{t('userpush.hourlyCap')}<HelpTip helpKey="help.set.site.monitor.userpush.hourly-cap" label={t('userpush.hourlyCap')} /></span>
               <input type="number" className="input" min={1} max={500} value={val('hourly-cap', '30')}
                 onChange={(e) => setVal('hourly-cap', e.target.value)} />
             </label>
             {/* Mesaj uzunlugu: ikisi de gomulu sabitti. Ust sinirlar bilerek dar - max-message
                 urun sozlesmesi (K6: <=200 karakter, tek satir), kaldirmak kanali sessizce deler. */}
-            <label className="threshold-field">{t('userpush.maxMessageChars')}
+            <label className="threshold-field"><span className="help-label-row">{t('userpush.maxMessageChars')}<HelpTip helpKey="help.set.site.monitor.userpush.max-message-chars" label={t('userpush.maxMessageChars')} /></span>
               <input type="number" className="input" min={80} max={320} value={val('max-message-chars', '200')}
                 onChange={(e) => setVal('max-message-chars', e.target.value)} />
             </label>
-            <label className="threshold-field">{t('userpush.reasonMaxChars')}
+            <label className="threshold-field"><span className="help-label-row">{t('userpush.reasonMaxChars')}<HelpTip helpKey="help.set.site.monitor.userpush.reason-max-chars" label={t('userpush.reasonMaxChars')} /></span>
               <input type="number" className="input" min={40} max={280} value={val('reason-max-chars', '160')}
                 onChange={(e) => setVal('reason-max-chars', e.target.value)} />
             </label>
@@ -414,7 +478,7 @@ export default function UserPushSettings() {
 
         {/* ── Unvan grupları — SEÇİLEBİLİR KARTLAR ── */}
         <div className="admin-section">
-          <h4 className="ldap-subhdr">{t('userpush.groupsTitle')}</h4>
+          <h4 className="ldap-subhdr">{t('userpush.groupsTitle')}<HelpTip helpKey="help.set.site.monitor.userpush.role-groups" label={t('userpush.groupsTitle')} /></h4>
           <p className="section-desc">{t('userpush.groupsDesc')}</p>
           <div className="up-group-grid">
             {Object.entries(groupsSafe).map(([key, g]) => {
@@ -440,7 +504,8 @@ export default function UserPushSettings() {
                       yuzden hic push alici bulamiyor, ekran da nedenini soylemiyordu.
                       Merdiven backend ile ayni: KRITIK > YUKSEK > digerleri (UYARI). */}
                   <div className="up-group-level">
-                    <span className="up-group-level-label">{t('userpush.groupMinLevel')}</span>
+                    <span className="up-group-level-label">{t('userpush.groupMinLevel')}
+                      <HelpTip helpKey="help.userpush.groupMinLevel" label={t('userpush.groupMinLevel')} /></span>
                     <SegmentedControl
                       value={g.minLevel || 'WARNING'}
                       ariaLabel={`${t(`userpush.group.${key}`)} — ${t('userpush.groupMinLevel')}`}
@@ -468,7 +533,7 @@ export default function UserPushSettings() {
         <div className="admin-section">
           <h4 className="ldap-subhdr">{t('userpush.scopesTitle')}</h4>
           <p className="section-desc">{t('userpush.scopesDesc')}</p>
-          <h5 className="userpush-subsub">{t('userpush.typeMatrix')}</h5>
+          <h5 className="userpush-subsub">{t('userpush.typeMatrix')}<HelpTip helpKey="help.userpush.typeMatrix" label={t('userpush.typeMatrix')} /></h5>
           <div className="up-chip-grid" role="group" aria-label={t('userpush.typeMatrix')}>
             {TYPES.map(({ key, Icon }) => (
               <ToggleChip key={key} Icon={Icon} label={t('userpush.type.' + key)}
@@ -478,7 +543,8 @@ export default function UserPushSettings() {
           </div>
 
           <div className="up-team-toolbar">
-            <h5 className="userpush-subsub" style={{ margin: 0 }}>{t('userpush.teamMatrix')}</h5>
+            <h5 className="userpush-subsub" style={{ margin: 0 }}>{t('userpush.teamMatrix')}
+              <HelpTip helpKey="help.userpush.teamMatrix" label={t('userpush.teamMatrix')} /></h5>
             <input type="text" className="upt-search up-team-search" value={teamQuery}
               placeholder={t('userpush.searchTeam')}
               onChange={(e) => setTeamQuery(e.target.value)} />
@@ -500,16 +566,17 @@ export default function UserPushSettings() {
           <h4 className="ldap-subhdr">{t('userpush.quietTitle')}</h4>
           <p className="section-desc">{t('userpush.quietDesc')}</p>
           <div className="up-quiet-row">
-            <label className="threshold-field">{t('userpush.quietStart')}
+            <label className="threshold-field"><span className="help-label-row">{t('userpush.quietStart')}<HelpTip helpKey="help.set.site.monitor.userpush.quiet-start" label={t('userpush.quietStart')} /></span>
               <input type="time" className="input" value={val('quiet-start')}
                 onChange={(e) => setVal('quiet-start', e.target.value)} />
             </label>
-            <label className="threshold-field">{t('userpush.quietEnd')}
+            <label className="threshold-field"><span className="help-label-row">{t('userpush.quietEnd')}<HelpTip helpKey="help.set.site.monitor.userpush.quiet-end" label={t('userpush.quietEnd')} /></span>
               <input type="time" className="input" value={val('quiet-end')}
                 onChange={(e) => setVal('quiet-end', e.target.value)} />
             </label>
             <div className="threshold-field">
-              <span>{t('userpush.quietMinLevel')}</span>
+              <span className="help-label-row">{t('userpush.quietMinLevel')}
+                <HelpTip helpKey="help.set.site.monitor.userpush.quiet-min-level" label={t('userpush.quietMinLevel')} /></span>
               <SegmentedControl value={val('quiet-min-level', 'CRITICAL')}
                 ariaLabel={t('userpush.quietMinLevel')}
                 onChange={(v) => setVal('quiet-min-level', v)}
@@ -529,7 +596,8 @@ export default function UserPushSettings() {
           <div className="up-master-row" style={{ marginTop: 12 }}>
             <PillSwitch on={val('realert-enabled', 'true') !== 'false'} label={t('userpush.realertEnabled')}
               onToggle={() => setVal('realert-enabled', val('realert-enabled', 'true') !== 'false' ? 'false' : 'true')} />
-            <span>{t('userpush.realertEnabled')}</span>
+            <span className="help-label-row">{t('userpush.realertEnabled')}
+              <HelpTip helpKey="help.set.site.monitor.userpush.realert-enabled" label={t('userpush.realertEnabled')} /></span>
           </div>
         </div>
 
@@ -557,7 +625,8 @@ export default function UserPushSettings() {
                     <span className={`up-template-icon up-template-icon--${meta.tone}`}>
                       <MIcon size={15} aria-hidden="true" />
                     </span>
-                    <span className="up-template-name">{t(`userpush.template.${k}`)}</span>
+                    <span className="up-template-name">{t(`userpush.template.${k}`)}
+                      <HelpTip helpKey={`help.set.site.monitor.userpush.template.${k}`} label={t(`userpush.template.${k}`)} /></span>
                   </div>
                   <input type="text" className="input" value={cur} maxLength={220}
                     onChange={(e) => setVal(`template.${k}`, e.target.value)} />
@@ -597,11 +666,57 @@ export default function UserPushSettings() {
         )}
       </div>
 
+      {/* ── Kim alır? (alıcı çözümü açıklaması) ── */}
+      <div className="admin-section up-explain">
+        <h4 className="ldap-subhdr">{t('userpush.explainTitle')}</h4>
+        <p className="section-desc">{t('userpush.explainDesc')}</p>
+        <div className="userpush-log-filters">
+          <SearchableSelect value={exTeam} onChange={(v) => setExTeam(v)} placeholder={t('userpush.explainPickTeam')} searchThreshold={4}
+            options={[{ value: '', label: t('userpush.explainPickTeam') }, ...(teams || []).map(tm => ({ value: String(tm.id), label: tm.name }))]} />
+          <SegmentedControl value={exLevel} onChange={setExLevel} ariaLabel={t('userpush.explainLevel')}
+            options={['WARNING', 'HIGH', 'CRITICAL'].map(l => ({ value: l, label: l }))} />
+        </div>
+        {exTeam && exLoading && <LoadingBlock label={t('modal.loading')} />}
+        {exTeam && !exLoading && exRows && exRows.length === 0 && (
+          <div className="sqlpg-td-empty">{t('userpush.explainEmpty')}</div>
+        )}
+        {exTeam && !exLoading && exRows && exRows.length > 0 && (
+          <div className="admin-table-wrap">
+            <table className="admin-table up-explain-table">
+              <thead>
+                <tr>
+                  <th>{t('userpush.explainMember')}</th>
+                  <th>{t('userpush.explainTitleCol')}</th>
+                  <th>{t('userpush.explainGroup')}</th>
+                  <th>{t('userpush.explainDecision')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {exRows.map((m, i) => (
+                  <tr key={m.username + i} className={m.decision === 'RECIPIENT' ? 'is-recipient' : 'is-skipped'}>
+                    <td><strong>{m.display_name || m.username}</strong> <span className="sys-muted sys-mono sys-small">{m.username}</span></td>
+                    <td className="sys-small">{m.title || '—'}{m.org_role ? <span className="sys-muted"> · {m.org_role}</span> : null}</td>
+                    <td className="sys-small">{m.group ? <>{m.group}{m.min_level ? <span className="sys-muted"> · ≥ {m.min_level}</span> : null}{m.group_enabled === false ? <span className="sys-muted"> · {t('userpush.explainGroupOff')}</span> : null}</> : '—'}</td>
+                    <td><span className={`up-decision up-decision--${m.decision}`}>{t('userpush.decision.' + m.decision)}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* ── Teslimat günlüğü ── */}
-      <div className="admin-section">
+      <div className="admin-section" ref={logRef}>
         <h4 className="ldap-subhdr">{t('userpush.logTitle')}</h4>
         <p className="section-desc">{t('userpush.logDesc')}</p>
         <div className="userpush-log-filters">
+          {fWindow && (
+            <button type="button" className="btn btn-sm up-window-chip" onClick={() => { setFWindow(''); setPage(0) }}
+              title={t('userpush.windowClear')}>
+              {t('userpush.windowActive', fWindow === '24h' ? t('userpush.stat24h') : t('userpush.stat7d'))} ✕
+            </button>
+          )}
           <input type="text" className="upt-search" placeholder={t('userpush.filterSicil')} value={fUser}
             onChange={(e) => { setFUser(e.target.value); setPage(0) }} />
           <SearchableSelect value={fStatus} onChange={(v) => { setFStatus(v); setPage(0) }}
@@ -618,6 +733,7 @@ export default function UserPushSettings() {
           <a className="btn btn-sm" href={api.admin.userPush.exportUrl({
             ...(fUser ? { username: fUser } : {}), ...(fStatus ? { status: fStatus } : {}),
             ...(fTrigger ? { trigger: fTrigger } : {}), ...(fNotifId ? { notificationId: fNotifId } : {}),
+            ...(windowFrom(fWindow) ? { from: windowFrom(fWindow) } : {}),
           })} download>CSV</a>
         </div>
 
@@ -637,6 +753,10 @@ export default function UserPushSettings() {
                         <span className="userpush-log-who">
                           {r.username === '-' ? <em>{t('userpush.systemRow')}</em>
                             : <UserBadge username={r.username} displayName={r.display_name} size="sm" inline nameOnly />}
+                          {/* Kişinin takım(lar)ı — satır bir <button>, bu yüzden TeamBadge span modunda. */}
+                          {(userTeams[(r.username || '').toUpperCase()] || []).map((tn) => (
+                            <TeamBadge key={tn} teamName={tn} size={11} as="span" className="userpush-log-team" />
+                          ))}
                         </span>
                         <span className="userpush-log-mon">{r.monitor_name || '—'}</span>
                         <span className="userpush-log-trigger">{t('userpush.trigger.' + r.trigger)}</span>

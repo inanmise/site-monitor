@@ -9,6 +9,16 @@ const DEFAULT_PROPS = {
   onLogout: vi.fn(),
 }
 
+describe('Nav — sürüm çipi (2026-09-11)', () => {
+  it('sürüm bir DÜĞME olarak çizilir (popover tetikleyici), iki marka dalında da aynı sınıf', () => {
+    const { container } = render(<Nav {...DEFAULT_PROPS} />)
+    const chip = container.querySelector('button.sb-brand-version')
+    expect(chip).not.toBeNull()
+    expect(chip.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(chip.getAttribute('aria-expanded')).toBe('false')
+  })
+})
+
 describe('Nav', () => {
   it('renders all 6 tabs', () => {
     render(<Nav {...DEFAULT_PROPS} />)

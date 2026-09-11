@@ -6,6 +6,7 @@ import PaginationBar from './ui/PaginationBar.jsx'
 import { readPageSize, writePageSize } from '../hooks/usePagination.js'
 import { LoadingBlock } from './ui/Progress.jsx'
 import { LastLoginSummary } from './LastLoginInfo.jsx'
+import { BellOff, BellRing } from 'lucide-react'
 import SegmentedControl from './ui/SegmentedControl.jsx'
 import DeviceHistoryPanel from './DeviceHistoryPanel.jsx'
 import { MonitorSmartphone, ListChecks } from 'lucide-react'
@@ -70,12 +71,21 @@ export default function MyAuditLog({ loginInfo = null, onChangePassword = null, 
       {/* E1: kişi webhook push tercihi — kullanıcı YALNIZ kendi bayrağını yazar. Günlükte
           SKIPPED_USER_OPT_OUT olarak görünür; "neden bana gelmedi" sorusunun cevabı kayıtlıdır. */}
       {onPushOptOutChange && (
-        <div className="my-push-optout">
-          <label className="checkbox-label" title={t('userpush.optOutHint')}>
-            <input type="checkbox" checked={pushOptOut}
-              onChange={(e) => onPushOptOutChange(e.target.checked)} />
-            <span>{t('userpush.optOut')}</span>
-          </label>
+        // 2026-09-11: düz checkbox + metin "yan yana değmiş" duruyordu. Ayar kartı deseni: ikon,
+        // başlık, açıklama ve sağda SWITCH (perm-pill — UserPushSettings ile aynı görsel dil).
+        <div className={`my-push-optout my-push-optout--card${pushOptOut ? ' is-off' : ''}`}>
+          <span className="my-push-optout-icon" aria-hidden="true">
+            {pushOptOut ? <BellOff size={18} /> : <BellRing size={18} />}
+          </span>
+          <div className="my-push-optout-text">
+            <span className="my-push-optout-title" id="my-push-optout-title">{t('userpush.optOut')}</span>
+            <span className="my-push-optout-hint">{t('userpush.optOutHint')}</span>
+          </div>
+          <button type="button" role="switch" aria-checked={pushOptOut} aria-labelledby="my-push-optout-title"
+            className={`perm-pill ${pushOptOut ? 'perm-pill-on' : 'perm-pill-off'} my-push-optout-switch`}
+            onClick={() => onPushOptOutChange(!pushOptOut)}>
+            <span className="perm-pill-knob" />
+          </button>
         </div>
       )}
 

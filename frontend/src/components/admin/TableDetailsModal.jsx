@@ -1,4 +1,5 @@
 import { Table } from 'lucide-react'
+import { formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
 
@@ -16,6 +17,9 @@ export default function TableDetailsModal({ table, details, loading, onClose }) 
   const constraints = details?.constraints ?? []
   const indexes     = details?.indexes ?? []
   const triggers    = details?.triggers ?? []
+  const act         = details?.activity ?? {}
+  const hasAct      = Object.keys(act).length > 0
+  const fmt = (v) => (v ? formatDateSec(v) : '—')
 
   const ctClass = (type) => {
     const k = String(type || '').split(' ')[0].toLowerCase()
@@ -34,6 +38,33 @@ export default function TableDetailsModal({ table, details, loading, onClose }) 
           <LoadingBlock label={t('sql.td.loading')} className="sqlpg-td-loading" size={18} />
         ) : (
           <div className="sqlpg-td-body">
+            {/* ── Zaman & aktivite (2026-09-11): oluşturma ≈ ilk görülme, son veri değişimi, MAX(ts), boyut ── */}
+            {hasAct && (
+              <section className="sqlpg-td-sec sqlpg-td-activity">
+                <h4>{t('sql.td.activity')}</h4>
+                <dl className="sqlpg-td-dl">
+                  <dt>{t('sql.meta.created')}</dt>
+                  <dd>
+                    {act.first_seen_at ? <>{act.first_seen_approx ? '≈ ' : ''}{fmt(act.first_seen_at)}</> : t('sql.meta.unknown')}
+                    {act.first_seen_approx && <span className="sqlpg-td-muted"> · {t('sql.meta.createdApprox')}</span>}
+                    {act.first_seen_version && <span className="sqlpg-td-muted"> · v{act.first_seen_version}</span>}
+                  </dd>
+                  <dt>{t('sql.meta.lastChange')}</dt>
+                  <dd>{fmt(act.last_change_at)} <span className="sqlpg-td-muted">· {t('sql.meta.lastChangeHint')}</span></dd>
+                  <dt>{t('sql.meta.lastDataMax')}</dt>
+                  <dd>{fmt(act.last_record_at)}{act.last_record_column && <span className="sqlpg-td-muted"> · <code>{act.last_record_column}</code></span>}</dd>
+                  <dt>{t('sql.meta.liveRows')}</dt>
+                  <dd>{act.live_rows != null ? Number(act.live_rows).toLocaleString() : '—'}</dd>
+                  <dt>{t('sql.meta.counters')}</dt>
+                  <dd>{act.tup_ins != null ? `${Number(act.tup_ins).toLocaleString()} / ${Number(act.tup_upd ?? 0).toLocaleString()} / ${Number(act.tup_del ?? 0).toLocaleString()}` : '—'}</dd>
+                  <dt>{t('sql.meta.size')}</dt>
+                  <dd>{act.size_total ? <>{act.size_total}{act.size_data && act.size_data !== act.size_total ? <span className="sqlpg-td-muted"> (data {act.size_data})</span> : null}</> : '—'}</dd>
+                  <dt>{t('sql.meta.lastAnalyze')}</dt>
+                  <dd>{fmt(act.last_maintenance_at)}</dd>
+                </dl>
+              </section>
+            )}
+
             {/* ── Kolonlar + tip sınırları ── */}
             <section className="sqlpg-td-sec">
               <h4>{t('sql.td.columns')} <span className="sqlpg-td-count">{columns.length}</span></h4>

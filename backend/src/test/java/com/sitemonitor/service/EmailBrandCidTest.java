@@ -123,7 +123,10 @@ class EmailBrandCidTest {
             org.junit.jupiter.params.provider.Arguments.of("login-anomaly-alert",
                 (java.util.function.Consumer<EmailNotificationService>) s -> s.sendSystemAdminLoginAnomalyAlert(new String[]{"admin@example.com"}, report, "TEST")),
             org.junit.jupiter.params.provider.Arguments.of("login-anomaly-resolved",
-                (java.util.function.Consumer<EmailNotificationService>) s -> s.sendSystemAdminLoginAnomalyResolved(new String[]{"admin@example.com"}, "2026-09-10T10:00:00", "2026-09-10T10:30:00", 42L))
+                (java.util.function.Consumer<EmailNotificationService>) s -> s.sendSystemAdminLoginAnomalyResolved(new String[]{"admin@example.com"}, "2026-09-10T10:00:00", "2026-09-10T10:30:00", 42L)),
+            org.junit.jupiter.params.provider.Arguments.of("deployment-notice",
+                (java.util.function.Consumer<EmailNotificationService>) s -> s.sendDeploymentNotice(new String[]{"admin@example.com"},
+                        new EmailNotificationService.DeploymentNotice("UPGRADE", "prod", "20.53.2", "20.54.0", "01234567", "2026-09-11T08:00:00Z", java.util.List.of("feat: x"), false)))
         );
     }
 

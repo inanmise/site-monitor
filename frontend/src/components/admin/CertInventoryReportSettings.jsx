@@ -5,6 +5,7 @@ import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { Spinner, LoadingBlock } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
+import HelpTip from '../ui/HelpTip.jsx'
 import Field from '../ui/Field.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import ModalShell from '../ui/ModalShell.jsx'
@@ -204,7 +205,7 @@ export default function CertInventoryReportSettings() {
       <label className="cir-toggle">
         <input type="checkbox" checked={!!status.enabled} onChange={e => toggleEnabled(e.target.checked)} />
         <span>{t('cir.enabled')}</span>
-      </label>
+      </label><HelpTip helpKey="help.set.site.monitor.cert-inventory-report.enabled" label={t('cir.enabled')} />
       {!status.enabled && <AlertBanner tone="warning">{t('cir.disabledNote')}</AlertBanner>}
       {status.enabled && noRecipients && (
         <AlertBanner tone="warning">{t('cir.noRecipientsNote')}</AlertBanner>
@@ -220,7 +221,7 @@ export default function CertInventoryReportSettings() {
           kontrolü sarmıyordu, yani ekran okuyucu için alanların adı yoktu; ipuçları da
           aria-describedby ile bağlı değildi. */}
       <div className="cir-schedule-grid">
-        <Field label={t('cir.dayRule')}>
+        <Field label={<span className="help-label-row">{t('cir.dayRule')}<HelpTip helpKey="help.cir.dayRule" label={t('cir.dayRule')} /></span>}>
           {({ id }) => (
             <select id={id} className="input" value={rule.kind}
               onChange={e => applyRule({ ...rule, kind: e.target.value })}>
@@ -231,7 +232,7 @@ export default function CertInventoryReportSettings() {
           )}
         </Field>
         {rule.kind === 'lastWeekday' && (
-          <Field label={t('cir.weekday')}>
+          <Field label={<span className="help-label-row">{t('cir.weekday')}<HelpTip helpKey="help.cir.weekday" label={t('cir.weekday')} /></span>}>
             {({ id }) => (
               <select id={id} className="input" value={rule.weekday}
                 onChange={e => applyRule({ ...rule, weekday: e.target.value })}>
@@ -241,7 +242,7 @@ export default function CertInventoryReportSettings() {
           </Field>
         )}
         {rule.kind === 'dayOfMonth' && (
-          <Field label={t('cir.dayOfMonth')} hint={t('cir.dayOfMonthHint')}>
+          <Field label={<span className="help-label-row">{t('cir.dayOfMonth')}<HelpTip helpKey="help.cir.dayOfMonth" label={t('cir.dayOfMonth')} /></span>} hint={t('cir.dayOfMonthHint')}>
             {({ id, describedBy }) => (
               <input id={id} aria-describedby={describedBy} className="input"
                 type="number" min="1" max="28" value={rule.day}
@@ -250,14 +251,14 @@ export default function CertInventoryReportSettings() {
           </Field>
         )}
         {rule.kind !== 'custom' && (
-          <Field label={t('cir.time')}>
+          <Field label={<span className="help-label-row">{t('cir.time')}<HelpTip helpKey="help.cir.time" label={t('cir.time')} /></span>}>
             {({ id }) => (
               <input id={id} className="input" type="time" value={rule.time}
                 onChange={e => applyRule({ ...rule, time: e.target.value })} />
             )}
           </Field>
         )}
-        <Field label={t('cir.cronExpr')} hint={t('cir.cronHint')}>
+        <Field label={<span className="help-label-row">{t('cir.cronExpr')}<HelpTip helpKey="help.set.site.monitor.cert-inventory-report.cron" label={t('cir.cronExpr')} /></span>} hint={t('cir.cronHint')}>
           {({ id, describedBy }) => (
             <input id={id} aria-describedby={describedBy} className="input" value={cron}
               onChange={e => { setCron(e.target.value); setRule(r => ({ ...r, kind: 'custom' })); setDirty(true) }} />
@@ -293,14 +294,14 @@ export default function CertInventoryReportSettings() {
         </AlertBanner>
       )}
 
-      <Field label={t('cir.recipients')} hint={t('cir.recipientsHint')}>
+      <Field label={<span className="help-label-row">{t('cir.recipients')}<HelpTip helpKey="help.set.site.monitor.cert-inventory-report.recipients" label={t('cir.recipients')} /></span>} hint={t('cir.recipientsHint')}>
         {({ id, describedBy }) => (
           <input id={id} aria-describedby={describedBy} className="input"
             value={recipients} placeholder="pki@example.com"
             onChange={e => { setRecipients(e.target.value); setDirty(true) }} />
         )}
       </Field>
-      <Field label={t('cir.cc')}>
+      <Field label={<span className="help-label-row">{t('cir.cc')}<HelpTip helpKey="help.set.site.monitor.cert-inventory-report.cc" label={t('cir.cc')} /></span>}>
         {({ id }) => (
           <input id={id} className="input" value={cc} placeholder=""
             onChange={e => { setCc(e.target.value); setDirty(true) }} />

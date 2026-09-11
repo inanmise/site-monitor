@@ -5,6 +5,7 @@ import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { Spinner } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
+import HelpTip from '../ui/HelpTip.jsx'
 
 /**
  * Genel Ayarlar — küratörlü, tipli proje config'leri (key/value). Backend kataloğundan
@@ -156,7 +157,14 @@ export default function GeneralSettings() {
           {byGroup[g].map((it) => (
             <div className="threshold-grid" key={it.key}>
               <div className="threshold-field">
-                <label>{t('general.lbl.' + it.key)}</label>
+                {/* Açıklama metni SAYFADA durmaz: 200+ ayarlı bu liste okunamaz hâle gelirdi.
+                    Anahtar katalogtan türetilir — aynı metin özel sayfalarda da paylaşılır. */}
+                <label>
+                  <span className="help-label-row">
+                    {t('general.lbl.' + it.key)}
+                    <HelpTip helpKey={'help.set.' + it.key} label={t('general.lbl.' + it.key)} />
+                  </span>
+                </label>
                 {renderInput(it)}
                 <span className="hint">
                   <code>{it.key}</code>

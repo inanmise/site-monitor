@@ -6,6 +6,7 @@ import { useToast } from '../ui/Toast.jsx'
 import SecretKeyWarning from './SecretKeyWarning.jsx'
 import { Spinner } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
+import HelpTip from '../ui/HelpTip.jsx'
 
 // Role values match AppUser.systemRole tokens (used when provisioning is wired in a later phase).
 const ROLES = ['ADMIN', 'TEAM_ADMIN', 'USER', 'AUDIT']
@@ -141,7 +142,7 @@ export default function LdapSettings() {
         <label className="ldap-toggle ldap-toggle-major">
           <input type="checkbox" checked={!!form.enabled} onChange={(e) => set('enabled', e.target.checked)} />
           <span>{t('ldap.enable')}</span>
-        </label>
+        </label><HelpTip helpKey="help.ldap.enable" label={t('ldap.enable')} />
         <p className="hint">{t('ldap.enableHint')}</p>
       </div>
 
@@ -150,12 +151,12 @@ export default function LdapSettings() {
         <h4 className="ldap-subhdr">{t('ldap.connection')}</h4>
         <div className="threshold-grid">
           <div className="threshold-field">
-            <label>{t('ldap.host')}</label>
+            <label><span className="help-label-row">{t('ldap.host')}<HelpTip helpKey="help.ldap.host" label={t('ldap.host')} /></span></label>
             <input type="text" value={form.host || ''} placeholder="ldap.corp.example.com"
               onChange={(e) => set('host', e.target.value)} />
           </div>
           <div className="threshold-field">
-            <label>{t('ldap.port')}</label>
+            <label><span className="help-label-row">{t('ldap.port')}<HelpTip helpKey="help.ldap.port" label={t('ldap.port')} /></span></label>
             <input type="number" value={form.port ?? ''} placeholder="636"
               onChange={(e) => set('port', e.target.value === '' ? null : +e.target.value)} />
             <span className="hint">{t('ldap.portHint')}</span>
@@ -165,16 +166,16 @@ export default function LdapSettings() {
           <label className="ldap-toggle">
             <input type="checkbox" checked={!!form.use_ldaps} onChange={(e) => set('use_ldaps', e.target.checked)} />
             <span>{t('ldap.useLdaps')}</span>
-          </label>
+          </label><HelpTip helpKey="help.ldap.useLdaps" label={t('ldap.useLdaps')} />
           <label className="ldap-toggle">
             <input type="checkbox" checked={!!form.start_tls} onChange={(e) => set('start_tls', e.target.checked)} />
             <span>{t('ldap.startTls')}</span>
-          </label>
+          </label><HelpTip helpKey="help.ldap.startTls" label={t('ldap.startTls')} />
           <label className="ldap-toggle">
             <input type="checkbox" checked={!!form.skip_cert_verification}
               onChange={(e) => set('skip_cert_verification', e.target.checked)} />
             <span>{t('ldap.skipCert')}</span>
-          </label>
+          </label><HelpTip helpKey="help.ldap.skipCert" label={t('ldap.skipCert')} />
         </div>
         {/* Trust-all açıkken zincir+hostname hiç doğrulanmaz; bind ve kullanıcı parolaları MITM'e açık. */}
         {form.skip_cert_verification && (
@@ -184,19 +185,19 @@ export default function LdapSettings() {
           </div>
         )}
         <div className="threshold-field ldap-full">
-          <label>{t('ldap.caCert')}</label>
+          <label><span className="help-label-row">{t('ldap.caCert')}<HelpTip helpKey="help.ldap.caCert" label={t('ldap.caCert')} /></span></label>
           <textarea className="ldap-textarea" rows={4} value={form.ca_cert_pem || ''}
             placeholder="-----BEGIN CERTIFICATE-----" onChange={(e) => set('ca_cert_pem', e.target.value)} />
           <span className="hint">{t('ldap.caCertHint')}</span>
         </div>
         <div className="threshold-field ldap-full">
-          <label>{t('ldap.bindDn')}</label>
+          <label><span className="help-label-row">{t('ldap.bindDn')}<HelpTip helpKey="help.ldap.bindDn" label={t('ldap.bindDn')} /></span></label>
           <input type="text" value={form.bind_dn || ''} placeholder="CN=svc,OU=Service Accounts,DC=corp,DC=com"
             onChange={(e) => set('bind_dn', e.target.value)} />
           <span className="hint">{t('ldap.bindDnHint')}</span>
         </div>
         <div className="threshold-field ldap-full">
-          <label>{t('ldap.bindPassword')}</label>
+          <label><span className="help-label-row">{t('ldap.bindPassword')}<HelpTip helpKey="help.ldap.bindPassword" label={t('ldap.bindPassword')} /></span></label>
           <input type="password" value={bindPw} autoComplete="new-password"
             placeholder={form.bind_password_set ? t('ldap.bindPwSet') : t('ldap.bindPwEmpty')}
             onChange={(e) => setBindPw(e.target.value)} />
@@ -208,30 +209,30 @@ export default function LdapSettings() {
       <div className="admin-section">
         <h4 className="ldap-subhdr">{t('ldap.userSearch')}</h4>
         <div className="threshold-field ldap-full">
-          <label>{t('ldap.baseDn')}</label>
+          <label><span className="help-label-row">{t('ldap.baseDn')}<HelpTip helpKey="help.ldap.baseDn" label={t('ldap.baseDn')} /></span></label>
           <input type="text" value={form.base_dn || ''} placeholder="DC=corp,DC=com"
             onChange={(e) => set('base_dn', e.target.value)} />
           <span className="hint">{t('ldap.baseDnHint')}</span>
         </div>
         <div className="threshold-field ldap-full">
-          <label>{t('ldap.userFilter')}</label>
+          <label><span className="help-label-row">{t('ldap.userFilter')}<HelpTip helpKey="help.ldap.userFilter" label={t('ldap.userFilter')} /></span></label>
           <input type="text" value={form.user_search_filter || ''} placeholder="(objectclass=person)"
             onChange={(e) => set('user_search_filter', e.target.value)} />
           <span className="hint">{t('ldap.userFilterHint')}</span>
         </div>
         <div className="threshold-grid">
           <div className="threshold-field">
-            <label>{t('ldap.userAttr')}</label>
+            <label><span className="help-label-row">{t('ldap.userAttr')}<HelpTip helpKey="help.ldap.userAttr" label={t('ldap.userAttr')} /></span></label>
             <input type="text" value={form.user_attribute || ''} placeholder="sAMAccountName"
               onChange={(e) => set('user_attribute', e.target.value)} />
           </div>
           <div className="threshold-field">
-            <label>{t('ldap.emailAttr')}</label>
+            <label><span className="help-label-row">{t('ldap.emailAttr')}<HelpTip helpKey="help.ldap.emailAttr" label={t('ldap.emailAttr')} /></span></label>
             <input type="text" value={form.email_attribute || ''} placeholder="mail"
               onChange={(e) => set('email_attribute', e.target.value)} />
           </div>
           <div className="threshold-field">
-            <label>{t('ldap.displayAttr')}</label>
+            <label><span className="help-label-row">{t('ldap.displayAttr')}<HelpTip helpKey="help.ldap.displayAttr" label={t('ldap.displayAttr')} /></span></label>
             <input type="text" value={form.display_attribute || ''} placeholder="displayName"
               onChange={(e) => set('display_attribute', e.target.value)} />
           </div>
@@ -243,19 +244,19 @@ export default function LdapSettings() {
         <h4 className="ldap-subhdr">{t('ldap.groupLookup')}</h4>
         <p className="section-desc">{t('ldap.groupLookupDesc')}</p>
         <div className="threshold-field ldap-full">
-          <label>{t('ldap.groupSearchBase')}</label>
+          <label><span className="help-label-row">{t('ldap.groupSearchBase')}<HelpTip helpKey="help.ldap.groupSearchBase" label={t('ldap.groupSearchBase')} /></span></label>
           <input type="text" value={form.group_search_base || ''} placeholder="OU=Groups,DC=corp,DC=com"
             onChange={(e) => set('group_search_base', e.target.value)} />
         </div>
         <div className="threshold-field ldap-full">
-          <label>{t('ldap.groupFilter')}</label>
+          <label><span className="help-label-row">{t('ldap.groupFilter')}<HelpTip helpKey="help.ldap.groupFilter" label={t('ldap.groupFilter')} /></span></label>
           <input type="text" value={form.group_filter || ''} placeholder="(objectclass=group)"
             onChange={(e) => set('group_filter', e.target.value)} />
         </div>
         <label className="ldap-toggle">
           <input type="checkbox" checked={!!form.skip_member_of} onChange={(e) => set('skip_member_of', e.target.checked)} />
           <span>{t('ldap.skipMemberOf')}</span>
-        </label>
+        </label><HelpTip helpKey="help.ldap.skipMemberOf" label={t('ldap.skipMemberOf')} />
         <p className="hint">{t('ldap.skipMemberOfHint')}</p>
       </div>
 
@@ -276,8 +277,8 @@ export default function LdapSettings() {
           <table className="admin-table">
             <thead>
               <tr>
-                <th>{t('ldap.mapGroup')}</th>
-                <th style={{ width: 180 }}>{t('ldap.mapRole')}</th>
+                <th>{t('ldap.mapGroup')}<HelpTip helpKey="help.ldap.mapGroup" label={t('ldap.mapGroup')} /></th>
+                <th style={{ width: 180 }}>{t('ldap.mapRole')}<HelpTip helpKey="help.ldap.mapRole" label={t('ldap.mapRole')} /></th>
                 <th style={{ width: 48 }}></th>
               </tr>
             </thead>
@@ -310,7 +311,7 @@ export default function LdapSettings() {
           <Plus size={14} /> {t('ldap.addMapping')}
         </button>
         <div className="threshold-field" style={{ maxWidth: 260, marginTop: 14 }}>
-          <label>{t('ldap.defaultRole')}</label>
+          <label><span className="help-label-row">{t('ldap.defaultRole')}<HelpTip helpKey="help.ldap.defaultRole" label={t('ldap.defaultRole')} /></span></label>
           <select value={form.default_role || 'ADMIN'} onChange={(e) => set('default_role', e.target.value)}>
             {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
           </select>

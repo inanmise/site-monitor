@@ -643,6 +643,29 @@ export const TR = {
   'userpush.disabledWarn': 'Kanal kapalı — aşağıdaki ayarlar saklanır ama hiçbir gönderim yapılmaz.',
   'userpush.stat24h': 'Son 24 saat',
   'userpush.stat7d': 'Son 7 gün',
+  'userpush.kpiHint': 'Tıkla: bu penceredeki teslimatları listele (kime, ne zaman, ne içerikle)',
+  'userpush.windowActive': 'Pencere: {0}',
+  'userpush.windowClear': 'Zaman penceresini kaldır',
+  'userpush.explainTitle': 'Kim alır? — alıcı çözümü',
+  'userpush.explainDesc': 'Takım ve seviye seçin: her üye için push kararı ve nedeni (grup eşleşmesi, asgari seviye, kişi opt-out, pasif hesap). "Aynı takımdayız ama bana gelmedi" sorusunun cevabı burada.',
+  'userpush.explainPickTeam': '— Takım seçin —',
+  'userpush.explainLevel': 'Seviye',
+  'userpush.explainEmpty': 'Bu takımda aktif üye yok',
+  'userpush.explainMember': 'Üye',
+  'userpush.explainTitleCol': 'Unvan / org rolü',
+  'userpush.explainGroup': 'Eşleşen grup',
+  'userpush.explainDecision': 'Karar',
+  'userpush.explainGroupOff': 'grup kapalı',
+  'userpush.decision.RECIPIENT': 'Alır',
+  'userpush.decision.NO_GROUP': 'Grup eşleşmedi (unvan/rol desenlere uymuyor)',
+  'userpush.decision.GROUP_DISABLED': 'Grubu kapalı',
+  'userpush.decision.BELOW_MIN_LEVEL': 'Seviye grubun asgarisinin altında',
+  'userpush.decision.SKIPPED_USER_OPT_OUT': 'Kişi kapattı (My Activity)',
+  'userpush.decision.SKIPPED_NO_ID': 'Kullanıcı adı yok',
+  'userpush.decision.INACTIVE': 'Pasif hesap',
+  'userpush.decision.ALL_GROUPS_OFF': 'Tüm gruplar kapalı',
+  'userpush.decision.MISSING_MEMBERSHIP': 'Takım üyeliği kaydı YOK (birincil takımı bu, ama üyelik tablosunda satırı yok — veri kusuru)',
+  'usr.pushOptOutTitle': 'Webhook push bildirimlerini kapatmış (My Activity)',
   'userpush.circuitOpen': 'Devre kesici AÇIK — art arda hatalar nedeniyle gönderim geçici durdu',
   'userpush.connTitle': 'Bağlantı',
   'userpush.connDesc': 'Bildirim API\'sinin adresi ve kimlik başlıkları. Sır işaretli başlık değerleri şifreli saklanır ve bir daha düz görünmez.',
@@ -1103,6 +1126,7 @@ export const TR = {
   'general.lbl.site.monitor.system-admin.email':           'Sistem Yöneticisi E-postası',
   'general.lbl.site.monitor.login-issues.enabled':         'Login "Sorun Bildir" özelliği',
   'general.lbl.site.monitor.client-errors.enabled':        'Otomatik çökme bildirimi (ErrorBoundary → kayıt + admin maili)',
+  'general.lbl.site.monitor.deploy.notify.enabled':        'Dağıtım bildirimi (yeni sürüm devreye alınınca sistem yöneticisine e-posta + push)',
   'general.lbl.site.monitor.issue-reports.daily-digest':   'Sorun bildirimlerinde günlük özet maili (tekil mail yerine)',
   'general.lbl.site.monitor.escalation.auto-add-managers': 'Müdürü otomatik eskalasyon kontağı yap (login provizyonunda, D7+ → MANAGER/HIGH)',
   'general.lbl.site.monitor.ui.inactivity-minutes': 'Hareketsizlik oturum kapatma (dakika) — varsayılan 60, en az 1, en çok 1440',
@@ -2451,6 +2475,7 @@ export const TR = {
   'mon.loadError':      'İzleme listesi yüklenemedi',
   'mon.duplicateBadge': 'Kopya',
   'mon.duplicateHint':  'Kaynak izlemenin birebir kopyası. Genelde sadece URL/host alanını değiştirip kaydetmeniz yeterli.',
+  'mon.scrollForMore':  'Devamı için kaydırın',
 
   // ── Sayfa düzeyi toplu kontrol (CheckAllButton / useCheckRun / MonitorCheckRunModal) ──
   // Etikette SAYI var: karttaki tekil düğmenin adı da "Şimdi kontrol et" ve ikisi ayırt
@@ -2623,6 +2648,8 @@ export const TR = {
   'perm.res.alerts.actions':       'Alarmı onaylama, kapatma, yeniden gönderme.',
   'perm.res.system_health.read':   'Sistem sağlığı metriklerini izleme.',
   'perm.res.system_health.actions':'Force Run, kilit serbestleştirme, heartbeat tetikleme.',
+  'perm.res.release_history.read': 'Sürüm & dağıtım geçmişini görüntüleme (Sistem Sağlığı bölümü, CSV).',
+  'perm.res.release_history.edit': 'Dağıtım geçmişine elle kayıt ekleme, denetimden geri doldurma, elle kaydı silme.',
   'perm.res.system_health.terminate':'Kullanıcı oturumunu uzaktan sonlandırma (kick) + token iptali.',
   'perm.res.system_health.scheduler_lock':'Dağıtık zamanlayıcı kilidini zorla serbest bırakma.',
   'perm.res.monitoring.read':      'Port/DNS izleme listesini görüntüleme.',
@@ -2693,6 +2720,17 @@ export const TR = {
   'sql.td.indexes':      'Index\'ler',
   'sql.td.triggers':     'Trigger\'lar',
   'sql.td.none':         'Yok',
+  'sql.td.activity':     'Zaman & Aktivite',
+  'sql.meta.created':    'Oluşturma',
+  'sql.meta.createdApprox': 'ilk görülme (kayıt defteri başlangıcı) — gerçek oluşturma daha eski olabilir',
+  'sql.meta.lastChange': 'Son veri değişimi',
+  'sql.meta.lastChangeHint': 'pg_stat sayaçlarından, dakika hassasiyetinde',
+  'sql.meta.lastDataMax': 'En son kayıt (MAX)',
+  'sql.meta.liveRows':   'Canlı satır (tahmini)',
+  'sql.meta.counters':   'Ekleme / güncelleme / silme',
+  'sql.meta.size':       'Boyut',
+  'sql.meta.lastAnalyze':'Son analyze / vacuum',
+  'sql.meta.unknown':    'bilinmiyor',
   'sql.td.loadError':    'Detaylar yüklenemedi',
   // İlişki (hiyerarşi) diyagramı
   'sql.diag.open':       'İlişki diyagramı',
@@ -2759,6 +2797,11 @@ export const TR = {
   'team.noLeader':        'Lider atanmadı',
   'team.noUsersHint':     'Lider seçmek için önce Kullanıcı Yönetimi\'nden bir kullanıcı ekleyin.',
   'team.leaderOptionalHint': 'Opsiyonel — PO/lider henüz sisteme giriş yapmamış olabilir.',
+  'team.formManager':   'Takım Müdürü',
+  'team.selectManager': '— Otomatik (AD müdür zinciri) —',
+  'team.managerHint':   'Opsiyonel — boş bırakılırsa üyelerin AD müdür zincirinden türetilir; seçim AD bilgisini ezmez, yalnız bu ekranda öncelik alır.',
+  'team.managerManual': '(elle)',
+  'team.managerManualTitle': 'Takım Yönetimi ekranından elle atandı; AD zincirinden türetilmedi.',
   'team.expandMembers':   'Üyeleri göster',
   'team.collapseMembers': 'Üyeleri gizle',
   'team.members':         'Üyeler',
@@ -2788,6 +2831,7 @@ export const TR = {
   'usr.saved':         'Kaydedildi',
   'usr.pwdChanged':    'Şifre güncellendi',
   'usr.colUsername':   'Kullanıcı Adı',
+  'usr.colUser':       'Kullanıcı',
   'usr.colDisplay':    'Ad Soyad',
   'usr.colEmail':      'E-posta',
   'usr.colRole':       'Rol',
@@ -3414,6 +3458,132 @@ export const TR = {
   'health.hbDetailMissed':     'Eksik',
   'health.hbDetailStatus':     'Durum',
   'health.queueTitle':     'Görev Kuyruğu',
+  'version.chipTitle':  'Sürüm bilgisi — yayın ve devreye alma',
+  'version.newDot':     'Yeni sürüm',
+  'version.released':   'Yayın',
+  'version.live':       'Devreye alma',
+  'version.liveNever':  'Bu ortamda dağıtım kaydı yok',
+  'version.commit':     'Commit',
+  'version.uptime':     'Çalışma süresi',
+  'version.helm':       'Helm',
+  'version.mismatch':   'Uyarı: çalışan sürüm ({0}) imaj etiketinden ({1}) farklı',
+  'version.newInThis':  'Bu sürümde yeni',
+  'version.sinceLast':  'Son ziyaretinizden beri {0} sürüm çıktı',
+  'version.whatsNew':   'Yenilikler',
+  'version.deployments':'Dağıtım geçmişi',
+  'version.loadError':  'Sunucu ayrıntıları alınamadı',
+  'version.loading':    'Yükleniyor…',
+  'version.copy':       'Kopyala',
+  'version.copied':     'Kopyalandı',
+  'version.dur.d':      'g',
+  'version.dur.h':      's',
+  'version.dur.m':      'd',
+  'version.justNow':    'az önce',
+  'version.lag':        'yayından {0} sonra',
+  'version.kind.FIRST_SEEN': 'İlk görülme',
+  'version.kind.UPGRADE':    'Yükseltme',
+  'version.kind.RESTART':    'Yeniden başlatma',
+  'version.kind.ROLLBACK':   'Geri alma',
+  'version.kind.CHANGED':    'Değişti',
+  'version.kind.UNKNOWN':    'Sürüm bilinmiyor',
+  'version.bump.major':   'Büyük',
+  'version.bump.minor':   'Küçük',
+  'version.bump.patch':   'Yama',
+  'version.bump.initial': 'İlk',
+  'version.source.STARTUP':  'Açılış',
+  'version.source.BACKFILL': 'Geri doldurma',
+  'version.source.MANUAL':   'Elle',
+  'releases.title':            'Yenilikler',
+  'releases.density.deployed': 'Dağıtılanlar',
+  'releases.density.all':      'Tüm sürümler',
+  'releases.type.all':   'Tümü',
+  'releases.type.feat':  'Yeni özellik',
+  'releases.type.fix':   'Düzeltme',
+  'releases.type.other': 'Diğer',
+  'releases.search':     'Sürüm, kapsam ya da başlıkta ara…',
+  'releases.current':    'ŞU AN',
+  'releases.deployedHere': 'Bu ortamda: {0}',
+  'releases.notDeployed':  'Bu ortama hiç dağıtılmadı',
+  'releases.collapsed':    '+{0} yama',
+  'releases.showPatches':  'Katlanan yamaları göster',
+  'releases.changes.feat':  'Yeni',
+  'releases.changes.fix':   'Düzeltme',
+  'releases.changes.other': 'Diğer',
+  'releases.more':       '+{0} daha',
+  'releases.truncated':  'Liste kısaltıldı ({0} değişiklik gösterilmiyor)',
+  'releases.empty':      'Eşleşen sürüm yok',
+  'releases.noIndex':    'Yayın dizini bu imajda yok (docs/releases/index.json). CI her sürümde üretir; yerel çalıştırmada boş olabilir.',
+  'releases.loadError':  'Yayın listesi alınamadı',
+  'releases.breaking':   'KIRICI',
+  'releases.indexMeta':  'Dizin: {0} sürüm · üretim {1}',
+  'releases.sinceStrip': 'Son ziyaretinizden ({0}) beri yeni sürümler var — şu an {1}',
+  'help.view.guide':     'Kılavuz',
+  'help.view.releases':  'Yenilikler',
+  'deploy.section':      'Sürüm & Dağıtım',
+  'deploy.currentTitle': 'Koşan sürüm',
+  'deploy.previous':     'Önceki sürüm',
+  'deploy.restarts':     'Bu sürümde yeniden başlatma',
+  'deploy.last30':       'Son 30 gün dağıtım',
+  'deploy.restarts7':    'Son 7 gün yeniden başlatma',
+  'deploy.rollbacks':    'Geri alma',
+  'deploy.avgLag':       'Ort. yayın → devreye alma',
+  'deploy.skipped':      'Atlanan sürüm',
+  'deploy.timelineTitle':'Zaman çizelgesi',
+  'deploy.restartsFolded': '{0} yeniden başlatma gizlendi',
+  'deploy.tableTitle':   'Dağıtım kayıtları',
+  'deploy.env':          'Ortam',
+  'deploy.envAll':       'Tüm ortamlar',
+  'deploy.source':       'Kaynak',
+  'deploy.sourceAll':    'Tümü',
+  'deploy.search':       'Sürüm, commit, pod, not…',
+  'deploy.col.started':  'Başlangıç',
+  'deploy.col.version':  'Sürüm',
+  'deploy.col.kind':     'Tür',
+  'deploy.col.commit':   'Commit',
+  'deploy.col.pod':      'Pod / düğüm',
+  'deploy.col.helm':     'Helm',
+  'deploy.col.ended':    'Bitiş',
+  'deploy.col.source':   'Kaynak',
+  'deploy.col.actions':  'İşlem',
+  'deploy.endUnrecorded':'kayıtsız kapanış',
+  'deploy.running':      'çalışıyor',
+  'deploy.csv':          'CSV',
+  'deploy.refresh':      'Yenile',
+  'deploy.empty':        'Kayıt yok',
+  'deploy.emptyHint':    'İlk kayıt bu sürümün açılışıyla oluşur; eski açılışlar için "Denetimden geri doldur".',
+  'deploy.loadError':    'Dağıtım geçmişi alınamadı',
+  'deploy.matrixTitle':  'Sürüm × ortam',
+  'deploy.matrixNever':  'hiç dağıtılmadı',
+  'deploy.matrixShowAll':'Tümünü göster',
+  'deploy.matrixTruncated': 'İlk 200 sürüm',
+  'deploy.manualAdd':    'Elle kayıt ekle',
+  'deploy.backfill':     'Denetimden geri doldur',
+  'deploy.backfillConfirmTitle': 'Denetimden geri doldur',
+  'deploy.backfillConfirm': '{0} açılış denetim kaydı (SCHEMA_PATCH) "{1}" ortamına sürümsüz (Geri doldurma) olarak eklenecek. Var olanlar atlanır. Devam edilsin mi?',
+  'deploy.backfillDone': '{0} kayıt eklendi, {1} zaten vardı',
+  'deploy.backfillNone': 'Geri doldurulacak kayıt yok',
+  'deploy.delete':       'Sil',
+  'deploy.deleteConfirm':'Elle girilen dağıtım kaydı silinsin mi? ({0} · v{1})',
+  'deploy.deleted':      'Kayıt silindi',
+  'deploy.manualTitle':  'Elle dağıtım kaydı',
+  'deploy.manualVersion':'Sürüm',
+  'deploy.manualEnv':    'Ortam',
+  'deploy.manualAt':     'Devreye alma anı',
+  'deploy.manualNote':   'Not (kaynak: değişiklik kaydı / bilet)',
+  'deploy.manualCommit': 'Commit (opsiyonel)',
+  'deploy.manualHint':   'Yalnız uygulamanın kendisinin yazamadığı geçmiş dağıtımlar için. Kayıt "Elle" kaynağıyla işaretlenir ve silinebilir.',
+  'deploy.saved':        'Dağıtım kaydı eklendi',
+  'deploy.save':         'Kaydet',
+  'deploy.cancel':       'İptal',
+  'deploy.mismatch':     'Çalışan sürüm ile imaj etiketi farklı — imaj eski bir VERSION ile derlenmiş olabilir',
+  'deploy.image':        'İmaj',
+  'deploy.pod':          'Pod',
+  'deploy.since':        'Devreye alma',
+  'deploy.uptime':       'Çalışma süresi',
+  'deploy.helm':         'Helm',
+  'deploy.commit':       'Commit',
+  'sys.buildVersion':    'Sürüm',
+  'sys.buildCommit':     'Commit',
   'health.queuePending':   'Kuyrukta Birikmiş',
   'health.queueTooltip':   'Bu sayı yalnızca {0} aktif thread’in tamamı dolduğunda artar. 0 ise pool yetiyor demektir.',
   'health.queueSaturated': 'Havuz doygun: kuyruk kapasitesinin %80’ini aştı — taramalar yavaşlıyor, taşan görevler zamanlayıcı thread’inde koşuyor.',
@@ -5550,6 +5720,557 @@ export const TR = {
   'tier.clickHint':     'Dilime ya da satıra tıkla → filtrele',
   'tier.filterLabel':   'Tier filtresi',
   'tier.centerTotal':   'toplam',
+
+  // ── Ayar yardımı (HelpTip) — her yapılandırma değerinin "ne işe yarar / faydası /
+  //    önerilen değer" metni. ÜÇ satır, \n ile ayrılır; HelpTip pre-line ile çizer.
+  //    `help.set.<katalog anahtarı>` Genel Ayarlar ile özel sayfa arasında PAYLAŞILIR.
+  //    Kapı: src/test/settings-help-coverage.test.js (katalogdaki her anahtar + üç satır).
+  'help.cir.dayOfMonth':
+    'Ne işe yarar: "Ayın belirli günü" kuralında raporun gönderileceği gün numarası.\nFaydası: Rapor her ay aynı takvim gününde gelir; beklenti sabitlenir.\nÖnerilen değer: 1-28 arası bir gün — her ayda var olsun diye 28 ile sınırlıdır. Şubat\'ta atlanmaması için 29-31 kullanılamaz.',
+  'help.cir.dayRule':
+    'Ne işe yarar: Raporun ayın hangi kuralına göre gönderileceğini seçer; seçim aşağıdaki cron ifadesini otomatik kurar.\nFaydası: Cron sözdizimi bilmeden doğru ve geçerli bir zamanlama üretilir.\nÖnerilen değer: "Ayın son belirli günü" (varsayılan) — ay sonu kapanışına denk düşer. "Özel" yalnız elle cron yazmak isteyenler içindir.',
+  'help.cir.time':
+    'Ne işe yarar: Raporun gönderileceği saat (kurum saat dilimi).\nFaydası: Rapor mesai içinde düşer; kimse sabah kutuyu temizlerken kaçırmaz.\nÖnerilen değer: 10:00 (varsayılan) — gün başlangıcı yoğunluğundan sonra. Gece saatleri raporun gözden kaçmasına yol açar.',
+  'help.cir.weekday':
+    'Ne işe yarar: "Ayın son belirli günü" kuralında hangi haftanın gününün kullanılacağı.\nFaydası: Rapor, ekibin gerçekten baktığı bir güne denk getirilebilir.\nÖnerilen değer: Cuma (varsayılan) — ay kapanışından önceki son iş günü. Pazartesi, haftaya raporla başlamak isteyen ekipler için uygundur.',
+  'help.ldap.baseDn':
+    'Ne işe yarar: Kullanıcı aramasının başlayacağı dizin kökü.\nFaydası: Arama yalnız ilgili ağaçta yapılır; sorgu hızlanır ve yanlış eşleşme olasılığı düşer.\nÖnerilen değer: Kullanıcıları kapsayan en dar kök (örn. OU=Users,DC=example,DC=com). Tüm domain kökünü vermek aramayı yavaşlatır.',
+  'help.ldap.bindDn':
+    'Ne işe yarar: Kullanıcı ve grup aramalarının yapılacağı servis hesabının ayırt edici adı (DN).\nFaydası: Arama yetkisi tek bir hesapta toplanır ve denetlenebilir.\nÖnerilen değer: Yalnız okuma yetkisi olan ayrılmış bir servis hesabı (örn. CN=svc-sitemonitor,OU=Service Accounts,DC=example,DC=com). Yönetici hesabı kullanmayın.',
+  'help.ldap.bindPassword':
+    'Ne işe yarar: Servis hesabının parolası; şifrelenmiş saklanır ve geri gösterilmez.\nFaydası: Dizin kimlik bilgisi veritabanında düz metin durmaz.\nÖnerilen değer: Boş bırakırsanız mevcut parola KORUNUR. Parola döndüğünde burayı güncelleyip bağlantıyı test edin.',
+  'help.ldap.caCert':
+    'Ne işe yarar: Dizin sunucusunun sertifikasını doğrulamak için kullanılacak dahili CA paketi (PEM).\nFaydası: Kendi CA\'nızla imzalı bir dizin, doğrulamayı kapatmadan güvenle kullanılır.\nÖnerilen değer: Kök ve varsa ara sertifikaları birlikte yapıştırın. Boş bırakılırsa sistem kök sertifikaları kullanılır; "doğrulamayı atla" açıkken bu alan YOK SAYILIR.',
+  'help.ldap.defaultRole':
+    'Ne işe yarar: Hiçbir grup eşleşmediğinde kullanılması amaçlanan rol.\nFaydası: Eşleme tablosu eksikken de kullanıcının bir rolü olur.\nÖnerilen değer: DİKKAT — bu değer kaydedilir ama GİRİŞTE OKUNMAZ; "ADMIN" seçmek kimseyi yönetici yapmaz. Rol dizin niteliklerinden türetilir.',
+  'help.ldap.displayAttr':
+    'Ne işe yarar: Arayüzde gösterilecek ad soyadın okunacağı dizin niteliği.\nFaydası: Ekranlarda kullanıcı adı yerine tanınabilir bir ad görünür.\nÖnerilen değer: displayName. Dizininizde dolu değilse cn kullanın.',
+  'help.ldap.emailAttr':
+    'Ne işe yarar: Kullanıcının e-posta adresinin okunacağı dizin niteliği.\nFaydası: Alarm ve rapor e-postaları doğru adrese gider; adres elle girilmez.\nÖnerilen değer: mail (varsayılan Active Directory niteliği). Boş kalırsa kullanıcıya hiçbir bildirim e-postası gönderilemez.',
+  'help.ldap.enable':
+    'Ne işe yarar: Kurumsal dizine karşı kimlik doğrulamayı açar; kapalıyken yalnız yerel hesaplar giriş yapar.\nFaydası: Kullanıcılar kendi domain hesaplarıyla girer, ayrı bir parola yönetilmez.\nÖnerilen değer: Bağlantı testi başarılı olduktan SONRA açın. Yerel yönetici hesabı her koşulda çalışmaya devam eder.',
+  'help.ldap.groupFilter':
+    'Ne işe yarar: Grup aramasında uygulanacak LDAP filtresi.\nFaydası: Yalnız gerçek grup nesneleri taranır; arama hafifler.\nÖnerilen değer: (objectclass=group) yeterlidir. Grup arama kökü boşsa bu alan da kullanılmaz.',
+  'help.ldap.groupSearchBase':
+    'Ne işe yarar: Ayrı grup araması yapılacaksa grupların aranacağı dizin kökü.\nFaydası: Kullanıcı kaydında memberOf dolu olmayan dizinlerde grup üyeliği yine de bulunur.\nÖnerilen değer: Grupları kapsayan kök (örn. OU=Groups,DC=example,DC=com). Ayrı grup aramasına ihtiyacınız yoksa boş bırakın.',
+  'help.ldap.host':
+    'Ne işe yarar: Bağlanılacak dizin (LDAP/Active Directory) sunucusunun adı.\nFaydası: Doğru sunucu, girişlerin ilk denemede doğrulanmasını sağlar.\nÖnerilen değer: Tek bir sunucu yerine domain adı ya da yük dengeleyici (örn. ldap.example.com) — böylece tek bir denetleyici kapandığında giriş durmaz.',
+  'help.ldap.mapGroup':
+    'Ne işe yarar: Bir role eşlenecek dizin grubunun tam DN\'i ya da CN parçası (büyük/küçük harf duyarsız).\nFaydası: Yetki, kişi kişi verilmek yerine dizin grubundan türetilir.\nÖnerilen değer: Ayırt edici bir CN parçası yeterlidir. DİKKAT: bu bölüm şu anda giriş yolunda OKUNMUYOR — rol dizin niteliklerinden türetiliyor.',
+  'help.ldap.mapRole':
+    'Ne işe yarar: Eşleşen grup üyelerine verilecek uygulama rolü.\nFaydası: Bir kişi işten ayrıldığında dizin grubundan çıkarılması yeterli olur.\nÖnerilen değer: En dar yeterli rolü seçin. DİKKAT: bu eşleme şu anda girişte uygulanmıyor, yalnız kaydedilir.',
+  'help.ldap.port':
+    'Ne işe yarar: Dizin sunucusuna bağlanılacak TCP portu.\nFaydası: Port, şifreleme yöntemini belirler; yanlış port sessiz zaman aşımı üretir.\nÖnerilen değer: LDAPS için 636, düz/StartTLS için 389. Active Directory Global Catalog kullanıyorsanız 3269 (TLS) ya da 3268.',
+  'help.ldap.skipCert':
+    'Ne işe yarar: TLS sertifika zincirinin ve sunucu adının doğrulanmasını tamamen kapatır.\nFaydası: Yalnız geliştirme kurulumunda, sertifika hazır değilken bağlantıyı denemenizi sağlar.\nÖnerilen değer: Kapalı. Açıkken servis hesabı ve TÜM kullanıcı parolaları doğrulanmamış TLS üzerinden geçer; önce "CA ile doğrulayarak test et" düğmesini deneyin.',
+  'help.ldap.skipMemberOf':
+    'Ne işe yarar: Kullanıcı aramasında memberOf niteliğinin istenmesini atlar (Active Directory MaxValRange / 1 MB sınırı için geçici çözüm).\nFaydası: Çok fazla iç içe grup üyeliği olan kullanıcılar dizin sınırına takılıp giriş yapamaz hâle gelmez.\nÖnerilen değer: Kapalı; yalnız bu limite takılan girişler görüyorsanız açın. Açtığınızda grup arama kökü ve filtresi ZORUNLUDUR, yoksa rol bilgisi hiç gelmez.',
+  'help.ldap.startTls':
+    'Ne işe yarar: 389 portunda başlayan düz bağlantıyı StartTLS ile şifreliye yükseltir.\nFaydası: LDAPS sunmayan eski dizinlerde de trafik şifrelenir.\nÖnerilen değer: LDAPS kapalıysa açın. İkisini birden açmayın — LDAPS zaten şifreli bir kanaldır.',
+  'help.ldap.useLdaps':
+    'Ne işe yarar: Bağlantıyı doğrudan TLS ile kurar (LDAPS, genelde 636).\nFaydası: Servis hesabı ve kullanıcı parolaları baştan şifreli kanaldan geçer.\nÖnerilen değer: Açık — dizin trafiği kimlik bilgisi taşır. Yalnız sunucu LDAPS sunmuyorsa StartTLS\'e geçin.',
+  'help.ldap.userAttr':
+    'Ne işe yarar: Kullanıcının giriş ekranına yazdığı değerin dizindeki karşılığı olan nitelik.\nFaydası: İnsanlar zaten bildikleri kimlikle giriş yapar; ayrı bir kullanıcı adı öğrenmezler.\nÖnerilen değer: Active Directory\'de sAMAccountName. E-posta ile giriş isteniyorsa userPrincipalName.',
+  'help.ldap.userFilter':
+    'Ne işe yarar: Kullanıcı ararken uygulanacak LDAP filtresi; {{username}} çalışma anında girilen adla değiştirilir.\nFaydası: Yalnız uygun nesneler (örn. etkin kişi hesapları) eşleşir, servis hesapları ve kişiler karışmaz.\nÖnerilen değer: (objectclass=person) yeterlidir. İçinde {{username}} yoksa yapılandırılan nitelikle otomatik birleştirilir.',
+  'help.secret.key':
+    'Ne işe yarar: Kayıtlı şifreli alanları (SMTP/LDAP parolaları) çözmeyi denemek için kullanılan ADAY anahtar; hiçbir yere kaydedilmez.\nFaydası: "Parola neden çalışmıyor" sorusu, doğru anahtarın yüklü olup olmadığı doğrulanarak yanıtlanır.\nÖnerilen değer: Ortamınızdaki SITE_MONITOR_SECRET_KEY değeri. Her çözümleme denetim kaydına yazılır; anahtar hiçbir yere loglanmaz.',
+  'help.set.logging.level.com.sitemonitor':
+    'Ne işe yarar: Uygulama loglarının ayrıntı seviyesini canlı değiştirir (TRACE en ayrıntılı, ERROR en sessiz).\nFaydası: Bir arızayı incelerken yeniden dağıtım yapmadan ayrıntı açılır, iş bitince geri kapatılır.\nÖnerilen değer: Üretimde INFO; arıza incelerken geçici olarak DEBUG. TRACE disk ve CPU yer, açık unutmayın.',
+  'help.set.logging.level.com.sitemonitor.mail':
+    'Ne işe yarar: Yalnız e-posta gönderim logger\'ının seviyesi — uygulamanın geri kalanını sessiz bırakır.\nFaydası: "Mail gitmiyor" şikâyetinde tüm sistemi TRACE\'e boğmadan SMTP diyaloğu görülür.\nÖnerilen değer: Boş (uygulama seviyesini miras alır). Sorun incelerken geçici olarak TRACE, sonra tekrar boşaltın — TRACE mail başlıklarını ve içeriğini loglar.',
+  'help.set.site.monitor.activity.retention-days':
+    'Ne işe yarar: Birleşik aktivite akışı (Kayıtlar → Aktivite) kayıtlarının saklama süresi.\nFaydası: "Kim ne zaman ne yaptı" sorusu geriye dönük yanıtlanır; en hızlı büyüyen seri yine de sınırlıdır.\nÖnerilen değer: 365 gün (varsayılan, kişisel veri pencereleriyle eşitlenmiştir). Her kontrol bir satır eklediği için büyümeyi Veri Saklama ekranından izleyin; taban 1 gün.',
+  'help.set.site.monitor.alert.retention-days':
+    'Ne işe yarar: Alarm geçmişi kayıtlarının saklama süresi.\nFaydası: Yinelenen arızalar ve alarm gürültüsü geriye dönük analiz edilebilir.\nÖnerilen değer: 365 gün (varsayılan) — yıllık karşılaştırma için en az bir yıl tutun.',
+  'help.set.site.monitor.app.base-url':
+    'Ne işe yarar: E-posta ve push bildirimlerindeki bağlantıların başına konan genel adres; uygulama bunu canlı okur.\nFaydası: Alarm mailindeki bağlantı doğrudan ilgili ekrana gider, alıcı adresi elle düzeltmez.\nÖnerilen değer: Kullanıcıların tarayıcıya yazdığı tam adres (örn. https://sitemonitor.example.com). Varsayılan http://localhost:5173 üretimde çalışmaz.',
+  'help.set.site.monitor.audit.retention-days':
+    'Ne işe yarar: Denetim (audit) kayıtlarının saklama süresi; silmeden önce JSONL arşiv üretilir.\nFaydası: Uyum gereği geçmiş korunur, tablo ise sınırsız büyümez.\nÖnerilen değer: 365 gün (varsayılan). Kurumsal denetim politikanız daha uzunsa onunla hizalayın; taban 1 gün.',
+  'help.set.site.monitor.branding.app-name':
+    'Ne işe yarar: Uygulamanın arayüzde ve e-postalarda görünen adı.\nFaydası: Ürün kurumunuzun kendi aracı gibi görünür; kullanıcılar yabancı bir ada bakmaz.\nÖnerilen değer: Kurum içinde kullandığınız kısa ad. Boş bırakılırsa varsayılan SiteMonitor kimliği kullanılır.',
+  'help.set.site.monitor.branding.banner-enabled':
+    'Ne işe yarar: Uygulamanın üstünde tüm kullanıcılara gösterilen duyuru şeridini açar.\nFaydası: Bakım penceresi ya da kesinti duyurusu, kimseye e-posta göndermeden herkese ulaşır.\nÖnerilen değer: Normalde false (varsayılan); yalnız duyurulacak bir şey varken açın ve sonra kapatın.',
+  'help.set.site.monitor.branding.banner-link':
+    'Ne işe yarar: Duyuru şeridindeki bağlantının adresi (ayrıntı sayfası, değişiklik kaydı, bilet).\nFaydası: Kullanıcı uzun açıklamayı şeride sığdırmadan ayrıntıya ulaşır.\nÖnerilen değer: Tam https adresi. Boş bırakılırsa şerit yalnız metin gösterir.',
+  'help.set.site.monitor.branding.banner-link-label':
+    'Ne işe yarar: Duyuru şeridindeki bağlantının görünen metni.\nFaydası: "Ayrıntılar" gibi net bir çağrı, çıplak adresten daha okunaklıdır.\nÖnerilen değer: İki-üç kelimelik eylem ifadesi. Boş bırakılırsa adresin kendisi gösterilir.',
+  'help.set.site.monitor.branding.banner-text':
+    'Ne işe yarar: Duyuru şeridinde gösterilen metin.\nFaydası: Kısa ve net bir duyuru, destek hattına gelen soruların önünü keser.\nÖnerilen değer: Tek cümle; tarihi ve saati açıkça yazın. Metin değişince şerit kapatmış kullanıcılara yeniden gösterilir.',
+  'help.set.site.monitor.branding.banner-tone':
+    'Ne işe yarar: Duyuru şeridinin görsel tonu: INFO (bilgi), WARNING (uyarı) ya da CRITICAL (kritik).\nFaydası: Aciliyet renkten anlaşılır; her duyuru aynı ağırlıkta görünmez.\nÖnerilen değer: Planlı duyurularda INFO (varsayılan), yaklaşan bakımda WARNING, süren kesintide CRITICAL. CRITICAL\'i sürekli açık bırakmak etkisini yitirir.',
+  'help.set.site.monitor.branding.banner-version':
+    'Ne işe yarar: Şerit metni her değiştiğinde otomatik artan sürüm sayacı; kapatmış kullanıcılara şeridin yeniden gösterilmesini sağlar.\nFaydası: Yeni bir duyuru, eskisini kapatmış kullanıcılara da ulaşır.\nÖnerilen değer: Elle değiştirmeyin — sistem yönetir ve arayüzde gizlidir.',
+  'help.set.site.monitor.branding.footer-text':
+    'Ne işe yarar: Giriş ekranının altında görünen küçük bilgi satırı.\nFaydası: Yasal not, sahiplik ya da destek iletişimi kalıcı biçimde görünür.\nÖnerilen değer: Tek satır (örn. sahip ekip ve destek adresi). Boş bırakılırsa alt bilgi çizilmez.',
+  'help.set.site.monitor.branding.login-subtitle':
+    'Ne işe yarar: Giriş ekranında başlığın altındaki açıklama satırı.\nFaydası: Kimlerin giriş yapabileceği ya da destek yolu burada söylenebilir.\nÖnerilen değer: Tek cümle. Boş bırakılırsa alt satır hiç çizilmez.',
+  'help.set.site.monitor.branding.login-title':
+    'Ne işe yarar: Giriş ekranının ana başlığı.\nFaydası: Kullanıcı doğru sisteme giriş yaptığını ilk bakışta anlar.\nÖnerilen değer: Tek satırlık bir karşılama (örn. "Site İzleme Portalı"). Boş bırakılırsa yerleşik metin kullanılır.',
+  'help.set.site.monitor.branding.logo-data':
+    'Ne işe yarar: Giriş ekranında ve arayüzde gösterilen logo (yüklenen dosya gömülü olarak saklanır).\nFaydası: Marka kimliği metin adından daha güçlü biçimde görünür.\nÖnerilen değer: PNG, JPEG ya da SVG; yüklemeden önce 256 piksele küçültülür ve 200 KB\'ı aşamaz. Boş bırakılırsa logo yerine uygulama adı yazılır.',
+  'help.set.site.monitor.branding.primary-color':
+    'Ne işe yarar: Arayüzün vurgu rengi — düğmeler, bağlantılar ve seçili durumlar bunu kullanır.\nFaydası: Uygulama kurumsal kimliğe uyar, yabancı bir araç gibi durmaz.\nÖnerilen değer: Kurumsal renginizin altı haneli hex kodu (örn. #1d4ed8). Koyu temada da okunabilirliği kontrol edin; boş bırakılırsa varsayılan mavi kullanılır.',
+  'help.set.site.monitor.branding.signin-label':
+    'Ne işe yarar: Giriş düğmesinin üzerindeki metin.\nFaydası: Kurumunuzun alışık olduğu ifade kullanılır (örn. "Oturum Aç").\nÖnerilen değer: Bir ya da iki kelime. Boş bırakılırsa varsayılan etiket kullanılır.',
+  'help.set.site.monitor.branding.tab-title':
+    'Ne işe yarar: Tarayıcı sekmesinde ve yer imlerinde görünen başlık.\nFaydası: Onlarca açık sekme arasında uygulama tek bakışta bulunur.\nÖnerilen değer: Kısa tutun (2-3 kelime); uzun başlıklar sekmede kesilir. Boş bırakılırsa uygulama adı kullanılır.',
+  'help.set.site.monitor.branding.username-label':
+    'Ne işe yarar: Kullanıcı adı alanının etiketi.\nFaydası: Dizininizde ne deniyorsa o yazılır (sicil, kullanıcı adı, e-posta) ve yanlış veri girilmez.\nÖnerilen değer: Kullanıcıların bildiği ad. Boş bırakılırsa varsayılan etiket kullanılır.',
+  'help.set.site.monitor.cert-inventory-report.cc':
+    'Ne işe yarar: Aylık envanter raporunun bilgi (CC) alıcıları.\nFaydası: Yönetim ya da uyum tarafı, ana sorumluluğu üstlenmeden kopyayı görür.\nÖnerilen değer: Boş (varsayılan) ya da tek bir yönetim listesi. CC\'yi kalabalıklaştırmak raporun ciddiyetini azaltır.',
+  'help.set.site.monitor.cert-inventory-report.cron':
+    'Ne işe yarar: Aylık envanter raporunun zamanlaması (Spring cron ifadesi); değişiklik yeniden başlatma olmadan uygulanır.\nFaydası: Rapor kurumun raporlama takvimine göre kaydırılabilir; sonraki çalışma zamanı ekranda görünür.\nÖnerilen değer: 0 0 10 * * FRIL (varsayılan) — ayın son cuması 10:00. Zamanlamayı yukarıdaki gün/saat seçicilerinden kurmak elle cron yazmaktan güvenlidir.',
+  'help.set.site.monitor.cert-inventory-report.enabled':
+    'Ne işe yarar: Aylık sertifika envanteri raporunun zamanlanmış gönderimini açar/kapatır.\nFaydası: Envanterin tam listesi düzenli aralıklarla ilgili kişilerin önüne gelir.\nÖnerilen değer: true (varsayılan). Kapalıyken "Şimdi çalıştır" düğmesi hâlâ elle rapor üretebilir.',
+  'help.set.site.monitor.cert-inventory-report.recipients':
+    'Ne işe yarar: Aylık envanter raporunun ana alıcıları (virgülle) — envanterden türeyen sahip adreslerine EK olarak.\nFaydası: Sahiplik verisi eksik olsa bile rapor sabit bir adrese ulaşır.\nÖnerilen değer: Kişisel kutu değil, PKI/güvenlik dağıtım listesi (örn. pki@example.com). Boş bırakılır ve sahip adresi de yoksa rapor gönderilmez.',
+  'help.set.site.monitor.cert-inventory-report.retention-days':
+    'Ne işe yarar: Üretilmiş aylık sertifika envanteri raporlarının saklama süresi.\nFaydası: Envanterin geçmiş fotoğrafları uyum denetimlerinde kanıt olarak kullanılır.\nÖnerilen değer: 730 gün (varsayılan). Denetim döngünüz daha uzunsa onunla hizalayın.',
+  'help.set.site.monitor.cert-note-revision.retention-days':
+    'Ne işe yarar: Sertifika notlarının sürüm geçmişinin saklama süresi.\nFaydası: Bir notun ne zaman, kim tarafından değiştirildiği geriye dönük görülebilir.\nÖnerilen değer: 730 gün (varsayılan). Hacmi düşük bir tablodur, kısaltmanın kazancı azdır.',
+  'help.set.site.monitor.client-errors.enabled':
+    'Ne işe yarar: Arayüzde bir ekran çökerse (ErrorBoundary) hatayı kaydeder ve yöneticiye e-posta atar.\nFaydası: Kullanıcının bildirmediği beyaz ekranlar görünür olur; yığın izi kaybolmaz.\nÖnerilen değer: true (varsayılan). Kapatmak hataları yok etmez, yalnız görünmez kılar.',
+  'help.set.site.monitor.cors.allowed-origins':
+    'Ne işe yarar: Tarayıcıdan kimlikli istek atmasına izin verilen origin listesi (virgülle ayrılır).\nFaydası: Yalnız kendi arayüzünüz API\'ye erişir; yabancı bir sayfanın oturumunuzu kullanması engellenir.\nÖnerilen değer: Yalnız gerçek arayüz adresi (örn. https://sitemonitor.example.com). Asla * yazmayın; geliştirme varsayılanı http://localhost:5173 üretimde kaldırılmalı.',
+  'help.set.site.monitor.db.growth-warn-rows':
+    'Ne işe yarar: Bir tablo bu satır sayısını aşarsa sistem sağlığında büyüme uyarısı üretilir.\nFaydası: Saklama ayarı yanlış olan bir tablo, disk dolmadan önce fark edilir.\nÖnerilen değer: 20.000.000 (varsayılan). Küçük bir veritabanında 5.000.000 daha erken uyarır.',
+  'help.set.site.monitor.deploy.notify.enabled':
+    'Ne işe yarar: Yeni bir sürüm devreye alındığında sistem yöneticisine e-posta ve push bildirimi gönderir.\nFaydası: Dağıtım sessiz geçmez; sürüm sonrası bir arıza görülürse zaman çizgisi elde hazırdır.\nÖnerilen değer: Haftada birkaç dağıtım yapan ekiplerde true; günde çok kez dağıtım yapılıyorsa false (varsayılan).',
+  'help.set.site.monitor.diagnostics.retention-days':
+    'Ne işe yarar: Tanılama (diagnostics) çalıştırma kayıtlarının saklama süresi.\nFaydası: Geçmiş bir arıza incelemesinin çıktısı kaybolmaz.\nÖnerilen değer: 365 gün (varsayılan). Kayıtlar hedef adresleri içerebilir; ihtiyacınızdan uzun tutmayın.',
+  'help.set.site.monitor.dns.alert-enabled':
+    'Ne işe yarar: DNS alarmlarının gönderilip gönderilmeyeceğini belirler; kontroller her hâlükârda koşar ve kaydedilir.\nFaydası: Kayıt değişikliği ya da çözümleme hatası, kullanıcı şikâyetinden önce görülür.\nÖnerilen değer: true (varsayılan). Yalnız planlı bir gürültü kesme döneminde geçici olarak kapatın.',
+  'help.set.site.monitor.dns.default-interval-seconds':
+    'Ne işe yarar: Yeni bir DNS monitörü oluşturulurken forma gelen varsayılan kontrol aralığı (saniye); mevcut monitörler değişmez.\nFaydası: Herkes aynı sıklıkla başlar, tek tek ayar yapılmaz ve yük öngörülebilir kalır.\nÖnerilen değer: 300 saniye (varsayılan). Yayılma (propagation) izliyorsanız geçici olarak 60\'a indirin.',
+  'help.set.site.monitor.dns.query-timeout-ms':
+    'Ne işe yarar: Tek bir DNS sorgusunun yanıt bekleme süresi; aşılırsa sorgu başarısız sayılır.\nFaydası: Yanıtsız bir çözümleyici kontrol turunu geciktirmez.\nÖnerilen değer: 2000 ms (varsayılan) — yavaşlık eşiğinin üstünde olmalı, aksi hâlde yavaş yanıtlar hiç ölçülemez.',
+  'help.set.site.monitor.dns.resolvers':
+    'Ne işe yarar: DNS kontrollerinde sorgulanacak çözümleyici sunucuların listesi (virgülle).\nFaydası: Birden çok çözümleyici, tek bir sunucunun bayat önbelleğini yayılma sorunu sanmayı önler.\nÖnerilen değer: En az iki bağımsız çözümleyici (varsayılan 8.8.8.8,1.1.1.1,9.9.9.9). İç bölgeleri izliyorsanız kurum çözümleyicinizi de ekleyin.',
+  'help.set.site.monitor.dns.slow-confirm-attempts':
+    'Ne işe yarar: Yavaş DNS alarmı açılmadan önce kaç kez üst üste teyit edileceği.\nFaydası: Tek seferlik bir ağ dalgalanması alarm üretmez.\nÖnerilen değer: 3 (varsayılan). 1 yapmak gürültüyü ciddi biçimde artırır; 5\'in üstü alarmı geciktirir.',
+  'help.set.site.monitor.dns.slow-confirm-interval-ms':
+    'Ne işe yarar: Yavaş DNS teyit denemeleri arasındaki bekleme süresi.\nFaydası: Teyitler zamana yayılır, geçici bir sıkışıklık yanlışlıkla kalıcı sanılmaz.\nÖnerilen değer: 60000 ms (1 dakika, varsayılan). Kısaltmak teyidi anlamsızlaştırır; uzatmak alarmı geciktirir.',
+  'help.set.site.monitor.dns.slow-threshold-ms':
+    'Ne işe yarar: DNS çözümlemesi bu süreyi aşarsa "yavaş DNS" alarmı adayı olur.\nFaydası: Çözümleyici sorunları tam kesintiye dönüşmeden görülür.\nÖnerilen değer: 1500 ms (varsayılan). Coğrafi olarak uzak çözümleyicilerde 2500; 500\'ün altı sürekli yanlış alarm üretir.',
+  'help.set.site.monitor.domain.alert-enabled':
+    'Ne işe yarar: Alan adı (domain) süre bitişi alarmlarının gönderilip gönderilmeyeceğini belirler; kontroller her hâlükârda koşar ve kaydedilir.\nFaydası: Unutulan bir alan adı yenilemesi, alan düşmeden haftalar önce gündeme gelir.\nÖnerilen değer: true (varsayılan). Yalnız planlı bir gürültü kesme döneminde geçici olarak kapatın.',
+  'help.set.site.monitor.domain.critical-check-enabled':
+    'Ne işe yarar: Bitişine az kalan alan adları için günde İKİNCİ bir kontrol turu çalıştırır.\nFaydası: Son günlerde yapılan bir yenileme aynı gün görülür; gereksiz alarm tekrarı kesilir.\nÖnerilen değer: true (varsayılan). Yalnız dış sorgu bütçesi çok darsa kapatın.',
+  'help.set.site.monitor.domain.critical-check-threshold-days':
+    'Ne işe yarar: İkinci günlük kontrolün hangi kalan gün sayısının altında devreye gireceği.\nFaydası: Ek sorgular yalnız gerçekten acil alan adlarına harcanır.\nÖnerilen değer: 7 gün (varsayılan). 30\'a çıkarmak sorgu sayısını belirgin biçimde artırır.',
+  'help.set.site.monitor.domain.default-critical-days':
+    'Ne işe yarar: Yeni alan adı monitörlerinde önerilen KRİTİK eşik (kalan gün).\nFaydası: Son düzlükte alarm seviyesi yükselir ve konu kaybolmaz.\nÖnerilen değer: 7 gün (varsayılan). Uyarı eşiğinden küçük olmalı; yavaş onay süreçleri varsa 14.',
+  'help.set.site.monitor.domain.default-interval-seconds':
+    'Ne işe yarar: Yeni bir alan adı monitörü oluşturulurken forma gelen varsayılan kontrol aralığı (saniye); mevcut monitörler değişmez.\nFaydası: Herkes aynı sıklıkla başlar, tek tek ayar yapılmaz ve yük öngörülebilir kalır.\nÖnerilen değer: 86400 saniye (varsayılan). Bitiş tarihi günde bir kez değişir; daha sık sorgu kayıt sunucularına gereksiz yük bindirir.',
+  'help.set.site.monitor.domain.default-thresholds':
+    'Ne işe yarar: Alan adı bitiş hatırlatmalarının gönderileceği gün basamakları (virgülle).\nFaydası: Tek bir mail yerine giderek sıklaşan hatırlatmalar gelir; yenileme unutulmaz.\nÖnerilen değer: 60,30,14,7,3,1 (varsayılan). Basamak eklemek mail hacmini artırır — beşten fazlasına gerek yoktur.',
+  'help.set.site.monitor.domain.default-warning-days':
+    'Ne işe yarar: Yeni bir alan adı monitörü oluşturulurken önerilen UYARI eşiği (kalan gün).\nFaydası: Her monitör aynı hatırlatma disiplinini elle ayar yapılmadan devralır.\nÖnerilen değer: 30 gün (varsayılan) — çoğu kayıt kuruluşunun yenileme penceresine denk düşer.',
+  'help.set.site.monitor.domain.dnsbl-budget-ms':
+    'Ne işe yarar: Tüm kara liste sorguları için toplam süre bütçesi; dolunca kalan sorgular atlanır.\nFaydası: Yanıt vermeyen bir DNSBL bölgesi alan adı kontrolünü kilitlemez.\nÖnerilen değer: 8000 ms (varsayılan); taban 1000 ms. Liste sayısını artırdıysanız bütçeyi de artırın.',
+  'help.set.site.monitor.domain.dnsbl-lists':
+    'Ne işe yarar: Alan adının IP\'lerinin sorgulanacağı kara liste (DNSBL) bölgeleri (virgülle).\nFaydası: Sunucunuz bir kara listeye düştüğünde e-postalarınız reddedilmeden önce haberdar olursunuz.\nÖnerilen değer: Varsayılan üçlü (zen.spamhaus.org, bl.spamcop.net, dbl.spamhaus.org) çoğu kurulum için yeterli. Her ek liste her kontrolde ek DNS sorgusu demektir.',
+  'help.set.site.monitor.domain.dnsbl-max-ips':
+    'Ne işe yarar: Bir alan adı için kara listede sorgulanacak en fazla IP sayısı.\nFaydası: Onlarca A kaydı olan bir alan adı sorgu patlaması üretmez.\nÖnerilen değer: 5 (varsayılan); taban 1. CDN arkasındaki alan adlarında artırmanın faydası yoktur.',
+  'help.set.site.monitor.domain.isimtescil-whois-url':
+    'Ne işe yarar: .tr sorgularında kullanılan İsimtescil web-WHOIS uç noktası.\nFaydası: Sağlayıcı adresini değiştirdiğinde yeni dağıtım beklemeden düzeltilebilir.\nÖnerilen değer: Varsayılanı bırakın; yalnız sağlayıcı adresi değiştiyse güncelleyin.',
+  'help.set.site.monitor.domain.rdap-bootstrap-url':
+    'Ne işe yarar: Bir uzantının (TLD) yetkili RDAP sunucusunu bulmak için okunan IANA bootstrap dosyasının adresi.\nFaydası: Her uzantı için doğru kayıt sunucusuna gidilir; genel yedek adrese düşülmez.\nÖnerilen değer: https://data.iana.org/rdap/dns.json (varsayılan) ya da kurum içi aynası. Erişilemezse yedek RDAP adresi devreye girer.',
+  'help.set.site.monitor.domain.rdap-fallback-url':
+    'Ne işe yarar: Bootstrap ile yetkili sunucu bulunamazsa kullanılan genel RDAP adresi.\nFaydası: Yeni ya da alışılmadık uzantılarda bitiş tarihi yine de okunabilir.\nÖnerilen değer: https://rdap.org/domain/ (varsayılan). Boş bırakmak, bootstrap başarısız olduğunda sorguyu tamamen düşürür.',
+  'help.set.site.monitor.domain.rdap-timeout-ms':
+    'Ne işe yarar: Tek bir RDAP isteğinin yanıt bekleme süresi.\nFaydası: Yavaş bir kayıt sunucusu günlük tazeleme turunu uzatmaz.\nÖnerilen değer: 6000 ms (varsayılan). Proxy arkasında 8000-10000; 2000\'in altına inmeyin.',
+  'help.set.site.monitor.domain.tr-web-whois-enabled':
+    'Ne işe yarar: .tr alan adlarının bitiş tarihini HTTPS üzerinden web-WHOIS ile okur (port 43 kapalıyken tek yol).\nFaydası: .tr alan adları için de süre bitişi izlenebilir; sorgu proxy üzerinden geçer.\nÖnerilen değer: .tr alan adı izleyen kurulumda true (varsayılan), aksi hâlde false.',
+  'help.set.site.monitor.domain.tr-web-whois-providers':
+    'Ne işe yarar: .tr web-WHOIS sağlayıcılarının denenme sırası (virgülle).\nFaydası: Bir sağlayıcı yanıt vermezse sıradaki denenir; tek kaynağa bağımlılık kalkar.\nÖnerilen değer: isimtescil,trabis,trabis43 (varsayılan). Sırayı yalnız bir sağlayıcı sürekli hata veriyorsa değiştirin.',
+  'help.set.site.monitor.domain.trabis-whois-url':
+    'Ne işe yarar: .tr sorgularında kullanılan TRABİS web-WHOIS uç noktası.\nFaydası: Resmî kaynak yedek olarak elde kalır; sağlayıcı adresi canlı düzeltilebilir.\nÖnerilen değer: Varsayılanı bırakın; yalnız resmî adres değiştiyse güncelleyin.',
+  'help.set.site.monitor.domain.trabis-whois43-host':
+    'Ne işe yarar: TRABİS\'in klasik port 43 WHOIS sunucusunun adı — web sağlayıcılar başarısız olursa son çare.\nFaydası: Web arayüzleri değişse bile .tr bitiş tarihi için bir yol daha kalır.\nÖnerilen değer: whois.trabis.gov.tr (varsayılan). 43/tcp kapalıysa bu sağlayıcıyı listeden çıkarın.',
+  'help.set.site.monitor.domain.whois-enabled':
+    'Ne işe yarar: RDAP sonuç vermezse klasik port 43 WHOIS sorgusunun denenmesini açar.\nFaydası: RDAP desteklemeyen uzantılarda bitiş tarihi yine de bulunur.\nÖnerilen değer: true (varsayılan). Güvenlik duvarınız 43/tcp çıkışını kapatıyorsa false yapın — açık bırakmak yalnız zaman aşımı üretir.',
+  'help.set.site.monitor.domain.whois-servers':
+    'Ne işe yarar: Uzantı başına WHOIS sunucusu eşlemesi; boş bırakılırsa sunucu IANA verisinden bulunur.\nFaydası: Yanlış ya da yavaş bir kayıt sunucusu elle doğru adresle değiştirilebilir.\nÖnerilen değer: Boş (varsayılan) bırakın; yalnız belirli bir uzantıda sonuç alınamıyorsa tld=sunucu biçiminde satır ekleyin.',
+  'help.set.site.monitor.domain.whois-timeout-ms':
+    'Ne işe yarar: Tek bir WHOIS (port 43) sorgusunun yanıt bekleme süresi.\nFaydası: Yanıt vermeyen bir kayıt sunucusu gece işini kilitlemez.\nÖnerilen değer: 6000 ms (varsayılan). Yavaş kayıt sunucularında 10000; 2000\'in altı meşru yanıtları da keser.',
+  'help.set.site.monitor.escalation.auto-add-managers':
+    'Ne işe yarar: Dizinden giriş yapan kullanıcının müdürünü otomatik olarak MANAGER eskalasyon kontağı yapar.\nFaydası: Eskalasyon listesi elle beslenmeden dolar; kimse çözülmeyen bir alarmı görmeden kalmaz.\nÖnerilen değer: false (varsayılan) — açmadan önce müdür verisinin doğru olduğunu doğrulayın; açılınca mevcut kayıtlar silinmez, üzerine eklenir.',
+  'help.set.site.monitor.executor.core-size':
+    'Ne işe yarar: Kontrol görevlerini çalıştıran havuzun sürekli açık tuttuğu thread sayısı; değişiklik yeniden başlatma olmadan uygulanır.\nFaydası: Sabit bir taban kapasite, sweep başlangıcındaki thread açma gecikmesini ortadan kaldırır.\nÖnerilen değer: 20 (varsayılan). Azami sayıyı AŞAMAZ; tek pod kurulumda 10-30 arası kalın, CPU tavanını zorlamayın.',
+  'help.set.site.monitor.executor.max-size':
+    'Ne işe yarar: Kuyruk dolduğunda havuzun çıkabileceği en yüksek thread sayısı.\nFaydası: Yoğun sweep\'lerde kontroller sıraya girip gecikmez; tavan yine de CPU\'yu korur.\nÖnerilen değer: 50 (varsayılan). Çekirdek sayısından küçük OLAMAZ; tek pod\'da 100\'ün üstü bellek ve CPU\'yu riske atar.',
+  'help.set.site.monitor.executor.queue-capacity':
+    'Ne işe yarar: Thread bulunamayınca bekleyebilecek görev sayısı; dolunca yeni görevler reddedilir.\nFaydası: Ani yük dalgası kaybolmadan soğurulur, uygulama bellek taşmasıyla çökmez.\nÖnerilen değer: 5000 (varsayılan). En az 1 olmalı; monitör sayısının birkaç katı yeterlidir.',
+  'help.set.site.monitor.expiry.alert-enabled':
+    'Ne işe yarar: Sertifika/alan adı süre bitişi alarmlarının gönderilip gönderilmeyeceğini belirler; kontroller her hâlükârda koşar ve kaydedilir.\nFaydası: Süre bitişleri eşik günlerinde hatırlatılır; kimse takvimde iz sürmek zorunda kalmaz.\nÖnerilen değer: true (varsayılan). Yalnız planlı bir gürültü kesme döneminde geçici olarak kapatın.',
+  'help.set.site.monitor.failed-login.alert-recipients':
+    'Ne işe yarar: Anomali uyarılarının gideceği ek e-posta adresleri (virgülle) — sistem yöneticisi adresine EK olarak.\nFaydası: Güvenlik ekibi, sistem yöneticisi kutusuna bağlı kalmadan doğrudan haberdar olur.\nÖnerilen değer: Güvenlik operasyon listesi (örn. soc@example.com). Boş bırakılırsa yalnız sistem yöneticisi adresi kullanılır.',
+  'help.set.site.monitor.failed-login.baseline-hours':
+    'Ne işe yarar: Göreli kuralın "normal"i hesapladığı geçmiş pencere (saat).\nFaydası: Temel çizgi kurumunuzun gerçek ritmini yansıtır, keyfî bir sayıya dayanmaz.\nÖnerilen değer: 24 saat (varsayılan) — günlük döngüyü kapsar. 168 (bir hafta) hafta sonu farkını yumuşatır ama tepkiyi yavaşlatır.',
+  'help.set.site.monitor.failed-login.catchup-cap-minutes':
+    'Ne işe yarar: Uygulama bir süre kapalı kaldıysa dedektörün geriye dönük en fazla kaç dakikayı tarayacağı.\nFaydası: Uzun kapalılıktan sonra açılış, birikmiş kayıtları tarayarak sistemi kilitlemez.\nÖnerilen değer: 60 dakika (varsayılan). Çok uzun bakım pencereleriniz varsa 180.',
+  'help.set.site.monitor.failed-login.cooldown-minutes':
+    'Ne işe yarar: Aynı olay için yeni bir uyarı e-postası gönderilmeden önce beklenecek süre.\nFaydası: Süren bir saldırı sırasında dakikada bir mail yerine düzenli aralıklı hatırlatma gelir.\nÖnerilen değer: 60 dakika (varsayılan). 15\'in altı olay sürerken posta kutusunu doldurur.',
+  'help.set.site.monitor.failed-login.enabled':
+    'Ne işe yarar: Başarısız giriş anomali tespitini açar; dedektör denetim kayıtlarını tarar ve eşik aşılınca sistem yöneticisine e-posta gönderir.\nFaydası: Parola deneme (brute force) saldırısı, hesap kilitlenmelerinden önce görülür.\nÖnerilen değer: true (varsayılan). Kapatmak tüm kuralları birden susturur.',
+  'help.set.site.monitor.failed-login.relative-floor':
+    'Ne işe yarar: Göreli kuralın çalışabilmesi için gereken en az mutlak hata sayısı.\nFaydası: Sessiz bir gecede 1 hatadan 3 hataya çıkış "üç kat artış" diye alarm üretmez.\nÖnerilen değer: 8 (varsayılan). 0 yapmak göreli kuralı gürültü makinesine çevirir.',
+  'help.set.site.monitor.failed-login.relative-multiplier':
+    'Ne işe yarar: Hacim, geçmiş temel çizginin kaç katını aşarsa göreli kural tetiklenir.\nFaydası: Sabit eşiğin altında kalan ama olağandışı bir artış da yakalanır.\nÖnerilen değer: 3.0 (varsayılan, yani üç katı). 2.0 daha hassas ama gürültülüdür; 1.5\'in altına inmeyin.',
+  'help.set.site.monitor.failed-login.resolved-email-enabled':
+    'Ne işe yarar: Anomali sona erdiğinde "çözüldü" bilgi e-postası gönderir.\nFaydası: Uyarıyı alan kişi, olayın kapandığını elle kontrol etmek zorunda kalmaz.\nÖnerilen değer: true (varsayılan). Kapatmak, açık olayların sessizce kapanması demektir.',
+  'help.set.site.monitor.failed-login.retention-days':
+    'Ne işe yarar: Login anomali olay kayıtlarının saklama süresi.\nFaydası: Geçmiş saldırı denemeleri eşik ayarını ve olay soruşturmasını besler.\nÖnerilen değer: 365 gün (varsayılan) — güvenlik kayıtlarıyla aynı pencere. Taban 7 gündür.',
+  'help.set.site.monitor.failed-login.threshold-distinct-ips-per-account':
+    'Ne işe yarar: Tek bir hesabın kaç FARKLI IP\'den denendiğinde olay açılacağı.\nFaydası: Botnet üzerinden dağıtılmış, IP başına eşik aşmayan denemeler görünür olur.\nÖnerilen değer: 5 (varsayılan). Mobil ağlarda IP sık değiştiği için 8-10 daha az yanlış alarm üretir.',
+  'help.set.site.monitor.failed-login.threshold-distinct-users-per-ip':
+    'Ne işe yarar: Tek bir IP\'nin pencere içinde kaç FARKLI hesabı denediğinde olay açılacağı.\nFaydası: Kullanıcı adı listesi deneyen (user enumeration) saldırılar, deneme sayısı düşük olsa bile yakalanır.\nÖnerilen değer: 5 (varsayılan). Paylaşımlı bir çıkış IP\'niz varsa 10-15.',
+  'help.set.site.monitor.failed-login.threshold-per-account':
+    'Ne işe yarar: Tek bir hesapta pencere içindeki başarısız giriş eşiği.\nFaydası: Belirli bir kullanıcıyı hedefleyen parola denemesi ayrıca görünür.\nÖnerilen değer: 5 (varsayılan). Kurumsal hesap kilitleme politikanızın hemen altında tutun.',
+  'help.set.site.monitor.failed-login.threshold-per-ip':
+    'Ne işe yarar: Tek bir IP adresinden gelen başarısız giriş eşiği.\nFaydası: Tek kaynaktan yapılan taramalar, farklı hesaplara dağılsa bile yakalanır.\nÖnerilen değer: 15 (varsayılan). Kullanıcılarınız tek bir NAT arkasından geliyorsa daha yüksek tutun, aksi hâlde yanlış alarm alırsınız.',
+  'help.set.site.monitor.failed-login.threshold-total':
+    'Ne işe yarar: Pencere içinde TÜM sistemdeki toplam başarısız giriş sayısı bu değeri aşarsa olay açılır.\nFaydası: Dağıtık bir deneme, hiçbir hesap ya da IP tek başına eşiği aşmasa bile yakalanır.\nÖnerilen değer: 20 (varsayılan). Kullanıcı sayınıza göre ölçekleyin: 1000 kullanıcılı kurulumda 50-100 daha gerçekçidir.',
+  'help.set.site.monitor.failed-login.window-minutes':
+    'Ne işe yarar: Başarısız girişlerin sayıldığı kayan zaman penceresi.\nFaydası: Kısa sürede yoğunlaşan denemeler, gün içine yayılmış normal hatalardan ayrılır.\nÖnerilen değer: 10 dakika (varsayılan). Yavaş, sabırlı saldırıları yakalamak için 30; 5\'in altı yalnız gürültü üretir.',
+  'help.set.site.monitor.heartbeat.retention-days':
+    'Ne işe yarar: Sistem nabzı (heartbeat) kayıtlarının saklama süresi — uygulamanın ayakta olduğunu gösteren yüksek frekanslı seri.\nFaydası: Yakın geçmişteki kapalılıklar görünür kalır, en hızlı yazılan tablolardan biri ise şişmez.\nÖnerilen değer: 30 gün (varsayılan). 90\'ın üstüne çıkmanın pratik faydası yoktur.',
+  'help.set.site.monitor.http.alert-enabled':
+    'Ne işe yarar: HTTP/web sitesi alarmlarının gönderilip gönderilmeyeceğini belirler; kontroller her hâlükârda koşar ve kaydedilir.\nFaydası: Durum kodu, yönlendirme ya da yanıt süresi sorunları anında bildirilir.\nÖnerilen değer: true (varsayılan). Yalnız planlı bir gürültü kesme döneminde geçici olarak kapatın.',
+  'help.set.site.monitor.http.default-interval-seconds':
+    'Ne işe yarar: Yeni bir HTTP monitörü oluşturulurken forma gelen varsayılan kontrol aralığı (saniye); mevcut monitörler değişmez.\nFaydası: Herkes aynı sıklıkla başlar, tek tek ayar yapılmaz ve yük öngörülebilir kalır.\nÖnerilen değer: 300 saniye (varsayılan). Müşteriye dönük kritik sitelerde 60; yüzlerce monitörde 300\'ün altına inmeyin.',
+  'help.set.site.monitor.http.default-timeout-ms':
+    'Ne işe yarar: Yeni bir HTTP monitöründe forma gelen varsayılan istek zaman aşımı (ms).\nFaydası: Yanıt vermeyen hedefler kontrol turunu uzatmaz; kayıtlar tutarlı bir tavan taşır.\nÖnerilen değer: 10000 ms (varsayılan). Ağır uygulamalarda 15000-20000; 30000\'in üstü kesinti tespitini geciktirir.',
+  'help.set.site.monitor.http.rdap-base-url':
+    'Ne işe yarar: HTTP izlemenin alan adı bitiş bilgisi için kullandığı RDAP taban adresi.\nFaydası: Sorgular tek, bilinen bir uç noktadan geçer; proxy ve güvenlik duvarı kuralları sadeleşir.\nÖnerilen değer: https://rdap.org/domain/ (varsayılan) ya da kurumsal RDAP aynanız. Dış hedef olduğu için yalnız global yönetici değiştirebilir.',
+  'help.set.site.monitor.incident.draft-image-retention-days':
+    'Ne işe yarar: Henüz bir olaya bağlanmamış TASLAK görsellerin saklama süresi.\nFaydası: Yarıda bırakılmış yüklemeler veritabanında sessizce birikmez.\nÖnerilen değer: 7 gün (varsayılan) — kısa tutun; bunlar hiçbir kayda bağlı olmayan öksüz dosyalardır.',
+  'help.set.site.monitor.incident.image-retention-days':
+    'Ne işe yarar: Olay kayıtlarına eklenen görsellerin saklama süresi.\nFaydası: Ekran görüntüsü kanıtı bir süre durur, satır başına megabaytlar süresiz birikmez.\nÖnerilen değer: 730 gün (varsayılan). Veritabanı baskısı altında 365.',
+  'help.set.site.monitor.incident.retention-days':
+    'Ne işe yarar: Elle girilen olay (SRE incident) kayıtlarının saklama süresi; yalnız ÇÖZÜLMÜŞ olaylar silinir.\nFaydası: Kurum hafızası korunurken çok eski kapanmış kayıtlar isteğe bağlı temizlenebilir.\nÖnerilen değer: 0 (varsayılan) = hiç silinmez. Silme istiyorsanız bilinçli bir değer verin; açık olaylar hiçbir değerde silinmez.',
+  'help.set.site.monitor.issue-reports.daily-digest':
+    'Ne işe yarar: Kullanıcı sorun bildirimlerini tek tek yollamak yerine günde bir özet e-postada toplar.\nFaydası: Yoğun günlerde yönetici kutusu dolmaz; bildirimler yine de aynı gün görülür.\nÖnerilen değer: Günde 5\'ten fazla bildirim geliyorsa true; düşük hacimde false (varsayılan) daha hızlı tepki verir.',
+  'help.set.site.monitor.keyword.alert-enabled':
+    'Ne işe yarar: Anahtar kelime (keyword) alarmlarının gönderilip gönderilmeyeceğini belirler; kontroller her hâlükârda koşar ve kaydedilir.\nFaydası: Sayfa 200 dönerken içeriği bozulduysa bu yine de fark edilir.\nÖnerilen değer: true (varsayılan). Yalnız planlı bir gürültü kesme döneminde geçici olarak kapatın.',
+  'help.set.site.monitor.keyword.default-interval-seconds':
+    'Ne işe yarar: Yeni bir anahtar kelime monitörü oluşturulurken forma gelen varsayılan kontrol aralığı (saniye); mevcut monitörler değişmez.\nFaydası: Herkes aynı sıklıkla başlar, tek tek ayar yapılmaz ve yük öngörülebilir kalır.\nÖnerilen değer: 60 saniye (varsayılan). İçerik nadiren değişiyorsa 300 hem hedefe hem size daha nazik olur.',
+  'help.set.site.monitor.keyword.default-slow-ms':
+    'Ne işe yarar: Yeni bir anahtar kelime monitöründe forma gelen varsayılan YAVAŞ yanıt eşiği (ms) — aşılırsa kayıt yavaş sayılır ve yavaşlık alarmı üretilebilir.\nFaydası: Tam kesinti olmadan gerçekleşen bozulma görünür olur.\nÖnerilen değer: 3000 ms (varsayılan). Zaman aşımından küçük olmalı; aksi hâlde hiç tetiklenmez.',
+  'help.set.site.monitor.keyword.default-timeout-ms':
+    'Ne işe yarar: Yeni bir anahtar kelime monitöründe forma gelen varsayılan istek zaman aşımı (ms).\nFaydası: Yanıt vermeyen hedefler kontrol turunu uzatmaz; kayıtlar tutarlı bir tavan taşır.\nÖnerilen değer: 10000 ms (varsayılan). Sayfa büyükse 15000; zaman aşımı yavaşlık eşiğinden büyük olmalı.',
+  'help.set.site.monitor.login-issue.retention-days':
+    'Ne işe yarar: Kullanıcıların gönderdiği giriş sorunu bildirimlerinin saklama süresi.\nFaydası: Yinelenen giriş sorunlarının deseni görülür; çözülen kayıtlar süresiz birikmez.\nÖnerilen değer: 365 gün (varsayılan). Kayıtlar kullanıcı adı ve IP içerdiği için kişisel veri politikanızla hizalayın.',
+  'help.set.site.monitor.login-issues.enabled':
+    'Ne işe yarar: Giriş ekranındaki "Sorun Bildir" bağlantısını açar; kullanıcı giremediğinde kayıt oluşturur.\nFaydası: Giremeyen kullanıcı telefonla aramak yerine iz bırakır, yönetici sebebi ekranda görür.\nÖnerilen değer: true (varsayılan). Yalnız dış dünyaya açık bir kurulumda kapatmayı düşünün.',
+  'help.set.site.monitor.login-issues.force-email':
+    'Ne işe yarar: Kullanıcı bildirimleri susturmuş olsa bile giriş sorunu e-postasının yine de gönderilmesini sağlar.\nFaydası: Hesabına erişemeyen kişi, susturma ayarı yüzünden yardım akışından tamamen düşmez.\nÖnerilen değer: true (varsayılan). Kapatmak, susturan kullanıcıların giriş sorunlarının sessizce kaybolması demektir.',
+  'help.set.site.monitor.metrics.http.retention-days':
+    'Ne işe yarar: HTTP ölçüm serisinin (durum kodu, yanıt süresi) kaç gün saklanacağı.\nFaydası: Sistem Sağlığı HTTP paneli geçmişi gösterir, en hızlı büyüyen seri ise disk yemez.\nÖnerilen değer: 7 gün (varsayılan) — bu seri her kontrolde satır üretir. Uzun trend için günlük rollup zaten 2 yıl saklanır.',
+  'help.set.site.monitor.metrics.page-issues.retention-days':
+    'Ne işe yarar: Tek tek sayfa bütünlüğü BULGULARININ (kırık bağlantı, eksik kaynak) saklama süresi.\nFaydası: Yinelenen bir kırık bağlantının geçmişi görülür; en kalabalık çocuk tablo kontrol altında kalır.\nÖnerilen değer: 90 gün (varsayılan) — ana seriden kısa tutulur. Taban 1 gün.',
+  'help.set.site.monitor.metrics.page.retention-days':
+    'Ne işe yarar: Sayfa bütünlüğü kontrol serisinin saklama süresi (gün).\nFaydası: Bulgu sayısının zaman içindeki seyri görülür; seri sonsuza kadar büyümez.\nÖnerilen değer: 180 gün (varsayılan). Taban 1 gündür.',
+  'help.set.site.monitor.metrics.pagespeed-resources.retention-days':
+    'Ne işe yarar: Sayfa hızı KAYNAK kırılımının saklama süresi; yalnız eşik ihlali anlarının donmuş delilleri yaşa göre silinir.\nFaydası: "Hangi kaynak yavaşlattı" kanıtı bir süre durur, ama en hacimli tablo şişmez.\nÖnerilen değer: 90 gün (varsayılan). Kök-neden analizini uzun yapıyorsanız 180; taban 1 gün.',
+  'help.set.site.monitor.metrics.pagespeed.retention-days':
+    'Ne işe yarar: Sayfa hızı ölçüm serisinin kaç gün saklanacağı; daha eskisi gece temizliğinde silinir.\nFaydası: Trend grafikleri anlamlı bir geçmiş taşır, tablo ise sınırsız büyümez.\nÖnerilen değer: 180 gün (varsayılan) — iki çeyreklik karşılaştırma sağlar. Taban 1 gündür.',
+  'help.set.site.monitor.metrics.scripted.retention-days':
+    'Ne işe yarar: Senaryo koşum geçmişinin saklama süresi (gün).\nFaydası: Başarım trendi ve eski hataların kanıtı bir süre elde kalır; tablo sınırsız büyümez.\nÖnerilen değer: 180 gün (varsayılan). Çıktı kuyruğu büyükse 90; taban 1 gün.',
+  'help.set.site.monitor.monitoring.allow-internal-targets':
+    'Ne işe yarar: İzleme ve tanılama hedeflerinin özel/iç ağ adreslerine (RFC1918) çözülmesine izin verir.\nFaydası: Kurum içi sistemler izlenebilir; kapalıyken SSRF koruması iç hedefleri reddeder.\nÖnerilen değer: İç ağı izleyen kurumsal kurulumda true (varsayılan). Yalnız internet hedefleri izleniyorsa false daha güvenli. Metadata ve link-local adresler her koşulda bloklu.',
+  'help.set.site.monitor.monitoring.allow-loopback-targets':
+    'Ne işe yarar: Hedeflerin 127.0.0.1/::1 gibi loopback adreslerine çözülmesine izin verir.\nFaydası: Kapalıyken, uygulamanın kendi sunucusundaki yerel servisleri yoklamaya zorlanması engellenir.\nÖnerilen değer: false (varsayılan). Yalnız geliştirme ya da tek makineli demo kurulumunda true yapın.',
+  'help.set.site.monitor.monitoring.change-retention-days':
+    'Ne işe yarar: İzleme YAPILANDIRMASI değişiklik geçmişinin (kim, ne zaman, hangi IP, neyi değiştirdi) saklama süresi.\nFaydası: "Bu eşiği kim değiştirdi" sorusu aylar sonra bile yanıtlanır.\nÖnerilen değer: 730 gün (varsayılan) — denetim kaydından bilinçli olarak UZUN tutulur; taban 30 gün.',
+  'help.set.site.monitor.network-outage.retention-days':
+    'Ne işe yarar: Ağ kesintisi olay kayıtlarının saklama süresi.\nFaydası: Geçmiş kesintiler, eşiklerin doğru ayarlandığını göstermek için elde kalır.\nÖnerilen değer: 365 gün (varsayılan); taban 30. Nadir görülen, küçük bir tablodur.',
+  'help.set.site.monitor.network.error-rate-threshold':
+    'Ne işe yarar: Bir kontrol turunda ağ-sınıfı hata oranı bu değeri aşarsa tur "ağ kesintisi şüphesi" sayılır ve alarm üretilmez.\nFaydası: Kendi ağınız koptuğunda yüzlerce sahte "site kapalı" alarmı yerine tek kesinti kaydı oluşur.\nÖnerilen değer: 0.50 (varsayılan, yani %50). Çok bölgeli kurulumda 0.60-0.70; 0.20\'nin altı gerçek arızaları da bastırır.',
+  'help.set.site.monitor.network.min-errors':
+    'Ne işe yarar: Ağ kesintisi şüphesi için gereken en az hata sayısı — oran eşiğiyle BİRLİKTE sağlanmalıdır.\nFaydası: Üç monitörlü küçük bir kurulumda tek hata %50 oranı üretip yanlışlıkla "kesinti" demez.\nÖnerilen değer: 3 (varsayılan). 200+ monitörlü kurulumda 5-10 daha güvenli.',
+  'help.set.site.monitor.notification.retention-days':
+    'Ne işe yarar: Gönderilen bildirim (e-posta) günlüğünün saklama süresi.\nFaydası: "Bu alarm kime gitti" sorusu geriye dönük yanıtlanır.\nÖnerilen değer: 365 gün (varsayılan). Alıcı adresleri kişisel veri olduğu için diğer kişisel veri pencereleriyle hizalı tutun.',
+  'help.set.site.monitor.page.alert-enabled':
+    'Ne işe yarar: Sayfa bütünlüğü alarmlarının gönderilip gönderilmeyeceğini belirler; kontroller her hâlükârda koşar ve kaydedilir.\nFaydası: Kırık bağlantı, eksik görsel ya da karışık içerik bulguları bildirime dönüşür.\nÖnerilen değer: true (varsayılan). Yalnız planlı bir gürültü kesme döneminde geçici olarak kapatın.',
+  'help.set.site.monitor.page.default-crawl-depth':
+    'Ne işe yarar: Sayfa bütünlüğü taramasının başlangıç adresinden kaç bağlantı derinliğine ineceği.\nFaydası: Sitenin yalnız giriş sayfası değil, bir iki katman altı da denetlenir.\nÖnerilen değer: 2 (varsayılan). Her derinlik katmanı sayfa sayısını katlar; 3\'ün üstü tek pod\'da pahalıdır.',
+  'help.set.site.monitor.page.default-crawl-max-pages':
+    'Ne işe yarar: Bir tarama turunda ziyaret edilecek en fazla sayfa sayısı — derinlikten bağımsız sert tavan.\nFaydası: Büyük bir sitede tarama saatlerce sürüp kaynakları tüketemez.\nÖnerilen değer: 50 (varsayılan). Küçük kurumsal sitelerde 100\'e çıkarılabilir; 200\'ün üstü kontrolü dakikalara uzatır.',
+  'help.set.site.monitor.page.default-interval-seconds':
+    'Ne işe yarar: Yeni bir sayfa bütünlüğü monitörü oluşturulurken forma gelen varsayılan kontrol aralığı (saniye); mevcut monitörler değişmez.\nFaydası: Herkes aynı sıklıkla başlar, tek tek ayar yapılmaz ve yük öngörülebilir kalır.\nÖnerilen değer: 300 saniye (varsayılan). Kontrol pahalıdır (tüm kaynaklar indirilir); 120\'nin altına inmeyin.',
+  'help.set.site.monitor.page.default-slow-ms':
+    'Ne işe yarar: Yeni bir sayfa bütünlüğü monitöründe forma gelen varsayılan YAVAŞ yanıt eşiği (ms) — aşılırsa kayıt yavaş sayılır ve yavaşlık alarmı üretilebilir.\nFaydası: Tam kesinti olmadan gerçekleşen bozulma görünür olur.\nÖnerilen değer: 2000 ms (varsayılan). Kaynak başına uygulanır; 500\'ün altı normal internet gecikmesini bile yavaş sayar.',
+  'help.set.site.monitor.page.default-timeout-ms':
+    'Ne işe yarar: Yeni bir sayfa bütünlüğü monitöründe forma gelen varsayılan istek zaman aşımı (ms).\nFaydası: Yanıt vermeyen hedefler kontrol turunu uzatmaz; kayıtlar tutarlı bir tavan taşır.\nÖnerilen değer: 4000 ms (varsayılan). Kaynak BAŞINA uygulanır; yüzlerce kaynakta büyük değer toplam süreyi patlatır.',
+  'help.set.site.monitor.page.manual-cooldown-seconds':
+    'Ne işe yarar: "Şimdi kontrol et" düğmesine ardışık basışlar arasındaki en az bekleme süresi.\nFaydası: Üst üste tıklama request thread\'lerini tüketip uygulamayı yavaşlatamaz.\nÖnerilen değer: 20 saniye (varsayılan). Çok kullanıcılı kurulumda 30-60.',
+  'help.set.site.monitor.page.max-check-seconds':
+    'Ne işe yarar: Tek bir sayfa bütünlüğü kontrolünün toplam duvar-saati süre tavanı.\nFaydası: Yanıt vermeyen bir hedef zamanlayıcı thread\'ini sonsuza kadar tutamaz.\nÖnerilen değer: 120 saniye (varsayılan). Çok kaynaklı ağır sayfalarda 180; taban 10 saniyedir.',
+  'help.set.site.monitor.page.resource-concurrency':
+    'Ne işe yarar: Bir sayfa bütünlüğü kontrolünde aynı anda doğrulanacak kaynak (bağlantı, görsel, script) sayısı.\nFaydası: Yüksek değer kontrolü hızlandırır, düşük değer hedef siteye karşı nazik davranır.\nÖnerilen değer: 5 (varsayılan). Hedef sunucu hassassa 2-3; tek pod olduğu için 10\'un üstüne çıkmayın.',
+  'help.set.site.monitor.page.user-agent':
+    'Ne işe yarar: Sayfa bütünlüğü kontrollerinin gönderdiği User-Agent başlığı.\nFaydası: Hedef tarafta izleme trafiği gerçek kullanıcıdan ayrılabilir; WAF kuralları buna göre yazılır.\nÖnerilen değer: Varsayılan SiteMonitor-PageCheck/1.0 kimliği. Yalnız hedef sunucu bilinmeyen ajanları engelliyorsa değiştirin.',
+  'help.set.site.monitor.pagespeed.alert-enabled':
+    'Ne işe yarar: Sayfa hızı alarmlarının gönderilip gönderilmeyeceğini belirler; kontroller her hâlükârda koşar ve kaydedilir.\nFaydası: Yavaşlama, tam kesinti hâline gelmeden önce fark edilir.\nÖnerilen değer: true (varsayılan). Yalnız planlı bir gürültü kesme döneminde geçici olarak kapatın.',
+  'help.set.site.monitor.pagespeed.default-interval-seconds':
+    'Ne işe yarar: Yeni bir sayfa hızı monitörü oluşturulurken forma gelen varsayılan kontrol aralığı (saniye); mevcut monitörler değişmez.\nFaydası: Herkes aynı sıklıkla başlar, tek tek ayar yapılmaz ve yük öngörülebilir kalır.\nÖnerilen değer: 1800 saniye (varsayılan). Yarım saat, trend görmeye yeter ve hedefi yormaz; 300\'ün altı ölçüm gürültüsü üretir.',
+  'help.set.site.monitor.pagespeed.default-timeout-ms':
+    'Ne işe yarar: Yeni bir sayfa hızı monitöründe forma gelen varsayılan istek zaman aşımı (ms).\nFaydası: Yanıt vermeyen hedefler kontrol turunu uzatmaz; kayıtlar tutarlı bir tavan taşır.\nÖnerilen değer: 10000 ms (varsayılan). Ölçüm gerçekçi kalsın diye tarayıcı davranışına yakın tutun; 30000\'in üstü anlamsızdır.',
+  'help.set.site.monitor.pagespeed.manual-cooldown-seconds':
+    'Ne işe yarar: Kayıtlı bir sayfa hızı monitörünün elle tetiklenmesi arasındaki en az bekleme.\nFaydası: Elle ölçüm seli zamanlanmış kontrolleri geciktirmez.\nÖnerilen değer: 30 saniye (varsayılan). Ölçüm 10 saniyeden uzun sürüyorsa 60.',
+  'help.set.site.monitor.pagespeed.max-check-seconds':
+    'Ne işe yarar: Tek bir sayfa hızı ölçümünün toplam süre tavanı.\nFaydası: Yanıt vermeyen bir hedef ölçüm havuzunu kilitlemez.\nÖnerilen değer: 120 saniye (varsayılan); taban 10 saniyedir. Ağır sayfalarda 180\'e kadar çıkabilirsiniz.',
+  'help.set.site.monitor.pagespeed.max-total-kb':
+    'Ne işe yarar: Tek bir ölçümde indirilecek TOPLAM bayt tavanı (KB). Tavan dolunca kalan kaynaklar atlanır ve ölçüm "alt sınır" işaretlenir.\nFaydası: 500 kaynaklı dev bir sayfa gigabaytlarca trafik ve bellek tüketemez.\nÖnerilen değer: Varsayılan tavan (yaklaşık 150 MB) çoğu site için fazlasıyla yeterlidir; taban 64 KB. Sonuçlar sürekli "alt sınır" işaretleniyorsa yükseltin.',
+  'help.set.site.monitor.pagespeed.resource-concurrency':
+    'Ne işe yarar: Bir sayfa hızı ölçümünde aynı anda indirilecek kaynak sayısı.\nFaydası: Ölçüm gerçek tarayıcı davranışına yaklaşır; düşük değer hedefe daha nazik olur.\nÖnerilen değer: 5 (varsayılan). Hedef hassassa 2-3, hiçbir zaman 10\'un üstü değil.',
+  'help.set.site.monitor.pagespeed.test-cooldown-seconds':
+    'Ne işe yarar: Form doldururken kullanılan "Şimdi Dene" ölçümünün bekleme süresi — kayıtlı ölçümden AYRI ve daha kısadır.\nFaydası: Kullanıcı yanlış yazdığı URL\'i düzeltip hemen yeniden deneyebilir, üst üste tıklama yine de kesilir.\nÖnerilen değer: 10 saniye (varsayılan). 30\'un üstü form doldurmayı gereksiz yere yavaşlatır.',
+  'help.set.site.monitor.pagespeed.user-agent':
+    'Ne işe yarar: Sayfa hızı ölçümlerinin gönderdiği User-Agent başlığı.\nFaydası: Hedef site ölçüm trafiğini tanır; kimliğe göre farklı içerik sunan sunucularda sonuç tutarlı olur.\nÖnerilen değer: Varsayılanı bırakın. Boş bırakılırsa gömülü varsayılan kimlik kullanılır.',
+  'help.set.site.monitor.ping.alert-enabled':
+    'Ne işe yarar: Ping (ICMP) alarmlarının gönderilip gönderilmeyeceğini belirler; kontroller her hâlükârda koşar ve kaydedilir.\nFaydası: Ağ katmanındaki erişilemezlik, uygulama katmanı kontrollerinden bağımsız görünür.\nÖnerilen değer: true (varsayılan). Yalnız planlı bir gürültü kesme döneminde geçici olarak kapatın.',
+  'help.set.site.monitor.ping.default-interval-seconds':
+    'Ne işe yarar: Yeni bir ping monitörü oluşturulurken forma gelen varsayılan kontrol aralığı (saniye); mevcut monitörler değişmez.\nFaydası: Herkes aynı sıklıkla başlar, tek tek ayar yapılmaz ve yük öngörülebilir kalır.\nÖnerilen değer: 60 saniye (varsayılan). Ping ucuzdur; 30\'un altına inmek tek pod\'da CPU maliyetini hızla artırır.',
+  'help.set.site.monitor.ping.default-timeout-ms':
+    'Ne işe yarar: Yeni bir ping monitöründe forma gelen varsayılan istek zaman aşımı (ms).\nFaydası: Yanıt vermeyen hedefler kontrol turunu uzatmaz; kayıtlar tutarlı bir tavan taşır.\nÖnerilen değer: 5000 ms (varsayılan). Yurt dışı hedeflerde 8000; 1000\'in altı sahte kesinti üretir.',
+  'help.set.site.monitor.port.alert-enabled':
+    'Ne işe yarar: Port alarmlarının gönderilip gönderilmeyeceğini belirler; kontroller her hâlükârda koşar ve kaydedilir.\nFaydası: Kapanan bir servis portu, uygulama hâlâ ayaktayken bile yakalanır.\nÖnerilen değer: true (varsayılan). Yalnız planlı bir gürültü kesme döneminde geçici olarak kapatın.',
+  'help.set.site.monitor.port.default-interval-seconds':
+    'Ne işe yarar: Yeni bir port monitörü oluşturulurken forma gelen varsayılan kontrol aralığı (saniye); mevcut monitörler değişmez.\nFaydası: Herkes aynı sıklıkla başlar, tek tek ayar yapılmaz ve yük öngörülebilir kalır.\nÖnerilen değer: 60 saniye (varsayılan). Kritik olmayan portlarda 300 yeterlidir.',
+  'help.set.site.monitor.port.default-slow-ms':
+    'Ne işe yarar: Yeni bir port monitöründe forma gelen varsayılan YAVAŞ yanıt eşiği (ms) — aşılırsa kayıt yavaş sayılır ve yavaşlık alarmı üretilebilir.\nFaydası: Tam kesinti olmadan gerçekleşen bozulma görünür olur.\nÖnerilen değer: 3000 ms (varsayılan). TCP bağlantısı için 3 saniye zaten yüksektir; 1000-2000 daha erken uyarır.',
+  'help.set.site.monitor.port.default-timeout-ms':
+    'Ne işe yarar: Yeni bir port monitöründe forma gelen varsayılan istek zaman aşımı (ms).\nFaydası: Yanıt vermeyen hedefler kontrol turunu uzatmaz; kayıtlar tutarlı bir tavan taşır.\nÖnerilen değer: 5000 ms (varsayılan). TCP el sıkışması hızlıdır; 10000\'in üstü yalnız kontrolü uzatır.',
+  'help.set.site.monitor.retention.hold-enabled':
+    'Ne işe yarar: Hukuki muhafaza (legal hold) valfi: açıkken gece temizliği HİÇBİR satır silmez.\nFaydası: Süren bir soruşturma ya da denetim sırasında kanıt otomatik silme yüzünden kaybolmaz.\nÖnerilen değer: false (varsayılan). Yalnız soruşturma süresince açın — açık kaldıkça veritabanı sürekli büyür ve bunu kimse fark etmez.',
+  'help.set.site.monitor.retention.purge-batch-size':
+    'Ne işe yarar: Gece temizliğinde tek seferde silinecek satır sayısı; büyük tablolar bu boyutta dilimlenerek temizlenir.\nFaydası: Tek dev DELETE yerine küçük işlemler koşar; veritabanı kilitleri kısa sürer ve uygulama yanıt vermeye devam eder.\nÖnerilen değer: 10000 (varsayılan). Gece penceresi darsa 25000-50000; veritabanı zorlanıyorsa 5000.',
+  'help.set.site.monitor.retention.run-history-retention-days':
+    'Ne işe yarar: Gece temizliği koşum geçmişinin (ne zaman koştu, kaç satır sildi) saklama süresi.\nFaydası: Temizliğin gerçekten koştuğu ve neyi sildiği kanıtlanabilir — sessiz bir durma fark edilir.\nÖnerilen değer: 180 gün (varsayılan). Bu geçmiş, saklama ayarlarını değiştirirken en çok başvurulan kayıttır.',
+  'help.set.site.monitor.rollup.hourly-retention-days':
+    'Ne işe yarar: Saatlik özet satırlarının saklama süresi — günlük özetten daha ince çözünürlük.\nFaydası: Birkaç ay geriye dönük gün içi desenler (sabah yoğunluğu, gece bakımı) görülebilir.\nÖnerilen değer: 365 gün (varsayılan). Günlük özetten kısa tutun; satır sayısı 24 kat fazladır.',
+  'help.set.site.monitor.rollup.lookback-days':
+    'Ne işe yarar: Günlük özet (rollup) işinin her gece yeniden hesapladığı TAMAMLANMIŞ gün sayısı.\nFaydası: Uygulama kısa süre kapalı kaldıysa boşluklar kendiliğinden doldurulur; hesap tekrarlanabilir ve üzerine yazılır.\nÖnerilen değer: 3 gün (varsayılan) — kısa kesintileri kapatır. 7 daha güvenli ama gece işini uzatır; en az 1.',
+  'help.set.site.monitor.rollup.retention-days':
+    'Ne işe yarar: Günlük özet (uptime/yanıt süresi trendi) satırlarının saklama süresi.\nFaydası: Ham seriler kısaltılsa bile uzun dönem trend korunur — yıllık karşılaştırma mümkün kalır.\nÖnerilen değer: 730 gün (varsayılan, iki yıl). Taban 90 gündür; özet satırları küçüktür, kısaltmanın kazancı azdır.',
+  'help.set.site.monitor.scheduler.domain-expiry-refresh.enabled':
+    'Ne işe yarar: Alan adı bitiş tarihlerini günde bir kez RDAP/WHOIS üzerinden yeniden çeken gece işini açar.\nFaydası: Yenilenen bir alan adının yeni tarihi kendiliğinden görünür; kimse elle tazelemek zorunda kalmaz.\nÖnerilen değer: true (varsayılan). Yalnız dış sorgu tamamen yasaksa kapatın.',
+  'help.set.site.monitor.scheduler.stale-minutes':
+    'Ne işe yarar: Bir monitörün son kontrolü bu kadar dakikadan eskiyse veri "bayat" sayılır ve sistem sağlığında işaretlenir.\nFaydası: Zamanlayıcı sessizce durduğunda ekran hâlâ yeşil görünmez; bayatlık ayrı bir bulgu olarak çıkar.\nÖnerilen değer: 65 dakika (varsayılan) — en uzun kontrol aralığının biraz üstü. En az 5 dakika olabilir.',
+  'help.set.site.monitor.scripted.alert-enabled':
+    'Ne işe yarar: Senaryo izleme alarmlarının gönderilip gönderilmeyeceği — motorun kendisinden AYRI anahtar.\nFaydası: "Bu hafta k6 alarmı sussun" demek ölçümleri de durdurmaz; koşumlar kaydedilmeye devam eder.\nÖnerilen değer: true (varsayılan). Yeni yazılmış, henüz oturmamış scriptler için geçici olarak false.',
+  'help.set.site.monitor.scripted.anomaly.enabled':
+    'Ne işe yarar: Senaryo anomali koruyucusunu açar — tehlikeli davranış gösteren bir izlemeyi otomatik kapatır.\nFaydası: Gece boyunca hata üreten bir script kimse fark etmeden durdurulur.\nÖnerilen değer: true (varsayılan). Kapatmak yalnız acil bir kaçış kapısıdır, kalıcı ayar olmamalıdır.',
+  'help.set.site.monitor.scripted.anomaly.timeout-streak':
+    'Ne işe yarar: Kaç ardışık zaman aşımından sonra izlemenin otomatik kapatılacağı; 0 ya da altı bu tetiği kapatır.\nFaydası: Kalıcı olarak takılan bir senaryo havuzu boşuna meşgul etmez.\nÖnerilen değer: 5 (varsayılan). Kırılgan hedeflerde 8-10; 2\'nin altı geçici arızalarda izlemeyi gereksiz yere kapatır.',
+  'help.set.site.monitor.scripted.default-interval-seconds':
+    'Ne işe yarar: Yeni bir senaryo (k6) monitörü oluşturulurken forma gelen varsayılan kontrol aralığı (saniye); mevcut monitörler değişmez.\nFaydası: Herkes aynı sıklıkla başlar, tek tek ayar yapılmaz ve yük öngörülebilir kalır.\nÖnerilen değer: 300 saniye (varsayılan). Her koşum bir k6 alt süreci başlatır; 120\'nin altı tek pod\'da CPU tavanını zorlar.',
+  'help.set.site.monitor.scripted.default-timeout-seconds':
+    'Ne işe yarar: Yeni bir senaryo monitöründe forma gelen varsayılan koşum zaman aşımı (saniye).\nFaydası: Yeni scriptler makul bir tavanla başlar; takılan bir koşum havuzu tutmaz.\nÖnerilen değer: 60 saniye (varsayılan). Azami zaman aşımını aşamaz.',
+  'help.set.site.monitor.scripted.draft-retention-days':
+    'Ne işe yarar: Kaydedilmemiş senaryo taslaklarının saklama süresi.\nFaydası: Yarım kalan düzenlemeler kaybolmaz ama süresiz de birikmez.\nÖnerilen değer: 30 gün (varsayılan). Uzun süren geliştirme döngülerinde 90.',
+  'help.set.site.monitor.scripted.enabled':
+    'Ne işe yarar: Senaryo (k6) izleme motorunu tamamen açar ya da kapatır; kapalıyken hiçbir script koşmaz.\nFaydası: Sunucuda alt süreç çalıştıran tek özellik tek anahtarla durdurulabilir.\nÖnerilen değer: true (varsayılan). k6 ikilisi kurulu değilse false yapın, aksi hâlde her koşum hata kaydı üretir.',
+  'help.set.site.monitor.scripted.hardcoded-secret-policy':
+    'Ne işe yarar: Script içinde sabit-kodlu bir gizli değer (parola, token) saptandığında ne yapılacağı.\nFaydası: Sırlar script metnine gömülmez; ortam değişkeni kullanımı teşvik edilir.\nÖnerilen değer: WARN (varsayılan) uyarır ama kaydeder; disiplin oturduğunda BLOCK yapıp kaydı tamamen reddedin.',
+  'help.set.site.monitor.scripted.k6-api-address':
+    'Ne işe yarar: k6 alt sürecinin REST API\'sini bağlayacağı adres.\nFaydası: 0 portu efemer (rastgele boş) port demektir — eşzamanlı koşumlarda port çakışması imkânsızdır.\nÖnerilen değer: 127.0.0.1:0 (varsayılan). Boş bırakılırsa bayrak hiç eklenmez; bunu yalnız beklenmedik bir k6 sürümünde geri dönüş olarak kullanın.',
+  'help.set.site.monitor.scripted.k6-bin':
+    'Ne işe yarar: Sunucuda çalıştırılacak k6 çalıştırılabilir dosyasının yolu.\nFaydası: k6 standart yolda değilse tam yol verilerek senaryo izleme çalışır hâle gelir.\nÖnerilen değer: k6 (varsayılan, PATH üzerinden) ya da mutlak yol. Sunucuda çalıştırılacak dosyayı seçtiği için yalnız global yönetici değiştirebilir.',
+  'help.set.site.monitor.scripted.manual-cooldown-seconds':
+    'Ne işe yarar: Kayıtlı bir senaryonun elle çalıştırılmaları arasındaki en az bekleme.\nFaydası: Üst üste tıklama k6 havuzunu doldurup zamanlanmış koşumları bekletmez.\nÖnerilen değer: 20 saniye (varsayılan). Script uzun sürüyorsa 60.',
+  'help.set.site.monitor.scripted.manual-wait-seconds':
+    'Ne işe yarar: Elle çalıştırmada arayüzün sonucu kaç saniye bekleyeceği; aşılırsa koşum arka planda sürer.\nFaydası: Uzun bir senaryo tarayıcıyı kilitlemez; sonuç geldiğinde listede görünür.\nÖnerilen değer: 25 saniye (varsayılan). Vekil sunucu (proxy) zaman aşımınızın altında kalmalıdır.',
+  'help.set.site.monitor.scripted.max-procs':
+    'Ne işe yarar: k6 alt sürecinin kullanabileceği işlemci sayısı (Go çalışma zamanının GOMAXPROCS değeri).\nFaydası: Tek bir senaryo sunucunun tüm çekirdeklerini kaplayıp diğer kontrolleri yavaşlatamaz.\nÖnerilen değer: 1 (varsayılan). 0 ya da boş değer sınırı kaldırır; tek pod kurulumda tavsiye edilmez.',
+  'help.set.site.monitor.scripted.max-requests-per-run':
+    'Ne işe yarar: Tek bir koşumda kabul edilen en fazla HTTP isteği; aşılırsa koşum ANOMALİ sayılır ve izleme anında kapatılır.\nFaydası: Kontrolden çıkan bir script hedefi dövmeye devam edemez.\nÖnerilen değer: 200 (varsayılan). Çok adımlı senaryolarda 500; 0 ya da altı tavanı tamamen kaldırır.',
+  'help.set.site.monitor.scripted.max-rps':
+    'Ne işe yarar: k6 koşumunun saniyede atabileceği istek sayısı tavanı (k6 --rps); 0 veya altı = tavan yok.\nFaydası: Statik analizin göremediği bir döngü, üretim sistemine yük testi hâline gelmez.\nÖnerilen değer: 25 (varsayılan). Senaryo ÜRETİM sistemlerine istek attığı için 100\'ün üstüne çıkarmayın.',
+  'help.set.site.monitor.scripted.max-timeout-seconds':
+    'Ne işe yarar: Bir senaryo monitörünün isteyebileceği en uzun koşum süresi — sert üst sınır.\nFaydası: Tek bir script havuz yuvasını dakikalarca tutup diğer senaryoları bekletemez.\nÖnerilen değer: 180 saniye (varsayılan). 300\'ün üstü, havuz küçükken sıra beklemeyi görünür biçimde uzatır.',
+  'help.set.site.monitor.scripted.mem-limit':
+    'Ne işe yarar: k6 alt sürecinin bellek hedefi (Go çalışma zamanının GOMEMLIMIT değeri).\nFaydası: Kaçak bellek tüketen bir script uygulamayı OOM ile düşürmez.\nÖnerilen değer: 256MiB (varsayılan). Büyük veri işleyen senaryolarda 512MiB; 0 ya da boş sınırı kaldırır.',
+  'help.set.site.monitor.scripted.no-checks-policy':
+    'Ne işe yarar: Koşan ama hiç check() çalıştırmayan bir senaryonun nasıl değerlendirileceği.\nFaydası: Hiçbir şeyi doğrulamayan bir script sessizce "başarılı" görünmez.\nÖnerilen değer: WARN (varsayılan): kayıt hatalı sayılır, alarm üretilmez. Disiplin isteniyorsa FAIL; PASS yalnız eski davranışa acil dönüş içindir.',
+  'help.set.site.monitor.scripted.output-tail-bytes':
+    'Ne işe yarar: Her koşumda saklanan k6 çıktısının son kaç baytının kaydedileceği.\nFaydası: Hata ayıklamak için yeterli iz kalır, koşum tablosu ise devasa loglarla şişmez.\nÖnerilen değer: 8192 bayt (varsayılan). Çıktısı bol scriptlerde 16384; 65536\'nın üstü saklama maliyetini hızla artırır.',
+  'help.set.site.monitor.scripted.pool-size':
+    'Ne işe yarar: Aynı anda çalışabilecek k6 alt süreci sayısı.\nFaydası: Tek pod\'da CPU ve bellek tavanı korunur; senaryo izleme diğer kontrolleri aç bırakmaz.\nÖnerilen değer: 2 (varsayılan). Her süreç kendi CPU\'sunu yer; 4\'ün üstü tek pod kurulumda risklidir.',
+  'help.set.site.monitor.scripted.slow-threshold-ms':
+    'Ne işe yarar: Bir k6 koşumu bu süreyi aşarsa yavaş sayılır ve yavaşlık alarmı üretilebilir.\nFaydası: Senaryo hâlâ geçiyor ama giderek yavaşlıyorsa bu görünür olur.\nÖnerilen değer: 15000 ms (varsayılan). Koşum zaman aşımından küçük olmalı; çok adımlı senaryolarda 30000.',
+  'help.set.site.monitor.scripted.syntax-check-policy':
+    'Ne işe yarar: Kaydetmeden önce k6 ile sözdizimi doğrulaması yapılıp yapılmayacağı.\nFaydası: Bozuk bir script kaydedilip ilk zamanlanmış koşumda patlamaz; hata satır/sütunuyla anında görünür.\nÖnerilen değer: BLOCK (varsayılan) — kesin hatada kaydı reddeder. WARN yalnız uyarır, OFF denetimi tamamen kapatır.',
+  'help.set.site.monitor.scripted.validate-timeout-seconds':
+    'Ne işe yarar: Kaydetme öncesi sözdizimi doğrulamasının süre tavanı.\nFaydası: Doğrulama takılırsa kaydet düğmesi sonsuza kadar dönmez.\nÖnerilen değer: 10 saniye (varsayılan). Büyük, çok modüllü scriptlerde 20.',
+  'help.set.site.monitor.security.new-device-email':
+    'Ne işe yarar: Bir kullanıcı daha önce görülmemiş bir cihaz özetiyle giriş yaptığında ona bilgi e-postası gönderir.\nFaydası: Çalınmış bir parolayla yapılan giriş, hesabın sahibine anında görünür.\nÖnerilen değer: false (varsayılan) — posta hacmi bir karardır. Dışa açık kurulumda true önerilir; tespit ham tarayıcı kimliğine değil cihaz özetine bakar, tarayıcı güncellemesi yanlış alarm üretmez.',
+  'help.set.site.monitor.series.certificate.retention-days':
+    'Ne işe yarar: Sertifika kontrollerinin HAM ölçüm serisinin saklama süresi (gün); daha eskisi gece temizliğinde silinir.\nFaydası: Satır bazında tam ayrıntı bir süre elde kalır; uzun dönem trend zaten günlük özette korunur.\nÖnerilen değer: 180 gün (varsayılan). Bu seriler her kontrolde satır üretir — kısaltmak en hızlı disk kazancıdır, ama gösterdiğiniz her pencere tam ayrıntı taşımalıdır.',
+  'help.set.site.monitor.series.dns.retention-days':
+    'Ne işe yarar: DNS kontrollerinin HAM ölçüm serisinin saklama süresi (gün); daha eskisi gece temizliğinde silinir.\nFaydası: Satır bazında tam ayrıntı bir süre elde kalır; uzun dönem trend zaten günlük özette korunur.\nÖnerilen değer: 180 gün (varsayılan). Bu seriler her kontrolde satır üretir — kısaltmak en hızlı disk kazancıdır, ama gösterdiğiniz her pencere tam ayrıntı taşımalıdır.',
+  'help.set.site.monitor.series.domain.retention-days':
+    'Ne işe yarar: Alan adı (domain) kontrollerinin HAM ölçüm serisinin saklama süresi (gün); daha eskisi gece temizliğinde silinir.\nFaydası: Satır bazında tam ayrıntı bir süre elde kalır; uzun dönem trend zaten günlük özette korunur.\nÖnerilen değer: 180 gün (varsayılan). Bu seriler her kontrolde satır üretir — kısaltmak en hızlı disk kazancıdır, ama gösterdiğiniz her pencere tam ayrıntı taşımalıdır.',
+  'help.set.site.monitor.series.http.retention-days':
+    'Ne işe yarar: HTTP kontrollerinin HAM ölçüm serisinin saklama süresi (gün); daha eskisi gece temizliğinde silinir.\nFaydası: Satır bazında tam ayrıntı bir süre elde kalır; uzun dönem trend zaten günlük özette korunur.\nÖnerilen değer: 180 gün (varsayılan). Bu seriler her kontrolde satır üretir — kısaltmak en hızlı disk kazancıdır, ama gösterdiğiniz her pencere tam ayrıntı taşımalıdır.',
+  'help.set.site.monitor.series.keyword.retention-days':
+    'Ne işe yarar: Anahtar kelime kontrollerinin HAM ölçüm serisinin saklama süresi (gün); daha eskisi gece temizliğinde silinir.\nFaydası: Satır bazında tam ayrıntı bir süre elde kalır; uzun dönem trend zaten günlük özette korunur.\nÖnerilen değer: 180 gün (varsayılan). Bu seriler her kontrolde satır üretir — kısaltmak en hızlı disk kazancıdır, ama gösterdiğiniz her pencere tam ayrıntı taşımalıdır.',
+  'help.set.site.monitor.series.ping.retention-days':
+    'Ne işe yarar: Ping kontrollerinin HAM ölçüm serisinin saklama süresi (gün); daha eskisi gece temizliğinde silinir.\nFaydası: Satır bazında tam ayrıntı bir süre elde kalır; uzun dönem trend zaten günlük özette korunur.\nÖnerilen değer: 180 gün (varsayılan). Bu seriler her kontrolde satır üretir — kısaltmak en hızlı disk kazancıdır, ama gösterdiğiniz her pencere tam ayrıntı taşımalıdır.',
+  'help.set.site.monitor.series.port.retention-days':
+    'Ne işe yarar: Port kontrollerinin HAM ölçüm serisinin saklama süresi (gün); daha eskisi gece temizliğinde silinir.\nFaydası: Satır bazında tam ayrıntı bir süre elde kalır; uzun dönem trend zaten günlük özette korunur.\nÖnerilen değer: 180 gün (varsayılan). Bu seriler her kontrolde satır üretir — kısaltmak en hızlı disk kazancıdır, ama gösterdiğiniz her pencere tam ayrıntı taşımalıdır.',
+  'help.set.site.monitor.series.uptime.retention-days':
+    'Ne işe yarar: Erişilebilirlik (uptime) kontrollerinin HAM ölçüm serisinin saklama süresi (gün); daha eskisi gece temizliğinde silinir.\nFaydası: Satır bazında tam ayrıntı bir süre elde kalır; uzun dönem trend zaten günlük özette korunur.\nÖnerilen değer: 180 gün (varsayılan). Bu seriler her kontrolde satır üretir — kısaltmak en hızlı disk kazancıdır, ama gösterdiğiniz her pencere tam ayrıntı taşımalıdır.',
+  'help.set.site.monitor.sql-history.retention-days':
+    'Ne işe yarar: SQL çalışma alanında koşulan sorguların geçmişinin saklama süresi.\nFaydası: Kimin hangi sorguyu koşturduğu denetlenebilir; kullanıcı da kendi sorgusunu yeniden bulur.\nÖnerilen değer: 365 gün (varsayılan). Sorgu metinleri hassas veri içerebilir, gereğinden uzun tutmayın.',
+  'help.set.site.monitor.storm.enabled':
+    'Ne işe yarar: Alarm fırtınası bastırmasını açar: kısa sürede çok monitör düşerse bireysel alarmlar TEK toplu bildirime indirgenir.\nFaydası: Omurga arızasında yüzlerce mail yerine tek, okunabilir özet gider.\nÖnerilen değer: true (varsayılan). Kapatmak, geniş kesintide posta kutularının dolması demektir.',
+  'help.set.site.monitor.storm.per-group':
+    'Ne işe yarar: Fırtına sayımını tüm envanter yerine izleme grubu bazında yapar.\nFaydası: Bir uygulamanın çökmesi, ilgisiz grupların alarmlarını bastırmaz.\nÖnerilen değer: Monitörler anlamlı gruplara ayrılmışsa true; tek büyük havuz varsa false (varsayılan).',
+  'help.set.site.monitor.storm.retention-days':
+    'Ne işe yarar: Alarm fırtınası olay kayıtlarının saklama süresi.\nFaydası: Geçmiş fırtınalar eşik ayarını doğrulamak için elde kalır.\nÖnerilen değer: 365 gün (varsayılan). Hacmi düşük bir tablodur, kısaltmanın kazancı azdır.',
+  'help.set.site.monitor.storm.threshold-unit':
+    'Ne işe yarar: Fırtına eşiğinin sabit SAYI ile mi yoksa aktif monitörlerin YÜZDESİ ile mi ölçüleceği.\nFaydası: Yüzde, monitör sayısı büyüdükçe eşiği kendiliğinden ölçekler.\nÖnerilen değer: Küçük ve sabit bir envanterde COUNT (varsayılan); envanter sürekli büyüyorsa PERCENT.',
+  'help.set.site.monitor.storm.threshold-value':
+    'Ne işe yarar: Pencere içinde kaç monitör (ya da yüzde kaçı) düşerse fırtına sayılacağı.\nFaydası: Doğru ayarlandığında gerçek olaylar tek bildirime iner, tekil arızalar normal akar.\nÖnerilen değer: COUNT için 5 (varsayılan, en az 2); PERCENT için 10-25 arası. Çok düşük değer sıradan arızaları da toplar.',
+  'help.set.site.monitor.storm.window-minutes':
+    'Ne işe yarar: Eşiğin içinde sayıldığı kayan zaman penceresi.\nFaydası: Aynı anda olan arızalar birleşir, gün içine yayılan bağımsız arızalar birleşmez.\nÖnerilen değer: 5 dakika (varsayılan); izinli aralık 1-15. Kısa pencere gerçek fırtınaları kaçırır, uzun pencere ilgisiz arızaları birleştirir.',
+  'help.set.site.monitor.system-admin.email':
+    'Ne işe yarar: Sistem düzeyi bildirimlerin (çökme raporu, login anomalisi, dağıtım duyurusu) gittiği yönetici adresi.\nFaydası: Kimseye atanmamış teknik uyarılar sahipsiz kalmaz; tek adres üzerinden takip edilir.\nÖnerilen değer: Kişisel kutu değil, ekip dağıtım listesi (örn. sitemonitor-admin@example.com). Boş bırakılırsa bu bildirimler hiç gönderilmez.',
+  'help.set.site.monitor.trust.alert-hostname-mismatch':
+    'Ne işe yarar: Sunulan sertifika o host adını kapsamıyorsa güvenlik alarmı üretir.\nFaydası: Yanlış sanal host, süresi geçmiş yönlendirme ya da araya giren bir cihaz hemen fark edilir.\nÖnerilen değer: true (varsayılan) — meşru bir ad uyuşmazlığı neredeyse hiç olmaz.',
+  'help.set.site.monitor.trust.alert-untrusted':
+    'Ne işe yarar: Sertifikayı imzalayan otorite güvenilmiyorsa alarm üretir.\nFaydası: Sahte ya da beklenmedik bir CA ile imzalanmış sertifika sessizce kabul edilmez.\nÖnerilen değer: false (varsayılan): CA paketi boşken TÜM iç host\'lar güvenilmez görünür ve yayın anında alarm seli olur. Önce CA paketini doldurun, sonra true yapın.',
+  'help.set.site.monitor.trust.auto-pin.enabled':
+    'Ne işe yarar: PKIX hatası alınan bir host\'un CA\'sını ilk görüşte (TOFU) host bazında sabitler; rotasyonda otomatik yeniler.\nFaydası: CA paketi eksik olsa bile HTTP izleme ve RDAP çıkışı çalışır, üstelik "her sertifikaya güven" demeden.\nÖnerilen değer: true (varsayılan). Kapatırsanız iç CA\'ları elle CA paketine eklemeniz gerekir.',
+  'help.set.site.monitor.trust.ca-bundle-pem':
+    'Ne işe yarar: Kurumsal/iç kök ve ara CA sertifikalarını PEM olarak taşır; bu CA ile imzalı host\'lar GÜVENİLİR sayılır.\nFaydası: İç sertifikalar "güvenilmeyen otorite" diye işaretlenmez; giden TLS bağlantıları PKIX hatasıyla düşmez.\nÖnerilen değer: Kurumunuzun kök + ara CA zinciri, ardışık -----BEGIN CERTIFICATE----- blokları hâlinde. Boş bırakılırsa yalnız genel (public) CA\'lar güvenilir sayılır.',
+  'help.set.site.monitor.ui.inactivity-minutes':
+    'Ne işe yarar: Hiç işlem yapılmadan geçen bu süre sonunda tarayıcı oturumu kendiliğinden kapanır.\nFaydası: Açık bırakılmış bir ekran başkasının eline geçmez; sunucu oturumu da boşuna açık kalmaz.\nÖnerilen değer: 60 dakika (varsayılan). Ortak kullanılan makinelerde 15-30, izole ofiste 120; sunucu 1-1440 aralığına kırpar.',
+  'help.set.site.monitor.ui.inactivity-warn-seconds':
+    'Ne işe yarar: Oturum kapanmadan önce geri sayımlı uyarının kaç saniye gösterileceğini belirler.\nFaydası: Kullanıcı formda yazarken aniden atılmaz, tek tıkla süreyi uzatabilir.\nÖnerilen değer: 60 saniye (varsayılan). Toplam hareketsizlik süresini aşamaz — sunucu otomatik kırpar.',
+  'help.set.site.monitor.uptime.alert-enabled':
+    'Ne işe yarar: Erişilebilirlik (uptime) alarmlarının gönderilip gönderilmeyeceğini belirler; kontroller her hâlükârda koşar ve kaydedilir.\nFaydası: Bir site düştüğünde sorumlu ekip beklemeden haberdar olur.\nÖnerilen değer: true (varsayılan). Yalnız planlı bir gürültü kesme döneminde geçici olarak kapatın.',
+  'help.set.site.monitor.uptime.recovery-checks':
+    'Ne işe yarar: Düşmüş bir monitörün "düzeldi" sayılması için gereken ardışık başarılı kontrol sayısı.\nFaydası: Bir an için dönen servis erken "çözüldü" bildirimi üretmez; yalpalayan servisler susturulur.\nÖnerilen değer: 3 (varsayılan). 1 yapmak açılıp kapanan (flapping) alarm üretir; 5\'in üstü çözüm bildirimini geciktirir.',
+  'help.set.site.monitor.uptime.recovery-interval-ms':
+    'Ne işe yarar: Kurtarma teyit kontrolleri arasındaki bekleme süresi.\nFaydası: Teyitler zamana yayılınca "gerçekten ayakta" sonucu güvenilir olur.\nÖnerilen değer: 30000 ms (30 saniye, varsayılan). Kısaltmak teyidi zayıflatır, uzatmak çözüm bildirimini geciktirir.',
+  'help.set.site.monitor.userpush.circuit-cooldown-seconds':
+    'Ne işe yarar: Devre kesici açıldıktan sonra yeniden denemeden önce beklenecek süre.\nFaydası: Sağlayıcıya toparlanma zamanı tanınır; kanal kendiliğinden geri gelir.\nÖnerilen değer: 300 saniye (5 dakika, varsayılan). Kısaltmak kesicinin anlamını azaltır, uzatmak bildirimleri geciktirir.',
+  'help.set.site.monitor.userpush.circuit-threshold':
+    'Ne işe yarar: Kaç ardışık hatadan sonra devre kesicinin açılacağı (gönderim geçici olarak durur).\nFaydası: Kapalı bir sağlayıcıya boşuna istek yağdırılmaz; kuyruk erimez.\nÖnerilen değer: 5 (varsayılan). 2\'nin altı geçici hatalarda kanalı gereksiz kapatır.',
+  'help.set.site.monitor.userpush.enabled':
+    'Ne işe yarar: Kişi-bazlı webhook (push) kanalını açar; mail hattından tamamen bağımsız ikinci bildirim yoludur.\nFaydası: Alarmlar e-postayı beklemeden telefona düşer; mail sunucusu arızasında da bildirim gider.\nÖnerilen değer: false (varsayılan) — açılmadıkça sistemin davranışı bugünküyle birebir aynıdır. Adres ve başlıklar doğrulandıktan sonra true yapın.',
+  'help.set.site.monitor.userpush.headers':
+    'Ne işe yarar: Her push isteğine eklenen HTTP başlıkları; "gizli" işaretli değerler şifrelenir ve API\'den asla düz metin dönmez.\nFaydası: Kimlik doğrulama jetonu veritabanında açık durmaz ve ekranda maskelenir.\nÖnerilen değer: Sağlayıcınızın istediği asgari başlık kümesi (çoğunlukla tek bir Authorization). Jeton taşıyan her satırı "gizli" işaretleyin.',
+  'help.set.site.monitor.userpush.hourly-cap':
+    'Ne işe yarar: Bir kişiye saatte gönderilebilecek en fazla push sayısı; aşan mesajlar RATE_LIMITED olarak kaydedilir.\nFaydası: Geniş bir kesintide kimsenin telefonu kullanılamaz hâle gelmez.\nÖnerilen değer: 30 (varsayılan); izinli aralık 1-500. Nöbetçi ekipte 50, geniş dağıtımda 10-20.',
+  'help.set.site.monitor.userpush.max-message-chars':
+    'Ne işe yarar: Push mesajının karakter tavanı; sunucu bu uzunlukta kırpar.\nFaydası: Mesaj telefon bildiriminde tek satırda okunur kalır, ortasından kesilmez.\nÖnerilen değer: 200 (varsayılan, ürün sözleşmesi). Sunucu 80-320 aralığına kırpar; tavanı yükseltmek uzun mesajı okunur yapmaz.',
+  'help.set.site.monitor.userpush.pipeline':
+    'Ne işe yarar: Push gövdesinde gönderilen "pipeline" alanı — sağlayıcı tarafında hangi akışın işleyeceğini seçer.\nFaydası: Aynı uç nokta üzerinden farklı ortamlar (test/üretim) ayrıştırılabilir.\nÖnerilen değer: Sağlayıcınızın verdiği akış adı. Gerekmiyorsa boş bırakın.',
+  'help.set.site.monitor.userpush.quiet-end':
+    'Ne işe yarar: Sessiz saat penceresinin bitişi (SS:DD); gece devrilen pencereler (22:00-07:00) desteklenir.\nFaydası: Pencere doğal mesai saatine göre kurulur; gece yarısı ayrımı düşünülmez.\nÖnerilen değer: 07:00 gibi bir mesai başı saati. Başlangıçla aynı değer verilirse pencere bütün günü kapsar.',
+  'help.set.site.monitor.userpush.quiet-min-level':
+    'Ne işe yarar: Sessiz saatlerde geçmesine izin verilen asgari alarm seviyesi.\nFaydası: Gece yalnız kritik olaylar uyandırır, geri kalanı sabahki mesaiyi bekler.\nÖnerilen değer: CRITICAL (varsayılan). UYARI seçmek sessiz saatleri işlevsiz kılar — hiçbir şey bastırılmaz.',
+  'help.set.site.monitor.userpush.quiet-start':
+    'Ne işe yarar: Sessiz saat penceresinin başlangıcı (SS:DD); bu pencerede yalnız asgari seviye ve üstü push gönderilir.\nFaydası: Mesai dışında yalnız gerçekten acil olan bildirim uyandırır.\nÖnerilen değer: 22:00 gibi bir mesai sonu saati. Başlangıç ya da bitiş boşsa sessiz saatler HİÇ uygulanmaz.',
+  'help.set.site.monitor.userpush.realert-enabled':
+    'Ne işe yarar: Açık bir alarm sürerken gönderilen günlük tekrar (re-alert) bildiriminin push kanalına da düşüp düşmeyeceği.\nFaydası: Mail ne gönderiyorsa push da gönderir; iki kanal arasında sessiz bir boşluk kalmaz.\nÖnerilen değer: true (varsayılan). Push hacmi rahatsız ediyorsa önce saatlik tavanı düşürmeyi deneyin.',
+  'help.set.site.monitor.userpush.reason-max-chars':
+    'Ne işe yarar: Mesaj içindeki "neden/değişen" bölümünün karakter tavanı; 0 verilirse ayrı bir kırpma yapılmaz.\nFaydası: Uzun bir hata metni mesajın geri kalanını dışarı itmez.\nÖnerilen değer: 160 (varsayılan). Sunucu 40-280 aralığına kırpar; mesaj tavanından küçük tutun.',
+  'help.set.site.monitor.userpush.retention-days':
+    'Ne işe yarar: Push teslimat günlüğünün saklama süresi — kime, ne zaman, hangi içerikle gönderildiği.\nFaydası: "Bana bildirim gelmedi" iddiası kanıtla yanıtlanır; kayıtlar kişisel veri olduğu için süresiz tutulmaz.\nÖnerilen değer: Kurumsal kişisel veri politikanızla hizalayın; taban 90 gündür.',
+  'help.set.site.monitor.userpush.retry-backoff-seconds':
+    'Ne işe yarar: Yeniden denemeler arasındaki bekleme süreleri (virgülle, deneme başına bir değer).\nFaydası: Artan bekleme, geçici olarak zorlanan bir sağlayıcıyı daha da zorlamaz.\nÖnerilen değer: 30,120 (varsayılan) — artan aralıklar kullanın. Deneme sayısından az değer verirseniz son değer tekrar edilir.',
+  'help.set.site.monitor.userpush.retry-max':
+    'Ne işe yarar: Başarısız bir push için yapılacak en fazla yeniden deneme sayısı.\nFaydası: Anlık bir ağ hatası yüzünden bildirim kaybolmaz.\nÖnerilen değer: 2 (varsayılan); izinli aralık 0-5. Yüksek değerler, sağlayıcı gerçekten kapalıysa gecikmeyi büyütür.',
+  'help.set.site.monitor.userpush.role-groups':
+    'Ne işe yarar: Hangi unvan/rol gruplarının push alacağını, kaynağını (kurumsal rol ya da unvan deseni) ve asgari seviyesini tanımlayan JSON yapılandırması.\nFaydası: Alıcı listesi elle tutulmaz; dizin verisi değiştikçe kendiliğinden güncellenir.\nÖnerilen değer: Yukarıdaki kartlardan düzenleyin. Asgari seviyeyi UYARI\'ya çekmek bildirim hacmini ciddi biçimde artırır.',
+  'help.set.site.monitor.userpush.template.changed':
+    'Ne işe yarar: DEĞİŞİKLİK (changed) push mesajının metin şablonu; süslü parantezli yer tutucular gönderim anında doldurulur (örn. {ad}, {hedef}, {degisen}).\nFaydası: Mesaj kurumunuzun diline uyarlanır; kullanıcı bildirimi açmadan ne olduğunu anlar.\nÖnerilen değer: Tek satır, 200 karakterin altında tutun — telefon bildirimi uzun metni keser. Boş bırakılırsa gömülü varsayılan şablon kullanılır.',
+  'help.set.site.monitor.userpush.template.down':
+    'Ne işe yarar: KESİNTİ (down) push mesajının metin şablonu; süslü parantezli yer tutucular gönderim anında doldurulur (örn. {seviye}, {ad}, {hedef}, {neden}).\nFaydası: Mesaj kurumunuzun diline uyarlanır; kullanıcı bildirimi açmadan ne olduğunu anlar.\nÖnerilen değer: Tek satır, 200 karakterin altında tutun — telefon bildirimi uzun metni keser. Boş bırakılırsa gömülü varsayılan şablon kullanılır.',
+  'help.set.site.monitor.userpush.template.expiry':
+    'Ne işe yarar: SÜRE BİTİŞİ (expiry) push mesajının metin şablonu; süslü parantezli yer tutucular gönderim anında doldurulur (örn. {ne}, {hedef}, {gun}, {tarih}).\nFaydası: Mesaj kurumunuzun diline uyarlanır; kullanıcı bildirimi açmadan ne olduğunu anlar.\nÖnerilen değer: Tek satır, 200 karakterin altında tutun — telefon bildirimi uzun metni keser. Boş bırakılırsa gömülü varsayılan şablon kullanılır.',
+  'help.set.site.monitor.userpush.template.resolved':
+    'Ne işe yarar: ÇÖZÜLDÜ (resolved) push mesajının metin şablonu; süslü parantezli yer tutucular gönderim anında doldurulur (örn. {ad}, {hedef}, {sure}, {saat}).\nFaydası: Mesaj kurumunuzun diline uyarlanır; kullanıcı bildirimi açmadan ne olduğunu anlar.\nÖnerilen değer: Tek satır, 200 karakterin altında tutun — telefon bildirimi uzun metni keser. Boş bırakılırsa gömülü varsayılan şablon kullanılır.',
+  'help.set.site.monitor.userpush.template.slow':
+    'Ne işe yarar: YAVAŞLIK (slow) push mesajının metin şablonu; süslü parantezli yer tutucular gönderim anında doldurulur (örn. {ad}, {metrik}, {deger}, {esik}).\nFaydası: Mesaj kurumunuzun diline uyarlanır; kullanıcı bildirimi açmadan ne olduğunu anlar.\nÖnerilen değer: Tek satır, 200 karakterin altında tutun — telefon bildirimi uzun metni keser. Boş bırakılırsa gömülü varsayılan şablon kullanılır.',
+  'help.set.site.monitor.userpush.template.test':
+    'Ne işe yarar: TEST push mesajının metin şablonu; süslü parantezli yer tutucular gönderim anında doldurulur (örn. {ad}, {hedef}).\nFaydası: Mesaj kurumunuzun diline uyarlanır; kullanıcı bildirimi açmadan ne olduğunu anlar.\nÖnerilen değer: Tek satır, 200 karakterin altında tutun — telefon bildirimi uzun metni keser. Boş bırakılırsa gömülü varsayılan şablon kullanılır.',
+  'help.set.site.monitor.userpush.timeout-connect-seconds':
+    'Ne işe yarar: Webhook sunucusuna bağlanmak için beklenecek süre.\nFaydası: Erişilemeyen bir uç nokta bildirim kuyruğunu tıkamaz.\nÖnerilen değer: 3 saniye (varsayılan); arayüz 1-30 arasını kabul eder. Sağlayıcı yavaşsa 5.',
+  'help.set.site.monitor.userpush.timeout-total-seconds':
+    'Ne işe yarar: Bir push isteğinin bağlantı dâhil toplam süre tavanı.\nFaydası: Yavaş yanıt veren bir sağlayıcı alarm hattını geciktirmez.\nÖnerilen değer: 5 saniye (varsayılan); izinli aralık 1-60. Bağlantı zaman aşımından büyük olmalıdır.',
+  'help.set.site.monitor.userpush.title':
+    'Ne işe yarar: Push bildiriminin başlığı — telefonda mesajın üstünde görünen ad.\nFaydası: Kullanıcı bildirimi açmadan kimden geldiğini anlar.\nÖnerilen değer: Kısa ve tanınır bir ad (varsayılan "Site Monitor"). Uzun başlıklar telefon ekranında kesilir.',
+  'help.set.site.monitor.userpush.url':
+    'Ne işe yarar: Push mesajlarının POST edileceği webhook uç noktası.\nFaydası: Kurumunuzun mevcut bildirim altyapısı yeniden kullanılır; ayrı bir mobil uygulama gerekmez.\nÖnerilen değer: Sağlayıcınızın verdiği tam HTTPS adresi. Boş bırakılırsa hiçbir push gönderilmez; gizli başlıkları dışarı taşıyabildiği için yalnız global yönetici değiştirebilir.',
+  'help.set.site.monitor.weekly-availability.enabled':
+    'Ne işe yarar: Her pazartesi 10:00\'da takım başına gönderilen haftalık erişilebilirlik e-postasını açar/kapatır.\nFaydası: Takımlar haftalık özetini kimse elle hazırlamadan alır; kapalıyken hiçbir rapor gitmez.\nÖnerilen değer: true (varsayılan). Yalnız planlı bir sessizlik döneminde geçici olarak kapatın.',
+  'help.set.site.monitor.weekly-availability.retention-days':
+    'Ne işe yarar: Haftalık erişilebilirlik raporu kayıtlarının saklama süresi.\nFaydası: Hizmet seviyesi (SLA) tartışmalarında üç yıllık geçmiş elde hazır bulunur.\nÖnerilen değer: 1095 gün (varsayılan, üç yıl). Sözleşme yükümlülüğünüz daha kısaysa düşürebilirsiniz.',
+  'help.set.site.monitor.weekly-report.image-retention-days':
+    'Ne işe yarar: Haftalık rapor görsellerinin saklama süresi; bundan eskisi gece silinir, rapor METNİ korunur.\nFaydası: Satır başına megabaytlarca yer tutan görseller birikmez, raporun kendisi kaybolmaz.\nÖnerilen değer: 730 gün (varsayılan). Veritabanı baskısı varsa 365; taban 30 gün.',
+  'help.set.site.monitor.weekly-report.mail-retention-days':
+    'Ne işe yarar: Gönderilen haftalık rapor e-postalarının arşiv kayıtlarının saklama süresi.\nFaydası: "Geçen çeyrekte ne raporlanmıştı" sorusu, arşivden aynı HTML açılarak yanıtlanır.\nÖnerilen değer: 730 gün (varsayılan, iki yıl). Görseller ayrı ve daha kısa bir pencerede tutulur.',
+  'help.set.site.monitor.weekly.score.weight-critical':
+    'Ne işe yarar: Haftalık rapordaki sağlık skorunda kritik bulguların ceza ağırlığı.\nFaydası: Yönetici özeti, en ağır sorunları hak ettikleri ölçüde öne çıkarır.\nÖnerilen değer: 8.0 (varsayılan) — dört ağırlığın en yükseği olmalı. Kritikleri daha sert cezalandırmak için 10-12.',
+  'help.set.site.monitor.weekly.score.weight-expiring':
+    'Ne işe yarar: Süresi yaklaşan sertifikaların haftalık sağlık skorundaki ceza ağırlığı.\nFaydası: Yenileme işi biriktikçe skor düşer ve konu yönetici özetinde görünür hâle gelir.\nÖnerilen değer: 2.0 (varsayılan). Yenileme disiplinini öne çıkarmak istiyorsanız 3-4.',
+  'help.set.site.monitor.weekly.score.weight-uptime':
+    'Ne işe yarar: Erişilebilirlik (uptime) kaybının skordaki ceza ağırlığı — eksik her yüzde puanı için uygulanır.\nFaydası: Kısa ama sık kesintiler, sertifika bulguları kadar görünür olur.\nÖnerilen değer: 0.5 (varsayılan). Yüzde puanı başına uygulandığı için küçük tutun; 1.0 üstü skoru tek başına domine eder.',
+  'help.set.site.monitor.weekly.score.weight-weak-algo':
+    'Ne işe yarar: Zayıf imza algoritması ya da kısa anahtar taşıyan sertifikaların skordaki ceza ağırlığı.\nFaydası: Kriptografik borç görünür kalır ve uyum denetimlerinden önce kapatılabilir.\nÖnerilen değer: 3.0 (varsayılan). Uyum baskısı yüksekse 5\'e kadar çıkarın.',
+  'help.smtp.auth':
+    'Ne işe yarar: SMTP oturumunda kullanıcı adı/parola ile kimlik doğrulaması yapılıp yapılmayacağı.\nFaydası: Kimlik doğrulayan aktarma sunucuları gönderimi kabul eder; kapalıyken kimlik bilgisi hiç gönderilmez.\nÖnerilen değer: Dış sağlayıcılarda ve kimlik isteyen kurumsal aktarmalarda açık. Yalnız IP ile yetkilendiren iç aktarmada kapalı.',
+  'help.smtp.connTimeout':
+    'Ne işe yarar: SMTP sunucusuna bağlanmak için beklenecek süre (ms).\nFaydası: Erişilemeyen bir aktarma sunucusu alarm gönderim işini kilitlemez.\nÖnerilen değer: 10000 ms (varsayılan). Uzak ya da yavaş bir sağlayıcıda 20000; 60000\'in üstü kuyruğu tıkar.',
+  'help.smtp.enabled':
+    'Ne işe yarar: Uygulamanın e-posta göndermesini açar; kapalıyken hiçbir alarm maili çıkmaz.\nFaydası: Bakım ya da taşıma sırasında tüm posta hattı tek anahtarla susturulabilir.\nÖnerilen değer: true — kapalı bırakmak alarmların sessizce kaybolması demektir. Webhook (push) kanalı bundan bağımsız çalışır.',
+  'help.smtp.fromAddress':
+    'Ne işe yarar: Giden e-postaların gönderen adresi.\nFaydası: Alıcılar maili tanır ve spam klasörüne düşme ihtimali azalır; yanıtlar doğru kutuya gider.\nÖnerilen değer: Kurumsal alanınızda, SPF/DKIM kayıtları olan bir adres (örn. alerts@example.com). Aktarma sunucunuzun göndermesine izin verdiği bir alan olmalıdır.',
+  'help.smtp.fromName':
+    'Ne işe yarar: Gönderen adresinin yanında görünen ad.\nFaydası: Alıcı, gelen kutusunda maili açmadan kaynağını anlar.\nÖnerilen değer: Kısa ve tanınır bir ad (örn. SiteMonitor). Boş bırakılırsa yalnız adres görünür.',
+  'help.smtp.host':
+    'Ne işe yarar: Giden postanın teslim edileceği SMTP sunucusunun adı ya da IP adresi.\nFaydası: Kurumsal posta altyapınız kullanılır; alarm mailleri tanıdık bir alandan gelir.\nÖnerilen değer: Kurumsal aktarma (relay) sunucunuz (örn. smtp.example.com). Boş bırakılırsa test ve gönderim düğmeleri çalışmaz.',
+  'help.smtp.interContact':
+    'Ne işe yarar: Aynı alarmın alıcıları arasında bırakılan bekleme süresi (ms).\nFaydası: Aktarma sunucusunun hız sınırına takılmadan çok alıcıya ulaşılır.\nÖnerilen değer: 5000 ms (varsayılan). Aktarma sunucunuz cömertse 1000-2000; hız sınırı hataları görüyorsanız yükseltin.',
+  'help.smtp.interDomain':
+    'Ne işe yarar: Farklı alan adlarına gönderim arasında bırakılan bekleme süresi (ms).\nFaydası: Aynı anda birçok alana giden posta, itibar (reputation) filtrelerini tetiklemez.\nÖnerilen değer: 3000 ms (varsayılan). Yalnız kurum içi tek alana gönderiyorsanız düşürebilirsiniz.',
+  'help.smtp.password':
+    'Ne işe yarar: SMTP servis hesabının parolası; şifrelenmiş saklanır ve ekranda asla geri gösterilmez.\nFaydası: Kimlik bilgisi veritabanında düz metin durmaz.\nÖnerilen değer: Boş bırakırsanız kayıtlı parola KORUNUR — değiştirmek istemiyorsanız dokunmayın. Değiştirdikten sonra "Bağlantıyı test et" ile doğrulayın.',
+  'help.smtp.port':
+    'Ne işe yarar: SMTP sunucusuna bağlanılacak TCP portu.\nFaydası: Doğru port, doğru şifreleme yöntemini seçer ve bağlantı ilk denemede kurulur.\nÖnerilen değer: 587 (STARTTLS, yaygın tercih), doğrudan TLS için 465, kimliksiz iç aktarma için 25.',
+  'help.smtp.readTimeout':
+    'Ne işe yarar: Sunucudan yanıt beklerken tolere edilecek en uzun süre (ms).\nFaydası: Yanıt vermeyen bir sunucu, gönderim thread\'ini süresiz tutamaz.\nÖnerilen değer: 15000 ms (varsayılan). Büyük ekli mailler gönderiyorsanız 30000.',
+  'help.smtp.retryDelay':
+    'Ne işe yarar: Başarısız bir gönderimden sonra yeniden denemeden önce beklenecek süre (ms).\nFaydası: Geçici olarak meşgul bir aktarma sunucusu üst üste denemelerle daha da zorlanmaz.\nÖnerilen değer: 90000 ms (1,5 dakika, varsayılan). Çok kısa değerler aktarma sunucusunun hız sınırına takılmanıza yol açar.',
+  'help.smtp.sslTrust':
+    'Ne işe yarar: TLS sertifikası doğrulanırken güvenilecek sunucu adları; * her sertifikayı kabul eder.\nFaydası: Kendi imzalı sertifika kullanan iç aktarma sunucusu, doğrulamayı tamamen kapatmadan çalışır.\nÖnerilen değer: Yalnız kendi sunucunuzun adı (örn. smtp.example.com). * yazmak araya girme saldırısına kapı açar — son çare olarak kullanın.',
+  'help.smtp.startTls':
+    'Ne işe yarar: Düz başlayan bağlantının STARTTLS ile şifreliye yükseltilmesini dener.\nFaydası: Kimlik bilgisi ve mesaj içeriği ağda açık dolaşmaz.\nÖnerilen değer: 587 portunda açık. 465 (doğrudan TLS) kullanıyorsanız gerekmez.',
+  'help.smtp.startTlsRequired':
+    'Ne işe yarar: STARTTLS yükseltmesi başarısız olursa gönderimi tamamen reddeder (sessizce düz metne düşmez).\nFaydası: Yanlış yapılandırılmış bir sunucu yüzünden postanın şifresiz gitmesi engellenir.\nÖnerilen değer: Üretimde açık. Yalnız eski, TLS desteklemeyen bir iç aktarma varsa kapatın.',
+  'help.smtp.username':
+    'Ne işe yarar: SMTP kimlik doğrulaması için kullanılacak hesap adı.\nFaydası: Aktarma sunucusu gönderimi tanır ve reddetmez; giden posta izlenebilir bir kimliğe bağlanır.\nÖnerilen değer: Kişisel hesap değil, bu uygulamaya ait servis hesabı. Sunucu kimlik istemiyorsa boş bırakın.',
+  'help.smtp.writeTimeout':
+    'Ne işe yarar: Mesaj gövdesini sunucuya yazarken tolere edilecek en uzun süre (ms).\nFaydası: Yavaş bir bağlantıda ekli büyük raporlar yarıda kesilmez.\nÖnerilen değer: 15000 ms (varsayılan). PDF/CSV ekli raporlar gönderiliyorsa 30000.',
+  'help.userpush.groupMinLevel':
+    'Ne işe yarar: Bu unvan grubunun push alacağı asgari alarm seviyesi; bunun altındaki alarmlar gruba hiç gitmez.\nFaydası: Üst yönetim yalnız kritikleri, uzmanlar her şeyi alır — tek kanal, kademeli hacim.\nÖnerilen değer: Yönetici grupları için KRİTİK, uzman grupları için UYARI. Seviye çok yüksek seçilirse grup hiç alıcı bulamaz ve bunun sebebi ekranda görünmez.',
+  'help.userpush.headerRow':
+    'Ne işe yarar: Push isteğine eklenecek tek bir HTTP başlığı; "gizli" işaretlenen değer şifreli saklanır ve ekranda maskelenir.\nFaydası: Kimlik doğrulama jetonu veritabanında açık durmaz ve arayüzde okunamaz.\nÖnerilen değer: Jeton ya da anahtar taşıyan HER satırı "gizli" işaretleyin. Maskeli bir değere dokunmazsanız kayıtlı gizli değer korunur.',
+  'help.userpush.teamMatrix':
+    'Ne işe yarar: Hangi takımların monitörlerinin push üreteceğini seçer.\nFaydası: Nöbet tutmayan takımlar gece bildirim almaz; kanal yalnız ilgili ekipler için açıktır.\nÖnerilen değer: Yalnız nöbet tutan takımları açın. Yeni bir takım eklendiğinde burada kapalı başlar — açmayı unutmayın.',
+  'help.userpush.typeMatrix':
+    'Ne işe yarar: Hangi izleme türlerinin push bildirimi üreteceğini seçer; kapalı bir türün alarmı push kanalına hiç düşmez.\nFaydası: Telefona yalnız üzerinde işlem yapılacak alarm türleri gider; e-posta kanalı etkilenmez.\nÖnerilen değer: Gece yarısı müdahale gerektiren türleri açın (kesinti, sertifika/alan adı bitişi); bilgilendirme niteliğindekileri kapalı bırakın.',
+  'helptip.aria':
+    'Açıklama',
 }
 
 export const EN = {
@@ -6187,6 +6908,29 @@ export const EN = {
   'userpush.disabledWarn': 'Channel is off — settings below are stored but nothing is sent.',
   'userpush.stat24h': 'Last 24 hours',
   'userpush.stat7d': 'Last 7 days',
+  'userpush.kpiHint': 'Click to list the deliveries in this window (who, when, what)',
+  'userpush.windowActive': 'Window: {0}',
+  'userpush.windowClear': 'Clear the time window',
+  'userpush.explainTitle': 'Who receives it? — recipient resolution',
+  'userpush.explainDesc': 'Pick a team and a level: the push decision and reason for every member (group match, minimum level, personal opt-out, inactive account). This answers "we are on the same team but I did not get it".',
+  'userpush.explainPickTeam': '— Select a team —',
+  'userpush.explainLevel': 'Level',
+  'userpush.explainEmpty': 'No active members in this team',
+  'userpush.explainMember': 'Member',
+  'userpush.explainTitleCol': 'Title / org role',
+  'userpush.explainGroup': 'Matched group',
+  'userpush.explainDecision': 'Decision',
+  'userpush.explainGroupOff': 'group off',
+  'userpush.decision.RECIPIENT': 'Receives',
+  'userpush.decision.NO_GROUP': 'No group match (title/role does not match the patterns)',
+  'userpush.decision.GROUP_DISABLED': 'Group disabled',
+  'userpush.decision.BELOW_MIN_LEVEL': 'Level below the group minimum',
+  'userpush.decision.SKIPPED_USER_OPT_OUT': 'Opted out (My Activity)',
+  'userpush.decision.SKIPPED_NO_ID': 'No username',
+  'userpush.decision.INACTIVE': 'Inactive account',
+  'userpush.decision.ALL_GROUPS_OFF': 'All groups off',
+  'userpush.decision.MISSING_MEMBERSHIP': 'No team membership row (this is their primary team, but the membership table has no row — data defect)',
+  'usr.pushOptOutTitle': 'Has switched webhook push notifications off (My Activity)',
   'userpush.circuitOpen': 'Circuit breaker OPEN — deliveries paused after consecutive failures',
   'userpush.connTitle': 'Connection',
   'userpush.connDesc': 'Notification API address and auth headers. Values marked secret are stored encrypted and never shown again.',
@@ -6647,6 +7391,7 @@ export const EN = {
   'general.lbl.site.monitor.system-admin.email':           'System Admin Email',
   'general.lbl.site.monitor.login-issues.enabled':         'Login "Report a Problem" feature',
   'general.lbl.site.monitor.client-errors.enabled':        'Automatic crash reporting (ErrorBoundary → record + admin email)',
+  'general.lbl.site.monitor.deploy.notify.enabled':        'Deployment notification (email + push to the system administrator when a new version goes live)',
   'general.lbl.site.monitor.issue-reports.daily-digest':   'Daily digest email for issue reports (instead of per-report mail)',
   'general.lbl.site.monitor.escalation.auto-add-managers': 'Auto-add manager as escalation contact (on login provisioning, D7+ → MANAGER/HIGH)',
   'general.lbl.site.monitor.ui.inactivity-minutes': 'Idle logout (minutes) — default 60, min 1, max 1440',
@@ -7991,6 +8736,7 @@ export const EN = {
   'mon.loadError':      'Could not load the monitor list',
   'mon.duplicateBadge': 'Copy',
   'mon.duplicateHint':  'An exact copy of the source monitor. Usually you only need to change the URL/host field and save.',
+  'mon.scrollForMore':  'Scroll for more',
 
   // ── Page-level bulk check (CheckAllButton / useCheckRun / MonitorCheckRunModal) ──
   'mon.checkAll':            'Check Now ({0})',
@@ -8161,6 +8907,8 @@ export const EN = {
   'perm.res.alerts.actions':       'Acknowledge, resolve, re-notify alerts.',
   'perm.res.system_health.read':   'Monitor system health metrics.',
   'perm.res.system_health.actions':'Force run, release lock, trigger heartbeat.',
+  'perm.res.release_history.read': 'View the release & deployment history (System Health section, CSV).',
+  'perm.res.release_history.edit': 'Add manual deployment records, backfill from the audit log, delete manual records.',
   'perm.res.system_health.terminate':'Remotely terminate a user session (kick) + revoke tokens.',
   'perm.res.system_health.scheduler_lock':'Force-release the distributed scheduler lock.',
   'perm.res.monitoring.read':      'View port/DNS monitor list.',
@@ -8231,6 +8979,17 @@ export const EN = {
   'sql.td.indexes':      'Indexes',
   'sql.td.triggers':     'Triggers',
   'sql.td.none':         'None',
+  'sql.td.activity':     'Time & Activity',
+  'sql.meta.created':    'Created',
+  'sql.meta.createdApprox': 'first seen (registry start) — the real creation may be earlier',
+  'sql.meta.lastChange': 'Last data change',
+  'sql.meta.lastChangeHint': 'from pg_stat counters, one-minute precision',
+  'sql.meta.lastDataMax': 'Latest record (MAX)',
+  'sql.meta.liveRows':   'Live rows (estimate)',
+  'sql.meta.counters':   'Inserts / updates / deletes',
+  'sql.meta.size':       'Size',
+  'sql.meta.lastAnalyze':'Last analyze / vacuum',
+  'sql.meta.unknown':    'unknown',
   'sql.td.loadError':    'Failed to load details',
   // Relationship (hierarchy) diagram
   'sql.diag.open':       'Relationship diagram',
@@ -8297,6 +9056,11 @@ export const EN = {
   'team.noLeader':        'No leader assigned',
   'team.noUsersHint':     'To select a leader, first add a user in User Management.',
   'team.leaderOptionalHint': 'Optional — the PO/leader may not have logged in yet.',
+  'team.formManager':   'Team Manager',
+  'team.selectManager': '— Automatic (AD manager chain) —',
+  'team.managerHint':   'Optional — leave blank to derive it from the members\' AD manager chain; a selection does not overwrite AD, it only takes precedence on this screen.',
+  'team.managerManual': '(manual)',
+  'team.managerManualTitle': 'Assigned manually in Team Management; not derived from the AD chain.',
   'team.expandMembers':   'Show members',
   'team.collapseMembers': 'Hide members',
   'team.members':         'Members',
@@ -8326,6 +9090,7 @@ export const EN = {
   'usr.saved':         'Saved',
   'usr.pwdChanged':    'Password updated',
   'usr.colUsername':   'Username',
+  'usr.colUser':       'User',
   'usr.colDisplay':    'Display Name',
   'usr.colEmail':      'Email',
   'usr.colRole':       'Role',
@@ -8952,6 +9717,132 @@ export const EN = {
   'health.hbDetailMissed':     'Missing',
   'health.hbDetailStatus':     'Status',
   'health.queueTitle':     'Task Queue',
+  'version.chipTitle':  'Version details — release and deployment',
+  'version.newDot':     'New version',
+  'version.released':   'Released',
+  'version.live':       'Went live',
+  'version.liveNever':  'No deployment record in this environment',
+  'version.commit':     'Commit',
+  'version.uptime':     'Uptime',
+  'version.helm':       'Helm',
+  'version.mismatch':   'Warning: the running version ({0}) differs from the image tag ({1})',
+  'version.newInThis':  'New in this version',
+  'version.sinceLast':  '{0} releases since your last visit',
+  'version.whatsNew':   "What's new",
+  'version.deployments':'Deployment history',
+  'version.loadError':  'Could not load server details',
+  'version.loading':    'Loading…',
+  'version.copy':       'Copy',
+  'version.copied':     'Copied',
+  'version.dur.d':      'd',
+  'version.dur.h':      'h',
+  'version.dur.m':      'm',
+  'version.justNow':    'just now',
+  'version.lag':        '{0} after release',
+  'version.kind.FIRST_SEEN': 'First seen',
+  'version.kind.UPGRADE':    'Upgrade',
+  'version.kind.RESTART':    'Restart',
+  'version.kind.ROLLBACK':   'Rollback',
+  'version.kind.CHANGED':    'Changed',
+  'version.kind.UNKNOWN':    'Version unknown',
+  'version.bump.major':   'Major',
+  'version.bump.minor':   'Minor',
+  'version.bump.patch':   'Patch',
+  'version.bump.initial': 'Initial',
+  'version.source.STARTUP':  'Startup',
+  'version.source.BACKFILL': 'Backfill',
+  'version.source.MANUAL':   'Manual',
+  'releases.title':            "What's new",
+  'releases.density.deployed': 'Deployed',
+  'releases.density.all':      'All releases',
+  'releases.type.all':   'All',
+  'releases.type.feat':  'Features',
+  'releases.type.fix':   'Fixes',
+  'releases.type.other': 'Other',
+  'releases.search':     'Search by version, scope or subject…',
+  'releases.current':    'CURRENT',
+  'releases.deployedHere': 'In this environment: {0}',
+  'releases.notDeployed':  'Never deployed to this environment',
+  'releases.collapsed':    '+{0} patches',
+  'releases.showPatches':  'Show the folded patches',
+  'releases.changes.feat':  'New',
+  'releases.changes.fix':   'Fixed',
+  'releases.changes.other': 'Other',
+  'releases.more':       '+{0} more',
+  'releases.truncated':  'List truncated ({0} changes not shown)',
+  'releases.empty':      'No matching releases',
+  'releases.noIndex':    'The release index is not in this image (docs/releases/index.json). CI generates it on every release; it may be empty when running locally.',
+  'releases.loadError':  'Could not load the release list',
+  'releases.breaking':   'BREAKING',
+  'releases.indexMeta':  'Index: {0} releases · generated {1}',
+  'releases.sinceStrip': 'There are new releases since your last visit ({0}) — now on {1}',
+  'help.view.guide':     'Guide',
+  'help.view.releases':  "What's new",
+  'deploy.section':      'Release & Deployment',
+  'deploy.currentTitle': 'Running version',
+  'deploy.previous':     'Previous version',
+  'deploy.restarts':     'Restarts on this version',
+  'deploy.last30':       'Deployments (30 days)',
+  'deploy.restarts7':    'Restarts (7 days)',
+  'deploy.rollbacks':    'Rollbacks',
+  'deploy.avgLag':       'Avg. release → live',
+  'deploy.skipped':      'Skipped releases',
+  'deploy.timelineTitle':'Timeline',
+  'deploy.restartsFolded': '{0} restarts hidden',
+  'deploy.tableTitle':   'Deployment records',
+  'deploy.env':          'Environment',
+  'deploy.envAll':       'All environments',
+  'deploy.source':       'Source',
+  'deploy.sourceAll':    'All',
+  'deploy.search':       'Version, commit, pod, note…',
+  'deploy.col.started':  'Started',
+  'deploy.col.version':  'Version',
+  'deploy.col.kind':     'Kind',
+  'deploy.col.commit':   'Commit',
+  'deploy.col.pod':      'Pod / node',
+  'deploy.col.helm':     'Helm',
+  'deploy.col.ended':    'Ended',
+  'deploy.col.source':   'Source',
+  'deploy.col.actions':  'Actions',
+  'deploy.endUnrecorded':'unrecorded shutdown',
+  'deploy.running':      'running',
+  'deploy.csv':          'CSV',
+  'deploy.refresh':      'Refresh',
+  'deploy.empty':        'No records',
+  'deploy.emptyHint':    "The first record is written when this version starts up; use \"Backfill from audit\" for earlier startups.",
+  'deploy.loadError':    'Could not load the deployment history',
+  'deploy.matrixTitle':  'Release × environment',
+  'deploy.matrixNever':  'never deployed',
+  'deploy.matrixShowAll':'Show all',
+  'deploy.matrixTruncated': 'First 200 releases',
+  'deploy.manualAdd':    'Add manual record',
+  'deploy.backfill':     'Backfill from audit',
+  'deploy.backfillConfirmTitle': 'Backfill from audit',
+  'deploy.backfillConfirm': '{0} startup audit rows (SCHEMA_PATCH) will be added to "{1}" as version-less Backfill records. Existing ones are skipped. Continue?',
+  'deploy.backfillDone': '{0} records added, {1} already existed',
+  'deploy.backfillNone': 'Nothing to backfill',
+  'deploy.delete':       'Delete',
+  'deploy.deleteConfirm':'Delete this manual deployment record? ({0} · v{1})',
+  'deploy.deleted':      'Record deleted',
+  'deploy.manualTitle':  'Manual deployment record',
+  'deploy.manualVersion':'Version',
+  'deploy.manualEnv':    'Environment',
+  'deploy.manualAt':     'Went live at',
+  'deploy.manualNote':   'Note (source: change ticket)',
+  'deploy.manualCommit': 'Commit (optional)',
+  'deploy.manualHint':   'Only for past deployments the application could not record itself. The record is marked with the "Manual" source and can be deleted.',
+  'deploy.saved':        'Deployment record added',
+  'deploy.save':         'Save',
+  'deploy.cancel':       'Cancel',
+  'deploy.mismatch':     'The running version and the image tag differ — the image may have been built from an old VERSION',
+  'deploy.image':        'Image',
+  'deploy.pod':          'Pod',
+  'deploy.since':        'Live since',
+  'deploy.uptime':       'Uptime',
+  'deploy.helm':         'Helm',
+  'deploy.commit':       'Commit',
+  'sys.buildVersion':    'Version',
+  'sys.buildCommit':     'Commit',
   'health.queuePending':   'Backlog in queue',
   'health.queueTooltip':   'This counter rises only when all {0} active threads are busy. 0 means pool capacity is sufficient.',
   'health.queueSaturated': 'Pool saturated: queue is above 80% of capacity — sweeps are slowing down and overflow tasks run on the scheduler thread.',
@@ -11082,6 +11973,557 @@ export const EN = {
   'tier.clickHint':    'Click a slice or row to filter',
   'tier.filterLabel':  'Tier filter',
   'tier.centerTotal':  'total',
+
+  // ── Ayar yardımı (HelpTip) — her yapılandırma değerinin "ne işe yarar / faydası /
+  //    önerilen değer" metni. ÜÇ satır, \n ile ayrılır; HelpTip pre-line ile çizer.
+  //    `help.set.<katalog anahtarı>` Genel Ayarlar ile özel sayfa arasında PAYLAŞILIR.
+  //    Kapı: src/test/settings-help-coverage.test.js (katalogdaki her anahtar + üç satır).
+  'help.cir.dayOfMonth':
+    'What it does: The day of the month the report is sent on under the "given day of the month" rule.\nBenefit: The report arrives on the same calendar day every month, so expectations are stable.\nRecommended: A day between 1 and 28 — capped at 28 so it exists in every month. 29-31 are not allowed, to avoid skipping February.',
+  'help.cir.dayRule':
+    'What it does: Chooses the monthly rule the report follows; your selection builds the cron expression below automatically.\nBenefit: You get a valid schedule without having to know cron syntax.\nRecommended: "Last given weekday of the month" (the default), which lines up with month-end close. "Custom" is only for people who want to write cron by hand.',
+  'help.cir.time':
+    'What it does: The time of day the report is sent, in the organisation\'s time zone.\nBenefit: The report lands during working hours instead of being buried overnight.\nRecommended: 10:00 (the default), just after the morning rush. Overnight times tend to get overlooked.',
+  'help.cir.weekday':
+    'What it does: Which weekday the "last given weekday of the month" rule uses.\nBenefit: The report can land on a day the team actually reads it.\nRecommended: Friday (the default), the last working day before month-end. Monday suits teams who prefer to start the week with the report.',
+  'help.ldap.baseDn':
+    'What it does: The directory root where user searches begin.\nBenefit: Searching only the relevant subtree is faster and less likely to match the wrong object.\nRecommended: The narrowest root that still covers your users (e.g. OU=Users,DC=example,DC=com). The whole domain root makes searches slow.',
+  'help.ldap.bindDn':
+    'What it does: The distinguished name of the service account used to search for users and groups.\nBenefit: Search rights sit with one auditable account.\nRecommended: A dedicated read-only service account (e.g. CN=svc-sitemonitor,OU=Service Accounts,DC=example,DC=com). Do not use an administrator account.',
+  'help.ldap.bindPassword':
+    'What it does: The service account\'s password; it is stored encrypted and never shown back.\nBenefit: The directory credential is not left in clear text in the database.\nRecommended: Leave it blank to keep the stored password. When the password is rotated, update it here and re-run the connection test.',
+  'help.ldap.caCert':
+    'What it does: The internal CA bundle (PEM) used to validate the directory server\'s certificate.\nBenefit: A directory signed by your own CA can be used safely without switching verification off.\nRecommended: Paste the root and any intermediates together. Left empty, the system trust store is used; note that this field is ignored while "skip verification" is on.',
+  'help.ldap.defaultRole':
+    'What it does: The role intended for users who match no group at all.\nBenefit: A user still has a role even when the mapping table is incomplete.\nRecommended: Be aware that this value is saved but never read at sign-in, so choosing ADMIN does not make anyone an administrator. Roles are derived from directory attributes.',
+  'help.ldap.displayAttr':
+    'What it does: The directory attribute the display name is read from.\nBenefit: Screens show a recognisable name instead of a bare username.\nRecommended: displayName, or cn if that attribute is not populated in your directory.',
+  'help.ldap.emailAttr':
+    'What it does: The directory attribute the user\'s email address is read from.\nBenefit: Alerts and reports reach the right address without anyone typing it in.\nRecommended: mail, the standard Active Directory attribute. If it is empty, no notification email can be sent to that person.',
+  'help.ldap.enable':
+    'What it does: Enables authentication against your corporate directory; with it off, only local accounts can sign in.\nBenefit: People sign in with their own domain account, so there is no second password to manage.\nRecommended: Switch it on only after the connection test passes. The local administrator account keeps working either way.',
+  'help.ldap.groupFilter':
+    'What it does: The LDAP filter applied when searching for groups.\nBenefit: Only genuine group objects are scanned, which keeps the search light.\nRecommended: (objectclass=group) is usually enough. It is unused if the group search base is empty.',
+  'help.ldap.groupSearchBase':
+    'What it does: The directory root searched for groups when a separate group lookup is used.\nBenefit: Group membership is still found on directories that do not populate memberOf on the user object.\nRecommended: The root containing your groups (e.g. OU=Groups,DC=example,DC=com). Leave it empty if you do not need a separate lookup.',
+  'help.ldap.host':
+    'What it does: The host name of the directory (LDAP/Active Directory) server to connect to.\nBenefit: The right server means sign-ins are validated first time.\nRecommended: A domain name or load-balanced address (e.g. ldap.example.com) rather than one specific server, so sign-ins survive a single controller going down.',
+  'help.ldap.mapGroup':
+    'What it does: The full DN or a CN fragment of the directory group being mapped to a role (case-insensitive).\nBenefit: Permissions are derived from a directory group rather than granted person by person.\nRecommended: A distinctive CN fragment is enough. Note that this section is not currently read during sign-in — roles are derived from directory attributes instead.',
+  'help.ldap.mapRole':
+    'What it does: The application role granted to members of the matching group.\nBenefit: Removing somebody from the directory group is enough when they leave.\nRecommended: Choose the narrowest role that suffices. Note that this mapping is currently stored but not applied at sign-in.',
+  'help.ldap.port':
+    'What it does: The TCP port used to reach the directory server.\nBenefit: The port decides the encryption method; the wrong one produces silent timeouts.\nRecommended: 636 for LDAPS, 389 for plain or StartTLS. For an Active Directory global catalog use 3269 (TLS) or 3268.',
+  'help.ldap.skipCert':
+    'What it does: Disables verification of the TLS chain and the server name entirely.\nBenefit: It lets you get a connection working in a development setup before certificates are in place.\nRecommended: Off. While it is on, the service account and every user password travel over unverified TLS — try the "test with CA verification" button first.',
+  'help.ldap.skipMemberOf':
+    'What it does: Skips requesting the memberOf attribute during the user search — a workaround for the Active Directory MaxValRange / 1 MB limit.\nBenefit: Users with very large nested group memberships do not hit the directory limit and fail to sign in.\nRecommended: Off; switch it on only if you actually see sign-ins hitting that limit. When it is on, the group search base and filter become mandatory, otherwise no role information arrives at all.',
+  'help.ldap.startTls':
+    'What it does: Upgrades a plain connection on port 389 to an encrypted one using StartTLS.\nBenefit: Traffic is still encrypted against older directories that do not offer LDAPS.\nRecommended: Switch it on when LDAPS is off. Do not enable both — LDAPS is already an encrypted channel.',
+  'help.ldap.useLdaps':
+    'What it does: Opens the connection with TLS from the start (LDAPS, usually on 636).\nBenefit: The service account and user passwords travel over an encrypted channel from the first byte.\nRecommended: On — directory traffic carries credentials. Fall back to StartTLS only if the server does not offer LDAPS.',
+  'help.ldap.userAttr':
+    'What it does: The directory attribute that matches what the user types on the sign-in screen.\nBenefit: People sign in with the identity they already know, rather than learning a new one.\nRecommended: sAMAccountName on Active Directory, or userPrincipalName if you want people to sign in with their email address.',
+  'help.ldap.userFilter':
+    'What it does: The LDAP filter applied when searching for a user; {{username}} is substituted with the name typed at sign-in.\nBenefit: Only appropriate objects match, so service accounts and people do not get mixed up.\nRecommended: (objectclass=person) is usually enough. If the filter contains no {{username}}, it is combined automatically with the configured attribute.',
+  'help.secret.key':
+    'What it does: A candidate key used to try decrypting the stored encrypted fields (SMTP and LDAP passwords); it is never saved anywhere.\nBenefit: "Why does the password not work?" is answered by confirming whether the right key is loaded.\nRecommended: The SITE_MONITOR_SECRET_KEY value from your environment. Every decryption attempt is audited, and the key itself is never logged.',
+  'help.set.logging.level.com.sitemonitor':
+    'What it does: Changes the application log level live — TRACE is the most detailed, ERROR the quietest.\nBenefit: You can turn up detail while investigating a fault without redeploying, then turn it back down.\nRecommended: INFO in production, DEBUG temporarily while investigating. TRACE costs disk and CPU, so do not leave it on.',
+  'help.set.logging.level.com.sitemonitor.mail':
+    'What it does: Sets the level of the mail-delivery logger alone, leaving the rest of the application quiet.\nBenefit: You can watch the SMTP conversation for a "mail is not arriving" complaint without drowning the whole system in TRACE.\nRecommended: Empty, so it inherits the application level. Use TRACE briefly while investigating and then clear it again — TRACE logs mail headers and content.',
+  'help.set.site.monitor.activity.retention-days':
+    'What it does: How long the unified activity feed (Records → Activity) is kept.\nBenefit: "Who did what, when" can be answered retrospectively, while the fastest-growing series stays bounded.\nRecommended: 365 days (the default, aligned with the other personal-data windows). Every check adds a row, so watch the growth on the Data Retention screen. The floor is 1 day.',
+  'help.set.site.monitor.alert.retention-days':
+    'What it does: How long alert history records are kept.\nBenefit: Recurring faults and alert noise can be analysed retrospectively.\nRecommended: 365 days (the default) — keep at least a year so you can compare like with like.',
+  'help.set.site.monitor.app.base-url':
+    'What it does: Sets the address every link in emails and push notifications is built on; the application reads it live.\nBenefit: A link in an alert opens the right screen straight away instead of the recipient patching the address by hand.\nRecommended: The exact address people type in the browser (e.g. https://sitemonitor.example.com). The default, http://localhost:5173, will not work in production.',
+  'help.set.site.monitor.audit.retention-days':
+    'What it does: How long audit records are kept; a JSONL archive is written before anything is deleted.\nBenefit: The history compliance asks for is preserved without the table growing without limit.\nRecommended: 365 days (the default). Align it with your own audit policy if that is longer. The floor is 1 day.',
+  'help.set.site.monitor.branding.app-name':
+    'What it does: The application name shown in the interface and in emails.\nBenefit: The product reads as your organisation\'s own tool rather than a foreign name.\nRecommended: The short name you use internally. Left empty, the default SiteMonitor identity is used.',
+  'help.set.site.monitor.branding.banner-enabled':
+    'What it does: Shows the announcement banner at the top of the application for every user.\nBenefit: A maintenance window or outage notice reaches everyone without sending a single email.\nRecommended: false (the default) most of the time; switch it on only while you have something to announce, then off again.',
+  'help.set.site.monitor.branding.banner-link':
+    'What it does: The address the announcement banner links to — a detail page, change record or ticket.\nBenefit: People can reach the detail without you cramming it into the banner.\nRecommended: A full https address. Left empty, the banner shows text only.',
+  'help.set.site.monitor.branding.banner-link-label':
+    'What it does: The visible text of the link in the announcement banner.\nBenefit: A clear call such as "Details" reads better than a bare address.\nRecommended: A two- or three-word call to action. Left empty, the address itself is shown.',
+  'help.set.site.monitor.branding.banner-text':
+    'What it does: The text shown in the announcement banner.\nBenefit: A short, clear notice heads off calls to the help desk.\nRecommended: One sentence, with the date and time spelled out. When the text changes, the banner reappears for people who had dismissed it.',
+  'help.set.site.monitor.branding.banner-tone':
+    'What it does: The visual tone of the announcement banner: INFO, WARNING or CRITICAL.\nBenefit: Urgency comes across from the colour, so not every notice carries the same weight.\nRecommended: INFO (the default) for planned notices, WARNING for upcoming maintenance, CRITICAL during a live outage. Leaving CRITICAL on permanently drains its meaning.',
+  'help.set.site.monitor.branding.banner-version':
+    'What it does: A version counter that increases automatically whenever the banner text changes, so the banner reappears for people who dismissed the previous one.\nBenefit: A new announcement still reaches users who dismissed the last one.\nRecommended: Do not edit it by hand — the system maintains it and it is hidden in the interface.',
+  'help.set.site.monitor.branding.footer-text':
+    'What it does: The small line of information shown at the foot of the sign-in screen.\nBenefit: A legal note, ownership statement or support contact stays permanently visible.\nRecommended: A single line, such as the owning team and a support address. Left empty, no footer is drawn.',
+  'help.set.site.monitor.branding.login-subtitle':
+    'What it does: The line of explanatory text under the heading on the sign-in screen.\nBenefit: You can say who may sign in, or where to get help.\nRecommended: One sentence. Left empty, the line is not drawn at all.',
+  'help.set.site.monitor.branding.login-title':
+    'What it does: The main heading on the sign-in screen.\nBenefit: People can see at a glance that they are signing in to the right system.\nRecommended: A single line of welcome, such as "Site Monitoring Portal". Left empty, the built-in text is used.',
+  'help.set.site.monitor.branding.logo-data':
+    'What it does: The logo shown on the sign-in screen and in the interface, stored inline from the file you upload.\nBenefit: Brand identity comes across more strongly than a text name alone.\nRecommended: PNG, JPEG or SVG; images are downscaled to 256 pixels and must stay under 200 KB. Left empty, the application name is shown instead.',
+  'help.set.site.monitor.branding.primary-color':
+    'What it does: The accent colour of the interface — buttons, links and selected states all use it.\nBenefit: The application matches your corporate identity instead of looking like an outside tool.\nRecommended: Your brand colour as a six-digit hex value (e.g. #1d4ed8). Check it reads well in dark mode too; left empty, the default blue is used.',
+  'help.set.site.monitor.branding.signin-label':
+    'What it does: The text on the sign-in button.\nBenefit: You can use the wording your organisation is used to.\nRecommended: One or two words. Left empty, the default label is used.',
+  'help.set.site.monitor.branding.tab-title':
+    'What it does: The title shown on the browser tab and in bookmarks.\nBenefit: The application is easy to pick out among dozens of open tabs.\nRecommended: Keep it to two or three words; long titles are truncated in a tab. Left empty, the application name is used.',
+  'help.set.site.monitor.branding.username-label':
+    'What it does: The label on the username field.\nBenefit: It can match whatever your directory calls it — staff number, username, email — so people enter the right thing.\nRecommended: The term your users know. Left empty, the default label is used.',
+  'help.set.site.monitor.cert-inventory-report.cc':
+    'What it does: The CC recipients of the monthly inventory report.\nBenefit: Management or compliance see a copy without taking on the primary responsibility.\nRecommended: Empty (the default), or a single management list. A crowded CC line devalues the report.',
+  'help.set.site.monitor.cert-inventory-report.cron':
+    'What it does: The schedule for the monthly inventory report, as a Spring cron expression; changes apply live, without a restart.\nBenefit: The report can be moved to fit your reporting calendar, and the next run time is shown on screen.\nRecommended: 0 0 10 * * FRIL (the default) — 10:00 on the last Friday of the month. Building the schedule with the day and time pickers above is safer than writing cron by hand.',
+  'help.set.site.monitor.cert-inventory-report.enabled':
+    'What it does: Switches the scheduled monthly certificate inventory report on or off.\nBenefit: The full inventory lands in front of the right people at a regular rhythm.\nRecommended: true (the default). Even when off, the "run now" button can still produce the report by hand.',
+  'help.set.site.monitor.cert-inventory-report.recipients':
+    'What it does: The main recipients of the monthly inventory report, comma-separated, in addition to the owner addresses derived from the inventory.\nBenefit: The report still reaches a fixed address even where ownership data is incomplete.\nRecommended: A PKI or security distribution list rather than a personal mailbox (e.g. pki@example.com). If this is empty and no owner address exists, nothing is sent.',
+  'help.set.site.monitor.cert-inventory-report.retention-days':
+    'What it does: How long generated monthly certificate inventory reports are kept.\nBenefit: Past snapshots of the inventory serve as evidence in compliance audits.\nRecommended: 730 days (the default). Align it with your audit cycle if that is longer.',
+  'help.set.site.monitor.cert-note-revision.retention-days':
+    'What it does: How long the revision history of certificate notes is kept.\nBenefit: You can see when a note was changed and by whom, long afterwards.\nRecommended: 730 days (the default). It is a low-volume table, so shortening gains little.',
+  'help.set.site.monitor.client-errors.enabled':
+    'What it does: Records a front-end crash caught by the error boundary and emails the administrator about it.\nBenefit: White screens nobody bothers to report become visible, and the stack trace is not lost.\nRecommended: true (the default). Turning it off does not stop the crashes, it only hides them.',
+  'help.set.site.monitor.cors.allowed-origins':
+    'What it does: Lists the origins allowed to make credentialed browser requests, comma-separated.\nBenefit: Only your own interface can reach the API, so a foreign page cannot ride on a signed-in session.\nRecommended: Just the real interface address (e.g. https://sitemonitor.example.com). Never use *; drop the development default http://localhost:5173 in production.',
+  'help.set.site.monitor.db.growth-warn-rows':
+    'What it does: Raises a growth warning in system health when a table passes this many rows.\nBenefit: A table whose retention is set wrong is spotted before the disk fills.\nRecommended: 20,000,000 (the default). On a small database, 5,000,000 warns you sooner.',
+  'help.set.site.monitor.deploy.notify.enabled':
+    'What it does: Emails and pushes the system administrator whenever a new version goes live.\nBenefit: Deployments stop being silent, so if something breaks afterwards you already have the timeline.\nRecommended: true for teams deploying a few times a week; false (the default) where releases go out several times a day.',
+  'help.set.site.monitor.diagnostics.retention-days':
+    'What it does: How long diagnostic run records are kept.\nBenefit: The output of a past investigation is not lost.\nRecommended: 365 days (the default). These records can contain target addresses, so do not keep them longer than you need.',
+  'help.set.site.monitor.dns.alert-enabled':
+    'What it does: Controls whether DNS alerts are sent; the checks still run and are recorded either way.\nBenefit: A record change or a resolution failure is seen before the first user complaint.\nRecommended: true (the default). Only turn it off briefly, to silence a known noisy period.',
+  'help.set.site.monitor.dns.default-interval-seconds':
+    'What it does: The default check interval, in seconds, pre-filled when a new DNS monitor is created; existing monitors are unaffected.\nBenefit: Everyone starts at the same cadence, with no per-monitor fiddling and a predictable load.\nRecommended: 300 seconds (the default). Drop it to 60 temporarily while you are watching a propagation change.',
+  'help.set.site.monitor.dns.query-timeout-ms':
+    'What it does: How long a single DNS query waits before it counts as failed.\nBenefit: A silent resolver does not hold up the check sweep.\nRecommended: 2000 ms (the default). Keep it above the slowness threshold, otherwise slow replies are never measured at all.',
+  'help.set.site.monitor.dns.resolvers':
+    'What it does: Lists the resolvers DNS checks query, comma-separated.\nBenefit: Using more than one resolver stops a single server\'s stale cache from looking like a propagation problem.\nRecommended: At least two independent resolvers (default 8.8.8.8,1.1.1.1,9.9.9.9). Add your corporate resolver as well if you watch internal zones.',
+  'help.set.site.monitor.dns.slow-confirm-attempts':
+    'What it does: How many consecutive confirmations are needed before a slow-DNS alert opens.\nBenefit: A one-off network blip does not raise an alert.\nRecommended: 3 (the default). Setting it to 1 makes things noisy; above 5 alerts arrive too late.',
+  'help.set.site.monitor.dns.slow-confirm-interval-ms':
+    'What it does: The wait between slow-DNS confirmation attempts.\nBenefit: Confirmations are spread over time, so a passing congestion spike is not mistaken for a lasting problem.\nRecommended: 60000 ms — one minute (the default). Shorter makes confirmation meaningless; longer delays the alert.',
+  'help.set.site.monitor.dns.slow-threshold-ms':
+    'What it does: A DNS resolution slower than this becomes a candidate for a slow-DNS alert.\nBenefit: Resolver trouble is seen before it turns into a full outage.\nRecommended: 1500 ms (the default), or 2500 for geographically distant resolvers; below 500 you get constant false alarms.',
+  'help.set.site.monitor.domain.alert-enabled':
+    'What it does: Controls whether domain expiry alerts are sent; the checks still run and are recorded either way.\nBenefit: A forgotten domain renewal comes up weeks before the name would lapse.\nRecommended: true (the default). Only turn it off briefly, to silence a known noisy period.',
+  'help.set.site.monitor.domain.critical-check-enabled':
+    'What it does: Runs a second daily check for domains close to expiry.\nBenefit: A renewal made at the last minute is picked up the same day, cutting needless repeat alerts.\nRecommended: true (the default). Turn it off only if your outbound lookup budget is very tight.',
+  'help.set.site.monitor.domain.critical-check-threshold-days':
+    'What it does: The days-remaining mark below which the second daily check kicks in.\nBenefit: The extra lookups are spent only on domains that are genuinely urgent.\nRecommended: 7 days (the default). Raising it to 30 noticeably increases the number of lookups.',
+  'help.set.site.monitor.domain.default-critical-days':
+    'What it does: The critical threshold, in days remaining, suggested for new domain monitors.\nBenefit: The alert level rises on the home straight so the issue cannot be lost.\nRecommended: 7 days (the default). It must be lower than the warning threshold; use 14 where approvals are slow.',
+  'help.set.site.monitor.domain.default-interval-seconds':
+    'What it does: The default check interval, in seconds, pre-filled when a new domain monitor is created; existing monitors are unaffected.\nBenefit: Everyone starts at the same cadence, with no per-monitor fiddling and a predictable load.\nRecommended: 86400 seconds (the default). Expiry dates change at most once a day; querying more often only burdens the registries.',
+  'help.set.site.monitor.domain.default-thresholds':
+    'What it does: The day marks at which domain expiry reminders are sent, comma-separated.\nBenefit: Instead of a single email you get reminders that close in, so a renewal is not forgotten.\nRecommended: 60,30,14,7,3,1 (the default). More marks means more mail — five or six is plenty.',
+  'help.set.site.monitor.domain.default-warning-days':
+    'What it does: The warning threshold, in days remaining, suggested when a new domain monitor is created.\nBenefit: Every monitor inherits the same reminder discipline without anyone setting it by hand.\nRecommended: 30 days (the default), which matches most registrars\' renewal windows.',
+  'help.set.site.monitor.domain.dnsbl-budget-ms':
+    'What it does: A total time budget for all blocklist queries; once it is spent the remaining queries are skipped.\nBenefit: An unresponsive DNSBL zone cannot stall the domain check.\nRecommended: 8000 ms (the default), with a 1000 ms floor. Raise it if you add more zones.',
+  'help.set.site.monitor.domain.dnsbl-lists':
+    'What it does: The blocklist (DNSBL) zones queried for a domain\'s addresses, comma-separated.\nBenefit: You learn that your server has been listed before your mail starts being rejected.\nRecommended: The default three (zen.spamhaus.org, bl.spamcop.net, dbl.spamhaus.org) suit most installs. Each extra zone means another DNS query on every check.',
+  'help.set.site.monitor.domain.dnsbl-max-ips':
+    'What it does: The maximum number of addresses checked against the blocklists for one domain.\nBenefit: A domain with dozens of A records cannot trigger an explosion of queries.\nRecommended: 5 (the default), with a floor of 1. Raising it adds nothing for domains behind a CDN.',
+  'help.set.site.monitor.domain.isimtescil-whois-url':
+    'What it does: The İsimtescil web WHOIS endpoint used for .tr lookups.\nBenefit: If the provider moves its address you can correct it without waiting for a release.\nRecommended: Leave it at the default; change it only if the provider\'s address changes.',
+  'help.set.site.monitor.domain.rdap-bootstrap-url':
+    'What it does: The IANA bootstrap file used to find the authoritative RDAP server for a given top-level domain.\nBenefit: Each extension is queried at its proper registry rather than falling back to a generic endpoint.\nRecommended: https://data.iana.org/rdap/dns.json (the default) or an internal mirror. If it is unreachable, the fallback RDAP address takes over.',
+  'help.set.site.monitor.domain.rdap-fallback-url':
+    'What it does: The generic RDAP address used when bootstrap cannot identify an authoritative server.\nBenefit: Expiry can still be read for new or unusual extensions.\nRecommended: https://rdap.org/domain/ (the default). Leaving it empty means the lookup simply fails when bootstrap does.',
+  'help.set.site.monitor.domain.rdap-timeout-ms':
+    'What it does: How long a single RDAP request waits for a reply.\nBenefit: A slow registry does not stretch out the daily refresh sweep.\nRecommended: 6000 ms (the default), 8000-10000 behind a proxy; do not go below 2000.',
+  'help.set.site.monitor.domain.tr-web-whois-enabled':
+    'What it does: Reads .tr domain expiry over HTTPS web WHOIS — the only route when port 43 is closed.\nBenefit: .tr names get expiry monitoring too, and the lookup goes through the proxy.\nRecommended: true (the default) if you monitor .tr names, otherwise false.',
+  'help.set.site.monitor.domain.tr-web-whois-providers':
+    'What it does: The order in which .tr web WHOIS providers are tried, comma-separated.\nBenefit: If one provider does not answer, the next is tried, so no single source is a dependency.\nRecommended: isimtescil,trabis,trabis43 (the default). Reorder it only when one provider fails consistently.',
+  'help.set.site.monitor.domain.trabis-whois-url':
+    'What it does: The TRABIS web WHOIS endpoint used for .tr lookups.\nBenefit: The official source stays available as a fallback and its address can be corrected live.\nRecommended: Leave it at the default; update it only if the official address changes.',
+  'help.set.site.monitor.domain.trabis-whois43-host':
+    'What it does: The classic port 43 WHOIS host for TRABIS, used as a last resort when the web providers fail.\nBenefit: There is still a route to .tr expiry dates even if the web interfaces change.\nRecommended: whois.trabis.gov.tr (the default). If 43/tcp is blocked, drop that provider from the list instead.',
+  'help.set.site.monitor.domain.whois-enabled':
+    'What it does: Enables a classic port 43 WHOIS query as a fallback when RDAP returns nothing.\nBenefit: Expiry is still found for extensions that do not support RDAP.\nRecommended: true (the default). Set it to false if your firewall blocks outbound 43/tcp, since leaving it on only produces timeouts.',
+  'help.set.site.monitor.domain.whois-servers':
+    'What it does: Maps extensions to specific WHOIS servers; left empty, the server is discovered from IANA data.\nBenefit: A wrong or slow registry server can be overridden with the right address.\nRecommended: Empty (the default); add tld=server entries only for an extension that fails to resolve.',
+  'help.set.site.monitor.domain.whois-timeout-ms':
+    'What it does: How long a single WHOIS (port 43) query waits for a reply.\nBenefit: An unresponsive registry cannot stall the nightly job.\nRecommended: 6000 ms (the default), or 10000 for slow registries; below 2000 you cut off legitimate replies.',
+  'help.set.site.monitor.escalation.auto-add-managers':
+    'What it does: Automatically registers the line manager of anyone who signs in through the directory as a MANAGER escalation contact.\nBenefit: The escalation list fills itself, so an unresolved alert always has somebody above it to reach.\nRecommended: false (the default) — check your directory\'s manager data first; switching it on only adds contacts, it never removes existing ones.',
+  'help.set.site.monitor.executor.core-size':
+    'What it does: The number of threads the check executor keeps alive permanently; changes apply live, without a restart.\nBenefit: A fixed baseline removes the thread start-up lag at the beginning of each sweep.\nRecommended: 20 (the default). It must not exceed the maximum; on a single pod stay between 10 and 30 so you do not crowd the CPU ceiling.',
+  'help.set.site.monitor.executor.max-size':
+    'What it does: The highest number of threads the pool may grow to once the queue fills.\nBenefit: Busy sweeps do not queue up and fall behind, while the ceiling still protects the CPU.\nRecommended: 50 (the default). It can never be lower than the core size; above 100 on a single pod you risk memory and CPU.',
+  'help.set.site.monitor.executor.queue-capacity':
+    'What it does: How many tasks may wait when no thread is free; once it is full, new tasks are rejected.\nBenefit: A sudden burst is absorbed rather than dropped, without letting memory run away.\nRecommended: 5000 (the default). The minimum is 1; a few times your monitor count is plenty.',
+  'help.set.site.monitor.expiry.alert-enabled':
+    'What it does: Controls whether certificate and domain expiry alerts are sent; the checks still run and are recorded either way.\nBenefit: Expiries are chased at the threshold days, so nobody has to track them in a calendar.\nRecommended: true (the default). Only turn it off briefly, to silence a known noisy period.',
+  'help.set.site.monitor.failed-login.alert-recipients':
+    'What it does: Additional email addresses for anomaly warnings, comma-separated, on top of the system administrator address.\nBenefit: The security team is notified directly rather than depending on the administrator mailbox.\nRecommended: A security operations list (e.g. soc@example.com). Left empty, only the system administrator address is used.',
+  'help.set.site.monitor.failed-login.baseline-hours':
+    'What it does: The historical window, in hours, from which the relative rule works out what "normal" looks like.\nBenefit: The baseline reflects your organisation\'s real rhythm rather than an arbitrary number.\nRecommended: 24 hours (the default), covering the daily cycle. 168 (a week) smooths out weekends but reacts more slowly.',
+  'help.set.site.monitor.failed-login.catchup-cap-minutes':
+    'What it does: Caps how far back the detector scans after the application has been down for a while.\nBenefit: Start-up after a long outage does not lock the system up chewing through a backlog.\nRecommended: 60 minutes (the default), or 180 if you have long maintenance windows.',
+  'help.set.site.monitor.failed-login.cooldown-minutes':
+    'What it does: How long to wait before another warning email may be sent for the same incident.\nBenefit: During an ongoing attack you get a paced reminder instead of an email a minute.\nRecommended: 60 minutes (the default). Below 15 you flood the mailbox while the incident is live.',
+  'help.set.site.monitor.failed-login.enabled':
+    'What it does: Enables failed-login anomaly detection; the detector scans the audit log and emails the system administrator when a threshold is crossed.\nBenefit: A brute-force attempt is seen before accounts start locking out.\nRecommended: true (the default). Turning it off silences every rule at once.',
+  'help.set.site.monitor.failed-login.relative-floor':
+    'What it does: The minimum absolute number of failures before the relative rule may fire at all.\nBenefit: Going from one failure to three on a quiet night is not reported as a threefold spike.\nRecommended: 8 (the default). Setting it to zero turns the relative rule into a noise generator.',
+  'help.set.site.monitor.failed-login.relative-multiplier':
+    'What it does: How many times the historical baseline the volume must reach for the relative rule to fire.\nBenefit: An unusual rise that never crosses the fixed thresholds is still caught.\nRecommended: 3.0 (the default, i.e. three times). 2.0 is more sensitive but noisier; do not go below 1.5.',
+  'help.set.site.monitor.failed-login.resolved-email-enabled':
+    'What it does: Sends a "resolved" email when the anomaly subsides.\nBenefit: Whoever received the warning does not have to check by hand whether it is over.\nRecommended: true (the default). Turning it off means incidents close in silence.',
+  'help.set.site.monitor.failed-login.retention-days':
+    'What it does: How long login anomaly incident records are kept.\nBenefit: Past attack attempts feed threshold tuning and incident investigations.\nRecommended: 365 days (the default), matching the other security windows. The floor is 7 days.',
+  'help.set.site.monitor.failed-login.threshold-distinct-ips-per-account':
+    'What it does: How many distinct addresses may attempt one account within the window before an incident opens.\nBenefit: Attempts spread over a botnet, none of which crosses the per-address threshold, become visible.\nRecommended: 5 (the default), or 8-10 where mobile networks change addresses frequently.',
+  'help.set.site.monitor.failed-login.threshold-distinct-users-per-ip':
+    'What it does: How many distinct accounts one address may try within the window before an incident opens.\nBenefit: Username enumeration is caught even when the number of attempts per account is low.\nRecommended: 5 (the default), or 10-15 if you have a shared egress address.',
+  'help.set.site.monitor.failed-login.threshold-per-account':
+    'What it does: The threshold for failed sign-ins against a single account within the window.\nBenefit: A password attack aimed at one particular user shows up in its own right.\nRecommended: 5 (the default). Keep it just below your account lockout policy.',
+  'help.set.site.monitor.failed-login.threshold-per-ip':
+    'What it does: The threshold for failed sign-ins coming from a single address.\nBenefit: Scanning from one source is caught even when it is spread across many accounts.\nRecommended: 15 (the default). Raise it if your users share one NAT address, otherwise you will get false alarms.',
+  'help.set.site.monitor.failed-login.threshold-total':
+    'What it does: Opens an incident when the total number of failed sign-ins across the whole system exceeds this within the window.\nBenefit: A distributed attempt is caught even when no single account or address crosses a threshold.\nRecommended: 20 (the default). Scale it to your population: 50-100 is more realistic with a thousand users.',
+  'help.set.site.monitor.failed-login.window-minutes':
+    'What it does: The rolling window over which failed sign-ins are counted.\nBenefit: Attempts concentrated in a short burst are separated from ordinary mistakes spread over a day.\nRecommended: 10 minutes (the default), or 30 to catch slow, patient attacks; below 5 it is mostly noise.',
+  'help.set.site.monitor.heartbeat.retention-days':
+    'What it does: How long system heartbeat records are kept — the high-frequency series proving the application is alive.\nBenefit: Recent downtime stays visible without one of the busiest tables bloating.\nRecommended: 30 days (the default). There is little practical value in going beyond 90.',
+  'help.set.site.monitor.http.alert-enabled':
+    'What it does: Controls whether HTTP/website alerts are sent; the checks still run and are recorded either way.\nBenefit: Status-code, redirect and response-time problems are reported straight away.\nRecommended: true (the default). Only turn it off briefly, to silence a known noisy period.',
+  'help.set.site.monitor.http.default-interval-seconds':
+    'What it does: The default check interval, in seconds, pre-filled when a new HTTP monitor is created; existing monitors are unaffected.\nBenefit: Everyone starts at the same cadence, with no per-monitor fiddling and a predictable load.\nRecommended: 300 seconds (the default). Use 60 for customer-facing critical sites; with hundreds of monitors do not drop below 300.',
+  'help.set.site.monitor.http.default-timeout-ms':
+    'What it does: The default request timeout, in milliseconds, pre-filled for a new HTTP monitor.\nBenefit: Unresponsive targets do not stretch the sweep, and records share a consistent ceiling.\nRecommended: 10000 ms (the default). Use 15000-20000 for heavy applications; above 30000 you delay outage detection.',
+  'help.set.site.monitor.http.rdap-base-url':
+    'What it does: The RDAP base address HTTP monitoring uses to look up domain expiry.\nBenefit: Lookups go through one known endpoint, which keeps proxy and firewall rules simple.\nRecommended: https://rdap.org/domain/ (the default) or your own RDAP mirror. Because it is an outbound target, only a global administrator may change it.',
+  'help.set.site.monitor.incident.draft-image-retention-days':
+    'What it does: How long draft images that were never attached to an incident are kept.\nBenefit: Abandoned uploads do not accumulate silently in the database.\nRecommended: 7 days (the default). Keep it short — these are orphans belonging to no record.',
+  'help.set.site.monitor.incident.image-retention-days':
+    'What it does: How long images attached to incident records are kept.\nBenefit: Screenshot evidence survives for a while without megabytes per row piling up forever.\nRecommended: 730 days (the default), or 365 under database pressure.',
+  'help.set.site.monitor.incident.retention-days':
+    'What it does: How long manually written incident records are kept; only resolved incidents are ever deleted.\nBenefit: Institutional memory is preserved while very old closed records can be cleared if you want.\nRecommended: 0 (the default) means nothing is deleted. Set a value only deliberately; open incidents are never deleted at any setting.',
+  'help.set.site.monitor.issue-reports.daily-digest':
+    'What it does: Bundles user issue reports into one daily digest instead of mailing each one separately.\nBenefit: The administrator mailbox stays readable on busy days while the reports are still seen the same day.\nRecommended: true once you see more than about five reports a day; at low volume false (the default) gets a faster response.',
+  'help.set.site.monitor.keyword.alert-enabled':
+    'What it does: Controls whether keyword alerts are sent; the checks still run and are recorded either way.\nBenefit: Content that has broken while the page still returns 200 is still noticed.\nRecommended: true (the default). Only turn it off briefly, to silence a known noisy period.',
+  'help.set.site.monitor.keyword.default-interval-seconds':
+    'What it does: The default check interval, in seconds, pre-filled when a new keyword monitor is created; existing monitors are unaffected.\nBenefit: Everyone starts at the same cadence, with no per-monitor fiddling and a predictable load.\nRecommended: 60 seconds (the default). Where content rarely changes, 300 is kinder to both the target and to you.',
+  'help.set.site.monitor.keyword.default-slow-ms':
+    'What it does: The default slow-response threshold, in milliseconds, pre-filled for a new keyword monitor; anything slower is recorded as slow and can raise a slowness alert.\nBenefit: Degradation that never becomes a full outage still becomes visible.\nRecommended: 3000 ms (the default). It must stay below the timeout, otherwise it can never fire.',
+  'help.set.site.monitor.keyword.default-timeout-ms':
+    'What it does: The default request timeout, in milliseconds, pre-filled for a new keyword monitor.\nBenefit: Unresponsive targets do not stretch the sweep, and records share a consistent ceiling.\nRecommended: 10000 ms (the default). Use 15000 for heavy pages; the timeout must stay above the slow-response threshold.',
+  'help.set.site.monitor.login-issue.retention-days':
+    'What it does: How long user-submitted login issue reports are kept.\nBenefit: Patterns in recurring sign-in problems become visible without resolved reports piling up forever.\nRecommended: 365 days (the default). They contain usernames and addresses, so align it with your personal-data policy.',
+  'help.set.site.monitor.login-issues.enabled':
+    'What it does: Shows the "Report a problem" link on the sign-in screen and files a record when someone cannot get in.\nBenefit: A locked-out user leaves a trace instead of ringing the help desk, and the administrator sees the cause on screen.\nRecommended: true (the default). Only consider turning it off on an internet-facing deployment.',
+  'help.set.site.monitor.login-issues.force-email':
+    'What it does: Sends the login-issue email even when the user has muted notifications.\nBenefit: Someone locked out of their account does not fall out of the help loop because of a mute setting.\nRecommended: true (the default). Turning it off means muted users\' login problems disappear quietly.',
+  'help.set.site.monitor.metrics.http.retention-days':
+    'What it does: How many days the HTTP measurement series — status codes and response times — is kept.\nBenefit: The system health HTTP panel has history while the fastest-growing series does not eat the disk.\nRecommended: 7 days (the default), because this series adds a row on every check. Long-term trend already lives in the daily rollup, kept for two years.',
+  'help.set.site.monitor.metrics.page-issues.retention-days':
+    'What it does: How long individual page integrity findings — broken links, missing resources — are kept.\nBenefit: You can see the history of a recurring broken link while the busiest child table stays in check.\nRecommended: 90 days (the default), deliberately shorter than the parent series. The floor is 1 day.',
+  'help.set.site.monitor.metrics.page.retention-days':
+    'What it does: How many days the page integrity check series is kept.\nBenefit: You can see how the number of findings moves over time without the series growing forever.\nRecommended: 180 days (the default). The floor is 1 day.',
+  'help.set.site.monitor.metrics.pagespeed-resources.retention-days':
+    'What it does: How long the per-resource page speed breakdown is kept; only the frozen evidence of threshold breaches ages out.\nBenefit: The "which resource slowed it down" evidence survives for a while without bloating the largest table.\nRecommended: 90 days (the default), or 180 if you do longer root-cause work. The floor is 1 day.',
+  'help.set.site.monitor.metrics.pagespeed.retention-days':
+    'What it does: How many days the page speed measurement series is kept; anything older is removed by the nightly clean-up.\nBenefit: Trend charts keep a meaningful history without letting the table grow without limit.\nRecommended: 180 days (the default), which covers two quarters of comparison. The floor is 1 day.',
+  'help.set.site.monitor.metrics.scripted.retention-days':
+    'What it does: How many days the scripted run history is kept.\nBenefit: Performance trends and evidence of past failures survive for a while without the table growing forever.\nRecommended: 180 days (the default), or 90 if you store long output tails. The floor is 1 day.',
+  'help.set.site.monitor.monitoring.allow-internal-targets':
+    'What it does: Allows monitoring and diagnostic targets to resolve to private, internal addresses (RFC1918).\nBenefit: Internal systems can be monitored; with it off, the SSRF guard rejects internal targets outright.\nRecommended: true (the default) for a corporate estate that monitors its own network; false is safer if you only watch internet targets. Metadata and link-local addresses stay blocked either way.',
+  'help.set.site.monitor.monitoring.allow-loopback-targets':
+    'What it does: Allows targets to resolve to loopback addresses such as 127.0.0.1 or ::1.\nBenefit: With it off, the application cannot be tricked into probing services on its own host.\nRecommended: false (the default). Only set it to true for development or a single-machine demo.',
+  'help.set.site.monitor.monitoring.change-retention-days':
+    'What it does: How long the monitoring configuration change history is kept — who changed what, when, and from which address.\nBenefit: "Who changed this threshold?" can still be answered months later.\nRecommended: 730 days (the default), deliberately longer than the audit log. The floor is 30 days.',
+  'help.set.site.monitor.network-outage.retention-days':
+    'What it does: How long network outage event records are kept.\nBenefit: Past outages remain available to show the thresholds are set sensibly.\nRecommended: 365 days (the default), with a floor of 30. It is a small, rarely written table.',
+  'help.set.site.monitor.network.error-rate-threshold':
+    'What it does: If the share of network-class failures in one sweep exceeds this, the sweep is treated as a suspected network outage and no alerts are raised.\nBenefit: When your own network drops you get a single outage record instead of hundreds of false "site down" alerts.\nRecommended: 0.50 (the default, i.e. 50%). Use 0.60-0.70 across multiple sites; below 0.20 you start suppressing genuine faults.',
+  'help.set.site.monitor.network.min-errors':
+    'What it does: The minimum number of failures needed before a sweep can count as a network outage — it must be met alongside the rate threshold.\nBenefit: On a small estate a single failure cannot hit 50% and be mistaken for an outage.\nRecommended: 3 (the default). With 200+ monitors, 5-10 is safer.',
+  'help.set.site.monitor.notification.retention-days':
+    'What it does: How long the sent-notification (email) log is kept.\nBenefit: "Who received this alert?" can be answered retrospectively.\nRecommended: 365 days (the default). Recipient addresses are personal data, so keep it aligned with your other personal-data windows.',
+  'help.set.site.monitor.page.alert-enabled':
+    'What it does: Controls whether page integrity alerts are sent; the checks still run and are recorded either way.\nBenefit: Broken links, missing images and mixed-content findings turn into notifications.\nRecommended: true (the default). Only turn it off briefly, to silence a known noisy period.',
+  'help.set.site.monitor.page.default-crawl-depth':
+    'What it does: How many link levels below the start address the page integrity crawl descends.\nBenefit: More than just the landing page is inspected, without crawling the whole site.\nRecommended: 2 (the default). Each extra level multiplies the number of pages; beyond 3 it is expensive on a single pod.',
+  'help.set.site.monitor.page.default-crawl-max-pages':
+    'What it does: A hard cap on the number of pages visited in one crawl, regardless of depth.\nBenefit: A crawl of a large site cannot run for hours and consume resources.\nRecommended: 50 (the default), up to 100 for a small corporate site; beyond 200 a single check stretches into minutes.',
+  'help.set.site.monitor.page.default-interval-seconds':
+    'What it does: The default check interval, in seconds, pre-filled when a new page integrity monitor is created; existing monitors are unaffected.\nBenefit: Everyone starts at the same cadence, with no per-monitor fiddling and a predictable load.\nRecommended: 300 seconds (the default). These checks are expensive because every resource is fetched; do not go below 120.',
+  'help.set.site.monitor.page.default-slow-ms':
+    'What it does: The default slow-response threshold, in milliseconds, pre-filled for a new page integrity monitor; anything slower is recorded as slow and can raise a slowness alert.\nBenefit: Degradation that never becomes a full outage still becomes visible.\nRecommended: 2000 ms (the default). It applies per resource; below 500 even ordinary internet latency counts as slow.',
+  'help.set.site.monitor.page.default-timeout-ms':
+    'What it does: The default request timeout, in milliseconds, pre-filled for a new page integrity monitor.\nBenefit: Unresponsive targets do not stretch the sweep, and records share a consistent ceiling.\nRecommended: 4000 ms (the default). It applies per resource, so a large value multiplies across hundreds of resources.',
+  'help.set.site.monitor.page.manual-cooldown-seconds':
+    'What it does: The minimum wait between consecutive presses of the "check now" button.\nBenefit: Repeated clicking cannot exhaust request threads and slow the application down.\nRecommended: 20 seconds (the default), or 30-60 where many people use the screen.',
+  'help.set.site.monitor.page.max-check-seconds':
+    'What it does: The total wall-clock limit for a single page integrity check.\nBenefit: An unresponsive target cannot hold a scheduler thread indefinitely.\nRecommended: 120 seconds (the default), or 180 for heavy pages with many resources. The floor is 10 seconds.',
+  'help.set.site.monitor.page.resource-concurrency':
+    'What it does: How many page resources — links, images, scripts — are verified at the same time during one integrity check.\nBenefit: A higher number finishes faster; a lower one is gentler on the site being checked.\nRecommended: 5 (the default). Use 2-3 against a fragile target, and stay below 10 since this runs on a single pod.',
+  'help.set.site.monitor.page.user-agent':
+    'What it does: The User-Agent header sent by page integrity checks.\nBenefit: The target can tell monitoring traffic apart from real visitors, so WAF rules can be written around it.\nRecommended: The default SiteMonitor-PageCheck/1.0 identity. Change it only where the target blocks unfamiliar agents.',
+  'help.set.site.monitor.pagespeed.alert-enabled':
+    'What it does: Controls whether page speed alerts are sent; the checks still run and are recorded either way.\nBenefit: A slowdown is noticed before it turns into a full outage.\nRecommended: true (the default). Only turn it off briefly, to silence a known noisy period.',
+  'help.set.site.monitor.pagespeed.default-interval-seconds':
+    'What it does: The default check interval, in seconds, pre-filled when a new page speed monitor is created; existing monitors are unaffected.\nBenefit: Everyone starts at the same cadence, with no per-monitor fiddling and a predictable load.\nRecommended: 1800 seconds (the default). Half an hour is enough to see a trend without tiring the target; below 300 you just measure noise.',
+  'help.set.site.monitor.pagespeed.default-timeout-ms':
+    'What it does: The default request timeout, in milliseconds, pre-filled for a new page speed monitor.\nBenefit: Unresponsive targets do not stretch the sweep, and records share a consistent ceiling.\nRecommended: 10000 ms (the default). Keep it near browser behaviour so the measurement stays realistic; above 30000 is meaningless.',
+  'help.set.site.monitor.pagespeed.manual-cooldown-seconds':
+    'What it does: The minimum wait between manual runs of a saved page speed monitor.\nBenefit: A flood of manual measurements cannot delay the scheduled ones.\nRecommended: 30 seconds (the default), or 60 where a measurement takes longer than ten seconds.',
+  'help.set.site.monitor.pagespeed.max-check-seconds':
+    'What it does: The total time limit for a single page speed measurement.\nBenefit: An unresponsive target cannot lock up the measurement pool.\nRecommended: 120 seconds (the default), with a floor of 10; heavy pages may justify up to 180.',
+  'help.set.site.monitor.pagespeed.max-total-kb':
+    'What it does: Caps the total number of kilobytes downloaded in one measurement; once it is reached, remaining resources are skipped and the result is marked as a lower bound.\nBenefit: A huge page with hundreds of resources cannot consume gigabytes of traffic and memory.\nRecommended: The default cap (about 150 MB) is ample for most sites, with a 64 KB floor. Raise it if results are constantly marked as lower bounds.',
+  'help.set.site.monitor.pagespeed.resource-concurrency':
+    'What it does: How many resources are downloaded in parallel during a page speed measurement.\nBenefit: The measurement stays close to real browser behaviour, while a lower value is kinder to the target.\nRecommended: 5 (the default), 2-3 against a fragile target, and never above 10.',
+  'help.set.site.monitor.pagespeed.test-cooldown-seconds':
+    'What it does: The cooldown for the "try now" measurement used while filling in the form — separate from, and shorter than, the saved-monitor one.\nBenefit: Someone can correct a mistyped URL and retry at once, while repeated clicking is still curbed.\nRecommended: 10 seconds (the default); above 30 it just makes the form tedious.',
+  'help.set.site.monitor.pagespeed.user-agent':
+    'What it does: The User-Agent header sent by page speed measurements.\nBenefit: The target recognises measurement traffic, which keeps results consistent on servers that vary content by agent.\nRecommended: Leave it at the default; if you clear it, the built-in identity is used.',
+  'help.set.site.monitor.ping.alert-enabled':
+    'What it does: Controls whether ping (ICMP) alerts are sent; the checks still run and are recorded either way.\nBenefit: Network-layer unreachability shows up independently of the application-layer checks.\nRecommended: true (the default). Only turn it off briefly, to silence a known noisy period.',
+  'help.set.site.monitor.ping.default-interval-seconds':
+    'What it does: The default check interval, in seconds, pre-filled when a new ping monitor is created; existing monitors are unaffected.\nBenefit: Everyone starts at the same cadence, with no per-monitor fiddling and a predictable load.\nRecommended: 60 seconds (the default). Ping is cheap, but going below 30 raises CPU cost quickly on a single pod.',
+  'help.set.site.monitor.ping.default-timeout-ms':
+    'What it does: The default request timeout, in milliseconds, pre-filled for a new ping monitor.\nBenefit: Unresponsive targets do not stretch the sweep, and records share a consistent ceiling.\nRecommended: 5000 ms (the default). Use 8000 for targets abroad; below 1000 you manufacture false outages.',
+  'help.set.site.monitor.port.alert-enabled':
+    'What it does: Controls whether port alerts are sent; the checks still run and are recorded either way.\nBenefit: A service port that closes is caught even while the host itself is still up.\nRecommended: true (the default). Only turn it off briefly, to silence a known noisy period.',
+  'help.set.site.monitor.port.default-interval-seconds':
+    'What it does: The default check interval, in seconds, pre-filled when a new port monitor is created; existing monitors are unaffected.\nBenefit: Everyone starts at the same cadence, with no per-monitor fiddling and a predictable load.\nRecommended: 60 seconds (the default). For non-critical ports, 300 is plenty.',
+  'help.set.site.monitor.port.default-slow-ms':
+    'What it does: The default slow-response threshold, in milliseconds, pre-filled for a new port monitor; anything slower is recorded as slow and can raise a slowness alert.\nBenefit: Degradation that never becomes a full outage still becomes visible.\nRecommended: 3000 ms (the default). Three seconds is already high for a TCP connect; 1000-2000 warns you sooner.',
+  'help.set.site.monitor.port.default-timeout-ms':
+    'What it does: The default request timeout, in milliseconds, pre-filled for a new port monitor.\nBenefit: Unresponsive targets do not stretch the sweep, and records share a consistent ceiling.\nRecommended: 5000 ms (the default). A TCP handshake is quick, so above 10000 you only lengthen the check.',
+  'help.set.site.monitor.retention.hold-enabled':
+    'What it does: The legal hold valve: while it is on, the nightly clean-up deletes nothing at all.\nBenefit: Evidence is not lost to automatic deletion during an investigation or audit.\nRecommended: false (the default). Switch it on only for the duration of an investigation — while it stays on the database grows steadily and nobody notices.',
+  'help.set.site.monitor.retention.purge-batch-size':
+    'What it does: How many rows the nightly clean-up deletes at a time; large tables are purged in slices of this size.\nBenefit: Many small transactions instead of one huge DELETE keep locks short and the application responsive.\nRecommended: 10000 (the default). Use 25000-50000 if the nightly window is tight, or 5000 if the database struggles.',
+  'help.set.site.monitor.retention.run-history-retention-days':
+    'What it does: How long the clean-up run history — when it ran and how many rows it removed — is kept.\nBenefit: You can prove the clean-up actually ran and what it deleted, so a silent stoppage is noticed.\nRecommended: 180 days (the default). This history is what you consult most when changing retention settings.',
+  'help.set.site.monitor.rollup.hourly-retention-days':
+    'What it does: How long hourly rollup rows are kept — a finer resolution than the daily summary.\nBenefit: Intraday patterns such as a morning peak or a nightly maintenance dip stay visible for months.\nRecommended: 365 days (the default). Keep it shorter than the daily rollup, since there are 24 times as many rows.',
+  'help.set.site.monitor.rollup.lookback-days':
+    'What it does: How many completed days the daily rollup job recalculates each night.\nBenefit: Gaps left by a short outage fill themselves in, since the calculation is idempotent and overwrites.\nRecommended: 3 days (the default), which covers brief outages. 7 is safer but lengthens the nightly job; the minimum is 1.',
+  'help.set.site.monitor.rollup.retention-days':
+    'What it does: How long daily rollup rows — the uptime and response-time trend — are kept.\nBenefit: Long-term trend survives even when the raw series are shortened, so year-on-year comparison stays possible.\nRecommended: 730 days (the default, two years). The floor is 90; rollup rows are small, so shortening gains little.',
+  'help.set.site.monitor.scheduler.domain-expiry-refresh.enabled':
+    'What it does: Enables the nightly job that re-reads domain expiry dates over RDAP/WHOIS once a day.\nBenefit: A renewed domain shows its new date on its own, with nobody refreshing anything by hand.\nRecommended: true (the default). Turn it off only where outbound lookups are banned outright.',
+  'help.set.site.monitor.scheduler.stale-minutes':
+    'What it does: Flags a monitor\'s data as stale in system health when its last check is older than this many minutes.\nBenefit: If the scheduler quietly stops, the screen no longer looks green — staleness shows up as its own finding.\nRecommended: 65 minutes (the default), a little above your longest check interval. The floor is 5 minutes.',
+  'help.set.site.monitor.scripted.alert-enabled':
+    'What it does: Controls whether scripted monitoring raises alerts — a separate switch from the engine itself.\nBenefit: Silencing k6 alerts for a week does not stop the measurements; runs are still recorded.\nRecommended: true (the default), or false for a while when a newly written script has not settled yet.',
+  'help.set.site.monitor.scripted.anomaly.enabled':
+    'What it does: Enables the scenario anomaly guard, which switches off a monitor that starts behaving dangerously.\nBenefit: A script failing all night is stopped without anyone having to notice it.\nRecommended: true (the default). Turning it off is an emergency escape hatch, not a lasting setting.',
+  'help.set.site.monitor.scripted.anomaly.timeout-streak':
+    'What it does: How many consecutive timeouts switch the monitor off automatically; zero or less disables this trigger.\nBenefit: A scenario that is permanently stuck stops occupying the pool for nothing.\nRecommended: 5 (the default), or 8-10 against fragile targets; below 2 you disable monitors over transient faults.',
+  'help.set.site.monitor.scripted.default-interval-seconds':
+    'What it does: The default check interval, in seconds, pre-filled when a new scripted (k6) monitor is created; existing monitors are unaffected.\nBenefit: Everyone starts at the same cadence, with no per-monitor fiddling and a predictable load.\nRecommended: 300 seconds (the default). Every run starts a k6 subprocess, so below 120 you push the CPU ceiling on a single pod.',
+  'help.set.site.monitor.scripted.default-timeout-seconds':
+    'What it does: The default run timeout, in seconds, pre-filled for a new scripted monitor.\nBenefit: New scripts start with a sensible ceiling, so a hung run does not hold the pool.\nRecommended: 60 seconds (the default). It cannot exceed the maximum timeout.',
+  'help.set.site.monitor.scripted.draft-retention-days':
+    'What it does: How long unsaved scenario drafts are kept.\nBenefit: Half-finished edits are not lost, but they do not pile up indefinitely either.\nRecommended: 30 days (the default), or 90 for long development cycles.',
+  'help.set.site.monitor.scripted.enabled':
+    'What it does: Turns the scripted (k6) monitoring engine on or off entirely; with it off no script runs at all.\nBenefit: The one feature that spawns subprocesses on the server can be stopped with a single switch.\nRecommended: true (the default). Set it to false if the k6 binary is not installed, otherwise every run files an error.',
+  'help.set.site.monitor.scripted.hardcoded-secret-policy':
+    'What it does: Decides what happens when a hard-coded secret — a password or token — is detected in a script.\nBenefit: Secrets stop being embedded in script text and environment variables get used instead.\nRecommended: WARN (the default) warns but still saves; move to BLOCK to refuse the save once the habit is established.',
+  'help.set.site.monitor.scripted.k6-api-address':
+    'What it does: The address the k6 subprocess binds its REST API to.\nBenefit: Port 0 means an ephemeral port, so concurrent runs can never collide.\nRecommended: 127.0.0.1:0 (the default). Leaving it empty omits the flag entirely — use that only as an escape hatch with an unexpected k6 build.',
+  'help.set.site.monitor.scripted.k6-bin':
+    'What it does: The path to the k6 executable run on the server.\nBenefit: Where k6 is not on the standard path, an absolute path makes scripted monitoring work.\nRecommended: k6 (the default, via PATH) or an absolute path. Because it chooses what gets executed on the server, only a global administrator may change it.',
+  'help.set.site.monitor.scripted.manual-cooldown-seconds':
+    'What it does: The minimum wait between manual runs of a saved scenario.\nBenefit: Repeated clicking cannot fill the k6 pool and delay the scheduled runs.\nRecommended: 20 seconds (the default), or 60 for long-running scripts.',
+  'help.set.site.monitor.scripted.manual-wait-seconds':
+    'What it does: How long the interface waits for a manual run before letting it continue in the background.\nBenefit: A long scenario does not lock up the browser; the result appears in the list when it is ready.\nRecommended: 25 seconds (the default). Keep it below your proxy\'s timeout.',
+  'help.set.site.monitor.scripted.max-procs':
+    'What it does: Limits how many processor cores the k6 subprocess may use (the Go runtime\'s GOMAXPROCS).\nBenefit: A single scenario cannot claim every core and slow the other checks down.\nRecommended: 1 (the default). Zero or an empty value removes the limit, which is not advisable on a single pod.',
+  'help.set.site.monitor.scripted.max-requests-per-run':
+    'What it does: The maximum number of HTTP requests accepted in one run; exceed it and the run counts as an anomaly and the monitor is switched off immediately.\nBenefit: A script that has run away cannot keep hammering the target.\nRecommended: 200 (the default), or 500 for long multi-step scenarios; zero or less removes the cap.',
+  'help.set.site.monitor.scripted.max-rps':
+    'What it does: Caps how many requests per second a k6 run may issue (k6 --rps); zero or less means no cap.\nBenefit: A loop that static analysis could not see does not turn into a load test against production.\nRecommended: 25 (the default). Since these scenarios hit production systems, do not push it above 100.',
+  'help.set.site.monitor.scripted.max-timeout-seconds':
+    'What it does: The longest run a scripted monitor may ask for — a hard upper bound.\nBenefit: One script cannot hold a pool slot for minutes and keep the others waiting.\nRecommended: 180 seconds (the default). Above 300, queueing becomes noticeable with a small pool.',
+  'help.set.site.monitor.scripted.mem-limit':
+    'What it does: Sets the memory target for the k6 subprocess (the Go runtime\'s GOMEMLIMIT).\nBenefit: A script leaking memory cannot take the whole application down with an out-of-memory kill.\nRecommended: 256MiB (the default), or 512MiB for data-heavy scenarios; zero or empty removes the limit.',
+  'help.set.site.monitor.scripted.no-checks-policy':
+    'What it does: Decides how a scenario that runs but never calls check() is judged.\nBenefit: A script that verifies nothing cannot quietly look successful.\nRecommended: WARN (the default) records it as faulty without alerting. Use FAIL to enforce discipline; PASS exists only as an emergency return to the old behaviour.',
+  'help.set.site.monitor.scripted.output-tail-bytes':
+    'What it does: How many bytes from the end of the k6 output are stored with each run.\nBenefit: You keep enough trace to debug with, without filling the run table with huge logs.\nRecommended: 8192 bytes (the default), or 16384 for chatty scripts; above 65536 storage costs climb fast.',
+  'help.set.site.monitor.scripted.pool-size':
+    'What it does: How many k6 subprocesses may run at the same time.\nBenefit: The CPU and memory ceiling of a single pod is protected, so scripted monitoring does not starve the other checks.\nRecommended: 2 (the default). Each process eats its own CPU; above 4 is risky on a single pod.',
+  'help.set.site.monitor.scripted.slow-threshold-ms':
+    'What it does: A k6 run slower than this counts as slow and can raise a slowness alert.\nBenefit: A scenario that still passes but is steadily getting slower becomes visible.\nRecommended: 15000 ms (the default). Keep it below the run timeout; use 30000 for long multi-step scenarios.',
+  'help.set.site.monitor.scripted.syntax-check-policy':
+    'What it does: Decides whether a script is validated with k6 before it is saved.\nBenefit: A broken script is not saved only to blow up on its first scheduled run; the error appears at once with line and column.\nRecommended: BLOCK (the default) refuses the save on a definite error. WARN only warns, and OFF disables the check altogether.',
+  'help.set.site.monitor.scripted.validate-timeout-seconds':
+    'What it does: The time limit for the syntax validation performed before saving.\nBenefit: If validation hangs, the save button does not spin forever.\nRecommended: 10 seconds (the default), or 20 for large multi-module scripts.',
+  'help.set.site.monitor.security.new-device-email':
+    'What it does: Emails a user when they sign in from a device fingerprint that has not been seen before.\nBenefit: A sign-in with a stolen password is visible to the account owner immediately.\nRecommended: false (the default), because mail volume is a decision; switch it on for internet-facing deployments. Detection uses a device summary rather than the raw user agent, so browser updates do not raise false alarms.',
+  'help.set.site.monitor.series.certificate.retention-days':
+    'What it does: How many days the raw certificate check series is kept; anything older is removed by the nightly clean-up.\nBenefit: Full row-level detail stays available for a while, and the long-term trend is preserved in the daily rollup anyway.\nRecommended: 180 days (the default). These series add a row on every check, so shortening them is the quickest way to reclaim disk — but every window you display must still carry full detail.',
+  'help.set.site.monitor.series.dns.retention-days':
+    'What it does: How many days the raw DNS check series is kept; anything older is removed by the nightly clean-up.\nBenefit: Full row-level detail stays available for a while, and the long-term trend is preserved in the daily rollup anyway.\nRecommended: 180 days (the default). These series add a row on every check, so shortening them is the quickest way to reclaim disk — but every window you display must still carry full detail.',
+  'help.set.site.monitor.series.domain.retention-days':
+    'What it does: How many days the raw domain check series is kept; anything older is removed by the nightly clean-up.\nBenefit: Full row-level detail stays available for a while, and the long-term trend is preserved in the daily rollup anyway.\nRecommended: 180 days (the default). These series add a row on every check, so shortening them is the quickest way to reclaim disk — but every window you display must still carry full detail.',
+  'help.set.site.monitor.series.http.retention-days':
+    'What it does: How many days the raw HTTP check series is kept; anything older is removed by the nightly clean-up.\nBenefit: Full row-level detail stays available for a while, and the long-term trend is preserved in the daily rollup anyway.\nRecommended: 180 days (the default). These series add a row on every check, so shortening them is the quickest way to reclaim disk — but every window you display must still carry full detail.',
+  'help.set.site.monitor.series.keyword.retention-days':
+    'What it does: How many days the raw keyword check series is kept; anything older is removed by the nightly clean-up.\nBenefit: Full row-level detail stays available for a while, and the long-term trend is preserved in the daily rollup anyway.\nRecommended: 180 days (the default). These series add a row on every check, so shortening them is the quickest way to reclaim disk — but every window you display must still carry full detail.',
+  'help.set.site.monitor.series.ping.retention-days':
+    'What it does: How many days the raw ping check series is kept; anything older is removed by the nightly clean-up.\nBenefit: Full row-level detail stays available for a while, and the long-term trend is preserved in the daily rollup anyway.\nRecommended: 180 days (the default). These series add a row on every check, so shortening them is the quickest way to reclaim disk — but every window you display must still carry full detail.',
+  'help.set.site.monitor.series.port.retention-days':
+    'What it does: How many days the raw port check series is kept; anything older is removed by the nightly clean-up.\nBenefit: Full row-level detail stays available for a while, and the long-term trend is preserved in the daily rollup anyway.\nRecommended: 180 days (the default). These series add a row on every check, so shortening them is the quickest way to reclaim disk — but every window you display must still carry full detail.',
+  'help.set.site.monitor.series.uptime.retention-days':
+    'What it does: How many days the raw availability (uptime) check series is kept; anything older is removed by the nightly clean-up.\nBenefit: Full row-level detail stays available for a while, and the long-term trend is preserved in the daily rollup anyway.\nRecommended: 180 days (the default). These series add a row on every check, so shortening them is the quickest way to reclaim disk — but every window you display must still carry full detail.',
+  'help.set.site.monitor.sql-history.retention-days':
+    'What it does: How long the history of queries run in the SQL workspace is kept.\nBenefit: Who ran which query is auditable, and people can find their own queries again.\nRecommended: 365 days (the default). Query text can contain sensitive data, so do not keep it longer than you need.',
+  'help.set.site.monitor.storm.enabled':
+    'What it does: Enables alert storm suppression: when many monitors fail in a short window, the individual alerts collapse into one bundled notification.\nBenefit: A backbone failure sends one readable summary instead of hundreds of emails.\nRecommended: true (the default). Turning it off means flooded mailboxes during a wide outage.',
+  'help.set.site.monitor.storm.per-group':
+    'What it does: Counts storms per monitor group rather than across the whole estate.\nBenefit: One application collapsing does not suppress alerts from unrelated groups.\nRecommended: true where monitors are organised into meaningful groups; false (the default) for one large pool.',
+  'help.set.site.monitor.storm.retention-days':
+    'What it does: How long alert storm event records are kept.\nBenefit: Past storms remain available for tuning the threshold.\nRecommended: 365 days (the default). It is a low-volume table, so shortening it gains little.',
+  'help.set.site.monitor.storm.threshold-unit':
+    'What it does: Chooses whether the storm threshold is a fixed count or a percentage of active monitors.\nBenefit: A percentage scales the threshold on its own as the estate grows.\nRecommended: COUNT (the default) for a small, stable estate; PERCENT where the estate keeps growing.',
+  'help.set.site.monitor.storm.threshold-value':
+    'What it does: How many monitors — or what percentage of them — must fail within the window to count as a storm.\nBenefit: Set well, real incidents collapse into one notification while isolated faults flow normally.\nRecommended: 5 for COUNT (the default, minimum 2); 10-25 for PERCENT. Too low and ordinary faults get bundled too.',
+  'help.set.site.monitor.storm.window-minutes':
+    'What it does: The rolling time window within which the threshold is counted.\nBenefit: Failures that happen together are grouped, while unrelated faults spread across the day are not.\nRecommended: 5 minutes (the default), within an allowed 1-15. A short window misses real storms; a long one groups unrelated faults.',
+  'help.set.site.monitor.system-admin.email':
+    'What it does: The administrator address that system-level notices go to — crash reports, login anomalies, deployment announcements.\nBenefit: Technical warnings that belong to nobody in particular still reach someone, through a single address.\nRecommended: A team distribution list rather than a personal mailbox (e.g. sitemonitor-admin@example.com). Leave it empty and these notices are never sent.',
+  'help.set.site.monitor.trust.alert-hostname-mismatch':
+    'What it does: Raises a security alert when the certificate presented does not cover the host name being checked.\nBenefit: A misrouted virtual host, a stale redirect or a device sitting in the middle is spotted at once.\nRecommended: true (the default) — a legitimate hostname mismatch is almost unheard of.',
+  'help.set.site.monitor.trust.alert-untrusted':
+    'What it does: Raises an alert when the authority that signed a certificate is not trusted.\nBenefit: A certificate signed by a forged or unexpected CA is not accepted in silence.\nRecommended: false (the default): with an empty CA bundle every internal host looks untrusted and you would get a flood of alerts on day one. Fill the CA bundle first, then switch it on.',
+  'help.set.site.monitor.trust.auto-pin.enabled':
+    'What it does: Pins the CA of a host that fails PKIX validation on first sight (trust on first use), per host, and re-pins it automatically when the CA rotates.\nBenefit: HTTP monitoring and RDAP lookups keep working even with an incomplete CA bundle, without resorting to trusting everything.\nRecommended: true (the default). If you turn it off you must add internal CAs to the bundle by hand.',
+  'help.set.site.monitor.trust.ca-bundle-pem':
+    'What it does: Holds your corporate or internal root and intermediate CA certificates in PEM form; hosts signed by them count as trusted.\nBenefit: Internal certificates stop being reported as untrusted, and outbound TLS no longer fails with PKIX errors.\nRecommended: Your organisation\'s root plus intermediate chain, as consecutive -----BEGIN CERTIFICATE----- blocks. Left empty, only public CAs are trusted.',
+  'help.set.site.monitor.ui.inactivity-minutes':
+    'What it does: Signs the browser session out automatically after this many minutes with no activity.\nBenefit: A screen left open cannot be picked up by someone else, and idle server sessions do not linger.\nRecommended: 60 minutes (the default). Use 15-30 on shared machines, up to 120 in a private office; the server clamps it to 1-1440.',
+  'help.set.site.monitor.ui.inactivity-warn-seconds':
+    'What it does: Sets how many seconds the countdown warning appears before the session is closed.\nBenefit: Nobody is thrown out mid-form; one click extends the session.\nRecommended: 60 seconds (the default). It cannot exceed the total idle window — the server clamps it.',
+  'help.set.site.monitor.uptime.alert-enabled':
+    'What it does: Controls whether availability (uptime) alerts are sent; the checks still run and are recorded either way.\nBenefit: The responsible team hears about a site going down without waiting for a user to notice.\nRecommended: true (the default). Only turn it off briefly, to silence a known noisy period.',
+  'help.set.site.monitor.uptime.recovery-checks':
+    'What it does: How many consecutive successful checks are needed before a downed monitor counts as recovered.\nBenefit: A service that flickers back for a moment does not trigger a premature "resolved" notice.\nRecommended: 3 (the default). One causes flapping alerts; above five the resolution notice arrives late.',
+  'help.set.site.monitor.uptime.recovery-interval-ms':
+    'What it does: The wait between recovery confirmation checks.\nBenefit: Spreading the confirmations over time makes the "genuinely up" verdict trustworthy.\nRecommended: 30000 ms — thirty seconds (the default). Shorter weakens the confirmation; longer delays the resolution notice.',
+  'help.set.site.monitor.userpush.circuit-cooldown-seconds':
+    'What it does: How long to wait after the circuit opens before trying again.\nBenefit: The provider is given time to recover and the channel comes back on its own.\nRecommended: 300 seconds — five minutes (the default). Shorter defeats the point of the breaker; longer delays notifications.',
+  'help.set.site.monitor.userpush.circuit-threshold':
+    'What it does: How many consecutive failures open the circuit breaker, pausing delivery.\nBenefit: A dead provider is not bombarded with pointless requests and the queue does not melt.\nRecommended: 5 (the default). Below 2 you shut the channel over transient errors.',
+  'help.set.site.monitor.userpush.enabled':
+    'What it does: Switches on the per-person webhook (push) channel, a second notification route entirely independent of email.\nBenefit: Alerts reach a phone without waiting for mail, and still arrive when the mail server is down.\nRecommended: false (the default) — until it is enabled the system behaves exactly as it does today. Switch it on once the URL and headers are verified.',
+  'help.set.site.monitor.userpush.headers':
+    'What it does: The HTTP headers added to every push request; values marked secret are encrypted and never returned in clear text by the API.\nBenefit: An authentication token is not stored in the open and is masked on screen.\nRecommended: The minimum set your provider requires, usually a single Authorization header. Mark every row that carries a token as secret.',
+  'help.set.site.monitor.userpush.hourly-cap':
+    'What it does: The maximum number of pushes one person may receive per hour; anything beyond is recorded as RATE_LIMITED.\nBenefit: Nobody\'s phone becomes unusable during a wide outage.\nRecommended: 30 (the default), within an allowed 1-500. Use 50 for an on-call rota, 10-20 for a broad audience.',
+  'help.set.site.monitor.userpush.max-message-chars':
+    'What it does: Caps the length of a push message; the server truncates at this point.\nBenefit: The message stays readable as a single line in a phone notification instead of being cut mid-sentence.\nRecommended: 200 (the default, and the product contract). The server clamps it to 80-320; raising the cap does not make a long message readable.',
+  'help.set.site.monitor.userpush.pipeline':
+    'What it does: The "pipeline" field sent in the push body, which tells the provider which flow should handle the message.\nBenefit: Different environments — test and production — can share one endpoint and still be kept apart.\nRecommended: Whatever flow name your provider gives you; leave it empty if it is not required.',
+  'help.set.site.monitor.userpush.quiet-end':
+    'What it does: The end of the quiet-hours window (HH:MM); windows that cross midnight, such as 22:00-07:00, are supported.\nBenefit: The window follows working hours naturally, with no need to reason about midnight.\nRecommended: A start-of-day time such as 07:00. Setting it equal to the start makes the window cover the whole day.',
+  'help.set.site.monitor.userpush.quiet-min-level':
+    'What it does: The minimum alert level allowed through during quiet hours.\nBenefit: Only critical events wake anybody at night; the rest waits for the morning.\nRecommended: CRITICAL (the default). Choosing warning makes quiet hours pointless, since nothing is held back.',
+  'help.set.site.monitor.userpush.quiet-start':
+    'What it does: The start of the quiet-hours window (HH:MM); inside it, only pushes at or above the minimum severity are sent.\nBenefit: Out of hours, only the genuinely urgent notifications wake anyone.\nRecommended: An end-of-day time such as 22:00. If either the start or the end is empty, quiet hours are not applied at all.',
+  'help.set.site.monitor.userpush.realert-enabled':
+    'What it does: Decides whether the daily re-alert for a still-open incident also goes out over push.\nBenefit: Push sends whatever mail sends, so there is no silent gap between the two channels.\nRecommended: true (the default). If the volume is uncomfortable, try lowering the hourly cap first.',
+  'help.set.site.monitor.userpush.reason-max-chars':
+    'What it does: Caps the "reason"/"changed" section inside the message; zero means no separate truncation.\nBenefit: A long error string does not push the rest of the message out.\nRecommended: 160 (the default). The server clamps it to 40-280; keep it below the message cap.',
+  'help.set.site.monitor.userpush.retention-days':
+    'What it does: How long the push delivery log is kept — who was messaged, when, and with what content.\nBenefit: "I never got a notification" can be answered with evidence, while personal data is not held indefinitely.\nRecommended: Align it with your personal-data policy; the floor is 90 days.',
+  'help.set.site.monitor.userpush.retry-backoff-seconds':
+    'What it does: The waits between retries, comma-separated, one value per attempt.\nBenefit: Increasing backoff avoids pushing a struggling provider further under.\nRecommended: 30,120 (the default) — use increasing gaps. If you list fewer values than retries, the last one is reused.',
+  'help.set.site.monitor.userpush.retry-max':
+    'What it does: The maximum number of retries for a failed push.\nBenefit: A momentary network error does not lose the notification.\nRecommended: 2 (the default), within an allowed 0-5. Higher values simply add delay when the provider really is down.',
+  'help.set.site.monitor.userpush.role-groups':
+    'What it does: The JSON configuration defining which title or role groups receive push, where each is sourced from (organisational role or title pattern), and its minimum severity.\nBenefit: The recipient list is not maintained by hand; it follows the directory as it changes.\nRecommended: Edit it through the cards above. Dropping a group\'s minimum severity to warning increases volume considerably.',
+  'help.set.site.monitor.userpush.template.changed':
+    'What it does: The text template for the change (changed) push message; the placeholders in braces are filled in at send time (e.g. {ad}, {hedef}, {degisen}).\nBenefit: The wording fits your organisation, and people understand the situation without opening the notification.\nRecommended: Keep it to one line under about 200 characters — phone notifications truncate. Left empty, the built-in default template is used.',
+  'help.set.site.monitor.userpush.template.down':
+    'What it does: The text template for the outage (down) push message; the placeholders in braces are filled in at send time (e.g. {seviye}, {ad}, {hedef}, {neden}).\nBenefit: The wording fits your organisation, and people understand the situation without opening the notification.\nRecommended: Keep it to one line under about 200 characters — phone notifications truncate. Left empty, the built-in default template is used.',
+  'help.set.site.monitor.userpush.template.expiry':
+    'What it does: The text template for the expiry push message; the placeholders in braces are filled in at send time (e.g. {ne}, {hedef}, {gun}, {tarih}).\nBenefit: The wording fits your organisation, and people understand the situation without opening the notification.\nRecommended: Keep it to one line under about 200 characters — phone notifications truncate. Left empty, the built-in default template is used.',
+  'help.set.site.monitor.userpush.template.resolved':
+    'What it does: The text template for the resolved push message; the placeholders in braces are filled in at send time (e.g. {ad}, {hedef}, {sure}, {saat}).\nBenefit: The wording fits your organisation, and people understand the situation without opening the notification.\nRecommended: Keep it to one line under about 200 characters — phone notifications truncate. Left empty, the built-in default template is used.',
+  'help.set.site.monitor.userpush.template.slow':
+    'What it does: The text template for the slowness (slow) push message; the placeholders in braces are filled in at send time (e.g. {ad}, {metrik}, {deger}, {esik}).\nBenefit: The wording fits your organisation, and people understand the situation without opening the notification.\nRecommended: Keep it to one line under about 200 characters — phone notifications truncate. Left empty, the built-in default template is used.',
+  'help.set.site.monitor.userpush.template.test':
+    'What it does: The text template for the test push message; the placeholders in braces are filled in at send time (e.g. {ad}, {hedef}).\nBenefit: The wording fits your organisation, and people understand the situation without opening the notification.\nRecommended: Keep it to one line under about 200 characters — phone notifications truncate. Left empty, the built-in default template is used.',
+  'help.set.site.monitor.userpush.timeout-connect-seconds':
+    'What it does: How long to wait while connecting to the webhook server.\nBenefit: An unreachable endpoint cannot block the notification queue.\nRecommended: 3 seconds (the default); the form accepts 1-30. Use 5 for a slow provider.',
+  'help.set.site.monitor.userpush.timeout-total-seconds':
+    'What it does: The total time limit for a push request, including the connection.\nBenefit: A slow provider does not hold up the alerting path.\nRecommended: 5 seconds (the default), within an allowed 1-60. Keep it above the connect timeout.',
+  'help.set.site.monitor.userpush.title':
+    'What it does: The title of the push notification — the name shown above the message on the phone.\nBenefit: People can tell who the notification is from without opening it.\nRecommended: A short, recognisable name (the default is "Site Monitor"). Long titles are truncated on a phone screen.',
+  'help.set.site.monitor.userpush.url':
+    'What it does: The webhook endpoint push messages are POSTed to.\nBenefit: Your existing notification infrastructure is reused; no separate mobile app is needed.\nRecommended: The full HTTPS address your provider gives you. Left empty, no push is ever sent. Because it can carry secret headers outwards, only a global administrator may change it.',
+  'help.set.site.monitor.weekly-availability.enabled':
+    'What it does: Switches the weekly availability email — sent per team every Monday at 10:00 — on or off.\nBenefit: Teams get their weekly summary without anyone compiling it; with it off, nothing is sent at all.\nRecommended: true (the default). Turn it off only for a planned quiet period.',
+  'help.set.site.monitor.weekly-availability.retention-days':
+    'What it does: How long weekly availability report records are kept.\nBenefit: Three years of history is at hand for service-level discussions.\nRecommended: 1095 days (the default, three years). Lower it if your contractual obligation is shorter.',
+  'help.set.site.monitor.weekly-report.image-retention-days':
+    'What it does: How long weekly report images are kept; older ones are deleted overnight while the report text is preserved.\nBenefit: Images that weigh megabytes per row stop accumulating, and the reports themselves survive.\nRecommended: 730 days (the default), or 365 under database pressure. The floor is 30 days.',
+  'help.set.site.monitor.weekly-report.mail-retention-days':
+    'What it does: How long archived copies of sent weekly report emails are kept.\nBenefit: "What did we report last quarter?" is answered by opening the very same HTML from the archive.\nRecommended: 730 days (the default, two years). Images are kept separately, on a shorter window.',
+  'help.set.site.monitor.weekly.score.weight-critical':
+    'What it does: The penalty weight critical findings carry in the weekly report\'s health score.\nBenefit: The executive summary reflects the most serious problems in proportion to how serious they are.\nRecommended: 8.0 (the default) and the largest of the four weights. Raise it to 10-12 to punish criticals harder.',
+  'help.set.site.monitor.weekly.score.weight-expiring':
+    'What it does: The penalty weight expiring certificates carry in the weekly health score.\nBenefit: As renewal work piles up the score falls, which puts it in front of management.\nRecommended: 2.0 (the default). Raise it to 3-4 if you want renewal discipline to stand out.',
+  'help.set.site.monitor.weekly.score.weight-uptime':
+    'What it does: The penalty weight applied to lost availability, charged per missing percentage point.\nBenefit: Short but frequent outages become as visible as certificate findings.\nRecommended: 0.5 (the default). Keep it small because it is charged per percentage point; above 1.0 it dominates the score on its own.',
+  'help.set.site.monitor.weekly.score.weight-weak-algo':
+    'What it does: The penalty weight given to certificates with weak signature algorithms or short keys.\nBenefit: Cryptographic debt stays visible and can be cleared before an audit finds it.\nRecommended: 3.0 (the default). Push it towards 5 where compliance pressure is high.',
+  'help.smtp.auth':
+    'What it does: Decides whether the SMTP session authenticates with a username and password.\nBenefit: Relays that require authentication accept the mail; with it off, no credentials are sent at all.\nRecommended: On for external providers and corporate relays that ask for credentials; off for an internal relay that authorises by IP address.',
+  'help.smtp.connTimeout':
+    'What it does: How long to wait while connecting to the SMTP server, in milliseconds.\nBenefit: An unreachable relay cannot lock up the alert-sending job.\nRecommended: 10000 ms (the default), or 20000 for a distant or slow provider; above 60000 the queue backs up.',
+  'help.smtp.enabled':
+    'What it does: Allows the application to send email; with it off, no alert mail leaves the system.\nBenefit: The whole mail path can be silenced with one switch during maintenance or a migration.\nRecommended: true — leaving it off means alerts disappear quietly. The webhook (push) channel is independent of this.',
+  'help.smtp.fromAddress':
+    'What it does: The sender address on outgoing email.\nBenefit: Recipients recognise the mail and it is less likely to be filtered, while replies go to the right mailbox.\nRecommended: An address on your own domain with SPF and DKIM in place (e.g. alerts@example.com), and one your relay is allowed to send as.',
+  'help.smtp.fromName':
+    'What it does: The display name shown beside the sender address.\nBenefit: Recipients can tell where the message comes from without opening it.\nRecommended: A short, recognisable name (e.g. SiteMonitor). Left empty, only the address is shown.',
+  'help.smtp.host':
+    'What it does: The host name or address of the SMTP server outbound mail is handed to.\nBenefit: Your corporate mail infrastructure is used, so alerts arrive from a familiar domain.\nRecommended: Your corporate relay (e.g. smtp.example.com). Left empty, the test and send buttons do nothing.',
+  'help.smtp.interContact':
+    'What it does: The pause left between recipients of the same alert, in milliseconds.\nBenefit: Many recipients can be reached without tripping the relay\'s rate limit.\nRecommended: 5000 ms (the default), or 1000-2000 with a generous relay; raise it if you see rate-limit errors.',
+  'help.smtp.interDomain':
+    'What it does: The pause left between sends to different domains, in milliseconds.\nBenefit: Mail fanning out to many domains at once does not trip reputation filters.\nRecommended: 3000 ms (the default). You can lower it if you only ever send to one internal domain.',
+  'help.smtp.password':
+    'What it does: The password of the SMTP service account; it is stored encrypted and never shown back on screen.\nBenefit: The credential is not left in clear text in the database.\nRecommended: Leave it blank to keep the stored password — only type here when you mean to change it, then confirm with "test connection".',
+  'help.smtp.port':
+    'What it does: The TCP port used to reach the SMTP server.\nBenefit: The right port implies the right encryption method, so the connection works first time.\nRecommended: 587 for STARTTLS (the usual choice), 465 for implicit TLS, or 25 for an unauthenticated internal relay.',
+  'help.smtp.readTimeout':
+    'What it does: The longest wait for a reply from the server, in milliseconds.\nBenefit: A silent server cannot hold a sending thread indefinitely.\nRecommended: 15000 ms (the default), or 30000 if you send mail with large attachments.',
+  'help.smtp.retryDelay':
+    'What it does: How long to wait after a failed send before trying again, in milliseconds.\nBenefit: A temporarily busy relay is not pushed further under by rapid retries.\nRecommended: 90000 ms — a minute and a half (the default). Very short values run you into the relay\'s rate limits.',
+  'help.smtp.sslTrust':
+    'What it does: Names the hosts whose TLS certificates are trusted; * accepts any certificate.\nBenefit: An internal relay with a self-signed certificate works without disabling verification everywhere.\nRecommended: Just your own server\'s name (e.g. smtp.example.com). Using * opens the door to interception — treat it as a last resort.',
+  'help.smtp.startTls':
+    'What it does: Attempts to upgrade a plain connection to an encrypted one using STARTTLS.\nBenefit: Credentials and message content do not travel the network in the clear.\nRecommended: On when using port 587. It is unnecessary with 465, which is TLS from the start.',
+  'help.smtp.startTlsRequired':
+    'What it does: Refuses to send at all if the STARTTLS upgrade fails, rather than quietly falling back to plain text.\nBenefit: A misconfigured server cannot cause mail to go out unencrypted.\nRecommended: On in production. Turn it off only for a legacy internal relay with no TLS support.',
+  'help.smtp.username':
+    'What it does: The account name used to authenticate to the SMTP server.\nBenefit: The relay recognises the sender and does not reject it, and outbound mail is tied to a traceable identity.\nRecommended: A service account dedicated to this application rather than a personal one. Leave it empty if the server does not require authentication.',
+  'help.smtp.writeTimeout':
+    'What it does: The longest time allowed while writing the message body to the server, in milliseconds.\nBenefit: Large attached reports are not cut off on a slow link.\nRecommended: 15000 ms (the default), or 30000 where reports carry PDF or CSV attachments.',
+  'help.userpush.groupMinLevel':
+    'What it does: The minimum alert level at which this title group receives push; anything below it never reaches the group.\nBenefit: Senior people get only criticals while specialists get everything — one channel, graded volume.\nRecommended: CRITICAL for management groups and warning level for specialist groups. Set it too high and the group resolves to no recipients at all, with no explanation on screen.',
+  'help.userpush.headerRow':
+    'What it does: A single HTTP header added to the push request; a value marked secret is stored encrypted and masked on screen.\nBenefit: An authentication token is neither stored in the open nor readable in the interface.\nRecommended: Mark every row carrying a token or key as secret. If you leave a masked value untouched, the stored secret is preserved.',
+  'help.userpush.teamMatrix':
+    'What it does: Chooses which teams\' monitors produce push notifications.\nBenefit: Teams without an on-call rota are not woken at night, and the channel stays open only for those who need it.\nRecommended: Enable the teams that hold a rota. A newly created team starts switched off here, so remember to enable it.',
+  'help.userpush.typeMatrix':
+    'What it does: Chooses which monitor types produce push notifications; an alert from a type that is off never reaches the push channel.\nBenefit: Only the alert types worth acting on reach a phone, and the email channel is untouched.\nRecommended: Enable the types that warrant a response at midnight — outages, certificate and domain expiry — and leave the informational ones off.',
+  'helptip.aria':
+    'Help',
 }
 
 // ── Context ───────────────────────────────────────────────────────────────────

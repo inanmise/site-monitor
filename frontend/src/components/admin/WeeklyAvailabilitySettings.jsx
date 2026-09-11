@@ -7,6 +7,7 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { mailPreviewSrcDoc, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
 import { Spinner } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
+import HelpTip from '../ui/HelpTip.jsx'
 
 export default function WeeklyAvailabilitySettings() {
   const t = useT()
@@ -212,7 +213,8 @@ export default function WeeklyAvailabilitySettings() {
           <input type="checkbox" checked={enabled} disabled={savingEnabled}
             onChange={(e) => toggleEnabled(e.target.checked)} />
           <span>{t('weeklyavail.enabled')}</span>
-        </label>
+        </label><HelpTip helpKey="help.set.site.monitor.weekly-availability.enabled"
+          label={t('weeklyavail.enabled')} />
         <p className="hint">{t('weeklyavail.enabledHint')}</p>
         {!enabled && (
           <div className="alert-msg ldap-lookup-error" style={{ marginTop: 10 }}>

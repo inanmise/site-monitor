@@ -268,6 +268,42 @@ class LdapProvisioningServiceTest {
     }
 
     @Test
+    @DisplayName("2026-09-10: extensionAttribute4 dolu ama DN değilse manager DN'ine düşülür; düz sicil kabul")
+    void managerSicil_fallsBackToManagerDn() {
+        assertThat(LdapProvisioningService.managerSicilOf(Map.of(
+                "extensionAttribute4", "N/A",
+                "manager", "CN=58714,OU=Staff,OU=Corp,DC=example,DC=com"))).isEqualTo("58714");
+        assertThat(LdapProvisioningService.managerSicilOf(Map.of(
+                "manager", "CN=58714,OU=Staff,DC=example,DC=com"))).isEqualTo("58714");
+        assertThat(LdapProvisioningService.managerSicilOf(Map.of("extensionAttribute4", "77001"))).isEqualTo("77001");
+        assertThat(LdapProvisioningService.managerSicilOf(Map.of("extensionAttribute4", " "))).isNull();
+        assertThat(LdapProvisioningService.managerSicilOf(Map.of("cn", "1"))).isNull();
+        // Eski davranışın kırığı: ea4 dolu-ama-DN-değil + manager dolu → sicil boş kalıyordu.
+        assertThat(LdapProvisioningService.cnOf("N/A")).isNull();
+    }
+
+    @Test
+    @DisplayName("2026-09-10: özyinelemeli provizyon edilen müdürün KENDİ müdür sicili de yazılır (AD'ye derinleşmeden)")
+    void recursiveManager_keepsOwnManagerSicil() {
+        when(directory.findOne("cn", "99999")).thenReturn(Optional.of(Map.of(
+                "sAMAccountName", "mgr1", "displayName", "Müdür Bey", "cn", "99999",
+                "manager", "CN=88888,OU=Staff,DC=example,DC=com")));
+        Map<String, Object> attrs = Map.of(
+                "cn", "80002", "displayName", "Normal User",
+                "extensionAttribute4", "CN=99999,OU=Staff,OU=Corp,DC=example,DC=com");
+
+        service.provisionFromAd("usr1", "CN=usr1,DC=example,DC=com", attrs);
+
+        org.mockito.ArgumentCaptor<AppUser> cap = org.mockito.ArgumentCaptor.forClass(AppUser.class);
+        org.mockito.Mockito.verify(userRepo, org.mockito.Mockito.atLeastOnce()).save(cap.capture());
+        AppUser manager = cap.getAllValues().stream()
+                .filter(x -> "MGR1".equals(x.getUsername())).findFirst().orElseThrow();
+        assertThat(manager.getManagerSicil()).isEqualTo("88888");
+        // Bir üst kademe (88888) AD'den ÇEKİLMEZ — zincir tek adımda durur.
+        org.mockito.Mockito.verify(directory, org.mockito.Mockito.never()).findOne("cn", "88888");
+    }
+
+    @Test
     @DisplayName("cnOf extracts the CN value from a DN")
     void cnOfHelper() {
         assertThat(LdapProvisioningService.cnOf("CN=99999,OU=Staff,DC=example,DC=com")).isEqualTo("99999");

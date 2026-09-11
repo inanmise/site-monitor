@@ -31,6 +31,32 @@ const sampleMembers = [
   },
 ]
 
+describe('TeamManager — elle takım müdürü (2026-09-10)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.admin.getTeamUsers.mockResolvedValue({ success: true, data: sampleMembers })
+  })
+
+  it('manager_id doluysa sütunda o kişi yazılır ve "(elle)" işareti çıkar; boşsa AD zincirinden türetilir', async () => {
+    const users = [
+      ...sampleMembers,
+      { id: 8, username: 'mgr', display_name: 'Müdür Elle', org_role: 'MANAGER', active: true },
+      { id: 9, username: 'mgr2', display_name: 'Müdür Zincir', org_role: 'MANAGER', active: true },
+      { id: 10, username: 'uye', display_name: 'Üye', org_role: 'TECH', team_id: 2, manager_id: 9, active: true },
+    ]
+    api.admin.getUsers.mockResolvedValue({ success: true, data: users })
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [
+      { id: 1, name: 'Payments', active: true, leader_id: 7, email: 't@ex.com', manager_id: 8 },
+      { id: 2, name: 'Ledger', active: true, leader_id: null, email: 'l@ex.com', manager_id: null },
+    ] })
+    render(<TeamManager systemRole="ADMIN" onTeamsChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
+    await waitFor(() => expect(screen.getByText('Müdür Elle')).toBeDefined())
+    expect(screen.getByText(/\((elle|manual)\)/)).toBeDefined()   // test-utils dili TR/EN olabilir
+    await waitFor(() => expect(screen.getByText('Müdür Zincir')).toBeDefined())
+  })
+})
+
 describe('TeamManager — business-card members', () => {
   beforeEach(() => {
     vi.clearAllMocks()

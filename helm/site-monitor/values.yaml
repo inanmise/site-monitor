@@ -39,6 +39,10 @@ ingress:
 # Application configuration (non-sensitive)
 config:
   springProfile: prod
+  # Ortam etiketi (dev | staging | prod) — Sürüm & Dağıtım Geçmişi'nde dağıtım kaydına ve Nav sürüm
+  # popover'ına yazılır; springProfile üç ortamda da "prod" olduğundan ortamı yalnız bu ayırt eder.
+  # environments/*.yaml doldurur; boş = uygulama "bilinmiyor" der.
+  environmentName: ""
   # com.sitemonitor log seviyesi. Prod'da INFO: DEBUG'ta heartbeat/sweep/per-domain satırları pod başına
   # günde on binlerce satır üretir ve prod'da hem console hem dosya appender'ına yazılır (çift I/O).
   # Restart'sız değiştirmek için: Yönetim → Genel Ayarlar → Loglama (DB override env'i ezer).

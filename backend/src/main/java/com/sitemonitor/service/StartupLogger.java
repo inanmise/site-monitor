@@ -106,6 +106,18 @@ public class StartupLogger {
         rows.add(new Row("version", v.version(), v.source()));
         rows.add(new Row("profiles.active", profiles(), "runtime"));
         rows.add(propRow("spring.application.name"));
+        // Build meta + dağıtım kimliği (2026-09-10): pod HANGİ commit'ten, NE ZAMAN, HANGİ ortamda —
+        // eskiden yalnız OCI label'daydı, loglardan doğrulanamıyordu. Boş = env verilmemiş ([none]).
+        BuildInfo.Snapshot b = BuildInfo.resolve(env);
+        rows.add(metaRow("build.commit",        b.commit()));
+        rows.add(metaRow("build.time",          b.buildTime()));
+        rows.add(metaRow("image.version",       b.imageVersion()));
+        rows.add(metaRow("image.ref",           b.imageRef()));
+        rows.add(new Row("environment",         b.environment(), b.environment().equals("local") || b.environment().equals("unknown") ? "default" : "env"));
+        rows.add(metaRow("helm.release",        b.helmRelease()));
+        rows.add(metaRow("helm.revision",       b.helmRevision() == null ? "" : String.valueOf(b.helmRevision())));
+        rows.add(metaRow("helm.chart-version",  b.helmChartVersion()));
+        rows.add(new Row("instance",            b.instanceId(), "runtime"));
         return new Section("Uygulama", rows);
     }
 
@@ -298,6 +310,12 @@ public class StartupLogger {
         return sb.toString();
     }
 
+    /** Build/dağıtım meta satırı: değer boşsa "(yok)" + [none], doluysa [env] (hepsi ortam değişkeninden gelir). */
+    private static Row metaRow(String key, String value) {
+        boolean blank = value == null || value.isBlank();
+        return new Row(key, blank ? "(yok)" : value, blank ? "none" : "env");
+    }
+
     private static String pad(String s, int w) {
         if (s.length() >= w) return s;
         return s + " ".repeat(w - s.length());
@@ -307,8 +325,12 @@ public class StartupLogger {
 
     private String renderJson(List<Section> sections) {
         StringBuilder sb = new StringBuilder("{");
+        BuildInfo.Snapshot b = BuildInfo.resolve(env);
         sb.append(js("_meta")).append(":{").append(js("version")).append(':').append(js(AppVersion.resolve(env)))
-          .append(',').append(js("profiles")).append(':').append(js(profiles())).append('}');
+          .append(',').append(js("profiles")).append(':').append(js(profiles()))
+          // log-toplama korelasyonu: aynı sürümün farklı commit/ortam kayıtları ayrışsın
+          .append(',').append(js("commit")).append(':').append(js(b.commitShort()))
+          .append(',').append(js("environment")).append(':').append(js(b.environment())).append('}');
         for (Section s : sections) {
             sb.append(',').append(js(s.title())).append(":{");
             boolean first = true;

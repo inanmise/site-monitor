@@ -57,7 +57,10 @@ class UserPushControllerUnitTest {
                 mock(com.sitemonitor.repository.UserPushDeliveryRepository.class),
                 mock(com.sitemonitor.repository.UserPushScopeRepository.class),
                 mock(SecretCipher.class),
-                mock(AuditService.class));
+                mock(AuditService.class),
+                mock(com.sitemonitor.service.UserPushRecipientResolver.class),
+                mock(com.sitemonitor.repository.AppUserRepository.class),
+                mock(com.sitemonitor.repository.TeamRepository.class));
     }
 
     private static MockHttpSession session(String role, boolean scoped) {

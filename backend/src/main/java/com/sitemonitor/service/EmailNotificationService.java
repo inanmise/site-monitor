@@ -549,6 +549,73 @@ public class EmailNotificationService {
             + simpleFrameClose();
     }
 
+    // ── System admin — sürüm geçişi bildirimi (E3, opt-in) ───────────────────
+
+    /** Dağıtım bildirimi verisi — {@code DeploymentNotifyService} toplar, burada yalnız çizilir. */
+    public record DeploymentNotice(String kind, String environment, String fromVersion, String toVersion,
+                                   String commitShort, String startedAt, List<String> highlights, boolean breaking) {}
+
+    /** UPGRADE → yeşil (ok) logo, ROLLBACK → kırmızı (critical) logo; çerçeve şifre-sıfırlama ile aynı (Tier-3). */
+    public String sendDeploymentNotice(String[] recipients, DeploymentNotice n) {
+        if (!isEnabled()) {
+            log.info("⚠ Email devre dışı — dağıtım bildirimi atlanıyor: {} {}→{}", n.environment(), n.fromVersion(), n.toVersion());
+            return "SKIPPED_DISABLED";
+        }
+        if (recipients == null || recipients.length == 0) {
+            log.warn("Dağıtım bildirimi alıcısı yok — atlanıyor");
+            return "SKIPPED_NO_RECIPIENT";
+        }
+        try {
+            boolean rollback = "ROLLBACK".equals(n.kind());
+            String subject = "[Site Monitor] " + (rollback ? "⏪ Geri alma: " : "🚀 Yükseltme: ")
+                    + n.environment() + " " + n.fromVersion() + " → " + n.toVersion();
+            return sendFramedHtml(recipients, subject, buildDeploymentNoticeHtml(n), rollback ? "critical" : "ok");
+        } catch (Exception e) {
+            log.error("✗ Dağıtım bildirimi hazırlanamadı: TO={} | HATA={}", Arrays.toString(recipients), e.getMessage(), e);
+            return "FAILED: " + e.getMessage();
+        }
+    }
+
+    /** Outlook-güvenli: td bgcolor, düz hex, MSO font fallback (simpleFrameOpen); TR ana metin + EN alt satır. */
+    public String buildDeploymentNoticeHtml(DeploymentNotice n) {
+        boolean rollback = "ROLLBACK".equals(n.kind());
+        String color = rollback ? "#b91c1c" : "#15803d";
+        String titleTr = rollback ? "Geri alma yapıldı" : "Yeni sürüm devreye alındı";
+        String titleEn = rollback ? "Rollback deployed" : "New version deployed";
+        StringBuilder rows = new StringBuilder();
+        rows.append(newDeviceRow("Ortam / Environment", n.environment()));
+        rows.append(newDeviceRow("Sürüm / Version", n.fromVersion() + " → " + n.toVersion()));
+        rows.append(newDeviceRow("Tür / Kind", rollback ? "ROLLBACK (geri alma)" : "UPGRADE (yükseltme)"));
+        if (n.commitShort() != null && !n.commitShort().isBlank()) rows.append(newDeviceRow("Commit", n.commitShort()));
+        if (n.startedAt() != null && !n.startedAt().isBlank()) rows.append(newDeviceRow("Başlangıç / Started", n.startedAt()));
+        StringBuilder hl = new StringBuilder();
+        if (n.highlights() != null && !n.highlights().isEmpty()) {
+            hl.append("<p style='margin:14px 0 6px;font-weight:700'>Öne çıkanlar / Highlights</p>")
+              .append("<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;font-size:13px'>");
+            for (String h : n.highlights()) {
+                hl.append("<tr><td bgcolor='#ffffff' style='padding:3px 8px 3px 0;color:#64748b;vertical-align:top'>•</td>")
+                  .append("<td bgcolor='#ffffff' style='padding:3px 0'>").append(escHtml(h)).append("</td></tr>");
+            }
+            hl.append("</table>");
+        }
+        String breaking = n.breaking()
+                ? "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:12px 0'><tr>"
+                  + "<td bgcolor='#fef2f2' style='background:#fef2f2;border-left:4px solid #dc2626;padding:8px 12px;font-size:13px;color:#991b1b'>"
+                  + "<strong>Kırıcı değişiklik içerir / Contains breaking changes.</strong></td></tr></table>"
+                : "";
+        return simpleFrameOpen(560)
+            + "<h2 style='color:" + color + ";margin:0 0 4px;font-size:20px'>" + escHtml(titleTr) + "</h2>"
+            + "<p style='margin:0 0 12px;font-size:13px;color:#64748b'>" + escHtml(titleEn) + "</p>"
+            + "<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:14px 0;font-size:14px'>"
+            + rows
+            + "</table>"
+            + breaking
+            + hl
+            + "<p style='font-size:13px;color:#64748b;margin:14px 0 0'>Ayrıntı: Sistem Sağlığı → Sürüm &amp; Dağıtım. "
+            + "Bu bildirim <em>site.monitor.deploy.notify.enabled</em> ayarı ile açılıp kapatılır.</p>"
+            + simpleFrameClose();
+    }
+
     // ── System admin — network outage notifications ──────────────────────────
 
     public String sendSystemAdminNetworkAlert(String to, String detectedAt,
@@ -2934,6 +3001,13 @@ public class EmailNotificationService {
     /** Sayfa Hızı bölümü: en yavaş N sayfa + kaç izlemenin eşiği aşıldığı. */
     public record PageSpeedWeekly(List<PageSpeedWeeklyRow> slowest, int monitorCount, int breachedMonitorCount) {}
 
+    /**
+     * Haftalık rapordaki "Sürüm &amp; Dağıtım" satırı (E2): rapor penceresindeki dağıtım/yeniden
+     * başlatma/geri alma sayıları ve haftanın ilk→son sürümü. {@code null} = veri toplanamadı (satır
+     * çizilmez); sıfır dağıtım ise "dağıtım yapılmadı" der (satır yine çizilir).
+     */
+    public record DeploymentWeekly(int deployments, String fromVersion, String toVersion, int restarts, int rollbacks) {}
+
     /** Geriye uyumlu: ek yokken (ya da üretilemediğinde) gövdede ek bandı çizilmez. */
     public String buildWeeklyAvailabilityHtml(String teamName, String weekLabel,
                                               List<AvailabilityRow> rows, AvailabilitySummary s) {
@@ -2953,6 +3027,13 @@ public class EmailNotificationService {
     public String buildWeeklyAvailabilityHtml(String teamName, String weekLabel,
                                               List<AvailabilityRow> rows, AvailabilitySummary s,
                                               AttachmentInfo att, PageSpeedWeekly ps) {
+        return buildWeeklyAvailabilityHtml(teamName, weekLabel, rows, s, att, ps, null);
+    }
+
+    /** {@code dep} doluysa gövdeye "Sürüm &amp; Dağıtım" bandı eklenir (E2). */
+    public String buildWeeklyAvailabilityHtml(String teamName, String weekLabel,
+                                              List<AvailabilityRow> rows, AvailabilitySummary s,
+                                              AttachmentInfo att, PageSpeedWeekly ps, DeploymentWeekly dep) {
         String accent = "#1f3864";
         String outerBg = "#f4f6f8";
         String generatedAt = ZonedDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
@@ -3071,6 +3152,33 @@ public class EmailNotificationService {
                 + "sayıma girmez.</td></tr></table></div>";
         }
 
+        // ── Sürüm & Dağıtım satırı (E2) — Outlook-güvenli: td + bgcolor, düz hex ────────────────
+        // Okuyan "bu hafta ne değişti?" sorusunu kesinti tablosunun yanında görsün diye; geri alma
+        // varsa kenar çizgisi kırmızıya döner. TR ana satır + EN alt satır (rapor dili sabit TR).
+        String deploySection = "";
+        if (dep != null) {
+            String range = (dep.fromVersion() != null && dep.toVersion() != null && !dep.fromVersion().equals(dep.toVersion()))
+                    ? " (v" + dep.fromVersion() + " → v" + dep.toVersion() + ")"
+                    : (dep.toVersion() != null ? " (v" + dep.toVersion() + ")" : "");
+            String tr = dep.deployments() == 0
+                    ? "Bu hafta dağıtım yapılmadı; " + dep.restarts() + " yeniden başlatma, " + dep.rollbacks() + " geri alma"
+                    : "Bu hafta " + dep.deployments() + " dağıtım" + range + ", " + dep.restarts()
+                      + " yeniden başlatma, " + dep.rollbacks() + " geri alma";
+            String en = dep.deployments() == 0
+                    ? "No deployments this week; " + dep.restarts() + " restart(s), " + dep.rollbacks() + " rollback(s)"
+                    : dep.deployments() + " deployment(s)" + range + ", " + dep.restarts()
+                      + " restart(s), " + dep.rollbacks() + " rollback(s) this week";
+            String edge = dep.rollbacks() > 0 ? "#dc2626" : "#64748b";
+            deploySection =
+                "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 18px'><tr>"
+                + "<td bgcolor='#f8fafc' style='background:#f8fafc;border-left:4px solid " + edge + ";"
+                + "border-radius:0 8px 8px 0;padding:10px 16px;font-size:13px;color:#1e293b'>"
+                + "<span style='font-weight:800;color:#334155'>🚀 Sürüm &amp; Dağıtım</span><br>"
+                + "<span style='font-size:13px;color:#334155'>" + escHtml(tr) + "</span><br>"
+                + "<span style='font-size:11px;color:#64748b'>" + escHtml(en) + "</span>"
+                + "</td></tr></table>";
+        }
+
         // Domain tablosu (en kötü üstte — servis sıralar)
         StringBuilder body = new StringBuilder();
         body.append("<tr>")
@@ -3149,6 +3257,7 @@ public class EmailNotificationService {
             + bestWorst
             + table
             + pageSpeedSection
+            + deploySection
             // Footer
             + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
             + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitor — Otomatik Haftalık Rapor</td>"

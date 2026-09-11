@@ -45,6 +45,7 @@ class WeeklyAvailabilityReportServiceTest {
     @Mock com.sitemonitor.service.report.WeeklyOutageReportService outageReportService;
     @Mock com.sitemonitor.repository.PageSpeedMonitorRepository pageSpeedMonitorRepo;
     @Mock com.sitemonitor.repository.PageSpeedCheckRepository pageSpeedCheckRepo;
+    @Mock DeploymentHistoryService deploymentHistory;
 
     private WeeklyAvailabilityReportService service;
 
@@ -64,14 +65,17 @@ class WeeklyAvailabilityReportServiceTest {
     void setUp() {
         service = new WeeklyAvailabilityReportService(teamRepo, inventoryRepo, uptimeCheckRepo,
                 latestCheckRepo, contactRepo, userRepo, emailService, notificationLogRepo, walRepo, appSettings,
-                outageReportService, pageSpeedMonitorRepo, pageSpeedCheckRepo);
+                outageReportService, pageSpeedMonitorRepo, pageSpeedCheckRepo, deploymentHistory);
         when(appSettings.getBoolean(eq("site.monitor.weekly-availability.enabled"), anyBoolean())).thenReturn(true);
         when(emailService.sendHtml(any(), any(), any(), any(), any())).thenReturn("SENT");
         when(emailService.sendHtmlWithAttachments(any(), any(), any(), any(), any(), any())).thenReturn("SENT");
         when(outageReportService.collect(any(), any(), any())).thenReturn(outageData(3, 1));
         when(outageReportService.pdf(any())).thenReturn(new byte[]{ 1, 2, 3 });
-        when(emailService.buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), any()))
+        when(emailService.buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn("<html></html>");
+        // Varsayılan: dağıtım geçmişi boş → "dağıtım yapılmadı" satırı (rapor yine gider).
+        when(deploymentHistory.currentEnvironment()).thenReturn("prod");
+        when(deploymentHistory.derivedFor(any())).thenReturn(java.util.List.of());
         // Varsayılan: takımın sayfa hızı izlemesi yok → bölüm hiç çizilmez.
         when(pageSpeedMonitorRepo.findByActiveTrue()).thenReturn(java.util.List.of());
         when(emailService.getEmailFrom()).thenReturn("noreply@sitemonitor");
@@ -309,7 +313,7 @@ class WeeklyAvailabilityReportServiceTest {
         // Ek sessizce iliştirilseydi okuyanların çoğu — özellikle telefonda — fark etmezdi.
         ArgumentCaptor<EmailNotificationService.AttachmentInfo> attCap =
                 ArgumentCaptor.forClass(EmailNotificationService.AttachmentInfo.class);
-        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture(), any());
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture(), any(), any());
         assertThat(attCap.getValue()).isNotNull();
         assertThat(attCap.getValue().fileName()).endsWith(".pdf");
         assertThat(attCap.getValue().monitorTypeCount()).isEqualTo(MonitorTypeCatalog.ORDER.size());
@@ -348,7 +352,7 @@ class WeeklyAvailabilityReportServiceTest {
 
         ArgumentCaptor<EmailNotificationService.AttachmentInfo> attCap =
                 ArgumentCaptor.forClass(EmailNotificationService.AttachmentInfo.class);
-        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture(), any());
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture(), any(), any());
         assertThat(attCap.getValue()).isNull();      // gövdede ek bandı çizilmez
         verify(outageReportService, never()).pdf(any());
         assertThat(result.sent()).isEqualTo(1);      // rapor yine gitti
@@ -750,6 +754,66 @@ class WeeklyAvailabilityReportServiceTest {
     }
 
     /** Varsayılan fabrika: erişilebilirlik raporu anahtarı AÇIK — "kapalıysa gönderilmez" ayrı testte. */
+    // ── E2: Sürüm & Dağıtım satırı ───────────────────────────────────────────────────────────
+
+    private static com.sitemonitor.model.DeploymentHistory dep(long id, String startedAtUtcNoZ, String version) {
+        com.sitemonitor.model.DeploymentHistory d = new com.sitemonitor.model.DeploymentHistory();
+        d.setId(id); d.setStartedAt(startedAtUtcNoZ + "Z"); d.setRecordedAt(d.getStartedAt());
+        d.setEnvironment("prod"); d.setVersion(version); d.setSource("STARTUP");
+        return d;
+    }
+
+    @Test
+    @DisplayName("E2: pencere içindeki dağıtımlar sayılır (yükseltme+geri alma = dağıtım, restart ayrı), pencere dışı elenir")
+    void deployments_countedWithinWindow() {
+        WeeklyAvailabilityReportService.Window w = service.lastFullWeekWindow();
+        // Pencere sınırları 'Z'siz UTC (İstanbul Pzt 00:00 = UTC Paz 21:00); satırlar 'Z'li —
+        // from tam sınırda dahil, to'dan sonra hariç. "inside" from'a göre türetilir, tarih parçasından değil.
+        String from = w.fromUtc();
+        String inside = java.time.LocalDateTime.parse(w.fromUtc()).plusHours(12).format(java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+        String before = java.time.LocalDateTime.parse(w.fromUtc()).minusSeconds(1).format(java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+        String after = java.time.LocalDateTime.parse(w.toUtc()).plusSeconds(1).format(java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+        List<com.sitemonitor.service.DeploymentHistoryService.Derived> derived =
+                com.sitemonitor.service.DeploymentHistoryService.deriveKinds(List.of(
+                        dep(1, before, "1.0.0"),     // pencere ÖNCESİ — FIRST_SEEN ama sayılmaz
+                        dep(2, from, "1.1.0"),       // UPGRADE (sınırda, dahil)
+                        dep(3, inside, "1.1.0"),     // RESTART
+                        dep(4, inside, "1.0.0"),     // ROLLBACK
+                        dep(5, inside, "1.2.0"),     // UPGRADE
+                        dep(6, after, "1.3.0")));    // pencere SONRASI — sayılmaz
+        when(deploymentHistory.derivedFor("prod")).thenReturn(derived);
+
+        EmailNotificationService.DeploymentWeekly d = service.collectDeployments(w);
+        assertThat(d).isNotNull();
+        assertThat(d.deployments()).isEqualTo(3);
+        assertThat(d.restarts()).isEqualTo(1);
+        assertThat(d.rollbacks()).isEqualTo(1);
+        assertThat(d.fromVersion()).isEqualTo("1.0.0");
+        assertThat(d.toVersion()).isEqualTo("1.2.0");
+    }
+
+    @Test
+    @DisplayName("E2: geçmiş boşsa sıfır satırı; servis patlarsa null (rapor satırsız gider) — mail yine HTML üreticisine ulaşır")
+    void deployments_emptyAndFailureTolerant() {
+        WeeklyAvailabilityReportService.Window w = service.lastFullWeekWindow();
+        assertThat(service.collectDeployments(w))
+                .isEqualTo(new EmailNotificationService.DeploymentWeekly(0, null, null, 0, 0));
+
+        when(deploymentHistory.derivedFor(any())).thenThrow(new RuntimeException("db"));
+        assertThat(service.collectDeployments(w)).isNull();
+
+        Team t = team(5L, "Dijital", "dijital@x.com");
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
+        when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L))
+                .thenReturn(List.of(inv("a.com")));
+        service.sendWeeklyReports(false);
+        ArgumentCaptor<EmailNotificationService.DeploymentWeekly> cap =
+                ArgumentCaptor.forClass(EmailNotificationService.DeploymentWeekly.class);
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), any(), cap.capture());
+        assertThat(cap.getValue()).isNull();
+        verify(emailService).sendHtmlWithAttachments(any(), any(), any(), any(), any(), any());
+    }
+
     private Team team(Long id, String name, String email) {
         return team(id, name, email, true);
     }
@@ -788,7 +852,7 @@ class WeeklyAvailabilityReportServiceTest {
     private EmailNotificationService.PageSpeedWeekly capturePageSpeed() {
         ArgumentCaptor<EmailNotificationService.PageSpeedWeekly> cap =
                 ArgumentCaptor.forClass(EmailNotificationService.PageSpeedWeekly.class);
-        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), cap.capture());
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), cap.capture(), any());
         return cap.getValue();
     }
 

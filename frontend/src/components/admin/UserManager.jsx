@@ -6,7 +6,7 @@ import { useToast } from '../ui/Toast.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import MultiTeamSelect from '../ui/MultiTeamSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
-import { UserPlus, UserCog } from 'lucide-react'
+import { UserPlus, UserCog, BellOff } from 'lucide-react'
 import AdminAutoResetModal from './AdminAutoResetModal.jsx'
 import UserEditModal, { ModalHeaderAvatar } from './UserEditModal.jsx'
 
@@ -228,37 +228,50 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
       </div>
 
       <div className="admin-table-wrap">
-        <table className="admin-table">
+        {/* 2026-09-11: 11 sütun (avatar + kullanıcı adı + sicil + ad + ünvan + …) 1366px'te sığmıyor,
+            Eylemler sütunu yatay kaydırmanın ardında kayboluyordu. Kimlik alanları TEK hücrede
+            (avatar · ad soyad / kullanıcı adı · sicil / ünvan), Eylemler daralmaz (um-col-actions). */}
+        <table className="admin-table um-table">
           <thead>
             <tr>
-              <th aria-label="avatar"></th>
-              <th>{t('usr.colUsername')}</th>
-              <th>{t('usr.colEmployeeId')}</th>
-              <th>{t('usr.colDisplay')}</th>
-              <th>{t('usr.colTitle')}</th>
+              <th>{t('usr.colUser')}</th>
               <th>{t('usr.colEmail')}</th>
               <th>{t('usr.colRole')}</th>
               <th>{t('usr.colOrgRole')}</th>
               <th>{t('usr.colTeam')}</th>
               <th>{t('usr.colActive')}</th>
-              <th>{t('usr.colActions')}</th>
+              <th className="um-col-actions">{t('usr.colActions')}</th>
             </tr>
           </thead>
           <tbody>
             {users.length === 0 && (
-              <tr><td colSpan={11} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
+              <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
                 {loading ? '…' : t('usr.noResults')}
               </td></tr>
             )}
             {users.map((user) => (
               <tr key={user.id} style={{ cursor: 'pointer' }} title={t('usr.viewTitle')}
                 onClick={() => setViewUser(user)}>
-                <td><UserAvatar user={user} /></td>
-                <td><strong>{user.username}</strong></td>
-                <td>{user.employee_id || '—'}</td>
-                <td>{user.display_name || '—'}</td>
-                <td>{user.title || '—'}</td>
-                <td>{user.email || '—'}</td>
+                <td className="um-col-user">
+                  <div className="um-identity">
+                    <UserAvatar user={user} />
+                    <div className="um-identity-text">
+                      <strong className="um-identity-name">
+                        {user.display_name || user.username}
+                        {user.push_opt_out && (
+                          <span className="um-optout-badge" title={t('usr.pushOptOutTitle')} aria-label={t('usr.pushOptOutTitle')}>
+                            <BellOff size={12} />
+                          </span>
+                        )}
+                      </strong>
+                      <span className="um-identity-sub sys-mono">
+                        {user.username}{user.employee_id ? ` · ${user.employee_id}` : ''}
+                      </span>
+                      {user.title && <span className="um-identity-title" title={user.title}>{user.title}</span>}
+                    </div>
+                  </div>
+                </td>
+                <td className="um-col-email"><span className="um-email" title={user.email || ''}>{user.email || '—'}</span></td>
                 <td>
                   <span className={`role-badge${user.system_role === 'ADMIN' ? ' role-admin' : user.system_role === 'AUDIT' ? ' role-audit' : ''}`}>{user.system_role}</span>
                   {user.role_locked && (
@@ -276,13 +289,13 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                     <span style={{ marginLeft: 6, cursor: 'help' }} title={t('usr.orgRoleLockedTitle')}>🔒</span>
                   )}
                 </td>
-                <td>{((user.team_ids ?? user.teamIds ?? (user.team_id != null ? [user.team_id] : []))
+                <td className="um-col-team">{((user.team_ids ?? user.teamIds ?? (user.team_id != null ? [user.team_id] : []))
                   .map(id => teamMap[id]).filter(Boolean).join(', ')) || '—'}</td>
                 <td>
                   <span className={user.active ? 'badge badge-ok' : 'badge badge-err'}>{user.active ? t('usr.active') : t('usr.inactive')}</span>
                   {user.permanent_lock && <span className="badge badge-err" style={{ marginLeft: 4 }} title={t('usr.permLocked')}>🔒</span>}
                 </td>
-                <td onClick={(e) => e.stopPropagation()}>
+                <td className="um-col-actions" onClick={(e) => e.stopPropagation()}>
                   <KebabMenu label={t('usr.colActions')} items={canManage ? [
                     { label: t('usr.edit'), onClick: () => openEdit(user) },
                     { label: t('usr.autoResetBtn'), onClick: () => setAutoResetModal(user) },

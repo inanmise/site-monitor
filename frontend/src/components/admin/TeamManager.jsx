@@ -10,9 +10,10 @@ import UserEditModal from './UserEditModal.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import TeamMembersModal from '../ui/TeamMembersModal.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
+import { resolveTeamManager } from '../../utils/teamManager.js'
 
 // Haftalık e-postalar opt-in: YENİ takım ikisi de kapalı doğar (backend de createTeam'de false yazar).
-const emptyTeam = { name: '', email: '', description: '', active: true, leader_id: '',
+const emptyTeam = { name: '', email: '', description: '', active: true, leader_id: '', manager_id: '',
   weekly_reminder_enabled: false, weekly_availability_enabled: false }
 
 /** Sunucu SNAKE_CASE döndürür; camelCase varyantı da savunma amaçlı okunur (openEdit'teki leader_id deseni). */
@@ -121,16 +122,21 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   /** Bir kullanıcının bağlı olduğu müdür etiketi: adı (çözülebiliyorsa) yoksa sicili. */
   const managerLabelFor = (u) => (u?.manager_id && userMap[u.manager_id]) || u?.manager_sicil || null
 
-  /** Takımın müdürü: o takımdaki kullanıcıların bağlı olduğu müdür(ler)in birleşimi. */
-  const teamManagerLabel = (teamId) => {
-    const labels = new Set()
-    users.forEach(u => { if (u.team_id === teamId) { const l = managerLabelFor(u); if (l) labels.add(l) } })
-    return labels.size ? [...labels].join(', ') : null
+  /** Takımın müdürü — TEK kişi. Elle atanmışsa (team.manager_id) o; yoksa takımın bağlı olduğu ilk
+   *  yönetici (lider/PO ve üst kademeler elenir; kural utils/teamManager.js). Eskiden üyelerin
+   *  müdürlerinin birleşimiydi → iki ad çıkıyordu. */
+  const manualManagerId = (team) => team.manager_id ?? team.managerId ?? null
+  const teamManagerLabel = (team) => {
+    const manual = manualManagerId(team)
+    if (manual != null && userMap[manual]) return userMap[manual]
+    return resolveTeamManager(users.filter(u => u.team_id === team.id), usersById, managerLabelFor,
+      team.leader_id ?? team.leaderId ?? null)
   }
 
   function openAdd() { setForm(emptyTeam); setModal('add'); setMsg(null) }
   function openEdit(team) {
     setForm({ ...team, email: team.email || '', leader_id: String(team.leaderId ?? team.leader_id ?? ''),
+      manager_id: String(team.managerId ?? team.manager_id ?? ''),
       weekly_reminder_enabled: weeklyFlag(team, 'reminder'),
       weekly_availability_enabled: weeklyFlag(team, 'availability') })
     setModal(team)
@@ -152,6 +158,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
         description: form.description,
         active: form.active,
         leader_id: form.leader_id ? Number(form.leader_id) : null,  // PO optional
+        manager_id: form.manager_id ? Number(form.manager_id) : null,  // elle müdür; null → AD zincirinden türet
         weekly_reminder_enabled: !!form.weekly_reminder_enabled,
         weekly_availability_enabled: !!form.weekly_availability_enabled,
       }
@@ -257,7 +264,14 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
                   </td>
                   <td>{team.email || '—'}</td>
                   <td>{userMap[team.leader_id] ?? <span style={{ color: 'var(--danger)' }}>{t('team.noLeader')}</span>}</td>
-                  <td>{teamManagerLabel(team.id) || '—'}</td>
+                  <td>
+                    {teamManagerLabel(team) || '—'}
+                    {manualManagerId(team) != null && userMap[manualManagerId(team)] && (
+                      <span className="field-hint" style={{ marginLeft: 6 }} title={t('team.managerManualTitle')}>
+                        {t('team.managerManual')}
+                      </span>
+                    )}
+                  </td>
                   <td><span className={team.active ? 'badge badge-ok' : 'badge badge-err'}>{team.active ? t('team.active') : t('team.inactive')}</span></td>
                   <td>
                     <div className="tm-weekly-cell">
@@ -330,6 +344,20 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
                   ]}
                 />
                 <span className="field-hint">{t('team.leaderOptionalHint')}</span>
+              </label>
+              <label>
+                <span>{t('team.formManager')}</span>
+                <SearchableSelect
+                  value={form.manager_id}
+                  onChange={v => setForm({ ...form, manager_id: v })}
+                  placeholder={t('team.selectManager')}
+                  searchThreshold={2}
+                  options={[
+                    { value: '', label: t('team.selectManager') },
+                    ...users.map(u => ({ value: u.id, label: `${u.display_name || u.username} (${u.username})` })),
+                  ]}
+                />
+                <span className="field-hint">{t('team.managerHint')}</span>
               </label>
               <label className="full-width">{t('team.formDesc')}
                 <input value={form.description || ''} onChange={(e) => setForm({ ...form, description: e.target.value })} />

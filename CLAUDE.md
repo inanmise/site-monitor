@@ -223,3 +223,10 @@ Key routing rules:
 - Save progress → invoke /context-save
 - Resume context → invoke /context-restore
 - Author a backlog-ready spec/issue → invoke /spec
+
+## Sürüm & Dağıtım geçmişi (2026-09-11)
+- Yayın dizini `docs/releases/index.json` CI'da `scripts/gen-release-index.mjs --append` ile büyür (yerelde `--check`); imajda `/app/releases.json`, `ReleaseIndexService` okur. Çalışma anında GitHub'a ÇIKILMAZ.
+- `deployment_history` asla silinmez (RetentionCatalog BOUNDED); yalnız MANUAL satır silinir. Tür (UPGRADE/RESTART/ROLLBACK) `deriveKinds` ile türetilir, yazılmaz.
+- İzin anahtarları TAM ad: `canView('release_history.read')`, `canEdit('release_history.edit')` — `canView('release_history')` sessizce false döner.
+- `schema_table_registry` (SQL Playground "oluşturma ≈ ilk görülme / son veri değişimi"): heartbeat'te pg_stat sayaç farkı; katalogsuz ortamda yalnız first_seen.
+- CI `release.yml`: elle major ya da anlamlı commit yokken bump → `confirm_major=yes`; `BUILD_DATE` gerçek build anı.

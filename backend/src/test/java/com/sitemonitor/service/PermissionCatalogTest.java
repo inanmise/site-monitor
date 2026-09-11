@@ -108,13 +108,13 @@ class PermissionCatalogTest {
         assertThat(teamAdmin.get("weekly_reports.crud").get("edit")).isTrue();
         assertThat(teamAdmin.get("weekly_reports.approve").get("execute")).isTrue();
         assertThat(teamAdmin.get("diagnostics.history").get("view")).isTrue();
-        assertThat(teamAdmin.get("diagnostics.run").get("execute")).isFalse();
+        assertThat(teamAdmin.get("diagnostics.run").get("execute")).isTrue();    // 2026-09-11: kendi takımının alanları (uç kapsamlar)
 
         // USER: rapor read/crud açık, approve KAPALI; diagnostics kapalı
         assertThat(user.get("weekly_reports.read").get("view")).isTrue();
         assertThat(user.get("weekly_reports.crud").get("edit")).isTrue();
         assertThat(user.get("weekly_reports.approve").get("execute")).isFalse();
-        assertThat(user.get("diagnostics.run").get("execute")).isFalse();
+        assertThat(user.get("diagnostics.run").get("execute")).isTrue();         // 2026-09-11: kendi takımının alanları (uç kapsamlar)
         assertThat(user.get("diagnostics.history").get("view")).isFalse();
 
         // AUDIT: yalnız VIEW açık (read + history); crud/approve/run kapalı

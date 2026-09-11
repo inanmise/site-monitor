@@ -87,7 +87,8 @@ class WebConfigTest {
     void publicEndpoints_areNoStore() throws Exception {
         WebConfig cfg = new WebConfig();
         var filter = cfg.securityHeadersFilter();
-        for (String uri : new String[]{"/api/branding", "/api/public-stats", "/api/me", "/api/admin/system"}) {
+        for (String uri : new String[]{"/api/branding", "/api/public-stats", "/api/me", "/api/admin/system",
+                "/api/system/version", "/api/system/releases", "/api/admin/deployments"}) {
             var req = new org.springframework.mock.web.MockHttpServletRequest("GET", uri);
             var res = new org.springframework.mock.web.MockHttpServletResponse();
             filter.doFilter(req, res, new org.springframework.mock.web.MockFilterChain());

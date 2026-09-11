@@ -35,6 +35,12 @@ public class ExtendedHealthService {
     private final JdbcTemplate jdbcTemplate;
     private final RdapDomainClient rdapDomainClient;
     private final com.sitemonitor.repository.RetentionRunRepository retentionRunRepo;
+
+    /** Dağıtım kaydının last_seen_at'ı heartbeat ritminde tazelenir (hard-kill'de son görülme kalır). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DeploymentHistoryService deploymentHistory;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private SchemaTableRegistryService schemaRegistry;
     private final AppSettingsService appSettings;
     @org.springframework.context.annotation.Lazy
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -85,6 +91,8 @@ public class ExtendedHealthService {
             hb.setRecordedAt(LocalDateTime.now(ZoneOffset.UTC));
             heartbeatRepo.save(hb);
             log.debug("Heartbeat recorded at {}", hb.getRecordedAt());
+            if (deploymentHistory != null) deploymentHistory.touch();
+            if (schemaRegistry != null) schemaRegistry.tick();   // dakika hassasiyetinde "son veri değişimi"
         } catch (Exception e) {
             log.warn("Failed to record heartbeat: {}", e.getMessage());
         }

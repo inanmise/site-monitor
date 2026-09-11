@@ -92,6 +92,8 @@ BDDK/iç denetim süreleri esas alınmalıdır.
 | `alert_storms` | 365 gün | 90 g | `site.monitor.storm.retention-days` | `resolved = true AND resolved_at < ?` | Alarm fırtınası kayıtları. Yalnız çözülmüş fırtınalar silinir. |
 | `retention_run_item` | 180 gün | 30 g | `site.monitor.retention.run-history-retention-days` | `created_at < ?` | Gece temizliği çalışma detayı (tablo başına silinen satır). Ana kayıttan ÖNCE silinir. |
 | `retention_run` | 180 gün | 30 g | `site.monitor.retention.run-history-retention-days` | `started_at < ?` | Gece temizliği çalışma özeti — sağlık sinyali ve ekrandaki geçmiş buradan beslenir. |
+| `deployment_history` | sınırlı büyür | — | — | — | Sürüm & dağıtım geçmişi (K10, 2026-09-10): her pod açılışı bir satır (sürüm/commit/ortam/helm rev). ASLA silinmez — 'hangi sürüm ne zaman devreye alındı' sorusunun tek kalıcı kaynağı; yalnız elle girilen (MANUAL) satır admin tarafından silinebilir. Büyüme sınırlı (~günde birkaç satır). |
+| `schema_table_registry` | sınırlı büyür | — | — | — | Tablo kayıt defteri (SQL Playground, 2026-09-11): tablo başına TEK satır — ilk görülme anı ve son veri değişimi. Tablo sayısı kadar satır; asla silinmez (silinirse 'oluşturma' bilgisi kaybolur). |
 
 ## Kapsam güvencesi
 

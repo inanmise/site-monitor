@@ -1771,6 +1771,7 @@ public class AdminController {
                 (String) body.get("email"),
                 (String) body.get("description"),
                 toLong(body.get("leader_id")));
+        if (body.containsKey("manager_id")) team = userService.updateTeamManager(team.getId(), toLong(body.get("manager_id")));
         auditService.recordAction("TEAM_CREATE", session, request,
                 "TEAM", team.getId().toString(),
                 "{\"name\":\"" + team.getName() + "\",\"leaderId\":" + team.getLeaderId() + "}");
@@ -1797,6 +1798,9 @@ public class AdminController {
                 toLong(body.get("leader_id")),
                 bool(body.get("weekly_reminder_enabled")),
                 bool(body.get("weekly_availability_enabled")));
+        // manager_id: anahtar gövdede VARSA uygulanır (null = temizle). leader_id'den farklı: lider null'da
+        // dokunulmaz, müdür ise bilinçli olarak temizlenebilmeli (AD zincirine geri dönmek için).
+        if (body.containsKey("manager_id")) team = userService.updateTeamManager(id, toLong(body.get("manager_id")));
         auditService.recordAction("TEAM_UPDATE", session, "TEAM", id.toString(),
                 AuditDetail.of("name", team.getName()),
                 AuditDiff.diff(teamBefore, AuditDiff.snapshot(team, TEAM_AUDIT_FIELDS)));
@@ -1888,7 +1892,7 @@ public class AdminController {
     /** Takim denetiminde izlenen alanlar — silme anlik goruntusu ve guncelleme diff'i AYNI listeyi kullanir
      *  ki "silinen takimda ne vardi" ile "takimda ne degisti" karsilastirilabilir kalsin. */
     private static final String[] TEAM_AUDIT_FIELDS = {
-            "name", "email", "description", "active", "leaderId",
+            "name", "email", "description", "active", "leaderId", "managerId",
             "weeklyReminderEnabled", "weeklyAvailabilityEnabled" };
 
     @DeleteMapping("/teams/{id}")
@@ -2510,8 +2514,19 @@ public class AdminController {
      *  canView(inv.getTeamId()) eklenmeli. */
     private void requireAdminOrMonitoredDomain(HttpSession session, String domain) {
         if (isAdminOrAudit(session)) return;
-        if (domain != null && inventoryRepo.findByDomain(domain.trim()).isPresent()) return;
-        log.warn("Diagnostics denied (non-admin, unmonitored domain='{}') user={}", domain, actor(session));
+        // 2026-09-11: TEAM_ADMIN/USER da diagnostics.run alır → hedef yalnız KENDİ takımının envanter kaydı
+        // olabilir (viewScope null = tüm takımlar). Eskiden envanterdeki HER alan adına izin veriyordu; o
+        // zaman yetki admin'deydi, şimdi kapsam uçta kesinleşir.
+        if (domain != null) {
+            var inv = inventoryRepo.findByDomain(domain.trim()).orElse(null);
+            if (inv != null) {
+                List<Long> scope = viewScope(session);
+                // scope null = tüm takımlar (global admin/AUDIT); teamId null = SAHİPSİZ kayıt — başka
+                // takımın değil, dolayısıyla reddedilmez (envanter kayıtlarının bir kısmı takımsız doğar).
+                if (scope == null || inv.getTeamId() == null || scope.contains(inv.getTeamId())) return;
+            }
+        }
+        log.warn("Diagnostics denied (non-admin, domain='{}' not in team scope) user={}", domain, actor(session));
         throw new SecurityException("Bu domain için tanılama yetkiniz yok");
     }
 

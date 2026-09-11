@@ -124,6 +124,15 @@ public class SchedulerService {
     private final AuditService auditService;         // sistem olayları (schema-patch, retention-purge)
     private final FailedLoginAnomalyIncidentService failedLoginAnomalyIncidentService;   // başarısız-login anomali taraması
 
+    /** Sürüm & dağıtım geçmişi (K2, 2026-09-10) — isteğe bağlı: bean yoksa (test bağlamı) kancalar sessizce atlanır. */
+    @Autowired(required = false)
+    private DeploymentHistoryService deploymentHistory;
+    @Autowired(required = false)
+    private BuildInfo buildInfo;
+    /** Tablo kayıt defteri (SQL Playground "ne zaman oluştu / son değişim", 2026-09-11) — isteğe bağlı. */
+    @Autowired(required = false)
+    private SchemaTableRegistryService schemaRegistry;
+
     private final DomainMonitorRepository domainMonitorRepo;
     private final DomainCheckRepository domainCheckRepo;
     private final DomainCheckerService domainCheckerService;
@@ -260,6 +269,10 @@ public class SchedulerService {
     private static final String INSTANCE_ID = HOSTNAME + "-"
             + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
 
+    /** Örnek kimliği (BuildInfo / dağıtım kaydı bunu okur; süreç ömrü boyunca sabit). */
+    public static String instanceId() { return INSTANCE_ID; }
+    public static String hostname()   { return HOSTNAME; }
+
     // In-process guard — prevents same JVM from running two checks concurrently
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicReference<LocalDateTime> lastRun = new AtomicReference<>();
@@ -298,6 +311,10 @@ public class SchedulerService {
         try {
             applySchemaPatches();
             auditService.recordSystemEvent("SCHEMA_PATCH", "SYSTEM", "db", "başlangıç şema yamaları uygulandı");
+            // Dağıtım kaydı: şema yamalarından SONRA (tablo/indeks hazır). Hata içeride yutulur — açılışı
+            // hiçbir koşulda durdurmaz (K2). Tür (UPGRADE/RESTART/ROLLBACK) satırlardan türetilir, burada değil.
+            if (deploymentHistory != null) deploymentHistory.recordStartup();
+            if (schemaRegistry != null) schemaRegistry.tick();   // yeni tablolar first_seen alsın (hata içeride yutulur)
             userService.ensureBootstrapped(adminUsername, adminPassword);
             // In-memory oturumlar restart'ta silinir ama DB'deki activeSessionId kalır → aksi halde
             // "Aktif Oturum" sayımı şişer ve restart sonrası ilk login'de gerçekte canlı oturum
@@ -331,6 +348,7 @@ public class SchedulerService {
         } finally {
             // Senkron bootstrap bitti (başarılı ya da değil — mevcut davranış: app yine de çalışmaya
             // devam eder) → trafiğe HAZIR. Gecikmeli ağır tarama aşağıda arka planda kalır.
+            if (deploymentHistory != null) deploymentHistory.markReady();   // ready_at = trafiğe hazır anı
             AvailabilityChangeEvent.publish(eventPublisher, this, ReadinessState.ACCEPTING_TRAFFIC);
             log.info("Bootstrap complete — readiness=ACCEPTING_TRAFFIC [instance={}]", INSTANCE_ID);
         }
@@ -489,6 +507,11 @@ public class SchedulerService {
     }
 
     private void applySchemaPatches() {
+        // Sürüm & dağıtım geçmişi (2026-09-10): BACKFILL idempotency — audit_ref tekil (NULL'lar hariç, kısmi indeks).
+        // ddl-auto=update dolu tabloya UNIQUE eklemez ([[ddl-auto sessiz kısıt tuzağı]]) → açık patch.
+        patch("CREATE UNIQUE INDEX IF NOT EXISTS uq_deploy_audit_ref ON deployment_history(audit_ref) WHERE audit_ref IS NOT NULL");
+        // Tablo kayıt defteri (entity YOK, ham DDL): SchemaTableRegistryService — first_seen / last_change.
+        patch(SchemaTableRegistryService.DDL);
         // Kişi-webhook kanalı (2026-08): izleme-bazlı bayrak + kişi opt-out. Dolu tablolara
         // NOT NULL eklenmez (Hibernate yutar, kolon oluşmaz) — nullable + kod tarafında vars. true.
         patch("ALTER TABLE http_monitors ADD COLUMN notify_webhook BOOLEAN DEFAULT true");
@@ -2052,6 +2075,20 @@ public class SchedulerService {
         schedulerMap.put("instance_id",    INSTANCE_ID);
         schedulerMap.put("active_domains", inventoryRepo.countByActiveTrue());
         h.put("scheduler", schedulerMap);
+
+        // Sürüm & dağıtım (Sistem kartı): koşan sürüm/commit/ortam/çalışma süresi — detay /api/system/version.
+        if (buildInfo != null) {
+            BuildInfo.Snapshot b = buildInfo.get();
+            Map<String, Object> build = new LinkedHashMap<>();
+            build.put("version",        b.version());
+            build.put("commit",         b.commitShort());
+            build.put("environment",    b.environment());
+            build.put("image_version",  b.imageVersion());
+            build.put("helm_revision",  b.helmRevision());
+            build.put("started_at",     b.jvmStartedAt());
+            build.put("uptime_seconds", b.uptimeSeconds());
+            h.put("build", build);
+        }
 
         // Distributed lock state
         try {

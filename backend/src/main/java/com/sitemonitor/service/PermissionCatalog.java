@@ -67,6 +67,10 @@ public final class PermissionCatalog {
         r("system_health.actions",       "monitoring", EXECUTE, Set.of(EXECUTE)),
         r("system_health.terminate",     "monitoring", EXECUTE, Set.of(EXECUTE)),   // kullanıcı oturumu sonlandırma (kick)
         r("system_health.scheduler_lock","monitoring", EXECUTE, Set.of(EXECUTE)),   // dağıtık-kilit force-release
+        // Sürüm & Dağıtım geçmişi (K9, 2026-09-10): okuma ADMIN+AUDIT (auditDefaults VIEW kuralı), yazma
+        // (elle kayıt / geri doldurma / silme) AYRI satır — yalnız EDIT verilir; kapsamlı müdür yazamaz.
+        r("release_history.read",        "monitoring", VIEW),
+        r("release_history.edit",        "monitoring", EDIT, Set.of(EDIT)),
         r("monitoring.read",       "monitoring", VIEW),
         r("monitoring.crud",       "monitoring", EDIT),
         r("monitoring.trigger",    "monitoring", EXECUTE),
@@ -217,7 +221,11 @@ public final class PermissionCatalog {
             "weekly_reports.read", "weekly_reports.crud", "weekly_reports.approve",
             "incidents.view", "incidents.manage", "incidents.delete",
             "maintenance.view", "maintenance.manage", "maintenance.delete",
-            "diagnostics.history"
+            "diagnostics.history",
+            // diagnostics.run (2026-09-11, ürün kararı): takım yöneticisi KENDİ takımının izlediği alan adları için
+            // tanılama koşturur — uç requireAdminOrMonitoredDomain ile takım kapsamına bağlar (başka takımın / envanter
+            // dışı host'a çalışmaz), proxy-ca-chain ucu ayrıca admin'de kalır.
+            "diagnostics.run"
         );
         for (Resource r : ALL) putAll(map, r, allowed.contains(r.key));
         // Internal: team_admin sentinel for legacy helper
@@ -251,6 +259,9 @@ public final class PermissionCatalog {
             // Şablon kütüphanesi: USER kendi TAKIMINA şablon yazar (K2).
             // Genel şablonu düzenlemek uçta requireAdmin ile ayrıca korunur.
             "monitoring.scripted_templates",
+            // diagnostics.run (2026-09-11): USER da kendi takımının izlediği alan adları için tanılama koşturur
+            // (uç takım kapsamını doğrular; tanılama geçmişi görünürlüğü diagnostics.history ile ayrı).
+            "diagnostics.run",
             // monitoring.scripted (edit + execute): USER kendi TAKIMININ sentetik monitörünü
             // yazar/düzenler ve elle koşturur. 2026-08-24'e kadar USER'a KAPALIYDI ve kullanıcı
             // bunu bir kusur olarak bildirdi: şablon yazabiliyor ama o şablondan monitör

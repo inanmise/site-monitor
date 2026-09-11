@@ -5,7 +5,6 @@ import com.sitemonitor.repository.*;
 import com.sitemonitor.service.EmailNotificationService.AvailabilityRow;
 import com.sitemonitor.service.EmailNotificationService.AvailabilitySummary;
 import com.sitemonitor.service.report.WeeklyOutageReportService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
@@ -28,7 +27,6 @@ import java.util.*;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class WeeklyAvailabilityReportService {
 
     private static final ZoneId IST = ZoneId.of("Europe/Istanbul");
@@ -52,6 +50,46 @@ public class WeeklyAvailabilityReportService {
      *  dairesel referans üretiyor ve uygulama hiç açılmıyor; depolar o zincire girmez. */
     private final com.sitemonitor.repository.PageSpeedMonitorRepository pageSpeedMonitorRepo;
     private final com.sitemonitor.repository.PageSpeedCheckRepository pageSpeedCheckRepo;
+    /** "Sürüm & Dağıtım" satırı (E2). @Lazy — aşağıdaki yapıcı notuna bak. */
+    private final DeploymentHistoryService deploymentHistory;
+
+    /**
+     * Yapıcı ELLE yazıldı ({@code @RequiredArgsConstructor} değil): {@code deploymentHistory}
+     * parametresi {@code @Lazy} olmak zorunda ve Lombok bu ek açıklamayı yapıcı parametresine
+     * KOPYALAMAZ. Bu sınıfa bir SERVİS eklemek daha önce dairesel referans üretip uygulamayı hiç
+     * açılmaz hale getirdi (WeeklyOutageReportService'teki aynı desen); {@code @Lazy} proxy'si
+     * zinciri kurulum anında keser, ilk çağrıda gerçek bean çözülür.
+     */
+    public WeeklyAvailabilityReportService(
+            TeamRepository teamRepo,
+            CertificateInventoryRepository inventoryRepo,
+            UptimeCheckRepository uptimeCheckRepo,
+            LatestCheckRepository latestCheckRepo,
+            EscalationContactRepository contactRepo,
+            AppUserRepository userRepo,
+            EmailNotificationService emailService,
+            NotificationLogRepository notificationLogRepo,
+            WeeklyAvailabilityLogRepository walRepo,
+            AppSettingsService appSettings,
+            WeeklyOutageReportService outageReportService,
+            com.sitemonitor.repository.PageSpeedMonitorRepository pageSpeedMonitorRepo,
+            com.sitemonitor.repository.PageSpeedCheckRepository pageSpeedCheckRepo,
+            @org.springframework.context.annotation.Lazy DeploymentHistoryService deploymentHistory) {
+        this.teamRepo = teamRepo;
+        this.inventoryRepo = inventoryRepo;
+        this.uptimeCheckRepo = uptimeCheckRepo;
+        this.latestCheckRepo = latestCheckRepo;
+        this.contactRepo = contactRepo;
+        this.userRepo = userRepo;
+        this.emailService = emailService;
+        this.notificationLogRepo = notificationLogRepo;
+        this.walRepo = walRepo;
+        this.appSettings = appSettings;
+        this.outageReportService = outageReportService;
+        this.pageSpeedMonitorRepo = pageSpeedMonitorRepo;
+        this.pageSpeedCheckRepo = pageSpeedCheckRepo;
+        this.deploymentHistory = deploymentHistory;
+    }
 
     @Value("${site.monitor.weekly-availability.enabled:true}")
     private boolean enabledDefault;
@@ -305,9 +343,53 @@ public class WeeklyAvailabilityReportService {
                         MonitorTypeCatalog.ORDER.size());
 
         EmailNotificationService.PageSpeedWeekly pageSpeed = collectPageSpeed(team, w);
+        EmailNotificationService.DeploymentWeekly deployments = collectDeployments(w);
         String html = emailService.buildWeeklyAvailabilityHtml(
-                team.getName(), w.weekLabel(), rows, summary, att, pageSpeed);
+                team.getName(), w.weekLabel(), rows, summary, att, pageSpeed, deployments);
         return new TeamReport(rows, summary, subject, html, to, cc, outage);
+    }
+
+    /**
+     * Rapor penceresindeki dağıtım özeti (E2): koşan ortamın türetilmiş geçiş listesinden
+     * {@code started_at ∈ [from, to]} satırlar sayılır. Dağıtım = UPGRADE/ROLLBACK/CHANGED/FIRST_SEEN,
+     * yeniden başlatma = RESTART, geri alma = ROLLBACK (dağıtıma da dahil). Sürüm aralığı haftanın
+     * ilk geçişinin ÖNCEKİ sürümünden son geçişin sürümüne. Zaman damgaları ISO-UTC dize; pencere
+     * sınırları 'Z' taşımaz, satırlar taşır — karşılaştırma öncesi 'Z' soyulur.
+     *
+     * <p>Patlarsa {@code null} döner ve rapor bu satır OLMADAN gider (sayfa hızı / ek ile aynı ilke).
+     */
+    EmailNotificationService.DeploymentWeekly collectDeployments(Window w) {
+        try {
+            String env = deploymentHistory.currentEnvironment();
+            List<DeploymentHistoryService.Derived> all = deploymentHistory.derivedFor(env);
+            if (all == null) all = List.of();
+            String from = stripZ(w.fromUtc()), to = stripZ(w.toUtc());
+            int deployments = 0, restarts = 0, rollbacks = 0;
+            String fromVersion = null, toVersion = null;
+            for (DeploymentHistoryService.Derived d : all) {
+                String at = stripZ(d.row().getStartedAt());
+                if (at == null || at.compareTo(from) < 0 || at.compareTo(to) > 0) continue;
+                switch (d.kind()) {
+                    case RESTART -> restarts++;
+                    case UNKNOWN -> { /* sürümsüz backfill satırı — sayılmaz */ }
+                    default -> {
+                        deployments++;
+                        if (d.kind() == DeploymentHistoryService.Kind.ROLLBACK) rollbacks++;
+                        if (fromVersion == null) fromVersion = d.previousVersion();
+                        toVersion = d.row().getVersion();
+                    }
+                }
+            }
+            return new EmailNotificationService.DeploymentWeekly(deployments, fromVersion, toVersion, restarts, rollbacks);
+        } catch (Exception e) {
+            log.warn("Haftalık rapor dağıtım satırı toplanamadı (rapor satırsız gider): {}", e.toString());
+            return null;
+        }
+    }
+
+    private static String stripZ(String iso) {
+        if (iso == null) return null;
+        return iso.endsWith("Z") ? iso.substring(0, iso.length() - 1) : iso;
     }
 
     /** Haftalık rapordaki en yavaş sayfa sayısı — tablo okunur kalsın diye kısa tutulur. */

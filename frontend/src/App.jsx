@@ -119,6 +119,9 @@ function formatDurationShort(ms) {
 }
 
 // Mail/derin-link ile gelen ?tab= değeri — yalnız bilinen sekme anahtarları kabul edilir.
+/** Aynı sekmede param değişimi: handleTabChange(id, extraParams) → sayfalar bu olayı dinler (HelpPage view, SystemHealth sec). */
+export const TAB_PARAMS_EVENT = 'sm:tab-params'
+
 const VALID_TABS = new Set([
   'dashboard', 'all', 'domains', 'forecast', 'renewal', 'renewal-guide',
   'warnings', 'incidents', 'maintenance', 'alerthistory', 'stats', 'weakalgo', 'weeklyreports', 'incident-history',
@@ -164,8 +167,23 @@ export default function App() {
   // Weekly Reports sekmesi zaten açıkken menüye tekrar tıklanınca açık raporu listeye döndür.
   // Ayrıca sekme değişince tarayıcı geçmişine kayıt bırak (pushState) → Geri/İleri düğmeleri
   // sekmeler arası gezinir. Bayat derin-link parametrelerini (monitor/domain/incident) URL'den temizle.
-  const handleTabChange = (id) => {
+  // extraParams (opsiyonel): hedef sayfanın açılışta okuyacağı param'lar — ör. sürüm çipinden
+  // Yardım → Yenilikler (`view=releases`) ya da Sistem Sağlığı → Sürüm & Dağıtım (`sec=releases`).
+  // Temizlemeden SONRA yazılır ki PAGE_STATE_PARAMS süpürmesi onları da silmesin.
+  const handleTabChange = (id, extraParams) => {
     if (id === 'weeklyreports' && tab === 'weeklyreports') setWrResetNonce((n) => n + 1)
+    if (id === tab && extraParams) {
+      // Aynı sekme: sayfa yeniden mount olmaz, param'ı mount'ta okuyan sayfa görmezdi (ör. Yardım'dayken
+      // çipten "Yenilikler"). URL'e yaz (geçmişe girmeden) + sayfaya olay gönder; HelpPage/SystemHealth dinler.
+      try {
+        const url = new URL(window.location.href)
+        for (const [k, v] of Object.entries(extraParams)) if (v != null && v !== '') url.searchParams.set(k, String(v))
+        const qs = url.searchParams.toString()
+        window.history.replaceState(window.history.state, '', url.pathname + (qs ? `?${qs}` : '') + url.hash)
+      } catch { /* history yoksay */ }
+      window.dispatchEvent(new CustomEvent(TAB_PARAMS_EVENT, { detail: extraParams }))
+      return
+    }
     if (id !== tab) {
       try {
         const url = new URL(window.location.href)
@@ -176,6 +194,9 @@ export default function App() {
         // Önekli aileler (ör. Denetim Kaydı'nın `a_*` filtreleri) sabit adla sayılamaz.
         for (const k of [...url.searchParams.keys()]) {
           if (PAGE_STATE_PREFIXES.some(pre => k.startsWith(pre))) url.searchParams.delete(k)
+        }
+        if (extraParams) {
+          for (const [k, v] of Object.entries(extraParams)) if (v != null && v !== '') url.searchParams.set(k, String(v))
         }
         const qs = url.searchParams.toString()
         window.history.pushState({ tab: id }, '', url.pathname + (qs ? `?${qs}` : '') + url.hash)

@@ -49,6 +49,7 @@ public class TeamDirectoryController {
             m.put("active", t.getActive());
             m.put("email", t.getEmail());
             m.put("leader_id", t.getLeaderId());
+            m.put("manager_id", t.getManagerId());
             m.put("leader_display_name", t.getLeaderId() != null ? displayName(leaders.get(t.getLeaderId())) : null);
             out.add(m);
         }

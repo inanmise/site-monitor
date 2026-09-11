@@ -502,6 +502,35 @@ class AuthControllerTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    // ── Self-service push opt-out (2026-09-10: istemci yolu yanlıştı, uç burada pinlenir) ──
+
+    @Test
+    @DisplayName("POST /api/me/push-opt-out: oturumlu kullanıcı kendi bayrağını yazar, yanıt push_opt_out döner")
+    void pushOptOut_setsFlag_returnsIt() throws Exception {
+        mvc.perform(post("/api/me/push-opt-out")
+                        .session(selfSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"opt_out\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.push_opt_out").value(true));
+        verify(userService).savePushOptOut(argThat(u -> Boolean.TRUE.equals(u.getPushOptOut())));
+    }
+
+    @Test
+    @DisplayName("POST /api/me/push-opt-out oturumsuz → 401; eski yanlış yol /api/auth/me/push-opt-out → 404")
+    void pushOptOut_unauthenticated_andWrongPath() throws Exception {
+        mvc.perform(post("/api/me/push-opt-out")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"opt_out\":true}"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/auth/me/push-opt-out")
+                        .session(selfSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"opt_out\":true}"))
+                .andExpect(status().isNotFound());
+    }
+
     // ── Self-service password change ──────────────────────────────────────────
 
     @Test

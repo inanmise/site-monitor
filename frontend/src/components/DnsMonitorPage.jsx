@@ -21,6 +21,8 @@ import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import { Plus, ChevronDown, Globe, Info, Network, AlertTriangle, FlaskConical, Check, RefreshCw, Pause, BellDot, ArrowLeftRight } from 'lucide-react'
+import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
+import ModalScrollHint from './ui/ModalScrollHint.jsx'
 import { duplicateName } from '../utils/duplicateName.js'
 import DnsDetailModal from './DnsDetailModal.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
@@ -100,6 +102,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   // sekmenin kendi 30 sn'lik canlı yenilemesi 1. sayfa dışında ve özel aralıkta KAPALI.
   const [histReload, setHistReload] = useState(0)
   const [modal, setModal] = useState(null)
+  // Düzenleme modalı: sabit başlık + kaydırılan gövde + sabit alt bar (useModalScrollHint).
+  const scrollHint = useModalScrollHint()
   // Opsiyonel "değişiklik nedeni" — form nesnesine DEĞİL ayrı tutulur: taslak/kirlilik
   // karşılaştırması form üzerinden yapılıyor ve not bir ayar değil, tek seferlik açıklama.
   const [changeNote, setChangeNote] = useState('')
@@ -648,8 +652,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
               `overflow-y: auto`una düşüyor: kaydırma çubuğu modalın kenarında değil EKRANIN en
               sağında çıkıyor ve kaydırınca başlık da yukarı kayıyor. Diğer sekiz düzenleme
               modalı bunu taşıyordu, DNS taşımıyordu — kapı: modalScroll.test.jsx. */}
-          <div className="modal-box" onClick={e => e.stopPropagation()}
-            style={{ maxWidth: 640, width: '92vw', maxHeight: '90vh', overflowY: 'auto' }}>
+          <div className="modal-box modal-sticky-actions" onClick={e => e.stopPropagation()}
+            style={{ maxWidth: 640, width: '92vw' }}>
             <div className="modal-icon-hdr modal-icon-hdr--dns">
               <div className="modal-icon-hdr-badge">
                 <Network size={20} />
@@ -657,6 +661,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
               <h3>{modal === 'new' ? t('dns.modalNew') : t('dns.modalEdit')}
                 {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
             </div>
+            <div className="modal-scroll-body" ref={scrollHint.ref}>
             {dupSource && <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>}
             <div className="form-grid form-grid--top">
               <label>
@@ -828,6 +833,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
             {modal !== 'new' && (
               <ChangeNoteField t={t} id="dns-change-note" value={changeNote} onChange={setChangeNote} />
             )}
+            </div>
+            <ModalScrollHint {...scrollHint} />
             <div className="modal-actions">
               <button className="btn btn-secondary" style={{ marginRight: 'auto' }} onClick={runTest}
                 disabled={testing || !form.domain.trim()}>

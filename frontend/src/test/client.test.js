@@ -60,6 +60,16 @@ describe('api.login', () => {
 // ── api.getMe ─────────────────────────────────────────────────────────────────
 
 describe('api.getMe', () => {
+  it("2026-09-10: setPushOptOut POSTs to /api/me/push-opt-out (NOT /api/auth/...) with opt_out body", async () => {
+    mockFetch({ success: true, push_opt_out: true })
+    const res = await api.me.setPushOptOut(true)
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/me/push-opt-out',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ opt_out: true }) })
+    )
+    expect(res.push_opt_out).toBe(true)
+  })
+
   it('GETs /api/me', async () => {
     mockFetch({ success: true, username: 'alice' })
     const result = await api.getMe()

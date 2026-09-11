@@ -13,10 +13,14 @@
 
     <groupId>com.sitemonitor</groupId>
     <artifactId>site-monitor</artifactId>
-    <version>7.2.0</version>
+    <!-- CI-friendly sürüm: tek kaynak kök VERSION dosyası. Docker build `-Drevision=$(cat VERSION)` verir;
+         yerel `mvn` koşumları 0.0.0-local üretir (jar adı site-monitor-0.0.0-local.jar; Dockerfile ve
+         start-local.ps1 glob kullanır). Eskiden sabit 7.2.0 idi ve manifest yedeği bayat sürüm loglayabiliyordu. -->
+    <version>${revision}</version>
     <name>site-monitor</name>
 
     <properties>
+        <revision>0.0.0-local</revision>
         <java.version>25</java.version>
         <!-- Spring Boot 4.1.0'ın yönettiği Lombok JDK 25 javac'ını desteklemiyordu
              (annotation processor çalışmıyor → "cannot find symbol" üretilen getter/setter'larda).
