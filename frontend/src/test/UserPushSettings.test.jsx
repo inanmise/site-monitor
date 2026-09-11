@@ -278,7 +278,7 @@ describe('UserPushSettings', () => {
     await waitFor(() => expect(warnings[0]).toHaveAttribute('aria-pressed', 'true'))
   })
 
-  it('2026-09-11: grup kartları ORG ROLÜ çipleri taşır, unvan deseni alanı YOK; eski title kaydı org-rol kümesine çevrilir', async () => {
+  it('2026-09-11: beş sabit kademe kartı (sistemdeki org rolleri: Uzman/PO/Yönetici/Bölüm Başkanı/C-Level), her biri TEK org rolü rozeti; unvan deseni alanı YOK; eski kayıt kademelere sabitlenir', async () => {
     // Eski biçimde kayıtlı yapılandırma (unvan desenleri) — ekran org rolüne çevirmeli.
     stubAll({ settings: { ...SETTINGS,
       'site.monitor.userpush.role-groups': JSON.stringify({
@@ -293,19 +293,18 @@ describe('UserPushSettings', () => {
     expect(screen.queryByPlaceholderText(/\*Yönetici\*|\*Manager\*/)).not.toBeInTheDocument()
     expect(screen.queryByText(/AD unvan deseni|AD title pattern/)).not.toBeInTheDocument()
 
-    // Her kartta org rolü çipleri; eski "uzman" kaydı TECH olarak işaretli gelir
+    // Beş kademe kartı (kayıtta "bolum_baskani"/"clevel" yoktu — kapalı eklenir), sıra: Uzman, PO, Yönetici, Bölüm Başkanı, C-Level
     const groups = screen.getAllByLabelText(/Bu gruba giren org rolleri|Org roles in this group/)
-    expect(groups).toHaveLength(3)
-    const uzmanChips = within(groups[1]).getAllByRole('button')
-    const tech = uzmanChips.find((b) => /^Uzman$|^Professional$/.test(b.textContent.trim()))
-    expect(tech).toHaveAttribute('aria-pressed', 'true')
-    // Yönetici kartında MANAGER + Bölüm Başkanı + C-Level işaretli
-    const yonChips = within(groups[0]).getAllByRole('button', { pressed: true }).map((b) => b.textContent.trim())
-    expect(yonChips).toEqual(expect.arrayContaining([expect.stringMatching(/Yönetici|Manager/), expect.stringMatching(/Bölüm Başkanı|Department Head/)]))
-
-    // Çipe tıklayınca gruptan çıkar (aria-pressed false)
-    fireEvent.click(tech)
-    await waitFor(() => expect(tech).toHaveAttribute('aria-pressed', 'false'))
+    expect(groups).toHaveLength(5)
+    const roleOf = (el) => within(el).getAllByText(/./, { selector: '.up-badge' }).map((b) => b.textContent.trim()).slice(1)
+    expect(roleOf(groups[0])).toEqual([expect.stringMatching(/^Uzman$|^Professional$/)])
+    expect(roleOf(groups[1])).toEqual([expect.stringMatching(/PO/)])
+    expect(roleOf(groups[2])).toEqual([expect.stringMatching(/^Yönetici$|^Manager$/)])
+    expect(roleOf(groups[3])).toEqual([expect.stringMatching(/Bölüm Başkanı|Department Head/)])
+    expect(roleOf(groups[4])).toEqual([expect.stringMatching(/C-Level/)])
+    // PO kartında C-Level / Bölüm Başkanı gibi başka rol YOK, seçilebilir çip de yok
+    expect(within(groups[1]).queryByText(/C-Level|Üst Düzey|Department Head|Bölüm Başkanı/)).not.toBeInTheDocument()
+    expect(within(groups[1]).queryByRole('button')).not.toBeInTheDocument()
   })
 
   it('sessiz saat asgari seviyesinde de UYARI seçeneği var', async () => {

@@ -41,15 +41,30 @@ public class UserPushRecipientResolver {
 
     /** Varsayılan grup seti — ayar boşken de tanımlı olsun (hepsi KAPALI). */
     static final String DEFAULT_GROUPS_JSON = """
-            {"yonetici":{"enabled":false,"source":"orgRole","patterns":["MANAGER","BOLUM_BASKANI","CLEVEL"],"minLevel":"HIGH"},
-             "uzman":{"enabled":false,"source":"orgRole","patterns":["TECH"],"minLevel":"WARNING"},
-             "po":{"enabled":false,"source":"orgRole","patterns":["PO"],"minLevel":"WARNING"}}""";
+            {"uzman":{"enabled":false,"source":"orgRole","patterns":["TECH"],"minLevel":"WARNING"},
+             "po":{"enabled":false,"source":"orgRole","patterns":["PO"],"minLevel":"WARNING"},
+             "yonetici":{"enabled":false,"source":"orgRole","patterns":["MANAGER"],"minLevel":"HIGH"},
+             "bolum_baskani":{"enabled":false,"source":"orgRole","patterns":["BOLUM_BASKANI"],"minLevel":"CRITICAL"},
+             "clevel":{"enabled":false,"source":"orgRole","patterns":["CLEVEL"],"minLevel":"CRITICAL"}}""";
 
-    /** Grup anahtarı → org-rol kümesi; eski {@code source:"title"} yapılandırmasını çevirmek için. */
-    static final Map<String, List<String>> LEGACY_ROLE_SETS = Map.of(
-            "yonetici", List.of("MANAGER", "BOLUM_BASKANI", "CLEVEL"),
-            "uzman",    List.of("TECH"),
-            "po",       List.of("PO"));
+    /**
+     * Sabit kademeler (ürün kararı 2026-09-11): kartlar sistemdeki org rolü listesinin birebir karşılığıdır
+     * (Kullanıcı ekranındaki "Organizasyonel Rol" seçenekleri) — her kart TEK org rolü: Uzman = TECH,
+     * PO = PO, Yönetici = MANAGER, Bölüm Başkanı = BOLUM_BASKANI, C-Level = CLEVEL. Yönetici yalnız aç/kapa
+     * + asgari seviye seçer. Kayıtlı yapılandırma ne derse desin bilinen anahtarın rolü budur (eski unvan
+     * desenleri ve ara sürümün çoklu-rol kümeleri de buna çevrilir); kayıtta olmayan kademe kapalı eklenir.
+     * "Rol yok (üye)" = orgRole boş → hiçbir kart; "Kim alır?"da NO_ORG_ROLE.
+     */
+    static final Map<String, List<String>> TIER_ROLES = new LinkedHashMap<>();
+    static {
+        TIER_ROLES.put("uzman",         List.of("TECH"));
+        TIER_ROLES.put("po",            List.of("PO"));
+        TIER_ROLES.put("yonetici",      List.of("MANAGER"));
+        TIER_ROLES.put("bolum_baskani", List.of("BOLUM_BASKANI"));
+        TIER_ROLES.put("clevel",        List.of("CLEVEL"));
+    }
+    private static final Map<String, String> TIER_DEFAULT_MIN_LEVEL = Map.of(
+            "uzman", "WARNING", "po", "WARNING", "yonetici", "HIGH", "bolum_baskani", "CRITICAL", "clevel", "CRITICAL");
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -204,16 +219,18 @@ public class UserPushRecipientResolver {
                 JsonNode n = e.getValue();
                 List<String> raw = new ArrayList<>();
                 if (n.path("patterns").isArray()) n.path("patterns").forEach(x -> raw.add(x.asText()));
-                // Eski kayıt (source:"title", unvan desenleri): desenler ANLAMSIZ — grup anahtarının org-rol
-                // kümesine çevrilir. Bilinmeyen anahtar için (özel grup) desenler org-rol kodu sayılır.
-                boolean legacy = !"orgRole".equalsIgnoreCase(n.path("source").asText("orgRole"));
-                List<String> pats = legacy ? new ArrayList<>(LEGACY_ROLE_SETS.getOrDefault(e.getKey(), raw)) : raw;
+                // Bilinen kademenin rolü SABİT (TIER_ROLES); kayıttaki desenler (eski unvan desenleri ya da ara
+                // sürümün çoklu-rol kümesi) yok sayılır. Bilinmeyen anahtar (özel grup): desenler org-rol kodu sayılır.
+                List<String> pats = TIER_ROLES.containsKey(e.getKey()) ? TIER_ROLES.get(e.getKey()) : raw;
                 out.put(e.getKey(), new GroupRule(e.getKey(),
                         n.path("enabled").asBoolean(false),
                         "orgRole",
                         pats,
-                        n.path("minLevel").asText("WARNING")));
+                        n.path("minLevel").asText(TIER_DEFAULT_MIN_LEVEL.getOrDefault(e.getKey(), "WARNING"))));
             });
+            // Kayıtta olmayan bilinen kademe (ör. eski kayıtta "bolum_baskani" yok) varsayılanıyla, KAPALI eklenir.
+            TIER_ROLES.forEach((key, roles) -> out.putIfAbsent(key,
+                    new GroupRule(key, false, "orgRole", roles, TIER_DEFAULT_MIN_LEVEL.get(key))));
         } catch (Exception ex) {
             log.warn("userpush role-groups ayrıştırılamadı — tüm gruplar kapalı sayılıyor: {}", ex.toString());
         }

@@ -3,7 +3,7 @@ import {
   Save, Send, BellRing, Plus, Trash2, Copy, RefreshCw, Search as SearchIcon,
   Crown, UserCog, Briefcase, Globe, Network, Target, Radio, CalendarDays,
   ScanSearch, FlaskConical, Gauge, ShieldCheck, WifiOff, Timer, CalendarClock,
-  ArrowLeftRight, CheckCircle2, OctagonPause, Check,
+  ArrowLeftRight, CheckCircle2, OctagonPause, Check, Landmark, Building2,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -57,14 +57,21 @@ const TYPES = [
 ]
 
 /** Unvan grubu kartları: ikon + kalıcı görsel kimlik. */
-/** Org rolü kodları — UserEditModal'daki seçenek listesiyle birebir (usr.orgRoleVal.*). */
-const ORG_ROLES = ['TECH', 'PO', 'MANAGER', 'BOLUM_BASKANI', 'CLEVEL']
-
-const GROUP_META = {
-  yonetici: { Icon: Crown },
-  uzman: { Icon: UserCog },
-  po: { Icon: Briefcase },
+/**
+ * Sabit kademeler (ürün kararı 2026-09-11): kartlar sistemdeki org rolü listesinin birebir karşılığı
+ * (Kullanıcı ekranındaki "Organizasyonel Rol" seçenekleri) — her kart TEK org rolü: Uzman = TECH,
+ * PO = PO, Yönetici = MANAGER, Bölüm Başkanı = BOLUM_BASKANI, C-Level = CLEVEL. Yönetici yalnız aç/kapa
+ * + asgari seviye seçer; rol rozet olarak yazılır. Backend (UserPushRecipientResolver.TIER_ROLES) aynı
+ * eşlemeyi zorunlu kılar. "Rol yok (üye)" hiçbir karta girmez.
+ */
+const TIERS = {
+  uzman:         { role: 'TECH',          minLevel: 'WARNING',  Icon: UserCog },
+  po:            { role: 'PO',            minLevel: 'WARNING',  Icon: Briefcase },
+  yonetici:      { role: 'MANAGER',       minLevel: 'HIGH',     Icon: Crown },
+  bolum_baskani: { role: 'BOLUM_BASKANI', minLevel: 'CRITICAL', Icon: Landmark },
+  clevel:        { role: 'CLEVEL',        minLevel: 'CRITICAL', Icon: Building2 },
 }
+const GROUP_META = TIERS
 
 /** Şablon aileleri: ikon + ton — önizleme maketinin vurgu rengi buradan. */
 const TEMPLATE_META = {
@@ -247,21 +254,21 @@ export default function UserPushSettings() {
   // farklı unvan var, desen listesi hiç tam olmuyordu. Org rolü AD kademesinden türer (PO / D6 →
   // MANAGER / D7 → BOLUM_BASKANI / diğer → TECH) ve kullanıcı ekranından elle sabitlenebilir.
   function defaultGroups() {
-    return {
-      yonetici: { enabled: false, source: 'orgRole', patterns: ['MANAGER', 'BOLUM_BASKANI', 'CLEVEL'], minLevel: 'HIGH' },
-      uzman: { enabled: false, source: 'orgRole', patterns: ['TECH'], minLevel: 'WARNING' },
-      po: { enabled: false, source: 'orgRole', patterns: ['PO'], minLevel: 'WARNING' },
-    }
-  }
-  // Eski kayıt (source:'title' + unvan desenleri) ekrana geldiğinde grup anahtarının org-rol kümesine
-  // çevrilir — backend aynı çeviriyi okurken yapıyor; kaydet'e basınca yeni biçim kalıcılaşır.
-  function normalizeGroups(g) {
-    const defs = defaultGroups()
     const out = {}
+    for (const [key, tier] of Object.entries(TIERS)) {
+      out[key] = { enabled: false, source: 'orgRole', patterns: [tier.role], minLevel: tier.minLevel }
+    }
+    return out
+  }
+  // Kayıt ekrana gelince kademelere SABİTLENİR: bilinen anahtarın rolü TIERS'tan (eski unvan desenleri
+  // ya da ara sürümün çoklu-rol kümesi yok sayılır), eksik kademe kapalı eklenir, bilinmeyen anahtar
+  // olduğu gibi kalır. Backend okurken aynı çeviriyi yapar; kaydet'e basınca yeni biçim kalıcılaşır.
+  function normalizeGroups(g) {
+    const out = defaultGroups()
     for (const [key, v] of Object.entries(g || {})) {
-      out[key] = v?.source === 'orgRole'
-        ? { ...v }
-        : { ...v, source: 'orgRole', patterns: defs[key]?.patterns || v?.patterns || [] }
+      out[key] = TIERS[key]
+        ? { ...out[key], ...v, source: 'orgRole', patterns: [TIERS[key].role] }
+        : { ...v, source: 'orgRole' }
     }
     return out
   }
@@ -510,20 +517,12 @@ export default function UserPushSettings() {
                       onToggle={() => setRoleGroups({ ...groupsSafe, [key]: { ...g, enabled: !g.enabled } })} />
                   </div>
                   <p className="up-group-desc">{t(`userpush.groupDesc.${key}`)}</p>
-                  <div className="up-group-badges">
+                  {/* Kademe = tek org rolü; rozet olarak yazılır, seçilemez (TIERS). */}
+                  <div className="up-group-badges" aria-label={t('userpush.groupRolesLabel')}>
                     <span className="up-badge up-badge--muted">{t('userpush.groupOrgRole')}</span>
-                  </div>
-                  {/* Org rolü çipleri: bu gruba hangi org rolleri girer. Bir rol birden çok grupta
-                      olabilir; alıcı çözümü İLK açık eşleşmeyi alır (backend ile aynı sıra). */}
-                  <div className="up-chip-grid" aria-label={t('userpush.groupRolesLabel')}>
-                    {ORG_ROLES.map((code) => {
-                      const on = (g.patterns || []).includes(code)
-                      return (
-                        <ToggleChip key={code} on={on} label={t(`usr.orgRoleVal.${code}`)}
-                          onToggle={() => setRoleGroups({ ...groupsSafe, [key]: { ...g, source: 'orgRole',
-                            patterns: on ? (g.patterns || []).filter((c) => c !== code) : [...(g.patterns || []), code] } })} />
-                      )
-                    })}
+                    {(g.patterns || []).map((code) => (
+                      <span key={code} className="up-badge up-badge--muted">{t(`usr.orgRoleVal.${code}`)}</span>
+                    ))}
                   </div>
                   {/* Asgari seviye ARTIK DUZENLENEBILIR. Eskiden yalniz `minLevel === 'HIGH'`
                       oldugunda salt-okunur bir rozet ciziliyordu: ayar kaliciydi ve davranisi

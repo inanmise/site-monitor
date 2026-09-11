@@ -34,9 +34,10 @@ class UserPushRecipientResolverTest {
     @InjectMocks UserPushRecipientResolver resolver;
 
     private static final String GROUPS_ALL_ON = """
-            {"yonetici":{"enabled":true,"source":"orgRole","patterns":["MANAGER","BOLUM_BASKANI","CLEVEL"],"minLevel":"HIGH"},
-             "uzman":{"enabled":true,"source":"orgRole","patterns":["TECH"],"minLevel":"WARNING"},
-             "po":{"enabled":true,"source":"orgRole","patterns":["PO"],"minLevel":"WARNING"}}""";
+            {"uzman":{"enabled":true,"source":"orgRole","patterns":["TECH"],"minLevel":"WARNING"},
+             "po":{"enabled":true,"source":"orgRole","patterns":["PO"],"minLevel":"WARNING"},
+             "yonetici":{"enabled":true,"source":"orgRole","patterns":["MANAGER"],"minLevel":"HIGH"},
+             "bolum_baskani":{"enabled":true,"source":"orgRole","patterns":["BOLUM_BASKANI"],"minLevel":"CRITICAL"}}""";
 
     private void groups(String json) {
         when(appSettings.getString(org.mockito.ArgumentMatchers.eq("site.monitor.userpush.role-groups"), anyString()))
@@ -78,22 +79,42 @@ class UserPushRecipientResolverTest {
     }
 
     @Test
-    @DisplayName("Eski kayıt (source:title + unvan desenleri) okunurken grup anahtarının org-rol kümesine çevrilir")
-    void legacyTitleConfig_convertedToOrgRoles() {
+    @DisplayName("Kademeler SABİT: eski kayıt (unvan desenleri / çoklu-rol kümesi) okunurken her anahtar tek org rolüne bağlanır; eksik kademe kapalı eklenir")
+    void legacyConfig_pinnedToTiers() {
         groups("""
                 {"yonetici":{"enabled":true,"source":"title","patterns":["*Yönetici*","*Müdür*"],"minLevel":"HIGH"},
-                 "uzman":{"enabled":true,"source":"title","patterns":["*Uzman*"],"minLevel":"WARNING"}}""");
+                 "uzman":{"enabled":true,"source":"orgRole","patterns":["TECH","CLEVEL"],"minLevel":"WARNING"}}""");
         when(userRepo.findByMembershipTeamId(5L)).thenReturn(List.of(
                 user("N00001", "Yazılım Geliştirici", "TECH"),     // eski desen "*Uzman*" uymazdı; org rolüyle girer
                 user("N00002", "Bölüm Müdürü", "MANAGER"),
-                user("N00003", "Bölüm Müdürü", null)));            // unvanı eşleşirdi; artık org rolü olmadan girmez
+                user("N00003", "Bölüm Müdürü", null),              // unvanı eşleşirdi; artık org rolü olmadan girmez
+                user("N00004", "Genel Müdür", "CLEVEL"),           // kendi kademesi (clevel) kayıtta yok → kapalı eklenir → girmez
+                user("N00005", "Bölüm Başkanı", "BOLUM_BASKANI"))); // kademesi kayıtta yok → kapalı eklenir → girmez
 
-        assertThat(resolver.resolve(5L, "HIGH")).extracting(UserPushRecipientResolver.Recipient::username)
+        assertThat(resolver.resolve(5L, "CRITICAL")).extracting(UserPushRecipientResolver.Recipient::username)
                 .containsExactly("N00001", "N00002");
         var rules = resolver.groupRules();
+        assertThat(rules.keySet()).containsExactlyInAnyOrder("yonetici", "uzman", "po", "bolum_baskani", "clevel");
+        assertThat(rules.get("clevel").enabled()).isFalse();
         assertThat(rules.get("uzman").patterns()).containsExactly("TECH");
-        assertThat(rules.get("yonetici").patterns()).containsExactly("MANAGER", "BOLUM_BASKANI", "CLEVEL");
-        assertThat(rules.get("yonetici").source()).isEqualTo("orgRole");
+        assertThat(rules.get("yonetici").patterns()).containsExactly("MANAGER");
+        assertThat(rules.get("bolum_baskani").enabled()).isFalse();
+        assertThat(rules.get("bolum_baskani").patterns()).containsExactly("BOLUM_BASKANI");
+        assertThat(rules.get("bolum_baskani").minLevel()).isEqualTo("CRITICAL");
+        assertThat(rules.get("po").enabled()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Bölüm Başkanı kademesi ayrı karttır: açıkken yalnız CRITICAL'de alır (varsayılan asgari), Yönetici HIGH'ta")
+    void departmentHeadTier() {
+        groups(GROUPS_ALL_ON);
+        when(userRepo.findByMembershipTeamId(5L)).thenReturn(List.of(
+                user("N00001", "x", "BOLUM_BASKANI"),
+                user("N00002", "x", "MANAGER")));
+        assertThat(resolver.resolve(5L, "HIGH")).extracting(UserPushRecipientResolver.Recipient::username)
+                .containsExactly("N00002");
+        assertThat(resolver.resolve(5L, "CRITICAL")).extracting(UserPushRecipientResolver.Recipient::username)
+                .containsExactlyInAnyOrder("N00001", "N00002");
     }
 
     @Test
@@ -133,7 +154,8 @@ class UserPushRecipientResolverTest {
     void inactiveAndDisabledGroupExcluded() {
         groups("""
                 {"yonetici":{"enabled":false,"source":"orgRole","patterns":["MANAGER"],"minLevel":"HIGH"},
-                 "uzman":{"enabled":true,"source":"orgRole","patterns":["TECH"],"minLevel":"WARNING"}}""");
+                 "uzman":{"enabled":true,"source":"orgRole","patterns":["TECH"],"minLevel":"WARNING"},
+                 "po":{"enabled":false,"source":"orgRole","patterns":["PO"],"minLevel":"WARNING"}}""");
         AppUser inactive = user("N00030", "Uzman", "TECH");
         inactive.setActive(false);
         when(userRepo.findByMembershipTeamId(5L)).thenReturn(List.of(
