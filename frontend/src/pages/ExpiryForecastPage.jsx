@@ -283,7 +283,21 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
   const next = useMemo(() => nextExpiry(certs, today), [certs, today])
   const teamOpts = useMemo(() => [...new Map(allCerts.filter((c) => c.team_id != null).map((c) => [String(c.team_id), c.team_name || `#${c.team_id}`])).entries()].map(([value, label]) => ({ value, label })), [allCerts])
   const groupOpts = useMemo(() => [...new Set(allCerts.map((c) => c.group_name).filter(Boolean))].sort().map((g) => ({ value: g, label: g })), [allCerts])
-  const renewals = data?.renewals || { on_time: 0, late: 0, months: [], events: [] }
+  // Yenileme geçmişi sayfa süzgecini izler (ISSUE-010): olaylar süzülen alanlara indirgenir, oran/aylar yeniden sayılır.
+  // Süzgeç yokken sunucu toplamları (olay listesi 50 ile kısıtlı) olduğu gibi kullanılır.
+  const renewals = useMemo(() => {
+    const raw = data?.renewals || { on_time: 0, late: 0, months: [], events: [] }
+    if (!Object.values(filters).some(Boolean)) return raw
+    const allow = new Set(certs.map((c) => c.domain))
+    const events = (raw.events || []).filter((e) => allow.has(e.domain))
+    const months = {}; let on_time = 0, late = 0
+    for (const e of events) {
+      e.on_time ? on_time++ : late++
+      const m = (localDayKey(e.renewed_at) || '').slice(0, 7)
+      ;(months[m] ||= { month: m, on_time: 0, late: 0 })[e.on_time ? 'on_time' : 'late']++
+    }
+    return { ...raw, on_time, late, events, months: Object.values(months).sort((a, b) => a.month.localeCompare(b.month)) }
+  }, [data, certs, filters])
   const onTimePct = renewals.on_time + renewals.late > 0 ? Math.round(renewals.on_time * 100 / (renewals.on_time + renewals.late)) : null
   const filterActive = !!(filters.team || filters.ugTeam || filters.tier || filters.group)
 
