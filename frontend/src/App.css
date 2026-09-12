@@ -13030,6 +13030,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .fc-team-table td.is-warn { color: #b45309; font-weight: 700; }
 .fc-hm-cell-v2.fc-hm-off { background-image: repeating-linear-gradient(135deg, transparent 0 4px, rgba(148,163,184,.18) 4px 6px); }
 .fc-hm-cell-v2:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.fc-hm-cell-v2.fc-hm-planned { outline: 2px dashed #7c3aed; outline-offset: -3px; }
+.fc-hm-plan-mark { position: absolute; right: 6px; bottom: 5px; color: #7c3aed; display: inline-flex; }
+.fc-hm-tplan { color: #c4b5fd; margin-top: 2px; }
+.fc-hm-leg-planned { font-size: .74em; color: #7c3aed; display: inline-flex; align-items: center; gap: 3px; padding-left: 10px; }
+[data-theme="dark"] .fc-hm-cell-v2.fc-hm-planned { outline-color: #a78bfa; }
+[data-theme="dark"] .fc-hm-plan-mark, [data-theme="dark"] .fc-hm-leg-planned { color: #a78bfa; }
 .fc-hm-leg-off { margin-left: auto; font-size: .74em; color: var(--text-light); padding-left: 14px; background: repeating-linear-gradient(135deg, transparent 0 4px, rgba(148,163,184,.35) 4px 6px) no-repeat left center / 10px 10px; }
 .fc-actions { display: inline-flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
 .fc-batches { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 10px; }
