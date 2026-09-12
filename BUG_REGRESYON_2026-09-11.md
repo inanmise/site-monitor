@@ -124,3 +124,8 @@ ve TeamBadge sınıfı (buton içinde buton) tarandı → temiz. Backend değiş
 
 Diff 2 dosya (1 commit, yalnız frontend): `isOpen` varsayılanı `=== true`; kapalı bölüm içeriği yalnız CSS ile
 gizli (DOM'da kalır → form değerleri/kaydet etkilenmez). S11/S12 dokunulmadı → **REGRESYON YOK**.
+
+## Ek — dokuzuncu tur (2026-09-12, `v20.57.0..HEAD`: teslimat satırı yerleşimi)
+
+Diff 2 dosya (1 commit, yalnız CSS + modal boyutu). Kapılar `cssClasses`/`cssTokens` yeşil (yeni sınıf `.modal-shell--xl`
+tanımlı, `@container` sorgusu). Davranış/veri değişikliği yok → **REGRESYON YOK**.

@@ -176,7 +176,7 @@ function WindowModal({ win, status, counts, windowFrom, statusTone, userTeamsHin
     ...others.map((k) => [k, k, counts[k]])]
 
   return (
-    <ModalShell open onClose={onClose} title={title} icon={BellRing} size="lg" scrollBody
+    <ModalShell open onClose={onClose} title={title} icon={BellRing} size="xl" scrollBody
       closeLabel={t('userpush.winClose')}
       footer={(
         <>
