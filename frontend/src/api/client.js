@@ -158,6 +158,8 @@ export const api = {
   me: {
     /** "Sizin için — bugün" paneli (2026-09-12, #3) */
     today: () => request('/me/today'),
+    /** Bildirim kutusu (2026-09-12, #2) */
+    inbox: () => request('/me/inbox'),
     // 2026-09-10: yol '/auth/me/push-opt-out' idi — AuthController '/api' tabanlı, uç '/api/me/push-opt-out'
     // → 404; sunucu onayı gelmediği için "Webhook push istemiyorum" kutusu HİÇ işaretlenmiyordu.
     setPushOptOut: (optOut) => request('/me/push-opt-out', { method: 'POST', body: JSON.stringify({ opt_out: optOut }) }),

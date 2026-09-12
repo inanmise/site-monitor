@@ -23,6 +23,7 @@ import java.util.Map;
 public class TodayPanelController {
 
     private final TodayPanelService todayPanelService;
+    private final com.sitemonitor.service.InboxService inboxService;
 
     @GetMapping("/today")
     public ResponseEntity<Map<String, Object>> today(HttpSession session) {
@@ -32,5 +33,21 @@ public class TodayPanelController {
         else if (session.getAttribute("teamId") instanceof Long tid) own.add(tid);
         Map<String, Object> data = todayPanelService.build(teamId -> SessionScope.canView(session, teamId), own);
         return ResponseEntity.ok(Map.of("success", true, "data", data));
+    }
+
+    /** Bildirim kutusu (2026-09-12, #2): {@code GET /api/me/inbox}. Okundu durumu istemcide (anahtar bazlı). */
+    @GetMapping("/inbox")
+    public ResponseEntity<Map<String, Object>> inbox(HttpSession session) {
+        List<Long> own = new ArrayList<>();
+        List<Long> view = SessionScope.viewTeamIds(session);
+        if (view != null) own.addAll(view);
+        else if (session.getAttribute("teamId") instanceof Long tid) own.add(tid);
+        List<Map<String, Object>> items = inboxService.build(teamId -> SessionScope.canView(session, teamId), own).stream().map(i -> {
+            Map<String, Object> m = new java.util.LinkedHashMap<>();
+            m.put("key", i.key()); m.put("kind", i.kind()); m.put("level", i.level()); m.put("title", i.title()); m.put("sub", i.sub());
+            m.put("at", i.at()); m.put("tab", i.tab()); m.put("params", i.params());
+            return m;
+        }).toList();
+        return ResponseEntity.ok(Map.of("success", true, "data", items));
     }
 }

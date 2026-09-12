@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { useTheme } from '../i18n/theme.jsx'
 import CommandPalette from './CommandPalette.jsx'
+import InboxBell from './InboxBell.jsx'
 import { LayoutDashboard, AlertTriangle, FileText, RefreshCw, ClipboardList, Settings, User, Globe, LogOut, Lock, Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen, History, Wifi, Network, Search, TrendingDown, Database, UserCheck, ShieldCheck, CalendarDays, ListChecks, Target, Radio, Siren, Wrench, LifeBuoy, Gauge, ScanSearch, FlaskConical, Bug, MonitorSmartphone } from 'lucide-react'
 import BrandLogo from './BrandLogo.jsx'
 import IssueReportModal from './IssueReportModal.jsx'
@@ -227,6 +228,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
         {open && <><span className="sb-search-text">{t('palette.trigger')}</span><kbd className="sb-search-kbd">Ctrl K</kbd></>}
       </button>
       <CommandPalette tabs={paletteTabs} onTabChange={onTabChange} />
+      {/* Bildirim kutusu (2026-09-12, #2): açık alarm / çözülen / bakım / haftalık son giriş / dolan istisna */}
+      <InboxBell username={username} compact={!open} />
 
       {/* ── Nav items ── */}
       <nav className="sb-nav">
