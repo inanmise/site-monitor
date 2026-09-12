@@ -12907,6 +12907,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .invhy-title { flex: 0 0 auto; }
 .invhy-sum { flex: 1; min-width: 0; font-weight: 500; font-size: .88em; color: var(--text-light); }
 .invhy-chev { transition: transform .15s; }
+/* Dar ekranda baslik + ozet alt alta; ozet tek kelimelik sutuna sikismasin (ISSUE-005) */
+@media (max-width: 640px) { .invhy-head { flex-wrap: wrap; } .invhy-title { flex: 1 1 auto; } .invhy-sum { flex: 1 1 100%; order: 3; } .invhy-chev { margin-left: auto; } }
 .invhy-chev.is-open { transform: rotate(180deg); }
 .invhy-body { padding: 0 14px 10px; }
 .invhy-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
