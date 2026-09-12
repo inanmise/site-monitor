@@ -251,3 +251,10 @@ Kapsam: uçtan uca headless tarayıcı QA'sı (34 sayfa, İngilizce arayüz + T�
   (tekil çip + 2-arg sözleşme).
 Bilinen sınırlar (bilinçli): keyword `expect`/`trig` İngilizce "1 times" biçimi (tekil/çoğul ayrımı yok); ISSUE-013
 düzeltmesi yalnız tarayıcıda doğrulandı (jsdom yerleşim yapmaz). → **REGRESYON YOK**.
+
+**CI kırmızısı (sürüm sırasında):** `UserPushServiceTest.enqueueTeamNotice_writesRowsWithDedupe` runner'da düştü
+(yerelde iki kez yeşil). Kök neden flake değil yarış: ilk çağrı satır kuyruklayınca outbox worker iş parçacığı hemen
+koşup `appSettings` mock'unu çağırıyor; test iş parçacığı aynı anda `when(...)` ile yeniden stub'lıyor — Mockito
+stubbing iş parçacığı güvenli değil, yeni stub kayboluyor (`reason=null`). Kapalı dal ayrı teste alındı
+(`enqueueTeamNotice_disabled`, worker hiç başlamıyor). Desen notu: worker'lı serviste satır kuyrukladıktan SONRA
+mock'u yeniden stub'lama.

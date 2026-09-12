@@ -865,11 +865,20 @@ class UserPushServiceTest {
         assertThat(d.getStatus()).isEqualTo("PENDING");
         assertThat(d.getMessage()).contains("a.example.com");
         verify(resolver).resolve(5L, "CRITICAL");
+    }
 
+    // AYRI test (2026-09-12, CI kırmızısı): kuyruğa satır girince outbox worker İPLİĞİ hemen koşar ve
+    // appSettings mock'unu çağırır; test iş parçacığı o sırada `when(...)` ile yeniden stub'larsa Mockito
+    // stubbing'i iş parçacığı güvenli olmadığından yeni stub kaybolur (yerelde yeşil, yavaş runner'da null).
+    // Kapalı dalı worker hiç başlamadan tek başına doğrula.
+    @Test
+    @DisplayName("2026-09-12: enqueueTeamNotice — kanal KAPALI → satır yok, sebep SKIPPED_DISABLED")
+    void enqueueTeamNotice_disabled() {
         when(appSettings.getBoolean(eq("site.monitor.userpush.enabled"), any(Boolean.class))).thenReturn(false);
         Map<String, Object> off = service.enqueueTeamNotice(5L, "WEAK_ALGO", "CRITICAL", "a.example.com", "m", "k");
         assertThat(off.get("reason")).isEqualTo("SKIPPED_DISABLED");
         assertThat(off.get("queued")).isEqualTo(0);
+        verify(deliveryRepo, never()).save(any());
     }
 
     @Test
