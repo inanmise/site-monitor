@@ -1171,6 +1171,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .modal-shell--sm { max-width: 460px; }
 .modal-shell--md { max-width: 620px; }
 .modal-shell--lg { max-width: 900px; }
+.modal-shell--xl { max-width: 1140px; }
 .modal-shell--full { max-width: 96vw; }
 .modal-box:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .modal-shell-hdr {
@@ -8490,7 +8491,6 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .userpush-modal-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .userpush-modal-trigger { font-size: .78em; color: var(--text-muted); }
 .userpush-modal-msg { font-style: italic; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; flex-basis: 100%; }
-.userpush-log-who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .userpush-stats-row { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 8px; font-size: .9em; }
 .userpush-stat b { color: var(--success, #16a34a); }
 .userpush-stat .userpush-fail { color: var(--danger, #dc2626); }
@@ -8516,10 +8516,25 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .userpush-log-filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
 .userpush-log { display: flex; flex-direction: column; gap: 4px; }
 .userpush-log-row { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.userpush-log-head { display: grid; grid-template-columns: auto 1fr 1.2fr auto auto; gap: 10px; align-items: center;
+/* Satır başlığı: durum · kişi(+takım) · izleme · tetik · zaman. Kişi ve izleme sütunları
+   `minmax(0, …)` — 1fr'nin varsayılan min-content tabanı uzun ad/takım rozetini ezmiyor ama komşu
+   sütunları sıkıştırıp isimleri okunmaz hâle getiriyordu (KPI modalında, 2026-09-12). Dar alanda
+   (modal ≤ 720px) başlık İKİ satıra kırılır: üstte durum + kişi, altta izleme · tetik · zaman. */
+.userpush-log-head { display: grid; grid-template-columns: auto minmax(160px, 1.3fr) minmax(120px, 1fr) auto auto;
+  gap: 10px; align-items: center;
   width: 100%; padding: 7px 10px; background: none; border: 0; cursor: pointer; text-align: left;
   color: inherit; font: inherit; }
 .userpush-log-head:hover { background: var(--bg-hover); }
+.userpush-log-who { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; white-space: normal; }
+.userpush-log-who > span:first-child { min-width: 0; max-width: 100%; }   /* UserBadge (inline-flex) — ad taşarsa ellipsis kendi içinde */
+.userpush-log-when { white-space: nowrap; }
+@container userpush-log (max-width: 720px) {
+  .userpush-log-head { grid-template-columns: auto minmax(0, 1fr); row-gap: 4px; }
+  .userpush-log-mon { grid-column: 2; }
+  .userpush-log-trigger, .userpush-log-when { grid-column: 2; }
+  .userpush-log-trigger { display: inline; }
+}
+.userpush-log { container-type: inline-size; container-name: userpush-log; }
 .userpush-log-mon { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .userpush-log-trigger { font-size: .8em; color: var(--text-muted); }
 .userpush-log-when { font-size: .8em; color: var(--text-muted); }
