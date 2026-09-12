@@ -39,7 +39,7 @@ export default function InventoryTeamView({ rows, onShow, onFilterTeam }) {
         return (
           <section key={g.key} className={`invtv-group${g.key === 'none' ? ' invtv-group--none' : ''}`}>
             <div className="invtv-head">
-              <button type="button" className="invtv-toggle" onClick={() => toggle(g.key)} aria-expanded={isOpen}>
+              <button type="button" className="invtv-toggle" onClick={() => toggle(g.key)} aria-expanded={isOpen} aria-label={t('inv.teamToggle', g.name || t('inv.teamNoTeam'))}>
                 {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
               </button>
               {g.name ? <TeamBadge teamId={g.id} teamName={g.name} /> : <span className="inv-warn-text">{t('inv.teamNoTeam')}</span>}

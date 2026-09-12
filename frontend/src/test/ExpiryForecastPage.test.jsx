@@ -17,7 +17,8 @@ vi.mock('../api/client', async () => {
 })
 import { api } from '../api/client'
 
-function inDays(n) { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
+// Yerel gün (toISOString UTC günü verir: 00:00–03:00 İstanbul'da fikstür bir gün geri kayıp "80 gün" 79 oluyordu)
+function inDays(n) { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
 const cert = (domain, days, extra = {}) => ({
   domain, days_remaining: days, status: days == null ? 'error' : 'valid', not_after: days == null ? null : `${inDays(days)}T12:00:00`,
   renew_by: days == null ? null : inDays(days - 14), lead_days: 14, tier: 1, team_id: 1, team_name: 'Takım A', issuer_cn: 'CA One',

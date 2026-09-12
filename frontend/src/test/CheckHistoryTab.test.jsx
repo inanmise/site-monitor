@@ -20,7 +20,7 @@ import { api } from '../api/client'
 const item = (ts, up = true) => ({ id: Math.random(), checked_at: ts, up, rtt_ms: 10, error: up ? null : 'timeout' })
 
 const envelope = (over = {}) => ({ success: true, data: {
-  items: [item('2026-08-07T10:00:00'), item('2026-08-07T09:00:00', false), item('2026-08-06T22:00:00')],
+  items: [item('2026-08-07T10:00:00'), item('2026-08-07T09:00:00', false), item('2026-08-06T12:00:00')],
   counts: { total: 120, fail: 7 }, buckets: [{ key: '2026-08-07T10', total: 60, fail: 0 }, { key: '2026-08-07T09', total: 60, fail: 7 }],
   alerts: [], range: { from: '2026-08-06T10:00:00', to: '2026-08-07T10:30:00' },
   total: 120, page: 0, size: 50, ...over,
@@ -205,14 +205,14 @@ describe('CheckHistoryTab', () => {
 
     it('gün ayırıcısı grubu KIRAR — zaman bağlamı gruplamaya feda edilmez', async () => {
       const acrossDays = [
-        fail('2026-08-07T00:10:00', 'ayni hata'),
-        fail('2026-08-06T23:50:00', 'ayni hata'),
+        fail('2026-08-07T12:10:00', 'ayni hata'),   // öğlen UTC: her dilimde ayrı gün (gün ayracı yerel gün, ISSUE-007 kardeşi)
+        fail('2026-08-06T11:50:00', 'ayni hata'),
       ]
       api.monitoring.getCheckHistory.mockResolvedValue(envelope({ items: acrossDays, total: 2 }))
       renderTab({ groupIdenticalErrors: true, rowSignature: sig })
-      await screen.findByText('2026-08-07T00:10:00')
+      await screen.findByText('2026-08-07T12:10:00')
       // İki farklı güne düştükleri için gruplanmadılar: ikisi de doğrudan görünür
-      expect(screen.getByText('2026-08-06T23:50:00')).toBeInTheDocument()
+      expect(screen.getByText('2026-08-06T11:50:00')).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: /aynı sonuç|identical results/i })).toBeNull()
     })
 

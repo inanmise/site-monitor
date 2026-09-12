@@ -5,7 +5,7 @@ import {
   Tooltip as RTooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Label, Legend, BarChart,
 } from 'recharts'
-import { Calendar, RefreshCw, Download, Link2, Printer, Play, CalendarPlus, AlertTriangle, ShieldOff } from 'lucide-react'
+import { Calendar, RefreshCw, Download, Link2, Printer, Play, CalendarPlus, CalendarCheck, AlertTriangle, ShieldOff } from 'lucide-react'
 import { api, formatDate, formatDateOnly, localDayKey } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import BrandLogo from '../components/BrandLogo.jsx'
@@ -105,6 +105,12 @@ function CalendarHeatmap({ certs, th, t, today, rangeDays, setRangeDays, onOpenD
     }
     return map
   }, [certs, th, today, rangeDays])
+  // Planlı yenileme günleri (ISSUE-008): plan modalı 'takvimde taralı çizilir' der — hücre kesik çerçeve + işaret alır
+  const plannedByDate = useMemo(() => {
+    const map = {}
+    for (const c of certs) if (c.renewal_plan_state === 'planned' && c.renewal_planned_at) (map[c.renewal_planned_at] ||= []).push(c.domain)
+    return map
+  }, [certs])
   const start = new Date(today + 'T00:00:00')
   const dow = (start.getDay() + 6) % 7
   const weekStart = new Date(start); weekStart.setDate(weekStart.getDate() - dow)
@@ -116,7 +122,7 @@ function CalendarHeatmap({ certs, th, t, today, rangeDays, setRangeDays, onOpenD
     const diff = dayDiff(today, key)
     const slot = byDate[key] || { critical: [], high: [], warning: [] }
     const list = [...slot.critical, ...slot.high, ...slot.warning]
-    cells.push({ key, inRange: diff >= 0 && diff < rangeDays, count: list.length, list, slot, isToday: key === today, dayNum: d.getDate(), off: isWeekend(key) || isHoliday(key), holiday: isHoliday(key) })
+    cells.push({ key, inRange: diff >= 0 && diff < rangeDays, count: list.length, list, slot, isToday: key === today, dayNum: d.getDate(), off: isWeekend(key) || isHoliday(key), holiday: isHoliday(key), planned: plannedByDate[key] || [] })
   }
   const DAYS = t('forecast.calDays').split(',')
   return (
@@ -126,22 +132,24 @@ function CalendarHeatmap({ certs, th, t, today, rangeDays, setRangeDays, onOpenD
       </div>
       <div className="fc-heatmap-days">{DAYS.map((d) => <div key={d} className="fc-hm-day-label">{d}</div>)}</div>
       <div className={`fc-heatmap-grid${weekCount > 10 ? ' fc-heatmap-grid--compact' : ''}`} style={{ '--cal-aspect': `7 / ${Math.ceil((dow + 30) / 7)}` }}>
-        {cells.map(({ key, inRange, count, list, slot, isToday, dayNum, off, holiday }) => inRange ? (
+        {cells.map(({ key, inRange, count, list, slot, isToday, dayNum, off, holiday, planned }) => inRange ? (
           <button key={key} type="button"
-            className={`fc-hm-cell fc-hm-cell-v2${count === 0 ? ' fc-hm-zero' : ''}${isToday ? ' fc-hm-today' : ''}${count > 0 ? ' fc-hm-clickable' : ''}${off ? ' fc-hm-off' : ''}`}
-            style={{ background: heatColor(count) }}
+            className={`fc-hm-cell fc-hm-cell-v2${count === 0 ? ' fc-hm-zero' : ''}${isToday ? ' fc-hm-today' : ''}${count > 0 ? ' fc-hm-clickable' : ''}${off ? ' fc-hm-off' : ''}${planned.length ? ' fc-hm-planned' : ''}`}
+            style={{ backgroundColor: heatColor(count) }}
             onMouseEnter={() => setHovered(key)} onMouseLeave={() => setHovered(null)} onFocus={() => setHovered(key)} onBlur={() => setHovered(null)}
             onClick={count > 0 ? () => onOpenDay({ key, certs: list }) : undefined}
             aria-label={`${key} — ${t('forecast.certCount', count)}${holiday ? ` · ${t('forecast.holiday')}` : ''}`}
             title={holiday ? t('forecast.holiday') : off ? t('forecast.weekend') : count > 0 ? t('forecast.dayModalOpen') : undefined}>
             <span className="fc-hm-day-num">{dayNum}</span>
             {count > 0 && <span className="fc-hm-count-v2" style={{ color: countColor(slot) }}>{count}</span>}
+            {planned.length > 0 && <span className="fc-hm-plan-mark" aria-label={t('forecast.hmPlanned', planned.join(', '))}><CalendarCheck size={12} aria-hidden="true" /></span>}
             {hovered === key && (
               <div className="fc-hm-tooltip">
                 <strong>{key}</strong>
                 <div>{t('forecast.certCount', count)}{holiday ? ` · ${t('forecast.holiday')}` : off ? ` · ${t('forecast.weekend')}` : ''}</div>
                 {list.slice(0, 4).map((c) => <div key={c.domain} className="fc-hm-tdomain">{c.domain}</div>)}
                 {list.length > 4 && <div>+{list.length - 4}</div>}
+                {planned.length > 0 && <div className="fc-hm-tplan">{t('forecast.hmPlanned', planned.join(', '))}</div>}
               </div>
             )}
           </button>
@@ -152,6 +160,7 @@ function CalendarHeatmap({ certs, th, t, today, rangeDays, setRangeDays, onOpenD
         {HEAT_COLORS.slice(1).map((c) => <div key={c} className="fc-hm-leg-dot" style={{ background: c }} />)}
         <span className="fc-hm-leg-label">{t('forecast.legendHigh')}</span>
         <span className="fc-hm-leg-off">{t('forecast.legendOff')}</span>
+        <span className="fc-hm-leg-planned"><CalendarCheck size={11} aria-hidden="true" /> {t('forecast.legendPlanned')}</span>
       </div>
     </>
   )
@@ -274,14 +283,36 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
   const next = useMemo(() => nextExpiry(certs, today), [certs, today])
   const teamOpts = useMemo(() => [...new Map(allCerts.filter((c) => c.team_id != null).map((c) => [String(c.team_id), c.team_name || `#${c.team_id}`])).entries()].map(([value, label]) => ({ value, label })), [allCerts])
   const groupOpts = useMemo(() => [...new Set(allCerts.map((c) => c.group_name).filter(Boolean))].sort().map((g) => ({ value: g, label: g })), [allCerts])
-  const renewals = data?.renewals || { on_time: 0, late: 0, months: [], events: [] }
+  // Yenileme geçmişi sayfa süzgecini izler (ISSUE-010): olaylar süzülen alanlara indirgenir, oran/aylar yeniden sayılır.
+  // Süzgeç yokken sunucu toplamları (olay listesi 50 ile kısıtlı) olduğu gibi kullanılır.
+  const renewals = useMemo(() => {
+    const raw = data?.renewals || { on_time: 0, late: 0, months: [], events: [] }
+    if (!Object.values(filters).some(Boolean)) return raw
+    const allow = new Set(certs.map((c) => c.domain))
+    const events = (raw.events || []).filter((e) => allow.has(e.domain))
+    const months = {}; let on_time = 0, late = 0
+    for (const e of events) {
+      e.on_time ? on_time++ : late++
+      const m = (localDayKey(e.renewed_at) || '').slice(0, 7)
+      ;(months[m] ||= { month: m, on_time: 0, late: 0 })[e.on_time ? 'on_time' : 'late']++
+    }
+    return { ...raw, on_time, late, events, months: Object.values(months).sort((a, b) => a.month.localeCompare(b.month)) }
+  }, [data, certs, filters])
   const onTimePct = renewals.on_time + renewals.late > 0 ? Math.round(renewals.on_time * 100 / (renewals.on_time + renewals.late)) : null
   const filterActive = !!(filters.team || filters.ugTeam || filters.tier || filters.group)
 
-  const monthEvents = useMemo(() => list.filter((r) => r.renew_by_key || r.expiry_key).map((r) => ({
-    date: r.renew_by_key || r.expiry_key, label: r.domain, title: `${r.domain} · ${t('forecast.csvRenewBy')} ${r.renew_by_key || '—'} · ${t('forecast.csvExpiry')} ${r.expiry_key || '—'}`,
-    tone: r.cls === 'overdue' || r.cls === 'critical' ? 'bad' : r.cls === 'high' || r.window === 'late' ? 'warn' : 'info', onClick: () => onSelectDomain?.(r.domain),
-  })), [list, onSelectDomain, t])
+  // Ay görünümü gezinebilir: 03 tablosunun 30 günlük penceresine değil, 12 aya bağlı (ISSUE-013)
+  const monthList = useMemo(() => upcoming(certs, th, 365, today), [certs, th, today])
+  const monthEvents = useMemo(() => [
+    ...monthList.filter((r) => r.renew_by_key || r.expiry_key).map((r) => ({
+      date: r.renew_by_key || r.expiry_key, label: r.domain, title: `${r.domain} · ${t('forecast.csvRenewBy')} ${r.renew_by_key || '—'} · ${t('forecast.csvExpiry')} ${r.expiry_key || '—'}`,
+      tone: r.cls === 'overdue' || r.cls === 'critical' ? 'bad' : r.cls === 'high' || r.window === 'late' ? 'warn' : 'info', onClick: () => onSelectDomain?.(r.domain),
+    })),
+    // Planlı yenileme günü de olay (ISSUE-008)
+    ...certs.filter((c) => c.renewal_plan_state === 'planned' && c.renewal_planned_at).map((c) => ({
+      date: c.renewal_planned_at, label: c.domain, title: `${c.domain} · ${t('forecast.hmPlanned', c.renewal_planned_at)}`, tone: 'ok', onClick: () => onSelectDomain?.(c.domain),
+    })),
+  ], [monthList, certs, onSelectDomain, t])
 
   async function checkNow(domain) {
     setBusyDomain(domain)

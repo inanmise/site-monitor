@@ -327,3 +327,33 @@ tatil/hafta sonu (#11), boş durumlar (#12), sözlük (#13), tek uç `/api/forec
 Bilinen sınırlar (bilinçli): tatil tablosu 2026–2028 (dini bayramlar yıl bazlı), yenileme penceresi 90 gün sabit,
 renew-by sunucuda UTC günü (istemci yerel güne çevirir), plan "done" yalnız not_before ile (parmak izi onayı ayrı).
 → **REGRESYON YOK**.
+
+## Ek — on yedinci tur (2026-09-13, `/qa` 2. tur + sürüm öncesi regresyon süpürmesi — `v20.59.0..HEAD`)
+
+Kapsam: Domain Envanteri + Vade Takvimi tarayıcı QA'sı (14 bulgu, 13 düzeltme, rapor `.gstack/qa-reports/qa-report-localhost-2026-09-12-r2.md`)
+ve o düzeltmelerin diff'i üzerinde imza-güdümlü süpürme.
+
+**On altıncı turun "bilinçli sınır" dediği madde YANLIŞTI:** *"renew-by sunucuda UTC günü (istemci yerel güne çevirir)"* —
+istemci çıplak `YYYY-MM-DD` alanı `localDayKey`'den olduğu gibi geçirir, çevirmez. `23:59:59Z` biten her sertifikada
+(DigiCert varsayılanı) "bitiş 24.10 · en geç 23.09" (30 gün lead için 31 gün) çıktı. Sunucu artık `ZoneId.systemDefault()`
+(prod Europe/Istanbul) gününü üretir; `renewed_at` günü, plan-done günü ve ay kovası aynı dilimde. Surefire zaten
+`-Duser.timezone=UTC` koştuğundan test beklentileri dilim-açık (`ZoneOffset.UTC` → 23.09, `Europe/Istanbul` → 24.09).
+
+**Kardeş süpürme (aynı sınıf: UTC damgası → `.slice/substring(0,10)` ile çıplak gün):**
+- `CheckHistoryTab.jsx:111` — gün ayraçları UTC günüyle; satırlar yerel saat basıyor → 00:00–03:00 kontrolleri önceki günün
+  başlığında (her izleme geçmişi sekmesi + envanter çekmecesi). → `localDayKey`. Sabit fikstürler gece yarısı UTC'den
+  öğlene taşındı (dilimden bağımsız), yeni `CheckHistoryTab.regression-1.test.jsx`. **DÜZELTİLDİ (147f016e).**
+- `MaintenanceWindowsPage.jsx:236` — saat pencere diliminde, tarih UTC. → `dayInTz`. **DÜZELTİLDİ (aynı commit).**
+- `WeekDatePicker` `toISOString().slice(0,10)` — GÜVENLİ (monthGrid UTC-öğlen tarihleri üretir).
+- Backend `substring(0,10)` eşleşmeleri dosya adı / retention `DATE10` / IncidentService fallback — kullanıcıya gün olarak
+  gösterilen yüzey değil; bırakıldı.
+- `toUtc`/`localDayKey` `utils/localDay.js`'e taşındı, `api/client` yeniden dışa aktarır: istemci modülünü tümüyle
+  mock'layan 16 sayfa testi bileşenleri bu yardımcılardan yoksun bırakıyordu (`No "localDayKey" export`).
+
+**Diğer QA düzeltmeleri (kısa):** heat-map hatching `background` kısayolu ×2 (inline + `.fc-hm-zero !important`) ile
+siliniyordu; plan tarihi takvimde çizilmiyordu (modal metni vaat ediyordu); `MonthCalendar` ay başlığı tarayıcı dilinden
+(3 sayfa); 375 px'te KPI/05-06 satırı ve hijyen bandı; `i_sort` URL'de; takım aç/kapat `aria-label`; içe aktarma önizlemesi
+yeni satırda `team`/`port`; zamanında-yenileme KPI süzgeci izler; boş durum metni; ay görünümü 12 ay.
+Bilinen sınırlar: heat-map 375 px'te kartı ~35 px aşar (7 sütun min-content); `GET /api/issue-reports` 405 yerine 500
+(API-only, ertelendi); süzgeçli zamanında oranı sunucunun 50'lik olay listesinden sayılır.
+→ **REGRESYON YOK** (16. turun sınır varsayımı düzeltildi; kardeş 2 bulgu kapatıldı).

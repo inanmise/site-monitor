@@ -19,6 +19,7 @@ import org.springframework.jdbc.core.RowCallbackHandler;
 
 import java.sql.ResultSet;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
@@ -68,9 +69,14 @@ class RenewalForecastServiceTest {
         assertThat(lead).containsEntry("default", 14).containsEntry("t1", 30).containsEntry("t2", 14);
         assertThat(service.leadFor(1, lead)).isEqualTo(30);
         assertThat(service.leadFor(null, lead)).isEqualTo(14);
-        assertThat(RenewalForecastService.renewBy("2026-10-23T23:59:59", 30)).isEqualTo("2026-09-23");
-        assertThat(RenewalForecastService.renewBy("2026-10-23", 14)).isEqualTo("2026-10-09");
+        // Regression: ISSUE-007 — renew_by UTC günüyle üretiliyordu; ekran bitişi yerel gün (24.10) gösterirken
+        // "en geç 23.09" çıkıyordu. Found by /qa on 2026-09-12 · Report: .gstack/qa-reports/qa-report-localhost-2026-09-12-r2.md
+        assertThat(RenewalForecastService.renewBy("2026-10-23T23:59:59", 30, ZoneOffset.UTC)).isEqualTo("2026-09-23");
+        assertThat(RenewalForecastService.renewBy("2026-10-23T23:59:59", 30, ZoneId.of("Europe/Istanbul"))).isEqualTo("2026-09-24");
+        assertThat(RenewalForecastService.renewBy("2026-10-23", 14, ZoneOffset.UTC)).isEqualTo("2026-10-09");
         assertThat(RenewalForecastService.renewBy(null, 14)).isNull();
+        assertThat(RenewalForecastService.localDay("2026-10-23T23:59:59", ZoneId.of("Europe/Istanbul"))).isEqualTo("2026-10-24");
+        assertThat(RenewalForecastService.localDay("garbage", ZoneOffset.UTC)).isEqualTo("garbage");
     }
 
     @Test
@@ -91,7 +97,9 @@ class RenewalForecastServiceTest {
         assertThat(certs).extracting(c -> c.get("domain")).containsExactly("a.example.com", "expired.example.com", "p.example.com", "d.example.com");
         Map<String, Object> a = certs.get(0);
         assertThat(a.get("lead_days")).isEqualTo(30);
-        assertThat(a.get("renew_by")).isEqualTo("2026-09-23");
+        // Dilimden bağımsız beklenti: sunucu dilimindeki takvim günü (CI UTC → 23.09, yerel Istanbul → 24.09)
+        String expectedRenewBy = Instant.parse("2026-10-23T23:59:59Z").minus(30, ChronoUnit.DAYS).atZone(ZoneId.systemDefault()).toLocalDate().toString();
+        assertThat(a.get("renew_by")).isEqualTo(expectedRenewBy);
         assertThat(a.get("renewal_plan_state")).isEqualTo("none");
         assertThat(certs.get(2).get("renewal_plan_state")).isEqualTo("planned");
         assertThat(certs.get(3).get("renewal_plan_state")).isEqualTo("done");

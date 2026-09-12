@@ -80,7 +80,7 @@ describe('Domain Envanteri — zenginleştirme', () => {
     renderIm()
     await screen.findByText('a.example.com')
     await screen.findByText(/Inventory hygiene|Envanter hijyeni/)
-    const chip = await screen.findByRole('button', { name: /2 (no responsible team|sorumlu ekip girilmemiş)/ })
+    const chip = await screen.findByRole('button', { name: /2 (no responsible contacts|sorumlu ekip girilmemiş)/ })
     fireEvent.click(chip)
     await waitFor(() => expect(rowsShown()).toEqual(['b.example.com', 'c.example.com']))
     await waitFor(() => expect(window.location.search).toContain('i_hy=no_contacts'))

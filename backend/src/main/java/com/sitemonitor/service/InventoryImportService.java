@@ -204,7 +204,8 @@ public class InventoryImportService {
         flag(r, "action_required", it.getActionRequired(), v -> it.setActionRequired(v), ch);
         flag(r, "server_update", it.getServerUpdate(), v -> it.setServerUpdate(v), ch);
         flag(r, "transferred_to_sy", it.getTransferredToSy(), v -> it.setTransferredToSy(v), ch);
-        if (isNew) { ch.add(0, "domain"); }
+        // Yeni satır: takım (zorunlu) ve varsayılan-dışı port da yazılır — önizleme yazılacak her alanı saysın (ISSUE-004)
+        if (isNew) { if (port != null && port != 443) ch.add(0, "port"); ch.add(0, "team"); ch.add(0, "domain"); }
         return ch;
     }
 

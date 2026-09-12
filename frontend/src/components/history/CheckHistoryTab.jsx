@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { BellRing, BellOff, Calendar, Download } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { api, formatDateSec, formatDateOnly } from '../../api/client'
+import { localDayKey } from '../../utils/localDay.js'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import DateTimeRangePicker from '../ui/DateTimeRangePicker.jsx'
@@ -108,7 +109,7 @@ export default function CheckHistoryTab({
         out.push({ type: events[ei].ev, key: `ev-${events[ei].a.id}-${events[ei].ev}`, alert: events[ei].a, ts: events[ei].ts })
         ei++
       }
-      const day = itemTs(c).slice(0, 10)
+      const day = localDayKey(itemTs(c))   // satırlar yerel saat gösterir; gün başlığı da yerel gün olmalı (UTC dilimlemesi 00:00–03:00 kontrollerini önceki güne atıyordu)
       if (day && day !== lastDay) { out.push({ type: 'day', key: `day-${day}`, day }); lastDay = day }
       out.push({ type: 'item', key: `it-${itemTs(c)}#${i}`, item: c, index: i })
     })
@@ -220,7 +221,7 @@ export default function CheckHistoryTab({
           </div>
           {rows.map(r => {
             if (r.type === 'day') {
-              return <div key={r.key} className="hist-day-sep">{formatDateOnly(r.day + 'T00:00:00')}</div>
+              return <div key={r.key} className="hist-day-sep">{formatDateOnly(r.day + 'T12:00:00')}</div>
             }
             if (r.type === 'triggered' || r.type === 'resolved') {
               const a = r.alert

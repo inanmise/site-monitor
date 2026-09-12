@@ -2,6 +2,7 @@
 // hook degil — sabit 'tr-TR' yazdiklari icin Ingilizce arayuzde ayni ekranda iki
 // farkli tarih bicimi goruluyordu (bkz. i18n/dateLocale.js).
 import { dateLocale, LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
+import { toUtc, localDayKey } from '../utils/localDay.js'
 
 /** Arayüz dili (tr|en) — i18n/index.jsx'teki storedLang ile aynı anahtar; i18n modülünü
  *  import etmemek için (React bağımlılığı, dairesel import riski) burada yalın okunur. */
@@ -1233,14 +1234,8 @@ export const api = {
  * Ayrıca dize olmayan girdide `.endsWith` FIRLATIYORDU; artık olduğu gibi geçiriliyor
  * (`new Date` zaten Date/number kabul eder).
  */
-function toUtc(iso) {
-  if (typeof iso !== 'string') return iso
-  const s = iso.trim()
-  if (/[zZ]$/.test(s)) return s                                  // zaten UTC
-  if (/[+-]\d{2}:?\d{2}$/.test(s)) return s                      // ofset taşıyor (+03:00 / -0300)
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s + 'T00:00:00Z'     // yalnız tarih
-  return s + 'Z'
-}
+// toUtc / localDayKey: utils/localDay.js (yeniden dışa aktarılır — eski import yolları geçerli)
+export { toUtc, localDayKey }
 
 export function formatDate(iso) {
   if (!iso) return 'N/A'
@@ -1278,22 +1273,6 @@ export function formatTime(iso) {
   }
 }
 
-/**
- * Yerel gün anahtarı 'YYYY-MM-DD' (QA 2026-09-12, ISSUE-004): sunucu zaman damgaları UTC'dir
- * ("2026-10-23T23:59:59" = 24/10 02:59 İstanbul). `.slice(0, 10)` UTC gününü alır ve takvim/ICS
- * olayı bir gün ERKEN düşer. Yalnız tarih ("YYYY-MM-DD") verildiyse olduğu gibi döner.
- */
-export function localDayKey(iso) {
-  if (!iso) return null
-  if (typeof iso === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(iso.trim())) return iso.trim()
-  try {
-    const d = new Date(toUtc(iso))
-    if (Number.isNaN(d.getTime())) return String(iso).slice(0, 10)
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  } catch {
-    return String(iso).slice(0, 10)
-  }
-}
 
 export function formatDateOnly(iso) {
   if (!iso) return '—'
