@@ -33,3 +33,20 @@ describe('MonitorSpark', () => {
     expect(container.querySelector('.mspark-up').classList.contains('is-ok')).toBe(true)
   })
 })
+
+describe('MonitorSpark — 30 günlük SLA satırı (2026-09-12, #11)', () => {
+  it('hedef altı → kırmızı ok + hatalı saat; hedef üstü → yeşil onay; sparkline yokken SLA tek başına çizilir', () => {
+    const { container, unmount } = render(<MonitorSpark spark={{ n: 3, fail: 0, up_pct: 100, buckets: [{ t: 'a', n: 1, ms: 1 }, { t: 'b', n: 2, ms: 2 }], last: [] }}
+      sla={{ n: 4000, fail: 8, up_pct: 99.8, bad_hours: 3 }} slaTarget={99.9} slaDays={30} />)
+    const sla = container.querySelector('.mspark-sla')
+    expect(sla.classList.contains('is-below')).toBe(true)
+    expect(sla.textContent).toMatch(/30 gün: %99\.80|30 d: 99\.80%/)
+    expect(sla.textContent).toMatch(/hedef %99\.9 ↓|target 99\.9% ↓/)
+    expect(sla.textContent).toMatch(/3 hatalı saat|3 bad hours/)
+    unmount()
+    const { container: c2 } = render(<MonitorSpark spark={undefined} sla={{ n: 100, fail: 0, up_pct: 100, bad_hours: 0 }} slaTarget={99.9} slaDays={30} />)
+    expect(c2.querySelector('.mspark')).toBeNull()
+    expect(c2.querySelector('.mspark-sla.is-met')).not.toBeNull()
+    expect(c2.querySelector('.mspark-sla-bad')).toBeNull()
+  })
+})

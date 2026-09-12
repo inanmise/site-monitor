@@ -6,9 +6,10 @@ import { useT } from '../../i18n/index.jsx'
  * `spark` = useSparklines haritasındaki tek monitörün kaydı; yoksa hiçbir şey çizilmez (kart değişmez).
  * Çizgi: saatlik ortalama süre (ms). Kırmızı nokta = hatalı kontrol. Sağda 24 sa erişilebilirlik yüzdesi.
  */
-export default function MonitorSpark({ spark, unit = 'ms' }) {
+export default function MonitorSpark({ spark, unit = 'ms', sla = null, slaTarget = null, slaDays = 30 }) {
   const t = useT()
-  if (!spark || !spark.n) return null
+  if ((!spark || !spark.n) && !(sla && sla.n)) return null
+  if (!spark || !spark.n) return <SlaLine sla={sla} target={slaTarget} days={slaDays} />
   const series = (spark.buckets || []).map((b) => (b.ms == null ? 0 : b.ms))
   const last = spark.last || []
   const up = spark.up_pct
@@ -32,6 +33,21 @@ export default function MonitorSpark({ spark, unit = 'ms' }) {
         </span>
         {up != null && <span className={`mspark-up${upCls}`}>{t('spark.up', up)}</span>}
       </div>
+      <SlaLine sla={sla} target={slaTarget} days={slaDays} />
+    </div>
+  )
+}
+
+/** 30 günlük kullanılabilirlik / hedef satırı (2026-09-12, #11): hedef altındaysa kırmızı ok, üstündeyse yeşil. */
+function SlaLine({ sla, target, days }) {
+  const t = useT()
+  if (!sla || !sla.n || sla.up_pct == null) return null
+  const below = target != null && sla.up_pct < target
+  return (
+    <div className={`mspark-sla${below ? ' is-below' : ' is-met'}`} title={t('spark.slaTip', sla.n, sla.fail, sla.bad_hours ?? 0)}>
+      <span className="mspark-sla-val">{t('spark.sla', days, sla.up_pct.toFixed(2))}</span>
+      {target != null && <span className="mspark-sla-target">{t('spark.slaTarget', target)} {below ? '↓' : '✓'}</span>}
+      {(sla.bad_hours ?? 0) > 0 && <span className="mspark-sla-bad">{t('spark.slaBadHours', sla.bad_hours)}</span>}
     </div>
   )
 }

@@ -1258,6 +1258,7 @@ export const TR = {
   'general.lbl.site.monitor.weekly-report.image-retention-days': 'Haftalık rapor görselleri saklama (gün)',
   'general.lbl.site.monitor.weekly-report.deadline-day': 'Haftalık rapor son giriş günü',
   'general.lbl.site.monitor.weekly-report.deadline-time': 'Haftalık rapor son giriş saati (SS:dd)',
+  'general.lbl.site.monitor.sla.target-pct': 'Kullanılabilirlik hedefi (%)',
   'general.lbl.site.monitor.weekly.score.weight-critical': 'Skor ağırlığı — kritik',
   'general.lbl.site.monitor.weekly.score.weight-expiring': 'Skor ağırlığı — süresi dolan',
   'general.lbl.site.monitor.weekly.score.weight-uptime': 'Skor ağırlığı — erişilebilirlik',
@@ -4359,6 +4360,10 @@ export const TR = {
   'spark.lastAria': 'Son {0} kontrol',
   'spark.fail': 'hata',
   'spark.up': '%{0} erişilebilir',
+  'spark.sla': '{0} gün: %{1}',
+  'spark.slaTarget': 'hedef %{0}',
+  'spark.slaBadHours': '{0} hatalı saat',
+  'spark.slaTip': 'Son 30 gün: {0} kontrol, {1} hata, {2} saat diliminde hata görüldü',
   'card.renewedAgo': '{0} gün önce yenilendi',
   'card.renewedToday': 'Bugün yenilendi',
   'card.renewedTip': 'Sertifika başlangıcı: {0}',
@@ -6502,6 +6507,8 @@ export const TR = {
     'Ne işe yarar: Haftalık raporun son giriş günü. Haftalık Raporlar sayfasındaki "⏰ Son giriş" satırı, hatırlatma e-postasındaki vurgu ve hatırlatmanın gönderileceği gün buradan okunur (hatırlatma o gün 09:00\'da gider).\nFaydası: Takvim değişince kod değişmez; sayfa, e-posta ve zamanlayıcı aynı kaynağı kullanır.\nÖnerilen değer: FRI (varsayılan).',
   'help.set.site.monitor.weekly-report.deadline-time':
     'Ne işe yarar: Haftalık raporun son giriş saati (SS:dd, İstanbul). Sayfa başlığında ve hatırlatma e-postasında gösterilir.\nFaydası: Ekiplere tek ve doğru saat bildirilir.\nÖnerilen değer: 15:00 (varsayılan). Bozuk biçim yazılırsa sistem sessizce 15:00\'a döner.',
+  'help.set.site.monitor.sla.target-pct':
+    'Ne işe yarar: İzleme kartlarındaki 30 günlük kullanılabilirlik oranının karşılaştırıldığı hedef (%). Hedefin altındaki kart kırmızı ok gösterir.\nFaydası: "%99,87" tek başına bir şey söylemez; hedefle yan yana "ihlal var/yok" olur.\nÖnerilen değer: 99.9 (varsayılan). Tier-1 servisler için 99.95, iç araçlar için 99.5 makul.',
   'help.set.site.monitor.weekly-report.mail-retention-days':
     'Ne işe yarar: Gönderilen haftalık rapor e-postalarının arşiv kayıtlarının saklama süresi.\nFaydası: "Geçen çeyrekte ne raporlanmıştı" sorusu, arşivden aynı HTML açılarak yanıtlanır.\nÖnerilen değer: 730 gün (varsayılan, iki yıl). Görseller ayrı ve daha kısa bir pencerede tutulur.',
   'help.set.site.monitor.weekly.score.weight-critical':
@@ -7808,6 +7815,7 @@ export const EN = {
   'general.lbl.site.monitor.weekly-report.image-retention-days': 'Weekly report images retention (days)',
   'general.lbl.site.monitor.weekly-report.deadline-day': 'Weekly report deadline day',
   'general.lbl.site.monitor.weekly-report.deadline-time': 'Weekly report deadline time (HH:mm)',
+  'general.lbl.site.monitor.sla.target-pct': 'Availability target (%)',
   'general.lbl.site.monitor.weekly.score.weight-critical': 'Score weight — critical',
   'general.lbl.site.monitor.weekly.score.weight-expiring': 'Score weight — expiring',
   'general.lbl.site.monitor.weekly.score.weight-uptime': 'Score weight — uptime',
@@ -10903,6 +10911,10 @@ export const EN = {
   'spark.lastAria': 'Last {0} checks',
   'spark.fail': 'failed',
   'spark.up': '{0}% available',
+  'spark.sla': '{0} d: {1}%',
+  'spark.slaTarget': 'target {0}%',
+  'spark.slaBadHours': '{0} bad hours',
+  'spark.slaTip': 'Last 30 days: {0} checks, {1} failures, failures seen in {2} hourly slots',
   'card.renewedAgo': 'Renewed {0} days ago',
   'card.renewedToday': 'Renewed today',
   'card.renewedTip': 'Certificate valid from: {0}',
@@ -13040,6 +13052,8 @@ export const EN = {
     'What it does: The weekly report deadline day. The "⏰ Deadline" line on the Weekly Reports page, the highlight in the reminder email and the day the reminder is sent all read it (the reminder goes out at 09:00 that day).\nBenefit: When the calendar changes, no code changes; page, email and scheduler share one source.\nRecommended: FRI (the default).',
   'help.set.site.monitor.weekly-report.deadline-time':
     'What it does: The weekly report deadline time (HH:mm, Istanbul). Shown in the page header and in the reminder email.\nBenefit: Teams are told one, correct time.\nRecommended: 15:00 (the default). A malformed value silently falls back to 15:00.',
+  'help.set.site.monitor.sla.target-pct':
+    'What it does: The availability target (%) the 30-day ratio on monitor cards is compared against. Cards below target show a red arrow.\nBenefit: "99.87%" alone says nothing; next to a target it becomes "breach / no breach".\nRecommended: 99.9 (the default). 99.95 for tier-1 services, 99.5 for internal tools is reasonable.',
   'help.set.site.monitor.weekly-report.mail-retention-days':
     'What it does: How long archived copies of sent weekly report emails are kept.\nBenefit: "What did we report last quarter?" is answered by opening the very same HTML from the archive.\nRecommended: 730 days (the default, two years). Images are kept separately, on a shorter window.',
   'help.set.site.monitor.weekly.score.weight-critical':

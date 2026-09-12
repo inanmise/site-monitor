@@ -12451,6 +12451,11 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .mspark-up.is-ok { color: var(--success); }
 .mspark-up.is-warn { color: #d97706; }
 .mspark-up.is-bad { color: var(--danger); }
+.mspark-sla { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: .74em; padding-top: 2px; border-top: 1px dashed var(--border); color: var(--text-muted); }
+.mspark-sla-val { font-weight: 700; color: var(--text); }
+.mspark-sla.is-below .mspark-sla-val, .mspark-sla.is-below .mspark-sla-target { color: var(--danger); }
+.mspark-sla.is-met .mspark-sla-target { color: var(--success); }
+.mspark-sla-bad { color: #d97706; }
 
 /* ── "Sizin için — bugün" paneli (dashboard üstü, 2026-09-12 #3) ───────────────────────────── */
 .today { border: 1px solid var(--border); border-radius: 12px; background: var(--bg-surface); margin: 0 0 16px; }

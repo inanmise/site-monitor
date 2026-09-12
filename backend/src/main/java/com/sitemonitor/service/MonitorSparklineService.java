@@ -132,4 +132,42 @@ public class MonitorSparklineService {
         }
         return out;
     }
+
+    public static final int MAX_DAYS = 90;
+
+    /**
+     * Kullanılabilirlik / SLA (2026-09-12, #11): son N günde monitör başına toplam, hata, yüzde ve
+     * "hatalı saat" sayısı (hata görülen ayrık saat kovası — kesinti süresinin kaba ölçüsü). İki toplu
+     * sorgu, ham satır yok; 30 gün × 100 monitör dakikalık kontrolde 4M satırı DB toplar.
+     * @return id → { n, fail, up_pct (iki ondalık), bad_hours }
+     */
+    public Map<Long, Map<String, Object>> availability(String type, int days, Set<Long> ids) {
+        Kind k = KINDS.get(type);
+        int d = Math.max(1, Math.min(MAX_DAYS, days));
+        String from = ISO.format(Instant.now().minus(d, ChronoUnit.DAYS));
+        Map<Long, Map<String, Object>> out = new LinkedHashMap<>();
+        if (ids.isEmpty()) return out;
+        for (Long id : ids) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("n", 0); m.put("fail", 0); m.put("up_pct", null); m.put("bad_hours", 0);
+            out.put(id, m);
+        }
+        jdbc.query("SELECT monitor_id, COUNT(*), SUM(" + k.failExpr() + ") FROM " + k.table()
+                + " WHERE checked_at >= ? GROUP BY monitor_id", rs -> {
+            Map<String, Object> m = out.get(rs.getLong(1));
+            if (m == null) return;
+            m.put("n", rs.getInt(2)); m.put("fail", rs.getInt(3));
+        }, from);
+        jdbc.query("SELECT t.monitor_id, COUNT(DISTINCT t.bucket) FROM ("
+                + "  SELECT monitor_id, substr(checked_at,1,13) AS bucket, " + k.failExpr() + " AS fail FROM " + k.table() + " WHERE checked_at >= ?"
+                + ") t WHERE t.fail = 1 GROUP BY t.monitor_id", rs -> {
+            Map<String, Object> m = out.get(rs.getLong(1));
+            if (m != null) m.put("bad_hours", rs.getInt(2));
+        }, from);
+        for (Map<String, Object> m : out.values()) {
+            int n = (Integer) m.get("n"), fail = (Integer) m.get("fail");
+            m.put("up_pct", n == 0 ? null : Math.round(10000.0 * (n - fail) / n) / 100.0);
+        }
+        return out;
+    }
 }

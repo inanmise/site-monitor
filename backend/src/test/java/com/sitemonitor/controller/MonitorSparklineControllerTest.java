@@ -38,6 +38,7 @@ class MonitorSparklineControllerTest {
     @MockitoBean MonitorSparklineService sparklineService;
     @MockitoBean com.sitemonitor.service.PermissionService permissionService;
     @MockitoBean com.sitemonitor.service.AuditService auditService;
+    @MockitoBean com.sitemonitor.service.AppSettingsService appSettings;
 
     private MockHttpSession teamUser(Long... viewTeams) {
         MockHttpSession s = new MockHttpSession();
@@ -76,5 +77,21 @@ class MonitorSparklineControllerTest {
         @SuppressWarnings("unchecked") ArgumentCaptor<Set<Long>> ids = ArgumentCaptor.forClass(Set.class);
         verify(sparklineService).sparklines(eq("http"), eq(9999), ids.capture());
         assertThat(ids.getValue()).containsExactly(1L);   // takım 9 ve takımsız monitör dışarıda
+    }
+    @Test
+    @DisplayName("sla: hedef canlı ayardan (varsayılan 99.9), gün tavanı 90, kapsam aynı")
+    void sla() throws Exception {
+        Map<Long, Long> teams = new HashMap<>(); teams.put(1L, 5L); teams.put(2L, 9L);
+        when(sparklineService.monitorTeams("ping")).thenReturn(teams);
+        when(appSettings.getDouble(eq("site.monitor.sla.target-pct"), org.mockito.ArgumentMatchers.anyDouble())).thenReturn(99.5);
+        Map<Long, Map<String, Object>> out = new HashMap<>();
+        out.put(1L, Map.of("n", 100, "fail", 1, "up_pct", 99.0, "bad_hours", 1));
+        when(sparklineService.availability(eq("ping"), anyInt(), eq(Set.of(1L)))).thenReturn(out);
+        mvc.perform(get("/api/monitoring/sla").param("type", "ping").param("days", "365").session(teamUser(5L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.target_pct").value(99.5))
+                .andExpect(jsonPath("$.days").value(90))
+                .andExpect(jsonPath("$.data.1.up_pct").value(99.0))
+                .andExpect(jsonPath("$.data.2").doesNotExist());
     }
 }

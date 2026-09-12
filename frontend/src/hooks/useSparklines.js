@@ -19,4 +19,20 @@ export function useSparklines(type, hours = 24, refreshMs = 60_000) {
   return map
 }
 
+/**
+ * Kullanılabilirlik / SLA (2026-09-12, #11): tür başına 30 günlük oran + filo hedefi; 5 dk'da bir.
+ * Dönen: { target, days, data: { [id]: { n, fail, up_pct, bad_hours } } }
+ */
+export function useSla(type, days = 30, refreshMs = 300_000) {
+  const [sla, setSla] = useState({ target: null, days, data: {} })
+  const load = useCallback(async () => {
+    try {
+      const r = await api.monitoring.getSla(type, days)
+      if (r?.success && r.data && typeof r.data === 'object') setSla({ target: r.target_pct ?? null, days: r.days ?? days, data: r.data })
+    } catch { /* süs */ }
+  }, [type, days])
+  useVisibleInterval(load, refreshMs, true)
+  return sla
+}
+
 export default useSparklines

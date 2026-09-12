@@ -196,6 +196,8 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.weekly-report.deadline-day",  "monitoring", Type.ENUM,
                 java.util.List.of("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")),
         new Setting("site.monitor.weekly-report.deadline-time", "monitoring", Type.STRING),
+        // Kullanılabilirlik hedefi (%) — izleme kartlarındaki 30 günlük SLA satırı bununla karşılaştırılır (2026-09-12, #11).
+        new Setting("site.monitor.sla.target-pct",             "monitoring", Type.DOUBLE),
         // Birleşik aktivite akışı (Kayıtlar → Aktivite) kayıt saklama süresi — bu günden eski aktiviteler gece temizlenir.
         new Setting("site.monitor.activity.retention-days",           "monitoring", Type.INT),
         // Denetim (audit) kayıt saklama süresi (gün) + silmeden önce JSONL arşiv üretimi (append-only + arşiv).

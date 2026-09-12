@@ -99,4 +99,19 @@ class MonitorSparklineServiceTest {
         assertThat(svc.sparklines("http", 9999, Set.of())).isEmpty();
         assertThat(MonitorSparklineService.KINDS).containsKeys("http", "ping", "port", "dns", "keyword", "page", "pagespeed", "scripted");
     }
+    @Test
+    @DisplayName("availability: 30 gün toplam/hata/yüzde (iki ondalık) + hatalı saat kovası; pencere dışı satır sayılmaz; gün tavanı 90")
+    void availability() {
+        check(1, 5,   200L, null);
+        check(1, 65,  null, "timeout");   // farklı saat kovası
+        check(1, 66,  null, "timeout");   // aynı kova → bad_hours yine 1
+        check(1, 3 * 24 * 60, 300L, null);
+        check(1, 100 * 24 * 60, 300L, null);   // 100 gün önce — 90 gün tavanı dışında
+        Map<Long, Map<String, Object>> out = svc.availability("http", 9999, Set.of(1L, 3L));
+        Map<String, Object> m = out.get(1L);
+        assertThat(m).containsEntry("n", 4).containsEntry("fail", 2).containsEntry("bad_hours", 1);
+        assertThat((Double) m.get("up_pct")).isEqualTo(50.0);
+        assertThat(out.get(3L)).containsEntry("n", 0).containsEntry("bad_hours", 0);
+        assertThat(out.get(3L).get("up_pct")).isNull();
+    }
 }

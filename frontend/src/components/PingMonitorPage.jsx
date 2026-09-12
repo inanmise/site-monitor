@@ -38,7 +38,7 @@ import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorSpark from './ui/MonitorSpark.jsx'
-import { useSparklines } from '../hooks/useSparklines.js'
+import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
@@ -81,6 +81,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const canCheckRow = canManageRow
   const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))   // silme: TEAM_ADMIN/ADMIN
   const sparks = useSparklines('ping')   // kart mini trendi (2026-09-12)
+  const sla = useSla('ping')   // 30 günlük kullanılabilirlik / hedef (2026-09-12, #11)
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
@@ -537,7 +538,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
               </div>
               <div className="upt-card-domain" title={m.host}>{m.host}</div>
               <MonitorCardMeta monitor={m} />
-              <MonitorSpark spark={sparks[String(m.id)]} />
+              <MonitorSpark spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days} />
               <div className="upt-card-divider" />
               <div className="upt-card-metrics">
                 <div className="upt-metric">
