@@ -65,6 +65,7 @@ const MonitorChangesConsole = lazy(() => import('./components/admin/MonitorChang
 const WeakAlgorithmReport = lazy(() => import('./components/admin/WeakAlgorithmReport'))
 import TodayPanel from './components/TodayPanel.jsx'
 import RecentChangesLine from './components/RecentChangesLine.jsx'
+import HelpDrawer from './components/HelpDrawer.jsx'
 const WeeklyReportsPage = lazy(() => import('./components/WeeklyReportsPage'))
 const IncidentHistoryPage = lazy(() => import('./components/IncidentHistoryPage'))
 const SystemHealth = lazy(() => import('./components/admin/SystemHealth'))
@@ -924,6 +925,8 @@ export default function App() {
       )}
 
       <main className="app-main">
+        {/* Bağlama duyarlı yardım (2026-09-12, #24): sağ altta "?", o sayfanın kılavuz bölümü yan panelde */}
+        <HelpDrawer tab={tab} />
         <AnnouncementBanner heroOnMount />
         {/* Yalnız şüpheli durumda (önceki girişten bu yana başarısız deneme varsa) görünür. */}
         <LastLoginNotice info={loginInfo} />

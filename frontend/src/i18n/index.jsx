@@ -4592,6 +4592,11 @@ export const TR = {
   'act.folded': '{0} ardışık kontrol — açmak için tıklayın',
   'act.foldedErrors': '{0} hata',
   'sys.breach': 'ihlal',   // grafik eşik rozeti (2026-09-12, #23)
+  // Bağlama duyarlı yardım (2026-09-12, #24)
+  'helpd.open': 'Bu sayfa için yardım',
+  'helpd.title': 'Bu sayfa nasıl kullanılır?',
+  'helpd.full': 'Tam kılavuz',
+  'helpd.none': 'Bu sayfa için ayrı bir kılavuz bölümü yok — tam kılavuza bakın.',
   // Zayıf Algoritma Raporu — zenginleştirme (2026-09-12)
   'wa.loadError':         'Rapor yüklenemedi',
   'wa.retry':             'Yeniden dene',
@@ -11289,6 +11294,11 @@ export const EN = {
   'act.folded': '{0} consecutive checks — click to expand',
   'act.foldedErrors': '{0} errors',
   'sys.breach': 'breaches',   // chart threshold badge (2026-09-12, #23)
+  // Contextual help (2026-09-12, #24)
+  'helpd.open': 'Help for this page',
+  'helpd.title': 'How to use this page',
+  'helpd.full': 'Full guide',
+  'helpd.none': 'There is no dedicated guide section for this page — see the full guide.',
   // Weak Algorithm Report — enrichment (2026-09-12)
   'wa.loadError':         'The report could not be loaded',
   'wa.retry':             'Try again',
