@@ -54,6 +54,8 @@ public class WeakAlgorithmReportService {
     static final int TREND_DAYS = 30;
     /** NIST SP 800-57 2030 sonrası asgari: RSA/DSA 3072 bit (112-bit güvenlik sınıfı biter). */
     static final int RSA_2030_MIN_BITS = 3072;
+    /** NIST SP 800-131A Rev.2: 112-bit güvenlik sınıfı (RSA 2048) 2030-12-31 sonrası KABUL EDİLMEZ. */
+    static final LocalDate RSA_2048_SUNSET = LocalDate.of(2030, 12, 31);
     static final int INTERMEDIATE_WARN_DAYS = 30;
 
     /** Kural kataloğu — sıra arayüz sırasıdır. */
@@ -141,6 +143,17 @@ public class WeakAlgorithmReportService {
                     && lc.getPublicKeySize() >= 2048 && lc.getPublicKeySize() < RSA_2030_MIN_BITS) {
                 Map<String, Object> o = baseRow(lc, inv, teams);
                 o.put("reason", "key.rsa3072");
+                // Beklenen eylem (2026-09-12, kullanıcı: "domainlerden bekleneni daha net aktaralım"):
+                //   renew   → sertifika 2030 sonundan ÖNCE zaten dolacak: sıradaki yenilemede CSR'ı 3072+/EC üret
+                //   reissue → sertifika 2030'u AŞIYOR: yenilemeyi beklemek yetmez, erken yeniden düzenleme gerekir
+                //   unknown → bitiş tarihi bilinmiyor
+                LocalDate notAfter = parseDate(lc.getNotAfter());
+                String action = notAfter == null ? "unknown" : notAfter.isAfter(RSA_2048_SUNSET) ? "reissue" : "renew";
+                o.put("action", action);
+                o.put("renewal_by", notAfter == null ? null : (notAfter.isAfter(RSA_2048_SUNSET) ? RSA_2048_SUNSET : notAfter).toString());
+                o.put("target", "RSA 3072 / ECDSA P-256");
+                o.put("exception", exceptions.get(inv.getDomain()) == null ? null : exceptionJson(exceptions.get(inv.getDomain()), today));
+                if (o.get("exception") == null) o.remove("exception");
                 outlook.add(o);
             }
 
@@ -231,9 +244,38 @@ public class WeakAlgorithmReportService {
 
         Map<String, Object> outlookMap = new LinkedHashMap<>();
         outlookMap.put("year", 2030);
+        outlookMap.put("sunset", RSA_2048_SUNSET.toString());
         outlookMap.put("rsa_min_bits", RSA_2030_MIN_BITS);
         outlookMap.put("affected", outlook.size());
-        outlook.sort(Comparator.comparing(m -> String.valueOf(m.get("domain"))));
+        // Risk özeti: filo payı, eylem kırılımı, takım kırılımı, en erken/en geç bitiş, kalan gün.
+        int rsaFleet = 0;
+        for (LatestCheck lc : lcByDomain.values()) if (isRsaLike(lc.getPublicKeyAlgorithm())) rsaFleet++;
+        int checkedCount = active.size() - neverChecked;
+        long reissue = outlook.stream().filter(m -> "reissue".equals(m.get("action"))).count();
+        long renew   = outlook.stream().filter(m -> "renew".equals(m.get("action"))).count();
+        long unknown = outlook.stream().filter(m -> "unknown".equals(m.get("action"))).count();
+        Map<String, Integer> byTeam = new LinkedHashMap<>();
+        for (Map<String, Object> m : outlook) byTeam.merge(m.get("team_name") == null ? "—" : String.valueOf(m.get("team_name")), 1, Integer::sum);
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("checked", checkedCount);
+        summary.put("rsa_fleet", rsaFleet);
+        summary.put("pct_of_checked", checkedCount == 0 ? 0 : Math.round(100.0 * outlook.size() / checkedCount));
+        summary.put("pct_of_rsa", rsaFleet == 0 ? 0 : Math.round(100.0 * outlook.size() / rsaFleet));
+        summary.put("reissue", reissue);
+        summary.put("renew", renew);
+        summary.put("unknown", unknown);
+        summary.put("days_to_sunset", ChronoUnit.DAYS.between(now.atZone(ZoneOffset.UTC).toLocalDate(), RSA_2048_SUNSET));
+        summary.put("by_team", sortedDesc(byTeam));
+        outlookMap.put("summary", summary);
+        // Erken eylem gerekenler (reissue) üstte, sonra en yakın yenileme tarihi
+        outlook.sort((a, b) -> {
+            int c = Integer.compare(actionRank((String) a.get("action")), actionRank((String) b.get("action")));
+            if (c != 0) return c;
+            String ra = (String) a.get("renewal_by"), rb = (String) b.get("renewal_by");
+            if (ra == null || rb == null) return ra == null ? (rb == null ? 0 : 1) : -1;
+            c = ra.compareTo(rb);
+            return c != 0 ? c : String.valueOf(a.get("domain")).compareTo(String.valueOf(b.get("domain")));
+        });
         outlookMap.put("rows", outlook);
 
         List<Map<String, Object>> teamRows = new ArrayList<>();
@@ -494,6 +536,16 @@ public class WeakAlgorithmReportService {
         if (isBlank(alg)) return false;
         String up = alg.toUpperCase(Locale.ROOT);
         return up.contains("RSA") || up.contains("DSA");
+    }
+
+    private static int actionRank(String a) {
+        return switch (a == null ? "" : a) { case "reissue" -> 0; case "renew" -> 1; default -> 2; };
+    }
+
+    private static LocalDate parseDate(String iso) {
+        if (isBlank(iso)) return null;
+        try { return LocalDate.parse(iso.trim().substring(0, Math.min(10, iso.trim().length()))); }
+        catch (Exception e) { return null; }
     }
 
     private static String blankTo(String s, String d) { return isBlank(s) ? d : s.trim(); }

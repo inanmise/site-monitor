@@ -148,7 +148,34 @@ class WeakAlgorithmReportServiceTest {
         Map<?, ?> outlook = (Map<?, ?>) svc.build().get("outlook");
         assertThat(outlook.get("affected")).isEqualTo(1);
         assertThat(outlook.get("rsa_min_bits")).isEqualTo(3072);
-        assertThat(rows(outlook.get("rows")).get(0)).containsEntry("domain", "rsa2048.example.com").containsEntry("reason", "key.rsa3072");
+        assertThat(outlook.get("sunset")).isEqualTo("2030-12-31");
+        assertThat(rows(outlook.get("rows")).get(0)).containsEntry("domain", "rsa2048.example.com").containsEntry("reason", "key.rsa3072")
+                .containsEntry("action", "unknown").containsEntry("target", "RSA 3072 / ECDSA P-256");   // notAfter yok → önce kontrol
+        Map<String, Object> sm = (Map<String, Object>) outlook.get("summary");
+        assertThat(sm).containsEntry("checked", 3).containsEntry("rsa_fleet", 2).containsEntry("pct_of_checked", 33L)
+                .containsEntry("pct_of_rsa", 50L).containsEntry("unknown", 1L);
+        assertThat((Long) sm.get("days_to_sunset")).isGreaterThan(0);
+    }
+
+    @Test
+    @DisplayName("2030 beklenen eylem: sertifika 2030 sonunu aşıyorsa 'reissue' (en geç 2030-12-31), öncesinde doluyorsa 'renew' (en geç bitiş tarihi); reissue üstte")
+    void build_outlookActions() {
+        LatestCheck longLived = lc("long.example.com", "SHA256withRSA", "RSA", 2048, "TLSv1.3", "TLS_AES_256_GCM_SHA384");
+        longLived.setNotAfter("2031-06-01T00:00:00");
+        LatestCheck soon = lc("soon.example.com", "SHA256withRSA", "RSA", 2048, "TLSv1.3", "TLS_AES_256_GCM_SHA384");
+        soon.setNotAfter("2027-03-01T00:00:00");
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv("soon.example.com", 1L), inv("long.example.com", 1L)));
+        when(latestCheckRepo.findAll()).thenReturn(List.of(longLived, soon));
+        when(teamRepo.findAll()).thenReturn(List.of(team(1L, "Takım A")));
+
+        Map<?, ?> outlook = (Map<?, ?>) svc.build().get("outlook");
+        List<Map<String, Object>> r = rows(outlook.get("rows"));
+        assertThat(r).hasSize(2);
+        assertThat(r.get(0)).containsEntry("domain", "long.example.com").containsEntry("action", "reissue").containsEntry("renewal_by", "2030-12-31");
+        assertThat(r.get(1)).containsEntry("domain", "soon.example.com").containsEntry("action", "renew").containsEntry("renewal_by", "2027-03-01");
+        Map<String, Object> sm = (Map<String, Object>) outlook.get("summary");
+        assertThat(sm).containsEntry("reissue", 1L).containsEntry("renew", 1L).containsEntry("unknown", 0L);
+        assertThat(rows(sm.get("by_team")).get(0)).containsEntry("label", "Takım A").containsEntry("count", 2);
     }
 
     @Test

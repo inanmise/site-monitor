@@ -7144,6 +7144,24 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   background: #fef3c7; color: #92400e; font-size: .82em; font-weight: 600; }
 .wa-outlook-chip small { font-weight: 400; opacity: .85; }
 
+/* 2030 görünümü — uyarı bandı + beklenen adımlar */
+.wa-outlook-warn { padding: 12px 16px; border-radius: 10px; border: 1px solid #f59e0b; border-left-width: 4px;
+  background: #fffbeb; color: #78350f; display: flex; flex-direction: column; gap: 6px; font-size: .9em; }
+.wa-outlook-warn.is-clear { border-color: #86efac; background: #f0fdf4; color: #166534; }
+.wa-outlook-warn p { margin: 0; line-height: 1.5; }
+.wa-outlook-warn-head { display: flex; align-items: center; gap: 8px; font-size: 1.02em; }
+.wa-outlook-risk { margin: 2px 0 0; padding-left: 20px; line-height: 1.55; }
+.wa-outlook-expect { padding: 10px 14px; border: 1px dashed var(--border); border-radius: 10px; }
+.wa-outlook-steps { margin: 4px 0 0; padding-left: 20px; line-height: 1.6; font-size: .88em; }
+.wa-outlook-action { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: .76em; font-weight: 700; white-space: nowrap; }
+.wa-outlook-action--reissue { background: #fee2e2; color: #991b1b; }
+.wa-outlook-action--renew   { background: #fef3c7; color: #92400e; }
+.wa-outlook-action--unknown { background: var(--bg-hover); color: var(--text-light); }
+[data-theme="dark"] .wa-outlook-warn { background: #422006; border-color: #b45309; color: #fde68a; }
+[data-theme="dark"] .wa-outlook-warn.is-clear { background: #052e16; border-color: #166534; color: #86efac; }
+[data-theme="dark"] .wa-outlook-action--reissue { background: #450a0a; color: #fca5a5; }
+[data-theme="dark"] .wa-outlook-action--renew   { background: #422006; color: #fcd34d; }
+
 /* Trend */
 .wa-trend { width: 100%; height: 90px; display: block; }
 .wa-trend-bar { fill: var(--bg-hover); }

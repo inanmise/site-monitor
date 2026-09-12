@@ -455,20 +455,84 @@ export default function WeakAlgorithmReport() {
         </div>
       </Section>
 
-      {/* ── 4. 2030 görünümü ── */}
+      {/* ── 4. 2030 görünümü — risk + beklenen eylem (2026-09-12: "riskimizi bildirelim, bekleneni net aktaralım") ── */}
       <Section id="outlook" icon={CalendarClock} title={t('wa.secOutlook', data?.outlook?.year ?? 2030)} count={data?.outlook?.affected ?? 0}
         tone={(data?.outlook?.affected ?? 0) > 0 ? 'warn' : 'ok'} open={open.outlook} onToggle={() => toggle('outlook')}>
-        <p className="wa-banner-info">{t('wa.outlookInfo', data?.outlook?.rsa_min_bits ?? 3072)}</p>
-        {(data?.outlook?.rows || []).length === 0 ? <p className="wa-muted">{t('wa.outlookEmpty')}</p> : (
-          <div className="wa-chip-list">
-            {data.outlook.rows.map(r => (
-              <span key={r.domain} className="wa-outlook-chip" title={`${r.public_key_algorithm} ${r.public_key_size}`}>
-                {r.domain} <small className="wa-mono">{r.public_key_algorithm} {r.public_key_size}</small>
-                {r.team_name && <small> · {r.team_name}</small>}
-              </span>
-            ))}
-          </div>
-        )}
+        {(() => {
+          const ol = data?.outlook || {}
+          const sm = ol.summary || {}
+          const rowsO = ol.rows || []
+          const sunset = ol.sunset ? formatDate(ol.sunset) : '31.12.2030'
+          const years = Math.max(0, Math.round(((sm.days_to_sunset ?? 0) / 365.25) * 10) / 10)
+          const actionLabel = (a) => t(`wa.outlookAction.${a || 'unknown'}`)
+          return (
+            <>
+              {/* Uyarı bandı — bugün güvenli, yarın uyumsuz: risk sayılarla */}
+              <div className={`wa-outlook-warn${rowsO.length ? '' : ' is-clear'}`} role="note">
+                <div className="wa-outlook-warn-head">
+                  {rowsO.length ? <AlertTriangle size={18} aria-hidden="true" /> : <ShieldCheck size={18} aria-hidden="true" />}
+                  <b>{rowsO.length ? t('wa.outlookRiskTitle', rowsO.length, sm.pct_of_checked ?? 0, sunset) : t('wa.outlookEmpty')}</b>
+                </div>
+                <p>{t('wa.outlookWhat', ol.rsa_min_bits ?? 3072, sunset)}</p>
+                <p>{t('wa.outlookWhy')}</p>
+                {rowsO.length > 0 && (
+                  <ul className="wa-outlook-risk">
+                    <li>{t('wa.outlookRiskReissue', sm.reissue ?? 0)}</li>
+                    <li>{t('wa.outlookRiskRenew', sm.renew ?? 0)}</li>
+                    {(sm.unknown ?? 0) > 0 && <li>{t('wa.outlookRiskUnknown', sm.unknown)}</li>}
+                    <li>{t('wa.outlookRiskTime', years, sm.days_to_sunset ?? 0)}</li>
+                    {(sm.by_team || []).length > 0 && (
+                      <li>{t('wa.outlookRiskTeams')} {sm.by_team.map(b => `${b.label} (${b.count})`).join(' · ')}</li>
+                    )}
+                  </ul>
+                )}
+              </div>
+
+              {/* Ne bekleniyor — takımın yapacağı iş, adım adım */}
+              <div className="wa-outlook-expect">
+                <div className="wa-bars-title">{t('wa.outlookExpectTitle')}</div>
+                <ol className="wa-outlook-steps">
+                  <li>{t('wa.outlookStep1')}</li>
+                  <li>{t('wa.outlookStep2')}</li>
+                  <li>{t('wa.outlookStep3')}</li>
+                  <li>{t('wa.outlookStep4')}</li>
+                  <li>{t('wa.outlookStep5')}</li>
+                </ol>
+              </div>
+
+              {rowsO.length > 0 && (
+                <div className="wa-table-wrap">
+                  <table className="wa-table">
+                    <thead><tr>
+                      <th>{t('wa.colAction')}</th><th>{t('wa.colDomain')}</th><th>{t('wa.colTeam')}</th><th>{t('wa.colKeyAlgo')}</th>
+                      <th>{t('wa.colTarget')}</th><th>{t('wa.colExpiry')}</th><th>{t('wa.colRenewBy')}</th><th>{t('wa.colActions')}</th>
+                    </tr></thead>
+                    <tbody>
+                      {rowsO.map(r => (
+                        <tr key={r.domain} className={`wa-row wa-row-${r.action === 'reissue' ? 'high' : 'medium'}`}>
+                          <td>
+                            <span className={`wa-outlook-action wa-outlook-action--${r.action || 'unknown'}`}>{actionLabel(r.action)}</span>
+                            <div className="wa-sub">{t(`wa.outlookActionHint.${r.action || 'unknown'}`)}</div>
+                          </td>
+                          <td className="wa-cell-domain">{r.domain}<ExceptionChip ex={r.exception} /></td>
+                          <td><TeamCell row={r} /></td>
+                          <td className="wa-mono">{r.public_key_algorithm} {r.public_key_size}<div className="wa-sub">{t('wa.outlookNow')}</div></td>
+                          <td className="wa-mono">{r.target}<div className="wa-sub">{t('wa.outlookTargetHint')}</div></td>
+                          <td>
+                            <div>{r.not_after ? formatDate(r.not_after) : '—'}</div>
+                            {r.days_remaining != null && <div className="wa-sub">{t('wa.daysLeft', r.days_remaining)}</div>}
+                          </td>
+                          <td className={r.action === 'reissue' ? 'wa-expiring' : ''}>{r.renewal_by ? formatDate(r.renewal_by) : '—'}</td>
+                          <td><Actions row={r} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )
+        })()}
       </Section>
 
       {/* ── 7. Takım kırılımı ── */}

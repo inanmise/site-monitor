@@ -50,7 +50,10 @@ const EMPTY = {
   scan: { active_domains: 212, checked: 210, checked_24h: 205, never_checked: 2, error: 3, latest_checked_at: '2026-09-12T10:00:00', generated_at: '2026-09-12T10:05:00' },
   rules: RULES,
   distribution: { signature: [{ label: 'SHA256withRSA', count: 180 }, { label: 'SHA256withECDSA', count: 30 }], key: [{ label: 'RSA 2048', count: 150 }], tls: [{ label: 'TLSv1.3', count: 200 }], cipher_tier: [{ label: 'STRONG', count: 210 }] },
-  outlook: { year: 2030, rsa_min_bits: 3072, affected: 1, rows: [{ domain: 'rsa2048.example.com', public_key_algorithm: 'RSA', public_key_size: 2048, team_name: 'Takım A', reason: 'key.rsa3072' }] },
+  outlook: { year: 2030, sunset: '2030-12-31', rsa_min_bits: 3072, affected: 1,
+    summary: { checked: 210, rsa_fleet: 150, pct_of_checked: 1, pct_of_rsa: 1, reissue: 1, renew: 0, unknown: 0, days_to_sunset: 1571, by_team: [{ label: 'Takım A', count: 1 }] },
+    rows: [{ domain: 'rsa2048.example.com', public_key_algorithm: 'RSA', public_key_size: 2048, team_id: 1, team_name: 'Takım A', reason: 'key.rsa3072',
+      action: 'reissue', renewal_by: '2030-12-31', target: 'RSA 3072 / ECDSA P-256', not_after: '2031-06-01T00:00:00', days_remaining: 1700 }] },
   tls: { total: 0, rows: [] }, chain: { total: 0, rows: [] },
   teams: { rows: [{ team_id: 1, team_name: 'Takım A', total: 200, weak: 0, tls: 0, chain: 0 }], unowned: { total: 12, weak: 0, tls: 0, chain: 0 } },
   trend: { days: 30, series: series(), detected: [], resolved: [] },
@@ -96,6 +99,10 @@ describe('WeakAlgorithmReport — zengin rapor (2026-09-12)', () => {
     // 2030 görünümü sayaç rozeti 1 ve alan listede
     fireEvent.click(screen.getByRole('button', { name: /2030/ }))
     expect(screen.getByText('rsa2048.example.com')).toBeInTheDocument()
+    // Risk bandı sayılarla + beklenen eylem etiketi (2030 sonunu aşan sertifika → erken yeniden düzenle)
+    expect(screen.getByText(/Risk: 1 alan|Risk: 1 domains/)).toBeInTheDocument()
+    expect(screen.getByText(/Erken yeniden düzenle|Re-issue early/)).toBeInTheDocument()
+    expect(screen.getByText(/Alan sahibinden beklenen|What the domain owner is expected to do/)).toBeInTheDocument()
     // Sahipsiz alan uyarısı (takım bölümü)
     fireEvent.click(screen.getByRole('button', { name: /Takım kırılımı|By team/ }))
     expect(screen.getByText(/Takımı olmayan 12 alan|12 domains have no team/)).toBeInTheDocument()
