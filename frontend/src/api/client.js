@@ -1270,6 +1270,23 @@ export function formatTime(iso) {
   }
 }
 
+/**
+ * Yerel gün anahtarı 'YYYY-MM-DD' (QA 2026-09-12, ISSUE-004): sunucu zaman damgaları UTC'dir
+ * ("2026-10-23T23:59:59" = 24/10 02:59 İstanbul). `.slice(0, 10)` UTC gününü alır ve takvim/ICS
+ * olayı bir gün ERKEN düşer. Yalnız tarih ("YYYY-MM-DD") verildiyse olduğu gibi döner.
+ */
+export function localDayKey(iso) {
+  if (!iso) return null
+  if (typeof iso === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(iso.trim())) return iso.trim()
+  try {
+    const d = new Date(toUtc(iso))
+    if (Number.isNaN(d.getTime())) return String(iso).slice(0, 10)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  } catch {
+    return String(iso).slice(0, 10)
+  }
+}
+
 export function formatDateOnly(iso) {
   if (!iso) return '—'
   try {
