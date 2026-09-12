@@ -43,6 +43,12 @@ const emptyForm = {
   startAt: '', durationMinutes: 60, recurrence: 'NONE', daysOfWeek: [], dayOfMonth: 1,
 }
 
+function dayInTz(utcIso, tz) {
+  if (!utcIso) return ''
+  try {
+    return new Date(utcIso.endsWith('Z') ? utcIso : utcIso + 'Z').toLocaleDateString('sv-SE', { timeZone: tz })   // YYYY-MM-DD, pencerenin diliminde (saatle aynı gün)
+  } catch { return utcIso.slice(0, 10) }
+}
 function todInTz(utcIso, tz) {
   if (!utcIso) return ''
   try {
@@ -233,7 +239,7 @@ export default function MaintenanceWindowsPage({ systemRole }) {
                   <td><div className="mw-name">{w.name}</div>{w.description && <div className="mw-desc">{w.description}</div>}</td>
                   <td>{w.all_monitors ? <span className="mw-all">{t('mw.allMonitors')}</span> : (w.target_count + ' ' + t('mw.monitors'))}</td>
                   <td className="mw-sched">{scheduleSummary(w)}</td>
-                  <td className="mw-next">{w.next_occurrence ? todInTz(w.next_occurrence, w.timezone) + ' · ' + (w.next_occurrence.slice(0, 10)) : '—'}</td>
+                  <td className="mw-next">{w.next_occurrence ? todInTz(w.next_occurrence, w.timezone) + ' · ' + dayInTz(w.next_occurrence, w.timezone) : '—'}</td>
                   <td>{statusBadge(w.status)}</td>
                   <td className="mw-th-actions">
                     {canManage && <>
