@@ -193,4 +193,11 @@ public class CertificateInventory {
      */
     @jakarta.persistence.Column(name = "notification_group_id")
     private Long notificationGroupId;
+
+    // ── Planlanan yenileme (2026-09-12, vade takvimi #6): operatör "bu tarihte yenileyeceğiz" der; takvimde
+    // taralı çizilir, gerçek yenileme (parmak izi değişimi) görülünce sunucu temizler. Hepsi nullable.
+    @Column(name = "renewal_planned_at", length = 10)      private String renewalPlannedAt;      // YYYY-MM-DD
+    @Column(name = "renewal_planned_by", length = 100)     private String renewalPlannedBy;
+    @Column(name = "renewal_planned_by_name")              private String renewalPlannedByName;
+    @Column(name = "renewal_planned_note", length = 500)   private String renewalPlannedNote;
 }
