@@ -12775,6 +12775,19 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .cc-renewed-chip { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 1px 6px; border-radius: 6px; font-size: .74em; font-weight: 600; background: #dcfce7; color: #166534; white-space: nowrap; }
 [data-theme="dark"] .cc-renewed-chip { background: #052e16; color: #86efac; }
 
+/* Toplu işlem çubuğu (izleme sayfaları, 2026-09-12 #13) */
+.bulkbar { position: sticky; top: 8px; z-index: 6; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; padding: 8px 12px;
+  border: 1px solid var(--primary); border-radius: 10px; background: var(--bg-surface); box-shadow: 0 6px 20px rgba(0,0,0,.12); }
+.bulkbar-all, .bulkbar-close { background: none; border: 0; color: var(--text-light); cursor: pointer; padding: 4px; border-radius: 6px; display: inline-flex; }
+.bulkbar-all:hover, .bulkbar-close:hover { background: var(--bg-hover); color: var(--text); }
+.bulkbar-count { font-weight: 700; }
+.bulkbar-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.bulkbar-actions .btn { display: inline-flex; align-items: center; gap: 4px; }
+.bulkbar-field { display: inline-flex; align-items: center; gap: 4px; padding-left: 6px; border-left: 1px solid var(--border); }
+.bulkbar-field .ss-trigger, .bulkbar-field .input { min-width: 140px; }
+.bulkbar-close { margin-left: auto; }
+.upt-card-check { width: 15px; height: 15px; margin: 0 6px 0 0; cursor: pointer; accent-color: var(--primary); }
+
 /* Sütun seçici + kayıtlı görünüm (Tüm Sertifikalar, 2026-09-12 #10) */
 .colpick { position: relative; }
 .colpick-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 220px; padding: 8px; border: 1px solid var(--border); border-radius: 8px;

@@ -11,6 +11,7 @@ import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorSpark from './ui/MonitorSpark.jsx'
+import BulkActionBar from './ui/BulkActionBar.jsx'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
@@ -85,6 +86,10 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   // kuralı UYDURULMUYOR; kartın ▶ düğmesiyle birebir aynı yüzey.
   const canCheckRow = canManageRow
   const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))
+  // Toplu seçim (2026-09-12, #13): kart kutucuğu; yalnız yönetebildiği satırlar seçilebilir
+  const [bulkSel, setBulkSel] = useState(() => new Set())
+  const toggleBulk = (id) => setBulkSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
+
   const sparks = useSparklines('port')   // kart mini trendi (2026-09-12)
   const sla = useSla('port')   // 30 günlük kullanılabilirlik / hedef (2026-09-12, #11)
   const [monitors, setMonitors] = useState([])
@@ -522,12 +527,19 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
         <div className="mon-empty">{t('port.noMonitors')}</div>
       ) : (
         <>
+        <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow}
+          api={{ update: api.monitoring.updatePortMonitor, remove: api.monitoring.deletePortMonitor }}
+          onClear={() => setBulkSel(new Set())} onDone={load}
+          onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
         <div className="upt-grid">
           {pager.pageItems.map(m => (
             <div key={m.id}
               className={`upt-card ${cardClass(m)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
               onClick={() => openModal(m)}>
               <div className="upt-card-top">
+                {canManageRow(m) && (
+                  <input type="checkbox" className="upt-card-check" checked={bulkSel.has(m.id)} onChange={() => toggleBulk(m.id)} onClick={(e) => e.stopPropagation()} aria-label={t('bulk.selectOne')} />
+                )}
                 {statusBadge(m.status)}
                 {alarmBadge(m)}<MaintenanceBadge target={m.host} />
                 <span className="upt-card-top-right">
