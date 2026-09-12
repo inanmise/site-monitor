@@ -39,6 +39,8 @@ const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
+import MonitorSpark from './ui/MonitorSpark.jsx'
+import { useSparklines } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
@@ -89,6 +91,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
   // kuralı UYDURULMUYOR; kartın ▶ düğmesiyle birebir aynı yüzey.
   const canCheckRow = canManageRow
   const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))
+  const sparks = useSparklines('http')   // kart mini trendi (2026-09-12)
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
@@ -532,6 +535,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
               </div>
               <div className="upt-card-domain" title={m.url}>{m.url}</div>
               <MonitorCardMeta monitor={m} />
+              <MonitorSpark spark={sparks[String(m.id)]} />
               <div className="upt-card-divider" />
               <div className="upt-card-metrics">
                 <div className="upt-metric">

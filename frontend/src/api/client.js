@@ -1145,6 +1145,8 @@ export const api = {
 
     // HTTP / Website
     getHttpMonitors:   () => request('/monitoring/http'),
+    // Kart mini trendi (2026-09-12): tür başına tek toplu istek — saatlik kovalar + son 5 kontrol
+    getSparklines: (type, hours = 24) => request(`/monitoring/sparklines?type=${encodeURIComponent(type)}&hours=${hours}`),
     createHttpMonitor: (data) => request('/monitoring/http', { method: 'POST', body: JSON.stringify(data) }),
     updateHttpMonitor: (id, data) => request(`/monitoring/http/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteHttpMonitor: (id) => request(`/monitoring/http/${id}`, { method: 'DELETE' }),

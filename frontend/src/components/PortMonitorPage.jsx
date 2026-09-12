@@ -10,6 +10,8 @@ import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
+import MonitorSpark from './ui/MonitorSpark.jsx'
+import { useSparklines } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
@@ -83,6 +85,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   // kuralı UYDURULMUYOR; kartın ▶ düğmesiyle birebir aynı yüzey.
   const canCheckRow = canManageRow
   const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))
+  const sparks = useSparklines('port')   // kart mini trendi (2026-09-12)
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
@@ -535,6 +538,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
               Host'u ":" ile bolmek onu tek bir metin dugumu olmaktan cikariyordu. */}
               <div className="upt-card-domain" title={`${m.host}:${m.port}`}>{m.host}</div>
               <MonitorCardMeta monitor={m} />
+              <MonitorSpark spark={sparks[String(m.id)]} />
               <div className="upt-card-divider" />
               <div className="upt-card-metrics">
                 <div className="upt-metric">

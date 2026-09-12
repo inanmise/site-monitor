@@ -18,6 +18,8 @@ import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
+import MonitorSpark from './ui/MonitorSpark.jsx'
+import { useSparklines } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import { Plus, ChevronDown, Globe, Info, Network, AlertTriangle, FlaskConical, Check, RefreshCw, Pause, BellDot, ArrowLeftRight } from 'lucide-react'
@@ -93,6 +95,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   // Silme SEMANTİĞİ hâlâ standalone'a göre ayrışır (standalone → gerçek silme; envanter-türevi →
   // pasifleştirme, envanter senkronu yeniden açabilir); ayrışan yalnız DAVRANIŞ, yetki değil.
   const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))
+  const sparks = useSparklines('dns')   // kart mini trendi (2026-09-12)
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
@@ -580,6 +583,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
               </div>
               <div className="upt-card-domain" title={m.domain}>{m.domain}</div>
               <MonitorCardMeta monitor={m} />
+              <MonitorSpark spark={sparks[String(m.id)]} />
               <div className="upt-card-divider" />
               {/* DEĞİŞTİ/ROTASYON rozetleri kartın içinde kalır: DNS'te asıl sinyal "değer
                   değişti mi" sorusudur, tabloda da en görünür yerdeydi. */}

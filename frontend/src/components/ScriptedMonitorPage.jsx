@@ -48,6 +48,8 @@ import { exitLabel, exitHint, diagnosisHint, k6SyntaxLevel, readPhases, formatBy
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
+import MonitorSpark from './ui/MonitorSpark.jsx'
+import { useSparklines } from '../hooks/useSparklines.js'
 import MonitorModalActions from './ui/MonitorModalActions.jsx'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
@@ -194,6 +196,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   const myTeam = teamId != null ? String(teamId) : null
   const isOwnTeam = (m) => myTeam != null && String(m.team_id) === myTeam
 
+  const sparks = useSparklines('scripted')   // kart mini trendi (2026-09-12)
   const [monitors, setMonitors] = useState([])
   // Şablon kütüphanesi (Genel + takım). Yükleme hatası sayfayı DÜŞÜRMEZ: liste boş kalsa bile
   // script'i elle yazmak her zaman mümkün olmalı.
@@ -1120,6 +1123,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
               </div>
               <div className="upt-card-domain" title={m.name}>{m.name}</div>
               <MonitorCardMeta monitor={m} />
+              <MonitorSpark spark={sparks[String(m.id)]} />
               <div className="upt-card-divider" />
               <div className="upt-card-metrics">
                 <div className="upt-metric">

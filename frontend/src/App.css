@@ -12435,3 +12435,19 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .help-tip-title { font-weight: 700; font-size: 12.5px; margin-bottom: 4px; color: var(--text); }
 /* pre-line: sözlükteki \n gerçek satır olur (üç satırlık "ne işe yarar/faydası/önerilen"). */
 .help-tip-text { white-space: pre-line; color: var(--text-muted); }
+
+/* ── Kart mini trendi + son 5 kontrol (2026-09-12, zenginleştirme #4/#14) ─────────────────── */
+.mspark { display: flex; flex-direction: column; gap: 3px; margin: 6px 0 2px; cursor: default; }
+.mspark-line { display: flex; align-items: center; gap: 8px; }
+.mspark-line .spark { flex: 0 0 120px; }
+.mspark-flat { flex: 0 0 120px; height: 2px; background: var(--border); border-radius: 1px; }
+.mspark-ms { font-size: .78em; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.mspark-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mspark-dots { display: inline-flex; gap: 4px; }
+.mspark-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--border); display: inline-block; }
+.mspark-dot.is-ok { background: var(--success); }
+.mspark-dot.is-fail { background: var(--danger); }
+.mspark-up { font-size: .74em; font-weight: 600; color: var(--text-muted); }
+.mspark-up.is-ok { color: var(--success); }
+.mspark-up.is-warn { color: #d97706; }
+.mspark-up.is-bad { color: var(--danger); }

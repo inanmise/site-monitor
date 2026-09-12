@@ -4358,6 +4358,12 @@ export const TR = {
   'wa.noTeam':            'Takım atanmadı',
   'wa.noOwner':           '—',
   'wa.totalWeak':         'Toplam {0} zayıf sertifika',
+  // Kart mini trendi (2026-09-12)
+  'spark.title': 'Son 24 saat: {0} kontrol, {1} hata',
+  'spark.aria': 'Son 24 saat yanıt süresi trendi',
+  'spark.lastAria': 'Son {0} kontrol',
+  'spark.fail': 'hata',
+  'spark.up': '%{0} erişilebilir',
   // Zayıf Algoritma Raporu — zenginleştirme (2026-09-12)
   'wa.loadError':         'Rapor yüklenemedi',
   'wa.retry':             'Yeniden dene',
@@ -10819,6 +10825,12 @@ export const EN = {
   'wa.noTeam':            'No team assigned',
   'wa.noOwner':           '—',
   'wa.totalWeak':         '{0} weak certificates total',
+  // Card mini trend (2026-09-12)
+  'spark.title': 'Last 24 h: {0} checks, {1} failures',
+  'spark.aria': 'Response-time trend, last 24 h',
+  'spark.lastAria': 'Last {0} checks',
+  'spark.fail': 'failed',
+  'spark.up': '{0}% available',
   // Weak Algorithm Report — enrichment (2026-09-12)
   'wa.loadError':         'The report could not be loaded',
   'wa.retry':             'Try again',
