@@ -193,6 +193,16 @@ export default function RetentionSettings() {
     else toast.error(res?.error || t('settings.saveError'))
   }
 
+  // Envanter çöp kutusu otomatik boşaltma (2026-09-12, envanter #10) — tek sayı, anında kaydedilir
+  const [invPurge, setInvPurge] = useState('')
+  useEffect(() => { if (data) setInvPurge(String(data.inventory_auto_purge_days ?? 0)) }, [data])
+  async function saveInvPurge() {
+    const v = Math.max(0, parseInt(invPurge, 10) || 0)
+    const res = await api.admin.saveRetentionSettings({ 'site.monitor.inventory.auto-purge-days': String(v) })
+    if (res?.success) { toast.success(res.message); load(false) }
+    else toast.error(res?.error || t('settings.saveError'))
+  }
+
   if (!data) {
     // Yukleme BASARISIZ olduysa spinner sonsuza kadar donerdi: load() try/catch tasimadigi
     // icin ag hatasinda promise reject oluyor, hicbir durum guncellenmiyordu. Artik ayni
@@ -349,6 +359,22 @@ export default function RetentionSettings() {
         {openPanel === 'changes' && (
           <div className="ret-panel"><RetentionChangeLog rows={changes} /></div>
         )}
+      </div>
+
+      {/* ── Envanter çöp kutusu (#10) ── */}
+      <div className="admin-section">
+        <h4 className="ldap-subhdr"><Trash2 size={15} /> {t('ret.invPurgeTitle')}</h4>
+        <p className="section-desc">{t('ret.invPurgeDesc')}</p>
+        <div className="threshold-grid">
+          <div className="threshold-field">
+            <label><span className="help-label-row">{t('ret.invPurgeDays')}<HelpTip helpKey="help.set.site.monitor.inventory.auto-purge-days" label={t('ret.invPurgeDays')} /></span></label>
+            <div className="ret-inline-field">
+              <input className="input input-sm" type="number" min={0} max={3650} value={invPurge} onChange={e => setInvPurge(e.target.value)} aria-label={t('ret.invPurgeDays')} />
+              <button type="button" className="btn btn-sm btn-primary" disabled={String(data.inventory_auto_purge_days ?? 0) === String(parseInt(invPurge, 10) || 0)} onClick={saveInvPurge}>{t('ret.invPurgeApply')}</button>
+            </div>
+            <span className="hint"><code>site.monitor.inventory.auto-purge-days</code></span>
+          </div>
+        </div>
       </div>
 
       {/* ── Legal hold ── */}

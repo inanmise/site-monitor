@@ -488,6 +488,10 @@ export const api = {
     },
     // Inventory
     getInventory: (showDeleted = false) => request(`/admin/inventory?showDeleted=${showDeleted}`),
+    // Envanter zenginleştirme (2026-09-12): hijyen bandı + CSV içe aktarma (dry_run varsayılan true)
+    getInventoryHygiene: () => request('/admin/inventory/hygiene'),
+    importInventory: (rows, dryRun = true) =>
+      request('/admin/inventory/import', { method: 'POST', body: JSON.stringify({ rows, dry_run: dryRun }) }),
     getInventoryByDomain: (domain) => request(`/admin/inventory/by-domain?domain=${encodeURIComponent(domain)}`),
     addInventory: (item) => request('/admin/inventory', { method: 'POST', body: JSON.stringify(item) }),
     updateInventory: (id, item) => request(`/admin/inventory/${id}`, { method: 'PUT', body: JSON.stringify(item) }),

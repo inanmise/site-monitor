@@ -79,6 +79,7 @@ public class RetentionAdminController {
         data.put("hold_active", retentionService.holdActive());
         data.put("hold_key", RetentionCatalog.HOLD_KEY);
         data.put("batch_size", settingsService.getInt(RetentionCatalog.BATCH_KEY, 10000));
+        data.put("inventory_auto_purge_days", settingsService.getInt(com.sitemonitor.service.InventoryAutoPurgeService.KEY, 0));   // envanter #10
         // Sabit metin DEĞİL: env/config ile ezilirse arayüz gerçek zamanlamayı göstersin.
         data.put("cleanup_cron", cleanupCron);
         data.put("cleanup_zone", RetentionCatalog.CLEANUP_ZONE);

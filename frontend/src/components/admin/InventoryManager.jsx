@@ -1,12 +1,10 @@
-import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react'
-import { ChevronDown, Download, Users } from 'lucide-react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { ChevronDown, Download, Users, Upload } from 'lucide-react'
 import ModalShell from '../ui/ModalShell.jsx'
-import TeamBadge from '../ui/TeamBadge.jsx'
 import Field from '../ui/Field.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { CONTACT_FIELDS } from '../../utils/inventoryContacts.js'
 import { api } from '../../api/client'
-import { InventoryDetails } from '../inventory/InventoryDetails.jsx'
 import InventoryFormModal from '../inventory/InventoryFormModal.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -15,12 +13,22 @@ import { usePagination } from '../../hooks/usePagination.js'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../../hooks/useUrlQuerySync.js'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
-import KebabMenu from '../ui/KebabMenu.jsx'
 import DiagnosticsModal from './DiagnosticsModal.jsx'
 import { exportInventoryCsv, exportInventoryPdf } from '../../utils/exportInventory'
-import { Spinner, LoadingBlock } from '../ui/Progress.jsx'
-
-const ChangeHistoryTab = lazy(() => import('../history/ChangeHistoryTab.jsx'))
+import { Spinner } from '../ui/Progress.jsx'
+import StatusBlock from '../ui/StatusBlock.jsx'
+import { Inbox } from 'lucide-react'
+import InventoryToolbar from '../inventory/InventoryToolbar.jsx'
+import InventoryHygieneBand, { hygieneIndex } from '../inventory/InventoryHygieneBand.jsx'
+import InventoryTable from '../inventory/InventoryTable.jsx'
+import InventoryTeamView from '../inventory/InventoryTeamView.jsx'
+import InventoryImportModal from '../inventory/InventoryImportModal.jsx'
+import InventoryDrawer from '../inventory/InventoryDrawer.jsx'
+import { useVisibleInterval } from '../../hooks/useVisibleInterval.js'
+import {
+  applyFilters, sortItems, detectOverlaps, filtersToParams, paramsToFilters, readView, writeView, defaultCols,
+  readSavedViews, writeSavedViews, EMPTY_FILTERS,
+} from '../inventory/inventoryModel.js'
 
 /**
  * Toplu sorumlu-ekip atama formu.
@@ -57,7 +65,10 @@ function BulkContactsModal({ count, onApply, onClose }) {
   )
 }
 
-export default function InventoryManager({ onInventoryChange, systemRole, teams: teamsProp = [], isAdmin: isAdminProp = false, openAddSignal = false, onAddConsumed }) {
+// Varsayılan boş liste SABİT: `= []` her render'da yeni kimlik üretir ve aşağıdaki prop-senkron efekti sonsuz döngüye girer (USER + teams verilmeden).
+const NO_TEAMS = []
+
+export default function InventoryManager({ onInventoryChange, systemRole, teams: teamsProp = NO_TEAMS, isAdmin: isAdminProp = false, openAddSignal = false, onAddConsumed }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -71,8 +82,21 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const [transferTeamId, setTransferTeamId]     = useState('')
   const [saving, setSaving]           = useState(false)
   const [statusFilter, setStatusFilter] = useState(() => readUrlParam('stat', 'default'))
-  const [showItem,    setShowItem]    = useState(null)
-  const [showTab,     setShowTab]     = useState('details')
+  const [showItem,    setShowItem]    = useState(null)   // çekmece (#8)
+  const [importOpen,  setImportOpen]  = useState(false)  // CSV içe aktarma (#6)
+  const [hygiene,     setHygiene]     = useState(null)   // /inventory/hygiene (#2)
+  const [notifGroups, setNotifGroups] = useState([])
+  // Süzgeç / sıralama / sütun / yoğunluk / görünüm (#1 #4 #13 #15 #7) — süzgeç URL'de (i_ öneki), gerisi localStorage
+  const [filters, setFilters] = useState(() => paramsToFilters(readUrlParam))
+  const [sort, setSort]       = useState(() => readView().sort || 'domain|asc')
+  const [cols, setColsRaw]    = useState(() => { const v = readView().cols; return Array.isArray(v) && v.length ? v : defaultCols() })
+  const [density, setDensityRaw] = useState(() => readView().density || 'comfortable')
+  const [view, setViewRaw]    = useState(() => readUrlParam('i_view', readView().view || 'table'))
+  const [savedViews, setSavedViews] = useState(readSavedViews)
+  const setCols = (c) => { setColsRaw(c); writeView({ cols: c }) }
+  const setDensity = (d) => { setDensityRaw(d); writeView({ density: d }) }
+  const setView = (v) => { setViewRaw(v); writeView({ view: v }) }
+  const setSortPersist = (v) => { setSort(v); writeView({ sort: v }) }
   const [diag,        setDiag]        = useState(null)   // { domain, port } → DiagnosticsModal
   const [exportOpen,  setExportOpen]  = useState(false)
   const [exporting,   setExporting]   = useState(false)
@@ -87,7 +111,15 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     // Tek takım modeli: ekleyebilen/düzenleyebilen herkes (admin + team-admin) takım
     // listesine ihtiyaç duyar; team-admin'e backend yalnız kapsamındaki takımları döner.
     if (canManage) api.admin.getTeams().then(res => { if (res?.success) setTeams(res.data) })
+    api.notificationGroups.list().then(res => { if (res?.success) setNotifGroups(res.data?.groups ?? res.data ?? []) }).catch(() => {})
   }, [])
+
+  // Hijyen bandı (#2): yalnız yönetebilenler (sunucu da aynı kapıyı uygular); 5 dk'da bir görünürken tazelenir.
+  const loadHygiene = useCallback(async () => {
+    if (!canManage) return
+    try { const r = await api.admin.getInventoryHygiene(); if (r?.success) setHygiene(r.data) } catch { /* bant süs */ }
+  }, [canManage])
+  useVisibleInterval(loadHygiene, 300_000, true)
 
   // Prop senkronu YALNIZ yönetemeyenler için. `teams` iki farklı sahibi olan bir state:
   // canManage ise yukarıdaki çekim sahiplenir (team-admin'e kapsamlı liste döner), aksi halde
@@ -154,7 +186,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     deleted:  items.filter(i => !!i.deleted_at).length,
   }), [items])
 
-  const visibleItems = useMemo(() => {
+  const statusItems = useMemo(() => {
     switch (statusFilter) {
       case 'active':   return items.filter(i => i.active   && !i.deleted_at)
       case 'inactive': return items.filter(i => !i.active  && !i.deleted_at)
@@ -162,6 +194,10 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       default:         return items.filter(i => !i.deleted_at)
     }
   }, [items, statusFilter])
+  const hygieneIdx = useMemo(() => hygieneIndex(hygiene), [hygiene])
+  const visibleItems = useMemo(() => sortItems(applyFilters(statusItems, filters, hygieneIdx), sort), [statusItems, filters, hygieneIdx, sort])
+  const overlaps = useMemo(() => detectOverlaps(items), [items])
+  const groupNames = useMemo(() => [...new Set(items.map(i => i.group_name).filter(Boolean))].sort(), [items])
 
   function togglePill(kind) {
     setStatusFilter(prev => prev === kind ? 'default' : kind)
@@ -173,14 +209,17 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const selectableItems = useMemo(() => visibleItems.filter(i => !i.deleted_at), [visibleItems])
 
   // Sayfalama yalnız RENDER'ı böler; "tümünü seç" filtrelenmiş tüm liste (selectableItems) üzerinde kalır.
+  const filterKey = JSON.stringify(filters)
   const pager = usePagination(visibleItems, {
-    listKey: 'inventory', resetDeps: [statusFilter],
+    listKey: 'inventory', resetDeps: [statusFilter, filterKey, sort],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
 
-  // Paylaşılabilir URL: durum filtresi + sayfa/boyut.
+  // Paylaşılabilir URL: durum filtresi + süzgeçler (i_*) + görünüm + sayfa/boyut.
   useUrlQuerySync({
     stat: statusFilter !== 'default' ? statusFilter : null,
+    ...filtersToParams(filters),
+    i_view: view !== 'table' ? view : null,
     page: pager.page > 1 ? pager.page : null,
     ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
   })
@@ -195,7 +234,42 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     return n
   })
   // Filtre değişince seçimi temizle (görünmeyen satırlar seçili kalmasın)
-  useEffect(() => { setSelected(new Set()) }, [statusFilter])
+  useEffect(() => { setSelected(new Set()) }, [statusFilter, filterKey])
+
+  // ── Kayıtlı görünümler (#13) + paylaşım bağlantısı ──
+  function saveView(name) {
+    const v = { name, filters, sort, cols, density, statusFilter, view }
+    const next = [...savedViews.filter(x => x.name !== name), v]
+    setSavedViews(next); writeSavedViews(next); toast.success(t('inv.viewSaved', name))
+  }
+  function applyView(v) {
+    setFilters({ ...EMPTY_FILTERS, ...(v.filters || {}) }); setSortPersist(v.sort || 'domain|asc'); setCols(v.cols?.length ? v.cols : defaultCols())
+    setDensity(v.density || 'comfortable'); setStatusFilter(v.statusFilter || 'default'); setView(v.view || 'table')
+  }
+  function deleteView(name) { const next = savedViews.filter(x => x.name !== name); setSavedViews(next); writeSavedViews(next) }
+  async function copyLink() {
+    try { await navigator.clipboard.writeText(window.location.href); toast.success(t('inv.copied')) } catch { toast.error(t('inv.copyFailed')) }
+  }
+
+  // ── Satır-içi düzenleme (#8): tier / aktif — tam kayıt + yama (snake_case; uç tam gövde bekler) ──
+  async function inlineUpdate(r, patch) {
+    const body = { ...r, ...patch }
+    for (const k of Object.keys(body)) if (k.startsWith('cert_') || k === 'team_name' || k === 'ug_team_name') delete body[k]
+    try {
+      const res = await api.admin.updateInventory(r.id, body)
+      if (res?.success) { toast.success(t('inv.inlineSaved', r.domain)); setItems(list => list.map(x => x.id === r.id ? { ...x, ...patch } : x)); onInventoryChange?.() }
+      else toast.error(res?.error || t('inv.saveError'))
+    } catch (e) { toast.error(e?.message || t('inv.saveError')) }
+  }
+
+  // ── Şimdi kontrol et (#11): mevcut sağlık tazeleme ucu; sonuç satıra işlenir ──
+  async function checkNow(r) {
+    try {
+      const res = await api.refreshCertificateHealth(r.domain)
+      if (res?.success) { toast.success(t('inv.checkNowOk', r.domain)); load(); loadHygiene() }
+      else toast.error(res?.error || t('inv.checkNowErr'))
+    } catch (e) { toast.error(e?.message || t('inv.checkNowErr')) }
+  }
 
   async function bulkAction(action) {
     const ids = [...selected]
@@ -461,9 +535,20 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
               </div>
             )}
           </div>
+          {canManage && <button className="btn btn-secondary" onClick={() => setImportOpen(true)}><Upload size={14} /> {t('inv.import')}</button>}
           {canManage && <button className="btn btn-success" onClick={openAdd}>{t('inv.addBtn')}</button>}
         </div>
       </div>
+
+      {canManage && (
+        <InventoryHygieneBand data={hygiene} overlaps={overlaps} active={filters.hygiene}
+          onSelect={(code) => { setFilters(f => ({ ...f, hygiene: code })); setStatusFilter('default'); setView('table') }}
+          onOpenDomain={(d) => { const r = items.find(i => i.domain === d); if (r) setShowItem(r) }} />
+      )}
+      <InventoryToolbar filters={filters} onFilters={setFilters} teams={teams} groupNames={groupNames} notifGroups={notifGroups}
+        shown={visibleItems.length} total={statusItems.length}
+        cols={cols} onCols={setCols} sort={sort} onSort={setSortPersist} density={density} onDensity={setDensity}
+        view={view} onView={setView} savedViews={savedViews} onSaveView={saveView} onApplyView={applyView} onDeleteView={deleteView} onCopyLink={copyLink} />
 
       {canManage && selected.size > 0 && (
         <div className="inv-stats-pills" style={{ marginBottom: 10, gap: 8, alignItems: 'center',
@@ -485,75 +570,25 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
         </div>
       )}
 
-      <div className="admin-table-wrap">
-        <table className="admin-table">
-          <thead>
-            <tr>
-              {canManage && (
-                <th style={{ width: 28 }}>
-                  <input type="checkbox" checked={allOnPage} onChange={toggleAll}
-                    disabled={selectableItems.length === 0} title={t('inv.bulkSelectAll')} />
-                </th>
-              )}
-              <th>{t('inv.colDomain')}</th>
-              <th>{t('inv.colPort')}</th>
-              <th>{t('inv.colTier')}</th>
-              <th>{t('inv.colTeam')}</th>
-              <th>{t('inv.colActive')}</th>
-              <th>{t('inv.colActions')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {pager.pageItems.map((item) => (
-              <tr key={item.id} className={item.deleted_at ? 'inv-row-deleted' : ''}>
-                {canManage && (
-                  <td onClick={e => e.stopPropagation()}>
-                    {!item.deleted_at && (
-                      <input type="checkbox" checked={selected.has(item.id)}
-                        onChange={() => toggleSel(item.id)} />
-                    )}
-                  </td>
-                )}
-                <td><strong>{item.domain}</strong></td>
-                <td>{item.port}</td>
-                <td>
-                  {item.tier
-                    ? <span className={`tier-badge tier-badge-${item.tier}`}>T{item.tier}</span>
-                    : <span style={{ color: 'var(--text-light)', fontSize: '.8em' }}>—</span>}
-                </td>
-                <td>{(item.team_name || teamMap[String(item.team_id)]) ? <TeamBadge teamId={item.team_id} teamName={item.team_name || teamMap[String(item.team_id)]} /> : '—'}</td>
-                <td>
-                  {item.deleted_at
-                    ? <span className="badge badge-deleted">{t('inv.deletedBadge')}</span>
-                    : <span className={item.active ? 'badge badge-ok' : 'badge badge-err'}>
-                        {item.active ? t('inv.active') : t('inv.inactive')}
-                      </span>
-                  }
-                </td>
-                <td>
-                  <KebabMenu label={t('inv.colActions')} items={
-                    item.deleted_at
-                      ? [
-                          { label: t('inv.show'), onClick: () => { setShowTab('details'); setShowItem(item) } },
-                          { label: t('inv.restore'), onClick: () => restore(item.id), hidden: !canManage },
-                          { label: t('inv.purge'), danger: true, onClick: () => purge(item.id), hidden: !isAdmin },
-                        ]
-                      : [
-                          { label: t('inv.show'), onClick: () => { setShowTab('details'); setShowItem(item) } },
-                          { label: t('inv.diagnose'), onClick: () => setDiag({ domain: item.domain, port: item.port || 443 }), hidden: !isAdmin },
-                          { label: t('inv.edit'), onClick: () => openEdit(item), hidden: !canManage },
-                          { label: t('mon.duplicate'), onClick: () => openDuplicate(item), hidden: !canManage },
-                          { label: t('inv.transfer'), onClick: () => openTransfer(item), hidden: !(isAdmin && teams.length > 1) },
-                          { label: t('inv.delete'), danger: true, onClick: () => del(item.id), hidden: !canManage },
-                        ]
-                  } />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <PaginationBar {...pager} />
-      </div>
+      {view === 'team' ? (
+        <InventoryTeamView rows={visibleItems} onShow={(r) => setShowItem(r)}
+          onFilterTeam={(teamId) => { setFilters(f => ({ ...f, team: teamId == null ? '' : String(teamId) })); setView('table') }} />
+      ) : visibleItems.length === 0 ? (
+        <StatusBlock tone="neutral" icon={Inbox} title={statusItems.length === 0 ? t('inv.emptyTitle') : t('inv.noMatch')}
+          description={statusItems.length === 0 ? (canManage ? t('inv.emptyHintAdmin') : t('inv.emptyHint')) : t('empty.hintFilter')} />
+      ) : (
+        <>
+          <InventoryTable rows={pager.pageItems} cols={cols} sort={sort} onSort={setSortPersist} density={density}
+            canManage={canManage} isAdmin={isAdmin} teamsCount={teams.length} teamMap={teamMap} statusFilter={statusFilter}
+            selected={selected} onToggle={toggleSel} onToggleAll={toggleAll} allOnPage={allOnPage}
+            onShow={(r) => setShowItem(r)} onEdit={openEdit} onDuplicate={openDuplicate} onTransfer={openTransfer}
+            onDelete={del} onRestore={restore} onPurge={purge}
+            onDiagnose={(r) => setDiag({ domain: r.domain, port: r.port || 443 })}
+            onCheckNow={checkNow} onInline={inlineUpdate}
+            onTagClick={(tag) => setFilters(f => ({ ...f, q: tag }))} />
+          <PaginationBar {...pager} />
+        </>
+      )}
 
       {/* ── Ana Form Modalı — inventory/InventoryFormModal.jsx'e çıkarıldı (dashboard kartı da aynı
              formu açıyor). key: açıkken mod/kayıt değişirse remount olsun. ── */}
@@ -577,56 +612,14 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
         />
       )}
 
-      {/* ── Show (Read-Only Detail) Modalı ── */}
+      {/* ── Kayıt çekmecesi (#8): Ayrıntılar / Değişiklikler / Kontroller; önceki-sonraki gezinme ── */}
       {showItem && (
-        <div className="modal-overlay" onClick={() => setShowItem(null)}>
-          <div className="modal-box modal-show" onClick={e => e.stopPropagation()}>
-
-            {/* Header */}
-            <div className="show-header">
-              <div className="show-header-title">
-                <span className="show-domain">{showItem.domain}</span>
-                <span className="show-badge show-badge-port">:{showItem.port || 443}</span>
-                {showItem.tier && (
-                  <span className={`tier-badge tier-badge-${showItem.tier}`}>T{showItem.tier}</span>
-                )}
-                <span className={`show-badge ${
-                  showItem.deleted_at ? 'show-badge-deleted'
-                  : showItem.active   ? 'show-badge-active'
-                  :                     'show-badge-inactive'
-                }`}>
-                  {showItem.deleted_at
-                    ? t('inv.deletedBadge')
-                    : showItem.active ? t('inv.active') : t('inv.inactive')}
-                </span>
-              </div>
-              <button type="button" className="show-close" aria-label={t('app.dismiss')} onClick={() => setShowItem(null)}>✕</button>
-            </div>
-
-            {/* İki sekme: kaydın kendisi ve kaydın GEÇMİŞİ (kim, ne zaman, neyi değiştirdi).
-                Envanter satırları sertifika sahipliğinin kaynağı — "bu alanı kim T1 yaptı"
-                sorusu burada, kaydın yanında cevaplanmalı. */}
-            <div className="modal-tabs">
-              <button className={`modal-tab${showTab === 'details' ? ' active' : ''}`}
-                onClick={() => setShowTab('details')}>{t('modal.detailsTab')}</button>
-              <button className={`modal-tab${showTab === 'changes' ? ' active' : ''}`}
-                onClick={() => setShowTab('changes')}>{t('chg.tab')}</button>
-            </div>
-
-            {showTab === 'details' && <InventoryDetails record={showItem} teamMap={teamMap} />}
-            {showTab === 'changes' && (
-              <div className="show-body">
-                <Suspense fallback={<LoadingBlock label={t('modal.loading')} />}>
-                  <ChangeHistoryTab t={t} kind="inventory" monitorId={showItem.id}
-                    teamNames={teamNameById} />
-                </Suspense>
-              </div>
-            )}
-
-          </div>
-        </div>
+        <InventoryDrawer record={showItem} records={visibleItems} teamMap={teamMap} teamNameById={teamNameById} canManage={canManage}
+          onClose={() => setShowItem(null)} onEdit={(r) => { setShowItem(null); openEdit(r) }} onCheckNow={checkNow} onNavigate={setShowItem} />
       )}
-
+      {importOpen && (
+        <InventoryImportModal onClose={() => setImportOpen(false)} onDone={() => { load(); loadHygiene(); onInventoryChange?.() }} />
+      )}
       {/* ── Transfer Modalı ── */}
       {transferModal && (
         <div className="modal-overlay" onClick={() => setTransferModal(null)}>
