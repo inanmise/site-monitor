@@ -1,9 +1,93 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-12T14:27:55Z",
+  "generatedAt": "2026-09-12T15:52:26Z",
   "repo": "inanmise/site-monitor",
-  "count": 638,
+  "count": 639,
   "releases": [
+    {
+      "version": "20.58.1",
+      "tag": "v20.58.1",
+      "releasedAt": "2026-09-12T15:52:20Z",
+      "commit": "4994ef8603e8dfde93f19eaae7fc64ab8ceef81a",
+      "prevVersion": "20.58.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 7,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": "userpush",
+          "breaking": false,
+          "sha": "4994ef86",
+          "subject": "isolate the \"channel disabled\" branch from the outbox worker race"
+        },
+        {
+          "type": "docs",
+          "scope": "regression",
+          "breaking": false,
+          "sha": "0168f1d4",
+          "subject": "round 14 — browser QA pass (13 findings, all fixed, frontend-only)"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "8a3aaf35",
+          "subject": "ISSUE-011/012 configuration-health card formats timestamps and \"Open\" focuses the field"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "0e0560d1",
+          "subject": "ISSUE-005/006 forecast heat legend and keyword rule phrases from the dictionary"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "2e039a79",
+          "subject": "ISSUE-008/009 weak-algo Exceptions KPI matches the section; \"until\" is date-only"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "99585674",
+          "subject": "ISSUE-001/007/010 locale-aware percent + units; noise panel no longer overlaps the heat-map"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "150d07f8",
+          "subject": "ISSUE-002 renewal advice message/action rendered in the UI language"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "01ba7064",
+          "subject": "ISSUE-003/004 calendar buckets by LOCAL day; opens on the first month with an event"
+        },
+        {
+          "type": "fix",
+          "scope": "dashboard",
+          "breaking": false,
+          "sha": "e0f678ba",
+          "subject": "\"For you — today\" panel collapsed by default; expanded state remembered per browser"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.58.0",
       "tag": "v20.58.0",
