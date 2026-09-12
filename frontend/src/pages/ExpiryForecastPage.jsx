@@ -287,8 +287,10 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
   const onTimePct = renewals.on_time + renewals.late > 0 ? Math.round(renewals.on_time * 100 / (renewals.on_time + renewals.late)) : null
   const filterActive = !!(filters.team || filters.ugTeam || filters.tier || filters.group)
 
+  // Ay görünümü gezinebilir: 03 tablosunun 30 günlük penceresine değil, 12 aya bağlı (ISSUE-013)
+  const monthList = useMemo(() => upcoming(certs, th, 365, today), [certs, th, today])
   const monthEvents = useMemo(() => [
-    ...list.filter((r) => r.renew_by_key || r.expiry_key).map((r) => ({
+    ...monthList.filter((r) => r.renew_by_key || r.expiry_key).map((r) => ({
       date: r.renew_by_key || r.expiry_key, label: r.domain, title: `${r.domain} · ${t('forecast.csvRenewBy')} ${r.renew_by_key || '—'} · ${t('forecast.csvExpiry')} ${r.expiry_key || '—'}`,
       tone: r.cls === 'overdue' || r.cls === 'critical' ? 'bad' : r.cls === 'high' || r.window === 'late' ? 'warn' : 'info', onClick: () => onSelectDomain?.(r.domain),
     })),
@@ -296,7 +298,7 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
     ...certs.filter((c) => c.renewal_plan_state === 'planned' && c.renewal_planned_at).map((c) => ({
       date: c.renewal_planned_at, label: c.domain, title: `${c.domain} · ${t('forecast.hmPlanned', c.renewal_planned_at)}`, tone: 'ok', onClick: () => onSelectDomain?.(c.domain),
     })),
-  ], [list, certs, onSelectDomain, t])
+  ], [monthList, certs, onSelectDomain, t])
 
   async function checkNow(domain) {
     setBusyDomain(domain)
