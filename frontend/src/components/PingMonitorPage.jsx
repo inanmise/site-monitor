@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
+import { formatPercent } from '../i18n/dateLocale.js'
 import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -560,7 +561,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
                 </div>
                 {m.packet_loss != null && (
                   <div className="upt-metric">
-                    <span className="upt-metric-val">%{m.packet_loss}</span>
+                    <span className="upt-metric-val">{formatPercent(m.packet_loss)}</span>
                     <span className="upt-metric-lbl">{t('ping.loss')}</span>
                   </div>
                 )}
@@ -612,13 +613,13 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
             <div className="upt-modal-divider" />
             <div className="upt-modal-summary">
               <div className="upt-modal-metric" title={t('ping.sumUptimeHint')}>
-                <span className="upt-modal-metric-val">{summary.total > 0 ? `%${Math.round((summary.total - summary.down) * 1000 / summary.total) / 10}` : '—'}</span>
+                <span className="upt-modal-metric-val">{summary.total > 0 ? formatPercent(Math.round((summary.total - summary.down) * 1000 / summary.total) / 10) : '—'}</span>
                 <span className="upt-modal-metric-lbl">{t('ping.sumUptime')}{summary.total > 0 ? ` · ${summary.total - summary.down}/${summary.total}` : ''}</span>
               </div>
               <div className="upt-modal-metric" title={t('ping.sumTotalHint')}><span className="upt-modal-metric-val">{summary.total}</span><span className="upt-modal-metric-lbl">{t('ping.sumTotal')}</span></div>
               <div className="upt-modal-metric" title={t('ping.sumIncidentsHint')}><span className="upt-modal-metric-val">{summary.down}</span><span className="upt-modal-metric-lbl">{t('ping.sumIncidents')}</span></div>
               {selected.rtt_ms != null && <div className="upt-modal-metric" title={t('ping.rttHint')}><span className="upt-modal-metric-val">{selected.rtt_ms}ms</span><span className="upt-modal-metric-lbl">{t('ping.rtt')}</span></div>}
-              {selected.packet_loss != null && <div className="upt-modal-metric" title={t('ping.lossHint')}><span className="upt-modal-metric-val">%{selected.packet_loss}</span><span className="upt-modal-metric-lbl">{t('ping.loss')}</span></div>}
+              {selected.packet_loss != null && <div className="upt-modal-metric" title={t('ping.lossHint')}><span className="upt-modal-metric-val">{formatPercent(selected.packet_loss)}</span><span className="upt-modal-metric-lbl">{t('ping.loss')}</span></div>}
               {selected.checked_at && <div className="upt-modal-metric"><span className="upt-modal-metric-val upt-modal-metric-time">{formatDateSec(selected.checked_at)}</span><span className="upt-modal-metric-lbl">{t('ping.lastCheck')}</span></div>}
             </div>
             {selected.status === 'na' && <div className="alert-msg" style={{ marginTop: 4 }}>{t('ping.naHint')}</div>}
@@ -642,7 +643,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
                   <span className={c.up ? 'upt-rt-up' : 'upt-rt-down'}>{c.up ? t('ping.statusUp') : t('ping.statusDown')}</span>
                   <span className="upt-rt-ms">{c.rtt_ms != null ? `${c.rtt_ms}ms` : '—'}</span>
                   {c.error ? <span className="upt-rt-error" title={c.error}>{c.error}</span>
-                    : <span className="upt-rt-ms">{c.packet_loss != null ? `%${c.packet_loss}` : '—'}</span>}
+                    : <span className="upt-rt-ms">{formatPercent(c.packet_loss)}</span>}
                 </>)} />
             )}
 

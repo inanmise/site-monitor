@@ -22,7 +22,7 @@ describe('ExecutiveSummary', () => {
     const onTeam = vi.fn(); const nav = vi.fn()
     window.addEventListener('sm:navigate', nav)
     render(<ExecutiveSummary onOpenTeam={onTeam} />)
-    await screen.findByText('%90')
+    await screen.findByText(/^(%90|90%)$/)
     expect(screen.getByText(/-8 önceki 30 güne göre|-8 vs previous 30 days/)).toBeInTheDocument()
     expect(screen.getByText(/SLA ihlali \(hedef %99\.9\)|SLA breaches \(target 99\.9%\)/)).toBeInTheDocument()
     const rows = document.querySelectorAll('.exs-team-row')
@@ -38,7 +38,7 @@ describe('ExecutiveSummary', () => {
   it('tek takım → karşılaştırma bloğu çizilmez; uç başarısız → özet yok', async () => {
     api.getExecutiveStats.mockResolvedValue({ success: true, data: { certs: { total: 1, ok: 1, health_pct: 100 }, alerts: {}, sla: {}, teams: [{ team_id: 1, team_name: 'A', total: 1, health_pct: 100 }] } })
     const { container, unmount } = render(<ExecutiveSummary />)
-    await screen.findByText('%100')
+    await screen.findByText(/^(%100|100%)$/)
     expect(container.querySelector('.exs-teams')).toBeNull()
     unmount()
     api.getExecutiveStats.mockResolvedValue({ success: false })

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useCallback } from 'react'
 import { useT } from '../../i18n/index.jsx'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import SmtpSettings from './SmtpSettings'
@@ -55,6 +55,9 @@ const GLOBAL_ONLY_SECTIONS = new Set(['smtp', 'ldap', 'database', 'secrets'])
 export default function AdminSettings({ globalAdmin = true }) {
   const t = useT()
   const [active, setActive] = useState(initialSection)
+  // Yapılandırma sağlığı "Aç" → bölüm + alan anahtarı (GeneralSettings kaydırır/odaklar; ISSUE-012)
+  const [focusKey, setFocusKey] = useState(null)
+  const openSection = useCallback((sec, key) => { setActive(sec); setFocusKey(key ? { key, nonce: Date.now() } : null) }, [])
   const tabRefs = useRef({})
 
   // Derin bağlantı: /?tab=settings&sec=ldap doğrudan LDAP bölümünü açar. Varsayılan bölümde
@@ -82,7 +85,7 @@ export default function AdminSettings({ globalAdmin = true }) {
   return (
     <>
     {/* Yapılandırma sağlığı — 12 bölümün üstünde tek kart (2026-09-12, #25); yalnız global admin ucu */}
-    {globalAdmin && <ConfigHealthCard onOpenSection={setActive} />}
+    {globalAdmin && <ConfigHealthCard onOpenSection={openSection} />}
     <div className="settings-layout">
       <aside className="settings-menu" role="tablist" aria-orientation="vertical"
              aria-label={t('settings.navHeader')}>
@@ -121,7 +124,7 @@ export default function AdminSettings({ globalAdmin = true }) {
           </div>
         )}
         {(globalAdmin || !GLOBAL_ONLY_SECTIONS.has(active)) && <>
-        {active === 'general' && <GeneralSettings />}
+        {active === 'general' && <GeneralSettings focusKey={focusKey} />}
         {active === 'branding' && <BrandingSettings />}
         {active === 'monitorgroups' && <MonitorGroups />}
         {active === 'smtp' && <SmtpSettings />}

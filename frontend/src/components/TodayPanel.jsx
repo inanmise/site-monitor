@@ -10,12 +10,13 @@ import TeamBadge from './ui/TeamBadge.jsx'
  * "Sizin için — bugün" (2026-09-12, zenginleştirme #3): dashboard'un üstünde dört kart —
  * 30 gün altı sertifika · açık alarm · süresi dolan istisna · bu haftanın raporu. Her kart doğru
  * sayfaya süzülmüş bağlantı. Hepsi sıfırsa tek satır yeşil "bugün ilgilenilecek bir şey yok".
- * 2 dk'da bir görünürken tazelenir; kapalı/açık durumu localStorage'da.
+ * 2 dk'da bir görünürken tazelenir; VARSAYILAN KAPALI, açık/kapalı tercihi localStorage'da.
  */
 export default function TodayPanel({ onOpenDomain }) {
   const t = useT()
   const [data, setData] = useState(null)
-  const [open, setOpen] = useState(() => { try { return localStorage.getItem('today-panel-open') !== 'false' } catch { return true } })
+  // Varsayılan KAPALI (2026-09-12, kullanıcı: "otomatik kapalı olsun"); açan kullanıcı tercihi saklanır.
+  const [open, setOpen] = useState(() => { try { return localStorage.getItem('today-panel-open') === 'true' } catch { return false } })
 
   const load = useCallback(async () => {
     try { const r = await api.me.today(); if (r?.success && r.data) setData(r.data) } catch { /* panel süs */ }

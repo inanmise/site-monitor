@@ -30,6 +30,16 @@ export function setDateLocale(lang) {
   mirrored = localeFor(lang)
 }
 
+/**
+ * Yüzde biçimi (QA 2026-09-12, ISSUE-001/007/010): Türkçe "%100", İngilizce "100%".
+ * `%${v}` şablonu İngilizce arayüzde Türkçe sırayı sızdırıyordu (Statistics, SMTP, gürültü tablosu…).
+ * null/undefined/'' → tire.
+ */
+export function formatPercent(v, dash = '—') {
+  if (v === null || v === undefined || v === '') return dash
+  return dateLocale() === 'tr-TR' ? `%${v}` : `${v}%`
+}
+
 /** Güncel Intl yereli. Ayna yoksa localStorage'a düşer (i18n ile aynı varsayılan: 'en'). */
 export function dateLocale() {
   if (mirrored) return mirrored

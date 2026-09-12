@@ -6,6 +6,7 @@ const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 
 vi.mock('../api/client', () => ({
   formatDateOnly: (s) => s ?? '',
+  localDayKey: (s) => String(s ?? '').slice(0, 10),
   api: withApiFallback({
     getRenewalAdvice: vi.fn(),
   }),
@@ -70,5 +71,20 @@ describe('RenewalAdvice — yükleme hatası', () => {
     await waitFor(() => expect(api.getRenewalAdvice).toHaveBeenCalled())
     expect(screen.queryByText(/izleme listesi yüklenemedi|could not load the monitor list/i))
       .not.toBeInTheDocument()
+  })
+})
+
+/** QA 2026-09-12 ISSUE-002: sunucu mesajı yalnız Türkçe; kart `code` + gün sayısıyla arayüz dilinde çevrilir. */
+describe('RenewalAdvice — mesaj/eylem arayüz dilinde', () => {
+  it('EXPIRING_INFO kodu 41 gün: İngilizce arayüzde İngilizce metin; bilinmeyen kodda sunucu metni kalır', async () => {
+    api.getRenewalAdvice.mockResolvedValue({ success: true, data: [
+      { domain: 'a.example.com', code: 'EXPIRING_INFO', priority: 'info', days_remaining: 41, not_after: '2026-10-23T23:59:59', message: 'Sertifika 41 gün içinde bitiyor.', action: 'Sertifika yenileme takviminizi güncelleyin.' },
+      { domain: 'b.example.com', code: 'SOMETHING_NEW', priority: 'info', days_remaining: 5, not_after: '2026-10-23T23:59:59', message: 'sunucu metni', action: 'sunucu eylemi' },
+    ] })
+    render(<RenewalAdvice />)
+    expect(await screen.findByText(/Certificate expires in 41 days\.|Sertifika 41 gün içinde bitiyor\./)).toBeInTheDocument()
+    expect(screen.getByText(/Update your renewal calendar\.|Sertifika yenileme takviminizi güncelleyin\./)).toBeInTheDocument()
+    expect(screen.getByText('sunucu metni')).toBeInTheDocument()
+    expect(screen.getByText('sunucu eylemi')).toBeInTheDocument()
   })
 })

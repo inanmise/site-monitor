@@ -22,6 +22,7 @@ vi.mock('../components/ui/Dialog.jsx', () => ({
 }))
 vi.mock('../api/client', () => ({
   formatDate: (s) => String(s ?? ''),
+  formatDateOnly: (s) => String(s ?? ''),
   formatDateSec: (s) => String(s ?? ''),
   api: withApiFallback({
     refreshCertificateHealth: vi.fn().mockResolvedValue({ success: true }),
@@ -124,6 +125,10 @@ describe('WeakAlgorithmReport — zengin rapor (2026-09-12)', () => {
     expect(screen.getByText(/Zincir kırık|Broken chain/)).toBeInTheDocument()
     // İstisna çipi
     expect(screen.getByText(/İstisna · 2026-12-31|Exception · 2026-12-31/)).toBeInTheDocument()
+    // KPI kartı = kayıtlı istisna sayısı (bölümle aynı) + zayıf bulguya bağlı olan alt satırda (QA ISSUE-008)
+    const kpi = [...document.querySelectorAll('.wa-kpi')].find((k) => /İstisna|Exceptions/i.test(k.querySelector('.wa-kpi-label')?.textContent || ''))
+    expect(kpi.querySelector('.wa-kpi-value').textContent).toBe('1')
+    expect(kpi.querySelector('.wa-kpi-sub').textContent).toMatch(/1 tanesi etkin zayıf bulguya bağlı|1 attached to an active weak finding/)
     // Trend
     fireEvent.click(screen.getByRole('button', { name: /Son 30 gün|Last 30 days/ }))
     expect(screen.getByText(/Tespit edilen \(1\)|Detected \(1\)/)).toBeInTheDocument()

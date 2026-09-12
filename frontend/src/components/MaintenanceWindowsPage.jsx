@@ -61,7 +61,7 @@ export default function MaintenanceWindowsPage({ systemRole }) {
   const [calOpen, setCalOpen] = useState(() => { try { return localStorage.getItem('mw-cal-open') === 'true' } catch { return false } })
   // Takvim olayları (2026-09-12, #19): sıradaki oluşum (next_occurrence) ya da tek seferlik başlangıç; aynı güne 2+ pencere = çakışma adayı
   const mwCalEvents = rows.filter(w => w.next_occurrence || w.start_at).map(w => ({
-    date: String(w.next_occurrence || w.start_at).slice(0, 10), label: w.name, title: `${w.name} · ${w.duration_minutes ?? 60} dk`,
+    date: w.next_occurrence || w.start_at, label: w.name, title: `${w.name} · ${w.duration_minutes ?? 60} ${t('chg.unitMin')}`,
     tone: w.status === 'ACTIVE' ? 'warn' : 'info', onClick: () => openEdit(w),
   }))
   const pager = usePagination(rows, { listKey: 'maintenance-windows' })

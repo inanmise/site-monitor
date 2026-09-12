@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { ShieldCheck, AlertTriangle, OctagonAlert, CircleOff, RefreshCw, ChevronDown, ArrowRight } from 'lucide-react'
-import { api } from '../../api/client'
+import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval.js'
 import { navigateTo } from '../../utils/navigate.js'
@@ -12,6 +12,8 @@ import { Spinner } from '../ui/Progress.jsx'
  * Sorunsuzken küçük yeşil şerit; sorun varsa açık liste. 5 dk'da bir görünürken tazelenir.
  */
 const SETTINGS_SECTIONS = new Set(['general', 'smtp', 'ldap', 'userpush', 'weeklyavail', 'retention', 'branding'])
+/** Kontrol → Genel Ayarlar'daki alan anahtarı (Aç → kaydır + odakla). */
+const CHECK_SETTING_KEY = { base_url: 'site.monitor.app.base-url', admin_email: 'site.monitor.system-admin.email', reminder: 'site.monitor.weekly-report.deadline-day' }
 const ICON = { ok: ShieldCheck, warn: AlertTriangle, bad: OctagonAlert, off: CircleOff }
 
 export default function ConfigHealthCard({ onOpenSection }) {
@@ -37,7 +39,9 @@ export default function ConfigHealthCard({ onOpenSection }) {
   const checks = data.checks || []
 
   function go(c) {
-    if (SETTINGS_SECTIONS.has(c.tab)) { onOpenSection?.(c.tab); return }
+    // Bölüm zaten açıksa "Aç" hiçbir şey yapmıyor gibi görünüyordu (QA ISSUE-012): ilgili alan anahtarı
+    // da iletilir; GeneralSettings alana kaydırır, odaklar ve kısa süre vurgular.
+    if (SETTINGS_SECTIONS.has(c.tab)) { onOpenSection?.(c.tab, CHECK_SETTING_KEY[c.key] || null); return }
     navigateTo(c.tab === 'inventory' ? 'admin' : c.tab)
   }
 
@@ -45,7 +49,9 @@ export default function ConfigHealthCard({ onOpenSection }) {
     const d = c.detail || ''
     const [kind, rest] = d.includes(':') ? [d.slice(0, d.indexOf(':')), d.slice(d.indexOf(':') + 1)] : [d, '']
     const key = `cfg.detail.${kind}`
-    const tr = t(key, rest)
+    // Ham ISO damgası ("2026-09-12T14:33:10.386063100") arayüz biçimine (QA ISSUE-011)
+    const arg = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(rest) ? formatDate(rest.replace(/(\.\d{3})\d+$/, '$1')) : rest
+    const tr = t(key, arg)
     return tr === key ? d : tr
   }
 
@@ -55,8 +61,8 @@ export default function ConfigHealthCard({ onOpenSection }) {
         <Icon size={18} aria-hidden="true" />
         <span className="cfg-health-title">{t('cfg.title')}</span>
         <span className="cfg-health-summary">
-          {data.bad > 0 && <span className="cfg-pill cfg-pill--bad">{t('cfg.bad', data.bad)}</span>}
-          {data.warn > 0 && <span className="cfg-pill cfg-pill--warn">{t('cfg.warn', data.warn)}</span>}
+          {data.bad > 0 && <span className="cfg-pill cfg-pill--bad">{data.bad === 1 ? t('cfg.badOne') : t('cfg.bad', data.bad)}</span>}
+          {data.warn > 0 && <span className="cfg-pill cfg-pill--warn">{data.warn === 1 ? t('cfg.warnOne') : t('cfg.warn', data.warn)}</span>}
           <span className="cfg-pill cfg-pill--ok">{t('cfg.ok', data.ok)}</span>
         </span>
         <ChevronDown size={16} className={`cfg-health-chevron${open ? ' is-open' : ''}`} aria-hidden="true" />

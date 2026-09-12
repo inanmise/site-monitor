@@ -1,3 +1,4 @@
+import { localDayKey } from '../api/client'
 /**
  * ICS (iCalendar) üretimi (2026-09-12, zenginleştirme #8): sertifika bitiş tarihlerini "takvimime ekle".
  * Tüm-gün VEVENT'ler; UID kararlı (alan + tarih) → yeniden içe aktarma çoğaltmaz. Kütüphanesiz.
@@ -24,7 +25,8 @@ export function buildIcs(events, { prodId = '-//Site Monitor//Certificate Renewa
   const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', `PRODID:${prodId}`, 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', `X-WR-CALNAME:${esc(calName)}`]
   for (const e of events) {
     if (!e?.date) continue
-    const ymd = String(e.date).slice(0, 10)
+    const ymd = localDayKey(e.date)   // yerel gün (ISSUE-004) — UTC 23:59Z damgası bir gün erken düşmesin
+    if (!ymd) continue
     lines.push('BEGIN:VEVENT', `UID:${esc(e.uid || `${ymd}-${e.summary}`)}@site-monitor`, `DTSTAMP:${stamp}`,
       `DTSTART;VALUE=DATE:${ymd.replace(/-/g, '')}`, `DTEND;VALUE=DATE:${nextDay(ymd)}`,
       `SUMMARY:${esc(e.summary)}`)

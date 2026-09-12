@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, formatDateOnly } from '../api/client'
+import { api, formatDateOnly, localDayKey } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
@@ -20,14 +20,22 @@ export default function RenewalAdvice({ onSelectDomain }) {
   // Takvim görünümü (2026-09-12, #8): aynı haftaya yığılan yenilemeler görünsün; tercih saklanır.
   const [view, setView] = useState(() => { try { return localStorage.getItem('renewal-view') === 'calendar' ? 'calendar' : 'list' } catch { return 'list' } })
   const switchView = (v) => { setView(v); try { localStorage.setItem('renewal-view', v) } catch { /* yoksay */ } }
+  // Mesaj/eylem arayüz dilinde (QA 2026-09-12, ISSUE-002): sunucu yalnız TR üretir; `code` + gün sayısı
+  // ile çevrilir, bilinmeyen kodda sunucu metni kalır.
+  const adviceText = (a) => {
+    const n = a.days_remaining == null ? '' : Math.abs(a.days_remaining)
+    const msg = t(`renewal.msg.${a.code}`, n), act = t(`renewal.act.${a.code}`, n)
+    return { message: msg.startsWith('renewal.msg.') ? a.message : msg, action: act.startsWith('renewal.act.') ? a.action : act }
+  }
   const calEvents = advice.filter(a => a.not_after).map(a => ({
-    date: String(a.not_after).slice(0, 10), label: a.domain, title: `${a.domain} · ${a.message}`,
+    date: a.not_after, label: a.domain, title: `${a.domain} · ${adviceText(a).message}`,   // takvim yerel güne yerleştirir (ISSUE-004)
     tone: a.priority === 'critical' ? 'bad' : a.priority === 'warning' ? 'warn' : 'info', onClick: () => onSelectDomain?.(a.domain),
   }))
   function exportIcs() {
-    downloadIcs('sertifika-yenilemeleri.ics', buildIcs(advice.filter(a => a.not_after).map(a => ({
-      uid: `cert-${a.domain}-${String(a.not_after).slice(0, 10)}`, date: a.not_after, summary: `${t('renewal.icsPrefix')} ${a.domain}`, description: `${a.message}\n${a.action || ''}`,
-    })), { calName: t('renewal.icsCal') }))
+    downloadIcs('sertifika-yenilemeleri.ics', buildIcs(advice.filter(a => a.not_after).map(a => {
+      const tx = adviceText(a)
+      return { uid: `cert-${a.domain}-${localDayKey(a.not_after)}`, date: a.not_after, summary: `${t('renewal.icsPrefix')} ${a.domain}`, description: `${tx.message}\n${tx.action || ''}` }
+    }), { calName: t('renewal.icsCal') }))
   }
 
   // .catch YOKTU: request() ag hatasinda {success:false} DONDURMEZ, throw eder ve burada
@@ -91,9 +99,9 @@ export default function RenewalAdvice({ onSelectDomain }) {
                 <span className="renewal-badge" style={{ background: color }}>{label}</span>
                 <strong className="renewal-domain">{item.domain}</strong>
               </div>
-              <div className="renewal-message">{item.message}</div>
+              <div className="renewal-message">{adviceText(item).message}</div>
               <div className="renewal-action">
-                <strong>{t('renewal.action')}</strong> <code>{item.action}</code>
+                <strong>{t('renewal.action')}</strong> <code>{adviceText(item).action}</code>
               </div>
               {/* Bağlantı sorunu (ulaşılamayan sertifika) → derin tanılama linki */}
               {item.code === 'UNREACHABLE' && (

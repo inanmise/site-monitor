@@ -85,6 +85,19 @@ function exportCsv(rows) {
   URL.revokeObjectURL(url)
 }
 
+/**
+ * Sunucu özeti yalnız Türkçe üretir ("0 kırık · 12ms", "3 istek", "yüklenemedi"); İngilizce arayüzde
+ * jetonlar sözlükten çevrilir (QA 2026-09-12, ISSUE-010). Türkçede sözlük değeri = jetonun kendisi.
+ */
+const SUMMARY_TOKENS = [['yapılandırma hatası', 'act.tok.configError'], ['yüklenemedi', 'act.tok.loadFailed'],
+  ['zaman aşımı', 'act.tok.timeout'], ['kırık', 'act.tok.broken'], ['istek', 'act.tok.requests']]
+export function localizeSummary(summary, t) {
+  if (!summary) return summary
+  let s = String(summary)
+  for (const [tr, key] of SUMMARY_TOKENS) s = s.split(tr).join(t(key))
+  return s
+}
+
 export default function ActivityLog({ refreshTrigger }) {
   const t = useT()
   const [filters, setFilters] = useState(readParams)
@@ -284,7 +297,7 @@ export default function ActivityLog({ refreshTrigger }) {
                     <span className="act-item-target" title={row.target}>{row.target}</span>
                     <span className="act-item-action">{t('act.ac.' + row.action)}</span>
                     <span className="act-item-summary" style={{ color: sm.color }}>
-                      <sm.Icon size={13} /> {row.result_summary || t('act.st.' + row.result_status)}
+                      <sm.Icon size={13} /> {localizeSummary(row.result_summary, t) || t('act.st.' + row.result_status)}
                     </span>
                     <span className="act-item-time" title={formatDateSec(row.activity_time)}>{rel(row.activity_time)}</span>
                   </button>
@@ -307,7 +320,7 @@ export default function ActivityLog({ refreshTrigger }) {
                           return (
                             <div key={h.id} className="act-mini-row">
                               <span style={{ color: hs.color }}><hs.Icon size={11} /></span>
-                              <span className="act-mini-sum">{h.result_summary || h.result_status}</span>
+                              <span className="act-mini-sum">{localizeSummary(h.result_summary, t) || h.result_status}</span>
                               <span className="act-mini-time" title={formatDateSec(h.activity_time)}>{rel(h.activity_time)}</span>
                             </div>
                           )

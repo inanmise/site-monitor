@@ -23,6 +23,8 @@
  */
 
 /** 0..max aralığına kırpar; max 0/geçersizse null (belirsiz) döner. */
+import { formatPercent } from '../../i18n/dateLocale.js'
+
 function clampValue(value, max) {
   const m = Number(max)
   if (!Number.isFinite(m) || m <= 0) return null
@@ -73,7 +75,7 @@ export function ProgressBar({
       {(label || showValue) && !decorative && (
         <div className="pg-bar-head">
           {label && <span className="pg-bar-label">{label}</span>}
-          {showValue && percent != null && <span className="pg-bar-value">%{percent}</span>}
+          {showValue && percent != null && <span className="pg-bar-value">{formatPercent(percent)}</span>}
         </div>
       )}
       {v == null
@@ -102,7 +104,7 @@ export function ProgressRing({
     ? { 'aria-label': label || undefined }
     : {
         'aria-valuenow': percent, 'aria-valuemin': 0, 'aria-valuemax': 100,
-        'aria-valuetext': `%${percent}`, 'aria-label': label || undefined,
+        'aria-valuetext': formatPercent(percent), 'aria-label': label || undefined,
       }
   return (
     <span

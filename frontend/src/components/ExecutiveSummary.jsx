@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react'
+import { formatPercent } from '../i18n/dateLocale.js'
 import { HeartPulse, CalendarClock, Siren, Gauge, TrendingUp, TrendingDown, Minus } from 'lucide-react'
 import { api } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -38,7 +39,7 @@ export default function ExecutiveSummary({ onOpenTeam }) {
         <button type="button" className={`exs-kpi${tone(health, 95, 90, true)}`} onClick={() => navigateTo('dashboard')}>
           <HeartPulse size={18} aria-hidden="true" />
           <span className="exs-kpi-label">{t('exs.health')}</span>
-          <b className="exs-kpi-value">{health == null ? '—' : `%${health}`}</b>
+          <b className="exs-kpi-value">{formatPercent(health)}</b>
           <span className="exs-kpi-sub">{t('exs.healthSub', c.ok ?? 0, c.total ?? 0)}</span>
         </button>
         <button type="button" className={`exs-kpi${tone(c.under30 ?? 0, 5, 15)}`} onClick={() => navigateTo('renewal')}>
@@ -72,7 +73,7 @@ export default function ExecutiveSummary({ onOpenTeam }) {
                   title={t('exs.teamTip', tm.ok, tm.under30, tm.expired, tm.error, tm.open_alerts)}>
                   <span className="exs-team-name">{tm.team_name ? <TeamBadge teamId={tm.team_id} teamName={tm.team_name} /> : <em>{t('exs.noTeam')}</em>}</span>
                   <ProgressBar value={h ?? 0} max={100} size="sm" decorative className={`exs-team-bar${h == null ? '' : h >= 95 ? ' is-ok' : h >= 90 ? ' is-warn' : ' is-bad'}`} />
-                  <span className="exs-team-pct">{h == null ? '—' : `%${h}`}</span>
+                  <span className="exs-team-pct">{formatPercent(h)}</span>
                   <span className="exs-team-meta">{tm.total} · {tm.under30 > 0 && <b className="is-warn">{tm.under30}↓30g</b>} {tm.open_alerts > 0 && <b className="is-bad">{tm.open_alerts}⚠</b>}</span>
                 </button>
               )

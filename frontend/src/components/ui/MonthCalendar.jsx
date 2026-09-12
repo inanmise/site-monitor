@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
+import { localDayKey } from '../../api/client'
 
 /**
  * Aylık takvim ızgarası (2026-09-12, zenginleştirme #8/#19) — kütüphanesiz.
@@ -10,17 +11,31 @@ import { useT } from '../../i18n/index.jsx'
  */
 function ymd(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
 
+/** Bu ayda olay varsa null (bugünkü ay kalır); yoksa bugünden sonraki ilk olayın ayı, o da yoksa en erken olayın ayı. */
+export function firstEventMonth(events) {
+  const keys = (events || []).map((e) => localDayKey(e?.date)).filter(Boolean).sort()
+  if (!keys.length) return null
+  const now = new Date()
+  const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  if (keys.some((k) => k.startsWith(thisMonth))) return null
+  const today = ymd(now)
+  const k = keys.find((x) => x >= today) || keys[0]
+  return new Date(Number(k.slice(0, 4)), Number(k.slice(5, 7)) - 1, 1)
+}
+
 export default function MonthCalendar({ events = [], initialMonth, maxPerDay = 3, ariaLabel }) {
   const t = useT()
-  const [cursor, setCursor] = useState(() => {
-    const d = initialMonth ? new Date(initialMonth) : new Date()
-    return new Date(d.getFullYear(), d.getMonth(), 1)
-  })
   const byDay = useMemo(() => {
     const m = new Map()
-    for (const e of events) { if (!e?.date) continue; const k = String(e.date).slice(0, 10); if (!m.has(k)) m.set(k, []); m.get(k).push(e) }
+    // Yerel gün (ISSUE-004): UTC damgası 23:59Z → yerel ertesi gün; slice(0,10) bir gün erken düşürüyordu.
+    for (const e of events) { if (!e?.date) continue; const k = localDayKey(e.date); if (!k) continue; if (!m.has(k)) m.set(k, []); m.get(k).push(e) }
     return m
   }, [events])
+  // Başlangıç ayı (ISSUE-003): bu ayda olay yoksa olayı olan İLK aya açılır — boş ızgara "hiçbir şey yok" okunmasın.
+  const [cursor, setCursor] = useState(() => {
+    const d = initialMonth ? new Date(initialMonth) : firstEventMonth(events) || new Date()
+    return new Date(d.getFullYear(), d.getMonth(), 1)
+  })
 
   const year = cursor.getFullYear(), month = cursor.getMonth()
   const first = new Date(year, month, 1)

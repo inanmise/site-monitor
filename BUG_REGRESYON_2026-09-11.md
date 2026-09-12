@@ -214,3 +214,47 @@ gruplama (#22), grafik eşikleri (#23), bağlama duyarlı yardım (#24), gerçek
   `clean verify` sürüm öncesi koşuldu.
 Bilinen sınırlar (bilinçli): SLA hedefi filo geneli (takım başına ertelendi); grafik eşikleri sabit; palet arama
 LIKE (tam metin değil); ICS yalnız istemcide üretilir. → **REGRESYON YOK**.
+
+## Ek — on dördüncü tur (2026-09-12, tarayıcı QA turu `/qa` — `v20.58.0..HEAD`, yalnız frontend)
+
+Kapsam: uçtan uca headless tarayıcı QA'sı (34 sayfa, İngilizce arayüz + Türkçe örneklem, karanlık tema, 375 px);
+13 bulgu (4 orta, 9 düşük; kritik/yüksek yok, konsol hatası 0, kırık bağlantı 0), rapor
+`.gstack/qa-reports/qa-report-localhost-2026-09-12.md`. Ayrıca "Sizin için — bugün" varsayılan kapalı (e0f678ba).
+
+**Bulgular ve düzeltme deseni:**
+- ISSUE-004 (orta, işlevsel): takvim/ICS `not_after.slice(0,10)` ile **UTC gününü** alıyordu; liste yerel günü gösterir
+  (24/10 02:59 İstanbul = `2026-10-23T23:59:59Z`) → aynı sertifika listede 24/10, takvimde 23/10, .ics'te bir gün
+  erken. Tek yardımcı `localDayKey` (`api/client.js`, `toUtc` ile aynı sözleşme); `MonthCalendar` kovalama, `ics.js`
+  DTSTART, `RenewalAdvice` uid, `MaintenanceWindowsPage` olayı bu yardımcıyı kullanır. Test beklentisi saat dilimine
+  bağlı DEĞİL (CI UTC / yerel İstanbul tuzağı): `localDayKey(x)` == `formatDateOnly(x)` günü.
+- ISSUE-008 (orta, işlevsel): Zayıf Algoritma KPI'ı yalnız **zayıf bulguya bağlı** istisnaları sayıyordu (`excepted`),
+  bölüm ise tüm kayıtları → sayfa kendiyle çelişiyordu. KPI = kayıtlı istisna (bölümle aynı), alt satır = bulguya
+  bağlı adet. Backend sözleşmesi değişmedi (`excepted` haftalık e-postada kullanılmaya devam eder).
+- ISSUE-002 (orta, içerik): yenileme tavsiyesi mesaj/eylemi sunucuda yalnız TR üretilir; arayüz `code` + gün sayısıyla
+  çevirir, bilinmeyen kodda sunucu metni kalır (geriye uyumlu). Backend/e-posta metni değişmedi.
+- ISSUE-007 (orta, görsel): gürültü paneli `auto-fit minmax(320px)` üç sütuna bölünüp tablo komşuya taşıyordu →
+  `3fr/2fr` + `overflow-x:auto`, ≤1100px tek sütun.
+- Sınıf düzeltmesi (kardeş yüzey süpürmesi): `%${v}` Türkçe sırası 12 yüzeyde → `formatPercent` (dateLocale.js,
+  `dateLocale()` aynasıyla dile bağlı). Türkçe birim/jeton sızıntıları (`sn/dk/sa`, `kırık/istek/yüklenemedi`,
+  Türkçe ay adı, `Az/Çok`, `≥1 kez`, `1 problems`) sözlüğe taşındı; aktivite özeti jeton haritasıyla kenarda
+  çevrilir (sunucu metni değişmedi → CSV/e-posta aynı).
+- ISSUE-012 (düşük, UX): yapılandırma sağlığı "Aç" aynı bölümde hiçbir şey yapmıyor gibiydi → `onOpenSection(sec, key)`
+  sözleşmesi (ikinci arg yalnız `general` satırlarında), `GeneralSettings` `data-setting-key` ile kaydır/odakla/vurgula.
+
+**Denetim odakları ve sonuç:**
+- Sunucu tarafı ve API sözleşmesi DEĞİŞMEDİ (git diff yalnız `frontend/`); yetki/kapsam yüzeyi yok.
+- Kapılar: 0 lint hatası (70 uyarı ana dalla birebir aynı), i18n paritesi (her yeni anahtar TR+EN), cssClasses/cssTokens
+  (yeni sınıf `.threshold-grid.is-focus-target` App.css'te), EOL kontrolü (CRLF korundu).
+- Testlerde iki mock eksikliği yakalandı (`formatDate`/`formatDateOnly` `../api/client` mock'larında) ve
+  `%25`→`25%` beklentileri dile duyarlı yapıldı; `KeywordMonitorPage` TR ifade beklentisi iki dile açıldı.
+- Yeni testler: `localDayKey.test.jsx` (5), RenewalAdvice (+1), WeakAlgorithmReport (KPI assert), ConfigHealthCard
+  (tekil çip + 2-arg sözleşme).
+Bilinen sınırlar (bilinçli): keyword `expect`/`trig` İngilizce "1 times" biçimi (tekil/çoğul ayrımı yok); ISSUE-013
+düzeltmesi yalnız tarayıcıda doğrulandı (jsdom yerleşim yapmaz). → **REGRESYON YOK**.
+
+**CI kırmızısı (sürüm sırasında):** `UserPushServiceTest.enqueueTeamNotice_writesRowsWithDedupe` runner'da düştü
+(yerelde iki kez yeşil). Kök neden flake değil yarış: ilk çağrı satır kuyruklayınca outbox worker iş parçacığı hemen
+koşup `appSettings` mock'unu çağırıyor; test iş parçacığı aynı anda `when(...)` ile yeniden stub'lıyor — Mockito
+stubbing iş parçacığı güvenli değil, yeni stub kayboluyor (`reason=null`). Kapalı dal ayrı teste alındı
+(`enqueueTeamNotice_disabled`, worker hiç başlamıyor). Desen notu: worker'lı serviste satır kuyrukladıktan SONRA
+mock'u yeniden stub'lama.
