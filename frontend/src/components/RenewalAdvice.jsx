@@ -3,10 +3,11 @@ import { api, formatDateOnly } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
+import StatusBlock from './ui/StatusBlock.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
 import MonthCalendar from './ui/MonthCalendar.jsx'
 import { buildIcs, downloadIcs } from '../utils/ics.js'
-import { CalendarDays, List, Download } from 'lucide-react'
+import { CalendarDays, List, Download, ShieldCheck } from 'lucide-react'
 
 const PRIORITY_COLOR = { critical: '#dc3545', warning: '#fd7e14', info: '#0d6efd' }
 
@@ -59,7 +60,7 @@ export default function RenewalAdvice({ onSelectDomain }) {
       </AlertBanner>
     )
   if (advice.length === 0)
-    return <LoadingBlock label={t('renewal.allGood')} fullWidth />
+    return <StatusBlock tone="success" icon={ShieldCheck} title={t('renewal.allGood')} description={t('empty.hintAllGood')} />
 
   return (
     <div className="renewal-container">

@@ -25,7 +25,7 @@ import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { RefreshCw, Plus, Trash2, ScanSearch, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, Image, FileCode, Link2, Frame, Type, ShieldAlert, Download, EyeOff } from 'lucide-react'
+import { RefreshCw, Plus, Trash2, ScanSearch, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, Image, FileCode, Link2, Frame, Type, ShieldAlert, Download, EyeOff, Inbox } from 'lucide-react'
 import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
 import ModalScrollHint from './ui/ModalScrollHint.jsx'
 import { duplicateName } from '../utils/duplicateName.js'
@@ -35,6 +35,7 @@ import AlertHistory from './admin/AlertHistory.jsx'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
+import StatusBlock from './ui/StatusBlock.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
@@ -655,7 +656,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
           {String(loadError)}
         </AlertBanner>
       ) : monitors.length === 0 ? (
-        <LoadingBlock label={canWrite ? t('page.noMonitorsAdmin') : t('page.noMonitors')} fullWidth />
+        <StatusBlock tone="neutral" icon={Inbox} title={canWrite ? t('page.noMonitorsAdmin') : t('page.noMonitors')} description={canWrite ? t('empty.hintMonitorsAdmin') : t('empty.hintMonitors')} />
       ) : (
         <>
         <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow}

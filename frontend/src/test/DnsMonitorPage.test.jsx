@@ -6,6 +6,7 @@ const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 
 vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
+  formatDateSec: (s) => s ?? '',   // OutageTimeline (2026-09-12, #12) modal içinde kullanıyor
   api: withApiFallback({
     monitoring: {
       listGroups:       vi.fn(() => Promise.resolve({ success: true, data: [] })),
@@ -55,7 +56,10 @@ describe('DnsMonitorPage', () => {
     expect(badge).toBeTruthy()
     expect(badge.textContent).toMatch(expected)
     // Rozet üst satırın İLK çocuğu olmalı — sağ gruptaki kopyalama düğmesini sola itmesin.
-    expect(container.querySelector('.upt-card-top').firstElementChild).toBe(badge)
+    // Toplu seçim kutucuğu (2026-09-12, #13) rozetin SOLUNDA durabilir; rozet yine sağ gruptan önce gelmeli.
+    const top = container.querySelector('.upt-card-top')
+    const firstNonCheck = [...top.children].find((el) => !(el.tagName === 'INPUT' && el.type === 'checkbox'))
+    expect(firstNonCheck).toBe(badge)
   })
 
   it('aktif alarmlı satırda alarm ikonu (.upt-alarm-ico) render olur', async () => {

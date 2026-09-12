@@ -4597,6 +4597,13 @@ export const TR = {
   'helpd.title': 'Bu sayfa nasıl kullanılır?',
   'helpd.full': 'Tam kılavuz',
   'helpd.none': 'Bu sayfa için ayrı bir kılavuz bölümü yok — tam kılavuza bakın.',
+  // Boş durum ipuçları (2026-09-12, #5) — spinner yerine "ne yok, ne yapılır"
+  'empty.hintFilter': 'Filtreleri gevşetin ya da arama terimini silin.',
+  'empty.hintActivity': 'İlk kontroller koştuğunda hareket burada görünür.',
+  'empty.hintCerts': 'Yeni bir alan adı ekleyin ya da Yönetim → Envanter\'den içe aktarın.',
+  'empty.hintAllGood': 'Bu iyi bir haber — şu an ilgilenilecek bir şey yok.',
+  'empty.hintMonitors': 'Bu tür için henüz izleme tanımlanmamış; takım yöneticiniz ekleyebilir.',
+  'empty.hintMonitorsAdmin': 'Sağ üstteki "Yeni" düğmesiyle ilk izlemeyi oluşturun; kılavuz düğmesi formu nasıl dolduracağınızı anlatır.',
   // Zayıf Algoritma Raporu — zenginleştirme (2026-09-12)
   'wa.loadError':         'Rapor yüklenemedi',
   'wa.retry':             'Yeniden dene',
@@ -11299,6 +11306,13 @@ export const EN = {
   'helpd.title': 'How to use this page',
   'helpd.full': 'Full guide',
   'helpd.none': 'There is no dedicated guide section for this page — see the full guide.',
+  // Empty-state hints (2026-09-12, #5) — "what is missing, what to do" instead of a spinner
+  'empty.hintFilter': 'Relax the filters or clear the search term.',
+  'empty.hintActivity': 'Activity appears here once the first checks run.',
+  'empty.hintCerts': 'Add a domain or import from Administration → Inventory.',
+  'empty.hintAllGood': 'Good news — nothing needs attention right now.',
+  'empty.hintMonitors': 'No monitors of this type yet; your team admin can add one.',
+  'empty.hintMonitorsAdmin': 'Create the first monitor with the "New" button top right; the guide button explains the form.',
   // Weak Algorithm Report — enrichment (2026-09-12)
   'wa.loadError':         'The report could not be loaded',
   'wa.retry':             'Try again',

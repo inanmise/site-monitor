@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
-import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock } from 'lucide-react'
+import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Inbox, ShieldCheck } from 'lucide-react'
 
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
@@ -33,6 +33,7 @@ import CheckTeamPicker, { NO_TEAM } from './components/check/CheckTeamPicker.jsx
 import AnnouncementBanner from './components/AnnouncementBanner.jsx'
 import { LastLoginNotice } from './components/LastLoginInfo.jsx'
 import { LoadingBlock } from './components/ui/Progress.jsx'
+import StatusBlock from './components/ui/StatusBlock.jsx'
 
 // Ağır/seyrek admin & rapor sekmeleri — lazy (kod-bölme): ilk yük küçülür, sekme
 // açılınca yüklenir. Hepsi aşağıdaki tek <Suspense> sınırı altında render edilir.
@@ -1097,7 +1098,7 @@ export default function App() {
                   )}
                 </div>
                 {sorted.length === 0 ? (
-                  <LoadingBlock label={statsFilter ? t('app.noFilterCerts', STAT_FILTER_LABEL[statsFilter]) : t('app.noCerts')} fullWidth />
+                  <StatusBlock tone="neutral" icon={Inbox} title={statsFilter ? t('app.noFilterCerts', STAT_FILTER_LABEL[statsFilter]) : t('app.noCerts')} description={statsFilter || search ? t('empty.hintFilter') : t('empty.hintCerts')} />
                 ) : (
                   <>
                     <div className="cards-container">
@@ -1136,7 +1137,7 @@ export default function App() {
                   ⓘ {t('app.sslHourlyNote')}
                 </div>
                 {warnings.length === 0 ? (
-                  <LoadingBlock label={t('app.noWarnings')} fullWidth />
+                  <StatusBlock tone="success" icon={ShieldCheck} title={t('app.noWarnings')} description={t('empty.hintAllGood')} />
                 ) : (
                   <>
                   <div className="cards-container">

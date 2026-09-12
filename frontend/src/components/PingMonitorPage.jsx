@@ -13,7 +13,7 @@ import SearchableSelect from './ui/SearchableSelect.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
-import { RefreshCw, Plus, Trash2, Radio, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle } from 'lucide-react'
+import { RefreshCw, Plus, Trash2, Radio, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, Inbox } from 'lucide-react'
 import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
 import ModalScrollHint from './ui/ModalScrollHint.jsx'
 import { duplicateName } from '../utils/duplicateName.js'
@@ -33,6 +33,7 @@ import AlertHistory from './admin/AlertHistory.jsx'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
+import StatusBlock from './ui/StatusBlock.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
@@ -526,7 +527,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
           {String(loadError)}
         </AlertBanner>
       ) : monitors.length === 0 ? (
-        <LoadingBlock label={canWrite ? t('ping.noMonitorsAdmin') : t('ping.noMonitors')} fullWidth />
+        <StatusBlock tone="neutral" icon={Inbox} title={canWrite ? t('ping.noMonitorsAdmin') : t('ping.noMonitors')} description={canWrite ? t('empty.hintMonitorsAdmin') : t('empty.hintMonitors')} />
       ) : (
         <>
         <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow}

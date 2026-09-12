@@ -14,7 +14,7 @@ import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { RefreshCw, Plus, Trash2, Globe, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ShieldCheck } from 'lucide-react'
+import { RefreshCw, Plus, Trash2, Globe, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ShieldCheck, Inbox } from 'lucide-react'
 import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
 import ModalScrollHint from './ui/ModalScrollHint.jsx'
 import { duplicateName } from '../utils/duplicateName.js'
@@ -35,6 +35,7 @@ import AlertHistory from './admin/AlertHistory.jsx'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
+import StatusBlock from './ui/StatusBlock.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
@@ -524,7 +525,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
           {String(loadError)}
         </AlertBanner>
       ) : monitors.length === 0 ? (
-        <LoadingBlock label={canWrite ? t('http.noMonitorsAdmin') : t('http.noMonitors')} fullWidth />
+        <StatusBlock tone="neutral" icon={Inbox} title={canWrite ? t('http.noMonitorsAdmin') : t('http.noMonitors')} description={canWrite ? t('empty.hintMonitorsAdmin') : t('empty.hintMonitors')} />
       ) : (
         <>
         <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow}

@@ -1,4 +1,5 @@
 import { LoadingBlock } from './ui/Progress.jsx'
+import StatusBlock from './ui/StatusBlock.jsx'
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -6,8 +7,7 @@ import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import {
   Shield, Activity, Globe, Server, Radio, Share2, Search, CalendarClock, ScanSearch, FlaskConical, Gauge,
   CheckCircle, AlertTriangle, XCircle, HelpCircle, ChevronDown, ChevronRight,
-  Download, X, RefreshCw, Clock, User,
-} from 'lucide-react'
+  Download, X, RefreshCw, Clock, User, Inbox } from 'lucide-react'
 import { csvCell } from '../utils/csv.js'
 
 // Her izleme türünün ayırt edici ikon + rengi (badge).
@@ -242,7 +242,7 @@ export default function ActivityLog({ refreshTrigger }) {
       ) : error ? (
         <div className="loading act-error-state">{t('act.error')}</div>
       ) : data.length === 0 ? (
-        <LoadingBlock label={anyFilter ? t('act.noMatch') : t('act.empty')} fullWidth />
+        <StatusBlock tone="neutral" icon={Inbox} title={anyFilter ? t('act.noMatch') : t('act.empty')} description={anyFilter ? t('empty.hintFilter') : t('empty.hintActivity')} />
       ) : (
         <>
           <div className="act-feed">
