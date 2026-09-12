@@ -1,9 +1,163 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-12T19:45:09Z",
+  "generatedAt": "2026-09-12T21:46:08Z",
   "repo": "inanmise/site-monitor",
-  "count": 640,
+  "count": 641,
   "releases": [
+    {
+      "version": "20.59.1",
+      "tag": "v20.59.1",
+      "releasedAt": "2026-09-12T21:46:00Z",
+      "commit": "02156f920fe8ebf379701e3caa48614785c74120",
+      "prevVersion": "20.59.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 14,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 4
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": "forecast",
+          "breaking": false,
+          "sha": "02156f92",
+          "subject": "fixture dates built from the local day, not the UTC day"
+        },
+        {
+          "type": "docs",
+          "scope": "regression",
+          "breaking": false,
+          "sha": "1ab73b58",
+          "subject": "round 17 — QA round 2 + pre-release sibling sweep (UTC-day class)"
+        },
+        {
+          "type": "fix",
+          "scope": "history",
+          "breaking": false,
+          "sha": "147f016e",
+          "subject": "day separators and maintenance next-run date used the UTC day, not the local day"
+        },
+        {
+          "type": "test",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "ab85197c",
+          "subject": "ISSUE-001 — inventory hygiene test expects the new EN chip label"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "b833f3b0",
+          "subject": "ISSUE-005 — inventory hygiene band header crushed its summary to one word per line at 375px"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "5e9f99a7",
+          "subject": "ISSUE-012 — forecast KPI row and 05/06 row stayed two-column at 375px, right column clipped"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "fa74d9a8",
+          "subject": "ISSUE-010 — on-time renewal KPI and section ignored the page filters"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "f2394f75",
+          "subject": "ISSUE-002 — inventory copy-link dropped the sort order"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "dcb5cea4",
+          "subject": "ISSUE-003 — team-view expand toggle had no accessible name (icon-only button)"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "75d70078",
+          "subject": "ISSUE-001 — EN hygiene chips \"no team\" vs \"no responsible team\" were indistinguishable"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "856f115c",
+          "subject": "ISSUE-011 — \"Takım verisi bulunamadı\" shown when the by-team window is merely empty"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "66d9a71e",
+          "subject": "ISSUE-013 — month view only showed events inside the upcoming table's 30-day range"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "af0f37e4",
+          "subject": "ISSUE-008 — planned renewal date was never drawn on the forecast calendar"
+        },
+        {
+          "type": "test",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "09f6471f",
+          "subject": "regression test for ISSUE-009 — MonthCalendar month label follows app locale"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "70102151",
+          "subject": "ISSUE-009 — month calendar header followed the browser locale, not the app language"
+        },
+        {
+          "type": "test",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "bb2b1321",
+          "subject": "regression test for ISSUE-004 — new import rows list team/port in changes"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "cae37d7c",
+          "subject": "ISSUE-004 — import preview omitted \"team\" (and non-default port) from a new row's change list"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "a1589dc3",
+          "subject": "ISSUE-007 — renew_by was the UTC calendar day while expiry is shown as the local day"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "df881dd3",
+          "subject": "ISSUE-006 — weekend/holiday hatching on the forecast heat map never rendered"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.59.0",
       "tag": "v20.59.0",
