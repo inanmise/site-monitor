@@ -39,6 +39,7 @@ vi.mock('../api/client', () => ({
   formatDate:     (s) => s ?? '',
   formatDateSec:  (s) => s ?? '',
   formatDateOnly: (s) => s ?? '',
+  localDayKey:    (s) => String(s ?? '').slice(0, 10),   // takvim/vade modelleri (2026-09-12)
 }))
 
 /** App.jsx'teki `lazy(() => import('./x/Y'))` yollarını çıkarır. */

@@ -258,3 +258,72 @@ koşup `appSettings` mock'unu çağırıyor; test iş parçacığı aynı anda `
 stubbing iş parçacığı güvenli değil, yeni stub kayboluyor (`reason=null`). Kapalı dal ayrı teste alındı
 (`enqueueTeamNotice_disabled`, worker hiç başlamıyor). Desen notu: worker'lı serviste satır kuyrukladıktan SONRA
 mock'u yeniden stub'lama.
+
+## Ek — on beşinci tur (2026-09-12, Domain Envanteri zenginleştirme — 15 madde, `v20.58.1..HEAD`)
+
+Kapsam: arama+süzgeç (#1), hijyen bandı (#2), canlı sertifika sütunları (#3), sütun seçici+sıralama (#4),
+bayrak/sorumlu ikonları (#5), CSV içe aktarma (#6), takıma göre görünüm (#7), çekmece + satır-içi düzenleme (#8),
+alan adı bitişi (#9), çöp kutusu künyesi + otomatik purge ayarı (#10), şimdi kontrol et (#11), çakışma sezgisi (#12),
+kayıtlı görünüm + bağlantı (#13), etiket çipleri (#14), yoğunluk/mobil (#15). Ayrıca "Bildirim grubu" çift etiket
+düzeltmesi (85240399).
+
+**Denetim odakları ve sonuç:**
+- Yeni uçlar: `GET /admin/inventory/hygiene` (liste ile aynı kapsam; `inventory.crud` edit → USER'a kapalı),
+  `POST /admin/inventory/import` (`dry_run` VARSAYILAN true; satır başına `SessionScope.canManage`; silinmiş
+  kayıt/dosya içi tekrar/kapsam dışı atlanır, batch durmaz; `DOMAIN_IMPORT` denetimi + satır başına geçmiş).
+  AdminController'a bağımlılık eklenmedi (ayrı `InventoryInsightController`, 5 WebMvc testi).
+- Kuru koşu işlem DIŞINDA koşar (`plan()` @Transactional değil): open-in-view kapalı → `findByDomain` kopuk
+  varlık döner, deneme mutasyonları flush edilmez. Aynı gövde @Transactional olsaydı "kuru" koşu sessizce
+  yazardı — servis testinde `save` hiç çağrılmıyor diye pinli.
+- `listInventory` `latest_checks` ile zenginleşti (tek ek sorgu, `@Transient cert_*` alanları); satır-içi
+  düzenleme tam gövde + yama gönderir ve `cert_*`/`team_name` alanlarını gövdeden eler (Jackson bilinmeyen
+  alanı yok sayar ama sözleşme temiz kalsın).
+- Otomatik purge: retention kataloğuna ham DELETE politikası OLARAK EKLENMEDİ (checks/notes öksüz kalırdı);
+  ayrı servis elle purge ile aynı zinciri koşar, `DOMAIN_AUTO_PURGE` sistem denetimi, HA kilidi
+  (`tryAcquireSchedulerLock` public yapıldı). `RetentionCoverageTest` EXEMPT girdisi (soft delete) korunur.
+  Yumuşak silme artık aktörü damgalar (`stampUpdated`) → çöp kutusunda "kim sildi".
+- Hijyen bulgularına makine kodu eklendi (`Finding.codes`); e-posta metni değişmedi (`InventoryHygieneServiceTest`
+  +2). `analyze(rows, cap)` — sayfa tavansız ister.
+- Frontend saf model (`inventoryModel.js`, 7 test): süzgeç/sıralama/çakışma/CSV ayrıştırma (RFC-4180'e yakın,
+  `;` otomatik, BOM, yerelleştirilmiş başlık eşlemesi). Bileşen testleri `InventoryEnrichment.test.jsx` (10).
+- Tarayıcı doğrulaması: hijyen çipi → `i_hy` URL'de, süzgeç paneli, çekmece Kontroller sekmesi (ilk denemede
+  `renderRow` eksikti → ErrorBoundary; CertificateModal'ın satır çizicisi taşındı, LIR-2026-000033 bu
+  denemeden), takım görünümü, içe aktarma kuru koşu (1 yeni / 1 değişiklik yok / 1 geçersiz — yazılmadı).
+- Kapıların yakaladıkları: `cssClasses` (`.input-sm`, `.inv-table`), `settings-help-coverage` (EN başlık
+  "Recommended:"), i18n çift anahtar (`inv.colUgTeam`), eski test seçicileri (satır artık iki checkbox
+  taşıyor; alan adı düğme oldu).
+- Kalıcı düzeltme: `teams: teamsProp = []` her render'da yeni dizi → prop-senkron efekti sonsuz döngü
+  (teams verilmeden USER rolü); modül sabiti `NO_TEAMS`.
+Bilinen sınırlar (bilinçli): süzgeçler istemci tarafı (liste zaten tam yükleniyor, ≤1000 satır); içe aktarma
+tek istekte 5000 satır; çakışma sezgisi yalnız öneri; kayıtlı görünümler tarayıcıya özel (paylaşım = bağlantı).
+→ **REGRESYON YOK**.
+
+## Ek — on altıncı tur (2026-09-12, Vade Takvimi zenginleştirme — 14 madde)
+
+Kapsam: dolmuş/erişilemeyen görünür (#1), takım/UG/tier/grup süzgeci (#2), renew-by + tier lead ayarı (#3),
+tazelik/ortam/hata bandı (#4), alarm eşikleri (#5), eylemler + planlanan yenileme (#6), takıma göre dolacaklar (#7),
+toplu iş/kapsama/veren (#8), ICS/CSV/bağlantı/yazdır (#9), zamanında yenileme oranı (#10), ay görünümü +
+tatil/hafta sonu (#11), boş durumlar (#12), sözlük (#13), tek uç `/api/forecast` (#14).
+
+**Denetim odakları ve sonuç:**
+- Yeni uçlar `ForecastController` (AdminController/CertificateController'a dokunulmadı): `GET /api/forecast`
+  (`inventory.list` view; `SessionScope.viewTeamIds` + satır bazlı `canView`), `POST/DELETE /api/forecast/{domain}/plan`
+  (`inventory.crud` edit + `canManage`; yabancı takım 403, bilinmeyen domain 400 — `ForecastControllerTest` 3).
+- Eski model **dolmuş ve hatalı** sertifikaları hiç göstermiyordu (`d < today` / `days<0` süzgeci) — bu sayfada
+  "≤7 gün 0" yazarken dolmuş sertifika olabiliyordu. Yeni model `classify` ile overdue/unreachable ayrı kova.
+- Eşikler sabit 7/14/30'dan `AlertThreshold`'a bağlandı (alarmla aynı; kayıt yoksa 30/15/7). Lead ayarları
+  `AppSettingsCatalog` "monitoring" grubunda → `settings-labels-sync` + `settings-help-coverage` için TR/EN etiket ve
+  3-satır yardım eklendi (EN başlık "Recommended:" kuralı bir kez ısırdı).
+- Yenileme geçmişi DB'de toplanır (`GROUP BY domain, fingerprint` — ham satır taşınmaz); geçiş = yenileme, "zamanında"
+  = önceki bitiş − tier lead'inden önce. Yerel veride 3 olay (1 zamanında, 2 geç) — sayfa gerçekten sinyal veriyor.
+- Planlanan yenileme: `certificate_inventory` 4 NULLABLE kolon (ddl-auto sessiz NOT NULL tuzağı yok), geçmiş +
+  `CERT_RENEWAL_PLANNED/_PLAN_CLEARED` denetimi; "done" durumu sunucuda türetilir (not_before ≥ plan tarihi).
+- Saf model `forecastModel.js`: ilk sürümde `addDays` `toISOString().slice(0,10)` ile UTC gününe kayıyordu (İstanbul'da
+  bir gün geri) — test yakaladı, yerel getter'larla düzeltildi. Tüm testler `today` sabitiyle TZ'den bağımsız (CI UTC).
+- Tarayıcı doğrulaması: LOCAL etiketi, veri damgası, 6 KPI, 90 günde 6 satır + renew-by + hafta sonu düzeltmesi,
+  plan modalı, takım tablosu (`unreachable` alanı eksik → NaN; düzeltildi ve `>30` sütunu eklendi).
+- `PAGE_STATE_PREFIXES`'e `i_` (envanter) ve `f_` (takvim) eklendi — sekme değişince parametreler temizlenir.
+- Kapılar: `cssClasses` (`.fc-intel-block`), `lazy-tabs-smoke` mock'una `localDayKey`; i18n paritesi tam.
+Bilinen sınırlar (bilinçli): tatil tablosu 2026–2028 (dini bayramlar yıl bazlı), yenileme penceresi 90 gün sabit,
+renew-by sunucuda UTC günü (istemci yerel güne çevirir), plan "done" yalnız not_before ile (parmak izi onayı ayrı).
+→ **REGRESYON YOK**.

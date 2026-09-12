@@ -66,7 +66,8 @@ async function openRowMenu(domain) {
   fireEvent.click(within(row).getByRole('button', { name: /işlem|actions/i }))
 }
 
-const checkboxes = () => [...document.querySelectorAll('tbody input[type="checkbox"]')]
+// Satır SEÇİM kutuları (ilk hücre) — aktif/pasif anahtarı da checkbox (2026-09-12, satır-içi düzenleme), o sayılmaz
+const checkboxes = () => [...document.querySelectorAll('tbody td:first-child input[type="checkbox"]')]
 
 describe('InventoryManager', () => {
   beforeEach(() => {
@@ -175,7 +176,7 @@ describe('InventoryManager', () => {
     fireEvent.click(checkboxes()[0])
     expect(await screen.findByText(/1 seçili|1 selected/)).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /pasif|inactive/i }))   // filtre değişti
+    fireEvent.click(document.querySelector('.inv-stat-inactive'))   // filtre değişti (alan adı düğmesi de 'pasif' içerir → sınıfla seç)
 
     await waitFor(() => expect(screen.queryByText(/seçili|selected/)).toBeNull())
   })

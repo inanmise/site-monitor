@@ -1991,7 +1991,7 @@ public class SchedulerService {
      * {@code false} if another instance holds an unexpired lock.
      * Gracefully degrades to {@code true} (allow) if the lock table is unavailable.
      */
-    private boolean tryAcquireSchedulerLock(String lockName, int ttlMinutes) {
+    public boolean tryAcquireSchedulerLock(String lockName, int ttlMinutes) {   // InventoryAutoPurgeService de kullanır
         try {
             String now   = ISO.format(Instant.now());
             String until = ISO.format(Instant.now().plusSeconds(ttlMinutes * 60L));

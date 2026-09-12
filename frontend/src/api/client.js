@@ -316,6 +316,10 @@ export const api = {
   getSchedulerStatus: () => request('/scheduler/status'),
 
   getRenewalAdvice: () => request('/renewal-advice'),
+  // Vade takvimi (2026-09-12): tek gövde + planlanan yenileme
+  getForecast: () => request('/forecast'),
+  forecastPlan: (domain, date, note) => request(`/forecast/${encodeURIComponent(domain)}/plan`, { method: 'POST', body: JSON.stringify({ date, note }) }),
+  forecastUnplan: (domain) => request(`/forecast/${encodeURIComponent(domain)}/plan`, { method: 'DELETE' }),
 
   // Birleşik aktivite akışı (Kayıtlar → Aktivite) — sayfalı/filtreli/takım-izole. Boş filtreler düşürülür.
   getActivity: (params = {}) => {
@@ -488,6 +492,10 @@ export const api = {
     },
     // Inventory
     getInventory: (showDeleted = false) => request(`/admin/inventory?showDeleted=${showDeleted}`),
+    // Envanter zenginleştirme (2026-09-12): hijyen bandı + CSV içe aktarma (dry_run varsayılan true)
+    getInventoryHygiene: () => request('/admin/inventory/hygiene'),
+    importInventory: (rows, dryRun = true) =>
+      request('/admin/inventory/import', { method: 'POST', body: JSON.stringify({ rows, dry_run: dryRun }) }),
     getInventoryByDomain: (domain) => request(`/admin/inventory/by-domain?domain=${encodeURIComponent(domain)}`),
     addInventory: (item) => request('/admin/inventory', { method: 'POST', body: JSON.stringify(item) }),
     updateInventory: (id, item) => request(`/admin/inventory/${id}`, { method: 'PUT', body: JSON.stringify(item) }),

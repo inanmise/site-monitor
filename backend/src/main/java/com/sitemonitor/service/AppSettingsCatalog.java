@@ -198,6 +198,12 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.weekly-report.deadline-time", "monitoring", Type.STRING),
         // Kullanılabilirlik hedefi (%) — izleme kartlarındaki 30 günlük SLA satırı bununla karşılaştırılır (2026-09-12, #11).
         new Setting("site.monitor.sla.target-pct",             "monitoring", Type.DOUBLE),
+        // Vade takvimi (2026-09-12): yenileme öncesi süre — genel + tier başına (boş/0 = genel)
+        new Setting("site.monitor.renewal.lead-days",           "monitoring", Type.INT),
+        new Setting("site.monitor.renewal.lead-days-t1",        "monitoring", Type.INT),
+        new Setting("site.monitor.renewal.lead-days-t2",        "monitoring", Type.INT),
+        new Setting("site.monitor.renewal.lead-days-t3",        "monitoring", Type.INT),
+        new Setting("site.monitor.renewal.lead-days-t4",        "monitoring", Type.INT),
         // Birleşik aktivite akışı (Kayıtlar → Aktivite) kayıt saklama süresi — bu günden eski aktiviteler gece temizlenir.
         new Setting("site.monitor.activity.retention-days",           "monitoring", Type.INT),
         // Denetim (audit) kayıt saklama süresi (gün) + silmeden önce JSONL arşiv üretimi (append-only + arşiv).
@@ -323,6 +329,7 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.retention.purge-batch-size",        "retention", Type.INT),
         new Setting("site.monitor.network-outage.retention-days",     "retention", Type.INT),
         new Setting("site.monitor.incident.retention-days",           "retention", Type.INT),
+        new Setting("site.monitor.inventory.auto-purge-days",          "retention", Type.INT),   // 0 = kapalı; çöp kutusu otomatik boşaltma (envanter #10)
         new Setting("site.monitor.rollup.lookback-days",              "retention", Type.INT),
         new Setting("site.monitor.rollup.retention-days",             "retention", Type.INT),
         new Setting("site.monitor.rollup.hourly-retention-days",      "retention", Type.INT),

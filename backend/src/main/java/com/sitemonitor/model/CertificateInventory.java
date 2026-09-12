@@ -159,6 +159,14 @@ public class CertificateInventory {
     @Transient private String teamName;
     @Transient private String ugTeamName;
 
+    // ── Canlı kontrol özeti (2026-09-12, envanter #3) — listInventory latest_checks'ten doldurur ──
+    @Transient private String certStatus;          // valid | warning | critical | error | …
+    @Transient private Integer certDaysRemaining;
+    @Transient private String certNotAfter;
+    @Transient private String certCheckedAt;
+    @Transient private String certIssuer;
+    @Transient private String certError;
+
     // ── Kimlik künyesi ────────────────────────────────────────────────────────────────────
     // "Bu izlemeyi kim kurdu?" sorusu geçmiş tablosuna gitmeden de cevaplanabilsin (kart künyesi
     // bunu okur). monitor_change_log'dan BAĞIMSIZ: biri retention ile temizlense de diğeri kalır.
@@ -185,4 +193,11 @@ public class CertificateInventory {
      */
     @jakarta.persistence.Column(name = "notification_group_id")
     private Long notificationGroupId;
+
+    // ── Planlanan yenileme (2026-09-12, vade takvimi #6): operatör "bu tarihte yenileyeceğiz" der; takvimde
+    // taralı çizilir, gerçek yenileme (parmak izi değişimi) görülünce sunucu temizler. Hepsi nullable.
+    @Column(name = "renewal_planned_at", length = 10)      private String renewalPlannedAt;      // YYYY-MM-DD
+    @Column(name = "renewal_planned_by", length = 100)     private String renewalPlannedBy;
+    @Column(name = "renewal_planned_by_name")              private String renewalPlannedByName;
+    @Column(name = "renewal_planned_note", length = 500)   private String renewalPlannedNote;
 }

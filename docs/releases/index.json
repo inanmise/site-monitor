@@ -1,9 +1,79 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-12T15:52:26Z",
+  "generatedAt": "2026-09-12T19:45:09Z",
   "repo": "inanmise/site-monitor",
-  "count": 639,
+  "count": 640,
   "releases": [
+    {
+      "version": "20.59.0",
+      "tag": "v20.59.0",
+      "releasedAt": "2026-09-12T19:44:56Z",
+      "commit": "3325092743f2b3d146721bb3d7e09d24f6afc896",
+      "prevVersion": "20.58.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 4,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 2,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": "regression",
+          "breaking": false,
+          "sha": "33250927",
+          "subject": "round 16 — Expiry Forecast enrichment (14 items)"
+        },
+        {
+          "type": "feat",
+          "scope": "forecast",
+          "breaking": false,
+          "sha": "45598737",
+          "subject": "Expiry Forecast page — overdue, scope filters, renew-by plan, actions, intelligence, exports"
+        },
+        {
+          "type": "feat",
+          "scope": "forecast",
+          "breaking": false,
+          "sha": "cd48d3f8",
+          "subject": "/api/forecast single payload, renewal lead-time settings, planned renewals, on-time trend"
+        },
+        {
+          "type": "docs",
+          "scope": "regression",
+          "breaking": false,
+          "sha": "1a16ccde",
+          "subject": "round 15 — Domain Inventory enrichment (15 items)"
+        },
+        {
+          "type": "feat",
+          "scope": "inventory",
+          "breaking": false,
+          "sha": "7854163b",
+          "subject": "Domain Inventory page — search/filters, hygiene band, live status, columns, import, drawer, team view"
+        },
+        {
+          "type": "feat",
+          "scope": "inventory",
+          "breaking": false,
+          "sha": "93b2fedf",
+          "subject": "hygiene endpoint, live check fields on the list, CSV import, trash auto-purge"
+        },
+        {
+          "type": "fix",
+          "scope": "monitor-modals",
+          "breaking": false,
+          "sha": "85240399",
+          "subject": "\"Notification group\" label was rendered twice in every monitor edit form"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.58.1",
       "tag": "v20.58.1",
