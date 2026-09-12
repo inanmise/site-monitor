@@ -88,7 +88,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const [notifGroups, setNotifGroups] = useState([])
   // Süzgeç / sıralama / sütun / yoğunluk / görünüm (#1 #4 #13 #15 #7) — süzgeç URL'de (i_ öneki), gerisi localStorage
   const [filters, setFilters] = useState(() => paramsToFilters(readUrlParam))
-  const [sort, setSort]       = useState(() => readView().sort || 'domain|asc')
+  const [sort, setSort]       = useState(() => readUrlParam('i_sort', readView().sort || 'domain|asc'))   // paylaşılan bağlantı sıralamayı taşır (ISSUE-002)
   const [cols, setColsRaw]    = useState(() => { const v = readView().cols; return Array.isArray(v) && v.length ? v : defaultCols() })
   const [density, setDensityRaw] = useState(() => readView().density || 'comfortable')
   const [view, setViewRaw]    = useState(() => readUrlParam('i_view', readView().view || 'table'))
@@ -220,6 +220,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     stat: statusFilter !== 'default' ? statusFilter : null,
     ...filtersToParams(filters),
     i_view: view !== 'table' ? view : null,
+    i_sort: sort !== 'domain|asc' ? sort : null,
     page: pager.page > 1 ? pager.page : null,
     ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
   })
