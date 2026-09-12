@@ -396,6 +396,7 @@ export const api = {
     kpis: (id) => request(`/weekly-reports/${id}/kpis`),
     monitoringStats: (id) => request(`/weekly-reports/${id}/monitoring-stats`),
     years: (teamId) => request(`/weekly-reports/years${teamId ? '?teamId=' + teamId : ''}`),
+    deadline: () => request('/weekly-reports/deadline'),   // son giriş günü/saati — canlı ayar (2026-09-12)
     mails: (id) => request(`/weekly-reports/${id}/mails`),
     create: (payload) => request('/weekly-reports', {
       method: 'POST', body: JSON.stringify(payload),

@@ -22,6 +22,8 @@ import { downscaleImage } from '../utils/imageDownscale'
 import { isoWeekInfo, isEditableWeek, formatWeekRange } from '../utils/isoWeek'
 import { mailPreviewSrcDoc } from '../utils/mailPreview.js'
 import { LoadingBlock } from './ui/Progress.jsx'
+import PaginationBar from './ui/PaginationBar.jsx'
+import { usePagination } from '../hooks/usePagination.js'
 
 /** Oturum kesintisi yedekleri için localStorage anahtar öneki. */
 const DRAFT_BACKUP_PREFIX = 'wr.draft.'
@@ -412,6 +414,18 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   }, [effTeamId])
 
   useEffect(() => { loadYears() }, [loadYears])
+
+  // Son giriş zamanı canlı ayardan (2026-09-12, kullanıcı: "Deadline: every Friday at 15:00 konfigüratif
+  // olmalı"). Yüklenene/başarısız olana kadar varsayılan (Cuma 15:00) gösterilir — sayfa kırılmaz.
+  const [deadline, setDeadline] = useState(null)
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try { const r = await api.weeklyReports.deadline(); if (alive && r?.success && r.data) setDeadline(r.data) }
+      catch { /* varsayılan kalır */ }
+    })()
+    return () => { alive = false }
+  }, [])
 
   // Takvimde raporlu haftaların işaretlenmesi — yıl başına Set cache'i
   const [weekMarks, setWeekMarks] = useState({})
@@ -999,6 +1013,10 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   const channels = content?.item4?.channels ?? []
   // "Tarihe Git" hafta filtresi etkinse tablo o haftaya daraltılır
   const displayedReports = weekFilter != null ? reports.filter((r) => r.week_no === weekFilter) : reports
+  // Sayfalama (2026-09-12, kullanıcı: "Weekly Reports tarafında paging yapılmamış"): liste yıl+takım ile
+  // sınırlı (≤53 hafta × takım) ve takvim işaretleri (weekMarks) tüm listeyi istiyor → sayfalama YALNIZ
+  // render'ı böler (InventoryManager deseni). "Tümünü seç" filtrelenmiş tüm liste üzerinde kalır.
+  const pager = usePagination(displayedReports, { listKey: 'weekly-reports', resetDeps: [effTeamId, year, weekFilter] })
 
   // Üstte ve altta aynı aksiyon barı — kaydırmada ikisi de sticky görünür
   const actionButtons = report && (
@@ -1124,7 +1142,9 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                 <li>{t('wr.helpStep4')}</li>
                 <li>{t('wr.helpStep5')}</li>
               </ol>
-              <div className="wr-help-deadline">⏰ {t('wr.helpDeadline')}</div>
+              <div className="wr-help-deadline">⏰ {t('wr.helpDeadline',
+                deadline ? (lang === 'tr' ? deadline.day_tr : deadline.day_en) : (lang === 'tr' ? 'Cuma' : 'Friday'),
+                deadline?.time || '15:00')}</div>
             </div>
           )}
         </div>
@@ -1182,7 +1202,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                 </tr>
               </thead>
               <tbody>
-                {displayedReports.map((r) => (
+                {pager.pageItems.map((r) => (
                   <tr key={r.id} onClick={() => setSelectedId(r.id)} style={{ cursor: 'pointer' }}>
                     {isAdmin && (
                       <td onClick={(e) => e.stopPropagation()} style={{ width: 32 }}>
@@ -1251,6 +1271,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                 ))}
               </tbody>
             </table>
+            <PaginationBar {...pager} />
           </div>
             ) : (
               <div className="empty-state">

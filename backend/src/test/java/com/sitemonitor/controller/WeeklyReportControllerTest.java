@@ -44,6 +44,7 @@ class WeeklyReportControllerTest {
     @MockitoBean com.sitemonitor.service.WeeklyReportKpiService kpiService;
     @MockitoBean com.sitemonitor.service.MonitoringWeeklyStatsService monitoringStatsService;
     @MockitoBean com.sitemonitor.service.PermissionService permissionService;   // rol kapısı (mock: izin verir)
+    @MockitoBean com.sitemonitor.service.AppSettingsService appSettings;          // son giriş zamanı (2026-09-12)
 
     private static WeeklyReport report(Long id, Long teamId, String status) {
         WeeklyReport r = new WeeklyReport();
@@ -416,5 +417,18 @@ class WeeklyReportControllerTest {
         mvc.perform(post("/api/weekly-reports/approve-link/reject").param("token", "X"))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("geçersiz")));
+    }
+    @Test
+    @DisplayName("2026-09-12: GET /weekly-reports/deadline canlı ayardan gün/saat + TR/EN gün adı döner")
+    void deadline_fromLiveSettings() throws Exception {
+        org.mockito.Mockito.when(appSettings.getString(org.mockito.ArgumentMatchers.eq("site.monitor.weekly-report.deadline-day"), org.mockito.ArgumentMatchers.any())).thenReturn("THU");
+        org.mockito.Mockito.when(appSettings.getString(org.mockito.ArgumentMatchers.eq("site.monitor.weekly-report.deadline-time"), org.mockito.ArgumentMatchers.any())).thenReturn("17:30");
+        mvc.perform(get("/api/weekly-reports/deadline").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.day").value("THU"))
+                .andExpect(jsonPath("$.data.time").value("17:30"))
+                .andExpect(jsonPath("$.data.day_tr").value("Perşembe"))
+                .andExpect(jsonPath("$.data.day_en").value("Thursday"))
+                .andExpect(jsonPath("$.data.valid").value(true));
     }
 }

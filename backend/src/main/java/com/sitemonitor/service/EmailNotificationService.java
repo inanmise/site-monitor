@@ -2861,6 +2861,11 @@ public class EmailNotificationService {
      *  SY takımlarına, bugün 15:00 son giriş hatırlatması + "nasıl girilir" kısa kılavuz
      *  + doğrudan Haftalık Raporlar'a giden CTA link. Mail her zaman TR. */
     public String buildWeeklyReportReminderHtml(String teamName, String weekLabel, String reportUrl) {
+        return buildWeeklyReportReminderHtml(teamName, weekLabel, reportUrl, "bugün saat 15:00");
+    }
+
+    /** {@code deadlineText} = "bugün saat 15:00" / "Perşembe saat 17:00" — canlı ayardan (2026-09-12). */
+    public String buildWeeklyReportReminderHtml(String teamName, String weekLabel, String reportUrl, String deadlineText) {
         String accent = "#1f3864";
         String outerBg = "#f4f6f8";
         String generatedAt = ZonedDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
@@ -2947,7 +2952,7 @@ public class EmailNotificationService {
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 4px;border-radius:8px;overflow:hidden'><tr>"
             + "<td width='4' bgcolor='#dc2626' style='background-color:#dc2626;width:4px;font-size:0;line-height:0'>&nbsp;</td>"
             + "<td bgcolor='#fef2f2' style='background-color:#fef2f2;padding:10px 14px;font-size:14px;font-weight:700;color:#991b1b'>"
-            + "⏰ Son giriş <strong>bugün saat 15:00</strong> — lütfen bu haftanın raporunu Site Monitor üzerinden zamanında giriniz.</td></tr></table>"
+            + "⏰ Son giriş <strong>" + escHtml(deadlineText) + "</strong> — lütfen bu haftanın raporunu Site Monitor üzerinden zamanında giriniz.</td></tr></table>"
 
             + cta
 

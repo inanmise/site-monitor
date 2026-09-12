@@ -1705,7 +1705,7 @@ public class SchedulerService {
             return;
         }
         try {
-            weeklyReportReminderService.sendFridayReminders();
+            weeklyReportReminderService.sendFridayReminders(true);   // yalnız son giriş gününde gönderir
         } catch (Exception e) {
             log.error("Haftalık rapor cuma hatırlatması başarısız: {}", e.getMessage(), e);
         } finally {

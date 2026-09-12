@@ -1261,6 +1261,8 @@ export const TR = {
   'general.lbl.site.monitor.trust.alert-untrusted': 'Güvenilmeyen sertifika otoritesinde alarm',
   'general.lbl.site.monitor.weekly-availability.enabled': 'Haftalık erişilebilirlik e-postası açık',
   'general.lbl.site.monitor.weekly-report.image-retention-days': 'Haftalık rapor görselleri saklama (gün)',
+  'general.lbl.site.monitor.weekly-report.deadline-day': 'Haftalık rapor son giriş günü',
+  'general.lbl.site.monitor.weekly-report.deadline-time': 'Haftalık rapor son giriş saati (SS:dd)',
   'general.lbl.site.monitor.weekly.score.weight-critical': 'Skor ağırlığı — kritik',
   'general.lbl.site.monitor.weekly.score.weight-expiring': 'Skor ağırlığı — süresi dolan',
   'general.lbl.site.monitor.weekly.score.weight-uptime': 'Skor ağırlığı — erişilebilirlik',
@@ -4274,7 +4276,7 @@ export const TR = {
   'wr.helpStep3':        'Dört maddeyi doldurun: Proaktif İyileştirmeler · Olay/Problem/Postmortem · Katılımlar · Domain bazlı kritik işler.',
   'wr.helpStep4':        '"Kaydet"e basın; hazır olunca "Onaya Gönder".',
   'wr.helpStep5':        'PO onayından sonra rapor müdüre otomatik iletilir.',
-  'wr.helpDeadline':     'Son giriş: her Cuma saat 15:00.',
+  'wr.helpDeadline':     'Son giriş: her {0} saat {1}.',
   'wr.sendReminderNow':  'Hatırlatma maillerini şimdi gönder',
   'wr.reminderSending':  'Gönderiliyor…',
   'wr.reminderSent':     '{0}/{1} SY takımına hatırlatma gönderildi',
@@ -6389,6 +6391,10 @@ export const TR = {
     'Ne işe yarar: Haftalık erişilebilirlik raporu kayıtlarının saklama süresi.\nFaydası: Hizmet seviyesi (SLA) tartışmalarında üç yıllık geçmiş elde hazır bulunur.\nÖnerilen değer: 1095 gün (varsayılan, üç yıl). Sözleşme yükümlülüğünüz daha kısaysa düşürebilirsiniz.',
   'help.set.site.monitor.weekly-report.image-retention-days':
     'Ne işe yarar: Haftalık rapor görsellerinin saklama süresi; bundan eskisi gece silinir, rapor METNİ korunur.\nFaydası: Satır başına megabaytlarca yer tutan görseller birikmez, raporun kendisi kaybolmaz.\nÖnerilen değer: 730 gün (varsayılan). Veritabanı baskısı varsa 365; taban 30 gün.',
+  'help.set.site.monitor.weekly-report.deadline-day':
+    'Ne işe yarar: Haftalık raporun son giriş günü. Haftalık Raporlar sayfasındaki "⏰ Son giriş" satırı, hatırlatma e-postasındaki vurgu ve hatırlatmanın gönderileceği gün buradan okunur (hatırlatma o gün 09:00\'da gider).\nFaydası: Takvim değişince kod değişmez; sayfa, e-posta ve zamanlayıcı aynı kaynağı kullanır.\nÖnerilen değer: FRI (varsayılan).',
+  'help.set.site.monitor.weekly-report.deadline-time':
+    'Ne işe yarar: Haftalık raporun son giriş saati (SS:dd, İstanbul). Sayfa başlığında ve hatırlatma e-postasında gösterilir.\nFaydası: Ekiplere tek ve doğru saat bildirilir.\nÖnerilen değer: 15:00 (varsayılan). Bozuk biçim yazılırsa sistem sessizce 15:00\'a döner.',
   'help.set.site.monitor.weekly-report.mail-retention-days':
     'Ne işe yarar: Gönderilen haftalık rapor e-postalarının arşiv kayıtlarının saklama süresi.\nFaydası: "Geçen çeyrekte ne raporlanmıştı" sorusu, arşivden aynı HTML açılarak yanıtlanır.\nÖnerilen değer: 730 gün (varsayılan, iki yıl). Görseller ayrı ve daha kısa bir pencerede tutulur.',
   'help.set.site.monitor.weekly.score.weight-critical':
@@ -7698,6 +7704,8 @@ export const EN = {
   'general.lbl.site.monitor.trust.alert-untrusted': 'Alert on untrusted certificate authority',
   'general.lbl.site.monitor.weekly-availability.enabled': 'Weekly availability email enabled',
   'general.lbl.site.monitor.weekly-report.image-retention-days': 'Weekly report images retention (days)',
+  'general.lbl.site.monitor.weekly-report.deadline-day': 'Weekly report deadline day',
+  'general.lbl.site.monitor.weekly-report.deadline-time': 'Weekly report deadline time (HH:mm)',
   'general.lbl.site.monitor.weekly.score.weight-critical': 'Score weight — critical',
   'general.lbl.site.monitor.weekly.score.weight-expiring': 'Score weight — expiring',
   'general.lbl.site.monitor.weekly.score.weight-uptime': 'Score weight — uptime',
@@ -10705,7 +10713,7 @@ export const EN = {
   'wr.helpStep3':        'Fill the four items: Proactive improvements · Incidents/Problems/Postmortems · Engagements · Domain-based critical work.',
   'wr.helpStep4':        'Click "Save"; when ready, "Submit for Approval".',
   'wr.helpStep5':        'After PO approval, the report is automatically sent to the manager.',
-  'wr.helpDeadline':     'Deadline: every Friday at 15:00.',
+  'wr.helpDeadline':     'Deadline: every {0} at {1}.',
   'wr.sendReminderNow':  'Send reminder emails now',
   'wr.reminderSending':  'Sending…',
   'wr.reminderSent':     'Reminder sent to {0}/{1} SY teams',
@@ -12814,6 +12822,10 @@ export const EN = {
     'What it does: How long weekly availability report records are kept.\nBenefit: Three years of history is at hand for service-level discussions.\nRecommended: 1095 days (the default, three years). Lower it if your contractual obligation is shorter.',
   'help.set.site.monitor.weekly-report.image-retention-days':
     'What it does: How long weekly report images are kept; older ones are deleted overnight while the report text is preserved.\nBenefit: Images that weigh megabytes per row stop accumulating, and the reports themselves survive.\nRecommended: 730 days (the default), or 365 under database pressure. The floor is 30 days.',
+  'help.set.site.monitor.weekly-report.deadline-day':
+    'What it does: The weekly report deadline day. The "⏰ Deadline" line on the Weekly Reports page, the highlight in the reminder email and the day the reminder is sent all read it (the reminder goes out at 09:00 that day).\nBenefit: When the calendar changes, no code changes; page, email and scheduler share one source.\nRecommended: FRI (the default).',
+  'help.set.site.monitor.weekly-report.deadline-time':
+    'What it does: The weekly report deadline time (HH:mm, Istanbul). Shown in the page header and in the reminder email.\nBenefit: Teams are told one, correct time.\nRecommended: 15:00 (the default). A malformed value silently falls back to 15:00.',
   'help.set.site.monitor.weekly-report.mail-retention-days':
     'What it does: How long archived copies of sent weekly report emails are kept.\nBenefit: "What did we report last quarter?" is answered by opening the very same HTML from the archive.\nRecommended: 730 days (the default, two years). Images are kept separately, on a shorter window.',
   'help.set.site.monitor.weekly.score.weight-critical':
