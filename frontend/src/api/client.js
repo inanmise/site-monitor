@@ -304,6 +304,7 @@ export const api = {
     request(`/certificates/${encodeURIComponent(domain)}/health/confirm-renewal`, { method: 'POST' }),
 
   getStats: () => request('/stats'),
+  getExecutiveStats: () => request('/stats/executive'),   // yönetici özeti (2026-09-12, #20)
 
   getTeamStats: () => request('/stats/teams'),
 

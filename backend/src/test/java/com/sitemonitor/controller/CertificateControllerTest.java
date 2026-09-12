@@ -91,6 +91,9 @@ class CertificateControllerTest {
     @MockitoBean
     com.sitemonitor.service.CertificateAppLayerProbe appLayerProbe;
 
+    @MockitoBean
+    com.sitemonitor.service.ExecutiveStatsService executiveStatsService;   // yönetici özeti (2026-09-12, #20)
+
     // ── Auth guard ────────────────────────────────────────────────────────────
 
     @Test
@@ -828,5 +831,15 @@ class CertificateControllerTest {
 
         mvc.perform(get("/api/check-preview/t5.example.com").session(scopedSession())).andExpect(status().isOk());
         mvc.perform(get("/api/check-preview/adhoc.example.com").session(scopedSession())).andExpect(status().isOk());
+    }
+    @Test
+    @DisplayName("2026-09-12: GET /stats/executive gövdeyi servisten kapsam predicate'iyle döner")
+    void executiveStats() throws Exception {
+        org.mockito.Mockito.when(executiveStatsService.build(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(java.util.Map.of("certs", java.util.Map.of("total", 5, "health_pct", 80.0), "teams", java.util.List.of()));
+        mvc.perform(get("/api/stats/executive").session(teamSession(5L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.certs.total").value(5))
+                .andExpect(jsonPath("$.data.certs.health_pct").value(80.0));
     }
 }

@@ -39,6 +39,7 @@ public class CertificateController {
     private final CertificateService certService;
     private final CertificateCheckerService checkerService;
     private final SchedulerService schedulerService;
+    private final com.sitemonitor.service.ExecutiveStatsService executiveStatsService;   // yönetici özeti (2026-09-12, #20)
     private final AlertEventRepository alertEventRepository;
     private final CertificateInventoryRepository inventoryRepo;
     private final NetworkOutageEventRepository networkOutageRepo;
@@ -232,6 +233,12 @@ public class CertificateController {
     @GetMapping("/stats")
     public ResponseEntity<Map<String, Object>> getStats(HttpSession session) {
         return ok(Map.of("success", true, "data", certService.getStatsForTeams(SessionScope.viewTeamIds(session)), "timestamp", now()));
+    }
+
+    /** Yönetici özeti (2026-09-12, #20): KPI + takım karşılaştırması + 30 gün delta. Kapsam viewTeamIds. */
+    @GetMapping("/stats/executive")
+    public ResponseEntity<Map<String, Object>> getExecutiveStats(HttpSession session) {
+        return ok(Map.of("success", true, "data", executiveStatsService.build(teamId -> SessionScope.canView(session, teamId)), "timestamp", now()));
     }
 
     @GetMapping("/stats/teams")

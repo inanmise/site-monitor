@@ -33,6 +33,8 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     List<AlertEvent> findByResolvedFalseAndAcknowledgedFalseOrderByCreatedAtDesc();
 
     List<AlertEvent> findAllByOrderByCreatedAtDesc();
+    /** Yönetici özeti (2026-09-12, #20): pencere içinde AÇILAN alarmlar (delta hesabı). */
+    List<AlertEvent> findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(String since);
 
     @Query("SELECT e FROM AlertEvent e WHERE e.resolved = false ORDER BY e.alertLevel DESC, e.createdAt DESC")
     List<AlertEvent> findAllOpenOrderBySeverity();

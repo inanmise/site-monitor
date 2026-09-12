@@ -12457,6 +12457,40 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .mspark-sla.is-met .mspark-sla-target { color: var(--success); }
 .mspark-sla-bad { color: #d97706; }
 
+/* ── Yönetici özeti (İstatistik üstü, 2026-09-12 #20) ─────────────────────────────────────── */
+.exs { display: flex; flex-direction: column; gap: 12px; margin: 0 0 16px; }
+.exs-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+.exs-kpi { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--border); border-left-width: 4px;
+  border-radius: 10px; background: var(--bg-surface); color: var(--text); font: inherit; text-align: left; cursor: pointer; min-width: 0; }
+.exs-kpi:hover { border-color: var(--primary); }
+.exs-kpi:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.exs-kpi > svg { color: var(--text-muted); }
+.exs-kpi.is-ok { border-left-color: var(--success); }
+.exs-kpi.is-warn { border-left-color: #d97706; }
+.exs-kpi.is-bad { border-left-color: var(--danger); }
+.exs-kpi-label { font-size: .74em; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); }
+.exs-kpi-value { font-size: 1.6em; line-height: 1.1; }
+.exs-kpi.is-ok .exs-kpi-value { color: var(--success); }
+.exs-kpi.is-warn .exs-kpi-value { color: #d97706; }
+.exs-kpi.is-bad .exs-kpi-value { color: var(--danger); }
+.exs-kpi-sub { font-size: .78em; color: var(--text-light); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.exs-delta { display: inline-flex; align-items: center; gap: 3px; font-weight: 600; color: var(--text-muted); }
+.exs-delta.is-ok { color: var(--success); }
+.exs-delta.is-bad { color: var(--danger); }
+.exs-teams { border: 1px solid var(--border); border-radius: 10px; background: var(--bg-surface); padding: 10px 14px; }
+.exs-teams-title { font-size: .74em; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; }
+.exs-teams-grid { display: flex; flex-direction: column; gap: 4px; }
+.exs-team-row { display: grid; grid-template-columns: minmax(140px, 1fr) 2fr 56px auto; align-items: center; gap: 10px; padding: 4px 6px; border: 0; border-radius: 8px;
+  background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.exs-team-row:hover { background: var(--bg-hover); }
+.exs-team-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.exs-team-bar { width: 100%; }
+.exs-team-pct { font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+.exs-team-meta { font-size: .78em; color: var(--text-light); white-space: nowrap; }
+.exs-team-meta .is-warn { color: #d97706; }
+.exs-team-meta .is-bad { color: var(--danger); }
+@media (max-width: 760px) { .exs-team-row { grid-template-columns: 1fr 56px; } .exs-team-bar, .exs-team-meta { grid-column: 1 / -1; } }
+
 /* ── "Sizin için — bugün" paneli (dashboard üstü, 2026-09-12 #3) ───────────────────────────── */
 .today { border: 1px solid var(--border); border-radius: 12px; background: var(--bg-surface); margin: 0 0 16px; }
 .today--clear { border-color: #86efac; }
