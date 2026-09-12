@@ -387,3 +387,21 @@ Kapsam: `UserActivityService` + yeni `PageUsageService`, `SystemController` 2 ye
 Bilinen sınırlar: süzgeçli 'zamanında/takım' sayıları 7 günlük pencereye bağlı (sunucu tek payload); sayfa kullanımı
 dakikası ping × 15 sn tahmini; bakım overlay'i yok; e-posta detay modalında görünür (mevcut davranış).
 → **REGRESYON YOK** (1 yeni kusur tarayıcıda bulundu ve aynı turda kapatıldı).
+
+## Ek — on dokuzuncu tur (2026-09-13, sürüm öncesi — `/qa` Kullanıcı / Oturum paneli + regresyon süpürmesi, `v20.59.1..HEAD`)
+
+Kapsam: 8 commit — panel (18. tur) + QA 2 bulgu. İmza süpürmesi (skip-ci belirteci, gerçek kimlik, UTC gün dilimlemesi,
+button-içinde-button, elle kurulmuş modal): temiz — yeni modallar tümü `ModalShell`, rozetler `as="span"` ya da inert `UserBadge`.
+
+**QA bulguları (rapor `.gstack/qa-reports/qa-report-localhost-2026-09-13.md`):**
+- **ISSUE-002 (YÜKSEK, mevcut kusur):** `SchedulerService` açılışta `clearAllActiveSessions()` — 'in-memory oturum restart'ı
+  yaşamaz' varsayımı; oysa prod `application-prod.properties` ve yerel launcher `spring.session.store-type=jdbc`. Her
+  deploy sonrası içerideki kullanıcılar 'Aktif Oturum'dan düşüyor, tek-oturum süpersede koruması devre dışı kalıyordu.
+  Ping artık işaret NULL ise oturumu yeniden sahiplenir (`adoptSessionIfNone`, `WHERE activeSessionId IS NULL` —
+  canlı/TERMINATED işaret asla ezilmez). `RepositoryWriteTransactionGuardTest` pini + `UserServiceSessionAdoptTest` 3.
+  Tarayıcıda restart sonrası yeniden giriş yapmadan '1 Aktif Oturum' doğrulandı.
+- **ISSUE-001 (orta):** `u_*` süzgeçli paylaşılan bağlantı bölümü kapalı açıyordu → `?sec=users` ya da `u_*` bölümü açar,
+  kopyalanan bağlantı `sec=users` taşır.
+Bilinen sınırlar (bilinçli): restart anında tarayıcının ping'i 401 alırsa beni-hatırla ile YENİ oturum açılır (süre 0'dan
+başlar — doğru); `clearAllActiveSessions` açılışta kalır (in-memory profil için hâlâ gerekli).
+→ **REGRESYON YOK**.
