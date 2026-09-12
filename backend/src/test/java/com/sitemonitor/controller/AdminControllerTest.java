@@ -218,6 +218,25 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("GET /api/admin/inventory: satırlar latest_checks ile zenginleşir (cert_status / kalan gün / son kontrol) — envanter #3")
+    void listInventory_enrichedWithLatestCheck() throws Exception {
+        CertificateInventory inv = inventory("example.com");
+        when(inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc()).thenReturn(List.of(inv, inventory("nocheck.example.com")));
+        com.sitemonitor.model.LatestCheck lc = new com.sitemonitor.model.LatestCheck();
+        lc.setDomain("example.com"); lc.setStatus("warning"); lc.setDaysRemaining(12);
+        lc.setCheckedAt("2026-09-12T10:00:00"); lc.setNotAfter("2026-09-24T23:59:59"); lc.setIssuerCn("Test CA");
+        when(latestCheckRepo.findAll()).thenReturn(List.of(lc));
+
+        mvc.perform(get("/api/admin/inventory").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].cert_status").value("warning"))
+                .andExpect(jsonPath("$.data[0].cert_days_remaining").value(12))
+                .andExpect(jsonPath("$.data[0].cert_checked_at").value("2026-09-12T10:00:00"))
+                .andExpect(jsonPath("$.data[0].cert_issuer").value("Test CA"))
+                .andExpect(jsonPath("$.data[1].cert_status").doesNotExist());
+    }
+
+    @Test
     @DisplayName("GET /api/admin/inventory/by-domain returns the record for an existing domain")
     void getInventoryByDomain_returns200() throws Exception {
         when(inventoryRepo.findByDomain("example.com")).thenReturn(Optional.of(inventory("example.com")));

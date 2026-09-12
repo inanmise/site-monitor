@@ -99,6 +99,21 @@ class InventoryHygieneServiceTest {
         assertThat(g.samples()).extracting("domain")
                 .containsExactly("takimsiz.com", "tiersiz.com", "ikisi-de-yok.com");
         assertThat(g.samples().get(2).detail()).contains("takım").contains("tier");
+        // Makine kodları (2026-09-12): Envanter sayfası bunlarla arayüz dilinde yazar
+        assertThat(g.samples().get(2).codes()).containsExactly("no_team", "no_tier");
+        assertThat(g.samples().get(0).codes()).containsExactly("no_team");
+    }
+
+    @Test
+    @DisplayName("analyze(rows, cap): sayfa tavansız ister → tüm bulgular; e-posta MAX_PER_GROUP ile kırpılır")
+    void capIsCallerChoice() {
+        List<CertificateInventory> many = new java.util.ArrayList<>();
+        for (int i = 0; i < 15; i++) many.add(inv("d" + i + ".example.com", null, 1, true));
+        var capped = service.analyze(many);
+        assertThat(group(capped, "missing").total()).isEqualTo(15);
+        assertThat(group(capped, "missing").samples()).hasSize(InventoryHygieneService.MAX_PER_GROUP);
+        var full = service.analyze(many, Integer.MAX_VALUE);
+        assertThat(group(full, "missing").samples()).hasSize(15);
     }
 
     @Test

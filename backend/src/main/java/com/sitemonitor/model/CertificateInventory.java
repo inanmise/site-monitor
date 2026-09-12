@@ -159,6 +159,14 @@ public class CertificateInventory {
     @Transient private String teamName;
     @Transient private String ugTeamName;
 
+    // ── Canlı kontrol özeti (2026-09-12, envanter #3) — listInventory latest_checks'ten doldurur ──
+    @Transient private String certStatus;          // valid | warning | critical | error | …
+    @Transient private Integer certDaysRemaining;
+    @Transient private String certNotAfter;
+    @Transient private String certCheckedAt;
+    @Transient private String certIssuer;
+    @Transient private String certError;
+
     // ── Kimlik künyesi ────────────────────────────────────────────────────────────────────
     // "Bu izlemeyi kim kurdu?" sorusu geçmiş tablosuna gitmeden de cevaplanabilsin (kart künyesi
     // bunu okur). monitor_change_log'dan BAĞIMSIZ: biri retention ile temizlense de diğeri kalır.

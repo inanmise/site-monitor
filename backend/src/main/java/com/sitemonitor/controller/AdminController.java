@@ -165,9 +165,23 @@ public class AdminController {
         for (Team tm : userService.listTeams()) {
             if (tm.getId() != null) teamNames.put(tm.getId(), tm.getName());
         }
+        // Canlı sertifika durumu (2026-09-12, envanter #3): satırda geçerli/uyarı/hata, kalan gün, son
+        // kontrol — Genel Bakış'a geçmeden okunsun. latest_checks domain başına tek satır; ek sorgu bir.
+        Map<String, LatestCheck> latest = new HashMap<>();
+        try { for (LatestCheck lc : latestCheckRepo.findAll()) if (lc.getDomain() != null) latest.put(lc.getDomain(), lc); }
+        catch (Exception e) { log.debug("Envanter listesi: latest_checks okunamadı: {}", e.toString()); }
         for (CertificateInventory it : items) {
             if (it.getTeamId() != null)   it.setTeamName(teamNames.get(it.getTeamId()));
             if (it.getUgTeamId() != null) it.setUgTeamName(teamNames.get(it.getUgTeamId()));
+            LatestCheck lc = latest.get(it.getDomain());
+            if (lc != null) {
+                it.setCertStatus(lc.getStatus());
+                it.setCertDaysRemaining(lc.getDaysRemaining());
+                it.setCertNotAfter(lc.getNotAfter());
+                it.setCertCheckedAt(lc.getCheckedAt());
+                it.setCertIssuer(lc.getIssuerCn() != null ? lc.getIssuerCn() : lc.getIssuer());
+                it.setCertError(lc.getError());
+            }
         }
         return ok(Map.of("data", items));
     }
@@ -761,6 +775,7 @@ public class AdminController {
             Map<String, Object> _histBefore = AuditDiff.snapshot(inv, INVENTORY_FIELDS);
             inv.setDeletedAt(now());
             inv.setActive(false);
+            monitorHistory.stampUpdated(inv, session);   // "kim sildi" çöp kutusunda görünsün (envanter #10)
             inventoryRepo.save(inv);
             int alertsClosed = escalationService.closeAlertsOnInventoryDelete(inv.getDomain());
             auditService.recordAction("DOMAIN_SOFT_DELETE", session, request,
@@ -2619,19 +2634,9 @@ public class AdminController {
      *  https://www.wingscard.com.tr/ → www.wingscard.com.tr), sonra host formatını doğrular.
      *  Subdomain KORUNUR (host-düzeyi diagnostics için); registrable'a indirgeme (PSL) yalnız
      *  domain-expiry akışının kendi içinde yapılır. Normalize edilmiş host döner. */
+    /** Kural {@link com.sitemonitor.service.DomainNames#validate} — içe aktarma servisiyle ortak. */
     private static String validateDomain(String domain) {
-        if (domain == null || domain.isBlank())
-            throw new IllegalArgumentException("Domain cannot be blank");
-        String host = com.sitemonitor.service.PublicSuffixService.extractHost(domain);
-        if (host == null || host.isBlank())
-            throw new IllegalArgumentException("Domain cannot be blank");
-        if (host.length() > 253)
-            throw new IllegalArgumentException("Domain name too long");
-        if (!host.matches("^(?:[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}$")
-                && !host.matches("^[a-zA-Z0-9\\-]{1,63}$")) {
-            throw new IllegalArgumentException("Invalid domain format: " + domain);
-        }
-        return host;
+        return com.sitemonitor.service.DomainNames.validate(domain);
     }
 
     /** Tanılama hedefi doğrulaması (bağlanan uçlar için): validateDomain + SSRF (SsrfGuard). Çözülen IP

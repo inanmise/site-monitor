@@ -323,6 +323,7 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.retention.purge-batch-size",        "retention", Type.INT),
         new Setting("site.monitor.network-outage.retention-days",     "retention", Type.INT),
         new Setting("site.monitor.incident.retention-days",           "retention", Type.INT),
+        new Setting("site.monitor.inventory.auto-purge-days",          "retention", Type.INT),   // 0 = kapalı; çöp kutusu otomatik boşaltma (envanter #10)
         new Setting("site.monitor.rollup.lookback-days",              "retention", Type.INT),
         new Setting("site.monitor.rollup.retention-days",             "retention", Type.INT),
         new Setting("site.monitor.rollup.hourly-retention-days",      "retention", Type.INT),

@@ -58,8 +58,14 @@ public class InventoryHygieneService {
     private final LatestCheckRepository latestRepo;
     private final AppSettingsService appSettings;
 
-    /** Tek bulgu: hangi domain, ne sorun. */
-    public record Finding(String domain, String detail) { }
+    /**
+     * Tek bulgu: hangi domain, ne sorun. {@code codes} makine-okur kodlar (no_team, no_tier, no_contacts,
+     * never_checked, stale, error, expired, revoked, chain, deployment, weak) — Envanter sayfası bunlarla
+     * arayüz dilinde yazar; {@code detail} e-posta metni (Türkçe) olarak kalır.
+     */
+    public record Finding(String domain, String detail, List<String> codes) {
+        public Finding(String domain, String detail) { this(domain, detail, List.of()); }
+    }
 
     /** Bir grup bulgusu — başlık, toplam sayı ve kırpılmış örnekler. */
     public record Group(String key, String title, int total, List<Finding> samples) {
@@ -75,7 +81,13 @@ public class InventoryHygieneService {
     /**
      * @param rows silinmemiş envanter kayıtları (aktif + pasif) — sayımlar buradan
      */
-    public Result analyze(List<CertificateInventory> rows) {
+    public Result analyze(List<CertificateInventory> rows) { return analyze(rows, MAX_PER_GROUP); }
+
+    /**
+     * @param cap grup başına örnek satır tavanı — e-posta {@link #MAX_PER_GROUP}, Envanter sayfası
+     *            ({@code /admin/inventory/hygiene}) tamamını ister ({@code Integer.MAX_VALUE})
+     */
+    public Result analyze(List<CertificateInventory> rows, int cap) {
         List<CertificateInventory> active = rows.stream()
                 .filter(r -> !Boolean.FALSE.equals(r.getActive()))
                 .toList();
@@ -92,26 +104,26 @@ public class InventoryHygieneService {
         }
 
         List<Group> groups = new ArrayList<>();
-        groups.add(missingInventoryFields(active));
-        groups.add(missingContacts(active));
-        groups.add(uncheckedOrStale(active, latest));
-        groups.add(checkErrors(latest));
-        groups.add(certificateHealth(latest));
+        groups.add(missingInventoryFields(active, cap));
+        groups.add(missingContacts(active, cap));
+        groups.add(uncheckedOrStale(active, latest, cap));
+        groups.add(checkErrors(latest, cap));
+        groups.add(certificateHealth(latest, cap));
 
         int total = groups.stream().mapToInt(Group::total).sum();
         return new Result(groups.stream().filter(g -> !g.isEmpty()).toList(), total);
     }
 
     // ── 1) Envanter eksikleri ────────────────────────────────────────────────
-    private Group missingInventoryFields(List<CertificateInventory> active) {
+    private Group missingInventoryFields(List<CertificateInventory> active, int cap) {
         List<Finding> f = new ArrayList<>();
         for (CertificateInventory r : active) {
-            List<String> missing = new ArrayList<>();
-            if (r.getTeamId() == null) missing.add("takım atanmamış");
-            if (r.getTier() == null) missing.add("kritiklik (tier) atanmamış");
-            if (!missing.isEmpty()) f.add(new Finding(r.getDomain(), String.join(", ", missing)));
+            List<String> missing = new ArrayList<>(); List<String> codes = new ArrayList<>();
+            if (r.getTeamId() == null) { missing.add("takım atanmamış"); codes.add("no_team"); }
+            if (r.getTier() == null) { missing.add("kritiklik (tier) atanmamış"); codes.add("no_tier"); }
+            if (!missing.isEmpty()) f.add(new Finding(r.getDomain(), String.join(", ", missing), codes));
         }
-        return group("missing", "Envanter bilgisi eksik", f);
+        return group("missing", "Envanter bilgisi eksik", f, cap);
     }
 
     /**
@@ -125,18 +137,18 @@ public class InventoryHygieneService {
      * <p>DÖRDÜ birden boşsa bulgu; biri bile doluysa eksik saymayız — her sertifikanın dört ekiple
      * ilişkisi yok (WAF'ta durmayan, IIS'te çalışmayan kayıtlar var).
      */
-    private Group missingContacts(List<CertificateInventory> active) {
+    private Group missingContacts(List<CertificateInventory> active, int cap) {
         List<Finding> f = new ArrayList<>();
         for (CertificateInventory r : active) {
             if (CertificateInventoryContacts.filled(r).isEmpty()) {
-                f.add(new Finding(r.getDomain(), "sorumlu ekip bilgisi girilmemiş"));
+                f.add(new Finding(r.getDomain(), "sorumlu ekip bilgisi girilmemiş", List.of("no_contacts")));
             }
         }
-        return group("contacts", "Sorumlu ekip bilgisi eksik", f);
+        return group("contacts", "Sorumlu ekip bilgisi eksik", f, cap);
     }
 
     // ── 2) Hiç kontrol edilmemiş / bayat kontrol ─────────────────────────────
-    private Group uncheckedOrStale(List<CertificateInventory> active, Map<String, CertificateDto> latest) {
+    private Group uncheckedOrStale(List<CertificateInventory> active, Map<String, CertificateDto> latest, int cap) {
         int staleMinutes = Math.max(5, appSettings.getInt("site.monitor.scheduler.stale-minutes", 65));
         String cutoff = ISO.format(Instant.now().minus(staleMinutes, ChronoUnit.MINUTES));
 
@@ -144,29 +156,29 @@ public class InventoryHygieneService {
         for (CertificateInventory r : active) {
             CertificateDto d = latest.get(r.getDomain());
             if (d == null) {
-                f.add(new Finding(r.getDomain(), "hiç kontrol edilmemiş — izleme sonucu yok"));
+                f.add(new Finding(r.getDomain(), "hiç kontrol edilmemiş — izleme sonucu yok", List.of("never_checked")));
             } else if (d.getCheckedAt() != null && d.getCheckedAt().compareTo(cutoff) < 0) {
                 f.add(new Finding(r.getDomain(), "son kontrol " + shortTime(d.getCheckedAt())
-                        + " (eşik: " + staleMinutes + " dk)"));
+                        + " (eşik: " + staleMinutes + " dk)", List.of("stale")));
             }
         }
-        return group("stale", "Kontrol edilmemiş veya güncel olmayan", f);
+        return group("stale", "Kontrol edilmemiş veya güncel olmayan", f, cap);
     }
 
     // ── 3) Kontrol hatası ────────────────────────────────────────────────────
-    private Group checkErrors(Map<String, CertificateDto> latest) {
+    private Group checkErrors(Map<String, CertificateDto> latest, int cap) {
         List<Finding> f = latest.values().stream()
                 .filter(d -> "error".equalsIgnoreCase(d.getStatus()))
                 .sorted(java.util.Comparator.comparing(CertificateDto::getDomain,
                         java.util.Comparator.nullsLast(String::compareTo)))
                 .map(d -> new Finding(d.getDomain(),
-                        d.getError() != null && !d.getError().isBlank() ? d.getError() : "kontrol edilemedi"))
+                        d.getError() != null && !d.getError().isBlank() ? d.getError() : "kontrol edilemedi", List.of("error")))
                 .collect(Collectors.toList());
-        return group("error", "Kontrol hatası — erişilemeyen sertifika", f);
+        return group("error", "Kontrol hatası — erişilemeyen sertifika", f, cap);
     }
 
     // ── 4) Sertifika sağlığı ─────────────────────────────────────────────────
-    private Group certificateHealth(Map<String, CertificateDto> latest) {
+    private Group certificateHealth(Map<String, CertificateDto> latest, int cap) {
         Set<String> weak;
         try {
             weak = latestRepo.findWeakAlgorithmCandidates().stream()
@@ -178,24 +190,24 @@ public class InventoryHygieneService {
 
         List<Finding> f = new ArrayList<>();
         for (CertificateDto d : latest.values()) {
-            List<String> issues = new ArrayList<>();
+            List<String> issues = new ArrayList<>(); List<String> codes = new ArrayList<>();
             if (d.getDaysRemaining() != null && d.getDaysRemaining() < 0) {
-                issues.add("SÜRESİ DOLMUŞ (" + Math.abs(d.getDaysRemaining()) + " gün önce)");
+                issues.add("SÜRESİ DOLMUŞ (" + Math.abs(d.getDaysRemaining()) + " gün önce)"); codes.add("expired");
             }
-            if ("REVOKED".equalsIgnoreCase(d.getRevocationStatus())) issues.add("iptal edilmiş (REVOKED)");
-            if ("BROKEN".equalsIgnoreCase(d.getChainStatus())) issues.add("sertifika zinciri kırık");
-            if ("INCOMPLETE".equalsIgnoreCase(d.getDeploymentStatus())) issues.add("dağıtım eksik");
-            if (weak.contains(d.getDomain())) issues.add("zayıf imza/anahtar");
-            if (!issues.isEmpty()) f.add(new Finding(d.getDomain(), String.join(", ", issues)));
+            if ("REVOKED".equalsIgnoreCase(d.getRevocationStatus())) { issues.add("iptal edilmiş (REVOKED)"); codes.add("revoked"); }
+            if ("BROKEN".equalsIgnoreCase(d.getChainStatus())) { issues.add("sertifika zinciri kırık"); codes.add("chain"); }
+            if ("INCOMPLETE".equalsIgnoreCase(d.getDeploymentStatus())) { issues.add("dağıtım eksik"); codes.add("deployment"); }
+            if (weak.contains(d.getDomain())) { issues.add("zayıf imza/anahtar"); codes.add("weak"); }
+            if (!issues.isEmpty()) f.add(new Finding(d.getDomain(), String.join(", ", issues), codes));
         }
         // Süresi dolmuşlar en üstte
         f.sort((a, b) -> Boolean.compare(b.detail().startsWith("SÜRESİ"), a.detail().startsWith("SÜRESİ")));
-        return group("health", "Sertifika sağlığı sorunları", f);
+        return group("health", "Sertifika sağlığı sorunları", f, cap);
     }
 
-    private static Group group(String key, String title, List<Finding> all) {
+    private static Group group(String key, String title, List<Finding> all, int cap) {
         return new Group(key, title, all.size(),
-                all.size() > MAX_PER_GROUP ? List.copyOf(all.subList(0, MAX_PER_GROUP)) : List.copyOf(all));
+                all.size() > cap ? List.copyOf(all.subList(0, cap)) : List.copyOf(all));
     }
 
     /**
