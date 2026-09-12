@@ -4,6 +4,9 @@ import { useT } from '../i18n/index.jsx'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
+import MonthCalendar from './ui/MonthCalendar.jsx'
+import { buildIcs, downloadIcs } from '../utils/ics.js'
+import { CalendarDays, List, Download } from 'lucide-react'
 
 const PRIORITY_COLOR = { critical: '#dc3545', warning: '#fd7e14', info: '#0d6efd' }
 
@@ -13,6 +16,18 @@ export default function RenewalAdvice({ onSelectDomain }) {
   const [loading, setLoading] = useState(true)
   const [diag, setDiag] = useState(null)   // { domain, port } → DiagnosticsModal
   const [loadError, setLoadError] = useState(null)
+  // Takvim görünümü (2026-09-12, #8): aynı haftaya yığılan yenilemeler görünsün; tercih saklanır.
+  const [view, setView] = useState(() => { try { return localStorage.getItem('renewal-view') === 'calendar' ? 'calendar' : 'list' } catch { return 'list' } })
+  const switchView = (v) => { setView(v); try { localStorage.setItem('renewal-view', v) } catch { /* yoksay */ } }
+  const calEvents = advice.filter(a => a.not_after).map(a => ({
+    date: String(a.not_after).slice(0, 10), label: a.domain, title: `${a.domain} · ${a.message}`,
+    tone: a.priority === 'critical' ? 'bad' : a.priority === 'warning' ? 'warn' : 'info', onClick: () => onSelectDomain?.(a.domain),
+  }))
+  function exportIcs() {
+    downloadIcs('sertifika-yenilemeleri.ics', buildIcs(advice.filter(a => a.not_after).map(a => ({
+      uid: `cert-${a.domain}-${String(a.not_after).slice(0, 10)}`, date: a.not_after, summary: `${t('renewal.icsPrefix')} ${a.domain}`, description: `${a.message}\n${a.action || ''}`,
+    })), { calName: t('renewal.icsCal') }))
+  }
 
   // .catch YOKTU: request() ag hatasinda {success:false} DONDURMEZ, throw eder ve burada
   // timeoutMs de verilmiyor (varsayilan 0 = timeout yok). Promise reject olunca setLoading(false)
@@ -48,7 +63,15 @@ export default function RenewalAdvice({ onSelectDomain }) {
 
   return (
     <div className="renewal-container">
-      {advice.map((item, i) => {
+      <div className="renewal-toolbar">
+        <div className="seg" role="group" aria-label={t('renewal.viewLabel')}>
+          <button type="button" className={`btn btn-sm ${view === 'list' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => switchView('list')} aria-pressed={view === 'list'}><List size={13} /> {t('renewal.viewList')}</button>
+          <button type="button" className={`btn btn-sm ${view === 'calendar' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => switchView('calendar')} aria-pressed={view === 'calendar'}><CalendarDays size={13} /> {t('renewal.viewCalendar')}</button>
+        </div>
+        <button type="button" className="btn btn-sm btn-secondary" onClick={exportIcs} disabled={!calEvents.length} title={t('renewal.icsTip')}><Download size={13} /> {t('renewal.ics')}</button>
+      </div>
+      {view === 'calendar' && <MonthCalendar events={calEvents} ariaLabel={t('renewal.viewCalendar')} />}
+      {view === 'list' && advice.map((item, i) => {
         const color = PRIORITY_COLOR[item.priority] || '#6c757d'
         const label = PRIORITY_LABEL[item.priority] || item.priority
         const days = item.days_remaining

@@ -12457,6 +12457,38 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .mspark-sla.is-met .mspark-sla-target { color: var(--success); }
 .mspark-sla-bad { color: #d97706; }
 
+/* ── Aylık takvim ızgarası (Yenileme / Bakım, 2026-09-12 #8/#19) ────────────────────────────── */
+.mcal { border: 1px solid var(--border); border-radius: 10px; background: var(--bg-surface); padding: 10px 12px; margin-bottom: 12px; }
+.mcal-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.mcal-title { flex: 1; text-align: center; font-weight: 600; text-transform: capitalize; }
+.mcal-count { font-weight: 400; color: var(--text-light); margin-left: 6px; }
+.mcal-today { margin-left: 4px; }
+.mcal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
+.mcal-dow { font-size: .72em; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); text-align: center; padding: 2px 0 4px; }
+.mcal-cell { min-height: 68px; border: 1px solid var(--border); border-radius: 6px; padding: 3px 4px; background: var(--bg); display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mcal-cell--empty { border-color: transparent; background: transparent; }
+.mcal-cell.is-today { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
+.mcal-cell.has-bad { background: color-mix(in srgb, var(--danger) 8%, var(--bg)); }
+.mcal-cell.has-warn { background: color-mix(in srgb, #d97706 10%, var(--bg)); }
+.mcal-day { font-size: .74em; font-weight: 600; color: var(--text-muted); }
+.mcal-cell.is-today .mcal-day { color: var(--primary); }
+.mcal-events { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mcal-ev { display: block; width: 100%; text-align: left; border: 0; border-radius: 4px; padding: 1px 5px; font: inherit; font-size: .7em; font-weight: 600; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #1e293b; }
+.mcal-ev--ok { background: #dcfce7; color: #166534; }
+.mcal-ev--info { background: #dbeafe; color: #1e40af; }
+.mcal-ev--warn { background: #fef3c7; color: #92400e; }
+.mcal-ev--bad { background: #fee2e2; color: #991b1b; }
+.mcal-more { font-size: .68em; color: var(--text-light); }
+[data-theme="dark"] .mcal-ev--ok { background: #052e16; color: #86efac; }
+[data-theme="dark"] .mcal-ev--info { background: #1e3a8a; color: #bfdbfe; }
+[data-theme="dark"] .mcal-ev--warn { background: #422006; color: #fcd34d; }
+[data-theme="dark"] .mcal-ev--bad { background: #450a0a; color: #fca5a5; }
+@media (max-width: 760px) { .mcal-cell { min-height: 44px; } .mcal-ev { font-size: .62em; } }
+.renewal-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.renewal-toolbar .seg { display: inline-flex; gap: 4px; }
+.renewal-toolbar .btn { display: inline-flex; align-items: center; gap: 5px; }
+
 /* ── Haftalık rapor takım tamamlama panosu (2026-09-12 #21) ────────────────────────────────── */
 .wrc { border: 1px solid var(--border); border-radius: 10px; background: var(--bg-surface); margin: 0 0 14px; }
 .wrc-head { width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: none; border: 0; color: var(--text); font: inherit; font-weight: 600; cursor: pointer; text-align: left; border-radius: 10px; }

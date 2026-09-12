@@ -5,6 +5,7 @@ import { useToast } from '../ui/Toast.jsx'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
+import MaintenanceBadge from '../ui/MaintenanceBadge.jsx'   // alarm bakım penceresine denk geliyorsa rozet (2026-09-12, #19)
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../../hooks/useUrlQuerySync.js'
 import { readPageSize, writePageSize } from '../../hooks/usePagination.js'
 import UserBadge from '../ui/UserBadge.jsx'
@@ -1261,7 +1262,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
                     {levelLabel[a.alert_level] || a.alert_level}
                   </span>
                   <TypeChip type={a.alert_type} />
-                  <strong className="alert-domain">{a.domain}</strong>
+                  <strong className="alert-domain">{a.domain}</strong><MaintenanceBadge target={a.domain} />
                   <OpenDurationBadge createdAt={a.created_at} staleHours={staleHours} />
                   <RepeatBadge count={a.repeat_count} />
                   {(a.email_failed_count ?? 0) > 0 && (
@@ -1345,7 +1346,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
 
                 <div className="ahc-body">
                   <div className="ahc-top">
-                    <strong className="ahc-domain">{a.domain}</strong>
+                    <strong className="ahc-domain">{a.domain}</strong><MaintenanceBadge target={a.domain} />
                     <TypeChip type={a.alert_type} size={12} />
                     <RepeatBadge count={a.repeat_count} />
                     <span className={`ahc-level alh-lvl--${levelClass(a.alert_level)}`}>

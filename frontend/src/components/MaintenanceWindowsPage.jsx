@@ -10,8 +10,9 @@ import PaginationBar from './ui/PaginationBar.jsx'
 import MultiTeamSelect from './ui/MultiTeamSelect.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import DateTimeField from './ui/DateTimeField.jsx'
+import MonthCalendar from './ui/MonthCalendar.jsx'
 import ModalShell from './ui/ModalShell.jsx'
-import { Wrench, Plus, Play, Pencil, Trash2, Pause, RefreshCw, History } from 'lucide-react'
+import { Wrench, Plus, Play, Pencil, Trash2, Pause, RefreshCw, History, CalendarDays } from 'lucide-react'
 
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
@@ -57,6 +58,12 @@ export default function MaintenanceWindowsPage({ systemRole }) {
   const canManage = systemRole === 'ADMIN' || systemRole === 'TEAM_ADMIN'
 
   const [rows, setRows] = useState([])
+  const [calOpen, setCalOpen] = useState(() => { try { return localStorage.getItem('mw-cal-open') === 'true' } catch { return false } })
+  // Takvim olayları (2026-09-12, #19): sıradaki oluşum (next_occurrence) ya da tek seferlik başlangıç; aynı güne 2+ pencere = çakışma adayı
+  const mwCalEvents = rows.filter(w => w.next_occurrence || w.start_at).map(w => ({
+    date: String(w.next_occurrence || w.start_at).slice(0, 10), label: w.name, title: `${w.name} · ${w.duration_minutes ?? 60} dk`,
+    tone: w.status === 'ACTIVE' ? 'warn' : 'info', onClick: () => openEdit(w),
+  }))
   const pager = usePagination(rows, { listKey: 'maintenance-windows' })
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState(null)          // 'new' | window | 'quick'
@@ -193,6 +200,7 @@ export default function MaintenanceWindowsPage({ systemRole }) {
           <p className="upt-subtitle">{t('mw.subtitle')}</p>
         </div>
         <div className="upt-header-right">
+          <button className="btn btn-sm upt-refresh-btn" onClick={() => setCalOpen(v => { try { localStorage.setItem('mw-cal-open', String(!v)) } catch { /* yoksay */ } return !v })} aria-pressed={calOpen}><CalendarDays size={14} />{t('mw.calendar')}</button>
           <button className="btn btn-sm upt-refresh-btn" onClick={load}><RefreshCw size={14} />{t('mw.refresh')}</button>
           {canManage && <button className="btn btn-sm btn-secondary" onClick={openQuick}><Play size={14} />{t('mw.startNow')}</button>}
           {canManage && <button className="btn btn-sm btn-primary" onClick={openNew}><Plus size={14} />{t('mw.create')}</button>}
@@ -208,7 +216,9 @@ export default function MaintenanceWindowsPage({ systemRole }) {
           <p className="mw-empty-text">{t('mw.emptyText')}</p>
           {canManage && <button className="btn btn-primary" onClick={openNew}><Plus size={15} />{t('mw.create')}</button>}
         </div>
-      ) : (
+      ) : (<>
+        {/* Takvim görünümü (2026-09-12, #19): sıradaki oluşumlar ay ızgarasında; aynı güne çakışan pencereler yığılır */}
+        {calOpen && <MonthCalendar events={mwCalEvents} ariaLabel={t('mw.calendar')} />}
         <div className="admin-table-wrap">
           <table className="admin-table mw-table">
             <thead>
@@ -243,7 +253,7 @@ export default function MaintenanceWindowsPage({ systemRole }) {
           </table>
           <PaginationBar {...pager} />
         </div>
-      )}
+      </>)}
 
       {/* Create / Edit modal */}
       {modal && modal !== 'quick' && createPortal(
