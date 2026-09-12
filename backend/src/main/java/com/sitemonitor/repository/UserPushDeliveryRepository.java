@@ -71,6 +71,13 @@ public interface UserPushDeliveryRepository extends JpaRepository<UserPushDelive
            """)
     List<Object[]> countByStatusSince(@Param("since") String since);
 
+    /** KPI kartları takım kırılımı (2026-09-12): pencere içi durum × takım sayıları. teamId null = alarmın takımı yok (test/sistem). */
+    @Query("""
+           SELECT d.teamId, d.status, COUNT(d) FROM UserPushDelivery d
+           WHERE d.createdAt >= :since GROUP BY d.teamId, d.status
+           """)
+    List<Object[]> countByTeamAndStatusSince(@Param("since") String since);
+
     /** E4 devre-kesici sağlık sinyali: pencere içi ardışık olmayan toplam FAILED. */
     long countByStatusAndCreatedAtGreaterThanEqual(String status, String since);
 

@@ -279,12 +279,35 @@ public class UserPushController {
         return ok(out);
     }
 
+    /** KPI pencereleri (2026-09-12, kullanıcı): 24 saat · 7 · 15 · 30 · 60 gün. Anahtar = API/UI sözleşmesi. */
+    static final Map<String, Duration> STAT_WINDOWS = new LinkedHashMap<>();
+    static {
+        STAT_WINDOWS.put("24h", Duration.ofHours(24));
+        STAT_WINDOWS.put("7d",  Duration.ofDays(7));
+        STAT_WINDOWS.put("15d", Duration.ofDays(15));
+        STAT_WINDOWS.put("30d", Duration.ofDays(30));
+        STAT_WINDOWS.put("60d", Duration.ofDays(60));
+    }
+
     @GetMapping("/stats")
     public ResponseEntity<Map<String, Object>> stats(HttpSession session) {
         requireAdmin(session);
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("last24h", statusCounts(Duration.ofHours(24)));
-        out.put("last7d", statusCounts(Duration.ofDays(7)));
+        // Geriye uyum: last24h / last7d düz sayaç haritası olarak kalır (eski istemci/test sözleşmesi).
+        out.put("last24h", statusCounts(STAT_WINDOWS.get("24h")));
+        out.put("last7d", statusCounts(STAT_WINDOWS.get("7d")));
+        // Yeni sözleşme: windows[key] = { counts: {status→n}, teams: [{team_id, team_name, SENT, FAILED, total}] }
+        Map<String, Object> windows = new LinkedHashMap<>();
+        Map<Long, String> teamNames = new LinkedHashMap<>();
+        teamRepo.findAll().forEach(tm -> teamNames.put(tm.getId(), tm.getName()));
+        for (Map.Entry<String, Duration> w : STAT_WINDOWS.entrySet()) {
+            String since = ISO.format(Instant.now().minus(w.getValue()).atZone(ZONE).toLocalDateTime());
+            Map<String, Object> win = new LinkedHashMap<>();
+            win.put("counts", statusCounts(w.getValue()));
+            win.put("teams", teamBreakdown(since, teamNames));
+            windows.put(w.getKey(), win);
+        }
+        out.put("windows", windows);
         out.put("health", userPushService.healthSnapshot());
         return ok(out);
     }
@@ -295,6 +318,33 @@ public class UserPushController {
         for (Object[] row : deliveryRepo.countByStatusSince(since))
             counts.put(String.valueOf(row[0]), ((Number) row[1]).longValue());
         return counts;
+    }
+
+    /** Takım başına SENT/FAILED/toplam — toplam azalan; takımsız satırlar (test/sistem) "—" adıyla en sonda. */
+    private List<Map<String, Object>> teamBreakdown(String since, Map<Long, String> teamNames) {
+        Map<Long, Map<String, Object>> byTeam = new LinkedHashMap<>();
+        for (Object[] row : deliveryRepo.countByTeamAndStatusSince(since)) {
+            Long teamId = row[0] == null ? null : ((Number) row[0]).longValue();
+            String status = String.valueOf(row[1]);
+            long n = ((Number) row[2]).longValue();
+            Map<String, Object> m = byTeam.computeIfAbsent(teamId, id -> {
+                Map<String, Object> x = new LinkedHashMap<>();
+                x.put("team_id", id);
+                x.put("team_name", id == null ? null : teamNames.getOrDefault(id, "#" + id));
+                x.put("SENT", 0L); x.put("FAILED", 0L); x.put("total", 0L);
+                return x;
+            });
+            if ("SENT".equals(status)) m.put("SENT", (Long) m.get("SENT") + n);
+            else if ("FAILED".equals(status)) m.put("FAILED", (Long) m.get("FAILED") + n);
+            m.put("total", (Long) m.get("total") + n);
+        }
+        List<Map<String, Object>> out = new ArrayList<>(byTeam.values());
+        out.sort((a, b) -> {
+            boolean an = a.get("team_id") == null, bn = b.get("team_id") == null;
+            if (an != bn) return an ? 1 : -1;
+            return Long.compare((Long) b.get("total"), (Long) a.get("total"));
+        });
+        return out;
     }
 
     // ── Yardımcılar ────────────────────────────────────────────────────────────────────────

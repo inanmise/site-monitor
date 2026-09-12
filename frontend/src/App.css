@@ -8381,6 +8381,16 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .up-kpi--btn:hover, .up-kpi--btn:focus-visible { border-color: var(--primary); outline: none; }
 .up-kpi--btn.is-active { border-color: var(--primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 25%, transparent); }
 .up-kpi-num { cursor: pointer; border-radius: 4px; padding: 0 3px; }
+/* KPI kartında takım kırılımı (2026-09-12): en yoğun 3 takım — ad · toplam · (başarısız) */
+.up-kpi-teams { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; padding-top: 4px;
+  border-top: 1px dashed var(--border); font-size: .74em; color: var(--text-muted); }
+.up-kpi-team { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.up-kpi-team-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.up-kpi-team b { font-weight: 700; color: var(--text); }
+.up-kpi-team b.up-kpi-fail { color: var(--danger); }
+.up-kpi-team-more { color: var(--text-light); }
+.up-team-chips { margin-top: 2px; }
+.up-chip-count--fail { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); margin-left: 2px; }
 .up-kpi-num:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
 .up-window-chip { border-color: var(--primary); color: var(--primary); }
 .up-explain { margin-top: 4px; }

@@ -128,4 +128,41 @@ class UserPushControllerUnitTest {
                 .getSettings((HttpSession) null))
                 .isInstanceOf(SecurityException.class);
     }
+
+    // ── /stats: beş pencere + takım kırılımı (2026-09-12) ─────────────────────
+
+    @SuppressWarnings("unchecked")
+    @Test
+    @DisplayName("stats: 24h/7d/15d/30d/60d pencereleri; her pencerede durum sayaçları + takım kırılımı (toplam azalan, takımsız sonda); last24h/last7d geriye uyumlu")
+    void stats_fiveWindowsWithTeamBreakdown() {
+        var deliveryRepo = mock(com.sitemonitor.repository.UserPushDeliveryRepository.class);
+        var teamRepo = mock(com.sitemonitor.repository.TeamRepository.class);
+        var pushService = mock(UserPushService.class);
+        com.sitemonitor.model.Team a = new com.sitemonitor.model.Team(); a.setId(5L); a.setName("Takım A");
+        com.sitemonitor.model.Team b = new com.sitemonitor.model.Team(); b.setId(6L); b.setName("Takım B");
+        when(teamRepo.findAll()).thenReturn(List.of(a, b));
+        when(deliveryRepo.countByStatusSince(anyString())).thenReturn(List.<Object[]>of(
+                new Object[]{"SENT", 4L}, new Object[]{"FAILED", 1L}));
+        when(deliveryRepo.countByTeamAndStatusSince(anyString())).thenReturn(List.<Object[]>of(
+                new Object[]{6L, "SENT", 1L},
+                new Object[]{5L, "SENT", 3L}, new Object[]{5L, "FAILED", 1L},
+                new Object[]{null, "SENT", 2L}));
+        when(pushService.healthSnapshot()).thenReturn(java.util.Map.of());
+        var c = new UserPushController(mock(AppSettingsService.class), pushService, deliveryRepo,
+                mock(com.sitemonitor.repository.UserPushScopeRepository.class), mock(SecretCipher.class),
+                mock(AuditService.class), mock(com.sitemonitor.service.UserPushRecipientResolver.class),
+                mock(com.sitemonitor.repository.AppUserRepository.class), teamRepo);
+
+        var body = (java.util.Map<String, Object>) c.stats(session("ADMIN", false)).getBody();
+        var data = (java.util.Map<String, Object>) body.get("data");
+        var windows = (java.util.Map<String, Object>) data.get("windows");
+        assertThat(windows.keySet()).containsExactly("24h", "7d", "15d", "30d", "60d");
+        assertThat((java.util.Map<String, Object>) data.get("last24h")).containsEntry("SENT", 4L);
+        var w24 = (java.util.Map<String, Object>) windows.get("24h");
+        assertThat((java.util.Map<String, Object>) w24.get("counts")).containsEntry("FAILED", 1L);
+        var teams = (List<java.util.Map<String, Object>>) w24.get("teams");
+        assertThat(teams).extracting(m -> m.get("team_name")).containsExactly("Takım A", "Takım B", null);
+        assertThat(teams.get(0)).containsEntry("SENT", 3L).containsEntry("FAILED", 1L).containsEntry("total", 4L);
+        assertThat(teams.get(2)).containsEntry("team_id", null).containsEntry("total", 2L);
+    }
 }

@@ -65,7 +65,16 @@ function stubAll({ deliveries = [DELIVERY], settings = SETTINGS } = {}) {
   })
   api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'Takım A' }] })
   api.admin.userPush.getStats.mockResolvedValue({
-    success: true, data: { last24h: { SENT: 4, FAILED: 1 }, last7d: { SENT: 40 }, health: {} },
+    success: true, data: {
+      last24h: { SENT: 4, FAILED: 1 }, last7d: { SENT: 40 }, health: {},
+      windows: {
+        '24h': { counts: { SENT: 4, FAILED: 1 }, teams: [{ team_id: 5, team_name: 'Takım A', SENT: 3, FAILED: 1, total: 4 }, { team_id: 6, team_name: 'Takım B', SENT: 1, FAILED: 0, total: 1 }] },
+        '7d':  { counts: { SENT: 40 }, teams: [{ team_id: 5, team_name: 'Takım A', SENT: 40, FAILED: 0, total: 40 }] },
+        '15d': { counts: { SENT: 60, FAILED: 2 }, teams: [] },
+        '30d': { counts: { SENT: 90, FAILED: 3 }, teams: [] },
+        '60d': { counts: { SENT: 120, FAILED: 4 }, teams: [] },
+      },
+    },
   })
   api.admin.userPush.getDeliveries.mockResolvedValue({
     success: true, data: { deliveries, total: deliveries.length, page: 0, size: 25,
@@ -209,7 +218,11 @@ describe('UserPushSettings', () => {
     render(<UserPushSettings />)
     await screen.findByDisplayValue('Authorization')
     const cards = document.querySelectorAll('.up-kpi--btn')
-    expect(cards.length).toBe(2)
+    expect(cards.length).toBe(5)   // 24s · 7g · 15g · 30g · 60g
+    expect(cards[4].textContent).toMatch(/Last 60 days|Son 60 gün/)
+    expect(cards[4].textContent).toContain('120')
+    // Takım kırılımı: 24 saat kartında Takım A 4 (1 başarısız), Takım B 1
+    expect(cards[0].querySelector('.up-kpi-teams').textContent).toMatch(/Takım A.*4.*1.*Takım B.*1/s)
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 
     fireEvent.click(cards[1])                                  // Son 7 gün → modal
@@ -220,11 +233,16 @@ describe('UserPushSettings', () => {
     const from7 = api.admin.userPush.getDeliveries.mock.calls.at(-1)[0].from
     expect(Date.now() - Date.parse(from7 + 'Z')).toBeGreaterThan(6.9 * 86400e3)
     // Durum çipleri: Tümü / SENT / FAILED (sayılarıyla); satır listesi modalın içinde
-    expect(within(dlg).getByRole('button', { name: /^(Tümü|All)/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(within(dlg).getByRole('button', { name: /^(Tümü|All)\d/ })).toHaveAttribute('aria-pressed', 'true')   // durum çipi (sayılı); 'All teams' değil
     expect([...dlg.querySelectorAll('.up-chip')].map((c) => c.textContent.replace(/\d+$/, ''))).toEqual(expect.arrayContaining(['SENT', 'FAILED']))
     expect(await within(dlg).findByText('example.com')).toBeInTheDocument()
     // Günlük (modal dışı) süzülmedi
     expect(document.querySelector('.up-window-chip')).toBeNull()
+    // Takım çipleri: "Tüm takımlar" basılı; Takım A'ya tıklayınca istek teamId=5 ile gider
+    const teamChips = dlg.querySelector('.up-team-chips')
+    expect(within(teamChips).getByRole('button', { name: /All teams|Tüm takımlar/ })).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(within(teamChips).getByRole('button', { name: /Takım A/ }))
+    await waitFor(() => expect(api.admin.userPush.getDeliveries).toHaveBeenLastCalledWith(expect.objectContaining({ teamId: 5 })))
 
     fireEvent.click(within(dlg.querySelector('.modal-shell-footer')).getByRole('button', { name: /^(Kapat|Close)$/ }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())

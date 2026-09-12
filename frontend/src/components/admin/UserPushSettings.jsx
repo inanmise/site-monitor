@@ -59,6 +59,16 @@ const TYPES = [
 
 /** Unvan grubu kartları: ikon + kalıcı görsel kimlik. */
 
+/** KPI pencereleri (2026-09-12): anahtar = backend STAT_WINDOWS ile aynı; ms + etiket anahtarı. */
+const WINDOWS = [
+  { key: '24h', ms: 24 * 3600e3, label: 'userpush.stat24h' },
+  { key: '7d',  ms: 7 * 86400e3, label: 'userpush.stat7d' },
+  { key: '15d', ms: 15 * 86400e3, label: 'userpush.stat15d' },
+  { key: '30d', ms: 30 * 86400e3, label: 'userpush.stat30d' },
+  { key: '60d', ms: 60 * 86400e3, label: 'userpush.stat60d' },
+]
+const winLabelKey = (w) => (WINDOWS.find((x) => x.key === w) || WINDOWS[0]).label
+
 /** Açılır/kapanır bölüm anahtarları — sıra sayfadaki sıra; localStorage'da hatırlanır. */
 const SECTIONS = ['conn', 'groups', 'scopes', 'quiet', 'templates', 'test', 'explain', 'log']
 const SECTIONS_KEY = 'sm.userpush.sections'
@@ -140,21 +150,25 @@ function DeliveryRow({ r, isOpen, onToggle, userTeams, t, statusTone }) {
  * bir POP-UP'ta açılır — özet (durum başına sayı), durum süzgeci ve o penceredeki teslimatların listesi.
  * Eski davranış (günlüğü süzüp kaydırmak) "Günlükte aç" düğmesinde bilinçli bir eylem olarak kaldı.
  */
-function WindowModal({ win, status, counts, windowFrom, statusTone, userTeamsHint, onStatus, onOpenInLog, onClose, t }) {
+function WindowModal({ win, status, counts, teams: teamRows, windowFrom, statusTone, userTeamsHint, onStatus, onOpenInLog, onClose, t }) {
   const [rows, setRows] = useState(null)
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
   const [userTeams, setUserTeams] = useState(userTeamsHint || {})
   const [openRow, setOpenRow] = useState(null)
+  // Takım süzgeci (2026-09-12, kullanıcı: "kutular takım bazlı adet versin"): çipler alarmın TAKIMINA
+  // göre (teslimat satırındaki team_id) — kişinin üyelikleri değil. null = tüm takımlar.
+  const [team, setTeam] = useState(null)
   const SIZE = 25
   const from = windowFrom(win)
 
-  useEffect(() => { setPage(0) }, [win, status])
+  useEffect(() => { setPage(0) }, [win, status, team])
   useEffect(() => {
     let alive = true
     setRows(null)
     const params = { page, size: SIZE, from }
     if (status) params.status = status
+    if (team != null) params.teamId = team
     Promise.resolve(api.admin.userPush.getDeliveries(params))
       .then((res) => {
         if (!alive) return
@@ -166,9 +180,9 @@ function WindowModal({ win, status, counts, windowFrom, statusTone, userTeamsHin
       })
       .catch(() => { if (alive) setRows([]) })
     return () => { alive = false }
-  }, [win, status, page, from])
+  }, [win, status, team, page, from])
 
-  const title = win === '24h' ? t('userpush.stat24h') : t('userpush.stat7d')
+  const title = t(winLabelKey(win))
   const sum = Object.entries(counts || {}).reduce((s, [, v]) => s + (Number(v) || 0), 0)
   // Durum çipleri: Tümü + SENT + FAILED sabit; sayısı olan diğer durumlar (SKIPPED_*, PENDING…) dinamik.
   const others = Object.keys(counts || {}).filter((k) => k !== 'SENT' && k !== 'FAILED' && Number(counts[k]) > 0)
@@ -194,6 +208,20 @@ function WindowModal({ win, status, counts, windowFrom, statusTone, userTeamsHin
           </button>
         ))}
       </div>
+      {Array.isArray(teamRows) && teamRows.length > 0 && (
+        <div className="up-chip-grid up-team-chips" role="group" aria-label={t('userpush.winTeamFilter')}>
+          <button type="button" className={`up-chip${team == null ? ' up-chip--on' : ''}`} aria-pressed={team == null}
+            onClick={() => setTeam(null)}><span>{t('userpush.winAllTeams')}</span></button>
+          {teamRows.filter((tr) => tr.team_id != null).map((tr) => (
+            <button key={tr.team_id} type="button" className={`up-chip${team === tr.team_id ? ' up-chip--on' : ''}`}
+              aria-pressed={team === tr.team_id} onClick={() => setTeam(team === tr.team_id ? null : tr.team_id)}
+              title={`SENT ${tr.SENT} · FAILED ${tr.FAILED}`}>
+              <span>{tr.team_name}</span><b className="up-chip-count">{tr.total}</b>
+              {tr.FAILED > 0 && <b className="up-chip-count up-chip-count--fail">{tr.FAILED}</b>}
+            </button>
+          ))}
+        </div>
+      )}
       {rows === null ? <LoadingBlock label={t('modal.loading')} />
         : rows.length === 0 ? (
           <StatusBlock tone="neutral" icon={BellRing} title={t('userpush.winEmpty')} description={t('userpush.logEmpty')} />
@@ -352,7 +380,7 @@ export default function UserPushSettings() {
   }, [exTeam, exLevel])
   const logRef = useRef(null)
   const windowFrom = (w) => {
-    const ms = w === '24h' ? 24 * 3600e3 : w === '7d' ? 7 * 86400e3 : 0
+    const ms = (WINDOWS.find((x) => x.key === w) || {}).ms || 0
     return ms ? new Date(Date.now() - ms).toISOString().slice(0, 19) : null   // createdAt biçimi yyyy-MM-ddTHH:mm:ss (UTC, Z'siz)
   }
   // KPI kartı → pencere MODALI (2026-09-11, kullanıcı: "tıklayınca pop-up'ta ayrıntı sunmalı").
@@ -570,8 +598,8 @@ export default function UserPushSettings() {
 
   const statusTone = (st) => st === 'SENT' ? 'ok' : (st === 'FAILED' || st === 'CIRCUIT_OPEN') ? 'danger'
     : st === 'PENDING' ? 'info' : 'muted'
-  const k24 = stats?.last24h || {}
-  const k7 = stats?.last7d || {}
+  // Beş pencere: yeni sözleşme stats.windows[key] = { counts, teams }; eski last24h/last7d yedek.
+  const winStats = (w) => stats?.windows?.[w] || (w === '24h' ? { counts: stats?.last24h || {} } : w === '7d' ? { counts: stats?.last7d || {} } : { counts: {} })
 
   return (
     <div className="ldap-settings userpush-settings">
@@ -586,26 +614,35 @@ export default function UserPushSettings() {
         <p className="section-desc">{t('userpush.desc')}</p>
         {stats && (
           <div className="userpush-stats-row up-kpis">
-            <div className={`up-kpi up-kpi--btn${fWindow === '24h' ? ' is-active' : ''}`} role="button" tabIndex={0}
-              title={t('userpush.kpiHint')} aria-pressed={fWindow === '24h'}
-              onClick={() => pickWindow('24h', '')}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickWindow('24h', '') } }}>
-              <span className="up-kpi-label">{t('userpush.stat24h')}</span>
-              <span className="up-kpi-nums">
-                <b className="up-kpi-ok up-kpi-num" role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); pickWindow('24h', 'SENT') }}>{k24.SENT || 0}</b><small>SENT</small>
-                <b className="up-kpi-fail up-kpi-num" role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); pickWindow('24h', 'FAILED') }}>{k24.FAILED || 0}</b><small>FAILED</small>
-              </span>
-            </div>
-            <div className={`up-kpi up-kpi--btn${fWindow === '7d' ? ' is-active' : ''}`} role="button" tabIndex={0}
-              title={t('userpush.kpiHint')} aria-pressed={fWindow === '7d'}
-              onClick={() => pickWindow('7d', '')}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickWindow('7d', '') } }}>
-              <span className="up-kpi-label">{t('userpush.stat7d')}</span>
-              <span className="up-kpi-nums">
-                <b className="up-kpi-ok up-kpi-num" role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); pickWindow('7d', 'SENT') }}>{k7.SENT || 0}</b><small>SENT</small>
-                <b className="up-kpi-fail up-kpi-num" role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); pickWindow('7d', 'FAILED') }}>{k7.FAILED || 0}</b><small>FAILED</small>
-              </span>
-            </div>
+            {WINDOWS.map(({ key, label }) => {
+              const ws = winStats(key)
+              const c = ws.counts || {}
+              const top = (ws.teams || []).filter((tr) => tr.team_id != null).slice(0, 3)
+              return (
+                <div key={key} className={`up-kpi up-kpi--btn${fWindow === key ? ' is-active' : ''}`} role="button" tabIndex={0}
+                  title={t('userpush.kpiHint')} aria-pressed={fWindow === key}
+                  onClick={() => pickWindow(key, '')}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickWindow(key, '') } }}>
+                  <span className="up-kpi-label">{t(label)}</span>
+                  <span className="up-kpi-nums">
+                    <b className="up-kpi-ok up-kpi-num" role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); pickWindow(key, 'SENT') }}>{c.SENT || 0}</b><small>SENT</small>
+                    <b className="up-kpi-fail up-kpi-num" role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); pickWindow(key, 'FAILED') }}>{c.FAILED || 0}</b><small>FAILED</small>
+                  </span>
+                  {/* Takım kırılımı: en yoğun 3 takım (toplam · başarısız). Tamamı modalda. */}
+                  {top.length > 0 && (
+                    <span className="up-kpi-teams">
+                      {top.map((tr) => (
+                        <span key={tr.team_id} className="up-kpi-team" title={`SENT ${tr.SENT} · FAILED ${tr.FAILED}`}>
+                          <span className="up-kpi-team-name">{tr.team_name}</span>
+                          <b>{tr.total}</b>{tr.FAILED > 0 && <b className="up-kpi-fail">{tr.FAILED}</b>}
+                        </span>
+                      ))}
+                      {(ws.teams || []).filter((tr) => tr.team_id != null).length > 3 && <span className="up-kpi-team-more">…</span>}
+                    </span>
+                  )}
+                </div>
+              )
+            })}
             {health.circuit_open && (
               <div className="up-kpi up-kpi--circuit">
                 <OctagonPause size={16} aria-hidden="true" />
@@ -934,7 +971,7 @@ export default function UserPushSettings() {
           {fWindow && (
             <button type="button" className="btn btn-sm up-window-chip" onClick={() => { setFWindow(''); setPage(0) }}
               title={t('userpush.windowClear')}>
-              {t('userpush.windowActive', fWindow === '24h' ? t('userpush.stat24h') : t('userpush.stat7d'))} ✕
+              {t('userpush.windowActive', t(winLabelKey(fWindow)))} ✕
             </button>
           )}
           <input type="text" className="upt-search" placeholder={t('userpush.filterSicil')} value={fUser}
@@ -995,7 +1032,7 @@ export default function UserPushSettings() {
 
       {winModal && (
         <WindowModal win={winModal.win} status={winModal.status}
-          counts={winModal.win === '24h' ? k24 : k7} windowFrom={windowFrom} statusTone={statusTone}
+          counts={winStats(winModal.win).counts} teams={winStats(winModal.win).teams} windowFrom={windowFrom} statusTone={statusTone}
           userTeamsHint={userTeams} t={t}
           onStatus={(s) => setWinModal({ ...winModal, status: s })}
           onOpenInLog={openInLog} onClose={() => setWinModal(null)} />
