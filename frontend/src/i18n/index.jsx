@@ -4537,6 +4537,12 @@ export const TR = {
   'chg7.opened': '{0} alarm açıldı',
   'chg7.resolved': '{0} çözüldü',
   'chg7.none': 'değişiklik yok',
+  // Yenileme yükü (2026-09-12, #9)
+  'forecast.loadTitle': 'Yenileme yükü — önümüzdeki 12 ay',
+  'forecast.loadPeak': '{0} sertifika dolacak · zirve {1}: {2}',
+  'forecast.loadNone': 'Önümüzdeki 12 ayda dolacak sertifika yok',
+  'forecast.loadOther': 'Diğer takımlar',
+  'forecast.loadNote': 'Ay başına dolacak sertifika sayısı, takıma göre yığılmış. Aynı aya yığılan yenilemeler satın alma / CSR iş yükünü ve bütçeyi planlamak içindir.',
   // Zayıf Algoritma Raporu — zenginleştirme (2026-09-12)
   'wa.loadError':         'Rapor yüklenemedi',
   'wa.retry':             'Yeniden dene',
@@ -11179,6 +11185,12 @@ export const EN = {
   'chg7.opened': '{0} alerts opened',
   'chg7.resolved': '{0} resolved',
   'chg7.none': 'no changes',
+  // Renewal load (2026-09-12, #9)
+  'forecast.loadTitle': 'Renewal load — next 12 months',
+  'forecast.loadPeak': '{0} certificates expiring · peak {1}: {2}',
+  'forecast.loadNone': 'No certificates expire in the next 12 months',
+  'forecast.loadOther': 'Other teams',
+  'forecast.loadNote': 'Certificates expiring per month, stacked by team. Renewals piling into the same month drive procurement / CSR workload and budget planning.',
   // Weak Algorithm Report — enrichment (2026-09-12)
   'wa.loadError':         'The report could not be loaded',
   'wa.retry':             'Try again',

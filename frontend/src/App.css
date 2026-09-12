@@ -12775,6 +12775,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .cc-renewed-chip { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 1px 6px; border-radius: 6px; font-size: .74em; font-weight: 600; background: #dcfce7; color: #166534; white-space: nowrap; }
 [data-theme="dark"] .cc-renewed-chip { background: #052e16; color: #86efac; }
 
+/* Yenileme yükü grafiği (Bitiş Tahmini, 2026-09-12 #9) */
+.fc-load { margin-top: 16px; }
+.fc-load-sum { margin-left: auto; font-size: .8em; color: var(--text-light); }
+.fc-load-chart { padding: 6px 4px 0; }
+.fc-load-note { margin: 6px 12px 10px; font-size: .78em; color: var(--text-light); }
+
 /* "Son 7 günde ne değişti" satırı (dashboard istatistik şeridi altı, 2026-09-12 #7) */
 .recent-changes { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: -6px 0 14px; font-size: .84em; color: var(--text-light); }
 .recent-changes b { color: var(--text); }

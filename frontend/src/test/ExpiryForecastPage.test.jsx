@@ -156,3 +156,20 @@ describe('ExpiryForecastPage', () => {
     await waitFor(() => expect(document.body.textContent).toContain('crit.example.com'))
   })
 })
+
+describe('ExpiryForecastPage — yenileme yükü (2026-09-12, #9)', () => {
+  it('önümüzdeki 12 ayın toplamı ve zirve ayı başlıkta; 13 ay sonra dolan sayılmaz', async () => {
+    const soon = new Date(); soon.setMonth(soon.getMonth() + 2)
+    const far = new Date(); far.setMonth(far.getMonth() + 13)
+    api.getCertificates.mockResolvedValue([
+      { domain: 'a.example.com', not_after: soon.toISOString(), days_remaining: 60, team_name: 'Takım A', alert_level: 'OK' },
+      { domain: 'b.example.com', not_after: soon.toISOString(), days_remaining: 60, team_name: 'Takım B', alert_level: 'OK' },
+      { domain: 'far.example.com', not_after: far.toISOString(), days_remaining: 400, team_name: 'Takım A', alert_level: 'OK' },
+    ])
+    render(<ExpiryForecastPage onSelectDomain={() => {}} />)
+    await waitFor(() => expect(document.querySelector('.fc-load')).toBeTruthy())
+    const sum = document.querySelector('.fc-load-sum').textContent
+    expect(sum).toMatch(/^2 sertifika dolacak|^2 certificates expiring/)
+    expect(sum).toMatch(/: 2$/)
+  })
+})
