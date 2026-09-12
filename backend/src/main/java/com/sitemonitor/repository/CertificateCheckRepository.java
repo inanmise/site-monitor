@@ -12,6 +12,23 @@ import java.util.List;
 
 public interface CertificateCheckRepository extends JpaRepository<CertificateCheck, Long> {
 
+    /**
+     * Zayıf Algoritma Raporu trendi (2026-09-12): pencere içinde ZAYIF görülen (alan, gün) çiftleri.
+     * Koşullar {@code LatestCheckRepository.findWeakAlgorithmCandidates} ile birebir — yalnız zayıf
+     * satırlar döner (nadir), tüm zaman serisi taranmaz; checked_at index'li.
+     */
+    @Query("""
+        SELECT DISTINCT c.domain, SUBSTRING(c.checkedAt, 1, 10) FROM CertificateCheck c
+        WHERE c.checkedAt >= :cutoff AND (
+              upper(c.signatureAlgorithm) LIKE '%MD2%'
+           OR upper(c.signatureAlgorithm) LIKE '%MD5%'
+           OR upper(c.signatureAlgorithm) LIKE '%SHA1%'
+           OR upper(c.signatureAlgorithm) LIKE '%SHA-1%'
+           OR ((upper(c.publicKeyAlgorithm) LIKE '%RSA%' OR upper(c.publicKeyAlgorithm) LIKE '%DSA%') AND c.publicKeySize < 2048)
+           OR (upper(c.publicKeyAlgorithm) LIKE '%EC%' AND c.publicKeySize < 256))
+        """)
+    List<Object[]> weakObservationsSince(@Param("cutoff") String cutoff);
+
     // ── Kontrol Geçmişi v2 (domain anahtarlı, SSL): sayfalı aralık + hata filtresi + histogram ──
     Page<CertificateCheck> findByDomainAndCheckedAtBetween(String domain, String from, String to, Pageable p);
     Page<CertificateCheck> findByDomainAndStatusAndCheckedAtBetween(String domain, String status, String from, String to, Pageable p);

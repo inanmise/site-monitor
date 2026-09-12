@@ -18,6 +18,8 @@ public interface UserPushDeliveryRepository extends JpaRepository<UserPushDelive
 
     /** Dedupe ön-kontrolü (yarışta son söz UNIQUE kısıtın — bu yalnız gürültüsüz erken çıkış). */
     boolean existsByAlertEventIdAndDedupeKeyAndUsername(Long alertEventId, String dedupeKey, String username);
+    /** Olaysız takım bildirimi (Zayıf Algoritma Raporu) dedupe'u — alertEventId yok. */
+    boolean existsByDedupeKeyAndUsername(String dedupeKey, String username);
 
     /** Saat tavanı: kullanıcı başına son bir saatte yazılmış GÖNDERİLEBİLİR satır sayısı. */
     @Query("""

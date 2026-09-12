@@ -839,6 +839,14 @@ export const api = {
 
     // Weak algorithm report
     getWeakAlgorithms: () => request('/admin/audit/weak-algorithms'),
+    // 2026-09-12 zenginleştirme: CSV indirme <a href> ile (same-origin cookie), istisna ve takıma bildir uçları
+    weakAlgorithmsExportUrl: () => `${BASE}/admin/audit/weak-algorithms/export`,
+    setWeakAlgorithmException: (domain, body) =>
+      request(`/admin/audit/weak-algorithms/${encodeURIComponent(domain)}/exception`, { method: 'POST', body: JSON.stringify(body) }),
+    clearWeakAlgorithmException: (domain) =>
+      request(`/admin/audit/weak-algorithms/${encodeURIComponent(domain)}/exception`, { method: 'DELETE' }),
+    notifyWeakAlgorithm: (domain) =>
+      request(`/admin/audit/weak-algorithms/${encodeURIComponent(domain)}/notify`, { method: 'POST' }),
 
     // Audit log
     getAuditLogs: (params) => {

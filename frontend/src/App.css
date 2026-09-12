@@ -7085,6 +7085,90 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .wa-row-critical td { border-left-color: #ef4444; }
 [data-theme="dark"] .wa-row-high td    { border-left-color: #f97316; }
 
+/* ── Zayıf Algoritma Raporu — zenginleştirme (2026-09-12) ─────────────────────────── */
+.wa-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.wa-toolbar-meta { display: inline-flex; align-items: center; gap: 8px; font-size: .85em; color: var(--text-light); }
+.wa-toolbar-actions { display: flex; gap: 8px; }
+.wa-toolbar-actions .btn, .wa-actions .btn { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+
+.wa-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.wa-kpi { display: flex; flex-direction: column; gap: 3px; padding: 10px 14px; border: 1px solid var(--border);
+  border-radius: 10px; background: var(--bg-surface); min-width: 0; }
+.wa-kpi-label { font-size: .72em; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); }
+.wa-kpi-value { font-size: 1.45em; font-weight: 700; line-height: 1.1; }
+.wa-kpi-sub { font-size: .74em; color: var(--text-light); }
+.wa-kpi--ok .wa-kpi-value { color: var(--success); }
+.wa-kpi--bad .wa-kpi-value { color: var(--danger); }
+.wa-kpi--warn .wa-kpi-value { color: #d97706; }
+
+.wa-banner--clean { background: #dcfce7; border-color: #86efac; color: #166534; flex-wrap: wrap; }
+.wa-banner-sub { font-size: .82em; opacity: .9; }
+.wa-banner-badge.tls   { background: #7c3aed; color: #fff; }
+.wa-banner-badge.chain { background: #0369a1; color: #fff; }
+.wa-sev-medium { background: #fef9c3; color: #854d0e; }
+.wa-row-medium td { border-left: 3px solid #d97706; }
+.wa-ok { color: var(--success); }
+
+/* Katlanır bölüm */
+.wa-sec { border: 1px solid var(--border); border-radius: 10px; background: var(--bg-surface); }
+.wa-sec-head { width: 100%; display: flex; align-items: center; gap: 8px; padding: 11px 14px; background: none; border: 0;
+  color: var(--text); font: inherit; font-weight: 600; cursor: pointer; text-align: left; border-radius: 10px; }
+.wa-sec-head:hover { color: var(--primary); }
+.wa-sec-head:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.wa-sec-chevron { transition: transform .15s; flex-shrink: 0; }
+.wa-sec-chevron.is-open { transform: rotate(180deg); }
+.wa-sec-title { min-width: 0; }
+.wa-sec-count { display: inline-block; min-width: 22px; padding: 1px 8px; border-radius: 999px; font-size: .78em; text-align: center;
+  background: var(--bg-hover); color: var(--text); }
+.wa-sec-count--ok  { background: #dcfce7; color: #166534; }
+.wa-sec-count--bad { background: #fee2e2; color: #991b1b; }
+.wa-sec-count--warn { background: #fef3c7; color: #92400e; }
+.wa-sec-hint { margin-left: auto; font-size: .78em; font-weight: 400; color: var(--text-light); white-space: nowrap; }
+.wa-sec-body { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 10px; }
+.wa-table--rules td { vertical-align: middle; }
+.wa-rule--hit td { background: color-mix(in srgb, var(--danger) 6%, transparent); }
+
+/* Dağılım çubukları */
+.wa-dist-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.wa-bars { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.wa-bars-title { font-size: .78em; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin-bottom: 2px; }
+.wa-bar-row { display: grid; grid-template-columns: minmax(90px, 1fr) 2fr auto; align-items: center; gap: 8px; }
+.wa-bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wa-bar-row .pg-bar-wrap { min-width: 0; }
+.wa-bar-fill { width: 100%; }
+.wa-bar-count { font-size: .82em; min-width: 2ch; text-align: right; }
+
+/* 2030 görünümü */
+.wa-chip-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.wa-outlook-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 8px;
+  background: #fef3c7; color: #92400e; font-size: .82em; font-weight: 600; }
+.wa-outlook-chip small { font-weight: 400; opacity: .85; }
+
+/* Trend */
+.wa-trend { width: 100%; height: 90px; display: block; }
+.wa-trend-bar { fill: var(--bg-hover); }
+.wa-trend-bar--weak { fill: var(--danger); }
+.wa-trend-axis { stroke: var(--border); stroke-width: 1; }
+.wa-trend-lists { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+
+/* Eylemler + istisna */
+.wa-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.wa-exception-chip { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 6px; font-size: .72em; font-weight: 600;
+  background: #dbeafe; color: #1e40af; vertical-align: middle; white-space: nowrap; }
+.wa-exception-chip.is-expired { background: #fee2e2; color: #991b1b; }
+.wa-row--excepted td { opacity: .72; }
+.wa-field { display: flex; flex-direction: column; gap: 4px; font-size: .88em; font-weight: 600; margin-bottom: 10px; }
+.wa-field .input { font-weight: 400; }
+
+[data-theme="dark"] .wa-banner--clean { background: #052e16; border-color: #166534; color: #86efac; }
+[data-theme="dark"] .wa-sev-medium { background: #422006; color: #fcd34d; }
+[data-theme="dark"] .wa-sec-count--ok  { background: #052e16; color: #86efac; }
+[data-theme="dark"] .wa-sec-count--bad { background: #450a0a; color: #fca5a5; }
+[data-theme="dark"] .wa-sec-count--warn { background: #422006; color: #fcd34d; }
+[data-theme="dark"] .wa-outlook-chip { background: #422006; color: #fcd34d; }
+[data-theme="dark"] .wa-exception-chip { background: #1e3a8a; color: #bfdbfe; }
+[data-theme="dark"] .wa-exception-chip.is-expired { background: #450a0a; color: #fca5a5; }
+
 /* ═══════════════════════  TEAM STATS SECTION  ════════════════════════ */
 .ts-root { margin: 0 0 8px; }
 .ts-title { font-size: .78em; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;

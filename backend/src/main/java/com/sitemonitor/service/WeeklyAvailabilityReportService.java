@@ -344,8 +344,9 @@ public class WeeklyAvailabilityReportService {
 
         EmailNotificationService.PageSpeedWeekly pageSpeed = collectPageSpeed(team, w);
         EmailNotificationService.DeploymentWeekly deployments = collectDeployments(w);
+        EmailNotificationService.WeakAlgoWeekly weak = collectWeakAlgo(domains);
         String html = emailService.buildWeeklyAvailabilityHtml(
-                team.getName(), w.weekLabel(), rows, summary, att, pageSpeed, deployments);
+                team.getName(), w.weekLabel(), rows, summary, att, pageSpeed, deployments, weak);
         return new TeamReport(rows, summary, subject, html, to, cc, outage);
     }
 
@@ -358,6 +359,23 @@ public class WeeklyAvailabilityReportService {
      *
      * <p>Patlarsa {@code null} döner ve rapor bu satır OLMADAN gider (sayfa hızı / ek ile aynı ilke).
      */
+    /**
+     * Zayıf algoritma satırı (2026-09-12) — DEPO ile hesaplanır (WeakAlgorithmReportService enjekte
+     * edilmez: bu sınıfa servis eklemek dairesel referans üretir). Hüküm ortak yardımcıdan.
+     */
+    EmailNotificationService.WeakAlgoWeekly collectWeakAlgo(List<CertificateInventory> domains) {
+        try {
+            List<String> names = domains.stream().map(CertificateInventory::getDomain).filter(Objects::nonNull).toList();
+            Map<String, LatestCheck> latest = new HashMap<>();
+            for (String d : names) latestCheckRepo.findById(d).ifPresent(lc -> latest.put(d, lc));
+            int[] ws = WeakAlgorithmReportService.weakAndScannedFor(names, latestCheckRepo.findWeakAlgorithmCandidates(), latest);
+            return new EmailNotificationService.WeakAlgoWeekly(ws[0], ws[1]);
+        } catch (Exception e) {
+            log.warn("Haftalık rapor zayıf-algoritma satırı hesaplanamadı (bant atlanır): {}", e.toString());
+            return null;
+        }
+    }
+
     EmailNotificationService.DeploymentWeekly collectDeployments(Window w) {
         try {
             String env = deploymentHistory.currentEnvironment();

@@ -3008,6 +3008,9 @@ public class EmailNotificationService {
      */
     public record DeploymentWeekly(int deployments, String fromVersion, String toVersion, int restarts, int rollbacks) {}
 
+    /** Zayıf algoritma satırı (2026-09-12): takımın alanlarında zayıf sertifika sayısı + taranan alan sayısı. */
+    public record WeakAlgoWeekly(int weak, int scanned) {}
+
     /** Geriye uyumlu: ek yokken (ya da üretilemediğinde) gövdede ek bandı çizilmez. */
     public String buildWeeklyAvailabilityHtml(String teamName, String weekLabel,
                                               List<AvailabilityRow> rows, AvailabilitySummary s) {
@@ -3034,6 +3037,14 @@ public class EmailNotificationService {
     public String buildWeeklyAvailabilityHtml(String teamName, String weekLabel,
                                               List<AvailabilityRow> rows, AvailabilitySummary s,
                                               AttachmentInfo att, PageSpeedWeekly ps, DeploymentWeekly dep) {
+        return buildWeeklyAvailabilityHtml(teamName, weekLabel, rows, s, att, ps, dep, null);
+    }
+
+    /** {@code weak} doluysa "Zayıf algoritma: N (tarandı: M)" bandı eklenir (2026-09-12). */
+    public String buildWeeklyAvailabilityHtml(String teamName, String weekLabel,
+                                              List<AvailabilityRow> rows, AvailabilitySummary s,
+                                              AttachmentInfo att, PageSpeedWeekly ps, DeploymentWeekly dep,
+                                              WeakAlgoWeekly weak) {
         String accent = "#1f3864";
         String outerBg = "#f4f6f8";
         String generatedAt = ZonedDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
@@ -3179,6 +3190,27 @@ public class EmailNotificationService {
                 + "</td></tr></table>";
         }
 
+        // Zayıf algoritma bandı (2026-09-12): "temiz" raporun da kanıtı olsun — denetim/uyum ekibi
+        // "0 (tarandı: 212)" satırını görür; zayıf varsa kenar çizgisi kırmızı.
+        String weakSection = "";
+        if (weak != null) {
+            String edge = weak.weak() > 0 ? "#dc2626" : "#16a34a";
+            String tr = weak.weak() == 0
+                    ? "Zayıf algoritmalı sertifika yok (tarandı: " + weak.scanned() + " alan)"
+                    : weak.weak() + " sertifika zayıf imza/anahtar kullanıyor (tarandı: " + weak.scanned() + " alan) — yenileme planı gerekli";
+            String en = weak.weak() == 0
+                    ? "No weak-algorithm certificates (" + weak.scanned() + " domains scanned)"
+                    : weak.weak() + " certificate(s) use a weak signature/key (" + weak.scanned() + " domains scanned) — renewal plan needed";
+            weakSection =
+                "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 18px'><tr>"
+                + "<td bgcolor='#f8fafc' style='background:#f8fafc;border-left:4px solid " + edge + ";"
+                + "border-radius:0 8px 8px 0;padding:10px 16px;font-size:13px;color:#1e293b'>"
+                + "<span style='font-weight:800;color:#334155'>🔐 Zayıf Algoritma</span><br>"
+                + "<span style='font-size:13px;color:#334155'>" + escHtml(tr) + "</span><br>"
+                + "<span style='font-size:11px;color:#64748b'>" + escHtml(en) + "</span>"
+                + "</td></tr></table>";
+        }
+
         // Domain tablosu (en kötü üstte — servis sıralar)
         StringBuilder body = new StringBuilder();
         body.append("<tr>")
@@ -3258,6 +3290,7 @@ public class EmailNotificationService {
             + table
             + pageSpeedSection
             + deploySection
+            + weakSection
             // Footer
             + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
             + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitor — Otomatik Haftalık Rapor</td>"

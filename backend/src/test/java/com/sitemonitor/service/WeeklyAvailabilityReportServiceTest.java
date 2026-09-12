@@ -71,7 +71,7 @@ class WeeklyAvailabilityReportServiceTest {
         when(emailService.sendHtmlWithAttachments(any(), any(), any(), any(), any(), any())).thenReturn("SENT");
         when(outageReportService.collect(any(), any(), any())).thenReturn(outageData(3, 1));
         when(outageReportService.pdf(any())).thenReturn(new byte[]{ 1, 2, 3 });
-        when(emailService.buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), any(), any()))
+        when(emailService.buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn("<html></html>");
         // Varsayılan: dağıtım geçmişi boş → "dağıtım yapılmadı" satırı (rapor yine gider).
         when(deploymentHistory.currentEnvironment()).thenReturn("prod");
@@ -313,7 +313,7 @@ class WeeklyAvailabilityReportServiceTest {
         // Ek sessizce iliştirilseydi okuyanların çoğu — özellikle telefonda — fark etmezdi.
         ArgumentCaptor<EmailNotificationService.AttachmentInfo> attCap =
                 ArgumentCaptor.forClass(EmailNotificationService.AttachmentInfo.class);
-        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture(), any(), any());
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture(), any(), any(), any());
         assertThat(attCap.getValue()).isNotNull();
         assertThat(attCap.getValue().fileName()).endsWith(".pdf");
         assertThat(attCap.getValue().monitorTypeCount()).isEqualTo(MonitorTypeCatalog.ORDER.size());
@@ -352,7 +352,7 @@ class WeeklyAvailabilityReportServiceTest {
 
         ArgumentCaptor<EmailNotificationService.AttachmentInfo> attCap =
                 ArgumentCaptor.forClass(EmailNotificationService.AttachmentInfo.class);
-        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture(), any(), any());
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture(), any(), any(), any());
         assertThat(attCap.getValue()).isNull();      // gövdede ek bandı çizilmez
         verify(outageReportService, never()).pdf(any());
         assertThat(result.sent()).isEqualTo(1);      // rapor yine gitti
@@ -809,7 +809,7 @@ class WeeklyAvailabilityReportServiceTest {
         service.sendWeeklyReports(false);
         ArgumentCaptor<EmailNotificationService.DeploymentWeekly> cap =
                 ArgumentCaptor.forClass(EmailNotificationService.DeploymentWeekly.class);
-        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), any(), cap.capture());
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), any(), cap.capture(), any());
         assertThat(cap.getValue()).isNull();
         verify(emailService).sendHtmlWithAttachments(any(), any(), any(), any(), any(), any());
     }
@@ -852,7 +852,7 @@ class WeeklyAvailabilityReportServiceTest {
     private EmailNotificationService.PageSpeedWeekly capturePageSpeed() {
         ArgumentCaptor<EmailNotificationService.PageSpeedWeekly> cap =
                 ArgumentCaptor.forClass(EmailNotificationService.PageSpeedWeekly.class);
-        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), cap.capture(), any());
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), cap.capture(), any(), any());
         return cap.getValue();
     }
 
@@ -932,5 +932,25 @@ class WeeklyAvailabilityReportServiceTest {
                 .isEqualTo("2026-08-10T00:00:00");
         assertThat(WeeklyAvailabilityReportService.shiftWeek("2026-01-05T21:00:00"))
                 .isEqualTo("2025-12-29T21:00:00");   // yıl sınırını doğru geçer
+    }
+    @Test
+    @DisplayName("2026-09-12: collectWeakAlgo — takımın alanlarında zayıf sayısı ve taranan sayısı; depo düşerse null (bant atlanır, rapor gider)")
+    void collectWeakAlgo_countsAndDegrades() {
+        com.sitemonitor.model.CertificateInventory a = new com.sitemonitor.model.CertificateInventory(); a.setDomain("a.example.com");
+        com.sitemonitor.model.CertificateInventory b = new com.sitemonitor.model.CertificateInventory(); b.setDomain("b.example.com");
+        com.sitemonitor.model.LatestCheck weak = new com.sitemonitor.model.LatestCheck();
+        weak.setDomain("a.example.com"); weak.setSignatureAlgorithm("SHA1withRSA"); weak.setPublicKeyAlgorithm("RSA"); weak.setPublicKeySize(2048); weak.setCheckedAt("2026-01-01T00:00:00");
+        com.sitemonitor.model.LatestCheck other = new com.sitemonitor.model.LatestCheck();
+        other.setDomain("other.example.com"); other.setSignatureAlgorithm("MD5withRSA");
+        when(latestCheckRepo.findById("a.example.com")).thenReturn(java.util.Optional.of(weak));
+        when(latestCheckRepo.findById("b.example.com")).thenReturn(java.util.Optional.empty());
+        when(latestCheckRepo.findWeakAlgorithmCandidates()).thenReturn(java.util.List.of(weak, other));
+
+        EmailNotificationService.WeakAlgoWeekly w = service.collectWeakAlgo(java.util.List.of(a, b));
+        assertThat(w.weak()).isEqualTo(1);
+        assertThat(w.scanned()).isEqualTo(1);
+
+        when(latestCheckRepo.findWeakAlgorithmCandidates()).thenThrow(new RuntimeException("db"));
+        assertThat(service.collectWeakAlgo(java.util.List.of(a, b))).isNull();
     }
 }
