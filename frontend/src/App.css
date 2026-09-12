@@ -12775,6 +12775,16 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .cc-renewed-chip { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 1px 6px; border-radius: 6px; font-size: .74em; font-weight: 600; background: #dcfce7; color: #166534; white-space: nowrap; }
 [data-theme="dark"] .cc-renewed-chip { background: #052e16; color: #86efac; }
 
+/* Grafik eşik rozeti (Sistem Sağlığı, 2026-09-12 #23) */
+.mini-chart-breach { margin-left: auto; margin-right: 8px; padding: 0 6px; border-radius: 999px; font-size: .7em; font-weight: 700; line-height: 16px; }
+.mini-chart-breach--ok { background: #dcfce7; color: #166534; }
+.mini-chart-breach--warn { background: #fef3c7; color: #92400e; }
+.mini-chart-breach--crit { background: #fee2e2; color: #991b1b; }
+[data-theme="dark"] .mini-chart-breach--ok { background: #052e16; color: #86efac; }
+[data-theme="dark"] .mini-chart-breach--warn { background: #422006; color: #fcd34d; }
+[data-theme="dark"] .mini-chart-breach--crit { background: #450a0a; color: #fca5a5; }
+.mini-chart-thr { pointer-events: none; }
+
 /* Aktivite akışı: zaman grupları + katlanmış koşular (2026-09-12 #22) */
 .act-group-head { margin: 10px 0 4px; font-size: .74em; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
 .act-group-head small { font-weight: 600; padding: 0 6px; border-radius: 999px; background: var(--bg-hover); color: var(--text-light); }

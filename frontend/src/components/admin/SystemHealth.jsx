@@ -21,6 +21,18 @@ import { readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import { Rocket } from 'lucide-react'
 const DeploymentHistoryPanel = lazy(() => import('./DeploymentHistoryPanel.jsx'))   // yalnız bölüm açılınca
 const LoginActivityChart = lazy(() => import('./LoginActivityChart.jsx'))   // recharts → tembel yükle (bundle hafif)
+/**
+ * Grafik eşikleri (2026-09-12, #23): her grafik "normal mi" sorusuna cevap versin — uyarı/kritik bandı +
+ * pencere içindeki ihlal sayısı. Değerler tek pod / 100 eşzamanlı kullanıcı kabulüne göre; CPU ve heap
+ * sert tavan (OOM = kesinti), HTTP süre/hata ve DB sorgu süresi kullanıcı deneyimi eşiği.
+ */
+const HEALTH_THRESHOLDS = {
+  cpu:     { warn: 70, crit: 85 },     // %
+  heap:    { warn: 75, crit: 90 },     // %
+  httpMs:  { warn: 1000, crit: 3000 }, // ms ortalama
+  httpErr: { warn: 1, crit: 5 },       // hata / dk
+  dbMs:    { warn: 200, crit: 500 },   // ms ortalama sorgu
+}
 const HttpMetricsExplorer = lazy(() => import('./HttpMetricsExplorer.jsx'))  // recharts → tembel yükle
 
 function SmtpStatusCell({ row, t }) {
@@ -1076,6 +1088,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
             />
             <MiniChart
               label={t('http.avgDuration')}
+              thresholds={HEALTH_THRESHOLDS.httpMs} breachLabel={t('sys.breach')}
               unit=" ms"
               color="#f59e0b"
               data={(httpMetrics.history ?? []).map(b => ({ ts: b.ts, value: b.avg_ms }))}
@@ -1083,6 +1096,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
             />
             <MiniChart
               label={t('http.errorsPerMin')}
+              thresholds={HEALTH_THRESHOLDS.httpErr} breachLabel={t('sys.breach')}
               unit=""
               color="#ef4444"
               data={(httpMetrics.history ?? []).map(b => ({ ts: b.ts, value: b.errors }))}
@@ -1117,6 +1131,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
         <div className="metrics-grid">
           <MiniChart
             label={t('sys.cpuProcess')}
+              thresholds={HEALTH_THRESHOLDS.cpu} breachLabel={t('sys.breach')}
             unit="%"
             maxY={100}
             color="#4f9cf9"
@@ -1128,6 +1143,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
           />
           <MiniChart
             label={t('sys.heapPct')}
+              thresholds={HEALTH_THRESHOLDS.heap} breachLabel={t('sys.breach')}
             unit="%"
             maxY={100}
             color="#10b981"
@@ -1236,6 +1252,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                       data={sc('series').map(b => ({ ts: b.ts, value: b.count }))}
                       onClick={() => setModalChart({ label: t('db.queriesPer'), unit: '', color: '#4f9cf9', gran, data: sc('series').map(b => ({ ts: b.ts, value: b.count })) })} />
                     <MiniChart label={t('db.avgMsPer')} unit=" ms" color="#f59e0b" gran={gran}
+                      thresholds={HEALTH_THRESHOLDS.dbMs} breachLabel={t('sys.breach')}
                       data={sc('series').map(b => ({ ts: b.ts, value: b.avg_ms }))}
                       onClick={() => setModalChart({ label: t('db.avgMsPer'), unit: ' ms', color: '#f59e0b', gran, data: sc('series').map(b => ({ ts: b.ts, value: b.avg_ms })) })} />
                   </div>

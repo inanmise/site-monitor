@@ -4591,6 +4591,7 @@ export const TR = {
   'act.group.older': 'Daha eski',
   'act.folded': '{0} ardışık kontrol — açmak için tıklayın',
   'act.foldedErrors': '{0} hata',
+  'sys.breach': 'ihlal',   // grafik eşik rozeti (2026-09-12, #23)
   // Zayıf Algoritma Raporu — zenginleştirme (2026-09-12)
   'wa.loadError':         'Rapor yüklenemedi',
   'wa.retry':             'Yeniden dene',
@@ -11287,6 +11288,7 @@ export const EN = {
   'act.group.older': 'Older',
   'act.folded': '{0} consecutive checks — click to expand',
   'act.foldedErrors': '{0} errors',
+  'sys.breach': 'breaches',   // chart threshold badge (2026-09-12, #23)
   // Weak Algorithm Report — enrichment (2026-09-12)
   'wa.loadError':         'The report could not be loaded',
   'wa.retry':             'Try again',
