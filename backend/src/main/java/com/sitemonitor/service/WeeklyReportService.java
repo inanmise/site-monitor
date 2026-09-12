@@ -176,6 +176,52 @@ public class WeeklyReportService {
         return reportRepo.findByTeamIdAndReportYearOrderByWeekNoDesc(teamId, y);
     }
 
+    /**
+     * Takım tamamlama panosu (2026-09-12, #21): takım × hafta durum matrisi. Yalnız global admin / AUDIT
+     * (tüm takımlar); diğerleri boş liste alır (kendi takımı zaten listede). Haftalar 1..bugünkü ISO haftası
+     * (geçmiş yıl için 52/53); hafta bugünden ileriyse hücre yok. Durum: MISSING | DRAFT | PENDING_APPROVAL |
+     * APPROVED | REJECTED. Yalnız aktif ve hatırlatması açık olan takımlar sayılır ("rapor beklenen" küme).
+     */
+    public Map<String, Object> completion(Integer year, Actor actor) {
+        int y = year != null ? year : today().getYear();
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        java.time.LocalDate today = today();
+        int isoYear = today.get(java.time.temporal.WeekFields.ISO.weekBasedYear());
+        int currentWeek = today.get(java.time.temporal.WeekFields.ISO.weekOfWeekBasedYear());
+        int lastWeek = y < isoYear ? (int) java.time.LocalDate.of(y, 12, 28).get(java.time.temporal.WeekFields.ISO.weekOfWeekBasedYear())
+                     : y > isoYear ? 0 : currentWeek;
+        out.put("year", y); out.put("weeks", lastWeek); out.put("current_week", y == isoYear ? currentWeek : null);
+        List<Map<String, Object>> teams = new java.util.ArrayList<>();
+        if (!(actor.isAdmin() || actor.isAudit())) { out.put("teams", teams); return out; }
+        Map<Long, Map<Integer, WeeklyReport>> byTeam = new java.util.HashMap<>();
+        for (WeeklyReport r : reportRepo.findByReportYearOrderByTeamIdAscWeekNoDesc(y))
+            byTeam.computeIfAbsent(r.getTeamId(), k -> new java.util.HashMap<>()).put(r.getWeekNo(), r);
+        int totalMissing = 0;
+        for (Team t : teamRepo.findByActiveTrueOrderByNameAsc()) {
+            if (!Boolean.TRUE.equals(t.getWeeklyReminderEnabled()) && !byTeam.containsKey(t.getId())) continue;
+            Map<Integer, WeeklyReport> rows = byTeam.getOrDefault(t.getId(), Map.of());
+            List<Map<String, Object>> cells = new java.util.ArrayList<>();
+            int approved = 0, missing = 0;
+            for (int w = 1; w <= lastWeek; w++) {
+                WeeklyReport r = rows.get(w);
+                String status = r == null ? "MISSING" : r.getStatus();
+                if ("APPROVED".equals(status)) approved++;
+                if ("MISSING".equals(status) || "DRAFT".equals(status) || "REJECTED".equals(status)) missing++;
+                Map<String, Object> c = new java.util.LinkedHashMap<>();
+                c.put("week", w); c.put("status", status); c.put("report_id", r == null ? null : r.getId());
+                cells.add(c);
+            }
+            totalMissing += missing;
+            Map<String, Object> m = new java.util.LinkedHashMap<>();
+            m.put("team_id", t.getId()); m.put("team_name", t.getName()); m.put("reminder", Boolean.TRUE.equals(t.getWeeklyReminderEnabled()));
+            m.put("approved", approved); m.put("missing", missing); m.put("cells", cells);
+            teams.add(m);
+        }
+        teams.sort((a, b) -> Integer.compare((int) b.get("missing"), (int) a.get("missing")));   // en eksik üstte
+        out.put("teams", teams); out.put("total_missing", totalMissing);
+        return out;
+    }
+
     /** Yıl dropdown'ı: rapor bulunan yıllar (takım scoping'i list() ile aynı);
      *  içinde bulunulan ISO yılı yoksa başa eklenir — dropdown boş kalmaz. */
     public List<Integer> years(Long requestedTeamId, Actor actor) {

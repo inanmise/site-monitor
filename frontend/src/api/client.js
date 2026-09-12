@@ -402,6 +402,7 @@ export const api = {
     monitoringStats: (id) => request(`/weekly-reports/${id}/monitoring-stats`),
     years: (teamId) => request(`/weekly-reports/years${teamId ? '?teamId=' + teamId : ''}`),
     deadline: () => request('/weekly-reports/deadline'),   // son giriş günü/saati — canlı ayar (2026-09-12)
+    completion: (year) => request(`/weekly-reports/completion${year ? '?year=' + year : ''}`),   // takım × hafta panosu (2026-09-12, #21)
     mails: (id) => request(`/weekly-reports/${id}/mails`),
     create: (payload) => request('/weekly-reports', {
       method: 'POST', body: JSON.stringify(payload),

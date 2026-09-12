@@ -23,6 +23,7 @@ import { isoWeekInfo, isEditableWeek, formatWeekRange } from '../utils/isoWeek'
 import { mailPreviewSrcDoc } from '../utils/mailPreview.js'
 import { LoadingBlock } from './ui/Progress.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
+import WeeklyCompletionBoard from './WeeklyCompletionBoard.jsx'
 import { usePagination } from '../hooks/usePagination.js'
 
 /** Oturum kesintisi yedekleri için localStorage anahtar öneki. */
@@ -1121,6 +1122,15 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
             <Bell size={14} /> {sendingReminder ? t('wr.reminderSending') : t('wr.sendReminderNow')}
           </button>
         </div>
+      )}
+
+      {/* Takım tamamlama panosu (2026-09-12, #21): takım × hafta — yalnız global admin/AUDIT'e veri gelir */}
+      {!selectedId && (isAdmin || isAudit) && (
+        <WeeklyCompletionBoard year={year} onPick={(tid, week, reportId) => {
+          if (reportId) { setSelectedId(reportId); return }
+          if (isAdmin) setSelTeamId(String(tid))
+          setWeekFilter(week); setJumpDate('')
+        }} />
       )}
 
       {/* ── "Nasıl girilir?" yardım kartı — kısa, açılır-kapanır (liste görünümünde) ── */}

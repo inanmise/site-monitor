@@ -103,6 +103,13 @@ public class WeeklyReportController {
         return ok(Map.of("data", m));
     }
 
+    /** Takım tamamlama panosu (2026-09-12, #21): takım × hafta durum matrisi (global admin / AUDIT). */
+    @GetMapping("/completion")
+    public ResponseEntity<Map<String, Object>> completion(@RequestParam(required = false) Integer year, HttpSession session) {
+        permissionService.require(session, "weekly_reports.read", "view");
+        return ok(Map.of("data", service.completion(year, actor(session))));
+    }
+
     @GetMapping("/years")
     public ResponseEntity<Map<String, Object>> years(
             @RequestParam(required = false) Long teamId, HttpSession session) {

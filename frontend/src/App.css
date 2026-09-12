@@ -12457,6 +12457,44 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .mspark-sla.is-met .mspark-sla-target { color: var(--success); }
 .mspark-sla-bad { color: #d97706; }
 
+/* ── Haftalık rapor takım tamamlama panosu (2026-09-12 #21) ────────────────────────────────── */
+.wrc { border: 1px solid var(--border); border-radius: 10px; background: var(--bg-surface); margin: 0 0 14px; }
+.wrc-head { width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: none; border: 0; color: var(--text); font: inherit; font-weight: 600; cursor: pointer; text-align: left; border-radius: 10px; }
+.wrc-head:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.wrc-title { flex: 1; min-width: 0; }
+.wrc-summary { font-size: .84em; font-weight: 600; }
+.wrc-summary.is-warn { color: #d97706; }
+.wrc-summary.is-ok { color: var(--success); }
+.wrc-chevron { transition: transform .15s; }
+.wrc-chevron.is-open { transform: rotate(180deg); }
+.wrc-body { padding: 0 14px 12px; }
+.wrc-scroll { overflow-x: auto; }
+.wrc-grid { border-collapse: separate; border-spacing: 2px; font-size: .8em; }
+.wrc-team-th, .wrc-team-td { text-align: left; position: sticky; left: 0; background: var(--bg-surface); padding-right: 8px; white-space: nowrap; z-index: 1; }
+.wrc-week-th { font-weight: 600; color: var(--text-muted); text-align: center; min-width: 18px; padding: 0 1px; }
+.wrc-week-th.is-current { color: var(--primary); }
+.wrc-sum-th, .wrc-sum-td { text-align: right; padding-left: 8px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.wrc-sum-td .is-ok { color: var(--success); }
+.wrc-sum-td .is-warn { color: #d97706; }
+.wrc-cell-td { padding: 0; }
+.wrc-cell { display: block; width: 18px; height: 18px; border-radius: 4px; border: 1px solid transparent; padding: 0; cursor: pointer; }
+.wrc-cell:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.wrc-cell.is-current { border-color: var(--primary); }
+.wrc-cell--missing { background: var(--bg-hover); }
+.wrc-cell--draft { background: #fde68a; }
+.wrc-cell--pending { background: #93c5fd; }
+.wrc-cell--approved { background: #86efac; }
+.wrc-cell--rejected { background: #fca5a5; }
+.wrc-cell--legend { width: 12px; height: 12px; display: inline-block; vertical-align: middle; cursor: default; }
+.wrc-noremind { margin-left: 4px; font-size: .8em; color: var(--text-muted); }
+.wrc-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: .76em; color: var(--text-light); }
+.wrc-legend-item { display: inline-flex; align-items: center; gap: 4px; }
+.wrc-legend-note { margin-left: auto; }
+[data-theme="dark"] .wrc-cell--draft { background: #92400e; }
+[data-theme="dark"] .wrc-cell--pending { background: #1e40af; }
+[data-theme="dark"] .wrc-cell--approved { background: #166534; }
+[data-theme="dark"] .wrc-cell--rejected { background: #991b1b; }
+
 /* ── Yönetici özeti (İstatistik üstü, 2026-09-12 #20) ─────────────────────────────────────── */
 .exs { display: flex; flex-direction: column; gap: 12px; margin: 0 0 16px; }
 .exs-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }

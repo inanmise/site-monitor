@@ -1030,4 +1030,37 @@ class WeeklyReportServiceTest {
         assertThatThrownBy(() -> service.transfer(List.of(5L), 2L, mudur)).isInstanceOf(SecurityException.class);
         assertThat(service.get(5L, ADMIN)).isNotNull();
     }
+    // ── Takım tamamlama panosu (2026-09-12, #21) ─────────────────────────────────────────────
+
+    @Test
+    @DisplayName("completion: geçen yıl 52/53 hafta; hatırlatması kapalı ve raporsuz takım listelenmez; en eksik takım üstte; USER boş liste")
+    void completion_matrix() {
+        int lastYear = WeeklyReportService.today().getYear() - 1;
+        int weeksInYear = java.time.LocalDate.of(lastYear, 12, 28).get(java.time.temporal.WeekFields.ISO.weekOfWeekBasedYear());
+        Team a = new Team(); a.setId(1L); a.setName("Takım A"); a.setActive(true); a.setWeeklyReminderEnabled(true);
+        Team b = new Team(); b.setId(2L); b.setName("Takım B"); b.setActive(true); b.setWeeklyReminderEnabled(true);
+        Team c = new Team(); c.setId(3L); c.setName("Takım C"); c.setActive(true); c.setWeeklyReminderEnabled(false);   // raporsuz + hatırlatma kapalı → yok
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(java.util.List.of(a, b, c));
+        WeeklyReport r1 = new WeeklyReport(); r1.setId(11L); r1.setTeamId(1L); r1.setReportYear(lastYear); r1.setWeekNo(1); r1.setStatus("APPROVED");
+        WeeklyReport r2 = new WeeklyReport(); r2.setId(12L); r2.setTeamId(1L); r2.setReportYear(lastYear); r2.setWeekNo(2); r2.setStatus("DRAFT");
+        WeeklyReport r3 = new WeeklyReport(); r3.setId(13L); r3.setTeamId(2L); r3.setReportYear(lastYear); r3.setWeekNo(1); r3.setStatus("PENDING_APPROVAL");
+        when(reportRepo.findByReportYearOrderByTeamIdAscWeekNoDesc(lastYear)).thenReturn(java.util.List.of(r1, r2, r3));
+
+        java.util.Map<String, Object> out = service.completion(lastYear, ADMIN);
+        assertThat(out).containsEntry("year", lastYear).containsEntry("weeks", weeksInYear);
+        assertThat(out.get("current_week")).isNull();
+        @SuppressWarnings("unchecked") java.util.List<java.util.Map<String, Object>> teams = (java.util.List<java.util.Map<String, Object>>) out.get("teams");
+        assertThat(teams).hasSize(2);
+        // A: 1 onaylı, eksik = (weeks-1); B: 0 onaylı, eksik = weeks-1 (1. hafta onay bekliyor eksik sayılmaz) → eşit eksik; sıra korunur (A, B)
+        assertThat(teams.get(0)).containsEntry("team_name", "Takım A").containsEntry("approved", 1).containsEntry("missing", weeksInYear - 1);
+        @SuppressWarnings("unchecked") java.util.List<java.util.Map<String, Object>> cellsA = (java.util.List<java.util.Map<String, Object>>) teams.get(0).get("cells");
+        assertThat(cellsA).hasSize(weeksInYear);
+        assertThat(cellsA.get(0)).containsEntry("status", "APPROVED").containsEntry("report_id", 11L);
+        assertThat(cellsA.get(1)).containsEntry("status", "DRAFT");
+        assertThat(cellsA.get(2)).containsEntry("status", "MISSING");
+        assertThat(out.get("total_missing")).isEqualTo(2 * (weeksInYear - 1));
+
+        @SuppressWarnings("unchecked") java.util.List<?> userTeams = (java.util.List<?>) service.completion(lastYear, USER_T2).get("teams");
+        assertThat(userTeams).isEmpty();
+    }
 }
