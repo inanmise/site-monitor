@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { localDayKey } from '../../api/client'
+import { dateLocale } from '../../i18n/dateLocale.js'
 
 /**
  * Aylık takvim ızgarası (2026-09-12, zenginleştirme #8/#19) — kütüphanesiz.
@@ -46,7 +47,7 @@ export default function MonthCalendar({ events = [], initialMonth, maxPerDay = 3
   for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, month, d))
   while (cells.length % 7 !== 0) cells.push(null)
   const today = ymd(new Date())
-  const monthLabel = cursor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+  const monthLabel = cursor.toLocaleDateString(dateLocale(), { month: 'long', year: 'numeric' })   // uygulama dili, tarayıcı dili değil (ISSUE-009)
   const monthEvents = [...byDay.entries()].filter(([k]) => k.startsWith(`${year}-${String(month + 1).padStart(2, '0')}`)).reduce((n, [, v]) => n + v.length, 0)
   const dayNames = [t('cal.mon'), t('cal.tue'), t('cal.wed'), t('cal.thu'), t('cal.fri'), t('cal.sat'), t('cal.sun')]
 
