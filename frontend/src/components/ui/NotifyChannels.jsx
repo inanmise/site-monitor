@@ -70,7 +70,7 @@ export default function NotifyChannels({
           kanal seçimiyle hedef seçimi ayrı bölümlerdeyken kullanıcı ikisini ilişkilendiremiyordu. */}
       {onGroupChange && (
         <div style={{ marginTop: 10 }}>
-          <div className="field-hint" style={{ marginBottom: 4 }}>{t('notify.groupLabel')}</div>
+          {/* Etiket seçicinin kendisinde (ng.selectorLabel) — burada ikinci kez yazılmaz (2026-09-12: "Bildirim grubu" çift görünüyordu). */}
           <NotificationGroupSelect teamId={teamId} value={groupId} onChange={onGroupChange} />
         </div>
       )}
