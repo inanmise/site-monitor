@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 vi.mock('../api/client', () => ({
+  formatDate: (s) => String(s ?? ''),
   api: withApiFallback({ admin: { getConfigHealth: vi.fn() } }),
 }))
 import { api } from '../api/client'
@@ -28,10 +29,10 @@ describe('ConfigHealthCard', () => {
     render(<ConfigHealthCard onOpenSection={onOpen} />)
     await screen.findByText(/E-posta \(SMTP\)|Email \(SMTP\)/)
     expect(screen.getByText(/son test BAŞARISIZ · 2026-09-12T08:00:00|last test FAILED · 2026-09-12T08:00:00/)).toBeInTheDocument()
-    expect(screen.getByText(/1 sorun|1 problems/)).toBeInTheDocument()
+    expect(screen.getByText(/^1 sorun$|^1 problem$/)).toBeInTheDocument()   // tekil (QA ISSUE-011)
     const rows = document.querySelectorAll('.cfg-row')
     fireEvent.click(rows[0].querySelector('.cfg-row-go'))
-    expect(onOpen).toHaveBeenCalledWith('smtp')
+    expect(onOpen).toHaveBeenCalledWith('smtp', null)   // ikinci arg: odaklanacak alan anahtarı (yalnız general satırları)
     fireEvent.click(rows[1].querySelector('.cfg-row-go'))
     await waitFor(() => expect(nav).toHaveBeenCalled())
     expect(nav.mock.calls[0][0].detail.tab).toBe('admin')   // envanter = Yönetim sekmesi

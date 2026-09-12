@@ -13,11 +13,22 @@ import HelpTip from '../ui/HelpTip.jsx'
  * Yalnız değiştirilen key'ler gönderilir; boş bırakmak override'ı kaldırır (varsayılana döner).
  * SMTP/LDAP deseniyle aynı stil (yeni CSS üretmeden).
  */
-export default function GeneralSettings() {
+export default function GeneralSettings({ focusKey = null }) {
   const t = useT()
   const toast = useToast()
 
   const [items, setItems] = useState(null)   // backend kataloğu
+  // Yapılandırma sağlığı kartından gelen alan (ISSUE-012): liste yüklenince kaydır, odakla, 2 sn vurgula.
+  useEffect(() => {
+    if (!focusKey?.key || !items) return
+    const el = document.querySelector(`[data-setting-key="${focusKey.key}"]`)
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el.classList.add('is-focus-target')
+    el.querySelector('input, select, textarea, .ss-trigger')?.focus?.({ preventScroll: true })
+    const id = setTimeout(() => el.classList.remove('is-focus-target'), 2000)
+    return () => clearTimeout(id)
+  }, [focusKey, items])
   const [loadError, setLoadError] = useState(null)
   const [edited, setEdited] = useState({})    // yalnız dokunulan key'ler
   const [saving, setSaving] = useState(false)
@@ -155,7 +166,7 @@ export default function GeneralSettings() {
             <p className="section-desc">{t('general.grpDesc.' + g)}</p>
           )}
           {byGroup[g].map((it) => (
-            <div className="threshold-grid" key={it.key}>
+            <div className="threshold-grid" key={it.key} data-setting-key={it.key}>
               <div className="threshold-field">
                 {/* Açıklama metni SAYFADA durmaz: 200+ ayarlı bu liste okunamaz hâle gelirdi.
                     Anahtar katalogtan türetilir — aynı metin özel sayfalarda da paylaşılır. */}
