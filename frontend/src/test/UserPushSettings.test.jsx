@@ -336,8 +336,8 @@ describe('UserPushSettings', () => {
       expect.stringMatching(/Connection|Bağlantı/), expect.stringMatching(/Role Groups|Rol Grupları/), expect.stringMatching(/Delivery Log|Teslimat Günlüğü/)]))
     expect(heads.length).toBe(8)
     expect(document.querySelectorAll('.cs-section.is-open').length).toBe(0)
-    // Kaydet düğmesi bölüm dışında, hep görünür
-    expect(screen.getByRole('button', { name: /^(Save|Kaydet)$/ }).closest('.cs-section')).toBeNull()
+    // Değişiklik yokken kayıt şeridi çizilmez
+    expect(document.querySelector('.up-savebar')).toBeNull()
 
     // Bağlantı bölümünü aç → aria-expanded true, is-open, kalıcı
     const conn = heads.find((b) => /Connection|Bağlantı/.test(b.textContent))
@@ -353,6 +353,29 @@ describe('UserPushSettings', () => {
     expect(document.querySelectorAll('.cs-section.is-open').length).toBe(0)
     expect(JSON.parse(localStorage.getItem('sm.userpush.sections')).log).toBe(false)
     try { localStorage.removeItem('sm.userpush.sections') } catch {}
+  })
+
+  it('2026-09-12: kayıt şeridi yalnız DEĞİŞİKLİK varken, alta yapışık; Geri al eski değeri döndürür; Kaydet → şerit kaybolur', async () => {
+    api.admin.userPush.saveSettings.mockResolvedValue({ success: true, data: { settings: { ...SETTINGS, 'site.monitor.userpush.title': 'Yeni Başlık' } } })
+    render(<UserPushSettings />)
+    const title = await screen.findByDisplayValue('Site Monitor')
+    expect(document.querySelector('.up-savebar')).toBeNull()
+
+    fireEvent.change(title, { target: { value: 'Yeni Başlık' } })
+    const bar = await waitFor(() => { const b = document.querySelector('.up-savebar'); expect(b).not.toBeNull(); return b })
+    expect(within(bar).getByText(/unsaved changes|Kaydedilmemiş/)).toBeInTheDocument()
+
+    // Geri al → eski değer, şerit kalkar
+    fireEvent.click(within(bar).getByRole('button', { name: /Discard|Geri al/ }))
+    await waitFor(() => expect(document.querySelector('.up-savebar')).toBeNull())
+    expect(screen.getByDisplayValue('Site Monitor')).toBeInTheDocument()
+
+    // Değiştir + Kaydet → API çağrılır, şerit kalkar
+    fireEvent.change(screen.getByDisplayValue('Site Monitor'), { target: { value: 'Yeni Başlık' } })
+    await waitFor(() => expect(document.querySelector('.up-savebar')).not.toBeNull())
+    fireEvent.click(within(document.querySelector('.up-savebar')).getByRole('button', { name: /^(Save|Kaydet)$/ }))
+    await waitFor(() => expect(api.admin.userPush.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ 'site.monitor.userpush.title': 'Yeni Başlık' })))
+    await waitFor(() => expect(document.querySelector('.up-savebar')).toBeNull())
   })
 
   it('sessiz saat asgari seviyesinde de UYARI seçeneği var', async () => {

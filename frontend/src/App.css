@@ -8424,6 +8424,18 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   text-transform: uppercase; letter-spacing: .5px; }
 .up-group-level .hint { font-size: .78em; color: var(--text-light); }
 
+/* Yapışkan kayıt şeridi — yalnız kaydedilmemiş değişiklik varken çizilir (UserPushSettings). */
+.up-savebar {
+  position: sticky; bottom: 12px; z-index: 5;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  margin-top: 8px; padding: 10px 16px; border-radius: 10px;
+  background: var(--bg-surface); border: 1px solid var(--primary);
+  box-shadow: 0 6px 24px rgba(0,0,0,.14);
+}
+.up-savebar-msg { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--text); }
+.up-savebar-actions { display: flex; gap: 8px; }
+.up-savebar-actions .btn { display: inline-flex; align-items: center; gap: 6px; }
+
 /* Rozetler */
 .up-badge { font-size: .7em; font-weight: 700; padding: 2px 8px; border-radius: 10px; letter-spacing: .02em; }
 .up-badge--warn { background: color-mix(in srgb, var(--warning) 20%, transparent); color: #b45309; }

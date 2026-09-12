@@ -302,6 +302,11 @@ export default function UserPushSettings() {
   const [saving, setSaving] = useState(false)
   const [settings, setSettings] = useState({})
   const [headers, setHeaders] = useState([])
+  // Kaydedilmiş hâlin anlık görüntüsü — "kaydedilmemiş değişiklik var mı" bundan türer (2026-09-12,
+  // kullanıcı: Kaydet düğmesi sayfanın ortasında kayboluyordu → yalnız değişiklik varken görünen,
+  // alta yapışık kayıt şeridi). Kapsam (tür/takım) ve ana anahtar ANINDA kaydedildiği için şeride girmez.
+  const [savedSnap, setSavedSnap] = useState(null)
+  const snapshotOf = (s, h, g) => JSON.stringify({ s, h, g })
   const [scopes, setScopes] = useState([])
   const [defaults, setDefaults] = useState({ templates: {}, placeholders: [] })
   const [health, setHealth] = useState({})
@@ -421,8 +426,11 @@ export default function UserPushSettings() {
         setScopes(d.scopes || [])
         setDefaults(d.defaults || { templates: {}, placeholders: [] })
         setHealth(d.health || {})
-        try { setRoleGroups(JSON.parse(d.settings?.[KEY('role-groups')] || '') || {}) }
-        catch { setRoleGroups(defaultGroups()) }
+        let g = {}
+        try { g = JSON.parse(d.settings?.[KEY('role-groups')] || '') || {} } catch { g = defaultGroups() }
+        setRoleGroups(g)
+        const h = Array.isArray(d.settings?.[KEY('headers')]) ? d.settings[KEY('headers')] : []
+        setSavedSnap(snapshotOf(d.settings || {}, h, Object.keys(g).length ? normalizeGroups(g) : defaultGroups()))
       } else {
         toast.error(res?.error || t('settings.loadError'))
       }
@@ -457,6 +465,12 @@ export default function UserPushSettings() {
   }
 
   const groupsSafe = Object.keys(roleGroups).length ? normalizeGroups(roleGroups) : defaultGroups()
+  const dirty = savedSnap !== null && snapshotOf(settings, headers, groupsSafe) !== savedSnap
+  function discard() {
+    if (!savedSnap) return
+    const snap = JSON.parse(savedSnap)
+    setSettings(snap.s); setHeaders(snap.h); setRoleGroups(snap.g)
+  }
 
   async function save() {
     setSaving(true)
@@ -467,8 +481,11 @@ export default function UserPushSettings() {
       const res = await api.admin.userPush.saveSettings(body)
       if (res?.success) {
         toast.success(t('userpush.saved'))
-        setSettings(res.data?.settings || {})
-        setHeaders(Array.isArray(res.data?.settings?.[KEY('headers')]) ? res.data.settings[KEY('headers')] : [])
+        const s2 = res.data?.settings || {}
+        const h2 = Array.isArray(s2[KEY('headers')]) ? s2[KEY('headers')] : []
+        setSettings(s2)
+        setHeaders(h2)
+        setSavedSnap(snapshotOf(s2, h2, groupsSafe))
       } else {
         toast.error(res?.error || t('settings.saveError'))
       }
@@ -847,12 +864,6 @@ export default function UserPushSettings() {
         </div>
       </div>
 
-      <div className="admin-section">
-        <button type="button" className="btn btn-primary" onClick={save} disabled={saving}>
-          {saving ? <Spinner size={14} inline decorative /> : <Save size={15} />} {t('settings.save')}
-        </button>
-      </div>
-
       {/* ── Test gönderimi ── */}
       <div className={sec('test')}>
         <SectionHead id="test" title={t('userpush.testTitle')} open={isOpen('test')} onToggle={() => toggleSec('test')}></SectionHead>
@@ -967,6 +978,20 @@ export default function UserPushSettings() {
           onPageChange={(p) => setPage(p - 1)}
           onPageSizeChange={(n) => { setPageSize(n); setPage(0) }} />
       </div>
+
+      {/* Yapışkan kayıt şeridi — yalnız kaydedilmemiş değişiklik varken; sayfa nereye kaydırılırsa
+          kaydırılsın altta. Kaydet + Geri al. */}
+      {dirty && (
+        <div className="up-savebar" role="region" aria-label={t('userpush.unsavedTitle')}>
+          <span className="up-savebar-msg"><Save size={15} aria-hidden="true" /> {t('userpush.unsaved')}</span>
+          <div className="up-savebar-actions">
+            <button type="button" className="btn btn-sm btn-secondary" onClick={discard} disabled={saving}>{t('userpush.discard')}</button>
+            <button type="button" className="btn btn-sm btn-primary" onClick={save} disabled={saving}>
+              {saving ? <Spinner size={14} inline decorative /> : <Save size={14} />} {saving ? t('settings.saving') : t('settings.save')}
+            </button>
+          </div>
+        </div>
+      )}
 
       {winModal && (
         <WindowModal win={winModal.win} status={winModal.status}
