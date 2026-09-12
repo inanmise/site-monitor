@@ -319,6 +319,10 @@ export default function App() {
       const tab = e?.detail?.tab
       if (!tab || !VALID_TABS.has(tab)) return
       tabChangeRef.current?.(tab, e.detail.params)
+      // Palet/bildirim sonuçları: ?domain= dashboard aramasına, ?team= takım süzgecine düşer.
+      const p = e.detail.params || {}
+      if (p.domain) setSearch(String(p.domain))
+      if (p.team) setTeamFilter(String(p.team))
     }
     window.addEventListener(NAVIGATE_EVENT, onNav)
     return () => window.removeEventListener(NAVIGATE_EVENT, onNav)

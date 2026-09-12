@@ -122,6 +122,8 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  /** Komut paleti (2026-09-12, #1): alan / izleme / takım — takım kapsamlı. */
+  search: (q) => request(`/search?q=${encodeURIComponent(q)}`),
   // Hafif kullanıcı dizini (her authenticated kullanıcı) — UserDirectory bağlamı bununla beslenir.
   /** Kurum-geneli takım rehberi (oturum açmış herkes) — ad→id ve üye listesi (beyaz-listeli). */
   teams: {
