@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-11T18:43:27Z",
+  "generatedAt": "2026-09-12T02:50:28Z",
   "repo": "inanmise/site-monitor",
-  "count": 636,
+  "count": 637,
   "releases": [
+    {
+      "version": "20.57.1",
+      "tag": "v20.57.1",
+      "releasedAt": "2026-09-12T02:50:17Z",
+      "commit": "7ec50c8fd5e026f7d1e9779d5913347b7c067288",
+      "prevVersion": "20.57.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": "regresyon",
+          "breaking": false,
+          "sha": "7ec50c8f",
+          "subject": "dokuzuncu tur eki — satir yerlesimi temiz"
+        },
+        {
+          "type": "fix",
+          "scope": "push",
+          "breaking": false,
+          "sha": "0445f476",
+          "subject": "KPI modalinda teslimat satirlari sikisiyordu — sutunlar minmax, dar alanda iki satira kirilir, modal xl"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.57.0",
       "tag": "v20.57.0",
