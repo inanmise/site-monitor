@@ -90,6 +90,15 @@ public class CertificateInventory {
      */
     @Column(name = "timeout_seconds")    private Integer timeoutSeconds;
 
+    /**
+     * Alan başına kontrol sıklığı (saat) — 2026-09-12, kullanıcı: "kartın düzenle modalında kontrol
+     * sıklığı seçilebilmeli (saatlik / 12 saatlik / günlük / haftalık)". Saatlik süpürme, son kontrolün
+     * üzerinden bu kadar saat geçmemişse alanı atlar (stale süpürmesi de aynı süzgeci uygular; yoksa
+     * atlanan alanı 5 dk sonra yakalardı). NULL = genel zamanlama (her süpürmede). Elle "Şimdi kontrol et"
+     * bu değere bakmaz. Nullable: dolu tabloya NOT NULL eklenmez (sessizce düşer).
+     */
+    @Column(name = "check_interval_hours") private Integer checkIntervalHours;
+
     /** Per-domain TLS handshake mode override: null=inherit global setting,
      *  "browser" (TLS 1.2 + ALPN) or "default" (JDK defaults, TLS 1.3). */
     @Column(name = "tls_mode", length = 16)

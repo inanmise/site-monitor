@@ -346,6 +346,50 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.data.tls_mode").value("default"));
     }
 
+    // ── Alan başına kontrol sıklığı (2026-09-12) ─────────────────────────────
+
+    @Test
+    @DisplayName("2026-09-12: PUT persists check_interval_hours (24) and echoes it back")
+    void updateInventory_checkInterval_persisted() throws Exception {
+        CertificateInventory existing = inventory("old.com");
+        existing.setId(1L);
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+        when(inventoryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        mvc.perform(put("/api/admin/inventory/1")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"old.com\",\"port\":443,\"active\":true,\"check_interval_hours\":24}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.check_interval_hours").value(24));
+        assertThat(existing.getCheckIntervalHours()).isEqualTo(24);
+    }
+
+    @Test
+    @DisplayName("2026-09-12: PUT with an unsupported interval (5) falls back to null = global schedule")
+    void updateInventory_checkInterval_unsupportedBecomesNull() throws Exception {
+        CertificateInventory existing = inventory("old.com");
+        existing.setId(1L);
+        existing.setCheckIntervalHours(168);
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+        when(inventoryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        mvc.perform(put("/api/admin/inventory/1")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"old.com\",\"port\":443,\"active\":true,\"check_interval_hours\":5}"))
+                .andExpect(status().isOk());
+        assertThat(existing.getCheckIntervalHours()).isNull();
+    }
+
+    @Test
+    @DisplayName("2026-09-12: normalizeInterval accepts only 1/6/12/24/168")
+    void normalizeInterval_whitelist() {
+        assertThat(AdminController.normalizeInterval(null)).isNull();
+        for (int h : new int[] {1, 6, 12, 24, 168}) assertThat(AdminController.normalizeInterval(h)).isEqualTo(h);
+        for (int h : new int[] {0, -1, 2, 5, 48, 720}) assertThat(AdminController.normalizeInterval(h)).isNull();
+    }
+
     // ── Sorumlu Ekipler ───────────────────────────────────────────────────────
 
     /**

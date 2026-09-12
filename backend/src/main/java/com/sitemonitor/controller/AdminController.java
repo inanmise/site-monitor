@@ -77,7 +77,7 @@ public class AdminController {
         "tlsMode", "purchasedBy", "changeDescription", "expectedFingerprint", "expectedSubject",
         "teamId", "groupName", "deletedAt", "notificationGroupId",
         "svcMgmtContact", "appDevContact", "iisAdminContact", "wafAdminContact",
-        "timeoutSeconds"
+        "timeoutSeconds", "checkIntervalHours"
     };
     private final CertificateInventoryRepository inventoryRepo;
     private final com.sitemonitor.service.DerivedMonitorTeamSync derivedMonitorTeamSync;
@@ -224,6 +224,7 @@ public class AdminController {
             throw new IllegalArgumentException("Port must be between 1 and 65535");
         if (item.getActive() == null) item.setActive(true);
         item.setTlsMode(normalizeTlsMode(item.getTlsMode()));
+        item.setCheckIntervalHours(normalizeInterval(item.getCheckIntervalHours()));
         // Bildirim grubu SAHIPLIK dogrulamasi — updateInventory ile AYNI kural. Olusturma yolunda
         // eksikti: baska takimin grup id'si ile kayit acilabiliyordu. Gonderim aninda ikinci bir
         // kapi daha var (NotificationGroupService yabanci grubu yok sayar) ama gecersiz deger yine
@@ -340,6 +341,7 @@ public class AdminController {
         // bir numaralı sessiz hatası; kontrol listesinde ayrıca yazılı.
         existing.setTimeoutSeconds(item.getTimeoutSeconds());
         existing.setTlsMode(item.getTlsMode());
+        existing.setCheckIntervalHours(normalizeInterval(item.getCheckIntervalHours()));
         existing.setPurchasedBy(item.getPurchasedBy());
         existing.setChangeDescription(item.getChangeDescription());
         existing.setTier(item.getTier());
@@ -449,6 +451,12 @@ public class AdminController {
     }
 
     /** tls_mode: null/blank → null (inherit global); only "browser"/"default" allowed. */
+    /** Kontrol sıklığı (saat): izin verilen değerler; başka/boş → null (genel zamanlama). */
+    static Integer normalizeInterval(Integer h) {
+        if (h == null) return null;
+        return java.util.Set.of(1, 6, 12, 24, 168).contains(h) ? h : null;
+    }
+
     private String normalizeTlsMode(String v) {
         if (v == null || v.isBlank()) return null;
         String m = v.trim().toLowerCase();

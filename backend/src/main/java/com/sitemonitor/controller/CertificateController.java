@@ -420,7 +420,8 @@ public class CertificateController {
         out.put("not_after", lc == null ? null : lc.getNotAfter());
         out.put("days_remaining", lc == null ? null : lc.getDaysRemaining());
         out.put("checked_at", lc == null ? null : lc.getCheckedAt());
-        out.put("next_check_at", schedulerService.nextCertificateSweepAt());
+        out.put("next_check_at", schedulerService.nextCertificateSweepAt(domain, inv.getCheckIntervalHours()));   // alan başına sıklık (2026-09-12)
+        out.put("check_interval_hours", inv.getCheckIntervalHours());
         out.put("tls_mode_used", lc == null ? null : lc.getTlsModeUsed());
         out.put("has_page_monitor", hasPageMonitor);
         out.put("ok_count", result.okCount());

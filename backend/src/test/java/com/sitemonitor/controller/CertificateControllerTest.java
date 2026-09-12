@@ -481,7 +481,8 @@ class CertificateControllerTest {
         when(inventoryRepo.findByDomain("a.example.com")).thenReturn(java.util.Optional.of(invOf(5L, 8443)));
         when(latestCheckRepo.findById("a.example.com")).thenReturn(java.util.Optional.of(latestOf()));
         when(pageMonitorRepo.existsByUrlContainingIgnoreCaseAndActiveTrue("a.example.com")).thenReturn(false);
-        when(schedulerService.nextCertificateSweepAt()).thenReturn("2026-08-23T11:00:00");
+        // 2026-09-12: sağlık ucu alan başına aşırı yükü çağırır (sıklık boş → genel süpürme)
+        when(schedulerService.nextCertificateSweepAt("a.example.com", null)).thenReturn("2026-08-23T11:00:00");
 
         mvc.perform(get("/api/certificates/a.example.com/health").session(teamSession(5L)))
                 .andExpect(status().isOk())
