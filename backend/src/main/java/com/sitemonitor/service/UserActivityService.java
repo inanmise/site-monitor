@@ -50,6 +50,12 @@ public class UserActivityService {
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;   // anomali onayı (#3)
     private final AppSettingsService appSettings;    // oturum zaman aşımı (#2)
 
+    /** Mesai saatleri (AuditService ile aynı anahtarlar) — ısı haritası mesai dışını gölgeler (#6). */
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.audit.office-start-hour:8}")
+    private int officeStartHour = 8;
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.audit.office-end-hour:20}")
+    private int officeEndHour = 20;
+
     /** Proje TZ'si: Europe/Istanbul (UTC+3, DST yok). */
     private static final ZoneId ZONE = ZoneId.of("Europe/Istanbul");
     private static final DateTimeFormatter ISO =
@@ -95,6 +101,7 @@ public class UserActivityService {
         out.put("usage",        buildUsage(usersByName, teamNames));   // #1: sayfa kullanımı (7 gün)
         out.put("generated_at", ISO.format(Instant.now()));
         out.put("window_days",  7);
+        out.put("office_hours", Map.of("start", officeStartHour, "end", officeEndHour));   // #6 ısı haritası gölgesi
         return out;
     }
 

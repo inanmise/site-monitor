@@ -85,6 +85,8 @@ class UserActivityServiceEnrichmentTest {
         assertThat(sum.get("dormant_30d")).isEqualTo(3L);
         assertThat(sum.get("dormant_90d")).isEqualTo(2L);
         assertThat(sum.get("never_logged_in")).isEqualTo(1L);
+        assertThat(((Map<?, ?>) o.get("office_hours")).get("start")).isEqualTo(8);
+        assertThat(o.get("window_days")).isEqualTo(7);
         @SuppressWarnings("unchecked") List<Map<String, Object>> dormant = (List<Map<String, Object>>) ((Map<?, ?>) o.get("details")).get("dormant");
         assertThat(dormant).extracting(m -> m.get("username")).containsExactly("never", "old100", "old40");
         assertThat(dormant.get(1).get("team_name")).isEqualTo("Takım B");
