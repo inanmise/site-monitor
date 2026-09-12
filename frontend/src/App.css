@@ -2765,6 +2765,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
    read-only domain), end-hizalama komşu input'u aşağı kaydırır; start ile inputlar üstte hizalı kalır. */
 .form-grid--top { align-items: start; }
 .checkbox-label { flex-direction: row !important; align-items: center; gap: 8px !important; cursor: pointer; }
+.checkbox-label.userpush-secret-toggle { display: inline-flex; }   /* yanındaki HelpTip aynı satırda kalsın */
 /* Etiket chip input (incident formu) — text+Enter ile renkli etiketler */
 .tag-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
 .tag-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 20px;
@@ -11911,7 +11912,13 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 
 /* Toggles */
 .ldap-toggles { display: flex; flex-wrap: wrap; gap: 10px 22px; margin: 12px 0; }
-.ldap-toggle { display: flex; align-items: center; gap: 8px; font-size: .92em; cursor: pointer; }
+.ldap-toggle { display: inline-flex; align-items: center; gap: 8px; font-size: .92em; cursor: pointer; }
+/* Anahtar + yardım ipucu AYNI satırda: `display:flex` label'ı satır boyu yapıp ondan sonra gelen
+   <HelpTip>'i alt satıra düşürüyordu (Haftalık e-posta "etkin" anahtarı, 2026-09-12 — 17 yerde aynı
+   desen: </label><HelpTip …/>). inline-flex ile ipucu etiketin hemen sağında; blok akışı için
+   kapsayıcı .ldap-toggle-row kullanılır. */
+.ldap-toggle + .help-tip { vertical-align: middle; }
+.ldap-toggle-row { display: flex; align-items: center; flex-wrap: wrap; gap: 0 4px; }
 .ldap-toggle input { width: 16px; height: 16px; cursor: pointer; }
 .ldap-toggle-major { font-weight: 700; font-size: 1em; }
 
