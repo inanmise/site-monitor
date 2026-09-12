@@ -1731,8 +1731,6 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
       </div>
       )}
 
-      <p className="sys-refresh-note">↻ {t('sys.autoRefresh')}</p>
-
       <ChartModal chart={modalChart} onClose={() => setModalChart(null)} />
 
       {httpExpOpen && (
@@ -2425,6 +2423,10 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
         )}
       </div>
       )}
+
+      {/* Sayfa geneli not — EN ALTTA (2026-09-12, kullanıcı: not Sürüm & Dağıtım bölümünün ÜSTÜNDE
+          kalıyordu, bölümler arasında sahipsiz görünüyordu). */}
+      <p className="sys-refresh-note">↻ {t('sys.autoRefresh')}</p>
     </div>
   )
 }
