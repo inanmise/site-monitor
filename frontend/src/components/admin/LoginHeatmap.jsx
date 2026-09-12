@@ -3,11 +3,12 @@
 //        dayLabels (7 kısa ad), title, hourLabel, onCellClick(weekday, hour),
 //        todayDow (bugünün hafta-günü 0..6, yoksa -1 → satır vurgusu),
 //        rowTotals [7] (gün toplamları — sağda), colTotals [24] (saat toplamları — altta), total (hafta),
-//        cell (hücre boyutu px — büyük tek-hafta görünümünde 32; SVG viewBox ile kaba ölçeklenir).
+//        cell (hücre boyutu px — büyük tek-hafta görünümünde 32; SVG viewBox ile kaba ölçeklenir),
+//        isOff(r,c) → mesai dışı hücre taraması (2026-09-13 #6), marks [7][24] → başarısız/anomali işareti (köşe noktası).
 // Renk yoğunluğu = count/max. Hücrede başarısız login varsa KIRMIZI, yoksa mavi.
 export default function LoginHeatmap({
   matrix = [], failed = [], max = 0, dayLabels = [], title, hourLabel, onCellClick,
-  todayDow = -1, rowTotals = [], colTotals = [], total = 0, cell = 32,
+  todayDow = -1, rowTotals = [], colTotals = [], total = 0, cell = 32, isOff, marks,
 }) {
   const cols = 24, rows = 7
   const gap = cell > 22 ? 3 : 2
@@ -38,6 +39,11 @@ export default function LoginHeatmap({
       )}
       <svg viewBox={`0 0 ${W} ${H}`} className="mini-chart-svg" role="img" aria-label={title}
            style={{ width: '100%', height: 'auto' }}>
+        <defs>
+          <pattern id="lh-off" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="6" stroke="rgba(148,163,184,.45)" strokeWidth="2" />
+          </pattern>
+        </defs>
         {/* Bugün satırı vurgusu (arka plan + çerçeve) */}
         {todayDow >= 0 && todayDow < rows && (
           <rect x={1} y={topPad + todayDow * cell - 1} width={W - 2} height={cell} rx="3"
@@ -58,15 +64,21 @@ export default function LoginHeatmap({
                 const f = Number((failed[r] || [])[c] || 0)
                 const clickable = onCellClick && v > 0
                 const hh = String(c).padStart(2, '0')
+                const off = typeof isOff === 'function' && isOff(r, c)
+                const mark = marks && marks[r] && marks[r][c]
                 return (
-                  <rect key={c}
-                    x={leftPad + c * cell} y={y}
-                    width={cell - gap} height={cell - gap} rx="3"
-                    fill={color(v, f > 0)}
-                    style={clickable ? { cursor: 'pointer' } : undefined}
-                    onClick={clickable ? () => onCellClick(r, c) : undefined}>
-                    <title>{`${dayLabels[r] || ''} ${hh}:00–${hh}:59 — ${v}${f > 0 ? ` (${f} başarısız)` : ''}`}</title>
-                  </rect>
+                  <g key={c}>
+                    <rect
+                      x={leftPad + c * cell} y={y}
+                      width={cell - gap} height={cell - gap} rx="3"
+                      fill={color(v, f > 0)}
+                      style={clickable ? { cursor: 'pointer' } : undefined}
+                      onClick={clickable ? () => onCellClick(r, c) : undefined}>
+                      <title>{`${dayLabels[r] || ''} ${hh}:00–${hh}:59 — ${v}${f > 0 ? ` (${f} başarısız)` : ''}${off ? ' · mesai dışı' : ''}`}</title>
+                    </rect>
+                    {off && <rect x={leftPad + c * cell} y={y} width={cell - gap} height={cell - gap} rx="3" fill="url(#lh-off)" pointerEvents="none" />}
+                    {mark ? <circle cx={leftPad + c * cell + cell - gap - 4} cy={y + 4} r={Math.max(2, cell * 0.09)} fill="#dc2626" pointerEvents="none" /> : null}
+                  </g>
                 )
               })}
               {/* Gün sonu toplamı (sağ) */}

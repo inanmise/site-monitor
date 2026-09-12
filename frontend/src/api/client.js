@@ -276,7 +276,8 @@ export const api = {
   sendIssueReport: (dto) => request('/issue-reports', { method: 'POST', body: JSON.stringify(dto) }),
 
   // Hafif oturum geçerlilik yoklaması — süpersede ise 401 → request() otomatik /?session=expired.
-  sessionPing: () => request('/session/ping', { timeoutMs: DEFAULT_TIMEOUT_MS }),
+  // Sayfa kullanımı (System Health #1): görünür sekme anahtarı ping'e eklenir — yalnız `tab`, URL parametreleri değil
+  sessionPing: (tab) => request(`/session/ping${tab ? '?tab=' + encodeURIComponent(tab) : ''}`, { timeoutMs: DEFAULT_TIMEOUT_MS }),
 
   getCertificates: () => request('/certificates'),
 
@@ -941,8 +942,13 @@ export const api = {
     // Esnek login serisi — aralık seçimi (1g/7g/30g), gün-navigasyonu, zoom
     getLoginSeries: (from, to, granularity = 'day') =>
       request(`/admin/system/user-activity/series?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&granularity=${granularity}`),
-    terminateUserSession: (username) => request('/admin/system/terminate-session', {
-      method: 'POST', body: JSON.stringify({ username }),
+    terminateUserSession: (username, reason) => request('/admin/system/terminate-session', {
+      method: 'POST', body: JSON.stringify(reason ? { username, reason } : { username }),
+    }),
+    // Kullanıcı etkinliği zenginleştirmesi (2026-09-13): kullanıcı zaman çizelgesi + anomali onayı
+    getUserTimeline: (username, limit = 20) => request(`/admin/system/user-activity/user/${encodeURIComponent(username)}?limit=${limit}`),
+    ackAnomaly: (auditId, acknowledge = true, note) => request(`/admin/system/user-activity/anomalies/${auditId}/ack`, {
+      method: 'POST', body: JSON.stringify({ acknowledge, note: note || null }),
     }),
   },
 
