@@ -297,3 +297,33 @@ düzeltmesi (85240399).
 Bilinen sınırlar (bilinçli): süzgeçler istemci tarafı (liste zaten tam yükleniyor, ≤1000 satır); içe aktarma
 tek istekte 5000 satır; çakışma sezgisi yalnız öneri; kayıtlı görünümler tarayıcıya özel (paylaşım = bağlantı).
 → **REGRESYON YOK**.
+
+## Ek — on altıncı tur (2026-09-12, Vade Takvimi zenginleştirme — 14 madde)
+
+Kapsam: dolmuş/erişilemeyen görünür (#1), takım/UG/tier/grup süzgeci (#2), renew-by + tier lead ayarı (#3),
+tazelik/ortam/hata bandı (#4), alarm eşikleri (#5), eylemler + planlanan yenileme (#6), takıma göre dolacaklar (#7),
+toplu iş/kapsama/veren (#8), ICS/CSV/bağlantı/yazdır (#9), zamanında yenileme oranı (#10), ay görünümü +
+tatil/hafta sonu (#11), boş durumlar (#12), sözlük (#13), tek uç `/api/forecast` (#14).
+
+**Denetim odakları ve sonuç:**
+- Yeni uçlar `ForecastController` (AdminController/CertificateController'a dokunulmadı): `GET /api/forecast`
+  (`inventory.list` view; `SessionScope.viewTeamIds` + satır bazlı `canView`), `POST/DELETE /api/forecast/{domain}/plan`
+  (`inventory.crud` edit + `canManage`; yabancı takım 403, bilinmeyen domain 400 — `ForecastControllerTest` 3).
+- Eski model **dolmuş ve hatalı** sertifikaları hiç göstermiyordu (`d < today` / `days<0` süzgeci) — bu sayfada
+  "≤7 gün 0" yazarken dolmuş sertifika olabiliyordu. Yeni model `classify` ile overdue/unreachable ayrı kova.
+- Eşikler sabit 7/14/30'dan `AlertThreshold`'a bağlandı (alarmla aynı; kayıt yoksa 30/15/7). Lead ayarları
+  `AppSettingsCatalog` "monitoring" grubunda → `settings-labels-sync` + `settings-help-coverage` için TR/EN etiket ve
+  3-satır yardım eklendi (EN başlık "Recommended:" kuralı bir kez ısırdı).
+- Yenileme geçmişi DB'de toplanır (`GROUP BY domain, fingerprint` — ham satır taşınmaz); geçiş = yenileme, "zamanında"
+  = önceki bitiş − tier lead'inden önce. Yerel veride 3 olay (1 zamanında, 2 geç) — sayfa gerçekten sinyal veriyor.
+- Planlanan yenileme: `certificate_inventory` 4 NULLABLE kolon (ddl-auto sessiz NOT NULL tuzağı yok), geçmiş +
+  `CERT_RENEWAL_PLANNED/_PLAN_CLEARED` denetimi; "done" durumu sunucuda türetilir (not_before ≥ plan tarihi).
+- Saf model `forecastModel.js`: ilk sürümde `addDays` `toISOString().slice(0,10)` ile UTC gününe kayıyordu (İstanbul'da
+  bir gün geri) — test yakaladı, yerel getter'larla düzeltildi. Tüm testler `today` sabitiyle TZ'den bağımsız (CI UTC).
+- Tarayıcı doğrulaması: LOCAL etiketi, veri damgası, 6 KPI, 90 günde 6 satır + renew-by + hafta sonu düzeltmesi,
+  plan modalı, takım tablosu (`unreachable` alanı eksik → NaN; düzeltildi ve `>30` sütunu eklendi).
+- `PAGE_STATE_PREFIXES`'e `i_` (envanter) ve `f_` (takvim) eklendi — sekme değişince parametreler temizlenir.
+- Kapılar: `cssClasses` (`.fc-intel-block`), `lazy-tabs-smoke` mock'una `localDayKey`; i18n paritesi tam.
+Bilinen sınırlar (bilinçli): tatil tablosu 2026–2028 (dini bayramlar yıl bazlı), yenileme penceresi 90 gün sabit,
+renew-by sunucuda UTC günü (istemci yerel güne çevirir), plan "done" yalnız not_before ile (parmak izi onayı ayrı).
+→ **REGRESYON YOK**.
