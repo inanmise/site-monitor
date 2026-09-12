@@ -12452,6 +12452,46 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .mspark-up.is-warn { color: #d97706; }
 .mspark-up.is-bad { color: var(--danger); }
 
+/* ── Yapılandırma sağlığı kartı (Ayarlar üstü, 2026-09-12 #25) ─────────────────────────────── */
+.cfg-health { border: 1px solid var(--border); border-left-width: 4px; border-radius: 10px; background: var(--bg-surface); margin: 0 0 14px; }
+.cfg-health--ok { border-left-color: var(--success); }
+.cfg-health--warn { border-left-color: #d97706; }
+.cfg-health--bad { border-left-color: var(--danger); }
+.cfg-health--loading { padding: 10px 14px; font-size: .85em; color: var(--text-light); display: flex; gap: 8px; align-items: center; }
+.cfg-health-head { width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: none; border: 0;
+  color: var(--text); font: inherit; font-weight: 600; cursor: pointer; text-align: left; border-radius: 10px; }
+.cfg-health-head:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.cfg-health--ok .cfg-health-head > svg { color: var(--success); }
+.cfg-health--warn .cfg-health-head > svg { color: #d97706; }
+.cfg-health--bad .cfg-health-head > svg { color: var(--danger); }
+.cfg-health-title { flex: 1; min-width: 0; }
+.cfg-health-summary { display: flex; gap: 6px; flex-wrap: wrap; }
+.cfg-pill { padding: 1px 8px; border-radius: 999px; font-size: .76em; font-weight: 700; }
+.cfg-pill--ok { background: #dcfce7; color: #166534; }
+.cfg-pill--warn { background: #fef3c7; color: #92400e; }
+.cfg-pill--bad { background: #fee2e2; color: #991b1b; }
+.cfg-health-chevron { transition: transform .15s; }
+.cfg-health-chevron.is-open { transform: rotate(180deg); }
+.cfg-health-list { list-style: none; margin: 0; padding: 0 14px 10px; display: flex; flex-direction: column; gap: 4px; }
+.cfg-row { display: grid; grid-template-columns: 16px minmax(120px, 1fr) 2fr auto; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; font-size: .88em; }
+.cfg-row--ok { color: var(--text-light); }
+.cfg-row--ok > svg { color: var(--success); }
+.cfg-row--off { color: var(--text-light); opacity: .8; }
+.cfg-row--warn { background: #fffbeb; color: #78350f; }
+.cfg-row--warn > svg { color: #d97706; }
+.cfg-row--bad { background: #fef2f2; color: #7f1d1d; }
+.cfg-row--bad > svg { color: var(--danger); }
+.cfg-row--foot { grid-template-columns: 1fr; justify-items: end; }
+.cfg-row-name { font-weight: 600; }
+.cfg-row-detail { font-family: monospace; font-size: .9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cfg-row-go { display: inline-flex; align-items: center; gap: 4px; }
+[data-theme="dark"] .cfg-pill--ok { background: #052e16; color: #86efac; }
+[data-theme="dark"] .cfg-pill--warn { background: #422006; color: #fcd34d; }
+[data-theme="dark"] .cfg-pill--bad { background: #450a0a; color: #fca5a5; }
+[data-theme="dark"] .cfg-row--warn { background: #422006; color: #fde68a; }
+[data-theme="dark"] .cfg-row--bad { background: #450a0a; color: #fecaca; }
+@media (max-width: 760px) { .cfg-row { grid-template-columns: 16px 1fr auto; } .cfg-row-detail { grid-column: 2 / -1; } }
+
 /* Yakın zamanda yenilendi rozeti (sertifika kartı, 2026-09-12 #6) */
 .cc-renewed-chip { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 1px 6px; border-radius: 6px; font-size: .74em; font-weight: 600; background: #dcfce7; color: #166534; white-space: nowrap; }
 [data-theme="dark"] .cc-renewed-chip { background: #052e16; color: #86efac; }

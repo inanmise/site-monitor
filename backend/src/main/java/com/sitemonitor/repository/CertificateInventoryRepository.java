@@ -22,6 +22,8 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     boolean existsByDomainIgnoreCase(String domain);
     boolean existsByTeamIdAndActiveTrue(Long teamId);
     long countByActiveTrue();
+    /** Sahipsiz (takımsız) aktif alanlar — yapılandırma sağlığı kartı (2026-09-12). */
+    long countByActiveTrueAndTeamIdIsNull();
 
     /** Aylık envanter raporunun "Silinmiş" KPI'ı — soft-delete edilmiş kayıt sayısı. */
     long countByDeletedAtIsNotNull();

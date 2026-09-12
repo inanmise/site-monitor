@@ -121,6 +121,8 @@ function formatDurationShort(ms) {
 // Mail/derin-link ile gelen ?tab= değeri — yalnız bilinen sekme anahtarları kabul edilir.
 /** Aynı sekmede param değişimi: handleTabChange(id, extraParams) → sayfalar bu olayı dinler (HelpPage view, SystemHealth sec). */
 export const TAB_PARAMS_EVENT = 'sm:tab-params'
+/** Programatik gezinme olayı — bkz. utils/navigate.js */
+export const NAVIGATE_EVENT = 'sm:navigate'
 
 const VALID_TABS = new Set([
   'dashboard', 'all', 'domains', 'forecast', 'renewal', 'renewal-guide',
@@ -306,6 +308,20 @@ export default function App() {
     }
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
+  }, [])
+
+  // Programatik sekme geçişi (2026-09-12): kartlar/palet/bildirim kutusu `navigateTo(tab, params)` yayar,
+  // burada handleTabChange ile aynı yoldan (URL + geçmiş kaydı) uygulanır. Ref: handleTabChange her render'da yeni.
+  const tabChangeRef = useRef(null)
+  tabChangeRef.current = handleTabChange
+  useEffect(() => {
+    const onNav = (e) => {
+      const tab = e?.detail?.tab
+      if (!tab || !VALID_TABS.has(tab)) return
+      tabChangeRef.current?.(tab, e.detail.params)
+    }
+    window.addEventListener(NAVIGATE_EVENT, onNav)
+    return () => window.removeEventListener(NAVIGATE_EVENT, onNav)
   }, [])
 
   useEffect(() => {

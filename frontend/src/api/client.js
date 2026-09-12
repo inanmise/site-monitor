@@ -839,6 +839,8 @@ export const api = {
       request(`/admin/notes/${encodeURIComponent(domain)}/${noteId}/restore`, { method: 'POST' }),
 
     // Weak algorithm report
+    // Yapılandırma sağlığı kartı (2026-09-12, #25)
+    getConfigHealth: () => request('/admin/config-health'),
     getWeakAlgorithms: () => request('/admin/audit/weak-algorithms'),
     // 2026-09-12 zenginleştirme: CSV indirme <a href> ile (same-origin cookie), istisna ve takıma bildir uçları
     weakAlgorithmsExportUrl: () => `${BASE}/admin/audit/weak-algorithms/export`,

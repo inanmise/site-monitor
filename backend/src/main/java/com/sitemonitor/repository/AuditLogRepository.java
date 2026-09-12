@@ -37,6 +37,8 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
     // ── Hash zinciri ─────────────────────────────────────────────────────────────
     /** Zincirin ucu (en yüksek seq) — persist() bir sonraki seq/prev_hash'i buradan alır. */
     Optional<AuditLog> findTopByOrderBySeqDesc();
+    /** Yapılandırma sağlığı kartı (2026-09-12): son SMTP_TEST / LDAP_TEST sonucu. */
+    Optional<AuditLog> findTopByEventTypeOrderByEventTimeDesc(String eventType);
 
     /** Doğrulama için zincirlenmiş (seq'i olan) satırları seq sırasıyla sayfalı okur (legacy null-seq hariç). */
     List<AuditLog> findBySeqNotNullOrderBySeqAsc(Pageable pageable);
