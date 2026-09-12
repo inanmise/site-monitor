@@ -8440,10 +8440,13 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   position: sticky; bottom: 12px; z-index: 5;
   display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
   margin-top: 8px; padding: 10px 16px; border-radius: 10px;
-  background: var(--bg-surface); border: 1px solid var(--primary);
+  background: var(--bg-surface); border: 1px solid var(--border);
   box-shadow: 0 6px 24px rgba(0,0,0,.14);
 }
-.up-savebar-msg { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--text); }
+/* Kaydedilmemiş değişiklik: vurgulu çerçeve (temiz durumda sakin) */
+.up-savebar--dirty { border-color: var(--primary); }
+.up-savebar-msg { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--text-light); }
+.up-savebar--dirty .up-savebar-msg { color: var(--text); }
 .up-savebar-actions { display: flex; gap: 8px; }
 .up-savebar-actions .btn { display: inline-flex; align-items: center; gap: 6px; }
 

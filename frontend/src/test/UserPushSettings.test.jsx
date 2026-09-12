@@ -354,8 +354,10 @@ describe('UserPushSettings', () => {
       expect.stringMatching(/Connection|Bağlantı/), expect.stringMatching(/Role Groups|Rol Grupları/), expect.stringMatching(/Delivery Log|Teslimat Günlüğü/)]))
     expect(heads.length).toBe(8)
     expect(document.querySelectorAll('.cs-section.is-open').length).toBe(0)
-    // Değişiklik yokken kayıt şeridi çizilmez
-    expect(document.querySelector('.up-savebar')).toBeNull()
+    // Kayıt şeridi HER ZAMAN çizilir; değişiklik yokken Kaydet pasif (2026-09-12: "kaydet butonunu göremiyorum")
+    const bar0 = document.querySelector('.up-savebar')
+    expect(bar0).not.toBeNull()
+    expect(within(bar0).getByRole('button', { name: /^(Save|Kaydet)$/ })).toBeDisabled()
 
     // Bağlantı bölümünü aç → aria-expanded true, is-open, kalıcı
     const conn = heads.find((b) => /Connection|Bağlantı/.test(b.textContent))
@@ -373,27 +375,33 @@ describe('UserPushSettings', () => {
     try { localStorage.removeItem('sm.userpush.sections') } catch {}
   })
 
-  it('2026-09-12: kayıt şeridi yalnız DEĞİŞİKLİK varken, alta yapışık; Geri al eski değeri döndürür; Kaydet → şerit kaybolur', async () => {
+  it('2026-09-12: kayıt şeridi hep görünür — temizken pasif Kaydet; değişince Geri al + etkin Kaydet; Geri al eski değeri döndürür; Kaydet → temiz', async () => {
     api.admin.userPush.saveSettings.mockResolvedValue({ success: true, data: { settings: { ...SETTINGS, 'site.monitor.userpush.title': 'Yeni Başlık' } } })
     render(<UserPushSettings />)
     const title = await screen.findByDisplayValue('Site Monitor')
-    expect(document.querySelector('.up-savebar')).toBeNull()
+    const bar = document.querySelector('.up-savebar')
+    expect(bar).not.toBeNull()
+    expect(bar.classList.contains('up-savebar--dirty')).toBe(false)
+    expect(within(bar).getByText(/All changes saved|Tüm değişiklikler kaydedildi/)).toBeInTheDocument()
+    expect(within(bar).getByRole('button', { name: /^(Save|Kaydet)$/ })).toBeDisabled()
+    expect(within(bar).queryByRole('button', { name: /Discard|Geri al/ })).toBeNull()
 
     fireEvent.change(title, { target: { value: 'Yeni Başlık' } })
-    const bar = await waitFor(() => { const b = document.querySelector('.up-savebar'); expect(b).not.toBeNull(); return b })
+    await waitFor(() => expect(bar.classList.contains('up-savebar--dirty')).toBe(true))
     expect(within(bar).getByText(/unsaved changes|Kaydedilmemiş/)).toBeInTheDocument()
+    expect(within(bar).getByRole('button', { name: /^(Save|Kaydet)$/ })).toBeEnabled()
 
-    // Geri al → eski değer, şerit kalkar
+    // Geri al → eski değer, şerit temiz duruma döner
     fireEvent.click(within(bar).getByRole('button', { name: /Discard|Geri al/ }))
-    await waitFor(() => expect(document.querySelector('.up-savebar')).toBeNull())
+    await waitFor(() => expect(bar.classList.contains('up-savebar--dirty')).toBe(false))
     expect(screen.getByDisplayValue('Site Monitor')).toBeInTheDocument()
 
-    // Değiştir + Kaydet → API çağrılır, şerit kalkar
+    // Değiştir + Kaydet → API çağrılır, şerit temiz
     fireEvent.change(screen.getByDisplayValue('Site Monitor'), { target: { value: 'Yeni Başlık' } })
-    await waitFor(() => expect(document.querySelector('.up-savebar')).not.toBeNull())
-    fireEvent.click(within(document.querySelector('.up-savebar')).getByRole('button', { name: /^(Save|Kaydet)$/ }))
+    await waitFor(() => expect(bar.classList.contains('up-savebar--dirty')).toBe(true))
+    fireEvent.click(within(bar).getByRole('button', { name: /^(Save|Kaydet)$/ }))
     await waitFor(() => expect(api.admin.userPush.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ 'site.monitor.userpush.title': 'Yeni Başlık' })))
-    await waitFor(() => expect(document.querySelector('.up-savebar')).toBeNull())
+    await waitFor(() => expect(bar.classList.contains('up-savebar--dirty')).toBe(false))
   })
 
   it('sessiz saat asgari seviyesinde de UYARI seçeneği var', async () => {

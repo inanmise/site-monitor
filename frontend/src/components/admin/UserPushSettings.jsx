@@ -1016,14 +1016,21 @@ export default function UserPushSettings() {
           onPageSizeChange={(n) => { setPageSize(n); setPage(0) }} />
       </div>
 
-      {/* Yapışkan kayıt şeridi — yalnız kaydedilmemiş değişiklik varken; sayfa nereye kaydırılırsa
-          kaydırılsın altta. Kaydet + Geri al. */}
-      {dirty && (
-        <div className="up-savebar" role="region" aria-label={t('userpush.unsavedTitle')}>
-          <span className="up-savebar-msg"><Save size={15} aria-hidden="true" /> {t('userpush.unsaved')}</span>
+      {/* Yapışkan kayıt şeridi — HER ZAMAN görünür (2026-09-12, kullanıcı: "kaydet butonunu göremiyorum" —
+          yalnız-değişince-beliren şerit keşfedilemiyordu). Temiz durumda "kaydedildi" + pasif Kaydet;
+          değişiklik varken vurgulu şerit + Geri al + etkin Kaydet. Sayfa nereye kaydırılırsa kaydırılsın altta. */}
+      {!loading && (
+        <div className={`up-savebar${dirty ? ' up-savebar--dirty' : ''}`} role="region"
+             aria-label={dirty ? t('userpush.unsavedTitle') : t('userpush.savedTitle')}>
+          <span className="up-savebar-msg">
+            {dirty ? <Save size={15} aria-hidden="true" /> : <Check size={15} aria-hidden="true" />}
+            {' '}{dirty ? t('userpush.unsaved') : t('userpush.allSaved')}
+          </span>
           <div className="up-savebar-actions">
-            <button type="button" className="btn btn-sm btn-secondary" onClick={discard} disabled={saving}>{t('userpush.discard')}</button>
-            <button type="button" className="btn btn-sm btn-primary" onClick={save} disabled={saving}>
+            {dirty && (
+              <button type="button" className="btn btn-sm btn-secondary" onClick={discard} disabled={saving}>{t('userpush.discard')}</button>
+            )}
+            <button type="button" className="btn btn-sm btn-primary" onClick={save} disabled={saving || !dirty}>
               {saving ? <Spinner size={14} inline decorative /> : <Save size={14} />} {saving ? t('settings.saving') : t('settings.save')}
             </button>
           </div>
