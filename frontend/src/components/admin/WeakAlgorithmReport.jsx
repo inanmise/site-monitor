@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { api, formatDate, formatDateSec } from '../../api/client'
+import { api, formatDate, formatDateSec, formatDateOnly } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import {
   AlertTriangle, ShieldAlert, ShieldCheck, RefreshCw, Download, ChevronDown, Bell, BellRing,
@@ -274,7 +274,7 @@ export default function WeakAlgorithmReport() {
 
   const ExceptionChip = ({ ex }) => ex ? (
     <span className={`wa-exception-chip${ex.expired ? ' is-expired' : ''}`} title={ex.reason || ''}>
-      {ex.expired ? t('wa.exceptionExpired', formatDate(ex.until)) : t('wa.exceptionUntilChip', formatDate(ex.until))}
+      {ex.expired ? t('wa.exceptionExpired', formatDateOnly(ex.until)) : t('wa.exceptionUntilChip', formatDateOnly(ex.until))}
     </span>
   ) : null
 
@@ -310,7 +310,8 @@ export default function WeakAlgorithmReport() {
         <Kpi label={t('wa.kpiWeak')} value={data?.total ?? 0} sub={t('wa.kpiWeakSub', data?.critical ?? 0, data?.high ?? 0)} tone={(data?.total ?? 0) > 0 ? 'bad' : 'ok'} />
         <Kpi label={t('wa.kpiTls')} value={data?.tls?.total ?? 0} tone={(data?.tls?.total ?? 0) > 0 ? 'bad' : 'ok'} />
         <Kpi label={t('wa.kpiChain')} value={data?.chain?.total ?? 0} tone={(data?.chain?.total ?? 0) > 0 ? 'bad' : 'ok'} />
-        <Kpi label={t('wa.kpiExcepted')} value={data?.excepted ?? 0} sub={t('wa.kpiExceptedSub')} />
+        {/* Kayıtlı istisna sayısı = İstisnalar bölümüyle aynı (QA ISSUE-008); yalnız zayıf bulguya bağlı olanlar alt satırda */}
+        <Kpi label={t('wa.kpiExcepted')} value={data?.exceptions?.length ?? 0} sub={(data?.excepted ?? 0) > 0 ? t('wa.kpiExceptedOnFindings', data.excepted) : t('wa.kpiExceptedSub')} />
       </div>
 
       {/* ── Hüküm bandı ── */}
@@ -593,7 +594,7 @@ export default function WeakAlgorithmReport() {
                 {data.exceptions.map(e => (
                   <tr key={e.domain} className={e.expired ? 'wa-rule--hit' : ''}>
                     <td className="wa-cell-domain">{e.domain}</td>
-                    <td>{formatDate(e.until)}{e.expired && <span className="wa-sub wa-expired">{t('wa.exceptionExpiredShort')}</span>}</td>
+                    <td>{formatDateOnly(e.until)}{e.expired && <span className="wa-sub wa-expired">{t('wa.exceptionExpiredShort')}</span>}</td>
                     <td className="wa-sub">{e.reason || '—'}</td>
                     <td className="wa-sub">{e.created_by || '—'}{e.created_at && <div>{formatDateSec(e.created_at)}</div>}</td>
                     {canManage && (
