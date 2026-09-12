@@ -1138,6 +1138,32 @@ public class SchedulerService {
             """);
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_mon_groups_team_type_lname ON monitoring_groups(team_id, type, name_lower)");
 
+        // ── Sayfa kullanımı (2026-09-13, System Health kullanıcı etkinliği #1): oturum ping'i görünür
+        //    sekmeyi taşır; PageUsageService bellekte biriktirip dakikada bir buraya yazar. Günlük özet,
+        //    kullanıcı×sekme; ping ≈ 15 sn varlık. Retention 'page-usage-daily' (varsayılan 90 gün). ──
+        patch("""
+            CREATE TABLE IF NOT EXISTS page_usage_daily(
+                day VARCHAR(10) NOT NULL,
+                username VARCHAR(120) NOT NULL,
+                tab VARCHAR(40) NOT NULL,
+                pings BIGINT DEFAULT 0,
+                first_seen VARCHAR(40),
+                last_seen VARCHAR(40),
+                PRIMARY KEY (day, username, tab)
+            )
+            """);
+        patch("CREATE INDEX IF NOT EXISTS idx_pud_day ON page_usage_daily(day)");
+        // ── Anomali onayı (#3): audit_log append-only kalır; "gördüm/inceledim" damgası ayrı tabloda.
+        //    Öksüz satırlar (audit satırı budanınca) 'anomaly-ack-orphan' kuralıyla temizlenir. ──
+        patch("""
+            CREATE TABLE IF NOT EXISTS login_anomaly_ack(
+                audit_id BIGINT PRIMARY KEY,
+                acked_by VARCHAR(120),
+                acked_at VARCHAR(40),
+                note VARCHAR(500)
+            )
+            """);
+
         cleanupFalseDnsChangeFlags();
         cleanupInterceptedCertPins();
     }

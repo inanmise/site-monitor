@@ -27,6 +27,7 @@ BDDK/iç denetim süreleri esas alınmalıdır.
 
 | Tablo | Süre | Taban | Ayar anahtarı | Kural | Gerekçe |
 |---|---|---|---|---|---|
+| `page_usage_daily` | 90 gün | 7 g | `site.monitor.page-usage.retention-days` | `day < ?` | Günlük sayfa kullanımı özeti (kullanıcı adı + sekme anahtarı + ping sayısı; URL/parametre yok). System Health kullanıcı etkinliği bölümünün 'en çok kullanılan sayfalar / hiç açılmayanlar / takım benimseme' tabloları buradan beslenir. Kişisel veri olduğundan kısa tutulur. |
 | `user_push_deliveries` | 1095 gün | 90 g | `site.monitor.userpush.retention-days` | `created_at < ?` | Kişi-bazlı webhook (push) teslimat günlüğü — kime, ne zaman, hangi içerikle, hangi alarm için, sonuç ne + API'nin verdiği notificationId. ÇOK UZUN saklama (3 yıl) bilinçli ürün kararı (2026-08-27): kurum tarafında iz sürme ve denetim için kanıt zinciri. Sicil içerir → PERSONAL. |
 | `notification_logs` | 365 gün | 30 g | `site.monitor.notification.retention-days` | `sent_at < ?` | Gönderilen bildirim geçmişi (alıcı adı/e-postası içerir). Kişisel veri saklama süreleri 1 yılda eşitlendi (2026-08 kullanıcı kararı) — denetimde tek bir pencere savunulur. |
 | `diagnostic_runs` | 365 gün | 7 g | `site.monitor.diagnostics.retention-days` | `executed_at < ?` | Elle çalıştırılan tanılamalar (çalıştıran kullanıcı ve kaynak IP içerir). Kişisel veri penceresiyle aynı 1 yıl (2026-08 kararı). |
@@ -76,6 +77,7 @@ BDDK/iç denetim süreleri esas alınmalıdır.
 | `keyword_results` | 180 gün | 30 g | `site.monitor.series.keyword.retention-days` | `checked_at < ?` | İçerik kontrol ham serisi (sayfa parçacığı içerebilir). |
 | `ping_checks` | 180 gün | 30 g | `site.monitor.series.ping.retention-days` | `checked_at < ?` | Ping ham serisi (30 sn kadans). |
 | `dns_records` | 180 gün | 30 g | `site.monitor.series.dns.retention-days` | `checked_at < ? AND monitor_id IN (SELECT id FROM dns_monitors) AND id NOT IN (SELECT MAX(id) FROM dns_recor…` | DNS kayıt serisi. Yaşayan her monitörün EN YENİ satırı baseline'dır (değişiklik tespiti ona bakar) → asla silinmez. |
+| `login_anomaly_ack` | öksüz temizliği | — | — | `audit_id NOT IN (SELECT id FROM audit_log)` | Denetim satırı budanmış anomali onayı damgası (System Health #3). Ebeveyn audit_log yaş kuralına uyar. |
 | `dns_records` | öksüz temizliği | — | — | `monitor_id NOT IN (SELECT id FROM dns_monitors)` | Monitörü kalıcı silinmiş DNS serisi. FK/CASCADE yok; öksüz satırlar hiçbir yaş kuralına takılmıyordu. |
 | `http_metric_minute` | 7 gün | 1 g | `site.monitor.metrics.http.retention-days` | `bucket_minute < ?` | Uygulamanın kendi HTTP metrik kovaları (dakikalık). Kısa tutulur; hacmi yüksektir. |
 | `http_checks` | 180 gün | 30 g | `site.monitor.series.http.retention-days` | `checked_at < ?` | HTTP kontrol ham serisi (en hızlı büyüyen serilerden). |

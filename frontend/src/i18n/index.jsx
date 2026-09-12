@@ -6784,6 +6784,10 @@ export const TR = {
     'Ne işe yarar: Gece temizliği koşum geçmişinin (ne zaman koştu, kaç satır sildi) saklama süresi.\nFaydası: Temizliğin gerçekten koştuğu ve neyi sildiği kanıtlanabilir — sessiz bir durma fark edilir.\nÖnerilen değer: 180 gün (varsayılan). Bu geçmiş, saklama ayarlarını değiştirirken en çok başvurulan kayıttır.',
   'help.set.site.monitor.rollup.hourly-retention-days':
     'Ne işe yarar: Saatlik özet satırlarının saklama süresi — günlük özetten daha ince çözünürlük.\nFaydası: Birkaç ay geriye dönük gün içi desenler (sabah yoğunluğu, gece bakımı) görülebilir.\nÖnerilen değer: 365 gün (varsayılan). Günlük özetten kısa tutun; satır sayısı 24 kat fazladır.',
+  'help.set.site.monitor.page-usage.retention-days':
+    'Ne işe yarar: Sayfa kullanımı özetinin (hangi kullanıcı hangi sayfada ne kadar kaldı — günlük, sekme bazında) saklama süresi.
+Faydası: Sistem Sağlığı → Kullanıcı etkinliği "en çok kullanılan / hiç açılmayan sayfalar" ve takım benimseme tabloları bu pencere kadar geriye bakar; kişisel veri olduğundan kısa tutulur.
+Önerilen değer: 90 gün (en az 7).',
   'help.set.site.monitor.rollup.lookback-days':
     'Ne işe yarar: Günlük özet (rollup) işinin her gece yeniden hesapladığı TAMAMLANMIŞ gün sayısı.\nFaydası: Uygulama kısa süre kapalı kaldıysa boşluklar kendiliğinden doldurulur; hesap tekrarlanabilir ve üzerine yazılır.\nÖnerilen değer: 3 gün (varsayılan) — kısa kesintileri kapatır. 7 daha güvenli ama gece işini uzatır; en az 1.',
   'help.set.site.monitor.rollup.retention-days':
@@ -13774,6 +13778,10 @@ export const EN = {
     'What it does: How long the clean-up run history — when it ran and how many rows it removed — is kept.\nBenefit: You can prove the clean-up actually ran and what it deleted, so a silent stoppage is noticed.\nRecommended: 180 days (the default). This history is what you consult most when changing retention settings.',
   'help.set.site.monitor.rollup.hourly-retention-days':
     'What it does: How long hourly rollup rows are kept — a finer resolution than the daily summary.\nBenefit: Intraday patterns such as a morning peak or a nightly maintenance dip stay visible for months.\nRecommended: 365 days (the default). Keep it shorter than the daily rollup, since there are 24 times as many rows.',
+  'help.set.site.monitor.page-usage.retention-days':
+    'What it does: How long the daily page-usage summary is kept (which user spent how long on which page, per tab, per day).
+Benefit: System Health → User activity "most used / never opened pages" and team adoption tables look back this far; it is personal data, so keep it short.
+Recommended: 90 days (minimum 7).',
   'help.set.site.monitor.rollup.lookback-days':
     'What it does: How many completed days the daily rollup job recalculates each night.\nBenefit: Gaps left by a short outage fill themselves in, since the calculation is idempotent and overwrites.\nRecommended: 3 days (the default), which covers brief outages. 7 is safer but lengthens the nightly job; the minimum is 1.',
   'help.set.site.monitor.rollup.retention-days':

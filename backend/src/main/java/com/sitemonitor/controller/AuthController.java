@@ -74,6 +74,10 @@ public class AuthController {
     @Autowired(required = false)
     private PermissionService permissionService;
 
+    /** Sayfa kullanımı (System Health #1) — opsiyonel: birim testlerinde bean yok. */
+    @Autowired(required = false)
+    private com.sitemonitor.service.PageUsageService pageUsageService;
+
     // LDAP/AD — optional so @WebMvcTest contexts without these beans still load.
     @Autowired(required = false)
     private LdapSettingsService ldapSettings;
@@ -340,11 +344,14 @@ public class AuthController {
      *  süpersede edildiyse AuthInterceptor bu metoda girmeden 401 döner; böylece dropped taraf
      *  boştayken bile kısa sürede /?session=expired'a düşer (tam getMe yükü olmadan). */
     @GetMapping("/session/ping")
-    public ResponseEntity<Map<String, Object>> sessionPing(HttpSession session) {
+    public ResponseEntity<Map<String, Object>> sessionPing(HttpSession session,
+                                                           @RequestParam(required = false) String tab) {
         // Oturum canlılığını tazele (aktif sayım + login-onayı bunu kullanır). Süpersede oturum bu
         // metoda girmeden interceptor'da 401 alır; buraya gelen istek geçerli/güncel oturumdur.
         String username = (String) session.getAttribute("username");
         if (username != null) userService.touchActiveSession(username, session.getId());
+        // Görünür sekme (yalnız sekme anahtarı; URL parametreleri değil) → sayfa kullanımı sayacı
+        if (username != null && tab != null && pageUsageService != null) pageUsageService.record(username, tab);
         return ResponseEntity.ok(Map.of("success", true));
     }
 

@@ -333,6 +333,7 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.rollup.lookback-days",              "retention", Type.INT),
         new Setting("site.monitor.rollup.retention-days",             "retention", Type.INT),
         new Setting("site.monitor.rollup.hourly-retention-days",      "retention", Type.INT),
+        new Setting("site.monitor.page-usage.retention-days",         "retention", Type.INT),   // sayfa kullanımı özeti (System Health #1)
         new Setting("site.monitor.cert-inventory-report.retention-days", "retention", Type.INT),
         new Setting("site.monitor.db.growth-warn-rows",               "retention", Type.INT),
         // ── 2026-08: eskiden koda GÖMÜLÜ olan kesimler artık ayar (RetentionCatalog ile senkron;

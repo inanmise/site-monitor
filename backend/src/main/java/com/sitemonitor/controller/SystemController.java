@@ -184,7 +184,36 @@ public class SystemController {
                 "data", userActivityService.getLoginSeries(from, to, granularity)));
     }
 
-    /** Admin: bir kullanıcının aktif oturumunu uzaktan sonlandır (kick) + remember-me token'larını iptal. */
+    /** Kullanıcı zaman çizelgesi (#3): son 30 gün login/anomali olayları — oturum detay modalı. */
+    @GetMapping("/user-activity/user/{username}")
+    public ResponseEntity<Map<String, Object>> userTimeline(@PathVariable String username,
+                                                            @RequestParam(defaultValue = "20") int limit,
+                                                            HttpSession session) {
+        requireSystemRead(session);
+        permissionService.require(session, "system_health.read", "view");
+        return ok(Map.of("data", userActivityService.userTimeline(username, Math.min(100, Math.max(1, limit)))));
+    }
+
+    /** Anomali onayı (#3): "gördüm/inceledim" damgası (+ not). acknowledge=false → onayı kaldır. Denetime yazılır. */
+    @PostMapping("/user-activity/anomalies/{auditId}/ack")
+    public ResponseEntity<Map<String, Object>> ackAnomaly(@PathVariable long auditId,
+                                                          @RequestBody(required = false) Map<String, Object> body,
+                                                          HttpSession session) {
+        requireSystemRead(session);
+        permissionService.require(session, "system_health.read", "view");
+        boolean ack = body == null || body.get("acknowledge") == null || Boolean.parseBoolean(String.valueOf(body.get("acknowledge")));
+        String note = body != null && body.get("note") != null ? String.valueOf(body.get("note")) : null;
+        String actor = String.valueOf(session.getAttribute("username"));
+        Map<String, Object> stamp = userActivityService.acknowledgeAnomaly(auditId, actor, note, ack);
+        auditService.recordAction("LOGIN_ANOMALY_ACK", session, "AUDIT_LOG", String.valueOf(auditId),
+                (ack ? "acknowledged" : "cleared") + (note != null && !note.isBlank() ? ": " + note : ""), null);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("audit_id", auditId); out.put("acknowledged", ack); out.put("ack", stamp);
+        return ok(out);
+    }
+
+    /** Admin: bir kullanıcının aktif oturumunu uzaktan sonlandır (kick) + remember-me token'larını iptal.
+     *  #10: isteğe bağlı gerekçe denetim satırına yazılır; kendi oturumunu kapatma reddedilir. */
     @PostMapping("/terminate-session")
     public ResponseEntity<Map<String, Object>> terminateSession(
             @RequestBody Map<String, String> body, HttpSession session) {
@@ -195,9 +224,16 @@ public class SystemController {
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false, "error", "username required", "timestamp", now()));
         }
+        String self = String.valueOf(session.getAttribute("username"));
+        if (self.equalsIgnoreCase(username.trim())) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false, "error", "cannot terminate own session", "timestamp", now()));
+        }
+        String reason = body.get("reason");
         userService.terminateActiveSession(username);
         rememberMeService.invalidateAllForUser(username);
-        auditService.recordAction("SESSION_TERMINATE", session, "USER", username, username, null);
+        auditService.recordAction("SESSION_TERMINATE", session, "USER", username,
+                username + (reason != null && !reason.isBlank() ? " — " + reason.trim() : ""), null);
         return ok(Map.of("username", username));
     }
 

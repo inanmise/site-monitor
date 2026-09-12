@@ -17,12 +17,15 @@ import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -43,6 +46,9 @@ public class UserActivityService {
     private final AppUserRepository  userRepo;
     private final TeamRepository     teamRepo;
     private final UserService        userService;
+    private final PageUsageService   pageUsage;      // sayfa kullanımı (#1)
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;   // anomali onayı (#3)
+    private final AppSettingsService appSettings;    // oturum zaman aşımı (#2)
 
     /** Proje TZ'si: Europe/Istanbul (UTC+3, DST yok). */
     private static final ZoneId ZONE = ZoneId.of("Europe/Istanbul");
@@ -52,6 +58,9 @@ public class UserActivityService {
     private static final List<String> ANOMALY_KINDS =
             List.of("OFF_HOURS", "UNUSUAL_IP", "GEO_VELOCITY", "BRUTE_FORCE", "RATE_LIMITED");
     private static final int TOP_N = 10;
+    private static final int DORMANT_DAYS = 30;        // atıl hesap eşiği (#5)
+    private static final int DORMANT_LONG_DAYS = 90;
+    private static final int USAGE_DAYS = 7;           // sayfa kullanımı penceresi (#1)
     private static final int RECENT_ANOMALIES = 20;
     private static final int HEATMAP_CELL_CAP = 200;   // hücre başına en fazla login detayı
     private static final int DETAIL_CAP = 500;         // KPI drill-down liste üst sınırı
@@ -73,7 +82,7 @@ public class UserActivityService {
         List<Map<String, Object>> activeUsers = buildActiveUsers(teamNames);
 
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("summary",      buildSummary(window, activeUsers.size()));
+        out.put("summary",      buildSummary(window, activeUsers.size(), usersByName));
         out.put("active_users", activeUsers);
         out.put("login_status", buildLoginStatus(usersByName, teamNames));   // ek sorgu yok (usersByName zaten yüklü)
         out.put("series",       buildSeries(window));
@@ -82,7 +91,10 @@ public class UserActivityService {
         out.put("anomalies",    buildAnomalies(window));
         out.put("role_team",    buildRoleTeam(window, teamNames, usersByName));
         out.put("heatmaps",     buildWeeklyHeatmaps());   // bu hafta + 1 önceki + 2 önceki (her biri from/to'lu)
-        out.put("details",      buildKpiDetails(window)); // KPI kartlarına tıklayınca 24s drill-down listeleri
+        out.put("details",      buildKpiDetails(window, usersByName, teamNames)); // KPI drill-down listeleri
+        out.put("usage",        buildUsage(usersByName, teamNames));   // #1: sayfa kullanımı (7 gün)
+        out.put("generated_at", ISO.format(Instant.now()));
+        out.put("window_days",  7);
         return out;
     }
 
@@ -131,7 +143,7 @@ public class UserActivityService {
     }
 
     // ── Summary ────────────────────────────────────────────────────────────────
-    private Map<String, Object> buildSummary(List<AuditLog> window, int activeCount) {
+    private Map<String, Object> buildSummary(List<AuditLog> window, int activeCount, Map<String, AppUser> usersByName) {
         String s24 = ISO.format(Instant.now().minusSeconds(DAY_SECONDS));
         long s24Logins = 0, s24Failed = 0, s24Anom = 0;
         long d7Logins = 0, d7Failed = 0, d7Anom = 0;
@@ -162,11 +174,28 @@ public class UserActivityService {
         m.put("failed_7d",         d7Failed);
         m.put("anomalies_7d",      d7Anom);
         m.put("unique_users_7d",   users7d.size());
+        // #5: atıl hesaplar — son giriş ≥30/90 gün önce ya da hiç; yalnız aktif hesaplar (pasifler zaten kapalı)
+        String d30 = ISO.format(Instant.now().minusSeconds(DORMANT_DAYS * DAY_SECONDS));
+        String d90 = ISO.format(Instant.now().minusSeconds(DORMANT_LONG_DAYS * DAY_SECONDS));
+        long dormant30 = 0, dormant90 = 0, never = 0, total = 0;
+        for (AppUser u : usersByName.values()) {
+            if (!Boolean.TRUE.equals(u.getActive())) continue;
+            total++;
+            String ll = u.getLastLoginAt();
+            if (ll == null || ll.isBlank()) { never++; dormant30++; dormant90++; continue; }
+            if (ll.compareTo(d30) < 0) dormant30++;
+            if (ll.compareTo(d90) < 0) dormant90++;
+        }
+        m.put("total_users",       total);
+        m.put("dormant_30d",       dormant30);
+        m.put("dormant_90d",       dormant90);
+        m.put("never_logged_in",   never);
         return m;
     }
 
     // ── KPI drill-down (son 24 saat) — kartlara tıklayınca detay listeleri ──────
-    private Map<String, Object> buildKpiDetails(List<AuditLog> window) {
+    private Map<String, Object> buildKpiDetails(List<AuditLog> window, Map<String, AppUser> usersByName,
+                                                Map<Long, String> teamNames) {
         String s24 = ISO.format(Instant.now().minusSeconds(DAY_SECONDS));
         List<AuditLog> logins = new ArrayList<>();
         List<AuditLog> failed = new ArrayList<>();
@@ -197,6 +226,25 @@ public class UserActivityService {
                     m.put("username", e.getKey());
                     m.put("logins", e.getValue()[0]);
                     m.put("last_login", userLast.get(e.getKey()));
+                    return m;
+                }).toList());
+        // #5: atıl hesaplar — en uzun süredir girmeyen önce; hiç girmemişler en başta
+        String d30 = ISO.format(Instant.now().minusSeconds(DORMANT_DAYS * DAY_SECONDS));
+        out.put("dormant", usersByName.values().stream()
+                .filter(u -> Boolean.TRUE.equals(u.getActive()))
+                .filter(u -> u.getLastLoginAt() == null || u.getLastLoginAt().isBlank() || u.getLastLoginAt().compareTo(d30) < 0)
+                .sorted(Comparator.comparing((AppUser u) -> nullSafe(u.getLastLoginAt())))
+                .limit(DETAIL_CAP)
+                .map(u -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("username", u.getUsername());
+                    m.put("user_id", u.getId());
+                    m.put("display_name", displayName(u));
+                    m.put("system_role", u.getSystemRole());
+                    m.put("team_name", u.getTeamId() != null ? teamNames.get(u.getTeamId()) : null);
+                    m.put("auth_source", u.getAuthSource());
+                    m.put("last_login_at", u.getLastLoginAt());
+                    m.put("created_at", u.getCreatedAt());
                     return m;
                 }).toList());
         return out;
@@ -258,6 +306,14 @@ public class UserActivityService {
             m.put("city",         ev != null ? ev.getIpCity() : null);
             m.put("org",          ev != null ? ev.getIpOrg() : null);
             m.put("user_agent",   ev != null ? ev.getUserAgent() : null);
+            // #2: boşta süresi + oturum düşme sayacı (hareketsizlik ayarı) + son görülen sekme (#1)
+            Instant seen = parse(u.getLastSeenAt());
+            long idleSec = seen != null ? Math.max(0, Duration.between(seen, now).getSeconds()) : -1;
+            m.put("idle_sec",     idleSec);
+            m.put("expires_in_sec", idleSec >= 0 ? Math.max(0, inactivitySeconds() - idleSec) : null);
+            String[] lt = pageUsage != null ? pageUsage.lastTabOf(u.getUsername()) : null;
+            m.put("last_tab",     lt != null ? lt[0] : null);
+            m.put("last_tab_at",  lt != null ? lt[1] : null);
             putLoginStamp(m, u);
             rows.add(m);
         }
@@ -409,6 +465,9 @@ public class UserActivityService {
         Map<String, long[]> agg = new LinkedHashMap<>();    // ip → [total, success, failed]
         Map<String, String[]> geo = new LinkedHashMap<>();  // ip → [country, city]
         Map<String, String> hosts = new LinkedHashMap<>();  // ip → reverse-DNS host (login anında kaydedilmiş)
+        Map<String, String[]> seen = new LinkedHashMap<>();  // ip → [first_seen, last_seen] (#8)
+        Map<String, Set<String>> actors = new LinkedHashMap<>(); // ip → arkasındaki kullanıcılar (#8)
+        Map<String, String> orgs = new LinkedHashMap<>();
         for (AuditLog a : window) {
             String ip = a.getIpAddress();
             if (ip == null || ip.isBlank()) continue;
@@ -417,7 +476,14 @@ public class UserActivityService {
             if ("SUCCESS".equals(a.getOutcome())) c[1]++; else c[2]++;
             geo.computeIfAbsent(ip, k -> new String[]{a.getIpCountry(), a.getIpCity()});
             if (a.getIpReverseHost() != null && !hosts.containsKey(ip)) hosts.put(ip, a.getIpReverseHost());
+            if (a.getIpOrg() != null && !orgs.containsKey(ip)) orgs.put(ip, a.getIpOrg());
+            String t = nullSafe(a.getEventTime());
+            String[] fl = seen.computeIfAbsent(ip, k -> new String[]{t, t});
+            if (t.compareTo(fl[0]) < 0) fl[0] = t;
+            if (t.compareTo(fl[1]) > 0) fl[1] = t;
+            if (a.getActor() != null) actors.computeIfAbsent(ip, k -> new LinkedHashSet<>()).add(a.getActor());
         }
+        String weekAgo = ISO.format(Instant.now().minusSeconds(7 * DAY_SECONDS));
         return agg.entrySet().stream()
                 .sorted((x, y) -> Long.compare(y.getValue()[0], x.getValue()[0]))
                 .limit(TOP_N)
@@ -432,6 +498,14 @@ public class UserActivityService {
                     m.put("country",     g[0]);
                     m.put("city",        g[1]);
                     m.put("reverse_dns", hosts.get(e.getKey()));
+                    String[] fl = seen.get(e.getKey());
+                    m.put("first_seen",  fl != null ? fl[0] : null);
+                    m.put("last_seen",   fl != null ? fl[1] : null);
+                    m.put("new_this_week", fl != null && fl[0].compareTo(weekAgo) >= 0);   // pencere 7 gün: ilk görülme = pencere içi
+                    m.put("org",         orgs.get(e.getKey()));
+                    Set<String> us = actors.getOrDefault(e.getKey(), Set.of());
+                    m.put("user_count",  us.size());
+                    m.put("users",       us.stream().limit(8).toList());
                     return m;
                 })
                 .toList();
@@ -455,6 +529,7 @@ public class UserActivityService {
                 .limit(RECENT_ANOMALIES)
                 .map(a -> {
                     Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("id",      a.getId());
                     m.put("time",    a.getEventTime());
                     m.put("actor",   a.getActor());
                     m.put("ip",      a.getIpAddress());
@@ -467,8 +542,17 @@ public class UserActivityService {
                 })
                 .toList();
         long total = counts.values().stream().mapToLong(Long::longValue).sum();
+        // #3: onay damgaları (gördüm/inceledim) — satırlara eklenir, sayaç "açık" olanı verir
+        Map<Long, Map<String, Object>> acks = ackMap(recent.stream().map(r -> (Long) r.get("id")).filter(Objects::nonNull).toList());
+        long unacked = 0;
+        for (Map<String, Object> r : recent) {
+            Map<String, Object> ack = acks.get((Long) r.get("id"));
+            r.put("ack", ack);
+            if (ack == null) unacked++;
+        }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("counts", counts);
+        out.put("unacked_recent", unacked);
         out.put("total",  total);
         out.put("recent", recent);
         return out;
@@ -508,7 +592,13 @@ public class UserActivityService {
                     return m;
                 })
                 .toList();
-        List<Map<String, Object>> teams = new ArrayList<>(byTeam.entrySet().stream()
+        // #7: takım üyeleri (birincil takım) — pencerede hiç giriş yapmayanlar
+        Map<Long, List<AppUser>> members = new LinkedHashMap<>();
+        for (AppUser u : usersByName.values())
+            if (u.getTeamId() != null && Boolean.TRUE.equals(u.getActive())) members.computeIfAbsent(u.getTeamId(), k -> new ArrayList<>()).add(u);
+        Map<Long, Long> byTeamAll = new LinkedHashMap<>(byTeam);
+        for (Long tid : members.keySet()) byTeamAll.putIfAbsent(tid, 0L);   // hiç girişi olmayan takımlar da listelensin
+        List<Map<String, Object>> teams = new ArrayList<>(byTeamAll.entrySet().stream()
                 .sorted((x, y) -> Long.compare(y.getValue(), x.getValue()))
                 .map(e -> {
                     Map<String, Object> m = new LinkedHashMap<>();
@@ -516,6 +606,13 @@ public class UserActivityService {
                     m.put("team_name", teamNames.get(e.getKey()));
                     m.put("count",     e.getValue());
                     m.put("users",     actorList(teamActors.get(e.getKey()), usersByName));
+                    Set<String> loggedLc = new HashSet<>();
+                    for (String a : teamActors.getOrDefault(e.getKey(), Map.of()).keySet()) loggedLc.add(lc(a));
+                    List<AppUser> mem = members.getOrDefault(e.getKey(), List.of());
+                    m.put("member_count", mem.size());
+                    m.put("never_logged", mem.stream().filter(u -> !loggedLc.contains(lc(u.getUsername())))
+                            .map(u -> { Map<String, Object> x = new LinkedHashMap<>(); x.put("username", u.getUsername()); x.put("user_id", u.getId()); x.put("display_name", displayName(u)); x.put("last_login_at", u.getLastLoginAt()); return x; })
+                            .toList());
                     return m;
                 })
                 .toList());
@@ -662,6 +759,145 @@ public class UserActivityService {
             matrix.add(r);
         }
         return matrix;
+    }
+
+    // ── Anomali onayı (#3) ────────────────────────────────────────────────────────
+    private Map<Long, Map<String, Object>> ackMap(List<Long> ids) {
+        Map<Long, Map<String, Object>> out = new HashMap<>();
+        if (ids.isEmpty() || jdbc == null) return out;
+        try {
+            String in = String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
+            jdbc.query("SELECT audit_id, acked_by, acked_at, note FROM login_anomaly_ack WHERE audit_id IN (" + in + ")", rs -> {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("by", rs.getString("acked_by")); m.put("at", rs.getString("acked_at")); m.put("note", rs.getString("note"));
+                out.put(rs.getLong("audit_id"), m);
+            }, ids.toArray());
+        } catch (Exception e) { log.debug("login_anomaly_ack okunamadı: {}", e.toString()); }
+        return out;
+    }
+
+    /** Anomaliyi onayla / onayı kaldır. Dönüş: yeni onay damgası (kaldırmada null). */
+    @org.springframework.cache.annotation.CacheEvict(value = "user-activity-overview", allEntries = true)
+    public Map<String, Object> acknowledgeAnomaly(long auditId, String actor, String note, boolean acknowledge) {
+        if (!acknowledge) { jdbc.update("DELETE FROM login_anomaly_ack WHERE audit_id = ?", auditId); return null; }
+        String at = ISO.format(Instant.now());
+        String n = note == null ? null : note.trim().substring(0, Math.min(500, note.trim().length()));
+        int upd = jdbc.update("UPDATE login_anomaly_ack SET acked_by = ?, acked_at = ?, note = ? WHERE audit_id = ?", actor, at, n, auditId);
+        if (upd == 0) jdbc.update("INSERT INTO login_anomaly_ack(audit_id, acked_by, acked_at, note) VALUES (?,?,?,?)", auditId, actor, at, n);
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("by", actor); m.put("at", at); m.put("note", n);
+        return m;
+    }
+
+    /** Kullanıcı zaman çizelgesi (#3): son 30 günün login/başarısız/anomali olayları — detay modalı. */
+    public Map<String, Object> userTimeline(String username, int limit) {
+        String since = ISO.format(Instant.now().minusSeconds(30 * DAY_SECONDS));
+        List<AuditLog> all = auditLogRepo.findLoginEventsSince(LOGIN_TYPES, since);
+        String want = lc(username);
+        List<AuditLog> mine = all.stream().filter(a -> a.getActor() != null && lc(a.getActor()).equals(want)).toList();
+        List<Map<String, Object>> events = eventRows(mine).stream().limit(Math.max(1, limit)).toList();
+        Map<Long, Map<String, Object>> acks = ackMap(mine.stream().map(AuditLog::getId).filter(Objects::nonNull).toList());
+        List<Map<String, Object>> withId = new ArrayList<>();
+        for (AuditLog a : mine.stream().sorted((x, y) -> nullSafe(y.getEventTime()).compareTo(nullSafe(x.getEventTime()))).limit(Math.max(1, limit)).toList()) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", a.getId()); m.put("time", a.getEventTime()); m.put("ip", a.getIpAddress());
+            m.put("country", a.getIpCountry()); m.put("city", a.getIpCity()); m.put("outcome", a.getOutcome());
+            m.put("flags", a.getAnomalyFlags()); m.put("reason", a.getFailureReason()); m.put("user_agent", a.getUserAgent());
+            m.put("ack", acks.get(a.getId()));
+            withId.add(m);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("username", username);
+        out.put("events", withId.isEmpty() ? events : withId);
+        out.put("anomalies", withId.stream().filter(e -> e.get("flags") != null && !String.valueOf(e.get("flags")).isBlank()).toList());
+        out.put("logins", mine.stream().filter(a -> "SUCCESS".equals(a.getOutcome())).count());
+        out.put("failed", mine.stream().filter(a -> !"SUCCESS".equals(a.getOutcome())).count());
+        out.put("distinct_ips", mine.stream().map(AuditLog::getIpAddress).filter(Objects::nonNull).distinct().count());
+        out.put("since", since);
+        return out;
+    }
+
+    // ── Sayfa kullanımı (#1): 7 gün, kullanıcı×sekme×gün ping sayısı → sayfa/kullanıcı/takım özetleri ──
+    private Map<String, Object> buildUsage(Map<String, AppUser> usersByName, Map<Long, String> teamNames) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("days", USAGE_DAYS);
+        out.put("ping_seconds", PageUsageService.PING_SECONDS);
+        List<Map<String, Object>> rows = pageUsage != null ? pageUsage.rowsSince(USAGE_DAYS) : List.of();
+        Map<String, long[]> byTab = new LinkedHashMap<>();            // tab → [pings]
+        Map<String, Set<String>> tabUsers = new LinkedHashMap<>();    // tab → kullanıcılar
+        Map<String, String> tabLast = new LinkedHashMap<>();          // tab → son görülme
+        Map<String, Map<String, long[]>> userTabs = new LinkedHashMap<>(); // user → tab → [pings]
+        Map<Long, Map<String, Set<String>>> teamTabUsers = new LinkedHashMap<>(); // team → tab → kullanıcılar
+        Map<String, Map<String, long[]>> dayTab = new LinkedHashMap<>(); // day → tab → [pings] (trend)
+        for (Map<String, Object> r : rows) {
+            String tab = String.valueOf(r.get("tab")), user = String.valueOf(r.get("username")), day = String.valueOf(r.get("day"));
+            long pings = r.get("pings") == null ? 0 : ((Number) r.get("pings")).longValue();
+            String last = r.get("last_seen") == null ? "" : String.valueOf(r.get("last_seen"));
+            byTab.computeIfAbsent(tab, k -> new long[1])[0] += pings;
+            tabUsers.computeIfAbsent(tab, k -> new LinkedHashSet<>()).add(user);
+            tabLast.merge(tab, last, (a, b) -> b.compareTo(a) > 0 ? b : a);
+            userTabs.computeIfAbsent(user, k -> new LinkedHashMap<>()).computeIfAbsent(tab, k -> new long[1])[0] += pings;
+            dayTab.computeIfAbsent(day, k -> new LinkedHashMap<>()).computeIfAbsent(tab, k -> new long[1])[0] += pings;
+            AppUser u = usersByName.get(lc(user));
+            if (u != null && u.getTeamId() != null)
+                teamTabUsers.computeIfAbsent(u.getTeamId(), k -> new LinkedHashMap<>()).computeIfAbsent(tab, k -> new LinkedHashSet<>()).add(user);
+        }
+        long totalPings = byTab.values().stream().mapToLong(a -> a[0]).sum();
+        out.put("total_minutes", totalPings * PageUsageService.PING_SECONDS / 60);
+        out.put("pages", byTab.entrySet().stream()
+                .sorted((x, y) -> Long.compare(y.getValue()[0], x.getValue()[0]))
+                .map(e -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("tab", e.getKey());
+                    m.put("minutes", e.getValue()[0] * PageUsageService.PING_SECONDS / 60);
+                    m.put("users", tabUsers.getOrDefault(e.getKey(), Set.of()).size());
+                    m.put("share", totalPings == 0 ? 0 : Math.round(e.getValue()[0] * 1000.0 / totalPings) / 10.0);
+                    m.put("last_seen", tabLast.get(e.getKey()));
+                    return m;
+                }).toList());
+        out.put("users", userTabs.entrySet().stream()
+                .map(e -> {
+                    long tot = e.getValue().values().stream().mapToLong(a -> a[0]).sum();
+                    String top = e.getValue().entrySet().stream().max(Comparator.comparingLong(x -> x.getValue()[0])).map(Map.Entry::getKey).orElse(null);
+                    AppUser u = usersByName.get(lc(e.getKey()));
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("username", e.getKey());
+                    m.put("user_id", u != null ? u.getId() : null);
+                    m.put("display_name", displayName(u));
+                    m.put("team_name", u != null && u.getTeamId() != null ? teamNames.get(u.getTeamId()) : null);
+                    m.put("minutes", tot * PageUsageService.PING_SECONDS / 60);
+                    m.put("pages", e.getValue().size());
+                    m.put("top_tab", top);
+                    return m;
+                })
+                .sorted((x, y) -> Long.compare((Long) y.get("minutes"), (Long) x.get("minutes")))
+                .limit(TOP_N)
+                .toList());
+        out.put("teams", teamTabUsers.entrySet().stream()
+                .map(e -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("team_id", e.getKey());
+                    m.put("team_name", teamNames.get(e.getKey()));
+                    Map<String, Integer> tabs = new LinkedHashMap<>();
+                    e.getValue().forEach((tab, us) -> tabs.put(tab, us.size()));
+                    m.put("tabs", tabs);   // sekme → o takımdan kaç kişi açtı
+                    return m;
+                }).toList());
+        out.put("trend", dayTab.entrySet().stream().sorted(Map.Entry.comparingByKey())
+                .map(e -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("day", e.getKey());
+                    long tot = e.getValue().values().stream().mapToLong(a -> a[0]).sum();
+                    m.put("minutes", tot * PageUsageService.PING_SECONDS / 60);
+                    return m;
+                }).toList());
+        return out;
+    }
+
+    /** Hareketsizlik zaman aşımı (sn) — AuthController ile aynı ayar ve sınırlar. */
+    private long inactivitySeconds() {
+        int v = appSettings != null ? appSettings.getInt("site.monitor.ui.inactivity-minutes", 60) : 60;
+        return Math.max(1, Math.min(v, 24 * 60)) * 60L;
     }
 
     // ── Yardımcılar ───────────────────────────────────────────────────────────────
