@@ -276,7 +276,18 @@ public class UserService {
         if (last != null && now - last < touchDebounceMs) return;
         if (lastTouchAtMs.size() > SESSION_MAP_MAX) lastTouchAtMs.clear();
         lastTouchAtMs.put(key, now);
-        userRepo.touchLastSeen(username, sessionId, ISO.format(Instant.now()));
+        String ts = ISO.format(Instant.now());
+        int touched = userRepo.touchLastSeen(username, sessionId, ts);
+        if (touched == 0) {
+            // QA ISSUE-002 (2026-09-13): açılış temizliği (clearAllActiveSessions) işareti NULL yaptı ama JDBC oturum
+            // restart'ı yaşadı → kullanıcı içeride, ping'i var, "Aktif Oturum" 0 ve tek-oturum koruması devre dışı.
+            // İşaret NULL ise bu oturumu yeniden sahiplen; başka işaret varsa (süpersede/kick) dokunma.
+            int adopted = userRepo.adoptSessionIfNone(username, sessionId, ts);
+            if (adopted > 0) {
+                activeSessionCache.remove(normalizeUsername(username));   // F2 evict: süpersede sorgusu yeni sid'i görsün
+                log.info("Re-adopted surviving session for {} after restart", username);
+            }
+        }
     }
 
     /** Kullanıcının CANLI bir aktif oturumu var mı? activeSessionId set (TERMINATED sentinel değil) VE

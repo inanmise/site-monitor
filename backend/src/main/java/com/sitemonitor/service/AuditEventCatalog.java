@@ -132,6 +132,7 @@ public final class AuditEventCatalog {
             "LDAP_SETTINGS_SAVE",
             "LDAP_TEST",
             "LOGIN",
+            "LOGIN_ANOMALY_ACK",
             "LOGIN_ANOMALY_ALERT",
             "LOGIN_ANOMALY_RESOLVED",
             "LOGIN_ANOMALY_SETTINGS_SAVE",

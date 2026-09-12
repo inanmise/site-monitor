@@ -357,3 +357,51 @@ yeni satırda `team`/`port`; zamanında-yenileme KPI süzgeci izler; boş durum 
 Bilinen sınırlar: heat-map 375 px'te kartı ~35 px aşar (7 sütun min-content); `GET /api/issue-reports` 405 yerine 500
 (API-only, ertelendi); süzgeçli zamanında oranı sunucunun 50'lik olay listesinden sayılır.
 → **REGRESYON YOK** (16. turun sınır varsayımı düzeltildi; kardeş 2 bulgu kapatıldı).
+
+## Ek — on sekizinci tur (2026-09-13, Sistem Sağlığı → Kullanıcı / Oturum zenginleştirme — 14 madde)
+
+Kapsam: `UserActivityService` + yeni `PageUsageService`, `SystemController` 2 yeni uç + sonlandırma gerekçesi;
+`SystemHealth.jsx` içindeki 400 satırlık blok `components/admin/useractivity/` (panel, modallar, saf model) olarak ayrıldı.
+
+**Denetim odakları ve sonuç:**
+- Sayfa kullanımı (#1): oturum ping'i yalnız `tab` anahtarını taşır (beyaz liste `^[a-z0-9-]{1,40}$`; URL parametresi,
+  alan adı, arama metni ASLA); `page_usage_daily` raw-DDL tablosu → `RetentionCoverageTest` RAW_DDL listesi + katalog AGE
+  kuralı (90 g, min 7, PERSONAL) + ayar/yardım TR-EN + `docs/RETENTION_POLITIKASI.md` üretildi. Yazma update-then-insert
+  (PG/H2 aynı); DB hatasında tampon korunur (`PageUsageServiceTest`).
+- Anomali onayı (#3): `audit_log` append-only kalır; `login_anomaly_ack` ayrı tablo + `anomaly-ack-orphan` kuralı;
+  `LOGIN_ANOMALY_ACK` denetim tipi (`AuditEventCatalogTest`). Uç `system_health.read` ile (AUDIT de onaylayabilir — salt
+  okuma denetçisinin 'gördüm' damgası bilinçli).
+- Sonlandırma (#10): kendi oturumunu kapatma 400; gerekçe denetim satırında. `SystemControllerTest` +3.
+- **Tarayıcıda yakalanan gerçek kusur:** aktif oturum `login_at` oturumun EN SON denetim satırından geliyordu → onay
+  yazınca 'Login zamanı' ileri kaydı, süre 0 dk oldu. Artık oturumun LOGIN satırı → herhangi satırı → son LOGIN sırası
+  (`findTopByActorAndSessionIdAndEventTypeOrderByEventTimeDesc`), regresyon testi süreyi 49–51 dk arasında pinler.
+- Gizlilik (#14): sicil yalnız global admin; User-Agent 'göster'e kadar gizli; e-posta zaten görünürdü (değişmedi).
+- Erişilebilirlik (#13): satır tıklaması yerine hücre içi `Detay` düğmesi; sıralanabilir başlık `<button>` + `aria-sort`;
+  takım satır başlığında `TeamBadge as="span"` (button-içinde-button — 2026-09-10 ISSUE-001 sınıfı, testte yakalandı).
+- URL `u_*` öneki `PAGE_STATE_PREFIXES`'e eklendi (sekme değişince temizlenir). CSV `utils/csv.js` (`csvRows`).
+- Isı haritası: mesai dışı `office_hours` payload'dan (AuditService ile aynı anahtarlar), SVG `<pattern>` taraması; başarısız
+  hücre noktası. Bakım penceresi overlay'i YAPILMADI (yineleme kuralı takvim gününe ucuz çevrilemiyor — bilinçli sınır).
+- Kapılar: cssClasses (`.uact-table--sessions` eksikti → eklendi), i18n paritesi 105 anahtar, settings-help (yeni
+  retention anahtarı), coverage floor 63 dosya. Bir kez `lazy-tabs-smoke` 15 sn'de düştü, ikinci tam koşuda yeşil — süit
+  yükünde bütçesinin sınırında; ayrıca izlenmeli.
+Bilinen sınırlar: süzgeçli 'zamanında/takım' sayıları 7 günlük pencereye bağlı (sunucu tek payload); sayfa kullanımı
+dakikası ping × 15 sn tahmini; bakım overlay'i yok; e-posta detay modalında görünür (mevcut davranış).
+→ **REGRESYON YOK** (1 yeni kusur tarayıcıda bulundu ve aynı turda kapatıldı).
+
+## Ek — on dokuzuncu tur (2026-09-13, sürüm öncesi — `/qa` Kullanıcı / Oturum paneli + regresyon süpürmesi, `v20.59.1..HEAD`)
+
+Kapsam: 8 commit — panel (18. tur) + QA 2 bulgu. İmza süpürmesi (skip-ci belirteci, gerçek kimlik, UTC gün dilimlemesi,
+button-içinde-button, elle kurulmuş modal): temiz — yeni modallar tümü `ModalShell`, rozetler `as="span"` ya da inert `UserBadge`.
+
+**QA bulguları (rapor `.gstack/qa-reports/qa-report-localhost-2026-09-13.md`):**
+- **ISSUE-002 (YÜKSEK, mevcut kusur):** `SchedulerService` açılışta `clearAllActiveSessions()` — 'in-memory oturum restart'ı
+  yaşamaz' varsayımı; oysa prod `application-prod.properties` ve yerel launcher `spring.session.store-type=jdbc`. Her
+  deploy sonrası içerideki kullanıcılar 'Aktif Oturum'dan düşüyor, tek-oturum süpersede koruması devre dışı kalıyordu.
+  Ping artık işaret NULL ise oturumu yeniden sahiplenir (`adoptSessionIfNone`, `WHERE activeSessionId IS NULL` —
+  canlı/TERMINATED işaret asla ezilmez). `RepositoryWriteTransactionGuardTest` pini + `UserServiceSessionAdoptTest` 3.
+  Tarayıcıda restart sonrası yeniden giriş yapmadan '1 Aktif Oturum' doğrulandı.
+- **ISSUE-001 (orta):** `u_*` süzgeçli paylaşılan bağlantı bölümü kapalı açıyordu → `?sec=users` ya da `u_*` bölümü açar,
+  kopyalanan bağlantı `sec=users` taşır.
+Bilinen sınırlar (bilinçli): restart anında tarayıcının ping'i 401 alırsa beni-hatırla ile YENİ oturum açılır (süre 0'dan
+başlar — doğru); `clearAllActiveSessions` açılışta kalır (in-memory profil için hâlâ gerekli).
+→ **REGRESYON YOK**.

@@ -203,6 +203,47 @@ class SystemControllerTest {
                 .andExpect(status().isForbidden());
     }
 
+    // ── Kullanıcı etkinliği zenginleştirmesi (2026-09-13): zaman çizelgesi, anomali onayı, kendi oturumunu kapatma ──
+
+    @Test
+    @DisplayName("POST /terminate-session kendi oturumu için 400 (self-guard) ve gerekçe denetim satırına yazılır")
+    void terminateSession_selfGuardAndReason() throws Exception {
+        mvc.perform(post("/api/admin/system/terminate-session").session(adminSession())
+                        .contentType("application/json").content("{\"username\":\"ADMIN\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/admin/system/terminate-session").session(adminSession())
+                        .contentType("application/json").content("{\"username\":\"bob\",\"reason\":\"stale VPN\"}"))
+                .andExpect(status().isOk());
+        verify(auditService).recordAction(eq("SESSION_TERMINATE"), any(), eq("USER"), eq("bob"), eq("bob — stale VPN"), any());
+    }
+
+    @Test
+    @DisplayName("GET /user-activity/user/{username} AUDIT görebilir; limit 100'e kırpılır")
+    void userTimeline_asAudit() throws Exception {
+        when(userActivityService.userTimeline(eq("bob"), anyInt())).thenReturn(Map.of("username", "bob", "logins", 3L));
+        mvc.perform(get("/api/admin/system/user-activity/user/bob?limit=500").session(auditSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.logins").value(3));
+        verify(userActivityService).userTimeline("bob", 100);
+        mvc.perform(get("/api/admin/system/user-activity/user/bob").session(userSession())).andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("POST /user-activity/anomalies/{id}/ack onaylar + LOGIN_ANOMALY_ACK denetimi; acknowledge=false kaldırır")
+    void anomalyAck() throws Exception {
+        when(userActivityService.acknowledgeAnomaly(eq(42L), eq("admin"), eq("seen"), eq(true))).thenReturn(Map.of("by", "admin"));
+        mvc.perform(post("/api/admin/system/user-activity/anomalies/42/ack").session(adminSession())
+                        .contentType("application/json").content("{\"note\":\"seen\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.acknowledged").value(true))
+                .andExpect(jsonPath("$.ack.by").value("admin"));
+        verify(auditService).recordAction(eq("LOGIN_ANOMALY_ACK"), any(), eq("AUDIT_LOG"), eq("42"), eq("acknowledged: seen"), any());
+        mvc.perform(post("/api/admin/system/user-activity/anomalies/42/ack").session(adminSession())
+                        .contentType("application/json").content("{\"acknowledge\":false}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.acknowledged").value(false));
+        verify(userActivityService).acknowledgeAnomaly(42L, "admin", null, false);
+    }
+
     // ── Haftalık erişilebilirlik e-postası (Ayarlar sayfası uçları) ──
 
     @Test

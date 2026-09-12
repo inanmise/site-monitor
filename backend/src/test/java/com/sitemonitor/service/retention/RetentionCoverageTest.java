@@ -30,7 +30,7 @@ class RetentionCoverageTest {
      * oluşturulan tablolar. Sınıf taraması bunları göremediği için elle listelenir.
      */
     private static final List<String> RAW_DDL_TABLES = List.of(
-            "scheduler_lock", "login_anomaly_state", "monitor_check_daily", "app_user_teams");
+            "scheduler_lock", "login_anomaly_state", "monitor_check_daily", "app_user_teams", "page_usage_daily", "login_anomaly_ack");
 
     /** Muafiyetler — HER BİRİ gerekçeli. Gerekçesiz muafiyet eklenemez (değer boş olamaz). */
     private static final Map<String, String> EXEMPT = Map.ofEntries(

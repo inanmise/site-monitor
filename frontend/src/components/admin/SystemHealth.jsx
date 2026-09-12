@@ -1,26 +1,21 @@
-import { useState, useEffect, useCallback, useMemo, useRef, Fragment, lazy, Suspense } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
 import { dateLocale, formatPercent } from '../../i18n/dateLocale.js'
 import { api, formatDate, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval'
-import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail, ChevronRight, Check, Server, Database, Globe, Cpu, ChevronDown, Users, LogIn, ShieldAlert, UserCheck } from 'lucide-react'
+import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail, ChevronRight, Check, Server, Database, Globe, Cpu, ChevronDown, Users } from 'lucide-react'
 import MiniChart from './MiniChart'
 import ChartModal from './ChartModal'
 import HeartbeatHistoryModal from './HeartbeatHistoryModal'
-import LoginHeatmap from './LoginHeatmap'
-import DateTimeField from '../ui/DateTimeField.jsx'
-import TeamBadge from '../ui/TeamBadge.jsx'
-import DateTimeRangePicker from '../ui/DateTimeRangePicker.jsx'
+import UserActivityPanel from './useractivity/UserActivityPanel.jsx'   // Kullanıcı / Oturum paneli (2026-09-13 zenginleştirme)
 
-import UserBadge from '../ui/UserBadge.jsx'   // proje-geneli ortak kullanıcı rozeti (avatar + ad-soyad)
 import { mailPreviewSrcDoc, mailLogoVariant } from '../../utils/mailPreview.js'
 import { Spinner, ProgressBar, LoadingBlock } from '../ui/Progress.jsx'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import { readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import { Rocket } from 'lucide-react'
 const DeploymentHistoryPanel = lazy(() => import('./DeploymentHistoryPanel.jsx'))   // yalnız bölüm açılınca
-const LoginActivityChart = lazy(() => import('./LoginActivityChart.jsx'))   // recharts → tembel yükle (bundle hafif)
 /**
  * Grafik eşikleri (2026-09-12, #23): her grafik "normal mi" sorusuna cevap versin — uyarı/kritik bandı +
  * pencere içindeki ihlal sayısı. Değerler tek pod / 100 eşzamanlı kullanıcı kabulüne göre; CPU ve heap
@@ -83,23 +78,6 @@ function fmsDuration(ms, t) {
   return `${m} ${t('chg.unitMin')} ${s} ${t('chg.unitSec')}`
 }
 
-// Kullanıcı/oturum izleme yardımcıları
-function shortUa(ua) {
-  if (!ua) return '—'
-  if (/Edg\//.test(ua)) return 'Edge'
-  if (/OPR\/|Opera/.test(ua)) return 'Opera'
-  if (/Chrome\//.test(ua)) return 'Chrome'
-  if (/Firefox\//.test(ua)) return 'Firefox'
-  if (/Safari\//.test(ua)) return 'Safari'
-  if (/curl\//i.test(ua)) return 'curl'
-  return ua.split(' ')[0] || '—'
-}
-function fmtMins(m, t) {
-  const n = Number(m) || 0
-  if (n < 60) return `${n} ${t('chg.unitMin')}`
-  const h = Math.floor(n / 60), mm = n % 60
-  return `${h} ${t('chg.unitHour')} ${mm} ${t('chg.unitMin')}`
-}
 
 /** ISO yıl+hafta → "31 August – 6 September 2026" (arayüz yerelinde; sunucu etiketi yalnız Türkçe). */
 function isoWeekRange(year, weekNo) {
@@ -112,12 +90,8 @@ function isoWeekRange(year, weekNo) {
   const dmy = (d) => d.toLocaleDateString(loc, { day: 'numeric', month: 'long', year: 'numeric', timeZone: tz })
   return `${mon.getUTCFullYear() === sun.getUTCFullYear() ? dm(mon) : dmy(mon)} – ${dmy(sun)}`
 }
-function locStr(country, city) {
-  const parts = [city, country].filter(Boolean)
-  return parts.length ? parts.join(', ') : '—'
-}
 
-export default function SystemHealth({ systemRole, globalAdmin = false, preFilterDomain, openSmtpModalOnLoad, onSmtpPreFilterConsumed }) {
+export default function SystemHealth({ systemRole, globalAdmin = false, username, preFilterDomain, openSmtpModalOnLoad, onSmtpPreFilterConsumed }) {
   const isAdmin = systemRole === 'ADMIN'
   // Kullanıcı/oturum izleme yalnız global admin veya AUDIT'e açık (backend requireSystemRead ile aynı).
   // Sağlık sekmesi herkese görünür; yetkisiz kullanıcıda bu bölümü hiç çağırma/gösterme → 403/"Yüklenemedi" olmaz.
@@ -133,13 +107,18 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
   const [hbRefreshing, setHbRefreshing] = useState(false)
   const [hbModalOpen, setHbModalOpen] = useState(false)
   // varsayılan: tüm akordiyon kapalı; `?sec=releases` derin-linki (sürüm çipi) o bölümü açık getirir.
-  const [openSection, setOpenSection] = useState(() => (readUrlParam('sec', '') === 'releases' ? 'releases' : null))
+  // `?sec=users` ya da paylaşılan bir kullanıcı-etkinliği bağlantısı (u_* süzgeçleri) o bölümü açık getirir (QA ISSUE-001).
+  const [openSection, setOpenSection] = useState(() => {
+    const sec = readUrlParam('sec', '')
+    if (sec === 'releases' || sec === 'users') return sec
+    try { return [...new URLSearchParams(window.location.search).keys()].some((k) => k.startsWith('u_')) ? 'users' : null } catch { return null }
+  })
   const toggleSection = (key) => setOpenSection(prev => prev === key ? null : key)
   const sysVisible  = openSection === 'sys'
   const releasesVisible = openSection === 'releases'
   // Aynı sekmedeyken (Sistem Sağlığı açıkken çipten "Dağıtım geçmişi") App `sec` param'ını olayla iletir.
   useEffect(() => {
-    const on = (e) => { const s = e?.detail?.sec; if (s === 'releases') setOpenSection('releases') }
+    const on = (e) => { const s = e?.detail?.sec; if (s === 'releases' || s === 'users') setOpenSection(s) }
     window.addEventListener('sm:tab-params', on)
     return () => window.removeEventListener('sm:tab-params', on)
   }, [])
@@ -177,23 +156,6 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
   const [waLogItem, setWaLogItem]       = useState(null)
   const [loadErrors, setLoadErrors]   = useState({ health: false, metrics: false, http: false, db: false, users: false })
   const [userActivity, setUserActivity] = useState(null)
-  const [uactSort, setUactSort]       = useState({ col: 'duration_min', dir: 'desc' })
-  const [terminatingUser, setTerminatingUser] = useState(null)
-  const [sessionDetail, setSessionDetail] = useState(null) // tıklanan aktif oturum detay modalı
-  const [showActiveList, setShowActiveList] = useState(false) // "Aktif Oturum" kartı → kişi listesi modalı
-  const [heatCell, setHeatCell] = useState(null) // ısı haritası hücresi {weekday,hour} → o saatteki girişler
-  const [expRole, setExpRole] = useState(null)   // rol drill-down (açık rol)
-  const [expTeam, setExpTeam] = useState(null)   // takım drill-down (açık takım index)
-  const [weekIdx, setWeekIdx] = useState(0)      // heatmap hafta navigasyonu (0=bu hafta .. 2=2 hafta önce)
-  const [kpiDetail, setKpiDetail] = useState(null) // KPI kartı drill-down {title, kind}
-  // Giriş trendi: esnek aralık (1g/7g/30g) + istenen güne gitme (saatlik) — zoom/navigasyon
-  const [trendDays, setTrendDays] = useState(7)    // 1 | 7 | 30
-  const [trendDate, setTrendDate] = useState('')   // 'yyyy-mm-dd' seçili gün (saatlik); boşsa aralık modu
-  const [trendCustom, setTrendCustom] = useState(null)   // {from,to} UTC ISO — özel aralık ("x gün x saat")
-  const [trendPreset, setTrendPreset] = useState(null)   // null | '1h' | '6h' — hızlı küçük-aralık (dakika bazlı)
-  const [trendShowCustom, setTrendShowCustom] = useState(false)
-  const [trendData, setTrendData] = useState(null) // { buckets, granularity }
-  const [trendLoading, setTrendLoading] = useState(false)
   // Veritabanı analitiği (executive): pencere (1/7/30) + payload
   const [dbDays, setDbDays] = useState(7)
   const [dbData, setDbData] = useState(null)
@@ -233,39 +195,6 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
   useVisibleInterval(load, 30000)   // gizli sekmede polling durur
   useEffect(() => () => { if (fastPollRef.current) clearInterval(fastPollRef.current) }, [])   // scan fast-poll temizliği
 
-  // Giriş trendi: seçilen aralık/gün için esnek seriyi çek. Tarih seçiliyse o günün saatlik
-  // dağılımı (00:00–24:00); değilse son N gün (1g→saatlik, 7g/30g→günlük). UTC ISO gönderilir.
-  const loadTrend = useCallback(async () => {
-    if (!canViewUserActivity) return
-    setTrendLoading(true)
-    try {
-      const iso = d => d.toISOString().slice(0, 19)
-      let fromD, toD, gran
-      if (trendPreset) {
-        const hrs = trendPreset === '1h' ? 1 : 6
-        toD = new Date(); fromD = new Date(toD.getTime() - hrs * 3_600_000); gran = 'minute'   // hızlı küçük-aralık → dakika
-      } else if (trendCustom) {
-        fromD = new Date(trendCustom.from + 'Z'); toD = new Date(trendCustom.to + 'Z')
-        const span = toD - fromD
-        // Adaptif granülerlik: aralık küçüldükçe daha ince kova — ≤6 saat → DAKİKA, ≤2 gün → saat, üstü → gün.
-        gran = span <= 6 * 3_600_000 ? 'minute' : span <= 2 * 86_400_000 ? 'hour' : 'day'
-      } else if (trendDate) {
-        fromD = new Date(`${trendDate}T00:00:00`)          // yerel gün başı
-        toD   = new Date(`${trendDate}T23:59:59`)          // AYNI gün sonu (ertesi güne taşmaz)
-        gran  = 'hour'
-      } else if (trendDays === 1) {
-        toD = new Date(); fromD = new Date(toD.getTime() - 86_400_000); gran = 'hour'
-      } else {
-        toD = new Date(); fromD = new Date(toD.getTime() - trendDays * 86_400_000); gran = 'day'
-      }
-      const res = await api.admin.getLoginSeries(iso(fromD), iso(toD), gran)
-      if (res?.success) setTrendData(res.data)
-    } finally {
-      setTrendLoading(false)
-    }
-  }, [canViewUserActivity, trendDays, trendDate, trendCustom, trendPreset])
-
-  useEffect(() => { if (usersVisible) loadTrend() }, [usersVisible, loadTrend])
 
   // Veritabanı analitiği — DB bölümü açıkken / pencere değişince çek
   const loadDbAnalytics = useCallback(async () => {
@@ -290,22 +219,6 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
     }
   }, [])
 
-  const handleTerminateSession = useCallback(async (username) => {
-    if (!username) return
-    // Tarayıcı-varsayılanı kutu DEĞİL: proje diyaloğu (tasarım sistemi + hedefin adı).
-    if (!await showConfirm({
-      title: t('uact.terminate'), message: t('uact.terminateConfirm', username),
-      confirmText: t('uact.terminate'), variant: 'danger',
-    })) return
-    setTerminatingUser(username)
-    const res = await api.admin.terminateUserSession(username)
-    if (res?.success) {
-      const uact = await api.admin.getUserActivity()
-      if (uact?.success) setUserActivity(uact.data)
-      setMsg(t('uact.terminated', username))
-    }
-    setTerminatingUser(null)
-  }, [t])
 
   const refreshPool = useCallback(async () => {
     setPoolCardRefreshing(true)
@@ -1413,349 +1326,8 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
         </div>
         {usersVisible && (
         <div className="metrics-section">
-          {loadErrors.users && <div className="sys-msg">{t('uact.loadError')}</div>}
-          {userActivity && (() => {
-            const ua = userActivity
-            const sum = ua.summary || {}
-            const active = ua.active_users || []
-            const anomalies = ua.anomalies || {}
-            const roleTeam = ua.role_team || {}
-            const heatmaps = ua.heatmaps || []
-            const dayLabels = t('uact.weekdays').split(',')
-            const fmtHeatRange = (hm) => {
-              if (!hm.from || !hm.to) return ''
-              const from = new Date(hm.from + 'Z')
-              const endIncl = new Date(new Date(hm.to + 'Z').getTime() - 86_400_000) // to exclusive → son gün
-              const f = d => d.toLocaleDateString([], { day: '2-digit', month: '2-digit' })
-              return `${f(from)} – ${f(endIncl)}`
-            }
-            const weekBase = (i) => i === 0 ? t('uact.weekThis') : i === 1 ? t('uact.weekPrev1') : i === 2 ? t('uact.weekPrev2') : t('uact.weekPrev3')
-            const uSort = (col) => setUactSort(s => s.col === col
-              ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' }
-              : { col, dir: col === 'username' ? 'asc' : 'desc' })
-            const uArrow = (col) => uactSort.col === col ? (uactSort.dir === 'asc' ? ' ↑' : ' ↓') : ''
-            const sortedActive = [...active].sort((a, b) => {
-              const av = a[uactSort.col], bv = b[uactSort.col]
-              const cmp = typeof av === 'number' ? av - bv : String(av ?? '').localeCompare(String(bv ?? ''))
-              return uactSort.dir === 'asc' ? cmp : -cmp
-            })
-            const kpi = (key, Icon, val, label, sub, variant, onClick) => (
-              <div key={key}
-                className={`uact-kpi${variant ? ' uact-kpi--' + variant : ''}${onClick ? ' is-clickable' : ''}`}
-                onClick={onClick} title={onClick ? t('uact.detailHint') : undefined}>
-                <span className="uact-kpi-icon"><Icon size={16} /></span>
-                <span className="uact-kpi-val">{val}</span>
-                <span className="uact-kpi-lbl">{label}</span>
-                {sub ? <span className="uact-kpi-sub">{sub}</span> : null}
-              </div>
-            )
-            return (
-              <div className="uact-exec">
-                {/* Hero özet bandı */}
-                <div className="uact-hero">
-                  <div className="uact-hero-title">
-                    <span className="uact-hero-eyebrow">{t('uact.section')}</span>
-                    <span className="uact-hero-h">{t('uact.heroTitle')}</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <button type="button" className="uact-hero-live" onClick={() => setShowActiveList(true)} title={t('uact.activeCardHint')}>
-                      <span className="uact-hero-dot" />{sum.active_count ?? 0} {t('uact.activeNow')}
-                    </button>
-                    <button type="button" className="sys-card-refresh-btn" onClick={refreshUserActivity} disabled={uactRefreshing} title={t('uact.refresh')}>
-                      <span className={uactRefreshing ? 'spin' : ''}>↻</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* KPI özet kartları */}
-                <div className="uact-kpi-grid">
-                  {kpi('active', Users, sum.active_count ?? 0, t('uact.activeNow'), t('uact.kpiLive'), 'ok', () => setShowActiveList(true))}
-                  {kpi('logins', LogIn, sum.logins_24h ?? 0, t('uact.logins24h'), t('uact.kpi24h'), undefined, () => setKpiDetail({ title: t('uact.logins24h'), kind: 'logins' }))}
-                  {kpi('failed', XCircle, sum.failed_24h ?? 0, t('uact.failed24h'), t('uact.kpi24h'), (sum.failed_24h ?? 0) > 0 ? 'danger' : undefined, () => setKpiDetail({ title: t('uact.failed24h'), kind: 'failed' }))}
-                  {kpi('anom', ShieldAlert, sum.anomalies_24h ?? 0, t('uact.anomalies24h'), t('uact.kpi24h'), (sum.anomalies_24h ?? 0) > 0 ? 'danger' : undefined, () => setKpiDetail({ title: t('uact.anomalies24h'), kind: 'anomalies' }))}
-                  {kpi('uniq', UserCheck, sum.unique_users_24h ?? 0, t('uact.uniqueUsers24h'), t('uact.kpi24h'), undefined, () => setKpiDetail({ title: t('uact.uniqueUsers24h'), kind: 'unique_users' }))}
-                </div>
-
-                {/* Login trendi — esnek aralık (1g/7g/30g) + istenen güne gitme (saatlik) + zoom */}
-                <h3 className="metrics-title">{t('uact.trendTitle')}</h3>
-                <div className="chart-range-bar" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
-                  {['1h', '6h'].map(h => (
-                    <button key={h} type="button"
-                      className={`chart-range-btn ${trendPreset === h ? 'chart-range-btn-active' : ''}`}
-                      onClick={() => { setTrendDate(''); setTrendCustom(null); setTrendShowCustom(false); setTrendPreset(h) }}>
-                      {t(`uact.range${h}`)}
-                    </button>
-                  ))}
-                  {[1, 7, 30].map(d => (
-                    <button key={d} type="button"
-                      className={`chart-range-btn ${!trendDate && !trendCustom && !trendPreset && trendDays === d ? 'chart-range-btn-active' : ''}`}
-                      onClick={() => { setTrendDate(''); setTrendCustom(null); setTrendShowCustom(false); setTrendPreset(null); setTrendDays(d) }}>
-                      {t(`uact.range${d}d`)}
-                    </button>
-                  ))}
-                  <span className="sys-muted sys-small">·</span>
-                  <DateTimeField dateOnly clearable className="dtf-inline" value={trendDate}
-                    onChange={(v) => { setTrendCustom(null); setTrendShowCustom(false); setTrendPreset(null); setTrendDate(v) }}
-                    placeholder={t('uact.gotoDay')} />
-                  <button type="button" className={`chart-range-btn ${trendCustom ? 'chart-range-btn-active' : ''}`}
-                    onClick={() => setTrendShowCustom(s => !s)}>{t('chart.custom')}</button>
-                  {trendLoading && <Spinner size={14} inline decorative />}
-                </div>
-                {trendShowCustom && (
-                  <div style={{ margin: '8px 0' }}>
-                    <DateTimeRangePicker
-                      from={trendCustom ? new Date(trendCustom.from + 'Z') : new Date(Date.now() - 7 * 86_400_000)}
-                      to={trendCustom ? new Date(trendCustom.to + 'Z') : new Date()}
-                      onApply={(f, to) => { setTrendDate(''); setTrendDays(7); setTrendPreset(null); setTrendCustom({ from: f.toISOString().slice(0, 19), to: to.toISOString().slice(0, 19) }) }} />
-                  </div>
-                )}
-                {(() => {
-                  const buckets = trendData?.buckets || []
-                  const gran = trendData?.granularity || 'day'
-                  return buckets.length === 0
-                    ? <div className="sys-muted sys-small" style={{ padding: '8px 2px' }}>{t('uact.noLogins')}</div>
-                    : <Suspense fallback={<div className="sys-muted sys-small" style={{ padding: 8 }}>…</div>}>
-                        <LoginActivityChart buckets={buckets} gran={gran} />
-                      </Suspense>
-                })()}
-
-                {/* Peak ısı haritası — tek hafta (BÜYÜK) + hafta navigasyonu (geriye 3 hafta) */}
-                <h3 className="metrics-title">{t('uact.peakTitle')}</h3>
-                {heatmaps.length > 0 ? (() => {
-                  const wi = Math.min(weekIdx, heatmaps.length - 1)
-                  const hm = heatmaps[wi]
-                  const navBtn = (disabled) => ({
-                    padding: '5px 14px', fontSize: '.82rem', fontWeight: 600, borderRadius: 6,
-                    border: '1px solid var(--border, #cbd5e1)', background: 'var(--bg-subtle, #f8fafc)',
-                    cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.4 : 1,
-                  })
-                  const olderDisabled = wi >= heatmaps.length - 1   // daha eski yok
-                  const newerDisabled = wi <= 0                     // bu haftadan yenisi yok
-                  return (
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 8 }}>
-                        <button type="button" disabled={olderDisabled} style={navBtn(olderDisabled)}
-                          onClick={() => setWeekIdx(Math.min(heatmaps.length - 1, wi + 1))}>← {t('uact.prevWeek')}</button>
-                        <button type="button" disabled={newerDisabled} style={navBtn(newerDisabled)}
-                          onClick={() => setWeekIdx(Math.max(0, wi - 1))}>{t('uact.nextWeek')} →</button>
-                      </div>
-                      <LoginHeatmap matrix={hm.matrix || []} failed={hm.failed || []} max={hm.max || 0}
-                        dayLabels={dayLabels} title={weekBase(wi)} hourLabel={fmtHeatRange(hm)}
-                        todayDow={hm.today_dow ?? -1} rowTotals={hm.row_totals || []} colTotals={hm.col_totals || []} total={hm.total || 0}
-                        onCellClick={(weekday, hour) => setHeatCell({ weekday, hour, cells: hm.cells || {}, label: `${weekBase(wi)} · ${fmtHeatRange(hm)}` })} />
-                    </div>
-                  )
-                })() : <div className="sys-muted sys-small">{t('uact.noLogins')}</div>}
-
-                {/* Aktif kullanıcılar */}
-                <h3 className="metrics-title">{t('uact.activeListTitle')} ({active.length})</h3>
-                <div className="health-table-wrap">
-                  <table className="health-dbtable">
-                    <thead><tr>
-                      <th className="dbtcol-th" onClick={() => uSort('username')}>{t('uact.colUser')}<span className="dbt-arrow">{uArrow('username')}</span></th>
-                      <th className="dbtcol-th">{t('uact.colRole')}</th>
-                      <th className="dbtcol-th">{t('uact.colTeam')}</th>
-                      <th className="dbtcol-th" onClick={() => uSort('login_at')}>{t('uact.colLoginAt')}<span className="dbt-arrow">{uArrow('login_at')}</span></th>
-                      <th className="dbtcol-th dbtcol-th-num" onClick={() => uSort('duration_min')}>{t('uact.colDuration')}<span className="dbt-arrow">{uArrow('duration_min')}</span></th>
-                      <th className="dbtcol-th">{t('uact.colLocation')}</th>
-                      <th className="dbtcol-th">{t('uact.colBrowser')}</th>
-                      {isAdmin && <th className="dbtcol-th">{t('uact.colAction')}</th>}
-                    </tr></thead>
-                    <tbody>
-                      {sortedActive.length === 0 && (
-                        <tr><td colSpan={isAdmin ? 8 : 7} className="sys-muted">{t('uact.noActive')}</td></tr>
-                      )}
-                      {sortedActive.map(u => (
-                        <tr key={u.username} className="uact-row-click" style={{ cursor: 'pointer' }}
-                          title={t('uact.detailHint')} onClick={() => setSessionDetail(u)}>
-                          <td><UserBadge username={u.username} userId={u.user_id} displayName={u.display_name} /></td>
-                          <td>{u.system_role || '—'}</td>
-                          <td>{u.team_name ? <TeamBadge teamId={u.team_id} teamName={u.team_name} /> : '—'}</td>
-                          <td className="sys-mono sys-small">{u.login_at ? formatDateSec(u.login_at) : '—'}</td>
-                          <td className="dbtcol-num-cell">{fmtMins(u.duration_min, t)}</td>
-                          <td className="sys-small">{u.ip ? <span className="sys-mono">{u.ip}</span> : '—'}{u.ip ? <span className="sys-muted"> {locStr(u.country, u.city)}</span> : null}</td>
-                          <td className="sys-small">{shortUa(u.user_agent)}</td>
-                          {isAdmin && (
-                            <td>
-                              <button className="health-db-refresh-btn" disabled={terminatingUser === u.username}
-                                onClick={(e) => { e.stopPropagation(); handleTerminateSession(u.username) }}>
-                                {terminatingUser === u.username ? t('uact.terminating') : t('uact.terminate')}
-                              </button>
-                            </td>
-                          )}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Top kullanıcılar */}
-                <h3 className="metrics-title">{t('uact.topUsersTitle')}</h3>
-                <div className="health-table-wrap">
-                  <table className="health-dbtable">
-                    <thead><tr>
-                      <th className="dbtcol-th">{t('uact.colUser')}</th>
-                      <th className="dbtcol-th dbtcol-th-num">{t('uact.colLogins')}</th>
-                      <th className="dbtcol-th">{t('uact.colLastLogin')}</th>
-                    </tr></thead>
-                    <tbody>
-                      {(ua.top_users || []).map(r => (
-                        <tr key={r.username}>
-                          <td><UserBadge username={r.username} userId={r.user_id} displayName={r.display_name} /></td>
-                          <td className="dbtcol-num-cell">{r.logins}</td>
-                          <td className="sys-mono sys-small">{r.last_login ? formatDateSec(r.last_login) : '—'}</td>
-                        </tr>
-                      ))}
-                      {(ua.top_users || []).length === 0 && <tr><td colSpan={3} className="sys-muted">—</td></tr>}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Giriş durumu — TÜM kullanıcılar. Yukarıdaki tablolar audit penceresinden
-                    (7 gün) beslenir ve 180 günlük budamaya tabidir; bu tablo kullanıcı satırından
-                    okunduğu için "hiç girmemiş" ve "şu anda parolası deneniyor" hesapları da gösterir. */}
-                <h3 className="metrics-title">{t('uact.loginStatusTitle')}</h3>
-                <div className="sys-muted sys-small">{t('uact.loginStatusHint')}</div>
-                <div className="health-table-wrap">
-                  <table className="health-dbtable">
-                    <thead><tr>
-                      <th className="dbtcol-th">{t('uact.colUser')}</th>
-                      <th className="dbtcol-th">{t('uact.colLastLogin')}</th>
-                      <th className="dbtcol-th">{t('uact.colPrevLogin')}</th>
-                      <th className="dbtcol-th">{t('uact.colLastFailed')}</th>
-                      <th className="dbtcol-th dbtcol-th-num">{t('uact.colFailedCount')}</th>
-                    </tr></thead>
-                    <tbody>
-                      {(ua.login_status || []).map(r => (
-                        <tr key={r.username} className="uact-row-click" style={{ cursor: 'pointer' }}
-                            title={t('uact.detailHint')} onClick={() => setSessionDetail(r)}>
-                          <td><UserBadge username={r.username} userId={r.user_id} displayName={r.display_name} /></td>
-                          <td className="sys-mono sys-small">{r.last_login_at ? formatDateSec(r.last_login_at) : '—'}</td>
-                          <td className="sys-mono sys-small">{r.prev_login_at ? formatDateSec(r.prev_login_at) : '—'}</td>
-                          <td className="sys-mono sys-small">{r.last_failed_at ? formatDateSec(r.last_failed_at) : '—'}</td>
-                          <td className="dbtcol-num-cell">{r.failed_since_login ?? 0}</td>
-                        </tr>
-                      ))}
-                      {(ua.login_status || []).length === 0 && <tr><td colSpan={5} className="sys-muted">—</td></tr>}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Top kaynaklar */}
-                <h3 className="metrics-title">{t('uact.topSourcesTitle')}</h3>
-                <div className="health-table-wrap">
-                  <table className="health-dbtable">
-                    <thead><tr>
-                      <th className="dbtcol-th">{t('uact.colIp')}</th>
-                      <th className="dbtcol-th">{t('uact.colLocation')}</th>
-                      <th className="dbtcol-th dbtcol-th-num">{t('uact.colTotal')}</th>
-                      <th className="dbtcol-th dbtcol-th-num">{t('uact.success')}</th>
-                      <th className="dbtcol-th dbtcol-th-num">{t('uact.failed')}</th>
-                    </tr></thead>
-                    <tbody>
-                      {(ua.top_sources || []).map(r => (
-                        <tr key={r.ip}>
-                          <td className="sys-mono">{r.ip}{r.reverse_dns && <span className="sys-small sys-muted" style={{ display: 'block' }}>{r.reverse_dns}</span>}</td>
-                          <td className="sys-small">{locStr(r.country, r.city)}</td>
-                          <td className="dbtcol-num-cell">{r.total}</td>
-                          <td className="dbtcol-num-cell sys-ok-text">{r.success}</td>
-                          <td className="dbtcol-num-cell sys-err-text">{r.failed}</td>
-                        </tr>
-                      ))}
-                      {(ua.top_sources || []).length === 0 && <tr><td colSpan={5} className="sys-muted">—</td></tr>}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Anomaliler */}
-                <h3 className="metrics-title">{t('uact.anomaliesTitle')} ({anomalies.total ?? 0})</h3>
-                <div className="uact-kpi-grid">
-                  {['OFF_HOURS', 'UNUSUAL_IP', 'GEO_VELOCITY', 'BRUTE_FORCE', 'RATE_LIMITED'].map(k =>
-                    kpi(k, ShieldAlert, anomalies.counts?.[k] ?? 0, t(`uact.anom_${k}`), null,
-                        (anomalies.counts?.[k] ?? 0) > 0 ? 'danger' : undefined))}
-                </div>
-                {(anomalies.recent || []).length > 0 && (
-                  <div className="health-table-wrap">
-                    <table className="health-dbtable">
-                      <thead><tr>
-                        <th className="dbtcol-th">{t('uact.colTime')}</th>
-                        <th className="dbtcol-th">{t('uact.colUser')}</th>
-                        <th className="dbtcol-th">{t('uact.colIp')}</th>
-                        <th className="dbtcol-th">{t('uact.colLocation')}</th>
-                        <th className="dbtcol-th">{t('uact.colFlags')}</th>
-                        <th className="dbtcol-th">{t('uact.colOutcome')}</th>
-                      </tr></thead>
-                      <tbody>
-                        {anomalies.recent.map((r, i) => (
-                          <tr key={i}>
-                            <td className="sys-mono sys-small">{r.time ? formatDateSec(r.time) : '—'}</td>
-                            <td>{r.actor ? <UserBadge username={r.actor} inline size="sm" /> : '—'}</td>
-                            <td className="sys-mono sys-small">{r.ip || '—'}</td>
-                            <td className="sys-small">{locStr(r.country, r.city)}</td>
-                            <td className="sys-small">{r.flags || '—'}</td>
-                            <td className="sys-small">{r.outcome || '—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-
-                {/* Rol / Takım kırılımı */}
-                <h3 className="metrics-title">{t('uact.roleTeamTitle')}</h3>
-                <div className="health-table-wrap">
-                  <table className="health-dbtable">
-                    <thead><tr>
-                      <th className="dbtcol-th">{t('uact.colRole')}</th>
-                      <th className="dbtcol-th dbtcol-th-num">{t('uact.colLogins')}</th>
-                    </tr></thead>
-                    <tbody>
-                      {(roleTeam.by_role || []).map(r => (
-                        <Fragment key={r.role}>
-                          <tr style={r.users?.length ? { cursor: 'pointer' } : undefined}
-                            onClick={r.users?.length ? () => setExpRole(x => x === r.role ? null : r.role) : undefined}>
-                            <td>{r.users?.length ? (expRole === r.role ? '▾ ' : '▸ ') : ''}{r.role}</td>
-                            <td className="dbtcol-num-cell">{r.count}</td>
-                          </tr>
-                          {expRole === r.role && r.users?.length > 0 && (
-                            <tr><td colSpan={2} style={{ padding: '4px 10px', background: 'var(--bg-subtle, #f8fafc)' }}>
-                              {r.users.map(u => <div key={u.username} style={{ padding: '3px 0' }}><UserBadge username={u.username} userId={u.user_id} displayName={u.display_name} count={u.count} /></div>)}
-                            </td></tr>
-                          )}
-                        </Fragment>
-                      ))}
-                      {(roleTeam.by_role || []).length === 0 && <tr><td colSpan={2} className="sys-muted">—</td></tr>}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="health-table-wrap">
-                  <table className="health-dbtable">
-                    <thead><tr>
-                      <th className="dbtcol-th">{t('uact.colTeam')}</th>
-                      <th className="dbtcol-th dbtcol-th-num">{t('uact.colLogins')}</th>
-                    </tr></thead>
-                    <tbody>
-                      {(roleTeam.by_team || []).map((r, i) => (
-                        <Fragment key={i}>
-                          <tr style={r.users?.length ? { cursor: 'pointer' } : undefined}
-                            onClick={r.users?.length ? () => setExpTeam(x => x === i ? null : i) : undefined}>
-                            <td>{r.users?.length ? (expTeam === i ? '▾ ' : '▸ ') : ''}{r.team_name ? <TeamBadge teamId={r.team_id} teamName={r.team_name} /> : '—'}</td>
-                            <td className="dbtcol-num-cell">{r.count}</td>
-                          </tr>
-                          {expTeam === i && r.users?.length > 0 && (
-                            <tr><td colSpan={2} style={{ padding: '4px 10px', background: 'var(--bg-subtle, #f8fafc)' }}>
-                              {r.users.map(u => <div key={u.username} style={{ padding: '3px 0' }}><UserBadge username={u.username} userId={u.user_id} displayName={u.display_name} count={u.count} /></div>)}
-                            </td></tr>
-                          )}
-                        </Fragment>
-                      ))}
-                      {(roleTeam.by_team || []).length === 0 && <tr><td colSpan={2} className="sys-muted">—</td></tr>}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )
-          })()}
+          <UserActivityPanel data={userActivity} error={loadErrors.users} refreshing={uactRefreshing} onRefresh={refreshUserActivity}
+            isAdmin={isAdmin} globalAdmin={!!globalAdmin} username={username} onTerminated={refreshUserActivity} />
         </div>
         )}
       </div>
@@ -1774,135 +1346,6 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
           </div>
         </div>
       )}
-
-      {/* Isı haritası hücresi → o hafta-günü/saatteki girişler */}
-      {heatCell && (() => {
-        const labels = t('uact.weekdays').split(',')
-        const key = `${heatCell.weekday}-${heatCell.hour}`
-        const list = (heatCell.cells && heatCell.cells[key]) || []
-        const hh = String(heatCell.hour).padStart(2, '0')
-        return (
-          <div className="modal-overlay" onClick={() => setHeatCell(null)}>
-            <div className="modal-box modal-show" onClick={e => e.stopPropagation()}>
-              <div className="show-header">
-                <div className="show-header-title">
-                  <span className="show-domain">{labels[heatCell.weekday] || ''} {hh}:00–{hh}:59</span>
-                  {heatCell.label && <span className="sys-muted sys-small">{heatCell.label}</span>}
-                  <span className="show-badge show-badge-port">{list.length}</span>
-                </div>
-                <button type="button" className="show-close" aria-label={t('app.dismiss')} onClick={() => setHeatCell(null)}>✕</button>
-              </div>
-              <div className="show-body">
-                {list.length === 0 ? (
-                  <div className="sys-muted">{t('uact.noLogins')}</div>
-                ) : (
-                  <div className="health-table-wrap">
-                    <table className="health-dbtable">
-                      <thead><tr>
-                        <th className="dbtcol-th">{t('uact.colTime')}</th>
-                        <th className="dbtcol-th">{t('uact.colUser')}</th>
-                        <th className="dbtcol-th">{t('uact.colIp')}</th>
-                        <th className="dbtcol-th">{t('uact.colLocation')}</th>
-                        <th className="dbtcol-th">{t('uact.colOutcome')}</th>
-                        <th className="dbtcol-th">{t('uact.colReason')}</th>
-                      </tr></thead>
-                      <tbody>
-                        {list.map((r, i) => (
-                          <tr key={i}>
-                            <td className="sys-mono sys-small">{r.time ? formatDateSec(r.time) : '—'}</td>
-                            <td>{r.actor ? <UserBadge username={r.actor} inline size="sm" /> : '—'}</td>
-                            <td className="sys-mono sys-small">{r.ip || '—'}</td>
-                            <td className="sys-small">{locStr(r.country, r.city)}</td>
-                            <td className="sys-small">{r.outcome === 'SUCCESS'
-                              ? <span className="sys-ok-text">{r.outcome}</span>
-                              : <span className="sys-err-text">{r.outcome || '—'}</span>}</td>
-                            <td className="sys-small">{r.reason || '—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )
-      })()}
-
-      {/* KPI kartı drill-down — Login/Başarısız/Anomali/Tekil kullanıcı (son 24 saat) */}
-      {kpiDetail && (() => {
-        const rows = userActivity?.details?.[kpiDetail.kind] || []
-        const isUsers = kpiDetail.kind === 'unique_users'
-        const isFailed = kpiDetail.kind === 'failed'
-        const isAnom = kpiDetail.kind === 'anomalies'
-        return (
-          <div className="modal-overlay" onClick={() => setKpiDetail(null)}>
-            <div className="modal-box modal-show" onClick={e => e.stopPropagation()}>
-              <div className="show-header">
-                <div className="show-header-title">
-                  <span className="show-domain">{kpiDetail.title}</span>
-                  <span className="sys-muted sys-small">{t('uact.kpi24h')}</span>
-                  <span className="show-badge show-badge-port">{rows.length}</span>
-                </div>
-                <button type="button" className="show-close" aria-label={t('app.dismiss')} onClick={() => setKpiDetail(null)}>✕</button>
-              </div>
-              <div className="show-body">
-                {rows.length === 0 ? (
-                  <div className="sys-muted">{t('uact.noLogins')}</div>
-                ) : isUsers ? (
-                  <div className="health-table-wrap">
-                    <table className="health-dbtable">
-                      <thead><tr>
-                        <th className="dbtcol-th">{t('uact.colUser')}</th>
-                        <th className="dbtcol-th dbtcol-th-num">{t('uact.colLogins')}</th>
-                        <th className="dbtcol-th">{t('uact.colLastLogin')}</th>
-                      </tr></thead>
-                      <tbody>
-                        {rows.map((r, i) => (
-                          <tr key={i}>
-                            <td className="sys-mono">{r.username}</td>
-                            <td className="dbtcol-num-cell">{r.logins}</td>
-                            <td className="sys-mono sys-small">{r.last_login ? formatDateSec(r.last_login) : '—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="health-table-wrap">
-                    <table className="health-dbtable">
-                      <thead><tr>
-                        <th className="dbtcol-th">{t('uact.colTime')}</th>
-                        <th className="dbtcol-th">{t('uact.colUser')}</th>
-                        <th className="dbtcol-th">{t('uact.colIp')}</th>
-                        <th className="dbtcol-th">{t('uact.colLocation')}</th>
-                        {isAnom && <th className="dbtcol-th">{t('uact.colFlags')}</th>}
-                        {(isFailed || isAnom) && <th className="dbtcol-th">{t('uact.colOutcome')}</th>}
-                        {isFailed && <th className="dbtcol-th">{t('uact.colReason')}</th>}
-                      </tr></thead>
-                      <tbody>
-                        {rows.map((r, i) => (
-                          <tr key={i}>
-                            <td className="sys-mono sys-small">{r.time ? formatDateSec(r.time) : '—'}</td>
-                            <td>{r.actor ? <UserBadge username={r.actor} inline size="sm" /> : '—'}</td>
-                            <td className="sys-mono sys-small">{r.ip || '—'}</td>
-                            <td className="sys-small">{locStr(r.country, r.city)}</td>
-                            {isAnom && <td className="sys-small">{r.flags || '—'}</td>}
-                            {(isFailed || isAnom) && <td className="sys-small">{r.outcome === 'SUCCESS'
-                              ? <span className="sys-ok-text">{r.outcome}</span>
-                              : <span className="sys-err-text">{r.outcome || '—'}</span>}</td>}
-                            {isFailed && <td className="sys-small">{r.reason || '—'}</td>}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )
-      })()}
 
       {/* Veritabanı Analitiği KPI kartı → detay modalı (veriler dbData içinden) */}
       {dbKpiDetail && (() => {
@@ -2048,132 +1491,6 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                 <button type="button" className="show-close" aria-label={t('app.dismiss')} onClick={() => setDbKpiDetail(null)}>✕</button>
               </div>
               <div className="show-body">{body}</div>
-            </div>
-          </div>
-        )
-      })()}
-
-      {/* "Aktif Oturum" kartı → oturumdaki kişiler listesi modalı */}
-      {showActiveList && (() => {
-        const list = userActivity?.active_users || []
-        return (
-          <div className="modal-overlay" onClick={() => setShowActiveList(false)}>
-            <div className="modal-box modal-show" onClick={e => e.stopPropagation()}>
-              <div className="show-header">
-                <div className="show-header-title">
-                  <span className="show-domain">{t('uact.activeListTitle')}</span>
-                  <span className="show-badge show-badge-port">{list.length}</span>
-                </div>
-                <button type="button" className="show-close" aria-label={t('app.dismiss')} onClick={() => setShowActiveList(false)}>✕</button>
-              </div>
-              <div className="show-body">
-                {list.length === 0 ? (
-                  <div className="sys-muted">{t('uact.noActive')}</div>
-                ) : (
-                  <div className="health-table-wrap">
-                    <table className="health-dbtable">
-                      <thead><tr>
-                        <th className="dbtcol-th">{t('uact.colUser')}</th>
-                        <th className="dbtcol-th">{t('uact.colRole')}</th>
-                        <th className="dbtcol-th">{t('uact.colTeam')}</th>
-                        <th className="dbtcol-th">{t('uact.colLoginAt')}</th>
-                        <th className="dbtcol-th dbtcol-th-num">{t('uact.colDuration')}</th>
-                        <th className="dbtcol-th">{t('uact.colLocation')}</th>
-                      </tr></thead>
-                      <tbody>
-                        {list.map(u => (
-                          <tr key={u.username} className="uact-row-click" style={{ cursor: 'pointer' }}
-                            title={t('uact.detailHint')}
-                            onClick={() => setSessionDetail(u)}>
-                            <td><UserBadge username={u.username} userId={u.user_id} displayName={u.display_name} /></td>
-                            <td>{u.system_role || '—'}</td>
-                            <td>{u.team_name ? <TeamBadge teamId={u.team_id} teamName={u.team_name} /> : '—'}</td>
-                            <td className="sys-mono sys-small">{u.login_at ? formatDateSec(u.login_at) : '—'}</td>
-                            <td className="dbtcol-num-cell">{fmtMins(u.duration_min, t)}</td>
-                            <td className="sys-small">{u.ip ? <span className="sys-mono">{u.ip}</span> : '—'}{u.ip ? <span className="sys-muted"> {locStr(u.country, u.city)}</span> : null}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )
-      })()}
-
-      {/* Aktif oturum detay modalı — satıra tıklayınca tüm bilgiler */}
-      {sessionDetail && (() => {
-        const u = sessionDetail
-        const field = (label, value, mono) => (
-          <div className="show-field" key={label}>
-            <span className="show-field-label">{label}</span>
-            <span className={`show-field-value${mono ? ' show-field-mono' : ''}`}>{value || '—'}</span>
-          </div>
-        )
-        return (
-          <div className="modal-overlay" style={{ zIndex: 2100 }} onClick={() => setSessionDetail(null)}>
-            <div className="modal-box modal-show" onClick={e => e.stopPropagation()}>
-              <div className="show-header">
-                <div className="show-header-title">
-                  <span className="show-domain">{u.username}</span>
-                  {u.system_role && <span className="show-badge show-badge-port">{u.system_role}</span>}
-                </div>
-                <button type="button" className="show-close" aria-label={t('app.dismiss')} onClick={() => setSessionDetail(null)}>✕</button>
-              </div>
-              <div className="show-body">
-                <div className="show-section-header">{t('uact.detailUser')}</div>
-                <div className="show-grid-2">
-                  {field(t('uact.colUser'), u.username, true)}
-                  {field(t('uact.detailDisplayName'), u.display_name)}
-                  {field(t('uact.detailEmail'), u.email, true)}
-                  {field(t('uact.detailEmployeeId'), u.employee_id, true)}
-                  {field(t('uact.colRole'), u.system_role)}
-                  {field(t('uact.detailOrgRole'), u.org_role)}
-                  {field(t('uact.colTeam'), u.team_name ? <TeamBadge teamId={u.team_id} teamName={u.team_name} /> : null)}
-                </div>
-
-                <div className="show-section-header">{t('uact.detailSession')}</div>
-                <div className="show-grid-2">
-                  {field(t('uact.colLoginAt'), u.login_at ? formatDateSec(u.login_at) : '—', true)}
-                  {field(t('uact.colDuration'), fmtMins(u.duration_min, t))}
-                  {field(t('uact.detailLastSeen'), u.last_seen ? formatDateSec(u.last_seen) : '—', true)}
-                </div>
-
-                {/* Giriş geçmişi — kullanıcı satırından (audit budamasından bağımsız). Alan adları
-                    aktif-oturum satırlarıyla AYNI olduğu için bu modal iki listeyi de render eder. */}
-                <div className="show-section-header">{t('uact.detailLoginHistory')}</div>
-                <div className="show-grid-2">
-                  {field(t('uact.colLastLogin'), u.last_login_at ? formatDateSec(u.last_login_at) : '—', true)}
-                  {field(t('uact.detailLoginMethod'), u.last_login_method)}
-                  {field(t('uact.colPrevLogin'), u.prev_login_at ? formatDateSec(u.prev_login_at) : '—', true)}
-                  {field(t('uact.detailPrevIp'), u.prev_login_ip, true)}
-                  {field(t('uact.colLastFailed'), u.last_failed_at ? formatDateSec(u.last_failed_at) : '—', true)}
-                  {field(t('uact.detailFailedIp'), u.last_failed_ip, true)}
-                  {field(t('uact.colFailedCount'), String(u.failed_since_login ?? 0))}
-                </div>
-
-                <div className="show-section-header">{t('uact.detailSource')}</div>
-                <div className="show-grid-2">
-                  {field(t('uact.colIp'), u.ip, true)}
-                  {field(t('uact.colLocation'), locStr(u.country, u.city))}
-                  {field(t('uact.detailOrg'), u.org)}
-                  {field(t('uact.colBrowser'), shortUa(u.user_agent))}
-                </div>
-                <div className="show-field show-field-full">
-                  <span className="show-field-label">{t('uact.detailUserAgent')}</span>
-                  <span className="show-field-value show-field-mono">{u.user_agent || '—'}</span>
-                </div>
-
-                {isAdmin && (
-                  <button className="health-db-refresh-btn" style={{ marginTop: 14 }}
-                    disabled={terminatingUser === u.username}
-                    onClick={() => { handleTerminateSession(u.username); setSessionDetail(null) }}>
-                    {t('uact.terminate')}
-                  </button>
-                )}
-              </div>
             </div>
           </div>
         )

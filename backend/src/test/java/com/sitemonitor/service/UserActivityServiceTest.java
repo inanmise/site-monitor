@@ -41,6 +41,9 @@ class UserActivityServiceTest {
     @Mock AppUserRepository  userRepo;
     @Mock TeamRepository     teamRepo;
     @Mock UserService        userService;
+    @Mock PageUsageService   pageUsage;
+    @Mock AppSettingsService appSettings;
+    @Mock org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     private UserActivityService service;
 
@@ -49,7 +52,7 @@ class UserActivityServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new UserActivityService(auditLogRepo, userRepo, teamRepo, userService);
+        service = new UserActivityService(auditLogRepo, userRepo, teamRepo, userService, pageUsage, jdbc, appSettings);
     }
 
     private AuditLog ev(String actor, String ip, String outcome, String role, Long teamId,

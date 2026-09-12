@@ -450,7 +450,8 @@ export default function App() {
   useEffect(() => {
     if (!user) return
     const ms = Number(import.meta.env.VITE_SESSION_PING_MS ?? 15_000)
-    const ping = () => { api.sessionPing() }
+    // Sayfa kullanımı: sekme görünürken hangi sayfada olduğunu taşır (utils: yalnız sekme anahtarı)
+    const ping = () => { api.sessionPing(document.visibilityState === 'visible' ? (new URLSearchParams(window.location.search).get('tab') || 'dashboard') : undefined) }
     const id = setInterval(ping, ms)
     const onVisible = () => { if (document.visibilityState === 'visible') ping() }
     document.addEventListener('visibilitychange', onVisible)
@@ -1411,6 +1412,7 @@ export default function App() {
                 <SystemHealth
                   systemRole={systemRole}
                   globalAdmin={globalAdmin}
+                  username={user}
                   preFilterDomain={smtpPreFilterDomain}
                   openSmtpModalOnLoad={openSmtpModalOnLoad}
                   onSmtpPreFilterConsumed={() => {

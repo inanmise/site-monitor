@@ -1,9 +1,93 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-12T21:46:08Z",
+  "generatedAt": "2026-09-12T23:48:55Z",
   "repo": "inanmise/site-monitor",
-  "count": 641,
+  "count": 642,
   "releases": [
+    {
+      "version": "20.60.0",
+      "tag": "v20.60.0",
+      "releasedAt": "2026-09-12T23:48:49Z",
+      "commit": "b0ee1dbb4508c34d2f35d5f29614e1e4c74fd78b",
+      "prevVersion": "20.59.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 3,
+        "fix": 3,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 2,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": "regression",
+          "breaking": false,
+          "sha": "b0ee1dbb",
+          "subject": "round 19 — pre-release sweep + QA findings on the Users / Sessions panel"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "f3953be2",
+          "subject": "ISSUE-001 — shared user-activity links opened System Health with the section collapsed"
+        },
+        {
+          "type": "test",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "fa79b2c0",
+          "subject": "regression test for ISSUE-002 — ping re-adopts a cleared session marker"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "2b172a8b",
+          "subject": "ISSUE-002 — sessions that survive a restart vanished from \"Aktif Oturum\" and lost single-session protection"
+        },
+        {
+          "type": "docs",
+          "scope": "regression",
+          "breaking": false,
+          "sha": "954eaa4e",
+          "subject": "round 18 — System Health Users / Sessions enrichment (14 items)"
+        },
+        {
+          "type": "fix",
+          "scope": "user-activity",
+          "breaking": false,
+          "sha": "90c95655",
+          "subject": "session login_at from the session LOGIN row; usage share label and 375px overflow"
+        },
+        {
+          "type": "feat",
+          "scope": "user-activity",
+          "breaking": false,
+          "sha": "72b71a70",
+          "subject": "rebuild the Users / Sessions panel — usage, trend cards, session lifecycle, anomaly ack, filters, exports"
+        },
+        {
+          "type": "feat",
+          "scope": "user-activity",
+          "breaking": false,
+          "sha": "0154c300",
+          "subject": "expose office hours in the overview payload for heat-map shading"
+        },
+        {
+          "type": "feat",
+          "scope": "user-activity",
+          "breaking": false,
+          "sha": "08b14587",
+          "subject": "page usage tracking, dormant accounts, session idle/expiry, anomaly ack, user timeline, source insights"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.59.1",
       "tag": "v20.59.1",

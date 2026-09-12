@@ -70,6 +70,13 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     @Query("UPDATE AppUser u SET u.lastSeenAt = :ts WHERE UPPER(u.username) = UPPER(:username) AND u.activeSessionId = :sid")
     int touchLastSeen(@Param("username") String username, @Param("sid") String sid, @Param("ts") String ts);
 
+    /** Restart sonrası yeniden sahiplenme (2026-09-13, QA ISSUE-002): açılış temizliği işareti NULL'a çeker ama JDBC
+     *  oturum restart'ı yaşar; ilk ping oturumu geri yazar. Başka bir işaret (canlı sid ya da TERMINATED) varsa
+     *  DOKUNMAZ — süpersede/kick semantiği korunur. */
+    @Modifying
+    @Query("UPDATE AppUser u SET u.activeSessionId = :sid, u.lastSeenAt = :ts WHERE UPPER(u.username) = UPPER(:username) AND u.activeSessionId IS NULL")
+    int adoptSessionIfNone(@Param("username") String username, @Param("sid") String sid, @Param("ts") String ts);
+
     /**
      * Başarısız giriş damgası — TEK atomik statement (entity yükle-kaydet DEĞİL).
      *

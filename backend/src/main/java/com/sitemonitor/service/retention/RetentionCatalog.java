@@ -83,6 +83,14 @@ public final class RetentionCatalog {
                 "Saatlik özet. Ham seri kısaldığında olayın hangi SAATTE olduğu burada kalır "
                 + "(günlük özet bunu kaybeder). Ham serinin ~%1,7'si kadar yer kaplar."),
 
+        // ── Sayfa kullanımı (2026-09-13): kullanıcı×sekme×gün ping sayısı — System Health "kim neyi kullanıyor" ──
+        new RetentionPolicy("page-usage-daily", "page_usage_daily", "day", TimeKind.DATE10,
+                "site.monitor.page-usage.retention-days", 90, 7, false, "{t}", Mode.AGE, false,
+                DataClass.PERSONAL,
+                "Günlük sayfa kullanımı özeti (kullanıcı adı + sekme anahtarı + ping sayısı; URL/parametre yok). "
+                + "System Health kullanıcı etkinliği bölümünün 'en çok kullanılan sayfalar / hiç açılmayanlar / "
+                + "takım benimseme' tabloları buradan beslenir. Kişisel veri olduğundan kısa tutulur."),
+
         // ── Denetim ve sistem kayıtları ───────────────────────────────────────────────────────
         age("audit-log", "audit_log", "event_time", "site.monitor.audit.retention-days",
                 365, 30, true, DataClass.SECURITY_AUDIT,
@@ -136,6 +144,9 @@ public final class RetentionCatalog {
                 + "WHERE monitor_id IN (SELECT id FROM dns_monitors) GROUP BY monitor_id)",
                 DataClass.OPERATIONAL,
                 "DNS kayıt serisi. Yaşayan her monitörün EN YENİ satırı baseline'dır (değişiklik tespiti ona bakar) → asla silinmez."),
+        orphan("anomaly-ack-orphan", "login_anomaly_ack",
+                "audit_id NOT IN (SELECT id FROM audit_log)", DataClass.OPERATIONAL,
+                "Denetim satırı budanmış anomali onayı damgası (System Health #3). Ebeveyn audit_log yaş kuralına uyar."),
         orphan("dns-records-orphan", "dns_records",
                 "monitor_id NOT IN (SELECT id FROM dns_monitors)", DataClass.OPERATIONAL,
                 "Monitörü kalıcı silinmiş DNS serisi. FK/CASCADE yok; öksüz satırlar hiçbir yaş kuralına takılmıyordu."),
