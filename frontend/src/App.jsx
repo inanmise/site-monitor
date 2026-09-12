@@ -63,6 +63,7 @@ const InventoryManager = lazy(() => import('./components/admin/InventoryManager'
 const AuditLogViewer = lazy(() => import('./components/admin/AuditLogViewer'))
 const MonitorChangesConsole = lazy(() => import('./components/admin/MonitorChangesConsole'))
 const WeakAlgorithmReport = lazy(() => import('./components/admin/WeakAlgorithmReport'))
+import TodayPanel from './components/TodayPanel.jsx'
 const WeeklyReportsPage = lazy(() => import('./components/WeeklyReportsPage'))
 const IncidentHistoryPage = lazy(() => import('./components/IncidentHistoryPage'))
 const SystemHealth = lazy(() => import('./components/admin/SystemHealth'))
@@ -1063,6 +1064,8 @@ export default function App() {
                     </button>
                   )}
                 </div>
+                {/* "Sizin için — bugün" (2026-09-12, #3): takımın ilgilenmesi gerekenler, sayfanın üstünde */}
+                <TodayPanel onOpenDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} />
                 <div className="dashboard-header">
                   <h2>{t('app.dashTitle')}</h2>
                   {statsFilter && (

@@ -12452,6 +12452,55 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .mspark-up.is-warn { color: #d97706; }
 .mspark-up.is-bad { color: var(--danger); }
 
+/* ── "Sizin için — bugün" paneli (dashboard üstü, 2026-09-12 #3) ───────────────────────────── */
+.today { border: 1px solid var(--border); border-radius: 12px; background: var(--bg-surface); margin: 0 0 16px; }
+.today--clear { border-color: #86efac; }
+.today-head { width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: none; border: 0;
+  color: var(--text); font: inherit; font-weight: 600; cursor: pointer; text-align: left; border-radius: 12px; }
+.today-head:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.today-head > svg { color: var(--primary); }
+.today--clear .today-head > svg { color: var(--success); }
+.today-title { flex: 1; min-width: 0; }
+.today-summary { font-weight: 500; font-size: .88em; color: var(--text-light); }
+.today--clear .today-summary { color: var(--success); font-weight: 600; }
+.today-chevron { transition: transform .15s; }
+.today-chevron.is-open { transform: rotate(180deg); }
+.today-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; padding: 0 12px 12px; }
+.today-card { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-left-width: 4px; border-radius: 10px; background: var(--bg); min-width: 0; }
+.today-card--ok { border-left-color: var(--success); }
+.today-card--warn { border-left-color: #d97706; }
+.today-card--bad { border-left-color: var(--danger); }
+.today-card-head { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.today-card-title { flex: 1; min-width: 0; }
+.today-card-count { font-size: 1.2em; }
+.today-card--warn .today-card-count { color: #d97706; }
+.today-card--bad .today-card-count { color: var(--danger); }
+.today-card--ok .today-card-count { color: var(--success); }
+.today-card-sub { font-size: .8em; color: var(--text-light); }
+.today-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: .85em; }
+.today-list li { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.today-link { background: none; border: 0; padding: 0; color: var(--primary); font: inherit; font-weight: 600; cursor: pointer; text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.today-link:hover { text-decoration: underline; }
+.today-days { font-size: .9em; color: var(--text-light); white-space: nowrap; }
+.today-days.is-warn { color: #d97706; font-weight: 600; }
+.today-days.is-bad { color: var(--danger); font-weight: 600; }
+.today-muted { font-size: .85em; color: var(--text-light); }
+.today-level { font-size: .7em; font-weight: 700; padding: 1px 6px; border-radius: 6px; background: var(--bg-hover); }
+.today-level--critical { background: #fee2e2; color: #991b1b; }
+.today-level--high { background: #ffedd5; color: #9a3412; }
+.today-level--warning { background: #fef9c3; color: #854d0e; }
+.today-status { font-size: .78em; font-weight: 600; padding: 1px 7px; border-radius: 6px; background: var(--bg-hover); }
+.today-status--approved { background: #dcfce7; color: #166534; }
+.today-status--pending_approval { background: #dbeafe; color: #1e40af; }
+.today-status--draft, .today-status--rejected, .today-status--missing { background: #fef3c7; color: #92400e; }
+.today-card-go { align-self: flex-end; margin-top: auto; background: none; border: 0; color: var(--primary); font: inherit; font-size: .82em; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+[data-theme="dark"] .today-level--critical { background: #450a0a; color: #fca5a5; }
+[data-theme="dark"] .today-level--high { background: #431407; color: #fdba74; }
+[data-theme="dark"] .today-level--warning { background: #422006; color: #fcd34d; }
+[data-theme="dark"] .today-status--approved { background: #052e16; color: #86efac; }
+[data-theme="dark"] .today-status--pending_approval { background: #1e3a8a; color: #bfdbfe; }
+[data-theme="dark"] .today-status--draft, [data-theme="dark"] .today-status--rejected, [data-theme="dark"] .today-status--missing { background: #422006; color: #fcd34d; }
+
 /* ── Komut paleti (Ctrl+K, 2026-09-12 #1) ─────────────────────────────────────────────────── */
 .sb-search { display: flex; align-items: center; gap: 8px; margin: 6px 10px 4px; padding: 6px 10px; border-radius: 8px;
   border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.08); color: rgba(255,255,255,.85); font: inherit; font-size: .82em; cursor: pointer; }
