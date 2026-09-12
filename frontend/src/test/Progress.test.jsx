@@ -43,7 +43,7 @@ describe('ProgressBar — native <progress>', () => {
 
   it('görünen yüzde ile değer aynı hesaptan gelir', () => {
     const { container } = render(<ProgressBar value={3} max={12} showValue />)
-    expect(screen.getByText('%25')).toBeTruthy()
+    expect(container.querySelector('.pg-bar-value').textContent).toMatch(/^(%25|25%)$/)
     expect(container.querySelector('progress').value).toBe(3)
   })
 
@@ -65,7 +65,7 @@ describe('ProgressRing — belirli dairesel yay', () => {
     expect(bar.getAttribute('aria-valuenow')).toBe('50')
     expect(bar.getAttribute('aria-valuemin')).toBe('0')
     expect(bar.getAttribute('aria-valuemax')).toBe('100')
-    expect(bar.getAttribute('aria-valuetext')).toBe('%50')
+    expect(bar.getAttribute('aria-valuetext')).toMatch(/^(%50|50%)$/)
   })
 
   it('ekranda görünen yüzde ile aria-valuenow AYNI', () => {

@@ -1,4 +1,5 @@
 import { LoadingBlock } from './ui/Progress.jsx'
+import { formatPercent } from '../i18n/dateLocale.js'
 import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
@@ -617,7 +618,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
             <div className="upt-modal-summary">
               <div className="upt-modal-metric" title={t('port.sumUptimeHint')}>
                 <span className="upt-modal-metric-val">
-                  {summary.total > 0 ? `%${Math.round((summary.total - summary.down) * 1000 / summary.total) / 10}` : '—'}
+                  {summary.total > 0 ? formatPercent(Math.round((summary.total - summary.down) * 1000 / summary.total) / 10) : '—'}
                 </span>
                 <span className="upt-modal-metric-lbl">{t('port.sumUptime')}</span>
               </div>

@@ -1,4 +1,5 @@
 import { fmtDay, daysClass, httpClass } from './CheckRunShell.jsx'
+import { formatPercent } from '../../i18n/dateLocale.js'
 import { formatBytes } from '../../utils/formatBytes.js'
 
 /**
@@ -105,7 +106,7 @@ export function monitorCheckColumns(type, t) {
           { key: 'rtt', label: t('mon.checkColRtt'), render: r => num((r.data || {}).rtt_ms) },
           { key: 'loss', label: t('mon.checkColLoss'), render: r => {
             const v = (r.data || {}).packet_loss
-            return v == null ? '—' : `%${v}`
+            return formatPercent(v)
           } },
         ],
       }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { formatPercent } from '../../i18n/dateLocale.js'
 import { ChevronDown, Activity, Flame, Lightbulb } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -56,7 +57,7 @@ export default function AlertNoisePanel({ onPickDomain }) {
                         <td><button type="button" className="noise-link" onClick={() => onPickDomain?.(r.domain)}>{r.domain}</button></td>
                         <td className="noise-mono">{r.type}</td>
                         <td><b>{r.count}</b></td>
-                        <td><span className="noise-bar" style={{ '--w': `${Math.min(100, r.share_pct)}%` }}>%{r.share_pct}</span></td>
+                        <td><span className="noise-bar" style={{ '--w': `${Math.min(100, r.share_pct)}%` }}>{formatPercent(r.share_pct)}</span></td>
                         <td>{r.avg_minutes == null ? '—' : t('noise.minutes', r.avg_minutes)}</td>
                       </tr>
                     ))}

@@ -3157,6 +3157,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* Thresholds */
 .threshold-card { background: var(--bg); border-radius: 8px; padding: 20px; border: 1px solid var(--border); }
 .threshold-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 16px; }
+/* Yapılandırma sağlığı "Aç" hedefi — kısa süreli vurgu (ISSUE-012) */
+.threshold-grid.is-focus-target { outline: 2px solid var(--primary); outline-offset: 6px; border-radius: 8px; transition: outline-color .4s; }
 .threshold-field { display: flex; flex-direction: column; gap: 6px; }
 .threshold-field label { font-weight: 700; font-size: .9em; }
 /* input DEĞİL, alanların HEPSİ. Taban kural yalnız `input` seçiyordu; aynı kutunun içindeki
@@ -9262,8 +9264,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .dns-value-cell { max-width: 300px; word-break: break-all; }
 .dns-prev-value { font-size: 10px; color: var(--text-muted); margin-top: 3px; font-style: italic; }
 
+/* Dar ekran: iki sütun 375px'te kartı ~110px'e sıkıştırıyordu (QA ISSUE-013) → tek sütun */
 @media (max-width: 600px) {
-  .upt-grid { grid-template-columns: 1fr 1fr; }
+  .upt-grid { grid-template-columns: 1fr; }
   .mon-header { flex-direction: column; }
 }
 
@@ -12468,8 +12471,10 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .noise-body { padding: 0 14px 12px; }
 .noise-toolbar { display: flex; gap: 6px; margin-bottom: 10px; }
 .noise-empty { padding: 12px; color: var(--text-light); font-size: .88em; }
-.noise-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
-.noise-block { min-width: 0; }
+/* Tablo geniş URL'lerle daralamaz; iki sütunlu sabit oran + taşan blok kendi içinde kaydırılır (QA ISSUE-007). */
+.noise-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 18px; }
+@media (max-width: 1100px) { .noise-grid { grid-template-columns: minmax(0, 1fr); } }
+.noise-block { min-width: 0; overflow-x: auto; }
 .noise-block--wide { grid-column: 1 / -1; }
 .noise-block-title { font-size: .76em; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
 .noise-block-title small { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text-light); }
@@ -12480,7 +12485,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .noise-link:hover { text-decoration: underline; }
 .noise-mono { font-family: monospace; font-size: .9em; color: var(--text-light); }
 .noise-bar { display: inline-block; min-width: 48px; padding: 0 4px; border-radius: 4px; background: linear-gradient(90deg, color-mix(in srgb, var(--danger) 35%, transparent) var(--w, 0%), transparent var(--w, 0%)); font-variant-numeric: tabular-nums; }
-.noise-heat { display: grid; grid-template-columns: 34px repeat(24, minmax(8px, 1fr)); gap: 2px; align-items: center; }
+.noise-heat { display: grid; grid-template-columns: 34px repeat(24, minmax(8px, 1fr)); gap: 2px; align-items: center; min-width: 300px; }
 .noise-heat-row { display: contents; }
 .noise-heat-corner { }
 .noise-heat-hour { font-size: .62em; color: var(--text-muted); text-align: center; }
@@ -12639,7 +12644,14 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .today-card-sub { font-size: .8em; color: var(--text-light); }
 .today-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: .85em; }
 .today-list li { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
-.today-link { background: none; border: 0; padding: 0; color: var(--primary); font: inherit; font-weight: 600; cursor: pointer; text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.today-link { background: none; border: 0; padding: 0; color: var(--primary); font: inherit; font-weight: 600; cursor: pointer; text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+/* Dar ekran (QA ISSUE-013): başlık ile özet üst üste binmesin, kartlar tek sütun ve panel dışına taşmasın */
+@media (max-width: 600px) {
+  .today-head { flex-wrap: wrap; }
+  .today-title { flex: 1 1 100%; }
+  .today-summary { flex: 1 1 auto; }
+  .today-grid { grid-template-columns: minmax(0, 1fr); }
+}
 .today-link:hover { text-decoration: underline; }
 .today-days { font-size: .9em; color: var(--text-light); white-space: nowrap; }
 .today-days.is-warn { color: #d97706; font-weight: 600; }

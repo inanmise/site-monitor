@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment, lazy, Suspense } from 'react'
-import { dateLocale } from '../../i18n/dateLocale.js'
+import { dateLocale, formatPercent } from '../../i18n/dateLocale.js'
 import { api, formatDate, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
@@ -74,12 +74,13 @@ function triggerLabel(trigger, t) {
   return map[trigger] ?? trigger
 }
 
-function fmsDuration(ms) {
+// Birimler sözlükten (QA 2026-09-12, ISSUE-010): "3.1 sn" / "1 dk" İngilizce arayüze sızıyordu.
+function fmsDuration(ms, t) {
   if (!ms || ms <= 0) return '—'
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)} sn`
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)} ${t('chg.unitSec')}`
   const m = Math.floor(ms / 60000)
   const s = Math.round((ms % 60000) / 1000)
-  return `${m} dk ${s} sn`
+  return `${m} ${t('chg.unitMin')} ${s} ${t('chg.unitSec')}`
 }
 
 // Kullanıcı/oturum izleme yardımcıları
@@ -93,11 +94,23 @@ function shortUa(ua) {
   if (/curl\//i.test(ua)) return 'curl'
   return ua.split(' ')[0] || '—'
 }
-function fmtMins(m) {
+function fmtMins(m, t) {
   const n = Number(m) || 0
-  if (n < 60) return `${n} dk`
+  if (n < 60) return `${n} ${t('chg.unitMin')}`
   const h = Math.floor(n / 60), mm = n % 60
-  return `${h} sa ${mm} dk`
+  return `${h} ${t('chg.unitHour')} ${mm} ${t('chg.unitMin')}`
+}
+
+/** ISO yıl+hafta → "31 August – 6 September 2026" (arayüz yerelinde; sunucu etiketi yalnız Türkçe). */
+function isoWeekRange(year, weekNo) {
+  if (!year || !weekNo) return null
+  const jan4 = new Date(Date.UTC(year, 0, 4))
+  const mon = new Date(jan4); mon.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() + 6) % 7) + (weekNo - 1) * 7)
+  const sun = new Date(mon); sun.setUTCDate(mon.getUTCDate() + 6)
+  const loc = dateLocale(), tz = 'UTC'
+  const dm = (d) => d.toLocaleDateString(loc, { day: 'numeric', month: 'long', timeZone: tz })
+  const dmy = (d) => d.toLocaleDateString(loc, { day: 'numeric', month: 'long', year: 'numeric', timeZone: tz })
+  return `${mon.getUTCFullYear() === sun.getUTCFullYear() ? dm(mon) : dmy(mon)} – ${dmy(sun)}`
 }
 function locStr(country, city) {
   const parts = [city, country].filter(Boolean)
@@ -646,7 +659,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                     )}
                   </dd>
                   <dt>{t('waSched.reportedWeek')}</dt>
-                  <dd>{weeklyAvail.last_run_week || '—'}</dd>
+                  <dd>{isoWeekRange(weeklyAvail.last_run_year, weeklyAvail.last_run_week_no) || weeklyAvail.last_run_week || '—'}</dd>
                 </>
               )}
             </dl>
@@ -767,7 +780,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
             <dt>{t('health.lastScan')}</dt>
             <dd>{scan?.last_run ? formatDate(scan.last_run) : t('sys.never')}</dd>
             <dt>{t('health.scanDuration')}</dt>
-            <dd>{fmsDuration(scan?.duration_ms)}</dd>
+            <dd>{fmsDuration(scan?.duration_ms, t)}</dd>
             <dt>{t('health.scanTotal')}</dt>
             <dd>{scan?.total ?? 0}</dd>
             <dt>{t('health.scanWarn')}</dt>
@@ -792,7 +805,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
               <h3>{t('health.smtpTitle')}</h3>
             </div>
             <span className={`sys-badge ${smtpHasAlarm ? 'sys-badge-locked' : 'sys-badge-free'}`}>
-              <span className={smtpRateClass}>%{smtpRate}</span>
+              <span className={smtpRateClass}>{formatPercent(smtpRate)}</span>
             </span>
           </div>
           {smtpHasAlarm && (
@@ -826,7 +839,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
             <dt>{t('health.smtpSent')}</dt>
             <dd>{smtpData.sent ?? 0} / {smtpData.attempted ?? smtpData.total ?? 0}</dd>
             <dt>{t('health.smtpRate')}</dt>
-            <dd className={smtpRateClass}>%{smtpRate}</dd>
+            <dd className={smtpRateClass}>{formatPercent(smtpRate)}</dd>
             <dt></dt>
             <dd className="sys-small sys-muted">{t('health.smtpPeriodActive', t(`health.smtpPeriod${smtpPeriod}`))}</dd>
           </dl>
@@ -1559,7 +1572,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                           <td>{u.system_role || '—'}</td>
                           <td>{u.team_name ? <TeamBadge teamId={u.team_id} teamName={u.team_name} /> : '—'}</td>
                           <td className="sys-mono sys-small">{u.login_at ? formatDateSec(u.login_at) : '—'}</td>
-                          <td className="dbtcol-num-cell">{fmtMins(u.duration_min)}</td>
+                          <td className="dbtcol-num-cell">{fmtMins(u.duration_min, t)}</td>
                           <td className="sys-small">{u.ip ? <span className="sys-mono">{u.ip}</span> : '—'}{u.ip ? <span className="sys-muted"> {locStr(u.country, u.city)}</span> : null}</td>
                           <td className="sys-small">{shortUa(u.user_agent)}</td>
                           {isAdmin && (
@@ -2076,7 +2089,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                             <td>{u.system_role || '—'}</td>
                             <td>{u.team_name ? <TeamBadge teamId={u.team_id} teamName={u.team_name} /> : '—'}</td>
                             <td className="sys-mono sys-small">{u.login_at ? formatDateSec(u.login_at) : '—'}</td>
-                            <td className="dbtcol-num-cell">{fmtMins(u.duration_min)}</td>
+                            <td className="dbtcol-num-cell">{fmtMins(u.duration_min, t)}</td>
                             <td className="sys-small">{u.ip ? <span className="sys-mono">{u.ip}</span> : '—'}{u.ip ? <span className="sys-muted"> {locStr(u.country, u.city)}</span> : null}</td>
                           </tr>
                         ))}
@@ -2124,7 +2137,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                 <div className="show-section-header">{t('uact.detailSession')}</div>
                 <div className="show-grid-2">
                   {field(t('uact.colLoginAt'), u.login_at ? formatDateSec(u.login_at) : '—', true)}
-                  {field(t('uact.colDuration'), fmtMins(u.duration_min))}
+                  {field(t('uact.colDuration'), fmtMins(u.duration_min, t))}
                   {field(t('uact.detailLastSeen'), u.last_seen ? formatDateSec(u.last_seen) : '—', true)}
                 </div>
 

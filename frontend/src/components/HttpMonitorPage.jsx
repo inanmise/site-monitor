@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
+import { formatPercent } from '../i18n/dateLocale.js'
 import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -610,7 +611,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
             <div className="upt-modal-divider" />
             <div className="upt-modal-summary">
               <div className="upt-modal-metric" title={t('http.sumOkHint')}>
-                <span className="upt-modal-metric-val">{summary.total > 0 ? `%${Math.round((summary.total - summary.down) * 1000 / summary.total) / 10}` : '—'}</span>
+                <span className="upt-modal-metric-val">{summary.total > 0 ? formatPercent(Math.round((summary.total - summary.down) * 1000 / summary.total) / 10) : '—'}</span>
                 <span className="upt-modal-metric-lbl">{t('http.sumOk')}</span>
               </div>
               <div className="upt-modal-metric" title={t('http.sumTotalHint')}><span className="upt-modal-metric-val">{summary.total}</span><span className="upt-modal-metric-lbl">{t('http.sumTotal')}</span></div>
