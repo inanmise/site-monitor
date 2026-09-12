@@ -13020,7 +13020,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .fc-th-note { font-size: .76em; color: var(--text-muted); padding-bottom: 8px; cursor: help; }
 .fc-kpi2-grid--6 { grid-template-columns: repeat(6, 1fr); }
 @media (max-width: 1200px) { .fc-kpi2-grid--6 { grid-template-columns: repeat(3, 1fr); } }
-@media (max-width: 640px) { .fc-kpi2-grid--6 { grid-template-columns: repeat(2, 1fr); } }
+/* 375 px: KPI kartlari ve 05/06 satiri tek sutun — iki sutun sayfa genisligini asip sag sutunu kirpiyordu (ISSUE-012) */
+@media (max-width: 640px) { .fc-kpi2-grid--6 { grid-template-columns: minmax(0, 1fr); } .forecast-page .fc-row-2col { grid-template-columns: minmax(0, 1fr); } .forecast-page .fc-section-card { min-width: 0; } .forecast-page .fc-range-filter { flex-wrap: wrap; } }
 .fc-kpi2--btn { text-align: left; font: inherit; color: inherit; cursor: pointer; }
 .fc-team-table { width: 100%; border-collapse: collapse; font-size: .82em; margin-top: 6px; }
 .fc-team-table th { text-align: left; font-weight: 600; color: var(--text-muted); padding: 4px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
