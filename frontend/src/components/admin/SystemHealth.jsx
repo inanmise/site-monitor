@@ -107,13 +107,18 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
   const [hbRefreshing, setHbRefreshing] = useState(false)
   const [hbModalOpen, setHbModalOpen] = useState(false)
   // varsayılan: tüm akordiyon kapalı; `?sec=releases` derin-linki (sürüm çipi) o bölümü açık getirir.
-  const [openSection, setOpenSection] = useState(() => (readUrlParam('sec', '') === 'releases' ? 'releases' : null))
+  // `?sec=users` ya da paylaşılan bir kullanıcı-etkinliği bağlantısı (u_* süzgeçleri) o bölümü açık getirir (QA ISSUE-001).
+  const [openSection, setOpenSection] = useState(() => {
+    const sec = readUrlParam('sec', '')
+    if (sec === 'releases' || sec === 'users') return sec
+    try { return [...new URLSearchParams(window.location.search).keys()].some((k) => k.startsWith('u_')) ? 'users' : null } catch { return null }
+  })
   const toggleSection = (key) => setOpenSection(prev => prev === key ? null : key)
   const sysVisible  = openSection === 'sys'
   const releasesVisible = openSection === 'releases'
   // Aynı sekmedeyken (Sistem Sağlığı açıkken çipten "Dağıtım geçmişi") App `sec` param'ını olayla iletir.
   useEffect(() => {
-    const on = (e) => { const s = e?.detail?.sec; if (s === 'releases') setOpenSection('releases') }
+    const on = (e) => { const s = e?.detail?.sec; if (s === 'releases' || s === 'users') setOpenSection(s) }
     window.addEventListener('sm:tab-params', on)
     return () => window.removeEventListener('sm:tab-params', on)
   }, [])

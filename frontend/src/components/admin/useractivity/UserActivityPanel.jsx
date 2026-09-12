@@ -142,7 +142,10 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
     setExportOpen(false)
   }
   async function copyLink() {
-    try { await navigator.clipboard.writeText(window.location.href); toast.success(t('uact.copied')) } catch { toast.error(t('uact.copyFailed')) }
+    try {
+      const u = new URL(window.location.href); u.searchParams.set('sec', 'users')   // alıcı bölümü açık görsün (QA ISSUE-001)
+      await navigator.clipboard.writeText(u.toString()); toast.success(t('uact.copied'))
+    } catch { toast.error(t('uact.copyFailed')) }
   }
   if (error) return <StatusBlock tone="danger" icon={ShieldAlert} title={t('uact.loadError')} actions={<button type="button" className="btn btn-sm btn-secondary" onClick={onRefresh}>{t('uact.refresh')}</button>} />
   if (!data) return <div className="sys-muted sys-small" style={{ padding: 8 }}>…</div>
