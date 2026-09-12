@@ -129,7 +129,7 @@ function CalendarHeatmap({ certs, th, t, today, rangeDays, setRangeDays, onOpenD
         {cells.map(({ key, inRange, count, list, slot, isToday, dayNum, off, holiday }) => inRange ? (
           <button key={key} type="button"
             className={`fc-hm-cell fc-hm-cell-v2${count === 0 ? ' fc-hm-zero' : ''}${isToday ? ' fc-hm-today' : ''}${count > 0 ? ' fc-hm-clickable' : ''}${off ? ' fc-hm-off' : ''}`}
-            style={{ background: heatColor(count) }}
+            style={{ backgroundColor: heatColor(count) }}
             onMouseEnter={() => setHovered(key)} onMouseLeave={() => setHovered(null)} onFocus={() => setHovered(key)} onBlur={() => setHovered(null)}
             onClick={count > 0 ? () => onOpenDay({ key, certs: list }) : undefined}
             aria-label={`${key} — ${t('forecast.certCount', count)}${holiday ? ` · ${t('forecast.holiday')}` : ''}`}
