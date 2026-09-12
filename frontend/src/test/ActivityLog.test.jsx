@@ -76,3 +76,32 @@ describe('ActivityLog', () => {
     })
   })
 })
+
+describe('ActivityLog — zaman grupları + katlama (2026-09-12, #22)', () => {
+  it('Bugün / Dün başlıkları; aynı hedefin 3 ardışık kontrolü tek satıra katlanır, tıklayınca açılır', async () => {
+    const now = Date.now()
+    const iso = (ms) => new Date(ms).toISOString().slice(0, 19)
+    api.getActivity.mockResolvedValue({
+      success: true, page: 0, total: 5,
+      data: [
+        row({ id: 1, monitor_type: 'HTTP', monitor_name: 'web', target: 'https://w.example.com', result_status: 'SUCCESS', activity_time: iso(now - 60_000) }),
+        row({ id: 2, monitor_type: 'HTTP', monitor_name: 'web', target: 'https://w.example.com', result_status: 'ERROR', activity_time: iso(now - 120_000) }),
+        row({ id: 3, monitor_type: 'HTTP', monitor_name: 'web', target: 'https://w.example.com', result_status: 'SUCCESS', activity_time: iso(now - 180_000) }),
+        row({ id: 4, monitor_type: 'CERT', monitor_name: 'cert-a', target: 'a.com', result_status: 'WARNING', activity_time: iso(now - 240_000) }),
+        row({ id: 5, monitor_type: 'PING', monitor_name: 'gw', target: '10.0.0.1', result_status: 'SUCCESS', activity_time: iso(now - 30 * 3600_000) }),
+      ],
+    })
+    render(<ActivityLog />)
+    await screen.findByText('cert-a')
+    const heads = [...document.querySelectorAll('.act-group-head')].map((h) => h.textContent)
+    expect(heads[0]).toMatch(/Bugün|Today/)
+    expect(heads.some((h) => /Dün|Yesterday|Bu hafta|This week/.test(h))).toBe(true)
+    const fold = document.querySelector('.act-fold')
+    expect(fold).not.toBeNull()
+    expect(fold.textContent).toMatch(/3 ardışık kontrol|3 consecutive checks/)
+    expect(fold.textContent).toMatch(/1 hata|1 errors/)
+    fireEvent.click(fold.querySelector('.act-item-row'))
+    expect(document.querySelector('.act-fold')).toBeNull()
+    expect(document.querySelectorAll('.act-item').length).toBe(5)
+  })
+})

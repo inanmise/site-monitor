@@ -4584,6 +4584,13 @@ export const TR = {
   'alh.whyPushTip': 'Gönderildi {0} · başarısız {1} · atlandı {2}',
   'alh.whyPushNone': 'push: kayıt yok',
   'alh.whyNobody': 'kimseye ulaşmadı — alıcı kuralını kontrol edin',
+  // Aktivite gruplama (2026-09-12, #22)
+  'act.group.today': 'Bugün',
+  'act.group.yesterday': 'Dün',
+  'act.group.week': 'Bu hafta',
+  'act.group.older': 'Daha eski',
+  'act.folded': '{0} ardışık kontrol — açmak için tıklayın',
+  'act.foldedErrors': '{0} hata',
   // Zayıf Algoritma Raporu — zenginleştirme (2026-09-12)
   'wa.loadError':         'Rapor yüklenemedi',
   'wa.retry':             'Yeniden dene',
@@ -11273,6 +11280,13 @@ export const EN = {
   'alh.whyPushTip': 'Sent {0} · failed {1} · skipped {2}',
   'alh.whyPushNone': 'push: no record',
   'alh.whyNobody': 'reached nobody — check the recipient rules',
+  // Activity grouping (2026-09-12, #22)
+  'act.group.today': 'Today',
+  'act.group.yesterday': 'Yesterday',
+  'act.group.week': 'This week',
+  'act.group.older': 'Older',
+  'act.folded': '{0} consecutive checks — click to expand',
+  'act.foldedErrors': '{0} errors',
   // Weak Algorithm Report — enrichment (2026-09-12)
   'wa.loadError':         'The report could not be loaded',
   'wa.retry':             'Try again',

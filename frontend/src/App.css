@@ -12775,6 +12775,13 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .cc-renewed-chip { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 1px 6px; border-radius: 6px; font-size: .74em; font-weight: 600; background: #dcfce7; color: #166534; white-space: nowrap; }
 [data-theme="dark"] .cc-renewed-chip { background: #052e16; color: #86efac; }
 
+/* Aktivite akışı: zaman grupları + katlanmış koşular (2026-09-12 #22) */
+.act-group-head { margin: 10px 0 4px; font-size: .74em; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+.act-group-head small { font-weight: 600; padding: 0 6px; border-radius: 999px; background: var(--bg-hover); color: var(--text-light); }
+.act-group-head:first-child { margin-top: 0; }
+.act-fold .act-item-row { background: color-mix(in srgb, var(--primary) 5%, transparent); }
+.act-fold-count { font-weight: 600; color: var(--primary); }
+
 /* "Neden hâlâ açık?" çipleri (Alarm Geçmişi açık sekmesi, 2026-09-12 #16) */
 .alert-why { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 4px 0 6px; font-size: .78em; }
 .alert-why-label { font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; font-size: .9em; }
