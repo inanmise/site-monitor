@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
+import { formatPercent } from '../i18n/dateLocale.js'
 import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -480,24 +481,19 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   }
 
   // Operatör + adet → sağlıklı (alarmsız) koşul ifadesi — opPhrase aynası.
+  // Sözlükten (QA 2026-09-12, ISSUE-006): "≥1 kez" / "en az 1 kez" İngilizce arayüze sızıyordu.
   function expectPhrase(op, n) {
-    switch (op) {
-      case 'LTE': return `en fazla ${n} kez`
-      case 'EQ':  return `tam olarak ${n} kez`
-      case 'GT':  return `${n} kezden fazla`
-      case 'LT':  return `${n} kezden az`
-      default:    return `en az ${n} kez`   // GTE
-    }
+    return t(`keyword.expect.${['LTE', 'EQ', 'GT', 'LT'].includes(op) ? op : 'GTE'}`, n)
   }
-  // Alarmın HANGİ durumda tetikleneceği — düz, net Türkçe (koşulun sağlanmadığı taraf).
+  // Alarmın HANGİ durumda tetikleneceği (koşulun sağlanmadığı taraf).
   function triggerPhrase(op, n, kw) {
     const k = kw && kw.trim() ? `« ${kw.trim()} »` : t('keyword.theKeyword')
     switch (op) {
-      case 'LTE': return n === 0 ? `${k} sayfada bulunursa` : `${k} sayfada ${n} kezden fazla bulunursa`
-      case 'EQ':  return `${k} sayfada tam olarak ${n} kez bulunmazsa`
-      case 'GT':  return `${k} sayfada ${n} veya daha az bulunursa`
-      case 'LT':  return `${k} sayfada ${n} veya daha fazla bulunursa`
-      default:    return n <= 1 ? `${k} sayfada hiç bulunmazsa` : `${k} sayfada ${n} kezden az bulunursa`   // GTE
+      case 'LTE': return n === 0 ? t('keyword.trig.LTE0', k) : t('keyword.trig.LTE', k, n)
+      case 'EQ':  return t('keyword.trig.EQ', k, n)
+      case 'GT':  return t('keyword.trig.GT', k, n)
+      case 'LT':  return t('keyword.trig.LT', k, n)
+      default:    return n <= 1 ? t('keyword.trig.GTE1', k) : t('keyword.trig.GTE', k, n)
     }
   }
 
@@ -575,7 +571,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                 {alarmBadge(m)}<MaintenanceBadge target={m.url} />
                 <span className="upt-card-top-right">
                   <span className="upt-port-tag">
-                    {(OP_SYM[m.operator] || '≥') + (m.match_count ?? 1)} kez
+                    {(OP_SYM[m.operator] || '≥') + (m.match_count ?? 1)} {t('keyword.times')}
                   </span>
                   <CopyLinkButton iconOnly url={monitorDeepLink('keyword', m.id)} className="btn btn-sm upt-card-copy" />
                 </span>
@@ -652,7 +648,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
             <div className="upt-modal-divider" />
             <div className="upt-modal-summary">
               <div className="upt-modal-metric" title={t('keyword.sumOkHint')}>
-                <span className="upt-modal-metric-val">{summary.total > 0 ? `%${Math.round((summary.total - summary.down) * 1000 / summary.total) / 10}` : '—'}</span>
+                <span className="upt-modal-metric-val">{summary.total > 0 ? formatPercent(Math.round((summary.total - summary.down) * 1000 / summary.total) / 10) : '—'}</span>
                 <span className="upt-modal-metric-lbl">{t('keyword.sumOk')}</span>
               </div>
               <div className="upt-modal-metric" title={t('keyword.sumTotalHint')}><span className="upt-modal-metric-val">{summary.total}</span><span className="upt-modal-metric-lbl">{t('keyword.sumTotal')}</span></div>

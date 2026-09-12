@@ -352,11 +352,11 @@ function CalendarHeatmap({ certs, t, onSelectDomain }) {
         ))}
       </div>
       <div className="fc-hm-legend">
-        <span className="fc-hm-leg-label">Az</span>
+        <span className="fc-hm-leg-label">{t('forecast.legendLow')}</span>
         {HEAT_COLORS.slice(1).map(c => (
           <div key={c} className="fc-hm-leg-dot" style={{ background: c }} />
         ))}
-        <span className="fc-hm-leg-label">Çok</span>
+        <span className="fc-hm-leg-label">{t('forecast.legendHigh')}</span>
       </div>
 
       {/* ── Gün detay modalı — o günün sertifikaları (genel bakış kartları gibi) ── */}
