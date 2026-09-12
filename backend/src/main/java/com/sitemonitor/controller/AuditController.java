@@ -267,7 +267,7 @@ public class AuditController {
             @PathVariable String domain, HttpSession session, HttpServletRequest request) {
         permissionService.require(session, "weak_algo.manage", "edit");
         boolean removed = weakAlgoService.clearException(domain);
-        if (removed) auditService.recordAction("WEAK_ALGO_EXCEPTION_CLEAR", session, request, "WEAK_ALGO", domain, null);
+        if (removed) auditService.recordAction("WEAK_ALGO_EXCEPTION_CLEAR", session, request, "WEAK_ALGO", domain, com.sitemonitor.service.AuditDetail.of("domain", domain, "removed", true));
         return ok(Map.of("removed", removed));
     }
 
