@@ -316,6 +316,10 @@ export const api = {
   getSchedulerStatus: () => request('/scheduler/status'),
 
   getRenewalAdvice: () => request('/renewal-advice'),
+  // Vade takvimi (2026-09-12): tek gövde + planlanan yenileme
+  getForecast: () => request('/forecast'),
+  forecastPlan: (domain, date, note) => request(`/forecast/${encodeURIComponent(domain)}/plan`, { method: 'POST', body: JSON.stringify({ date, note }) }),
+  forecastUnplan: (domain) => request(`/forecast/${encodeURIComponent(domain)}/plan`, { method: 'DELETE' }),
 
   // Birleşik aktivite akışı (Kayıtlar → Aktivite) — sayfalı/filtreli/takım-izole. Boş filtreler düşürülür.
   getActivity: (params = {}) => {

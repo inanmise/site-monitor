@@ -13009,3 +13009,65 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* Küçük giriş (araç çubukları / satır-içi düzenleme) */
 .input-sm { padding: 4px 8px; font-size: .86em; }
 .inv-table { min-width: 720px; }
+
+/* ── Vade Takvimi zenginleştirme (2026-09-12) — süzgeç, 6'lı KPI, takım tablosu, yaklaşan liste eylemleri, zeka, yazdırma ── */
+.fc-refresh { margin-left: 6px; border: 0; background: none; color: var(--text-light); cursor: pointer; padding: 2px; border-radius: 4px; vertical-align: middle; display: inline-flex; }
+.fc-refresh:hover { background: var(--bg-hover); color: var(--text); }
+.fc-filters { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; margin: 12px 0; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-surface); }
+.fc-f { display: flex; flex-direction: column; gap: 4px; font-size: .84em; color: var(--text-light); min-width: 160px; }
+.fc-f > span { font-weight: 600; }
+.fc-f-count { font-size: .84em; color: var(--text-light); padding-bottom: 8px; }
+.fc-th-note { font-size: .76em; color: var(--text-muted); padding-bottom: 8px; cursor: help; }
+.fc-kpi2-grid--6 { grid-template-columns: repeat(6, 1fr); }
+@media (max-width: 1200px) { .fc-kpi2-grid--6 { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 640px) { .fc-kpi2-grid--6 { grid-template-columns: repeat(2, 1fr); } }
+.fc-kpi2--btn { text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.fc-team-table { width: 100%; border-collapse: collapse; font-size: .82em; margin-top: 6px; }
+.fc-team-table th { text-align: left; font-weight: 600; color: var(--text-muted); padding: 4px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.fc-team-table td { padding: 5px 6px; border-bottom: 1px solid var(--border); }
+.fc-team-table tr.is-on td { background: color-mix(in srgb, var(--primary) 10%, transparent); }
+.fc-team-table td.is-bad { color: var(--danger); font-weight: 700; }
+.fc-team-table td.is-warn { color: #b45309; font-weight: 700; }
+.fc-hm-cell-v2.fc-hm-off { background-image: repeating-linear-gradient(135deg, transparent 0 4px, rgba(148,163,184,.18) 4px 6px); }
+.fc-hm-cell-v2:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.fc-hm-leg-off { margin-left: auto; font-size: .74em; color: var(--text-light); padding-left: 14px; background: repeating-linear-gradient(135deg, transparent 0 4px, rgba(148,163,184,.35) 4px 6px) no-repeat left center / 10px 10px; }
+.fc-actions { display: inline-flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+.fc-batches { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 10px; }
+.fc-batch { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: .78em; background: color-mix(in srgb, #f59e0b 16%, transparent); color: #92400e; border: 1px solid #fde68a; }
+.fc-exp-row--overdue, .fc-exp-row--unreachable { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+.fc-exp-row.is-late .fc-exp-renew b { color: #b45309; }
+.fc-exp-cls { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 10px; font-size: .74em; font-weight: 700; white-space: nowrap; }
+.fc-exp-cls--overdue, .fc-exp-cls--unreachable { background: #fee2e2; color: #b91c1c; }
+.fc-exp-cls--critical { background: #fee2e2; color: #c2410c; }
+.fc-exp-cls--high { background: #ffedd5; color: #c2410c; }
+.fc-exp-cls--warning { background: #fef9c3; color: #92400e; }
+.fc-exp-cls--later { background: #dbeafe; color: #1d4ed8; }
+.fc-exp-renew { font-size: .9em; color: var(--text-light); white-space: nowrap; }
+.fc-exp-offday { margin-left: 4px; color: #b45309; }
+.fc-exp-plan { padding: 1px 8px; border-radius: 10px; font-size: .74em; font-weight: 600; white-space: nowrap; }
+.fc-exp-plan.is-planned { background: #ede9fe; color: #5b21b6; }
+.fc-exp-plan.is-done { background: #dcfce7; color: #15803d; }
+.fc-exp-actions { display: inline-flex; gap: 4px; margin-left: auto; }
+.fc-exp-actions .btn { padding: 3px 6px; }
+.fc-intel { display: grid; gap: 12px; }
+.fc-intel-block { min-width: 0; }
+.fc-intel-h { font-size: .76em; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin-bottom: 4px; }
+.fc-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.fc-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 20px; border: 1px solid var(--border); background: var(--bg); font-size: .8em; }
+.fc-chip b { color: var(--primary); }
+.fc-intel-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: .84em; }
+.fc-day-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.fc-day-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); font-size: .9em; }
+[data-theme="dark"] .fc-exp-cls--overdue, [data-theme="dark"] .fc-exp-cls--unreachable, [data-theme="dark"] .fc-exp-cls--critical { background: #7f1d1d; color: #fecaca; }
+[data-theme="dark"] .fc-exp-cls--high { background: #7c2d12; color: #fed7aa; }
+[data-theme="dark"] .fc-exp-cls--warning { background: #713f12; color: #fef08a; }
+[data-theme="dark"] .fc-exp-cls--later { background: #1e3a8a; color: #bfdbfe; }
+[data-theme="dark"] .fc-exp-plan.is-planned { background: #4c1d95; color: #ddd6fe; }
+[data-theme="dark"] .fc-exp-plan.is-done { background: #14532d; color: #bbf7d0; }
+[data-theme="dark"] .fc-batch { background: #713f12; color: #fef08a; border-color: #854d0e; }
+@media print {
+  .no-print, .fc-actions, .fc-exp-actions, .fc-range-filter, .fc-refresh, .help-fab { display: none !important; }
+  .forecast-page .fc-card { break-inside: avoid; box-shadow: none !important; }
+  .forecast-page .fc-row-2col { display: block !important; }
+  .forecast-page .fc-expiry-list { max-height: none !important; overflow: visible !important; }
+}
