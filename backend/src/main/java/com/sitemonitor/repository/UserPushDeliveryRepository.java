@@ -21,6 +21,10 @@ public interface UserPushDeliveryRepository extends JpaRepository<UserPushDelive
     /** Olaysız takım bildirimi (Zayıf Algoritma Raporu) dedupe'u — alertEventId yok. */
     boolean existsByDedupeKeyAndUsername(String dedupeKey, String username);
 
+    /** Alarm listesi "kanal durumu" çipi (2026-09-12, #16): sayfadaki alarmlar için durum × adet, tek sorgu. */
+    @Query("SELECT d.alertEventId, d.status, COUNT(d) FROM UserPushDelivery d WHERE d.alertEventId IN :ids GROUP BY d.alertEventId, d.status")
+    List<Object[]> countByAlertEventIdInGroupByStatus(@Param("ids") java.util.Collection<Long> ids);
+
     /** Saat tavanı: kullanıcı başına son bir saatte yazılmış GÖNDERİLEBİLİR satır sayısı. */
     @Query("""
            SELECT COUNT(d) FROM UserPushDelivery d

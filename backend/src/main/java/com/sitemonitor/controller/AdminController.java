@@ -1299,8 +1299,28 @@ public class AdminController {
         long staleTotal = alertEventRepo.countStale(resolvedEffective, staleBefore, domain,
                 alertTypeEffective, typeScoped, typesParam, qEffective, teamId, scoped, scopeList);
 
+        // Push kanal özeti (2026-09-12, #16): sayfadaki alarmlar için {sent, failed, skipped, other} — "neden hâlâ açık"
+        // satırına e-posta alıcılarının yanında push'un da ulaşıp ulaşmadığını koyar. Tek grup sorgusu; düşerse boş.
+        Map<String, Map<String, Long>> pushSummary = new LinkedHashMap<>();
+        try {
+            List<Long> ids = result.getContent().stream().map(AlertEvent::getId).filter(Objects::nonNull).toList();
+            if (!ids.isEmpty()) {
+                for (Object[] row : userPushDeliveryRepo.countByAlertEventIdInGroupByStatus(ids)) {
+                    String id = String.valueOf(row[0]);
+                    String st = String.valueOf(row[1]);
+                    long n = ((Number) row[2]).longValue();
+                    Map<String, Long> m = pushSummary.computeIfAbsent(id, k -> new LinkedHashMap<>(Map.of("sent", 0L, "failed", 0L, "skipped", 0L, "other", 0L)));
+                    String key = "SENT".equals(st) ? "sent" : "FAILED".equals(st) ? "failed" : st != null && st.startsWith("SKIPPED") ? "skipped" : "other";
+                    m.merge(key, n, Long::sum);
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Alarm listesi push özeti alınamadı: {}", e.toString());
+        }
+
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("data",         result.getContent());
+        body.put("push_summary", pushSummary);
         body.put("total",        result.getTotalElements());
         body.put("page",         result.getNumber());
         body.put("size",         result.getSize());

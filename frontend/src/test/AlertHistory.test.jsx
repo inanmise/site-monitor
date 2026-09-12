@@ -863,3 +863,27 @@ describe('AlertHistory closed-alert expiry (not_after)', () => {
     expect(document.querySelector('.ahc-chip-renewed')).toBeNull()
   })
 })
+
+describe('AlertHistory — "neden hâlâ açık?" çipleri (2026-09-12, #16)', () => {
+  it('açık alarmda onay/e-posta/push çipleri; push özeti sunucudan; kimseye ulaşmayan alarm kırmızı uyarı', async () => {
+    api.admin.getAlerts.mockResolvedValue({
+      success: true,
+      data: [
+        { ...closedAlert, id: 301, resolved: false, acknowledged: false, notified_contacts: '[]' },
+        { ...closedAlert, id: 302, domain: 'reached.example.com', resolved: false, acknowledged: true, acknowledged_by: 'ops',
+          notified_contacts: JSON.stringify([{ name: 'A', email: 'a@example.com', role: 'owner' }]) },
+      ],
+      push_summary: { 302: { sent: 2, failed: 1, skipped: 0, other: 0 } },
+      total: 2, page: 0, size: 20,
+    })
+    render(<AlertHistory />)
+    await waitFor(() => expect(screen.getByText('reached.example.com')).toBeDefined())
+    const whys = document.querySelectorAll('.alert-why')
+    expect(whys.length).toBe(2)
+    expect(whys[0].textContent).toMatch(/onaylanmadı|not acknowledged/)
+    expect(whys[0].textContent).toMatch(/kimseye ulaşmadı|reached nobody/)
+    expect(whys[1].textContent).toMatch(/onaylandı · ops|acknowledged · ops/)
+    expect(whys[1].textContent).toMatch(/push: 2 gönderildi · 1 başarısız|push: 2 sent · 1 failed/)
+    expect(whys[1].textContent).not.toMatch(/kimseye ulaşmadı|reached nobody/)
+  })
+})

@@ -4575,6 +4575,15 @@ export const TR = {
   'pspd.budgetLine': 'bütçe (eşik)',
   'pspd.breachWeek': 'Eşik üstü: bu hafta {0} · geçen hafta {1}',
   'pspd.breachWeekTip': 'Eşiği aşan ya da hata veren kontrol sayısı (son 7 gün / önceki 7 gün)',
+  // "Neden hâlâ açık?" (2026-09-12, #16)
+  'alh.whyOpen': 'Neden hâlâ açık?',
+  'alh.whyAcked': 'onaylandı · {0}',
+  'alh.whyUnacked': 'onaylanmadı',
+  'alh.whyEmail': 'e-posta: {0} alıcı',
+  'alh.whyPush': 'push: {0} gönderildi · {1} başarısız',
+  'alh.whyPushTip': 'Gönderildi {0} · başarısız {1} · atlandı {2}',
+  'alh.whyPushNone': 'push: kayıt yok',
+  'alh.whyNobody': 'kimseye ulaşmadı — alıcı kuralını kontrol edin',
   // Zayıf Algoritma Raporu — zenginleştirme (2026-09-12)
   'wa.loadError':         'Rapor yüklenemedi',
   'wa.retry':             'Yeniden dene',
@@ -11255,6 +11264,15 @@ export const EN = {
   'pspd.budgetLine': 'budget (threshold)',
   'pspd.breachWeek': 'Over budget: this week {0} · last week {1}',
   'pspd.breachWeekTip': 'Checks that breached a threshold or failed (last 7 days / previous 7 days)',
+  // "Why still open?" (2026-09-12, #16)
+  'alh.whyOpen': 'Why still open?',
+  'alh.whyAcked': 'acknowledged · {0}',
+  'alh.whyUnacked': 'not acknowledged',
+  'alh.whyEmail': 'email: {0} recipients',
+  'alh.whyPush': 'push: {0} sent · {1} failed',
+  'alh.whyPushTip': 'Sent {0} · failed {1} · skipped {2}',
+  'alh.whyPushNone': 'push: no record',
+  'alh.whyNobody': 'reached nobody — check the recipient rules',
   // Weak Algorithm Report — enrichment (2026-09-12)
   'wa.loadError':         'The report could not be loaded',
   'wa.retry':             'Try again',

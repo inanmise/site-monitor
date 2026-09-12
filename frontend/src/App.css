@@ -12775,6 +12775,18 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .cc-renewed-chip { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 1px 6px; border-radius: 6px; font-size: .74em; font-weight: 600; background: #dcfce7; color: #166534; white-space: nowrap; }
 [data-theme="dark"] .cc-renewed-chip { background: #052e16; color: #86efac; }
 
+/* "Neden hâlâ açık?" çipleri (Alarm Geçmişi açık sekmesi, 2026-09-12 #16) */
+.alert-why { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 4px 0 6px; font-size: .78em; }
+.alert-why-label { font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; font-size: .9em; }
+.alert-why-chip { padding: 1px 8px; border-radius: 999px; background: var(--bg-hover); color: var(--text); }
+.alert-why-chip.is-ok { background: #dcfce7; color: #166534; }
+.alert-why-chip.is-warn { background: #fef3c7; color: #92400e; }
+.alert-why-chip.is-bad { background: #fee2e2; color: #991b1b; }
+.alert-why-chip.is-muted { color: var(--text-light); }
+[data-theme="dark"] .alert-why-chip.is-ok { background: #052e16; color: #86efac; }
+[data-theme="dark"] .alert-why-chip.is-warn { background: #422006; color: #fcd34d; }
+[data-theme="dark"] .alert-why-chip.is-bad { background: #450a0a; color: #fca5a5; }
+
 /* Sayfa hızı eşik üstü haftalık karşılaştırma (2026-09-12 #15) */
 .pspd-breach-week { font-size: .76em; color: var(--text-muted); margin: 2px 0 4px; }
 .pspd-breach-week.is-worse b { color: var(--danger); }
