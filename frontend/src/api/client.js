@@ -792,6 +792,7 @@ export const api = {
       method: 'POST', body: JSON.stringify({ action, ids, ...(note ? { note } : {}) }),
     }),
     getAlertNotifications: (id) => request(`/admin/alerts/${id}/notifications`),
+    getAlertNoise: (days = 7) => request(`/admin/alerts/noise?days=${days}`),   // gürültü analizi (2026-09-12, #18)
     getAlertPushDeliveries: (id) => request(`/admin/alerts/${id}/push-deliveries`),
 
     // Teams

@@ -12457,6 +12457,42 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .mspark-sla.is-met .mspark-sla-target { color: var(--success); }
 .mspark-sla-bad { color: #d97706; }
 
+/* ── Alarm gürültü analizi (Alarm Geçmişi üstü, 2026-09-12 #18) ─────────────────────────────── */
+.noise { border: 1px solid var(--border); border-radius: 10px; background: var(--bg-surface); margin: 0 0 12px; }
+.noise-head { width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: none; border: 0; color: var(--text); font: inherit; font-weight: 600; cursor: pointer; text-align: left; border-radius: 10px; }
+.noise-head:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.noise-title { flex: 1; min-width: 0; }
+.noise-sum { font-size: .82em; font-weight: 500; color: var(--text-light); }
+.noise-chevron { transition: transform .15s; }
+.noise-chevron.is-open { transform: rotate(180deg); }
+.noise-body { padding: 0 14px 12px; }
+.noise-toolbar { display: flex; gap: 6px; margin-bottom: 10px; }
+.noise-empty { padding: 12px; color: var(--text-light); font-size: .88em; }
+.noise-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+.noise-block { min-width: 0; }
+.noise-block--wide { grid-column: 1 / -1; }
+.noise-block-title { font-size: .76em; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+.noise-block-title small { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text-light); }
+.noise-table { width: 100%; border-collapse: collapse; font-size: .84em; }
+.noise-table th { text-align: left; font-weight: 600; color: var(--text-muted); padding: 4px 6px; border-bottom: 1px solid var(--border); }
+.noise-table td { padding: 5px 6px; border-bottom: 1px solid var(--border); }
+.noise-link { background: none; border: 0; padding: 0; color: var(--primary); font: inherit; font-weight: 600; cursor: pointer; }
+.noise-link:hover { text-decoration: underline; }
+.noise-mono { font-family: monospace; font-size: .9em; color: var(--text-light); }
+.noise-bar { display: inline-block; min-width: 48px; padding: 0 4px; border-radius: 4px; background: linear-gradient(90deg, color-mix(in srgb, var(--danger) 35%, transparent) var(--w, 0%), transparent var(--w, 0%)); font-variant-numeric: tabular-nums; }
+.noise-heat { display: grid; grid-template-columns: 34px repeat(24, minmax(8px, 1fr)); gap: 2px; align-items: center; }
+.noise-heat-row { display: contents; }
+.noise-heat-corner { }
+.noise-heat-hour { font-size: .62em; color: var(--text-muted); text-align: center; }
+.noise-heat-day { font-size: .7em; font-weight: 600; color: var(--text-muted); }
+.noise-heat-cell { aspect-ratio: 1; border-radius: 2px; background: color-mix(in srgb, var(--danger) calc(var(--a, 0) * 100%), var(--bg-hover)); }
+.noise-flap-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: .86em; }
+.noise-flap-list li { padding: 6px 10px; border-radius: 8px; background: #fffbeb; color: #78350f; }
+.noise-tip { display: block; margin-top: 2px; font-size: .9em; color: #92400e; }
+.noise-tip .noise-link { margin-left: 4px; }
+[data-theme="dark"] .noise-flap-list li { background: #422006; color: #fde68a; }
+[data-theme="dark"] .noise-tip { color: #fcd34d; }
+
 /* ── Kesinti zaman çizelgesi (kontrol geçmişi, 2026-09-12 #12) ──────────────────────────────── */
 .otl { margin: 6px 0 10px; }
 .otl-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: .78em; margin-bottom: 4px; }

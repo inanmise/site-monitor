@@ -5,7 +5,8 @@ import { useToast } from '../ui/Toast.jsx'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
-import MaintenanceBadge from '../ui/MaintenanceBadge.jsx'   // alarm bakım penceresine denk geliyorsa rozet (2026-09-12, #19)
+import MaintenanceBadge from '../ui/MaintenanceBadge.jsx'
+import AlertNoisePanel from './AlertNoisePanel.jsx'   // alarm bakım penceresine denk geliyorsa rozet (2026-09-12, #19)
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../../hooks/useUrlQuerySync.js'
 import { readPageSize, writePageSize } from '../../hooks/usePagination.js'
 import UserBadge from '../ui/UserBadge.jsx'
@@ -1107,6 +1108,8 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
              sabit; orada takım/arama filtresi anlamsız olur ve modalı gereksiz uzatır. ── */}
       {urlSync && (
         <>
+          {/* Gürültü analizi (2026-09-12, #18): en çok alarm üreten hedefler, gün×saat ısı haritası, flap adayları */}
+          <AlertNoisePanel onPickDomain={(d) => { setSearch(d); setSearchTerm(d); setPage(0) }} />
           <MonitorStatsSection
             loading={loading} total={statItems[0].value}
             statsVisible={statsVisible} onToggle={() => setStatsVisible(v => !v)}
