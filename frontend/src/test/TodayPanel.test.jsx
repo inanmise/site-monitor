@@ -24,6 +24,9 @@ describe('TodayPanel', () => {
     window.addEventListener('sm:navigate', nav)
     render(<TodayPanel onOpenDomain={onOpen} />)
     await screen.findByText(/5 konu ilgi bekliyor|5 items need attention/)
+    // Varsayılan KAPALI: özet satırı görünür, kartlar açılınca gelir
+    expect(document.querySelector('.today-grid')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Sizin için|For you/ }))
     expect(screen.getByText(/1 tanesi DOLMUŞ|1 already EXPIRED/)).toBeInTheDocument()
     expect(screen.getByText(/1 tanesi KRİTİK|1 CRITICAL/)).toBeInTheDocument()
     expect(screen.getByText(/^taslak$|^draft$/)).toBeInTheDocument()
@@ -45,9 +48,10 @@ describe('TodayPanel', () => {
     await screen.findByText(/Bugün ilgilenilecek bir şey yok|Nothing needs attention today/)
     expect(document.querySelector('.today-grid')).toBeNull()
     const head = screen.getByRole('button', { name: /Sizin için|For you/ })
+    expect(head).toHaveAttribute('aria-expanded', 'false')   // varsayılan kapalı
     fireEvent.click(head)
-    expect(head).toHaveAttribute('aria-expanded', 'false')
-    expect(localStorage.getItem('today-panel-open')).toBe('false')
+    expect(head).toHaveAttribute('aria-expanded', 'true')
+    expect(localStorage.getItem('today-panel-open')).toBe('true')
   })
 
   it('uç başarısız → panel çizilmez', async () => {
