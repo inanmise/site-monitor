@@ -3,8 +3,35 @@ import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
+import TeamBadge from './ui/TeamBadge.jsx'
 import { readPageSize, writePageSize } from '../hooks/usePagination.js'
 import { isInsecure, securityTitle } from '../utils/certSecurity.js'
+
+/**
+ * Sütun seçici + kayıtlı görünüm (2026-09-12, zenginleştirme #10): hangi sütunların görüneceği ve
+ * sıralama/sayfa boyutu/durum süzgeci localStorage'da ("benim görünümüm"). domain ve durum sabit.
+ * Yeni isteğe bağlı sütunlar: takım, anahtar (tür + bit), imza algoritması — varsayılan kapalı.
+ */
+export const TABLE_COLUMNS = [
+  { key: 'domain',    labelKey: 'tbl.colDomain',  fixed: true },
+  { key: 'issuer',    labelKey: 'tbl.colIssuer',  def: true },
+  { key: 'subject',   labelKey: 'tbl.colSubject', def: true },
+  { key: 'team',      labelKey: 'tbl.colTeam',    def: false },
+  { key: 'expiry',    labelKey: 'tbl.colExpiry',  def: true },
+  { key: 'days',      labelKey: 'tbl.colDays',    def: true },
+  { key: 'status',    labelKey: 'tbl.colStatus',  fixed: true },
+  { key: 'key',       labelKey: 'tbl.colKey',     def: false },
+  { key: 'signature', labelKey: 'tbl.colSig',     def: false },
+  { key: 'checked',   labelKey: 'tbl.colChecked', def: true },
+]
+const VIEW_KEY = 'certtable-view'
+function readView() {
+  try { const v = JSON.parse(localStorage.getItem(VIEW_KEY) || 'null'); return v && typeof v === 'object' ? v : null } catch { return null }
+}
+function writeView(patch) {
+  try { localStorage.setItem(VIEW_KEY, JSON.stringify({ ...(readView() || {}), ...patch })) } catch { /* yoksay */ }
+}
+function defaultCols() { return TABLE_COLUMNS.filter((c) => c.fixed || c.def).map((c) => c.key) }
 
 export default function CertificatesTable({ onRowClick }) {
   const t = useT()
@@ -23,7 +50,11 @@ export default function CertificatesTable({ onRowClick }) {
   const [pagination, setPagination] = useState({ current_page: 1, total: 0, total_pages: 1 })
   const [page, setPage]             = useState(1)
   const [perPage, setPerPage]       = useState(() => readPageSize('certificates-table'))
-  const [sortBy, setSortBy]         = useState('priority|asc')
+  const [sortBy, setSortBy]         = useState(() => readView()?.sortBy || 'priority|asc')
+  const [cols, setCols]             = useState(() => { const v = readView()?.cols; return Array.isArray(v) && v.length ? v : defaultCols() })
+  const [colsOpen, setColsOpen]     = useState(false)
+  const show = (k) => cols.includes(k)
+  const toggleCol = (k) => setCols((c) => { const next = c.includes(k) ? c.filter((x) => x !== k) : [...c, k]; writeView({ cols: next }); return next })
   const [filterDomain, setFilterDomain] = useState('')
   const [filterIssuer, setFilterIssuer] = useState('')
   // Her tuşta istek atma — 300 ms sessizlikten sonra tek istek (AlertHistory/UserManager deseni).
@@ -33,7 +64,7 @@ export default function CertificatesTable({ onRowClick }) {
   useEffect(() => { const id = setTimeout(() => setIssuerTerm(filterIssuer), 300); return () => clearTimeout(id) }, [filterIssuer])
   // Fetch yarışı: "ba" yanıtı "ban" yanıtından SONRA gelirse tabloyu ve sayfa sayısını ezerdi.
   const loadSeq = useRef(0)
-  const [filterStatus, setFilterStatus] = useState('')
+  const [filterStatus, setFilterStatus] = useState(() => readView()?.filterStatus || '')
   const [loading, setLoading]       = useState(false)
   const [statusDropOpen, setStatusDropOpen] = useState(false)
   const statusDropRef = useRef(null)
@@ -101,7 +132,7 @@ export default function CertificatesTable({ onRowClick }) {
           <label>{t('tbl.sort')}</label>
           <SearchableSelect
             value={sortBy}
-            onChange={v => { setSortBy(v); setPage(1) }}
+            onChange={v => { setSortBy(v); setPage(1); writeView({ sortBy: v }) }}
             options={[
               { value: 'priority|asc',        label: t('tbl.sortPriority') },
               { value: 'domain|asc',          label: t('tbl.sortDomainAsc') },
@@ -117,16 +148,33 @@ export default function CertificatesTable({ onRowClick }) {
         <button className="btn btn-secondary" style={{ marginTop: 24 }} onClick={reset}>
           {t('tbl.reset')}
         </button>
+        <div className="colpick" style={{ marginTop: 24 }}>
+          <button type="button" className="btn btn-secondary" onClick={() => setColsOpen((o) => !o)} aria-expanded={colsOpen} aria-haspopup="true">
+            {t('tbl.columns')} ({cols.length}/{TABLE_COLUMNS.length})
+          </button>
+          {colsOpen && (
+            <div className="colpick-menu" role="group" aria-label={t('tbl.columns')}>
+              {TABLE_COLUMNS.map((c) => (
+                <label key={c.key} className={`colpick-item${c.fixed ? ' is-fixed' : ''}`}>
+                  <input type="checkbox" checked={show(c.key)} disabled={c.fixed} onChange={() => toggleCol(c.key)} /> {t(c.labelKey)}
+                </label>
+              ))}
+              <button type="button" className="btn btn-sm btn-secondary" onClick={() => { const d = defaultCols(); setCols(d); writeView({ cols: d }) }}>{t('tbl.columnsReset')}</button>
+              <span className="colpick-note">{t('tbl.viewSaved')}</span>
+            </div>
+          )}
+        </div>
       </div>
 
       <table className="certificates-table">
         <thead>
           <tr>
             <th>{t('tbl.colDomain')}</th>
-            <th>{t('tbl.colIssuer')}</th>
-            <th>{t('tbl.colSubject')}</th>
-            <th>{t('tbl.colExpiry')}</th>
-            <th>{t('tbl.colDays')}</th>
+            {show('issuer') && <th>{t('tbl.colIssuer')}</th>}
+            {show('subject') && <th>{t('tbl.colSubject')}</th>}
+            {show('team') && <th>{t('tbl.colTeam')}</th>}
+            {show('expiry') && <th>{t('tbl.colExpiry')}</th>}
+            {show('days') && <th>{t('tbl.colDays')}</th>}
             <th>
               <div className="cf-wrap" ref={statusDropRef}>
                 <button
@@ -159,16 +207,18 @@ export default function CertificatesTable({ onRowClick }) {
                 )}
               </div>
             </th>
-            <th>{t('tbl.colChecked')}</th>
+            {show('key') && <th>{t('tbl.colKey')}</th>}
+            {show('signature') && <th>{t('tbl.colSig')}</th>}
+            {show('checked') && <th>{t('tbl.colChecked')}</th>}
           </tr>
         </thead>
         <tbody>
           {loading ? (
-            <tr><td colSpan={7} className="loading">{t('tbl.loading')}</td></tr>
+            <tr><td colSpan={cols.length} className="loading">{t('tbl.loading')}</td></tr>
           ) : certs.length === 0 ? (
-            <tr><td colSpan={7} className="loading">{t('tbl.noCerts')}</td></tr>
+            <tr><td colSpan={cols.length} className="loading">{t('tbl.noCerts')}</td></tr>
           ) : certs.map((cert) => (
-            <TableRow key={cert.domain} cert={cert} onClick={onRowClick} />
+            <TableRow key={cert.domain} cert={cert} onClick={onRowClick} show={show} />
           ))}
         </tbody>
       </table>
@@ -179,13 +229,13 @@ export default function CertificatesTable({ onRowClick }) {
         rangeEnd={Math.min(p.current_page * perPage, p.total)}
         pageSize={perPage}
         onPageChange={setPage}
-        onPageSizeChange={n => { setPerPage(n); setPage(1); writePageSize('certificates-table', n) }}
+        onPageSizeChange={n => { setPerPage(n); setPage(1); writePageSize('certificates-table', n); writeView({ perPage: n }) }}
       />
     </>
   )
 }
 
-function TableRow({ cert, onClick }) {
+function TableRow({ cert, onClick, show = () => true }) {
   const t = useT()
   const days = cert.days_remaining
   // Hüküm SUNUCUDAN gelir (CertificateService.computeAlertLevel: expired/critical/high/warning/valid)
@@ -207,10 +257,11 @@ function TableRow({ cert, onClick }) {
   return (
     <tr data-domain={cert.domain} onClick={() => onClick(cert.domain)} style={{ cursor: 'pointer' }}>
       <td><strong>{cert.domain}</strong></td>
-      <td>{cert.issuer_cn || cert.issuer || 'N/A'}</td>
-      <td>{cert.subject || 'N/A'}</td>
-      <td>{formatDate(cert.not_after)}</td>
-      <td><strong>{days ?? 'N/A'}</strong></td>
+      {show('issuer') && <td>{cert.issuer_cn || cert.issuer || 'N/A'}</td>}
+      {show('subject') && <td>{cert.subject || 'N/A'}</td>}
+      {show('team') && <td>{cert.team_name ? <TeamBadge teamId={cert.team_id} teamName={cert.team_name} /> : '—'}</td>}
+      {show('expiry') && <td>{formatDate(cert.not_after)}</td>}
+      {show('days') && <td><strong>{days ?? 'N/A'}</strong></td>}
       <td>
         <span className={`table-status ${statusClass}`}></span>{statusText}
         {isInsecure(cert) && (
@@ -219,7 +270,9 @@ function TableRow({ cert, onClick }) {
           </span>
         )}
       </td>
-      <td>{formatDate(cert.checked_at)}</td>
+      {show('key') && <td className="wa-mono">{cert.public_key_algorithm ? `${cert.public_key_algorithm}${cert.public_key_size ? ' ' + cert.public_key_size : ''}` : '—'}</td>}
+      {show('signature') && <td className="wa-mono">{cert.signature_algorithm || '—'}</td>}
+      {show('checked') && <td>{formatDate(cert.checked_at)}</td>}
     </tr>
   )
 }

@@ -12775,6 +12775,14 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .cc-renewed-chip { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 1px 6px; border-radius: 6px; font-size: .74em; font-weight: 600; background: #dcfce7; color: #166534; white-space: nowrap; }
 [data-theme="dark"] .cc-renewed-chip { background: #052e16; color: #86efac; }
 
+/* Sütun seçici + kayıtlı görünüm (Tüm Sertifikalar, 2026-09-12 #10) */
+.colpick { position: relative; }
+.colpick-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 220px; padding: 8px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-surface); box-shadow: 0 8px 24px rgba(0,0,0,.18); display: flex; flex-direction: column; gap: 4px; }
+.colpick-item { display: flex; align-items: center; gap: 6px; font-size: .86em; cursor: pointer; }
+.colpick-item.is-fixed { opacity: .6; cursor: default; }
+.colpick-note { font-size: .74em; color: var(--text-light); }
+
 /* Yenileme yükü grafiği (Bitiş Tahmini, 2026-09-12 #9) */
 .fc-load { margin-top: 16px; }
 .fc-load-sum { margin-left: auto; font-size: .8em; color: var(--text-light); }

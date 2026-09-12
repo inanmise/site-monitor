@@ -4543,6 +4543,13 @@ export const TR = {
   'forecast.loadNone': 'Önümüzdeki 12 ayda dolacak sertifika yok',
   'forecast.loadOther': 'Diğer takımlar',
   'forecast.loadNote': 'Ay başına dolacak sertifika sayısı, takıma göre yığılmış. Aynı aya yığılan yenilemeler satın alma / CSR iş yükünü ve bütçeyi planlamak içindir.',
+  // Sütun seçici (2026-09-12, #10)
+  'tbl.columns': 'Sütunlar',
+  'tbl.columnsReset': 'Varsayılana dön',
+  'tbl.viewSaved': 'Sütun, sıralama ve sayfa boyutu tercihiniz bu tarayıcıda saklanır.',
+  'tbl.colTeam': 'Takım',
+  'tbl.colKey': 'Anahtar',
+  'tbl.colSig': 'İmza algoritması',
   // Zayıf Algoritma Raporu — zenginleştirme (2026-09-12)
   'wa.loadError':         'Rapor yüklenemedi',
   'wa.retry':             'Yeniden dene',
@@ -11191,6 +11198,13 @@ export const EN = {
   'forecast.loadNone': 'No certificates expire in the next 12 months',
   'forecast.loadOther': 'Other teams',
   'forecast.loadNote': 'Certificates expiring per month, stacked by team. Renewals piling into the same month drive procurement / CSR workload and budget planning.',
+  // Column chooser (2026-09-12, #10)
+  'tbl.columns': 'Columns',
+  'tbl.columnsReset': 'Reset to default',
+  'tbl.viewSaved': 'Your column, sort and page-size choices are kept in this browser.',
+  'tbl.colTeam': 'Team',
+  'tbl.colKey': 'Key',
+  'tbl.colSig': 'Signature algorithm',
   // Weak Algorithm Report — enrichment (2026-09-12)
   'wa.loadError':         'The report could not be loaded',
   'wa.retry':             'Try again',

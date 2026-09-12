@@ -110,3 +110,22 @@ describe('CertificatesTable', () => {
     expect(api.getCertificatesPaginated.mock.calls.map(c => c[0].filter_domain)).toEqual(['ban'])
   })
 })
+describe('CertificatesTable — sütun seçici + kayıtlı görünüm (2026-09-12, #10)', () => {
+  it('varsayılan 7 sütun; "Takım" açılınca başlık gelir ve tercih localStorage\'a yazılır; yeniden render tercihten okur', async () => {
+    try { localStorage.removeItem('certtable-view') } catch { /* yok */ }
+    api.getCertificatesPaginated.mockResolvedValue(paged([cert({ domain: 'col.example.com', team_name: 'Takım A', team_id: 1, public_key_algorithm: 'RSA', public_key_size: 2048 })]))
+    const { unmount } = render(<CertificatesTable onRowClick={() => {}} />)
+    await waitFor(() => expect(document.querySelector('tr[data-domain="col.example.com"]')).toBeTruthy())
+    expect(document.querySelectorAll('thead th').length).toBe(7)
+    fireEvent.click(screen.getByRole('button', { name: /Sütunlar|Columns/ }))
+    fireEvent.click(screen.getByLabelText(/^(Takım|Team)$/))
+    expect(document.querySelectorAll('thead th').length).toBe(8)
+    expect(JSON.parse(localStorage.getItem('certtable-view')).cols).toContain('team')
+    unmount()
+    render(<CertificatesTable onRowClick={() => {}} />)
+    await waitFor(() => expect(document.querySelector('tr[data-domain="col.example.com"]')).toBeTruthy())
+    expect(document.querySelectorAll('thead th').length).toBe(8)
+    expect(document.body.textContent).toContain('Takım A')
+    try { localStorage.removeItem('certtable-view') } catch { /* yok */ }
+  })
+})
