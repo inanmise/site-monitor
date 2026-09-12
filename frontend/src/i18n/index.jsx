@@ -4529,6 +4529,14 @@ export const TR = {
   'noise.flapLine': '{0} alarm, ortalama {1} dk açık kaldı',
   'noise.flapTip': 'Öneri: onay sayısını (confirm attempts) artırın ya da eşiği gevşetin; gerçek kesinti değil, titreme.',
   'noise.flapGo': 'Ayarlar',
+  // Ne değişti satırı (2026-09-12, #7)
+  'chg7.prefix': 'Son {0} gün:',
+  'chg7.added': '+{0} yeni alan',
+  'chg7.removed': '−{0} silinen',
+  'chg7.renewed': '{0} yenileme',
+  'chg7.opened': '{0} alarm açıldı',
+  'chg7.resolved': '{0} çözüldü',
+  'chg7.none': 'değişiklik yok',
   // Zayıf Algoritma Raporu — zenginleştirme (2026-09-12)
   'wa.loadError':         'Rapor yüklenemedi',
   'wa.retry':             'Yeniden dene',
@@ -11163,6 +11171,14 @@ export const EN = {
   'noise.flapLine': '{0} alerts, open for {1} min on average',
   'noise.flapTip': 'Suggestion: raise the confirm attempts or relax the threshold; this is flapping, not a real outage.',
   'noise.flapGo': 'Settings',
+  // What changed line (2026-09-12, #7)
+  'chg7.prefix': 'Last {0} days:',
+  'chg7.added': '+{0} new domains',
+  'chg7.removed': '−{0} removed',
+  'chg7.renewed': '{0} renewals',
+  'chg7.opened': '{0} alerts opened',
+  'chg7.resolved': '{0} resolved',
+  'chg7.none': 'no changes',
   // Weak Algorithm Report — enrichment (2026-09-12)
   'wa.loadError':         'The report could not be loaded',
   'wa.retry':             'Try again',

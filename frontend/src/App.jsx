@@ -64,6 +64,7 @@ const AuditLogViewer = lazy(() => import('./components/admin/AuditLogViewer'))
 const MonitorChangesConsole = lazy(() => import('./components/admin/MonitorChangesConsole'))
 const WeakAlgorithmReport = lazy(() => import('./components/admin/WeakAlgorithmReport'))
 import TodayPanel from './components/TodayPanel.jsx'
+import RecentChangesLine from './components/RecentChangesLine.jsx'
 const WeeklyReportsPage = lazy(() => import('./components/WeeklyReportsPage'))
 const IncidentHistoryPage = lazy(() => import('./components/IncidentHistoryPage'))
 const SystemHealth = lazy(() => import('./components/admin/SystemHealth'))
@@ -988,6 +989,8 @@ export default function App() {
                 weakStats={weakAlgStats} issuerStats={issuerStats}
                 certIssueStats={certIssueStats}
                 onCaClick={() => setCaModal(true)} />
+              {/* "Son 7 günde ne değişti" (2026-09-12, #7): anlık sayaçların altında tek satır hareket özeti */}
+              {statsVisible && <RecentChangesLine />}
             </div>
           )}
 

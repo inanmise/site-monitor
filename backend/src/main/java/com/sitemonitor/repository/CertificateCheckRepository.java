@@ -29,6 +29,14 @@ public interface CertificateCheckRepository extends JpaRepository<CertificateChe
         """)
     List<Object[]> weakObservationsSince(@Param("cutoff") String cutoff);
 
+    /** "Son 7 günde ne değişti" (2026-09-12, #7): pencere içinde birden fazla parmak izi görülen alanlar = yenileme. */
+    @Query("""
+        SELECT c.domain FROM CertificateCheck c
+        WHERE c.checkedAt >= :cutoff AND c.fingerprint IS NOT NULL
+        GROUP BY c.domain HAVING COUNT(DISTINCT c.fingerprint) > 1
+        """)
+    List<String> domainsWithFingerprintChangeSince(@Param("cutoff") String cutoff);
+
     // ── Kontrol Geçmişi v2 (domain anahtarlı, SSL): sayfalı aralık + hata filtresi + histogram ──
     Page<CertificateCheck> findByDomainAndCheckedAtBetween(String domain, String from, String to, Pageable p);
     Page<CertificateCheck> findByDomainAndStatusAndCheckedAtBetween(String domain, String status, String from, String to, Pageable p);

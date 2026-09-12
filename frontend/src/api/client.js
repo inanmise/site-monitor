@@ -307,6 +307,7 @@ export const api = {
 
   getStats: () => request('/stats'),
   getExecutiveStats: () => request('/stats/executive'),   // yönetici özeti (2026-09-12, #20)
+  getRecentChanges: (days = 7) => request(`/stats/changes?days=${days}`),   // "ne değişti" satırı (2026-09-12, #7)
 
   getTeamStats: () => request('/stats/teams'),
 

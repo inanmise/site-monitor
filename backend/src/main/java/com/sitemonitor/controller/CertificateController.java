@@ -241,6 +241,12 @@ public class CertificateController {
         return ok(Map.of("success", true, "data", executiveStatsService.build(teamId -> SessionScope.canView(session, teamId)), "timestamp", now()));
     }
 
+    /** "Son 7 günde ne değişti" (2026-09-12, #7). */
+    @GetMapping("/stats/changes")
+    public ResponseEntity<Map<String, Object>> getRecentChanges(@RequestParam(defaultValue = "7") int days, HttpSession session) {
+        return ok(Map.of("success", true, "data", executiveStatsService.recentChanges(days, teamId -> SessionScope.canView(session, teamId)), "timestamp", now()));
+    }
+
     @GetMapping("/stats/teams")
     public ResponseEntity<Map<String, Object>> getTeamStats(HttpSession session) {
         List<Long> scope = SessionScope.viewTeamIds(session);

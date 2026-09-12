@@ -37,6 +37,7 @@ public class ExecutiveStatsService {
     private final TeamRepository teamRepo;
     private final MonitorSparklineService sparklineService;
     private final AppSettingsService appSettings;
+    private final com.sitemonitor.repository.CertificateCheckRepository certificateCheckRepo;
 
     public Map<String, Object> build(Predicate<Long> canViewTeam) {
         Map<String, Object> out = new LinkedHashMap<>();
@@ -150,6 +151,41 @@ public class ExecutiveStatsService {
         out.put("teams", teams);
         out.put("window_days", WINDOW_DAYS);
         out.put("generated_at", ISO.format(Instant.now()));
+        return out;
+    }
+
+    /**
+     * "Son N günde ne değişti" satırı (2026-09-12, #7): yeni alan, silinen alan, yenilenen sertifika (parmak izi
+     * değişimi), açılan / çözülen alarm. Dashboard istatistik şeridinin altında tek satır.
+     */
+    public Map<String, Object> recentChanges(int days, Predicate<Long> canViewTeam) {
+        int d = Math.max(1, Math.min(90, days));
+        String since = ISO.format(Instant.now().minus(d, ChronoUnit.DAYS));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("days", d);
+        Set<String> visibleDomains = new HashSet<>();
+        int added = 0, removed = 0;
+        try {
+            for (CertificateInventory i : inventoryRepo.findAllByOrderByDomainAsc()) {
+                if (!canViewTeam.test(i.getTeamId())) continue;
+                if (i.getDeletedAt() != null) { if (i.getDeletedAt().compareTo(since) >= 0) removed++; continue; }
+                visibleDomains.add(i.getDomain());
+                if (i.getCreatedAt() != null && i.getCreatedAt().compareTo(since) >= 0) added++;
+            }
+        } catch (Exception e) { log.debug("changes: envanter düştü: {}", e.toString()); }
+        int renewed = 0;
+        try { for (String dom : certificateCheckRepo.domainsWithFingerprintChangeSince(since)) if (visibleDomains.contains(dom)) renewed++; }
+        catch (Exception e) { log.debug("changes: parmak izi sorgusu düştü: {}", e.toString()); }
+        int opened = 0, resolved = 0;
+        try {
+            for (AlertEvent e : alertEventRepo.findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(since)) {
+                if (!visible(e, canViewTeam, visibleDomains) || e.getCreatedAt() == null || e.getCreatedAt().compareTo(since) < 0) continue;
+                opened++;
+                if (Boolean.TRUE.equals(e.getResolved()) && e.getResolvedAt() != null && e.getResolvedAt().compareTo(since) >= 0) resolved++;
+            }
+        } catch (Exception e) { log.debug("changes: alarm sorgusu düştü: {}", e.toString()); }
+        out.put("added", added); out.put("removed", removed); out.put("renewed", renewed);
+        out.put("alerts_opened", opened); out.put("alerts_resolved", resolved);
         return out;
     }
 

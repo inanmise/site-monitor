@@ -46,6 +46,7 @@ class ExecutiveStatsServiceTest {
     @Mock TeamRepository teamRepo;
     @Mock MonitorSparklineService sparklineService;
     @Mock AppSettingsService appSettings;
+    @Mock com.sitemonitor.repository.CertificateCheckRepository certificateCheckRepo;
     ExecutiveStatsService svc;
 
     private static CertificateInventory inv(String d, Long team) { CertificateInventory i = new CertificateInventory(); i.setDomain(d); i.setTeamId(team); i.setActive(true); return i; }
@@ -58,7 +59,7 @@ class ExecutiveStatsServiceTest {
 
     @BeforeEach
     void setUp() {
-        svc = new ExecutiveStatsService(inventoryRepo, latestCheckRepo, alertEventRepo, teamRepo, sparklineService, appSettings);
+        svc = new ExecutiveStatsService(inventoryRepo, latestCheckRepo, alertEventRepo, teamRepo, sparklineService, appSettings, certificateCheckRepo);
         Team a = new Team(); a.setId(1L); a.setName("Takım A"); Team b = new Team(); b.setId(2L); b.setName("Takım B");
         when(teamRepo.findAll()).thenReturn(List.of(a, b));
         when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(
@@ -110,5 +111,18 @@ class ExecutiveStatsServiceTest {
         assertThat(m(b, "sla")).containsEntry("monitors", 1).containsEntry("breaches", 1);
         @SuppressWarnings("unchecked") List<Map<String, Object>> teams = (List<Map<String, Object>>) b.get("teams");
         assertThat(teams).hasSize(1);
+    }
+    @Test
+    @DisplayName("2026-09-12 #7: son 7 gün — yeni alan (created_at), silinen (deleted_at), yenilenen (parmak izi), açılan/çözülen alarm; kapsam")
+    void recentChanges() {
+        CertificateInventory fresh = inv("new.example.com", 1L); fresh.setCreatedAt(ISO.format(Instant.now().minus(2, ChronoUnit.DAYS)));
+        CertificateInventory old = inv("ok1.example.com", 1L); old.setCreatedAt(ISO.format(Instant.now().minus(40, ChronoUnit.DAYS)));
+        CertificateInventory gone = inv("gone.example.com", 1L); gone.setDeletedAt(ISO.format(Instant.now().minus(1, ChronoUnit.DAYS)));
+        CertificateInventory foreign = inv("f.example.com", 2L); foreign.setCreatedAt(ISO.format(Instant.now().minus(1, ChronoUnit.DAYS)));
+        when(inventoryRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(fresh, old, gone, foreign));
+        when(certificateCheckRepo.domainsWithFingerprintChangeSince(anyString())).thenReturn(List.of("ok1.example.com", "f.example.com"));
+        Map<String, Object> c = svc.recentChanges(7, t -> t != null && t == 1L);
+        assertThat(c).containsEntry("days", 7).containsEntry("added", 1).containsEntry("removed", 1).containsEntry("renewed", 1)
+                .containsEntry("alerts_opened", 1).containsEntry("alerts_resolved", 0);   // setUp: ev(1) 1 gün önce açık; 45/50 gün öncekiler dışarıda
     }
 }
