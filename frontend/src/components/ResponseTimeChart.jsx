@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
-  ResponsiveContainer, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine,
 } from 'recharts'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -85,7 +85,7 @@ const VALUE_FORMAT = {
   '': { fmt: (v) => String(v),       axis: (v) => String(v),         width: 40 },
 }
 
-export default function ResponseTimeChart({ monitorId, kind, metric, unit = 'ms' }) {
+export default function ResponseTimeChart({ monitorId, kind, metric, unit = 'ms', budget = null, budgetLabel = null }) {
   const t = useT()
   const isPing = kind === 'ping'
   // Sertifika: ana seri kontrol süresi (ms), yardımcı seri kalan gün — ping'in paket kaybı için
@@ -223,6 +223,11 @@ export default function ResponseTimeChart({ monitorId, kind, metric, unit = 'ms'
             <Tooltip content={<ChartTooltip t={t} isPing={isPing} isSsl={isSsl} fmt={valueFormat.fmt} />} />
             <Area yAxisId="ms" type="monotone" dataKey="band" name={t('chart.minmax')} hide={hidden.has('band')}
               fill="#bfdbfe" fillOpacity={0.45} stroke="none" isAnimationActive={false} connectNulls />
+            {/* Bütçe / eşik çizgisi (2026-09-12, #15): sayfa hızı eşiği grafikte görünür — aşımlar çizginin üstünde */}
+            {budget != null && Number.isFinite(Number(budget)) && Number(budget) > 0 && (
+              <ReferenceLine yAxisId="ms" y={Number(budget)} stroke="#dc2626" strokeDasharray="6 4" ifOverflow="extendDomain"
+                label={{ value: budgetLabel || t('chart.budget'), position: 'insideTopRight', fill: '#dc2626', fontSize: 10 }} />
+            )}
             <Line yAxisId="ms" type="monotone" dataKey="avg" name={t('chart.avg')} hide={hidden.has('avg')}
               stroke="#2563eb" strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />
             <Line yAxisId="ms" type="monotone" dataKey="p95" name={t('chart.p95')} hide={hidden.has('p95')}

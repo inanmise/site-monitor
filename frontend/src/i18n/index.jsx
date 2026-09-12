@@ -4570,6 +4570,11 @@ export const TR = {
   'bulk.deleteTitle': 'Toplu silme',
   'bulk.deleteMsg': '{0} izleme kalıcı olarak silinecek. Devam edilsin mi?',
   'bulk.deleteConfirm': 'Sil',
+  // Sayfa hızı bütçe / eşik (2026-09-12, #15)
+  'chart.budget': 'eşik',
+  'pspd.budgetLine': 'bütçe (eşik)',
+  'pspd.breachWeek': 'Eşik üstü: bu hafta {0} · geçen hafta {1}',
+  'pspd.breachWeekTip': 'Eşiği aşan ya da hata veren kontrol sayısı (son 7 gün / önceki 7 gün)',
   // Zayıf Algoritma Raporu — zenginleştirme (2026-09-12)
   'wa.loadError':         'Rapor yüklenemedi',
   'wa.retry':             'Yeniden dene',
@@ -11245,6 +11250,11 @@ export const EN = {
   'bulk.deleteTitle': 'Bulk delete',
   'bulk.deleteMsg': '{0} monitors will be deleted permanently. Continue?',
   'bulk.deleteConfirm': 'Delete',
+  // Page speed budget / threshold (2026-09-12, #15)
+  'chart.budget': 'threshold',
+  'pspd.budgetLine': 'budget (threshold)',
+  'pspd.breachWeek': 'Over budget: this week {0} · last week {1}',
+  'pspd.breachWeekTip': 'Checks that breached a threshold or failed (last 7 days / previous 7 days)',
   // Weak Algorithm Report — enrichment (2026-09-12)
   'wa.loadError':         'The report could not be loaded',
   'wa.retry':             'Try again',
