@@ -12457,6 +12457,21 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .mspark-sla.is-met .mspark-sla-target { color: var(--success); }
 .mspark-sla-bad { color: #d97706; }
 
+/* ── Kesinti zaman çizelgesi (kontrol geçmişi, 2026-09-12 #12) ──────────────────────────────── */
+.otl { margin: 6px 0 10px; }
+.otl-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: .78em; margin-bottom: 4px; }
+.otl-title { font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+.otl-sum { font-weight: 600; }
+.otl-sum.is-ok { color: var(--success); }
+.otl-sum.is-bad { color: var(--danger); }
+.otl-track { position: relative; height: 14px; border-radius: 7px; background: color-mix(in srgb, var(--success) 30%, transparent); overflow: hidden; }
+.otl-seg { position: absolute; top: 0; height: 100%; border: 0; padding: 0; cursor: pointer; background: var(--danger); min-width: 3px; }
+.otl-seg--warning { background: #d97706; }
+.otl-seg--high { background: #ea580c; }
+.otl-seg.is-open { background-image: repeating-linear-gradient(45deg, transparent 0 4px, rgba(255,255,255,.35) 4px 8px); }
+.otl-seg:hover, .otl-seg:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; }
+.otl-axis { display: flex; justify-content: space-between; font-size: .7em; color: var(--text-muted); margin-top: 2px; }
+
 /* ── Aylık takvim ızgarası (Yenileme / Bakım, 2026-09-12 #8/#19) ────────────────────────────── */
 .mcal { border: 1px solid var(--border); border-radius: 10px; background: var(--bg-surface); padding: 10px 12px; margin-bottom: 12px; }
 .mcal-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }

@@ -4502,6 +4502,12 @@ export const TR = {
   'renewal.icsPrefix': 'Sertifika yenileme:',
   'renewal.icsCal': 'Site Monitor — Sertifika yenilemeleri',
   'mw.calendar': 'Takvim',
+  // Kesinti zaman çizelgesi (2026-09-12, #12)
+  'otl.aria': 'Kesinti zaman çizelgesi',
+  'otl.title': 'Kesinti zaman çizelgesi',
+  'otl.none': 'Bu aralıkta alarm yok',
+  'otl.summary': '{0} alarm · toplam {1} · erişilebilirlik %{2}',
+  'otl.stillOpen': 'hâlâ açık',
   // Zayıf Algoritma Raporu — zenginleştirme (2026-09-12)
   'wa.loadError':         'Rapor yüklenemedi',
   'wa.retry':             'Yeniden dene',
@@ -11109,6 +11115,12 @@ export const EN = {
   'renewal.icsPrefix': 'Certificate renewal:',
   'renewal.icsCal': 'Site Monitor — Certificate renewals',
   'mw.calendar': 'Calendar',
+  // Outage timeline (2026-09-12, #12)
+  'otl.aria': 'Outage timeline',
+  'otl.title': 'Outage timeline',
+  'otl.none': 'No alerts in this range',
+  'otl.summary': '{0} alerts · total {1} · availability {2}%',
+  'otl.stillOpen': 'still open',
   // Weak Algorithm Report — enrichment (2026-09-12)
   'wa.loadError':         'The report could not be loaded',
   'wa.retry':             'Try again',
