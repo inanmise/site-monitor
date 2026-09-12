@@ -1,4 +1,5 @@
 import { LoadingBlock } from './ui/Progress.jsx'
+import PaginationBar from './ui/PaginationBar.jsx'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../api/client'
@@ -6,7 +7,7 @@ import { useT, useDateLocale } from '../i18n/index.jsx'
 import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 import { rcMeta, durationMs, formatDuration, formatIncidentTime } from '../utils/incidentMeta.js'
-import { Siren, RefreshCw, Trash2, MessageSquare, X, ExternalLink, ChevronLeft, ChevronRight,
+import { Siren, RefreshCw, Trash2, MessageSquare, X, ExternalLink,
   CheckCircle2, Send, Info, ArrowUp, ArrowDown } from 'lucide-react'
 
 const BANNER_KEY = 'incidents-banner-dismissed'
@@ -279,19 +280,11 @@ export default function IncidentsPage({ systemRole }) {
             </table>
           </div>
 
-          <div className="alh-pagination" style={{ marginTop: 10 }}>
-            <div className="alh-page-size">
-              <span>{t('incov.perPage')}</span>
-              {[10, 20, 50].map(n => (
-                <button key={n} className={`alh-size-btn${size === n ? ' is-active' : ''}`} onClick={() => changeSize(n)}>{n}</button>
-              ))}
-            </div>
-            <div className="alh-page-info">{t('incov.pageOf', page + 1, totalPages)} · {total} {t('incov.records')}</div>
-            <div className="alh-page-nav">
-              <button disabled={page === 0} onClick={() => setPage(p => p - 1)}><ChevronLeft size={13} /> {t('incov.prev')}</button>
-              <button disabled={page + 1 >= totalPages} onClick={() => setPage(p => p + 1)}>{t('incov.next')} <ChevronRight size={13} /></button>
-            </div>
-          </div>
+          {/* Standart sayfalama çubuğu (2026-09-12, #17): sayfaya git + boyut seçici, diğer listelerle aynı */}
+          <PaginationBar page={page + 1} totalPages={totalPages} totalItems={total}
+            rangeStart={total ? page * size + 1 : 0} rangeEnd={Math.min(total, (page + 1) * size)}
+            pageSize={size} sizeOptions={[10, 20, 50, 100]}
+            onPageChange={(p) => setPage(p - 1)} onPageSizeChange={(n) => changeSize(Number(n))} />
         </>
       )}
 

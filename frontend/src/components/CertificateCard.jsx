@@ -1,5 +1,5 @@
 import { ShieldAlert, ShieldCheck, MailWarning, BellOff, Clock, Calendar, Network, Globe, Users, Building2,
-  Play, Pencil, Copy, Trash2 } from 'lucide-react'
+  Play, Pencil, Copy, Trash2, RefreshCw } from 'lucide-react'
 import { memo } from 'react'
 import { formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -69,6 +69,9 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
   const viaLabel = cert.via === 'proxy' ? t('card.viaProxy') : t('card.viaDirect')
 
   const beforeMs = cert.not_before ? Date.parse(cert.not_before) : NaN
+  // 30 gün içinde başlamış sertifika = yeni yenilenmiş; kartta rozet (2026-09-12, #6)
+  const renewedDays = Number.isFinite(beforeMs) && !isError && (Date.now() - beforeMs) >= 0 && (Date.now() - beforeMs) <= 30 * 86400000
+    ? Math.floor((Date.now() - beforeMs) / 86400000) : null
   const afterMs  = cert.not_after  ? Date.parse(cert.not_after)  : NaN
   const totalDays = Number.isFinite(beforeMs) && Number.isFinite(afterMs)
     ? Math.round((afterMs - beforeMs) / 86400000)
@@ -158,12 +161,18 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
             <span className="cc-expires" title={t('card.expires')}>
               <Calendar size={12} />
               <span>{t('card.expiresShort')} {formatDate(cert.not_after)}</span>
+              {/* Yakın zamanda yenilendi (2026-09-12, #6): not_before ≤ 30 gün önce → "N gün önce yenilendi" */}
+              {renewedDays != null && (
+                <span className="cc-renewed-chip" title={t('card.renewedTip', formatDate(cert.not_before))}>
+                  <RefreshCw size={11} /> {renewedDays === 0 ? t('card.renewedToday') : t('card.renewedAgo', renewedDays)}
+                </span>
+              )}
             </span>
           ) : <span />}
           {showAlgo && (
             <span
               className={`cc-algo-chip cc-algo-${isWeak ? 'weak' : 'strong'}`}
-              title={isWeak ? 'Weak Algorithm' : 'Strong Algorithm'}
+              title={`${isWeak ? t('card.algoWeak') : t('card.algoStrong')}${cert.signature_algorithm ? ' · ' + cert.signature_algorithm : ''}`}
             >
               {isWeak ? <ShieldAlert size={13} /> : <ShieldCheck size={13} />}
               <span>{algoLabel}</span>
