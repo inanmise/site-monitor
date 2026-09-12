@@ -1198,4 +1198,26 @@ class EmailNotificationServiceTest {
         assertThat(html).contains("cid:shot0");                            // ekran görüntüsü (CID)
         assertThat(html).contains("hesap açıldı");                         // çözüm notu
     }
+    // ── Haftalık e-posta: Zayıf Algoritma bandı (2026-09-12) ─────────────────────────────
+
+    private static EmailNotificationService.AvailabilitySummary emptySummary() {
+        return new EmailNotificationService.AvailabilitySummary(0, 0, null, null, null, null, null, 0, null);
+    }
+
+    @Test
+    @DisplayName("2026-09-12: haftalık e-posta 'Zayıf algoritma: 0 (tarandı: N)' bandını taşır; zayıf varsa kırmızı kenar + yenileme notu; null → bant yok")
+    void weeklyHtml_weakAlgoBand() {
+        String clean = service.buildWeeklyAvailabilityHtml("Takım A", "2026-W37", java.util.List.of(), emptySummary(),
+                null, null, null, new EmailNotificationService.WeakAlgoWeekly(0, 212));
+        assertThat(clean).contains("Zayıf Algoritma").contains("Zayıf algoritmalı sertifika yok (tarandı: 212 alan)")
+                .contains("No weak-algorithm certificates (212 domains scanned)").contains("#16a34a");
+
+        String weak = service.buildWeeklyAvailabilityHtml("Takım A", "2026-W37", java.util.List.of(), emptySummary(),
+                null, null, null, new EmailNotificationService.WeakAlgoWeekly(2, 40));
+        assertThat(weak).contains("2 sertifika zayıf imza/anahtar kullanıyor (tarandı: 40 alan)").contains("#dc2626");
+
+        String none = service.buildWeeklyAvailabilityHtml("Takım A", "2026-W37", java.util.List.of(), emptySummary(),
+                null, null, null);
+        assertThat(none).doesNotContain("Zayıf Algoritma");
+    }
 }

@@ -81,6 +81,10 @@ export function InventoryDetails({ record, teamMap }) {
             : record.tls_mode === 'default' ? t('inv.tlsModeDefault')
             : t('inv.tlsModeInherit')
           } />
+          <ShowField label={t('inv.formInterval')} value={
+            ({ 1: t('inv.interval1h'), 6: t('inv.interval6h'), 12: t('inv.interval12h'), 24: t('inv.interval24h'), 168: t('inv.interval168h') })[record.check_interval_hours]
+            || t('inv.intervalInherit')
+          } />
         </div>
 
         {/* Sorumlu Ekipler — sertifikayi kimin yenileyecegi (yonlendirme DEGIL, bilgilendirme) */}

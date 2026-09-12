@@ -77,7 +77,7 @@ public class AdminController {
         "tlsMode", "purchasedBy", "changeDescription", "expectedFingerprint", "expectedSubject",
         "teamId", "groupName", "deletedAt", "notificationGroupId",
         "svcMgmtContact", "appDevContact", "iisAdminContact", "wafAdminContact",
-        "timeoutSeconds"
+        "timeoutSeconds", "checkIntervalHours"
     };
     private final CertificateInventoryRepository inventoryRepo;
     private final com.sitemonitor.service.DerivedMonitorTeamSync derivedMonitorTeamSync;
@@ -224,6 +224,7 @@ public class AdminController {
             throw new IllegalArgumentException("Port must be between 1 and 65535");
         if (item.getActive() == null) item.setActive(true);
         item.setTlsMode(normalizeTlsMode(item.getTlsMode()));
+        item.setCheckIntervalHours(normalizeInterval(item.getCheckIntervalHours()));
         // Bildirim grubu SAHIPLIK dogrulamasi — updateInventory ile AYNI kural. Olusturma yolunda
         // eksikti: baska takimin grup id'si ile kayit acilabiliyordu. Gonderim aninda ikinci bir
         // kapi daha var (NotificationGroupService yabanci grubu yok sayar) ama gecersiz deger yine
@@ -340,6 +341,7 @@ public class AdminController {
         // bir numaralı sessiz hatası; kontrol listesinde ayrıca yazılı.
         existing.setTimeoutSeconds(item.getTimeoutSeconds());
         existing.setTlsMode(item.getTlsMode());
+        existing.setCheckIntervalHours(normalizeInterval(item.getCheckIntervalHours()));
         existing.setPurchasedBy(item.getPurchasedBy());
         existing.setChangeDescription(item.getChangeDescription());
         existing.setTier(item.getTier());
@@ -449,6 +451,12 @@ public class AdminController {
     }
 
     /** tls_mode: null/blank → null (inherit global); only "browser"/"default" allowed. */
+    /** Kontrol sıklığı (saat): izin verilen değerler; başka/boş → null (genel zamanlama). */
+    static Integer normalizeInterval(Integer h) {
+        if (h == null) return null;
+        return java.util.Set.of(1, 6, 12, 24, 168).contains(h) ? h : null;
+    }
+
     private String normalizeTlsMode(String v) {
         if (v == null || v.isBlank()) return null;
         String m = v.trim().toLowerCase();
@@ -1291,8 +1299,28 @@ public class AdminController {
         long staleTotal = alertEventRepo.countStale(resolvedEffective, staleBefore, domain,
                 alertTypeEffective, typeScoped, typesParam, qEffective, teamId, scoped, scopeList);
 
+        // Push kanal özeti (2026-09-12, #16): sayfadaki alarmlar için {sent, failed, skipped, other} — "neden hâlâ açık"
+        // satırına e-posta alıcılarının yanında push'un da ulaşıp ulaşmadığını koyar. Tek grup sorgusu; düşerse boş.
+        Map<String, Map<String, Long>> pushSummary = new LinkedHashMap<>();
+        try {
+            List<Long> ids = result.getContent().stream().map(AlertEvent::getId).filter(Objects::nonNull).toList();
+            if (!ids.isEmpty()) {
+                for (Object[] row : userPushDeliveryRepo.countByAlertEventIdInGroupByStatus(ids)) {
+                    String id = String.valueOf(row[0]);
+                    String st = String.valueOf(row[1]);
+                    long n = ((Number) row[2]).longValue();
+                    Map<String, Long> m = pushSummary.computeIfAbsent(id, k -> new LinkedHashMap<>(Map.of("sent", 0L, "failed", 0L, "skipped", 0L, "other", 0L)));
+                    String key = "SENT".equals(st) ? "sent" : "FAILED".equals(st) ? "failed" : st != null && st.startsWith("SKIPPED") ? "skipped" : "other";
+                    m.merge(key, n, Long::sum);
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Alarm listesi push özeti alınamadı: {}", e.toString());
+        }
+
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("data",         result.getContent());
+        body.put("push_summary", pushSummary);
         body.put("total",        result.getTotalElements());
         body.put("page",         result.getNumber());
         body.put("size",         result.getSize());

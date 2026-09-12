@@ -13,7 +13,11 @@ const axisLabel = (ts, gran, lastInclusive) => {
     : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
-export default function MiniChart({ data = [], color = '#4f9cf9', label, unit = '%', maxY, onClick, gran }) {
+/**
+ * thresholds (2026-09-12, #23): { warn, crit } → grafikte kesikli uyarı/kritik bandı + başlıkta "ihlal: N"
+ * rozeti (pencere içinde eşiği aşan nokta sayısı). Eşik yoksa görünüm eskisiyle aynı.
+ */
+export default function MiniChart({ data = [], color = '#4f9cf9', label, unit = '%', maxY, onClick, gran, thresholds = null, breachLabel = null }) {
   const W = 400, H = 82
   const PAD = { top: 8, bottom: 20, left: 34, right: 8 }
   const pw = W - PAD.left - PAD.right   // plot width
@@ -35,6 +39,10 @@ export default function MiniChart({ data = [], color = '#4f9cf9', label, unit = 
     : ''
 
   const gradId = `cg-${label?.replace(/\W/g, '')}`
+  const warn = thresholds?.warn ?? null, crit = thresholds?.crit ?? null
+  const critCount = crit != null ? values.filter(v => v >= crit).length : 0
+  const warnCount = warn != null ? values.filter(v => v >= warn && (crit == null || v < crit)).length : 0
+  const breachTone = critCount > 0 ? 'crit' : warnCount > 0 ? 'warn' : (warn != null || crit != null) ? 'ok' : null
   const yTicks = [0, 0.25, 0.5, 0.75, 1]
 
   return (
@@ -45,6 +53,12 @@ export default function MiniChart({ data = [], color = '#4f9cf9', label, unit = 
     >
       <div className="mini-chart-hdr">
         <span className="mini-chart-lbl">{label}</span>
+        {breachTone && (
+          <span className={`mini-chart-breach mini-chart-breach--${breachTone}`}
+            title={`warn ≥ ${warn ?? '—'}${unit} · crit ≥ ${crit ?? '—'}${unit}`}>
+            {breachTone === 'ok' ? '✓' : `${critCount + warnCount}${breachLabel ? ' ' + breachLabel : ''}`}
+          </span>
+        )}
         {current != null
           ? <span className="mini-chart-cur" style={{ color }}>{current}{unit}</span>
           : <span className="mini-chart-cur mini-chart-na">—</span>
@@ -74,6 +88,9 @@ export default function MiniChart({ data = [], color = '#4f9cf9', label, unit = 
           )
         })}
 
+        {/* Eşik bantları (2026-09-12, #23) — yMax içinde kalanlar çizilir */}
+        {warn != null && warn <= yMax && <line x1={PAD.left} y1={toY(warn)} x2={W - PAD.right} y2={toY(warn)} stroke="#d97706" strokeWidth="0.8" strokeDasharray="4,3" className="mini-chart-thr" />}
+        {crit != null && crit <= yMax && <line x1={PAD.left} y1={toY(crit)} x2={W - PAD.right} y2={toY(crit)} stroke="#dc2626" strokeWidth="0.8" strokeDasharray="4,3" className="mini-chart-thr" />}
         {/* Area fill */}
         {area && <path d={area} fill={`url(#${gradId})`} />}
 

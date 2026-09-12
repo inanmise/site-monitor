@@ -6,6 +6,7 @@ import SegmentedControl from '../ui/SegmentedControl.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import DateTimeRangePicker from '../ui/DateTimeRangePicker.jsx'
 import DensityStrip from './DensityStrip.jsx'
+import OutageTimeline from './OutageTimeline.jsx'
 import useCheckHistory from './useCheckHistory.js'
 import useUrlQuerySync from '../../hooks/useUrlQuerySync.js'
 import { LoadingBlock } from '../ui/Progress.jsx'
@@ -191,6 +192,8 @@ export default function CheckHistoryTab({
         </div>
       )}
 
+      {/* Kesinti zaman çizelgesi (2026-09-12, #12): alarm açılış→çözüm segmentleri, süre + Alarm Geçmişi bağlantısı */}
+      <OutageTimeline alerts={h.alerts} range={h.range} />
       <DensityStrip buckets={h.buckets} zoomed={!fixedMode && h.preset === 'custom'}
         onZoom={(fromIso, toIso) => {
           if (fixedMode) { onRangeChange?.(new Date(fromIso + 'Z'), new Date(toIso + 'Z')); return }

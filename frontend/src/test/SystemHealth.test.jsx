@@ -119,6 +119,16 @@ describe('SystemHealth — akordiyon bölümleri hatasız render eder', () => {
     expect(collapseBars().length).toBe(SECTIONS.length)
   })
 
+  it('2026-09-12: "30 sn otomatik yenileme" notu SON bölümün (Sürüm & Dağıtım) ALTINDA — bölümler arasında sahipsiz kalmaz', async () => {
+    renderHealth()
+    await waitFor(() => expect(api.admin.getSystemHealth).toHaveBeenCalled())
+    const note = document.querySelector('.sys-refresh-note')
+    expect(note).not.toBeNull()
+    const lastBar = collapseBars()[SECTIONS.length - 1]
+    // DOCUMENT_POSITION_FOLLOWING (4): not, son katlanır çubuktan SONRA gelir
+    expect(lastBar.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it.each(SECTIONS.map((s, i) => [s, i]))(
     '"%s" bölümü açıldığında çökmez',
     async (_name, index) => {

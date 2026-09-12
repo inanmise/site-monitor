@@ -42,16 +42,34 @@ public class WeeklyReportReminderService {
     @Value("${site.monitor.app.base-url:http://localhost:5173}")
     private String appBaseUrl;
 
+    /** "bugün saat 15:00" / "Cuma saat 15:00" — mail vurgusu; son giriş günü bugünse "bugün". */
+    static String deadlineText(WeeklyReportDeadline d, LocalDate today) {
+        String when = today.getDayOfWeek() == d.day() ? "bugün" : d.dayNameTr();
+        return when + " saat " + d.timeText();
+    }
+
     /** Gönderim özeti — loglama/test için. */
     public record ReminderResult(int candidates, int sent, int skippedNoEmail, int skippedDone, int skippedDisabled) {}
 
-    public ReminderResult sendFridayReminders() {
+    public ReminderResult sendFridayReminders() { return sendFridayReminders(false); }
+
+    /**
+     * @param scheduledRun true = zamanlayıcıdan (her gün 09:00): yalnız SON GİRİŞ GÜNÜNDE gönderir;
+     *                     false = elle tetik (/reminders/trigger): gün kontrolü yok.
+     */
+    public ReminderResult sendFridayReminders(boolean scheduledRun) {
         if (!enabled) {
             log.info("Haftalık rapor hatırlatması devre dışı (reminder-enabled=false) — atlandı");
             return new ReminderResult(0, 0, 0, 0, 0);
         }
 
         LocalDate today = LocalDate.now(IST);
+        WeeklyReportDeadline deadline = WeeklyReportDeadline.resolve(appSettings);
+        if (scheduledRun && today.getDayOfWeek() != deadline.day()) {
+            log.debug("Haftalık rapor hatırlatması: bugün {} son giriş günü değil ({}) — atlandı",
+                    today.getDayOfWeek(), deadline.day());
+            return new ReminderResult(0, 0, 0, 0, 0);
+        }
         int year = today.get(WeekFields.ISO.weekBasedYear());
         int week = today.get(WeekFields.ISO.weekOfWeekBasedYear());
         String weekLabel = WeeklyReportService.computeWeekLabel(year, week);
@@ -86,7 +104,8 @@ public class WeeklyReportReminderService {
 
             String subject = "[Site Monitor] " + team.getName() + " — Haftalık rapor hatırlatması (" + weekLabel + ")";
             // Logo şablonun başlık çubuğundan gelir; CID ekini sendHtml hunisi otomatik iliştirir.
-            String html = emailService.buildWeeklyReportReminderHtml(team.getName(), weekLabel, url);
+            String html = emailService.buildWeeklyReportReminderHtml(team.getName(), weekLabel, url,
+                    deadlineText(deadline, today));
             String status = emailService.sendHtml(new String[]{teamEmail}, null, subject, html, null);
             sent++;
             log.info("Haftalık rapor hatırlatması: team={} week={} to={} status={}",

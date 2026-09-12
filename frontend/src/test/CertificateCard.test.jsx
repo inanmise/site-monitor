@@ -166,3 +166,20 @@ describe('CertificateCard — aksiyon butonları', () => {
     expect(actionBtns()).toHaveLength(0)
   })
 })
+
+describe('CertificateCard — yakın zamanda yenilendi rozeti (2026-09-12, #6)', () => {
+  const base = { domain: 'r.example.com', status: 'valid', alert_level: 'OK', days_remaining: 300, not_after: '2027-07-01T00:00:00', checked_at: '2026-09-12T10:00:00', public_key_algorithm: 'RSA', public_key_size: 2048, signature_algorithm: 'SHA256withRSA' }
+  it('not_before 5 gün önce → "5 gün önce yenilendi"; 90 gün önce → rozet yok', () => {
+    const ago = (d) => new Date(Date.now() - d * 86400000).toISOString()
+    const { container, unmount } = render(<CertificateCard cert={{ ...base, not_before: ago(5) }} isWeak={false} onClick={() => {}} />)
+    expect(container.querySelector('.cc-renewed-chip')).not.toBeNull()
+    expect(container.querySelector('.cc-renewed-chip').textContent).toMatch(/5 gün önce yenilendi|Renewed 5 days ago/)
+    unmount()
+    const { container: c2 } = render(<CertificateCard cert={{ ...base, not_before: ago(90) }} isWeak={false} onClick={() => {}} />)
+    expect(c2.querySelector('.cc-renewed-chip')).toBeNull()
+  })
+  it('algoritma çipi başlığı imza algoritmasını da taşır', () => {
+    const { container } = render(<CertificateCard cert={{ ...base, not_before: '2026-01-01T00:00:00' }} isWeak={false} onClick={() => {}} />)
+    expect(container.querySelector('.cc-algo-chip').getAttribute('title')).toMatch(/SHA256withRSA/)
+  })
+})

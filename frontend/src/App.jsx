@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
-import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock } from 'lucide-react'
+import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Inbox, ShieldCheck } from 'lucide-react'
 
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
@@ -33,6 +33,7 @@ import CheckTeamPicker, { NO_TEAM } from './components/check/CheckTeamPicker.jsx
 import AnnouncementBanner from './components/AnnouncementBanner.jsx'
 import { LastLoginNotice } from './components/LastLoginInfo.jsx'
 import { LoadingBlock } from './components/ui/Progress.jsx'
+import StatusBlock from './components/ui/StatusBlock.jsx'
 
 // Ağır/seyrek admin & rapor sekmeleri — lazy (kod-bölme): ilk yük küçülür, sekme
 // açılınca yüklenir. Hepsi aşağıdaki tek <Suspense> sınırı altında render edilir.
@@ -63,6 +64,9 @@ const InventoryManager = lazy(() => import('./components/admin/InventoryManager'
 const AuditLogViewer = lazy(() => import('./components/admin/AuditLogViewer'))
 const MonitorChangesConsole = lazy(() => import('./components/admin/MonitorChangesConsole'))
 const WeakAlgorithmReport = lazy(() => import('./components/admin/WeakAlgorithmReport'))
+import TodayPanel from './components/TodayPanel.jsx'
+import RecentChangesLine from './components/RecentChangesLine.jsx'
+import HelpDrawer from './components/HelpDrawer.jsx'
 const WeeklyReportsPage = lazy(() => import('./components/WeeklyReportsPage'))
 const IncidentHistoryPage = lazy(() => import('./components/IncidentHistoryPage'))
 const SystemHealth = lazy(() => import('./components/admin/SystemHealth'))
@@ -121,6 +125,8 @@ function formatDurationShort(ms) {
 // Mail/derin-link ile gelen ?tab= değeri — yalnız bilinen sekme anahtarları kabul edilir.
 /** Aynı sekmede param değişimi: handleTabChange(id, extraParams) → sayfalar bu olayı dinler (HelpPage view, SystemHealth sec). */
 export const TAB_PARAMS_EVENT = 'sm:tab-params'
+/** Programatik gezinme olayı — bkz. utils/navigate.js */
+export const NAVIGATE_EVENT = 'sm:navigate'
 
 const VALID_TABS = new Set([
   'dashboard', 'all', 'domains', 'forecast', 'renewal', 'renewal-guide',
@@ -306,6 +312,24 @@ export default function App() {
     }
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
+  }, [])
+
+  // Programatik sekme geçişi (2026-09-12): kartlar/palet/bildirim kutusu `navigateTo(tab, params)` yayar,
+  // burada handleTabChange ile aynı yoldan (URL + geçmiş kaydı) uygulanır. Ref: handleTabChange her render'da yeni.
+  const tabChangeRef = useRef(null)
+  tabChangeRef.current = handleTabChange
+  useEffect(() => {
+    const onNav = (e) => {
+      const tab = e?.detail?.tab
+      if (!tab || !VALID_TABS.has(tab)) return
+      tabChangeRef.current?.(tab, e.detail.params)
+      // Palet/bildirim sonuçları: ?domain= dashboard aramasına, ?team= takım süzgecine düşer.
+      const p = e.detail.params || {}
+      if (p.domain) setSearch(String(p.domain))
+      if (p.team) setTeamFilter(String(p.team))
+    }
+    window.addEventListener(NAVIGATE_EVENT, onNav)
+    return () => window.removeEventListener(NAVIGATE_EVENT, onNav)
   }, [])
 
   useEffect(() => {
@@ -902,6 +926,8 @@ export default function App() {
       )}
 
       <main className="app-main">
+        {/* Bağlama duyarlı yardım (2026-09-12, #24): sağ altta "?", o sayfanın kılavuz bölümü yan panelde */}
+        <HelpDrawer tab={tab} />
         <AnnouncementBanner heroOnMount />
         {/* Yalnız şüpheli durumda (önceki girişten bu yana başarısız deneme varsa) görünür. */}
         <LastLoginNotice info={loginInfo} />
@@ -967,6 +993,8 @@ export default function App() {
                 weakStats={weakAlgStats} issuerStats={issuerStats}
                 certIssueStats={certIssueStats}
                 onCaClick={() => setCaModal(true)} />
+              {/* "Son 7 günde ne değişti" (2026-09-12, #7): anlık sayaçların altında tek satır hareket özeti */}
+              {statsVisible && <RecentChangesLine />}
             </div>
           )}
 
@@ -1043,6 +1071,8 @@ export default function App() {
                     </button>
                   )}
                 </div>
+                {/* "Sizin için — bugün" (2026-09-12, #3): takımın ilgilenmesi gerekenler, sayfanın üstünde */}
+                <TodayPanel onOpenDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} />
                 <div className="dashboard-header">
                   <h2>{t('app.dashTitle')}</h2>
                   {statsFilter && (
@@ -1068,7 +1098,7 @@ export default function App() {
                   )}
                 </div>
                 {sorted.length === 0 ? (
-                  <LoadingBlock label={statsFilter ? t('app.noFilterCerts', STAT_FILTER_LABEL[statsFilter]) : t('app.noCerts')} fullWidth />
+                  <StatusBlock tone="neutral" icon={Inbox} title={statsFilter ? t('app.noFilterCerts', STAT_FILTER_LABEL[statsFilter]) : t('app.noCerts')} description={statsFilter || search ? t('empty.hintFilter') : t('empty.hintCerts')} />
                 ) : (
                   <>
                     <div className="cards-container">
@@ -1107,7 +1137,7 @@ export default function App() {
                   ⓘ {t('app.sslHourlyNote')}
                 </div>
                 {warnings.length === 0 ? (
-                  <LoadingBlock label={t('app.noWarnings')} fullWidth />
+                  <StatusBlock tone="success" icon={ShieldCheck} title={t('app.noWarnings')} description={t('empty.hintAllGood')} />
                 ) : (
                   <>
                   <div className="cards-container">

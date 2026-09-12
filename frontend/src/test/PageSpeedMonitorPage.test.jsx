@@ -590,3 +590,14 @@ describe('formatBytes', () => {
     expect(formatBytes('abc')).toBe('—')
   })
 })
+
+describe('PageSpeedMonitorPage — eşik üstü haftalık karşılaştırma (2026-09-12, #15)', () => {
+  it('7 gün / 14 gün SLA verisinden "bu hafta 3 · geçen hafta 5 ↓" satırı kartta', async () => {
+    api.monitoring.getSla = vi.fn((type, days) => Promise.resolve({ success: true, target_pct: 99.9, days,
+      data: { 1: { n: 100, fail: days === 7 ? 3 : days === 14 ? 8 : 10, up_pct: 97, bad_hours: 2 } } }))
+    render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await screen.findByText('https://x.com/odeme')
+    const line = await screen.findByText(/Eşik üstü: bu hafta 3 · geçen hafta 5|Over budget: this week 3 · last week 5/)
+    expect(line.closest('.pspd-breach-week').classList.contains('is-better')).toBe(true)
+  })
+})

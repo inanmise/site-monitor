@@ -438,6 +438,56 @@ public class UserPushService {
         return out;
     }
 
+    /**
+     * Takıma DOĞRUDAN bildirim (2026-09-12, Zayıf Algoritma Raporu "takıma bildir"): alarm olayı yok,
+     * alıcılar takım + seviye ile çözülür (rol grubu / asgari seviye / sessiz saat kuralları aynen).
+     * Kanal paritesi: e-posta ile aynı anda push. Dedupe anahtarı çağıranın verdiği {@code dedupeKey}
+     * (aynı alan için gün içinde ikinci tıklama tekrar yazmaz). Dönen harita: queued / skipped.
+     */
+    public Map<String, Object> enqueueTeamNotice(Long teamId, String trigger, String alertLevel,
+                                                 String monitorName, String message, String dedupeKey) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("queued", 0); out.put("skipped", 0); out.put("recipients", List.of());
+        if (!enabled()) { out.put("reason", "SKIPPED_DISABLED"); return out; }
+        if (teamId == null) { out.put("reason", "SKIPPED_NO_TEAM"); return out; }
+        List<UserPushRecipientResolver.Recipient> recipients = resolver.resolve(teamId, alertLevel);
+        if (recipients.isEmpty()) { out.put("reason", "SKIPPED_NO_RECIPIENTS"); return out; }
+        String batchId = UUID.randomUUID().toString().substring(0, 8);
+        String now = ISO.format(Instant.now());
+        String since = ISO.format(Instant.now().minus(Duration.ofHours(1)));
+        String text = PushText.truncate(PushText.pushSafe(message), maxMessageChars());
+        int queued = 0, skipped = 0;
+        List<String> names = new ArrayList<>();
+        for (var r : recipients) {
+            String status;
+            if (r.skipReason() != null) status = r.skipReason();
+            else if (deliveryRepo.countRecentForUser(r.username(), since) >= hourlyCap()) status = "RATE_LIMITED";
+            else if (circuitOpen()) status = "CIRCUIT_OPEN";
+            else status = "PENDING";
+            if (dedupeKey != null && deliveryRepo.existsByDedupeKeyAndUsername(dedupeKey, r.username())) { skipped++; continue; }
+            UserPushDelivery d = new UserPushDelivery();
+            d.setTrigger(trigger);
+            d.setDedupeKey(dedupeKey);
+            d.setMonitorType("CERTIFICATE");
+            d.setMonitorName(monitorName);
+            d.setTeamId(teamId);
+            d.setAlertLevel(alertLevel);
+            d.setUsername(r.username());
+            d.setDisplayName(r.displayName());
+            d.setTitle(titleSetting());
+            d.setMessage(text);
+            d.setStatus(status);
+            d.setCreatedAt(now);
+            d.setBatchId(batchId);
+            try { deliveryRepo.save(d); } catch (Exception dup) { skipped++; continue; }
+            if ("PENDING".equals(status)) { queued++; names.add(r.displayName() == null ? r.username() : r.displayName()); }
+            else skipped++;
+        }
+        if (queued > 0) worker.execute(this::drainOutbox);
+        out.put("queued", queued); out.put("skipped", skipped); out.put("recipients", names); out.put("batch_id", batchId);
+        return out;
+    }
+
     // ── Outbox worker ──────────────────────────────────────────────────────────────────────
 
     /** PENDING satırları batch bazında gönderir. Tek worker — eşzamanlılık yok. */

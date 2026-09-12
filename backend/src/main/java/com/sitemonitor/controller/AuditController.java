@@ -38,6 +38,9 @@ public class AuditController {
     private final AuditService auditService;
     private final com.sitemonitor.service.DeviceHistoryService deviceHistoryService;
     private final com.sitemonitor.repository.AppUserRepository appUserRepo;
+    private final com.sitemonitor.service.WeakAlgorithmReportService weakAlgoService;
+    private final com.sitemonitor.service.EmailNotificationService emailService;
+    private final com.sitemonitor.service.UserPushService userPushService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -213,92 +216,102 @@ public class AuditController {
                         .body(Map.of("success", false, "error", "Denetim kaydı bulunamadı")));
     }
 
+    /**
+     * Zayıf Algoritma Raporu — zengin gövde {@link com.sitemonitor.service.WeakAlgorithmReportService}'ten
+     * (2026-09-12). Eski alanlar ({@code data/total/critical/high}) aynen korunur.
+     */
     @GetMapping("/audit/weak-algorithms")
     public ResponseEntity<Map<String, Object>> weakAlgorithmReport(HttpSession session) {
         permissionService.require(session, "weak_algo.read", "view");
-        // Tüm tabloyu çekmek yerine zayıf-algoritma adaylarını DB'de filtrele
-        List<LatestCheck> weakCandidates = latestCheckRepo.findWeakAlgorithmCandidates();
+        return ok(weakAlgoService.build());
+    }
 
-        // Envanteri yalnız aday domain'ler için yükle (tüm envanter taranmaz)
-        List<String> weakDomains = weakCandidates.stream()
-                .map(LatestCheck::getDomain).filter(Objects::nonNull).distinct().toList();
-        Map<String, CertificateInventory> invMap = weakDomains.isEmpty()
-                ? Map.of()
-                : inventoryRepo.findByDomainIn(weakDomains).stream()
-                        .collect(Collectors.toMap(CertificateInventory::getDomain, i -> i, (a, b) -> a));
+    /** CSV dışa aktarma — sertifika + TLS + zincir bulguları tek dosyada; denetim kaydı düşer. */
+    @GetMapping(value = "/audit/weak-algorithms/export", produces = "text/csv")
+    public ResponseEntity<String> weakAlgorithmExport(HttpSession session, HttpServletRequest request) {
+        permissionService.require(session, "weak_algo.read", "view");
+        Map<String, Object> body = weakAlgoService.build();
+        String csv = weakAlgoService.toCsv(body);
+        auditService.recordAction("WEAK_ALGO_EXPORT", session, request, "WEAK_ALGO", "export",
+                "{\"rows\":" + body.get("total") + ",\"tls\":" + ((Map<?, ?>) body.get("tls")).get("total")
+                + ",\"chain\":" + ((Map<?, ?>) body.get("chain")).get("total") + "}");
+        String fname = "weak-algorithms-" + now().substring(0, 10) + ".csv";
+        return ResponseEntity.ok()
+                .header("Content-Disposition", "attachment; filename=\"" + fname + "\"")
+                .header("Content-Type", "text/csv; charset=utf-8")
+                .body(csv);
+    }
 
-        // Tüm takım tablosunu çekmek yerine yalnız zayıf-domain envanterindeki takımları yükle
-        Set<Long> teamIds = invMap.values().stream()
-                .map(CertificateInventory::getTeamId).filter(Objects::nonNull)
-                .collect(Collectors.toSet());
-        Map<Long, Team> teamMap = teamIds.isEmpty()
-                ? Map.of()
-                : teamRepo.findAllById(teamIds).stream()
-                        .collect(Collectors.toMap(Team::getId, t -> t, (a, b) -> a));
-
-        List<Map<String, Object>> rows = new ArrayList<>();
-        for (LatestCheck lc : weakCandidates) {
-            List<String> weaknesses = new ArrayList<>();
-            String severity = classifyWeakness(lc, weaknesses);
-            if (severity == null) continue;
-
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("domain",               lc.getDomain());
-            row.put("subject",              lc.getSubject());
-            row.put("issuer",               lc.getIssuer());
-            row.put("signature_algorithm",  lc.getSignatureAlgorithm());
-            row.put("public_key_algorithm", lc.getPublicKeyAlgorithm());
-            row.put("public_key_size",      lc.getPublicKeySize());
-            row.put("not_after",            lc.getNotAfter());
-            row.put("days_remaining",       lc.getDaysRemaining());
-            row.put("status",               lc.getStatus());
-            row.put("checked_at",           lc.getCheckedAt());
-            row.put("weaknesses",           weaknesses);
-            row.put("severity",             severity);
-
-            CertificateInventory inv = invMap.get(lc.getDomain());
-            if (inv != null) {
-                row.put("owner",       inv.getOwner());
-                row.put("description", inv.getDescription());
-                Long tid = inv.getTeamId();
-                row.put("team_id",     tid);
-                if (tid != null && teamMap.containsKey(tid)) {
-                    row.put("team_name",  teamMap.get(tid).getName());
-                    row.put("team_email", teamMap.get(tid).getEmail());
-                }
-            }
-            rows.add(row);
+    /** İstisna (kabul edildi / planlı yenileme): {reason, until}. Süresi geçince satır yeniden aktif olur. */
+    @PostMapping("/audit/weak-algorithms/{domain}/exception")
+    public ResponseEntity<Map<String, Object>> weakAlgorithmException(
+            @PathVariable String domain, @RequestBody Map<String, String> body,
+            HttpSession session, HttpServletRequest request) {
+        permissionService.require(session, "weak_algo.manage", "edit");
+        try {
+            var e = weakAlgoService.setException(domain, body.get("reason"), body.get("until"),
+                    String.valueOf(session.getAttribute("username")));
+            auditService.recordAction("WEAK_ALGO_EXCEPTION_SET", session, request, "WEAK_ALGO", domain,
+                    "{\"until\":\"" + e.getUntil() + "\"}");
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("domain", e.getDomain()); out.put("reason", e.getReason()); out.put("until", e.getUntil());
+            return ok(Map.of("data", out));
+        } catch (java.time.format.DateTimeParseException | IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "error",
+                    "until_past".equals(ex.getMessage()) ? "Bitiş tarihi geçmişte olamaz" : "Geçerli bir bitiş tarihi (yyyy-aa-gg) gerekli"));
         }
+    }
 
-        rows.sort((a, b) -> severityRank(b.get("severity").toString()) - severityRank(a.get("severity").toString()));
-
-        long critical = rows.stream().filter(r -> "CRITICAL".equals(r.get("severity"))).count();
-        long high     = rows.stream().filter(r -> "HIGH".equals(r.get("severity"))).count();
-
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("data",     rows);
-        body.put("total",    rows.size());
-        body.put("critical", critical);
-        body.put("high",     high);
-        return ok(body);
+    @DeleteMapping("/audit/weak-algorithms/{domain}/exception")
+    public ResponseEntity<Map<String, Object>> weakAlgorithmExceptionClear(
+            @PathVariable String domain, HttpSession session, HttpServletRequest request) {
+        permissionService.require(session, "weak_algo.manage", "edit");
+        boolean removed = weakAlgoService.clearException(domain);
+        if (removed) auditService.recordAction("WEAK_ALGO_EXCEPTION_CLEAR", session, request, "WEAK_ALGO", domain, com.sitemonitor.service.AuditDetail.of("domain", domain, "removed", true));
+        return ok(Map.of("removed", removed));
     }
 
     /**
-     * Zayıflık sınıflandırması ORTAK kurala devreder ({@link com.sitemonitor.service.CertificateHealthRules}).
-     *
-     * <p>Aynı hüküm sertifika sağlık kontrol listesinde de veriliyor; iki yerde ayrı eşik tutmak,
-     * aynı sertifikanın bir ekranda "zayıf" diğerinde "temiz" görünmesi demekti.
+     * Sorumlu takıma bildir — e-posta (takım adresi) + push (takım alıcıları, seviye CRITICAL).
+     * Alarm olayı üretmez; gün içinde aynı alan için tekrar tıklama push'u yeniden yazmaz (dedupe).
      */
-    private String classifyWeakness(LatestCheck lc, List<String> weaknesses) {
-        return com.sitemonitor.service.CertificateHealthRules.classifyWeakness(
+    @PostMapping("/audit/weak-algorithms/{domain}/notify")
+    public ResponseEntity<Map<String, Object>> weakAlgorithmNotify(
+            @PathVariable String domain, HttpSession session, HttpServletRequest request) {
+        permissionService.require(session, "weak_algo.manage", "edit");
+        CertificateInventory inv = inventoryRepo.findByDomain(domain).orElse(null);
+        if (inv == null) return ResponseEntity.status(404).body(Map.of("success", false, "error", "Alan envanterde yok"));
+        LatestCheck lc = latestCheckRepo.findById(domain).orElse(null);
+        Team team = inv.getTeamId() == null ? null : teamRepo.findById(inv.getTeamId()).orElse(null);
+        if (team == null) return ResponseEntity.badRequest().body(Map.of("success", false, "error", "Alanın sorumlu takımı yok"));
+
+        List<String> weaknesses = new ArrayList<>();
+        String severity = lc == null ? null : com.sitemonitor.service.CertificateHealthRules.classifyWeakness(
                 lc.getSignatureAlgorithm(), lc.getPublicKeyAlgorithm(), lc.getPublicKeySize(), weaknesses);
+        String what = weaknesses.isEmpty() ? "TLS/zincir bulgusu" : String.join(", ", weaknesses);
+        String subject = "[Site Monitor] Zayıf algoritma — " + domain;
+        String message = "Sertifika güvenlik standardını karşılamıyor: " + what
+                + ". Sorumlu takımla koordineli yenileme planı gerekiyor. Rapor: Ayarlar → Zayıf Algoritma Raporu.";
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        String email = team.getEmail();
+        if (email != null && !email.isBlank()) {
+            String st = emailService.sendAlert(new String[] {email}, subject, message, domain,
+                    severity == null ? "WARNING" : severity, "WEAK_ALGORITHM",
+                    lc == null ? null : lc.getDaysRemaining(), null);
+            out.put("email", st);
+            out.put("email_to", email);
+        } else {
+            out.put("email", "SKIPPED_NO_TEAM_EMAIL");
+        }
+        String day = now().substring(0, 10);
+        out.put("push", userPushService.enqueueTeamNotice(team.getId(), "WEAK_ALGO", "CRITICAL", domain,
+                "[Zayıf algoritma] " + domain + " — " + what, "WEAK_ALGO:" + domain + ":" + day));
+        auditService.recordAction("WEAK_ALGO_NOTIFY", session, request, "WEAK_ALGO", domain,
+                "{\"team_id\":" + team.getId() + ",\"email\":\"" + out.get("email") + "\"}");
+        return ok(Map.of("data", out));
     }
 
-    private int severityRank(String s) {
-        if ("CRITICAL".equals(s)) return 2;
-        if ("HIGH".equals(s))     return 1;
-        return 0;
-    }
 
     // ── Cihaz Geçmişi — ADMIN salt-okunur görünümü (K8) ──────────────────────
     //

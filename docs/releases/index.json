@@ -1,9 +1,261 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-12T02:50:28Z",
+  "generatedAt": "2026-09-12T14:27:55Z",
   "repo": "inanmise/site-monitor",
-  "count": 637,
+  "count": 638,
   "releases": [
+    {
+      "version": "20.58.0",
+      "tag": "v20.58.0",
+      "releasedAt": "2026-09-12T14:27:49Z",
+      "commit": "3ba9286baae9807da2163fa3531851613f650986",
+      "prevVersion": "20.57.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 28,
+        "fix": 3,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": "gates",
+          "breaking": false,
+          "sha": "3ba9286b",
+          "subject": "weak_algo_exception retention exemption + audit detail on exception clear"
+        },
+        {
+          "type": "docs",
+          "scope": "regression",
+          "breaking": false,
+          "sha": "9ad4e0a7",
+          "subject": "round 13 — 25-item enrichment batch review"
+        },
+        {
+          "type": "feat",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "bddd542a",
+          "subject": "real empty states instead of spinners — what is missing and what to do (#5)"
+        },
+        {
+          "type": "feat",
+          "scope": "help",
+          "breaking": false,
+          "sha": "351416c4",
+          "subject": "contextual help drawer — \"?\" opens the current page's guide section (#24)"
+        },
+        {
+          "type": "feat",
+          "scope": "health",
+          "breaking": false,
+          "sha": "09a84d9b",
+          "subject": "warn/critical threshold bands and breach badges on system-health charts (#23)"
+        },
+        {
+          "type": "feat",
+          "scope": "activity",
+          "breaking": false,
+          "sha": "0455ffd1",
+          "subject": "time-grouped feed (today / yesterday / this week / older) with consecutive same-target runs folded (#22)"
+        },
+        {
+          "type": "feat",
+          "scope": "alerts",
+          "breaking": false,
+          "sha": "e350f963",
+          "subject": "\"why still open?\" chips on open alerts — acknowledgement, email recipients, push channel outcome (#16)"
+        },
+        {
+          "type": "feat",
+          "scope": "pagespeed",
+          "breaking": false,
+          "sha": "5561c2d2",
+          "subject": "budget line on the metric chart + \"over budget this week vs last week\" per card (#15)"
+        },
+        {
+          "type": "feat",
+          "scope": "monitoring",
+          "breaking": false,
+          "sha": "84f9488c",
+          "subject": "bulk actions on all eight monitor pages — pause / resume / team / group / delete (#13)"
+        },
+        {
+          "type": "feat",
+          "scope": "certificates",
+          "breaking": false,
+          "sha": "5b39f4b9",
+          "subject": "column chooser + saved view on the certificates table (#10)"
+        },
+        {
+          "type": "feat",
+          "scope": "forecast",
+          "breaking": false,
+          "sha": "1eb340d9",
+          "subject": "renewal-load chart — certificates expiring per month for the next 12 months, stacked by team (#9)"
+        },
+        {
+          "type": "feat",
+          "scope": "dashboard",
+          "breaking": false,
+          "sha": "a233656c",
+          "subject": "\"what changed in the last 7 days\" line under the stats strip (#7)"
+        },
+        {
+          "type": "feat",
+          "scope": "alerts",
+          "breaking": false,
+          "sha": "4cbbd8d4",
+          "subject": "noise analysis — noisiest targets, day×hour heatmap, flapping candidates (#18)"
+        },
+        {
+          "type": "feat",
+          "scope": "history",
+          "breaking": false,
+          "sha": "3510ce85",
+          "subject": "outage timeline strip in the check-history tab (#12)"
+        },
+        {
+          "type": "feat",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "ad32f65c",
+          "subject": "month calendar for renewals and maintenance windows, ICS export, maintenance badge on alerts (#8, #19)"
+        },
+        {
+          "type": "feat",
+          "scope": "nav",
+          "breaking": false,
+          "sha": "2f6e48d3",
+          "subject": "notification inbox — open / resolved alerts, maintenance, weekly deadline, expired exceptions (#2)"
+        },
+        {
+          "type": "feat",
+          "scope": "weekly-reports",
+          "breaking": false,
+          "sha": "730cee07",
+          "subject": "team completion board — team × week heatmap (#21)"
+        },
+        {
+          "type": "feat",
+          "scope": "stats",
+          "breaking": false,
+          "sha": "01e79abf",
+          "subject": "executive summary — four KPIs, team comparison, 30-day alert delta (#20)"
+        },
+        {
+          "type": "feat",
+          "scope": "monitoring",
+          "breaking": false,
+          "sha": "a61dacc3",
+          "subject": "30-day availability vs SLA target on every monitor card (#11)"
+        },
+        {
+          "type": "feat",
+          "scope": "dashboard",
+          "breaking": false,
+          "sha": "0c9f4cd8",
+          "subject": "\"For you — today\" panel (#3)"
+        },
+        {
+          "type": "feat",
+          "scope": "nav",
+          "breaking": false,
+          "sha": "8b50f4c2",
+          "subject": "command palette (Ctrl+K) — pages, certificates, monitors, teams in one box (#1)"
+        },
+        {
+          "type": "feat",
+          "scope": "settings",
+          "breaking": false,
+          "sha": "27c0dcf9",
+          "subject": "configuration-health card above the settings sections (#25)"
+        },
+        {
+          "type": "feat",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "01b6e66c",
+          "subject": "renewed-recently chip on certificate cards + standard PaginationBar on Incidents"
+        },
+        {
+          "type": "feat",
+          "scope": "monitoring",
+          "breaking": false,
+          "sha": "2ebb1d03",
+          "subject": "card mini trend + last-5-check dots on every monitor card"
+        },
+        {
+          "type": "feat",
+          "scope": "weak-algo",
+          "breaking": false,
+          "sha": "2c1649c6",
+          "subject": "2030 outlook — risk statement, expected action per domain, deadline and target key"
+        },
+        {
+          "type": "feat",
+          "scope": "weekly-reports",
+          "breaking": false,
+          "sha": "2b544cd5",
+          "subject": "table paging + configurable deadline day/time"
+        },
+        {
+          "type": "feat",
+          "scope": "weak-algo",
+          "breaking": false,
+          "sha": "c5fd853f",
+          "subject": "enrich the Weak Algorithm Report — scan summary, rules, distribution, 2030 outlook, TLS/chain findings, teams, trend, actions, CSV, weekly line"
+        },
+        {
+          "type": "fix",
+          "scope": "health",
+          "breaking": false,
+          "sha": "82735fe2",
+          "subject": "move the \"auto-refreshes every 30 s\" note below the last section"
+        },
+        {
+          "type": "fix",
+          "scope": "userpush",
+          "breaking": false,
+          "sha": "1522a6c5",
+          "subject": "save bar always visible — disabled Save when clean, Discard + Save when dirty"
+        },
+        {
+          "type": "feat",
+          "scope": "inventory",
+          "breaking": false,
+          "sha": "cc0b15b2",
+          "subject": "per-domain certificate check frequency (hourly/6h/12h/daily/weekly)"
+        },
+        {
+          "type": "feat",
+          "scope": "push",
+          "breaking": false,
+          "sha": "43e2bc3e",
+          "subject": "KPI pencereleri 24s / 7g / 15g / 30g / 60g + takım bazlı adetler"
+        },
+        {
+          "type": "fix",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "75e24953",
+          "subject": "anahtar etiketinin yanındaki yardım ipucu alt satıra düşüyordu — 17 yerde (Haftalık e-posta \"etkin\" vb.)"
+        },
+        {
+          "type": "feat",
+          "scope": "push",
+          "breaking": false,
+          "sha": "db767591",
+          "subject": "Kaydet düğmesi yerine yapışkan kayıt şeridi — yalnız kaydedilmemiş değişiklik varken, altta sabit"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.57.1",
       "tag": "v20.57.1",

@@ -92,6 +92,8 @@ public final class PermissionCatalog {
         // ── Loglar & Raporlar ─────────────────────────────────────────────
         r("audit_log.read",     "logs", VIEW),
         r("weak_algo.read",     "logs", VIEW),
+        // İstisna kaydı / takıma bildir (2026-09-12). Ayrı satır — auditDefaults deseni (yukarıdaki not).
+        r("weak_algo.manage",   "logs", EDIT),
 
         // ── Haftalık Raporlar ─────────────────────────────────────────────
         r("weekly_reports.read",    "reports", VIEW),
@@ -211,7 +213,7 @@ public final class PermissionCatalog {
             "system_health.read",
             // audit_log.read: denetim kaydı sistem-geneli (tüm takımlar/kullanıcılar) → yalnız
             // global admin/AUDIT erişebilir (requireAuditAccess); TEAM_ADMIN'e verilmez.
-            "weak_algo.read",
+            "weak_algo.read", "weak_algo.manage",
             // monitoring.crud/trigger: kendi takımı için keyword/ping izleme oluştur/düzenle/çalıştır
             // monitoring.scripted: PO/TEAM_ADMIN kendi takımı için k6 senaryosu yazar/çalıştırır (USER'a AÇILMAZ)
             "monitoring.read", "monitoring.crud", "monitoring.trigger", "monitoring.scripted", "domain.registration.view", "monitoring.group",

@@ -48,6 +48,9 @@ import { exitLabel, exitHint, diagnosisHint, k6SyntaxLevel, readPhases, formatBy
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
+import MonitorSpark from './ui/MonitorSpark.jsx'
+import BulkActionBar from './ui/BulkActionBar.jsx'
+import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorModalActions from './ui/MonitorModalActions.jsx'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
@@ -194,6 +197,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   const myTeam = teamId != null ? String(teamId) : null
   const isOwnTeam = (m) => myTeam != null && String(m.team_id) === myTeam
 
+  const sparks = useSparklines('scripted')   // kart mini trendi (2026-09-12)
+  const sla = useSla('scripted')   // 30 günlük kullanılabilirlik / hedef (2026-09-12, #11)
   const [monitors, setMonitors] = useState([])
   // Şablon kütüphanesi (Genel + takım). Yükleme hatası sayfayı DÜŞÜRMEZ: liste boş kalsa bile
   // script'i elle yazmak her zaman mümkün olmalı.
@@ -255,6 +260,10 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   // kapısıyla aynı sonuç, basılıp 4xx yiyen bir düğme gösterilmiyor.
   const canCheckRow = (m) => k6.available && canManageRow(m)
   const canDeleteRow = (m) => k6.canManage && (isAdmin || (isTeamAdmin && isOwnTeam(m)))
+  // Toplu seçim (2026-09-12, #13): kart kutucuğu; yalnız yönetebildiği satırlar seçilebilir
+  const [bulkSel, setBulkSel] = useState(() => new Set())
+  const toggleBulk = (id) => setBulkSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
+
 
   // Diger 8 izleme sayfasinda hata dali VARDI, bu sayfada ve UptimePage'de HIC yoktu:
   // `if (res?.success)` basarisizken yalniz setLoading(false) kosuyor, monitors bos kaliyor ve
@@ -1080,6 +1089,10 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
           title={k6.canManage ? t('scripted.noMonitorsAdmin') : t('scripted.noMonitors')} />
       ) : (
         <>
+        <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow}
+          api={{ update: api.monitoring.updateScriptedMonitor, remove: api.monitoring.deleteScriptedMonitor }}
+          onClear={() => setBulkSel(new Set())} onDone={load}
+          onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
         <div className="upt-grid">
           {pager.pageItems.map(m => (
             /* Kart klavyeyle de açılabilir: role+tabIndex+Enter/Space. onKeyDown YALNIZ kartın
@@ -1093,6 +1106,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
               }}
               onClick={() => openDetail(m)}>
               <div className="upt-card-top">
+                {canManageRow(m) && (
+                  <input type="checkbox" className="upt-card-check" checked={bulkSel.has(m.id)} onChange={() => toggleBulk(m.id)} onClick={(e) => e.stopPropagation()} aria-label={t('bulk.selectOne')} />
+                )}
                 {statusBadge(m)}
                 {alarmBadge(m)}<MaintenanceBadge target={m.name} />
                 {/* Hiç yeşile dönmemiş monitör: arıza değil yapılandırma/erişim sorunu sinyali.
@@ -1120,6 +1136,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
               </div>
               <div className="upt-card-domain" title={m.name}>{m.name}</div>
               <MonitorCardMeta monitor={m} />
+              <MonitorSpark spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days} />
               <div className="upt-card-divider" />
               <div className="upt-card-metrics">
                 <div className="upt-metric">

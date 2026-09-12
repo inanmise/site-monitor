@@ -838,4 +838,46 @@ class UserPushServiceTest {
 
         assertThat(store).singleElement().extracting(UserPushDelivery::getStatus).isEqualTo("SKIPPED_USER_OPT_OUT");
     }
+    // ── Olaysız takım bildirimi (2026-09-12, Zayıf Algoritma Raporu "takıma bildir") ─────────
+
+    @Test
+    @DisplayName("2026-09-12: enqueueTeamNotice — takım+seviye alıcıları, WEAK_ALGO tetiği, dedupe anahtarı; aynı gün ikinci tıklama yazmaz; global kapalı → SKIPPED_DISABLED")
+    void enqueueTeamNotice_writesRowsWithDedupe() {
+        recipients("N00001", "N00002");
+        when(deliveryRepo.existsByDedupeKeyAndUsername("WEAK_ALGO:a.example.com:2026-09-12", "N00002")).thenReturn(true);
+
+        Map<String, Object> out = service.enqueueTeamNotice(5L, "WEAK_ALGO", "CRITICAL", "a.example.com",
+                "[Zayıf algoritma] a.example.com — Weak hash: SHA1withRSA", "WEAK_ALGO:a.example.com:2026-09-12");
+
+        assertThat(out.get("queued")).isEqualTo(1);
+        assertThat(out.get("skipped")).isEqualTo(1);
+        List<UserPushDelivery> rows = savedRows();
+        assertThat(rows).hasSize(1);
+        UserPushDelivery d = rows.get(0);
+        assertThat(d.getUsername()).isEqualTo("N00001");
+        assertThat(d.getTrigger()).isEqualTo("WEAK_ALGO");
+        assertThat(d.getAlertEventId()).isNull();
+        assertThat(d.getTeamId()).isEqualTo(5L);
+        assertThat(d.getAlertLevel()).isEqualTo("CRITICAL");
+        assertThat(d.getMonitorType()).isEqualTo("CERTIFICATE");
+        assertThat(d.getMonitorName()).isEqualTo("a.example.com");
+        assertThat(d.getDedupeKey()).isEqualTo("WEAK_ALGO:a.example.com:2026-09-12");
+        assertThat(d.getStatus()).isEqualTo("PENDING");
+        assertThat(d.getMessage()).contains("a.example.com");
+        verify(resolver).resolve(5L, "CRITICAL");
+
+        when(appSettings.getBoolean(eq("site.monitor.userpush.enabled"), any(Boolean.class))).thenReturn(false);
+        Map<String, Object> off = service.enqueueTeamNotice(5L, "WEAK_ALGO", "CRITICAL", "a.example.com", "m", "k");
+        assertThat(off.get("reason")).isEqualTo("SKIPPED_DISABLED");
+        assertThat(off.get("queued")).isEqualTo(0);
+    }
+
+    @Test
+    @DisplayName("2026-09-12: enqueueTeamNotice — takımsız ya da alıcısız → satır yok, sebep döner")
+    void enqueueTeamNotice_noTeamOrRecipients() {
+        assertThat(service.enqueueTeamNotice(null, "WEAK_ALGO", "CRITICAL", "a.example.com", "m", "k").get("reason")).isEqualTo("SKIPPED_NO_TEAM");
+        when(resolver.resolve(anyLong(), anyString())).thenReturn(List.of());
+        assertThat(service.enqueueTeamNotice(5L, "WEAK_ALGO", "CRITICAL", "a.example.com", "m", "k").get("reason")).isEqualTo("SKIPPED_NO_RECIPIENTS");
+        verify(deliveryRepo, never()).save(any());
+    }
 }

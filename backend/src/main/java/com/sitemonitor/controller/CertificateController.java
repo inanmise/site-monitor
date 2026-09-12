@@ -39,6 +39,7 @@ public class CertificateController {
     private final CertificateService certService;
     private final CertificateCheckerService checkerService;
     private final SchedulerService schedulerService;
+    private final com.sitemonitor.service.ExecutiveStatsService executiveStatsService;   // yönetici özeti (2026-09-12, #20)
     private final AlertEventRepository alertEventRepository;
     private final CertificateInventoryRepository inventoryRepo;
     private final NetworkOutageEventRepository networkOutageRepo;
@@ -234,6 +235,18 @@ public class CertificateController {
         return ok(Map.of("success", true, "data", certService.getStatsForTeams(SessionScope.viewTeamIds(session)), "timestamp", now()));
     }
 
+    /** Yönetici özeti (2026-09-12, #20): KPI + takım karşılaştırması + 30 gün delta. Kapsam viewTeamIds. */
+    @GetMapping("/stats/executive")
+    public ResponseEntity<Map<String, Object>> getExecutiveStats(HttpSession session) {
+        return ok(Map.of("success", true, "data", executiveStatsService.build(teamId -> SessionScope.canView(session, teamId)), "timestamp", now()));
+    }
+
+    /** "Son 7 günde ne değişti" (2026-09-12, #7). */
+    @GetMapping("/stats/changes")
+    public ResponseEntity<Map<String, Object>> getRecentChanges(@RequestParam(defaultValue = "7") int days, HttpSession session) {
+        return ok(Map.of("success", true, "data", executiveStatsService.recentChanges(days, teamId -> SessionScope.canView(session, teamId)), "timestamp", now()));
+    }
+
     @GetMapping("/stats/teams")
     public ResponseEntity<Map<String, Object>> getTeamStats(HttpSession session) {
         List<Long> scope = SessionScope.viewTeamIds(session);
@@ -420,7 +433,8 @@ public class CertificateController {
         out.put("not_after", lc == null ? null : lc.getNotAfter());
         out.put("days_remaining", lc == null ? null : lc.getDaysRemaining());
         out.put("checked_at", lc == null ? null : lc.getCheckedAt());
-        out.put("next_check_at", schedulerService.nextCertificateSweepAt());
+        out.put("next_check_at", schedulerService.nextCertificateSweepAt(domain, inv.getCheckIntervalHours()));   // alan başına sıklık (2026-09-12)
+        out.put("check_interval_hours", inv.getCheckIntervalHours());
         out.put("tls_mode_used", lc == null ? null : lc.getTlsModeUsed());
         out.put("has_page_monitor", hasPageMonitor);
         out.put("ok_count", result.okCount());

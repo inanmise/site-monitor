@@ -145,6 +145,25 @@ describe('envanter formu eylem çubuğu', () => {
     await waitFor(() => expect(api.admin.deleteInventory).toHaveBeenCalledWith(42))
   })
 
+  // Alan başına kontrol sıklığı (2026-09-12): düzenle modalında saatlik/12 sa/günlük/haftalık seçilir.
+  it('2026-09-12: kontrol sıklığı "Günlük" seçilip kaydedilince check_interval_hours=24 gider; boş = null', async () => {
+    renderEdit()
+    const label = screen.getByText(/Kontrol sıklığı|Check frequency/)
+    // SearchableSelect yerli <select> değil: tetiği mouseDown ile aç, seçeneği mouseDown ile seç.
+    const trigger = label.closest('label').querySelector('.ss-trigger')
+    fireEvent.mouseDown(trigger)
+    fireEvent.mouseDown([...document.querySelectorAll('.ss-option')].find(el => /Günlük|Daily/.test(el.textContent)))
+    fireEvent.click(btn(/^(Kaydet|Save)$/))
+    await waitFor(() => expect(api.admin.updateInventory).toHaveBeenCalled())
+    expect(api.admin.updateInventory.mock.calls[0][1]).toMatchObject({ check_interval_hours: 24 })
+  })
+
+  it('2026-09-12: kayıtta check_interval_hours=168 varsa form "Haftalık" ile açılır', () => {
+    render(<InventoryFormModal mode="edit" record={{ ...RECORD, check_interval_hours: 168 }} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+    const label = screen.getByText(/Kontrol sıklığı|Check frequency/)
+    expect(label.closest('label').textContent).toMatch(/Haftalık|Weekly/)
+  })
+
   it('Sil iptal edilince hiçbir çağrı yapılmaz', async () => {
     confirmMock.mockResolvedValue(false)
     renderEdit()

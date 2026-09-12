@@ -122,6 +122,8 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  /** Komut paleti (2026-09-12, #1): alan / izleme / takım — takım kapsamlı. */
+  search: (q) => request(`/search?q=${encodeURIComponent(q)}`),
   // Hafif kullanıcı dizini (her authenticated kullanıcı) — UserDirectory bağlamı bununla beslenir.
   /** Kurum-geneli takım rehberi (oturum açmış herkes) — ad→id ve üye listesi (beyaz-listeli). */
   teams: {
@@ -154,6 +156,10 @@ export const api = {
     getReleaseNotes: (since) => request(`/system/releases/notes${since ? `?since=${encodeURIComponent(since)}` : ''}`),
   },
   me: {
+    /** "Sizin için — bugün" paneli (2026-09-12, #3) */
+    today: () => request('/me/today'),
+    /** Bildirim kutusu (2026-09-12, #2) */
+    inbox: () => request('/me/inbox'),
     // 2026-09-10: yol '/auth/me/push-opt-out' idi — AuthController '/api' tabanlı, uç '/api/me/push-opt-out'
     // → 404; sunucu onayı gelmediği için "Webhook push istemiyorum" kutusu HİÇ işaretlenmiyordu.
     setPushOptOut: (optOut) => request('/me/push-opt-out', { method: 'POST', body: JSON.stringify({ opt_out: optOut }) }),
@@ -300,6 +306,8 @@ export const api = {
     request(`/certificates/${encodeURIComponent(domain)}/health/confirm-renewal`, { method: 'POST' }),
 
   getStats: () => request('/stats'),
+  getExecutiveStats: () => request('/stats/executive'),   // yönetici özeti (2026-09-12, #20)
+  getRecentChanges: (days = 7) => request(`/stats/changes?days=${days}`),   // "ne değişti" satırı (2026-09-12, #7)
 
   getTeamStats: () => request('/stats/teams'),
 
@@ -396,6 +404,8 @@ export const api = {
     kpis: (id) => request(`/weekly-reports/${id}/kpis`),
     monitoringStats: (id) => request(`/weekly-reports/${id}/monitoring-stats`),
     years: (teamId) => request(`/weekly-reports/years${teamId ? '?teamId=' + teamId : ''}`),
+    deadline: () => request('/weekly-reports/deadline'),   // son giriş günü/saati — canlı ayar (2026-09-12)
+    completion: (year) => request(`/weekly-reports/completion${year ? '?year=' + year : ''}`),   // takım × hafta panosu (2026-09-12, #21)
     mails: (id) => request(`/weekly-reports/${id}/mails`),
     create: (payload) => request('/weekly-reports', {
       method: 'POST', body: JSON.stringify(payload),
@@ -783,6 +793,7 @@ export const api = {
       method: 'POST', body: JSON.stringify({ action, ids, ...(note ? { note } : {}) }),
     }),
     getAlertNotifications: (id) => request(`/admin/alerts/${id}/notifications`),
+    getAlertNoise: (days = 7) => request(`/admin/alerts/noise?days=${days}`),   // gürültü analizi (2026-09-12, #18)
     getAlertPushDeliveries: (id) => request(`/admin/alerts/${id}/push-deliveries`),
 
     // Teams
@@ -838,7 +849,17 @@ export const api = {
       request(`/admin/notes/${encodeURIComponent(domain)}/${noteId}/restore`, { method: 'POST' }),
 
     // Weak algorithm report
+    // Yapılandırma sağlığı kartı (2026-09-12, #25)
+    getConfigHealth: () => request('/admin/config-health'),
     getWeakAlgorithms: () => request('/admin/audit/weak-algorithms'),
+    // 2026-09-12 zenginleştirme: CSV indirme <a href> ile (same-origin cookie), istisna ve takıma bildir uçları
+    weakAlgorithmsExportUrl: () => `${BASE}/admin/audit/weak-algorithms/export`,
+    setWeakAlgorithmException: (domain, body) =>
+      request(`/admin/audit/weak-algorithms/${encodeURIComponent(domain)}/exception`, { method: 'POST', body: JSON.stringify(body) }),
+    clearWeakAlgorithmException: (domain) =>
+      request(`/admin/audit/weak-algorithms/${encodeURIComponent(domain)}/exception`, { method: 'DELETE' }),
+    notifyWeakAlgorithm: (domain) =>
+      request(`/admin/audit/weak-algorithms/${encodeURIComponent(domain)}/notify`, { method: 'POST' }),
 
     // Audit log
     getAuditLogs: (params) => {
@@ -1136,6 +1157,10 @@ export const api = {
 
     // HTTP / Website
     getHttpMonitors:   () => request('/monitoring/http'),
+    // Kart mini trendi (2026-09-12): tür başına tek toplu istek — saatlik kovalar + son 5 kontrol
+    getSparklines: (type, hours = 24) => request(`/monitoring/sparklines?type=${encodeURIComponent(type)}&hours=${hours}`),
+    // Kullanılabilirlik / SLA (2026-09-12, #11): 30 günlük oran + hedef
+    getSla: (type, days = 30) => request(`/monitoring/sla?type=${encodeURIComponent(type)}&days=${days}`),
     createHttpMonitor: (data) => request('/monitoring/http', { method: 'POST', body: JSON.stringify(data) }),
     updateHttpMonitor: (id, data) => request(`/monitoring/http/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteHttpMonitor: (id) => request(`/monitoring/http/${id}`, { method: 'DELETE' }),

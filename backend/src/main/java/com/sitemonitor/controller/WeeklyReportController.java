@@ -45,6 +45,7 @@ public class WeeklyReportController {
     private final AuditService auditService;
     private final WeeklyReportKpiService kpiService;
     private final MonitoringWeeklyStatsService monitoringStatsService;
+    private final com.sitemonitor.service.AppSettingsService appSettings;   // son giriş zamanı (2026-09-12)
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -86,6 +87,27 @@ public class WeeklyReportController {
             return (Map<String, Object>) x;
         }).toList();
         return ok(Map.of("data", data));
+    }
+
+    /** Son giriş zamanı (2026-09-12): sayfa başlığındaki "⏰ Son giriş" canlı ayardan. Okuma yetkisi yeter. */
+    @GetMapping("/deadline")
+    public ResponseEntity<Map<String, Object>> deadline(HttpSession session) {
+        permissionService.require(session, "weekly_reports.read", "view");
+        com.sitemonitor.service.WeeklyReportDeadline d = com.sitemonitor.service.WeeklyReportDeadline.resolve(appSettings);
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("day", d.dayCode());
+        m.put("time", d.timeText());
+        m.put("day_tr", d.dayNameTr());
+        m.put("day_en", d.dayNameEn());
+        m.put("valid", d.valid());
+        return ok(Map.of("data", m));
+    }
+
+    /** Takım tamamlama panosu (2026-09-12, #21): takım × hafta durum matrisi (global admin / AUDIT). */
+    @GetMapping("/completion")
+    public ResponseEntity<Map<String, Object>> completion(@RequestParam(required = false) Integer year, HttpSession session) {
+        permissionService.require(session, "weekly_reports.read", "view");
+        return ok(Map.of("data", service.completion(year, actor(session))));
     }
 
     @GetMapping("/years")

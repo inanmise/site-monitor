@@ -1,4 +1,5 @@
 import { LoadingBlock } from './ui/Progress.jsx'
+import StatusBlock from './ui/StatusBlock.jsx'
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -6,8 +7,7 @@ import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import {
   Shield, Activity, Globe, Server, Radio, Share2, Search, CalendarClock, ScanSearch, FlaskConical, Gauge,
   CheckCircle, AlertTriangle, XCircle, HelpCircle, ChevronDown, ChevronRight,
-  Download, X, RefreshCw, Clock, User,
-} from 'lucide-react'
+  Download, X, RefreshCw, Clock, User, Inbox } from 'lucide-react'
 import { csvCell } from '../utils/csv.js'
 
 // Her izleme türünün ayırt edici ikon + rengi (badge).
@@ -90,6 +90,32 @@ export default function ActivityLog({ refreshTrigger }) {
   const [filters, setFilters] = useState(readParams)
   const [qInput, setQInput]   = useState(filters.q)
   const [data, setData]       = useState([])
+  // Zaman grupları + ardışık aynı-hedef katlama (2026-09-12, #22). Katlama: aynı monitör türü + hedef, arka
+  // arkaya ≥ 3 satır → tek "N kontrol" satırı; kullanıcı açınca (unfolded) satırlar tek tek döner.
+  const [unfolded, setUnfolded] = useState(() => new Set())
+  const groupedFeed = useMemo(() => {
+    const out = []
+    const now = new Date(); const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+    const startYesterday = startToday - 86400000, startWeek = startToday - 6 * 86400000
+    const groupOf = (iso) => { const ms = new Date(iso && !iso.endsWith('Z') && !iso.includes('+') ? iso + 'Z' : iso).getTime()
+      return !Number.isFinite(ms) ? 'older' : ms >= startToday ? 'today' : ms >= startYesterday ? 'yesterday' : ms >= startWeek ? 'week' : 'older' }
+    let lastGroup = null
+    let i = 0
+    while (i < data.length) {
+      const row = data[i]
+      const g = groupOf(row.activity_time)
+      if (g !== lastGroup) { const count = data.filter((r) => groupOf(r.activity_time) === g).length; out.push({ kind: 'head', key: 'h-' + g, group: g, count }); lastGroup = g }
+      let j = i + 1
+      while (j < data.length && data[j].monitor_type === row.monitor_type && data[j].target === row.target && groupOf(data[j].activity_time) === g) j++
+      const run = data.slice(i, j)
+      const key = 'f-' + row.monitor_type + '-' + row.target + '-' + row.id
+      if (run.length >= 3 && !unfolded.has(key)) out.push({ kind: 'fold', key, rows: run })
+      else run.forEach((r) => out.push({ kind: 'row', key: 'r-' + r.id, row: r }))
+      i = j
+    }
+    return out
+  }, [data, unfolded])
+
   const [total, setTotal]     = useState(0)
   const [page, setPage]       = useState(0)
   const [summary, setSummary] = useState(null)
@@ -216,18 +242,39 @@ export default function ActivityLog({ refreshTrigger }) {
       ) : error ? (
         <div className="loading act-error-state">{t('act.error')}</div>
       ) : data.length === 0 ? (
-        <LoadingBlock label={anyFilter ? t('act.noMatch') : t('act.empty')} fullWidth />
+        <StatusBlock tone="neutral" icon={Inbox} title={anyFilter ? t('act.noMatch') : t('act.empty')} description={anyFilter ? t('empty.hintFilter') : t('empty.hintActivity')} />
       ) : (
         <>
           <div className="act-feed">
-            {data.map((row) => {
+            {groupedFeed.map((entry) => {
+              // Zaman grubu başlığı (2026-09-12, #22): bugün / dün / bu hafta / daha eski
+              if (entry.kind === 'head') return <div key={entry.key} className="act-group-head">{t('act.group.' + entry.group)} <small>{entry.count}</small></div>
+              // Katlanmış ardışık koşu: aynı hedefin peş peşe N kontrolü tek satırda; tıklayınca açılır
+              if (entry.kind === 'fold') {
+                const f = entry
+                const tm0 = TYPE_MAP[f.rows[0].monitor_type] || { Icon: HelpCircle, color: '#64748b' }
+                const errs = f.rows.filter((r) => r.result_status === 'ERROR' || r.result_status === 'TIMEOUT').length
+                return (
+                  <div key={f.key} className={`act-item act-fold${errs ? ' act-item-error' : ''}`}>
+                    <button className="act-item-row" onClick={() => setUnfolded((u) => { const n = new Set(u); n.add(f.key); return n })}>
+                      <span className="act-item-caret"><ChevronRight size={14} /></span>
+                      <span className="act-item-badge" style={{ color: tm0.color, background: tm0.color + '18' }}><tm0.Icon size={13} /> {f.rows[0].monitor_type}</span>
+                      <span className="act-item-name" title={f.rows[0].monitor_name}>{f.rows[0].monitor_name}</span>
+                      <span className="act-item-target" title={f.rows[0].target}>{f.rows[0].target}</span>
+                      <span className="act-item-action act-fold-count">{t('act.folded', f.rows.length)}{errs ? ` · ${t('act.foldedErrors', errs)}` : ''}</span>
+                      <span className="act-item-time" title={formatDateSec(f.rows[0].activity_time)}>{rel(f.rows[f.rows.length - 1].activity_time)} → {rel(f.rows[0].activity_time)}</span>
+                    </button>
+                  </div>
+                )
+              }
+              const row = entry.row
               const tm = TYPE_MAP[row.monitor_type] || { Icon: HelpCircle, color: '#64748b' }
               const sm = STATUS_META[row.result_status] || STATUS_META.UNKNOWN
               const isOpen = openId === row.id
               const d = details[row.id]
               const isError = row.result_status === 'ERROR' || row.result_status === 'TIMEOUT'
               return (
-                <div key={row.id} className={`act-item${isOpen ? ' open' : ''}${isError ? ' act-item-error' : ''}`}>
+                <div key={entry.key} className={`act-item${isOpen ? ' open' : ''}${isError ? ' act-item-error' : ''}`}>
                   <button className="act-item-row" onClick={() => openDetail(row)}>
                     <span className="act-item-caret">{isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
                     <span className="act-item-badge" style={{ color: tm.color, background: tm.color + '18' }}>

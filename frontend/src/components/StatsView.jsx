@@ -5,6 +5,7 @@ import { formatDate } from '../api/client'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { usePagination } from '../hooks/usePagination.js'
+import ExecutiveSummary from './ExecutiveSummary.jsx'
 
 // ── Tier meta ────────────────────────────────────────────────────────────────
 const TIER_META = {
@@ -286,6 +287,13 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
 
   return (
     <div className="sv-root">
+      {/* Yönetici özeti (2026-09-12, #20): 4 KPI + takım karşılaştırması + 30 gün delta — tablonun üstünde */}
+      <ExecutiveSummary onOpenTeam={(id) => {
+        // Takım süzgeci {domains, label} şeklinde (TeamTierSection ile aynı sözleşme); id → sertifikaların takımı
+        const domains = new Set(certs.filter((c) => c.team_id === id).map((c) => c.domain))
+        const label = certs.find((c) => c.team_id === id)?.team_name ?? String(id)
+        setTeamFilter((cur) => (cur?.label === label ? null : { domains, label }))
+      }} />
 
       {/* ── Team × Tier cards (collapsible — matches Dashboard stats toggle) ── */}
       <div

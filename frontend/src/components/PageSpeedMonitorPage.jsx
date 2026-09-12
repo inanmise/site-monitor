@@ -27,7 +27,7 @@ import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { RefreshCw, Plus, Trash2, Gauge, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, Image, FileCode, Frame, Type, Download, Link2, Wand2 } from 'lucide-react'
+import { RefreshCw, Plus, Trash2, Gauge, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, Image, FileCode, Frame, Type, Download, Link2, Wand2, Inbox } from 'lucide-react'
 import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
 import ModalScrollHint from './ui/ModalScrollHint.jsx'
 import { duplicateName } from '../utils/duplicateName.js'
@@ -36,10 +36,14 @@ import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import { LoadingBlock } from './ui/Progress.jsx'
+import StatusBlock from './ui/StatusBlock.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
+import MonitorSpark from './ui/MonitorSpark.jsx'
+import BulkActionBar from './ui/BulkActionBar.jsx'
+import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
@@ -72,6 +76,19 @@ const RES_ICON = { IMG: Image, CSS: FileCode, JS: FileCode, IFRAME: Frame, FONT:
 const RES_COLS = '0.7fr 3fr 0.7fr 0.7fr 0.5fr 0.7fr'
 
 /** Grafik metrikleri — sunucu `?metric=` ile TEK seriyi projekte eder (yeni tarama üretmez). */
+/** Eşik üstü kontrol sayısı bu hafta / geçen hafta — sayfa hızında "fail" = eşik aşımı ya da hata (MonitorSparklineService). */
+function BreachWeekLine({ w7, w14, t }) {
+  if (!w7 || !w14 || !w14.n) return null
+  const thisWeek = w7.fail ?? 0
+  const lastWeek = Math.max(0, (w14.fail ?? 0) - thisWeek)
+  const trend = thisWeek > lastWeek ? '↑' : thisWeek < lastWeek ? '↓' : '='
+  return (
+    <div className={`pspd-breach-week${thisWeek > lastWeek ? ' is-worse' : thisWeek < lastWeek ? ' is-better' : ''}`} title={t('pspd.breachWeekTip')}>
+      {t('pspd.breachWeek', thisWeek, lastWeek)} <b>{trend}</b>
+    </div>
+  )
+}
+
 const METRICS = [
   { key: 'load',     labelKey: 'pspd.metricLoad',     unit: 'ms' },
   { key: 'ttfb',     labelKey: 'pspd.metricTtfb',     unit: 'ms' },
@@ -138,7 +155,15 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
   // kuralı UYDURULMUYOR; kartın ▶ düğmesiyle birebir aynı yüzey.
   const canCheckRow = canManageRow
   const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))
+  // Toplu seçim (2026-09-12, #13): kart kutucuğu; yalnız yönetebildiği satırlar seçilebilir
+  const [bulkSel, setBulkSel] = useState(() => new Set())
+  const toggleBulk = (id) => setBulkSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
 
+
+  const sparks = useSparklines('pagespeed')   // kart mini trendi (2026-09-12)
+  const sla = useSla('pagespeed')   // 30 günlük kullanılabilirlik / hedef (2026-09-12, #11)
+  const week7 = useSla('pagespeed', 7)     // eşik üstü: bu hafta (2026-09-12, #15)
+  const week14 = useSla('pagespeed', 14)   // eşik üstü: son 14 gün → geçen hafta = 14g − 7g
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
@@ -583,6 +608,8 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
     ? (teams.find(tm => String(tm.id) === String(form.teamId))?.name || t('pspd.noTeam'))
     : (teamName || t('pspd.noTeam'))
   const activeMetric = METRICS.find(x => x.key === metric) ?? METRICS[0]
+  // Bütçe çizgisi (2026-09-12, #15): seçili ölçütün eşiği (yük ms / TTFB ms / boyut KB→B / istek sayısı)
+  const budgetFor = (m, key) => key === 'load' ? m.max_load_ms : key === 'ttfb' ? m.max_ttfb_ms : key === 'size' ? (m.max_page_kb ? m.max_page_kb * 1024 : null) : key === 'requests' ? m.max_requests : null
 
   return (
     <div className="upt-page">
@@ -636,14 +663,21 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
           {String(loadError)}
         </AlertBanner>
       ) : monitors.length === 0 ? (
-        <LoadingBlock label={canWrite ? t('pspd.noMonitorsAdmin') : t('pspd.noMonitors')} fullWidth />
+        <StatusBlock tone="neutral" icon={Inbox} title={canWrite ? t('pspd.noMonitorsAdmin') : t('pspd.noMonitors')} description={canWrite ? t('empty.hintMonitorsAdmin') : t('empty.hintMonitors')} />
       ) : (
         <>
+        <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow}
+          api={{ update: api.monitoring.updatePageSpeedMonitor, remove: api.monitoring.deletePageSpeedMonitor }}
+          onClear={() => setBulkSel(new Set())} onDone={load}
+          onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
         <div className="upt-grid">
           {pager.pageItems.map(m => (
             <div key={m.id} className={`upt-card ${cardClass(m)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
               onClick={() => openDetail(m)}>
               <div className="upt-card-top">
+                {canManageRow(m) && (
+                  <input type="checkbox" className="upt-card-check" checked={bulkSel.has(m.id)} onChange={() => toggleBulk(m.id)} onClick={(e) => e.stopPropagation()} aria-label={t('bulk.selectOne')} />
+                )}
                 {statusBadge(m)}
                 {alarmBadge(m)}<MaintenanceBadge target={m.url} />
                 <span className="upt-card-top-right">
@@ -652,6 +686,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
               </div>
               <div className="upt-card-domain" title={m.url}>{m.url}</div>
               <MonitorCardMeta monitor={m} />
+              <MonitorSpark spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days} />
+              {/* Eşik üstü karşılaştırması (2026-09-12, #15): bu hafta / geçen hafta (14 gün − 7 gün) */}
+              <BreachWeekLine w7={week7.data[String(m.id)]} w14={week14.data[String(m.id)]} t={t} />
               <div className="upt-card-divider" />
               <div className="upt-card-metrics">
                 <div className="upt-metric">
@@ -858,7 +895,8 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
               </div>
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ResponseTimeChart monitorId={selected.id} kind="pagespeed"
-                  metric={activeMetric.key} unit={activeMetric.unit} />
+                  metric={activeMetric.key} unit={activeMetric.unit}
+                  budget={budgetFor(selected, activeMetric.key)} budgetLabel={t('pspd.budgetLine')} />
               </Suspense>
             </>)}
 

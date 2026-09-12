@@ -129,3 +129,88 @@ gizli (DOM'da kalır → form değerleri/kaydet etkilenmez). S11/S12 dokunulmad�
 
 Diff 2 dosya (1 commit, yalnız CSS + modal boyutu). Kapılar `cssClasses`/`cssTokens` yeşil (yeni sınıf `.modal-shell--xl`
 tanımlı, `@container` sorgusu). Davranış/veri değişikliği yok → **REGRESYON YOK**.
+
+## Ek — onuncu tur (2026-09-12, `v20.57.1..HEAD`: alan başına kontrol sıklığı + kayıt şeridi + sağlık notu)
+
+**Alan başına kontrol sıklığı** (`check_interval_hours` 1/6/12/24/168, NULL = genel saatlik): entity + idempotent
+`ALTER TABLE ... ADD COLUMN` (nullable — dolu tabloda NOT NULL sessizce düşerdi), `AdminController.normalizeInterval`
+beyaz liste (başka değer → NULL), `SchedulerService.dueForScheduledSweep` (5 dk tolerans, bozuk/boş tarih → girer).
+**Bulgu (denetimde yakalandı, düzeltildi):** stale süpürmesi (5 dk, 65 dk'dır kontrolsüz alanlar) aynı süzgeci
+uygulamıyordu → saatlik süpürmenin atladığı GÜNLÜK alanı 5 dk sonra yakalar, ayar hiç çalışmazdı. Stale süpürmesi
+artık `dueForScheduledSweep` üzerinden; satırlar `loadDomainsFromInventory`'den gelir (alan başına `timeout_seconds`
+de artık stale süpürmesinde taşınıyor — önceden düşüyordu). Elle "Şimdi kontrol et" / `runCheck()` süzgeçsiz.
+Sağlık ucu `next_check_at` alan başına (`nextCertificateSweepAt(domain, hours)`), panelde sıklık etiketi.
+Kapı `change-field-labels-sync` `chg.field.checkIntervalHours` eksikliğini yakaladı → TR/EN eklendi.
+Testler: SchedulerServiceTest +6 (89), AdminControllerTest +3 (136), CertificateControllerTest stub güncel (47),
+InventoryFormActions +2, CertHealthPanel 22 yeşil.
+
+**Kayıt şeridi** (kullanıcı: "kaydet butonunu göremiyorum"): yalnız-değişince-beliren şerit keşfedilemiyordu → HER
+ZAMAN görünür; temiz durumda "Tüm değişiklikler kaydedildi" + pasif Kaydet, değişince vurgulu çerçeve + Geri al +
+etkin Kaydet. `cssClasses`/`cssTokens`/i18n parite yeşil.
+
+**Sistem Sağlığı notu**: "↻ 30 sn'de bir yenilenir" Sürüm & Dağıtım bölümünün üstünde sahipsiz kalıyordu → en alta;
+DOM sırası testle pinli. Frontend kapı üçlüsü yeşil (0 lint hatası, 1890 test, taban %40) → **REGRESYON YOK**.
+
+## Ek — on birinci tur (2026-09-12, Zayıf Algoritma Raporu zenginleştirme — 10 madde)
+
+Yeni `WeakAlgorithmReportService` (eski `data/total/critical/high` sözleşmesi AYNEN korunur; `AuditControllerTest`
+delege testi pinler). Eklenen bölümler: scan / rules / distribution / outlook(2030, RSA≥3072) / tls / chain / teams /
+trend(30 gün, yalnız zayıf satırlar sorgulanır — tüm zaman serisi taranmaz) / exceptions. Hükümler
+`CertificateHealthRules`'a devredilir; kural kataloğu şiddetleri `classifyWeakness` ile birebir (SHA-1 HIGH, RSA ≤1024
+CRITICAL / 1025–2047 HIGH, EC <192 CRITICAL / 192–255 HIGH) — denetimde ilk taslak SHA-1'i CRITICAL yazmıştı, düzeltildi.
+Yeni tablo `weak_algo_exception` (yeni tablo → NOT NULL tuzağı yok; UNIQUE domain). Yeni izin `weak_algo.manage`
+(ayrı satır — auditDefaults deseni; TEAM_ADMIN'e açık, USER'a kapalı), yeni denetim olayları `WEAK_ALGO_*` (kategori
+CERTIFICATE, `_EXPORT` soneki kuralından ÖNCE). "Takıma bildir" = e-posta (`sendAlert`, Outlook-güvenli şablon) +
+push (`enqueueTeamNotice`, olaysız, takım+CRITICAL alıcı çözümü, gün bazlı dedupe) — kanal paritesi; günlük
+tetik süzgecine `WEAK_ALGO` eklendi. CSV `Csv.row` (CsvExportGuard yeşil). Haftalık e-posta bandı: 8. parametre
+`WeakAlgoWeekly` (7-arg aşırı yük korunur; `WeeklyAvailabilityReportService` depo ile hesaplar — servis enjekte
+edilmez, dairesel referans). Kapılar yakaladı: `permission-labels-sync` (perm.res.weak_algo.manage), `progress-guard`
+(elle yüzde çubuğu → `ProgressBar`), `cssTokens` (`--card-bg` hayalet yedek). **EOL tuzağı:** Git Bash `sed -i` App.css
+ve i18n'i LF'ye çevirdi → CRLF geri yazıldı, commit öncesi EOL karşılaştırma script'i koşuldu (hafızaya işlendi).
+Testler: WeakAlgorithmReportServiceTest 10, AuditControllerTest 16, UserPushServiceTest 44, WeeklyAvailability 44,
+EmailNotification 62, PermissionCatalog/AuditEventCatalog/IdentityLeak/CsvExport/RepositoryWriteTx yeşil; frontend
+0 lint hatası, 1897 test, taban %40 → **REGRESYON YOK**.
+
+## Ek — on ikinci tur (2026-09-12, haftalık rapor sayfalama + son giriş ayarı + 2030 görünümü)
+
+**Sayfalama:** yalnız render'ı böler (`usePagination`, InventoryManager deseni; liste yıl+takım ile sınırlı, takvim
+işaretleri tüm listeyi ister) — "tümünü seç" filtrelenmiş liste üzerinde kalır; 53 satır → 50+3 testle pinli.
+**Son giriş:** iki canlı ayar (`deadline-day` ENUM MON…SUN, `deadline-time` HH:mm), `WeeklyReportDeadline.parse` bozuk
+değerde sessizce varsayılana düşer (`valid=false`). Hatırlatma cron'u varsayılanı `FRI` → HER GÜN 09:00; gün kararı
+serviste (`sendFridayReminders(true)` yalnız son giriş gününde) — **prod `WR_REMINDER_CRON` override'ı varsa** son giriş
+günü değişince onun da güncellenmesi gerekir (values drift notu). E-posta metni ayardan ("bugün saat 17:30" / "Perşembe
+saat 17:30"); 3-arg aşırı yük korunur. Sayfa `GET /weekly-reports/deadline` ile okur; yükleme async+try/catch
+(ilk taslakta `.then` zinciri eski test süitini düşürdü — düzeltildi). Kapı `bilingual-fields-lang` `day_name_en`
+alanını iki-dilli token sandı → `day_tr/day_en` olarak adlandırıldı (yalancı pozitif ama sözleşme değişikliği ucuz).
+**2030 görünümü:** her alan için beklenen eylem (`reissue` = sertifika 2030 sonunu aşıyor → erken yeniden düzenleme,
+`renew` = yenilemede büyüt, `unknown` = önce kontrol), en geç tarih, hedef anahtar; özet (filo payı, eylem/takım
+kırılımı, sunset'e kalan gün); UI'da risk bandı + "alan sahibinden beklenen" 5 adım + tablo.
+Testler: WeeklyReportDeadlineTest 2, WeeklyReportReminderServiceTest 6, WeeklyReportControllerTest 26,
+WeakAlgorithmReportServiceTest 11; frontend 1900 test, 0 lint hatası, taban %40 → **REGRESYON YOK**.
+
+## Ek — on üçüncü tur (2026-09-12, 25 maddelik zenginleştirme — `v20.57.1..HEAD`, 31 commit)
+
+Kapsam: kart mini trend + son-5 nokta (#4/#14), kart bilgisi (#6), Incidents PaginationBar (#17), yapılandırma
+sağlığı kartı (#25), komut paleti (#1), "Sizin için — bugün" (#3), SLA satırı + `sla.target-pct` ayarı (#11),
+yönetici özeti (#20), takım tamamlama panosu (#21), bildirim kutusu (#2), aylık takvim + ICS + bakım rozeti
+(#8/#19), kesinti zaman çizelgesi (#12), gürültü analizi (#18), "ne değişti" satırı (#7), yenileme yükü (#9),
+sütun seçici (#10), toplu işlem (#13), sayfa hızı bütçe çizgisi (#15), "neden hâlâ açık" (#16), aktivite
+gruplama (#22), grafik eşikleri (#23), bağlama duyarlı yardım (#24), gerçek boş durumlar (#5).
+
+**Denetim odakları ve sonuç:**
+- Yeni uçların tamamı takım kapsamlı: `SessionScope.canView` predicate'i servise verilir (sparklines/sla/search/
+  today/inbox/executive/changes/noise); config-health `settings.general` + `requireNotScopedAdmin`. Controller
+  testleri takım 9'un monitörünü dışarıda tutuyor (IDOR).
+- Natif SQL yalnız `MonitorSparklineService` ve `GlobalSearchService`'te; ikisi de H2 (Postgres kipi) üstünde gerçek
+  motorla test edildi; LIKE parametreli, `%`/`_` kaçırılır. Kova sorguları ham satır taşımaz.
+- Toplu işlem (#13) sunucuya yeni uç eklemedi — satır başına mevcut PUT/DELETE; yetki/denetim/alarm kapatma aynı.
+- Yeni bağımlılık zinciri kırılganlıkları: `ExecutiveStatsService` ve `CertificateController`'a yeni alan → WebMvc
+  testlerine `@MockitoBean` eklendi; `WeeklyAvailabilityReportService` yine servis enjekte ETMEZ (dairesel referans).
+- Kapıların yakaladıkları: `cssClasses` (3 hayalet sınıf), `cssTokens` (1), `bilingual-fields-lang` (day_name_en),
+  `progress-guard`, `permission-labels-sync`; hepsi kapatıldı. Heredoc kaçış çöküşü (ics.js) Write aracıyla yeniden
+  yazıldı. Karışık EOL iki kez yakalandı (StatsView, DnsMonitorPage.test) → CRLF'e normalize edildi.
+- Testler: frontend 1939 (224 dosya) yeşil, 0 lint hatası, taban %40; backend yeni sınıflar için 14 test sınıfı
+  (Sparkline/Search/ConfigHealth/Today/Inbox/Executive/Noise/WeeklyCompletion) + etkilenen suit'ler yeşil; tam
+  `clean verify` sürüm öncesi koşuldu.
+Bilinen sınırlar (bilinçli): SLA hedefi filo geneli (takım başına ertelendi); grafik eşikleri sabit; palet arama
+LIKE (tam metin değil); ICS yalnız istemcide üretilir. → **REGRESYON YOK**.

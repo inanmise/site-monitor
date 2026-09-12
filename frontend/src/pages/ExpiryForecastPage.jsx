@@ -469,6 +469,72 @@ function ExpiryList({ upcomingList, t }) {
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
+/**
+ * Yenileme yükü (2026-09-12, zenginleştirme #9): önümüzdeki 12 ayda ay başına dolacak sertifika sayısı,
+ * takıma göre yığılmış çubuk. Bütçe / iş yükü planlaması: "Mart'ta 40 yenileme, 30'u Takım A" bir bakışta.
+ * Takımlar en kalabalık 6 + "Diğer"; renkler sabit palet (tema token'ı değil — recharts SVG fill).
+ */
+const LOAD_COLORS = ['#2563eb', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#94a3b8']
+
+function computeRenewalLoad(certs) {
+  const now = new Date()
+  const months = []
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() + i, 1)
+    months.push({ key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, label: d.toLocaleDateString(dateLocale(), { month: 'short', year: '2-digit' }), total: 0, teams: {} })
+  }
+  const teamTotals = {}
+  for (const c of certs || []) {
+    if (!c?.not_after) continue
+    const d = new Date(c.not_after)
+    if (Number.isNaN(d.getTime())) continue
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    const m = months.find((x) => x.key === key)
+    if (!m) continue
+    const team = c.team_name || '—'
+    m.total += 1
+    m.teams[team] = (m.teams[team] || 0) + 1
+    teamTotals[team] = (teamTotals[team] || 0) + 1
+  }
+  const top = Object.entries(teamTotals).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([n]) => n)
+  const rows = months.map((m) => {
+    const row = { month: m.label, total: m.total }
+    let other = 0
+    for (const [team, n] of Object.entries(m.teams)) { if (top.includes(team)) row[team] = n; else other += n }
+    if (other) row['__other'] = other
+    return row
+  })
+  const peak = rows.reduce((best, r) => (r.total > (best?.total ?? -1) ? r : best), null)
+  return { rows, teams: top, hasOther: rows.some((r) => r.__other), peak, total: rows.reduce((n, r) => n + r.total, 0) }
+}
+
+function RenewalLoadChart({ certs, t }) {
+  const load = useMemo(() => computeRenewalLoad(certs), [certs])
+  return (
+    <div className="fc-card fc-section-card fc-load">
+      <div className="fc-sec-header">
+        <span className="fc-sec-num">02b</span>
+        <span className="fc-sec-title">{t('forecast.loadTitle')}</span>
+        <span className="fc-load-sum">{load.total > 0 && load.peak ? t('forecast.loadPeak', load.total, load.peak.month, load.peak.total) : t('forecast.loadNone')}</span>
+      </div>
+      <div className="fc-load-chart">
+        <ResponsiveContainer width="100%" height={220}>
+          <ComposedChart data={load.rows} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+            <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={28} />
+            <RTooltip contentStyle={{ fontSize: 12 }} />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            {load.teams.map((team, i) => <Bar key={team} dataKey={team} stackId="load" fill={LOAD_COLORS[i % LOAD_COLORS.length]} />)}
+            {load.hasOther && <Bar dataKey="__other" name={t('forecast.loadOther')} stackId="load" fill={LOAD_COLORS[6]} />}
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+      <p className="fc-load-note">{t('forecast.loadNote')}</p>
+    </div>
+  )
+}
+
 export default function ExpiryForecastPage({ onSelectDomain }) {
   const t = useT()
   const time = useClock()
@@ -578,6 +644,9 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
 
           {/* ── Section 02: Calendar ── */}
           <CalendarHeatmap certs={data.certs} t={t} onSelectDomain={onSelectDomain} />
+
+          {/* ── Section 02b: Yenileme yükü — 12 ay, takıma göre yığılmış (2026-09-12, #9) ── */}
+          <RenewalLoadChart certs={data.certs} t={t} />
 
           {/* ── Section 03: Expiry List ── */}
           <ExpiryList upcomingList={data.upcomingList} t={t} />

@@ -32,6 +32,7 @@ const EMPTY = {
   ...emptyFlags(),          // 13 operasyonel bayrak — tek kaynak: utils/inventoryFlags.js
   tls_mode: '',
   timeout_seconds: '',
+  check_interval_hours: '',   // '' = genel zamanlama; 1/6/12/24/168 saat
   purchased_by: '',
   svc_mgmt_contact: '', app_dev_contact: '', iis_admin_contact: '', waf_admin_contact: '',
   change_description: '',
@@ -77,6 +78,7 @@ function formFrom(item) {
     use_proxy:          item.use_proxy        ?? false,
     tls_mode:           item.tls_mode         ?? '',
     timeout_seconds:    item.timeout_seconds != null ? String(item.timeout_seconds) : '',
+    check_interval_hours: item.check_interval_hours != null ? String(item.check_interval_hours) : '',
     purchased_by:       item.purchased_by     ?? '',
     change_description: item.change_description ?? '',
     expected_fingerprint: item.expected_fingerprint ?? '',
@@ -313,6 +315,8 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
         // düşüyor, ama burada da elemek "kaydettim ama olmadı" turunu engelliyor.
         timeout_seconds:    form.timeout_seconds && Number(form.timeout_seconds) > 0
                               ? Number(form.timeout_seconds) : null,
+        // Kontrol sıklığı (2026-09-12): BOŞ = genel saatlik zamanlama; sunucu 1/6/12/24/168 dışını null sayar.
+        check_interval_hours: form.check_interval_hours ? Number(form.check_interval_hours) : null,
         purchased_by:       form.purchased_by || null,
         change_description: form.change_description || null,
         // DİKKAT: payload'ın tek camelCase çifti (entity Jackson adlarıyla eşleşsin diye).
@@ -449,6 +453,23 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
               placeholder={t('inv.formTimeoutPlaceholder')}
               onChange={e => f('timeout_seconds', e.target.value)} />
             <span className="field-hint">{t('inv.formTimeoutHint')}</span>
+          </label>
+
+          <label>
+            {t('inv.formInterval')}
+            <SearchableSelect
+              value={form.check_interval_hours}
+              onChange={v => f('check_interval_hours', v)}
+              options={[
+                { value: '',    label: t('inv.intervalInherit') },
+                { value: '1',   label: t('inv.interval1h') },
+                { value: '6',   label: t('inv.interval6h') },
+                { value: '12',  label: t('inv.interval12h') },
+                { value: '24',  label: t('inv.interval24h') },
+                { value: '168', label: t('inv.interval168h') },
+              ]}
+            />
+            <span className="field-hint">{t('inv.formIntervalHint')}</span>
           </label>
 
           <label>

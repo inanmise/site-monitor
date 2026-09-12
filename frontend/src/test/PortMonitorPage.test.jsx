@@ -6,6 +6,7 @@ const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 
 vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
+  formatDateSec: (s) => s ?? '',   // OutageTimeline (2026-09-12, #12) modal içinde kullanıyor
   formatDateOnly: (s) => s ?? '',
   api: withApiFallback({
     monitoring: {

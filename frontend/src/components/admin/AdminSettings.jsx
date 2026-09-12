@@ -8,6 +8,7 @@ import MonitorGroups from './MonitorGroups'
 import SecretTools from './SecretTools'
 import DatabaseInfo from './DatabaseInfo'
 import WeeklyAvailabilitySettings from './WeeklyAvailabilitySettings'
+import ConfigHealthCard from './ConfigHealthCard.jsx'
 import CertInventoryReportSettings from './CertInventoryReportSettings'
 import StormSettings from './StormSettings'
 import LoginAnomalySettings from './LoginAnomalySettings'
@@ -79,6 +80,9 @@ export default function AdminSettings({ globalAdmin = true }) {
   }
 
   return (
+    <>
+    {/* Yapılandırma sağlığı — 12 bölümün üstünde tek kart (2026-09-12, #25); yalnız global admin ucu */}
+    {globalAdmin && <ConfigHealthCard onOpenSection={setActive} />}
     <div className="settings-layout">
       <aside className="settings-menu" role="tablist" aria-orientation="vertical"
              aria-label={t('settings.navHeader')}>
@@ -134,5 +138,6 @@ export default function AdminSettings({ globalAdmin = true }) {
         </>}
       </section>
     </div>
+    </>
   )
 }

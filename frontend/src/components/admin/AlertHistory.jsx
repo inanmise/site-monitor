@@ -5,6 +5,8 @@ import { useToast } from '../ui/Toast.jsx'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
+import MaintenanceBadge from '../ui/MaintenanceBadge.jsx'
+import AlertNoisePanel from './AlertNoisePanel.jsx'   // alarm bakım penceresine denk geliyorsa rozet (2026-09-12, #19)
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../../hooks/useUrlQuerySync.js'
 import { readPageSize, writePageSize } from '../../hooks/usePagination.js'
 import UserBadge from '../ui/UserBadge.jsx'
@@ -583,6 +585,29 @@ function ReNotifyConfirmModal({ domain, recipients, webhook, sending, onSend, on
  * <p>Eşiği aşan alarmlar vurgulanır: uzun süredir açık kalan bir alarm ya çözülmemiş ya
  * unutulmuştur; ikisi de görünmesi gereken durumlar.
  */
+/**
+ * "Neden hâlâ açık?" çipleri (2026-09-12, #16): onaylanmadı / onaylandı (kim), e-posta alıcı sayısı, push
+ * gönderildi-başarısız-atlandı, hiç bildirim yoksa "kimseye ulaşmadı" uyarısı. Alarm Geçmişi ile Push
+ * günlüğüne dağılmış bilgi tek satırda.
+ */
+function WhyOpenChips({ a, notified, push, t }) {
+  const sent = push?.sent ?? 0, failed = push?.failed ?? 0, skipped = push?.skipped ?? 0
+  const nobody = notified === 0 && sent === 0
+  return (
+    <div className="alert-why" aria-label={t('alh.whyOpen')}>
+      <span className="alert-why-label">{t('alh.whyOpen')}</span>
+      <span className={`alert-why-chip${a.acknowledged ? ' is-ok' : ' is-warn'}`}>
+        {a.acknowledged ? t('alh.whyAcked', a.acknowledged_by || '—') : t('alh.whyUnacked')}
+      </span>
+      <span className={`alert-why-chip${notified > 0 ? '' : ' is-muted'}`}>{t('alh.whyEmail', notified)}</span>
+      <span className={`alert-why-chip${failed > 0 ? ' is-bad' : sent > 0 ? '' : ' is-muted'}`} title={push ? t('alh.whyPushTip', sent, failed, skipped) : ''}>
+        {push ? t('alh.whyPush', sent, failed) : t('alh.whyPushNone')}
+      </span>
+      {nobody && <span className="alert-why-chip is-bad">{t('alh.whyNobody')}</span>}
+    </div>
+  )
+}
+
 function OpenDurationBadge({ createdAt, staleHours }) {
   const t = useT()
   if (!createdAt) return null
@@ -726,6 +751,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
   const [unackedTotal, setUnackedTotal] = useState(0)
   const [staleTotal,   setStaleTotal]   = useState(0)
   const [staleHours,   setStaleHours]   = useState(24)
+  const [pushSummary,  setPushSummary]  = useState({})   // alarm id → {sent, failed, skipped} (2026-09-12, #16)
   const [teams,        setTeams]        = useState([])
   // Şerit KAPALI başlar — sekiz izleme sayfasının hepsinde böyle; burada `true` bırakmak
   // tutarsızlıktı. Ayrıca sayfa açılışında ekranı doldurmuyor: önce alarmlar görünüyor,
@@ -875,6 +901,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
         setLevelCounts(res.level_counts ?? {})
         setUnackedTotal(res.unacked_total ?? 0)
         setStaleTotal(res.stale_total ?? 0)
+        setPushSummary(res.push_summary && typeof res.push_summary === 'object' ? res.push_summary : {})
         setStaleHours(res.stale_hours ?? 24)
       } else if (res != null) {
         toast.error(res?.error || t('alh.loadError'))
@@ -1106,6 +1133,8 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
              sabit; orada takım/arama filtresi anlamsız olur ve modalı gereksiz uzatır. ── */}
       {urlSync && (
         <>
+          {/* Gürültü analizi (2026-09-12, #18): en çok alarm üreten hedefler, gün×saat ısı haritası, flap adayları */}
+          <AlertNoisePanel onPickDomain={(d) => { setSearch(d); setSearchTerm(d); setPage(0) }} />
           <MonitorStatsSection
             loading={loading} total={statItems[0].value}
             statsVisible={statsVisible} onToggle={() => setStatsVisible(v => !v)}
@@ -1261,7 +1290,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
                     {levelLabel[a.alert_level] || a.alert_level}
                   </span>
                   <TypeChip type={a.alert_type} />
-                  <strong className="alert-domain">{a.domain}</strong>
+                  <strong className="alert-domain">{a.domain}</strong><MaintenanceBadge target={a.domain} />
                   <OpenDurationBadge createdAt={a.created_at} staleHours={staleHours} />
                   <RepeatBadge count={a.repeat_count} />
                   {(a.email_failed_count ?? 0) > 0 && (
@@ -1282,6 +1311,9 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
                     <span>{t('alh.lastNotif')} {formatDate(a.last_re_alert_at)}</span>
                   )}
                 </div>
+
+                {/* "Neden hâlâ açık?" (2026-09-12, #16): onay, e-posta alıcı sayısı, push kanal durumu — açık sekmede */}
+                {isOpen && <WhyOpenChips a={a} notified={notifiedList.length} push={pushSummary[String(a.id)]} t={t} />}
 
                 {notifiedList.length > 0 && (
                   <div className="alert-notified">
@@ -1345,7 +1377,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
 
                 <div className="ahc-body">
                   <div className="ahc-top">
-                    <strong className="ahc-domain">{a.domain}</strong>
+                    <strong className="ahc-domain">{a.domain}</strong><MaintenanceBadge target={a.domain} />
                     <TypeChip type={a.alert_type} size={12} />
                     <RepeatBadge count={a.repeat_count} />
                     <span className={`ahc-level alh-lvl--${levelClass(a.alert_level)}`}>

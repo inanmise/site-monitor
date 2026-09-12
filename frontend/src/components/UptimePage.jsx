@@ -8,12 +8,13 @@ import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQueryS
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import { domainDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
-import { RefreshCw, X, AlertCircle, CheckCircle, Users } from 'lucide-react'
+import { RefreshCw, X, AlertCircle, CheckCircle, Users, Inbox } from 'lucide-react'
 import DateTimeRangePicker from './ui/DateTimeRangePicker.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
+import StatusBlock from './ui/StatusBlock.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
 
 const REFRESH_INTERVAL = 60
@@ -242,7 +243,7 @@ export default function UptimePage({ systemRole }) {
           {String(loadError)}
         </AlertBanner>
       ) : items.length === 0 ? (
-        <LoadingBlock label={t('uptime.noData')} fullWidth />
+        <StatusBlock tone="neutral" icon={Inbox} title={t('uptime.noData')} description={t('empty.hintFilter')} />
       ) : (
         <div className="upt-grid">
           {pager.pageItems.map(item => (

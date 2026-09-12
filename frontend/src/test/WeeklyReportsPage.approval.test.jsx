@@ -43,7 +43,7 @@ vi.mock('../api/client', () => ({
       years: vi.fn(), list: vi.fn(), get: vi.fn(), lock: vi.fn(), unlock: vi.fn(),
       save: vi.fn(), submit: vi.fn(), approve: vi.fn(), reject: vi.fn(), reopen: vi.fn(),
       resend: vi.fn(), remove: vi.fn(), kpis: vi.fn(), monitoringStats: vi.fn(),
-      mails: vi.fn(), uploadImage: vi.fn(), transfer: vi.fn(),
+      mails: vi.fn(), uploadImage: vi.fn(), transfer: vi.fn(), deadline: vi.fn(),
     },
     admin: { getTeams: vi.fn() },
   }),
@@ -139,5 +139,44 @@ describe('WeeklyReportsPage — onay akışı', () => {
 
     await waitFor(() => expect(confirmMock).toHaveBeenCalled())
     expect(api.weeklyReports.reopen).not.toHaveBeenCalled()
+  })
+})
+
+describe('WeeklyReportsPage — sayfalama + son giriş zamanı (2026-09-12)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.weeklyReports.years.mockResolvedValue({ success: true, data: [2026] })
+    api.weeklyReports.get.mockResolvedValue({ success: true, data: { report: REPORT, images: [] } })
+    api.weeklyReports.kpis.mockResolvedValue({ success: true, data: null })
+    api.weeklyReports.monitoringStats.mockResolvedValue({ success: true, data: null })
+    api.weeklyReports.mails.mockResolvedValue({ success: true, data: [] })
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'SY-A' }] })
+    api.weeklyReports.deadline.mockResolvedValue({ success: true, data: { day: 'THU', time: '17:30', day_tr: 'Perşembe', day_en: 'Thursday', valid: true } })
+  })
+
+  it('53 rapor → tablo sayfalanır (varsayılan 50/sayfa), sayfalama çubuğu 2 sayfa gösterir; 2. sayfada kalan 3 satır', async () => {
+    const many = Array.from({ length: 53 }, (_, i) => ({ ...REPORT, id: 100 + i, week_no: i + 1, week_label: `2026-W${String(i + 1).padStart(2, '0')}` }))
+    api.weeklyReports.list.mockResolvedValue({ success: true, data: many })
+    renderPage()
+    await waitFor(() => expect(api.weeklyReports.list).toHaveBeenCalled())
+    await waitFor(() => expect(document.querySelectorAll('tbody tr').length).toBe(50))
+    const next = screen.getByRole('button', { name: /^(Sonraki|Next)$/ })
+    fireEvent.click(next)
+    await waitFor(() => expect(document.querySelectorAll('tbody tr').length).toBe(3))
+  })
+
+  it('tek rapor → sayfalama çubuğu çizilmez (küçük listeye gürültü yok)', async () => {
+    api.weeklyReports.list.mockResolvedValue({ success: true, data: [REPORT] })
+    renderPage()
+    await waitFor(() => expect(document.querySelectorAll('tbody tr').length).toBe(1))
+    expect(screen.queryByRole('button', { name: /^(Sonraki|Next)$/ })).toBeNull()
+  })
+
+  it('"⏰ Son giriş" satırı canlı ayardan gelir (Perşembe 17:30) — sabit "Cuma 15:00" değil', async () => {
+    api.weeklyReports.list.mockResolvedValue({ success: true, data: [REPORT] })
+    renderPage()
+    await waitFor(() => expect(api.weeklyReports.deadline).toHaveBeenCalled())
+    fireEvent.click(document.querySelector('.wr-help-toggle'))
+    expect(await screen.findByText(/her Perşembe saat 17:30|every Thursday at 17:30/)).toBeInTheDocument()
   })
 })

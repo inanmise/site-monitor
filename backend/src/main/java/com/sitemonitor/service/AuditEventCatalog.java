@@ -215,6 +215,10 @@ public final class AuditEventCatalog {
             "USER_ROLE_UNLOCK",
             "USER_UNLOCK",
             "USER_UPDATE",
+            "WEAK_ALGO_EXCEPTION_CLEAR",
+            "WEAK_ALGO_EXCEPTION_SET",
+            "WEAK_ALGO_EXPORT",
+            "WEAK_ALGO_NOTIFY",
             "WEEKLY_AVAILABILITY_RUN",
             "WEEKLY_AVAILABILITY_TEST",
             "WEEKLY_AVAILABILITY_TOGGLE",
@@ -262,6 +266,7 @@ public final class AuditEventCatalog {
 
         if (t.startsWith("CERT_INVENTORY_REPORT")) return REPORT;    // CERT_* ten ÖNCE
         if (t.startsWith("WEEKLY_")) return REPORT;
+        if (t.startsWith("WEAK_ALGO_")) return CERTIFICATE;         // _EXPORT sonekinden ÖNCE: sertifika raporu
 
         if (t.startsWith("MAINTENANCE_")) return MAINTENANCE;
         if (t.startsWith("MONITOR_") || t.startsWith("THRESHOLD_")

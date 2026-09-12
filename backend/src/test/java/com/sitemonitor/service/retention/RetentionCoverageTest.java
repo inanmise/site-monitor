@@ -81,6 +81,7 @@ class RetentionCoverageTest {
             // İçerik: kullanıcı üretimi, soft delete ile yönetilen kayıtlar.
             Map.entry("certificate_notes", "Kullanıcı notu — soft delete; revizyonlarının politikası var."),
             Map.entry("monitor_notes", "Kullanıcı notu — soft delete."),
+            Map.entry("weak_algo_exception", "Kullanıcı kararı (istisna, alan başına TEK satır, UNIQUE domain) — süresi dolunca satır SİLİNMEZ, raporda \"süresi doldu\" olarak görünür; kullanıcı kaldırır. Zaman serisi değil, birikmez."),
             Map.entry("weekly_reports", "Haftalık rapor metni: takım×hafta; görsel ve mailleri ayrı politikada."),
             Map.entry("password_history", "UserService her şifre değişiminde kullanıcı başına son N'e kırpar."),
             Map.entry("remember_me_tokens", "RememberMeService saatlik olarak süresi dolanları siler.")

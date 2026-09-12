@@ -574,6 +574,7 @@ public class SchedulerService {
         patch("ALTER TABLE certificate_inventory ADD COLUMN use_proxy BOOLEAN DEFAULT false");
         patch("ALTER TABLE certificate_inventory ADD COLUMN timeout_seconds INTEGER");
         patch("ALTER TABLE certificate_inventory ADD COLUMN tls_mode TEXT");
+        patch("ALTER TABLE certificate_inventory ADD COLUMN check_interval_hours INTEGER");   // 2026-09-12 alan başına sıklık
         // Alan adı (registrar) süre bitişi — Alan Adı Tanılama aracı eşleşen envanter satırlarına yazar (TLS sertifika bitişinden ayrı).
         patch("ALTER TABLE certificate_inventory ADD COLUMN domain_expiry TEXT");
         patch("ALTER TABLE certificate_inventory ADD COLUMN domain_registrar TEXT");
@@ -1392,7 +1393,13 @@ public class SchedulerService {
     @Scheduled(cron = "${site.monitor.scheduler.cron:0 0 * * * *}")
     public void scheduledHourlyCheck() {
         log.info("Hourly scheduled check triggered [instance={}]", INSTANCE_ID);
-        runCheck();
+        // Alan başına sıklık: vadesi gelmeyenler bu turda atlanır (elle runCheck() hepsini koşturur).
+        List<Map<String, Object>> due = dueForScheduledSweep(loadDomainsFromInventory());
+        if (due.isEmpty()) {
+            log.warn("Hourly check: no domain due (inventory empty or all on longer intervals) — skipping");
+            return;
+        }
+        runCheckForDomains(due, true);
     }
 
     /** Stale sweep: checks domains not checked within stale-minutes (configurable). */
@@ -1405,14 +1412,13 @@ public class SchedulerService {
                 .map(lc -> lc.getDomain())
                 .collect(Collectors.toSet());
 
-        List<Map<String, Object>> staleDomains = inventoryRepo.findByActiveTrueOrderByDomainAsc().stream()
-                .filter(item -> !freshDomains.contains(item.getDomain()))
-                .map(item -> Map.<String, Object>of(
-                        "domain",    item.getDomain(),
-                        "port",      item.getPort(),
-                        "use_proxy", Boolean.TRUE.equals(item.getUseProxy()),
-                        "tls_mode",  item.getTlsMode() == null ? "" : item.getTlsMode()))
-                .toList();
+        // 2026-09-12: alan başına sıklık — 65 dk'dır kontrol edilmeyen GÜNLÜK alan bayat DEĞİLDİR; aynı
+        // süzgeç (dueForScheduledSweep) uygulanmazsa saatlik süpürmenin atladığı alanı 5 dk sonra stale
+        // süpürmesi yakalar ve sıklık ayarı hiç çalışmaz. Satırlar artık loadDomainsFromInventory'den gelir
+        // (alan başına timeout_seconds de taşınır — önceden stale süpürmesi onu düşürüyordu).
+        List<Map<String, Object>> staleDomains = dueForScheduledSweep(loadDomainsFromInventory().stream()
+                .filter(row -> !freshDomains.contains((String) row.get("domain")))
+                .toList());
 
         if (staleDomains.isEmpty()) {
             log.debug("Stale sweep: all active domains are fresh");
@@ -1699,7 +1705,7 @@ public class SchedulerService {
             return;
         }
         try {
-            weeklyReportReminderService.sendFridayReminders();
+            weeklyReportReminderService.sendFridayReminders(true);   // yalnız son giriş gününde gönderir
         } catch (Exception e) {
             log.error("Haftalık rapor cuma hatırlatması başarısız: {}", e.getMessage(), e);
         } finally {
@@ -2050,6 +2056,29 @@ public class SchedulerService {
         }
     }
 
+    /**
+     * Alan başına sıradaki kontrol (2026-09-12): sıklık boş/1 ise genel süpürme; değilse
+     * (son kontrol + sıklık − 5 dk) anından SONRAKİ ilk süpürme tiki — dueForScheduledSweep ile aynı eşik.
+     * Hiç kontrol edilmemişse/tarih bozuksa bir sonraki süpürme.
+     */
+    public String nextCertificateSweepAt(String domain, Integer checkIntervalHours) {
+        if (checkIntervalHours == null || checkIntervalHours <= 1 || domain == null) return nextCertificateSweepAt();
+        try {
+            String checkedAt = latestCheckRepo.findById(domain).map(lc -> lc.getCheckedAt()).orElse(null);
+            Instant last = parseIsoInstant(checkedAt);
+            if (last == null) return nextCertificateSweepAt();
+            Instant dueFrom = last.plus(checkIntervalHours, ChronoUnit.HOURS).minus(5, ChronoUnit.MINUTES);
+            java.time.ZonedDateTime from = dueFrom.isAfter(Instant.now()) ? dueFrom.atZone(ZoneOffset.UTC) : java.time.ZonedDateTime.now();
+            String cron = (sweepCron == null || sweepCron.isBlank()) ? "0 0 * * * *" : sweepCron;
+            var next = org.springframework.scheduling.support.CronExpression.parse(cron).next(from);
+            return next == null ? null
+                    : next.withZoneSameInstant(ZoneOffset.UTC).format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
+        } catch (Exception e) {
+            log.debug("Alan başına sıradaki süpürme hesaplanamadı: {}", e.toString());
+            return nextCertificateSweepAt();
+        }
+    }
+
     public Map<String, Object> getStatus() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("last_run",       lastRun.get() != null ? lastRun.get().toString() : "Not yet run");
@@ -2244,7 +2273,7 @@ public class SchedulerService {
         return before;
     }
 
-    private List<Map<String, Object>> loadDomainsFromInventory() {
+    List<Map<String, Object>> loadDomainsFromInventory() {   // paket-görünür: test
         List<CertificateInventory> items = inventoryRepo.findByActiveTrueOrderByDomainAsc();
         List<Map<String, Object>> result = new ArrayList<>();
         for (CertificateInventory item : items) {
@@ -2256,10 +2285,43 @@ public class SchedulerService {
             row.put("use_proxy", Boolean.TRUE.equals(item.getUseProxy()));
             row.put("tls_mode",  item.getTlsMode() == null ? "" : item.getTlsMode());
             if (item.getTimeoutSeconds() != null) row.put("timeout_seconds", item.getTimeoutSeconds());
+            if (item.getCheckIntervalHours() != null) row.put("check_interval_hours", item.getCheckIntervalHours());
             result.add(row);
         }
         log.info("Loaded {} active domains from inventory", result.size());
         return result;
+    }
+
+    /**
+     * Alan başına kontrol sıklığı (2026-09-12): {@code check_interval_hours} dolu olan alan, son kontrolünün
+     * üzerinden o kadar saat geçmediyse bu süpürmeden ÇIKARILIR. Boş/1 = her süpürme (eski davranış).
+     * Hiç kontrol edilmemiş alan her zaman girer. Saatlik VE stale süpürmesi bu süzgeci kullanır;
+     * elle tetik ({@code runCheck()} / "Şimdi kontrol et") KULLANMAZ.
+     */
+    List<Map<String, Object>> dueForScheduledSweep(List<Map<String, Object>> domains) {
+        Instant now = Instant.now();
+        List<Map<String, Object>> due = new ArrayList<>(domains.size());
+        int skipped = 0;
+        for (Map<String, Object> d : domains) {
+            Integer hours = (Integer) d.get("check_interval_hours");
+            if (hours == null || hours <= 1) { due.add(d); continue; }
+            String checkedAt = latestCheckRepo.findById((String) d.get("domain")).map(lc -> lc.getCheckedAt()).orElse(null);
+            Instant last = parseIsoInstant(checkedAt);
+            // 5 dk tolerans: cron tam saatte, kontrol birkaç sn sürer — "23 sa 59 dk" yüzünden bir tur kaçmasın.
+            if (last == null || !last.plus(hours, ChronoUnit.HOURS).minus(5, ChronoUnit.MINUTES).isAfter(now)) due.add(d);
+            else skipped++;
+        }
+        if (skipped > 0) log.info("Scheduled sweep: {} domain(s) skipped — own interval not due yet", skipped);
+        return due;
+    }
+
+    private static Instant parseIsoInstant(String iso) {
+        if (iso == null || iso.isBlank()) return null;
+        try { return Instant.parse(iso.endsWith("Z") ? iso : iso + "Z"); }
+        catch (Exception e) {
+            try { return java.time.LocalDateTime.parse(iso).toInstant(java.time.ZoneOffset.UTC); }
+            catch (Exception e2) { return null; }
+        }
     }
 
     /** Map.of rejects nulls, so inventory maps carry "" for unset tls_mode. */

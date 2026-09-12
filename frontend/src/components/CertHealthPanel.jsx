@@ -168,9 +168,13 @@ export default function CertHealthPanel({ domain, canRefresh = true }) {
           <span className="hlth-chip-k">{t('hlth.lastCheck')}</span>
           <span className="hlth-chip-v">{data.checked_at ? formatDateSec(data.checked_at) : '—'}</span>
         </span>
-        <span className="hlth-chip">
+        <span className="hlth-chip" title={data.check_interval_hours ? t('inv.formIntervalHint') : undefined}>
           <span className="hlth-chip-k">{t('hlth.nextCheck')}</span>
-          <span className="hlth-chip-v">{data.next_check_at ? formatDateSec(data.next_check_at) : '—'}</span>
+          <span className="hlth-chip-v">
+            {data.next_check_at ? formatDateSec(data.next_check_at) : '—'}
+            {/* Alan başına kontrol sıklığı (2026-09-12): genel saatlik zamanlamadan sapıyorsa yanında yazar. */}
+            {data.check_interval_hours ? ` · ${t(`inv.interval${data.check_interval_hours}h`)}` : ''}
+          </span>
         </span>
 
         <span className="hlth-meta-spacer" />

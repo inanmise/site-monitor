@@ -1728,4 +1728,106 @@ class SchedulerServiceTest {
         assertThat(scheduler.isStillMonitored(sweepItem(EscalationService.TYPE_PORT_DOWN, "gone.example.com", Map.of("monitor_id", 3L)))).isFalse();
         assertThat(scheduler.isStillMonitored(sweepItem(EscalationService.TYPE_PORT_DOWN, "gone.example.com", Map.of("monitor_id", 4L)))).isTrue();
     }
+    // ── Alan başına kontrol sıklığı (2026-09-12) ─────────────────────────────────────────────
+
+    private static Map<String, Object> invRow(String domain, Integer intervalHours) {
+        Map<String, Object> m = new java.util.HashMap<>();
+        m.put("domain", domain);
+        if (intervalHours != null) m.put("check_interval_hours", intervalHours);
+        return m;
+    }
+
+    private static java.util.Optional<com.sitemonitor.model.LatestCheck> lastCheckedAgo(java.time.Duration ago) {
+        com.sitemonitor.model.LatestCheck lc = new com.sitemonitor.model.LatestCheck();
+        lc.setCheckedAt(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+                .withZone(java.time.ZoneOffset.UTC).format(java.time.Instant.now().minus(ago)));
+        return java.util.Optional.of(lc);
+    }
+
+    @Test
+    @DisplayName("2026-09-12: sıklık boş/1 saat → her süpürmede; 24 saat → 3 saat önce kontrol edildiyse atlanır")
+    void dueForScheduledSweep_skipsDomainsWhoseOwnIntervalIsNotDue() {
+        when(latestCheckRepo.findById("daily.example.com")).thenReturn(lastCheckedAgo(java.time.Duration.ofHours(3)));
+        List<Map<String, Object>> due = scheduler.dueForScheduledSweep(List.of(
+                invRow("global.example.com", null),
+                invRow("hourly.example.com", 1),
+                invRow("daily.example.com", 24)));
+        assertThat(due).extracting(m -> m.get("domain"))
+                .containsExactly("global.example.com", "hourly.example.com");
+        // boş/1 için repo'ya hiç sorulmaz (sıcak yol ucuz kalır)
+        verify(latestCheckRepo, never()).findById("global.example.com");
+        verify(latestCheckRepo, never()).findById("hourly.example.com");
+    }
+
+    @Test
+    @DisplayName("2026-09-12: vadesi gelen (25 sa önce), hiç kontrol edilmemiş ve tarihi bozuk alanlar 24 saatlikte de girer")
+    void dueForScheduledSweep_includesDueNeverCheckedAndUnparsable() {
+        when(latestCheckRepo.findById("old.example.com")).thenReturn(lastCheckedAgo(java.time.Duration.ofHours(25)));
+        when(latestCheckRepo.findById("never.example.com")).thenReturn(java.util.Optional.empty());
+        com.sitemonitor.model.LatestCheck broken = new com.sitemonitor.model.LatestCheck();
+        broken.setCheckedAt("not-a-date");
+        when(latestCheckRepo.findById("broken.example.com")).thenReturn(java.util.Optional.of(broken));
+        List<Map<String, Object>> due = scheduler.dueForScheduledSweep(List.of(
+                invRow("old.example.com", 24), invRow("never.example.com", 24), invRow("broken.example.com", 24)));
+        assertThat(due).extracting(m -> m.get("domain"))
+                .containsExactly("old.example.com", "never.example.com", "broken.example.com");
+    }
+
+    @Test
+    @DisplayName("2026-09-12: 5 dk tolerans — 23 sa 57 dk önce kontrol edilen günlük alan bu turu KAÇIRMAZ; 23 sa 50 dk ise bekler")
+    void dueForScheduledSweep_fiveMinuteToleranceAroundCronBoundary() {
+        when(latestCheckRepo.findById("edge.example.com")).thenReturn(lastCheckedAgo(java.time.Duration.ofHours(24).minusMinutes(3)));
+        assertThat(scheduler.dueForScheduledSweep(List.of(invRow("edge.example.com", 24)))).hasSize(1);
+        when(latestCheckRepo.findById("wait.example.com")).thenReturn(lastCheckedAgo(java.time.Duration.ofHours(24).minusMinutes(10)));
+        assertThat(scheduler.dueForScheduledSweep(List.of(invRow("wait.example.com", 24)))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("2026-09-12: envanter satırı check_interval_hours taşır (dolu ise), timeout gibi")
+    void loadDomainsFromInventory_carriesCheckIntervalHours() {
+        CertificateInventory a = new CertificateInventory(); a.setDomain("weekly.example.com"); a.setActive(true); a.setCheckIntervalHours(168);
+        CertificateInventory b = new CertificateInventory(); b.setDomain("plain.example.com"); b.setActive(true);
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(a, b));
+        List<Map<String, Object>> rows = scheduler.loadDomainsFromInventory();
+        assertThat(rows).hasSize(2);
+        assertThat(rows.get(0)).containsEntry("check_interval_hours", 168);
+        assertThat(rows.get(1)).doesNotContainKey("check_interval_hours");
+    }
+    @Test
+    @DisplayName("2026-09-12: alan başına sıradaki kontrol — haftalık alan 2 gün önce kontrol edildiyse ~5 gün sonrası; boş sıklık = genel süpürme")
+    void nextCertificateSweepAt_perDomainRespectsOwnInterval() {
+        String global = scheduler.nextCertificateSweepAt();
+        assertThat(scheduler.nextCertificateSweepAt("plain.example.com", null)).isEqualTo(global);
+        assertThat(scheduler.nextCertificateSweepAt("plain.example.com", 1)).isEqualTo(global);
+
+        when(latestCheckRepo.findById("weekly.example.com")).thenReturn(lastCheckedAgo(java.time.Duration.ofDays(2)));
+        String next = scheduler.nextCertificateSweepAt("weekly.example.com", 168);
+        java.time.Instant nextI = java.time.LocalDateTime.parse(next).toInstant(java.time.ZoneOffset.UTC);
+        java.time.Instant dueFrom = java.time.Instant.now().plus(java.time.Duration.ofDays(5)).minusSeconds(5 * 60);
+        assertThat(nextI).isAfterOrEqualTo(dueFrom.minusSeconds(2));
+        assertThat(nextI).isBefore(dueFrom.plus(java.time.Duration.ofHours(1)).plusSeconds(2));
+
+        // vadesi çoktan geçmiş (sıklık 24 sa, 3 gün önce) → sıradaki genel süpürme
+        when(latestCheckRepo.findById("late.example.com")).thenReturn(lastCheckedAgo(java.time.Duration.ofDays(3)));
+        assertThat(scheduler.nextCertificateSweepAt("late.example.com", 24)).isEqualTo(global);
+    }
+    @Test
+    @DisplayName("2026-09-12: stale süpürmesi de sıklığa uyar — 3 sa'dır kontrolsüz GÜNLÜK alan yeniden kontrol EDİLMEZ, saatlik olan edilir")
+    void checkStaleInventory_honoursPerDomainInterval() {
+        CertificateInventory daily = new CertificateInventory(); daily.setDomain("daily.example.com"); daily.setPort(443); daily.setActive(true); daily.setCheckIntervalHours(24);
+        CertificateInventory hourly = new CertificateInventory(); hourly.setDomain("hourly.example.com"); hourly.setPort(443); hourly.setActive(true); hourly.setTimeoutSeconds(7);
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(daily, hourly));
+        // 65 dk penceresinde hiçbiri taze değil (her ikisi de 3 sa önce kontrol edildi)
+        when(latestCheckRepo.findByCheckedAtGreaterThanEqual(anyString())).thenReturn(java.util.Set.of());
+        when(latestCheckRepo.findById("daily.example.com")).thenReturn(lastCheckedAgo(java.time.Duration.ofHours(3)));
+        Map<String, Object> ok = Map.of("domain", "hourly.example.com", "status", "valid");
+        when(checkerService.checkAsync(anyString(), anyInt(), anyBoolean(), any(), any()))
+                .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(ok));
+
+        scheduler.checkStaleInventory();
+
+        // Yalnız saatlik alan gider; alan başına timeout_seconds artık stale süpürmesinde de taşınır.
+        verify(checkerService).checkAsync("hourly.example.com", 443, false, null, 7);
+        verify(checkerService, never()).checkAsync(org.mockito.ArgumentMatchers.eq("daily.example.com"), anyInt(), anyBoolean(), any(), any());
+    }
 }

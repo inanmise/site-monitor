@@ -39,7 +39,7 @@ class WeeklyReportReminderServiceTest {
         ReflectionTestUtils.setField(service, "enabled", true);
         ReflectionTestUtils.setField(service, "appBaseUrl", "https://cm.example.com/");
         when(appSettings.getString(anyString(), any())).thenAnswer(i -> i.getArgument(1));
-        when(emailService.buildWeeklyReportReminderHtml(any(), any(), any())).thenReturn("<html/>");
+        when(emailService.buildWeeklyReportReminderHtml(any(), any(), any(), any())).thenReturn("<html/>");
         when(emailService.sendHtml(any(), any(), anyString(), anyString(), any())).thenReturn("SENT");
     }
 
@@ -102,7 +102,7 @@ class WeeklyReportReminderServiceTest {
         service.sendFridayReminders();
 
         ArgumentCaptor<String> urlCap = ArgumentCaptor.forClass(String.class);
-        verify(emailService).buildWeeklyReportReminderHtml(eq("AlphaSY"), anyString(), urlCap.capture());
+        verify(emailService).buildWeeklyReportReminderHtml(eq("AlphaSY"), anyString(), urlCap.capture(), anyString());
         assertThat(urlCap.getValue()).isEqualTo("https://cm.example.com/?tab=weeklyreports");
     }
 
@@ -150,5 +150,35 @@ class WeeklyReportReminderServiceTest {
         assertThat(res.sent()).isZero();
         verifyNoInteractions(teamRepo, reportRepo);
         verify(emailService, never()).sendHtml(any(), any(), anyString(), anyString(), any());
+    }
+    // ── Son giriş zamanı canlı ayardan (2026-09-12) ─────────────────────────────────────────
+
+    @Test
+    @DisplayName("2026-09-12: zamanlanmış koşu yalnız SON GİRİŞ GÜNÜNDE gönderir; elle tetik gün bakmaz; mail metni ayardan")
+    void scheduledRun_onlyOnDeadlineDay() {
+        Team a = team(1L, "AlphaSY", "alpha@x.com");
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(java.util.List.of(a));
+        when(reportRepo.findByTeamIdAndReportYearAndWeekNo(anyLong(), anyInt(), anyInt())).thenReturn(Optional.empty());
+
+        // Son giriş günü = YARIN (kayan: bugünün gününe göre) → zamanlanmış koşu atlar, elle tetik gönderir
+        java.time.DayOfWeek tomorrow = java.time.LocalDate.now(java.time.ZoneId.of("Europe/Istanbul")).plusDays(1).getDayOfWeek();
+        when(appSettings.getString(eq(WeeklyReportDeadline.KEY_DAY), any())).thenReturn(tomorrow.name().substring(0, 3));
+        when(appSettings.getString(eq(WeeklyReportDeadline.KEY_TIME), any())).thenReturn("17:30");
+
+        assertThat(service.sendFridayReminders(true).sent()).isEqualTo(0);
+        verify(emailService, org.mockito.Mockito.never()).sendHtml(any(), isNull(), anyString(), anyString(), isNull());
+
+        assertThat(service.sendFridayReminders(false).sent()).isEqualTo(1);
+        ArgumentCaptor<String> dl = ArgumentCaptor.forClass(String.class);
+        verify(emailService).buildWeeklyReportReminderHtml(eq("AlphaSY"), anyString(), anyString(), dl.capture());
+        String[] tr = {"Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"};
+        assertThat(dl.getValue()).isEqualTo(tr[tomorrow.getValue() - 1] + " saat 17:30");
+
+        // Son giriş günü = BUGÜN → zamanlanmış koşu gönderir, metin "bugün saat 17:30"
+        org.mockito.Mockito.clearInvocations(emailService);
+        java.time.DayOfWeek today = java.time.LocalDate.now(java.time.ZoneId.of("Europe/Istanbul")).getDayOfWeek();
+        when(appSettings.getString(eq(WeeklyReportDeadline.KEY_DAY), any())).thenReturn(today.name().substring(0, 3));
+        assertThat(service.sendFridayReminders(true).sent()).isEqualTo(1);
+        verify(emailService).buildWeeklyReportReminderHtml(eq("AlphaSY"), anyString(), anyString(), eq("bugün saat 17:30"));
     }
 }
