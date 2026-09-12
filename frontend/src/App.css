@@ -9083,10 +9083,10 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .uact-chip { padding: 2px 9px; border-radius: 999px; font-size: 12px; background: var(--bg-surface); border: 1px solid var(--border); color: var(--text); }
 .uact-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .uact-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-.uact-bar { position: relative; display: inline-block; width: 120px; height: 10px; border-radius: 999px; background: var(--bg-surface); vertical-align: middle; overflow: hidden; }
+.uact-bar { position: relative; display: inline-block; width: 120px; height: 10px; border-radius: 999px; background: var(--bg-surface); vertical-align: middle; }
 .uact-bar--wide { flex: 1 1 120px; min-width: 60px; }
-.uact-bar-fill { position: absolute; inset: 0 auto 0 0; width: var(--w, 0%); background: var(--sb-accent, #3b82f6); border-radius: 999px; }
-.uact-bar-lbl { margin-left: 128px; font-size: 11px; color: var(--text-light); font-variant-numeric: tabular-nums; }
+.uact-bar-fill { position: absolute; inset: 0 auto 0 0; width: var(--w, 0%); max-width: 100%; background: var(--sb-accent, #3b82f6); border-radius: 999px; }
+.uact-bar-lbl { position: absolute; left: calc(100% + 8px); top: -4px; font-size: 11px; color: var(--text-light); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .uact-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 .uact-teamrow { border-bottom: 1px dashed var(--border); }
 .uact-teamrow-head { width: 100%; display: flex; align-items: center; gap: 10px; padding: 7px 4px; background: none; border: 0; font: inherit; color: var(--text); cursor: pointer; text-align: left; }
@@ -9129,6 +9129,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   .uact-table td::before { content: attr(data-label); font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-light); text-align: left; flex: 0 0 40%; }
   .uact-table td.dbtcol-num-cell { text-align: right; }
   .uact-table-wrap { max-height: none; }
+  .uact-sec-header .seg-ctl { flex-wrap: wrap; margin-left: 0; width: 100%; }
+  .uact-sec-header .seg-ctl-btn { flex: 1 1 auto; }
+  .uact-glossary { grid-template-columns: minmax(0, 1fr); padding: 8px; }
+  .uact-glossary > div { min-width: 0; }
+  .uact-teamrow-head { flex-wrap: wrap; }
+  .fc-card.fc-section-card { overflow: hidden; }
 }
 
 /* Executive bölüm başlıkları — tüm Sistem Sağlığı sayfası (scope: .sys-health) */

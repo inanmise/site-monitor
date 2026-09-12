@@ -285,8 +285,10 @@ public class UserActivityService {
             // oturumlar (ping durmuş) sayımdan ve listeden otomatik düşer.
             if (!userService.hasLiveSession(u)) continue;
             // Oturuma ait audit satırı → login zamanı + IP/konum/tarayıcı. Fallback: son başarılı LOGIN.
+            // Önce oturumun LOGIN satırı (süre = login'den beri); yoksa oturumun herhangi bir satırı; o da yoksa son LOGIN.
             AuditLog ev = auditLogRepo
-                    .findTopByActorAndSessionIdOrderByEventTimeDesc(u.getUsername(), u.getActiveSessionId())
+                    .findTopByActorAndSessionIdAndEventTypeOrderByEventTimeDesc(u.getUsername(), u.getActiveSessionId(), "LOGIN")
+                    .or(() -> auditLogRepo.findTopByActorAndSessionIdOrderByEventTimeDesc(u.getUsername(), u.getActiveSessionId()))
                     .orElseGet(() -> auditLogRepo
                             .findTopByActorAndEventTypeAndOutcomeOrderByEventTimeDesc(
                                     u.getUsername(), "LOGIN", "SUCCESS")

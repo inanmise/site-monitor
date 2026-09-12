@@ -100,11 +100,16 @@ class UserActivityServiceEnrichmentTest {
         when(userRepo.findAllWithActiveSession()).thenReturn(List.of(u));
         when(userRepo.findAll()).thenReturn(List.of(u));
         when(userService.hasLiveSession(u)).thenReturn(true);
-        when(auditLogRepo.findTopByActorAndSessionIdOrderByEventTimeDesc(anyString(), anyString())).thenReturn(Optional.empty());
+        // Oturumun LOGIN satırı 50 dk önce; aynı oturumdaki daha yeni denetim satırı (anomali onayı) süreyi SIFIRLAMAMALI
+        AuditLog login = ev(1, "admin", "10.0.0.1", "SUCCESS", 5L, null, Instant.now().minusSeconds(3000)); login.setSessionId("sid-1");
+        AuditLog later = ev(2, "admin", "10.0.0.1", "SUCCESS", 5L, null, Instant.now().minusSeconds(10)); later.setEventType("LOGIN_ANOMALY_ACK"); later.setSessionId("sid-1");
+        when(auditLogRepo.findTopByActorAndSessionIdAndEventTypeOrderByEventTimeDesc("admin", "sid-1", "LOGIN")).thenReturn(Optional.of(login));
+        when(auditLogRepo.findTopByActorAndSessionIdOrderByEventTimeDesc(anyString(), anyString())).thenReturn(Optional.of(later));
         when(auditLogRepo.findTopByActorAndEventTypeAndOutcomeOrderByEventTimeDesc(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
         when(pageUsage.lastTabOf("admin")).thenReturn(new String[]{"forecast", "2026-09-13T00:00:00"});
         Map<String, Object> o = service.getOverview();
         @SuppressWarnings("unchecked") Map<String, Object> row = ((List<Map<String, Object>>) o.get("active_users")).get(0);
+        assertThat((Long) row.get("duration_min")).isBetween(49L, 51L);
         long idle = (Long) row.get("idle_sec");
         assertThat(idle).isBetween(118L, 125L);
         assertThat((Long) row.get("expires_in_sec")).isBetween(30 * 60 - 125L, 30 * 60 - 118L);

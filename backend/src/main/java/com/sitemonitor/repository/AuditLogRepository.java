@@ -96,6 +96,10 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
 
     Optional<AuditLog> findTopByActorAndSessionIdOrderByEventTimeDesc(String actor, String sessionId);
 
+    /** Oturumun LOGIN satırı — oturum süresi bunun zamanından hesaplanır (aynı oturumdaki sonraki denetim
+     *  satırları, ör. anomali onayı, "login zamanını" ileri kaydırmasın — 2026-09-13). */
+    Optional<AuditLog> findTopByActorAndSessionIdAndEventTypeOrderByEventTimeDesc(String actor, String sessionId, String eventType);
+
     Optional<AuditLog> findTopByActorAndEventTypeAndOutcomeOrderByEventTimeDesc(
             String actor, String eventType, String outcome);
 
