@@ -119,7 +119,7 @@ public class RenewalForecastService {
             m.put("renewal_planned_note", i != null ? i.getRenewalPlannedNote() : null);
             // Plan durumu: planned → yeni sertifika (not_before) plan tarihinden sonra görüldüyse done (plan yerine geldi)
             String planned = i != null ? i.getRenewalPlannedAt() : null;
-            String nb = d.getNotBefore() == null ? null : d.getNotBefore().substring(0, Math.min(10, d.getNotBefore().length()));
+            String nb = localDay(d.getNotBefore(), ZONE);
             m.put("renewal_plan_state", planned == null ? "none" : (nb != null && nb.compareTo(planned) >= 0 ? "done" : "planned"));
             certs.add(m);
             if (d.getCheckedAt() != null && (dataAsOf == null || d.getCheckedAt().compareTo(dataAsOf) > 0)) dataAsOf = d.getCheckedAt();
@@ -135,14 +135,34 @@ public class RenewalForecastService {
         return out;
     }
 
-    /** Bitiş − lead gün ('YYYY-MM-DD', UTC günü — takvim/ICS istemcide yerel güne çevirir). */
-    static String renewBy(String notAfter, int leadDays) {
-        if (notAfter == null || notAfter.isBlank()) return null;
+    /**
+     * Takvim günü dilimi: zaman damgaları UTC saklanır, istemci ise yerel günü gösterir (23:59:59Z biten
+     * sertifika ekranda ertesi gün). Çıplak 'YYYY-MM-DD' alanlar bu yüzden sunucu dilimine göre üretilir —
+     * servisler Europe/Istanbul'da koşar, kullanıcılar da oradadır (ISSUE-007, 2026-09-12).
+     */
+    static final ZoneId ZONE = ZoneId.systemDefault();
+
+    /** Bitiş − lead gün ('YYYY-MM-DD', {@link #ZONE} günü). */
+    static String renewBy(String notAfter, int leadDays) { return renewBy(notAfter, leadDays, ZONE); }
+
+    static String renewBy(String notAfter, int leadDays, ZoneId zone) {
+        Instant t = parseUtc(notAfter);
+        return t == null ? null : t.minus(leadDays, ChronoUnit.DAYS).atZone(zone).toLocalDate().toString();
+    }
+
+    /** UTC zaman damgası → dilimdeki takvim günü ('YYYY-MM-DD'); parse edilemezse ilk 10 karakter. */
+    static String localDay(String utcTs, ZoneId zone) {
+        Instant t = parseUtc(utcTs);
+        if (t != null) return t.atZone(zone).toLocalDate().toString();
+        return utcTs == null ? null : utcTs.substring(0, Math.min(10, utcTs.length()));
+    }
+
+    private static Instant parseUtc(String ts) {
+        if (ts == null || ts.isBlank()) return null;
         try {
-            String s = notAfter.trim();
-            Instant t = s.matches("^\\d{4}-\\d{2}-\\d{2}$") ? Instant.parse(s + "T00:00:00Z")
+            String s = ts.trim();
+            return s.matches("^\\d{4}-\\d{2}-\\d{2}$") ? Instant.parse(s + "T00:00:00Z")
                     : (s.endsWith("Z") || s.matches(".*[+-]\\d{2}:?\\d{2}$")) ? OffsetDateTime.parse(s).toInstant() : Instant.parse(s + "Z");
-            return t.minus(leadDays, ChronoUnit.DAYS).atZone(ZoneOffset.UTC).toLocalDate().toString();
         } catch (Exception e) { return null; }
     }
 
@@ -180,13 +200,14 @@ public class RenewalForecastService {
                         if (renewedAt.compareTo(windowStart) < 0) continue;
                         String prevNotAfter = groups.get(k - 1)[2] == null ? null : String.valueOf(groups.get(k - 1)[2]);
                         String renewByPrev = renewBy(prevNotAfter, leadD);
-                        boolean ok = renewByPrev == null || renewedAt.substring(0, 10).compareTo(renewByPrev) <= 0;
+                        String renewedDay = localDay(renewedAt, ZONE);
+                        boolean ok = renewByPrev == null || renewedDay.compareTo(renewByPrev) <= 0;
                         Map<String, Object> ev = new LinkedHashMap<>();
                         ev.put("domain", e.getKey()); ev.put("renewed_at", renewedAt); ev.put("prev_not_after", prevNotAfter);
                         ev.put("renew_by", renewByPrev); ev.put("on_time", ok); ev.put("tier", i != null ? i.getTier() : null);
                         events.add(ev);
                         if (ok) onTime++; else late++;
-                        String month = renewedAt.substring(0, 7);
+                        String month = renewedDay.substring(0, 7);
                         months.computeIfAbsent(month, x -> new int[2])[ok ? 0 : 1]++;
                     }
                 }
