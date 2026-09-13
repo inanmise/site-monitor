@@ -377,7 +377,7 @@ function NotesTab({ domain, t, currentUser, isAdmin }) {
 }
 
 export default function CertificateModal({ domain, alertLevel, onClose, initialData, previewMode, currentUser, currentUserRole,
-                                          onCheckNow, checking = false, onEdit, refreshSignal = 0 }) {
+                                          onCheckNow, checking = false, onEdit, refreshSignal = 0, initialTab }) {
   const t = useT()
   useEscapeKey(!previewMode, onClose)   // Escape ile kapat (QA ISSUE-002, 2026-09-13); önizleme modunda kapatma yok
   const toast = useToast()
@@ -387,6 +387,8 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   // "istek anındaki domain hâlâ ekranda mı" sorusunu bu ref'ten okur (her render'da tazelenir).
   const domainRef = useRef(null)
   domainRef.current = domain
+  const initialTabRef = useRef(initialTab)   // açılış sekmesi (tablo satır menüsü); ref: domain effect'inin bağımlılığı olmasın
+  initialTabRef.current = initialTab
   // Canlı SSL probe'unun tur sayacı. domainRef TEK BAŞINA yetmiyordu: uçuşan yanıt "artık
   // ekranda değilim" deyip sslLoading'i TEMİZLEMEDEN dönüyor, bayrak true kalıyordu. Modal
   // kalıcı mount'lu olduğu için o bayrak bir sonraki domain'e taşınıyor ve SSL sekmesi
@@ -473,7 +475,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
     if (!domain) return
     setCertData(null)
     setSslData(null)
-    setActiveTab('ssl')
+    setActiveTab(initialTabRef.current || 'ssl')   // satır menüsünden doğrudan sekmeye (alarm/kontrol geçmişi)
 
     if (initialData) {
       setCertData(initialData)

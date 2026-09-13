@@ -285,6 +285,12 @@ export const api = {
     const q = new URLSearchParams(params).toString()
     return request(`/certificates/list?${q}`)
   },
+  /** Tüm Sertifikalar CSV (2026-09-13): aynı süzgeç, tüm sayfalar; tarayıcı indirir, sunucu CERT_LIST_EXPORT yazar. */
+  certExportUrl: (params, cols) => {
+    const q = new URLSearchParams(Object.fromEntries(Object.entries({ ...params, cols: (cols || []).join(',') })
+      .filter(([k, v]) => v !== '' && v != null && v !== false && k !== 'page' && k !== 'per_page'))).toString()
+    return `${BASE}/certificates/export.csv?${q}`
+  },
 
   getWarnings: () => request('/warnings'),
 
