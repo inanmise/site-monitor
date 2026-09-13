@@ -840,6 +840,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   margin-left: 8px;
   flex: 1;
 }
+/* Dar ekranda çubuk sarar; etiket küçülebilir (QA ISSUE-002 2026-09-13: 375 px'te 36 px taşma) */
+@media (max-width: 640px) {
+  .stats-collapse-bar { flex-wrap: wrap; row-gap: 4px; }
+  .stats-collapse-label { flex: 0 1 auto; min-width: 0; }
+  .stats-collapse-hint { flex: 1 1 100%; margin-left: 26px; order: 3; }
+}
 .search-box { padding: 10px 14px; border: 1px solid var(--border); border-radius: 4px; font-size: .95em; min-width: 200px; flex: 1; }
 .add-domain-section { display: flex; gap: 8px; margin-left: auto; }
 .domain-input { width: 350px; max-width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: 4px; font-size: .95em; }
