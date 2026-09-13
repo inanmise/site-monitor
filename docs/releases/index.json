@@ -1,9 +1,58 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-13T13:01:40Z",
+  "generatedAt": "2026-09-13T14:56:33Z",
   "repo": "inanmise/site-monitor",
-  "count": 646,
+  "count": 647,
   "releases": [
+    {
+      "version": "20.62.0",
+      "tag": "v20.62.0",
+      "releasedAt": "2026-09-13T14:56:26Z",
+      "commit": "1c2c0e1f5abab248de410b6f2768323625dd7417",
+      "prevVersion": "20.61.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 3,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": "regresyon",
+          "breaking": false,
+          "sha": "1c2c0e1f",
+          "subject": "yirmi dördüncü tur — ürün turu (v20.61.1..HEAD)"
+        },
+        {
+          "type": "feat",
+          "scope": "tour",
+          "breaking": false,
+          "sha": "ab6fc530",
+          "subject": "ürün turu — ilk girişte karşılama, spot ışıklı 20 adım, sayfa turları, başlangıç listesi"
+        },
+        {
+          "type": "feat",
+          "scope": "tour",
+          "breaking": false,
+          "sha": "bcaa7b20",
+          "subject": "giriş yanıtı da tour durumunu taşır"
+        },
+        {
+          "type": "feat",
+          "scope": "tour",
+          "breaking": false,
+          "sha": "34bb7233",
+          "subject": "ürün turu durumu sunucuda — /me tour alanı, POST /me/tour, yönetici sıfırlama, özet"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.61.1",
       "tag": "v20.61.1",
