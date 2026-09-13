@@ -1343,6 +1343,7 @@ public class WeeklyReportService {
             m.put("status", r == null ? "MISSING" : r.getStatus());
             m.put("report_id", r == null ? null : r.getId());
             m.put("updated_at", r == null ? null : r.getUpdatedAt());
+            m.put("sent_at", r == null ? null : r.getSentAt());   // APPROVED + gönderildi → şeritte "Gönderildi"
             teams.add(m);
         }
         out.put("teams", teams);

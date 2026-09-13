@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   Plus, Save, Send, CheckCircle, Undo2, Eye, Trash2, RefreshCcw, ArrowLeft, Menu, History, FilePenLine,
-  HelpCircle, ChevronDown, Bell, Mail, ArrowRightLeft, Printer,
+  HelpCircle, ChevronDown, Bell, Mail, ArrowRightLeft, Printer, ChevronLeft, ChevronRight, Download, Sparkles,
 } from 'lucide-react'
 import UserBadge from './ui/UserBadge.jsx'
 import WeeklyKpiStrip from './WeeklyKpiStrip.jsx'
@@ -25,6 +25,10 @@ import { LoadingBlock } from './ui/Progress.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import WeeklyCompletionBoard from './WeeklyCompletionBoard.jsx'
 import { usePagination } from '../hooks/usePagination.js'
+import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
+import WeeklyThisWeekStrip from './weekly/WeeklyThisWeekStrip.jsx'
+import { WeeklyStatusChips, SortTh, ScoreBadge, DeltaBadge, SuggestBadge, PrevNoteToggle } from './weekly/WeeklyListExtras.jsx'
+import { statusFacets, approvalQueue, filterByStatus, sortReports, parsePrevContent, buildYearCsv, toUrlMapping } from './weekly/weeklyModel.js'
 
 /** Oturum kesintisi yedekleri için localStorage anahtar öneki. */
 const DRAFT_BACKUP_PREFIX = 'wr.draft.'
@@ -319,16 +323,23 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
 
   const [teams, setTeams] = useState([])
-  const [selTeamId, setSelTeamId] = useState('')   // varsayılan: Tüm Takımlar (admin takım combobox'ı)
-  const [year, setYear] = useState(isoWeekInfo().year)
+  // URL derin bağlantı (2026-09-13): w_team / team (bildirim kutusu), w_year, w_week, w_id, w_st, w_sort
+  const [selTeamId, setSelTeamId] = useState(() => readUrlParam('w_team', null) || readUrlParam('team', null) || '')   // varsayılan: Tüm Takımlar (admin takım combobox'ı)
+  const [year, setYear] = useState(() => readUrlInt('w_year', isoWeekInfo().year))
   const [years, setYears] = useState([])
   const [jumpDate, setJumpDate] = useState('')
-  const [weekFilter, setWeekFilter] = useState(null) // "Tarihe Git" → tabloyu o haftaya daraltır
+  const [weekFilter, setWeekFilter] = useState(() => readUrlInt('w_week', null)) // "Tarihe Git" → tabloyu o haftaya daraltır
   const [openMenuId, setOpenMenuId] = useState(null)  // İşlemler kebab menüsü açık satır
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 }) // fixed konum (overflow'dan kaçış)
   const [reports, setReports] = useState([])
   const [loadingList, setLoadingList] = useState(true)
-  const [selectedId, setSelectedId] = useState(null)
+  const [selectedId, setSelectedId] = useState(() => readUrlInt('w_id', null))
+  const [statusChip, setStatusChip] = useState(() => readUrlParam('w_st', '') || '')   // durum çipi / MINE (2026-09-13)
+  const [listSort, setListSort] = useState(() => readUrlParam('w_sort', 'week|desc') || 'week|desc')
+  const [thisWeek, setThisWeek] = useState(null)        // "bu hafta" şeridi (2026-09-13)
+  const [suggest, setSuggest] = useState(null)          // sistemden öneriler (detay, düzenlenebilirken)
+  const [prevReport, setPrevReport] = useState(null)    // önceki hafta (Δ + not paneli)
+  const [prevOpen, setPrevOpen] = useState({})          // bölüm → geçen haftanın notu açık mı
   const [helpOpen, setHelpOpen] = useState(() => {
     try { return localStorage.getItem('wr-help-open') === 'true' } catch { return false }
   })
@@ -458,8 +469,13 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     else loadList()             // aynı yıl: yükleme göstergesiyle tazele, sonra filtrele
   }
 
+  const loadThisWeek = useCallback(async () => {
+    try { const r = await api.weeklyReports.thisWeek(); if (r?.success) setThisWeek(r.data ?? null) } catch { /* şerit yoksa sayfa yine çalışır */ }
+  }, [])
+
   const loadList = useCallback(async () => {
     setLoadingList(true)
+    loadThisWeek()
     try {
       const res = await api.weeklyReports.list({ teamId: effTeamId ?? undefined, year })
       if (res?.success) {
@@ -472,9 +488,12 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     } finally {
       setLoadingList(false)
     }
-  }, [effTeamId, year, selectedId])
+  }, [effTeamId, year, selectedId, loadThisWeek])
 
   useEffect(() => { loadList() }, [effTeamId, year]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // URL eşitleme (2026-09-13): süzgeç/açık rapor paylaşılabilir, F5 açık raporu korur
+  useUrlQuerySync(toUrlMapping({ selectedId, selTeamId: isAdmin ? selTeamId : '', year, weekFilter, statusChip, sort: listSort, currentYear: isoWeekInfo().year }))
 
   const loadReport = useCallback(async (id) => {
     if (!id) { setReport(null); setContent(null); setLockHeld(false); setLockHolder(null); return }
@@ -540,6 +559,21 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       .finally(() => { if (alive) setKpisLoading(false) })
     return () => { alive = false }
   }, [report?.id])
+
+  // Önceki hafta (Δ rozetleri + "geçen haftanın notu") ve sistemden öneriler (yalnız düzenlenebilirken) — 2026-09-13
+  useEffect(() => {
+    const rid = report?.id
+    setPrevReport(null); setSuggest(null); setPrevOpen({})
+    if (!rid) return
+    let alive = true
+    api.weeklyReports.previous(rid).then((r) => { if (alive && r?.success) setPrevReport(r.data ?? null) }).catch(() => {})
+    if (canModifyRow(report)) {
+      api.weeklyReports.suggestions(rid).then((r) => { if (alive && r?.success) setSuggest(r.data ?? null) }).catch(() => {})
+    }
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [report?.id])
+  const prevContent = useMemo(() => parsePrevContent(prevReport?.content_json), [prevReport])
 
   // İzleme göstergeleri — AĞIR 7-tür toplama; yalnız akordeon İLK açıldığında çekilir (tek pod'u koru). Rapor değişince sıfırla.
   useEffect(() => { setMonStats(null) }, [report?.id])
@@ -776,6 +810,51 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     }
   }
 
+  // Listeden onay (2026-09-13): önizleme açmadan tek tık; sunucu yetkiyi doğrular
+  async function approveById(id) {
+    const ok = await showConfirm({ title: t('wr.approveConfirmTitle'), message: t('wr.approveConfirmMsg'), confirmText: t('wr.approve'), cancelText: t('wr.cancel') })
+    if (!ok) return
+    setBusy(true)
+    try {
+      const res = await api.weeklyReports.approve(id)
+      if (res?.success) { toast.success(t('wr.approveOk')); loadList() } else toast.error(res?.error || t('wr.actionFailed'))
+    } finally { setBusy(false) }
+  }
+  async function approveSelected() {
+    const ids = [...selectedIds].filter((id) => reports.find((r) => r.id === id)?.status === 'PENDING_APPROVAL')
+    if (!ids.length) { toast.error(t('wr.bulkApproveNone')); return }
+    const ok = await showConfirm({ title: t('wr.bulkApproveTitle'), message: t('wr.bulkApproveMsg', ids.length), confirmText: t('wr.approve'), cancelText: t('wr.cancel') })
+    if (!ok) return
+    setBusy(true)
+    let okN = 0, fail = 0
+    try {
+      for (const id of ids) { try { const r = await api.weeklyReports.approve(id); if (r?.success) okN++; else fail++ } catch { fail++ } }
+    } finally {
+      setBusy(false)
+    }
+    if (fail === 0) toast.success(t('bulk.done', okN)); else toast.error(t('bulk.partial', okN, fail))
+    setSelectedIds(new Set()); loadList()
+  }
+  /** Komşu hafta (2026-09-13): listede varsa aç; yoksa oluşturma modalını o haftayla aç. */
+  function gotoWeek(dir) {
+    if (!report) return
+    let y = report.report_year, w = report.week_no + dir
+    if (w < 1) { y -= 1; w = 53 } else if (w > 53) { y += 1; w = 1 }
+    if (dir < 0 && prevReport) { setSelectedId(prevReport.id); return }
+    const hit = reports.find((r) => r.team_id === report.team_id && r.report_year === y && r.week_no === w)
+    if (hit) { setSelectedId(hit.id); return }
+    if (!isAudit) setNewModal({ year: y, week: w, teamId: String(report.team_id), carry: false })
+  }
+  function downloadYearCsv() {
+    const name = (tid) => isAdmin ? (teams.find((tm) => tm.id === tid)?.name ?? '') : (teamName ?? '')
+    const csv = buildYearCsv(displayedReports, name, t)
+    try {
+      const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }); const url = URL.createObjectURL(blob)
+      const a = document.createElement('a'); a.href = url; a.download = `haftalik-raporlar-${year}.csv`; document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch { /* jsdom */ }
+  }
+
   // Onaylı raporu yeniden düzenlenebilir hale getirir (APPROVED → DRAFT)
   async function reopenReport() {
     const ok = await showConfirm({
@@ -826,11 +905,13 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     if (!rejectModal?.note?.trim()) { toast.error(t('wr.rejectNoteRequired')); return }
     setBusy(true)
     try {
-      const res = await api.weeklyReports.reject(report.id, rejectModal.note.trim())
+      const rid = rejectModal.id ?? report?.id
+      const res = await api.weeklyReports.reject(rid, rejectModal.note.trim())
       if (res?.success) {
         setRejectModal(null)
         toast.success(t('wr.rejectOk'))
-        loadReport(report.id); loadList()
+        if (report?.id === rid) loadReport(rid)
+        loadList()
       } else {
         toast.error(res?.error || t('wr.actionFailed'))
       }
@@ -880,6 +961,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       team_id: newModal.teamId ? Number(newModal.teamId) : undefined,
       year: newModal.year,
       week_no: newModal.week,
+      carry_notes: !!newModal.carry,   // geçen haftadan devam (2026-09-13)
     })
     if (res?.success) {
       setNewModal(null)
@@ -1013,11 +1095,17 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   const i2 = content?.item2 ?? {}
   const channels = content?.item4?.channels ?? []
   // "Tarihe Git" hafta filtresi etkinse tablo o haftaya daraltılır
-  const displayedReports = weekFilter != null ? reports.filter((r) => r.week_no === weekFilter) : reports
+  const teamNameOf = (tid) => isAdmin ? (teams.find((tm) => tm.id === tid)?.name ?? '') : (teamName ?? '')
+  const queueCtx = { isAdmin, isAudit, teamId }
+  const facets = useMemo(() => statusFacets(weekFilter != null ? reports.filter((r) => r.week_no === weekFilter) : reports), [reports, weekFilter])
+  const mineCount = useMemo(() => approvalQueue(reports, queueCtx).length, [reports, isAdmin, isAudit, teamId]) // eslint-disable-line react-hooks/exhaustive-deps
+  const displayedReports = useMemo(() => sortReports(
+    filterByStatus(weekFilter != null ? reports.filter((r) => r.week_no === weekFilter) : reports, statusChip, queueCtx),
+    listSort, teamNameOf), [reports, weekFilter, statusChip, listSort, teams, isAdmin, teamName, isAudit, teamId]) // eslint-disable-line react-hooks/exhaustive-deps
   // Sayfalama (2026-09-12, kullanıcı: "Weekly Reports tarafında paging yapılmamış"): liste yıl+takım ile
   // sınırlı (≤53 hafta × takım) ve takvim işaretleri (weekMarks) tüm listeyi istiyor → sayfalama YALNIZ
   // render'ı böler (InventoryManager deseni). "Tümünü seç" filtrelenmiş tüm liste üzerinde kalır.
-  const pager = usePagination(displayedReports, { listKey: 'weekly-reports', resetDeps: [effTeamId, year, weekFilter] })
+  const pager = usePagination(displayedReports, { listKey: 'weekly-reports', resetDeps: [effTeamId, year, weekFilter, statusChip, listSort] })
 
   // Üstte ve altta aynı aksiyon barı — kaydırmada ikisi de sticky görünür
   const actionButtons = report && (
@@ -1100,8 +1188,8 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                 <RefreshCcw size={13} />
               </button>
               {!isAudit && (
-                <button className="btn btn-success"
-                  onClick={() => setNewModal({ ...isoWeekInfo(), teamId: isAdmin ? selTeamId : String(teamId ?? '') })}>
+                <button className="btn btn-success" data-tour="wr-new"
+                  onClick={() => setNewModal({ ...isoWeekInfo(), teamId: isAdmin ? selTeamId : String(teamId ?? ''), carry: false })}>
                   <Plus size={14} /> {t('wr.newReport')}
                 </button>
               )}
@@ -1133,9 +1221,16 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
         }} />
       )}
 
+      {/* ── "Bu hafta" şeridi (2026-09-13): takımın bu haftaki rapor durumu + son giriş geri sayımı ── */}
+      {!selectedId && (
+        <WeeklyThisWeekStrip data={thisWeek} loading={loadingList && !thisWeek} canCreate={!isAudit}
+          onOpen={(id) => setSelectedId(id)}
+          onCreate={(tid, y, w) => setNewModal({ year: y, week: w, teamId: String(tid), carry: false })} />
+      )}
+
       {/* ── "Nasıl girilir?" yardım kartı — kısa, açılır-kapanır (liste görünümünde) ── */}
       {!selectedId && (
-        <div className={`wr-help${helpOpen ? ' is-open' : ''}`}>
+        <div className={`wr-help${helpOpen ? ' is-open' : ''}`} data-tour="wr-help">
           <button type="button" className="wr-help-toggle"
             onClick={() => { const n = !helpOpen; setHelpOpen(n); try { localStorage.setItem('wr-help-open', String(n)) } catch {} }}
             aria-expanded={helpOpen}>
@@ -1178,11 +1273,22 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                   style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-light)', fontSize: '1.1em', lineHeight: 1 }}>✕</button>
               </div>
             )}
+            <div className="wr-listbar">
+              <WeeklyStatusChips facets={facets} value={statusChip} onChange={(v) => { setStatusChip(v); setSelectedIds(new Set()) }}
+                mineCount={mineCount} showMine={!isAudit && (isAdmin || isTeamAdmin || mineCount > 0)} />
+              <span className="wr-spacer" />
+              <button type="button" className="btn btn-secondary btn-sm-p" onClick={downloadYearCsv} title={t('wr.csvTitle')} data-tour="wr-csv" disabled={!displayedReports.length}>
+                <Download size={13} /> CSV
+              </button>
+            </div>
             {isAdmin && selectedIds.size > 0 && (
               <div className="wr-bulk-bar">
                 <span className="wr-bulk-count">{t('wr.selectedCount', selectedIds.size)}</span>
                 <button type="button" className="btn btn-primary btn-sm-p" onClick={() => openTransfer([...selectedIds])}>
                   <ArrowRightLeft size={14} /> {t('wr.transferSelected')}
+                </button>
+                <button type="button" className="btn btn-success btn-sm-p" onClick={approveSelected} disabled={busy}>
+                  <CheckCircle size={14} /> {t('wr.bulkApprove')}
                 </button>
                 <button type="button" className="btn btn-secondary btn-sm-p" onClick={() => setSelectedIds(new Set())}>
                   {t('wr.clearSelection')}
@@ -1191,7 +1297,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
             )}
             {displayedReports.length ? (
           <div className="admin-table-wrap">
-            <table className="admin-table">
+            <table className="admin-table wr-table" data-tour="wr-table">
               <thead>
                 <tr>
                   {isAdmin && (
@@ -1201,11 +1307,12 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                         onChange={() => toggleSelectAll(displayedReports)} />
                     </th>
                   )}
-                  <th>{t('wr.colWeek')}</th>
-                  <th>{t('wr.team')}</th>
-                  <th>{t('wr.statusCol')}</th>
+                  <SortTh col="week" label={t('wr.colWeek')} sort={listSort} onSort={setListSort} />
+                  <SortTh col="team" label={t('wr.team')} sort={listSort} onSort={setListSort} />
+                  <SortTh col="status" label={t('wr.statusCol')} sort={listSort} onSort={setListSort} />
+                  <SortTh col="score" label={t('wr.colScore')} sort={listSort} onSort={setListSort} />
                   <th>{t('wr.colCreated')}</th>
-                  <th>{t('wr.colUpdated')}</th>
+                  <SortTh col="updated" label={t('wr.colUpdated')} sort={listSort} onSort={setListSort} />
                   <th>{t('wr.colApproved')}</th>
                   <th>{t('wr.colSent')}</th>
                   <th>{t('wr.actions')}</th>
@@ -1213,16 +1320,18 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
               </thead>
               <tbody>
                 {pager.pageItems.map((r) => (
-                  <tr key={r.id} onClick={() => setSelectedId(r.id)} style={{ cursor: 'pointer' }}>
+                  <tr key={r.id} onClick={() => setSelectedId(r.id)} style={{ cursor: 'pointer' }} tabIndex={0}
+                    onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setSelectedId(r.id) } }}>
                     {isAdmin && (
                       <td onClick={(e) => e.stopPropagation()} style={{ width: 32 }}>
                         <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelect(r.id)} />
                       </td>
                     )}
-                    <td><strong>{formatWeekRange(r.report_year, r.week_no, lang)}</strong></td>
-                    <td>{isAdmin ? (teams.find((tm) => tm.id === r.team_id)?.name ?? r.team_id) : (teamName ?? r.team_id)}</td>
-                    <td>
+                    <td data-label={t('wr.colWeek')}><strong>{formatWeekRange(r.report_year, r.week_no, lang)}</strong></td>
+                    <td data-label={t('wr.team')}>{isAdmin ? (teams.find((tm) => tm.id === r.team_id)?.name ?? r.team_id) : (teamName ?? r.team_id)}</td>
+                    <td data-label={t('wr.statusCol')}>
                       {statusBadge(r.status, r.sent_at)}
+                      {r.reject_note && r.status !== 'APPROVED' && <span className="wr-reject-flag" title={t('wr.rejectFlagTitle')}>↩</span>}
                       {r.editing_by && (
                         <div style={{ fontSize: '.72em', color: 'var(--text-light)', marginTop: 3 }}>
                           ✏️ <UserBadge username={r.editing_by} inline size="sm" /> {t('wr.editingNow')}
@@ -1235,10 +1344,11 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                         </div>
                       )}
                     </td>
-                    <td>{actorCell(r.created_by, r.created_at)}</td>
-                    <td>{actorCell(r.updated_by, r.updated_at)}</td>
-                    <td>{actorCell(r.approved_by, r.approved_at)}</td>
-                    <td>{r.sent_at ? formatDate(r.sent_at) : '—'}</td>
+                    <td data-label={t('wr.colScore')}><ScoreBadge score={r.score} title={t('wr.scoreTitle')} /></td>
+                    <td data-label={t('wr.colCreated')}>{actorCell(r.created_by, r.created_at)}</td>
+                    <td data-label={t('wr.colUpdated')}>{actorCell(r.updated_by, r.updated_at)}</td>
+                    <td data-label={t('wr.colApproved')}>{actorCell(r.approved_by, r.approved_at)}</td>
+                    <td data-label={t('wr.colSent')}>{r.sent_at ? formatDate(r.sent_at) : '—'}</td>
                     <td onClick={(e) => e.stopPropagation()}>
                       <div className="wr-menu-wrap">
                         <button className="btn-sm" title={t('wr.actions')} aria-label={t('wr.actions')}
@@ -1263,6 +1373,16 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                             <button onClick={() => { setOpenMenuId(null); openMailHistory(r) }}>
                               <History size={14} /> {t('wr.history')}
                             </button>
+                            {r.status === 'PENDING_APPROVAL' && !isAudit && (
+                              <>
+                                <button onClick={() => { setOpenMenuId(null); approveById(r.id) }}>
+                                  <CheckCircle size={14} /> {t('wr.approve')}
+                                </button>
+                                <button onClick={() => { setOpenMenuId(null); setRejectModal({ note: '', id: r.id }) }}>
+                                  <Undo2 size={14} /> {t('wr.reject')}
+                                </button>
+                              </>
+                            )}
                             {isAdmin && (
                               <button onClick={() => { setOpenMenuId(null); openTransfer([r.id]) }}>
                                 <ArrowRightLeft size={14} /> {t('wr.transfer')}
@@ -1305,7 +1425,11 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
               <div className="wr-brief-team">
                 {isAdmin ? (teams.find((tm) => tm.id === report.team_id)?.name ?? teamName ?? report.team_id) : (teamName ?? report.team_id)}
               </div>
-              <div className="wr-brief-week">{report.week_label}</div>
+              <div className="wr-brief-week">
+                <button type="button" className="wr-nav" onClick={() => gotoWeek(-1)} title={t('wr.prevWeek')} aria-label={t('wr.prevWeek')}><ChevronLeft size={14} /></button>
+                {report.week_label}
+                <button type="button" className="wr-nav" onClick={() => gotoWeek(1)} title={t('wr.nextWeek')} aria-label={t('wr.nextWeek')}><ChevronRight size={14} /></button>
+              </div>
             </div>
             <div className="wr-brief-right">
               {statusBadge(report.status, report.sent_at)}
@@ -1401,6 +1525,20 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
             {/* Toplam türetilir — elle girilmez */}
             <NumInput label={t('wr.total')}  value={i1.total}  editable={false} onChange={() => {}} />
           </div>
+          {prevContent && (
+            <div className="wr-deltas" title={t('wr.deltaTitle', prevReport?.week_label || '')}>
+              <span>{t('wr.deltaVsPrev')}:</span>
+              <DeltaBadge cur={i1.urgent} prev={prevContent.item1.urgent} /> <DeltaBadge cur={i1.high} prev={prevContent.item1.high} />
+              <DeltaBadge cur={i1.medium} prev={prevContent.item1.medium} /> <DeltaBadge cur={i1.low} prev={prevContent.item1.low} />
+              <DeltaBadge cur={i1.total} prev={prevContent.item1.total} />
+            </div>
+          )}
+          {suggest && editable && (
+            <div className="wr-suggest-line" data-tour="wr-suggest">
+              <Sparkles size={13} /> {t('wr.sugLine', suggest.alarms_opened ?? '—', suggest.critical_certs ?? '—', suggest.open_incidents ?? '—')}
+            </div>
+          )}
+          <PrevNoteToggle open={!!prevOpen.item1} onToggle={() => setPrevOpen((o) => ({ ...o, item1: !o.item1 }))} note={prevContent?.item1?.notes_md} weekLabel={prevReport?.week_label} />
           <div className="wr-fields">
             <label className="wr-field wr-grow1">
               <span>{t('wr.statusText')}</span>
@@ -1430,6 +1568,15 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
             <NumInput label={t('wr.problemRecords')} value={i2.problem_records} editable={editable} onChange={(v) => patch(['item2', 'problem_records'], v)} />
             <NumInput label={t('wr.postmortems')}    value={i2.postmortems}     editable={editable} onChange={(v) => patch(['item2', 'postmortems'], v)} />
           </div>
+          {(prevContent || (suggest && editable)) && (
+            <div className="wr-deltas">
+              {prevContent && <><span>{t('wr.deltaVsPrev')}:</span>
+                <DeltaBadge cur={i2.open_incidents} prev={prevContent.item2.open_incidents} /> <DeltaBadge cur={i2.problem_records} prev={prevContent.item2.problem_records} />
+                <DeltaBadge cur={i2.postmortems} prev={prevContent.item2.postmortems} /></>}
+              {suggest && editable && <SuggestBadge value={suggest.open_incidents} current={i2.open_incidents} label={t('wr.openIncidents')} onApply={(v) => patch(['item2', 'open_incidents'], v)} />}
+            </div>
+          )}
+          <PrevNoteToggle open={!!prevOpen.item2} onToggle={() => setPrevOpen((o) => ({ ...o, item2: !o.item2 }))} note={prevContent?.item2?.notes_md} weekLabel={prevReport?.week_label} />
           {/* Her kayıt türü için ayrı takip linki; eski raporlardaki genel link doluysa o da gösterilir */}
           <div className="wr-fields">
             <label className="wr-field wr-grow1">
@@ -1464,6 +1611,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
             <MdField value={content?.item3?.notes_md} editable={editable} reportId={report.id}
               onChange={(v) => patch(['item3', 'notes_md'], v)} height={240} />
           </div>
+          <PrevNoteToggle open={!!prevOpen.item3} onToggle={() => setPrevOpen((o) => ({ ...o, item3: !o.item3 }))} note={prevContent?.item3?.notes_md} weekLabel={prevReport?.week_label} />
 
           {/* ── Madde 4 — kanallar ── */}
           <div className="show-section-header">{t('wr.item4Title')}</div>
@@ -1539,7 +1687,11 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
             }}>
               📅 {formatWeekRange(newModal.year, newModal.week, lang)}
             </div>
-            <p style={{ fontSize: '.82em', color: 'var(--text-light)', marginTop: 8 }}>{t('wr.templateHint')}</p>
+            <div className="wr-carry" role="radiogroup" aria-label={t('wr.carryTitle')}>
+              <label><input type="radio" name="wr-carry" checked={!newModal.carry} onChange={() => setNewModal({ ...newModal, carry: false })} /> {t('wr.carryBlank')}</label>
+              <label><input type="radio" name="wr-carry" checked={!!newModal.carry} onChange={() => setNewModal({ ...newModal, carry: true })} /> {t('wr.carryPrev')}</label>
+            </div>
+            <p style={{ fontSize: '.82em', color: 'var(--text-light)', marginTop: 8 }}>{newModal.carry ? t('wr.carryHint') : t('wr.templateHint')}</p>
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setNewModal(null)}>{t('wr.cancel')}</button>
               <button className="btn btn-primary" onClick={createReport}
@@ -1557,7 +1709,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
             <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: '.9em' }}>
               {t('wr.rejectNote')} <span className="req-star">*</span>
               <textarea rows={5} value={rejectModal.note}
-                onChange={(e) => setRejectModal({ note: e.target.value })} />
+                onChange={(e) => setRejectModal((m) => ({ ...m, note: e.target.value }))} />
             </label>
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setRejectModal(null)}>{t('wr.cancel')}</button>

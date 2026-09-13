@@ -420,6 +420,9 @@ export const api = {
     years: (teamId) => request(`/weekly-reports/years${teamId ? '?teamId=' + teamId : ''}`),
     deadline: () => request('/weekly-reports/deadline'),   // son giriş günü/saati — canlı ayar (2026-09-12)
     completion: (year) => request(`/weekly-reports/completion${year ? '?year=' + year : ''}`),   // takım × hafta panosu (2026-09-12, #21)
+    thisWeek: () => request('/weekly-reports/this-week'),                    // "bu hafta" şeridi (2026-09-13)
+    suggestions: (id) => request(`/weekly-reports/${id}/suggestions`),       // sistemden öneriler (2026-09-13)
+    previous: (id) => request(`/weekly-reports/${id}/previous`),             // önceki hafta (Δ + not paneli) (2026-09-13)
     mails: (id) => request(`/weekly-reports/${id}/mails`),
     create: (payload) => request('/weekly-reports', {
       method: 'POST', body: JSON.stringify(payload),
