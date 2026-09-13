@@ -46,6 +46,7 @@ public class WeeklyReportController {
     private final WeeklyReportKpiService kpiService;
     private final MonitoringWeeklyStatsService monitoringStatsService;
     private final com.sitemonitor.service.AppSettingsService appSettings;   // son giriş zamanı (2026-09-12)
+    private final com.sitemonitor.repository.IncidentRecordRepository incidentRepo;   // öneri: açık olay sayısı (2026-09-13)
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -101,6 +102,57 @@ public class WeeklyReportController {
         m.put("day_en", d.dayNameEn());
         m.put("valid", d.valid());
         return ok(Map.of("data", m));
+    }
+
+    /** "Bu hafta" şeridi (2026-09-13): kapsamdaki takımların bu haftaki rapor durumu + son giriş anı. */
+    @GetMapping("/this-week")
+    public ResponseEntity<Map<String, Object>> thisWeek(HttpSession session) {
+        permissionService.require(session, "weekly_reports.read", "view");
+        return ok(Map.of("data", service.thisWeek(actor(session))));
+    }
+
+    /**
+     * Sistemden öneriler (2026-09-13): madde 1–2 sayıları için canlı değerler — açık olay (RESOLVED dışı,
+     * takım kapsamı), haftada açılan alarm, kritik sertifika, penceredeki dolacaklar. YALNIZ-OKUMA; elle
+     * girilen değerin üzerine yazmaz (istemci "Uygula" ile alır).
+     */
+    @GetMapping("/{id}/suggestions")
+    public ResponseEntity<Map<String, Object>> suggestions(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "weekly_reports.read", "view");
+        WeeklyReport r = service.get(id, actor(session));
+        Map<String, Object> m = new LinkedHashMap<>();
+        long open = 0;
+        for (Object[] row : incidentRepo.countByStatus(null, null, true, List.of(r.getTeamId()))) {
+            String st = row[0] == null ? "" : row[0].toString();
+            if (!"RESOLVED".equalsIgnoreCase(st) && !"CLOSED".equalsIgnoreCase(st)) open += ((Number) row[1]).longValue();
+        }
+        m.put("open_incidents", open);
+        try {
+            var k = kpiService.compute(r.getTeamId(), r.getReportYear(), r.getWeekNo());
+            if (k != null && k.current() != null) {
+                m.put("alarms_opened", k.current().alarmsOpened());
+                m.put("critical_certs", k.current().criticalCerts());
+                m.put("expiring_in_window", k.current().expiringInWindow());
+                m.put("uptime_pct", k.current().uptimePct());
+            }
+        } catch (Exception e) {
+            m.put("kpi_error", true);
+        }
+        return ok(Map.of("data", m));
+    }
+
+    /** Önceki hafta raporu (Δ rozetleri + "geçen haftanın notu"): sayılar + notlar; yoksa data=null. */
+    @GetMapping("/{id}/previous")
+    public ResponseEntity<Map<String, Object>> previous(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "weekly_reports.read", "view");
+        WeeklyReport r = service.get(id, actor(session));
+        WeeklyReport p = service.previous(r);
+        Map<String, Object> body = new LinkedHashMap<>();
+        if (p == null) { body.put("data", null); return ok(body); }
+        Map<String, Object> m = summary(p);
+        m.put("content_json", p.getContentJson());
+        body.put("data", m);
+        return ok(body);
     }
 
     /** Takım tamamlama panosu (2026-09-12, #21): takım × hafta durum matrisi (global admin / AUDIT). */
@@ -183,7 +235,8 @@ public class WeeklyReportController {
         if (year == null || weekNo == null) {
             throw new IllegalArgumentException("year ve week_no zorunludur");
         }
-        WeeklyReport r = service.create(teamId, year, weekNo, a);
+        boolean carry = Boolean.TRUE.equals(body.get("carry_notes"));   // geçen haftadan devam (2026-09-13)
+        WeeklyReport r = service.create(teamId, year, weekNo, a, carry);
         auditService.recordAction("WEEKLY_REPORT_CREATE", session, request,
                 "WEEKLY_REPORT", r.getId().toString(),
                 "{\"team_id\":" + r.getTeamId() + ",\"week\":\"" + r.getWeekLabel() + "\"}");
@@ -550,6 +603,9 @@ public class WeeklyReportController {
         m.put("updated_by", r.getUpdatedBy());
         m.put("updated_at", r.getUpdatedAt());
         m.put("editing_by", service.lockFresh(r) ? r.getEditingBy() : null); // listede "düzenliyor" ipucu
+        m.put("score", r.getScore());                     // gönderim anı skoru (2026-09-13)
+        m.put("submitted_by", r.getSubmittedBy());
+        m.put("reject_note", r.getRejectNote() != null && !r.getRejectNote().isBlank());   // iade notu var mı (rozet)
         return m;
     }
 

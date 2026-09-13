@@ -1063,4 +1063,97 @@ class WeeklyReportServiceTest {
         @SuppressWarnings("unchecked") java.util.List<?> userTeams = (java.util.List<?>) service.completion(lastYear, USER_T2).get("teams");
         assertThat(userTeams).isEmpty();
     }
+    // ── Haftalık Raporlar zenginleştirmesi (2026-09-13) ─────────────────────────
+
+    @Test
+    @DisplayName("carryTemplate: sayılar sıfır, dolu notlar 'Geçen haftadan devam' başlığıyla taşınır, boş not boş kalır, çift başlık yok")
+    void carryTemplate_carriesNotesResetsCounts() throws Exception {
+        String prev = "{\"version\":1,\"item1\":{\"total\":5,\"urgent\":1,\"high\":2,\"medium\":1,\"low\":1,\"status_text\":\"Planlandı\",\"tracking_url\":\"https://x.example.com\",\"notes_md\":\"Sürüm 2 devam\"},"
+                + "\"item2\":{\"open_incidents\":3,\"problem_records\":1,\"postmortems\":0,\"notes_md\":\"\"},\"item3\":{\"notes_md\":\"**Geçen haftadan devam (W35)**\\n\\nEski\"},"
+                + "\"item4\":{\"channels\":[{\"id\":\"c-1\",\"name\":\"Kanal A\",\"notes_md\":\"kanal notu\"}]}}";
+        String out = WeeklyReportService.carryTemplate(prev, "2026-W36");
+        var root = new ObjectMapper().readTree(out);
+        assertThat(root.path("item1").path("total").asInt()).isZero();
+        assertThat(root.path("item1").path("urgent").asInt()).isZero();
+        assertThat(root.path("item1").path("tracking_url").asText()).isEqualTo("https://x.example.com");   // yapı korunur
+        assertThat(root.path("item1").path("notes_md").asText()).startsWith("**Geçen haftadan devam (2026-W36)**").contains("Sürüm 2 devam");
+        assertThat(root.path("item2").path("open_incidents").asInt()).isZero();
+        assertThat(root.path("item2").path("notes_md").asText()).isEmpty();
+        assertThat(root.path("item3").path("notes_md").asText()).isEqualTo("**Geçen haftadan devam (W35)**\n\nEski");   // zaten başlıklı → çiftlenmez
+        assertThat(root.path("item4").path("channels").get(0).path("notes_md").asText()).contains("kanal notu");
+        // Bozuk JSON → resetTemplate'e düşer (istisna yok)
+        assertThat(WeeklyReportService.carryTemplate("{bozuk", "x")).isNotNull();
+    }
+
+    @Test
+    @DisplayName("create(carryNotes=true) önceki rapordan carryTemplate ile, false ise resetTemplate ile başlar")
+    void create_carryFlagSelectsTemplate() {
+        WeeklyReport prev = report(40L, 2L, "APPROVED");
+        prev.setContentJson("{\"version\":1,\"item1\":{\"total\":2,\"notes_md\":\"not\"},\"item2\":{},\"item3\":{\"notes_md\":\"\"},\"item4\":{\"channels\":[]}}");
+        when(reportRepo.findFirstByTeamIdOrderByReportYearDescWeekNoDesc(2L)).thenReturn(Optional.of(prev));
+        when(reportRepo.findByTeamIdAndReportYearAndWeekNo(eq(2L), anyInt(), anyInt())).thenReturn(Optional.empty());
+        LocalDate today = WeeklyReportService.today();
+        int y = today.get(WeekFields.ISO.weekBasedYear()), w = today.get(WeekFields.ISO.weekOfWeekBasedYear());
+        WeeklyReport carried = service.create(2L, y, w, USER_T2, true);
+        assertThat(carried.getContentJson()).contains("Geçen haftadan devam").contains("\"total\":0");
+        WeeklyReport plain = service.create(2L, y, w, USER_T2, false);
+        assertThat(plain.getContentJson()).doesNotContain("Geçen haftadan devam").doesNotContain("\"notes_md\":\"not\"");
+    }
+
+    @Test
+    @DisplayName("previous: aynı takım bir önceki hafta; 1. haftada önceki yılın son ISO haftasına geçer; yoksa null")
+    void previous_crossesYearBoundary() {
+        WeeklyReport cur = report(5L, 2L, "DRAFT"); cur.setReportYear(2026); cur.setWeekNo(10);
+        WeeklyReport prev = report(4L, 2L, "APPROVED"); prev.setReportYear(2026); prev.setWeekNo(9);
+        when(reportRepo.findByTeamIdAndReportYearAndWeekNo(2L, 2026, 9)).thenReturn(Optional.of(prev));
+        assertThat(service.previous(cur)).isSameAs(prev);
+        WeeklyReport first = report(6L, 2L, "DRAFT"); first.setReportYear(2026); first.setWeekNo(1);
+        when(reportRepo.findByTeamIdAndReportYearAndWeekNo(2L, 2025, 52)).thenReturn(Optional.empty());
+        assertThat(service.previous(first)).isNull();
+        org.mockito.Mockito.verify(reportRepo).findByTeamIdAndReportYearAndWeekNo(2L, 2025, 52);   // 2025'in son ISO haftası 52
+    }
+
+    @Test
+    @DisplayName("thisWeek: kullanıcı kendi takımını görür (MISSING/DRAFT), admin hatırlatması açık tüm takımları; due_at UTC ISO ve is_past sunucuda")
+    void thisWeek_scopesTeams() {
+        Team t2 = team(2L, "TakimA", "a@test"); t2.setWeeklyReminderEnabled(true); t2.setActive(true);
+        Team t7 = team(7L, "TakimB", "b@test"); t7.setWeeklyReminderEnabled(false); t7.setActive(true);
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t2, t7));
+        LocalDate today = WeeklyReportService.today();
+        int y = today.get(WeekFields.ISO.weekBasedYear()), w = today.get(WeekFields.ISO.weekOfWeekBasedYear());
+        when(reportRepo.findByTeamIdAndReportYearAndWeekNo(2L, y, w)).thenReturn(Optional.of(report(5L, 2L, "DRAFT")));
+        when(reportRepo.findByTeamIdAndReportYearAndWeekNo(7L, y, w)).thenReturn(Optional.empty());
+
+        @SuppressWarnings("unchecked") var mine = (java.util.List<java.util.Map<String, Object>>) service.thisWeek(USER_T2).get("teams");
+        assertThat(mine).hasSize(1);
+        assertThat(mine.get(0)).containsEntry("team_id", 2L).containsEntry("status", "DRAFT").containsEntry("report_id", 5L);
+
+        java.util.Map<String, Object> adminView = service.thisWeek(ADMIN);
+        @SuppressWarnings("unchecked") var all = (java.util.List<java.util.Map<String, Object>>) adminView.get("teams");
+        assertThat(all).extracting(m -> m.get("team_id")).containsExactly(2L);   // hatırlatması kapalı takım sayılmaz
+        assertThat(adminView.get("week")).isEqualTo(w);
+        assertThat(String.valueOf(adminView.get("due_at"))).matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}");
+        assertThat(adminView.get("is_past")).isInstanceOf(Boolean.class);
+        assertThat(adminView.get("deadline_day")).isEqualTo("FRI");
+    }
+
+    @Test
+    @DisplayName("submit: gönderim anında skor KPI'dan yazılır; KPI hatası gönderimi durdurmaz")
+    void submit_storesScoreSnapshot() {
+        WeeklyReport r = report(5L, 2L, "DRAFT");
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
+        var score = new WeeklyReportKpiService.ScoreBlock(77, null, "amber");
+        var summary = new WeeklyReportKpiService.SummaryBlock(java.util.Map.of(), score, java.util.List.of(), java.util.List.of());
+        when(kpiService.compute(2L, r.getReportYear(), r.getWeekNo())).thenReturn(new WeeklyReportKpiService.WeeklyReportKpis(null, null, java.util.List.of(), summary));
+        service.submit(5L, USER_T2);
+        assertThat(r.getScore()).isEqualTo(77);
+        assertThat(r.getStatus()).isEqualTo("PENDING_APPROVAL");
+
+        WeeklyReport r2 = report(6L, 2L, "DRAFT");
+        when(reportRepo.findById(6L)).thenReturn(Optional.of(r2));
+        when(kpiService.compute(2L, r2.getReportYear(), r2.getWeekNo())).thenThrow(new RuntimeException("kpi down"));
+        service.submit(6L, USER_T2);
+        assertThat(r2.getScore()).isNull();
+        assertThat(r2.getStatus()).isEqualTo("PENDING_APPROVAL");
+    }
 }
