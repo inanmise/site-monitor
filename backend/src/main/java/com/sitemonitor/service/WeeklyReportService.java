@@ -1520,13 +1520,19 @@ public class WeeklyReportService {
      * bu hafta zaten girmiş takımlar (reminder servisiyle aynı kurallar).
      */
     public Map<String, Object> reminderStatus(boolean enabled) {
+        return reminderStatus(enabled, java.time.ZonedDateTime.now(IST));
+    }
+
+    /** Saat enjekte edilebilir (test: Cumartesi → sayaçlar gelecek haftaya bakar). */
+    Map<String, Object> reminderStatus(boolean enabled, java.time.ZonedDateTime nowIst) {
         WeeklyReportDeadline d = WeeklyReportDeadline.resolve(appSettings);
-        java.time.ZonedDateTime nowIst = java.time.ZonedDateTime.now(IST);
         java.time.ZonedDateTime next = nowIst.toLocalDate().atTime(9, 0).atZone(IST);
         while (next.getDayOfWeek() != d.day() || !next.isAfter(nowIst)) next = next.plusDays(1);
-        LocalDate today = today();
-        int year = today.get(java.time.temporal.WeekFields.ISO.weekBasedYear());
-        int week = today.get(java.time.temporal.WeekFields.ISO.weekOfWeekBasedYear());
+        // Sayaçlar SONRAKİ KOŞUNUN haftasına göre (QA ISSUE-002): son giriş günü geçtiyse (Cmt/Paz) koşu gelecek
+        // haftadadır; bugünün haftasına bakmak "2 takıma gidecek" gibi yanlış bir sayı gösteriyordu.
+        LocalDate runDay = next.toLocalDate();
+        int year = runDay.get(java.time.temporal.WeekFields.ISO.weekBasedYear());
+        int week = runDay.get(java.time.temporal.WeekFields.ISO.weekOfWeekBasedYear());
         int optIn = 0, noEmail = 0, done = 0, will = 0;
         List<Map<String, Object>> teams = new ArrayList<>();
         for (Team t : teamRepo.findByActiveTrueOrderByNameAsc()) {
@@ -1546,6 +1552,7 @@ public class WeeklyReportService {
         out.put("enabled", enabled);
         out.put("deadline_day", d.dayCode()); out.put("deadline_time", d.timeText());
         out.put("next_run_at", ISO.format(next.withZoneSameInstant(ZoneOffset.UTC)));
+        out.put("run_week", String.format("%d-W%02d", year, week));
         out.put("opt_in_teams", optIn); out.put("no_email", noEmail); out.put("already_done", done); out.put("will_send", will);
         out.put("teams", teams);
         return out;

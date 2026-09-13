@@ -1220,13 +1220,18 @@ class WeeklyReportServiceTest {
         Team b = team(7L, "TakimB", ""); b.setWeeklyReminderEnabled(true);
         Team c = team(8L, "TakimC", "c@test"); c.setWeeklyReminderEnabled(false);
         when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(a, b, c));
-        LocalDate today = WeeklyReportService.today();
-        int y = today.get(WeekFields.ISO.weekBasedYear()), w = today.get(WeekFields.ISO.weekOfWeekBasedYear());
+        // Sayaçlar sonraki koşunun (ilk gelecek Cuma 09:00 IST) haftasına göre — QA ISSUE-002
+        java.time.ZonedDateTime nowIst = java.time.ZonedDateTime.now(java.time.ZoneId.of("Europe/Istanbul"));
+        java.time.ZonedDateTime run = nowIst.toLocalDate().atTime(9, 0).atZone(java.time.ZoneId.of("Europe/Istanbul"));
+        while (run.getDayOfWeek() != java.time.DayOfWeek.FRIDAY || !run.isAfter(nowIst)) run = run.plusDays(1);
+        LocalDate runDay = run.toLocalDate();
+        int y = runDay.get(WeekFields.ISO.weekBasedYear()), w = runDay.get(WeekFields.ISO.weekOfWeekBasedYear());
         when(reportRepo.findByTeamIdAndReportYearAndWeekNo(2L, y, w)).thenReturn(Optional.of(report(5L, 2L, "APPROVED")));
         when(reportRepo.findByTeamIdAndReportYearAndWeekNo(7L, y, w)).thenReturn(Optional.empty());
         java.util.Map<String, Object> st = service.reminderStatus(true);
         assertThat(st).containsEntry("enabled", true).containsEntry("opt_in_teams", 2).containsEntry("no_email", 1)
-                .containsEntry("already_done", 1).containsEntry("will_send", 0).containsEntry("deadline_day", "FRI");
+                .containsEntry("already_done", 1).containsEntry("will_send", 0).containsEntry("deadline_day", "FRI")
+                .containsEntry("run_week", String.format("%d-W%02d", y, w));
         String next = String.valueOf(st.get("next_run_at"));
         assertThat(next).matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}");
         java.time.ZonedDateTime n = java.time.LocalDateTime.parse(next).atZone(java.time.ZoneOffset.UTC).withZoneSameInstant(java.time.ZoneId.of("Europe/Istanbul"));
