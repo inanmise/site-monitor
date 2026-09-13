@@ -1309,6 +1309,30 @@ Bu kılavuzun kendisi: sol tarafta başlıklardan otomatik üretilen içindekile
 
 ---
 
+### 14.30 Ürün Turu
+
+Uygulamaya **ilk kez giren** kullanıcıya, veriler yüklendikten kısa süre sonra bir karşılama kartı çıkar: "Site Monitör'e hoş geldiniz — 2 dakikalık tur?". Üç seçenek vardır:
+
+- **Turu başlat** — sol menüden sağ alttaki yardıma kadar ana noktaları spot ışığıyla gösteren, rolünüze göre 17–20 adımlık gezinti.
+- **Şimdi değil** — kart kapanır; en çok üç girişte yeniden sorulur, sonra susar.
+- **Bir daha gösterme** — kalıcıdır ve **sunucuda** tutulur: başka bir tarayıcıdan ya da bilgisayardan girseniz de kart bir daha çıkmaz.
+
+**Tur sırasında:** karartılmış ekranda yalnız anlatılan öğe aydınlıktır ve tıklanabilir. Balonda başlık, kısa açıklama, ilerleme (örn. 7/20), **Geri / İleri**, "Daha fazla" (o konunun kılavuz bölümünü yan panelde açar), "Turu atla" ve "Bir daha gösterme" bulunur. Klavye: **→** ileri, **←** geri, **Esc** kapatır. Bazı adımlar sizden bir şey yapmanızı ister ("karta tıklayın", "Ctrl K'ya basın"); yaptığınızda tur kendiliğinden ilerler, isterseniz **Benim yerime yap** düğmesi sizin adınıza yapar.
+
+**Rolünüze göre içerik:** herkes Genel Bakış sayaçları, süzgeçler, "Şimdi Kontrol Et", sertifika kartı ve detay penceresi, Tüm Sertifikalar, İzleme, Uyarılar, Raporlar, komut paleti, bildirimler, kullanıcı menüsü, tema/dil ve yardım adımlarını görür. Takım yöneticileri ek olarak alan ekleme adımını; yöneticiler Yönetim ve Sistem Sağlığı adımlarını; denetçi (AUDIT) rolü Denetim Kaydı adımını görür. Dar ekranda (telefon) kısaltılmış sürüm alt sayfa olarak açılır.
+
+**Sayfa turları:** bazı sayfalar kendi kısa turunu taşır (Tüm Sertifikalar: süzgeçler, durum menüsü, sütunlar, ön ayarlar, CSV, satır seçimi, satır menüsü; HTTP izleme: nasıl çalışır, yeni izleme, nasıl doldurulur, kartlar). Böyle bir sayfaya ilk gelişinizde sağ altta "Bu sayfayı tanımak ister misiniz?" çipi görünür; kapatırsanız o sayfa için bir daha çıkmaz.
+
+**Başlangıç listesi:** Genel Bakış'ın üstünde yeni kullanıcı için altı maddelik küçük bir liste durur (turu tamamla, bir kart aç, Tüm Sertifikalar'ı gez, bir izleme sayfasına bak, haftalık raporları gör, yardımı aç). Maddeler siz sayfaları gezdikçe kendiliğinden işaretlenir; hepsi bitince ya da ✕ ile gizlediğinizde kaybolur.
+
+**Turu yeniden bulmak:** kullanıcı menüsü → **Ürün turu**; sağ alttaki "?" yardım çekmecesinde **Ürün turu** ve (varsa) **Bu sayfada tur**; Yardım sayfasındaki düğme; komut paletinde (Ctrl K) "Ürün turunu başlat". "Bir daha gösterme" demiş olsanız da bu yollarla turu istediğiniz zaman açabilirsiniz.
+
+**Yenilikler turu:** yeni bir sürüm tura yeni adımlar eklediğinde, turu tamamlamış kullanıcılara girişte yalnız yeni adımları anlatan kısa bir "Yenilikler" kartı çıkar; o da "Şimdi değil" / "Bir daha gösterme" ile kapatılabilir.
+
+**Yöneticiler için:** Sistem Sağlığı → Kullanıcılar bölümündeki KPI turu tamamlayan / kapatan / hiç görmeyen kullanıcı sayılarını gösterir. Kullanıcı düzenleme penceresindeki **Turu sıfırla** düğmesi kişinin tur durumunu siler; bir sonraki girişte karşılama kartını yeniden görür. Tamamlama, kapatma ve sıfırlama denetim kaydına düşer (`TOUR_COMPLETED`, `TOUR_DISMISSED`, `USER_TOUR_RESET`).
+
+---
+
 ## 15. Operasyonel Prosedürler
 
 Bu bölüm günlük operasyonun tarif defteridir: sık yapılan işlerin adım adım, ekran adlarıyla anlatımı.

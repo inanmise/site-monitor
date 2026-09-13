@@ -1151,6 +1151,30 @@ The screen you are reading. It renders this guide with a table of contents, scro
 
 ---
 
+### 14.30 Product Tour
+
+A user signing in for the **first time** sees a welcome card shortly after the data loads: "Welcome to Site Monitor — a two-minute tour?". There are three choices:
+
+- **Start the tour** — a 17–20 stop walk-through (depending on your role) that spotlights the main places from the left-hand menu to the help button in the bottom-right corner.
+- **Not now** — the card closes; it asks again on at most three further sign-ins, then stays quiet.
+- **Don't show again** — permanent and kept **on the server**: the card never comes back, even from another browser or computer.
+
+**During the tour** the screen is dimmed and only the item being explained stays lit and clickable. The balloon carries a title, a short explanation, progress (e.g. 7/20), **Back / Next**, "Read more" (opens that topic's guide section in the side panel), "Skip the tour" and "Don't show again". Keyboard: **→** next, **←** back, **Esc** closes. Some stops ask you to do something ("click the card", "press Ctrl K"); the tour moves on when you do, or **Do it for me** does it on your behalf.
+
+**Content by role:** everyone sees the dashboard counters, filters, "Check Now", the certificate card and detail window, All Certificates, Monitoring, Alerts, Reports, the command palette, notifications, the user menu, theme/language and help. Team admins also see the add-domain stop; admins see Admin and System Health; the auditor (AUDIT) role sees the Audit Log stop. On a narrow screen (phone) a shortened version opens as a bottom sheet.
+
+**Page tours:** some pages carry their own short tour (All Certificates: filters, status menu, columns, presets, CSV, row selection, row menu; HTTP monitoring: how it works, new monitor, how to fill in, cards). The first time you land on such a page a chip appears in the bottom-right corner: "Want a quick look around this page?". Close it and it will not return for that page.
+
+**Getting-started list:** at the top of the dashboard a small six-item list guides a new user (finish the tour, open a card, browse All Certificates, look at a monitoring page, see the weekly reports, open the help guide). Items tick themselves off as you visit the pages; the list disappears once complete or when you hide it with ✕.
+
+**Finding the tour again:** user menu → **Product tour**; the "?" help drawer in the bottom-right corner offers **Product tour** and, where one exists, **Tour this page**; the button on the Help page; the command palette (Ctrl K) command "Start the product tour". Even after "Don't show again" you can open the tour this way whenever you like.
+
+**What's-new tour:** when a release adds new stops, users who already finished the tour see a short "What's new" card at sign-in covering only the new stops; it, too, can be closed with "Not now" or "Don't show again".
+
+**For administrators:** the KPI under System Health → Users shows how many users completed, dismissed or never saw the tour. **Reset the tour** in the user edit window clears a person's tour state so they see the welcome card at their next sign-in. Completion, dismissal and reset are written to the audit log (`TOUR_COMPLETED`, `TOUR_DISMISSED`, `USER_TOUR_RESET`).
+
+---
+
 ## 15. Operational Procedures
 
 This section is the recipe book for everyday work: the tasks people do often, step by step, with the screen names.

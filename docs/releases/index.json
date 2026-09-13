@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-13T14:56:33Z",
+  "generatedAt": "2026-09-13T15:29:51Z",
   "repo": "inanmise/site-monitor",
-  "count": 647,
+  "count": 648,
   "releases": [
+    {
+      "version": "20.62.1",
+      "tag": "v20.62.1",
+      "releasedAt": "2026-09-13T15:29:45Z",
+      "commit": "d242d2e941b0837fd885cd114e854e8e37da1e16",
+      "prevVersion": "20.62.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 2,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": "regresyon",
+          "breaking": false,
+          "sha": "d242d2e9",
+          "subject": "yirmi beşinci tur — kılavuz §14.30 (v20.62.0..HEAD)"
+        },
+        {
+          "type": "docs",
+          "scope": "guide",
+          "breaking": false,
+          "sha": "1c2610b7",
+          "subject": "kılavuza \"14.30 Ürün Turu\" bölümü (TR/EN) + PDF'ler yeniden üretildi"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.62.0",
       "tag": "v20.62.0",

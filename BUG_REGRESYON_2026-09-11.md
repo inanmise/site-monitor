@@ -517,3 +517,9 @@ Bilinen sınırlar (bilinçli): whitepaper'da tur bölümü yok (kılavuz + PDF 
 elle artırılınca devreye girer; mobilde tur kısaltılmış (palet adımı yok); ön ayarlar gibi tur da tek sürüm
 (çoklu dil metni i18n'den).
 → **REGRESYON YOK**.
+
+## Ek — yirmi beşinci tur (2026-09-13, sürüm öncesi — kılavuz §14.30 Ürün Turu, `v20.62.0..HEAD`)
+
+Kapsam: 1 commit (kılavuz TR/EN + kök kopyalar + PDF'ler + manifest + tur adımlarında help bağlantısı). Kod değişikliği yok.
+Kapılar: `whitepaper-sync` (kök = kaynak), `whitepaper-pdf-freshness` (manifest sha'ları güncel), `tour-targets` yeşil;
+yardım çekmecesinde §14.30 açılıyor (3024 karakter, yönetici paragrafı dâhil). → **REGRESYON YOK**.
