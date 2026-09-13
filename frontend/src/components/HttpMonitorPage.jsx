@@ -497,7 +497,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
           <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
           <MonitorGuideButton type="http" />
           {canWrite && (
-            <button className="btn btn-sm btn-primary" onClick={openNew}>
+            <button className="btn btn-sm btn-primary" onClick={openNew} data-tour="mon-new">
               <Plus size={14} />{t('http.addMonitor')}
             </button>
           )}
@@ -535,7 +535,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
           api={{ update: api.monitoring.updateHttpMonitor, remove: api.monitoring.deleteHttpMonitor }}
           onClear={() => setBulkSel(new Set())} onDone={load}
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
-        <div className="upt-grid">
+        <div className="upt-grid" data-tour="mon-cards">
           {pager.pageItems.map(m => (
             <div key={m.id} className={`upt-card ${cardClass(m)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
               onClick={() => openDetail(m)}>

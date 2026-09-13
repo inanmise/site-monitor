@@ -285,6 +285,8 @@ export const api = {
     const q = new URLSearchParams(params).toString()
     return request(`/certificates/list?${q}`)
   },
+  /** Ürün turu durumu (2026-09-13): yalnız kendi kaydı; {status, version, last_step, seen_page, checklist, checklist_hidden, reset} */
+  setTourState: (patch) => request('/me/tour', { method: 'POST', body: JSON.stringify(patch || {}) }),
   /** Tüm Sertifikalar CSV (2026-09-13): aynı süzgeç, tüm sayfalar; tarayıcı indirir, sunucu CERT_LIST_EXPORT yazar. */
   certExportUrl: (params, cols) => {
     const q = new URLSearchParams(Object.fromEntries(Object.entries({ ...params, cols: (cols || []).join(',') })
@@ -814,6 +816,8 @@ export const api = {
 
     // Teams
     getTeams: () => request('/admin/teams'),
+    /** Ürün turunu sıfırla (2026-09-13): kullanıcı bir sonraki girişte karşılama kartını yeniden görür. */
+    resetUserTour: (id) => request(`/admin/users/${id}/tour-reset`, { method: 'POST' }),
     createTeam: (data) => request('/admin/teams', { method: 'POST', body: JSON.stringify(data) }),
     updateTeam: (id, data) => request(`/admin/teams/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteTeam: (id) => request(`/admin/teams/${id}`, { method: 'DELETE' }),

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react'
 import {
   Users, LogIn, XCircle, ShieldAlert, UserCheck, UserX, Download, Link2, RefreshCw, ChevronDown, ChevronRight, Info, Check, BookOpen,
+  Compass,
 } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import { api, formatDateSec, formatDateOnly } from '../../../api/client'
@@ -215,7 +216,9 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
       </div>
 
       {/* 01 KPI trend kartları (#4, #5) */}
-      <div className="uact-kpi-grid uact-kpi-grid--6">
+      <div className="uact-kpi-grid uact-kpi-grid--6 uact-kpi-grid--tour">
+        {/* Ürün turu (2026-09-13): tamamladı / kapattı / hiç görmedi */}
+        {kpi('tour', Compass, sum.tour?.completed ?? 0, t('uact.tourKpi'), t('uact.tourKpiSub', sum.tour?.dismissed ?? 0, sum.tour?.none ?? 0), undefined, null)}
         {kpi('active', Users, sum.active_count ?? 0, t('uact.activeNow'), t('uact.kpiLive'), 'ok', () => setKpiDetail({ kind: 'active', title: t('uact.activeListTitle') }))}
         {kpi('logins', LogIn, pick('logins_24h', 'logins_7d'), t('uact.logins'), t('uact.kpi7d', sum.logins_7d ?? 0), undefined, () => setKpiDetail({ kind: 'logins', title: t('uact.logins') }), sparkFrom(ua.series, 'success'), deltaVsAvg(ua.series, 'success'))}
         {kpi('failed', XCircle, pick('failed_24h', 'failed_7d'), t('uact.failedLbl'), t('uact.failedRatio', failedRatio(pick('failed_24h', 'failed_7d'), pick('logins_24h', 'logins_7d'))), failedT === 'neutral' ? undefined : failedT, () => setKpiDetail({ kind: 'failed', title: t('uact.failedLbl') }), sparkFrom(ua.series, 'failed'), deltaVsAvg(ua.series, 'failed'))}

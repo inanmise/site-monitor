@@ -4,18 +4,20 @@ import { useT, useLanguage } from '../i18n/index.jsx'
 import { useTheme } from '../i18n/theme.jsx'
 import CommandPalette from './CommandPalette.jsx'
 import InboxBell from './InboxBell.jsx'
-import { LayoutDashboard, AlertTriangle, FileText, RefreshCw, ClipboardList, Settings, User, Globe, LogOut, Lock, Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen, History, Wifi, Network, Search, TrendingDown, Database, UserCheck, ShieldCheck, CalendarDays, ListChecks, Target, Radio, Siren, Wrench, LifeBuoy, Gauge, ScanSearch, FlaskConical, Bug, MonitorSmartphone } from 'lucide-react'
+import { LayoutDashboard, AlertTriangle, FileText, RefreshCw, ClipboardList, Settings, User, Globe, LogOut, Lock, Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen, History, Wifi, Network, Search, TrendingDown, Database, UserCheck, ShieldCheck, CalendarDays, ListChecks, Target, Radio, Siren, Wrench, LifeBuoy, Gauge, ScanSearch, FlaskConical, Bug, MonitorSmartphone, Compass } from 'lucide-react'
 import BrandLogo from './BrandLogo.jsx'
 import IssueReportModal from './IssueReportModal.jsx'
 import { LastLoginPopoverLines } from './LastLoginInfo.jsx'
 import { useBranding } from '../contexts/BrandingProvider.jsx'
 import VersionChip from './VersionChip.jsx'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
+import { useTour } from './tour/TourProvider.jsx'
 
 export default function Nav({ activeTab, onTabChange, username, teamName, systemRole, globalAdmin, onLogout, onChangePassword, globalStatus = 'ok', loginInfo = null }) {
   const t = useT()
   const { toggle } = useLanguage()
   const { theme, toggle: toggleTheme } = useTheme()
+  const tour = useTour()   // ürün turu: kullanıcı menüsünden yeniden başlat + sm:nav-reveal (2026-09-13)
   const { get: brand, branding } = useBranding()
   // Sürüm SUNUCUDAN gelir (VersionChip → useAppVersion); çip tıklanınca yayın/dağıtım popover'ı açılır.
   const { canView } = usePermissions()
@@ -168,6 +170,20 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
     }
   }, [activeTab])
 
+  // Tur motoru bir sekmeyi göstermek istediğinde kenar çubuğunu ve o sekmenin grubunu açar (2026-09-13)
+  useEffect(() => {
+    const onReveal = (e) => {
+      const tabId = e?.detail?.tab
+      if (!tabId) return
+      if (!open) { setOpen(true); try { localStorage.setItem('sidebar-open', 'true') } catch { /* depolama yok */ } }
+      const gi = GROUPS.findIndex((g) => g.labelKey && g.tabs.some((tb) => tb.id === tabId))
+      if (gi >= 0) { setOpenGroup(gi); try { localStorage.setItem('nav-group-open', String(gi)) } catch { /* depolama yok */ } }
+    }
+    window.addEventListener('sm:nav-reveal', onReveal)
+    return () => window.removeEventListener('sm:nav-reveal', onReveal)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
   function toggleGroup(gi) {
     setOpenGroup(prev => {
       const next = prev === gi ? null : gi
@@ -222,17 +238,17 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
       </div>
 
       {/* Komut paleti tetiği (2026-09-12, #1): Ctrl+K — alan / izleme / takım / sekme tek kutuda */}
-      <button type="button" className={`sb-search${open ? '' : ' sb-search--mini'}`}
+      <button type="button" data-tour="nav-search" className={`sb-search${open ? '' : ' sb-search--mini'}`}
         onClick={() => window.dispatchEvent(new CustomEvent('sm:palette'))} title={t('palette.title')} aria-label={t('palette.title')}>
         <Search size={14} aria-hidden="true" />
         {open && <><span className="sb-search-text">{t('palette.trigger')}</span><kbd className="sb-search-kbd">Ctrl K</kbd></>}
       </button>
       <CommandPalette tabs={paletteTabs} onTabChange={onTabChange} />
       {/* Bildirim kutusu (2026-09-12, #2): açık alarm / çözülen / bakım / haftalık son giriş / dolan istisna */}
-      <InboxBell username={username} compact={!open} />
+      <div data-tour="nav-inbox" className="sb-inbox-wrap"><InboxBell username={username} compact={!open} /></div>
 
       {/* ── Nav items ── */}
-      <nav className="sb-nav">
+      <nav className="sb-nav" data-tour="nav-groups">
         {GROUPS.map((group, gi) => {
           const visibleTabs = group.tabs.filter((tab) => tab.show)
           if (visibleTabs.length === 0) return null
@@ -255,6 +271,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
                   <button
                     key={id}
                     className={`sb-item${activeTab === id ? ' sb-active' : ''}`}
+                    data-tour={`nav-tab-${id}`}
                     onClick={() => onTabChange(id)}
                     title={!open ? t(labelKey) : undefined}
                   >
@@ -274,6 +291,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
           <button
             ref={userTriggerRef}
             className={`sb-user-trigger${userMenuOpen ? ' is-open' : ''}`}
+            data-tour="nav-user"
             onClick={() => setUserMenuOpen(v => !v)}
             title={!open ? t('nav.userSettings') : undefined}
           >
@@ -327,6 +345,14 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
               <Lock size={14} />
               <span>{t('nav.changePassword')}</span>
             </button>
+            {/* Ürün turu (2026-09-13): kapatan kullanıcı istediğinde yeniden bulabilsin */}
+            <button
+              className="sb-user-popover-item"
+              onClick={() => { setUserMenuOpen(false); tour.start('main') }}
+            >
+              <Compass size={14} />
+              <span>{t('tour.restart')}</span>
+            </button>
           </div>,
           document.body
         )}
@@ -343,6 +369,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
         <IssueReportModal open={issueOpen} onClose={() => setIssueOpen(false)} />
         <button
           className="sb-logout"
+          data-tour="nav-theme"
           onClick={toggleTheme}
           title={!open ? (theme === 'dark' ? t('nav.lightMode') : t('nav.darkMode')) : undefined}
         >

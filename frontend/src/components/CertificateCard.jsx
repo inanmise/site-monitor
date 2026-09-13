@@ -17,7 +17,7 @@ function parseDn(dn, field) {
 function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure = false,
                                           onMailFailureClick, isWeak,
                                           onCheckNow, onEdit, onDuplicate, onDelete,
-                                          checking = false, deleting = false }) {
+                                          checking = false, deleting = false, tourId }) {
   const t = useT()
   const days = cert.days_remaining
   const al = cert.alert_level
@@ -90,7 +90,7 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
     /* Kart klavyeyle de açılabilir: role+tabIndex+Enter/Space. onKeyDown YALNIZ kartın KENDİ
        hedefinde çalışır — footer'daki Çalıştır/Düzenle/Kopyala düğmelerinde Enter'a basıldığında
        tuş olayı karta baloncuklanıp detayı DA açardı (çift eylem). */
-    <div className={`cc-card cc-${state}`} data-domain={cert.domain}
+    <div className={`cc-card cc-${state}`} data-domain={cert.domain} data-tour={tourId}
       role="button" tabIndex={0}
       aria-label={t('card.openDetailFor', cert.domain || '')}
       onKeyDown={(e) => {

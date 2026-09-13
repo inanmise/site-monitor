@@ -5,6 +5,8 @@ import remarkGfm from 'remark-gfm'
 import { HelpCircle, X, BookOpen } from 'lucide-react'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { navigateTo } from '../utils/navigate.js'
+import { useTour } from './tour/TourProvider.jsx'
+import { PAGE_TOURS } from './tour/tourSteps.js'
 import whitepaperTr from '../assets/whitepaper.md?raw'
 import whitepaperEn from '../assets/whitepaper.en.md?raw'
 
@@ -38,6 +40,7 @@ export default function HelpDrawer({ tab }) {
   const { lang } = useLanguage()
   const [open, setOpen] = useState(false)
   const [section, setSection] = useState(null)
+  const tour = useTour()   // ürün turu (2026-09-13): çekmeceden genel tur / sayfa turu
 
   useEffect(() => {
     const onHelp = (e) => { setSection(e?.detail?.section || null); setOpen(true) }
@@ -52,7 +55,7 @@ export default function HelpDrawer({ tab }) {
 
   return (
     <>
-      <button type="button" className="help-fab" onClick={() => { setSection(null); setOpen(true) }} aria-label={t('helpd.open')} title={t('helpd.open')}>
+      <button type="button" className="help-fab" data-tour="help-fab" onClick={() => { setSection(null); setOpen(true) }} aria-label={t('helpd.open')} title={t('helpd.open')}>
         <HelpCircle size={20} aria-hidden="true" />
       </button>
       {open && createPortal(
@@ -62,6 +65,8 @@ export default function HelpDrawer({ tab }) {
               <BookOpen size={16} aria-hidden="true" />
               <span className="helpd-title">{t('helpd.title')}</span>
               <button type="button" className="btn btn-sm btn-secondary" onClick={() => { setOpen(false); navigateTo('help') }}>{t('helpd.full')}</button>
+              <button type="button" className="btn btn-sm btn-secondary" onClick={() => { setOpen(false); tour.start('main') }}>{t('tour.restart')}</button>
+              {PAGE_TOURS[tab]?.length > 0 && <button type="button" className="btn btn-sm btn-secondary" onClick={() => { setOpen(false); tour.start('page', { pageId: tab }) }}>{t('tour.pageStart')}</button>}
               <button type="button" className="helpd-close" onClick={() => setOpen(false)} aria-label={t('app.close')}><X size={14} /></button>
             </div>
             <div className="helpd-body help-content">

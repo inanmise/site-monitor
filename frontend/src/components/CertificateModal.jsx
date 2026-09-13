@@ -612,7 +612,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
           </div>
         </div>
 
-        <div className="modal-tabs">
+        <div className="modal-tabs" data-tour="cert-modal-tabs">
           <button
             className={`modal-tab${activeTab === 'ssl' ? ' active' : ''}`}
             onClick={() => switchTab('ssl')}

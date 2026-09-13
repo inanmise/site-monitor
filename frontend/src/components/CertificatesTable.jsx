@@ -180,7 +180,7 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
     if (key === 'status') {
       return (
         <th key={key} data-col={key} aria-sort={sortKey === 'priority' ? (sortDir === 'desc' ? 'descending' : 'ascending') : 'none'}>
-          <div className="cf-wrap" ref={statusDropRef}>
+          <div className="cf-wrap" ref={statusDropRef} data-tour="ct-status">
             <button type="button" className={`cf-th-btn${filters.status ? ' cf-active' : ''}`} onClick={() => setStatusDropOpen((v) => !v)} title={t('tbl.filterTitle')}>
               {t('tbl.colStatus')}
               {filters.status && <span className="cf-active-label"> · {activeStatusLabel}</span>}
@@ -244,7 +244,7 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
             <thead>
               <tr>
                 {showSelect && (
-                  <th data-col="select" className="ct-td-select">
+                  <th data-col="select" className="ct-td-select" data-tour="ct-select">
                     <input type="checkbox" aria-label={t('bulk.selectAll')} checked={certs.length > 0 && certs.every((c) => selected.has(c.domain))} onChange={toggleAllPage} />
                   </th>
                 )}
@@ -253,8 +253,8 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
               </tr>
             </thead>
             <tbody>
-              {certs.map((cert) => (
-                <TableRow key={cert.domain} cert={cert} cols={cols} shared={shared[cert.domain] ?? 1}
+              {certs.map((cert, i) => (
+                <TableRow key={cert.domain} cert={cert} cols={cols} shared={shared[cert.domain] ?? 1} tourId={i === 0 ? 'ct-row-menu' : undefined}
                   selected={selected.has(cert.domain)} onToggle={showSelect ? toggleSel : null}
                   onOpen={onRowClick} onCheckNow={onCheckNow} checking={checkingDomain === cert.domain}
                   onEdit={canManage ? onEdit : null} onCopyLink={copyRowLink}
@@ -278,7 +278,7 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
   )
 }
 
-function TableRow({ cert, cols, shared, selected, onToggle, onOpen, onCheckNow, checking, onEdit, onCopyLink, onSameCert }) {
+function TableRow({ cert, cols, shared, selected, onToggle, onOpen, onCheckNow, checking, onEdit, onCopyLink, onSameCert, tourId }) {
   const t = useT()
   const level = levelOf(cert)
   const statusClass = LEVEL_CLASS[level] ?? 'status-valid'
@@ -370,7 +370,7 @@ function TableRow({ cert, cols, shared, selected, onToggle, onOpen, onCheckNow, 
         </td>
       )}
       {cols.map(cell)}
-      <td className="ct-td-actions" onClick={stop} onKeyDown={stop}>
+      <td className="ct-td-actions" onClick={stop} onKeyDown={stop} data-tour={tourId}>
         <KebabMenu items={menu} label={t('tbl.actions')} />
       </td>
     </tr>
