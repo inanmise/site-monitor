@@ -205,16 +205,16 @@ class CertificateListQueryTest {
     @DisplayName("CSV: başlık istemcinin sütun sırasıyla, bilinmeyen sütun atlanır, formül/virgül kaçırılır, süzgeç uygulanır")
     void csvExport() {
         String csv = service.exportCsv(q("", "2", "", false, null, "", ""), null, List.of("domain", "status", "shared", "bogus", "team"));
-        String[] lines = csv.split("\n");
+        String[] lines = csv.split("\r\n");   // Csv.row CRLF ile biter (ortak kural)
         assertThat(lines[0]).isEqualTo("domain,status,shared,team");
         assertThat(lines).hasSize(4);   // başlık + takım 2'nin 3 satırı
         assertThat(lines[3]).isEqualTo("warn.example.com,warning,1,Takım B");
         assertThat(csv).contains("shared-b.example.com,valid,2,Takım B");
-        // Hücre kaçışı
-        assertThat(CertificateService.csvCell("=HYPERLINK(\"x\")")).isEqualTo("\"'=HYPERLINK(\"\"x\"\")\"");
-        assertThat(CertificateService.csvCell("a,b")).isEqualTo("\"a,b\"");
-        assertThat(CertificateService.csvCell(null)).isEmpty();
+        // Hücre kaçışı ortak kuraldan (com.sitemonitor.util.Csv — CsvExportGuardTest kapısı); virgüllü veren tırnaklanır
+        latest.get(0).setIssuerCn("Example, Inc CA");
+        assertThat(service.exportCsv(q("", "", "", false, null, "", "fp-1"), null, List.of("domain", "issuer")))
+                .contains("expired.example.com,\"Example, Inc CA\"");
         // Sütun verilmezse tüm sütunlar
-        assertThat(service.exportCsv(q("", "", "", false, null, "", ""), null, List.of()).split("\n")[0]).startsWith("domain,issuer,subject,team,");
+        assertThat(service.exportCsv(q("", "", "", false, null, "", ""), null, List.of()).split("\r\n")[0]).startsWith("domain,issuer,subject,team,");
     }
 }

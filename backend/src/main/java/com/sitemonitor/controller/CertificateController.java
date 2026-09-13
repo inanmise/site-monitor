@@ -117,7 +117,7 @@ public class CertificateController {
         List<String> colList = java.util.Arrays.stream(cols.split(","))
                 .map(String::trim).filter(s -> !s.isEmpty()).toList();
         String csv = certService.exportCsv(q, SessionScope.viewTeamIds(session), colList);
-        int rows = Math.max(0, (int) csv.chars().filter(ch -> ch == '\n').count() - 1);
+        int rows = Math.max(0, (int) csv.chars().filter(ch -> ch == '\n').count() - 1);   // başlık hariç satır sayısı (CRLF sonlu)
         auditService.recordAction("CERT_LIST_EXPORT", session, request, "CERTIFICATE", "export",
                 "{\"rows\":" + rows + ",\"status\":\"" + filter_status.replace("\"", "") + "\",\"window\":\""
                 + filter_window.replace("\"", "") + "\",\"team\":\"" + filter_team.replace("\"", "") + "\"}");

@@ -593,8 +593,8 @@ public class CertificateService {
 
     /**
      * CSV dışa aktarma — tablodaki süzgeçle AYNI sonuç, tüm sayfalar; görünür sütun sırası istemciden.
-     * Hücre kaçışı: çift tırnak/virgül/satır sonu → tırnaklı; formül başlangıcı (= + - @) tırnak içinde
-     * tek tırnakla nötrlenir (CSV enjeksiyonu). Bilinmeyen sütun anahtarı atlanır.
+     * Hücre kaçışı TEK yerde: {@link com.sitemonitor.util.Csv} (formül nötrleme + tırnaklama; kapı
+     * {@code CsvExportGuardTest}). Bilinmeyen sütun anahtarı atlanır.
      */
     public String exportCsv(com.sitemonitor.dto.CertListQuery q, java.util.Collection<Long> teamIds, List<String> cols) {
         Map<String, Object> res = getPaginated(
@@ -608,12 +608,12 @@ public class CertificateService {
         List<String> keys = cols.stream().filter(CSV_COLUMNS::containsKey).collect(Collectors.toList());
         if (keys.isEmpty()) keys = new ArrayList<>(CSV_COLUMNS.keySet());
         StringBuilder sb = new StringBuilder();
-        sb.append(String.join(",", keys)).append('\n');
+        sb.append(com.sitemonitor.util.Csv.row(keys.toArray()));
         for (CertificateDto c : rows) {
             CsvRow row = new CsvRow(c, shared.getOrDefault(c.getDomain(), 1));
-            List<String> cells = new ArrayList<>(keys.size());
-            for (String k : keys) cells.add(csvCell(CSV_COLUMNS.get(k).apply(row)));
-            sb.append(String.join(",", cells)).append('\n');
+            Object[] cells = new Object[keys.size()];
+            for (int i = 0; i < keys.size(); i++) cells[i] = CSV_COLUMNS.get(keys.get(i)).apply(row);
+            sb.append(com.sitemonitor.util.Csv.row(cells));
         }
         return sb.toString();
     }
@@ -651,17 +651,6 @@ public class CertificateService {
     }
 
     private static String nz(String s) { return s == null ? "" : s; }
-
-    static String csvCell(Object o) {
-        if (o == null) return "";
-        String s = String.valueOf(o);
-        boolean formula = !s.isEmpty() && "=+-@\t\r".indexOf(s.charAt(0)) >= 0;
-        if (formula) s = "'" + s;
-        if (formula || s.contains(",") || s.contains("\"") || s.contains("\n") || s.contains("\r")) {
-            return "\"" + s.replace("\"", "\"\"") + "\"";
-        }
-        return s;
-    }
 
     @Cacheable(value = "cert-warnings", sync = true)
     public List<CertificateDto> getWarnings() {

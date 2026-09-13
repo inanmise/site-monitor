@@ -282,7 +282,7 @@ class CertificateControllerTest {
     @DisplayName("GET /api/certificates/export.csv → text/csv, ek dosya adı, CERT_LIST_EXPORT denetim kaydı (satır sayısı)")
     void exportCertificatesCsv_authenticated_returnsCsvAndAudits() throws Exception {
         when(certService.exportCsv(any(com.sitemonitor.dto.CertListQuery.class), any(), any()))
-                .thenReturn("domain,status\na.example.com,valid\nb.example.com,expired\n");
+                .thenReturn("domain,status\r\na.example.com,valid\r\nb.example.com,expired\r\n");
 
         mvc.perform(get("/api/certificates/export.csv").session(authSession())
                         .param("cols", "domain,status").param("filter_status", "expired"))
