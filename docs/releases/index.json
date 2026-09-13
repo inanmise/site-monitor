@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-13T15:29:51Z",
+  "generatedAt": "2026-09-13T16:48:21Z",
   "repo": "inanmise/site-monitor",
-  "count": 648,
+  "count": 649,
   "releases": [
+    {
+      "version": "20.63.0",
+      "tag": "v20.63.0",
+      "releasedAt": "2026-09-13T16:48:14Z",
+      "commit": "346d2e43339eeed1cd6bdc92fc755402131d708b",
+      "prevVersion": "20.62.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 2,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": "regresyon",
+          "breaking": false,
+          "sha": "346d2e43",
+          "subject": "yirmi altıncı tur — Haftalık Raporlar zenginleştirmesi (v20.62.1..HEAD)"
+        },
+        {
+          "type": "feat",
+          "scope": "weekly",
+          "breaking": false,
+          "sha": "a2e97c67",
+          "subject": "Haftalık Raporlar zenginleştirmesi — bu hafta şeridi, onay kuyruğu, öneriler, geçen haftadan devam, derin bağlantı"
+        },
+        {
+          "type": "feat",
+          "scope": "weekly",
+          "breaking": false,
+          "sha": "785807db",
+          "subject": "bu-hafta şeridi, sistemden öneriler, önceki hafta, geçen haftadan devam, gönderim skoru"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.62.1",
       "tag": "v20.62.1",
