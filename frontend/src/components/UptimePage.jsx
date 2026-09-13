@@ -16,6 +16,7 @@ import SearchableSelect from './ui/SearchableSelect.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
+import { useEscapeKey } from '../hooks/useEscapeKey.js'
 
 const REFRESH_INTERVAL = 60
 
@@ -31,6 +32,7 @@ export default function UptimePage({ systemRole }) {
   const [search, setSearch]             = useState(() => readUrlParam('q', ''))
   const [teamFilter, setTeamFilter]     = useState(() => readUrlParam('team', 'all'))
   const [selected, setSelected]         = useState(null)
+  useEscapeKey(!!selected, closeModal)   // Escape ile kapat (QA ISSUE-002, 2026-09-13; ModalShell'e taşınmamış detay modalı)
   const [diag, setDiag]                 = useState(null)   // { domain, port } → DiagnosticsModal
   const [dateFrom, setDateFrom]         = useState(todayStartDate)
   const [dateTo, setDateTo]             = useState(() => new Date())

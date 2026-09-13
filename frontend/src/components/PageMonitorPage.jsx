@@ -47,6 +47,7 @@ import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { csvCell } from '../utils/csv.js'
+import { useEscapeKey } from '../hooks/useEscapeKey.js'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
@@ -105,6 +106,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   const [loadError, setLoadError] = useState(null)
   const [teams, setTeams] = useState([])
   const [selected, setSelected] = useState(null)
+  useEscapeKey(!!selected, closeDetail)   // Escape ile kapat (QA ISSUE-002, 2026-09-13; ModalShell'e taşınmamış detay modalı)
   const [issues, setIssues] = useState([])
   const [issuesLoading, setIssuesLoading] = useState(false)
   const [confirmations, setConfirmations] = useState([])   // canlı teyit zincirleri (Teyit denemesi X/N)

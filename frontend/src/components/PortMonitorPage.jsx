@@ -43,6 +43,7 @@ import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
+import { useEscapeKey } from '../hooks/useEscapeKey.js'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
@@ -99,6 +100,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const [teams, setTeams] = useState([])
   const [defaults, setDefaults] = useState(null)
   const [selected, setSelected] = useState(null)
+  useEscapeKey(!!selected, closeModal)   // Escape ile kapat (QA ISSUE-002, 2026-09-13; ModalShell'e taşınmamış detay modalı)
   const [detailTab, setDetailTab] = useState('control')
   // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin. Sekmenin kendi 30 sn'lik
   // canlı yenilemesi yetmiyor: 1. sayfa dışındaysan ya da özel aralık seçtiysen KAPALI. Sinyal,

@@ -55,6 +55,7 @@ import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorModalActions from './ui/MonitorModalActions.jsx'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
+import { useEscapeKey } from '../hooks/useEscapeKey.js'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
@@ -238,6 +239,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   // once biten, hala sureni kilitten cikarmasin.
   const { isRunning, track } = useRunningChecks()
   const [selected, setSelected] = useState(null) // detail monitor
+  useEscapeKey(!!selected, closeDetail)   // Escape ile kapat (QA ISSUE-002, 2026-09-13; ModalShell'e taşınmamış detay modalı)
   const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
   const [detailTab, setDetailTab] = useState('control')
   // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin. Sekmenin kendi 30 sn'lik
