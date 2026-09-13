@@ -20,12 +20,14 @@ export default function ConfigHealthCard({ onOpenSection }) {
   const t = useT()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [open, setOpen] = useState(false)
+  // Varsayılan KAPALI (kullanıcı kararı 2026-09-13): sorun olsa da kart kendiliğinden açılmaz — başlıktaki
+  // sayaç çipleri ("1 sorun · 2 uyarı") zaten yeterli; açan kişinin tercihi bu tarayıcıda kalır.
+  const [open, setOpen] = useState(() => { try { return localStorage.getItem('cfg-health-open') === 'true' } catch { return false } })
 
   const load = useCallback(async () => {
     try {
       const r = await api.admin.getConfigHealth()
-      if (r?.success) { setData(r.data); setOpen((o) => o || r.data?.overall !== 'ok') }
+      if (r?.success) setData(r.data)
     } catch { /* kart süs — ayar sayfası etkilenmez */ }
     finally { setLoading(false) }
   }, [])
@@ -57,7 +59,8 @@ export default function ConfigHealthCard({ onOpenSection }) {
 
   return (
     <section className={`cfg-health cfg-health--${overall}`} aria-label={t('cfg.title')}>
-      <button type="button" className="cfg-health-head" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <button type="button" className="cfg-health-head" aria-expanded={open}
+        onClick={() => setOpen((o) => { try { localStorage.setItem('cfg-health-open', String(!o)) } catch { /* yoksay */ } return !o })}>
         <Icon size={18} aria-hidden="true" />
         <span className="cfg-health-title">{t('cfg.title')}</span>
         <span className="cfg-health-summary">

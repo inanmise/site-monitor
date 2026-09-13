@@ -11,9 +11,9 @@ import ConfigHealthCard from '../components/admin/ConfigHealthCard.jsx'
 
 /** Yapılandırma sağlığı kartı (2026-09-12, #25): sorun varsa açık liste, tıklayınca bölüme/sekmeye gider. */
 describe('ConfigHealthCard', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => { vi.clearAllMocks(); try { localStorage.removeItem('cfg-health-open') } catch { /* yoksay */ } })
 
-  it('sorunlu → liste açık; ayar bölümü satırı onOpenSection, nav satırı sm:navigate; detay kodu çevrilir', async () => {
+  it('sorunlu → kart yine KAPALI (2026-09-13), başlıkta sayaç; açınca liste; ayar bölümü satırı onOpenSection, nav satırı sm:navigate; detay kodu çevrilir', async () => {
     api.admin.getConfigHealth.mockResolvedValue({ success: true, data: {
       overall: 'bad', bad: 1, warn: 1, ok: 2,
       checks: [
@@ -27,6 +27,10 @@ describe('ConfigHealthCard', () => {
     const nav = vi.fn()
     window.addEventListener('sm:navigate', nav)
     render(<ConfigHealthCard onOpenSection={onOpen} />)
+    const head = await screen.findByRole('button', { name: /Yapılandırma sağlığı|Configuration health/ })
+    expect(head).toHaveAttribute('aria-expanded', 'false')   // sorun olsa da varsayılan kapalı
+    expect(document.querySelectorAll('.cfg-row').length).toBe(0)
+    fireEvent.click(head)
     await screen.findByText(/E-posta \(SMTP\)|Email \(SMTP\)/)
     expect(screen.getByText(/son test BAŞARISIZ · 2026-09-12T08:00:00|last test FAILED · 2026-09-12T08:00:00/)).toBeInTheDocument()
     expect(screen.getByText(/^1 sorun$|^1 problem$/)).toBeInTheDocument()   // tekil (QA ISSUE-011)
