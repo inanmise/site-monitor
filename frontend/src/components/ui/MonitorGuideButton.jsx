@@ -20,7 +20,7 @@ export default function MonitorGuideButton({ type }) {
   const md = guide[lang] || guide.tr || guide.en
   return (
     <>
-      <button type="button" className="btn btn-sm btn-secondary mguide-btn"
+      <button type="button" className="btn btn-sm btn-secondary mguide-btn" data-tour="mon-guide"
         title={t('guideForm.btn')} onClick={() => setOpen(true)}>
         <BookOpen size={14} /> {t('guideForm.btn')}
       </button>

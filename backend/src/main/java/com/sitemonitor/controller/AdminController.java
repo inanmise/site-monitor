@@ -96,6 +96,7 @@ public class AdminController {
     private final CertificateNoteRevisionRepository noteRevisionRepo;
     private final UserService userService;
     private final AppUserRepository userRepo;
+    private final com.sitemonitor.service.TourStateService tourStateService;   // ürün turu sıfırlama (2026-09-13)
     private final TeamRepository teamRepo;
     private final EmailNotificationService emailNotificationService;
     private final ConnectionDiagnosticsService diagnosticsService;
@@ -1068,6 +1069,21 @@ public class AdminController {
             sb.append('"').append(values.get(i).replace("\\", "\\\\").replace("\"", "\\\"")).append('"');
         }
         return sb.append(']').toString();
+    }
+
+    /**
+     * Ürün turunu sıfırla (2026-09-13): kullanıcı bir sonraki girişte karşılama kartını yeniden görür.
+     * Kapı: takım kapsamlı admin (kendi takımı) ya da global admin. Denetim: USER_TOUR_RESET.
+     */
+    @PostMapping("/users/{id}/tour-reset")
+    public ResponseEntity<Map<String, Object>> resetUserTour(@PathVariable Long id, HttpSession session, HttpServletRequest request) {
+        requireAdminOrTeamAdmin(session);
+        AppUser target = userRepo.findById(id).orElseThrow(() -> new NoSuchElementException("User not found: " + id));
+        requireTeamScopedAdmin(session, target.getTeamId());
+        tourStateService.apply(target, Map.of(), true);
+        auditService.recordAction("USER_TOUR_RESET", session, request, "USER", String.valueOf(id),
+                "{\"username\":\"" + String.valueOf(target.getUsername()).replace("\"", "") + "\"}");
+        return ok(Map.of("message", "Tour reset"));
     }
 
     @PostMapping("/inventory/{id}/transfer")

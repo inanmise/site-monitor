@@ -76,7 +76,7 @@ export default function CertTableToolbar({
 
   return (
     <>
-      <div className="advanced-filters ct-filters">
+      <div className="advanced-filters ct-filters" data-tour="ct-filters">
         <div className="filter-group">
           <label htmlFor="ct-f-domain">{t('tbl.domainSearch')}</label>
           <input id="ct-f-domain" className="filter-input" placeholder={t('tbl.domainPh')} value={filters.domain}
@@ -134,7 +134,7 @@ export default function CertTableToolbar({
         <div className="ct-tools">
           <SegmentedControl value={density} onChange={onDensity} ariaLabel={t('tbl.density')}
             options={[{ value: 'comfortable', label: t('tbl.densityComfortable') }, { value: 'compact', label: t('tbl.densityCompact') }]} />
-          <div className="colpick" ref={presetRef}>
+          <div className="colpick" ref={presetRef} data-tour="ct-presets">
             <button type="button" className="btn btn-sm btn-secondary" onClick={() => { setPresetOpen((o) => !o); setColsOpen(false) }} aria-expanded={presetOpen} aria-haspopup="true">
               <Bookmark size={14} /> {t('tbl.presets')}{presets.length ? ` (${presets.length})` : ''}
             </button>
@@ -158,7 +158,7 @@ export default function CertTableToolbar({
               </div>
             )}
           </div>
-          <div className="colpick" ref={colsRef}>
+          <div className="colpick" ref={colsRef} data-tour="ct-columns">
             <button type="button" className="btn btn-sm btn-secondary" onClick={() => { setColsOpen((o) => !o); setPresetOpen(false) }} aria-expanded={colsOpen} aria-haspopup="true">
               <Columns3 size={14} /> {t('tbl.columns')} ({cols.length}/{TABLE_COLUMNS.length})
             </button>
@@ -188,7 +188,7 @@ export default function CertTableToolbar({
               </div>
             )}
           </div>
-          <a className="btn btn-sm btn-secondary" href={exportUrl} download title={t('tbl.csvTitle')}><Download size={14} /> CSV</a>
+          <a className="btn btn-sm btn-secondary" href={exportUrl} download title={t('tbl.csvTitle')} data-tour="ct-csv"><Download size={14} /> CSV</a>
           <CopyLinkButton iconOnly />
         </div>
       </div>

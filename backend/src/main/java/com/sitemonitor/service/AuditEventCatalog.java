@@ -211,6 +211,8 @@ public final class AuditEventCatalog {
             "TEMPLATE_UPDATE",
             "THRESHOLD_CREATE",
             "THRESHOLD_UPDATE",
+            "TOUR_COMPLETED",
+            "TOUR_DISMISSED",
             "USER_CREATE",
             "USER_DELETE",
             "USER_ORG_ROLE_UNLOCK",
@@ -221,6 +223,7 @@ public final class AuditEventCatalog {
             "USER_PUSH_SETTINGS",
             "USER_PUSH_TEST",
             "USER_ROLE_UNLOCK",
+            "USER_TOUR_RESET",
             "USER_UNLOCK",
             "USER_UPDATE",
             "WEAK_ALGO_EXCEPTION_CLEAR",
@@ -268,6 +271,7 @@ public final class AuditEventCatalog {
                 || t.equals("SELF_PASSWORD_CHANGE")) return AUTH;
 
         if (t.startsWith("PERMISSION_")) return PERMISSION;
+        if (t.startsWith("TOUR_")) return USER;                     // ürün turu: kişinin kendi tercihi
         if (t.startsWith("USER_PUSH_")) return INTEGRATION;          // USER_* ten ÖNCE
         if (t.startsWith("USER_")) return USER;
         if (t.startsWith("TEAM_")) return TEAM;

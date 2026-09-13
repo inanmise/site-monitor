@@ -492,3 +492,28 @@ Kapsam: 3 QA commit'i. İmza süpürmesi temiz (skip-ci yok, gerçek kimlik yok,
   `nowrap`, `.table-scroll` kaydırır; varsayılan 7 sütunda yerleşim değişmedi (mobil kart kuralı sonra geldiği için kazanır).
 Doğrulama: 5 sekme, TR+EN, açık+koyu, 1280+375 px, 21 sütun; konsol hata farkı 0; 500'ler yalnız yeniden başlatma
 sırasındaki Vite proxy yanıtları (5 bayt), sonrasında 200. → **REGRESYON YOK**.
+
+## Ek — yirmi dördüncü tur (2026-09-13, sürüm öncesi — ürün turu, 12 madde, `v20.61.1..HEAD`)
+
+Kapsam: 3 commit. İmza süpürmesi temiz (skip-ci yok, gerçek kimlik yok; test fixture'ları "testuser"/"newbie").
+Hook + erken-return: `TourProvider` App'in auth kapısından SONRA (oturumlu ağaç, PermissionsProvider içinde) mount edilir,
+gövdesinde koşullu return yok; `TourPageChip`/`OnboardingChecklist` hook'ları return'lerin üstünde.
+
+**Denetim odakları:**
+- Kalıcılık: `tour_state` yalnız kendi kaydına yazılır (push-opt-out deseni, IDOR yüzeyi yok); `dismissed` YAPIŞKAN —
+  started/snoozed onu ezmez (TourStateServiceTest); istemci tamamlamış/kapatmış kullanıcıyı yeniden başlatınca
+  'started'a düşürmez (tarayıcıda yakalandı, TourProvider testi pinledi). Yönetici sıfırlama takım kapsamlı
+  (`requireTeamScopedAdmin`; TEAM_ADMIN başka takım → 403 pinli).
+- Yan etki disiplini: persist çağrıları setState güncelleyicisinin DIŞINDA (StrictMode çift çağrı → çift POST olurdu).
+- Hayalet hedef kapısı (`tour-targets.test.js`): her adımın `data-tour` hedefi bir JSX'te, TR/EN metni var, sekme
+  kimlikleri geçerli — hedef silinirse test kırmızı (tur sessizce erimez).
+- Çizim: karartma dört parça, delik boş (hedefe tıklanabilir); z-index 3000 (modal 1000–2100 üstü); balon yalnız
+  `data-tour` ölçer, 200 ms + scroll/resize'da tazelenir; bulunamayan hedef 3 sn'de atlanır.
+- Kapılar: progress-guard elle yüzde çubuğunu yakaladı → `ProgressBar`; cssClasses `.tour-welcome`'ı yakaladı →
+  tanımlandı; i18n parity 103/103; DDL patch idempotent (JPA update önce oluşturdu, patch noop).
+- Testler: backend TourStateServiceTest 7 + Auth +3 + Admin +1; frontend tourEngine 9, TourProvider 10, tour-targets 4;
+  tam süitler yeşil (backend clean verify aşağıda, frontend 2037).
+Bilinen sınırlar (bilinçli): whitepaper'da tur bölümü yok (kılavuz + PDF ayrı iş); "Yenilikler" turu TOUR_VERSION
+elle artırılınca devreye girer; mobilde tur kısaltılmış (palet adımı yok); ön ayarlar gibi tur da tek sürüm
+(çoklu dil metni i18n'den).
+→ **REGRESYON YOK**.

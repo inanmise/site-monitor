@@ -14,7 +14,7 @@ export default function MonitorHowBox({ bullets = [], title }) {
   const items = bullets.filter(Boolean)
   if (items.length === 0) return null
   return (
-    <div className="mhow">
+    <div className="mhow" data-tour="mon-how">
       <button type="button" className="mhow-toggle" onClick={() => setOpen(o => !o)} aria-expanded={open}>
         <HelpCircle size={15} /><span>{title || t('mhow.title')}</span>
         <ChevronDown size={15} className={`mhow-chev${open ? ' open' : ''}`} />

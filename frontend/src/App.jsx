@@ -67,6 +67,10 @@ const WeakAlgorithmReport = lazy(() => import('./components/admin/WeakAlgorithmR
 import TodayPanel from './components/TodayPanel.jsx'
 import RecentChangesLine from './components/RecentChangesLine.jsx'
 import HelpDrawer from './components/HelpDrawer.jsx'
+import { TourProvider } from './components/tour/TourProvider.jsx'
+import OnboardingChecklist from './components/tour/OnboardingChecklist.jsx'
+import TourPageChip from './components/tour/TourPageChip.jsx'
+import { readMirror, writeMirror, mergeState } from './components/tour/tourEngine.js'
 const WeeklyReportsPage = lazy(() => import('./components/WeeklyReportsPage'))
 const IncidentHistoryPage = lazy(() => import('./components/IncidentHistoryPage'))
 const SystemHealth = lazy(() => import('./components/admin/SystemHealth'))
@@ -164,6 +168,9 @@ export default function App() {
   const [loginInfo, setLoginInfo] = useState(null)
   // E1: kişi webhook push tercihi — /me ve login yanıtından gelir, Etkinliklerim'den yazılır.
   const [pushOptOut, setPushOptOut] = useState(false)
+  // Ürün turu durumu (2026-09-13): doğruluk kaynağı sunucu (/me + login yanıtı), localStorage yalnız ayna.
+  const [tourState, setTourState] = useState(() => readMirror())
+  const persistTourRef = useRef(null)   // openCertModal (useCallback, []) güncel persistTour'a ref'ten ulaşır
   const [authChecked, setAuthChecked] = useState(false)
   // Oturum düşüşünde (401 → /?session=expired) giriş formunda "oturum süresi doldu" bildirimi göster (AUTH-1).
   const [sessionExpiredNotice, setSessionExpiredNotice] = useState(initialSessionExpired)
@@ -280,6 +287,7 @@ export default function App() {
         // döndürür; alınmazsa özet ve kullanıcı menüsü sayfa yenilemede boşalır.
         setLoginInfo(res.login_info ?? null)
         setPushOptOut(!!res.push_opt_out)
+        { const ts = mergeState(res.tour ?? null, readMirror()); setTourState(ts); writeMirror(ts) }
         // Oturum aktif bayrağı: login yalnız bu sekmede yapılmamış olabilir (cookie reauth ya da
         // başka sekmede login). Bayrağı burada da set et ki oturum sonradan düş/süpersede olunca
         // client.js 401'i yakalayıp temiz /?session=expired'a yönlendirsin ("Yüklenemedi" yerine).
@@ -607,6 +615,8 @@ export default function App() {
   useEffect(() => { certsRef.current = certs }, [certs])
   const openCertModal = useCallback((d) => {
     setModalCert(certsRef.current.find(c => c.domain === d) ?? null)
+    // Başlangıç listesi: ilk kart açıldı (sunucuya yalnız henüz işaretli değilse yazılır — TourProvider aynı kuralı sekmeler için uygular)
+    const ts = readMirror(); if (ts && ts.status !== 'dismissed' && !ts.checklist?.card && !ts.checklist_hidden) persistTourRef.current?.({ checklist: { card: true } })
   }, [])
 
   /**
@@ -690,7 +700,21 @@ export default function App() {
     setMustChangePwd(!!userData.must_change_password)
     setLoginInfo(userData.login_info ?? null)
     setPushOptOut(!!userData.push_opt_out)
+    { const ts = mergeState(userData.tour ?? null, readMirror()); setTourState(ts); writeMirror(ts) }
   }
+
+  /** Tur durumu yazımı: sunucu birleştirir ve güncel hâli döner; ayna da o hâle çekilir. */
+  const persistTour = useCallback(async (patch) => {
+    try {
+      const r = await api.setTourState(patch)
+      if (r?.success) { const ts = r.tour ?? null; setTourState(ts); writeMirror(ts) }
+    } catch { /* çevrimdışı: ayna kalır, bir sonraki yazımda sunucu birleştirir */ }
+  }, [])
+  persistTourRef.current = persistTour
+  const tourCtx = useMemo(() => ({
+    role: systemRole, globalAdmin, canWrite: canManageInventory, mustChangePwd, tab,
+    ready: !!user && !mustChangePwd && lastUpdate != null,   // veri geldi → karşılama kartı boş ekrana çıkmasın
+  }), [systemRole, globalAdmin, canManageInventory, mustChangePwd, tab, user, lastUpdate])
 
   const weakDomainSet = useMemo(
     () => new Set((weakAlgStats?.data ?? []).map(d => d.domain)),
@@ -905,6 +929,7 @@ export default function App() {
     <PermissionsProvider user={user}>
     <UserDirectoryProvider>
     <TeamDirectoryProvider>
+    <TourProvider ctx={tourCtx} tourState={tourState} onPersist={persistTour}>
     <div className="app-layout">
 
       {inactivityWarning && (
@@ -929,6 +954,7 @@ export default function App() {
       <main className="app-main">
         {/* Bağlama duyarlı yardım (2026-09-12, #24): sağ altta "?", o sayfanın kılavuz bölümü yan panelde */}
         <HelpDrawer tab={tab} />
+        <TourPageChip tab={tab} />
         <AnnouncementBanner heroOnMount />
         {/* Yalnız şüpheli durumda (önceki girişten bu yana başarısız deneme varsa) görünür. */}
         <LastLoginNotice info={loginInfo} />
@@ -937,12 +963,12 @@ export default function App() {
           {/* Kontroller yalnız SERTİFİKA sayfalarında — izleme/yönetim sekmelerinde işlevsizdi. */}
           {CERT_TABS.has(tab) && (
             <div className="controls">
-              <button className="btn btn-primary" onClick={() => setTeamPickerOpen(true)} disabled={refreshing}>
+              <button className="btn btn-primary" data-tour="check-now" onClick={() => setTeamPickerOpen(true)} disabled={refreshing}>
                 {refreshing
                   ? t('app.checkedOf', checkRun?.rows.length ?? 0, checkRun?.total ?? 0)
                   : t('app.checkNow')}
               </button>
-              <div className="add-domain-section">
+              <div className="add-domain-section" data-tour="add-domain">
                 <input className="domain-input" type="text" placeholder={t('app.newDomainPlaceholder')}
                   value={newDomain} onChange={(e) => setNewDomain(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleAddDomain()} />
@@ -974,7 +1000,7 @@ export default function App() {
           )}
 
           {tab === 'dashboard' && (
-            <div className="stats-section">
+            <div className="stats-section" data-tour="dash-stats">
               <div
                 className="stats-collapse-bar"
                 onClick={() => setStatsVisible((v) => !v)}
@@ -1004,7 +1030,7 @@ export default function App() {
             <Suspense fallback={<LoadingBlock label={t('tbl.loading')} fullWidth />}>
             {tab === 'dashboard' && (
               <div className="tab-content active">
-                <div className="sort-controls sort-bar">
+                <div className="sort-controls sort-bar" data-tour="dash-filters">
                   <label>{t('app.sortLabel')}</label>
                   <SearchableSelect
                     value={sortOrder}
@@ -1073,6 +1099,8 @@ export default function App() {
                   )}
                 </div>
                 {/* "Sizin için — bugün" (2026-09-12, #3): takımın ilgilenmesi gerekenler, sayfanın üstünde */}
+                {/* Başlangıç listesi (ürün turu, 2026-09-13): yeni kullanıcıya ilk adımlar; biter ya da kapatılırsa kaybolur */}
+                <OnboardingChecklist />
                 <TodayPanel onOpenDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} />
                 <div className="dashboard-header">
                   <h2>{t('app.dashTitle')}</h2>
@@ -1103,8 +1131,8 @@ export default function App() {
                 ) : (
                   <>
                     <div className="cards-container">
-                      {dashPager.pageItems.map((cert) => (
-                        <CertificateCard key={cert.domain} cert={cert} onClick={openCertModal}
+                      {dashPager.pageItems.map((cert, ci) => (
+                        <CertificateCard key={cert.domain} cert={cert} onClick={openCertModal} tourId={ci === 0 ? 'first-card' : undefined}
                           hasSilentAlert={silentAlertDomains.has(cert.domain)}
                           hasMailFailure={mailFailureDomains.has(cert.domain)}
                           onMailFailureClick={() => {
@@ -1488,6 +1516,7 @@ export default function App() {
         onClose={() => { checkCancelRef.current = true; setCheckRun(null) }}
       />
     </div>
+    </TourProvider>
     </TeamDirectoryProvider>
     </UserDirectoryProvider>
     </PermissionsProvider>

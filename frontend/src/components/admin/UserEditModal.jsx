@@ -5,7 +5,7 @@ import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import MultiTeamSelect from '../ui/MultiTeamSelect.jsx'
-import { UserCog, ChevronRight } from 'lucide-react'
+import { UserCog, ChevronRight, Compass } from 'lucide-react'
 import DeviceHistoryPanel from '../DeviceHistoryPanel.jsx'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 
@@ -28,6 +28,14 @@ export function ModalHeaderAvatar({ userId, children }) {
 export default function UserEditModal({ user, teams, onClose, onSaved, readOnly = false, onEdit }) {
   const t = useT()
   const toast = useToast()
+  const [tourBusy, setTourBusy] = useState(false)
+  async function resetTour() {
+    setTourBusy(true)
+    try {
+      const r = await api.admin.resetUserTour(user.id)
+      if (r?.success === false) toast.error(r?.error || t('usr.tourResetFailed')); else toast.success(t('usr.tourResetDone'))
+    } catch (e) { toast.error(e?.message || t('usr.tourResetFailed')) } finally { setTourBusy(false) }
+  }
   const [form, setForm] = useState(toForm(user))
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
@@ -183,6 +191,14 @@ export default function UserEditModal({ user, teams, onClose, onSaved, readOnly 
             {t('usr.formActive')}
           </label>
         </div>
+        {/* Ürün turu sıfırlama (2026-09-13): kullanıcı bir sonraki girişte karşılama kartını yeniden görür */}
+        {!readOnly && user?.id && (
+          <div className="usr-tour-row">
+            <Compass size={14} />
+            <span>{t('usr.tourLabel')}</span>
+            <button type="button" className="btn btn-sm btn-secondary" disabled={tourBusy} onClick={resetTour}>{tourBusy ? t('usr.saving') : t('usr.tourReset')}</button>
+          </div>
+        )}
         {/* Cihaz Gecmisi (K8) — SALT-OKUNUR. Yetkisi olmayana HIC cizilmez; aksi halde
             bolumu acan kisi 403 alir ve bunu bir hata sanardi. */}
         {canSeeDevices && user?.id && (

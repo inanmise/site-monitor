@@ -8,7 +8,7 @@ import BrandLogo from './BrandLogo.jsx'
 import SegmentedControl from './ui/SegmentedControl.jsx'
 import ReleaseNotesPanel from './ReleaseNotesPanel.jsx'
 import { readUrlParam, useUrlQuerySync } from '../hooks/useUrlQuerySync.js'
-import { BookOpen, Sparkles } from 'lucide-react'
+import { BookOpen, Sparkles, Compass } from 'lucide-react'
 import whitepaperTr from '../assets/whitepaper.md?raw'
 import whitepaperEn from '../assets/whitepaper.en.md?raw'
 
@@ -116,6 +116,8 @@ export default function HelpPage() {
           </div>
         </div>
         <div className="help-header-right">
+          {/* Ürün turu (2026-09-13): Yardım'dan da başlatılabilir */}
+          <button type="button" className="btn btn-sm btn-secondary" onClick={() => { try { window.dispatchEvent(new CustomEvent('sm:tour-start', { detail: { kind: 'main' } })) } catch { /* yoksay */ } }}><Compass size={13} /> {t('tour.restart')}</button>
           <SegmentedControl value={view} onChange={setView} ariaLabel={t('help.title')}
             options={[
               { value: 'guide', label: t('help.view.guide'), icon: BookOpen },

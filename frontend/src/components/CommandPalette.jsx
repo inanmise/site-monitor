@@ -60,11 +60,15 @@ export default function CommandPalette({ tabs = [], onTabChange }) {
 
   const tabHits = useMemo(() => {
     const needle = q.trim().toLocaleLowerCase('tr')
+    // Ürün turu komutu (2026-09-13): sekme listesinin sonunda; aramada 'tur' ile bulunur
+    const tourLabel = t('tour.paletteCmd')
+    const tourHit = (!needle || tourLabel.toLocaleLowerCase('tr').includes(needle) || 'tour'.includes(needle)) ? [{ kind: 'tab', id: '__tour', label: tourLabel, tab: null }] : []
     return tabs
       .filter((tb) => !needle || tb.label.toLocaleLowerCase('tr').includes(needle) || tb.id.includes(needle))
       .slice(0, needle ? 6 : 8)
       .map((tb) => ({ kind: 'tab', id: tb.id, label: tb.label, tab: tb.id }))
-  }, [q, tabs])
+      .concat(tourHit)
+  }, [q, tabs, t])
 
   const items = useMemo(() => [...tabHits, ...remote], [tabHits, remote])
   useEffect(() => { setCursor(0) }, [items.length])
@@ -72,6 +76,7 @@ export default function CommandPalette({ tabs = [], onTabChange }) {
   const go = useCallback((it) => {
     setOpen(false)
     if (!it) return
+    if (it.id === '__tour') { try { window.dispatchEvent(new CustomEvent('sm:tour-start', { detail: { kind: 'main' } })) } catch { /* yoksay */ } return }
     if (it.kind === 'tab') { onTabChange?.(it.id); return }
     navigateTo(it.tab, it.params)
   }, [onTabChange])
