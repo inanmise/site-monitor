@@ -166,6 +166,7 @@ export default function CertificatesTable({ onRowClick }) {
         </div>
       </div>
 
+      <div className="table-scroll">
       <table className="certificates-table">
         <thead>
           <tr>
@@ -222,6 +223,7 @@ export default function CertificatesTable({ onRowClick }) {
           ))}
         </tbody>
       </table>
+      </div>
 
       <PaginationBar
         page={p.current_page} totalPages={p.total_pages} totalItems={p.total}
