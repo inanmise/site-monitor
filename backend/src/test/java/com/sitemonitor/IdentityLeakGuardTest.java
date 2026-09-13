@@ -91,8 +91,6 @@ class IdentityLeakGuardTest {
             // ── Ürün içeriği / marka ──
             Map.entry("backend/src/main/java/com/sitemonitor/controller/WeeklyReportController.java",
                     "rapor altbilgisinde görünen kurum adı — marka metni, ayrı karar"),
-            Map.entry("backend/src/main/java/com/sitemonitor/service/WeeklyReportService.java",
-                    "tohum kanal adı (varsayılan rapor içeriği) — ürün verisi, ayrı karar"),
             Map.entry("backend/src/test/java/com/sitemonitor/service/WeeklyReportServiceTest.java",
                     "yukarıdaki tohum verinin bekçisi — kaynakla AYNI değeri beklemek zorunda"),
             Map.entry("backend/src/main/java/com/sitemonitor/service/EmailNotificationService.java",
