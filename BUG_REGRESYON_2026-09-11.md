@@ -598,3 +598,16 @@ Push kanal paritesi (bellek kuralı): e-posta ne gönderiyorsa push da — onay 
 Bilinen sınırlar (bilinçli): tarayıcı doğrulaması bu turda YAPILMADI (oturum açılmadı; birim/kontrol testleri kapsıyor,
 sürüm sonrası ilk onayda teslimat günlüğüne bakılmalı); push metni sabit (şablon ayarı yok); yorum dizisi bildirimi yok.
 → **REGRESYON YOK**.
+
+### 28. tur eki — /gstack-qa (2026-09-13, `v20.64.0..HEAD`, tarayıcı doğrulaması YAPILDI)
+
+Yukarıdaki "tarayıcı doğrulaması yapılmadı" sınırı kapandı: onay → e-posta + takım/müdür push zinciri, Webhook ayar bölümü,
+yorum dizisi sistem satırları ve hatırlatma satırı headless tarayıcıda uçtan uca doğrulandı. QA 2 bulgu (ikisi de
+Orta) buldu ve düzeltti, her biri ayrı commit + ayrı regresyon test dosyası:
+- ISSUE-001 (Fonksiyonel): PO = müdür e-postası olan kişiye aynı onay için İKİ push (takım + müdür satırı). Düzeltme:
+  müdür push'u önce; `enqueueDirect` dönen usernames takım bildiriminden düşülür (`enqueueTeamNotice` 8-arg, harf
+  duyarsız). Yeniden gönderimde teslimat günlüğü 3 satırdan 2'ye indi (kanıt QA raporunda).
+- ISSUE-002 (İçerik): hatırlatma durumu sayaçları bugünün haftasına bakıyordu; son giriş günü geçince (Cmt/Paz,
+  Cuma 09:00 sonrası) "2 takıma gidecek" yanlış sayı. Düzeltme: sonraki koşu gününün ISO haftası; yanıt `run_week`
+  taşır ve satırda gösterilir; saat enjekte edilebilir (Cmt/Çrş/Cuma-sonrası üç senaryo pinli — CI UTC tuzağı yok).
+Sağlık puanı 97 → 100 (bağlantı/perf/erişilebilirlik kapsam dışı). → **REGRESYON YOK**.
