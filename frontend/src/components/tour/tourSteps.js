@@ -11,7 +11,7 @@
 export const isAdminCtx = (c) => c?.role === 'ADMIN' || c?.role === 'TEAM_ADMIN'
 
 export const MAIN_STEPS = [
-  { id: 'welcome',   center: true, since: 1 },
+  { id: 'welcome',   center: true, since: 1, help: '14.30' },
   { id: 'sidebar',   target: 'nav-groups', placement: 'right', since: 1, help: '14.3', before: { reveal: 'dashboard' } },
   { id: 'dashboard', target: 'dash-stats', tab: 'dashboard', placement: 'bottom', since: 1, help: '14.4' },
   { id: 'filters',   target: 'dash-filters', tab: 'dashboard', placement: 'bottom', since: 1, help: '14.4' },
@@ -34,7 +34,7 @@ export const MAIN_STEPS = [
   { id: 'user',      target: 'nav-user', placement: 'right', since: 1, help: '14.21' },
   { id: 'theme',     target: 'nav-theme', placement: 'right', since: 1 },
   { id: 'help',      target: 'help-fab', placement: 'left', since: 1, help: '14.29' },
-  { id: 'done',      center: true, since: 1 },
+  { id: 'done',      center: true, since: 1, help: '14.30' },
 ]
 
 /** Sayfa turları — sekme kimliği → adımlar (aynı motor; "Bu sayfayı tanıt"). */
