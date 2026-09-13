@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-13T10:22:14Z",
+  "generatedAt": "2026-09-13T12:00:36Z",
   "repo": "inanmise/site-monitor",
-  "count": 644,
+  "count": 645,
   "releases": [
+    {
+      "version": "20.61.0",
+      "tag": "v20.61.0",
+      "releasedAt": "2026-09-13T12:00:32Z",
+      "commit": "7f19d39c1be4058d9948acf4b727e729fed13a0d",
+      "prevVersion": "20.60.2",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 2,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "certs",
+          "breaking": false,
+          "sha": "7f19d39c",
+          "subject": "CSV dışa aktarma ortak Csv kuralına bağlandı + regresyon turu 22"
+        },
+        {
+          "type": "feat",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "60eccfaf",
+          "subject": "Tüm Sertifikalar tablosu zenginleştirmesi — 16 madde"
+        },
+        {
+          "type": "feat",
+          "scope": "certs",
+          "breaking": false,
+          "sha": "920ee254",
+          "subject": "Tüm Sertifikalar sorgusu — alert_level süzgeci, facet'ler, yeni süzgeç/sıralama, CSV, toplu tier/takım"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.60.2",
       "tag": "v20.60.2",
