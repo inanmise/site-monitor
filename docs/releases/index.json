@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-13T04:52:37Z",
+  "generatedAt": "2026-09-13T10:22:14Z",
   "repo": "inanmise/site-monitor",
-  "count": 643,
+  "count": 644,
   "releases": [
+    {
+      "version": "20.60.2",
+      "tag": "v20.60.2",
+      "releasedAt": "2026-09-13T10:22:07Z",
+      "commit": "615e00ce99f44c10610412d8d491f45847df4fab",
+      "prevVersion": "20.60.1",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": "regresyon",
+          "breaking": false,
+          "sha": "615e00ce",
+          "subject": "yirmi birinci tur — düğme boyu süpürmesi (v20.60.1..HEAD)"
+        },
+        {
+          "type": "fix",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "e85a8725",
+          "subject": ".btn/.btn-sm kutusu sabitlendi — aynı çubuktaki düğmeler tek boy"
+        },
+        {
+          "type": "fix",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "91b2c32b",
+          "subject": "Sütun seçici düğmesi Sıfırla ile aynı boyda (.colpick display:flex)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.60.1",
       "tag": "v20.60.1",
