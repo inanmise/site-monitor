@@ -16,6 +16,7 @@ import { LoadingBlock, Spinner } from './ui/Progress.jsx'
 import { CheckRunningStrip } from './ui/CheckRunning.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
+import { useEscapeKey } from '../hooks/useEscapeKey.js'
 
 // Grafik recharts çekiyor; diğer izleme sayfalarındaki gibi (PingMonitorPage) tembel yüklenir.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
@@ -378,6 +379,7 @@ function NotesTab({ domain, t, currentUser, isAdmin }) {
 export default function CertificateModal({ domain, alertLevel, onClose, initialData, previewMode, currentUser, currentUserRole,
                                           onCheckNow, checking = false, onEdit, refreshSignal = 0 }) {
   const t = useT()
+  useEscapeKey(!previewMode, onClose)   // Escape ile kapat (QA ISSUE-002, 2026-09-13); önizleme modunda kapatma yok
   const toast = useToast()
   const { showConfirm } = useDialog()
   const [certData, setCertData]       = useState(null)

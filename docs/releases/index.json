@@ -1,9 +1,72 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-12T23:48:55Z",
+  "generatedAt": "2026-09-13T04:52:37Z",
   "repo": "inanmise/site-monitor",
-  "count": 642,
+  "count": 643,
   "releases": [
+    {
+      "version": "20.60.1",
+      "tag": "v20.60.1",
+      "releasedAt": "2026-09-13T04:52:30Z",
+      "commit": "4b7c07f53898b70ae8dd2683140632b428590053",
+      "prevVersion": "20.60.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 4,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": "regression",
+          "breaking": false,
+          "sha": "4b7c07f5",
+          "subject": "round 20 — pre-release sweep for the two QA rounds on v20.60.0"
+        },
+        {
+          "type": "test",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "07b4c61e",
+          "subject": "regression test for ISSUE-002 — useEscapeKey layering and lifecycle"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "059dfb5b",
+          "subject": "ISSUE-002 — none of the 11 detail modals (9 monitor types, Uptime, Certificate) closed on Escape"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "88878b6d",
+          "subject": "ISSUE-001 — \"Yeni Monitor\" (unaccented) on port/keyword/ping vs \"Yeni Monitör\" everywhere else"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "71368b70",
+          "subject": "ISSUE-002 — accordion collapse bar could not shrink its label at 375px (36px overflow on Stats / System Health)"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "f3e72f7c",
+          "subject": "ISSUE-001 — certificate tables had no scroll container; columns past \"Domain\" were unreachable at 375px"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.60.0",
       "tag": "v20.60.0",

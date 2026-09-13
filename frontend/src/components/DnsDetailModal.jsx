@@ -12,6 +12,7 @@ import MonitorNotes from './MonitorNotes.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
 import MonitorModalActions from './ui/MonitorModalActions.jsx'
+import { useEscapeKey } from '../hooks/useEscapeKey.js'
 // Süre grafiği artık paylaşımlı ResponseTimeChart (ping/keyword/port ile aynı: 90g/özel aralık + avg/min-max/p95).
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
@@ -45,6 +46,7 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
                                         running = false, onCheck, onEdit, onDuplicate, onDelete, deleting = false,
                                         histReload = 0 }) {
   const t = useT()
+  useEscapeKey(true, onClose)   // Escape ile kapat (QA ISSUE-002, 2026-09-13)
   const [details, setDetails] = useState(null)
   const [loadError, setLoadError] = useState(null)
   // D12: monitör hızla değiştirilirse eskinin geç yanıtı yeni modalı doldurmasın.

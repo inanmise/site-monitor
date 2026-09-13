@@ -402,6 +402,7 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
       </div>
 
       {/* ── Certificate table ── */}
+      <div className="table-scroll">
       <table className="certificates-table">
         <thead>
           <tr>
@@ -459,6 +460,7 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
           })}
         </tbody>
       </table>
+      </div>
 
       {/* ── Pagination ── */}
       <PaginationBar {...pager} />

@@ -840,6 +840,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   margin-left: 8px;
   flex: 1;
 }
+/* Dar ekranda çubuk sarar; etiket küçülebilir (QA ISSUE-002 2026-09-13: 375 px'te 36 px taşma) */
+@media (max-width: 640px) {
+  .stats-collapse-bar { flex-wrap: wrap; row-gap: 4px; }
+  .stats-collapse-label { flex: 0 1 auto; min-width: 0; }
+  .stats-collapse-hint { flex: 1 1 100%; margin-left: 26px; order: 3; }
+}
 .search-box { padding: 10px 14px; border: 1px solid var(--border); border-radius: 4px; font-size: .95em; min-width: 200px; flex: 1; }
 .add-domain-section { display: flex; gap: 8px; margin-left: auto; }
 .domain-input { width: 350px; max-width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: 4px; font-size: .95em; }
@@ -1696,6 +1702,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 
 /* ── Table ──────────────────────────────────────────── */
 .certificates-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+/* Dar ekranda tablo sağa kayar, sayfa değil (QA ISSUE-001 2026-09-13: 375 px'te Domain dışındaki sütunlar erişilemiyordu) */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
 .certificates-table th { background: #2c3e50; color: #fff; padding: 12px 10px; text-align: left; font-size: .88em; }
 .certificates-table td { padding: 10px; border-bottom: 1px solid var(--border); font-size: .9em; }
 .certificates-table tr:hover td { background: #f0f7ff; }

@@ -50,6 +50,7 @@ import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { csvCell } from '../utils/csv.js'
 import { formatBytes } from '../utils/formatBytes.js'
 import { suggestThresholds, suggestionIsPartial } from '../utils/pageSpeedThresholds.js'
+import { useEscapeKey } from '../hooks/useEscapeKey.js'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
@@ -169,6 +170,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
   const [loadError, setLoadError] = useState(null)
   const [teams, setTeams] = useState([])
   const [selected, setSelected] = useState(null)
+  useEscapeKey(!!selected, closeDetail)   // Escape ile kapat (QA ISSUE-002, 2026-09-13; ModalShell'e taşınmamış detay modalı)
   const [resources, setResources] = useState([])
   const [resTotal, setResTotal] = useState(0)   // listedeki değil, KIRILIMDAKİ toplam kaynak sayısı
   const [breaches, setBreaches] = useState([])
