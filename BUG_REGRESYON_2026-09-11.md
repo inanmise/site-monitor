@@ -478,3 +478,17 @@ CertificatesTable/CertTableToolbar/CertBulkBar'da tüm hook'lar koşullu return'
 Bilinen sınırlar (bilinçli): ön ayarlar tarayıcıda; yapışkan başlık yok (kaydırmalı kap + sayfa kaydırması); toplu
 "sustur" yok (alan bazlı susturma API'si yok); `expiring7` sunucuda takma ad olarak kaldı (eski bağlantılar).
 → **REGRESYON YOK**.
+
+## Ek — yirmi üçüncü tur (2026-09-13, sürüm öncesi — `/qa` v20.61.0 üzerinde, `v20.61.0..HEAD`)
+
+Kapsam: 3 QA commit'i. İmza süpürmesi temiz (skip-ci yok, gerçek kimlik yok, test kapısı yeni dosyada).
+
+**QA bulguları (`.gstack/qa-reports/qa-report-localhost-2026-09-13-r2.md`):**
+- **ISSUE-001 (YÜKSEK, mevcut kusur 2026-08-25'ten beri):** `/admin/inventory/bulk` ucunun `@CacheEvict`'i, `applyBulkContacts`
+  javadoc'u araya girince ÖZEL yardımcıya kaymıştı; proxy özel çağrıyı sarmaz → toplu pasifleştirme/silme/kademe/takım
+  sonrası cert-latest/warnings/stats/renewal-advice 5 dk bayat. Ek uç metoduna alındı; `CacheEvictPlacementRegressionTest`
+  (cache eki yalnız public metotta + bulk uç dört cache'i boşaltır). Tarayıcıda liste ve envanter kademesi anında eşit.
+- **ISSUE-002 (orta, görsel):** 10+ sütunda `%100` genişlik hücreleri kelime kelime kırıyordu → `.ct-table` doğal genişlik +
+  `nowrap`, `.table-scroll` kaydırır; varsayılan 7 sütunda yerleşim değişmedi (mobil kart kuralı sonra geldiği için kazanır).
+Doğrulama: 5 sekme, TR+EN, açık+koyu, 1280+375 px, 21 sütun; konsol hata farkı 0; 500'ler yalnız yeniden başlatma
+sırasındaki Vite proxy yanıtları (5 bayt), sonrasında 200. → **REGRESYON YOK**.

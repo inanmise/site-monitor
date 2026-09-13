@@ -13246,6 +13246,11 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .ct-td-select input { cursor: pointer; }
 .ct-td-actions { width: 44px; text-align: right; }
 .ct-th-btn { white-space: nowrap; }
+/* QA ISSUE-002 (2026-09-13): 10+ sütun açıkken tablo %100 genişliğe sıkışıp "Veren" hücresini kelime kelime kırıyordu;
+   doğal genişlik + yatay kaydırma (.table-scroll) — hücreler tek satır, uzun metin kabı kaydırır. */
+.ct-table { min-width: 100%; width: max-content; }
+.ct-table td { white-space: nowrap; }
+.ct-table td.ct-td-domain, .ct-table td.ct-td-actions { white-space: nowrap; }
 .cf-opt-count { margin-left: auto; font-size: .82em; color: var(--text-light); font-weight: 600; }
 .ct-td-domain { white-space: nowrap; }
 .ct-tier { margin-left: 6px; }

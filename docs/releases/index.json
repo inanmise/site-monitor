@@ -1,9 +1,58 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-13T12:00:36Z",
+  "generatedAt": "2026-09-13T13:01:40Z",
   "repo": "inanmise/site-monitor",
-  "count": 645,
+  "count": 646,
   "releases": [
+    {
+      "version": "20.61.1",
+      "tag": "v20.61.1",
+      "releasedAt": "2026-09-13T13:01:30Z",
+      "commit": "12509bcad4e821eefd5f80ac5d3a1e1b7cf2721c",
+      "prevVersion": "20.61.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": "regresyon",
+          "breaking": false,
+          "sha": "12509bca",
+          "subject": "yirmi üçüncü tur — /qa v20.61.0 (bulk cache eviction + tablo genişliği)"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "b56dda75",
+          "subject": "ISSUE-002 — Tüm Sertifikalar tablosu 10+ sütunda hücreleri kelime kelime kırıyordu; doğal genişlik + yatay kaydırma"
+        },
+        {
+          "type": "test",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "31a06c98",
+          "subject": "regression test for ISSUE-001 — cache ekleri yalnız public metotta, bulk uç eviction taşır"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "76538de7",
+          "subject": "ISSUE-001 — toplu envanter ucunun @CacheEvict'i özel yardımcıya kaymıştı; eviction uç metoduna geri alındı"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.61.0",
       "tag": "v20.61.0",
