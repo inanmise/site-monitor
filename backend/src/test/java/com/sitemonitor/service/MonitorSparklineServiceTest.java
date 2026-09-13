@@ -43,8 +43,12 @@ class MonitorSparklineServiceTest {
     }
 
     private void check(long monitorId, int minutesAgo, Long ms, String error) {
+        checkAt(monitorId, Instant.now().minus(minutesAgo, ChronoUnit.MINUTES), ms, error);
+    }
+
+    private void checkAt(long monitorId, Instant at, Long ms, String error) {
         jdbc.update("INSERT INTO http_checks(monitor_id, http_status, response_ms, error, checked_at) VALUES (?,?,?,?,?)",
-                monitorId, error == null ? 200 : null, ms, error, ISO.format(Instant.now().minus(minutesAgo, ChronoUnit.MINUTES)));
+                monitorId, error == null ? 200 : null, ms, error, ISO.format(at));
     }
 
     @Test
@@ -103,8 +107,11 @@ class MonitorSparklineServiceTest {
     @DisplayName("availability: 30 gün toplam/hata/yüzde (iki ondalık) + hatalı saat kovası; pencere dışı satır sayılmaz; gün tavanı 90")
     void availability() {
         check(1, 5,   200L, null);
-        check(1, 65,  null, "timeout");   // farklı saat kovası
-        check(1, 66,  null, "timeout");   // aynı kova → bad_hours yine 1
+        // İki hata AYNI saat kovasında olmalı: "65 dk / 66 dk önce" dakika sınırında (örn. CI 18:05'te) farklı
+        // saatlere düşüyordu → bad_hours=2 (2026-09-13 CI kırmızısı). Kovayı açıkça sabitle: bir önceki tam saat +10/+20 dk.
+        Instant hour = Instant.now().minus(65, ChronoUnit.MINUTES).truncatedTo(ChronoUnit.HOURS);
+        checkAt(1, hour.plus(10, ChronoUnit.MINUTES), null, "timeout");
+        checkAt(1, hour.plus(20, ChronoUnit.MINUTES), null, "timeout");   // aynı kova → bad_hours yine 1
         check(1, 3 * 24 * 60, 300L, null);
         check(1, 100 * 24 * 60, 300L, null);   // 100 gün önce — 90 gün tavanı dışında
         Map<Long, Map<String, Object>> out = svc.availability("http", 9999, Set.of(1L, 3L));
