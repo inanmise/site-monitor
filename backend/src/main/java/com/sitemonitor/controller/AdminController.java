@@ -794,8 +794,11 @@ public class AdminController {
      * kayıt atlanır; tek kaydın yetkisizliği partiyi düşürmez). "delete" tekil soft-delete
      * ile birebir (deletedAt+active=false + alarm kapatma). Zaten silinmiş/silinmiş kayıtlar
      * activate/deactivate için atlanır (geri yükleme ayrı akıştır).
+     *
+     * <p>QA ISSUE-001 (2026-09-13): {@code @CacheEvict} bu javadoc ile metot arasına giren
+     * {@code applyBulkContacts} yardımcısına kaymıştı (2026-08-25) — özel metotta proxy çalışmaz,
+     * toplu pasifleştirme/silme/kademe sonrası liste 5 dk bayat kalıyordu. Ek, artık uç metodunda.
      */
-    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
     /**
      * Toplu "sorumlu ekip ata" — YALNIZ gövdede GÖNDERİLEN alanları yazar.
      *
@@ -818,6 +821,7 @@ public class AdminController {
 
     @PostMapping("/inventory/bulk")
     @Transactional
+    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
     public ResponseEntity<Map<String, Object>> bulkInventoryAction(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         requireAdminOrTeamAdmin(session);
