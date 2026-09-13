@@ -1234,4 +1234,113 @@ class WeeklyReportServiceTest {
         assertThat(n.getHour()).isEqualTo(9);
         assertThat(n.toInstant()).isAfter(java.time.Instant.now());
     }
+    @Test
+    @DisplayName("onay → takıma push (2026-09-13): WEEKLY_REPORT tetiği, WARNING, 'onaylandı ve müdüre gönderildi'; mail FAILED → metin BAŞARISIZ; yeniden gönderim ayrı anahtar; push hatası onayı durdurmaz")
+    void approve_pushesTeam() {
+        UserPushService push = mock(UserPushService.class);
+        when(push.weeklyTeamEnabled()).thenReturn(true);
+        when(push.weeklyManagerEnabled()).thenReturn(true);
+        when(push.enqueueTeamNotice(any(), any(), any(), any(), any(), any(), any())).thenReturn(Map.of("queued", 1));
+        when(push.enqueueDirect(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(Map.of("queued", 1));
+        ReflectionTestUtils.setField(service, "userPushService", push);
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(2L, "MANAGER"))
+                .thenReturn(List.of(contact("MANAGER", "Ali Müdür", "mudur@test.com")));
+        // Müdür: takımda elle atanmış müdür YOK → MANAGER kontağının e-postasıyla eşleşen kullanıcı
+        AppUser mgr = new AppUser(); mgr.setId(50L); mgr.setUsername("M00050"); mgr.setDisplayName("Ali Müdür");
+        mgr.setEmail("mudur@test.com"); mgr.setActive(true); mgr.setPushOptOut(false);
+        when(userRepo.findActiveByEmailsLower(any())).thenReturn(List.of(mgr));
+
+        WeeklyReport r = report(5L, 2L, "PENDING_APPROVAL");
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
+        service.approve(5L, PO_T2);
+        ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+        verify(push).enqueueTeamNotice(eq(2L), eq("WEEKLY_REPORT"), eq("WARNING"), eq("WEEKLY_REPORT"),
+                eq("TakimA " + r.getWeekLabel()), msg.capture(), key.capture());
+        assertThat(msg.getValue()).startsWith("[Haftalık rapor] TakimA " + r.getWeekLabel())
+                .contains("onaylandı ve müdüre gönderildi").contains("Onaylayan: PO İki");
+        assertThat(key.getValue()).isEqualTo("WR_APPROVED:5:" + r.getVersion());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<UserPushService.DirectRecipient>> mgrs = ArgumentCaptor.forClass(List.class);
+        verify(push).enqueueDirect(mgrs.capture(), eq(2L), eq("WEEKLY_REPORT"), eq("WARNING"), eq("WEEKLY_REPORT"),
+                eq("TakimA " + r.getWeekLabel()), contains("onaylandı; rapor e-postanıza gönderildi"), eq("WR_APPROVED:5:" + r.getVersion() + ":MGR"));
+        assertThat(mgrs.getValue()).extracting(UserPushService.DirectRecipient::username).containsExactly("M00050");
+
+        // mail FAILED → takım "gönderildi" sanmasın
+        WeeklyReport r2 = report(6L, 2L, "PENDING_APPROVAL");
+        when(reportRepo.findById(6L)).thenReturn(Optional.of(r2));
+        when(emailService.sendHtml(any(), any(), anyString(), anyString(), any())).thenReturn("FAILED: smtp down");
+        service.approve(6L, PO_T2);
+        verify(push).enqueueTeamNotice(eq(2L), eq("WEEKLY_REPORT"), eq("WARNING"), eq("WEEKLY_REPORT"),
+                anyString(), contains("BAŞARISIZ (FAILED: smtp down)"), eq("WR_APPROVED:6:" + r2.getVersion()));
+        assertThat(r2.getStatus()).isEqualTo("APPROVED");
+        verify(push).enqueueDirect(any(), eq(2L), eq("WEEKLY_REPORT"), eq("WARNING"), eq("WEEKLY_REPORT"),
+                anyString(), contains("Raporu uygulamadan görüntüleyin"), eq("WR_APPROVED:6:" + r2.getVersion() + ":MGR"));
+
+        // yeniden gönderim: ayrı anahtar + "yeniden gönderildi"
+        when(emailService.sendHtml(any(), any(), anyString(), anyString(), any())).thenReturn("SENT");
+        service.resend(5L, ADMIN);
+        verify(push).enqueueTeamNotice(eq(2L), eq("WEEKLY_REPORT"), eq("WARNING"), eq("WEEKLY_REPORT"),
+                anyString(), contains("müdüre yeniden gönderildi"), eq("WR_RESENT:5:" + r.getVersion()));
+
+        // ayarlar kapalı → hiçbir kanal çağrılmaz
+        when(push.weeklyTeamEnabled()).thenReturn(false);
+        when(push.weeklyManagerEnabled()).thenReturn(false);
+        WeeklyReport r9 = report(9L, 2L, "PENDING_APPROVAL");
+        when(reportRepo.findById(9L)).thenReturn(Optional.of(r9));
+        service.approve(9L, PO_T2);
+        org.mockito.Mockito.verify(push, org.mockito.Mockito.times(3)).enqueueTeamNotice(any(), any(), any(), any(), any(), any(), any());
+        org.mockito.Mockito.verify(push, org.mockito.Mockito.times(3)).enqueueDirect(any(), any(), any(), any(), any(), any(), any(), any());
+        when(push.weeklyTeamEnabled()).thenReturn(true);
+        when(push.weeklyManagerEnabled()).thenReturn(true);
+
+        // push patlarsa onay yine olur
+        WeeklyReport r3 = report(7L, 2L, "PENDING_APPROVAL");
+        when(reportRepo.findById(7L)).thenReturn(Optional.of(r3));
+        when(push.enqueueTeamNotice(any(), any(), any(), any(), any(), any(), any())).thenThrow(new RuntimeException("push down"));
+        assertThat(service.approve(7L, PO_T2)).containsKey("data");
+        assertThat(r3.getStatus()).isEqualTo("APPROVED");
+
+        // servis yoksa (eski kurulum) sessiz
+        ReflectionTestUtils.setField(service, "userPushService", null);
+        WeeklyReport r4 = report(8L, 2L, "PENDING_APPROVAL");
+        when(reportRepo.findById(8L)).thenReturn(Optional.of(r4));
+        assertThat(service.approve(8L, PO_T2)).containsKey("data");
+    }
+    @Test
+    @DisplayName("müdür push alıcıları (2026-09-13): elle atanmış müdür > MANAGER kontağı e-postası > AD zinciri; pasif/opt-out işaretli; hiçbiri yoksa boş")
+    void resolveManagerPushRecipients_order() {
+        Team team = team(2L, "TakimA", "a@test");
+        AppUser manual = new AppUser(); manual.setId(60L); manual.setUsername("M00060"); manual.setDisplayName("Elle Müdür"); manual.setActive(true); manual.setPushOptOut(true);
+        AppUser byMail = new AppUser(); byMail.setId(61L); byMail.setUsername("M00061"); byMail.setDisplayName("Kontak Müdür"); byMail.setActive(true);
+        AppUser ad = new AppUser(); ad.setId(62L); ad.setUsername("M00062"); ad.setDisplayName("AD Müdür"); ad.setActive(true); ad.setEmail("ad@test");
+        AppUser member = new AppUser(); member.setId(70L); member.setUsername("U00070"); member.setActive(true); member.setManagerId(62L);
+
+        // 1) elle atanmış müdür — opt-out bayrağı taşınır
+        team.setManagerId(60L);
+        when(userRepo.findById(60L)).thenReturn(Optional.of(manual));
+        var r1 = service.resolveManagerPushRecipients(team, 2L);
+        assertThat(r1).hasSize(1);
+        assertThat(r1.get(0).username()).isEqualTo("M00060");
+        assertThat(r1.get(0).optOut()).isTrue();
+
+        // 2) elle müdür pasif → MANAGER kontağı e-postası
+        manual.setActive(false);
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(2L, "MANAGER")).thenReturn(List.of(contact("MANAGER", "Ali", "Mudur@Test.com")));
+        when(userRepo.findActiveByEmailsLower(java.util.Set.of("mudur@test.com"))).thenReturn(List.of(byMail));
+        var r2 = service.resolveManagerPushRecipients(team, 2L);
+        assertThat(r2).extracting(UserPushService.DirectRecipient::username).containsExactly("M00061");
+
+        // 3) kontak eşleşmedi → AD zinciri (üyelerin manager_id'si, e-postası olan aktif kullanıcı)
+        when(userRepo.findActiveByEmailsLower(any())).thenReturn(List.of());
+        when(userRepo.findByTeamIdOrderByUsernameAsc(2L)).thenReturn(List.of(member));
+        when(userRepo.findById(62L)).thenReturn(Optional.of(ad));
+        var r3 = service.resolveManagerPushRecipients(team, 2L);
+        assertThat(r3).extracting(UserPushService.DirectRecipient::username).containsExactly("M00062");
+        assertThat(r3.get(0).displayName()).isEqualTo("AD Müdür");
+
+        // 4) hiçbiri → boş
+        when(userRepo.findByTeamIdOrderByUsernameAsc(2L)).thenReturn(List.of());
+        assertThat(service.resolveManagerPushRecipients(team(3L, "B", null), 3L)).isEmpty();
+    }
 }

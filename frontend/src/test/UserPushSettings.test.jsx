@@ -352,7 +352,7 @@ describe('UserPushSettings', () => {
     const heads = screen.getAllByRole('button', { expanded: false }).filter((b) => b.classList.contains('cs-toggle'))
     expect(heads.map((b) => b.textContent)).toEqual(expect.arrayContaining([
       expect.stringMatching(/Connection|Bağlantı/), expect.stringMatching(/Role Groups|Rol Grupları/), expect.stringMatching(/Delivery Log|Teslimat Günlüğü/)]))
-    expect(heads.length).toBe(8)
+    expect(heads.length).toBe(9)   // 2026-09-13: + "Haftalık rapor onayı" bölümü
     expect(document.querySelectorAll('.cs-section.is-open').length).toBe(0)
     // Kayıt şeridi HER ZAMAN çizilir; değişiklik yokken Kaydet pasif (2026-09-12: "kaydet butonunu göremiyorum")
     const bar0 = document.querySelector('.up-savebar')
@@ -368,7 +368,7 @@ describe('UserPushSettings', () => {
 
     // "Tümünü genişlet" → hepsi açık; "Tümünü daralt" → hepsi kapalı
     fireEvent.click(screen.getByRole('button', { name: /Expand all|Tümünü genişlet/ }))
-    expect(document.querySelectorAll('.cs-section.is-open').length).toBe(8)
+    expect(document.querySelectorAll('.cs-section.is-open').length).toBe(9)
     fireEvent.click(screen.getByRole('button', { name: /Collapse all|Tümünü daralt/ }))
     expect(document.querySelectorAll('.cs-section.is-open').length).toBe(0)
     expect(JSON.parse(localStorage.getItem('sm.userpush.sections')).log).toBe(false)
@@ -412,5 +412,21 @@ describe('UserPushSettings', () => {
     // Erisilebilir ad i18n'den gelir: 'Pencerede en dusuk seviye' / 'Minimum level in window'.
     const group = screen.getByRole('group', { name: /en düşük seviye|Minimum level in window/i })
     expect(within(group).getByRole('button', { name: /^UYARI$|^WARNING$/ })).toBeInTheDocument()
+  })
+
+  it('2026-09-13: "Haftalık rapor onayı" bölümü — takım/müdür anahtarları varsayılan AÇIK; kapatıp Kaydet → weekly.*-enabled=false gider', async () => {
+    api.admin.userPush.saveSettings.mockResolvedValue({ success: true, data: { settings: { ...SETTINGS, 'site.monitor.userpush.weekly.manager-enabled': 'false' } } })
+    render(<UserPushSettings />)
+    await screen.findByDisplayValue('Site Monitor')
+    fireEvent.click(screen.getByRole('button', { name: /Haftalık rapor onayı|Weekly report approval/ }))
+    const team = screen.getByRole('switch', { name: /Takıma bildir|Notify the team/ })
+    const mgr = screen.getByRole('switch', { name: /Müdüre bildir|Notify the manager/ })
+    expect(team.getAttribute('aria-checked')).toBe('true')
+    expect(mgr.getAttribute('aria-checked')).toBe('true')
+    fireEvent.click(mgr)
+    expect(mgr.getAttribute('aria-checked')).toBe('false')
+    const bar = document.querySelector('.up-savebar')
+    fireEvent.click(within(bar).getByRole('button', { name: /^(Save|Kaydet)$/ }))
+    await waitFor(() => expect(api.admin.userPush.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ 'site.monitor.userpush.weekly.manager-enabled': 'false' })))
   })
 })

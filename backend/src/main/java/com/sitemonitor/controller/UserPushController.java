@@ -73,6 +73,7 @@ public class UserPushController {
             "site.monitor.userpush.template.expiry", "site.monitor.userpush.template.changed",
             "site.monitor.userpush.template.resolved", "site.monitor.userpush.template.test",
             "site.monitor.userpush.realert-enabled",
+            "site.monitor.userpush.weekly.team-enabled", "site.monitor.userpush.weekly.manager-enabled",
             "site.monitor.userpush.quiet-start", "site.monitor.userpush.quiet-end",
             "site.monitor.userpush.quiet-min-level", "site.monitor.userpush.retention-days");
 

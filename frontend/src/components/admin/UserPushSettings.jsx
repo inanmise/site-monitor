@@ -47,7 +47,7 @@ const TEMPLATE_KEYS = ['down', 'slow', 'expiry', 'changed', 'cert', 'resolved', 
 const STATUS_OPTIONS = ['SENT', 'FAILED', 'PENDING', 'RATE_LIMITED', 'CIRCUIT_OPEN',
   'SKIPPED_TYPE_OFF', 'SKIPPED_TEAM_OFF', 'SKIPPED_MONITOR_OFF', 'SKIPPED_QUIET_HOURS',
   'SKIPPED_REALERT_OFF', 'SKIPPED_NO_RECIPIENTS', 'SKIPPED_USER_OPT_OUT', 'SKIPPED_NO_PRIOR']
-const TRIGGERS = ['OPEN', 'ESCALATION', 'RE_ALERT', 'RESOLVE', 'RESEND', 'WEAK_ALGO', 'TEST']   // WEAK_ALGO: rapor 'takıma bildir' (2026-09-12)
+const TRIGGERS = ['OPEN', 'ESCALATION', 'RE_ALERT', 'RESOLVE', 'RESEND', 'WEAK_ALGO', 'WEEKLY_REPORT', 'TEST']   // WEAK_ALGO: rapor 'takıma bildir' (2026-09-12); WEEKLY_REPORT: onay → takıma (2026-09-13)
 
 /** İzleme tipleri — ikonlar Nav/ChangeKindCards ile AYNI: kullanıcı yeni görsel dil öğrenmez. */
 const TYPES = [
@@ -70,7 +70,7 @@ const WINDOWS = [
 const winLabelKey = (w) => (WINDOWS.find((x) => x.key === w) || WINDOWS[0]).label
 
 /** Açılır/kapanır bölüm anahtarları — sıra sayfadaki sıra; localStorage'da hatırlanır. */
-const SECTIONS = ['conn', 'groups', 'scopes', 'quiet', 'templates', 'test', 'explain', 'log']
+const SECTIONS = ['conn', 'groups', 'scopes', 'quiet', 'weekly', 'templates', 'test', 'explain', 'log']
 const SECTIONS_KEY = 'sm.userpush.sections'
 function readSections() {
   try {
@@ -862,6 +862,25 @@ export default function UserPushSettings() {
             <span className="help-label-row">{t('userpush.realertEnabled')}
               <HelpTip helpKey="help.set.site.monitor.userpush.realert-enabled" label={t('userpush.realertEnabled')} /></span>
           </div>
+        </div>
+
+        {/* ── Haftalık rapor onayı (2026-09-13): takıma + müdüre push; e-posta ile aynı anda ── */}
+        <div className={sec('weekly')}>
+          <SectionHead id="weekly" title={t('userpush.weeklyTitle')} open={isOpen('weekly')} onToggle={() => toggleSec('weekly')}></SectionHead>
+          <p className="section-desc">{t('userpush.weeklyDesc')}</p>
+          <div className="up-master-row">
+            <PillSwitch on={val('weekly.team-enabled', 'true') !== 'false'} label={t('userpush.weeklyTeam')}
+              onToggle={() => setVal('weekly.team-enabled', val('weekly.team-enabled', 'true') !== 'false' ? 'false' : 'true')} />
+            <span className="help-label-row">{t('userpush.weeklyTeam')}
+              <HelpTip helpKey="help.set.site.monitor.userpush.weekly.team-enabled" label={t('userpush.weeklyTeam')} /></span>
+          </div>
+          <div className="up-master-row" style={{ marginTop: 8 }}>
+            <PillSwitch on={val('weekly.manager-enabled', 'true') !== 'false'} label={t('userpush.weeklyManager')}
+              onToggle={() => setVal('weekly.manager-enabled', val('weekly.manager-enabled', 'true') !== 'false' ? 'false' : 'true')} />
+            <span className="help-label-row">{t('userpush.weeklyManager')}
+              <HelpTip helpKey="help.set.site.monitor.userpush.weekly.manager-enabled" label={t('userpush.weeklyManager')} /></span>
+          </div>
+          <p className="hint">{t('userpush.weeklyHint')}</p>
         </div>
 
         {/* ── Şablonlar — push bildirim MAKETİ önizlemeli ── */}

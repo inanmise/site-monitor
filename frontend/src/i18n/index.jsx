@@ -742,6 +742,11 @@ export const TR = {
   'userpush.quietEnd': 'Bitiş',
   'userpush.quietMinLevel': 'Pencerede en düşük seviye',
   'userpush.realertEnabled': 'Günlük hatırlatma (re-alert) push olarak da gitsin',
+  'userpush.weeklyTitle': 'Haftalık rapor onayı',
+  'userpush.weeklyDesc': 'Haftalık rapor onaylanınca müdüre e-posta gider; aynı anda push da gönderilir. Takım üyeleri rol grubu / asgari seviye kurallarıyla (seviye UYARI), müdür doğrudan (e-postanın alıcısı) alır.',
+  'userpush.weeklyTeam': 'Takıma bildir — "rapor onaylandı, müdüre gönderildi"',
+  'userpush.weeklyManager': 'Müdüre bildir — "rapor onaylandı; e-postanıza gönderildi"',
+  'userpush.weeklyHint': 'Müdür sırasıyla: takımda elle atanmış müdür → MANAGER kademe kontağıyla aynı e-postalı kullanıcı → AD zinciri. E-posta gidemezse push metni bunu söyler. Teslimatlar günlükte "Haftalık rapor onayı" tetiğiyle süzülür.',
   'userpush.templatesTitle': 'Mesaj Şablonları',
   'userpush.templatesDesc': 'Kısa ve tek satır: nerede, ne zaman, ne çalışmıyor / ne düzeldi. Değişiklik anında etkilidir; bilinmeyen yer tutucu kaydetmede reddedilir.',
   'userpush.placeholders': 'Yer tutucular',
@@ -774,6 +779,7 @@ export const TR = {
   'userpush.trigger.RESEND': 'Yeniden gönderim',
   'userpush.trigger.TEST': 'Test',
   'userpush.trigger.WEAK_ALGO': 'Zayıf algoritma bildirimi',
+  'userpush.trigger.WEEKLY_REPORT': 'Haftalık rapor onayı',
   'userpush.trigger.undefined': '—',
   'userpush.systemRow': 'katman kararı',
   'userpush.attempts': 'Deneme',
@@ -7280,6 +7286,10 @@ export const TR = {
     'Ne işe yarar: Sessiz saatlerde geçmesine izin verilen asgari alarm seviyesi.\nFaydası: Gece yalnız kritik olaylar uyandırır, geri kalanı sabahki mesaiyi bekler.\nÖnerilen değer: CRITICAL (varsayılan). UYARI seçmek sessiz saatleri işlevsiz kılar — hiçbir şey bastırılmaz.',
   'help.set.site.monitor.userpush.quiet-start':
     'Ne işe yarar: Sessiz saat penceresinin başlangıcı (SS:DD); bu pencerede yalnız asgari seviye ve üstü push gönderilir.\nFaydası: Mesai dışında yalnız gerçekten acil olan bildirim uyandırır.\nÖnerilen değer: 22:00 gibi bir mesai sonu saati. Başlangıç ya da bitiş boşsa sessiz saatler HİÇ uygulanmaz.',
+  'help.set.site.monitor.userpush.weekly.team-enabled':
+    'Ne işe yarar: Haftalık rapor onaylanıp müdüre e-postalanınca takım üyelerine "rapor onaylandı, müdüre gönderildi" push bildirimi gönderilip gönderilmeyeceği. Alıcılar rol grubu / asgari seviye kurallarıyla (seviye UYARI) çözülür.\nFaydası: Takım, raporun döngüsünü tamamladığını uygulamaya girmeden öğrenir; e-posta gidememişse push bunu söyler.\nÖnerilen değer: true (varsayılan). Yalnız müdür bildirimi isteniyorsa kapatın.',
+  'help.set.site.monitor.userpush.weekly.manager-enabled':
+    'Ne işe yarar: Haftalık rapor onaylanınca e-postanın alıcısı olan müdüre aynı anda doğrudan push gönderilip gönderilmeyeceği (rol grubu kuralı uygulanmaz; kişi zaten alıcıdır). Müdür: takımda elle atanmış müdür → MANAGER kademe kontağıyla aynı e-postalı kullanıcı → AD zinciri.\nFaydası: Müdür raporun geldiğini e-posta kutusuna bakmadan görür; e-posta gidememişse push uygulamadan görüntülemesini söyler.\nÖnerilen değer: true (varsayılan). Müdür uygulama kullanıcısı değilse (push kimliği yok) bildirim sessizce atlanır.',
   'help.set.site.monitor.userpush.realert-enabled':
     'Ne işe yarar: Açık bir alarm sürerken gönderilen günlük tekrar (re-alert) bildiriminin push kanalına da düşüp düşmeyeceği.\nFaydası: Mail ne gönderiyorsa push da gönderir; iki kanal arasında sessiz bir boşluk kalmaz.\nÖnerilen değer: true (varsayılan). Push hacmi rahatsız ediyorsa önce saatlik tavanı düşürmeyi deneyin.',
   'help.set.site.monitor.userpush.reason-max-chars':
@@ -8114,6 +8124,11 @@ export const EN = {
   'userpush.quietEnd': 'End',
   'userpush.quietMinLevel': 'Minimum level in window',
   'userpush.realertEnabled': 'Send the daily re-alert as a push too',
+  'userpush.weeklyTitle': 'Weekly report approval',
+  'userpush.weeklyDesc': 'When a weekly report is approved the manager gets it by email; a push goes out at the same time. Team members receive it under the role-group / minimum-severity rules (severity WARNING); the manager receives it directly, as the email recipient.',
+  'userpush.weeklyTeam': 'Notify the team — "report approved, sent to the manager"',
+  'userpush.weeklyManager': 'Notify the manager — "report approved; sent to your inbox"',
+  'userpush.weeklyHint': 'The manager is resolved in order: manager set on the team → user whose email matches the MANAGER escalation contact → AD chain. If the email fails, the push says so. Deliveries can be filtered in the log by the "Weekly report approval" trigger.',
   'userpush.templatesTitle': 'Message Templates',
   'userpush.templatesDesc': 'Short, single line: where, when, what is down / what recovered. Changes apply instantly; unknown placeholders are rejected on save.',
   'userpush.placeholders': 'Placeholders',
@@ -8146,6 +8161,7 @@ export const EN = {
   'userpush.trigger.RESEND': 'Resend',
   'userpush.trigger.TEST': 'Test',
   'userpush.trigger.WEAK_ALGO': 'Weak algorithm notice',
+  'userpush.trigger.WEEKLY_REPORT': 'Weekly report approval',
   'userpush.trigger.undefined': '—',
   'userpush.systemRow': 'scope decision',
   'userpush.attempts': 'Attempts',
@@ -14640,6 +14656,10 @@ export const EN = {
     'What it does: The minimum alert level allowed through during quiet hours.\nBenefit: Only critical events wake anybody at night; the rest waits for the morning.\nRecommended: CRITICAL (the default). Choosing warning makes quiet hours pointless, since nothing is held back.',
   'help.set.site.monitor.userpush.quiet-start':
     'What it does: The start of the quiet-hours window (HH:MM); inside it, only pushes at or above the minimum severity are sent.\nBenefit: Out of hours, only the genuinely urgent notifications wake anyone.\nRecommended: An end-of-day time such as 22:00. If either the start or the end is empty, quiet hours are not applied at all.',
+  'help.set.site.monitor.userpush.weekly.team-enabled':
+    'What it does: Whether team members get a "report approved, sent to the manager" push once a weekly report is approved and emailed to the manager. Recipients follow the role-group / minimum-severity rules (severity WARNING).\nBenefit: The team learns the report has completed its cycle without opening the app; if the email failed, the push says so.\nRecommended: true (the default). Switch it off if only the manager should be notified.',
+  'help.set.site.monitor.userpush.weekly.manager-enabled':
+    'What it does: Whether the manager who receives the approval email also gets a direct push at the same time (role-group rules do not apply; they are already the recipient). The manager is resolved as: manager set on the team → user whose email matches the MANAGER escalation contact → AD chain.\nBenefit: The manager sees the report has arrived without checking their inbox; if the email failed, the push tells them to view it in the app.\nRecommended: true (the default). If the manager is not an app user (no push identity), the notification is skipped silently.',
   'help.set.site.monitor.userpush.realert-enabled':
     'What it does: Decides whether the daily re-alert for a still-open incident also goes out over push.\nBenefit: Push sends whatever mail sends, so there is no silent gap between the two channels.\nRecommended: true (the default). If the volume is uncomfortable, try lowering the hourly cap first.',
   'help.set.site.monitor.userpush.reason-max-chars':

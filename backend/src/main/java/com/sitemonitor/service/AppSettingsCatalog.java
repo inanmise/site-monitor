@@ -79,6 +79,9 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.userpush.template.test",       "userpush",   Type.STRING),
         // K8: mail neyi gönderiyorsa webhook da — günlük re-alert dahil (vars. AÇIK).
         new Setting("site.monitor.userpush.realert-enabled",     "userpush",   Type.BOOL),
+        // Haftalık rapor onayı (2026-09-13): takıma (rol grubu kuralıyla) ve müdüre (doğrudan) push — vars. AÇIK.
+        new Setting("site.monitor.userpush.weekly.team-enabled",    "userpush",   Type.BOOL),
+        new Setting("site.monitor.userpush.weekly.manager-enabled", "userpush",   Type.BOOL),
         // E2 sessiz saatler: pencerede yalnız min seviye ve üstü gider (örn. 22:00-07:00 CRITICAL).
         new Setting("site.monitor.userpush.quiet-start",         "userpush",   Type.STRING),
         new Setting("site.monitor.userpush.quiet-end",           "userpush",   Type.STRING),
