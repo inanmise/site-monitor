@@ -628,6 +628,7 @@ public class SchedulerService {
         patch("ALTER TABLE app_users ADD COLUMN last_failed_login_reason VARCHAR(40)");
         patch("ALTER TABLE app_users ADD COLUMN failed_since_login INTEGER DEFAULT 0");
         patch("ALTER TABLE app_users ADD COLUMN failed_before_login INTEGER DEFAULT 0");
+        patch("ALTER TABLE app_users ADD COLUMN tour_state TEXT");   // 2026-09-13 ürün turu durumu (JSON)
         // DEFAULT yalnız YENİ satırlara uygulanır; mevcut satırlar NULL kalır ve `COALESCE`suz
         // bir artış NULL'a düşerdi. Sayaçları bir kez sıfırla (idempotent).
         patch("UPDATE app_users SET failed_since_login = 0 WHERE failed_since_login IS NULL");

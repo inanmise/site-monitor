@@ -15,6 +15,7 @@ import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -36,6 +37,7 @@ class AuthControllerTest {
 
     @MockitoBean
     UserService userService;
+    @MockitoBean com.sitemonitor.service.TourStateService tourStateService;   // ürün turu (2026-09-13)
 
     @MockitoBean
     com.sitemonitor.service.HttpMetricsService httpMetricsService;
@@ -529,6 +531,56 @@ class AuthControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"opt_out\":true}"))
                 .andExpect(status().isNotFound());
+    }
+
+    // ── Ürün turu durumu (2026-09-13) ─────────────────────────────────────────
+
+    @Test
+    @DisplayName("GET /api/me: tour alanı — durum yoksa null, varsa çözülmüş JSON")
+    void me_returnsTourState() throws Exception {
+        mvc.perform(get("/api/me").session(selfSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tour").doesNotExist());
+        testUser.setTourState("{\"status\":\"dismissed\",\"version\":1}");
+        mvc.perform(get("/api/me").session(selfSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tour.status").value("dismissed"))
+                .andExpect(jsonPath("$.tour.version").value(1));
+    }
+
+    @Test
+    @DisplayName("POST /api/me/tour: yama servise gider, yanıt güncel tour; dismissed geçişi TOUR_DISMISSED denetimi yazar")
+    void setTour_appliesPatch_andAuditsDismiss() throws Exception {
+        when(tourStateService.apply(any(AppUser.class), any(), eq(false)))
+                .thenReturn(new java.util.LinkedHashMap<>(Map.of("status", "dismissed", "version", 1, "last_step", "cards")));
+        mvc.perform(post("/api/me/tour").session(selfSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"dismissed\",\"version\":1,\"last_step\":\"cards\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.tour.status").value("dismissed"));
+        verify(tourStateService).apply(argThat(u -> "testuser".equals(u.getUsername())), argThat(m -> "dismissed".equals(m.get("status"))), eq(false));
+        verify(auditService).recordAction(eq("TOUR_DISMISSED"), any(jakarta.servlet.http.HttpSession.class),
+                eq("USER"), eq("1"), anyString(), org.mockito.ArgumentMatchers.contains("\"last_step\":\"cards\""));
+    }
+
+    @Test
+    @DisplayName("POST /api/me/tour: aynı durumda kalınca denetim YAZILMAZ; reset → tour null; oturumsuz 401")
+    void setTour_noAuditWhenUnchanged_reset_unauth() throws Exception {
+        testUser.setTourState("{\"status\":\"completed\"}");
+        when(tourStateService.apply(any(AppUser.class), any(), eq(false)))
+                .thenReturn(new java.util.LinkedHashMap<>(Map.of("status", "completed", "last_step", "help")));
+        mvc.perform(post("/api/me/tour").session(selfSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"last_step\":\"help\"}"))
+                .andExpect(status().isOk());
+        verify(auditService, never()).recordAction(eq("TOUR_COMPLETED"), any(jakarta.servlet.http.HttpSession.class), anyString(), anyString(), anyString(), any());
+        when(tourStateService.apply(any(AppUser.class), any(), eq(true))).thenReturn(null);
+        mvc.perform(post("/api/me/tour").session(selfSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reset\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tour").doesNotExist());
+        mvc.perform(post("/api/me/tour").contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"completed\"}"))
+                .andExpect(status().isUnauthorized());
     }
 
     // ── Self-service password change ──────────────────────────────────────────

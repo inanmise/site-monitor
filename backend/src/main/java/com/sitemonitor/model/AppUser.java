@@ -123,6 +123,10 @@ public class AppUser {
     @Column(name = "push_opt_out")
     private Boolean pushOptOut = false;
 
+    /** Ürün turu durumu (JSON; bkz. TourStateService) — "bir daha gösterme" cihazdan bağımsız kalıcı. */
+    @Column(name = "tour_state", columnDefinition = "TEXT")
+    private String tourState;
+
     /** Authentication source: "LOCAL" (BCrypt password) or "LDAP" (AD bind).
      *  Null (legacy rows) is treated as LOCAL. LDAP users carry a sentinel
      *  password hash that never matches, so they can only sign in via AD. */

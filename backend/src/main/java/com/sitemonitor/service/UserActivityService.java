@@ -197,6 +197,7 @@ public class UserActivityService {
         m.put("dormant_30d",       dormant30);
         m.put("dormant_90d",       dormant90);
         m.put("never_logged_in",   never);
+        m.put("tour",              TourStateService.summarize(usersByName.values()));   // ürün turu: tamamladı/kapattı/hiç görmedi (2026-09-13)
         return m;
     }
 

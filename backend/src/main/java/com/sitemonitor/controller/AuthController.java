@@ -68,6 +68,7 @@ public class AuthController {
     private final com.sitemonitor.service.LoginIssueMailService loginIssueMailService;
     private final com.sitemonitor.service.AppSettingsService appSettings;
     private final UserService userService;
+    private final com.sitemonitor.service.TourStateService tourStateService;   // ürün turu (2026-09-13)
     private final com.sitemonitor.repository.AuditLogRepository auditLogRepo;
     private final ClientIpResolver clientIpResolver;
 
@@ -408,6 +409,8 @@ public class AuthController {
             resp.put("mudurluk_name", u.getMudurlukName());
             // E1: kişi kendi push tercihi — Ayarlar sayfasındaki anahtar bunu okur.
             resp.put("push_opt_out", Boolean.TRUE.equals(u.getPushOptOut()));
+            // Ürün turu durumu (null = hiç görmedi → istemci karşılama kartını gösterir)
+            resp.put("tour", com.sitemonitor.service.TourStateService.parse(u.getTourState()));
             resp.put("manager_sicil", u.getManagerSicil());
             resp.put("has_photo", u.getPhotoBase64() != null && !u.getPhotoBase64().isBlank());
             // Giriş güvenliği özeti — kullanıcı satırından okunur, EK SORGU YOK. Değerler kaydırma
@@ -480,6 +483,36 @@ public class AuthController {
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("success", true);
         resp.put("push_opt_out", optOut);
+        return ResponseEntity.ok(resp);
+    }
+
+    /**
+     * Ürün turu durumu (2026-09-13) — kullanıcı YALNIZ kendi kaydını yazar (push-opt-out deseni).
+     * Gövde: {status?, version?, last_step?, seen_page?, checklist?{k:bool}, checklist_hidden?, reset?}.
+     * "completed"/"dismissed" geçişi denetlenir (TOUR_COMPLETED / TOUR_DISMISSED); "reset" durumu siler
+     * (kullanıcı "turu yeniden başlat"). Yanıt: güncel {@code tour} (null = sıfırlandı).
+     */
+    @PostMapping("/me/tour")
+    public ResponseEntity<Map<String, Object>> setTourState(
+            @RequestBody Map<String, Object> body, HttpSession session) {
+        String username = (String) session.getAttribute("username");
+        if (username == null) throw new SecurityException("Not authenticated");
+        var u = userService.findByUsername(username).orElseThrow(() -> new SecurityException("Not authenticated"));
+        String before = String.valueOf(java.util.Optional.ofNullable(com.sitemonitor.service.TourStateService.parse(u.getTourState()))
+                .map(m -> m.get("status")).orElse(null));
+        boolean reset = Boolean.TRUE.equals(body.get("reset"));
+        Map<String, Object> next = tourStateService.apply(u, body, reset);
+        String after = next == null ? null : String.valueOf(next.get("status"));
+        if (after != null && !after.equals(before) && ("completed".equals(after) || "dismissed".equals(after))) {
+            auditService.recordAction("completed".equals(after) ? "TOUR_COMPLETED" : "TOUR_DISMISSED", session,
+                    "USER", String.valueOf(u.getId()),
+                    "completed".equals(after) ? "Kişi ürün turunu tamamladı" : "Kişi ürün turunu kapattı (bir daha gösterme)",
+                    "{\"version\":" + next.getOrDefault("version", 0) + ",\"last_step\":\""
+                            + String.valueOf(next.getOrDefault("last_step", "")).replace("\"", "") + "\"}");
+        }
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("success", true);
+        resp.put("tour", next);
         return ResponseEntity.ok(resp);
     }
 

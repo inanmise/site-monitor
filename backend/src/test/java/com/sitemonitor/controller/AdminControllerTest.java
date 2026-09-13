@@ -51,6 +51,7 @@ class AdminControllerTest {
 
     @MockitoBean com.sitemonitor.repository.NotificationGroupRepository notificationGroupRepo;
     @MockitoBean com.sitemonitor.service.DerivedMonitorTeamSync derivedMonitorTeamSync;
+    @MockitoBean com.sitemonitor.service.TourStateService tourStateService;   // ürün turu (2026-09-13)
     // AdminController "Tekrar Bildir" onizlemesinde webhook alicilarini da cozuyor (A2).
     @MockitoBean com.sitemonitor.service.UserPushService userPushService;
     @MockitoBean
@@ -1043,6 +1044,25 @@ class AdminControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"action\":\"set-team\",\"ids\":[11]}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("POST /admin/users/{id}/tour-reset: admin sıfırlar (USER_TOUR_RESET); TEAM_ADMIN başka takımın kullanıcısı → 403; USER → 403")
+    void tourReset_scopedAndAudited() throws Exception {
+        AppUser target = new AppUser(); target.setId(77L); target.setUsername("newbie"); target.setTeamId(9L); target.setActive(true);
+        when(userRepo.findById(77L)).thenReturn(Optional.of(target));
+
+        mvc.perform(post("/api/admin/users/77/tour-reset").session(authSession()))
+                .andExpect(status().isOk());
+        verify(tourStateService).apply(eq(target), any(), eq(true));
+        verify(auditService).recordAction(eq("USER_TOUR_RESET"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("USER"), eq("77"),
+                org.mockito.ArgumentMatchers.contains("newbie"));
+
+        mvc.perform(post("/api/admin/users/77/tour-reset").session(teamAdminSession()))
+                .andExpect(status().isForbidden());   // takım 2'nin admini, kullanıcı takım 9'da
+        mvc.perform(post("/api/admin/users/77/tour-reset").session(userSession()))
+                .andExpect(status().isForbidden());
     }
 
     @Test
