@@ -92,4 +92,8 @@ public class WeeklyReport {
 
     @Column(name = "editing_heartbeat")
     private String editingHeartbeat;
+
+    /** Onaya gönderim anındaki sağlık skoru (0-100, WeeklyScoreCalculator) — liste sütunu; null = eski kayıt. */
+    @Column(name = "score")
+    private Integer score;
 }

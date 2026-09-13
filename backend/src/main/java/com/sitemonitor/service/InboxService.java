@@ -104,7 +104,7 @@ public class InboxService {
                     String status = weeklyReportRepo.findByTeamIdAndReportYearAndWeekNo(tid, year, week).map(WeeklyReport::getStatus).orElse("MISSING");
                     if ("MISSING".equals(status) || "DRAFT".equals(status) || "REJECTED".equals(status))
                         out.add(new Item("weekly:" + tid + ":" + year + "-" + week, "weekly_due", "WARNING", "W" + week, status + " · " + d.timeText(),
-                                today + "T" + d.timeText() + ":00", "weeklyreports", Map.of("team", tid)));
+                                today + "T" + d.timeText() + ":00", "weeklyreports", Map.of("team", tid, "w_week", week)));   // w_week: sayfa o haftaya süzer (2026-09-13)
                 }
             }
         } catch (Exception ex) { log.debug("inbox: haftalık rapor düştü: {}", ex.toString()); }

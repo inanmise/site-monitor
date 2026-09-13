@@ -45,6 +45,7 @@ class WeeklyReportControllerTest {
     @MockitoBean com.sitemonitor.service.MonitoringWeeklyStatsService monitoringStatsService;
     @MockitoBean com.sitemonitor.service.PermissionService permissionService;   // rol kapısı (mock: izin verir)
     @MockitoBean com.sitemonitor.service.AppSettingsService appSettings;          // son giriş zamanı (2026-09-12)
+    @MockitoBean com.sitemonitor.repository.IncidentRecordRepository incidentRepo;   // öneriler (2026-09-13)
 
     private static WeeklyReport report(Long id, Long teamId, String status) {
         WeeklyReport r = new WeeklyReport();
@@ -78,6 +79,88 @@ class WeeklyReportControllerTest {
         s.setAttribute("userId", 1L);
         s.setAttribute("systemRole", "ADMIN");
         return s;
+    }
+
+    // ── Haftalık Raporlar zenginleştirmesi (2026-09-13): bu hafta / öneriler / önceki / geçen haftadan devam / skor ──
+
+    @Test
+    @DisplayName("GET /weekly-reports/this-week → servis şeridi (data.week, teams) — oturumsuz 401")
+    void thisWeek_returnsStrip() throws Exception {
+        when(service.thisWeek(any())).thenReturn(Map.of("year", 2026, "week", 37, "week_label", "2026-W37",
+                "due_at", "2026-09-11T12:00:00", "is_past", true, "teams", List.of(Map.of("team_id", 2L, "status", "MISSING"))));
+        mvc.perform(get("/api/weekly-reports/this-week").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.week").value(37))
+                .andExpect(jsonPath("$.data.teams[0].status").value("MISSING"));
+        mvc.perform(get("/api/weekly-reports/this-week")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("GET /{id}/suggestions: açık olay RESOLVED hariç sayılır (takım kapsamı), KPI alanları eklenir; KPI hatası uç'u düşürmez")
+    void suggestions_countsOpenIncidents_andKpis() throws Exception {
+        when(service.get(eq(5L), any())).thenReturn(report(5L, 2L, "DRAFT"));
+        when(incidentRepo.countByStatus(isNull(), isNull(), eq(true), eq(List.of(2L))))
+                .thenReturn(List.of(new Object[]{"OPEN", 2L}, new Object[]{"MITIGATED", 1L}, new Object[]{"RESOLVED", 7L}));
+        var cur = new com.sitemonitor.service.WeeklyReportKpiService.KpiSet(10, 3, 1, 4, 2, 2, 99.5, "2026-W37");
+        when(kpiService.compute(2L, 2026, 24)).thenReturn(new com.sitemonitor.service.WeeklyReportKpiService.WeeklyReportKpis(cur, null, List.of(), null));
+        mvc.perform(get("/api/weekly-reports/5/suggestions").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.open_incidents").value(3))
+                .andExpect(jsonPath("$.data.alarms_opened").value(4))
+                .andExpect(jsonPath("$.data.critical_certs").value(2))
+                .andExpect(jsonPath("$.data.expiring_in_window").value(3));
+        when(kpiService.compute(2L, 2026, 24)).thenThrow(new RuntimeException("kpi down"));
+        mvc.perform(get("/api/weekly-reports/5/suggestions").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.open_incidents").value(3))
+                .andExpect(jsonPath("$.data.kpi_error").value(true));
+    }
+
+    @Test
+    @DisplayName("GET /{id}/previous: önceki hafta özet + content_json; yoksa data null")
+    void previous_returnsSummaryOrNull() throws Exception {
+        WeeklyReport cur = report(5L, 2L, "DRAFT");
+        WeeklyReport prev = report(4L, 2L, "APPROVED"); prev.setWeekNo(36); prev.setContentJson("{\"item1\":{\"total\":3}}"); prev.setScore(81);
+        when(service.get(eq(5L), any())).thenReturn(cur);
+        when(service.previous(cur)).thenReturn(prev);
+        mvc.perform(get("/api/weekly-reports/5/previous").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.id").value(4))
+                .andExpect(jsonPath("$.data.score").value(81))
+                .andExpect(jsonPath("$.data.content_json", containsString("\"total\":3")));
+        when(service.previous(cur)).thenReturn(null);
+        mvc.perform(get("/api/weekly-reports/5/previous").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("POST /weekly-reports carry_notes=true → service.create(..., true); yokken false")
+    void create_carryNotesFlag() throws Exception {
+        when(service.create(any(), anyInt(), anyInt(), any(), anyBoolean())).thenReturn(report(9L, 2L, "DRAFT"));
+        mvc.perform(post("/api/weekly-reports").session(userSession())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"team_id\":2,\"year\":2026,\"week_no\":37,\"carry_notes\":true}"))
+                .andExpect(status().isOk());
+        org.mockito.Mockito.verify(service).create(eq(2L), eq(2026), eq(37), any(), eq(true));
+        mvc.perform(post("/api/weekly-reports").session(userSession())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"team_id\":2,\"year\":2026,\"week_no\":38}"))
+                .andExpect(status().isOk());
+        org.mockito.Mockito.verify(service).create(eq(2L), eq(2026), eq(38), any(), eq(false));
+    }
+
+    @Test
+    @DisplayName("Liste özeti score / submitted_by / reject_note (boolean) alanlarını taşır")
+    void list_carriesScoreAndRejectFlag() throws Exception {
+        WeeklyReport r = report(1L, 2L, "REJECTED"); r.setScore(64); r.setRejectNote("eksik"); r.setSubmittedBy("Regular User");
+        when(service.list(any(), any(), any())).thenReturn(List.of(r));
+        when(service.lastMailStatuses(any())).thenReturn(Map.of());
+        mvc.perform(get("/api/weekly-reports").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].score").value(64))
+                .andExpect(jsonPath("$.data[0].reject_note").value(true))
+                .andExpect(jsonPath("$.data[0].submitted_by").value("Regular User"));
     }
 
     @Test

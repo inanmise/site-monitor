@@ -48,6 +48,13 @@ export const PAGE_TOURS = {
     { id: 'all-select',  target: 'ct-select', placement: 'right', help: '14.8', mobile: false },
     { id: 'all-menu',    target: 'ct-row-menu', placement: 'left', help: '14.8' },
   ],
+  weeklyreports: [
+    { id: 'wr-thisweek', target: 'wr-thisweek', placement: 'bottom', help: '14.18' },
+    { id: 'wr-chips',    target: 'wr-chips', placement: 'bottom', help: '14.18' },
+    { id: 'wr-table',    target: 'wr-table', placement: 'top', help: '14.18' },
+    { id: 'wr-new',      target: 'wr-new', placement: 'bottom', help: '14.18', when: (c) => c?.role !== 'AUDIT' },
+    { id: 'wr-help',     target: 'wr-help', placement: 'bottom', help: '14.18' },
+  ],
   http: [
     { id: 'mon-how',  target: 'mon-how', placement: 'bottom', help: '14.14' },
     { id: 'mon-new',  target: 'mon-new', placement: 'bottom', help: '14.14', when: (c) => c?.canWrite !== false },

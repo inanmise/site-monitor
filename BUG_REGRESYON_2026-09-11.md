@@ -523,3 +523,23 @@ elle artırılınca devreye girer; mobilde tur kısaltılmış (palet adımı yo
 Kapsam: 1 commit (kılavuz TR/EN + kök kopyalar + PDF'ler + manifest + tur adımlarında help bağlantısı). Kod değişikliği yok.
 Kapılar: `whitepaper-sync` (kök = kaynak), `whitepaper-pdf-freshness` (manifest sha'ları güncel), `tour-targets` yeşil;
 yardım çekmecesinde §14.30 açılıyor (3024 karakter, yönetici paragrafı dâhil). → **REGRESYON YOK**.
+
+## Ek — yirmi altıncı tur (2026-09-13, sürüm öncesi — Haftalık Raporlar zenginleştirmesi, `v20.62.1..HEAD`)
+
+Kapsam: 2 commit. İmza süpürmesi temiz (yeni testler example/SY-A takma adlarıyla; mevcut DEFAULT_TEMPLATE_JSON'daki kanal
+adlarına dokunulmadı). Hook + erken-return: WeeklyReportsPage'e eklenen hook'lar (useUrlQuerySync, previous/suggestions
+effect'i, useMemo'lar) sayfanın tek return'ünün üstünde; yeni bileşenlerde koşullu return hook'lardan sonra.
+
+**Denetim odakları:**
+- Takım kapsamı: this-week yalnız kapsamdaki takımlar (admin/AUDIT: hatırlatması açık takımlar; kullanıcı: kendisi);
+  suggestions/previous `service.get(id, actor)` üstünden (aynı yetki), açık olay sayımı `scoped=true` + takım listesi
+  (IncidentRecordRepository.countByStatus). Listeden onay/iade mevcut uçlarla (sunucu izin + durum makinesi).
+- Skor anlık görüntüsü: submit içinde try/catch — KPI hatası gönderimi durdurmaz (test pinli); DDL patch idempotent.
+- URL ad alanı: `w_` PAGE_STATE_PREFIXES'e eklendi; bildirim kutusu `team` paramı da okunur (mevcut sözleşme bozulmadı).
+- Yarış/yan etki: iade modalı `id` taşır (listeden iade doğru rapora — test yakaladı, düzeltildi); toplu onay işlem bayrağı
+  try/finally (bayrak kapısı yakaladı); `previous`/`suggestions` effect'i `alive` bayrağıyla bayat yanıtı yazmaz.
+- Kapılar: cssClasses/cssTokens/i18n-parity/tour-targets/progress-guard/csv-escape-guard yeşil; tam süit 2046; backend
+  WeeklyReportService 63 / Controller 31 / Inbox 2 yeşil.
+Bilinen sınırlar (bilinçli): yorum dizisi, hatırlatma görünürlüğü, yönetici PDF/CSV özeti, takım şablonu ikinci tur;
+e-posta CTA'ları değişmedi (Outlook-güvenli şablon ayrı iş) — derin bağlantı yalnız uygulama içi.
+→ **REGRESYON YOK**.

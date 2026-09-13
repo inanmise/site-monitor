@@ -255,6 +255,14 @@ public class WeeklyReportService {
     // ── Oluşturma — şablon kopyalama ──────────────────────────────────────────
 
     public WeeklyReport create(Long requestedTeamId, int year, int weekNo, Actor actor) {
+        return create(requestedTeamId, year, weekNo, actor, false);
+    }
+
+    /**
+     * @param carryNotes true → geçen haftanın notları "Geçen haftadan devam" başlığıyla taşınır (sayılar sıfır);
+     *                   false → yalnız yapı (kanallar, takip URL'leri) kalıtılır (2026-09-13).
+     */
+    public WeeklyReport create(Long requestedTeamId, int year, int weekNo, Actor actor, boolean carryNotes) {
         Long teamId = actor.isAdmin() ? requestedTeamId : actor.teamId();
         if (teamId == null) throw new IllegalArgumentException("Takım belirlenemedi");
         if (weekNo < 1 || weekNo > 53) throw new IllegalArgumentException("Geçersiz hafta numarası: " + weekNo);
@@ -267,9 +275,9 @@ public class WeeklyReportService {
             throw new IllegalStateException("DUPLICATE_WEEK");
         }
 
-        // Şablon: takımın en güncel raporunun yapısı (kanallar + takip URL'leri)
+        // Şablon: takımın en güncel raporunun yapısı (kanallar + takip URL'leri); istenirse notlar da taşınır
         String content = reportRepo.findFirstByTeamIdOrderByReportYearDescWeekNoDesc(teamId)
-                .map(prev -> resetTemplate(prev.getContentJson()))
+                .map(prev -> carryNotes ? carryTemplate(prev.getContentJson(), prev.getWeekLabel()) : resetTemplate(prev.getContentJson()))
                 .orElse(DEFAULT_TEMPLATE_JSON);
 
         String now = now();
@@ -442,6 +450,13 @@ public class WeeklyReportService {
         r.setSubmittedAt(now());
         r.setUpdatedBy(actor.display());
         r.setUpdatedAt(now());
+        // Gönderim anı skoru (2026-09-13): liste sütunu için anlık görüntü; KPI hesabı düşerse gönderim durmaz
+        try {
+            var k = kpiService.compute(r.getTeamId(), r.getReportYear(), r.getWeekNo());
+            if (k != null && k.summary() != null && k.summary().score() != null) r.setScore(k.summary().score().value());
+        } catch (Exception e) {
+            log.warn("Haftalık rapor skoru hesaplanamadı (id={}): {}", r.getId(), e.toString());
+        }
         // E-posta ile hızlı onay token'ı (tek-kullanımlık, süreli)
         String token = newApprovalToken();
         r.setApprovalToken(token);
@@ -1247,6 +1262,94 @@ public class WeeklyReportService {
 
     /** Şablon kopyalama: kanal id/ad + takip URL'leri korunur; sayılar
      *  sıfırlanır, notes_md/status_text boşalır. Bozuk JSON → default şablon. */
+    /**
+     * "Geçen haftadan devam" (2026-09-13): yapı + notlar taşınır, sayılar sıfırlanır. Her dolu not
+     * {@code **Geçen haftadan devam (etiket)**} satırıyla açılır — kişi neyin miras olduğunu görsün.
+     */
+    static String carryTemplate(String prevContentJson, String prevLabel) {
+        ObjectMapper om = TEMPLATE_MAPPER;
+        try {
+            ObjectNode root = (ObjectNode) om.readTree(prevContentJson);
+            String head = "**Geçen haftadan devam (" + (prevLabel == null ? "" : prevLabel) + ")**\n\n";
+            ObjectNode i1 = root.withObject("item1");
+            for (String k : List.of("total", "urgent", "high", "medium", "low")) i1.put(k, 0);
+            i1.put("notes_md", carry(i1.path("notes_md").asText(""), head));
+            ObjectNode i2 = root.withObject("item2");
+            for (String k : List.of("open_incidents", "problem_records", "postmortems")) i2.put(k, 0);
+            i2.put("notes_md", carry(i2.path("notes_md").asText(""), head));
+            ObjectNode i3 = root.withObject("item3");
+            i3.put("notes_md", carry(i3.path("notes_md").asText(""), head));
+            JsonNode channels = root.path("item4").path("channels");
+            if (channels.isArray()) {
+                for (JsonNode ch : channels) {
+                    if (ch instanceof ObjectNode chObj) chObj.put("notes_md", carry(chObj.path("notes_md").asText(""), head));
+                }
+            }
+            return om.writeValueAsString(root);
+        } catch (Exception e) {
+            return resetTemplate(prevContentJson);
+        }
+    }
+
+    private static String carry(String notes, String head) {
+        if (notes == null || notes.isBlank()) return "";
+        return notes.startsWith("**Geçen haftadan devam") ? notes : head + notes;
+    }
+
+    /**
+     * Bir önceki hafta raporu (aynı takım; yıl sınırını da geçer) — detaydaki Δ rozetleri ve
+     * "geçen haftanın notu" paneli için. Yoksa null.
+     */
+    public WeeklyReport previous(WeeklyReport r) {
+        int y = r.getReportYear(), w = r.getWeekNo();
+        if (w > 1) return reportRepo.findByTeamIdAndReportYearAndWeekNo(r.getTeamId(), y, w - 1).orElse(null);
+        int lastWeekPrevYear = (int) LocalDate.of(y - 1, 12, 28).get(java.time.temporal.WeekFields.ISO.weekOfWeekBasedYear());
+        return reportRepo.findByTeamIdAndReportYearAndWeekNo(r.getTeamId(), y - 1, lastWeekPrevYear).orElse(null);
+    }
+
+    /**
+     * "Bu hafta" şeridi (2026-09-13): aktörün kapsamındaki her takım için içinde bulunulan ISO haftanın rapor
+     * durumu + son giriş zamanı. Admin/AUDIT: rapor beklenen tüm takımlar (completion ile aynı küme);
+     * diğerleri: kendi takımı. {@code due_at} UTC ISO (istemci geri sayımı buradan), {@code is_past} sunucuda.
+     */
+    public Map<String, Object> thisWeek(Actor actor) {
+        LocalDate today = today();
+        int isoYear = today.get(java.time.temporal.WeekFields.ISO.weekBasedYear());
+        int week = today.get(java.time.temporal.WeekFields.ISO.weekOfWeekBasedYear());
+        WeeklyReportDeadline d = WeeklyReportDeadline.resolve(appSettings);
+        // Haftanın son giriş anı: bu ISO haftanın ilgili günü + saati (IST)
+        LocalDate monday = today.with(java.time.temporal.WeekFields.ISO.dayOfWeek(), 1);
+        java.time.ZonedDateTime due = monday.plusDays(d.day().getValue() - 1).atTime(d.time()).atZone(IST);
+        java.time.ZonedDateTime nowIst = java.time.ZonedDateTime.now(IST);
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("year", isoYear); out.put("week", week); out.put("week_label", computeWeekLabel(isoYear, week));
+        out.put("due_at", ISO.format(due.withZoneSameInstant(ZoneOffset.UTC)));
+        out.put("is_past", nowIst.isAfter(due));
+        out.put("deadline_day", d.dayCode()); out.put("deadline_time", d.timeText());
+        List<Map<String, Object>> teams = new java.util.ArrayList<>();
+        List<Team> scope;
+        if (actor.isAdmin() || actor.isAudit()) {
+            scope = teamRepo.findByActiveTrueOrderByNameAsc().stream()
+                    .filter(t -> Boolean.TRUE.equals(t.getWeeklyReminderEnabled())).toList();
+        } else if (actor.teamId() != null) {
+            scope = teamRepo.findById(actor.teamId()).map(List::of).orElse(List.of());
+        } else {
+            scope = List.of();
+        }
+        for (Team t : scope) {
+            Map<String, Object> m = new java.util.LinkedHashMap<>();
+            m.put("team_id", t.getId()); m.put("team_name", t.getName());
+            WeeklyReport r = reportRepo.findByTeamIdAndReportYearAndWeekNo(t.getId(), isoYear, week).orElse(null);
+            m.put("status", r == null ? "MISSING" : r.getStatus());
+            m.put("report_id", r == null ? null : r.getId());
+            m.put("updated_at", r == null ? null : r.getUpdatedAt());
+            m.put("sent_at", r == null ? null : r.getSentAt());   // APPROVED + gönderildi → şeritte "Gönderildi"
+            teams.add(m);
+        }
+        out.put("teams", teams);
+        return out;
+    }
+
     static String resetTemplate(String prevContentJson) {
         ObjectMapper om = TEMPLATE_MAPPER;
         try {
