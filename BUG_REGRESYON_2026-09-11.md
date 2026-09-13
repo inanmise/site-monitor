@@ -425,3 +425,24 @@ da bileşen gövdesinde koşullu return'den ÖNCE (hook + erken-return tuzağı 
 Bilinen sınırlar: düzenleme formları Escape ile kapanmaz (bilinçli); headless QA'da 60 dk hareketsizlik çıkışı sentetik
 tıklamayı saymaz (araç notu, uygulama davranışı doğru).
 → **REGRESYON YOK**.
+
+## Ek — yirmi birinci tur (2026-09-13, sürüm öncesi — düğme boyu süpürmesi, `v20.60.1..HEAD`)
+
+Kapsam: 2 commit (App.css 2 kural + CertRenewalGuide 1 satır). Kullanıcı bulgusu: Tüm Sertifikalar'da Sıfırla (45 px) ≠
+Sütunlar (36 px). Örnek kapatılmadı, SINIF kapatıldı: 35 sekmede çalışma zamanı ölçümü (aynı flex satırındaki aynı boy
+`.btn` kardeşleri, >2 px eşik) iki aile daha buldu — `.controls` satırı (36 vs input'a uzayan 39) ve dokuz izleme sayfasının
+küçük düğme çubuğu (24/25/27: yalnız-ikon / ikon+metin / metin).
+
+**Kök neden:** `.btn`/`.btn-sm` satır yüksekliği ve hizalama tanımlamıyordu; kutu içerik türüne göre değişiyordu. Altı
+sayfa-yerel `.x .btn { inline-flex; gap }` kuralı aynı deseni tek tek yamalıyordu (kanıt: kök kuralın doğru olduğu).
+**Düzeltme:** kök kural `inline-flex + center + gap + line-height 1.3 + min-height (em tabanlı)`; `.colpick` sarmalayıcı `flex`.
+
+**Regresyon taraması (global `display` değişikliği riskli):**
+- `.btn`/`.btn-sm` seçicili başka `display` / `width: 100%` / `text-align` / `flex-direction` kuralı yok (grep).
+- `.btn` gövdesinde blok çocuk (`div/br/p/small/ul`) ya da `textAlign` inline stili olan düğme YOK (flex satırında yan yana
+  dizilirdi) — 0 eşleşme, 105 jsx dosyası tarandı.
+- İkon `marginRight` + `gap` çift boşluk: yalnız CertRenewalGuide (kaldırıldı).
+- Kapılar: cssClasses/cssTokens + CertificatesTable/HttpMonitorPage/CertRenewalGuide yeşil; 33 sekmede tarama 'ok';
+  görsel: HTTP başlık çubuğu, dashboard kontrolleri, düzenleme formu alt çubuğu (Test Et / İptal / Kaydet), Haftalık Raporlar.
+Bilinen sınır: yalnız-ikon düğmeler artık metinli kardeşleriyle aynı boyda (24 → 27 px) — istenen davranış.
+→ **REGRESYON YOK**.
