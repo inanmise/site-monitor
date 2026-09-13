@@ -7,6 +7,7 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import { UsersRound, PenLine } from 'lucide-react'
 import UserEditModal from './UserEditModal.jsx'
+import TagInput from '../ui/TagInput.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import TeamMembersModal from '../ui/TeamMembersModal.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
@@ -14,7 +15,20 @@ import { resolveTeamManager } from '../../utils/teamManager.js'
 
 // Haftalık e-postalar opt-in: YENİ takım ikisi de kapalı doğar (backend de createTeam'de false yazar).
 const emptyTeam = { name: '', email: '', description: '', active: true, leader_id: '', manager_id: '',
-  weekly_reminder_enabled: false, weekly_availability_enabled: false }
+  weekly_reminder_enabled: false, weekly_availability_enabled: false, weekly_channels: '' }
+
+/** Takım kanal şablonu (2026-09-13): sunucu JSON dizi metni tutar (`weekly_channels`); formda CSV. */
+export function channelsCsv(team) {
+  const raw = team?.weekly_channels ?? team?.weeklyChannels
+  if (Array.isArray(raw)) return raw.join(', ')
+  if (typeof raw !== 'string' || !raw.trim()) return ''
+  try { const arr = JSON.parse(raw); return Array.isArray(arr) ? arr.map((x) => String(x).trim()).filter(Boolean).join(', ') : '' } catch { return '' }
+}
+export function channelsList(csv) {
+  const out = []
+  for (const x of String(csv || '').split(',')) { const v = x.trim().slice(0, 60); if (v && !out.includes(v)) out.push(v); if (out.length >= 20) break }
+  return out
+}
 
 /** Sunucu SNAKE_CASE döndürür; camelCase varyantı da savunma amaçlı okunur (openEdit'teki leader_id deseni). */
 function weeklyFlag(team, which) {
@@ -138,7 +152,8 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
     setForm({ ...team, email: team.email || '', leader_id: String(team.leaderId ?? team.leader_id ?? ''),
       manager_id: String(team.managerId ?? team.manager_id ?? ''),
       weekly_reminder_enabled: weeklyFlag(team, 'reminder'),
-      weekly_availability_enabled: weeklyFlag(team, 'availability') })
+      weekly_availability_enabled: weeklyFlag(team, 'availability'),
+      weekly_channels: channelsCsv(team) })
     setModal(team)
     setMsg(null)
   }
@@ -168,6 +183,14 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
         ? await api.admin.createTeam(payload)
         : await api.admin.updateTeam(editedId, payload)
       if (res?.success) {
+        // Kanal şablonu ayrı (dar) uçtan gider: yalnız değiştiyse; yeni takımda dolu girildiyse (2026-09-13)
+        const nextCh = channelsList(form.weekly_channels)
+        const prevCh = isAdd ? [] : channelsList(channelsCsv(modal))
+        const chId = isAdd ? res.data?.id : editedId
+        if (chId && JSON.stringify(nextCh) !== JSON.stringify(prevCh)) {
+          const chRes = await api.admin.updateTeamWeeklyNotifications(chId, { weekly_channels: nextCh })
+          if (!chRes?.success) toast.error(chRes?.error || t('team.weeklySaveError'))
+        }
         toast.success(t('team.saved'))
         load(); onTeamsChange?.()
         if (!isAdd) setMembersNonce(n => n + 1)
@@ -381,6 +404,11 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
                   <span>{t('team.weeklyAvailability')}</span>
                 </div>
                 <span className="field-hint">{t('team.weeklyHint')}</span>
+                <div className="tm-weekly-channels">
+                  <TagInput label={t('team.weeklyChannels')} value={form.weekly_channels || ''}
+                    onChange={(v) => setForm({ ...form, weekly_channels: v })} placeholder={t('team.weeklyChannelsPh')} />
+                  <span className="field-hint">{t('team.weeklyChannelsHint')}</span>
+                </div>
               </div>
             </div>
             {msg && (

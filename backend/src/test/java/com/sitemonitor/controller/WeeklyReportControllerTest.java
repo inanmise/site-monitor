@@ -46,6 +46,7 @@ class WeeklyReportControllerTest {
     @MockitoBean com.sitemonitor.service.PermissionService permissionService;   // rol kapısı (mock: izin verir)
     @MockitoBean com.sitemonitor.service.AppSettingsService appSettings;          // son giriş zamanı (2026-09-12)
     @MockitoBean com.sitemonitor.repository.IncidentRecordRepository incidentRepo;   // öneriler (2026-09-13)
+    @MockitoBean com.sitemonitor.repository.TeamRepository teamRepo;                   // takım kanal şablonu (2026-09-13)
 
     private static WeeklyReport report(Long id, Long teamId, String status) {
         WeeklyReport r = new WeeklyReport();
@@ -161,6 +162,55 @@ class WeeklyReportControllerTest {
                 .andExpect(jsonPath("$.data[0].score").value(64))
                 .andExpect(jsonPath("$.data[0].reject_note").value(true))
                 .andExpect(jsonPath("$.data[0].submitted_by").value("Regular User"));
+    }
+
+    @Test
+    @DisplayName("GET/POST /{id}/comments: liste; ekleme denetim kaydı düşer (WEEKLY_REPORT_COMMENT); boş metin 400")
+    void comments_listAndAdd() throws Exception {
+        var c = new com.sitemonitor.model.WeeklyReportComment(); c.setId(3L); c.setReportId(5L); c.setKind("COMMENT"); c.setAuthor("Regular User"); c.setText("merhaba"); c.setCreatedAt("2026-09-13T10:00:00");
+        when(service.comments(eq(5L), any())).thenReturn(List.of(c));
+        when(service.addComment(eq(5L), eq("merhaba"), any())).thenReturn(c);
+        when(service.addComment(eq(5L), eq(""), any())).thenThrow(new IllegalArgumentException("Yorum boş olamaz"));
+        mvc.perform(get("/api/weekly-reports/5/comments").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].kind").value("COMMENT"))
+                .andExpect(jsonPath("$.data[0].text").value("merhaba"));
+        mvc.perform(post("/api/weekly-reports/5/comments").session(userSession())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"text\":\"merhaba\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.id").value(3));
+        org.mockito.Mockito.verify(auditService).recordAction(eq("WEEKLY_REPORT_COMMENT"), any(),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("WEEKLY_REPORT"), eq("5"), contains("\"comment_id\":3"));
+        mvc.perform(post("/api/weekly-reports/5/comments").session(userSession())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"text\":\"\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("GET /reminders/status: admin görür, USER 403; liste özeti comment_count taşır; GET /{id} team_channels döner")
+    void reminderStatus_andCommentCount_andTeamChannels() throws Exception {
+        when(service.reminderStatus(anyBoolean())).thenReturn(Map.of("enabled", true, "next_run_at", "2026-09-18T06:00:00", "will_send", 2));
+        mvc.perform(get("/api/weekly-reports/reminders/status").session(adminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.will_send").value(2));
+        mvc.perform(get("/api/weekly-reports/reminders/status").session(userSession()))
+                .andExpect(status().isForbidden());
+
+        when(service.list(any(), any(), any())).thenReturn(List.of(report(1L, 2L, "DRAFT")));
+        when(service.lastMailStatuses(any())).thenReturn(Map.of());
+        when(service.commentCounts(any())).thenReturn(Map.of(1L, 4L));
+        mvc.perform(get("/api/weekly-reports").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].comment_count").value(4));
+
+        var team = new com.sitemonitor.model.Team(); team.setId(2L); team.setName("Takım A"); team.setWeeklyChannels("[\"Mobil\",\"Şube\"]");
+        when(teamRepo.findById(2L)).thenReturn(java.util.Optional.of(team));
+        when(service.get(eq(5L), any())).thenReturn(report(5L, 2L, "DRAFT"));
+        when(service.imagesMeta(5L)).thenReturn(List.of());
+        mvc.perform(get("/api/weekly-reports/5").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_channels[0]").value("Mobil"))
+                .andExpect(jsonPath("$.data.team_channels[1]").value("Şube"));
     }
 
     @Test

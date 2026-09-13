@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { ChevronDown, LayoutGrid } from 'lucide-react'
+import { ChevronDown, LayoutGrid, Printer, Download } from 'lucide-react'
 import { api } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import TeamBadge from './ui/TeamBadge.jsx'
+import { buildYearSummaryCsv, buildYearSummaryHtml } from './weekly/weeklyModel.js'
 
 /**
  * Haftalık rapor takım tamamlama panosu (2026-09-12, zenginleştirme #21): takım × hafta ısı haritası.
@@ -15,7 +16,8 @@ const STATUS_CLASS = { MISSING: 'missing', DRAFT: 'draft', PENDING_APPROVAL: 'pe
 export default function WeeklyCompletionBoard({ year, onPick }) {
   const t = useT()
   const [data, setData] = useState(null)
-  const [open, setOpen] = useState(() => { try { return localStorage.getItem('wr-completion-open') !== 'false' } catch { return true } })
+  // Varsayılan KAPALI (kullanıcı kararı 2026-09-13): pano listeyi aşağı itiyordu; açan kişinin tercihi bu tarayıcıda kalır.
+  const [open, setOpen] = useState(() => { try { return localStorage.getItem('wr-completion-open') === 'true' } catch { return false } })
 
   useEffect(() => {
     let alive = true
@@ -29,6 +31,30 @@ export default function WeeklyCompletionBoard({ year, onPick }) {
   if (!data || !(data.teams || []).length) return null
   const weeks = Array.from({ length: data.weeks || 0 }, (_, i) => i + 1)
   const toggle = () => setOpen((o) => { try { localStorage.setItem('wr-completion-open', String(!o)) } catch { /* yoksay */ } return !o })
+
+  // Yönetici yıl özeti (2026-09-13, ikinci tur): matris CSV + yazdırılabilir sayfa (tarayıcı "PDF olarak kaydet").
+  function downloadCsv() {
+    const csv = buildYearSummaryCsv(data, t)
+    try {
+      const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }); const url = URL.createObjectURL(blob)
+      const a = document.createElement('a'); a.href = url; a.download = `haftalik-yil-ozeti-${data.year}.csv`; document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch { /* jsdom */ }
+  }
+  function printSummary() {
+    // Gizli iframe: uygulama CSS'inden bağımsız, A4 yatay tek sayfa; yazdırma bitince kaldırılır.
+    const html = buildYearSummaryHtml(data, t)
+    try {
+      const f = document.createElement('iframe')
+      f.setAttribute('aria-hidden', 'true'); f.setAttribute('title', 'print'); f.className = 'wrc-print-frame'
+      document.body.appendChild(f)
+      const d = f.contentDocument; d.open(); d.write(html); d.close()
+      const w = f.contentWindow
+      const done = () => setTimeout(() => { try { f.remove() } catch { /* yoksay */ } }, 1500)
+      w.onafterprint = done
+      setTimeout(() => { try { w.focus(); w.print() } catch { done() } }, 60)
+    } catch { /* jsdom */ }
+  }
 
   return (
     <section className="wrc" aria-label={t('wrc.title')}>
@@ -74,6 +100,15 @@ export default function WeeklyCompletionBoard({ year, onPick }) {
               <span key={k} className="wrc-legend-item"><span className={`wrc-cell wrc-cell--${cls} wrc-cell--legend`} /> {t(`wrc.status.${k}`)}</span>
             ))}
             <span className="wrc-legend-item wrc-legend-note">{t('wrc.legendSum')}</span>
+          </div>
+          <div className="wrc-tools">
+            <span className="wrc-tools-label">{t('wr.yearSummary')}:</span>
+            <button type="button" className="btn btn-secondary btn-sm-p" onClick={printSummary} title={t('wr.yearSummaryPrintTitle')}>
+              <Printer size={13} /> {t('wr.yearSummaryPrint')}
+            </button>
+            <button type="button" className="btn btn-secondary btn-sm-p" onClick={downloadCsv} title={t('wr.yearSummaryCsvTitle')}>
+              <Download size={13} /> CSV
+            </button>
           </div>
         </div>
       )}

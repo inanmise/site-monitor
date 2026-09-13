@@ -45,6 +45,10 @@ public class Team {
     @Column(name = "weekly_availability_enabled")
     private Boolean weeklyAvailabilityEnabled = false;
 
+    /** Haftalık rapor kanal şablonu — JSON dizi (["İnternet","Çağrı Merkezi"]); takımın ilk raporu bununla başlar (2026-09-13). */
+    @Column(name = "weekly_channels", columnDefinition = "TEXT")
+    private String weeklyChannels;
+
     private String createdAt;
     private String updatedAt;
 }

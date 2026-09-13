@@ -1925,9 +1925,16 @@ public class AdminController {
         Map<String, Object> wnBefore = teamRepo.findById(id)
                 .map(t -> AuditDiff.snapshot(t, TEAM_AUDIT_FIELDS))
                 .orElseGet(java.util.LinkedHashMap::new);
+        // Kanal şablonu (2026-09-13): liste gönderildiyse temizlenip JSON dizi olarak saklanır; yoksa dokunulmaz
+        String channelsJson = null;
+        if (body.get("weekly_channels") instanceof java.util.List<?> raw) {
+            java.util.List<String> names = new java.util.ArrayList<>();
+            for (Object o : raw) { String v = o == null ? "" : o.toString().trim(); if (!v.isEmpty() && !names.contains(v)) names.add(v.length() > 60 ? v.substring(0, 60) : v); if (names.size() >= 20) break; }
+            try { channelsJson = names.isEmpty() ? "" : new tools.jackson.databind.ObjectMapper().writeValueAsString(names); } catch (Exception e) { channelsJson = ""; }
+        }
         Team team = userService.updateTeamWeeklyNotifications(id,
                 bool(body.get("weekly_reminder_enabled")),
-                bool(body.get("weekly_availability_enabled")));
+                bool(body.get("weekly_availability_enabled")), channelsJson);
         auditService.recordAction("TEAM_WEEKLY_NOTIFICATIONS", session, "TEAM", id.toString(),
                 AuditDetail.of("name", team.getName()),
                 AuditDiff.diff(wnBefore, AuditDiff.snapshot(team, TEAM_AUDIT_FIELDS)));
@@ -1994,7 +2001,7 @@ public class AdminController {
      *  ki "silinen takimda ne vardi" ile "takimda ne degisti" karsilastirilabilir kalsin. */
     private static final String[] TEAM_AUDIT_FIELDS = {
             "name", "email", "description", "active", "leaderId", "managerId",
-            "weeklyReminderEnabled", "weeklyAvailabilityEnabled" };
+            "weeklyReminderEnabled", "weeklyAvailabilityEnabled", "weeklyChannels" };
 
     @DeleteMapping("/teams/{id}")
     public ResponseEntity<Map<String, Object>> deleteTeam(

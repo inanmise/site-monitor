@@ -234,6 +234,7 @@ public final class AuditEventCatalog {
             "WEEKLY_AVAILABILITY_TEST",
             "WEEKLY_AVAILABILITY_TOGGLE",
             "WEEKLY_REPORT_APPROVE",
+            "WEEKLY_REPORT_COMMENT",
             "WEEKLY_REPORT_CREATE",
             "WEEKLY_REPORT_DELETE",
             "WEEKLY_REPORT_IMAGE_ADD",

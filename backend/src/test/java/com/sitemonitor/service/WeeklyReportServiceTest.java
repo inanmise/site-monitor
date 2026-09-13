@@ -158,7 +158,7 @@ class WeeklyReportServiceTest {
         WeeklyReport created = service.create(null, 2026, 24, USER_T2);
         // Tohum sablonundaki kanal adi URUN VERISI (WeeklyReportService:136) ve bilincli olarak
         // supurulmedi; test onu AYNEN yansitmak zorunda (bkz. kimlik-tarama muafiyet listesi).
-        assertThat(created.getContentJson()).contains("Çağrı Merkezi").contains("Akbank.com");
+        assertThat(created.getContentJson()).contains("Çağrı Merkezi").contains("Web Kanalı");
 
         when(reportRepo.findByTeamIdAndReportYearAndWeekNo(2L, 2026, 24))
                 .thenReturn(Optional.of(created));
@@ -1155,5 +1155,83 @@ class WeeklyReportServiceTest {
         service.submit(6L, USER_T2);
         assertThat(r2.getScore()).isNull();
         assertThat(r2.getStatus()).isEqualTo("PENDING_APPROVAL");
+    }
+    // ── İkinci tur (2026-09-13): yorum dizisi, takım kanal şablonu, hatırlatma görünürlüğü ──
+
+    @Test
+    @DisplayName("yorum dizisi: durum geçişleri sistem yorumu düşer (SUBMIT/REJECT), serbest yorum doğrulanır, AUDIT yazamaz, silme kaskadı")
+    void comments_systemAndFree() {
+        var commentRepo = org.mockito.Mockito.mock(com.sitemonitor.repository.WeeklyReportCommentRepository.class);
+        when(commentRepo.save(any())).thenAnswer(i -> { var c = (com.sitemonitor.model.WeeklyReportComment) i.getArgument(0); c.setId(1L); return c; });
+        ReflectionTestUtils.setField(service, "commentRepo", commentRepo);
+        WeeklyReport r = report(5L, 2L, "DRAFT");
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(2L, "PO")).thenReturn(List.of());
+        when(userRepo.findByTeamIdAndOrgRoleAndActiveTrue(2L, "PO")).thenReturn(List.of());
+        service.submit(5L, USER_T2);
+        var cap = org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.WeeklyReportComment.class);
+        org.mockito.Mockito.verify(commentRepo).save(cap.capture());
+        assertThat(cap.getValue().getKind()).isEqualTo("SUBMIT");
+        assertThat(cap.getValue().getReportId()).isEqualTo(5L);
+        service.reject(5L, "  eksik veri ", ADMIN);
+        org.mockito.Mockito.verify(commentRepo, org.mockito.Mockito.times(2)).save(cap.capture());
+        assertThat(cap.getValue().getKind()).isEqualTo("REJECT");
+        assertThat(cap.getValue().getText()).isEqualTo("eksik veri");
+        var free = service.addComment(5L, "  Not düştüm ", USER_T2);
+        assertThat(free.getKind()).isEqualTo("COMMENT");
+        assertThat(free.getText()).isEqualTo("Not düştüm");
+        assertThatThrownBy(() -> service.addComment(5L, "   ", USER_T2)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.addComment(5L, "x".repeat(WeeklyReportService.COMMENT_MAX + 1), USER_T2)).isInstanceOf(IllegalArgumentException.class);
+        Actor audit = new Actor(99L, "audit", "Denetçi", null, "AUDIT");
+        assertThatThrownBy(() -> service.addComment(5L, "yorum", audit)).isInstanceOf(SecurityException.class);
+        when(commentRepo.countByReportIds(any())).thenReturn(List.<Object[]>of(new Object[]{5L, 3L}));
+        assertThat(service.commentCounts(List.of(5L))).containsEntry(5L, 3L);
+        // silme kaskadı
+        WeeklyReport d = report(6L, 2L, "DRAFT");
+        when(reportRepo.findById(6L)).thenReturn(Optional.of(d));
+        service.delete(6L, ADMIN);
+        org.mockito.Mockito.verify(commentRepo).deleteByReportId(6L);
+    }
+
+    @Test
+    @DisplayName("takım kanal şablonu: JSON dizi temizlenir (boş/tekrar/uzun), ilk rapor şablonla başlar; şablon yoksa varsayılan (Web Kanalı)")
+    void teamChannelTemplate() {
+        assertThat(WeeklyReportService.channelTemplate(null)).isEmpty();
+        assertThat(WeeklyReportService.channelTemplate("{bozuk")).isEmpty();
+        assertThat(WeeklyReportService.channelTemplate("[\"A\",\" \",\"A\",\"B\"]")).containsExactly("A", "B");
+        assertThat(WeeklyReportService.channelTemplate("[\"" + "x".repeat(80) + "\"]").get(0)).hasSize(60);
+        Team t = team(2L, "TakimA", "a@test"); t.setWeeklyChannels("[\"Mobil\",\"Şube\"]");
+        String tpl = WeeklyReportService.templateForTeam(t);
+        assertThat(tpl).contains("\"name\":\"Mobil\"").contains("\"name\":\"Şube\"").doesNotContain("Çağrı Merkezi");
+        assertThat(WeeklyReportService.templateForTeam(team(3L, "B", "b@test"))).contains("Web Kanalı").doesNotContain("Akbank");
+        // create: önceki rapor yok → takım şablonu
+        when(teamRepo.findById(2L)).thenReturn(Optional.of(t));
+        when(reportRepo.findFirstByTeamIdOrderByReportYearDescWeekNoDesc(2L)).thenReturn(Optional.empty());
+        when(reportRepo.findByTeamIdAndReportYearAndWeekNo(eq(2L), anyInt(), anyInt())).thenReturn(Optional.empty());
+        LocalDate today = WeeklyReportService.today();
+        WeeklyReport created = service.create(2L, today.get(WeekFields.ISO.weekBasedYear()), today.get(WeekFields.ISO.weekOfWeekBasedYear()), USER_T2);
+        assertThat(created.getContentJson()).contains("Mobil").contains("Şube");
+    }
+
+    @Test
+    @DisplayName("hatırlatma görünürlüğü: sonraki koşu son giriş gününde 09:00 (gelecekte), opt-in/e-postasız/girmiş sayaçları")
+    void reminderStatus() {
+        Team a = team(2L, "TakimA", "a@test"); a.setWeeklyReminderEnabled(true);
+        Team b = team(7L, "TakimB", ""); b.setWeeklyReminderEnabled(true);
+        Team c = team(8L, "TakimC", "c@test"); c.setWeeklyReminderEnabled(false);
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(a, b, c));
+        LocalDate today = WeeklyReportService.today();
+        int y = today.get(WeekFields.ISO.weekBasedYear()), w = today.get(WeekFields.ISO.weekOfWeekBasedYear());
+        when(reportRepo.findByTeamIdAndReportYearAndWeekNo(2L, y, w)).thenReturn(Optional.of(report(5L, 2L, "APPROVED")));
+        when(reportRepo.findByTeamIdAndReportYearAndWeekNo(7L, y, w)).thenReturn(Optional.empty());
+        java.util.Map<String, Object> st = service.reminderStatus(true);
+        assertThat(st).containsEntry("enabled", true).containsEntry("opt_in_teams", 2).containsEntry("no_email", 1)
+                .containsEntry("already_done", 1).containsEntry("will_send", 0).containsEntry("deadline_day", "FRI");
+        String next = String.valueOf(st.get("next_run_at"));
+        assertThat(next).matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}");
+        java.time.ZonedDateTime n = java.time.LocalDateTime.parse(next).atZone(java.time.ZoneOffset.UTC).withZoneSameInstant(java.time.ZoneId.of("Europe/Istanbul"));
+        assertThat(n.getDayOfWeek()).isEqualTo(java.time.DayOfWeek.FRIDAY);
+        assertThat(n.getHour()).isEqualTo(9);
+        assertThat(n.toInstant()).isAfter(java.time.Instant.now());
     }
 }

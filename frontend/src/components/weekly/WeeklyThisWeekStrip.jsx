@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { CalendarClock, Plus, ArrowRight, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { CalendarClock, Plus, ArrowRight, AlertTriangle, CheckCircle2, ChevronDown } from 'lucide-react'
 import { useT, useLanguage } from '../../i18n/index.jsx'
 import { formatWeekRange } from '../../utils/isoWeek'
 import { countdown } from './weeklyModel.js'
@@ -12,6 +12,9 @@ export default function WeeklyThisWeekStrip({ data, onOpen, onCreate, canCreate,
   const t = useT()
   const { lang } = useLanguage()
   const [now, setNow] = useState(() => Date.now())
+  // Varsayılan KAPALI (kullanıcı kararı 2026-09-13): başlıkta özet (eksik sayısı + son giriş) görünür, açan kişinin tercihi kalır
+  const [open, setOpen] = useState(() => { try { return localStorage.getItem('wr-thisweek-open') === 'true' } catch { return false } })
+  const toggle = () => setOpen((o) => { try { localStorage.setItem('wr-thisweek-open', String(!o)) } catch { /* yoksay */ } return !o })
   useEffect(() => { const id = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(id) }, [])
   if (loading || !data) return null
   const cd = countdown(data.due_at, now)
@@ -21,16 +24,18 @@ export default function WeeklyThisWeekStrip({ data, onOpen, onCreate, canCreate,
   const tone = cd?.past && missing > 0 ? 'late' : missing > 0 ? 'open' : 'ok'
   return (
     <section className={`wr-tw wr-tw--${tone}`} aria-label={t('wr.tw.title')} data-tour="wr-thisweek">
-      <div className="wr-tw-head">
+      <button type="button" className="wr-tw-head" aria-expanded={open} onClick={toggle}>
         <CalendarClock size={16} />
         <strong>{t('wr.tw.title')}</strong>
         <span className="wr-tw-week">{formatWeekRange(data.year, data.week, lang)}</span>
+        {!open && <span className={`wr-tw-sum${missing > 0 ? ' is-open' : ''}`}>{missing > 0 ? t('wr.tw.sumMissing', missing) : t('wr.tw.sumOk')}</span>}
         <span className="wr-spacer" />
         <span className={`wr-tw-due${cd?.past ? ' is-past' : ''}`} title={t('wr.tw.deadlineHint', data.deadline_day, data.deadline_time)}>
           {cd?.past ? <AlertTriangle size={13} /> : null} {dueText}
         </span>
-      </div>
-      <ul className="wr-tw-list">
+        <ChevronDown size={15} className={`wr-tw-chev${open ? ' is-open' : ''}`} aria-hidden="true" />
+      </button>
+      {open && <ul className="wr-tw-list">
         {teams.length === 0 && <li className="wr-tw-none">{t('wr.tw.noTeam')}</li>}
         {teams.map((x) => {
           const st = x.status
@@ -49,7 +54,7 @@ export default function WeeklyThisWeekStrip({ data, onOpen, onCreate, canCreate,
             </li>
           )
         })}
-      </ul>
+      </ul>}
     </section>
   )
 }

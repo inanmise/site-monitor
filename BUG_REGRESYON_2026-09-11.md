@@ -543,3 +543,34 @@ effect'i, useMemo'lar) sayfanın tek return'ünün üstünde; yeni bileşenlerde
 Bilinen sınırlar (bilinçli): yorum dizisi, hatırlatma görünürlüğü, yönetici PDF/CSV özeti, takım şablonu ikinci tur;
 e-posta CTA'ları değişmedi (Outlook-güvenli şablon ayrı iş) — derin bağlantı yalnız uygulama içi.
 → **REGRESYON YOK**.
+
+## Ek — yirmi yedinci tur (2026-09-13, sürüm öncesi — Haftalık Raporlar ikinci tur, `v20.63.0..HEAD`)
+
+Kapsam: 1 commit (yorum dizisi, hatırlatma görünürlüğü, yıl özeti, takım kanal şablonu; pano + şerit varsayılan kapalı).
+İmza süpürmesi: yeni kod/test/commit'te gerçek kişi/kurum adı yok (DEFAULT_TEMPLATE_JSON'daki eski kanal adı "Web Kanalı"
+olarak nötrlendi; test iddiası da güncellendi). Hook + erken-return: yeni hook'lar (teamChannels/reminderNonce state,
+missingTemplateChannels useMemo) sayfanın tek return'ünün üstünde; WeeklyComments/WeeklyReminderStatus'ta koşullu return
+hook'lardan sonra.
+
+**Denetim odakları:**
+- Yetki: comments/addComment `service.get(id, actor)` kapısından geçer (takım kapsamı aynı); AUDIT yazamaz (SecurityException
+  → 403), reminders/status yalnız admin/AUDIT (USER 403 pinli). weekly_channels yalnız takım üyesi/admin ucundan (mevcut
+  weekly-notifications kapısı; ad/e-posta/aktiflik yine dokunulmaz — `ignoresAdminOnlyFields` yeşil).
+- Veri: sistem yorumu try/catch — durum makinesini durdurmaz; rapor silme yorumları da siler (`deleteByReportId` tx
+  sahibi `WeeklyReportService.delete` @Transactional, allow-list'e gerekçeyle eklendi); öksüz retention politikası
+  (`weekly-report-comments-orphan`, PERSONAL) + RetentionCoverage/RetentionDoc yeşil, belge yeniden üretildi.
+- Zaman: reminderStatus sonraki koşu IST 09:00 → UTC ISO; test `today()` ile göreli (sabit tarih yok), Cuma/09:00/gelecek
+  iddiaları IST'e çevrilerek doğrulanır (CI UTC tuzağı).
+- Kaçış: yıl özeti HTML'inde takım adı/durum `escHtml`; CSV `csvRows` (formül nötrleme test pinli). Yazdırma gizli
+  iframe'de, uygulama CSS'inden bağımsız; tarayıcıda `print()` stub'lanarak 3 satır × 39 sütun + 5 lejant doğrulandı.
+- Yarış/yan etki: yorum gönderimi try/finally (işlem bayrağı kapısı); `alive` bayrağı bayat yanıtı yazmaz; TeamManager
+  şablon kaydı yalnız DEĞİŞTİYSE ikinci (dar) uca gider; "Şablondan tamamla" mevcut kanal adlarını (TR harf-duyarsız)
+  korur, yalnız eksikleri ekler.
+- Kapılar: eslint temiz (tek yeni uyarı useMemo bağımlılığı → düzeltildi); i18n TR/EN parity; cssClasses/cssTokens
+  yeni sınıf/token'lar tanımlı; DDL patch idempotent (JPA update önce oluşturdu, patch noop). Tarayıcı: hatırlatma satırı
+  (18.09 09:00, 2 gidecek / 1 girmiş / 3 açık), yorum gönderme + rozet, takım formunda 3 chip → `weekly_channels`
+  JSON, editörde "Şablondan tamamla (3)" → 3 sekme.
+Bilinen sınırlar (bilinçli): yorum dizisi e-posta/push bildirimi üretmez (PO'ya "yeni yorum" bildirimi ayrı iş);
+yıl özeti PDF'i tarayıcının "PDF olarak kaydet"iyle (sunucu tarafı PDF yok); kılavuz §14.18'e ikinci tur bölümü sonraki
+belge turunda.
+→ **REGRESYON YOK**.
