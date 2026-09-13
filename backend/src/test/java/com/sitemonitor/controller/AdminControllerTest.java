@@ -978,6 +978,73 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.data.skipped").value(1));
     }
 
+    // ── Tüm Sertifikalar toplu işlemleri (2026-09-13): alan adıyla çözüm + set-tier / set-team ──
+
+    @Test
+    @DisplayName("bulk: `domains` listesi envanter kimliğine çözülür (bilinmeyen alan atlanır), set-tier kademeyi yazar")
+    void bulk_domainsResolveToIds_setTier() throws Exception {
+        CertificateInventory a = inventory("a.example.com"); a.setId(11L); a.setTeamId(1L); a.setTier(3);
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(Optional.of(a));
+        when(inventoryRepo.findByDomain("yok.example.com")).thenReturn(Optional.empty());
+        when(inventoryRepo.findById(11L)).thenReturn(Optional.of(a));
+        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(post("/api/admin/inventory/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"set-tier\",\"domains\":[\"A.example.com\",\"yok.example.com\"],\"tier\":1}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.processed").value(1));
+        assertThat(a.getTier()).isEqualTo(1);
+        ArgumentCaptor<String> act = ArgumentCaptor.forClass(String.class);
+        verify(auditService).recordAction(act.capture(), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class),
+                ArgumentMatchers.<String>any(), ArgumentMatchers.<String>any(), ArgumentMatchers.<String>any());
+        assertThat(act.getValue()).isEqualTo("DOMAIN_BULK_SET_TIER");
+    }
+
+    @Test
+    @DisplayName("bulk set-tier: 0 ya da 5 → 400; tier verilmezse kademe KALDIRILIR")
+    void bulk_setTier_validatesRange_andClears() throws Exception {
+        CertificateInventory a = inventory("a.example.com"); a.setId(11L); a.setTeamId(1L); a.setTier(2);
+        when(inventoryRepo.findById(11L)).thenReturn(Optional.of(a));
+        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        mvc.perform(post("/api/admin/inventory/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"set-tier\",\"ids\":[11],\"tier\":5}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/admin/inventory/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"set-tier\",\"ids\":[11]}"))
+                .andExpect(status().isOk());
+        assertThat(a.getTier()).isNull();
+    }
+
+    @Test
+    @DisplayName("bulk set-team: GLOBAL admin takımı yazar ve türev izlemeleri senkronlar; TEAM_ADMIN → 403; team_id yoksa 400")
+    void bulk_setTeam_globalAdminOnly_syncsDerived() throws Exception {
+        CertificateInventory a = inventory("a.example.com"); a.setId(11L); a.setTeamId(1L);
+        when(inventoryRepo.findById(11L)).thenReturn(Optional.of(a));
+        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(post("/api/admin/inventory/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"set-team\",\"ids\":[11],\"team_id\":9}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.processed").value(1));
+        assertThat(a.getTeamId()).isEqualTo(9L);
+        verify(derivedMonitorTeamSync).syncTeam("a.example.com", 9L);
+        verify(permissionService).require(any(jakarta.servlet.http.HttpSession.class), eq("inventory.transfer"), eq("execute"));
+
+        mvc.perform(post("/api/admin/inventory/bulk").session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"set-team\",\"ids\":[11],\"team_id\":9}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/inventory/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"set-team\",\"ids\":[11]}"))
+                .andExpect(status().isBadRequest());
+    }
+
     @Test
     @DisplayName("POST /api/admin/inventory/bulk as USER → 403")
     void bulkInventory_asUser_returns403() throws Exception {
