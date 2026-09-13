@@ -611,3 +611,11 @@ Orta) buldu ve düzeltti, her biri ayrı commit + ayrı regresyon test dosyası:
   Cuma 09:00 sonrası) "2 takıma gidecek" yanlış sayı. Düzeltme: sonraki koşu gününün ISO haftası; yanıt `run_week`
   taşır ve satırda gösterilir; saat enjekte edilebilir (Cmt/Çrş/Cuma-sonrası üç senaryo pinli — CI UTC tuzağı yok).
 Sağlık puanı 97 → 100 (bağlantı/perf/erişilebilirlik kapsam dışı). → **REGRESYON YOK**.
+
+## Ek — yirmi dokuzuncu tur (2026-09-13, sürüm öncesi — Yapılandırma sağlığı kartı varsayılan kapalı)
+
+Kapsam: 1 commit, yalnız frontend (ConfigHealthCard + testi). Kart artık sorun olsa da kendiliğinden açılmaz;
+başlık çipleri ("1 sorun · 2 uyarı · N tamam") özeti taşımaya devam eder; tercih `localStorage cfg-health-open`
+(tamamlama panosu / bu-hafta şeridiyle aynı desen, try/catch sarmalı). Hook sırası değişmedi (useState başlangıç
+fonksiyonu). Test: "sorunlu → yine kapalı, başlıkta sayaç, açınca liste" pinli; beforeEach localStorage temizler.
+Kapılar: eslint temiz; backend kaynakları önceki turdan beri DEĞİŞMEDİ (3769 test o turda yeşil). → **REGRESYON YOK**.
