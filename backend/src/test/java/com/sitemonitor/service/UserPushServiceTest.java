@@ -889,4 +889,44 @@ class UserPushServiceTest {
         assertThat(service.enqueueTeamNotice(5L, "WEAK_ALGO", "CRITICAL", "a.example.com", "m", "k").get("reason")).isEqualTo("SKIPPED_NO_RECIPIENTS");
         verify(deliveryRepo, never()).save(any());
     }
+    @Test
+    @DisplayName("2026-09-13: enqueueTeamNotice monitorType aşırı yüklemesi — WEEKLY_REPORT teslimat günlüğüne yazılır; 6-arg çağrı CERTIFICATE kalır")
+    void enqueueTeamNotice_monitorTypeOverload() {
+        recipients("N00001");
+        Map<String, Object> out = service.enqueueTeamNotice(5L, "WEEKLY_REPORT", "WARNING", "WEEKLY_REPORT",
+                "Takım A 2026-W37", "[Haftalık rapor] Takım A 2026-W37 onaylandı ve müdüre gönderildi.", "WR_APPROVED:1:3");
+        assertThat(out.get("queued")).isEqualTo(1);
+        List<UserPushDelivery> rows = savedRows();
+        assertThat(rows).hasSize(1);
+        UserPushDelivery d = rows.get(0);
+        verify(resolver).resolve(5L, "WARNING");
+        assertThat(d.getMonitorType()).isEqualTo("WEEKLY_REPORT");
+        assertThat(d.getTrigger()).isEqualTo("WEEKLY_REPORT");
+        assertThat(d.getMonitorName()).isEqualTo("Takım A 2026-W37");
+        assertThat(d.getDedupeKey()).isEqualTo("WR_APPROVED:1:3");
+    }
+    @Test
+    @DisplayName("2026-09-13: enqueueDirect — rol grubu çözümü yok, opt-out satırı SKIPPED, tekrar eden kullanıcı bir kez, dedupe, global kapalı")
+    void enqueueDirect_writesRows() {
+        var a = new UserPushService.DirectRecipient("M00001", "Müdür Bir", false);
+        var b = new UserPushService.DirectRecipient("M00002", "Müdür İki", true);
+        var dup = new UserPushService.DirectRecipient(" M00001 ", "Müdür Bir", false);
+        Map<String, Object> out = service.enqueueDirect(List.of(a, b, dup), 5L, "WEEKLY_REPORT", "WARNING", "WEEKLY_REPORT",
+                "Takım A 2026-W37", "[Haftalık rapor] Takım A 2026-W37 onaylandı; rapor e-postanıza gönderildi.", "WR_APPROVED:1:3:MGR");
+        assertThat(out.get("queued")).isEqualTo(1);
+        assertThat(out.get("skipped")).isEqualTo(2);
+        List<UserPushDelivery> rows = savedRows();
+        assertThat(rows).hasSize(2);
+        assertThat(rows.get(0).getUsername()).isEqualTo("M00001");
+        assertThat(rows.get(0).getStatus()).isEqualTo("PENDING");
+        assertThat(rows.get(0).getMonitorType()).isEqualTo("WEEKLY_REPORT");
+        assertThat(rows.get(0).getTeamId()).isEqualTo(5L);
+        assertThat(rows.get(1).getUsername()).isEqualTo("M00002");
+        assertThat(rows.get(1).getStatus()).isEqualTo("SKIPPED_USER_OPT_OUT");
+        verify(resolver, never()).resolve(any(), any());
+
+        when(deliveryRepo.existsByDedupeKeyAndUsername("WR_APPROVED:1:3:MGR", "M00001")).thenReturn(true);
+        assertThat(service.enqueueDirect(List.of(a), 5L, "WEEKLY_REPORT", "WARNING", "WEEKLY_REPORT", "x", "y", "WR_APPROVED:1:3:MGR").get("queued")).isEqualTo(0);
+        assertThat(service.enqueueDirect(List.of(), 5L, "WEEKLY_REPORT", "WARNING", "WEEKLY_REPORT", "x", "y", null).get("reason")).isEqualTo("SKIPPED_NO_RECIPIENTS");
+    }
 }

@@ -73,6 +73,10 @@ public class WeeklyReportService {
      *  null ise (eski testler) sistem yorumları sessizce atlanır. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.repository.WeeklyReportCommentRepository commentRepo;
+    /** Onay → takıma push (2026-09-13, kullanıcı isteği): "rapor onaylandı, müdüre gönderildi". Alan enjeksiyonu
+     *  aynı gerekçeyle; null ise (eski testler) sessizce atlanır. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private UserPushService userPushService;
 
     /** static resetTemplate için paylaşılan, thread-safe mapper — her çağrıda
      *  yeni ObjectMapper kurma maliyetini önler (Jackson 3 mapper'ları yeniden
@@ -515,10 +519,77 @@ public class WeeklyReportService {
         r.setUpdatedBy(actor.display());
         r.setUpdatedAt(now());
         reportRepo.save(r);
+        pushTeamApproval(r, mailStatus, false);
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("data", r);
         out.put("mail_status", mailStatus);
+        return out;
+    }
+
+    /**
+     * Takıma push (2026-09-13): onay/yeniden gönderim sonrası takım üyelerine "haftalık rapor onaylandı, müdüre
+     * gönderildi" bildirimi. Alıcılar UserPushRecipientResolver kurallarıyla (rol grubu / asgari seviye / opt-out)
+     * çözülür; seviye WARNING — uzman/PO grupları alır, yönetici grubu (HIGH+) zaten e-postanın alıcısıdır.
+     * E-posta gidememişse metin bunu söyler (takım "gönderildi" sanmasın). Tekilleştirme rapor id + sürüm
+     * (yeniden açılıp tekrar onaylanınca yeni bildirim). Push hatası onayı DURDURMAZ.
+     */
+    void pushTeamApproval(WeeklyReport r, String mailStatus, boolean resend) {
+        if (userPushService == null || r == null || r.getTeamId() == null) return;
+        try {
+            Team team = teamRepo.findById(r.getTeamId()).orElse(null);
+            String teamName = team != null && team.getName() != null ? team.getName() : "Takım";
+            String head = "[Haftalık rapor] " + teamName + " " + r.getWeekLabel();
+            String who = r.getApprovedBy() == null ? "" : " Onaylayan: " + r.getApprovedBy() + ".";
+            boolean sent = mailSent(mailStatus);
+            String fail = " BAŞARISIZ (" + (mailStatus == null ? "-" : mailStatus) + ")";
+            String key = (resend ? "WR_RESENT:" : "WR_APPROVED:") + r.getId() + ":" + r.getVersion();
+            String name = teamName + " " + r.getWeekLabel();
+            // 1) Müdür — doğrudan (e-postanın alıcısı; Webhook ayarı: weekly.manager-enabled). ÖNCE gider:
+            //    aynı kişi takım grubunda da olabilir (PO=müdür) — takım bildiriminden düşülür (QA ISSUE-001).
+            java.util.Set<String> notified = new java.util.HashSet<>();
+            if (userPushService.weeklyManagerEnabled()) {
+                String text = sent
+                        ? head + (resend ? " size yeniden gönderildi." : " onaylandı; rapor e-postanıza gönderildi.") + who
+                        : head + " onaylandı ama e-posta" + fail + ". Raporu uygulamadan görüntüleyin." + who;
+                Map<String, Object> res = userPushService.enqueueDirect(resolveManagerPushRecipients(team, r.getTeamId()), r.getTeamId(),
+                        "WEEKLY_REPORT", "WARNING", "WEEKLY_REPORT", name, text, key + ":MGR");
+                if (res != null && res.get("usernames") instanceof List<?> us) for (Object u : us) if (u != null) notified.add(u.toString());
+            }
+            // 2) Takım üyeleri — rol grubu / asgari seviye kuralıyla (Webhook ayarı: weekly.team-enabled)
+            if (userPushService.weeklyTeamEnabled()) {
+                String text = sent
+                        ? head + (resend ? " müdüre yeniden gönderildi." : " onaylandı ve müdüre gönderildi.") + who
+                        : head + (resend ? " yeniden gönderim" : " onaylandı ama müdüre e-posta") + fail + " - Haftalık Raporlar'dan yeniden gönderin.";
+                userPushService.enqueueTeamNotice(r.getTeamId(), "WEEKLY_REPORT", "WARNING", "WEEKLY_REPORT", name, text, key, notified);
+            }
+        } catch (Exception e) {
+            log.warn("Haftalık rapor push'u kuyruğa alınamadı (id={}): {}", r.getId(), e.toString());
+        }
+    }
+
+    /**
+     * Müdür push alıcıları (2026-09-13) — onay e-postasının alıcısıyla AYNI kişi(ler), uygulama kullanıcısı olarak:
+     * 1) Takımda elle atanmış müdür (Team.managerId); 2) MANAGER kademe kontağının e-postasıyla eşleşen aktif
+     * kullanıcı; 3) AD zinciri (üyelerin manager_id'si). Tekil, sıra korunur. Hiçbiri yoksa boş (push atlanır).
+     */
+    List<UserPushService.DirectRecipient> resolveManagerPushRecipients(Team team, Long teamId) {
+        java.util.LinkedHashMap<Long, AppUser> found = new java.util.LinkedHashMap<>();
+        if (team != null && team.getManagerId() != null) {
+            userRepo.findById(team.getManagerId()).filter(u -> Boolean.TRUE.equals(u.getActive())).ifPresent(u -> found.put(u.getId(), u));
+        }
+        if (found.isEmpty()) {
+            java.util.Set<String> emails = new java.util.HashSet<>();
+            for (EscalationContact c : contactRepo.findByTeamIdAndRoleAndActiveTrue(teamId, "MANAGER"))
+                if (c.getEmail() != null && !c.getEmail().isBlank()) emails.add(c.getEmail().trim().toLowerCase(java.util.Locale.ROOT));
+            if (!emails.isEmpty()) for (AppUser u : userRepo.findActiveByEmailsLower(emails)) found.put(u.getId(), u);
+        }
+        if (found.isEmpty()) for (AppUser u : resolveTeamManagerUsers(teamId)) found.put(u.getId(), u);
+        List<UserPushService.DirectRecipient> out = new ArrayList<>();
+        for (AppUser u : found.values()) {
+            String dn = u.getDisplayName() != null && !u.getDisplayName().isBlank() ? u.getDisplayName() : u.getUsername();
+            out.add(new UserPushService.DirectRecipient(u.getUsername(), dn, Boolean.TRUE.equals(u.getPushOptOut())));
+        }
         return out;
     }
 
@@ -692,6 +763,7 @@ public class WeeklyReportService {
         r.setUpdatedBy(actor.display());
         r.setUpdatedAt(now());
         reportRepo.save(r);
+        pushTeamApproval(r, mailStatus, true);
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("data", r);
@@ -1448,13 +1520,19 @@ public class WeeklyReportService {
      * bu hafta zaten girmiş takımlar (reminder servisiyle aynı kurallar).
      */
     public Map<String, Object> reminderStatus(boolean enabled) {
+        return reminderStatus(enabled, java.time.ZonedDateTime.now(IST));
+    }
+
+    /** Saat enjekte edilebilir (test: Cumartesi → sayaçlar gelecek haftaya bakar). */
+    Map<String, Object> reminderStatus(boolean enabled, java.time.ZonedDateTime nowIst) {
         WeeklyReportDeadline d = WeeklyReportDeadline.resolve(appSettings);
-        java.time.ZonedDateTime nowIst = java.time.ZonedDateTime.now(IST);
         java.time.ZonedDateTime next = nowIst.toLocalDate().atTime(9, 0).atZone(IST);
         while (next.getDayOfWeek() != d.day() || !next.isAfter(nowIst)) next = next.plusDays(1);
-        LocalDate today = today();
-        int year = today.get(java.time.temporal.WeekFields.ISO.weekBasedYear());
-        int week = today.get(java.time.temporal.WeekFields.ISO.weekOfWeekBasedYear());
+        // Sayaçlar SONRAKİ KOŞUNUN haftasına göre (QA ISSUE-002): son giriş günü geçtiyse (Cmt/Paz) koşu gelecek
+        // haftadadır; bugünün haftasına bakmak "2 takıma gidecek" gibi yanlış bir sayı gösteriyordu.
+        LocalDate runDay = next.toLocalDate();
+        int year = runDay.get(java.time.temporal.WeekFields.ISO.weekBasedYear());
+        int week = runDay.get(java.time.temporal.WeekFields.ISO.weekOfWeekBasedYear());
         int optIn = 0, noEmail = 0, done = 0, will = 0;
         List<Map<String, Object>> teams = new ArrayList<>();
         for (Team t : teamRepo.findByActiveTrueOrderByNameAsc()) {
@@ -1474,6 +1552,7 @@ public class WeeklyReportService {
         out.put("enabled", enabled);
         out.put("deadline_day", d.dayCode()); out.put("deadline_time", d.timeText());
         out.put("next_run_at", ISO.format(next.withZoneSameInstant(ZoneOffset.UTC)));
+        out.put("run_week", String.format("%d-W%02d", year, week));
         out.put("opt_in_teams", optIn); out.put("no_email", noEmail); out.put("already_done", done); out.put("will_send", will);
         out.put("teams", teams);
         return out;

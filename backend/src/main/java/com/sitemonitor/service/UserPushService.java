@@ -152,6 +152,10 @@ public class UserPushService {
     // ── Ayarlar (CANLI okunur — şablon/timeout değişikliği anında etkir) ───────────────────
 
     public boolean enabled() { return appSettings.getBoolean("site.monitor.userpush.enabled", false); }
+    /** Haftalık rapor onayı → takım üyelerine push (rol grubu / seviye kuralıyla). Vars. AÇIK (2026-09-13). */
+    public boolean weeklyTeamEnabled() { return appSettings.getBoolean("site.monitor.userpush.weekly.team-enabled", true); }
+    /** Haftalık rapor onayı → takım müdürüne DOĞRUDAN push (e-postanın alıcısı). Vars. AÇIK (2026-09-13). */
+    public boolean weeklyManagerEnabled() { return appSettings.getBoolean("site.monitor.userpush.weekly.manager-enabled", true); }
     private String url() { return appSettings.getString("site.monitor.userpush.url", ""); }
     private int connectTimeout() { return appSettings.getInt("site.monitor.userpush.timeout-connect-seconds", 3); }
     private int totalTimeout() { return appSettings.getInt("site.monitor.userpush.timeout-total-seconds", 5); }
@@ -446,6 +450,24 @@ public class UserPushService {
      */
     public Map<String, Object> enqueueTeamNotice(Long teamId, String trigger, String alertLevel,
                                                  String monitorName, String message, String dedupeKey) {
+        return enqueueTeamNotice(teamId, trigger, alertLevel, "CERTIFICATE", monitorName, message, dedupeKey);
+    }
+
+    /** {@link #enqueueTeamNotice(Long, String, String, String, String, String)} + teslimat günlüğünde görünen
+     *  {@code monitorType} (2026-09-13: haftalık rapor onayı "WEEKLY_REPORT" olarak süzülebilsin). */
+    public Map<String, Object> enqueueTeamNotice(Long teamId, String trigger, String alertLevel, String monitorType,
+                                                 String monitorName, String message, String dedupeKey) {
+        return enqueueTeamNotice(teamId, trigger, alertLevel, monitorType, monitorName, message, dedupeKey, java.util.Set.of());
+    }
+
+    /** + {@code excludeUsernames}: aynı olay için başka kanaldan (ör. müdür push'u) zaten bildirilen kişiler
+     *  takım bildirimini İKİNCİ kez almaz (QA ISSUE-001, 2026-09-13). Karşılaştırma büyük/küçük harf duyarsız. */
+    public Map<String, Object> enqueueTeamNotice(Long teamId, String trigger, String alertLevel, String monitorType,
+                                                 String monitorName, String message, String dedupeKey,
+                                                 java.util.Set<String> excludeUsernames) {
+        java.util.Set<String> excluded = new java.util.HashSet<>();
+        for (String u : excludeUsernames == null ? java.util.Set.<String>of() : excludeUsernames)
+            if (u != null) excluded.add(u.trim().toUpperCase(java.util.Locale.ROOT));
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("queued", 0); out.put("skipped", 0); out.put("recipients", List.of());
         if (!enabled()) { out.put("reason", "SKIPPED_DISABLED"); return out; }
@@ -459,6 +481,7 @@ public class UserPushService {
         int queued = 0, skipped = 0;
         List<String> names = new ArrayList<>();
         for (var r : recipients) {
+            if (r.username() != null && excluded.contains(r.username().trim().toUpperCase(java.util.Locale.ROOT))) { skipped++; continue; }
             String status;
             if (r.skipReason() != null) status = r.skipReason();
             else if (deliveryRepo.countRecentForUser(r.username(), since) >= hourlyCap()) status = "RATE_LIMITED";
@@ -468,7 +491,7 @@ public class UserPushService {
             UserPushDelivery d = new UserPushDelivery();
             d.setTrigger(trigger);
             d.setDedupeKey(dedupeKey);
-            d.setMonitorType("CERTIFICATE");
+            d.setMonitorType(monitorType == null ? "CERTIFICATE" : monitorType);
             d.setMonitorName(monitorName);
             d.setTeamId(teamId);
             d.setAlertLevel(alertLevel);
@@ -485,6 +508,62 @@ public class UserPushService {
         }
         if (queued > 0) worker.execute(this::drainOutbox);
         out.put("queued", queued); out.put("skipped", skipped); out.put("recipients", names); out.put("batch_id", batchId);
+        return out;
+    }
+
+    /** Doğrudan alıcı (rol grubu çözümü YOK): kullanıcı adı + görünen ad + opt-out. */
+    public record DirectRecipient(String username, String displayName, boolean optOut) {}
+
+    /**
+     * Belirli kullanıcılara DOĞRUDAN bildirim (2026-09-13, haftalık rapor → müdür): alıcılar çağıran
+     * tarafından çözülür (rol grubu / asgari seviye uygulanmaz — kişi zaten e-postanın alıcısıdır);
+     * opt-out, saatlik tavan, devre kesici ve dedupe aynen. Sessiz saat uygulanmaz (bilgilendirme, alarm değil).
+     */
+    public Map<String, Object> enqueueDirect(List<DirectRecipient> recipients, Long teamId, String trigger, String alertLevel,
+                                             String monitorType, String monitorName, String message, String dedupeKey) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("queued", 0); out.put("skipped", 0); out.put("recipients", List.of());
+        if (!enabled()) { out.put("reason", "SKIPPED_DISABLED"); return out; }
+        if (recipients == null || recipients.isEmpty()) { out.put("reason", "SKIPPED_NO_RECIPIENTS"); return out; }
+        String batchId = UUID.randomUUID().toString().substring(0, 8);
+        String now = ISO.format(Instant.now());
+        String since = ISO.format(Instant.now().minus(Duration.ofHours(1)));
+        String text = PushText.truncate(PushText.pushSafe(message), maxMessageChars());
+        int queued = 0, skipped = 0;
+        List<String> names = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        List<String> usernames = new ArrayList<>();
+        for (DirectRecipient r : recipients) {
+            String u = r.username() == null ? "" : r.username().trim();
+            if (u.isEmpty() || !seen.add(u)) { skipped++; continue; }
+            String status;
+            if (r.optOut()) status = "SKIPPED_USER_OPT_OUT";
+            else if (deliveryRepo.countRecentForUser(u, since) >= hourlyCap()) status = "RATE_LIMITED";
+            else if (circuitOpen()) status = "CIRCUIT_OPEN";
+            else status = "PENDING";
+            if (dedupeKey != null && deliveryRepo.existsByDedupeKeyAndUsername(dedupeKey, u)) { skipped++; continue; }
+            UserPushDelivery d = new UserPushDelivery();
+            d.setTrigger(trigger);
+            d.setDedupeKey(dedupeKey);
+            d.setMonitorType(monitorType == null ? "CERTIFICATE" : monitorType);
+            d.setMonitorName(monitorName);
+            d.setTeamId(teamId);
+            d.setAlertLevel(alertLevel);
+            d.setUsername(u);
+            d.setDisplayName(r.displayName() == null ? u : r.displayName());
+            d.setTitle(titleSetting());
+            d.setMessage(text);
+            d.setStatus(status);
+            d.setCreatedAt(now);
+            d.setBatchId(batchId);
+            try { deliveryRepo.save(d); } catch (Exception dup) { skipped++; continue; }
+            if ("PENDING".equals(status)) { queued++; names.add(d.getDisplayName()); }
+            else skipped++;
+            usernames.add(u);
+        }
+        if (queued > 0) worker.execute(this::drainOutbox);
+        out.put("queued", queued); out.put("skipped", skipped); out.put("recipients", names); out.put("batch_id", batchId);
+        out.put("usernames", usernames);   // çağıran, aynı olayın takım bildiriminden bu kişileri düşer
         return out;
     }
 

@@ -94,6 +94,10 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
 
     // ── Faz 3b: manager (müdür) → astları / yönettiği takımlar ──
     List<AppUser> findByManagerId(Long managerId);
+
+    /** Müdür push eşlemesi (2026-09-13): MANAGER kademe kontağının e-postası → aktif uygulama kullanıcısı (küçük harf). */
+    @Query("SELECT u FROM AppUser u WHERE u.active = true AND u.email IS NOT NULL AND LOWER(u.email) IN :emails")
+    List<AppUser> findActiveByEmailsLower(@Param("emails") Collection<String> emails);
     boolean existsByManagerId(Long managerId);
 
     /** Haftalık rapor PO bildirimi — kontağı olmayan takımlar için fallback. */

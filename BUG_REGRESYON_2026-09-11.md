@@ -574,3 +574,40 @@ Bilinen sınırlar (bilinçli): yorum dizisi e-posta/push bildirimi üretmez (PO
 yıl özeti PDF'i tarayıcının "PDF olarak kaydet"iyle (sunucu tarafı PDF yok); kılavuz §14.18'e ikinci tur bölümü sonraki
 belge turunda.
 → **REGRESYON YOK**.
+
+## Ek — yirmi sekizinci tur (2026-09-13, sürüm öncesi — Haftalık rapor onayı → takıma/müdüre push, `v20.64.0..HEAD`)
+
+Kapsam: 1 commit. İmza süpürmesi: test sicilleri M00050/M00060 biçiminde kurgu, e-postalar *@test; gerçek ad yok.
+Push kanal paritesi (bellek kuralı): e-posta ne gönderiyorsa push da — onay maili + takım/müdür push aynı anda.
+
+**Denetim odakları:**
+- Kanonik zincir (9 halka): AppSettingsCatalog (+2 BOOL) → UserPushController.PLAIN_KEYS → UserPushService okuma
+  (`weeklyTeamEnabled/weeklyManagerEnabled`, vars. true) → WeeklyReportService.approve/resend çağrısı → UI bölümü →
+  TR/EN etiket + `help.set.*` (settings-help-coverage kapısı) → teslimat günlüğü tetik kataloğu (`TRIGGERS` +
+  `userpush.trigger.WEEKLY_REPORT`) → testler → belge (bu tur). AppSettingsCatalogCoverageTest yeşil (kodda okunan her
+  anahtar katalogda).
+- Alıcı doğruluğu: müdür = e-postanın alıcısıyla aynı kişi (Team.managerId → MANAGER kontağı e-postası → AD zinciri);
+  e-posta eşlemesi LOWER() sorgusuyla (findAll taraması YOK — LDAP ile binlerce kullanıcı olabilir). Uygulama kullanıcısı
+  değilse sessizce atlanır (SKIPPED_NO_RECIPIENTS). Opt-out satırı yazılır ama gönderilmez (teşhis izi).
+- Seviye: takım bildirimi WARNING → uzman/PO grupları; yönetici (HIGH+) grubu bilerek almaz — o kişi zaten müdür
+  push'unun alıcısı (çift bildirim yok). Doğrudan kanalda sessiz saat uygulanmaz (bilgilendirme, alarm değil).
+- Yan etki: push hatası try/catch — onay/yeniden gönderim durmaz (test pinli); dedupe id+version(+:MGR) — yeniden
+  açılıp tekrar onaylanınca yeni bildirim, aynı sürümde tekrar yok; e-posta FAILED ise metin bunu söyler.
+- Kapılar: PushMessageContractTest (şablon yer tutucuları değişmedi), UserPushControllerTest, SettingsScopedAdminGate,
+  settings-help-coverage, eslint temiz.
+Bilinen sınırlar (bilinçli): tarayıcı doğrulaması bu turda YAPILMADI (oturum açılmadı; birim/kontrol testleri kapsıyor,
+sürüm sonrası ilk onayda teslimat günlüğüne bakılmalı); push metni sabit (şablon ayarı yok); yorum dizisi bildirimi yok.
+→ **REGRESYON YOK**.
+
+### 28. tur eki — /gstack-qa (2026-09-13, `v20.64.0..HEAD`, tarayıcı doğrulaması YAPILDI)
+
+Yukarıdaki "tarayıcı doğrulaması yapılmadı" sınırı kapandı: onay → e-posta + takım/müdür push zinciri, Webhook ayar bölümü,
+yorum dizisi sistem satırları ve hatırlatma satırı headless tarayıcıda uçtan uca doğrulandı. QA 2 bulgu (ikisi de
+Orta) buldu ve düzeltti, her biri ayrı commit + ayrı regresyon test dosyası:
+- ISSUE-001 (Fonksiyonel): PO = müdür e-postası olan kişiye aynı onay için İKİ push (takım + müdür satırı). Düzeltme:
+  müdür push'u önce; `enqueueDirect` dönen usernames takım bildiriminden düşülür (`enqueueTeamNotice` 8-arg, harf
+  duyarsız). Yeniden gönderimde teslimat günlüğü 3 satırdan 2'ye indi (kanıt QA raporunda).
+- ISSUE-002 (İçerik): hatırlatma durumu sayaçları bugünün haftasına bakıyordu; son giriş günü geçince (Cmt/Paz,
+  Cuma 09:00 sonrası) "2 takıma gidecek" yanlış sayı. Düzeltme: sonraki koşu gününün ISO haftası; yanıt `run_week`
+  taşır ve satırda gösterilir; saat enjekte edilebilir (Cmt/Çrş/Cuma-sonrası üç senaryo pinli — CI UTC tuzağı yok).
+Sağlık puanı 97 → 100 (bağlantı/perf/erişilebilirlik kapsam dışı). → **REGRESYON YOK**.

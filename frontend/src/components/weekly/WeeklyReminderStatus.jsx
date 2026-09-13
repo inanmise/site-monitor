@@ -39,7 +39,7 @@ export default function WeeklyReminderStatus({ nonce = 0 }) {
   return (
     <span className="wr-rem-status" role="note" title={t('wr.rem.title')}>
       <CalendarClock size={13} aria-hidden="true" />
-      <span>{t('wr.rem.next')}: <b>{st.next_run_at ? formatDate(st.next_run_at) : '—'}</b></span>
+      <span>{t('wr.rem.next')}: <b>{st.next_run_at ? formatDate(st.next_run_at) : '—'}</b>{st.run_week ? ` (${st.run_week})` : ''}</span>
       <span className="wr-rem-sep" aria-hidden="true">·</span>
       <span>{parts.join(' · ')}</span>
     </span>
