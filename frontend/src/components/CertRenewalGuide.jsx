@@ -120,7 +120,7 @@ export default function CertRenewalGuide({ isAdmin }) {
         </div>
         {isAdmin && (
           <button className="btn btn-primary" onClick={openAdd}>
-            <Plus size={16} style={{ marginRight: 4 }} />
+            <Plus size={16} />
             {t('guide.addLink')}
           </button>
         )}
