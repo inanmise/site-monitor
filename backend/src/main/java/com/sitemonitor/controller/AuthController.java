@@ -866,6 +866,7 @@ public class AuthController {
         resp.put("success", true);
         resp.put("message", "Login successful");
         resp.put("login_info", loginInfo(stamp));
+        resp.put("tour", com.sitemonitor.service.TourStateService.parse(user.getTourState()));   // ürün turu (giriş yanıtı da taşır: karşılama kartı F5 beklemesin)
         resp.put("username", user.getUsername());
         resp.put("user_id", user.getId());
         resp.put("team_id", user.getTeamId());
