@@ -1,9 +1,65 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-13T18:24:27Z",
+  "generatedAt": "2026-09-13T19:56:04Z",
   "repo": "inanmise/site-monitor",
-  "count": 650,
+  "count": 651,
   "releases": [
+    {
+      "version": "20.65.0",
+      "tag": "v20.65.0",
+      "releasedAt": "2026-09-13T19:55:53Z",
+      "commit": "d4899dd072935a113b504b7a592a7f291046dbee",
+      "prevVersion": "20.64.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 2
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "7c90d8f6",
+          "subject": "regression test for ISSUE-002 — Cumartesi/Cuma-sonrası sayaçlar gelecek haftaya bakar"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "a1f65d24",
+          "subject": "ISSUE-002 — hatırlatma durumu sayaçları sonraki koşunun haftasına baksın"
+        },
+        {
+          "type": "test",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "f4b3170c",
+          "subject": "regression test for ISSUE-001 — müdür bildirilen kişi takım push'undan düşülür"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "7fdb7c5d",
+          "subject": "ISSUE-001 — haftalık rapor onayında PO=müdür olan kişiye çift push gitmesin"
+        },
+        {
+          "type": "feat",
+          "scope": "weekly",
+          "breaking": false,
+          "sha": "c900fddf",
+          "subject": "onay sonrası takıma ve müdüre push bildirimi + Webhook ayarları"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.64.0",
       "tag": "v20.64.0",
