@@ -405,3 +405,23 @@ button-içinde-button, elle kurulmuş modal): temiz — yeni modallar tümü `Mo
 Bilinen sınırlar (bilinçli): restart anında tarayıcının ping'i 401 alırsa beni-hatırla ile YENİ oturum açılır (süre 0'dan
 başlar — doğru); `clearAllActiveSessions` açılışta kalır (in-memory profil için hâlâ gerekli).
 → **REGRESYON YOK**.
+
+## Ek — yirminci tur (2026-09-13, sürüm öncesi — iki `/qa` turu: tam süpürme + etkileşim akışları, `v20.60.0..HEAD`)
+
+Kapsam: 5 QA commit'i (17 dosya). İmza süpürmesi: skip-ci belirteci yok, gerçek kimlik yok, `useEscapeKey` çağrısı 11 dosyada
+da bileşen gövdesinde koşullu return'den ÖNCE (hook + erken-return tuzağı kontrol edildi: 0 return arada).
+
+**QA bulguları (`qa-report-localhost-2026-09-13-full.md`, `-flows.md`):**
+- Sertifika tabloları (Stats + Tüm Sertifikalar) 375 px'te kaydırma kabı yoktu → `.table-scroll`; akordiyon çubuğu etiketi
+  küçülmüyordu → ≤640 px sarma. (görsel, orta/düşük)
+- **11 detay modalı Escape ile kapanmıyordu** (9 izleme türü + Uptime + Sertifika; ModalShell'e taşınmamış eski modallar).
+  Ortak `hooks/useEscapeKey`: yalnız açıkken dinler, üstte `.modal-overlay` (ModalShell YA DA elle kurulu düzenleme formu —
+  form bilinçli olarak Escape/dış tıklamayla kapanmaz) varsa dokunmaz, `defaultPrevented` olayları yok sayar. İlk sürüm yalnız
+  `.modal-shell-overlay`'e bakıyordu → düzenleme formu açıkken Escape ALTTAKİ detayı kapattı; tarayıcıda yakalandı, commit
+  öncesi düzeltildi; `useEscapeKey.regression-1.test.jsx` katmanlamayı pinler.
+- 'Yeni Monitor' (aksansız, port/keyword/ping) → 'Yeni Monitör'.
+- Ertelenen: denetleyici hata metinleri EN arayüzde Türkçe (`SsrfGuard.UNRESOLVABLE_PREFIX` vb. — DB'de saklanıp
+  `MonitoringOutageService` tarafından desenle eşleniyor; hata-kodu sözleşmesi ayrı iş).
+Bilinen sınırlar: düzenleme formları Escape ile kapanmaz (bilinçli); headless QA'da 60 dk hareketsizlik çıkışı sentetik
+tıklamayı saymaz (araç notu, uygulama davranışı doğru).
+→ **REGRESYON YOK**.
