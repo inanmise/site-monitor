@@ -2025,7 +2025,7 @@ class AdminControllerTest {
         t.setId(2L);
         t.setName("Dijital");
         t.setWeeklyReminderEnabled(true);
-        when(userService.updateTeamWeeklyNotifications(anyLong(), any(), any())).thenReturn(t);
+        when(userService.updateTeamWeeklyNotifications(anyLong(), any(), any(), any())).thenReturn(t);
     }
 
     /** Oturumdaki kullanıcıyı verilen takım(lar)ın üyesi yapar (dar uç app_users'tan doğruluyor). */
@@ -2050,7 +2050,7 @@ class AdminControllerTest {
                         .content("{\"weekly_reminder_enabled\":true}"))
                 .andExpect(status().isOk());
 
-        verify(userService).updateTeamWeeklyNotifications(eq(2L), eq(Boolean.TRUE), isNull());
+        verify(userService).updateTeamWeeklyNotifications(eq(2L), eq(Boolean.TRUE), isNull(), isNull());
     }
 
     @Test
@@ -2065,7 +2065,7 @@ class AdminControllerTest {
                         .content("{\"weekly_availability_enabled\":false}"))
                 .andExpect(status().isOk());
 
-        verify(userService).updateTeamWeeklyNotifications(eq(7L), isNull(), eq(Boolean.FALSE));
+        verify(userService).updateTeamWeeklyNotifications(eq(7L), isNull(), eq(Boolean.FALSE), isNull());
     }
 
     @Test
@@ -2080,7 +2080,7 @@ class AdminControllerTest {
                         .content("{\"weekly_reminder_enabled\":true}"))
                 .andExpect(status().isForbidden());
 
-        verify(userService, never()).updateTeamWeeklyNotifications(anyLong(), any(), any());
+        verify(userService, never()).updateTeamWeeklyNotifications(anyLong(), any(), any(), any());
     }
 
     @Test
@@ -2107,8 +2107,29 @@ class AdminControllerTest {
                         .content("{\"weekly_reminder_enabled\":true,\"name\":\"Hacked\",\"active\":false,\"email\":\"x@y.com\"}"))
                 .andExpect(status().isOk());
 
-        verify(userService).updateTeamWeeklyNotifications(eq(2L), eq(Boolean.TRUE), isNull());
+        verify(userService).updateTeamWeeklyNotifications(eq(2L), eq(Boolean.TRUE), isNull(), isNull());
         verify(userService, never()).updateTeam(anyLong(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("PUT weekly-notifications: weekly_channels listesi temizlenip JSON dizi olur; boş liste şablonu kaldırır (\"\"); alan yoksa null")
+    void weeklyNotifications_channelsTemplate() throws Exception {
+        stubWeeklyToggle();
+        stubMembership(42L, 2L);
+
+        mvc.perform(put("/api/admin/teams/2/weekly-notifications")
+                        .session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"weekly_channels\":[\" Mobil \",\"\",\"Mobil\",\"Şube\"]}"))
+                .andExpect(status().isOk());
+        verify(userService).updateTeamWeeklyNotifications(eq(2L), isNull(), isNull(), eq("[\"Mobil\",\"Şube\"]"));
+
+        mvc.perform(put("/api/admin/teams/2/weekly-notifications")
+                        .session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"weekly_channels\":[]}"))
+                .andExpect(status().isOk());
+        verify(userService).updateTeamWeeklyNotifications(eq(2L), isNull(), isNull(), eq(""));
     }
 
     @Test

@@ -105,3 +105,58 @@ export function toUrlMapping({ selectedId, selTeamId, year, weekFilter, statusCh
     w_sort: sort && sort !== 'week|desc' ? sort : null,
   }
 }
+
+/** Yönetici yıl özeti (2026-09-13, ikinci tur): tamamlama panosundaki takım × hafta matrisinin
+ *  CSV'si — hücre = durum, ikinci blok = skor. Yazdırılabilir HTML'i buildYearSummaryHtml üretir. */
+export function buildYearSummaryCsv(data, t) {
+  const weeks = Array.from({ length: data?.weeks || 0 }, (_, i) => i + 1)
+  const st = (k) => t(`wrc.status.${k}`)
+  const head = [t('wrc.team'), ...weeks.map((w) => `W${String(w).padStart(2, '0')}`), t('wrc.status.APPROVED'), t('wrc.missingShort')]
+  const rows = (data?.teams || []).map((tm) => {
+    const byWeek = new Map((tm.cells || []).map((c) => [c.week, c]))
+    return [tm.team_name, ...weeks.map((w) => { const c = byWeek.get(w); return c ? (c.score != null ? `${st(c.status)} (${c.score})` : st(c.status)) : '' }), tm.approved ?? '', tm.missing ?? '']
+  })
+  return csvRows([head, ...rows])
+}
+
+const YS_COLORS = { MISSING: '#e5e7eb', DRAFT: '#fde68a', PENDING_APPROVAL: '#bfdbfe', APPROVED: '#bbf7d0', REJECTED: '#fecaca' }
+const escHtml = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+
+/** Yıl özetinin kendi başına yazdırılabilir HTML'i (gizli iframe → print → "PDF olarak kaydet").
+ *  Uygulama CSS'inden bağımsızdır: A4 yatay, takım × hafta ızgarası, hücrede skor, altta lejant. */
+export function buildYearSummaryHtml(data, t, { generatedAt = new Date() } = {}) {
+  const weeks = Array.from({ length: data?.weeks || 0 }, (_, i) => i + 1)
+  const st = (k) => t(`wrc.status.${k}`)
+  const cur = data?.current_week
+  const head = weeks.map((w) => `<th class="w${w === cur ? ' cur' : ''}">${w}</th>`).join('')
+  const rows = (data?.teams || []).map((tm) => {
+    const byWeek = new Map((tm.cells || []).map((c) => [c.week, c]))
+    const cells = weeks.map((w) => {
+      const c = byWeek.get(w)
+      const k = c?.status || 'MISSING'
+      const txt = c?.score != null ? c.score : (k === 'MISSING' ? '' : '·')
+      return `<td class="c" style="background:${YS_COLORS[k] || YS_COLORS.MISSING}" title="${escHtml(st(k))}">${escHtml(txt)}</td>`
+    }).join('')
+    return `<tr><td class="tm">${escHtml(tm.team_name)}${tm.reminder === false ? ' <span class="mute">⏸</span>' : ''}</td>${cells}<td class="sum">${escHtml(tm.approved ?? 0)} / ${escHtml(tm.missing ?? 0)}</td></tr>`
+  }).join('')
+  const legend = Object.keys(YS_COLORS).map((k) => `<span class="lg"><i style="background:${YS_COLORS[k]}"></i>${escHtml(st(k))}</span>`).join('')
+  const title = `${escHtml(t('wr.yearSummary'))} · ${escHtml(data?.year ?? '')}`
+  const stamp = escHtml(generatedAt.toISOString().slice(0, 16).replace('T', ' '))
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>
+@page{size:A4 landscape;margin:12mm}
+body{font:11px/1.35 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:#111;margin:0}
+h1{font-size:16px;margin:0 0 2px}.sub{color:#555;font-size:10px;margin:0 0 10px}
+table{border-collapse:collapse;width:100%}th,td{border:1px solid #d1d5db;padding:2px 3px;text-align:center}
+th.w{font-size:9px;width:16px}th.cur,td.cur{outline:2px solid #2563eb}
+td.tm{text-align:left;font-weight:600;white-space:nowrap}td.c{font-size:9px;font-variant-numeric:tabular-nums}
+td.sum{white-space:nowrap;font-weight:600}.mute{color:#999}
+.legend{margin-top:8px;font-size:10px;color:#333;display:flex;gap:12px;flex-wrap:wrap}
+.lg i{display:inline-block;width:10px;height:10px;border:1px solid #9ca3af;margin-right:3px;vertical-align:-1px}
+.note{margin-top:6px;font-size:9px;color:#666}
+</style></head><body>
+<h1>${title}</h1><p class="sub">${escHtml(t('wr.yearSummaryGenerated'))}: ${stamp} · ${escHtml(t('wrc.missing', data?.total_missing ?? 0))}</p>
+<table><thead><tr><th>${escHtml(t('wrc.team'))}</th>${head}<th>${escHtml(t('wrc.sum'))}</th></tr></thead><tbody>${rows}</tbody></table>
+<div class="legend">${legend}</div>
+<p class="note">${escHtml(t('wr.yearSummaryNote'))}</p>
+</body></html>`
+}

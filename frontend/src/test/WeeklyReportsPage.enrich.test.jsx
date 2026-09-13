@@ -69,6 +69,9 @@ describe('WeeklyReportsPage — zenginleştirme (2026-09-13)', () => {
   it('"Bu hafta" şeridi: takım durumları, rapor yoksa Oluştur → modal o hafta ile; geri sayım metni', async () => {
     renderPage()
     const strip = await screen.findByLabelText(/Bu hafta|This week/)
+    // Varsayılan KAPALI: başlıkta özet (1 takım eksik), açınca takım satırları
+    expect(strip.textContent).toMatch(/1 takımın raporu eksik|1 teams have no report/)
+    fireEvent.click(strip.querySelector('.wr-tw-head'))
     expect(strip.textContent).toMatch(/SY-A/); expect(strip.textContent).toMatch(/SY-B/)
     expect(strip.textContent).toMatch(/Son giriş|Deadline/)
     fireEvent.click(within(strip).getByText(/Oluştur|Create/))
@@ -137,8 +140,36 @@ describe('WeeklyReportsPage — zenginleştirme (2026-09-13)', () => {
   it('AUDIT: şeritte Oluştur yok, çubukta onay kuyruğu çipi yok', async () => {
     renderPage('AUDIT')
     const strip = await screen.findByLabelText(/Bu hafta|This week/)
+    fireEvent.click(strip.querySelector('.wr-tw-head'))
     expect(within(strip).queryByText(/Oluştur|Create/)).toBeNull()
     await waitFor(() => expect(document.querySelector('.wr-chips')).not.toBeNull())
     expect(document.querySelector('.wr-chip-mine')).toBeNull()
+  })
+
+  it('ikinci tur: listede yorum rozeti; detayda yorum paneli + "Şablondan tamamla" takım şablonundaki eksik kanalları ekler; hatırlatma durumu satırı', async () => {
+    api.weeklyReports.list.mockResolvedValue({ success: true, data: [{ ...PENDING, comment_count: 3 }, DRAFT, SENT] })
+    api.weeklyReports.remindersStatus.mockResolvedValue({ success: true, data: { enabled: true, next_run_at: '2026-09-18T06:00:00', will_send: 1, already_done: 0, no_email: 0, opt_in_teams: 1 } })
+    api.weeklyReports.comments.mockResolvedValue({ success: true, data: [{ id: 1, kind: 'SUBMIT', author: 'Ekip Üyesi', created_at: '2026-09-10T10:00:00' }] })
+    api.weeklyReports.get.mockImplementation(async (id) => id === 11
+      ? { success: true, data: { report: DRAFT, images: [], team_channels: ['Web Kanalı', 'Mobil'] } }
+      : { success: true, data: { report: PENDING, images: [] } })
+    renderPage()
+    await waitFor(() => expect(document.querySelector('.wr-cm-badge')).not.toBeNull())
+    expect(document.querySelector('.wr-cm-badge').textContent).toBe('3')
+    const rem = await screen.findByRole('note')
+    expect(rem.textContent).toMatch(/1 takıma gidecek|going to 1 teams/)
+    // detay: DRAFT (11) düzenlenebilir → şablon düğmesi (2 eksik), tıklayınca 2 kanal sekmesi
+    const rows = document.querySelectorAll('.wr-table tbody tr')   // hafta desc: 37, 36, 35
+    fireEvent.click(rows[1])
+    await waitFor(() => expect(api.weeklyReports.get).toHaveBeenCalledWith(11))
+    await screen.findByText('2026-W36')
+    const fill = await screen.findByText(/Şablondan tamamla \(2\)|Fill in from template \(2\)/)
+    fireEvent.click(fill)
+    await waitFor(() => expect(screen.getByText('Mobil')).toBeInTheDocument())
+    expect(screen.queryByText(/Şablondan tamamla|Fill in from template/)).toBeNull()
+    // yorum paneli: sistem satırı listelenir, form var (ADMIN yazabilir)
+    await waitFor(() => expect(api.weeklyReports.comments).toHaveBeenCalledWith(11))
+    await screen.findByText(/Onaya gönderildi|Submitted for approval/)
+    expect(document.querySelector('.wr-cm-input')).not.toBeNull()
   })
 })

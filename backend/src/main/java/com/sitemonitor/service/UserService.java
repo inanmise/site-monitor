@@ -629,9 +629,15 @@ public class UserService {
      *  Ad/e-posta/aktiflik gibi yönetici alanlarına buradan DOKUNULAMAZ; null = "bu anahtara dokunma". */
     @Transactional
     public Team updateTeamWeeklyNotifications(Long id, Boolean weeklyReminderEnabled, Boolean weeklyAvailabilityEnabled) {
+        return updateTeamWeeklyNotifications(id, weeklyReminderEnabled, weeklyAvailabilityEnabled, null);
+    }
+
+    /** @param weeklyChannels null = dokunma; JSON dizi metni (temizlenmiş) ya da boş dize = şablonu kaldır (2026-09-13). */
+    public Team updateTeamWeeklyNotifications(Long id, Boolean weeklyReminderEnabled, Boolean weeklyAvailabilityEnabled, String weeklyChannels) {
         Team team = teamRepo.findById(id).orElseThrow(() -> new NoSuchElementException("Team not found: " + id));
         if (weeklyReminderEnabled != null) team.setWeeklyReminderEnabled(weeklyReminderEnabled);
         if (weeklyAvailabilityEnabled != null) team.setWeeklyAvailabilityEnabled(weeklyAvailabilityEnabled);
+        if (weeklyChannels != null) team.setWeeklyChannels(weeklyChannels.isBlank() ? null : weeklyChannels);
         team.setUpdatedAt(now());
         return teamRepo.save(team);
     }

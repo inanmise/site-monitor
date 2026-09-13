@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   Plus, Save, Send, CheckCircle, Undo2, Eye, Trash2, RefreshCcw, ArrowLeft, Menu, History, FilePenLine,
-  HelpCircle, ChevronDown, Bell, Mail, ArrowRightLeft, Printer, ChevronLeft, ChevronRight, Download, Sparkles,
+  HelpCircle, ChevronDown, Bell, Mail, ArrowRightLeft, Printer, ChevronLeft, ChevronRight, Download, Sparkles, MessageSquare, ListPlus,
 } from 'lucide-react'
 import UserBadge from './ui/UserBadge.jsx'
 import WeeklyKpiStrip from './WeeklyKpiStrip.jsx'
@@ -27,6 +27,8 @@ import WeeklyCompletionBoard from './WeeklyCompletionBoard.jsx'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import WeeklyThisWeekStrip from './weekly/WeeklyThisWeekStrip.jsx'
+import WeeklyComments from './weekly/WeeklyComments.jsx'
+import WeeklyReminderStatus from './weekly/WeeklyReminderStatus.jsx'
 import { WeeklyStatusChips, SortTh, ScoreBadge, DeltaBadge, SuggestBadge, PrevNoteToggle } from './weekly/WeeklyListExtras.jsx'
 import { statusFacets, approvalQueue, filterByStatus, sortReports, parsePrevContent, buildYearCsv, toUrlMapping } from './weekly/weeklyModel.js'
 
@@ -352,6 +354,8 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   const [monStats, setMonStats] = useState(null)         // İzleme göstergeleri (lazy, akordeon açılınca)
   const [monLoading, setMonLoading] = useState(false)
   const [managerMissing, setManagerMissing] = useState(false)
+  const [teamChannels, setTeamChannels] = useState([])     // takım kanal şablonu (2026-09-13, ikinci tur)
+  const [reminderNonce, setReminderNonce] = useState(0)    // hatırlatma durumu satırını elle gönderim sonrası tazele
   const [channelTab, setChannelTab] = useState(0)
   const [dirty, setDirty] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -511,6 +515,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       const r = res.data.report
       setReport({ ...r, images: res.data.images })
       setManagerMissing(!!res.data.manager_contact_missing)
+      setTeamChannels(Array.isArray(res.data.team_channels) ? res.data.team_channels : [])
       try { setContent(JSON.parse(r.content_json)) } catch { setContent(null) }
       setDirty(false)
       setChannelTab(0)
@@ -953,6 +958,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       toast.error(t('wr.reminderFailed'))
     } finally {
       setSendingReminder(false)
+      setReminderNonce((n) => n + 1)
     }
   }
 
@@ -1067,6 +1073,17 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     setChannelTab(channels.length)
   }
 
+  /** Takım kanal şablonundaki eksik kanalları ekler (2026-09-13); mevcut adlar korunur. */
+  function fillChannelsFromTemplate() {
+    const channels = content?.item4?.channels ?? []
+    const have = new Set(channels.map((c) => String(c.name || '').trim().toLocaleLowerCase('tr')))
+    const missing = teamChannels.filter((n) => !have.has(String(n).trim().toLocaleLowerCase('tr')))
+    if (!missing.length) return
+    const stamp = Date.now()
+    patch(['item4', 'channels'], [...channels, ...missing.map((n, i) => ({ id: `c-${stamp}-${i}`, name: n, notes_md: '' }))])
+    setChannelTab(channels.length)
+  }
+
   async function removeChannel(idx) {
     const ch = content.item4.channels[idx]
     const ok = await showConfirm({
@@ -1094,6 +1111,11 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   const i1 = content?.item1 ?? {}
   const i2 = content?.item2 ?? {}
   const channels = content?.item4?.channels ?? []
+  const rawChannels = content?.item4?.channels
+  const missingTemplateChannels = useMemo(() => {
+    const have = new Set((rawChannels ?? []).map((c) => String(c.name || '').trim().toLocaleLowerCase('tr')))
+    return teamChannels.filter((n) => !have.has(String(n).trim().toLocaleLowerCase('tr')))
+  }, [rawChannels, teamChannels])
   // "Tarihe Git" hafta filtresi etkinse tablo o haftaya daraltılır
   const teamNameOf = (tid) => isAdmin ? (teams.find((tm) => tm.id === tid)?.name ?? '') : (teamName ?? '')
   const queueCtx = { isAdmin, isAudit, teamId }
@@ -1209,6 +1231,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
             onClick={sendReminders} disabled={sendingReminder}>
             <Bell size={14} /> {sendingReminder ? t('wr.reminderSending') : t('wr.sendReminderNow')}
           </button>
+          <WeeklyReminderStatus nonce={reminderNonce} />
         </div>
       )}
 
@@ -1332,6 +1355,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                     <td data-label={t('wr.statusCol')}>
                       {statusBadge(r.status, r.sent_at)}
                       {r.reject_note && r.status !== 'APPROVED' && <span className="wr-reject-flag" title={t('wr.rejectFlagTitle')}>↩</span>}
+                      {r.comment_count > 0 && <span className="wr-cm-badge" title={t('wr.cm.badge', r.comment_count)}><MessageSquare size={11} aria-hidden="true" />{r.comment_count}</span>}
                       {r.editing_by && (
                         <div style={{ fontSize: '.72em', color: 'var(--text-light)', marginTop: 3 }}>
                           ✏️ <UserBadge username={r.editing_by} inline size="sm" /> {t('wr.editingNow')}
@@ -1628,6 +1652,12 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                 <Plus size={12} /> {t('wr.addChannel')}
               </button>
             )}
+            {editable && missingTemplateChannels.length > 0 && (
+              <button type="button" className="admin-tab-btn wr-tpl-btn" onClick={fillChannelsFromTemplate}
+                title={t('wr.fillChannelsTitle', missingTemplateChannels.join(', '))}>
+                <ListPlus size={12} /> {t('wr.fillChannels', missingTemplateChannels.length)}
+              </button>
+            )}
           </div>
           {channels[channelTab] && (
             <div style={{ marginTop: 10 }}>
@@ -1647,6 +1677,9 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                 onChange={(v) => patch(['item4', 'channels', channelTab, 'notes_md'], v)} height={220} />
             </div>
           )}
+
+          {/* ── Yorum dizisi (2026-09-13, ikinci tur): PO ↔ takım gidiş-gelişi; durum geçişinde tazelenir ── */}
+          <WeeklyComments reportId={report.id} canWrite={!isAudit} nonce={report.status} />
 
           {/* ── Alt aksiyon barı (sticky) ── */}
           <div className="modal-actions wr-actions">{actionButtons}</div>

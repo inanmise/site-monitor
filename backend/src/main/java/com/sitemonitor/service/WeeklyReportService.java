@@ -69,6 +69,10 @@ public class WeeklyReportService {
     // Alan adı koruma özeti (kara liste / transfer kilidi) — salt okuma, iki basit depo.
     private final com.sitemonitor.repository.DomainMonitorRepository domainMonitorRepo;
     private final com.sitemonitor.repository.DomainCheckRepository domainCheckRepo;
+    /** Yorum dizisi (2026-09-13, ikinci tur). Alan enjeksiyonu: yapıcı imzası değişmesin (testler konumsal kurar);
+     *  null ise (eski testler) sistem yorumları sessizce atlanır. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.WeeklyReportCommentRepository commentRepo;
 
     /** static resetTemplate için paylaşılan, thread-safe mapper — her çağrıda
      *  yeni ObjectMapper kurma maliyetini önler (Jackson 3 mapper'ları yeniden
@@ -136,7 +140,7 @@ public class WeeklyReportService {
              "item4":{"channels":[
                {"id":"c-1","name":"İnternet","notes_md":""},
                {"id":"c-2","name":"Çağrı Merkezi","notes_md":""},
-               {"id":"c-3","name":"Web Kanalı (Akbank.com)","notes_md":""}]}}
+               {"id":"c-3","name":"Web Kanalı","notes_md":""}]}}
             """;
 
     /** Controller session'dan kurar — servis testleri MockHttpSession istemez. */
@@ -209,6 +213,7 @@ public class WeeklyReportService {
                 if ("MISSING".equals(status) || "DRAFT".equals(status) || "REJECTED".equals(status)) missing++;
                 Map<String, Object> c = new java.util.LinkedHashMap<>();
                 c.put("week", w); c.put("status", status); c.put("report_id", r == null ? null : r.getId());
+                c.put("score", r == null ? null : r.getScore());   // yıl özeti (2026-09-13)
                 cells.add(c);
             }
             totalMissing += missing;
@@ -266,7 +271,7 @@ public class WeeklyReportService {
         Long teamId = actor.isAdmin() ? requestedTeamId : actor.teamId();
         if (teamId == null) throw new IllegalArgumentException("Takım belirlenemedi");
         if (weekNo < 1 || weekNo > 53) throw new IllegalArgumentException("Geçersiz hafta numarası: " + weekNo);
-        teamRepo.findById(teamId)
+        Team team = teamRepo.findById(teamId)
                 .orElseThrow(() -> new NoSuchElementException("Team not found: " + teamId));
         if (!actor.isAdmin() && !Objects.equals(actor.teamId(), teamId)) {
             throw new SecurityException("Başka takım için rapor oluşturulamaz");
@@ -278,7 +283,7 @@ public class WeeklyReportService {
         // Şablon: takımın en güncel raporunun yapısı (kanallar + takip URL'leri); istenirse notlar da taşınır
         String content = reportRepo.findFirstByTeamIdOrderByReportYearDescWeekNoDesc(teamId)
                 .map(prev -> carryNotes ? carryTemplate(prev.getContentJson(), prev.getWeekLabel()) : resetTemplate(prev.getContentJson()))
-                .orElse(DEFAULT_TEMPLATE_JSON);
+                .orElseGet(() -> templateForTeam(team));   // ilk rapor: takım kanal şablonu (2026-09-13) ya da varsayılan
 
         String now = now();
         WeeklyReport r = new WeeklyReport();
@@ -450,6 +455,7 @@ public class WeeklyReportService {
         r.setSubmittedAt(now());
         r.setUpdatedBy(actor.display());
         r.setUpdatedAt(now());
+        systemComment(r, "SUBMIT", actor, null);
         // Gönderim anı skoru (2026-09-13): liste sütunu için anlık görüntü; KPI hesabı düşerse gönderim durmaz
         try {
             var k = kpiService.compute(r.getTeamId(), r.getReportYear(), r.getWeekNo());
@@ -504,6 +510,7 @@ public class WeeklyReportService {
         r.setApprovedBy(actor.display());
         r.setApprovedAt(now());
         r.setRejectNote(null);
+        systemComment(r, "APPROVE", actor, null);
         if (mailSent(mailStatus)) r.setSentAt(now());
         r.setUpdatedBy(actor.display());
         r.setUpdatedAt(now());
@@ -714,6 +721,7 @@ public class WeeklyReportService {
         r.setApprovedBy(null);
         r.setApprovedAt(null);
         r.setUpdatedBy(actor.display());
+        systemComment(r, "REOPEN", actor, null);
         r.setUpdatedAt(now());
         log.info("Haftalık rapor revizyona açıldı (APPROVED→DRAFT): id={} team={} by={}",
                 id, r.getTeamId(), actor.display());
@@ -788,6 +796,7 @@ public class WeeklyReportService {
         r.setRejectNote(note.trim());
         r.setRejectedBy(actor.display());
         r.setRejectedAt(now());
+        systemComment(r, "REJECT", actor, note.trim());
         r.setUpdatedBy(actor.display());
         r.setUpdatedAt(now());
         reportRepo.save(r);
@@ -997,6 +1006,7 @@ public class WeeklyReportService {
         requireCanDelete(r, actor);
         imageRepo.deleteByReportId(id);
         mailRepo.deleteByReportId(id);
+        if (commentRepo != null) commentRepo.deleteByReportId(id);
         reportRepo.delete(r);
         log.info("Haftalık rapor silindi: id={} team={} week={} by={}",
                 id, r.getTeamId(), r.getWeekLabel(), actor.display());
@@ -1346,6 +1356,125 @@ public class WeeklyReportService {
             m.put("sent_at", r == null ? null : r.getSentAt());   // APPROVED + gönderildi → şeritte "Gönderildi"
             teams.add(m);
         }
+        out.put("teams", teams);
+        return out;
+    }
+
+    // ── Yorum dizisi (2026-09-13, ikinci tur) ─────────────────────────────────
+
+    public static final int COMMENT_MAX = 2000;
+
+    /** Durum geçişi yorumu (SUBMIT/APPROVE/REJECT/REOPEN) — hata durum makinesini durdurmaz. */
+    private void systemComment(WeeklyReport r, String kind, Actor actor, String text) {
+        if (commentRepo == null || r.getId() == null) return;
+        try {
+            com.sitemonitor.model.WeeklyReportComment c = new com.sitemonitor.model.WeeklyReportComment();
+            c.setReportId(r.getId()); c.setKind(kind); c.setAuthor(actor.display()); c.setAuthorId(actor.userId());
+            c.setText(text); c.setCreatedAt(now());
+            commentRepo.save(c);
+        } catch (Exception e) {
+            log.warn("Haftalık rapor sistem yorumu yazılamadı (id={}, kind={}): {}", r.getId(), kind, e.toString());
+        }
+    }
+
+    /** Raporu görebilen herkes yorumları görür (get ile aynı kapı). */
+    public List<com.sitemonitor.model.WeeklyReportComment> comments(Long id, Actor actor) {
+        get(id, actor);
+        return commentRepo == null ? List.of() : commentRepo.findByReportIdOrderByCreatedAtAsc(id);
+    }
+
+    /** Serbest yorum: raporu görebilen (AUDIT hariç) herkes; 1–2000 karakter. */
+    public com.sitemonitor.model.WeeklyReportComment addComment(Long id, String text, Actor actor) {
+        WeeklyReport r = get(id, actor);
+        if (actor.isAudit()) throw new SecurityException("Denetçi yorum yazamaz");
+        String t = text == null ? "" : text.trim();
+        if (t.isEmpty()) throw new IllegalArgumentException("Yorum boş olamaz");
+        if (t.length() > COMMENT_MAX) throw new IllegalArgumentException("Yorum en çok " + COMMENT_MAX + " karakter");
+        if (commentRepo == null) throw new IllegalStateException("Yorum deposu yok");
+        com.sitemonitor.model.WeeklyReportComment c = new com.sitemonitor.model.WeeklyReportComment();
+        c.setReportId(r.getId()); c.setKind("COMMENT"); c.setAuthor(actor.display()); c.setAuthorId(actor.userId());
+        c.setText(t); c.setCreatedAt(now());
+        return commentRepo.save(c);
+    }
+
+    /** Liste rozeti: rapor → yorum sayısı. */
+    public Map<Long, Long> commentCounts(Collection<Long> ids) {
+        Map<Long, Long> out = new java.util.HashMap<>();
+        if (commentRepo == null || ids == null || ids.isEmpty()) return out;
+        for (Object[] row : commentRepo.countByReportIds(ids)) out.put(((Number) row[0]).longValue(), ((Number) row[1]).longValue());
+        return out;
+    }
+
+    // ── Takım kanal şablonu (2026-09-13, ikinci tur) ──────────────────────────
+
+    /** Takımın kanal şablonu (JSON dizi) varsa onunla, yoksa varsayılan şablonla başlar. */
+    static String templateForTeam(Team team) {
+        List<String> names = channelTemplate(team == null ? null : team.getWeeklyChannels());
+        if (names.isEmpty()) return DEFAULT_TEMPLATE_JSON;
+        try {
+            ObjectNode root = (ObjectNode) TEMPLATE_MAPPER.readTree(DEFAULT_TEMPLATE_JSON);
+            var arr = TEMPLATE_MAPPER.createArrayNode();
+            int i = 1;
+            for (String n : names) { ObjectNode ch = TEMPLATE_MAPPER.createObjectNode(); ch.put("id", "c-" + i++); ch.put("name", n); ch.put("notes_md", ""); arr.add(ch); }
+            root.withObject("item4").set("channels", arr);
+            return TEMPLATE_MAPPER.writeValueAsString(root);
+        } catch (Exception e) {
+            return DEFAULT_TEMPLATE_JSON;
+        }
+    }
+
+    /** JSON dizi → temiz ad listesi (boşlar atılır, tekil, ≤20 × ≤60 karakter). */
+    public static List<String> channelTemplate(String json) {
+        List<String> out = new ArrayList<>();
+        if (json == null || json.isBlank()) return out;
+        try {
+            JsonNode n = TEMPLATE_MAPPER.readTree(json);
+            if (!n.isArray()) return out;
+            for (JsonNode x : n) {
+                String v = x.asText("").trim();
+                if (v.isEmpty() || out.contains(v)) continue;
+                out.add(v.length() > 60 ? v.substring(0, 60) : v);
+                if (out.size() >= 20) break;
+            }
+        } catch (Exception e) { /* bozuk şablon → boş */ }
+        return out;
+    }
+
+    // ── Hatırlatma görünürlüğü (2026-09-13, ikinci tur) ───────────────────────
+
+    /**
+     * Zamanlayıcı her gün 09:00 IST koşar ama yalnız son giriş GÜNÜNDE gönderir → bir sonraki gönderim
+     * = son giriş gününün bir sonraki gelişi 09:00. Alıcı özeti: hatırlatması açık / e-postası olmayan /
+     * bu hafta zaten girmiş takımlar (reminder servisiyle aynı kurallar).
+     */
+    public Map<String, Object> reminderStatus(boolean enabled) {
+        WeeklyReportDeadline d = WeeklyReportDeadline.resolve(appSettings);
+        java.time.ZonedDateTime nowIst = java.time.ZonedDateTime.now(IST);
+        java.time.ZonedDateTime next = nowIst.toLocalDate().atTime(9, 0).atZone(IST);
+        while (next.getDayOfWeek() != d.day() || !next.isAfter(nowIst)) next = next.plusDays(1);
+        LocalDate today = today();
+        int year = today.get(java.time.temporal.WeekFields.ISO.weekBasedYear());
+        int week = today.get(java.time.temporal.WeekFields.ISO.weekOfWeekBasedYear());
+        int optIn = 0, noEmail = 0, done = 0, will = 0;
+        List<Map<String, Object>> teams = new ArrayList<>();
+        for (Team t : teamRepo.findByActiveTrueOrderByNameAsc()) {
+            if (!Boolean.TRUE.equals(t.getWeeklyReminderEnabled())) continue;
+            optIn++;
+            boolean hasMail = t.getEmail() != null && !t.getEmail().isBlank();
+            String st = reportRepo.findByTeamIdAndReportYearAndWeekNo(t.getId(), year, week).map(WeeklyReport::getStatus).orElse("MISSING");
+            boolean isDone = "PENDING_APPROVAL".equals(st) || "APPROVED".equals(st);
+            if (!hasMail) noEmail++;
+            if (isDone) done++;
+            if (hasMail && !isDone) will++;
+            Map<String, Object> m = new java.util.LinkedHashMap<>();
+            m.put("team_id", t.getId()); m.put("team_name", t.getName()); m.put("has_email", hasMail); m.put("done", isDone);
+            teams.add(m);
+        }
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("enabled", enabled);
+        out.put("deadline_day", d.dayCode()); out.put("deadline_time", d.timeText());
+        out.put("next_run_at", ISO.format(next.withZoneSameInstant(ZoneOffset.UTC)));
+        out.put("opt_in_teams", optIn); out.put("no_email", noEmail); out.put("already_done", done); out.put("will_send", will);
         out.put("teams", teams);
         return out;
     }

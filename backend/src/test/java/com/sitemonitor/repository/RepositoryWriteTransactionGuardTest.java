@@ -73,6 +73,7 @@ class RepositoryWriteTransactionGuardTest {
             // Haftalık rapor — WeeklyReportService (@Transactional): rapor + görsel + mail kaydı + kilitler birlikte.
             "WeeklyReportImageRepository#deleteByReportId",
             "WeeklyReportMailRepository#deleteByReportId",
+            "WeeklyReportCommentRepository#deleteByReportId",   // WeeklyReportService.delete (@Transactional), 2026-09-13
             "WeeklyReportRepository#clearLocksByUser",
             // Giriş sorunu bildirimi — LoginIssueService#delete (@Transactional): bildirim + görseller birlikte.
             "LoginIssueReportImageRepository#deleteByReportId",

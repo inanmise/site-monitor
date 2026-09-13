@@ -424,6 +424,11 @@ export const api = {
     suggestions: (id) => request(`/weekly-reports/${id}/suggestions`),       // sistemden öneriler (2026-09-13)
     previous: (id) => request(`/weekly-reports/${id}/previous`),             // önceki hafta (Δ + not paneli) (2026-09-13)
     mails: (id) => request(`/weekly-reports/${id}/mails`),
+    comments: (id) => request(`/weekly-reports/${id}/comments`),             // yorum dizisi (2026-09-13, ikinci tur)
+    addComment: (id, text) => request(`/weekly-reports/${id}/comments`, {
+      method: 'POST', body: JSON.stringify({ text }),
+    }),
+    remindersStatus: () => request('/weekly-reports/reminders/status'),      // hatırlatma görünürlüğü (admin/AUDIT)
     create: (payload) => request('/weekly-reports', {
       method: 'POST', body: JSON.stringify(payload),
     }),

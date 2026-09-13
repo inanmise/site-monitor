@@ -47,6 +47,9 @@ public class WeeklyReportController {
     private final MonitoringWeeklyStatsService monitoringStatsService;
     private final com.sitemonitor.service.AppSettingsService appSettings;   // son giriş zamanı (2026-09-12)
     private final com.sitemonitor.repository.IncidentRecordRepository incidentRepo;   // öneri: açık olay sayısı (2026-09-13)
+    private final com.sitemonitor.repository.TeamRepository teamRepo;                  // takım kanal şablonu (2026-09-13)
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.weekly-report.reminder-enabled:true}")
+    private boolean reminderEnabled;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -61,9 +64,11 @@ public class WeeklyReportController {
         // Liste görünümünde content_json taşınmaz (boyut) — özet alanlar yeter
         Map<Long, String> mailStatuses = service.lastMailStatuses(
                 reports.stream().map(WeeklyReport::getId).toList());
+        Map<Long, Long> commentCounts = service.commentCounts(reports.stream().map(WeeklyReport::getId).toList());
         List<Map<String, Object>> summaries = reports.stream().map(r -> {
             Map<String, Object> m = summary(r);
             m.put("last_mail_status", mailStatuses.get(r.getId()));
+            m.put("comment_count", commentCounts.getOrDefault(r.getId(), 0L));   // yorum rozeti (2026-09-13)
             return m;
         }).toList();
         return ok(Map.of("data", summaries));
@@ -102,6 +107,33 @@ public class WeeklyReportController {
         m.put("day_en", d.dayNameEn());
         m.put("valid", d.valid());
         return ok(Map.of("data", m));
+    }
+
+    /** Yorum dizisi (2026-09-13): raporu görebilen herkes okur. */
+    @GetMapping("/{id}/comments")
+    public ResponseEntity<Map<String, Object>> comments(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "weekly_reports.read", "view");
+        return ok(Map.of("data", service.comments(id, actor(session))));
+    }
+
+    /** Yorum ekle (COMMENT): AUDIT hariç, raporu görebilen herkes; denetim kaydı düşer. */
+    @PostMapping("/{id}/comments")
+    public ResponseEntity<Map<String, Object>> addComment(@PathVariable Long id, @RequestBody Map<String, Object> body,
+                                                          HttpSession session, HttpServletRequest request) {
+        permissionService.require(session, "weekly_reports.read", "view");
+        var c = service.addComment(id, body.get("text") == null ? null : body.get("text").toString(), actor(session));
+        auditService.recordAction("WEEKLY_REPORT_COMMENT", session, request, "WEEKLY_REPORT", id.toString(),
+                "{\"comment_id\":" + c.getId() + ",\"chars\":" + (c.getText() == null ? 0 : c.getText().length()) + "}");
+        return ok(Map.of("data", c));
+    }
+
+    /** Hatırlatma görünürlüğü (2026-09-13): sonraki koşu, alıcı özeti (admin/AUDIT). */
+    @GetMapping("/reminders/status")
+    public ResponseEntity<Map<String, Object>> reminderStatus(HttpSession session) {
+        permissionService.require(session, "weekly_reports.read", "view");
+        Actor a = actor(session);
+        if (!a.isAdmin() && !a.isAudit()) throw new SecurityException("Yalnız yönetici");
+        return ok(Map.of("data", service.reminderStatus(reminderEnabled)));
     }
 
     /** "Bu hafta" şeridi (2026-09-13): kapsamdaki takımların bu haftaki rapor durumu + son giriş anı. */
@@ -180,6 +212,9 @@ public class WeeklyReportController {
         data.put("report", r);
         data.put("images", images);
         data.put("manager_contact_missing", service.managerContactMissing(r.getTeamId()));
+        // Takım kanal şablonu (2026-09-13): editördeki "Kanalları şablondan tamamla" düğmesi
+        data.put("team_channels", teamRepo.findById(r.getTeamId())
+                .map(tm -> com.sitemonitor.service.WeeklyReportService.channelTemplate(tm.getWeeklyChannels())).orElse(List.of()));
         // Bayatlık SUNUCUDA hesaplanır — istemci saatine güvenilmez
         data.put("lock_holder", service.lockHeldByOther(r, a)
                 ? Map.of("name", r.getEditingBy(), "heartbeat_at", r.getEditingHeartbeat())

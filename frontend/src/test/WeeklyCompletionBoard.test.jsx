@@ -21,6 +21,9 @@ describe('WeeklyCompletionBoard', () => {
     const onPick = vi.fn()
     render(<WeeklyCompletionBoard year={2026} onPick={onPick} />)
     await screen.findByText(/2 eksik hafta|2 missing weeks/)
+    // Varsayılan KAPALI (2026-09-13) — başlık tıklanınca açılır
+    expect(document.querySelectorAll('.wrc-cell:not(.wrc-cell--legend)').length).toBe(0)
+    fireEvent.click(document.querySelector('.wrc-head'))
     expect(document.querySelectorAll('.wrc-cell:not(.wrc-cell--legend)').length).toBe(6)
     expect(document.querySelectorAll('.wrc-cell--missing:not(.wrc-cell--legend)').length).toBe(1)
     expect(document.querySelector('.wrc-noremind')).not.toBeNull()   // Takım A hatırlatması kapalı

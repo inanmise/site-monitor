@@ -13361,7 +13361,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .wr-tw { border: 1px solid var(--border); border-left: 4px solid var(--primary); border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; background: var(--bg-card); }
 .wr-tw--late { border-left-color: var(--danger); }
 .wr-tw--ok { border-left-color: var(--success); }
-.wr-tw-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.wr-tw-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; width: 100%; background: none; border: 0; padding: 0; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.wr-tw-list { margin-top: 6px; }
+.wr-tw-sum { font-size: .84em; color: var(--text-light); }
+.wr-tw-sum.is-open { color: #b45309; font-weight: 600; }
+.wr-tw-chev { color: var(--text-light); transition: transform .15s; }
+.wr-tw-chev.is-open { transform: rotate(180deg); }
 .wr-tw-week { color: var(--text-light); font-size: .88em; }
 .wr-tw-due { font-size: .84em; font-weight: 600; color: var(--text-light); display: inline-flex; align-items: center; gap: 4px; }
 .wr-tw-due.is-past { color: var(--danger); }
@@ -13408,3 +13413,39 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   .wr-table td[data-label]::before { content: attr(data-label); font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-light); text-align: left; flex: 0 0 40%; }
   .wr-tw-item { gap: 6px; }
 }
+
+/* ── Haftalık rapor ikinci tur (2026-09-13): yorum dizisi · hatırlatma durumu · yıl özeti · kanal şablonu ── */
+.wr-cm { margin-top: 18px; }
+.wr-cm-head { display: flex; align-items: center; gap: 6px; }
+.wr-cm-count { font-size: .72em; font-weight: 700; background: var(--bg-hover, #eef2f7); color: var(--text-light); border-radius: 999px; padding: 1px 8px; }
+.wr-cm-empty { font-size: .84em; color: var(--text-light); padding: 8px 2px; }
+.wr-cm-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.wr-cm-item { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--bg-surface); }
+.wr-cm-item--sys { background: var(--bg-hover, #f8fafc); border-style: dashed; }
+.wr-cm-item--approve { border-color: #86efac; }
+.wr-cm-item--reject { border-color: #fca5a5; }
+.wr-cm-item--submit { border-color: #93c5fd; }
+.wr-cm-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: .78em; color: var(--text-light); }
+.wr-cm-kind { color: var(--text); }
+.wr-cm-text { margin-top: 4px; font-size: .9em; white-space: pre-wrap; word-break: break-word; }
+.wr-cm-form { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.wr-cm-input { width: 100%; resize: vertical; min-height: 48px; font: inherit; }
+.wr-cm-form-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.wr-cm-hint { font-size: .76em; color: var(--text-light); }
+.wr-cm-err { font-size: .82em; color: #dc2626; }
+.wr-cm-badge { display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; font-size: .72em; font-weight: 700; color: var(--text-light); vertical-align: middle; }
+.wr-reminder-trigger { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.wr-rem-status { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: .8em; color: var(--text-light); }
+.wr-rem-status b { color: var(--text); }
+.wr-rem-status.is-off { color: #b45309; }
+.wr-rem-sep { opacity: .6; }
+.wrc-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); }
+.wrc-tools-label { font-size: .8em; font-weight: 600; color: var(--text-light); }
+.wrc-print-frame { position: fixed; right: 0; bottom: 0; width: 0; height: 0; border: 0; visibility: hidden; }
+.wr-tpl-btn { border-style: dashed; }
+.tm-weekly-channels { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+[data-theme="dark"] .wr-cm-item--sys { background: rgba(255,255,255,.03); }
+[data-theme="dark"] .wr-cm-item--approve { border-color: #166534; }
+[data-theme="dark"] .wr-cm-item--reject { border-color: #991b1b; }
+[data-theme="dark"] .wr-cm-item--submit { border-color: #1e40af; }
+@media print { .wr-cm-form { display: none !important; } }
