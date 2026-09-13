@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-13T19:56:04Z",
+  "generatedAt": "2026-09-13T20:10:05Z",
   "repo": "inanmise/site-monitor",
-  "count": 651,
+  "count": 652,
   "releases": [
+    {
+      "version": "20.66.0",
+      "tag": "v20.66.0",
+      "releasedAt": "2026-09-13T20:09:57Z",
+      "commit": "3b4de0e71ff7424e892e42995424734f48b6b93a",
+      "prevVersion": "20.65.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": "settings",
+          "breaking": false,
+          "sha": "25164094",
+          "subject": "yapılandırma sağlığı kartı varsayılan kapalı gelsin"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.65.0",
       "tag": "v20.65.0",
