@@ -69,14 +69,63 @@ public class CertificateController {
             @RequestParam(defaultValue = "") String filter_domain,
             @RequestParam(defaultValue = "") String filter_issuer,
             @RequestParam(defaultValue = "") String filter_status,
+            @RequestParam(defaultValue = "") String filter_team,
+            @RequestParam(defaultValue = "") String filter_window,
+            @RequestParam(defaultValue = "false") boolean filter_insecure,
+            @RequestParam(required = false) Integer filter_tier,
+            @RequestParam(defaultValue = "") String filter_port,
+            @RequestParam(defaultValue = "") String filter_fp,
             HttpSession session) {
 
-        Map<String, Object> result = certService.getPaginated(page, per_page, sort_by, sort_dir,
-                filter_domain, filter_issuer, filter_status, SessionScope.viewTeamIds(session));
-        return ok(Map.of("success", true,
-                "data", result.get("data"),
-                "pagination", result.get("pagination"),
-                "timestamp", now()));
+        var q = new com.sitemonitor.dto.CertListQuery(page, per_page, sort_by, sort_dir,
+                filter_domain, filter_issuer, filter_status, filter_team, filter_window, filter_insecure,
+                filter_tier, filter_port, filter_fp);
+        Map<String, Object> result = certService.getPaginated(q, SessionScope.viewTeamIds(session));
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", true);
+        body.put("data", result.get("data"));
+        body.put("pagination", result.get("pagination"));
+        body.put("facets", result.get("facets"));
+        body.put("shared", result.get("shared"));
+        body.put("timestamp", now());
+        return ok(body);
+    }
+
+    /**
+     * Tüm Sertifikalar — CSV dışa aktarma (2026-09-13). Tablodaki süzgeçle AYNI sonuç, tüm sayfalar,
+     * görünür sütun sırası ({@code cols}, virgülle). Görüş kapsamı listeyle aynı; işlem denetlenir
+     * (CERT_LIST_EXPORT: satır sayısı + süzgeç özeti).
+     */
+    @GetMapping(value = "/certificates/export.csv", produces = "text/csv")
+    public ResponseEntity<String> exportCertificatesCsv(
+            @RequestParam(defaultValue = "domain") String sort_by,
+            @RequestParam(defaultValue = "asc") String sort_dir,
+            @RequestParam(defaultValue = "") String filter_domain,
+            @RequestParam(defaultValue = "") String filter_issuer,
+            @RequestParam(defaultValue = "") String filter_status,
+            @RequestParam(defaultValue = "") String filter_team,
+            @RequestParam(defaultValue = "") String filter_window,
+            @RequestParam(defaultValue = "false") boolean filter_insecure,
+            @RequestParam(required = false) Integer filter_tier,
+            @RequestParam(defaultValue = "") String filter_port,
+            @RequestParam(defaultValue = "") String filter_fp,
+            @RequestParam(defaultValue = "") String cols,
+            HttpSession session, jakarta.servlet.http.HttpServletRequest request) {
+        var q = new com.sitemonitor.dto.CertListQuery(1, 5000, sort_by, sort_dir,
+                filter_domain, filter_issuer, filter_status, filter_team, filter_window, filter_insecure,
+                filter_tier, filter_port, filter_fp);
+        List<String> colList = java.util.Arrays.stream(cols.split(","))
+                .map(String::trim).filter(s -> !s.isEmpty()).toList();
+        String csv = certService.exportCsv(q, SessionScope.viewTeamIds(session), colList);
+        int rows = Math.max(0, (int) csv.chars().filter(ch -> ch == '\n').count() - 1);   // başlık hariç satır sayısı (CRLF sonlu)
+        auditService.recordAction("CERT_LIST_EXPORT", session, request, "CERTIFICATE", "export",
+                "{\"rows\":" + rows + ",\"status\":\"" + filter_status.replace("\"", "") + "\",\"window\":\""
+                + filter_window.replace("\"", "") + "\",\"team\":\"" + filter_team.replace("\"", "") + "\"}");
+        String fname = "sertifikalar-" + now().substring(0, 10) + ".csv";
+        return ResponseEntity.ok()
+                .header("Content-Disposition", "attachment; filename=\"" + fname + "\"")
+                .header("Content-Type", "text/csv; charset=utf-8")
+                .body(csv);
     }
 
     @GetMapping("/warnings")

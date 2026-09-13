@@ -34,7 +34,9 @@ class CsvExportGuardTest {
     /** text/csv yazıyor ama gövdeyi Csv kullanan başka sınıf üretiyor — gerekçesiyle. */
     private static final Map<String, String> DELEGATES = Map.of(
             "service/report/CertificateInventoryReportService.java",
-            "CSV gövdesi InventoryExportService.csv() → Csv.cell; burası yalnız MIME türünü ekliyor");
+            "CSV gövdesi InventoryExportService.csv() → Csv.cell; burası yalnız MIME türünü ekliyor",
+            "controller/CertificateController.java",
+            "CSV gövdesi CertificateService.exportCsv() → Csv.row; controller yalnız MIME türü + denetim kaydı ekliyor");
 
     private static final String HAND_ROLLED_QUOTING = "replace(\"\\\"\", \"\\\"\\\"\")";
 

@@ -823,14 +823,37 @@ public class AdminController {
         requireAdminOrTeamAdmin(session);
         requirePerm(session, "inventory.crud", "edit");
         String action = body.get("action") != null ? body.get("action").toString().trim().toLowerCase() : "";
-        if (!Set.of("activate", "deactivate", "delete", "set-contacts").contains(action)) {
-            throw new IllegalArgumentException("action must be one of: activate, deactivate, delete, set-contacts");
+        if (!Set.of("activate", "deactivate", "delete", "set-contacts", "set-tier", "set-team").contains(action)) {
+            throw new IllegalArgumentException("action must be one of: activate, deactivate, delete, set-contacts, set-tier, set-team");
         }
+        // Tüm Sertifikalar tablosu (2026-09-13) alan adıyla çalışır, envanter kimliğini bilmez:
+        // `domains` listesi kimliğe çözülür (bilinmeyen alan atlanır). `ids` ile birlikte de verilebilir.
         LinkedHashSet<Long> ids = new LinkedHashSet<>();
         if (body.get("ids") instanceof List<?> raw) {
             for (Object o : raw) { Long id = toLong(o); if (id != null) ids.add(id); }
         }
+        if (body.get("domains") instanceof List<?> rawDomains) {
+            for (Object o : rawDomains) {
+                if (o == null) continue;
+                inventoryRepo.findByDomain(o.toString().trim().toLowerCase()).map(CertificateInventory::getId).ifPresent(ids::add);
+            }
+        }
         if (ids.isEmpty()) throw new IllegalArgumentException("No ids provided");
+        // set-tier: 1–4 ya da null (kademeyi kaldır). set-team: yalnız GLOBAL admin + transfer izni —
+        // tek kayıtlık /transfer ucuyla aynı kapı ve aynı türev-izleme senkronu.
+        Integer newTier = null;
+        if ("set-tier".equals(action)) {
+            Long tv = toLong(body.get("tier"));
+            if (tv != null && (tv < 1 || tv > 4)) throw new IllegalArgumentException("tier must be 1..4 or null");
+            newTier = tv == null ? null : tv.intValue();
+        }
+        Long newTeamId = null;
+        if ("set-team".equals(action)) {
+            requireAdmin(session);
+            requirePerm(session, "inventory.transfer", "execute");
+            newTeamId = toLong(body.get("team_id"));
+            if (newTeamId == null) throw new IllegalArgumentException("team_id is required");
+        }
 
         int processed = 0, skipped = 0, alertsClosed = 0;
         String ts = now();
@@ -862,6 +885,19 @@ public class AdminController {
                         processed++;
                     }
                 }
+                case "set-tier" -> {
+                    if (deleted) { skipped++; }
+                    else { inv.setTier(newTier); inv.setUpdatedAt(ts); inventoryRepo.save(inv); processed++; }
+                }
+                case "set-team" -> {
+                    if (deleted) { skipped++; }
+                    else {
+                        boolean changed = !java.util.Objects.equals(inv.getTeamId(), newTeamId);
+                        inv.setTeamId(newTeamId); inv.setUpdatedAt(ts); inventoryRepo.save(inv);
+                        if (changed) derivedMonitorTeamSync.syncTeam(inv.getDomain(), newTeamId);
+                        processed++;
+                    }
+                }
                 case "delete" -> {
                     if (deleted) { skipped++; }            // zaten silinmiş → no-op
                     else {
@@ -882,6 +918,8 @@ public class AdminController {
             case "deactivate"   -> "DOMAIN_BULK_DEACTIVATE";
             case "delete"       -> "DOMAIN_BULK_DELETE";
             case "set-contacts" -> "DOMAIN_BULK_SET_CONTACTS";
+            case "set-tier"     -> "DOMAIN_BULK_SET_TIER";
+            case "set-team"     -> "DOMAIN_BULK_SET_TEAM";
             default             -> "DOMAIN_BULK_" + action.toUpperCase(java.util.Locale.ROOT).replace('-', '_');
         };
         auditService.recordAction(auditAction, session, request, "CERTIFICATE",

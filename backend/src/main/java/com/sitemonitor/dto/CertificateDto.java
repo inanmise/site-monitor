@@ -122,6 +122,13 @@ public class CertificateDto {
     @JsonProperty("team_name")
     private String teamName;
 
+    /**
+     * Envanterdeki alan-başına kontrol sıklığı (saat; null = genel süpürme). Tablo "bayat" rozeti
+     * için: son kontrol bu sıklığın iki katından eskiyse kullanıcı sayıya güvenmemeli.
+     */
+    @JsonProperty("check_interval_hours")
+    private Integer checkIntervalHours;
+
     public static CertificateDto from(LatestCheck c, List<String> sanList,
                                       List<String> keyUsageList, List<String> extKeyUsageList) {
         CertificateDto dto = new CertificateDto();

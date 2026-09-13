@@ -1260,7 +1260,13 @@ export default function App() {
             {tab === 'all' && (
               <div className="tab-content active">
                 <h2>{t('app.allTitle')}</h2>
-                <CertificatesTable onRowClick={(d) => setModalCert(certs.find(c => c.domain === d) ?? null)} />
+                {/* refreshKey=lastUpdate: App'in 5 dk yenilemesi ve "Şimdi Kontrol Et" tabloya sessiz tazeleme olarak düşer (2026-09-13) */}
+                <CertificatesTable
+                  onRowClick={(d, tab) => { const c = certs.find(x => x.domain === d); setModalCert(c ? (tab ? { ...c, _tab: tab } : c) : null) }}
+                  refreshKey={lastUpdate}
+                  onCheckNow={runSingleCheck} checkingDomain={refreshing ? '*' : checkingDomain}
+                  onEdit={canManageInventory ? (d) => setInvForm({ domain: d, mode: 'edit' }) : undefined}
+                  canManage={canManageInventory} globalAdmin={globalAdmin} onRefresh={loadData} />
               </div>
             )}
 
@@ -1449,7 +1455,7 @@ export default function App() {
       {/* Çalıştır/Düzenle KARTLA AYNI kaynaktan (`cardActions`) gelir — modal içinde ikinci bir
           kontrol/düzenleme yolu tanımlanmaz. Önizleme (envanterde olmayan domain) modunda ikisi
           de anlamsız: kayıtlı adres yok, düzenlenecek envanter satırı yok. */}
-      <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} currentUser={user} currentUserRole={systemRole} onClose={() => setModalCert(null)}
+      <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} currentUser={user} currentUserRole={systemRole} onClose={() => setModalCert(null)} initialTab={modalCert?._tab}
         refreshSignal={certModalRefresh}
         {...(modalCert && !modalCert._preview ? cardActions(modalCert) : {})} />
       {caModal && <CaDiversityModal certs={certs} onClose={() => setCaModal(false)} />}

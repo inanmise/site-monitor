@@ -300,12 +300,14 @@ public class CertificateService {
         Map<String, Long> teamIdMap = new HashMap<>(activeInventory.size());
         Map<String, String> teamNameMap = new HashMap<>(activeInventory.size());
         Map<String, Integer> portMap = new HashMap<>(activeInventory.size());
+        Map<String, Integer> intervalMap = new HashMap<>(activeInventory.size());   // alan başına sıklık → tablo "bayat" rozeti
         for (CertificateInventory inv : activeInventory) {
             String d = inv.getDomain();
             if (d == null) continue;
             activeDomains.add(d);
             if (inv.getTier() != null) tierMap.put(d, inv.getTier());
             if (inv.getPort() != null) portMap.put(d, inv.getPort());
+            if (inv.getCheckIntervalHours() != null) intervalMap.put(d, inv.getCheckIntervalHours());
             if (inv.getTeamId() != null) {
                 teamIdMap.put(d, inv.getTeamId());
                 String tn = teamNames.get(inv.getTeamId());
@@ -325,6 +327,7 @@ public class CertificateService {
                     dto.setPort(portMap.get(c.getDomain()));
                     dto.setTeamId(teamIdMap.get(c.getDomain()));
                     dto.setTeamName(teamNameMap.get(c.getDomain()));
+                    dto.setCheckIntervalHours(intervalMap.get(c.getDomain()));
                     dto.setAlertLevel(computeAlertLevel(dto, critDays, highDays));
                     return dto;
                 })
@@ -406,64 +409,248 @@ public class CertificateService {
                 .collect(Collectors.toSet());
     }
 
+    /** Eski sekiz parametreli biçim — {@link CertListQuery#of} üzerinden yeni yola düşer. */
     public Map<String, Object> getPaginated(int page, int perPage,
                                              String sortBy, String sortDir,
                                              String filterDomain, String filterIssuer,
                                              String filterStatus, java.util.Collection<Long> teamIds) {
+        return getPaginated(com.sitemonitor.dto.CertListQuery.of(page, perPage, sortBy, sortDir,
+                filterDomain, filterIssuer, filterStatus), teamIds);
+    }
+
+    /**
+     * Tüm Sertifikalar tablosu (2026-09-13 zenginleştirme): süzgeç + sıralama + dilim + FACET sayaçları.
+     *
+     * <p>Durum süzgeci artık satırla AYNI hükmü ({@code alert_level}) okur — eskiden süzgeç kendi
+     * merdivenini kuruyordu ve "Kritik" süzgeci "Süresi doldu" yazan satırları da getiriyordu.
+     *
+     * <p>Facet'ler: her boyut, KENDİSİ HARİÇ tüm süzgeçler uygulanmış listeden sayılır (kullanıcı
+     * "Kritik"i seçince öteki durumların sayıları kaybolmaz). {@code shared_count} tam liste
+     * üzerinden parmak izi sayımıdır: süzgeç sertifikanın kaç alanda kullanıldığını değiştirmez.
+     */
+    public Map<String, Object> getPaginated(com.sitemonitor.dto.CertListQuery q, java.util.Collection<Long> teamIds) {
         List<CertificateDto> all = getAllLatestForTeams(teamIds);
 
-        var thrOpt   = alertThresholdRepo.findFirstByActiveTrue();
-        int critDays = thrOpt.map(AlertThreshold::getCriticalDays).orElse(7);
-        int highDays  = thrOpt.map(AlertThreshold::getHighDays).orElse(15);
+        // Parmak izi → alan sayısı (tam liste; süzgeçten bağımsız). CACHE'LENMİŞ DTO'YA YAZILMAZ:
+        // liste görüş kapsamına göre süzülü geliyor, aynı nesneyi iki kapsamın isteği farklı sayıyla
+        // ezerdi. Sayım ayrı haritada döner (`shared`: yalnız >1 olanlar), sıralama/CSV oradan okur.
+        Map<String, Integer> sharedByDomain = sharedCounts(all);
 
-        List<CertificateDto> filtered = all.stream()
-                .filter(c -> filterDomain.isBlank() || c.getDomain().toLowerCase().contains(filterDomain.toLowerCase()))
-                .filter(c -> filterIssuer.isBlank() || issuerStr(c).contains(filterIssuer.toLowerCase()))
-                .filter(c -> {
-                    if (filterStatus.isBlank()) return true;
-                    boolean isError   = "error".equals(c.getStatus());
-                    boolean isWarning = Boolean.TRUE.equals(c.getWarning()) && !isError;
-                    boolean isCrit    = isWarning && c.getDaysRemaining() != null && c.getDaysRemaining() <= critDays;
-                    boolean isHigh    = isWarning && !isCrit && c.getDaysRemaining() != null && c.getDaysRemaining() <= highDays;
-                    return switch (filterStatus) {
-                        case "error"     -> isError;
-                        case "critical"  -> isCrit;
-                        case "high"      -> isHigh;
-                        case "warning"   -> isWarning && !isCrit && !isHigh;
-                        case "valid"     -> !isWarning && !isError;
-                        case "expiring7" -> c.getDaysRemaining() != null && c.getDaysRemaining() >= 0 && c.getDaysRemaining() <= 7;
-                        default          -> filterStatus.equals(c.getStatus());
-                    };
-                })
+        String fd = q.filterDomain().toLowerCase(), fi = q.filterIssuer().toLowerCase();
+        java.util.function.Predicate<CertificateDto> byText = c ->
+                (fd.isEmpty() || c.getDomain().toLowerCase().contains(fd)
+                        || (c.getSubject() != null && c.getSubject().toLowerCase().contains(fd))
+                        || (c.getSan() != null && c.getSan().stream().anyMatch(x -> x != null && x.toLowerCase().contains(fd))))
+                && (fi.isEmpty() || issuerStr(c).contains(fi));
+        java.util.function.Predicate<CertificateDto> byStatus = c -> matchesStatus(c, q.filterStatus());
+        java.util.function.Predicate<CertificateDto> byWindow = c -> matchesWindow(c, q.filterWindow());
+        java.util.function.Predicate<CertificateDto> byTeam = c -> {
+            String ft = q.filterTeam();
+            if (ft.isEmpty()) return true;
+            if ("__none__".equals(ft)) return c.getTeamId() == null;
+            return c.getTeamId() != null && ft.equals(String.valueOf(c.getTeamId()));
+        };
+        java.util.function.Predicate<CertificateDto> byInsecure = c -> !q.filterInsecure() || !Boolean.TRUE.equals(c.getSecure());
+        java.util.function.Predicate<CertificateDto> byTier = c -> q.filterTier() == null || q.filterTier().equals(c.getTier());
+        java.util.function.Predicate<CertificateDto> byPort = c -> {
+            String fp = q.filterPort();
+            if (fp.isEmpty()) return true;
+            int port = c.getPort() == null ? 443 : c.getPort();
+            if ("nonstd".equals(fp)) return port != 443;
+            try { return port == Integer.parseInt(fp); } catch (NumberFormatException e) { return true; }
+        };
+        java.util.function.Predicate<CertificateDto> byFp = c -> q.filterFp().isEmpty() || q.filterFp().equalsIgnoreCase(c.getFingerprint());
+
+        // Boyut adı → süzgeç; facet sayımında o boyut dışarıda bırakılır
+        Map<String, java.util.function.Predicate<CertificateDto>> dims = new LinkedHashMap<>();
+        dims.put("text", byText); dims.put("status", byStatus); dims.put("window", byWindow); dims.put("team", byTeam);
+        dims.put("insecure", byInsecure); dims.put("tier", byTier); dims.put("port", byPort); dims.put("fp", byFp);
+        java.util.function.Function<String, List<CertificateDto>> allBut = skip -> all.stream()
+                .filter(c -> dims.entrySet().stream().allMatch(e -> e.getKey().equals(skip) || e.getValue().test(c)))
                 .collect(Collectors.toList());
 
-        Comparator<CertificateDto> comparator = switch (sortBy) {
-            case "priority" ->
-                    Comparator.<CertificateDto, Integer>comparing(c -> "error".equals(c.getStatus()) ? 0 : 1)
-                              .thenComparingInt(c -> c.getDaysRemaining() == null ? 999999 : c.getDaysRemaining());
-            case "issuer" -> Comparator.comparing(c -> issuerStr(c));
-            case "days_remaining" -> Comparator.comparingInt(c -> c.getDaysRemaining() == null ? 999999 : c.getDaysRemaining());
-            case "checked_at" -> Comparator.comparing(c -> c.getCheckedAt() == null ? "" : c.getCheckedAt());
-            default -> Comparator.comparing(c -> c.getDomain().toLowerCase());
-        };
-        if (!"priority".equals(sortBy) && "desc".equalsIgnoreCase(sortDir)) comparator = comparator.reversed();
+        List<CertificateDto> filtered = allBut.apply("");
+
+        Comparator<CertificateDto> comparator = comparatorFor(q.sortBy(), sharedByDomain);
+        if (!"priority".equals(q.sortBy()) && "desc".equalsIgnoreCase(q.sortDir())) comparator = comparator.reversed();
         filtered.sort(comparator);
 
+        int perPage = q.perPage(), page = q.page();
         int total = filtered.size();
         int totalPages = (int) Math.ceil((double) total / perPage);
         int from = Math.min((page - 1) * perPage, total);
         int to = Math.min(from + perPage, total);
 
-        return Map.of(
-                "data", filtered.subList(from, to),
-                "pagination", Map.of(
-                        "current_page", page,
-                        "per_page", perPage,
-                        "total", total,
-                        "total_pages", Math.max(totalPages, 1)
-                )
-        );
+        // ── Facet'ler ──
+        Map<String, Integer> levels = new LinkedHashMap<>();
+        for (String lv : List.of("expired", "critical", "high", "warning", "valid", "error")) levels.put(lv, 0);
+        for (CertificateDto c : allBut.apply("status")) levels.merge(levelOf(c), 1, Integer::sum);
+        Map<String, Integer> windows = new LinkedHashMap<>();
+        List<CertificateDto> forWindow = allBut.apply("window");
+        for (String w : List.of("expired", "7", "30", "60", "90")) windows.put(w, (int) forWindow.stream().filter(c -> matchesWindow(c, w)).count());
+        Map<Long, String> teamNames = new HashMap<>();
+        Map<Long, Integer> teamCounts = new HashMap<>();
+        int noTeam = 0;
+        for (CertificateDto c : allBut.apply("team")) {
+            if (c.getTeamId() == null) { noTeam++; continue; }
+            teamCounts.merge(c.getTeamId(), 1, Integer::sum);
+            if (c.getTeamName() != null) teamNames.putIfAbsent(c.getTeamId(), c.getTeamName());
+        }
+        List<Map<String, Object>> teams = teamCounts.entrySet().stream()
+                .map(e -> { Map<String, Object> m = new LinkedHashMap<>(); m.put("id", e.getKey()); m.put("name", teamNames.getOrDefault(e.getKey(), "#" + e.getKey())); m.put("count", e.getValue()); return m; })
+                .sorted(Comparator.comparing(m -> String.valueOf(m.get("name")), String.CASE_INSENSITIVE_ORDER))
+                .collect(Collectors.toList());
+        int insecure = (int) allBut.apply("insecure").stream().filter(c -> !Boolean.TRUE.equals(c.getSecure())).count();
+        Map<String, Integer> tiers = new TreeMap<>();
+        for (CertificateDto c : allBut.apply("tier")) if (c.getTier() != null) tiers.merge(String.valueOf(c.getTier()), 1, Integer::sum);
+        int nonstd = (int) allBut.apply("port").stream().filter(c -> c.getPort() != null && c.getPort() != 443).count();
+
+        Map<String, Object> facets = new LinkedHashMap<>();
+        facets.put("levels", levels);
+        facets.put("windows", windows);
+        facets.put("teams", teams);
+        facets.put("no_team", noTeam);
+        facets.put("insecure", insecure);
+        facets.put("tiers", tiers);
+        facets.put("nonstd_port", nonstd);
+        facets.put("all", all.size());
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("data", filtered.subList(from, to));
+        out.put("pagination", Map.of(
+                "current_page", page,
+                "per_page", perPage,
+                "total", total,
+                "total_pages", Math.max(totalPages, 1)));
+        out.put("facets", facets);
+        Map<String, Integer> shared = new LinkedHashMap<>();
+        sharedByDomain.forEach((d, n) -> { if (n > 1) shared.put(d, n); });
+        out.put("shared", shared);
+        return out;
     }
+
+    /** domain → aynı parmak izini taşıyan alan sayısı (parmak izi yoksa 1). */
+    static Map<String, Integer> sharedCounts(List<CertificateDto> all) {
+        Map<String, Integer> fpCount = new HashMap<>();
+        for (CertificateDto c : all) {
+            if (c.getFingerprint() != null && !c.getFingerprint().isBlank()) fpCount.merge(c.getFingerprint(), 1, Integer::sum);
+        }
+        Map<String, Integer> byDomain = new HashMap<>(all.size());
+        for (CertificateDto c : all) {
+            byDomain.put(c.getDomain(), c.getFingerprint() == null || c.getFingerprint().isBlank() ? 1 : fpCount.getOrDefault(c.getFingerprint(), 1));
+        }
+        return byDomain;
+    }
+
+    /** Satırın gösterdiği seviye — {@code alert_level} yoksa (eski cache) aynı kuralla türetilir. */
+    private static String levelOf(CertificateDto c) {
+        if (c.getAlertLevel() != null) return c.getAlertLevel();
+        if ("error".equals(c.getStatus())) return "error";
+        Integer d = c.getDaysRemaining();
+        if (d != null && d < 0) return "expired";
+        return Boolean.TRUE.equals(c.getWarning()) ? "warning" : "valid";
+    }
+
+    private static boolean matchesStatus(CertificateDto c, String filter) {
+        if (filter.isEmpty()) return true;
+        return switch (filter) {
+            case "expiring7" -> c.getDaysRemaining() != null && c.getDaysRemaining() >= 0 && c.getDaysRemaining() <= 7;   // eski takma ad
+            case "expired", "critical", "high", "warning", "valid", "error" -> filter.equals(levelOf(c));
+            default -> filter.equals(c.getStatus());
+        };
+    }
+
+    private static boolean matchesWindow(CertificateDto c, String window) {
+        if (window.isEmpty()) return true;
+        Integer d = c.getDaysRemaining();
+        if (d == null) return false;
+        if ("expired".equals(window)) return d < 0;
+        try { int n = Integer.parseInt(window); return d >= 0 && d <= n; } catch (NumberFormatException e) { return true; }
+    }
+
+    /** Sıralama beyaz listesi — bilinmeyen anahtar alan adına düşer (istemciden gelen dizeyle yansıma yok). */
+    private Comparator<CertificateDto> comparatorFor(String sortBy, Map<String, Integer> shared) {
+        Comparator<String> ci = Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER);
+        return switch (sortBy) {
+            case "priority" ->
+                    Comparator.<CertificateDto, Integer>comparing(c -> "error".equals(c.getStatus()) ? 0 : 1)
+                              .thenComparingInt(c -> c.getDaysRemaining() == null ? 999999 : c.getDaysRemaining());
+            case "issuer" -> Comparator.comparing(this::issuerStr);
+            case "subject" -> Comparator.comparing(CertificateDto::getSubject, ci);
+            case "days_remaining", "not_after" -> Comparator.comparingInt(c -> c.getDaysRemaining() == null ? 999999 : c.getDaysRemaining());
+            case "checked_at" -> Comparator.comparing(c -> c.getCheckedAt() == null ? "" : c.getCheckedAt());
+            case "team" -> Comparator.comparing(CertificateDto::getTeamName, ci);
+            case "key_size" -> Comparator.comparingInt(c -> c.getPublicKeySize() == null ? -1 : c.getPublicKeySize());
+            case "signature" -> Comparator.comparing(CertificateDto::getSignatureAlgorithm, ci);
+            case "tier" -> Comparator.comparingInt(c -> c.getTier() == null ? 99 : c.getTier());
+            case "port" -> Comparator.comparingInt(c -> c.getPort() == null ? 443 : c.getPort());
+            case "shared" -> Comparator.comparingInt(c -> shared.getOrDefault(c.getDomain(), 1));
+            case "not_before" -> Comparator.comparing(c -> c.getNotBefore() == null ? "" : c.getNotBefore());
+            case "intermediate" -> Comparator.comparingInt(c -> c.getIntermediateDaysRemaining() == null ? 999999 : c.getIntermediateDaysRemaining());
+            default -> Comparator.comparing(c -> c.getDomain().toLowerCase());
+        };
+    }
+
+    /**
+     * CSV dışa aktarma — tablodaki süzgeçle AYNI sonuç, tüm sayfalar; görünür sütun sırası istemciden.
+     * Hücre kaçışı TEK yerde: {@link com.sitemonitor.util.Csv} (formül nötrleme + tırnaklama; kapı
+     * {@code CsvExportGuardTest}). Bilinmeyen sütun anahtarı atlanır.
+     */
+    public String exportCsv(com.sitemonitor.dto.CertListQuery q, java.util.Collection<Long> teamIds, List<String> cols) {
+        Map<String, Object> res = getPaginated(
+                new com.sitemonitor.dto.CertListQuery(1, 5000, q.sortBy(), q.sortDir(), q.filterDomain(), q.filterIssuer(),
+                        q.filterStatus(), q.filterTeam(), q.filterWindow(), q.filterInsecure(), q.filterTier(), q.filterPort(), q.filterFp()),
+                teamIds);
+        @SuppressWarnings("unchecked")
+        List<CertificateDto> rows = (List<CertificateDto>) res.get("data");
+        @SuppressWarnings("unchecked")
+        Map<String, Integer> shared = (Map<String, Integer>) res.get("shared");
+        List<String> keys = cols.stream().filter(CSV_COLUMNS::containsKey).collect(Collectors.toList());
+        if (keys.isEmpty()) keys = new ArrayList<>(CSV_COLUMNS.keySet());
+        StringBuilder sb = new StringBuilder();
+        sb.append(com.sitemonitor.util.Csv.row(keys.toArray()));
+        for (CertificateDto c : rows) {
+            CsvRow row = new CsvRow(c, shared.getOrDefault(c.getDomain(), 1));
+            Object[] cells = new Object[keys.size()];
+            for (int i = 0; i < keys.size(); i++) cells[i] = CSV_COLUMNS.get(keys.get(i)).apply(row);
+            sb.append(com.sitemonitor.util.Csv.row(cells));
+        }
+        return sb.toString();
+    }
+
+    /** CSV satırı: DTO + paylaşım sayısı (DTO'da tutulmaz, bkz. sharedCounts). */
+    record CsvRow(CertificateDto c, int shared) {}
+
+    private static final Map<String, java.util.function.Function<CsvRow, Object>> CSV_COLUMNS;
+    static {
+        Map<String, java.util.function.Function<CsvRow, Object>> m = new LinkedHashMap<>();
+        m.put("domain", r -> r.c().getDomain());
+        m.put("issuer", r -> r.c().getIssuerCn() != null ? r.c().getIssuerCn() : r.c().getIssuer());
+        m.put("subject", r -> r.c().getSubject());
+        m.put("team", r -> r.c().getTeamName());
+        m.put("not_before", r -> r.c().getNotBefore());
+        m.put("expiry", r -> r.c().getNotAfter());
+        m.put("days", r -> r.c().getDaysRemaining());
+        m.put("status", r -> levelOf(r.c()));
+        m.put("trust", r -> String.join("|", List.of(nz(r.c().getChainStatus()), nz(r.c().getTrustStatus()), nz(r.c().getRevocationStatus()))));
+        m.put("insecure", r -> Boolean.TRUE.equals(r.c().getSecure()) ? "" : String.join("|", r.c().getSecurityFlags() == null ? List.of() : r.c().getSecurityFlags()));
+        m.put("key", r -> r.c().getPublicKeyAlgorithm() == null ? "" : r.c().getPublicKeyAlgorithm() + (r.c().getPublicKeySize() == null ? "" : " " + r.c().getPublicKeySize()));
+        m.put("signature", r -> r.c().getSignatureAlgorithm());
+        m.put("san", r -> r.c().getSan() == null ? 0 : r.c().getSan().size());
+        m.put("shared", CsvRow::shared);
+        m.put("port", r -> r.c().getPort() == null ? 443 : r.c().getPort());
+        m.put("tier", r -> r.c().getTier());
+        m.put("via", r -> r.c().getVia());
+        m.put("tls", r -> r.c().getTlsModeUsed());
+        m.put("intermediate", r -> r.c().getIntermediateDaysRemaining());
+        m.put("fingerprint", r -> r.c().getFingerprint());
+        m.put("serial", r -> r.c().getSerialNumber());
+        m.put("checked", r -> r.c().getCheckedAt());
+        m.put("error", r -> r.c().getError());
+        CSV_COLUMNS = Collections.unmodifiableMap(m);
+    }
+
+    private static String nz(String s) { return s == null ? "" : s; }
 
     @Cacheable(value = "cert-warnings", sync = true)
     public List<CertificateDto> getWarnings() {

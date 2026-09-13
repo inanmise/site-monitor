@@ -446,3 +446,35 @@ sayfa-yerel `.x .btn { inline-flex; gap }` kuralı aynı deseni tek tek yamalıy
   görsel: HTTP başlık çubuğu, dashboard kontrolleri, düzenleme formu alt çubuğu (Test Et / İptal / Kaydet), Haftalık Raporlar.
 Bilinen sınır: yalnız-ikon düğmeler artık metinli kardeşleriyle aynı boyda (24 → 27 px) — istenen davranış.
 → **REGRESYON YOK**.
+
+## Ek — yirmi ikinci tur (2026-09-13, sürüm öncesi — Tüm Sertifikalar zenginleştirmesi, 16 madde, `v20.60.2..HEAD`)
+
+Kapsam: 2 commit, 22 dosya (+2277/−342). İmza süpürmesi: skip-ci belirteci yok, gerçek kimlik yok (testler example.com /
+"Takım A"), UTC gün dilimlemesi yok (göreli zaman `toMs` ile `Z` eki — api/client toUtc sözleşmesi), hook + erken-return:
+CertificatesTable/CertTableToolbar/CertBulkBar'da tüm hook'lar koşullu return'lerin ÜSTÜNDE (CertBulkBar `if (domains.length
+=== 0) return null` useEffect'ten sonra).
+
+**Kapatılan kusurlar:**
+- Tablo bayat kalıyordu: App'in 5 dk yenilemesi ve "Şimdi Kontrol Et" tabloya ulaşmıyordu → `refreshKey=lastUpdate` sessiz
+  tazeleme + görünürken `useVisibleInterval`. Test: rerender'da ikinci istek, `.pg-block` çizilmez, satır güncellenir.
+- Durum süzgeci ↔ satır hükmü ayrışması: sunucu süzgeci kendi merdivenini kuruyordu ("Kritik" süzgeci "Süresi doldu"
+  satırlarını getiriyor, "valid" süzgeci "Yüksek" satırları sayıyordu) → `levelOf()` ile tek hüküm; "expired" seçeneği.
+
+**Denetim odakları:**
+- Takım kapsamı: `/certificates/list`, `/export.csv` `SessionScope.viewTeamIds` ile aynı listeden; `set-team` yalnız GLOBAL
+  admin (`requireAdmin` + `inventory.transfer`), TEAM_ADMIN 403 pinli; `domains` çözümü bilinmeyen alanı atlar.
+- Cache güvenliği: paylaşılan parmak izi sayımı cache'li DTO'ya YAZILMAZ (iki kapsamın isteği aynı nesneyi ezerdi) →
+  ayrı `shared` haritası; sıralama/CSV oradan okur. Test: DTO'da alan yok, haritada yalnız >1.
+- Sıralama beyaz listesi: bilinmeyen anahtar (`__proto__`) alan adına düşer — istemci dizesiyle yansıma yok.
+- CSV: sunucu tarafı formül/virgül/tırnak kaçışı (`csvCell`), CERT_LIST_EXPORT satır sayısıyla; istemci seçim CSV'si
+  `utils/csv.js` (csv-escape-guard). Katalog testi (`AuditEventCatalogTest`) yeni üç türü doğruladı.
+- URL ad alanı: `c_` öneki PAGE_STATE_PREFIXES'e eklendi — sekme değişince temizlenir; `?domain=` (e-posta bağlantısı)
+  alan süzgecine düşer, dashboard'daki `search` davranışı korunur.
+- Kapılar: progress-guard elle yazılmış yüzde çubuğunu yakaladı (ct-life `width:%` → `ProgressBar` native `<progress>`,
+  `.pg-bar--ok/warn/crit` tonları); cssClasses/cssTokens/i18n-parity/used-keys temiz (82 TR + 82 EN anahtar).
+- Kademe atama doğrulaması: 0/5 → 400, verilmezse kademe kaldırılır (pinli).
+- Testler: backend CertificateListQueryTest 8 + Controller +2 + Admin +3; frontend certTableModel 12, enrich 11, mevcut 7
+  uyarlandı (veri sütunu sayımı seçim/işlem sütunlarını dışlar); tam süit 2014 yeşil, taban %40, build.
+Bilinen sınırlar (bilinçli): ön ayarlar tarayıcıda; yapışkan başlık yok (kaydırmalı kap + sayfa kaydırması); toplu
+"sustur" yok (alan bazlı susturma API'si yok); `expiring7` sunucuda takma ad olarak kaldı (eski bağlantılar).
+→ **REGRESYON YOK**.

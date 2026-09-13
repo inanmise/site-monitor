@@ -251,16 +251,58 @@ class CertificateControllerTest {
     @Test
     @DisplayName("GET /api/certificates/list returns 200 with paginated data")
     void getCertificatesList_authenticated_returns200() throws Exception {
-        when(certService.getPaginated(anyInt(), anyInt(), anyString(), anyString(),
-                anyString(), anyString(), anyString(), any()))
+        when(certService.getPaginated(any(com.sitemonitor.dto.CertListQuery.class), any()))
                 .thenReturn(Map.of(
                         "data", Collections.emptyList(),
-                        "pagination", Map.of("total", 0, "page", 1)
+                        "pagination", Map.of("total", 0, "page", 1),
+                        "facets", Map.of("all", 0),
+                        "shared", Map.of()
                 ));
 
-        mvc.perform(get("/api/certificates/list").session(authSession()))
+        mvc.perform(get("/api/certificates/list").session(authSession())
+                        .param("filter_status", "expired").param("filter_window", "30").param("filter_team", "3")
+                        .param("filter_insecure", "true").param("filter_tier", "2").param("filter_port", "nonstd").param("sort_by", "team"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true));
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.facets.all").value(0));
+        // Yeni süzgeçler kayıt nesnesine EKSİKSİZ taşınır (kanonik zincir boşluğu: parametre eklenip okunmaması)
+        org.mockito.ArgumentCaptor<com.sitemonitor.dto.CertListQuery> cap = org.mockito.ArgumentCaptor.forClass(com.sitemonitor.dto.CertListQuery.class);
+        verify(certService).getPaginated(cap.capture(), any());
+        com.sitemonitor.dto.CertListQuery q = cap.getValue();
+        org.assertj.core.api.Assertions.assertThat(q.filterStatus()).isEqualTo("expired");
+        org.assertj.core.api.Assertions.assertThat(q.filterWindow()).isEqualTo("30");
+        org.assertj.core.api.Assertions.assertThat(q.filterTeam()).isEqualTo("3");
+        org.assertj.core.api.Assertions.assertThat(q.filterInsecure()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(q.filterTier()).isEqualTo(2);
+        org.assertj.core.api.Assertions.assertThat(q.filterPort()).isEqualTo("nonstd");
+        org.assertj.core.api.Assertions.assertThat(q.sortBy()).isEqualTo("team");
+    }
+
+    @Test
+    @DisplayName("GET /api/certificates/export.csv → text/csv, ek dosya adı, CERT_LIST_EXPORT denetim kaydı (satır sayısı)")
+    void exportCertificatesCsv_authenticated_returnsCsvAndAudits() throws Exception {
+        when(certService.exportCsv(any(com.sitemonitor.dto.CertListQuery.class), any(), any()))
+                .thenReturn("domain,status\r\na.example.com,valid\r\nb.example.com,expired\r\n");
+
+        mvc.perform(get("/api/certificates/export.csv").session(authSession())
+                        .param("cols", "domain,status").param("filter_status", "expired"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", org.hamcrest.Matchers.startsWith("text/csv")))
+                .andExpect(header().string("Content-Disposition", org.hamcrest.Matchers.containsString("sertifikalar-")))
+                .andExpect(content().string(org.hamcrest.Matchers.startsWith("domain,status")));
+
+        org.mockito.ArgumentCaptor<java.util.List<String>> cols = org.mockito.ArgumentCaptor.forClass(java.util.List.class);
+        verify(certService).exportCsv(any(), any(), cols.capture());
+        org.assertj.core.api.Assertions.assertThat(cols.getValue()).containsExactly("domain", "status");
+        verify(auditService).recordAction(eq("CERT_LIST_EXPORT"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("CERTIFICATE"), eq("export"),
+                org.mockito.ArgumentMatchers.contains("\"rows\":2"));
+    }
+
+    @Test
+    @DisplayName("GET /api/certificates/export.csv oturumsuz → 401 (dışa aktarma herkese açık değil)")
+    void exportCertificatesCsv_unauthenticated_returns401() throws Exception {
+        mvc.perform(get("/api/certificates/export.csv")).andExpect(status().isUnauthorized());
     }
 
     @Test
