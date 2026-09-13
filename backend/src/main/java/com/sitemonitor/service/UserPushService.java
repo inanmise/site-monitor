@@ -457,6 +457,17 @@ public class UserPushService {
      *  {@code monitorType} (2026-09-13: haftalık rapor onayı "WEEKLY_REPORT" olarak süzülebilsin). */
     public Map<String, Object> enqueueTeamNotice(Long teamId, String trigger, String alertLevel, String monitorType,
                                                  String monitorName, String message, String dedupeKey) {
+        return enqueueTeamNotice(teamId, trigger, alertLevel, monitorType, monitorName, message, dedupeKey, java.util.Set.of());
+    }
+
+    /** + {@code excludeUsernames}: aynı olay için başka kanaldan (ör. müdür push'u) zaten bildirilen kişiler
+     *  takım bildirimini İKİNCİ kez almaz (QA ISSUE-001, 2026-09-13). Karşılaştırma büyük/küçük harf duyarsız. */
+    public Map<String, Object> enqueueTeamNotice(Long teamId, String trigger, String alertLevel, String monitorType,
+                                                 String monitorName, String message, String dedupeKey,
+                                                 java.util.Set<String> excludeUsernames) {
+        java.util.Set<String> excluded = new java.util.HashSet<>();
+        for (String u : excludeUsernames == null ? java.util.Set.<String>of() : excludeUsernames)
+            if (u != null) excluded.add(u.trim().toUpperCase(java.util.Locale.ROOT));
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("queued", 0); out.put("skipped", 0); out.put("recipients", List.of());
         if (!enabled()) { out.put("reason", "SKIPPED_DISABLED"); return out; }
@@ -470,6 +481,7 @@ public class UserPushService {
         int queued = 0, skipped = 0;
         List<String> names = new ArrayList<>();
         for (var r : recipients) {
+            if (r.username() != null && excluded.contains(r.username().trim().toUpperCase(java.util.Locale.ROOT))) { skipped++; continue; }
             String status;
             if (r.skipReason() != null) status = r.skipReason();
             else if (deliveryRepo.countRecentForUser(r.username(), since) >= hourlyCap()) status = "RATE_LIMITED";
@@ -520,6 +532,7 @@ public class UserPushService {
         int queued = 0, skipped = 0;
         List<String> names = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
+        List<String> usernames = new ArrayList<>();
         for (DirectRecipient r : recipients) {
             String u = r.username() == null ? "" : r.username().trim();
             if (u.isEmpty() || !seen.add(u)) { skipped++; continue; }
@@ -546,9 +559,11 @@ public class UserPushService {
             try { deliveryRepo.save(d); } catch (Exception dup) { skipped++; continue; }
             if ("PENDING".equals(status)) { queued++; names.add(d.getDisplayName()); }
             else skipped++;
+            usernames.add(u);
         }
         if (queued > 0) worker.execute(this::drainOutbox);
         out.put("queued", queued); out.put("skipped", skipped); out.put("recipients", names); out.put("batch_id", batchId);
+        out.put("usernames", usernames);   // çağıran, aynı olayın takım bildiriminden bu kişileri düşer
         return out;
     }
 

@@ -545,20 +545,23 @@ public class WeeklyReportService {
             String fail = " BAŞARISIZ (" + (mailStatus == null ? "-" : mailStatus) + ")";
             String key = (resend ? "WR_RESENT:" : "WR_APPROVED:") + r.getId() + ":" + r.getVersion();
             String name = teamName + " " + r.getWeekLabel();
-            // 1) Takım üyeleri — rol grubu / asgari seviye kuralıyla (Webhook ayarı: weekly.team-enabled)
-            if (userPushService.weeklyTeamEnabled()) {
-                String text = sent
-                        ? head + (resend ? " müdüre yeniden gönderildi." : " onaylandı ve müdüre gönderildi.") + who
-                        : head + (resend ? " yeniden gönderim" : " onaylandı ama müdüre e-posta") + fail + " - Haftalık Raporlar'dan yeniden gönderin.";
-                userPushService.enqueueTeamNotice(r.getTeamId(), "WEEKLY_REPORT", "WARNING", "WEEKLY_REPORT", name, text, key);
-            }
-            // 2) Müdür — doğrudan (e-postanın alıcısı; Webhook ayarı: weekly.manager-enabled)
+            // 1) Müdür — doğrudan (e-postanın alıcısı; Webhook ayarı: weekly.manager-enabled). ÖNCE gider:
+            //    aynı kişi takım grubunda da olabilir (PO=müdür) — takım bildiriminden düşülür (QA ISSUE-001).
+            java.util.Set<String> notified = new java.util.HashSet<>();
             if (userPushService.weeklyManagerEnabled()) {
                 String text = sent
                         ? head + (resend ? " size yeniden gönderildi." : " onaylandı; rapor e-postanıza gönderildi.") + who
                         : head + " onaylandı ama e-posta" + fail + ". Raporu uygulamadan görüntüleyin." + who;
-                userPushService.enqueueDirect(resolveManagerPushRecipients(team, r.getTeamId()), r.getTeamId(),
+                Map<String, Object> res = userPushService.enqueueDirect(resolveManagerPushRecipients(team, r.getTeamId()), r.getTeamId(),
                         "WEEKLY_REPORT", "WARNING", "WEEKLY_REPORT", name, text, key + ":MGR");
+                if (res != null && res.get("usernames") instanceof List<?> us) for (Object u : us) if (u != null) notified.add(u.toString());
+            }
+            // 2) Takım üyeleri — rol grubu / asgari seviye kuralıyla (Webhook ayarı: weekly.team-enabled)
+            if (userPushService.weeklyTeamEnabled()) {
+                String text = sent
+                        ? head + (resend ? " müdüre yeniden gönderildi." : " onaylandı ve müdüre gönderildi.") + who
+                        : head + (resend ? " yeniden gönderim" : " onaylandı ama müdüre e-posta") + fail + " - Haftalık Raporlar'dan yeniden gönderin.";
+                userPushService.enqueueTeamNotice(r.getTeamId(), "WEEKLY_REPORT", "WARNING", "WEEKLY_REPORT", name, text, key, notified);
             }
         } catch (Exception e) {
             log.warn("Haftalık rapor push'u kuyruğa alınamadı (id={}): {}", r.getId(), e.toString());

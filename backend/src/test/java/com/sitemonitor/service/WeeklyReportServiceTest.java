@@ -1240,7 +1240,7 @@ class WeeklyReportServiceTest {
         UserPushService push = mock(UserPushService.class);
         when(push.weeklyTeamEnabled()).thenReturn(true);
         when(push.weeklyManagerEnabled()).thenReturn(true);
-        when(push.enqueueTeamNotice(any(), any(), any(), any(), any(), any(), any())).thenReturn(Map.of("queued", 1));
+        when(push.enqueueTeamNotice(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(Map.of("queued", 1));
         when(push.enqueueDirect(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(Map.of("queued", 1));
         ReflectionTestUtils.setField(service, "userPushService", push);
         when(contactRepo.findByTeamIdAndRoleAndActiveTrue(2L, "MANAGER"))
@@ -1256,7 +1256,7 @@ class WeeklyReportServiceTest {
         ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
         verify(push).enqueueTeamNotice(eq(2L), eq("WEEKLY_REPORT"), eq("WARNING"), eq("WEEKLY_REPORT"),
-                eq("TakimA " + r.getWeekLabel()), msg.capture(), key.capture());
+                eq("TakimA " + r.getWeekLabel()), msg.capture(), key.capture(), any());
         assertThat(msg.getValue()).startsWith("[Haftalık rapor] TakimA " + r.getWeekLabel())
                 .contains("onaylandı ve müdüre gönderildi").contains("Onaylayan: PO İki");
         assertThat(key.getValue()).isEqualTo("WR_APPROVED:5:" + r.getVersion());
@@ -1272,7 +1272,7 @@ class WeeklyReportServiceTest {
         when(emailService.sendHtml(any(), any(), anyString(), anyString(), any())).thenReturn("FAILED: smtp down");
         service.approve(6L, PO_T2);
         verify(push).enqueueTeamNotice(eq(2L), eq("WEEKLY_REPORT"), eq("WARNING"), eq("WEEKLY_REPORT"),
-                anyString(), contains("BAŞARISIZ (FAILED: smtp down)"), eq("WR_APPROVED:6:" + r2.getVersion()));
+                anyString(), contains("BAŞARISIZ (FAILED: smtp down)"), eq("WR_APPROVED:6:" + r2.getVersion()), any());
         assertThat(r2.getStatus()).isEqualTo("APPROVED");
         verify(push).enqueueDirect(any(), eq(2L), eq("WEEKLY_REPORT"), eq("WARNING"), eq("WEEKLY_REPORT"),
                 anyString(), contains("Raporu uygulamadan görüntüleyin"), eq("WR_APPROVED:6:" + r2.getVersion() + ":MGR"));
@@ -1281,7 +1281,7 @@ class WeeklyReportServiceTest {
         when(emailService.sendHtml(any(), any(), anyString(), anyString(), any())).thenReturn("SENT");
         service.resend(5L, ADMIN);
         verify(push).enqueueTeamNotice(eq(2L), eq("WEEKLY_REPORT"), eq("WARNING"), eq("WEEKLY_REPORT"),
-                anyString(), contains("müdüre yeniden gönderildi"), eq("WR_RESENT:5:" + r.getVersion()));
+                anyString(), contains("müdüre yeniden gönderildi"), eq("WR_RESENT:5:" + r.getVersion()), any());
 
         // ayarlar kapalı → hiçbir kanal çağrılmaz
         when(push.weeklyTeamEnabled()).thenReturn(false);
@@ -1289,7 +1289,7 @@ class WeeklyReportServiceTest {
         WeeklyReport r9 = report(9L, 2L, "PENDING_APPROVAL");
         when(reportRepo.findById(9L)).thenReturn(Optional.of(r9));
         service.approve(9L, PO_T2);
-        org.mockito.Mockito.verify(push, org.mockito.Mockito.times(3)).enqueueTeamNotice(any(), any(), any(), any(), any(), any(), any());
+        org.mockito.Mockito.verify(push, org.mockito.Mockito.times(3)).enqueueTeamNotice(any(), any(), any(), any(), any(), any(), any(), any());
         org.mockito.Mockito.verify(push, org.mockito.Mockito.times(3)).enqueueDirect(any(), any(), any(), any(), any(), any(), any(), any());
         when(push.weeklyTeamEnabled()).thenReturn(true);
         when(push.weeklyManagerEnabled()).thenReturn(true);
@@ -1297,7 +1297,7 @@ class WeeklyReportServiceTest {
         // push patlarsa onay yine olur
         WeeklyReport r3 = report(7L, 2L, "PENDING_APPROVAL");
         when(reportRepo.findById(7L)).thenReturn(Optional.of(r3));
-        when(push.enqueueTeamNotice(any(), any(), any(), any(), any(), any(), any())).thenThrow(new RuntimeException("push down"));
+        when(push.enqueueTeamNotice(any(), any(), any(), any(), any(), any(), any(), any())).thenThrow(new RuntimeException("push down"));
         assertThat(service.approve(7L, PO_T2)).containsKey("data");
         assertThat(r3.getStatus()).isEqualTo("APPROVED");
 
