@@ -824,6 +824,7 @@ export const api = {
     }),
     getAlertNotifications: (id) => request(`/admin/alerts/${id}/notifications`),
     getAlertNoise: (days = 7) => request(`/admin/alerts/noise?days=${days}`),   // gürültü analizi (2026-09-12, #18)
+    getAlertTeamStats: () => request('/admin/alerts/team-stats'),               // takım kırılımı (2026-09-16)
     getAlertPushDeliveries: (id) => request(`/admin/alerts/${id}/push-deliveries`),
 
     // Teams

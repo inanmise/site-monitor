@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { formatPercent } from '../../i18n/dateLocale.js'
-import { ChevronDown, Activity, Flame, Lightbulb } from 'lucide-react'
+import { ChevronDown, Activity, Flame, Lightbulb, Timer, MoonStar, CheckCircle2, AlertOctagon } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { navigateTo } from '../../utils/navigate.js'
@@ -11,6 +11,39 @@ import { navigateTo } from '../../utils/navigate.js'
  * katlanır; 7 / 30 gün seçimi. Veri /api/admin/alerts/noise.
  */
 const DAYS = [7, 30]
+
+/** KPI kutucuğu — sayı büyük, etiket küçük, ipucu başlıkta (2026-09-16 zenginleştirme). */
+function Kpi({ icon: Icon, label, value, sub, tone, title }) {
+  return (
+    <div className={`noise-kpi${tone ? ` noise-kpi--${tone}` : ''}`} title={title}>
+      <div className="noise-kpi-top">{Icon && <Icon size={13} aria-hidden="true" />}<span>{label}</span></div>
+      <div className="noise-kpi-val">{value}</div>
+      {sub && <div className="noise-kpi-sub">{sub}</div>}
+    </div>
+  )
+}
+
+/** Günlük seri — kıvılcım çubukları; en yoğun gün vurgulu. */
+function Trend({ series, t }) {
+  const max = Math.max(1, ...series.map((p) => p.count))
+  const peak = series.reduce((m, p) => (p.count > (m?.count ?? -1) ? p : m), null)
+  return (
+    <div className="noise-trend">
+      <div className="noise-trend-bars" role="img" aria-label={t('noise.trendAria')}>
+        {series.map((p) => (
+          <span key={p.date} className={`noise-trend-bar${peak && p.date === peak.date && p.count > 0 ? ' is-peak' : ''}`}
+            style={{ '--h': `${Math.max(3, Math.round(100 * p.count / max))}%` }}
+            title={`${p.date} · ${p.count}`} />
+        ))}
+      </div>
+      <div className="noise-trend-axis">
+        <span>{series[0]?.date?.slice(5)}</span>
+        {peak && peak.count > 0 && <span className="noise-trend-peak">{t('noise.trendPeak', peak.date.slice(5), peak.count)}</span>}
+        <span>{series[series.length - 1]?.date?.slice(5)}</span>
+      </div>
+    </div>
+  )
+}
 
 export default function AlertNoisePanel({ onPickDomain }) {
   const t = useT()
@@ -46,6 +79,30 @@ export default function AlertNoisePanel({ onPickDomain }) {
           {!data && <div className="noise-empty">{t('noise.loading')}</div>}
           {data && data.total === 0 && <div className="noise-empty">{t('noise.none', data.days)}</div>}
           {data && data.total > 0 && (
+            <>
+            {/* KPI şeridi (2026-09-16): sayfa açılır açılmaz "ne kadar gürültü, ne kadarı kritik,
+                ne kadarı mesai dışı, ortalama kapanma ne kadar sürüyor" görünsün. */}
+            <div className="noise-kpis">
+              <Kpi icon={Activity} label={t('noise.kpiTotal')} value={data.total}
+                sub={t('noise.kpiPerDay', data.per_day_avg ?? 0)} title={t('noise.kpiTotalTip', data.days)} />
+              <Kpi icon={AlertOctagon} label={t('noise.kpiCritical')} value={data.critical} tone={data.critical > 0 ? 'bad' : null}
+                sub={t('noise.kpiOpen', data.still_open ?? 0)} />
+              <Kpi icon={CheckCircle2} label={t('noise.kpiResolved')} value={formatPercent(data.resolved_pct ?? 0)}
+                sub={t('noise.kpiResolvedSub', data.resolved_total ?? 0)} tone={(data.resolved_pct ?? 0) >= 80 ? 'ok' : null} />
+              <Kpi icon={Timer} label={t('noise.kpiMttr')} value={data.mttr_minutes == null ? '—' : t('noise.minutes', data.mttr_minutes)}
+                sub={t('noise.kpiMttrSub')} title={t('noise.kpiMttrTip')} />
+              <Kpi icon={MoonStar} label={t('noise.kpiOffHours')} value={formatPercent(data.off_hours_pct ?? 0)}
+                sub={t('noise.kpiOffHoursSub', data.off_hours ?? 0)} tone={(data.off_hours_pct ?? 0) >= 40 ? 'warn' : null}
+                title={t('noise.kpiOffHoursTip')} />
+            </div>
+
+            {(data.series || []).length > 1 && (
+              <div className="noise-block noise-block--wide">
+                <div className="noise-block-title">{t('noise.trend')}</div>
+                <Trend series={data.series} t={t} />
+              </div>
+            )}
+
             <div className="noise-grid">
               <div className="noise-block">
                 <div className="noise-block-title">{t('noise.top')}</div>
@@ -95,7 +152,23 @@ export default function AlertNoisePanel({ onPickDomain }) {
                   </ul>
                 )}
               </div>
+
+              {(data.by_type || []).length > 0 && (
+                <div className="noise-block">
+                  <div className="noise-block-title">{t('noise.byType')}</div>
+                  <ul className="noise-type-list">
+                    {data.by_type.map((r) => (
+                      <li key={r.type}>
+                        <span className="noise-type-name">{r.type}</span>
+                        <span className="noise-type-bar" style={{ '--w': `${Math.min(100, r.share_pct)}%` }} aria-hidden="true" />
+                        <span className="noise-type-num"><b>{r.count}</b>{r.critical > 0 && <em className="noise-type-crit" title={t('noise.kpiCritical')}> · {r.critical}</em>}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
+            </>
           )}
         </div>
       )}

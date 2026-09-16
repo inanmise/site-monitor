@@ -7,6 +7,8 @@ import PaginationBar from '../ui/PaginationBar.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import MaintenanceBadge from '../ui/MaintenanceBadge.jsx'
 import AlertNoisePanel from './AlertNoisePanel.jsx'   // alarm bakım penceresine denk geliyorsa rozet (2026-09-12, #19)
+import AlertTeamStatsPanel from './alerts/AlertTeamStatsPanel.jsx'   // takım kırılımı (2026-09-16)
+import AlertSignatureStrip from './alerts/AlertSignatureStrip.jsx'   // imza geçmişi şeridi (2026-09-16)
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../../hooks/useUrlQuerySync.js'
 import { readPageSize, writePageSize } from '../../hooks/usePagination.js'
 import UserBadge from '../ui/UserBadge.jsx'
@@ -900,6 +902,25 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
     { value: 'unack', label: t('alh.unackedOnly') },
     { value: 'ack',   label: t('alh.ackOnly') },
   ]
+  /** Takım adı (izleme alarmlarında satırda yalnız team_id var; ad süzgeç listesinden gelir). */
+  const teamNameOf = useCallback((id) => {
+    if (id == null) return null
+    const hit = teams.find((tm) => String(tm.id) === String(id))
+    return hit ? hit.name : null
+  }, [teams])
+
+  /** Aynı imzanın (alan adı + tip) GEÇMİŞİ: kapalı sekmeye geçer ve listeyi o imzaya süzer (2026-09-16). */
+  const showSignatureHistory = useCallback((a) => {
+    if (!a) return
+    setTab('closed')
+    setTypeFilter(a.alert_type || '')
+    const q = a.domain || ''
+    setSearch(q); setSearchTerm(q)
+    setLevelFilter(''); setAckFilter(''); setClosedFrom(null); setClosedTo(null)
+    setPage(0)
+    try { window.scrollTo({ top: 0, behavior: 'smooth' }) } catch { /* jsdom */ }
+  }, [])
+
   const teamOptions = [
     { value: '', label: t('alh.allTeams') },
     ...teams.map(tm => ({ value: String(tm.id), label: tm.name })),
@@ -1191,6 +1212,8 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
       {urlSync && (
         <>
           {/* Gürültü analizi (2026-09-12, #18): en çok alarm üreten hedefler, gün×saat ısı haritası, flap adayları */}
+          <AlertTeamStatsPanel activeTeamId={teamFilter}
+            onPickTeam={(id) => { setTeamFilter(String(id)); setPage(0) }} />
           <AlertNoisePanel onPickDomain={(d) => { setSearch(d); setSearchTerm(d); setPage(0) }} />
           <MonitorStatsSection
             loading={loading} total={statItems[0].value}
@@ -1370,6 +1393,9 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
                   )}
                 </div>
 
+                {/* İmza geçmişi (2026-09-16): takım · kaçıncı kez · önceki oluşum · geçmişe geçiş */}
+                <AlertSignatureStrip alert={a} teamName={teamNameOf(a.team_id)} onShowHistory={showSignatureHistory} />
+
                 {/* "Neden hâlâ açık?" (2026-09-12, #16): onay, e-posta alıcı sayısı, push kanal durumu — açık sekmede */}
                 {isOpen && <WhyOpenChips a={a} notified={notifiedList.length} push={pushSummary[String(a.id)]} t={t} />}
 
@@ -1482,6 +1508,8 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
                       </div>
                     )
                   })()}
+
+                  <AlertSignatureStrip alert={a} teamName={teamNameOf(a.team_id)} onShowHistory={showSignatureHistory} />
 
                   <div className="ahc-timeline">
                     <div className="ahc-tl-item">

@@ -122,6 +122,17 @@ public class AlertEvent {
      */
     @Transient private Long    repeatCount;
     /** Sertifikanın GÜNCEL son geçerlilik anı (LatestCheck) — alarm anındakinden farklıysa yenilenmiştir. */
+    /**
+     * Aynı imzanın (alan adı + alarm tipi) geçmişi — 2026-09-16 kullanıcı isteği: "bu alarm en son ne
+     * zaman oluştu, ne zamandır sessiz, geçmişte kaç kez açıldı?". Liste ucunda TEK toplu sorguyla
+     * doldurulur (kart başına sorgu N+1 olurdu), kalıcı DEĞİL.
+     */
+    @Transient private Long    historyCount;        // aynı imzayla toplam alarm (tüm zamanlar)
+    @Transient private String  historyFirstAt;      // ilk oluşum
+    @Transient private String  historyPrevAt;       // BU alarmdan önceki oluşum (yoksa null = ilk kez)
+    @Transient private String  historyLastAt;       // imzanın en son oluşumu (bu alarm da olabilir)
+    @Transient private String  historyLastResolvedAt; // imzanın en son kapanışı — "ne zamandır sessiz"
+
     @Transient private String  currentNotAfter;
 
     /**
