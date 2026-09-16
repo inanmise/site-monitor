@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-16T20:40:12Z",
+  "generatedAt": "2026-09-16T21:11:38Z",
   "repo": "inanmise/site-monitor",
-  "count": 654,
+  "count": 655,
   "releases": [
+    {
+      "version": "20.68.1",
+      "tag": "v20.68.1",
+      "releasedAt": "2026-09-16T21:11:31Z",
+      "commit": "47e182132835f04863a2375d812803d353677916",
+      "prevVersion": "20.68.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "981f568a",
+          "subject": "ISSUE-002/003 — takım kırılımı dar ekranda kırpılıyordu, başlık dört satıra bölünüyordu"
+        },
+        {
+          "type": "test",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "a25186f9",
+          "subject": "regression test for ISSUE-001 — takım rozeti satır düğmesi içinde span kalır"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "0459de03",
+          "subject": "ISSUE-001 — takım kırılımında iç içe <button> (React validateDOMNesting uyarısı)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.68.0",
       "tag": "v20.68.0",

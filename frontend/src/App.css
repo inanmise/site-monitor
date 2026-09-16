@@ -13508,7 +13508,11 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .alh-ts-sum { font-weight: 500; font-size: .84em; color: var(--text-light); }
 .alh-ts-chev { margin-left: auto; transition: transform .18s ease; }
 .alh-ts-chev.is-open { transform: rotate(180deg); }
-.alh-ts-body { padding: 0 14px 12px; }
+/* Tablo dar ekranda kutusunun DIŞINA taşıyordu ve kırpılıyordu: "Son 7/30 gün" sütunları
+   375px'te görünmüyor, kaydırılamıyordu (QA ISSUE-002, 2026-09-16). Kendi yatay kaydırma
+   kabında durur (tamamlama panosundaki .wrc-scroll deseni). */
+.alh-ts-body { padding: 0 14px 12px; overflow-x: auto; }
+.alh-ts-table { min-width: 520px; }
 .alh-ts-empty { color: var(--text-light); font-size: .86em; padding: 8px 0 12px; }
 .alh-ts-table td, .alh-ts-table th { vertical-align: middle; }
 .alh-ts-row.is-active { background: color-mix(in srgb, var(--primary) 8%, transparent); }
@@ -13541,4 +13545,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 @media (max-width: 760px) {
   .noise-kpis { grid-template-columns: repeat(2, 1fr); }
   .alh-ts-open { min-width: 60px; }
+  /* Başlıktaki özet çipi dar ekranda başlığı dört satıra bölüyordu (QA ISSUE-003, 2026-09-16);
+     sayılar zaten panelin içinde. Başlık tek satır kalır, çip gizlenir. */
+  .alh-ts-sum, .noise-sum { display: none; }
+  .alh-ts-head, .noise-head { flex-wrap: nowrap; }
+  .alh-ts-title, .noise-title { white-space: nowrap; }
 }
