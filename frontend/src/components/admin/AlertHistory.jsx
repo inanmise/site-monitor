@@ -766,6 +766,9 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
     try { return new Set(JSON.parse(sessionStorage.getItem(GROUP_EXPAND_KEY) || '[]')) }
     catch { return new Set() }
   })
+  // Bildirim kutusundan derin bağlantı (2026-09-16): ?alert=<id> — tipin grubu AÇILIR, kart vurgulanır
+  // ve görünüme kaydırılır. Param tüketilince URL'den silinir (sekme dönüşünde tekrar vurgulamasın).
+  const [linkedAlertId, setLinkedAlertId] = useState(() => (urlSync ? readUrlParam('alert', null) : null))
   const toggleGroup = useCallback((type) => {
     setExpanded(prev => {
       const next = new Set(prev)
@@ -774,6 +777,25 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
       return next
     })
   }, [])
+
+  // Derin bağlantı: liste gelince kartı bul, grubunu aç, kaydır. Kart DOM'a girdikten sonra
+  // (bir sonraki boyama) kaydırılır; bulunamazsa (başka sayfada/süzgeçte) yalnız vurgu kalır.
+  useEffect(() => {
+    if (!linkedAlertId || !alerts.length) return
+    const hit = alerts.find((a) => String(a.id) === String(linkedAlertId))
+    if (hit?.alert_type) {
+      setExpanded((prev) => (prev.has(hit.alert_type) ? prev : new Set(prev).add(hit.alert_type)))
+    }
+    const id = setTimeout(() => {
+      try { document.querySelector('.alert-card.alh-card-linked')?.scrollIntoView({ block: 'center', behavior: 'smooth' }) } catch { /* jsdom */ }
+    }, 80)
+    try {
+      const url = new URL(window.location.href)
+      url.searchParams.delete('alert')
+      window.history.replaceState({}, '', url)
+    } catch { /* yoksay */ }
+    return () => clearTimeout(id)
+  }, [linkedAlertId, alerts])
 
   // Yazarken her tuşta istek atma — 300 ms sessizlikten sonra tek istek.
   useEffect(() => {
@@ -1276,7 +1298,8 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
           expanded={expanded} onToggle={toggleGroup} renderCard={(a) => {
             const notifiedList = parseContacts(a.notified_contacts)
             return (
-              <div key={a.id} className={`alert-card alert-${a.alert_level?.toLowerCase()}`}>
+              <div key={a.id} className={`alert-card alert-${a.alert_level?.toLowerCase()}`
+                + (String(a.id) === String(linkedAlertId) ? ' alh-card-linked' : '')}>
 
                 <div className="alert-card-header">
                   <input
