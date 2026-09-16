@@ -93,6 +93,20 @@ describe('AlertTeamStatsPanel — takım kırılımı', () => {
     fireEvent.click(document.querySelector('.alh-ts-link'))
     expect(onPick).toHaveBeenCalledWith('5')
   })
+
+  // Regression: ISSUE-001 — TeamBadge varsayılan <button> çiziyor; satır düğmesinin İÇİNDE
+  // kullanılınca React her satır için validateDOMNesting uyarısı basıyordu.
+  // Found by /qa on 2026-09-16
+  // Report: .gstack/qa-reports/qa-report-localhost-2026-09-16.md
+  it('ISSUE-001: takım rozeti satır düğmesinin içinde <button> DEĞİL (iç içe düğüm uyarısı)', async () => {
+    render(<LangProvider><AlertTeamStatsPanel onPickTeam={() => {}} /></LangProvider>)
+    fireEvent.click(screen.getByRole('button', { name: /Takım kırılımı|Breakdown by team/ }))
+    await screen.findByText('Takım A')
+    const link = document.querySelector('.alh-ts-link')
+    expect(link.tagName).toBe('BUTTON')
+    expect(link.querySelector('button')).toBeNull()          // rozet span olmalı
+    expect(link.querySelector('[role="button"]')).not.toBeNull()   // erişilebilirliği korur
+  })
 })
 
 describe('AlertHistory — "Geçmişini gör" listeyi o imzaya süzer', () => {
