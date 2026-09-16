@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
-import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Inbox, ShieldCheck } from 'lucide-react'
+import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Inbox, ShieldCheck, CalendarDays } from 'lucide-react'
 
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
@@ -158,6 +158,8 @@ export default function App() {
   // Faz 3b: yalnız global (yerel/bootstrap) admin global-only sekmeleri görür;
   // kapsamlı (scoped) müdür-admin systemRole==='ADMIN' olsa da görmemeli (backend 403 döner).
   const [globalAdmin, setGlobalAdmin] = useState(false)
+  // Haftalık Raporlar modülü takım bazlı açılır (2026-09-16): sunucu /me + giriş yanıtında söyler.
+  const [weeklyReportsVisible, setWeeklyReportsVisible] = useState(false)
   const [teamId, setTeamId] = useState(null)
   const [teamName, setTeamName] = useState(null)
   // Kullanıcının TÜM takım üyelikleri (birincil takım ilk). Takım Yönetimi'ndeki haftalık e-posta
@@ -278,6 +280,7 @@ export default function App() {
         setUser(res.username)
         setSystemRole(res.system_role || 'USER')
         setGlobalAdmin(!!res.global_admin)
+        setWeeklyReportsVisible(!!res.weekly_reports_visible)
         setTeamId(res.team_id ?? null)
         setTeamName(res.team_name ?? null)
         setMyTeamIds(Array.isArray(res.team_ids) ? res.team_ids : [])
@@ -693,6 +696,7 @@ export default function App() {
     setUser(userData.username)
     setSystemRole(userData.system_role || 'USER')
     setGlobalAdmin(!!userData.global_admin)
+    setWeeklyReportsVisible(!!userData.weekly_reports_visible)
     setTeamId(userData.team_id ?? null)
     setTeamName(userData.team_name ?? null)
     setMyTeamIds(Array.isArray(userData.team_ids) ? userData.team_ids : [])
@@ -940,7 +944,7 @@ export default function App() {
       )}
 
       <Nav activeTab={tab} onTabChange={handleTabChange} username={user} teamName={teamName} systemRole={systemRole}
-        globalAdmin={globalAdmin} loginInfo={loginInfo}
+        globalAdmin={globalAdmin} loginInfo={loginInfo} weeklyReportsVisible={weeklyReportsVisible}
         onLogout={handleLogout} onChangePassword={() => setSelfPwdModalOpen(true)} />
 
       {selfPwdModalOpen && user && (
@@ -1415,9 +1419,15 @@ export default function App() {
               </div>
             )}
 
-            {tab === 'weeklyreports' && (
+            {/* Derin bağlantı da kapıdan geçer: modül kapalıysa sayfa hiç çizilmez (2026-09-16). */}
+            {tab === 'weeklyreports' && weeklyReportsVisible && (
               <div className="tab-content active">
                 <WeeklyReportsPage systemRole={systemRole} teamId={teamId} teamName={teamName} resetNonce={wrResetNonce} />
+              </div>
+            )}
+            {tab === 'weeklyreports' && !weeklyReportsVisible && (
+              <div className="tab-content active">
+                <StatusBlock tone="info" icon={CalendarDays} title={t('wracc.hiddenTitle')} description={t('wracc.hiddenBody')} />
               </div>
             )}
 
