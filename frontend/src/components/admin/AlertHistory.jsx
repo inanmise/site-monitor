@@ -778,6 +778,41 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
     })
   }, [])
 
+  // İKİNCİ (ve sonraki) derin bağlantı — bileşen zaten AÇIKKEN gelen bildirim tıklaması
+  // (2026-09-16 kullanıcı bildirimi): sekme değişmediği için bileşen mount'ta kalıyor, URL
+  // güncelleniyordu ama süzgeçler ilk tıklamanınki kalıyor ve ekranda ESKİ alarm duruyordu.
+  // Çözüm: `sm:navigate` olayının PARAMLARINI (URL'i okumaktan daha güvenilir: App henüz yazmamış
+  // olabilir) doğrudan uygula; geri/ileri düğmesinde de URL'den yeniden oku.
+  useEffect(() => {
+    if (!urlSync) return undefined
+    const apply = (p) => {
+      setTab(p.view === 'closed' ? 'closed' : 'open')
+      setTypeFilter(p.type ? String(p.type) : '')
+      const q = p.q ? String(p.q) : ''
+      setSearch(q); setSearchTerm(q)
+      // Yeni bir bildirim niyeti: kalan süzgeçler sıfırlanır, yoksa aranan alarm eleniyor olabilir.
+      setLevelFilter(''); setAckFilter(''); setClosedFrom(null); setClosedTo(null)
+      setPage(0)
+      setLinkedAlertId(p.alert != null ? String(p.alert) : null)
+    }
+    const onNav = (e) => {
+      if (e?.detail?.tab !== 'alerthistory') return
+      apply(e.detail.params || {})
+    }
+    const onPop = () => {
+      apply({
+        view: readUrlParam('view', null), type: readUrlParam('type', ''), q: readUrlParam('q', ''),
+        alert: readUrlParam('alert', null),
+      })
+    }
+    window.addEventListener('sm:navigate', onNav)
+    window.addEventListener('popstate', onPop)
+    return () => {
+      window.removeEventListener('sm:navigate', onNav)
+      window.removeEventListener('popstate', onPop)
+    }
+  }, [urlSync])
+
   // Derin bağlantı: liste gelince kartı bul, grubunu aç, kaydır. Kart DOM'a girdikten sonra
   // (bir sonraki boyama) kaydırılır; bulunamazsa (başka sayfada/süzgeçte) yalnız vurgu kalır.
   useEffect(() => {
