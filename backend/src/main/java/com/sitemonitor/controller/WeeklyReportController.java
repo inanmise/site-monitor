@@ -363,6 +363,48 @@ public class WeeklyReportController {
         return ok(result);
     }
 
+    // ── Modül görünürlüğü (2026-09-16): Ayarlar → Haftalık Raporlar ───────────────────────────
+
+    /** Takım × modül durumu (yalnız global admin): ad, aktiflik, açık mı, mevcut rapor sayısı. */
+    @GetMapping("/access/teams")
+    public ResponseEntity<Map<String, Object>> accessTeams(HttpSession session) {
+        if (!SessionScope.isGlobalAdmin(session)) throw new SecurityException("Admin access required");
+        Map<Long, Long> counts = service.reportCountsByTeam();
+        List<Map<String, Object>> rows = teamRepo.findAll().stream()
+                .sorted(java.util.Comparator.comparing(t -> t.getName() == null ? "" : t.getName().toLowerCase(java.util.Locale.ROOT)))
+                .map(t -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("team_id", t.getId());
+                    m.put("team_name", t.getName());
+                    m.put("active", Boolean.TRUE.equals(t.getActive()));
+                    m.put("enabled", Boolean.TRUE.equals(t.getWeeklyReportsEnabled()));
+                    m.put("reminder", Boolean.TRUE.equals(t.getWeeklyReminderEnabled()));
+                    m.put("report_count", counts.getOrDefault(t.getId(), 0L));
+                    return m;
+                }).toList();
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("teams", rows);
+        data.put("enabled_count", rows.stream().filter(r -> Boolean.TRUE.equals(r.get("enabled"))).count());
+        return ok(Map.of("data", data));
+    }
+
+    /** Takımda modülü aç/kapat (yalnız global admin). Kapatmak veriyi SİLMEZ — yalnız görünürlük. */
+    @PutMapping("/access/teams/{teamId}")
+    public ResponseEntity<Map<String, Object>> setAccess(@PathVariable Long teamId,
+                                                        @RequestBody Map<String, Object> body,
+                                                        HttpSession session, HttpServletRequest request) {
+        if (!SessionScope.isGlobalAdmin(session)) throw new SecurityException("Admin access required");
+        boolean enabled = Boolean.TRUE.equals(body.get("enabled"))
+                || "true".equalsIgnoreCase(String.valueOf(body.get("enabled")));
+        com.sitemonitor.model.Team team = service.setFeatureEnabled(teamId, enabled);
+        auditService.recordAction("WEEKLY_REPORT_ACCESS", session, request, "TEAM", String.valueOf(teamId),
+                "{\"team\":\"" + (team.getName() == null ? "" : team.getName().replace("\"", "'")) + "\",\"enabled\":" + enabled + "}");
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("team_id", teamId);
+        data.put("enabled", enabled);
+        return ok(Map.of("data", data, "message", enabled ? "Açıldı" : "Kapatıldı"));
+    }
+
     /** Cuma hatırlatma maillerini cron beklemeden ANINDA gönderir — yalnız ADMIN.
      *  Test/operasyon kolaylığı; mantık scheduled cron ile aynı (sendFridayReminders). */
     @PostMapping("/reminders/trigger")

@@ -92,6 +92,19 @@ class InboxServiceTest {
         assertThat(items).extracting(InboxService.Item::key).doesNotContain("alert:3", "resolved:5");
         assertThat(items.stream().filter(i -> i.kind().equals("maintenance_soon")).findFirst().orElseThrow().params()).containsEntry("window", 8L);
         assertThat(items.stream().filter(i -> i.kind().equals("weekly_due")).findFirst().orElseThrow().tab()).isEqualTo("weeklyreports");
+
+        // Açık alarm → ALARM GEÇMİŞİ (2026-09-16 kullanıcı bildirimi): "Uyarılar" sertifika uyarıları
+        // sayfasıdır, alarm olayını tanımaz; tıklayan kişi alarmı bulamıyordu. Artık tip süzgeci +
+        // alan adı araması + olay kimliği (kart vurgusu) ile doğru yere gider.
+        InboxService.Item open = items.get(0);
+        assertThat(open.tab()).isEqualTo("alerthistory");
+        assertThat(open.params()).containsEntry("alert", 2L).containsEntry("type", "HTTP_DOWN");
+        assertThat(open.params()).doesNotContainKey("view");   // açık sekmesi varsayılan
+
+        InboxService.Item resolved = items.stream().filter(i -> i.kind().equals("alert_resolved")).findFirst().orElseThrow();
+        assertThat(resolved.tab()).isEqualTo("alerthistory");
+        assertThat(resolved.params()).containsEntry("view", "closed");
+        assertThat(resolved.params()).containsKey("alert");
     }
 
     @Test

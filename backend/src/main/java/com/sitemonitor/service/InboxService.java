@@ -60,8 +60,12 @@ public class InboxService {
         try {
             for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
                 if (!visible(e, canViewTeam, domains)) continue;
+                // Hedef: Alarm Geçmişi (alerthistory) — "Uyarılar" SERTİFİKA uyarıları sayfasıdır ve
+                // alarm olayını tanımaz; bildirim oraya gidince kullanıcı tıkladığı alarmı bulamıyordu
+                // (2026-09-16 kullanıcı bildirimi). Artık: açık sekmesi + tipe süzme + olay kimliği
+                // (arayüz grubu açar, kartı vurgular ve kaydırır).
                 out.add(new Item("alert:" + e.getId(), "alert_open", e.getAlertLevel(), e.getDomain() != null ? e.getDomain() : String.valueOf(e.getAlertType()),
-                        e.getAlertType(), e.getCreatedAt(), "warnings", Map.of("incident", e.getId())));
+                        e.getAlertType(), e.getCreatedAt(), "alerthistory", alertParams(e, false)));
             }
         } catch (Exception ex) { log.debug("inbox: açık alarmlar düştü: {}", ex.toString()); }
 
@@ -72,7 +76,7 @@ public class InboxService {
                 if (!Boolean.TRUE.equals(e.getResolved()) || e.getResolvedAt() == null || e.getResolvedAt().compareTo(since) < 0) continue;
                 if (!visible(e, canViewTeam, domains)) continue;
                 out.add(new Item("resolved:" + e.getId() + ":" + e.getResolvedAt(), "alert_resolved", "OK", e.getDomain() != null ? e.getDomain() : String.valueOf(e.getAlertType()),
-                        e.getAlertType(), e.getResolvedAt(), "alerthistory", Map.of("incident", e.getId())));
+                        e.getAlertType(), e.getResolvedAt(), "alerthistory", alertParams(e, true)));
             }
         } catch (Exception ex) { log.debug("inbox: çözülenler düştü: {}", ex.toString()); }
 
@@ -124,6 +128,20 @@ public class InboxService {
             return String.valueOf(b.at()).compareTo(String.valueOf(a.at()));
         });
         return out.size() > MAX_ITEMS ? out.subList(0, MAX_ITEMS) : out;
+    }
+
+    /**
+     * Alarm Geçmişi derin bağlantısı (2026-09-16): {@code alert} olay kimliği (kart vurgusu + grubun
+     * açılması), {@code type} tip süzgeci, {@code q} alan adı araması, çözülenlerde {@code view=closed}.
+     * Alan adı yoksa arama konmaz — boş arama tüm listeyi süzerdi.
+     */
+    private static Map<String, Object> alertParams(AlertEvent e, boolean resolved) {
+        Map<String, Object> p = new LinkedHashMap<>();
+        p.put("alert", e.getId());
+        if (e.getAlertType() != null) p.put("type", e.getAlertType());
+        if (e.getDomain() != null && !e.getDomain().isBlank()) p.put("q", e.getDomain());
+        if (resolved) p.put("view", "closed");
+        return p;
     }
 
     private static int rank(Item i) {

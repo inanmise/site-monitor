@@ -171,16 +171,73 @@ public class WeeklyReportService {
 
     // ── Listeleme / okuma ─────────────────────────────────────────────────────
 
+    // ── Modül görünürlüğü (2026-09-16): takım bazlı açık/kapalı ───────────────
+    //
+    // Varsayılan KAPALI. Kapalı takım: sayfayı görmez (arayüz), uçlar 403 (SecurityException),
+    // pano/şerit/hatırlatma o takımı saymaz. Yönetici Ayarlar → Haftalık Raporlar'dan açar.
+    // Global admin/AUDIT kapalı takımın verisini de GÖRMEZ — "kapalı" tek anlama gelsin.
+
+    /** Takıma açık mı? (null takım = kapalı) */
+    public boolean featureEnabled(Long teamId) {
+        return teamId != null && teamRepo.findById(teamId)
+                .map(t -> Boolean.TRUE.equals(t.getWeeklyReportsEnabled())).orElse(false);
+    }
+
+    /** Modülü açık olan AKTİF takımların kimlikleri (pano/şerit/liste kapsamı). */
+    public java.util.Set<Long> enabledTeamIds() {
+        java.util.Set<Long> out = new java.util.LinkedHashSet<>();
+        for (Team t : teamRepo.findByActiveTrueOrderByNameAsc())
+            if (Boolean.TRUE.equals(t.getWeeklyReportsEnabled())) out.add(t.getId());
+        return out;
+    }
+
+    /** Kullanıcı modülü görebilir mi? Kendi takımlarından biri açıksa evet; yönetici/denetçi için
+     *  en az bir takım açıksa evet (yönetim ekranları boş sayfaya düşmesin). */
+    public boolean visibleFor(java.util.Collection<Long> teamIds, boolean adminOrAudit) {
+        java.util.Set<Long> enabled = enabledTeamIds();
+        if (enabled.isEmpty()) return false;
+        if (adminOrAudit) return true;
+        if (teamIds == null) return false;
+        for (Long id : teamIds) if (id != null && enabled.contains(id)) return true;
+        return false;
+    }
+
+    /** Takım → rapor sayısı (ayar ekranında "bu takımda kaç rapor var" bilgisi). */
+    public Map<Long, Long> reportCountsByTeam() {
+        Map<Long, Long> out = new java.util.HashMap<>();
+        for (Object[] row : reportRepo.countByTeam()) out.put(((Number) row[0]).longValue(), ((Number) row[1]).longValue());
+        return out;
+    }
+
+    /** Modülü takımda aç/kapat. Veri SİLİNMEZ — kapalı takımın raporları durur, yalnız görünmez olur. */
+    @Transactional
+    public Team setFeatureEnabled(Long teamId, boolean enabled) {
+        Team t = teamRepo.findById(teamId)
+                .orElseThrow(() -> new NoSuchElementException("Team not found: " + teamId));
+        t.setWeeklyReportsEnabled(enabled);
+        teamRepo.save(t);
+        log.info("Haftalık Raporlar modülü {}: team={} ({})", enabled ? "AÇILDI" : "KAPATILDI", t.getName(), teamId);
+        return t;
+    }
+
+    /** Kapalı takım için erişim reddi (controller 403'e çevirir). */
+    void requireFeature(Long teamId) {
+        if (!featureEnabled(teamId)) throw new SecurityException("WEEKLY_REPORTS_DISABLED");
+    }
+
     public List<WeeklyReport> list(Long requestedTeamId, Integer year, Actor actor) {
         int y = year != null ? year : today().getYear();
         Long teamId = actor.isAdmin() || actor.isAudit()
                 ? requestedTeamId
                 : actor.teamId(); // non-ADMIN kendi takımına zorlanır
         if (teamId == null) {
+            java.util.Set<Long> enabled = enabledTeamIds();
             return actor.isAdmin() || actor.isAudit()
-                    ? reportRepo.findByReportYearOrderByTeamIdAscWeekNoDesc(y)
+                    ? reportRepo.findByReportYearOrderByTeamIdAscWeekNoDesc(y).stream()
+                            .filter(r -> enabled.contains(r.getTeamId())).toList()
                     : List.of();
         }
+        if (!featureEnabled(teamId)) return List.of();
         return reportRepo.findByTeamIdAndReportYearOrderByWeekNoDesc(teamId, y);
     }
 
@@ -206,6 +263,7 @@ public class WeeklyReportService {
             byTeam.computeIfAbsent(r.getTeamId(), k -> new java.util.HashMap<>()).put(r.getWeekNo(), r);
         int totalMissing = 0;
         for (Team t : teamRepo.findByActiveTrueOrderByNameAsc()) {
+            if (!Boolean.TRUE.equals(t.getWeeklyReportsEnabled())) continue;   // modül kapalı takım panoda yok (2026-09-16)
             if (!Boolean.TRUE.equals(t.getWeeklyReminderEnabled()) && !byTeam.containsKey(t.getId())) continue;
             Map<Integer, WeeklyReport> rows = byTeam.getOrDefault(t.getId(), Map.of());
             List<Map<String, Object>> cells = new java.util.ArrayList<>();
@@ -233,6 +291,7 @@ public class WeeklyReportService {
 
     /** Yıl dropdown'ı: rapor bulunan yıllar (takım scoping'i list() ile aynı);
      *  içinde bulunulan ISO yılı yoksa başa eklenir — dropdown boş kalmaz. */
+    /** Modül kapalı takımda yıl listesi de boştur (liste/derin bağlantı sızmasın). */
     public List<Integer> years(Long requestedTeamId, Actor actor) {
         Long teamId = actor.isAdmin() || actor.isAudit() ? requestedTeamId : actor.teamId();
         int current = today().get(WeekFields.ISO.weekBasedYear());
@@ -277,6 +336,7 @@ public class WeeklyReportService {
         if (weekNo < 1 || weekNo > 53) throw new IllegalArgumentException("Geçersiz hafta numarası: " + weekNo);
         Team team = teamRepo.findById(teamId)
                 .orElseThrow(() -> new NoSuchElementException("Team not found: " + teamId));
+        requireFeature(teamId);   // modül kapalı takıma rapor açılamaz (2026-09-16)
         if (!actor.isAdmin() && !Objects.equals(actor.teamId(), teamId)) {
             throw new SecurityException("Başka takım için rapor oluşturulamaz");
         }
@@ -314,6 +374,7 @@ public class WeeklyReportService {
      * Sonuç: {@code {transferred:int, skipped:[{id, week_label, year, week_no, reason}]}}.
      */
     @Transactional
+    /** Hedef takımda modül kapalıysa transfer edilmez (rapor görünmez bir takıma taşınmasın). */
     public Map<String, Object> transfer(List<Long> ids, Long targetTeamId, Actor actor) {
         if (!actor.isAdmin()) throw new SecurityException("Transfer yetkisi yok — ADMIN gerekir");
         if (targetTeamId == null) throw new IllegalArgumentException("Hedef takım seçilmeli");
@@ -1173,6 +1234,7 @@ public class WeeklyReportService {
     // ── Yetkiler / doğrulama ─────────────────────────────────────────────────
 
     private void requireCanRead(WeeklyReport r, Actor a) {
+        requireFeature(r.getTeamId());   // modül o takımda kapalıysa kimse (yönetici dâhil) okuyamaz
         if (a.isAdmin() || a.isAudit()) return;
         if (!Objects.equals(a.teamId(), r.getTeamId())) {
             throw new SecurityException("Bu rapora erişim yetkiniz yok");
@@ -1412,9 +1474,11 @@ public class WeeklyReportService {
         List<Team> scope;
         if (actor.isAdmin() || actor.isAudit()) {
             scope = teamRepo.findByActiveTrueOrderByNameAsc().stream()
+                    .filter(t -> Boolean.TRUE.equals(t.getWeeklyReportsEnabled()))
                     .filter(t -> Boolean.TRUE.equals(t.getWeeklyReminderEnabled())).toList();
         } else if (actor.teamId() != null) {
-            scope = teamRepo.findById(actor.teamId()).map(List::of).orElse(List.of());
+            scope = teamRepo.findById(actor.teamId())
+                    .filter(t -> Boolean.TRUE.equals(t.getWeeklyReportsEnabled())).map(List::of).orElse(List.of());
         } else {
             scope = List.of();
         }
@@ -1536,6 +1600,7 @@ public class WeeklyReportService {
         int optIn = 0, noEmail = 0, done = 0, will = 0;
         List<Map<String, Object>> teams = new ArrayList<>();
         for (Team t : teamRepo.findByActiveTrueOrderByNameAsc()) {
+            if (!Boolean.TRUE.equals(t.getWeeklyReportsEnabled())) continue;   // modül kapalı (2026-09-16)
             if (!Boolean.TRUE.equals(t.getWeeklyReminderEnabled())) continue;
             optIn++;
             boolean hasMail = t.getEmail() != null && !t.getEmail().isBlank();

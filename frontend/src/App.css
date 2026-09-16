@@ -2981,6 +2981,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .inc-row-ongoing { background: rgba(220,38,38,.04); }
 /* E-posta derin linkiyle açılan olay — kullanıcı hangi satıra geldiğini görsün. */
 .inc-row-linked td { background: rgba(99, 102, 241, .12); box-shadow: inset 3px 0 0 #4f46e5; }
+/* Bildirim kutusundan gelen alarm kartı (2026-09-16): aynı vurgu dili — kullanıcı tıkladığı alarmı görür. */
+.alert-card.alh-card-linked { box-shadow: inset 3px 0 0 #4f46e5, 0 0 0 2px rgba(99,102,241,.35); }
 .inc-row-link { cursor: pointer; transition: background .12s; }
 .inc-row-link:hover { background: rgba(99,102,241,.08); }
 .inc-row-link:focus-visible { outline: 2px solid #4f46e5; outline-offset: -2px; }
@@ -12799,18 +12801,25 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .today-status--draft, [data-theme="dark"] .today-status--rejected, [data-theme="dark"] .today-status--missing { background: #422006; color: #fcd34d; }
 
 /* ── Komut paleti (Ctrl+K, 2026-09-12 #1) ─────────────────────────────────────────────────── */
-.sb-search { display: flex; align-items: center; gap: 8px; margin: 6px 10px 4px; padding: 6px 10px; border-radius: 8px;
+/* Ara ve Bildirimler AYNI kutu (2026-09-16, kullanıcı isteği): kutu ölçüsü TEK kuralda tanımlanır ki
+   ikisi ayrı ayrı düzenlenirken sürüklenmesin. Eskiden yükseklik içeriğin insafındaydı — "Ctrl K"
+   etiketi (kenarlıklı kbd) ile okunmamış sayısı rozeti (line-height 18) farklı yükseklik veriyordu,
+   iki kutu yan yana eşit görünmüyordu. min-height ikisini de sabitler; rozet/kbd artık yükseklik
+   belirlemez, yalnız içeride ortalanır. */
+.sb-search, .sb-bell { position: relative; display: flex; align-items: center; gap: 8px; min-height: 32px;
+  padding: 6px 10px; border-radius: 8px;
   border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.08); color: rgba(255,255,255,.85); font: inherit; font-size: .82em; cursor: pointer; }
+.sb-search { margin: 6px 10px 4px; }
 .sb-search:hover { background: rgba(255,255,255,.16); color: #fff; }
 .sb-search:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
-.sb-search--mini { justify-content: center; margin: 6px 8px 4px; padding: 6px; }
+.sb-search--mini, .sb-bell--mini { justify-content: center; padding: 6px; }
+.sb-search--mini { margin: 6px 8px 4px; }
 .sb-search-text { flex: 1; text-align: left; }
-.sb-search-kbd { font-family: inherit; font-size: .78em; padding: 1px 5px; border-radius: 4px; border: 1px solid rgba(255,255,255,.3); opacity: .8; }
-.sb-bell { position: relative; display: flex; align-items: center; gap: 8px; margin: 0 10px 6px; padding: 6px 10px; border-radius: 8px;
-  border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.08); color: rgba(255,255,255,.85); font: inherit; font-size: .82em; cursor: pointer; }
+.sb-search-kbd { font-family: inherit; font-size: .78em; line-height: 16px; padding: 0 5px; border-radius: 4px; border: 1px solid rgba(255,255,255,.3); opacity: .8; }
+.sb-bell { margin: 0 10px 6px; }
 .sb-bell:hover { background: rgba(255,255,255,.16); color: #fff; }
 .sb-bell:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
-.sb-bell--mini { justify-content: center; margin: 0 8px 6px; padding: 6px; }
+.sb-bell--mini { margin: 0 8px 6px; }
 .sb-bell-text { flex: 1; text-align: left; }
 .sb-bell-badge { min-width: 18px; padding: 0 5px; border-radius: 999px; background: #dc2626; color: #fff; font-size: .74em; font-weight: 700; text-align: center; line-height: 18px; }
 .sb-bell--mini .sb-bell-badge { position: absolute; top: -4px; right: -4px; }
@@ -13346,7 +13355,10 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .uact-kpi-grid--tour { grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .usr-tour-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: .9em; }
 .usr-tour-row .btn-sm { margin-left: auto; margin-right: 0; }
-.sb-inbox-wrap { display: block; }
+/* Bildirim düğmesi kutusu ARA ile aynı genişlikte olsun (2026-09-16): sarmalayıcı BLOK iken buton
+   form denetimi olarak içeriğine göre daralıyordu (204px'e karşı 103px). Flex sütun + stretch,
+   butonu tıpkı .sb-search gibi kenar boşlukları kadar içeriden tam genişliğe yayar. */
+.sb-inbox-wrap { display: flex; flex-direction: column; }
 [data-theme="dark"] .tour-mask { background: rgba(2, 6, 23, .7); }
 @media (prefers-reduced-motion: reduce) { .tour-ring, .tour-tip { transition: none; } }
 @media (max-width: 900px) { .uact-kpi-grid--tour { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
@@ -13449,3 +13461,17 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .wr-cm-item--reject { border-color: #991b1b; }
 [data-theme="dark"] .wr-cm-item--submit { border-color: #1e40af; }
 @media print { .wr-cm-form { display: none !important; } }
+
+/* ── Haftalık Raporlar takım görünürlüğü (2026-09-16) ─────────────────────────────────────── */
+.wracc-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 10px 0; }
+.wracc-search { display: inline-flex; align-items: center; gap: 6px; flex: 1; min-width: 200px; max-width: 340px; color: var(--text-light); }
+.wracc-search .input { flex: 1; }
+.wracc-count { font-size: .82em; color: var(--text-light); font-weight: 600; }
+.wracc-table td, .wracc-table th { vertical-align: middle; }
+.wracc-state { display: inline-flex; align-items: center; gap: 8px; }
+.wracc-on { color: var(--success); font-weight: 600; font-size: .85em; }
+.wracc-off { color: var(--text-light); font-size: .85em; }
+.wracc-row--passive { opacity: .65; }
+.wracc-passive { margin-left: 6px; font-size: .74em; color: var(--text-light); }
+.wracc-empty { text-align: center; color: var(--text-light); padding: 18px 8px; }
+.wracc-hint { margin-top: 10px; }

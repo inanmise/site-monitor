@@ -843,6 +843,10 @@ class UserPushServiceTest {
     @Test
     @DisplayName("2026-09-12: enqueueTeamNotice — takım+seviye alıcıları, WEAK_ALGO tetiği, dedupe anahtarı; aynı gün ikinci tıklama yazmaz; global kapalı → SKIPPED_DISABLED")
     void enqueueTeamNotice_writesRowsWithDedupe() {
+        // Outbox worker'ı SUSTUR: enqueue* kuyruğa satır koyunca worker ipliği hemen koşuyor ve AYNI
+        // varlık nesnesini FAILED yapıyordu — assert ile yarışıyor (yerelde yeşil, CI'da kırmızı,
+        // 2026-09-16). Bu test satır YAZIMINI sınıyor, teslimatı değil.
+        when(deliveryRepo.findTop50ByStatusOrderByIdAsc(anyString())).thenReturn(List.of());
         recipients("N00001", "N00002");
         when(deliveryRepo.existsByDedupeKeyAndUsername("WEAK_ALGO:a.example.com:2026-09-12", "N00002")).thenReturn(true);
 
@@ -908,6 +912,10 @@ class UserPushServiceTest {
     @Test
     @DisplayName("2026-09-13: enqueueDirect — rol grubu çözümü yok, opt-out satırı SKIPPED, tekrar eden kullanıcı bir kez, dedupe, global kapalı")
     void enqueueDirect_writesRows() {
+        // Outbox worker'ı SUSTUR: enqueue* kuyruğa satır koyunca worker ipliği hemen koşuyor ve AYNI
+        // varlık nesnesini FAILED yapıyordu — assert ile yarışıyor (yerelde yeşil, CI'da kırmızı,
+        // 2026-09-16). Bu test satır YAZIMINI sınıyor, teslimatı değil.
+        when(deliveryRepo.findTop50ByStatusOrderByIdAsc(anyString())).thenReturn(List.of());
         var a = new UserPushService.DirectRecipient("M00001", "Müdür Bir", false);
         var b = new UserPushService.DirectRecipient("M00002", "Müdür İki", true);
         var dup = new UserPushService.DirectRecipient(" M00001 ", "Müdür Bir", false);

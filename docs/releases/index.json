@@ -1,9 +1,58 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-13T20:10:05Z",
+  "generatedAt": "2026-09-16T16:05:26Z",
   "repo": "inanmise/site-monitor",
-  "count": 652,
+  "count": 653,
   "releases": [
+    {
+      "version": "20.67.0",
+      "tag": "v20.67.0",
+      "releasedAt": "2026-09-16T16:05:20Z",
+      "commit": "9cd00a365dff9de4ef573cf08f28318028c5965c",
+      "prevVersion": "20.66.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": "push",
+          "breaking": false,
+          "sha": "9cd00a36",
+          "subject": "outbox worker yarışı — satır yazımı testleri PENDING'i yakalayamıyordu (CI kırmızısı)"
+        },
+        {
+          "type": "fix",
+          "scope": "nav",
+          "breaking": false,
+          "sha": "74aef1df",
+          "subject": "Ara ve Bildirimler kutuları aynı boyutta"
+        },
+        {
+          "type": "fix",
+          "scope": "inbox",
+          "breaking": false,
+          "sha": "16273b99",
+          "subject": "açık alarm bildirimi alarmın kendisini açsın (Uyarılar sayfasına düşüyordu)"
+        },
+        {
+          "type": "feat",
+          "scope": "weekly",
+          "breaking": false,
+          "sha": "1b2a4621",
+          "subject": "Haftalık Raporlar modülü takım bazlı açılır — varsayılan KAPALI"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.66.0",
       "tag": "v20.66.0",

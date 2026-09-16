@@ -9,6 +9,7 @@ vi.mock('../components/admin/BrandingSettings', () => ({ default: () => <div dat
 vi.mock('../components/admin/MonitorGroups', () => ({ default: () => <div data-testid="sec-monitorgroups" /> }))
 vi.mock('../components/admin/SmtpSettings', () => ({ default: () => <div data-testid="sec-smtp" /> }))
 vi.mock('../components/admin/WeeklyAvailabilitySettings', () => ({ default: () => <div data-testid="sec-weeklyavail" /> }))
+vi.mock('../components/admin/WeeklyReportAccessSettings', () => ({ default: () => <div data-testid="sec-weeklyreports" /> }))
 vi.mock('../components/admin/CertInventoryReportSettings', () => ({ default: () => <div data-testid="sec-certinvreport" /> }))
 vi.mock('../components/admin/StormSettings', () => ({ default: () => <div data-testid="sec-storm" /> }))
 vi.mock('../components/admin/UserPushSettings', () => ({ default: () => <div data-testid="sec-userpush" /> }))
@@ -32,10 +33,10 @@ function setUrl(search) {
 describe('AdminSettings — sekme semantiği, klavye ve derin bağlantı', () => {
   beforeEach(() => setUrl(''))
 
-  it('ARIA sekme deseni: 14 tab, tekil aria-selected, panele bağlı', () => {
+  it('ARIA sekme deseni: 15 tab (2026-09-16: + Haftalık Raporlar), tekil aria-selected, panele bağlı', () => {
     render(<AdminSettings />)
     const tabs = screen.getAllByRole('tab')
-    expect(tabs).toHaveLength(14)
+    expect(tabs).toHaveLength(15)
     expect(tabs.filter(t => t.getAttribute('aria-selected') === 'true')).toHaveLength(1)
 
     const panel = screen.getByRole('tabpanel')
@@ -48,7 +49,7 @@ describe('AdminSettings — sekme semantiği, klavye ve derin bağlantı', () =>
     render(<AdminSettings />)
     const tabs = screen.getAllByRole('tab')
     expect(tabs.filter(t => t.getAttribute('tabindex') === '0')).toHaveLength(1)
-    expect(tabs.filter(t => t.getAttribute('tabindex') === '-1')).toHaveLength(13)
+    expect(tabs.filter(t => t.getAttribute('tabindex') === '-1')).toHaveLength(tabs.length - 1)
   })
 
   it('ok tuşu ODAĞI taşır ama paneli DEĞİŞTİRMEZ (manuel aktivasyon)', () => {
@@ -68,20 +69,22 @@ describe('AdminSettings — sekme semantiği, klavye ve derin bağlantı', () =>
     const tabs = screen.getAllByRole('tab')
     tabs[0].focus()
     fireEvent.keyDown(tabs[0], { key: 'End' })
-    expect(document.activeElement).toBe(tabs[13])
-    fireEvent.keyDown(tabs[13], { key: 'Home' })
+    expect(document.activeElement).toBe(tabs.at(-1))
+    fireEvent.keyDown(tabs.at(-1), { key: 'Home' })
     expect(document.activeElement).toBe(tabs[0])
     fireEvent.keyDown(tabs[0], { key: 'ArrowUp' })
-    expect(document.activeElement).toBe(tabs[13])
+    expect(document.activeElement).toBe(tabs.at(-1))
   })
 
   it('Enter/Space odaklı sekmeyi aktive eder', () => {
     render(<AdminSettings />)
     const tabs = screen.getAllByRole('tab')
     // role="tab" olan <button> için Enter/Space zaten click üretir; sonucu doğruluyoruz.
-    fireEvent.click(tabs[9])   // ldap (userpush storm'dan sonra girdi, indeksler kaydı)
+    // İNDEKS DEĞİL etiket (2026-09-16): araya bölüm eklendikçe indeksli seçim sessizce başka sekmeyi tıklıyordu.
+    const ldapTab = tabs.find((x) => /LDAP/.test(x.textContent))
+    fireEvent.click(ldapTab)
     expect(screen.getByTestId('sec-ldap')).toBeInTheDocument()
-    expect(tabs[9].getAttribute('aria-selected')).toBe('true')
+    expect(ldapTab.getAttribute('aria-selected')).toBe('true')
   })
 
   it('?sec=ldap ile doğrudan LDAP bölümü açılır (derin bağlantı)', () => {
@@ -99,7 +102,7 @@ describe('AdminSettings — sekme semantiği, klavye ve derin bağlantı', () =>
 
   it('bölüm değişince URL\'e ?sec= yazılır; varsayılana dönünce param SİLİNİR', async () => {
     render(<AdminSettings />)
-    fireEvent.click(screen.getAllByRole('tab')[11])   // retention (userpush sonrası kayan indeks)
+    fireEvent.click(screen.getAllByRole('tab').find((x) => /Veri Saklama|Retention/.test(x.textContent)))
     await waitFor(() => expect(window.location.search).toContain('sec=retention'), { timeout: 2000 })
 
     fireEvent.click(screen.getAllByRole('tab')[0])    // general = varsayılan

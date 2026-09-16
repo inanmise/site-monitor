@@ -63,7 +63,7 @@ class WeeklyReportReminderStatusRegressionTest {
                 org.mockito.Mockito.mock(com.sitemonitor.repository.DomainMonitorRepository.class),
                 org.mockito.Mockito.mock(com.sitemonitor.repository.DomainCheckRepository.class));
         when(appSettings.getString(anyString(), any())).thenAnswer(i -> i.getArgument(1));   // varsayılan: FRI 15:00
-        Team a = new Team(); a.setId(2L); a.setName("Takım A"); a.setEmail("a@example.com"); a.setWeeklyReminderEnabled(true);
+        Team a = new Team(); a.setId(2L); a.setName("Takım A"); a.setEmail("a@example.com"); a.setWeeklyReminderEnabled(true); a.setWeeklyReportsEnabled(true);   // modül açık (2026-09-16)
         when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(a));
     }
 

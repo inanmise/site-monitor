@@ -13,7 +13,7 @@ import VersionChip from './VersionChip.jsx'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 import { useTour } from './tour/TourProvider.jsx'
 
-export default function Nav({ activeTab, onTabChange, username, teamName, systemRole, globalAdmin, onLogout, onChangePassword, globalStatus = 'ok', loginInfo = null }) {
+export default function Nav({ activeTab, onTabChange, username, teamName, systemRole, globalAdmin, onLogout, onChangePassword, globalStatus = 'ok', loginInfo = null, weeklyReportsVisible = false }) {
   const t = useT()
   const { toggle } = useLanguage()
   const { theme, toggle: toggleTheme } = useTheme()
@@ -75,7 +75,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
       tabs: [
         { id: 'stats',         Icon: BarChart3,    labelKey: 'nav.stats',         show: true },
         { id: 'weakalgo',      Icon: ShieldAlert,  labelKey: 'nav.weakAlgo',      show: true },
-        { id: 'weeklyreports', Icon: CalendarDays, labelKey: 'nav.weeklyReports', show: true },
+        // Haftalık Raporlar modülü takım bazlı açılır (2026-09-16) — varsayılan KAPALI, sekme hiç çizilmez.
+        { id: 'weeklyreports', Icon: CalendarDays, labelKey: 'nav.weeklyReports', show: weeklyReportsVisible },
         { id: 'incident-history', Icon: ListChecks, labelKey: 'nav.incidentHistory', show: true },
       ],
     },
@@ -240,7 +241,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
       {/* Komut paleti tetiği (2026-09-12, #1): Ctrl+K — alan / izleme / takım / sekme tek kutuda */}
       <button type="button" data-tour="nav-search" className={`sb-search${open ? '' : ' sb-search--mini'}`}
         onClick={() => window.dispatchEvent(new CustomEvent('sm:palette'))} title={t('palette.title')} aria-label={t('palette.title')}>
-        <Search size={14} aria-hidden="true" />
+        <Search size={15} aria-hidden="true" />
         {open && <><span className="sb-search-text">{t('palette.trigger')}</span><kbd className="sb-search-kbd">Ctrl K</kbd></>}
       </button>
       <CommandPalette tabs={paletteTabs} onTabChange={onTabChange} />

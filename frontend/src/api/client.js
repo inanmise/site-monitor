@@ -429,6 +429,10 @@ export const api = {
       method: 'POST', body: JSON.stringify({ text }),
     }),
     remindersStatus: () => request('/weekly-reports/reminders/status'),      // hatırlatma görünürlüğü (admin/AUDIT)
+    accessTeams: () => request('/weekly-reports/access/teams'),              // modül görünürlüğü: takım listesi (2026-09-16)
+    setAccess: (teamId, enabled) => request(`/weekly-reports/access/teams/${teamId}`, {
+      method: 'PUT', body: JSON.stringify({ enabled }),
+    }),
     create: (payload) => request('/weekly-reports', {
       method: 'POST', body: JSON.stringify(payload),
     }),

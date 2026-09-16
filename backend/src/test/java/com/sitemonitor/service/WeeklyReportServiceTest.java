@@ -94,6 +94,9 @@ class WeeklyReportServiceTest {
     private static Team team(Long id, String name, String email) {
         Team t = new Team();
         t.setId(id); t.setName(name); t.setEmail(email);
+        // Modül görünürlüğü (2026-09-16) varsayılan KAPALI; bu süitin konusu modülün KENDİSİ, bu yüzden
+        // fixture açık doğar. Kapalı takım davranışı ayrı süitte (WeeklyReportAccessTest) pinli.
+        t.setWeeklyReportsEnabled(true);
         return t;
     }
 
@@ -1023,6 +1026,7 @@ class WeeklyReportServiceTest {
         Actor mudur = new Actor(20L, "mudur", "Müdür", 2L, "ADMIN", false);
         WeeklyReport other = report(5L, 7L, "APPROVED");
         when(reportRepo.findById(5L)).thenReturn(Optional.of(other));
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(team(7L, "TakimB", "b@test")));   // modül açık (görünürlük ayrı süitte)
 
         assertThat(mudur.isAdmin()).isFalse();
         assertThat(ADMIN.isAdmin()).as("5-arg kurucu: rol ADMIN → global (geriye uyum)").isTrue();
@@ -1037,9 +1041,9 @@ class WeeklyReportServiceTest {
     void completion_matrix() {
         int lastYear = WeeklyReportService.today().getYear() - 1;
         int weeksInYear = java.time.LocalDate.of(lastYear, 12, 28).get(java.time.temporal.WeekFields.ISO.weekOfWeekBasedYear());
-        Team a = new Team(); a.setId(1L); a.setName("Takım A"); a.setActive(true); a.setWeeklyReminderEnabled(true);
-        Team b = new Team(); b.setId(2L); b.setName("Takım B"); b.setActive(true); b.setWeeklyReminderEnabled(true);
-        Team c = new Team(); c.setId(3L); c.setName("Takım C"); c.setActive(true); c.setWeeklyReminderEnabled(false);   // raporsuz + hatırlatma kapalı → yok
+        Team a = new Team(); a.setId(1L); a.setName("Takım A"); a.setActive(true); a.setWeeklyReminderEnabled(true); a.setWeeklyReportsEnabled(true);
+        Team b = new Team(); b.setId(2L); b.setName("Takım B"); b.setActive(true); b.setWeeklyReminderEnabled(true); b.setWeeklyReportsEnabled(true);
+        Team c = new Team(); c.setId(3L); c.setName("Takım C"); c.setActive(true); c.setWeeklyReminderEnabled(false); c.setWeeklyReportsEnabled(true);   // raporsuz + hatırlatma kapalı → yok
         when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(java.util.List.of(a, b, c));
         WeeklyReport r1 = new WeeklyReport(); r1.setId(11L); r1.setTeamId(1L); r1.setReportYear(lastYear); r1.setWeekNo(1); r1.setStatus("APPROVED");
         WeeklyReport r2 = new WeeklyReport(); r2.setId(12L); r2.setTeamId(1L); r2.setReportYear(lastYear); r2.setWeekNo(2); r2.setStatus("DRAFT");

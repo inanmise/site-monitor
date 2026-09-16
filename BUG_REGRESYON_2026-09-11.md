@@ -619,3 +619,31 @@ başlık çipleri ("1 sorun · 2 uyarı · N tamam") özeti taşımaya devam ede
 (tamamlama panosu / bu-hafta şeridiyle aynı desen, try/catch sarmalı). Hook sırası değişmedi (useState başlangıç
 fonksiyonu). Test: "sorunlu → yine kapalı, başlıkta sayaç, açınca liste" pinli; beforeEach localStorage temizler.
 Kapılar: eslint temiz; backend kaynakları önceki turdan beri DEĞİŞMEDİ (3769 test o turda yeşil). → **REGRESYON YOK**.
+
+## Ek — otuzuncu tur (2026-09-16, sürüm öncesi — modül görünürlüğü + bildirim bağlantısı + kenar çubuğu, `v20.66.0..HEAD`)
+
+Kapsam: 3 commit. İmza süpürmesi temiz (yeni test/ekran metinlerinde example.com / "Takım A").
+Hook + erken-return: App.jsx'e eklenen `weeklyReportsVisible` state'i auth kapısının ÜSTÜNDE;
+AlertHistory'deki derin bağlantı effect'i mevcut hook sırasının sonunda, koşullu return yok.
+
+**Denetim odakları:**
+- Kapı sunucuda: modül kapalı takımın raporu `requireCanRead` içinden 403 — global admin ve AUDIT dâhil
+  (tarayıcıda doğrulandı: list 0, GET 403 WEEKLY_REPORTS_DISABLED, pano 0, /api/me visible=false; tekrar
+  açınca list 4, GET 200, visible=true). Arayüzdeki gizleme tek başına güvenlik sayılmadı.
+- Yan kanallar: hatırlatma cron'u (skippedDisabled sayacı), reminderStatus, completion, thisWeek, create,
+  transfer hedefi ve Genel Bakış "bugün" kartı aynı bayrağı okur — kanonik zincirin dokuz halkası da bağlı.
+- Veri: kapatma SİLMEZ (test: setFeatureEnabled sonrası deleteById çağrılmaz); DDL patch idempotent
+  (kolon vardı → noop, mevcut 3 satır FALSE'a çekildi), NULL = kapalı.
+- Yetki: aç/kapat yalnız GLOBAL admin (`SessionScope.isGlobalAdmin`); kapsamlı müdür ayar bölümünü
+  göremez (GLOBAL_ONLY_SECTIONS). Denetim kaydı WEEKLY_REPORT_ACCESS (katalogda).
+- Bildirim bağlantısı: açık alarm artık Alarm Geçmişi'nde tip+alan adı süzgeciyle açılıyor, kart
+  vurgulanıp kaydırılıyor, param tüketiliyor; `alert/type/level/ack/from/to` sekme değişiminde temizlenen
+  paramlara eklendi (asılı filtre tuzağı).
+- Kırılan mevcut testler bilinçli düzeltildi: modül bayrağı varsayılan kapalı olduğu için haftalık süit
+  fixture'ları açık doğuyor; kapalı davranış AYRI süitte (WeeklyReportAccessTest). AdminSettings sekme
+  testleri indeks yerine etiketle seçiyor.
+- Kapılar: backend `mvn clean verify` (IdentityLeakGuard hariç — yalnız kullanıcının commit'lenmemiş iki
+  belgesini işaretliyor) 3777 test yeşil; frontend lint/2060 test/kapsam tabanı/build yeşil.
+Bilinen sınırlar (bilinçli): açılan takımın üyeleri sekmeyi en geç bir sonraki /me yüklemesinde görür
+(anlık push yok); kapalı takımın eski raporları veritabanında durur (ürün kararı).
+→ **REGRESYON YOK**.

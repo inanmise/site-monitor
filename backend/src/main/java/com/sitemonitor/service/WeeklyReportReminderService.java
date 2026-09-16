@@ -82,6 +82,8 @@ public class WeeklyReportReminderService {
             // Takım başına opt-in: anahtar kapalıysa (veya hiç açılmamışsa) bu takım rahatsız edilmez.
             // Filtre repo sorgusuna DEĞİL buraya konur — findByActiveTrueOrderByNameAsc başka üç akış
             // tarafından da kullanılıyor (CertificateService dahil).
+            // Modül o takımda kapalıysa (2026-09-16) hatırlatma da gitmez — özellik hiç yokmuş gibi davranır.
+            if (!Boolean.TRUE.equals(team.getWeeklyReportsEnabled())) { skippedDisabled++; continue; }
             if (!Boolean.TRUE.equals(team.getWeeklyReminderEnabled())) {
                 skippedDisabled++;
                 continue;
