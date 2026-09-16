@@ -143,6 +143,9 @@ public class TodayPanelService {
         int missing = 0;
         for (Long tid : ownTeamIds == null ? List.<Long>of() : ownTeamIds) {
             if (tid == null) continue;
+            // Modül o takımda kapalıysa kart da yok (2026-09-16): takım Haftalık Raporlar sayfasını
+            // görmüyorsa "bu hafta raporun eksik" demenin karşılığı da yok.
+            if (!teamRepo.findById(tid).map(t -> Boolean.TRUE.equals(t.getWeeklyReportsEnabled())).orElse(false)) continue;
             Optional<WeeklyReport> r = weeklyReportRepo.findByTeamIdAndReportYearAndWeekNo(tid, year, week);
             String status = r.map(WeeklyReport::getStatus).orElse("MISSING");
             if ("MISSING".equals(status) || "DRAFT".equals(status) || "REJECTED".equals(status)) missing++;

@@ -421,6 +421,9 @@ public class AuthController {
         // Faz 3b: scope flags for the UI (hide global-only tabs from scoped müdür-admins).
         resp.put("global_admin", SessionScope.isGlobalAdmin(session));
         resp.put("scoped", session.getAttribute("viewTeamIds") != null);
+        // Haftalık Raporlar modülü bu kullanıcıya görünür mü (2026-09-16)? Takım bazlı açılır, varsayılan
+        // KAPALI — sekme yalnız açık takımlara (ve en az bir takım açıksa yönetici/denetçiye) çizilir.
+        resp.put("weekly_reports_visible", weeklyReportsVisible(resp, session));
         return ResponseEntity.ok(resp);
     }
 
@@ -883,6 +886,8 @@ public class AuthController {
         // Faz 3b: scope flags so the UI hides global-only tabs from scoped müdür-admins.
         resp.put("global_admin", SessionScope.isGlobalAdmin(session));
         resp.put("scoped", session.getAttribute("viewTeamIds") != null);
+        // Giriş yanıtına da konur: /me yalnız açılışta koşuyor — konmazsa sekme ancak F5'ten sonra görünürdü.
+        resp.put("weekly_reports_visible", weeklyReportsVisible(resp, session));
         return resp;
     }
 
@@ -913,6 +918,21 @@ public class AuthController {
     }
 
     /** Birincil takım ilk olacak şekilde kullanıcının TÜM üyeliklerini team_ids + team_names olarak ekler. */
+    /** {@code /me} + giriş yanıtı için modül görünürlüğü; hata olursa KAPALI (sessiz sızma yerine sessiz gizleme). */
+    @SuppressWarnings("unchecked")
+    private boolean weeklyReportsVisible(Map<String, Object> resp, HttpSession session) {
+        try {
+            String role = String.valueOf(session.getAttribute("systemRole"));
+            boolean adminOrAudit = SessionScope.isGlobalAdmin(session) || "AUDIT".equals(role);
+            Object ids = resp.get("team_ids");
+            if (weeklyReportService == null) return false;   // @Autowired(required=false): test/kısmi bağlamda kapalı say
+            return weeklyReportService.visibleFor(ids instanceof java.util.Collection ? (java.util.Collection<Long>) ids : List.of(), adminOrAudit);
+        } catch (Exception e) {
+            log.debug("weekly_reports_visible hesaplanamadı: {}", e.toString());
+            return false;
+        }
+    }
+
     private void putTeams(Map<String, Object> resp, AppUser user) {
         List<Long> ids = new ArrayList<>();
         if (user.getTeamId() != null) ids.add(user.getTeamId());

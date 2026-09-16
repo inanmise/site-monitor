@@ -46,6 +46,14 @@ public class Team {
     private Boolean weeklyAvailabilityEnabled = false;
 
     /** Haftalık rapor kanal şablonu — JSON dizi (["İnternet","Çağrı Merkezi"]); takımın ilk raporu bununla başlar (2026-09-13). */
+    /**
+     * Haftalık Raporlar modülü bu takıma AÇIK mı (2026-09-16, kullanıcı kararı)? VARSAYILAN KAPALI:
+     * modül herkese görünen bir ekran değildir; yönetici Ayarlar → Haftalık Raporlar'dan takım takım açar.
+     * Kapalıyken takım sayfayı görmez, uçlar 403 döner, hatırlatma maili/panosu o takımı saymaz.
+     */
+    @Column(name = "weekly_reports_enabled")
+    private Boolean weeklyReportsEnabled = false;
+
     @Column(name = "weekly_channels", columnDefinition = "TEXT")
     private String weeklyChannels;
 

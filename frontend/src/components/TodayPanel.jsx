@@ -97,6 +97,9 @@ export default function TodayPanel({ onOpenDomain }) {
             </ul>
           </Card>
 
+          {/* Haftalık rapor kartı YALNIZ modülü açık takımlarda (2026-09-16): sunucu kapalı takımı hiç
+              saymaz → count 0 gelir; sayfayı görmeyen takıma "raporun eksik" demenin karşılığı yok. */}
+          {weekly.count > 0 && (
           <Card icon={CalendarDays} tone={weekly.missing > 0 ? 'warn' : 'ok'} title={t('today.weekly', weekly.week)} count={weekly.missing || 0}
             sub={weekly.count === 0 ? t('today.weeklyNoTeam') : weekly.missing > 0 ? t('today.weeklyMissing') : t('today.weeklyDone')}
             onGo={weekly.count ? () => navigateTo('weeklyreports') : null}>
@@ -109,6 +112,7 @@ export default function TodayPanel({ onOpenDomain }) {
               ))}
             </ul>
           </Card>
+          )}
         </div>
       )}
     </section>

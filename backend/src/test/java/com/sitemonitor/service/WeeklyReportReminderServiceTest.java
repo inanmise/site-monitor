@@ -52,6 +52,7 @@ class WeeklyReportReminderServiceTest {
         Team t = new Team();
         t.setId(id); t.setName(name); t.setEmail(email); t.setActive(true);
         t.setWeeklyReminderEnabled(reminderEnabled);
+        t.setWeeklyReportsEnabled(true);   // modül açık (2026-09-16); kapalı takım davranışı ayrı testte
         return t;
     }
 
@@ -180,5 +181,18 @@ class WeeklyReportReminderServiceTest {
         when(appSettings.getString(eq(WeeklyReportDeadline.KEY_DAY), any())).thenReturn(today.name().substring(0, 3));
         assertThat(service.sendFridayReminders(true).sent()).isEqualTo(1);
         verify(emailService).buildWeeklyReportReminderHtml(eq("AlphaSY"), anyString(), anyString(), eq("bugün saat 17:30"));
+    }
+    @Test
+    @DisplayName("2026-09-16: Haftalık Raporlar modülü KAPALI takıma hatırlatma gitmez (hatırlatma anahtarı açık olsa bile)")
+    void moduleDisabledTeamIsSkipped() {
+        Team off = team(9L, "Kapali", "kapali@example.com", true);
+        off.setWeeklyReportsEnabled(false);
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(off));
+
+        WeeklyReportReminderService.ReminderResult r = service.sendFridayReminders();
+
+        assertThat(r.sent()).isEqualTo(0);
+        assertThat(r.skippedDisabled()).isEqualTo(1);   // aday listesindeydi ama modül kapalı diye atlandı
+        verify(emailService, never()).sendHtml(any(), any(), anyString(), anyString(), any());
     }
 }

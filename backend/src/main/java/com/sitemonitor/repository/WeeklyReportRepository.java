@@ -11,6 +11,10 @@ import java.util.Optional;
 
 public interface WeeklyReportRepository extends JpaRepository<WeeklyReport, Long> {
 
+    /** Ayar ekranı: takım → rapor sayısı (modül kapatılırken "veri var mı" uyarısı için). */
+    @org.springframework.data.jpa.repository.Query("SELECT r.teamId, COUNT(r) FROM WeeklyReport r GROUP BY r.teamId")
+    java.util.List<Object[]> countByTeam();
+
     /** Yıl filtresi dropdown'ı — rapor bulunan yıllar (yeni → eski). */
     @Query("SELECT DISTINCT r.reportYear FROM WeeklyReport r"
             + " WHERE (:teamId IS NULL OR r.teamId = :teamId) ORDER BY r.reportYear DESC")

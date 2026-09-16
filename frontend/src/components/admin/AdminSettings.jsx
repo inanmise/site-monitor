@@ -8,6 +8,7 @@ import MonitorGroups from './MonitorGroups'
 import SecretTools from './SecretTools'
 import DatabaseInfo from './DatabaseInfo'
 import WeeklyAvailabilitySettings from './WeeklyAvailabilitySettings'
+import WeeklyReportAccessSettings from './WeeklyReportAccessSettings'
 import ConfigHealthCard from './ConfigHealthCard.jsx'
 import CertInventoryReportSettings from './CertInventoryReportSettings'
 import StormSettings from './StormSettings'
@@ -25,6 +26,7 @@ const SECTIONS = [
   { id: 'monitorgroups', labelKey: 'settings.navMonitorGroups' },
   { id: 'smtp', labelKey: 'settings.navSmtp' },
   { id: 'weeklyavail', labelKey: 'settings.navWeeklyAvail' },
+  { id: 'weeklyreports', labelKey: 'settings.navWeeklyReports' },
   { id: 'certinvreport', labelKey: 'settings.navCertInvReport' },
   { id: 'storm', labelKey: 'settings.navStorm' },
   { id: 'userpush', labelKey: 'settings.navUserPush' },
@@ -50,7 +52,8 @@ function initialSection() {
  * dört yüzey. Backend aynı dördü requireNotScopedAdmin ile 403'ler; burada 403 dolu bir ekran yerine
  * "yalnız global yönetici" notu çizilir. Sekme listede kalır (var olduğu görülsün).
  */
-const GLOBAL_ONLY_SECTIONS = new Set(['smtp', 'ldap', 'database', 'secrets'])
+// Modül görünürlüğü kurumsal bir karardır: kapsamlı müdür kendi takımına açamaz (2026-09-16).
+const GLOBAL_ONLY_SECTIONS = new Set(['smtp', 'ldap', 'database', 'secrets', 'weeklyreports'])
 
 export default function AdminSettings({ globalAdmin = true }) {
   const t = useT()
@@ -129,6 +132,7 @@ export default function AdminSettings({ globalAdmin = true }) {
         {active === 'monitorgroups' && <MonitorGroups />}
         {active === 'smtp' && <SmtpSettings />}
         {active === 'weeklyavail' && <WeeklyAvailabilitySettings />}
+        {active === 'weeklyreports' && <WeeklyReportAccessSettings />}
         {active === 'certinvreport' && <CertInventoryReportSettings />}
         {active === 'storm' && <StormSettings />}
         {active === 'userpush' && <UserPushSettings />}

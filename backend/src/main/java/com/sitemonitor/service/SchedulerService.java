@@ -754,6 +754,10 @@ public class SchedulerService {
         patch("ALTER TABLE weekly_reports ADD COLUMN editing_heartbeat TEXT");
         patch("ALTER TABLE weekly_reports ADD COLUMN score INTEGER");   // 2026-09-13 gönderim anı skoru (liste sütunu)
         patch("ALTER TABLE teams ADD COLUMN weekly_channels TEXT");   // 2026-09-13 takım kanal şablonu (JSON dizi)
+        // 2026-09-16 modül görünürlüğü: VARSAYILAN KAPALI. Kolon dolu tabloya eklenirken NULL doğar;
+        // NULL = kapalı sayılır (Boolean.TRUE.equals), ayrıca mevcut satırlar açıkça false'a çekilir.
+        patch("ALTER TABLE teams ADD COLUMN weekly_reports_enabled BOOLEAN DEFAULT FALSE");
+        patch("UPDATE teams SET weekly_reports_enabled = FALSE WHERE weekly_reports_enabled IS NULL");
         // Görsel takım izolasyonu — açık team_id + mevcut satırlar için backfill
         patch("ALTER TABLE weekly_report_images ADD COLUMN team_id BIGINT");
         patch("UPDATE weekly_report_images i SET team_id = "

@@ -53,8 +53,9 @@ class TodayPanelServiceTest {
     @BeforeEach
     void setUp() {
         svc = new TodayPanelService(inventoryRepo, latestCheckRepo, alertEventRepo, exceptionRepo, weeklyReportRepo, teamRepo);
-        Team a = new Team(); a.setId(1L); a.setName("Takım A");
+        Team a = new Team(); a.setId(1L); a.setName("Takım A"); a.setWeeklyReportsEnabled(true);   // modül açık (2026-09-16)
         when(teamRepo.findAll()).thenReturn(List.of(a));
+        when(teamRepo.findById(1L)).thenReturn(Optional.of(a));
         when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv("soon.example.com", 1L), inv("exp.example.com", 1L), inv("far.example.com", 1L), inv("other.example.com", 2L)));
         when(latestCheckRepo.findAll()).thenReturn(List.of(lc("soon.example.com", 12), lc("exp.example.com", -3), lc("far.example.com", 200), lc("other.example.com", 2)));
         AlertEvent open = new AlertEvent(); open.setId(9L); open.setDomain("soon.example.com"); open.setAlertType("HTTP_DOWN"); open.setAlertLevel("CRITICAL"); open.setTeamId(1L);
@@ -98,5 +99,16 @@ class TodayPanelServiceTest {
         assertThat(block(b, "alerts")).containsEntry("count", 2);
         assertThat(block(b, "weekly")).containsEntry("count", 0).containsEntry("missing", 0);
         assertThat(block(b, "exceptions")).containsEntry("count", 0).containsEntry("error", "IllegalStateException");
+    }
+    @Test
+    @DisplayName("2026-09-16: Haftalık Raporlar modülü KAPALI takım haftalık kartta sayılmaz (count 0 → arayüz kartı çizmez)")
+    void weeklyBlock_skipsDisabledTeams() {
+        Team off = new Team(); off.setId(1L); off.setName("Takım A"); off.setWeeklyReportsEnabled(false);
+        when(teamRepo.findById(1L)).thenReturn(Optional.of(off));
+
+        Map<String, Object> weekly = block(svc.build(t -> t != null && t == 1L, List.of(1L)), "weekly");
+
+        assertThat(weekly).containsEntry("count", 0).containsEntry("missing", 0);
+        assertThat(items(weekly)).isEmpty();
     }
 }
