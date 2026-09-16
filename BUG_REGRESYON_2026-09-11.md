@@ -673,3 +673,29 @@ imza geçmişi / gürültü analizi). İmza süpürmesi temiz (yeni testlerde ex
 Bilinen sınırlar (bilinçli): imza geçmişi penceresi zaman çizelgesi örneklemiyle sınırlı (çok eski
 "önceki oluşum" 500 satırın dışındaysa gösterilmez); takım kırılımı "kapandı" sütunu son 30 günü kapsar.
 → **REGRESYON YOK**.
+
+## Ek — otuz ikinci tur (2026-09-16/17, sürüm öncesi — /gstack-qa bulguları, `v20.68.0..HEAD`)
+
+Kapsam: 3 commit (yalnız frontend: bir JSX satırı + CSS + regresyon testi). QA turu Alarm Geçmişi
+zenginleştirmesini (takım kırılımı, imza şeridi, gürültü KPI'ları) headless tarayıcıda uçtan uca
+gezdi; 3 bulgu çıktı, üçü de düzeltildi ve doğrulandı. Sağlık skoru 88 → 100.
+
+**Bulgular ve denetim notları:**
+- ISSUE-001 (Orta, konsol): yeni takım kırılımı panelinde satır düğmesinin İÇİNDE TeamBadge →
+  React `validateDOMNesting: <button> içinde <button>`, her satırda bir uyarı. `as="span"` ile
+  düzeltildi; regresyon testi satırın BUTTON kalmasını, içinde iç içe buton OLMAMASINI ve
+  `role="button"` erişilebilirliğinin korunmasını pinliyor. Bu tuzak 2026-09-10 öğrenmesinde 11
+  yüzeyde pinliydi — yeni yüzey yine düştü; öğrenme "yeni panel" vurgusuyla güncellendi.
+- ISSUE-002 (Orta, görsel): 375px'te tablo panel kutusunun 306px dışına taşıp KIRPILIYORDU
+  ("Son 7/30 gün" ne görünüyor ne kaydırılıyordu). Sayfa geneli taşmadığı için (`pageOverflow 0`)
+  klasik ölçüm bunu göremez — ölçüm panel kabında (`scrollWidth-clientWidth`) yapıldı. Kendi
+  yatay kaydırma kabı + `min-width` (tamamlama panosundaki `.wrc-scroll` deseniyle aynı).
+- ISSUE-003 (Düşük, görsel): başlıktaki özet çipi dar ekranda başlığı dört satıra bölüyordu →
+  760px altında gizlendi (sayılar panelin içinde zaten var); gürültü panelinin çipi de aynı kuralda.
+- Kapılar: backend `clean verify` 3775 test yeşil (IdentityLeakGuard hariç — yalnız kullanıcının
+  commit'lenmemiş iki belgesi), frontend lint / 2070 test / kapsam tabanı / build yeşil. Koyu tema
+  ve 375px yerleşimi tarayıcıda görüldü; düzeltme sonrası konsol uyarı sayacı SABİT kaldı (delta 0).
+Bilinen sınırlar (bilinçli): 375px'te kenar çubuğu içerik alanını ~204px'e sıkıştırıyor (mevcut
+uygulama düzeni, bu turun kapsamı dışında); bağlantı/performans/erişilebilirlik kategorileri test
+edilmedi.
+→ **REGRESYON YOK**.
