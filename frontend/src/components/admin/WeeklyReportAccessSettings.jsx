@@ -21,7 +21,7 @@ import TeamBadge from '../ui/TeamBadge.jsx'
 function Pill({ on, disabled, onToggle, label }) {
   return (
     <button type="button" role="switch" aria-checked={!!on} aria-label={label} title={label}
-      disabled={disabled} className={`perm-pill${on ? ' is-on' : ''}`} onClick={onToggle}>
+      disabled={disabled} className={`perm-pill ${on ? 'perm-pill-on' : 'perm-pill-off'}`} onClick={onToggle}>
       <span className="perm-pill-knob" />
     </button>
   )

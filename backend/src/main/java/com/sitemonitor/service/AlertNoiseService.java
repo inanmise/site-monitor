@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
@@ -52,10 +53,23 @@ public class AlertNoiseService {
         Map<String, Double> perTargetMinutes = new HashMap<>();
         Map<String, String> targetType = new HashMap<>();
         int[][] heat = new int[7][24];                                   // [Pzt..Paz][0..23]
+        // Zenginleştirme (2026-09-16): günlük seri (kıvılcım çizgisi), tip/seviye kırılımı, MTTR,
+        // çözülme oranı ve mesai-dışı payı. Hepsi AYNI tek geçişten çıkar — ek sorgu yok.
+        Map<String, Integer> byDate = new LinkedHashMap<>();
+        for (int i = d - 1; i >= 0; i--) byDate.put(LocalDate.now(IST).minusDays(i).toString(), 0);
+        Map<String, int[]> byType = new LinkedHashMap<>();                // tip → [toplam, kritik]
+        Map<String, Integer> byLevel = new LinkedHashMap<>();
+        double resolvedMinutesSum = 0;
+        int resolvedTotal = 0, offHours = 0, stillOpen = 0;
         int total = 0, critical = 0;
         for (AlertEvent e : events) {
             total++;
             if ("CRITICAL".equalsIgnoreCase(e.getAlertLevel())) critical++;
+            byLevel.merge(e.getAlertLevel() == null ? "?" : e.getAlertLevel().toUpperCase(Locale.ROOT), 1, Integer::sum);
+            int[] tc = byType.computeIfAbsent(e.getAlertType() == null ? "?" : e.getAlertType(), k -> new int[2]);
+            tc[0]++;
+            if ("CRITICAL".equalsIgnoreCase(e.getAlertLevel())) tc[1]++;
+            if (!Boolean.TRUE.equals(e.getResolved())) stillOpen++;
             String key = (e.getDomain() == null ? "?" : e.getDomain()) + "|" + e.getAlertType();
             int[] c = perTarget.computeIfAbsent(key, k -> new int[2]);
             c[0]++;
@@ -64,9 +78,15 @@ public class AlertNoiseService {
             if (created != null) {
                 ZonedDateTime z = created.atZone(IST);
                 heat[z.getDayOfWeek().getValue() - 1][z.getHour()]++;
+                byDate.computeIfPresent(z.toLocalDate().toString(), (k, v) -> v + 1);
+                // Mesai dışı: hafta sonu ya da 18:00–09:00 arası (İstanbul) — "nöbet yükü" göstergesi.
+                boolean weekend = z.getDayOfWeek().getValue() >= 6;
+                if (weekend || z.getHour() >= 18 || z.getHour() < 9) offHours++;
                 Instant resolved = parse(e.getResolvedAt());
                 if (Boolean.TRUE.equals(e.getResolved()) && resolved != null && resolved.isAfter(created)) {
                     c[1]++;
+                    resolvedTotal++;
+                    resolvedMinutesSum += (resolved.toEpochMilli() - created.toEpochMilli()) / 60000.0;
                     perTargetMinutes.merge(key, (resolved.toEpochMilli() - created.toEpochMilli()) / 60000.0, Double::sum);
                 }
             }
@@ -110,6 +130,31 @@ public class AlertNoiseService {
         heatMap.put("rows", heatRows); heatMap.put("peak", peak); heatMap.put("peak_day", peakDay); heatMap.put("peak_hour", peakHour);
         heatMap.put("by_hour", Arrays.stream(byHour).boxed().toList()); heatMap.put("by_day", Arrays.stream(byDay).boxed().toList());
         out.put("heat", heatMap);
+        // ── Zenginleştirme alanları (2026-09-16) ──
+        List<Map<String, Object>> series = new ArrayList<>();
+        for (Map.Entry<String, Integer> en : byDate.entrySet()) {
+            Map<String, Object> p = new LinkedHashMap<>();
+            p.put("date", en.getKey()); p.put("count", en.getValue());
+            series.add(p);
+        }
+        out.put("series", series);
+        List<Map<String, Object>> types = new ArrayList<>();
+        for (Map.Entry<String, int[]> en : byType.entrySet()) {
+            Map<String, Object> p = new LinkedHashMap<>();
+            p.put("type", en.getKey()); p.put("count", en.getValue()[0]); p.put("critical", en.getValue()[1]);
+            p.put("share_pct", total == 0 ? 0 : Math.round(1000.0 * en.getValue()[0] / total) / 10.0);
+            types.add(p);
+        }
+        types.sort((a, b) -> Integer.compare((int) b.get("count"), (int) a.get("count")));
+        out.put("by_type", types.subList(0, Math.min(TOP, types.size())));
+        out.put("by_level", byLevel);
+        out.put("still_open", stillOpen);
+        out.put("resolved_total", resolvedTotal);
+        out.put("resolved_pct", total == 0 ? 0 : Math.round(1000.0 * resolvedTotal / total) / 10.0);
+        out.put("mttr_minutes", resolvedTotal == 0 ? null : Math.round(resolvedMinutesSum / resolvedTotal * 10) / 10.0);
+        out.put("off_hours", offHours);
+        out.put("off_hours_pct", total == 0 ? 0 : Math.round(1000.0 * offHours / total) / 10.0);
+        out.put("per_day_avg", Math.round(10.0 * total / d) / 10.0);
         return out;
     }
 

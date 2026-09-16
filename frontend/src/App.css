@@ -3338,7 +3338,13 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* Alarm Geçmişi filtre çubuğu — izleme sayfalarının .upt-toolbar'ını yeniden kullanır;
    burada yalnız tip rozetleriyle arasındaki boşluk ayarlanır (renk/kenarlık ORADAN gelir,
    böylece koyu tema kuralları tek yerde kalır). */
-.alh-toolbar { justify-content: flex-end; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.alh-toolbar { justify-content: flex-start; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+/* SearchableSelect varsayılanı width:100% (form içi kullanım). Süzgeç çubuğunda bu, her açılırı
+   KENDİ SATIRINA itiyordu; "Filtreleri temizle" düğmesi de araya sıkışıp kaymış görünüyordu
+   (2026-09-16 kullanıcı bildirimi). Filtre satırında açılırlar içeriğe göre daralır, CSV sağa yaslanır. */
+.alh-toolbar .ss-wrap { width: auto; min-width: 150px; max-width: 230px; }
+.alh-toolbar .upt-search { flex: 1 1 200px; min-width: 180px; max-width: 320px; }
+.alh-toolbar .hist-csv-btn { margin-left: auto; }
 /* Konu (alarm tipi) grupları — katlanabilir başlık + altındaki kart listesi.
    Renk satır içinden gelir (tipe özgü, alertTypeMeta tek kaynak); yerleşim burada. */
 .alh-group { margin-bottom: 14px; }
@@ -12611,7 +12617,11 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .noise-link { background: none; border: 0; padding: 0; color: var(--primary); font: inherit; font-weight: 600; cursor: pointer; }
 .noise-link:hover { text-decoration: underline; }
 .noise-mono { font-family: monospace; font-size: .9em; color: var(--text-light); }
-.noise-bar { display: inline-block; min-width: 48px; padding: 0 4px; border-radius: 4px; background: linear-gradient(90deg, color-mix(in srgb, var(--danger) 35%, transparent) var(--w, 0%), transparent var(--w, 0%)); font-variant-numeric: tabular-nums; }
+/* Pay: sayı çubuğun üstünde okunur; kutu sabit genişlikte (2026-09-16 — eskiden metin kadar
+   daralıp çubuk bir lekeye dönüşüyordu, oran okunamıyordu). */
+.noise-bar { display: inline-flex; align-items: center; justify-content: flex-end; width: 74px; height: 18px;
+  padding: 0 5px; border-radius: 4px; font-variant-numeric: tabular-nums; font-size: .92em;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--danger) 30%, transparent) var(--w, 0%), var(--bg-hover) var(--w, 0%)); }
 .noise-heat { display: grid; grid-template-columns: 34px repeat(24, minmax(8px, 1fr)); gap: 2px; align-items: center; min-width: 300px; }
 .noise-heat-row { display: contents; }
 .noise-heat-corner { }
@@ -13475,3 +13485,60 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .wracc-passive { margin-left: 6px; font-size: .74em; color: var(--text-light); }
 .wracc-empty { text-align: center; color: var(--text-light); padding: 18px 8px; }
 .wracc-hint { margin-top: 10px; }
+
+/* ── Alarm Geçmişi: imza şeridi + takım kırılımı + gürültü KPI'ları (2026-09-16) ─────────────── */
+.alh-sig { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0 2px; font-size: .78em; }
+.alh-sig-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px;
+  background: var(--bg-surface); border: 1px solid var(--border); color: var(--text-light); }
+.alh-sig-chip strong { color: var(--text); font-weight: 600; }
+.alh-sig-chip--team { background: color-mix(in srgb, var(--primary) 8%, transparent); }
+.alh-sig-chip--first { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, var(--border)); }
+.alh-sig-chip--quiet { color: #0369a1; border-color: #bae6fd; background: #f0f9ff; }
+.alh-sig-dim { opacity: .75; }
+.alh-sig-link { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px;
+  border: 1px dashed var(--primary); background: none; color: var(--primary); font: inherit; font-size: 1em; cursor: pointer; }
+.alh-sig-link:hover { background: color-mix(in srgb, var(--primary) 10%, transparent); }
+[data-theme="dark"] .alh-sig-chip--quiet { color: #7dd3fc; background: #082f49; border-color: #0c4a6e; }
+
+.alh-ts { border: 1px solid var(--border); border-radius: 10px; background: var(--bg-surface); margin: 0 0 12px; }
+.alh-ts-head { width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: none;
+  border: 0; color: var(--text); font: inherit; font-weight: 600; cursor: pointer; text-align: left; border-radius: 10px; }
+.alh-ts-head:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.alh-ts-title { flex: 0 0 auto; }
+.alh-ts-sum { font-weight: 500; font-size: .84em; color: var(--text-light); }
+.alh-ts-chev { margin-left: auto; transition: transform .18s ease; }
+.alh-ts-chev.is-open { transform: rotate(180deg); }
+.alh-ts-body { padding: 0 14px 12px; }
+.alh-ts-empty { color: var(--text-light); font-size: .86em; padding: 8px 0 12px; }
+.alh-ts-table td, .alh-ts-table th { vertical-align: middle; }
+.alh-ts-row.is-active { background: color-mix(in srgb, var(--primary) 8%, transparent); }
+.alh-ts-link { background: none; border: 0; padding: 0; font: inherit; cursor: pointer; }
+.alh-ts-open { display: inline-flex; align-items: center; gap: 8px; min-width: 90px; }
+.alh-ts-bar { height: 6px; width: var(--w, 0%); min-width: 2px; border-radius: 999px; background: var(--danger, #dc2626); opacity: .55; }
+.alh-ts-unassigned { color: var(--text-light); font-style: italic; }
+.alh-ts-hint { margin-top: 8px; }
+
+.noise-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin: 10px 0 12px; }
+.noise-kpi { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; background: var(--bg-surface); }
+.noise-kpi-top { display: flex; align-items: center; gap: 5px; font-size: .74em; color: var(--text-light); text-transform: uppercase; letter-spacing: .02em; }
+.noise-kpi-val { font-size: 1.35em; font-weight: 700; line-height: 1.2; margin-top: 2px; }
+.noise-kpi-sub { font-size: .74em; color: var(--text-light); }
+.noise-kpi--bad .noise-kpi-val { color: var(--danger, #dc2626); }
+.noise-kpi--warn .noise-kpi-val { color: #b45309; }
+.noise-kpi--ok .noise-kpi-val { color: var(--success); }
+.noise-trend { padding: 4px 0 2px; }
+.noise-trend-bars { display: flex; align-items: flex-end; justify-content: space-evenly; gap: 3px; height: 68px; padding: 0 2px; }
+.noise-trend-bar { flex: 1 1 0; max-width: 46px; height: var(--h, 3%); border-radius: 3px 3px 0 0; background: color-mix(in srgb, var(--primary) 55%, transparent); }
+.noise-trend-bar.is-peak { background: var(--danger, #dc2626); opacity: .8; }
+.noise-trend-axis { display: flex; justify-content: space-between; gap: 8px; font-size: .72em; color: var(--text-light); margin-top: 4px; }
+.noise-trend-peak { font-weight: 600; }
+.noise-type-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.noise-type-list li { display: grid; grid-template-columns: minmax(90px, 1fr) 2fr auto; align-items: center; gap: 8px; font-size: .82em; }
+.noise-type-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; color: var(--text-light); }
+.noise-type-bar { height: 8px; width: var(--w, 0%); min-width: 3px; border-radius: 999px; background: color-mix(in srgb, var(--primary) 45%, transparent); }
+.noise-type-num { text-align: right; }
+.noise-type-crit { color: var(--danger, #dc2626); font-style: normal; font-weight: 600; }
+@media (max-width: 760px) {
+  .noise-kpis { grid-template-columns: repeat(2, 1fr); }
+  .alh-ts-open { min-width: 60px; }
+}

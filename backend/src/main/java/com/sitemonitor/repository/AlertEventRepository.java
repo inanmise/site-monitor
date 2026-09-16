@@ -468,4 +468,14 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     List<Object[]> countRecentByDomainAndType(@Param("domains") Collection<String> domains,
                                               @Param("since") String since);
 
+    /** İmza (alan adı + tip) geçmiş özeti: toplam, ilk, son oluşum, son kapanış — TÜM zamanlar (2026-09-16). */
+    @Query("SELECT e.domain, e.alertType, COUNT(e), MIN(e.createdAt), MAX(e.createdAt), MAX(e.resolvedAt) "
+         + "FROM AlertEvent e WHERE e.domain IN :domains GROUP BY e.domain, e.alertType")
+    List<Object[]> summarizeHistoryByDomainAndType(@Param("domains") Collection<String> domains);
+
+    /** İmza zaman çizelgesi (en yeniden eskiye, SAYFALI): "bu alarmdan ÖNCEKİ oluşum" için. */
+    @Query("SELECT e.domain, e.alertType, e.createdAt FROM AlertEvent e "
+         + "WHERE e.domain IN :domains ORDER BY e.createdAt DESC")
+    List<Object[]> findSignatureTimeline(@Param("domains") Collection<String> domains, Pageable pageable);
+
 }

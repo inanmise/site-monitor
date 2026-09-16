@@ -120,6 +120,8 @@ public class AdminController {
 
     /** Tekrar rozetinin penceresi (gün) — bu süre içindeki aynı (domain, tip) alarmları sayılır. */
     private static final int ALERT_REPEAT_WINDOW_DAYS = 30;
+    /** İmza zaman çizelgesi örneklem tavanı — "önceki oluşum" için yeterli, sorgu sınırsız büyümesin. */
+    private static final int ALERT_TIMELINE_SAMPLE = 500;
 
     /** Tekrar sayımı için bileşik anahtar — dize paketleme YOK (domain adlarında boşluk olabiliyor). */
     private record RepeatKey(String domain, String alertType) {}
@@ -1585,8 +1587,46 @@ public class AdminController {
             }
         }
 
+        // İmza geçmişi (2026-09-16): "bu alarm daha önce kaç kez açıldı, önceki oluşum ne zaman,
+        // en son ne zaman görüldü/kapandı". İKİ toplu sorgu: özet (tüm zamanlar) + son N satırlık
+        // zaman çizelgesi (önceki oluşumu bulmak için; tavanlı — tek imza binlerce satır olabilir).
+        Map<RepeatKey, long[]> historySummary = new HashMap<>();
+        Map<RepeatKey, String[]> historyStamps = new HashMap<>();   // [first, last, lastResolved]
+        Map<RepeatKey, List<String>> timeline = new HashMap<>();
+        if (!domains.isEmpty()) {
+            try {
+                for (Object[] row : alertEventRepo.summarizeHistoryByDomainAndType(domains)) {
+                    RepeatKey k = new RepeatKey(str(row[0]), str(row[1]));
+                    historySummary.put(k, new long[]{ ((Number) row[2]).longValue() });
+                    historyStamps.put(k, new String[]{ str(row[3]), str(row[4]), str(row[5]) });
+                }
+                for (Object[] row : alertEventRepo.findSignatureTimeline(domains,
+                        PageRequest.of(0, ALERT_TIMELINE_SAMPLE))) {
+                    timeline.computeIfAbsent(new RepeatKey(str(row[0]), str(row[1])), k -> new ArrayList<>())
+                            .add(str(row[2]));   // sorgu zaten createdAt DESC
+                }
+            } catch (Exception e) {
+                log.debug("Alarm imza geçmişi alınamadı: {}", e.toString());
+            }
+        }
+
         for (AlertEvent ev : events) {
             ev.setRepeatCount(repeatCounts.get(new RepeatKey(ev.getDomain(), ev.getAlertType())));
+            RepeatKey sig = new RepeatKey(ev.getDomain(), ev.getAlertType());
+            long[] hist = historySummary.get(sig);
+            if (hist != null) ev.setHistoryCount(hist[0]);
+            String[] stamps = historyStamps.get(sig);
+            if (stamps != null) {
+                ev.setHistoryFirstAt(stamps[0]);
+                ev.setHistoryLastAt(stamps[1]);
+                ev.setHistoryLastResolvedAt(stamps[2]);
+            }
+            List<String> stampsList = timeline.get(sig);
+            if (stampsList != null && ev.getCreatedAt() != null) {
+                for (String at : stampsList) {            // DESC sıralı: ilk KÜÇÜK olan önceki oluşumdur
+                    if (at != null && at.compareTo(ev.getCreatedAt()) < 0) { ev.setHistoryPrevAt(at); break; }
+                }
+            }
             if (EscalationService.CERT_ALERT_TYPES.contains(ev.getAlertType())) {
                 String current = latestNotAfter.get(ev.getDomain());
                 ev.setCurrentNotAfter(current);

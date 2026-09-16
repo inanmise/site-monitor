@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-16T16:05:26Z",
+  "generatedAt": "2026-09-16T20:40:12Z",
   "repo": "inanmise/site-monitor",
-  "count": 653,
+  "count": 654,
   "releases": [
+    {
+      "version": "20.68.0",
+      "tag": "v20.68.0",
+      "releasedAt": "2026-09-16T20:40:05Z",
+      "commit": "99ae24774b8c620c6e1210a682067dc31e4e45f1",
+      "prevVersion": "20.67.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": "alerts",
+          "breaking": false,
+          "sha": "6c54eb88",
+          "subject": "Alarm Geçmişi — takım kırılımı, kart imza geçmişi, zenginleştirilmiş gürültü analizi"
+        },
+        {
+          "type": "fix",
+          "scope": "inbox",
+          "breaking": false,
+          "sha": "afdc82dd",
+          "subject": "ikinci bildirim tıklaması sayfa açıkken de uygulanır + görünürlük anahtarı yeşil/gri"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.67.0",
       "tag": "v20.67.0",

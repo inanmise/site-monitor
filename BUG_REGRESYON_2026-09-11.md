@@ -647,3 +647,29 @@ AlertHistory'deki derin bağlantı effect'i mevcut hook sırasının sonunda, ko
 Bilinen sınırlar (bilinçli): açılan takımın üyeleri sekmeyi en geç bir sonraki /me yüklemesinde görür
 (anlık push yok); kapalı takımın eski raporları veritabanında durur (ürün kararı).
 → **REGRESYON YOK**.
+
+## Ek — otuz birinci tur (2026-09-16, sürüm öncesi — Alarm Geçmişi zenginleştirmesi, `v20.67.0..HEAD`)
+
+Kapsam: 2 commit (bildirim ikinci tıklama + görünürlük anahtarı rengi; Alarm Geçmişi takım kırılımı /
+imza geçmişi / gürültü analizi). İmza süpürmesi temiz (yeni testlerde example.com + "Takım A").
+
+**Denetim odakları:**
+- N+1 yok: kart imza geçmişi İKİ toplu sorgu (özet + 500 satır tavanlı zaman çizelgesi örneklemi);
+  takım kırılımı iki listeyle (açıklar + 30 gün penceresi) çalışıp kesişimi id ile tekilleştirir.
+- Kapsam (IDOR): takım kırılımı listeyle AYNI kapsamı uygular (global değilse yalnız görülen takımlar,
+  takımı çözülemeyen alarm hiç sayılmaz) — test pinli; uç `alerts.read` ister.
+- Çift kaynak tuzağı (hafıza: DNS/Port çift kaynak): alarmın takımı hem satırın `team_id`'sinden hem
+  domain→envanter SY takımından çözülür; yalnız biri sayılsaydı sertifika alarmları tabloda yoktu.
+- Sıralama: "takımı çözülemeyen" satırı adı boş olduğu için listenin BAŞINA oturuyordu → daima sona
+  alındı (test yakaladı).
+- Zaman: "ne zamandır sessiz" ve "arada X gün" istemci tarafında `Date.now()` ile hesaplanır; damgalar
+  zone'suz UTC olduğu için 'Z' eklenerek ayrıştırılır (yerel saat kayması yok), bozuk damga null döner.
+- Gürültü analizi: yeni alanlar (seri, tip kırılımı, MTTR, kapanma oranı, mesai dışı) AYNI tek geçişten
+  çıkar — ek sorgu yok; mesai dışı tanımı hafta sonu ∪ 18:00–09:00 (İstanbul).
+- Kapılar: backend `clean verify` 3775 test yeşil (IdentityLeakGuard hariç — yalnız kullanıcının
+  commit'lenmemiş iki belgesi), frontend lint / 2069 test / kapsam tabanı / build yeşil. Tarayıcıda
+  doğrulandı: takım kırılımı (4 açık / 37 kapalı / 3 / 39), imza şeridi ("geçmişte 6 alarm · Önceki
+  12.09 20:05 · 4 gündür sessiz"), "Geçmişini gör" → 6 kayıt, gürültü KPI'ları.
+Bilinen sınırlar (bilinçli): imza geçmişi penceresi zaman çizelgesi örneklemiyle sınırlı (çok eski
+"önceki oluşum" 500 satırın dışındaysa gösterilmez); takım kırılımı "kapandı" sütunu son 30 günü kapsar.
+→ **REGRESYON YOK**.
