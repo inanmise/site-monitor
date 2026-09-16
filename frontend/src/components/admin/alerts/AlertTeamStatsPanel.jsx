@@ -63,7 +63,9 @@ export default function AlertTeamStatsPanel({ onPickTeam, activeTeamId }) {
                             <span className="alh-ts-unassigned">{t('alhts.unassigned')}</span>
                           ) : (
                             <button type="button" className="alh-ts-link" onClick={() => onPickTeam?.(String(r.team_id))}>
-                              <TeamBadge teamId={r.team_id} teamName={r.team_name} size={12} />
+                              {/* as="span": rozet ZATEN bir <button> içinde — varsayılan <button> iç içe düğüm
+                                  uyarısı üretiyordu (QA ISSUE-001, 2026-09-16; aynı sınıf 11 yüzeyde pinli). */}
+                              <TeamBadge teamId={r.team_id} teamName={r.team_name} size={12} as="span" />
                             </button>
                           )}
                         </td>
