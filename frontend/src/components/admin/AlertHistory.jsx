@@ -594,14 +594,24 @@ function ReNotifyConfirmModal({ domain, recipients, webhook, sending, onSend, on
  */
 function WhyOpenChips({ a, notified, push, t }) {
   const sent = push?.sent ?? 0, failed = push?.failed ?? 0, skipped = push?.skipped ?? 0
-  const nobody = notified === 0 && sent === 0
+  // E-posta çipi GERÇEK gönderim sayısını gösterir (notification_logs). Eskiden alarm satırındaki
+  // `notified_contacts` (KADEME kontakları) sayılıyordu; izleme alarmlarında bu liste boş olduğu
+  // için mail takım adresine gitse bile "0 alıcı" yazıyordu — kullanıcı "kimseye gitmedi" okuyordu
+  // (2026-09-17 bildirimi). Kime gittiği zaten altındaki "Bildirilenler" şeridinde.
+  const mailSent = Number(a?.email_sent_count ?? 0), mailFailed = Number(a?.email_failed_count ?? 0)
+  const nobody = mailSent === 0 && sent === 0
   return (
     <div className="alert-why" aria-label={t('alh.whyOpen')}>
       <span className="alert-why-label">{t('alh.whyOpen')}</span>
       <span className={`alert-why-chip${a.acknowledged ? ' is-ok' : ' is-warn'}`}>
         {a.acknowledged ? t('alh.whyAcked', a.acknowledged_by || '—') : t('alh.whyUnacked')}
       </span>
-      <span className={`alert-why-chip${notified > 0 ? '' : ' is-muted'}`}>{t('alh.whyEmail', notified)}</span>
+      <span className={`alert-why-chip${mailFailed > 0 ? ' is-bad' : mailSent > 0 ? '' : ' is-muted'}`}
+        title={notified > 0 ? t('alh.whyEmailTip', notified) : ''}>
+        {mailSent > 0
+          ? (mailFailed > 0 ? t('alh.whyEmailMixed', mailSent, mailFailed) : t('alh.whyEmail', mailSent))
+          : (mailFailed > 0 ? t('alh.whyEmailFailed', mailFailed) : t('alh.whyEmailNone'))}
+      </span>
       <span className={`alert-why-chip${failed > 0 ? ' is-bad' : sent > 0 ? '' : ' is-muted'}`} title={push ? t('alh.whyPushTip', sent, failed, skipped) : ''}>
         {push ? t('alh.whyPush', sent, failed) : t('alh.whyPushNone')}
       </span>

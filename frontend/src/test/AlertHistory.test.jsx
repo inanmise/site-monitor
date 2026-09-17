@@ -869,7 +869,10 @@ describe('AlertHistory — "neden hâlâ açık?" çipleri (2026-09-12, #16)', (
     api.admin.getAlerts.mockResolvedValue({
       success: true,
       data: [
-        { ...closedAlert, id: 301, resolved: false, acknowledged: false, notified_contacts: '[]' },
+        // 2026-09-17: "kimseye ulaşmadı" artık GERÇEK gönderime bakar (notification_logs sayacı),
+        // kademe kontağı listesine değil — mail takım adresine gitmişse alarm ulaşmış sayılır.
+        { ...closedAlert, id: 301, resolved: false, acknowledged: false, notified_contacts: '[]',
+          email_sent_count: 0, email_failed_count: 0 },
         { ...closedAlert, id: 302, domain: 'reached.example.com', resolved: false, acknowledged: true, acknowledged_by: 'ops',
           notified_contacts: JSON.stringify([{ name: 'A', email: 'a@example.com', role: 'owner' }]) },
       ],
@@ -884,6 +887,8 @@ describe('AlertHistory — "neden hâlâ açık?" çipleri (2026-09-12, #16)', (
     expect(whys[0].textContent).toMatch(/kimseye ulaşmadı|reached nobody/)
     expect(whys[1].textContent).toMatch(/onaylandı · ops|acknowledged · ops/)
     expect(whys[1].textContent).toMatch(/push: 2 gönderildi · 1 başarısız|push: 2 sent · 1 failed/)
+    expect(whys[0].textContent).toMatch(/e-posta: gönderilmedi|email: none sent/)
+    expect(whys[1].textContent).toMatch(/e-posta: 3 gönderildi · 1 başarısız|email: 3 sent · 1 failed/)
     expect(whys[1].textContent).not.toMatch(/kimseye ulaşmadı|reached nobody/)
   })
 })
