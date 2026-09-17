@@ -68,7 +68,7 @@ describe('AlertSignatureStrip — imza geçmişi', () => {
 describe('AlertTeamStatsPanel — takım kırılımı', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    try { localStorage.removeItem('alh-teamstats-open') } catch { /* yoksay */ }
+    try { sessionStorage.removeItem('alh-teamstats-open') } catch { /* yoksay */ }
     api.admin.getAlertTeamStats.mockResolvedValue({ success: true, data: {
       window_days: 30, total_open: 4, total_closed: 37, total_last7: 3, total_last30: 39,
       teams: [

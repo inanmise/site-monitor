@@ -8,7 +8,9 @@ import AlertNoisePanel from '../components/admin/AlertNoisePanel.jsx'
 
 /** Gürültü analizi (2026-09-12, #18): kapalı başlar, açınca yüklenir; top tablo, ısı haritası, flap önerisi; gün seçimi yeniden yükler. */
 describe('AlertNoisePanel', () => {
-  beforeEach(() => { vi.clearAllMocks(); try { localStorage.clear() } catch { /* yok */ } })
+  // Panel tercihi 2026-09-17'den beri OTURUMLUK (sessionStorage): temizlenmezse bir önceki testte
+  // açık bırakılan panel sonraki testte açık doğar ve başlığa tıklamak onu KAPATIR.
+  beforeEach(() => { vi.clearAllMocks(); try { localStorage.clear(); sessionStorage.clear() } catch { /* yok */ } })
   const rows = Array.from({ length: 7 }, () => Array(24).fill(0)); rows[1][14] = 5
   const DATA = { days: 7, total: 12, critical: 3, distinct_targets: 2,
     top: [{ domain: 'flap.example.com', type: 'HTTP_DOWN', count: 9, resolved: 9, avg_minutes: 3.5, share_pct: 75 }, { domain: 'slow.example.com', type: 'PING_DOWN', count: 3, resolved: 2, avg_minutes: 42, share_pct: 25 }],
