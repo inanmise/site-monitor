@@ -3063,8 +3063,6 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* Modal blokları */
 .mw-block { grid-column: 1 / -1; padding: 12px 14px; border: 1px solid var(--border); border-radius: 9px; background: rgba(148,163,184,.06); }
 .mw-block-title { font-weight: 700; font-size: .9em; margin-bottom: 6px; color: var(--text, #1e293b); }
-.mw-selectall { margin-top: 6px; background: none; border: none; color: #2563eb; font-size: .82em; font-weight: 600; cursor: pointer; padding: 0; }
-.mw-selectall:hover { text-decoration: underline; }
 /* Haftalık gün seçici */
 .mw-dow { display: flex; flex-wrap: wrap; gap: 6px; }
 .mw-dow-btn { padding: 5px 11px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-card, #fff); color: var(--text-muted);
@@ -13550,4 +13548,50 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   .alh-ts-sum, .noise-sum { display: none; }
   .alh-ts-head, .noise-head { flex-wrap: nowrap; }
   .alh-ts-title, .noise-title { white-space: nowrap; }
+}
+
+/* Bakim penceresi hedef secici (2026-09-17): once tur, sonra o turun monitorleri */
+.mtp { display: flex; flex-direction: column; gap: 10px; }
+.mtp-cols { display: grid; grid-template-columns: 190px 1fr; gap: 10px; align-items: start; }
+.mtp-types { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px;
+  max-height: 260px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 4px; }
+.mtp-type { width: 100%; display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 0; border-radius: 6px;
+  background: none; color: var(--text); font: inherit; font-size: .86em; cursor: pointer; text-align: left; }
+.mtp-type:hover { background: var(--bg-hover); }
+.mtp-type.is-active { background: color-mix(in srgb, var(--primary) 12%, transparent); font-weight: 600; }
+.mtp-type.has-picked .mtp-type-count { background: var(--primary); color: #fff; }
+.mtp-type-name { flex: 1; min-width: 0; }
+.mtp-type-count { font-size: .82em; padding: 0 6px; border-radius: 999px; background: var(--bg-hover); color: var(--text-light); }
+.mtp-list-wrap { border: 1px solid var(--border); border-radius: 8px; padding: 6px; }
+.mtp-list-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+/* GRID: bu bir <label>, modaldaki `.form-grid label input` kuralı input'a display:block + width:100%
+   veriyor ve flex satırında ikonu ÜSTE itiyordu (iki satır). Grid iki hücreyi aynı satırda tutar. */
+.mtp-search { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 6px;
+  flex: 1 1 160px; min-width: 140px; color: var(--text-light); }
+.mtp-search .input { width: 100%; min-width: 0; }
+.mtp-list { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.mtp-item { width: 100%; display: flex; align-items: center; gap: 8px; padding: 5px 8px; border: 0; border-radius: 6px;
+  background: none; color: var(--text); font: inherit; font-size: .85em; cursor: pointer; text-align: left; }
+.mtp-item:hover { background: var(--bg-hover); }
+.mtp-item.is-on { background: color-mix(in srgb, var(--success) 12%, transparent); }
+.mtp-item-check { width: 16px; height: 16px; flex: 0 0 auto; border: 1px solid var(--border); border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center; color: var(--success); }
+.mtp-item.is-on .mtp-item-check { border-color: var(--success); }
+.mtp-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mtp-item-target { font-size: .82em; color: var(--text-light); max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mtp-none { color: var(--text-light); font-size: .84em; padding: 6px 8px; }
+.mtp-selected { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.mtp-selected-label { font-size: .82em; font-weight: 600; color: var(--text-light); }
+.mtp-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 6px 2px 8px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--bg-surface); font-size: .78em; }
+.mtp-chip b { font-weight: 600; color: var(--text-light); }
+.mtp-chip-x { background: none; border: 0; padding: 0; color: var(--text-light); cursor: pointer; display: inline-flex; }
+.mtp-chip-x:hover { color: var(--danger, #dc2626); }
+.mtp-clear { background: none; border: 0; padding: 0 4px; color: var(--primary); font: inherit; font-size: .78em; cursor: pointer; }
+.mtp-hint { margin: 0; }
+.mtp-empty { margin: 6px 0; }
+@media (max-width: 760px) {
+  .mtp-cols { grid-template-columns: 1fr; }
+  .mtp-types { flex-direction: row; overflow-x: auto; max-height: none; }
+  .mtp-type { white-space: nowrap; }
 }
