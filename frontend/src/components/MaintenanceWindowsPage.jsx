@@ -7,7 +7,7 @@ import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 import { usePagination } from '../hooks/usePagination.js'
 import PaginationBar from './ui/PaginationBar.jsx'
-import MultiTeamSelect from './ui/MultiTeamSelect.jsx'
+import MaintenanceTargetPicker from './monitoring/MaintenanceTargetPicker.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import DateTimeField from './ui/DateTimeField.jsx'
 import MonthCalendar from './ui/MonthCalendar.jsx'
@@ -102,11 +102,15 @@ export default function MaintenanceWindowsPage({ systemRole }) {
         for (const m of list) {
           const target = key(m)
           if (!target) continue
-          out.push({ value: target, target, type, name: m.name || target, label: `${m.name || target} · ${t('mw.type.' + type)}` })
+          // Kimlik TUR + hedef: ayni URL hem Sayfa Butunlugu hem Sayfa Hizi monitoru olabilir; kimlik
+          // yalniz hedef olunca ikincisi dedup'ta ELENIYOR ve o tur bakim penceresinde hic secilemiyordu
+          // (2026-09-17 kullanici bildirimi: "page speed monitor adi hatali"). Tur adlari ':' icermez,
+          // bu yuzden ilk ':' guvenli ayiricidir (targetObjs geri ayirir).
+          out.push({ value: `${type}:${target}`, target, type, name: m.name || target, label: `${m.name || target} · ${t('mw.type.' + type)}` })
         }
       } catch { /* atla */ }
     }))
-    const seen = new Set()
+    const seen = new Set()   // artik tur+hedef bazli
     setMonitorOptions(out.filter(o => seen.has(o.value) ? false : (seen.add(o.value), true)))
     setOptsLoaded(true)
   }
@@ -116,7 +120,7 @@ export default function MaintenanceWindowsPage({ systemRole }) {
     loadMonitorOptions()
     setForm({
       name: w.name || '', description: w.description || '', allMonitors: !!w.all_monitors,
-      targets: (w.targets || []).map(x => x.target).filter(Boolean),
+      targets: (w.targets || []).map(x => (x.type && x.type !== '?' ? `${x.type}:${x.target}` : x.target)).filter(Boolean),
       timezone: w.timezone || 'Europe/Istanbul', startAt: w.start_at || '', durationMinutes: w.duration_minutes ?? 60,
       recurrence: w.recurrence || 'NONE',
       daysOfWeek: w.days_of_week ? w.days_of_week.split(',').map(Number) : [],
@@ -127,8 +131,15 @@ export default function MaintenanceWindowsPage({ systemRole }) {
   function openQuick() { setQuickForm({ allMonitors: false, targets: [], minutes: 30, name: '' }); loadMonitorOptions(); setModal('quick') }
   function close() { setModal(null) }
 
+  /** Secici kimligi (`tur:hedef`) → sunucunun bekledigi {type, target, name}. Secenek listede yoksa
+   *  (monitor silinmis, eski kayit) kimlik yine de ayrilir; ':' yoksa tur bilinmiyor demektir. */
   function targetObjs(vals) {
-    return vals.map(tg => { const o = monitorOptions.find(x => x.value === tg); return o ? { type: o.type, target: o.value, name: o.name } : { type: '?', target: tg, name: tg } })
+    return vals.map(tg => {
+      const o = monitorOptions.find(x => x.value === tg)
+      if (o) return { type: o.type, target: o.target, name: o.name }
+      const i = String(tg).indexOf(':')
+      return i > 0 ? { type: tg.slice(0, i), target: tg.slice(i + 1), name: tg.slice(i + 1) } : { type: '?', target: tg, name: tg }
+    })
   }
 
   async function save() {
@@ -282,9 +293,10 @@ export default function MaintenanceWindowsPage({ systemRole }) {
                   <input type="checkbox" checked={form.allMonitors} onChange={e => setForm(f => ({ ...f, allMonitors: e.target.checked }))} />{t('mw.allMonitorsOpt')}</label>
                 {!form.allMonitors && (
                   <div style={{ marginTop: 6 }}>
-                    <MultiTeamSelect value={form.targets} onChange={v => setForm(f => ({ ...f, targets: v }))}
-                      options={monitorOptions} placeholder={t('mw.selectMonitors')} searchThreshold={2} />
-                    <button type="button" className="mw-selectall" onClick={() => setForm(f => ({ ...f, targets: monitorOptions.map(o => o.value) }))}>{t('mw.selectAll')}</button>
+                    {/* Önce tür, sonra o türün monitörleri (2026-09-17): düz liste hangi türü
+                        durdurduğunu göstermiyordu, bir türü tümden susturmak tek tek seçim istiyordu. */}
+                    <MaintenanceTargetPicker options={monitorOptions} value={form.targets}
+                      onChange={v => setForm(f => ({ ...f, targets: v }))} typeLabel={ty => t('mw.type.' + ty)} />
                   </div>
                 )}
               </div>
@@ -343,8 +355,8 @@ export default function MaintenanceWindowsPage({ systemRole }) {
                   <input type="checkbox" checked={quickForm.allMonitors} onChange={e => setQuickForm(f => ({ ...f, allMonitors: e.target.checked }))} />{t('mw.allMonitorsOpt')}</label>
                 {!quickForm.allMonitors && (
                   <div style={{ marginTop: 6 }}>
-                    <MultiTeamSelect value={quickForm.targets} onChange={v => setQuickForm(f => ({ ...f, targets: v }))}
-                      options={monitorOptions} placeholder={t('mw.selectMonitors')} searchThreshold={2} />
+                    <MaintenanceTargetPicker options={monitorOptions} value={quickForm.targets}
+                      onChange={v => setQuickForm(f => ({ ...f, targets: v }))} typeLabel={ty => t('mw.type.' + ty)} />
                   </div>
                 )}
               </div>

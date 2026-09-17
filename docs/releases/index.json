@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-16T21:11:38Z",
+  "generatedAt": "2026-09-17T02:24:35Z",
   "repo": "inanmise/site-monitor",
-  "count": 655,
+  "count": 656,
   "releases": [
+    {
+      "version": "20.69.0",
+      "tag": "v20.69.0",
+      "releasedAt": "2026-09-17T02:24:29Z",
+      "commit": "9343f6125eaeb90c62a81dc27cd91740c93754ac",
+      "prevVersion": "20.68.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 2,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": "maintenance",
+          "breaking": false,
+          "sha": "980e0020",
+          "subject": "bakım hedefi seçimi — önce izleme türü, sonra o türün monitörleri"
+        },
+        {
+          "type": "fix",
+          "scope": "alerts",
+          "breaking": false,
+          "sha": "057237dd",
+          "subject": "\"e-posta: 0 alıcı\" — çip gerçek gönderim sayısını göstersin"
+        },
+        {
+          "type": "feat",
+          "scope": "alerts",
+          "breaking": false,
+          "sha": "91a54b77",
+          "subject": "takım kırılımı ve gürültü analizi her açılışta KAPALI gelsin"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.68.1",
       "tag": "v20.68.1",

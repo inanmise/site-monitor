@@ -14,7 +14,10 @@ import TeamBadge from '../../ui/TeamBadge.jsx'
 export default function AlertTeamStatsPanel({ onPickTeam, activeTeamId }) {
   const t = useT()
   const [data, setData] = useState(null)
-  const [open, setOpen] = useState(() => { try { return localStorage.getItem('alh-teamstats-open') === 'true' } catch { return false } })
+  // Varsayilan KAPALI ve tercih OTURUMLUK (2026-09-17 kullanici karari): sayfa her acildiginda panel
+  // kapali gelir, liste hemen gorunur; ayni sekmede acik biraktiysan gezinme boyunca acik kalir.
+  // sessionStorage bilincli: bu sayfadaki alarm tipi gruplari da ayni deseni kullaniyor.
+  const [open, setOpen] = useState(() => { try { return sessionStorage.getItem('alh-teamstats-open') === 'true' } catch { return false } })
 
   const load = useCallback(async () => {
     try { const r = await api.admin.getAlertTeamStats(); if (r?.success && r.data) setData(r.data) }
@@ -22,7 +25,7 @@ export default function AlertTeamStatsPanel({ onPickTeam, activeTeamId }) {
   }, [])
   useEffect(() => { if (open) load() }, [open, load])
 
-  const toggle = () => setOpen((o) => { try { localStorage.setItem('alh-teamstats-open', String(!o)) } catch { /* yoksay */ } return !o })
+  const toggle = () => setOpen((o) => { try { sessionStorage.setItem('alh-teamstats-open', String(!o)) } catch { /* yoksay */ } return !o })
   const rows = data?.teams || []
   const maxOpen = Math.max(1, ...rows.map((r) => Number(r.open) || 0))
 

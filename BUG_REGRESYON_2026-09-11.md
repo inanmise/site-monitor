@@ -699,3 +699,27 @@ Bilinen sınırlar (bilinçli): 375px'te kenar çubuğu içerik alanını ~204px
 uygulama düzeni, bu turun kapsamı dışında); bağlantı/performans/erişilebilirlik kategorileri test
 edilmedi.
 → **REGRESYON YOK**.
+
+## Ek — otuz üçüncü tur (2026-09-17, sürüm öncesi — panel varsayılanı, e-posta çipi, bakım hedef seçici, `v20.68.1..HEAD`)
+
+Kapsam: 3 commit, yalnız frontend. İmza süpürmesi temiz (testlerde example.com).
+
+**Denetim odakları:**
+- Panel tercihi oturumluk: sessionStorage; eski localStorage "true" kaydı okunmuyor (tarayıcıda
+  doğrulandı: kayıt true dursa bile ikisi de kapalı açıldı). Test sızıntısı (bir önceki testin açık
+  bıraktığı panel) beforeEach'te sessionStorage temizlenerek kapatıldı.
+- E-posta çipi: kaynak `notified_contacts` (kademe) → `email_sent_count/failed` (notification_logs).
+  "kimseye ulaşmadı" uyarısı da gerçek gönderime bakar; mevcut test yeni sözleşmeye uyarlandı.
+- Bakım hedef seçici: değer sözleşmesi string[] kaldı; seçenek kimliği tür+hedef oldu — aynı URL'yi iki
+  tür izleyince ikincisi dedup'ta eleniyordu (Sayfa Hızı hiç seçilemiyordu). `targetObjs` kimliği ilk
+  ':' ile ayırır (tür adları ':' içermez); eski kayıtlar (`type` yoksa) hedefiyle yüklenir. Uçtan uca
+  doğrulandı: "Şimdi başlat" ile pagespeed hedefi kaydedildi (`{type:"pagespeed",target:…}`),
+  düzenlemede çip geri geldi, test kaydı silindi.
+- `mw.type.pagespeed` anahtarı iki dilde de yoktu — parity kapısı bunu yakalayamaz (ikisinde de eksik);
+  eklendi. Modal içindeki `.form-grid label` kuralı seçicinin arama kutusunu iki satıra bölüyordu → label
+  yerine div (aria-label korunur).
+- Kapılar: frontend lint / 2075 test / kapsam tabanı / build yeşil; backend kaynağı DEĞİŞMEDİ (son
+  `clean verify` 3775 test yeşil, aynı kaynak).
+Bilinen sınırlar (bilinçli): "türün tamamını seç" o anki monitörleri ekler (gelecekte eklenenler için
+"Tüm monitörler" kutusu; ipucu metni söylüyor); tür bazlı joker hedef sunucuda yok.
+→ **REGRESYON YOK**.

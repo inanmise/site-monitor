@@ -49,14 +49,15 @@ export default function AlertNoisePanel({ onPickDomain }) {
   const t = useT()
   const [days, setDays] = useState(7)
   const [data, setData] = useState(null)
-  const [open, setOpen] = useState(() => { try { return localStorage.getItem('alh-noise-open') === 'true' } catch { return false } })
+  // Varsayilan KAPALI, tercih OTURUMLUK (2026-09-17 kullanici karari) - takim kirilimiyla ayni kural.
+  const [open, setOpen] = useState(() => { try { return sessionStorage.getItem('alh-noise-open') === 'true' } catch { return false } })
 
   const load = useCallback(async () => {
     try { const r = await api.admin.getAlertNoise(days); if (r?.success && r.data) setData(r.data) } catch { /* panel süs */ }
   }, [days])
   useEffect(() => { if (open) load() }, [open, load])
 
-  const toggle = () => setOpen((o) => { try { localStorage.setItem('alh-noise-open', String(!o)) } catch { /* yoksay */ } return !o })
+  const toggle = () => setOpen((o) => { try { sessionStorage.setItem('alh-noise-open', String(!o)) } catch { /* yoksay */ } return !o })
   const dayNames = [t('cal.mon'), t('cal.tue'), t('cal.wed'), t('cal.thu'), t('cal.fri'), t('cal.sat'), t('cal.sun')]
   const heat = data?.heat
   const peak = Math.max(1, heat?.peak || 0)
