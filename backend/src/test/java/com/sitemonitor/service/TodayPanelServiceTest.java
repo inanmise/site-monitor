@@ -71,6 +71,22 @@ class TodayPanelServiceTest {
     }
 
     @Test
+    @DisplayName("limit: panel TOP(5) ile kırpar, full (MAX) tamamını döner; count her iki halde de tam sayı (2026-09-18)")
+    void limit_capsItemsButNotCount() {
+        java.util.List<CertificateInventory> invs = new java.util.ArrayList<>();
+        java.util.List<LatestCheck> lcs = new java.util.ArrayList<>();
+        for (int i = 0; i < 8; i++) { invs.add(inv("c" + i + ".example.com", 1L)); lcs.add(lc("c" + i + ".example.com", i + 1)); }
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(invs);
+        when(latestCheckRepo.findAll()).thenReturn(lcs);
+        Map<String, Object> capped = block(svc.build(t -> true, List.of(1L)), "certs");
+        assertThat(capped.get("count")).isEqualTo(8);
+        assertThat(items(capped)).hasSize(TodayPanelService.TOP);
+        Map<String, Object> full = block(svc.build(t -> true, List.of(1L), Integer.MAX_VALUE), "certs");
+        assertThat(full.get("count")).isEqualTo(8);
+        assertThat(items(full)).hasSize(8);
+    }
+
+    @Test
     @DisplayName("takım 1 kullanıcısı: 30 gün altı 2 (1 dolmuş, en az gün üstte), açık alarm 1 (takım 2'ninki elenir), istisna 2 (60 gün elenir, dolmuş 1), haftalık DRAFT → eksik")
     void scopedPanel() {
         Map<String, Object> b = svc.build(t -> t != null && t == 1L, List.of(1L));

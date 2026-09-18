@@ -5,6 +5,7 @@ import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import { navigateTo } from '../utils/navigate.js'
 import TeamBadge from './ui/TeamBadge.jsx'
+import TodayListModal from './TodayListModal.jsx'
 
 /**
  * "Sizin için — bugün" (2026-09-12, zenginleştirme #3): dashboard'un üstünde dört kart —
@@ -15,6 +16,8 @@ import TeamBadge from './ui/TeamBadge.jsx'
 export default function TodayPanel({ onOpenDomain }) {
   const t = useT()
   const [data, setData] = useState(null)
+  // "Tümünü gör" pop-up'ı (2026-09-18): { section, title, icon, onOpen, onGo }
+  const [listModal, setListModal] = useState(null)
   // Varsayılan KAPALI (2026-09-12, kullanıcı: "otomatik kapalı olsun"); açan kullanıcı tercihi saklanır.
   const [open, setOpen] = useState(() => { try { return localStorage.getItem('today-panel-open') === 'true' } catch { return false } })
 
@@ -31,7 +34,7 @@ export default function TodayPanel({ onOpenDomain }) {
     setOpen((o) => { try { localStorage.setItem('today-panel-open', String(!o)) } catch { /* yoksay */ } return !o })
   }
 
-  const Card = ({ icon: Icon, tone, title, count, sub, onGo, children }) => (
+  const Card = ({ icon: Icon, tone, title, count, sub, onGo, section, onOpenItem, children }) => (
     <div className={`today-card today-card--${tone}`}>
       <div className="today-card-head">
         <Icon size={16} aria-hidden="true" />
@@ -40,8 +43,10 @@ export default function TodayPanel({ onOpenDomain }) {
       </div>
       {sub && <div className="today-card-sub">{sub}</div>}
       {children}
+      {/* "Tümünü gör" → sayfaya gitmek yerine POP-UP: listenin tamamı sayfalı (2026-09-18); "Sayfaya git" pop-up'ın altında */}
       {onGo && (
-        <button type="button" className="today-card-go" onClick={onGo}>{t('today.go')} <ArrowRight size={12} aria-hidden="true" /></button>
+        <button type="button" className="today-card-go"
+          onClick={() => setListModal({ section, title, icon: Icon, onOpen: onOpenItem, onGo })}>{t('today.go')} <ArrowRight size={12} aria-hidden="true" /></button>
       )}
     </div>
   )
@@ -58,7 +63,7 @@ export default function TodayPanel({ onOpenDomain }) {
         <div className="today-grid">
           <Card icon={CalendarClock} tone={certs.expired > 0 ? 'bad' : certs.count > 0 ? 'warn' : 'ok'} title={t('today.certs')} count={certs.count || 0}
             sub={certs.expired > 0 ? t('today.certsExpired', certs.expired) : t('today.certsSub')}
-            onGo={certs.count ? () => navigateTo('renewal') : null}>
+            onGo={certs.count ? () => navigateTo('renewal') : null} section="certs" onOpenItem={(c) => onOpenDomain?.(c.domain)}>
             <ul className="today-list">
               {(certs.items || []).map((c) => (
                 <li key={c.domain}>
@@ -72,7 +77,7 @@ export default function TodayPanel({ onOpenDomain }) {
 
           <Card icon={Siren} tone={alerts.critical > 0 ? 'bad' : alerts.count > 0 ? 'warn' : 'ok'} title={t('today.alerts')} count={alerts.count || 0}
             sub={alerts.critical > 0 ? t('today.alertsCritical', alerts.critical) : t('today.alertsSub')}
-            onGo={alerts.count ? () => navigateTo('warnings') : null}>
+            onGo={alerts.count ? () => navigateTo('warnings') : null} section="alerts" onOpenItem={(a) => navigateTo('alerthistory', { incident: a.id })}>
             <ul className="today-list">
               {(alerts.items || []).map((a) => (
                 <li key={a.id}>
@@ -86,7 +91,7 @@ export default function TodayPanel({ onOpenDomain }) {
 
           <Card icon={ClipboardCheck} tone={exc.expired > 0 ? 'bad' : exc.count > 0 ? 'warn' : 'ok'} title={t('today.exceptions')} count={exc.count || 0}
             sub={exc.expired > 0 ? t('today.exceptionsExpired', exc.expired) : t('today.exceptionsSub')}
-            onGo={exc.count ? () => navigateTo('weakalgo') : null}>
+            onGo={exc.count ? () => navigateTo('weakalgo') : null} section="exceptions" onOpenItem={() => navigateTo('weakalgo')}>
             <ul className="today-list">
               {(exc.items || []).map((e) => (
                 <li key={e.domain}>
@@ -102,7 +107,7 @@ export default function TodayPanel({ onOpenDomain }) {
           {weekly.count > 0 && (
           <Card icon={CalendarDays} tone={weekly.missing > 0 ? 'warn' : 'ok'} title={t('today.weekly', weekly.week)} count={weekly.missing || 0}
             sub={weekly.count === 0 ? t('today.weeklyNoTeam') : weekly.missing > 0 ? t('today.weeklyMissing') : t('today.weeklyDone')}
-            onGo={weekly.count ? () => navigateTo('weeklyreports') : null}>
+            onGo={weekly.count ? () => navigateTo('weeklyreports') : null} section="weekly" onOpenItem={() => navigateTo('weeklyreports')}>
             <ul className="today-list">
               {(weekly.items || []).map((w) => (
                 <li key={w.team_id}>
@@ -114,6 +119,12 @@ export default function TodayPanel({ onOpenDomain }) {
           </Card>
           )}
         </div>
+      )}
+      {listModal && (
+        <TodayListModal section={listModal.section} title={listModal.title} icon={listModal.icon}
+          onClose={() => setListModal(null)}
+          onOpen={(x) => { setListModal(null); listModal.onOpen?.(x) }}
+          onGo={listModal.onGo} />
       )}
     </section>
   )

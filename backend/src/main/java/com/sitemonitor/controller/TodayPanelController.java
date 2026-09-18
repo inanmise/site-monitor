@@ -26,12 +26,15 @@ public class TodayPanelController {
     private final com.sitemonitor.service.InboxService inboxService;
 
     @GetMapping("/today")
-    public ResponseEntity<Map<String, Object>> today(HttpSession session) {
+    public ResponseEntity<Map<String, Object>> today(@org.springframework.web.bind.annotation.RequestParam(defaultValue = "false") boolean full,
+                                                     HttpSession session) {
         List<Long> own = new ArrayList<>();
         List<Long> view = SessionScope.viewTeamIds(session);
         if (view != null) own.addAll(view);
         else if (session.getAttribute("teamId") instanceof Long tid) own.add(tid);
-        Map<String, Object> data = todayPanelService.build(teamId -> SessionScope.canView(session, teamId), own);
+        // full=true: "Tümünü gör" pop-up'ı — kart başına tavan kalkar (2026-09-18).
+        Map<String, Object> data = todayPanelService.build(teamId -> SessionScope.canView(session, teamId), own,
+                full ? Integer.MAX_VALUE : com.sitemonitor.service.TodayPanelService.TOP);
         return ResponseEntity.ok(Map.of("success", true, "data", data));
     }
 

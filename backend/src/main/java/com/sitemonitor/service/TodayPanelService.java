@@ -33,7 +33,8 @@ import java.util.function.Predicate;
 public class TodayPanelService {
 
     private static final ZoneId IST = ZoneId.of("Europe/Istanbul");
-    static final int CERT_DAYS = 30, EXCEPTION_SOON_DAYS = 14, TOP = 5;
+    static final int CERT_DAYS = 30, EXCEPTION_SOON_DAYS = 14;
+    public static final int TOP = 5;   // kart başına satır (pop-up tavansız: build(..., limit))
 
     private final CertificateInventoryRepository inventoryRepo;
     private final LatestCheckRepository latestCheckRepo;
@@ -43,6 +44,14 @@ public class TodayPanelService {
     private final TeamRepository teamRepo;
 
     public Map<String, Object> build(Predicate<Long> canViewTeam, List<Long> ownTeamIds) {
+        return build(canViewTeam, ownTeamIds, TOP);
+    }
+
+    /**
+     * {@code limit}: kart başına satır tavanı — panel {@link #TOP}, "Tümünü gör" pop-up'ı {@code Integer.MAX_VALUE}
+     * (2026-09-18: kullanıcı listenin tamamını sayfada değil pop-up'ta, sayfalı görmek istedi).
+     */
+    public Map<String, Object> build(Predicate<Long> canViewTeam, List<Long> ownTeamIds, int limit) {
         Map<String, Object> out = new LinkedHashMap<>();
         List<CertificateInventory> visible = new ArrayList<>();
         try {
@@ -55,9 +64,9 @@ public class TodayPanelService {
         Map<Long, String> teamNames = new HashMap<>();
         try { teamRepo.findAll().forEach(t -> teamNames.put(t.getId(), t.getName())); } catch (Exception ignored) { }
 
-        out.put("certs", safe(() -> certs(visibleDomains, domainTeam, teamNames)));
-        out.put("alerts", safe(() -> alerts(canViewTeam, visibleDomains, teamNames)));
-        out.put("exceptions", safe(() -> exceptions(visibleDomains, domainTeam, teamNames)));
+        out.put("certs", safe(() -> certs(visibleDomains, domainTeam, teamNames, limit)));
+        out.put("alerts", safe(() -> alerts(canViewTeam, visibleDomains, teamNames, limit)));
+        out.put("exceptions", safe(() -> exceptions(visibleDomains, domainTeam, teamNames, limit)));
         out.put("weekly", safe(() -> weekly(ownTeamIds, teamNames)));
         out.put("scope_domains", visibleDomains.size());
         return out;
@@ -73,7 +82,7 @@ public class TodayPanelService {
     }
 
     /** 30 gün altı (ve dolmuş) sertifikalar — en az gün üstte. */
-    private Map<String, Object> certs(Set<String> domains, Map<String, Long> domainTeam, Map<Long, String> teamNames) {
+    private Map<String, Object> certs(Set<String> domains, Map<String, Long> domainTeam, Map<Long, String> teamNames, int limit) {
         List<Map<String, Object>> items = new ArrayList<>();
         int expired = 0;
         for (LatestCheck lc : latestCheckRepo.findAll()) {
@@ -88,12 +97,12 @@ public class TodayPanelService {
         }
         items.sort(Comparator.comparingInt(m -> (Integer) m.get("days")));
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("count", items.size()); out.put("expired", expired); out.put("items", items.subList(0, Math.min(TOP, items.size())));
+        out.put("count", items.size()); out.put("expired", expired); out.put("items", items.subList(0, Math.min(limit, items.size())));
         return out;
     }
 
     /** Açık alarmlar — takımı görünür olan ya da alanı görünür envanterde olan. */
-    private Map<String, Object> alerts(Predicate<Long> canViewTeam, Set<String> domains, Map<Long, String> teamNames) {
+    private Map<String, Object> alerts(Predicate<Long> canViewTeam, Set<String> domains, Map<Long, String> teamNames, int limit) {
         List<Map<String, Object>> items = new ArrayList<>();
         int critical = 0;
         for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
@@ -107,12 +116,12 @@ public class TodayPanelService {
             items.add(m);
         }
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("count", items.size()); out.put("critical", critical); out.put("items", items.subList(0, Math.min(TOP, items.size())));
+        out.put("count", items.size()); out.put("critical", critical); out.put("items", items.subList(0, Math.min(limit, items.size())));
         return out;
     }
 
     /** Zayıf-algoritma istisnaları: süresi dolmuş ya da 14 gün içinde dolacak. */
-    private Map<String, Object> exceptions(Set<String> domains, Map<String, Long> domainTeam, Map<Long, String> teamNames) {
+    private Map<String, Object> exceptions(Set<String> domains, Map<String, Long> domainTeam, Map<Long, String> teamNames, int limit) {
         LocalDate today = LocalDate.now(IST);
         List<Map<String, Object>> items = new ArrayList<>();
         int expired = 0;
@@ -131,7 +140,7 @@ public class TodayPanelService {
         }
         items.sort(Comparator.comparingLong(m -> (Long) m.get("days")));
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("count", items.size()); out.put("expired", expired); out.put("items", items.subList(0, Math.min(TOP, items.size())));
+        out.put("count", items.size()); out.put("expired", expired); out.put("items", items.subList(0, Math.min(limit, items.size())));
         return out;
     }
 

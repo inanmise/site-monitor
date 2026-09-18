@@ -12685,6 +12685,38 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .mcal-ev--bad { background: #450a0a; color: #fca5a5; }
 @media (max-width: 760px) { .mcal-cell { min-height: 44px; } .mcal-ev { font-size: .62em; } }
 .renewal-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+/* ── Yenileme Önerileri yeniden tasarımı (2026-09-18) ── */
+.rn-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.rn-kpi { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border: 1px solid var(--border); border-left: 4px solid var(--kpi); border-radius: 8px; background: var(--bg-surface); text-align: left; font: inherit; color: var(--text); cursor: pointer; transition: box-shadow .15s, transform .15s; }
+.rn-kpi--static { cursor: default; }
+.rn-kpi:not(.rn-kpi--static):hover { box-shadow: 0 4px 14px rgba(0,0,0,.12); transform: translateY(-1px); }
+.rn-kpi.is-active { background: color-mix(in srgb, var(--kpi) 12%, transparent); border-color: var(--kpi); }
+.rn-kpi-num { font-size: 1.9em; font-weight: 800; line-height: 1; color: var(--kpi); font-variant-numeric: tabular-nums; }
+.rn-kpi-lbl { font-size: .74em; color: var(--text-muted); font-weight: 600; letter-spacing: .03em; text-transform: uppercase; }
+.rn-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rn-toolbar > .ss-wrap { width: auto; min-width: 150px; max-width: 230px; }
+.rn-search-wrap { display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--input-bg); color: var(--text-muted); flex: 1 1 220px; min-width: 200px; max-width: 360px; }
+.rn-search { flex: 1; border: 0; background: transparent; color: var(--input-text); font: inherit; padding: 8px 0; min-width: 0; }
+.rn-search:focus { outline: none; }
+.rn-count { font-size: .82em; color: var(--text-muted); white-space: nowrap; }
+.rn-views { display: inline-flex; gap: 4px; margin-left: auto; }
+.rn { gap: 14px; }
+.rn-row td { vertical-align: middle; }
+.rn-table td { vertical-align: middle; }
+.rn-issuer { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rn-actions { white-space: nowrap; display: flex; gap: 4px; }
+.rn-days { white-space: nowrap; }
+.rn-days b { font-variant-numeric: tabular-nums; }
+.rn-days--past { color: #dc3545; } .rn-days--crit { color: #dc3545; } .rn-days--warn { color: #b45309; } .rn-days--unknown { color: var(--text-muted); }
+.rn-domain-btn { background: none; border: 0; padding: 0; font: inherit; font-weight: 700; color: var(--text); cursor: pointer; text-align: left; }
+.rn-domain-btn:hover { color: var(--primary); text-decoration: underline; }
+.rn-code-chip { font-size: .72em; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--border); color: var(--text-muted); white-space: nowrap; }
+.rn-shared { font-size: .72em; padding: 2px 8px; border-radius: 10px; background: color-mix(in srgb, #14b8a6 14%, transparent); color: #0f766e; border: 1px solid color-mix(in srgb, #14b8a6 40%, transparent); white-space: nowrap; }
+.rn-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; font-size: .82em; color: var(--text-muted); }
+.rn-meta-item { display: inline-flex; align-items: center; gap: 4px; }
+.rn-card-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.rn-card-actions .btn { display: inline-flex; align-items: center; gap: 4px; }
+@media (max-width: 640px) { .rn-views { margin-left: 0; } .rn-search-wrap { max-width: none; } }
 .renewal-toolbar .seg { display: inline-flex; gap: 4px; }
 .renewal-toolbar .btn { display: inline-flex; align-items: center; gap: 5px; }
 
@@ -13206,6 +13238,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .fc-ci-peak:hover { background: color-mix(in srgb, var(--primary) 18%, transparent); }
 .fc-chart-hint { font-size: .74em; color: var(--text-muted); margin-top: 4px; text-align: right; }
 .fc-day-search { width: 100%; margin-bottom: 8px; }
+/* "Sizin için — bugün" Tümünü gör pop-up'ı (2026-09-18) */
+.today-modal-list { display: flex; flex-direction: column; gap: 6px; }
+.today-modal-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; }
 .fc-hm-cell-v2.fc-hm-off { background-image: repeating-linear-gradient(135deg, transparent 0 4px, rgba(148,163,184,.18) 4px 6px); }
 .fc-hm-cell-v2:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 .fc-hm-cell-v2.fc-hm-planned { outline: 2px dashed #7c3aed; outline-offset: -3px; }

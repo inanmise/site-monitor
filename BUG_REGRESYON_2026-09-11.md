@@ -810,3 +810,22 @@ forecastModel.teamBucketCerts, IncidentsPage, AlertTeamStatsPanel + AlertTeamCel
 - Kapılar: backend `clean verify` yeşil; frontend lint / 2105 test / kapsam tabanı / build yeşil.
 → **REGRESYON YOK**.
 
+## Ek — otuz sekizinci tur (2026-09-18, sürüm sonrası — push {ne}, "Tümünü gör" pop-up'ı, Yenileme Önerileri yeniden tasarımı, `v20.70.0..HEAD`)
+
+Kapsam: backend (UserPushService.expiringWhat; TodayPanelService build(limit) + /me/today?full; CertificateService
+buildAdvice bağlam alanları) ve frontend (TodayPanel + TodayListModal; RenewalAdvice tümüyle yeniden). İmza süpürmesi temiz.
+
+**Denetim odakları:**
+- Push: {ne} sabit "süre" idi → tipten türer (DOMAIN içeren tipler "alan adı kaydı", diğer EXPIRY "SSL sertifikası");
+  test dört tipi pinler. Diğer şablonlar zaten neyi söylüyor; DEĞİŞMEDİ (admin'in özelleştirdiği şablon varsa
+  {ne} yer tutucusu aynı adla dolmaya devam eder).
+- Today: `build(canView, own, limit)` — count her iki halde tam sayı, items yalnız tavan (test). Pop-up 10'luk
+  sayfalı + arama; "Sayfaya git" eski geçiş. Test: inline `Card` bileşeni her render'da yeniden kuruluyor →
+  eski düğme referansı kopuk (testte yeniden sorgu; üretimde etkisi yok — kullanıcı her tıklamada güncel DOM'a basar).
+- Yenileme Önerileri: sunucu sırası (öncelik) korunur, istemci sıralama/süzme ek; URL `r_pri`/`r_code` (r_ öneki
+  zaten PAGE_STATE_PREFIXES'te) + ortak `team/group/tag/q/sort/page`. CSV `csvRows` (kaçış kapısı) + BOM.
+  cssClasses kapısı `.rn`/`.rn-row` hayaletlerini, cssTokens `var(--card-bg, …)` yedeklisini yakaladı → düzeltildi.
+  Tarayıcıda: özet şeridi/süzgeçler/kart/tablo görüldü; Genel Bakış pop-up'ı "Açık alarm (4)" + sayfa boyutu + Sayfaya git.
+- Kapılar: backend `clean verify` yeşil; frontend lint / 2110 test / kapsam tabanı / build yeşil.
+→ **REGRESYON YOK**.
+

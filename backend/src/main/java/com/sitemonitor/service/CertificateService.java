@@ -943,42 +943,42 @@ public class CertificateService {
                 advice.add(buildAdvice(domain, "REVOKED", "critical",
                         "Sertifika İPTAL EDİLDİ! Trafiği derhal kesin.",
                         "Sertifikayı yenileyin ve CDN/load-balancer yapılandırmasını güncelleyin.",
-                        days, cert.getNotAfter()));
+                        days, cert));
             } else if ("INCOMPLETE".equals(cert.getDeploymentStatus())) {
                 advice.add(buildAdvice(domain, "DEPLOYMENT_INCOMPLETE", "critical",
                         "DEPLOYMENT EKSİK: Yenileme yapıldı ancak uç nokta eski sertifikayı sunuyor.",
                         "Yeni sertifikayı uç noktalara deploy edin ve konfigürasyonu yeniden yükleyin.",
-                        days, cert.getNotAfter()));
+                        days, cert));
             } else if ("BROKEN".equals(cert.getChainStatus())) {
                 advice.add(buildAdvice(domain, "CHAIN_BROKEN", "critical",
                         "ZİNCİR SORUNLU: Ara/kök CA sertifikası süresi dolmuş veya geçersiz.",
                         "Ara sertifika zincirini güncelleyin. Sunucu yapılandırmasını kontrol edin.",
-                        days, cert.getNotAfter()));
+                        days, cert));
             } else if ("error".equals(cert.getStatus())) {
                 advice.add(buildAdvice(domain, "UNREACHABLE", "critical",
                         "Sertifikaya ulaşılamıyor.",
                         "Bağlantıyı ve domain yapılandırmasını kontrol edin.",
-                        null, cert.getNotAfter()));
+                        null, cert));
             } else if (days != null && days < 0) {
                 advice.add(buildAdvice(domain, "EXPIRED", "critical",
                         "Sertifika süresi dolmuş! " + Math.abs(days) + " gün önce bitti.",
                         "Sertifikayı derhal yenileyin.",
-                        days, cert.getNotAfter()));
+                        days, cert));
             } else if (days != null && days <= 7) {
                 advice.add(buildAdvice(domain, "EXPIRING_CRITICAL", "critical",
                         "Sertifika " + days + " gün içinde bitiyor! Acil yenileme gerekli.",
                         "Sertifikayı bugün yenileyin.",
-                        days, cert.getNotAfter()));
+                        days, cert));
             } else if (days != null && days <= 30) {
                 advice.add(buildAdvice(domain, "EXPIRING_WARNING", "warning",
                         "Sertifika " + days + " gün içinde bitiyor.",
                         "Sertifika yenileme sürecini başlatın.",
-                        days, cert.getNotAfter()));
+                        days, cert));
             } else if (days != null && days <= 60) {
                 advice.add(buildAdvice(domain, "EXPIRING_INFO", "info",
                         "Sertifika " + days + " gün içinde bitiyor.",
                         "Sertifika yenileme takviminizi güncelleyin.",
-                        days, cert.getNotAfter()));
+                        days, cert));
             }
         }
 
@@ -989,7 +989,7 @@ public class CertificateService {
 
     private Map<String, Object> buildAdvice(String domain, String code, String priority,
                                              String message, String action,
-                                             Integer days, String notAfter) {
+                                             Integer days, CertificateDto cert) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("domain", domain);
         m.put("code", code);
@@ -997,7 +997,16 @@ public class CertificateService {
         m.put("message", message);
         m.put("action", action);
         m.put("days_remaining", days);
-        m.put("not_after", notAfter);
+        m.put("not_after", cert.getNotAfter());
+        // Zenginleştirme (2026-09-18, Yenileme Önerileri yeniden tasarımı): süzme/gruplama/karar için bağlam.
+        m.put("team_id", cert.getTeamId());
+        m.put("team_name", cert.getTeamName());
+        m.put("tier", cert.getTier());
+        m.put("group_name", cert.getGroupName());
+        m.put("tags", cert.getTags());
+        m.put("port", cert.getPort());
+        m.put("issuer_cn", cert.getIssuerCn());
+        m.put("fingerprint", cert.getFingerprint());   // aynı sertifikayı paylaşan alanlar tek yenileme işidir
         return m;
     }
 
