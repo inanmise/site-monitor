@@ -772,7 +772,7 @@ CertificateDto/Service group_name+tags) ve frontend (9 izleme sayfası filtre ka
   takımına 200, başka takıma 403. Düzenleme/silme/aktarma/içe aktarma yönetici kapılarında KALDI (bilinçli).
 - Genel Bakış: `/api/certificates` group_name+tags döner (DTO testi: envanterde boşsa null); grup/etiket
   kutuları, "Etiketsiz/Grupsuz" seçenekleri, metin araması grup/etikette de eşleşir, "Filtreleri temizle"
-  (herhangi bir daraltmada görünür, istatistik kartı seçimini de sıfırlar). Tarayıcıda: etiket "erdi" → 1 kayıt,
+  (herhangi bir daraltmada görünür, istatistik kartı seçimini de sıfırlar). Tarayıcıda: tek kayıtta bulunan bir etiket seçildi → 1 kayıt,
   temizle → düğme kayboldu, liste geri geldi. Yerleşim: arama en başa alındı (sağa yaslı arama satır sonuna
   düşüyordu), etiket+kutu çifti `.sort-bar-field` ile birlikte sarıyor.
 - Kenar çubuğu kutusu: çok takımlı kullanıcıda tek (birincil) takım yerine "N takım" + popover'da "Dahil
