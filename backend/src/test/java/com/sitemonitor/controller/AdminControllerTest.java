@@ -2002,6 +2002,38 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("PUT /inventory as USER on OWN team → 200; gönderilen team_id YOK SAYILIR (aktarım yok)")
+    void updateInventory_asUser_ownTeam_editsButCannotTransfer() throws Exception {
+        CertificateInventory existing = inventory("uye.example.com"); existing.setId(6L); existing.setTeamId(2L);
+        when(inventoryRepo.findById(6L)).thenReturn(Optional.of(existing));
+        when(inventoryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        mvc.perform(put("/api/admin/inventory/6")
+                        .session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"uye.example.com\",\"port\":8443,\"active\":true,\"team_id\":9}"))
+                .andExpect(status().isOk());
+        assertThat(existing.getPort()).isEqualTo(8443);
+        assertThat(existing.getTeamId()).isEqualTo(2L);   // takım 9'a aktarılmadı
+    }
+
+    @Test
+    @DisplayName("PUT /inventory as USER on ANOTHER team → 403; DELETE kendi takımında bile 403 (silme yönetici işi)")
+    void updateInventory_asUser_otherTeam_403_deleteStillAdmin() throws Exception {
+        CertificateInventory other = inventory("yabanci.example.com"); other.setId(7L); other.setTeamId(9L);
+        when(inventoryRepo.findById(7L)).thenReturn(Optional.of(other));
+        mvc.perform(put("/api/admin/inventory/7")
+                        .session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"yabanci.example.com\",\"port\":443,\"active\":true}"))
+                .andExpect(status().isForbidden());
+        CertificateInventory own = inventory("uye.example.com"); own.setId(8L); own.setTeamId(2L);
+        when(inventoryRepo.findById(8L)).thenReturn(Optional.of(own));
+        mvc.perform(delete("/api/admin/inventory/8").session(userSession()))
+                .andExpect(status().isForbidden());
+        verify(inventoryRepo, never()).save(any());
+    }
+
+    @Test
     @DisplayName("POST /api/admin/inventory as TEAM_ADMIN on a team it does NOT manage returns 403")
     void addInventory_asTeamAdmin_outOfScopeTeam_returns403() throws Exception {
         // Faz 3b: yönetim kapsamı dışındaki takıma (999) ekleme reddedilir.

@@ -780,3 +780,13 @@ CertificateDto/Service group_name+tags) ve frontend (9 izleme sayfası filtre ka
 - Kapılar: backend `clean verify` 3813 test; frontend lint / 2098 test / kapsam tabanı / build yeşil.
 → **REGRESYON YOK**.
 
+## Ek — otuz altıncı tur (2026-09-18, sürüm öncesi — USER kendi takımının envanter kaydını düzenler, `v20.69.0..HEAD`)
+
+Kapsam: `updateInventory` kapısı `requireInventoryWriter` (admin / yönetim kapsamı / üyelik); takım aktarımı
+yalnız kaydın takımını yönetenlere (TEAM_ADMIN ve üyelik yoluyla gelen USER için team_id sabitlenir — test:
+team_id 9 gönderilse de 2'de kaldı). Başka takımın kaydı 403; SİLME kendi takımında bile 403 (yönetici işi).
+Frontend: satır kapısı `canEditRow` (Düzenle/Kopyala/satır içi tier) — USER yalnız üyesi olduğu takımın
+satırında; toplu seçim/sil/içe aktarma/hijyen bandı canManage'de kaldı; Genel Bakış kartında da aynı kapı.
+Kapılar: backend `clean verify` yeşil; frontend lint / 2099 test / kapsam tabanı / build yeşil.
+→ **REGRESYON YOK**.
+

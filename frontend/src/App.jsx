@@ -252,6 +252,7 @@ export default function App() {
   // "Domain Ekle" her kullanıcı seviyesinde (2026-09-18): USER varsayılanı inventory.crud/edit AÇIK; sunucu üyelik doğrular.
   // usePermissions App gövdesinde çalışmaz (provider aşağıda; bkz. cardActions) → rol tabanlı; asıl kapı uçta.
   const canAddInventory = canManageInventory || systemRole === 'USER'
+  const canEditCert = (cert) => canManageInventory || (canAddInventory && cert?.team_id != null && myTeamIds.some((id) => String(id) === String(cert.team_id)))
   // Backend'deki SessionScope.isGlobalViewer'ın birebir karşılığı: kapsamsız (global) admin ya da
   // AUDIT. Kapsamlı müdür-admin buraya GİRMEZ — o da takım süzgeciyle çalışır.
   const globalViewer = globalAdmin || systemRole === 'AUDIT'
@@ -660,8 +661,9 @@ export default function App() {
     return {
       onCheckNow: () => runSingleCheck(cert.domain),
       checking: checkingDomain === cert.domain || refreshing,
-      onEdit:      canManageInventory ? () => setInvForm({ domain: cert.domain, mode: 'edit' }) : undefined,
-      onDuplicate: canManageInventory ? () => setInvForm({ domain: cert.domain, mode: 'duplicate' }) : undefined,
+      // 2026-09-18: USER kendi TAKIMININ kaydını düzenler/kopyalar (uç üyelik doğrular); silme yönetici işi.
+      onEdit:      canEditCert(cert) ? () => setInvForm({ domain: cert.domain, mode: 'edit' }) : undefined,
+      onDuplicate: canEditCert(cert) ? () => setInvForm({ domain: cert.domain, mode: 'duplicate' }) : undefined,
       // Kapı Düzenle/Kopyala ile AYNI: rol tabanlı. usePermissions BURADA çalışmaz —
       // PermissionsProvider App'in KENDİ içinde render ediliyor, App gövdesi context'in
       // ÜSTÜNDE kalır ve canEdit daima false döner (düğme hiç çizilmezdi). Yetkinin asıl

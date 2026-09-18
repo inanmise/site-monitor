@@ -80,6 +80,9 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   // düzenleme/silme/içe aktarma/hijyen bandı canManage'de kalır. Sunucu üyelik doğrular.
   const perms = usePermissions()
   const canAdd = canManage || perms.canEdit('inventory.crud')
+  // Satır düzenleme (2026-09-18): USER yalnız ÜYESİ olduğu takımın kaydını düzenler/kopyalar (teamsProp = /me takımları).
+  const myTeamIdSet = useMemo(() => new Set((teamsProp || []).map((tm) => String(tm.id))), [teamsProp])
+  const canEditRow = useCallback((r) => canManage || (canAdd && r?.team_id != null && myTeamIdSet.has(String(r.team_id))), [canManage, canAdd, myTeamIdSet])
   const [items, setItems]             = useState([])
   const [teams, setTeams]             = useState(teamsProp)
   const [formModal, setFormModal]     = useState(null)   // { mode: 'add'|'edit'|'duplicate', record }
@@ -585,7 +588,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       ) : (
         <>
           <InventoryTable rows={pager.pageItems} cols={cols} sort={sort} onSort={setSortPersist} density={density}
-            canManage={canManage} isAdmin={isAdmin} teamsCount={teams.length} teamMap={teamMap} statusFilter={statusFilter}
+            canManage={canManage} canEditRow={canEditRow} isAdmin={isAdmin} teamsCount={teams.length} teamMap={teamMap} statusFilter={statusFilter}
             selected={selected} onToggle={toggleSel} onToggleAll={toggleAll} allOnPage={allOnPage}
             onShow={(r) => setShowItem(r)} onEdit={openEdit} onDuplicate={openDuplicate} onTransfer={openTransfer}
             onDelete={del} onRestore={restore} onPurge={purge}
@@ -620,7 +623,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
 
       {/* ── Kayıt çekmecesi (#8): Ayrıntılar / Değişiklikler / Kontroller; önceki-sonraki gezinme ── */}
       {showItem && (
-        <InventoryDrawer record={showItem} records={visibleItems} teamMap={teamMap} teamNameById={teamNameById} canManage={canManage}
+        <InventoryDrawer record={showItem} records={visibleItems} teamMap={teamMap} teamNameById={teamNameById} canManage={canManage} canEditRow={canEditRow}
           onClose={() => setShowItem(null)} onEdit={(r) => { setShowItem(null); openEdit(r) }} onCheckNow={checkNow} onNavigate={setShowItem} />
       )}
       {importOpen && (

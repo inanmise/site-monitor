@@ -54,7 +54,7 @@ export function ContactsCell({ r, t }) {
  * #9 alan adı bitişi · #10 çöp kutusu künyesi · #11 şimdi kontrol et · #14 etiket çipleri · #15 yoğunluk).
  */
 export default function InventoryTable({
-  rows, cols, sort, onSort, density, canManage, isAdmin, teamsCount, teamMap = {}, selected, onToggle, onToggleAll, allOnPage,
+  rows, cols, sort, onSort, density, canManage, canEditRow = () => canManage, isAdmin, teamsCount, teamMap = {}, selected, onToggle, onToggleAll, allOnPage,
   onShow, onEdit, onDuplicate, onTransfer, onDelete, onRestore, onPurge, onDiagnose, onCheckNow, onInline, onTagClick, statusFilter,
 }) {
   const t = useT()
@@ -139,11 +139,11 @@ export default function InventoryTable({
                 </td>
                 {show('port') && <td>{r.port ?? 443}</td>}
                 {show('tier') && (
-                  <td onDoubleClick={() => canManage && !del && setEditing({ id: r.id, field: 'tier' })}>
+                  <td onDoubleClick={() => canEditRow(r) && !del && setEditing({ id: r.id, field: 'tier' })}>
                     {editing?.id === r.id && editing.field === 'tier' ? inlineTier(r)
                       : r.tier
-                        ? <button type="button" className={`tier-badge tier-badge-${r.tier} inv-inline-btn`} disabled={!canManage || del} onClick={() => setEditing({ id: r.id, field: 'tier' })} title={canManage ? t('inv.inlineEditTip') : undefined}>T{r.tier}</button>
-                        : <button type="button" className="inv-muted inv-inline-btn" disabled={!canManage || del} onClick={() => setEditing({ id: r.id, field: 'tier' })} title={canManage ? t('inv.inlineEditTip') : undefined}>—</button>}
+                        ? <button type="button" className={`tier-badge tier-badge-${r.tier} inv-inline-btn`} disabled={!canEditRow(r) || del} onClick={() => setEditing({ id: r.id, field: 'tier' })} title={canEditRow(r) ? t('inv.inlineEditTip') : undefined}>T{r.tier}</button>
+                        : <button type="button" className="inv-muted inv-inline-btn" disabled={!canEditRow(r) || del} onClick={() => setEditing({ id: r.id, field: 'tier' })} title={canEditRow(r) ? t('inv.inlineEditTip') : undefined}>—</button>}
                   </td>
                 )}
                 {show('team') && <td>{(r.team_name || teamMap[String(r.team_id)]) ? <TeamBadge teamId={r.team_id} teamName={r.team_name || teamMap[String(r.team_id)]} /> : r.team_id != null ? '—' : <span className="inv-muted inv-warn-text">{t('inv.hy.no_team')}</span>}</td>}
@@ -185,8 +185,9 @@ export default function InventoryTable({
                           { label: t('inv.show'), onClick: () => onShow(r) },
                           { label: t('inv.checkNow'), onClick: () => checkNow(r) },
                           { label: t('inv.diagnose'), onClick: () => onDiagnose(r), hidden: !isAdmin },
-                          { label: t('inv.edit'), onClick: () => onEdit(r), hidden: !canManage },
-                          { label: t('mon.duplicate'), onClick: () => onDuplicate(r), hidden: !canManage },
+                          // Düzenle/Kopyala satır bazlı (2026-09-18): USER kendi takımının kaydını düzenler; silme canManage'de kalır
+                          { label: t('inv.edit'), onClick: () => onEdit(r), hidden: !canEditRow(r) },
+                          { label: t('mon.duplicate'), onClick: () => onDuplicate(r), hidden: !canEditRow(r) },
                           { label: t('inv.transfer'), onClick: () => onTransfer(r), hidden: !(isAdmin && teamsCount > 1) },
                           { label: t('inv.delete'), danger: true, onClick: () => onDelete(r.id), hidden: !canManage },
                         ]} />

@@ -272,7 +272,9 @@ public class AdminController {
             HttpSession session, HttpServletRequest request) {
         CertificateInventory existing = inventoryRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
-        requireTeamScopedAdmin(session, existing.getTeamId());
+        // 2026-09-18: USER kendi TAKIMININ kaydını düzenler (izleme türleriyle aynı sözleşme); silme/aktarma
+        // yönetici kapılarında kalır.
+        requireInventoryWriter(session, existing.getTeamId());
         requirePerm(session, "inventory.crud", "edit");
         // Oluşturma yolu (addInventory) host'a normalize ediyor (trim + küçük harf); güncelleme
         // etmiyordu. "Example.COM" gibi harf-farklı düzenleme rename sayılmıyor (equalsIgnoreCase)
@@ -280,9 +282,9 @@ public class AdminController {
         // kayıt geçmişsiz kalıyordu; "Other.com" ise exact-UNIQUE'i geçip ikinci satır oluşturuyordu.
         item.setDomain(validateDomain(item.getDomain()));
         requireInventoryGroupAndTags(item);   // grup + etiket zorunlu (2026-09-18) — düzenlemede de
-        // TEAM_ADMIN cannot transfer an item to another team via this endpoint —
-        // freeze teamId to its current value.
-        if (isTeamAdmin(session)) {
+        // Takım aktarımı bu uçtan YALNIZ kaydın takımını yönetenlere (global admin / yönetim kapsamı):
+        // TEAM_ADMIN ve üyelik yoluyla gelen USER için teamId mevcut değere sabitlenir.
+        if (isTeamAdmin(session) || !canManageTeamResource(session, existing.getTeamId())) {
             item.setTeamId(existing.getTeamId());
         }
         item.setTlsMode(normalizeTlsMode(item.getTlsMode()));
@@ -2625,7 +2627,8 @@ public class AdminController {
     /**
      * Envanter kaydı AÇMA kapısı (2026-09-18): global admin → her takım; yönetim kapsamı (PO/müdür) →
      * yönettiği takımlar; USER → yalnız ÜYESİ olduğu takım (memberTeamIds; eski oturumda birincil).
-     * Düzenleme/silme/aktarma bu kapıyı KULLANMAZ — requireTeamScopedAdmin'de kalır.
+     * Silme/aktarma/içe aktarma bu kapıyı KULLANMAZ — requireTeamScopedAdmin'de kalır; düzenleme de bu kapıdan
+     * geçer (üye kendi takımının kaydını düzenler, takım alanı sabitlenir).
      */
     private void requireInventoryWriter(HttpSession session, Long teamId) {
         if (canManageTeamResource(session, teamId)) return;

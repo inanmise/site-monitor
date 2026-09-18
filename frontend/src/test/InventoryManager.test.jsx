@@ -32,6 +32,11 @@ vi.mock('../api/client', () => ({
     transferCertSy: vi.fn(),
   } }),
 }))
+// Yetki: USER için inventory.crud/edit AÇIK (2026-09-18 varsayılanı); satır kapısı üyeliğe bakar.
+vi.mock('../contexts/PermissionsProvider.jsx', () => ({
+  usePermissions: () => ({ perms: {}, canView: () => true, canEdit: (r) => r === 'inventory.crud', canExecute: () => false, refresh: () => {} }),
+  PermissionsProvider: ({ children }) => children,
+}))
 vi.mock('../components/ui/Dialog.jsx', () => ({
   useDialog: () => ({ showConfirm: confirmMock }),
   DialogProvider: ({ children }) => children,
@@ -256,5 +261,32 @@ describe('InventoryManager', () => {
 
     await waitFor(() => expect(screen.getByText('Cekilen')).toBeInTheDocument())
     expect(screen.queryByText('Proptan')).toBeNull()
+  })
+})
+
+// ── USER: kendi takımının kaydını düzenler (2026-09-18) ──
+describe('InventoryManager — USER satır düzenleme kapısı', () => {
+  it('USER: "Domain Ekle" görünür; kendi takımının satırında Düzenle/Kopyala VAR, Sil YOK; başka takımın satırında düzenleme yok; toplu seçim sütunu yok', async () => {
+    vi.clearAllMocks()
+    api.admin.getInventory.mockResolvedValue({ success: true, data: [
+      { id: 1, domain: 'kendi.example.com', port: 443, active: true, team_id: 5, team_name: 'SY-A' },
+      { id: 2, domain: 'baska.example.com', port: 443, active: true, team_id: 9, team_name: 'SY-B' },
+    ] })
+    const { container } = render(<LangProvider><InventoryManager systemRole="USER" teams={[{ id: 5, name: 'SY-A' }]} /></LangProvider>)
+    await screen.findByText('kendi.example.com')
+    expect(screen.getByRole('button', { name: /Domain Ekle|Add Domain/i })).toBeInTheDocument()
+    expect(container.querySelector('thead input[type=checkbox]')).toBeNull()
+
+    const own = screen.getByText('kendi.example.com').closest('tr')
+    fireEvent.click(own.querySelector('.kebab-trigger'))
+    let items = [...document.querySelectorAll('.wr-menu-pop button')].map((b) => b.textContent.trim())
+    expect(items).toEqual(expect.arrayContaining([expect.stringMatching(/^(Düzenle|Edit)$/), expect.stringMatching(/Kopyala|Duplicate/i)]))
+    expect(items.some((x) => /^(Sil|Delete)$/.test(x))).toBe(false)
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    const other = screen.getByText('baska.example.com').closest('tr')
+    fireEvent.click(other.querySelector('.kebab-trigger'))
+    items = [...document.querySelectorAll('.wr-menu-pop button')].map((b) => b.textContent.trim())
+    expect(items.some((x) => /^(Düzenle|Edit)$/.test(x))).toBe(false)
   })
 })
