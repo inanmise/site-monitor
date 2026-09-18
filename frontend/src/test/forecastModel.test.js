@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  classify, windowState, applyFilters, computeKpis, dailySeries, byTeam, batches, coverage, byIssuer, upcoming, nextExpiry,
+  classify, windowState, applyFilters, computeKpis, dailySeries, byTeam, teamBucketCerts, batches, coverage, byIssuer, upcoming, nextExpiry,
   isHoliday, isWeekend, lastBusinessDay, icsEvents, csvRows, filtersToParams, paramsToFilters, EMPTY_FILTERS,
 } from '../pages/forecastModel.js'
 
@@ -86,5 +86,22 @@ describe('holidays / exports', () => {
     const csv = csvRows(rows, t)
     expect(csv[0]).toHaveLength(9)
     expect(csv[1][0]).toBe('gone.example.com')
+  })
+})
+
+describe('teamBucketCerts (takım tablosu hücresi, 2026-09-18)', () => {
+  it('hücre listesi byTeam sayılarıyla BİREBİR aynı uzunlukta; günü kalana göre sıralı; takımsız = "none"', () => {
+    const row = byTeam(CERTS, TH, 60, TODAY).find((r) => r.id === '5')
+    const len = (b) => teamBucketCerts(CERTS, TH, 60, '5', b, TODAY).length
+    expect(len('total')).toBe(row.total)
+    expect(len('overdue')).toBe(row.overdue + row.unreachable)
+    expect(len('critical')).toBe(row.critical)
+    expect(len('high')).toBe(row.high)
+    expect(len('warning')).toBe(row.warning)
+    expect(len('later')).toBe(row.later)
+    expect(len('late')).toBe(row.late)
+    expect(teamBucketCerts(CERTS, TH, 60, '5', 'total', TODAY).map((x) => x.domain).slice(0, 2)).toEqual(['gone.example.com', 'a.example.com'])
+    expect(teamBucketCerts(CERTS, TH, 60, '9', 'total', TODAY).map((x) => x.domain)).toEqual(['t9.example.com'])
+    expect(teamBucketCerts([c('x.example.com', 5, { team_id: null, team_name: null })], TH, 60, 'none', 'critical', TODAY)).toHaveLength(1)
   })
 })

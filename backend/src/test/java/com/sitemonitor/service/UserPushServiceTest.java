@@ -752,6 +752,25 @@ class UserPushServiceTest {
         assertThat(text).contains("23.09.2026");   // UTC damga → İstanbul takvimi
     }
 
+    /**
+     * {ne} sabit "süre" idi: telefonda "x.com - süre 18 gün içinde doluyor" NEYİN dolduğunu söylemiyordu
+     * (2026-09-18 kullanıcı bildirimi). Artık tipten türer: sertifika ↔ alan adı kaydı.
+     */
+    @Test
+    @DisplayName("{ne}: sertifika tiplerinde 'SSL sertifikası', alan adı tiplerinde 'alan adı kaydı' — 'süre' kalmaz")
+    void expiryMessage_saysWhatExpires() {
+        String cert = service.buildMessage(event(5L, "HIGH", "EXPIRY"), "DAILY_REALERT",
+                java.util.Map.of("days_remaining", 18, "not_after", "2026-10-06T23:59:59"));
+        assertThat(cert).contains("SSL sertifikası 18 gün içinde doluyor").doesNotContain("süre 18");
+        String dom = service.buildMessage(event(7L, "HIGH", "DOMAINMON_EXPIRY"), "DAILY_REALERT",
+                java.util.Map.of("days", 30, "expiry_date", "2026-10-18"));
+        assertThat(dom).contains("alan adı kaydı 30 gün içinde doluyor");
+        String kw = service.buildMessage(event(8L, "HIGH", "KEYWORD_DOMAIN_EXPIRY"), "DAILY_REALERT",
+                java.util.Map.of("domain_days_remaining", 12, "expiry_date", "2026-09-30"));
+        assertThat(kw).contains("alan adı kaydı 12 gün içinde doluyor");
+        assertThat(UserPushService.expiringWhat(null)).isEqualTo("SSL sertifikası");
+    }
+
     @Test
     @DisplayName("tarih: domain baglaminda expiry_date ONCELIKLI kalir")
     void expiryDate_keepsExplicitExpiryDate() {

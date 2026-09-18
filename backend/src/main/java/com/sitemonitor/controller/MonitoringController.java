@@ -885,6 +885,10 @@ public class MonitoringController {
             item.put("domain", domain);
             item.put("port",   inv.getPort());
             item.put("team_name", teamMap.get(domain));
+            // Grup / etiket / kademe (2026-09-18): Durum İzleme grup-etiket filtresi + kart çipleri.
+            item.put("group_name", inv.getGroupName());
+            item.put("tags", inv.getTags());
+            item.put("tier", inv.getTier());
 
             int port = inv.getPort() != null ? inv.getPort() : 443;
             Optional<UptimeCheck> uc = Optional.ofNullable(latestUptime.get(domain + ":" + port));

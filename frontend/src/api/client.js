@@ -158,7 +158,7 @@ export const api = {
   },
   me: {
     /** "Sizin için — bugün" paneli (2026-09-12, #3) */
-    today: () => request('/me/today'),
+    today: (opts = {}) => request(opts.full ? '/me/today?full=true' : '/me/today'),
     /** Bildirim kutusu (2026-09-12, #2) */
     inbox: () => request('/me/inbox'),
     // 2026-09-10: yol '/auth/me/push-opt-out' idi — AuthController '/api' tabanlı, uç '/api/me/push-opt-out'

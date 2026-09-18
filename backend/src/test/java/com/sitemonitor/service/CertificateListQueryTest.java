@@ -207,6 +207,18 @@ class CertificateListQueryTest {
     }
 
     @Test
+    @DisplayName("Yenileme önerisi öğeleri bağlam taşır (takım/kademe/grup/etiket/port/veren/parmak izi) — 2026-09-18 yeniden tasarım")
+    void renewalAdviceCarriesContext() {
+        java.util.Map<String, Object> ok = service.getRenewalAdvice().stream()
+                .filter(a -> "crit.example.com".equals(a.get("domain"))).findFirst().orElseThrow();
+        assertThat(ok.get("code")).isEqualTo("EXPIRING_CRITICAL");
+        assertThat(ok).containsKeys("team_id", "team_name", "tier", "group_name", "tags", "port", "issuer_cn", "fingerprint");
+        assertThat(ok.get("port")).isEqualTo(443);
+        assertThat(ok.get("tier")).isEqualTo(1);
+        assertThat(ok.get("team_id")).isEqualTo(1L);
+    }
+
+    @Test
     @DisplayName("check_interval_hours DTO'ya taşınır (tablo 'bayat' rozeti)")
     void checkIntervalOnDto() {
         CertificateDto ok = service.getAllLatest().stream().filter(c -> c.getDomain().startsWith("ok")).findFirst().orElseThrow();

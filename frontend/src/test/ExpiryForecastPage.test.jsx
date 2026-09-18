@@ -71,6 +71,27 @@ describe('ExpiryForecastPage', () => {
     await waitFor(() => expect(rows().length).toBeGreaterThan(4))
   })
 
+  it('takım tablosu hücresi tıklanır → o takım+kova listesi modalda; 12 kayıtlı gün modali SAYFALI (10 + sayfalama)', async () => {
+    const many = Array.from({ length: 12 }, (_, i) => cert(`gun${i}.example.com`, 5, { team_id: 3, team_name: 'Takım C' }))
+    api.getForecast.mockResolvedValue({ success: true, data: { ...DATA, certs: [...DATA.certs, ...many] } })
+    render(<ExpiryForecastPage />)
+    await screen.findByText('crit.example.com')
+    // Takım C satırı: ≤7 hücresi 12 → tıkla
+    const rowC = [...document.querySelectorAll('.fc-team-table tbody tr')].find((tr) => tr.textContent.includes('Takım C'))
+    const crit = [...rowC.querySelectorAll('.fc-cell-btn')].find((b) => b.textContent.trim() === '12')
+    expect(crit).toBeTruthy()
+    fireEvent.click(crit)
+    const modal = await screen.findByRole('dialog')
+    expect(modal.textContent).toMatch(/Takım C/)
+    expect(modal.querySelectorAll('.fc-day-row')).toHaveLength(10)          // 10'luk sayfa
+    expect(modal.querySelector('.pg-nav')).not.toBeNull()
+    expect(modal.textContent).toMatch(/1[–-]10/)                             // 1–10 / 12
+    fireEvent.click([...modal.querySelectorAll('button')].find((b) => /sonraki|next|›|»/i.test(b.textContent + (b.getAttribute('aria-label') || ''))))
+    await waitFor(() => expect(modal.querySelectorAll('.fc-day-row')).toHaveLength(2))
+    // Sıfır hücresi düğme değil
+    expect(rowC.querySelector('.fc-zero')).not.toBeNull()
+  })
+
   it('#3 renew-by satırda; #8 paylaşılan sertifika + veren çipi; #10 zamanında oranı', async () => {
     render(<ExpiryForecastPage />)
     await screen.findByText('crit.example.com')

@@ -19,10 +19,12 @@ import { LoadingBlock } from '../components/ui/Progress.jsx'
 import { useToast } from '../components/ui/Toast.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import { useUrlQuerySync, readUrlParam } from '../hooks/useUrlQuerySync.js'
+import { usePagination } from '../hooks/usePagination.js'
+import PaginationBar from '../components/ui/PaginationBar.jsx'
 import { buildIcs, downloadIcs } from '../utils/ics.js'
 import { csvCell } from '../utils/csv.js'
 import {
-  EMPTY_FILTERS, filtersToParams, paramsToFilters, applyFilters, computeKpis, dailySeries, byTeam, batches, coverage, byIssuer,
+  EMPTY_FILTERS, filtersToParams, paramsToFilters, applyFilters, computeKpis, dailySeries, byTeam, teamBucketCerts, batches, coverage, byIssuer,
   upcoming, nextExpiry, expiryKey, classify, isHoliday, isWeekend, lastBusinessDay, icsEvents, csvRows, todayKey, dayDiff,
 } from './forecastModel.js'
 
@@ -72,6 +74,81 @@ function KpiCard2({ range, value, color, sub, onClick, hint }) {
       <div className="fc-kpi2-number" style={{ color }}>{count}</div>
       <div className="fc-kpi2-sub">{value === 0 && hint ? hint : sub}</div>
     </Tag>
+  )
+}
+
+/** Takım tablosu kova etiketi (hücre modal başlığı için). */
+function bucketLabel(bucket, th, t) {
+  if (bucket === 'overdue') return t('forecast.cls.overdue')
+  if (bucket === 'critical') return `≤${th.critical} ${t('forecast.daysLeft')}`
+  if (bucket === 'high') return `≤${th.high} ${t('forecast.daysLeft')}`
+  if (bucket === 'warning') return `≤${th.warning} ${t('forecast.daysLeft')}`
+  if (bucket === 'later') return `>${th.warning} ${t('forecast.daysLeft')}`
+  if (bucket === 'late') return t('forecast.rangeLate')
+  return t('forecast.colTotal')
+}
+
+/**
+ * Günlük yoğunluk özeti (2026-09-18): grafiğin üstünde en yoğun gün + 7 günlük tepe + ortalama —
+ * çubuklar "9 tane" derken hangi gün, ne kadar yığılma olduğu tek bakışta görülsün; tepe güne tıklanır.
+ */
+function ChartInsight({ data, t, onOpenDay }) {
+  const busy = data.filter((d) => d.total > 0)
+  if (busy.length === 0) return null
+  const peak = busy.reduce((a, b) => (b.total > a.total ? b : a), busy[0])
+  const total = data.reduce((n, d) => n + d.total, 0)
+  const days = data.length
+  const perWeek = (total / Math.max(1, days / 7)).toFixed(1)
+  let peakWeek = 0
+  for (let i = 0; i + 7 <= days; i++) { const w = data.slice(i, i + 7).reduce((n, d) => n + d.total, 0); if (w > peakWeek) peakWeek = w }
+  const open = () => onOpenDay({ key: peak.date, certs: [...(peak.domains?.critical || []), ...(peak.domains?.high || []), ...(peak.domains?.warning || [])] })
+  return (
+    <div className="fc-chart-insight">
+      <span className="fc-ci-item"><b>{total}</b> {t('forecast.ciTotal', days)}</span>
+      <span className="fc-ci-item">{t('forecast.ciBusyDays', busy.length)}</span>
+      <span className="fc-ci-item">{t('forecast.ciPerWeek', perWeek)}</span>
+      <span className="fc-ci-item">{t('forecast.ciPeakWeek', peakWeek)}</span>
+      <button type="button" className="fc-ci-peak" onClick={open} title={t('forecast.dayModalOpen')}>
+        {t('forecast.ciPeakDay', peak.label, peak.total)}
+      </button>
+    </div>
+  )
+}
+
+/**
+ * Gün / takım-kova sertifika listesi modali — SAYFALI (2026-09-18, kullanıcı bildirimi: 9 kayıt bile
+ * ekranı aşan tek parça liste açıyordu). Sayfa boyutu küçük (10) ve modal içinde kaydırılır; arama
+ * kutusu uzun listede alan adına göre daraltır.
+ */
+function DayListModal({ modal, th, t, onClose, onSelectDomain, onPlan }) {
+  const [q, setQ] = useState('')
+  const rows = useMemo(() => {
+    const s = q.trim().toLowerCase()
+    return s ? modal.certs.filter((c) => (c.domain || '').toLowerCase().includes(s) || (c.team_name || '').toLowerCase().includes(s)) : modal.certs
+  }, [modal.certs, q])
+  const pager = usePagination(rows, { listKey: 'forecast-day', defaultSize: 10, resetDeps: [q, modal] })
+  const title = modal.title ?? t('forecast.dayModalTitle', formatDateOnly(modal.key), modal.certs.length)
+  return (
+    <ModalShell open onClose={onClose} title={title} icon={Calendar} size="lg" scrollBody
+      footer={<button type="button" className="btn btn-secondary" onClick={onClose}>{t('app.close')}</button>}>
+      {modal.certs.length > 5 && (
+        <input className="input fc-day-search" type="text" placeholder={t('forecast.daySearch')} value={q} onChange={(e) => setQ(e.target.value)} />
+      )}
+      <ul className="fc-day-list">{pager.pageItems.map((c) => {
+        const cls = classify(c, th); const rb = c.renew_by ? localDayKey(c.renew_by) : null
+        return (
+          <li key={c.domain} className="fc-day-row">
+            <span className="fc-exp-sev-dot" style={{ background: SEV_COLORS[cls] }} />
+            <button type="button" className="inv-domain" onClick={() => onSelectDomain?.(c.domain)}>{c.domain}</button>
+            {c.tier && <span className={`tier-badge tier-badge-${c.tier}`}>T{c.tier}</span>}
+            {c.team_name && <TeamBadge teamId={c.team_id} teamName={c.team_name} />}
+            <span className="inv-dim">{c.days_remaining} {t('forecast.daysLeft')}{rb ? ` · ${t('forecast.renewBy')} ${formatDateOnly(rb)}` : ''}{c.issuer_cn ? ` · ${c.issuer_cn}` : ''}</span>
+            <span className="fc-exp-actions"><button type="button" className="btn btn-sm btn-secondary" onClick={() => onPlan(c, rb)}><CalendarPlus size={11} /> {t('forecast.planBtn')}</button></span>
+          </li>)
+      })}</ul>
+      {rows.length === 0 && <div className="fc-no-data">{t('empty.hintFilter')}</div>}
+      <PaginationBar {...pager} sizeOptions={[10, 25, 50]} />
+    </ModalShell>
   )
 }
 
@@ -402,9 +479,12 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
               </div>
               {chartData.every((d) => d.total === 0)
                 ? <StatusBlock tone="success" title={t('forecast.noneInRange', chartRange)} description={hintNext} />
-                : (
+                : (<>
+                  <ChartInsight data={chartData} t={t} onOpenDay={setDayModal} />
                   <ResponsiveContainer width="100%" height={280}>
-                    <ComposedChart data={chartData} margin={{ top: 4, right: 20, bottom: 0, left: 0 }}>
+                    {/* Güne tıkla → o günün sertifika listesi (ısı haritasıyla aynı modal; 2026-09-18) */}
+                    <ComposedChart data={chartData} margin={{ top: 4, right: 20, bottom: 0, left: 0 }} style={{ cursor: 'pointer' }}
+                      onClick={(st) => { const d = st?.activePayload?.[0]?.payload; if (d && d.total > 0) setDayModal({ key: d.date, certs: [...(d.domains?.critical || []), ...(d.domains?.high || []), ...(d.domains?.warning || [])] }) }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#1e3a5f" />
                       <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10 }} interval={Math.max(0, Math.floor(chartRange / 6))} />
                       <YAxis yAxisId="left" allowDecimals={false} tick={{ fill: '#94a3b8', fontSize: 10 }} width={26} />
@@ -416,7 +496,8 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
                       <Line yAxisId="right" type="monotone" dataKey="cumulative" stroke="#3b82f6" strokeWidth={2} dot={false} name={t('forecast.ttCumulative')} />
                     </ComposedChart>
                   </ResponsiveContainer>
-                )}
+                  <div className="fc-chart-hint">{t('forecast.chartClickHint')}</div>
+                </>)}
             </div>
             <div className="fc-card fc-section-card">
               <div className="fc-sec-header"><span className="fc-sec-num">04</span><span className="fc-sec-title">{t('forecast.teamTitle', chartRange)}</span></div>
@@ -431,14 +512,41 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
                       <RTooltip formatter={(v, n) => [v, n]} contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', fontSize: 12 }} />
                     </PieChart>
                   </ResponsiveContainer>
-                  <table className="fc-team-table">
-                    <thead><tr><th>{t('inv.colTeam')}</th><th>{t('forecast.cls.overdue')}</th><th>≤{th.critical}</th><th>≤{th.high}</th><th>≤{th.warning}</th><th>&gt;{th.warning}</th><th>{t('forecast.rangeLate')}</th><th></th></tr></thead>
-                    <tbody>{teams.map((r) => (
-                      <tr key={r.id} className={filters.team === r.id ? 'is-on' : ''}>
-                        <td>{r.name ? <TeamBadge teamId={Number(r.id)} teamName={r.name} /> : <span className="inv-warn-text">{t('inv.teamNoTeam')}</span>}</td>
-                        <td className={r.overdue + r.unreachable > 0 ? 'is-bad' : ''}>{r.overdue + r.unreachable}</td><td>{r.critical}</td><td>{r.high}</td><td>{r.warning}</td><td className="inv-dim">{r.later}</td><td className={r.late > 0 ? 'is-warn' : ''}>{r.late}</td>
-                        <td>{r.id !== 'none' && <button type="button" className="btn btn-sm btn-secondary" onClick={() => setFilters((f) => ({ ...f, team: f.team === r.id ? '' : r.id }))}>{filters.team === r.id ? t('inv.filterClear') : t('forecast.teamFilter')}</button>}</td>
-                      </tr>))}</tbody>
+                  {/* Hücreler tıklanır (2026-09-18): sayı → o takım+kova sertifika listesi (gün modaliyle aynı yüzey) */}
+                  <table className="fc-team-table fc-team-table--grid">
+                    <thead><tr>
+                      <th>{t('inv.colTeam')}</th>
+                      <th className="fc-num" title={t('forecast.cls.overdue')}>{t('forecast.cls.overdue')}</th>
+                      <th className="fc-num" title={t('forecast.legCritical')}>≤{th.critical}</th>
+                      <th className="fc-num" title={t('forecast.legHigh')}>≤{th.high}</th>
+                      <th className="fc-num" title={t('forecast.legWarning')}>≤{th.warning}</th>
+                      <th className="fc-num">&gt;{th.warning}</th>
+                      <th className="fc-num">{t('forecast.rangeLate')}</th>
+                      <th className="fc-num">{t('forecast.colTotal')}</th>
+                      <th></th>
+                    </tr></thead>
+                    <tbody>{teams.map((r) => {
+                      const teamLabel = r.name || t('inv.teamNoTeam')
+                      const cell = (bucket, value, cls = '') => (
+                        <td className={`fc-num${cls ? ' ' + cls : ''}`}>
+                          {value > 0
+                            ? <button type="button" className="fc-cell-btn" title={t('forecast.cellOpen', teamLabel)}
+                                onClick={() => setDayModal({ title: `${teamLabel} · ${bucketLabel(bucket, th, t)} (${value})`, certs: teamBucketCerts(certs, th, chartRange, r.id, bucket, today) })}>{value}</button>
+                            : <span className="fc-zero">0</span>}
+                        </td>)
+                      return (
+                        <tr key={r.id} className={filters.team === r.id ? 'is-on' : ''}>
+                          <td>{r.name ? <TeamBadge teamId={Number(r.id)} teamName={r.name} /> : <span className="inv-warn-text">{t('inv.teamNoTeam')}</span>}</td>
+                          {cell('overdue', r.overdue + r.unreachable, r.overdue + r.unreachable > 0 ? 'is-bad' : '')}
+                          {cell('critical', r.critical, r.critical > 0 ? 'is-crit' : '')}
+                          {cell('high', r.high, r.high > 0 ? 'is-high' : '')}
+                          {cell('warning', r.warning)}
+                          {cell('later', r.later, 'inv-dim')}
+                          {cell('late', r.late, r.late > 0 ? 'is-warn' : '')}
+                          {cell('total', r.total, 'is-total')}
+                          <td>{r.id !== 'none' && <button type="button" className="btn btn-sm btn-secondary" onClick={() => setFilters((f) => ({ ...f, team: f.team === r.id ? '' : r.id }))}>{filters.team === r.id ? t('inv.filterClear') : t('forecast.teamFilter')}</button>}</td>
+                        </tr>)
+                    })}</tbody>
                   </table>
                 </>
               )}
@@ -544,21 +652,8 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
       )}
 
       {dayModal && (
-        <ModalShell open onClose={() => setDayModal(null)} title={t('forecast.dayModalTitle', formatDateOnly(dayModal.key), dayModal.certs.length)} icon={Calendar} size="lg"
-          footer={<button type="button" className="btn btn-secondary" onClick={() => setDayModal(null)}>{t('app.close')}</button>}>
-          <ul className="fc-day-list">{dayModal.certs.map((c) => {
-            const cls = classify(c, th); const rb = c.renew_by ? localDayKey(c.renew_by) : null
-            return (
-              <li key={c.domain} className="fc-day-row">
-                <span className="fc-exp-sev-dot" style={{ background: SEV_COLORS[cls] }} />
-                <button type="button" className="inv-domain" onClick={() => onSelectDomain?.(c.domain)}>{c.domain}</button>
-                {c.tier && <span className={`tier-badge tier-badge-${c.tier}`}>T{c.tier}</span>}
-                {c.team_name && <TeamBadge teamId={c.team_id} teamName={c.team_name} />}
-                <span className="inv-dim">{c.days_remaining} {t('forecast.daysLeft')}{rb ? ` · ${t('forecast.renewBy')} ${formatDateOnly(rb)}` : ''}{c.issuer_cn ? ` · ${c.issuer_cn}` : ''}</span>
-                <span className="fc-exp-actions"><button type="button" className="btn btn-sm btn-secondary" onClick={() => setPlanRow({ ...c, expiry_key: expiryKey(c), renew_by_key: rb })}><CalendarPlus size={11} /> {t('forecast.planBtn')}</button></span>
-              </li>)
-          })}</ul>
-        </ModalShell>
+        <DayListModal modal={dayModal} th={th} t={t} onClose={() => setDayModal(null)}
+          onSelectDomain={onSelectDomain} onPlan={(c, rb) => setPlanRow({ ...c, expiry_key: expiryKey(c), renew_by_key: rb })} />
       )}
       {planRow && <PlanModal row={planRow} onClose={() => setPlanRow(null)} onSaved={applyPlan} onCleared={applyPlan} />}
     </div>

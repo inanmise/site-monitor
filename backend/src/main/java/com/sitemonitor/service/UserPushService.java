@@ -884,6 +884,17 @@ public class UserPushService {
                 DEFAULT_TEMPLATES.getOrDefault(key, DEFAULT_TEMPLATES.get("down")));
     }
 
+    /**
+     * Süre-bitişi alarmında NEYİN dolduğu — {@code {ne}} yer tutucusu. Alan adı kaydı tipleri (whois/RDAP:
+     * DOMAIN_EXPIRY, DOMAINMON_EXPIRY, KEYWORD_DOMAIN_EXPIRY, …_DOMAIN_EXPIRY) "alan adı kaydı"; geri kalan
+     * her EXPIRY (sertifika sweep'i EXPIRY, HTTP/KEYWORD SSL) "SSL sertifikası".
+     */
+    static String expiringWhat(String alertType) {
+        String t = alertType == null ? "" : alertType;
+        if (t.contains("DOMAIN")) return "alan adı kaydı";
+        return "SSL sertifikası";
+    }
+
     /** Olay → şablon ailesi. */
     static String templateKeyFor(String alertType, String trigger) {
         if ("RESOLVE".equals(trigger)) return "resolved";
@@ -923,7 +934,9 @@ public class UserPushService {
         vals.put("metrik", ctxStr(ctx, "metric",    slow.getOrDefault("metric", "yanıt")));
         vals.put("deger",  ctxStr(ctx, "value",     slow.getOrDefault("value", "-")));
         vals.put("esik",   ctxStr(ctx, "threshold", slow.getOrDefault("threshold", "-")));
-        vals.put("ne", "süre");
+        // {ne}: NEYİN dolduğu (2026-09-18, kullanıcı bildirimi): eskiden sabit "süre" yazıyor, telefonda
+        // "x.com - süre 18 gün içinde doluyor" sertifika mı alan adı kaydı mı belli olmuyordu.
+        vals.put("ne", expiringWhat(event.getAlertType()));
         // ÖNCE ctx, sonra event — dosyanın geri kalanındaki kural (bkz. metrik/deger/esik).
         // Eskiden YALNIZ event.getDaysRemaining() okunuyordu: o değer alarm açılırken/tırmanırken
         // yazılır, e-posta ise gönderim anında latest_check'ten TAZE değeri kullanır. İki kanal

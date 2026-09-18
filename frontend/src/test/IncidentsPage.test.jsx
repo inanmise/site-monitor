@@ -62,6 +62,23 @@ describe('IncidentsPage', () => {
     expect(screen.getByText(/2 comments|2 yorum/i)).toBeInTheDocument()
   })
 
+  it('takım sütunu (2026-09-18): takımlı satırda TeamBadge, takımsızda "—"; rozete tıklamak satır yönlendirmesini TETİKLEMEZ', async () => {
+    api.monitoring.incidents.list.mockResolvedValue({ success: true, total: 2, type_counts: { HTTP_DOWN: 2 }, data: [
+      { ...incident, id: 1, team_id: 5, team_name: 'Takım A' },
+      { ...incident, id: 2, status: 'resolved', resolved_at: '2026-07-10T11:00:00', team_id: null, team_name: null },
+    ] })
+    render(<IncidentsPage systemRole="ADMIN" />)
+    await screen.findByText('Takım A')
+    expect(screen.getByRole('columnheader', { name: /Takım|Team/ })).toBeInTheDocument()
+    const rows = document.querySelectorAll('tbody tr')
+    expect(rows[0].querySelector('.team-badge')).not.toBeNull()
+    expect(rows[1].querySelector('.team-badge')).toBeNull()
+    expect(rows[1].textContent).toContain('—')
+    const before = window.location.href
+    fireEvent.click(rows[0].querySelector('.team-badge'))
+    expect(window.location.href).toBe(before)   // satır "link"i devreye girmedi
+  })
+
   it('ADMIN için silme butonu görünür', async () => {
     api.monitoring.incidents.list.mockResolvedValue({ success: true, data: [incident], total: 1, type_counts: {} })
     render(<IncidentsPage systemRole="ADMIN" />)

@@ -112,6 +112,29 @@ export function byTeam(certs, th, days, today = todayKey()) {
   return [...m.values()].sort((a, b) => b.total - a.total)
 }
 
+/**
+ * Takım tablosu HÜCRESİNİN sertifikaları (2026-09-18): byTeam ile AYNI aralık kuralı — hücredeki sayı ile
+ * açılan listenin uzunluğu her zaman eşit olsun. bucket: 'overdue' (süresi dolmuş + ulaşılamayan),
+ * 'critical' | 'high' | 'warning' | 'later' (sınıf), 'late' (yenileme penceresi geçmiş), 'total'.
+ */
+export function teamBucketCerts(certs, th, days, teamId, bucket, today = todayKey()) {
+  const out = []
+  for (const c of certs) {
+    const id = c.team_id == null ? 'none' : String(c.team_id)
+    if (id !== String(teamId)) continue
+    const key = expiryKey(c); const diff = key ? dayDiff(today, key) : null
+    const cls = classify(c, th)
+    const inRange = cls === 'overdue' || cls === 'unreachable' || (diff != null && diff >= 0 && diff < days)
+    if (!inRange) continue
+    const hit = bucket === 'total' ? true
+      : bucket === 'overdue' ? (cls === 'overdue' || cls === 'unreachable')
+      : bucket === 'late' ? windowState(c, today) === 'late'
+      : cls === bucket
+    if (hit) out.push(c)
+  }
+  return out.sort((a, b) => (a.days_remaining ?? 9999) - (b.days_remaining ?? 9999))
+}
+
 /** Aynı güne 3+ yenileme = toplu iş; aynı parmak izini paylaşan alanlar = tek sertifika. */
 export function batches(certs, th, days, today = todayKey(), min = 3) {
   const byDay = new Map()

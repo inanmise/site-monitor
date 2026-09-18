@@ -52,6 +52,7 @@ public class IncidentsController {
     private final ScriptedMonitorRepository scriptedMonitorRepo;
     private final PageSpeedMonitorRepository pageSpeedMonitorRepo;
     private final CertificateInventoryRepository inventoryRepo;
+    private final com.sitemonitor.repository.TeamRepository teamRepo;   // takım sütunu (2026-09-18)
     private final PermissionService permissionService;
     private final AuditService auditService;
 
@@ -91,7 +92,8 @@ public class IncidentsController {
 
         Map<Long, Map<String, Object>> monitors = resolveMonitors(events);
         Map<Long, Long> commentCounts = commentCounts(events);
-        List<Map<String, Object>> data = events.stream().map(e -> toDto(e, monitors, commentCounts)).toList();
+        TeamInfo teams = resolveTeams(events);
+        List<Map<String, Object>> data = events.stream().map(e -> toDto(e, monitors, commentCounts, teams)).toList();
 
         Map<String, Long> typeCounts = new LinkedHashMap<>();
         for (Object[] row : alertEventRepo.countIncidentsByType(resolved, since, until, qEff, scoped, scopeList))
@@ -118,7 +120,34 @@ public class IncidentsController {
         };
     }
 
-    private Map<String, Object> toDto(AlertEvent e, Map<Long, Map<String, Object>> monitors, Map<Long, Long> counts) {
+    /** Olay → takım (2026-09-18): damgalı teamId önce; yoksa domain → envanter SY takımı (UG yedeği). Tek toplu sorgu. */
+    private record TeamInfo(Map<Long, Long> teamByEvent, Map<Long, String> names) {}
+
+    private TeamInfo resolveTeams(List<AlertEvent> events) {
+        Map<Long, Long> byEvent = new HashMap<>();
+        Set<String> needDomain = new HashSet<>();
+        for (AlertEvent e : events) {
+            if (e.getTeamId() != null) byEvent.put(e.getId(), e.getTeamId());
+            else if (e.getDomain() != null) needDomain.add(e.getDomain());
+        }
+        if (!needDomain.isEmpty()) {
+            Map<String, Long> byDomain = new HashMap<>();
+            for (com.sitemonitor.model.CertificateInventory inv : inventoryRepo.findByDomainIn(needDomain)) {
+                Long tid = inv.getTeamId() != null ? inv.getTeamId() : inv.getUgTeamId();
+                if (tid != null) byDomain.putIfAbsent(inv.getDomain(), tid);
+            }
+            for (AlertEvent e : events)
+                if (e.getTeamId() == null && e.getDomain() != null && byDomain.containsKey(e.getDomain()))
+                    byEvent.put(e.getId(), byDomain.get(e.getDomain()));
+        }
+        Set<Long> ids = new HashSet<>(byEvent.values());
+        Map<Long, String> names = ids.isEmpty() ? Map.of() : teamRepo.findAllById(ids).stream()
+                .filter(tm -> tm.getId() != null && tm.getName() != null)
+                .collect(Collectors.toMap(com.sitemonitor.model.Team::getId, com.sitemonitor.model.Team::getName, (a, b) -> a));
+        return new TeamInfo(byEvent, names);
+    }
+
+    private Map<String, Object> toDto(AlertEvent e, Map<Long, Map<String, Object>> monitors, Map<Long, Long> counts, TeamInfo teams) {
         Map<String, Object> ctx = deserialize(e.getContextJson());
         Map<String, Object> dto = new LinkedHashMap<>();
         dto.put("id",            e.getId());
@@ -132,6 +161,9 @@ public class IncidentsController {
             monitor.put("tab", "dashboard");
         }
         dto.put("monitor",       monitor);
+        Long teamId = teams == null ? null : teams.teamByEvent().get(e.getId());
+        dto.put("team_id",       teamId);
+        dto.put("team_name",     teamId == null ? null : teams.names().get(teamId));
         dto.put("root_cause",    rootCause(e.getAlertType(), ctx));
         dto.put("comment_count", counts.getOrDefault(e.getId(), 0L));
         dto.put("alert_type",    e.getAlertType());
@@ -278,7 +310,7 @@ public class IncidentsController {
         AlertEvent ev = requireAlert(id);
         requireIncidentScope(session, ev);
         List<AlertEvent> one = List.of(ev);
-        return ok(Map.of("data", toDto(ev, resolveMonitors(one), commentCounts(one))));
+        return ok(Map.of("data", toDto(ev, resolveMonitors(one), commentCounts(one), resolveTeams(one))));
     }
 
     // ── Yorumlar ─────────────────────────────────────────────────────────────────

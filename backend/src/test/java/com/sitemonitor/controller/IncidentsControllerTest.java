@@ -42,6 +42,7 @@ class IncidentsControllerTest {
     @MockitoBean ScriptedMonitorRepository scriptedMonitorRepo;
     @MockitoBean PageSpeedMonitorRepository pageSpeedMonitorRepo;
     @MockitoBean CertificateInventoryRepository inventoryRepo;
+    @MockitoBean com.sitemonitor.repository.TeamRepository teamRepo;
     @MockitoBean PermissionService permissionService;
     @MockitoBean AuditService auditService;
     // Auth + metrics interceptor bağımlılıkları (WebMvc slice)
@@ -119,6 +120,37 @@ class IncidentsControllerTest {
                 .andExpect(jsonPath("$.data[0].monitor.name").value("https://x.example.com"))
                 .andExpect(jsonPath("$.data[0].monitor.tab").value("http"))
                 .andExpect(jsonPath("$.data[0].comment_count").value(0));
+    }
+
+    @Test
+    @DisplayName("GET /incidents: takım sütunu — damgalı teamId adıyla döner; damgasız olay domain→envanter SY takımından çözülür (2026-09-18)")
+    void list_resolvesTeamForRows() throws Exception {
+        AlertEvent stamped = httpDown500();                       // teamId damgalı
+        stamped.setTeamId(5L);
+        AlertEvent viaInventory = httpDown500();                  // damgasız → envanter
+        viaInventory.setId(2L); viaInventory.setDomain("inv.example.com");
+        AlertEvent orphan = httpDown500();                        // ne damga ne envanter → null
+        orphan.setId(3L); orphan.setDomain("yok.example.com");
+        when(alertEventRepo.findIncidents(any(), any(), any(), any(), any(), anyBoolean(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(stamped, viaInventory, orphan)));
+        when(alertEventRepo.countIncidentsByType(any(), any(), any(), any(), anyBoolean(), any())).thenReturn(List.of());
+        when(commentRepo.countByAlertIds(any())).thenReturn(List.of());
+        when(httpMonitorRepo.findAll()).thenReturn(List.of());
+        com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();
+        inv.setDomain("inv.example.com"); inv.setTeamId(9L);
+        when(inventoryRepo.findByDomainIn(any())).thenReturn(List.of(inv));
+        com.sitemonitor.model.Team t5 = new com.sitemonitor.model.Team(); t5.setId(5L); t5.setName("Takım A");
+        com.sitemonitor.model.Team t9 = new com.sitemonitor.model.Team(); t9.setId(9L); t9.setName("Takım B");
+        when(teamRepo.findAllById(any())).thenReturn(List.of(t5, t9));
+
+        mvc.perform(get("/api/monitoring/incidents").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].team_id").value(5))
+                .andExpect(jsonPath("$.data[0].team_name").value("Takım A"))
+                .andExpect(jsonPath("$.data[1].team_id").value(9))
+                .andExpect(jsonPath("$.data[1].team_name").value("Takım B"))
+                .andExpect(jsonPath("$.data[2].team_id").isEmpty())
+                .andExpect(jsonPath("$.data[2].team_name").isEmpty());
     }
 
     @Test
