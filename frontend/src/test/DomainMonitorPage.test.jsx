@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, fillGroupAndTags } from './test-utils.jsx'
 import DomainMonitorPage from '../components/DomainMonitorPage.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -31,7 +31,7 @@ vi.mock('../api/client', () => ({
 import { api } from '../api/client'
 
 const monitor = {
-  id: 1, name: 'example', domain: 'example.com.tr', team_name: 'SY-A', group_name: 'Kurumsal',
+  id: 1, name: 'example', domain: 'example.com.tr', team_name: 'SY-A', group_name: 'Kurumsal', tags: 'prod',
   status: 'OK', source: 'RDAP', days_remaining: 120, expiry_date: '2026-08-13', registrar: 'TR Registry',
   status_codes: ['clientTransferProhibited'], nameservers: ['ns1.example.com.tr'], ns_resolves: true,
   active: true, interval_seconds: 86400, warning_days: 30, critical_days: 7, checked_at: '2026-07-10T00:00:00',
@@ -66,6 +66,7 @@ describe('DomainMonitorPage', () => {
     await waitFor(() => expect(api.monitoring.getDomainMonitors).toHaveBeenCalled())
     fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
     fireEvent.change(screen.getByPlaceholderText('example.com'), { target: { value: 'example.org' } })
+    await fillGroupAndTags()   // grup + etiket zorunlu (2026-09-18)
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
     await waitFor(() => expect(api.monitoring.createDomainMonitor).toHaveBeenCalled())
     expect(api.monitoring.createDomainMonitor.mock.calls[0][0].domain).toBe('example.org')
@@ -94,6 +95,7 @@ describe('DomainMonitorPage', () => {
     await waitFor(() => expect(api.monitoring.getDomainMonitors).toHaveBeenCalled())
     fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
     fireEvent.change(screen.getByPlaceholderText('example.com'), { target: { value: 'www.example.com' } })
+    await fillGroupAndTags()   // grup + etiket zorunlu (2026-09-18)
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
 
     await waitFor(() => expect(api.monitoring.createDomainMonitor).toHaveBeenCalled())
@@ -109,6 +111,7 @@ describe('DomainMonitorPage', () => {
     await waitFor(() => expect(api.monitoring.getDomainMonitors).toHaveBeenCalled())
     fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
     fireEvent.change(screen.getByPlaceholderText('example.com'), { target: { value: 'example.org' } })
+    await fillGroupAndTags()   // grup + etiket zorunlu (2026-09-18)
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
 
     await waitFor(() => expect(api.monitoring.createDomainMonitor).toHaveBeenCalled())
@@ -121,6 +124,7 @@ describe('DomainMonitorPage', () => {
     await waitFor(() => expect(api.monitoring.getDomainMonitors).toHaveBeenCalled())
     fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
     fireEvent.change(screen.getByPlaceholderText('example.com'), { target: { value: 'example.org' } })
+    await fillGroupAndTags()   // grup + etiket zorunlu (2026-09-18)
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
 
     await waitFor(() => expect(api.monitoring.createDomainMonitor).toHaveBeenCalled())
@@ -137,6 +141,7 @@ describe('DomainMonitorPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
     fireEvent.change(screen.getByPlaceholderText('example.com'), { target: { value: 'example.org' } })
     fireEvent.click(screen.getByLabelText(/blacklist|kara liste/i))
+    await fillGroupAndTags()   // grup + etiket zorunlu (2026-09-18)
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
 
     await waitFor(() => expect(api.monitoring.createDomainMonitor).toHaveBeenCalled())
@@ -148,7 +153,7 @@ describe('DomainMonitorPage', () => {
     api.monitoring.getDomainMonitors.mockResolvedValue({ success: true, data: [{
       id: 1, name: 'example', domain: 'example.com.tr', status: 'OK', source: 'RDAP',
       checked_at: '2026-07-10T00:00:00',
-      team_id: 3, team_name: 'SY-A', group_name: 'Kurumsal',
+      team_id: 3, team_name: 'SY-A', group_name: 'Kurumsal', tags: 'prod',
       thresholds_csv: '90,45,10,2', warning_days: 45, critical_days: 9,
       interval_seconds: 43200, check_timeout_ms: 12000, active: false, notification_group_id: 7,
       // Koruma anahtarlari da varsayilanin TERSI: biri formFrom'dan duserse
@@ -173,7 +178,7 @@ describe('DomainMonitorPage', () => {
     expect(api.monitoring.updateDomainMonitor).not.toHaveBeenCalled()
 
     expect(api.monitoring.createDomainMonitor.mock.calls[0][0]).toEqual({
-      name: 'example (Kopya)', domain: 'example.com.tr', groupName: 'Kurumsal', teamId: 3,
+      name: 'example (Kopya)', domain: 'example.com.tr', groupName: 'Kurumsal', tags: 'prod', teamId: 3,
       thresholdsCsv: '90,45,10,2', warningDays: 45, criticalDays: 9,
       intervalSeconds: 43200, checkTimeoutMs: 12000,
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar

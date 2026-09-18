@@ -28,7 +28,7 @@ class PermissionCatalogTest {
     void userIsReadOnlyPlusAlertActions() {
         Map<String, Map<String, Boolean>> user = PermissionCatalog.defaultsFor("USER");
         assertThat(user.get("inventory.list").get("view")).isTrue();
-        assertThat(user.get("inventory.crud").get("edit")).isFalse();
+        assertThat(user.get("inventory.crud").get("edit")).isTrue();    // 2026-09-18: "Domain Ekle" her seviyede (uç üyelik doğrular)
         assertThat(user.get("alerts.actions").get("execute")).isTrue();
         // Internal kaynaklar USER'da kapalı
         assertThat(user.get("permissions.manage").get("edit")).isFalse();

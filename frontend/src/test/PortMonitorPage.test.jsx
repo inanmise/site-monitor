@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, fillGroupAndTags } from './test-utils.jsx'
 import PortMonitorPage from '../components/PortMonitorPage.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -27,7 +27,7 @@ vi.mock('../api/client', () => ({
 import { api } from '../api/client'
 
 const monitor = {
-  id: 1, name: 'mail', host: '10.0.0.1', team_name: 'SY-A', group_name: 'Mail',
+  id: 1, name: 'mail', host: '10.0.0.1', team_name: 'SY-A', group_name: 'Mail', tags: 'prod',
   port: 25, protocol: 'TCP', status: 'open', response_ms: 3, active: true,
   interval_seconds: 60, timeout_ms: 5000, checked_at: '2026-06-24T00:00:00',
 }
@@ -63,6 +63,7 @@ describe('PortMonitorPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitor/i }))
     fireEvent.change(screen.getByPlaceholderText(/1\.2\.3\.4/), { target: { value: 'mail.example.com' } })
     fireEvent.change(screen.getAllByRole('spinbutton')[0], { target: { value: '993' } })
+    await fillGroupAndTags()   // grup + etiket zorunlu (2026-09-18)
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
     await waitFor(() => expect(api.monitoring.createPortMonitor).toHaveBeenCalled())
     const payload = api.monitoring.createPortMonitor.mock.calls[0][0]
@@ -187,6 +188,7 @@ describe('PortMonitorPage — değişiklik nedeni', () => {
   const MON = {
     id: 1, name: 'mail', host: '10.0.0.1', port: 8443, status: 'open',
     checked_at: '2026-06-24T00:00:00', team_id: 3, team_name: 'SY-A', active: true,
+    group_name: 'Mail', tags: 'prod',   // grup + etiket zorunlu (2026-09-18)
   }
 
   async function openEdit() {

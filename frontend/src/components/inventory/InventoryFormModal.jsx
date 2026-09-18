@@ -7,6 +7,7 @@ import { useToast } from '../ui/Toast.jsx'
 import { useT } from '../../i18n/index.jsx'
 import { useTheme } from '../../i18n/theme.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
+import TagInput from '../ui/TagInput.jsx'
 import NotificationGroupSelect from '../ui/NotificationGroupSelect.jsx'
 import { INVENTORY_FLAGS, emptyFlags } from '../../utils/inventoryFlags.js'
 import { CONTACT_FIELDS, looksLikeBrokenEmail } from '../../utils/inventoryContacts.js'
@@ -28,7 +29,7 @@ import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 
 const EMPTY = {
   domain: '', port: 443, owner: '', description: '', active: true,
-  team_id: '', group_name: '', notification_group_id: '', tier: null,
+  team_id: '', group_name: '', tags: '', notification_group_id: '', tier: null,
   ...emptyFlags(),          // 13 operasyonel bayrak — tek kaynak: utils/inventoryFlags.js
   tls_mode: '',
   timeout_seconds: '',
@@ -176,6 +177,9 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
   function validate() {
     if (!form.domain.trim()) return t('inv.formDomain') + ' zorunlu'
     if (!form.team_id) return t('inv.teamRequired')
+    // Grup + etiket zorunlu (2026-09-18): envanter kaydı da bir izleme — dokuz türle aynı kural.
+    if (!form.group_name?.trim()) return t('inv.groupRequired')
+    if (!form.tags?.trim()) return t('inv.tagsRequired')
     return null
   }
 
@@ -296,6 +300,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
         // @RequestBody Map alip anahtari duz okuyor, orada camelCase DOGRU.
         notification_group_id: form.notification_group_id ? Number(form.notification_group_id) : null,
         group_name:         form.group_name?.trim() || null,
+        tags:               form.tags?.trim() || null,   // formda alan yoktu → düzenleme etiketleri SİLİYORDU (2026-09-18)
         ug_team_id:         null,   // tek takım modeli — UG ayrımı kaldırıldı
         external_vendor:    form.external_vendor,
         action_required:    form.action_required,
@@ -408,7 +413,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
           </label>
 
           <label>
-            {t('inv.formGroup')}
+            <span>{t('inv.formGroup')} <span className="req-star">*</span></span>
             <SearchableSelect
               value={form.group_name}
               onChange={v => f('group_name', v)}
@@ -430,6 +435,13 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
             onChange={v => f('notification_group_id', v)}
             disabled={!canManage}
           />
+
+          {/* Etiketler — zorunlu (2026-09-18). Tablo/CSV zaten okuyordu; form alanı yoktu. */}
+          <div className="full-width http-tags-block">
+            <div className="http-block-title">{t('inv.formTags')} <span className="req-star">*</span></div>
+            <div className="field-hint" style={{ marginBottom: 6 }}>{t('inv.tagsHint')}</div>
+            <TagInput value={form.tags} onChange={v => f('tags', v)} disabled={!canManage} placeholder={t('mon.tagsPlaceholder')} />
+          </div>
 
           <label>
             {t('inv.formTier')}

@@ -223,15 +223,15 @@ public class AdminController {
     @PostMapping("/inventory")
     public ResponseEntity<Map<String, Object>> addInventory(
             @Valid @RequestBody CertificateInventory item, HttpSession session, HttpServletRequest request) {
-        requireAdminOrTeamAdmin(session);
         requirePerm(session, "inventory.crud", "edit");
         item.setDomain(validateDomain(item.getDomain()));   // URL yapıştırılırsa host'a normalize edilir
         if (item.getTeamId() == null) {
             throw new IllegalArgumentException("A team must be selected for the certificate");
         }
-        // The chosen team must be within the caller's manage scope (global admin: any;
-        // PO: only teams they lead; müdür: none).
-        requireTeamScopedAdmin(session, item.getTeamId());
+        requireInventoryGroupAndTags(item);   // grup + etiket zorunlu (2026-09-18)
+        // Seçilen takım çağıranın YAZMA kapsamında olmalı: global admin her takım; yönetici/PO yönettiği
+        // takımlar; USER ÜYESİ olduğu takım(lar) (2026-09-18: "Domain Ekle" her kullanıcı seviyesinde).
+        requireInventoryWriter(session, item.getTeamId());
         String now = now();
         item.setId(null);
         item.setCreatedAt(now);
@@ -272,16 +272,19 @@ public class AdminController {
             HttpSession session, HttpServletRequest request) {
         CertificateInventory existing = inventoryRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
-        requireTeamScopedAdmin(session, existing.getTeamId());
+        // 2026-09-18: USER kendi TAKIMININ kaydını düzenler (izleme türleriyle aynı sözleşme); silme/aktarma
+        // yönetici kapılarında kalır.
+        requireInventoryWriter(session, existing.getTeamId());
         requirePerm(session, "inventory.crud", "edit");
         // Oluşturma yolu (addInventory) host'a normalize ediyor (trim + küçük harf); güncelleme
         // etmiyordu. "Example.COM" gibi harf-farklı düzenleme rename sayılmıyor (equalsIgnoreCase)
         // ama satıra yazılıyordu → latest_checks/geçmiş/notlar domain dizesiyle bağlı olduğundan
         // kayıt geçmişsiz kalıyordu; "Other.com" ise exact-UNIQUE'i geçip ikinci satır oluşturuyordu.
         item.setDomain(validateDomain(item.getDomain()));
-        // TEAM_ADMIN cannot transfer an item to another team via this endpoint —
-        // freeze teamId to its current value.
-        if (isTeamAdmin(session)) {
+        requireInventoryGroupAndTags(item);   // grup + etiket zorunlu (2026-09-18) — düzenlemede de
+        // Takım aktarımı bu uçtan YALNIZ kaydın takımını yönetenlere (global admin / yönetim kapsamı):
+        // TEAM_ADMIN ve üyelik yoluyla gelen USER için teamId mevcut değere sabitlenir.
+        if (isTeamAdmin(session) || !canManageTeamResource(session, existing.getTeamId())) {
             item.setTeamId(existing.getTeamId());
         }
         item.setTlsMode(normalizeTlsMode(item.getTlsMode()));
@@ -2293,6 +2296,22 @@ public class AdminController {
         return ok(Map.of("message", "User role unlocked"));
     }
 
+    /** Takım kilidini kaldır → kullanıcının takım üyelikleri tekrar AD (LDAP) yönetimine döner (2026-09-18). */
+    @PostMapping("/users/{id}/team-unlock")
+    public ResponseEntity<Map<String, Object>> unlockUserTeams(
+            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+        AppUser target = userRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
+        requireTeamScopedAdmin(session, target.getTeamId());
+        requirePerm(session, "users.crud", "edit");
+        // Kilit kalkınca takımlar AD yönetimine döner; kaybolan gerçek SABİTLENMİŞ üyelik kümesidir.
+        String detail = AuditDetail.of("username", target.getUsername(),
+                "team_ids_before", String.valueOf(target.getTeamIds()));
+        userService.unlockTeams(id);
+        auditService.recordAction("USER_TEAM_UNLOCK", session, request, "USER", id.toString(), detail);
+        return ok(Map.of("message", "User teams unlocked"));
+    }
+
     /** Org-rol kilidini kaldır → kullanıcının org_role'ü tekrar AD (LDAP) yönetimine döner. */
     @PostMapping("/users/{id}/org-role-unlock")
     public ResponseEntity<Map<String, Object>> unlockUserOrgRole(
@@ -2605,6 +2624,19 @@ public class AdminController {
         }
     }
 
+    /**
+     * Envanter kaydı AÇMA kapısı (2026-09-18): global admin → her takım; yönetim kapsamı (PO/müdür) →
+     * yönettiği takımlar; USER → yalnız ÜYESİ olduğu takım (memberTeamIds; eski oturumda birincil).
+     * Silme/aktarma/içe aktarma bu kapıyı KULLANMAZ — requireTeamScopedAdmin'de kalır; düzenleme de bu kapıdan
+     * geçer (üye kendi takımının kaydını düzenler, takım alanı sabitlenir).
+     */
+    private void requireInventoryWriter(HttpSession session, Long teamId) {
+        if (canManageTeamResource(session, teamId)) return;
+        if (SessionScope.isMemberOf(session, teamId)) return;
+        log.warn("Inventory add outside membership by user={} team={}", actor(session), teamId);
+        throw new SecurityException("Access denied: you can only add certificates to your own team");
+    }
+
     private void requireAdminOrTeamAdmin(HttpSession session) {
         if (isAdmin(session)) return;
         List<Long> m = SessionScope.manageTeamIds(session);
@@ -2740,6 +2772,18 @@ public class AdminController {
      *  Subdomain KORUNUR (host-düzeyi diagnostics için); registrable'a indirgeme (PSL) yalnız
      *  domain-expiry akışının kendi içinde yapılır. Normalize edilmiş host döner. */
     /** Kural {@link com.sitemonitor.service.DomainNames#validate} — içe aktarma servisiyle ortak. */
+    /**
+     * Envanter kaydı da bir izleme: grup ve en az bir etiket zorunlu (2026-09-18, ürün kararı — dokuz
+     * izleme türüyle aynı kural, bkz. MonitoringController.requireGroupAndTags). Form alanı eksikken
+     * düzenleme mevcut etiketleri SİLİYORDU (existing.setTags(null)); artık boş gönderim reddedilir.
+     */
+    private static void requireInventoryGroupAndTags(CertificateInventory item) {
+        if (item.getGroupName() == null || item.getGroupName().isBlank())
+            throw new IllegalArgumentException("Grup seçimi zorunludur; kayıt kaydedilemez.");
+        if (item.getTags() == null || item.getTags().isBlank())
+            throw new IllegalArgumentException("En az bir etiket zorunludur; kayıt kaydedilemez.");
+    }
+
     private static String validateDomain(String domain) {
         return com.sitemonitor.service.DomainNames.validate(domain);
     }

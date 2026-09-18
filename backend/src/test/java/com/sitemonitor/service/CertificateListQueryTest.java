@@ -81,6 +81,7 @@ class CertificateListQueryTest {
         CertificateInventory inv = new CertificateInventory();
         inv.setDomain(domain); inv.setActive(true); inv.setTeamId(teamId); inv.setTier(tier); inv.setPort(port);
         inv.setCheckIntervalHours(domain.startsWith("ok") ? 6 : null);
+        if (domain.startsWith("ok")) { inv.setGroupName("Ödeme"); inv.setTags("prod, kritik"); }   // Genel Bakış grup/etiket filtresi (2026-09-18)
         inventory.add(inv);
         LatestCheck c = new LatestCheck();
         c.setDomain(domain); c.setStatus(status); c.setWarning(warning); c.setDaysRemaining(days);
@@ -192,6 +193,17 @@ class CertificateListQueryTest {
         // "CN=ok" konuda geçer, alan adında geçmez
         List<String> subj = domains(service.getPaginated(new CertListQuery(1, 50, "domain", "asc", "CN=ok", "", "", "", "", false, null, "", ""), null));
         assertThat(subj).containsExactly("ok.example.com");
+    }
+
+    @Test
+    @DisplayName("group_name + tags DTO'ya taşınır (Genel Bakış grup/etiket filtresi); envanterde boşsa null")
+    void groupAndTagsOnDto() {
+        CertificateDto ok = service.getAllLatest().stream().filter(c -> c.getDomain().startsWith("ok")).findFirst().orElseThrow();
+        assertThat(ok.getGroupName()).isEqualTo("Ödeme");
+        assertThat(ok.getTags()).isEqualTo("prod, kritik");
+        CertificateDto other = service.getAllLatest().stream().filter(c -> c.getDomain().startsWith("warn")).findFirst().orElseThrow();
+        assertThat(other.getGroupName()).isNull();
+        assertThat(other.getTags()).isNull();
     }
 
     @Test

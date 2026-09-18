@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, fillGroupAndTags } from './test-utils.jsx'
 import HttpMonitorPage from '../components/HttpMonitorPage.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -28,7 +28,7 @@ import { api } from '../api/client'
 
 const monitor = {
   id: 1, name: 'Example', url: 'https://www.example.com/', method: 'GET', expected_status: '201-204',
-  group_name: 'X Sistemleri', team_id: 5, team_name: 'SY-A', status: 'up', http_status: 200, response_ms: 12,
+  group_name: 'X Sistemleri', tags: 'prod', team_id: 5, team_name: 'SY-A', status: 'up', http_status: 200, response_ms: 12,
   interval_seconds: 600, timeout_ms: 7000, active: true, checked_at: '2026-06-24T00:00:00',
 }
 
@@ -100,9 +100,110 @@ describe('HttpMonitorPage', () => {
     expect(url.value).toBe('http://internal.host:8080/health')   // bilinçli http:// tercihi korunur
 
     fireEvent.change(url, { target: { value: 'www.axess.com.tr' } })
+    await fillGroupAndTags()   // grup + etiket zorunlu (2026-09-18)
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))   // alandan çıkmadan kaydet
     await waitFor(() => expect(api.monitoring.createHttpMonitor).toHaveBeenCalled())
     expect(api.monitoring.createHttpMonitor.mock.calls[0][0].url).toBe('https://www.axess.com.tr')
+  })
+
+  // ── Etiket filtresi + grup/etiket metin araması (2026-09-18): dokuz sayfada varsayılan; Http temsilci ──
+  it('araç çubuğunda etiket filtresi: seçilen etiket listeyi daraltır; arama kutusu etiket/grup metninde de eşleşir', async () => {
+    api.monitoring.getHttpMonitors.mockResolvedValue({ success: true, data: [
+      { ...monitor, id: 1, url: 'https://a.example.com/', tags: 'prod, kritik' },
+      { ...monitor, id: 2, url: 'https://b.example.com/', tags: 'edge', group_name: 'Ödeme' },
+      { ...monitor, id: 3, url: 'https://c.example.com/', tags: '' },
+    ] })
+    render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await screen.findByText('https://a.example.com/')
+    const toolbar = document.querySelector('.upt-toolbar')
+    // Etiket kutusu: "Tüm etiketler" tetikleyicisi
+    const tagTrigger = [...toolbar.querySelectorAll('.ss-trigger')].find((b) => /tüm etiketler|all tags/i.test(b.textContent))
+    expect(tagTrigger).toBeTruthy()
+    fireEvent.mouseDown(tagTrigger)
+    const labels = [...toolbar.querySelectorAll('.ss-option')].map((o) => o.textContent.trim())
+    expect(labels).toEqual(expect.arrayContaining(['edge', 'kritik', 'prod']))
+    expect(labels.some((l) => /etiketsiz|untagged/i.test(l))).toBe(true)   // id 3 etiketsiz → seçenek var
+    fireEvent.mouseDown([...toolbar.querySelectorAll('.ss-option')].find((o) => o.textContent.trim() === 'kritik'))
+    await waitFor(() => expect(screen.queryByText('https://b.example.com/')).toBeNull())
+    expect(screen.getByText('https://a.example.com/')).toBeInTheDocument()
+    expect(screen.queryByText('https://c.example.com/')).toBeNull()
+
+    // Filtreyi sıfırla, serbest metinle grup adı ara
+    fireEvent.mouseDown([...toolbar.querySelectorAll('.ss-trigger')].find((b) => /kritik/.test(b.textContent)))
+    fireEvent.mouseDown([...toolbar.querySelectorAll('.ss-option')].find((o) => /tüm etiketler|all tags/i.test(o.textContent)))
+    fireEvent.change(toolbar.querySelector('.upt-search'), { target: { value: 'ödeme' } })
+    await waitFor(() => expect(screen.getByText('https://b.example.com/')).toBeInTheDocument())
+    expect(screen.queryByText('https://a.example.com/')).toBeNull()
+  })
+
+  it('USER rolünde de grup/etiket filtreleri GÖRÜNEN listenin tamamından türer (başka takımın grubu/etiketi seçilebilir)', async () => {
+    api.monitoring.getHttpMonitors.mockResolvedValue({ success: true, data: [
+      { ...monitor, id: 1, url: 'https://own.example.com/', team_id: 5, team_name: 'SY-A', group_name: 'Kendi Grubu', tags: 'kendi' },
+      { ...monitor, id: 2, url: 'https://other.example.com/', team_id: 9, team_name: 'SY-B', group_name: 'Öteki Grup', tags: 'öteki' },
+    ] })
+    render(<HttpMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await screen.findByText('https://own.example.com/')
+    const toolbar = document.querySelector('.upt-toolbar')
+    fireEvent.mouseDown([...toolbar.querySelectorAll('.ss-trigger')].find((b) => /tüm gruplar|all groups/i.test(b.textContent)))
+    expect([...toolbar.querySelectorAll('.ss-option')].map((o) => o.textContent.trim())).toEqual(expect.arrayContaining(['Kendi Grubu', 'Öteki Grup']))
+    fireEvent.mouseDown([...toolbar.querySelectorAll('.ss-option')].find((o) => o.textContent.trim() === 'Öteki Grup'))
+    await waitFor(() => expect(screen.queryByText('https://own.example.com/')).toBeNull())
+    expect(screen.getByText('https://other.example.com/')).toBeInTheDocument()
+    fireEvent.mouseDown([...toolbar.querySelectorAll('.ss-trigger')].find((b) => /tüm etiketler|all tags/i.test(b.textContent)))
+    expect([...toolbar.querySelectorAll('.ss-option')].map((o) => o.textContent.trim())).toEqual(expect.arrayContaining(['kendi', 'öteki']))
+  })
+
+  // ── Grup + etiket zorunlu (2026-09-18): dokuz sayfa aynı kapıyı taşır; Http temsilci ──
+  it('yeni izleme: grup seçilmeden Kaydet → grup hatası, etiket girilmeden → etiket hatası; create ÇAĞRILMAZ', async () => {
+    render(<HttpMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getHttpMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör|yeni izleme/i }))
+    fireEvent.change(screen.getByPlaceholderText('https://example.com'), { target: { value: 'https://x.example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+    expect(await screen.findByText(/grup seçimi zorunludur|a group is required/i)).toBeInTheDocument()
+    expect(api.monitoring.createHttpMonitor).not.toHaveBeenCalled()
+    // Grup seçilip etiket yine boş bırakılırsa ikinci kapı
+    await fillGroupAndTags({ tag: '' })
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+    expect(await screen.findByText(/en az bir etiket zorunludur|at least one tag is required/i)).toBeInTheDocument()
+    expect(api.monitoring.createHttpMonitor).not.toHaveBeenCalled()
+    // Zorunlu yıldızları: grup ve etiket başlığı
+    const modal = document.querySelector('.modal-box')
+    expect([...modal.querySelectorAll('.req-star')].length).toBeGreaterThanOrEqual(3)   // takım + grup + etiket
+  })
+
+  // ── Çok takımlı kullanıcı (2026-09-18): takım kutusu AÇIK, ikincil takım seçilip gönderilir ──
+  it('USER + 2 takım: takım kutusu açılır, "takımsız" seçeneği YOK, ikincil takım payload\'a gider; admin takım ucu ÇAĞRILMAZ', async () => {
+    const myTeams = [{ id: 5, name: 'SY-A' }, { id: 9, name: 'SY-B' }]
+    render(<HttpMonitorPage systemRole="USER" teamId={5} teamName="SY-A" myTeams={myTeams} />)
+    await waitFor(() => expect(api.monitoring.getHttpMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör|yeni izleme/i }))
+
+    // Kutu açık (kilitli input değil) ve birincil takım seçili gelir
+    const modal = document.querySelector('.modal-box')
+    const trigger = [...modal.querySelectorAll('.ss-trigger')].find((b) => /SY-A/.test(b.textContent))
+    expect(trigger).toBeTruthy()
+    fireEvent.mouseDown(trigger)   // açılış onMouseDown ile
+    const labels = [...modal.querySelectorAll('.ss-option')].map((o) => o.textContent.trim())
+    expect(labels).toEqual(['SY-A', 'SY-B'])   // takımsız seçenek yok: üye için takım zorunlu
+    fireEvent.mouseDown([...modal.querySelectorAll('.ss-option')].find((o) => o.textContent.trim() === 'SY-B'))
+
+    fireEvent.change(screen.getByPlaceholderText('https://example.com'), { target: { value: 'https://iki.example.com' } })
+    await fillGroupAndTags()   // grup + etiket zorunlu (2026-09-18)
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+    await waitFor(() => expect(api.monitoring.createHttpMonitor).toHaveBeenCalled())
+    expect(api.monitoring.createHttpMonitor.mock.calls[0][0].teamId).toBe(9)
+    expect(api.admin.getTeams).not.toHaveBeenCalled()
+  })
+
+  it('USER + tek takım: takım kutusu kilitli input olarak kalır (regresyon)', async () => {
+    render(<HttpMonitorPage systemRole="USER" teamId={5} teamName="SY-A" myTeams={[{ id: 5, name: 'SY-A' }]} />)
+    await waitFor(() => expect(api.monitoring.getHttpMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör|yeni izleme/i }))
+    const modal = document.querySelector('.modal-box')
+    const locked = [...modal.querySelectorAll('input[disabled]')].find((i) => i.value === 'SY-A')
+    expect(locked).toBeTruthy()
+    expect([...modal.querySelectorAll('.ss-trigger')].some((b) => /SY-A/.test(b.textContent))).toBe(false)
   })
 
   it('Kopyala: TÜM kullanıcı ayarları birebir kopyalanır (yalnız ad "(Kopya)" olur)', async () => {

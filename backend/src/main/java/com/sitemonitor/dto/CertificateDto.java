@@ -122,6 +122,12 @@ public class CertificateDto {
     @JsonProperty("team_name")
     private String teamName;
 
+    /** Envanter grubu + etiketler (2026-09-18): Genel Bakış grup/etiket filtresi. null = envantersiz/atanmamış. */
+    @JsonProperty("group_name")
+    private String groupName;
+
+    private String tags;
+
     /**
      * Envanterdeki alan-başına kontrol sıklığı (saat; null = genel süpürme). Tablo "bayat" rozeti
      * için: son kontrol bu sıklığın iki katından eskiyse kullanıcı sayıya güvenmemeli.

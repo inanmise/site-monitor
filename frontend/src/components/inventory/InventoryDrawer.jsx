@@ -14,7 +14,7 @@ const CheckHistoryTab = lazy(() => import('../history/CheckHistoryTab.jsx'))
  * Kayıt çekmecesi (2026-09-12, #8): modal yerine sağdan panel — Ayrıntılar / Değişiklikler / Kontroller;
  * önceki/sonraki satır okları ile listeyi kapatmadan gezilir. Görsel dil HelpDrawer (.helpd) ailesi.
  */
-export default function InventoryDrawer({ record, records = [], teamMap, teamNameById, canManage, onClose, onEdit, onCheckNow, onNavigate }) {
+export default function InventoryDrawer({ record, records = [], teamMap, teamNameById, canManage, canEditRow = () => canManage, onClose, onEdit, onCheckNow, onNavigate }) {
   const t = useT()
   const [tab, setTab] = useState('details')
   useEffect(() => {
@@ -43,7 +43,7 @@ export default function InventoryDrawer({ record, records = [], teamMap, teamNam
             <CertCell r={record} t={t} />
           </span>
           {!record.deleted_at && <button type="button" className="btn btn-sm btn-secondary" onClick={() => onCheckNow(record)} title={t('inv.checkNow')}><Play size={12} /></button>}
-          {canManage && !record.deleted_at && <button type="button" className="btn btn-sm btn-primary" onClick={() => onEdit(record)}><Pencil size={12} /> {t('inv.edit')}</button>}
+          {canEditRow(record) && !record.deleted_at && <button type="button" className="btn btn-sm btn-primary" onClick={() => onEdit(record)}><Pencil size={12} /> {t('inv.edit')}</button>}
           <button type="button" className="helpd-close" onClick={onClose} aria-label={t('app.close')}><X size={14} /></button>
         </div>
         <div className="modal-tabs invdr-tabs">

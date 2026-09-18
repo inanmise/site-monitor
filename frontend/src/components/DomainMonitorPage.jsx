@@ -9,6 +9,7 @@ import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
+import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import CheckAllButton from './check/CheckAllButton.jsx'
 import MonitorCheckRunModal from './check/MonitorCheckRunModal.jsx'
@@ -21,6 +22,7 @@ import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import TagInput from './ui/TagInput.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
@@ -38,7 +40,7 @@ import DomainExpiryTrace from './DomainExpiryTrace.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
-import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
+import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
@@ -59,7 +61,7 @@ const INTERVALS = [
 ]
 
 const emptyForm = {
-  name: '', domain: '', groupName: '', notificationGroupId: '', teamId: '',
+  name: '', domain: '', groupName: '', tags: '', notificationGroupId: '', teamId: '',
   thresholdsCsv: '60,30,14,7,3,1', warningDays: 30, criticalDays: 7, intervalSeconds: 86400, active: true,
   checkTimeoutMs: '',
   // Koruma anahtarlari: kilit ve degisiklik ACIK (bugunku fiili davranis), kara liste KAPALI
@@ -94,7 +96,7 @@ function sourceTag(source, provider) {
   return (source === 'WHOIS' && p) ? `WHOIS · ${p}` : source
 }
 
-export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
+export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeams = [] }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -102,7 +104,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'
   const myTeam = teamId != null ? String(teamId) : null
-  const isOwnTeam = (m) => myTeam != null && String(m.team_id) === myTeam
+  const [teams, setTeams] = useState([])   // hook'tan ÖNCE tanımlı olmalı (TDZ)
+  // Takım seçimi + "kendi takımı" kapısı artık ÜYESİ olunan tüm takımlar (2026-09-18); hook 9 sayfada ortak.
+  const { canPickTeam, pickTeams, isOwnTeam } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId })
   const canManageRow = (m) => isAdmin || isOwnTeam(m)
   // Toplu kontrolün adayı = kullanıcının TEK TEK de çalıştırabileceği satırlar. Yeni bir izin
   // kuralı UYDURULMUYOR; kartın ▶ düğmesiyle birebir aynı yüzey.
@@ -111,7 +115,6 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
-  const [teams, setTeams] = useState([])
   const [selected, setSelected] = useState(null)
   useEscapeKey(!!selected, closeDetail)   // Escape ile kapat (QA ISSUE-002, 2026-09-13; ModalShell'e taşınmamış detay modalı)
   const [modal, setModal] = useState(null)          // 'new' | monitor | null
@@ -122,8 +125,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   const [changeNote, setChangeNote] = useState('')
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
-  const selectedTeamLabel = isAdmin
-    ? (teams.find(tm => String(tm.id) === String(form.teamId))?.name || t('app.noTeam'))
+  const selectedTeamLabel = canPickTeam
+    ? (pickTeams.find(tm => String(tm.id) === String(form.teamId))?.name || t('app.noTeam'))
     : (teamName || t('app.noTeam'))
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
   const [defaults, setDefaults] = useState(null)
@@ -143,6 +146,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
+  const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))   // etiket filtresi (2026-09-18)
   const [sortBy, setSortBy] = useState(() => readUrlParam('sort', 'days_asc'))
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
@@ -219,7 +223,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   }
   /** Monitör (snake_case) → form state eşlemesi. Edit ve Kopyala AYNI eşlemeyi kullanır → alan kaçmaz. */
   function formFrom(m) {
-    return { name: m.name || '', domain: m.domain || '', groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
+    return { name: m.name || '', domain: m.domain || '', groupName: m.group_name || '', tags: m.tags || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
       teamId: m.team_id != null ? String(m.team_id) : '',
       thresholdsCsv: m.thresholds_csv || '60,30,14,7,3,1',
       warningDays: m.warning_days ?? 30, criticalDays: m.critical_days ?? 7,
@@ -263,12 +267,14 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   async function save() {
     if (!form.domain.trim()) return
     if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
+    if (!form.groupName?.trim()) { toast.error(t('mon.groupRequired')); return }   // grup + etiket zorunlu (2026-09-18)
+    if (!form.tags?.trim()) { toast.error(t('mon.tagsRequired')); return }
     setSaving(true)
     try {
       const payload = {
         // Serbest metin isimler korunur (backend URL'li isimleri host'a indirger); boşsa normalize domain.
         name: form.name.trim() || normalizeDomainInput(form.domain), domain: normalizeDomainInput(form.domain),
-        groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId),
+        groupName: form.groupName?.trim() || null, tags: form.tags?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId),
         // Bos = takim varsayilani -> takim adresi (zincirin kalani).
         notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
           ? null : Number(form.notificationGroupId),
@@ -412,18 +418,27 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   }
 
   const { teamOptions, hasTeamOptions } = useTeamOptions(monitors)
-  const teamSelectOptions = useMemo(() => [{ value: '', label: t('dom.noTeam') },
-    ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))], [teams, t])
+  const teamSelectOptions = useMemo(() => [...(isAdmin ? [{ value: '', label: t('dom.noTeam') }] : []),   // "takımsız" yalnız admin: üye için takım zorunlu (2026-09-18)
+    ...pickTeams.map(tm => ({ value: String(tm.id), label: tm.name }))], [isAdmin, pickTeams, t])
   // Değişiklik geçmişi `teamId` farkını ADA çevirebilsin — çıplak sayı okunmuyor.
   const teamNameById = useMemo(
     () => Object.fromEntries(teams.map(tm => [tm.id, tm.name])), [teams])
-  const groupMonitors = useMemo(
-    () => (isAdmin ? monitors : monitors.filter(m => myTeam != null && String(m.team_id) === myTeam)),
-    [monitors, isAdmin, myTeam])
+  // Filtre seçenekleri (grup/etiket) rol fark etmeksizin GÖRÜNEN listenin tamamından türer (2026-09-18,
+  // kullanıcı isteği: filtreleme her yetkide). Sunucu zaten kapsamı uyguluyor; burada bir daha daraltmak
+  // müdür/izleyici gibi çok takım gören rollerin başka takımın grubunu seçememesine yol açıyordu.
+  const groupMonitors = monitors
   const groupNames = useMemo(
     () => [...new Set(groupMonitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
     [groupMonitors])
   const hasGroupOptions = groupNames.length > 0
+  // Etiket filtresi: grupla aynı sözleşme ('all' / '__none__' / etiket). Seçenekler listedeki etiketlerden türer.
+  const tagNames = useMemo(() => tagNamesOf(groupMonitors), [groupMonitors])
+  // Kutu etiketsiz izleme varken de görünür: "Etiketsiz" seçeneği eski (etiketsiz) kayıtları bulmanın yolu.
+  const hasTagOptions = tagNames.length > 0 || groupMonitors.some(m => !(m.tags || '').trim())
+  const tagFilterOptions = useMemo(() => [{ value: 'all', label: t('mon.allTags') },
+    ...tagNames.map(x => ({ value: x, label: x })),
+    ...(groupMonitors.some(m => !(m.tags || '').trim()) ? [{ value: '__none__', label: t('mon.noTags') }] : [])],
+    [tagNames, groupMonitors, t])
   const groupFilterOptions = useMemo(() => [{ value: 'all', label: t('dom.allGroups') },
     ...groupNames.map(g => ({ value: g, label: g })),
     ...(groupMonitors.some(m => !m.group_name) ? [{ value: '__none__', label: t('dom.noGroup') }] : [])],
@@ -434,10 +449,12 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
 
   const scoped = useMemo(() => monitors.filter(m => {
     if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
+    if (!matchesTag(m, tagFilter)) return false
+    if (matchesGroupOrTagText(m, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
     if (!search.trim()) return true
     const q = search.trim().toLowerCase()
     return (m.domain || '').toLowerCase().includes(q) || (m.name || '').toLowerCase().includes(q) || (m.registrar || '').toLowerCase().includes(q)
-  }), [monitors, teamFilter, groupFilter, search])
+  }), [monitors, teamFilter, groupFilter, tagFilter, search])
 
   const counts = useMemo(() => {
     const c = { total: scoped.length, ok: 0, warning: 0, critical: 0, unknown: 0, changed: 0 }
@@ -475,14 +492,14 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
   // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(displayMonitors, {
-    listKey: 'domain-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter, sortBy],
+    listKey: 'domain-monitors', resetDeps: [search, teamFilter, groupFilter, tagFilter, statFilter, sortBy],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
 
   // Paylaşılabilir URL: görünür durum (filtre/arama/sayfa/açık modal) adres çubuğunda yaşar;
   // varsayılan değerler param üretmez (temiz URL). Yazım debounce'lu replaceState (useUrlQuerySync).
   useUrlQuerySync({
-    ...monitorUrlState({ teamFilter, groupFilter, search, statFilter, pager }),
+    ...monitorUrlState({ teamFilter, groupFilter, tagFilter, search, statFilter, pager }),
     sort: sortBy !== 'days_asc' ? sortBy : null,
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'control' ? detailTab : null,
@@ -559,6 +576,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
           <SearchableSelect value={sortBy} onChange={setSortBy} options={sortOptions} />
           {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />}
+          {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} />}
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />}
           <input className="upt-search" type="text" placeholder={t('dom.searchPlaceholder')} value={search} onChange={e => setSearch(e.target.value)} />
         </div>
@@ -744,10 +762,10 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
               <label><span>{t('dom.name')}</span>
                 <input value={form.name} placeholder={form.domain} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
               <label><span>{t('dom.team')} <span className="req-star">*</span></span>
-                {isAdmin
+                {canPickTeam
                   ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
                   : <input value={teamName || t('dom.noTeam')} disabled />}</label>
-              <label className="full-width"><span>{t('dom.group')}</span>
+              <label className="full-width"><span>{t('dom.group')} <span className="req-star">*</span></span>
                 <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
                   options={[{ value: '', label: t('dom.noGroup') }, ...groupSelectOptions]}
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('dom.noGroup')} /></label>
@@ -773,6 +791,12 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
               <div className="full-width field-hint">ⓘ {t('verify.hint')}</div>
               <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
                 onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
+              {/* Etiketler — zorunlu (2026-09-18); Http/Port ile aynı blok */}
+              <div className="full-width http-tags-block">
+                <div className="http-block-title">{t('mon.tagsTitle')} <span className="req-star">*</span></div>
+                <div className="field-hint" style={{ marginBottom: 6 }}>{t('mon.tagsHint')}</div>
+                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('mon.tagsPlaceholder')} />
+              </div>
 
               <label><span>{t('dom.warningDays')}</span>
                 <input type="number" min="1" value={form.warningDays} onChange={e => setForm(f => ({ ...f, warningDays: Number(e.target.value) }))} /></label>

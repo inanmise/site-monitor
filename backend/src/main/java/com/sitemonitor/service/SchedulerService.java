@@ -615,6 +615,7 @@ public class SchedulerService {
         patch("ALTER TABLE latest_checks ADD COLUMN fingerprint_ack_fingerprint TEXT");
         patch("ALTER TABLE app_users ADD COLUMN role_locked BOOLEAN DEFAULT false");
         patch("ALTER TABLE app_users ADD COLUMN org_role_locked BOOLEAN DEFAULT false");
+        patch("ALTER TABLE app_users ADD COLUMN team_locked BOOLEAN DEFAULT false");   // takım kilidi (2026-09-18)
         // Giriş damgaları — kullanıcının kendi güvenlik özeti ("önceki girişiniz / son başarısız
         // deneme") + admin listesi. Mevcut satırlarda NULL/0 kalır; ilk girişte dolar.
         patch("ALTER TABLE app_users ADD COLUMN last_login_at VARCHAR(30)");

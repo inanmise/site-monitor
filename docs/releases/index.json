@@ -1,9 +1,65 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-17T02:24:35Z",
+  "generatedAt": "2026-09-18T14:46:13Z",
   "repo": "inanmise/site-monitor",
-  "count": 656,
+  "count": 657,
   "releases": [
+    {
+      "version": "20.70.0",
+      "tag": "v20.70.0",
+      "releasedAt": "2026-09-18T14:46:07Z",
+      "commit": "fcd5c567822bfda3d1ce6cdbfa447086f789e6e1",
+      "prevVersion": "20.69.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 3,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": "regresyon",
+          "breaking": false,
+          "sha": "fcd5c567",
+          "subject": "tur 35 notunda yerel etiket değeri yerine nötr ifade"
+        },
+        {
+          "type": "feat",
+          "scope": "inventory",
+          "breaking": false,
+          "sha": "86320c90",
+          "subject": "USER kendi takımının sertifika kaydını düzenler (silme/aktarma yönetici kapısında)"
+        },
+        {
+          "type": "feat",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "ac5f62cb",
+          "subject": "Domain Ekle her seviyede, Genel Bakış grup/etiket filtresi + temizle, çok takımlı kullanıcı kutusu"
+        },
+        {
+          "type": "fix",
+          "scope": "monitoring",
+          "breaking": false,
+          "sha": "ec99b9c8",
+          "subject": "grup/etiket filtre seçenekleri her rolde görünen listenin tamamından türer"
+        },
+        {
+          "type": "feat",
+          "scope": "monitoring",
+          "breaking": false,
+          "sha": "9302a071",
+          "subject": "çok takımlı takım seçimi, grup+etiket zorunluluğu, takım kilidi, etiket filtresi"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.69.0",
       "tag": "v20.69.0",

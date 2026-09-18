@@ -99,6 +99,13 @@ public class AppUser {
     @Column(name = "org_role_locked")
     private Boolean orgRoleLocked;
 
+    /** true → takım üyelikleri admin tarafından MANUEL düzenlendi; LDAP provisyonu {@link #teamIds}/{@link #teamId}'ye
+     *  DOKUNMAZ (aksi halde AD grup üyeliğinden türetilen takımlar her girişte manuel atamayı ezerdi —
+     *  2026-09-18 kullanıcı bildirimi: çok takımlı kullanıcının elle eklenen takımı girişte kayboluyordu).
+     *  Kilit kaldırılınca (team-unlock) sonraki girişte AD yeniden yazar. Null = AD-yönetimli. */
+    @Column(name = "team_locked")
+    private Boolean teamLocked;
+
     /** Birincil takım (geriye-uyum + varsayılanlar: denetim actorTeamId, haftalık rapor varsayılanı,
      *  Nav gösterimi, eskalasyon kontağı). Her zaman {@link #teamIds} içindedir. */
     @Column(name = "team_id")

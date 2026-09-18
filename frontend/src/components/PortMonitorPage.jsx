@@ -40,10 +40,11 @@ import AlertHistory from './admin/AlertHistory.jsx'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
-import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
+import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { useEscapeKey } from '../hooks/useEscapeKey.js'
+import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
@@ -74,7 +75,7 @@ const emptyForm = { name: '', host: '', port: '', protocol: 'TCP', expect: '', s
   intervalSeconds: 300, timeoutMs: 5000,
   confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true }
 
-export default function PortMonitorPage({ systemRole, teamId, teamName }) {
+export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams = [] }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -82,7 +83,9 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin                          // ekle/düzenle/sil butonu (takım-kapsamlı)
   const myTeam = teamId != null ? String(teamId) : null
-  const isOwnTeam = (m) => myTeam != null && String(m.team_id) === myTeam
+  const [teams, setTeams] = useState([])   // hook'tan ÖNCE tanımlı olmalı (TDZ)
+  // Takım seçimi + "kendi takımı" kapısı artık ÜYESİ olunan tüm takımlar (2026-09-18); hook 9 sayfada ortak.
+  const { canPickTeam, pickTeams, isOwnTeam } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId })
   const canManageRow = (m) => isAdmin || isOwnTeam(m)              // düzenle + kontrol (otomatik :443/team_id=null → yalnız admin)
   // Toplu kontrolün adayı = kullanıcının TEK TEK de çalıştırabileceği satırlar. Yeni bir izin
   // kuralı UYDURULMUYOR; kartın ▶ düğmesiyle birebir aynı yüzey.
@@ -97,7 +100,6 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
-  const [teams, setTeams] = useState([])
   const [defaults, setDefaults] = useState(null)
   const [selected, setSelected] = useState(null)
   useEscapeKey(!!selected, closeModal)   // Escape ile kapat (QA ISSUE-002, 2026-09-13; ModalShell'e taşınmamış detay modalı)
@@ -127,6 +129,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const { isRunning, track } = useRunningChecks()
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
+  const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))   // etiket filtresi (2026-09-18)
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
@@ -245,6 +248,8 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   async function save() {
     if (!form.host.trim() || !form.port) { setSaveError(t('port.hostRequired')); return }
     if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
+    if (!form.groupName?.trim()) { toast.error(t('mon.groupRequired')); return }   // grup + etiket zorunlu (2026-09-18)
+    if (!form.tags?.trim()) { toast.error(t('mon.tagsRequired')); return }
     setSaving(true); setSaveError(null)
     try {
       const payload = {
@@ -364,8 +369,8 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const hasTeamOptions = teamOptions.some(o => o.value !== 'all' && o.value !== '__none__')
 
   // Modal seçicileri: takım (admin → tüm takımlar) + grup (mevcut gruplardan, yeni grup oluşturulabilir).
-  const teamSelectOptions = useMemo(() => [{ value: '', label: t('app.noTeam') },
-    ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))], [teams, t])
+  const teamSelectOptions = useMemo(() => [...(isAdmin ? [{ value: '', label: t('app.noTeam') }] : []),   // "takımsız" yalnız admin: üye için takım zorunlu (2026-09-18)
+    ...pickTeams.map(tm => ({ value: String(tm.id), label: tm.name }))], [isAdmin, pickTeams, t])
   // Değişiklik geçmişi `teamId` farkını ADA çevirebilsin — çıplak sayı okunmuyor.
   const teamNameById = useMemo(
     () => Object.fromEntries(teams.map(tm => [tm.id, tm.name])), [teams])
@@ -374,6 +379,14 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   // Form içi grup dropdown'ı takım+tür kapsamlı endpoint'ten (liste filtresi değil): admin başka takımın grubunu görmez.
   const groupSelectOptions = useMemo(() => teamGroups.map(g => ({ value: g.name, label: g.name })), [teamGroups])
   const hasGroupOptions = groupNames.length > 0
+  // Etiket filtresi: grupla aynı sözleşme ('all' / '__none__' / etiket). Seçenekler listedeki etiketlerden türer.
+  const tagNames = useMemo(() => tagNamesOf(monitors), [monitors])
+  // Kutu etiketsiz izleme varken de görünür: "Etiketsiz" seçeneği eski (etiketsiz) kayıtları bulmanın yolu.
+  const hasTagOptions = tagNames.length > 0 || monitors.some(m => !(m.tags || '').trim())
+  const tagFilterOptions = useMemo(() => [{ value: 'all', label: t('mon.allTags') },
+    ...tagNames.map(x => ({ value: x, label: x })),
+    ...(monitors.some(m => !(m.tags || '').trim()) ? [{ value: '__none__', label: t('mon.noTags') }] : [])],
+    [tagNames, monitors, t])
   const groupFilterOptions = [{ value: 'all', label: t('port.allGroups') },
     ...groupNames.map(g => ({ value: g, label: g })),
     ...(monitors.some(m => !m.group_name) ? [{ value: '__none__', label: t('port.noGroup') }] : [])]
@@ -384,9 +397,11 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   // seçince liste daralıyor ama kartlar küresel sayıyı göstermeye devam ediyordu. HttpMonitorPage deseni.)
   const scoped = useMemo(() => monitors.filter(m => {
     if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
+    if (!matchesTag(m, tagFilter)) return false
+    if (matchesGroupOrTagText(m, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
     if (!search.trim()) return true
     return m.host.toLowerCase().includes(search.trim().toLowerCase())
-  }), [monitors, teamFilter, groupFilter, search])
+  }), [monitors, teamFilter, groupFilter, tagFilter, search])
 
   const portCounts = useMemo(() => ({
     total: scoped.length,
@@ -428,14 +443,14 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
   // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(displayMonitors, {
-    listKey: 'port-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter],
+    listKey: 'port-monitors', resetDeps: [search, teamFilter, groupFilter, tagFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
 
   // Paylaşılabilir URL: görünür durum (filtre/arama/sayfa/açık modal) adres çubuğunda yaşar;
   // varsayılan değerler param üretmez (temiz URL). Yazım debounce'lu replaceState (useUrlQuerySync).
   useUrlQuerySync({
-    ...monitorUrlState({ teamFilter, groupFilter, search, statFilter, pager }),
+    ...monitorUrlState({ teamFilter, groupFilter, tagFilter, search, statFilter, pager }),
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'control' ? detailTab : null,
     // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
@@ -467,8 +482,8 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
       style={{ color: alarmLevelColor(m.alarm_level) }} title={title}><AlertTriangle size={14} /></span>
   }
 
-  const selectedTeamLabel = isAdmin
-    ? (teams.find(tm => String(tm.id) === String(form.teamId))?.name || t('app.noTeam'))
+  const selectedTeamLabel = canPickTeam
+    ? (pickTeams.find(tm => String(tm.id) === String(form.teamId))?.name || t('app.noTeam'))
     : (teamName || t('app.noTeam'))
 
   return (
@@ -515,6 +530,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
           {hasGroupOptions && (
             <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />
           )}
+          {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} />}
           <input className="upt-search" type="text"
             placeholder={t('port.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
@@ -761,10 +777,10 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
                 </div>
               )}
               <label><span>{t('port.team')} <span className="req-star">*</span></span>
-                {isAdmin
+                {canPickTeam
                   ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
                   : <input value={teamName || t('app.noTeam')} disabled />}</label>
-              <label><span>{t('port.group')}</span>
+              <label><span>{t('port.group')} <span className="req-star">*</span></span>
                 <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
                   options={[{ value: '', label: t('port.noGroup') }, ...groupSelectOptions]}
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('port.noGroup')} /></label>
@@ -778,7 +794,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
                 onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
               {/* Etiketler */}
               <div className="full-width port-tags-block">
-                <div className="port-block-title">{t('port.tagsTitle')}</div>
+                <div className="port-block-title">{t('port.tagsTitle')} <span className="req-star">*</span></div>
                 <div className="field-hint" style={{ marginBottom: 6 }}>{t('port.tagsHint')}</div>
                 <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('port.tagsPlaceholder')} />
               </div>

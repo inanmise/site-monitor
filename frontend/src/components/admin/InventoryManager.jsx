@@ -9,6 +9,7 @@ import InventoryFormModal from '../inventory/InventoryFormModal.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useT } from '../../i18n/index.jsx'
+import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import { usePagination } from '../../hooks/usePagination.js'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../../hooks/useUrlQuerySync.js'
@@ -75,6 +76,13 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const isAdmin = systemRole ? systemRole === 'ADMIN' : isAdminProp
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canManage = isAdmin || isTeamAdmin
+  // "Domain Ekle" her kullanıcı seviyesinde (2026-09-18): yetki inventory.crud/edit'ten (USER varsayılanı açık);
+  // düzenleme/silme/içe aktarma/hijyen bandı canManage'de kalır. Sunucu üyelik doğrular.
+  const perms = usePermissions()
+  const canAdd = canManage || perms.canEdit('inventory.crud')
+  // Satır düzenleme (2026-09-18): USER yalnız ÜYESİ olduğu takımın kaydını düzenler/kopyalar (teamsProp = /me takımları).
+  const myTeamIdSet = useMemo(() => new Set((teamsProp || []).map((tm) => String(tm.id))), [teamsProp])
+  const canEditRow = useCallback((r) => canManage || (canAdd && r?.team_id != null && myTeamIdSet.has(String(r.team_id))), [canManage, canAdd, myTeamIdSet])
   const [items, setItems]             = useState([])
   const [teams, setTeams]             = useState(teamsProp)
   const [formModal, setFormModal]     = useState(null)   // { mode: 'add'|'edit'|'duplicate', record }
@@ -537,7 +545,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
             )}
           </div>
           {canManage && <button className="btn btn-secondary" onClick={() => setImportOpen(true)}><Upload size={14} /> {t('inv.import')}</button>}
-          {canManage && <button className="btn btn-success" onClick={openAdd}>{t('inv.addBtn')}</button>}
+          {canAdd && <button className="btn btn-success" onClick={openAdd}>{t('inv.addBtn')}</button>}
         </div>
       </div>
 
@@ -580,7 +588,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       ) : (
         <>
           <InventoryTable rows={pager.pageItems} cols={cols} sort={sort} onSort={setSortPersist} density={density}
-            canManage={canManage} isAdmin={isAdmin} teamsCount={teams.length} teamMap={teamMap} statusFilter={statusFilter}
+            canManage={canManage} canEditRow={canEditRow} isAdmin={isAdmin} teamsCount={teams.length} teamMap={teamMap} statusFilter={statusFilter}
             selected={selected} onToggle={toggleSel} onToggleAll={toggleAll} allOnPage={allOnPage}
             onShow={(r) => setShowItem(r)} onEdit={openEdit} onDuplicate={openDuplicate} onTransfer={openTransfer}
             onDelete={del} onRestore={restore} onPurge={purge}
@@ -615,7 +623,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
 
       {/* ── Kayıt çekmecesi (#8): Ayrıntılar / Değişiklikler / Kontroller; önceki-sonraki gezinme ── */}
       {showItem && (
-        <InventoryDrawer record={showItem} records={visibleItems} teamMap={teamMap} teamNameById={teamNameById} canManage={canManage}
+        <InventoryDrawer record={showItem} records={visibleItems} teamMap={teamMap} teamNameById={teamNameById} canManage={canManage} canEditRow={canEditRow}
           onClose={() => setShowItem(null)} onEdit={(r) => { setShowItem(null); openEdit(r) }} onCheckNow={checkNow} onNavigate={setShowItem} />
       )}
       {importOpen && (

@@ -223,6 +223,7 @@ public final class AuditEventCatalog {
             "USER_PUSH_SETTINGS",
             "USER_PUSH_TEST",
             "USER_ROLE_UNLOCK",
+            "USER_TEAM_UNLOCK",
             "USER_TOUR_RESET",
             "USER_UNLOCK",
             "USER_UPDATE",

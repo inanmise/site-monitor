@@ -155,6 +155,9 @@ public class LdapProvisioningService {
     }
 
     private void resolveTeams(AppUser u, Map<String, Object> attrs, boolean isPo) {
+        // Admin takımları MANUEL düzenlediyse (team_locked) AD üyeliği hiç uygulanmaz — role_locked ile
+        // aynı sözleşme (2026-09-18). Kilit kalkınca bir sonraki girişte AD yeniden yazar.
+        if (Boolean.TRUE.equals(u.getTeamLocked())) return;
         // Bir kullanıcı birden çok ScrumGroup'ta olabilir; takım, CN'i "Onaycı" ile bitMEYEN
         // gruplardır (onaycı grupları takım değil). TÜM uygun gruplar üyelik olur (sıra korunur);
         // her grubun mail'i (groupMail) o takımın e-postasıdır. Hiç grup yoksa company fallback.

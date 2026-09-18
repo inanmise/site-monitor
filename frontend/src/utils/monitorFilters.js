@@ -60,13 +60,49 @@ export function matchesTeamAndGroup(m, teamFilter, groupFilter) {
  *
  * @returns {object} useUrlQuerySync'e yayılacak (spread) ortak parametreler
  */
-export function monitorUrlState({ teamFilter, groupFilter, search, statFilter, pager }) {
+export function monitorUrlState({ teamFilter, groupFilter, tagFilter = 'all', search, statFilter, pager }) {
   return {
     team: teamFilter === 'all' ? null : teamFilter,
     group: groupFilter === 'all' ? null : groupFilter,
+    tag: tagFilter === 'all' ? null : tagFilter,   // etiket filtresi (2026-09-18)
     q: search.trim() || null,
     stat: statFilter && statFilter !== 'total' ? statFilter : null,
     page: pager.page > 1 ? pager.page : null,
     ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
   }
+}
+
+/** Virgülle ayrılmış etiket dizesini temiz listeye çevirir ("prod, kritik" → ['prod','kritik']). */
+export function tagsOf(m) {
+  return String(m?.tags || '').split(',').map((x) => x.trim()).filter(Boolean)
+}
+
+/**
+ * Etiket filtresi (2026-09-18, ürün kararı: grup + etiket bazlı filtreleme her izleme sayfasında
+ * VARSAYILAN). Sözleşme takım/grupla aynı: 'all' → filtre yok; '__none__' → yalnız etiketsizler
+ * (eski kayıtlar); aksi hâlde etiket listesinde TAM eşleşme (büyük/küçük harf duyarsız).
+ */
+export function matchesTag(m, tagFilter) {
+  if (!tagFilter || tagFilter === 'all') return true
+  const tags = tagsOf(m)
+  if (tagFilter === NO_ASSIGNMENT) return tags.length === 0
+  const want = tagFilter.toLowerCase()
+  return tags.some((t) => t.toLowerCase() === want)
+}
+
+/** Listedeki tüm etiketler — tekil, harf-duyarsız birleştirilmiş, alfabetik. */
+export function tagNamesOf(monitors) {
+  const seen = new Map()
+  for (const m of monitors || []) for (const t of tagsOf(m)) { const k = t.toLowerCase(); if (!seen.has(k)) seen.set(k, t) }
+  return [...seen.values()].sort((a, b) => a.localeCompare(b))
+}
+
+/**
+ * Serbest metin araması grup adı ve etiketlerde de eşleşsin (sayfaya özgü alan aramasına EK).
+ * Kullanıcı "kritik" yazınca URL'sinde geçmese de o etiketli izlemeler listelenir.
+ */
+export function matchesGroupOrTagText(m, search) {
+  const q = String(search || '').trim().toLowerCase()
+  if (!q) return false
+  return (m?.group_name || '').toLowerCase().includes(q) || tagsOf(m).some((t) => t.toLowerCase().includes(q))
 }

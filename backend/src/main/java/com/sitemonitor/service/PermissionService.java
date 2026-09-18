@@ -225,7 +225,10 @@ public class PermissionService {
                   + "uç requireAdminOrMonitoredDomain ile takım kapsamına bağlı"),
             new PolicyUpgrade("USER", "diagnostics.run", List.of("execute"),
                     "USER kendi takımının izlediği alan adları için tanılama koşturabilmeli (2026-09-11); "
-                  + "uç takım kapsamını doğrular, proxy-ca-chain admin'de kalır")
+                  + "uç takım kapsamını doğrular, proxy-ca-chain admin'de kalır"),
+            new PolicyUpgrade("USER", "inventory.crud", List.of("edit"),
+                    "\"Domain Ekle\" her kullanıcı seviyesinde (2026-09-18); uç üyelik doğrular (requireInventoryWriter), "
+                  + "düzenleme/silme/aktarma yönetici kapılarında kalır")
     );
 
     /** Update single grant. ADMIN row'ları her zaman true; bypass yok. */

@@ -11,6 +11,7 @@ import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import TagInput from './ui/TagInput.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
@@ -37,7 +38,7 @@ import { LoadingBlock } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 import MonitorStatsSection from './MonitorStatsSection.jsx'
-import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
+import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorSpark from './ui/MonitorSpark.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
@@ -46,6 +47,7 @@ import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { useEscapeKey } from '../hooks/useEscapeKey.js'
+import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
@@ -63,13 +65,13 @@ const INTERVALS = [
   { value: 86400, labelKey: 'notify.iv24h' },
 ]
 const REFRESH_INTERVAL = 60
-const emptyForm = { name: '', host: '', ipVersion: 'auto', groupName: '', notificationGroupId: '', teamId: '',
+const emptyForm = { name: '', host: '', ipVersion: 'auto', groupName: '', tags: '', notificationGroupId: '', teamId: '',
   intervalSeconds: 60, timeoutMs: 5000, packetCount: 4, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, notifyEmail: true, notifyWebhook: true, active: true,
   // Yavaşlık alarmı OPT-IN: varsayılan kapalı — mevcut izlemelerin hiçbiri bir gün sabah
   // birden yeni bir alarm türü üretmeye başlamasın.
   slowResponseEnabled: false, slowBaselineWindowMinutes: 10, slowThresholdPercent: 20 }
 
-export default function PingMonitorPage({ systemRole, teamId, teamName }) {
+export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams = [] }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -78,7 +80,9 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'      // USER ve üstü: kendi takımı için oluştur/düzenle/kontrol
   const myTeam = teamId != null ? String(teamId) : null
-  const isOwnTeam = (m) => myTeam != null && String(m.team_id) === myTeam
+  const [teams, setTeams] = useState([])   // hook'tan ÖNCE tanımlı olmalı (TDZ)
+  // Takım seçimi + "kendi takımı" kapısı artık ÜYESİ olunan tüm takımlar (2026-09-18); hook 9 sayfada ortak.
+  const { canPickTeam, pickTeams, isOwnTeam } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId })
   const canManageRow = (m) => isAdmin || isOwnTeam(m)                    // düzenle + kontrol (kendi takımı)
   // Toplu kontrolün adayı = kullanıcının TEK TEK de çalıştırabileceği satırlar. Yeni bir izin
   // kuralı UYDURULMUYOR; kartın ▶ düğmesiyle birebir aynı yüzey.
@@ -93,7 +97,6 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
-  const [teams, setTeams] = useState([])
   const [selected, setSelected] = useState(null)
   useEscapeKey(!!selected, closeDetail)   // Escape ile kapat (QA ISSUE-002, 2026-09-13; ModalShell'e taşınmamış detay modalı)
   const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
@@ -105,8 +108,8 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const [changeNote, setChangeNote] = useState('')
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
-  const selectedTeamLabel = isAdmin
-    ? (teams.find(tm => String(tm.id) === String(form.teamId))?.name || t('app.noTeam'))
+  const selectedTeamLabel = canPickTeam
+    ? (pickTeams.find(tm => String(tm.id) === String(form.teamId))?.name || t('app.noTeam'))
     : (teamName || t('app.noTeam'))
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
   const [defaults, setDefaults] = useState(null)   // per-tip varsayılan aralık/timeout (Kontrol Sıklığı ayarı)
@@ -120,6 +123,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
+  const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))   // etiket filtresi (2026-09-18)
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
   const [secondsSince, setSecondsSince] = useState(0)
@@ -202,7 +206,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   }
   /** Monitör (snake_case) → form state eşlemesi. Edit ve Kopyala AYNI eşlemeyi kullanır → alan kaçmaz. */
   function formFrom(m) {
-    return { name: m.name || '', host: m.host || '', ipVersion: m.ip_version || 'auto', groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
+    return { name: m.name || '', host: m.host || '', ipVersion: m.ip_version || 'auto', groupName: m.group_name || '', tags: m.tags || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
       teamId: m.team_id != null ? String(m.team_id) : '', intervalSeconds: m.interval_seconds ?? 60,
       notifyEmail: m.notify_email !== false,
       timeoutMs: m.timeout_ms ?? 5000, packetCount: m.packet_count ?? 4,
@@ -230,11 +234,13 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   async function save() {
     if (!form.host.trim()) return
     if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
+    if (!form.groupName?.trim()) { toast.error(t('mon.groupRequired')); return }   // grup + etiket zorunlu (2026-09-18)
+    if (!form.tags?.trim()) { toast.error(t('mon.tagsRequired')); return }
     setSaving(true)
     try {
       const payload = {
         name: (form.name || form.host).trim(), host: form.host.trim(), ipVersion: form.ipVersion,
-        groupName: form.groupName?.trim() || null,
+        groupName: form.groupName?.trim() || null, tags: form.tags?.trim() || null,
         // Bos = takim varsayilani -> takim adresi (zincirin kalani).
         notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
           ? null : Number(form.notificationGroupId),
@@ -369,19 +375,28 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
 
   // Türetilmiş listeler memoize — 1sn countdown her saniye render tetikler.
   const { teamOptions, hasTeamOptions } = useTeamOptions(monitors)
-  const teamSelectOptions = useMemo(() => [{ value: '', label: t('ping.noTeam') },
-    ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))], [teams, t])
+  const teamSelectOptions = useMemo(() => [...(isAdmin ? [{ value: '', label: t('ping.noTeam') }] : []),   // "takımsız" yalnız admin: üye için takım zorunlu (2026-09-18)
+    ...pickTeams.map(tm => ({ value: String(tm.id), label: tm.name }))], [isAdmin, pickTeams, t])
   // Değişiklik geçmişi `teamId` farkını ADA çevirebilsin — çıplak sayı okunmuyor.
   const teamNameById = useMemo(
     () => Object.fromEntries(teams.map(tm => [tm.id, tm.name])), [teams])
   // Gruplar takıma özgü: kullanıcı yalnız kendi takımının gruplarını görür/seçer (admin tümünü).
-  const groupMonitors = useMemo(
-    () => (isAdmin ? monitors : monitors.filter(m => myTeam != null && String(m.team_id) === myTeam)),
-    [monitors, isAdmin, myTeam])
+  // Filtre seçenekleri (grup/etiket) rol fark etmeksizin GÖRÜNEN listenin tamamından türer (2026-09-18,
+  // kullanıcı isteği: filtreleme her yetkide). Sunucu zaten kapsamı uyguluyor; burada bir daha daraltmak
+  // müdür/izleyici gibi çok takım gören rollerin başka takımın grubunu seçememesine yol açıyordu.
+  const groupMonitors = monitors
   const groupNames = useMemo(
     () => [...new Set(groupMonitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
     [groupMonitors])
   const hasGroupOptions = groupNames.length > 0
+  // Etiket filtresi: grupla aynı sözleşme ('all' / '__none__' / etiket). Seçenekler listedeki etiketlerden türer.
+  const tagNames = useMemo(() => tagNamesOf(groupMonitors), [groupMonitors])
+  // Kutu etiketsiz izleme varken de görünür: "Etiketsiz" seçeneği eski (etiketsiz) kayıtları bulmanın yolu.
+  const hasTagOptions = tagNames.length > 0 || groupMonitors.some(m => !(m.tags || '').trim())
+  const tagFilterOptions = useMemo(() => [{ value: 'all', label: t('mon.allTags') },
+    ...tagNames.map(x => ({ value: x, label: x })),
+    ...(groupMonitors.some(m => !(m.tags || '').trim()) ? [{ value: '__none__', label: t('mon.noTags') }] : [])],
+    [tagNames, groupMonitors, t])
   const groupFilterOptions = useMemo(() => [{ value: 'all', label: t('ping.allGroups') },
     ...groupNames.map(g => ({ value: g, label: g })),
     ...(groupMonitors.some(m => !m.group_name) ? [{ value: '__none__', label: t('ping.noGroup') }] : [])],
@@ -391,9 +406,11 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
 
   const scoped = useMemo(() => monitors.filter(m => {
     if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
+    if (!matchesTag(m, tagFilter)) return false
+    if (matchesGroupOrTagText(m, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
     if (!search.trim()) return true
     return (m.host || '').toLowerCase().includes(search.trim().toLowerCase())
-  }), [monitors, teamFilter, groupFilter, search])
+  }), [monitors, teamFilter, groupFilter, tagFilter, search])
 
   const counts = useMemo(() => {
     const c = { total: scoped.length, up: 0, down: 0, alarm: 0, unacked: 0, paused: 0 }
@@ -423,14 +440,14 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
   // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(displayMonitors, {
-    listKey: 'ping-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter],
+    listKey: 'ping-monitors', resetDeps: [search, teamFilter, groupFilter, tagFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
 
   // Paylaşılabilir URL: görünür durum (filtre/arama/sayfa/açık modal) adres çubuğunda yaşar;
   // varsayılan değerler param üretmez (temiz URL). Yazım debounce'lu replaceState (useUrlQuerySync).
   useUrlQuerySync({
-    ...monitorUrlState({ teamFilter, groupFilter, search, statFilter, pager }),
+    ...monitorUrlState({ teamFilter, groupFilter, tagFilter, search, statFilter, pager }),
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'control' ? detailTab : null,
     // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
@@ -518,6 +535,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
           {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />}
+          {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} />}
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />}
           <input className="upt-search" type="text" placeholder={t('ping.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
@@ -697,10 +715,10 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
               <label><span>{t('ping.name')}</span>
                 <input value={form.name} placeholder={form.host} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
               <label><span>{t('ping.team')} <span className="req-star">*</span></span>
-                {isAdmin
+                {canPickTeam
                   ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
                   : <input value={teamName || t('ping.noTeam')} disabled />}</label>
-              <label><span>{t('ping.group')}</span>
+              <label><span>{t('ping.group')} <span className="req-star">*</span></span>
                 <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
                   options={[{ value: '', label: t('ping.noGroup') }, ...groupSelectOptions]}
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('ping.noGroup')} /></label>
@@ -712,6 +730,12 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
                 onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
               <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
                 onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
+              {/* Etiketler — zorunlu (2026-09-18); Http/Port ile aynı blok */}
+              <div className="full-width http-tags-block">
+                <div className="http-block-title">{t('mon.tagsTitle')} <span className="req-star">*</span></div>
+                <div className="field-hint" style={{ marginBottom: 6 }}>{t('mon.tagsHint')}</div>
+                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('mon.tagsPlaceholder')} />
+              </div>
               <label><span>{t('ping.timeout')}</span>
                 <input type="number" value={form.timeoutMs} onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) }))} /></label>
               <label><span>{t('ping.confirmAttempts')}</span>

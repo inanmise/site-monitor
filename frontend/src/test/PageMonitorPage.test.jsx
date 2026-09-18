@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, fillGroupAndTags } from './test-utils.jsx'
 import PageMonitorPage from '../components/PageMonitorPage.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -28,7 +28,7 @@ import { api } from '../api/client'
 
 const monitor = {
   id: 1, name: 'Example', url: 'https://www.example.com/', mode: 'SINGLE_PAGE',
-  group_name: 'X Sistemleri', team_name: 'SY-A', status: 'DEGRADED',
+  group_name: 'X Sistemleri', tags: 'prod', team_name: 'SY-A', status: 'DEGRADED',
   broken_resources: 2, mixed_content_count: 0, total_resources: 12, active: true, checked_at: '2026-06-24T00:00:00',
 }
 
@@ -141,6 +141,7 @@ describe('PageMonitorPage', () => {
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
     fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni izleme/i }))
     fireEvent.change(screen.getByPlaceholderText('https://example.com'), { target: { value: 'www.axess.com.tr' } })
+    await fillGroupAndTags()   // grup + etiket zorunlu (2026-09-18)
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
     await waitFor(() => expect(api.monitoring.createPageMonitor).toHaveBeenCalled())
     expect(api.monitoring.createPageMonitor.mock.calls[0][0].url).toBe('https://www.axess.com.tr')

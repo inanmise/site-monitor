@@ -187,6 +187,13 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
     else toast.error(res?.error || 'Error')
   }
 
+  // Takım kilidi (2026-09-18): admin üyeliği elle değiştirince LDAP girişi ezmez; kilit kalkınca AD yazar.
+  async function teamUnlock(id) {
+    const res = await api.admin.unlockUserTeams(id)
+    if (res?.success) { toast.success(t('usr.teamUnlocked')); load() }
+    else toast.error(res?.error || 'Error')
+  }
+
   async function del(id) {
     const user = users.find(u => u.id === id)
     const ok = await showConfirm({
@@ -290,7 +297,10 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                   )}
                 </td>
                 <td className="um-col-team">{((user.team_ids ?? user.teamIds ?? (user.team_id != null ? [user.team_id] : []))
-                  .map(id => teamMap[id]).filter(Boolean).join(', ')) || '—'}</td>
+                  .map(id => teamMap[id]).filter(Boolean).join(', ')) || '—'}
+                  {user.team_locked && (
+                    <span style={{ marginLeft: 6, cursor: 'help' }} title={t('usr.teamLockedTitle')}>🔒</span>
+                  )}</td>
                 <td>
                   <span className={user.active ? 'badge badge-ok' : 'badge badge-err'}>{user.active ? t('usr.active') : t('usr.inactive')}</span>
                   {user.permanent_lock && <span className="badge badge-err" style={{ marginLeft: 4 }} title={t('usr.permLocked')}>🔒</span>}
@@ -302,6 +312,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                     { label: t('usr.unlock'), onClick: () => unlock(user.id), hidden: !user.permanent_lock },
                     { label: t('usr.roleUnlock'), onClick: () => roleUnlock(user.id), hidden: !user.role_locked },
                     { label: t('usr.orgRoleUnlock'), onClick: () => orgRoleUnlock(user.id), hidden: !user.org_role_locked },
+                    { label: t('usr.teamUnlock'), onClick: () => teamUnlock(user.id), hidden: !user.team_locked },
                     { label: t('usr.delete'), danger: true, onClick: () => del(user.id),
                       hidden: isSelf(user) || isLastActiveAdmin(user) },
                   ] : []} />

@@ -725,6 +725,10 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="light"] .sb-user-popover-meta-row > span { color: var(--text-light, #64748b); }
 [data-theme="light"] .sb-user-popover-meta-row > strong { color: var(--text, #1e293b); }
 
+/* Çok takımlı kullanıcı kutusu (2026-09-18): "N takım" etiketi + popup listesi */
+.sb-team-multi { display: inline-flex; align-items: center; gap: 4px; }
+.sb-teams-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.sb-teams-item { display: flex; align-items: center; gap: 8px; }
 .sb-role-badge {
   display: inline-block;
   font-size: .62em;
@@ -5182,13 +5186,14 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 
 .filter-group .ss-wrap { width: auto; min-width: 140px; }
 .sort-bar .ss-wrap { width: auto; min-width: 130px; }
+/* Etiket + kutu birlikte sarsın (2026-09-18): "Etiket:" satır sonunda tek başına kalıyordu */
+.sort-bar-field { display: inline-flex; align-items: center; gap: 10px; white-space: nowrap; }
 
 .sort-bar-search {
   flex: 0 0 220px; min-width: 160px;
   padding: 7px 12px; border: 1px solid var(--border); border-radius: 6px;
   background: var(--input-bg); color: var(--input-text);
   font-size: .9em; font-family: inherit;
-  margin-left: auto;
 }
 .sort-bar-search:focus {
   outline: none; border-color: var(--primary);
@@ -5207,7 +5212,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .sort-bar-search-clear:hover { background: #374151; color: #fca5a5; border-color: #fca5a5; }
 
 @media (max-width: 640px) {
-  .sort-bar-search { flex: 1 1 100%; margin-left: 0; }
+  .sort-bar-search { flex: 1 1 100%; }
 }
 
 /* Inline alarm message inside card */
@@ -7871,6 +7876,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   flex-wrap: wrap; gap: 10px; margin-bottom: 18px;
 }
 .upt-toolbar-left { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* Grup / etiket / takım filtreleri YAN YANA (2026-09-18): .ss-wrap'in global width:100%'i toolbar'da
+   üç kutuyu alt alta dikiyordu; Alarm Geçmişi (.alh-toolbar) ile aynı daraltma. */
+.upt-toolbar > .ss-wrap, .dns-toolbar > .ss-wrap { width: auto; min-width: 160px; max-width: 240px; }
 .upt-filter-pills { display: flex; gap: 4px; }
 .upt-filter-pill {
   padding: 5px 13px; border-radius: 20px; font-size: 12px; font-weight: 600;

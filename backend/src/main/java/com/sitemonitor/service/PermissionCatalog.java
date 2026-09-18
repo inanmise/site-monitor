@@ -242,6 +242,10 @@ public final class PermissionCatalog {
         // Read-only across the board, plus alerts.actions (USER manages own team alerts)
         Set<String> allowed = Set.of(
             "inventory.list",
+            // inventory.crud (2026-09-18, ürün kararı): "Domain Ekle" her kullanıcı seviyesinde — USER kendi
+            // TAKIMINA sertifika kaydı açar (uç üyelik doğrular: requireInventoryWriter). Düzenleme/silme/
+            // aktarma yönetici kapılarında (requireTeamScopedAdmin) kalır.
+            "inventory.crud",
             "contacts.list",
             // Bildirim gruplari: USER kendi TAKIMININ alici listesini yonetir (K2) -- alarmi
             // kimin alacagi takimin nobet duzenidir, yonetici islemi degil. Uc UYELIK dogrular.

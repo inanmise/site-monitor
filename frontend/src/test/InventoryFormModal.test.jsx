@@ -38,7 +38,7 @@ const TEAMS = [{ id: 1, name: 'SY-Takım A' }, { id: 2, name: 'SY-Takım B' }]
 
 /** Forma RENDER EDİLMEYEN ama payload'a giden alanları da taşıyan tam kayıt. */
 const RECORD = {
-  id: 42, domain: 'a.example.com', port: 8443, active: true, team_id: 1, group_name: 'Prod',
+  id: 42, domain: 'a.example.com', port: 8443, active: true, team_id: 1, group_name: 'Prod', tags: 'prod',
   tier: 2, tls_mode: 'browser', purchased_by: 'ACME',
   owner: 'Ops Ekibi', description: 'Kritik ödeme servisi',
   expected_fingerprint: 'AA:BB:CC', expected_subject: 'CN=a.example.com',
@@ -62,6 +62,30 @@ describe('InventoryFormModal', () => {
     // Takım SearchableSelect: gizli input yerine doğrudan seçenek tıklaması yerine formu
     // team_id ile açmak daha güvenilir — bu vaka create dallanmasını doğruluyor.
     expect(api.admin.addInventory).not.toHaveBeenCalled()
+  })
+
+  // ── Grup + etiket zorunlu (2026-09-18): envanter kaydı da bir izleme ──
+  it('edit: etiket alanı formda ÇİZİLİR ve kayıtlı etiketler payload\'a geri gider (eskiden alan yoktu → düzenleme etiketleri siliyordu)', async () => {
+    render(<InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+    expect(document.querySelector('.tag-chip')?.textContent).toMatch(/^prod/)
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(api.admin.updateInventory).toHaveBeenCalled())
+    expect(api.admin.updateInventory.mock.calls[0][1].tags).toBe('prod')
+    expect(api.admin.updateInventory.mock.calls[0][1].group_name).toBe('Prod')
+  })
+
+  it('edit: grup boşsa kaydetmez ve gruba dair hata gösterir; etiket boşsa etikete dair hata', async () => {
+    render(<InventoryFormModal mode="edit" record={{ ...RECORD, group_name: '' }} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+    fireEvent.click(saveBtn())
+    expect(await screen.findByText(/grup seçimi zorunludur|a group is required/i)).toBeInTheDocument()
+    expect(api.admin.updateInventory).not.toHaveBeenCalled()
+  })
+
+  it('edit: etiket boşsa kaydetmez', async () => {
+    render(<InventoryFormModal mode="edit" record={{ ...RECORD, tags: '' }} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+    fireEvent.click(saveBtn())
+    expect((await screen.findAllByText(/en az bir etiket zorunludur|at least one tag is required/i)).length).toBeGreaterThanOrEqual(2)   // ipucu + hata bandı
+    expect(api.admin.updateInventory).not.toHaveBeenCalled()
   })
 
   it('edit: kaydet → updateInventory(record.id) çağrılır, addInventory ÇAĞRILMAZ', async () => {

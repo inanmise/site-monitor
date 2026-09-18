@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { matchesTeamAndGroup, monitorUrlState, NO_ASSIGNMENT } from '../utils/monitorFilters.js'
+import { matchesTeamAndGroup, monitorUrlState, NO_ASSIGNMENT, matchesTag, tagNamesOf, tagsOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
 
 /**
  * TAKIM/GRUP KAPSAMI — sekiz izleme sayfasında birebir kopyalanmış sekiz satırdı ve
@@ -91,5 +91,49 @@ describe('monitorUrlState', () => {
     expect(monitorUrlState({ ...base, pager: pager(2, 50) }).ps).toBe(50)
     expect(monitorUrlState({ ...base, pager: pager(1, 50) }).ps).toBeNull()   // 1. sayfa + varsayılan → yok
     expect(monitorUrlState({ ...base, pager: pager(1, 100) }).ps).toBe(100)   // boyut farklı → yaz
+  })
+})
+
+// ── Etiket filtresi + grup/etiket metin araması (2026-09-18): dokuz sayfada varsayılan ──
+describe('matchesTag / tagNamesOf / matchesGroupOrTagText', () => {
+  const T = (tags, group) => ({ tags, group_name: group })
+
+  it("tagsOf: virgülle ayrılmış dizeyi kırpar, boşları atar; null güvenli", () => {
+    expect(tagsOf(T('prod, kritik ,,  edge'))).toEqual(['prod', 'kritik', 'edge'])
+    expect(tagsOf(T(null))).toEqual([])
+    expect(tagsOf(null)).toEqual([])
+  })
+
+  it("'all' elemez; etiket TAM eşleşir (kısmi değil), harf-duyarsız", () => {
+    expect(matchesTag(T('prod,kritik'), 'all')).toBe(true)
+    expect(matchesTag(T('prod,kritik'), 'kritik')).toBe(true)
+    expect(matchesTag(T('prod,Kritik'), 'kRITIK'.toLowerCase())).toBe(true)   // harf-duyarsız (ASCII); Türkçe İ→i̇ ayrı konu
+    expect(matchesTag(T('prod,kritik'), 'krit')).toBe(false)   // kısmi eşleşme YOK
+    expect(matchesTag(T('prod,kritik'), 'edge')).toBe(false)
+  })
+
+  it('__none__ yalnız etiketsizleri geçirir (eski kayıtlar)', () => {
+    expect(matchesTag(T(''), NO_ASSIGNMENT)).toBe(true)
+    expect(matchesTag(T(null), NO_ASSIGNMENT)).toBe(true)
+    expect(matchesTag(T('prod'), NO_ASSIGNMENT)).toBe(false)
+  })
+
+  it('tagNamesOf: tekil, harf-duyarsız birleşik, alfabetik', () => {
+    expect(tagNamesOf([T('prod,Kritik'), T('kritik, edge'), T(null)])).toEqual(['edge', 'Kritik', 'prod'])
+    expect(tagNamesOf([])).toEqual([])
+  })
+
+  it('metin araması grup adında ve etiketlerde KISMİ eşleşir; boş arama eşleşmez', () => {
+    expect(matchesGroupOrTagText(T('prod,kritik', 'Ödeme Sistemleri'), 'krit')).toBe(true)
+    expect(matchesGroupOrTagText(T('prod', 'Ödeme Sistemleri'), 'ödeme')).toBe(true)
+    expect(matchesGroupOrTagText(T('prod', 'Ödeme'), 'xyz')).toBe(false)
+    expect(matchesGroupOrTagText(T('prod', 'Ödeme'), '   ')).toBe(false)
+  })
+
+  it('monitorUrlState: tag filtresi param üretir; all/eksik üretmez', () => {
+    const base = { teamFilter: 'all', groupFilter: 'all', search: '', statFilter: null, pager: { page: 1, pageSize: 50 } }
+    expect(monitorUrlState(base).tag).toBeNull()                       // tagFilter verilmedi → yok (eski çağıran)
+    expect(monitorUrlState({ ...base, tagFilter: 'all' }).tag).toBeNull()
+    expect(monitorUrlState({ ...base, tagFilter: 'prod' }).tag).toBe('prod')
   })
 })
