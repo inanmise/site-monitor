@@ -223,16 +223,15 @@ public class AdminController {
     @PostMapping("/inventory")
     public ResponseEntity<Map<String, Object>> addInventory(
             @Valid @RequestBody CertificateInventory item, HttpSession session, HttpServletRequest request) {
-        requireAdminOrTeamAdmin(session);
         requirePerm(session, "inventory.crud", "edit");
         item.setDomain(validateDomain(item.getDomain()));   // URL yapıştırılırsa host'a normalize edilir
         if (item.getTeamId() == null) {
             throw new IllegalArgumentException("A team must be selected for the certificate");
         }
         requireInventoryGroupAndTags(item);   // grup + etiket zorunlu (2026-09-18)
-        // The chosen team must be within the caller's manage scope (global admin: any;
-        // PO: only teams they lead; müdür: none).
-        requireTeamScopedAdmin(session, item.getTeamId());
+        // Seçilen takım çağıranın YAZMA kapsamında olmalı: global admin her takım; yönetici/PO yönettiği
+        // takımlar; USER ÜYESİ olduğu takım(lar) (2026-09-18: "Domain Ekle" her kullanıcı seviyesinde).
+        requireInventoryWriter(session, item.getTeamId());
         String now = now();
         item.setId(null);
         item.setCreatedAt(now);
@@ -2621,6 +2620,18 @@ public class AdminController {
                     actor(session), resourceTeamId);
             throw new SecurityException("Access denied: not allowed to modify this team's resource");
         }
+    }
+
+    /**
+     * Envanter kaydı AÇMA kapısı (2026-09-18): global admin → her takım; yönetim kapsamı (PO/müdür) →
+     * yönettiği takımlar; USER → yalnız ÜYESİ olduğu takım (memberTeamIds; eski oturumda birincil).
+     * Düzenleme/silme/aktarma bu kapıyı KULLANMAZ — requireTeamScopedAdmin'de kalır.
+     */
+    private void requireInventoryWriter(HttpSession session, Long teamId) {
+        if (canManageTeamResource(session, teamId)) return;
+        if (SessionScope.isMemberOf(session, teamId)) return;
+        log.warn("Inventory add outside membership by user={} team={}", actor(session), teamId);
+        throw new SecurityException("Access denied: you can only add certificates to your own team");
     }
 
     private void requireAdminOrTeamAdmin(HttpSession session) {

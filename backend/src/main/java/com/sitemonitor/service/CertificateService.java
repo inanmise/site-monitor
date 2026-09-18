@@ -301,10 +301,14 @@ public class CertificateService {
         Map<String, String> teamNameMap = new HashMap<>(activeInventory.size());
         Map<String, Integer> portMap = new HashMap<>(activeInventory.size());
         Map<String, Integer> intervalMap = new HashMap<>(activeInventory.size());   // alan başına sıklık → tablo "bayat" rozeti
+        Map<String, String> groupMap = new HashMap<>(activeInventory.size());       // grup/etiket → Genel Bakış filtresi (2026-09-18)
+        Map<String, String> tagsMap = new HashMap<>(activeInventory.size());
         for (CertificateInventory inv : activeInventory) {
             String d = inv.getDomain();
             if (d == null) continue;
             activeDomains.add(d);
+            if (inv.getGroupName() != null && !inv.getGroupName().isBlank()) groupMap.put(d, inv.getGroupName());
+            if (inv.getTags() != null && !inv.getTags().isBlank()) tagsMap.put(d, inv.getTags());
             if (inv.getTier() != null) tierMap.put(d, inv.getTier());
             if (inv.getPort() != null) portMap.put(d, inv.getPort());
             if (inv.getCheckIntervalHours() != null) intervalMap.put(d, inv.getCheckIntervalHours());
@@ -327,6 +331,8 @@ public class CertificateService {
                     dto.setPort(portMap.get(c.getDomain()));
                     dto.setTeamId(teamIdMap.get(c.getDomain()));
                     dto.setTeamName(teamNameMap.get(c.getDomain()));
+                    dto.setGroupName(groupMap.get(c.getDomain()));
+                    dto.setTags(tagsMap.get(c.getDomain()));
                     dto.setCheckIntervalHours(intervalMap.get(c.getDomain()));
                     dto.setAlertLevel(computeAlertLevel(dto, critDays, highDays));
                     return dto;

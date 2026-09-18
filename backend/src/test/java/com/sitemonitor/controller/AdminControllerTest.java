@@ -1976,6 +1976,31 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.data.team_id").value(2));
     }
 
+    // ── "Domain Ekle" her kullanıcı seviyesinde (2026-09-18): USER kendi takımına ekler, başkasına 403 ──
+    @Test
+    @DisplayName("POST /inventory as USER on OWN team → 200 (üyelik kapısı)")
+    void addInventory_asUser_ownTeam_returns200() throws Exception {
+        CertificateInventory saved = inventory("uye.example.com"); saved.setId(5L); saved.setTeamId(2L);
+        when(inventoryRepo.save(any())).thenReturn(saved);
+        mvc.perform(post("/api/admin/inventory")
+                        .session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"uye.example.com\",\"port\":443,\"team_id\":2}"))
+                .andExpect(status().isOk());
+        verify(inventoryRepo).save(any());
+    }
+
+    @Test
+    @DisplayName("POST /inventory as USER on ANOTHER team → 403 (üyesi değil)")
+    void addInventory_asUser_otherTeam_returns403() throws Exception {
+        mvc.perform(post("/api/admin/inventory")
+                        .session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"yabanci.example.com\",\"port\":443,\"team_id\":9}"))
+                .andExpect(status().isForbidden());
+        verify(inventoryRepo, never()).save(any());
+    }
+
     @Test
     @DisplayName("POST /api/admin/inventory as TEAM_ADMIN on a team it does NOT manage returns 403")
     void addInventory_asTeamAdmin_outOfScopeTeam_returns403() throws Exception {

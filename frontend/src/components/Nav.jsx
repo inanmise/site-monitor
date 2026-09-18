@@ -4,16 +4,18 @@ import { useT, useLanguage } from '../i18n/index.jsx'
 import { useTheme } from '../i18n/theme.jsx'
 import CommandPalette from './CommandPalette.jsx'
 import InboxBell from './InboxBell.jsx'
-import { LayoutDashboard, AlertTriangle, FileText, RefreshCw, ClipboardList, Settings, User, Globe, LogOut, Lock, Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen, History, Wifi, Network, Search, TrendingDown, Database, UserCheck, ShieldCheck, CalendarDays, ListChecks, Target, Radio, Siren, Wrench, LifeBuoy, Gauge, ScanSearch, FlaskConical, Bug, MonitorSmartphone, Compass } from 'lucide-react'
+import { LayoutDashboard, AlertTriangle, FileText, RefreshCw, ClipboardList, Settings, User, Globe, LogOut, Lock, Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen, History, Wifi, Network, Search, TrendingDown, Database, UserCheck, Users, ShieldCheck, CalendarDays, ListChecks, Target, Radio, Siren, Wrench, LifeBuoy, Gauge, ScanSearch, FlaskConical, Bug, MonitorSmartphone, Compass } from 'lucide-react'
 import BrandLogo from './BrandLogo.jsx'
 import IssueReportModal from './IssueReportModal.jsx'
 import { LastLoginPopoverLines } from './LastLoginInfo.jsx'
+import ModalShell from './ui/ModalShell.jsx'
+import TeamBadge from './ui/TeamBadge.jsx'
 import { useBranding } from '../contexts/BrandingProvider.jsx'
 import VersionChip from './VersionChip.jsx'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 import { useTour } from './tour/TourProvider.jsx'
 
-export default function Nav({ activeTab, onTabChange, username, teamName, systemRole, globalAdmin, onLogout, onChangePassword, globalStatus = 'ok', loginInfo = null, weeklyReportsVisible = false }) {
+export default function Nav({ activeTab, onTabChange, username, teamName, myTeams = [], systemRole, globalAdmin, onLogout, onChangePassword, globalStatus = 'ok', loginInfo = null, weeklyReportsVisible = false }) {
   const t = useT()
   const { toggle } = useLanguage()
   const { theme, toggle: toggleTheme } = useTheme()
@@ -136,6 +138,10 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
   })
 
   const [userMenuOpen, setUserMenuOpen] = useState(false)
+  // Çok takımlı kullanıcı (2026-09-18): kutuda tek (birincil) takım yerine "N takım" etiketi; popover'daki
+  // "Dahil olduğum takımlar" tüm üyelikleri listeler (TeamBadge → üye modali).
+  const multiTeam = Array.isArray(myTeams) && myTeams.length > 1
+  const [teamsOpen, setTeamsOpen] = useState(false)
   const [userMenuPos, setUserMenuPos] = useState(null)
   const [photoErr, setPhotoErr] = useState(false)
   const userTriggerRef = useRef(null)
@@ -302,7 +308,9 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
             {open && (
               <div className="sb-user-info">
                 <span className="sb-user-name">{username}</span>
-                {teamName && <span className="sb-team-name">{teamName}</span>}
+                {multiTeam
+                  ? <span className="sb-team-name sb-team-multi" title={myTeams.map(tm => tm.name).join(', ')}><Users size={11} /> {t('nav.teamsCount', myTeams.length)}</span>
+                  : teamName && <span className="sb-team-name">{teamName}</span>}
                 {isAdmin && <span className="sb-role-badge">ADMIN</span>}
                 {isTeamAdmin && <span className="sb-role-badge">TEAM ADMIN</span>}
               </div>
@@ -321,6 +329,15 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
             <LastLoginPopoverLines info={loginInfo} />
             {/* Popover son girisi gosteriyor; dogal devami "peki tum gecmis?" —
                 kullaniciyi Etkinliklerim'deki Cihaz Gecmisi gorunumune goturur. */}
+            {multiTeam && (
+              <button
+                className="sb-user-popover-item"
+                onClick={() => { setUserMenuOpen(false); setTeamsOpen(true) }}
+              >
+                <Users size={14} />
+                <span>{t('nav.myTeams', myTeams.length)}</span>
+              </button>
+            )}
             <button
               className="sb-user-popover-item"
               onClick={() => { setUserMenuOpen(false); onTabChange('myactivity') }}
@@ -368,6 +385,17 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
           {open && <span>{t('nav.reportIssue')}</span>}
         </button>
         <IssueReportModal open={issueOpen} onClose={() => setIssueOpen(false)} />
+        <ModalShell open={teamsOpen} onClose={() => setTeamsOpen(false)} title={t('nav.myTeamsTitle')} icon={Users} size="sm">
+          <p className="field-hint" style={{ marginTop: 0 }}>{t('nav.myTeamsHint')}</p>
+          <ul className="sb-teams-list">
+            {myTeams.map(tm => (
+              <li key={tm.id} className="sb-teams-item">
+                <TeamBadge teamId={tm.id} teamName={tm.name} size={14} />
+                {teamName && tm.name === teamName && <span className="sb-role-badge">{t('nav.primaryTeam')}</span>}
+              </li>
+            ))}
+          </ul>
+        </ModalShell>
         <button
           className="sb-logout"
           data-tour="nav-theme"

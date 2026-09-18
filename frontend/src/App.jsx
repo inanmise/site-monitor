@@ -8,6 +8,7 @@ import { useToast } from './components/ui/Toast.jsx'
 import { useT } from './i18n/index.jsx'
 import { usePagination } from './hooks/usePagination.js'
 import { teamsFromMe } from './hooks/useMonitorTeamPick.js'
+import { matchesTag, tagNamesOf, matchesGroupOrTagText } from './utils/monitorFilters.js'
 import PaginationBar from './components/ui/PaginationBar.jsx'
 import { useUrlQuerySync, readUrlParam, readUrlInt, PAGE_STATE_PARAMS, PAGE_STATE_PREFIXES } from './hooks/useUrlQuerySync.js'
 import SearchableSelect from './components/ui/SearchableSelect.jsx'
@@ -248,6 +249,9 @@ export default function App() {
   // manage-scope listesi yok (/me yalnız üyelik döndürür); yönetilebilir bir takımı yanlışlıkla
   // gizlemektense backend'in 403'üne güveniyoruz (InventoryManager da böyle yapıyor).
   const canManageInventory = systemRole === 'ADMIN' || systemRole === 'TEAM_ADMIN'
+  // "Domain Ekle" her kullanıcı seviyesinde (2026-09-18): USER varsayılanı inventory.crud/edit AÇIK; sunucu üyelik doğrular.
+  // usePermissions App gövdesinde çalışmaz (provider aşağıda; bkz. cardActions) → rol tabanlı; asıl kapı uçta.
+  const canAddInventory = canManageInventory || systemRole === 'USER'
   // Backend'deki SessionScope.isGlobalViewer'ın birebir karşılığı: kapsamsız (global) admin ya da
   // AUDIT. Kapsamlı müdür-admin buraya GİRMEZ — o da takım süzgeciyle çalışır.
   const globalViewer = globalAdmin || systemRole === 'AUDIT'
@@ -265,6 +269,9 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState('all')
   const [expiryFilter, setExpiryFilter] = useState('all')
   const [teamFilter, setTeamFilter] = useState('all')
+  // Genel Bakış grup/etiket filtresi (2026-09-18, kullanıcı isteği): izleme sayfalarıyla aynı sözleşme.
+  const [groupFilter, setGroupFilter] = useState('all')
+  const [tagFilter, setTagFilter] = useState('all')
   const [activityRefreshKey, setActivityRefreshKey] = useState(0)
   const [silentAlertDomains, setSilentAlertDomains] = useState(new Set())
   const [mailFailureDomains, setMailFailureDomains] = useState(new Set())
@@ -846,6 +853,32 @@ export default function App() {
     return opts
   }, [certs, t])
   const hasTeamOptions = teamOptions.some((o) => o.value !== 'all' && o.value !== '__none__')
+  // Grup / etiket seçenekleri kart listesinden türer (envanter group_name/tags); "__none__" atanmamışları bulur.
+  const groupOptions = useMemo(() => {
+    const names = new Set(); let hasNone = false
+    for (const c of certs) { if (c.group_name) names.add(c.group_name); else hasNone = true }
+    const opts = [{ value: 'all', label: t('app.allGroups') }]
+    ;[...names].sort((a, b) => a.localeCompare(b)).forEach((n) => opts.push({ value: n, label: n }))
+    if (hasNone) opts.push({ value: '__none__', label: t('app.noGroup') })
+    return opts
+  }, [certs, t])
+  const hasGroupOptions = groupOptions.length > 1
+  const tagOptions = useMemo(() => {
+    const names = tagNamesOf(certs)
+    const opts = [{ value: 'all', label: t('mon.allTags') }]
+    names.forEach((n) => opts.push({ value: n, label: n }))
+    if (certs.some((c) => !(c.tags || '').trim())) opts.push({ value: '__none__', label: t('mon.noTags') })
+    return opts
+  }, [certs, t])
+  const hasTagOptions = tagOptions.length > 1
+  // "Filtreleri temizle" (2026-09-18): herhangi bir daraltma varken görünür; hepsini varsayılana döndürür.
+  const dashFiltersActive = !!search || sortOrder !== 'default' || statusFilter !== 'all' || expiryFilter !== 'all'
+    || teamFilter !== 'all' || groupFilter !== 'all' || tagFilter !== 'all' || !!statsFilter
+  const clearDashFilters = () => {
+    setSearch(''); setSortOrder('default'); setStatusFilter('all'); setExpiryFilter('all')
+    setTeamFilter('all'); setGroupFilter('all'); setTagFilter('all'); setStatsFilter(null)
+    dashPager.setPage(1)
+  }
 
   const filtered = useMemo(() => certs.filter((c) => {
     if (statFn   && !statFn(c))   return false
@@ -855,12 +888,18 @@ export default function App() {
       if (teamFilter === '__none__') { if (c.team_name) return false }
       else if (c.team_name !== teamFilter) return false
     }
+    if (groupFilter !== 'all') {
+      if (groupFilter === '__none__') { if (c.group_name) return false }
+      else if (c.group_name !== groupFilter) return false
+    }
+    if (!matchesTag(c, tagFilter)) return false
     if (!search)                   return true
+    if (matchesGroupOrTagText(c, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
     const s = search.toLowerCase()
     return c.domain?.toLowerCase().includes(s) || c.issuer?.toLowerCase().includes(s) || c.subject?.toLowerCase().includes(s)
   // Bağımlılıklar FİLTRE ANAHTARLARI: statusFn/expiryFn `?? (() => true)` ile her render'da YENİ
   // fonksiyon üretiyor; onları dep olarak vermek memo'yu tümüyle boşa çıkarırdı.
-  }), [certs, statsFilter, statusFilter, expiryFilter, teamFilter, search])
+  }), [certs, statsFilter, statusFilter, expiryFilter, teamFilter, groupFilter, tagFilter, search])
 
   function defaultPriority(c) {
     const al = c.alert_level
@@ -948,7 +987,7 @@ export default function App() {
         </div>
       )}
 
-      <Nav activeTab={tab} onTabChange={handleTabChange} username={user} teamName={teamName} systemRole={systemRole}
+      <Nav activeTab={tab} onTabChange={handleTabChange} username={user} teamName={teamName} myTeams={myTeams} systemRole={systemRole}
         globalAdmin={globalAdmin} loginInfo={loginInfo} weeklyReportsVisible={weeklyReportsVisible}
         onLogout={handleLogout} onChangePassword={() => setSelfPwdModalOpen(true)} />
 
@@ -1040,6 +1079,25 @@ export default function App() {
             {tab === 'dashboard' && (
               <div className="tab-content active">
                 <div className="sort-controls sort-bar" data-tour="dash-filters">
+                  {/* Arama en başta (2026-09-18): grup/etiket kutuları eklenince sağa yaslı arama satır sonuna
+                      "kaymış" görünüyordu; ilk kontrol olunca sarma doğal kalır. */}
+                  <input
+                    className="sort-bar-search"
+                    type="text"
+                    placeholder={t('app.searchPlaceholder')}
+                    value={search}
+                    onChange={(e) => { setSearch(e.target.value); dashPager.setPage(1) }}
+                  />
+                  {search && (
+                    <button
+                      type="button"
+                      className="sort-bar-search-clear"
+                      onClick={() => { setSearch(''); dashPager.setPage(1) }}
+                      title={t('app.clearFilter')}
+                    >
+                      ✕
+                    </button>
+                  )}
                   <label>{t('app.sortLabel')}</label>
                   <SearchableSelect
                     value={sortOrder}
@@ -1074,33 +1132,41 @@ export default function App() {
                     ]}
                   />
                   {hasTeamOptions && (
-                    <>
+                    <span className="sort-bar-field">
                       <label>{t('app.teamLabel')}</label>
                       <SearchableSelect
                         value={teamFilter}
                         onChange={v => { setTeamFilter(v); dashPager.setPage(1) }}
                         options={teamOptions}
                       />
-                    </>
+                    </span>
                   )}
-                  <input
-                    className="sort-bar-search"
-                    type="text"
-                    placeholder={t('app.searchPlaceholder')}
-                    value={search}
-                    onChange={(e) => { setSearch(e.target.value); dashPager.setPage(1) }}
-                  />
-                  {search && (
-                    <button
-                      type="button"
-                      className="sort-bar-search-clear"
-                      onClick={() => { setSearch(''); dashPager.setPage(1) }}
-                      title={t('app.clearFilter')}
-                    >
-                      ✕
+                  {hasGroupOptions && (
+                    <span className="sort-bar-field">
+                      <label>{t('app.groupLabel')}</label>
+                      <SearchableSelect
+                        value={groupFilter}
+                        onChange={v => { setGroupFilter(v); dashPager.setPage(1) }}
+                        options={groupOptions} searchThreshold={2}
+                      />
+                    </span>
+                  )}
+                  {hasTagOptions && (
+                    <span className="sort-bar-field">
+                      <label>{t('app.tagLabel')}</label>
+                      <SearchableSelect
+                        value={tagFilter}
+                        onChange={v => { setTagFilter(v); dashPager.setPage(1) }}
+                        options={tagOptions} searchThreshold={2}
+                      />
+                    </span>
+                  )}
+                  {dashFiltersActive && (
+                    <button type="button" className="btn btn-secondary btn-sm-p" onClick={clearDashFilters}>
+                      {t('app.clearFilters')}
                     </button>
                   )}
-                  {(systemRole === 'ADMIN' || systemRole === 'TEAM_ADMIN') && (
+                  {canAddInventory && (
                     <button type="button" className="btn btn-success sort-bar-add-domain"
                             onClick={() => { setPendingAddDomain(true); handleTabChange('domains') }}>
                       {t('inv.addBtn')}
@@ -1125,6 +1191,8 @@ export default function App() {
                           setStatsFilter(null)
                           setStatusFilter('all')
                           setExpiryFilter('all')
+                          setGroupFilter('all')
+                          setTagFilter('all')
                           setSearch('')
                           setSortOrder('default')
                           dashPager.setPage(1)
@@ -1362,7 +1430,7 @@ export default function App() {
 
             {tab === 'domains' && (
               <div className="tab-content active">
-                <InventoryManager onInventoryChange={loadData} systemRole={systemRole}
+                <InventoryManager onInventoryChange={loadData} systemRole={systemRole} teams={myTeams}   // USER: form takım kutusu üyesi olduğu takımlar (2026-09-18)
                   openAddSignal={pendingAddDomain} onAddConsumed={() => setPendingAddDomain(false)} />
               </div>
             )}

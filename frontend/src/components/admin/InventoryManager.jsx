@@ -9,6 +9,7 @@ import InventoryFormModal from '../inventory/InventoryFormModal.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useT } from '../../i18n/index.jsx'
+import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import { usePagination } from '../../hooks/usePagination.js'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../../hooks/useUrlQuerySync.js'
@@ -75,6 +76,10 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const isAdmin = systemRole ? systemRole === 'ADMIN' : isAdminProp
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canManage = isAdmin || isTeamAdmin
+  // "Domain Ekle" her kullanıcı seviyesinde (2026-09-18): yetki inventory.crud/edit'ten (USER varsayılanı açık);
+  // düzenleme/silme/içe aktarma/hijyen bandı canManage'de kalır. Sunucu üyelik doğrular.
+  const perms = usePermissions()
+  const canAdd = canManage || perms.canEdit('inventory.crud')
   const [items, setItems]             = useState([])
   const [teams, setTeams]             = useState(teamsProp)
   const [formModal, setFormModal]     = useState(null)   // { mode: 'add'|'edit'|'duplicate', record }
@@ -537,7 +542,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
             )}
           </div>
           {canManage && <button className="btn btn-secondary" onClick={() => setImportOpen(true)}><Upload size={14} /> {t('inv.import')}</button>}
-          {canManage && <button className="btn btn-success" onClick={openAdd}>{t('inv.addBtn')}</button>}
+          {canAdd && <button className="btn btn-success" onClick={openAdd}>{t('inv.addBtn')}</button>}
         </div>
       </div>
 

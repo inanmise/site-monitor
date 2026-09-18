@@ -758,3 +758,25 @@ GEÇMEZ (mevcut içe aktarma sözleşmesi korunur); envanter-türevi DNS/Port sa
 (kaynak envanter kaydıdır).
 → **REGRESYON YOK**.
 
+## Ek — otuz beşinci tur (2026-09-18, sürüm öncesi — her rolde filtre, Domain Ekle her seviyede, Genel Bakış grup/etiket, çok takımlı kullanıcı kutusu, `v20.69.0..HEAD`)
+
+Kapsam: backend (PermissionCatalog USER `inventory.crud`, AdminController `requireInventoryWriter`,
+CertificateDto/Service group_name+tags) ve frontend (9 izleme sayfası filtre kaynağı, App Genel Bakış
+çubuğu, InventoryManager, Nav). İmza süpürmesi temiz.
+
+**Denetim odakları:**
+- Filtre seçenekleri rol fark etmeksizin GÖRÜNEN listeden türer; istemcinin ikinci daraltması müdür/izleyici
+  gibi çok takım gören rollerde başka takımın grubunu seçilemez kılıyordu. Sunucu kapsamı değişmedi.
+- "Domain Ekle" USER'a açıldı: yetki `inventory.crud/edit` (mevcut kurulum için politika yükseltmesi, insan
+  eli değmiş satıra dokunmaz); uç `requireInventoryWriter` = admin / yönetim kapsamı / ÜYELİK. Test: USER kendi
+  takımına 200, başka takıma 403. Düzenleme/silme/aktarma/içe aktarma yönetici kapılarında KALDI (bilinçli).
+- Genel Bakış: `/api/certificates` group_name+tags döner (DTO testi: envanterde boşsa null); grup/etiket
+  kutuları, "Etiketsiz/Grupsuz" seçenekleri, metin araması grup/etikette de eşleşir, "Filtreleri temizle"
+  (herhangi bir daraltmada görünür, istatistik kartı seçimini de sıfırlar). Tarayıcıda: etiket "erdi" → 1 kayıt,
+  temizle → düğme kayboldu, liste geri geldi. Yerleşim: arama en başa alındı (sağa yaslı arama satır sonuna
+  düşüyordu), etiket+kutu çifti `.sort-bar-field` ile birlikte sarıyor.
+- Kenar çubuğu kutusu: çok takımlı kullanıcıda tek (birincil) takım yerine "N takım" + popover'da "Dahil
+  olduğum takımlar" → modal (TeamBadge → üye modali; birincil işaretli). Tek takımlı görünüm değişmedi (Nav testi).
+- Kapılar: backend `clean verify` 3813 test; frontend lint / 2098 test / kapsam tabanı / build yeşil.
+→ **REGRESYON YOK**.
+

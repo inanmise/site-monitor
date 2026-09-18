@@ -125,3 +125,31 @@ describe('Nav', () => {
     expect(screen.queryByRole('button', { name: /Settings/ })).toBeNull()
   })
 })
+
+// ── Çok takımlı kullanıcı kutusu (2026-09-18): tek takım yerine "N takım" + popup listesi ──
+describe('Nav — çok takımlı kullanıcı', () => {
+  const TEAMS = [{ id: 5, name: 'Takım A' }, { id: 9, name: 'Takım B' }]
+
+  it('tek takım: takım adı aynen yazılır, "N takım" etiketi ve popup girişi YOK', () => {
+    const { container } = render(<Nav {...DEFAULT_PROPS} teamName="Takım A" myTeams={[{ id: 5, name: 'Takım A' }]} />)
+    expect(container.querySelector('.sb-team-name').textContent).toBe('Takım A')
+    expect(container.querySelector('.sb-team-multi')).toBeNull()
+    fireEvent.click(container.querySelector('.sb-user-trigger'))
+    expect(screen.queryByText(/My teams|Dahil olduğum takımlar/i)).toBeNull()
+  })
+
+  it('2+ takım: kutuda "2 teams" etiketi; popup girişi tüm takımları listeler ve birincili işaretler', () => {
+    const { container } = render(<Nav {...DEFAULT_PROPS} teamName="Takım A" myTeams={TEAMS} />)
+    const label = container.querySelector('.sb-team-multi')
+    expect(label.textContent).toMatch(/2 (teams|takım)/)
+    expect(label.title).toBe('Takım A, Takım B')
+    fireEvent.click(container.querySelector('.sb-user-trigger'))
+    fireEvent.click(screen.getByText(/My teams \(2\)|Dahil olduğum takımlar \(2\)/i))
+    const items = document.querySelectorAll('.sb-teams-item')
+    expect(items).toHaveLength(2)
+    expect(items[0].textContent).toContain('Takım A')
+    expect(items[0].textContent).toMatch(/PRIMARY|BİRİNCİL/)
+    expect(items[1].textContent).toContain('Takım B')
+    expect(items[1].textContent).not.toMatch(/PRIMARY|BİRİNCİL/)
+  })
+})
