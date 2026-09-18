@@ -416,7 +416,10 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   const hasTeamOptions = teamOptions.some(o => o.value !== 'all' && o.value !== '__none__')
 
   // Grup seçenekleri — yüklü monitörlerden türetilir (takım-kapsamlı: admin hepsini, diğerleri kendi takımı) — ping/keyword deseni.
-  const groupMonitors = isAdmin ? monitors : monitors.filter(isOwnTeam)   // ikincil takımlar da dâhil (2026-09-18)
+  // Filtre seçenekleri (grup/etiket) rol fark etmeksizin GÖRÜNEN listenin tamamından türer (2026-09-18,
+  // kullanıcı isteği: filtreleme her yetkide). Sunucu zaten kapsamı uyguluyor; burada bir daha daraltmak
+  // müdür/izleyici gibi çok takım gören rollerin başka takımın grubunu seçememesine yol açıyordu.
+  const groupMonitors = monitors
   const groupNames = [...new Set(groupMonitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b))
   const hasGroupOptions = groupNames.length > 0
   // Form içi grup dropdown'ı takım+tür kapsamlı endpoint'ten (liste filtresi değil): admin başka takımın grubunu görmez.

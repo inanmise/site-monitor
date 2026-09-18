@@ -136,6 +136,23 @@ describe('HttpMonitorPage', () => {
     expect(screen.queryByText('https://a.example.com/')).toBeNull()
   })
 
+  it('USER rolünde de grup/etiket filtreleri GÖRÜNEN listenin tamamından türer (başka takımın grubu/etiketi seçilebilir)', async () => {
+    api.monitoring.getHttpMonitors.mockResolvedValue({ success: true, data: [
+      { ...monitor, id: 1, url: 'https://own.example.com/', team_id: 5, team_name: 'SY-A', group_name: 'Kendi Grubu', tags: 'kendi' },
+      { ...monitor, id: 2, url: 'https://other.example.com/', team_id: 9, team_name: 'SY-B', group_name: 'Öteki Grup', tags: 'öteki' },
+    ] })
+    render(<HttpMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await screen.findByText('https://own.example.com/')
+    const toolbar = document.querySelector('.upt-toolbar')
+    fireEvent.mouseDown([...toolbar.querySelectorAll('.ss-trigger')].find((b) => /tüm gruplar|all groups/i.test(b.textContent)))
+    expect([...toolbar.querySelectorAll('.ss-option')].map((o) => o.textContent.trim())).toEqual(expect.arrayContaining(['Kendi Grubu', 'Öteki Grup']))
+    fireEvent.mouseDown([...toolbar.querySelectorAll('.ss-option')].find((o) => o.textContent.trim() === 'Öteki Grup'))
+    await waitFor(() => expect(screen.queryByText('https://own.example.com/')).toBeNull())
+    expect(screen.getByText('https://other.example.com/')).toBeInTheDocument()
+    fireEvent.mouseDown([...toolbar.querySelectorAll('.ss-trigger')].find((b) => /tüm etiketler|all tags/i.test(b.textContent)))
+    expect([...toolbar.querySelectorAll('.ss-option')].map((o) => o.textContent.trim())).toEqual(expect.arrayContaining(['kendi', 'öteki']))
+  })
+
   // ── Grup + etiket zorunlu (2026-09-18): dokuz sayfa aynı kapıyı taşır; Http temsilci ──
   it('yeni izleme: grup seçilmeden Kaydet → grup hatası, etiket girilmeden → etiket hatası; create ÇAĞRILMAZ', async () => {
     render(<HttpMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)

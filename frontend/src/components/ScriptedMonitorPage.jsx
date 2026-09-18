@@ -416,9 +416,10 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
     })
   }, [monitors, savedSource, isOwnTeam])
   // Gruplar takıma özgü: kullanıcı yalnız kendi takımının gruplarını görür/seçer (admin tümünü).
-  const groupMonitors = useMemo(
-    () => (isAdmin ? monitors : monitors.filter(isOwnTeam)),   // ikincil takımlar da dâhil (2026-09-18)
-    [monitors, isAdmin, isOwnTeam])
+  // Filtre seçenekleri (grup/etiket) rol fark etmeksizin GÖRÜNEN listenin tamamından türer (2026-09-18,
+  // kullanıcı isteği: filtreleme her yetkide). Sunucu zaten kapsamı uyguluyor; burada bir daha daraltmak
+  // müdür/izleyici gibi çok takım gören rollerin başka takımın grubunu seçememesine yol açıyordu.
+  const groupMonitors = monitors
   const groupNames = useMemo(
     () => [...new Set(groupMonitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
     [groupMonitors])
