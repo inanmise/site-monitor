@@ -34,6 +34,10 @@ public class DomainMonitor {
     @Column(name = "group_name")
     private String groupName;
 
+    /** Serbest etiketler — virgülle ayrılmış (2026-09-18: her izlemede zorunlu; Http/Port ile aynı biçim). */
+    @Column(columnDefinition = "TEXT")
+    private String tags;
+
     /** Sorumlu takım — alarm yönlendirmesi. */
     @Column(name = "team_id")
     private Long teamId;

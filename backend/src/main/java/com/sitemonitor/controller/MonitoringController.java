@@ -115,7 +115,7 @@ public class MonitoringController {
     /** İzleme güncellemelerinde before/after diff için snapshot alınacak alanlar (tür-üstü superset; olmayan getter → null, gürültü yaratmaz). */
     private static final String[] MON_FIELDS = {
         "name", "host", "port", "url", "domain", "recordType", "keyword", "expectedValue", "expect",
-        "expectedStatus", "method", "matchOperator", "matchCount", "active", "teamId", "groupName",
+        "expectedStatus", "method", "matchOperator", "matchCount", "active", "teamId", "groupName", "tags",
         "intervalSeconds", "timeoutMs", "warningDays", "criticalDays", "protocol", "verifySsl", "followRedirects",
         "mode", "crawlDepth", "crawlMaxPages", "excludePatterns", "slowResourceMs", "alertThirdParty", "alertMixedContent", "alertTimeout", "resourceConcurrency",
         "notificationGroupId",
@@ -648,7 +648,10 @@ public class MonitoringController {
         if (SessionScope.isGlobalAdmin(session)) return true;
         if (teamId == null) return false;
         if (SessionScope.canManage(session, teamId)) return true;   // TEAM_ADMIN yönetim kapsamı
-        return teamId.equals(sessionTeamId(session));               // USER kendi takımı
+        // USER: ÜYESİ olduğu HER takım (2026-09-18) — eskiden yalnız birincil takımdı; çok takımlı
+        // kullanıcı ikincil takımına izleme ekleyemiyor, seçtiği takım sessizce birincile düşüyordu.
+        // memberTeamIds eski oturumda birincile geri düşer (rolling deploy), yani daralma yok.
+        return SessionScope.isMemberOf(session, teamId) || teamId.equals(sessionTeamId(session));
     }
 
     /**
@@ -698,6 +701,9 @@ public class MonitoringController {
         Long requested = body.get("teamId") instanceof Number n ? n.longValue() : null;
         if (SessionScope.isGlobalAdmin(session)) return requested;
         if (requested != null && canOperateTeam(session, requested)) return requested;
+        // Açıkça istenen ama iş görülemeyen takım: SESSİZCE birincile düşmek yerine reddet (2026-09-18).
+        // Kullanıcı "X takımına ekledim" sanıp Y'de bulurdu; eski istemciler teamId göndermez → etkilenmez.
+        if (requested != null) throw new SecurityException("Bu takıma izleme ekleme yetkiniz yok");
         return sessionTeamId(session);
     }
 
@@ -727,6 +733,20 @@ public class MonitoringController {
 
     private ResponseEntity<Map<String, Object>> forbidden(String msg) {
         return ResponseEntity.status(403).body(Map.of("success", false, "error", msg));
+    }
+
+    /**
+     * Grup + etiket zorunlu (2026-09-18, ürün kararı): "grup bilgisi olmayan izleme olmamalı, etiketi
+     * olmayan izleme olmamalı". Dokuz tür + envanter aynı kuralı uygular. Oluşturmada alan YOK ya da
+     * boş → 400; güncellemede yalnız GÖNDERİLİP boş bırakılmışsa 400 (kısmi PUT'lar — ör. excludePatterns —
+     * anahtarı hiç taşımaz, onlara dokunulmaz). Sunucu tarafı kapı: form doğrulaması atlanabilir.
+     */
+    private ResponseEntity<Map<String, Object>> requireGroupAndTags(Map<String, Object> body, boolean create) {
+        boolean groupMissing = create ? blank(body.get("groupName")) : (body.containsKey("groupName") && blank(body.get("groupName")));
+        if (groupMissing) return badRequest("Grup seçimi zorunludur; izleme kaydedilemez.");
+        boolean tagsMissing = create ? blank(body.get("tags")) : (body.containsKey("tags") && blank(body.get("tags")));
+        if (tagsMissing) return badRequest("En az bir etiket zorunludur; izleme kaydedilemez.");
+        return null;
     }
 
     private static boolean blank(Object o) {
@@ -1270,6 +1290,7 @@ public class MonitoringController {
     @PostMapping("/port")
     public ResponseEntity<Map<String, Object>> createPort(@RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        { var _gt = requireGroupAndTags(body, true); if (_gt != null) return _gt; }   // grup + etiket zorunlu (2026-09-18)
         if (blank(body.get("host"))) return badRequest("host zorunlu");
         if (!(body.get("port") instanceof Number)) return badRequest("port zorunlu");
         String host = body.get("host").toString().trim().toLowerCase(java.util.Locale.ROOT);   // envanterle aynı anahtar (küçük harf)
@@ -1325,6 +1346,7 @@ public class MonitoringController {
     @PutMapping("/port/{id}")
     public ResponseEntity<Map<String, Object>> updatePort(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        { var _gt = requireGroupAndTags(body, false); if (_gt != null) return _gt; }   // gönderilip boş bırakılmışsa 400 (2026-09-18)
         java.util.Map<String, Object> _before = portMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return portMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, effectiveTeam(m.getHost(), m.getStandalone(), m.getTeamId())))
@@ -1674,6 +1696,7 @@ public class MonitoringController {
     @PostMapping("/dns")
     public ResponseEntity<Map<String, Object>> createDns(@RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        { var _gt = requireGroupAndTags(body, true); if (_gt != null) return _gt; }   // grup + etiket zorunlu (2026-09-18)
         if (blank(body.get("domain")))     return badRequest("domain zorunludur");
         if (blank(body.get("recordType"))) return badRequest("recordType zorunludur");
         String domain = body.get("domain").toString().trim().toLowerCase(java.util.Locale.ROOT);   // envanterle aynı anahtar
@@ -1712,6 +1735,7 @@ public class MonitoringController {
         if (body.get("dnsChangeAlertEnabled") != null)                              // DNS_CHANGED aç/kapa (null=açık)
             m.setDnsChangeAlertEnabled(Boolean.TRUE.equals(body.get("dnsChangeAlertEnabled")));
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));   // mantıksal grup (serbest-form)
+        if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
         m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         // Kanal bayraklari burada HIC okunmuyordu: "Kopyala" akisinda e-posta/webhook KAPALI bir
@@ -1743,6 +1767,7 @@ public class MonitoringController {
     @PutMapping("/dns/{id}")
     public ResponseEntity<Map<String, Object>> updateDns(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        { var _gt = requireGroupAndTags(body, false); if (_gt != null) return _gt; }   // gönderilip boş bırakılmışsa 400 (2026-09-18)
         java.util.Map<String, Object> _before = dnsMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return dnsMonitorRepo.findById(id).map(m -> {
             // Kapı, sekiz kardeş türle AYNI: izlemenin takımı üzerinde yetki (bkz. updatePort).
@@ -1797,6 +1822,7 @@ public class MonitoringController {
             if (body.containsKey("dnsChangeAlertEnabled"))   // DNS_CHANGED aç/kapa (null=açık)
                 m.setDnsChangeAlertEnabled(Boolean.TRUE.equals(body.get("dnsChangeAlertEnabled")));
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
+            if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             boolean detached = detachIfIdentityChanged(m, _prevDomain);
             m.setUpdatedAt(ISO.format(Instant.now()));
@@ -1986,6 +2012,7 @@ public class MonitoringController {
         item.put("propagation_check", Boolean.TRUE.equals(m.getPropagationCheck()));
         item.put("dns_change_alert_enabled", !Boolean.FALSE.equals(m.getDnsChangeAlertEnabled()));   // etkin değer (null=açık)
         item.put("group_name",      m.getGroupName());
+        item.put("tags",            m.getTags());
         // Standalone monitör takımını teamId'den çöz (envantere bağlı değil); envanter-türevi domain→envanter eşlemesinden.
         item.put("team_name",       standalone && m.getTeamId() != null
                 ? teamById.get(m.getTeamId()) : teamMap.get(m.getDomain()));
@@ -2045,6 +2072,7 @@ public class MonitoringController {
     @PostMapping("/keyword")
     public ResponseEntity<Map<String, Object>> createKeyword(@RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        { var _gt = requireGroupAndTags(body, true); if (_gt != null) return _gt; }   // grup + etiket zorunlu (2026-09-18)
         if (blank(body.get("url")) || blank(body.get("keyword"))) return badRequest("url ve keyword zorunlu");
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
@@ -2092,6 +2120,7 @@ public class MonitoringController {
     @PutMapping("/keyword/{id}")
     public ResponseEntity<Map<String, Object>> updateKeyword(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        { var _gt = requireGroupAndTags(body, false); if (_gt != null) return _gt; }   // gönderilip boş bırakılmışsa 400 (2026-09-18)
         java.util.Map<String, Object> _before = keywordMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return keywordMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
@@ -2575,6 +2604,7 @@ public class MonitoringController {
     @PostMapping("/http")
     public ResponseEntity<Map<String, Object>> createHttp(@RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        { var _gt = requireGroupAndTags(body, true); if (_gt != null) return _gt; }   // grup + etiket zorunlu (2026-09-18)
         if (blank(body.get("url"))) return badRequest("url zorunlu");
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
@@ -2618,6 +2648,7 @@ public class MonitoringController {
     @PutMapping("/http/{id}")
     public ResponseEntity<Map<String, Object>> updateHttp(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        { var _gt = requireGroupAndTags(body, false); if (_gt != null) return _gt; }   // gönderilip boş bırakılmışsa 400 (2026-09-18)
         java.util.Map<String, Object> _before = httpMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return httpMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
@@ -2870,6 +2901,7 @@ public class MonitoringController {
     @PostMapping("/page")
     public ResponseEntity<Map<String, Object>> createPage(@RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        { var _gt = requireGroupAndTags(body, true); if (_gt != null) return _gt; }   // grup + etiket zorunlu (2026-09-18)
         if (blank(body.get("url"))) return badRequest("url zorunlu");
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
@@ -2909,6 +2941,7 @@ public class MonitoringController {
     @PutMapping("/page/{id}")
     public ResponseEntity<Map<String, Object>> updatePage(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        { var _gt = requireGroupAndTags(body, false); if (_gt != null) return _gt; }   // gönderilip boş bırakılmışsa 400 (2026-09-18)
         java.util.Map<String, Object> _before = pageMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return pageMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
@@ -3127,6 +3160,7 @@ public class MonitoringController {
     @PostMapping("/pagespeed")
     public ResponseEntity<Map<String, Object>> createPageSpeed(@RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        { var _gt = requireGroupAndTags(body, true); if (_gt != null) return _gt; }   // grup + etiket zorunlu (2026-09-18)
         if (blank(body.get("url"))) return badRequest("url zorunlu");
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
@@ -3158,6 +3192,7 @@ public class MonitoringController {
     @PutMapping("/pagespeed/{id}")
     public ResponseEntity<Map<String, Object>> updatePageSpeed(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        { var _gt = requireGroupAndTags(body, false); if (_gt != null) return _gt; }   // gönderilip boş bırakılmışsa 400 (2026-09-18)
         Map<String, Object> _before = pageSpeedMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, PAGESPEED_FIELDS)).orElse(null);
         return pageSpeedMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
@@ -3684,6 +3719,7 @@ public class MonitoringController {
     @PostMapping("/scripted")
     public ResponseEntity<Map<String, Object>> createScripted(@RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.scripted", "edit");   // ADMIN + TEAM_ADMIN (PO) — k6 = keyfi kod
+        { var _gt = requireGroupAndTags(body, true); if (_gt != null) return _gt; }   // grup + etiket zorunlu (2026-09-18)
         if (blank(body.get("name"))) return badRequest("ad zorunlu");
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
@@ -3734,6 +3770,7 @@ public class MonitoringController {
     @PutMapping("/scripted/{id}")
     public ResponseEntity<Map<String, Object>> updateScripted(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.scripted", "edit");
+        { var _gt = requireGroupAndTags(body, false); if (_gt != null) return _gt; }   // gönderilip boş bırakılmışsa 400 (2026-09-18)
         java.util.Map<String, Object> _before = scriptedMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, SCRIPTED_FIELDS)).orElse(null);
         String scanErr = scanScriptOrError(body.get("script"));
         if (scanErr != null) return badRequest(scanErr);
@@ -4583,6 +4620,7 @@ public class MonitoringController {
     @PostMapping("/domain")
     public ResponseEntity<Map<String, Object>> createDomain(@RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        { var _gt = requireGroupAndTags(body, true); if (_gt != null) return _gt; }   // grup + etiket zorunlu (2026-09-18)
         if (blank(body.get("domain"))) return badRequest("domain zorunlu");
         String reg = publicSuffixService.registrableDomain(body.get("domain").toString());
         if (reg == null || reg.isBlank()) return badRequest("Geçersiz/çözümlenemeyen alan adı");
@@ -4595,6 +4633,7 @@ public class MonitoringController {
         m.setName(blank(body.get("name")) ? reg : normalizeMonitorName(body.get("name").toString()));
         m.setDomain(reg);
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
+        if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
         m.setTeamId(teamId);
         m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
         m.setActive(true);                                            // varsayılan: yeni izleme aktif
@@ -4616,6 +4655,7 @@ public class MonitoringController {
     @PutMapping("/domain/{id}")
     public ResponseEntity<Map<String, Object>> updateDomain(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        { var _gt = requireGroupAndTags(body, false); if (_gt != null) return _gt; }   // gönderilip boş bırakılmışsa 400 (2026-09-18)
         java.util.Map<String, Object> _before = domainMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return domainMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
@@ -4625,6 +4665,7 @@ public class MonitoringController {
                 if (reg != null && !reg.isBlank()) m.setDomain(reg);
             }
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
+            if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
             if (body.containsKey("teamId")) m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             closeAlertsOnPause(m.getActive(), body.get("active"), m.getDomain(), Set.of(EscalationService.TYPE_DOMAINMON_EXPIRY, EscalationService.TYPE_DOMAINMON_UNKNOWN, EscalationService.TYPE_DOMAINMON_STATUS, EscalationService.TYPE_DOMAINMON_CHANGED, EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK, EscalationService.TYPE_DOMAINMON_BLACKLIST));
@@ -4808,6 +4849,7 @@ public class MonitoringController {
         item.put("name",             m.getName());
         item.put("domain",           m.getDomain());
         item.put("group_name",       m.getGroupName());
+        item.put("tags",            m.getTags());
         item.put("team_id",          m.getTeamId());
         item.put("notification_group_id",          m.getNotificationGroupId());
         item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
@@ -4897,6 +4939,7 @@ public class MonitoringController {
     @PostMapping("/ping")
     public ResponseEntity<Map<String, Object>> createPing(@RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        { var _gt = requireGroupAndTags(body, true); if (_gt != null) return _gt; }   // grup + etiket zorunlu (2026-09-18)
         if (blank(body.get("host"))) return badRequest("host zorunlu");
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
@@ -4910,6 +4953,7 @@ public class MonitoringController {
         String ipv = body.get("ipVersion") != null ? body.get("ipVersion").toString() : "auto";
         m.setIpVersion(Set.of("v4", "v6", "auto").contains(ipv) ? ipv : "auto");
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
+        if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
         m.setTeamId(teamId);
         m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
         m.setActive(true);                                            // varsayılan: yeni izleme aktif
@@ -4940,6 +4984,7 @@ public class MonitoringController {
     @PutMapping("/ping/{id}")
     public ResponseEntity<Map<String, Object>> updatePing(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        { var _gt = requireGroupAndTags(body, false); if (_gt != null) return _gt; }   // gönderilip boş bırakılmışsa 400 (2026-09-18)
         java.util.Map<String, Object> _before = pingMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return pingMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
@@ -4962,6 +5007,7 @@ public class MonitoringController {
             }
             if (body.get("ipVersion")       != null) { String v = body.get("ipVersion").toString(); m.setIpVersion(Set.of("v4","v6","auto").contains(v) ? v : "auto"); }
             if (body.containsKey("groupName"))       m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
+            if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             closeAlertsOnPause(m.getActive(), body.get("active"), m.getHost(), Set.of(EscalationService.TYPE_PING_DOWN, EscalationService.TYPE_PING_SLOW));
@@ -5092,6 +5138,7 @@ public class MonitoringController {
         item.put("host",             m.getHost());
         item.put("ip_version",       m.getIpVersion());
         item.put("group_name",       m.getGroupName());
+        item.put("tags",            m.getTags());
         item.put("team_id",          m.getTeamId());
         item.put("notification_group_id",          m.getNotificationGroupId());
         item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);

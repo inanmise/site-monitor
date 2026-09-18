@@ -82,7 +82,7 @@ describe('readUrlParam / readUrlInt', () => {
   })
 
   it('PAGE_STATE_PARAMS sözlüğü beklenen paramları içerir', () => {
-    for (const p of ['group', 'team', 'q', 'stat', 'sort', 'page', 'ps', 'monitor', 'range', 'mtab', 'domain', 'incident'])
+    for (const p of ['group', 'tag', 'team', 'q', 'stat', 'sort', 'page', 'ps', 'monitor', 'range', 'mtab', 'domain', 'incident'])
       expect(PAGE_STATE_PARAMS).toContain(p)
   })
 })

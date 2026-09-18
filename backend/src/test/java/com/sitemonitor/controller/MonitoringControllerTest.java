@@ -477,7 +477,7 @@ class MonitoringControllerTest {
 
         mvc.perform(post("/api/monitoring/page").session(session("ADMIN"))
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"url\":\"https://x.com\",\"teamId\":1,\"alertMixedContent\":false}"))
+                        .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://x.com\",\"teamId\":1,\"alertMixedContent\":false}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.alert_mixed_content").value(false))
                 .andExpect(jsonPath("$.data.alert_third_party").value(false))    // varsayılan false
@@ -493,7 +493,7 @@ class MonitoringControllerTest {
 
         mvc.perform(post("/api/monitoring/page").session(session("ADMIN"))
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"url\":\"https://x.com\",\"teamId\":1,\"alertTimeout\":false}"))
+                        .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://x.com\",\"teamId\":1,\"alertTimeout\":false}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.alert_timeout").value(false))
                 .andExpect(jsonPath("$.data.alert_mixed_content").value(true));  // varsayılan true
@@ -504,7 +504,7 @@ class MonitoringControllerTest {
     void createPage_requiresTeam() throws Exception {
         mvc.perform(post("/api/monitoring/page").session(session("USER"))
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"url\":\"https://x.com\"}"))
+                        .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://x.com\"}"))
                 .andExpect(status().isBadRequest());
         org.mockito.Mockito.verify(pageMonitorRepo, never()).save(any());
     }
@@ -574,7 +574,7 @@ class MonitoringControllerTest {
         when(portMonitorRepo.existsByHostAndPortAndActiveTrue("x.example.com", 8443)).thenReturn(true);
         mvc.perform(post("/api/monitoring/port").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"host\":\"x.example.com\",\"port\":8443}"))
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"host\":\"x.example.com\",\"port\":8443}"))
                 .andExpect(status().isBadRequest());
     }
 
@@ -586,7 +586,7 @@ class MonitoringControllerTest {
                 .thenAnswer(a -> { com.sitemonitor.model.PortMonitor p = a.getArgument(0); p.setId(7L); return p; });
         mvc.perform(post("/api/monitoring/port").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"host\":\"1.2.3.4\",\"port\":25,\"teamId\":3,\"groupName\":\"mail\"}"))
+                .content("{\"host\":\"1.2.3.4\",\"port\":25,\"teamId\":3,\"groupName\":\"mail\",\"tags\":\"t1\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.host").value("1.2.3.4"))
                 .andExpect(jsonPath("$.data.port").value(25))
@@ -602,7 +602,7 @@ class MonitoringControllerTest {
                 .thenAnswer(a -> { com.sitemonitor.model.PortMonitor p = a.getArgument(0); p.setId(7L); return p; });
         mvc.perform(post("/api/monitoring/port").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"host\":\"1.2.3.4\",\"port\":25,\"teamId\":3}"))
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"host\":\"1.2.3.4\",\"port\":25,\"teamId\":3}"))
                 .andExpect(status().isOk());
         // 3. arg String literal → belirsizlik yok (request-overload'ın 3. parametresi HttpServletRequest).
         verify(auditService).recordAction(eq("MONITOR_CREATE"), any(), eq("PORT_MONITOR"), eq("7"), any(), any());
@@ -614,7 +614,7 @@ class MonitoringControllerTest {
         when(pingMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(true);
         mvc.perform(post("/api/monitoring/ping").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"host\":\"x.example.com\",\"teamId\":3}"))
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"host\":\"x.example.com\",\"teamId\":3}"))
                 .andExpect(status().isBadRequest());
     }
 
@@ -626,7 +626,7 @@ class MonitoringControllerTest {
                 .thenAnswer(a -> { com.sitemonitor.model.PingMonitor p = a.getArgument(0); p.setId(7L); return p; });
         mvc.perform(post("/api/monitoring/ping").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"host\":\"1.2.3.4\",\"teamId\":3}"))
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"host\":\"1.2.3.4\",\"teamId\":3}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.host").value("1.2.3.4"));
     }
@@ -639,7 +639,7 @@ class MonitoringControllerTest {
                 .thenAnswer(a -> { com.sitemonitor.model.PortMonitor p = a.getArgument(0); p.setId(9L); return p; });
         mvc.perform(post("/api/monitoring/port").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"host\":\"svc.local\",\"port\":8080,\"teamId\":3,\"protocol\":\"http\",\"expect\":\"2xx\",\"sendData\":\"/health\"}"))
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"host\":\"svc.local\",\"port\":8080,\"teamId\":3,\"protocol\":\"http\",\"expect\":\"2xx\",\"sendData\":\"/health\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.protocol").value("HTTP"))
                 .andExpect(jsonPath("$.data.expect").value("2xx"))
@@ -654,7 +654,7 @@ class MonitoringControllerTest {
                 .thenAnswer(a -> { com.sitemonitor.model.PortMonitor p = a.getArgument(0); p.setId(12L); return p; });
         mvc.perform(post("/api/monitoring/port").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"host\":\"svc.local\",\"port\":9000,\"teamId\":3,\"confirmAttempts\":5,\"recoveryChecks\":2}"))
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"host\":\"svc.local\",\"port\":9000,\"teamId\":3,\"confirmAttempts\":5,\"recoveryChecks\":2}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.confirm_attempts").value(5))
                 .andExpect(jsonPath("$.data.recovery_checks").value(2))
@@ -1155,7 +1155,7 @@ class MonitoringControllerTest {
 
         mvc.perform(post("/api/monitoring/keyword").session(session("ADMIN"))
                 .contentType("application/json")
-                .content("{\"url\":\"https://x.example.com\",\"keyword\":\"foo\",\"operator\":\"GTE\",\"matchCount\":1,\"teamId\":3," +
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://x.example.com\",\"keyword\":\"foo\",\"operator\":\"GTE\",\"matchCount\":1,\"teamId\":3," +
                         "\"customHeaders\":\"Cache-Control: no-cache\",\"recoveryChecks\":4,\"recoveryIntervalSeconds\":5}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.custom_headers").value("Cache-Control: no-cache"))
@@ -1253,7 +1253,7 @@ class MonitoringControllerTest {
 
         mvc.perform(post("/api/monitoring/keyword").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"url\":\"https://x.example.com\",\"keyword\":\"OK\",\"teamId\":3}"))
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://x.example.com\",\"keyword\":\"OK\",\"teamId\":3}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error", org.hamcrest.Matchers.containsString("zaten izleniyor")));
 
@@ -1269,7 +1269,7 @@ class MonitoringControllerTest {
 
         mvc.perform(post("/api/monitoring/keyword").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"url\":\"https://x.example.com\",\"keyword\":\"BASKA\",\"teamId\":3}"))
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://x.example.com\",\"keyword\":\"BASKA\",\"teamId\":3}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.url").value("https://x.example.com"))
                 .andExpect(jsonPath("$.data.keyword").value("BASKA"));
@@ -1416,19 +1416,19 @@ class MonitoringControllerTest {
         var admin = session("ADMIN");   // global admin: viewTeamIds set edilmemiş → isGlobalAdmin=true (eski bypass senaryosu)
         mvc.perform(post("/api/monitoring/http").session(admin)
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"url\":\"https://x.example.com\"}"))
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://x.example.com\"}"))
                 .andExpect(status().isBadRequest());
         mvc.perform(post("/api/monitoring/ping").session(admin)
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"host\":\"1.2.3.4\"}"))
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"host\":\"1.2.3.4\"}"))
                 .andExpect(status().isBadRequest());
         mvc.perform(post("/api/monitoring/keyword").session(admin)
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"url\":\"https://x.example.com\",\"keyword\":\"example\"}"))
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://x.example.com\",\"keyword\":\"example\"}"))
                 .andExpect(status().isBadRequest());
         mvc.perform(post("/api/monitoring/domain").session(admin)
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"domain\":\"example.org\"}"))
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"example.org\"}"))
                 .andExpect(status().isBadRequest());
         // Takımsız hiçbir kayıt oluşmamalı.
         verify(httpMonitorRepo, never()).save(any());
@@ -1466,7 +1466,7 @@ class MonitoringControllerTest {
                 .thenAnswer(a -> { com.sitemonitor.model.HttpMonitor h = a.getArgument(0); h.setId(31L); return h; });
         mvc.perform(post("/api/monitoring/http").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"url\":\"https://kopya.example.com\",\"teamId\":3,\"active\":false}"))
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://kopya.example.com\",\"teamId\":3,\"active\":false}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.active").value(false));
 
@@ -1484,7 +1484,7 @@ class MonitoringControllerTest {
                 .thenAnswer(a -> { com.sitemonitor.model.HttpMonitor h = a.getArgument(0); h.setId(32L); return h; });
         mvc.perform(post("/api/monitoring/http").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"url\":\"https://yeni.example.com\",\"teamId\":3}"))
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://yeni.example.com\",\"teamId\":3}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.active").value(true));
     }
@@ -1497,7 +1497,7 @@ class MonitoringControllerTest {
                 .thenAnswer(a -> { com.sitemonitor.model.PingMonitor p = a.getArgument(0); p.setId(33L); return p; });
         mvc.perform(post("/api/monitoring/ping").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"host\":\"10.0.0.9\",\"teamId\":3,\"active\":false}"))
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"host\":\"10.0.0.9\",\"teamId\":3,\"active\":false}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.active").value(false));
     }
@@ -1510,7 +1510,7 @@ class MonitoringControllerTest {
                 .thenAnswer(a -> { com.sitemonitor.model.ScriptedMonitor s = a.getArgument(0); s.setId(34L); return s; });
         mvc.perform(post("/api/monitoring/scripted").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"name\":\"OIDC Login (Kopya)\",\"teamId\":3,\"groupName\":\"Senaryolar\","
+                .content("{\"name\":\"OIDC Login (Kopya)\",\"teamId\":3,\"groupName\":\"Senaryolar\",\"tags\":\"t1\","
                         + "\"script\":\"export default function(){}\",\"active\":false}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.active").value(false));
@@ -1524,7 +1524,7 @@ class MonitoringControllerTest {
                 .thenAnswer(a -> { com.sitemonitor.model.PortMonitor p = a.getArgument(0); p.setId(35L); return p; });
         mvc.perform(post("/api/monitoring/port").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"host\":\"svc.local\",\"port\":9090,\"teamId\":3,\"active\":false}"))
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"host\":\"svc.local\",\"port\":9090,\"teamId\":3,\"active\":false}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.active").value(false));
     }
@@ -1539,7 +1539,7 @@ class MonitoringControllerTest {
 
         mvc.perform(post("/api/monitoring/dns").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"domain\":\"www.example.com\",\"recordType\":\"A\",\"teamId\":3,\"name\":\"example (Kopya)\"}"))
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"www.example.com\",\"recordType\":\"A\",\"teamId\":3,\"name\":\"example (Kopya)\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("zaten bir izleme var")));
 
@@ -1559,7 +1559,7 @@ class MonitoringControllerTest {
 
         mvc.perform(post("/api/monitoring/page").session(session("ADMIN"))
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"url\":\"  www.axess.com.tr  \",\"teamId\":1}"))
+                        .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"  www.axess.com.tr  \",\"teamId\":1}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.url").value("https://www.axess.com.tr"));
 
@@ -1575,7 +1575,7 @@ class MonitoringControllerTest {
         when(pageMonitorRepo.existsDuplicate(eq("https://www.axess.com.tr"), any(), any())).thenReturn(true);
         mvc.perform(post("/api/monitoring/page").session(session("ADMIN"))
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"url\":\"www.axess.com.tr\",\"teamId\":1}"))
+                        .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"www.axess.com.tr\",\"teamId\":1}"))
                 .andExpect(status().isBadRequest());
         verify(pageMonitorRepo, never()).save(any());
     }
@@ -1585,7 +1585,7 @@ class MonitoringControllerTest {
     void createPage_hostlessUrl_returns400() throws Exception {
         mvc.perform(post("/api/monitoring/page").session(session("ADMIN"))
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"url\":\"https://\",\"teamId\":1}"))
+                        .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://\",\"teamId\":1}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("host yok")));
         verify(pageMonitorRepo, never()).save(any());
@@ -1600,14 +1600,14 @@ class MonitoringControllerTest {
 
         mvc.perform(post("/api/monitoring/http").session(session("ADMIN"))
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"url\":\"www.axess.com.tr\",\"teamId\":3}"))
+                        .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"www.axess.com.tr\",\"teamId\":3}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.url").value("https://www.axess.com.tr"));
 
         // İç servis 443'te olmayabilir → kullanıcının açık http:// tercihi asla https'e taşınmaz.
         mvc.perform(post("/api/monitoring/http").session(session("ADMIN"))
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"url\":\"http://internal.host:8080/health\",\"teamId\":3}"))
+                        .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"http://internal.host:8080/health\",\"teamId\":3}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.url").value("http://internal.host:8080/health"));
     }
@@ -1621,7 +1621,7 @@ class MonitoringControllerTest {
 
         mvc.perform(post("/api/monitoring/keyword").session(session("ADMIN"))
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"url\":\"  x.example.com/a?t={timestamp}  \",\"keyword\":\"example\",\"teamId\":3}"))
+                        .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"  x.example.com/a?t={timestamp}  \",\"keyword\":\"example\",\"teamId\":3}"))
                 .andExpect(status().isOk());
 
         org.mockito.ArgumentCaptor<com.sitemonitor.model.KeywordMonitor> cap =
@@ -2805,7 +2805,7 @@ class MonitoringControllerTest {
 
         mvc.perform(post("/api/monitoring/pagespeed").session(session("ADMIN"))
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"url\":\"https://x.com\",\"teamId\":1,\"intervalSeconds\":60}"))
+                        .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://x.com\",\"teamId\":1,\"intervalSeconds\":60}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.interval_seconds")
                         .value(com.sitemonitor.model.PageSpeedMonitor.MIN_INTERVAL_SECONDS));
@@ -2841,13 +2841,13 @@ class MonitoringControllerTest {
 
         mvc.perform(post("/api/monitoring/pagespeed").session(session("ADMIN"))
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"url\":\"www.x.com\",\"teamId\":1}"))
+                        .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"www.x.com\",\"teamId\":1}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.url").value("https://www.x.com"));
 
         mvc.perform(post("/api/monitoring/pagespeed").session(session("ADMIN"))
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"url\":\"://\",\"teamId\":1}"))
+                        .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"://\",\"teamId\":1}"))
                 .andExpect(status().isBadRequest());
     }
 
@@ -2919,7 +2919,7 @@ class MonitoringControllerTest {
 
         mvc.perform(post("/api/monitoring/dns").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"domain\":\"kayit.example.com\",\"recordType\":\"A\",\"teamId\":3,"
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"kayit.example.com\",\"recordType\":\"A\",\"teamId\":3,"
                         + "\"notifyEmail\":false,\"notifyWebhook\":false,"
                         + "\"confirmAttempts\":5,\"confirmIntervalSeconds\":45,"
                         + "\"recoveryChecks\":2,\"recoveryIntervalSeconds\":15}"))
@@ -2950,7 +2950,7 @@ class MonitoringControllerTest {
 
         mvc.perform(post("/api/monitoring/dns").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"domain\":\"vars.example.com\",\"recordType\":\"A\",\"teamId\":3}"))
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"vars.example.com\",\"recordType\":\"A\",\"teamId\":3}"))
                 .andExpect(status().isOk());
 
         org.mockito.ArgumentCaptor<com.sitemonitor.model.DnsMonitor> cap =
@@ -3425,7 +3425,7 @@ class MonitoringControllerTest {
 
         mvc.perform(post("/api/monitoring/dns").session(teamSession("TEAM_ADMIN", 5L, 5L))
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"domain\":\"own.example.com\",\"recordType\":\"A\",\"teamId\":5}"))
+                        .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"own.example.com\",\"recordType\":\"A\",\"teamId\":5}"))
                 .andExpect(status().isOk());
 
         org.mockito.ArgumentCaptor<com.sitemonitor.model.DnsMonitor> cap =
@@ -3509,11 +3509,156 @@ class MonitoringControllerTest {
                 .thenAnswer(a -> { com.sitemonitor.model.PortMonitor p = a.getArgument(0); p.setId(9L); return p; });
         mvc.perform(post("/api/monitoring/port").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"host\":\"MAIL.Example.com\",\"port\":25,\"teamId\":3}"))
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"host\":\"MAIL.Example.com\",\"port\":25,\"teamId\":3}"))
                 .andExpect(status().isOk());
         verify(portMonitorRepo).existsByHostAndPortAndActiveTrue("mail.example.com", 25);
         org.mockito.ArgumentCaptor<com.sitemonitor.model.PortMonitor> cap = org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.PortMonitor.class);
         verify(portMonitorRepo).save(cap.capture());
         assertThat(cap.getValue().getHost()).isEqualTo("mail.example.com");
+    }
+
+    // ── Çok takımlı kullanıcı izleme eklerken takımını seçebilir (2026-09-18, kullanıcı isteği) ──
+    // Eskiden canOperateTeam USER için yalnız BİRİNCİL takımı kabul ediyor, ikincil takım istendiğinde
+    // resolveWriteTeam SESSİZCE birincile düşüyordu — kullanıcı "X takımına ekledim" sanıp izlemeyi Y'de
+    // buluyordu. Artık üyesi olduğu her takım kabul; üye olmadığı takım 403.
+
+    private MockHttpSession multiTeamUser(Long primary, Long... members) {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", Boolean.TRUE);
+        s.setAttribute("username", "u");
+        s.setAttribute("systemRole", "USER");
+        s.setAttribute("teamId", primary);
+        s.setAttribute("viewTeamIds", java.util.List.of(members));
+        s.setAttribute("memberTeamIds", java.util.List.of(members));
+        return s;
+    }
+
+    @Test
+    @DisplayName("POST /http çok takımlı: ikincil takım (üye) → izleme O takıma yazılır, birincile düşmez")
+    void multiTeam_secondaryMemberTeam_isHonoured() throws Exception {
+        when(httpMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(httpMonitorRepo.save(any(com.sitemonitor.model.HttpMonitor.class)))
+                .thenAnswer(a -> { com.sitemonitor.model.HttpMonitor h = a.getArgument(0); h.setId(41L); return h; });
+        mvc.perform(post("/api/monitoring/http").session(multiTeamUser(1L, 1L, 2L))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://iki.example.com\",\"teamId\":2}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_id").value(2));
+    }
+
+    @Test
+    @DisplayName("POST /http çok takımlı: üye OLMADIĞI takım → 403 (sessizce birincile düşmez)")
+    void multiTeam_nonMemberTeam_isRejected() throws Exception {
+        mvc.perform(post("/api/monitoring/http").session(multiTeamUser(1L, 1L, 2L))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://uc.example.com\",\"teamId\":3}"))
+                .andExpect(status().isForbidden());
+        verify(httpMonitorRepo, never()).save(any(com.sitemonitor.model.HttpMonitor.class));
+    }
+
+    @Test
+    @DisplayName("POST /http çok takımlı: teamId gönderilmezse (eski istemci) birincil takım — geriye uyum")
+    void multiTeam_noTeamId_fallsBackToPrimary() throws Exception {
+        when(httpMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(httpMonitorRepo.save(any(com.sitemonitor.model.HttpMonitor.class)))
+                .thenAnswer(a -> { com.sitemonitor.model.HttpMonitor h = a.getArgument(0); h.setId(42L); return h; });
+        mvc.perform(post("/api/monitoring/http").session(multiTeamUser(1L, 1L, 2L))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://bir.example.com\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_id").value(1));
+    }
+
+    @Test
+    @DisplayName("POST /http eski oturum (memberTeamIds YOK): birincil takım yine kabul — rolling deploy geri düşüşü")
+    void multiTeam_legacySession_primaryStillWorks() throws Exception {
+        when(httpMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(httpMonitorRepo.save(any(com.sitemonitor.model.HttpMonitor.class)))
+                .thenAnswer(a -> { com.sitemonitor.model.HttpMonitor h = a.getArgument(0); h.setId(43L); return h; });
+        MockHttpSession legacy = new MockHttpSession();
+        legacy.setAttribute("authenticated", Boolean.TRUE);
+        legacy.setAttribute("username", "u");
+        legacy.setAttribute("systemRole", "USER");
+        legacy.setAttribute("teamId", 1L);
+        legacy.setAttribute("viewTeamIds", java.util.List.of(1L));
+        mvc.perform(post("/api/monitoring/http").session(legacy)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://eski.example.com\",\"teamId\":1}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_id").value(1));
+    }
+
+    // ── Grup + etiket zorunlu (2026-09-18, ürün kararı): dokuz türün HEPSİNDE oluşturma kapısı ──
+    // Tek test, tür başına bir istek: kapı permissionService.require'ın hemen ardında, tür-özel
+    // doğrulamalardan ÖNCE koşar; gövdeye yalnız hedef alanı koymak yeter.
+    @org.junit.jupiter.params.ParameterizedTest(name = "POST /{0}: grup yoksa 400")
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"http", "domain", "port", "dns", "keyword", "ping", "page", "pagespeed", "scripted"})
+    void create_missingGroup_returns400(String type) throws Exception {
+        mvc.perform(post("/api/monitoring/" + type).session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"tags\":\"t1\",\"name\":\"x\",\"url\":\"https://x.example.com\",\"host\":\"x.example.com\",\"domain\":\"x.example.com\",\"port\":443,\"recordType\":\"A\",\"keyword\":\"k\",\"teamId\":1}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("Grup")));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest(name = "POST /{0}: etiket yoksa 400")
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"http", "domain", "port", "dns", "keyword", "ping", "page", "pagespeed", "scripted"})
+    void create_missingTags_returns400(String type) throws Exception {
+        mvc.perform(post("/api/monitoring/" + type).session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"groupName\":\"Grup A\",\"name\":\"x\",\"url\":\"https://x.example.com\",\"host\":\"x.example.com\",\"domain\":\"x.example.com\",\"port\":443,\"recordType\":\"A\",\"keyword\":\"k\",\"teamId\":1}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("etiket")));
+    }
+
+    @Test
+    @DisplayName("PUT /http: grup/etiket anahtarı HİÇ gönderilmezse (kısmi PUT) kapı devreye girmez")
+    void update_partialBodyWithoutGroupOrTags_isAccepted() throws Exception {
+        com.sitemonitor.model.HttpMonitor m = new com.sitemonitor.model.HttpMonitor();
+        m.setId(5L); m.setUrl("https://x.example.com"); m.setTeamId(1L); m.setGroupName("Grup A"); m.setTags("t1"); m.setActive(true);
+        when(httpMonitorRepo.findById(5L)).thenReturn(Optional.of(m));
+        when(httpMonitorRepo.save(any(com.sitemonitor.model.HttpMonitor.class))).thenAnswer(a -> a.getArgument(0));
+        mvc.perform(put("/api/monitoring/http/5").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"active\":false}"))
+                .andExpect(status().isOk());
+        assertThat(m.getGroupName()).isEqualTo("Grup A");
+        assertThat(m.getTags()).isEqualTo("t1");
+    }
+
+    @Test
+    @DisplayName("PUT /http: etiket BOŞ gönderilirse 400 — mevcut etiket silinmez")
+    void update_blankTags_returns400() throws Exception {
+        com.sitemonitor.model.HttpMonitor m = new com.sitemonitor.model.HttpMonitor();
+        m.setId(6L); m.setUrl("https://x.example.com"); m.setTeamId(1L); m.setGroupName("Grup A"); m.setTags("t1"); m.setActive(true);
+        when(httpMonitorRepo.findById(6L)).thenReturn(Optional.of(m));
+        mvc.perform(put("/api/monitoring/http/6").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"\"}"))
+                .andExpect(status().isBadRequest());
+        verify(httpMonitorRepo, never()).save(any(com.sitemonitor.model.HttpMonitor.class));
+        assertThat(m.getTags()).isEqualTo("t1");
+    }
+
+    @Test
+    @DisplayName("POST /domain + /ping + /dns: tags artık kalıcı ve yanıtta döner (eskiden alan yoktu)")
+    void createDomainPingDns_tagsPersistedAndReturned() throws Exception {
+        when(domainMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(publicSuffixService.registrableDomain(anyString())).thenReturn("x.example.com");
+        when(domainMonitorRepo.save(any(com.sitemonitor.model.DomainMonitor.class)))
+                .thenAnswer(a -> { com.sitemonitor.model.DomainMonitor d = a.getArgument(0); d.setId(71L); return d; });
+        mvc.perform(post("/api/monitoring/domain").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"prod, kritik\",\"domain\":\"x.example.com\",\"teamId\":1}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.tags").value("prod, kritik"));
+        when(pingMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(pingMonitorRepo.save(any(com.sitemonitor.model.PingMonitor.class)))
+                .thenAnswer(a -> { com.sitemonitor.model.PingMonitor d = a.getArgument(0); d.setId(72L); return d; });
+        mvc.perform(post("/api/monitoring/ping").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"edge\",\"host\":\"x.example.com\",\"teamId\":1}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.tags").value("edge"));
     }
 }

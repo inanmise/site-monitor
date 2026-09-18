@@ -859,6 +859,7 @@ export const api = {
     unlockUser: (id) => request(`/admin/users/${id}/unlock`, { method: 'POST' }),
     unlockUserRole: (id) => request(`/admin/users/${id}/role-unlock`, { method: 'POST' }),
     unlockUserOrgRole: (id) => request(`/admin/users/${id}/org-role-unlock`, { method: 'POST' }),
+    unlockUserTeams: (id) => request(`/admin/users/${id}/team-unlock`, { method: 'POST' }),   // takım kilidi (2026-09-18)
 
     // Cert transfer
     transferCert: (id, teamId) => request(`/admin/inventory/${id}/transfer`, {

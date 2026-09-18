@@ -672,6 +672,66 @@ class UserServiceTest {
         assertThat(u.getOrgRoleLocked()).isNull();        // değişmedi → kilitlenmedi
     }
 
+    // ── Takım kilidi (2026-09-18): manuel üyelik değişikliği LDAP'tan ezilmesin ──
+    @Test
+    @DisplayName("updateUser: takım kümesi DEĞİŞİRSE team_locked=true (LDAP artık ezmez)")
+    void updateUser_teamsChanged_locksTeams() {
+        AppUser u = user("alice", "hash");
+        u.setId(1L);
+        u.setTeamIds(new LinkedHashSet<>(List.of(5L)));
+        u.setTeamId(5L);
+        when(userRepo.findById(1L)).thenReturn(Optional.of(u));
+
+        service.updateUser(1L, null, null, null, null, List.of(5L, 9L), null, null);
+
+        assertThat(u.getTeamIds()).containsExactly(5L, 9L);
+        assertThat(u.getTeamLocked()).isTrue();
+    }
+
+    @Test
+    @DisplayName("updateUser: aynı takım kümesi yeniden gönderilirse kilit KONMAZ (form her kayıtta team_ids yollar)")
+    void updateUser_teamsUnchanged_doesNotLock() {
+        AppUser u = user("alice", "hash");
+        u.setId(1L);
+        u.setTeamIds(new LinkedHashSet<>(List.of(5L, 9L)));
+        u.setTeamId(5L);
+        u.setTeamLocked(null);
+        when(userRepo.findById(1L)).thenReturn(Optional.of(u));
+
+        service.updateUser(1L, "Alice", null, null, null, List.of(5L, 9L), null, null);
+
+        assertThat(u.getTeamLocked()).isNull();
+    }
+
+    @Test
+    @DisplayName("updateUser: teamIds=null (kısmi güncelleme) takımlara ve kilide dokunmaz")
+    void updateUser_teamsNull_untouched() {
+        AppUser u = user("alice", "hash");
+        u.setId(1L);
+        u.setTeamIds(new LinkedHashSet<>(List.of(5L)));
+        u.setTeamId(5L);
+        when(userRepo.findById(1L)).thenReturn(Optional.of(u));
+
+        service.updateUser(1L, "Alice", null, null, null, null, null, null);
+
+        assertThat(u.getTeamIds()).containsExactly(5L);
+        assertThat(u.getTeamLocked()).isNull();
+    }
+
+    @Test
+    @DisplayName("unlockTeams: takım kilidini kaldırır (AD yönetimine döner)")
+    void unlockTeams_clearsLock() {
+        AppUser u = user("alice", "hash");
+        u.setId(1L);
+        u.setTeamLocked(true);
+        when(userRepo.findById(1L)).thenReturn(Optional.of(u));
+
+        service.unlockTeams(1L);
+
+        assertThat(u.getTeamLocked()).isFalse();
+        verify(userRepo).save(u);
+    }
+
     @Test
     @DisplayName("unlockOrgRole: org rol kilidini kaldırır (AD yönetimine döner)")
     void unlockOrgRole_clearsLock() {

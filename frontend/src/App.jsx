@@ -7,6 +7,7 @@ import { deleteInventoryByDomain } from './utils/deleteInventory.js'
 import { useToast } from './components/ui/Toast.jsx'
 import { useT } from './i18n/index.jsx'
 import { usePagination } from './hooks/usePagination.js'
+import { teamsFromMe } from './hooks/useMonitorTeamPick.js'
 import PaginationBar from './components/ui/PaginationBar.jsx'
 import { useUrlQuerySync, readUrlParam, readUrlInt, PAGE_STATE_PARAMS, PAGE_STATE_PREFIXES } from './hooks/useUrlQuerySync.js'
 import SearchableSelect from './components/ui/SearchableSelect.jsx'
@@ -165,6 +166,8 @@ export default function App() {
   // Kullanıcının TÜM takım üyelikleri (birincil takım ilk). Takım Yönetimi'ndeki haftalık e-posta
   // anahtarları üye bazlı açıldığı için gerekir; /me ve login yanıtı ikisi de team_ids döndürür.
   const [myTeamIds, setMyTeamIds] = useState([])
+  // Üyesi olunan takımlar (id+ad): izleme formlarında takım seçimi (2026-09-18) — /me team_ids × team_names
+  const [myTeams, setMyTeams] = useState([])
   // Kullanıcının kendi giriş güvenliği özeti (backend `login_info`): giriş yanıtından VE /me'den
   // gelir. AuthContext yok — üç tüketiciye (uyarı şeridi, Etkinliklerim, kullanıcı menüsü) prop.
   const [loginInfo, setLoginInfo] = useState(null)
@@ -284,6 +287,7 @@ export default function App() {
         setTeamId(res.team_id ?? null)
         setTeamName(res.team_name ?? null)
         setMyTeamIds(Array.isArray(res.team_ids) ? res.team_ids : [])
+        setMyTeams(teamsFromMe(res))
         setMustChangePwd(!!res.must_change_password)
         setIdleCfg(idleConfigFrom(res))
         // Giriş güvenliği özeti — F5 sonrası login yanıtı yoktur, bu yüzden /me de aynı bloğu
@@ -700,6 +704,7 @@ export default function App() {
     setTeamId(userData.team_id ?? null)
     setTeamName(userData.team_name ?? null)
     setMyTeamIds(Array.isArray(userData.team_ids) ? userData.team_ids : [])
+    setMyTeams(teamsFromMe(userData))
     setIdleCfg(idleConfigFrom(userData))
     setMustChangePwd(!!userData.must_change_password)
     setLoginInfo(userData.login_info ?? null)
@@ -1469,15 +1474,15 @@ export default function App() {
 
             {tab === 'help'     && <HelpPage />}
             {tab === 'uptime'   && <UptimePage   systemRole={systemRole} />}
-            {tab === 'http'     && <HttpMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
-            {tab === 'domain'   && <DomainMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
-            {tab === 'port'     && <PortMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
-            {tab === 'dns'      && <DnsMonitorPage  systemRole={systemRole} teamId={teamId} teamName={teamName} />}
-            {tab === 'keyword'  && <KeywordMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
-            {tab === 'ping'     && <PingMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
-            {tab === 'page'     && <PageMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
-            {tab === 'pagespeed' && <PageSpeedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
-            {tab === 'scripted' && <ScriptedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
+            {tab === 'http'     && <HttpMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} />}
+            {tab === 'domain'   && <DomainMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} />}
+            {tab === 'port'     && <PortMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} />}
+            {tab === 'dns'      && <DnsMonitorPage  systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} />}
+            {tab === 'keyword'  && <KeywordMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} />}
+            {tab === 'ping'     && <PingMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} />}
+            {tab === 'page'     && <PageMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} />}
+            {tab === 'pagespeed' && <PageSpeedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} />}
+            {tab === 'scripted' && <ScriptedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} />}
             {tab === 'forecast' && <ExpiryForecastPage onSelectDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} />}
             </Suspense>
            </ErrorBoundary>

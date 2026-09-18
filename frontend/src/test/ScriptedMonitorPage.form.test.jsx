@@ -302,7 +302,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       id: 3, name: 'llm-test', status: 'PASS', team_id: 5, team_name: 'SY-A',
       // group_name ŞART: save() zorunlu alan denetiminde erken dönerse kaydetme testleri
       // YANLIŞ sebeple yeşil/kırmızı olur.
-      group_name: 'SY-A grubu',
+      group_name: 'SY-A grubu', tags: 'prod',
       script: 'export default function(){}', script_version: '1.0.2',
       checked_at: '2026-08-13T10:00:00',
     }
@@ -609,7 +609,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       k6_available: true, k6_version: 'v0.49.0', can_manage: true,
       monitors: [{ id: 1, name: 'OIDC Login', status: 'PASS', team_id: 5, team_name: 'SY-A',
                    slow_response_enabled: false, slow_threshold_ms: 15000,
-                   script: 'export default function(){}', group_name: 'G',
+                   script: 'export default function(){}', group_name: 'G', tags: 'prod',
                    interval_seconds: 300, timeout_seconds: 60,
                    confirm_attempts: 3, confirm_interval_seconds: 30,
                    recovery_checks: 3, recovery_interval_seconds: 30, active: true, env: [] }],
@@ -656,7 +656,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       k6_available: true, k6_version: 'v0.49.0', can_manage: true,
       monitors: [{ id: 1, name: 'OIDC Login', status: 'PASS', team_id: 5, team_name: 'SY-A',
                    slow_response_enabled: false, slow_threshold_ms: 15000,
-                   script: 'export default function(){}', group_name: 'G',
+                   script: 'export default function(){}', group_name: 'G', tags: 'prod',
                    interval_seconds: 300, timeout_seconds: 60,
                    confirm_attempts: 3, confirm_interval_seconds: 30,
                    recovery_checks: 3, recovery_interval_seconds: 30, active: true, env: [] }],

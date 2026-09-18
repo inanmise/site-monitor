@@ -91,6 +91,10 @@ public class DnsMonitor {
     @Column(name = "group_name")
     private String groupName;
 
+    /** Serbest etiketler — virgülle ayrılmış (2026-09-18: her izlemede zorunlu; Http/Port ile aynı biçim). */
+    @Column(columnDefinition = "TEXT")
+    private String tags;
+
     /** DNS_CHANGED alarmı monitör bazında açık mı? null = açık (mevcut monitörler etkilenmez;
      *  etkin kontrol her yerde !Boolean.FALSE.equals). false = değişiklik alarmı ve günlük RE-ALERT bastırılır;
      *  kontrol/kayıt geçmişi (changed=true satırları) değişmeden tutulmaya devam eder. */

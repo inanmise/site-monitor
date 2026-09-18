@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, fillGroupAndTags } from './test-utils.jsx'
 import PingMonitorPage from '../components/PingMonitorPage.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -25,7 +25,7 @@ vi.mock('../api/client', () => ({
 import { api } from '../api/client'
 
 const monitor = {
-  id: 1, name: 'GW', host: '10.0.0.1', ip_version: 'auto', group_name: 'Y Sistemleri',
+  id: 1, name: 'GW', host: '10.0.0.1', ip_version: 'auto', group_name: 'Y Sistemleri', tags: 'prod',
   team_name: 'SY-A', status: 'up', rtt_ms: 3, active: true, checked_at: '2026-06-24T00:00:00',
 }
 
@@ -66,7 +66,7 @@ describe('PingMonitorPage', () => {
     // Her alan varsayılandan FARKLI → bir alan formFrom'dan düşerse tam-payload karşılaştırması kırılır.
     api.monitoring.getPingMonitors.mockResolvedValue({ success: true, data: [{
       id: 1, name: 'GW', host: '10.0.0.1', status: 'up', checked_at: '2026-06-24T00:00:00',
-      ip_version: 'v6', group_name: 'Kurumsal', team_id: 5, team_name: 'SY-A',
+      ip_version: 'v6', group_name: 'Kurumsal', tags: 'prod,kritik', team_id: 5, team_name: 'SY-A',
       interval_seconds: 900, timeout_ms: 7000, packet_count: 7,
       confirm_attempts: 5, confirm_interval_seconds: 45, recovery_checks: 4, recovery_interval_seconds: 90,
       slow_response_enabled: true, slow_baseline_window_minutes: 25, slow_threshold_percent: 35,
@@ -98,7 +98,7 @@ describe('PingMonitorPage', () => {
     expect(api.monitoring.updatePingMonitor).not.toHaveBeenCalled()
 
     expect(api.monitoring.createPingMonitor.mock.calls[0][0]).toEqual({
-      name: 'GW (Kopya)', host: '10.0.0.9', ipVersion: 'v6', groupName: 'Kurumsal', teamId: 5,
+      name: 'GW (Kopya)', host: '10.0.0.9', ipVersion: 'v6', groupName: 'Kurumsal', tags: 'prod,kritik', teamId: 5,
       intervalSeconds: 900, timeoutMs: 7000, packetCount: 7, notifyEmail: true, notifyWebhook: true,
       confirmAttempts: 5, confirmIntervalSeconds: 45, recoveryChecks: 4, recoveryIntervalSeconds: 90,
       // Yavaşlık ayarı da kopyalanır: kopyanın "sessiz" doğması, kullanıcının kurduğu eşiği
@@ -133,6 +133,7 @@ describe('PingMonitorPage', () => {
     fireEvent.change(pct, { target: { value: '40' } })
 
     fireEvent.change(screen.getByPlaceholderText('1.2.3.4 / host.example.com'), { target: { value: '10.0.0.5' } })
+    await fillGroupAndTags()   // grup + etiket zorunlu (2026-09-18)
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
 
     await waitFor(() => expect(api.monitoring.createPingMonitor).toHaveBeenCalled())

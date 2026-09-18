@@ -28,6 +28,7 @@ const monitor = {
   id: 1, name: 'example', domain: 'www.example.com', record_type: 'A', standalone: true,
   team_id: 5, team_name: 'SY-A', value: '1.2.3.4', ttl: 300, response_ms: 20, active: true,
   checked_at: '2026-07-06T00:00:00', slow_threshold_ms: null,
+  group_name: 'X Sistemleri', tags: 'prod',   // grup + etiket zorunlu (2026-09-18): Düzenle/Kopyala kaydedebilsin
 }
 
 describe('DnsMonitorPage', () => {
@@ -134,7 +135,7 @@ describe('DnsMonitorPage', () => {
     api.monitoring.getDnsMonitors.mockResolvedValue({ success: true, data: [{
       id: 1, name: 'example', domain: 'www.example.com', record_type: 'CNAME', standalone: true,
       team_id: 5, team_name: 'SY-A', value: '1.2.3.4', ttl: 300, checked_at: '2026-07-06T00:00:00',
-      interval_seconds: 900, group_name: 'Kurumsal',
+      interval_seconds: 900, group_name: 'Kurumsal', tags: 'prod,kritik',
       expected_value: '1.2.3.4\n5.6.7.8', slow_threshold_ms: 2500,
       propagation_check: true, dns_change_alert_enabled: false, active: false,
       notification_group_id: 7,
@@ -159,7 +160,7 @@ describe('DnsMonitorPage', () => {
 
     expect(api.monitoring.createDnsMonitor.mock.calls[0][0]).toEqual({
       name: 'example (Kopya)', domain: 'www.example.com', recordType: 'CNAME',
-      intervalSeconds: 900, teamId: 5, groupName: 'Kurumsal',
+      intervalSeconds: 900, teamId: 5, groupName: 'Kurumsal', tags: 'prod,kritik',
       expectedValue: '1.2.3.4\n5.6.7.8', slowThresholdMs: 2500,
       propagationCheck: true, dnsChangeAlertEnabled: false,
       // B1: e-posta kanal bayragi DNS formuna eklendi (eskiden bu turde HIC yoktu).

@@ -39,7 +39,7 @@ import { LoadingBlock } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin (eager bundle'a girmesin).
 import MonitorStatsSection from './MonitorStatsSection.jsx'
-import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
+import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorSpark from './ui/MonitorSpark.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
@@ -48,6 +48,7 @@ import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { useEscapeKey } from '../hooks/useEscapeKey.js'
+import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
@@ -79,7 +80,7 @@ const emptyForm = { name: '', url: '', keyword: '', operator: 'GTE', matchCount:
   slowResponseEnabled: false, slowThresholdMs: 3000,
   intervalSeconds: 60, timeoutMs: 10000, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, customHeaders: '', active: true }
 
-export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
+export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTeams = [] }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -87,7 +88,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'      // USER ve üstü: kendi takımı için oluştur/düzenle/kontrol
   const myTeam = teamId != null ? String(teamId) : null
-  const isOwnTeam = (m) => myTeam != null && String(m.team_id) === myTeam
+  const [teams, setTeams] = useState([])   // hook'tan ÖNCE tanımlı olmalı (TDZ)
+  // Takım seçimi + "kendi takımı" kapısı artık ÜYESİ olunan tüm takımlar (2026-09-18); hook 9 sayfada ortak.
+  const { canPickTeam, pickTeams, isOwnTeam } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId })
   const canManageRow = (m) => isAdmin || isOwnTeam(m)                    // düzenle + kontrol (kendi takımı)
   // Toplu kontrolün adayı = kullanıcının TEK TEK de çalıştırabileceği satırlar. Yeni bir izin
   // kuralı UYDURULMUYOR; kartın ▶ düğmesiyle birebir aynı yüzey.
@@ -102,7 +105,6 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
-  const [teams, setTeams] = useState([])
   const [selected, setSelected] = useState(null)
   useEscapeKey(!!selected, closeDetail)   // Escape ile kapat (QA ISSUE-002, 2026-09-13; ModalShell'e taşınmamış detay modalı)
   const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
@@ -133,6 +135,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
+  const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))   // etiket filtresi (2026-09-18)
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
   const [secondsSince, setSecondsSince] = useState(0)
@@ -254,6 +257,8 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   async function save() {
     if (!form.url.trim() || !form.keyword.trim()) return
     if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
+    if (!form.groupName?.trim()) { toast.error(t('mon.groupRequired')); return }   // grup + etiket zorunlu (2026-09-18)
+    if (!form.tags?.trim()) { toast.error(t('mon.tagsRequired')); return }
     setSaving(true)
     try {
       const payload = {
@@ -380,20 +385,28 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   // Türetilmiş listeler memoize — 1sn countdown her saniye render tetikler; bu O(n)
   // hesaplar her tıkta değil yalnız bağımlılık değişince çalışsın.
   const { teamOptions, hasTeamOptions } = useTeamOptions(monitors)
-  const teamSelectOptions = useMemo(() => [{ value: '', label: t('keyword.noTeam') },
-    ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))], [teams, t])
+  const teamSelectOptions = useMemo(() => [...(isAdmin ? [{ value: '', label: t('keyword.noTeam') }] : []),   // "takımsız" yalnız admin: üye için takım zorunlu (2026-09-18)
+    ...pickTeams.map(tm => ({ value: String(tm.id), label: tm.name }))], [isAdmin, pickTeams, t])
   // Değişiklik geçmişi `teamId` farkını ADA çevirebilsin — çıplak sayı okunmuyor.
   const teamNameById = useMemo(
     () => Object.fromEntries(teams.map(tm => [tm.id, tm.name])), [teams])
   // Gruplar takıma özgüdür: kullanıcı yalnız kendi takımının gruplarını görür/seçer (admin tümünü).
   // Yeni grup creatable ile yazılıp seçilebilir (mevcut grup olmasa bile).
   const groupMonitors = useMemo(
-    () => (isAdmin ? monitors : monitors.filter(m => myTeam != null && String(m.team_id) === myTeam)),
-    [monitors, isAdmin, myTeam])
+    () => (isAdmin ? monitors : monitors.filter(isOwnTeam)),   // ikincil takımlar da dâhil (2026-09-18)
+    [monitors, isAdmin, isOwnTeam])
   const groupNames = useMemo(
     () => [...new Set(groupMonitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
     [groupMonitors])
   const hasGroupOptions = groupNames.length > 0
+  // Etiket filtresi: grupla aynı sözleşme ('all' / '__none__' / etiket). Seçenekler listedeki etiketlerden türer.
+  const tagNames = useMemo(() => tagNamesOf(groupMonitors), [groupMonitors])
+  // Kutu etiketsiz izleme varken de görünür: "Etiketsiz" seçeneği eski (etiketsiz) kayıtları bulmanın yolu.
+  const hasTagOptions = tagNames.length > 0 || groupMonitors.some(m => !(m.tags || '').trim())
+  const tagFilterOptions = useMemo(() => [{ value: 'all', label: t('mon.allTags') },
+    ...tagNames.map(x => ({ value: x, label: x })),
+    ...(groupMonitors.some(m => !(m.tags || '').trim()) ? [{ value: '__none__', label: t('mon.noTags') }] : [])],
+    [tagNames, groupMonitors, t])
   const groupFilterOptions = useMemo(() => [{ value: 'all', label: t('keyword.allGroups') },
     ...groupNames.map(g => ({ value: g, label: g })),
     ...(groupMonitors.some(m => !m.group_name) ? [{ value: '__none__', label: t('keyword.noGroup') }] : [])],
@@ -403,10 +416,12 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
 
   const scoped = useMemo(() => monitors.filter(m => {
     if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
+    if (!matchesTag(m, tagFilter)) return false
+    if (matchesGroupOrTagText(m, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
     if (!search.trim()) return true
     const q = search.trim().toLowerCase()
     return (m.url || '').toLowerCase().includes(q) || (m.keyword || '').toLowerCase().includes(q)
-  }), [monitors, teamFilter, groupFilter, search])
+  }), [monitors, teamFilter, groupFilter, tagFilter, search])
 
   const counts = useMemo(() => {
     const c = { total: scoped.length, up: 0, down: 0, error: 0, alarm: 0, unacked: 0 }
@@ -436,14 +451,14 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
   // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(displayMonitors, {
-    listKey: 'keyword-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter],
+    listKey: 'keyword-monitors', resetDeps: [search, teamFilter, groupFilter, tagFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
 
   // Paylaşılabilir URL: görünür durum (filtre/arama/sayfa/açık modal) adres çubuğunda yaşar;
   // varsayılan değerler param üretmez (temiz URL). Yazım debounce'lu replaceState (useUrlQuerySync).
   useUrlQuerySync({
-    ...monitorUrlState({ teamFilter, groupFilter, search, statFilter, pager }),
+    ...monitorUrlState({ teamFilter, groupFilter, tagFilter, search, statFilter, pager }),
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'control' ? detailTab : null,
     // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
@@ -499,8 +514,8 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     }
   }
 
-  const selectedTeamLabel = isAdmin
-    ? (teams.find(tm => String(tm.id) === String(form.teamId))?.name || t('keyword.noTeam'))
+  const selectedTeamLabel = canPickTeam
+    ? (pickTeams.find(tm => String(tm.id) === String(form.teamId))?.name || t('keyword.noTeam'))
     : (teamName || t('keyword.noTeam'))
 
   return (
@@ -542,6 +557,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
           {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />}
+          {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} />}
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />}
           <input className="upt-search" type="text" placeholder={t('keyword.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
@@ -777,10 +793,10 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
               <label><span>{t('keyword.name')}</span>
                 <input value={form.name} placeholder={form.url} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
               <label><span>{t('keyword.team')} <span className="req-star">*</span></span>
-                {isAdmin
+                {canPickTeam
                   ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
                   : <input value={teamName || t('keyword.noTeam')} disabled />}</label>
-              <label className="full-width"><span>{t('keyword.group')}</span>
+              <label className="full-width"><span>{t('keyword.group')} <span className="req-star">*</span></span>
                 <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
                   options={[{ value: '', label: t('keyword.noGroup') }, ...groupSelectOptions]}
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('keyword.noGroup')} /></label>
@@ -795,7 +811,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
 
               {/* Etiketler */}
               <div className="full-width kw-tags-block">
-                <div className="kw-block-title">{t('keyword.tagsTitle')}</div>
+                <div className="kw-block-title">{t('keyword.tagsTitle')} <span className="req-star">*</span></div>
                 <div className="field-hint" style={{ marginBottom: 6 }}>{t('keyword.tagsHint')}</div>
                 <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('keyword.tagsPlaceholder')} />
               </div>

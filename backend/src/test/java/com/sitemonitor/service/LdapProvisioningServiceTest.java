@@ -328,6 +328,47 @@ class LdapProvisioningServiceTest {
     }
 
     @Test
+    @DisplayName("takım KİLİTLİ (team_locked): AD üyeliği manuel atamayı EZMEZ — kilit varken takımlar aynen kalır (2026-09-18)")
+    void teamLocked_keepsManualTeams() {
+        AppUser existing = new AppUser();
+        existing.setId(77L);
+        existing.setUsername("LOCKEDTEAMS");
+        existing.setTeamIds(new java.util.LinkedHashSet<>(List.of(5L, 9L)));   // admin elle verdi
+        existing.setTeamId(5L);
+        existing.setTeamLocked(true);
+        when(userRepo.findByUsername("LOCKEDTEAMS")).thenReturn(Optional.of(existing));
+        Map<String, Object> attrs = Map.of(
+                "cn", "70020",
+                "memberOf", List.of("CN=SY-Alpha,OU=ScrumGroups,DC=example,DC=com"));
+
+        AppUser u = service.provisionFromAd("lockedteams", "CN=lockedteams,DC=akb", attrs);
+
+        assertThat(u.getTeamIds()).containsExactly(5L, 9L);
+        assertThat(u.getTeamId()).isEqualTo(5L);
+        org.mockito.Mockito.verify(teamRepo, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any(Team.class));
+    }
+
+    @Test
+    @DisplayName("takım kilidi KALKMIŞ (team_locked=false): AD üyeliği yeniden yazar")
+    void teamUnlocked_adOverwritesAgain() {
+        AppUser existing = new AppUser();
+        existing.setId(78L);
+        existing.setUsername("UNLOCKEDTEAMS");
+        existing.setTeamIds(new java.util.LinkedHashSet<>(List.of(5L, 9L)));
+        existing.setTeamId(5L);
+        existing.setTeamLocked(false);
+        when(userRepo.findByUsername("UNLOCKEDTEAMS")).thenReturn(Optional.of(existing));
+        Map<String, Object> attrs = Map.of(
+                "cn", "70021",
+                "memberOf", List.of("CN=SY-Alpha,OU=ScrumGroups,DC=example,DC=com"));
+
+        AppUser u = service.provisionFromAd("unlockedteams", "CN=unlockedteams,DC=akb", attrs);
+
+        assertThat(u.getTeamIds()).doesNotContain(9L);
+        assertThat(u.getTeamIds()).hasSize(1);
+    }
+
+    @Test
     @DisplayName("company fallback: ScrumGroup yokken company'den tek takım çıkarılır")
     void companyFallback_whenNoScrumGroup() {
         org.mockito.ArgumentCaptor<Team> cap = org.mockito.ArgumentCaptor.forClass(Team.class);

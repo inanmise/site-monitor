@@ -29,13 +29,15 @@ import ModalScrollHint from './ui/ModalScrollHint.jsx'
 import { duplicateName } from '../utils/duplicateName.js'
 import DnsDetailModal from './DnsDetailModal.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import TagInput from './ui/TagInput.jsx'
+import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 
 import MonitorStatsSection from './MonitorStatsSection.jsx'
-import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
+import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS']
@@ -66,14 +68,14 @@ const INFO_ITEMS = [
   { type: 'TTL',   descKey: 'dns.ttlExplain' },
 ]
 
-const emptyForm = { name: '', domain: '', recordType: 'A', intervalSeconds: 300, teamId: '', groupName: '', notificationGroupId: '', expectedValue: '', slowThresholdMs: '', propagationCheck: false, dnsChangeAlertEnabled: true, notifyEmail: true, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, notifyWebhook: true, active: true }
+const emptyForm = { name: '', domain: '', recordType: 'A', intervalSeconds: 300, teamId: '', groupName: '', tags: '', notificationGroupId: '', expectedValue: '', slowThresholdMs: '', propagationCheck: false, dnsChangeAlertEnabled: true, notifyEmail: true, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, notifyWebhook: true, active: true }
 
 function truncateValue(val, max = 50) {
   if (!val) return '—'
   return val.length > max ? val.substring(0, max) + '…' : val
 }
 
-export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
+export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams = [] }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -81,7 +83,9 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'   // USER ve üstü: kendi takımı için standalone DNS ekler
   const myTeam = teamId != null ? String(teamId) : null
-  const isOwnTeam = (m) => myTeam != null && String(m.team_id) === myTeam
+  const [teams, setTeams] = useState([])   // hook'tan ÖNCE tanımlı olmalı (TDZ)
+  // Takım seçimi + "kendi takımı" kapısı artık ÜYESİ olunan tüm takımlar (2026-09-18); hook 9 sayfada ortak.
+  const { canPickTeam, pickTeams, isOwnTeam } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId })
   // Kapılar PortMonitorPage ile AYNI — uçlar da hizalandı (MonitoringController.updateDns/
   // deleteDns/triggerDns artık canOperateTeam kullanıyor, sekiz kardeş türle aynı kural).
   //
@@ -105,7 +109,6 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
-  const [teams, setTeams] = useState([])
   const [detailMonitor, setDetailMonitor] = useState(null)
   // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin (diğer sekiz türle aynı):
   // sekmenin kendi 30 sn'lik canlı yenilemesi 1. sayfa dışında ve özel aralıkta KAPALI.
@@ -127,6 +130,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
+  const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))   // etiket filtresi (2026-09-18)
   const [infoOpen, setInfoOpen] = useState(false)
   const [testResult, setTestResult] = useState(null)
   const [testing, setTesting] = useState(false)
@@ -195,11 +199,11 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   useMonitorDeepLink(monitors, setDetailMonitor)
 
   // Ortak bildirim blogunun "kime gidecek" satiri icin hedef takim adi (HttpMonitorPage deseni).
-  const selectedTeamLabel = isAdmin
-    ? (teams.find(tm => String(tm.id) === String(form.teamId))?.name || t('app.noTeam'))
+  const selectedTeamLabel = canPickTeam
+    ? (pickTeams.find(tm => String(tm.id) === String(form.teamId))?.name || t('app.noTeam'))
     : (teamName || t('app.noTeam'))
-  const teamSelectOptions = [{ value: '', label: t('app.noTeam') },
-    ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))]
+  const teamSelectOptions = [...(isAdmin ? [{ value: '', label: t('app.noTeam') }] : []),   // "takımsız" yalnız admin: üye için takım zorunlu (2026-09-18)
+    ...pickTeams.map(tm => ({ value: String(tm.id), label: tm.name }))]
 
   function openNew() {
     setDupSource(null)
@@ -219,7 +223,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
       recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
       teamId: m.team_id != null ? String(m.team_id) : '',
-      groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
+      groupName: m.group_name || '', tags: m.tags || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
       expectedValue: m.expected_value || '',
       slowThresholdMs: m.slow_threshold_ms ?? '',
       propagationCheck: m.propagation_check === true,
@@ -250,6 +254,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
     if ((modal === 'new' || modal?.standalone) && (form.teamId === '' || form.teamId == null)) {
       toast.error(t('mon.teamRequired')); return
     }
+    if (!form.groupName?.trim()) { toast.error(t('mon.groupRequired')); return }   // grup + etiket zorunlu (2026-09-18)
+    if (!form.tags?.trim()) { toast.error(t('mon.tagsRequired')); return }
     setSaving(true)
     try {
       const isNew = modal === 'new'
@@ -262,7 +268,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
         recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
         expectedValue: (form.expectedValue || '').trim(),
         slowThresholdMs: form.slowThresholdMs === '' ? null : Number(form.slowThresholdMs),
-        groupName: form.groupName?.trim() || null,
+        groupName: form.groupName?.trim() || null, tags: form.tags?.trim() || null,
         // Bos = takim varsayilani -> takim adresi (zincirin kalani).
         notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
           ? null : Number(form.notificationGroupId),
@@ -410,11 +416,19 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const hasTeamOptions = teamOptions.some(o => o.value !== 'all' && o.value !== '__none__')
 
   // Grup seçenekleri — yüklü monitörlerden türetilir (takım-kapsamlı: admin hepsini, diğerleri kendi takımı) — ping/keyword deseni.
-  const groupMonitors = isAdmin ? monitors : monitors.filter(m => myTeam != null && String(m.team_id) === myTeam)
+  const groupMonitors = isAdmin ? monitors : monitors.filter(isOwnTeam)   // ikincil takımlar da dâhil (2026-09-18)
   const groupNames = [...new Set(groupMonitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b))
   const hasGroupOptions = groupNames.length > 0
   // Form içi grup dropdown'ı takım+tür kapsamlı endpoint'ten (liste filtresi değil): admin başka takımın grubunu görmez.
   const groupSelectOptions = teamGroups.map(g => ({ value: g.name, label: g.name }))
+  // Etiket filtresi: grupla aynı sözleşme ('all' / '__none__' / etiket). Seçenekler listedeki etiketlerden türer.
+  const tagNames = useMemo(() => tagNamesOf(groupMonitors), [groupMonitors])
+  // Kutu etiketsiz izleme varken de görünür: "Etiketsiz" seçeneği eski (etiketsiz) kayıtları bulmanın yolu.
+  const hasTagOptions = tagNames.length > 0 || groupMonitors.some(m => !(m.tags || '').trim())
+  const tagFilterOptions = useMemo(() => [{ value: 'all', label: t('mon.allTags') },
+    ...tagNames.map(x => ({ value: x, label: x })),
+    ...(groupMonitors.some(m => !(m.tags || '').trim()) ? [{ value: '__none__', label: t('mon.noTags') }] : [])],
+    [tagNames, groupMonitors, t])
   const groupFilterOptions = [{ value: 'all', label: t('dns.allGroups') },
     ...groupNames.map(g => ({ value: g, label: g })),
     ...(groupMonitors.some(m => !m.group_name) ? [{ value: '__none__', label: t('dns.noGroup') }] : [])]
@@ -426,10 +440,12 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   // 2 sonuç gel. HttpMonitorPage deseni.)
   const scoped = useMemo(() => monitors.filter(m => {
     if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
+    if (!matchesTag(m, tagFilter)) return false
+    if (matchesGroupOrTagText(m, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
     if (!search.trim()) return true
     const s = search.toLowerCase()
     return m.domain?.toLowerCase().includes(s) || m.record_type?.toLowerCase().includes(s)
-  }), [monitors, teamFilter, groupFilter, search])
+  }), [monitors, teamFilter, groupFilter, tagFilter, search])
 
   const dnsCounts = useMemo(() => ({
     total: scoped.length,
@@ -472,13 +488,13 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
   // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(filtered, {
-    listKey: 'dns-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter],
+    listKey: 'dns-monitors', resetDeps: [search, teamFilter, groupFilter, tagFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
 
   // Paylaşılabilir URL: filtre/arama/sayfa + açık detay modalı (mtab/range DnsDetailModal içinde sync'lenir).
   useUrlQuerySync({
-    ...monitorUrlState({ teamFilter, groupFilter, search, statFilter, pager }),
+    ...monitorUrlState({ teamFilter, groupFilter, tagFilter, search, statFilter, pager }),
     monitor: detailMonitor?.id ?? null,
     // Modal AÇIKKEN mtab/range'i DnsDetailModal yönetir (anahtarlar mapping'de olmaz → dokunulmaz);
     // modal kapanınca burada null'a düşer ve URL'den silinir (modal unmount'ta silme yapamaz).
@@ -547,6 +563,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
         {hasGroupOptions && (
           <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />
         )}
+        {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} />}
         <input
           className="dns-search-input"
           type="text"
@@ -693,7 +710,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
               {(modal === 'new' || modal.standalone) && (
                 <label>
                   <span>{t('dns.team')} <span className="req-star">*</span></span>
-                  {isAdmin
+                  {canPickTeam
                     ? <SearchableSelect
                         value={form.teamId}
                         onChange={v => setForm(f => ({ ...f, teamId: v }))}
@@ -712,7 +729,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
                 />
               </label>
               <label>
-                <span>{t('dns.group')}</span>
+                <span>{t('dns.group')} <span className="req-star">*</span></span>
                 <SearchableSelect
                   value={form.groupName}
                   onChange={v => setForm(f => ({ ...f, groupName: v }))}
@@ -752,6 +769,12 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
               <div className="full-width field-hint">ⓘ {t('verify.hint')}</div>
               <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
                 onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
+              {/* Etiketler — zorunlu (2026-09-18); Http/Port ile aynı blok */}
+              <div className="full-width http-tags-block">
+                <div className="http-block-title">{t('mon.tagsTitle')} <span className="req-star">*</span></div>
+                <div className="field-hint" style={{ marginBottom: 6 }}>{t('mon.tagsHint')}</div>
+                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('mon.tagsPlaceholder')} />
+              </div>
               <label>
                 <span>{t('dns.slowThresholdField')}</span>
                 <input

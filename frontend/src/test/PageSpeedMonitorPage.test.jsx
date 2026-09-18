@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within, act } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within, act, fillGroupAndTags } from './test-utils.jsx'
 import PageSpeedMonitorPage from '../components/PageSpeedMonitorPage.jsx'
 import { formatBytes } from '../utils/formatBytes.js'
 
@@ -34,7 +34,7 @@ import { api } from '../api/client'
 
 const monitor = {
   id: 1, name: 'Ödeme sayfası', url: 'https://x.com/odeme',
-  team_id: 5, team_name: 'SY-A', group_name: 'Kanal', active: true,
+  team_id: 5, team_name: 'SY-A', group_name: 'Kanal', tags: 'prod', active: true,
   interval_seconds: 1800, timeout_ms: 10000,
   max_load_ms: 3000, max_ttfb_ms: null, max_page_kb: null, max_requests: null,
   status: 'OK', ok: true, response_ms: 900, ttfb_ms: 120,
@@ -103,6 +103,7 @@ describe('PageSpeedMonitorPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /add monitor|izleme ekle/i }))
 
     fireEvent.change(screen.getByPlaceholderText('https://example.com'), { target: { value: 'https://y.com' } })
+    await fillGroupAndTags()   // grup + etiket zorunlu (2026-09-18)
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
 
     await waitFor(() => expect(api.monitoring.createPageSpeedMonitor).toHaveBeenCalled())
@@ -122,6 +123,7 @@ describe('PageSpeedMonitorPage', () => {
     await waitFor(() => expect(api.monitoring.getPageSpeedMonitors).toHaveBeenCalled())
 
     fireEvent.click(await screen.findByTitle(/edit|düzenle/i))
+    await fillGroupAndTags()   // grup + etiket zorunlu (2026-09-18)
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
 
     await waitFor(() => expect(api.monitoring.updatePageSpeedMonitor).toHaveBeenCalled())
@@ -553,6 +555,7 @@ describe('PageSpeedMonitorPage', () => {
     const blanks = screen.getAllByPlaceholderText(/no threshold|eşik yok/i)
     expect(blanks.map(el => el.value)).toEqual(['7000', '300', '55000', '220'])
 
+    await fillGroupAndTags()   // grup + etiket zorunlu (2026-09-18)
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
     await waitFor(() => expect(api.monitoring.createPageSpeedMonitor).toHaveBeenCalled())
     const payload = api.monitoring.createPageSpeedMonitor.mock.calls[0][0]

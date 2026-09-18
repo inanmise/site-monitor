@@ -723,3 +723,38 @@ Kapsam: 3 commit, yalnız frontend. İmza süpürmesi temiz (testlerde example.c
 Bilinen sınırlar (bilinçli): "türün tamamını seç" o anki monitörleri ekler (gelecekte eklenenler için
 "Tüm monitörler" kutusu; ipucu metni söylüyor); tür bazlı joker hedef sunucuda yok.
 → **REGRESYON YOK**.
+
+## Ek — otuz dördüncü tur (2026-09-18, sürüm öncesi — çok takımlı takım seçimi, grup+etiket zorunluluğu, takım kilidi, etiket filtresi, `v20.69.0..HEAD`)
+
+Kapsam: backend (MonitoringController 9 tür + AdminController envanter + LdapProvisioning/UserService)
+ve frontend (9 izleme sayfası, envanter formu, UserManager, monitorFilters). İmza süpürmesi temiz
+(testlerde example.com / "Grup A" / "Takım A").
+
+**Denetim odakları:**
+- Çok takımlı kullanıcı: eskiden `canOperateTeam` USER için yalnız BİRİNCİL takımı kabul ediyor,
+  ikincil takım istendiğinde `resolveWriteTeam` SESSİZCE birincile düşüyordu (kullanıcı "X'e ekledim"
+  sanıp Y'de buluyordu). Artık üyesi olduğu her takım kabul; üye olmadığı takım 403 (sessiz düşüş yok);
+  eski oturum (memberTeamIds yok) birincile geri düşer. Frontend: `useMonitorTeamPick` 9 sayfada ortak;
+  2+ takımlı üye için kutu açılır, "takımsız" seçeneği yalnız admin'de. Hook, `teams` state'inden ÖNCE
+  çağrılınca TDZ çöküşü — testte yakalandı, sıralama düzeltildi.
+- Grup + etiket zorunlu: sunucu kapısı `requireGroupAndTags` (oluşturmada eksik/boş → 400; güncellemede
+  yalnız GÖNDERİLİP boş bırakılmışsa 400 — kısmi PUT'lar, ör. `excludePatterns`, dokunulmaz). Domain/DNS/
+  Ping'e `tags` kolonu (nullable, ddl-auto) + form bloğu eklendi. Envanter formunda etiket alanı YOKTU ve
+  `updateInventory` `existing.setTags(item.getTags())` ile düzenlemede etiketleri SİLİYORDU → alan eklendi,
+  boş gönderim reddedilir (test: mevcut "prod" korunur). Backend testlerinde 38+19 create/update gövdesine
+  grup+etiket enjekte edildi; 9 tür için parametreli kapı testi.
+- Takım kilidi: `team_locked` (role_locked/org_role_locked ile aynı sözleşme) — admin üyeliği DEĞİŞTİRİNCE
+  kilit; aynı küme yeniden gönderilirse kilit KONMAZ (form her kayıtta team_ids yollar); LDAP `resolveTeams`
+  kilitliyse hiç dokunmaz; `team-unlock` ucu + `USER_TEAM_UNLOCK` denetim olayı (katalog alfabetik).
+  Tarayıcıda uçtan uca: ikinci takım eklenince rozet + "Takımları AD'ye geri ver" menüsü, toast, rozet
+  kalktı; test kullanıcısı geri alındı.
+- Etiket filtresi (9 sayfa): `matchesTag`/`tagNamesOf`/`matchesGroupOrTagText` tek yerde; URL `tag`
+  paramı (PAGE_STATE_PARAMS); "Etiketsiz" seçeneği eski kayıtları bulur (kutu etiketsiz kayıt varken de
+  görünür). `.ss-wrap` global width:100% üç kutuyu alt alta diziyordu → `.upt-toolbar > .ss-wrap` daraltması
+  (Alarm Geçmişi ile aynı). Tarayıcıda: qa-beta → yalnız B, qa-ortak → A+B, URL `?tag=…`.
+- Kapılar: backend `clean verify` 3810 test yeşil; frontend lint / test / kapsam tabanı / build yeşil.
+Bilinen sınırlar (bilinçli): envanter CSV içe aktarma (`/inventory/import`, `/bulk`) grup/etiket kapısından
+GEÇMEZ (mevcut içe aktarma sözleşmesi korunur); envanter-türevi DNS/Port satırları grup/etiket taşımaz
+(kaynak envanter kaydıdır).
+→ **REGRESYON YOK**.
+

@@ -29,6 +29,7 @@ vi.mock('../api/client', () => ({
     unlockUser: vi.fn(),
     unlockUserRole: vi.fn(),
     unlockUserOrgRole: vi.fn(),
+    unlockUserTeams: vi.fn(),
     getUserAvatar: vi.fn(),
   } }),
 }))
@@ -53,6 +54,9 @@ const USERS = [
     system_role: 'ADMIN', team_ids: [5], active: true },
   { id: 3, username: 'kilitli', display_name: 'Kilitli K', email: 'k@example.com',
     system_role: 'USER', team_ids: [9], active: true, permanent_lock: true },
+  // Takım kilidi (2026-09-18): admin üyeliği elle değiştirdi → LDAP girişi ezmez; rozet + "AD'ye geri ver"
+  { id: 4, username: 'cokTakim', display_name: 'Çok Takım', email: 'ct@example.com',
+    system_role: 'USER', team_ids: [5, 9], active: true, team_locked: true },
 ]
 
 const renderUm = (props = {}) => render(
@@ -197,6 +201,23 @@ describe('UserManager', () => {
     fireEvent.click(await screen.findByText(/Kilidi Aç|Unlock/i))
 
     await waitFor(() => expect(api.admin.unlockUser).toHaveBeenCalledWith(3))
+  })
+
+  it('takım kilidi: rozet yalnız team_locked kullanıcıda; menüden "AD-ye geri ver" doğru id ile çağrılır', async () => {
+    api.admin.unlockUserTeams.mockResolvedValue({ success: true })
+    renderUm()
+    const lockedRow = (await screen.findByText('cokTakim')).closest('tr')
+    expect(within(lockedRow).getByTitle(/Takımlar kilitli|Teams locked/i)).toBeInTheDocument()
+    const plainRow = screen.getByText('einanmis').closest('tr')
+    expect(within(plainRow).queryByTitle(/Takımlar kilitli|Teams locked/i)).toBeNull()
+
+    await openRowMenu('einanmis')
+    expect(screen.queryByText(/Takımları AD'ye geri ver|Return teams to AD/i)).toBeNull()
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    await openRowMenu('cokTakim')
+    fireEvent.click(await screen.findByText(/Takımları AD'ye geri ver|Return teams to AD/i))
+    await waitFor(() => expect(api.admin.unlockUserTeams).toHaveBeenCalledWith(4))
   })
 
   it('kaydetme reddedilirse modal AÇIK kalır ve hata gösterilir', async () => {

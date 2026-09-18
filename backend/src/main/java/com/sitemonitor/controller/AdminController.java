@@ -229,6 +229,7 @@ public class AdminController {
         if (item.getTeamId() == null) {
             throw new IllegalArgumentException("A team must be selected for the certificate");
         }
+        requireInventoryGroupAndTags(item);   // grup + etiket zorunlu (2026-09-18)
         // The chosen team must be within the caller's manage scope (global admin: any;
         // PO: only teams they lead; müdür: none).
         requireTeamScopedAdmin(session, item.getTeamId());
@@ -279,6 +280,7 @@ public class AdminController {
         // ama satıra yazılıyordu → latest_checks/geçmiş/notlar domain dizesiyle bağlı olduğundan
         // kayıt geçmişsiz kalıyordu; "Other.com" ise exact-UNIQUE'i geçip ikinci satır oluşturuyordu.
         item.setDomain(validateDomain(item.getDomain()));
+        requireInventoryGroupAndTags(item);   // grup + etiket zorunlu (2026-09-18) — düzenlemede de
         // TEAM_ADMIN cannot transfer an item to another team via this endpoint —
         // freeze teamId to its current value.
         if (isTeamAdmin(session)) {
@@ -2293,6 +2295,22 @@ public class AdminController {
         return ok(Map.of("message", "User role unlocked"));
     }
 
+    /** Takım kilidini kaldır → kullanıcının takım üyelikleri tekrar AD (LDAP) yönetimine döner (2026-09-18). */
+    @PostMapping("/users/{id}/team-unlock")
+    public ResponseEntity<Map<String, Object>> unlockUserTeams(
+            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+        AppUser target = userRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
+        requireTeamScopedAdmin(session, target.getTeamId());
+        requirePerm(session, "users.crud", "edit");
+        // Kilit kalkınca takımlar AD yönetimine döner; kaybolan gerçek SABİTLENMİŞ üyelik kümesidir.
+        String detail = AuditDetail.of("username", target.getUsername(),
+                "team_ids_before", String.valueOf(target.getTeamIds()));
+        userService.unlockTeams(id);
+        auditService.recordAction("USER_TEAM_UNLOCK", session, request, "USER", id.toString(), detail);
+        return ok(Map.of("message", "User teams unlocked"));
+    }
+
     /** Org-rol kilidini kaldır → kullanıcının org_role'ü tekrar AD (LDAP) yönetimine döner. */
     @PostMapping("/users/{id}/org-role-unlock")
     public ResponseEntity<Map<String, Object>> unlockUserOrgRole(
@@ -2740,6 +2758,18 @@ public class AdminController {
      *  Subdomain KORUNUR (host-düzeyi diagnostics için); registrable'a indirgeme (PSL) yalnız
      *  domain-expiry akışının kendi içinde yapılır. Normalize edilmiş host döner. */
     /** Kural {@link com.sitemonitor.service.DomainNames#validate} — içe aktarma servisiyle ortak. */
+    /**
+     * Envanter kaydı da bir izleme: grup ve en az bir etiket zorunlu (2026-09-18, ürün kararı — dokuz
+     * izleme türüyle aynı kural, bkz. MonitoringController.requireGroupAndTags). Form alanı eksikken
+     * düzenleme mevcut etiketleri SİLİYORDU (existing.setTags(null)); artık boş gönderim reddedilir.
+     */
+    private static void requireInventoryGroupAndTags(CertificateInventory item) {
+        if (item.getGroupName() == null || item.getGroupName().isBlank())
+            throw new IllegalArgumentException("Grup seçimi zorunludur; kayıt kaydedilemez.");
+        if (item.getTags() == null || item.getTags().isBlank())
+            throw new IllegalArgumentException("En az bir etiket zorunludur; kayıt kaydedilemez.");
+    }
+
     private static String validateDomain(String domain) {
         return com.sitemonitor.service.DomainNames.validate(domain);
     }

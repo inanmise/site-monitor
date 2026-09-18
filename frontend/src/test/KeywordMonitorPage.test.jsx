@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, fillGroupAndTags } from './test-utils.jsx'
 import KeywordMonitorPage from '../components/KeywordMonitorPage.jsx'
 
 // Açıklama ifadeleri (expectPhrase/triggerPhrase) dilden bağımsız TR; butonlar
@@ -29,7 +29,7 @@ import { api } from '../api/client'
 
 const monitor = {
   id: 1, name: 'Example', url: 'https://www.example.com/', keyword: 'example',
-  operator: 'GTE', match_count: 1, group_name: 'X Sistemleri', team_name: 'SY-A',
+  operator: 'GTE', match_count: 1, group_name: 'X Sistemleri', tags: 'prod', team_name: 'SY-A',
   status: 'up', http_status: 200, occurrences: 5, active: true, checked_at: '2026-06-24T00:00:00',
 }
 
@@ -100,6 +100,7 @@ describe('KeywordMonitorPage', () => {
     expect(url.value).toBe('https://x.example.com/a?t={timestamp}')
 
     fireEvent.change(screen.getByPlaceholderText('SUCCESS'), { target: { value: 'example' } })
+    await fillGroupAndTags()   // grup + etiket zorunlu (2026-09-18)
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
     await waitFor(() => expect(api.monitoring.createKeywordMonitor).toHaveBeenCalled())
     expect(api.monitoring.createKeywordMonitor.mock.calls[0][0].url).toBe('https://x.example.com/a?t={timestamp}')

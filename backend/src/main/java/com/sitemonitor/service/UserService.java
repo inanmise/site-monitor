@@ -684,6 +684,7 @@ public class UserService {
         user.setOrgRole(orgRole != null && !orgRole.isBlank() ? orgRole : null);
         user.setOrgRoleLocked(true);    // admin oluşturdu → org rol manuel; LDAP provisyonu ezmesin
         applyTeams(user, teams);
+        user.setTeamLocked(true);       // admin oluşturdu → takımlar manuel; LDAP provisyonu ezmesin (2026-09-18)
         user.setActive(true);
         user.setCreatedAt(now);
         user.setUpdatedAt(now);
@@ -737,7 +738,14 @@ public class UserService {
             user.setRoleLocked(true);   // admin manuel değiştirdi → LDAP provisyonu bu rolü ezmesin
         }
         // teamIds == null → takımlara dokunma (kısmi güncelleme); verilirse (boş dahil) üyeliği set et.
-        if (teamIds != null) applyTeams(user, normalizeTeams(teamIds));
+        if (teamIds != null) {
+            LinkedHashSet<Long> next = normalizeTeams(teamIds);
+            // Üyelik GERÇEKTEN değiştiyse kilitle (role/orgRole ile aynı sözleşme): düzenleme formu her
+            // kayıtta team_ids gönderir; aynı kümeyi yeniden yazmak manuel atama sayılmaz (2026-09-18).
+            boolean changed = !next.equals(new LinkedHashSet<>(user.getTeamIds() == null ? java.util.Set.of() : user.getTeamIds()));
+            applyTeams(user, next);
+            if (changed) user.setTeamLocked(true);   // admin manuel değiştirdi → LDAP takımları ezmesin
+        }
         if (active != null) user.setActive(active);
         String newOrg = (orgRole != null && !orgRole.isBlank()) ? orgRole : null;
         if (!Objects.equals(newOrg, user.getOrgRole())) {
@@ -764,6 +772,17 @@ public class UserService {
         AppUser user = userRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         user.setRoleLocked(false);
+        user.setUpdatedAt(now());
+        userRepo.save(user);
+    }
+
+    /** Admin kullanıcının takım kilidini kaldırır → takım üyelikleri tekrar AD (LDAP) yönetimine döner
+     *  (sonraki LDAP girişinde ScrumGroups/company'den yeniden çözülür). 2026-09-18. */
+    @Transactional
+    public void unlockTeams(Long id) {
+        AppUser user = userRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
+        user.setTeamLocked(false);
         user.setUpdatedAt(now());
         userRepo.save(user);
     }

@@ -58,7 +58,7 @@ import { api } from '../api/client'
 import InventoryFormModal from '../components/inventory/InventoryFormModal.jsx'
 
 const TEAMS = [{ id: 1, name: 'Takım A' }]
-const RECORD = { id: 42, domain: 'kayitli.example.com', port: 8443, active: true, team_id: 1 }
+const RECORD = { id: 42, domain: 'kayitli.example.com', port: 8443, active: true, team_id: 1, group_name: 'Prod', tags: 'prod' }   // grup + etiket zorunlu (2026-09-18)
 
 const btn = (re) => screen.getByRole('button', { name: re })
 const maybeBtn = (re) => screen.queryByRole('button', { name: re })

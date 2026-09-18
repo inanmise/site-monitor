@@ -39,7 +39,7 @@ import { LoadingBlock } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 import MonitorStatsSection from './MonitorStatsSection.jsx'
-import { matchesTeamAndGroup } from '../utils/monitorFilters.js'
+import { matchesTeamAndGroup, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorSpark from './ui/MonitorSpark.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
@@ -51,6 +51,7 @@ import { csvCell } from '../utils/csv.js'
 import { formatBytes } from '../utils/formatBytes.js'
 import { suggestThresholds, suggestionIsPartial } from '../utils/pageSpeedThresholds.js'
 import { useEscapeKey } from '../hooks/useEscapeKey.js'
+import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
@@ -142,7 +143,7 @@ function BreachEvidence({ metrics, detail, t }) {
   )
 }
 
-export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
+export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myTeams = [] }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -150,7 +151,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'
   const myTeam = teamId != null ? String(teamId) : null
-  const isOwnTeam = (m) => myTeam != null && String(m.team_id) === myTeam
+  const [teams, setTeams] = useState([])   // hook'tan ÖNCE tanımlı olmalı (TDZ)
+  // Takım seçimi + "kendi takımı" kapısı artık ÜYESİ olunan tüm takımlar (2026-09-18); hook 9 sayfada ortak.
+  const { canPickTeam, pickTeams, isOwnTeam } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId })
   const canManageRow = (m) => isAdmin || isOwnTeam(m)
   // Toplu kontrolün adayı = kullanıcının TEK TEK de çalıştırabileceği satırlar. Yeni bir izin
   // kuralı UYDURULMUYOR; kartın ▶ düğmesiyle birebir aynı yüzey.
@@ -168,7 +171,6 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
-  const [teams, setTeams] = useState([])
   const [selected, setSelected] = useState(null)
   useEscapeKey(!!selected, closeDetail)   // Escape ile kapat (QA ISSUE-002, 2026-09-13; ModalShell'e taşınmamış detay modalı)
   const [resources, setResources] = useState([])
@@ -201,6 +203,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
+  const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))   // etiket filtresi (2026-09-18)
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
   const [secondsSince, setSecondsSince] = useState(0)
@@ -391,6 +394,8 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
   async function save() {
     if (!form.url.trim()) return
     if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
+    if (!form.groupName?.trim()) { toast.error(t('mon.groupRequired')); return }   // grup + etiket zorunlu (2026-09-18)
+    if (!form.tags?.trim()) { toast.error(t('mon.tagsRequired')); return }
     setSaving(true)
     try {
       const payload = payloadFromForm()
@@ -507,18 +512,26 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
   }
 
   const { teamOptions, hasTeamOptions } = useTeamOptions(monitors)
-  const teamSelectOptions = useMemo(() => [{ value: '', label: t('pspd.noTeam') },
-    ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))], [teams, t])
+  const teamSelectOptions = useMemo(() => [...(isAdmin ? [{ value: '', label: t('pspd.noTeam') }] : []),   // "takımsız" yalnız admin: üye için takım zorunlu (2026-09-18)
+    ...pickTeams.map(tm => ({ value: String(tm.id), label: tm.name }))], [isAdmin, pickTeams, t])
   // Degisiklik gecmisi teamId farkini ADA cevirebilsin — ciplak sayi okunmuyor.
   const teamNameById = useMemo(
     () => Object.fromEntries(teams.map(tm => [tm.id, tm.name])), [teams])
   const groupMonitors = useMemo(
-    () => (isAdmin ? monitors : monitors.filter(m => myTeam != null && String(m.team_id) === myTeam)),
-    [monitors, isAdmin, myTeam])
+    () => (isAdmin ? monitors : monitors.filter(isOwnTeam)),   // ikincil takımlar da dâhil (2026-09-18)
+    [monitors, isAdmin, isOwnTeam])
   const groupNames = useMemo(
     () => [...new Set(groupMonitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
     [groupMonitors])
   const hasGroupOptions = groupNames.length > 0
+  // Etiket filtresi: grupla aynı sözleşme ('all' / '__none__' / etiket). Seçenekler listedeki etiketlerden türer.
+  const tagNames = useMemo(() => tagNamesOf(groupMonitors), [groupMonitors])
+  // Kutu etiketsiz izleme varken de görünür: "Etiketsiz" seçeneği eski (etiketsiz) kayıtları bulmanın yolu.
+  const hasTagOptions = tagNames.length > 0 || groupMonitors.some(m => !(m.tags || '').trim())
+  const tagFilterOptions = useMemo(() => [{ value: 'all', label: t('mon.allTags') },
+    ...tagNames.map(x => ({ value: x, label: x })),
+    ...(groupMonitors.some(m => !(m.tags || '').trim()) ? [{ value: '__none__', label: t('mon.noTags') }] : [])],
+    [tagNames, groupMonitors, t])
   const groupFilterOptions = useMemo(() => [{ value: 'all', label: t('pspd.allGroups') },
     ...groupNames.map(g => ({ value: g, label: g })),
     ...(groupMonitors.some(m => !m.group_name) ? [{ value: '__none__', label: t('pspd.noGroup') }] : [])],
@@ -527,10 +540,12 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
 
   const scoped = useMemo(() => monitors.filter(m => {
     if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
+    if (!matchesTag(m, tagFilter)) return false
+    if (matchesGroupOrTagText(m, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
     if (!search.trim()) return true
     const q = search.trim().toLowerCase()
     return (m.url || '').toLowerCase().includes(q) || (m.name || '').toLowerCase().includes(q)
-  }), [monitors, teamFilter, groupFilter, search])
+  }), [monitors, teamFilter, groupFilter, tagFilter, search])
 
   const counts = useMemo(() => {
     const c = { total: scoped.length, ok: 0, slow: 0, down: 0, alarm: 0, unacked: 0 }
@@ -556,13 +571,14 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
   }, [scoped, statFilter])
 
   const pager = usePagination(displayMonitors, {
-    listKey: 'pagespeed-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter],
+    listKey: 'pagespeed-monitors', resetDeps: [search, teamFilter, groupFilter, tagFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
 
   useUrlQuerySync({
     team: teamFilter === 'all' ? null : teamFilter,
     group: groupFilter === 'all' ? null : groupFilter,
+    tag: tagFilter === 'all' ? null : tagFilter,
     q: search.trim() || null,
     stat: statFilter || null,
     page: pager.page > 1 ? pager.page : null,
@@ -606,8 +622,8 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
   /** Aşılan eşik anahtarlarını okunur rozete çevirir. */
   const breachLabel = (k) => t(`pspd.breach_${String(k).toLowerCase()}`)
 
-  const selectedTeamLabel = isAdmin
-    ? (teams.find(tm => String(tm.id) === String(form.teamId))?.name || t('pspd.noTeam'))
+  const selectedTeamLabel = canPickTeam
+    ? (pickTeams.find(tm => String(tm.id) === String(form.teamId))?.name || t('pspd.noTeam'))
     : (teamName || t('pspd.noTeam'))
   const activeMetric = METRICS.find(x => x.key === metric) ?? METRICS[0]
   // Bütçe çizgisi (2026-09-12, #15): seçili ölçütün eşiği (yük ms / TTFB ms / boyut KB→B / istek sayısı)
@@ -653,6 +669,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
           {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />}
+          {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} />}
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />}
           <input className="upt-search" type="text" placeholder={t('pspd.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
@@ -973,10 +990,10 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
               <label><span>{t('pspd.name')}</span>
                 <input value={form.name} placeholder={form.url} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
               <label><span>{t('pspd.team')} <span className="req-star">*</span></span>
-                {isAdmin
+                {canPickTeam
                   ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
                   : <input value={teamName || t('pspd.noTeam')} disabled />}</label>
-              <label className="full-width"><span>{t('pspd.group')}</span>
+              <label className="full-width"><span>{t('pspd.group')} <span className="req-star">*</span></span>
                 <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
                   options={[{ value: '', label: t('pspd.noGroup') }, ...groupSelectOptions]}
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('pspd.noGroup')} /></label>
@@ -1011,7 +1028,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName }) {
 
               {/* Etiketler */}
               <div className="full-width kw-tags-block">
-                <div className="kw-block-title">{t('pspd.tagsTitle')}</div>
+                <div className="kw-block-title">{t('pspd.tagsTitle')} <span className="req-star">*</span></div>
                 <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('pspd.tagsPlaceholder')} />
               </div>
 

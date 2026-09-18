@@ -276,10 +276,49 @@ class AdminControllerTest {
         mvc.perform(post("/api/admin/inventory")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"domain\":\"newdomain.com\",\"port\":443,\"team_id\":1}"))
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"newdomain.com\",\"port\":443,\"team_id\":1}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.domain").value("newdomain.com"));
+    }
+
+    // ── Grup + etiket zorunlu (2026-09-18): envanter kaydı da bir izleme ──
+    @Test
+    @DisplayName("POST /inventory: grup yoksa 400 — kayıt açılmaz")
+    void addInventory_missingGroup_returns400() throws Exception {
+        mvc.perform(post("/api/admin/inventory")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tags\":\"t1\",\"domain\":\"grupsuz.example.com\",\"port\":443,\"team_id\":1}"))
+                .andExpect(status().isBadRequest());
+        verify(inventoryRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("POST /inventory: etiket yoksa 400 — kayıt açılmaz")
+    void addInventory_missingTags_returns400() throws Exception {
+        mvc.perform(post("/api/admin/inventory")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"group_name\":\"Grup A\",\"domain\":\"etiketsiz.example.com\",\"port\":443,\"team_id\":1}"))
+                .andExpect(status().isBadRequest());
+        verify(inventoryRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("PUT /inventory: etiket boş gönderilirse 400 — eskiden mevcut etiketleri SİLİYORDU")
+    void updateInventory_blankTags_returns400_doesNotWipe() throws Exception {
+        CertificateInventory existing = inventory("old.com");
+        existing.setId(1L);
+        existing.setTags("prod");
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+        mvc.perform(put("/api/admin/inventory/1")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"  \",\"domain\":\"old.com\",\"port\":443,\"active\":true}"))
+                .andExpect(status().isBadRequest());
+        verify(inventoryRepo, never()).save(any());
+        assertThat(existing.getTags()).isEqualTo("prod");
     }
 
     @Test
@@ -293,7 +332,7 @@ class AdminControllerTest {
         mvc.perform(put("/api/admin/inventory/1")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"domain\":\"updated.com\",\"port\":443,\"active\":true}"))
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"updated.com\",\"port\":443,\"active\":true}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
     }
@@ -310,7 +349,7 @@ class AdminControllerTest {
         mvc.perform(put("/api/admin/inventory/1")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"domain\":\"dom.com\",\"port\":443,\"active\":false}"))
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"dom.com\",\"port\":443,\"active\":false}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.alertsClosed").value(4));
 
@@ -328,7 +367,7 @@ class AdminControllerTest {
         mvc.perform(put("/api/admin/inventory/1")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"domain\":\"dom2.com\",\"port\":443,\"active\":true}"))
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"dom2.com\",\"port\":443,\"active\":true}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.alertsClosed").value(0));
 
@@ -344,7 +383,7 @@ class AdminControllerTest {
         mvc.perform(put("/api/admin/inventory/999")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"domain\":\"x.com\",\"port\":443}"))
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"x.com\",\"port\":443}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.success").value(false));
     }
@@ -360,7 +399,7 @@ class AdminControllerTest {
         mvc.perform(put("/api/admin/inventory/1")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"domain\":\"old.com\",\"port\":443,\"active\":true,\"tls_mode\":\"default\"}"))
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"old.com\",\"port\":443,\"active\":true,\"tls_mode\":\"default\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.tls_mode").value("default"));
@@ -379,7 +418,7 @@ class AdminControllerTest {
         mvc.perform(put("/api/admin/inventory/1")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"domain\":\"old.com\",\"port\":443,\"active\":true,\"check_interval_hours\":24}"))
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"old.com\",\"port\":443,\"active\":true,\"check_interval_hours\":24}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.check_interval_hours").value(24));
         assertThat(existing.getCheckIntervalHours()).isEqualTo(24);
@@ -397,7 +436,7 @@ class AdminControllerTest {
         mvc.perform(put("/api/admin/inventory/1")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"domain\":\"old.com\",\"port\":443,\"active\":true,\"check_interval_hours\":5}"))
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"old.com\",\"port\":443,\"active\":true,\"check_interval_hours\":5}"))
                 .andExpect(status().isOk());
         assertThat(existing.getCheckIntervalHours()).isNull();
     }
@@ -430,7 +469,7 @@ class AdminControllerTest {
         mvc.perform(put("/api/admin/inventory/1")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"domain\":\"old.com\",\"port\":443,\"active\":true,"
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"old.com\",\"port\":443,\"active\":true,"
                                + "\"svc_mgmt_contact\":\"Ad Soyad - ad.soyad@example.com\","
                                + "\"app_dev_contact\":\"ekip@example.com\","
                                + "\"iis_admin_contact\":\"iis@example.com\","
@@ -499,7 +538,7 @@ class AdminControllerTest {
         mvc.perform(put("/api/admin/inventory/1")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"domain\":\"old.com\",\"port\":443,\"active\":true,"
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"old.com\",\"port\":443,\"active\":true,"
                                + "\"expected_fingerprint\":\"AA:BB:CC\","
                                + "\"expected_subject\":\"CN=old.com\"}"))
                 .andExpect(status().isOk());
@@ -522,7 +561,7 @@ class AdminControllerTest {
         mvc.perform(put("/api/admin/inventory/1")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"domain\":\"old.com\",\"port\":443,\"active\":true,"
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"old.com\",\"port\":443,\"active\":true,"
                                + "\"expectedFingerprint\":\"CAMEL\"}"))
                 .andExpect(status().isOk());
 
@@ -549,7 +588,7 @@ class AdminControllerTest {
         mvc.perform(put("/api/admin/inventory/1")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"domain\":\"old.com\",\"port\":443,\"active\":true,"
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"old.com\",\"port\":443,\"active\":true,"
                                + "\"notification_group_id\":50}"))
                 .andExpect(status().isOk());
 
@@ -569,7 +608,7 @@ class AdminControllerTest {
         mvc.perform(post("/api/admin/inventory")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"domain\":\"yeni.example.com\",\"port\":443,\"active\":true,"
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"yeni.example.com\",\"port\":443,\"active\":true,"
                                + "\"team_id\":7,\"notification_group_id\":99}"))
                 .andExpect(status().isOk());
 
@@ -624,7 +663,7 @@ class AdminControllerTest {
         mvc.perform(put("/api/admin/inventory/1")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"domain\":\"old.com\",\"port\":443,\"tls_mode\":\"bogus\"}"))
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"old.com\",\"port\":443,\"tls_mode\":\"bogus\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.success").value(false));
     }
@@ -1062,6 +1101,26 @@ class AdminControllerTest {
         mvc.perform(post("/api/admin/users/77/tour-reset").session(teamAdminSession()))
                 .andExpect(status().isForbidden());   // takım 2'nin admini, kullanıcı takım 9'da
         mvc.perform(post("/api/admin/users/77/tour-reset").session(userSession()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("POST /admin/users/{id}/team-unlock: admin takım kilidini kaldırır (USER_TEAM_UNLOCK); TEAM_ADMIN başka takım → 403; USER → 403")
+    void teamUnlock_scopedAndAudited() throws Exception {
+        AppUser target = new AppUser(); target.setId(78L); target.setUsername("multi"); target.setTeamId(9L); target.setActive(true);
+        target.setTeamIds(new java.util.LinkedHashSet<>(java.util.List.of(9L, 4L)));
+        when(userRepo.findById(78L)).thenReturn(Optional.of(target));
+
+        mvc.perform(post("/api/admin/users/78/team-unlock").session(authSession()))
+                .andExpect(status().isOk());
+        verify(userService).unlockTeams(78L);
+        verify(auditService).recordAction(eq("USER_TEAM_UNLOCK"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("USER"), eq("78"),
+                org.mockito.ArgumentMatchers.contains("multi"));
+
+        mvc.perform(post("/api/admin/users/78/team-unlock").session(teamAdminSession()))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/users/78/team-unlock").session(userSession()))
                 .andExpect(status().isForbidden());
     }
 
@@ -1911,7 +1970,7 @@ class AdminControllerTest {
         mvc.perform(post("/api/admin/inventory")
                         .session(teamAdminSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"domain\":\"x.com\",\"port\":443,\"team_id\":2}"))
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"x.com\",\"port\":443,\"team_id\":2}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.team_id").value(2));
@@ -1924,7 +1983,7 @@ class AdminControllerTest {
         mvc.perform(post("/api/admin/inventory")
                         .session(teamAdminSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"domain\":\"x.com\",\"port\":443,\"team_id\":999}"))
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"x.com\",\"port\":443,\"team_id\":999}"))
                 .andExpect(status().isForbidden());
     }
 
@@ -1939,7 +1998,7 @@ class AdminControllerTest {
         mvc.perform(put("/api/admin/inventory/1")
                         .session(teamAdminSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"domain\":\"x.com\",\"port\":443}"))
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"x.com\",\"port\":443}"))
                 .andExpect(status().isForbidden());
     }
 
@@ -1955,7 +2014,7 @@ class AdminControllerTest {
         mvc.perform(put("/api/admin/inventory/1")
                         .session(teamAdminSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"domain\":\"x.com\",\"port\":443}"))
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"x.com\",\"port\":443}"))
                 .andExpect(status().isOk());
     }
 
@@ -2637,7 +2696,7 @@ class AdminControllerTest {
         mvc.perform(put("/api/admin/inventory/1")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"domain\":\"OLD.COM\",\"port\":443,\"active\":true}"))
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"OLD.COM\",\"port\":443,\"active\":true}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.domain").value("old.com"));
         // Harf farkı rename DEĞİLDİR: geçmiş tabloları taşınmaz, satır aynı anahtarla kalır.

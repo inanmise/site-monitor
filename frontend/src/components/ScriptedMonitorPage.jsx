@@ -47,7 +47,7 @@ import CopyButton from './ui/CopyButton.jsx'
 import { exitLabel, exitHint, diagnosisHint, k6SyntaxLevel, readPhases, formatBytes,
   checksSummary, stuckLabel } from './scriptedExitCodes.js'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
-import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
+import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorSpark from './ui/MonitorSpark.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
@@ -56,6 +56,7 @@ import MonitorModalActions from './ui/MonitorModalActions.jsx'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import { useEscapeKey } from '../hooks/useEscapeKey.js'
+import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
@@ -188,7 +189,7 @@ function scriptedRowSignature(c) {
   return `${c.status}|${c.exit_code ?? ''}|${first}`
 }
 
-export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
+export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTeams = [] }) {
   const t = useT()
   const { lang } = useLanguage()
   const toast = useToast()
@@ -197,7 +198,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const isAdminish = isAdmin || isTeamAdmin            // form/team-select davranışı (mevcut semantik korunur)
   const myTeam = teamId != null ? String(teamId) : null
-  const isOwnTeam = (m) => myTeam != null && String(m.team_id) === myTeam
+  const [teams, setTeams] = useState([])   // hook'tan ÖNCE tanımlı olmalı (TDZ)
+  const { canPickTeam, pickTeams, isOwnTeam } = useMonitorTeamPick({ isAdmin: isAdminish, adminTeams: teams, myTeams, teamId })   // 2026-09-18
 
   const sparks = useSparklines('scripted')   // kart mini trendi (2026-09-12)
   const sla = useSla('scripted')   // 30 günlük kullanılabilirlik / hedef (2026-09-12, #11)
@@ -216,10 +218,10 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   // Kurumsal vekilin ETKİN durumu — düzenleme formunda "bu ayarla gerçekte ne olacak" notu için.
   const [proxy, setProxy] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [teams, setTeams] = useState([])
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
+  const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))   // etiket filtresi (2026-09-18)
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
   const [secondsSince, setSecondsSince] = useState(0)
@@ -386,7 +388,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
 
   // Türetilmiş listeler memoize — 1sn countdown her saniye render tetikler.
   const { teamOptions, hasTeamOptions } = useTeamOptions(monitors)
-  const teamSelectOptions = useMemo(() => teams.map(tm => ({ value: String(tm.id), label: tm.name })), [teams])
+  const teamSelectOptions = useMemo(() => pickTeams.map(tm => ({ value: String(tm.id), label: tm.name })), [pickTeams])
   // Değişiklik geçmişi `teamId` farkını ADA çevirebilsin — çıplak sayı okunmuyor.
   const teamNameById = useMemo(
     () => Object.fromEntries(teams.map(tm => [tm.id, tm.name])), [teams])
@@ -405,22 +407,30 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
       // listeden düşerse seçim boş görünür. (Zaten editörde açık — ek bir görünürlük vermez.)
       if (m.id === savedSource?.id) return true
       // BAŞKA takımların script'leri hiç listelenmez — ADMIN olsa bile.
-      return myTeam != null && String(m.team_id) === String(myTeam)
+      return isOwnTeam(m)   // ikincil takımlar da "kendi takımı" (2026-09-18)
     })
     return [...withScript].sort((a, b) => {
       if (a.id === savedSource?.id) return -1
       if (b.id === savedSource?.id) return 1
       return (a.name || '').localeCompare(b.name || '')
     })
-  }, [monitors, savedSource, myTeam])
+  }, [monitors, savedSource, isOwnTeam])
   // Gruplar takıma özgü: kullanıcı yalnız kendi takımının gruplarını görür/seçer (admin tümünü).
   const groupMonitors = useMemo(
-    () => (isAdmin ? monitors : monitors.filter(m => myTeam != null && String(m.team_id) === myTeam)),
-    [monitors, isAdmin, myTeam])
+    () => (isAdmin ? monitors : monitors.filter(isOwnTeam)),   // ikincil takımlar da dâhil (2026-09-18)
+    [monitors, isAdmin, isOwnTeam])
   const groupNames = useMemo(
     () => [...new Set(groupMonitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
     [groupMonitors])
   const hasGroupOptions = groupNames.length > 0
+  // Etiket filtresi: grupla aynı sözleşme ('all' / '__none__' / etiket). Seçenekler listedeki etiketlerden türer.
+  const tagNames = useMemo(() => tagNamesOf(groupMonitors), [groupMonitors])
+  // Kutu etiketsiz izleme varken de görünür: "Etiketsiz" seçeneği eski (etiketsiz) kayıtları bulmanın yolu.
+  const hasTagOptions = tagNames.length > 0 || groupMonitors.some(m => !(m.tags || '').trim())
+  const tagFilterOptions = useMemo(() => [{ value: 'all', label: t('mon.allTags') },
+    ...tagNames.map(x => ({ value: x, label: x })),
+    ...(groupMonitors.some(m => !(m.tags || '').trim()) ? [{ value: '__none__', label: t('mon.noTags') }] : [])],
+    [tagNames, groupMonitors, t])
   const groupFilterOptions = useMemo(() => [{ value: 'all', label: t('scripted.allGroups') },
     ...groupNames.map(g => ({ value: g, label: g })),
     ...(groupMonitors.some(m => !m.group_name) ? [{ value: '__none__', label: t('scripted.noGroup') }] : [])],
@@ -430,10 +440,12 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
 
   const scoped = useMemo(() => monitors.filter(m => {
     if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
+    if (!matchesTag(m, tagFilter)) return false
+    if (matchesGroupOrTagText(m, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
     const q = search.trim().toLowerCase()
     if (!q) return true
     return (m.name || '').toLowerCase().includes(q) || (m.group_name || '').toLowerCase().includes(q)
-  }), [monitors, teamFilter, groupFilter, search])
+  }), [monitors, teamFilter, groupFilter, tagFilter, search])
 
   const counts = useMemo(() => {
     const c = { total: scoped.length, up: 0, down: 0, alarm: 0, unacked: 0, paused: 0 }
@@ -463,12 +475,12 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
   // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(displayMonitors, {
-    listKey: 'scripted-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter],
+    listKey: 'scripted-monitors', resetDeps: [search, teamFilter, groupFilter, tagFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
   // Paylaşılabilir URL: filtre/arama/sayfa + açık detay modalı adres çubuğunda yaşar (varsayılanlar param üretmez).
   useUrlQuerySync({
-    ...monitorUrlState({ teamFilter, groupFilter, search, statFilter, pager }),
+    ...monitorUrlState({ teamFilter, groupFilter, tagFilter, search, statFilter, pager }),
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'control' ? detailTab : null,
     // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
@@ -743,6 +755,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     if (!form.name.trim()) { toast.error(t('scripted.nameRequired')); return }
     if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
     if (!form.groupName.trim()) { toast.error(t('scripted.groupRequired')); return }
+    if (!form.tags?.trim()) { toast.error(t('mon.tagsRequired')); return }   // etiket zorunlu (2026-09-18)
     // Boş/aralık dışı sayısal alan SESSİZCE kaydedilmesin (bkz. invalidNumericField).
     const bad = invalidNumericField(form)
     if (bad) { toast.error(t('scripted.numRange', t(bad.labelKey), bad.min, bad.max)); return }
@@ -1073,6 +1086,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
           {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />}
+          {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} />}
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />}
           <input className="upt-search" type="text" placeholder={t('scripted.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
@@ -1343,7 +1357,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
       )}
       </>)}
 
-      {modal && createPortal(<EditModal {...{ t, lang, k6Version: k6.version, proxy, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke, dismissSmoke: () => { setSmoke(null); closeEdit({ skipDraft: true }) }, save, del, closeEdit, runTest, isAdminish, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts, savedSource, templates: scriptTemplates, draftSavedAt, pendingDraft, applyDraft, discardDraft, bumpType, setBumpType }} />, document.body)}
+      {modal && createPortal(<EditModal {...{ t, lang, k6Version: k6.version, proxy, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke, dismissSmoke: () => { setSmoke(null); closeEdit({ skipDraft: true }) }, save, del, closeEdit, runTest, isAdminish, canPickTeam, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts, savedSource, templates: scriptTemplates, draftSavedAt, pendingDraft, applyDraft, discardDraft, bumpType, setBumpType }} />, document.body)}
 
       {/* Sayfa düzeyi toplu kontrol: önce takım seçimi, sonra akan sonuç tablosu.
           Depolama anahtarı TÜR BAŞINA ayrı — tek anahtar paylaşılsaydı buradaki seçim
@@ -1574,7 +1588,7 @@ function CheckDetail({ t, check, k6Version }) {
 }
 
 // ── Create/Edit modal ────────────────────────────────────────────────────────
-function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke = null, dismissSmoke, save, del, closeEdit, runTest, isAdminish, canDelete, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts = [], savedSource = null, templates = [], draftSavedAt = null, pendingDraft = null, applyDraft, discardDraft, bumpType = 'patch', setBumpType }) {
+function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke = null, dismissSmoke, save, del, closeEdit, runTest, isAdminish, canPickTeam = isAdminish, canDelete, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts = [], savedSource = null, templates = [], draftSavedAt = null, pendingDraft = null, applyDraft, discardDraft, bumpType = 'patch', setBumpType }) {
   // Düzenleme modalı: sabit başlık + kaydırılan gövde + sabit alt bar (useModalScrollHint).
   const scrollHint = useModalScrollHint()
   // Ortak bildirim blogunun "kime gidecek" satiri. Form AYRI bir bilesende oldugu icin
@@ -1640,7 +1654,7 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
             <input value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} /></label>
 
           <label><span>{t('scripted.team')} <span className="req-star">*</span></span>
-            {isAdminish
+            {canPickTeam
               ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))}
                   options={[{ value: '', label: t('scripted.selectTeam') }, ...teamSelectOptions]} searchThreshold={2} />
               : <input value={teamName || t('scripted.selectTeam')} disabled />}</label>
@@ -1715,7 +1729,7 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
 
           {/* Etiketler — kanonik TagInput (diğer tiplerle parite; payload'daki tags alanını doldurur) */}
           <div className="full-width">
-            <div className="kw-block-title">{t('scripted.tagsTitle')}</div>
+            <div className="kw-block-title">{t('scripted.tagsTitle')} <span className="req-star">*</span></div>
             <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('scripted.tagsPlaceholder')} />
             <span className="field-hint">{t('scripted.tagsHint')}</span>
           </div>
