@@ -3,6 +3,7 @@ import { ChevronDown, Users, AlertCircle, CheckCircle } from 'lucide-react'
 import { api } from '../../../api/client'
 import { useT } from '../../../i18n/index.jsx'
 import TeamBadge from '../../ui/TeamBadge.jsx'
+import AlertTeamCellModal from './AlertTeamCellModal.jsx'
 
 /**
  * Alarm Geçmişi takım kırılımı (2026-09-16, kullanıcı isteği): hangi takımın kaç alarmı var —
@@ -11,12 +12,14 @@ import TeamBadge from '../../ui/TeamBadge.jsx'
  * <p>Katlanır ve VARSAYILAN KAPALI (sayfadaki diğer paneller gibi); açıldığında yüklenir, tercih
  * tarayıcıda kalır. Kapsam sunucuda: kullanıcı yalnız görebildiği takımların sayısını görür.
  */
-export default function AlertTeamStatsPanel({ onPickTeam, activeTeamId }) {
+export default function AlertTeamStatsPanel({ onPickTeam, activeTeamId, onOpenAlert }) {
   const t = useT()
   const [data, setData] = useState(null)
   // Varsayilan KAPALI ve tercih OTURUMLUK (2026-09-17 kullanici karari): sayfa her acildiginda panel
   // kapali gelir, liste hemen gorunur; ayni sekmede acik biraktiysan gezinme boyunca acik kalir.
   // sessionStorage bilincli: bu sayfadaki alarm tipi gruplari da ayni deseni kullaniyor.
+  // Hücre pop-up'ı (2026-09-18): sayıya tıkla → o takım + kovanın alarmları, sayfalı.
+  const [cell, setCell] = useState(null)
   const [open, setOpen] = useState(() => { try { return sessionStorage.getItem('alh-teamstats-open') === 'true' } catch { return false } })
 
   const load = useCallback(async () => {
@@ -27,6 +30,11 @@ export default function AlertTeamStatsPanel({ onPickTeam, activeTeamId }) {
 
   const toggle = () => setOpen((o) => { try { sessionStorage.setItem('alh-teamstats-open', String(!o)) } catch { /* yoksay */ } return !o })
   const rows = data?.teams || []
+  // Sayı > 0 ve takım çözülmüşse tıklanır (takımsız satır sunucuda teamId ile sorgulanamaz → düz sayı).
+  const num = (r, bucket, value, label) => (Number(value) > 0 && r.team_id != null)
+    ? <button type="button" className="alh-ts-num" title={t('alhts.cellOpen')}
+        onClick={() => setCell({ team: { team_id: r.team_id, team_name: r.team_name }, bucket, count: value, windowDays: data?.window_days || 30 })}>{label ?? value}</button>
+    : (label ?? value)
   const maxOpen = Math.max(1, ...rows.map((r) => Number(r.open) || 0))
 
   return (
@@ -74,13 +82,13 @@ export default function AlertTeamStatsPanel({ onPickTeam, activeTeamId }) {
                         </td>
                         <td data-label={t('alhts.colOpen')}>
                           <span className="alh-ts-open">
-                            <b>{r.open}</b>
+                            {num(r, 'open', r.open, <b>{r.open}</b>)}
                             <span className="alh-ts-bar" style={{ '--w': `${Math.round(100 * (Number(r.open) || 0) / maxOpen)}%` }} aria-hidden="true" />
                           </span>
                         </td>
-                        <td data-label={t('alhts.colClosed')}>{r.closed}</td>
-                        <td data-label={t('alhts.col7')}>{r.last7}</td>
-                        <td data-label={t('alhts.col30')}>{r.last30}</td>
+                        <td data-label={t('alhts.colClosed')}>{num(r, 'closed', r.closed)}</td>
+                        <td data-label={t('alhts.col7')}>{num(r, 'last7', r.last7)}</td>
+                        <td data-label={t('alhts.col30')}>{num(r, 'last30', r.last30)}</td>
                       </tr>
                     )
                   })}
@@ -91,6 +99,7 @@ export default function AlertTeamStatsPanel({ onPickTeam, activeTeamId }) {
           )}
         </div>
       )}
+      {cell && <AlertTeamCellModal cell={cell} onClose={() => setCell(null)} onOpenAlert={onOpenAlert ? (a) => { setCell(null); onOpenAlert(a) } : undefined} />}
     </section>
   )
 }

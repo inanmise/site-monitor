@@ -1223,7 +1223,8 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
         <>
           {/* Gürültü analizi (2026-09-12, #18): en çok alarm üreten hedefler, gün×saat ısı haritası, flap adayları */}
           <AlertTeamStatsPanel activeTeamId={teamFilter}
-            onPickTeam={(id) => { setTeamFilter(String(id)); setPage(0) }} />
+            onPickTeam={(id) => { setTeamFilter(String(id)); setPage(0) }}
+            onOpenAlert={(a) => { setSearch(a.domain || ''); setSearchTerm(a.domain || ''); setTeamFilter('all'); setPage(0) }} />
           <AlertNoisePanel onPickDomain={(d) => { setSearch(d); setSearchTerm(d); setPage(0) }} />
           <MonitorStatsSection
             loading={loading} total={statItems[0].value}

@@ -8,11 +8,12 @@ import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQueryS
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import { domainDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
-import { RefreshCw, X, AlertCircle, CheckCircle, Users, Inbox } from 'lucide-react'
+import { RefreshCw, X, AlertCircle, CheckCircle, Users, Inbox, FolderOpen } from 'lucide-react'
 import DateTimeRangePicker from './ui/DateTimeRangePicker.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import { matchesTag, tagNamesOf, tagsOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
 import { LoadingBlock } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
@@ -31,6 +32,9 @@ export default function UptimePage({ systemRole }) {
   const [sortKey, setSortKey]           = useState(() => readUrlParam('sort', 'default'))
   const [search, setSearch]             = useState(() => readUrlParam('q', ''))
   const [teamFilter, setTeamFilter]     = useState(() => readUrlParam('team', 'all'))
+  // Grup / etiket filtresi (2026-09-18): izleme sayfalarıyla aynı sözleşme ('all' / '__none__' / değer).
+  const [groupFilter, setGroupFilter]   = useState(() => readUrlParam('group', 'all'))
+  const [tagFilter, setTagFilter]       = useState(() => readUrlParam('tag', 'all'))
   const [selected, setSelected]         = useState(null)
   useEscapeKey(!!selected, closeModal)   // Escape ile kapat (QA ISSUE-002, 2026-09-13; ModalShell'e taşınmamış detay modalı)
   const [diag, setDiag]                 = useState(null)   // { domain, port } → DiagnosticsModal
@@ -86,9 +90,14 @@ export default function UptimePage({ systemRole }) {
       if (teamFilter === '__none__') list = list.filter(x => !x.team_name)
       else                            list = list.filter(x => x.team_name === teamFilter)
     }
+    if (groupFilter !== 'all') {
+      if (groupFilter === '__none__') list = list.filter(x => !x.group_name)
+      else                             list = list.filter(x => x.group_name === groupFilter)
+    }
+    if (tagFilter !== 'all') list = list.filter(x => matchesTag(x, tagFilter))
     if (search.trim()) {
       const q = search.trim().toLowerCase()
-      list = list.filter(x => x.domain.toLowerCase().includes(q))
+      list = list.filter(x => x.domain.toLowerCase().includes(q) || matchesGroupOrTagText(x, q))   // grup/etiket metni de aranır
     }
     list.sort((a, b) => {
       if (sortKey === 'default') {
@@ -103,7 +112,7 @@ export default function UptimePage({ systemRole }) {
       return 0
     })
     return list
-  }, [items, filterStatus, sortKey, search, teamFilter])
+  }, [items, filterStatus, sortKey, search, teamFilter, groupFilter, tagFilter])
 
 
   // Takım filtresi seçenekleri — listeden türetilir (dashboard deseni).
@@ -117,10 +126,30 @@ export default function UptimePage({ systemRole }) {
     return opts
   })()
   const hasTeamOptions = teamOptions.some(o => o.value !== 'all' && o.value !== '__none__')
+  const groupOptions = useMemo(() => {
+    const names = new Set(); let hasNone = false
+    for (const x of items) { if (x.group_name) names.add(x.group_name); else hasNone = true }
+    const opts = [{ value: 'all', label: t('app.allGroups') }]
+    ;[...names].sort((a, b) => a.localeCompare(b)).forEach((n) => opts.push({ value: n, label: n }))
+    if (hasNone) opts.push({ value: '__none__', label: t('app.noGroup') })
+    return opts
+  }, [items, t])
+  const hasGroupOptions = groupOptions.length > 1
+  const tagOptions = useMemo(() => {
+    const opts = [{ value: 'all', label: t('mon.allTags') }]
+    tagNamesOf(items).forEach((n) => opts.push({ value: n, label: n }))
+    if (items.some((x) => !(x.tags || '').trim())) opts.push({ value: '__none__', label: t('mon.noTags') })
+    return opts
+  }, [items, t])
+  const hasTagOptions = tagOptions.length > 1
+  // "Filtreleri temizle": herhangi bir daraltma varken görünür.
+  const filtersActive = filterStatus !== 'all' || sortKey !== 'default' || !!search.trim()
+    || teamFilter !== 'all' || groupFilter !== 'all' || tagFilter !== 'all'
+  const clearFilters = () => { setFilterStatus('all'); setSortKey('default'); setSearch(''); setTeamFilter('all'); setGroupFilter('all'); setTagFilter('all') }
 
   // Sayfalama standardı: usePagination + PaginationBar (pageNumbers artık bileşenin içinde).
   const pager = usePagination(displayItems, {
-    listKey: 'uptime', resetDeps: [filterStatus, sortKey, search, teamFilter],
+    listKey: 'uptime', resetDeps: [filterStatus, sortKey, search, teamFilter, groupFilter, tagFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
 
@@ -130,6 +159,8 @@ export default function UptimePage({ systemRole }) {
     sort: sortKey !== 'default' ? sortKey : null,
     q: search.trim() || null,
     team: teamFilter !== 'all' ? teamFilter : null,
+    group: groupFilter !== 'all' ? groupFilter : null,
+    tag: tagFilter !== 'all' ? tagFilter : null,
     page: pager.page > 1 ? pager.page : null,
     ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
   })
@@ -229,6 +260,11 @@ export default function UptimePage({ systemRole }) {
             {hasTeamOptions && (
               <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />
             )}
+            {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupOptions} searchThreshold={2} />}
+            {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagOptions} searchThreshold={2} />}
+            {filtersActive && (
+              <button type="button" className="btn btn-secondary btn-sm-p" onClick={clearFilters}>{t('app.clearFilters')}</button>
+            )}
           </div>
           <input className="upt-search" type="text"
             placeholder={t('uptime.searchPlaceholder')}
@@ -267,6 +303,17 @@ export default function UptimePage({ systemRole }) {
               </div>
 
               <div className="upt-card-domain">{item.domain}</div>
+              {(item.group_name || item.tags) && (
+                <div className="upt-card-meta" onClick={(e) => e.stopPropagation()}>
+                  {item.group_name && (
+                    <button type="button" className="inv-tag upt-group-chip" title={t('card.group')}
+                      onClick={() => setGroupFilter(item.group_name)}><FolderOpen size={10} /> {item.group_name}</button>
+                  )}
+                  {tagsOf(item).map((tag) => (
+                    <button key={tag} type="button" className="inv-tag" title={t('card.tag')} onClick={() => setTagFilter(tag)}>{tag}</button>
+                  ))}
+                </div>
+              )}
               {item.team_name && (
                 <div title={t('card.team')} style={{ display: 'flex', alignItems: 'center', gap: 5,
                   fontSize: '.78em', color: 'var(--text-muted)', marginTop: 2 }}>

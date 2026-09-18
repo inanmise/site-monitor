@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { api } from '../api/client'
 import { useT, useDateLocale } from '../i18n/index.jsx'
 import { useToast } from './ui/Toast.jsx'
+import TeamBadge from './ui/TeamBadge.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 import { rcMeta, durationMs, formatDuration, formatIncidentTime } from '../utils/incidentMeta.js'
 import { Siren, RefreshCw, Trash2, MessageSquare, X, ExternalLink,
@@ -232,6 +233,7 @@ export default function IncidentsPage({ systemRole }) {
                 <tr>
                   <th className="inc-th-sort" onClick={() => toggleSort('status')}>{t('incov.colStatus')} {sortIcon('status')}</th>
                   <th>{t('incov.colMonitor')}</th>
+                  <th>{t('incov.colTeam')}</th>
                   <th className="inc-th-sort" onClick={() => toggleSort('rootCause')}>{t('incov.colRootCause')} {sortIcon('rootCause')}</th>
                   <th>{t('incov.colComments')}</th>
                   <th className="inc-th-sort" onClick={() => toggleSort('started')}>{t('incov.colStarted')} {sortIcon('started')}</th>
@@ -254,6 +256,8 @@ export default function IncidentsPage({ systemRole }) {
                         : <span className="inc-status inc-status--resolved"><CheckCircle2 size={14} />{t('incov.resolved')}</span>}
                     </td>
                     <td>{monitorCell(inc.monitor)}</td>
+                    {/* Takım (2026-09-18): rozet tıklanınca üye modali; satır tıklaması detaya gitmesin */}
+                    <td onClick={e => e.stopPropagation()}>{(inc.team_name || inc.team_id != null) ? <TeamBadge teamId={inc.team_id} teamName={inc.team_name} /> : <span className="inv-muted">—</span>}</td>
                     <td>{rootCauseCell(inc.root_cause)}</td>
                     <td>
                       <button className="inc-comments-btn" onClick={e => { e.stopPropagation(); setCommentsFor(inc) }}>

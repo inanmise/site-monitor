@@ -790,3 +790,23 @@ satırında; toplu seçim/sil/içe aktarma/hijyen bandı canManage'de kaldı; Ge
 Kapılar: backend `clean verify` yeşil; frontend lint / 2099 test / kapsam tabanı / build yeşil.
 → **REGRESYON YOK**.
 
+## Ek — otuz yedinci tur (2026-09-18, sürüm sonrası — Durum İzleme grup/etiket, Vade Takvimi hücreler + yoğunluk özeti + sayfalı modal, Olaylar takım sütunu, Alarm Geçmişi hücre pop-up'ı, `v20.70.0..HEAD`)
+
+Kapsam: backend (uptimeOverview group_name/tags/tier; IncidentsController team_id/team_name — damgalı takım
+yoksa domain→envanter SY/UG tek toplu sorgu, TeamRepository bağımlılığı) ve frontend (UptimePage, ExpiryForecastPage +
+forecastModel.teamBucketCerts, IncidentsPage, AlertTeamStatsPanel + AlertTeamCellModal). İmza süpürmesi temiz.
+
+**Denetim odakları:**
+- Durum İzleme: `.upt-toolbar-left > .ss-wrap` daraltması eklendi (üç kutu alt alta diziliyordu — tarayıcıda
+  görüldü, düzeltildi); kart çipleri `.inv-tag` diliyle, tıklama filtreler; URL `group`/`tag`.
+- Vade Takvimi: hücre listesi `teamBucketCerts` byTeam ile AYNI aralık kuralı (test: her kovanın uzunluğu
+  tablodaki sayıya eşit); grafik `onClick` → gün modali; ChartInsight (toplam/yoğun gün/haftalık/tepe 7 gün/tepe gün).
+  Modal `DayListModal` 10'luk sayfalı + 5+ kayıtta arama (kullanıcı bildirimi: 9 kayıt ekranı aşıyordu).
+- Olaylar: takım sütunu; rozet hücresi `stopPropagation` (satır "link" davranışı korunur — test).
+- Alarm Geçmişi: hücre → sunucu sayfalamalı pop-up; kova→sorgu eşlemesi AlertTeamStatsService ile aynı
+  (açık tarihten bağımsız; kapandı pencere içi; 7/30 gün açılanlar). Takımsız satır tıklanmaz (teamId ile
+  sorgulanamaz). Tarayıcıda: 43 → "1–25 / 43 kayıt", tablo `table-layout: fixed` ile modal genişliğine sığar.
+- cssClasses kapısı iki hayalet sınıf yakaladı (`.alh-cell-row`, `.fc-ci-item`) → tanımlandı.
+- Kapılar: backend `clean verify` yeşil; frontend lint / 2105 test / kapsam tabanı / build yeşil.
+→ **REGRESYON YOK**.
+

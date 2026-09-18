@@ -82,3 +82,47 @@ describe('UptimePage — yükleme hatası', () => {
       .not.toBeInTheDocument()
   })
 })
+
+// ── Grup / etiket filtresi + kart çipleri (2026-09-18) ──
+describe('UptimePage — grup/etiket filtresi', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.monitoring.getUptimeOverview.mockResolvedValue({ success: true, data: [
+      { ...row, domain: 'odeme.example.com', group_name: 'Ödeme', tags: 'prod, kritik' },
+      { ...row, domain: 'kampanya.example.com', group_name: 'Kampanya', tags: 'edge' },
+      { ...row, domain: 'eski.example.com' },
+    ] })
+  })
+
+  it('grup ve etiket kutuları listeden türer; etiket çipine tıklayınca liste o etikete süzülür; "Filtreleri temizle" geri getirir', async () => {
+    render(<UptimePage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await screen.findByText('odeme.example.com')
+    const bar = document.querySelector('.upt-toolbar')
+    const triggers = [...bar.querySelectorAll('.ss-trigger')].map((b) => b.textContent.trim())
+    expect(triggers).toEqual(expect.arrayContaining([expect.stringMatching(/tüm gruplar|all groups/i), expect.stringMatching(/tüm etiketler|all tags/i)]))
+    expect(screen.queryByText(/filtreleri temizle|clear filters/i)).toBeNull()
+
+    // Kart çipi → etiket filtresi
+    fireEvent.click([...document.querySelectorAll('.upt-card .inv-tag')].find((b) => b.textContent.trim() === 'kritik'))
+    await waitFor(() => expect(screen.queryByText('kampanya.example.com')).toBeNull())
+    expect(screen.getByText('odeme.example.com')).toBeInTheDocument()
+    expect(screen.queryByText('eski.example.com')).toBeNull()
+
+    fireEvent.click(screen.getByText(/filtreleri temizle|clear filters/i))
+    expect(await screen.findByText('kampanya.example.com')).toBeInTheDocument()
+
+    // Grup kutusu: "Grupsuz" eski kaydı bulur
+    fireEvent.mouseDown([...bar.querySelectorAll('.ss-trigger')].find((b) => /tüm gruplar|all groups/i.test(b.textContent)))
+    fireEvent.mouseDown([...bar.querySelectorAll('.ss-option')].find((o) => /grupsuz|no group/i.test(o.textContent)))
+    await waitFor(() => expect(screen.queryByText('odeme.example.com')).toBeNull())
+    expect(screen.getByText('eski.example.com')).toBeInTheDocument()
+  })
+
+  it('arama kutusu grup adı ve etikette de eşleşir', async () => {
+    render(<UptimePage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await screen.findByText('odeme.example.com')
+    fireEvent.change(document.querySelector('.upt-search'), { target: { value: 'edge' } })
+    await waitFor(() => expect(screen.queryByText('odeme.example.com')).toBeNull())
+    expect(screen.getByText('kampanya.example.com')).toBeInTheDocument()
+  })
+})

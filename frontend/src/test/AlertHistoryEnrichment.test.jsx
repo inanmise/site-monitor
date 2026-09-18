@@ -94,6 +94,31 @@ describe('AlertTeamStatsPanel — takım kırılımı', () => {
     expect(onPick).toHaveBeenCalledWith('5')
   })
 
+  // Hücre pop-up'ı (2026-09-18): sayıya tıkla → o takım+kova alarmları SAYFALI (sunucu sayfalama)
+  it('hücre sayısına tıklayınca takım+kova sorgusuyla sayfalı liste modali açılır; takımsız satır ve 0 tıklanmaz; sayfa 2 yeni istek atar', async () => {
+    const mk = (i) => ({ id: i, alert_type: 'HTTP_DOWN', alert_level: 'CRITICAL', domain: `d${i}.example.com`, created_at: '2026-09-10T10:00:00', resolved: false, message: 'm' })
+    api.admin.getAlerts.mockImplementation(({ page }) => Promise.resolve({ success: true, total: 39, data: Array.from({ length: Math.min(25, 39 - page * 25) }, (_, k) => mk(page * 25 + k + 1)) }))
+    render(<LangProvider><AlertTeamStatsPanel /></LangProvider>)
+    fireEvent.click(screen.getByRole('button', { name: /Takım kırılımı|Breakdown by team/ }))
+    await screen.findByText('Takım A')
+    const rows = document.querySelectorAll('.alh-ts-row')
+    expect(rows[0].querySelectorAll('.alh-ts-num')).toHaveLength(4)   // açık/kapandı/7/30 hepsi > 0
+    expect(rows[1].querySelectorAll('.alh-ts-num')).toHaveLength(0)   // takımsız → düz sayı
+
+    fireEvent.click([...rows[0].querySelectorAll('.alh-ts-num')].find((b) => b.textContent.trim() === '39'))   // son 30 gün
+    await waitFor(() => expect(api.admin.getAlerts).toHaveBeenCalled())
+    const q = api.admin.getAlerts.mock.calls[0][0]
+    expect(q).toMatchObject({ teamId: 5, page: 0, size: 25 })
+    expect(q.since).toBeTruthy(); expect(q.resolved).toBeUndefined()
+    const modal = await screen.findByRole('dialog')
+    expect(modal.textContent).toMatch(/Takım A/)
+    await waitFor(() => expect(modal.querySelectorAll('.alh-cell-row')).toHaveLength(25))
+    expect(modal.querySelector('.pg-nav')).not.toBeNull()
+    fireEvent.click([...modal.querySelectorAll('button')].find((b) => /Sonraki|Next/i.test(b.getAttribute('aria-label') || '')))
+    await waitFor(() => expect(api.admin.getAlerts).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1 })))
+    await waitFor(() => expect(modal.querySelectorAll('.alh-cell-row')).toHaveLength(14))   // 39 - 25
+  })
+
   // Regression: ISSUE-001 — TeamBadge varsayılan <button> çiziyor; satır düğmesinin İÇİNDE
   // kullanılınca React her satır için validateDOMNesting uyarısı basıyordu.
   // Found by /qa on 2026-09-16
