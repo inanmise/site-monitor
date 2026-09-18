@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-18T14:46:13Z",
+  "generatedAt": "2026-09-18T17:36:31Z",
   "repo": "inanmise/site-monitor",
-  "count": 657,
+  "count": 658,
   "releases": [
+    {
+      "version": "20.71.0",
+      "tag": "v20.71.0",
+      "releasedAt": "2026-09-18T17:36:25Z",
+      "commit": "5d53b05329e5319a0e5e2e254c04ca0592120b05",
+      "prevVersion": "20.70.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 2,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "5d53b053",
+          "subject": "Yenileme Önerileri yeniden tasarımı, \"Sizin için bugün\" Tümünü gör pop-up'ı, push {ne} neyin dolduğunu söyler"
+        },
+        {
+          "type": "feat",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "c1d41843",
+          "subject": "Durum İzleme grup/etiket filtresi, Vade Takvimi tıklanır hücreler + yoğunluk özeti + sayfalı modal, Olaylar takım sütunu, Alarm Geçmişi hücre pop-up'ı"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.70.0",
       "tag": "v20.70.0",
