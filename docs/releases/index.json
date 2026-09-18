@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-18T17:36:31Z",
+  "generatedAt": "2026-09-18T18:27:04Z",
   "repo": "inanmise/site-monitor",
-  "count": 658,
+  "count": 659,
   "releases": [
+    {
+      "version": "20.71.1",
+      "tag": "v20.71.1",
+      "releasedAt": "2026-09-18T18:26:57Z",
+      "commit": "fe1c91388b93d77f6df4da66773a583569f1cc72",
+      "prevVersion": "20.71.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "forecast",
+          "breaking": false,
+          "sha": "fe1c9138",
+          "subject": "Günlük Yoğunluk çubukları tıklanır — kümülatif çizgi tıklamayı yutuyordu"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.71.0",
       "tag": "v20.71.0",
