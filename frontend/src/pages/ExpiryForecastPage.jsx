@@ -353,6 +353,11 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
   const kpi = useMemo(() => computeKpis(certs, th, today), [certs, th, today])
   const chartData = useMemo(() => dailySeries(certs, th, chartRange, today, locale), [certs, th, chartRange, today, locale])
   const teams = useMemo(() => byTeam(certs, th, chartRange, today), [certs, th, chartRange, today])
+  /** Günlük yoğunluk çubuğu/sütunu → o günün listesi (gün modali). payload = dailySeries satırı. */
+  const openChartDay = (d) => {
+    if (!d || !d.date || !(d.total > 0)) return
+    setDayModal({ key: d.date, certs: [...(d.domains?.critical || []), ...(d.domains?.high || []), ...(d.domains?.warning || [])] })
+  }
   const list = useMemo(() => upcoming(certs, th, listRange, today), [certs, th, listRange, today])
   const batchList = useMemo(() => batches(certs, th, listRange, today), [certs, th, listRange, today])
   const shared = useMemo(() => coverage(certs), [certs])
@@ -484,16 +489,20 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
                   <ResponsiveContainer width="100%" height={280}>
                     {/* Güne tıkla → o günün sertifika listesi (ısı haritasıyla aynı modal; 2026-09-18) */}
                     <ComposedChart data={chartData} margin={{ top: 4, right: 20, bottom: 0, left: 0 }} style={{ cursor: 'pointer' }}
-                      onClick={(st) => { const d = st?.activePayload?.[0]?.payload; if (d && d.total > 0) setDayModal({ key: d.date, certs: [...(d.domains?.critical || []), ...(d.domains?.high || []), ...(d.domains?.warning || [])] }) }}>
+                      onClick={(st) => { const i = [st?.activeTooltipIndex, st?.activeIndex].map(Number).find(Number.isInteger); openChartDay(st?.activePayload?.[0]?.payload ?? (i != null ? chartData[i] : null)) }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#1e3a5f" />
                       <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10 }} interval={Math.max(0, Math.floor(chartRange / 6))} />
                       <YAxis yAxisId="left" allowDecimals={false} tick={{ fill: '#94a3b8', fontSize: 10 }} width={26} />
                       <YAxis yAxisId="right" orientation="right" allowDecimals={false} tick={{ fill: '#3b82f6', fontSize: 10 }} width={36} />
                       <RTooltip content={<BarTooltip t={t} />} cursor={{ fill: 'rgba(255,255,255,.04)' }} />
-                      <Bar yAxisId="left" dataKey="critical" stackId="s" fill="#dc2626" name={t('forecast.legCritical')} />
-                      <Bar yAxisId="left" dataKey="high" stackId="s" fill="#ea580c" name={t('forecast.legHigh')} />
-                      <Bar yAxisId="left" dataKey="warning" stackId="s" fill="#f59e0b" name={t('forecast.legWarning')} radius={[3, 3, 0, 0]} />
-                      <Line yAxisId="right" type="monotone" dataKey="cumulative" stroke="#3b82f6" strokeWidth={2} dot={false} name={t('forecast.ttCumulative')} />
+                      {/* Recharts 3: grafik-seviyesi onClick her tıklamada activePayload vermiyor (kullanıcı bildirimi
+                          2026-09-18: "çubuklara tıklanmıyor") → çubukların KENDİ onClick'i birincil, grafik yedek. */}
+                      <Bar yAxisId="left" dataKey="critical" stackId="s" fill="#dc2626" name={t('forecast.legCritical')} onClick={(d) => openChartDay(d?.payload ?? d)} cursor="pointer" />
+                      <Bar yAxisId="left" dataKey="high" stackId="s" fill="#ea580c" name={t('forecast.legHigh')} onClick={(d) => openChartDay(d?.payload ?? d)} cursor="pointer" />
+                      <Bar yAxisId="left" dataKey="warning" stackId="s" fill="#f59e0b" name={t('forecast.legWarning')} radius={[3, 3, 0, 0]} onClick={(d) => openChartDay(d?.payload ?? d)} cursor="pointer" />
+                      {/* Kümülatif çizgi çubukların ÜSTÜNDE çiziliyor ve tıklamayı yutuyordu (tarayıcıda görüldü:
+                          elementFromPoint → .recharts-line-curve). Dekoratif: fare olaylarını almasın. */}
+                      <Line yAxisId="right" type="monotone" dataKey="cumulative" stroke="#3b82f6" strokeWidth={2} dot={false} name={t('forecast.ttCumulative')} style={{ pointerEvents: 'none' }} />
                     </ComposedChart>
                   </ResponsiveContainer>
                   <div className="fc-chart-hint">{t('forecast.chartClickHint')}</div>

@@ -829,3 +829,13 @@ buildAdvice bağlam alanları) ve frontend (TodayPanel + TodayListModal; Renewal
 - Kapılar: backend `clean verify` yeşil; frontend lint / 2110 test / kapsam tabanı / build yeşil.
 → **REGRESYON YOK**.
 
+## Ek — otuz dokuzuncu tur (2026-09-18, sürüm sonrası — Günlük Yoğunluk çubukları tıklanmıyordu, `v20.71.0..HEAD`)
+
+Kapsam: yalnız frontend (ExpiryForecastPage). Bulgu tarayıcıda kanıtlandı: `elementFromPoint` çubuğun ortasında
+`.recharts-line-curve` döndü — kümülatif çizgi çubukların üstünde çizilip tıklamayı yutuyordu; grafik seviyesi
+`onClick` Recharts 3'te her tıklamada `activePayload` vermiyor. Düzeltme: çizgi `pointer-events: none`; üç `Bar`ın
+kendi `onClick`'i birincil (payload → gün modali), grafik onClick `activeTooltipIndex/activeIndex` yedeği.
+Doğrulama: aynı noktada `elementFromPoint` → `.recharts-rectangle`, pop-up "24.10.2026 — bu gün dolan sertifikalar (2)".
+Kapılar: frontend lint / 2110 test / kapsam tabanı / build yeşil; backend DEĞİŞMEDİ.
+→ **REGRESYON YOK**.
+
