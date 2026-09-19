@@ -5,6 +5,7 @@ import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
+import { CheckRunningStrip } from './ui/CheckRunning.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
@@ -700,6 +701,8 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
               <div className="modal-icon-hdr-badge"><Radio size={20} /></div>
               <h3>{modal === 'new' ? t('ping.modalNew') : t('ping.modalEdit')}
                 {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
+              {/* Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen). */}
+              <span className="modal-icon-hdr-running"><CheckRunningStrip running={saving || testing} label={saving ? t('mon.saving') : t('ping.testing')} /></span>
             </div>
             <div className="modal-scroll-body" ref={scrollHint.ref}>
             {dupSource && <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>}
@@ -805,13 +808,13 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
             <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
             <div className="modal-actions">
               <div style={{ display: 'flex', gap: 8, marginRight: 'auto' }}>
-                <button className="btn btn-secondary" onClick={runTest} disabled={testing || !form.host.trim()}>
-                  <FlaskConical size={14} />{testing ? t('ping.testing') : t('ping.test')}
+                <button className="btn btn-secondary" onClick={runTest} aria-busy={testing || undefined} disabled={testing || !form.host.trim()}>
+                  <FlaskConical size={14} />{t('ping.test')}
                 </button>
                 {modal !== 'new' && canDeleteRow(modal) && <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('ping.delete')}</button>}
               </div>
               <button className="btn btn-secondary" onClick={closeEdit}>{t('ping.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving || !form.host.trim() || !form.teamId || !!dupHost}>{saving ? '...' : t('ping.save')}</button>
+              <button className="btn btn-primary" onClick={save} aria-busy={saving || undefined} disabled={saving || !form.host.trim() || !form.teamId || !!dupHost}>{t('ping.save')}</button>
             </div>
           </div>
         </div>,

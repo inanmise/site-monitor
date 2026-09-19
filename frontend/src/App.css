@@ -2577,6 +2577,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .modal-box h3 { margin-bottom: 20px; font-size: 1.2em; }
 .modal-icon-hdr { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
 .modal-icon-hdr h3 { margin: 0; font-size: 1.15em; font-weight: 700; }
+/* Başlığın sağındaki meşgul şeridi (dokuz izleme formu): düğme metinleri sabit, evre burada. */
+.modal-icon-hdr-running { margin-left: auto; display: inline-flex; align-items: center; flex-shrink: 0; }
+.modal-icon-hdr-running:empty { display: none; }
 .modal-icon-hdr-badge { width: 46px; height: 46px; border-radius: 12px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .modal-icon-hdr--user .modal-icon-hdr-badge { background: linear-gradient(135deg, #3b82f6, #1d4ed8); color: #fff; }
 .modal-icon-hdr--team .modal-icon-hdr-badge { background: linear-gradient(135deg, #10b981, #059669); color: #fff; }

@@ -3,6 +3,7 @@ import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
+import { CheckRunningStrip } from './ui/CheckRunning.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
@@ -697,6 +698,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
               </div>
               <h3>{modal === 'new' ? t('dns.modalNew') : t('dns.modalEdit')}
                 {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
+              {/* Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen). */}
+              <span className="modal-icon-hdr-running"><CheckRunningStrip running={saving || testing} label={saving ? t('mon.saving') : t('dns.testing')} /></span>
             </div>
             <div className="modal-scroll-body" ref={scrollHint.ref}>
             {dupSource && <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>}
@@ -881,16 +884,15 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
             <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
             <div className="modal-actions">
               <button className="btn btn-secondary" style={{ marginRight: 'auto' }} onClick={runTest}
-                disabled={testing || !form.domain.trim()}>
-                <FlaskConical size={14} />{testing ? t('dns.testing') : t('dns.test')}
+                aria-busy={testing || undefined} disabled={testing || !form.domain.trim()}>
+                <FlaskConical size={14} />{t('dns.test')}
               </button>
               <button className="btn btn-secondary" onClick={closeEditModal}>{t('dns.cancel')}</button>
               <button
                 className="btn btn-primary"
-                onClick={save}
-                disabled={saving || !form.recordType || !form.domain.trim() || ((modal === 'new' || modal?.standalone) && !form.teamId)}
+                onClick={save} aria-busy={saving || undefined} disabled={saving || !form.recordType || !form.domain.trim() || ((modal === 'new' || modal?.standalone) && !form.teamId)}
               >
-                {saving ? t('dns.saving') : t('dns.save')}
+                {t('dns.save')}
               </button>
             </div>
           </div>

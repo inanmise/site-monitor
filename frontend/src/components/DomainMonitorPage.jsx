@@ -5,6 +5,7 @@ import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
+import { CheckRunningStrip } from './ui/CheckRunning.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
@@ -746,6 +747,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
               <div className="modal-icon-hdr-badge"><CalendarClock size={20} /></div>
               <h3>{modal === 'new' ? t('dom.modalNew') : t('dom.modalEdit')}
                 {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
+              {/* Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen). */}
+              <span className="modal-icon-hdr-running"><CheckRunningStrip running={saving || testing} label={saving ? t('mon.saving') : t('dom.testing')} /></span>
             </div>
             <div className="modal-scroll-body" ref={scrollHint.ref}>
 
@@ -865,8 +868,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
             <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
             <div className="modal-actions">
               <span style={{ display: 'flex', gap: 8, marginRight: 'auto' }}>
-                <button className="btn btn-secondary" onClick={runTest} disabled={testing || !form.domain.trim()}>
-                  <FlaskConical size={14} />{testing ? t('dom.testing') : t('dom.test')}
+                <button className="btn btn-secondary" onClick={runTest} aria-busy={testing || undefined} disabled={testing || !form.domain.trim()}>
+                  <FlaskConical size={14} />{t('dom.test')}
                 </button>
                 {isAdmin && (
                   <button className="btn btn-secondary" onClick={() => diagnose({ domain: normalizeDomainInput(form.domain) })} disabled={!form.domain.trim()}>
@@ -876,7 +879,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
               </span>
               {modal !== 'new' && canDeleteRow(modal) && <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('dom.delete')}</button>}
               <button className="btn btn-secondary" onClick={closeEdit}>{t('dom.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving || !form.domain.trim() || !form.teamId}>{saving ? '...' : t('dom.save')}</button>
+              <button className="btn btn-primary" onClick={save} aria-busy={saving || undefined} disabled={saving || !form.domain.trim() || !form.teamId}>{t('dom.save')}</button>
             </div>
           </div>
         </div>,

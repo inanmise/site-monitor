@@ -6,6 +6,7 @@ import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
+import { CheckRunningStrip } from './ui/CheckRunning.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
@@ -741,6 +742,8 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
               <div className="modal-icon-hdr-badge"><Plug size={20} /></div>
               <h3>{modal === 'new' ? t('port.modalAdd') : t('port.modalEdit')}
                 {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
+              {/* Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen). */}
+              <span className="modal-icon-hdr-running"><CheckRunningStrip running={saving || testing} label={saving ? t('mon.saving') : t('port.testing')} /></span>
             </div>
             <div className="modal-scroll-body" ref={scrollHint.ref}>
 
@@ -870,15 +873,15 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
             <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
             <div className="modal-actions">
               <div style={{ display: 'flex', gap: 8, marginRight: 'auto' }}>
-                <button className="btn btn-secondary" onClick={runTest} disabled={testing || !form.host.trim() || !form.port}>
-                  <FlaskConical size={14} />{testing ? t('port.testing') : t('port.test')}
+                <button className="btn btn-secondary" onClick={runTest} aria-busy={testing || undefined} disabled={testing || !form.host.trim() || !form.port}>
+                  <FlaskConical size={14} />{t('port.test')}
                 </button>
                 {modal !== 'new' && canDeleteRow(modal) && (
                   <button className="btn btn-danger" onClick={() => deleteMonitor(modal)}><Trash2 size={14} />{t('port.delete')}</button>
                 )}
               </div>
               <button className="btn btn-secondary" onClick={closeEdit}>{t('port.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving || !form.host.trim() || !form.port || !form.teamId}>{saving ? '...' : t('port.save')}</button>
+              <button className="btn btn-primary" onClick={save} aria-busy={saving || undefined} disabled={saving || !form.host.trim() || !form.port || !form.teamId}>{t('port.save')}</button>
             </div>
           </div>
         </div>,
