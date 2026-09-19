@@ -132,7 +132,7 @@ class CertificateAppLayerProbeTest {
         when(pageCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(7L)).thenReturn(Optional.of(last));
 
         assertThat(probe.checkMixedContent("a.example.com", 443)).isEqualTo("CLEAN");
-        verify(pageChecker, never()).test(anyString(), anyInt());
+        verify(pageChecker, never()).scanMixedContent(anyString(), anyInt());
     }
 
     @Test
@@ -154,27 +154,27 @@ class CertificateAppLayerProbeTest {
     @DisplayName("Sayfa izlemesi YOKSA tek seferlik tarama koşar (443 dışı port URL'e yazılır)")
     void fallsBackToOnDemandScan() {
         when(pageMonitorRepo.findByUrlContainingIgnoreCaseAndActiveTrue(anyString())).thenReturn(List.of());
-        when(pageChecker.test(anyString(), anyInt())).thenReturn(pageResult(true, 2));
+        when(pageChecker.scanMixedContent(anyString(), anyInt())).thenReturn(pageResult(true, 2));
 
         assertThat(probe.checkMixedContent("a.example.com", 8443)).isEqualTo("MIXED");
-        verify(pageChecker).test("https://a.example.com:8443/", 8000);
+        verify(pageChecker).scanMixedContent("https://a.example.com:8443/", 8000);
     }
 
     @Test
     @DisplayName("443'te port URL'e YAZILMAZ (kanonik adres)")
     void defaultPortIsOmittedFromUrl() {
         when(pageMonitorRepo.findByUrlContainingIgnoreCaseAndActiveTrue(anyString())).thenReturn(List.of());
-        when(pageChecker.test(anyString(), anyInt())).thenReturn(pageResult(true, 0));
+        when(pageChecker.scanMixedContent(anyString(), anyInt())).thenReturn(pageResult(true, 0));
 
         assertThat(probe.checkMixedContent("a.example.com", 443)).isEqualTo("CLEAN");
-        verify(pageChecker).test("https://a.example.com/", 8000);
+        verify(pageChecker).scanMixedContent("https://a.example.com/", 8000);
     }
 
     @Test
     @DisplayName("Sayfa ERİŞİLEMEZSE UNKNOWN — erişilemeyeni 'karışık içerik var' diye raporlamayız")
     void unreachablePageIsUnknown() {
         when(pageMonitorRepo.findByUrlContainingIgnoreCaseAndActiveTrue(anyString())).thenReturn(List.of());
-        when(pageChecker.test(anyString(), anyInt())).thenReturn(pageResult(false, 0));
+        when(pageChecker.scanMixedContent(anyString(), anyInt())).thenReturn(pageResult(false, 0));
 
         assertThat(probe.checkMixedContent("a.example.com", 443)).isEqualTo("UNKNOWN");
     }
@@ -185,10 +185,10 @@ class CertificateAppLayerProbeTest {
         PageMonitor m = new PageMonitor(); m.setId(7L);
         when(pageMonitorRepo.findByUrlContainingIgnoreCaseAndActiveTrue(anyString())).thenReturn(List.of(m));
         when(pageCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(anyLong())).thenReturn(Optional.empty());
-        when(pageChecker.test(anyString(), anyInt())).thenReturn(pageResult(true, 0));
+        when(pageChecker.scanMixedContent(anyString(), anyInt())).thenReturn(pageResult(true, 0));
 
         assertThat(probe.checkMixedContent("a.example.com", 443)).isEqualTo("CLEAN");
-        verify(pageChecker).test(anyString(), anyInt());
+        verify(pageChecker).scanMixedContent(anyString(), anyInt());
     }
 
     // ── Kalıcılaştırma ──────────────────────────────────────────────────────
@@ -199,7 +199,7 @@ class CertificateAppLayerProbeTest {
         LatestCheck lc = stored();
         when(hstsService.diagnose(anyString(), anyInt(), anyBoolean())).thenReturn(Map.of("verdict", "ENFORCED"));
         when(pageMonitorRepo.findByUrlContainingIgnoreCaseAndActiveTrue(anyString())).thenReturn(List.of());
-        when(pageChecker.test(anyString(), anyInt())).thenReturn(pageResult(true, 0));
+        when(pageChecker.scanMixedContent(anyString(), anyInt())).thenReturn(pageResult(true, 0));
 
         probe.refresh("a.example.com", 443, false);
 
@@ -219,7 +219,7 @@ class CertificateAppLayerProbeTest {
         stored();
         when(hstsService.diagnose(anyString(), anyInt(), anyBoolean())).thenThrow(new RuntimeException("ağ yok"));
         when(pageMonitorRepo.findByUrlContainingIgnoreCaseAndActiveTrue(anyString())).thenReturn(List.of());
-        when(pageChecker.test(anyString(), anyInt())).thenReturn(pageResult(true, 0));
+        when(pageChecker.scanMixedContent(anyString(), anyInt())).thenReturn(pageResult(true, 0));
 
         probe.refresh("a.example.com", 443, false);
 
@@ -235,7 +235,7 @@ class CertificateAppLayerProbeTest {
         when(latestCheckRepo.findById("yok.example.com")).thenReturn(Optional.empty());
         when(hstsService.diagnose(anyString(), anyInt(), anyBoolean())).thenReturn(Map.of("verdict", "ENFORCED"));
         when(pageMonitorRepo.findByUrlContainingIgnoreCaseAndActiveTrue(anyString())).thenReturn(List.of());
-        when(pageChecker.test(anyString(), anyInt())).thenReturn(pageResult(true, 0));
+        when(pageChecker.scanMixedContent(anyString(), anyInt())).thenReturn(pageResult(true, 0));
 
         probe.refresh("yok.example.com", 443, false);
 
@@ -248,7 +248,7 @@ class CertificateAppLayerProbeTest {
         stored();
         when(hstsService.diagnose(anyString(), anyInt(), anyBoolean())).thenReturn(Map.of("verdict", "ABSENT"));
         when(pageMonitorRepo.findByUrlContainingIgnoreCaseAndActiveTrue(anyString())).thenReturn(List.of());
-        when(pageChecker.test(anyString(), anyInt())).thenReturn(pageResult(true, 0));
+        when(pageChecker.scanMixedContent(anyString(), anyInt())).thenReturn(pageResult(true, 0));
         when(latestCheckRepo.save(any())).thenThrow(new RuntimeException("tablo kilitli"));
 
         probe.refresh("a.example.com", 443, false);   // istisna DIŞARI sızmamalı

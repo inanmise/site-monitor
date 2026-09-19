@@ -1107,3 +1107,50 @@ Denetim odakları: başlık `.dashboard-header > h2` kuralının dışına çık
 ve tercihi değiştiriyor; süzgeç satırında eski düğme yok.
 Kapılar: frontend lint 0 hata / 2131 test / kapsam / build yeşil; backend DEĞİŞMEDİ.
 → **REGRESYON YOK**.
+
+## Ek — elli üçüncü tur (2026-09-19, sürüm sonrası — envanter formu Kaydet'te kayma yok + ilk kontrol süresi, `v20.72.0..HEAD`)
+
+Kaynak: üretim ekran görüntüsü — "Domain Düzenle" formunda Kaydet'e basınca alt bar kayıyor; ardından "İlk kontrol
+koşuyor…" bir dakikaya yakın sürüyor.
+Kapsam: frontend (InventoryFormModal, CheckRunningStrip `label`, App.css) + backend (PageCheckerService.scanMixedContent,
+CertificateAppLayerProbe).
+Bulgular ve düzeltmeler:
+- Alt bar: "Kaydet" → "Kaydediliyor…" → "İlk kontrol koşuyor…" (84→134→179 px) + araya giren "Kontrol ediliyor… N sn"
+  şeridi satırı 723 px'e taşırıyor (iç genişlik 684); ölçüm: Test et x=343→302 (modal dışına), her düğme kaydı.
+  → Düğme metinleri SABİT (Kaydet/Test et/Çalıştır; kilit + `aria-busy`), evre BAŞLIKTAKİ şeritte
+  (CertificateModal deseni; `CheckRunningStrip label`). Ölçüm: iki evrede de x/w/y birebir aynı (343/669/784/867/943),
+  kaydırma konumu korunur (scrollTop 300→300).
+- Doğrulama hatası: `.alert-msg` gövde ile alt bar arasına giriyor (grid küçülüyor) + başa kaydırma → iki kayma; ayrıca
+  hata YEŞİL kutudaydı. → AlertBanner(danger) alt barın üstünde YÜZER (`.modal-wide-float`, × ile kapanır, alan
+  değişince gider), scrollTo yok; yüzerken kaydırma ipucu gizli (üst üste binmesin).
+- Süre: `health/refresh` karışık içerik satırı için `pageChecker.test(...)` çağırıyordu = ana sayfanın TÜM alt
+  kaynaklarını (5'li, 8 sn/kaynak, 60 sn deadline) doğruluyordu; pod'dan erişilemeyen CDN'lerde deadline'a dayanıyor.
+  Karar URL şemasından verildiği için → `scanMixedContent` (tek GET, alt kaynak isteği yok). Sayfa izlemesinin
+  `test`/`check` yolu DEĞİŞMEDİ.
+Testler: InventoryFormModal.test (+3: iki evrede metin/şerit/aria-busy sabit; yüzen hata × ve alan değişimi; Test et
+sabit), PageCheckerServiceTest.scanMixedContent_doesNotFetchSubresources (asılı img'li sayfa <1.5 sn),
+CertificateAppLayerProbeTest test→scanMixedContent.
+Kapılar: frontend lint 0 hata / 2134 test / kapsam / build yeşil; backend `clean verify` (bkz. çıktı) — tek beklenen
+kırmızı `IdentityLeakGuardTest` (takipsiz yerel dosyalar).
+→ **REGRESYON YOK**.
+
+## Ek — elli dördüncü tur (2026-09-19, sürüm sonrası — "Kaydet" mekanizması dokuz izleme formunda denetlendi, `v20.72.0..HEAD`)
+
+Soru: 53. turdaki iki bulgu (alt bar kayması + uzun ilk kontrol) başka izleme tipinde de var mı?
+Denetim (kod + tarayıcı ölçümü):
+- SÜRE: dokuz izleme formunun Kaydet'i (`POST/PUT /api/monitoring/{http,ping,dns,port,keyword,page,domain,pagespeed,
+  scripted}`) yalnız DB yazar; kaydetme sonrası senkron ağ kontrolü YOK (envantere özgüydü). Tek istisna Sentetik: kayıt
+  sonrası k6 doğrulama koşumu (`runSmokeCheck`) — bilinçli tasarım, kaydı bloklamaz, "Kapat" açık, banner bunu söylüyor.
+  → Süre sorunu yalnız sertifika envanterindeydi (53. turda kapatıldı).
+- KAYMA: dokuz formda da aynı sınıf, daha küçük ölçekte: "Kaydet" → "..." (84→48 px) Sil/İptal'i 36 px sağa kaydırıyor
+  (HTTP formunda ölçüldü: Sil x=781→817); "Test et" → "Test ediliyor…" genişliyor (solda, `margin-right:auto` — başkasını
+  itmiyor). → Düğme metinleri SABİT (+`aria-busy`), evre başlıktaki `CheckRunningStrip` şeridinde
+  (`.modal-icon-hdr-running`, "Kaydediliyor… / Test ediliyor… N sn"); yeni i18n `mon.saving`. HTTP ölçümü: üç durumda da
+  düğme x/w birebir (361/781/865/940). Sentetik'te test düğmesi spinner↔ikon takası kaldı (aynı 14 px, genişlik değişmez).
+- Kapı: `monitorFormBusyLabels.test.js` — dizini listeleyip her `*MonitorPage.jsx`'te ternary'li Kaydet/Test etiketi YOK,
+  `aria-busy` VAR, şerit başlıkta VAR / alt barda YOK; mutasyonla ısırdığı doğrulandı (`'...'` geri konunca kırmızı).
+- Uygulama notu: toplu düzenleme script'inde heredoc `\1` kaçışı düştü → `onClick={save}` yerine 0x01 baytı yazıldı,
+  dokuz sayfa çöktü (ErrorBoundary). Bayt taraması + `onClick={save}` sayımıyla geri kondu; `git checkout` ile bir dosyanın
+  tüm sweep'i yanlışlıkla silindi, yeniden uygulandı ve diff'i diğer sekizle karşılaştırıldı.
+Kapılar: frontend lint 0 hata / 2144 test / kapsam / build yeşil; backend DEĞİŞMEDİ.
+→ **REGRESYON YOK**.

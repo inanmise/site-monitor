@@ -65,6 +65,24 @@ class PageCheckerServiceTest {
     // ── Testler ──────────────────────────────────────────────────────────────
 
     @Test
+    @DisplayName("scanMixedContent: alt kaynaklara İSTEK ATMAZ — asılı img'li sayfa bile anında döner (sertifika ilk kontrolü)")
+    void scanMixedContent_doesNotFetchSubresources() {
+        // /hangres: sağlam sayfa, tek img /hang'e gider (10 sn uyur). test(...) bu img'i doğrulamaya
+        // gidip zaman aşımına dayanırdı; karışık içerik kararı URL şemasından verilir, istek gerekmez.
+        long t0 = System.currentTimeMillis();
+        var r = checker.scanMixedContent(base + "/hangres", 1500);
+        long ms = System.currentTimeMillis() - t0;
+        assertThat(r.mainReachable()).isTrue();
+        assertThat(r.status()).isEqualTo("OK");
+        assertThat(r.totalResources()).isGreaterThanOrEqualTo(1);   // envanter çıkarıldı…
+        assertThat(r.issues()).isEmpty();                            // …ama hiçbiri doğrulanmadı (TIMEOUT yok)
+        assertThat(r.timeoutResources()).isZero();
+        assertThat(ms).isLessThan(1500L);                            // img zaman aşımı (1.5 sn) BEKLENMEDİ
+        assertThat(checker.scanMixedContent("https://", 1500).status()).isEqualTo("CONFIG_ERROR");
+        assertThat(checker.scanMixedContent(base + "/down500", 1500).mainReachable()).isFalse();
+    }
+
+    @Test
     @DisplayName("Şemasız/host'suz URL → CONFIG_ERROR (DOWN DEĞİL): yapılandırma hatası kesinti alarmı üretmemeli")
     void schemalessUrl_configError_notDown() {
         var r = checker.check("www.axess.com.tr", "SINGLE_PAGE", 5000, 2000, 5, null, 2, 50, 60);

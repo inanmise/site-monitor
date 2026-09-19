@@ -362,3 +362,82 @@ describe('InventoryFormModal — kaydetme sonrası otomatik ilk kontrol', () => 
     await waitFor(() => expect(onSaved).toHaveBeenCalled())
   })
 })
+
+/**
+ * Kaydet'te HİÇBİR ŞEY yer değiştirmez (2026-09-19, üretim ekran görüntüsü).
+ *
+ * Eskiden alt barda "Kaydet" → "Kaydediliyor…" → "İlk kontrol koşuyor…" diye uzuyor ve araya
+ * "Kontrol ediliyor… N sn" şeridi giriyordu: satır 723 px'e taşıyor, Test et modalın dışına kayıyordu.
+ * Şimdi düğme metinleri SABİT; evre başlıktaki şeritte anlatılır; doğrulama mesajı gövdeyi itmeden
+ * alt barın üstünde yüzer (jsdom yerleşimi kanıtlamaz — DOM sözleşmesi pinlenir).
+ */
+describe('InventoryFormModal — Kaydet sırasında kayma yok', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('kaydederken düğme metni "Kaydet" kalır; evre BAŞLIKTAKİ şeritte ("Kaydediliyor…" → "İlk kontrol koşuyor…")', async () => {
+    let releaseSave, releaseCheck
+    api.admin.updateInventory = vi.fn(() => new Promise(r => { releaseSave = () => r({ success: true }) }))
+    api.refreshCertificateHealth = vi.fn(() => new Promise(r => { releaseCheck = () => r({ success: true }) }))
+    const onSaved = vi.fn()
+    const { container } = render(<InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={onSaved} />)
+    const footer = container.querySelector('.modal-actions')
+    const labelsBefore = Array.from(footer.querySelectorAll('button')).map(b => b.textContent.trim())
+
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(api.admin.updateInventory).toHaveBeenCalled())
+    // Evre 1: şerit başlıkta, düğme metni değişmedi, şerit alt barda DEĞİL.
+    const title = container.querySelector('.modal-wide-title')
+    expect(title.querySelector('.mon-running')).toHaveTextContent(/Kaydediliyor|Saving/)
+    expect(footer.querySelector('.mon-running')).toBeNull()
+    expect(saveBtn()).toBeDisabled()
+    expect(saveBtn()).toHaveAttribute('aria-busy', 'true')
+    expect(Array.from(footer.querySelectorAll('button')).map(b => b.textContent.trim())).toEqual(labelsBefore)
+
+    // Evre 2: ilk kontrol — yine başlıkta, yine aynı düğmeler.
+    releaseSave()
+    await waitFor(() => expect(api.refreshCertificateHealth).toHaveBeenCalled())
+    await waitFor(() => expect(title.querySelector('.mon-running')).toHaveTextContent(/İlk kontrol koşuyor|Running first check/))
+    expect(footer.querySelector('.mon-running')).toBeNull()
+    expect(Array.from(footer.querySelectorAll('button')).map(b => b.textContent.trim())).toEqual(labelsBefore)
+    expect(screen.getByRole('button', { name: /^İptal$|^Cancel$/i })).toBeDisabled()
+
+    releaseCheck()
+    await waitFor(() => expect(onSaved).toHaveBeenCalled())
+  })
+
+  it('doğrulama hatası alt barın üstünde YÜZER: gövde başa kaydırılmaz, × ile kapanır, alan değişince gider', async () => {
+    const { container } = render(<InventoryFormModal mode="edit" record={{ ...RECORD, group_name: '' }} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+    const grid = container.querySelector('.form-grid')
+    grid.scrollTo = vi.fn()
+    fireEvent.click(saveBtn())
+    const banner = await screen.findByRole('alert')
+    expect(banner).toHaveTextContent(/grup seçimi zorunludur|a group is required/i)
+    expect(banner.closest('.modal-wide-float')).not.toBeNull()   // .form-grid'in kardeşi olarak yüzer, içinde değil
+    expect(grid.contains(banner)).toBe(false)
+    expect(grid.scrollTo).not.toHaveBeenCalled()
+
+    // × kapatır
+    fireEvent.click(screen.getByRole('button', { name: /^Kapat$|^Close$/i }))
+    expect(screen.queryByRole('alert')).toBeNull()
+
+    // Tekrar üret, bir alan değişince kendiliğinden gider.
+    fireEvent.click(saveBtn())
+    await screen.findByRole('alert')
+    fireEvent.change(screen.getByDisplayValue('8443'), { target: { value: '8444' } })
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('Test et / Çalıştır koşarken de metinleri sabit kalır, evre başlıkta', async () => {
+    let release
+    api.testCertificate = vi.fn(() => new Promise(r => { release = () => r({ success: false, error: 'bağlantı reddedildi' }) }))   // hata dalı: tarih biçimleyici mock'ta yok
+    const { container } = render(<InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+    const testBtn = screen.getByRole('button', { name: /^Test et$|^Test$/i })
+    fireEvent.click(testBtn)
+    await waitFor(() => expect(testBtn).toBeDisabled())
+    expect(testBtn).toHaveTextContent(/^Test et$|^Test$/)
+    expect(container.querySelector('.modal-wide-title .mon-running')).toHaveTextContent(/Test ediliyor|Testing/)
+    release()
+    await waitFor(() => expect(testBtn).not.toBeDisabled())
+    expect(container.querySelector('.modal-wide-title .mon-running')).toBeNull()
+  })
+})

@@ -2577,6 +2577,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .modal-box h3 { margin-bottom: 20px; font-size: 1.2em; }
 .modal-icon-hdr { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
 .modal-icon-hdr h3 { margin: 0; font-size: 1.15em; font-weight: 700; }
+/* Başlığın sağındaki meşgul şeridi (dokuz izleme formu): düğme metinleri sabit, evre burada. */
+.modal-icon-hdr-running { margin-left: auto; display: inline-flex; align-items: center; flex-shrink: 0; }
+.modal-icon-hdr-running:empty { display: none; }
 .modal-icon-hdr-badge { width: 46px; height: 46px; border-radius: 12px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .modal-icon-hdr--user .modal-icon-hdr-badge { background: linear-gradient(135deg, #3b82f6, #1d4ed8); color: #fff; }
 .modal-icon-hdr--team .modal-icon-hdr-badge { background: linear-gradient(135deg, #10b981, #059669); color: #fff; }
@@ -6998,6 +7001,18 @@ button.ccx-mini:hover { color: var(--primary); }
   margin-bottom: 16px;
   flex-shrink: 0;
 }
+/* Başlık + sağında meşgul şeridi (Kaydediliyor… / İlk kontrol koşuyor… N sn). Şerit alt bardan
+   buraya taşındı: alt barda düğmelerin arasına girince satır taşıyor, düğmeler kayıyordu. */
+.modal-box.modal-wide > h3.modal-wide-title {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 1.5em;
+}
+.modal-wide-title > span:first-child { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+/* Doğrulama mesajı gövdeyi İTMEZ: alt barın hemen üstünde yüzer (kapatılabilir; alan değişince gider). */
+.modal-wide-float {
+  position: absolute; left: 28px; right: 28px; bottom: 88px; z-index: 6;
+  filter: drop-shadow(0 6px 16px rgba(0,0,0,.18));
+}
+.modal-wide-float .alert-banner { margin-bottom: 0; }
 /* Senaryo İzleme modal başlık satırı: başlık solda, kapatma (X) butonu sağda.
    (.modal-head / .icon-btn eskiden tanımsızdı → X başlığın altına sola düşüyordu.) */
 .modal-head {

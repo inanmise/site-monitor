@@ -42,6 +42,7 @@ import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import { LoadingBlock, Spinner } from './ui/Progress.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
+import { CheckRunningStrip } from './ui/CheckRunning.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import CopyButton from './ui/CopyButton.jsx'
 import { exitLabel, exitHint, diagnosisHint, k6SyntaxLevel, readPhases, formatBytes,
@@ -1631,6 +1632,8 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
                 ✓ {t('scripted.autoSaved')} {draftSavedAt.toLocaleTimeString(lang === 'tr' ? 'tr-TR' : 'en-GB')}
               </span>
             )}</h3>
+              {/* Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen). */}
+              <span className="modal-icon-hdr-running"><CheckRunningStrip running={saving || testing} label={saving ? t('mon.saving') : t('scripted.testing')} /></span>
         </div>
         <div className="modal-scroll-body" ref={scrollHint.ref}>
         {dupSource && <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>}
@@ -1907,11 +1910,11 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
           <div style={{ display: 'flex', gap: 8, marginRight: 'auto' }}>
             <button className="btn btn-secondary" onClick={runTest} disabled={testing} aria-busy={testing}>
               {testing ? <Spinner size={14} inline decorative /> : <FlaskConical size={14} />}
-              {testing ? t('scripted.testing') : t('scripted.testRun')}</button>
+              {t('scripted.testRun')}</button>
             {modal.id && canDelete && <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('scripted.delete')}</button>}
           </div>
           <button className="btn btn-secondary" onClick={closeEdit}>{t('scripted.cancel')}</button>
-          <button className="btn btn-primary" onClick={save} disabled={saving || !form.name.trim() || !form.teamId || !form.groupName.trim()}>{saving ? '...' : t('scripted.save')}</button>
+          <button className="btn btn-primary" onClick={save} aria-busy={saving || undefined} disabled={saving || !form.name.trim() || !form.teamId || !form.groupName.trim()}>{t('scripted.save')}</button>
         </div>
       </div>
     </div>

@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-19T16:55:10Z",
+  "generatedAt": "2026-09-19T19:17:23Z",
   "repo": "inanmise/site-monitor",
-  "count": 660,
+  "count": 661,
   "releases": [
+    {
+      "version": "20.72.1",
+      "tag": "v20.72.1",
+      "releasedAt": "2026-09-19T19:17:16Z",
+      "commit": "e92e5de2786e8827abea0bac0dc6fd9fe9b50c54",
+      "prevVersion": "20.72.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "monitors",
+          "breaking": false,
+          "sha": "e92e5de2",
+          "subject": "dokuz izleme formunda Kaydet/Test metni sabit — alt bar kaymıyor"
+        },
+        {
+          "type": "fix",
+          "scope": "inventory",
+          "breaking": false,
+          "sha": "d59616e5",
+          "subject": "Kaydet'te alt bar kaymıyor; ilk kontrol alt kaynakları doğrulamıyor"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.72.0",
       "tag": "v20.72.0",

@@ -4,6 +4,7 @@ import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
+import { CheckRunningStrip } from './ui/CheckRunning.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
@@ -975,6 +976,8 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
               <div className="modal-icon-hdr-badge"><Gauge size={20} /></div>
               <h3>{modal === 'new' ? t('pspd.modalNew') : t('pspd.modalEdit')}
                 {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
+              {/* Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen). */}
+              <span className="modal-icon-hdr-running"><CheckRunningStrip running={saving || testing} label={saving ? t('mon.saving') : t('pspd.testing')} /></span>
             </div>
             <div className="modal-scroll-body" ref={scrollHint.ref}>
 
@@ -1185,13 +1188,13 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
               {/* URL boşken ölçüm yapılamaz. Buton zaten kapalı; title kapalı olma SEBEBİNİ söyler
                   (sessizce tıklanmayan bir buton kullanıcıya arıza gibi görünüyor). */}
               <button className="btn btn-secondary" style={{ marginRight: 'auto' }} onClick={runTest}
-                disabled={testing || !form.url.trim()}
+                aria-busy={testing || undefined} disabled={testing || !form.url.trim()}
                 title={!form.url.trim() ? t('pspd.testNeedsUrl') : undefined}>
-                <FlaskConical size={14} />{testing ? t('pspd.testing') : t('pspd.test')}
+                <FlaskConical size={14} />{t('pspd.test')}
               </button>
               {modal !== 'new' && canDeleteRow(modal) && <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('pspd.delete')}</button>}
               <button className="btn btn-secondary" onClick={closeEdit}>{t('pspd.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving || !form.url.trim() || !form.teamId}>{saving ? '...' : t('pspd.save')}</button>
+              <button className="btn btn-primary" onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.teamId}>{t('pspd.save')}</button>
             </div>
           </div>
         </div>,
