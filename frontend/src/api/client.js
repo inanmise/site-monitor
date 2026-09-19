@@ -974,6 +974,14 @@ export const api = {
       detail: (id) => request(`/admin/smtp-log/${id}`),
       resend: (id) => request(`/admin/smtp-log/${id}/resend`, { method: 'POST' }),
     },
+    // Webhook Push Gönderim Logu (2026-09-19): SMTP'nin push karşılığı — aynı sözleşme (+ username/monitorType/level).
+    pushLog: {
+      search: (params) => request(`/admin/push-log/search${api.admin.smtpLog._qs(params)}`),
+      summary: (params) => request(`/admin/push-log/summary${api.admin.smtpLog._qs(params)}`),
+      export: (params) => request(`/admin/push-log/export${api.admin.smtpLog._qs(params)}`),
+      detail: (id) => request(`/admin/push-log/${id}`),
+      requeue: (id) => request(`/admin/push-log/${id}/requeue`, { method: 'POST' }),
+    },
     triggerHeartbeat: () => request('/admin/system/heartbeat', { method: 'POST' }),
     getHeartbeatTimeline: (days = 1) => request(`/admin/system/heartbeat-timeline?days=${days}`),
     // Kullanıcı / oturum izleme

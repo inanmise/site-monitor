@@ -220,6 +220,7 @@ public final class AuditEventCatalog {
             "USER_PASSWORD_AUTO_RESET",
             "USER_PUSH_EXPORT",
             "USER_PUSH_OPT_OUT",
+            "USER_PUSH_REQUEUE",
             "USER_PUSH_SCOPES",
             "USER_PUSH_SETTINGS",
             "USER_PUSH_TEST",

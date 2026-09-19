@@ -90,6 +90,25 @@ public interface UserPushDeliveryRepository extends JpaRepository<UserPushDelive
     /** "Sizin için — bugün" teslim edilemeyen bildirim kartı (2026-09-19): pencere içi FAILED satırları, yeni üstte. */
     List<UserPushDelivery> findByStatusAndCreatedAtGreaterThanEqualOrderByIdDesc(String status, String since);
 
+    /**
+     * Webhook Push Gönderim Logu penceresi (2026-09-19; PushLogQueryService) — {@code message} ve {@code rawResponse}
+     * HARİÇ sütunlar (gövde yalnız satır detayında). Sıra: id, alertEventId, trigger, monitorType, monitorId, monitorName,
+     * teamId, alertLevel, username, displayName, title, status, httpStatus, error, attempts, createdAt, sentAt, batchId,
+     * notificationId.
+     */
+    @Query("""
+           SELECT d.id, d.alertEventId, d.trigger, d.monitorType, d.monitorId, d.monitorName, d.teamId, d.alertLevel,
+                  d.username, d.displayName, d.title, d.status, d.httpStatus, d.error, d.attempts, d.createdAt, d.sentAt,
+                  d.batchId, d.notificationId
+           FROM UserPushDelivery d
+           WHERE d.createdAt >= :from AND d.createdAt <= :to
+           ORDER BY d.createdAt DESC, d.id DESC
+           """)
+    List<Object[]> findWindowRows(@Param("from") String from, @Param("to") String to);
+
+    /** Aynı toplu isteğin (batch) tüm alıcı satırları — satır detayındaki "kime gitti / kim düştü". */
+    List<UserPushDelivery> findByBatchIdOrderByIdAsc(String batchId);
+
     /** Test tavanı: son bir dakikadaki TEST satırları. */
     long countByTriggerAndCreatedAtGreaterThanEqual(String trigger, String since);
 

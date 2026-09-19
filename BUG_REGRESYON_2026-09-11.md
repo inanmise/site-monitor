@@ -1008,3 +1008,47 @@ Denetim odakları:
 Kapılar: backend `clean verify` (bkz. çıktı) — tek beklenen kırmızı `IdentityLeakGuardTest` (takipsiz kullanıcı dosyaları);
 yeni testler 9 (servis) + 4 (kontrolör). Frontend lint 0 hata / 2123 test / kapsam (SmtpLogView %99,5) / build yeşil.
 → **REGRESYON YOK**.
+
+## Ek — kırk sekizinci tur (2026-09-19, sürüm sonrası — Sistem Sağlığı'ndaki her bölüm her kademeye açık, `v20.71.1..HEAD`)
+
+Kapsam: backend (PermissionCatalog USER/TEAM_ADMIN `release_history.read`; PermissionService PolicyUpgrade ×2 — mevcut
+kurulumlarda `updated_by=system` satırlarını çevirir, yönetici kararı ezilmez; SystemController 5 salt-okuma uçtan
+`requireSystemRead` kalktı: user-activity, user-activity/series, user-activity/user/{u}, db-analytics, http-metrics
+endpoints/series) + frontend (SystemHealth `canViewUserActivity=true`, `canAck` → UserActivityPanel).
+Denetim odakları:
+- YAZMA uçları değişmedi: anomali onayı, oturum sonlandırma, heartbeat/lock, dağıtım kaydı yazma admin/AUDIT'te; panel
+  onay düğmeleri `canAck` ile gizlenir (403'e koşmasın).
+- **Sızıntı kapısı:** `/user-activity` payload'ı `employee_id` (sicil) taşıyordu; arayüz kapsamlı kullanıcıda "maskeli"
+  gösteriyordu ama JSON'da duruyordu. Uç her kademeye açılınca sunucuda silinir (`maskEmployeeIds`, önbellekli özetin
+  kopyası) — TeamBadge/üye listesi beyaz-liste ilkesiyle aynı. Test: USER payload'ında anahtar YOK, ADMIN'de var.
+- SystemControllerTest: iki "USER 403" testi 200'e çevrildi + ack 403 kalır + sicil maskesi.
+- Tarayıcıda: admin oturumunda 6 bölüm (Sistem · HTTP · JVM/CPU · Veritabanı · Kullanıcı/Oturum · Sürüm & Dağıtım).
+  Not: yerelde USER oturumu açılmadı (tek hesap); kapı davranışı WebMvc testleriyle pinli.
+Kapılar: bkz. 49. tur (ortak koşum).
+→ **REGRESYON YOK**.
+
+## Ek — kırk dokuzuncu tur (2026-09-19, sürüm sonrası — Sistem Sağlığı: Webhook Push kartı + Webhook Push Gönderim Logu sayfası, `v20.71.1..HEAD`)
+
+Kapsam: backend (PushLogQueryService + PushLogController yeni; UserPushDeliveryRepository gövdesiz pencere projeksiyonu +
+batch sorgusu; UserPushService.requeue; AuditEventCatalog USER_PUSH_REQUEUE) + frontend (PushLogView yeni; SystemHealth
+Webhook Push kartı → `view=push`; `p_` URL öneki; api.admin.pushLog; i18n TR/EN; `.pl-trigger-*`, `.sml-pre`).
+Denetim odakları:
+- Kart SMTP kartıyla aynı iskelet: 24 sa / 7 gün / 30 gün pilleri, gönderilen/başarısız/kuyrukta/oran; oran <%90 alarm
+  rengi. Veri `summary` ucundan (60 sn önbellek); görünürken 60 sn'de bir tazelenir.
+- Sayfa: SMTP sayfasının sözlüğü (`.sml-*`) — KPI 9 (kuyrukta ve engellendi ayrı), zaman çizelgesi (sent/failed/
+  pending/skipped), takım · hata sınıfı · alıcı · izleme · seviye kırılımları, sunucu taraflı arama/sıralama/sayfalama,
+  detay (mesaj, ham yanıt, aynı batch'in alıcıları, "Alarmı aç"), CSV, yeniden kuyruğa alma.
+- Durum sözlüğü: SENT/FAILED/PENDING/BLOCKED(CIRCUIT_OPEN, RATE_LIMITED)/SKIPPED(SKIPPED_*); hata sınıfı HTTP koduna
+  göre (AUTH 401/403 · NOT_FOUND 404 · RATE 429 · SERVER 5xx · CLIENT 4xx), kodsuz CONFIG (URL ayarlanmamış / gövde
+  kurulamadı — tarayıcıda "Diğer" çıkınca eklendi) · TIMEOUT · CONNECT · OTHER.
+- Tetikleyici sözlüğü SMTP'den FARKLI (OPEN/RE_ALERT/RESOLVE/…): ilk sürüm SMTP listesini kullanıyordu → satırlarda ham
+  "RE_ALERT" çıktı; mevcut `userpush.trigger.*` etiketleri + özetten gelen bilinmeyenler süzgeçte.
+- Kapsam: push satırı alan adı taşımaz → görüş takımları + kullanıcının KENDİ satırları (username); kontrolör testi pinler.
+- Yeniden kuyruk: FAILED/BLOCKED → PENDING, deneme sayacı 0, tek başına batch (eski batch arkadaşları yeniden gitmesin),
+  worker hemen; kanal kapalıysa CHANNEL_DISABLED (409); yalnız global admin + system_health.actions; denetim
+  USER_PUSH_REQUEUE (auditFormat `_REQUEUE` fiili).
+- Tarayıcıda: kart 0/23 %0 (yerelde webhook URL'si yok → hepsi FAILED, gerçek veri); sayfa 34 kayıt, 9 KPI, günlük
+  çubuklar, kırılımlar, satır detayı; deep-link `view=push`.
+Kapılar: backend `clean verify` (bkz. çıktı) — tek beklenen kırmızı `IdentityLeakGuardTest` (takipsiz kullanıcı
+dosyaları); yeni testler 5 (servis) + 3 (kontrolör). Frontend lint 0 hata / 2127 test / kapsam (68 dosya) / build yeşil.
+→ **REGRESYON YOK**.

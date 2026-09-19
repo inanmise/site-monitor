@@ -4,11 +4,12 @@ import { api, formatDate, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval'
-import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail, ChevronRight, Check, Server, Database, Globe, Cpu, ChevronDown, Users } from 'lucide-react'
+import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail, ChevronRight, Check, Server, Database, Globe, Cpu, ChevronDown, Users, Webhook } from 'lucide-react'
 import MiniChart from './MiniChart'
 import ChartModal from './ChartModal'
 import HeartbeatHistoryModal from './HeartbeatHistoryModal'
 import SmtpLogView from './SmtpLogView.jsx'   // SMTP Gönderim Logu v2 — tam sayfa alt görünüm (2026-09-19)
+import PushLogView from './PushLogView.jsx'   // Webhook Push Gönderim Logu — tam sayfa alt görünüm (2026-09-19)
 import UserActivityPanel from './useractivity/UserActivityPanel.jsx'   // Kullanıcı / Oturum paneli (2026-09-13 zenginleştirme)
 
 import { mailPreviewSrcDoc } from '../../utils/mailPreview.js'
@@ -116,6 +117,11 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
         setSmtpInitial({ range: d.m_range, status: d.m_status, domain: d.m_domain, recipient: d.m_rcpt, teamId: d.m_team, errorClass: d.m_cls, q: d.m_q })
         setView('smtp')
       }
+      if (e?.detail?.view === 'push') {
+        const d = e.detail
+        setPushInitial({ range: d.p_range, status: d.p_status, username: d.p_user, teamId: d.p_team, errorClass: d.p_cls, level: d.p_level, q: d.p_q })
+        setView('push')
+      }
     }
     window.addEventListener('sm:tab-params', on)
     return () => window.removeEventListener('sm:tab-params', on)
@@ -143,8 +149,12 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
     return () => window.removeEventListener('keydown', onKey)
   }, [httpExpOpen])
   // SMTP Gönderim Logu v2 (2026-09-19): modal yerine TAM SAYFA alt görünüm (`?view=smtp`, süzgeçler `m_*`).
-  const [view, setView] = useState(() => readUrlParam('view', '') === 'smtp' ? 'smtp' : null)
+  const [view, setView] = useState(() => { const v = readUrlParam('view', ''); return v === 'smtp' || v === 'push' ? v : null })
   const [smtpInitial, setSmtpInitial] = useState(null)
+  // Webhook Push kartı (2026-09-19): SMTP kartıyla aynı iskelet — periyot pilleri, oran, CTA → view=push
+  const [pushPeriod, setPushPeriod] = useState('7d')
+  const [pushKpi, setPushKpi] = useState(null)
+  const [pushInitial, setPushInitial] = useState(null)
   // Haftalık erişilebilirlik gönderim logları (kart → modal)
   const [waLogsModal, setWaLogsModal]   = useState(false)
   const [waLogs, setWaLogs]             = useState(null)
@@ -257,12 +267,34 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
     } catch { /* history yoksay */ }
   }, [smtpPeriod])
 
+  const openPushView = useCallback((overrides) => {
+    const o = overrides && typeof overrides === 'object' && !('nativeEvent' in overrides) ? overrides : {}
+    setPushInitial({ range: pushPeriod, ...o })
+    setView('push')
+    try {
+      const url = new URL(window.location.href)
+      url.searchParams.set('view', 'push')
+      window.history.replaceState(window.history.state, '', url.pathname + '?' + url.searchParams.toString() + url.hash)
+    } catch { /* history yoksay */ }
+  }, [pushPeriod])
+
+  // Kart KPI'sı: seçili periyot için push özeti (60 sn önbellekli uç; görünürken 60 sn'de bir tazelenir)
+  const loadPushKpi = useCallback(async () => {
+    try {
+      const ms = pushPeriod === '24h' ? 24 * 3600e3 : pushPeriod === '30d' ? 30 * 86400e3 : 7 * 86400e3
+      const r = await api.admin.pushLog.summary({ from: new Date(Date.now() - ms).toISOString().slice(0, 19) })
+      setPushKpi(r?.success ? (r.data?.kpi || {}) : null)
+    } catch { setPushKpi(null) }
+  }, [pushPeriod])
+  useEffect(() => { loadPushKpi() }, [loadPushKpi])
+  useVisibleInterval(loadPushKpi, 60_000, false)
+
   const closeSmtpView = useCallback(() => {
-    setView(null); setSmtpInitial(null)
+    setView(null); setSmtpInitial(null); setPushInitial(null)
     try {
       const url = new URL(window.location.href)
       url.searchParams.delete('view')
-      for (const k of [...url.searchParams.keys()]) if (k.startsWith('m_')) url.searchParams.delete(k)
+      for (const k of [...url.searchParams.keys()]) if (k.startsWith('m_') || k.startsWith('p_')) url.searchParams.delete(k)
       const qs = url.searchParams.toString()
       window.history.replaceState(window.history.state, '', url.pathname + (qs ? `?${qs}` : '') + url.hash)
     } catch { /* history yoksay */ }
@@ -400,6 +432,13 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
     return (
       <div className="sys-health">
         <SmtpLogView key={JSON.stringify(smtpInitial)} initial={smtpInitial} onBack={closeSmtpView} />
+      </div>
+    )
+  }
+  if (view === 'push') {
+    return (
+      <div className="sys-health">
+        <PushLogView key={JSON.stringify(pushInitial)} initial={pushInitial} onBack={closeSmtpView} />
       </div>
     )
   }
@@ -763,6 +802,49 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
             <ChevronRight size={14} className="smtp-log-cta-arrow" />
           </button>
         </div>
+
+        {/* Webhook Push card (2026-09-19) — SMTP kartının push karşılığı; tıklama → view=push */}
+        {(() => {
+          const k = pushKpi || {}
+          const attempted = (k.sent || 0) + (k.failed || 0)
+          const rate = attempted > 0 ? (k.sent || 0) / attempted : null
+          const alarm = rate != null && rate < 0.9
+          const rateCls = rate == null ? '' : rate >= 0.95 ? 'sys-ok-text' : rate >= 0.8 ? 'sys-warn-text' : 'sys-err-text'
+          return (
+            <div className={`sys-card sys-card-clickable${alarm ? ' sys-card-alarm' : ''}`} onClick={openPushView} title={t('pl.cardHint')} data-testid="push-card">
+              <div className="sys-card-header">
+                <div className="hb-title-row">
+                  <Webhook size={20} className={`push-card-icon${alarm ? ' is-alarm' : ''}`} aria-hidden="true" />
+                  <h3>{t('pl.cardTitle')}</h3>
+                </div>
+                <span className={`sys-badge ${alarm ? 'sys-badge-locked' : 'sys-badge-free'}`}>
+                  <span className={rateCls}>{rate == null ? '—' : formatPercent(rate)}</span>
+                </span>
+              </div>
+              <div className="smtp-period-pills" onClick={(e) => e.stopPropagation()}>
+                {['24h', '7d', '30d'].map((p) => (
+                  <button key={p} type="button" className={`smtp-period-pill${pushPeriod === p ? ' is-selected' : ''}`} onClick={() => setPushPeriod(p)}>{t(`sml.range.${p}`)}</button>
+                ))}
+              </div>
+              <dl className="sys-dl">
+                <dt>{t('health.smtpSent')}</dt>
+                <dd>{k.sent ?? 0} / {attempted}</dd>
+                <dt>{t('health.statusFailed')}</dt>
+                <dd className={k.failed > 0 ? 'sys-err-text' : ''}>{k.failed ?? 0}</dd>
+                <dt>{t('pl.cardQueued')}</dt>
+                <dd className={(k.pending || 0) + (k.blocked || 0) > 0 ? 'sys-warn-text' : ''}>{(k.pending || 0) + (k.blocked || 0)}</dd>
+                <dt>{t('health.smtpRate')}</dt>
+                <dd className={rateCls}>{rate == null ? '—' : formatPercent(rate)}</dd>
+              </dl>
+              <button type="button" className="smtp-log-cta" onClick={(e) => { e.stopPropagation(); openPushView() }}>
+                <Webhook size={14} />
+                <span>{t('pl.cardHint')}</span>
+                <span className="smtp-log-cta-period">{t(`sml.range.${pushPeriod}`)}</span>
+                <ChevronRight size={14} className="smtp-log-cta-arrow" />
+              </button>
+            </div>
+          )
+        })()}
 
         {/* Heartbeat card */}
         <div

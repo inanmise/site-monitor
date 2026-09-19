@@ -569,6 +569,21 @@ public class UserPushService {
 
     // ── Outbox worker ──────────────────────────────────────────────────────────────────────
 
+    /**
+     * Webhook Push Gönderim Logu "Yeniden kuyruğa al" (2026-09-19): FAILED/CIRCUIT_OPEN/RATE_LIMITED satırı PENDING'e
+     * çekilir, TEK BAŞINA batch olur (eski batch arkadaşları yeniden gitmesin), deneme sayacı sıfırlanır ve worker
+     * hemen tetiklenir. Devre kesici açıksa drainOutbox zaten bekletir — kayıp olmaz.
+     */
+    public void requeue(UserPushDelivery d) {
+        d.setStatus("PENDING");
+        d.setAttempts(0);
+        d.setError(null);
+        d.setHttpStatus(null);
+        d.setBatchId("requeue-" + d.getId() + "-" + System.currentTimeMillis());
+        deliveryRepo.save(d);
+        worker.execute(this::drainOutbox);
+    }
+
     /** PENDING satırları batch bazında gönderir. Tek worker — eşzamanlılık yok. */
     void drainOutbox() {
         try {
