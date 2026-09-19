@@ -2509,7 +2509,11 @@ public class SchedulerService {
 
     // ── Port / DNS / Uptime periodic checks ──────────────────────────────────
 
-    @Scheduled(fixedDelayString = "${site.monitor.uptime.interval-ms:300000}", initialDelayString = "60000")
+    /** Envanter erişilebilirlik (HTTP uptime) süpürmesi — 2026-09-19'dan beri SAATLİK: Durum İzleme kartında
+     *  SSL Kontrol Geçmişi saat başı (sweepCron) dolarken HTTP Kontrol Geçmişi 5 dk'da bir doluyordu; iki geçmiş
+     *  aynı sıklıkta olsun diye varsayılan 1 saate çekildi (application.properties ile aynı değer, pin:
+     *  UptimeIntervalDefaultTest). DOWN teyidi bu aralıktan bağımsızdır (confirm-* parametreleri). */
+    @Scheduled(fixedDelayString = "${site.monitor.uptime.interval-ms:3600000}", initialDelayString = "60000")
     public void runUptimeChecks() {
         if (!appSettings.getBoolean("site.monitor.uptime.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
         // HA: tüm-tur dağıtık kilit — 2+ pod'da bir turu yalnız bir pod çalıştırır (mükerrer probe/geçmiş kaydı önlenir).

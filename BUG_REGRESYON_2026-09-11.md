@@ -894,3 +894,22 @@ Tarayıcı doğrulaması: HTTP, DNS, Sentetik, Envanter (Dışa Aktar / İçe Ak
 Kapılar: frontend lint 0 hata / 2112 test (ilk koşumda lazy-tabs-smoke UptimePage 15 sn zaman aşımı, seri tam tekrar
 246/246 yeşil) / kapsam tabanı / build yeşil; backend DEĞİŞMEDİ.
 → **REGRESYON YOK**.
+
+## Ek — kırk üçüncü tur (2026-09-19, sürüm sonrası — Durum İzleme kartı: HTTP Kontrol Geçmişi de SAATLİK, `v20.71.1..HEAD`)
+
+Kapsam: yalnız backend yapılandırması (SchedulerService `runUptimeChecks` @Scheduled yedeği + application.properties
+`site.monitor.uptime.interval-ms`). SSL Kontrol Geçmişi saat başı (`scheduler.cron 0 0 * * * *`) dolarken HTTP Kontrol
+Geçmişi 5 dk'da bir doluyordu (300000 ms); iki geçmiş aynı sıklıkta olsun diye varsayılan 3600000 ms'e çekildi.
+Denetim odakları:
+- Tek anahtar, iki yazım yeri (properties + @Scheduled yedeği) → `UptimeIntervalDefaultTest` ikisini de 1 saate ve
+  SSL cron'unu saat başına pinler (PasswordPolicyDefaultTest deseni). Env `UPTIME_INTERVAL_MS` ile ezilebilir; yerel
+  `.env` ezmiyor; helm/k8s bu anahtarı taşımıyor (prod da yeni varsayılanı alır).
+- DOWN teyidi (confirm-* 30 sn × 3) ve kurtarma kontrolleri (`uptime.recovery-*`) süpürme aralığından bağımsız —
+  alarm gecikmesi değişmez, yalnız TESPİT en geç 1 saat sonra. Bilinçli ürün kararı (kullanıcı isteği).
+- Bayatlık eşiği (`scheduler.stale-minutes` 65) sertifika kontrolüne bakar, uptime tablosuna değil → etkilenmez.
+  24 saatlik erişilebilirlik yüzdesi artık 24 örnekten hesaplanır (tek arıza ≈ %95,8).
+- Frontend/i18n/whitepaper'da "5 dakikada bir" erişilebilirlik ifadesi yok (tarandı) → metin değişikliği gerekmedi.
+Kapılar: backend `clean verify` 3830 test — 1 kırmızı `IdentityLeakGuardTest.noNewIdentityLeaks`, YALNIZ kullanıcının
+takipsiz `docs/CORE_WEB_VITALS_FIZIBILITE.md` / `sre-slo-sekmesi.komut.md` dosyalarından (depoda yok, CI'ı
+etkilemez; dokunulmadı); yeni test 2/2 yeşil. Jar yeniden kuruldu, :8080 `/health` UP, :5173 200. Frontend DEĞİŞMEDİ.
+→ **REGRESYON YOK**.
