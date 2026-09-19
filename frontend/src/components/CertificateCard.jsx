@@ -5,6 +5,7 @@ import { formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { CheckNowButton, CheckRunningStrip } from './ui/CheckRunning.jsx'
 import TeamBadge from './ui/TeamBadge.jsx'
+import CertificateCardExtras from './CertificateCardExtras.jsx'
 import { isInsecure, securityTitle } from '../utils/certSecurity.js'
 import { ProgressBar } from './ui/Progress.jsx'
 
@@ -17,7 +18,9 @@ function parseDn(dn, field) {
 function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure = false,
                                           onMailFailureClick, isWeak,
                                           onCheckNow, onEdit, onDuplicate, onDelete,
-                                          checking = false, deleting = false, tourId }) {
+                                          checking = false, deleting = false, tourId,
+                                          // Zengin görünüm (2026-09-19): /card-extras bloğu + eylemler; extra yoksa kart bugünkü hâlinde
+                                          extra, onOpenHealth, onConfirmRenewal, onPlanRenewal, confirming = false }) {
   const t = useT()
   const days = cert.days_remaining
   const al = cert.alert_level
@@ -197,6 +200,9 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
           )}
         </div>
       )}
+
+      {/* ── Zengin görünüm: sağlık · alarm · erişilebilirlik · değişim · plan · paylaşılan/bakım/kontak (2026-09-19) ── */}
+      {extra && <CertificateCardExtras cert={cert} extra={extra} onOpenHealth={onOpenHealth} onConfirmRenewal={onConfirmRenewal} onPlanRenewal={onPlanRenewal} confirming={confirming} />}
 
       {/* ── Footer — solda alarm çipleri, sağda aksiyonlar ── */}
       {hasFooter && (

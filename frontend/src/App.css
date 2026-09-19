@@ -5210,6 +5210,47 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   line-height: 1; height: 32px;
 }
 .sort-bar-search-clear:hover { background: #f3f4f6; color: #b91c1c; border-color: #fca5a5; }
+/* ── Genel Bakış kartı zengin görünümü (2026-09-19) — .ccx-* ───────────────────────────── */
+.ccx { display: flex; flex-direction: column; gap: 5px; margin: 8px 0 2px; padding-top: 8px; border-top: 1px dashed var(--border); }
+.ccx-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.ccx-chip { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: .74em; font-weight: 600; padding: 2px 8px; border-radius: 10px; border: 1px solid transparent; background: var(--bg-hover); color: var(--text); cursor: pointer; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.ccx-chip:hover { border-color: var(--primary); }
+.ccx-chip--ok { background: #dcfce7; color: #166534; }
+.ccx-chip--warn { background: #fef3c7; color: #92400e; }
+.ccx-chip--bad { background: #fee2e2; color: #991b1b; }
+.ccx-chip--info { background: #dbeafe; color: #1e40af; }
+.ccx-chip--critical { background: #fee2e2; color: #991b1b; }
+.ccx-chip--high { background: #ffedd5; color: #9a3412; }
+.ccx-chip--warning, .ccx-chip--medium { background: #fef9c3; color: #854d0e; }
+.ccx-chip--low, .ccx-chip--info { background: #dbeafe; color: #1e40af; }
+.ccx-chip.is-acked { opacity: .65; }
+.ccx-mini { display: inline-flex; align-items: center; gap: 3px; font: inherit; font-size: .68em; font-weight: 600; padding: 1px 6px; border-radius: 6px; border: 0; background: var(--bg-hover); color: var(--text-muted); cursor: default; white-space: nowrap; }
+button.ccx-mini { cursor: pointer; }
+button.ccx-mini:hover { color: var(--primary); }
+.ccx-mini.is-bad { background: #fee2e2; color: #991b1b; }
+.ccx-mini--warn { background: #fef3c7; color: #92400e; }
+.ccx-mini--info { background: #dbeafe; color: #1e40af; }
+.ccx-more { font-size: .68em; color: var(--text-muted); }
+.ccx-uptime { font-size: .78em; }
+.ccx-uptime > svg { flex-shrink: 0; }
+.ccx-ok { color: var(--success); }
+.ccx-bad { color: var(--danger); }
+.ccx-pct { font-weight: 700; font-variant-numeric: tabular-nums; }
+.ccx-pct.is-warn { color: #b45309; }
+.ccx-pct.is-bad { color: var(--danger); }
+.ccx-muted { color: var(--text-muted); font-size: .92em; }
+.ccx-spark { display: inline-flex; margin-left: auto; }
+.ccx-act { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: .74em; font-weight: 600; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--primary); background: transparent; color: var(--primary); cursor: pointer; white-space: nowrap; }
+.ccx-act:hover { background: color-mix(in srgb, var(--primary) 10%, transparent); }
+.ccx-act:disabled { opacity: .55; cursor: not-allowed; }
+.dash-card-mode { display: inline-flex; align-items: center; gap: 5px; background: var(--bg-surface); border: 1px solid var(--border); color: var(--text); }
+.dash-card-mode.is-rich { border-color: var(--primary); color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, var(--bg-surface)); }
+[data-theme="dark"] .ccx-chip--ok { background: #052e16; color: #86efac; }
+[data-theme="dark"] .ccx-chip--warn, [data-theme="dark"] .ccx-mini--warn, [data-theme="dark"] .ccx-chip--warning, [data-theme="dark"] .ccx-chip--medium { background: #422006; color: #fcd34d; }
+[data-theme="dark"] .ccx-chip--bad, [data-theme="dark"] .ccx-chip--critical, [data-theme="dark"] .ccx-mini.is-bad { background: #450a0a; color: #fca5a5; }
+[data-theme="dark"] .ccx-chip--high { background: #431407; color: #fdba74; }
+[data-theme="dark"] .ccx-chip--info, [data-theme="dark"] .ccx-mini--info, [data-theme="dark"] .ccx-chip--low { background: #1e3a8a; color: #bfdbfe; }
+
 /* Genel Bakış "Domain Ekle" — üst kontrol satırında "Şimdi Kontrol Et"in yanında (2026-09-19); envanter add modalını açar */
 .controls-add-domain { flex-shrink: 0; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
 /* Genel Bakış "Domain ara" — Domain Ekle'nin yanında; kutu düğme yüksekliğine uzar, temizle düğmesi bitişik */

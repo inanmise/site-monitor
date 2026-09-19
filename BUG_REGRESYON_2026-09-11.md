@@ -1052,3 +1052,31 @@ Denetim odakları:
 Kapılar: backend `clean verify` (bkz. çıktı) — tek beklenen kırmızı `IdentityLeakGuardTest` (takipsiz kullanıcı
 dosyaları); yeni testler 5 (servis) + 3 (kontrolör). Frontend lint 0 hata / 2127 test / kapsam (68 dosya) / build yeşil.
 → **REGRESYON YOK**.
+
+## Ek — ellinci tur (2026-09-19, sürüm sonrası — Genel Bakış sertifika kartı zengin görünümü (8 blok) + Kompakt/Zengin anahtarı, `v20.71.1..HEAD`)
+
+Kapsam: backend (CertificateCardExtrasService + CertificateCardExtrasController `/api/certificates/card-extras`;
+UptimeCheckRepository saatlik kova sorgusu; MaintenanceService windowInfoByTarget/activeEndAt) + frontend
+(CertificateCardExtras yeni; CertificateCard `extra` prop; RenewalPlanModal Vade Takvimi'nden çıkarılıp ortaklaştı;
+App.jsx veri + anahtar + eylemler; i18n TR/EN `ccx.*`; CSS `.ccx-*`). Kullanıcı seçimi 8/8 + "Zengin + kompakt anahtarı".
+Denetim odakları:
+- Ana liste (`/api/certificates`, `cert-latest` önbelleği, 50 testli kontrolör) DOKUNULMADI: zenginleştirme ayrı uçtan
+  gelir, kart alan adıyla birleştirir; uç düşerse kart bugünkü hâlinde kalır (extra=undefined).
+- Tek geçiş/60 sn önbellek (tüm envanter): latest_checks 1 tarama, açık alarmlar 1, uptime saatlik kova 1 GROUP BY +
+  son kontrol 1 (LATERAL), bakım pencereleri 1, sağlık kuralları CPU (eşik BİR kez, `thresholdDays`). Kapsam
+  `/certificates` kuralı (görüş takımlarının envanteri; global hepsi).
+- Sağlık: FAIL satırlar (expiry hariç) + "ok/evaluated"; kritik anahtarlar (revocation/trust/sanMatch/chain) kırmızı;
+  tıklama → sertifika modalı Sağlık sekmesi (`_tab: 'health'`). Açık alarm: en yüksek seviye + sayı + hepsi onaylı mı;
+  tıklama → Alarm Geçmişi'nde ilk olay. Erişilebilirlik: 24 sa %, son ms, 24 saatlik kova sparkline (boş saat null).
+  Değişim: pin uyuşmazlığı kırmızı (Onayla YOK — önce incelenir), 7 gün içinde onaysız değişim turuncu + Onayla
+  (mevcut confirm-renewal ucu). Plan: gecikmiş (plan tarihi geçti, sertifika plandan sonra verilmedi) / tamam /
+  bekliyor; 30 gün altı plansız → "Yenileme planla" (ortak modal, forecast plan ucu). Paylaşılan: aynı parmak izi +
+  SAN sayısı (hover listesi). Bakım: hedefe özel pencere, yoksa "tüm izlemeler" penceresi; aktif → bitişe kadar, 24 sa
+  içinde başlayacak → "Bakım hh:mm". Kontaklar: 4 alan; hepsi boşsa "Sorumlu kişi yok" hijyen uyarısı.
+- Tüm zengin blok tıklamaları `stopPropagation` — aksi halde kart detayı da açılırdı (test pinler).
+- Anahtar: süzgeç satırında Kompakt/Zengin (localStorage `dash-card-mode`, varsayılan Zengin); Kompakt = bugünkü kart.
+- Tarayıcıda: 11 kart zengin (Sağlık 14/14 temiz, %100 erişilebilirlik · ms, SAN, "Sorumlu kişi yok"); anahtar
+  Kompakt ↔ Zengin ve localStorage doğrulandı. Anahtar düğmesi ilk ekranda koyu dolguyla çıktı → yüzey + kenarlık.
+Kapılar: backend `clean verify` (bkz. çıktı) — tek beklenen kırmızı `IdentityLeakGuardTest`; yeni test 5 (servis).
+Frontend lint 0 hata / 2130 test / kapsam / build yeşil.
+→ **REGRESYON YOK**.

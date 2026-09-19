@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
-import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Inbox, ShieldCheck, CalendarDays, Plus } from 'lucide-react'
+import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Inbox, ShieldCheck, CalendarDays, Plus, LayoutList, LayoutGrid } from 'lucide-react'
 
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
@@ -23,6 +23,7 @@ import CertificateCard from './components/CertificateCard'
 import CertificatesTable from './components/CertificatesTable'
 import CertificateModal from './components/CertificateModal'
 import CaDiversityModal from './components/CaDiversityModal'
+import RenewalPlanModal from './components/RenewalPlanModal.jsx'   // Genel Bakış kartı 'Planla' (2026-09-19)
 import RenewalAdvice from './components/RenewalAdvice'
 import CertRenewalGuide from './components/CertRenewalGuide.jsx'
 import PasswordChangeModal from './components/admin/PasswordChangeModal.jsx'
@@ -275,6 +276,11 @@ export default function App() {
   const [tagFilter, setTagFilter] = useState('all')
   const [activityRefreshKey, setActivityRefreshKey] = useState(0)
   const [silentAlertDomains, setSilentAlertDomains] = useState(new Set())
+  // Genel Bakış kartı zengin görünümü (2026-09-19): /card-extras haritası + Kompakt/Zengin anahtarı (localStorage)
+  const [cardExtras, setCardExtras] = useState({})
+  const [cardMode, setCardMode] = useState(() => { try { return localStorage.getItem('dash-card-mode') === 'compact' ? 'compact' : 'rich' } catch { return 'rich' } })
+  const [planRow, setPlanRow] = useState(null)
+  const [confirmingDomain, setConfirmingDomain] = useState(null)
   const [mailFailureDomains, setMailFailureDomains] = useState(new Set())
   const [smtpPreFilterDomain, setSmtpPreFilterDomain] = useState(null)
   const [openSmtpModalOnLoad, setOpenSmtpModalOnLoad] = useState(false)
@@ -416,9 +422,9 @@ export default function App() {
     // network-status + weak-algorithms BURADAN çıkarıldı: network → 60 sn tick tek kaynak;
     // weak-algorithms → login'de bir kez (aşağıda) çünkü zayıf-algoritma verisi ancak cert
     // sweep'iyle (~saatlik) değişir → 5 dk'da 100 kullanıcı × tekrar gereksizdi.
-    const [certsRes, statsRes, silentRes, teamStatsRes, mailFailRes] = await Promise.allSettled([
+    const [certsRes, statsRes, silentRes, teamStatsRes, mailFailRes, extrasRes] = await Promise.allSettled([
       api.getCertificates(), api.getStats(), api.getSilentAlertDomains(), api.getTeamStats(),
-      api.getMailFailureDomains(),
+      api.getMailFailureDomains(), api.getCardExtras(),
     ])
     if (!loadAliveRef.current) return // unmount/logout'ta state'i kirletme
     const v = (s) => s.status === 'fulfilled' ? s.value : null
@@ -429,6 +435,8 @@ export default function App() {
     if (stats?.success) setStats(stats.data)
     if (silent?.success) setSilentAlertDomains(new Set(silent.data))
     if (mailFail?.success) setMailFailureDomains(new Set(mailFail.data ?? []))
+    const extras = v(extrasRes)
+    if (extras?.success) setCardExtras(extras.data || {})
     if (teamStats?.success) setTeamStats(teamStats.data)
     // networkStatus → 60 sn tick (dedup); weakAlgStats → login'de bir kez ayrı effect (aşağıda).
   }, [])
@@ -628,6 +636,27 @@ export default function App() {
    *  değiştirirdi (state setter'ını okuma amaçlı çağırmak da gereksiz render üretir). */
   const certsRef = useRef(certs)
   useEffect(() => { certsRef.current = certs }, [certs])
+  /** Zengin kart eylemleri (2026-09-19): sağlık sekmesiyle aç · planlı yenilemeyi onayla · yenileme planla. */
+  const openCertHealth = useCallback((d) => {
+    const c = certsRef.current.find(x => x.domain === d)
+    setModalCert(c ? { ...c, _tab: 'health' } : { domain: d, _tab: 'health' })
+  }, [])
+  const confirmCardRenewal = useCallback(async (d) => {
+    setConfirmingDomain(d)
+    try {
+      const r = await api.confirmCertificateRenewal(d)
+      if (r?.success) { toast.success(t('ccx.confirmed', d)); const x = await api.getCardExtras(); if (x?.success) setCardExtras(x.data || {}) }
+      else toast.error(r?.error || t('mon.loadError'))
+    } catch (e) { toast.error(String(e?.message || e)) } finally { setConfirmingDomain(null) }
+  }, [toast, t])
+  const planCardRenewal = useCallback((cert, renewal) => {
+    setPlanRow({ domain: cert.domain, renewal_planned_at: renewal?.planned_at || '', renewal_planned_note: renewal?.note || '',
+      expiry_key: cert.not_after ? String(cert.not_after).slice(0, 10) : null })
+  }, [])
+  const toggleCardMode = useCallback(() => {
+    setCardMode((m) => { const next = m === 'rich' ? 'compact' : 'rich'; try { localStorage.setItem('dash-card-mode', next) } catch { /* yoksay */ } return next })
+  }, [])
+
   const openCertModal = useCallback((d) => {
     setModalCert(certsRef.current.find(c => c.domain === d) ?? null)
     // Başlangıç listesi: ilk kart açıldı (sunucuya yalnız henüz işaretli değilse yazılır — TourProvider aynı kuralı sekmeler için uygular)
@@ -1174,6 +1203,10 @@ export default function App() {
                       />
                     </span>
                   )}
+                  <button type="button" className={`btn btn-secondary btn-sm-p dash-card-mode${cardMode === 'rich' ? ' is-rich' : ''}`} onClick={toggleCardMode}
+                    title={t('ccx.modeTip')} aria-pressed={cardMode === 'rich'}>
+                    {cardMode === 'rich' ? <LayoutList size={13} /> : <LayoutGrid size={13} />} {cardMode === 'rich' ? t('ccx.modeRich') : t('ccx.modeCompact')}
+                  </button>
                   {dashFiltersActive && (
                     <button type="button" className="btn btn-secondary btn-sm-p" onClick={clearDashFilters}>
                       {t('app.clearFilters')}
@@ -1217,6 +1250,8 @@ export default function App() {
                     <div className="cards-container">
                       {dashPager.pageItems.map((cert, ci) => (
                         <CertificateCard key={cert.domain} cert={cert} onClick={openCertModal} tourId={ci === 0 ? 'first-card' : undefined}
+                          extra={cardMode === 'rich' ? cardExtras[cert.domain] : undefined}
+                          onOpenHealth={openCertHealth} onConfirmRenewal={confirmCardRenewal} onPlanRenewal={planCardRenewal} confirming={confirmingDomain === cert.domain}
                           hasSilentAlert={silentAlertDomains.has(cert.domain)}
                           hasMailFailure={mailFailureDomains.has(cert.domain)}
                           onMailFailureClick={() => {
@@ -1577,6 +1612,9 @@ export default function App() {
         refreshSignal={certModalRefresh}
         {...(modalCert && !modalCert._preview ? cardActions(modalCert) : {})} />
       {caModal && <CaDiversityModal certs={certs} onClose={() => setCaModal(false)} />}
+      {planRow && <RenewalPlanModal row={planRow} onClose={() => setPlanRow(null)}
+        onSaved={async () => { setPlanRow(null); const x = await api.getCardExtras(); if (x?.success) setCardExtras(x.data || {}) }}
+        onCleared={async () => { setPlanRow(null); const x = await api.getCardExtras(); if (x?.success) setCardExtras(x.data || {}) }} />}
 
       {/* Kart → envanter formu (Düzenle / Kopyala). Kendi Suspense sınırı: yukarıdaki sınır sekme
           içeriğiyle birlikte kapanıyor ve eager import MDEditor'ü dashboard'un ilk chunk'ına sokardı. */}

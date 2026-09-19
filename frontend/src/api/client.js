@@ -349,6 +349,8 @@ export const api = {
   getSilentAlertDomains: () => request('/alerts/silent-domains'),
 
   getMailFailureDomains: () => request('/notifications/failure-domains'),
+  // Genel Bakış kartı zenginleştirmeleri (2026-09-19): alan adı → {health, alerts, uptime, change, renewal, shared, maintenance, contacts}
+  getCardExtras: () => request('/certificates/card-extras'),
 
   getNetworkStatus: () => request('/system/network-status'),
 
