@@ -12,6 +12,7 @@ import TeamBadge from '../ui/TeamBadge.jsx'
 import TeamMembersModal from '../ui/TeamMembersModal.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { resolveTeamManager } from '../../utils/teamManager.js'
+import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 
 // Haftalık e-postalar opt-in: YENİ takım ikisi de kapalı doğar (backend de createTeam'de false yazar).
 const emptyTeam = { name: '', email: '', description: '', active: true, leader_id: '', manager_id: '',
@@ -81,7 +82,8 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   const [editingUser, setEditingUser]   = useState(null)
 
   // İstemci-taraflı filtre + sayfalama (getTeams tüm listeyi döndürür — dropdown kaynağı bozulmasın)
-  const [q, setQ]       = useState('')
+  const [q, setQ]       = useState(() => readUrlParam('g_q', ''))   // URL'de (g_q)
+  useUrlQuerySync({ g_q: q })
   const [page, setPage] = useState(0)
   const [size, setSize] = useState(20)
 

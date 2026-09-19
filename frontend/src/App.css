@@ -6460,6 +6460,9 @@ button.ccx-mini:hover { color: var(--primary); }
   gap: 8px;
   align-items: center;
 }
+/* SearchableSelect (.ss-wrap) %100 genişlik doğar; süzgeç çubuğunda her süzgeç ayrı satıra düşüyordu
+   (Eskalasyon/Kullanıcılar/Denetim: üst üste üç tam satır, arama kutusu 190 px). Çubukta sabit ölçü. */
+.audit-filters > .ss-wrap { width: auto; flex: 0 1 240px; min-width: 180px; }
 .audit-filter-input {
   padding: 6px 10px;
   border: 1px solid var(--border, #e2e8f0);

@@ -6,6 +6,7 @@ import { useToast } from '../ui/Toast.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import MultiTeamSelect from '../ui/MultiTeamSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
+import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import { UserPlus, UserCog, BellOff } from 'lucide-react'
 import AdminAutoResetModal from './AdminAutoResetModal.jsx'
 import UserEditModal, { ModalHeaderAvatar } from './UserEditModal.jsx'
@@ -63,10 +64,12 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   const [msg, setMsg] = useState(null)
 
   // Filtre + sunucu-taraflı sayfalama
-  const [q, setQ] = useState('')
-  const [fRole, setFRole] = useState('')
-  const [fOrgRole, setFOrgRole] = useState('')
-  const [fTeam, setFTeam] = useState('')
+  // Süzgeçler URL'de (g_*): derin bağlantı + yenileme korur (2026-09-20).
+  const [q, setQ] = useState(() => readUrlParam('g_q', ''))
+  const [fRole, setFRole] = useState(() => readUrlParam('g_role', ''))
+  const [fOrgRole, setFOrgRole] = useState(() => readUrlParam('g_org', ''))
+  const [fTeam, setFTeam] = useState(() => readUrlParam('g_team', ''))
+  useUrlQuerySync({ g_q: q, g_role: fRole, g_org: fOrgRole, g_team: fTeam })
   const [page, setPage] = useState(0)
   const [size, setSize] = useState(20)
   const [total, setTotal] = useState(0)

@@ -77,7 +77,7 @@ export default function AlertThresholds() {
               </div>
               <div className="modal-actions">
                 <button className="btn btn-secondary" onClick={() => setEditing(null)}>{t('thr.cancel')}</button>
-                <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? t('thr.saving') : t('thr.save')}</button>
+                <button className="btn btn-primary" onClick={save} disabled={saving} aria-busy={saving || undefined}>{t('thr.save')}</button>
               </div>
             </div>
           ) : (

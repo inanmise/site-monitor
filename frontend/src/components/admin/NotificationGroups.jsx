@@ -12,6 +12,7 @@ import TagInput from '../ui/TagInput.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import NotificationGroupHistory from './NotificationGroupHistory.jsx'
+import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 
 /** Grup başına adres tavanı — backend {@code NotificationGroupService.MAX_EMAILS_PER_GROUP} ile AYNI. */
 const MAX_EMAILS = 15
@@ -47,7 +48,8 @@ export default function NotificationGroups({ teams = [], systemRole }) {
   const [editing, setEditing] = useState(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
-  const [fTeam, setFTeam] = useState('')
+  const [fTeam, setFTeam] = useState(() => readUrlParam('g_team', ''))   // URL'de (g_team)
+  useUrlQuerySync({ g_team: fTeam })
   // { group, usage } — silme 409 dondugunde ya da kullanici kullanimi merak ettiginde
   const [usageModal, setUsageModal] = useState(null)
   const [moveTarget, setMoveTarget] = useState('')

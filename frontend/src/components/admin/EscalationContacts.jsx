@@ -7,6 +7,7 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
+import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 
 const ROLES  = ['PO', 'TECH', 'MANAGER', 'CLEVEL']
 const LEVELS = ['WARNING', 'HIGH', 'CRITICAL']
@@ -29,10 +30,12 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
   const [msg, setMsg]       = useState(null)
 
   // İstemci-taraflı filtre + sayfalama (getContacts tüm listeyi döndürür)
-  const [q, setQ]         = useState('')
-  const [fRole, setFRole] = useState('')
-  const [fLevel, setFLevel] = useState('')
-  const [fTeam, setFTeam] = useState('')
+  // Süzgeçler URL'de (g_*): derin bağlantı + yenileme korur (2026-09-20).
+  const [q, setQ]         = useState(() => readUrlParam('g_q', ''))
+  const [fRole, setFRole] = useState(() => readUrlParam('g_role', ''))
+  const [fLevel, setFLevel] = useState(() => readUrlParam('g_level', ''))
+  const [fTeam, setFTeam] = useState(() => readUrlParam('g_team', ''))
+  useUrlQuerySync({ g_q: q, g_role: fRole, g_level: fLevel, g_team: fTeam })
   const [page, setPage]   = useState(0)
   const [size, setSize]   = useState(20)
 
