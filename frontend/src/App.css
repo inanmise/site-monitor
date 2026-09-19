@@ -5258,8 +5258,14 @@ button.ccx-mini:hover { color: var(--primary); }
 .cc-live-muted { font-weight: 500; opacity: .85; }
 .cc-live-alert.is-open { font-weight: 700; }
 [data-theme="dark"] .cc-live--bad { border-color: #7f1d1d; background: #450a0a; color: #fca5a5; }
-.dash-card-mode { display: inline-flex; align-items: center; gap: 5px; background: var(--bg-surface); border: 1px solid var(--border); color: var(--text); }
-.dash-card-mode.is-rich { border-color: var(--primary); color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, var(--bg-surface)); }
+/* Kompakt / Zengin segmenti — "Genel Bakış" başlığının yanında (2026-09-19) */
+.dashboard-title-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.dashboard-title-row h2 { margin: 0; }   /* .dashboard-header > h2 kuralı artık doğrudan çocuk değil */
+.dash-card-mode-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--bg-surface); }
+.dash-card-mode-btn { display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: .8em; font-weight: 600; padding: 5px 10px; border: 0; background: transparent; color: var(--text-muted); cursor: pointer; }
+.dash-card-mode-btn + .dash-card-mode-btn { border-left: 1px solid var(--border); }
+.dash-card-mode-btn:hover { color: var(--text); }
+.dash-card-mode-btn.is-active { background: color-mix(in srgb, var(--primary) 12%, var(--bg-surface)); color: var(--primary); }
 [data-theme="dark"] .ccx-chip--ok { background: #052e16; color: #86efac; }
 [data-theme="dark"] .ccx-chip--warn, [data-theme="dark"] .ccx-mini--warn, [data-theme="dark"] .ccx-chip--warning, [data-theme="dark"] .ccx-chip--medium { background: #422006; color: #fcd34d; }
 [data-theme="dark"] .ccx-chip--bad, [data-theme="dark"] .ccx-chip--critical, [data-theme="dark"] .ccx-mini.is-bad { background: #450a0a; color: #fca5a5; }

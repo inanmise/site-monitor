@@ -1097,3 +1097,13 @@ Denetim odakları:
 Kapılar: backend `clean verify` (bkz. çıktı) — tek beklenen kırmızı `IdentityLeakGuardTest`; frontend lint 0 hata / 2131
 test / kapsam / build yeşil.
 → **REGRESYON YOK**.
+
+## Ek — elli ikinci tur (2026-09-19, sürüm sonrası — Kompakt/Zengin anahtarı "Genel Bakış" başlığının yanına, `v20.71.1..HEAD`)
+
+Kapsam: yalnız frontend (App.jsx + App.css). Süzgeç satırındaki tek düğme kaldırıldı; başlığın yanında iki durumlu segment
+(Kompakt | Zengin, aktif olan vurgulu, `aria-pressed`). Aynı state/localStorage (`dash-card-mode`).
+Denetim odakları: başlık `.dashboard-header > h2` kuralının dışına çıkınca alt boşluk geri geldi (dikey merkez 349 vs
+359 px) → `.dashboard-title-row h2 { margin: 0 }`; ölçüm 349/349. Segment tıklamaları kart sayısını (11 ↔ 0 zengin blok)
+ve tercihi değiştiriyor; süzgeç satırında eski düğme yok.
+Kapılar: frontend lint 0 hata / 2131 test / kapsam / build yeşil; backend DEĞİŞMEDİ.
+→ **REGRESYON YOK**.

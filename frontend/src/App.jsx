@@ -1203,10 +1203,6 @@ export default function App() {
                       />
                     </span>
                   )}
-                  <button type="button" className={`btn btn-secondary btn-sm-p dash-card-mode${cardMode === 'rich' ? ' is-rich' : ''}`} onClick={toggleCardMode}
-                    title={t('ccx.modeTip')} aria-pressed={cardMode === 'rich'}>
-                    {cardMode === 'rich' ? <LayoutList size={13} /> : <LayoutGrid size={13} />} {cardMode === 'rich' ? t('ccx.modeRich') : t('ccx.modeCompact')}
-                  </button>
                   {dashFiltersActive && (
                     <button type="button" className="btn btn-secondary btn-sm-p" onClick={clearDashFilters}>
                       {t('app.clearFilters')}
@@ -1218,7 +1214,15 @@ export default function App() {
                 <OnboardingChecklist />
                 <TodayPanel onOpenDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} />
                 <div className="dashboard-header">
-                  <h2>{t('app.dashTitle')}</h2>
+                  <div className="dashboard-title-row">
+                    <h2>{t('app.dashTitle')}</h2>
+                    <div className="dash-card-mode-seg" role="group" aria-label={t('ccx.modeTip')} title={t('ccx.modeTip')}>
+                      <button type="button" className={`dash-card-mode-btn${cardMode === 'compact' ? ' is-active' : ''}`} aria-pressed={cardMode === 'compact'}
+                        onClick={() => cardMode !== 'compact' && toggleCardMode()}><LayoutGrid size={13} /> {t('ccx.modeCompact')}</button>
+                      <button type="button" className={`dash-card-mode-btn${cardMode === 'rich' ? ' is-active' : ''}`} aria-pressed={cardMode === 'rich'}
+                        onClick={() => cardMode !== 'rich' && toggleCardMode()}><LayoutList size={13} /> {t('ccx.modeRich')}</button>
+                    </div>
+                  </div>
                   {statsFilter && (
                     <div className="stats-filter-bar">
                       <span>
