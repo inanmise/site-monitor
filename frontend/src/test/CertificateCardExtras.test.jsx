@@ -48,6 +48,26 @@ describe('CertificateCard — zengin görünüm', () => {
     window.removeEventListener('sm:navigate', nav)
   })
 
+  it('"şu an" şeridi: ayakta · ms + son alarm (çözüldü) gri; erişilemiyor + açık alarm kırmızı; tıklama Durum İzleme (?q=) ve kartı açmaz; kompaktta da çizilir', () => {
+    const onClick = vi.fn(), nav = vi.fn(); window.addEventListener('sm:navigate', nav)
+    const { unmount } = render(<CertificateCard cert={CERT} onClick={onClick}
+      live={{ uptime: { last_status: 'up', last_ms: 210, last_at: new Date(Date.now() - 5 * 60000).toISOString().slice(0, 19) }, alert: { id: 3, level: 'HIGH', type: 'HTTP_DOWN', resolved: true, at: '2026-09-10T10:00:00', resolved_at: new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 19) } }} />)
+    const strip = document.querySelector('.cc-live')
+    expect(strip.className).toContain('cc-live--ok')
+    expect(strip.textContent).toMatch(/Ayakta|Up/); expect(strip.textContent).toContain('210ms'); expect(strip.textContent).toMatch(/alarm 3g ✓|alert 3d ✓/)
+    expect(strip.title).toMatch(/5dk önce|5m ago/)
+    fireEvent.click(strip)
+    expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'uptime', params: { q: 'a.example.com' } })
+    expect(onClick).not.toHaveBeenCalled()
+    expect(document.querySelector('.ccx')).toBeNull()                       // extra yok = kompakt, şerit yine var
+    unmount()
+    render(<CertificateCard cert={CERT} onClick={onClick} live={{ uptime: { last_status: 'down', last_ms: null, last_at: '2026-09-19T11:00:00' }, alert: { id: 4, level: 'CRITICAL', type: 'ACCESSIBILITY', resolved: false, at: '2026-09-19T11:05:00' } }} />)
+    const bad = document.querySelector('.cc-live')
+    expect(bad.className).toContain('cc-live--bad')
+    expect(bad.textContent).toMatch(/ERİŞİLEMİYOR|DOWN/); expect(bad.textContent).toMatch(/alarm AÇIK · CRITICAL|alert OPEN · CRITICAL/)
+    window.removeEventListener('sm:navigate', nav)
+  })
+
   it('temiz sağlık + plan yok ve 30 gün altı → "Yenileme planla" kısayolu; kontak yoksa uyarı; pin uyuşmazlığında Onayla yok', () => {
     const onPlan = vi.fn()
     const extra = { health: { ok: 14, evaluated: 14, failed: [] }, change: { mismatch: true }, contacts: { missing: true }, shared: { count: 0, san_count: 4 } }

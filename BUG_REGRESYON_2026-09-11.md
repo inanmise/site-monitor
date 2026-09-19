@@ -1080,3 +1080,20 @@ Denetim odakları:
 Kapılar: backend `clean verify` (bkz. çıktı) — tek beklenen kırmızı `IdentityLeakGuardTest`; yeni test 5 (servis).
 Frontend lint 0 hata / 2130 test / kapsam / build yeşil.
 → **REGRESYON YOK**.
+
+## Ek — elli birinci tur (2026-09-19, sürüm sonrası — Genel Bakış kartı "şu an" şeridi: son erişim + son alarm, `v20.71.1..HEAD`)
+
+Kapsam: backend (AlertEventRepository.findLatestPerDomain — alan başına EN SON alarm, açık/kapalı; card-extras `last_alert`
+bloğu) + frontend (CertificateLiveStrip yeni; CertificateCard `live` prop — footer'da eylem düğmelerinin karşısında; App
+her iki görünümde geçirir; i18n `live.*`; CSS `.cc-live*`).
+Denetim odakları:
+- Şerit kompakt görünümde de çizilir (tek satır); zengin bloktan bağımsız. Yalnız sorunda renkli (erişilemiyor / açık
+  alarm → kırmızı), aksi hâlde gri — 100 kartta gürültü yapmasın.
+- Erişilebilirlik saatlik olduğu için (43. tur) "son kontrol X dk önce" tooltip'te; şerit metni ilk denemede eylem
+  düğmelerini alt satıra itti (footer flex-wrap) → `:has(.cc-live)` ile çip kabı esner + nowrap, metin kısaltıldı
+  ("Ayakta 16ms · alarm 17g ✓"), font .68em; ölçüm: 155/155 px, eylemlerle aynı satır (y=692/693).
+- Tıklama → Durum İzleme `?q=<alan>` (UptimePage arama paramı); kart onClick'i yutulur.
+- Test: ayakta+çözülmüş gri / erişilemiyor+açık kırmızı, tooltip, navigasyon, kompaktta da var.
+Kapılar: backend `clean verify` (bkz. çıktı) — tek beklenen kırmızı `IdentityLeakGuardTest`; frontend lint 0 hata / 2131
+test / kapsam / build yeşil.
+→ **REGRESYON YOK**.

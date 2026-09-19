@@ -39,6 +39,10 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     @Query("SELECT e FROM AlertEvent e WHERE e.resolved = false ORDER BY e.alertLevel DESC, e.createdAt DESC")
     List<AlertEvent> findAllOpenOrderBySeverity();
 
+    /** Genel Bakış kartı "şu an" şeridi (2026-09-19): alan başına EN SON alarm olayı (açık ya da çözülmüş) — tek sorgu. */
+    @Query("SELECT a FROM AlertEvent a WHERE a.id IN (SELECT MAX(b.id) FROM AlertEvent b WHERE b.domain IS NOT NULL GROUP BY b.domain)")
+    List<AlertEvent> findLatestPerDomain();
+
     List<AlertEvent> findByDomainOrderByCreatedAtDesc(String domain);
 
     List<AlertEvent> findByDomainAndResolvedFalse(String domain);

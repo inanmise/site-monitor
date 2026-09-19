@@ -82,6 +82,7 @@ public class CertificateCardExtrasService {
         catch (Exception e) { log.debug("card-extras: latest_checks okunamadı: {}", e.toString()); }
 
         Map<String, Map<String, Object>> alerts = safe(this::openAlertsByDomain, "alarm");
+        Map<String, Map<String, Object>> lastAlerts = safe(this::lastAlertByDomain, "son alarm");
         Map<String, Map<String, Object>> uptime = safe(() -> uptimeByDomain(now), "uptime");
         Map<String, Map<String, Object>> maint = safe(() -> maintenanceService.windowInfoByTarget(now), "bakım");
         Map<String, List<String>> byFingerprint = new HashMap<>();
@@ -100,6 +101,7 @@ public class CertificateCardExtrasService {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("health", health(lc, inv, th));
             m.put("alerts", alerts.get(d));
+            m.put("last_alert", lastAlerts.get(d));
             m.put("uptime", uptime.get(d));
             m.put("change", change(lc, now));
             m.put("renewal", renewal(inv, lc, today));
@@ -150,6 +152,20 @@ public class CertificateCardExtrasService {
         return out;
     }
     private static int rank(String level) { int i = LEVEL_ORDER.indexOf(level); return i < 0 ? LEVEL_ORDER.size() : i; }
+
+    /** "Şu an" şeridi: alanın en son alarm olayı — açıksa seviyesi, kapalıysa ne zaman çözüldüğü. */
+    private Map<String, Map<String, Object>> lastAlertByDomain() {
+        Map<String, Map<String, Object>> out = new HashMap<>();
+        for (AlertEvent e : alertEventRepo.findLatestPerDomain()) {
+            if (e.getDomain() == null) continue;
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", e.getId()); m.put("level", e.getAlertLevel()); m.put("type", e.getAlertType());
+            m.put("resolved", Boolean.TRUE.equals(e.getResolved())); m.put("at", e.getCreatedAt()); m.put("resolved_at", e.getResolvedAt());
+            m.put("acknowledged", Boolean.TRUE.equals(e.getAcknowledged()));
+            out.put(e.getDomain(), m);
+        }
+        return out;
+    }
 
     // ── 3) Erişilebilirlik ────────────────────────────────────────────────────────────────
     private Map<String, Map<String, Object>> uptimeByDomain(Instant now) {

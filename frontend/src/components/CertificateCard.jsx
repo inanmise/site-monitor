@@ -6,6 +6,7 @@ import { useT } from '../i18n/index.jsx'
 import { CheckNowButton, CheckRunningStrip } from './ui/CheckRunning.jsx'
 import TeamBadge from './ui/TeamBadge.jsx'
 import CertificateCardExtras from './CertificateCardExtras.jsx'
+import CertificateLiveStrip from './CertificateLiveStrip.jsx'
 import { isInsecure, securityTitle } from '../utils/certSecurity.js'
 import { ProgressBar } from './ui/Progress.jsx'
 
@@ -20,7 +21,9 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
                                           onCheckNow, onEdit, onDuplicate, onDelete,
                                           checking = false, deleting = false, tourId,
                                           // Zengin görünüm (2026-09-19): /card-extras bloğu + eylemler; extra yoksa kart bugünkü hâlinde
-                                          extra, onOpenHealth, onConfirmRenewal, onPlanRenewal, confirming = false }) {
+                                          extra, onOpenHealth, onConfirmRenewal, onPlanRenewal, confirming = false,
+                                          // "Şu an" şeridi (2026-09-19): her iki görünümde footer'ın sol tarafı; live = {uptime, alert}
+                                          live }) {
   const t = useT()
   const days = cert.days_remaining
   const al = cert.alert_level
@@ -64,7 +67,8 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
   // Aksiyon butonları handler VARLIĞINA bağlı: Bitiş Tahmini ekranı yalnız cert+onClick geçiyor,
   // orada footer bugünkü koşullu davranışına döner (ek bayrak/prop gerekmez).
   const hasActions = !!(onCheckNow || onEdit || onDuplicate || onDelete)
-  const hasFooter  = hasSilentAlert || hasMailFailure || hasActions
+  const hasLive    = !!(live && (live.uptime || live.alert))
+  const hasFooter  = hasSilentAlert || hasMailFailure || hasActions || hasLive
 
   // Kontrol yolu rozeti: hata kartlarında her zaman, sağlıklı kartlarda
   // sadece proxy ile kontrol edilenlerde (direct varsayılan — gürültü yapma)
@@ -210,6 +214,7 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
           {/* Çipler kendi sarmalayıcısında: .cc-footer'a doğrudan space-between verilseydi,
               aksiyonu olmayan ama İKİ çipi olan kartta çipler iki uca savrulurdu. */}
           <div className="cc-footer-chips">
+            {hasLive && <CertificateLiveStrip domain={cert.domain} uptime={live.uptime} alert={live.alert} />}
             {hasSilentAlert && (
               <span className="cc-chip cc-chip-warn" title={t('card.silentAlert')}>
                 <BellOff size={12} />

@@ -69,6 +69,7 @@ class CertificateCardExtrasServiceTest {
         when(healthService.thresholdDays()).thenReturn(new int[]{30, 7});
         when(healthService.evaluate(any(), any(), eq(false), anyInt(), anyInt())).thenReturn(new CertificateHealthService.HealthResult(List.of(), 0, 0));
         when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of());
+        when(alertEventRepo.findLatestPerDomain()).thenReturn(List.of());
         when(uptimeCheckRepo.hourlyHttpOkSince(anyString())).thenReturn(List.of());
         when(uptimeCheckRepo.findLatestPerDomainPort()).thenReturn(List.of());
         when(maintenanceService.windowInfoByTarget(any())).thenReturn(Map.of());
@@ -86,8 +87,11 @@ class CertificateCardExtrasServiceTest {
         AlertEvent w = new AlertEvent(); w.setId(5L); w.setDomain("a.example.com"); w.setAlertLevel("WARNING"); w.setAlertType("EXPIRY"); w.setAcknowledged(true);
         AlertEvent c = new AlertEvent(); c.setId(6L); c.setDomain("a.example.com"); c.setAlertLevel("CRITICAL"); c.setAlertType("ACCESSIBILITY"); c.setAcknowledged(false);
         when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of(w, c));
+        AlertEvent last = new AlertEvent(); last.setId(9L); last.setDomain("a.example.com"); last.setAlertLevel("HIGH"); last.setAlertType("HTTP_DOWN"); last.setResolved(true); last.setCreatedAt(at(300)); last.setResolvedAt(at(200));
+        when(alertEventRepo.findLatestPerDomain()).thenReturn(List.of(last));
 
         Map<String, Object> x = svc.compute(NOW).get("a.example.com");
+        assertThat((Map<String, Object>) x.get("last_alert")).containsEntry("id", 9L).containsEntry("resolved", true).containsEntry("type", "HTTP_DOWN").containsEntry("resolved_at", at(200));
         assertThat((Map<String, Object>) x.get("health")).containsEntry("ok", 1).containsEntry("evaluated", 3).containsEntry("failed", List.of("chain"));
         Map<String, Object> al = (Map<String, Object>) x.get("alerts");
         assertThat(al).containsEntry("count", 2).containsEntry("level", "CRITICAL").containsEntry("all_acked", false).containsEntry("first_id", 6L);

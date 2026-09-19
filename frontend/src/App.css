@@ -5243,6 +5243,21 @@ button.ccx-mini:hover { color: var(--primary); }
 .ccx-act { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: .74em; font-weight: 600; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--primary); background: transparent; color: var(--primary); cursor: pointer; white-space: nowrap; }
 .ccx-act:hover { background: color-mix(in srgb, var(--primary) 10%, transparent); }
 .ccx-act:disabled { opacity: .55; cursor: not-allowed; }
+/* "Şu an" şeridi — footer sol: son erişim + son alarm; yalnız sorunda renkli */
+.cc-live { display: inline-flex; align-items: center; gap: 3px; font: inherit; font-size: .68em; font-weight: 600; padding: 2px 7px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-surface); color: var(--text-muted); cursor: pointer; white-space: nowrap; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+/* Şerit eylem düğmeleriyle AYNI satırda kalsın: çip kabı esner/daralır, şerit taşarsa üç nokta */
+.cc-footer-chips:has(.cc-live) { flex: 1 1 0; min-width: 0; flex-wrap: nowrap; }
+.cc-footer-chips .cc-live { flex: 0 1 auto; }
+.cc-live-alert { white-space: nowrap; }
+.cc-live:hover { border-color: var(--primary); color: var(--primary); }
+.cc-live--bad { border-color: #fca5a5; background: #fef2f2; color: #991b1b; }
+.cc-live-up { display: inline-flex; align-items: center; gap: 4px; }
+.cc-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #94a3b8; flex-shrink: 0; }
+.cc-live-dot.is-up { background: var(--success); }
+.cc-live-dot.is-down { background: var(--danger); box-shadow: 0 0 0 3px rgba(220, 38, 38, .18); }
+.cc-live-muted { font-weight: 500; opacity: .85; }
+.cc-live-alert.is-open { font-weight: 700; }
+[data-theme="dark"] .cc-live--bad { border-color: #7f1d1d; background: #450a0a; color: #fca5a5; }
 .dash-card-mode { display: inline-flex; align-items: center; gap: 5px; background: var(--bg-surface); border: 1px solid var(--border); color: var(--text); }
 .dash-card-mode.is-rich { border-color: var(--primary); color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, var(--bg-surface)); }
 [data-theme="dark"] .ccx-chip--ok { background: #052e16; color: #86efac; }
