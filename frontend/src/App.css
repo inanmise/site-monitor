@@ -2673,6 +2673,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
    Ölçüm jsdom'da GÖRÜNMEZ; kapı e2e/contact-modal.spec.js'te. */
 .form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: end; }
 .form-grid label { display: flex; flex-direction: column; gap: 5px; font-size: .88em; font-weight: 600; min-width: 0; }
+/* Üst hizalı varyant (2026-09-19): altında ipucu olan alan komşusunu kaydırmasın (envanter formu) */
+.form-grid--top { align-items: start; }
 /* Form alanı = `.input` ile AYNI görünüm — tek standart, iki tanım değil.
    İki eksik vardı ve ikisi de "stilsiz" görüntünün sebebiydi:
    1) `textarea` bu seçicinin DIŞINDAYDI → tarayıcı varsayılanı: monospace yazı tipi, dolgu yok,

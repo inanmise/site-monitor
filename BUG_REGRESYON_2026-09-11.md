@@ -866,3 +866,11 @@ Bilinen sınırlar (bilinçli): envanter-türevi (izlemesiz) port/DNS/erişilebi
 envanter kaydına seviye alanı eklenmedi; alan adı EPP durumu (pendingDelete vb.) hesaplanan seviyesini korur.
 → **REGRESYON YOK**.
 
+## Ek — kırk birinci tur (2026-09-19, sürüm sonrası — envanter formunda Kritiklik Seviyesi / Bağlantı zaman aşımı hizası, `v20.71.1..HEAD`)
+
+Kapsam: yalnız frontend (InventoryFormModal + App.css). `.form-grid` ızgarası ALT hizalı (`align-items: end`); altında
+ipucu olan "Bağlantı zaman aşımı" komşusu "Kritiklik Seviyesi"ni aşağı kaydırıyordu (tarayıcıda y 436 vs 389). Envanter
+formu `form-grid--top` (üst hizalı) varyantını kullanır; diğer formlar dokunulmadı. Doğrulama: iki etiket y=436.7.
+Kapılar: frontend lint / 2112 test / kapsam / build yeşil; backend DEĞİŞMEDİ.
+→ **REGRESYON YOK**.
+
