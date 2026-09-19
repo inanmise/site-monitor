@@ -874,3 +874,23 @@ formu `form-grid--top` (üst hizalı) varyantını kullanır; diğer formlar dok
 Kapılar: frontend lint / 2112 test / kapsam / build yeşil; backend DEĞİŞMEDİ.
 → **REGRESYON YOK**.
 
+
+## Ek — kırk ikinci tur (2026-09-19, sürüm sonrası — başlık eylem düğmeleri tek stil: Yenile / Şimdi Kontrol Et / bağlantı kopyala / Nasıl doldurulur? / Yeni Monitör / Domain Ekle, `v20.71.1..HEAD`)
+
+Kapsam: yalnız frontend (App.css + DnsMonitorPage, CopyLinkButton, InventoryManager, App.jsx). Dokuz izleme sayfası,
+Envanter ve Genel Bakış başlıklarındaki eylem düğmeleri üç ayrı görünümdeydi (`.btn` gri, `.btn-primary` düz mavi,
+`.btn-success` yeşil, `mguide-btn` ikonlu turuncu; DNS sayfası satır içi stil ile hizalanıyordu). Tek kural, yalnız
+`.upt-header-right` / `.inv-header-actions` / `.sort-bar .sort-bar-add-domain` kapsamında: 34px / 9px köşe / 13px 600
+ağırlık; ikincil = yüzey arka planı + kenarlık + marka hover; birincil (`btn-primary`, `btn-success`, `sort-bar-add-domain`)
+= marka gradyanı + beyaz metin. Küresel `.btn` DOKUNULMADI (modal/tablo düğmeleri eski görünümde).
+Denetim odakları:
+- Kopyala düğmesi yalnız-ikon olduğunda 34×34 kare: `:has()` seçicisi jsdom/tarayıcıda güvenilir eşleşmedi →
+  `data-icon-only` özniteliği (CopyLinkButton) + öznitelik seçicisi.
+- DNS sayfası satır içi `style` sarmalayıcısı `upt-header-right` sınıfına çekildi (12 sayfa aynı sarmalayıcı).
+- Envanter "Domain Ekle" (`btn-success`) ve Genel Bakış "Domain Ekle" (`sort-bar-add-domain`) birincil stile + `Plus` ikon;
+  Genel Bakış düğmesi `margin-left:auto` ile süzgeç satırının sağına.
+- Koyu tema: gölge geçersiz kılmaları; hayalet sınıf/token yok (cssClasses / cssTokens kapıları yeşil).
+Tarayıcı doğrulaması: HTTP, DNS, Sentetik, Envanter (Dışa Aktar / İçe Aktar ikincil + mavi Domain Ekle), Genel Bakış.
+Kapılar: frontend lint 0 hata / 2112 test (ilk koşumda lazy-tabs-smoke UptimePage 15 sn zaman aşımı, seri tam tekrar
+246/246 yeşil) / kapsam tabanı / build yeşil; backend DEĞİŞMEDİ.
+→ **REGRESYON YOK**.

@@ -7744,6 +7744,48 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .upt-last-check { font-size: 12px; color: var(--text-muted); }
 .upt-refresh-btn { display: flex; align-items: center; gap: 5px; }
 
+/* ── Sayfa başlığı eylem düğmeleri — TEK STİL (2026-09-19, kullanıcı isteği) ──
+   Eskiden aynı satırda üç dil vardı: "Yenile/Şimdi Kontrol Et" renksiz .btn, "Nasıl doldurulur?" koyu gri
+   .btn-secondary, "Yeni Monitör" düz mavi .btn-primary; envanterde "Domain Ekle" yeşil .btn-success.
+   Kapsam BİLİNÇLİ dar: yalnız başlık eylem kümeleri (.upt-header-right, .inv-header-actions, Genel Bakış'ın
+   Domain Ekle'si) — modal/form düğmelerine (İptal/Kaydet) dokunulmaz.
+   Dil: ikincil eylemler "hayalet" (yüzey zemini + ince kenarlık, hover'da marka rengi); birincil eylem
+   (Yeni Monitör / Domain Ekle) marka degradesi + gölge. Aynı yükseklik, yarıçap, yazı, ikon boşluğu. */
+.upt-header-right .btn, .inv-header-actions .btn, .sort-bar .sort-bar-add-domain.btn {
+  height: 34px; min-height: 34px; padding: 0 14px; margin: 0; gap: 7px;
+  border-radius: 9px; font-size: 13px; font-weight: 600; line-height: 1;
+  border: 1px solid var(--border); background: var(--bg-surface); color: var(--text);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .06);
+  transition: border-color .15s, color .15s, background .15s, box-shadow .15s, transform .12s;
+}
+.upt-header-right .btn:hover, .inv-header-actions .btn:hover {
+  border-color: var(--primary); color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 7%, var(--bg-surface));
+  box-shadow: 0 2px 6px rgba(15, 23, 42, .10);
+}
+.upt-header-right .btn:active, .inv-header-actions .btn:active { transform: translateY(1px); box-shadow: none; }
+.upt-header-right .btn:disabled, .inv-header-actions .btn:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+.upt-header-right .btn > svg, .inv-header-actions .btn > svg { width: 15px; height: 15px; flex-shrink: 0; }
+/* Kılavuz düğmesi: koyu gri dolgu yerine hayalet; ikon marka rengi (mor sabitini bırakır) */
+.upt-header-right .mguide-btn > svg { color: var(--primary); }
+/* İkon-only (Bağlantıyı kopyala): kare */
+.upt-header-right .btn[data-icon-only] { width: 34px; padding: 0; justify-content: center; }
+/* Birincil eylem: Yeni Monitör / Domain Ekle / İzleme Ekle */
+.upt-header-right .btn-primary, .inv-header-actions .btn-primary, .inv-header-actions .btn-success, .sort-bar .sort-bar-add-domain.btn {
+  color: #fff; border-color: color-mix(in srgb, var(--primary) 80%, #000);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--primary) 82%, #fff) 0%, var(--primary) 100%);
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--primary) 35%, transparent);
+}
+.upt-header-right .btn-primary:hover, .inv-header-actions .btn-primary:hover, .inv-header-actions .btn-success:hover, .sort-bar .sort-bar-add-domain.btn:hover {
+  color: #fff; border-color: color-mix(in srgb, var(--primary) 70%, #000);
+  background: linear-gradient(180deg, var(--primary) 0%, color-mix(in srgb, var(--primary) 85%, #000) 100%);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--primary) 45%, transparent);
+}
+.upt-header-right .upt-last-check { font-size: 12px; color: var(--text-muted); margin-right: 2px; }
+.sort-bar .sort-bar-add-domain.btn { margin-left: auto; }   /* Genel Bakış: sağa yaslı kalır */
+[data-theme="dark"] .upt-header-right .btn, [data-theme="dark"] .inv-header-actions .btn { box-shadow: 0 1px 2px rgba(0,0,0,.35); }
+[data-theme="dark"] .upt-header-right .btn:hover, [data-theme="dark"] .inv-header-actions .btn:hover { box-shadow: 0 2px 8px rgba(0,0,0,.45); }
+
 /* ── Uptime grid ── */
 .upt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; margin-bottom: 28px; }
 

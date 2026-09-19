@@ -29,7 +29,7 @@ export default function CopyLinkButton({ className = 'btn btn-secondary btn-sm',
   }
 
   return (
-    <button type="button" className={className} onClick={copy}
+    <button type="button" className={className} onClick={copy} data-icon-only={iconOnly || undefined}
       title={t('share.copyLink')} aria-label={t('share.copyLink')}>
       <Link2 size={14} />{iconOnly ? null : <> {t('share.copyLink')}</>}
     </button>

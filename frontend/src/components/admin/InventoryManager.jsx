@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { ChevronDown, Download, Users, Upload } from 'lucide-react'
+import { ChevronDown, Download, Users, Upload, Plus } from 'lucide-react'
 import ModalShell from '../ui/ModalShell.jsx'
 import Field from '../ui/Field.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
@@ -545,7 +545,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
             )}
           </div>
           {canManage && <button className="btn btn-secondary" onClick={() => setImportOpen(true)}><Upload size={14} /> {t('inv.import')}</button>}
-          {canAdd && <button className="btn btn-success" onClick={openAdd}>{t('inv.addBtn')}</button>}
+          {canAdd && <button className="btn btn-success" onClick={openAdd}><Plus size={14} /> {t('inv.addBtn')}</button>}
         </div>
       </div>
 

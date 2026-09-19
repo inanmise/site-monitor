@@ -513,7 +513,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
             <h2 className="dns-title">{t('dns.title')}</h2>
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 'auto' }}>
+        <div className="upt-header-right">   {/* diğer 8 sayfayla aynı eylem kümesi stili (2026-09-19) */}
           <span className="upt-last-check">{t('dns.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}</span>
           <button className="btn btn-sm upt-refresh-btn" onClick={load}><RefreshCw size={14} />{t('dns.refreshBtn')}</button>
           <CheckAllButton count={checkable.length} running={checkRun.running}

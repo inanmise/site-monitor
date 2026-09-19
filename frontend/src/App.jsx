@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
-import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Inbox, ShieldCheck, CalendarDays } from 'lucide-react'
+import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Inbox, ShieldCheck, CalendarDays, Plus } from 'lucide-react'
 
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
@@ -1171,7 +1171,7 @@ export default function App() {
                   {canAddInventory && (
                     <button type="button" className="btn btn-success sort-bar-add-domain"
                             onClick={() => { setPendingAddDomain(true); handleTabChange('domains') }}>
-                      {t('inv.addBtn')}
+                      <Plus size={14} /> {t('inv.addBtn')}
                     </button>
                   )}
                 </div>
