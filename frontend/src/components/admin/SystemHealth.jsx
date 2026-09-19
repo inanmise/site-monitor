@@ -83,9 +83,10 @@ function isoWeekRange(year, weekNo) {
 
 export default function SystemHealth({ systemRole, globalAdmin = false, username, preFilterDomain, openSmtpModalOnLoad, onSmtpPreFilterConsumed }) {
   const isAdmin = systemRole === 'ADMIN'
-  // Kullanıcı/oturum izleme yalnız global admin veya AUDIT'e açık (backend requireSystemRead ile aynı).
-  // Sağlık sekmesi herkese görünür; yetkisiz kullanıcıda bu bölümü hiç çağırma/gösterme → 403/"Yüklenemedi" olmaz.
-  const canViewUserActivity = !!globalAdmin || systemRole === 'AUDIT'
+  // 2026-09-19 (ürün kararı): Sistem Sağlığı'ndaki HER bölüm her kademeye açık — Kullanıcı/Oturum da. Bölüm salt-okuma;
+  // anomali onayı ve oturum sonlandırma (yazma) global admin / AUDIT'te kalır (canActUserActivity → panel düğmeleri).
+  const canViewUserActivity = true
+  const canActUserActivity = !!globalAdmin || systemRole === 'AUDIT'
   const t = useT()
   const { showConfirm } = useDialog()
   const [health, setHealth]           = useState(null)
@@ -1302,7 +1303,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
         )}
       </div>
 
-      {/* Kullanıcı / Oturum izleme — yalnız yetkili (global admin/AUDIT) görür */}
+      {/* Kullanıcı / Oturum izleme — her kademe görür (2026-09-19); onay/sonlandırma yetkiye bağlı */}
       {canViewUserActivity && (
       <div className="stats-section">
         <div
@@ -1322,7 +1323,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
         {usersVisible && (
         <div className="metrics-section">
           <UserActivityPanel data={userActivity} error={loadErrors.users} refreshing={uactRefreshing} onRefresh={refreshUserActivity}
-            isAdmin={isAdmin} globalAdmin={!!globalAdmin} username={username} onTerminated={refreshUserActivity} />
+            isAdmin={isAdmin} globalAdmin={!!globalAdmin} canAck={canActUserActivity} username={username} onTerminated={refreshUserActivity} />
         </div>
         )}
       </div>

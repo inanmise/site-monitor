@@ -21,6 +21,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -102,7 +103,7 @@ public class SystemController {
     @GetMapping("/http-metrics/endpoints")
     public ResponseEntity<Map<String, Object>> httpMetricEndpoints(
             @RequestParam String from, @RequestParam String to, HttpSession session) {
-        requireSystemRead(session);
+        // 2026-09-19: Sistem Sağlığı'ndaki her bölüm her kademeye açık → salt-okuma, permission kapısı yeter.
         permissionService.require(session, "system_health.read", "view");
         return ok(Map.of("data", httpMetricsQueryService.endpoints(from, to)));
     }
@@ -115,7 +116,6 @@ public class SystemController {
             @RequestParam(required = false) String endpoint,
             @RequestParam(required = false) String granularity,
             HttpSession session) {
-        requireSystemRead(session);
         permissionService.require(session, "system_health.read", "view");
         return ok(Map.of("data", httpMetricsQueryService.series(from, to, endpoint, granularity)));
     }
@@ -150,13 +150,32 @@ public class SystemController {
     }
 
     /** Kullanıcı / oturum izleme — aktif oturumlar, login serileri, top/anomali/peak (tek payload).
-     *  Sayfa görünürlüğüyle aynı kitle: global admin VEYA AUDIT (salt-okuma denetçi). */
+     *  2026-09-19 (ürün kararı): Sistem Sağlığı'ndaki HER bölüm her kademeye açık → salt-okuma uçlar yalnız
+     *  {@code system_health.read} ister; sicil no kapsamlı kullanıcıda maskeli kalır (UserActivityService),
+     *  oturum sonlandırma (AuthController) ve anomali onayı admin/AUDIT'te kalır. */
     @GetMapping("/user-activity")
     public ResponseEntity<Map<String, Object>> getUserActivity(HttpSession session) {
-        requireSystemRead(session);
         permissionService.require(session, "system_health.read", "view");
         return ok(Map.of(
-                "data", userActivityService.getOverview()));
+                "data", maskEmployeeIds(userActivityService.getOverview(), SessionScope.isGlobalAdmin(session))));
+    }
+
+    /**
+     * Sicil numarası yalnız GLOBAL admin'e döner (TeamBadge/üye listesi beyaz listesiyle aynı ilke: sicil ASLA
+     * kapsamlı kullanıcıya sızmaz). Uç her kademeye açılınca (2026-09-19) arayüzdeki "maskeli" gösterimi
+     * yetmez — payload'da hiç olmamalı. Özet önbellekli (paylaşılan) olduğu için kopya üzerinde silinir.
+     */
+    @SuppressWarnings("unchecked")
+    static Map<String, Object> maskEmployeeIds(Map<String, Object> overview, boolean globalAdmin) {
+        if (globalAdmin || overview == null || !(overview.get("active_users") instanceof List<?> users)) return overview;
+        List<Object> masked = new java.util.ArrayList<>(users.size());
+        for (Object u : users) {
+            if (u instanceof Map<?, ?> m) { Map<String, Object> c = new LinkedHashMap<>((Map<String, Object>) m); c.remove("employee_id"); masked.add(c); }
+            else masked.add(u);
+        }
+        Map<String, Object> copy = new LinkedHashMap<>(overview);
+        copy.put("active_users", masked);
+        return copy;
     }
 
     /** Veritabanı analitiği — top kullanıcı/SQL, yavaş sorgular, tablolar, seri, bağlantılar (tek payload).
@@ -164,8 +183,7 @@ public class SystemController {
     @GetMapping("/db-analytics")
     public ResponseEntity<Map<String, Object>> dbAnalytics(
             @RequestParam(defaultValue = "7") int days, HttpSession session) {
-        requireSystemRead(session);
-        permissionService.require(session, "system_health.read", "view");
+        permissionService.require(session, "system_health.read", "view");   // 2026-09-19: her kademe (salt-okuma)
         return ok(Map.of(
                 "data", dbAnalyticsService.getOverview(days)));
     }
@@ -178,8 +196,7 @@ public class SystemController {
             @RequestParam String to,
             @RequestParam(defaultValue = "day") String granularity,
             HttpSession session) {
-        requireSystemRead(session);
-        permissionService.require(session, "system_health.read", "view");
+        permissionService.require(session, "system_health.read", "view");   // 2026-09-19: her kademe (salt-okuma)
         return ok(Map.of(
                 "data", userActivityService.getLoginSeries(from, to, granularity)));
     }
@@ -189,8 +206,7 @@ public class SystemController {
     public ResponseEntity<Map<String, Object>> userTimeline(@PathVariable String username,
                                                             @RequestParam(defaultValue = "20") int limit,
                                                             HttpSession session) {
-        requireSystemRead(session);
-        permissionService.require(session, "system_health.read", "view");
+        permissionService.require(session, "system_health.read", "view");   // 2026-09-19: her kademe (salt-okuma)
         return ok(Map.of("data", userActivityService.userTimeline(username, Math.min(100, Math.max(1, limit)))));
     }
 

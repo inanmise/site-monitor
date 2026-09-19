@@ -228,7 +228,13 @@ public class PermissionService {
                   + "uç takım kapsamını doğrular, proxy-ca-chain admin'de kalır"),
             new PolicyUpgrade("USER", "inventory.crud", List.of("edit"),
                     "\"Domain Ekle\" her kullanıcı seviyesinde (2026-09-18); uç üyelik doğrular (requireInventoryWriter), "
-                  + "düzenleme/silme/aktarma yönetici kapılarında kalır")
+                  + "düzenleme/silme/aktarma yönetici kapılarında kalır"),
+            new PolicyUpgrade("USER", "release_history.read", List.of("view"),
+                    "Sistem Sağlığı'ndaki her bölüm her kademeye açık (2026-09-19): Sürüm & Dağıtım okunur, "
+                  + "yazma release_history.edit'te kalır"),
+            new PolicyUpgrade("TEAM_ADMIN", "release_history.read", List.of("view"),
+                    "Sistem Sağlığı'ndaki her bölüm her kademeye açık (2026-09-19): Sürüm & Dağıtım okunur, "
+                  + "yazma release_history.edit'te kalır")
     );
 
     /** Update single grant. ADMIN row'ları her zaman true; bypass yok. */
