@@ -1018,6 +1018,35 @@ export default function App() {
                   ? t('app.checkedOf', checkRun?.rows.length ?? 0, checkRun?.total ?? 0)
                   : t('app.checkNow')}
               </button>
+              {/* Domain Ekle "Şimdi Kontrol Et"in yanında (2026-09-19, kullanıcı isteği) — eskiden süzgeç satırının sağındaydı */}
+              {tab === 'dashboard' && canAddInventory && (
+                <button type="button" className="btn btn-primary controls-add-domain"
+                        onClick={() => { setPendingAddDomain(true); handleTabChange('domains') }}>
+                  <Plus size={14} /> {t('inv.addBtn')}
+                </button>
+              )}
+              {/* Domain ara — Domain Ekle'nin yanında (2026-09-19, kullanıcı isteği); eskiden süzgeç satırının başındaydı */}
+              {tab === 'dashboard' && (
+                <span className="controls-search">
+                  <input
+                    className="sort-bar-search"
+                    type="text"
+                    placeholder={t('app.searchPlaceholder')}
+                    value={search}
+                    onChange={(e) => { setSearch(e.target.value); dashPager.setPage(1) }}
+                  />
+                  {search && (
+                    <button
+                      type="button"
+                      className="sort-bar-search-clear"
+                      onClick={() => { setSearch(''); dashPager.setPage(1) }}
+                      title={t('app.clearFilter')}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </span>
+              )}
               <div className="add-domain-section" data-tour="add-domain">
                 <input className="domain-input" type="text" placeholder={t('app.newDomainPlaceholder')}
                   value={newDomain} onChange={(e) => setNewDomain(e.target.value)}
@@ -1081,25 +1110,7 @@ export default function App() {
             {tab === 'dashboard' && (
               <div className="tab-content active">
                 <div className="sort-controls sort-bar" data-tour="dash-filters">
-                  {/* Arama en başta (2026-09-18): grup/etiket kutuları eklenince sağa yaslı arama satır sonuna
-                      "kaymış" görünüyordu; ilk kontrol olunca sarma doğal kalır. */}
-                  <input
-                    className="sort-bar-search"
-                    type="text"
-                    placeholder={t('app.searchPlaceholder')}
-                    value={search}
-                    onChange={(e) => { setSearch(e.target.value); dashPager.setPage(1) }}
-                  />
-                  {search && (
-                    <button
-                      type="button"
-                      className="sort-bar-search-clear"
-                      onClick={() => { setSearch(''); dashPager.setPage(1) }}
-                      title={t('app.clearFilter')}
-                    >
-                      ✕
-                    </button>
-                  )}
+                  {/* Arama kutusu 2026-09-19'da üst kontrol satırına ("Domain Ekle"nin yanına) taşındı; burada yalnız sıralama/süzgeçler. */}
                   <label>{t('app.sortLabel')}</label>
                   <SearchableSelect
                     value={sortOrder}
@@ -1166,12 +1177,6 @@ export default function App() {
                   {dashFiltersActive && (
                     <button type="button" className="btn btn-secondary btn-sm-p" onClick={clearDashFilters}>
                       {t('app.clearFilters')}
-                    </button>
-                  )}
-                  {canAddInventory && (
-                    <button type="button" className="btn btn-success sort-bar-add-domain"
-                            onClick={() => { setPendingAddDomain(true); handleTabChange('domains') }}>
-                      <Plus size={14} /> {t('inv.addBtn')}
                     </button>
                   )}
                 </div>

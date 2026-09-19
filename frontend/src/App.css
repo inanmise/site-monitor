@@ -5207,8 +5207,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   line-height: 1; height: 32px;
 }
 .sort-bar-search-clear:hover { background: #f3f4f6; color: #b91c1c; border-color: #fca5a5; }
-/* Dashboard arama satırının sağına "Domain Ekle" — envanter add modalını açar */
-.sort-bar-add-domain { margin-left: auto; flex-shrink: 0; white-space: nowrap; height: 32px; }
+/* Genel Bakış "Domain Ekle" — üst kontrol satırında "Şimdi Kontrol Et"in yanında (2026-09-19); envanter add modalını açar */
+.controls-add-domain { flex-shrink: 0; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+/* Genel Bakış "Domain ara" — Domain Ekle'nin yanında; kutu düğme yüksekliğine uzar, temizle düğmesi bitişik */
+.controls-search { display: inline-flex; align-self: stretch; align-items: stretch; gap: 6px; }
+.controls-search .sort-bar-search { flex: 0 1 240px; height: auto; }
+.controls-search .sort-bar-search-clear { height: auto; }
 [data-theme="dark"] .sort-bar-search { background: var(--bg-surface); color: var(--text); border-color: var(--border); }
 [data-theme="dark"] .sort-bar-search-clear { color: #9ca3af; }
 [data-theme="dark"] .sort-bar-search-clear:hover { background: #374151; color: #fca5a5; border-color: #fca5a5; }
@@ -7747,11 +7751,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* ── Sayfa başlığı eylem düğmeleri — TEK STİL (2026-09-19, kullanıcı isteği) ──
    Eskiden aynı satırda üç dil vardı: "Yenile/Şimdi Kontrol Et" renksiz .btn, "Nasıl doldurulur?" koyu gri
    .btn-secondary, "Yeni Monitör" düz mavi .btn-primary; envanterde "Domain Ekle" yeşil .btn-success.
-   Kapsam BİLİNÇLİ dar: yalnız başlık eylem kümeleri (.upt-header-right, .inv-header-actions, Genel Bakış'ın
-   Domain Ekle'si) — modal/form düğmelerine (İptal/Kaydet) dokunulmaz.
+   Kapsam BİLİNÇLİ dar: yalnız başlık eylem kümeleri (.upt-header-right, .inv-header-actions) — modal/form
+   düğmelerine (İptal/Kaydet) dokunulmaz. Genel Bakış'ın Domain Ekle'si üst kontrol satırında "Şimdi Kontrol Et"
+   ile aynı küresel .btn-primary'yi kullanır (yan yana iki farklı mavi olmasın).
    Dil: ikincil eylemler "hayalet" (yüzey zemini + ince kenarlık, hover'da marka rengi); birincil eylem
    (Yeni Monitör / Domain Ekle) marka degradesi + gölge. Aynı yükseklik, yarıçap, yazı, ikon boşluğu. */
-.upt-header-right .btn, .inv-header-actions .btn, .sort-bar .sort-bar-add-domain.btn {
+.upt-header-right .btn, .inv-header-actions .btn {
   height: 34px; min-height: 34px; padding: 0 14px; margin: 0; gap: 7px;
   border-radius: 9px; font-size: 13px; font-weight: 600; line-height: 1;
   border: 1px solid var(--border); background: var(--bg-surface); color: var(--text);
@@ -7771,18 +7776,17 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* İkon-only (Bağlantıyı kopyala): kare */
 .upt-header-right .btn[data-icon-only] { width: 34px; padding: 0; justify-content: center; }
 /* Birincil eylem: Yeni Monitör / Domain Ekle / İzleme Ekle */
-.upt-header-right .btn-primary, .inv-header-actions .btn-primary, .inv-header-actions .btn-success, .sort-bar .sort-bar-add-domain.btn {
+.upt-header-right .btn-primary, .inv-header-actions .btn-primary, .inv-header-actions .btn-success {
   color: #fff; border-color: color-mix(in srgb, var(--primary) 80%, #000);
   background: linear-gradient(180deg, color-mix(in srgb, var(--primary) 82%, #fff) 0%, var(--primary) 100%);
   box-shadow: 0 2px 6px color-mix(in srgb, var(--primary) 35%, transparent);
 }
-.upt-header-right .btn-primary:hover, .inv-header-actions .btn-primary:hover, .inv-header-actions .btn-success:hover, .sort-bar .sort-bar-add-domain.btn:hover {
+.upt-header-right .btn-primary:hover, .inv-header-actions .btn-primary:hover, .inv-header-actions .btn-success:hover {
   color: #fff; border-color: color-mix(in srgb, var(--primary) 70%, #000);
   background: linear-gradient(180deg, var(--primary) 0%, color-mix(in srgb, var(--primary) 85%, #000) 100%);
   box-shadow: 0 4px 12px color-mix(in srgb, var(--primary) 45%, transparent);
 }
 .upt-header-right .upt-last-check { font-size: 12px; color: var(--text-muted); margin-right: 2px; }
-.sort-bar .sort-bar-add-domain.btn { margin-left: auto; }   /* Genel Bakış: sağa yaslı kalır */
 [data-theme="dark"] .upt-header-right .btn, [data-theme="dark"] .inv-header-actions .btn { box-shadow: 0 1px 2px rgba(0,0,0,.35); }
 [data-theme="dark"] .upt-header-right .btn:hover, [data-theme="dark"] .inv-header-actions .btn:hover { box-shadow: 0 2px 8px rgba(0,0,0,.45); }
 
@@ -12882,10 +12886,6 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .today-level--warning { background: #fef9c3; color: #854d0e; }
 /* İzleme kartı satırı: tür rozeti (HTTP/PING/PORT…) — ActivityLog rozetiyle aynı sözlük, tek renk (2026-09-19) */
 .today-type { font-size: .68em; font-weight: 700; letter-spacing: .02em; padding: 1px 6px; border-radius: 6px; background: var(--bg-hover); color: var(--text-light); white-space: nowrap; }
-.today-status { font-size: .78em; font-weight: 600; padding: 1px 7px; border-radius: 6px; background: var(--bg-hover); }
-.today-status--approved { background: #dcfce7; color: #166534; }
-.today-status--pending_approval { background: #dbeafe; color: #1e40af; }
-.today-status--draft, .today-status--rejected, .today-status--missing { background: #fef3c7; color: #92400e; }
 .today-type--email { background: #dbeafe; color: #1e40af; }
 .today-type--webhook { background: #ede9fe; color: #5b21b6; }
 .today-type--push { background: #ffedd5; color: #9a3412; }
@@ -12897,6 +12897,10 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .today-type--push { background: #431407; color: #fdba74; }
 [data-theme="dark"] .today-finding { background: #422006; color: #fcd34d; }
 [data-theme="dark"] .today-finding.is-bad { background: #450a0a; color: #fca5a5; }
+.today-status { font-size: .78em; font-weight: 600; padding: 1px 7px; border-radius: 6px; background: var(--bg-hover); }
+.today-status--approved { background: #dcfce7; color: #166534; }
+.today-status--pending_approval { background: #dbeafe; color: #1e40af; }
+.today-status--draft, .today-status--rejected, .today-status--missing { background: #fef3c7; color: #92400e; }
 .today-card-go { align-self: flex-end; margin-top: auto; background: none; border: 0; color: var(--primary); font: inherit; font-size: .82em; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
 [data-theme="dark"] .today-level--critical { background: #450a0a; color: #fca5a5; }
 [data-theme="dark"] .today-level--high { background: #431407; color: #fdba74; }

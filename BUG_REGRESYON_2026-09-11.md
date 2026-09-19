@@ -961,3 +961,18 @@ Kapılar: backend `clean verify` 3839 test — tek kırmızı `IdentityLeakGuard
 testler 2 (+CertificateHealthServiceTest 36 yeşil). Frontend lint 0 hata / 2114 test / kapsam / build yeşil. Jar yeniden
 kuruldu, :8080 `/health` UP.
 → **REGRESYON YOK**.
+
+## Ek — kırk altıncı tur (2026-09-19, sürüm sonrası — Genel Bakış: "Domain Ekle" ve "Domain ara" üst kontrol satırına, `v20.71.1..HEAD`)
+
+Kapsam: yalnız frontend (App.jsx + App.css). Kullanıcı isteği (iki adım): "Domain Ekle" "Şimdi Kontrol Et"in yanına,
+ardından "Domain ara" kutusu "Domain Ekle"nin yanına. İkisi de süzgeç satırından (`.sort-bar`) `.controls`'a taşındı.
+Denetim odakları:
+- Domain Ekle artık "Şimdi Kontrol Et" ile aynı küresel `.btn-primary` (yan yana iki farklı mavi olmasın) →
+  `.sort-bar-add-domain` gradyan/`margin-left:auto` kuralları ve 42. turdaki birleşik seçici üyeliği kaldırıldı;
+  `.controls-add-domain` yalnız sarma/ikon boşluğu. Yalnız `tab === 'dashboard' && canAddInventory`.
+- Arama: `.controls-search` sarmalayıcı `align-self: stretch` — kutu düğme yüksekliğine uzar (ilk denemede 36 vs 39 px
+  hizasızdı, ölçülüp düzeltildi: hepsi y=20/h=39). Temizle düğmesi bitişik; arama/temizleme davranışı aynı state.
+- Süzgeç satırında yalnız Sırala/Durum/Süre/Takım/Grup/Etiket kaldı; 2026-09-18 "arama en başta" notu güncellendi.
+- Tarayıcıda: "axess" yazınca 1 kart, temizle düğmesi görünür; ekran görüntüsü.
+Kapılar: frontend lint 0 hata / 2114 test / kapsam / build yeşil; backend DEĞİŞMEDİ.
+→ **REGRESYON YOK**.
