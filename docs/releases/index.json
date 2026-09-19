@@ -1,9 +1,121 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-18T18:27:04Z",
+  "generatedAt": "2026-09-19T16:55:10Z",
   "repo": "inanmise/site-monitor",
-  "count": 659,
+  "count": 660,
   "releases": [
+    {
+      "version": "20.72.0",
+      "tag": "v20.72.0",
+      "releasedAt": "2026-09-19T16:55:05Z",
+      "commit": "6824cb6583a4298f2b2e7a94bf98b734d1c57528",
+      "prevVersion": "20.71.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 9,
+        "fix": 4,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "dashboard",
+          "breaking": false,
+          "sha": "6824cb65",
+          "subject": "Kompakt/Zengin anahtarı \"Genel Bakış\" başlığının yanında (iki durumlu segment)"
+        },
+        {
+          "type": "feat",
+          "scope": "dashboard",
+          "breaking": false,
+          "sha": "2e42bb1a",
+          "subject": "sertifika kartında \"şu an\" şeridi — son erişim durumu + son alarm"
+        },
+        {
+          "type": "feat",
+          "scope": "dashboard",
+          "breaking": false,
+          "sha": "f842093e",
+          "subject": "sertifika kartı zengin görünümü — sağlık, alarm, erişilebilirlik, değişim, plan, paylaşım, bakım, kontaklar"
+        },
+        {
+          "type": "feat",
+          "scope": "push-log",
+          "breaking": false,
+          "sha": "e44ea87d",
+          "subject": "Sistem Sağlığı'na Webhook Push kartı + Webhook Push Gönderim Logu sayfası"
+        },
+        {
+          "type": "feat",
+          "scope": "health",
+          "breaking": false,
+          "sha": "c467be72",
+          "subject": "Sistem Sağlığı'ndaki her bölüm her kademeye açık (salt-okuma) — sicil sunucuda maskelenir"
+        },
+        {
+          "type": "feat",
+          "scope": "smtp-log",
+          "breaking": false,
+          "sha": "6fa7b860",
+          "subject": "SMTP Gönderim Logu v2 — tam sayfa görünüm, sunucu taraflı arama/özet, hata analizi, yeniden gönderim"
+        },
+        {
+          "type": "fix",
+          "scope": "dashboard",
+          "breaking": false,
+          "sha": "cf5a511a",
+          "subject": "\"Domain Ekle\" ve \"Domain ara\" üst kontrol satırında — \"Şimdi Kontrol Et\"in yanında"
+        },
+        {
+          "type": "feat",
+          "scope": "today",
+          "breaking": false,
+          "sha": "ba1f9dfe",
+          "subject": "iki kart daha — teslim edilemeyen bildirim (24 sa) ve sertifika sağlık bulguları"
+        },
+        {
+          "type": "feat",
+          "scope": "today",
+          "breaking": false,
+          "sha": "c797e0b1",
+          "subject": "\"Sizin için — bugün\" izleme kartları — kararsız / yavaşlayan / sessiz / alan adı kaydı (istisna kartı kaldırıldı)"
+        },
+        {
+          "type": "feat",
+          "scope": "uptime",
+          "breaking": false,
+          "sha": "f32c68c9",
+          "subject": "erişilebilirlik (HTTP) süpürmesi saatlik — Durum İzleme'de HTTP ve SSL Kontrol Geçmişi aynı sıklıkta"
+        },
+        {
+          "type": "fix",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "6730a938",
+          "subject": "başlık eylem düğmeleri tek stil — Yenile / Şimdi Kontrol Et / Nasıl doldurulur? / Yeni Monitör / Domain Ekle"
+        },
+        {
+          "type": "fix",
+          "scope": "inventory",
+          "breaking": false,
+          "sha": "b26bc2d3",
+          "subject": "Düzenle formunda Kritiklik Seviyesi ile Bağlantı zaman aşımı aynı hizada"
+        },
+        {
+          "type": "feat",
+          "scope": "alerts",
+          "breaking": false,
+          "sha": "8f822631",
+          "subject": "izleme alarm seviyesi — varsayılan Uyarı, izlemeden Yüksek/Kritik; eskalasyon kontakları seviyeye bağlı"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.71.1",
       "tag": "v20.71.1",
