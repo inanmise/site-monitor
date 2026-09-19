@@ -772,6 +772,14 @@ export const api = {
     // Thresholds
     getThresholds: () => request('/admin/thresholds'),
     updateThreshold: (id, data) => request(`/admin/thresholds/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    // Tier bazlı eşikler + etki önizleme (2026-09-20)
+    createThreshold: (data) => request('/admin/thresholds', { method: 'POST', body: JSON.stringify(data) }),
+    deleteThreshold: (id) => request(`/admin/thresholds/${id}`, { method: 'DELETE' }),
+    previewThreshold: ({ tier, warning, high, critical }) => {
+      const p = new URLSearchParams({ warning: String(warning), high: String(high), critical: String(critical) })
+      if (tier != null) p.set('tier', String(tier))
+      return request(`/admin/thresholds/preview?${p.toString()}`)
+    },
 
     // Contacts
     getContacts: () => request('/admin/contacts/all'),

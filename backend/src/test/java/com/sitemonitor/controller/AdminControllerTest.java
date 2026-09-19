@@ -50,6 +50,7 @@ class AdminControllerTest {
     com.sitemonitor.repository.UserPushDeliveryRepository userPushDeliveryRepo;
 
     @MockitoBean com.sitemonitor.repository.NotificationGroupRepository notificationGroupRepo;
+    @MockitoBean com.sitemonitor.service.ThresholdPreviewService thresholdPreviewService;   // tier eşik önizleme (2026-09-20)
     @MockitoBean com.sitemonitor.service.DerivedMonitorTeamSync derivedMonitorTeamSync;
     @MockitoBean com.sitemonitor.service.TourStateService tourStateService;   // ürün turu (2026-09-13)
     // AdminController "Tekrar Bildir" onizlemesinde webhook alicilarini da cozuyor (A2).
@@ -1156,9 +1157,95 @@ class AdminControllerTest {
         mvc.perform(put("/api/admin/thresholds/1")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"warningDays\":25,\"highDays\":12,\"criticalDays\":5,\"reAlertIntervalHours\":12}"))
+                        .content("{\"warning_days\":25,\"high_days\":12,\"critical_days\":5,\"re_alert_interval_hours\":12}"))   // tel biçimi SNAKE_CASE
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
+    }
+
+    // ── Tier bazlı eşikler (2026-09-20) ───────────────────────────────────────
+
+    @Test
+    @DisplayName("POST /thresholds tier=1: tier satırı yaratılır, ad boşsa tier-1 olur")
+    void createTierThreshold_ok() throws Exception {
+        when(thresholdRepo.findByTierOrderByIdAsc(1)).thenReturn(List.of());
+        when(thresholdRepo.save(any())).thenAnswer(inv -> { AlertThreshold t = inv.getArgument(0); t.setId(9L); return t; });
+
+        mvc.perform(post("/api/admin/thresholds").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tier\":1,\"warning_days\":60,\"high_days\":30,\"critical_days\":14}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.tier").value(1))
+                .andExpect(jsonPath("$.data.name").value("tier-1"));
+        verify(auditService).recordAction(eq("THRESHOLD_CREATE"), any(), eq("ALERT_THRESHOLD"), eq("9"), eq("tier-1"), any());
+    }
+
+    @Test
+    @DisplayName("POST /thresholds aynı tier'a ikinci satır → 409; ters sıra (kritik > uyarı) → 400; tier 7 → 400")
+    void createTierThreshold_validation() throws Exception {
+        AlertThreshold t1 = defaultThreshold(); t1.setTier(1);
+        when(thresholdRepo.findByTierOrderByIdAsc(1)).thenReturn(List.of(t1));
+        mvc.perform(post("/api/admin/thresholds").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tier\":1,\"warning_days\":60,\"high_days\":30,\"critical_days\":14}"))
+                .andExpect(status().isConflict());
+
+        when(thresholdRepo.findByTierOrderByIdAsc(2)).thenReturn(List.of());
+        mvc.perform(post("/api/admin/thresholds").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tier\":2,\"warning_days\":10,\"high_days\":30,\"critical_days\":40}"))
+                .andExpect(status().isBadRequest());
+
+        mvc.perform(post("/api/admin/thresholds").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tier\":7,\"warning_days\":60,\"high_days\":30,\"critical_days\":14}"))
+                .andExpect(status().isBadRequest());
+        verify(thresholdRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("PUT /thresholds kısmi gövde mevcut değerlerle birleşip sıra denetiminden geçer; bozuk sıra 400")
+    void updateThreshold_orderValidation() throws Exception {
+        AlertThreshold existing = defaultThreshold();   // 30/15/7
+        when(thresholdRepo.findById(1L)).thenReturn(Optional.of(existing));
+        when(thresholdRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        mvc.perform(put("/api/admin/thresholds/1").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"critical_days\":20}"))     // 20 > yüksek 15 → bozuk
+                .andExpect(status().isBadRequest());
+        mvc.perform(put("/api/admin/thresholds/1").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"critical_days\":10}"))     // 10 ≤ 15 ≤ 30
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("DELETE /thresholds/{id}: tier satırı silinir + denetim; VARSAYILAN satır 409")
+    void deleteThreshold() throws Exception {
+        AlertThreshold tier = defaultThreshold(); tier.setId(5L); tier.setTier(2); tier.setName("tier-2");
+        when(thresholdRepo.findById(5L)).thenReturn(Optional.of(tier));
+        mvc.perform(delete("/api/admin/thresholds/5").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.deleted").value(true));
+        verify(thresholdRepo).delete(tier);
+        verify(auditService).recordAction(eq("THRESHOLD_DELETE"), any(), eq("ALERT_THRESHOLD"), eq("5"), eq("tier-2"), any());
+        verify(thresholdPreviewService, atLeastOnce()).afterThresholdChange();   // kart seviyeleri eşikten türer → cache boşalır
+
+        when(thresholdRepo.findById(1L)).thenReturn(Optional.of(defaultThreshold()));
+        mvc.perform(delete("/api/admin/thresholds/1").session(authSession()))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    @DisplayName("GET /thresholds/preview servise tier + günleri geçirir; bozuk sıra 400")
+    void previewThreshold() throws Exception {
+        when(thresholdPreviewService.preview(1, 60, 30, 14)).thenReturn(Map.of("scope_total", 3));
+        mvc.perform(get("/api/admin/thresholds/preview").session(authSession())
+                        .param("tier", "1").param("warning", "60").param("high", "30").param("critical", "14"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.scope_total").value(3));
+        mvc.perform(get("/api/admin/thresholds/preview").session(authSession())
+                        .param("warning", "5").param("high", "30").param("critical", "14"))
+                .andExpect(status().isBadRequest());
     }
 
     // ── Contacts ──────────────────────────────────────────────────────────────

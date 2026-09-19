@@ -212,6 +212,7 @@ public final class AuditEventCatalog {
             "TEMPLATE_UPDATE",
             "THRESHOLD_CREATE",
             "THRESHOLD_UPDATE",
+            "THRESHOLD_DELETE",
             "TOUR_COMPLETED",
             "TOUR_DISMISSED",
             "USER_CREATE",

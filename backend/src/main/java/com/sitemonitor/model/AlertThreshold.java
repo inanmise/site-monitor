@@ -31,4 +31,12 @@ public class AlertThreshold {
 
     @Column(nullable = false)
     private Boolean active = true;
+
+    /**
+     * Kritiklik tier'ı (1..4) — null = VARSAYILAN satır (tüm alanlar). Tier satırı varsa o tier'daki
+     * alanlar için varsayılanın YERİNE geçer (2026-09-20, {@link com.sitemonitor.service.ThresholdResolution}).
+     * Nullable kolon: ddl-auto sessizce ekler (NOT NULL tuzağı yok).
+     */
+    @Column(name = "tier")
+    private Integer tier;
 }

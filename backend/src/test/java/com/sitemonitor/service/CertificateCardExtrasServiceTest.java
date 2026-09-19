@@ -66,7 +66,7 @@ class CertificateCardExtrasServiceTest {
     @BeforeEach
     void setUp() {
         svc = new CertificateCardExtrasService(inventoryRepo, latestCheckRepo, alertEventRepo, uptimeCheckRepo, maintenanceService, healthService, null);
-        when(healthService.thresholdDays()).thenReturn(new int[]{30, 7});
+        when(healthService.thresholdResolution()).thenReturn(ThresholdResolution.fixed(null));   // tier bazlı çözüm (2026-09-20): 30/15/7
         when(healthService.evaluate(any(), any(), eq(false), anyInt(), anyInt())).thenReturn(new CertificateHealthService.HealthResult(List.of(), 0, 0));
         when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of());
         when(alertEventRepo.findLatestPerDomain()).thenReturn(List.of());

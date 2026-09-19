@@ -3203,6 +3203,25 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 .threshold-field .hint { font-size: .8em; color: var(--text-light); }
 .threshold-display { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+/* Tier bazlı eşikler + etki önizleme (2026-09-20) */
+.threshold-card + .threshold-card { margin-top: 12px; }
+.threshold-card--tier { border-left: 3px solid var(--primary); }
+.threshold-card-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.threshold-card-title { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
+.threshold-card-scope { font-size: .8em; color: var(--text-light); }
+.threshold-actions { display: inline-flex; align-items: center; gap: 8px; }
+.threshold-add { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+.threshold-add .ss-wrap { width: auto; flex: 0 1 300px; min-width: 220px; }
+.threshold-preview { margin: 4px 0 14px; padding: 10px 12px; border: 1px dashed var(--border); border-radius: 8px; background: var(--bg-surface); font-size: .88em; display: flex; flex-direction: column; gap: 8px; }
+.threshold-preview--loading, .threshold-preview--error { color: var(--text-light); }
+.threshold-preview--error { color: var(--danger); }
+.threshold-preview-head { font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.threshold-preview-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.threshold-preview-cell { display: inline-flex; align-items: center; gap: 4px; }
+.threshold-preview-delta { opacity: .85; font-weight: 600; }
+.threshold-preview-samples { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.threshold-preview-lv { font-weight: 600; color: var(--text-light); }
+.threshold-preview-chip { padding: 1px 8px; border-radius: 999px; background: var(--bg-card, #fff); border: 1px solid var(--border); font-family: ui-monospace, monospace; font-size: .92em; }
 .threshold-levels { display: flex; gap: 10px; flex-wrap: wrap; }
 .level-badge.warning { background: #f0a500; }
 .level-badge.high { background: #e07b00; }

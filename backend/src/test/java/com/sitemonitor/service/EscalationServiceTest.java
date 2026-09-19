@@ -2279,6 +2279,31 @@ class EscalationServiceTest {
         assertThat(subject.getAllValues().get(0)).doesNotContain("GÜN KALDI").contains("KRİTİK");
     }
 
+    // ── Tier bazlı eşik (2026-09-20) ────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Tier 1 satırı (60/30/14) varken 12 gün kalan Tier-1 alanı KRİTİK, tier'sız alan aynı günle YÜKSEK")
+    void tierThresholdChangesLevel() {
+        AlertThreshold t1 = defaultThreshold(); t1.setTier(1); t1.setWarningDays(60); t1.setHighDays(30); t1.setCriticalDays(14);
+        when(thresholdRepo.findByActiveTrueAndTierIsNotNullOrderByIdAsc()).thenReturn(List.of(t1));
+        com.sitemonitor.model.CertificateInventory a = new com.sitemonitor.model.CertificateInventory();
+        a.setDomain("t1.example.com"); a.setTier(1);
+        com.sitemonitor.model.CertificateInventory b = new com.sitemonitor.model.CertificateInventory();
+        b.setDomain("plain.example.com");
+        when(inventoryRepo.findByDomainIn(anyCollection())).thenReturn(List.of(a, b));
+        when(alertEventRepo.findOpenAlert(anyString(), anyString())).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.processResults(List.of(expiryResult("t1.example.com", 12, true), expiryResult("plain.example.com", 12, true)));
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(2)).save(captor.capture());
+        Map<String, String> levelByDomain = new HashMap<>();
+        for (AlertEvent e : captor.getAllValues()) levelByDomain.putIfAbsent(e.getDomain(), e.getAlertLevel());
+        assertThat(levelByDomain.get("t1.example.com")).isEqualTo("CRITICAL");
+        assertThat(levelByDomain.get("plain.example.com")).isEqualTo("HIGH");
+    }
+
     // ── Denetim 5. tur: bildirim paritesi (bulgu 6 · 7 · 13) ──────────────────
 
     private AlertEvent resolvableEvent(String type, Long teamId, String contextJson) {

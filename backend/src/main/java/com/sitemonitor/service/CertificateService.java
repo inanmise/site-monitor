@@ -318,9 +318,8 @@ public class CertificateService {
                 if (tn != null) teamNameMap.put(d, tn);
             }
         }
-        var thrOpt   = alertThresholdRepo.findFirstByActiveTrue();
-        int critDays = thrOpt.map(AlertThreshold::getCriticalDays).orElse(7);
-        int highDays  = thrOpt.map(AlertThreshold::getHighDays).orElse(15);
+        // Tier bazlı eşik (2026-09-20): tek okuma, alan başına tier'ıyla çözülür.
+        ThresholdResolution thresholds = ThresholdResolution.load(alertThresholdRepo, null);
         // findByDomainIn → tüm latest_checks yerine sadece aktif domain'lerin satırlarını çek
         return latestRepo.findByDomainIn(activeDomains).stream()
                 .sorted(Comparator.comparing(LatestCheck::getDomain,
@@ -334,20 +333,23 @@ public class CertificateService {
                     dto.setGroupName(groupMap.get(c.getDomain()));
                     dto.setTags(tagsMap.get(c.getDomain()));
                     dto.setCheckIntervalHours(intervalMap.get(c.getDomain()));
-                    dto.setAlertLevel(computeAlertLevel(dto, critDays, highDays));
+                    int[] td = thresholds.days(tierMap.get(c.getDomain()));
+                    dto.setAlertLevel(computeAlertLevel(dto, td[0], td[1], td[2]));
                     return dto;
                 })
                 .collect(Collectors.toList());
     }
 
-    private String computeAlertLevel(CertificateDto dto, int critDays, int highDays) {
+    private String computeAlertLevel(CertificateDto dto, int critDays, int highDays, int warnDays) {
         if ("error".equals(dto.getStatus())) return "error";
         Integer days = dto.getDaysRemaining();
         if (days == null) return "valid";
         if (days < 0)         return "expired";
         if (days <= critDays) return "critical";
         if (days <= highDays) return "high";
-        if (Boolean.TRUE.equals(dto.getWarning())) return "warning";
+        // Uyarı: kontrolün sakladığı bayrak (global warning-days) VEYA bu alanın tier eşiği — tier'ı daha
+        // erken uyaran alan kartta da sarı görünsün, alarm e-postasıyla çelişmesin.
+        if (days <= warnDays || Boolean.TRUE.equals(dto.getWarning())) return "warning";
         return "valid";
     }
 
@@ -732,15 +734,15 @@ public class CertificateService {
         List<CertificateDto> syT2All  = syAll.stream().filter(c -> Integer.valueOf(2).equals(tierMap.get(c.getDomain()))).toList();
         List<CertificateDto> syT2Warn = syWarn.stream().filter(c -> Integer.valueOf(2).equals(tierMap.get(c.getDomain()))).toList();
 
-        int[] th = thresholdDays(); // eşik tek okuma → 4 alt-grup aynı değeri kullanır
+        ThresholdResolution th = thresholdResolution(); // eşik tek okuma → 4 alt-grup aynı çözümü kullanır
         Map<String, Object> res = new LinkedHashMap<>();
         res.put("mode",        "personal");
         res.put("team_id",     teamId);
         res.put("team_name",   teamName != null ? teamName : "");
-        res.put("sy_stats",    computeStats(syAll, syWarn, th[0], th[1]));
-        res.put("ug_stats",    computeStats(ugAll, ugWarn, th[0], th[1]));
-        res.put("sy_t1_stats", computeStats(syT1All, syT1Warn, th[0], th[1]));
-        res.put("sy_t2_stats", computeStats(syT2All, syT2Warn, th[0], th[1]));
+        res.put("sy_stats",    computeStats(syAll, syWarn, th, tierMap));
+        res.put("ug_stats",    computeStats(ugAll, ugWarn, th, tierMap));
+        res.put("sy_t1_stats", computeStats(syT1All, syT1Warn, th, tierMap));
+        res.put("sy_t2_stats", computeStats(syT2All, syT2Warn, th, tierMap));
         return res;
     }
 
@@ -772,7 +774,7 @@ public class CertificateService {
         for (CertificateDto c : allWarnings) warnByDomain.putIfAbsent(c.getDomain(), c);
 
         Map<String, Integer> tierMap = buildTierMap();
-        int[] th = thresholdDays(); // eşik tek okuma → döngüde her team için DB okunmaz
+        ThresholdResolution th = thresholdResolution(); // eşik tek okuma → döngüde her team için DB okunmaz
         List<Map<String, Object>> result = new ArrayList<>();
         // findAll() yerine sadece aktif team'leri çek — DB tarafında WHERE active=true
         for (Team team : teamRepo.findByActiveTrueOrderByNameAsc()) {
@@ -796,10 +798,10 @@ public class CertificateService {
             Map<String, Object> entry = new HashMap<>();
             entry.put("team_id",   tid);
             entry.put("team_name", team.getName());
-            entry.put("sy_stats",  computeStats(syAll, syWarn, th[0], th[1]));
-            entry.put("ug_stats",  computeStats(ugAll, ugWarn, th[0], th[1]));
-            entry.put("sy_t1_stats", computeStats(syT1All, syT1Warn, th[0], th[1]));
-            entry.put("sy_t2_stats", computeStats(syT2All, syT2Warn, th[0], th[1]));
+            entry.put("sy_stats",  computeStats(syAll, syWarn, th, tierMap));
+            entry.put("ug_stats",  computeStats(ugAll, ugWarn, th, tierMap));
+            entry.put("sy_t1_stats", computeStats(syT1All, syT1Warn, th, tierMap));
+            entry.put("sy_t2_stats", computeStats(syT2All, syT2Warn, th, tierMap));
             result.add(entry);
         }
         return Map.of("mode", "all_teams", "teams", result);
@@ -830,16 +832,26 @@ public class CertificateService {
         return computeStats(self.getAllLatest(), self.getWarnings());
     }
 
-    /** Aktif eşik (kritik/yüksek gün) — TEK okuma; 4-arg computeStats'e geçirilir. */
-    private int[] thresholdDays() {
-        var t = alertThresholdRepo.findFirstByActiveTrue();
-        return new int[]{ t.map(AlertThreshold::getCriticalDays).orElse(7),
-                          t.map(AlertThreshold::getHighDays).orElse(15) };
+    /** Tier bazlı eşik çözümü — TEK okuma; computeStats'e geçirilir (2026-09-20). */
+    private ThresholdResolution thresholdResolution() {
+        return ThresholdResolution.load(alertThresholdRepo, null);
     }
 
     private Map<String, Object> computeStats(List<CertificateDto> all, List<CertificateDto> warnings) {
-        int[] th = thresholdDays();
-        return computeStats(all, warnings, th[0], th[1]);
+        return computeStats(all, warnings, thresholdResolution(), buildTierMap());
+    }
+
+    /** Alan başına eşik: tier haritası + çözüm (varsayılan/tier satırı). */
+    private Map<String, Object> computeStats(List<CertificateDto> all, List<CertificateDto> warnings,
+                                             ThresholdResolution th, Map<String, Integer> tierMap) {
+        return computeStats(all, warnings, d -> th.days(tierMap.get(d)));
+    }
+
+    /** Sabit eşikli çözüm (eski imza — tier'sız kullanım ve testler). */
+    private Map<String, Object> computeStats(List<CertificateDto> all, List<CertificateDto> warnings,
+                                             int critDays, int highDays) {
+        int[] fixed = {critDays, highDays, 30};
+        return computeStats(all, warnings, d -> fixed);
     }
 
     /**
@@ -848,7 +860,7 @@ public class CertificateService {
      * dışarıdan verilir ki toplu (per-team) çağrılarda her seferinde DB okunmasın.
      */
     private Map<String, Object> computeStats(List<CertificateDto> all, List<CertificateDto> warnings,
-                                             int critDays, int highDays) {
+                                             java.util.function.Function<String, int[]> daysFor) {
         long errors = 0, criticalCount = 0, highCount = 0, expiring30 = 0, expiring7 = 0, expired = 0;
         long expiredActive = 0;   // hatasız + d<0: warningOnly türetiminde düşülür (O1a yan etkisi)
         List<String> warningDomains  = new ArrayList<>();
@@ -862,6 +874,8 @@ public class CertificateService {
             warnDomainSet.add(c.getDomain());
             boolean isError = "error".equals(c.getStatus());
             Integer d = c.getDaysRemaining();
+            int[] td = daysFor.apply(c.getDomain());
+            int critDays = td[0], highDays = td[1];
             if (isError) { errors++; errorDomains.add(c.getDomain()); }
             if (!isError && d != null) {
                 // O1a: alt sınır ŞART — dolmuş (d<0) sertifika hem critical_count'a hem expired'a

@@ -213,8 +213,9 @@ public class EscalationService {
                    TYPE_PAGE_DOWN, TYPE_SCRIPTED_FAIL, TYPE_PAGESPEED_DOWN);
 
     public void processResults(List<Map<String, Object>> results) {
-        AlertThreshold threshold = thresholdRepo.findFirstByActiveTrue()
-                .orElseGet(this::defaultThreshold);
+        // Tier bazlı eşik (2026-09-20): tablo BİR kez okunur, alan başına envanter tier'ıyla çözülür.
+        ThresholdResolution thresholds = ThresholdResolution.load(thresholdRepo, defaultThreshold());
+        AlertThreshold threshold = thresholds.defaultThreshold();
         int reAlertIv = threshold.getReAlertIntervalHours() != null ? threshold.getReAlertIntervalHours() : 24;
 
         // ── BATCH ÖN YÜKLEME (N+1 önleme) ──────────────────────────────────
@@ -260,11 +261,12 @@ public class EscalationService {
             if (alertTypes.isEmpty()) continue;
 
             for (String alertType : alertTypes) {
-                String alertLevel = determineAlertLevel(result, alertType, threshold);
-                if (alertLevel == null) continue;
-
                 // Route alert to the team that owns this cert — batch'ten lookup
                 var inventoryOpt  = Optional.ofNullable(invByDomain.get(domain));
+                Integer domainTier = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTier).orElse(null);
+                String alertLevel = determineAlertLevel(result, alertType, thresholds.forTier(domainTier));
+                if (alertLevel == null) continue;
+
                 Long domainTeamId = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
                 Long ugTeamId     = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null);
 

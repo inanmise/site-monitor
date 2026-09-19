@@ -84,6 +84,7 @@ public class AdminController {
     /** Envantere secilen bildirim grubunun sahipligini dogrulamak icin. */
     private final com.sitemonitor.repository.NotificationGroupRepository inventoryGroupRepo;
     private final AlertThresholdRepository thresholdRepo;
+    private final com.sitemonitor.service.ThresholdPreviewService thresholdPreviewService;   // tier eşik önizleme (2026-09-20)
     private final EscalationContactRepository contactRepo;
     private final AlertEventRepository alertEventRepo;
     private final NotificationLogRepository notificationLogRepo;
@@ -1147,9 +1148,76 @@ public class AdminController {
         requireAdmin(session);
         requirePerm(session, "thresholds.edit", "edit");
         t.setId(null);
+        validateThreshold(t.getTier(), t.getWarningDays(), t.getHighDays(), t.getCriticalDays());
+        // Tier başına TEK aktif satır; varsayılan (tier'sız) da tek: ikinci satır çözümde sessizce yok sayılırdı.
+        List<AlertThreshold> same = t.getTier() == null
+                ? thresholdRepo.findByActiveTrueAndTierIsNullOrderByIdAsc()
+                : thresholdRepo.findByTierOrderByIdAsc(t.getTier());
+        if (!same.isEmpty()) {
+            throw new IllegalStateException(t.getTier() == null
+                    ? com.sitemonitor.util.Msg.t("Varsayılan eşik zaten var; onu düzenleyin.", "A default threshold already exists; edit it instead.")
+                    : com.sitemonitor.util.Msg.t("Bu tier için eşik zaten var; onu düzenleyin.", "A threshold for this tier already exists; edit it instead."));
+        }
+        // Ad: entity varsayılanı "default" — tier satırı o adla kalmasın (listede ayırt edilemez).
+        if (t.getName() == null || t.getName().isBlank() || (t.getTier() != null && "default".equals(t.getName()))) {
+            t.setName(t.getTier() == null ? "default" : "tier-" + t.getTier());
+        }
+        if (t.getActive() == null) t.setActive(true);
         AlertThreshold saved = thresholdRepo.save(t);
-        auditService.recordAction("THRESHOLD_CREATE", session, "ALERT_THRESHOLD", String.valueOf(saved.getId()), saved.getName(), null);
+        thresholdPreviewService.afterThresholdChange();
+        auditService.recordAction("THRESHOLD_CREATE", session, "ALERT_THRESHOLD", String.valueOf(saved.getId()), saved.getName(),
+                com.sitemonitor.service.AuditDetail.of("tier", saved.getTier(), "warning_days", saved.getWarningDays(),
+                        "high_days", saved.getHighDays(), "critical_days", saved.getCriticalDays()));
         return ok(Map.of("data", saved));
+    }
+
+    /**
+     * Eşik satırı sil — YALNIZ tier satırları (2026-09-20). Varsayılan satır silinemez: tüm çözüm ona düşer.
+     */
+    @DeleteMapping("/thresholds/{id}")
+    public ResponseEntity<Map<String, Object>> deleteThreshold(@PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
+        requirePerm(session, "thresholds.edit", "edit");
+        AlertThreshold existing = thresholdRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Threshold not found: " + id));
+        if (existing.getTier() == null) {
+            throw new IllegalStateException(com.sitemonitor.util.Msg.t(
+                    "Varsayılan eşik silinemez.", "The default threshold cannot be deleted."));
+        }
+        thresholdRepo.delete(existing);
+        thresholdPreviewService.afterThresholdChange();
+        auditService.recordAction("THRESHOLD_DELETE", session, "ALERT_THRESHOLD", String.valueOf(id), existing.getName(),
+                com.sitemonitor.service.AuditDetail.of("tier", existing.getTier()));
+        return ok(Map.of("data", Map.of("deleted", true)));
+    }
+
+    /**
+     * Eşik etki önizlemesi (2026-09-20): "bu değerlerle bugün kaç alan hangi seviyede olur?" — kalıcı yazma yok.
+     * Kapsam satırın kapsamıyla aynı (tier satırı: o tier; varsayılan: tier'sız + kendi satırı olmayan tier'lar).
+     */
+    @GetMapping("/thresholds/preview")
+    public ResponseEntity<Map<String, Object>> previewThreshold(
+            @RequestParam(required = false) Integer tier,
+            @RequestParam int warning, @RequestParam int high, @RequestParam int critical,
+            HttpSession session) {
+        requirePerm(session, "thresholds.read", "view");
+        validateThreshold(tier, warning, high, critical);
+        return ok(Map.of("data", thresholdPreviewService.preview(tier, warning, high, critical)));
+    }
+
+    /** Gün sırası kritik ≤ yüksek ≤ uyarı ve hepsi ≥ 0; tier 1..4 ya da boş. Ters sıra bir seviyeyi ulaşılmaz kılar. */
+    private static void validateThreshold(Integer tier, Integer warning, Integer high, Integer critical) {
+        if (tier != null && (tier < 1 || tier > 4)) {
+            throw new IllegalArgumentException(com.sitemonitor.util.Msg.t("Tier 1–4 arasında olmalı", "Tier must be between 1 and 4"));
+        }
+        if (warning == null || high == null || critical == null) return;   // PUT kısmi gövde: null = mevcut değer kalır
+        if (warning < 0 || high < 0 || critical < 0) {
+            throw new IllegalArgumentException(com.sitemonitor.util.Msg.t("Gün değerleri negatif olamaz", "Day values cannot be negative"));
+        }
+        if (!(critical <= high && high <= warning)) {
+            throw new IllegalArgumentException(com.sitemonitor.util.Msg.t(
+                    "Sıra bozuk: kritik ≤ yüksek ≤ uyarı olmalı", "Out of order: critical ≤ high ≤ warning is required"));
+        }
     }
 
     @PutMapping("/thresholds/{id}")
@@ -1161,6 +1229,11 @@ public class AdminController {
                 .orElseThrow(() -> new NoSuchElementException("Threshold not found: " + id));
         java.util.Map<String, Object> _before = AuditDiff.snapshot(existing,
                 "name", "warningDays", "highDays", "criticalDays", "reAlertIntervalHours", "active");
+        // Birleşik değerlerle sıra denetimi: kısmi gövde mevcut değerlerle tamamlanır (tier değiştirilemez).
+        validateThreshold(existing.getTier(),
+                t.getWarningDays() != null ? t.getWarningDays() : existing.getWarningDays(),
+                t.getHighDays() != null ? t.getHighDays() : existing.getHighDays(),
+                t.getCriticalDays() != null ? t.getCriticalDays() : existing.getCriticalDays());
         existing.setName(t.getName() != null ? t.getName() : existing.getName());
         existing.setWarningDays(t.getWarningDays() != null ? t.getWarningDays() : existing.getWarningDays());
         existing.setHighDays(t.getHighDays() != null ? t.getHighDays() : existing.getHighDays());
@@ -1169,6 +1242,7 @@ public class AdminController {
                 ? t.getReAlertIntervalHours() : existing.getReAlertIntervalHours());
         existing.setActive(t.getActive() != null ? t.getActive() : existing.getActive());
         AlertThreshold saved = thresholdRepo.save(existing);
+        thresholdPreviewService.afterThresholdChange();   // kart seviyeleri/istatistik eşikten türer (2026-09-20)
         auditService.recordAction("THRESHOLD_UPDATE", session, "ALERT_THRESHOLD", String.valueOf(id), saved.getName(),
                 AuditDiff.diff(_before, AuditDiff.snapshot(saved,
                         "name", "warningDays", "highDays", "criticalDays", "reAlertIntervalHours", "active")));
