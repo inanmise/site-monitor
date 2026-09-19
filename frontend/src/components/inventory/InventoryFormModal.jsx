@@ -172,7 +172,11 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
     return () => { alive = false }
   }, [form.team_id])
 
-  function f(field, val) { setForm(prev => ({ ...prev, [field]: val })) }
+  function f(field, val) { setForm(prev => ({ ...prev, [field]: val })); if (msg) setMsg(null) }
+
+  // Meşgul evresi TEK yerde, başlıkta anlatılır (düğme metinleri sabit kalır — bkz. alt bar notu).
+  const busyLabel = saving ? t('inv.saving') : firstRun ? t('inv.saveRunning')
+    : testing ? t('inv.testing') : running ? t('inv.running') : null
 
   function validate() {
     if (!form.domain.trim()) return t('inv.formDomain') + ' zorunlu'
@@ -259,9 +263,9 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
   async function save() {
     const err = validate()
     if (err) {
+      // Mesaj Kaydet düğmesinin hemen üstünde YÜZER (gövdeyi itmez, başa kaydırmaz): gözün zaten
+      // olduğu yerde belirir ve form bir piksel oynamaz.
       setMsg(err)
-      // Inline hata mesajı modal'ın üstünde — kullanıcı uzun form'da kaçırmasın
-      formGridRef.current?.scrollTo?.({ top: 0, behavior: 'smooth' })
       return
     }
 
@@ -371,9 +375,14 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
     // Dış (overlay) tıklamada KAPANMAZ — girilen veri kaybolmasın; yalnız İptal/Kaydet kapatır.
     <div className="modal-overlay">
       <div className="modal-box modal-wide" onClick={(e) => e.stopPropagation()}>
-        <h3>
-          {mode === 'edit' ? t('inv.editTitle') : t('inv.addTitle')}
-          {isDuplicate && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}
+        <h3 className="modal-wide-title">
+          <span>
+            {mode === 'edit' ? t('inv.editTitle') : t('inv.addTitle')}
+            {isDuplicate && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}
+          </span>
+          {/* "Kaydediliyor… / İlk kontrol koşuyor… N sn" şeridi BAŞLIKTA (CertificateModal ile aynı yer):
+              alt barda düğmelerin arasına girince satır taşıyor ve her düğme kayıyordu (2026-09-19). */}
+          <CheckRunningStrip running={!!busyLabel} label={busyLabel} />
         </h3>
         {isDuplicate && <div className="mon-dup-hint">{t('inv.duplicateHint')}</div>}
 
@@ -554,9 +563,13 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
 
         </div>
 
-        {msg && <div className="alert-msg" style={{ marginTop: 10 }}>{msg}</div>}
+        {msg && (
+          <div className="modal-wide-float">
+            <AlertBanner tone="danger" role="alert" onDismiss={() => setMsg(null)} dismissLabel={t('app.close')}>{msg}</AlertBanner>
+          </div>
+        )}
 
-        {showScrollHint && (
+        {showScrollHint && !msg && (
           <button
             type="button"
             className="modal-scroll-hint"
@@ -604,16 +617,19 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
         {/* Alt bar — dokuz izleme formunun KANONİK düzeni (bkz. HttpMonitorPage):
             [Test et (solda)] … [Sil] [İptal] [Kaydet]. Envanter formu bu düzene uymayan
             tek düzenleme formuydu. */}
+        {/* Düğme METİNLERİ SABİT (Kaydet / Test et / Çalıştır): "Kaydediliyor…" → "İlk kontrol
+            koşuyor…" gibi uzayan metinler + araya giren şerit satırı 723 px'e taşırıyor ve Test et
+            modalın dışına kayıyordu. Evre başlıktaki şeritte; düğme kilitli + aria-busy. */}
         <div className="modal-actions">
           <button className="btn btn-secondary" style={{ marginRight: 'auto' }} onClick={runTest}
-            disabled={testing || !form.domain.trim()}>
-            <FlaskConical size={14} />{testing ? t('inv.testing') : t('inv.test')}
+            disabled={testing || !form.domain.trim()} aria-busy={testing || undefined}>
+            <FlaskConical size={14} />{t('inv.test')}
           </button>
           {/* Çalıştır ve Sil YALNIZ kayıtlı kayıtta: yeni/kopya modunda henüz ortada bir kayıt yok. */}
           {savedDomain && (
-            <button className="btn btn-secondary" onClick={runNow} disabled={running}
+            <button className="btn btn-secondary" onClick={runNow} disabled={running} aria-busy={running || undefined}
               title={t('inv.runTitle', savedDomain)}>
-              <RefreshCw size={14} />{running ? t('inv.running') : t('inv.run')}
+              <RefreshCw size={14} />{t('inv.run')}
             </button>
           )}
           {savedDomain && canDelete && (
@@ -621,13 +637,10 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
               <Trash2 size={14} />{t('inv.delete')}
             </button>
           )}
-          {/* Otomatik ilk kontrolün geri bildirimi — kartlardaki şeridin AYNISI. Kontrol canlı bir
-              TLS el sıkışması ve saniyeler sürebiliyor; şerit olmadan form "takıldı" gibi durur. */}
-          <CheckRunningStrip running={firstRun} />
-          <button className="btn btn-secondary" onClick={onClose} disabled={firstRun}>{t('inv.cancel')}</button>
-          <button className="btn btn-primary" onClick={save}
+          <button className="btn btn-secondary" onClick={onClose} disabled={saving || firstRun}>{t('inv.cancel')}</button>
+          <button className="btn btn-primary" onClick={save} aria-busy={(saving || firstRun) || undefined}
             disabled={saving || firstRun || !form.domain.trim() || !form.team_id}>
-            {saving ? t('inv.saving') : firstRun ? t('inv.saveRunning') : t('inv.save')}
+            {t('inv.save')}
           </button>
         </div>
       </div>

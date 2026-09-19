@@ -97,6 +97,47 @@ public class PageCheckerService {
         return checkSinglePage(url, timeoutMs, 2000, 5, Excludes.EMPTY, System.currentTimeMillis() + 60_000L);
     }
 
+    /**
+     * YALNIZ karışık içerik taraması: ana sayfa TEK istekle çekilir, kaynak envanteri çıkarılır ve
+     * {@code http://} yüklenen kaynaklar sayılır. Alt kaynaklara HİÇ istek atılmaz.
+     *
+     * <p><b>Neden ayrı (2026-09-19):</b> sertifika sağlık tazelemesi ("Kaydet" sonrası ilk kontrol)
+     * karışık içerik satırı için {@link #test} çağırıyordu; o yol ana sayfanın yüz küsur alt kaynağını
+     * 5'li eşzamanlılıkla, her biri 8 sn zaman aşımıyla, 60 sn deadline'a kadar TEK TEK doğruluyordu.
+     * Pod'dan erişilemeyen CDN/üçüncü taraf kaynaklarda bu doğrulama deadline'a dayanıyor ve kullanıcı
+     * "İlk kontrol koşuyor…" şeridinde bir dakikaya yakın bekliyordu — oysa karışık içerik kararı
+     * ({@link #isMixedContent}) URL şemasından verilir, tek bir alt kaynak isteği gerektirmez.
+     * Sayfa izlemesinin kırık link / yavaş kaynak denetimi bu yoldan etkilenmez ({@link #test} olduğu gibi).
+     */
+    public PageCheckResult scanMixedContent(String url, int timeoutMs) {
+        if (!com.sitemonitor.util.MonitorUrls.isCheckable(url)) {
+            return new PageCheckResult("CONFIG_ERROR", false, null, 0L, 0, 0, 0, 0, 0, null, null,
+                    com.sitemonitor.util.MonitorUrls.CONFIG_ERROR_MSG, List.of());
+        }
+        long start = System.currentTimeMillis();
+        String rootHost = hostOf(url);
+        PageFetchCore.Fetch main = fetchFollowing(url, "GET", true, timeoutMs);
+        if (main.blocked() || main.body() == null || main.status() >= 400 || main.status() == 0) {
+            long ms = System.currentTimeMillis() - start;
+            String err = main.error() != null ? main.error()
+                    : (main.status() >= 400 ? "ana sayfa HTTP " + main.status() : "ana sayfa alınamadı");
+            return new PageCheckResult("DOWN", false, main.status() == 0 ? null : main.status(), ms,
+                    0, 0, 0, 0, 1, null, null, err, List.of());
+        }
+        boolean pageHttps = url.toLowerCase(Locale.ROOT).startsWith("https://");
+        List<Resource> resources = inventory(main.body(), url, url, rootHost, Excludes.EMPTY);
+        List<ResourceIssue> issues = new ArrayList<>();
+        for (Resource r : resources) {
+            if (isMixedContent(pageHttps, r.type(), r.url())) {
+                issues.add(new ResourceIssue(r.url(), r.type(), r.sourcePage(), "MIXED_CONTENT",
+                        sameSite(hostOf(r.url()), rootHost), null, null));
+            }
+        }
+        long ms = System.currentTimeMillis() - start;
+        return summarize(issues, resources.size(), 1, main.status(), ms, sha256(main.body()),
+                (long) main.body().length);
+    }
+
     // ── SINGLE_PAGE ──────────────────────────────────────────────────────────
     private PageCheckResult checkSinglePage(String url, int timeoutMs, int slowMs, int concurrency,
                                             Excludes excludes, long deadline) {

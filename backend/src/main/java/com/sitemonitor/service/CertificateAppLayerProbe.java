@@ -175,7 +175,9 @@ public class CertificateAppLayerProbe {
         if (fromMonitor != null) return new ProbeOutcome(fromMonitor, null);
 
         String url = "https://" + domain + (port == 443 ? "" : ":" + port) + "/";
-        var result = pageChecker.test(url, PAGE_TIMEOUT_MS);
+        // scanMixedContent: yalnız ana sayfa çekilir, alt kaynaklar DOĞRULANMAZ (2026-09-19). test(...)
+        // yüz küsur alt kaynağı tek tek deniyor ve "İlk kontrol koşuyor…" bir dakikaya dayanıyordu.
+        var result = pageChecker.scanMixedContent(url, PAGE_TIMEOUT_MS);
         if (result == null) return new ProbeOutcome(UNKNOWN, "sayfa kontrolü sonuç döndürmedi");
         if (!result.mainReachable()) {
             String why = result.error() != null ? result.error()

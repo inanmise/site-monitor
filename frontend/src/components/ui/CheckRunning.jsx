@@ -78,14 +78,15 @@ export function CheckNowButton({ running, disabled, onClick, title, className = 
  * orada olduğu nokta. Çalışmıyorken HİÇBİR ŞEY render etmez, böylece kart yüksekliği
  * değişmez ve liste zıplamaz.
  */
-export function CheckRunningStrip({ running }) {
+export function CheckRunningStrip({ running, label }) {
   const t = useT()
   const seconds = useElapsedSeconds(running)
   if (!running) return null
   return (
     <span className="mon-running" role="status" aria-live="polite">
       <Spinner size={11} inline decorative />
-      <span className="mon-running-lbl">{t('mon.checkRunning')}</span>
+      {/* `label`: aynı şerit başka bir evreyi de anlatabilir ("Kaydediliyor…", "İlk kontrol koşuyor…"). */}
+      <span className="mon-running-lbl">{label || t('mon.checkRunning')}</span>
       {/* Saniye sayacı "askıda mı kaldı" sorusunu cevaplar: rakam ilerliyorsa iş sürüyor. */}
       <span className="mon-running-sec">{seconds} {t('mon.secShort')}</span>
     </span>
