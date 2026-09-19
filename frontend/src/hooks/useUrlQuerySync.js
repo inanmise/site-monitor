@@ -26,7 +26,7 @@ export const PAGE_STATE_PARAMS = ['group', 'tag', 'team', 'q', 'stat', 'sort', '
  * kullanıcı başka bir sekmeye geçip geri döndüğünde kendisinin kurmadığı bir filtreyle
  * karşılaşıyor, boş listeyi "kayıt yok" sanıyordu.
  */
-export const PAGE_STATE_PREFIXES = ['a_', 'r_', 'd_', 'i_', 'f_', 'u_', 'c_', 'w_']   // a_: Denetim Kaydı · r_: Veri Saklama koşum listesi · d_: Dağıtım geçmişi · i_: Envanter süzgeçleri · f_: Vade takvimi süzgeçleri · u_: Sistem Sağlığı kullanıcı etkinliği · c_: Tüm Sertifikalar tablosu · w_: Haftalık Raporlar
+export const PAGE_STATE_PREFIXES = ['a_', 'r_', 'd_', 'i_', 'f_', 'u_', 'c_', 'w_', 'm_', 'p_']   // a_: Denetim Kaydı · r_: Veri Saklama koşum listesi · d_: Dağıtım geçmişi · i_: Envanter süzgeçleri · f_: Vade takvimi süzgeçleri · u_: Sistem Sağlığı kullanıcı etkinliği · c_: Tüm Sertifikalar tablosu · w_: Haftalık Raporlar · m_: SMTP Gönderim Logu · p_: Webhook Push Gönderim Logu
 
 /** Mount'ta URL'den string param okur (useState initializer'ında kullanılır — flicker yok). */
 export function readUrlParam(key, fallback = null) {

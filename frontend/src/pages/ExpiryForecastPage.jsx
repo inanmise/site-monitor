@@ -10,6 +10,7 @@ import { api, formatDate, formatDateOnly, localDayKey } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import BrandLogo from '../components/BrandLogo.jsx'
 import AlertBanner from '../components/ui/AlertBanner.jsx'
+import PlanModal from '../components/RenewalPlanModal.jsx'   // Genel Bakış kartıyla ortak (2026-09-19)
 import StatusBlock from '../components/ui/StatusBlock.jsx'
 import SearchableSelect from '../components/ui/SearchableSelect.jsx'
 import ModalShell from '../components/ui/ModalShell.jsx'
@@ -284,37 +285,6 @@ function RenewalLoadChart({ certs, t, locale }) {
       </div>
       <p className="fc-load-note">{t('forecast.loadNote')}</p>
     </div>
-  )
-}
-
-// ── Plan modalı (#6) ──────────────────────────────────────────────────────────────────────────────
-function PlanModal({ row, onClose, onSaved, onCleared }) {
-  const t = useT(); const toast = useToast()
-  const [date, setDate] = useState(row.renewal_planned_at || row.renew_by_key || '')
-  const [note, setNote] = useState(row.renewal_planned_note || '')
-  const [busy, setBusy] = useState(false)
-  async function save() {
-    setBusy(true)
-    try { const r = await api.forecastPlan(row.domain, date, note); if (r?.success) { toast.success(t('forecast.planSaved', row.domain)); onSaved(r.data) } else toast.error(r?.error || t('forecast.planError')) }
-    catch (e) { toast.error(e?.message || t('forecast.planError')) } finally { setBusy(false) }
-  }
-  async function clear() {
-    setBusy(true)
-    try { const r = await api.forecastUnplan(row.domain); if (r?.success) { toast.success(t('forecast.planCleared', row.domain)); onCleared(r.data) } else toast.error(r?.error || t('forecast.planError')) }
-    catch (e) { toast.error(e?.message || t('forecast.planError')) } finally { setBusy(false) }
-  }
-  return (
-    <ModalShell open onClose={onClose} title={t('forecast.planTitle', row.domain)} icon={CalendarPlus}
-      footer={<>
-        {row.renewal_planned_at && <button type="button" className="btn btn-danger" disabled={busy} onClick={clear}>{t('forecast.planClear')}</button>}
-        <button type="button" className="btn btn-secondary" onClick={onClose}>{t('inv.cancel')}</button>
-        <button type="button" className="btn btn-primary" disabled={busy || !date} onClick={save}>{t('forecast.planSave')}</button>
-      </>}>
-      <p className="field-hint">{t('forecast.planHint', row.expiry_key ? formatDateOnly(row.expiry_key) : '—', row.renew_by_key ? formatDateOnly(row.renew_by_key) : '—')}</p>
-      <label className="full-width"><span>{t('forecast.planDate')}</span><input type="date" className="input" value={date} onChange={(e) => setDate(e.target.value)} /></label>
-      {date && (isWeekend(date) || isHoliday(date)) && <AlertBanner tone="warning">{t('forecast.planOffDay', formatDateOnly(lastBusinessDay(date)))}</AlertBanner>}
-      <label className="full-width"><span>{t('forecast.planNote')}</span><textarea className="input" rows={3} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} placeholder={t('forecast.planNotePh')} /></label>
-    </ModalShell>
   )
 }
 

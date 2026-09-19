@@ -13,6 +13,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.mockito.Mockito.when;
@@ -141,9 +142,32 @@ class SystemControllerTest {
     }
 
     @Test
-    @DisplayName("GET /api/admin/system/user-activity as USER returns 403 (admin/audit-only)")
-    void userActivity_asUser_returns403() throws Exception {
+    @DisplayName("GET /api/admin/system/user-activity as USER returns 200 (2026-09-19: Sistem Sağlığı her kademeye açık, salt-okuma)")
+    void userActivity_asUser_returns200() throws Exception {
         mvc.perform(get("/api/admin/system/user-activity").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("user-activity: sicil (employee_id) yalnız global ADMIN'e döner — USER payload'ında hiç yok (arayüz maskesi yetmez)")
+    void userActivity_masksEmployeeIdForNonGlobalAdmin() throws Exception {
+        when(userActivityService.getOverview()).thenReturn(Map.of("summary", Map.of("active_count", 1),
+                "active_users", List.of(Map.of("username", "u1", "employee_id", "12345", "email", "u1@example.com"))));
+        mvc.perform(get("/api/admin/system/user-activity").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.active_users[0].username").value("u1"))
+                .andExpect(jsonPath("$.data.active_users[0].employee_id").doesNotExist());
+        mvc.perform(get("/api/admin/system/user-activity").session(adminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.active_users[0].employee_id").value("12345"));
+    }
+
+    @Test
+    @DisplayName("POST anomaly ack as USER returns 403 (yazma: admin/AUDIT'te kalır)")
+    void ackAnomaly_asUser_returns403() throws Exception {
+        mvc.perform(post("/api/admin/system/user-activity/anomalies/7/ack").session(userSession())
+                        .contentType("application/json").content("{\"acknowledge\":true}"))
                 .andExpect(status().isForbidden());
     }
 
@@ -156,10 +180,11 @@ class SystemControllerTest {
     }
 
     @Test
-    @DisplayName("GET /api/admin/system/db-analytics as USER returns 403 (admin/audit-only)")
-    void dbAnalytics_asUser_returns403() throws Exception {
+    @DisplayName("GET /api/admin/system/db-analytics as USER returns 200 (2026-09-19: her kademe, salt-okuma)")
+    void dbAnalytics_asUser_returns200() throws Exception {
         mvc.perform(get("/api/admin/system/db-analytics?days=7").session(userSession()))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
     }
 
     @Test
@@ -218,14 +243,14 @@ class SystemControllerTest {
     }
 
     @Test
-    @DisplayName("GET /user-activity/user/{username} AUDIT görebilir; limit 100'e kırpılır")
+    @DisplayName("GET /user-activity/user/{username} AUDIT ve USER görebilir (2026-09-19); limit 100'e kırpılır")
     void userTimeline_asAudit() throws Exception {
         when(userActivityService.userTimeline(eq("bob"), anyInt())).thenReturn(Map.of("username", "bob", "logins", 3L));
         mvc.perform(get("/api/admin/system/user-activity/user/bob?limit=500").session(auditSession()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.logins").value(3));
         verify(userActivityService).userTimeline("bob", 100);
-        mvc.perform(get("/api/admin/system/user-activity/user/bob").session(userSession())).andExpect(status().isForbidden());
+        mvc.perform(get("/api/admin/system/user-activity/user/bob").session(userSession())).andExpect(status().isOk());   // 2026-09-19: her kademe (salt-okuma)
     }
 
     @Test

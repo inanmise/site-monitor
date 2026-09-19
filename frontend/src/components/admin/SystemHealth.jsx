@@ -1,16 +1,18 @@
-import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react'
 import { dateLocale, formatPercent } from '../../i18n/dateLocale.js'
 import { api, formatDate, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval'
-import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail, ChevronRight, Check, Server, Database, Globe, Cpu, ChevronDown, Users } from 'lucide-react'
+import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail, ChevronRight, Check, Server, Database, Globe, Cpu, ChevronDown, Users, Webhook } from 'lucide-react'
 import MiniChart from './MiniChart'
 import ChartModal from './ChartModal'
 import HeartbeatHistoryModal from './HeartbeatHistoryModal'
+import SmtpLogView from './SmtpLogView.jsx'   // SMTP Gönderim Logu v2 — tam sayfa alt görünüm (2026-09-19)
+import PushLogView from './PushLogView.jsx'   // Webhook Push Gönderim Logu — tam sayfa alt görünüm (2026-09-19)
 import UserActivityPanel from './useractivity/UserActivityPanel.jsx'   // Kullanıcı / Oturum paneli (2026-09-13 zenginleştirme)
 
-import { mailPreviewSrcDoc, mailLogoVariant } from '../../utils/mailPreview.js'
+import { mailPreviewSrcDoc } from '../../utils/mailPreview.js'
 import { Spinner, ProgressBar, LoadingBlock } from '../ui/Progress.jsx'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import { readUrlParam } from '../../hooks/useUrlQuerySync.js'
@@ -58,17 +60,6 @@ function waKind(status) {
   return 'SKIPPED' // NO_RECIPIENT vb.
 }
 
-function triggerLabel(trigger, t) {
-  const map = {
-    INITIAL:       t('health.triggerInitial'),
-    ESCALATION:    t('health.triggerEscalation'),
-    DAILY_REALERT: t('health.triggerDailyRealert'),
-    MANUAL:        t('health.triggerManual'),
-    RESOLUTION:    t('health.triggerResolution'),
-  }
-  return map[trigger] ?? trigger
-}
-
 // Birimler sözlükten (QA 2026-09-12, ISSUE-010): "3.1 sn" / "1 dk" İngilizce arayüze sızıyordu.
 function fmsDuration(ms, t) {
   if (!ms || ms <= 0) return '—'
@@ -93,9 +84,10 @@ function isoWeekRange(year, weekNo) {
 
 export default function SystemHealth({ systemRole, globalAdmin = false, username, preFilterDomain, openSmtpModalOnLoad, onSmtpPreFilterConsumed }) {
   const isAdmin = systemRole === 'ADMIN'
-  // Kullanıcı/oturum izleme yalnız global admin veya AUDIT'e açık (backend requireSystemRead ile aynı).
-  // Sağlık sekmesi herkese görünür; yetkisiz kullanıcıda bu bölümü hiç çağırma/gösterme → 403/"Yüklenemedi" olmaz.
-  const canViewUserActivity = !!globalAdmin || systemRole === 'AUDIT'
+  // 2026-09-19 (ürün kararı): Sistem Sağlığı'ndaki HER bölüm her kademeye açık — Kullanıcı/Oturum da. Bölüm salt-okuma;
+  // anomali onayı ve oturum sonlandırma (yazma) global admin / AUDIT'te kalır (canActUserActivity → panel düğmeleri).
+  const canViewUserActivity = true
+  const canActUserActivity = !!globalAdmin || systemRole === 'AUDIT'
   const t = useT()
   const { showConfirm } = useDialog()
   const [health, setHealth]           = useState(null)
@@ -118,7 +110,19 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
   const releasesVisible = openSection === 'releases'
   // Aynı sekmedeyken (Sistem Sağlığı açıkken çipten "Dağıtım geçmişi") App `sec` param'ını olayla iletir.
   useEffect(() => {
-    const on = (e) => { const s = e?.detail?.sec; if (s === 'releases' || s === 'users') setOpenSection(s) }
+    const on = (e) => {
+      const s = e?.detail?.sec; if (s === 'releases' || s === 'users') setOpenSection(s)
+      if (e?.detail?.view === 'smtp') {
+        const d = e.detail
+        setSmtpInitial({ range: d.m_range, status: d.m_status, domain: d.m_domain, recipient: d.m_rcpt, teamId: d.m_team, errorClass: d.m_cls, q: d.m_q })
+        setView('smtp')
+      }
+      if (e?.detail?.view === 'push') {
+        const d = e.detail
+        setPushInitial({ range: d.p_range, status: d.p_status, username: d.p_user, teamId: d.p_team, errorClass: d.p_cls, level: d.p_level, q: d.p_q })
+        setView('push')
+      }
+    }
     window.addEventListener('sm:tab-params', on)
     return () => window.removeEventListener('sm:tab-params', on)
   }, [])
@@ -144,11 +148,13 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [httpExpOpen])
-  const [smtpModal, setSmtpModal]     = useState(false)
-  const [smtpLogs, setSmtpLogs]       = useState(null)
-  const [smtpLoading, setSmtpLoading] = useState(false)
-  const [selectedLog, setSelectedLog] = useState(null)
-  const [smtpFilters, setSmtpFilters] = useState({ from: '', to: '', subject: '', status: '', domain: '' })
+  // SMTP Gönderim Logu v2 (2026-09-19): modal yerine TAM SAYFA alt görünüm (`?view=smtp`, süzgeçler `m_*`).
+  const [view, setView] = useState(() => { const v = readUrlParam('view', ''); return v === 'smtp' || v === 'push' ? v : null })
+  const [smtpInitial, setSmtpInitial] = useState(null)
+  // Webhook Push kartı (2026-09-19): SMTP kartıyla aynı iskelet — periyot pilleri, oran, CTA → view=push
+  const [pushPeriod, setPushPeriod] = useState('7d')
+  const [pushKpi, setPushKpi] = useState(null)
+  const [pushInitial, setPushInitial] = useState(null)
   // Haftalık erişilebilirlik gönderim logları (kart → modal)
   const [waLogsModal, setWaLogsModal]   = useState(false)
   const [waLogs, setWaLogs]             = useState(null)
@@ -247,19 +253,52 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
   // (Kaldırıldı) 60 sn'lik refreshPool auto-timer — 30 sn'lik `load` zaten getSystemHealth'i
   // (havuz dahil) çekiyordu; yinelenen poll'du. Manuel "havuz yenile" butonu (refreshPool) duruyor.
 
-  const openSmtpModal = useCallback(async (overrides) => {
-    setSmtpModal(true)
-    setSmtpLogs(null)
-    setSmtpFilters({ from: '', to: '', subject: '', status: '', domain: '', ...(overrides ?? {}) })
-    setSmtpLoading(true)
+  /** SMTP kartı / rozet / derin bağlantı → alt görünüm. overrides: { domain, status, range } (SmtpLogView initial). */
+  const openSmtpModal = useCallback((overrides) => {
+    const o = overrides && typeof overrides === 'object' && !('nativeEvent' in overrides) ? overrides : {}
+    // Kart periyodu (1d/7d/15d/30d) sayfanın aralığına taşınır; 15d karşılığı yok → 30d.
+    const range = o.range || ({ '1d': '24h', '7d': '7d', '15d': '30d', '30d': '30d' }[smtpPeriod] || '7d')
+    setSmtpInitial({ range, ...o })
+    setView('smtp')
     try {
-      const days = parseInt(smtpPeriod) || 30
-      const res = await api.admin.getSmtpLogs(days)
-      setSmtpLogs(res?.success ? res.data : [])
-    } finally {
-      setSmtpLoading(false)
-    }
+      const url = new URL(window.location.href)
+      url.searchParams.set('view', 'smtp')
+      window.history.replaceState(window.history.state, '', url.pathname + '?' + url.searchParams.toString() + url.hash)
+    } catch { /* history yoksay */ }
   }, [smtpPeriod])
+
+  const openPushView = useCallback((overrides) => {
+    const o = overrides && typeof overrides === 'object' && !('nativeEvent' in overrides) ? overrides : {}
+    setPushInitial({ range: pushPeriod, ...o })
+    setView('push')
+    try {
+      const url = new URL(window.location.href)
+      url.searchParams.set('view', 'push')
+      window.history.replaceState(window.history.state, '', url.pathname + '?' + url.searchParams.toString() + url.hash)
+    } catch { /* history yoksay */ }
+  }, [pushPeriod])
+
+  // Kart KPI'sı: seçili periyot için push özeti (60 sn önbellekli uç; görünürken 60 sn'de bir tazelenir)
+  const loadPushKpi = useCallback(async () => {
+    try {
+      const ms = pushPeriod === '24h' ? 24 * 3600e3 : pushPeriod === '30d' ? 30 * 86400e3 : 7 * 86400e3
+      const r = await api.admin.pushLog.summary({ from: new Date(Date.now() - ms).toISOString().slice(0, 19) })
+      setPushKpi(r?.success ? (r.data?.kpi || {}) : null)
+    } catch { setPushKpi(null) }
+  }, [pushPeriod])
+  useEffect(() => { loadPushKpi() }, [loadPushKpi])
+  useVisibleInterval(loadPushKpi, 60_000, false)
+
+  const closeSmtpView = useCallback(() => {
+    setView(null); setSmtpInitial(null); setPushInitial(null)
+    try {
+      const url = new URL(window.location.href)
+      url.searchParams.delete('view')
+      for (const k of [...url.searchParams.keys()]) if (k.startsWith('m_') || k.startsWith('p_')) url.searchParams.delete(k)
+      const qs = url.searchParams.toString()
+      window.history.replaceState(window.history.state, '', url.pathname + (qs ? `?${qs}` : '') + url.hash)
+    } catch { /* history yoksay */ }
+  }, [])
 
   const openWaLogsModal = useCallback(async () => {
     setWaLogsModal(true)
@@ -285,25 +324,6 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openSmtpModalOnLoad, preFilterDomain])
-
-  const closeSmtpModal = () => {
-    setSmtpModal(false)
-    setSmtpFilters({ from: '', to: '', subject: '', status: '', domain: '' })
-  }
-
-  const filteredSmtpLogs = useMemo(() => {
-    if (!smtpLogs) return null
-    const f = smtpFilters
-    const ci = s => (s ?? '').toString().toLowerCase()
-    return smtpLogs.filter(l => {
-      if (f.from    && !ci(l.sender_email).includes(ci(f.from))) return false
-      if (f.to      && !(ci(l.recipient_email) + ' ' + ci(l.recipient_name)).includes(ci(f.to))) return false
-      if (f.subject && !ci(l.subject).includes(ci(f.subject))) return false
-      if (f.status  && l.kind !== f.status) return false
-      if (f.domain  && !ci(l.domain).includes(ci(f.domain))) return false
-      return true
-    })
-  }, [smtpLogs, smtpFilters])
 
   const handleForceRelease = async () => {
     if (!await showConfirm({
@@ -407,6 +427,21 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
   const failedSections = Object.entries(loadErrors)
     .filter(([, v]) => v)
     .map(([k]) => t(`health.part${k.charAt(0).toUpperCase() + k.slice(1)}`))
+
+  if (view === 'smtp') {
+    return (
+      <div className="sys-health">
+        <SmtpLogView key={JSON.stringify(smtpInitial)} initial={smtpInitial} onBack={closeSmtpView} />
+      </div>
+    )
+  }
+  if (view === 'push') {
+    return (
+      <div className="sys-health">
+        <PushLogView key={JSON.stringify(pushInitial)} initial={pushInitial} onBack={closeSmtpView} />
+      </div>
+    )
+  }
 
   return (
     <div className="sys-health">
@@ -767,6 +802,49 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
             <ChevronRight size={14} className="smtp-log-cta-arrow" />
           </button>
         </div>
+
+        {/* Webhook Push card (2026-09-19) — SMTP kartının push karşılığı; tıklama → view=push */}
+        {(() => {
+          const k = pushKpi || {}
+          const attempted = (k.sent || 0) + (k.failed || 0)
+          const rate = attempted > 0 ? (k.sent || 0) / attempted : null
+          const alarm = rate != null && rate < 0.9
+          const rateCls = rate == null ? '' : rate >= 0.95 ? 'sys-ok-text' : rate >= 0.8 ? 'sys-warn-text' : 'sys-err-text'
+          return (
+            <div className={`sys-card sys-card-clickable${alarm ? ' sys-card-alarm' : ''}`} onClick={openPushView} title={t('pl.cardHint')} data-testid="push-card">
+              <div className="sys-card-header">
+                <div className="hb-title-row">
+                  <Webhook size={20} className={`push-card-icon${alarm ? ' is-alarm' : ''}`} aria-hidden="true" />
+                  <h3>{t('pl.cardTitle')}</h3>
+                </div>
+                <span className={`sys-badge ${alarm ? 'sys-badge-locked' : 'sys-badge-free'}`}>
+                  <span className={rateCls}>{rate == null ? '—' : formatPercent(rate)}</span>
+                </span>
+              </div>
+              <div className="smtp-period-pills" onClick={(e) => e.stopPropagation()}>
+                {['24h', '7d', '30d'].map((p) => (
+                  <button key={p} type="button" className={`smtp-period-pill${pushPeriod === p ? ' is-selected' : ''}`} onClick={() => setPushPeriod(p)}>{t(`sml.range.${p}`)}</button>
+                ))}
+              </div>
+              <dl className="sys-dl">
+                <dt>{t('health.smtpSent')}</dt>
+                <dd>{k.sent ?? 0} / {attempted}</dd>
+                <dt>{t('health.statusFailed')}</dt>
+                <dd className={k.failed > 0 ? 'sys-err-text' : ''}>{k.failed ?? 0}</dd>
+                <dt>{t('pl.cardQueued')}</dt>
+                <dd className={(k.pending || 0) + (k.blocked || 0) > 0 ? 'sys-warn-text' : ''}>{(k.pending || 0) + (k.blocked || 0)}</dd>
+                <dt>{t('health.smtpRate')}</dt>
+                <dd className={rateCls}>{rate == null ? '—' : formatPercent(rate)}</dd>
+              </dl>
+              <button type="button" className="smtp-log-cta" onClick={(e) => { e.stopPropagation(); openPushView() }}>
+                <Webhook size={14} />
+                <span>{t('pl.cardHint')}</span>
+                <span className="smtp-log-cta-period">{t(`sml.range.${pushPeriod}`)}</span>
+                <ChevronRight size={14} className="smtp-log-cta-arrow" />
+              </button>
+            </div>
+          )
+        })()}
 
         {/* Heartbeat card */}
         <div
@@ -1307,7 +1385,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
         )}
       </div>
 
-      {/* Kullanıcı / Oturum izleme — yalnız yetkili (global admin/AUDIT) görür */}
+      {/* Kullanıcı / Oturum izleme — her kademe görür (2026-09-19); onay/sonlandırma yetkiye bağlı */}
       {canViewUserActivity && (
       <div className="stats-section">
         <div
@@ -1327,7 +1405,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
         {usersVisible && (
         <div className="metrics-section">
           <UserActivityPanel data={userActivity} error={loadErrors.users} refreshing={uactRefreshing} onRefresh={refreshUserActivity}
-            isAdmin={isAdmin} globalAdmin={!!globalAdmin} username={username} onTerminated={refreshUserActivity} />
+            isAdmin={isAdmin} globalAdmin={!!globalAdmin} canAck={canActUserActivity} username={username} onTerminated={refreshUserActivity} />
         </div>
         )}
       </div>
@@ -1496,62 +1574,6 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
         )
       })()}
 
-      {selectedLog && (
-        <div className="smtp-detail-overlay" onClick={() => setSelectedLog(null)}>
-          <div className="smtp-detail-panel" onClick={e => e.stopPropagation()}>
-            <div className="smtp-detail-header">
-              <div className="smtp-detail-header-left">
-                <Mail size={17} className="smtp-detail-mail-icon" />
-                <span>{t('health.emailDetail')}</span>
-              </div>
-              <button type="button" className="smtp-modal-close" aria-label={t('app.dismiss')} onClick={() => setSelectedLog(null)}>✕</button>
-            </div>
-            <div className="smtp-detail-meta">
-              <div className="smtp-detail-meta-row">
-                <span className="smtp-detail-label">{t('health.emailDetailFrom')}</span>
-                <span className="sys-muted">{selectedLog.sender_email}</span>
-              </div>
-              <div className="smtp-detail-meta-row">
-                <span className="smtp-detail-label">{t('health.emailDetailTo')}</span>
-                <span>
-                  <strong>{selectedLog.recipient_name}</strong>
-                  {selectedLog.recipient_email && (
-                    <span className="sys-muted"> &lt;{selectedLog.recipient_email}&gt;</span>
-                  )}
-                </span>
-              </div>
-              <div className="smtp-detail-meta-row">
-                <span className="smtp-detail-label">{t('health.smtpLogSubject')}</span>
-                <span className="smtp-detail-subject">{selectedLog.subject}</span>
-              </div>
-              <div className="smtp-detail-meta-row">
-                <span className="smtp-detail-label">{t('health.smtpLogDate')}</span>
-                <span className="sys-mono">{formatDate(selectedLog.sent_at)}</span>
-              </div>
-              <div className="smtp-detail-meta-row">
-                <span className="smtp-detail-label">{t('health.emailDetailTrigger')}</span>
-                <span className={`smtp-trigger-badge smtp-trigger-${selectedLog.trigger?.toLowerCase()}`}>
-                  {triggerLabel(selectedLog.trigger, t)}
-                </span>
-                <SmtpStatusCell row={selectedLog} t={t} />
-              </div>
-            </div>
-            <div className="smtp-detail-body-label">{t('health.emailDetailBody')}</div>
-            <iframe
-              className="smtp-detail-iframe"
-              srcDoc={mailPreviewSrcDoc(
-                selectedLog.message ?? `<p style="color:#9ca3af;font-family:sans-serif">${t('health.emailDetailNoBody')}</p>`,
-                // Bu listede alarm SEVİYESİ taşınmıyor (yalnız trigger var) → CRITICAL mailler de
-                // "warning" logosuyla önizlenir. Renk yaklaşık, logonun görünmesi kesin.
-                { logoVariant: mailLogoVariant({ trigger: selectedLog.trigger }) },
-              )}
-              sandbox=""
-              title={selectedLog.subject}
-            />
-          </div>
-        </div>
-      )}
-
       {hbModalOpen && (
         <HeartbeatHistoryModal onClose={() => setHbModalOpen(false)} />
       )}
@@ -1640,106 +1662,6 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
             <div className="smtp-detail-body-label">{t('health.emailDetailBody')}</div>
             {/* Haftalık erişilebilirlik raporu daima "ok" logo varyantıyla gönderilir (varsayılan). */}
             <iframe className="smtp-detail-iframe" srcDoc={mailPreviewSrcDoc(waLogItem.html)} sandbox="" title={waLogItem.subject} />
-          </div>
-        </div>
-      )}
-
-      {smtpModal && (
-        <div className="smtp-modal-overlay" onClick={closeSmtpModal}>
-          <div className="smtp-modal" onClick={e => e.stopPropagation()}>
-            <div className="smtp-modal-header">
-              <h3>{t('health.smtpLogsTitle')}</h3>
-              <span className="smtp-modal-period">{t(`health.smtpPeriod${smtpPeriod}`)}</span>
-              <button type="button" className="smtp-modal-close" aria-label={t('app.dismiss')} onClick={closeSmtpModal}>✕</button>
-            </div>
-
-            {smtpLoading ? (
-              <LoadingBlock label={t('sys.loading')} className="smtp-modal-loading" />
-            ) : smtpLogs?.length === 0 ? (
-              <div className="smtp-modal-empty">{t('health.smtpNoErrors')}</div>
-            ) : (
-              <div className="smtp-modal-body">
-                <table className="smtp-log-table">
-                  <thead>
-                    <tr>
-                      <th>{t('health.smtpLogDate')}</th>
-                      <th>{t('health.smtpLogDomain')}</th>
-                      <th>{t('health.smtpLogFrom')}</th>
-                      <th>{t('health.smtpLogTo')}</th>
-                      <th>{t('health.smtpLogSubject')}</th>
-                      <th>{t('health.smtpLogStatus')}</th>
-                    </tr>
-                    <tr className="smtp-log-filter-row">
-                      <th />
-                      <th>
-                        <input
-                          type="text"
-                          placeholder={t('health.smtpFilterDomain')}
-                          value={smtpFilters.domain}
-                          onChange={e => setSmtpFilters(s => ({ ...s, domain: e.target.value }))}
-                        />
-                      </th>
-                      <th>
-                        <input
-                          type="text"
-                          placeholder={t('health.smtpFilterFrom')}
-                          value={smtpFilters.from}
-                          onChange={e => setSmtpFilters(s => ({ ...s, from: e.target.value }))}
-                        />
-                      </th>
-                      <th>
-                        <input
-                          type="text"
-                          placeholder={t('health.smtpFilterTo')}
-                          value={smtpFilters.to}
-                          onChange={e => setSmtpFilters(s => ({ ...s, to: e.target.value }))}
-                        />
-                      </th>
-                      <th>
-                        <input
-                          type="text"
-                          placeholder={t('health.smtpFilterSubject')}
-                          value={smtpFilters.subject}
-                          onChange={e => setSmtpFilters(s => ({ ...s, subject: e.target.value }))}
-                        />
-                      </th>
-                      <th>
-                        <select
-                          value={smtpFilters.status}
-                          onChange={e => setSmtpFilters(s => ({ ...s, status: e.target.value }))}
-                        >
-                          <option value="">{t('health.smtpFilterStatusAll')}</option>
-                          <option value="SENT">{t('health.smtpFilterStatusSent')}</option>
-                          <option value="FAILED">{t('health.smtpFilterStatusFailed')}</option>
-                          <option value="SKIPPED">{t('health.smtpFilterStatusSkipped')}</option>
-                        </select>
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredSmtpLogs?.length === 0 ? (
-                      <tr className="smtp-log-empty-row">
-                        <td colSpan={6}>{t('health.smtpLogNoMatch')}</td>
-                      </tr>
-                    ) : (
-                      filteredSmtpLogs?.map(row => (
-                        <tr key={row.id} className="smtp-log-row" onClick={() => setSelectedLog(row)}>
-                          <td className="smtp-log-date sys-mono">{formatDate(row.sent_at)}</td>
-                          <td className="smtp-log-domain sys-mono sys-small" title={row.domain || ''}>{row.domain || '—'}</td>
-                          <td className="smtp-log-from sys-mono sys-small" title={row.sender_email || ''}>{row.sender_email || '—'}</td>
-                          <td>
-                            <div className="smtp-log-recipient">{row.recipient_name || '—'}</div>
-                            <div className="smtp-log-email sys-muted sys-small" title={row.recipient_email || ''}>{row.recipient_email}</div>
-                          </td>
-                          <td className="smtp-log-subject" title={row.subject || ''}>{row.subject}</td>
-                          <td><SmtpStatusCell row={row} t={t} /></td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            )}
           </div>
         </div>
       )}

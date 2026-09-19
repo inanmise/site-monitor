@@ -75,7 +75,7 @@ const REFRESH_INTERVAL = 60
 const METHODS = ['GET', 'HEAD', 'POST']
 const emptyForm = {
   name: '', url: '', method: 'GET', expectedStatus: '200-399', followRedirects: true, verifySsl: false,
-  groupName: '', notificationGroupId: '', teamId: '', tags: '', notifyEmail: true, notifyWebhook: true,
+  groupName: '', notificationGroupId: '', teamId: '', tags: '', notifyEmail: true, alertLevel: 'WARNING', notifyWebhook: true,
   checkSslErrors: false, sslExpiryReminders: false, domainExpiryReminders: false,
   sslReminderDays: '30,14,7', domainReminderDays: '30,14,7',
   intervalSeconds: 300, timeoutMs: 10000,
@@ -213,7 +213,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
     return { name: m.name || '', url: m.url || '', method: m.method || 'GET',
       expectedStatus: m.expected_status || '200-399', followRedirects: m.follow_redirects !== false, verifySsl: !!m.verify_ssl,
       groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '', teamId: m.team_id != null ? String(m.team_id) : '', tags: m.tags || '',
-      notifyEmail: m.notify_email !== false, notifyWebhook: m.notify_webhook !== false,
+      notifyEmail: m.notify_email !== false, alertLevel: m.alert_level || 'WARNING', notifyWebhook: m.notify_webhook !== false,
       checkSslErrors: !!m.check_ssl_errors, sslExpiryReminders: !!m.ssl_expiry_reminders, domainExpiryReminders: !!m.domain_expiry_reminders,
       sslReminderDays: m.ssl_reminder_days || '30,14,7', domainReminderDays: m.domain_reminder_days || '30,14,7',
       intervalSeconds: m.interval_seconds ?? 300, timeoutMs: m.timeout_ms ?? 10000,
@@ -264,7 +264,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
         // Bos = takim varsayilani -> takim adresi (zincirin kalani).
         notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
           ? null : Number(form.notificationGroupId),
-        notifyEmail: form.notifyEmail, notifyWebhook: form.notifyWebhook,
+        notifyEmail: form.notifyEmail, alertLevel: form.alertLevel || 'WARNING', notifyWebhook: form.notifyWebhook,
         checkSslErrors: form.checkSslErrors, sslExpiryReminders: form.sslExpiryReminders, domainExpiryReminders: form.domainExpiryReminders,
         sslReminderDays: form.sslReminderDays?.trim() || '30,14,7', domainReminderDays: form.domainReminderDays?.trim() || '30,14,7',
         intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
@@ -744,6 +744,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('http.noGroup')} /></label>
               <NotifyChannels
                 notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+                alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
                 onChange={patch => setForm(f => ({ ...f, ...patch }))}
                 teamLabel={selectedTeamLabel} teamId={form.teamId}
                 groupId={form.notificationGroupId}

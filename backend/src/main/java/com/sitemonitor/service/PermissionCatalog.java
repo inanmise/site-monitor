@@ -211,6 +211,9 @@ public final class PermissionCatalog {
             "users.list", "users.crud", "users.actions",
             "alerts.read", "alerts.actions",
             "system_health.read",
+            // release_history.read (2026-09-19, ürün kararı): Sistem Sağlığı'ndaki HER bölüm her kademeye açık —
+            // Sürüm & Dağıtım bölümü de. Yazma (release_history.edit) yönetici alanı olarak kalır.
+            "release_history.read",
             // audit_log.read: denetim kaydı sistem-geneli (tüm takımlar/kullanıcılar) → yalnız
             // global admin/AUDIT erişebilir (requireAuditAccess); TEAM_ADMIN'e verilmez.
             "weak_algo.read", "weak_algo.manage",
@@ -259,6 +262,8 @@ public final class PermissionCatalog {
             "thresholds.read",
             "alerts.read", "alerts.actions",
             "system_health.read",
+            // release_history.read (2026-09-19, ürün kararı): Sistem Sağlığı'ndaki her bölüm her kademeye açık.
+            "release_history.read",
             // monitoring.crud/trigger: USER kendi takımı için keyword/ping izleme oluşturur/düzenler/çalıştırır
             // (silme canManage ile TEAM_ADMIN/ADMIN'de; Port/DNS yazma requireAdmin ile admin-only kalır)
             "monitoring.read", "monitoring.crud", "monitoring.trigger", "domain.registration.view", "monitoring.group",

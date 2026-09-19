@@ -438,7 +438,7 @@ public class MonitoringOutageService {
                     Map<String, Object> ctx = withDnsChannelFlags(reconstructChangeCtx(lastChanged), lastChanged);
                     withLock(EscalationService.TYPE_DNS_CHANGED, e.getDomain(), () ->
                             escalationService.processConfirmedOutage(e.getDomain(),
-                                    EscalationService.TYPE_DNS_CHANGED, "HIGH", ctx));
+                                    EscalationService.TYPE_DNS_CHANGED, levelFor(EscalationService.TYPE_DNS_CHANGED), ctx));
                 });
     }
 
@@ -764,21 +764,14 @@ public class MonitoringOutageService {
         };
     }
 
+    /**
+     * Bağlamda seviye YOKSA kullanılan yedek (2026-09-19 ürün kararı): süre-bitişi dışındaki her izleme alarmı
+     * WARNING ile açılır. İzlemeye bağlı sweep'ler seviyeyi bağlama damgalar (SchedulerService.chanCtx →
+     * izlemenin seçili seviyesi); envanter-türevi (izlemesiz) kontroller bu yedeğe düşer. Eski hâl tipe göre
+     * HIGH/CRITICAL sabitiydi ve her kesinti eskalasyon kontaklarına gidiyordu.
+     */
     static String levelFor(String alertType) {
-        return (EscalationService.TYPE_DNS_CHANGED.equals(alertType)
-                || EscalationService.TYPE_DNS_SLOW.equals(alertType)
-                || EscalationService.TYPE_DNS_UNEXPECTED.equals(alertType)
-                || EscalationService.TYPE_DNS_INCONSISTENT.equals(alertType)
-                || EscalationService.TYPE_HTTP_SSL.equals(alertType)
-                || EscalationService.TYPE_DOMAIN_EXPIRY.equals(alertType)
-                || EscalationService.isKeywordAux(alertType)
-                || EscalationService.TYPE_PORT_SLOW.equals(alertType)
-                || EscalationService.TYPE_PING_SLOW.equals(alertType)
-                || EscalationService.TYPE_SCRIPTED_SLOW.equals(alertType)
-                || EscalationService.TYPE_PAGE_INTEGRITY.equals(alertType)
-                // Sayfa yavaş ama AYAKTA → HIGH; CRITICAL yalnız gerçekten alınamadığında.
-                || EscalationService.TYPE_PAGESPEED_SLOW.equals(alertType)
-                || EscalationService.isDomainMon(alertType)) ? "HIGH" : "CRITICAL";
+        return com.sitemonitor.model.MonitorAlertPrefs.LEVEL_WARNING;
     }
 
     private Map<String, Object> sweepContext(SweepItem item) {

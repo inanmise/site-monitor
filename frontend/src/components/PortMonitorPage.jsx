@@ -71,7 +71,7 @@ const intervalIdx = (secs) => {
 const REFRESH_INTERVAL = 60
 const PORT_TYPES = ['TCP', 'TLS', 'HTTP', 'BANNER', 'UDP']
 const emptyForm = { name: '', host: '', port: '', protocol: 'TCP', expect: '', sendData: '', teamId: '', groupName: '', notificationGroupId: '',
-  tags: '', notifyEmail: true, notifyWebhook: true, ipVersion: 'auto', slowResponseEnabled: false, slowThresholdMs: 3000,
+  tags: '', notifyEmail: true, alertLevel: 'WARNING', notifyWebhook: true, ipVersion: 'auto', slowResponseEnabled: false, slowThresholdMs: 3000,
   intervalSeconds: 300, timeoutMs: 5000,
   confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true }
 
@@ -223,7 +223,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
     return { name: m.name || '', host: m.host || '', port: m.port ?? '', protocol: m.protocol || 'TCP',
       expect: m.expect || '', sendData: m.send_data || '',
       teamId: m.team_id != null ? String(m.team_id) : (derivedTeam ? String(derivedTeam.id) : ''), groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
-      tags: m.tags || '', notifyEmail: m.notify_email !== false, notifyWebhook: m.notify_webhook !== false, ipVersion: m.ip_version || 'auto',
+      tags: m.tags || '', notifyEmail: m.notify_email !== false, alertLevel: m.alert_level || 'WARNING', notifyWebhook: m.notify_webhook !== false, ipVersion: m.ip_version || 'auto',
       slowResponseEnabled: !!m.slow_response_enabled, slowThresholdMs: m.slow_threshold_ms ?? 3000,
       intervalSeconds: m.interval_seconds ?? 300, timeoutMs: m.timeout_ms ?? 5000,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
@@ -260,7 +260,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
         // Bos = takim varsayilani -> takim adresi (zincirin kalani).
         notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
           ? null : Number(form.notificationGroupId),
-        tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, notifyWebhook: form.notifyWebhook, ipVersion: form.ipVersion,
+        tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, alertLevel: form.alertLevel || 'WARNING', notifyWebhook: form.notifyWebhook, ipVersion: form.ipVersion,
         slowResponseEnabled: form.slowResponseEnabled, slowThresholdMs: Number(form.slowThresholdMs),
         intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
         confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
@@ -786,6 +786,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('port.noGroup')} /></label>
               <NotifyChannels
                 notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+                alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
                 onChange={patch => setForm(f => ({ ...f, ...patch }))}
                 teamLabel={selectedTeamLabel} teamId={form.teamId}
                 groupId={form.notificationGroupId}

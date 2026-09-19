@@ -2358,7 +2358,10 @@ public class EscalationService {
      *  YALNIZ KRİTİK domain alarmında müdür bilgilendirilir; ORTA/WARNING'de yalnız takım. Diğer standalone
      *  izleme (keyword/ping/http) her zaman yalnız takım. */
     private static boolean includeManagerContacts(String alertType, String level) {
-        return (isDomainMon(alertType) || TYPE_DOMAIN_EXPIRY.equals(alertType)) && "CRITICAL".equals(level);
+        // 2026-09-19 ürün kararı: seviye eşiği TÜM izleme türleri için tek kural — WARNING yalnız takım;
+        // HIGH/CRITICAL eskalasyon kontakları (kendi eşiklerine göre) eklenir. Kullanıcı seviyeyi izleme
+        // formundan yükseltir; süre-bitişi alarmlarında seviye gün kademesinden gelir.
+        return !"WARNING".equals(level);
     }
 
     /**

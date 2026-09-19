@@ -45,6 +45,7 @@ const VERB_SUFFIXES = [
   ['_SUBMIT', 'audit.verbSuffix.submit'],
   ['_REOPEN', 'audit.verbSuffix.reopen'],
   ['_RESEND', 'audit.verbSuffix.resend'],
+  ['_REQUEUE', 'audit.verbSuffix.requeue'],
   ['_RESTORE', 'audit.verbSuffix.restore'],
   ['_RESOLVE', 'audit.verbSuffix.resolve'],
   ['_UNLOCK', 'audit.verbSuffix.unlock'],

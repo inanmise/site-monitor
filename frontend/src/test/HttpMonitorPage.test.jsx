@@ -153,6 +153,26 @@ describe('HttpMonitorPage', () => {
     expect([...toolbar.querySelectorAll('.ss-option')].map((o) => o.textContent.trim())).toEqual(expect.arrayContaining(['kendi', 'öteki']))
   })
 
+  // ── Alarm seviyesi (2026-09-19): formda seçilir, payload'a alertLevel gider; düzenlemede kayıtlı seviye yüklenir ──
+  it('alarm seviyesi: yeni izlemede varsayılan Uyarı; Kritik seçilince createHttpMonitor alertLevel:CRITICAL alır; düzenlemede alert_level formu doldurur', async () => {
+    api.monitoring.getHttpMonitors.mockResolvedValue({ success: true, data: [{ ...monitor, alert_level: 'HIGH' }] })
+    render(<HttpMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getHttpMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör|yeni izleme/i }))
+    const modal = document.querySelector('.modal-box')
+    expect(modal.querySelector('.notify-level-btn--warning').getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(modal.querySelector('.notify-level-btn--critical'))
+    fireEvent.change(screen.getByPlaceholderText('https://example.com'), { target: { value: 'https://lvl.example.com' } })
+    await fillGroupAndTags()
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+    await waitFor(() => expect(api.monitoring.createHttpMonitor).toHaveBeenCalled())
+    expect(api.monitoring.createHttpMonitor.mock.calls[0][0].alertLevel).toBe('CRITICAL')
+    await waitFor(() => expect(document.querySelector('.modal-box')).toBeNull())   // başarılı kayıt modalı kapatır
+    // Düzenle: kayıtlı HIGH forma gelir
+    fireEvent.click(screen.getByRole('button', { name: /düzenle|edit/i }))
+    await waitFor(() => expect(document.querySelector('.modal-box .notify-level-btn--high').getAttribute('aria-pressed')).toBe('true'))
+  })
+
   // ── Grup + etiket zorunlu (2026-09-18): dokuz sayfa aynı kapıyı taşır; Http temsilci ──
   it('yeni izleme: grup seçilmeden Kaydet → grup hatası, etiket girilmeden → etiket hatası; create ÇAĞRILMAZ', async () => {
     render(<HttpMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
@@ -212,7 +232,7 @@ describe('HttpMonitorPage', () => {
     api.monitoring.getHttpMonitors.mockResolvedValue({ success: true, data: [{
       id: 1, name: 'Example', url: 'https://www.example.com/', status: 'up', checked_at: '2026-06-24T00:00:00',
       method: 'POST', expected_status: '201-204', follow_redirects: false, verify_ssl: true,
-      group_name: 'Kurumsal', team_id: 5, team_name: 'SY-A', tags: 'prod,kritik', notify_email: false,
+      group_name: 'Kurumsal', team_id: 5, team_name: 'SY-A', tags: 'prod,kritik', alert_level: 'HIGH', notify_email: false,
       check_ssl_errors: true, ssl_expiry_reminders: true, domain_expiry_reminders: true,
       ssl_reminder_days: '45,20,5', domain_reminder_days: '60,30,10',
       interval_seconds: 600, timeout_ms: 7000,
@@ -238,7 +258,7 @@ describe('HttpMonitorPage', () => {
     expect(api.monitoring.createHttpMonitor.mock.calls[0][0]).toEqual({
       name: 'Example (Kopya)', url: 'https://www.example.com/', method: 'POST',
       expectedStatus: '201-204', followRedirects: false, verifySsl: true,
-      groupName: 'Kurumsal', teamId: 5, tags: 'prod,kritik', notifyEmail: false, notifyWebhook: true,
+      groupName: 'Kurumsal', teamId: 5, tags: 'prod,kritik', alertLevel: 'HIGH', notifyEmail: false, notifyWebhook: true,
       checkSslErrors: true, sslExpiryReminders: true, domainExpiryReminders: true,
       sslReminderDays: '45,20,5', domainReminderDays: '60,30,10',
       intervalSeconds: 600, timeoutMs: 7000,

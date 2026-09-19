@@ -13,7 +13,7 @@ import org.hibernate.annotations.ColumnDefault;
 @Table(name = "ping_monitors")
 @Data
 @NoArgsConstructor
-public class PingMonitor {
+public class PingMonitor implements MonitorAlertPrefs, MonitorSchedule {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -51,6 +51,11 @@ public class PingMonitor {
     /** Kişi-webhook (push) bildirimi açık mı (vars. true — üst katmanlar zaten vars. KAPALI, çifte emniyet). */
     @Column(name = "notify_webhook")
     private Boolean notifyWebhook = true;
+
+    /** Alarm seviyesi (2026-09-19): WARNING (varsayılan, null) | HIGH | CRITICAL — süre-bitişi dışındaki tüm
+     *  alarmlar bu seviyede açılır; HIGH/CRITICAL eskalasyon kontaklarını alıcıya ekler. Bkz. MonitorAlertPrefs. */
+    @Column(name = "alert_level", length = 16)
+    private String alertLevel;
 
     /**
      * Yavaşlık alarmı açık mı (vars. KAPALI — opt-in).
@@ -133,4 +138,8 @@ public class PingMonitor {
      */
     @jakarta.persistence.Column(name = "notification_group_id")
     private Long notificationGroupId;
+
+    // MonitorSchedule (2026-09-19): "Sizin için — bugün" bayat-izleme kartı
+    @Override public String scheduleType() { return "PING"; }
+    @Override public String scheduleTarget() { return host; }
 }

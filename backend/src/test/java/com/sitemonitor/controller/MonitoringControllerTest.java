@@ -3661,4 +3661,23 @@ class MonitoringControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.tags").value("edge"));
     }
+
+    // ── Alarm seviyesi (2026-09-19): formdan seçilir, normalize edilir, yanıtta alert_level döner ──
+    @Test
+    @DisplayName("POST /http: alertLevel 'high' → HIGH; bilinmeyen/boş → WARNING (varsayılan)")
+    void createHttp_alertLevelNormalized() throws Exception {
+        when(httpMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(httpMonitorRepo.save(any(com.sitemonitor.model.HttpMonitor.class)))
+                .thenAnswer(a -> { com.sitemonitor.model.HttpMonitor h = a.getArgument(0); h.setId(91L); return h; });
+        mvc.perform(post("/api/monitoring/http").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://lvl.example.com\",\"teamId\":1,\"alertLevel\":\"high\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.alert_level").value("HIGH"));
+        mvc.perform(post("/api/monitoring/http").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://lvl2.example.com\",\"teamId\":1,\"alertLevel\":\"bogus\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.alert_level").value("WARNING"));
+    }
 }

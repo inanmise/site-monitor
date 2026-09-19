@@ -62,4 +62,19 @@ describe('NotifyChannels', () => {
     const { container } = draw({ onGroupChange: undefined })
     expect(container.querySelectorAll('.http-channel')).toHaveLength(4)
   })
+
+  // ── Alarm seviyesi (2026-09-19): varsayılan Uyarı; Yüksek/Kritik seçilebilir; onAlertLevelChange yoksa çizilmez ──
+  it('alarm seviyesi seçici: onAlertLevelChange verilince üç düğme, seçili olan aria-pressed; tıklama seviyeyi geri verir; verilmezse yok', () => {
+    const onLevel = vi.fn()
+    const { container } = draw({ alertLevel: 'WARNING', onAlertLevelChange: onLevel })
+    const btns = [...container.querySelectorAll('.notify-level-btn')]
+    expect(btns.map((b) => b.textContent)).toEqual(expect.arrayContaining([expect.stringMatching(/Uyarı|Warning/), expect.stringMatching(/Yüksek|High/), expect.stringMatching(/Kritik|Critical/)]))
+    expect(btns[0].getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(btns[2])
+    expect(onLevel).toHaveBeenCalledWith('CRITICAL')
+    const { container: c2 } = draw({ alertLevel: 'bogus', onAlertLevelChange: onLevel })
+    expect(c2.querySelector('.notify-level-btn--warning').getAttribute('aria-pressed')).toBe('true')   // bilinmeyen → Uyarı
+    const { container: c3 } = draw({})
+    expect(c3.querySelector('.notify-level')).toBeNull()
+  })
 })

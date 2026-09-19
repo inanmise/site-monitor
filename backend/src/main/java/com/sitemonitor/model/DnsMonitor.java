@@ -8,7 +8,7 @@ import lombok.NoArgsConstructor;
 @Table(name = "dns_monitors")
 @Data
 @NoArgsConstructor
-public class DnsMonitor {
+public class DnsMonitor implements MonitorAlertPrefs, MonitorSchedule {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -70,6 +70,11 @@ public class DnsMonitor {
     /** Kişi-webhook (push) bildirimi açık mı (vars. true — üst katmanlar zaten vars. KAPALI, çifte emniyet). */
     @Column(name = "notify_webhook")
     private Boolean notifyWebhook = true;
+
+    /** Alarm seviyesi (2026-09-19): WARNING (varsayılan, null) | HIGH | CRITICAL — süre-bitişi dışındaki tüm
+     *  alarmlar bu seviyede açılır; HIGH/CRITICAL eskalasyon kontaklarını alıcıya ekler. Bkz. MonitorAlertPrefs. */
+    @Column(name = "alert_level", length = 16)
+    private String alertLevel;
 
     /** Beklenen-değer kilidi (baseline): kullanıcının sabitlediği bilinen-iyi değer(ler), satır (\n) ayrılmış.
      *  Boş = kilit kapalı. Doluyken canlı sonuçta BEKLENMEYEN (bu sette olmayan) değer çıkarsa DNS_UNEXPECTED
@@ -133,4 +138,9 @@ public class DnsMonitor {
      */
     @jakarta.persistence.Column(name = "notification_group_id")
     private Long notificationGroupId;
+
+    // MonitorSchedule (2026-09-19): "Sizin için — bugün" bayat-izleme kartı
+    @Override public String scheduleType() { return "DNS"; }
+    @Override public boolean scheduleStandalone() { return Boolean.TRUE.equals(standalone); }
+    @Override public String scheduleTarget() { return domain; }
 }

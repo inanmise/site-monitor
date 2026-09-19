@@ -398,31 +398,30 @@ class StormServiceTest {
      * <p>Karar tablosu doğrudan sınanır (dağıtım yolu e-posta/webhook da tetiklediği için).
      */
     @Test
-    @DisplayName("Y4: storm alıcı kararı — page/scripted/pagespeed de TAKIM-ÖZEL (müdür eklenmez)")
+    @DisplayName("Y4 (2026-09-19 revizyonu): storm alıcı kararı SEVİYEYE bağlı — WARNING takım-özel, HIGH/CRITICAL müdür/kontak eklenir (tüm türler)")
     void storm_teamOnlyDecision_coversAllStandaloneTypes() {
-        // Bireysel yolda müdür ALMAYAN tipler → storm'da da almamalı.
+        // Ürün kararı 2026-09-19: izleme alarmları varsayılan WARNING (takım-özel); kullanıcı izlemede HIGH/CRITICAL
+        // seçerse eskalasyon kontakları eklenir. Storm bireysel yolla aynı tabloyu kullanır.
         for (String type : java.util.List.of(
                 EscalationService.TYPE_KEYWORD, EscalationService.TYPE_PING_DOWN,
                 EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_PAGE_DOWN,
                 EscalationService.TYPE_PAGE_INTEGRITY, EscalationService.TYPE_SCRIPTED_FAIL,
                 EscalationService.TYPE_SCRIPTED_SLOW, EscalationService.TYPE_PAGESPEED_DOWN,
-                EscalationService.TYPE_PAGESPEED_SLOW)) {
-            assertThat(EscalationService.teamOnlyRecipients(type, "CRITICAL"))
-                    .as("%s storm'da takım-özel olmalı (müdür eklenmez)", type).isTrue();
+                EscalationService.TYPE_PAGESPEED_SLOW, EscalationService.TYPE_DOMAINMON_EXPIRY)) {
+            assertThat(EscalationService.teamOnlyRecipients(type, "WARNING")).as("%s WARNING takım-özel", type).isTrue();
+            assertThat(EscalationService.teamOnlyRecipients(type, "HIGH")).as("%s HIGH kontak ekler", type).isFalse();
+            assertThat(EscalationService.teamOnlyRecipients(type, "CRITICAL")).as("%s CRITICAL kontak ekler", type).isFalse();
         }
-        // Envanter-türevli tip (sertifika erişilebilirliği) takım-özel DEĞİL → müdür eklenir.
-        assertThat(EscalationService.teamOnlyRecipients(EscalationService.TYPE_ACCESSIBILITY, "CRITICAL")).isFalse();
-        // DOMAINMON istisnası korunur: yalnız KRİTİK'te müdür girer.
-        assertThat(EscalationService.teamOnlyRecipients(EscalationService.TYPE_DOMAINMON_EXPIRY, "WARNING")).isTrue();
-        assertThat(EscalationService.teamOnlyRecipients(EscalationService.TYPE_DOMAINMON_EXPIRY, "CRITICAL")).isFalse();
+        // Envanter-türevli tip (sertifika erişilebilirliği) hiçbir seviyede takım-özel değil (kontak eşiği süzer).
+        assertThat(EscalationService.teamOnlyRecipients(EscalationService.TYPE_ACCESSIBILITY, "WARNING")).isFalse();
     }
 
     @Test
-    @DisplayName("Y4: SCRIPTED_FAIL üyeli storm'da eskalasyon kontakları SORGULANMAZ")
+    @DisplayName("Y4: WARNING seviyeli SCRIPTED_FAIL üyeli storm'da eskalasyon kontakları SORGULANMAZ (varsayılan seviye takım-özel)")
     void storm_scriptedMember_doesNotQueryManagerContacts() {
         AlertEvent m = new AlertEvent();
         m.setId(1L); m.setDomain("Ödeme akışı"); m.setAlertType(EscalationService.TYPE_SCRIPTED_FAIL);
-        m.setAlertLevel("CRITICAL"); m.setTeamId(7L);
+        m.setAlertLevel("WARNING"); m.setTeamId(7L);   // 2026-09-19: varsayılan seviye; CRITICAL seçilseydi kontaklar eklenirdi
 
         org.springframework.test.util.ReflectionTestUtils.invokeMethod(
                 storm, "resolveRecipients", java.util.List.of(m));

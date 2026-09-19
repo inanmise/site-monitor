@@ -42,6 +42,15 @@ public interface UptimeCheckRepository extends JpaRepository<UptimeCheck, Long> 
          + "FROM UptimeCheck u WHERE u.checkedAt >= :since AND (u.maintenance = false OR u.maintenance IS NULL) GROUP BY u.domain")
     List<Object[]> aggregateHttpOkSince(@Param("since") String since);
 
+    /**
+     * Genel Bakış kartı erişilebilirlik sparkline'ı (2026-09-19): alan × SAAT kovası (checkedAt'in ilk 13 karakteri
+     * "yyyy-MM-ddTHH") → toplam / up sayısı; bakım pencereleri hariç. Tek sorgu, tüm alanlar (kart-extras önbelleği).
+     */
+    @Query("SELECT u.domain, SUBSTRING(u.checkedAt, 1, 13), COUNT(u), SUM(CASE WHEN u.status = 'up' THEN 1 ELSE 0 END) "
+         + "FROM UptimeCheck u WHERE u.checkedAt >= :since AND (u.maintenance = false OR u.maintenance IS NULL) "
+         + "GROUP BY u.domain, SUBSTRING(u.checkedAt, 1, 13)")
+    List<Object[]> hourlyHttpOkSince(@Param("since") String since);
+
     /** Her (domain,port) için en güncel uptime kontrolü — overview'da domain başına
      *  findTopByDomainAndPort... sorgusu yerine tek toplu sorgu (N+1 giderme). */
     // Her izlenen domain için en güncel uptime kontrolü. Eski MAX(id)+GROUP BY (domain,port) TÜM

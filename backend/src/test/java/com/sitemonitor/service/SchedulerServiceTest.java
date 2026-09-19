@@ -1654,6 +1654,35 @@ class SchedulerServiceTest {
                 .invokeGetterMethod(item, "ctxExtra");
     }
 
+    // ── Alarm seviyesi izlemeden (2026-09-19): varsayılan WARNING, HIGH/CRITICAL seçilebilir; hesaplanan kademe ezilmez ──
+    @Test
+    @DisplayName("chanCtx(ctx, izleme): alert_level damgası — null → WARNING, seçili → aynen; ctx'te hazır seviye EZİLMEZ")
+    void chanCtx_stampsMonitorAlertLevel() {
+        com.sitemonitor.model.HttpMonitor m = new com.sitemonitor.model.HttpMonitor();
+        m.setNotifyEmail(true); m.setNotifyWebhook(true);
+        assertThat(SchedulerService.chanCtx(new java.util.LinkedHashMap<>(), m).get("alert_level")).isEqualTo("WARNING");
+        m.setAlertLevel("CRITICAL");
+        assertThat(SchedulerService.chanCtx(new java.util.LinkedHashMap<>(), m).get("alert_level")).isEqualTo("CRITICAL");
+        java.util.Map<String, Object> computed = new java.util.LinkedHashMap<>(java.util.Map.of("alert_level", "HIGH"));
+        assertThat(SchedulerService.chanCtx(computed, m).get("alert_level")).isEqualTo("HIGH");   // hesaplanan kademe korunur
+    }
+
+    @Test
+    @DisplayName("domainItem: EXPIRY hesaplanan seviyeyi taşır; CHANGED/TRANSFER_LOCK/BLACKLIST/UNKNOWN izlemenin seviyesini (varsayılan WARNING)")
+    void domainItem_levelPolicy() {
+        var mon = domainMon();
+        var expiry = itemCtx(org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                scheduler, "domainItem", EscalationService.TYPE_DOMAINMON_EXPIRY, mon, java.util.Map.of("days_remaining", 3), false, "CRITICAL"));
+        assertThat(expiry.get("alert_level")).isEqualTo("CRITICAL");
+        var changed = itemCtx(org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                scheduler, "domainItem", EscalationService.TYPE_DOMAINMON_CHANGED, mon, java.util.Map.of(), false, null));
+        assertThat(changed.get("alert_level")).isEqualTo("WARNING");
+        mon.setAlertLevel("HIGH");
+        var changedHigh = itemCtx(org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                scheduler, "domainItem", EscalationService.TYPE_DOMAINMON_CHANGED, mon, java.util.Map.of(), false, null));
+        assertThat(changedHigh.get("alert_level")).isEqualTo("HIGH");
+    }
+
     @Test
     @DisplayName("B3: ESIK alarmi (EXPIRY) ANINDA acilir - izlemenin dogrulama ayari UYGULANMAZ")
     void domainItem_thresholdType_immediate() {

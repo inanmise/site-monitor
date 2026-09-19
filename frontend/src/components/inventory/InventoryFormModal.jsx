@@ -377,7 +377,8 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
         </h3>
         {isDuplicate && <div className="mon-dup-hint">{t('inv.duplicateHint')}</div>}
 
-        <div className="form-grid" ref={formGridRef}>
+        {/* form-grid--top (2026-09-19): ızgara varsayılanı alt-hizalı; ipuçlu alanlar (zaman aşımı) yanındaki alanı yukarı itiyordu */}
+        <div className="form-grid form-grid--top" ref={formGridRef}>
 
           {/* ── Temel Bilgiler ── */}
           <SectionHeader label={t('inv.sectionBasic')} />

@@ -839,3 +839,271 @@ Doğrulama: aynı noktada `elementFromPoint` → `.recharts-rectangle`, pop-up "
 Kapılar: frontend lint / 2110 test / kapsam tabanı / build yeşil; backend DEĞİŞMEDİ.
 → **REGRESYON YOK**.
 
+## Ek — kırkıncı tur (2026-09-19, sürüm sonrası — izleme alarm seviyesi: varsayılan Uyarı, izlemeden Yüksek/Kritik, `v20.71.1..HEAD`)
+
+Kapsam: backend (MonitorAlertPrefs arayüzü + 9 modelde `alert_level`; SchedulerService.chanCtx(ctx, izleme);
+MonitoringOutageService.levelFor → WARNING yedeği; EscalationService.includeManagerContacts seviye kapısı;
+MonitoringController alertLevel uygula/döndür) ve frontend (NotifyChannels seviye seçici, 9 form). İmza süpürmesi temiz.
+
+**Analiz (eski):** `levelFor(tip)` sabit HIGH/CRITICAL üretiyordu; erişilemiyor/sentetik/anahtar kelime/DNS hatası her
+seferinde KRİTİK açılıyor, seviye eşikli push aboneleri ve (envanter-türevi tiplerde) eskalasyon kontakları bilgileniyordu.
+Sertifika/alan adı süre-bitişi gün kademesiyle doğru çalışıyordu.
+
+**Denetim odakları:**
+- Seviye kaynağı tek: sweep bağlamı `alert_level` (izlemenin seçimi, null → WARNING); HESAPLANAN kademe (alan adı
+  süre-bitişi CRITICAL/WARNING, EPP durumu) `putIfAbsent` ile korunur — test: chanCtx ezmez, domainItem EXPIRY
+  hesaplananı, CHANGED/LOCK/BLACKLIST/UNKNOWN izleme seviyesini taşır. İlk sürümde chanCtx aşırı yüklemesi kendi kendini
+  çağırıyordu (StackOverflow, 21 test) — toplu değiştirme yeni gövdeye de dokunmuştu; düzeltildi.
+- Alıcı politikası tek kural: WARNING takım-özel; HIGH → Uyarı/Yüksek eşikli kontaklar; CRITICAL → hepsi (müdür dâhil).
+  Eski "yalnız alan adı KRİTİK'te müdür" istisnası bu kuralın içine düştü; storm karar tablosu aynı fonksiyonu kullandığı
+  için storm testleri güncellendi (WARNING üye → kontak sorgusu yok).
+- Açık alarm seviyesini korur; izleme düzenlenip yükseltilirse mevcut terfi yolu ESCALATION gönderir; düşürme demote etmez.
+- Form: "Bildirimler ve alarmlar" bloğunda Uyarı/Yüksek/Kritik segment + seviye notu; Kopyala alanı taşır (9 test);
+  değişiklik geçmişi `chg.field.alertLevel` etiketi (parity kapısı yakaladı). Tarayıcıda: Ping formu, Kritik → API
+  `alert_level: CRITICAL`, test kaydı silindi.
+- Kapılar: backend `clean verify` 3823 test; frontend lint / 2112 test / kapsam tabanı / build yeşil.
+Bilinen sınırlar (bilinçli): envanter-türevi (izlemesiz) port/DNS/erişilebilirlik kontrolleri WARNING yedeğinde —
+envanter kaydına seviye alanı eklenmedi; alan adı EPP durumu (pendingDelete vb.) hesaplanan seviyesini korur.
+→ **REGRESYON YOK**.
+
+## Ek — kırk birinci tur (2026-09-19, sürüm sonrası — envanter formunda Kritiklik Seviyesi / Bağlantı zaman aşımı hizası, `v20.71.1..HEAD`)
+
+Kapsam: yalnız frontend (InventoryFormModal + App.css). `.form-grid` ızgarası ALT hizalı (`align-items: end`); altında
+ipucu olan "Bağlantı zaman aşımı" komşusu "Kritiklik Seviyesi"ni aşağı kaydırıyordu (tarayıcıda y 436 vs 389). Envanter
+formu `form-grid--top` (üst hizalı) varyantını kullanır; diğer formlar dokunulmadı. Doğrulama: iki etiket y=436.7.
+Kapılar: frontend lint / 2112 test / kapsam / build yeşil; backend DEĞİŞMEDİ.
+→ **REGRESYON YOK**.
+
+
+## Ek — kırk ikinci tur (2026-09-19, sürüm sonrası — başlık eylem düğmeleri tek stil: Yenile / Şimdi Kontrol Et / bağlantı kopyala / Nasıl doldurulur? / Yeni Monitör / Domain Ekle, `v20.71.1..HEAD`)
+
+Kapsam: yalnız frontend (App.css + DnsMonitorPage, CopyLinkButton, InventoryManager, App.jsx). Dokuz izleme sayfası,
+Envanter ve Genel Bakış başlıklarındaki eylem düğmeleri üç ayrı görünümdeydi (`.btn` gri, `.btn-primary` düz mavi,
+`.btn-success` yeşil, `mguide-btn` ikonlu turuncu; DNS sayfası satır içi stil ile hizalanıyordu). Tek kural, yalnız
+`.upt-header-right` / `.inv-header-actions` / `.sort-bar .sort-bar-add-domain` kapsamında: 34px / 9px köşe / 13px 600
+ağırlık; ikincil = yüzey arka planı + kenarlık + marka hover; birincil (`btn-primary`, `btn-success`, `sort-bar-add-domain`)
+= marka gradyanı + beyaz metin. Küresel `.btn` DOKUNULMADI (modal/tablo düğmeleri eski görünümde).
+Denetim odakları:
+- Kopyala düğmesi yalnız-ikon olduğunda 34×34 kare: `:has()` seçicisi jsdom/tarayıcıda güvenilir eşleşmedi →
+  `data-icon-only` özniteliği (CopyLinkButton) + öznitelik seçicisi.
+- DNS sayfası satır içi `style` sarmalayıcısı `upt-header-right` sınıfına çekildi (12 sayfa aynı sarmalayıcı).
+- Envanter "Domain Ekle" (`btn-success`) ve Genel Bakış "Domain Ekle" (`sort-bar-add-domain`) birincil stile + `Plus` ikon;
+  Genel Bakış düğmesi `margin-left:auto` ile süzgeç satırının sağına.
+- Koyu tema: gölge geçersiz kılmaları; hayalet sınıf/token yok (cssClasses / cssTokens kapıları yeşil).
+Tarayıcı doğrulaması: HTTP, DNS, Sentetik, Envanter (Dışa Aktar / İçe Aktar ikincil + mavi Domain Ekle), Genel Bakış.
+Kapılar: frontend lint 0 hata / 2112 test (ilk koşumda lazy-tabs-smoke UptimePage 15 sn zaman aşımı, seri tam tekrar
+246/246 yeşil) / kapsam tabanı / build yeşil; backend DEĞİŞMEDİ.
+→ **REGRESYON YOK**.
+
+## Ek — kırk üçüncü tur (2026-09-19, sürüm sonrası — Durum İzleme kartı: HTTP Kontrol Geçmişi de SAATLİK, `v20.71.1..HEAD`)
+
+Kapsam: yalnız backend yapılandırması (SchedulerService `runUptimeChecks` @Scheduled yedeği + application.properties
+`site.monitor.uptime.interval-ms`). SSL Kontrol Geçmişi saat başı (`scheduler.cron 0 0 * * * *`) dolarken HTTP Kontrol
+Geçmişi 5 dk'da bir doluyordu (300000 ms); iki geçmiş aynı sıklıkta olsun diye varsayılan 3600000 ms'e çekildi.
+Denetim odakları:
+- Tek anahtar, iki yazım yeri (properties + @Scheduled yedeği) → `UptimeIntervalDefaultTest` ikisini de 1 saate ve
+  SSL cron'unu saat başına pinler (PasswordPolicyDefaultTest deseni). Env `UPTIME_INTERVAL_MS` ile ezilebilir; yerel
+  `.env` ezmiyor; helm/k8s bu anahtarı taşımıyor (prod da yeni varsayılanı alır).
+- DOWN teyidi (confirm-* 30 sn × 3) ve kurtarma kontrolleri (`uptime.recovery-*`) süpürme aralığından bağımsız —
+  alarm gecikmesi değişmez, yalnız TESPİT en geç 1 saat sonra. Bilinçli ürün kararı (kullanıcı isteği).
+- Bayatlık eşiği (`scheduler.stale-minutes` 65) sertifika kontrolüne bakar, uptime tablosuna değil → etkilenmez.
+  24 saatlik erişilebilirlik yüzdesi artık 24 örnekten hesaplanır (tek arıza ≈ %95,8).
+- Frontend/i18n/whitepaper'da "5 dakikada bir" erişilebilirlik ifadesi yok (tarandı) → metin değişikliği gerekmedi.
+Kapılar: backend `clean verify` 3830 test — 1 kırmızı `IdentityLeakGuardTest.noNewIdentityLeaks`, YALNIZ kullanıcının
+takipsiz `docs/CORE_WEB_VITALS_FIZIBILITE.md` / `sre-slo-sekmesi.komut.md` dosyalarından (depoda yok, CI'ı
+etkilemez; dokunulmadı); yeni test 2/2 yeşil. Jar yeniden kuruldu, :8080 `/health` UP, :5173 200. Frontend DEĞİŞMEDİ.
+→ **REGRESYON YOK**.
+
+## Ek — kırk dördüncü tur (2026-09-19, sürüm sonrası — "Sizin için — bugün": istisna kartı kalktı, dört izleme kartı geldi, `v20.71.1..HEAD`)
+
+Kapsam: backend (MonitorSchedule arayüzü × 9 model; ActivityLogRepository 4 toplu sorgu; yeni TodayMonitorInsightsService;
+TodayPanelService istisna bloğu kaldırıldı, görünürlük süzgeci) + frontend (TodayPanel, TodayListModal, todayMonitorRows,
+i18n TR/EN, `.today-type`). Kullanıcı seçimi (4/4): kararsız (flapping) · yavaşlayan · sessiz/bayat · alan adı kaydı dolan.
+Denetim odakları:
+- Tek kaynak activity_log (monitor_id dolu → 9 tür); CERT/UPTIME envanter satırları kendi kartlarında. Sorgular zaman
+  aralığıyla (idx_act_time) kesilir; kararsızlık dizisi YALNIZ aralıkta arıza yazan monitörler için çekilir (tür başına IN).
+- Hesap tüm takımlar için 60 sn önbellekte (`today-monitors`); takım görünürlüğü TodayPanelService'te satır bazında —
+  alarm kartıyla AYNI kural (takımı görünür ya da hedefi görünür envanterde). Önbellek satırı kopyalanır (team_name).
+- Eşikler: kararsız ≥3 UP↔DOWN geçişi/24 sa (WARNING "iyi"); yavaş 24 sa ort. ≥1,5× taban VE ≥100 ms, iki tarafta ≥3
+  örnek, DOMAIN hariç (whois gecikmesi); bayat son kontrol > 2×aralık (taban 5 dk), 7 gün pencere — pencerede yaratılmış
+  ve hiç kontrol yoksa "hiç kontrol edilmedi", daha eskisi "7+ gündür kontrol yok"; alan adı ≤30 gün (dolmuş sayılır).
+- Tarayıcı bulgusu: yerelde 13 "sessiz" satır çıktı — hepsi envanter-türevi DNS/Port öksüzleri (alanı envanterden
+  silinmiş; süpürme `standalone != true && !activeDomains` ile BİLEREK atlıyor, liste uçları göstermiyor). Aynı kural
+  `MonitorSchedule.scheduleStandalone()` ile karta taşındı → 0 satır; test `stale_skipsOrphanedInventoryDerived`.
+- Satır tıklaması `?tab=<tür>&monitor=<id>` derin bağlantısı (useMonitorDeepLink, 8 sayfa); Sentetik'te yalnız sekme.
+  Pop-up ve kart aynı satır bileşenini çizer (todayMonitorRows.jsx). Tarayıcıda: fetch yaması ile 4 kart dolu görüntü,
+  Sessiz pop-up 2 satır, satır → `?tab=port&monitor=2`.
+- Kaldırılan: `exceptions` bloğu/kartı, `today.exceptions*`/`expiredOn`/`untilIn` anahtarları (kullanılmayan anahtar
+  kapısı yeşil), WeakAlgorithmExceptionRepository bağımlılığı.
+Kapılar: backend `clean verify` 3837 test — tek kırmızı `IdentityLeakGuardTest` (kullanıcının takipsiz 2 dosyası, depoda
+yok, dokunulmadı); yeni testler 7 + 4 (TodayPanelServiceTest güncellendi). Frontend lint 0 hata / 2113 test / kapsam / build
+yeşil. Jar yeniden kuruldu, :8080 `/health` UP.
+→ **REGRESYON YOK**.
+
+## Ek — kırk beşinci tur (2026-09-19, sürüm sonrası — "Sizin için — bugün": teslim edilemeyen bildirim + sertifika sağlık bulgusu kartları, `v20.71.1..HEAD`)
+
+Kapsam: backend (TodayMonitorInsightsService iki yeni blok + 6 bağımlılık; CertificateHealthService `thresholdDays()` /
+5-arg `evaluate` — eşik BİR kez okunur; UserPushDeliveryRepository türetilmiş sorgu; TodayPanelService iki blok) +
+frontend (TodayPanel 2 kart, todayMonitorRows NotificationRowBody/HealthRowBody, TodayListModal, i18n TR/EN, CSS rozetleri).
+Kullanıcı seçimi (4 adaydan 2): teslim edilemeyen bildirim (24 sa) · sertifika sağlık bulguları.
+Denetim odakları:
+- Bildirim: notification_logs (e-posta/webhook `FAILED…`, alarm üstünden takım+alan) + user_push_deliveries (`FAILED`,
+  takım). Hata metni "FAILED:" önekinden arındırılır; aynı olayın e-posta ve webhook'u ayrı satır (anahtar
+  kanal:olay:hedef:zaman). Satır → Alarm Geçmişi `incident=<olay>`; olaysız push yalnız sekme. Kanal kırılımı alt yazıda.
+- Sağlık: aktif envanterin her alanı için `evaluate` FAIL satırları — "expiry" hariç (30 gün altı kartı). Süresi dolmamış
+  zayıf-algoritma istisnası signature/keySize'ı SUSTURUR (kaldırılan istisna kartının işlevi buraya taşındı; "istisnalı"
+  etiketi), dolmuş istisna susturmaz; trust/chain/sanMatch/revocation KRİTİK (kırmızı rozet, kart tonu). Rozet başlığı
+  `hlth.val.*` değer metni (ör. "Eski (TLSv1)"). Satır → sertifika detayı (onOpenDomain); "Sayfaya git" → Zayıf Algoritma Raporu.
+- Görünürlük: her iki blok TodayPanelService'te aynı `visibleRows` kuralıyla süzülür; önbellek 60 sn (tüm takımlar).
+- Yerel veri: 11 sertifika 14/14 OK, 24 saatte teslim hatası yok → iki kart 0 (uç ile doğrulandı); dolu görünüm fetch
+  yamasıyla tarayıcıda: kanal rozetleri, hata metni, kritik/istisnalı rozetler, takım rozeti.
+Kapılar: backend `clean verify` 3839 test — tek kırmızı `IdentityLeakGuardTest` (kullanıcının takipsiz 2 dosyası); yeni
+testler 2 (+CertificateHealthServiceTest 36 yeşil). Frontend lint 0 hata / 2114 test / kapsam / build yeşil. Jar yeniden
+kuruldu, :8080 `/health` UP.
+→ **REGRESYON YOK**.
+
+## Ek — kırk altıncı tur (2026-09-19, sürüm sonrası — Genel Bakış: "Domain Ekle" ve "Domain ara" üst kontrol satırına, `v20.71.1..HEAD`)
+
+Kapsam: yalnız frontend (App.jsx + App.css). Kullanıcı isteği (iki adım): "Domain Ekle" "Şimdi Kontrol Et"in yanına,
+ardından "Domain ara" kutusu "Domain Ekle"nin yanına. İkisi de süzgeç satırından (`.sort-bar`) `.controls`'a taşındı.
+Denetim odakları:
+- Domain Ekle artık "Şimdi Kontrol Et" ile aynı küresel `.btn-primary` (yan yana iki farklı mavi olmasın) →
+  `.sort-bar-add-domain` gradyan/`margin-left:auto` kuralları ve 42. turdaki birleşik seçici üyeliği kaldırıldı;
+  `.controls-add-domain` yalnız sarma/ikon boşluğu. Yalnız `tab === 'dashboard' && canAddInventory`.
+- Arama: `.controls-search` sarmalayıcı `align-self: stretch` — kutu düğme yüksekliğine uzar (ilk denemede 36 vs 39 px
+  hizasızdı, ölçülüp düzeltildi: hepsi y=20/h=39). Temizle düğmesi bitişik; arama/temizleme davranışı aynı state.
+- Süzgeç satırında yalnız Sırala/Durum/Süre/Takım/Grup/Etiket kaldı; 2026-09-18 "arama en başta" notu güncellendi.
+- Tarayıcıda: "axess" yazınca 1 kart, temizle düğmesi görünür; ekran görüntüsü.
+Kapılar: frontend lint 0 hata / 2114 test / kapsam / build yeşil; backend DEĞİŞMEDİ.
+→ **REGRESYON YOK**.
+
+## Ek — kırk yedinci tur (2026-09-19, sürüm sonrası — SMTP Gönderim Logu v2: tam sayfa, sunucu taraflı arama/özet, `v20.71.1..HEAD`)
+
+Kapsam: backend (SmtpLogController + SmtpLogQueryService yeni; NotificationLogRepository gövdesiz projeksiyon ×2;
+EmailNotificationService.resendStoredHtml; AuditEventCatalog SMTP_RESEND) + frontend (SmtpLogView yeni; SystemHealth modal
+kaldırıldı → `view=smtp` alt görünüm; api.admin.smtpLog; `m_` URL öneki; TodayPanel bildirim kartı buraya derin bağlanır;
+i18n TR/EN 60 anahtar; CSS `.sml-*`). Kullanıcı seçimi (4+4+tam sayfa): KPI + zaman çizelgesi · takım kırılımı · hata
+sınıfları · alıcı/alan özeti · zengin detay · CSV · yeniden gönder · otomatik yenileme + derin bağlantı.
+Denetim odakları:
+- Eski uç 30 günlük pencereyi TAM VARLIK (gövde dâhil, onlarca KB/satır) yüklüyordu; yeni pencere gövdesiz projeksiyon +
+  alarm→takım/alan zenginleştirme, 60 sn önbellek (bean içi çağrı proxy'yi atladığı için @Cacheable DEĞİL, CacheManager
+  elle). Özet + arama aynı paramla → tek tarama. Gövde yalnız detayda (findById).
+- Takım kapsamı: CertificateController kuralı (görüş takımları + o takımların envanter alanları); global görücü hepsi.
+  Kontrolör testi kapsam türetimini pinler.
+- Hata sınıfı sözlüğü (TIMEOUT>AUTH>RATE>RECIPIENT>CONNECT>OTHER; SMTP kodları + JavaMail kalıpları) ve kind
+  (SENT/FAILED/SKIPPED/QUEUED/UNKNOWN) birim testli. Zaman çizelgesi ≤72 sa saatlik, üstü günlük; boş kovalar yazılır.
+- Yeniden gönder: yalnız FAILED, çözülmüş alarm 409, kapsam dışı 404; aynı gövde `sendFramedHtml` hunisinden (CID logo,
+  EmailBrandCidTest huni sayısı korunur); yeni log satırı trigger MANUAL; denetim SMTP_RESEND; yalnız global admin +
+  `system_health.actions`.
+- **Tarayıcıda yakalanan hata:** `search` yanıtı `Map.of` ile kurulunca açık uçlu pencerede `to=null` → NPE → "Sunucu
+  hatası" (birim testler mock'landığı için görmedi). LinkedHashMap'e çekildi; `SmtpLogControllerTest` (WebMvc) regresyon.
+- **Kardeş bulgu:** `.modal-box { max-width:640px }` (App.css 2573) `.modal-shell--lg/xl` ile aynı özgüllükte ve SONRA
+  geldiğinden lg/xl/full boyutları HİÇ uygulanmıyordu (UserPushSettings xl, AlertTeamCell lg, Uact lg de 640px'e
+  sıkışıyordu). `.modal-box.modal-shell--*` bileşik seçiciyle düzeltildi — o modallar artık tasarlanan genişlikte.
+- Tablo geniş ekranda sığmıyordu (1221 > 1078 px): konu sütunu esnek/ellipsis, iç boşluk dar → 1063 = 1063.
+- progress-guard kapısı elle çizilen hata-sınıfı çubuğunu yakaladı → ProgressBar (`--pg-fill` token).
+- Tarayıcıda: 30 kayıt / KPI / 7 günlük çubuk / takım-alıcı-alan tabloları; satır → detay (zincir 3, iframe, "Alarmı aç");
+  geri → Sistem Sağlığı; SMTP kartı CTA → görünüm; dashboard derin bağlantı `view=smtp&m_status=FAILED&m_range=24h`
+  → "Son 24 saat" + Başarısız KPI aktif.
+Kapılar: backend `clean verify` (bkz. çıktı) — tek beklenen kırmızı `IdentityLeakGuardTest` (takipsiz kullanıcı dosyaları);
+yeni testler 9 (servis) + 4 (kontrolör). Frontend lint 0 hata / 2123 test / kapsam (SmtpLogView %99,5) / build yeşil.
+→ **REGRESYON YOK**.
+
+## Ek — kırk sekizinci tur (2026-09-19, sürüm sonrası — Sistem Sağlığı'ndaki her bölüm her kademeye açık, `v20.71.1..HEAD`)
+
+Kapsam: backend (PermissionCatalog USER/TEAM_ADMIN `release_history.read`; PermissionService PolicyUpgrade ×2 — mevcut
+kurulumlarda `updated_by=system` satırlarını çevirir, yönetici kararı ezilmez; SystemController 5 salt-okuma uçtan
+`requireSystemRead` kalktı: user-activity, user-activity/series, user-activity/user/{u}, db-analytics, http-metrics
+endpoints/series) + frontend (SystemHealth `canViewUserActivity=true`, `canAck` → UserActivityPanel).
+Denetim odakları:
+- YAZMA uçları değişmedi: anomali onayı, oturum sonlandırma, heartbeat/lock, dağıtım kaydı yazma admin/AUDIT'te; panel
+  onay düğmeleri `canAck` ile gizlenir (403'e koşmasın).
+- **Sızıntı kapısı:** `/user-activity` payload'ı `employee_id` (sicil) taşıyordu; arayüz kapsamlı kullanıcıda "maskeli"
+  gösteriyordu ama JSON'da duruyordu. Uç her kademeye açılınca sunucuda silinir (`maskEmployeeIds`, önbellekli özetin
+  kopyası) — TeamBadge/üye listesi beyaz-liste ilkesiyle aynı. Test: USER payload'ında anahtar YOK, ADMIN'de var.
+- SystemControllerTest: iki "USER 403" testi 200'e çevrildi + ack 403 kalır + sicil maskesi.
+- Tarayıcıda: admin oturumunda 6 bölüm (Sistem · HTTP · JVM/CPU · Veritabanı · Kullanıcı/Oturum · Sürüm & Dağıtım).
+  Not: yerelde USER oturumu açılmadı (tek hesap); kapı davranışı WebMvc testleriyle pinli.
+Kapılar: bkz. 49. tur (ortak koşum).
+→ **REGRESYON YOK**.
+
+## Ek — kırk dokuzuncu tur (2026-09-19, sürüm sonrası — Sistem Sağlığı: Webhook Push kartı + Webhook Push Gönderim Logu sayfası, `v20.71.1..HEAD`)
+
+Kapsam: backend (PushLogQueryService + PushLogController yeni; UserPushDeliveryRepository gövdesiz pencere projeksiyonu +
+batch sorgusu; UserPushService.requeue; AuditEventCatalog USER_PUSH_REQUEUE) + frontend (PushLogView yeni; SystemHealth
+Webhook Push kartı → `view=push`; `p_` URL öneki; api.admin.pushLog; i18n TR/EN; `.pl-trigger-*`, `.sml-pre`).
+Denetim odakları:
+- Kart SMTP kartıyla aynı iskelet: 24 sa / 7 gün / 30 gün pilleri, gönderilen/başarısız/kuyrukta/oran; oran <%90 alarm
+  rengi. Veri `summary` ucundan (60 sn önbellek); görünürken 60 sn'de bir tazelenir.
+- Sayfa: SMTP sayfasının sözlüğü (`.sml-*`) — KPI 9 (kuyrukta ve engellendi ayrı), zaman çizelgesi (sent/failed/
+  pending/skipped), takım · hata sınıfı · alıcı · izleme · seviye kırılımları, sunucu taraflı arama/sıralama/sayfalama,
+  detay (mesaj, ham yanıt, aynı batch'in alıcıları, "Alarmı aç"), CSV, yeniden kuyruğa alma.
+- Durum sözlüğü: SENT/FAILED/PENDING/BLOCKED(CIRCUIT_OPEN, RATE_LIMITED)/SKIPPED(SKIPPED_*); hata sınıfı HTTP koduna
+  göre (AUTH 401/403 · NOT_FOUND 404 · RATE 429 · SERVER 5xx · CLIENT 4xx), kodsuz CONFIG (URL ayarlanmamış / gövde
+  kurulamadı — tarayıcıda "Diğer" çıkınca eklendi) · TIMEOUT · CONNECT · OTHER.
+- Tetikleyici sözlüğü SMTP'den FARKLI (OPEN/RE_ALERT/RESOLVE/…): ilk sürüm SMTP listesini kullanıyordu → satırlarda ham
+  "RE_ALERT" çıktı; mevcut `userpush.trigger.*` etiketleri + özetten gelen bilinmeyenler süzgeçte.
+- Kapsam: push satırı alan adı taşımaz → görüş takımları + kullanıcının KENDİ satırları (username); kontrolör testi pinler.
+- Yeniden kuyruk: FAILED/BLOCKED → PENDING, deneme sayacı 0, tek başına batch (eski batch arkadaşları yeniden gitmesin),
+  worker hemen; kanal kapalıysa CHANNEL_DISABLED (409); yalnız global admin + system_health.actions; denetim
+  USER_PUSH_REQUEUE (auditFormat `_REQUEUE` fiili).
+- Tarayıcıda: kart 0/23 %0 (yerelde webhook URL'si yok → hepsi FAILED, gerçek veri); sayfa 34 kayıt, 9 KPI, günlük
+  çubuklar, kırılımlar, satır detayı; deep-link `view=push`.
+Kapılar: backend `clean verify` (bkz. çıktı) — tek beklenen kırmızı `IdentityLeakGuardTest` (takipsiz kullanıcı
+dosyaları); yeni testler 5 (servis) + 3 (kontrolör). Frontend lint 0 hata / 2127 test / kapsam (68 dosya) / build yeşil.
+→ **REGRESYON YOK**.
+
+## Ek — ellinci tur (2026-09-19, sürüm sonrası — Genel Bakış sertifika kartı zengin görünümü (8 blok) + Kompakt/Zengin anahtarı, `v20.71.1..HEAD`)
+
+Kapsam: backend (CertificateCardExtrasService + CertificateCardExtrasController `/api/certificates/card-extras`;
+UptimeCheckRepository saatlik kova sorgusu; MaintenanceService windowInfoByTarget/activeEndAt) + frontend
+(CertificateCardExtras yeni; CertificateCard `extra` prop; RenewalPlanModal Vade Takvimi'nden çıkarılıp ortaklaştı;
+App.jsx veri + anahtar + eylemler; i18n TR/EN `ccx.*`; CSS `.ccx-*`). Kullanıcı seçimi 8/8 + "Zengin + kompakt anahtarı".
+Denetim odakları:
+- Ana liste (`/api/certificates`, `cert-latest` önbelleği, 50 testli kontrolör) DOKUNULMADI: zenginleştirme ayrı uçtan
+  gelir, kart alan adıyla birleştirir; uç düşerse kart bugünkü hâlinde kalır (extra=undefined).
+- Tek geçiş/60 sn önbellek (tüm envanter): latest_checks 1 tarama, açık alarmlar 1, uptime saatlik kova 1 GROUP BY +
+  son kontrol 1 (LATERAL), bakım pencereleri 1, sağlık kuralları CPU (eşik BİR kez, `thresholdDays`). Kapsam
+  `/certificates` kuralı (görüş takımlarının envanteri; global hepsi).
+- Sağlık: FAIL satırlar (expiry hariç) + "ok/evaluated"; kritik anahtarlar (revocation/trust/sanMatch/chain) kırmızı;
+  tıklama → sertifika modalı Sağlık sekmesi (`_tab: 'health'`). Açık alarm: en yüksek seviye + sayı + hepsi onaylı mı;
+  tıklama → Alarm Geçmişi'nde ilk olay. Erişilebilirlik: 24 sa %, son ms, 24 saatlik kova sparkline (boş saat null).
+  Değişim: pin uyuşmazlığı kırmızı (Onayla YOK — önce incelenir), 7 gün içinde onaysız değişim turuncu + Onayla
+  (mevcut confirm-renewal ucu). Plan: gecikmiş (plan tarihi geçti, sertifika plandan sonra verilmedi) / tamam /
+  bekliyor; 30 gün altı plansız → "Yenileme planla" (ortak modal, forecast plan ucu). Paylaşılan: aynı parmak izi +
+  SAN sayısı (hover listesi). Bakım: hedefe özel pencere, yoksa "tüm izlemeler" penceresi; aktif → bitişe kadar, 24 sa
+  içinde başlayacak → "Bakım hh:mm". Kontaklar: 4 alan; hepsi boşsa "Sorumlu kişi yok" hijyen uyarısı.
+- Tüm zengin blok tıklamaları `stopPropagation` — aksi halde kart detayı da açılırdı (test pinler).
+- Anahtar: süzgeç satırında Kompakt/Zengin (localStorage `dash-card-mode`, varsayılan Zengin); Kompakt = bugünkü kart.
+- Tarayıcıda: 11 kart zengin (Sağlık 14/14 temiz, %100 erişilebilirlik · ms, SAN, "Sorumlu kişi yok"); anahtar
+  Kompakt ↔ Zengin ve localStorage doğrulandı. Anahtar düğmesi ilk ekranda koyu dolguyla çıktı → yüzey + kenarlık.
+Kapılar: backend `clean verify` (bkz. çıktı) — tek beklenen kırmızı `IdentityLeakGuardTest`; yeni test 5 (servis).
+Frontend lint 0 hata / 2130 test / kapsam / build yeşil.
+→ **REGRESYON YOK**.
+
+## Ek — elli birinci tur (2026-09-19, sürüm sonrası — Genel Bakış kartı "şu an" şeridi: son erişim + son alarm, `v20.71.1..HEAD`)
+
+Kapsam: backend (AlertEventRepository.findLatestPerDomain — alan başına EN SON alarm, açık/kapalı; card-extras `last_alert`
+bloğu) + frontend (CertificateLiveStrip yeni; CertificateCard `live` prop — footer'da eylem düğmelerinin karşısında; App
+her iki görünümde geçirir; i18n `live.*`; CSS `.cc-live*`).
+Denetim odakları:
+- Şerit kompakt görünümde de çizilir (tek satır); zengin bloktan bağımsız. Yalnız sorunda renkli (erişilemiyor / açık
+  alarm → kırmızı), aksi hâlde gri — 100 kartta gürültü yapmasın.
+- Erişilebilirlik saatlik olduğu için (43. tur) "son kontrol X dk önce" tooltip'te; şerit metni ilk denemede eylem
+  düğmelerini alt satıra itti (footer flex-wrap) → `:has(.cc-live)` ile çip kabı esner + nowrap, metin kısaltıldı
+  ("Ayakta 16ms · alarm 17g ✓"), font .68em; ölçüm: 155/155 px, eylemlerle aynı satır (y=692/693).
+- Tıklama → Durum İzleme `?q=<alan>` (UptimePage arama paramı); kart onClick'i yutulur.
+- Test: ayakta+çözülmüş gri / erişilemiyor+açık kırmızı, tooltip, navigasyon, kompaktta da var.
+Kapılar: backend `clean verify` (bkz. çıktı) — tek beklenen kırmızı `IdentityLeakGuardTest`; frontend lint 0 hata / 2131
+test / kapsam / build yeşil.
+→ **REGRESYON YOK**.
+
+## Ek — elli ikinci tur (2026-09-19, sürüm sonrası — Kompakt/Zengin anahtarı "Genel Bakış" başlığının yanına, `v20.71.1..HEAD`)
+
+Kapsam: yalnız frontend (App.jsx + App.css). Süzgeç satırındaki tek düğme kaldırıldı; başlığın yanında iki durumlu segment
+(Kompakt | Zengin, aktif olan vurgulu, `aria-pressed`). Aynı state/localStorage (`dash-card-mode`).
+Denetim odakları: başlık `.dashboard-header > h2` kuralının dışına çıkınca alt boşluk geri geldi (dikey merkez 349 vs
+359 px) → `.dashboard-title-row h2 { margin: 0 }`; ölçüm 349/349. Segment tıklamaları kart sayısını (11 ↔ 0 zengin blok)
+ve tercihi değiştiriyor; süzgeç satırında eski düğme yok.
+Kapılar: frontend lint 0 hata / 2131 test / kapsam / build yeşil; backend DEĞİŞMEDİ.
+→ **REGRESYON YOK**.

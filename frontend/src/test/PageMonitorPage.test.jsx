@@ -219,7 +219,7 @@ describe('PageMonitorPage', () => {
     // Her alan varsayılandan FARKLI → bir alan formFrom'dan düşerse tam-payload karşılaştırması kırılır.
     api.monitoring.getPageMonitors.mockResolvedValue({ success: true, data: [{
       id: 1, name: 'Example', url: 'https://www.example.com/', status: 'DEGRADED', checked_at: '2026-06-24T00:00:00',
-      group_name: 'Kurumsal', team_id: 5, team_name: 'SY-A', tags: 'prod,kritik', notify_email: false,
+      group_name: 'Kurumsal', team_id: 5, team_name: 'SY-A', tags: 'prod,kritik', alert_level: 'HIGH', notify_email: false,
       mode: 'CRAWL', crawl_depth: 3, crawl_max_pages: 80, exclude_patterns: '/ads/\n/tracker/',
       slow_resource_ms: 1500, alert_third_party: true, alert_mixed_content: false, alert_timeout: false,
       resource_concurrency: 8, interval_seconds: 600, timeout_ms: 6000,
@@ -246,7 +246,7 @@ describe('PageMonitorPage', () => {
 
     expect(api.monitoring.createPageMonitor.mock.calls[0][0]).toEqual({
       name: 'Example (Kopya)', url: 'https://www.example.com/',
-      groupName: 'Kurumsal', teamId: 5, tags: 'prod,kritik', notifyEmail: false, notifyWebhook: true,
+      groupName: 'Kurumsal', teamId: 5, tags: 'prod,kritik', alertLevel: 'HIGH', notifyEmail: false, notifyWebhook: true,
       mode: 'CRAWL', crawlDepth: 3, crawlMaxPages: 80, excludePatterns: '/ads/\n/tracker/',
       slowResourceMs: 1500, alertThirdParty: true, alertMixedContent: false, alertTimeout: false,
       resourceConcurrency: 8, intervalSeconds: 600, timeoutMs: 6000,

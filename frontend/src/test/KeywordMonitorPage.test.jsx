@@ -112,7 +112,7 @@ describe('KeywordMonitorPage', () => {
       id: 1, name: 'Example', url: 'https://www.example.com/', keyword: 'example', status: 'up',
       checked_at: '2026-06-24T00:00:00',
       operator: 'LTE', match_count: 4, group_name: 'Kurumsal', team_id: 5, team_name: 'SY-A',
-      case_sensitive: true, tags: 'prod,kritik', notify_email: false,
+      case_sensitive: true, tags: 'prod,kritik', alert_level: 'HIGH', notify_email: false,
       check_ssl_errors: true, ssl_expiry_reminders: true, domain_expiry_reminders: true,
       ssl_reminder_days: '45,20,5', domain_reminder_days: '60,30,10',
       slow_response_enabled: true, slow_threshold_ms: 4500,
@@ -140,7 +140,7 @@ describe('KeywordMonitorPage', () => {
     expect(api.monitoring.createKeywordMonitor.mock.calls[0][0]).toEqual({
       name: 'Example (Kopya)', url: 'https://www.example.com/', keyword: 'example',
       operator: 'LTE', matchCount: 4, groupName: 'Kurumsal', teamId: 5,
-      caseSensitive: true, tags: 'prod,kritik', notifyEmail: false, notifyWebhook: true,
+      caseSensitive: true, tags: 'prod,kritik', alertLevel: 'HIGH', notifyEmail: false, notifyWebhook: true,
       checkSslErrors: true, sslExpiryReminders: true, domainExpiryReminders: true,
       sslReminderDays: '45,20,5', domainReminderDays: '60,30,10',
       slowResponseEnabled: true, slowThresholdMs: 4500,

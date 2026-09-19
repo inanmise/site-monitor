@@ -57,6 +57,61 @@ public class MaintenanceService {
         return allActive || (target != null && activeTargets.contains(target));
     }
 
+    /**
+     * Genel Bakış kartı bakım rozeti (2026-09-19): her hedef için {active, until, next_start, name}. Tüm aktif
+     * pencereler BİR kez gezilir (alan başına sorgu yok); "all monitors" penceresi {@code "*"} anahtarında.
+     * next_start: 24 saat içinde başlayacak en yakın pencere.
+     */
+    public Map<String, Map<String, Object>> windowInfoByTarget(Instant now) {
+        Map<String, Map<String, Object>> out = new java.util.HashMap<>();
+        for (MaintenanceWindow w : repo.findByActiveTrue()) {
+            Instant end = activeEndAt(w, now);
+            String next = end == null ? nextOccurrence(w, now) : null;
+            Instant nextAt = next == null ? null : parse(next);
+            boolean soon = nextAt != null && !nextAt.isAfter(now.plus(Duration.ofHours(24)));
+            if (end == null && !soon) continue;
+            List<String> keys = Boolean.TRUE.equals(w.getAllMonitors()) ? List.of("*") : targetsOf(w);
+            for (String k : keys) {
+                Map<String, Object> m = out.computeIfAbsent(k, x -> new LinkedHashMap<>());
+                if (end != null) {   // aktif pencere önceliklidir; birden çoksa en geç biten
+                    Object cur = m.get("until");
+                    if (!Boolean.TRUE.equals(m.get("active")) || cur == null || ISO.format(end).compareTo(String.valueOf(cur)) > 0) {
+                        m.put("active", true); m.put("until", ISO.format(end)); m.put("name", w.getName());
+                    }
+                } else if (!Boolean.TRUE.equals(m.get("active"))) {
+                    Object cur = m.get("next_start");
+                    if (cur == null || next.compareTo(String.valueOf(cur)) < 0) { m.put("active", false); m.put("next_start", next); m.put("name", w.getName()); }
+                }
+            }
+        }
+        return out;
+    }
+
+    /** Pencere şu an aktifse bitiş anı, değilse null — {@link #isActiveAt} ile aynı occurrence kuralı. */
+    public Instant activeEndAt(MaintenanceWindow w, Instant now) {
+        if (!Boolean.TRUE.equals(w.getActive())) return null;
+        Instant anchor = parse(w.getStartAt());
+        if (anchor == null) return null;
+        long dur = durMin(w);
+        ZoneId zone = zoneOf(w);
+        String rec = rec(w);
+        if ("NONE".equals(rec)) {
+            Instant end = anchor.plus(Duration.ofMinutes(dur));
+            return !now.isBefore(anchor) && now.isBefore(end) ? end : null;
+        }
+        ZonedDateTime anchorZ = anchor.atZone(zone);
+        LocalTime tod = anchorZ.toLocalTime();
+        LocalDate anchorDate = anchorZ.toLocalDate();
+        LocalDate today = now.atZone(zone).toLocalDate();
+        for (LocalDate d : List.of(today.minusDays(1), today)) {
+            if (d.isBefore(anchorDate) || !matchesRecurrence(w, rec, d)) continue;
+            Instant start = ZonedDateTime.of(d, tod, zone).toInstant();
+            Instant end = start.plus(Duration.ofMinutes(dur));
+            if (!now.isBefore(start) && now.isBefore(end)) return end;
+        }
+        return null;
+    }
+
     /** /active endpoint'i için: {all, targets}. */
     public Map<String, Object> activeInfo() {
         Map<String, Object> m = new LinkedHashMap<>();

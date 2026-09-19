@@ -34,7 +34,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
         monitors: [{
           id: 1, name: 'OIDC Login', status: 'PASS', checked_at: '2026-07-31T10:00:00',
           description: 'Giriş senaryosu', group_name: 'Senaryolar', team_id: 5, team_name: 'SY-A',
-          tags: 'prod,kritik', notify_email: false,
+          tags: 'prod,kritik', alert_level: 'HIGH', notify_email: false,
           interval_seconds: 900, timeout_seconds: 45,
           confirm_attempts: 5, confirm_interval_seconds: 45, recovery_checks: 4, recovery_interval_seconds: 90,
           active: false, script: 'export default function(){}', notification_group_id: 7,
@@ -65,7 +65,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
 
     expect(api.monitoring.createScriptedMonitor.mock.calls[0][0]).toEqual({
       name: 'OIDC Login (Kopya)', description: 'Giriş senaryosu',
-      groupName: 'Senaryolar', teamId: 5, tags: 'prod,kritik', notifyEmail: false, notifyWebhook: true,
+      groupName: 'Senaryolar', teamId: 5, tags: 'prod,kritik', alertLevel: 'HIGH', notifyEmail: false, notifyWebhook: true,
       intervalSeconds: 900, timeoutSeconds: 45,
       confirmAttempts: 5, confirmIntervalSeconds: 45, recoveryChecks: 4, recoveryIntervalSeconds: 90,
       // Bildirim grubu da kopyalanir: kopya, kaynagin alarmini ALAN ekibe gitsin.

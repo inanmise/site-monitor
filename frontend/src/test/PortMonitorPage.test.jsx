@@ -76,7 +76,7 @@ describe('PortMonitorPage', () => {
     api.monitoring.getPortMonitors.mockResolvedValue({ success: true, data: [{
       id: 1, name: 'mail', host: '10.0.0.1', status: 'open', checked_at: '2026-06-24T00:00:00',
       port: 8443, protocol: 'HTTP', expect: '2xx', send_data: '/health',
-      team_id: 3, team_name: 'SY-A', group_name: 'Kurumsal', tags: 'prod,kritik', notify_email: false,
+      team_id: 3, team_name: 'SY-A', group_name: 'Kurumsal', tags: 'prod,kritik', alert_level: 'HIGH', notify_email: false,
       ip_version: 'v4', slow_response_enabled: true, slow_threshold_ms: 4500,
       interval_seconds: 900, timeout_ms: 7000,
       confirm_attempts: 5, confirm_interval_seconds: 45, recovery_checks: 4, recovery_interval_seconds: 90,
@@ -102,7 +102,7 @@ describe('PortMonitorPage', () => {
     expect(api.monitoring.createPortMonitor.mock.calls[0][0]).toEqual({
       name: 'mail (Kopya)', host: '10.0.0.1', port: 8443, protocol: 'HTTP',
       expect: '2xx', sendData: '/health',
-      teamId: 3, groupName: 'Kurumsal', tags: 'prod,kritik', notifyEmail: false, notifyWebhook: true,
+      teamId: 3, groupName: 'Kurumsal', tags: 'prod,kritik', alertLevel: 'HIGH', notifyEmail: false, notifyWebhook: true,
       ipVersion: 'v4', slowResponseEnabled: true, slowThresholdMs: 4500,
       intervalSeconds: 900, timeoutMs: 7000,
       confirmAttempts: 5, confirmIntervalSeconds: 45, recoveryChecks: 4, recoveryIntervalSeconds: 90,

@@ -33,7 +33,8 @@ const LoginActivityChart = lazy(() => import('../LoginActivityChart.jsx'))
  *
  * Veri SystemHealth'in 30 sn döngüsünden gelir (tek payload); burası yalnız türetir ve çizer.
  */
-export default function UserActivityPanel({ data, error, refreshing, onRefresh, isAdmin, globalAdmin, username, onTerminated }) {
+/** canAck (2026-09-19): anomali onayı/geri alma yalnız global admin / AUDIT — panel artık her kademeye görünür. */
+export default function UserActivityPanel({ data, error, refreshing, onRefresh, isAdmin, globalAdmin, canAck = true, username, onTerminated }) {
   const t = useT()
   const toast = useToast()
   const [filters, setFilters] = useState(() => paramsToFilters(readUrlParam))
@@ -455,8 +456,8 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
                   <td data-label={t('uact.colFlags')}>{splitFlags(r.flags).map((f) => <span key={f} className="uact-flag" title={t(`uact.flagHelp.${f}`)}>{t(`uact.anom_${f}`)}</span>)}</td>
                   <td data-label={t('uact.colOutcome')} className="sys-small">{r.outcome === 'SUCCESS' ? <span className="sys-ok-text">{r.outcome}</span> : <span className="sys-err-text">{r.outcome || '—'}</span>}{r.reason ? <span className="sys-muted"> · {r.reason}</span> : null}</td>
                   <td data-label={t('uact.ackCol')}>{r.ack
-                    ? <span className="uact-ack" title={r.ack.note || ''}><Check size={12} /> {r.ack.by} · {rel(r.ack.at)}{r.id && <button type="button" className="uact-link sys-small" disabled={ackBusy === r.id} onClick={() => doAck(r, false)}>{t('uact.unack')}</button>}</span>
-                    : (r.id ? <button type="button" className="btn btn-sm btn-secondary" disabled={ackBusy === r.id} onClick={() => setAckTarget(r)}>{t('uact.ack')}</button> : '—')}</td>
+                    ? <span className="uact-ack" title={r.ack.note || ''}><Check size={12} /> {r.ack.by} · {rel(r.ack.at)}{r.id && canAck && <button type="button" className="uact-link sys-small" disabled={ackBusy === r.id} onClick={() => doAck(r, false)}>{t('uact.unack')}</button>}</span>
+                    : (r.id && canAck ? <button type="button" className="btn btn-sm btn-secondary" disabled={ackBusy === r.id} onClick={() => setAckTarget(r)}>{t('uact.ack')}</button> : '—')}</td>
                 </tr>
               ))}</tbody>
             </table>

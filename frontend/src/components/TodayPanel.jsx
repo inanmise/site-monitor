@@ -1,16 +1,18 @@
 import { useCallback, useState } from 'react'
-import { CalendarClock, Siren, ClipboardCheck, CalendarDays, ArrowRight, ChevronDown, Sparkles } from 'lucide-react'
-import { api, formatDate } from '../api/client'
+import { CalendarClock, Siren, CalendarDays, ArrowRight, ChevronDown, Sparkles, Activity, Gauge, BellOff, Globe, MailX, ShieldAlert } from 'lucide-react'
+import { api } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import { navigateTo } from '../utils/navigate.js'
 import TeamBadge from './ui/TeamBadge.jsx'
 import TodayListModal from './TodayListModal.jsx'
+import { MonitorRowBody, NotificationRowBody, HealthRowBody, MONITOR_SECTION_TAB, monitorRowKey, openMonitor, openNotification } from './todayMonitorRows.jsx'
 
 /**
- * "Sizin için — bugün" (2026-09-12, zenginleştirme #3): dashboard'un üstünde dört kart —
- * 30 gün altı sertifika · açık alarm · süresi dolan istisna · bu haftanın raporu. Her kart doğru
- * sayfaya süzülmüş bağlantı. Hepsi sıfırsa tek satır yeşil "bugün ilgilenilecek bir şey yok".
+ * "Sizin için — bugün" (2026-09-12, zenginleştirme #3): dashboard'un üstünde kartlar —
+ * 30 gün altı sertifika · açık alarm · bu haftanın raporu · ve dört İZLEME kartı (2026-09-19, zayıf-algoritma
+ * istisnası kartının yerine, kullanıcı seçimi): kararsız · yavaşlayan · sessiz/bayat · alan adı kaydı dolan;
+ * ikinci tur: teslim edilemeyen bildirim (24 sa) · sertifika sağlık bulguları. Her kart doğru sayfaya süzülmüş bağlantı. Hepsi sıfırsa tek satır yeşil "bugün ilgilenilecek bir şey yok".
  * 2 dk'da bir görünürken tazelenir; VARSAYILAN KAPALI, açık/kapalı tercihi localStorage'da.
  */
 export default function TodayPanel({ onOpenDomain }) {
@@ -27,8 +29,12 @@ export default function TodayPanel({ onOpenDomain }) {
   useVisibleInterval(load, 120_000, true)
 
   if (!data) return null
-  const certs = data.certs || {}, alerts = data.alerts || {}, exc = data.exceptions || {}, weekly = data.weekly || {}
-  const total = (certs.count || 0) + (alerts.count || 0) + (exc.count || 0) + (weekly.missing || 0)
+  const certs = data.certs || {}, alerts = data.alerts || {}, weekly = data.weekly || {}
+  const flapping = data.flapping || {}, slow = data.slow || {}, stale = data.stale || {}, domains = data.domains || {}
+  const notif = data.notifications || {}, health = data.health || {}
+  const total = (certs.count || 0) + (alerts.count || 0) + (weekly.missing || 0)
+    + (flapping.count || 0) + (slow.count || 0) + (stale.count || 0) + (domains.count || 0)
+    + (notif.count || 0) + (health.count || 0)
 
   function toggle() {
     setOpen((o) => { try { localStorage.setItem('today-panel-open', String(!o)) } catch { /* yoksay */ } return !o })
@@ -89,16 +95,52 @@ export default function TodayPanel({ onOpenDomain }) {
             </ul>
           </Card>
 
-          <Card icon={ClipboardCheck} tone={exc.expired > 0 ? 'bad' : exc.count > 0 ? 'warn' : 'ok'} title={t('today.exceptions')} count={exc.count || 0}
-            sub={exc.expired > 0 ? t('today.exceptionsExpired', exc.expired) : t('today.exceptionsSub')}
-            onGo={exc.count ? () => navigateTo('weakalgo') : null} section="exceptions" onOpenItem={() => navigateTo('weakalgo')}>
+          {/* İzleme kartları (2026-09-19): satır çizimi todayMonitorRows.jsx'te (pop-up ile ortak). */}
+          <Card icon={Activity} tone={flapping.count > 0 ? 'warn' : 'ok'} title={t('today.flapping')} count={flapping.count || 0}
+            sub={t('today.flappingSub')}
+            onGo={flapping.count ? () => navigateTo(MONITOR_SECTION_TAB.flapping) : null} section="flapping" onOpenItem={openMonitor}>
             <ul className="today-list">
-              {(exc.items || []).map((e) => (
-                <li key={e.domain}>
-                  <button type="button" className="today-link" onClick={() => navigateTo('weakalgo')}>{e.domain}</button>
-                  <span className={`today-days${e.days < 0 ? ' is-bad' : ' is-warn'}`}>{e.days < 0 ? t('today.expiredOn', formatDate(e.until)) : t('today.untilIn', e.days)}</span>
-                </li>
-              ))}
+              {(flapping.items || []).map((x) => <li key={monitorRowKey(x)}><MonitorRowBody section="flapping" item={x} t={t} onOpen={openMonitor} /></li>)}
+            </ul>
+          </Card>
+
+          <Card icon={Gauge} tone={slow.count > 0 ? 'warn' : 'ok'} title={t('today.slow')} count={slow.count || 0}
+            sub={t('today.slowSub')}
+            onGo={slow.count ? () => navigateTo(MONITOR_SECTION_TAB.slow) : null} section="slow" onOpenItem={openMonitor}>
+            <ul className="today-list">
+              {(slow.items || []).map((x) => <li key={monitorRowKey(x)}><MonitorRowBody section="slow" item={x} t={t} onOpen={openMonitor} /></li>)}
+            </ul>
+          </Card>
+
+          <Card icon={BellOff} tone={stale.count > 0 ? 'warn' : 'ok'} title={t('today.stale')} count={stale.count || 0}
+            sub={stale.paused > 0 ? `${t('today.staleSub')} · ${t('today.stalePaused', stale.paused)}` : t('today.staleSub')}
+            onGo={stale.count ? () => navigateTo(MONITOR_SECTION_TAB.stale) : null} section="stale" onOpenItem={openMonitor}>
+            <ul className="today-list">
+              {(stale.items || []).map((x) => <li key={monitorRowKey(x)}><MonitorRowBody section="stale" item={x} t={t} onOpen={openMonitor} /></li>)}
+            </ul>
+          </Card>
+
+          <Card icon={Globe} tone={domains.expired > 0 ? 'bad' : domains.count > 0 ? 'warn' : 'ok'} title={t('today.domains')} count={domains.count || 0}
+            sub={domains.expired > 0 ? t('today.domainsExpired', domains.expired) : t('today.domainsSub')}
+            onGo={domains.count ? () => navigateTo(MONITOR_SECTION_TAB.domains) : null} section="domains" onOpenItem={openMonitor}>
+            <ul className="today-list">
+              {(domains.items || []).map((x) => <li key={monitorRowKey(x)}><MonitorRowBody section="domains" item={x} t={t} onOpen={openMonitor} /></li>)}
+            </ul>
+          </Card>
+
+          <Card icon={MailX} tone={notif.count > 0 ? 'bad' : 'ok'} title={t('today.notif')} count={notif.count || 0}
+            sub={notif.count > 0 ? t('today.notifBreakdown', notif.email || 0, notif.webhook || 0, notif.push || 0) : t('today.notifSub')}
+            onGo={notif.count ? () => navigateTo('health', { view: 'smtp', m_status: 'FAILED', m_range: '24h' }) : null} section="notifications" onOpenItem={openNotification}>
+            <ul className="today-list">
+              {(notif.items || []).map((x) => <li key={monitorRowKey(x)}><NotificationRowBody item={x} t={t} onOpen={openNotification} /></li>)}
+            </ul>
+          </Card>
+
+          <Card icon={ShieldAlert} tone={health.critical > 0 ? 'bad' : health.count > 0 ? 'warn' : 'ok'} title={t('today.health')} count={health.count || 0}
+            sub={health.critical > 0 ? t('today.healthCritical', health.critical) : t('today.healthSub')}
+            onGo={health.count ? () => navigateTo(MONITOR_SECTION_TAB.health) : null} section="health" onOpenItem={(x) => onOpenDomain?.(x.domain)}>
+            <ul className="today-list">
+              {(health.items || []).map((x) => <li key={monitorRowKey(x)}><HealthRowBody item={x} t={t} onOpen={(h) => onOpenDomain?.(h.domain)} /></li>)}
             </ul>
           </Card>
 
