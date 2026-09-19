@@ -8,7 +8,7 @@ import lombok.NoArgsConstructor;
 @Table(name = "dns_monitors")
 @Data
 @NoArgsConstructor
-public class DnsMonitor implements MonitorAlertPrefs {
+public class DnsMonitor implements MonitorAlertPrefs, MonitorSchedule {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -138,4 +138,9 @@ public class DnsMonitor implements MonitorAlertPrefs {
      */
     @jakarta.persistence.Column(name = "notification_group_id")
     private Long notificationGroupId;
+
+    // MonitorSchedule (2026-09-19): "Sizin için — bugün" bayat-izleme kartı
+    @Override public String scheduleType() { return "DNS"; }
+    @Override public boolean scheduleStandalone() { return Boolean.TRUE.equals(standalone); }
+    @Override public String scheduleTarget() { return domain; }
 }

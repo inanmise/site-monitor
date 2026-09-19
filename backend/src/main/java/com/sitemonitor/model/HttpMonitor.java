@@ -18,7 +18,7 @@ import lombok.NoArgsConstructor;
 @Table(name = "http_monitors")
 @Data
 @NoArgsConstructor
-public class HttpMonitor implements MonitorAlertPrefs {
+public class HttpMonitor implements MonitorAlertPrefs, MonitorSchedule {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -149,4 +149,8 @@ public class HttpMonitor implements MonitorAlertPrefs {
      */
     @jakarta.persistence.Column(name = "notification_group_id")
     private Long notificationGroupId;
+
+    // MonitorSchedule (2026-09-19): "Sizin için — bugün" bayat-izleme kartı
+    @Override public String scheduleType() { return "HTTP"; }
+    @Override public String scheduleTarget() { return url; }
 }

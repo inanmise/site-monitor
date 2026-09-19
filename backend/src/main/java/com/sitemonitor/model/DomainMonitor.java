@@ -17,7 +17,7 @@ import lombok.NoArgsConstructor;
 @Table(name = "domain_monitors")
 @Data
 @NoArgsConstructor
-public class DomainMonitor implements MonitorAlertPrefs {
+public class DomainMonitor implements MonitorAlertPrefs, MonitorSchedule {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -154,4 +154,8 @@ public class DomainMonitor implements MonitorAlertPrefs {
      */
     @jakarta.persistence.Column(name = "notification_group_id")
     private Long notificationGroupId;
+
+    // MonitorSchedule (2026-09-19): "Sizin için — bugün" bayat-izleme kartı
+    @Override public String scheduleType() { return "DOMAIN"; }
+    @Override public String scheduleTarget() { return domain; }
 }

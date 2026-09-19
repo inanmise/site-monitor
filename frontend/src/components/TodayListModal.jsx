@@ -1,22 +1,25 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ArrowRight } from 'lucide-react'
-import { api, formatDate } from '../api/client'
+import { api } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import ModalShell from './ui/ModalShell.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 import TeamBadge from './ui/TeamBadge.jsx'
 import { usePagination } from '../hooks/usePagination.js'
+import { MonitorRowBody, monitorRowKey } from './todayMonitorRows.jsx'
 
 /**
  * "Sizin için — bugün" → "Tümünü gör" pop-up'ı (2026-09-18, kullanıcı isteği): kart yalnız ilk 5 satırı
  * gösterir; bu modal {@code /api/me/today?full=true} ile listenin TAMAMINI çeker ve 10'luk sayfalarla sunar.
  * Alt köşedeki "Sayfaya git" eski davranışı (ilgili sayfaya süzülmüş geçiş) korur.
  *
- * @param {'certs'|'alerts'|'exceptions'|'weekly'} section
+ * @param {'certs'|'alerts'|'weekly'|'flapping'|'slow'|'stale'|'domains'} section
  * @param {(item:object)=>void} onOpen  satıra tıklama (kartla aynı davranış)
  * @param {()=>void} [onGo]           "Sayfaya git"
  */
+const MONITOR_SECTIONS = new Set(['flapping', 'slow', 'stale', 'domains'])
+
 export default function TodayListModal({ section, title, icon, onClose, onOpen, onGo }) {
   const t = useT()
   const [data, setData] = useState(null)
@@ -35,7 +38,7 @@ export default function TodayListModal({ section, title, icon, onClose, onOpen, 
   const rows = useMemo(() => {
     const s = q.trim().toLowerCase()
     if (!s) return all
-    return all.filter((x) => [x.domain, x.type, x.team_name, x.level].some((v) => (v || '').toLowerCase().includes(s)))
+    return all.filter((x) => [x.domain, x.type, x.team_name, x.level, x.name, x.target, x.registrar].some((v) => (v || '').toLowerCase().includes(s)))
   }, [all, q])
   const pager = usePagination(rows, { listKey: 'today-' + section, defaultSize: 10, resetDeps: [q, all] })
   const count = data?.[section]?.count ?? data?.[section]?.missing ?? all.length
@@ -47,11 +50,8 @@ export default function TodayListModal({ section, title, icon, onClose, onOpen, 
         <button type="button" className="today-link" onClick={() => onOpen?.(x)}>{x.domain || x.type}</button>
         <span className="today-muted">{x.type}{x.acknowledged ? ` · ${t('today.acked')}` : ''}</span>
       </li>)
-    if (section === 'exceptions') return (
-      <li key={x.domain} className="today-modal-row">
-        <button type="button" className="today-link" onClick={() => onOpen?.(x)}>{x.domain}</button>
-        <span className={`today-days${x.days < 0 ? ' is-bad' : ' is-warn'}`}>{x.days < 0 ? t('today.expiredOn', formatDate(x.until)) : t('today.untilIn', x.days)}</span>
-      </li>)
+    if (MONITOR_SECTIONS.has(section)) return (
+      <li key={monitorRowKey(x)} className="today-modal-row"><MonitorRowBody section={section} item={x} t={t} onOpen={onOpen} /></li>)
     if (section === 'weekly') return (
       <li key={x.team_id} className="today-modal-row">
         {x.team_name ? <TeamBadge teamId={x.team_id} teamName={x.team_name} /> : <span>#{x.team_id}</span>}

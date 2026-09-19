@@ -93,4 +93,43 @@ public interface ActivityLogRepository extends JpaRepository<ActivityLog, Long> 
     List<ActivityLog> findRecentForMonitor(@Param("type") String type,
                                            @Param("monitorId") Long monitorId,
                                            Pageable pageable);
+
+    // ── "Sizin için — bugün" izleme kartları (2026-09-19; TodayMonitorInsightsService) ──────────
+    // Üçü de monitörlü satırlarla (monitor_id dolu → 9 izleme türü) sınırlı; CERT/UPTIME envanter
+    // satırları (monitor_id NULL) kendi kartlarında. Zaman aralığı idx_act_time ile kesilir.
+
+    /** Yanıt süresi ortalaması (tür + monitör) — yalnız BAŞARILI ve ölçümlü kontroller (hata süresi tabana karışmasın). */
+    @Query("""
+            SELECT a.monitorType, a.monitorId, AVG(a.responseMs), COUNT(a) FROM ActivityLog a
+            WHERE a.monitorId IS NOT NULL AND a.responseMs IS NOT NULL AND a.resultStatus = 'SUCCESS'
+              AND a.action IN ('SCHEDULED_CHECK','MANUAL_CHECK')
+              AND a.activityTime >= :from AND a.activityTime < :to
+            GROUP BY a.monitorType, a.monitorId
+            """)
+    List<Object[]> avgResponseByMonitor(@Param("from") String from, @Param("to") String to);
+
+    /** Son kontrol zamanı (tür + monitör) — bayat izleme tespiti; {@code since} öncesi hiç görünmeyen zaten bayattır. */
+    @Query("""
+            SELECT a.monitorType, a.monitorId, MAX(a.activityTime) FROM ActivityLog a
+            WHERE a.monitorId IS NOT NULL AND a.action IN ('SCHEDULED_CHECK','MANUAL_CHECK') AND a.activityTime >= :since
+            GROUP BY a.monitorType, a.monitorId
+            """)
+    List<Object[]> lastCheckByMonitor(@Param("since") String since);
+
+    /** Aralıkta en az bir ARIZA (ERROR/TIMEOUT) yazan monitörler — kararsızlık dizisi yalnız bunlar için çekilir. */
+    @Query("""
+            SELECT DISTINCT a.monitorType, a.monitorId FROM ActivityLog a
+            WHERE a.monitorId IS NOT NULL AND a.action IN ('SCHEDULED_CHECK','MANUAL_CHECK')
+              AND a.activityTime >= :since AND a.resultStatus IN ('ERROR','TIMEOUT')
+            """)
+    List<Object[]> monitorsWithFailureSince(@Param("since") String since);
+
+    /** Bir türün seçili monitörleri için zaman sıralı durum dizisi (monitör, zaman, durum) — geçiş sayımı Java'da. */
+    @Query("""
+            SELECT a.monitorId, a.activityTime, a.resultStatus FROM ActivityLog a
+            WHERE a.monitorType = :type AND a.monitorId IN :ids AND a.action IN ('SCHEDULED_CHECK','MANUAL_CHECK')
+              AND a.activityTime >= :since AND a.resultStatus IN ('SUCCESS','WARNING','ERROR','TIMEOUT')
+            ORDER BY a.monitorId, a.activityTime, a.id
+            """)
+    List<Object[]> statusSequence(@Param("type") String type, @Param("ids") List<Long> ids, @Param("since") String since);
 }

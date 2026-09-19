@@ -913,3 +913,29 @@ Kapılar: backend `clean verify` 3830 test — 1 kırmızı `IdentityLeakGuardTe
 takipsiz `docs/CORE_WEB_VITALS_FIZIBILITE.md` / `sre-slo-sekmesi.komut.md` dosyalarından (depoda yok, CI'ı
 etkilemez; dokunulmadı); yeni test 2/2 yeşil. Jar yeniden kuruldu, :8080 `/health` UP, :5173 200. Frontend DEĞİŞMEDİ.
 → **REGRESYON YOK**.
+
+## Ek — kırk dördüncü tur (2026-09-19, sürüm sonrası — "Sizin için — bugün": istisna kartı kalktı, dört izleme kartı geldi, `v20.71.1..HEAD`)
+
+Kapsam: backend (MonitorSchedule arayüzü × 9 model; ActivityLogRepository 4 toplu sorgu; yeni TodayMonitorInsightsService;
+TodayPanelService istisna bloğu kaldırıldı, görünürlük süzgeci) + frontend (TodayPanel, TodayListModal, todayMonitorRows,
+i18n TR/EN, `.today-type`). Kullanıcı seçimi (4/4): kararsız (flapping) · yavaşlayan · sessiz/bayat · alan adı kaydı dolan.
+Denetim odakları:
+- Tek kaynak activity_log (monitor_id dolu → 9 tür); CERT/UPTIME envanter satırları kendi kartlarında. Sorgular zaman
+  aralığıyla (idx_act_time) kesilir; kararsızlık dizisi YALNIZ aralıkta arıza yazan monitörler için çekilir (tür başına IN).
+- Hesap tüm takımlar için 60 sn önbellekte (`today-monitors`); takım görünürlüğü TodayPanelService'te satır bazında —
+  alarm kartıyla AYNI kural (takımı görünür ya da hedefi görünür envanterde). Önbellek satırı kopyalanır (team_name).
+- Eşikler: kararsız ≥3 UP↔DOWN geçişi/24 sa (WARNING "iyi"); yavaş 24 sa ort. ≥1,5× taban VE ≥100 ms, iki tarafta ≥3
+  örnek, DOMAIN hariç (whois gecikmesi); bayat son kontrol > 2×aralık (taban 5 dk), 7 gün pencere — pencerede yaratılmış
+  ve hiç kontrol yoksa "hiç kontrol edilmedi", daha eskisi "7+ gündür kontrol yok"; alan adı ≤30 gün (dolmuş sayılır).
+- Tarayıcı bulgusu: yerelde 13 "sessiz" satır çıktı — hepsi envanter-türevi DNS/Port öksüzleri (alanı envanterden
+  silinmiş; süpürme `standalone != true && !activeDomains` ile BİLEREK atlıyor, liste uçları göstermiyor). Aynı kural
+  `MonitorSchedule.scheduleStandalone()` ile karta taşındı → 0 satır; test `stale_skipsOrphanedInventoryDerived`.
+- Satır tıklaması `?tab=<tür>&monitor=<id>` derin bağlantısı (useMonitorDeepLink, 8 sayfa); Sentetik'te yalnız sekme.
+  Pop-up ve kart aynı satır bileşenini çizer (todayMonitorRows.jsx). Tarayıcıda: fetch yaması ile 4 kart dolu görüntü,
+  Sessiz pop-up 2 satır, satır → `?tab=port&monitor=2`.
+- Kaldırılan: `exceptions` bloğu/kartı, `today.exceptions*`/`expiredOn`/`untilIn` anahtarları (kullanılmayan anahtar
+  kapısı yeşil), WeakAlgorithmExceptionRepository bağımlılığı.
+Kapılar: backend `clean verify` 3837 test — tek kırmızı `IdentityLeakGuardTest` (kullanıcının takipsiz 2 dosyası, depoda
+yok, dokunulmadı); yeni testler 7 + 4 (TodayPanelServiceTest güncellendi). Frontend lint 0 hata / 2113 test / kapsam / build
+yeşil. Jar yeniden kuruldu, :8080 `/health` UP.
+→ **REGRESYON YOK**.

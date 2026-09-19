@@ -17,7 +17,7 @@ import lombok.NoArgsConstructor;
 @Table(name = "scripted_monitors")
 @Data
 @NoArgsConstructor
-public class ScriptedMonitor implements MonitorAlertPrefs {
+public class ScriptedMonitor implements MonitorAlertPrefs, MonitorSchedule {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -165,4 +165,8 @@ public class ScriptedMonitor implements MonitorAlertPrefs {
      */
     @jakarta.persistence.Column(name = "notification_group_id")
     private Long notificationGroupId;
+
+    // MonitorSchedule (2026-09-19): "Sizin için — bugün" bayat-izleme kartı
+    @Override public String scheduleType() { return "SCRIPTED"; }
+    @Override public String scheduleTarget() { return null; }
 }

@@ -1,0 +1,244 @@
+package com.sitemonitor.service;
+
+import com.sitemonitor.model.CertificateInventory;
+import com.sitemonitor.model.DnsMonitor;
+import com.sitemonitor.model.DomainCheck;
+import com.sitemonitor.model.DomainMonitor;
+import com.sitemonitor.model.HttpMonitor;
+import com.sitemonitor.model.PingMonitor;
+import com.sitemonitor.model.PortMonitor;
+import com.sitemonitor.repository.ActivityLogRepository;
+import com.sitemonitor.repository.CertificateInventoryRepository;
+import com.sitemonitor.repository.DnsMonitorRepository;
+import com.sitemonitor.repository.DomainCheckRepository;
+import com.sitemonitor.repository.DomainMonitorRepository;
+import com.sitemonitor.repository.HttpMonitorRepository;
+import com.sitemonitor.repository.KeywordMonitorRepository;
+import com.sitemonitor.repository.PageMonitorRepository;
+import com.sitemonitor.repository.PageSpeedMonitorRepository;
+import com.sitemonitor.repository.PingMonitorRepository;
+import com.sitemonitor.repository.PortMonitorRepository;
+import com.sitemonitor.repository.ScriptedMonitorRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.when;
+
+/**
+ * "Sizin için — bugün" izleme kartları (2026-09-19): kararsız / yavaşlayan / bayat / alan adı kaydı.
+ * {@code now} enjekte edilir — kayan pencere, sabit fixture tarihi YOK (CI UTC / yerel Istanbul tuzağı).
+ */
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class TodayMonitorInsightsServiceTest {
+
+    private static final DateTimeFormatter ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
+    private static final Instant NOW = Instant.parse("2026-09-19T12:00:00Z");
+
+    @Mock ActivityLogRepository activityRepo;
+    @Mock CertificateInventoryRepository inventoryRepo;
+    @Mock DomainCheckRepository domainCheckRepo;
+    @Mock HttpMonitorRepository httpRepo;
+    @Mock PortMonitorRepository portRepo;
+    @Mock PingMonitorRepository pingRepo;
+    @Mock DnsMonitorRepository dnsRepo;
+    @Mock KeywordMonitorRepository keywordRepo;
+    @Mock PageMonitorRepository pageRepo;
+    @Mock PageSpeedMonitorRepository pageSpeedRepo;
+    @Mock ScriptedMonitorRepository scriptedRepo;
+    @Mock DomainMonitorRepository domainRepo;
+    TodayMonitorInsightsService svc;
+
+    private static String at(long minutesAgo) { return ISO.format(NOW.minus(Duration.ofMinutes(minutesAgo))); }
+
+    private static HttpMonitor http(long id, String name, boolean active, int intervalSec, String createdAt) {
+        HttpMonitor m = new HttpMonitor(); m.setId(id); m.setName(name); m.setUrl("https://" + name + ".example.com/health");
+        m.setTeamId(1L); m.setActive(active); m.setIntervalSeconds(intervalSec); m.setCreatedAt(createdAt); return m;
+    }
+    private static DomainMonitor dom(long id, String domain, boolean active) {
+        DomainMonitor m = new DomainMonitor(); m.setId(id); m.setName(domain); m.setDomain(domain); m.setTeamId(1L); m.setActive(active); return m;
+    }
+    private static DomainCheck dc(long monitorId, Integer days) {
+        DomainCheck c = new DomainCheck(); c.setMonitorId(monitorId); c.setDaysRemaining(days); c.setExpiryDate("2026-10-01"); c.setRegistrar("Registrar X"); return c;
+    }
+
+    @BeforeEach
+    void setUp() {
+        svc = new TodayMonitorInsightsService(activityRepo, inventoryRepo, domainCheckRepo, httpRepo, portRepo, pingRepo, dnsRepo,
+                keywordRepo, pageRepo, pageSpeedRepo, scriptedRepo, domainRepo);
+        for (var r : List.of(portRepo, pingRepo, dnsRepo, keywordRepo, pageRepo, pageSpeedRepo, scriptedRepo, domainRepo, httpRepo))
+            when(r.findAll()).thenReturn(List.of());
+        when(activityRepo.monitorsWithFailureSince(anyString())).thenReturn(List.of());
+        when(activityRepo.statusSequence(anyString(), anyList(), anyString())).thenReturn(List.of());
+        when(activityRepo.avgResponseByMonitor(anyString(), anyString())).thenReturn(List.of());
+        when(activityRepo.lastCheckByMonitor(anyString())).thenReturn(List.of());
+        when(domainCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
+    }
+
+    // ── Kararsız ────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("kararsız: UP↔DOWN geçişi ≥3 olan izleme girer (WARNING 'iyi' sayılır), 2 geçiş girmez, pasif izleme girmez; çok geçiş üstte, son durum DOWN/UP")
+    void flapping_countsTransitions() {
+        when(httpRepo.findAll()).thenReturn(List.of(http(1, "a", true, 60, at(10_000)), http(2, "b", true, 60, at(10_000)),
+                http(3, "c", false, 60, at(10_000)), http(4, "d", true, 60, at(10_000))));
+        when(activityRepo.monitorsWithFailureSince(anyString())).thenReturn(List.<Object[]>of(new Object[]{"HTTP", 1L}, new Object[]{"HTTP", 2L}, new Object[]{"HTTP", 3L}, new Object[]{"HTTP", 4L}));
+        List<Object[]> seq = new ArrayList<>();
+        // 1: S E S E S → 4 geçiş, son UP
+        int t = 100; for (String st : List.of("SUCCESS", "ERROR", "SUCCESS", "ERROR", "SUCCESS")) seq.add(new Object[]{1L, at(t--), st});
+        // 2: S E S → 2 geçiş (eşik altı)
+        t = 100; for (String st : List.of("SUCCESS", "ERROR", "SUCCESS")) seq.add(new Object[]{2L, at(t--), st});
+        // 3: pasif — 4 geçiş olsa da girmez
+        t = 100; for (String st : List.of("SUCCESS", "TIMEOUT", "SUCCESS", "ERROR", "WARNING")) seq.add(new Object[]{3L, at(t--), st});
+        // 4: W E W E → 3 geçiş, son DOWN
+        t = 100; for (String st : List.of("WARNING", "ERROR", "WARNING", "ERROR")) seq.add(new Object[]{4L, at(t--), st});
+        when(activityRepo.statusSequence(eq("HTTP"), anyList(), anyString())).thenReturn(seq);
+
+        List<Map<String, Object>> f = svc.snapshot(NOW).flapping();
+
+        assertThat(f).extracting(m -> m.get("monitor_id")).containsExactly(1L, 4L);
+        assertThat(f.get(0)).containsEntry("transitions", 4).containsEntry("last_status", "UP").containsEntry("type", "HTTP")
+                .containsEntry("domain", "a.example.com").containsEntry("team_id", 1L);
+        assertThat(f.get(1)).containsEntry("transitions", 3).containsEntry("last_status", "DOWN");
+    }
+
+    // ── Yavaşlayan ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("yavaşlayan: 24 saat ortalaması tabanın ≥1,5 katı VE ≥100 ms fazla → girer; oran var ama fark <100 ms girmez; örnek <3 girmez; DOMAIN girmez")
+    void slow_ratioAndDeltaGate() {
+        when(httpRepo.findAll()).thenReturn(List.of(http(1, "slow", true, 60, at(10_000)), http(2, "tiny", true, 60, at(10_000)),
+                http(3, "few", true, 60, at(10_000)), http(4, "fine", true, 60, at(10_000))));
+        when(domainRepo.findAll()).thenReturn(List.of(dom(9, "d.example.com", true)));
+        String dayAgo = at(24 * 60);
+        // bugün (from = 24 saat önce)
+        when(activityRepo.avgResponseByMonitor(eq(dayAgo), anyString())).thenReturn(List.<Object[]>of(
+                new Object[]{"HTTP", 1L, 450.0, 20L},   // taban 200 → 2,25× ve +250 ms → girer
+                new Object[]{"HTTP", 2L, 16.0, 20L},    // taban 10 → 1,6× ama +6 ms → girmez
+                new Object[]{"HTTP", 3L, 900.0, 2L},    // 2 örnek → girmez
+                new Object[]{"HTTP", 4L, 210.0, 20L},   // taban 200 → 1,05× → girmez
+                new Object[]{"DOMAIN", 9L, 5000.0, 5L}));
+        // taban (to = 24 saat önce)
+        when(activityRepo.avgResponseByMonitor(anyString(), eq(dayAgo))).thenReturn(List.<Object[]>of(
+                new Object[]{"HTTP", 1L, 200.0, 100L}, new Object[]{"HTTP", 2L, 10.0, 100L},
+                new Object[]{"HTTP", 3L, 100.0, 100L}, new Object[]{"HTTP", 4L, 200.0, 100L},
+                new Object[]{"DOMAIN", 9L, 100.0, 7L}));
+
+        List<Map<String, Object>> s = svc.snapshot(NOW).slow();
+
+        assertThat(s).hasSize(1);
+        assertThat(s.get(0)).containsEntry("monitor_id", 1L).containsEntry("today_ms", 450L).containsEntry("baseline_ms", 200L)
+                .containsEntry("ratio", 2.3).containsEntry("samples", 20);
+    }
+
+    // ── Bayat ───────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("bayat: son kontrol 2×aralığı (taban 5 dk) aşan aktif izleme girer; hiç kontrolü olmayan yeni izleme yaratılış anından ölçülür; pasifler sayılır; en eski üstte")
+    void stale_twoIntervalsWithFloor() {
+        when(httpRepo.findAll()).thenReturn(List.of(
+                http(1, "old", true, 60, at(10_000)),      // son kontrol 30 dk önce, eşik max(2 dk, 5 dk)=5 dk → bayat
+                http(2, "fresh", true, 60, at(10_000)),    // son kontrol 3 dk önce → taze (eşik 5 dk)
+                http(3, "slowly", true, 1800, at(10_000)), // aralık 30 dk, son kontrol 50 dk önce, eşik 60 dk → taze
+                http(4, "never-new", true, 60, at(2)),     // hiç kontrol yok, 2 dk önce yaratıldı → taze
+                http(5, "never-old", true, 60, at(600)),   // hiç kontrol yok, 10 saat önce yaratıldı → bayat (age 600 dk, never)
+                http(8, "ancient", true, 60, at(30 * 1440)), // hiç kontrol yok, 30 gün önce yaratıldı → "7+ gündür yok" (yaş pencereyle sınırlı, never DEĞİL)
+                http(6, "paused", false, 60, at(10_000)),  // duraklatılmış → sayılır, listelenmez
+                http(7, "paused2", false, 60, at(10_000))));
+        when(activityRepo.lastCheckByMonitor(anyString())).thenReturn(List.<Object[]>of(
+                new Object[]{"HTTP", 1L, at(30)}, new Object[]{"HTTP", 2L, at(3)}, new Object[]{"HTTP", 3L, at(50)}));
+
+        TodayMonitorInsightsService.Snapshot snap = svc.snapshot(NOW);
+
+        assertThat(snap.paused()).isEqualTo(2);
+        assertThat(snap.stale()).extracting(m -> m.get("monitor_id")).containsExactly(8L, 5L, 1L);
+        assertThat(snap.stale().get(2)).containsEntry("age_min", 30L).containsEntry("expected_min", 5L).containsEntry("interval_sec", 60)
+                .containsEntry("last_check", at(30)).containsEntry("never", false);
+        assertThat(snap.stale().get(1)).containsEntry("last_check", null).containsEntry("never", true).containsEntry("age_min", 600L);
+        assertThat(snap.stale().get(0)).containsEntry("last_check", null).containsEntry("never", false).containsEntry("age_min", 7L * 1440);
+    }
+
+    // ── Alan adı kaydı ──────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("alan adı kaydı: 30 gün ve altı (dolmuş dâhil) girer, en az gün üstte; 31+ gün, pasif izleme ve gün bilgisi olmayan girmez")
+    void domains_within30Days() {
+        when(domainRepo.findAll()).thenReturn(List.of(dom(1, "a.example.com", true), dom(2, "b.example.com", true),
+                dom(3, "c.example.com", false), dom(4, "d.example.com", true), dom(5, "e.example.com", true)));
+        when(domainCheckRepo.findLatestPerMonitor()).thenReturn(List.of(dc(1, 12), dc(2, -3), dc(3, 1), dc(4, 31), dc(5, null)));
+
+        TodayMonitorInsightsService.Snapshot snap = svc.snapshot(NOW);
+
+        assertThat(snap.domains()).extracting(m -> m.get("monitor_id")).containsExactly(2L, 1L);
+        assertThat(snap.domainsExpired()).isEqualTo(1);
+        assertThat(snap.domains().get(0)).containsEntry("days", -3).containsEntry("expiry_date", "2026-10-01").containsEntry("registrar", "Registrar X")
+                .containsEntry("type", "DOMAIN").containsEntry("domain", "b.example.com");
+    }
+
+    // ── Ortak ───────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("hedef → çıplak host: URL şeması/yol, host:port, kullanıcı@ ve büyük harf sadeleşir; Sentetik (hedefsiz) null")
+    void hostOf() {
+        assertThat(TodayMonitorInsightsService.hostOf("https://API.Example.com:8443/health?x=1")).isEqualTo("api.example.com");
+        assertThat(TodayMonitorInsightsService.hostOf("mail.example.com:25")).isEqualTo("mail.example.com");
+        assertThat(TodayMonitorInsightsService.hostOf("user@db.example.com")).isEqualTo("db.example.com");
+        assertThat(TodayMonitorInsightsService.hostOf(null)).isNull();
+        assertThat(TodayMonitorInsightsService.hostOf("  ")).isNull();
+    }
+
+    @Test
+    @DisplayName("bayat: envanter-türevi (standalone değil) DNS/Port izlemesi alanı aktif envanterde DEĞİLSE öksüzdür — süpürme atlıyor, bayat sayılmaz; standalone ve envanterdeki girer")
+    void stale_skipsOrphanedInventoryDerived() {
+        CertificateInventory inv = new CertificateInventory(); inv.setDomain("Shop.example.com"); inv.setActive(true);
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv));
+        PortMonitor orphan = new PortMonitor(); orphan.setId(1L); orphan.setName("gone"); orphan.setHost("gone.example.com"); orphan.setPort(443); orphan.setActive(true); orphan.setStandalone(false); orphan.setCreatedAt(at(10_000));
+        PortMonitor derived = new PortMonitor(); derived.setId(2L); derived.setName("shop"); derived.setHost("shop.example.com"); derived.setPort(443); derived.setActive(true); derived.setStandalone(null); derived.setCreatedAt(at(10_000));
+        PortMonitor alone = new PortMonitor(); alone.setId(3L); alone.setName("alone"); alone.setHost("x.example.com"); alone.setPort(22); alone.setActive(true); alone.setStandalone(true); alone.setCreatedAt(at(10_000));
+        when(portRepo.findAll()).thenReturn(List.of(orphan, derived, alone));
+        DnsMonitor dnsOrphan = new DnsMonitor(); dnsOrphan.setId(4L); dnsOrphan.setName("gone-dns"); dnsOrphan.setDomain("gone.example.com"); dnsOrphan.setActive(true); dnsOrphan.setCreatedAt(at(10_000));
+        when(dnsRepo.findAll()).thenReturn(List.of(dnsOrphan));
+
+        assertThat(svc.snapshot(NOW).stale()).extracting(m -> m.get("monitor_id")).containsExactlyInAnyOrder(2L, 3L);
+    }
+
+    @Test
+    @DisplayName("bir kartın sorgusu düşerse o kart boş, diğerleri hesaplanır (panel yıkılmaz); takımsız DNS satırı domain taşır")
+    void oneBlockFailing_othersSurvive() {
+        when(activityRepo.monitorsWithFailureSince(anyString())).thenThrow(new IllegalStateException("db"));
+        DnsMonitor d = new DnsMonitor(); d.setId(7L); d.setName("ns"); d.setDomain("Shop.example.com"); d.setActive(true); d.setIntervalSeconds(60); d.setCreatedAt(at(10_000)); d.setStandalone(true);
+        when(dnsRepo.findAll()).thenReturn(List.of(d));
+        PortMonitor p = new PortMonitor(); p.setId(8L); p.setName("db"); p.setHost("db.example.com"); p.setPort(5432); p.setActive(true); p.setIntervalSeconds(60); p.setCreatedAt(at(10_000)); p.setStandalone(true);
+        when(portRepo.findAll()).thenReturn(List.of(p));
+        PingMonitor g = new PingMonitor(); g.setId(9L); g.setName("gw"); g.setHost("10.0.0.1"); g.setTeamId(2L); g.setActive(true); g.setIntervalSeconds(60); g.setCreatedAt(at(10_000));
+        when(pingRepo.findAll()).thenReturn(List.of(g));
+
+        TodayMonitorInsightsService.Snapshot snap = svc.snapshot(NOW);
+
+        assertThat(snap.flapping()).isEmpty();
+        assertThat(snap.stale()).extracting(m -> m.get("monitor_id")).containsExactlyInAnyOrder(7L, 8L, 9L);
+        Map<String, Object> dns = snap.stale().stream().filter(m -> m.get("monitor_id").equals(7L)).findFirst().orElseThrow();
+        assertThat(dns).containsEntry("type", "DNS").containsEntry("domain", "shop.example.com").containsEntry("team_id", null);
+        Map<String, Object> port = snap.stale().stream().filter(m -> m.get("monitor_id").equals(8L)).findFirst().orElseThrow();
+        assertThat(port).containsEntry("type", "PORT").containsEntry("target", "db.example.com:5432").containsEntry("domain", "db.example.com");
+    }
+}

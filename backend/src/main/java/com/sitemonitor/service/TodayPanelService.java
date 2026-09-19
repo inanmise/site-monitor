@@ -3,13 +3,11 @@ package com.sitemonitor.service;
 import com.sitemonitor.model.AlertEvent;
 import com.sitemonitor.model.CertificateInventory;
 import com.sitemonitor.model.LatestCheck;
-import com.sitemonitor.model.WeakAlgorithmException;
 import com.sitemonitor.model.WeeklyReport;
 import com.sitemonitor.repository.AlertEventRepository;
 import com.sitemonitor.repository.CertificateInventoryRepository;
 import com.sitemonitor.repository.LatestCheckRepository;
 import com.sitemonitor.repository.TeamRepository;
-import com.sitemonitor.repository.WeakAlgorithmExceptionRepository;
 import com.sitemonitor.repository.WeeklyReportRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,9 +21,11 @@ import java.util.function.Predicate;
 
 /**
  * "Sizin için — bugün" paneli (2026-09-12, zenginleştirme #3): giriş sonrası ilk ekranda takımın
- * ilgilenmesi gerekenler. Dört kart: 30 gün altı sertifika · açık alarm · süresi dolan/dolmak üzere
- * zayıf-algoritma istisnası · bu haftanın haftalık raporu. Kapsam çağıranın predicate'i (takım görünürlüğü).
- * Her kart try/catch'li — biri düşerse panel yine çizilir.
+ * ilgilenmesi gerekenler. Kartlar: 30 gün altı sertifika · açık alarm · bu haftanın haftalık raporu ·
+ * ve dört İZLEME kartı (2026-09-19, zayıf-algoritma istisnası kartının yerine, kullanıcı seçimi):
+ * kararsız · yavaşlayan · sessiz/bayat · alan adı kaydı dolan ({@link TodayMonitorInsightsService},
+ * takım-bağımsız 60 sn önbellek; görünürlük BURADA satır bazında süzülür).
+ * Kapsam çağıranın predicate'i (takım görünürlüğü). Her kart try/catch'li — biri düşerse panel yine çizilir.
  */
 @Service
 @RequiredArgsConstructor
@@ -33,15 +33,15 @@ import java.util.function.Predicate;
 public class TodayPanelService {
 
     private static final ZoneId IST = ZoneId.of("Europe/Istanbul");
-    static final int CERT_DAYS = 30, EXCEPTION_SOON_DAYS = 14;
+    static final int CERT_DAYS = 30;
     public static final int TOP = 5;   // kart başına satır (pop-up tavansız: build(..., limit))
 
     private final CertificateInventoryRepository inventoryRepo;
     private final LatestCheckRepository latestCheckRepo;
     private final AlertEventRepository alertEventRepo;
-    private final WeakAlgorithmExceptionRepository exceptionRepo;
     private final WeeklyReportRepository weeklyReportRepo;
     private final TeamRepository teamRepo;
+    private final TodayMonitorInsightsService monitorInsights;
 
     public Map<String, Object> build(Predicate<Long> canViewTeam, List<Long> ownTeamIds) {
         return build(canViewTeam, ownTeamIds, TOP);
@@ -66,8 +66,21 @@ public class TodayPanelService {
 
         out.put("certs", safe(() -> certs(visibleDomains, domainTeam, teamNames, limit)));
         out.put("alerts", safe(() -> alerts(canViewTeam, visibleDomains, teamNames, limit)));
-        out.put("exceptions", safe(() -> exceptions(visibleDomains, domainTeam, teamNames, limit)));
         out.put("weekly", safe(() -> weekly(ownTeamIds, teamNames)));
+        // İzleme kartları: tüm-takım anlık görüntü (önbellekli) → görünürlük süzgeci → tavan.
+        TodayMonitorInsightsService.Snapshot snap;
+        try { snap = monitorInsights.snapshot(); }
+        catch (Exception e) { log.debug("today: izleme anlık görüntüsü alınamadı: {}", e.toString()); snap = null; }
+        final TodayMonitorInsightsService.Snapshot sn = snap;
+        out.put("flapping", safe(() -> monitorBlock(visibleRows(sn == null ? List.of() : sn.flapping(), canViewTeam, visibleDomains, teamNames), limit, Map.of())));
+        out.put("slow", safe(() -> monitorBlock(visibleRows(sn == null ? List.of() : sn.slow(), canViewTeam, visibleDomains, teamNames), limit, Map.of())));
+        out.put("stale", safe(() -> monitorBlock(visibleRows(sn == null ? List.of() : sn.stale(), canViewTeam, visibleDomains, teamNames), limit,
+                Map.of("paused", sn == null ? 0 : sn.paused()))));
+        out.put("domains", safe(() -> {
+            List<Map<String, Object>> rows = visibleRows(sn == null ? List.of() : sn.domains(), canViewTeam, visibleDomains, teamNames);
+            long expired = rows.stream().filter(r -> ((Number) r.get("days")).intValue() < 0).count();
+            return monitorBlock(rows, limit, Map.of("expired", expired));
+        }));
         out.put("scope_domains", visibleDomains.size());
         return out;
     }
@@ -120,27 +133,31 @@ public class TodayPanelService {
         return out;
     }
 
-    /** Zayıf-algoritma istisnaları: süresi dolmuş ya da 14 gün içinde dolacak. */
-    private Map<String, Object> exceptions(Set<String> domains, Map<String, Long> domainTeam, Map<Long, String> teamNames, int limit) {
-        LocalDate today = LocalDate.now(IST);
+    /**
+     * İzleme kartı süzgeci — alarm kartıyla AYNI görünürlük kuralı: takımı görünür OLAN ya da (takımsız,
+     * envanter-türevi DNS/Port izlemelerinde) hedefi görünür envanterde olan satır. Önbellekteki satır
+     * DEĞİŞTİRİLMEZ (kopyalanır; team_name burada eklenir).
+     */
+    static List<Map<String, Object>> visibleRows(List<Map<String, Object>> all, Predicate<Long> canViewTeam,
+                                                 Set<String> domains, Map<Long, String> teamNames) {
         List<Map<String, Object>> items = new ArrayList<>();
-        int expired = 0;
-        for (WeakAlgorithmException ex : exceptionRepo.findAll()) {
-            if (ex.getDomain() == null || !domains.contains(ex.getDomain()) || ex.getUntil() == null) continue;
-            LocalDate until;
-            try { until = LocalDate.parse(ex.getUntil()); } catch (Exception e) { continue; }
-            long left = java.time.temporal.ChronoUnit.DAYS.between(today, until);
-            if (left > EXCEPTION_SOON_DAYS) continue;
-            if (left < 0) expired++;
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("domain", ex.getDomain()); m.put("until", ex.getUntil()); m.put("days", left); m.put("reason", ex.getReason());
-            Long tid = domainTeam.get(ex.getDomain());
-            m.put("team_id", tid); m.put("team_name", tid == null ? null : teamNames.get(tid));
+        for (Map<String, Object> r : all) {
+            Long tid = r.get("team_id") == null ? null : ((Number) r.get("team_id")).longValue();
+            String domain = (String) r.get("domain");
+            boolean vis = (tid != null && canViewTeam.test(tid)) || (domain != null && domains.contains(domain));
+            if (!vis) continue;
+            Map<String, Object> m = new LinkedHashMap<>(r);
+            m.put("team_name", tid == null ? null : teamNames.get(tid));
             items.add(m);
         }
-        items.sort(Comparator.comparingLong(m -> (Long) m.get("days")));
+        return items;
+    }
+
+    /** count + ek sayaçlar + tavanlı items (sıralama anlık görüntüden gelir). */
+    static Map<String, Object> monitorBlock(List<Map<String, Object>> items, int limit, Map<String, Object> extra) {
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("count", items.size()); out.put("expired", expired); out.put("items", items.subList(0, Math.min(limit, items.size())));
+        out.put("count", items.size()); out.putAll(extra);
+        out.put("items", items.subList(0, Math.min(limit, items.size())));
         return out;
     }
 

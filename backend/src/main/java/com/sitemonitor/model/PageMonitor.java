@@ -18,7 +18,7 @@ import lombok.NoArgsConstructor;
 @Table(name = "page_monitors")
 @Data
 @NoArgsConstructor
-public class PageMonitor implements MonitorAlertPrefs {
+public class PageMonitor implements MonitorAlertPrefs, MonitorSchedule {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -151,4 +151,8 @@ public class PageMonitor implements MonitorAlertPrefs {
      */
     @jakarta.persistence.Column(name = "notification_group_id")
     private Long notificationGroupId;
+
+    // MonitorSchedule (2026-09-19): "Sizin için — bugün" bayat-izleme kartı
+    @Override public String scheduleType() { return "PAGE"; }
+    @Override public String scheduleTarget() { return url; }
 }

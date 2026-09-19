@@ -13,7 +13,7 @@ import org.hibernate.annotations.ColumnDefault;
 @Table(name = "ping_monitors")
 @Data
 @NoArgsConstructor
-public class PingMonitor implements MonitorAlertPrefs {
+public class PingMonitor implements MonitorAlertPrefs, MonitorSchedule {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -138,4 +138,8 @@ public class PingMonitor implements MonitorAlertPrefs {
      */
     @jakarta.persistence.Column(name = "notification_group_id")
     private Long notificationGroupId;
+
+    // MonitorSchedule (2026-09-19): "Sizin için — bugün" bayat-izleme kartı
+    @Override public String scheduleType() { return "PING"; }
+    @Override public String scheduleTarget() { return host; }
 }
