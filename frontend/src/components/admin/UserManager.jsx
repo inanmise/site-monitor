@@ -6,6 +6,7 @@ import { useToast } from '../ui/Toast.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import MultiTeamSelect from '../ui/MultiTeamSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
+import AdminChangeHistory from './AdminChangeHistory.jsx'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import { UserPlus, UserCog, BellOff } from 'lucide-react'
 import AdminAutoResetModal from './AdminAutoResetModal.jsx'
@@ -65,6 +66,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
 
   // Filtre + sunucu-taraflı sayfalama
   // Süzgeçler URL'de (g_*): derin bağlantı + yenileme korur (2026-09-20).
+  const [histFilter, setHistFilter] = useState(null)   // { id, name } — satırdan "Geçmiş" (yalnız global ADMIN)
   const [q, setQ] = useState(() => readUrlParam('g_q', ''))
   const [fRole, setFRole] = useState(() => readUrlParam('g_role', ''))
   const [fOrgRole, setFOrgRole] = useState(() => readUrlParam('g_org', ''))
@@ -311,6 +313,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                 <td className="um-col-actions" onClick={(e) => e.stopPropagation()}>
                   <KebabMenu label={t('usr.colActions')} items={canManage ? [
                     { label: t('usr.edit'), onClick: () => openEdit(user) },
+                    { label: t('hist.title'), onClick: () => setHistFilter({ id: user.id, name: user.display_name || user.username }), hidden: !isAdmin },
                     { label: t('usr.autoResetBtn'), onClick: () => setAutoResetModal(user) },
                     { label: t('usr.unlock'), onClick: () => unlock(user.id), hidden: !user.permanent_lock },
                     { label: t('usr.roleUnlock'), onClick: () => roleUnlock(user.id), hidden: !user.role_locked },
@@ -338,6 +341,9 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
         <span>{t('usr.pageInfo', page + 1, totalPages, total)}</span>
         <button disabled={page + 1 >= totalPages || loading} onClick={() => load(page + 1, size)}>{t('app.nextPage')}</button>
       </div>
+
+      {/* Kullanıcı geçmişi yalnız global ADMIN (rol/takım/parola sıfırlama kayıtları kişisel veri taşır). */}
+      <AdminChangeHistory resource="USER" filter={histFilter} onClearFilter={() => setHistFilter(null)} canView={isAdmin} />
 
       {modal !== null && (
         <div className="modal-overlay" onClick={() => setModal(null)}>

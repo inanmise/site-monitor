@@ -7,6 +7,7 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
+import AdminChangeHistory from './AdminChangeHistory.jsx'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 
 const ROLES  = ['PO', 'TECH', 'MANAGER', 'CLEVEL']
@@ -31,6 +32,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
 
   // İstemci-taraflı filtre + sayfalama (getContacts tüm listeyi döndürür)
   // Süzgeçler URL'de (g_*): derin bağlantı + yenileme korur (2026-09-20).
+  const [histFilter, setHistFilter] = useState(null)   // { id, name } — satırdan "Geçmiş"
   const [q, setQ]         = useState(() => readUrlParam('g_q', ''))
   const [fRole, setFRole] = useState(() => readUrlParam('g_role', ''))
   const [fLevel, setFLevel] = useState(() => readUrlParam('g_level', ''))
@@ -207,10 +209,11 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
                 <td>{c.webhook_url ? <span className="badge badge-ok">{c.webhook_type}</span> : '—'}</td>
                 <td><span className={c.active ? 'badge badge-ok' : 'badge badge-err'}>{c.active ? t('ec.active') : t('ec.inactive')}</span></td>
                 <td>
-                  <KebabMenu label={t('ec.colActions')} items={canManage ? [
-                    { label: t('ec.edit'), onClick: () => openEdit(c) },
-                    { label: t('ec.delete'), danger: true, onClick: () => del(c.id) },
-                  ] : []} />
+                  <KebabMenu label={t('ec.colActions')} items={[
+                    ...(canManage ? [{ label: t('ec.edit'), onClick: () => openEdit(c) }] : []),
+                    { label: t('hist.title'), onClick: () => setHistFilter({ id: c.id, name: c.name || c.email }) },
+                    ...(canManage ? [{ label: t('ec.delete'), danger: true, onClick: () => del(c.id) }] : []),
+                  ]} />
                 </td>
               </tr>
             ))}
@@ -230,6 +233,8 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
         <span>{t('ec.pageInfo', safePage + 1, totalPages, filteredContacts.length)}</span>
         <button disabled={safePage + 1 >= totalPages} onClick={() => setPage(safePage + 1)}>{t('app.nextPage')}</button>
       </div>
+
+      <AdminChangeHistory resource="ESCALATION_CONTACT" filter={histFilter} onClearFilter={() => setHistFilter(null)} />
 
       {modal !== null && (
         <div className="modal-overlay" onClick={() => setModal(null)}>

@@ -7,6 +7,7 @@ import { useDialog } from '../ui/Dialog.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { Spinner } from '../ui/Progress.jsx'
+import AdminChangeHistory from './AdminChangeHistory.jsx'
 
 const TIERS = [1, 2, 3, 4]
 const PREVIEW_DEBOUNCE_MS = 400
@@ -222,6 +223,8 @@ export default function AlertThresholds() {
           </button>
         </div>
       )}
+
+      <AdminChangeHistory resource="ALERT_THRESHOLD" />
     </div>
   )
 }

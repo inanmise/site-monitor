@@ -25,9 +25,15 @@ const BADGE = {
 }
 
 /** Denetim alanı adı → ekran etiketi; bilinmeyen alan ham adıyla gösterilir (kaybolmaz). */
-function fieldLabel(t, key) {
-  const s = t(`ng.f.${key}`)
-  return s === `ng.f.${key}` ? key : s
+function fieldLabel(t, key, prefix = 'ng.f') {
+  const s = t(`${prefix}.${key}`)
+  return s === `${prefix}.${key}` ? key : s
+}
+
+/** Eylem etiketi: önekli anahtar yoksa ham eylem adı (yeni bir olay türü sessizce kaybolmasın). */
+function actionLabel(t, action, prefix = 'ng.act') {
+  const s = t(`${prefix}.${action}`)
+  return s === `${prefix}.${action}` ? String(action || '').toLowerCase().replace(/_/g, ' ') : s
 }
 
 function formatValue(t, v) {
@@ -56,7 +62,7 @@ function parseChanges(raw) {
   }
 }
 
-function Detail({ row }) {
+function Detail({ row, fieldPrefix }) {
   const t = useT()
   const parsed = parseChanges(row.changes)
   if (!parsed) return null
@@ -86,7 +92,7 @@ function Detail({ row }) {
         <tbody>
           {Object.entries(parsed).map(([field, c]) => (
             <tr key={field}>
-              <td className="audit-diff-field">{fieldLabel(t, field)}</td>
+              <td className="audit-diff-field">{fieldLabel(t, field, fieldPrefix)}</td>
               <td className="audit-diff-from">{formatValue(t, c.from)}</td>
               <td className="audit-diff-to">{formatValue(t, c.to)}</td>
             </tr>
@@ -104,7 +110,7 @@ function Detail({ row }) {
       <ul className="ng-hist-fields">
         {Object.entries(parsed).map(([field, v]) => (
           <li key={field}>
-            <span className="audit-diff-field">{fieldLabel(t, field)}</span>
+            <span className="audit-diff-field">{fieldLabel(t, field, fieldPrefix)}</span>
             <span className="audit-mono">{formatValue(t, v)}</span>
           </li>
         ))}
@@ -115,6 +121,8 @@ function Detail({ row }) {
 
 export default function NotificationGroupHistory({
   rows, truncated, hidden, loading, error, filterName, onClearFilter,
+  // Yönetim Paneli sekmeleri aynı sunumu başka kaynaklar için kullanır (2026-09-20).
+  fieldPrefix = 'ng.f', actPrefix = 'ng.act', nameOf = (r) => r.group_name || `#${r.group_id}`,
 }) {
   const t = useT()
 
@@ -141,16 +149,16 @@ export default function NotificationGroupHistory({
               <div className="ng-hist-main">
                 <span className="audit-cell-time audit-mono">{formatDateSec(r.at)}</span>
                 <span className={`audit-event-badge ${BADGE[r.action] || 'ev-other'}`}>
-                  {t(`ng.act.${r.action}`)}
+                  {actionLabel(t, r.action, actPrefix)}
                 </span>
                 <span className="ng-hist-who">{r.actor || '—'}</span>
                 <span className="ng-hist-what">
-                  “{r.group_name || `#${r.group_id}`}”
+                  “{nameOf(r)}”
                   {r.team_name && <span className="audit-sub"> · <TeamBadge teamId={r.team_id} teamName={r.team_name} size={11} /></span>}
                 </span>
                 {r.ip && <span className="ng-hist-ip audit-mono">{r.ip}</span>}
               </div>
-              <Detail row={r} />
+              <Detail row={r} fieldPrefix={fieldPrefix} />
             </li>
           ))}
         </ul>

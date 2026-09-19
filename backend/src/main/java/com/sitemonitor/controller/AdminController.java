@@ -85,6 +85,7 @@ public class AdminController {
     private final com.sitemonitor.repository.NotificationGroupRepository inventoryGroupRepo;
     private final AlertThresholdRepository thresholdRepo;
     private final com.sitemonitor.service.ThresholdPreviewService thresholdPreviewService;   // tier eşik önizleme (2026-09-20)
+    private final com.sitemonitor.service.AdminHistoryService adminHistoryService;             // sekme değişiklik geçmişi (2026-09-20)
     private final EscalationContactRepository contactRepo;
     private final AlertEventRepository alertEventRepo;
     private final NotificationLogRepository notificationLogRepo;
@@ -1132,6 +1133,80 @@ public class AdminController {
                 "CERTIFICATE", inv.getDomain(),
                 "{\"from\":" + oldUgTeamId + ",\"to\":" + newUgTeamId + "}");
         return ok(Map.of("data", inv, "message", "UG team transferred"));
+    }
+
+    // ── Yönetim Paneli değişiklik geçmişi (2026-09-20) ──────────────────────────
+
+    /**
+     * "Kim, ne zaman, neyi değiştirdi" — eşik / eskalasyon kişisi / takım / kullanıcı. Kaynak denetim kaydı.
+     * USER ve ALERT_THRESHOLD yalnız global yönetici (kişisel veri / global ayar); TEAM ve ESCALATION_CONTACT
+     * görüş kapsamıyla (kapsamlı müdür kendi takımlarını görür).
+     */
+    @GetMapping("/history")
+    public ResponseEntity<Map<String, Object>> adminHistory(
+            @RequestParam String resource,
+            @RequestParam(required = false) String resourceId,
+            @RequestParam(defaultValue = "50") int limit,
+            HttpSession session) {
+        if (!com.sitemonitor.service.AdminHistoryService.RESOURCES.contains(resource)) {
+            throw new IllegalArgumentException("Bilinmeyen kaynak: " + resource);
+        }
+        List<Long> scope;
+        switch (resource) {
+            case "ALERT_THRESHOLD" -> { requireAdmin(session); requirePerm(session, "thresholds.read", "view"); scope = null; }
+            case "USER" -> { requireAdmin(session); SessionScope.requireNotScopedAdmin(session, "users.history"); requirePerm(session, "users.list", "view"); scope = null; }
+            case "ESCALATION_CONTACT" -> { requirePerm(session, "contacts.list", "view"); scope = SessionScope.isGlobalViewer(session) ? null : SessionScope.viewTeamIds(session); }
+            default -> { requirePerm(session, "teams.list", "view"); scope = SessionScope.isGlobalViewer(session) ? null : SessionScope.viewTeamIds(session); }
+        }
+        var h = adminHistoryService.history(resource, resourceId, scope, limit);
+        Map<Long, String> teamNames = new LinkedHashMap<>();
+        teamRepo.findAll().forEach(tm -> teamNames.put(tm.getId(), tm.getName()));
+        String prefix = switch (resource) {
+            case "ALERT_THRESHOLD" -> "THRESHOLD_";
+            case "ESCALATION_CONTACT" -> "CONTACT_";
+            case "TEAM" -> "TEAM_";
+            default -> "USER_";
+        };
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (var e : h.items()) {
+            var r = e.row();
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", r.getId());
+            m.put("at", r.getEventTime());
+            m.put("actor", r.getActor());
+            m.put("action", r.getEventType() != null && r.getEventType().startsWith(prefix)
+                    ? r.getEventType().substring(prefix.length()) : r.getEventType());
+            m.put("event_type", r.getEventType());
+            m.put("resource_id", r.getResourceId());
+            m.put("name", historyName(r.getDetail()));
+            m.put("team_id", e.teamId());
+            m.put("team_name", e.teamId() != null ? teamNames.get(e.teamId()) : null);
+            m.put("changes", r.getChanges());
+            m.put("ip", r.getIpAddress());
+            m.put("outcome", r.getOutcome());
+            items.add(m);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("items", items);
+        out.put("truncated", h.truncated());
+        out.put("hidden", h.hidden());
+        return ok(out);
+    }
+
+    /**
+     * Geçmiş satırının adı: detail çoğu olayda düz ad, bazılarında JSON ({@code AuditDetail.of("name", …)},
+     * WEEKLY_REPORT_ACCESS gövdesi). JSON ise name/team/username/domain anahtarı çekilir; yoksa null (takım adı düşer).
+     */
+    static String historyName(String detail) {
+        if (detail == null) return null;
+        String d = detail.trim();
+        if (!d.startsWith("{")) return d;
+        for (String key : new String[]{"name", "team", "username", "domain"}) {
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("\"" + key + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"").matcher(d);
+            if (m.find()) return m.group(1);
+        }
+        return null;
     }
 
     // ── Alert Thresholds (ADMIN only) ─────────────────────────────────────────

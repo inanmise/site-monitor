@@ -772,6 +772,12 @@ export const api = {
     // Thresholds
     getThresholds: () => request('/admin/thresholds'),
     updateThreshold: (id, data) => request(`/admin/thresholds/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    // Yönetim Paneli değişiklik geçmişi (2026-09-20): resource = ALERT_THRESHOLD | ESCALATION_CONTACT | TEAM | USER
+    history: (resource, resourceId = null, limit = 50) => {
+      const qs = new URLSearchParams({ resource, limit: String(limit) })
+      if (resourceId != null) qs.set('resourceId', String(resourceId))
+      return request(`/admin/history?${qs.toString()}`)
+    },
     // Tier bazlı eşikler + etki önizleme (2026-09-20)
     createThreshold: (data) => request('/admin/thresholds', { method: 'POST', body: JSON.stringify(data) }),
     deleteThreshold: (id) => request(`/admin/thresholds/${id}`, { method: 'DELETE' }),

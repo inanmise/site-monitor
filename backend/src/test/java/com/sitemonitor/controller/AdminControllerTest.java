@@ -51,6 +51,7 @@ class AdminControllerTest {
 
     @MockitoBean com.sitemonitor.repository.NotificationGroupRepository notificationGroupRepo;
     @MockitoBean com.sitemonitor.service.ThresholdPreviewService thresholdPreviewService;   // tier eşik önizleme (2026-09-20)
+    @MockitoBean com.sitemonitor.service.AdminHistoryService adminHistoryService;             // sekme değişiklik geçmişi (2026-09-20)
     @MockitoBean com.sitemonitor.service.DerivedMonitorTeamSync derivedMonitorTeamSync;
     @MockitoBean com.sitemonitor.service.TourStateService tourStateService;   // ürün turu (2026-09-13)
     // AdminController "Tekrar Bildir" onizlemesinde webhook alicilarini da cozuyor (A2).
@@ -1160,6 +1161,46 @@ class AdminControllerTest {
                         .content("{\"warning_days\":25,\"high_days\":12,\"critical_days\":5,\"re_alert_interval_hours\":12}"))   // tel biçimi SNAKE_CASE
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
+    }
+
+    // ── Yönetim Paneli değişiklik geçmişi (2026-09-20) ────────────────────────
+
+    @Test
+    @DisplayName("GET /history?resource=TEAM: satırlar eylem öneki kırpılmış, takım adı çözülmüş döner")
+    void adminHistory_team() throws Exception {
+        com.sitemonitor.model.AuditLog row = new com.sitemonitor.model.AuditLog();
+        row.setId(11L); row.setEventType("TEAM_UPDATE"); row.setEventTime("2026-09-20T10:00:00");
+        row.setActor("admin"); row.setResourceType("TEAM"); row.setResourceId("7"); row.setDetail("Takım A");
+        row.setChanges("{\"name\":{\"from\":\"A\",\"to\":\"Takım A\"}}");
+        when(adminHistoryService.history(eq("TEAM"), isNull(), isNull(), eq(50)))
+                .thenReturn(new com.sitemonitor.service.AdminHistoryService.History(
+                        List.of(new com.sitemonitor.service.AdminHistoryService.Entry(row, 7L)), false, 0));
+        com.sitemonitor.model.Team team = new com.sitemonitor.model.Team(); team.setId(7L); team.setName("Takım A");
+        when(teamRepo.findAll()).thenReturn(List.of(team));
+
+        mvc.perform(get("/api/admin/history").param("resource", "TEAM").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].action").value("UPDATE"))
+                .andExpect(jsonPath("$.items[0].team_name").value("Takım A"))
+                .andExpect(jsonPath("$.items[0].name").value("Takım A"))
+                .andExpect(jsonPath("$.truncated").value(false));
+    }
+
+    @Test
+    @DisplayName("Geçmiş satırı adı: düz metin aynen; JSON detail'den name/team çekilir; anahtarsız JSON → null")
+    void historyNameExtraction() {
+        assertThat(AdminController.historyName("Takım A")).isEqualTo("Takım A");
+        assertThat(AdminController.historyName("{\"name\":\"Takım A\",\"leaderId\":5}")).isEqualTo("Takım A");
+        assertThat(AdminController.historyName("{\"team\":\"DijitalSY\",\"enabled\":false}")).isEqualTo("DijitalSY");
+        assertThat(AdminController.historyName("{\"enabled\":false}")).isNull();
+        assertThat(AdminController.historyName(null)).isNull();
+    }
+
+    @Test
+    @DisplayName("GET /history bilinmeyen kaynak → 400")
+    void adminHistory_unknownResource() throws Exception {
+        mvc.perform(get("/api/admin/history").param("resource", "MONITOR").session(authSession()))
+                .andExpect(status().isBadRequest());
     }
 
     // ── Tier bazlı eşikler (2026-09-20) ───────────────────────────────────────

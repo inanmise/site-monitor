@@ -11,6 +11,7 @@ import TagInput from '../ui/TagInput.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import TeamMembersModal from '../ui/TeamMembersModal.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
+import AdminChangeHistory from './AdminChangeHistory.jsx'
 import { resolveTeamManager } from '../../utils/teamManager.js'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 
@@ -82,6 +83,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   const [editingUser, setEditingUser]   = useState(null)
 
   // İstemci-taraflı filtre + sayfalama (getTeams tüm listeyi döndürür — dropdown kaynağı bozulmasın)
+  const [histFilter, setHistFilter] = useState(null)   // { id, name } — satırdan "Geçmiş"
   const [q, setQ]       = useState(() => readUrlParam('g_q', ''))   // URL'de (g_q)
   useUrlQuerySync({ g_q: q })
   const [page, setPage] = useState(0)
@@ -315,6 +317,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
                   <td>
                     <KebabMenu label={t('team.colActions')} items={[
                       { label: t('team.edit'), onClick: () => openEdit(team), hidden: !canEditRow(team.id) },
+                      { label: t('hist.title'), onClick: () => setHistFilter({ id: team.id, name: team.name }) },
                       { label: t('team.delete'), danger: true, onClick: () => del(team.id), hidden: !isAdmin },
                     ]} />
                   </td>
@@ -337,6 +340,8 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
         <span>{t('team.pageInfo', safePage + 1, totalPages, filteredTeams.length)}</span>
         <button disabled={safePage + 1 >= totalPages} onClick={() => setPage(safePage + 1)}>{t('app.nextPage')}</button>
       </div>
+
+      <AdminChangeHistory resource="TEAM" filter={histFilter} onClearFilter={() => setHistFilter(null)} />
 
       {modal !== null && (
         <div className="modal-overlay" onClick={closeModal}>
