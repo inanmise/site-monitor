@@ -19,7 +19,12 @@ export function openMonitor(item) {
 }
 
 /** Kart/pop-up "Sayfaya git" hedefi — bölüm başına en yakın sayfa. */
-export const MONITOR_SECTION_TAB = { flapping: 'incidents', slow: 'activity', stale: 'health', domains: 'domain' }
+export const MONITOR_SECTION_TAB = { flapping: 'incidents', slow: 'activity', stale: 'health', domains: 'domain', notifications: 'alerthistory', health: 'weakalgo' }
+
+/** Bildirim satırı tıklaması: alarmı varsa Alarm Geçmişi'nde o olayı açar; yoksa günlüğe gider. */
+export function openNotification(item) {
+  navigateTo('alerthistory', item?.alert_event_id ? { incident: item.alert_event_id } : undefined)
+}
 
 /** Yaş metni: kontrol varsa "X dk/sa önce"; yoksa pencerede yaratılmışsa "hiç kontrol edilmedi", daha eskiyse "7+ gündür kontrol yok". */
 function ageText(t, x) {
@@ -65,4 +70,40 @@ export function MonitorRowBody({ section, item: x, t, onOpen }) {
   </>)
 }
 
-export function monitorRowKey(x) { return `${x.type}:${x.monitor_id}` }
+/** Bildirim: "kanal:olay:hedef:zaman" — aynı olay için e-posta ve webhook ayrı satır. Sağlık: alan adı. */
+export function monitorRowKey(x) {
+  if (x.channel) return `${x.channel}:${x.alert_event_id ?? ''}:${x.target ?? ''}:${x.at ?? ''}`
+  if (x.findings) return `h:${x.domain}`
+  return `${x.type}:${x.monitor_id}`
+}
+
+/** Teslim edilemeyen bildirim satırı: [KANAL] hedef · hata · saat (alan/izleme adı başlıkta). */
+export function NotificationRowBody({ item: x, t, onOpen }) {
+  const time = x.at ? String(x.at).replace('T', ' ').slice(5, 16) : ''
+  return (<>
+    <span className={`today-type today-type--${(x.channel || '').toLowerCase()}`}>{t(`today.ch.${x.channel}`)}</span>
+    <button type="button" className="today-link" title={x.subject || x.monitor_name || undefined} onClick={() => onOpen?.(x)}>
+      {x.domain || x.monitor_name || x.target}
+    </button>
+    {(x.domain || x.monitor_name) && x.target && <span className="today-muted">{x.target}</span>}
+    <span className="today-days is-bad" title={x.error}>{x.error}</span>
+    {time && <span className="today-muted">{time}</span>}
+    {x.team_name ? <TeamBadge teamId={x.team_id} teamName={x.team_name} /> : null}
+  </>)
+}
+
+/** Sağlık bulgusu satırı: alan · bulgu rozetleri (hlth.val.* değer metniyle) · takım. */
+export function HealthRowBody({ item: x, t, onOpen }) {
+  return (<>
+    <button type="button" className="today-link" onClick={() => onOpen?.(x)}>{x.domain}</button>
+    {(x.findings || []).map((f) => (
+      <span key={f.key} className={`today-finding${x.critical && HEALTH_CRITICAL.has(f.key) ? ' is-bad' : ''}`}
+        title={t(`hlth.val.${f.value_key}`, ...(f.value_args || []))}>
+        {t(`today.hf.${f.key}`)}
+      </span>
+    ))}
+    {x.silenced && <span className="today-muted" title={t('today.healthSilencedHint')}>{t('today.healthSilenced')}</span>}
+    {x.team_name ? <TeamBadge teamId={x.team_id} teamName={x.team_name} /> : null}
+  </>)
+}
+const HEALTH_CRITICAL = new Set(['revocation', 'trust', 'sanMatch', 'chain'])

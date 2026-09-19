@@ -939,3 +939,25 @@ Kapılar: backend `clean verify` 3837 test — tek kırmızı `IdentityLeakGuard
 yok, dokunulmadı); yeni testler 7 + 4 (TodayPanelServiceTest güncellendi). Frontend lint 0 hata / 2113 test / kapsam / build
 yeşil. Jar yeniden kuruldu, :8080 `/health` UP.
 → **REGRESYON YOK**.
+
+## Ek — kırk beşinci tur (2026-09-19, sürüm sonrası — "Sizin için — bugün": teslim edilemeyen bildirim + sertifika sağlık bulgusu kartları, `v20.71.1..HEAD`)
+
+Kapsam: backend (TodayMonitorInsightsService iki yeni blok + 6 bağımlılık; CertificateHealthService `thresholdDays()` /
+5-arg `evaluate` — eşik BİR kez okunur; UserPushDeliveryRepository türetilmiş sorgu; TodayPanelService iki blok) +
+frontend (TodayPanel 2 kart, todayMonitorRows NotificationRowBody/HealthRowBody, TodayListModal, i18n TR/EN, CSS rozetleri).
+Kullanıcı seçimi (4 adaydan 2): teslim edilemeyen bildirim (24 sa) · sertifika sağlık bulguları.
+Denetim odakları:
+- Bildirim: notification_logs (e-posta/webhook `FAILED…`, alarm üstünden takım+alan) + user_push_deliveries (`FAILED`,
+  takım). Hata metni "FAILED:" önekinden arındırılır; aynı olayın e-posta ve webhook'u ayrı satır (anahtar
+  kanal:olay:hedef:zaman). Satır → Alarm Geçmişi `incident=<olay>`; olaysız push yalnız sekme. Kanal kırılımı alt yazıda.
+- Sağlık: aktif envanterin her alanı için `evaluate` FAIL satırları — "expiry" hariç (30 gün altı kartı). Süresi dolmamış
+  zayıf-algoritma istisnası signature/keySize'ı SUSTURUR (kaldırılan istisna kartının işlevi buraya taşındı; "istisnalı"
+  etiketi), dolmuş istisna susturmaz; trust/chain/sanMatch/revocation KRİTİK (kırmızı rozet, kart tonu). Rozet başlığı
+  `hlth.val.*` değer metni (ör. "Eski (TLSv1)"). Satır → sertifika detayı (onOpenDomain); "Sayfaya git" → Zayıf Algoritma Raporu.
+- Görünürlük: her iki blok TodayPanelService'te aynı `visibleRows` kuralıyla süzülür; önbellek 60 sn (tüm takımlar).
+- Yerel veri: 11 sertifika 14/14 OK, 24 saatte teslim hatası yok → iki kart 0 (uç ile doğrulandı); dolu görünüm fetch
+  yamasıyla tarayıcıda: kanal rozetleri, hata metni, kritik/istisnalı rozetler, takım rozeti.
+Kapılar: backend `clean verify` 3839 test — tek kırmızı `IdentityLeakGuardTest` (kullanıcının takipsiz 2 dosyası); yeni
+testler 2 (+CertificateHealthServiceTest 36 yeşil). Frontend lint 0 hata / 2114 test / kapsam / build yeşil. Jar yeniden
+kuruldu, :8080 `/health` UP.
+→ **REGRESYON YOK**.

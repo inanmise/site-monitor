@@ -45,6 +45,11 @@ class TodayPanelServiceTest {
     private static LatestCheck lc(String d, Integer days) { LatestCheck c = new LatestCheck(); c.setDomain(d); c.setDaysRemaining(days); return c; }
     @SuppressWarnings("unchecked") private static Map<String, Object> block(Map<String, Object> b, String k) { return (Map<String, Object>) b.get(k); }
     @SuppressWarnings("unchecked") private static List<Map<String, Object>> items(Map<String, Object> blk) { return (List<Map<String, Object>>) blk.get("items"); }
+    private static Map<String, Object> nrow(String channel, String target, String error, String domain, Long team) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("channel", channel); m.put("target", target); m.put("error", error); m.put("at", "2026-09-19T10:00:00"); m.put("domain", domain); m.put("team_id", team);
+        return m;
+    }
     private static Map<String, Object> mrow(String type, Long id, String name, String target, String domain, Long team, Map<String, Object> extra) {
         Map<String, Object> m = new java.util.LinkedHashMap<>();
         m.put("type", type); m.put("monitor_id", id); m.put("name", name); m.put("target", target); m.put("domain", domain); m.put("team_id", team);
@@ -75,7 +80,16 @@ class TodayPanelServiceTest {
                 List.of(mrow("DOMAIN", 6L, "d1", "exp.example.com", "exp.example.com", 1L, Map.of("days", -2)),
                         mrow("DOMAIN", 7L, "d2", "other.example.com", "other.example.com", 2L, Map.of("days", 5)),
                         mrow("DOMAIN", 8L, "d3", "soon.example.com", "soon.example.com", 1L, Map.of("days", 12))),
-                1));
+                1,
+                // bildirim: takım 1 e-posta + takım 2 push + takımsız-ama-alanı-görünür webhook
+                List.of(nrow("EMAIL", "a@example.com", "SMTP 550", "soon.example.com", 1L),
+                        nrow("PUSH", "user1", "HTTP 500", null, 2L),
+                        nrow("WEBHOOK", "hook", "timeout", "exp.example.com", null)),
+                // sağlık: takım 1'de kritik (güven) + takım 2'de zayıf imza
+                List.of(Map.of("domain", "exp.example.com", "team_id", 1L, "critical", true, "silenced", false,
+                                "findings", List.of(Map.of("key", "trust", "value_key", "untrusted", "value_args", List.of()))),
+                        Map.of("domain", "other.example.com", "team_id", 2L, "critical", false, "silenced", false,
+                                "findings", List.of(Map.of("key", "signature", "value_key", "weakAlgorithm", "value_args", List.of("SHA1withRSA")))))));
         WeeklyReport draft = new WeeklyReport(); draft.setId(77L); draft.setStatus("DRAFT");
         when(weeklyReportRepo.findByTeamIdAndReportYearAndWeekNo(anyLong(), anyInt(), anyInt())).thenReturn(Optional.of(draft));
     }
@@ -120,6 +134,13 @@ class TodayPanelServiceTest {
         assertThat(domains).containsEntry("count", 2).containsEntry("expired", 1L);
         assertThat(items(domains).get(0)).containsEntry("domain", "exp.example.com").containsEntry("days", -2);
         assertThat(monitorInsights.snapshot().flapping().get(0)).doesNotContainKey("team_name");   // önbellek satırı değişmedi
+        // Bildirim: takım 1 e-posta + görünür alanın webhook'u girer, takım 2 push elenir; kanal sayaçları
+        Map<String, Object> notif = block(b, "notifications");
+        assertThat(notif).containsEntry("count", 2).containsEntry("email", 1L).containsEntry("webhook", 1L).containsEntry("push", 0L);
+        // Sağlık: yalnız takım 1'in kritik bulgusu
+        Map<String, Object> health = block(b, "health");
+        assertThat(health).containsEntry("count", 1).containsEntry("critical", 1L);
+        assertThat(items(health).get(0)).containsEntry("domain", "exp.example.com").containsEntry("team_name", "Takım A");
         Map<String, Object> weekly = block(b, "weekly");
         assertThat(weekly).containsEntry("count", 1).containsEntry("missing", 1);
         assertThat(items(weekly).get(0)).containsEntry("status", "DRAFT").containsEntry("report_id", 77L).containsEntry("team_name", "Takım A");
@@ -136,7 +157,7 @@ class TodayPanelServiceTest {
         assertThat(block(b, "alerts")).containsEntry("count", 2);
         assertThat(block(b, "weekly")).containsEntry("count", 0).containsEntry("missing", 0);
         // İzleme anlık görüntüsü düşerse dört izleme kartı da boş (count 0) çizilir, panel yıkılmaz.
-        for (String k : List.of("flapping", "slow", "stale", "domains")) assertThat(block(b, k)).containsEntry("count", 0);
+        for (String k : List.of("flapping", "slow", "stale", "domains", "notifications", "health")) assertThat(block(b, k)).containsEntry("count", 0);
         assertThat(block(b, "stale")).containsEntry("paused", 0);
     }
     @Test

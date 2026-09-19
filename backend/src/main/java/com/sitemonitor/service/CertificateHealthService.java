@@ -78,6 +78,19 @@ public class CertificateHealthService {
     }
 
     public HealthResult evaluate(LatestCheck lc, CertificateInventory inv, boolean hasPageMonitor) {
+        int[] d = thresholdDays();
+        return evaluate(lc, inv, hasPageMonitor, d[0], d[1]);
+    }
+
+    /** Aktif alarm eşiği {uyarı, kritik} gün — toplu değerlendirmede (Sizin için — bugün) BİR kez okunur. */
+    public int[] thresholdDays() {
+        AlertThreshold th = safeThreshold();
+        return new int[]{th.getWarningDays() != null ? th.getWarningDays() : 30,
+                         th.getCriticalDays() != null ? th.getCriticalDays() : 7};
+    }
+
+    /** Eşikleri çağıranın verdiği değerlendirme — alan başına ek sorgu yok (2026-09-19). */
+    public HealthResult evaluate(LatestCheck lc, CertificateInventory inv, boolean hasPageMonitor, int warn, int crit) {
         List<HealthRow> rows = new ArrayList<>();
         if (lc == null) {
             // Hiç kontrol edilmemiş domain: tek satırlık dürüst cevap, uydurma OK üretme.
@@ -85,10 +98,6 @@ public class CertificateHealthService {
                     "unknown", List.of(), "runCheck", List.of(), Map.of()));
             return summarise(rows);
         }
-
-        AlertThreshold th = safeThreshold();
-        int warn = th.getWarningDays() != null ? th.getWarningDays() : 30;
-        int crit = th.getCriticalDays() != null ? th.getCriticalDays() : 7;
 
         rows.add(expiryRow(lc, warn, crit));
         rows.add(revocationRow(lc));

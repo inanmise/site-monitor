@@ -87,6 +87,9 @@ public interface UserPushDeliveryRepository extends JpaRepository<UserPushDelive
     /** E4 devre-kesici sağlık sinyali: pencere içi ardışık olmayan toplam FAILED. */
     long countByStatusAndCreatedAtGreaterThanEqual(String status, String since);
 
+    /** "Sizin için — bugün" teslim edilemeyen bildirim kartı (2026-09-19): pencere içi FAILED satırları, yeni üstte. */
+    List<UserPushDelivery> findByStatusAndCreatedAtGreaterThanEqualOrderByIdDesc(String status, String since);
+
     /** Test tavanı: son bir dakikadaki TEST satırları. */
     long countByTriggerAndCreatedAtGreaterThanEqual(String trigger, String since);
 

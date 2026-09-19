@@ -1,9 +1,20 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.model.AlertEvent;
+import com.sitemonitor.model.CertificateInventory;
 import com.sitemonitor.model.DomainCheck;
+import com.sitemonitor.model.LatestCheck;
 import com.sitemonitor.model.MonitorSchedule;
+import com.sitemonitor.model.NotificationLog;
+import com.sitemonitor.model.UserPushDelivery;
+import com.sitemonitor.model.WeakAlgorithmException;
 import com.sitemonitor.repository.ActivityLogRepository;
+import com.sitemonitor.repository.AlertEventRepository;
 import com.sitemonitor.repository.CertificateInventoryRepository;
+import com.sitemonitor.repository.LatestCheckRepository;
+import com.sitemonitor.repository.NotificationLogRepository;
+import com.sitemonitor.repository.UserPushDeliveryRepository;
+import com.sitemonitor.repository.WeakAlgorithmExceptionRepository;
 import com.sitemonitor.repository.DnsMonitorRepository;
 import com.sitemonitor.repository.DomainCheckRepository;
 import com.sitemonitor.repository.DomainMonitorRepository;
@@ -21,7 +32,9 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -36,7 +49,8 @@ import java.util.function.Supplier;
 
 /**
  * "Sizin için — bugün" panelinin İZLEME kartları (2026-09-19; zayıf-algoritma istisnası kartının
- * yerine, kullanıcı seçimi): kararsız (flapping) · yavaşlayan · sessiz/bayat · alan adı kaydı dolan.
+ * yerine, kullanıcı seçimi): kararsız (flapping) · yavaşlayan · sessiz/bayat · alan adı kaydı dolan;
+ * ve aynı gün eklenen iki kart daha: teslim edilemeyen bildirim (24 sa) · sertifika sağlık bulguları.
  * Dokuz izleme türünü activity_log (tek kaynak) + izleme tabloları üstünden okur.
  *
  * <p>Hesap TÜM takımlar için bir kez yapılır ve 60 sn önbelleğe alınır ({@code today-monitors});
@@ -59,6 +73,11 @@ public class TodayMonitorInsightsService {
     static final int STALE_FACTOR = 2, STALE_FLOOR_SEC = 300, STALE_LOOKBACK_DAYS = 7;
     /** Alan adı kaydı: 30 gün altı (ve dolmuş). */
     static final int DOMAIN_DAYS = 30;
+    /** Teslim edilemeyen bildirim penceresi (saat). */
+    static final int NOTIFY_WINDOW_HOURS = 24;
+    /** Sağlık bulgusu: FAIL satırlar; "expiry" kendi kartında (30 gün altı sertifika) → hariç. Bunlar KRİTİK sayılır. */
+    static final Set<String> HEALTH_CRITICAL_KEYS = Set.of("revocation", "trust", "sanMatch", "chain");
+    private static final ZoneId IST = ZoneId.of("Europe/Istanbul");
     /** Yavaşlama için whois gecikmesi anlamsız → DOMAIN dışarıda. */
     private static final Set<String> SLOW_TYPES = Set.of("HTTP", "PORT", "PING", "DNS", "KEYWORD", "PAGE", "PAGESPEED", "SCRIPTED");
 
@@ -66,6 +85,12 @@ public class TodayMonitorInsightsService {
 
     private final ActivityLogRepository activityRepo;
     private final CertificateInventoryRepository inventoryRepo;
+    private final NotificationLogRepository notificationLogRepo;
+    private final UserPushDeliveryRepository pushDeliveryRepo;
+    private final AlertEventRepository alertEventRepo;
+    private final LatestCheckRepository latestCheckRepo;
+    private final WeakAlgorithmExceptionRepository exceptionRepo;
+    private final CertificateHealthService healthService;
     private final DomainCheckRepository domainCheckRepo;
     private final HttpMonitorRepository httpRepo;
     private final PortMonitorRepository portRepo;
@@ -77,10 +102,10 @@ public class TodayMonitorInsightsService {
     private final ScriptedMonitorRepository scriptedRepo;
     private final DomainMonitorRepository domainRepo;
 
-    /** Tüm takımlar için hesaplanmış dört liste + duraklatılmış izleme sayısı. Satırlar {@code team_id} ve {@code domain} taşır (süzme için). */
+    /** Tüm takımlar için hesaplanmış listeler + duraklatılmış izleme sayısı. Satırlar {@code team_id} ve {@code domain} taşır (süzme için). */
     public record Snapshot(List<Map<String, Object>> flapping, List<Map<String, Object>> slow,
                            List<Map<String, Object>> stale, int paused, List<Map<String, Object>> domains,
-                           int domainsExpired) { }
+                           int domainsExpired, List<Map<String, Object>> notifications, List<Map<String, Object>> health) { }
 
     @Cacheable(value = "today-monitors", sync = true)
     public Snapshot snapshot() {
@@ -96,7 +121,9 @@ public class TodayMonitorInsightsService {
         List<Map<String, Object>> stale = safe(() -> stale(now, monitors, activeInventoryDomains(), paused));
         int[] expired = {0};
         List<Map<String, Object>> domains = safe(() -> domains(monitors, expired));
-        return new Snapshot(flapping, slow, stale, paused[0], domains, expired[0]);
+        List<Map<String, Object>> notifications = safe(() -> notifications(now));
+        List<Map<String, Object>> health = safe(this::health);
+        return new Snapshot(flapping, slow, stale, paused[0], domains, expired[0], notifications, health);
     }
 
     private static List<Map<String, Object>> safe(Supplier<List<Map<String, Object>>> s) {
@@ -253,6 +280,89 @@ public class TodayMonitorInsightsService {
         if (iso == null || iso.isBlank()) return null;
         try { return LocalDateTime.parse(iso.length() > 19 ? iso.substring(0, 19) : iso).toInstant(ZoneOffset.UTC); }
         catch (Exception e) { return null; }
+    }
+
+    // ── 5) Teslim edilemeyen bildirim (24 sa) ───────────────────────────────────────────────
+    /** E-posta / webhook (notification_logs, alarm üstünden takım+alan) + push (user_push_deliveries, takım). Yeni üstte. */
+    private List<Map<String, Object>> notifications(Instant now) {
+        String since = ISO.format(now.minus(Duration.ofHours(NOTIFY_WINDOW_HOURS)));
+        List<Map<String, Object>> items = new ArrayList<>();
+        List<NotificationLog> logs = notificationLogRepo.findAllSince(since);
+        Set<Long> eventIds = new HashSet<>();
+        for (NotificationLog n : logs) if (n.getAlertEventId() != null && (failed(n.getEmailStatus()) || failed(n.getWebhookStatus()))) eventIds.add(n.getAlertEventId());
+        Map<Long, AlertEvent> events = new HashMap<>();
+        if (!eventIds.isEmpty()) for (AlertEvent e : alertEventRepo.findAllById(eventIds)) events.put(e.getId(), e);
+        for (NotificationLog n : logs) {
+            AlertEvent e = n.getAlertEventId() == null ? null : events.get(n.getAlertEventId());
+            if (failed(n.getEmailStatus())) items.add(notifyRow("EMAIL", n.getRecipientEmail(), n.getEmailStatus(), n.getSentAt(), n.getSubject(), e, n.getAlertEventId()));
+            if (failed(n.getWebhookStatus())) items.add(notifyRow("WEBHOOK", n.getRecipientEmail(), n.getWebhookStatus(), n.getSentAt(), n.getSubject(), e, n.getAlertEventId()));
+        }
+        for (UserPushDelivery d : pushDeliveryRepo.findByStatusAndCreatedAtGreaterThanEqualOrderByIdDesc("FAILED", since)) {
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("channel", "PUSH"); r.put("target", d.getDisplayName() != null ? d.getDisplayName() : d.getUsername());
+            r.put("error", trim(d.getError() != null ? d.getError() : (d.getHttpStatus() != null ? "HTTP " + d.getHttpStatus() : "FAILED"), 160));
+            r.put("at", d.getSentAt() != null ? d.getSentAt() : d.getCreatedAt()); r.put("subject", d.getTitle());
+            r.put("alert_event_id", d.getAlertEventId()); r.put("domain", null); r.put("monitor_name", d.getMonitorName());
+            r.put("team_id", d.getTeamId());
+            items.add(r);
+        }
+        items.sort(Comparator.comparing((Map<String, Object> m) -> String.valueOf(m.get("at"))).reversed());
+        return items;
+    }
+
+    private static boolean failed(String status) { return status != null && status.toUpperCase().startsWith("FAILED"); }
+
+    private static Map<String, Object> notifyRow(String channel, String target, String status, String at, String subject, AlertEvent e, Long eventId) {
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("channel", channel); r.put("target", target);
+        String err = status == null ? "FAILED" : status.replaceFirst("(?i)^FAILED:?\\s*", "");
+        r.put("error", trim(err.isBlank() ? "FAILED" : err, 160));
+        r.put("at", at); r.put("subject", subject); r.put("alert_event_id", eventId);
+        r.put("domain", e == null ? null : e.getDomain()); r.put("monitor_name", e == null ? null : e.getAlertType());
+        r.put("team_id", e == null ? null : e.getTeamId());
+        return r;
+    }
+
+    private static String trim(String s, int max) { return s == null ? null : (s.length() <= max ? s : s.substring(0, max - 1) + "…"); }
+
+    // ── 6) Sertifika sağlık bulguları ────────────────────────────────────────────────────────
+    /**
+     * Aktif envanterdeki her alan için {@link CertificateHealthService#evaluate} — FAIL satırlar bulgu ("expiry" hariç:
+     * kendi kartı var). Süresi dolmamış zayıf-algoritma istisnası "signature"/"keySize" bulgularını SUSTURUR (bilinçli
+     * kabul edilmiş risk; süresi dolunca bulgu yeniden görünür — kaldırılan istisna kartının işlevi buraya taşındı).
+     */
+    private List<Map<String, Object>> health() {
+        Map<String, LatestCheck> latest = new HashMap<>();
+        for (LatestCheck lc : latestCheckRepo.findAll()) if (lc.getDomain() != null) latest.put(lc.getDomain(), lc);
+        String today = LocalDate.now(IST).toString();
+        Set<String> silenced = new HashSet<>();
+        for (WeakAlgorithmException ex : exceptionRepo.findAll())
+            if (ex.getDomain() != null && (ex.getUntil() == null || ex.getUntil().compareTo(today) >= 0)) silenced.add(ex.getDomain());
+        int[] th = healthService.thresholdDays();
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (CertificateInventory inv : inventoryRepo.findByActiveTrueOrderByDomainAsc()) {
+            LatestCheck lc = latest.get(inv.getDomain());
+            if (lc == null) continue;
+            List<Map<String, Object>> findings = new ArrayList<>();
+            boolean critical = false;
+            for (CertificateHealthService.HealthRow row : healthService.evaluate(lc, inv, false, th[0], th[1]).rows()) {
+                if (row.status() != CertificateHealthRules.Status.FAIL || "expiry".equals(row.key())) continue;
+                if (silenced.contains(inv.getDomain()) && ("signature".equals(row.key()) || "keySize".equals(row.key()))) continue;
+                Map<String, Object> f = new LinkedHashMap<>();
+                f.put("key", row.key()); f.put("value_key", row.valueKey()); f.put("value_args", row.valueArgs());
+                findings.add(f);
+                if (HEALTH_CRITICAL_KEYS.contains(row.key())) critical = true;
+            }
+            if (findings.isEmpty()) continue;
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("domain", inv.getDomain()); r.put("team_id", inv.getTeamId());
+            r.put("findings", findings); r.put("critical", critical); r.put("silenced", silenced.contains(inv.getDomain()));
+            items.add(r);
+        }
+        items.sort(Comparator.<Map<String, Object>>comparingInt(m -> Boolean.TRUE.equals(m.get("critical")) ? 0 : 1)
+                .thenComparingInt(m -> -((List<?>) m.get("findings")).size())
+                .thenComparing(m -> String.valueOf(m.get("domain"))));
+        return items;
     }
 
     // ── 4) Alan adı kaydı dolan ──────────────────────────────────────────────────────────────

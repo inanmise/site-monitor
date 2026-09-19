@@ -81,6 +81,18 @@ public class TodayPanelService {
             long expired = rows.stream().filter(r -> ((Number) r.get("days")).intValue() < 0).count();
             return monitorBlock(rows, limit, Map.of("expired", expired));
         }));
+        // 2026-09-19 (ikinci tur, kullanıcı seçimi): teslim edilemeyen bildirim (24 sa) · sertifika sağlık bulguları.
+        out.put("notifications", safe(() -> {
+            List<Map<String, Object>> rows = visibleRows(sn == null ? List.of() : sn.notifications(), canViewTeam, visibleDomains, teamNames);
+            Map<String, Object> extra = new LinkedHashMap<>();
+            for (String ch : List.of("EMAIL", "WEBHOOK", "PUSH")) extra.put(ch.toLowerCase(), rows.stream().filter(r -> ch.equals(r.get("channel"))).count());
+            return monitorBlock(rows, limit, extra);
+        }));
+        out.put("health", safe(() -> {
+            List<Map<String, Object>> rows = visibleRows(sn == null ? List.of() : sn.health(), canViewTeam, visibleDomains, teamNames);
+            long critical = rows.stream().filter(r -> Boolean.TRUE.equals(r.get("critical"))).count();
+            return monitorBlock(rows, limit, Map.of("critical", critical));
+        }));
         out.put("scope_domains", visibleDomains.size());
         return out;
     }

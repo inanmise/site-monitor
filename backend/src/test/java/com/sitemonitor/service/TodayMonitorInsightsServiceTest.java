@@ -1,14 +1,24 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.model.AlertEvent;
 import com.sitemonitor.model.CertificateInventory;
 import com.sitemonitor.model.DnsMonitor;
+import com.sitemonitor.model.LatestCheck;
+import com.sitemonitor.model.NotificationLog;
+import com.sitemonitor.model.UserPushDelivery;
+import com.sitemonitor.model.WeakAlgorithmException;
 import com.sitemonitor.model.DomainCheck;
 import com.sitemonitor.model.DomainMonitor;
 import com.sitemonitor.model.HttpMonitor;
 import com.sitemonitor.model.PingMonitor;
 import com.sitemonitor.model.PortMonitor;
 import com.sitemonitor.repository.ActivityLogRepository;
+import com.sitemonitor.repository.AlertEventRepository;
 import com.sitemonitor.repository.CertificateInventoryRepository;
+import com.sitemonitor.repository.LatestCheckRepository;
+import com.sitemonitor.repository.NotificationLogRepository;
+import com.sitemonitor.repository.UserPushDeliveryRepository;
+import com.sitemonitor.repository.WeakAlgorithmExceptionRepository;
 import com.sitemonitor.repository.DnsMonitorRepository;
 import com.sitemonitor.repository.DomainCheckRepository;
 import com.sitemonitor.repository.DomainMonitorRepository;
@@ -30,6 +40,8 @@ import org.mockito.quality.Strictness;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -37,6 +49,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -48,6 +61,7 @@ import static org.mockito.Mockito.when;
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
+@SuppressWarnings("unchecked")
 class TodayMonitorInsightsServiceTest {
 
     private static final DateTimeFormatter ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -55,6 +69,12 @@ class TodayMonitorInsightsServiceTest {
 
     @Mock ActivityLogRepository activityRepo;
     @Mock CertificateInventoryRepository inventoryRepo;
+    @Mock NotificationLogRepository notificationLogRepo;
+    @Mock UserPushDeliveryRepository pushDeliveryRepo;
+    @Mock AlertEventRepository alertEventRepo;
+    @Mock LatestCheckRepository latestCheckRepo;
+    @Mock WeakAlgorithmExceptionRepository exceptionRepo;
+    @Mock CertificateHealthService healthService;
     @Mock DomainCheckRepository domainCheckRepo;
     @Mock HttpMonitorRepository httpRepo;
     @Mock PortMonitorRepository portRepo;
@@ -82,7 +102,8 @@ class TodayMonitorInsightsServiceTest {
 
     @BeforeEach
     void setUp() {
-        svc = new TodayMonitorInsightsService(activityRepo, inventoryRepo, domainCheckRepo, httpRepo, portRepo, pingRepo, dnsRepo,
+        svc = new TodayMonitorInsightsService(activityRepo, inventoryRepo, notificationLogRepo, pushDeliveryRepo, alertEventRepo,
+                latestCheckRepo, exceptionRepo, healthService, domainCheckRepo, httpRepo, portRepo, pingRepo, dnsRepo,
                 keywordRepo, pageRepo, pageSpeedRepo, scriptedRepo, domainRepo);
         for (var r : List.of(portRepo, pingRepo, dnsRepo, keywordRepo, pageRepo, pageSpeedRepo, scriptedRepo, domainRepo, httpRepo))
             when(r.findAll()).thenReturn(List.of());
@@ -92,6 +113,80 @@ class TodayMonitorInsightsServiceTest {
         when(activityRepo.lastCheckByMonitor(anyString())).thenReturn(List.of());
         when(domainCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
         when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
+        when(notificationLogRepo.findAllSince(anyString())).thenReturn(List.of());
+        when(pushDeliveryRepo.findByStatusAndCreatedAtGreaterThanEqualOrderByIdDesc(anyString(), anyString())).thenReturn(List.of());
+        when(latestCheckRepo.findAll()).thenReturn(List.of());
+        when(exceptionRepo.findAll()).thenReturn(List.of());
+        when(healthService.thresholdDays()).thenReturn(new int[]{30, 7});
+    }
+
+    // ── Teslim edilemeyen bildirim ──────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("bildirim: FAILED e-posta/webhook (alarm üstünden takım+alan) ve FAILED push (takım) girer; SENT/SKIPPED girmez; hata metni 'FAILED:' önekinden arındırılır; yeni üstte")
+    void notifications_failedOnly() {
+        NotificationLog okMail = new NotificationLog(); okMail.setAlertEventId(1L); okMail.setSentAt(at(60)); okMail.setEmailStatus("SENT"); okMail.setWebhookStatus("SKIPPED");
+        NotificationLog badMail = new NotificationLog(); badMail.setAlertEventId(1L); badMail.setSentAt(at(30)); badMail.setEmailStatus("FAILED: 550 mailbox unavailable"); badMail.setWebhookStatus("SENT"); badMail.setRecipientEmail("ops@example.com"); badMail.setSubject("[Site Monitor] down");
+        NotificationLog badHook = new NotificationLog(); badHook.setAlertEventId(2L); badHook.setSentAt(at(10)); badHook.setEmailStatus("SKIPPED_DISABLED"); badHook.setWebhookStatus("FAILED:connect timed out"); badHook.setRecipientEmail("hook");
+        when(notificationLogRepo.findAllSince(anyString())).thenReturn(List.of(okMail, badMail, badHook));
+        AlertEvent e1 = new AlertEvent(); e1.setId(1L); e1.setDomain("a.example.com"); e1.setTeamId(1L); e1.setAlertType("HTTP_DOWN");
+        AlertEvent e2 = new AlertEvent(); e2.setId(2L); e2.setDomain("b.example.com"); e2.setTeamId(2L); e2.setAlertType("PORT_DOWN");
+        when(alertEventRepo.findAllById(any())).thenReturn(List.of(e1, e2));
+        UserPushDelivery push = new UserPushDelivery(); push.setStatus("FAILED"); push.setUsername("u1"); push.setDisplayName("Kullanıcı Bir"); push.setError("HTTP 500 from provider"); push.setCreatedAt(at(5)); push.setTeamId(1L); push.setMonitorName("api"); push.setAlertEventId(1L);
+        when(pushDeliveryRepo.findByStatusAndCreatedAtGreaterThanEqualOrderByIdDesc(eq("FAILED"), anyString())).thenReturn(List.of(push));
+
+        List<Map<String, Object>> n = svc.snapshot(NOW).notifications();
+
+        assertThat(n).extracting(m -> m.get("channel")).containsExactly("PUSH", "WEBHOOK", "EMAIL");
+        assertThat(n.get(2)).containsEntry("target", "ops@example.com").containsEntry("error", "550 mailbox unavailable")
+                .containsEntry("domain", "a.example.com").containsEntry("team_id", 1L).containsEntry("alert_event_id", 1L).containsEntry("monitor_name", "HTTP_DOWN");
+        assertThat(n.get(1)).containsEntry("error", "connect timed out").containsEntry("team_id", 2L);
+        assertThat(n.get(0)).containsEntry("target", "Kullanıcı Bir").containsEntry("error", "HTTP 500 from provider").containsEntry("monitor_name", "api");
+    }
+
+    // ── Sertifika sağlık bulguları ──────────────────────────────────────────────────────────
+
+    private static CertificateHealthService.HealthRow hrow(String key, CertificateHealthRules.Status st, String valueKey, Object... args) {
+        return new CertificateHealthService.HealthRow(key, "certificate", st, valueKey, List.of(args), "none", List.of(), Map.of());
+    }
+
+    @Test
+    @DisplayName("sağlık: FAIL satırlar bulgu (expiry hariç), kritik anahtar (trust/chain/sanMatch/revocation) üstte; süresi dolmamış zayıf-algoritma istisnası signature/keySize'ı susturur, dolmuş istisna susturmaz; kontrolsüz alan atlanır")
+    void health_findingsWithExceptionSilencing() {
+        CertificateInventory a = new CertificateInventory(); a.setDomain("a.example.com"); a.setTeamId(1L); a.setActive(true);
+        CertificateInventory b = new CertificateInventory(); b.setDomain("b.example.com"); b.setTeamId(1L); b.setActive(true);
+        CertificateInventory c = new CertificateInventory(); c.setDomain("c.example.com"); c.setTeamId(2L); c.setActive(true);
+        CertificateInventory d = new CertificateInventory(); d.setDomain("d.example.com"); d.setTeamId(2L); d.setActive(true);
+        CertificateInventory never = new CertificateInventory(); never.setDomain("never.example.com"); never.setActive(true);
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(a, b, c, d, never));
+        LatestCheck la = new LatestCheck(); la.setDomain("a.example.com");
+        LatestCheck lb = new LatestCheck(); lb.setDomain("b.example.com");
+        LatestCheck lc = new LatestCheck(); lc.setDomain("c.example.com");
+        LatestCheck ld = new LatestCheck(); ld.setDomain("d.example.com");
+        when(latestCheckRepo.findAll()).thenReturn(List.of(la, lb, lc, ld));
+        String today = LocalDate.now(ZoneId.of("Europe/Istanbul")).toString();
+        WeakAlgorithmException live = new WeakAlgorithmException(); live.setDomain("b.example.com"); live.setUntil(LocalDate.parse(today).plusDays(3).toString());
+        WeakAlgorithmException dead = new WeakAlgorithmException(); dead.setDomain("c.example.com"); dead.setUntil(LocalDate.parse(today).minusDays(1).toString());
+        when(exceptionRepo.findAll()).thenReturn(List.of(live, dead));
+        // a: zayıf imza + süre (süre hariç) → 1 bulgu, kritik değil; b: zayıf imza SUSTURULMUŞ + zincir kırık → 1 bulgu kritik;
+        // c: zayıf imza (istisna dolmuş → görünür); d: hepsi OK/UNKNOWN → yok
+        when(healthService.evaluate(eq(la), any(), eq(false), eq(30), eq(7))).thenReturn(new CertificateHealthService.HealthResult(List.of(
+                hrow("expiry", CertificateHealthRules.Status.FAIL, "daysLeft", 3), hrow("signature", CertificateHealthRules.Status.FAIL, "weakAlgorithm", "SHA1withRSA")), 0, 2));
+        when(healthService.evaluate(eq(lb), any(), eq(false), eq(30), eq(7))).thenReturn(new CertificateHealthService.HealthResult(List.of(
+                hrow("signature", CertificateHealthRules.Status.FAIL, "weakAlgorithm", "SHA1withRSA"), hrow("chain", CertificateHealthRules.Status.FAIL, "broken")), 0, 2));
+        when(healthService.evaluate(eq(lc), any(), eq(false), eq(30), eq(7))).thenReturn(new CertificateHealthService.HealthResult(List.of(
+                hrow("keySize", CertificateHealthRules.Status.FAIL, "shortKey", "RSA", 1024)), 0, 1));
+        when(healthService.evaluate(eq(ld), any(), eq(false), eq(30), eq(7))).thenReturn(new CertificateHealthService.HealthResult(List.of(
+                hrow("trust", CertificateHealthRules.Status.OK, "trusted"), hrow("chain", CertificateHealthRules.Status.UNKNOWN, "unverified")), 1, 1));
+
+        List<Map<String, Object>> h = svc.snapshot(NOW).health();
+
+        assertThat(h).extracting(m -> m.get("domain")).containsExactly("b.example.com", "a.example.com", "c.example.com");
+        assertThat(h.get(0)).containsEntry("critical", true).containsEntry("silenced", true);
+        assertThat((List<?>) h.get(0).get("findings")).hasSize(1);
+        assertThat(((List<Map<String, Object>>) h.get(0).get("findings")).get(0)).containsEntry("key", "chain").containsEntry("value_key", "broken");
+        assertThat(((List<Map<String, Object>>) h.get(1).get("findings")).get(0)).containsEntry("key", "signature").containsEntry("value_args", List.of("SHA1withRSA"));
+        assertThat(h.get(2)).containsEntry("critical", false).containsEntry("silenced", false).containsEntry("team_id", 2L);
     }
 
     // ── Kararsız ────────────────────────────────────────────────────────────────────────────
