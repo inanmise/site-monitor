@@ -13675,3 +13675,14 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   .mtp-types { flex-direction: row; overflow-x: auto; max-height: none; }
   .mtp-type { white-space: nowrap; }
 }
+
+/* İzleme formu — alarm seviyesi seçici (2026-09-19) */
+.notify-level { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.notify-level-head { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
+.notify-level-title { font-weight: 700; font-size: .9em; color: var(--text); }
+.notify-level-seg { display: inline-flex; }
+.notify-level-btn.active.notify-level-btn--warning { background: #f0a500; border-color: #f0a500; color: #fff; }
+.notify-level-btn.active.notify-level-btn--high { background: #e07b00; border-color: #e07b00; color: #fff; }
+.notify-level-btn.active.notify-level-btn--critical { background: #c0392b; border-color: #c0392b; color: #fff; }
+.notify-level-note { margin-top: 6px; }
+

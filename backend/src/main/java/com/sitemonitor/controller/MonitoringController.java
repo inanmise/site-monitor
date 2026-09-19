@@ -115,7 +115,7 @@ public class MonitoringController {
     /** İzleme güncellemelerinde before/after diff için snapshot alınacak alanlar (tür-üstü superset; olmayan getter → null, gürültü yaratmaz). */
     private static final String[] MON_FIELDS = {
         "name", "host", "port", "url", "domain", "recordType", "keyword", "expectedValue", "expect",
-        "expectedStatus", "method", "matchOperator", "matchCount", "active", "teamId", "groupName", "tags",
+        "expectedStatus", "method", "matchOperator", "matchCount", "active", "teamId", "groupName", "tags", "alertLevel",
         "intervalSeconds", "timeoutMs", "warningDays", "criticalDays", "protocol", "verifySsl", "followRedirects",
         "mode", "crawlDepth", "crawlMaxPages", "excludePatterns", "slowResourceMs", "alertThirdParty", "alertMixedContent", "alertTimeout", "resourceConcurrency",
         "notificationGroupId",
@@ -1544,6 +1544,7 @@ public class MonitoringController {
         item.put("recovery_checks",           m.getRecoveryChecks());
         item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
         item.put("tags",                      m.getTags());
+        item.put("alert_level",     com.sitemonitor.model.MonitorAlertPrefs.effectiveLevel(m.getAlertLevel()));
         item.put("notify_email",              m.getNotifyEmail());
         item.put("notify_webhook",              m.getNotifyWebhook());
         item.put("slow_response_enabled",     m.getSlowResponseEnabled());
@@ -1612,6 +1613,7 @@ public class MonitoringController {
 
     private void applyPortFeatureFields(PortMonitor m, Map<String, Object> body) {
         if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
+        if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)
         if (body.get("notifyEmail")         instanceof Boolean b) m.setNotifyEmail(b);
         if (body.get("notifyWebhook")          instanceof Boolean b) m.setNotifyWebhook(b);
         if (body.get("slowResponseEnabled") instanceof Boolean b) m.setSlowResponseEnabled(b);
@@ -1740,6 +1742,7 @@ public class MonitoringController {
             m.setDnsChangeAlertEnabled(Boolean.TRUE.equals(body.get("dnsChangeAlertEnabled")));
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));   // mantıksal grup (serbest-form)
         if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
+        if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)
         m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         // Kanal bayraklari burada HIC okunmuyordu: "Kopyala" akisinda e-posta/webhook KAPALI bir
@@ -1827,6 +1830,7 @@ public class MonitoringController {
                 m.setDnsChangeAlertEnabled(Boolean.TRUE.equals(body.get("dnsChangeAlertEnabled")));
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
+        if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             boolean detached = detachIfIdentityChanged(m, _prevDomain);
             m.setUpdatedAt(ISO.format(Instant.now()));
@@ -2017,6 +2021,7 @@ public class MonitoringController {
         item.put("dns_change_alert_enabled", !Boolean.FALSE.equals(m.getDnsChangeAlertEnabled()));   // etkin değer (null=açık)
         item.put("group_name",      m.getGroupName());
         item.put("tags",            m.getTags());
+        item.put("alert_level",     com.sitemonitor.model.MonitorAlertPrefs.effectiveLevel(m.getAlertLevel()));
         // Standalone monitör takımını teamId'den çöz (envantere bağlı değil); envanter-türevi domain→envanter eşlemesinden.
         item.put("team_name",       standalone && m.getTeamId() != null
                 ? teamById.get(m.getTeamId()) : teamMap.get(m.getDomain()));
@@ -2540,6 +2545,7 @@ public class MonitoringController {
         item.put("custom_headers",            m.getCustomHeaders());
         item.put("case_sensitive",            m.getCaseSensitive());
         item.put("tags",                      m.getTags());
+        item.put("alert_level",     com.sitemonitor.model.MonitorAlertPrefs.effectiveLevel(m.getAlertLevel()));
         item.put("notify_email",              m.getNotifyEmail());
         item.put("notify_webhook",              m.getNotifyWebhook());
         item.put("slow_response_enabled",     m.getSlowResponseEnabled());
@@ -2574,6 +2580,7 @@ public class MonitoringController {
     private void applyKeywordFeatureFields(KeywordMonitor m, Map<String, Object> body) {
         if (body.get("caseSensitive")         instanceof Boolean b) m.setCaseSensitive(b);
         if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
+        if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)
         if (body.get("notifyEmail")           instanceof Boolean b) m.setNotifyEmail(b);
         if (body.get("notifyWebhook")            instanceof Boolean b) m.setNotifyWebhook(b);
         if (body.get("slowResponseEnabled")   instanceof Boolean b) m.setSlowResponseEnabled(b);
@@ -2817,6 +2824,7 @@ public class MonitoringController {
     /** Ortak: HTTP feature alanlarını (tags, notify, SSL/Domain toggle'ları + gün eşikleri) body'den uygular. */
     private void applyHttpFeatureFields(HttpMonitor m, Map<String, Object> body) {
         if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
+        if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)
         if (body.get("notifyEmail")           instanceof Boolean b) m.setNotifyEmail(b);
         if (body.get("notifyWebhook")            instanceof Boolean b) m.setNotifyWebhook(b);
         if (body.get("checkSslErrors")        instanceof Boolean b) m.setCheckSslErrors(b);
@@ -2847,6 +2855,7 @@ public class MonitoringController {
         item.put("recovery_checks",           m.getRecoveryChecks());
         item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
         item.put("tags",                      m.getTags());
+        item.put("alert_level",     com.sitemonitor.model.MonitorAlertPrefs.effectiveLevel(m.getAlertLevel()));
         item.put("notify_email",              m.getNotifyEmail());
         item.put("notify_webhook",              m.getNotifyWebhook());
         item.put("check_ssl_errors",          m.getCheckSslErrors());
@@ -3468,6 +3477,7 @@ public class MonitoringController {
         if (body.get("recoveryChecks") instanceof Number n)          m.setRecoveryChecks(clampRecovery(n.intValue()));
         if (body.get("recoveryIntervalSeconds") instanceof Number n) m.setRecoveryIntervalSeconds(clampInterval(n.intValue()));
         if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
+        if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)
         if (body.get("notifyEmail") instanceof Boolean b) m.setNotifyEmail(b);
         if (body.get("notifyWebhook")  instanceof Boolean b) m.setNotifyWebhook(b);
 
@@ -3563,6 +3573,7 @@ public class MonitoringController {
         item.put("recovery_checks",           m.getRecoveryChecks());
         item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
         item.put("tags",                      m.getTags());
+        item.put("alert_level",     com.sitemonitor.model.MonitorAlertPrefs.effectiveLevel(m.getAlertLevel()));
         item.put("notify_email",              m.getNotifyEmail());
         item.put("notify_webhook",              m.getNotifyWebhook());
         item.put("created_at",                m.getCreatedAt());
@@ -3617,6 +3628,7 @@ public class MonitoringController {
         if (body.get("alertTimeout") instanceof Boolean b) m.setAlertTimeout(b);
         if (body.get("resourceConcurrency") instanceof Number n) m.setResourceConcurrency(Math.max(1, Math.min(20, n.intValue())));
         if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
+        if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)
         if (body.get("notifyEmail") instanceof Boolean b) m.setNotifyEmail(b);
         if (body.get("notifyWebhook")  instanceof Boolean b) m.setNotifyWebhook(b);
     }
@@ -3648,6 +3660,7 @@ public class MonitoringController {
         item.put("recovery_checks",           m.getRecoveryChecks());
         item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
         item.put("tags",                      m.getTags());
+        item.put("alert_level",     com.sitemonitor.model.MonitorAlertPrefs.effectiveLevel(m.getAlertLevel()));
         item.put("notify_email",              m.getNotifyEmail());
         item.put("notify_webhook",              m.getNotifyWebhook());
         item.put("active_alarm",       openAlarm != null);
@@ -4333,6 +4346,7 @@ public class MonitoringController {
         if (body.get("timeoutSeconds") instanceof Number n)
             m.setTimeoutSeconds(Math.max(5, Math.min(180, n.intValue())));
         if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
+        if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)
         if (body.get("notifyEmail") instanceof Boolean b) m.setNotifyEmail(b);
         if (body.get("notifyWebhook")  instanceof Boolean b) m.setNotifyWebhook(b);
         // Vekil tercihi: yalnız bilinen üç değer kabul edilir; tanınmayan girdi AUTO'ya düşer
@@ -4558,6 +4572,7 @@ public class MonitoringController {
         item.put("recovery_checks", m.getRecoveryChecks());
         item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
         item.put("tags", m.getTags());
+        item.put("alert_level",     com.sitemonitor.model.MonitorAlertPrefs.effectiveLevel(m.getAlertLevel()));
         item.put("notify_email", m.getNotifyEmail());
         item.put("notify_webhook", m.getNotifyWebhook());
         item.put("use_proxy", m.getUseProxy() == null ? "AUTO" : m.getUseProxy());
@@ -4638,6 +4653,7 @@ public class MonitoringController {
         m.setDomain(reg);
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
+        if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)
         m.setTeamId(teamId);
         m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
         m.setActive(true);                                            // varsayılan: yeni izleme aktif
@@ -4670,6 +4686,7 @@ public class MonitoringController {
             }
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
+        if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)
             if (body.containsKey("teamId")) m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             closeAlertsOnPause(m.getActive(), body.get("active"), m.getDomain(), Set.of(EscalationService.TYPE_DOMAINMON_EXPIRY, EscalationService.TYPE_DOMAINMON_UNKNOWN, EscalationService.TYPE_DOMAINMON_STATUS, EscalationService.TYPE_DOMAINMON_CHANGED, EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK, EscalationService.TYPE_DOMAINMON_BLACKLIST));
@@ -4854,6 +4871,7 @@ public class MonitoringController {
         item.put("domain",           m.getDomain());
         item.put("group_name",       m.getGroupName());
         item.put("tags",            m.getTags());
+        item.put("alert_level",     com.sitemonitor.model.MonitorAlertPrefs.effectiveLevel(m.getAlertLevel()));
         item.put("team_id",          m.getTeamId());
         item.put("notification_group_id",          m.getNotificationGroupId());
         item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
@@ -4958,6 +4976,7 @@ public class MonitoringController {
         m.setIpVersion(Set.of("v4", "v6", "auto").contains(ipv) ? ipv : "auto");
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
+        if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)
         m.setTeamId(teamId);
         m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
         m.setActive(true);                                            // varsayılan: yeni izleme aktif
@@ -5012,6 +5031,7 @@ public class MonitoringController {
             if (body.get("ipVersion")       != null) { String v = body.get("ipVersion").toString(); m.setIpVersion(Set.of("v4","v6","auto").contains(v) ? v : "auto"); }
             if (body.containsKey("groupName"))       m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
+        if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             closeAlertsOnPause(m.getActive(), body.get("active"), m.getHost(), Set.of(EscalationService.TYPE_PING_DOWN, EscalationService.TYPE_PING_SLOW));
@@ -5143,6 +5163,7 @@ public class MonitoringController {
         item.put("ip_version",       m.getIpVersion());
         item.put("group_name",       m.getGroupName());
         item.put("tags",            m.getTags());
+        item.put("alert_level",     com.sitemonitor.model.MonitorAlertPrefs.effectiveLevel(m.getAlertLevel()));
         item.put("team_id",          m.getTeamId());
         item.put("notification_group_id",          m.getNotificationGroupId());
         item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);

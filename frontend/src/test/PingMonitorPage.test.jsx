@@ -99,7 +99,7 @@ describe('PingMonitorPage', () => {
 
     expect(api.monitoring.createPingMonitor.mock.calls[0][0]).toEqual({
       name: 'GW (Kopya)', host: '10.0.0.9', ipVersion: 'v6', groupName: 'Kurumsal', tags: 'prod,kritik', teamId: 5,
-      intervalSeconds: 900, timeoutMs: 7000, packetCount: 7, notifyEmail: true, notifyWebhook: true,
+      intervalSeconds: 900, timeoutMs: 7000, packetCount: 7, alertLevel: 'WARNING', notifyEmail: true, notifyWebhook: true,
       confirmAttempts: 5, confirmIntervalSeconds: 45, recoveryChecks: 4, recoveryIntervalSeconds: 90,
       // Yavaşlık ayarı da kopyalanır: kopyanın "sessiz" doğması, kullanıcının kurduğu eşiği
       // sessizce düşürmek olurdu.

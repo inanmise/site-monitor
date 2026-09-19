@@ -66,7 +66,7 @@ const INTERVALS = [
 ]
 const REFRESH_INTERVAL = 60
 const emptyForm = { name: '', host: '', ipVersion: 'auto', groupName: '', tags: '', notificationGroupId: '', teamId: '',
-  intervalSeconds: 60, timeoutMs: 5000, packetCount: 4, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, notifyEmail: true, notifyWebhook: true, active: true,
+  intervalSeconds: 60, timeoutMs: 5000, packetCount: 4, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, notifyEmail: true, alertLevel: 'WARNING', notifyWebhook: true, active: true,
   // Yavaşlık alarmı OPT-IN: varsayılan kapalı — mevcut izlemelerin hiçbiri bir gün sabah
   // birden yeni bir alarm türü üretmeye başlamasın.
   slowResponseEnabled: false, slowBaselineWindowMinutes: 10, slowThresholdPercent: 20 }
@@ -208,7 +208,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
   function formFrom(m) {
     return { name: m.name || '', host: m.host || '', ipVersion: m.ip_version || 'auto', groupName: m.group_name || '', tags: m.tags || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
       teamId: m.team_id != null ? String(m.team_id) : '', intervalSeconds: m.interval_seconds ?? 60,
-      notifyEmail: m.notify_email !== false,
+      notifyEmail: m.notify_email !== false, alertLevel: m.alert_level || 'WARNING',
       timeoutMs: m.timeout_ms ?? 5000, packetCount: m.packet_count ?? 4,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30, recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
       notifyWebhook: m.notify_webhook !== false, active: m.active !== false,
@@ -245,7 +245,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
         notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
           ? null : Number(form.notificationGroupId),
         teamId: form.teamId === '' ? null : Number(form.teamId), intervalSeconds: Number(form.intervalSeconds),
-        notifyEmail: form.notifyEmail,
+        notifyEmail: form.notifyEmail, alertLevel: form.alertLevel || 'WARNING',
         timeoutMs: Number(form.timeoutMs), packetCount: Number(form.packetCount),
         confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds), recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
         notifyWebhook: !!form.notifyWebhook, active: form.active,
@@ -724,6 +724,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('ping.noGroup')} /></label>
               <NotifyChannels
                 notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+                alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
                 onChange={patch => setForm(f => ({ ...f, ...patch }))}
                 teamLabel={selectedTeamLabel} teamId={form.teamId}
                 groupId={form.notificationGroupId}

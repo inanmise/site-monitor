@@ -67,7 +67,7 @@ const emptyForm = {
   // Koruma anahtarlari: kilit ve degisiklik ACIK (bugunku fiili davranis), kara liste KAPALI
   // (her kontrolde dis DNS sorgusu uretir — bilincli acilmali).
   transferLockAlert: true, blacklistEnabled: false, changeAlert: true,
-  notifyEmail: true, notifyWebhook: true, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30,
+  notifyEmail: true, alertLevel: 'WARNING', notifyWebhook: true, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30,
 }
 
 /** URL yapıştırılmış girdiyi host'a indirger: https://www.x.com.tr/path → www.x.com.tr
@@ -228,7 +228,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
       thresholdsCsv: m.thresholds_csv || '60,30,14,7,3,1',
       warningDays: m.warning_days ?? 30, criticalDays: m.critical_days ?? 7,
       intervalSeconds: m.interval_seconds ?? 86400, active: m.active !== false,
-      notifyEmail: m.notify_email !== false,
+      notifyEmail: m.notify_email !== false, alertLevel: m.alert_level || 'WARNING',
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
       recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
       checkTimeoutMs: m.check_timeout_ms ?? '',
@@ -281,7 +281,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         thresholdsCsv: form.thresholdsCsv?.trim() || '60,30,14,7,3,1',
         warningDays: Number(form.warningDays), criticalDays: Number(form.criticalDays),
         intervalSeconds: Number(form.intervalSeconds), active: form.active,
-        notifyEmail: form.notifyEmail,
+        notifyEmail: form.notifyEmail, alertLevel: form.alertLevel || 'WARNING',
         confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
         recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
         checkTimeoutMs: form.checkTimeoutMs === '' || form.checkTimeoutMs == null ? null : Number(form.checkTimeoutMs),
@@ -771,6 +771,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('dom.noGroup')} /></label>
               <NotifyChannels
                 notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+                alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
                 onChange={patch => setForm(f => ({ ...f, ...patch }))}
                 teamLabel={selectedTeamLabel} teamId={form.teamId}
                 groupId={form.notificationGroupId}

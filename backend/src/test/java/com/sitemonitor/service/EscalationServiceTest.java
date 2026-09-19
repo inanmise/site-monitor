@@ -2539,4 +2539,16 @@ class EscalationServiceTest {
         assertThat(EscalationService.notAfterOf(Map.of("not_after", "  "))).isNull();
         assertThat(EscalationService.notAfterOf(Map.of("not_after", " 2026-09-22T23:59:59 "))).isEqualTo("2026-09-22T23:59:59");
     }
+
+    // ── Alıcı politikası seviyeye bağlı (2026-09-19): WARNING yalnız takım; HIGH/CRITICAL eskalasyon kontakları ──
+    @Test
+    @DisplayName("teamOnlyRecipients: her izleme türünde WARNING → yalnız takım; HIGH/CRITICAL → kontaklar eklenir")
+    void teamOnlyRecipients_levelGate() {
+        for (String type : List.of(EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_PING_DOWN, EscalationService.TYPE_KEYWORD,
+                EscalationService.TYPE_SCRIPTED_FAIL, EscalationService.TYPE_DOMAINMON_CHANGED, EscalationService.TYPE_PAGESPEED_SLOW)) {
+            assertThat(EscalationService.teamOnlyRecipients(type, "WARNING")).as(type + " WARNING").isTrue();
+            assertThat(EscalationService.teamOnlyRecipients(type, "HIGH")).as(type + " HIGH").isFalse();
+            assertThat(EscalationService.teamOnlyRecipients(type, "CRITICAL")).as(type + " CRITICAL").isFalse();
+        }
+    }
 }

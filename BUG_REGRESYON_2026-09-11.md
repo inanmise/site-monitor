@@ -839,3 +839,30 @@ Doğrulama: aynı noktada `elementFromPoint` → `.recharts-rectangle`, pop-up "
 Kapılar: frontend lint / 2110 test / kapsam tabanı / build yeşil; backend DEĞİŞMEDİ.
 → **REGRESYON YOK**.
 
+## Ek — kırkıncı tur (2026-09-19, sürüm sonrası — izleme alarm seviyesi: varsayılan Uyarı, izlemeden Yüksek/Kritik, `v20.71.1..HEAD`)
+
+Kapsam: backend (MonitorAlertPrefs arayüzü + 9 modelde `alert_level`; SchedulerService.chanCtx(ctx, izleme);
+MonitoringOutageService.levelFor → WARNING yedeği; EscalationService.includeManagerContacts seviye kapısı;
+MonitoringController alertLevel uygula/döndür) ve frontend (NotifyChannels seviye seçici, 9 form). İmza süpürmesi temiz.
+
+**Analiz (eski):** `levelFor(tip)` sabit HIGH/CRITICAL üretiyordu; erişilemiyor/sentetik/anahtar kelime/DNS hatası her
+seferinde KRİTİK açılıyor, seviye eşikli push aboneleri ve (envanter-türevi tiplerde) eskalasyon kontakları bilgileniyordu.
+Sertifika/alan adı süre-bitişi gün kademesiyle doğru çalışıyordu.
+
+**Denetim odakları:**
+- Seviye kaynağı tek: sweep bağlamı `alert_level` (izlemenin seçimi, null → WARNING); HESAPLANAN kademe (alan adı
+  süre-bitişi CRITICAL/WARNING, EPP durumu) `putIfAbsent` ile korunur — test: chanCtx ezmez, domainItem EXPIRY
+  hesaplananı, CHANGED/LOCK/BLACKLIST/UNKNOWN izleme seviyesini taşır. İlk sürümde chanCtx aşırı yüklemesi kendi kendini
+  çağırıyordu (StackOverflow, 21 test) — toplu değiştirme yeni gövdeye de dokunmuştu; düzeltildi.
+- Alıcı politikası tek kural: WARNING takım-özel; HIGH → Uyarı/Yüksek eşikli kontaklar; CRITICAL → hepsi (müdür dâhil).
+  Eski "yalnız alan adı KRİTİK'te müdür" istisnası bu kuralın içine düştü; storm karar tablosu aynı fonksiyonu kullandığı
+  için storm testleri güncellendi (WARNING üye → kontak sorgusu yok).
+- Açık alarm seviyesini korur; izleme düzenlenip yükseltilirse mevcut terfi yolu ESCALATION gönderir; düşürme demote etmez.
+- Form: "Bildirimler ve alarmlar" bloğunda Uyarı/Yüksek/Kritik segment + seviye notu; Kopyala alanı taşır (9 test);
+  değişiklik geçmişi `chg.field.alertLevel` etiketi (parity kapısı yakaladı). Tarayıcıda: Ping formu, Kritik → API
+  `alert_level: CRITICAL`, test kaydı silindi.
+- Kapılar: backend `clean verify` 3823 test; frontend lint / 2112 test / kapsam tabanı / build yeşil.
+Bilinen sınırlar (bilinçli): envanter-türevi (izlemesiz) port/DNS/erişilebilirlik kontrolleri WARNING yedeğinde —
+envanter kaydına seviye alanı eklenmedi; alan adı EPP durumu (pendingDelete vb.) hesaplanan seviyesini korur.
+→ **REGRESYON YOK**.
+

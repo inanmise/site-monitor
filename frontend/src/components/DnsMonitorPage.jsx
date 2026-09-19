@@ -68,7 +68,7 @@ const INFO_ITEMS = [
   { type: 'TTL',   descKey: 'dns.ttlExplain' },
 ]
 
-const emptyForm = { name: '', domain: '', recordType: 'A', intervalSeconds: 300, teamId: '', groupName: '', tags: '', notificationGroupId: '', expectedValue: '', slowThresholdMs: '', propagationCheck: false, dnsChangeAlertEnabled: true, notifyEmail: true, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, notifyWebhook: true, active: true }
+const emptyForm = { name: '', domain: '', recordType: 'A', intervalSeconds: 300, teamId: '', groupName: '', tags: '', notificationGroupId: '', expectedValue: '', slowThresholdMs: '', propagationCheck: false, dnsChangeAlertEnabled: true, notifyEmail: true, alertLevel: 'WARNING', confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, notifyWebhook: true, active: true }
 
 function truncateValue(val, max = 50) {
   if (!val) return '—'
@@ -219,7 +219,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
       domain: m.domain || '',
       recordType: m.record_type,
       intervalSeconds: m.interval_seconds,
-      notifyEmail: m.notify_email !== false,
+      notifyEmail: m.notify_email !== false, alertLevel: m.alert_level || 'WARNING',
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
       recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
       teamId: m.team_id != null ? String(m.team_id) : '',
@@ -263,7 +263,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
         name: (form.name || '').trim(),
         recordType: form.recordType,
         intervalSeconds: form.intervalSeconds,
-        notifyEmail: form.notifyEmail,
+        notifyEmail: form.notifyEmail, alertLevel: form.alertLevel || 'WARNING',
         confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
         recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
         expectedValue: (form.expectedValue || '').trim(),
@@ -745,6 +745,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
               </label>
               <NotifyChannels
                 notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+                alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
                 onChange={patch => setForm(f => ({ ...f, ...patch }))}
                 teamLabel={selectedTeamLabel} teamId={form.teamId}
                 groupId={form.notificationGroupId}

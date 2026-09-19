@@ -99,7 +99,7 @@ const METRICS = [
 ]
 
 const emptyForm = {
-  name: '', url: '', groupName: '', notificationGroupId: '', teamId: '', tags: '', notifyEmail: true, notifyWebhook: true,
+  name: '', url: '', groupName: '', notificationGroupId: '', teamId: '', tags: '', notifyEmail: true, alertLevel: 'WARNING', notifyWebhook: true,
   intervalSeconds: 1800, timeoutMs: 10000,
   maxLoadMs: '', maxTtfbMs: '', maxPageKb: '', maxRequests: '',
   userAgent: '', sendDnt: false, excludeTrackers: false, trackerPatterns: '',
@@ -326,7 +326,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
     return {
       name: m.name || '', url: m.url || '', groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
       teamId: m.team_id != null ? String(m.team_id) : '',
-      tags: m.tags || '', notifyEmail: m.notify_email !== false, notifyWebhook: m.notify_webhook !== false,
+      tags: m.tags || '', notifyEmail: m.notify_email !== false, alertLevel: m.alert_level || 'WARNING', notifyWebhook: m.notify_webhook !== false,
       intervalSeconds: m.interval_seconds ?? 1800, timeoutMs: m.timeout_ms ?? 10000,
       maxLoadMs: m.max_load_ms ?? '', maxTtfbMs: m.max_ttfb_ms ?? '',
       maxPageKb: m.max_page_kb ?? '', maxRequests: m.max_requests ?? '',
@@ -361,7 +361,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
         ? null : Number(form.notificationGroupId),
       teamId: form.teamId === '' ? null : Number(form.teamId),
-      tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, notifyWebhook: form.notifyWebhook,
+      tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, alertLevel: form.alertLevel || 'WARNING', notifyWebhook: form.notifyWebhook,
       intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
       maxLoadMs: thresholdValue(form.maxLoadMs), maxTtfbMs: thresholdValue(form.maxTtfbMs),
       maxPageKb: thresholdValue(form.maxPageKb), maxRequests: thresholdValue(form.maxRequests),
@@ -1000,6 +1000,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('pspd.noGroup')} /></label>
               <NotifyChannels
                 notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+                alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
                 onChange={patch => setForm(f => ({ ...f, ...patch }))}
                 teamLabel={selectedTeamLabel} teamId={form.teamId}
                 groupId={form.notificationGroupId}

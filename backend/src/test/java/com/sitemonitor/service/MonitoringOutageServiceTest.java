@@ -126,7 +126,7 @@ class MonitoringOutageServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> ctx = ArgumentCaptor.forClass(Map.class);
         verify(escalationService, times(1)).processConfirmedOutage(
-                eq("down.example.com"), eq(EscalationService.TYPE_ACCESSIBILITY), eq("CRITICAL"), ctx.capture());
+                eq("down.example.com"), eq(EscalationService.TYPE_ACCESSIBILITY), eq("WARNING"), ctx.capture());
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> attempts = (List<Map<String, Object>>) ctx.getValue().get("confirm_attempts");
         assertThat(attempts).hasSize(3);
@@ -158,7 +158,7 @@ class MonitoringOutageServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> ctx = ArgumentCaptor.forClass(Map.class);
         verify(escalationService).processConfirmedOutage(
-                eq("down.example.com"), eq(EscalationService.TYPE_DNS_FAILURE), eq("CRITICAL"), ctx.capture());
+                eq("down.example.com"), eq(EscalationService.TYPE_DNS_FAILURE), eq("WARNING"), ctx.capture());
         assertThat(ctx.getValue().get("record_type")).isEqualTo("A");
     }
 
@@ -179,7 +179,7 @@ class MonitoringOutageServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> ctx = ArgumentCaptor.forClass(Map.class);
         verify(escalationService).processConfirmedOutage(
-                eq("changed.example.com"), eq(EscalationService.TYPE_DNS_CHANGED), eq("HIGH"), ctx.capture());
+                eq("changed.example.com"), eq(EscalationService.TYPE_DNS_CHANGED), eq("WARNING"), ctx.capture());
         assertThat(ctx.getValue().get("old_values")).isEqualTo(List.of("1.2.3.4", "5.6.7.8"));
         assertThat(ctx.getValue().get("new_values")).isEqualTo(List.of("9.9.9.9"));
         assertThat(calls.get()).isEqualTo(3);   // 3 ardışık teyit denemesi
@@ -228,7 +228,7 @@ class MonitoringOutageServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> ctx = ArgumentCaptor.forClass(Map.class);
         verify(escalationService).processConfirmedOutage(
-                eq("stale.example.com"), eq(EscalationService.TYPE_DNS_CHANGED), eq("HIGH"), ctx.capture());
+                eq("stale.example.com"), eq(EscalationService.TYPE_DNS_CHANGED), eq("WARNING"), ctx.capture());
         assertThat(ctx.getValue().get("new_values")).isEqualTo(List.of("2.2.2.2"));
     }
 
@@ -295,7 +295,7 @@ class MonitoringOutageServiceTest {
                         Map.of("port", 8443, "protocol", "TCP"), MonitoringOutageServiceTest::up)));
 
         verify(escalationService).processConfirmedOutage(
-                eq("multi.example.com"), eq(EscalationService.TYPE_PORT_DOWN), eq("CRITICAL"), any());
+                eq("multi.example.com"), eq(EscalationService.TYPE_PORT_DOWN), eq("WARNING"), any());
         verify(escalationService, never()).resolveMonitoringAlertsForDomain(anyString(), anyString());
     }
 
@@ -328,7 +328,7 @@ class MonitoringOutageServiceTest {
                         Map.of("port", 443, "protocol", "TCP"), downThenUp(99, calls))));
 
         verify(escalationService).processConfirmedOutage(
-                eq("x.example.com"), eq(EscalationService.TYPE_PORT_DOWN), eq("CRITICAL"), any());
+                eq("x.example.com"), eq(EscalationService.TYPE_PORT_DOWN), eq("WARNING"), any());
     }
 
     @Test
@@ -485,7 +485,7 @@ class MonitoringOutageServiceTest {
                 item(EscalationService.TYPE_ACCESSIBILITY, "down.example.com", "443",
                         false, Map.of("port", 443), downThenUp(99, calls))));
         verify(escalationService).processConfirmedOutage(
-                eq("down.example.com"), eq(EscalationService.TYPE_ACCESSIBILITY), eq("CRITICAL"), any());
+                eq("down.example.com"), eq(EscalationService.TYPE_ACCESSIBILITY), eq("WARNING"), any());
     }
 
     @Test
@@ -506,13 +506,15 @@ class MonitoringOutageServiceTest {
         verifyNoInteractions(escalationService);
     }
 
+    // 2026-09-19 ürün kararı: süre-bitişi dışındaki HER izleme alarmı varsayılan WARNING; seviye izlemeden
+    // (sweep ctx alert_level) gelir, eskalasyon kontakları yalnız HIGH/CRITICAL'de eklenir.
     @Test
-    @DisplayName("levelFor: DNS_CHANGED → HIGH, diğerleri CRITICAL")
+    @DisplayName("levelFor: bağlamsız yedek her tip için WARNING (eski HIGH/CRITICAL sabitleri kalktı)")
     void levelFor_mapping() {
-        assertThat(MonitoringOutageService.levelFor(EscalationService.TYPE_DNS_CHANGED)).isEqualTo("HIGH");
-        assertThat(MonitoringOutageService.levelFor(EscalationService.TYPE_PORT_DOWN)).isEqualTo("CRITICAL");
-        assertThat(MonitoringOutageService.levelFor(EscalationService.TYPE_DNS_FAILURE)).isEqualTo("CRITICAL");
-        assertThat(MonitoringOutageService.levelFor(EscalationService.TYPE_ACCESSIBILITY)).isEqualTo("CRITICAL");
+        for (String t : List.of(EscalationService.TYPE_DNS_CHANGED, EscalationService.TYPE_PORT_DOWN,
+                EscalationService.TYPE_DNS_FAILURE, EscalationService.TYPE_ACCESSIBILITY, EscalationService.TYPE_HTTP_DOWN,
+                EscalationService.TYPE_PING_DOWN, EscalationService.TYPE_SCRIPTED_FAIL, EscalationService.TYPE_SCRIPTED_SLOW))
+            assertThat(MonitoringOutageService.levelFor(t)).as(t).isEqualTo("WARNING");
     }
 
     @Test
@@ -617,10 +619,15 @@ class MonitoringOutageServiceTest {
     // ── SCRIPTED_SLOW ────────────────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("SCRIPTED_SLOW seviyesi HIGH — yavaşlık kesinti değildir (SCRIPTED_FAIL CRITICAL kalır)")
-    void scriptedSlowIsHighNotCritical() {
-        assertThat(MonitoringOutageService.levelFor(EscalationService.TYPE_SCRIPTED_SLOW)).isEqualTo("HIGH");
-        assertThat(MonitoringOutageService.levelFor(EscalationService.TYPE_SCRIPTED_FAIL)).isEqualTo("CRITICAL");
+    @DisplayName("izleme seviyesi bağlamdan geçer: ctx alert_level=CRITICAL ise processConfirmedOutage o seviyeyle çağrılır (yedek WARNING ezilir)")
+    void monitorLevelFromContextWins() {
+        service.handleSweepResults(EscalationService.TYPE_SCRIPTED_FAIL, List.of(
+                item(EscalationService.TYPE_SCRIPTED_FAIL, "lvl.example.com", "k6",
+                        false, Map.of("alert_level", "CRITICAL", "team_id", 5L), downThenUp(99, new java.util.concurrent.atomic.AtomicInteger()))));
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> ctx = ArgumentCaptor.forClass(Map.class);
+        verify(escalationService).processConfirmedOutage(eq("lvl.example.com"), eq(EscalationService.TYPE_SCRIPTED_FAIL), any(), ctx.capture());
+        assertThat(ctx.getValue().get("alert_level")).isEqualTo("CRITICAL");   // processConfirmedOutage ctx seviyesini öncelikler
     }
 
     @Test
@@ -938,7 +945,7 @@ class MonitoringOutageServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> ctx = ArgumentCaptor.forClass(Map.class);
         verify(escalationService).processConfirmedOutage(
-                eq("flags.example.com"), eq(EscalationService.TYPE_DNS_CHANGED), eq("HIGH"), ctx.capture());
+                eq("flags.example.com"), eq(EscalationService.TYPE_DNS_CHANGED), eq("WARNING"), ctx.capture());
         assertThat(ctx.getValue().get("mail_disabled")).isEqualTo(true);
         assertThat(ctx.getValue().get("push_disabled")).isEqualTo(true);
         assertThat(ctx.getValue().get("team_id")).isEqualTo(3L);
@@ -973,6 +980,6 @@ class MonitoringOutageServiceTest {
                         Map.of("port", 443), downThenUp(99, calls))));
 
         verify(escalationService).processConfirmedOutage(
-                eq("live.example.com"), eq(EscalationService.TYPE_ACCESSIBILITY), eq("CRITICAL"), any());
+                eq("live.example.com"), eq(EscalationService.TYPE_ACCESSIBILITY), eq("WARNING"), any());
     }
 }

@@ -165,7 +165,7 @@ describe('DnsMonitorPage', () => {
       propagationCheck: true, dnsChangeAlertEnabled: false,
       // B1: e-posta kanal bayragi DNS formuna eklendi (eskiden bu turde HIC yoktu).
       // "Tum ayarlar birebir kopyalanir" iddiasi degismedi; kume bir alan buyudu.
-      notifyEmail: true, notifyWebhook: true,
+      alertLevel: 'WARNING', notifyEmail: true, notifyWebhook: true,
       // B3: dogrulama/kurtarma alanlari bu iki ture eklendi (eskiden yalniz global ayar vardi).
       // "TUM ayarlar birebir kopyalanir" iddiasi degismedi; kume dort alan buyudu.
       confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30,

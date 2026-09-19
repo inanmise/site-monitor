@@ -18,7 +18,7 @@ import lombok.NoArgsConstructor;
 @Table(name = "http_monitors")
 @Data
 @NoArgsConstructor
-public class HttpMonitor {
+public class HttpMonitor implements MonitorAlertPrefs {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -91,6 +91,11 @@ public class HttpMonitor {
     /** Kişi-webhook (push) bildirimi açık mı (vars. true — üst katmanlar zaten vars. KAPALI, çifte emniyet). */
     @Column(name = "notify_webhook")
     private Boolean notifyWebhook = true;
+
+    /** Alarm seviyesi (2026-09-19): WARNING (varsayılan, null) | HIGH | CRITICAL — süre-bitişi dışındaki tüm
+     *  alarmlar bu seviyede açılır; HIGH/CRITICAL eskalasyon kontaklarını alıcıya ekler. Bkz. MonitorAlertPrefs. */
+    @Column(name = "alert_level", length = 16)
+    private String alertLevel;
 
     /** SSL hata kontrolü: TLS zinciri/geçerliliği bozuksa alarm (yavaş döngü). */
     @Column(name = "check_ssl_errors")

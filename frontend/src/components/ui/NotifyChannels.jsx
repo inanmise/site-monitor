@@ -26,8 +26,14 @@ import NotificationGroupSelect from './NotificationGroupSelect.jsx'
 export default function NotifyChannels({
   notifyEmail, notifyWebhook, onChange,
   teamLabel, teamId, groupId, onGroupChange, groupName,
+  alertLevel, onAlertLevelChange,
 }) {
   const t = useT()
+  // Alarm seviyesi (2026-09-19, ürün kararı): süre-bitişi dışındaki her alarm varsayılan WARNING ile açılır;
+  // kullanıcı HIGH/CRITICAL seçerse eskalasyon kontakları alıcıya eklenir. Sertifika/alan adı süre-bitişi
+  // alarmları gün eşiğiyle kademelenir, bu seçimden etkilenmez.
+  const LEVELS = ['WARNING', 'HIGH', 'CRITICAL']
+  const level = LEVELS.includes(alertLevel) ? alertLevel : 'WARNING'
   // Hedef etiketi: grup seçiliyse GRUP, değilse takım. Seçici grup ADINI bilmiyorsa (henüz
   // yüklenmediyse) takım adına düşeriz — boş bir etiket göstermektense doğru olan bilinen bilgi.
   const target = groupId ? (groupName || t('notify.groupTarget')) : (teamLabel || '—')
@@ -65,6 +71,22 @@ export default function NotifyChannels({
           <Smartphone size={14} /><span>{t('userpush.monitorToggle')}</span>
         </label>
       </div>
+
+      {onAlertLevelChange && (
+        <div className="notify-level">
+          <div className="notify-level-head">
+            <span className="notify-level-title">{t('notify.levelTitle')}</span>
+            <span className="field-hint">{t('notify.levelHint')}</span>
+          </div>
+          <div className="seg-ctl notify-level-seg" role="group" aria-label={t('notify.levelTitle')}>
+            {LEVELS.map((lv) => (
+              <button key={lv} type="button" className={`seg-ctl-btn notify-level-btn notify-level-btn--${lv.toLowerCase()}${level === lv ? ' active' : ''}`}
+                aria-pressed={level === lv} onClick={() => onAlertLevelChange(lv)}>{t('notify.level.' + lv)}</button>
+            ))}
+          </div>
+          <div className="field-hint notify-level-note">{t('notify.levelNote.' + level)}</div>
+        </div>
+      )}
 
       {/* Bildirim grubu AYNI blokta: "kime gidecek" sorusunun cevabı tek yerde toplansın —
           kanal seçimiyle hedef seçimi ayrı bölümlerdeyken kullanıcı ikisini ilişkilendiremiyordu. */}

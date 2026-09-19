@@ -17,7 +17,7 @@ import lombok.NoArgsConstructor;
 @Table(name = "scripted_monitors")
 @Data
 @NoArgsConstructor
-public class ScriptedMonitor {
+public class ScriptedMonitor implements MonitorAlertPrefs {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -113,6 +113,11 @@ public class ScriptedMonitor {
     /** Kişi-webhook (push) bildirimi açık mı (vars. true — üst katmanlar zaten vars. KAPALI, çifte emniyet). */
     @Column(name = "notify_webhook")
     private Boolean notifyWebhook = true;
+
+    /** Alarm seviyesi (2026-09-19): WARNING (varsayılan, null) | HIGH | CRITICAL — süre-bitişi dışındaki tüm
+     *  alarmlar bu seviyede açılır; HIGH/CRITICAL eskalasyon kontaklarını alıcıya ekler. Bkz. MonitorAlertPrefs. */
+    @Column(name = "alert_level", length = 16)
+    private String alertLevel;
 
     /**
      * Otomatik devre dışı bırakma SEBEBİ — doluysa izleme sistem tarafından kapatılmıştır.
