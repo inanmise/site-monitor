@@ -433,6 +433,24 @@ public class EmailNotificationService {
         return doSend(String.join(",", to), msg, 1);
     }
 
+    /**
+     * SMTP Gönderim Logu "Yeniden gönder" (2026-09-19): kayıtlı HTML gövdeyi AYNEN, aynı alıcıya ve aynı
+     * konuyla gönderir — şablon yeniden kurulmaz (gövde zaten çerçeveli), {@link #sendFramedHtml} hunisi
+     * CID logoyu iliştirir. Dönüş sözlüğü diğer gönderimlerle aynı (SENT / FAILED: … / SKIPPED_DISABLED).
+     */
+    public String resendStoredHtml(String to, String subject, String html, String logoVariant) {
+        if (!isEnabled()) {
+            log.info("⚠ Email devre dışı — yeniden gönderim atlandı: TO={}", to);
+            return "SKIPPED_DISABLED";
+        }
+        try {
+            return sendFramedHtml(new String[]{to}, subject, html, logoVariant);
+        } catch (Exception e) {
+            log.error("✗ Yeniden gönderim hazırlanamadı: TO={} | HATA={}", to, e.getMessage(), e);
+            return "FAILED: " + e.getMessage();
+        }
+    }
+
     // ── Password reset — admin auto-reset flow ──────────────────────────────
 
     /**

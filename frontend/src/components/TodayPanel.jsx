@@ -130,7 +130,7 @@ export default function TodayPanel({ onOpenDomain }) {
 
           <Card icon={MailX} tone={notif.count > 0 ? 'bad' : 'ok'} title={t('today.notif')} count={notif.count || 0}
             sub={notif.count > 0 ? t('today.notifBreakdown', notif.email || 0, notif.webhook || 0, notif.push || 0) : t('today.notifSub')}
-            onGo={notif.count ? () => navigateTo(MONITOR_SECTION_TAB.notifications) : null} section="notifications" onOpenItem={openNotification}>
+            onGo={notif.count ? () => navigateTo('health', { view: 'smtp', m_status: 'FAILED', m_range: '24h' }) : null} section="notifications" onOpenItem={openNotification}>
             <ul className="today-list">
               {(notif.items || []).map((x) => <li key={monitorRowKey(x)}><NotificationRowBody item={x} t={t} onOpen={openNotification} /></li>)}
             </ul>

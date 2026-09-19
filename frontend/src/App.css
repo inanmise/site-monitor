@@ -1181,11 +1181,14 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .deploy-table tr.is-current td { background: color-mix(in srgb, var(--success, #16a34a) 6%, transparent); }
 .deploy-matrix tr.is-never td { color: var(--text-muted); }
 [data-theme="dark"] .sb-version-pop { background: var(--bg-card); }
-.modal-shell--sm { max-width: 460px; }
-.modal-shell--md { max-width: 620px; }
-.modal-shell--lg { max-width: 900px; }
-.modal-shell--xl { max-width: 1140px; }
-.modal-shell--full { max-width: 96vw; }
+/* .modal-box (aşağıda, 2573) max-width:640px ile aynı özgüllükte ve SONRA geldiği için lg/xl/full hiç
+   uygulanmıyordu — her ModalShell 640px'e sıkışıyordu (2026-09-19, SMTP detay modalında fark edildi).
+   Bileşik seçici (.modal-box.modal-shell--*) özgüllüğü artırır; sm/md eski değerlerinde. */
+.modal-box.modal-shell--sm { max-width: 460px; }
+.modal-box.modal-shell--md { max-width: 620px; }
+.modal-box.modal-shell--lg { max-width: 900px; }
+.modal-box.modal-shell--xl { max-width: 1140px; }
+.modal-box.modal-shell--full { max-width: 96vw; }
 .modal-box:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .modal-shell-hdr {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -12767,6 +12770,78 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 @media (max-width: 640px) { .rn-views { margin-left: 0; } .rn-search-wrap { max-width: none; } }
 .renewal-toolbar .seg { display: inline-flex; gap: 4px; }
 .renewal-toolbar .btn { display: inline-flex; align-items: center; gap: 5px; }
+
+/* ── SMTP Gönderim Logu v2 (2026-09-19) — Sistem Sağlığı tam sayfa alt görünümü ─────────────── */
+.sml { display: flex; flex-direction: column; gap: 14px; }
+.sml-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.sml-back { display: inline-flex; align-items: center; gap: 5px; }
+.sml-title { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+.sml-title > svg { color: var(--primary); flex-shrink: 0; }
+.sml-title h3 { margin: 0; font-size: 1.1em; }
+.sml-head-actions { display: flex; gap: 8px; }
+.sml-head-actions .btn { display: inline-flex; align-items: center; gap: 5px; }
+.sml-filters { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-surface); }
+.sml-ranges { display: flex; gap: 6px; flex-wrap: wrap; }
+.sml-chips { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.sml-search-clear { background: none; border: 0; padding: 2px; color: var(--text-muted); cursor: pointer; display: inline-flex; }
+.sml-search-clear:hover { color: var(--danger); }
+.sml-chip { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: .78em; padding: 3px 8px; border-radius: 12px; border: 1px solid var(--primary); background: color-mix(in srgb, var(--primary) 10%, transparent); color: var(--primary); cursor: pointer; }
+.sml-kpis { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+.sml-kpi-time { font-size: 1em; }
+.sml-card { border: 1px solid var(--border); border-radius: 10px; background: var(--bg-surface); padding: 12px 14px; min-width: 0; }
+.sml-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 600; margin-bottom: 8px; flex-wrap: wrap; }
+.sml-chart { width: 100%; min-height: 180px; }
+.sml-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.sml-empty { font-size: .85em; color: var(--text-muted); padding: 10px 0; }
+.sml-mini { width: 100%; border-collapse: collapse; font-size: .82em; }
+.sml-mini th { text-align: left; font-weight: 600; color: var(--text-muted); padding: 4px 6px; border-bottom: 1px solid var(--border); }
+.sml-mini td { padding: 5px 6px; border-bottom: 1px solid var(--border); vertical-align: top; font-variant-numeric: tabular-nums; }
+.sml-mini tr.is-active td { background: color-mix(in srgb, var(--primary) 8%, transparent); }
+.sml-ok { color: var(--success); }
+.sml-bad { color: var(--danger); font-weight: 700; }
+.sml-bars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.sml-bar-btn { display: grid; grid-template-columns: 110px 1fr 36px; align-items: center; gap: 8px; width: 100%; background: none; border: 1px solid transparent; border-radius: 6px; padding: 4px 6px; font: inherit; color: var(--text); cursor: pointer; text-align: left; }
+.sml-bar-btn:hover, .sml-bar-btn.is-active { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, transparent); }
+.sml-bar-lbl { font-size: .82em; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sml-bar-btn .pg-bar-wrap { min-width: 0; }
+.sml-bar-track { --pg-fill: var(--danger); }   /* Progress ailesinin dolgu token'ı — hata çubuğu kırmızı */
+.sml-bar-btn b { text-align: right; font-variant-numeric: tabular-nums; }
+.sml-table-card { padding: 0; overflow: hidden; }
+.sml-scroll { overflow-x: auto; }
+.sml-table th { white-space: nowrap; }
+/* Geniş ekranda tablo sığsın: konu esner (ellipsis), hücre iç boşluğu dar; darda .sml-scroll yatay kaydırır */
+.sml-table td, .sml-table th { padding-left: 8px; padding-right: 8px; }
+.sml-table .smtp-log-subject { max-width: 0; width: 34%; min-width: 160px; }
+.sml-table .smtp-log-domain { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sml-table .smtp-log-email { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sml-table .smtp-log-date { white-space: nowrap; }
+.sml-sort { background: none; border: 0; padding: 0; font: inherit; font-weight: inherit; color: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 3px; }
+.sml-sort:hover { color: var(--primary); }
+.sml-status { display: flex; flex-direction: column; gap: 2px; }
+.sml-cls { display: inline-block; margin-top: 3px; font-size: .7em; font-weight: 700; letter-spacing: .03em; padding: 1px 6px; border-radius: 6px; background: #fee2e2; color: #991b1b; }
+.sml-actions { white-space: nowrap; }
+.sml-actions .btn { display: inline-flex; align-items: center; margin-right: 4px; }
+.sml-resend { color: var(--primary); }
+.sml-table-card .pg-bar, .sml-table-card .pagination-bar { padding: 8px 12px; }
+.sml-detail { display: flex; flex-direction: column; }
+.sml-detail .smtp-detail-iframe { margin: 0; min-height: 360px; }
+.sml-role { margin-left: 6px; }
+.sml-raw { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sml-raw code { font-size: .82em; background: var(--bg-hover); padding: 2px 6px; border-radius: 4px; word-break: break-all; }
+.sml-alert { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sml-tag { font-size: .72em; font-weight: 600; padding: 1px 7px; border-radius: 6px; }
+.sml-tag--ok { background: #dcfce7; color: #166534; }
+.sml-tag--open { background: #fee2e2; color: #991b1b; }
+.sml-chain { margin: 8px 0 4px; }
+.sml-chain-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.sml-chain-btn { display: flex; align-items: center; gap: 10px; width: 100%; background: none; border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font: inherit; color: var(--text); cursor: pointer; text-align: left; flex-wrap: wrap; }
+.sml-chain-btn:hover:not(:disabled) { border-color: var(--primary); }
+.sml-chain-list li.is-current .sml-chain-btn { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, transparent); cursor: default; }
+.sml-foot { display: inline-flex; align-items: center; gap: 4px; }
+[data-theme="dark"] .sml-cls { background: #450a0a; color: #fca5a5; }
+[data-theme="dark"] .sml-tag--ok { background: #052e16; color: #86efac; }
+[data-theme="dark"] .sml-tag--open { background: #450a0a; color: #fca5a5; }
+@media (max-width: 760px) { .sml-bar-btn { grid-template-columns: 90px 1fr 32px; } .sml-head-actions { width: 100%; } }
 
 /* ── Haftalık rapor takım tamamlama panosu (2026-09-12 #21) ────────────────────────────────── */
 .wrc { border: 1px solid var(--border); border-radius: 10px; background: var(--bg-surface); margin: 0 0 14px; }

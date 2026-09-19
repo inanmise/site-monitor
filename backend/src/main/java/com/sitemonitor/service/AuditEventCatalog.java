@@ -189,6 +189,7 @@ public final class AuditEventCatalog {
             "SELF_PASSWORD_CHANGE",
             "SESSION_REVOKE_ALL",
             "SESSION_TERMINATE",
+            "SMTP_RESEND",
             "SMTP_SETTINGS_SAVE",
             "SMTP_TEST",
             "SMTP_TEST_EMAIL",

@@ -19,7 +19,7 @@ export function openMonitor(item) {
 }
 
 /** Kart/pop-up "Sayfaya git" hedefi — bölüm başına en yakın sayfa. */
-export const MONITOR_SECTION_TAB = { flapping: 'incidents', slow: 'activity', stale: 'health', domains: 'domain', notifications: 'alerthistory', health: 'weakalgo' }
+export const MONITOR_SECTION_TAB = { flapping: 'incidents', slow: 'activity', stale: 'health', domains: 'domain', health: 'weakalgo' }   // notifications: SMTP Gönderim Logu (health?view=smtp) — TodayPanel'de
 
 /** Bildirim satırı tıklaması: alarmı varsa Alarm Geçmişi'nde o olayı açar; yoksa günlüğe gider. */
 export function openNotification(item) {

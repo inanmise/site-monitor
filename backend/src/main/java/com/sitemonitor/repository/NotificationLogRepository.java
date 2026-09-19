@@ -55,4 +55,27 @@ public interface NotificationLogRepository extends JpaRepository<NotificationLog
 
     @Query("SELECT n FROM NotificationLog n WHERE n.sentAt >= :cutoff ORDER BY n.sentAt DESC")
     List<NotificationLog> findAllSince(@Param("cutoff") String cutoff);
+
+    /**
+     * SMTP Gönderim Logu penceresi (2026-09-19; SmtpLogQueryService) — {@code message} (tam HTML gövde, satır
+     * başına onlarca KB) HARİÇ sütunlar. Tam varlık listesi 30 günlük pencerede yüz MB'a çıkıyordu; gövde
+     * yalnız satır detayında ({@code findById}) okunur. Sıra: id, alertEventId, sentAt, recipientName,
+     * recipientEmail, recipientRole, subject, emailStatus, webhookStatus, trigger, emailFrom, cc.
+     */
+    @Query("""
+            SELECT n.id, n.alertEventId, n.sentAt, n.recipientName, n.recipientEmail, n.recipientRole, n.subject,
+                   n.emailStatus, n.webhookStatus, n.trigger, n.emailFrom, n.cc
+            FROM NotificationLog n
+            WHERE n.sentAt >= :from AND n.sentAt <= :to
+            ORDER BY n.sentAt DESC, n.id DESC
+            """)
+    List<Object[]> findWindowRows(@Param("from") String from, @Param("to") String to);
+
+    /** Aynı alarmın tüm gönderimleri (satır detayındaki "zincir") — gövdesiz. */
+    @Query("""
+            SELECT n.id, n.alertEventId, n.sentAt, n.recipientName, n.recipientEmail, n.recipientRole, n.subject,
+                   n.emailStatus, n.webhookStatus, n.trigger, n.emailFrom, n.cc
+            FROM NotificationLog n WHERE n.alertEventId = :alertEventId ORDER BY n.sentAt DESC, n.id DESC
+            """)
+    List<Object[]> findChainRows(@Param("alertEventId") Long alertEventId);
 }

@@ -976,3 +976,35 @@ Denetim odakları:
 - Tarayıcıda: "axess" yazınca 1 kart, temizle düğmesi görünür; ekran görüntüsü.
 Kapılar: frontend lint 0 hata / 2114 test / kapsam / build yeşil; backend DEĞİŞMEDİ.
 → **REGRESYON YOK**.
+
+## Ek — kırk yedinci tur (2026-09-19, sürüm sonrası — SMTP Gönderim Logu v2: tam sayfa, sunucu taraflı arama/özet, `v20.71.1..HEAD`)
+
+Kapsam: backend (SmtpLogController + SmtpLogQueryService yeni; NotificationLogRepository gövdesiz projeksiyon ×2;
+EmailNotificationService.resendStoredHtml; AuditEventCatalog SMTP_RESEND) + frontend (SmtpLogView yeni; SystemHealth modal
+kaldırıldı → `view=smtp` alt görünüm; api.admin.smtpLog; `m_` URL öneki; TodayPanel bildirim kartı buraya derin bağlanır;
+i18n TR/EN 60 anahtar; CSS `.sml-*`). Kullanıcı seçimi (4+4+tam sayfa): KPI + zaman çizelgesi · takım kırılımı · hata
+sınıfları · alıcı/alan özeti · zengin detay · CSV · yeniden gönder · otomatik yenileme + derin bağlantı.
+Denetim odakları:
+- Eski uç 30 günlük pencereyi TAM VARLIK (gövde dâhil, onlarca KB/satır) yüklüyordu; yeni pencere gövdesiz projeksiyon +
+  alarm→takım/alan zenginleştirme, 60 sn önbellek (bean içi çağrı proxy'yi atladığı için @Cacheable DEĞİL, CacheManager
+  elle). Özet + arama aynı paramla → tek tarama. Gövde yalnız detayda (findById).
+- Takım kapsamı: CertificateController kuralı (görüş takımları + o takımların envanter alanları); global görücü hepsi.
+  Kontrolör testi kapsam türetimini pinler.
+- Hata sınıfı sözlüğü (TIMEOUT>AUTH>RATE>RECIPIENT>CONNECT>OTHER; SMTP kodları + JavaMail kalıpları) ve kind
+  (SENT/FAILED/SKIPPED/QUEUED/UNKNOWN) birim testli. Zaman çizelgesi ≤72 sa saatlik, üstü günlük; boş kovalar yazılır.
+- Yeniden gönder: yalnız FAILED, çözülmüş alarm 409, kapsam dışı 404; aynı gövde `sendFramedHtml` hunisinden (CID logo,
+  EmailBrandCidTest huni sayısı korunur); yeni log satırı trigger MANUAL; denetim SMTP_RESEND; yalnız global admin +
+  `system_health.actions`.
+- **Tarayıcıda yakalanan hata:** `search` yanıtı `Map.of` ile kurulunca açık uçlu pencerede `to=null` → NPE → "Sunucu
+  hatası" (birim testler mock'landığı için görmedi). LinkedHashMap'e çekildi; `SmtpLogControllerTest` (WebMvc) regresyon.
+- **Kardeş bulgu:** `.modal-box { max-width:640px }` (App.css 2573) `.modal-shell--lg/xl` ile aynı özgüllükte ve SONRA
+  geldiğinden lg/xl/full boyutları HİÇ uygulanmıyordu (UserPushSettings xl, AlertTeamCell lg, Uact lg de 640px'e
+  sıkışıyordu). `.modal-box.modal-shell--*` bileşik seçiciyle düzeltildi — o modallar artık tasarlanan genişlikte.
+- Tablo geniş ekranda sığmıyordu (1221 > 1078 px): konu sütunu esnek/ellipsis, iç boşluk dar → 1063 = 1063.
+- progress-guard kapısı elle çizilen hata-sınıfı çubuğunu yakaladı → ProgressBar (`--pg-fill` token).
+- Tarayıcıda: 30 kayıt / KPI / 7 günlük çubuk / takım-alıcı-alan tabloları; satır → detay (zincir 3, iframe, "Alarmı aç");
+  geri → Sistem Sağlığı; SMTP kartı CTA → görünüm; dashboard derin bağlantı `view=smtp&m_status=FAILED&m_range=24h`
+  → "Son 24 saat" + Başarısız KPI aktif.
+Kapılar: backend `clean verify` (bkz. çıktı) — tek beklenen kırmızı `IdentityLeakGuardTest` (takipsiz kullanıcı dosyaları);
+yeni testler 9 (servis) + 4 (kontrolör). Frontend lint 0 hata / 2123 test / kapsam (SmtpLogView %99,5) / build yeşil.
+→ **REGRESYON YOK**.

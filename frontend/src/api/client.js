@@ -959,6 +959,21 @@ export const api = {
     getDbAnalytics: (days = 7) => request(`/admin/system/db-analytics?days=${days}`),
     getSmtpLogs: (days) =>
       request(`/admin/system/smtp-logs${days ? `?days=${days}` : ''}`),
+    // SMTP Gönderim Logu v2 (2026-09-19): sunucu taraflı arama/özet/dışa aktarma/detay/yeniden gönderim.
+    // params: { from, to, status, trigger, teamId, domain, recipient, errorClass, q, sort, page, size } — boşlar atılır.
+    smtpLog: {
+      _qs: (params = {}) => {
+        const q = new URLSearchParams()
+        Object.entries(params).forEach(([k, v]) => { if (v != null && v !== '') q.set(k, String(v)) })
+        const s = q.toString()
+        return s ? `?${s}` : ''
+      },
+      search: (params) => request(`/admin/smtp-log/search${api.admin.smtpLog._qs(params)}`),
+      summary: (params) => request(`/admin/smtp-log/summary${api.admin.smtpLog._qs(params)}`),
+      export: (params) => request(`/admin/smtp-log/export${api.admin.smtpLog._qs(params)}`),
+      detail: (id) => request(`/admin/smtp-log/${id}`),
+      resend: (id) => request(`/admin/smtp-log/${id}/resend`, { method: 'POST' }),
+    },
     triggerHeartbeat: () => request('/admin/system/heartbeat', { method: 'POST' }),
     getHeartbeatTimeline: (days = 1) => request(`/admin/system/heartbeat-timeline?days=${days}`),
     // Kullanıcı / oturum izleme
