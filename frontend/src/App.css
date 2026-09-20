@@ -59,6 +59,7 @@
   --z-modal:    2000;
   --z-announce: 9000;
   --z-dialog:   9500;
+  --z-menu:     9600;   /* KebabMenu portal'ı: modal (2000+) ve Dialog (9500) üstünde, toast (9700) altında — 2026-09-20 kullanıcı dizini menüsü modal scrim'inin ARKASINDA kalıyordu */
   --z-toast:    9700;
   --z-critical: 9900;
 }
@@ -9381,8 +9382,25 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .udir-q { flex: 1 1 200px; }
 .udir-q-wrap { display: flex; align-items: center; gap: 6px; }
 .udir-q-wrap .input { flex: 1; }
-.udir-user { display: inline-flex; align-items: center; gap: 6px; }
-.udir-name { margin-left: 0; text-decoration: none; }
+/* Kullanıcı Dizini satır düzeni v2 (2026-09-20): 8 sütun, sabit yerleşim (yatay kaydırma yok), kullanıcı hücresi
+   nokta + avatar + ad / kullanıcı adı · departman / e-posta; Etkinlik ve Durum hücreleri iki satırlı etiket:değer */
+.udir-table { table-layout: fixed; width: calc(100% - 2px); }   /* 1 px kenarlık payı: sarmalayıcıda yatay kaydırma çubuğu çıkmasın */
+.udir-c-user { width: 26%; } .udir-c-role { width: 10%; } .udir-c-team { width: 14%; } .udir-c-src { width: 8%; }
+.udir-c-act { width: 17%; } .udir-c-created { width: 9%; } .udir-c-state { width: 12%; } .udir-c-menu { width: 4%; }
+.udir-table td { vertical-align: top; overflow: hidden; }
+.udir-cell-user { position: relative; padding-left: 22px !important; }
+.udir-cell-user .udir-dot { position: absolute; left: 10px; top: 14px; }
+.udir-id { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.udir-name { margin-left: 0; text-decoration: none; text-align: left; min-width: 0; max-width: 100%; }
+.udir-name > span { max-width: 100%; }
+.udir-meta { display: block; font-size: 11px; color: var(--text-light); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.udir-email { padding-left: 33px; }   /* avatar (26) + boşluk hizası */
+.udir-cell-user .udir-meta:not(.udir-email) { padding-left: 33px; }
+.udir-cell-act { padding-top: 8px; }
+.udir-kv { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.udir-kv + .udir-kv { margin-top: 3px; }
+.udir-k { color: var(--text-light); font-size: 10.5px; min-width: 62px; flex: 0 0 auto; }
+.udir-kv .uact-pill { margin-left: 0; white-space: nowrap; }
 .udir-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); flex: 0 0 8px; }
 .udir-dot.is-on { background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,.18); }
 .udir-sub { display: block; font-size: 11px; color: var(--text-light); margin-top: 2px; }
@@ -9396,7 +9414,13 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .udir-tour--none { background: var(--bg-surface); color: var(--text-light); }
 .udir-teams { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 .udir-table td { vertical-align: top; }
-.udir-badges { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.udir-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.udir-badges .uact-pill { margin-left: 0; }
+/* Durum sütunu: başlıkta süzgeç seçicisi, satırda tıklanır hesap rozeti (2026-09-20) */
+.udir-th-filter { padding-top: 4px !important; padding-bottom: 4px !important; }
+.udir-th-filter .ss-wrap { width: 100%; font-weight: 500; text-transform: none; letter-spacing: 0; font-size: 12px; }
+.udir-badge-btn { cursor: pointer; font: inherit; border: 1px solid transparent; }
+.udir-badge-btn:hover, .udir-badge-btn.is-on { border-color: currentColor; }
 /* Giriş / anomali listesi modalı (2026-09-20) */
 .evl-table td { vertical-align: top; }
 .evl-row--bad td { background: color-mix(in srgb, #dc2626 4%, transparent); }
