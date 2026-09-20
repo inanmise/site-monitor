@@ -1329,7 +1329,7 @@ class AdminControllerTest {
     void historyNameExtraction() {
         assertThat(AdminController.historyName("Takım A")).isEqualTo("Takım A");
         assertThat(AdminController.historyName("{\"name\":\"Takım A\",\"leaderId\":5}")).isEqualTo("Takım A");
-        assertThat(AdminController.historyName("{\"team\":\"DijitalSY\",\"enabled\":false}")).isEqualTo("DijitalSY");
+        assertThat(AdminController.historyName("{\"team\":\"Takim A\",\"enabled\":false}")).isEqualTo("Takim A");
         assertThat(AdminController.historyName("{\"enabled\":false}")).isNull();
         assertThat(AdminController.historyName(null)).isNull();
     }
