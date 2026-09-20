@@ -164,39 +164,48 @@ export default function UserDirectoryModal({ data, initial = {}, isAdmin, global
       {rows.length === 0 ? <StatusBlock tone="neutral" icon={Users} title={t('uact.noRows')} /> : (
         <div className="health-table-wrap uact-table-wrap">
           <table className="health-dbtable uact-table udir-table" data-testid="udir-table">
+            <colgroup><col className="udir-c-user" /><col className="udir-c-role" /><col className="udir-c-team" /><col className="udir-c-src" /><col className="udir-c-act" /><col className="udir-c-created" /><col className="udir-c-state" /><col className="udir-c-menu" /></colgroup>
             <thead><tr>
               <th className="dbtcol-th">{t('uact.colUser')}</th>
               <th className="dbtcol-th">{t('uact.colRole')}</th>
               <th className="dbtcol-th">{t('uact.colTeam')}</th>
-              <th className="dbtcol-th">{t('uact.colAuthSource')}</th>
-              <th className="dbtcol-th">{t('uact.detailLastSeen')}</th>
-              <th className="dbtcol-th">{t('uact.colLastLogin')}</th>
+              <th className="dbtcol-th">{t('uact.colSource')}</th>
+              <th className="dbtcol-th">{t('uact.colActivity')}</th>
               <th className="dbtcol-th">{t('uact.colCreated')}</th>
-              <th className="dbtcol-th">{t('uact.colTour')}</th>
-              <th className="dbtcol-th">{t('uact.colAccount')}</th>
+              <th className="dbtcol-th">{t('uact.colStatus')}</th>
               <th className="dbtcol-th">{t('uact.colAction')}</th>
             </tr></thead>
             <tbody>{pager.pageItems.map((r) => {
               const st = loginStatus(r, activeSet)
               const self = username && String(r.username).toLowerCase() === String(username).toLowerCase()
               const extra = (r.team_ids || []).filter((id) => String(id) !== String(r.team_id ?? ''))
+              const dept = r.display_name && /\([^)]*\)\s*$/.test(r.display_name) ? r.display_name.match(/\(([^)]*)\)\s*$/)[1] : (r.department || null)
               return (
                 <tr key={r.username} className={`uact-row udir-row${r.online ? ' is-online' : ''}${self ? ' is-self' : ''}`}>
-                  <td data-label={t('uact.colUser')}>
-                    <span className="udir-user"><span className={`udir-dot${r.online ? ' is-on' : ''}`} title={r.online ? t('uact.dirOnline') : t('uact.dirOffline')} aria-hidden="true" />
-                      <button type="button" className="uact-link udir-name" title={r.display_name || r.username} onClick={() => onUser?.(r)}><UserBadge username={r.username} userId={r.user_id} displayName={r.display_name} nameOnly /></button>{self && <span className="uact-pill">{t('uact.selfSession')}</span>}</span>
-                    {/* Parantezli departman eki nameOnly ile addan ayrılır (dar sütunda 5 satıra sarıp komşu hücreye giriyordu — 2026-09-20 kullanıcı bildirimi) */}
-                    {r.display_name && /\([^)]*\)\s*$/.test(r.display_name) && <span className="udir-sub udir-dept" title={r.display_name}>{r.display_name.match(/\(([^)]*)\)\s*$/)[1]}</span>}
-                    <span className="udir-sub sys-mono udir-email" title={r.email || ''}>{r.email || '—'}</span>
+                  <td data-label={t('uact.colUser')} className="udir-cell-user">
+                    {/* 2026-09-20 (kullanıcı bildirimi "karışık"): tek düzen — nokta + avatar + ad; altında kullanıcı adı · departman; altında e-posta */}
+                    <span className={`udir-dot${r.online ? ' is-on' : ''}`} title={r.online ? t('uact.dirOnline') : t('uact.dirOffline')} aria-hidden="true" />
+                    <div className="udir-id">
+                      <button type="button" className="uact-link udir-name" title={r.display_name || r.username} onClick={() => onUser?.(r)}><UserBadge username={r.username} userId={r.user_id} displayName={r.display_name} nameOnly inline /></button>
+                      {self && <span className="uact-pill">{t('uact.selfSession')}</span>}
+                    </div>
+                    <div className="udir-meta" title={r.display_name || ''}><span className="sys-mono">{r.username}</span>{dept && <> · {dept}</>}</div>
+                    <div className="udir-meta udir-email sys-mono" title={r.email || ''}>{r.email || '—'}</div>
                   </td>
-                  <td data-label={t('uact.colRole')}><span className={`role-badge${r.system_role === 'ADMIN' ? ' role-admin' : ''}`}>{r.system_role || '—'}</span>{r.org_role && <span className="udir-sub">{t('usr.orgRoleVal.' + r.org_role)}</span>}</td>
-                  <td data-label={t('uact.colTeam')}>{r.team_name ? <TeamBadge teamId={r.team_id} teamName={r.team_name} /> : <span className="sys-muted">—</span>}{extra.length > 0 && <span className="udir-sub" title={t('uact.dirExtraTeams', extra.length)}>{extra.slice(0, 2).map((id) => <TeamBadge key={id} teamId={id} size={11} />)}{extra.length > 2 ? ` +${extra.length - 2}` : ''}</span>}</td>
+                  <td data-label={t('uact.colRole')}><span className={`role-badge${r.system_role === 'ADMIN' ? ' role-admin' : ''}`}>{r.system_role || '—'}</span>{r.org_role && <div className="udir-meta">{t('usr.orgRoleVal.' + r.org_role)}</div>}</td>
+                  <td data-label={t('uact.colTeam')}>{r.team_name ? <TeamBadge teamId={r.team_id} teamName={r.team_name} /> : <span className="sys-muted">—</span>}{extra.length > 0 && <div className="udir-meta udir-teams" title={t('uact.dirExtraTeams', extra.length)}>{extra.slice(0, 2).map((id) => <TeamBadge key={id} teamId={id} size={11} />)}{extra.length > 2 ? ` +${extra.length - 2}` : ''}</div>}</td>
                   <td data-label={t('uact.colAuthSource')}><span className={`udir-src${r.auth_source === 'LDAP' ? ' udir-src--ldap' : ''}`}>{r.auth_source === 'LDAP' ? 'LDAP' : t('usr.authLocal')}</span></td>
-                  <td data-label={t('uact.detailLastSeen')} className="sys-small">{r.online ? <span className="uact-pill uact-st--active">{t('uact.st.active')}{r.idle_sec > 0 ? ` · ${rel(r.last_seen)}` : ''}</span> : (r.last_seen ? <span title={formatDateSec(r.last_seen)}>{rel(r.last_seen)}</span> : '—')}</td>
-                  <td data-label={t('uact.colLastLogin')} className="sys-small">{r.last_login_at ? <span title={formatDateSec(r.last_login_at)}>{rel(r.last_login_at)}{r.last_login_method ? <span className="sys-muted"> · {r.last_login_method}</span> : null}</span> : <span className={`uact-pill uact-st--${st}`}>{t(`uact.st.${st}`)}</span>}</td>
+                  <td data-label={t('uact.colActivity')} className="sys-small udir-cell-act">
+                    <div className="udir-kv"><span className="udir-k">{t('uact.detailLastSeen')}</span>{r.online ? <span className="uact-pill uact-st--active">{t('uact.st.active')}{r.idle_sec > 0 ? ` · ${rel(r.last_seen)}` : ''}</span> : (r.last_seen ? <span title={formatDateSec(r.last_seen)}>{rel(r.last_seen)}</span> : '—')}</div>
+                    <div className="udir-kv"><span className="udir-k">{t('uact.colLastLogin')}</span>{r.last_login_at ? <span title={formatDateSec(r.last_login_at)}>{rel(r.last_login_at)}{r.last_login_method ? <span className="sys-muted"> · {r.last_login_method}</span> : null}</span> : <span className={`uact-pill uact-st--${st}`}>{t(`uact.st.${st}`)}</span>}</div>
+                  </td>
                   <td data-label={t('uact.colCreated')} className="sys-small">{r.created_at ? <span title={formatDateSec(r.created_at)}>{formatDateOnly(r.created_at)}</span> : '—'}</td>
-                  <td data-label={t('uact.colTour')}><span className={`uact-pill udir-tour--${r.tour_status || 'none'}`} title={r.tour_at ? formatDateSec(r.tour_at) : ''}>{t(`uact.tour.${r.tour_status || 'none'}`)}</span></td>
-                  <td data-label={t('uact.colAccount')}><span className="udir-badges">{r.active === false && <span className="badge badge-err">{t('usr.inactive')}</span>}{r.permanent_lock && <span className="badge badge-err">{t('usr.permLocked')}</span>}{r.active !== false && !r.permanent_lock && <span className="badge badge-ok">{t('usr.active')}</span>}</span></td>
+                  <td data-label={t('uact.colStatus')}>
+                    <div className="udir-badges">
+                      {r.active === false && <span className="badge badge-err">{t('usr.inactive')}</span>}{r.permanent_lock && <span className="badge badge-err">{t('usr.permLocked')}</span>}{r.active !== false && !r.permanent_lock && <span className="badge badge-ok">{t('usr.active')}</span>}
+                      <span className={`uact-pill udir-tour--${r.tour_status || 'none'}`} title={`${t('uact.colTour')}${r.tour_at ? ' · ' + formatDateSec(r.tour_at) : ''}`}>{t('uact.colTour')}: {t(`uact.tour.${r.tour_status || 'none'}`)}</span>
+                    </div>
+                  </td>
                   <td data-label={t('uact.colAction')} className="uact-actions">{busy === r.username ? <span className="sys-muted sys-small">…</span> : <KebabMenu items={menu(r)} label={t('uact.colAction')} />}</td>
                 </tr>
               )

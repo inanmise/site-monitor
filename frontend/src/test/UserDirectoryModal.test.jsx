@@ -152,7 +152,7 @@ describe('UserDirectoryModal', () => {
     const cell = document.querySelector('.udir-table tbody tr td')
     expect(cell.querySelector('.udir-name').textContent).toContain('Carol Ornek')
     expect(cell.querySelector('.udir-name').textContent).not.toContain('Bolumu')
-    expect(cell.querySelector('.udir-dept').textContent).toBe('Teknoloji Servis Yonetimi Bolumu')
+    expect(cell.querySelector('.udir-meta').textContent).toContain('Teknoloji Servis Yonetimi Bolumu')
     expect(cell.querySelector('.udir-email').textContent).toBe('carol@example.com')
   })
 
