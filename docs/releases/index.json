@@ -1,9 +1,65 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-20T15:32:57Z",
+  "generatedAt": "2026-09-20T17:09:15Z",
   "repo": "inanmise/site-monitor",
-  "count": 664,
+  "count": 665,
   "releases": [
+    {
+      "version": "20.75.0",
+      "tag": "v20.75.0",
+      "releasedAt": "2026-09-20T17:09:09Z",
+      "commit": "9322ddbfdc77388f13bf09ac2263fdf287c24d61",
+      "prevVersion": "20.74.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 2,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": "regresyon",
+          "breaking": false,
+          "sha": "9322ddbf",
+          "subject": "59. tur — kullanıcı dizini satır düzeni v2 + KebabMenu z-index, regresyon yok"
+        },
+        {
+          "type": "fix",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "f10b99fc",
+          "subject": "KebabMenu portal'ı modal scrim'inin arkasında kalıyordu (z-index 900 < 2000)"
+        },
+        {
+          "type": "feat",
+          "scope": "uact",
+          "breaking": false,
+          "sha": "e6cf5457",
+          "subject": "kullanıcı dizini hesap süzgeci panelden Durum sütun başlığına; satır rozeti tıklanınca süzer"
+        },
+        {
+          "type": "feat",
+          "scope": "uact",
+          "breaking": false,
+          "sha": "66c91558",
+          "subject": "kullanıcı dizini satır düzeni v2 — 8 sütun, sabit yerleşim, yatay kaydırma yok"
+        },
+        {
+          "type": "fix",
+          "scope": "uact",
+          "breaking": false,
+          "sha": "d0b7aa8e",
+          "subject": "kullanıcı dizininde Kullanıcı sütunu taşması"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.74.1",
       "tag": "v20.74.1",
