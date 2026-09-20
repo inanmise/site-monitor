@@ -101,7 +101,7 @@ export default function UserDirectoryModal({ data, initial = {}, isAdmin, global
   const roleOptions = useMemo(() => opt([...new Set(all.map((r) => r.system_role).filter(Boolean))].sort().map((r) => ({ value: r, label: r }))), [all]) // eslint-disable-line react-hooks/exhaustive-deps
   const tourOptions = opt(TOUR_STATES.map((s) => ({ value: s, label: t(`uact.tour.${s}`) })))
   const providerOptions = opt([{ value: 'LDAP', label: 'LDAP' }, { value: 'LOCAL', label: t('usr.authLocal') }])
-  const accountOptions = opt([{ value: 'active', label: t('usr.active') }, { value: 'inactive', label: t('usr.inactive') }, { value: 'locked', label: t('usr.permLocked') }])
+  const accountOptions = [{ value: '', label: t('uact.colStatus') }, { value: 'active', label: t('usr.active') }, { value: 'inactive', label: t('usr.inactive') }, { value: 'locked', label: t('usr.permLocked') }]   // başlıkta 'Durum' okunur
 
   async function run(row, label, fn) {
     setBusy(row.username)
@@ -158,7 +158,6 @@ export default function UserDirectoryModal({ data, initial = {}, isAdmin, global
         <label className="invtb-f"><span>{t('uact.colRole')}</span><SearchableSelect ariaLabel={t('uact.colRole')} value={f.role} onChange={(v) => setF({ role: v })} options={roleOptions} searchThreshold={99} /></label>
         <label className="invtb-f"><span>{t('uact.colAuthSource')}</span><SearchableSelect ariaLabel={t('uact.colAuthSource')} value={f.provider} onChange={(v) => setF({ provider: v })} options={providerOptions} searchThreshold={99} /></label>
         <label className="invtb-f"><span>{t('uact.colTour')}</span><SearchableSelect ariaLabel={t('uact.colTour')} value={f.tour} onChange={(v) => setF({ tour: v })} options={tourOptions} searchThreshold={99} /></label>
-        <label className="invtb-f"><span>{t('uact.colAccount')}</span><SearchableSelect ariaLabel={t('uact.colAccount')} value={f.account} onChange={(v) => setF({ account: v })} options={accountOptions} searchThreshold={99} /></label>
         {(f.q || f.team || f.role || f.provider || f.tour || f.account || f.view !== 'all') && <button type="button" className="btn btn-sm btn-secondary" onClick={() => setFRaw({ view: 'all', tour: '', team: '', role: '', provider: '', account: '', q: '' })}>{t('uact.filterClear')}</button>}
       </div>
       {rows.length === 0 ? <StatusBlock tone="neutral" icon={Users} title={t('uact.noRows')} /> : (
@@ -172,7 +171,10 @@ export default function UserDirectoryModal({ data, initial = {}, isAdmin, global
               <th className="dbtcol-th">{t('uact.colSource')}</th>
               <th className="dbtcol-th">{t('uact.colActivity')}</th>
               <th className="dbtcol-th">{t('uact.colCreated')}</th>
-              <th className="dbtcol-th">{t('uact.colStatus')}</th>
+              <th className="dbtcol-th udir-th-filter">
+                {/* Hesap süzgeci sütun üstünde (2026-09-20 kullanıcı bildirimi): panelden kaldırıldı */}
+                <SearchableSelect ariaLabel={t('uact.colAccount')} value={f.account} onChange={(v) => setF({ account: v })} options={accountOptions} searchThreshold={99} placeholder={t('uact.colStatus')} />
+              </th>
               <th className="dbtcol-th">{t('uact.colAction')}</th>
             </tr></thead>
             <tbody>{pager.pageItems.map((r) => {
@@ -202,7 +204,9 @@ export default function UserDirectoryModal({ data, initial = {}, isAdmin, global
                   <td data-label={t('uact.colCreated')} className="sys-small">{r.created_at ? <span title={formatDateSec(r.created_at)}>{formatDateOnly(r.created_at)}</span> : '—'}</td>
                   <td data-label={t('uact.colStatus')}>
                     <div className="udir-badges">
-                      {r.active === false && <span className="badge badge-err">{t('usr.inactive')}</span>}{r.permanent_lock && <span className="badge badge-err">{t('usr.permLocked')}</span>}{r.active !== false && !r.permanent_lock && <span className="badge badge-ok">{t('usr.active')}</span>}
+                      {r.active === false && <button type="button" className={`badge badge-err udir-badge-btn${f.account === 'inactive' ? ' is-on' : ''}`} title={t('uact.dirFilterBy')} onClick={() => setF({ account: f.account === 'inactive' ? '' : 'inactive' })}>{t('usr.inactive')}</button>}
+                      {r.permanent_lock && <button type="button" className={`badge badge-err udir-badge-btn${f.account === 'locked' ? ' is-on' : ''}`} title={t('uact.dirFilterBy')} onClick={() => setF({ account: f.account === 'locked' ? '' : 'locked' })}>{t('usr.permLocked')}</button>}
+                      {r.active !== false && !r.permanent_lock && <button type="button" className={`badge badge-ok udir-badge-btn${f.account === 'active' ? ' is-on' : ''}`} title={t('uact.dirFilterBy')} onClick={() => setF({ account: f.account === 'active' ? '' : 'active' })}>{t('usr.active')}</button>}
                       <span className={`uact-pill udir-tour--${r.tour_status || 'none'}`} title={`${t('uact.colTour')}${r.tour_at ? ' · ' + formatDateSec(r.tour_at) : ''}`}>{t('uact.colTour')}: {t(`uact.tour.${r.tour_status || 'none'}`)}</span>
                     </div>
                   </td>

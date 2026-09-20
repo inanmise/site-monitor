@@ -9415,6 +9415,11 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .udir-table td { vertical-align: top; }
 .udir-badges { display: flex; flex-wrap: wrap; gap: 4px; }
 .udir-badges .uact-pill { margin-left: 0; }
+/* Durum sütunu: başlıkta süzgeç seçicisi, satırda tıklanır hesap rozeti (2026-09-20) */
+.udir-th-filter { padding-top: 4px !important; padding-bottom: 4px !important; }
+.udir-th-filter .ss-wrap { width: 100%; font-weight: 500; text-transform: none; letter-spacing: 0; font-size: 12px; }
+.udir-badge-btn { cursor: pointer; font: inherit; border: 1px solid transparent; }
+.udir-badge-btn:hover, .udir-badge-btn.is-on { border-color: currentColor; }
 /* Giriş / anomali listesi modalı (2026-09-20) */
 .evl-table td { vertical-align: top; }
 .evl-row--bad td { background: color-mix(in srgb, #dc2626 4%, transparent); }
