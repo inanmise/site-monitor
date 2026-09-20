@@ -55,14 +55,15 @@ export default function PushBreakdownPanel({ title, rows = [], keyOf, label, dim
           {rows.map((r) => {
             const total = Number(r.total) || 0, sent = Number(r.sent) || 0, failed = Number(r.failed) || 0
             const other = Math.max(0, total - sent - failed)
+            // genişlikler CSS özel değişkeniyle (--w): çok parçalı çubuk ProgressBar'a sığmaz; progress-guard kapısı inline width istemez
             const w = (n) => `${total ? (n / total) * 100 : 0}%`
             return (
               <li key={keyOf(r)} className={`pbp-row${isDimActive?.(r) ? ' is-active' : ''}`}>
                 <div className="pbp-name">{label(r)}</div>
-                <div className="pbp-bar" title={`${t('health.statusSent')} ${sent} · ${t('health.statusFailed')} ${failed}${other ? ` · ${t('pl.bdOther')} ${other}` : ''}`} style={{ width: `${(total / max) * 100}%` }}>
-                  <span className="pbp-seg pbp-seg--sent" style={{ width: w(sent) }} />
-                  <span className="pbp-seg pbp-seg--failed" style={{ width: w(failed) }} />
-                  <span className="pbp-seg pbp-seg--other" style={{ width: w(other) }} />
+                <div className="pbp-bar" title={`${t('health.statusSent')} ${sent} · ${t('health.statusFailed')} ${failed}${other ? ` · ${t('pl.bdOther')} ${other}` : ''}`} style={{ '--w': `${(total / max) * 100}%` }}>
+                  <span className="pbp-seg pbp-seg--sent" style={{ '--w': w(sent) }} />
+                  <span className="pbp-seg pbp-seg--failed" style={{ '--w': w(failed) }} />
+                  <span className="pbp-seg pbp-seg--other" style={{ '--w': w(other) }} />
                 </div>
                 <div className="pbp-nums">
                   {num(r, '', total)}
