@@ -35,7 +35,7 @@ describe('ISSUE-002 — oturum detayı dizin + oturum kaydını birleştirir', (
     api.admin.getUserTimeline.mockResolvedValue({ success: true, data: { logins: 1, failed: 0, distinct_ips: 1, events: [] } })
   })
 
-  it('çevrimiçi kullanıcının Detay'ı: oluşturulma, tur "tamamladı", oturum alanları (boşta), Tam kullanıcı kartı + Turu sıfırla düğmeleri', async () => {
+  it('çevrimiçi kullanıcının Detay düğmesi: oluşturulma, tur "tamamladı", oturum alanları (boşta), Tam kullanıcı kartı + Turu sıfırla düğmeleri', async () => {
     render(<UserActivityPanel data={DATA} error={false} refreshing={false} onRefresh={vi.fn()} isAdmin globalAdmin username="other" />)
     // 04 Aktif kullanıcılar tablosundaki Detay (yalnız active_users kaydından açılır)
     const row = document.querySelector('.uact-table--sessions tbody tr')
