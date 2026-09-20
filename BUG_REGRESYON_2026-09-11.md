@@ -1288,3 +1288,20 @@ kolon üzerinden seçilsin".
   o duruma süzer (toggle). Tarayıcıda uzun ad / e-posta / çoklu takım enjekte edilerek doğrulandı.
 Kapılar: frontend lint 0 hata / test:coverage / kapsam tabanı / build; backend değişikliği yok (sürüm için `clean verify`
 yine koşuldu — tek kırmızı `IdentityLeakGuardTest`, yalnız bilinen iki takipsiz dosya). → **REGRESYON YOK**.
+
+## Ek — altmışıncı tur (2026-09-21, sürüm sonrası — push logu kırılım paneli v2 + Kullanıcı Etkinliği / simülatör düzenlemeleri, `v20.75.0..HEAD`)
+
+Kullanıcı bildirimleri (üretim 1366 px ekran görüntüleri):
+- 18244fd9: push/SMTP logu kırılım kartları yan yana 280 px'e düşünce sabit yerleşimli mini tabloda ad sütunu ~10 px kalıyor,
+  takım/alıcı/izleme/seviye adları HARF HARF sarıyordu → kartlar alt alta (tam genişlik).
+- ae56e978: kırılım paneli v2 — her satırda gönderildi / başarısız / diğer oran çubuğu ve üç tıklanır rakam (Toplam → yalnız
+  boyut; Gönderildi → +SENT; Başarısız → +FAILED); tıklama süzgeci uygular ve ana tabloya kaydırır, ikinci tıklama kaldırır;
+  başlık daraltılır. İzleme boyutu q (metin arama) ile süzülür. Tarayıcı: n64954 · Başarısız → 13 kayıt, URL p_status=FAILED&p_user.
+- 592e441f: Kullanıcı Etkinliği — sayfa kullanımı tablosu altında üç blok (yan yana sıkışma yoktu artık), listelerde yalnız ad
+  soyad (bölüm eki / rol pili / kullanıcı adı kaldırıldı; `nameOnly`), hiç giriş yapmayanlar etiket altında, En Çok Login Gelen
+  Kaynaklar IP hücresi sade + kullanıcılar ad soyadla; simülatör push alıcıları Kişi / Push grubu / Karar tablosu; eskalasyon
+  kişileri listesi standart PaginationBar.
+Kapı bulgusu: progress-guard kapısı kırılım çubuğundaki inline `width` desenini yakaladı → 69463eda: genişlikler CSS özel değişkeni (`--w`)
+ile (çok parçalı çubuk ProgressBar'a sığmaz). Kapılar HEAD'de yeniden koşuldu.
+Kapılar: frontend lint 0 hata / test:coverage / kapsam tabanı / build; backend değişikliği yok (sürüm için `clean verify` yine
+koşuldu — tek kırmızı `IdentityLeakGuardTest`, yalnız bilinen iki takipsiz dosya). → **REGRESYON YOK**.
