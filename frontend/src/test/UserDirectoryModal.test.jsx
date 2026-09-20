@@ -206,7 +206,7 @@ describe('UserActivityPanel — dizin bağlantıları ve takım sütunları', ()
     fireEvent.click(document.querySelectorAll('.uact-kpi--btn')[2])   // Login karti
     const dlg = await screen.findByRole('dialog')
     const row = within(dlg).getAllByRole('row')[1]
-    expect(row.textContent).toContain('Takim A'); expect(row.textContent).toContain('Chrome'); expect(row.textContent).toContain('USER')
+    expect(row.textContent).toContain('Takim A'); expect(row.textContent).toContain('Chrome'); expect(row.textContent).not.toContain('USER')   // yalnız ad soyad (2026-09-21)
     fireEvent.keyDown(document, { key: 'Escape' })
     const anomRow = document.querySelector('.uact-flag').closest('tr')
     expect(anomRow.textContent).toContain('Takim B')

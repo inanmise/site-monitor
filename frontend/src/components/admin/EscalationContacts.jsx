@@ -13,6 +13,8 @@ import { formatDateSec } from '../../api/client'
 import { Download } from 'lucide-react'
 import { toCsv, downloadCsv, stampedName } from '../../utils/csvExport.js'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
+import PaginationBar from '../ui/PaginationBar.jsx'
+import { usePagination } from '../../hooks/usePagination.js'
 
 const ROLES  = ['PO', 'TECH', 'MANAGER', 'CLEVEL']
 const LEVELS = ['WARNING', 'HIGH', 'CRITICAL']
@@ -44,8 +46,6 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
   const [fLevel, setFLevel] = useState(() => readUrlParam('g_level', ''))
   const [fTeam, setFTeam] = useState(() => readUrlParam('g_team', ''))
   useUrlQuerySync({ g_q: q, g_role: fRole, g_level: fLevel, g_team: fTeam })
-  const [page, setPage]   = useState(0)
-  const [size, setSize]   = useState(20)
 
   const teamMap = Object.fromEntries(teams.map(t => [t.id, t.name]))
   const userMap = Object.fromEntries(users.map(u => [String(u.id), u]))
@@ -66,11 +66,9 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
       && (!fTeam  || String(c.team_id) === String(fTeam)))
   }, [contacts, q, fRole, fLevel, fTeam])
 
-  const totalPages = Math.max(1, Math.ceil(filteredContacts.length / size))
-  const safePage   = Math.min(page, totalPages - 1)
-  const pagedContacts = filteredContacts.slice(safePage * size, safePage * size + size)
-
-  useEffect(() => { setPage(0) }, [q, fRole, fLevel, fTeam, size])
+  // Proje standardı sayfalama (2026-09-21): usePagination + PaginationBar (istemci-taraflı)
+  const pager = usePagination(filteredContacts, { listKey: 'admin-contacts', defaultSize: 25, resetDeps: [q, fRole, fLevel, fTeam] })
+  const pagedContacts = pager.pageItems
 
   useEffect(() => { load(); loadUsers() }, [])
 
@@ -272,18 +270,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
         </table>
       </div>
 
-      {/* Sayfa boyutu + sayfalama (istemci-taraflı) */}
-      <div className="audit-pagination">
-        <label style={{ marginRight: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-          {t('ec.perPage')}
-          <select className="audit-filter-input" value={size} onChange={(e) => setSize(Number(e.target.value))}>
-            {[20, 50, 100, 200].map(n => <option key={n} value={n}>{n}</option>)}
-          </select>
-        </label>
-        <button disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>{t('app.prevPage')}</button>
-        <span>{t('ec.pageInfo', safePage + 1, totalPages, filteredContacts.length)}</span>
-        <button disabled={safePage + 1 >= totalPages} onClick={() => setPage(safePage + 1)}>{t('app.nextPage')}</button>
-      </div>
+      {filteredContacts.length > 0 && <PaginationBar {...pager} />}
 
       <AdminChangeHistory resource="ESCALATION_CONTACT" filter={histFilter} onClearFilter={() => setHistFilter(null)} />
 
