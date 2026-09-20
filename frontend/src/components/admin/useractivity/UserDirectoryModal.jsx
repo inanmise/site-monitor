@@ -184,8 +184,10 @@ export default function UserDirectoryModal({ data, initial = {}, isAdmin, global
                 <tr key={r.username} className={`uact-row udir-row${r.online ? ' is-online' : ''}${self ? ' is-self' : ''}`}>
                   <td data-label={t('uact.colUser')}>
                     <span className="udir-user"><span className={`udir-dot${r.online ? ' is-on' : ''}`} title={r.online ? t('uact.dirOnline') : t('uact.dirOffline')} aria-hidden="true" />
-                      <button type="button" className="uact-link udir-name" onClick={() => onUser?.(r)}><UserBadge username={r.username} userId={r.user_id} displayName={r.display_name} /></button>{self && <span className="uact-pill">{t('uact.selfSession')}</span>}</span>
-                    <span className="udir-sub sys-mono">{r.email || '—'}</span>
+                      <button type="button" className="uact-link udir-name" title={r.display_name || r.username} onClick={() => onUser?.(r)}><UserBadge username={r.username} userId={r.user_id} displayName={r.display_name} nameOnly /></button>{self && <span className="uact-pill">{t('uact.selfSession')}</span>}</span>
+                    {/* Parantezli departman eki nameOnly ile addan ayrılır (dar sütunda 5 satıra sarıp komşu hücreye giriyordu — 2026-09-20 kullanıcı bildirimi) */}
+                    {r.display_name && /\([^)]*\)\s*$/.test(r.display_name) && <span className="udir-sub udir-dept" title={r.display_name}>{r.display_name.match(/\(([^)]*)\)\s*$/)[1]}</span>}
+                    <span className="udir-sub sys-mono udir-email" title={r.email || ''}>{r.email || '—'}</span>
                   </td>
                   <td data-label={t('uact.colRole')}><span className={`role-badge${r.system_role === 'ADMIN' ? ' role-admin' : ''}`}>{r.system_role || '—'}</span>{r.org_role && <span className="udir-sub">{t('usr.orgRoleVal.' + r.org_role)}</span>}</td>
                   <td data-label={t('uact.colTeam')}>{r.team_name ? <TeamBadge teamId={r.team_id} teamName={r.team_name} /> : <span className="sys-muted">—</span>}{extra.length > 0 && <span className="udir-sub" title={t('uact.dirExtraTeams', extra.length)}>{extra.slice(0, 2).map((id) => <TeamBadge key={id} teamId={id} size={11} />)}{extra.length > 2 ? ` +${extra.length - 2}` : ''}</span>}</td>

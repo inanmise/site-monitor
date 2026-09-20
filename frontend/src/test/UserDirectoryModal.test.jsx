@@ -146,6 +146,16 @@ describe('UserDirectoryModal', () => {
     expect(onClose).toHaveBeenCalled()
     window.removeEventListener('sm:navigate', nav)
   })
+  it('uzun ad: parantezli departman eki addan ayrılır, ayrı satırda ve e-posta tek satır sınıfıyla (2026-09-20 taşma bildirimi)', () => {
+    const rows = [{ ...STATUS[0], display_name: 'Carol Ornek (Teknoloji Servis Yonetimi Bolumu)' }]
+    render(<UserDirectoryModal data={{ ...DATA, login_status: rows, active_users: [] }} initial={{}} isAdmin username="admin" onClose={() => {}} />)
+    const cell = document.querySelector('.udir-table tbody tr td')
+    expect(cell.querySelector('.udir-name').textContent).toContain('Carol Ornek')
+    expect(cell.querySelector('.udir-name').textContent).not.toContain('Bolumu')
+    expect(cell.querySelector('.udir-dept').textContent).toBe('Teknoloji Servis Yonetimi Bolumu')
+    expect(cell.querySelector('.udir-email').textContent).toBe('carol@example.com')
+  })
+
   it('sayfalama: 30 kullanıcıda 25 satır + sayfa çubuğu', () => {
     const many = Array.from({ length: 30 }, (_, i) => ({ username: `u${i}`, user_id: 100 + i, system_role: 'USER', auth_source: 'LDAP', active: true, last_login_at: ago(i * 3600), tour_status: 'none' }))
     render(<UserDirectoryModal data={{ ...DATA, login_status: many, active_users: [] }} initial={{}} isAdmin username="admin" onClose={() => {}} />)
