@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-20T02:53:40Z",
+  "generatedAt": "2026-09-20T13:23:10Z",
   "repo": "inanmise/site-monitor",
-  "count": 662,
+  "count": 663,
   "releases": [
+    {
+      "version": "20.74.0",
+      "tag": "v20.74.0",
+      "releasedAt": "2026-09-20T13:23:03Z",
+      "commit": "be353c9effc4b40a11235d602a858f22ae82288c",
+      "prevVersion": "20.73.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 3,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "be353c9e",
+          "subject": "bildirim grubu geçmişi sayfalı, giriş / anomali KPI listesi v2"
+        },
+        {
+          "type": "feat",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "31c8e5e0",
+          "subject": "kullanıcı dizini, standart araç çubukları, şema detayı v2, push/aktivite logu, takım toplu işlem"
+        },
+        {
+          "type": "feat",
+          "scope": "ux",
+          "breaking": false,
+          "sha": "50864b20",
+          "subject": "bildirim kutusu v2, palet meta çipleri, kart bağlantıları, canlı şerit alarm ikonu"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.73.0",
       "tag": "v20.73.0",
