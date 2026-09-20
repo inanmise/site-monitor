@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo, Fragment } from 'react'
 import { api } from '../../api/client'
-import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
@@ -12,6 +11,9 @@ import TeamBadge from '../ui/TeamBadge.jsx'
 import TeamMembersModal from '../ui/TeamMembersModal.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import AdminChangeHistory from './AdminChangeHistory.jsx'
+import TeamMembersManager from './TeamMembersManager.jsx'
+import TeamDeleteImpactModal from './TeamDeleteImpactModal.jsx'
+import { navigateTo } from '../../utils/navigate.js'
 import { resolveTeamManager } from '../../utils/teamManager.js'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 
@@ -67,7 +69,6 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
     return new Set(ids)
   }, [myTeamIds, ownTeamId])
   const canToggleWeekly = (rowTeamId) => isAdmin || memberOf.has(Number(rowTeamId))
-  const { showConfirm } = useDialog()
   const [teams, setTeams]   = useState([])
   const [loadError, setLoadError] = useState(null)
   const [users, setUsers]   = useState([])
@@ -84,6 +85,9 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
 
   // İstemci-taraflı filtre + sayfalama (getTeams tüm listeyi döndürür — dropdown kaynağı bozulmasın)
   const [histFilter, setHistFilter] = useState(null)   // { id, name } — satırdan "Geçmiş"
+  const [stats, setStats] = useState({})                // takım id → sayaçlar (2026-09-20)
+  const [manageTeam, setManageTeam] = useState(null)    // üye yönetimi modalı
+  const [impactTeam, setImpactTeam] = useState(null)    // silme etki modalı
   const [q, setQ]       = useState(() => readUrlParam('g_q', ''))   // URL'de (g_q)
   useUrlQuerySync({ g_q: q })
   const [page, setPage] = useState(0)
@@ -115,6 +119,15 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
     } catch (e) {
       setLoadError(e?.message || t('settings.loadError'))
     }
+    loadStats()
+  }
+
+  /** Satır sayaçları — ayrı istek: liste sayaç gecikse de gelir (best-effort). */
+  async function loadStats() {
+    try {
+      const r = await api.admin.teamStats?.()
+      if (r?.success) setStats(r.data || {})
+    } catch { /* sütun boş kalır */ }
   }
 
   async function loadUsers() {
@@ -207,25 +220,10 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
     }
   }
 
-  async function del(id) {
+  /** Silme: önce ETKİ önizlemesi (bağlı varlıklar + hedef takıma taşı), sonra sil (2026-09-20). */
+  function del(id) {
     const team = teams.find(t => t.id === id)
-    const ok = await showConfirm({
-      title: t('team.deleteTitle'),
-      message: t('team.deleteMsg', team?.name ?? id),
-      variant: 'danger',
-      confirmText: t('team.deleteConfirm'),
-      cancelText: t('team.deleteCancel'),
-    })
-    if (!ok) return
-    const res = await api.admin.deleteTeam(id)
-    if (!res?.success) {
-      toast.error(res?.error || t('team.deleteError'))
-      return
-    }
-    toast.success(t('team.deleted'))
-    if (membersTeam?.id === id) setMembersTeam(null)
-    load()
-    onTeamsChange?.()
+    if (team) setImpactTeam(team)
   }
 
   /** Satırdaki bir haftalık anahtarı çevirir — ad/e-posta/aktifliğe DOKUNMAYAN dar uç. */
@@ -273,12 +271,13 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
               <th>{t('team.colManager')}</th>
               <th>{t('team.colActive')}</th>
               <th>{t('team.colWeeklyEmails')}</th>
+              <th>{t('team.colAssets')}</th>
               <th>{t('team.colActions')}</th>
             </tr>
           </thead>
           <tbody>
             {filteredTeams.length === 0 && (
-              <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
+              <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
                 {t('team.noResults')}
               </td></tr>
             )}
@@ -315,8 +314,15 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
                     </div>
                   </td>
                   <td>
+                    <TeamStats s={stats[String(team.id)]} t={t}
+                      onMembers={() => (canEditRow(team.id) ? setManageTeam(team) : setMembersTeam(team))}
+                      onDomains={() => navigateTo('domains', { i_team: String(team.id) })}
+                      onAlerts={() => navigateTo('alerthistory', { team: String(team.id) })} />
+                  </td>
+                  <td>
                     <KebabMenu label={t('team.colActions')} items={[
                       { label: t('team.edit'), onClick: () => openEdit(team), hidden: !canEditRow(team.id) },
+                      { label: t('team.manageMembers'), onClick: () => setManageTeam(team), hidden: !canEditRow(team.id) },
                       { label: t('hist.title'), onClick: () => setHistFilter({ id: team.id, name: team.name }) },
                       { label: t('team.delete'), danger: true, onClick: () => del(team.id), hidden: !isAdmin },
                     ]} />
@@ -433,6 +439,14 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
         </div>
       )}
 
+      {manageTeam && (
+        <TeamMembersManager team={manageTeam} users={users} canManage={canEditRow(manageTeam.id)}
+          onClose={() => setManageTeam(null)} onChanged={() => { loadStats(); setMembersNonce(n => n + 1); onTeamsChange?.() }} />
+      )}
+      {impactTeam && (
+        <TeamDeleteImpactModal team={impactTeam} teams={teams} onClose={() => setImpactTeam(null)}
+          onDeleted={(deleted) => { setImpactTeam(null); if (membersTeam?.id === impactTeam.id) setMembersTeam(null); load(); if (deleted) onTeamsChange?.() }} />
+      )}
       <TeamMembersModal open={!!membersTeam} team={membersTeam} onClose={() => setMembersTeam(null)}
         canManage={canManage} onEditUser={setEditingUser} loadMembers={loadTeamMembers}
         usersById={usersById} managerLabelFor={managerLabelFor} refreshKey={membersNonce} />
@@ -445,6 +459,29 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
           setMembersNonce(n => n + 1)
         }}
       />
+    </div>
+  )
+}
+
+/** Satır varlık sayaçları (2026-09-20): üye/domain/alarm tıklanır, diğerleri bilgi. Sayaç yoksa (henüz yüklenmedi) boş. */
+function TeamStats({ s, t, onMembers, onDomains, onAlerts }) {
+  if (!s) return null
+  const chip = (key, val, onClick, tip, extraCls = '') => {
+    const n = Number(val ?? 0)
+    const cls = `tm-stat${n === 0 ? ' tm-stat--zero' : ''}${extraCls}`
+    const label = t(`team.stat.${key}`, n)
+    return onClick
+      ? <button type="button" key={key} className={cls} onClick={onClick} title={tip}>{label}</button>
+      : <span key={key} className={cls} title={tip}>{label}</span>
+  }
+  return (
+    <div className="tm-stats" data-testid="team-stats">
+      {chip('members', s.members, onMembers, t('team.statMembersTip'))}
+      {chip('domains', s.domains, onDomains, t('team.statDomainsTip'))}
+      {chip('monitors', s.monitors)}
+      {chip('open_alerts', s.open_alerts, onAlerts, t('team.statAlertsTip'), Number(s.open_alerts) > 0 ? ' tm-stat--alert' : '')}
+      {chip('contacts', s.contacts)}
+      {chip('groups', s.groups)}
     </div>
   )
 }

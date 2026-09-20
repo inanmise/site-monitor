@@ -54,6 +54,7 @@ class AdminControllerTest {
     @MockitoBean com.sitemonitor.service.AdminHistoryService adminHistoryService;             // sekme değişiklik geçmişi (2026-09-20)
     @MockitoBean com.sitemonitor.service.UserPushRecipientResolver userPushRecipientResolver;
     @MockitoBean com.sitemonitor.service.WebhookService webhookService;
+    @MockitoBean com.sitemonitor.service.TeamAdminService teamAdminService;
     @MockitoBean com.sitemonitor.service.DerivedMonitorTeamSync derivedMonitorTeamSync;
     @MockitoBean com.sitemonitor.service.TourStateService tourStateService;   // ürün turu (2026-09-13)
     // AdminController "Tekrar Bildir" onizlemesinde webhook alicilarini da cozuyor (A2).
@@ -1163,6 +1164,67 @@ class AdminControllerTest {
                         .content("{\"warning_days\":25,\"high_days\":12,\"critical_days\":5,\"re_alert_interval_hours\":12}"))   // tel biçimi SNAKE_CASE
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
+    }
+
+    // ── Takım sayaçları / etki / taşıma / üyelik (2026-09-20) ────────────────────
+
+    @Test
+    @DisplayName("GET /teams/stats: takım id anahtarlı sayaçlar")
+    void teamStats() throws Exception {
+        when(teamAdminService.stats()).thenReturn(new java.util.LinkedHashMap<>(Map.of(7L, Map.of("members", 3, "domains", 12))));
+        mvc.perform(get("/api/admin/teams/stats").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data['7'].members").value(3));
+    }
+
+    @Test
+    @DisplayName("GET /teams/{id}/impact + POST /teams/{id}/move: etki listesi; taşıma servise gider ve denetlenir")
+    void teamImpactAndMove() throws Exception {
+        com.sitemonitor.model.Team a = new com.sitemonitor.model.Team(); a.setId(7L); a.setName("Takım A");
+        com.sitemonitor.model.Team b = new com.sitemonitor.model.Team(); b.setId(9L); b.setName("Takım B");
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(a));
+        when(teamRepo.findById(9L)).thenReturn(Optional.of(b));
+        when(teamAdminService.impact(7L)).thenReturn(Map.of("open_alerts", 2L, "empty", false));
+        mvc.perform(get("/api/admin/teams/7/impact").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.open_alerts").value(2));
+
+        when(teamAdminService.moveAll(7L, 9L)).thenReturn(new java.util.LinkedHashMap<>(Map.of("domains", 4, "monitors", 2, "users", 1, "contacts", 0, "groups", 1)));
+        mvc.perform(post("/api/admin/teams/7/move").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"target_team_id\":9}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.domains").value(4));
+        verify(auditService).recordAction(eq("TEAM_MOVE_ASSETS"), any(jakarta.servlet.http.HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class), eq("TEAM"), eq("7"), any());
+
+        mvc.perform(post("/api/admin/teams/7/move").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("POST/DELETE /teams/{id}/members: üyelik kümesi updateUser ile yazılır; son takım çıkarılamaz (409)")
+    void teamMembers() throws Exception {
+        AppUser u = new AppUser(); u.setId(42L); u.setUsername("ali"); u.setSystemRole("USER"); u.setTeamId(9L);
+        u.setTeamIds(new java.util.LinkedHashSet<>(List.of(9L)));
+        when(userRepo.findById(42L)).thenReturn(Optional.of(u));
+        when(userService.updateUser(eq(42L), isNull(), isNull(), isNull(), isNull(), any(), isNull(), isNull())).thenReturn(u);
+
+        mvc.perform(post("/api/admin/teams/7/members").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"user_id\":42}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.added").value(true));
+        ArgumentCaptor<java.util.Collection<Long>> ids = ArgumentCaptor.forClass(java.util.Collection.class);
+        verify(userService).updateUser(eq(42L), isNull(), isNull(), isNull(), isNull(), ids.capture(), isNull(), isNull());
+        assertThat(ids.getValue()).containsExactly(9L, 7L);
+        verify(auditService).recordAction(eq("TEAM_MEMBER_ADD"), any(jakarta.servlet.http.HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class), eq("TEAM"), eq("7"), any());
+
+        // tek takımı 9 → çıkarılamaz
+        mvc.perform(delete("/api/admin/teams/9/members/42").session(authSession()))
+                .andExpect(status().isConflict());
+        // üyesi olmadığı takımdan çıkarma no-op
+        mvc.perform(delete("/api/admin/teams/7/members/42").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.removed").value(false));
     }
 
     // ── "Kim bilgilendirilir?" + webhook testi + son teslimat (2026-09-20) ───────

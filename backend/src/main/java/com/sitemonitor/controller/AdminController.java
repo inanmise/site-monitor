@@ -88,6 +88,7 @@ public class AdminController {
     private final com.sitemonitor.service.AdminHistoryService adminHistoryService;             // sekme değişiklik geçmişi (2026-09-20)
     private final com.sitemonitor.service.UserPushRecipientResolver userPushRecipientResolver;  // "Kim bilgilendirilir?" push ayağı (2026-09-20)
     private final com.sitemonitor.service.WebhookService webhookService;                       // eskalasyon webhook testi (2026-09-20)
+    private final com.sitemonitor.service.TeamAdminService teamAdminService;                   // takım sayaçları / etki / taşıma (2026-09-20)
     private final EscalationContactRepository contactRepo;
     private final AlertEventRepository alertEventRepo;
     private final NotificationLogRepository notificationLogRepo;
@@ -2301,6 +2302,94 @@ public class AdminController {
     private static final String[] TEAM_AUDIT_FIELDS = {
             "name", "email", "description", "active", "leaderId", "managerId",
             "weeklyReminderEnabled", "weeklyAvailabilityEnabled", "weeklyChannels" };
+
+    // ── Takım sayaçları / etki önizleme / taşıma / üyelik (2026-09-20) ────────────
+
+    /** Takım satırı sayaçları: üye · domain · izleme · açık alarm · kişi · grup (tek geçiş). */
+    @GetMapping("/teams/stats")
+    public ResponseEntity<Map<String, Object>> teamStats(HttpSession session) {
+        requirePerm(session, "teams.list", "view");
+        Map<Long, Map<String, Object>> all = teamAdminService.stats();
+        if (!isAdminOrAudit(session)) {
+            List<Long> scope = viewScope(session);
+            all.keySet().retainAll(scope == null ? Set.of() : new HashSet<>(scope));
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        all.forEach((k, v) -> out.put(String.valueOf(k), v));
+        return ok(Map.of("data", out));
+    }
+
+    /** Silme/pasifleştirme ETKİ önizlemesi: bağlı domain/izleme/üye/kişi/grup listesi + açık alarm sayısı. */
+    @GetMapping("/teams/{id}/impact")
+    public ResponseEntity<Map<String, Object>> teamImpact(@PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
+        requirePerm(session, "teams.lifecycle", "execute");
+        teamRepo.findById(id).orElseThrow(() -> new NoSuchElementException("Team not found: " + id));
+        return ok(Map.of("data", teamAdminService.impact(id)));
+    }
+
+    /** Bağlı varlıkları hedef takıma taşı (bildirim grubundaki "409 → taşı" deseni). Silme ayrı çağrıdır. */
+    @PostMapping("/teams/{id}/move")
+    public ResponseEntity<Map<String, Object>> teamMove(@PathVariable Long id, @RequestBody Map<String, Object> body,
+                                                        HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        requirePerm(session, "teams.lifecycle", "execute");
+        Long target = toLong(body.get("target_team_id"));
+        if (target == null) throw new IllegalArgumentException("target_team_id is required");
+        String fromName = teamRepo.findById(id).map(Team::getName).orElseThrow(() -> new NoSuchElementException("Team not found: " + id));
+        String toName = teamRepo.findById(target).map(Team::getName).orElseThrow(() -> new NoSuchElementException("Team not found: " + target));
+        Map<String, Integer> moved = teamAdminService.moveAll(id, target);
+        auditService.recordAction("TEAM_MOVE_ASSETS", session, request, "TEAM", id.toString(),
+                AuditDetail.of("from", fromName, "to", toName, "to_id", target, "domains", moved.get("domains"),
+                        "monitors", moved.get("monitors"), "users", moved.get("users"), "contacts", moved.get("contacts"), "groups", moved.get("groups")));
+        return ok(Map.of("data", moved));
+    }
+
+    /** Üye ekle — kullanıcı zaten üyeyse no-op. Kapsam: global admin ya da o takımı yöneten TEAM_ADMIN. */
+    @PostMapping("/teams/{id}/members")
+    public ResponseEntity<Map<String, Object>> addTeamMember(@PathVariable Long id, @RequestBody Map<String, Object> body,
+                                                             HttpSession session, HttpServletRequest request) {
+        requireAdminOrTeamAdmin(session);
+        requirePerm(session, "users.crud", "edit");
+        requireTeamManageScope(session, id);
+        Long userId = toLong(body.get("user_id"));
+        if (userId == null) throw new IllegalArgumentException("user_id is required");
+        AppUser u = userRepo.findById(userId).orElseThrow(() -> new NoSuchElementException("User not found: " + userId));
+        java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>(u.getTeamIds() == null ? List.of() : u.getTeamIds());
+        if (u.getTeamId() != null) ids.add(u.getTeamId());
+        boolean added = ids.add(id);
+        if (added) userService.updateUser(userId, null, null, null, null, ids, null, null);
+        auditService.recordAction("TEAM_MEMBER_ADD", session, request, "TEAM", id.toString(),
+                AuditDetail.of("username", u.getUsername(), "user_id", userId, "changed", added));
+        return ok(Map.of("data", Map.of("added", added)));
+    }
+
+    /** Üye çıkar — kullanıcının SON takımı çıkarılamaz (ADMIN hariç: takımsız olabilir). */
+    @DeleteMapping("/teams/{id}/members/{userId}")
+    public ResponseEntity<Map<String, Object>> removeTeamMember(@PathVariable Long id, @PathVariable Long userId,
+                                                                HttpSession session, HttpServletRequest request) {
+        requireAdminOrTeamAdmin(session);
+        requirePerm(session, "users.crud", "edit");
+        requireTeamManageScope(session, id);
+        AppUser u = userRepo.findById(userId).orElseThrow(() -> new NoSuchElementException("User not found: " + userId));
+        java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>(u.getTeamIds() == null ? List.of() : u.getTeamIds());
+        if (u.getTeamId() != null) ids.add(u.getTeamId());
+        boolean removed = ids.remove(id);
+        if (removed && ids.isEmpty() && !"ADMIN".equals(u.getSystemRole())) {
+            throw new IllegalStateException(com.sitemonitor.util.Msg.t(
+                    "Kullanıcının tek takımı bu; önce başka bir takıma ekleyin.", "This is the user's only team; add another team first."));
+        }
+        if (removed) userService.updateUser(userId, null, null, null, null, ids, null, null);
+        auditService.recordAction("TEAM_MEMBER_REMOVE", session, request, "TEAM", id.toString(),
+                AuditDetail.of("username", u.getUsername(), "user_id", userId, "changed", removed));
+        return ok(Map.of("data", Map.of("removed", removed)));
+    }
+
+    private void requireTeamManageScope(HttpSession session, Long teamId) {
+        if (SessionScope.isGlobalAdmin(session)) return;
+        List<Long> manage = SessionScope.manageTeamIds(session);
+        if (manage == null || !manage.contains(teamId)) throw new SecurityException("Cannot manage another team's members");
+    }
 
     @DeleteMapping("/teams/{id}")
     public ResponseEntity<Map<String, Object>> deleteTeam(

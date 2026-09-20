@@ -3218,6 +3218,25 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .sim-list li.is-dup, .sim-list li.is-skipped { opacity: .6; }
 .sim-src { color: var(--text-light); font-size: .92em; }
 .sim-dup { font-size: .8em; color: var(--warning, #b7791f); }
+/* Takım satırı varlık sayaçları + üye yönetimi + silme etkisi (2026-09-20) */
+.tm-stats { display: flex; flex-wrap: wrap; gap: 4px; max-width: 260px; }
+.tm-stat { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-surface); font-size: .76em; font-weight: 600; color: var(--text); white-space: nowrap; }
+.tm-stat--zero { opacity: .55; }
+.tm-stat--alert { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+button.tm-stat { cursor: pointer; font: inherit; font-size: .76em; font-weight: 600; }
+button.tm-stat:hover { border-color: var(--primary); color: var(--primary); }
+.tmm-add { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+.tmm-add .ss-wrap { flex: 1 1 auto; }
+.tmm-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.tmm-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; }
+.tmm-meta { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.tmm-remove { flex-shrink: 0; }
+.tdi { display: flex; flex-direction: column; gap: 12px; }
+.tdi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.tdi-block { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.tdi-block h4 { margin: 0 0 6px; font-size: .88em; }
+.tdi-list { margin: 0; padding-left: 16px; font-size: .84em; max-height: 160px; overflow-y: auto; }
+.tdi-target { display: flex; flex-direction: column; gap: 6px; max-width: 420px; }
 /* Eskalasyon: son webhook teslimatı */
 .ec-delivery { display: inline-flex; flex-direction: column; gap: 2px; font-size: .82em; }
 .ec-delivery-at { color: var(--text-light); font-family: ui-monospace, monospace; font-size: .92em; }

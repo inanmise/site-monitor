@@ -862,6 +862,12 @@ export const api = {
     updateTeamWeeklyNotifications: (id, data) =>
       request(`/admin/teams/${id}/weekly-notifications`, { method: 'PUT', body: JSON.stringify(data) }),
     getTeamUsers: (id) => request(`/admin/teams/${id}/users`),
+    // Takım sayaçları / etki / taşıma / üyelik (2026-09-20)
+    teamStats: () => request('/admin/teams/stats'),
+    teamImpact: (id) => request(`/admin/teams/${id}/impact`),
+    teamMove: (id, targetTeamId) => request(`/admin/teams/${id}/move`, { method: 'POST', body: JSON.stringify({ target_team_id: targetTeamId }) }),
+    addTeamMember: (id, userId) => request(`/admin/teams/${id}/members`, { method: 'POST', body: JSON.stringify({ user_id: userId }) }),
+    removeTeamMember: (id, userId) => request(`/admin/teams/${id}/members/${userId}`, { method: 'DELETE' }),
 
     // Users
     getUsers: () => request('/admin/users'),
