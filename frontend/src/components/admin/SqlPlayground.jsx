@@ -407,7 +407,9 @@ export default function SqlPlayground() {
           table={tableDetail.table}
           details={tableDetail.details}
           loading={tableDetail.loading}
-          onClose={() => setTableDetail(null)}        />
+          onClose={() => setTableDetail(null)}
+          onOpenTable={(name) => openTableDetails(name)}
+          onUseQuery={(q) => setSql(q)}        />
       )}
 
       {diagram && (

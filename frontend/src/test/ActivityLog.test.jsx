@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from './test-utils.jsx'
-import ActivityLog from '../components/ActivityLog.jsx'
+import ActivityLog, { activityTarget } from '../components/ActivityLog.jsx'
 
 // Birleşik aktivite akışı — api mock'lanır. Durum/tür rozetleri dilden bağımsız CSS/enum ile doğrulanır.
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -103,5 +103,34 @@ describe('ActivityLog — zaman grupları + katlama (2026-09-12, #22)', () => {
     fireEvent.click(fold.querySelector('.act-item-row'))
     expect(document.querySelector('.act-fold')).toBeNull()
     expect(document.querySelectorAll('.act-item').length).toBe(5)
+  })
+
+  it('2026-09-20: activityTarget haritası — sertifika → dashboard ?q=alan, uptime → uptime, ping → ping ?monitor=id, scripted param taşımaz, bilinmeyen null', () => {
+    expect(activityTarget({ monitor_type: 'CERT', target: 'https://a.example.com:443/x' })).toEqual({ tab: 'dashboard', params: { q: 'a.example.com' } })
+    expect(activityTarget({ monitor_type: 'UPTIME', target: 'b.example.com' })).toEqual({ tab: 'uptime', params: { q: 'b.example.com' } })
+    expect(activityTarget({ monitor_type: 'PING', monitor_id: 7, target: '10.0.0.1' })).toEqual({ tab: 'ping', params: { monitor: 7 } })
+    expect(activityTarget({ monitor_type: 'SCRIPTED', monitor_id: 3 })).toEqual({ tab: 'scripted', params: undefined })
+    expect(activityTarget({ monitor_type: 'WEIRD' })).toBeNull()
+  })
+
+  it('2026-09-20: satırda takım rozeti; "İzlemeye git" düğmesi ve ad tıklaması izleme sekmesine gider (detay açılmaz); özet kalemi duruma süzer', async () => {
+    api.getActivity.mockResolvedValue({ success: true, page: 0, total: 1, data: [row({ id: 5, monitor_type: 'PING', monitor_id: 9, monitor_name: 'gw', target: '10.0.0.1', team_id: 5, team_name: 'Takim A' })] })
+    const nav = vi.fn(); window.addEventListener('sm:navigate', nav)
+    const { container } = render(<ActivityLog />)
+    expect(await screen.findByText('gw')).toBeInTheDocument()
+    expect(container.querySelector('.act-item-team').textContent).toContain('Takim A')
+    fireEvent.click(screen.getByRole('button', { name: /İzlemeye git|Go to the monitor/ }))
+    expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'ping', params: { monitor: 9 } })
+    fireEvent.click(screen.getByText('gw'))
+    expect(nav).toHaveBeenCalledTimes(2)
+    expect(container.querySelector('.act-item.open')).toBeNull()
+    expect(api.getActivityDetail).not.toHaveBeenCalled()
+    // özet: Hata kalemi → status=ERROR süzgeci
+    fireEvent.click(screen.getByRole('button', { name: /Hata|Error/ }))
+    await waitFor(() => expect(api.getActivity).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'ERROR' })))
+    expect(new URLSearchParams(window.location.search).get('astatus')).toBe('ERROR')
+    fireEvent.click(screen.getByRole('button', { name: /Hata|Error/ }))
+    await waitFor(() => expect(api.getActivity).toHaveBeenLastCalledWith(expect.objectContaining({ status: '' })))
+    window.removeEventListener('sm:navigate', nav)
   })
 })

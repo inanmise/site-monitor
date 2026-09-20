@@ -8,7 +8,8 @@ import MultiTeamSelect from '../ui/MultiTeamSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import AdminChangeHistory from './AdminChangeHistory.jsx'
 import UserDetailPanel from './UserDetailPanel.jsx'
-import { Download } from 'lucide-react'
+import { Download, Search, X, SlidersHorizontal } from 'lucide-react'
+import PaginationBar from '../ui/PaginationBar.jsx'
 import { toCsv, downloadCsv, stampedName } from '../../utils/csvExport.js'
 import { formatDateSec } from '../../api/client'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
@@ -80,8 +81,13 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   const [fOrgRole, setFOrgRole] = useState(() => readUrlParam('g_org', ''))
   const [fTeam, setFTeam] = useState(() => readUrlParam('g_team', ''))
   useUrlQuerySync({ g_q: q, g_role: fRole, g_org: fOrgRole, g_team: fTeam, g_dormant: fDormant })
+  // Proje standardı araç çubuğu (2026-09-20): arama kutusu + "Süzgeçler" açılır paneli (envanter ile aynı .invtb dağarcığı);
+  // etkin süzgeç varsa panel açık başlar (derin bağlantıdan gelen kişi süzgeci görsün).
+  const filterActive = !!(fRole || fOrgRole || fTeam || fDormant)
+  const [filtersOpen, setFiltersOpen] = useState(() => !!(readUrlParam('g_role', '') || readUrlParam('g_org', '') || readUrlParam('g_team', '') || readUrlParam('g_dormant', '')))
+  const clearFilters = () => { setQ(''); setFRole(''); setFOrgRole(''); setFTeam(''); setFDormant('') }
   const [page, setPage] = useState(0)
-  const [size, setSize] = useState(20)
+  const [size, setSize] = useState(25)   // PaginationBar seçenekleriyle (25/50/100/200) hizalı
   const [total, setTotal] = useState(0)
   const [activeAdminCount, setActiveAdminCount] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -289,24 +295,40 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
       </div>
       {msg && !modal && !autoResetModal && <div className="alert-msg">{msg}</div>}
 
-      {/* Filtre çubuğu — tek arama kutusu (username/sicil/ad/e-posta) + Rol/Org Rol/Takım */}
-      <div className="audit-filters">
-        <input className="audit-filter-input" placeholder={t('usr.searchPlaceholder')}
-          value={q} onChange={(e) => setQ(e.target.value)} />
-        <SearchableSelect value={fRole} onChange={setFRole} placeholder={t('usr.allRoles')}
-          options={[{ value: '', label: t('usr.allRoles') },
-            ...['ADMIN', 'TEAM_ADMIN', 'USER', 'AUDIT'].map(r => ({ value: r, label: r }))]} />
-        <SearchableSelect value={fOrgRole} onChange={setFOrgRole} placeholder={t('usr.allOrgRoles')}
-          options={[{ value: '', label: t('usr.allOrgRoles') },
-            ...['PO', 'TECH', 'MANAGER', 'BOLUM_BASKANI', 'CLEVEL'].map(r => ({ value: r, label: t('usr.orgRoleVal.' + r) }))]} />
-        {canSeeAllTeams && (
-          <SearchableSelect value={fTeam} onChange={setFTeam} placeholder={t('usr.allTeams')} searchThreshold={2}
-            options={[{ value: '', label: t('usr.allTeams') },
-              ...(teams || []).map(tm => ({ value: String(tm.id), label: tm.name }))]} />
+      {/* Araç çubuğu — proje standardı (.invtb): arama kutusu + Süzgeçler paneli + kayıt sayacı (2026-09-20) */}
+      <div className="invtb um-toolbar" data-testid="um-toolbar">
+        <div className="invtb-row">
+          <label className="invtb-search">
+            <Search size={14} aria-hidden="true" />
+            <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('usr.searchPlaceholder')} aria-label={t('usr.searchLabel')} />
+            {q && <button type="button" className="invtb-clear" onClick={() => setQ('')} aria-label={t('inv.filterClear')}><X size={12} /></button>}
+          </label>
+          <button type="button" className={`btn btn-sm ${filtersOpen || filterActive ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setFiltersOpen((o) => !o)} aria-expanded={filtersOpen}>
+            <SlidersHorizontal size={13} /> {t('inv.filters')}{filterActive ? ` · ${t('inv.filterActive')}` : ''}
+          </button>
+          <span className="invtb-count">{loading ? '…' : t('inv.shownOf', users.length, total)}</span>
+          <div className="invtb-spacer" />
+          {(filterActive || q) && <button type="button" className="btn btn-sm btn-secondary" onClick={clearFilters}>{t('inv.filterClear')}</button>}
+        </div>
+        {filtersOpen && (
+          <div className="invtb-filters" role="group" aria-label={t('inv.filters')}>
+            <label className="invtb-f"><span>{t('usr.colRole')}</span>
+              <SearchableSelect value={fRole} onChange={setFRole} ariaLabel={t('usr.colRole')}
+                options={[{ value: '', label: t('usr.allRoles') }, ...['ADMIN', 'TEAM_ADMIN', 'USER', 'AUDIT'].map(r => ({ value: r, label: r }))]} /></label>
+            <label className="invtb-f"><span>{t('usr.colOrgRole')}</span>
+              <SearchableSelect value={fOrgRole} onChange={setFOrgRole} ariaLabel={t('usr.colOrgRole')}
+                options={[{ value: '', label: t('usr.allOrgRoles') }, ...['PO', 'TECH', 'MANAGER', 'BOLUM_BASKANI', 'CLEVEL'].map(r => ({ value: r, label: t('usr.orgRoleVal.' + r) }))]} /></label>
+            {canSeeAllTeams && (
+              <label className="invtb-f"><span>{t('usr.colTeam')}</span>
+                <SearchableSelect value={fTeam} onChange={setFTeam} ariaLabel={t('usr.colTeam')} searchThreshold={2}
+                  options={[{ value: '', label: t('usr.allTeams') }, ...(teams || []).map(tm => ({ value: String(tm.id), label: tm.name }))]} /></label>
+            )}
+            <label className="invtb-f"><span>{t('usr.colLastLogin')}</span>
+              <SearchableSelect value={fDormant} onChange={setFDormant} ariaLabel={t('usr.colLastLogin')}
+                options={[{ value: '', label: t('usr.dormantAll') }, { value: '30', label: t('usr.dormant30') }, { value: '90', label: t('usr.dormant90') },
+                  { value: '180', label: t('usr.dormant180') }, { value: 'never', label: t('usr.dormantNever') }]} /></label>
+          </div>
         )}
-        <SearchableSelect value={fDormant} onChange={setFDormant} placeholder={t('usr.dormantAll')} ariaLabel={t('usr.colLastLogin')}
-          options={[{ value: '', label: t('usr.dormantAll') }, { value: '30', label: t('usr.dormant30') }, { value: '90', label: t('usr.dormant90') },
-            { value: '180', label: t('usr.dormant180') }, { value: 'never', label: t('usr.dormantNever') }]} />
       </div>
 
       {/* Toplu işlem çubuğu — seçim varken (2026-09-20) */}
@@ -428,18 +450,12 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
         </table>
       </div>
 
-      {/* Sayfa boyutu + sayfalama */}
-      <div className="audit-pagination">
-        <label style={{ marginRight: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-          {t('usr.perPage')}
-          <select className="audit-filter-input" value={size} onChange={(e) => setSize(Number(e.target.value))}>
-            {[20, 50, 100, 200].map(n => <option key={n} value={n}>{n}</option>)}
-          </select>
-        </label>
-        <button disabled={page === 0 || loading} onClick={() => load(page - 1, size)}>{t('app.prevPage')}</button>
-        <span>{t('usr.pageInfo', page + 1, totalPages, total)}</span>
-        <button disabled={page + 1 >= totalPages || loading} onClick={() => load(page + 1, size)}>{t('app.nextPage')}</button>
-      </div>
+      {/* Sayfalama — proje standardı PaginationBar (1 tabanlı; sunucu 0 tabanlı) (2026-09-20) */}
+      {total > 0 && (
+        <PaginationBar page={page + 1} totalPages={totalPages} totalItems={total}
+          rangeStart={page * size + 1} rangeEnd={Math.min((page + 1) * size, total)}
+          pageSize={size} onPageChange={(p) => load(p - 1, size)} onPageSizeChange={(s) => setSize(s)} />
+      )}
 
       {/* Kullanıcı geçmişi yalnız global ADMIN (rol/takım/parola sıfırlama kayıtları kişisel veri taşır). */}
       <AdminChangeHistory resource="USER" filter={histFilter} onClearFilter={() => setHistFilter(null)} canView={isAdmin} />

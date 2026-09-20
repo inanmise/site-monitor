@@ -2197,9 +2197,66 @@ public class AdminController {
         return ok(Map.of("data", team, "message", "Team created"));
     }
 
+    /**
+     * Toplu takım işlemi (2026-09-20, kullanıcı bildirimi): {@code ids} + {@code action}
+     * (activate | deactivate | set_manager | weekly_reminder_on/off | weekly_availability_on/off). Her takım
+     * TEK TEK {@link #applyTeamUpdate} zincirinden geçer (kapsam + izin + TEAM_UPDATE farkı); biri düşerse
+     * diğerleri sürer ve sonuç satır satır döner. Ek denetim: bir TEAM_BULK_UPDATE özeti.
+     */
+    @PostMapping("/teams/bulk")
+    public ResponseEntity<Map<String, Object>> bulkTeams(@RequestBody Map<String, Object> body, HttpSession session,
+                                                         HttpServletRequest request) {
+        requireAdminOrTeamAdmin(session);
+        requirePerm(session, "teams.update", "edit");
+        String action = String.valueOf(body.get("action"));
+        List<Long> ids = new ArrayList<>();
+        if (body.get("ids") instanceof java.util.Collection<?> c) for (Object o : c) { Long v = toLong(o); if (v != null && !ids.contains(v)) ids.add(v); }
+        if (ids.isEmpty()) throw new IllegalArgumentException("ids is required");
+        if (ids.size() > 200) throw new IllegalArgumentException("En fazla 200 takım");
+        Map<String, Object> patch = new LinkedHashMap<>();
+        switch (action) {
+            case "activate" -> patch.put("active", true);
+            case "deactivate" -> patch.put("active", false);
+            case "set_manager" -> {
+                Long managerId = toLong(body.get("manager_id"));
+                if (managerId != null && !userRepo.existsById(managerId)) throw new IllegalArgumentException("Manager user not found: " + managerId);
+                patch.put("manager_id", managerId);   // null = AD zincirine geri dön
+            }
+            case "weekly_reminder_on" -> patch.put("weekly_reminder_enabled", true);
+            case "weekly_reminder_off" -> patch.put("weekly_reminder_enabled", false);
+            case "weekly_availability_on" -> patch.put("weekly_availability_enabled", true);
+            case "weekly_availability_off" -> patch.put("weekly_availability_enabled", false);
+            default -> throw new IllegalArgumentException("Bilinmeyen işlem: " + action);
+        }
+        List<Map<String, Object>> results = new ArrayList<>();
+        int okCount = 0;
+        for (Long id : ids) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", id);
+            try {
+                Team tm = applyTeamUpdate(id, patch, session);
+                row.put("ok", true); row.put("name", tm.getName());
+                okCount++;
+            } catch (RuntimeException e) {
+                row.put("ok", false); row.put("error", e.getMessage());
+            }
+            results.add(row);
+        }
+        auditService.recordAction("TEAM_BULK_UPDATE", session, request, "TEAM", "bulk",
+                AuditDetail.of("action", action, "requested", ids.size(), "ok", okCount, "failed", ids.size() - okCount));
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("ok", okCount); data.put("failed", ids.size() - okCount); data.put("results", results);
+        return ok(Map.of("data", data));
+    }
+
     @PutMapping("/teams/{id}")
     public ResponseEntity<Map<String, Object>> updateTeam(
             @PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+        return ok(Map.of("data", applyTeamUpdate(id, body, session)));
+    }
+
+    /** PUT /teams/{id} gövdesi — toplu işlem de takım başına BUNU çağırır (aynı kapsam/izin zinciri, aynı denetim). */
+    private Team applyTeamUpdate(Long id, Map<String, Object> body, HttpSession session) {
         requireTeamScopedAdmin(session, id);
         requirePerm(session, "teams.update", "edit");
         // ONCEKI durum servis cagrisindan ONCE, ENTITY uzerinden alinir. Eskiden
@@ -2223,7 +2280,7 @@ public class AdminController {
         auditService.recordAction("TEAM_UPDATE", session, "TEAM", id.toString(),
                 AuditDetail.of("name", team.getName()),
                 AuditDiff.diff(teamBefore, AuditDiff.snapshot(team, TEAM_AUDIT_FIELDS)));
-        return ok(Map.of("data", team));
+        return team;
     }
 
     /**

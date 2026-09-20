@@ -210,6 +210,64 @@ class UserActivityServiceEnrichmentTest {
         assertThat(anoms).hasSize(1);
     }
 
+    @Test
+    @DisplayName("Kullanıcı dizini (2026-09-20): login_status satırı e-posta / org rolü / takım id+ek takımlar / sicil / oluşturulma / son görülme / tur / kilit taşır")
+    void loginStatusCarriesDirectoryFields() {
+        AppUser u = user(3, "carol", 5L, true, ISO.format(Instant.now().minus(2, ChronoUnit.DAYS)));
+        u.setEmail("carol@example.com"); u.setOrgRole("TECH"); u.setEmployeeId("E-3"); u.setCreatedAt("2026-01-05T10:00:00");
+        u.setLastSeenAt("2026-09-19T08:00:00"); u.setTeamIds(new LinkedHashSet<>(List.of(5L, 9L))); u.setPermanentLock(true);
+        u.setTitle("Uzman"); u.setDepartment("BT"); u.setAuthSource("LDAP");
+        u.setTourState("{\"status\":\"completed\",\"updated_at\":\"2026-02-01T09:00:00\"}");
+        AppUser v = user(4, "dave", 9L, true, null);   // tur durumu yok → "none"
+        when(userRepo.findAll()).thenReturn(List.of(u, v));
+        Map<String, Object> o = service.getOverview();
+        @SuppressWarnings("unchecked") List<Map<String, Object>> rows = (List<Map<String, Object>>) o.get("login_status");
+        Map<String, Object> carol = rows.stream().filter(r -> "carol".equals(r.get("username"))).findFirst().orElseThrow();
+        assertThat(carol.get("email")).isEqualTo("carol@example.com");
+        assertThat(carol.get("org_role")).isEqualTo("TECH");
+        assertThat(carol.get("team_id")).isEqualTo(5L);
+        assertThat(carol.get("team_ids")).isEqualTo(List.of(5L, 9L));
+        assertThat(carol.get("employee_id")).isEqualTo("E-3");
+        assertThat(carol.get("created_at")).isEqualTo("2026-01-05T10:00:00");
+        assertThat(carol.get("last_seen_at")).isEqualTo("2026-09-19T08:00:00");
+        assertThat(carol.get("permanent_lock")).isEqualTo(true);
+        assertThat(carol.get("title")).isEqualTo("Uzman");
+        assertThat(carol.get("tour_status")).isEqualTo("completed");
+        assertThat(carol.get("tour_at")).isEqualTo("2026-02-01T09:00:00");
+        Map<String, Object> dave = rows.stream().filter(r -> "dave".equals(r.get("username"))).findFirst().orElseThrow();
+        assertThat(dave.get("tour_status")).isEqualTo("none");
+        assertThat(dave.get("team_ids")).isEqualTo(List.of());
+        assertThat(dave.get("permanent_lock")).isEqualTo(false);
+    }
+
+    @Test
+    @DisplayName("Giriş / anomali satırları (2026-09-20): aktör → ad, rol, takım, kimlik kaynağı (büyük/küçük harf duyarsız); bilinmeyen aktörde null")
+    void eventRowsCarryActorTeam() {
+        Instant now = Instant.now();
+        AppUser bob = user(2, "Bob", 9L, true, ISO.format(now)); bob.setDisplayName("Bob Example"); bob.setSystemRole("USER"); bob.setAuthSource("LDAP");
+        when(userRepo.findAll()).thenReturn(List.of(bob));
+        when(auditLogRepo.findLoginEventsSince(any(), any())).thenReturn(List.of(
+                ev(1, "bob", "10.0.0.1", "SUCCESS", 9L, null, now.minusSeconds(60)),
+                ev(2, "bob", "10.0.0.2", "FAILURE", 9L, "UNUSUAL_IP", now.minusSeconds(30)),
+                ev(3, "ghost", "10.0.0.3", "SUCCESS", null, null, now)));
+        Map<String, Object> o = service.getOverview();
+        @SuppressWarnings("unchecked") Map<String, Object> details = (Map<String, Object>) o.get("details");
+        @SuppressWarnings("unchecked") List<Map<String, Object>> logins = (List<Map<String, Object>>) details.get("logins");
+        Map<String, Object> bobRow = logins.stream().filter(r -> "bob".equals(r.get("actor"))).findFirst().orElseThrow();
+        assertThat(bobRow.get("display_name")).isEqualTo("Bob Example");
+        assertThat(bobRow.get("team_name")).isEqualTo("Takım B");
+        assertThat(bobRow.get("team_id")).isEqualTo(9L);
+        assertThat(bobRow.get("system_role")).isEqualTo("USER");
+        assertThat(bobRow.get("auth_source")).isEqualTo("LDAP");
+        Map<String, Object> ghost = logins.stream().filter(r -> "ghost".equals(r.get("actor"))).findFirst().orElseThrow();
+        assertThat(ghost.get("team_name")).isNull();
+        assertThat(ghost.get("display_name")).isNull();
+        @SuppressWarnings("unchecked") List<Map<String, Object>> recent = (List<Map<String, Object>>) ((Map<?, ?>) o.get("anomalies")).get("recent");
+        assertThat(recent).hasSize(1);
+        assertThat(recent.get(0).get("team_name")).isEqualTo("Takım B");
+        assertThat(recent.get(0).get("user_id")).isEqualTo(2L);
+    }
+
     private static Map<String, Object> row(String day, String user, String tab, long pings) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("day", day); m.put("username", user); m.put("tab", tab); m.put("pings", pings); m.put("first_seen", day + "T08:00:00"); m.put("last_seen", day + "T09:00:00");

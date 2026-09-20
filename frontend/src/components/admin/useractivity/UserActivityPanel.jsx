@@ -17,6 +17,7 @@ import DateTimeRangePicker from '../../ui/DateTimeRangePicker.jsx'
 import { Spinner } from '../../ui/Progress.jsx'
 import LoginHeatmap from '../LoginHeatmap'
 import { SessionDetailModal, HeatCellModal, KpiDetailModal, TerminateModal, AckModal } from './UactModals.jsx'
+import UserDirectoryModal from './UserDirectoryModal.jsx'
 import {
   EMPTY_FILTERS, filtersToParams, paramsToFilters, hasActiveFilter, rowMatches, tabLabel, unusedTabs, idleBand, loginStatus,
   relTime, splitDuration, failedTone, failedRatio, sparkFrom, deltaVsAvg, isOffHourCell, FLAG_KEYS, splitFlags, sortRows,
@@ -49,6 +50,7 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
   const [heatCell, setHeatCell] = useState(null)
   const [kpiDetail, setKpiDetail] = useState(null)
   const [sessionDetail, setSessionDetail] = useState(null)
+  const [directory, setDirectory] = useState(null)     // Kullanıcı Dizini (2026-09-20): { view, tour }
   const [terminate, setTerminate] = useState(null)      // { username }
   const [ackTarget, setAckTarget] = useState(null)      // anomali satırı
   const [glossaryOpen, setGlossaryOpen] = useState(false)
@@ -183,7 +185,7 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
           <span className="uact-hero-stamp">{t('uact.dataAsOf', ua.generated_at ? formatDateSec(ua.generated_at) : '—')} · {winLabel}</span>
         </div>
         <div className="uact-hero-actions">
-          <button type="button" className="uact-hero-live" onClick={() => setKpiDetail({ kind: 'active', title: t('uact.activeListTitle') })} title={t('uact.activeCardHint')}>
+          <button type="button" className="uact-hero-live" onClick={() => setDirectory({ view: 'all' })} title={t('uact.activeCardHint')}>
             <span className="uact-hero-dot" />{sum.active_count ?? 0} {t('uact.activeNow')}
           </button>
           <button type="button" className="uact-hero-btn" onClick={onRefresh} disabled={refreshing} title={t('uact.refresh')} aria-label={t('uact.refresh')}>
@@ -219,8 +221,8 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
       {/* 01 KPI trend kartları (#4, #5) */}
       <div className="uact-kpi-grid uact-kpi-grid--6 uact-kpi-grid--tour">
         {/* Ürün turu (2026-09-13): tamamladı / kapattı / hiç görmedi */}
-        {kpi('tour', Compass, sum.tour?.completed ?? 0, t('uact.tourKpi'), t('uact.tourKpiSub', sum.tour?.dismissed ?? 0, sum.tour?.none ?? 0), undefined, null)}
-        {kpi('active', Users, sum.active_count ?? 0, t('uact.activeNow'), t('uact.kpiLive'), 'ok', () => setKpiDetail({ kind: 'active', title: t('uact.activeListTitle') }))}
+        {kpi('tour', Compass, sum.tour?.completed ?? 0, t('uact.tourKpi'), t('uact.tourKpiSub', sum.tour?.dismissed ?? 0, sum.tour?.none ?? 0), undefined, () => setDirectory({ tour: 'completed' }))}
+        {kpi('active', Users, sum.active_count ?? 0, t('uact.activeNow'), t('uact.kpiLive'), 'ok', () => setDirectory({ view: 'all' }))}
         {kpi('logins', LogIn, pick('logins_24h', 'logins_7d'), t('uact.logins'), t('uact.kpi7d', sum.logins_7d ?? 0), undefined, () => setKpiDetail({ kind: 'logins', title: t('uact.logins') }), sparkFrom(ua.series, 'success'), deltaVsAvg(ua.series, 'success'))}
         {kpi('failed', XCircle, pick('failed_24h', 'failed_7d'), t('uact.failedLbl'), t('uact.failedRatio', failedRatio(pick('failed_24h', 'failed_7d'), pick('logins_24h', 'logins_7d'))), failedT === 'neutral' ? undefined : failedT, () => setKpiDetail({ kind: 'failed', title: t('uact.failedLbl') }), sparkFrom(ua.series, 'failed'), deltaVsAvg(ua.series, 'failed'))}
         {kpi('anom', ShieldAlert, pick('anomalies_24h', 'anomalies_7d'), t('uact.anomalies'), t('uact.unackedSub', anomalies.unacked_recent ?? 0), (anomalies.unacked_recent ?? 0) > 0 ? 'danger' : undefined, () => setKpiDetail({ kind: 'anomalies', title: t('uact.anomalies') }))}
@@ -323,11 +325,11 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
           <div className="uact-usage">
             <div className="health-table-wrap">
               <table className="health-dbtable uact-table">
-                <thead><tr><th className="dbtcol-th">{t('uact.colPage')}</th><th className="dbtcol-th dbtcol-th-num">{t('uact.colMinutes')}</th><th className="dbtcol-th dbtcol-th-num">{t('uact.colUsers')}</th><th className="dbtcol-th">{t('uact.colShare')}</th><th className="dbtcol-th">{t('uact.colLastSeen')}</th></tr></thead>
+                <thead><tr><th className="dbtcol-th">{t('uact.colPage')}</th><th className="dbtcol-th dbtcol-th-num">{t('uact.colMinutes')}</th><th className="dbtcol-th dbtcol-th-num">{t('uact.colUsers')}</th><th className="dbtcol-th uact-th-share">{t('uact.colShare')}</th><th className="dbtcol-th uact-th-seen">{t('uact.colLastSeen')}</th></tr></thead>
                 <tbody>{usage.pages.map((p) => (
                   <tr key={p.tab}><td data-label={t('uact.colPage')}>{tabLabel(p.tab, t)} <span className="sys-muted sys-small sys-mono">{p.tab}</span></td><td data-label={t('uact.colMinutes')} className="dbtcol-num-cell">{p.minutes}</td><td data-label={t('uact.colUsers')} className="dbtcol-num-cell">{p.users}</td>
-                    <td data-label={t('uact.colShare')}><span className="uact-bar" style={{ '--w': `${Math.min(100, p.share)}%` }}><span className="uact-bar-fill" /><span className="uact-bar-lbl">{p.share}%</span></span></td>
-                    <td data-label={t('uact.colLastSeen')} className="sys-small">{p.last_seen ? rel(p.last_seen) : '—'}</td></tr>
+                    <td data-label={t('uact.colShare')} className="uact-share-cell"><span className="uact-share"><span className="uact-bar" style={{ '--w': `${Math.min(100, p.share)}%` }}><span className="uact-bar-fill" /></span><span className="uact-share-lbl">{p.share}%</span></span></td>
+                    <td data-label={t('uact.colLastSeen')} className="sys-small uact-seen-cell">{p.last_seen ? <span title={formatDateSec(p.last_seen)}>{rel(p.last_seen)}</span> : '—'}</td></tr>
                 ))}</tbody>
               </table>
             </div>
@@ -356,10 +358,11 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
         {loginRows.length === 0 ? <StatusBlock tone="neutral" icon={Users} title={t('uact.noRows')} /> : (
           <div className="health-table-wrap uact-table-wrap">
             <table className="health-dbtable uact-table">
-              <thead><tr><th className="dbtcol-th">{t('uact.colUser')}</th><th className="dbtcol-th">{t('uact.colStatus')}</th><th className="dbtcol-th">{t('uact.colLastLogin')}</th><th className="dbtcol-th">{t('uact.detailLoginMethod')}</th><th className="dbtcol-th dbtcol-th-num">{t('uact.colFailedCount')}</th><th className="dbtcol-th">{t('uact.colAction')}</th></tr></thead>
+              <thead><tr><th className="dbtcol-th">{t('uact.colUser')}</th><th className="dbtcol-th">{t('uact.colTeam')}</th><th className="dbtcol-th">{t('uact.colStatus')}</th><th className="dbtcol-th">{t('uact.colLastLogin')}</th><th className="dbtcol-th">{t('uact.detailLoginMethod')}</th><th className="dbtcol-th dbtcol-th-num">{t('uact.colFailedCount')}</th><th className="dbtcol-th">{t('uact.colAction')}</th></tr></thead>
               <tbody>{loginRows.map((r) => (
                 <tr key={r.username} className="uact-row">
-                  <td data-label={t('uact.colUser')}><UserBadge username={r.username} userId={r.user_id} displayName={r.display_name} /></td>
+                  <td data-label={t('uact.colUser')}><UserBadge username={r.username} userId={r.user_id} displayName={r.display_name} />{r.system_role && <span className="uact-pill">{r.system_role}</span>}</td>
+                  <td data-label={t('uact.colTeam')}>{r.team_name ? <TeamBadge teamId={r.team_id} teamName={r.team_name} /> : '—'}</td>
                   <td data-label={t('uact.colStatus')}><span className={`uact-pill uact-st--${r.status}`}>{t(`uact.st.${r.status}`)}</span></td>
                   <td data-label={t('uact.colLastLogin')} className="sys-small">{r.last_login_at ? <span title={formatDateSec(r.last_login_at)}>{rel(r.last_login_at)}</span> : '—'}</td>
                   <td data-label={t('uact.detailLoginMethod')} className="sys-small">{r.last_login_method || '—'}</td>
@@ -447,11 +450,12 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
         {(anomalies.recent || []).length === 0 ? <StatusBlock tone="success" icon={Check} title={t('uact.noAnomalies')} /> : (
           <div className="health-table-wrap uact-table-wrap">
             <table className="health-dbtable uact-table">
-              <thead><tr><th className="dbtcol-th">{t('uact.colTime')}</th><th className="dbtcol-th">{t('uact.colUser')}</th><th className="dbtcol-th">{t('uact.colIp')}</th><th className="dbtcol-th">{t('uact.colFlags')}</th><th className="dbtcol-th">{t('uact.colOutcome')}</th><th className="dbtcol-th">{t('uact.ackCol')}</th></tr></thead>
+              <thead><tr><th className="dbtcol-th">{t('uact.colTime')}</th><th className="dbtcol-th">{t('uact.colUser')}</th><th className="dbtcol-th">{t('uact.colTeam')}</th><th className="dbtcol-th">{t('uact.colIp')}</th><th className="dbtcol-th">{t('uact.colFlags')}</th><th className="dbtcol-th">{t('uact.colOutcome')}</th><th className="dbtcol-th">{t('uact.ackCol')}</th></tr></thead>
               <tbody>{anomalies.recent.map((r, i) => (
                 <tr key={r.id ?? i} className={`uact-row${r.ack ? ' is-acked' : ''}`}>
                   <td data-label={t('uact.colTime')} className="sys-mono sys-small">{r.time ? formatDateSec(r.time) : '—'}</td>
-                  <td data-label={t('uact.colUser')}>{r.actor ? <button type="button" className="uact-link" onClick={() => setSessionDetail({ username: r.actor })}><UserBadge username={r.actor} inline size="sm" /></button> : '—'}</td>
+                  <td data-label={t('uact.colUser')}>{r.actor ? <button type="button" className="uact-link" onClick={() => setSessionDetail({ username: r.actor })}><UserBadge username={r.actor} userId={r.user_id} displayName={r.display_name} inline size="sm" /></button> : '—'}{r.system_role && <span className="uact-pill">{r.system_role}</span>}</td>
+                  <td data-label={t('uact.colTeam')}>{r.team_name ? <TeamBadge teamId={r.team_id} teamName={r.team_name} /> : <span className="sys-muted">—</span>}</td>
                   <td data-label={t('uact.colIp')} className="sys-mono sys-small">{r.ip || '—'}{r.city || r.country ? <span className="sys-muted"> {[r.city, r.country].filter(Boolean).join(', ')}</span> : null}</td>
                   <td data-label={t('uact.colFlags')}>{splitFlags(r.flags).map((f) => <span key={f} className="uact-flag" title={t(`uact.flagHelp.${f}`)}>{t(`uact.anom_${f}`)}</span>)}</td>
                   <td data-label={t('uact.colOutcome')} className="sys-small">{r.outcome === 'SUCCESS' ? <span className="sys-ok-text">{r.outcome}</span> : <span className="sys-err-text">{r.outcome || '—'}</span>}{r.reason ? <span className="sys-muted"> · {r.reason}</span> : null}</td>
@@ -467,9 +471,11 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
 
       {heatCell && <HeatCellModal cell={heatCell} onClose={() => setHeatCell(null)} onUser={(u) => setSessionDetail({ username: u })} />}
       {kpiDetail && <KpiDetailModal detail={kpiDetail} data={ua} onClose={() => setKpiDetail(null)} onUser={(row) => setSessionDetail(row)} winLabel={winLabel} />}
+      {directory && <UserDirectoryModal data={ua} initial={directory} isAdmin={isAdmin} globalAdmin={globalAdmin} username={username} onClose={() => setDirectory(null)}
+        onUser={(row) => setSessionDetail(row)} onTerminate={(u) => setTerminate({ username: u })} onRefresh={onRefresh} />}
       {sessionDetail && <SessionDetailModal row={sessionDetail} full={activeAll.find((u) => String(u.username).toLowerCase() === String(sessionDetail.username).toLowerCase()) || (ua.login_status || []).find((u) => String(u.username).toLowerCase() === String(sessionDetail.username).toLowerCase()) || sessionDetail}
         isAdmin={isAdmin} globalAdmin={globalAdmin} self={username && String(sessionDetail.username).toLowerCase() === String(username).toLowerCase()} activeSet={activeSet}
-        onClose={() => setSessionDetail(null)} onTerminate={(u) => setTerminate({ username: u })} onAck={doAck} ackBusy={ackBusy} />}
+        onClose={() => setSessionDetail(null)} onTerminate={(u) => setTerminate({ username: u })} onAck={doAck} ackBusy={ackBusy} onRefresh={onRefresh} teams={ua.role_team?.by_team || []} />}
       {terminate && <TerminateModal target={terminate.username} busy={busyUser === terminate.username} onClose={() => setTerminate(null)} onConfirm={(reason) => doTerminate(terminate.username, reason)} />}
       {ackTarget && <AckModal row={ackTarget} busy={ackBusy === ackTarget.id} onClose={() => setAckTarget(null)} onConfirm={(note) => doAck(ackTarget, true, note)} />}
     </div>

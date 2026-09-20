@@ -328,6 +328,8 @@ class NotificationGroupServiceTest {
             assertThat(dto.get("emails")).isEqualTo(List.of("a@example.com", "b@example.com"));
             assertThat(dto.get("is_default")).isEqualTo(true);
             assertThat(dto.get("active")).isEqualTo(true);
+            // 2026-09-20: oluşturan / güncelleyen anahtarları DTO'da (null olsa da) var — liste sütunu buna bağlı
+            assertThat(dto).containsKeys("created_by", "created_by_name", "updated_by", "updated_by_name", "created_at", "updated_at");
         }
 
         @Test

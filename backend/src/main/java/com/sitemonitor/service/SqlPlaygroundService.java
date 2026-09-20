@@ -352,7 +352,165 @@ public class SqlPlaygroundService {
 
         try { out.put("activity", tableActivity(tableName)); } catch (Exception e) { out.put("activity", Map.of()); }
 
+        enrichTableDetails(tableName, out, cols);
         return out;
+    }
+
+    /**
+     * Şema detayı zenginleştirmesi (2026-09-20, kullanıcı bildirimi: "sayfa çok basic"): tablo/kolon
+     * açıklamaları, kolon istatistikleri (pg_stats: NULL oranı, ayrık değer, ort. genişlik), kısıtların
+     * YAPISAL hali (kolonlar, hedef tablo/kolon, ON DELETE/UPDATE), bu tabloya bakan FK'ler, çıkarım
+     * ilişkileri (*_id kolonları — {@link #relationships()} ile aynı kural), indeks kullanım/boyut
+     * (pg_stat_user_indexes), tarama sayaçları (seq/idx scan, ölü satır). Her sorgu {@code safeQuery}:
+     * katalog izni yoksa ilgili alan boş kalır, ekran düşmez.
+     */
+    @SuppressWarnings("unchecked")
+    private void enrichTableDetails(String tableName, Map<String, Object> out, List<Map<String, Object>> cols) {
+        List<Map<String, Object>> tc = safeQuery(
+            "SELECT obj_description(c.oid, 'pg_class') AS comment, c.relkind::text AS relkind, "
+          + "c.reltuples::bigint AS reltuples, c.relhasindex AS has_index "
+          + "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname='public' AND c.relname = ?", tableName);
+        out.put("comment", tc.isEmpty() ? null : tc.get(0).get("comment"));
+
+        // kolon açıklamaları + istatistikleri → columns satırlarına birleşir
+        Map<String, Map<String, Object>> byCol = new LinkedHashMap<>();
+        for (Map<String, Object> c : cols) byCol.put(str(c.get("column_name")), c);
+        for (Map<String, Object> r : safeQuery(
+            "SELECT a.attname AS column_name, col_description(a.attrelid, a.attnum) AS comment, a.attidentity::text AS identity "
+          + "FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace "
+          + "WHERE n.nspname='public' AND c.relname = ? AND a.attnum > 0 AND NOT a.attisdropped", tableName)) {
+            Map<String, Object> c = byCol.get(str(r.get("column_name")));
+            if (c == null) continue;
+            c.put("comment", r.get("comment"));
+            String ident = str(r.get("identity"));
+            c.put("is_identity", ident != null && !ident.isBlank());
+        }
+        for (Map<String, Object> r : safeQuery(
+            "SELECT attname AS column_name, null_frac, n_distinct, avg_width FROM pg_stats WHERE schemaname='public' AND tablename = ?", tableName)) {
+            Map<String, Object> c = byCol.get(str(r.get("column_name")));
+            if (c == null) continue;
+            c.put("null_frac", r.get("null_frac"));
+            c.put("n_distinct", r.get("n_distinct"));
+            c.put("avg_width", r.get("avg_width"));
+        }
+
+        // kısıtlar (yapısal): kolonlar, hedef tablo/kolon, eylemler
+        List<Map<String, Object>> constraints = new ArrayList<>();
+        Set<String> pk = new LinkedHashSet<>(), uq = new LinkedHashSet<>(), fkCols = new LinkedHashSet<>();
+        for (Map<String, Object> r : safeQuery(
+            "SELECT con.conname AS name, con.contype::text AS contype, pg_get_constraintdef(con.oid) AS definition, "
+          + "array_to_string(ARRAY(SELECT a.attname FROM unnest(con.conkey) k JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k), ',') AS columns, "
+          + "fr.relname AS ref_table, "
+          + "array_to_string(ARRAY(SELECT a.attname FROM unnest(con.confkey) k JOIN pg_attribute a ON a.attrelid = con.confrelid AND a.attnum = k), ',') AS ref_columns, "
+          + "con.confdeltype::text AS on_delete, con.confupdtype::text AS on_update "
+          + "FROM pg_constraint con JOIN pg_class rel ON rel.oid = con.conrelid JOIN pg_namespace ns ON ns.oid = rel.relnamespace "
+          + "LEFT JOIN pg_class fr ON fr.oid = con.confrelid "
+          + "WHERE ns.nspname='public' AND rel.relname = ? ORDER BY con.contype, con.conname", tableName)) {
+            String type = switch (String.valueOf(r.get("contype"))) {
+                case "p" -> "PRIMARY KEY"; case "f" -> "FOREIGN KEY"; case "u" -> "UNIQUE"; case "c" -> "CHECK"; case "x" -> "EXCLUDE";
+                default -> String.valueOf(r.get("contype"));
+            };
+            List<String> columns = splitCsv(str(r.get("columns")));
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("name", r.get("name")); m.put("type", type); m.put("definition", r.get("definition"));
+            m.put("columns", columns);
+            if ("FOREIGN KEY".equals(type)) {
+                m.put("ref_table", r.get("ref_table"));
+                m.put("ref_columns", splitCsv(str(r.get("ref_columns"))));
+                m.put("on_delete", fkAction(str(r.get("on_delete"))));
+                m.put("on_update", fkAction(str(r.get("on_update"))));
+                fkCols.addAll(columns);
+            }
+            if ("PRIMARY KEY".equals(type)) pk.addAll(columns);
+            if ("UNIQUE".equals(type)) uq.addAll(columns);
+            constraints.add(m);
+        }
+        if (!constraints.isEmpty()) out.put("constraints", constraints);   // eski liste aynı anahtar — zenginleşmiş hali
+
+        // bu tabloya bakan FK'ler
+        out.put("referenced_by", safeQuery(
+            "SELECT con.conname AS name, rel.relname AS from_table, "
+          + "array_to_string(ARRAY(SELECT a.attname FROM unnest(con.conkey) k JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k), ',') AS from_columns, "
+          + "con.confdeltype::text AS on_delete "
+          + "FROM pg_constraint con JOIN pg_class rel ON rel.oid = con.conrelid JOIN pg_class fr ON fr.oid = con.confrelid "
+          + "JOIN pg_namespace ns ON ns.oid = fr.relnamespace WHERE con.contype = 'f' AND ns.nspname='public' AND fr.relname = ? "
+          + "ORDER BY rel.relname", tableName).stream().map(r -> {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("name", r.get("name")); m.put("from_table", r.get("from_table"));
+                m.put("from_columns", splitCsv(str(r.get("from_columns")))); m.put("on_delete", fkAction(str(r.get("on_delete"))));
+                return m;
+            }).toList());
+
+        // çıkarım ilişkileri (şemada gerçek FK az; *_id kolon adından)
+        List<Map<String, Object>> inferred = new ArrayList<>();
+        try {
+            for (Map<String, Object> e : (List<Map<String, Object>>) relationships().get("edges")) {
+                if (!Boolean.TRUE.equals(e.get("inferred"))) continue;
+                if (tableName.equals(e.get("from")) || tableName.equals(e.get("to"))) inferred.add(e);
+            }
+        } catch (Exception ignored) { /* ilişkisiz devam */ }
+        out.put("inferred_relations", inferred);
+
+        // indeks kullanım + boyut → indexes satırlarına birleşir; kolon rozetleri için indeks kolonları
+        Map<String, Map<String, Object>> ixStats = new LinkedHashMap<>();
+        for (Map<String, Object> r : safeQuery(
+            "SELECT i.indexrelname AS name, i.idx_scan, i.idx_tup_read, pg_size_pretty(pg_relation_size(i.indexrelid)) AS size, "
+          + "pg_relation_size(i.indexrelid) AS size_bytes, "
+          + "array_to_string(ARRAY(SELECT a.attname FROM unnest(x.indkey) WITH ORDINALITY AS k(attnum, ord) "
+          + "JOIN pg_attribute a ON a.attrelid = x.indrelid AND a.attnum = k.attnum ORDER BY k.ord), ',') AS columns, x.indisprimary AS is_primary "
+          + "FROM pg_stat_user_indexes i JOIN pg_index x ON x.indexrelid = i.indexrelid WHERE i.schemaname='public' AND i.relname = ?", tableName)) {
+            ixStats.put(str(r.get("name")), r);
+        }
+        Set<String> indexedCols = new LinkedHashSet<>();
+        List<Map<String, Object>> ixs = (List<Map<String, Object>>) out.get("indexes");
+        if (ixs != null) for (Map<String, Object> ix : ixs) {
+            Map<String, Object> s = ixStats.get(str(ix.get("name")));
+            if (s == null) continue;
+            ix.put("scans", s.get("idx_scan")); ix.put("tup_read", s.get("idx_tup_read"));
+            ix.put("size", s.get("size")); ix.put("size_bytes", s.get("size_bytes"));
+            ix.put("is_primary", Boolean.TRUE.equals(s.get("is_primary")));
+            List<String> icols = splitCsv(str(s.get("columns")));
+            ix.put("columns", icols);
+            if (!icols.isEmpty()) indexedCols.add(icols.get(0));   // yalnız öncü kolon "indeksli" sayılır
+        }
+        for (Map<String, Object> c : cols) {
+            String n = str(c.get("column_name"));
+            c.put("is_pk", pk.contains(n)); c.put("is_fk", fkCols.contains(n)); c.put("is_unique", uq.contains(n)); c.put("is_indexed", indexedCols.contains(n) || pk.contains(n));
+        }
+
+        // tarama sayaçları
+        List<Map<String, Object>> scan = safeQuery(
+            "SELECT seq_scan, seq_tup_read, idx_scan, idx_tup_fetch, n_dead_tup, n_mod_since_analyze, "
+          + "last_vacuum, last_autovacuum, last_analyze, last_autoanalyze "
+          + "FROM pg_stat_user_tables WHERE schemaname='public' AND relname = ?", tableName);
+        if (!scan.isEmpty()) {
+            Map<String, Object> s = scan.get(0);
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("seq_scan", s.get("seq_scan")); m.put("seq_tup_read", s.get("seq_tup_read"));
+            m.put("idx_scan", s.get("idx_scan")); m.put("idx_tup_fetch", s.get("idx_tup_fetch"));
+            m.put("dead_rows", s.get("n_dead_tup")); m.put("mod_since_analyze", s.get("n_mod_since_analyze"));
+            m.put("last_vacuum", SchemaTableRegistryService.iso(s.get("last_vacuum")));
+            m.put("last_autovacuum", SchemaTableRegistryService.iso(s.get("last_autovacuum")));
+            m.put("last_analyze", SchemaTableRegistryService.iso(s.get("last_analyze")));
+            m.put("last_autoanalyze", SchemaTableRegistryService.iso(s.get("last_autoanalyze")));
+            out.put("stats", m);
+        }
+    }
+
+    private static List<String> splitCsv(String s) {
+        if (s == null || s.isBlank()) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String p : s.split(",")) if (!p.isBlank()) out.add(p.trim());
+        return out;
+    }
+
+    /** pg_constraint confdeltype/confupdtype harfi → okunur eylem. */
+    static String fkAction(String code) {
+        if (code == null) return null;
+        return switch (code) {
+            case "a" -> "NO ACTION"; case "r" -> "RESTRICT"; case "c" -> "CASCADE"; case "n" -> "SET NULL"; case "d" -> "SET DEFAULT";
+            default -> code;
+        };
     }
 
     /**

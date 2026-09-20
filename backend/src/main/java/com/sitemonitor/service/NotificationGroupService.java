@@ -323,6 +323,10 @@ public class NotificationGroupService {
         m.put("created_at", g.getCreatedAt());
         m.put("updated_at", g.getUpdatedAt());
         m.put("updated_by_name", g.getUpdatedByName());
+        // 2026-09-20 (kullanıcı bildirimi): kim oluşturdu / kim güncelledi listede görünsün
+        m.put("created_by", g.getCreatedBy());
+        m.put("created_by_name", g.getCreatedByName());
+        m.put("updated_by", g.getUpdatedBy());
         return m;
     }
 

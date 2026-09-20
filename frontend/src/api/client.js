@@ -871,6 +871,7 @@ export const api = {
     bulkUsers: (body) => request('/admin/users/bulk', { method: 'POST', body: JSON.stringify(body) }),
     // Takım sayaçları / etki / taşıma / üyelik (2026-09-20)
     teamStats: () => request('/admin/teams/stats'),
+    bulkTeams: (body) => request('/admin/teams/bulk', { method: 'POST', body: JSON.stringify(body) }),   // toplu takım işlemi (2026-09-20)
     teamImpact: (id) => request(`/admin/teams/${id}/impact`),
     teamMove: (id, targetTeamId) => request(`/admin/teams/${id}/move`, { method: 'POST', body: JSON.stringify({ target_team_id: targetTeamId }) }),
     addTeamMember: (id, userId) => request(`/admin/teams/${id}/members`, { method: 'POST', body: JSON.stringify({ user_id: userId }) }),
