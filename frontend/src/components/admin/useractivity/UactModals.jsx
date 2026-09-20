@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react'
-import { Users, ShieldAlert, Clock, Eye, LogOut, Check, UserX } from 'lucide-react'
+import { Users, ShieldAlert, Clock, Eye, LogOut, Check, UserX, Compass, ExternalLink, UserCog } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import { api, formatDateSec } from '../../../api/client'
 import ModalShell from '../../ui/ModalShell.jsx'
 import TeamBadge from '../../ui/TeamBadge.jsx'
 import UserBadge from '../../ui/UserBadge.jsx'
 import AlertBanner from '../../ui/AlertBanner.jsx'
+import UserDetailPanel from '../UserDetailPanel.jsx'
+import { useToast } from '../../ui/Toast.jsx'
+import { navigateTo } from '../../../utils/navigate.js'
 import { splitFlags, relTime, splitDuration, tabLabel, loginStatus } from './uactModel.js'
 
 /** Kullanıcı / Oturum paneli modalları (2026-09-13). Hepsi ModalShell (odak tuzağı, Escape, scroll kilidi). */
@@ -68,6 +71,13 @@ export function KpiDetailModal({ detail, data, onClose, onUser, winLabel }) {
   const isUsers = kind === 'unique_users', isDormant = kind === 'dormant', isActive = kind === 'active'
   const isFailed = kind === 'failed', isAnom = kind === 'anomalies'
   const rel = (iso) => { const r = relTime(iso); return r ? t(`uact.rel.${r.unit}`, r.n) : '—' }
+  // 2026-09-20: giriş / anomali / tekil kullanıcı satırlarında ad + rol + takım (olay satırı taşımıyorsa login_status'tan)
+  const byName = new Map((data.login_status || []).map((u) => [String(u.username || '').toLowerCase(), u]))
+  const who = (name, r = {}) => { const u = byName.get(String(name || '').toLowerCase()) || {}; return { ...u, ...Object.fromEntries(Object.entries(r).filter(([, v]) => v != null)) } }
+  const userCell = (name, r) => { const u = who(name, r); return name
+    ? <><button type="button" className="uact-link" onClick={() => onUser?.({ username: name, ...u })}><UserBadge username={name} userId={u.user_id} displayName={u.display_name} inline size="sm" /></button>{u.system_role && <span className="uact-pill">{u.system_role}</span>}</>
+    : '—' }
+  const teamCell = (name, r) => { const u = who(name, r); return u.team_name ? <TeamBadge teamId={u.team_id} teamName={u.team_name} /> : <span className="sys-muted">—</span> }
   return (
     <ModalShell open onClose={onClose} title={`${detail.title} · ${rows.length}`} icon={isDormant ? UserX : isAnom ? ShieldAlert : Users} size="lg">
       <p className="field-hint">{isDormant ? t('uact.dormantHint') : isActive ? t('uact.kpiLive') : winLabel}</p>
@@ -90,14 +100,16 @@ export function KpiDetailModal({ detail, data, onClose, onUser, winLabel }) {
                   <td className="sys-small">{u.auth_source || '—'}</td></tr>
               ))}</tbody>
             </>) : isUsers ? (<>
-              <thead><tr><th className="dbtcol-th">{t('uact.colUser')}</th><th className="dbtcol-th dbtcol-th-num">{t('uact.colLogins')}</th><th className="dbtcol-th">{t('uact.colLastLogin')}</th></tr></thead>
-              <tbody>{rows.map((r, i) => <tr key={i}><td><button type="button" className="uact-link" onClick={() => onUser?.({ username: r.username })}><UserBadge username={r.username} inline size="sm" /></button></td><td className="dbtcol-num-cell">{r.logins}</td><td className="sys-mono sys-small">{r.last_login ? formatDateSec(r.last_login) : '—'}</td></tr>)}</tbody>
+              <thead><tr><th className="dbtcol-th">{t('uact.colUser')}</th><th className="dbtcol-th">{t('uact.colTeam')}</th><th className="dbtcol-th">{t('uact.colAuthSource')}</th><th className="dbtcol-th dbtcol-th-num">{t('uact.colLogins')}</th><th className="dbtcol-th">{t('uact.colLastLogin')}</th></tr></thead>
+              <tbody>{rows.map((r, i) => <tr key={i}><td>{userCell(r.username)}</td><td>{teamCell(r.username)}</td><td className="sys-small">{who(r.username).auth_source || '—'}</td><td className="dbtcol-num-cell">{r.logins}</td><td className="sys-mono sys-small">{r.last_login ? formatDateSec(r.last_login) : '—'}</td></tr>)}</tbody>
             </>) : (<>
-              <thead><tr><th className="dbtcol-th">{t('uact.colTime')}</th><th className="dbtcol-th">{t('uact.colUser')}</th><th className="dbtcol-th">{t('uact.colIp')}</th>{isAnom && <th className="dbtcol-th">{t('uact.colFlags')}</th>}{(isFailed || isAnom) && <th className="dbtcol-th">{t('uact.colOutcome')}</th>}{isFailed && <th className="dbtcol-th">{t('uact.colReason')}</th>}</tr></thead>
+              <thead><tr><th className="dbtcol-th">{t('uact.colTime')}</th><th className="dbtcol-th">{t('uact.colUser')}</th><th className="dbtcol-th">{t('uact.colTeam')}</th><th className="dbtcol-th">{t('uact.colIp')}</th>{!isAnom && <th className="dbtcol-th">{t('uact.colBrowser')}</th>}{isAnom && <th className="dbtcol-th">{t('uact.colFlags')}</th>}{(isFailed || isAnom) && <th className="dbtcol-th">{t('uact.colOutcome')}</th>}{isFailed && <th className="dbtcol-th">{t('uact.colReason')}</th>}</tr></thead>
               <tbody>{rows.map((r, i) => (
                 <tr key={i}><td className="sys-mono sys-small">{r.time ? formatDateSec(r.time) : '—'}</td>
-                  <td>{r.actor ? <button type="button" className="uact-link" onClick={() => onUser?.({ username: r.actor })}><UserBadge username={r.actor} inline size="sm" /></button> : '—'}</td>
+                  <td>{userCell(r.actor, r)}</td>
+                  <td>{teamCell(r.actor, r)}</td>
                   <td className="sys-mono sys-small">{r.ip || '—'} <span className="sys-muted">{loc(r)}</span></td>
+                  {!isAnom && <td className="sys-small">{r.user_agent ? `${shortUa(r.user_agent)}${osOf(r.user_agent) ? ' · ' + osOf(r.user_agent) : ''}` : '—'}</td>}
                   {isAnom && <td>{splitFlags(r.flags).map((f) => <span key={f} className="uact-flag">{t(`uact.anom_${f}`)}</span>)}</td>}
                   {(isFailed || isAnom) && <td className="sys-small">{r.outcome === 'SUCCESS' ? <span className="sys-ok-text">{r.outcome}</span> : <span className="sys-err-text">{r.outcome || '—'}</span>}</td>}
                   {isFailed && <td className="sys-small">{r.reason || '—'}</td>}</tr>
@@ -111,9 +123,23 @@ export function KpiDetailModal({ detail, data, onClose, onUser, winLabel }) {
 }
 
 /** Oturum / kullanıcı detayı: kimlik (gizlilik #14), oturum, giriş geçmişi, kaynak, 30 günlük zaman çizelgesi (#3). */
-export function SessionDetailModal({ row, full, isAdmin, globalAdmin, self, activeSet, onClose, onTerminate, onAck, ackBusy }) {
+export function SessionDetailModal({ row, full, isAdmin, globalAdmin, self, activeSet, onClose, onTerminate, onAck, ackBusy, onRefresh, teams = [] }) {
   const t = useT()
+  const toast = useToast()
   const u = full || row
+  // 2026-09-20: hesap bölümü (oluşturulma, kilit, ünvan/departman, tur), takım üyelikleri, tam kullanıcı kartı + eylemler
+  const [fullCard, setFullCard] = useState(false)
+  const [tourBusy, setTourBusy] = useState(false)
+  const teamList = (teams || []).map((x) => ({ id: x.team_id ?? x.id, name: x.team_name ?? x.name })).filter((x) => x.id != null && x.name)
+  const extraTeams = (u.team_ids || []).filter((id) => String(id) !== String(u.team_id ?? ''))
+  async function resetTour() {
+    if (u.user_id == null) return
+    setTourBusy(true)
+    try {
+      const r = await api.admin.resetUserTour(u.user_id)
+      if (r?.success === false) toast.error(r?.error || t('usr.tourResetFailed')); else { toast.success(t('usr.tourResetDone')); onRefresh?.() }
+    } catch (e) { toast.error(e?.message || t('usr.tourResetFailed')) } finally { setTourBusy(false) }
+  }
   const [timeline, setTimeline] = useState(null)
   const [tlError, setTlError] = useState(false)
   const [revealUa, setRevealUa] = useState(false)
@@ -134,11 +160,19 @@ export function SessionDetailModal({ row, full, isAdmin, globalAdmin, self, acti
     <ModalShell open onClose={onClose} title={u.username} icon={Users} size="lg" scrollBody
       footer={<>
         <button type="button" className="btn btn-secondary" onClick={onClose}>{t('app.dismiss')}</button>
+        {isAdmin && u.user_id != null && <button type="button" className="btn btn-secondary" onClick={() => setFullCard(true)}><UserCog size={14} /> {t('uact.fullCard')}</button>}
+        {isAdmin && <button type="button" className="btn btn-secondary" onClick={() => { onClose?.(); navigateTo('admin', { g_tab: 'users', g_q: u.username }) }}><ExternalLink size={14} /> {t('uact.actOpenAdmin')}</button>}
+        {isAdmin && u.user_id != null && (u.tour_status || 'none') !== 'none' && <button type="button" className="btn btn-secondary" disabled={tourBusy} onClick={resetTour}><Compass size={14} /> {tourBusy ? t('usr.saving') : t('usr.tourReset')}</button>}
         {isAdmin && isLive && !self && <button type="button" className="btn btn-danger" onClick={() => onTerminate?.(u.username)}><LogOut size={14} /> {t('uact.terminate')}</button>}
       </>}>
+      {fullCard && <UserDetailPanel user={{ ...u, id: u.user_id, team_ids: u.team_ids || [] }} teams={teamList} isAdmin={globalAdmin} onClose={() => setFullCard(false)} />}
       <div className="uact-detail-head">
         <span className={`uact-pill uact-st--${status}`}>{t(`uact.st.${status}`)}</span>
         {u.system_role && <span className="show-badge show-badge-port">{u.system_role}</span>}
+        {u.org_role && <span className={`badge-role badge-role-${u.org_role}`}>{t('usr.orgRoleVal.' + u.org_role)}</span>}
+        {u.auth_source && <span className={`udir-src${u.auth_source === 'LDAP' ? ' udir-src--ldap' : ''}`}>{u.auth_source === 'LDAP' ? 'LDAP' : t('usr.authLocal')}</span>}
+        {u.active === false && <span className="badge badge-err">{t('usr.inactive')}</span>}
+        {u.permanent_lock && <span className="badge badge-err">{t('usr.permLocked')}</span>}
         {self && <span className="uact-pill">{t('uact.selfSession')}</span>}
       </div>
 
@@ -152,6 +186,16 @@ export function SessionDetailModal({ row, full, isAdmin, globalAdmin, self, acti
         {field(t('uact.detailOrgRole'), u.org_role)}
         {field(t('uact.colTeam'), u.team_name ? <TeamBadge teamId={u.team_id} teamName={u.team_name} /> : null)}
         {field(t('uact.colAuthSource'), u.auth_source)}
+        {field(t('uact.detailTitle'), [u.title, u.department].filter(Boolean).join(' · '))}
+        {field(t('uact.detailExtraTeams'), extraTeams.length > 0 ? <span className="udir-teams">{extraTeams.map((id) => <TeamBadge key={id} teamId={id} size={11} />)}</span> : null)}
+      </div>
+
+      <div className="show-section-header">{t('uact.detailAccount')}</div>
+      <div className="show-grid-2">
+        {field(t('uact.colCreated'), u.created_at ? formatDateSec(u.created_at) : '—', true)}
+        {field(t('uact.detailAccountState'), [u.active === false ? t('usr.inactive') : t('usr.active'), u.permanent_lock ? t('usr.permLocked') : null].filter(Boolean).join(' · '))}
+        {field(t('uact.detailLastSeen'), (u.last_seen || u.last_seen_at) ? `${formatDateSec(u.last_seen || u.last_seen_at)} · ${rel(u.last_seen || u.last_seen_at)}` : '—', true)}
+        {field(t('uact.colTour'), <span className={`uact-pill udir-tour--${u.tour_status || 'none'}`}>{t(`uact.tour.${u.tour_status || 'none'}`)}{u.tour_at ? <span className="sys-muted"> · {formatDateSec(u.tour_at)}</span> : null}</span>)}
       </div>
 
       {isLive && (<>

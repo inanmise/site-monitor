@@ -107,4 +107,18 @@ describe('PushLogView', () => {
     expect(onBack).toHaveBeenCalled()
     click.mockRestore()
   })
+
+  it('takım / alıcı rozetine tıklamak satır detayını AÇMAZ (2026-09-20 kullanıcı bildirimi); hata sınıfları paneli kaldırıldı, mini tablolar sabit yerleşimli', async () => {
+    render(<PushLogView onBack={() => {}} />)
+    await screen.findByText('Internal error')
+    const row = document.querySelector('.sml-table tbody tr.smtp-log-row')
+    const stop = row.querySelector('.sml-stop')
+    expect(stop).toBeTruthy()
+    fireEvent.click(stop)
+    expect(pushLog.detail).not.toHaveBeenCalled()
+    fireEvent.click(row)
+    await waitFor(() => expect(pushLog.detail).toHaveBeenCalled())
+    expect(screen.queryByText(/^Hata sınıfları$|^Error classes$/)).toBeNull()
+    expect(document.querySelector('.sml-mini .sml-mini-num')).toBeTruthy()
+  })
 })

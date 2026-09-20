@@ -36,7 +36,7 @@ describe('CommandPalette', () => {
   it('2+ karakterde /api/search çağrılır; sertifika sonucu Enter ile sm:navigate (dashboard + domain) yayar', async () => {
     api.search.mockResolvedValue({ success: true, data: [
       { kind: 'certificate', id: 'abc.example.com', label: 'abc.example.com', sub: 'Sahip', tab: 'dashboard', params: { domain: 'abc.example.com' } },
-      { kind: 'http', id: '7', label: 'Ödeme', sub: 'https://abc.example.com', tab: 'http', params: { monitor: '7' } },
+      { kind: 'http', id: '7', label: 'Ödeme', sub: 'https://abc.example.com', tab: 'http', params: { monitor: '7' }, team_name: 'Takım A', group_name: 'Satış', tags: 'prod, odeme', tier: null },
     ] })
     const nav = vi.fn()
     window.addEventListener('sm:navigate', nav)
@@ -47,6 +47,9 @@ describe('CommandPalette', () => {
     await waitFor(() => expect(api.search).toHaveBeenCalledWith('abc'))
     await screen.findByText('abc.example.com')
     expect(screen.getByText('Ödeme')).toBeInTheDocument()
+    // 2026-09-20: takım / grup / etiket çipleri satırda
+    const row = screen.getByText('Ödeme').closest('.palette-item')
+    expect(row.textContent).toContain('Takım A'); expect(row.textContent).toContain('Satış'); expect(row.textContent).toContain('odeme')
     // sekme eşleşmesi yok ('abc') → ilk öğe sertifika
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(nav).toHaveBeenCalled()

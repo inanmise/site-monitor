@@ -14,7 +14,10 @@ import AdminChangeHistory from './AdminChangeHistory.jsx'
 import TeamMembersManager from './TeamMembersManager.jsx'
 import TeamDeleteImpactModal from './TeamDeleteImpactModal.jsx'
 import { navigateTo } from '../../utils/navigate.js'
-import { Download } from 'lucide-react'
+import { Download, Search, X, SlidersHorizontal } from 'lucide-react'
+import PaginationBar from '../ui/PaginationBar.jsx'
+import { usePagination } from '../../hooks/usePagination.js'
+import { useDialog } from '../ui/Dialog.jsx'
 import { toCsv, downloadCsv, stampedName } from '../../utils/csvExport.js'
 import { resolveTeamManager } from '../../utils/teamManager.js'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
@@ -91,21 +94,19 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   const [manageTeam, setManageTeam] = useState(null)    // üye yönetimi modalı
   const [impactTeam, setImpactTeam] = useState(null)    // silme etki modalı
   const [q, setQ]       = useState(() => readUrlParam('g_q', ''))   // URL'de (g_q)
-  useUrlQuerySync({ g_q: q })
-  const [page, setPage] = useState(0)
-  const [size, setSize] = useState(20)
-
-  const filteredTeams = useMemo(() => {
-    const needle = q.trim().toLowerCase()
-    return teams.filter(tm =>
-      (!needle || (tm.name || '').toLowerCase().includes(needle) || (tm.email || '').toLowerCase().includes(needle)))
-  }, [teams, q])
-
-  const totalPages = Math.max(1, Math.ceil(filteredTeams.length / size))
-  const safePage = Math.min(page, totalPages - 1)
-  const pagedTeams = filteredTeams.slice(safePage * size, safePage * size + size)
-
-  useEffect(() => { setPage(0) }, [q, size])
+  // Zengin süzgeçler (2026-09-20, kullanıcı bildirimi): durum, müdür, açık alarm, lider, haftalık — URL'de g_*
+  const [fActive, setFActive]   = useState(() => readUrlParam('g_active', ''))     // '' | 'active' | 'inactive'
+  const [fManager, setFManager] = useState(() => readUrlParam('g_mgr', ''))        // kullanıcı id | 'none'
+  const [fAlerts, setFAlerts]   = useState(() => readUrlParam('g_alerts', ''))     // '' | 'open' | 'none'
+  const [fLeader, setFLeader]   = useState(() => readUrlParam('g_leader', ''))     // '' | 'none'
+  const [fWeekly, setFWeekly]   = useState(() => readUrlParam('g_weekly', ''))     // '' | 'reminder_on' | 'reminder_off' | 'availability_on' | 'availability_off'
+  useUrlQuerySync({ g_q: q, g_active: fActive, g_mgr: fManager, g_alerts: fAlerts, g_leader: fLeader, g_weekly: fWeekly })
+  const filterActive = !!(fActive || fManager || fAlerts || fLeader || fWeekly)
+  const [filtersOpen, setFiltersOpen] = useState(() => !!(readUrlParam('g_active', '') || readUrlParam('g_mgr', '') || readUrlParam('g_alerts', '') || readUrlParam('g_leader', '') || readUrlParam('g_weekly', '')))
+  const clearFilters = () => { setQ(''); setFActive(''); setFManager(''); setFAlerts(''); setFLeader(''); setFWeekly('') }
+  const { showConfirm } = useDialog()
+  const [selected, setSelected] = useState(() => new Set())   // toplu işlem seçimi (takım id)
+  const [bulkBusy, setBulkBusy] = useState(false)
 
   useEffect(() => { load(); loadUsers() }, [])
 
@@ -164,6 +165,59 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
     if (manual != null && userMap[manual]) return userMap[manual]
     return resolveTeamManager(users.filter(u => u.team_id === team.id), usersById, managerLabelFor,
       team.leader_id ?? team.leaderId ?? null)
+  }
+
+  /** Süzgeç + arama (ad / e-posta / lider adı / müdür adı / açıklama) — istemci tarafı; liste zaten tümü. */
+  const filteredTeams = useMemo(() => {
+    const needle = q.trim().toLowerCase()
+    return teams.filter(tm => {
+      const s = stats[String(tm.id)] || {}
+      const mgrLabel = teamManagerLabel(tm) || ''
+      const manualMgr = manualManagerId(tm)
+      if (needle && ![tm.name, tm.email, tm.description, userMap[tm.leader_id], mgrLabel].some((v) => v && String(v).toLowerCase().includes(needle))) return false
+      if (fActive === 'active' && !tm.active) return false
+      if (fActive === 'inactive' && tm.active) return false
+      if (fManager === 'none' && (manualMgr != null || mgrLabel)) return false
+      if (fManager && fManager !== 'none' && String(manualMgr ?? '') !== String(fManager) && !(userMap[fManager] && mgrLabel === userMap[fManager])) return false
+      if (fAlerts === 'open' && !(Number(s.open_alerts) > 0)) return false
+      if (fAlerts === 'none' && Number(s.open_alerts) > 0) return false
+      if (fLeader === 'none' && tm.leader_id != null && userMap[tm.leader_id]) return false
+      if (fWeekly === 'reminder_on' && !weeklyFlag(tm, 'reminder')) return false
+      if (fWeekly === 'reminder_off' && weeklyFlag(tm, 'reminder')) return false
+      if (fWeekly === 'availability_on' && !weeklyFlag(tm, 'availability')) return false
+      if (fWeekly === 'availability_off' && weeklyFlag(tm, 'availability')) return false
+      return true
+    })
+  }, [teams, stats, users, q, fActive, fManager, fAlerts, fLeader, fWeekly]) // eslint-disable-line react-hooks/exhaustive-deps
+  const pager = usePagination(filteredTeams, { listKey: 'admin-teams', defaultSize: 25, resetDeps: [q, fActive, fManager, fAlerts, fLeader, fWeekly] })
+  const pagedTeams = pager.pageItems
+  const managerOptions = useMemo(() => {
+    const ids = new Set()
+    for (const tm of teams) { const m = manualManagerId(tm); if (m != null && userMap[m]) ids.add(String(m)) }
+    for (const tm of teams) { const lbl = teamManagerLabel(tm); const u = users.find((x) => (x.display_name || x.username) === lbl); if (u) ids.add(String(u.id)) }
+    return [{ value: '', label: t('team.filterAny') }, { value: 'none', label: t('team.filterNoManager') }, ...[...ids].map((id) => ({ value: id, label: userMap[id] })).sort((a, b) => a.label.localeCompare(b.label))]
+  }, [teams, users]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Toplu işlem (2026-09-20): sayfadaki seçim → tek istek; sunucu her takımı kendi kapsam zincirinden geçirir ──
+  const selectableIds = pagedTeams.filter((tm) => canEditRow(tm.id)).map((tm) => tm.id)
+  const allPageSelected = selectableIds.length > 0 && selectableIds.every((id) => selected.has(id))
+  const toggleAllPage = () => setSelected((prev) => { const n = new Set(prev); if (allPageSelected) selectableIds.forEach((id) => n.delete(id)); else selectableIds.forEach((id) => n.add(id)); return n })
+  const toggleOne = (id) => setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
+  async function runBulk(action, extra = {}) {
+    const labels = { activate: t('team.bulkActivate'), deactivate: t('team.bulkDeactivate'), set_manager: t('team.bulkSetManager'),
+      weekly_reminder_on: t('team.bulkReminderOn'), weekly_reminder_off: t('team.bulkReminderOff'), weekly_availability_on: t('team.bulkAvailOn'), weekly_availability_off: t('team.bulkAvailOff') }
+    const ok = await showConfirm({ title: t('team.bulkTitle'), message: t('team.bulkConfirm', selected.size, labels[action] || action), confirmText: t('team.bulkApply'), variant: action === 'deactivate' ? 'danger' : undefined })
+    if (!ok) return
+    setBulkBusy(true)
+    try {
+      const res = await api.admin.bulkTeams({ action, ids: [...selected], ...extra })
+      if (res?.success) {
+        const d = res.data || {}
+        if ((d.failed ?? 0) > 0) toast.warning ? toast.warning(t('team.bulkPartial', d.ok ?? 0, d.failed)) : toast.error(t('team.bulkPartial', d.ok ?? 0, d.failed))
+        else toast.success(t('team.bulkDone', d.ok ?? selected.size))
+        setSelected(new Set()); load(); onTeamsChange?.()
+      } else toast.error(res?.error || t('settings.loadError'))
+    } catch (e) { toast.error(e?.message || t('settings.loadError')) } finally { setBulkBusy(false) }
   }
 
   function openAdd() { setForm(emptyTeam); setModal('add'); setMsg(null) }
@@ -265,16 +319,62 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
         <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
       )}
 
-      {/* Filtre çubuğu — ad/e-posta araması */}
-      <div className="audit-filters">
-        <input className="audit-filter-input" placeholder={t('team.searchPlaceholder')}
-          value={q} onChange={(e) => setQ(e.target.value)} />
+      {/* Araç çubuğu — proje standardı (.invtb): arama + Süzgeçler paneli + sayaç (2026-09-20) */}
+      <div className="invtb um-toolbar" data-testid="tm-toolbar">
+        <div className="invtb-row">
+          <label className="invtb-search">
+            <Search size={14} aria-hidden="true" />
+            <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('team.searchPlaceholder')} aria-label={t('team.searchLabel')} />
+            {q && <button type="button" className="invtb-clear" onClick={() => setQ('')} aria-label={t('inv.filterClear')}><X size={12} /></button>}
+          </label>
+          <button type="button" className={`btn btn-sm ${filtersOpen || filterActive ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setFiltersOpen((o) => !o)} aria-expanded={filtersOpen}>
+            <SlidersHorizontal size={13} /> {t('inv.filters')}{filterActive ? ` · ${t('inv.filterActive')}` : ''}
+          </button>
+          <span className="invtb-count">{t('inv.shownOf', filteredTeams.length, teams.length)}</span>
+          <div className="invtb-spacer" />
+          {(filterActive || q) && <button type="button" className="btn btn-sm btn-secondary" onClick={clearFilters}>{t('inv.filterClear')}</button>}
+        </div>
+        {filtersOpen && (
+          <div className="invtb-filters" role="group" aria-label={t('inv.filters')}>
+            <label className="invtb-f"><span>{t('team.colActive')}</span>
+              <SearchableSelect value={fActive} onChange={setFActive} ariaLabel={t('team.colActive')} searchThreshold={99}
+                options={[{ value: '', label: t('team.filterAny') }, { value: 'active', label: t('team.active') }, { value: 'inactive', label: t('team.inactive') }]} /></label>
+            <label className="invtb-f"><span>{t('team.colManager')}</span>
+              <SearchableSelect value={fManager} onChange={setFManager} ariaLabel={t('team.colManager')} searchThreshold={4} options={managerOptions} /></label>
+            <label className="invtb-f"><span>{t('team.filterAlerts')}</span>
+              <SearchableSelect value={fAlerts} onChange={setFAlerts} ariaLabel={t('team.filterAlerts')} searchThreshold={99}
+                options={[{ value: '', label: t('team.filterAny') }, { value: 'open', label: t('team.filterAlertsOpen') }, { value: 'none', label: t('team.filterAlertsNone') }]} /></label>
+            <label className="invtb-f"><span>{t('team.colLeader')}</span>
+              <SearchableSelect value={fLeader} onChange={setFLeader} ariaLabel={t('team.colLeader')} searchThreshold={99}
+                options={[{ value: '', label: t('team.filterAny') }, { value: 'none', label: t('team.noLeader') }]} /></label>
+            <label className="invtb-f"><span>{t('team.colWeeklyEmails')}</span>
+              <SearchableSelect value={fWeekly} onChange={setFWeekly} ariaLabel={t('team.colWeeklyEmails')} searchThreshold={99}
+                options={[{ value: '', label: t('team.filterAny') }, { value: 'reminder_on', label: `${t('team.weeklyReminderShort')}: ${t('team.on')}` }, { value: 'reminder_off', label: `${t('team.weeklyReminderShort')}: ${t('team.off')}` },
+                  { value: 'availability_on', label: `${t('team.weeklyAvailabilityShort')}: ${t('team.on')}` }, { value: 'availability_off', label: `${t('team.weeklyAvailabilityShort')}: ${t('team.off')}` }]} /></label>
+          </div>
+        )}
       </div>
+
+      {/* Toplu işlem çubuğu — seçim varken (2026-09-20) */}
+      {canManage && selected.size > 0 && (
+        <div className="um-bulk" data-testid="tm-bulk-bar" aria-busy={bulkBusy || undefined}>
+          <span className="um-bulk-count">{t('team.selected', selected.size)}</span>
+          <button className="btn btn-sm-p btn-secondary" onClick={() => runBulk('activate')} disabled={bulkBusy}>{t('team.bulkActivate')}</button>
+          <button className="btn btn-sm-p btn-danger" onClick={() => runBulk('deactivate')} disabled={bulkBusy}>{t('team.bulkDeactivate')}</button>
+          <SearchableSelect value="" onChange={(v) => v && runBulk(v)} placeholder={t('team.bulkWeekly')} ariaLabel={t('team.bulkWeekly')} searchThreshold={99}
+            options={[{ value: '', label: t('team.bulkWeekly') }, { value: 'weekly_reminder_on', label: t('team.bulkReminderOn') }, { value: 'weekly_reminder_off', label: t('team.bulkReminderOff') },
+              { value: 'weekly_availability_on', label: t('team.bulkAvailOn') }, { value: 'weekly_availability_off', label: t('team.bulkAvailOff') }]} />
+          {isAdmin && <SearchableSelect value="" onChange={(v) => v && runBulk('set_manager', { manager_id: v === 'none' ? null : Number(v) })} placeholder={t('team.bulkSetManager')} ariaLabel={t('team.bulkSetManager')} searchThreshold={4}
+            options={[{ value: '', label: t('team.bulkSetManager') }, { value: 'none', label: t('team.bulkClearManager') }, ...users.map((u) => ({ value: String(u.id), label: u.display_name || u.username }))]} />}
+          <button className="btn btn-sm-p btn-secondary" onClick={() => setSelected(new Set())} disabled={bulkBusy}>{t('usr.bulkClear')}</button>
+        </div>
+      )}
 
       <div className="admin-table-wrap">
         <table className="admin-table">
           <thead>
             <tr>
+              {canManage && <th className="um-col-check"><input type="checkbox" checked={allPageSelected} onChange={toggleAllPage} aria-label={t('team.selectAll')} disabled={selectableIds.length === 0} /></th>}
               <th>{t('team.colName')}</th>
               <th>{t('team.colEmail')}</th>
               <th>{t('team.colLeader')}</th>
@@ -287,13 +387,18 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
           </thead>
           <tbody>
             {filteredTeams.length === 0 && (
-              <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
+              <tr><td colSpan={canManage ? 9 : 8} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
                 {t('team.noResults')}
               </td></tr>
             )}
             {pagedTeams.map((team) => (
               <Fragment key={team.id}>
-                <tr>
+                <tr className={selected.has(team.id) ? 'is-selected' : ''}>
+                  {canManage && (
+                    <td className="um-col-check">
+                      {canEditRow(team.id) ? <input type="checkbox" checked={selected.has(team.id)} onChange={() => toggleOne(team.id)} aria-label={t('team.selectOne', team.name)} /> : null}
+                    </td>
+                  )}
                   <td>
                     <strong><TeamBadge teamId={team.id} teamName={team.name} size={13}
                       onOpen={() => setMembersTeam(team)} title={t('team.expandMembers')} /></strong>
@@ -344,18 +449,8 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
         </table>
       </div>
 
-      {/* Sayfa boyutu + sayfalama (istemci-taraflı) */}
-      <div className="audit-pagination">
-        <label style={{ marginRight: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-          {t('team.perPage')}
-          <select className="audit-filter-input" value={size} onChange={(e) => setSize(Number(e.target.value))}>
-            {[20, 50, 100, 200].map(n => <option key={n} value={n}>{n}</option>)}
-          </select>
-        </label>
-        <button disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>{t('app.prevPage')}</button>
-        <span>{t('team.pageInfo', safePage + 1, totalPages, filteredTeams.length)}</span>
-        <button disabled={safePage + 1 >= totalPages} onClick={() => setPage(safePage + 1)}>{t('app.nextPage')}</button>
-      </div>
+      {/* Sayfalama — proje standardı PaginationBar (istemci-taraflı, 2026-09-20) */}
+      {filteredTeams.length > 0 && <PaginationBar {...pager} />}
 
       <AdminChangeHistory resource="TEAM" filter={histFilter} onClearFilter={() => setHistFilter(null)} />
 

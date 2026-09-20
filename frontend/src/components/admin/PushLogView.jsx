@@ -19,7 +19,7 @@ import UserBadge from '../ui/UserBadge.jsx'
 import DateTimeRangePicker from '../ui/DateTimeRangePicker.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
-import { LoadingBlock, ProgressBar } from '../ui/Progress.jsx'
+import { LoadingBlock } from '../ui/Progress.jsx'
 
 /**
  * Webhook Push Gönderim Logu (2026-09-19, kullanıcı isteği: SMTP sayfasının push karşılığı) — Sistem Sağlığı →
@@ -207,13 +207,13 @@ export default function PushLogView({ onBack, initial }) {
       <div className="sml-card-head"><span>{title}</span></div>
       {list.length === 0 ? <div className="sml-empty">{t('sml.noData')}</div> : (
         <table className="sml-mini">
-          <thead><tr><th>{title}</th><th>{t('sml.kpiTotal')}</th><th>{t('health.statusSent')}</th><th>{t('health.statusFailed')}</th><th>{t('sml.lastFailed')}</th></tr></thead>
+          <thead><tr><th className="sml-mini-name">{t('sml.colName')}</th><th className="sml-mini-num">{t('sml.kpiTotal')}</th><th className="sml-mini-num">{t('health.statusSent')}</th><th className="sml-mini-num">{t('health.statusFailed')}</th><th className="sml-mini-date">{t('sml.lastFailed')}</th></tr></thead>
           <tbody>
             {list.map((x) => (
               <tr key={keyFn(x)} className={isActive(x) ? 'is-active' : ''}>
-                <td>{labelCell(x, onPick)}</td>
-                <td>{x.total}</td><td className="sml-ok">{x.sent}</td><td className={x.failed > 0 ? 'sml-bad' : ''}>{x.failed}</td>
-                <td className="sys-small">{x.last_failed_at ? formatDate(x.last_failed_at) : '—'}</td>
+                <td className="sml-mini-name">{labelCell(x, onPick)}</td>
+                <td className="sml-mini-num">{x.total}</td><td className="sml-mini-num sml-ok">{x.sent}</td><td className={`sml-mini-num${x.failed > 0 ? ' sml-bad' : ''}`}>{x.failed}</td>
+                <td className="sys-small sml-mini-date">{x.last_failed_at ? formatDate(x.last_failed_at) : '—'}</td>
               </tr>
             ))}
           </tbody>
@@ -307,30 +307,11 @@ export default function PushLogView({ onBack, initial }) {
         {miniTable(t('sml.byTeam'), teams, (x) => x.team_id ?? '-',
           (x) => x.team_id != null ? <button type="button" className="rn-domain-btn" onClick={() => patch({ teamId: String(f.teamId) === String(x.team_id) ? '' : String(x.team_id) })}>{x.team_name || `#${x.team_id}`}</button> : <span className="sys-muted">{t('sml.noTeam')}</span>,
           null, (x) => String(x.team_id ?? '') === String(f.teamId))}
-        <div className="sml-card">
-          <div className="sml-card-head"><span>{t('sml.byErrorClass')}</span></div>
-          {(summary?.error_classes || []).length === 0 ? <div className="sml-empty">{t('sml.noFailures')}</div> : (
-            <ul className="sml-bars">
-              {summary.error_classes.map((c) => {
-                const max = Math.max(...summary.error_classes.map((y) => y.count), 1)
-                return (
-                  <li key={c.error_class}>
-                    <button type="button" className={`sml-bar-btn${f.errorClass === c.error_class ? ' is-active' : ''}`} onClick={() => patch({ errorClass: f.errorClass === c.error_class ? '' : c.error_class })}>
-                      <span className="sml-bar-lbl">{t(`pl.cls.${c.error_class}`)}</span>
-                      <ProgressBar value={c.count} max={max} size="sm" decorative className="sml-bar-track" />
-                      <b>{c.count}</b>
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-        </div>
         {miniTable(t('pl.topUsers'), summary?.top_users || [], (x) => x.username,
           (x) => <button type="button" className="rn-domain-btn" onClick={() => patch({ username: f.username === x.username ? '' : x.username })}>{x.display_name || x.username}{x.display_name && <div className="sys-muted sys-small">{x.username}</div>}</button>,
           null, (x) => f.username === x.username)}
         {miniTable(t('pl.topMonitors'), summary?.top_monitors || [], (x) => `${x.monitor_type}:${x.monitor_name}`,
-          (x) => <><span className="today-type">{x.monitor_type}</span> <button type="button" className="rn-domain-btn" onClick={() => setQInput(x.monitor_name || '')}>{x.monitor_name}</button></>,
+          (x) => <span className="sml-mini-mon"><span className="today-type">{x.monitor_type}</span><button type="button" className="rn-domain-btn sml-mini-monname" title={x.monitor_name || ''} onClick={() => setQInput(x.monitor_name || '')}>{x.monitor_name}</button></span>,
           null, () => false)}
         {miniTable(t('pl.byLevel'), summary?.levels || [], (x) => x.level ?? '-',
           (x) => x.level ? <button type="button" className="rn-domain-btn" onClick={() => patch({ level: f.level === x.level ? '' : x.level })}><span className={`today-level today-level--${String(x.level).toLowerCase()}`}>{x.level}</span></button> : <span className="sys-muted">—</span>,
@@ -359,8 +340,8 @@ export default function PushLogView({ onBack, initial }) {
                 {rows.items.map((row) => (
                   <tr key={row.id} className="smtp-log-row" onClick={() => setDetailId(row.id)}>
                     <td className="smtp-log-date sys-mono">{formatDate(row.at)}</td>
-                    <td>{row.team_name ? <TeamBadge teamId={row.team_id} teamName={row.team_name} /> : <span className="sys-muted">—</span>}</td>
-                    <td><UserBadge username={row.username} displayName={row.display_name} inline size="sm" /></td>
+                    <td>{row.team_name ? <span className="sml-stop" onClick={(e) => e.stopPropagation()}><TeamBadge teamId={row.team_id} teamName={row.team_name} /></span> : <span className="sys-muted">—</span>}</td>
+                    <td><span className="sml-stop" onClick={(e) => e.stopPropagation()}><UserBadge username={row.username} displayName={row.display_name} inline size="sm" /></span></td>
                     <td><span className="today-type">{row.monitor_type || '—'}</span> <span className="smtp-log-subject" title={row.title || ''}>{row.monitor_name || row.title || '—'}</span></td>
                     <td>{row.alert_level ? <span className={`today-level today-level--${String(row.alert_level).toLowerCase()}`}>{row.alert_level}</span> : '—'}</td>
                     <td><span className={`smtp-trigger-badge pl-trigger-${(row.trigger || '').toLowerCase()}`}>{triggerLabel(row.trigger, t)}</span></td>

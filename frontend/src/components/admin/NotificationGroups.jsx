@@ -1,6 +1,7 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { Users, Star, Mail, Plus, Trash2, Pencil, History } from 'lucide-react'
-import { api } from '../../api/client'
+import { api, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
@@ -11,6 +12,7 @@ import Field from '../ui/Field.jsx'
 import TagInput from '../ui/TagInput.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
+import UserBadge from '../ui/UserBadge.jsx'
 import NotificationGroupHistory from './NotificationGroupHistory.jsx'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 
@@ -57,6 +59,8 @@ export default function NotificationGroups({ teams = [], systemRole }) {
   // Degisiklik gecmisi — KAPALI baslar: her acilista denetim sorgusu atmak, ekrani asil isi
   // (gruplari yonetmek) icin acan kullaniciya bedava yuk bindirirdi.
   const [histOpen, setHistOpen] = useState(false)
+  const [histPage, setHistPage] = useState(0)     // sayfalı geçmiş (2026-09-20); süzgeç değişince başa döner
+  const [histSize, setHistSize] = useState(25)
   const [histGroup, setHistGroup] = useState(null)   // { id, name } | null → tek gruba suz
   const [hist, setHist] = useState(null)
   const [histLoading, setHistLoading] = useState(false)
@@ -90,7 +94,7 @@ export default function NotificationGroups({ teams = [], systemRole }) {
     let cancelled = false
     setHistLoading(true)
     setHistError(null)
-    api.notificationGroups.history(histGroup?.id ?? null)
+    api.notificationGroups.history(histGroup?.id ?? null, { page: histPage, size: histSize })
       .then(res => {
         if (cancelled) return
         if (res?.success) setHist(res.data)
@@ -99,7 +103,8 @@ export default function NotificationGroups({ teams = [], systemRole }) {
       .catch(e => { if (!cancelled) setHistError(e?.message ?? String(e)) })
       .finally(() => { if (!cancelled) setHistLoading(false) })
     return () => { cancelled = true }
-  }, [histOpen, histGroup, groups])   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [histOpen, histGroup, groups, histPage, histSize])   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setHistPage(0) }, [histGroup, histSize])
 
   function openHistory(g) {
     setHistGroup(g ? { id: g.id, name: g.name } : null)
@@ -251,25 +256,28 @@ export default function NotificationGroups({ teams = [], systemRole }) {
           <h3>{t('ng.title')}</h3>
           <p className="section-desc">{t('ng.howBody')}</p>
         </div>
-        {writableTeamIds.length > 0 && (
-          <button className="btn btn-success" onClick={openAdd}>
-            <Plus size={15} aria-hidden="true" /> {t('ng.add')}
-          </button>
-        )}
-      </div>
-
-      {teams.length > 1 && (
-        <div className="audit-filters">
-          <SearchableSelect
-            value={fTeam}
-            onChange={setFTeam}
-            options={[{ value: '', label: t('ng.allTeams') },
-                      ...teams.map(x => ({ value: String(x.id), label: x.name }))]}
-            placeholder={t('ng.allTeams')}
-            searchThreshold={2}
-          />
+        <div className="hdr-actions">
+          {/* 2026-09-20 (kullanıcı bildirimi): takım süzgeci "Grup Ekle" ile aynı hizada; varsayılan = tüm takımlar */}
+          {teams.length > 1 && (
+            <div className="ng-team-filter">
+              <SearchableSelect
+                value={fTeam}
+                onChange={setFTeam}
+                ariaLabel={t('ng.colTeam')}
+                options={[{ value: '', label: t('ng.allTeams') },
+                          ...teams.map(x => ({ value: String(x.id), label: x.name }))]}
+                placeholder={t('ng.allTeams')}
+                searchThreshold={2}
+              />
+            </div>
+          )}
+          {writableTeamIds.length > 0 && (
+            <button className="btn btn-success" onClick={openAdd}>
+              <Plus size={15} aria-hidden="true" /> {t('ng.add')}
+            </button>
+          )}
         </div>
-      )}
+      </div>
 
       {!loading && teamsAtRisk.length > 0 && (
         <AlertBanner tone="warning" title={t('ng.riskTitle')}>
@@ -298,6 +306,7 @@ export default function NotificationGroups({ teams = [], systemRole }) {
                 <th>{t('ng.colName')}</th>
                 <th>{t('ng.colTeam')}</th>
                 <th>{t('ng.colEmails')}</th>
+                <th>{t('ng.colAudit')}</th>
                 <th>{t('ng.actions')}</th>
               </tr>
             </thead>
@@ -316,8 +325,23 @@ export default function NotificationGroups({ teams = [], systemRole }) {
                       {!g.active && <> <span className="badge badge-deleted">{t('ng.deletedBadge')}</span></>}
                     </td>
                     <td>{teamMap[String(g.team_id)] ?? `#${g.team_id}`}</td>
-                    <td title={(g.emails ?? []).join(', ')}>
-                      {t('ng.emailCount').replace('{n}', count)}
+                    <td>
+                      {/* Üzerine gelince / odaklanınca tanımlı adresler listelenir (2026-09-20) */}
+                      <EmailChip id={g.id} emails={g.emails ?? []} label={t('ng.emailCount').replace('{n}', count)} title={t('ng.colEmails')} />
+                    </td>
+                    <td className="ng-audit">
+                      <span className="ng-audit-line" title={g.created_by || ''}>
+                        <span className="ng-audit-lbl">{t('ng.createdBy')}</span>
+                        {g.created_by_name || g.created_by ? <UserBadge username={g.created_by} displayName={g.created_by_name} inline size="sm" /> : <span className="sys-muted">—</span>}
+                        {g.created_at && <span className="sys-muted"> · {formatDateSec(g.created_at)}</span>}
+                      </span>
+                      {(g.updated_at && g.updated_at !== g.created_at) || (g.updated_by && g.updated_by !== g.created_by) ? (
+                        <span className="ng-audit-line" title={g.updated_by || ''}>
+                          <span className="ng-audit-lbl">{t('ng.updatedBy')}</span>
+                          {g.updated_by_name || g.updated_by ? <UserBadge username={g.updated_by} displayName={g.updated_by_name} inline size="sm" /> : <span className="sys-muted">—</span>}
+                          {g.updated_at && <span className="sys-muted"> · {formatDateSec(g.updated_at)}</span>}
+                        </span>
+                      ) : null}
                     </td>
                     <td>
                       <KebabMenu
@@ -367,6 +391,8 @@ export default function NotificationGroups({ teams = [], systemRole }) {
           error={histError}
           filterName={histGroup?.name}
           onClearFilter={() => setHistGroup(null)}
+          page={histPage} size={histSize} total={hist?.total ?? 0}
+          onPageChange={setHistPage} onPageSizeChange={setHistSize}
         />
       )}
 
@@ -506,5 +532,27 @@ export default function NotificationGroups({ teams = [], systemRole }) {
         <span className="field-hint">{t('ng.makeDefaultHint')}</span>
       </ModalShell>
     </div>
+  )
+}
+
+/**
+ * "N adres" çipi — üzerine gelince / odaklanınca tanımlı adresler baloncukta listelenir (2026-09-20).
+ * Baloncuk PORTAL ile body'ye çizilir: tablo sarmalayıcısının overflow'u onu kırpmasın (HelpTip deseni).
+ */
+function EmailChip({ id, emails, label, title }) {
+  const ref = useRef(null)
+  const [pos, setPos] = useState(null)
+  const show = () => { const r = ref.current?.getBoundingClientRect(); if (r) setPos({ top: r.bottom + 6, left: r.left }) }
+  const hide = () => setPos(null)
+  return (
+    <span ref={ref} className="ng-mailchip" tabIndex={0} aria-describedby={pos ? `ng-mails-${id}` : undefined}
+      onMouseEnter={show} onMouseLeave={hide} onFocus={show} onBlur={hide}>
+      <Mail size={12} aria-hidden="true" /> {label}
+      {pos && emails.length > 0 && createPortal(
+        <span className="ng-mailpop" role="tooltip" id={`ng-mails-${id}`} style={{ top: pos.top, left: pos.left }}>
+          <span className="ng-mailpop-title">{title} · {emails.length}</span>
+          <ul>{emails.map(e => <li key={e} className="sys-mono">{e}</li>)}</ul>
+        </span>, document.body)}
+    </span>
   )
 }

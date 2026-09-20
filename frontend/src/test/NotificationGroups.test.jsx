@@ -6,6 +6,7 @@ const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 const state = vi.hoisted(() => ({ groups: [], writable: ['1'], teamEmails: { 1: 'sy-a@example.com' } }))
 
 vi.mock('../api/client', () => ({
+  formatDateSec: (v) => v ?? '',
   api: withApiFallback({
     notificationGroups: {
       list: vi.fn(async () => ({
@@ -67,6 +68,38 @@ describe('NotificationGroups', () => {
     expect(await screen.findByText('Ödeme Nöbetçi')).toBeTruthy()
     expect(screen.getByText(/Default/)).toBeTruthy()
     expect(screen.getByText('2 addresses')).toBeTruthy()
+  })
+
+  it('Adres çipi baloncuğu tanımlı adresleri listeler; oluşturan / güncelleyen sütunu; takım süzgeci başlıkta Grup Ekle ile aynı hizada (2026-09-20)', async () => {
+    state.groups = [group({ created_by: 'ayse', created_by_name: 'Ayse Y.', created_at: '2026-09-01T10:00:00', updated_by: 'burak', updated_by_name: 'Burak D.', updated_at: '2026-09-15T12:30:00' })]
+    render(<NotificationGroups teams={[{ id: 1, name: 'SY-A' }, { id: 2, name: 'SY-B' }]} systemRole="USER" />)
+    expect(await screen.findByText('Ödeme Nöbetçi')).toBeTruthy()
+    const chip = screen.getByText('2 addresses').closest('.ng-mailchip')
+    expect(document.querySelector('.ng-mailpop')).toBeNull()
+    fireEvent.mouseEnter(chip)
+    const pop = document.querySelector('.ng-mailpop')   // portal (body)
+    expect(pop.getAttribute('role')).toBe('tooltip')
+    expect(pop.textContent).toContain('odeme@example.com')
+    expect(pop.textContent).toContain('yedek@example.com')
+    fireEvent.mouseLeave(chip)
+    expect(document.querySelector('.ng-mailpop')).toBeNull()
+    const audit = document.querySelector('.ng-audit')
+    expect(audit.textContent).toContain('Ayse Y.'); expect(audit.textContent).toContain('2026-09-01T10:00:00')
+    expect(audit.textContent).toContain('Burak D.'); expect(audit.textContent).toContain('2026-09-15T12:30:00')
+    // takım süzgeci başlık eylemlerinde, "Grup Ekle"nin hemen solunda; varsayılan "Tüm takımlar"
+    const hdr = document.querySelector('.admin-section-header .hdr-actions')
+    const filter = hdr.querySelector('.ng-team-filter')
+    expect(filter).toBeTruthy()
+    expect(filter.textContent).toMatch(/All teams|Tüm takımlar/)
+    expect(filter.nextElementSibling.textContent).toMatch(/Add group|Grup ekle/i)
+    expect(document.querySelector('.audit-filters')).toBeNull()
+  })
+
+  it('Yalnız oluşturulmuş (hiç güncellenmemiş) grupta güncelleyen satırı çizilmez', async () => {
+    state.groups = [group({ created_by: 'ayse', created_by_name: 'Ayse Y.', created_at: '2026-09-01T10:00:00', updated_by: 'ayse', updated_by_name: 'Ayse Y.', updated_at: '2026-09-01T10:00:00' })]
+    render(<NotificationGroups teams={TEAMS} systemRole="USER" />)
+    expect(await screen.findByText('Ödeme Nöbetçi')).toBeTruthy()
+    expect(document.querySelectorAll('.ng-audit-line')).toHaveLength(1)
   })
 
   it('RİSK UYARISI: varsayılan grubu ve takım adresi olmayan takım için TEK uyarı çıkar', async () => {
@@ -236,7 +269,7 @@ describe('NotificationGroups', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Show history/i }))
 
-    await waitFor(() => expect(api.notificationGroups.history).toHaveBeenCalledWith(null))
+    await waitFor(() => expect(api.notificationGroups.history).toHaveBeenCalledWith(null, { page: 0, size: 25 }))
   })
 
   it('Satırdaki "Geçmiş" o grubu SÜZER', async () => {
@@ -247,7 +280,7 @@ describe('NotificationGroups', () => {
     fireEvent.click(screen.getByRole('button', { name: /Actions/i }))
     fireEvent.click(screen.getByText('History'))
 
-    await waitFor(() => expect(api.notificationGroups.history).toHaveBeenCalledWith(10))
+    await waitFor(() => expect(api.notificationGroups.history).toHaveBeenCalledWith(10, { page: 0, size: 25 }))
     // Süzgecin AÇIK olduğu kullanıcıya söylenir; aksi halde eksik listeyi tam sanardı.
     expect(await screen.findByText(/Showing the history of/i)).toBeTruthy()
   })
@@ -265,5 +298,23 @@ describe('NotificationGroups', () => {
     }
     // Yazamayan kullanıcıya "Grup Ekle" de gösterilmez.
     expect(screen.queryByRole('button', { name: /Add group/i })).toBeNull()
+  })
+
+  it('Geçmiş sayfalı (2026-09-20): PaginationBar toplamı gösterir, sonraki sayfa page=1 ile yeniden okur; sayfa boyutu değişince başa döner', async () => {
+    api.notificationGroups.history.mockImplementation(async (_g, { page, size }) => ({ success: true, data: {
+      items: Array.from({ length: Math.min(size, 60 - page * size) }, (_, i) => ({ id: page * size + i + 1, at: '2026-09-01T10:00:00', action: 'UPDATE', actor: 'ayse', group_id: 10, group_name: 'G', changes: null })),
+      total: 60, page, size, total_pages: Math.ceil(60 / size), truncated: false, hidden: 0 } }))
+    state.groups = [group()]
+    render(<NotificationGroups teams={TEAMS} systemRole="USER" />)
+    await screen.findByText('Ödeme Nöbetçi')
+    fireEvent.click(screen.getByRole('button', { name: /Show history|Geçmişi göster/i }))
+    await waitFor(() => expect(api.notificationGroups.history).toHaveBeenCalledWith(null, { page: 0, size: 25 }))
+    await waitFor(() => expect(document.querySelectorAll('.ng-hist-row')).toHaveLength(25))
+    expect(document.querySelector('.pgn-bar').textContent).toMatch(/60/)
+    fireEvent.click(screen.getByRole('button', { name: /Sonraki|Next/ }))
+    await waitFor(() => expect(api.notificationGroups.history).toHaveBeenLastCalledWith(null, { page: 1, size: 25 }))
+    fireEvent.click(screen.getByRole('button', { name: /^50$/ }))
+    await waitFor(() => expect(api.notificationGroups.history).toHaveBeenLastCalledWith(null, { page: 0, size: 50 }))
+    await waitFor(() => expect(document.querySelectorAll('.ng-hist-row')).toHaveLength(50))
   })
 })

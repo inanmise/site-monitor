@@ -208,6 +208,7 @@ public final class AuditEventCatalog {
             "TEAM_MEMBER_REMOVE",
             "TEAM_DELETE",
             "TEAM_UPDATE",
+            "TEAM_BULK_UPDATE",
             "TEAM_WEEKLY_NOTIFICATIONS",
             "TEMPLATE_CREATE",
             "TEMPLATE_DELETE",

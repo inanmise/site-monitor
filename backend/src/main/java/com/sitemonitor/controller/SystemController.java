@@ -167,14 +167,18 @@ public class SystemController {
      */
     @SuppressWarnings("unchecked")
     static Map<String, Object> maskEmployeeIds(Map<String, Object> overview, boolean globalAdmin) {
-        if (globalAdmin || overview == null || !(overview.get("active_users") instanceof List<?> users)) return overview;
-        List<Object> masked = new java.util.ArrayList<>(users.size());
-        for (Object u : users) {
-            if (u instanceof Map<?, ?> m) { Map<String, Object> c = new LinkedHashMap<>((Map<String, Object>) m); c.remove("employee_id"); masked.add(c); }
-            else masked.add(u);
-        }
+        if (globalAdmin || overview == null) return overview;
         Map<String, Object> copy = new LinkedHashMap<>(overview);
-        copy.put("active_users", masked);
+        // 2026-09-20: login_status (kullanıcı dizini) de sicil taşır → aynı maske.
+        for (String key : new String[]{"active_users", "login_status"}) {
+            if (!(overview.get(key) instanceof List<?> users)) continue;
+            List<Object> masked = new java.util.ArrayList<>(users.size());
+            for (Object u : users) {
+                if (u instanceof Map<?, ?> m) { Map<String, Object> c = new LinkedHashMap<>((Map<String, Object>) m); c.remove("employee_id"); masked.add(c); }
+                else masked.add(u);
+            }
+            copy.put(key, masked);
+        }
         return copy;
     }
 

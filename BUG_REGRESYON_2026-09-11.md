@@ -1195,3 +1195,61 @@ sayfalama (global: DB sayfası + gerçek toplam; kapsamlı: pencere + bellek), o
 dağarcığıyla tablo (özet fark "Takımlar: 5, 9 → 5", satır açılınca tam fark), çipler, PaginationBar. Tarayıcı: 43 kayıt /
 2 sayfa, giriş satırı yok. Kapılar: frontend lint 0 hata / 2175 test / kapsam / build; backend AdminHistoryServiceTest +
 AdminControllerTest yeşil (tam `clean verify` bu turun ana koşumunda). → REGRESYON YOK.
+
+## Ek — elli altıncı tur (2026-09-20, sürüm sonrası — kullanıcı bildirimleri toplu: Kullanıcı Etkinliği dizini, yönetim araç çubukları, şema detayı, push/aktivite logu, takım toplu işlem, `v20.73.0..HEAD`)
+
+Kapsam (13 kullanıcı bildirimi, hepsi tarayıcıda doğrulandı):
+- KULLANICI ETKİNLİĞİ: "1 Aktif oturum" yalnız oturumdakileri açıyordu → `UserDirectoryModal` (login_status ⊕ active_users;
+  çevrimiçi başta, boşta süresine göre; e-posta / rol+org rolü / takım+ek takımlar / LDAP-Yerel / son görülme / son giriş /
+  oluşturulma / tur / hesap; görünüm-tur-takım-rol-kaynak-hesap süzgeçleri + metin arama; PaginationBar; KebabMenu:
+  Detay, Kullanıcı yönetiminde aç (g_tab=users&g_q), e-posta, ad kopyala, Oturumu sonlandır, Turu sıfırla, Kilidi aç; CSV).
+  "Turu tamamlayan" kartı aynı dizini tour=completed ile açar. Backend: `login_status` satırları e-posta/org_role/team_id/
+  team_ids/employee_id/created_at/last_seen_at/permanent_lock/title/department/tour_status/tour_at taşır; `eventRows` ve
+  anomali `recent` aktörden ad/rol/takım/kaynak çözer (büyük-küçük harf duyarsız); `maskEmployeeIds` login_status'u da
+  maskeler (SystemControllerTest pinli). KPI modalları (giriş/başarısız/anomali/tekil kullanıcı) takım + tarayıcı sütunu;
+  bölüm 06/09 tablolarında takım; oturum detayında Hesap bölümü (oluşturulma, durum, son görülme, tur), ek takımlar,
+  "Tam kullanıcı kartı" (UserDetailPanel yığılı modal), "Kullanıcı yönetiminde aç", "Turu sıfırla". Sayfa kullanımı Pay
+  hücresi: mutlak etiket kaldırıldı (çubuk + yüzde tek satır; Son görülme ile çakışmaz).
+- KULLANICI YÖNETİMİ: `.audit-filters` yerine proje standardı `.invtb` araç çubuğu (arama + "Süzgeçler" paneli + sayaç)
+  ve PaginationBar (1 tabanlı ↔ sunucu 0 tabanlı; boyut 25/50/100/200). Panel etkin süzgeçle açık başlar (derin bağlantı).
+- BİLDİRİM GRUPLARI: takım combobox'ı başlıkta "Grup Ekle"nin solunda aynı hizada (varsayılan tüm takımlar); "N adres" çipi
+  üzerine gelince/odaklanınca adres listesi (portal — tablo overflow'u kırpıyordu, düzeltildi); Oluşturan / güncelleyen
+  sütunu (DTO'ya created_by/created_by_name/updated_by eklendi; yalnız oluşturulmuşta ikinci satır çizilmez).
+- SQL PLAYGROUND ŞEMA DETAYI: elle modal → ModalShell (xl) + KPI şeridi (satır/boyut/kolon/indeks/kısıt/trigger/son
+  değişim) + sekmeler: Genel bakış (Kimlik / Kullanım — seq/idx tarama çubuğu ProgressBar / Zaman & Aktivite), Kolonlar
+  (PK/FK/UQ/IDX/ID rozetleri, pg_stats NULL % · ayrık · genişlik, açıklama), Bütünlük & indeksler (yapısal kısıt: kolonlar,
+  hedef, ON DELETE; indeks kolonları + tarama + boyut, "kullanılmıyor" rozeti), İlişkiler (giden FK, bu tabloya bakanlar,
+  *_id çıkarımı — tablo adları başka detayı açar). Backend `enrichTableDetails` (her sorgu safeQuery; katalog izni yoksa
+  alan boş kalır, ekran düşmez — testte pg_stats hatası yutulur). Footer: Sorguya koy / Adı kopyala.
+- WEBHOOK PUSH LOGU: mini kırılım tabloları taşıyordu → sabit yerleşim, ad sütunu kırılır, sayısal sütunlar dar/sağa,
+  başlık "Ad"; "Hata sınıfları" paneli kaldırıldı (bilgi taşımıyordu; süzgeç açılır listesi kalır); takım/alıcı rozetine
+  tıklama satır detayını AÇMIYOR (`.sml-stop` sarmalayıcı; SmtpLogView kardeş satırı da). Kapı: PushLogView testi.
+- AKTİVİTE LOGU: satır adı ve "İzlemeye git" düğmesi ilgili izlemeye gider (`activityTarget`: CERT→dashboard ?q, UPTIME→
+  uptime ?q, diğerleri ?monitor=id; scripted param taşımaz); özet kalemleri (toplam/başarılı/uyarı/hata) tıklanınca duruma
+  süzer (astatus URL'de); satırda ve detayda takım rozeti (team_id zaten DTO'daydı; TeamDirectory'den ad).
+- TAKIM YÖNETİMİ: `POST /admin/teams/bulk` (activate/deactivate/set_manager/weekly_*; her takım `applyTeamUpdate` — PUT
+  ile aynı kapsam/izin zinciri + TEAM_UPDATE farkı; özet TEAM_BULK_UPDATE, katalog + geçmiş beyaz listesi; kapı:
+  AdminControllerTest.bulkTeams — kapsam dışı satır düşer, diğerleri sürer). Arayüz: seçim kutuları (yalnız düzenlenebilir
+  satır), toplu çubuk (aktif/pasif, haftalık e-posta, müdür ata/temizle), `.invtb` araç çubuğu — arama ad/e-posta/lider/
+  müdür adıyla; süzgeçler durum / müdür / açık alarm (stats.open_alerts) / lider yok / haftalık; URL g_*; PaginationBar.
+Uygulama notları: vitest coverage koşusu iki kez OOM (worker "Fatal process out of memory") — `NODE_OPTIONS=--max-old-
+space-size=6144` + `--maxWorkers=2` ile yeşil (2204 test); progress-guard kapısı elle yazılmış tarama çubuğunu yakaladı →
+ProgressBar. Kapılar: frontend lint 0 hata / test:coverage / coverage:floor / build; backend `clean verify` 3912 test — tek
+kırmızı `IdentityLeakGuardTest` (dosya listesi okundu: yalnız bilinen iki takipsiz dosya). → **REGRESYON YOK**.
+
+## Ek — elli yedinci tur (2026-09-20, sürüm sonrası — bildirim grubu geçmişi sayfalama + giriş KPI listesi v2, `v20.73.0..HEAD`)
+
+- BİLDİRİM GRUPLARI GEÇMİŞİ (kullanıcı bildirimi "paging yapısında yapalım"): `NotificationGroupHistoryService.page(scope,
+  groupId, page, size)` — 1000'lik pencere içinde kapsam süzgeci, sonra sayfa dilimi; `total` süzgeç sonrası sayı,
+  `truncated` pencere dolunca. Uç `GET /notification-groups/history?page&size` (eski `limit` yalnız size yoksa boyut);
+  yanıt `total/page/size/total_pages`. Arayüz PaginationBar (1 tabanlı ↔ sunucu 0 tabanlı), grup süzgeci / sayfa
+  boyutu değişince başa döner. Kapılar: servis (kapsam dışı satır sayılmaz, gizlenen ayrı, boş sayfa) + denetleyici
+  (page/size servise geçer) + NotificationGroups testi (page=1 yeniden okuma, boyut 50 → başa). Tarayıcı: 10 kayıt / 1 sayfa.
+- GİRİŞ KPI LİSTESİ (kullanıcı bildirimi "login kartı çok basic"): `EventListModal` (giriş / başarısız / anomali kartları)
+  — özet çipleri (tümü, tekil kullanıcı, tekil IP, takım, LDAP, başarısız, mesai dışı; başarısız ve mesai dışı
+  tıklanınca süzer), süzgeçler (metin: kullanıcı/IP/kuruluş/sebep; takım; sonuç; bayrak), sütunlar zaman / kullanıcı +
+  rol + olay türü / takım / kaynak / IP + konum + kuruluş / tarayıcı + OS / sonuç + sebep / bayraklar; sayfalama; CSV;
+  kullanıcı → oturum detayı. Dizinde olmayan aktör login_status'tan tamamlanır. Backend eventRows `id / event_type /
+  org / user_agent` taşır. Tarayıcı: 28 giriş, mesai dışı çipi 28, sayfalı.
+Kapılar: frontend lint 0 hata / 259 test dosyası (coverage `--maxWorkers=2` + 6 GB heap) / kapsam tabanı / build; backend
+`clean verify` 3913 test — tek kırmızı `IdentityLeakGuardTest` (yalnız bilinen iki takipsiz dosya). → **REGRESYON YOK**.

@@ -3,6 +3,7 @@ import { useT } from '../../i18n/index.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
+import PaginationBar from '../ui/PaginationBar.jsx'
 
 /**
  * "Kim, ne zaman, neyi değiştirdi" — bildirim gruplarının değişiklik geçmişi.
@@ -123,6 +124,8 @@ export default function NotificationGroupHistory({
   rows, truncated, hidden, loading, error, filterName, onClearFilter,
   // Yönetim Paneli sekmeleri aynı sunumu başka kaynaklar için kullanır (2026-09-20).
   fieldPrefix = 'ng.f', actPrefix = 'ng.act', nameOf = (r) => r.group_name || `#${r.group_id}`,
+  // Sayfalama (2026-09-20): sunucu 0 tabanlı; PaginationBar 1 tabanlı. Verilmezse (eski çağıran) çubuk çizilmez.
+  page = 0, size = 25, total = null, onPageChange, onPageSizeChange,
 }) {
   const t = useT()
 
@@ -164,8 +167,14 @@ export default function NotificationGroupHistory({
         </ul>
       )}
 
+      {total != null && total > 0 && onPageChange && (
+        <PaginationBar page={page + 1} totalPages={Math.max(1, Math.ceil(total / size))} totalItems={total}
+          rangeStart={page * size + 1} rangeEnd={Math.min((page + 1) * size, total)}
+          pageSize={size} onPageChange={(p) => onPageChange(p - 1)} onPageSizeChange={(s) => onPageSizeChange?.(s)} />
+      )}
+
       {/* Sessiz kesme YOK: eksik bir geçmişi tam sanmak, geçmişin kendisinden daha kötüdür. */}
-      {truncated && <p className="field-hint">{t('ng.histTruncated').replace('{n}', rows.length)}</p>}
+      {truncated && <p className="field-hint">{t('ng.histTruncated').replace('{n}', total ?? rows.length)}</p>}
       {hidden > 0 && <p className="field-hint">{t('ng.histHidden').replace('{n}', hidden)}</p>}
       <p className="field-hint">{t('ng.histRetentionNote')}</p>
     </div>

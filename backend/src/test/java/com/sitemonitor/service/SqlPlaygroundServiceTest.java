@@ -345,4 +345,65 @@ class SqlPlaygroundServiceTest {
         assertThat(t1.getQueryTimeout()).isEqualTo(30);
         assertThat(t1.getDataSource()).isSameAs(ds);
     }
+
+    // ── tableDetails zenginleştirme (2026-09-20) ─────────────────────────────
+
+    @Test
+    @DisplayName("tableDetails: yapısal kısıt (kolonlar, hedef tablo, ON DELETE), kolon rozetleri (pk/fk/indeksli), referenced_by, stats; katalog hatası ekranı düşürmez")
+    void tableDetails_enriched() {
+        java.util.function.Function<String, Map<String, Object>> col = n -> { Map<String, Object> m = new java.util.LinkedHashMap<>(); m.put("column_name", n); m.put("data_type", "bigint"); m.put("udt_name", "int8"); m.put("is_nullable", "NO"); return m; };
+        when(jdbc.queryForList(contains("information_schema.columns"), eq("alerts"))).thenReturn(new java.util.ArrayList<>(List.of(col.apply("id"), col.apply("team_id"), col.apply("note"))));
+        when(jdbc.queryForList(contains("pg_get_constraintdef"), eq("alerts"))).thenReturn(List.of(
+                Map.of("name", "alerts_pkey", "contype", "p", "definition", "PRIMARY KEY (id)", "columns", "id", "ref_columns", "", "on_delete", "a", "on_update", "a"),
+                mapOf("name", "alerts_team_fk", "contype", "f", "definition", "FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE", "columns", "team_id", "ref_table", "teams", "ref_columns", "id", "on_delete", "c", "on_update", "a")));
+        when(jdbc.queryForList(contains("fr.relname = ?"), eq("alerts"))).thenReturn(List.of(
+                Map.of("name", "notes_alert_fk", "from_table", "alert_notes", "from_columns", "alert_id", "on_delete", "n")));
+        when(jdbc.queryForList(contains("FROM pg_indexes"), eq("alerts"))).thenReturn(new java.util.ArrayList<>(List.of(
+                mapOf("name", "alerts_pkey", "definition", "CREATE UNIQUE INDEX alerts_pkey ON alerts (id)", "is_unique", true),
+                mapOf("name", "ix_alerts_note", "definition", "CREATE INDEX ix_alerts_note ON alerts (note)", "is_unique", false))));
+        when(jdbc.queryForList(contains("pg_stat_user_indexes"), eq("alerts"))).thenReturn(List.of(
+                mapOf("name", "ix_alerts_note", "idx_scan", 42L, "idx_tup_read", 100L, "size", "16 kB", "size_bytes", 16384L, "columns", "note", "is_primary", false)));
+        when(jdbc.queryForList(contains("pg_stat_user_tables WHERE"), eq("alerts"))).thenReturn(List.of(
+                mapOf("seq_scan", 3L, "seq_tup_read", 30L, "idx_scan", 42L, "idx_tup_fetch", 40L, "n_dead_tup", 7L, "n_mod_since_analyze", 1L,
+                      "last_vacuum", null, "last_autovacuum", null, "last_analyze", null, "last_autoanalyze", null)));
+        when(jdbc.queryForList(contains("pg_stats WHERE"), eq("alerts"))).thenThrow(new RuntimeException("no privilege"));   // safeQuery yutar
+
+        Map<String, Object> d = service.tableDetails("alerts");
+
+        @SuppressWarnings("unchecked") List<Map<String, Object>> cons = (List<Map<String, Object>>) d.get("constraints");
+        assertThat(cons).hasSize(2);
+        assertThat(cons.get(1).get("type")).isEqualTo("FOREIGN KEY");
+        assertThat(cons.get(1).get("columns")).isEqualTo(List.of("team_id"));
+        assertThat(cons.get(1).get("ref_table")).isEqualTo("teams");
+        assertThat(cons.get(1).get("on_delete")).isEqualTo("CASCADE");
+        @SuppressWarnings("unchecked") List<Map<String, Object>> cols = (List<Map<String, Object>>) d.get("columns");
+        assertThat(cols.get(0).get("is_pk")).isEqualTo(true);
+        assertThat(cols.get(1).get("is_fk")).isEqualTo(true);
+        assertThat(cols.get(2).get("is_indexed")).isEqualTo(true);
+        assertThat(cols.get(1).get("is_indexed")).isEqualTo(false);
+        @SuppressWarnings("unchecked") List<Map<String, Object>> ref = (List<Map<String, Object>>) d.get("referenced_by");
+        assertThat(ref).hasSize(1);
+        assertThat(ref.get(0).get("from_columns")).isEqualTo(List.of("alert_id"));
+        assertThat(ref.get(0).get("on_delete")).isEqualTo("SET NULL");
+        @SuppressWarnings("unchecked") List<Map<String, Object>> ixs = (List<Map<String, Object>>) d.get("indexes");
+        assertThat(ixs.get(1).get("scans")).isEqualTo(42L);
+        assertThat(ixs.get(1).get("size")).isEqualTo("16 kB");
+        assertThat(((Map<?, ?>) d.get("stats")).get("dead_rows")).isEqualTo(7L);
+        assertThat(d).containsKeys("comment", "inferred_relations");
+    }
+
+    @Test
+    void fkAction_codes() {
+        assertThat(SqlPlaygroundService.fkAction("c")).isEqualTo("CASCADE");
+        assertThat(SqlPlaygroundService.fkAction("n")).isEqualTo("SET NULL");
+        assertThat(SqlPlaygroundService.fkAction("a")).isEqualTo("NO ACTION");
+        assertThat(SqlPlaygroundService.fkAction(null)).isNull();
+    }
+
+    /** null değer taşıyabilen sıralı harita (Map.of null kabul etmez). */
+    private static Map<String, Object> mapOf(Object... kv) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < kv.length; i += 2) m.put((String) kv[i], kv[i + 1]);
+        return m;
+    }
 }

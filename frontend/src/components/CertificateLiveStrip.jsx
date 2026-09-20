@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { BellRing, BellOff } from 'lucide-react'
 import { useT } from '../i18n/index.jsx'
 import { formatDate } from '../api/client'
 import { navigateTo } from '../utils/navigate.js'
@@ -19,6 +20,13 @@ function ago(iso, t) {
   const h = Math.floor(m / 60)
   if (h < 48) return t('live.hourAgo', h)
   return t('live.dayAgo', Math.floor(h / 24))
+}
+
+/** Seviye kısa etiketi (KRİTİK/YÜKSEK/UYARI); bilinmeyen seviye ham adıyla. */
+function levelShort(level, t) {
+  const k = `sim.level.${String(level || '').toUpperCase()}`
+  const v = t(k)
+  return v === k ? String(level || '') : v
 }
 
 function CertificateLiveStrip({ domain, uptime, alert }) {
@@ -42,11 +50,12 @@ function CertificateLiveStrip({ domain, uptime, alert }) {
           {uptime.last_ms != null && up && <span className="cc-live-muted"> {uptime.last_ms}ms</span>}
         </span>
       )}
+      {/* Açık alarm = zil ikonu + seviye (2026-09-20): "alarm AÇIK · CRITICAL" metni dar footer'da kesiliyordu (K harfi). */}
       <span className={`cc-live-alert${open ? ' is-open' : ''}`}>
-        {uptime ? ' · ' : ''}
+        {uptime ? <span className="cc-live-sep" aria-hidden="true">·</span> : null}
         {!alert ? t('live.noAlert')
-          : open ? t('live.alertOpenLevel', alert.level || '')
-          : t('live.alertAgo', ago(alert.resolved_at || alert.at, t) || '—')}
+          : open ? <><BellRing size={11} className="cc-live-bell" aria-label={t('live.alertOpen')} /> {levelShort(alert.level, t)}</>
+          : <><BellOff size={11} className="cc-live-bell cc-live-bell--off" aria-hidden="true" /> {t('live.alertAgo', ago(alert.resolved_at || alert.at, t) || '—')}</>}
       </span>
     </button>
   )

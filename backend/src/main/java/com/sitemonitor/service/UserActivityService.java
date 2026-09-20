@@ -94,7 +94,7 @@ public class UserActivityService {
         out.put("series",       buildSeries(window));
         out.put("top_users",    buildTopUsers(window, usersByName));
         out.put("top_sources",  buildTopSources(window));
-        out.put("anomalies",    buildAnomalies(window));
+        out.put("anomalies",    buildAnomalies(window, usersByName, teamNames));
         out.put("role_team",    buildRoleTeam(window, teamNames, usersByName));
         out.put("heatmaps",     buildWeeklyHeatmaps());   // bu hafta + 1 önceki + 2 önceki (her biri from/to'lu)
         out.put("details",      buildKpiDetails(window, usersByName, teamNames)); // KPI drill-down listeleri
@@ -224,9 +224,9 @@ public class UserActivityService {
             if (a.getAnomalyFlags() != null && !a.getAnomalyFlags().isBlank()) anoms.add(a);
         }
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("logins", eventRows(logins));
-        out.put("failed", eventRows(failed));
-        out.put("anomalies", eventRows(anoms));
+        out.put("logins", eventRows(logins, usersByName, teamNames));
+        out.put("failed", eventRows(failed, usersByName, teamNames));
+        out.put("anomalies", eventRows(anoms, usersByName, teamNames));
         out.put("unique_users", userAgg.entrySet().stream()
                 .sorted((x, y) -> Long.compare(y.getValue()[0], x.getValue()[0]))
                 .map(e -> {
@@ -260,6 +260,11 @@ public class UserActivityService {
 
     /** Olay listesini yeni→eski sırada, cap'li UI satırlarına çevirir (ortak satır şekli). */
     private List<Map<String, Object>> eventRows(List<AuditLog> events) {
+        return eventRows(events, Map.of(), Map.of());
+    }
+
+    /** Aynı satır şekli + aktörün adı / rolü / takımı (2026-09-20: giriş ve anomali listelerinde takım görünsün). */
+    private List<Map<String, Object>> eventRows(List<AuditLog> events, Map<String, AppUser> usersByName, Map<Long, String> teamNames) {
         return events.stream()
                 .sorted((x, y) -> nullSafe(y.getEventTime()).compareTo(nullSafe(x.getEventTime())))
                 .limit(DETAIL_CAP)
@@ -267,12 +272,25 @@ public class UserActivityService {
                     Map<String, Object> m = new LinkedHashMap<>();
                     m.put("time", a.getEventTime());
                     m.put("actor", a.getActor());
+                    AppUser au = a.getActor() != null ? usersByName.get(lc(a.getActor())) : null;
+                    if (au == null && a.getActor() != null) au = usersByName.get(a.getActor());
+                    m.put("display_name", au != null ? displayName(au) : null);
+                    m.put("user_id", au != null ? au.getId() : null);
+                    m.put("system_role", au != null ? au.getSystemRole() : null);
+                    m.put("team_id", au != null ? au.getTeamId() : null);
+                    m.put("team_name", au != null && au.getTeamId() != null ? teamNames.get(au.getTeamId()) : null);
+                    m.put("auth_source", au != null ? au.getAuthSource() : null);
                     m.put("ip", a.getIpAddress());
                     m.put("country", a.getIpCountry());
                     m.put("city", a.getIpCity());
                     m.put("outcome", a.getOutcome());
                     m.put("flags", a.getAnomalyFlags());
                     m.put("reason", a.getFailureReason());
+                    // 2026-09-20: giriş listesi zenginleştirmesi — kimlik, olay türü, kuruluş, tarayıcı
+                    m.put("id", a.getId());
+                    m.put("event_type", a.getEventType());
+                    m.put("org", a.getIpOrg());
+                    m.put("user_agent", a.getUserAgent());
                     return m;
                 }).toList();
     }
@@ -371,6 +389,22 @@ public class UserActivityService {
             m.put("team_name",    u.getTeamId() != null ? teamNames.get(u.getTeamId()) : null);
             m.put("active",       Boolean.TRUE.equals(u.getActive()));
             m.put("auth_source",  u.getAuthSource());
+            // Kullanıcı dizini (2026-09-20, kullanıcı bildirimi): e-posta, org rolü, takım id + ek takımlar, sicil
+            // (denetleyici global admin dışı için siler), oluşturulma, son görülme, tur durumu, kilit, ünvan/departman.
+            m.put("email",        u.getEmail());
+            m.put("org_role",     u.getOrgRole());
+            m.put("team_id",      u.getTeamId());
+            m.put("team_ids",     u.getTeamIds() == null ? List.of() : new ArrayList<>(u.getTeamIds()));
+            m.put("employee_id",  u.getEmployeeId());
+            m.put("created_at",   u.getCreatedAt());
+            m.put("last_seen_at", u.getLastSeenAt());
+            m.put("permanent_lock", Boolean.TRUE.equals(u.getPermanentLock()));
+            m.put("title",        u.getTitle());
+            m.put("department",   u.getDepartment());
+            Map<String, Object> ts = TourStateService.parse(u.getTourState());
+            String tourStatus = ts == null ? null : String.valueOf(ts.get("status"));
+            m.put("tour_status",  tourStatus == null || "null".equals(tourStatus) ? "none" : tourStatus);
+            m.put("tour_at",      ts == null ? null : ts.get("updated_at"));
             putLoginStamp(m, u);
             rows.add(m);
         }
@@ -522,7 +556,7 @@ public class UserActivityService {
     }
 
     // ── Anomaliler ───────────────────────────────────────────────────────────────
-    private Map<String, Object> buildAnomalies(List<AuditLog> window) {
+    private Map<String, Object> buildAnomalies(List<AuditLog> window, Map<String, AppUser> usersByName, Map<Long, String> teamNames) {
         Map<String, Long> counts = new LinkedHashMap<>();
         for (String k : ANOMALY_KINDS) counts.put(k, 0L);
         List<AuditLog> flagged = new ArrayList<>();
@@ -542,6 +576,15 @@ public class UserActivityService {
                     m.put("id",      a.getId());
                     m.put("time",    a.getEventTime());
                     m.put("actor",   a.getActor());
+                    // 2026-09-20: anomali satırında kim / hangi takım / hangi rol görünsün
+                    AppUser au = a.getActor() != null ? usersByName.get(lc(a.getActor())) : null;
+                    if (au == null && a.getActor() != null) au = usersByName.get(a.getActor());
+                    m.put("display_name", au != null ? displayName(au) : null);
+                    m.put("user_id",      au != null ? au.getId() : null);
+                    m.put("system_role",  au != null ? au.getSystemRole() : null);
+                    m.put("team_id",      au != null ? au.getTeamId() : null);
+                    m.put("team_name",    au != null && au.getTeamId() != null ? teamNames.get(au.getTeamId()) : null);
+                    m.put("auth_source",  au != null ? au.getAuthSource() : null);
                     m.put("ip",      a.getIpAddress());
                     m.put("country", a.getIpCountry());
                     m.put("city",    a.getIpCity());

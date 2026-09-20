@@ -48,6 +48,7 @@ describe('UserManager — zenginleştirme', () => {
   it('uyuyan hesap süzgeci sunucuya dormantDays / neverLoggedIn olarak gider ve URL\\u0027de g_dormant tutulur', async () => {
     render(<UserManager systemRole="ADMIN" teams={TEAMS} currentUsername="admin" />)
     await screen.findByText('Ali')
+    fireEvent.click(screen.getByRole('button', { name: /Süzgeçler|Filters/ }))   // standart araç çubuğu: panel kapalı başlar (2026-09-20)
     fireEvent.mouseDown(screen.getByLabelText(/Son giriş|Last login/))
     fireEvent.mouseDown(await screen.findByText(/90\+ gündür|90\+ days/))
     await waitFor(() => expect(api.admin.searchUsers).toHaveBeenLastCalledWith(expect.objectContaining({ dormantDays: 90, neverLoggedIn: false })))

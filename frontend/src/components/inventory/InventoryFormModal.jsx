@@ -110,7 +110,7 @@ function initialForm(mode, record) {
  * @param {Function} onSaved              (savedResponse) => void — çağıran kapatır + tazeler
  */
 export default function InventoryFormModal({ mode = 'add', record = null, teams: teamsProp,
-                                             canManage = true, onClose, onSaved }) {
+                                             canManage = true, onClose, onSaved, focus = null }) {
   const t = useT()
   const { theme } = useTheme()
   const toast = useToast()
@@ -131,6 +131,13 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
   const [testResult, setTestResult] = useState(null)   // {status, issuer, not_after, days_remaining, ...} | {error}
   const [deleting, setDeleting] = useState(false)
   const formGridRef = useRef(null)
+  const contactsRef = useRef(null)
+  // Karttaki "Sorumlu kişi yok" çipinden gelince (2026-09-20) form Sorumlu Ekipler bölümünde açılır.
+  useEffect(() => {
+    if (focus !== 'contacts') return
+    const id = setTimeout(() => { try { contactsRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }); contactsRef.current?.classList.add('is-focus-target') } catch { /* jsdom */ } }, 50)
+    return () => clearTimeout(id)
+  }, [focus])
 
   const isDuplicate = mode === 'duplicate'
   // Silme yetkisi: CertificateModal ile AYNI kapı (inventory.crud) — ikinci bir yetki yolu açılmaz.
@@ -513,6 +520,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
           </label>
 
           {/* ── Sorumlu Ekipler ── */}
+          <div ref={contactsRef} className="full-width" data-testid="contacts-anchor" />
           <SectionHeader label={t('inv.sectionContacts')} />
           <div className="full-width">
             <span className="field-hint">{t('inv.contactsHint')}</span>
@@ -658,7 +666,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
  * domain-anahtarlı). Kayıt bulunamazsa (silinmiş / yetki kapsamı dışı) BOŞ FORM AÇILMAZ:
  * kullanıcı doldurup kaydeder ve mükerrer bir envanter kaydı doğardı.
  */
-export function InventoryFormModalForDomain({ domain, mode = 'edit', onClose, onSaved }) {
+export function InventoryFormModalForDomain({ domain, mode = 'edit', onClose, onSaved, focus = null }) {
   const t = useT()
   const toast = useToast()
   const [record, setRecord] = useState(null)
@@ -686,5 +694,5 @@ export function InventoryFormModalForDomain({ domain, mode = 'edit', onClose, on
       </div>
     )
   }
-  return <InventoryFormModal mode={mode} record={record} onClose={onClose} onSaved={onSaved} />
+  return <InventoryFormModal mode={mode} record={record} onClose={onClose} onSaved={onSaved} focus={focus} />
 }

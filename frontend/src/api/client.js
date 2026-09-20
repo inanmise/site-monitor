@@ -161,6 +161,8 @@ export const api = {
     today: (opts = {}) => request(opts.full ? '/me/today?full=true' : '/me/today'),
     /** Bildirim kutusu (2026-09-12, #2) */
     inbox: () => request('/me/inbox'),
+    /** Geçmiş (2026-09-20): çözülmüş alarmlar 30 gün, sayfalı. */
+    inboxHistory: (page = 0, size = 25) => request(`/me/inbox?view=history&page=${page}&size=${size}`),
     // 2026-09-10: yol '/auth/me/push-opt-out' idi — AuthController '/api' tabanlı, uç '/api/me/push-opt-out'
     // → 404; sunucu onayı gelmediği için "Webhook push istemiyorum" kutusu HİÇ işaretlenmiyordu.
     setPushOptOut: (optOut) => request('/me/push-opt-out', { method: 'POST', body: JSON.stringify({ opt_out: optOut }) }),
@@ -491,8 +493,8 @@ export const api = {
     usage: (id) => request(`/notification-groups/${id}/usage`),
     /** Degisiklik gecmisi (kim/ne zaman/ne degisti) — SILINMIS gruplar dahil. Kaynak audit_log;
      *  denetim uclarindan ayri, cunku bu ekran notification.groups yetkisiyle acilir. */
-    history: (groupId, limit = 50) => {
-      const qs = new URLSearchParams({ limit: String(limit) })
+    history: (groupId, { page = 0, size = 25 } = {}) => {   // sayfalı (2026-09-20)
+      const qs = new URLSearchParams({ page: String(page), size: String(size) })
       if (groupId != null) qs.set('groupId', String(groupId))
       return request(`/notification-groups/history?${qs.toString()}`)
     },
@@ -869,6 +871,7 @@ export const api = {
     bulkUsers: (body) => request('/admin/users/bulk', { method: 'POST', body: JSON.stringify(body) }),
     // Takım sayaçları / etki / taşıma / üyelik (2026-09-20)
     teamStats: () => request('/admin/teams/stats'),
+    bulkTeams: (body) => request('/admin/teams/bulk', { method: 'POST', body: JSON.stringify(body) }),   // toplu takım işlemi (2026-09-20)
     teamImpact: (id) => request(`/admin/teams/${id}/impact`),
     teamMove: (id, targetTeamId) => request(`/admin/teams/${id}/move`, { method: 'POST', body: JSON.stringify({ target_team_id: targetTeamId }) }),
     addTeamMember: (id, userId) => request(`/admin/teams/${id}/members`, { method: 'POST', body: JSON.stringify({ user_id: userId }) }),

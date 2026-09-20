@@ -153,14 +153,20 @@ class SystemControllerTest {
     @DisplayName("user-activity: sicil (employee_id) yalnız global ADMIN'e döner — USER payload'ında hiç yok (arayüz maskesi yetmez)")
     void userActivity_masksEmployeeIdForNonGlobalAdmin() throws Exception {
         when(userActivityService.getOverview()).thenReturn(Map.of("summary", Map.of("active_count", 1),
-                "active_users", List.of(Map.of("username", "u1", "employee_id", "12345", "email", "u1@example.com"))));
+                "active_users", List.of(Map.of("username", "u1", "employee_id", "12345", "email", "u1@example.com")),
+                // 2026-09-20: kullanıcı dizini (login_status) da sicil taşır → aynı maske
+                "login_status", List.of(Map.of("username", "u1", "employee_id", "12345"), Map.of("username", "u2", "employee_id", "67890"))));
         mvc.perform(get("/api/admin/system/user-activity").session(userSession()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.active_users[0].username").value("u1"))
-                .andExpect(jsonPath("$.data.active_users[0].employee_id").doesNotExist());
+                .andExpect(jsonPath("$.data.active_users[0].employee_id").doesNotExist())
+                .andExpect(jsonPath("$.data.login_status[0].username").value("u1"))
+                .andExpect(jsonPath("$.data.login_status[0].employee_id").doesNotExist())
+                .andExpect(jsonPath("$.data.login_status[1].employee_id").doesNotExist());
         mvc.perform(get("/api/admin/system/user-activity").session(adminSession()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.active_users[0].employee_id").value("12345"));
+                .andExpect(jsonPath("$.data.active_users[0].employee_id").value("12345"))
+                .andExpect(jsonPath("$.data.login_status[1].employee_id").value("67890"));
     }
 
     @Test

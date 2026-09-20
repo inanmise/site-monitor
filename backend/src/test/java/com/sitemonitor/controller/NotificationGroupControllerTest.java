@@ -397,11 +397,11 @@ class NotificationGroupControllerTest {
     @Test
     @DisplayName("Geçmiş: kendi görüş kapsamıyla sınırlı olarak döner")
     void history_returnsScopedRows() throws Exception {
-        when(historyService.history(any(), any(), anyInt())).thenReturn(
-                new com.sitemonitor.service.NotificationGroupHistoryService.History(
+        when(historyService.page(any(), any(), anyInt(), anyInt())).thenReturn(
+                new com.sitemonitor.service.NotificationGroupHistoryService.HistoryPage(
                         List.of(new com.sitemonitor.service.NotificationGroupHistoryService.Entry(
                                 auditRow(1L, "NOTIFICATION_GROUP_UPDATE", "10"), TEAM_A)),
-                        false, 0));
+                        1, 0, 25, false, 0));
 
         mvc.perform(get("/api/notification-groups/history").session(userOfA))
                 .andExpect(status().isOk())
@@ -412,14 +412,14 @@ class NotificationGroupControllerTest {
                 .andExpect(jsonPath("$.data.hidden").value(0));
 
         // Kapsam servise AKTARILMALI: burada boş/null geçmek, tüm takımların geçmişini sızdırırdı.
-        verify(historyService).history(argThat(ids -> ids != null && ids.contains(TEAM_A)), isNull(), anyInt());
+        verify(historyService).page(argThat(ids -> ids != null && ids.contains(TEAM_A)), isNull(), eq(0), eq(25));
     }
 
     @Test
     @DisplayName("Geçmiş: kesilme ve gizlenen sayısı yanıtta AÇIKÇA taşınır")
     void history_reportsTruncationHonestly() throws Exception {
-        when(historyService.history(any(), any(), anyInt())).thenReturn(
-                new com.sitemonitor.service.NotificationGroupHistoryService.History(List.of(), true, 3));
+        when(historyService.page(any(), any(), anyInt(), anyInt())).thenReturn(
+                new com.sitemonitor.service.NotificationGroupHistoryService.HistoryPage(List.of(), 0, 0, 25, true, 3));
 
         mvc.perform(get("/api/notification-groups/history").session(userOfA))
                 .andExpect(status().isOk())
@@ -430,13 +430,15 @@ class NotificationGroupControllerTest {
     @Test
     @DisplayName("Geçmiş: groupId süzgeci servise geçer")
     void history_passesGroupFilter() throws Exception {
-        when(historyService.history(any(), any(), anyInt())).thenReturn(
-                new com.sitemonitor.service.NotificationGroupHistoryService.History(List.of(), false, 0));
+        when(historyService.page(any(), any(), anyInt(), anyInt())).thenReturn(
+                new com.sitemonitor.service.NotificationGroupHistoryService.HistoryPage(List.of(), 0, 1, 10, false, 0));
 
-        mvc.perform(get("/api/notification-groups/history").param("groupId", "10").session(userOfA))
-                .andExpect(status().isOk());
+        mvc.perform(get("/api/notification-groups/history").param("groupId", "10").param("page", "1").param("size", "10").session(userOfA))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.page").value(1))
+                .andExpect(jsonPath("$.data.size").value(10));
 
-        verify(historyService).history(any(), eq(GROUP_A), anyInt());
+        verify(historyService).page(any(), eq(GROUP_A), eq(1), eq(10));
     }
 
     /**

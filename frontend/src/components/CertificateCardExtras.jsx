@@ -16,7 +16,7 @@ const CRITICAL_HF = new Set(['revocation', 'trust', 'sanMatch', 'chain'])
 
 function stop(fn) { return (e) => { e.stopPropagation(); fn?.(e) } }
 
-function CertificateCardExtras({ cert, extra, onOpenHealth, onConfirmRenewal, onPlanRenewal, confirming = false }) {
+function CertificateCardExtras({ cert, extra, onOpenHealth, onConfirmRenewal, onPlanRenewal, onEditContacts, confirming = false }) {
   const t = useT()
   if (!extra) return null
   const { health, alerts, uptime, change, renewal, shared, maintenance, contacts } = extra
@@ -56,7 +56,8 @@ function CertificateCardExtras({ cert, extra, onOpenHealth, onConfirmRenewal, on
 
       {/* Erişilebilirlik 24 sa */}
       {uptime && (uptime.pct24 != null || uptime.last_status) && (
-        <div className="ccx-row ccx-uptime" title={t('ccx.uptimeTip', uptime.checks24 ?? 0, uptime.last_at ? formatDate(uptime.last_at) : '—')}>
+        <button type="button" className="ccx-row ccx-uptime ccx-row--link" title={t('ccx.uptimeTip', uptime.checks24 ?? 0, uptime.last_at ? formatDate(uptime.last_at) : '—') + '\n' + t('ccx.uptimeGo')}
+          onClick={stop(() => navigateTo('uptime', { q: cert.domain }))}>
           <Activity size={11} className={uptime.last_status === 'up' ? 'ccx-ok' : uptime.last_status ? 'ccx-bad' : ''} />
           <span className={`ccx-pct${uptime.pct24 != null && uptime.pct24 < 99 ? (uptime.pct24 < 95 ? ' is-bad' : ' is-warn') : ''}`}>{uptime.pct24 == null ? '—' : `%${uptime.pct24}`}</span>
           <span className="ccx-muted">{t('ccx.uptime24')}</span>
@@ -64,7 +65,7 @@ function CertificateCardExtras({ cert, extra, onOpenHealth, onConfirmRenewal, on
           {Array.isArray(uptime.points) && uptime.points.some((p) => p != null) && (
             <span className="ccx-spark"><Sparkline data={uptime.points.map((p) => (p == null ? 0 : p))} width={72} height={16} color={uptime.pct24 != null && uptime.pct24 < 95 ? '#dc2626' : '#059669'} /></span>
           )}
-        </div>
+        </button>
       )}
 
       {/* Sertifika değişimi / pin */}
@@ -110,9 +111,14 @@ function CertificateCardExtras({ cert, extra, onOpenHealth, onConfirmRenewal, on
             </span>
           )}
           {contacts && (contacts.missing ? (
-            <span className="ccx-mini ccx-mini--warn" title={t('ccx.contactsMissingTip')}><Users size={10} /> {t('ccx.contactsMissing')}</span>
+            // 2026-09-20: tıklanınca envanter formu Sorumlu Ekipler bölümünde açılır (yetki yoksa yalnız bilgi)
+            onEditContacts
+              ? <button type="button" className="ccx-mini ccx-mini--warn ccx-mini--link" title={t('ccx.contactsMissingTip') + '\n' + t('ccx.contactsAdd')} onClick={stop(() => onEditContacts(cert.domain))}><Users size={10} /> {t('ccx.contactsMissing')}</button>
+              : <span className="ccx-mini ccx-mini--warn" title={t('ccx.contactsMissingTip')}><Users size={10} /> {t('ccx.contactsMissing')}</span>
           ) : (
-            <span className="ccx-mini" title={contactList.map(([k, v]) => `${t(`ccx.contact.${k}`)}: ${v}`).join('\n')}><Users size={10} /> {t('ccx.contacts', contactList.length)}</span>
+            onEditContacts
+              ? <button type="button" className="ccx-mini ccx-mini--link" title={contactList.map(([k, v]) => `${t(`ccx.contact.${k}`)}: ${v}`).join('\n') + '\n' + t('ccx.contactsEdit')} onClick={stop(() => onEditContacts(cert.domain))}><Users size={10} /> {t('ccx.contacts', contactList.length)}</button>
+              : <span className="ccx-mini" title={contactList.map(([k, v]) => `${t(`ccx.contact.${k}`)}: ${v}`).join('\n')}><Users size={10} /> {t('ccx.contacts', contactList.length)}</span>
           ))}
         </div>
       )}

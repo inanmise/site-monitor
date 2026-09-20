@@ -2398,6 +2398,48 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.data.id").value(2));
     }
 
+    @Test
+    @DisplayName("POST /teams/bulk (2026-09-20): deactivate her takım ayrı geçer, kapsam dışı satır düşer; set_manager manager_id doğrular; bilinmeyen işlem 400")
+    void bulkTeams() throws Exception {
+        when(userService.updateTeam(anyLong(), any(), any(), any(), any(), any(), any(), any()))
+                .thenAnswer(inv -> { Team tm = new Team(); tm.setId(inv.getArgument(0)); tm.setName("T" + inv.getArgument(0)); return tm; });
+        when(userService.updateTeamManager(anyLong(), any()))
+                .thenAnswer(inv -> { Team tm = new Team(); tm.setId(inv.getArgument(0)); tm.setName("T" + inv.getArgument(0)); return tm; });
+        // TEAM_ADMIN yalnız 2 numaralı takımı yönetir → 3 kapsam dışı (satır düşer, diğerleri sürer)
+        mvc.perform(post("/api/admin/teams/bulk").session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"deactivate\",\"ids\":[2,3]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.ok").value(1))
+                .andExpect(jsonPath("$.data.failed").value(1))
+                .andExpect(jsonPath("$.data.results[0].ok").value(true))
+                .andExpect(jsonPath("$.data.results[1].ok").value(false));
+        verify(userService).updateTeam(eq(2L), isNull(), isNull(), isNull(), eq(false), isNull(), isNull(), isNull());
+        verify(auditService).recordAction(eq("TEAM_BULK_UPDATE"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("TEAM"), eq("bulk"), any());
+
+        when(userRepo.existsById(77L)).thenReturn(true);
+        mvc.perform(post("/api/admin/teams/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"set_manager\",\"ids\":[2],\"manager_id\":77}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.ok").value(1));
+        verify(userService).updateTeamManager(2L, 77L);
+
+        mvc.perform(post("/api/admin/teams/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"set_manager\",\"ids\":[2],\"manager_id\":404}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/admin/teams/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"frobnicate\",\"ids\":[2]}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/admin/teams/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"weekly_reminder_on\",\"ids\":[]}"))
+                .andExpect(status().isBadRequest());
+    }
+
     // ── Haftalık e-posta anahtarları: takım ÜYELERİNE açık dar uç ─────────────
     // teams.update yetkisi olmayan sıradan USER kendi takımının iki anahtarını çevirebilmeli,
     // ama BAŞKA takımınkini çevirememeli (IDOR) ve ad/e-posta gibi alanlara dokunamamalı.

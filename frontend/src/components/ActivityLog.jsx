@@ -7,8 +7,27 @@ import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import {
   Shield, Activity, Globe, Server, Radio, Share2, Search, CalendarClock, ScanSearch, FlaskConical, Gauge,
   CheckCircle, AlertTriangle, XCircle, HelpCircle, ChevronDown, ChevronRight,
-  Download, X, RefreshCw, Clock, User, Inbox } from 'lucide-react'
+  Download, X, RefreshCw, Clock, User, Inbox, ExternalLink } from 'lucide-react'
 import { csvCell } from '../utils/csv.js'
+import TeamBadge from './ui/TeamBadge.jsx'
+import { navigateTo } from '../utils/navigate.js'
+
+/**
+ * Aktivite satırı → ilgili izleme sekmesi (2026-09-20, kullanıcı bildirimi: "ping logunu görünce o ping izlemesine
+ * gitmeliyim"). Backend MonitorRefResolver ile aynı kural: sertifika → Genel Bakış (?q=alan), uptime → Durum İzleme
+ * (?q=hedef), diğer türler kendi sekmesine ?monitor=id ile (scripted param taşımaz). Bilinmeyen tür → null.
+ */
+const MONITOR_TABS = { DOMAIN: 'domain', HTTP: 'http', PORT: 'port', PING: 'ping', DNS: 'dns', KEYWORD: 'keyword', PAGE: 'page', PAGESPEED: 'pagespeed', SCRIPTED: 'scripted' }
+export function activityTarget(row) {
+  if (!row) return null
+  const type = String(row.monitor_type || '').toUpperCase()
+  const host = row.target ? String(row.target).replace(/^https?:\/\//i, '').split('/')[0].split(':')[0] : ''
+  if (type === 'CERT') return { tab: 'dashboard', params: host ? { q: host } : undefined }
+  if (type === 'UPTIME') return { tab: 'uptime', params: host ? { q: host } : undefined }
+  const tab = MONITOR_TABS[type]
+  if (!tab) return null
+  return { tab, params: row.monitor_id != null && type !== 'SCRIPTED' ? { monitor: row.monitor_id } : undefined }
+}
 
 // Her izleme türünün ayırt edici ikon + rengi (badge).
 const TYPES = [
@@ -195,11 +214,16 @@ export default function ActivityLog({ refreshTrigger }) {
   return (
     <div className="activity-log">
       {/* Özet şerit */}
+      {/* Özet kalemleri tıklanır (2026-09-20): duruma süzer, tekrar tıklayınca süzgeç kalkar */}
       <div className="act-summary-bar">
-        <div className="act-sum-item"><strong>{summary?.total ?? '—'}</strong><span>{t('act.sum.total')}</span></div>
-        <div className="act-sum-item act-ok"><CheckCircle size={13} /><strong>{summary?.success_count ?? 0}</strong><span>{t('act.st.SUCCESS')}</span></div>
-        <div className="act-sum-item act-warn"><AlertTriangle size={13} /><strong>{summary?.warning ?? 0}</strong><span>{t('act.st.WARNING')}</span></div>
-        <div className="act-sum-item act-err"><XCircle size={13} /><strong>{summary?.error ?? 0}</strong><span>{t('act.st.ERROR')}</span></div>
+        {[['', summary?.total ?? '—', t('act.sum.total'), null, ''], ['SUCCESS', summary?.success_count ?? 0, t('act.st.SUCCESS'), CheckCircle, 'act-ok'],
+          ['WARNING', summary?.warning ?? 0, t('act.st.WARNING'), AlertTriangle, 'act-warn'], ['ERROR', summary?.error ?? 0, t('act.st.ERROR'), XCircle, 'act-err']].map(([st, val, label, Icon, cls]) => (
+          <button key={st || 'all'} type="button" className={`act-sum-item act-sum-btn${cls ? ' ' + cls : ''}${filters.status === st ? ' is-on' : ''}`}
+            aria-pressed={filters.status === st} title={t('act.sumFilterHint')}
+            onClick={() => setFilters((f) => ({ ...f, status: f.status === st ? '' : st }))}>
+            {Icon && <Icon size={13} />}<strong>{val}</strong><span>{label}</span>
+          </button>
+        ))}
         <div className="act-sum-spacer" />
         {summary?.last_activity && (
           <div className="act-sum-last"><Clock size={12} /> {t('act.lastActivity')}: {formatDateSec(summary.last_activity)}</div>
@@ -274,6 +298,7 @@ export default function ActivityLog({ refreshTrigger }) {
                       <span className="act-item-badge" style={{ color: tm0.color, background: tm0.color + '18' }}><tm0.Icon size={13} /> {f.rows[0].monitor_type}</span>
                       <span className="act-item-name" title={f.rows[0].monitor_name}>{f.rows[0].monitor_name}</span>
                       <span className="act-item-target" title={f.rows[0].target}>{f.rows[0].target}</span>
+                      <span className="act-item-team">{f.rows[0].team_id != null ? <TeamBadge teamId={f.rows[0].team_id} teamName={f.rows[0].team_name} static /> : <span className="sys-muted">—</span>}</span>
                       <span className="act-item-action act-fold-count">{t('act.folded', f.rows.length)}{errs ? ` · ${t('act.foldedErrors', errs)}` : ''}</span>
                       <span className="act-item-time" title={formatDateSec(f.rows[0].activity_time)}>{rel(f.rows[f.rows.length - 1].activity_time)} → {rel(f.rows[0].activity_time)}</span>
                     </button>
@@ -286,21 +311,28 @@ export default function ActivityLog({ refreshTrigger }) {
               const isOpen = openId === row.id
               const d = details[row.id]
               const isError = row.result_status === 'ERROR' || row.result_status === 'TIMEOUT'
+              const dest = activityTarget(row)
+              const go = (e) => { e.stopPropagation(); if (dest) navigateTo(dest.tab, dest.params) }
               return (
                 <div key={entry.key} className={`act-item${isOpen ? ' open' : ''}${isError ? ' act-item-error' : ''}`}>
-                  <button className="act-item-row" onClick={() => openDetail(row)}>
-                    <span className="act-item-caret">{isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
-                    <span className="act-item-badge" style={{ color: tm.color, background: tm.color + '18' }}>
-                      <tm.Icon size={13} /> {row.monitor_type}
-                    </span>
-                    <span className="act-item-name" title={row.monitor_name}>{row.monitor_name}</span>
-                    <span className="act-item-target" title={row.target}>{row.target}</span>
-                    <span className="act-item-action">{t('act.ac.' + row.action)}</span>
-                    <span className="act-item-summary" style={{ color: sm.color }}>
-                      <sm.Icon size={13} /> {localizeSummary(row.result_summary, t) || t('act.st.' + row.result_status)}
-                    </span>
-                    <span className="act-item-time" title={formatDateSec(row.activity_time)}>{rel(row.activity_time)}</span>
-                  </button>
+                  <div className="act-item-head">
+                    <button className="act-item-row" onClick={() => openDetail(row)}>
+                      <span className="act-item-caret">{isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
+                      <span className="act-item-badge" style={{ color: tm.color, background: tm.color + '18' }}>
+                        <tm.Icon size={13} /> {row.monitor_type}
+                      </span>
+                      {/* Ad tıklanınca izlemeye gider (2026-09-20); satırın kalanı detayı açar */}
+                      <span className={`act-item-name${dest ? ' act-item-name--link' : ''}`} title={dest ? t('act.goMonitor') : row.monitor_name} onClick={dest ? go : undefined}>{row.monitor_name}</span>
+                      <span className="act-item-target" title={row.target}>{row.target}</span>
+                      <span className="act-item-team">{row.team_id != null ? <TeamBadge teamId={row.team_id} teamName={row.team_name} static /> : <span className="sys-muted">—</span>}</span>
+                      <span className="act-item-action">{t('act.ac.' + row.action)}</span>
+                      <span className="act-item-summary" style={{ color: sm.color }}>
+                        <sm.Icon size={13} /> {localizeSummary(row.result_summary, t) || t('act.st.' + row.result_status)}
+                      </span>
+                      <span className="act-item-time" title={formatDateSec(row.activity_time)}>{rel(row.activity_time)}</span>
+                    </button>
+                    {dest && <button type="button" className="act-item-go" onClick={go} title={t('act.goMonitor')} aria-label={t('act.goMonitor')}><ExternalLink size={14} /></button>}
+                  </div>
                   {isOpen && (
                     <div className="act-item-detail">
                       <div className="act-detail-grid">
@@ -308,6 +340,7 @@ export default function ActivityLog({ refreshTrigger }) {
                         <div><label>{t('act.d.status')}</label><span style={{ color: sm.color }}>{t('act.st.' + row.result_status)}</span></div>
                         <div><label>{t('act.d.time')}</label><span>{formatDateSec(row.activity_time)}</span></div>
                         <div><label>{t('act.d.actor')}</label><span><User size={11} /> {row.actor || 'scheduler'}</span></div>
+                        <div><label>{t('act.d.team')}</label><span>{row.team_id != null ? <TeamBadge teamId={row.team_id} teamName={row.team_name} /> : '—'}</span></div>
                         {row.response_ms != null && <div><label>{t('act.d.response')}</label><span>{row.response_ms} ms</span></div>}
                         {row.days_remaining != null && <div><label>{t('act.d.days')}</label><span>{row.days_remaining}</span></div>}
                       </div>
