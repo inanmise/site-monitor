@@ -1185,3 +1185,13 @@ Uygulama tuzakları (bu turda tekrar ısırdı): heredoc `\1`/`\d` kaçış çö
 Kapılar: frontend lint 0 hata / test / kapsam / build (bkz. çıktı); backend `clean verify` (bkz. çıktı) — tek beklenen kırmızı
 `IdentityLeakGuardTest` (takipsiz yerel dosyalar).
 → **REGRESYON YOK**.
+
+### 55. tur eki — Değişiklik Geçmişi v2 (kullanıcı bildirimi)
+
+Bildirim: "Kullanıcılar geçmişi sadece loginleri gösteriyor, sayfalama yok, görünüm hoş değil." Kök neden: giriş/çıkış
+(LOGIN_SUCCESS/FAILED/LOGOUT), tur ve push olayları da `resource_type=USER` yazıyor; ham okuma giriş yağmuruydu.
+Düzeltme: kaynak başına yönetimsel olay beyaz listesi (kapı: AdminHistoryServiceTest — LOGIN_* sorguya girmez), sunucu
+sayfalama (global: DB sayfası + gerçek toplam; kapsamlı: pencere + bellek), olay türü süzgeci; arayüz Denetim Kaydı
+dağarcığıyla tablo (özet fark "Takımlar: 5, 9 → 5", satır açılınca tam fark), çipler, PaginationBar. Tarayıcı: 43 kayıt /
+2 sayfa, giriş satırı yok. Kapılar: frontend lint 0 hata / 2175 test / kapsam / build; backend AdminHistoryServiceTest +
+AdminControllerTest yeşil (tam `clean verify` bu turun ana koşumunda). → REGRESYON YOK.

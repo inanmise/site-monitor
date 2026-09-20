@@ -3218,6 +3218,20 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .sim-list li.is-dup, .sim-list li.is-skipped { opacity: .6; }
 .sim-src { color: var(--text-light); font-size: .92em; }
 .sim-dup { font-size: .8em; color: var(--warning, #b7791f); }
+/* Yönetim Paneli değişiklik geçmişi v2 — tablo + çipler + sayfalama (2026-09-20) */
+.ach { --ach-pad: 0; }
+.ach-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.ach-filter { display: inline-flex; align-items: center; gap: 8px; font-size: .85em; color: var(--text-light); }
+.ach-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ach-chip { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-surface); color: var(--text-light); font: inherit; font-size: .78em; font-weight: 600; cursor: pointer; }
+.ach-chip:hover { color: var(--text); border-color: var(--text-light); }
+.ach-chip.is-active { background: color-mix(in srgb, var(--primary) 12%, var(--bg-surface)); color: var(--primary); border-color: var(--primary); }
+.ach-table-wrap { margin-bottom: 10px; }
+.ach-table td { vertical-align: top; }
+.ach-target { font-weight: 600; }
+.ach-summary { max-width: 360px; font-size: .86em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ach-detail-row td { background: var(--bg-surface); padding: 10px 14px 12px 40px; }
+.ach-detail-row .audit-diff-table { margin: 0; }
 /* Yönetim Paneli özet şeridi (2026-09-20) */
 .aov { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
 .aov-kpis { display: flex; flex-wrap: wrap; gap: 8px; }

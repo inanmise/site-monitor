@@ -1307,9 +1307,9 @@ class AdminControllerTest {
         row.setId(11L); row.setEventType("TEAM_UPDATE"); row.setEventTime("2026-09-20T10:00:00");
         row.setActor("admin"); row.setResourceType("TEAM"); row.setResourceId("7"); row.setDetail("Takım A");
         row.setChanges("{\"name\":{\"from\":\"A\",\"to\":\"Takım A\"}}");
-        when(adminHistoryService.history(eq("TEAM"), isNull(), isNull(), eq(50)))
+        when(adminHistoryService.history(eq("TEAM"), isNull(), isNull(), isNull(), eq(0), eq(25)))
                 .thenReturn(new com.sitemonitor.service.AdminHistoryService.History(
-                        List.of(new com.sitemonitor.service.AdminHistoryService.Entry(row, 7L)), false, 0));
+                        List.of(new com.sitemonitor.service.AdminHistoryService.Entry(row, 7L)), 1, 0, 25, false, 0));
         com.sitemonitor.model.Team team = new com.sitemonitor.model.Team(); team.setId(7L); team.setName("Takım A");
         when(teamRepo.findAll()).thenReturn(List.of(team));
 
@@ -1318,6 +1318,9 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.items[0].action").value("UPDATE"))
                 .andExpect(jsonPath("$.items[0].team_name").value("Takım A"))
                 .andExpect(jsonPath("$.items[0].name").value("Takım A"))
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.total_pages").value(1))
+                .andExpect(jsonPath("$.types[0]").value("TEAM_CREATE"))
                 .andExpect(jsonPath("$.truncated").value(false));
     }
 

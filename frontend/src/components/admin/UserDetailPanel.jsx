@@ -38,7 +38,7 @@ export default function UserDetailPanel({ user, teams = [], isAdmin, onClose, on
     ]
     if (isAdmin) {
       jobs.push(api.admin.getPermissionMatrix().then(r => { if (alive && r?.success) setMatrix({ catalog: r.catalog || [], grants: r.grants || [] }) }).catch(() => {}))
-      jobs.push(api.admin.history('USER', user.id, 10).then(r => { if (alive && r?.success) setHist(r) }).catch(() => {}))
+      jobs.push(api.admin.history('USER', user.id, { page: 0, size: 10 }).then(r => { if (alive && r?.success) setHist(r) }).catch(() => {}))
       if (user.team_id != null && api.admin.userPush?.explain) {
         jobs.push(Promise.resolve(api.admin.userPush.explain(user.team_id, 'HIGH'))
           .then(r => { if (!alive || !r?.success) return; const m = (r.members || r.data?.members || []).find(x => x.username === user.username); setPush(m || null) })

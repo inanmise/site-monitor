@@ -112,7 +112,7 @@ describe('UserDetailPanel', () => {
     expect(await screen.findByText(/inventory\.crud|Envanter/)).toBeInTheDocument()
     expect(screen.queryByText(/users\.crud/)).toBeNull()
     expect(await screen.findByText(/düzenledi|edited/)).toBeInTheDocument()   // son değişiklik
-    expect(api.admin.history).toHaveBeenCalledWith('USER', 1, 10)
+    expect(api.admin.history).toHaveBeenCalledWith('USER', 1, { page: 0, size: 10 })
   })
 
   it('admin değil: yetki / push / geçmiş ayakları hiç istenmez', async () => {

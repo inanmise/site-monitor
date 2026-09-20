@@ -1160,7 +1160,9 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> adminHistory(
             @RequestParam String resource,
             @RequestParam(required = false) String resourceId,
-            @RequestParam(defaultValue = "50") int limit,
+            @RequestParam(required = false) List<String> types,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "25") int size,
             HttpSession session) {
         if (!com.sitemonitor.service.AdminHistoryService.RESOURCES.contains(resource)) {
             throw new IllegalArgumentException("Bilinmeyen kaynak: " + resource);
@@ -1172,7 +1174,7 @@ public class AdminController {
             case "ESCALATION_CONTACT" -> { requirePerm(session, "contacts.list", "view"); scope = SessionScope.isGlobalViewer(session) ? null : SessionScope.viewTeamIds(session); }
             default -> { requirePerm(session, "teams.list", "view"); scope = SessionScope.isGlobalViewer(session) ? null : SessionScope.viewTeamIds(session); }
         }
-        var h = adminHistoryService.history(resource, resourceId, scope, limit);
+        var h = adminHistoryService.history(resource, resourceId, types, scope, page, size);
         Map<Long, String> teamNames = new LinkedHashMap<>();
         teamRepo.findAll().forEach(tm -> teamNames.put(tm.getId(), tm.getName()));
         String prefix = switch (resource) {
@@ -1202,8 +1204,13 @@ public class AdminController {
         }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("items", items);
+        out.put("total", h.total());
+        out.put("page", h.page());
+        out.put("size", h.size());
+        out.put("total_pages", h.totalPages());
         out.put("truncated", h.truncated());
         out.put("hidden", h.hidden());
+        out.put("types", com.sitemonitor.service.AdminHistoryService.eventTypesFor(resource));
         return ok(out);
     }
 

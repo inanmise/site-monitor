@@ -781,9 +781,10 @@ export const api = {
     testContactWebhook: (id) => request(`/admin/contacts/${id}/webhook-test`, { method: 'POST' }),
     contactWebhookStatus: () => request('/admin/contacts/webhook-status'),
     // Yönetim Paneli değişiklik geçmişi (2026-09-20): resource = ALERT_THRESHOLD | ESCALATION_CONTACT | TEAM | USER
-    history: (resource, resourceId = null, limit = 50) => {
-      const qs = new URLSearchParams({ resource, limit: String(limit) })
+    history: (resource, resourceId = null, { page = 0, size = 25, types = [] } = {}) => {
+      const qs = new URLSearchParams({ resource, page: String(page), size: String(size) })
       if (resourceId != null) qs.set('resourceId', String(resourceId))
+      for (const ty of types || []) qs.append('types', ty)
       return request(`/admin/history?${qs.toString()}`)
     },
     // Tier bazlı eşikler + etki önizleme (2026-09-20)
