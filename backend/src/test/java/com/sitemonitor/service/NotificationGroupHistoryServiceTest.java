@@ -70,6 +70,27 @@ class NotificationGroupHistoryServiceTest {
     }
 
     @Test
+    @DisplayName("Sayfalı geçmiş (2026-09-20): kapsam süzgeci sonrası toplam, sayfa dilimi, kapsam dışı satır sayılmaz, gizlenen ayrı")
+    void page_slicesAfterScope() {
+        when(groupRepo.findAll()).thenReturn(List.of(group(10L, TEAM_A), group(20L, TEAM_B)));
+        audit(row(1, "NOTIFICATION_GROUP_UPDATE", "10", null), row(2, "NOTIFICATION_GROUP_UPDATE", "20", null),
+              row(3, "NOTIFICATION_GROUP_UPDATE", "10", null), row(4, "NOTIFICATION_GROUP_UPDATE", "10", null),
+              row(5, "NOTIFICATION_GROUP_UPDATE", "999", null));
+        var p0 = service().page(List.of(TEAM_A), null, 0, 2);
+        assertThat(p0.total()).isEqualTo(3);
+        assertThat(p0.items()).extracting(e -> e.row().getId()).containsExactly(1L, 3L);
+        assertThat(p0.hidden()).isEqualTo(1);
+        assertThat(p0.truncated()).isFalse();
+        var p1 = service().page(List.of(TEAM_A), null, 1, 2);
+        assertThat(p1.items()).extracting(e -> e.row().getId()).containsExactly(4L);
+        var p9 = service().page(List.of(TEAM_A), null, 9, 2);
+        assertThat(p9.items()).isEmpty();
+        assertThat(p9.total()).isEqualTo(3);
+        var all = service().page(null, null, 0, 25);
+        assertThat(all.total()).isEqualTo(5);   // sınırsız görücü: takımı çözülemeyen de listelenir
+    }
+
+    @Test
     @DisplayName("CANLI grup: satır grubun takımına göre süzülür")
     void liveGroup_scopedByTeam() {
         when(groupRepo.findAll()).thenReturn(List.of(group(10L, TEAM_A), group(20L, TEAM_B)));

@@ -61,6 +61,42 @@ public class NotificationGroupHistoryService {
     public record History(List<Entry> items, boolean truncated, int hidden) {}
 
     /**
+     * Sayfalı geçmiş (2026-09-20, kullanıcı bildirimi: liste sayfalama yapısında olsun).
+     * @param total  kapsam süzgecinden geçen satır sayısı (taranan pencere içinde; {@code truncated} ise alt sınır)
+     */
+    public record HistoryPage(List<Entry> items, int total, int page, int size, boolean truncated, int hidden) {}
+
+    /**
+     * Sayfalı okuma: taranan pencere ({@link #WINDOW_MAX}) içinde kapsam süzgeci uygulanır, sayfa dilimi kesilir.
+     * Pencere dolduysa {@code truncated} — daha eski kayıtlar var olabilir; sayfa sayısı pencereyle sınırlıdır.
+     */
+    public HistoryPage page(Collection<Long> teamIds, Long groupId, int page, int size) {
+        int sz = Math.max(1, Math.min(size, 200));
+        int pg = Math.max(0, page);
+        int window = WINDOW_MAX;
+        List<AuditLog> scanned = groupId != null
+                ? auditRepo.findByResourceTypeAndResourceIdOrderByEventTimeDesc(
+                        RESOURCE, String.valueOf(groupId), PageRequest.of(0, window))
+                : auditRepo.findByResourceTypeOrderByEventTimeDesc(RESOURCE, PageRequest.of(0, window));
+        Map<Long, Long> teamOf = resolveTeams(scanned);
+        boolean unrestricted = teamIds == null;
+        Set<Long> allowed = unrestricted ? Set.of() : new HashSet<>(teamIds);
+        List<Entry> all = new ArrayList<>();
+        int hidden = 0;
+        for (AuditLog r : scanned) {
+            Long team = teamOf.get(parseLong(r.getResourceId()));
+            if (!unrestricted && (team == null || !allowed.contains(team))) {
+                if (team == null) hidden++;
+                continue;
+            }
+            all.add(new Entry(r, team));
+        }
+        int from = Math.min(pg * sz, all.size());
+        int to = Math.min(from + sz, all.size());
+        return new HistoryPage(new ArrayList<>(all.subList(from, to)), all.size(), pg, sz, scanned.size() >= window, hidden);
+    }
+
+    /**
      * @param teamIds  görülebilir takımlar; {@code null} = sınırsız (global görücü)
      * @param groupId  yalnız bu grubun geçmişi ({@code null} = hepsi)
      */

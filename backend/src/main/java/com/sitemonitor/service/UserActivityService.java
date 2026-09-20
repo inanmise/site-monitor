@@ -286,6 +286,11 @@ public class UserActivityService {
                     m.put("outcome", a.getOutcome());
                     m.put("flags", a.getAnomalyFlags());
                     m.put("reason", a.getFailureReason());
+                    // 2026-09-20: giriş listesi zenginleştirmesi — kimlik, olay türü, kuruluş, tarayıcı
+                    m.put("id", a.getId());
+                    m.put("event_type", a.getEventType());
+                    m.put("org", a.getIpOrg());
+                    m.put("user_agent", a.getUserAgent());
                     return m;
                 }).toList();
     }

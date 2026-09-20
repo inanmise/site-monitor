@@ -493,8 +493,8 @@ export const api = {
     usage: (id) => request(`/notification-groups/${id}/usage`),
     /** Degisiklik gecmisi (kim/ne zaman/ne degisti) — SILINMIS gruplar dahil. Kaynak audit_log;
      *  denetim uclarindan ayri, cunku bu ekran notification.groups yetkisiyle acilir. */
-    history: (groupId, limit = 50) => {
-      const qs = new URLSearchParams({ limit: String(limit) })
+    history: (groupId, { page = 0, size = 25 } = {}) => {   // sayfalı (2026-09-20)
+      const qs = new URLSearchParams({ page: String(page), size: String(size) })
       if (groupId != null) qs.set('groupId', String(groupId))
       return request(`/notification-groups/history?${qs.toString()}`)
     },

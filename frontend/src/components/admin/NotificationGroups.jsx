@@ -59,6 +59,8 @@ export default function NotificationGroups({ teams = [], systemRole }) {
   // Degisiklik gecmisi — KAPALI baslar: her acilista denetim sorgusu atmak, ekrani asil isi
   // (gruplari yonetmek) icin acan kullaniciya bedava yuk bindirirdi.
   const [histOpen, setHistOpen] = useState(false)
+  const [histPage, setHistPage] = useState(0)     // sayfalı geçmiş (2026-09-20); süzgeç değişince başa döner
+  const [histSize, setHistSize] = useState(25)
   const [histGroup, setHistGroup] = useState(null)   // { id, name } | null → tek gruba suz
   const [hist, setHist] = useState(null)
   const [histLoading, setHistLoading] = useState(false)
@@ -92,7 +94,7 @@ export default function NotificationGroups({ teams = [], systemRole }) {
     let cancelled = false
     setHistLoading(true)
     setHistError(null)
-    api.notificationGroups.history(histGroup?.id ?? null)
+    api.notificationGroups.history(histGroup?.id ?? null, { page: histPage, size: histSize })
       .then(res => {
         if (cancelled) return
         if (res?.success) setHist(res.data)
@@ -101,7 +103,8 @@ export default function NotificationGroups({ teams = [], systemRole }) {
       .catch(e => { if (!cancelled) setHistError(e?.message ?? String(e)) })
       .finally(() => { if (!cancelled) setHistLoading(false) })
     return () => { cancelled = true }
-  }, [histOpen, histGroup, groups])   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [histOpen, histGroup, groups, histPage, histSize])   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setHistPage(0) }, [histGroup, histSize])
 
   function openHistory(g) {
     setHistGroup(g ? { id: g.id, name: g.name } : null)
@@ -388,6 +391,8 @@ export default function NotificationGroups({ teams = [], systemRole }) {
           error={histError}
           filterName={histGroup?.name}
           onClearFilter={() => setHistGroup(null)}
+          page={histPage} size={histSize} total={hist?.total ?? 0}
+          onPageChange={setHistPage} onPageSizeChange={setHistSize}
         />
       )}
 

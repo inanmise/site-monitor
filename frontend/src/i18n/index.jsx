@@ -4055,6 +4055,10 @@ export const TR = {
   'uact.activeCardHint':    'Tüm kullanıcılar — çevrimiçi olanlar başta',
   // Kullanıcı Dizini (2026-09-20)
   'uact.dirTitle': 'Kullanıcı Dizini',
+  'uact.uniqueIps': 'Tekil IP',
+  'uact.exportEvents': 'Liste (CSV)',
+  'uact.eventsSearchPh': 'kullanıcı, IP, kuruluş, sebep…',
+  'uact.eventsCapped': 'en son {0} kayıt',
   'uact.dirAll': 'Tümü',
   'uact.dirOnline': 'Çevrimiçi',
   'uact.dirOffline': 'Çevrimdışı',
@@ -12156,6 +12160,10 @@ export const EN = {
   'uact.activeCardHint':    'All users — people online first',
   // User directory (2026-09-20)
   'uact.dirTitle': 'User Directory',
+  'uact.uniqueIps': 'Unique IPs',
+  'uact.exportEvents': 'List (CSV)',
+  'uact.eventsSearchPh': 'user, IP, organisation, reason…',
+  'uact.eventsCapped': 'latest {0} records',
   'uact.dirAll': 'All',
   'uact.dirOnline': 'Online',
   'uact.dirOffline': 'Offline',

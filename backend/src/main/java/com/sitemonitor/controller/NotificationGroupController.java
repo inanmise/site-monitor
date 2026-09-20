@@ -362,18 +362,25 @@ public class NotificationGroupController {
      */
     @GetMapping("/history")
     public ResponseEntity<Map<String, Object>> history(@RequestParam(required = false) Long groupId,
-                                                       @RequestParam(defaultValue = "50") int limit,
+                                                       @RequestParam(defaultValue = "0") int page,
+                                                       @RequestParam(required = false) Integer size,
+                                                       @RequestParam(defaultValue = "25") int limit,
                                                        HttpSession session) {
         permissionService.require(session, PERM, "view");
         // null = sınırsız; global görücü dışında herkes kendi görüş kapsamıyla sınırlı.
         List<Long> scope = SessionScope.isGlobalViewer(session) ? null : readableTeamIds(session);
 
-        var h = historyService.history(scope, groupId, limit);
+        // 2026-09-20: sayfalı (page/size); eski `limit` yalnız size verilmediğinde sayfa boyutu olur.
+        var h = historyService.page(scope, groupId, page, size != null ? size : limit);
         Map<Long, String> teamNames = new LinkedHashMap<>();
         teamRepo.findAll().forEach(t -> teamNames.put(t.getId(), t.getName()));
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("items", h.items().stream().map(e -> historyItem(e, teamNames)).toList());
+        out.put("total", h.total());
+        out.put("page", h.page());
+        out.put("size", h.size());
+        out.put("total_pages", (int) Math.ceil(h.total() / (double) h.size()));
         out.put("truncated", h.truncated());
         // Takımı çözülemeyen satır sayısı: eksik bir geçmişi tam sanmak, geçmişin kendisinden
         // daha kötüdür.

@@ -18,6 +18,7 @@ import { Spinner } from '../../ui/Progress.jsx'
 import LoginHeatmap from '../LoginHeatmap'
 import { SessionDetailModal, HeatCellModal, KpiDetailModal, TerminateModal, AckModal } from './UactModals.jsx'
 import UserDirectoryModal from './UserDirectoryModal.jsx'
+import EventListModal from './EventListModal.jsx'
 import {
   EMPTY_FILTERS, filtersToParams, paramsToFilters, hasActiveFilter, rowMatches, tabLabel, unusedTabs, idleBand, loginStatus,
   relTime, splitDuration, failedTone, failedRatio, sparkFrom, deltaVsAvg, isOffHourCell, FLAG_KEYS, splitFlags, sortRows,
@@ -470,7 +471,11 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
       </div>
 
       {heatCell && <HeatCellModal cell={heatCell} onClose={() => setHeatCell(null)} onUser={(u) => setSessionDetail({ username: u })} />}
-      {kpiDetail && <KpiDetailModal detail={kpiDetail} data={ua} onClose={() => setKpiDetail(null)} onUser={(row) => setSessionDetail(row)} winLabel={winLabel} />}
+      {kpiDetail && ['logins', 'failed', 'anomalies'].includes(kpiDetail.kind)
+        ? <EventListModal kind={kpiDetail.kind} title={kpiDetail.title} rows={ua.details?.[kpiDetail.kind] || []} winLabel={winLabel}
+            byName={new Map((ua.login_status || []).map((u) => [String(u.username || '').toLowerCase(), u]))}
+            onClose={() => setKpiDetail(null)} onUser={(row) => setSessionDetail(row)} />
+        : kpiDetail && <KpiDetailModal detail={kpiDetail} data={ua} onClose={() => setKpiDetail(null)} onUser={(row) => setSessionDetail(row)} winLabel={winLabel} />}
       {directory && <UserDirectoryModal data={ua} initial={directory} isAdmin={isAdmin} globalAdmin={globalAdmin} username={username} onClose={() => setDirectory(null)}
         onUser={(row) => setSessionDetail(row)} onTerminate={(u) => setTerminate({ username: u })} onRefresh={onRefresh} />}
       {sessionDetail && <SessionDetailModal row={sessionDetail} full={activeAll.find((u) => String(u.username).toLowerCase() === String(sessionDetail.username).toLowerCase()) || (ua.login_status || []).find((u) => String(u.username).toLowerCase() === String(sessionDetail.username).toLowerCase()) || sessionDetail}

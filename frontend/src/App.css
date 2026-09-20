@@ -9397,6 +9397,10 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .udir-teams { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 .udir-table td { vertical-align: top; }
 .udir-badges { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+/* Giriş / anomali listesi modalı (2026-09-20) */
+.evl-table td { vertical-align: top; }
+.evl-row--bad td { background: color-mix(in srgb, #dc2626 4%, transparent); }
+.udir-chip:disabled { cursor: default; }
 /* Kullanıcı yönetimi araç çubuğu (2026-09-20): envanter .invtb standardı */
 .um-toolbar { margin-bottom: 12px; }
 .um-toolbar .invtb-filters { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }

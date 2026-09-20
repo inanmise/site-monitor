@@ -269,7 +269,7 @@ describe('NotificationGroups', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Show history/i }))
 
-    await waitFor(() => expect(api.notificationGroups.history).toHaveBeenCalledWith(null))
+    await waitFor(() => expect(api.notificationGroups.history).toHaveBeenCalledWith(null, { page: 0, size: 25 }))
   })
 
   it('Satırdaki "Geçmiş" o grubu SÜZER', async () => {
@@ -280,7 +280,7 @@ describe('NotificationGroups', () => {
     fireEvent.click(screen.getByRole('button', { name: /Actions/i }))
     fireEvent.click(screen.getByText('History'))
 
-    await waitFor(() => expect(api.notificationGroups.history).toHaveBeenCalledWith(10))
+    await waitFor(() => expect(api.notificationGroups.history).toHaveBeenCalledWith(10, { page: 0, size: 25 }))
     // Süzgecin AÇIK olduğu kullanıcıya söylenir; aksi halde eksik listeyi tam sanardı.
     expect(await screen.findByText(/Showing the history of/i)).toBeTruthy()
   })
@@ -298,5 +298,23 @@ describe('NotificationGroups', () => {
     }
     // Yazamayan kullanıcıya "Grup Ekle" de gösterilmez.
     expect(screen.queryByRole('button', { name: /Add group/i })).toBeNull()
+  })
+
+  it('Geçmiş sayfalı (2026-09-20): PaginationBar toplamı gösterir, sonraki sayfa page=1 ile yeniden okur; sayfa boyutu değişince başa döner', async () => {
+    api.notificationGroups.history.mockImplementation(async (_g, { page, size }) => ({ success: true, data: {
+      items: Array.from({ length: Math.min(size, 60 - page * size) }, (_, i) => ({ id: page * size + i + 1, at: '2026-09-01T10:00:00', action: 'UPDATE', actor: 'ayse', group_id: 10, group_name: 'G', changes: null })),
+      total: 60, page, size, total_pages: Math.ceil(60 / size), truncated: false, hidden: 0 } }))
+    state.groups = [group()]
+    render(<NotificationGroups teams={TEAMS} systemRole="USER" />)
+    await screen.findByText('Ödeme Nöbetçi')
+    fireEvent.click(screen.getByRole('button', { name: /Show history|Geçmişi göster/i }))
+    await waitFor(() => expect(api.notificationGroups.history).toHaveBeenCalledWith(null, { page: 0, size: 25 }))
+    await waitFor(() => expect(document.querySelectorAll('.ng-hist-row')).toHaveLength(25))
+    expect(document.querySelector('.pgn-bar').textContent).toMatch(/60/)
+    fireEvent.click(screen.getByRole('button', { name: /Sonraki|Next/ }))
+    await waitFor(() => expect(api.notificationGroups.history).toHaveBeenLastCalledWith(null, { page: 1, size: 25 }))
+    fireEvent.click(screen.getByRole('button', { name: /^50$/ }))
+    await waitFor(() => expect(api.notificationGroups.history).toHaveBeenLastCalledWith(null, { page: 0, size: 50 }))
+    await waitFor(() => expect(document.querySelectorAll('.ng-hist-row')).toHaveLength(50))
   })
 })

@@ -1236,3 +1236,20 @@ Uygulama notları: vitest coverage koşusu iki kez OOM (worker "Fatal process ou
 space-size=6144` + `--maxWorkers=2` ile yeşil (2204 test); progress-guard kapısı elle yazılmış tarama çubuğunu yakaladı →
 ProgressBar. Kapılar: frontend lint 0 hata / test:coverage / coverage:floor / build; backend `clean verify` 3912 test — tek
 kırmızı `IdentityLeakGuardTest` (dosya listesi okundu: yalnız bilinen iki takipsiz dosya). → **REGRESYON YOK**.
+
+## Ek — elli yedinci tur (2026-09-20, sürüm sonrası — bildirim grubu geçmişi sayfalama + giriş KPI listesi v2, `v20.73.0..HEAD`)
+
+- BİLDİRİM GRUPLARI GEÇMİŞİ (kullanıcı bildirimi "paging yapısında yapalım"): `NotificationGroupHistoryService.page(scope,
+  groupId, page, size)` — 1000'lik pencere içinde kapsam süzgeci, sonra sayfa dilimi; `total` süzgeç sonrası sayı,
+  `truncated` pencere dolunca. Uç `GET /notification-groups/history?page&size` (eski `limit` yalnız size yoksa boyut);
+  yanıt `total/page/size/total_pages`. Arayüz PaginationBar (1 tabanlı ↔ sunucu 0 tabanlı), grup süzgeci / sayfa
+  boyutu değişince başa döner. Kapılar: servis (kapsam dışı satır sayılmaz, gizlenen ayrı, boş sayfa) + denetleyici
+  (page/size servise geçer) + NotificationGroups testi (page=1 yeniden okuma, boyut 50 → başa). Tarayıcı: 10 kayıt / 1 sayfa.
+- GİRİŞ KPI LİSTESİ (kullanıcı bildirimi "login kartı çok basic"): `EventListModal` (giriş / başarısız / anomali kartları)
+  — özet çipleri (tümü, tekil kullanıcı, tekil IP, takım, LDAP, başarısız, mesai dışı; başarısız ve mesai dışı
+  tıklanınca süzer), süzgeçler (metin: kullanıcı/IP/kuruluş/sebep; takım; sonuç; bayrak), sütunlar zaman / kullanıcı +
+  rol + olay türü / takım / kaynak / IP + konum + kuruluş / tarayıcı + OS / sonuç + sebep / bayraklar; sayfalama; CSV;
+  kullanıcı → oturum detayı. Dizinde olmayan aktör login_status'tan tamamlanır. Backend eventRows `id / event_type /
+  org / user_agent` taşır. Tarayıcı: 28 giriş, mesai dışı çipi 28, sayfalı.
+Kapılar: frontend lint 0 hata / 259 test dosyası (coverage `--maxWorkers=2` + 6 GB heap) / kapsam tabanı / build; backend
+`clean verify` 3913 test — tek kırmızı `IdentityLeakGuardTest` (yalnız bilinen iki takipsiz dosya). → **REGRESYON YOK**.
