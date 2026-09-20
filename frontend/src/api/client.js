@@ -772,6 +772,29 @@ export const api = {
     // Thresholds
     getThresholds: () => request('/admin/thresholds'),
     updateThreshold: (id, data) => request(`/admin/thresholds/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    // "Kim bilgilendirilir?" simülatörü + eskalasyon webhook testi / son teslimat (2026-09-20)
+    simulateRecipients: ({ teamId, level = 'HIGH', kind = 'CERT', groupId = null }) => {
+      const qs = new URLSearchParams({ teamId: String(teamId), level, kind })
+      if (groupId != null) qs.set('groupId', String(groupId))
+      return request(`/admin/recipients/simulate?${qs.toString()}`)
+    },
+    testContactWebhook: (id) => request(`/admin/contacts/${id}/webhook-test`, { method: 'POST' }),
+    contactWebhookStatus: () => request('/admin/contacts/webhook-status'),
+    // Yönetim Paneli değişiklik geçmişi (2026-09-20): resource = ALERT_THRESHOLD | ESCALATION_CONTACT | TEAM | USER
+    history: (resource, resourceId = null, { page = 0, size = 25, types = [] } = {}) => {
+      const qs = new URLSearchParams({ resource, page: String(page), size: String(size) })
+      if (resourceId != null) qs.set('resourceId', String(resourceId))
+      for (const ty of types || []) qs.append('types', ty)
+      return request(`/admin/history?${qs.toString()}`)
+    },
+    // Tier bazlı eşikler + etki önizleme (2026-09-20)
+    createThreshold: (data) => request('/admin/thresholds', { method: 'POST', body: JSON.stringify(data) }),
+    deleteThreshold: (id) => request(`/admin/thresholds/${id}`, { method: 'DELETE' }),
+    previewThreshold: ({ tier, warning, high, critical }) => {
+      const p = new URLSearchParams({ warning: String(warning), high: String(high), critical: String(critical) })
+      if (tier != null) p.set('tier', String(tier))
+      return request(`/admin/thresholds/preview?${p.toString()}`)
+    },
 
     // Contacts
     getContacts: () => request('/admin/contacts/all'),
@@ -840,6 +863,16 @@ export const api = {
     updateTeamWeeklyNotifications: (id, data) =>
       request(`/admin/teams/${id}/weekly-notifications`, { method: 'PUT', body: JSON.stringify(data) }),
     getTeamUsers: (id) => request(`/admin/teams/${id}/users`),
+    // Yönetim Paneli özet şeridi (2026-09-20)
+    overview: () => request('/admin/overview'),
+    // Toplu kullanıcı işlemi (2026-09-20): action = activate | deactivate | assign_team | set_org_role
+    bulkUsers: (body) => request('/admin/users/bulk', { method: 'POST', body: JSON.stringify(body) }),
+    // Takım sayaçları / etki / taşıma / üyelik (2026-09-20)
+    teamStats: () => request('/admin/teams/stats'),
+    teamImpact: (id) => request(`/admin/teams/${id}/impact`),
+    teamMove: (id, targetTeamId) => request(`/admin/teams/${id}/move`, { method: 'POST', body: JSON.stringify({ target_team_id: targetTeamId }) }),
+    addTeamMember: (id, userId) => request(`/admin/teams/${id}/members`, { method: 'POST', body: JSON.stringify({ user_id: userId }) }),
+    removeTeamMember: (id, userId) => request(`/admin/teams/${id}/members/${userId}`, { method: 'DELETE' }),
 
     // Users
     getUsers: () => request('/admin/users'),

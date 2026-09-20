@@ -338,13 +338,14 @@ public class TodayMonitorInsightsService {
         Set<String> silenced = new HashSet<>();
         for (WeakAlgorithmException ex : exceptionRepo.findAll())
             if (ex.getDomain() != null && (ex.getUntil() == null || ex.getUntil().compareTo(today) >= 0)) silenced.add(ex.getDomain());
-        int[] th = healthService.thresholdDays();
+        ThresholdResolution thRes = healthService.thresholdResolution();   // tier bazlı (2026-09-20)
         List<Map<String, Object>> items = new ArrayList<>();
         for (CertificateInventory inv : inventoryRepo.findByActiveTrueOrderByDomainAsc()) {
             LatestCheck lc = latest.get(inv.getDomain());
             if (lc == null) continue;
             List<Map<String, Object>> findings = new ArrayList<>();
             boolean critical = false;
+            int[] th = CertificateHealthService.thresholdDays(thRes, inv.getTier());
             for (CertificateHealthService.HealthRow row : healthService.evaluate(lc, inv, false, th[0], th[1]).rows()) {
                 if (row.status() != CertificateHealthRules.Status.FAIL || "expiry".equals(row.key())) continue;
                 if (silenced.contains(inv.getDomain()) && ("signature".equals(row.key()) || "keySize".equals(row.key()))) continue;

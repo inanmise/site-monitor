@@ -78,15 +78,29 @@ public class CertificateHealthService {
     }
 
     public HealthResult evaluate(LatestCheck lc, CertificateInventory inv, boolean hasPageMonitor) {
-        int[] d = thresholdDays();
+        int[] d = thresholdDays(inv != null ? inv.getTier() : null);
         return evaluate(lc, inv, hasPageMonitor, d[0], d[1]);
     }
 
-    /** Aktif alarm eşiği {uyarı, kritik} gün — toplu değerlendirmede (Sizin için — bugün) BİR kez okunur. */
+    /** Aktif VARSAYILAN alarm eşiği {uyarı, kritik} gün — tier'sız kullanım. */
     public int[] thresholdDays() {
         AlertThreshold th = safeThreshold();
         return new int[]{th.getWarningDays() != null ? th.getWarningDays() : 30,
                          th.getCriticalDays() != null ? th.getCriticalDays() : 7};
+    }
+
+    /** Tier'a göre {uyarı, kritik} gün (2026-09-20) — tier satırı yoksa varsayılan. */
+    public int[] thresholdDays(Integer tier) {
+        return thresholdDays(thresholdResolution(), tier);
+    }
+
+    /** Toplu değerlendirme için: çözüm BİR kez yüklenir, alan başına bu metot çağrılır (ek sorgu yok). */
+    public static int[] thresholdDays(ThresholdResolution res, Integer tier) {
+        return new int[]{res.warningDays(tier), res.criticalDays(tier)};
+    }
+
+    public ThresholdResolution thresholdResolution() {
+        return ThresholdResolution.load(thresholdRepo, safeThreshold());
     }
 
     /** Eşikleri çağıranın verdiği değerlendirme — alan başına ek sorgu yok (2026-09-19). */

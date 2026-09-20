@@ -1154,3 +1154,44 @@ Denetim (kod + tarayıcı ölçümü):
   tüm sweep'i yanlışlıkla silindi, yeniden uygulandı ve diff'i diğer sekizle karşılaştırıldı.
 Kapılar: frontend lint 0 hata / 2144 test / kapsam / build yeşil; backend DEĞİŞMEDİ.
 → **REGRESYON YOK**.
+
+## Ek — elli beşinci tur (2026-09-20, sürüm sonrası — Yönetim Paneli uçtan uca denetim + 12 zenginleştirme, `v20.72.1..HEAD`)
+
+Kapsam: 6 commit (fb2719ed, d6536196, 987bdef8, 6ac8c983, 2401ea0a, +6/6). Denetim bulguları ve seçilen 12 özellik:
+- KUSURLAR: süzgeç çubuğunda `SearchableSelect` %100 genişlik → her süzgeç ayrı satır (Eskalasyon/Kullanıcılar/Denetim)
+  → `.audit-filters > .ss-wrap` 240 px; alt sekme + süzgeçler URL'de (`g_*`, sekme geçişinde temizlenir, yetkisiz g_tab
+  varsayılana iner); eşik Kaydet metni sabit.
+- TIER EŞİKLERİ: `alert_thresholds.tier` (null = varsayılan); `ThresholdResolution` tek okuma; alarm seviyesi, kart
+  seviyesi/istatistik, sağlık, kart ekleri, bugün, yenileme tahmini alan tier'ıyla. `findFirstByActiveTrue` artık
+  yalnız varsayılan satır (tier satırı global sanılmaz — kapı ThresholdResolutionTest). Önizleme: kapsam + mevcut/önerilen
+  sayım + örnekler. BULGU: eşik güncellemesi cache'e dokunmuyordu → kartlar TTL'e kadar eski seviyede;
+  `afterThresholdChange` türetilmiş cache'leri boşaltır. Tarayıcı: Tier 1 satırı (60/30/14) → 34/46 gün kalanlar
+  `warning`, silinince `valid`.
+- DEĞİŞİKLİK GEÇMİŞİ: `/admin/history?resource=` (TEAM/ESCALATION_CONTACT kapsamlı; USER/ALERT_THRESHOLD global admin);
+  JSON detail'den ad çekimi (WEEKLY_REPORT_ACCESS gövdesi ad olarak görünüyordu → düzeltildi).
+- KİM BİLGİLENDİRİLİR: `simulateRecipients` gerçek gönderimle aynı kararlar; webhook testi → BULGU: notification_logs
+  `alert_event_id NOT NULL` → test satırı düşüyordu (log'da görüldü) → sentinel 0 (rapor/anomali mailleriyle aynı desen),
+  kapı testte pinli. Son teslimat sütunu `findLatestWebhookPerRecipient`.
+- TAKIMLAR: tek geçiş sayaçlar (envanter-türevi teamId=null izleme sayılmaz), etki önizleme, `moveAll` (üyelik yeniden
+  yazımı, varsayılan grup bayrağı düşer), üye ekle/çıkar (son takım çıkarılamaz). Tarayıcı doğrulaması sırasında
+  script'in "Sil" düğmesini modalda yakalaması yerel boş `SmokeTeam-NoLeader` takımını sildi (yerel test verisi, bağlı
+  varlık yoktu; üretim etkisi yok) — akışın kendisi doğru çalıştı (boş takım → doğrudan sil).
+- KULLANICILAR: son giriş (`last_login_at` zaten JSON'daydı), uyuyan süzgeci (`findFilteredDormant`, ISO-UTC leksikografik),
+  toplu işlem (PUT gövdesi `applyUserUpdate`'e ayrıldı; her kullanıcı aynı güvenlik zinciri — kendini pasifleştirme /
+  son ADMIN testte pinli), CSV, detay kartı, özet şeridi (uyarı çipi → süzgeçli sekme; remount anahtarıyla aynı sekmede de).
+Uygulama tuzakları (bu turda tekrar ısırdı): heredoc `\1`/`\d` kaçış çöküşü (Java regex ve JSX'te 0x01/illegal escape),
+`git checkout` ile bir dosyanın sweep'ini silme (yeniden uygulandı), CRLF dosyada `\n` sonlu replace eşleşmedi (regex
+`\r?\n`), tel biçimi SNAKE_CASE (eşik testleri camelCase gönderiyordu — alanlar sessizce yok sayılıyor; düzeltildi).
+Kapılar: frontend lint 0 hata / test / kapsam / build (bkz. çıktı); backend `clean verify` (bkz. çıktı) — tek beklenen kırmızı
+`IdentityLeakGuardTest` (takipsiz yerel dosyalar).
+→ **REGRESYON YOK**.
+
+### 55. tur eki — Değişiklik Geçmişi v2 (kullanıcı bildirimi)
+
+Bildirim: "Kullanıcılar geçmişi sadece loginleri gösteriyor, sayfalama yok, görünüm hoş değil." Kök neden: giriş/çıkış
+(LOGIN_SUCCESS/FAILED/LOGOUT), tur ve push olayları da `resource_type=USER` yazıyor; ham okuma giriş yağmuruydu.
+Düzeltme: kaynak başına yönetimsel olay beyaz listesi (kapı: AdminHistoryServiceTest — LOGIN_* sorguya girmez), sunucu
+sayfalama (global: DB sayfası + gerçek toplam; kapsamlı: pencere + bellek), olay türü süzgeci; arayüz Denetim Kaydı
+dağarcığıyla tablo (özet fark "Takımlar: 5, 9 → 5", satır açılınca tam fark), çipler, PaginationBar. Tarayıcı: 43 kayıt /
+2 sayfa, giriş satırı yok. Kapılar: frontend lint 0 hata / 2175 test / kapsam / build; backend AdminHistoryServiceTest +
+AdminControllerTest yeşil (tam `clean verify` bu turun ana koşumunda). → REGRESYON YOK.

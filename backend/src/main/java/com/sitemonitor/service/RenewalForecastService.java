@@ -68,14 +68,30 @@ public class RenewalForecastService {
         return lead.getOrDefault("t" + tier, lead.get("default"));
     }
 
-    /** Etkin alarm eşiği; kayıt yoksa 30/15/7. */
+    /** Etkin VARSAYILAN alarm eşiği; kayıt yoksa 30/15/7. Tier satırları {@link #thresholdsByTier()}. */
     public Map<String, Integer> thresholds() {
         Map<String, Integer> t = new LinkedHashMap<>();
-        AlertThreshold a = thresholdRepo.findAll().stream().filter(x -> !Boolean.FALSE.equals(x.getActive())).findFirst().orElse(null);
+        // Tier satırları (tier != null) varsayılan sayılmaz (2026-09-20).
+        AlertThreshold a = thresholdRepo.findAll().stream()
+                .filter(x -> !Boolean.FALSE.equals(x.getActive()) && x.getTier() == null).findFirst().orElse(null);
         t.put("warning", a != null && a.getWarningDays() != null ? a.getWarningDays() : 30);
         t.put("high", a != null && a.getHighDays() != null ? a.getHighDays() : 15);
         t.put("critical", a != null && a.getCriticalDays() != null ? a.getCriticalDays() : 7);
         return t;
+    }
+
+    /** Tier → {warning, high, critical}; yalnız KENDİ satırı olan tier'lar (2026-09-20). */
+    public Map<String, Map<String, Integer>> thresholdsByTier() {
+        Map<String, Map<String, Integer>> out = new LinkedHashMap<>();
+        for (AlertThreshold a : thresholdRepo.findAll()) {
+            if (a.getTier() == null || Boolean.FALSE.equals(a.getActive())) continue;
+            Map<String, Integer> t = new LinkedHashMap<>();
+            t.put("warning", a.getWarningDays() != null ? a.getWarningDays() : 30);
+            t.put("high", a.getHighDays() != null ? a.getHighDays() : 15);
+            t.put("critical", a.getCriticalDays() != null ? a.getCriticalDays() : 7);
+            out.putIfAbsent("t" + a.getTier(), t);
+        }
+        return out;
     }
 
     /**

@@ -213,8 +213,9 @@ public class EscalationService {
                    TYPE_PAGE_DOWN, TYPE_SCRIPTED_FAIL, TYPE_PAGESPEED_DOWN);
 
     public void processResults(List<Map<String, Object>> results) {
-        AlertThreshold threshold = thresholdRepo.findFirstByActiveTrue()
-                .orElseGet(this::defaultThreshold);
+        // Tier bazlı eşik (2026-09-20): tablo BİR kez okunur, alan başına envanter tier'ıyla çözülür.
+        ThresholdResolution thresholds = ThresholdResolution.load(thresholdRepo, defaultThreshold());
+        AlertThreshold threshold = thresholds.defaultThreshold();
         int reAlertIv = threshold.getReAlertIntervalHours() != null ? threshold.getReAlertIntervalHours() : 24;
 
         // ── BATCH ÖN YÜKLEME (N+1 önleme) ──────────────────────────────────
@@ -260,11 +261,12 @@ public class EscalationService {
             if (alertTypes.isEmpty()) continue;
 
             for (String alertType : alertTypes) {
-                String alertLevel = determineAlertLevel(result, alertType, threshold);
-                if (alertLevel == null) continue;
-
                 // Route alert to the team that owns this cert — batch'ten lookup
                 var inventoryOpt  = Optional.ofNullable(invByDomain.get(domain));
+                Integer domainTier = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTier).orElse(null);
+                String alertLevel = determineAlertLevel(result, alertType, thresholds.forTier(domainTier));
+                if (alertLevel == null) continue;
+
                 Long domainTeamId = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
                 Long ugTeamId     = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null);
 
@@ -427,6 +429,62 @@ public class EscalationService {
         return alertEventRepo.findById(alertId)
                 .map(ev -> resolveReNotifyTargets(ev).domainTeamId())
                 .orElse(null);
+    }
+
+    /**
+     * "Kim bilgilendirilir?" simülatörü (2026-09-20, Yönetim Paneli): takım + seviye (+ izleme grubu) için
+     * alarm gitmeden alıcı zinciri. Gerçek gönderimle AYNI kararlar: takım e-postaları
+     * ({@code collectTeamRecipients}: izleme grubu → takım varsayılan grubu → takım adresi), eskalasyon
+     * kişileri ({@code includeManagerContacts} + {@code getContactsForLevel}, takımda yoksa global'e düşer)
+     * ve kişi webhook'ları. HİÇBİR yazma yapmaz.
+     *
+     * @param standaloneMonitor izleme alarmı mı (HTTP/ping/… — bugün seviye kuralı sertifikayla aynı)
+     */
+    public Map<String, Object> simulateRecipients(Long teamId, String level, boolean standaloneMonitor, Long groupId) {
+        String lvl = level == null ? "HIGH" : level.trim().toUpperCase(Locale.ROOT);
+        if (!LEVEL_ORDER.containsKey(lvl)) throw new IllegalArgumentException("Bilinmeyen seviye: " + level);
+        String alertType = standaloneMonitor ? TYPE_HTTP_DOWN : "EXPIRY";
+        boolean managers = includeManagerContacts(alertType, lvl);
+
+        List<Map<String, Object>> emails = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (String[] team : collectTeamRecipients(teamId, null, groupId)) {
+            if (!seen.add(team[0].toLowerCase())) continue;
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("email", team[0]); m.put("team", team[1]); m.put("source", team[2]); m.put("kind", "TEAM");
+            emails.add(m);
+        }
+        List<EscalationContact> contacts = managers ? getContactsForLevel(lvl, teamId) : List.of();
+        boolean fallbackGlobal = managers && teamId != null && !contacts.isEmpty()
+                && contacts.stream().noneMatch(c -> teamId.equals(c.getTeamId()));
+        List<Map<String, Object>> contactRows = new ArrayList<>();
+        List<Map<String, Object>> webhooks = new ArrayList<>();
+        for (EscalationContact c : contacts) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", c.getId()); m.put("name", c.getName()); m.put("email", c.getEmail());
+            m.put("role", c.getRole()); m.put("min_level", c.getMinAlertLevel()); m.put("team_id", c.getTeamId());
+            boolean dup = c.getEmail() != null && !seen.add(c.getEmail().trim().toLowerCase());
+            m.put("email_duplicate", dup);   // takım adresiyle aynıysa tek mail gider
+            contactRows.add(m);
+            if (c.getWebhookUrl() != null && !c.getWebhookUrl().isBlank()) {
+                Map<String, Object> w = new LinkedHashMap<>();
+                w.put("id", c.getId()); w.put("name", c.getName()); w.put("type", c.getWebhookType());
+                w.put("target", WebhookService.maskUrl(c.getWebhookUrl()));
+                webhooks.add(w);
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("team_id", teamId);
+        out.put("level", lvl);
+        out.put("standalone_monitor", standaloneMonitor);
+        out.put("managers_included", managers);
+        out.put("team_emails", emails);
+        out.put("contacts", contactRows);
+        out.put("contacts_fallback_global", fallbackGlobal);
+        out.put("webhooks", webhooks);
+        out.put("email_total", emails.size() + contactRows.stream().filter(r -> !Boolean.TRUE.equals(r.get("email_duplicate"))
+                && r.get("email") != null && !String.valueOf(r.get("email")).isBlank()).count());
+        return out;
     }
 
     public List<ReNotifyRecipient> previewReNotify(Long alertId) {

@@ -50,6 +50,12 @@ class AdminControllerTest {
     com.sitemonitor.repository.UserPushDeliveryRepository userPushDeliveryRepo;
 
     @MockitoBean com.sitemonitor.repository.NotificationGroupRepository notificationGroupRepo;
+    @MockitoBean com.sitemonitor.service.ThresholdPreviewService thresholdPreviewService;   // tier eşik önizleme (2026-09-20)
+    @MockitoBean com.sitemonitor.service.AdminHistoryService adminHistoryService;             // sekme değişiklik geçmişi (2026-09-20)
+    @MockitoBean com.sitemonitor.service.UserPushRecipientResolver userPushRecipientResolver;
+    @MockitoBean com.sitemonitor.service.WebhookService webhookService;
+    @MockitoBean com.sitemonitor.service.TeamAdminService teamAdminService;
+    @MockitoBean com.sitemonitor.service.AdminOverviewService adminOverviewService;
     @MockitoBean com.sitemonitor.service.DerivedMonitorTeamSync derivedMonitorTeamSync;
     @MockitoBean com.sitemonitor.service.TourStateService tourStateService;   // ürün turu (2026-09-13)
     // AdminController "Tekrar Bildir" onizlemesinde webhook alicilarini da cozuyor (A2).
@@ -1156,9 +1162,269 @@ class AdminControllerTest {
         mvc.perform(put("/api/admin/thresholds/1")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"warningDays\":25,\"highDays\":12,\"criticalDays\":5,\"reAlertIntervalHours\":12}"))
+                        .content("{\"warning_days\":25,\"high_days\":12,\"critical_days\":5,\"re_alert_interval_hours\":12}"))   // tel biçimi SNAKE_CASE
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("GET /overview: global admin sınırsız kapsamla servise gider")
+    void adminOverview() throws Exception {
+        when(adminOverviewService.overview(isNull())).thenReturn(Map.of("counts", Map.of("teams", 3), "warnings", List.of()));
+        mvc.perform(get("/api/admin/overview").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.counts.teams").value(3));
+    }
+
+    // ── Takım sayaçları / etki / taşıma / üyelik (2026-09-20) ────────────────────
+
+    @Test
+    @DisplayName("GET /teams/stats: takım id anahtarlı sayaçlar")
+    void teamStats() throws Exception {
+        when(teamAdminService.stats()).thenReturn(new java.util.LinkedHashMap<>(Map.of(7L, Map.of("members", 3, "domains", 12))));
+        mvc.perform(get("/api/admin/teams/stats").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data['7'].members").value(3));
+    }
+
+    @Test
+    @DisplayName("GET /teams/{id}/impact + POST /teams/{id}/move: etki listesi; taşıma servise gider ve denetlenir")
+    void teamImpactAndMove() throws Exception {
+        com.sitemonitor.model.Team a = new com.sitemonitor.model.Team(); a.setId(7L); a.setName("Takım A");
+        com.sitemonitor.model.Team b = new com.sitemonitor.model.Team(); b.setId(9L); b.setName("Takım B");
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(a));
+        when(teamRepo.findById(9L)).thenReturn(Optional.of(b));
+        when(teamAdminService.impact(7L)).thenReturn(Map.of("open_alerts", 2L, "empty", false));
+        mvc.perform(get("/api/admin/teams/7/impact").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.open_alerts").value(2));
+
+        when(teamAdminService.moveAll(7L, 9L)).thenReturn(new java.util.LinkedHashMap<>(Map.of("domains", 4, "monitors", 2, "users", 1, "contacts", 0, "groups", 1)));
+        mvc.perform(post("/api/admin/teams/7/move").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"target_team_id\":9}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.domains").value(4));
+        verify(auditService).recordAction(eq("TEAM_MOVE_ASSETS"), any(jakarta.servlet.http.HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class), eq("TEAM"), eq("7"), any());
+
+        mvc.perform(post("/api/admin/teams/7/move").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("POST/DELETE /teams/{id}/members: üyelik kümesi updateUser ile yazılır; son takım çıkarılamaz (409)")
+    void teamMembers() throws Exception {
+        AppUser u = new AppUser(); u.setId(42L); u.setUsername("ali"); u.setSystemRole("USER"); u.setTeamId(9L);
+        u.setTeamIds(new java.util.LinkedHashSet<>(List.of(9L)));
+        when(userRepo.findById(42L)).thenReturn(Optional.of(u));
+        when(userService.updateUser(eq(42L), isNull(), isNull(), isNull(), isNull(), any(), isNull(), isNull())).thenReturn(u);
+
+        mvc.perform(post("/api/admin/teams/7/members").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"user_id\":42}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.added").value(true));
+        ArgumentCaptor<java.util.Collection<Long>> ids = ArgumentCaptor.forClass(java.util.Collection.class);
+        verify(userService).updateUser(eq(42L), isNull(), isNull(), isNull(), isNull(), ids.capture(), isNull(), isNull());
+        assertThat(ids.getValue()).containsExactly(9L, 7L);
+        verify(auditService).recordAction(eq("TEAM_MEMBER_ADD"), any(jakarta.servlet.http.HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class), eq("TEAM"), eq("7"), any());
+
+        // tek takımı 9 → çıkarılamaz
+        mvc.perform(delete("/api/admin/teams/9/members/42").session(authSession()))
+                .andExpect(status().isConflict());
+        // üyesi olmadığı takımdan çıkarma no-op
+        mvc.perform(delete("/api/admin/teams/7/members/42").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.removed").value(false));
+    }
+
+    // ── "Kim bilgilendirilir?" + webhook testi + son teslimat (2026-09-20) ───────
+
+    @Test
+    @DisplayName("GET /recipients/simulate: servise takım/seviye/tür geçer, takım adı ve push ayağı eklenir")
+    void simulateRecipients_ok() throws Exception {
+        when(escalationService.simulateRecipients(1L, "HIGH", true, null)).thenReturn(new java.util.LinkedHashMap<>(Map.of("level", "HIGH", "email_total", 2L)));
+        com.sitemonitor.model.Team team = new com.sitemonitor.model.Team(); team.setId(1L); team.setName("Takım A");
+        when(teamRepo.findById(1L)).thenReturn(Optional.of(team));
+        when(userPushRecipientResolver.explain(1L, "HIGH")).thenReturn(List.of());
+
+        mvc.perform(get("/api/admin/recipients/simulate").param("teamId", "1").param("level", "HIGH").param("kind", "MONITOR")
+                        .session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_name").value("Takım A"))
+                .andExpect(jsonPath("$.data.push").isArray());
+    }
+
+    @Test
+    @DisplayName("POST /contacts/{id}/webhook-test: gönderir, notification_log'a WEBHOOK_TEST yazar, denetler; webhook'suz kişi 400")
+    void contactWebhookTest() throws Exception {
+        EscalationContact c = contact("po@test.com", "PO"); c.setId(5L); c.setTeamId(1L);
+        c.setWebhookUrl("https://hooks.example.com/services/T/B/x"); c.setWebhookType("SLACK");
+        when(contactRepo.findById(5L)).thenReturn(Optional.of(c));
+
+        mvc.perform(post("/api/admin/contacts/5/webhook-test").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("SENT"));
+        verify(webhookService).send(eq("SLACK"), eq("https://hooks.example.com/services/T/B/x"), any(), any(), eq("INFO"));
+        ArgumentCaptor<NotificationLog> logCap = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(notificationLogRepo).save(logCap.capture());
+        assertThat(logCap.getValue().getTrigger()).isEqualTo("WEBHOOK_TEST");
+        assertThat(logCap.getValue().getAlertEventId()).isEqualTo(0L);   // NOT NULL kolon: alarmsız kayıt sentinel 0 (üretimde insert düşüyordu)
+        assertThat(logCap.getValue().getWebhookStatus()).isEqualTo("SENT");
+        verify(auditService).recordAction(eq("CONTACT_WEBHOOK_TEST"), any(), eq("ESCALATION_CONTACT"), eq("5"), eq("Test PO"), any());
+
+        // gönderim düşerse FAILED + hata metni, 200 (kullanıcı sonucu görür)
+        org.mockito.Mockito.doThrow(new RuntimeException("404 Not Found")).when(webhookService).send(any(), any(), any(), any(), any());
+        mvc.perform(post("/api/admin/contacts/5/webhook-test").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("FAILED"))
+                .andExpect(jsonPath("$.data.error").value("404 Not Found"));
+
+        EscalationContact noHook = contact("x@test.com", "TECH"); noHook.setId(6L); noHook.setTeamId(1L);
+        when(contactRepo.findById(6L)).thenReturn(Optional.of(noHook));
+        mvc.perform(post("/api/admin/contacts/6/webhook-test").session(authSession()))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("GET /contacts/webhook-status: adres başına son teslimat, FAILED ayrıntısı ayrılır")
+    void contactWebhookStatus() throws Exception {
+        NotificationLog ok = new NotificationLog(); ok.setRecipientEmail("PO@Test.com"); ok.setWebhookStatus("SENT"); ok.setSentAt("2026-09-20T10:00:00"); ok.setTrigger("INITIAL");
+        NotificationLog bad = new NotificationLog(); bad.setRecipientEmail("mgr@test.com"); bad.setWebhookStatus("FAILED: 404"); bad.setSentAt("2026-09-19T10:00:00"); bad.setTrigger("WEBHOOK_TEST");
+        when(notificationLogRepo.findLatestWebhookPerRecipient()).thenReturn(List.of(ok, bad));
+        mvc.perform(get("/api/admin/contacts/webhook-status").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data['po@test.com'].status").value("SENT"))
+                .andExpect(jsonPath("$.data['mgr@test.com'].status").value("FAILED"))
+                .andExpect(jsonPath("$.data['mgr@test.com'].detail").value("404"));
+    }
+
+    // ── Yönetim Paneli değişiklik geçmişi (2026-09-20) ────────────────────────
+
+    @Test
+    @DisplayName("GET /history?resource=TEAM: satırlar eylem öneki kırpılmış, takım adı çözülmüş döner")
+    void adminHistory_team() throws Exception {
+        com.sitemonitor.model.AuditLog row = new com.sitemonitor.model.AuditLog();
+        row.setId(11L); row.setEventType("TEAM_UPDATE"); row.setEventTime("2026-09-20T10:00:00");
+        row.setActor("admin"); row.setResourceType("TEAM"); row.setResourceId("7"); row.setDetail("Takım A");
+        row.setChanges("{\"name\":{\"from\":\"A\",\"to\":\"Takım A\"}}");
+        when(adminHistoryService.history(eq("TEAM"), isNull(), isNull(), isNull(), eq(0), eq(25)))
+                .thenReturn(new com.sitemonitor.service.AdminHistoryService.History(
+                        List.of(new com.sitemonitor.service.AdminHistoryService.Entry(row, 7L)), 1, 0, 25, false, 0));
+        com.sitemonitor.model.Team team = new com.sitemonitor.model.Team(); team.setId(7L); team.setName("Takım A");
+        when(teamRepo.findAll()).thenReturn(List.of(team));
+
+        mvc.perform(get("/api/admin/history").param("resource", "TEAM").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].action").value("UPDATE"))
+                .andExpect(jsonPath("$.items[0].team_name").value("Takım A"))
+                .andExpect(jsonPath("$.items[0].name").value("Takım A"))
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.total_pages").value(1))
+                .andExpect(jsonPath("$.types[0]").value("TEAM_CREATE"))
+                .andExpect(jsonPath("$.truncated").value(false));
+    }
+
+    @Test
+    @DisplayName("Geçmiş satırı adı: düz metin aynen; JSON detail'den name/team çekilir; anahtarsız JSON → null")
+    void historyNameExtraction() {
+        assertThat(AdminController.historyName("Takım A")).isEqualTo("Takım A");
+        assertThat(AdminController.historyName("{\"name\":\"Takım A\",\"leaderId\":5}")).isEqualTo("Takım A");
+        assertThat(AdminController.historyName("{\"team\":\"Takim A\",\"enabled\":false}")).isEqualTo("Takim A");
+        assertThat(AdminController.historyName("{\"enabled\":false}")).isNull();
+        assertThat(AdminController.historyName(null)).isNull();
+    }
+
+    @Test
+    @DisplayName("GET /history bilinmeyen kaynak → 400")
+    void adminHistory_unknownResource() throws Exception {
+        mvc.perform(get("/api/admin/history").param("resource", "MONITOR").session(authSession()))
+                .andExpect(status().isBadRequest());
+    }
+
+    // ── Tier bazlı eşikler (2026-09-20) ───────────────────────────────────────
+
+    @Test
+    @DisplayName("POST /thresholds tier=1: tier satırı yaratılır, ad boşsa tier-1 olur")
+    void createTierThreshold_ok() throws Exception {
+        when(thresholdRepo.findByTierOrderByIdAsc(1)).thenReturn(List.of());
+        when(thresholdRepo.save(any())).thenAnswer(inv -> { AlertThreshold t = inv.getArgument(0); t.setId(9L); return t; });
+
+        mvc.perform(post("/api/admin/thresholds").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tier\":1,\"warning_days\":60,\"high_days\":30,\"critical_days\":14}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.tier").value(1))
+                .andExpect(jsonPath("$.data.name").value("tier-1"));
+        verify(auditService).recordAction(eq("THRESHOLD_CREATE"), any(), eq("ALERT_THRESHOLD"), eq("9"), eq("tier-1"), any());
+    }
+
+    @Test
+    @DisplayName("POST /thresholds aynı tier'a ikinci satır → 409; ters sıra (kritik > uyarı) → 400; tier 7 → 400")
+    void createTierThreshold_validation() throws Exception {
+        AlertThreshold t1 = defaultThreshold(); t1.setTier(1);
+        when(thresholdRepo.findByTierOrderByIdAsc(1)).thenReturn(List.of(t1));
+        mvc.perform(post("/api/admin/thresholds").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tier\":1,\"warning_days\":60,\"high_days\":30,\"critical_days\":14}"))
+                .andExpect(status().isConflict());
+
+        when(thresholdRepo.findByTierOrderByIdAsc(2)).thenReturn(List.of());
+        mvc.perform(post("/api/admin/thresholds").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tier\":2,\"warning_days\":10,\"high_days\":30,\"critical_days\":40}"))
+                .andExpect(status().isBadRequest());
+
+        mvc.perform(post("/api/admin/thresholds").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tier\":7,\"warning_days\":60,\"high_days\":30,\"critical_days\":14}"))
+                .andExpect(status().isBadRequest());
+        verify(thresholdRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("PUT /thresholds kısmi gövde mevcut değerlerle birleşip sıra denetiminden geçer; bozuk sıra 400")
+    void updateThreshold_orderValidation() throws Exception {
+        AlertThreshold existing = defaultThreshold();   // 30/15/7
+        when(thresholdRepo.findById(1L)).thenReturn(Optional.of(existing));
+        when(thresholdRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        mvc.perform(put("/api/admin/thresholds/1").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"critical_days\":20}"))     // 20 > yüksek 15 → bozuk
+                .andExpect(status().isBadRequest());
+        mvc.perform(put("/api/admin/thresholds/1").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"critical_days\":10}"))     // 10 ≤ 15 ≤ 30
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("DELETE /thresholds/{id}: tier satırı silinir + denetim; VARSAYILAN satır 409")
+    void deleteThreshold() throws Exception {
+        AlertThreshold tier = defaultThreshold(); tier.setId(5L); tier.setTier(2); tier.setName("tier-2");
+        when(thresholdRepo.findById(5L)).thenReturn(Optional.of(tier));
+        mvc.perform(delete("/api/admin/thresholds/5").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.deleted").value(true));
+        verify(thresholdRepo).delete(tier);
+        verify(auditService).recordAction(eq("THRESHOLD_DELETE"), any(), eq("ALERT_THRESHOLD"), eq("5"), eq("tier-2"), any());
+        verify(thresholdPreviewService, atLeastOnce()).afterThresholdChange();   // kart seviyeleri eşikten türer → cache boşalır
+
+        when(thresholdRepo.findById(1L)).thenReturn(Optional.of(defaultThreshold()));
+        mvc.perform(delete("/api/admin/thresholds/1").session(authSession()))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    @DisplayName("GET /thresholds/preview servise tier + günleri geçirir; bozuk sıra 400")
+    void previewThreshold() throws Exception {
+        when(thresholdPreviewService.preview(1, 60, 30, 14)).thenReturn(Map.of("scope_total", 3));
+        mvc.perform(get("/api/admin/thresholds/preview").session(authSession())
+                        .param("tier", "1").param("warning", "60").param("high", "30").param("critical", "14"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.scope_total").value(3));
+        mvc.perform(get("/api/admin/thresholds/preview").session(authSession())
+                        .param("warning", "5").param("high", "30").param("critical", "14"))
+                .andExpect(status().isBadRequest());
     }
 
     // ── Contacts ──────────────────────────────────────────────────────────────
@@ -2449,6 +2715,56 @@ class AdminControllerTest {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    // ── Users: uyuyan hesap süzgeci + toplu işlem (2026-09-20) ─────────────────
+
+    @Test
+    @DisplayName("GET /users/search?dormantDays=90: uyuyan süzgeci ayrı sorguya gider, kesim ISO-UTC")
+    void searchUsers_dormant() throws Exception {
+        when(userRepo.findFilteredDormant(any(), any(), any(), any(), any(), anyBoolean(), any()))
+                .thenReturn(new PageImpl<>(List.of(), org.springframework.data.domain.PageRequest.of(0, 20), 0));
+        when(userRepo.countBySystemRoleAndActiveTrue("ADMIN")).thenReturn(1L);
+        mvc.perform(get("/api/admin/users/search").param("dormantDays", "90").session(authSession()))
+                .andExpect(status().isOk());
+        ArgumentCaptor<String> cut = ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(userRepo).findFilteredDormant(isNull(), isNull(), isNull(), isNull(), cut.capture(), eq(false), any());
+        assertThat(cut.getValue()).matches("[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}");
+        // hiç girmemiş
+        mvc.perform(get("/api/admin/users/search").param("neverLoggedIn", "true").session(authSession()))
+                .andExpect(status().isOk());
+        org.mockito.Mockito.verify(userRepo).findFilteredDormant(isNull(), isNull(), isNull(), isNull(), isNull(), eq(true), any());
+        org.mockito.Mockito.verify(userRepo, never()).findFiltered(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("POST /users/bulk deactivate: her kullanıcı ayrı geçer; kendini pasifleştirme satırı düşer, diğerleri sürer; özet denetimi")
+    void bulkUsers_deactivate() throws Exception {
+        when(userService.updateUser(anyLong(), any(), any(), any(), any(), any(), eq(false), any()))
+                .thenAnswer(inv -> { AppUser u = new AppUser(); u.setId(inv.getArgument(0)); u.setUsername("u" + inv.getArgument(0)); return u; });
+        MockHttpSession s = authSession();
+        s.setAttribute("userId", 50L);
+        AppUser self = new AppUser(); self.setId(50L); self.setUsername("me"); self.setSystemRole("ADMIN"); self.setActive(true); self.setTeamId(1L);
+        when(userRepo.findById(50L)).thenReturn(Optional.of(self));
+
+        mvc.perform(post("/api/admin/users/bulk").session(s)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"deactivate\",\"ids\":[7,50,8]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.ok").value(2))
+                .andExpect(jsonPath("$.data.failed").value(1))
+                .andExpect(jsonPath("$.data.results[1].ok").value(false));
+        verify(auditService).recordAction(eq("USER_BULK_UPDATE"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("USER"), eq("bulk"), any());
+
+        mvc.perform(post("/api/admin/users/bulk").session(s)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"frobnicate\",\"ids\":[7]}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/admin/users/bulk").session(s)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"assign_team\",\"ids\":[7]}"))
+                .andExpect(status().isBadRequest());   // team_id yok
+    }
 
     // ── Users: filtreli + sayfalı arama (/users/search) ─────────────────────────
 

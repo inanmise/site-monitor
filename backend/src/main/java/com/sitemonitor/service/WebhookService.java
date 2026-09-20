@@ -141,7 +141,7 @@ public class WebhookService {
      * basılıyordu ve WARN prod'da açık, günlükler 30 gün saklanıyor. Log okuyabilen herkes o
      * kanala mesaj atabilirdi. Sorunu ayıklamak için host + kısa kuyruk yeter.
      */
-    static String maskUrl(String url) {
+    public static String maskUrl(String url) {
         if (url == null || url.isBlank()) return "-";
         try {
             URI u = URI.create(url);

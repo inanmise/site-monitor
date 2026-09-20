@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, act } from './test-utils.jsx'
 import AdminPanel from '../components/admin/AdminPanel.jsx'
 
@@ -81,5 +81,35 @@ describe('AdminPanel', () => {
     expect(contactsBtn).toHaveClass('active')
     const thresholdsBtn = screen.getByRole('button', { name: 'Thresholds' })
     expect(thresholdsBtn).not.toHaveClass('active')
+  })
+})
+
+/** Alt sekme + süzgeçler URL'de (g_*): derin bağlantı ve yenileme ilk sekmeye düşmez (2026-09-20). */
+describe('AdminPanel — g_tab derin bağlantı', () => {
+  afterEach(() => { window.history.replaceState(null, '', '/') })
+
+  it('g_tab=users ile açılınca Kullanıcılar sekmesi aktif', async () => {
+    window.history.replaceState(null, '', '/?tab=admin&g_tab=users')
+    await act(async () => { render(<AdminPanel systemRole="ADMIN" />) })
+    expect(screen.getByTestId('user-manager')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Users' })).toHaveClass('active')
+  })
+
+  it('yetkisiz sekme (TEAM_ADMIN + g_tab=thresholds) varsayılana iner', async () => {
+    window.history.replaceState(null, '', '/?tab=admin&g_tab=thresholds')
+    await act(async () => { render(<AdminPanel systemRole="TEAM_ADMIN" />) })
+    expect(screen.getByTestId('escalation-contacts')).toBeInTheDocument()
+    expect(screen.queryByTestId('alert-thresholds')).not.toBeInTheDocument()
+  })
+
+  it('sekme değişince önceki sekmenin g_* süzgeçleri URL parametrelerinden silinir, g_tab kalır', async () => {
+    window.history.replaceState(null, '', '/?tab=admin&g_tab=users&g_role=ADMIN&g_q=ali')
+    await act(async () => { render(<AdminPanel systemRole="ADMIN" />) })
+    fireEvent.click(screen.getByRole('button', { name: 'Teams' }))
+    const sp = new URLSearchParams(window.location.search)
+    expect(sp.get('g_role')).toBeNull()
+    expect(sp.get('g_q')).toBeNull()
+    expect(sp.get('tab')).toBe('admin')
+    expect(screen.getByTestId('team-manager')).toBeInTheDocument()
   })
 })

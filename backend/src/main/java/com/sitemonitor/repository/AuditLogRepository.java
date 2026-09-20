@@ -151,6 +151,10 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
     /** Bir kaynak TÜRÜNÜN tüm geçmişi (ör. tüm RETENTION_POLICY değişiklikleri). */
     List<AuditLog> findByResourceTypeOrderByEventTimeDesc(String resourceType, Pageable pageable);
 
+    /** Yönetim Paneli değişiklik geçmişi (2026-09-20): kaynak + olay türü beyaz listesi, sayfalı (toplam sayı gerçek). */
+    org.springframework.data.domain.Page<AuditLog> findByResourceTypeAndEventTypeIn(String resourceType, java.util.Collection<String> eventTypes, Pageable pageable);
+    org.springframework.data.domain.Page<AuditLog> findByResourceTypeAndResourceIdAndEventTypeIn(String resourceType, String resourceId, java.util.Collection<String> eventTypes, Pageable pageable);
+
     /** Bir kullanıcının tüm eylemleri. */
     List<AuditLog> findByActorIdOrderByEventTimeDesc(Long actorId, Pageable pageable);
 

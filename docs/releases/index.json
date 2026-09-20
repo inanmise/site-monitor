@@ -1,9 +1,86 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-19T19:17:23Z",
+  "generatedAt": "2026-09-20T02:53:40Z",
   "repo": "inanmise/site-monitor",
-  "count": 661,
+  "count": 662,
   "releases": [
+    {
+      "version": "20.73.0",
+      "tag": "v20.73.0",
+      "releasedAt": "2026-09-20T02:53:33Z",
+      "commit": "48752f17d9efe80914b4f14f5eee3039270a7d70",
+      "prevVersion": "20.72.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 6,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "48752f17",
+          "subject": "geçmiş ad çözümü testinde gerçek takım adı yerine yer tutucu"
+        },
+        {
+          "type": "feat",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "0c46dd43",
+          "subject": "Değişiklik Geçmişi v2 — olay beyaz listesi (giriş kayıtları dışarıda), tablo, çipler, sayfalama"
+        },
+        {
+          "type": "feat",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "5147d107",
+          "subject": "özet şeridi, son giriş + uyuyan hesap süzgeci, toplu işlem, CSV, kullanıcı detay kartı"
+        },
+        {
+          "type": "feat",
+          "scope": "teams",
+          "breaking": false,
+          "sha": "2401ea0a",
+          "subject": "satırda varlık sayaçları, üye yönetimi, silme etki önizleme + taşıma"
+        },
+        {
+          "type": "feat",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "6ac8c983",
+          "subject": "\"Kim bilgilendirilir?\" simülatörü + eskalasyon webhook testi ve son teslimat"
+        },
+        {
+          "type": "feat",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "987bdef8",
+          "subject": "her sekmede Değişiklik Geçmişi (eşik / eskalasyon / takım / kullanıcı)"
+        },
+        {
+          "type": "feat",
+          "scope": "thresholds",
+          "breaking": false,
+          "sha": "d6536196",
+          "subject": "tier bazlı eşikler + canlı etki önizleme"
+        },
+        {
+          "type": "fix",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "fb2719ed",
+          "subject": "süzgeç çubuğu tek satır, alt sekme + süzgeçler URL'de (g_*), eşik kaydet metni sabit"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.72.1",
       "tag": "v20.72.1",

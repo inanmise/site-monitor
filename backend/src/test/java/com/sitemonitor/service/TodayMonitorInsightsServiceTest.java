@@ -117,7 +117,7 @@ class TodayMonitorInsightsServiceTest {
         when(pushDeliveryRepo.findByStatusAndCreatedAtGreaterThanEqualOrderByIdDesc(anyString(), anyString())).thenReturn(List.of());
         when(latestCheckRepo.findAll()).thenReturn(List.of());
         when(exceptionRepo.findAll()).thenReturn(List.of());
-        when(healthService.thresholdDays()).thenReturn(new int[]{30, 7});
+        when(healthService.thresholdResolution()).thenReturn(ThresholdResolution.fixed(null));   // tier bazlı çözüm (2026-09-20): 30/15/7
     }
 
     // ── Teslim edilemeyen bildirim ──────────────────────────────────────────────────────────

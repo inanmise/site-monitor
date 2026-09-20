@@ -84,6 +84,12 @@ public class AdminController {
     /** Envantere secilen bildirim grubunun sahipligini dogrulamak icin. */
     private final com.sitemonitor.repository.NotificationGroupRepository inventoryGroupRepo;
     private final AlertThresholdRepository thresholdRepo;
+    private final com.sitemonitor.service.ThresholdPreviewService thresholdPreviewService;   // tier eşik önizleme (2026-09-20)
+    private final com.sitemonitor.service.AdminHistoryService adminHistoryService;             // sekme değişiklik geçmişi (2026-09-20)
+    private final com.sitemonitor.service.UserPushRecipientResolver userPushRecipientResolver;  // "Kim bilgilendirilir?" push ayağı (2026-09-20)
+    private final com.sitemonitor.service.WebhookService webhookService;                       // eskalasyon webhook testi (2026-09-20)
+    private final com.sitemonitor.service.TeamAdminService teamAdminService;                   // takım sayaçları / etki / taşıma (2026-09-20)
+    private final com.sitemonitor.service.AdminOverviewService adminOverviewService;           // özet şeridi (2026-09-20)
     private final EscalationContactRepository contactRepo;
     private final AlertEventRepository alertEventRepo;
     private final NotificationLogRepository notificationLogRepo;
@@ -1133,6 +1139,97 @@ public class AdminController {
         return ok(Map.of("data", inv, "message", "UG team transferred"));
     }
 
+    // ── Yönetim Paneli özet şeridi (2026-09-20) ───────────────────────────────────
+
+    /** Sayaçlar + sağlık uyarıları; kapsamlı kullanıcı görüş alanındaki takımlarla sınırlı. */
+    @GetMapping("/overview")
+    public ResponseEntity<Map<String, Object>> adminOverview(HttpSession session) {
+        requirePerm(session, "teams.list", "view");
+        List<Long> scope = SessionScope.isGlobalViewer(session) ? null : SessionScope.viewTeamIds(session);
+        return ok(Map.of("data", adminOverviewService.overview(scope)));
+    }
+
+    // ── Yönetim Paneli değişiklik geçmişi (2026-09-20) ──────────────────────────
+
+    /**
+     * "Kim, ne zaman, neyi değiştirdi" — eşik / eskalasyon kişisi / takım / kullanıcı. Kaynak denetim kaydı.
+     * USER ve ALERT_THRESHOLD yalnız global yönetici (kişisel veri / global ayar); TEAM ve ESCALATION_CONTACT
+     * görüş kapsamıyla (kapsamlı müdür kendi takımlarını görür).
+     */
+    @GetMapping("/history")
+    public ResponseEntity<Map<String, Object>> adminHistory(
+            @RequestParam String resource,
+            @RequestParam(required = false) String resourceId,
+            @RequestParam(required = false) List<String> types,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "25") int size,
+            HttpSession session) {
+        if (!com.sitemonitor.service.AdminHistoryService.RESOURCES.contains(resource)) {
+            throw new IllegalArgumentException("Bilinmeyen kaynak: " + resource);
+        }
+        List<Long> scope;
+        switch (resource) {
+            case "ALERT_THRESHOLD" -> { requireAdmin(session); requirePerm(session, "thresholds.read", "view"); scope = null; }
+            case "USER" -> { requireAdmin(session); SessionScope.requireNotScopedAdmin(session, "users.history"); requirePerm(session, "users.list", "view"); scope = null; }
+            case "ESCALATION_CONTACT" -> { requirePerm(session, "contacts.list", "view"); scope = SessionScope.isGlobalViewer(session) ? null : SessionScope.viewTeamIds(session); }
+            default -> { requirePerm(session, "teams.list", "view"); scope = SessionScope.isGlobalViewer(session) ? null : SessionScope.viewTeamIds(session); }
+        }
+        var h = adminHistoryService.history(resource, resourceId, types, scope, page, size);
+        Map<Long, String> teamNames = new LinkedHashMap<>();
+        teamRepo.findAll().forEach(tm -> teamNames.put(tm.getId(), tm.getName()));
+        String prefix = switch (resource) {
+            case "ALERT_THRESHOLD" -> "THRESHOLD_";
+            case "ESCALATION_CONTACT" -> "CONTACT_";
+            case "TEAM" -> "TEAM_";
+            default -> "USER_";
+        };
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (var e : h.items()) {
+            var r = e.row();
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", r.getId());
+            m.put("at", r.getEventTime());
+            m.put("actor", r.getActor());
+            m.put("action", r.getEventType() != null && r.getEventType().startsWith(prefix)
+                    ? r.getEventType().substring(prefix.length()) : r.getEventType());
+            m.put("event_type", r.getEventType());
+            m.put("resource_id", r.getResourceId());
+            m.put("name", historyName(r.getDetail()));
+            m.put("team_id", e.teamId());
+            m.put("team_name", e.teamId() != null ? teamNames.get(e.teamId()) : null);
+            m.put("changes", r.getChanges());
+            m.put("ip", r.getIpAddress());
+            m.put("outcome", r.getOutcome());
+            items.add(m);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("items", items);
+        out.put("total", h.total());
+        out.put("page", h.page());
+        out.put("size", h.size());
+        out.put("total_pages", h.totalPages());
+        out.put("truncated", h.truncated());
+        out.put("hidden", h.hidden());
+        out.put("types", com.sitemonitor.service.AdminHistoryService.eventTypesFor(resource));
+        return ok(out);
+    }
+
+    /**
+     * Geçmiş satırının adı: detail çoğu olayda düz ad, bazılarında JSON ({@code AuditDetail.of("name", …)},
+     * WEEKLY_REPORT_ACCESS gövdesi). JSON ise name/team/username/domain anahtarı çekilir; yoksa null (takım adı düşer).
+     */
+    static String historyName(String detail) {
+        if (detail == null) return null;
+        String d = detail.trim();
+        if (!d.startsWith("{")) return d;
+        for (String key : new String[]{"name", "team", "username", "domain"}) {
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("\"" + key + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"").matcher(d);
+            if (m.find()) return m.group(1);
+        }
+        return null;
+    }
+
     // ── Alert Thresholds (ADMIN only) ─────────────────────────────────────────
 
     @GetMapping("/thresholds")
@@ -1147,9 +1244,76 @@ public class AdminController {
         requireAdmin(session);
         requirePerm(session, "thresholds.edit", "edit");
         t.setId(null);
+        validateThreshold(t.getTier(), t.getWarningDays(), t.getHighDays(), t.getCriticalDays());
+        // Tier başına TEK aktif satır; varsayılan (tier'sız) da tek: ikinci satır çözümde sessizce yok sayılırdı.
+        List<AlertThreshold> same = t.getTier() == null
+                ? thresholdRepo.findByActiveTrueAndTierIsNullOrderByIdAsc()
+                : thresholdRepo.findByTierOrderByIdAsc(t.getTier());
+        if (!same.isEmpty()) {
+            throw new IllegalStateException(t.getTier() == null
+                    ? com.sitemonitor.util.Msg.t("Varsayılan eşik zaten var; onu düzenleyin.", "A default threshold already exists; edit it instead.")
+                    : com.sitemonitor.util.Msg.t("Bu tier için eşik zaten var; onu düzenleyin.", "A threshold for this tier already exists; edit it instead."));
+        }
+        // Ad: entity varsayılanı "default" — tier satırı o adla kalmasın (listede ayırt edilemez).
+        if (t.getName() == null || t.getName().isBlank() || (t.getTier() != null && "default".equals(t.getName()))) {
+            t.setName(t.getTier() == null ? "default" : "tier-" + t.getTier());
+        }
+        if (t.getActive() == null) t.setActive(true);
         AlertThreshold saved = thresholdRepo.save(t);
-        auditService.recordAction("THRESHOLD_CREATE", session, "ALERT_THRESHOLD", String.valueOf(saved.getId()), saved.getName(), null);
+        thresholdPreviewService.afterThresholdChange();
+        auditService.recordAction("THRESHOLD_CREATE", session, "ALERT_THRESHOLD", String.valueOf(saved.getId()), saved.getName(),
+                com.sitemonitor.service.AuditDetail.of("tier", saved.getTier(), "warning_days", saved.getWarningDays(),
+                        "high_days", saved.getHighDays(), "critical_days", saved.getCriticalDays()));
         return ok(Map.of("data", saved));
+    }
+
+    /**
+     * Eşik satırı sil — YALNIZ tier satırları (2026-09-20). Varsayılan satır silinemez: tüm çözüm ona düşer.
+     */
+    @DeleteMapping("/thresholds/{id}")
+    public ResponseEntity<Map<String, Object>> deleteThreshold(@PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
+        requirePerm(session, "thresholds.edit", "edit");
+        AlertThreshold existing = thresholdRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Threshold not found: " + id));
+        if (existing.getTier() == null) {
+            throw new IllegalStateException(com.sitemonitor.util.Msg.t(
+                    "Varsayılan eşik silinemez.", "The default threshold cannot be deleted."));
+        }
+        thresholdRepo.delete(existing);
+        thresholdPreviewService.afterThresholdChange();
+        auditService.recordAction("THRESHOLD_DELETE", session, "ALERT_THRESHOLD", String.valueOf(id), existing.getName(),
+                com.sitemonitor.service.AuditDetail.of("tier", existing.getTier()));
+        return ok(Map.of("data", Map.of("deleted", true)));
+    }
+
+    /**
+     * Eşik etki önizlemesi (2026-09-20): "bu değerlerle bugün kaç alan hangi seviyede olur?" — kalıcı yazma yok.
+     * Kapsam satırın kapsamıyla aynı (tier satırı: o tier; varsayılan: tier'sız + kendi satırı olmayan tier'lar).
+     */
+    @GetMapping("/thresholds/preview")
+    public ResponseEntity<Map<String, Object>> previewThreshold(
+            @RequestParam(required = false) Integer tier,
+            @RequestParam int warning, @RequestParam int high, @RequestParam int critical,
+            HttpSession session) {
+        requirePerm(session, "thresholds.read", "view");
+        validateThreshold(tier, warning, high, critical);
+        return ok(Map.of("data", thresholdPreviewService.preview(tier, warning, high, critical)));
+    }
+
+    /** Gün sırası kritik ≤ yüksek ≤ uyarı ve hepsi ≥ 0; tier 1..4 ya da boş. Ters sıra bir seviyeyi ulaşılmaz kılar. */
+    private static void validateThreshold(Integer tier, Integer warning, Integer high, Integer critical) {
+        if (tier != null && (tier < 1 || tier > 4)) {
+            throw new IllegalArgumentException(com.sitemonitor.util.Msg.t("Tier 1–4 arasında olmalı", "Tier must be between 1 and 4"));
+        }
+        if (warning == null || high == null || critical == null) return;   // PUT kısmi gövde: null = mevcut değer kalır
+        if (warning < 0 || high < 0 || critical < 0) {
+            throw new IllegalArgumentException(com.sitemonitor.util.Msg.t("Gün değerleri negatif olamaz", "Day values cannot be negative"));
+        }
+        if (!(critical <= high && high <= warning)) {
+            throw new IllegalArgumentException(com.sitemonitor.util.Msg.t(
+                    "Sıra bozuk: kritik ≤ yüksek ≤ uyarı olmalı", "Out of order: critical ≤ high ≤ warning is required"));
+        }
     }
 
     @PutMapping("/thresholds/{id}")
@@ -1161,6 +1325,11 @@ public class AdminController {
                 .orElseThrow(() -> new NoSuchElementException("Threshold not found: " + id));
         java.util.Map<String, Object> _before = AuditDiff.snapshot(existing,
                 "name", "warningDays", "highDays", "criticalDays", "reAlertIntervalHours", "active");
+        // Birleşik değerlerle sıra denetimi: kısmi gövde mevcut değerlerle tamamlanır (tier değiştirilemez).
+        validateThreshold(existing.getTier(),
+                t.getWarningDays() != null ? t.getWarningDays() : existing.getWarningDays(),
+                t.getHighDays() != null ? t.getHighDays() : existing.getHighDays(),
+                t.getCriticalDays() != null ? t.getCriticalDays() : existing.getCriticalDays());
         existing.setName(t.getName() != null ? t.getName() : existing.getName());
         existing.setWarningDays(t.getWarningDays() != null ? t.getWarningDays() : existing.getWarningDays());
         existing.setHighDays(t.getHighDays() != null ? t.getHighDays() : existing.getHighDays());
@@ -1169,6 +1338,7 @@ public class AdminController {
                 ? t.getReAlertIntervalHours() : existing.getReAlertIntervalHours());
         existing.setActive(t.getActive() != null ? t.getActive() : existing.getActive());
         AlertThreshold saved = thresholdRepo.save(existing);
+        thresholdPreviewService.afterThresholdChange();   // kart seviyeleri/istatistik eşikten türer (2026-09-20)
         auditService.recordAction("THRESHOLD_UPDATE", session, "ALERT_THRESHOLD", String.valueOf(id), saved.getName(),
                 AuditDiff.diff(_before, AuditDiff.snapshot(saved,
                         "name", "warningDays", "highDays", "criticalDays", "reAlertIntervalHours", "active")));
@@ -1205,6 +1375,111 @@ public class AdminController {
                     : contactRepo.findByTeamIdInOrderByRoleAsc(scope);
         }
         return ok(Map.of("data", contacts));
+    }
+
+    /**
+     * "Kim bilgilendirilir?" simülatörü (2026-09-20): takım + seviye (+ izleme grubu) → e-posta zinciri, eskalasyon
+     * kişileri, kişi webhook'ları ve push alıcıları — gerçek gönderimle aynı kararlar, yazma yok.
+     * Kapsam: kapsamlı kullanıcı yalnız görüş alanındaki takımı sorabilir.
+     */
+    @GetMapping("/recipients/simulate")
+    public ResponseEntity<Map<String, Object>> simulateRecipients(
+            @RequestParam Long teamId,
+            @RequestParam(defaultValue = "HIGH") String level,
+            @RequestParam(defaultValue = "CERT") String kind,
+            @RequestParam(required = false) Long groupId,
+            HttpSession session) {
+        requirePerm(session, "contacts.list", "view");
+        if (!SessionScope.isGlobalViewer(session)) {
+            List<Long> scope = SessionScope.viewTeamIds(session);
+            if (scope == null || !scope.contains(teamId)) throw new NoSuchElementException("Team not found: " + teamId);
+        }
+        boolean standalone = "MONITOR".equalsIgnoreCase(kind);
+        Map<String, Object> out = new LinkedHashMap<>(escalationService.simulateRecipients(teamId, level, standalone, groupId));
+        out.put("team_name", teamRepo.findById(teamId).map(Team::getName).orElse(null));
+        // Push ayağı — kişisel opt-out/unvan verisi taşır: yalnız global yönetici görür.
+        if (SessionScope.isGlobalAdmin(session)) {
+            try {
+                out.put("push", userPushRecipientResolver.explain(teamId, String.valueOf(out.get("level"))));
+            } catch (RuntimeException e) {
+                out.put("push_error", e.getMessage());
+            }
+        }
+        return ok(Map.of("data", out));
+    }
+
+    /**
+     * Eskalasyon kişisinin webhook'una TEST mesajı (2026-09-20): yanlış URL ilk kritik alarmda değil kurulumda
+     * yakalansın. Sonuç notification_log'a yazılır (trigger WEBHOOK_TEST) → "son teslimat" sütunu güncellenir.
+     */
+    @PostMapping("/contacts/{id}/webhook-test")
+    public ResponseEntity<Map<String, Object>> testContactWebhook(@PathVariable Long id, HttpSession session) {
+        requirePerm(session, "contacts.crud", "edit");
+        EscalationContact c = contactRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Contact not found: " + id));
+        if (!SessionScope.isGlobalViewer(session)) {
+            List<Long> scope = SessionScope.viewTeamIds(session);
+            if (c.getTeamId() == null || scope == null || !scope.contains(c.getTeamId())) {
+                throw new NoSuchElementException("Contact not found: " + id);
+            }
+        }
+        if (c.getWebhookUrl() == null || c.getWebhookUrl().isBlank()) {
+            throw new IllegalArgumentException(com.sitemonitor.util.Msg.t("Bu kişide webhook adresi yok.", "This contact has no webhook URL."));
+        }
+        String title = com.sitemonitor.util.Msg.t("SiteMonitor webhook testi", "SiteMonitor webhook test");
+        String message = com.sitemonitor.util.Msg.t(
+                "Bu bir test mesajıdır — eskalasyon kişisi \"" + c.getName() + "\" için webhook doğrulandı. Alarm değildir.",
+                "This is a test message — the webhook for escalation contact \"" + c.getName() + "\" is working. Not an alert.");
+        String status;
+        String error = null;
+        try {
+            webhookService.send(c.getWebhookType(), c.getWebhookUrl(), title, message, "INFO");
+            status = "SENT";
+        } catch (Exception e) {
+            error = e.getMessage();
+            status = "FAILED: " + error;
+        }
+        try {
+            NotificationLog entry = new NotificationLog();
+            entry.setAlertEventId(0L);   // sentinel: alarm kaynaklı DEĞİL (kolon NOT NULL — rapor/anomali mailleriyle aynı desen)
+            entry.setSentAt(now());
+            entry.setRecipientName(c.getName());
+            entry.setRecipientEmail(c.getEmail());
+            entry.setRecipientRole(c.getRole());
+            entry.setSubject(title);
+            entry.setMessage(message);
+            entry.setEmailStatus("SKIPPED");
+            entry.setWebhookStatus(status);
+            entry.setTrigger("WEBHOOK_TEST");
+            notificationLogRepo.save(entry);
+        } catch (RuntimeException e) {
+            log.warn("Webhook test logu kaydedilemedi: {}", e.getMessage());
+        }
+        auditService.recordAction("CONTACT_WEBHOOK_TEST", session, "ESCALATION_CONTACT", String.valueOf(id), c.getName(),
+                AuditDetail.of("webhook_type", c.getWebhookType(), "status", status));
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("status", "SENT".equals(status) ? "SENT" : "FAILED");
+        data.put("error", error);
+        data.put("target", com.sitemonitor.service.WebhookService.maskUrl(c.getWebhookUrl()));
+        return ok(Map.of("data", data));
+    }
+
+    /** Kişi e-postası (küçük harf) → son webhook teslimatı {at, status, trigger} (2026-09-20). */
+    @GetMapping("/contacts/webhook-status")
+    public ResponseEntity<Map<String, Object>> contactWebhookStatus(HttpSession session) {
+        requirePerm(session, "contacts.list", "view");
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (NotificationLog n : notificationLogRepo.findLatestWebhookPerRecipient()) {
+            if (n.getRecipientEmail() == null) continue;
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("at", n.getSentAt());
+            String ws = n.getWebhookStatus() == null ? "" : n.getWebhookStatus();
+            m.put("status", ws.startsWith("FAILED") ? "FAILED" : ws);
+            m.put("detail", ws.startsWith("FAILED: ") ? ws.substring(8) : null);
+            m.put("trigger", n.getTrigger());
+            out.put(n.getRecipientEmail().trim().toLowerCase(java.util.Locale.ROOT), m);
+        }
+        return ok(Map.of("data", out));
     }
 
     @PostMapping("/contacts")
@@ -2046,6 +2321,94 @@ public class AdminController {
             "name", "email", "description", "active", "leaderId", "managerId",
             "weeklyReminderEnabled", "weeklyAvailabilityEnabled", "weeklyChannels" };
 
+    // ── Takım sayaçları / etki önizleme / taşıma / üyelik (2026-09-20) ────────────
+
+    /** Takım satırı sayaçları: üye · domain · izleme · açık alarm · kişi · grup (tek geçiş). */
+    @GetMapping("/teams/stats")
+    public ResponseEntity<Map<String, Object>> teamStats(HttpSession session) {
+        requirePerm(session, "teams.list", "view");
+        Map<Long, Map<String, Object>> all = teamAdminService.stats();
+        if (!isAdminOrAudit(session)) {
+            List<Long> scope = viewScope(session);
+            all.keySet().retainAll(scope == null ? Set.of() : new HashSet<>(scope));
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        all.forEach((k, v) -> out.put(String.valueOf(k), v));
+        return ok(Map.of("data", out));
+    }
+
+    /** Silme/pasifleştirme ETKİ önizlemesi: bağlı domain/izleme/üye/kişi/grup listesi + açık alarm sayısı. */
+    @GetMapping("/teams/{id}/impact")
+    public ResponseEntity<Map<String, Object>> teamImpact(@PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
+        requirePerm(session, "teams.lifecycle", "execute");
+        teamRepo.findById(id).orElseThrow(() -> new NoSuchElementException("Team not found: " + id));
+        return ok(Map.of("data", teamAdminService.impact(id)));
+    }
+
+    /** Bağlı varlıkları hedef takıma taşı (bildirim grubundaki "409 → taşı" deseni). Silme ayrı çağrıdır. */
+    @PostMapping("/teams/{id}/move")
+    public ResponseEntity<Map<String, Object>> teamMove(@PathVariable Long id, @RequestBody Map<String, Object> body,
+                                                        HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        requirePerm(session, "teams.lifecycle", "execute");
+        Long target = toLong(body.get("target_team_id"));
+        if (target == null) throw new IllegalArgumentException("target_team_id is required");
+        String fromName = teamRepo.findById(id).map(Team::getName).orElseThrow(() -> new NoSuchElementException("Team not found: " + id));
+        String toName = teamRepo.findById(target).map(Team::getName).orElseThrow(() -> new NoSuchElementException("Team not found: " + target));
+        Map<String, Integer> moved = teamAdminService.moveAll(id, target);
+        auditService.recordAction("TEAM_MOVE_ASSETS", session, request, "TEAM", id.toString(),
+                AuditDetail.of("from", fromName, "to", toName, "to_id", target, "domains", moved.get("domains"),
+                        "monitors", moved.get("monitors"), "users", moved.get("users"), "contacts", moved.get("contacts"), "groups", moved.get("groups")));
+        return ok(Map.of("data", moved));
+    }
+
+    /** Üye ekle — kullanıcı zaten üyeyse no-op. Kapsam: global admin ya da o takımı yöneten TEAM_ADMIN. */
+    @PostMapping("/teams/{id}/members")
+    public ResponseEntity<Map<String, Object>> addTeamMember(@PathVariable Long id, @RequestBody Map<String, Object> body,
+                                                             HttpSession session, HttpServletRequest request) {
+        requireAdminOrTeamAdmin(session);
+        requirePerm(session, "users.crud", "edit");
+        requireTeamManageScope(session, id);
+        Long userId = toLong(body.get("user_id"));
+        if (userId == null) throw new IllegalArgumentException("user_id is required");
+        AppUser u = userRepo.findById(userId).orElseThrow(() -> new NoSuchElementException("User not found: " + userId));
+        java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>(u.getTeamIds() == null ? List.of() : u.getTeamIds());
+        if (u.getTeamId() != null) ids.add(u.getTeamId());
+        boolean added = ids.add(id);
+        if (added) userService.updateUser(userId, null, null, null, null, ids, null, null);
+        auditService.recordAction("TEAM_MEMBER_ADD", session, request, "TEAM", id.toString(),
+                AuditDetail.of("username", u.getUsername(), "user_id", userId, "changed", added));
+        return ok(Map.of("data", Map.of("added", added)));
+    }
+
+    /** Üye çıkar — kullanıcının SON takımı çıkarılamaz (ADMIN hariç: takımsız olabilir). */
+    @DeleteMapping("/teams/{id}/members/{userId}")
+    public ResponseEntity<Map<String, Object>> removeTeamMember(@PathVariable Long id, @PathVariable Long userId,
+                                                                HttpSession session, HttpServletRequest request) {
+        requireAdminOrTeamAdmin(session);
+        requirePerm(session, "users.crud", "edit");
+        requireTeamManageScope(session, id);
+        AppUser u = userRepo.findById(userId).orElseThrow(() -> new NoSuchElementException("User not found: " + userId));
+        java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>(u.getTeamIds() == null ? List.of() : u.getTeamIds());
+        if (u.getTeamId() != null) ids.add(u.getTeamId());
+        boolean removed = ids.remove(id);
+        if (removed && ids.isEmpty() && !"ADMIN".equals(u.getSystemRole())) {
+            throw new IllegalStateException(com.sitemonitor.util.Msg.t(
+                    "Kullanıcının tek takımı bu; önce başka bir takıma ekleyin.", "This is the user's only team; add another team first."));
+        }
+        if (removed) userService.updateUser(userId, null, null, null, null, ids, null, null);
+        auditService.recordAction("TEAM_MEMBER_REMOVE", session, request, "TEAM", id.toString(),
+                AuditDetail.of("username", u.getUsername(), "user_id", userId, "changed", removed));
+        return ok(Map.of("data", Map.of("removed", removed)));
+    }
+
+    private void requireTeamManageScope(HttpSession session, Long teamId) {
+        if (SessionScope.isGlobalAdmin(session)) return;
+        List<Long> manage = SessionScope.manageTeamIds(session);
+        if (manage == null || !manage.contains(teamId)) throw new SecurityException("Cannot manage another team's members");
+    }
+
     @DeleteMapping("/teams/{id}")
     public ResponseEntity<Map<String, Object>> deleteTeam(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
@@ -2088,6 +2451,8 @@ public class AdminController {
             @RequestParam(required = false)    String systemRole,
             @RequestParam(required = false)    String orgRole,
             @RequestParam(required = false)    Long   teamId,
+            @RequestParam(required = false)    Integer dormantDays,
+            @RequestParam(defaultValue = "false") boolean neverLoggedIn,
             HttpSession session) {
         requirePerm(session, "users.list", "view");
         size = Math.min(Math.max(size, 1), 200);
@@ -2100,9 +2465,12 @@ public class AdminController {
         String qParam = (q == null || q.isBlank()) ? null : "%" + q.trim().toLowerCase() + "%";
         String roleParam    = (systemRole == null || systemRole.isBlank()) ? null : systemRole;
         String orgRoleParam = (orgRole == null || orgRole.isBlank()) ? null : orgRole;
-        Page<AppUser> p = userRepo.findFiltered(
-                qParam, roleParam, orgRoleParam, effTeamId,
-                PageRequest.of(page, size));
+        // Uyuyan hesap süzgeci (2026-09-20): N gündür girmeyen / hiç girmemiş.
+        String dormantBefore = dormantDays != null && dormantDays > 0
+                ? ISO.format(Instant.now().minus(java.time.Duration.ofDays(dormantDays))) : null;
+        Page<AppUser> p = (dormantBefore == null && !neverLoggedIn)
+                ? userRepo.findFiltered(qParam, roleParam, orgRoleParam, effTeamId, PageRequest.of(page, size))
+                : userRepo.findFilteredDormant(qParam, roleParam, orgRoleParam, effTeamId, dormantBefore, neverLoggedIn, PageRequest.of(page, size));
 
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("data", p.getContent());
@@ -2159,9 +2527,66 @@ public class AdminController {
         return ok(Map.of("data", user, "message", "User created"));
     }
 
+    /**
+     * Toplu kullanıcı işlemi (2026-09-20): {@code ids} + {@code action} (activate | deactivate | assign_team |
+     * set_org_role). Her kullanıcı TEK TEK aynı güvenlik zincirinden geçer (kendini pasifleştirme, son aktif
+     * admin, takım kapsamı); biri düşerse diğerleri sürer ve sonuç satır satır döner. Denetim: her kullanıcı için
+     * USER_UPDATE (fark) + bir USER_BULK_UPDATE özeti.
+     */
+    @PostMapping("/users/bulk")
+    public ResponseEntity<Map<String, Object>> bulkUsers(@RequestBody Map<String, Object> body, HttpSession session,
+                                                         HttpServletRequest request) {
+        requireAdminOrTeamAdmin(session);
+        requirePerm(session, "users.crud", "edit");
+        String action = String.valueOf(body.get("action"));
+        List<Long> ids = new ArrayList<>();
+        if (body.get("ids") instanceof java.util.Collection<?> c) for (Object o : c) { Long v = toLong(o); if (v != null) ids.add(v); }
+        if (ids.isEmpty()) throw new IllegalArgumentException("ids is required");
+        if (ids.size() > 200) throw new IllegalArgumentException("En fazla 200 kullanıcı");
+        Map<String, Object> patch = new LinkedHashMap<>();
+        switch (action) {
+            case "activate" -> patch.put("active", true);
+            case "deactivate" -> patch.put("active", false);
+            case "assign_team" -> {
+                Long teamId = toLong(body.get("team_id"));
+                if (teamId == null) throw new IllegalArgumentException("team_id is required");
+                patch.put("team_ids", List.of(teamId));
+            }
+            case "set_org_role" -> {
+                Object role = body.get("org_role");
+                patch.put("org_role", role == null ? "" : String.valueOf(role));
+            }
+            default -> throw new IllegalArgumentException("Bilinmeyen işlem: " + action);
+        }
+        List<Map<String, Object>> results = new ArrayList<>();
+        int okCount = 0;
+        for (Long id : ids) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", id);
+            try {
+                AppUser u = applyUserUpdate(id, patch, session);
+                row.put("ok", true); row.put("username", u.getUsername());
+                okCount++;
+            } catch (RuntimeException e) {
+                row.put("ok", false); row.put("error", e.getMessage());
+            }
+            results.add(row);
+        }
+        auditService.recordAction("USER_BULK_UPDATE", session, request, "USER", "bulk",
+                AuditDetail.of("action", action, "requested", ids.size(), "ok", okCount, "failed", ids.size() - okCount));
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("ok", okCount); data.put("failed", ids.size() - okCount); data.put("results", results);
+        return ok(Map.of("data", data));
+    }
+
     @PutMapping("/users/{id}")
     public ResponseEntity<Map<String, Object>> updateUser(
             @PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+        return ok(Map.of("data", applyUserUpdate(id, body, session)));
+    }
+
+    /** PUT /users/{id} gövdesi — toplu işlem de kullanıcı başına BUNU çağırır (aynı güvenlik zinciri, aynı denetim). */
+    private AppUser applyUserUpdate(Long id, Map<String, Object> body, HttpSession session) {
         AppUser target = userRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
@@ -2229,7 +2654,7 @@ public class AdminController {
         user = userRepo.save(user);
         auditService.recordAction("USER_UPDATE", session, "USER", id.toString(), user.getUsername(),
                 AuditDiff.diff(_before, AuditDiff.snapshot(user, _uf)));
-        return ok(Map.of("data", user));
+        return user;
     }
 
     @PostMapping("/users/{id}/auto-reset-password")

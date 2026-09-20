@@ -91,7 +91,8 @@ public class CertificateCardExtrasService {
             if (lc != null && lc.getFingerprint() != null && !lc.getFingerprint().isBlank())
                 byFingerprint.computeIfAbsent(lc.getFingerprint().toLowerCase(Locale.ROOT), k -> new ArrayList<>()).add(inv.getDomain());
         }
-        int[] th; try { th = healthService.thresholdDays(); } catch (Exception e) { th = new int[]{30, 7}; }
+        // Tier bazlı eşik (2026-09-20): çözüm BİR kez, alan başına tier'ıyla.
+        ThresholdResolution thRes; try { thRes = healthService.thresholdResolution(); } catch (Exception e) { thRes = ThresholdResolution.fixed(null); }
         String today = LocalDate.now(IST).toString();
 
         Map<String, Map<String, Object>> out = new LinkedHashMap<>();
@@ -99,7 +100,7 @@ public class CertificateCardExtrasService {
             String d = inv.getDomain();
             LatestCheck lc = latest.get(d);
             Map<String, Object> m = new LinkedHashMap<>();
-            m.put("health", health(lc, inv, th));
+            m.put("health", health(lc, inv, CertificateHealthService.thresholdDays(thRes, inv.getTier())));
             m.put("alerts", alerts.get(d));
             m.put("last_alert", lastAlerts.get(d));
             m.put("uptime", uptime.get(d));
