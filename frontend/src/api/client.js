@@ -862,6 +862,10 @@ export const api = {
     updateTeamWeeklyNotifications: (id, data) =>
       request(`/admin/teams/${id}/weekly-notifications`, { method: 'PUT', body: JSON.stringify(data) }),
     getTeamUsers: (id) => request(`/admin/teams/${id}/users`),
+    // Yönetim Paneli özet şeridi (2026-09-20)
+    overview: () => request('/admin/overview'),
+    // Toplu kullanıcı işlemi (2026-09-20): action = activate | deactivate | assign_team | set_org_role
+    bulkUsers: (body) => request('/admin/users/bulk', { method: 'POST', body: JSON.stringify(body) }),
     // Takım sayaçları / etki / taşıma / üyelik (2026-09-20)
     teamStats: () => request('/admin/teams/stats'),
     teamImpact: (id) => request(`/admin/teams/${id}/impact`),

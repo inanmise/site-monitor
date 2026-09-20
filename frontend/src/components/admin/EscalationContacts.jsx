@@ -10,6 +10,8 @@ import AlertBanner from '../ui/AlertBanner.jsx'
 import AdminChangeHistory from './AdminChangeHistory.jsx'
 import RecipientSimulator from './RecipientSimulator.jsx'
 import { formatDateSec } from '../../api/client'
+import { Download } from 'lucide-react'
+import { toCsv, downloadCsv, stampedName } from '../../utils/csvExport.js'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 
 const ROLES  = ['PO', 'TECH', 'MANAGER', 'CLEVEL']
@@ -185,7 +187,14 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
             <span>{t('ec.legendCrit')}</span>
           </div>
         </div>
-        {canManage && <button className="btn btn-success" onClick={openAdd}>{t('ec.addBtn')}</button>}
+        <div className="hdr-actions">
+          <button className="btn btn-secondary" title={t('ec.exportCsv')} onClick={() => {
+            const rows = filteredContacts.map(c => [c.name, c.email, teamMap[c.team_id] || '', roleLabelMap[c.role] || c.role, levelLabelMap[c.min_alert_level] || c.min_alert_level,
+              c.webhook_url ? c.webhook_type : '', c.active ? t('ec.active') : t('ec.inactive')])
+            downloadCsv(stampedName('eskalasyon-kisileri'), toCsv([t('ec.colName'), t('ec.colEmail'), t('ec.colTeam'), t('ec.colRole'), t('ec.colLevel'), t('ec.colWebhook'), t('ec.colActive')], rows))
+          }}><Download size={14} /> {t('ec.exportCsv')}</button>
+          {canManage && <button className="btn btn-success" onClick={openAdd}>{t('ec.addBtn')}</button>}
+        </div>
       </div>
       {msg && <div className="alert-msg">{msg}</div>}
 

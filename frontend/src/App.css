@@ -3218,6 +3218,46 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .sim-list li.is-dup, .sim-list li.is-skipped { opacity: .6; }
 .sim-src { color: var(--text-light); font-size: .92em; }
 .sim-dup { font-size: .8em; color: var(--warning, #b7791f); }
+/* Yönetim Paneli özet şeridi (2026-09-20) */
+.aov { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.aov-kpis { display: flex; flex-wrap: wrap; gap: 8px; }
+.aov-kpi { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-card, #fff); color: var(--text); cursor: pointer; font: inherit; text-align: left; }
+.aov-kpi:hover { border-color: var(--primary); }
+.aov-kpi-icon { color: var(--text-light); display: inline-flex; }
+.aov-kpi-val { font-size: 1.15em; font-weight: 800; }
+.aov-kpi-lbl { font-size: .82em; color: var(--text-light); }
+.aov-kpi-sub { color: var(--text-light); }
+.aov-warnings { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.aov-ok { display: inline-flex; align-items: center; gap: 6px; font-size: .84em; color: var(--success); }
+.aov-warn { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--warning, #b7791f) 45%, transparent); background: color-mix(in srgb, var(--warning, #b7791f) 10%, var(--bg-surface)); color: var(--text); font: inherit; font-size: .8em; font-weight: 600; cursor: pointer; }
+.aov-warn--severe { border-color: color-mix(in srgb, var(--danger) 45%, transparent); background: color-mix(in srgb, var(--danger) 8%, var(--bg-surface)); }
+.aov-warn:hover { filter: brightness(.97); }
+/* Kullanıcılar: toplu seçim çubuğu + son giriş + detay kartı (2026-09-20) */
+.um-bulk { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; margin-bottom: 10px; border: 1px solid var(--primary); border-radius: 8px; background: color-mix(in srgb, var(--primary) 8%, var(--bg-surface)); }
+.um-bulk .ss-wrap { width: auto; flex: 0 1 220px; min-width: 180px; }
+.um-bulk-count { font-weight: 700; margin-right: 4px; }
+.um-col-check { width: 28px; }
+.um-lastlogin { font-size: .8em; white-space: nowrap; }
+.um-lastlogin--never { color: var(--text-light); font-style: italic; }
+.um-ldap { margin-left: 6px; font-size: .68em; padding: 1px 5px; border-radius: 6px; border: 1px solid var(--border); color: var(--text-light); vertical-align: middle; }
+.udp { display: flex; flex-direction: column; gap: 12px; }
+.udp-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.udp-badges { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.udp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+.udp-block { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.udp-block--wide { grid-column: 1 / -1; }
+.udp-block h4 { margin: 0 0 8px; font-size: .88em; display: inline-flex; align-items: center; gap: 6px; }
+.udp-dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: .85em; }
+.udp-dl dt { color: var(--text-light); }
+.udp-dl dd { margin: 0; }
+.udp-teams { display: flex; flex-wrap: wrap; gap: 8px; }
+.udp-team { display: inline-flex; align-items: center; gap: 6px; }
+.udp-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: .85em; }
+.udp-list li { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.udp-perms { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 4px 12px; font-size: .84em; }
+.udp-perms li { display: flex; gap: 8px; align-items: baseline; }
+.udp-perm-key { font-weight: 600; }
+.admin-section-header .hdr-actions { display: inline-flex; gap: 8px; align-items: center; }
 /* Takım satırı varlık sayaçları + üye yönetimi + silme etkisi (2026-09-20) */
 .tm-stats { display: flex; flex-wrap: wrap; gap: 4px; max-width: 260px; }
 .tm-stat { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-surface); font-size: .76em; font-weight: 600; color: var(--text); white-space: nowrap; }

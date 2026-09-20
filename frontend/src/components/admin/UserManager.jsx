@@ -7,6 +7,10 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import MultiTeamSelect from '../ui/MultiTeamSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import AdminChangeHistory from './AdminChangeHistory.jsx'
+import UserDetailPanel from './UserDetailPanel.jsx'
+import { Download } from 'lucide-react'
+import { toCsv, downloadCsv, stampedName } from '../../utils/csvExport.js'
+import { formatDateSec } from '../../api/client'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import { UserPlus, UserCog, BellOff } from 'lucide-react'
 import AdminAutoResetModal from './AdminAutoResetModal.jsx'
@@ -68,10 +72,14 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   // Süzgeçler URL'de (g_*): derin bağlantı + yenileme korur (2026-09-20).
   const [histFilter, setHistFilter] = useState(null)   // { id, name } — satırdan "Geçmiş" (yalnız global ADMIN)
   const [q, setQ] = useState(() => readUrlParam('g_q', ''))
+  const [fDormant, setFDormant] = useState(() => readUrlParam('g_dormant', ''))   // '' | '30' | '90' | '180' | 'never' (2026-09-20)
+  const [selected, setSelected] = useState(() => new Set())                    // toplu işlem seçimi (id)
+  const [bulk, setBulk] = useState(null)                                        // { action, team_id, org_role }
+  const [bulkBusy, setBulkBusy] = useState(false)
   const [fRole, setFRole] = useState(() => readUrlParam('g_role', ''))
   const [fOrgRole, setFOrgRole] = useState(() => readUrlParam('g_org', ''))
   const [fTeam, setFTeam] = useState(() => readUrlParam('g_team', ''))
-  useUrlQuerySync({ g_q: q, g_role: fRole, g_org: fOrgRole, g_team: fTeam })
+  useUrlQuerySync({ g_q: q, g_role: fRole, g_org: fOrgRole, g_team: fTeam, g_dormant: fDormant })
   const [page, setPage] = useState(0)
   const [size, setSize] = useState(20)
   const [total, setTotal] = useState(0)
@@ -90,10 +98,14 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
     try {
       const res = await api.admin.searchUsers({
         page: p, size: s, q: q.trim(), systemRole: fRole, orgRole: fOrgRole, teamId: fTeam,
+        dormantDays: fDormant && fDormant !== 'never' ? Number(fDormant) : '',
+        neverLoggedIn: fDormant === 'never',
       })
       if (res?.success) {
         setUsers(res.data); setTotal(res.total ?? 0); setPage(res.page ?? 0)
         setActiveAdminCount(res.active_admin_count ?? 0)
+        // Sayfa değişince görünmeyen seçim kalmasın (yanlışlıkla toplu işlem görünmeyene uygulanmasın).
+        setSelected(prev => new Set([...prev].filter(id => (res.data || []).some(u => u.id === id))))
       }
     } finally {
       setLoading(false)
@@ -105,7 +117,59 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
     const tmr = setTimeout(() => load(0, size), 300)
     return () => clearTimeout(tmr)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, fRole, fOrgRole, fTeam, size])
+  }, [q, fRole, fOrgRole, fTeam, fDormant, size])
+
+  // ── Toplu işlem (2026-09-20): sayfadaki seçim → tek istek; sunucu her kullanıcıyı kendi güvenlik zincirinden geçirir. ──
+  const pageIds = users.map(u => u.id)
+  const allPageSelected = pageIds.length > 0 && pageIds.every(id => selected.has(id))
+  function toggleAllPage() {
+    setSelected(prev => { const n = new Set(prev); if (allPageSelected) pageIds.forEach(id => n.delete(id)); else pageIds.forEach(id => n.add(id)); return n })
+  }
+  function toggleOne(id) { setSelected(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n }) }
+
+  async function runBulk(action, extra = {}) {
+    const labels = { activate: t('usr.bulkActivate'), deactivate: t('usr.bulkDeactivate'), assign_team: t('usr.bulkAssignTeam'), set_org_role: t('usr.bulkOrgRole') }
+    const ok = await showConfirm({
+      title: t('usr.bulkTitle'),
+      message: t('usr.bulkConfirm', selected.size, labels[action] || action),
+      confirmText: t('usr.bulkApply'),
+      variant: action === 'deactivate' ? 'danger' : undefined,
+    })
+    if (!ok) return
+    setBulkBusy(true)
+    try {
+      const res = await api.admin.bulkUsers({ action, ids: [...selected], ...extra })
+      if (res?.success) {
+        const d = res.data || {}
+        if ((d.failed ?? 0) > 0) toast.error(t('usr.bulkDone', d.ok ?? 0, d.failed ?? 0))
+        else toast.success(t('usr.bulkDone', d.ok ?? 0, 0))
+        setSelected(new Set()); setBulk(null); load()
+      } else toast.error(res?.error || 'Error')
+    } finally { setBulkBusy(false) }
+  }
+
+  /** CSV: süzgeçli liste, TÜM sayfalar (200'lük dilimlerle). Ekranda sayfa sayfa gezmeden dışa liste. */
+  async function exportCsv() {
+    const rows = []
+    for (let p = 0; p < 50; p++) {
+      const res = await api.admin.searchUsers({
+        page: p, size: 200, q: q.trim(), systemRole: fRole, orgRole: fOrgRole, teamId: fTeam,
+        dormantDays: fDormant && fDormant !== 'never' ? Number(fDormant) : '', neverLoggedIn: fDormant === 'never',
+      })
+      if (!res?.success) break
+      for (const u of res.data || []) {
+        const tids = u.team_ids ?? u.teamIds ?? (u.team_id != null ? [u.team_id] : [])
+        rows.push([u.username, u.display_name, u.email, u.employee_id, u.system_role, u.org_role,
+          tids.map(id => teamMap[id] || id).join(' | '), u.active ? t('usr.active') : t('usr.inactive'),
+          u.auth_source, u.last_login_at || '', u.title, u.department])
+      }
+      if ((res.page ?? p) + 1 >= (res.total_pages ?? 0)) break
+    }
+    downloadCsv(stampedName('kullanicilar'), toCsv(
+      [t('usr.formUsername'), t('usr.formDisplay'), t('usr.colEmail'), t('usr.formEmployeeId'), t('usr.colRole'), t('usr.colOrgRole'),
+       t('usr.colTeam'), t('usr.colActive'), t('usr.authSourceTitle'), t('usr.colLastLogin'), t('usr.colTitle'), t('usr.colDept')], rows))
+    toast.success(t('usr.exportDone', rows.length))
+  }
 
   function openAdd() { setForm(emptyUser); setMsg(null); setModal('add') }
   function openEdit(user) {
@@ -218,7 +282,10 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
     <div className="admin-section">
       <div className="admin-section-header">
         <h3>{t('usr.title')}</h3>
-        {canManage && <button className="btn btn-success" onClick={openAdd}>{t('usr.addBtn')}</button>}
+        <div className="hdr-actions">
+          <button className="btn btn-secondary" onClick={exportCsv} title={t('usr.exportCsv')}><Download size={14} /> {t('usr.exportCsv')}</button>
+          {canManage && <button className="btn btn-success" onClick={openAdd}>{t('usr.addBtn')}</button>}
+        </div>
       </div>
       {msg && !modal && !autoResetModal && <div className="alert-msg">{msg}</div>}
 
@@ -237,7 +304,26 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
             options={[{ value: '', label: t('usr.allTeams') },
               ...(teams || []).map(tm => ({ value: String(tm.id), label: tm.name }))]} />
         )}
+        <SearchableSelect value={fDormant} onChange={setFDormant} placeholder={t('usr.dormantAll')} ariaLabel={t('usr.colLastLogin')}
+          options={[{ value: '', label: t('usr.dormantAll') }, { value: '30', label: t('usr.dormant30') }, { value: '90', label: t('usr.dormant90') },
+            { value: '180', label: t('usr.dormant180') }, { value: 'never', label: t('usr.dormantNever') }]} />
       </div>
+
+      {/* Toplu işlem çubuğu — seçim varken (2026-09-20) */}
+      {canManage && selected.size > 0 && (
+        <div className="um-bulk" data-testid="bulk-bar" aria-busy={bulkBusy || undefined}>
+          <span className="um-bulk-count">{t('usr.selected', selected.size)}</span>
+          <button className="btn btn-sm-p btn-secondary" onClick={() => runBulk('activate')} disabled={bulkBusy}>{t('usr.bulkActivate')}</button>
+          <button className="btn btn-sm-p btn-danger" onClick={() => runBulk('deactivate')} disabled={bulkBusy}>{t('usr.bulkDeactivate')}</button>
+          {canSeeAllTeams && (
+            <SearchableSelect value={bulk?.team_id || ''} onChange={(v) => v && runBulk('assign_team', { team_id: Number(v) })} placeholder={t('usr.bulkAssignTeam')} ariaLabel={t('usr.bulkAssignTeam')}
+              searchThreshold={2} options={[{ value: '', label: t('usr.bulkPickTeam') }, ...(teams || []).map(tm => ({ value: String(tm.id), label: tm.name }))]} />
+          )}
+          <SearchableSelect value={bulk?.org_role || ''} onChange={(v) => v && runBulk('set_org_role', { org_role: v })} placeholder={t('usr.bulkOrgRole')} ariaLabel={t('usr.bulkOrgRole')}
+            options={[{ value: '', label: t('usr.bulkPickOrgRole') }, ...['PO', 'TECH', 'MANAGER', 'BOLUM_BASKANI', 'CLEVEL'].map(r => ({ value: r, label: t('usr.orgRoleVal.' + r) }))]} />
+          <button className="btn btn-sm-p btn-secondary" onClick={() => setSelected(new Set())} disabled={bulkBusy}>{t('usr.bulkClear')}</button>
+        </div>
+      )}
 
       <div className="admin-table-wrap">
         {/* 2026-09-11: 11 sütun (avatar + kullanıcı adı + sicil + ad + ünvan + …) 1366px'te sığmıyor,
@@ -246,24 +332,31 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
         <table className="admin-table um-table">
           <thead>
             <tr>
+              {canManage && <th className="um-col-check"><input type="checkbox" checked={allPageSelected} onChange={toggleAllPage} aria-label={t('usr.selectAll')} /></th>}
               <th>{t('usr.colUser')}</th>
               <th>{t('usr.colEmail')}</th>
               <th>{t('usr.colRole')}</th>
               <th>{t('usr.colOrgRole')}</th>
               <th>{t('usr.colTeam')}</th>
+              <th>{t('usr.colLastLogin')}</th>
               <th>{t('usr.colActive')}</th>
               <th className="um-col-actions">{t('usr.colActions')}</th>
             </tr>
           </thead>
           <tbody>
             {users.length === 0 && (
-              <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
+              <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
                 {loading ? '…' : t('usr.noResults')}
               </td></tr>
             )}
             {users.map((user) => (
               <tr key={user.id} style={{ cursor: 'pointer' }} title={t('usr.viewTitle')}
                 onClick={() => setViewUser(user)}>
+                {canManage && (
+                  <td className="um-col-check" onClick={(e) => e.stopPropagation()}>
+                    <input type="checkbox" checked={selected.has(user.id)} onChange={() => toggleOne(user.id)} aria-label={user.username} />
+                  </td>
+                )}
                 <td className="um-col-user">
                   <div className="um-identity">
                     <UserAvatar user={user} />
@@ -278,6 +371,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                       </strong>
                       <span className="um-identity-sub sys-mono">
                         {user.username}{user.employee_id ? ` · ${user.employee_id}` : ''}
+                        {user.auth_source === 'LDAP' && <span className="um-ldap" title={t('usr.authSourceTitle')}>{t('usr.ldapBadge')}</span>}
                       </span>
                       {user.title && <span className="um-identity-title" title={user.title}>{user.title}</span>}
                     </div>
@@ -306,6 +400,11 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                   {user.team_locked && (
                     <span style={{ marginLeft: 6, cursor: 'help' }} title={t('usr.teamLockedTitle')}>🔒</span>
                   )}</td>
+                <td>
+                  {user.last_login_at
+                    ? <span className="um-lastlogin" title={user.last_login_method || ''}>{formatDateSec(user.last_login_at)}</span>
+                    : <span className="um-lastlogin um-lastlogin--never">{t('usr.neverLoggedIn')}</span>}
+                </td>
                 <td>
                   <span className={user.active ? 'badge badge-ok' : 'badge badge-err'}>{user.active ? t('usr.active') : t('usr.inactive')}</span>
                   {user.permanent_lock && <span className="badge badge-err" style={{ marginLeft: 4 }} title={t('usr.permLocked')}>🔒</span>}
@@ -502,7 +601,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
 
       {/* Satıra tıklayınca: kullanıcı düzenle ekranının salt-okunur (gösterim) hali */}
       {viewUser && (
-        <UserEditModal user={viewUser} teams={teams} readOnly
+        <UserDetailPanel user={viewUser} teams={teams} isAdmin={isAdmin}
           onClose={() => setViewUser(null)}
           onEdit={canManage ? () => { const u = viewUser; setViewUser(null); openEdit(u) } : undefined} />
       )}

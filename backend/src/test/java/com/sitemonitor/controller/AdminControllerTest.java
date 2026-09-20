@@ -55,6 +55,7 @@ class AdminControllerTest {
     @MockitoBean com.sitemonitor.service.UserPushRecipientResolver userPushRecipientResolver;
     @MockitoBean com.sitemonitor.service.WebhookService webhookService;
     @MockitoBean com.sitemonitor.service.TeamAdminService teamAdminService;
+    @MockitoBean com.sitemonitor.service.AdminOverviewService adminOverviewService;
     @MockitoBean com.sitemonitor.service.DerivedMonitorTeamSync derivedMonitorTeamSync;
     @MockitoBean com.sitemonitor.service.TourStateService tourStateService;   // ürün turu (2026-09-13)
     // AdminController "Tekrar Bildir" onizlemesinde webhook alicilarini da cozuyor (A2).
@@ -1164,6 +1165,15 @@ class AdminControllerTest {
                         .content("{\"warning_days\":25,\"high_days\":12,\"critical_days\":5,\"re_alert_interval_hours\":12}"))   // tel biçimi SNAKE_CASE
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("GET /overview: global admin sınırsız kapsamla servise gider")
+    void adminOverview() throws Exception {
+        when(adminOverviewService.overview(isNull())).thenReturn(Map.of("counts", Map.of("teams", 3), "warnings", List.of()));
+        mvc.perform(get("/api/admin/overview").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.counts.teams").value(3));
     }
 
     // ── Takım sayaçları / etki / taşıma / üyelik (2026-09-20) ────────────────────
@@ -2702,6 +2712,56 @@ class AdminControllerTest {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    // ── Users: uyuyan hesap süzgeci + toplu işlem (2026-09-20) ─────────────────
+
+    @Test
+    @DisplayName("GET /users/search?dormantDays=90: uyuyan süzgeci ayrı sorguya gider, kesim ISO-UTC")
+    void searchUsers_dormant() throws Exception {
+        when(userRepo.findFilteredDormant(any(), any(), any(), any(), any(), anyBoolean(), any()))
+                .thenReturn(new PageImpl<>(List.of(), org.springframework.data.domain.PageRequest.of(0, 20), 0));
+        when(userRepo.countBySystemRoleAndActiveTrue("ADMIN")).thenReturn(1L);
+        mvc.perform(get("/api/admin/users/search").param("dormantDays", "90").session(authSession()))
+                .andExpect(status().isOk());
+        ArgumentCaptor<String> cut = ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(userRepo).findFilteredDormant(isNull(), isNull(), isNull(), isNull(), cut.capture(), eq(false), any());
+        assertThat(cut.getValue()).matches("[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}");
+        // hiç girmemiş
+        mvc.perform(get("/api/admin/users/search").param("neverLoggedIn", "true").session(authSession()))
+                .andExpect(status().isOk());
+        org.mockito.Mockito.verify(userRepo).findFilteredDormant(isNull(), isNull(), isNull(), isNull(), isNull(), eq(true), any());
+        org.mockito.Mockito.verify(userRepo, never()).findFiltered(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("POST /users/bulk deactivate: her kullanıcı ayrı geçer; kendini pasifleştirme satırı düşer, diğerleri sürer; özet denetimi")
+    void bulkUsers_deactivate() throws Exception {
+        when(userService.updateUser(anyLong(), any(), any(), any(), any(), any(), eq(false), any()))
+                .thenAnswer(inv -> { AppUser u = new AppUser(); u.setId(inv.getArgument(0)); u.setUsername("u" + inv.getArgument(0)); return u; });
+        MockHttpSession s = authSession();
+        s.setAttribute("userId", 50L);
+        AppUser self = new AppUser(); self.setId(50L); self.setUsername("me"); self.setSystemRole("ADMIN"); self.setActive(true); self.setTeamId(1L);
+        when(userRepo.findById(50L)).thenReturn(Optional.of(self));
+
+        mvc.perform(post("/api/admin/users/bulk").session(s)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"deactivate\",\"ids\":[7,50,8]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.ok").value(2))
+                .andExpect(jsonPath("$.data.failed").value(1))
+                .andExpect(jsonPath("$.data.results[1].ok").value(false));
+        verify(auditService).recordAction(eq("USER_BULK_UPDATE"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("USER"), eq("bulk"), any());
+
+        mvc.perform(post("/api/admin/users/bulk").session(s)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"frobnicate\",\"ids\":[7]}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/admin/users/bulk").session(s)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"assign_team\",\"ids\":[7]}"))
+                .andExpect(status().isBadRequest());   // team_id yok
+    }
 
     // ── Users: filtreli + sayfalı arama (/users/search) ─────────────────────────
 

@@ -234,6 +234,7 @@ public final class AuditEventCatalog {
             "USER_TOUR_RESET",
             "USER_UNLOCK",
             "USER_UPDATE",
+            "USER_BULK_UPDATE",
             "WEAK_ALGO_EXCEPTION_CLEAR",
             "WEAK_ALGO_EXCEPTION_SET",
             "WEAK_ALGO_EXPORT",

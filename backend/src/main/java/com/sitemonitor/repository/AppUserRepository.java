@@ -120,4 +120,26 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
                                @Param("orgRole") String orgRole,
                                @Param("teamId") Long teamId,
                                Pageable pageable);
+
+    /**
+     * {@link #findFiltered} + uyuyan hesap süzgeci (2026-09-20): {@code dormantBefore} (ISO-UTC) verilirse
+     * son girişi bu andan ESKİ ya da hiç olmayan; {@code neverOnly} true ise yalnız hiç girmemiş hesaplar.
+     * ISO-UTC sabit genişlikte → leksikografik karşılaştırma güvenli (UserService.shouldShiftStamp ile aynı).
+     */
+    @Query("SELECT u FROM AppUser u WHERE "
+        + "(:q IS NULL OR LOWER(u.username) LIKE :q OR LOWER(u.displayName) LIKE :q "
+        +              "OR LOWER(u.email) LIKE :q OR LOWER(u.employeeId) LIKE :q) AND "
+        + "(:systemRole IS NULL OR u.systemRole = :systemRole) AND "
+        + "(:orgRole IS NULL OR u.orgRole = :orgRole) AND "
+        + "(:teamId IS NULL OR u.teamId = :teamId OR :teamId IN (SELECT tid FROM u.teamIds tid)) AND "
+        + "(:dormantBefore IS NULL OR u.lastLoginAt IS NULL OR u.lastLoginAt < :dormantBefore) AND "
+        + "(:neverOnly = false OR u.lastLoginAt IS NULL) "
+        + "ORDER BY u.username ASC")
+    Page<AppUser> findFilteredDormant(@Param("q") String q,
+                                      @Param("systemRole") String systemRole,
+                                      @Param("orgRole") String orgRole,
+                                      @Param("teamId") Long teamId,
+                                      @Param("dormantBefore") String dormantBefore,
+                                      @Param("neverOnly") boolean neverOnly,
+                                      Pageable pageable);
 }

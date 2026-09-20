@@ -14,6 +14,8 @@ import AdminChangeHistory from './AdminChangeHistory.jsx'
 import TeamMembersManager from './TeamMembersManager.jsx'
 import TeamDeleteImpactModal from './TeamDeleteImpactModal.jsx'
 import { navigateTo } from '../../utils/navigate.js'
+import { Download } from 'lucide-react'
+import { toCsv, downloadCsv, stampedName } from '../../utils/csvExport.js'
 import { resolveTeamManager } from '../../utils/teamManager.js'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 
@@ -248,7 +250,15 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
     <div className="admin-section">
       <div className="admin-section-header">
         <h3>{t('team.title')}</h3>
-        {isAdmin && <button className="btn btn-success" onClick={openAdd}>{t('team.addBtn')}</button>}
+        <div className="hdr-actions">
+          <button className="btn btn-secondary" title={t('team.exportCsv')} onClick={() => {
+            const rows = filteredTeams.map(tm => { const s = stats[String(tm.id)] || {}; return [tm.name, tm.email, userMap[tm.leader_id] || '', teamManagerLabel(tm) || '',
+              tm.active ? t('team.active') : t('team.inactive'), s.members ?? '', s.domains ?? '', s.monitors ?? '', s.open_alerts ?? '', s.contacts ?? '', s.groups ?? ''] })
+            downloadCsv(stampedName('takimlar'), toCsv([t('team.colName'), t('team.colEmail'), t('team.colLeader'), t('team.colManager'), t('team.colActive'),
+              t('team.stat.members', '').trim(), t('team.stat.domains', '').trim(), t('team.stat.monitors', '').trim(), t('team.stat.open_alerts', '').trim(), t('team.stat.contacts', '').trim(), t('team.stat.groups', '').trim()], rows))
+          }}><Download size={14} /> {t('team.exportCsv')}</button>
+          {isAdmin && <button className="btn btn-success" onClick={openAdd}>{t('team.addBtn')}</button>}
+        </div>
       </div>
       {msg && !modal && <div className={`alert-msg${msg.startsWith('✓') ? '' : ' alert-msg--err'}`}>{msg}</div>}
       {loadError && teams.length === 0 && (

@@ -89,6 +89,7 @@ public class AdminController {
     private final com.sitemonitor.service.UserPushRecipientResolver userPushRecipientResolver;  // "Kim bilgilendirilir?" push ayağı (2026-09-20)
     private final com.sitemonitor.service.WebhookService webhookService;                       // eskalasyon webhook testi (2026-09-20)
     private final com.sitemonitor.service.TeamAdminService teamAdminService;                   // takım sayaçları / etki / taşıma (2026-09-20)
+    private final com.sitemonitor.service.AdminOverviewService adminOverviewService;           // özet şeridi (2026-09-20)
     private final EscalationContactRepository contactRepo;
     private final AlertEventRepository alertEventRepo;
     private final NotificationLogRepository notificationLogRepo;
@@ -1136,6 +1137,16 @@ public class AdminController {
                 "CERTIFICATE", inv.getDomain(),
                 "{\"from\":" + oldUgTeamId + ",\"to\":" + newUgTeamId + "}");
         return ok(Map.of("data", inv, "message", "UG team transferred"));
+    }
+
+    // ── Yönetim Paneli özet şeridi (2026-09-20) ───────────────────────────────────
+
+    /** Sayaçlar + sağlık uyarıları; kapsamlı kullanıcı görüş alanındaki takımlarla sınırlı. */
+    @GetMapping("/overview")
+    public ResponseEntity<Map<String, Object>> adminOverview(HttpSession session) {
+        requirePerm(session, "teams.list", "view");
+        List<Long> scope = SessionScope.isGlobalViewer(session) ? null : SessionScope.viewTeamIds(session);
+        return ok(Map.of("data", adminOverviewService.overview(scope)));
     }
 
     // ── Yönetim Paneli değişiklik geçmişi (2026-09-20) ──────────────────────────
@@ -2433,6 +2444,8 @@ public class AdminController {
             @RequestParam(required = false)    String systemRole,
             @RequestParam(required = false)    String orgRole,
             @RequestParam(required = false)    Long   teamId,
+            @RequestParam(required = false)    Integer dormantDays,
+            @RequestParam(defaultValue = "false") boolean neverLoggedIn,
             HttpSession session) {
         requirePerm(session, "users.list", "view");
         size = Math.min(Math.max(size, 1), 200);
@@ -2445,9 +2458,12 @@ public class AdminController {
         String qParam = (q == null || q.isBlank()) ? null : "%" + q.trim().toLowerCase() + "%";
         String roleParam    = (systemRole == null || systemRole.isBlank()) ? null : systemRole;
         String orgRoleParam = (orgRole == null || orgRole.isBlank()) ? null : orgRole;
-        Page<AppUser> p = userRepo.findFiltered(
-                qParam, roleParam, orgRoleParam, effTeamId,
-                PageRequest.of(page, size));
+        // Uyuyan hesap süzgeci (2026-09-20): N gündür girmeyen / hiç girmemiş.
+        String dormantBefore = dormantDays != null && dormantDays > 0
+                ? ISO.format(Instant.now().minus(java.time.Duration.ofDays(dormantDays))) : null;
+        Page<AppUser> p = (dormantBefore == null && !neverLoggedIn)
+                ? userRepo.findFiltered(qParam, roleParam, orgRoleParam, effTeamId, PageRequest.of(page, size))
+                : userRepo.findFilteredDormant(qParam, roleParam, orgRoleParam, effTeamId, dormantBefore, neverLoggedIn, PageRequest.of(page, size));
 
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("data", p.getContent());
@@ -2504,9 +2520,66 @@ public class AdminController {
         return ok(Map.of("data", user, "message", "User created"));
     }
 
+    /**
+     * Toplu kullanıcı işlemi (2026-09-20): {@code ids} + {@code action} (activate | deactivate | assign_team |
+     * set_org_role). Her kullanıcı TEK TEK aynı güvenlik zincirinden geçer (kendini pasifleştirme, son aktif
+     * admin, takım kapsamı); biri düşerse diğerleri sürer ve sonuç satır satır döner. Denetim: her kullanıcı için
+     * USER_UPDATE (fark) + bir USER_BULK_UPDATE özeti.
+     */
+    @PostMapping("/users/bulk")
+    public ResponseEntity<Map<String, Object>> bulkUsers(@RequestBody Map<String, Object> body, HttpSession session,
+                                                         HttpServletRequest request) {
+        requireAdminOrTeamAdmin(session);
+        requirePerm(session, "users.crud", "edit");
+        String action = String.valueOf(body.get("action"));
+        List<Long> ids = new ArrayList<>();
+        if (body.get("ids") instanceof java.util.Collection<?> c) for (Object o : c) { Long v = toLong(o); if (v != null) ids.add(v); }
+        if (ids.isEmpty()) throw new IllegalArgumentException("ids is required");
+        if (ids.size() > 200) throw new IllegalArgumentException("En fazla 200 kullanıcı");
+        Map<String, Object> patch = new LinkedHashMap<>();
+        switch (action) {
+            case "activate" -> patch.put("active", true);
+            case "deactivate" -> patch.put("active", false);
+            case "assign_team" -> {
+                Long teamId = toLong(body.get("team_id"));
+                if (teamId == null) throw new IllegalArgumentException("team_id is required");
+                patch.put("team_ids", List.of(teamId));
+            }
+            case "set_org_role" -> {
+                Object role = body.get("org_role");
+                patch.put("org_role", role == null ? "" : String.valueOf(role));
+            }
+            default -> throw new IllegalArgumentException("Bilinmeyen işlem: " + action);
+        }
+        List<Map<String, Object>> results = new ArrayList<>();
+        int okCount = 0;
+        for (Long id : ids) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", id);
+            try {
+                AppUser u = applyUserUpdate(id, patch, session);
+                row.put("ok", true); row.put("username", u.getUsername());
+                okCount++;
+            } catch (RuntimeException e) {
+                row.put("ok", false); row.put("error", e.getMessage());
+            }
+            results.add(row);
+        }
+        auditService.recordAction("USER_BULK_UPDATE", session, request, "USER", "bulk",
+                AuditDetail.of("action", action, "requested", ids.size(), "ok", okCount, "failed", ids.size() - okCount));
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("ok", okCount); data.put("failed", ids.size() - okCount); data.put("results", results);
+        return ok(Map.of("data", data));
+    }
+
     @PutMapping("/users/{id}")
     public ResponseEntity<Map<String, Object>> updateUser(
             @PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+        return ok(Map.of("data", applyUserUpdate(id, body, session)));
+    }
+
+    /** PUT /users/{id} gövdesi — toplu işlem de kullanıcı başına BUNU çağırır (aynı güvenlik zinciri, aynı denetim). */
+    private AppUser applyUserUpdate(Long id, Map<String, Object> body, HttpSession session) {
         AppUser target = userRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
@@ -2574,7 +2647,7 @@ public class AdminController {
         user = userRepo.save(user);
         auditService.recordAction("USER_UPDATE", session, "USER", id.toString(), user.getUsername(),
                 AuditDiff.diff(_before, AuditDiff.snapshot(user, _uf)));
-        return ok(Map.of("data", user));
+        return user;
     }
 
     @PostMapping("/users/{id}/auto-reset-password")
