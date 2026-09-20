@@ -113,7 +113,9 @@ export default function KebabMenu({ items = [], label = 'İşlemler', placement 
     <div ref={popRef} className="wr-menu-pop"
       style={{
         position: 'fixed', top: pos ? pos.top : 0, left: pos ? pos.left : 0,
-        right: 'auto', zIndex: 900, visibility: pos ? 'visible' : 'hidden',
+        // z-index: sabit 900 modal scrim'inin (2000+) altında kalıyordu → menü ModalShell içindeki tablolarda görünmüyor,
+        // "tıklanmıyor" sanılıyordu (2026-09-20 Kullanıcı Dizini). Token: --z-menu (modal ve Dialog üstü, toast altı).
+        right: 'auto', zIndex: 'var(--z-menu, 9600)', visibility: pos ? 'visible' : 'hidden',
       }}>
       {visible.map((it, i) => (
         <button key={i} type="button" className={it.danger ? 'danger' : ''}

@@ -59,6 +59,7 @@
   --z-modal:    2000;
   --z-announce: 9000;
   --z-dialog:   9500;
+  --z-menu:     9600;   /* KebabMenu portal'ı: modal (2000+) ve Dialog (9500) üstünde, toast (9700) altında — 2026-09-20 kullanıcı dizini menüsü modal scrim'inin ARKASINDA kalıyordu */
   --z-toast:    9700;
   --z-critical: 9900;
 }
