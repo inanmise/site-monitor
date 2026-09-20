@@ -160,4 +160,12 @@ class InboxServiceTest {
         assertThat(svc.history(t -> t != null && t == 2L, 0, 10).total()).isZero();
     }
 
+
+    @Test
+    @DisplayName("QA ISSUE-001: sertifika izleme bağlantısı Genel Bakış'a `domain` paramıyla gider (`q` yalnız ilk yüklemede okunur)")
+    void certRefUsesDomainParam() {
+        MonitorRefResolver.Ref ref = new MonitorRefResolver.Ref("a.example.com", "cert", "dashboard", null);
+        assertThat(MonitorRefResolver.paramsFor(ref, "a.example.com")).containsEntry("domain", "a.example.com").doesNotContainKey("q");
+        assertThat(MonitorRefResolver.paramsFor(ref, null)).isEmpty();
+    }
 }

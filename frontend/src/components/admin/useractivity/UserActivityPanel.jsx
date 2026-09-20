@@ -91,6 +91,15 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
   const is7d = filters.range === '7d'
   const activeAll = useMemo(() => ua.active_users || [], [ua])
   const activeSet = useMemo(() => new Set(activeAll.map((u) => String(u.username || '').toLowerCase())), [activeAll])
+  /** Oturum detayı kaydı (QA ISSUE-002): çevrimiçi kullanıcıda yalnız active_users seçilince dizin alanları (oluşturulma,
+   *  tur, kilit, ek takımlar, user_id) kayboluyordu → login_status TABAN, oturum alanları üstüne yazılır. */
+  const detailRecord = useCallback((name) => {
+    const key = String(name || '').toLowerCase()
+    const dir = (ua.login_status || []).find((u) => String(u.username || '').toLowerCase() === key)
+    const live = activeAll.find((u) => String(u.username || '').toLowerCase() === key)
+    if (!dir && !live) return null
+    return { ...(dir || {}), ...Object.fromEntries(Object.entries(live || {}).filter(([, v]) => v != null)) }
+  }, [ua.login_status, activeAll])
   const active = useMemo(() => sortRows(activeAll.filter((u) => rowMatches(u, filters)), sort.col, sort.dir), [activeAll, filters, sort])
   const loginRows = useMemo(() => {
     const rows = (ua.login_status || []).filter((r) => rowMatches(r, filters)).map((r) => ({ ...r, status: loginStatus(r, activeSet, now) }))
@@ -478,7 +487,7 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
         : kpiDetail && <KpiDetailModal detail={kpiDetail} data={ua} onClose={() => setKpiDetail(null)} onUser={(row) => setSessionDetail(row)} winLabel={winLabel} />}
       {directory && <UserDirectoryModal data={ua} initial={directory} isAdmin={isAdmin} globalAdmin={globalAdmin} username={username} onClose={() => setDirectory(null)}
         onUser={(row) => setSessionDetail(row)} onTerminate={(u) => setTerminate({ username: u })} onRefresh={onRefresh} />}
-      {sessionDetail && <SessionDetailModal row={sessionDetail} full={activeAll.find((u) => String(u.username).toLowerCase() === String(sessionDetail.username).toLowerCase()) || (ua.login_status || []).find((u) => String(u.username).toLowerCase() === String(sessionDetail.username).toLowerCase()) || sessionDetail}
+      {sessionDetail && <SessionDetailModal row={sessionDetail} full={detailRecord(sessionDetail.username)}
         isAdmin={isAdmin} globalAdmin={globalAdmin} self={username && String(sessionDetail.username).toLowerCase() === String(username).toLowerCase()} activeSet={activeSet}
         onClose={() => setSessionDetail(null)} onTerminate={(u) => setTerminate({ username: u })} onAck={doAck} ackBusy={ackBusy} onRefresh={onRefresh} teams={ua.role_team?.by_team || []} />}
       {terminate && <TerminateModal target={terminate.username} busy={busyUser === terminate.username} onClose={() => setTerminate(null)} onConfirm={(reason) => doTerminate(terminate.username, reason)} />}

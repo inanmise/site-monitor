@@ -1253,3 +1253,20 @@ kırmızı `IdentityLeakGuardTest` (dosya listesi okundu: yalnız bilinen iki ta
   org / user_agent` taşır. Tarayıcı: 28 giriş, mesai dışı çipi 28, sayfalı.
 Kapılar: frontend lint 0 hata / 259 test dosyası (coverage `--maxWorkers=2` + 6 GB heap) / kapsam tabanı / build; backend
 `clean verify` 3913 test — tek kırmızı `IdentityLeakGuardTest` (yalnız bilinen iki takipsiz dosya). → **REGRESYON YOK**.
+
+## Ek — elli sekizinci tur (2026-09-20, sürüm sonrası — /qa Standard, diff-aware `v20.73.0..v20.74.0`, `v20.74.0..HEAD`)
+
+QA koşusu (gstack `$B`, yerel, giriş yapılmış oturum; 9 sayfa, 12 akış; konsol 0 yeni hata; rapor
+`.gstack/qa-reports/qa-report-localhost-2026-09-20.md`). Sağlık 95 → 99.
+- ISSUE-001 (high, düzeltildi 53d6a960): Aktivite Logu sertifika satırı ve bildirim kutusu `MonitorRefResolver` Genel Bakış'a
+  `q` ile gidiyordu; App `q`'yu yalnız ilk yüklemede okur, canlı `sm:navigate` geçişi `domain` uygular → süzgeç uygulanmıyordu.
+  Kapı: ActivityLog testi + InboxServiceTest.certRefUsesDomainParam. Tarayıcı: 11 kart → 1 kart.
+- ISSUE-002 (high, düzeltildi 1acb1981 + regresyon testi): oturum detayı `active_users || login_status` seçiyordu; çevrimiçi
+  kullanıcıda oluşturulma/tur/kilit/ek takım/user_id kayboluyor, Tur "hiç görmedi" (dizin: tamamladı), Tam kullanıcı kartı /
+  Turu sıfırla çizilmiyordu → `detailRecord`: dizin taban, oturum alanları üstüne. Kapı: sessionDetailMerge.regression-1.
+- ISSUE-003 (medium, düzeltildi b389a6de + regresyon testi): `atype/astatus/arange/aq` PAGE_STATE_PARAMS'a — bayat süzgeç
+  paramı sekme değişiminde başka sekmeye taşınmıyor (`?tab=port&monitor=15`).
+- Ertelenen (low): ISSUE-004 şema detayı ilişki bağlantısında sekme "İlişkiler"de kalıyor (`key={table}`), ISSUE-005 Kullanıcılar
+  sayacı süzgeçli toplamı "tümü" gibi gösteriyor.
+Kapılar: frontend lint 0 hata / test:coverage / kapsam tabanı / build; backend `clean verify` — tek kırmızı `IdentityLeakGuardTest`
+(dosya listesi okundu: yalnız bilinen iki takipsiz dosya). → **REGRESYON YOK**.

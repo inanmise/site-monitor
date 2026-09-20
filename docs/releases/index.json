@@ -1,9 +1,72 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-20T13:23:10Z",
+  "generatedAt": "2026-09-20T15:32:57Z",
   "repo": "inanmise/site-monitor",
-  "count": 663,
+  "count": 664,
   "releases": [
+    {
+      "version": "20.74.1",
+      "tag": "v20.74.1",
+      "releasedAt": "2026-09-20T15:32:50Z",
+      "commit": "928aaf539a5dace7f72545bf1d7c46a13cb64695",
+      "prevVersion": "20.74.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 3,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 2
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": "regresyon",
+          "breaking": false,
+          "sha": "928aaf53",
+          "subject": "58. tur — /qa Standard, 3 düzeltme (ISSUE-001..003), regresyon yok"
+        },
+        {
+          "type": "test",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "3b267998",
+          "subject": "ISSUE-002 regresyon testi — başlıktaki kesme işareti (esbuild/eslint ayrıştırma)"
+        },
+        {
+          "type": "test",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "6359f830",
+          "subject": "regression test for ISSUE-002 — oturum detayı dizin + oturum birleşimi"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "1acb1981",
+          "subject": "ISSUE-002 — oturum detayı dizin ve oturum kaydını birleştirir"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "b389a6de",
+          "subject": "ISSUE-003 — Aktivite Logu süzgeç paramları sekme değişiminde temizlenir"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "53d6a960",
+          "subject": "ISSUE-001 — sertifika izleme bağlantısı Genel Bakış'a `domain` paramıyla gider"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.74.0",
       "tag": "v20.74.0",

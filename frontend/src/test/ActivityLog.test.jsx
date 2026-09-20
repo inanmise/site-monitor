@@ -106,7 +106,7 @@ describe('ActivityLog — zaman grupları + katlama (2026-09-12, #22)', () => {
   })
 
   it('2026-09-20: activityTarget haritası — sertifika → dashboard ?q=alan, uptime → uptime, ping → ping ?monitor=id, scripted param taşımaz, bilinmeyen null', () => {
-    expect(activityTarget({ monitor_type: 'CERT', target: 'https://a.example.com:443/x' })).toEqual({ tab: 'dashboard', params: { q: 'a.example.com' } })
+    expect(activityTarget({ monitor_type: 'CERT', target: 'https://a.example.com:443/x' })).toEqual({ tab: 'dashboard', params: { domain: 'a.example.com' } })
     expect(activityTarget({ monitor_type: 'UPTIME', target: 'b.example.com' })).toEqual({ tab: 'uptime', params: { q: 'b.example.com' } })
     expect(activityTarget({ monitor_type: 'PING', monitor_id: 7, target: '10.0.0.1' })).toEqual({ tab: 'ping', params: { monitor: 7 } })
     expect(activityTarget({ monitor_type: 'SCRIPTED', monitor_id: 3 })).toEqual({ tab: 'scripted', params: undefined })
