@@ -1270,3 +1270,21 @@ QA koşusu (gstack `$B`, yerel, giriş yapılmış oturum; 9 sayfa, 12 akış; k
   sayacı süzgeçli toplamı "tümü" gibi gösteriyor.
 Kapılar: frontend lint 0 hata / test:coverage / kapsam tabanı / build; backend `clean verify` — tek kırmızı `IdentityLeakGuardTest`
 (dosya listesi okundu: yalnız bilinen iki takipsiz dosya). → **REGRESYON YOK**.
+
+## Ek — elli dokuzuncu tur (2026-09-20, sürüm sonrası — Kullanıcı Dizini satır düzeni v2, `v20.74.1..HEAD`)
+
+Kullanıcı bildirimi (üretim ekran görüntüsü, 36 kullanıcı): uzun ad "(… Bölümü)" dar Kullanıcı sütununda 5 satıra sarıp
+e-postayla birlikte komşu hücrelere giriyordu; sonra "çok karışık" → satır düzeni v2; sonra "Hesap süzgeci panelden kalksın,
+kolon üzerinden seçilsin".
+- d0b7aa8e: ad parantezsiz (`nameOnly`), departman ve e-posta tek satır + üç nokta. Ölçüm: `td min-width` otomatik yerleşimde
+  sayılmıyor (118 px kaldı) → sütun genişliği başlıktan.
+- 66c91558: 10 → 8 sütun (Son etkinlik + Son giriş = Etkinlik; Tur + Hesap = Durum), colgroup ile sabit yerleşim, tablo modal
+  genişliğine sığar (yatay kaydırma yok; 1 px kenarlık payı). Kullanıcı hücresi: nokta + avatar + ad / kullanıcı adı ·
+  departman / e-posta.
+- f10b99fc: "İşlemler tıklanmıyor" → KebabMenu portal'ı z-index 900, ModalShell perdesi 2000: menü açılıyor ama perdenin
+  ARKASINDA kalıyordu (sayfa tablolarında sorun yoktu). Token `--z-menu` 9600 (modal/Dialog üstü, toast altı); tarayıcıda
+  menü ve "Detay" doğrulandı.
+- e6cf5457: Hesap seçicisi panelden kaldırıldı; Durum sütun başlığında "Durum ▾" seçicisi; satırdaki hesap rozeti tıklanınca
+  o duruma süzer (toggle). Tarayıcıda uzun ad / e-posta / çoklu takım enjekte edilerek doğrulandı.
+Kapılar: frontend lint 0 hata / test:coverage / kapsam tabanı / build; backend değişikliği yok (sürüm için `clean verify`
+yine koşuldu — tek kırmızı `IdentityLeakGuardTest`, yalnız bilinen iki takipsiz dosya). → **REGRESYON YOK**.
