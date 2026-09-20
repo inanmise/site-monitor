@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Search, X, CornerDownLeft, Globe, Activity, Users, LayoutGrid } from 'lucide-react'
+import { Search, X, CornerDownLeft, Globe, Activity, Users, LayoutGrid, UsersRound, FolderOpen, Tag } from 'lucide-react'
 import { api } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { navigateTo } from '../utils/navigate.js'
@@ -125,8 +125,20 @@ export default function CommandPalette({ tabs = [], onTabChange }) {
                     className={`palette-item${idx === cursor ? ' is-active' : ''}`}
                     onMouseEnter={() => setCursor(idx)} onClick={() => go(it)}>
                     <Icon size={14} aria-hidden="true" />
-                    <span className="palette-item-label">{it.label}</span>
-                    {it.sub && <span className="palette-item-sub">{it.sub}</span>}
+                    <span className="palette-item-main">
+                      <span className="palette-item-label">{it.label}{it.sub ? <span className="palette-item-sub"> {it.sub}</span> : null}</span>
+                      {/* 2026-09-20: takım / grup / etiket / tier — "hangi takımın?" sorusu sonuçta cevaplansın */}
+                      {(it.team_name || it.group_name || it.tags || it.tier) && (
+                        <span className="palette-item-meta">
+                          {it.team_name && <span className="palette-chip palette-chip--team"><UsersRound size={10} aria-hidden="true" /> {it.team_name}</span>}
+                          {it.group_name && <span className="palette-chip"><FolderOpen size={10} aria-hidden="true" /> {it.group_name}</span>}
+                          {it.tier && <span className="palette-chip">T{it.tier}</span>}
+                          {it.tags && String(it.tags).split(',').map(x => x.trim()).filter(Boolean).slice(0, 4).map(tag => (
+                            <span key={tag} className="palette-chip palette-chip--tag"><Tag size={10} aria-hidden="true" /> {tag}</span>
+                          ))}
+                        </span>
+                      )}
+                    </span>
                     {it.kind !== 'tab' && <span className="palette-item-kind">{kindLabel(it.kind)}{MONITOR_KINDS.includes(it.kind) ? ` · ${it.kind}` : ''}</span>}
                     {idx === cursor && <CornerDownLeft size={12} className="palette-enter" aria-hidden="true" />}
                   </button>

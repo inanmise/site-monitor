@@ -31,6 +31,8 @@ public class GlobalSearchController {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("kind", h.kind()); m.put("id", h.id()); m.put("label", h.label()); m.put("sub", h.sub());
             m.put("team_id", h.teamId()); m.put("tab", h.tab()); m.put("params", h.params());
+            // 2026-09-20: takım adı / grup / etiket / tier — palet satırında görünür
+            m.put("team_name", h.teamName()); m.put("group_name", h.groupName()); m.put("tags", h.tags()); m.put("tier", h.tier());
             return m;
         }).toList();
         return ResponseEntity.ok(Map.of("success", true, "data", rows));

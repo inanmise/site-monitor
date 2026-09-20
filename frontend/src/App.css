@@ -5370,6 +5370,15 @@ button.ccx-mini:hover { color: var(--primary); }
 .cc-live-dot.is-down { background: var(--danger); box-shadow: 0 0 0 3px rgba(220, 38, 38, .18); }
 .cc-live-muted { font-weight: 500; opacity: .85; }
 .cc-live-alert.is-open { font-weight: 700; }
+.cc-live-sep { margin: 0 3px; opacity: .6; }
+/* Kart ekleri: tıklanabilir erişilebilirlik satırı ve sorumlu kişi çipi (2026-09-20) */
+button.ccx-row--link { font: inherit; background: none; border: 0; padding: 0; cursor: pointer; color: inherit; text-align: left; width: 100%; }
+button.ccx-row--link:hover .ccx-muted, button.ccx-row--link:hover .ccx-pct { color: var(--primary); }
+button.ccx-mini--link { font: inherit; cursor: pointer; }
+button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, var(--bg-hover)); }
+.cc-live-bell { flex-shrink: 0; vertical-align: -1px; color: var(--danger); }
+.cc-live-bell--off { color: var(--text-muted); opacity: .7; }
+.cc-live-alert { display: inline-flex; align-items: center; gap: 2px; }
 [data-theme="dark"] .cc-live--bad { border-color: #7f1d1d; background: #450a0a; color: #fca5a5; }
 /* Kompakt / Zengin segmenti — "Genel Bakış" başlığının yanında (2026-09-19) */
 .dashboard-title-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; }
@@ -13238,6 +13247,28 @@ button.ccx-mini:hover { color: var(--primary); }
 .inbox-item-main { display: flex; flex-direction: column; min-width: 0; }
 .inbox-item-title { font-size: .9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inbox-item-sub { font-size: .78em; color: var(--text-light); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Bildirim kutusu v2 (2026-09-20): daha geniş panel, sekmeler, seçim satırı, takım/süre satırı, izlemeye git */
+.inbox--v2 { width: min(680px, 100%); }
+.inbox-tabs { display: flex; gap: 4px; padding: 6px 10px 0; border-bottom: 1px solid var(--border); }
+.inbox-tab { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--text-light); font: inherit; font-size: .85em; font-weight: 600; cursor: pointer; }
+.inbox-tab.is-active { color: var(--primary); border-bottom-color: var(--primary); }
+.inbox-selbar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: .82em; background: color-mix(in srgb, var(--primary) 8%, var(--bg-surface)); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.inbox-row { display: flex; align-items: center; gap: 6px; }
+.inbox-row.is-dismissed { opacity: .55; }
+.inbox-row.is-selected .inbox-item { background: color-mix(in srgb, var(--primary) 12%, transparent); }
+.inbox-row .inbox-item { flex: 1; min-width: 0; }
+.inbox-check { flex-shrink: 0; margin-left: 6px; }
+.inbox-item-meta { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.inbox-team { display: inline-flex; align-items: center; gap: 3px; font-size: .74em; font-weight: 600; color: var(--text); padding: 0 6px; border-radius: 6px; background: var(--bg-hover); white-space: nowrap; }
+.inbox-item-time { font-size: .74em; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.inbox-go-monitor { flex-shrink: 0; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-surface); color: var(--text-light); cursor: pointer; margin-right: 4px; }
+.inbox-go-monitor:hover { color: var(--primary); border-color: var(--primary); }
+.inbox-foot { display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-top: 1px solid var(--border); font-size: .78em; color: var(--text-light); flex-wrap: wrap; min-height: 30px; }
+.inbox-foot:empty { display: none; }
+.inbox-link { background: none; border: 0; color: var(--primary); cursor: pointer; font: inherit; font-size: 1em; padding: 0; }
+.inbox-pager { display: inline-flex; align-items: center; gap: 8px; }
+.inbox-foot-note { margin-left: auto; }
+.inbox--v2 .inbox-item { grid-template-columns: 18px 1fr auto; }
 .inbox-item-at { font-size: .74em; color: var(--text-muted); white-space: nowrap; }
 .inbox-level { font-size: .68em; font-weight: 700; padding: 1px 6px; border-radius: 6px; background: var(--bg-hover); }
 .inbox-level--critical { background: #fee2e2; color: #991b1b; }
@@ -13256,6 +13287,12 @@ button.ccx-mini:hover { color: var(--primary); }
 .palette-close:hover { background: var(--bg-hover); color: var(--text); }
 .palette-body { overflow-y: auto; padding: 6px; }
 .palette-empty { padding: 18px 12px; color: var(--text-light); font-size: .9em; text-align: center; }
+/* Palet satırı meta çipleri (2026-09-20): takım / grup / etiket / tier */
+.palette-item-main { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 2px; }
+.palette-item-meta { display: flex; flex-wrap: wrap; gap: 4px; }
+.palette-chip { display: inline-flex; align-items: center; gap: 3px; font-size: .7em; font-weight: 600; padding: 0 6px; border-radius: 6px; background: var(--bg-hover); color: var(--text-light); white-space: nowrap; }
+.palette-chip--team { color: var(--text); }
+.palette-chip--tag { color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, transparent); }
 .palette-group { padding-bottom: 4px; }
 .palette-group-title { font-size: .72em; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); padding: 8px 10px 4px; }
 .palette-item { width: 100%; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 0; border-radius: 8px; background: none;

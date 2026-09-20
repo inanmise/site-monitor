@@ -23,21 +23,21 @@ class GlobalSearchServiceTest {
         for (String t : List.of("certificate_inventory", "teams", "http_monitors", "ping_monitors", "port_monitors", "dns_monitors",
                 "keyword_monitors", "page_monitors", "pagespeed_monitors", "scripted_monitors", "domain_monitors"))
             jdbc.update("DROP TABLE IF EXISTS " + t);
-        jdbc.update("CREATE TABLE certificate_inventory(domain VARCHAR(253), team_id BIGINT, owner VARCHAR(200), description VARCHAR(500), active BOOLEAN)");
+        jdbc.update("CREATE TABLE certificate_inventory(domain VARCHAR(253), team_id BIGINT, owner VARCHAR(200), description VARCHAR(500), active BOOLEAN, group_name VARCHAR(100), tags VARCHAR(500), tier INTEGER)");
         jdbc.update("CREATE TABLE teams(id BIGINT, name VARCHAR(100))");
-        jdbc.update("CREATE TABLE http_monitors(id BIGINT, name VARCHAR(100), url VARCHAR(300), team_id BIGINT)");
-        jdbc.update("CREATE TABLE ping_monitors(id BIGINT, name VARCHAR(100), host VARCHAR(300), team_id BIGINT)");
-        jdbc.update("CREATE TABLE port_monitors(id BIGINT, name VARCHAR(100), host VARCHAR(300), team_id BIGINT)");
-        jdbc.update("CREATE TABLE dns_monitors(id BIGINT, name VARCHAR(100), domain VARCHAR(300), team_id BIGINT)");
-        jdbc.update("CREATE TABLE keyword_monitors(id BIGINT, name VARCHAR(100), url VARCHAR(300), team_id BIGINT)");
-        jdbc.update("CREATE TABLE page_monitors(id BIGINT, name VARCHAR(100), url VARCHAR(300), team_id BIGINT)");
-        jdbc.update("CREATE TABLE pagespeed_monitors(id BIGINT, name VARCHAR(100), url VARCHAR(300), team_id BIGINT)");
-        jdbc.update("CREATE TABLE scripted_monitors(id BIGINT, name VARCHAR(100), team_id BIGINT)");
-        jdbc.update("CREATE TABLE domain_monitors(id BIGINT, name VARCHAR(100), domain VARCHAR(300), team_id BIGINT)");
-        jdbc.update("INSERT INTO certificate_inventory VALUES ('shop.example.com', 1, 'Sahip A', 'Mağaza', TRUE), ('shop-old.example.com', 1, NULL, NULL, FALSE), ('other.example.com', 2, 'Shopkeeper', NULL, TRUE)");
+        jdbc.update("CREATE TABLE http_monitors(id BIGINT, name VARCHAR(100), url VARCHAR(300), team_id BIGINT, group_name VARCHAR(100), tags VARCHAR(500))");
+        jdbc.update("CREATE TABLE ping_monitors(id BIGINT, name VARCHAR(100), host VARCHAR(300), team_id BIGINT, group_name VARCHAR(100), tags VARCHAR(500))");
+        jdbc.update("CREATE TABLE port_monitors(id BIGINT, name VARCHAR(100), host VARCHAR(300), team_id BIGINT, group_name VARCHAR(100), tags VARCHAR(500))");
+        jdbc.update("CREATE TABLE dns_monitors(id BIGINT, name VARCHAR(100), domain VARCHAR(300), team_id BIGINT, group_name VARCHAR(100), tags VARCHAR(500))");
+        jdbc.update("CREATE TABLE keyword_monitors(id BIGINT, name VARCHAR(100), url VARCHAR(300), team_id BIGINT, group_name VARCHAR(100), tags VARCHAR(500))");
+        jdbc.update("CREATE TABLE page_monitors(id BIGINT, name VARCHAR(100), url VARCHAR(300), team_id BIGINT, group_name VARCHAR(100), tags VARCHAR(500))");
+        jdbc.update("CREATE TABLE pagespeed_monitors(id BIGINT, name VARCHAR(100), url VARCHAR(300), team_id BIGINT, group_name VARCHAR(100), tags VARCHAR(500))");
+        jdbc.update("CREATE TABLE scripted_monitors(id BIGINT, name VARCHAR(100), team_id BIGINT, group_name VARCHAR(100), tags VARCHAR(500))");
+        jdbc.update("CREATE TABLE domain_monitors(id BIGINT, name VARCHAR(100), domain VARCHAR(300), team_id BIGINT, group_name VARCHAR(100), tags VARCHAR(500))");
+        jdbc.update("INSERT INTO certificate_inventory VALUES ('shop.example.com', 1, 'Sahip A', 'Mağaza', TRUE, 'Satış', 'prod,odeme', 1), ('shop-old.example.com', 1, NULL, NULL, FALSE, NULL, NULL, NULL), ('other.example.com', 2, 'Shopkeeper', NULL, TRUE, NULL, NULL, NULL), ('tagged.example.com', 1, NULL, NULL, TRUE, 'Grup X', 'shopfloor', 2)");
         jdbc.update("INSERT INTO teams VALUES (1, 'Takım A'), (2, 'Takım B'), (3, 'Shop Takımı')");
-        jdbc.update("INSERT INTO http_monitors VALUES (7, 'Ödeme', 'https://shop.example.com/pay', 1), (8, 'Gizli', 'https://shop.example.com/x', 2)");
-        jdbc.update("INSERT INTO scripted_monitors VALUES (9, 'shop smoke', 1)");
+        jdbc.update("INSERT INTO http_monitors VALUES (7, 'Ödeme', 'https://shop.example.com/pay', 1, 'Satış', 'prod'), (8, 'Gizli', 'https://shop.example.com/x', 2, NULL, NULL), (10, 'Etiketli', 'https://a.example.com/', 1, NULL, 'shop-tag')");
+        jdbc.update("INSERT INTO scripted_monitors VALUES (9, 'shop smoke', 1, NULL, NULL)");
         svc = new GlobalSearchService(jdbc);
     }
 
@@ -58,10 +58,18 @@ class GlobalSearchServiceTest {
         assertThat(cert.tab()).isEqualTo("dashboard");
         assertThat(cert.params()).containsEntry("domain", "shop.example.com");
         assertThat(cert.sub()).isEqualTo("Sahip A");
-        GlobalSearchService.Hit http = hits.stream().filter(h -> "http".equals(h.kind())).findFirst().orElseThrow();
+        GlobalSearchService.Hit http = hits.stream().filter(h -> "http".equals(h.kind()) && "7".equals(h.id())).findFirst().orElseThrow();
         assertThat(http.tab()).isEqualTo("http");
         assertThat(http.params()).containsEntry("monitor", "7");
         assertThat(http.sub()).isEqualTo("https://shop.example.com/pay");
+        // 2026-09-20: takım adı / grup / etiket / tier sonuçta; etiket ve grup adı ARAMAYA girer
+        assertThat(cert.teamName()).isEqualTo("Takım A");
+        assertThat(cert.groupName()).isEqualTo("Satış");
+        assertThat(cert.tags()).isEqualTo("prod,odeme");
+        assertThat(cert.tier()).isEqualTo(1);
+        assertThat(http.teamName()).isEqualTo("Takım A");
+        assertThat(http.groupName()).isEqualTo("Satış");
+        assertThat(hits).extracting(GlobalSearchService.Hit::id).contains("tagged.example.com", "10");   // 'shopfloor' etiketi / 'shop-tag' etiketi
     }
 
     @Test

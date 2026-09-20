@@ -698,6 +698,8 @@ export default function App() {
       // ÜSTÜNDE kalır ve canEdit daima false döner (düğme hiç çizilmezdi). Yetkinin asıl
       // kapısı zaten uçta: inventory.crud/edit + takım kapsamı; reddedilirse toast hatayı gösterir.
       onDelete: canManageInventory ? () => deleteCertFromCard(cert.domain) : undefined,
+      // "Sorumlu kişi yok" çipi (2026-09-20): form doğrudan Sorumlu Ekipler bölümünde açılır.
+      onEditContacts: canEditCert(cert) ? () => setInvForm({ domain: cert.domain, mode: 'edit', focus: 'contacts' }) : undefined,
       deleting: deletingDomain === cert.domain,
     }
   }
@@ -1628,6 +1630,7 @@ export default function App() {
           <InventoryFormModalForDomain
             domain={invForm.domain}
             mode={invForm.mode}
+            focus={invForm.focus || null}
             onClose={() => setInvForm(null)}
             onSaved={() => { setInvForm(null); loadData(); setCertModalRefresh(k => k + 1) }}
           />

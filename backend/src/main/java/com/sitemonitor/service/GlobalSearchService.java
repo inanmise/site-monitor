@@ -21,7 +21,16 @@ import java.util.function.Predicate;
 @Slf4j
 public class GlobalSearchService {
 
-    public record Hit(String kind, String id, String label, String sub, Long teamId, String tab, Map<String, Object> params) {}
+    /**
+     * Arama vuruşu. 2026-09-20 (kullanıcı bildirimi): sonuçta takım adı, grup, etiketler ve tier de taşınır — palet
+     * yalnız ad gösteriyordu, "hangi takımın / hangi grubun" sorusu cevapsızdı. Etiket ve grup adı ARAMAYA da girer.
+     */
+    public record Hit(String kind, String id, String label, String sub, Long teamId, String tab, Map<String, Object> params,
+                      String teamName, String groupName, String tags, Integer tier) {
+        public Hit(String kind, String id, String label, String sub, Long teamId, String tab, Map<String, Object> params) {
+            this(kind, id, label, sub, teamId, tab, params, null, null, null, null);
+        }
+    }
 
     /** İzleme türü → (tablo, hedef sütunu, nav sekmesi). */
     record Kind(String table, String targetCol, String tab) {}
@@ -46,36 +55,46 @@ public class GlobalSearchService {
         if (needle.length() < MIN_QUERY) return List.of();
         String like = "%" + needle.replace("%", "\\%").replace("_", "\\_") + "%";
         List<Hit> out = new ArrayList<>();
+        Map<Long, String> teamNames = new java.util.HashMap<>();
+        try { jdbc.query("SELECT id, name FROM teams", rs -> { teamNames.put(rs.getLong("id"), rs.getString("name")); }); }
+        catch (Exception e) { log.debug("palet: takım adları okunamadı: {}", e.toString()); }
 
         // Sertifika envanteri
         try {
-            jdbc.query("SELECT domain, team_id, owner, description FROM certificate_inventory WHERE active = TRUE AND ("
-                    + "LOWER(domain) LIKE ? OR LOWER(COALESCE(owner,'')) LIKE ? OR LOWER(COALESCE(description,'')) LIKE ?) "
+            jdbc.query("SELECT domain, team_id, owner, description, group_name, tags, tier FROM certificate_inventory WHERE active = TRUE AND ("
+                    + "LOWER(domain) LIKE ? OR LOWER(COALESCE(owner,'')) LIKE ? OR LOWER(COALESCE(description,'')) LIKE ? "
+                    + "OR LOWER(COALESCE(group_name,'')) LIKE ? OR LOWER(COALESCE(tags,'')) LIKE ?) "
                     + "ORDER BY domain LIMIT " + (MAX_CERTS * 3), rs -> {
                 long tid = rs.getLong("team_id"); Long teamId = rs.wasNull() ? null : tid;
                 if (!canViewTeam.test(teamId)) return;
                 if (out.stream().filter(h -> "certificate".equals(h.kind())).count() >= MAX_CERTS) return;
                 String domain = rs.getString("domain");
                 String sub = firstNonBlank(rs.getString("owner"), rs.getString("description"));
-                out.add(new Hit("certificate", domain, domain, sub, teamId, "dashboard", Map.of("domain", domain)));
-            }, like, like, like);
+                int tierRaw = rs.getInt("tier"); Integer tier = rs.wasNull() ? null : tierRaw;
+                out.add(new Hit("certificate", domain, domain, sub, teamId, "dashboard", Map.of("domain", domain),
+                        teamId != null ? teamNames.get(teamId) : null, rs.getString("group_name"), rs.getString("tags"), tier));
+            }, like, like, like, like, like);
         } catch (Exception e) { log.debug("palet: envanter araması düştü: {}", e.toString()); }
 
         // İzlemeler (9 tür)
         for (Map.Entry<String, Kind> e : MONITOR_KINDS.entrySet()) {
             Kind k = e.getValue();
             String kind = e.getKey();
-            String cols = k.targetCol().equals("name") ? "id, name, name AS target, team_id" : "id, name, " + k.targetCol() + " AS target, team_id";
-            String where = k.targetCol().equals("name") ? "LOWER(name) LIKE ?" : "LOWER(name) LIKE ? OR LOWER(COALESCE(" + k.targetCol() + ",'')) LIKE ?";
+            String cols = (k.targetCol().equals("name") ? "id, name, name AS target, team_id" : "id, name, " + k.targetCol() + " AS target, team_id")
+                    + ", group_name, tags";
+            // Etiket ve grup adı da aranır (2026-09-20).
+            String where = (k.targetCol().equals("name") ? "LOWER(name) LIKE ?" : "LOWER(name) LIKE ? OR LOWER(COALESCE(" + k.targetCol() + ",'')) LIKE ?")
+                    + " OR LOWER(COALESCE(group_name,'')) LIKE ? OR LOWER(COALESCE(tags,'')) LIKE ?";
             try {
-                List<Object> args = k.targetCol().equals("name") ? List.of(like) : List.of(like, like);
+                List<Object> args = k.targetCol().equals("name") ? List.of(like, like, like) : List.of(like, like, like, like);
                 jdbc.query("SELECT " + cols + " FROM " + k.table() + " WHERE " + where + " ORDER BY name LIMIT " + (MAX_PER_MONITOR * 3), rs -> {
                     long tid = rs.getLong("team_id"); Long teamId = rs.wasNull() ? null : tid;
                     if (!canViewTeam.test(teamId)) return;
                     if (out.stream().filter(h -> kind.equals(h.kind())).count() >= MAX_PER_MONITOR) return;
                     String id = String.valueOf(rs.getLong("id"));
                     String name = rs.getString("name"), target = rs.getString("target");
-                    out.add(new Hit(kind, id, name, target != null && !target.equals(name) ? target : null, teamId, k.tab(), Map.of("monitor", id)));
+                    out.add(new Hit(kind, id, name, target != null && !target.equals(name) ? target : null, teamId, k.tab(), Map.of("monitor", id),
+                            teamId != null ? teamNames.get(teamId) : null, rs.getString("group_name"), rs.getString("tags"), null));
                 }, args.toArray());
             } catch (Exception ex) { log.debug("palet: {} araması düştü: {}", kind, ex.toString()); }
         }

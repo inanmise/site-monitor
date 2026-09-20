@@ -54,7 +54,7 @@ describe('CertificateCard — zengin görünüm', () => {
       live={{ uptime: { last_status: 'up', last_ms: 210, last_at: new Date(Date.now() - 5 * 60000).toISOString().slice(0, 19) }, alert: { id: 3, level: 'HIGH', type: 'HTTP_DOWN', resolved: true, at: '2026-09-10T10:00:00', resolved_at: new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 19) } }} />)
     const strip = document.querySelector('.cc-live')
     expect(strip.className).toContain('cc-live--ok')
-    expect(strip.textContent).toMatch(/Ayakta|Up/); expect(strip.textContent).toContain('210ms'); expect(strip.textContent).toMatch(/alarm 3g ✓|alert 3d ✓/)
+    expect(strip.textContent).toMatch(/Ayakta|Up/); expect(strip.textContent).toContain('210ms'); expect(strip.textContent).toMatch(/3g ✓|3d ✓/); expect(strip.querySelector('.cc-live-bell--off')).not.toBeNull()   // çözülmüş alarm: sessiz zil + yaş
     expect(strip.title).toMatch(/5dk önce|5m ago/)
     fireEvent.click(strip)
     expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'uptime', params: { q: 'a.example.com' } })
@@ -64,7 +64,11 @@ describe('CertificateCard — zengin görünüm', () => {
     render(<CertificateCard cert={CERT} onClick={onClick} live={{ uptime: { last_status: 'down', last_ms: null, last_at: '2026-09-19T11:00:00' }, alert: { id: 4, level: 'CRITICAL', type: 'ACCESSIBILITY', resolved: false, at: '2026-09-19T11:05:00' } }} />)
     const bad = document.querySelector('.cc-live')
     expect(bad.className).toContain('cc-live--bad')
-    expect(bad.textContent).toMatch(/ERİŞİLEMİYOR|DOWN/); expect(bad.textContent).toMatch(/alarm AÇIK · CRITICAL|alert OPEN · CRITICAL/)
+    expect(bad.textContent).toMatch(/ERİŞİLEMİYOR|DOWN/)
+    // Açık alarm = zil ikonu (erişilebilir adı "alarm AÇIK") + kısa seviye; uzun metin footer'da kesiliyordu (2026-09-20).
+    expect(bad.querySelector('.cc-live-bell[aria-label]').getAttribute('aria-label')).toMatch(/alarm AÇIK|alert OPEN/)
+    expect(bad.textContent).toMatch(/KRİTİK|CRITICAL/)
+    expect(bad.textContent).not.toMatch(/AÇIK · CRITICAL|OPEN · CRITICAL/)
     window.removeEventListener('sm:navigate', nav)
   })
 
@@ -80,4 +84,19 @@ describe('CertificateCard — zengin görünüm', () => {
     expect(screen.getByText(/Sorumlu kişi yok|No contacts/)).toBeInTheDocument()
     expect(screen.getByText(/4 SAN/)).toBeInTheDocument()
   })
+  it('erişilebilirlik satırı Durum İzleme (?q=) açar; "sorumlu kişi" çipi onEditContacts ile formu kontak bölümünde açar; kart onClick tetiklenmez', () => {
+    const onClick = vi.fn(), onEditContacts = vi.fn(), nav = vi.fn(); window.addEventListener('sm:navigate', nav)
+    const { unmount } = render(<CertificateCard cert={CERT} onClick={onClick} extra={{ ...EXTRA, contacts: { missing: true } }} onEditContacts={onEditContacts} />)
+    fireEvent.click(document.querySelector('.ccx-uptime'))
+    expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'uptime', params: { q: 'a.example.com' } })
+    fireEvent.click(screen.getByText(/Sorumlu kişi yok|No contacts/).closest('button'))
+    expect(onEditContacts).toHaveBeenCalledWith('a.example.com')
+    expect(onClick).not.toHaveBeenCalled()
+    unmount()
+    // yetkisiz (onEditContacts yok) → çip düğme değil, salt bilgi
+    render(<CertificateCard cert={CERT} onClick={onClick} extra={{ ...EXTRA, contacts: { missing: true } }} />)
+    expect(screen.getByText(/Sorumlu kişi yok|No contacts/).closest('button')).toBeNull()
+    window.removeEventListener('sm:navigate', nav)
+  })
+
 })

@@ -114,4 +114,50 @@ class InboxServiceTest {
         List<InboxService.Item> items = svc.build(t -> true, List.of());
         assertThat(items).extracting(InboxService.Item::kind).doesNotContain("alert_open", "weekly_due").contains("alert_resolved", "maintenance_active");
     }
+    // ── 2026-09-20 zenginleştirme: takım adı, başlangıç/bitiş, izlemeye git, geçmiş sayfası ──
+
+    @Test
+    @DisplayName("Alarm satırı takım adı, started/ended ve izleme derin bağlantısı taşır (teamRepo/resolver alan enjeksiyonu)")
+    void enrichedAlertItems() {
+        com.sitemonitor.repository.TeamRepository teamRepo = org.mockito.Mockito.mock(com.sitemonitor.repository.TeamRepository.class);
+        com.sitemonitor.model.Team t1 = new com.sitemonitor.model.Team(); t1.setId(1L); t1.setName("Takim A");
+        when(teamRepo.findAll()).thenReturn(List.of(t1));
+        MonitorRefResolver resolver = org.mockito.Mockito.mock(MonitorRefResolver.class);
+        when(resolver.resolve(any())).thenAnswer(inv -> {
+            java.util.Map<Long, MonitorRefResolver.Ref> m = new java.util.HashMap<>();
+            for (AlertEvent e : (List<AlertEvent>) inv.getArgument(0)) m.put(e.getId(), new MonitorRefResolver.Ref("Site", "http", "http", 77L));
+            return m;
+        });
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "teamRepo", teamRepo);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "monitorRefResolver", resolver);
+
+        List<InboxService.Item> items = svc.build(t -> t != null && t == 1L, List.of(1L));
+        InboxService.Item open = items.get(0);
+        assertThat(open.teamId()).isEqualTo(1L);
+        assertThat(open.teamName()).isEqualTo("Takim A");
+        assertThat(open.startedAt()).isNotBlank();
+        assertThat(open.endedAt()).isNull();
+        assertThat(open.monitorTab()).isEqualTo("http");
+        assertThat(open.monitorParams()).containsEntry("monitor", 77L);
+        assertThat(open.monitorName()).isEqualTo("Site");
+        InboxService.Item resolved = items.stream().filter(i -> i.kind().equals("alert_resolved")).findFirst().orElseThrow();
+        assertThat(resolved.endedAt()).isNotBlank();
+        // bakım satırı da takım adı taşır
+        InboxService.Item maint = items.stream().filter(i -> i.kind().equals("maintenance_active")).findFirst().orElseThrow();
+        assertThat(maint.teamName()).isEqualTo("Takim A");
+    }
+
+    @Test
+    @DisplayName("Geçmiş: 30 günde çözülenler (24 saat sınırı YOK), çözülme zamanına göre, sayfalı; kapsam dışı takım yok")
+    void historyPaged() {
+        InboxService.HistoryPage h = svc.history(t -> t != null && t == 1L, 0, 1);
+        assertThat(h.total()).isEqualTo(2);           // id 4 (3 sa) + id 5 (30 sa) — güncel listede 5 yoktu
+        assertThat(h.totalPages()).isEqualTo(2);
+        assertThat(h.items()).extracting(InboxService.Item::key).containsExactly("resolved:4:" + h.items().get(0).endedAt());
+        InboxService.HistoryPage p2 = svc.history(t -> t != null && t == 1L, 1, 1);
+        assertThat(p2.items().get(0).key()).startsWith("resolved:5:");
+        assertThat(p2.items().get(0).kind()).isEqualTo("alert_resolved");
+        assertThat(svc.history(t -> t != null && t == 2L, 0, 10).total()).isZero();
+    }
+
 }

@@ -18,7 +18,7 @@ function parseDn(dn, field) {
 
 function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure = false,
                                           onMailFailureClick, isWeak,
-                                          onCheckNow, onEdit, onDuplicate, onDelete,
+                                          onCheckNow, onEdit, onDuplicate, onDelete, onEditContacts,
                                           checking = false, deleting = false, tourId,
                                           // Zengin görünüm (2026-09-19): /card-extras bloğu + eylemler; extra yoksa kart bugünkü hâlinde
                                           extra, onOpenHealth, onConfirmRenewal, onPlanRenewal, confirming = false,
@@ -206,7 +206,7 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
       )}
 
       {/* ── Zengin görünüm: sağlık · alarm · erişilebilirlik · değişim · plan · paylaşılan/bakım/kontak (2026-09-19) ── */}
-      {extra && <CertificateCardExtras cert={cert} extra={extra} onOpenHealth={onOpenHealth} onConfirmRenewal={onConfirmRenewal} onPlanRenewal={onPlanRenewal} confirming={confirming} />}
+      {extra && <CertificateCardExtras cert={cert} extra={extra} onOpenHealth={onOpenHealth} onConfirmRenewal={onConfirmRenewal} onPlanRenewal={onPlanRenewal} onEditContacts={onEditContacts} confirming={confirming} />}
 
       {/* ── Footer — solda alarm çipleri, sağda aksiyonlar ── */}
       {hasFooter && (
