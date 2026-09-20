@@ -1,9 +1,65 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-20T17:09:15Z",
+  "generatedAt": "2026-09-20T22:39:20Z",
   "repo": "inanmise/site-monitor",
-  "count": 665,
+  "count": 666,
   "releases": [
+    {
+      "version": "20.76.0",
+      "tag": "v20.76.0",
+      "releasedAt": "2026-09-20T22:39:13Z",
+      "commit": "3c96095f0f4e663cf78c675732240ca8dcef1167",
+      "prevVersion": "20.75.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 2,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": "regresyon",
+          "breaking": false,
+          "sha": "3c96095f",
+          "subject": "60. tur — push logu kırılım paneli v2 + kullanıcı etkinliği düzenlemeleri, regresyon yok"
+        },
+        {
+          "type": "fix",
+          "scope": "health",
+          "breaking": false,
+          "sha": "69463eda",
+          "subject": "kırılım çubuğu genişlikleri CSS özel değişkeniyle (progress-guard kapısı)"
+        },
+        {
+          "type": "feat",
+          "scope": "ux",
+          "breaking": false,
+          "sha": "592e441f",
+          "subject": "sistem sağlığı ve simülatör düzenlemeleri (kullanıcı bildirimleri 2026-09-21)"
+        },
+        {
+          "type": "feat",
+          "scope": "health",
+          "breaking": false,
+          "sha": "ae56e978",
+          "subject": "push logu kırılım paneli v2 — oran çubuğu, tıklanır rakamlar (boyut + durum süzgeci), daraltma"
+        },
+        {
+          "type": "fix",
+          "scope": "health",
+          "breaking": false,
+          "sha": "18244fd9",
+          "subject": "push/SMTP logu kırılım kartları alt alta — dar kartta ad sütunu harf harf kırılıyordu"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.75.0",
       "tag": "v20.75.0",
