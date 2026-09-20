@@ -13,6 +13,16 @@ import java.util.Optional;
 public interface NotificationLogRepository extends JpaRepository<NotificationLog, Long> {
     List<NotificationLog> findByAlertEventIdOrderBySentAtDesc(Long alertEventId);
 
+    /** Alıcı adresi başına EN SON webhook teslimatı (SKIPPED hariç) — eskalasyon listesindeki "son teslimat" sütunu (2026-09-20). */
+    @org.springframework.data.jpa.repository.Query("""
+            select n from NotificationLog n
+            where n.id in (
+                select max(n2.id) from NotificationLog n2
+                where n2.recipientEmail is not null and n2.webhookStatus is not null and n2.webhookStatus <> 'SKIPPED'
+                group by lower(n2.recipientEmail))
+            """)
+    List<NotificationLog> findLatestWebhookPerRecipient();
+
     /**
      * Async 421-retry'ın terminal sonucunu (SENT/FAILED) geri-yazmak için: ilk denemede
      * "QUEUED_RETRY..." kaydedilen log satırını subject ile bulur (en güncel). Subject

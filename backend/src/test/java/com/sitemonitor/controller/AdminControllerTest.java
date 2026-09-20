@@ -52,6 +52,8 @@ class AdminControllerTest {
     @MockitoBean com.sitemonitor.repository.NotificationGroupRepository notificationGroupRepo;
     @MockitoBean com.sitemonitor.service.ThresholdPreviewService thresholdPreviewService;   // tier eşik önizleme (2026-09-20)
     @MockitoBean com.sitemonitor.service.AdminHistoryService adminHistoryService;             // sekme değişiklik geçmişi (2026-09-20)
+    @MockitoBean com.sitemonitor.service.UserPushRecipientResolver userPushRecipientResolver;
+    @MockitoBean com.sitemonitor.service.WebhookService webhookService;
     @MockitoBean com.sitemonitor.service.DerivedMonitorTeamSync derivedMonitorTeamSync;
     @MockitoBean com.sitemonitor.service.TourStateService tourStateService;   // ürün turu (2026-09-13)
     // AdminController "Tekrar Bildir" onizlemesinde webhook alicilarini da cozuyor (A2).
@@ -1161,6 +1163,67 @@ class AdminControllerTest {
                         .content("{\"warning_days\":25,\"high_days\":12,\"critical_days\":5,\"re_alert_interval_hours\":12}"))   // tel biçimi SNAKE_CASE
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
+    }
+
+    // ── "Kim bilgilendirilir?" + webhook testi + son teslimat (2026-09-20) ───────
+
+    @Test
+    @DisplayName("GET /recipients/simulate: servise takım/seviye/tür geçer, takım adı ve push ayağı eklenir")
+    void simulateRecipients_ok() throws Exception {
+        when(escalationService.simulateRecipients(1L, "HIGH", true, null)).thenReturn(new java.util.LinkedHashMap<>(Map.of("level", "HIGH", "email_total", 2L)));
+        com.sitemonitor.model.Team team = new com.sitemonitor.model.Team(); team.setId(1L); team.setName("Takım A");
+        when(teamRepo.findById(1L)).thenReturn(Optional.of(team));
+        when(userPushRecipientResolver.explain(1L, "HIGH")).thenReturn(List.of());
+
+        mvc.perform(get("/api/admin/recipients/simulate").param("teamId", "1").param("level", "HIGH").param("kind", "MONITOR")
+                        .session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_name").value("Takım A"))
+                .andExpect(jsonPath("$.data.push").isArray());
+    }
+
+    @Test
+    @DisplayName("POST /contacts/{id}/webhook-test: gönderir, notification_log'a WEBHOOK_TEST yazar, denetler; webhook'suz kişi 400")
+    void contactWebhookTest() throws Exception {
+        EscalationContact c = contact("po@test.com", "PO"); c.setId(5L); c.setTeamId(1L);
+        c.setWebhookUrl("https://hooks.example.com/services/T/B/x"); c.setWebhookType("SLACK");
+        when(contactRepo.findById(5L)).thenReturn(Optional.of(c));
+
+        mvc.perform(post("/api/admin/contacts/5/webhook-test").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("SENT"));
+        verify(webhookService).send(eq("SLACK"), eq("https://hooks.example.com/services/T/B/x"), any(), any(), eq("INFO"));
+        ArgumentCaptor<NotificationLog> logCap = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(notificationLogRepo).save(logCap.capture());
+        assertThat(logCap.getValue().getTrigger()).isEqualTo("WEBHOOK_TEST");
+        assertThat(logCap.getValue().getAlertEventId()).isEqualTo(0L);   // NOT NULL kolon: alarmsız kayıt sentinel 0 (üretimde insert düşüyordu)
+        assertThat(logCap.getValue().getWebhookStatus()).isEqualTo("SENT");
+        verify(auditService).recordAction(eq("CONTACT_WEBHOOK_TEST"), any(), eq("ESCALATION_CONTACT"), eq("5"), eq("Test PO"), any());
+
+        // gönderim düşerse FAILED + hata metni, 200 (kullanıcı sonucu görür)
+        org.mockito.Mockito.doThrow(new RuntimeException("404 Not Found")).when(webhookService).send(any(), any(), any(), any(), any());
+        mvc.perform(post("/api/admin/contacts/5/webhook-test").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("FAILED"))
+                .andExpect(jsonPath("$.data.error").value("404 Not Found"));
+
+        EscalationContact noHook = contact("x@test.com", "TECH"); noHook.setId(6L); noHook.setTeamId(1L);
+        when(contactRepo.findById(6L)).thenReturn(Optional.of(noHook));
+        mvc.perform(post("/api/admin/contacts/6/webhook-test").session(authSession()))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("GET /contacts/webhook-status: adres başına son teslimat, FAILED ayrıntısı ayrılır")
+    void contactWebhookStatus() throws Exception {
+        NotificationLog ok = new NotificationLog(); ok.setRecipientEmail("PO@Test.com"); ok.setWebhookStatus("SENT"); ok.setSentAt("2026-09-20T10:00:00"); ok.setTrigger("INITIAL");
+        NotificationLog bad = new NotificationLog(); bad.setRecipientEmail("mgr@test.com"); bad.setWebhookStatus("FAILED: 404"); bad.setSentAt("2026-09-19T10:00:00"); bad.setTrigger("WEBHOOK_TEST");
+        when(notificationLogRepo.findLatestWebhookPerRecipient()).thenReturn(List.of(ok, bad));
+        mvc.perform(get("/api/admin/contacts/webhook-status").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data['po@test.com'].status").value("SENT"))
+                .andExpect(jsonPath("$.data['mgr@test.com'].status").value("FAILED"))
+                .andExpect(jsonPath("$.data['mgr@test.com'].detail").value("404"));
     }
 
     // ── Yönetim Paneli değişiklik geçmişi (2026-09-20) ────────────────────────

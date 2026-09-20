@@ -2279,6 +2279,52 @@ class EscalationServiceTest {
         assertThat(subject.getAllValues().get(0)).doesNotContain("GÜN KALDI").contains("KRİTİK");
     }
 
+    // ── "Kim bilgilendirilir?" simülatörü (2026-09-20) ──────────────────────────
+
+    @Test
+    @DisplayName("Simülatör: takım adresi + seviyeye uyan kişiler + webhook; WARNING'de kişi yok; takımda kişi yoksa global'e düşer")
+    @SuppressWarnings("unchecked")
+    void simulateRecipients() {
+        com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
+        team.setId(7L); team.setName("Takim A"); team.setEmail("takim-a@example.com");
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
+        EscalationContact po = contact("po@example.com", "PO", "WARNING"); po.setId(1L); po.setTeamId(7L);
+        EscalationContact mgr = contact("mgr@example.com", "MANAGER", "HIGH"); mgr.setId(2L); mgr.setTeamId(7L);
+        mgr.setWebhookUrl("https://hooks.example.com/services/T1/B2/secret123"); mgr.setWebhookType("SLACK");
+        EscalationContact dupTeam = contact("takim-a@example.com", "TECH", "WARNING"); dupTeam.setId(3L); dupTeam.setTeamId(7L);
+        when(contactRepo.findByTeamIdAndMinAlertLevelInAndActiveTrue(7L, List.of("WARNING", "HIGH"))).thenReturn(List.of(po, mgr, dupTeam));
+
+        Map<String, Object> r = service.simulateRecipients(7L, "high", false, null);
+        assertThat(r.get("level")).isEqualTo("HIGH");
+        assertThat(r.get("managers_included")).isEqualTo(true);
+        List<Map<String, Object>> teamEmails = (List<Map<String, Object>>) r.get("team_emails");
+        assertThat(teamEmails).hasSize(1);
+        assertThat(teamEmails.get(0).get("email")).isEqualTo("takim-a@example.com");
+        List<Map<String, Object>> contacts = (List<Map<String, Object>>) r.get("contacts");
+        assertThat(contacts).hasSize(3);
+        assertThat(contacts.get(2).get("email_duplicate")).isEqualTo(true);   // takım adresiyle aynı → tek mail
+        assertThat(r.get("email_total")).isEqualTo(3L);                         // takım + po + mgr
+        List<Map<String, Object>> webhooks = (List<Map<String, Object>>) r.get("webhooks");
+        assertThat(webhooks).hasSize(1);
+        assertThat(String.valueOf(webhooks.get(0).get("target"))).doesNotContain("secret123");   // maskeli
+        assertThat(r.get("contacts_fallback_global")).isEqualTo(false);
+
+        // WARNING: kişi yok, yalnız takım
+        Map<String, Object> w = service.simulateRecipients(7L, "WARNING", true, null);
+        assertThat(w.get("managers_included")).isEqualTo(false);
+        assertThat((List<?>) w.get("contacts")).isEmpty();
+
+        // CRITICAL + takımda kişi yok → global kişilere düşer, bayrak kalkar
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(7L)).thenReturn(List.of());
+        EscalationContact global = contact("global@example.com", "CLEVEL", "CRITICAL"); global.setId(9L);
+        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of(global));
+        Map<String, Object> c = service.simulateRecipients(7L, "CRITICAL", false, null);
+        assertThat(c.get("contacts_fallback_global")).isEqualTo(true);
+        assertThat((List<?>) c.get("contacts")).hasSize(1);
+
+        assertThatThrownBy(() -> service.simulateRecipients(7L, "BOGUS", false, null)).isInstanceOf(IllegalArgumentException.class);
+    }
+
     // ── Tier bazlı eşik (2026-09-20) ────────────────────────────────────────────
 
     @Test

@@ -772,6 +772,14 @@ export const api = {
     // Thresholds
     getThresholds: () => request('/admin/thresholds'),
     updateThreshold: (id, data) => request(`/admin/thresholds/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    // "Kim bilgilendirilir?" simülatörü + eskalasyon webhook testi / son teslimat (2026-09-20)
+    simulateRecipients: ({ teamId, level = 'HIGH', kind = 'CERT', groupId = null }) => {
+      const qs = new URLSearchParams({ teamId: String(teamId), level, kind })
+      if (groupId != null) qs.set('groupId', String(groupId))
+      return request(`/admin/recipients/simulate?${qs.toString()}`)
+    },
+    testContactWebhook: (id) => request(`/admin/contacts/${id}/webhook-test`, { method: 'POST' }),
+    contactWebhookStatus: () => request('/admin/contacts/webhook-status'),
     // Yönetim Paneli değişiklik geçmişi (2026-09-20): resource = ALERT_THRESHOLD | ESCALATION_CONTACT | TEAM | USER
     history: (resource, resourceId = null, limit = 50) => {
       const qs = new URLSearchParams({ resource, limit: String(limit) })

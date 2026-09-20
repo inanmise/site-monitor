@@ -3203,6 +3203,24 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 .threshold-field .hint { font-size: .8em; color: var(--text-light); }
 .threshold-display { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+/* "Kim bilgilendirilir?" simülatörü (2026-09-20) */
+.sim-section h3 { display: inline-flex; align-items: center; gap: 6px; }
+.sim-controls { margin-bottom: 12px; }
+.sim-result { display: flex; flex-direction: column; gap: 10px; }
+.sim-summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sim-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-surface); font-size: .85em; font-weight: 600; }
+.sim-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.sim-block { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--bg-card, #fff); }
+.sim-block--wide { grid-column: 1 / -1; }
+.sim-block h4 { margin: 0 0 8px; font-size: .9em; display: inline-flex; align-items: center; gap: 6px; }
+.sim-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: .88em; }
+.sim-list li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sim-list li.is-dup, .sim-list li.is-skipped { opacity: .6; }
+.sim-src { color: var(--text-light); font-size: .92em; }
+.sim-dup { font-size: .8em; color: var(--warning, #b7791f); }
+/* Eskalasyon: son webhook teslimatı */
+.ec-delivery { display: inline-flex; flex-direction: column; gap: 2px; font-size: .82em; }
+.ec-delivery-at { color: var(--text-light); font-family: ui-monospace, monospace; font-size: .92em; }
 /* Tier bazlı eşikler + etki önizleme (2026-09-20) */
 .threshold-card + .threshold-card { margin-top: 12px; }
 .threshold-card--tier { border-left: 3px solid var(--primary); }

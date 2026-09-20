@@ -8,6 +8,8 @@ import KebabMenu from '../ui/KebabMenu.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import AdminChangeHistory from './AdminChangeHistory.jsx'
+import RecipientSimulator from './RecipientSimulator.jsx'
+import { formatDateSec } from '../../api/client'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 
 const ROLES  = ['PO', 'TECH', 'MANAGER', 'CLEVEL']
@@ -33,6 +35,8 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
   // İstemci-taraflı filtre + sayfalama (getContacts tüm listeyi döndürür)
   // Süzgeçler URL'de (g_*): derin bağlantı + yenileme korur (2026-09-20).
   const [histFilter, setHistFilter] = useState(null)   // { id, name } — satırdan "Geçmiş"
+  const [deliveries, setDeliveries] = useState({})     // e-posta → son webhook teslimatı (2026-09-20)
+  const [testingId, setTestingId] = useState(null)
   const [q, setQ]         = useState(() => readUrlParam('g_q', ''))
   const [fRole, setFRole] = useState(() => readUrlParam('g_role', ''))
   const [fLevel, setFLevel] = useState(() => readUrlParam('g_level', ''))
@@ -73,6 +77,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
     // Tirmanma kisileri alarmin KIME gidecegini belirliyor: "kisi yok" goren yonetici
     // eksik sanip yeniden ekler, gercekte kayitlar duruyordur.
     try {
+      loadDeliveries()
       const res = await api.admin.getContacts()
       if (res?.success) { setContacts(res.data); setLoadError(null) }
       else setLoadError(res?.error || t('settings.loadError'))
@@ -84,6 +89,28 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
   async function loadUsers() {
     const res = await api.admin.getUsers()
     if (res?.success) setUsers((res.data ?? []).filter(u => u.active))   // data null gelirse ekran cokmesin
+  }
+
+  async function loadDeliveries() {
+    try {
+      const r = await api.admin.contactWebhookStatus?.()
+      if (r?.success) setDeliveries(r.data || {})
+    } catch { /* sütun boş kalır; liste yine gelir */ }
+  }
+
+  /** Webhook testi (2026-09-20): sonuç toast + son teslimat sütunu tazelenir. */
+  async function testWebhook(c) {
+    setTestingId(c.id)
+    try {
+      const r = await api.admin.testContactWebhook(c.id)
+      if (r?.success && r.data?.status === 'SENT') toast.success(t('ec.testWebhookSent', r.data.target || ''))
+      else toast.error(t('ec.testWebhookFailed', r?.data?.error || r?.error || '—'))
+    } catch (e) {
+      toast.error(t('ec.testWebhookFailed', e?.message || '—'))
+    } finally {
+      setTestingId(null)
+      loadDeliveries()
+    }
   }
 
   function openAdd() {
@@ -162,6 +189,8 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
       </div>
       {msg && <div className="alert-msg">{msg}</div>}
 
+      <RecipientSimulator teams={teams} isAdmin={isAdmin} defaultTeamId={!isAdmin && teams.length === 1 ? teams[0].id : ''} />
+
       {/* Filtre çubuğu — ad/e-posta araması + Rol/Seviye/Takım */}
       <div className="audit-filters">
         <input className="audit-filter-input" placeholder={t('ec.searchPlaceholder')}
@@ -189,13 +218,14 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
               <th>{t('ec.colRole')}</th>
               <th>{t('ec.colLevel')}</th>
               <th>{t('ec.colWebhook')}</th>
+              <th>{t('ec.colLastDelivery')}</th>
               <th>{t('ec.colActive')}</th>
               <th>{t('ec.colActions')}</th>
             </tr>
           </thead>
           <tbody>
             {filteredContacts.length === 0 && (
-              <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
+              <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
                 {t('ec.noResults')}
               </td></tr>
             )}
@@ -207,11 +237,23 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
                 <td><span className="role-badge">{roleLabelMap[c.role] || c.role}</span></td>
                 <td><span className="level-badge" style={{ background: levelColor[c.min_alert_level] || '#999' }}>{levelLabelMap[c.min_alert_level] || c.min_alert_level}</span></td>
                 <td>{c.webhook_url ? <span className="badge badge-ok">{c.webhook_type}</span> : '—'}</td>
+                <td>{(() => {
+                  if (!c.webhook_url) return '—'
+                  const d = deliveries[String(c.email || '').trim().toLowerCase()]
+                  if (!d) return <span className="field-hint">{t('ec.lastDeliveryNone')}</span>
+                  return (
+                    <span className="ec-delivery" title={d.detail || ''}>
+                      <span className={d.status === 'SENT' ? 'badge badge-ok' : 'badge badge-err'}>{d.status}{d.trigger === 'WEBHOOK_TEST' ? ` · ${t('ec.lastDeliveryTest')}` : ''}</span>
+                      <span className="ec-delivery-at">{formatDateSec(d.at)}</span>
+                    </span>
+                  )
+                })()}</td>
                 <td><span className={c.active ? 'badge badge-ok' : 'badge badge-err'}>{c.active ? t('ec.active') : t('ec.inactive')}</span></td>
                 <td>
                   <KebabMenu label={t('ec.colActions')} items={[
                     ...(canManage ? [{ label: t('ec.edit'), onClick: () => openEdit(c) }] : []),
                     { label: t('hist.title'), onClick: () => setHistFilter({ id: c.id, name: c.name || c.email }) },
+                    ...(canManage && c.webhook_url ? [{ label: t('ec.testWebhook'), onClick: () => { if (testingId !== c.id) testWebhook(c) } }] : []),
                     ...(canManage ? [{ label: t('ec.delete'), danger: true, onClick: () => del(c.id) }] : []),
                   ]} />
                 </td>

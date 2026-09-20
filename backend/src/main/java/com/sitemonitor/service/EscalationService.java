@@ -431,6 +431,62 @@ public class EscalationService {
                 .orElse(null);
     }
 
+    /**
+     * "Kim bilgilendirilir?" simülatörü (2026-09-20, Yönetim Paneli): takım + seviye (+ izleme grubu) için
+     * alarm gitmeden alıcı zinciri. Gerçek gönderimle AYNI kararlar: takım e-postaları
+     * ({@code collectTeamRecipients}: izleme grubu → takım varsayılan grubu → takım adresi), eskalasyon
+     * kişileri ({@code includeManagerContacts} + {@code getContactsForLevel}, takımda yoksa global'e düşer)
+     * ve kişi webhook'ları. HİÇBİR yazma yapmaz.
+     *
+     * @param standaloneMonitor izleme alarmı mı (HTTP/ping/… — bugün seviye kuralı sertifikayla aynı)
+     */
+    public Map<String, Object> simulateRecipients(Long teamId, String level, boolean standaloneMonitor, Long groupId) {
+        String lvl = level == null ? "HIGH" : level.trim().toUpperCase(Locale.ROOT);
+        if (!LEVEL_ORDER.containsKey(lvl)) throw new IllegalArgumentException("Bilinmeyen seviye: " + level);
+        String alertType = standaloneMonitor ? TYPE_HTTP_DOWN : "EXPIRY";
+        boolean managers = includeManagerContacts(alertType, lvl);
+
+        List<Map<String, Object>> emails = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (String[] team : collectTeamRecipients(teamId, null, groupId)) {
+            if (!seen.add(team[0].toLowerCase())) continue;
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("email", team[0]); m.put("team", team[1]); m.put("source", team[2]); m.put("kind", "TEAM");
+            emails.add(m);
+        }
+        List<EscalationContact> contacts = managers ? getContactsForLevel(lvl, teamId) : List.of();
+        boolean fallbackGlobal = managers && teamId != null && !contacts.isEmpty()
+                && contacts.stream().noneMatch(c -> teamId.equals(c.getTeamId()));
+        List<Map<String, Object>> contactRows = new ArrayList<>();
+        List<Map<String, Object>> webhooks = new ArrayList<>();
+        for (EscalationContact c : contacts) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", c.getId()); m.put("name", c.getName()); m.put("email", c.getEmail());
+            m.put("role", c.getRole()); m.put("min_level", c.getMinAlertLevel()); m.put("team_id", c.getTeamId());
+            boolean dup = c.getEmail() != null && !seen.add(c.getEmail().trim().toLowerCase());
+            m.put("email_duplicate", dup);   // takım adresiyle aynıysa tek mail gider
+            contactRows.add(m);
+            if (c.getWebhookUrl() != null && !c.getWebhookUrl().isBlank()) {
+                Map<String, Object> w = new LinkedHashMap<>();
+                w.put("id", c.getId()); w.put("name", c.getName()); w.put("type", c.getWebhookType());
+                w.put("target", WebhookService.maskUrl(c.getWebhookUrl()));
+                webhooks.add(w);
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("team_id", teamId);
+        out.put("level", lvl);
+        out.put("standalone_monitor", standaloneMonitor);
+        out.put("managers_included", managers);
+        out.put("team_emails", emails);
+        out.put("contacts", contactRows);
+        out.put("contacts_fallback_global", fallbackGlobal);
+        out.put("webhooks", webhooks);
+        out.put("email_total", emails.size() + contactRows.stream().filter(r -> !Boolean.TRUE.equals(r.get("email_duplicate"))
+                && r.get("email") != null && !String.valueOf(r.get("email")).isBlank()).count());
+        return out;
+    }
+
     public List<ReNotifyRecipient> previewReNotify(Long alertId) {
         AlertEvent event = alertEventRepo.findById(alertId)
                 .orElseThrow(() -> new NoSuchElementException("Alert not found: " + alertId));

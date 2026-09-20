@@ -86,6 +86,8 @@ public class AdminController {
     private final AlertThresholdRepository thresholdRepo;
     private final com.sitemonitor.service.ThresholdPreviewService thresholdPreviewService;   // tier eşik önizleme (2026-09-20)
     private final com.sitemonitor.service.AdminHistoryService adminHistoryService;             // sekme değişiklik geçmişi (2026-09-20)
+    private final com.sitemonitor.service.UserPushRecipientResolver userPushRecipientResolver;  // "Kim bilgilendirilir?" push ayağı (2026-09-20)
+    private final com.sitemonitor.service.WebhookService webhookService;                       // eskalasyon webhook testi (2026-09-20)
     private final EscalationContactRepository contactRepo;
     private final AlertEventRepository alertEventRepo;
     private final NotificationLogRepository notificationLogRepo;
@@ -1354,6 +1356,111 @@ public class AdminController {
                     : contactRepo.findByTeamIdInOrderByRoleAsc(scope);
         }
         return ok(Map.of("data", contacts));
+    }
+
+    /**
+     * "Kim bilgilendirilir?" simülatörü (2026-09-20): takım + seviye (+ izleme grubu) → e-posta zinciri, eskalasyon
+     * kişileri, kişi webhook'ları ve push alıcıları — gerçek gönderimle aynı kararlar, yazma yok.
+     * Kapsam: kapsamlı kullanıcı yalnız görüş alanındaki takımı sorabilir.
+     */
+    @GetMapping("/recipients/simulate")
+    public ResponseEntity<Map<String, Object>> simulateRecipients(
+            @RequestParam Long teamId,
+            @RequestParam(defaultValue = "HIGH") String level,
+            @RequestParam(defaultValue = "CERT") String kind,
+            @RequestParam(required = false) Long groupId,
+            HttpSession session) {
+        requirePerm(session, "contacts.list", "view");
+        if (!SessionScope.isGlobalViewer(session)) {
+            List<Long> scope = SessionScope.viewTeamIds(session);
+            if (scope == null || !scope.contains(teamId)) throw new NoSuchElementException("Team not found: " + teamId);
+        }
+        boolean standalone = "MONITOR".equalsIgnoreCase(kind);
+        Map<String, Object> out = new LinkedHashMap<>(escalationService.simulateRecipients(teamId, level, standalone, groupId));
+        out.put("team_name", teamRepo.findById(teamId).map(Team::getName).orElse(null));
+        // Push ayağı — kişisel opt-out/unvan verisi taşır: yalnız global yönetici görür.
+        if (SessionScope.isGlobalAdmin(session)) {
+            try {
+                out.put("push", userPushRecipientResolver.explain(teamId, String.valueOf(out.get("level"))));
+            } catch (RuntimeException e) {
+                out.put("push_error", e.getMessage());
+            }
+        }
+        return ok(Map.of("data", out));
+    }
+
+    /**
+     * Eskalasyon kişisinin webhook'una TEST mesajı (2026-09-20): yanlış URL ilk kritik alarmda değil kurulumda
+     * yakalansın. Sonuç notification_log'a yazılır (trigger WEBHOOK_TEST) → "son teslimat" sütunu güncellenir.
+     */
+    @PostMapping("/contacts/{id}/webhook-test")
+    public ResponseEntity<Map<String, Object>> testContactWebhook(@PathVariable Long id, HttpSession session) {
+        requirePerm(session, "contacts.crud", "edit");
+        EscalationContact c = contactRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Contact not found: " + id));
+        if (!SessionScope.isGlobalViewer(session)) {
+            List<Long> scope = SessionScope.viewTeamIds(session);
+            if (c.getTeamId() == null || scope == null || !scope.contains(c.getTeamId())) {
+                throw new NoSuchElementException("Contact not found: " + id);
+            }
+        }
+        if (c.getWebhookUrl() == null || c.getWebhookUrl().isBlank()) {
+            throw new IllegalArgumentException(com.sitemonitor.util.Msg.t("Bu kişide webhook adresi yok.", "This contact has no webhook URL."));
+        }
+        String title = com.sitemonitor.util.Msg.t("SiteMonitor webhook testi", "SiteMonitor webhook test");
+        String message = com.sitemonitor.util.Msg.t(
+                "Bu bir test mesajıdır — eskalasyon kişisi \"" + c.getName() + "\" için webhook doğrulandı. Alarm değildir.",
+                "This is a test message — the webhook for escalation contact \"" + c.getName() + "\" is working. Not an alert.");
+        String status;
+        String error = null;
+        try {
+            webhookService.send(c.getWebhookType(), c.getWebhookUrl(), title, message, "INFO");
+            status = "SENT";
+        } catch (Exception e) {
+            error = e.getMessage();
+            status = "FAILED: " + error;
+        }
+        try {
+            NotificationLog entry = new NotificationLog();
+            entry.setAlertEventId(0L);   // sentinel: alarm kaynaklı DEĞİL (kolon NOT NULL — rapor/anomali mailleriyle aynı desen)
+            entry.setSentAt(now());
+            entry.setRecipientName(c.getName());
+            entry.setRecipientEmail(c.getEmail());
+            entry.setRecipientRole(c.getRole());
+            entry.setSubject(title);
+            entry.setMessage(message);
+            entry.setEmailStatus("SKIPPED");
+            entry.setWebhookStatus(status);
+            entry.setTrigger("WEBHOOK_TEST");
+            notificationLogRepo.save(entry);
+        } catch (RuntimeException e) {
+            log.warn("Webhook test logu kaydedilemedi: {}", e.getMessage());
+        }
+        auditService.recordAction("CONTACT_WEBHOOK_TEST", session, "ESCALATION_CONTACT", String.valueOf(id), c.getName(),
+                AuditDetail.of("webhook_type", c.getWebhookType(), "status", status));
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("status", "SENT".equals(status) ? "SENT" : "FAILED");
+        data.put("error", error);
+        data.put("target", com.sitemonitor.service.WebhookService.maskUrl(c.getWebhookUrl()));
+        return ok(Map.of("data", data));
+    }
+
+    /** Kişi e-postası (küçük harf) → son webhook teslimatı {at, status, trigger} (2026-09-20). */
+    @GetMapping("/contacts/webhook-status")
+    public ResponseEntity<Map<String, Object>> contactWebhookStatus(HttpSession session) {
+        requirePerm(session, "contacts.list", "view");
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (NotificationLog n : notificationLogRepo.findLatestWebhookPerRecipient()) {
+            if (n.getRecipientEmail() == null) continue;
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("at", n.getSentAt());
+            String ws = n.getWebhookStatus() == null ? "" : n.getWebhookStatus();
+            m.put("status", ws.startsWith("FAILED") ? "FAILED" : ws);
+            m.put("detail", ws.startsWith("FAILED: ") ? ws.substring(8) : null);
+            m.put("trigger", n.getTrigger());
+            out.put(n.getRecipientEmail().trim().toLowerCase(java.util.Locale.ROOT), m);
+        }
+        return ok(Map.of("data", out));
     }
 
     @PostMapping("/contacts")

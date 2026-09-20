@@ -94,6 +94,7 @@ public final class AuditEventCatalog {
             "CONTACT_CREATE",
             "CONTACT_DELETE",
             "CONTACT_UPDATE",
+            "CONTACT_WEBHOOK_TEST",
             "DIAGNOSTICS_DOMAIN_EXPIRY",
             "DIAGNOSTICS_HSTS",
             "DIAGNOSTICS_NETWORK",
