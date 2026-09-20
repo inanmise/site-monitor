@@ -13106,7 +13106,7 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .sml-card { border: 1px solid var(--border); border-radius: 10px; background: var(--bg-surface); padding: 12px 14px; min-width: 0; }
 .sml-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 600; margin-bottom: 8px; flex-wrap: wrap; }
 .sml-chart { width: 100%; min-height: 180px; }
-.sml-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.sml-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }   /* 2026-09-21 kullanıcı bildirimi: kırılım kartları ALT ALTA (yan yana 280 px kartta ad sütunu harf harf kırılıyordu) */
 .sml-empty { font-size: .85em; color: var(--text-muted); padding: 10px 0; }
 .sml-mini { width: 100%; border-collapse: collapse; font-size: .82em; }
 .sml-mini th { text-align: left; font-weight: 600; color: var(--text-muted); padding: 4px 6px; border-bottom: 1px solid var(--border); }
@@ -13114,12 +13114,13 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .sml-mini tr.is-active td { background: color-mix(in srgb, var(--primary) 8%, transparent); }
 /* Mini kırılım tabloları taşmasın (2026-09-20): sabit yerleşim, ad sütunu esner + kırılır, sayılar dar/sağa, tarih tek satır */
 .sml-mini { table-layout: fixed; }
-.sml-mini-name { min-width: 0; overflow-wrap: anywhere; }
-.sml-mini-name .rn-domain-btn { white-space: normal; overflow-wrap: anywhere; text-align: left; }
-.sml-mini-num { width: 56px; text-align: right; }
-.sml-mini th.sml-mini-num, .sml-mini th.sml-mini-date { white-space: normal; line-height: 1.15; font-size: .78em; vertical-align: bottom; }
-.sml-mini-date { width: 88px; white-space: nowrap; }
-.sml-mini-mon { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
+.sml-mini-name { min-width: 0; overflow-wrap: break-word; hyphens: auto; }   /* anywhere değil: kelime sığıyorsa harf harf kırma */
+.sml-mini-name .rn-domain-btn { white-space: normal; overflow-wrap: break-word; text-align: left; }
+.sml-mini-name .today-level, .sml-mini-name .today-type { white-space: nowrap; }
+.sml-mini-num { width: 84px; text-align: right; }
+.sml-mini th.sml-mini-num, .sml-mini th.sml-mini-date { white-space: nowrap; vertical-align: bottom; }
+.sml-mini-date { width: 140px; white-space: nowrap; }
+.sml-mini-mon { display: flex; flex-direction: row; gap: 8px; align-items: center; flex-wrap: wrap; }   /* tam genişlikte tür + ad tek satır */
 .sml-mini-monname { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 100%; }
 .sml-stop { display: inline-flex; }
 .sml-ok { color: var(--success); }
