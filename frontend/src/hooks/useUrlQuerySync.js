@@ -15,7 +15,8 @@ import { useEffect, useRef } from 'react'
  */
 
 /** Sekme değişince App.handleTabChange'in temizlediği sayfa-durumu paramları (tek doğruluk kaynağı). */
-export const PAGE_STATE_PARAMS = ['group', 'tag', 'team', 'q', 'stat', 'sort', 'page', 'ps', 'monitor', 'range', 'mtab', 'domain', 'incident', 'sec', 'view', 'alert', 'type', 'level', 'ack', 'from', 'to']
+export const PAGE_STATE_PARAMS = ['group', 'tag', 'team', 'q', 'stat', 'sort', 'page', 'ps', 'monitor', 'range', 'mtab', 'domain', 'incident', 'sec', 'view', 'alert', 'type', 'level', 'ack', 'from', 'to',
+  'atype', 'astatus', 'arange', 'aq']   // Aktivite Logu süzgeçleri (QA ISSUE-003: sekme değişince başka sekmeye taşınıyordu)
 
 /**
  * Sekme değişince temizlenecek param AİLELERİ (önek eşleşmesi).
