@@ -142,15 +142,19 @@ function SimResult({ data, t, isAdmin }) {
           <div className="sim-block sim-block--wide">
             <h4><BellRing size={14} /> {t('sim.pushTitle')}</h4>
             {!push ? <p className="field-hint">{data.push_error || t('sim.none')}</p> : push.length === 0 ? <p className="field-hint">{t('sim.none')}</p> : (
-              <ul className="sim-list">
-                {push.map((m, i) => (
-                  <li key={(m.username || '') + i} className={m.decision === 'RECIPIENT' ? '' : 'is-skipped'}>
-                    <strong>{m.display_name || m.displayName || m.username}</strong>
-                    <span className="sim-src">{m.group ? `${m.group}` : '—'}</span>
-                    <span className={`up-decision up-decision--${m.decision}`}>{t('userpush.decision.' + m.decision)}</span>
-                  </li>
-                ))}
-              </ul>
+              /* 2026-09-21 (kullanıcı bildirimi): satır satır serbest metin yerine sütunlu tablo — kişi / grup / karar hizalı */
+              <table className="sim-table">
+                <thead><tr><th>{t('sim.pushColPerson')}</th><th>{t('sim.pushColGroup')}</th><th>{t('sim.pushColDecision')}</th></tr></thead>
+                <tbody>
+                  {push.map((m, i) => (
+                    <tr key={(m.username || '') + i} className={m.decision === 'RECIPIENT' ? '' : 'is-skipped'}>
+                      <td><strong>{m.display_name || m.displayName || m.username}</strong>{m.username && (m.display_name || m.displayName) && <span className="sim-src sim-sub audit-mono">{m.username}</span>}</td>
+                      <td className="sim-src">{m.group || '—'}{m.min_level ? ` · ≥ ${m.min_level}` : ''}</td>
+                      <td><span className={`up-decision up-decision--${m.decision}`}>{t('userpush.decision.' + m.decision)}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         )}

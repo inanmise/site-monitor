@@ -75,7 +75,7 @@ export function KpiDetailModal({ detail, data, onClose, onUser, winLabel }) {
   const byName = new Map((data.login_status || []).map((u) => [String(u.username || '').toLowerCase(), u]))
   const who = (name, r = {}) => { const u = byName.get(String(name || '').toLowerCase()) || {}; return { ...u, ...Object.fromEntries(Object.entries(r).filter(([, v]) => v != null)) } }
   const userCell = (name, r) => { const u = who(name, r); return name
-    ? <><button type="button" className="uact-link" onClick={() => onUser?.({ username: name, ...u })}><UserBadge username={name} userId={u.user_id} displayName={u.display_name} inline size="sm" /></button>{u.system_role && <span className="uact-pill">{u.system_role}</span>}</>
+    ? <><button type="button" className="uact-link" onClick={() => onUser?.({ username: name, ...u })}><UserBadge username={name} userId={u.user_id} displayName={u.display_name} inline nameOnly size="sm" /></button></>
     : '—' }
   const teamCell = (name, r) => { const u = who(name, r); return u.team_name ? <TeamBadge teamId={u.team_id} teamName={u.team_name} /> : <span className="sys-muted">—</span> }
   return (
