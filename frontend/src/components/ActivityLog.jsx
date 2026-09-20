@@ -22,7 +22,8 @@ export function activityTarget(row) {
   if (!row) return null
   const type = String(row.monitor_type || '').toUpperCase()
   const host = row.target ? String(row.target).replace(/^https?:\/\//i, '').split('/')[0].split(':')[0] : ''
-  if (type === 'CERT') return { tab: 'dashboard', params: host ? { q: host } : undefined }
+  // Genel Bakış canlı geçişte `domain` paramını dinler (App onNav → setSearch); `q` yalnız ilk yüklemede okunur (QA ISSUE-001).
+  if (type === 'CERT') return { tab: 'dashboard', params: host ? { domain: host } : undefined }
   if (type === 'UPTIME') return { tab: 'uptime', params: host ? { q: host } : undefined }
   const tab = MONITOR_TABS[type]
   if (!tab) return null

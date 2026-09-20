@@ -71,7 +71,8 @@ public class MonitorRefResolver {
     public static Map<String, Object> paramsFor(Ref ref, String domain) {
         Map<String, Object> p = new LinkedHashMap<>();
         if (ref == null) return p;
-        if ("cert".equals(ref.family())) { if (domain != null && !domain.isBlank()) p.put("q", domain); return p; }
+        // Genel Bakış canlı sekme geçişinde `domain` paramını uygular (App onNav); `q` yalnız ilk yüklemede okunur (QA ISSUE-001).
+        if ("cert".equals(ref.family())) { if (domain != null && !domain.isBlank()) p.put("domain", domain); return p; }
         if (ref.monitorId() != null && !"scripted".equals(ref.family())) p.put("monitor", ref.monitorId());
         return p;
     }
