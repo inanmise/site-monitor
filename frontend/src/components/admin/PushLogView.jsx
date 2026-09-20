@@ -18,6 +18,7 @@ import TeamBadge from '../ui/TeamBadge.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
 import DateTimeRangePicker from '../ui/DateTimeRangePicker.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
+import PushBreakdownPanel from './PushBreakdownPanel.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
 
@@ -103,6 +104,7 @@ export default function PushLogView({ onBack, initial }) {
   const [detail, setDetail] = useState(null)
   const [busy, setBusy] = useState(false)
   const reqRef = useRef(0)
+  const tableRef = useRef(null)   // kırılım rakamı tıklanınca ana tabloya kaydır (2026-09-21)
 
   const patch = useCallback((p) => { setF((prev) => ({ ...prev, ...p })); setPage(1) }, [])
   useEffect(() => { const id = setTimeout(() => { if (qInput !== f.q) patch({ q: qInput }) }, 300); return () => clearTimeout(id) }, [qInput, f.q, patch])
@@ -202,25 +204,12 @@ export default function PushLogView({ onBack, initial }) {
   const sortIcon = (field) => { const [cur, dir] = f.sort.split(','); if (cur !== field) return null; return dir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} /> }
   const windowText = f.range === 'custom' ? `${f.from ? formatDate(toIso(f.from)) : '…'} → ${f.to ? formatDate(toIso(f.to)) : t('sml.now')}` : t(`sml.range.${f.range}`)
   const retryable = (x) => x.kind === 'FAILED' || x.kind === 'BLOCKED'
-  const miniTable = (title, list, keyFn, labelCell, onPick, isActive) => (
-    <div className="sml-card">
-      <div className="sml-card-head"><span>{title}</span></div>
-      {list.length === 0 ? <div className="sml-empty">{t('sml.noData')}</div> : (
-        <table className="sml-mini">
-          <thead><tr><th className="sml-mini-name">{t('sml.colName')}</th><th className="sml-mini-num">{t('sml.kpiTotal')}</th><th className="sml-mini-num">{t('health.statusSent')}</th><th className="sml-mini-num">{t('health.statusFailed')}</th><th className="sml-mini-date">{t('sml.lastFailed')}</th></tr></thead>
-          <tbody>
-            {list.map((x) => (
-              <tr key={keyFn(x)} className={isActive(x) ? 'is-active' : ''}>
-                <td className="sml-mini-name">{labelCell(x, onPick)}</td>
-                <td className="sml-mini-num">{x.total}</td><td className="sml-mini-num sml-ok">{x.sent}</td><td className={`sml-mini-num${x.failed > 0 ? ' sml-bad' : ''}`}>{x.failed}</td>
-                <td className="sys-small sml-mini-date">{x.last_failed_at ? formatDate(x.last_failed_at) : '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </div>
-  )
+  /** Kırılım rakamı → süzgeç (boyut + durum) + tabloya kaydırma. İzleme boyutu metin aramasıyla süzülür (q). */
+  const applyBreakdown = (p) => {
+    if ('q' in p) setQInput(p.q || '')
+    patch(p)
+    setTimeout(() => { try { tableRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }) } catch { /* jsdom */ } }, 50)
+  }
 
   return (
     <div className="sml">
@@ -304,21 +293,21 @@ export default function PushLogView({ onBack, initial }) {
       </div>
 
       <div className="sml-grid">
-        {miniTable(t('sml.byTeam'), teams, (x) => x.team_id ?? '-',
-          (x) => x.team_id != null ? <button type="button" className="rn-domain-btn" onClick={() => patch({ teamId: String(f.teamId) === String(x.team_id) ? '' : String(x.team_id) })}>{x.team_name || `#${x.team_id}`}</button> : <span className="sys-muted">{t('sml.noTeam')}</span>,
-          null, (x) => String(x.team_id ?? '') === String(f.teamId))}
-        {miniTable(t('pl.topUsers'), summary?.top_users || [], (x) => x.username,
-          (x) => <button type="button" className="rn-domain-btn" onClick={() => patch({ username: f.username === x.username ? '' : x.username })}>{x.display_name || x.username}{x.display_name && <div className="sys-muted sys-small">{x.username}</div>}</button>,
-          null, (x) => f.username === x.username)}
-        {miniTable(t('pl.topMonitors'), summary?.top_monitors || [], (x) => `${x.monitor_type}:${x.monitor_name}`,
-          (x) => <span className="sml-mini-mon"><span className="today-type">{x.monitor_type}</span><button type="button" className="rn-domain-btn sml-mini-monname" title={x.monitor_name || ''} onClick={() => setQInput(x.monitor_name || '')}>{x.monitor_name}</button></span>,
-          null, () => false)}
-        {miniTable(t('pl.byLevel'), summary?.levels || [], (x) => x.level ?? '-',
-          (x) => x.level ? <button type="button" className="rn-domain-btn" onClick={() => patch({ level: f.level === x.level ? '' : x.level })}><span className={`today-level today-level--${String(x.level).toLowerCase()}`}>{x.level}</span></button> : <span className="sys-muted">—</span>,
-          null, (x) => f.level === x.level)}
+        <PushBreakdownPanel title={t('sml.byTeam')} rows={teams} keyOf={(x) => x.team_id ?? '-'} status={f.status} onFilter={applyBreakdown}
+          label={(x) => x.team_id != null ? <TeamBadge teamId={x.team_id} teamName={x.team_name || `#${x.team_id}`} /> : <span className="sys-muted">{t('sml.noTeam')}</span>}
+          dim={(x) => x.team_id != null ? { teamId: String(x.team_id) } : null} isDimActive={(x) => x.team_id != null && String(x.team_id) === String(f.teamId)} />
+        <PushBreakdownPanel title={t('pl.topUsers')} rows={summary?.top_users || []} keyOf={(x) => x.username} status={f.status} onFilter={applyBreakdown}
+          label={(x) => <UserBadge username={x.username} displayName={x.display_name} inline size="sm" />}
+          dim={(x) => ({ username: x.username })} isDimActive={(x) => !!x.username && f.username === x.username} />
+        <PushBreakdownPanel title={t('pl.topMonitors')} rows={summary?.top_monitors || []} keyOf={(x) => `${x.monitor_type}:${x.monitor_name}`} status={f.status} onFilter={applyBreakdown}
+          label={(x) => <span className="sml-mini-mon"><span className="today-type">{x.monitor_type}</span><span className="pbp-mon" title={x.monitor_name || ''}>{x.monitor_name}</span></span>}
+          dim={(x) => ({ q: x.monitor_name || '' })} isDimActive={(x) => !!x.monitor_name && f.q === x.monitor_name} />
+        <PushBreakdownPanel title={t('pl.byLevel')} rows={summary?.levels || []} keyOf={(x) => x.level ?? '-'} status={f.status} onFilter={applyBreakdown}
+          label={(x) => x.level ? <span className={`today-level today-level--${String(x.level).toLowerCase()}`}>{x.level}</span> : <span className="sys-muted">—</span>}
+          dim={(x) => x.level ? { level: x.level } : null} isDimActive={(x) => !!x.level && f.level === x.level} />
       </div>
 
-      <div className="sml-card sml-table-card">
+      <div className="sml-card sml-table-card" ref={tableRef}>
         {loading && !summary ? <LoadingBlock label={t('sys.loading')} fullWidth /> : rows.total === 0 ? (
           <StatusBlock tone="neutral" icon={Webhook} title={t('health.smtpLogNoMatch')} description={activeCount > 0 ? t('sml.noMatchHint') : t('pl.noRowsHint')} />
         ) : (
