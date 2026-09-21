@@ -4,6 +4,7 @@ import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Inbo
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
 import { deleteInventoryByDomain } from './utils/deleteInventory.js'
+import { formatDuration } from './utils/incidentMeta.js'
 import { useToast } from './components/ui/Toast.jsx'
 import { useT } from './i18n/index.jsx'
 import { usePagination } from './hooks/usePagination.js'
@@ -117,16 +118,6 @@ const CHECK_CONCURRENCY = Number(import.meta.env.VITE_CHECK_CONCURRENCY ?? 6)
 function initialSessionExpired() {
   try { return new URLSearchParams(window.location.search).get('session') === 'expired' }
   catch { return false }
-}
-
-function formatDurationShort(ms) {
-  if (ms == null || ms < 0) return '—'
-  const s = Math.floor(ms / 1000)
-  if (s < 60)   return `${s}s`
-  const m = Math.floor(s / 60)
-  if (m < 60)   return `${m} dk ${s % 60} sn`
-  const h = Math.floor(m / 60)
-  return `${h} sa ${m % 60} dk`
 }
 
 // Mail/derin-link ile gelen ?tab= değeri — yalnız bilinen sekme anahtarları kabul edilir.
@@ -1375,7 +1366,7 @@ export default function App() {
                                   <div>
                                     <div className="ahc-tl-label">{t('app.outageDuration')}</div>
                                     <div className="ahc-tl-val">
-                                      {ev.duration_ms ? formatDurationShort(ev.duration_ms) : '—'}
+                                      {ev.duration_ms ? formatDuration(ev.duration_ms, t) : '—'}   /* i18n birimler (QA ISSUE-003): eski yerel biçimleyici EN'de "dk/sn" yazıyordu */
                                     </div>
                                   </div>
                                 </div>
