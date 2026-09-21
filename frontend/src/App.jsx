@@ -1371,7 +1371,8 @@ export default function App() {
                                   <div>
                                     <div className="ahc-tl-label">{t('app.outageDuration')}</div>
                                     <div className="ahc-tl-val">
-                                      {ev.duration_ms ? formatDuration(ev.duration_ms, t) : '—'}   /* i18n birimler (QA ISSUE-003): eski yerel biçimleyici EN'de "dk/sn" yazıyordu */
+                                      {/* i18n birimler (QA ISSUE-003): eski yerel biçimleyici EN'de "dk/sn" yazıyordu */}
+                                      {ev.duration_ms ? formatDuration(ev.duration_ms, t) : '—'}
                                     </div>
                                   </div>
                                 </div>
