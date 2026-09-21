@@ -971,7 +971,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
                 <span className="field-hint">{t('page.excludeHint')}</span></label>
               {/* Kurumsal vekil (2026-09-21): sertifika envanteriyle aynı karar */}
               <MonitorProxyField value={form.useProxy} onChange={v => setForm(f => ({ ...f, useProxy: v }))}
-                effective={modal && typeof modal === 'object' && modal.proxy_effective ? { via: modal.proxy_effective, source: modal.proxy_source, bypassed: modal.proxy_bypassed } : null} />
+                effective={modal && typeof modal === 'object' && modal.proxy_effective ? { via: modal.proxy_effective, source: modal.proxy_source, bypassed: modal.proxy_bypassed, mode: modal.use_proxy } : null} />
 
               <label className="checkbox-label full-width">
                 <input type="checkbox" checked={form.alertThirdParty} onChange={e => setForm(f => ({ ...f, alertThirdParty: e.target.checked }))} />{t('page.alertThirdParty')}</label>

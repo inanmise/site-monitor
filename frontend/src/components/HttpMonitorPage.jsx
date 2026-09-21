@@ -738,7 +738,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
                 <input type="checkbox" checked={form.verifySsl} onChange={e => setForm(f => ({ ...f, verifySsl: e.target.checked }))} />{t('http.verifySsl')}</label>
               {/* Kurumsal vekil (2026-09-21): sertifika envanteriyle aynı karar; düzenlemede etkin sonuç ipucu */}
               <MonitorProxyField value={form.useProxy} onChange={v => setForm(f => ({ ...f, useProxy: v }))}
-                effective={modal && typeof modal === 'object' && modal.proxy_effective ? { via: modal.proxy_effective, source: modal.proxy_source, bypassed: modal.proxy_bypassed } : null} />
+                effective={modal && typeof modal === 'object' && modal.proxy_effective ? { via: modal.proxy_effective, source: modal.proxy_source, bypassed: modal.proxy_bypassed, mode: modal.use_proxy } : null} />
 
               <label><span>{t('http.name')}</span>
                 <input value={form.name} placeholder={form.url} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>

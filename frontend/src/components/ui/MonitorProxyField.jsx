@@ -9,8 +9,10 @@ import SearchableSelect from './SearchableSelect.jsx'
  *          değilse doğrudan (bugünkü davranış; mevcut izlemeler yol değiştirmez).
  *  • ON    her zaman vekil (vekil tanımlı ve hedef NO_PROXY'de değilse — sertifika kontrolüyle aynı kural).
  *  • OFF   her zaman doğrudan.
- * `effective` (liste satırından: proxy_effective / proxy_source / proxy_bypassed) verilirse kararın gerçekte ne
- * olduğu ipucu olarak yazılır — "AUTO seçtim ama neden doğrudan?" sorusu formda cevaplansın.
+ * `effective` (liste satırından: proxy_effective / proxy_source / proxy_bypassed / mode=use_proxy) verilirse kararın
+ * gerçekte ne olduğu ipucu olarak yazılır — "AUTO seçtim ama neden doğrudan?" sorusu formda cevaplansın.
+ * Kip formda DEĞİŞTİRİLMİŞSE ipucu gizlenir (QA ISSUE-001, 2026-09-21): karar kaydedilmiş kipe aittir; "Her zaman
+ * vekil" seçilmişken altında "Doğrudan · envanter kaydından" yazması kaydedilmemiş seçim için yanlış iddia olurdu.
  */
 export const PROXY_MODES = ['AUTO', 'ON', 'OFF']
 
@@ -18,12 +20,16 @@ export default function MonitorProxyField({ value = 'AUTO', onChange, effective 
   const t = useT()
   const mode = PROXY_MODES.includes(value) ? value : 'AUTO'
   const options = PROXY_MODES.map((m) => ({ value: m, label: t(`mon.proxy.${m}`) }))
+  // `mode` anahtarı verilmişse kaydedilmiş kiptir (null/bilinmeyen = AUTO, backend sözleşmesi); verilmemişse eski çağıran.
+  const hasSaved = !!effective && Object.prototype.hasOwnProperty.call(effective, 'mode')
+  const savedMode = hasSaved ? (PROXY_MODES.includes(effective.mode) ? effective.mode : 'AUTO') : null
+  const showEffective = !!effective && (!hasSaved || savedMode === mode)
   return (
     <label className="full-width mon-proxy-field">
       <span>{t('mon.proxy.label')}</span>
       <SearchableSelect value={mode} onChange={onChange} options={options} searchThreshold={99} ariaLabel={t('mon.proxy.label')} disabled={disabled} />
       <span className="field-hint">{t(`mon.proxy.hint.${mode}`)}</span>
-      {effective && (
+      {showEffective && (
         <span className={`field-hint mon-proxy-eff mon-proxy-eff--${effective.via === 'proxy' ? 'proxy' : 'direct'}`}>
           {effective.via === 'proxy' ? <Network size={12} /> : <Globe size={12} />}
           {effective.via === 'proxy' ? t('mon.proxy.effProxy') : t('mon.proxy.effDirect')}
