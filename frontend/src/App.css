@@ -9431,6 +9431,8 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .udir-badges { display: flex; flex-wrap: wrap; gap: 4px; }
 /* İzleme vekil alanı + rozeti (2026-09-21) */
 .mon-proxy-field .field-hint { display: block; margin-top: 4px; }
+/* Üç seçenekli select tam satırı kaplamasın — kardeş "Metod" sütunu genişliği (QA ISSUE-002, kullanıcı bildirimi 2026-09-21) */
+.mon-proxy-field .ss-wrap { max-width: 320px; }
 .mon-proxy-eff { display: inline-flex; align-items: center; gap: 4px; }
 .mon-proxy-eff--proxy { color: var(--primary); }
 .mon-proxy-badge { display: inline-flex; align-items: center; gap: 4px; font-size: .92em; color: var(--text-light); }
