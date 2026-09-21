@@ -5279,6 +5279,7 @@ export const TR = {
   'ccx.healthTip': 'Sertifika sağlık kuralları: {0}/{1} temiz — tıkla → Sağlık sekmesi',
   'ccx.openAlerts': '{0} açık alarm',
   'ccx.uptime24': 'erişilebilirlik (24 sa)',
+  'ccx.pct': '%{0}',   // yüzde işareti dile bağlı (QA ISSUE-004): TR önde, EN sonda
   'ccx.uptimeTip': 'Son 24 saatte {0} HTTP kontrolü · son kontrol {1}',
   'ccx.changed': 'Sertifika değişti',
   'ccx.changedAt': 'Değişim: {0}',
@@ -13410,6 +13411,7 @@ export const EN = {
   'ccx.healthTip': 'Certificate health rules: {0}/{1} clean — click for the Health tab',
   'ccx.openAlerts': '{0} open alerts',
   'ccx.uptime24': 'availability (24 h)',
+  'ccx.pct': '{0}%',
   'ccx.uptimeTip': '{0} HTTP checks in the last 24 hours · last check {1}',
   'ccx.changed': 'Certificate changed',
   'ccx.changedAt': 'Changed: {0}',
