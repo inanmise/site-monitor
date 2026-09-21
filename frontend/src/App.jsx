@@ -152,6 +152,9 @@ function initialTabFromUrl() {
 }
 
 
+/** Uyarılar → Ağ kesinti geçmişi: varsayılan görünür kart sayısı (ONGOING'ler her zaman görünür). */
+const OUTAGE_HISTORY_FOLD = 5
+
 export default function App() {
   const { showConfirm } = useDialog()
   const toast = useToast()
@@ -230,6 +233,9 @@ export default function App() {
   const [networkStatus, setNetworkStatus] = useState(null)
   const [networkBannerDismissed, setNetworkBannerDismissed] = useState(false)
   const [outageHistory, setOutageHistory] = useState([])
+  // Uyarılar sekmesi kesinti geçmişi: varsayılan katlı (QA ISSUE-002, 2026-09-21 — 50 kart alt alta 16k px'ti). Ham kayıt
+  // silinmez/özetlenmez (ürün kuralı); yalnız ilk OUTAGE_HISTORY_FOLD kartı + tüm ONGOING'ler görünür, kalanı bir tıkla açılır.
+  const [outageHistoryExpanded, setOutageHistoryExpanded] = useState(false)
   const [teamStats, setTeamStats] = useState(null)
   const [weakAlgStats, setWeakAlgStats] = useState(null)
   const [statsVisible, setStatsVisible] = useState(false)
@@ -1325,7 +1331,8 @@ export default function App() {
                     <div className="loading muted">{t('app.networkOutageHistoryEmpty')}</div>
                   ) : (
                     <div className="alert-history-cards">
-                      {outageHistory.map(ev => {
+                      {(outageHistoryExpanded ? outageHistory
+                        : outageHistory.filter((ev, i) => i < OUTAGE_HISTORY_FOLD || ev.status === 'ONGOING')).map(ev => {
                         const ratePct = ev.error_rate != null ? Math.round(ev.error_rate * 100) : null
                         const thresholdPct = ev.threshold != null ? Math.round(ev.threshold * 100) : null
                         const healthy = (ev.total_checks ?? 0) - (ev.network_errors ?? 0)
@@ -1406,6 +1413,13 @@ export default function App() {
                         )
                       })}
                     </div>
+                  )}
+                  {outageHistory.length > OUTAGE_HISTORY_FOLD && (
+                    <button type="button" className="fc-show-more outage-history-toggle" onClick={() => setOutageHistoryExpanded(v => !v)}>
+                      {outageHistoryExpanded
+                        ? t('app.outageHistoryShowLess', OUTAGE_HISTORY_FOLD)
+                        : t('app.outageHistoryShowAll', outageHistory.length)}
+                    </button>
                   )}
                 </div>
               </div>

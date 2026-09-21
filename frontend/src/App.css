@@ -11933,6 +11933,8 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
   transition: background .15s;
 }
 .fc-show-more:hover { filter: brightness(1.1); }
+/* Uyarılar → Ağ kesinti geçmişi katlama düğmesi (QA ISSUE-002, 2026-09-21) */
+.outage-history-toggle { margin-top: 10px; }
 
 /* ── Pie empty state ── */
 .fc-pie-empty { display: flex; flex-direction: column; }
