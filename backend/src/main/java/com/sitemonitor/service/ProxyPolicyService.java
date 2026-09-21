@@ -53,6 +53,16 @@ public class ProxyPolicyService {
         return (ON.equals(v) || OFF.equals(v)) ? v : AUTO;
     }
 
+    /**
+     * Sayfa Hızı için varsayılan <b>OFF</b> (2026-09-21): ölçüm bugüne kadar pod'dan doğrudan gidiyordu ve vekil gecikmesi
+     * ölçüme karışır; mevcut kayıtlar (null) ve boş/bilinmeyen girdi doğrudan kalır. Yalnız açıkça {@code AUTO} ya da
+     * {@code ON} yazılmışsa yol değişir.
+     */
+    public static String normalizeModeDefaultOff(Object raw) {
+        String v = raw == null ? "" : raw.toString().trim().toUpperCase(Locale.ROOT);
+        return (ON.equals(v) || AUTO.equals(v)) ? v : OFF;
+    }
+
     /** URL'den alan adı; şemasız/bozuk girdide null. */
     public static String hostOf(String url) {
         if (url == null || url.isBlank()) return null;

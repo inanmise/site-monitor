@@ -2845,11 +2845,25 @@ public class MonitoringController {
 
     /** Liste satırına vekil alanları: tercih, etkin karar ve kaynağı (kart rozeti + form ipucu). */
     private void putProxyFields(Map<String, Object> item, String url, String mode) {
-        com.sitemonitor.service.ProxyPolicyService.Decision d = proxyDecision(url, mode);
-        item.put("use_proxy",        com.sitemonitor.service.ProxyPolicyService.normalizeMode(mode));
+        putProxyFieldsNormalized(item, url, com.sitemonitor.service.ProxyPolicyService.normalizeMode(mode));
+    }
+
+    /**
+     * @param normalizedMode çağıranın kuralıyla normalize edilmiş kip (HTTP/Keyword/Sayfa: null→AUTO; Sayfa Hızı: null→OFF)
+     */
+    private void putProxyFieldsNormalized(Map<String, Object> item, String url, String normalizedMode) {
+        com.sitemonitor.service.ProxyPolicyService.Decision d = proxyPolicy == null
+                ? com.sitemonitor.service.ProxyPolicyService.Decision.direct("none")
+                : proxyPolicy.decide(url, normalizedMode);
+        item.put("use_proxy",        normalizedMode);
         item.put("proxy_effective",  d.via());
         item.put("proxy_source",     d.source());
         item.put("proxy_bypassed",   d.bypassed());
+    }
+
+    /** Sayfa Hızı satırı: varsayılan OFF (2026-09-21) — mevcut kayıtlar (null) doğrudan görünür. */
+    private void putPageSpeedProxyFields(Map<String, Object> item, com.sitemonitor.model.PageSpeedMonitor m) {
+        putProxyFieldsNormalized(item, m.getUrl(), com.sitemonitor.service.ProxyPolicyService.normalizeModeDefaultOff(m.getUseProxy()));
     }
 
     private void applyHttpFeatureFields(HttpMonitor m, Map<String, Object> body) {
@@ -3392,8 +3406,13 @@ public class MonitoringController {
         // eşiği ona bakarak koysun.
         auditService.recordAction("MONITOR_TEST", session, "PAGESPEED_MONITOR", "test",
                 AuditDetail.of("url", AuditDetail.safeTarget(url)), null);
+        com.sitemonitor.service.ProxyPolicyService.Decision psd = proxyPolicy == null
+                ? com.sitemonitor.service.ProxyPolicyService.Decision.direct("none")
+                : proxyPolicy.decide(url, com.sitemonitor.service.ProxyPolicyService.normalizeModeDefaultOff(draft.getUseProxy()));
         PageSpeedCheckerService.Result r = pageSpeedChecker.test(draft);
         Map<String, Object> out = new LinkedHashMap<>();
+        out.put("via",            psd.via());
+        out.put("proxy_source",   psd.source());
         out.put("status",         r.status());
         out.put("reachable",      r.reachable());
         out.put("http_status",    r.statusCode());
@@ -3502,6 +3521,8 @@ public class MonitoringController {
 
         if (body.containsKey("userAgent")) m.setUserAgent(blank(body.get("userAgent")) ? null : body.get("userAgent").toString().trim());
         if (body.get("sendDnt") instanceof Boolean b) m.setSendDnt(b);
+        // Vekil kipi (2026-09-21): anahtar yoksa dokunma (mevcut kayıt korunur); null/boş/bilinmeyen → OFF (varsayılan doğrudan)
+        if (body.containsKey("useProxy")) m.setUseProxy(com.sitemonitor.service.ProxyPolicyService.normalizeModeDefaultOff(body.get("useProxy")));
         if (body.get("excludeTrackers") instanceof Boolean b) m.setExcludeTrackers(b);
         if (body.containsKey("trackerPatterns")) m.setTrackerPatterns(blank(body.get("trackerPatterns")) ? null : body.get("trackerPatterns").toString());
         if (body.get("resourceConcurrency") instanceof Number n) m.setResourceConcurrency(Math.max(1, Math.min(20, n.intValue())));
@@ -3596,6 +3617,7 @@ public class MonitoringController {
         item.put("exclude_trackers",     m.getExcludeTrackers());
         item.put("tracker_patterns",     m.getTrackerPatterns());
         item.put("resource_concurrency", m.getResourceConcurrency());
+        putPageSpeedProxyFields(item, m);
         item.put("basic_auth_user",      m.getBasicAuthUser());
         // Parola ASLA (şifreli hâli bile) dönmez — arayüz yalnız "kayıtlı mı" bilgisine ihtiyaç duyar.
         item.put("has_basic_auth_pass",  m.getBasicAuthPassEnc() != null && !m.getBasicAuthPassEnc().isBlank());

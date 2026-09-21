@@ -225,7 +225,7 @@ class SchedulerServiceTest {
         inv.setDomain("x.example.com");
         inv.setPort(443);
         when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv));
-        when(uptimeHttpCheckerService.check(eq("x.example.com"), eq(443), anyInt()))
+        when(uptimeHttpCheckerService.check(eq("x.example.com"), eq(443), anyInt(), eq(false)))
                 .thenReturn(Map.of("status", "down", "error", "timeout"));
 
         scheduler.runUptimeChecks();
@@ -242,7 +242,7 @@ class SchedulerServiceTest {
         assertThat(item.detail()).isEqualTo("443");
         // recheck supplier'ı canlı: çağrılınca check + persist yapar
         item.recheck().get();
-        verify(uptimeHttpCheckerService, org.mockito.Mockito.times(2)).check(eq("x.example.com"), eq(443), anyInt());
+        verify(uptimeHttpCheckerService, org.mockito.Mockito.times(2)).check(eq("x.example.com"), eq(443), anyInt(), eq(false));
     }
 
     @Test
@@ -252,7 +252,7 @@ class SchedulerServiceTest {
         inv.setDomain("x.example.com");
         inv.setPort(443);
         when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv));
-        when(uptimeHttpCheckerService.check(eq("x.example.com"), eq(443), anyInt()))
+        when(uptimeHttpCheckerService.check(eq("x.example.com"), eq(443), anyInt(), eq(false)))
                 .thenReturn(Map.of("status", "up", "response_ms", 12L));
         doThrow(new RuntimeException("boom"))
                 .when(monitoringOutageService).handleSweepResults(anyString(), anyList());

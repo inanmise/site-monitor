@@ -135,6 +135,9 @@ public class SchedulerService {
     /** HTTP/Keyword/Sayfa vekil kararı (2026-09-21) — isteğe bağlı: bean yoksa doğrudan (bugünkü davranış). */
     @Autowired(required = false)
     private ProxyPolicyService proxyPolicy;
+    /** Durum (uptime) yoklaması için kurumsal vekil (2026-09-21) — isteğe bağlı: bean yoksa doğrudan. */
+    @Autowired(required = false)
+    private ProxySettings proxySettings;
 
     private final DomainMonitorRepository domainMonitorRepo;
     private final DomainCheckRepository domainCheckRepo;
@@ -2545,7 +2548,7 @@ public class SchedulerService {
         List<Map.Entry<CertificateInventory, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
         for (CertificateInventory inv : active) {
             int port = inv.getPort() != null ? inv.getPort() : 443;
-            started.add(Map.entry(inv, startNetworkCheck(() -> recheckUptime(inv.getDomain(), port))));
+            started.add(Map.entry(inv, startNetworkCheck(() -> recheckUptime(inv.getDomain(), port, uptimeViaProxy(inv)))));
         }
         for (var entry : started) {
             CertificateInventory inv = entry.getKey();
@@ -2558,7 +2561,7 @@ public class SchedulerService {
                         EscalationService.TYPE_ACCESSIBILITY, inv.getDomain(), String.valueOf(port),
                         "up".equals(r.get("status")), (String) r.get("error"),
                         Map.of("port", port),
-                        () -> recheckUptime(inv.getDomain(), port)));
+                        () -> recheckUptime(inv.getDomain(), port, uptimeViaProxy(inv))));
             } catch (Exception e) {
                 log.warn("Uptime check failed for {}:{}: {}", inv.getDomain(), port, e.getMessage());
             }
@@ -2575,7 +2578,21 @@ public class SchedulerService {
     /** Uptime check + uptime_checks persist'i — hem sweep hem teyit re-check'leri
      *  bu yoldan geçer (teyit izi Durum izleme geçmişinde görünür). */
     private Map<String, Object> recheckUptime(String domain, int port) {
-        Map<String, Object> r = uptimeHttpCheckerService.check(domain, port, 10000);
+        return recheckUptime(domain, port, false);
+    }
+
+    /**
+     * Durum yoklaması envanter kaydının "Proxy üzerinden kontrol et" tercihini onurlandırır (2026-09-21):
+     * sertifika kontrolüyle AYNI karar ({@code ProxySettings.useFor}: bayrak Evet + vekil tanımlı + hedef NO_PROXY'de
+     * değil). Hayır olan kayıtlar bugünkü gibi doğrudan çıkar — yol yalnız envanterde Evet işaretli alan adlarında değişir.
+     */
+    private boolean uptimeViaProxy(CertificateInventory inv) {
+        return proxySettings != null && inv != null
+                && proxySettings.useFor(inv.getDomain(), Boolean.TRUE.equals(inv.getUseProxy()));
+    }
+
+    private Map<String, Object> recheckUptime(String domain, int port, boolean viaProxy) {
+        Map<String, Object> r = uptimeHttpCheckerService.check(domain, port, 10000, viaProxy);
         try {
             UptimeCheck check = new UptimeCheck();
             check.setDomain(domain);

@@ -64,6 +64,50 @@ public class ProxySettings {
     public java.net.Authenticator authenticator(org.slf4j.Logger log, String clientName) {
         return ProxyAuthSupport.proxyAuthenticatorOrNull(user, pass, log, clientName);
     }
+
+    /**
+     * Ham TCP yoklaması için kurumsal vekilde {@code CONNECT host:port} tüneli açar (2026-09-21, Durum/uptime).
+     *
+     * <p>Sertifika kontrolü aynı tüneli kendi içinde kurar ({@code CertificateCheckerService.openViaProxy}); Durum
+     * izlemesi ise aynı envanter kaydı için pod'dan doğrudan çıkıyordu → vekil-zorunlu alan adı sertifikada "geçerli",
+     * durumda "down". Bu yardımcı o boşluğu kapatır; vekil {@code 200} dönerse hedef (vekilden) erişilebilirdir.
+     * Sertifika kodu bilerek DOKUNULMADAN bırakıldı (kendi ayrıntılı tanı logları var).
+     *
+     * @return tünel kurulmuş ham soket — çağıran kapatır
+     * @throws java.io.IOException vekile bağlanılamadı ya da vekil tüneli reddetti (durum satırı mesajda)
+     */
+    public java.net.Socket openConnectTunnel(String targetHost, int targetPort, int timeoutMs) throws java.io.IOException {
+        if (!enabled()) throw new java.io.IOException("vekil tanımlı değil");
+        java.net.Socket raw = new java.net.Socket();
+        try {
+            raw.connect(new java.net.InetSocketAddress(host, port), timeoutMs);
+            raw.setSoTimeout(timeoutMs);
+            String crlf = "\r\n";
+            StringBuilder req = new StringBuilder()
+                    .append("CONNECT ").append(targetHost).append(':').append(targetPort).append(" HTTP/1.1").append(crlf)
+                    .append("Host: ").append(targetHost).append(':').append(targetPort).append(crlf);
+            if (user != null && !user.isBlank()) {
+                String creds = java.util.Base64.getEncoder().encodeToString(
+                        (user + ":" + (pass == null ? "" : pass)).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                req.append("Proxy-Authorization: Basic ").append(creds).append(crlf);
+            }
+            req.append(crlf);
+            raw.getOutputStream().write(req.toString().getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            raw.getOutputStream().flush();
+            java.io.BufferedReader in = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(raw.getInputStream(), java.nio.charset.StandardCharsets.US_ASCII));
+            String status = in.readLine();
+            if (status == null || !status.startsWith("HTTP/1.") || !status.regionMatches(9, "200", 0, 3)) {
+                throw new java.io.IOException("vekil tüneli reddetti: " + (status == null ? "(boş yanıt)" : status.trim()));
+            }
+            String line;
+            while ((line = in.readLine()) != null && !line.isEmpty()) { /* tünel başlıklarını tüket */ }
+            return raw;
+        } catch (java.io.IOException e) {
+            try { raw.close(); } catch (Exception ignored) { /* kapatma hatası önemsiz */ }
+            throw e;
+        }
+    }
     public int port() { return port; }
 
     /** {@code NO_PROXY} ham listesi (virgülle ayrık); tanımsızsa boş string. */

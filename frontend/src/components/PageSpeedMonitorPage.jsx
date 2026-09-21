@@ -16,6 +16,7 @@ import CheckTeamPicker, { monitorTeamBuckets } from './check/CheckTeamPicker.jsx
 import { CHECK_CONCURRENCY_BY_TYPE } from './check/monitorCheckColumns.jsx'
 import { useCheckRun } from '../hooks/useCheckRun.js'
 import MonitorModalActions from './ui/MonitorModalActions.jsx'
+import MonitorProxyField from './ui/MonitorProxyField.jsx'
 import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
@@ -103,7 +104,7 @@ const emptyForm = {
   name: '', url: '', groupName: '', notificationGroupId: '', teamId: '', tags: '', notifyEmail: true, alertLevel: 'WARNING', notifyWebhook: true,
   intervalSeconds: 1800, timeoutMs: 10000,
   maxLoadMs: '', maxTtfbMs: '', maxPageKb: '', maxRequests: '',
-  userAgent: '', sendDnt: false, excludeTrackers: false, trackerPatterns: '',
+  userAgent: '', sendDnt: false, useProxy: 'OFF', excludeTrackers: false, trackerPatterns: '',
   basicAuthUser: '', basicAuthPass: '', customHeaders: '', resourceConcurrency: 5,
   confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30,
   active: true,
@@ -331,7 +332,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       intervalSeconds: m.interval_seconds ?? 1800, timeoutMs: m.timeout_ms ?? 10000,
       maxLoadMs: m.max_load_ms ?? '', maxTtfbMs: m.max_ttfb_ms ?? '',
       maxPageKb: m.max_page_kb ?? '', maxRequests: m.max_requests ?? '',
-      userAgent: m.user_agent || '', sendDnt: !!m.send_dnt,
+      userAgent: m.user_agent || '', sendDnt: !!m.send_dnt, useProxy: m.use_proxy || 'OFF',
       excludeTrackers: !!m.exclude_trackers, trackerPatterns: m.tracker_patterns || '',
       basicAuthUser: m.basic_auth_user || '', basicAuthPass: '',
       customHeaders: '', resourceConcurrency: m.resource_concurrency ?? 5,
@@ -366,7 +367,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
       maxLoadMs: thresholdValue(form.maxLoadMs), maxTtfbMs: thresholdValue(form.maxTtfbMs),
       maxPageKb: thresholdValue(form.maxPageKb), maxRequests: thresholdValue(form.maxRequests),
-      userAgent: form.userAgent?.trim() || null, sendDnt: form.sendDnt,
+      userAgent: form.userAgent?.trim() || null, sendDnt: form.sendDnt, useProxy: form.useProxy || 'OFF',
       excludeTrackers: form.excludeTrackers, trackerPatterns: form.trackerPatterns?.trim() || null,
       basicAuthUser: form.basicAuthUser?.trim() || null,
       resourceConcurrency: Number(form.resourceConcurrency),
@@ -1071,6 +1072,14 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                       <input type="checkbox" checked={form.sendDnt} onChange={e => setForm(f => ({ ...f, sendDnt: e.target.checked }))} />{t('pspd.sendDnt')}</label>
                     <div className="field-hint">{t('pspd.sendDntHint')}</div>
 
+                    {/* Kurumsal vekil (2026-09-21): Sayfa Hızı'nda varsayılan DOĞRUDAN — vekil gecikmesi ölçüme karışır; vekil-zorunlu
+                        sayfalar için açılabilir. Düzenlemede kaydedilmiş etkin karar ipucu (MonitorProxyField sözleşmesi). */}
+                    <div style={{ marginTop: 10 }}>
+                      <MonitorProxyField value={form.useProxy} onChange={v => setForm(f => ({ ...f, useProxy: v }))}
+                        effective={modal && typeof modal === 'object' && modal.proxy_effective ? { via: modal.proxy_effective, source: modal.proxy_source, bypassed: modal.proxy_bypassed, mode: modal.use_proxy } : null} />
+                      <div className="field-hint">{t('pspd.proxyNote')}</div>
+                    </div>
+
                     <label className="checkbox-label" style={{ marginTop: 10 }}>
                       <input type="checkbox" checked={form.excludeTrackers} onChange={e => setForm(f => ({ ...f, excludeTrackers: e.target.checked }))} />{t('pspd.excludeTrackers')}</label>
                     <div className="field-hint">{t('pspd.excludeTrackersHint')}</div>
@@ -1135,6 +1144,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                         {' · '}{formatBytes(testResult.total_bytes, testResult.bytes_truncated)}
                         {' · '}{testResult.request_count} {t('pspd.mRequests')}
                         {testResult.http_status != null && <> · HTTP {testResult.http_status}</>}
+                        {testResult.via && <> · {testResult.via === 'proxy' ? t('mon.proxy.effProxy') : t('mon.proxy.effDirect')}</>}
                         <br /><span style={{ opacity: .8 }}>{t('pspd.testNoThresholds')}</span></>}
                 </span>
               </div>

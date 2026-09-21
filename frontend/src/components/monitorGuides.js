@@ -568,6 +568,7 @@ Boş bıraktığınız metrik **alarm üretmez**. Eşiğin tam değeri ihlal say
 - **Zaman aşımı**, **Eşzamanlı istek** (1–20), **Teyit/Toparlanma** ayarları — standart.
 - **User-Agent** — Boşsa kendini tanıtan varsayılan gider. WAF/bot koruması olan sayfalarda değiştirmeniz gerekebilir.
 - **DNT başlığı** — Ölçümün takip edilmemesini talep eder.
+- **Kurumsal vekil (proxy)** — Varsayılan **Doğrudan**: ölçüm pod'dan gider, vekil gecikmesi rakama karışmaz. **Envanterle aynı** / **Her zaman vekil üzerinden** yalnız vekilsiz erişilemeyen sayfalar için; vekil yolunda DNS/TCP/TLS faz kırılımı ölçülmez (— kalır). Kartta Proxy / Doğrudan rozeti gerçekte kullanılan yolu gösterir.
 - **Tracker'ları ölçüm dışı bırak** — Açıkken bilinen analytics/tracker kaynakları ne indirilir ne sayılır; "kendi sayfam ne kadar ağır" sorusu üçüncü-taraf gürültüsünden arınır. Altındaki alandan kendi desenlerinizi ekleyebilirsiniz.
 - **Kimlikli istekler** — Basic auth kullanıcı/parola. Parola **şifreli** saklanır ve ekrana bir daha dönmez; boş bırakmak "değiştirme" demektir, "sil" değil.
 - **Özel istek başlıkları** — Yalnız yöneticiler düzenleyebilir (serbest başlık iç servislere doğru bir yetki yüzeyi açar). Şifreli saklanır.
@@ -616,6 +617,7 @@ A metric you leave blank raises **no alerts**. The threshold value itself is all
 - **Timeout**, **Concurrent requests** (1–20), **Confirmation/recovery** settings — as elsewhere.
 - **User-Agent** — Left blank, a default that identifies itself is sent. You may need to change it for pages behind a WAF or bot protection.
 - **DNT header** — Asks that the measurement not be tracked.
+- **Corporate proxy** — Default **Direct**: the measurement leaves the pod directly, so proxy latency never pollutes the figure. **Same as inventory** / **Always via proxy** only for pages that are unreachable without the proxy; on the proxy route the DNS/TCP/TLS phase breakdown is not measured (shown as —). The Proxy / Direct badge on the card shows the route actually taken.
 - **Leave trackers out of the measurement** — When on, known analytics and tracker resources are neither downloaded nor counted, so "how heavy is my own page?" is not drowned out by third-party noise. Add your own patterns in the field below it.
 - **Authenticated requests** — Basic auth username and password. The password is stored **encrypted** and never comes back to the screen; leaving it blank means "don't change it", not "delete it".
 - **Custom request headers** — Administrators only, since an arbitrary header opens a route into internal services. Stored encrypted.
