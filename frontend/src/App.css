@@ -781,6 +781,15 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   .sb { width: var(--sb-closed-width); min-width: var(--sb-closed-width); }
   .sb-brand-text, .sb-label, .sb-user-name, .sb-logout span:last-child { display: none; }
   .sb.sb-closed { width: var(--sb-closed-width); }
+  /* Dar ekranda ray 60px'e zorlanır ama React `open` durumu true kalır → arama/bildirim/rol etiketleri çizilip
+     kırpılıyordu ("Searc", "Notifi", ADMIN taşması). Masaüstü daraltmasıyla (--mini) aynı görünüm (QA ISSUE-005). */
+  .sb-search-text, .sb-search-kbd, .sb-bell-text, .sb-role-badge { display: none; }
+  .sb-search, .sb-bell { justify-content: center; padding: 6px; margin-left: 8px; margin-right: 8px; }
+  .sb-bell .sb-bell-badge { position: absolute; top: -4px; right: -4px; }
+  /* Kullanıcı çipi: 44px genişlikte simgeler 0'a büzülüp boş beyaz kutu kalıyordu — yalnız kullanıcı simgesi */
+  .sb-user-trigger { justify-content: center; gap: 0; padding: 8px 0; }
+  .sb-user-trigger > svg { flex-shrink: 0; }
+  .sb-user-trigger .sb-user-chevron, .sb-user-trigger .sb-user-info { display: none; }
 }
 
 /* ── Legacy (kept for compatibility) ─────────────────── */
