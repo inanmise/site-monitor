@@ -56,6 +56,12 @@ public class HttpCheckerService {
     // client (+ selector-thread + connection pool) eksilir; tek pod'da bu da bir kazanç.
     private HttpClient trustAllNoFollow;
     private HttpClient strictNoFollow;
+    // Vekilli eşler (2026-09-21): izleme "vekil üzerinden" istiyorsa bunlar kullanılır. Alan enjeksiyonu (required=false):
+    // yapıcı imzası testlerde elle kuruluyor; vekil bileşeni yoksa (test) vekilli istemci kurulmaz → doğrudan.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ProxySettings proxySettings;
+    private HttpClient trustAllProxied;
+    private HttpClient strictProxied;
 
     // Çok-A pin yolu için saklanan SSLContext'ler (paylaşılan client'larla aynı güven) + per-host pinned client cache.
     private SSLContext trustAllCtx;
@@ -117,17 +123,36 @@ public class HttpCheckerService {
         this.strictCtx   = strict;
         trustAllNoFollow = build(trustAll);
         strictNoFollow   = build(strict);
+        if (proxySettings != null && proxySettings.enabled()) {
+            java.net.Authenticator auth = proxySettings.authenticator(log, "HTTP checker");
+            trustAllProxied = build(trustAll, proxySettings.proxySelector(), auth);
+            strictProxied   = build(strict, proxySettings.proxySelector(), auth);
+            log.info("HTTP checker vekilli istemci hazır: {}:{} (kimlik: {})", proxySettings.host(), proxySettings.port(),
+                    auth != null ? "Basic" : "anonim");
+        }
     }
 
-    private HttpClient build(SSLContext ssl) {
+    private HttpClient build(SSLContext ssl) { return build(ssl, null, null); }
+
+    private HttpClient build(SSLContext ssl, java.net.ProxySelector proxy, java.net.Authenticator auth) {
         HttpClient.Builder b = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .followRedirects(HttpClient.Redirect.NEVER);
         if (ssl != null) b.sslContext(ssl);
+        if (proxy != null) b.proxy(proxy);
+        if (auth != null) b.authenticator(auth);
         return b.build();
     }
 
-    private HttpClient client(boolean verifySsl) {
+    private HttpClient client(boolean verifySsl) { return client(verifySsl, false); }
+
+    /** viaProxy: vekilli eş; vekil kurulmamışsa (test/yapılandırmasız) doğrudan istemciye düşer — sessizce değil, DEBUG'la. */
+    private HttpClient client(boolean verifySsl, boolean viaProxy) {
+        if (viaProxy) {
+            HttpClient p = verifySsl ? strictProxied : trustAllProxied;
+            if (p != null) return p;
+            log.debug("HTTP checker: vekil istendi ama yapılandırılmamış → doğrudan");
+        }
         return verifySsl ? strictNoFollow : trustAllNoFollow;
     }
 
@@ -141,6 +166,15 @@ public class HttpCheckerService {
      */
     public Map<String, Object> check(String url, String method, String expectedStatus,
                                      int timeoutMs, boolean verifySsl, boolean followRedirects) {
+        return check(url, method, expectedStatus, timeoutMs, verifySsl, followRedirects, false);
+    }
+
+    /**
+     * @param viaProxy kurumsal vekil üzerinden (karar {@link ProxyPolicyService}'te verilir); sonuçta {@code via}
+     *                 {@code proxy|direct} döner — sertifika kontrolüyle aynı sözleşme.
+     */
+    public Map<String, Object> check(String url, String method, String expectedStatus,
+                                     int timeoutMs, boolean verifySsl, boolean followRedirects, boolean viaProxy) {
         // Yapılandırma hatası (şemasız/host'suz URL) kesinti DEĞİL — istek atılmaz, alarm da açılmaz
         // (SchedulerService config_error bayrağını okur). Eskiden bu durum sahte DOWN alarmı üretiyordu.
         if (!com.sitemonitor.util.MonitorUrls.isCheckable(url)) {
@@ -158,7 +192,7 @@ public class HttpCheckerService {
             r.put("error", blocked);
             return r;
         }
-        Attempt a1 = doCheck(url, method, expectedStatus, timeoutMs, verifySsl, followRedirects);
+        Attempt a1 = doCheck(url, method, expectedStatus, timeoutMs, verifySsl, followRedirects, viaProxy);
         if (Boolean.TRUE.equals(a1.result().get("ok")) || !verifySsl
                 || !isTrustFailure(a1.cause()) || !caAutoPinService.isEnabled()) {
             return a1.result();
@@ -183,7 +217,7 @@ public class HttpCheckerService {
             } catch (NumberFormatException ignore) { /* bozuk anahtar — atla */ }
         }
         if (!pinned) return a1.result();
-        Attempt a2 = doCheck(url, method, expectedStatus, timeoutMs, verifySsl, followRedirects);
+        Attempt a2 = doCheck(url, method, expectedStatus, timeoutMs, verifySsl, followRedirects, viaProxy);
         a2.result().put("repinned", true);
         return a2.result();
     }
@@ -210,14 +244,15 @@ public class HttpCheckerService {
     }
 
     private Attempt doCheck(String url, String method, String expectedStatus,
-                            int timeoutMs, boolean verifySsl, boolean followRedirects) {
+                            int timeoutMs, boolean verifySsl, boolean followRedirects, boolean viaProxy) {
         long start = System.currentTimeMillis();
         Map<String, Object> result = new LinkedHashMap<>();
+        result.put("via", viaProxy && client(verifySsl, true) != client(verifySsl, false) ? "proxy" : "direct");
         Exception failure = null;
         try {
             String m = method == null ? "GET" : method.trim().toUpperCase(Locale.ROOT);
             HttpResponse<Void> resp = sendFollowing(
-                    URI.create(url.trim()), m, timeoutMs, verifySsl, followRedirects);
+                    URI.create(url.trim()), m, timeoutMs, verifySsl, followRedirects, viaProxy);
             long ms = System.currentTimeMillis() - start;
             int status = resp.statusCode();
             result.put("http_status", status);
@@ -252,9 +287,9 @@ public class HttpCheckerService {
      * Çok-A pin yolu ({@link #sendMultiAware}) her hop için ayrı ayrı çalışır.
      */
     private HttpResponse<Void> sendFollowing(URI baseUri, String method, int timeoutMs,
-                                             boolean verifySsl, boolean followRedirects)
+                                             boolean verifySsl, boolean followRedirects, boolean viaProxy)
             throws java.io.IOException, InterruptedException {
-        if (!followRedirects) return sendMultiAware(baseUri, method, timeoutMs, verifySsl);
+        if (!followRedirects) return sendMultiAware(baseUri, method, timeoutMs, verifySsl, viaProxy);
         URI current = baseUri;
         String m = method;
         for (int hop = 0; hop <= SafeRedirect.MAX_HOPS; hop++) {
@@ -265,7 +300,7 @@ public class HttpCheckerService {
                     throw new SsrfGuard.BlockedException("geçersiz yönlendirme hedefi: " + current);
                 ssrfGuard.validate(host);
             }
-            HttpResponse<Void> resp = sendMultiAware(current, m, timeoutMs, verifySsl);
+            HttpResponse<Void> resp = sendMultiAware(current, m, timeoutMs, verifySsl, viaProxy);
             if (!SafeRedirect.isRedirect(resp.statusCode())) return resp;
             URI next = SafeRedirect.nextHop(current, resp.headers().firstValue("location").orElse(null));
             // Takip edilemeyen hedef (şema dışı / host'suz / güvenlik düşürmesi) → 3xx olduğu gibi döner.
@@ -276,10 +311,14 @@ public class HttpCheckerService {
         throw new java.io.IOException("çok fazla yönlendirme (" + SafeRedirect.MAX_HOPS + " hop aşıldı)");
     }
 
-    private HttpResponse<Void> sendMultiAware(URI baseUri, String method, int timeoutMs, boolean verifySsl)
+    private HttpResponse<Void> sendMultiAware(URI baseUri, String method, int timeoutMs, boolean verifySsl, boolean viaProxy)
             throws java.io.IOException, InterruptedException {
-        HttpClient shared = client(verifySsl);
+        HttpClient shared = client(verifySsl, viaProxy);
         String host = baseUri.getHost();
+        // Vekil yolunda çok-A pin uygulanmaz: hedefi vekil çözer, IP'ye yeniden yazmak CONNECT'i bozar.
+        if (viaProxy && shared != client(verifySsl, false)) {
+            return shared.send(buildRequest(baseUri, method, timeoutMs, null), HttpResponse.BodyHandlers.discarding());
+        }
         if (host == null || NetworkResolver.isIpLiteral(host)) {
             return shared.send(buildRequest(baseUri, method, timeoutMs, null), HttpResponse.BodyHandlers.discarding());
         }

@@ -54,6 +54,16 @@ public class ProxySettings {
     }
 
     public String host() { return host; }
+
+    /** JDK {@code HttpClient} için vekil seçici; vekil tanımsızsa {@code null} (RDAP istemcisiyle aynı desen). */
+    public java.net.ProxySelector proxySelector() {
+        return enabled() ? java.net.ProxySelector.of(new java.net.InetSocketAddress(host, port)) : null;
+    }
+
+    /** Vekil kimliği (yalnız PROXY isteklerine) — kullanıcı tanımlı değilse {@code null}. */
+    public java.net.Authenticator authenticator(org.slf4j.Logger log, String clientName) {
+        return ProxyAuthSupport.proxyAuthenticatorOrNull(user, pass, log, clientName);
+    }
     public int port() { return port; }
 
     /** {@code NO_PROXY} ham listesi (virgülle ayrık); tanımsızsa boş string. */

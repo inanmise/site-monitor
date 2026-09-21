@@ -116,7 +116,7 @@ public class MonitoringController {
     private static final String[] MON_FIELDS = {
         "name", "host", "port", "url", "domain", "recordType", "keyword", "expectedValue", "expect",
         "expectedStatus", "method", "matchOperator", "matchCount", "active", "teamId", "groupName", "tags", "alertLevel",
-        "intervalSeconds", "timeoutMs", "warningDays", "criticalDays", "protocol", "verifySsl", "followRedirects",
+        "intervalSeconds", "timeoutMs", "warningDays", "criticalDays", "protocol", "verifySsl", "followRedirects", "useProxy",
         "mode", "crawlDepth", "crawlMaxPages", "excludePatterns", "slowResourceMs", "alertThirdParty", "alertMixedContent", "alertTimeout", "resourceConcurrency",
         "notificationGroupId",
         "transferLockAlert", "blacklistEnabled", "changeAlert", "notifyEmail", "notifyWebhook",
@@ -239,6 +239,8 @@ public class MonitoringController {
     private com.sitemonitor.service.ScriptedCheckerService scriptedChecker;
     @org.springframework.beans.factory.annotation.Autowired
     private com.sitemonitor.service.ProxySettings proxySettings;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.ProxyPolicyService proxyPolicy;   // HTTP/Keyword/Sayfa vekil kararı (2026-09-21)
     @org.springframework.beans.factory.annotation.Autowired
     private com.sitemonitor.service.SsrfGuard ssrfGuard;
     @org.springframework.beans.factory.annotation.Autowired
@@ -2100,6 +2102,7 @@ public class MonitoringController {
         m.setUrl(kwUrl);
         m.setKeyword((String) body.get("keyword"));
         if (body.get("customHeaders") != null) m.setCustomHeaders((String) body.get("customHeaders"));
+        if (body.containsKey("useProxy")) m.setUseProxy(com.sitemonitor.service.ProxyPolicyService.normalizeMode(body.get("useProxy")));
         applyKeywordCondition(m, body);
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         m.setTeamId(teamId);
@@ -2146,6 +2149,7 @@ public class MonitoringController {
             if (body.get("url")             != null) m.setUrl(intendedUrl);
             if (body.get("keyword")         != null) m.setKeyword((String) body.get("keyword"));
             if (body.containsKey("customHeaders"))    m.setCustomHeaders((String) body.get("customHeaders"));
+            if (body.containsKey("useProxy"))         m.setUseProxy(com.sitemonitor.service.ProxyPolicyService.normalizeMode(body.get("useProxy")));
             if (body.get("operator") != null || body.get("matchCount") != null || body.get("condition") != null) applyKeywordCondition(m, body);
             if (body.containsKey("groupName"))       m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
@@ -2232,7 +2236,8 @@ public class MonitoringController {
         return keywordMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             Map<String, Object> r = keywordChecker.check(m.getUrl(), m.getKeyword(),
-                    m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000, m.getCustomHeaders(), Boolean.TRUE.equals(m.getCaseSensitive()));
+                    m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000, m.getCustomHeaders(), Boolean.TRUE.equals(m.getCaseSensitive()),
+                    viaProxy(m.getUrl(), m.getUseProxy()));
             boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
             int count = r.get("count") instanceof Number cn ? cn.intValue() : (found ? 1 : 0);
             int threshold = m.getMatchCount() != null ? m.getMatchCount() : 1;
@@ -2278,7 +2283,8 @@ public class MonitoringController {
         auditService.recordAction("MONITOR_TEST", session, "KEYWORD_MONITOR", "test",
                 AuditDetail.of("url", AuditDetail.safeTarget(url), "operator", op,
                         "match_count", threshold, "custom_headers", customHeaders != null), null);
-        Map<String, Object> r = keywordChecker.check(url, keyword, timeoutMs, customHeaders, caseSensitive);
+        com.sitemonitor.service.ProxyPolicyService.Decision kpd = proxyDecision(url, body.get("useProxy"));
+        Map<String, Object> r = keywordChecker.check(url, keyword, timeoutMs, customHeaders, caseSensitive, kpd.viaProxy());
         int count = r.get("count") instanceof Number cn ? cn.intValue() : 0;
         boolean met = r.get("error") == null && KeywordCheckerService.evaluate(count, op, threshold);
         Map<String, Object> out = new LinkedHashMap<>();
@@ -2288,6 +2294,8 @@ public class MonitoringController {
         out.put("response_ms",   r.get("response_ms"));
         out.put("snippet",       r.get("snippet"));
         out.put("error",         r.get("error"));
+        out.put("via",           r.getOrDefault("via", kpd.via()));
+        out.put("proxy_source",  kpd.source());
         out.put("phrase",        KeywordCheckerService.opPhrase(op, threshold));
         return ok(out);
     }
@@ -2528,6 +2536,7 @@ public class MonitoringController {
         item.put("name",             m.getName());
         item.put("url",              m.getUrl());
         item.put("keyword",          m.getKeyword());
+        putProxyFields(item, m.getUrl(), m.getUseProxy());
         item.put("condition",        m.getAlertCondition());
         item.put("operator",         m.getMatchOperator());
         item.put("match_count",      m.getMatchCount());
@@ -2631,6 +2640,7 @@ public class MonitoringController {
         if (!blank(body.get("expectedStatus"))) m.setExpectedStatus(body.get("expectedStatus").toString().trim());
         if (body.get("followRedirects") instanceof Boolean b) m.setFollowRedirects(b);
         if (body.get("verifySsl")       instanceof Boolean b) m.setVerifySsl(b);
+        if (body.containsKey("useProxy"))  m.setUseProxy(com.sitemonitor.service.ProxyPolicyService.normalizeMode(body.get("useProxy")));
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         m.setTeamId(teamId);
         m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
@@ -2673,6 +2683,7 @@ public class MonitoringController {
             if (!blank(body.get("expectedStatus"))) m.setExpectedStatus(body.get("expectedStatus").toString().trim());
             if (body.get("followRedirects") instanceof Boolean b) m.setFollowRedirects(b);
             if (body.get("verifySsl")       instanceof Boolean b) m.setVerifySsl(b);
+            if (body.containsKey("useProxy"))  m.setUseProxy(com.sitemonitor.service.ProxyPolicyService.normalizeMode(body.get("useProxy")));
             if (body.containsKey("groupName"))       m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
@@ -2758,7 +2769,7 @@ public class MonitoringController {
             // İLK kontrol burada koşar: kullanıcı sonucu ANINDA görsün (kart boş dönmesin).
             Map<String, Object> r = httpChecker.check(m.getUrl(), m.getMethod(), m.getExpectedStatus(),
                     m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000,
-                    Boolean.TRUE.equals(m.getVerifySsl()), !Boolean.FALSE.equals(m.getFollowRedirects()));
+                    Boolean.TRUE.equals(m.getVerifySsl()), !Boolean.FALSE.equals(m.getFollowRedirects()), viaProxy(m.getUrl(), m.getUseProxy()));
             HttpCheck res = new HttpCheck();
             res.setMonitorId(m.getId());
             res.setOk(Boolean.TRUE.equals(r.get("ok")));
@@ -2791,14 +2802,17 @@ public class MonitoringController {
         int timeoutMs = body.get("timeoutMs") instanceof Number tn ? tn.intValue() : 10000;
         boolean verifySsl = Boolean.TRUE.equals(body.get("verifySsl"));
         boolean followRedirects = !Boolean.FALSE.equals(body.get("followRedirects"));
+        com.sitemonitor.service.ProxyPolicyService.Decision pd = proxyDecision(url, body.get("useProxy"));
         // `verify_ssl=false` denetimde AÇIKÇA görünür: doğrulamayı kapatarak yapılan bir prob,
         // güvenlik incelemesinde diğerlerinden farklı bir sorudur.
         auditService.recordAction("MONITOR_TEST", session, "HTTP_MONITOR", "test",
                 AuditDetail.of("url", AuditDetail.safeTarget(url), "method", method,
                         "expected", expected, "verify_ssl", verifySsl,
-                        "follow_redirects", followRedirects), null);
-        Map<String, Object> r = httpChecker.check(url, method, expected, timeoutMs, verifySsl, followRedirects);
+                        "follow_redirects", followRedirects, "via", pd.via()), null);
+        Map<String, Object> r = httpChecker.check(url, method, expected, timeoutMs, verifySsl, followRedirects, pd.viaProxy());
         Map<String, Object> out = new LinkedHashMap<>();
+        out.put("via",             r.getOrDefault("via", pd.via()));
+        out.put("proxy_source",    pd.source());
         out.put("http_status",     r.get("http_status"));
         out.put("response_ms",     r.get("response_ms"));
         out.put("condition_met",   Boolean.TRUE.equals(r.get("ok")));
@@ -2822,6 +2836,22 @@ public class MonitoringController {
     }
 
     /** Ortak: HTTP feature alanlarını (tags, notify, SSL/Domain toggle'ları + gün eşikleri) body'den uygular. */
+    /** Vekil kararı (2026-09-21) — bean yoksa (test bağlamı) doğrudan. */
+    private com.sitemonitor.service.ProxyPolicyService.Decision proxyDecision(String url, Object mode) {
+        if (proxyPolicy == null) return com.sitemonitor.service.ProxyPolicyService.Decision.direct("none");
+        return proxyPolicy.decide(url, com.sitemonitor.service.ProxyPolicyService.normalizeMode(mode));
+    }
+    private boolean viaProxy(String url, String mode) { return proxyDecision(url, mode).viaProxy(); }
+
+    /** Liste satırına vekil alanları: tercih, etkin karar ve kaynağı (kart rozeti + form ipucu). */
+    private void putProxyFields(Map<String, Object> item, String url, String mode) {
+        com.sitemonitor.service.ProxyPolicyService.Decision d = proxyDecision(url, mode);
+        item.put("use_proxy",        com.sitemonitor.service.ProxyPolicyService.normalizeMode(mode));
+        item.put("proxy_effective",  d.via());
+        item.put("proxy_source",     d.source());
+        item.put("proxy_bypassed",   d.bypassed());
+    }
+
     private void applyHttpFeatureFields(HttpMonitor m, Map<String, Object> body) {
         if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
         if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)
@@ -2843,6 +2873,7 @@ public class MonitoringController {
         item.put("expected_status",  m.getExpectedStatus());
         item.put("follow_redirects", m.getFollowRedirects());
         item.put("verify_ssl",       m.getVerifySsl());
+        putProxyFields(item, m.getUrl(), m.getUseProxy());
         item.put("group_name",       m.getGroupName());
         item.put("team_id",          m.getTeamId());
         item.put("notification_group_id",          m.getNotificationGroupId());
@@ -3095,10 +3126,13 @@ public class MonitoringController {
         if (url.isEmpty()) return badRequest("url zorunlu");
         if (!MonitorUrls.isCheckable(url)) return badRequest(INVALID_URL_MSG);
         int timeoutMs = body.get("timeoutMs") instanceof Number tn ? tn.intValue() : 4000;
+        com.sitemonitor.service.ProxyPolicyService.Decision ppd = proxyDecision(url, body.get("useProxy"));
         auditService.recordAction("MONITOR_TEST", session, "PAGE_MONITOR", "test",
-                AuditDetail.of("url", AuditDetail.safeTarget(url)), null);
-        com.sitemonitor.service.PageCheckerService.PageCheckResult r = pageChecker.test(url, timeoutMs);
+                AuditDetail.of("url", AuditDetail.safeTarget(url), "via", ppd.via()), null);
+        com.sitemonitor.service.PageCheckerService.PageCheckResult r = pageChecker.test(url, timeoutMs, ppd.viaProxy());
         Map<String, Object> out = new LinkedHashMap<>();
+        out.put("via",                 ppd.via());
+        out.put("proxy_source",        ppd.source());
         out.put("status",              r.status());
         out.put("main_reachable",      r.mainReachable());
         out.put("http_status",         r.httpStatus());
@@ -3622,6 +3656,7 @@ public class MonitoringController {
         if (body.get("crawlDepth")    instanceof Number n) m.setCrawlDepth(Math.max(0, Math.min(5, n.intValue())));
         if (body.get("crawlMaxPages") instanceof Number n) m.setCrawlMaxPages(Math.max(1, Math.min(500, n.intValue())));
         if (body.containsKey("excludePatterns")) m.setExcludePatterns(blank(body.get("excludePatterns")) ? null : body.get("excludePatterns").toString());
+        if (body.containsKey("useProxy")) m.setUseProxy(com.sitemonitor.service.ProxyPolicyService.normalizeMode(body.get("useProxy")));
         if (body.get("slowResourceMs") instanceof Number n) m.setSlowResourceMs(Math.max(100, n.intValue()));
         if (body.get("alertThirdParty") instanceof Boolean b) m.setAlertThirdParty(b);
         if (body.get("alertMixedContent") instanceof Boolean b) m.setAlertMixedContent(b);
@@ -3643,6 +3678,7 @@ public class MonitoringController {
         item.put("crawl_depth",          m.getCrawlDepth());
         item.put("crawl_max_pages",      m.getCrawlMaxPages());
         item.put("exclude_patterns",     m.getExcludePatterns());
+        putProxyFields(item, m.getUrl(), m.getUseProxy());
         item.put("slow_resource_ms",     m.getSlowResourceMs());
         item.put("alert_third_party",    m.getAlertThirdParty());
         item.put("alert_mixed_content",  m.getAlertMixedContent());

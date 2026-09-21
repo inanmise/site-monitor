@@ -43,6 +43,7 @@ const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
+import MonitorProxyField, { ProxyViaBadge } from './ui/MonitorProxyField.jsx'
 import MonitorSpark from './ui/MonitorSpark.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
@@ -75,7 +76,7 @@ const intervalIdx = (secs) => {
 const REFRESH_INTERVAL = 60
 const METHODS = ['GET', 'HEAD', 'POST']
 const emptyForm = {
-  name: '', url: '', method: 'GET', expectedStatus: '200-399', followRedirects: true, verifySsl: false,
+  name: '', url: '', method: 'GET', expectedStatus: '200-399', followRedirects: true, verifySsl: false, useProxy: 'AUTO',
   groupName: '', notificationGroupId: '', teamId: '', tags: '', notifyEmail: true, alertLevel: 'WARNING', notifyWebhook: true,
   checkSslErrors: false, sslExpiryReminders: false, domainExpiryReminders: false,
   sslReminderDays: '30,14,7', domainReminderDays: '30,14,7',
@@ -212,7 +213,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
   /** Monitör (snake_case) → form state eşlemesi. Edit ve Kopyala AYNI eşlemeyi kullanır → alan kaçmaz. */
   function formFrom(m) {
     return { name: m.name || '', url: m.url || '', method: m.method || 'GET',
-      expectedStatus: m.expected_status || '200-399', followRedirects: m.follow_redirects !== false, verifySsl: !!m.verify_ssl,
+      expectedStatus: m.expected_status || '200-399', followRedirects: m.follow_redirects !== false, verifySsl: !!m.verify_ssl, useProxy: m.use_proxy || 'AUTO',
       groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '', teamId: m.team_id != null ? String(m.team_id) : '', tags: m.tags || '',
       notifyEmail: m.notify_email !== false, alertLevel: m.alert_level || 'WARNING', notifyWebhook: m.notify_webhook !== false,
       checkSslErrors: !!m.check_ssl_errors, sslExpiryReminders: !!m.ssl_expiry_reminders, domainExpiryReminders: !!m.domain_expiry_reminders,
@@ -243,7 +244,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
     try {
       const res = await api.monitoring.testHttp({
         url: normalizeUrl(form.url), method: form.method, expectedStatus: form.expectedStatus?.trim() || '200-399',
-        timeoutMs: Number(form.timeoutMs), verifySsl: form.verifySsl, followRedirects: form.followRedirects,
+        timeoutMs: Number(form.timeoutMs), verifySsl: form.verifySsl, followRedirects: form.followRedirects, useProxy: form.useProxy || 'AUTO',
       })
       setTestResult(res?.success ? res.data : { error: res?.error || t('http.testError') })
     } finally {
@@ -260,7 +261,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
     try {
       const payload = {
         name: (form.name || form.url).trim(), url: normalizeUrl(form.url), method: form.method,
-        expectedStatus: form.expectedStatus?.trim() || '200-399', followRedirects: form.followRedirects, verifySsl: form.verifySsl,
+        expectedStatus: form.expectedStatus?.trim() || '200-399', followRedirects: form.followRedirects, verifySsl: form.verifySsl, useProxy: form.useProxy || 'AUTO',
         groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId), tags: form.tags?.trim() || null,
         // Bos = takim varsayilani -> takim adresi (zincirin kalani).
         notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
@@ -648,6 +649,8 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
                 <span className={selected.follow_redirects !== false ? 'kw-on' : 'kw-off'}>{selected.follow_redirects !== false ? t('http.on') : t('http.off')}</span></div>
               <div className="kw-reqinfo-row"><span className="kw-reqinfo-k">{t('http.verifySsl')}</span>
                 <span className={selected.verify_ssl ? 'kw-on' : 'kw-off'}>{selected.verify_ssl ? t('http.on') : t('http.off')}</span></div>
+              {selected.proxy_effective && <div className="kw-reqinfo-row"><span className="kw-reqinfo-k">{t('mon.proxy.label')}</span>
+                <span><ProxyViaBadge via={selected.proxy_effective} source={selected.proxy_source} bypassed={selected.proxy_bypassed} /> <span className="sys-muted">· {t(`mon.proxy.${selected.use_proxy || 'AUTO'}`)}</span></span></div>}
               <div className="kw-reqinfo-row"><span className="kw-reqinfo-k">{t('http.sslSectionTitle')}</span>
                 <span>{[selected.check_ssl_errors && t('http.checkSslErrors'), selected.ssl_expiry_reminders && t('http.sslExpiryReminders'), selected.domain_expiry_reminders && t('http.domainExpiryReminders')].filter(Boolean).join(' · ') || t('http.none')}</span></div>
             </div>
@@ -733,6 +736,9 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
                 <input type="checkbox" checked={form.followRedirects} onChange={e => setForm(f => ({ ...f, followRedirects: e.target.checked }))} />{t('http.followRedirects')}</label>
               <label className="checkbox-label">
                 <input type="checkbox" checked={form.verifySsl} onChange={e => setForm(f => ({ ...f, verifySsl: e.target.checked }))} />{t('http.verifySsl')}</label>
+              {/* Kurumsal vekil (2026-09-21): sertifika envanteriyle aynı karar; düzenlemede etkin sonuç ipucu */}
+              <MonitorProxyField value={form.useProxy} onChange={v => setForm(f => ({ ...f, useProxy: v }))}
+                effective={modal && typeof modal === 'object' && modal.proxy_effective ? { via: modal.proxy_effective, source: modal.proxy_source, bypassed: modal.proxy_bypassed } : null} />
 
               <label><span>{t('http.name')}</span>
                 <input value={form.name} placeholder={form.url} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
@@ -826,6 +832,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
                         {testResult.http_status != null && <> — HTTP {testResult.http_status}</>}
                         {testResult.response_ms != null && <> · {testResult.response_ms}ms</>}
                         {testResult.expected_status && <> · {t('http.expectedStatus')}: {testResult.expected_status}</>}
+                        {testResult.via && <> · {testResult.via === 'proxy' ? t('mon.proxy.effProxy') : t('mon.proxy.effDirect')}</>}
                       </>}
                 </span>
               </div>

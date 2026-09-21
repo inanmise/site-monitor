@@ -1,5 +1,6 @@
 import { Layers } from 'lucide-react'
 import TeamBadge from './ui/TeamBadge.jsx'
+import { ProxyViaBadge } from './ui/MonitorProxyField.jsx'
 
 /**
  * İzleme kartındaki takım ve grup rozetleri.
@@ -28,6 +29,10 @@ export default function MonitorCardMeta({ monitor }) {
       )}
       {monitor.group_name && (
         <div style={rowStyle}><Layers size={12} />{monitor.group_name}</div>
+      )}
+      {/* Vekil rozeti (2026-09-21): yalnız HTTP/Keyword/Sayfa satırları proxy_effective taşır — sertifika kartındaki dil */}
+      {monitor.proxy_effective && (
+        <div style={rowStyle}><ProxyViaBadge via={monitor.proxy_effective} source={monitor.proxy_source} bypassed={monitor.proxy_bypassed} size={12} /></div>
       )}
     </>
   )

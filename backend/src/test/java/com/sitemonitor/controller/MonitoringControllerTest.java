@@ -683,7 +683,7 @@ class MonitoringControllerTest {
     void testKeyword_returnsResult() throws Exception {
         java.util.Map<String, Object> cr = new java.util.HashMap<>();
         cr.put("count", 5); cr.put("http_status", 200); cr.put("response_ms", 12L);
-        when(keywordChecker.check(eq("https://x.example.com"), eq("example"), anyInt(), any(), anyBoolean())).thenReturn(cr);
+        when(keywordChecker.check(eq("https://x.example.com"), eq("example"), anyInt(), any(), anyBoolean(), anyBoolean())).thenReturn(cr);   // viaProxy (2026-09-21)
 
         mvc.perform(post("/api/monitoring/keyword/test").session(session("USER"))
                 .contentType("application/json")
@@ -1477,6 +1477,34 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("POST /http: useProxy ON/OFF/AUTO saklanır, bilinmeyen değer AUTO'ya düşer; liste use_proxy + proxy_effective taşır (vekil bileşeni yoksa direct)")
+    void createHttp_useProxyPersistedAndEnriched() throws Exception {
+        when(httpMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(httpMonitorRepo.save(any(com.sitemonitor.model.HttpMonitor.class)))
+                .thenAnswer(a -> { com.sitemonitor.model.HttpMonitor h = a.getArgument(0); h.setId(32L); return h; });
+        mvc.perform(post("/api/monitoring/http").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://vekil.example.com\",\"teamId\":3,\"useProxy\":\"on\"}"))
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.HttpMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.HttpMonitor.class);
+        verify(httpMonitorRepo).save(cap.capture());
+        org.assertj.core.api.Assertions.assertThat(cap.getValue().getUseProxy()).isEqualTo("ON");
+
+        // bilinmeyen değer → AUTO (sentetik izlemeyle aynı kural)
+        org.assertj.core.api.Assertions.assertThat(com.sitemonitor.service.ProxyPolicyService.normalizeMode("maybe")).isEqualTo("AUTO");
+
+        // liste: vekil alanları (test bağlamında ProxyPolicyService bean'i yok → doğrudan, kaynak none)
+        com.sitemonitor.model.HttpMonitor hm = cap.getValue(); hm.setTeamId(3L);
+        when(httpMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(hm));
+        mvc.perform(get("/api/monitoring/http").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].use_proxy").value("ON"))
+                .andExpect(jsonPath("$.data[0].proxy_effective").value("direct"))
+                .andExpect(jsonPath("$.data[0].proxy_source").value("none"));
+    }
+
+    @Test
     @DisplayName("POST /http: active gönderilmezse varsayılan AKTİF kalır (regresyon koruması)")
     void createHttp_activeOmitted_defaultsTrue() throws Exception {
         when(httpMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
@@ -1635,14 +1663,15 @@ class MonitoringControllerTest {
     @Test
     @DisplayName("POST /page/test: checker'a NORMALİZE edilmiş URL gider (ad-hoc test de sahte hata vermez)")
     void testPage_normalizesBeforeChecker() throws Exception {
-        when(pageChecker.test(anyString(), org.mockito.ArgumentMatchers.anyInt())).thenReturn(
+        when(pageChecker.test(anyString(), org.mockito.ArgumentMatchers.anyInt(), anyBoolean())).thenReturn(
                 new com.sitemonitor.service.PageCheckerService.PageCheckResult(
                         "OK", true, 200, 12L, 3, 0, 0, 0, 1, null, null, null, List.of()));
         mvc.perform(post("/api/monitoring/page/test").session(session("ADMIN"))
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                         .content("{\"url\":\"www.axess.com.tr\"}"))
-                .andExpect(status().isOk());
-        verify(pageChecker).test(eq("https://www.axess.com.tr"), org.mockito.ArgumentMatchers.anyInt());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.via").value("direct"));   // vekil bileşeni test bağlamında yok → doğrudan
+        verify(pageChecker).test(eq("https://www.axess.com.tr"), org.mockito.ArgumentMatchers.anyInt(), eq(false));
     }
 
     // ═══════════ Kontrol Geçmişi v2 — kontrat + izolasyon + clamp + CSV ═══════════

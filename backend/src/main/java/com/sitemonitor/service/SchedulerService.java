@@ -132,6 +132,9 @@ public class SchedulerService {
     /** Tablo kayıt defteri (SQL Playground "ne zaman oluştu / son değişim", 2026-09-11) — isteğe bağlı. */
     @Autowired(required = false)
     private SchemaTableRegistryService schemaRegistry;
+    /** HTTP/Keyword/Sayfa vekil kararı (2026-09-21) — isteğe bağlı: bean yoksa doğrudan (bugünkü davranış). */
+    @Autowired(required = false)
+    private ProxyPolicyService proxyPolicy;
 
     private final DomainMonitorRepository domainMonitorRepo;
     private final DomainCheckRepository domainCheckRepo;
@@ -2318,6 +2321,11 @@ public class SchedulerService {
         return before;
     }
 
+    /** HTTP/Keyword/Sayfa izlemesi vekil üzerinden mi (2026-09-21)? Bean yoksa doğrudan. */
+    private boolean viaProxyFor(String url, String mode) {
+        return proxyPolicy != null && proxyPolicy.decide(url, mode).viaProxy();
+    }
+
     List<Map<String, Object>> loadDomainsFromInventory() {   // paket-görünür: test
         List<CertificateInventory> items = inventoryRepo.findByActiveTrueOrderByDomainAsc();
         List<Map<String, Object>> result = new ArrayList<>();
@@ -2818,7 +2826,7 @@ public class SchedulerService {
     private Map<String, Object> recheckKeyword(KeywordMonitor m) {
         int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000;
         Map<String, Object> r = keywordCheckerService.check(m.getUrl(), m.getKeyword(), timeout, m.getCustomHeaders(),
-                Boolean.TRUE.equals(m.getCaseSensitive()));
+                Boolean.TRUE.equals(m.getCaseSensitive()), viaProxyFor(m.getUrl(), m.getUseProxy()));
         boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
         int count = r.get("count") instanceof Number cn ? cn.intValue() : (found ? 1 : 0);
         int threshold = m.getMatchCount() != null ? m.getMatchCount() : 1;
@@ -3326,7 +3334,8 @@ public class SchedulerService {
     private Map<String, Object> recheckHttp(HttpMonitor m) {
         int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000;
         Map<String, Object> r = httpCheckerService.check(m.getUrl(), m.getMethod(), m.getExpectedStatus(),
-                timeout, Boolean.TRUE.equals(m.getVerifySsl()), !Boolean.FALSE.equals(m.getFollowRedirects()));
+                timeout, Boolean.TRUE.equals(m.getVerifySsl()), !Boolean.FALSE.equals(m.getFollowRedirects()),
+                viaProxyFor(m.getUrl(), m.getUseProxy()));
         boolean ok = Boolean.TRUE.equals(r.get("ok"));
         try {
             HttpCheck res = new HttpCheck();
@@ -3498,7 +3507,7 @@ public class SchedulerService {
                 m.getExcludePatterns(),
                 m.getCrawlDepth() != null ? m.getCrawlDepth() : 2,
                 m.getCrawlMaxPages() != null ? m.getCrawlMaxPages() : 50,
-                maxCheckSec);
+                maxCheckSec, viaProxyFor(m.getUrl(), m.getUseProxy()));
 
         // Alarm-uygunluk YALNIZ e-posta geçidi (tabloda her sorun görünür). countsForAlarm: BLOCKED/SLOW hiç,
         // LINK yalnız 404/410 (dış link 5xx/timeout alarm üretmez — Q1), yüklenen alt-kaynak broken/timeout.
@@ -4491,7 +4500,7 @@ public class SchedulerService {
         if (!Boolean.TRUE.equals(m.getSlowResponseEnabled())) { out.put("status", "up"); return out; }
         int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000;
         Map<String, Object> r = keywordCheckerService.check(m.getUrl(), m.getKeyword(), timeout, m.getCustomHeaders(),
-                Boolean.TRUE.equals(m.getCaseSensitive()));
+                Boolean.TRUE.equals(m.getCaseSensitive()), viaProxyFor(m.getUrl(), m.getUseProxy()));
         Long ms = r.get("response_ms") instanceof Number n ? n.longValue() : null;
         if (ms != null) out.put("response_ms", ms);
         boolean slow = r.get("error") == null && ms != null && ms > th;   // HTTP hatası → yavaşlık değerlendirilemez → up

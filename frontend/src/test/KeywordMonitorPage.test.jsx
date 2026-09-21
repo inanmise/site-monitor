@@ -140,7 +140,7 @@ describe('KeywordMonitorPage', () => {
     expect(api.monitoring.createKeywordMonitor.mock.calls[0][0]).toEqual({
       name: 'Example (Kopya)', url: 'https://www.example.com/', keyword: 'example',
       operator: 'LTE', matchCount: 4, groupName: 'Kurumsal', teamId: 5,
-      caseSensitive: true, tags: 'prod,kritik', alertLevel: 'HIGH', notifyEmail: false, notifyWebhook: true,
+      caseSensitive: true, useProxy: 'AUTO', tags: 'prod,kritik', alertLevel: 'HIGH', notifyEmail: false, notifyWebhook: true,
       checkSslErrors: true, sslExpiryReminders: true, domainExpiryReminders: true,
       sslReminderDays: '45,20,5', domainReminderDays: '60,30,10',
       slowResponseEnabled: true, slowThresholdMs: 4500,

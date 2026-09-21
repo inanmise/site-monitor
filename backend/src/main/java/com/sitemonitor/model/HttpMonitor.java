@@ -47,6 +47,14 @@ public class HttpMonitor implements MonitorAlertPrefs, MonitorSchedule {
     @Column(name = "verify_ssl")
     private Boolean verifySsl = false;
 
+    /**
+     * Kurumsal vekil (proxy) tercihi: {@code AUTO} | {@code ON} | {@code OFF} (2026-09-21). AUTO (varsayılan, null da
+     * AUTO): <b>envanterle aynı</b> — alan adı sertifika envanterinde "Proxy üzerinden kontrol et = Evet" ise vekil,
+     * değilse doğrudan. Karar {@code ProxyPolicyService}'te; sertifika kontrolüyle aynı vekil ve NO_PROXY kuralı.
+     */
+    @Column(name = "use_proxy", length = 10)
+    private String useProxy;
+
     /** Mantıksal grup (ör. "X Sistemleri") — filtreleme/gruplama; serbest-form. */
     @Column(name = "group_name")
     private String groupName;
