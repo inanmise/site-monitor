@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
-import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Inbox, ShieldCheck, CalendarDays, Plus, LayoutList, LayoutGrid } from 'lucide-react'
+import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Inbox, ShieldCheck, CalendarDays, Plus, LayoutList, LayoutGrid, Loader2 } from 'lucide-react'
 
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
@@ -1246,7 +1246,12 @@ export default function App() {
                     </div>
                   )}
                 </div>
-                {sorted.length === 0 ? (
+                {sorted.length === 0 && lastUpdate == null ? (
+                  /* İlk veri gelene kadar "Sertifika bulunamadı" DEĞİL yükleniyor (kullanıcı bildirimi 2026-09-21, QA ISSUE-006):
+                     certs [] ile başlar, getCertificates yanıtı gecikince boş durum sahte "sertifika yok" algısı veriyordu.
+                     lastUpdate yalnız ilk başarılı yanıtta dolar — tur kapısındaki "veri geldi" sinyaliyle aynı. */
+                  <StatusBlock tone="neutral" icon={Loader2} className="status-block--loading" title={t('app.loadingCerts')} role="status" />
+                ) : sorted.length === 0 ? (
                   <StatusBlock tone="neutral" icon={Inbox} title={statsFilter ? t('app.noFilterCerts', STAT_FILTER_LABEL[statsFilter]) : t('app.noCerts')} description={statsFilter || search ? t('empty.hintFilter') : t('empty.hintCerts')} />
                 ) : (
                   <>

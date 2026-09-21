@@ -1068,6 +1068,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .status-block--danger  { --sb-ink: var(--danger); }
 .status-block--success { --sb-ink: var(--success); }
 .status-block-icon { display: flex; justify-content: center; margin-bottom: 12px; }
+/* İlk yükleme durumu (QA ISSUE-006): simge döner, yükseklik boş-durumla aynı → kartlar gelince zıplama yok */
+.status-block--loading .status-block-icon svg { animation: spin .9s linear infinite; }
 .status-block-title { font-size: 1.2em; font-weight: 600; margin-bottom: 8px; color: var(--sb-ink); }
 .status-block-desc { color: var(--text-light); margin-bottom: 18px; }
 .status-block-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
