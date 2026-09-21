@@ -101,7 +101,10 @@ public class ProxySettings {
                 throw new java.io.IOException("vekil tüneli reddetti: " + (status == null ? "(boş yanıt)" : status.trim()));
             }
             String line;
-            while ((line = in.readLine()) != null && !line.isEmpty()) { /* tünel başlıklarını tüket */ }
+            int headerLines = 0;
+            while ((line = in.readLine()) != null && !line.isEmpty()) {   // tünel başlıklarını tüket
+                if (++headerLines > 100) throw new java.io.IOException("vekil tünel yanıtı: aşırı başlık (100+)");   // S3: tavanlı okuma
+            }
             return raw;
         } catch (java.io.IOException e) {
             try { raw.close(); } catch (Exception ignored) { /* kapatma hatası önemsiz */ }

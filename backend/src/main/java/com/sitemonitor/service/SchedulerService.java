@@ -654,6 +654,12 @@ public class SchedulerService {
         // Sentetik koşumun kurumsal çıkış vekilini kullanıp kullanmayacağı (AUTO/ON/OFF) ve
         // koşumun gerçekten vekilden geçip geçmediği. Mevcut satırlarda NULL = AUTO.
         patch("ALTER TABLE scripted_monitors ADD COLUMN use_proxy VARCHAR(10)");
+        // İzleme başına kurumsal vekil kipi (2026-09-21): HTTP/Keyword/Sayfa NULL = AUTO (envanterle aynı), Sayfa Hızı NULL = OFF
+        // (doğrudan). ddl-auto da ekler; açık patch proje geleneği (idempotent, kolon varsa noop).
+        patch("ALTER TABLE http_monitors ADD COLUMN use_proxy VARCHAR(10)");
+        patch("ALTER TABLE keyword_monitors ADD COLUMN use_proxy VARCHAR(10)");
+        patch("ALTER TABLE page_monitors ADD COLUMN use_proxy VARCHAR(10)");
+        patch("ALTER TABLE pagespeed_monitors ADD COLUMN use_proxy VARCHAR(10)");
         patch("ALTER TABLE scripted_checks ADD COLUMN via_proxy BOOLEAN");
         // İsteğin faz kırılımı: k6 bunları hep üretiyordu, okunmuyordu — "request timeout"un
         // DNS mi TCP mi TLS mi TTFB mi olduğu kayıttan cevaplanamıyordu. NULL = o faza girilmedi.

@@ -3193,7 +3193,7 @@ public class MonitoringController {
     private static final String[] PAGESPEED_FIELDS = {
             "name", "url", "active", "teamId", "groupName", "intervalSeconds", "timeoutMs",
             "maxLoadMs", "maxTtfbMs", "maxPageKb", "maxRequests",
-            "userAgent", "sendDnt", "excludeTrackers", "trackerPatterns",
+            "userAgent", "sendDnt", "useProxy", "excludeTrackers", "trackerPatterns",
             "basicAuthUser", "basicAuthPassEnc", "customHeadersEnc", "resourceConcurrency",
             "confirmAttempts", "confirmIntervalSeconds", "recoveryChecks", "recoveryIntervalSeconds",
             "tags", "notifyEmail", "notifyWebhook" };
