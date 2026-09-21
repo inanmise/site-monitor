@@ -256,6 +256,7 @@ public class MonitoringOutageService {
     private void noteSuppression(String alertType, int networkDown, int totalDomains) {
         double rate = totalDomains == 0 ? 0 : (double) networkDown / totalDomains;
         boolean wasActive = Boolean.TRUE.equals(suppressionActive.put(alertType, true));
+        outageReconciled.remove(alertType);   // kesinti yeniden açıldı → sonraki temiz turda DB'ye yine bakılsın
         if (wasActive) {
             log.debug("{} sweep: bastırma sürüyor ({}/{} ağ-sınıfı DOWN)", alertType, networkDown, totalDomains);
             return;
@@ -277,9 +278,21 @@ public class MonitoringOutageService {
         }
     }
 
+    /**
+     * Kaynak başına "yeniden başlatma sonrası DB ile bir kez uzlaşıldı" işareti (QA ISSUE-001, 2026-09-21).
+     * {@link #suppressionActive} bellek-içidir: kesinti kaydı yazıldıktan sonra uygulama yeniden başlarsa harita
+     * boş gelir, {@link #clearSuppression} "zaten kapalıydı" diye erken döner ve DB'deki ONGOING kayıt süpürmeler
+     * sağlıklı olsa da SONSUZA DEK açık kalır (canlıda 44+ saat "Still ongoing", DNS 11/11 Healthy). Bayrak kapalıyken
+     * ilk sağlıklı turda DB'ye bir kez bakılır; sonraki turlar sorgu atmaz (kesinti açılınca işaret sıfırlanır).
+     */
+    private final Set<String> outageReconciled = ConcurrentHashMap.newKeySet();
+
     private void clearSuppression(String alertType) {
-        if (!Boolean.TRUE.equals(suppressionActive.put(alertType, false))) return;   // zaten kapalıydı
-        log.info("{} sweep: ağ kesintisi şüphesi kalktı — alarm işleme normale döndü", alertType);
+        boolean wasActive = Boolean.TRUE.equals(suppressionActive.put(alertType, false));
+        if (!wasActive && !outageReconciled.add(alertType)) return;   // zaten kapalıydı ve DB bir kez uzlaştırıldı
+        if (wasActive) {
+            log.info("{} sweep: ağ kesintisi şüphesi kalktı — alarm işleme normale döndü", alertType);
+        }
         try {
             networkOutageRepo.findFirstBySourceAndStatusOrderByIdDesc(alertType, "ONGOING").ifPresent(ev -> {
                 String now = ISO.format(Instant.now());
@@ -290,6 +303,10 @@ public class MonitoringOutageService {
                                    - Instant.from(ISO.parse(ev.getDetectedAt())).toEpochMilli());
                 } catch (Exception ignored) { /* süre null kalır */ }
                 networkOutageRepo.save(ev);
+                if (!wasActive) {
+                    log.info("{} sweep: yeniden başlatma öncesinden açık kalan ağ kesintisi kaydı kapatıldı (id={}, tespit={})",
+                            alertType, ev.getId(), ev.getDetectedAt());
+                }
             });
         } catch (Exception e) {
             log.warn("{} bastırma olayı kapatılamadı: {}", alertType, e.getMessage());
