@@ -53,6 +53,9 @@ export function certRank(r) {
 
 export const EMPTY_FILTERS = Object.freeze({
   q: '', team: '', ugTeam: '', tier: '', group: '', notifGroup: '', cert: '', contacts: '', flags: [], domainExp: '', hygiene: '', proxy: '',   // proxy: '' | 'on' | 'off' (2026-09-22)
+  // Kolon süzgeçleri (2026-09-22, kullanıcı isteği): tablo başlığının altındaki satır. Aynı nesnede yaşar ki URL/kayıtlı
+  // görünüm/Temizle hepsini birlikte taşısın. team/tier/group/cert/contacts/domainExp/ugTeam kolonları üstteki süzgeçleri PAYLAŞIR.
+  domain: '', port: '', days: '', checked: '', flag: '', interval: '', tag: '', updated: '', active: '',
 })
 
 /** URL parametreleri ← filtre (i_ öneki, PAGE_STATE_PREFIXES'te). Boş değer null → param silinir. */
@@ -61,6 +64,8 @@ export function filtersToParams(f) {
     i_q: f.q || null, i_team: f.team || null, i_ug: f.ugTeam || null, i_tier: f.tier || null, i_group: f.group || null,
     i_ng: f.notifGroup || null, i_cert: f.cert || null, i_contacts: f.contacts || null,
     i_flags: f.flags?.length ? f.flags.join(',') : null, i_dexp: f.domainExp || null, i_hy: f.hygiene || null, i_proxy: f.proxy || null,
+    i_dom: f.domain || null, i_port: f.port || null, i_days: f.days || null, i_chk: f.checked || null, i_flag: f.flag || null,
+    i_int: f.interval || null, i_tag: f.tag || null, i_upd: f.updated || null, i_act: f.active || null,
   }
 }
 export function paramsToFilters(read) {
@@ -68,10 +73,13 @@ export function paramsToFilters(read) {
     q: read('i_q', ''), team: read('i_team', ''), ugTeam: read('i_ug', ''), tier: read('i_tier', ''), group: read('i_group', ''),
     notifGroup: read('i_ng', ''), cert: read('i_cert', ''), contacts: read('i_contacts', ''),
     flags: (read('i_flags', '') || '').split(',').filter(Boolean), domainExp: read('i_dexp', ''), hygiene: read('i_hy', ''), proxy: read('i_proxy', ''),
+    domain: read('i_dom', ''), port: read('i_port', ''), days: read('i_days', ''), checked: read('i_chk', ''), flag: read('i_flag', ''),
+    interval: read('i_int', ''), tag: read('i_tag', ''), updated: read('i_upd', ''), active: read('i_act', ''),
   }
 }
 export function hasActiveFilter(f) {
-  return !!(f.q || f.team || f.ugTeam || f.tier || f.group || f.notifGroup || f.cert || f.contacts || f.flags?.length || f.domainExp || f.hygiene || f.proxy)
+  return !!(f.q || f.team || f.ugTeam || f.tier || f.group || f.notifGroup || f.cert || f.contacts || f.flags?.length || f.domainExp || f.hygiene || f.proxy
+    || f.domain || f.port || f.days || f.checked || f.flag || f.interval || f.tag || f.updated || f.active)
 }
 
 function daysUntil(iso) {
@@ -79,6 +87,40 @@ function daysUntil(iso) {
   const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso + 'T00:00:00Z' : (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : iso + 'Z'))
   if (Number.isNaN(d.getTime())) return null
   return Math.floor((d.getTime() - Date.now()) / 86400000)
+}
+
+/** ISO zaman damgasından bu yana geçen saat; yoksa/bozuksa null. */
+function ageHours(iso) {
+  if (!iso) return null
+  const d = new Date(/[zZ]$|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : iso + 'Z')
+  if (Number.isNaN(d.getTime())) return null
+  return (Date.now() - d.getTime()) / 3600000
+}
+function tagList(csv) { return String(csv || '').split(',').map((x) => x.trim()).filter(Boolean) }
+
+/**
+ * Kolon süzgeçlerinin seçenek kaynağı (2026-09-22): DURUM süzgecinden geçmiş satırlardan türer (o an tabloda olabilecekler),
+ * böylece açılır listelerde hiç eşleşmeyecek değer yoktur. Saf; etiketleme bileşende (i18n).
+ */
+export function columnFilterOptions(items) {
+  const ports = new Set(), teams = new Map(), ugTeams = new Map(), groups = new Set(), intervals = new Set(), tags = new Map()
+  for (const r of items) {
+    ports.add(String(r.port ?? 443))
+    if (r.team_id != null) teams.set(String(r.team_id), r.team_name || String(r.team_id))
+    if (r.ug_team_id != null) ugTeams.set(String(r.ug_team_id), r.ug_team_name || String(r.ug_team_id))
+    if (r.group_name) groups.add(r.group_name)
+    if (r.check_interval_hours != null) intervals.add(String(r.check_interval_hours))
+    for (const tg of tagList(r.tags)) { const k = tg.toLowerCase(); if (!tags.has(k)) tags.set(k, tg) }
+  }
+  const byLabel = (a, b) => a.label.localeCompare(b.label)
+  return {
+    ports: [...ports].sort((a, b) => Number(a) - Number(b)),
+    teams: [...teams].map(([value, label]) => ({ value, label })).sort(byLabel),
+    ugTeams: [...ugTeams].map(([value, label]) => ({ value, label })).sort(byLabel),
+    groups: [...groups].sort((a, b) => a.localeCompare(b)),
+    intervals: [...intervals].sort((a, b) => Number(a) - Number(b)),
+    tags: [...tags.values()].sort((a, b) => a.localeCompare(b)),
+  }
 }
 
 /**
@@ -115,6 +157,26 @@ export function applyFilters(items, f, hygiene = null) {
       const d = daysUntil(r.domain_expiry)
       if (f.domainExp === 'unknown' ? d != null : (d == null || d > Number(f.domainExp))) return false
     }
+    // ── Kolon süzgeçleri (2026-09-22) ──
+    if (f.domain && !(r.domain || '').toLowerCase().includes(f.domain.trim().toLowerCase())) return false
+    if (f.port && String(r.port ?? 443) !== String(f.port)) return false
+    if (f.days) {
+      const d = r.cert_days_remaining
+      if (f.days === 'unknown' ? d != null : f.days === 'expired' ? !(d != null && d < 0) : (d == null || d < 0 || d > Number(f.days))) return false
+    }
+    if (f.checked) {
+      const age = ageHours(r.cert_checked_at)
+      if (f.checked === 'never' ? age != null : (age == null || age > Number(f.checked))) return false
+    }
+    if (f.flag && !r[f.flag]) return false
+    if (f.interval && (f.interval === 'global' ? r.check_interval_hours != null : String(r.check_interval_hours ?? '') !== String(f.interval))) return false
+    if (f.tag && !tagList(r.tags).some((x) => x.toLowerCase() === f.tag.toLowerCase())) return false
+    if (f.updated) {
+      const age = ageHours(r.updated_at)
+      if (age == null || age > Number(f.updated)) return false
+    }
+    if (f.active === 'yes' && !r.active) return false
+    if (f.active === 'no' && !!r.active) return false
     if (f.hygiene) {
       const codes = hygiene?.[r.domain]
       if (!codes || !codes.has(f.hygiene)) return false

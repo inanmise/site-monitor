@@ -48,6 +48,7 @@ vi.mock('../components/ui/Dialog.jsx', () => ({
 }))
 vi.mock('@uiw/react-md-editor', () => ({
   default: ({ value, textareaProps }) => <textarea readOnly value={value ?? ''} {...(textareaProps ?? {})} />,
+  commands: { divider: {}, codeEdit: {}, codePreview: {}, fullscreen: {} },   // araç çubuğu kopyala komutu (2026-09-22) bunları okur
 }))
 // Tanılama penceresi ağ çağırıyor; burada YALNIZ hangi adresle açıldığı sorgulanıyor.
 vi.mock('../components/admin/DiagnosticsModal.jsx', () => ({

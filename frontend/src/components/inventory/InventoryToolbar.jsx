@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Search, SlidersHorizontal, Columns3, Rows3, Bookmark, Link2, Users, Table2, X } from 'lucide-react'
+import { Search, ListFilter, SlidersHorizontal, Columns3, Rows3, Bookmark, Link2, Users, Table2, X } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { INVENTORY_FLAGS } from '../../utils/inventoryFlags.js'
@@ -11,6 +11,7 @@ import { INVENTORY_COLUMNS, EMPTY_FILTERS, hasActiveFilter, defaultCols } from '
  */
 export default function InventoryToolbar({
   filters, onFilters, teams = [], groupNames = [], notifGroups = [], shown = 0, total = 0,
+  colFilters = false, onColFilters = null,   // kolon süzgeç satırı anahtarı (2026-09-22)
   cols, onCols, sort, onSort, density, onDensity, view, onView, savedViews = [], onSaveView, onApplyView, onDeleteView, onCopyLink,
 }) {
   const t = useT()
@@ -57,6 +58,12 @@ export default function InventoryToolbar({
           <button type="button" className={`seg-ctl-btn${view === 'table' ? ' active' : ''}`} onClick={() => onView('table')} aria-pressed={view === 'table'}><Table2 size={13} className="seg-ctl-icon" /> {t('inv.viewTable')}</button>
           <button type="button" className={`seg-ctl-btn${view === 'team' ? ' active' : ''}`} onClick={() => onView('team')} aria-pressed={view === 'team'}><Users size={13} className="seg-ctl-icon" /> {t('inv.viewByTeam')}</button>
         </div>
+        {onColFilters && view === 'table' && (
+          <button type="button" className={`btn btn-sm ${colFilters ? 'btn-primary' : 'btn-secondary'}`} onClick={() => onColFilters(!colFilters)}
+            title={t('inv.colFiltersHint')} aria-pressed={colFilters}>
+            <ListFilter size={13} /> {t('inv.colFilters')}
+          </button>
+        )}
         <button type="button" className="btn btn-sm btn-secondary" onClick={() => onDensity(density === 'compact' ? 'comfortable' : 'compact')} title={t('inv.density')} aria-pressed={density === 'compact'}>
           <Rows3 size={13} /> {density === 'compact' ? t('inv.densityCompact') : t('inv.densityComfortable')}
         </button>

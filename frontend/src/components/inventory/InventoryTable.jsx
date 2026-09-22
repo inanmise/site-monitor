@@ -9,6 +9,7 @@ import TeamBadge from '../ui/TeamBadge.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import { CONTACT_FIELDS } from '../../utils/inventoryContacts.js'
 import { INVENTORY_COLUMNS, filledContacts, activeFlags } from './inventoryModel.js'
+import InventoryFilterRow from './InventoryFilterRow.jsx'   // kolon süzgeç satırı (2026-09-22)
 
 const FLAG_ICON = {
   netscaler: Server, waf_enabled: Shield, openshift: Cloud, ssl_pinning: Lock, jks_keystore: Key, ev_certificate: BadgeCheck,
@@ -56,6 +57,7 @@ export function ContactsCell({ r, t }) {
 export default function InventoryTable({
   rows, cols, sort, onSort, density, canManage, canEditRow = () => canManage, isAdmin, teamsCount, teamMap = {}, selected, onToggle, onToggleAll, allOnPage,
   onShow, onEdit, onDuplicate, onTransfer, onDelete, onRestore, onPurge, onDiagnose, onCheckNow, onInline, onTagClick, statusFilter,
+  filters = null, onFilters = null, allRows = [], showFilters = false,   // kolon süzgeç satırı (2026-09-22)
 }) {
   const t = useT()
   const [editing, setEditing] = useState(null)   // { id, field }
@@ -117,6 +119,9 @@ export default function InventoryTable({
             {header('active', statusFilter === 'deleted' ? 'inv.colDeleted' : 'inv.colActive')}
             <th>{t('inv.colActions')}</th>
           </tr>
+          {showFilters && filters && onFilters && (
+            <InventoryFilterRow filters={filters} onFilters={onFilters} allRows={allRows} cols={cols} canManage={canManage} statusFilter={statusFilter} />
+          )}
         </thead>
         <tbody>
           {rows.map((r) => {

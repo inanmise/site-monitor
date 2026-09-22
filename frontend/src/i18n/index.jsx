@@ -3608,6 +3608,11 @@ export const TR = {
   'inv.filterProxyOn':     'Vekil üzerinden kontrol edilenler',
   'inv.filterProxyOff':    'Doğrudan kontrol edilenler',
   'inv.filterClear':       'Süzgeçleri temizle',
+  // Kolon süzgeç satırı (2026-09-22)
+  'inv.colFilters': 'Kolon süzgeçleri', 'inv.colFiltersHint': 'Tablo başlığının altında her kolon için arama/seçim satırını aç-kapat',
+  'inv.colFilterDomain': 'Domain süz', 'inv.colFilterDomainPh': 'Domain ara…', 'inv.colFilterExpired': 'Süresi dolmuş', 'inv.colFilterWithinDays': '≤ {0} gün',
+  'inv.colFilterUnknown': 'Ölçülmemiş', 'inv.colFilterLast24h': 'Son 24 saat', 'inv.colFilterLast7d': 'Son 7 gün', 'inv.colFilterLast30d': 'Son 30 gün',
+  'inv.colFilterIntervalGlobal': 'Genel zamanlama', 'inv.colFilterIntervalH': 'Her {0} saat', 'inv.colFilterActiveYes': 'Aktif', 'inv.colFilterActiveNo': 'Pasif',
   'inv.shownOf':           '{0} / {1} kayıt',
   'inv.sort':              'Sırala',
   'inv.sortDomain':        'Alan adı A–Z',
@@ -11803,6 +11808,11 @@ export const EN = {
   'inv.filterProxyOn':     'Checked via proxy',
   'inv.filterProxyOff':    'Checked directly',
   'inv.filterClear':       'Clear filters',
+  // Column filter row (2026-09-22)
+  'inv.colFilters': 'Column filters', 'inv.colFiltersHint': 'Show or hide a search/select row for every column under the table header',
+  'inv.colFilterDomain': 'Filter by domain', 'inv.colFilterDomainPh': 'Search domain…', 'inv.colFilterExpired': 'Expired', 'inv.colFilterWithinDays': '≤ {0} days',
+  'inv.colFilterUnknown': 'Not measured', 'inv.colFilterLast24h': 'Last 24 hours', 'inv.colFilterLast7d': 'Last 7 days', 'inv.colFilterLast30d': 'Last 30 days',
+  'inv.colFilterIntervalGlobal': 'Global schedule', 'inv.colFilterIntervalH': 'Every {0} hours', 'inv.colFilterActiveYes': 'Active', 'inv.colFilterActiveNo': 'Inactive',
   'inv.shownOf':           '{0} of {1} records',
   'inv.sort':              'Sort',
   'inv.sortDomain':        'Domain A–Z',

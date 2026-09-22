@@ -13801,6 +13801,15 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .inv-th-btn { border: 0; background: none; color: inherit; font: inherit; font-weight: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; padding: 0; }
 .inv-th-btn:hover { text-decoration: underline; }
 .inv-th--sticky, .inv-td--sticky { position: sticky; left: 0; z-index: 1; }
+/* Kolon süzgeç satırı (2026-09-22): başlığın altında, her kolonda o kolona özgü denetim; başlıkla birlikte yapışkan */
+.inv-filter-row .inv-fr-cell { padding: 4px 6px; background: var(--bg-surface); border-bottom: 2px solid var(--border); vertical-align: middle; }
+.inv-filter-row .inv-fr-cell .ss-trigger { min-height: 28px; padding: 3px 8px; font-size: .82em; }
+.inv-filter-row .inv-fr-cell .ss-wrap, .inv-filter-row .inv-fr-cell .ss-root { min-width: 96px; }
+.inv-fr-text { position: relative; display: block; min-width: 140px; }
+.inv-fr-text .input { width: 100%; padding-right: 22px; font-size: .82em; }
+.inv-fr-clear { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); border: 0; background: none; color: var(--text-muted); cursor: pointer; padding: 2px; display: inline-flex; }
+.inv-fr-clear:hover { color: var(--danger, #dc2626); }
+.inv-table thead .inv-filter-row td.inv-td--sticky { position: sticky; left: 0; z-index: 2; }
 .inv-td--sticky { background: var(--bg-surface); }
 .admin-table tr:hover .inv-td--sticky { background: #f0f7ff; }
 .inv-domain { border: 0; background: none; color: var(--text); font: inherit; font-weight: 700; cursor: pointer; padding: 0; text-align: left; }

@@ -100,6 +100,8 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const [cols, setColsRaw]    = useState(() => { const v = readView().cols; return Array.isArray(v) && v.length ? v : defaultCols() })
   const [density, setDensityRaw] = useState(() => readView().density || 'comfortable')
   const [view, setViewRaw]    = useState(() => readUrlParam('i_view', readView().view || 'table'))
+  const [colFilters, setColFiltersRaw] = useState(() => !!readView().colFilters)   // kolon süzgeç satırı açık mı (2026-09-22)
+  const setColFilters = (v) => { setColFiltersRaw(v); writeView({ colFilters: v }) }
   const [savedViews, setSavedViews] = useState(readSavedViews)
   const setCols = (c) => { setColsRaw(c); writeView({ cols: c }) }
   const setDensity = (d) => { setDensityRaw(d); writeView({ density: d }) }
@@ -557,7 +559,8 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       <InventoryToolbar filters={filters} onFilters={setFilters} teams={teams} groupNames={groupNames} notifGroups={notifGroups}
         shown={visibleItems.length} total={statusItems.length}
         cols={cols} onCols={setCols} sort={sort} onSort={setSortPersist} density={density} onDensity={setDensity}
-        view={view} onView={setView} savedViews={savedViews} onSaveView={saveView} onApplyView={applyView} onDeleteView={deleteView} onCopyLink={copyLink} />
+        view={view} onView={setView} savedViews={savedViews} onSaveView={saveView} onApplyView={applyView} onDeleteView={deleteView} onCopyLink={copyLink}
+        colFilters={colFilters} onColFilters={setColFilters} />
 
       {canManage && selected.size > 0 && (
         <div className="inv-stats-pills" style={{ marginBottom: 10, gap: 8, alignItems: 'center',
@@ -594,7 +597,8 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
             onDelete={del} onRestore={restore} onPurge={purge}
             onDiagnose={(r) => setDiag({ domain: r.domain, port: r.port || 443 })}
             onCheckNow={checkNow} onInline={inlineUpdate}
-            onTagClick={(tag) => setFilters(f => ({ ...f, q: tag }))} />
+            onTagClick={(tag) => setFilters(f => ({ ...f, q: tag }))}
+            filters={filters} onFilters={setFilters} allRows={statusItems} showFilters={colFilters} />
           <PaginationBar {...pager} />
         </>
       )}
