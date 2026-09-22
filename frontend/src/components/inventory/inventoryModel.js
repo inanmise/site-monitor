@@ -1,5 +1,6 @@
 import { INVENTORY_FLAGS } from '../../utils/inventoryFlags.js'
 import { CONTACT_FIELDS } from '../../utils/inventoryContacts.js'
+import { mergeNewDefaultCols } from '../../utils/columnPrefs.js'
 
 /**
  * Envanter sayfası saf modeli (2026-09-12, envanter zenginleştirme #1/#4/#5/#9/#12/#13/#6):
@@ -243,6 +244,25 @@ export function readView() {
 export function writeView(patch) {
   try { localStorage.setItem(VIEW_KEY, JSON.stringify({ ...readView(), ...patch })) } catch { /* yoksay */ }
 }
+
+/**
+ * Bu düzeltmeden (2026-09-22) önce yazılmış görünümlerde `colsKnown` yok — o tarihte katalogda
+ * olan anahtarlar. DONDURULMUŞ: yeni sütun buraya EKLENMEZ, yoksa eski kullanıcı onu hiç görmez
+ * ("platform" sütununun başına gelen buydu).
+ */
+export const LEGACY_KNOWN_COLS = Object.freeze([
+  'domain', 'port', 'tier', 'team', 'ug_team', 'cert', 'days', 'checked', 'group',
+  'contacts', 'flags', 'domain_exp', 'interval', 'tags', 'updated', 'active',
+])
+export function colKeys() { return INVENTORY_COLUMNS.map((c) => c.key) }
+/** Kayıtlı/adlı görünümün sütunları + kullanıcının hiç görmediği yeni varsayılanlar (bkz. columnPrefs.js). */
+export function restoreCols(cols, known) {
+  if (!Array.isArray(cols) || cols.length === 0) return defaultCols()
+  return mergeNewDefaultCols(cols, INVENTORY_COLUMNS, known || LEGACY_KNOWN_COLS)
+}
+export function readCols() { const v = readView(); return restoreCols(v.cols, v.colsKnown) }
+/** Sütun seçimini yazarken o anki katalog da saklanır ki sonraki yeni sütun "yeni" sayılsın. */
+export function writeCols(cols) { writeView({ cols, colsKnown: colKeys() }) }
 export function readSavedViews() {
   try { const v = JSON.parse(localStorage.getItem(SAVED_VIEWS_KEY) || '[]'); return Array.isArray(v) ? v : [] } catch { return [] }
 }

@@ -19,7 +19,7 @@ import CertTableToolbar from './certtable/CertTableToolbar.jsx'
 import CertBulkBar from './certtable/CertBulkBar.jsx'
 import CertFilterRow from './certtable/CertFilterRow.jsx'   // kolon süzgeç satırı (2026-09-22)
 import { TABLE_COLUMNS, COLUMN_BY_KEY, STATUS_OPTIONS, EMPTY_FILTERS, LEVEL_CLASS, LEVEL_TEXT, URL_KEYS,
-  readView, writeView, readPresets, writePresets, savePreset, defaultCols, normalizeCols, csvColumnsFor,
+  readView, writeView, readPresets, writePresets, savePreset, readCols, writeCols, normalizeCols, csvColumnsFor,
   filtersFromUrl, toQuery, toUrlMapping, levelOf, trustOf, lifetimePct, isStale, relTime, shortFp } from './certtable/certTableModel.js'
 
 export { TABLE_COLUMNS }
@@ -54,7 +54,7 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
   const [sortBy, setSortBy] = useState(() => readUrlParam('c_sort', null) || readView()?.sortBy || 'priority|asc')
   const [page, setPage] = useState(() => readUrlInt('c_page', 1))
   const [perPage, setPerPage] = useState(() => readUrlInt('c_ps', null) || defaultPerPage)
-  const [cols, setCols] = useState(() => { const v = readView()?.cols; return Array.isArray(v) && v.length ? normalizeCols(v) : defaultCols() })
+  const [cols, setCols] = useState(readCols)   // kayıtlı seçim + hiç görülmemiş yeni varsayılan sütunlar (2026-09-22)
   const [density, setDensity] = useState(() => readView()?.density === 'compact' ? 'compact' : 'comfortable')
   const [colFilters, setColFilters] = useState(() => !!readView()?.colFilters)   // kolon süzgeç satırı açık mı (2026-09-22)
   const [presets, setPresets] = useState(() => readPresets())
@@ -134,7 +134,7 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
     const [k, d] = sortBy.split('|')
     changeSort(`${key}|${k === key && d === 'asc' ? 'desc' : 'asc'}`)
   }
-  function changeCols(next) { const n = normalizeCols(next); setCols(n); writeView({ cols: n }) }
+  function changeCols(next) { const n = normalizeCols(next); setCols(n); writeCols(n) }
   function changeDensity(d) { setDensity(d); writeView({ density: d }) }
   function changeColFilters(v) { setColFilters(v); writeView({ colFilters: v }) }
   function selectStatus(val) { updateFilters({ ...filters, status: val }); setStatusDropOpen(false); writeView({ filterStatus: val }) }

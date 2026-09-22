@@ -27,7 +27,7 @@ import InventoryImportModal from '../inventory/InventoryImportModal.jsx'
 import InventoryDrawer from '../inventory/InventoryDrawer.jsx'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval.js'
 import {
-  applyFilters, sortItems, detectOverlaps, filtersToParams, paramsToFilters, readView, writeView, defaultCols,
+  applyFilters, sortItems, detectOverlaps, filtersToParams, paramsToFilters, readView, writeView, readCols, writeCols, restoreCols, colKeys,
   readSavedViews, writeSavedViews, EMPTY_FILTERS,
 } from '../inventory/inventoryModel.js'
 
@@ -97,7 +97,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   // Süzgeç / sıralama / sütun / yoğunluk / görünüm (#1 #4 #13 #15 #7) — süzgeç URL'de (i_ öneki), gerisi localStorage
   const [filters, setFilters] = useState(() => paramsToFilters(readUrlParam))
   const [sort, setSort]       = useState(() => readUrlParam('i_sort', readView().sort || 'domain|asc'))   // paylaşılan bağlantı sıralamayı taşır (ISSUE-002)
-  const [cols, setColsRaw]    = useState(() => { const v = readView().cols; return Array.isArray(v) && v.length ? v : defaultCols() })
+  const [cols, setColsRaw]    = useState(readCols)   // kayıtlı seçim + kullanıcının hiç görmediği yeni varsayılan sütunlar (2026-09-22)
   const [density, setDensityRaw] = useState(() => readView().density || 'comfortable')
   const [view, setViewRaw]    = useState(() => readUrlParam('i_view', readView().view || 'table'))
   const [colFilters, setColFiltersRaw] = useState(() => !!readView().colFilters)   // kolon süzgeç satırı açık mı (2026-09-22)
@@ -109,7 +109,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   }, [])
   const setColFilters = (v) => { setColFiltersRaw(v); writeView({ colFilters: v }) }
   const [savedViews, setSavedViews] = useState(readSavedViews)
-  const setCols = (c) => { setColsRaw(c); writeView({ cols: c }) }
+  const setCols = (c) => { setColsRaw(c); writeCols(c) }
   const setDensity = (d) => { setDensityRaw(d); writeView({ density: d }) }
   const setView = (v) => { setViewRaw(v); writeView({ view: v }) }
   const setSortPersist = (v) => { setSort(v); writeView({ sort: v }) }
@@ -255,12 +255,12 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
 
   // ── Kayıtlı görünümler (#13) + paylaşım bağlantısı ──
   function saveView(name) {
-    const v = { name, filters, sort, cols, density, statusFilter, view }
+    const v = { name, filters, sort, cols, colsKnown: colKeys(), density, statusFilter, view }
     const next = [...savedViews.filter(x => x.name !== name), v]
     setSavedViews(next); writeSavedViews(next); toast.success(t('inv.viewSaved', name))
   }
   function applyView(v) {
-    setFilters({ ...EMPTY_FILTERS, ...(v.filters || {}) }); setSortPersist(v.sort || 'domain|asc'); setCols(v.cols?.length ? v.cols : defaultCols())
+    setFilters({ ...EMPTY_FILTERS, ...(v.filters || {}) }); setSortPersist(v.sort || 'domain|asc'); setCols(restoreCols(v.cols, v.colsKnown))
     setDensity(v.density || 'comfortable'); setStatusFilter(v.statusFilter || 'default'); setView(v.view || 'table')
   }
   function deleteView(name) { const next = savedViews.filter(x => x.name !== name); setSavedViews(next); writeSavedViews(next) }

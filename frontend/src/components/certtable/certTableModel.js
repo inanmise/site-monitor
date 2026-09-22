@@ -6,6 +6,7 @@
  * göreli zaman) ve CSV. Bileşen yalnız durum + çizim tutar; testler burayı doğrudan sınar.
  */
 import { csvRows } from '../../utils/csv.js'
+import { mergeNewDefaultCols } from '../../utils/columnPrefs.js'
 
 /** Sütun kataloğu — `sort`: sunucu sıralama anahtarı (yoksa başlık tıklanmaz). */
 export const TABLE_COLUMNS = [
@@ -76,6 +77,24 @@ export function readView() {
 export function writeView(patch) {
   try { localStorage.setItem(VIEW_KEY, JSON.stringify({ ...(readView() || {}), ...patch })) } catch { /* yoksay */ }
 }
+
+/**
+ * `colsKnown` yazılmadan önceki (2026-09-22) katalog. DONDURULMUŞ: yeni sütun buraya EKLENMEZ —
+ * eklenirse kayıtlı görünümü olan kullanıcı o sütunu hiç görmez (bkz. utils/columnPrefs.js).
+ */
+export const LEGACY_KNOWN_COLS = Object.freeze([
+  'domain', 'issuer', 'subject', 'team', 'expiry', 'days', 'status', 'trust', 'san', 'shared', 'key',
+  'signature', 'port', 'tier', 'via', 'tls', 'intermediate', 'notBefore', 'fingerprint', 'serial', 'checked',
+])
+export function colKeys() { return TABLE_COLUMNS.map((c) => c.key) }
+/** Kayıtlı sütunlar + kullanıcının hiç görmediği yeni varsayılan sütunlar. */
+export function readCols() {
+  const v = readView() || {}
+  const saved = v.cols
+  if (!Array.isArray(saved) || saved.length === 0) return defaultCols()
+  return normalizeCols(mergeNewDefaultCols(normalizeCols(saved), TABLE_COLUMNS, v.colsKnown || LEGACY_KNOWN_COLS))
+}
+export function writeCols(cols) { writeView({ cols, colsKnown: colKeys() }) }
 export function readPresets() {
   try { const v = JSON.parse(localStorage.getItem(PRESETS_KEY) || '[]'); return Array.isArray(v) ? v.filter((p) => p && p.name) : [] } catch { return [] }
 }

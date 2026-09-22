@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   applyFilters, sortItems, detectOverlaps, parseCsv, mapCsv, importTemplateCsv, filtersToParams, paramsToFilters,
   hasActiveFilter, EMPTY_FILTERS, INVENTORY_COLUMNS, defaultCols, certRank, IMPORT_COLUMNS, columnFilterOptions,
+  restoreCols, readCols, writeCols, LEGACY_KNOWN_COLS, colKeys, VIEW_KEY,
 } from '../components/inventory/inventoryModel.js'
 
 /** Envanter saf modeli (2026-09-12): filtre/sıralama/çakışma/CSV — React'siz. */
@@ -130,5 +131,33 @@ describe('CSV import', () => {
     expect(head).toEqual(IMPORT_COLUMNS)
     expect(head).toContain('waf_enabled')
     expect(mapCsv([]).rows).toEqual([])
+  })
+})
+
+describe('sütun tercihi × sonradan eklenen sütun (2026-09-22 QA)', () => {
+  it('kullanıcının hiç görmediği yeni varsayılan sütun katalog sırasındaki yerine eklenir', () => {
+    // colsKnown YOK → görünüm "platform" katalogda yokken yazılmış sayılır
+    const saved = ['domain', 'port', 'team', 'tags', 'active']
+    const out = restoreCols(saved, undefined)
+    expect(out).toContain('platform')
+    expect(out.indexOf('platform')).toBe(out.indexOf('tags') + 1)   // katalogda tags'ten hemen sonra
+    expect(out.filter((k) => k !== 'platform')).toEqual(saved)      // kalanların sırası bozulmaz
+  })
+  it('kullanıcının BİLEREK kapattığı sütun geri gelmez; boş liste varsayılana düşer', () => {
+    expect(restoreCols(['domain', 'port', 'active'], colKeys())).toEqual(['domain', 'port', 'active'])
+    expect(restoreCols([], colKeys())).toEqual(defaultCols())
+    expect(restoreCols(null)).toEqual(defaultCols())
+  })
+  it('LEGACY_KNOWN_COLS dondurulmuş: yeni sütunları İÇERMEZ, eskilerin hepsini içerir', () => {
+    expect(LEGACY_KNOWN_COLS).not.toContain('platform')
+    const legacy = new Set(LEGACY_KNOWN_COLS)
+    for (const k of colKeys()) if (k !== 'platform') expect(legacy.has(k)).toBe(true)
+  })
+  it('writeCols o anki kataloğu da saklar → aynı sütun ikinci kez eklenmez', () => {
+    localStorage.setItem(VIEW_KEY, JSON.stringify({ cols: ['domain', 'port', 'active'] }))
+    expect(readCols()).toContain('platform')          // eski kayıt: yeni sütun gelir
+    writeCols(['domain', 'port', 'active'])           // kullanıcı onu kapatıyor
+    expect(readCols()).toEqual(['domain', 'port', 'active'])
+    localStorage.clear()
   })
 })
