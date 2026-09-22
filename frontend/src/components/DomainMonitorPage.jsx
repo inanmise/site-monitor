@@ -53,7 +53,19 @@ const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
 const REFRESH_INTERVAL = 60
-const SORTS = ['days_asc', 'days_desc', 'name']
+const SORTS = ['days_asc', 'days_desc', 'name', 'registrar', 'team', 'changed']   // registrar/takım/son değişiklik (2026-09-22, B)
+/** Hızlı süzgeç (2026-09-22, B): URL `dq`. 'all' | 'nolock' | 'unsigned' | 'soon' | 'rdap' | 'whois' | 'alarm' */
+const QUICK = ['all', 'soon', 'nolock', 'unsigned', 'alarm', 'rdap', 'whois']
+const SOON_DAYS = 30
+const QUICK_PRED = {
+  all: () => true,
+  soon: m => m.days_remaining != null && m.days_remaining <= SOON_DAYS,
+  nolock: m => m.transfer_lock === 'NONE',
+  unsigned: m => m.dnssec === 'unsigned',
+  alarm: m => !!m.active_alarm,
+  rdap: m => m.source === 'RDAP',
+  whois: m => m.source === 'WHOIS',
+}
 // Domain kaydi gunde birkac kez sorgulanir; taban SAAT olcegindedir (WHOIS/RDAP nezaketi).
 // Diger turlerdeki dakika olcegi burada anlamsiz olurdu — bu yuzden liste TURE OZEL.
 const INTERVALS = [
@@ -172,6 +184,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
   const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))   // etiket filtresi (2026-09-18)
   const [sortBy, setSortBy] = useState(() => readUrlParam('sort', 'days_asc'))
+  const [quick, setQuick] = useState(() => { const v = readUrlParam('dq', 'all'); return QUICK.includes(v) ? v : 'all' })   // hızlı süzgeç (2026-09-22)
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
   const [secondsSince, setSecondsSince] = useState(0)
@@ -470,18 +483,20 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   // Form içi grup dropdown'ı takım+tür kapsamlı endpoint'ten (liste filtresi değil): admin başka takımın grubunu görmez.
   const groupSelectOptions = useMemo(() => teamGroups.map(g => ({ value: g.name, label: g.name })), [teamGroups])
   const sortOptions = useMemo(() => SORTS.map(s => ({ value: s, label: t('dom.sort_' + s) })), [t])
+  const quickOptions = useMemo(() => QUICK.map(q => ({ value: q, label: q === 'soon' ? t('dom.quick_soon', SOON_DAYS) : t('dom.quick_' + q) })), [t])
 
   const scoped = useMemo(() => monitors.filter(m => {
     if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
     if (!matchesTag(m, tagFilter)) return false
+    if (!(QUICK_PRED[quick] || QUICK_PRED.all)(m)) return false
     if (matchesGroupOrTagText(m, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
     if (!search.trim()) return true
     const q = search.trim().toLowerCase()
     return (m.domain || '').toLowerCase().includes(q) || (m.name || '').toLowerCase().includes(q) || (m.registrar || '').toLowerCase().includes(q)
-  }), [monitors, teamFilter, groupFilter, tagFilter, search])
+  }), [monitors, teamFilter, groupFilter, tagFilter, quick, search])
 
   const counts = useMemo(() => {
-    const c = { total: scoped.length, ok: 0, warning: 0, critical: 0, unknown: 0, changed: 0 }
+    const c = { total: scoped.length, ok: 0, warning: 0, critical: 0, unknown: 0, changed: 0, soon: 0, nolock: 0 }
     for (const m of scoped) {
       const s = m.status
       if (s === 'OK') c.ok++
@@ -489,6 +504,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
       else if (s === 'CRITICAL') c.critical++
       else c.unknown++
       if (m.changed) c.changed++
+      if (m.days_remaining != null && m.days_remaining <= SOON_DAYS) c.soon++
+      if (m.transfer_lock === 'NONE') c.nolock++
     }
     return c
   }, [scoped])
@@ -500,14 +517,19 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         ok: m => m.status === 'OK', warning: m => m.status === 'WARNING',
         critical: m => m.status === 'CRITICAL', unknown: m => m.status !== 'OK' && m.status !== 'WARNING' && m.status !== 'CRITICAL',
         changed: m => m.changed,
+        soon: QUICK_PRED.soon, nolock: QUICK_PRED.nolock,
       }[statFilter]
       if (pred) list = list.filter(pred)
     }
     const dv = (m) => (m.days_remaining == null ? (sortBy === 'days_asc' ? 1e9 : -1e9) : m.days_remaining)
     const sorted = [...list]
+    const byDomain = (a, b) => (a.domain || '').localeCompare(b.domain || '')
     if (sortBy === 'days_asc') sorted.sort((a, b) => dv(a) - dv(b))
     else if (sortBy === 'days_desc') sorted.sort((a, b) => dv(b) - dv(a))
-    else sorted.sort((a, b) => (a.domain || '').localeCompare(b.domain || ''))
+    else if (sortBy === 'registrar') sorted.sort((a, b) => (a.registrar || '\uffff').localeCompare(b.registrar || '\uffff') || byDomain(a, b))
+    else if (sortBy === 'team') sorted.sort((a, b) => (a.team_name || '\uffff').localeCompare(b.team_name || '\uffff') || byDomain(a, b))
+    else if (sortBy === 'changed') sorted.sort((a, b) => String(b.last_changed || '').localeCompare(String(a.last_changed || '')) || byDomain(a, b))   // en yeni kayıt değişikliği önce
+    else sorted.sort(byDomain)
     return sorted
   }, [scoped, statFilter, sortBy])
 
@@ -516,7 +538,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
   // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(displayMonitors, {
-    listKey: 'domain-monitors', resetDeps: [search, teamFilter, groupFilter, tagFilter, statFilter, sortBy],
+    listKey: 'domain-monitors', resetDeps: [search, teamFilter, groupFilter, tagFilter, quick, statFilter, sortBy],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
 
@@ -525,6 +547,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   useUrlQuerySync({
     ...monitorUrlState({ teamFilter, groupFilter, tagFilter, search, statFilter, pager }),
     sort: sortBy !== 'days_asc' ? sortBy : null,
+    dq: quick !== 'all' ? quick : null,   // hızlı süzgeç (2026-09-22)
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'control' ? detailTab : null,
     // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
@@ -537,6 +560,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
     { key: 'critical', Icon: ShieldAlert,      label: t('dom.dashCritical'), value: counts.critical, cls: 'critical' },
     { key: 'unknown',  Icon: HelpCircle,       label: t('dom.dashUnknown'),  value: counts.unknown,  cls: 'high'     },
     { key: 'changed',  Icon: Activity, label: t('dom.dashChanged'),  value: counts.changed,  cls: 'error'    },
+    { key: 'soon',     Icon: CalendarClock,    label: t('dom.dashSoon', SOON_DAYS), value: counts.soon, cls: 'warning' },
+    { key: 'nolock',   Icon: LockOpen,         label: t('dom.dashNoLock'),   value: counts.nolock,   cls: 'high'     },
   ]
   const onStatClick = (key) => setStatFilter(k => k === key ? null : key)
   const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }
@@ -599,6 +624,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
           <SearchableSelect value={sortBy} onChange={setSortBy} options={sortOptions} />
+          <SearchableSelect value={quick} onChange={setQuick} options={quickOptions} ariaLabel={t('dom.quickLabel')} />
           {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />}
           {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} />}
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />}
@@ -615,6 +641,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         <StatusBlock tone="neutral" icon={Inbox} title={canWrite ? t('dom.noMonitorsAdmin') : t('dom.noMonitors')} description={canWrite ? t('empty.hintMonitorsAdmin') : t('empty.hintMonitors')} />
       ) : (
         <>
+        {/* Süzgeç/arama hiçbir izlemeyi bırakmadıysa boş alan yerine açık mesaj (2026-09-22) */}
+        {displayMonitors.length === 0 && <StatusBlock tone="neutral" icon={Inbox} title={t('mon.noFilterMatch')} description={t('empty.hintFilter')} />}
         <div className="upt-grid">
           {pager.pageItems.map(m => (
             <div key={m.id} className={`upt-card upt-card--${statusCls(m.status)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}

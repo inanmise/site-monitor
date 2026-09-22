@@ -17,7 +17,7 @@ import { useEffect, useRef } from 'react'
 /** Sekme değişince App.handleTabChange'in temizlediği sayfa-durumu paramları (tek doğruluk kaynağı). */
 export const PAGE_STATE_PARAMS = ['group', 'tag', 'team', 'q', 'stat', 'sort', 'page', 'ps', 'monitor', 'range', 'mtab', 'domain', 'incident', 'sec', 'view', 'alert', 'type', 'level', 'ack', 'from', 'to',
   'atype', 'astatus', 'arange', 'aq',   // Aktivite Logu süzgeçleri (QA ISSUE-003: sekme değişince başka sekmeye taşınıyordu)
-  'via']   // izleme sayfaları vekil süzgeci (2026-09-22)
+  'via', 'dq']   // izleme sayfaları vekil süzgeci; alan adı hızlı süzgeci (2026-09-22)
 
 /**
  * Sekme değişince temizlenecek param AİLELERİ (önek eşleşmesi).
