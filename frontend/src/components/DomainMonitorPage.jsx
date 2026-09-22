@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
 import { dateLocale } from '../i18n/dateLocale.js'
 import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
@@ -29,7 +29,7 @@ import IntervalSlider from './ui/IntervalSlider.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
-import { RefreshCw, Plus, Trash2, CalendarClock, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Building2, Activity, Calendar, Inbox, Lock, LockOpen, ShieldCheck, ShieldOff, ListX, Server } from 'lucide-react'
+import { RefreshCw, Plus, Trash2, CalendarClock, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Building2, Activity, Calendar, Inbox, Lock, LockOpen, ShieldCheck, ShieldOff, ListX, Server, Download, ChevronDown } from 'lucide-react'
 import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
 import ModalScrollHint from './ui/ModalScrollHint.jsx'
 import { duplicateName } from '../utils/duplicateName.js'
@@ -50,6 +50,7 @@ import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import { ProgressBar } from './ui/Progress.jsx'
 import { eppLabel, domainLife } from '../utils/domainEpp.js'
+import { exportDomainsCsv, exportDomainsPdf } from '../utils/exportDomains.js'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
@@ -189,6 +190,17 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
   const [secondsSince, setSecondsSince] = useState(0)
+  // Dışa aktarım menüsü (2026-09-22, D): görünen (süzülmüş + sıralanmış) liste CSV/PDF — envanterle aynı menü deseni
+  const [exportOpen, setExportOpen] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const exportRef = useRef(null)
+  useEffect(() => {
+    if (!exportOpen) return
+    const onClick = (e) => { if (!exportRef.current?.contains(e.target)) setExportOpen(false) }
+    const onKey = (e) => { if (e.key === 'Escape') setExportOpen(false) }
+    document.addEventListener('mousedown', onClick); document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onClick); document.removeEventListener('keydown', onKey) }
+  }, [exportOpen])
 
   const load = useCallback(async () => {
     // HATA DALI: eskiden else yoktu → API düşünce liste boş kalıyor ve ekran
@@ -455,6 +467,16 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
     }
   }
 
+  async function doExport(kind) {
+    setExportOpen(false)
+    if (displayMonitors.length === 0) { toast.error(t('inv.exportNoData')); return }
+    setExporting(true)
+    try {
+      const n = kind === 'csv' ? exportDomainsCsv(displayMonitors, t) : await exportDomainsPdf(displayMonitors, t)
+      toast.success(t('inv.exportSuccess', n))
+    } catch { toast.error(t('inv.exportError')) } finally { setExporting(false) }
+  }
+
   const { teamOptions, hasTeamOptions } = useTeamOptions(monitors)
   const teamSelectOptions = useMemo(() => [...(isAdmin ? [{ value: '', label: t('dom.noTeam') }] : []),   // "takımsız" yalnız admin: üye için takım zorunlu (2026-09-18)
     ...pickTeams.map(tm => ({ value: String(tm.id), label: tm.name }))], [isAdmin, pickTeams, t])
@@ -608,6 +630,24 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
             done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
             onClick={checkRun.openPicker} />
           <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+          <div className="sqlpg-menu-wrap" ref={exportRef}>
+            <button type="button" className={`btn btn-sm upt-refresh-btn sqlpg-menu-trigger${exportOpen ? ' is-open' : ''}`}
+              onClick={() => setExportOpen(o => !o)} disabled={exporting} aria-haspopup="menu" aria-expanded={exportOpen}>
+              <Download size={14} />{t('inv.export')}<ChevronDown size={12} className="sqlpg-menu-chev" />
+            </button>
+            {exportOpen && (
+              <div className="sqlpg-menu inv-export-menu" role="menu">
+                <button type="button" className="sqlpg-item" role="menuitem" onClick={() => doExport('csv')}>
+                  <div className="sqlpg-item-label">{t('inv.exportCsv')}</div>
+                  <div className="sqlpg-item-preview">{t('dom.exportCsvHint', displayMonitors.length)}</div>
+                </button>
+                <button type="button" className="sqlpg-item" role="menuitem" onClick={() => doExport('pdf')}>
+                  <div className="sqlpg-item-label">{t('inv.exportPdf')}</div>
+                  <div className="sqlpg-item-preview">{t('dom.exportPdfHint', displayMonitors.length)}</div>
+                </button>
+              </div>
+            )}
+          </div>
           <MonitorGuideButton type="domain" />
           {canWrite && <button className="btn btn-sm btn-primary" onClick={openNew}><Plus size={14} />{t('dom.addMonitor')}</button>}
         </div>

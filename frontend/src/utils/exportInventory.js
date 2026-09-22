@@ -13,7 +13,7 @@ const statusOf = (item, t) =>
 const tierLabel = (item, t) =>
   item.tier ? `T${item.tier} — ${t(`inv.tier${item.tier}`)}` : t('inv.tierNone')
 
-const triggerDownload = (blob, filename) => {
+export const triggerDownload = (blob, filename) => {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -22,7 +22,7 @@ const triggerDownload = (blob, filename) => {
   URL.revokeObjectURL(url)
 }
 
-const dateStamp = () => {
+export const dateStamp = () => {
   const d = new Date()
   const pad = (n) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
@@ -134,7 +134,7 @@ async function fetchAsBase64(url) {
   return btoa(s)
 }
 
-async function registerRobotoFont(doc) {
+export async function registerRobotoFont(doc) {
   const [regular, bold] = await Promise.all([
     fetchAsBase64('/fonts/Roboto-Regular.ttf'),
     fetchAsBase64('/fonts/Roboto-Bold.ttf'),
