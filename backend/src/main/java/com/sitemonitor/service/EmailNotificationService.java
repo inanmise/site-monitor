@@ -3132,6 +3132,12 @@ public class EmailNotificationService {
      */
     public record DeploymentWeekly(int deployments, String fromVersion, String toVersion, int restarts, int rollbacks) {}
 
+    /** Haftalık rapordaki alan adı (registrar) bitiş satırı (2026-09-22, madde G). plannedAt null = plan yok. */
+    public record DomainExpiryWeeklyRow(String domain, Integer daysRemaining, String expiryDate, String registrar,
+                                        String transferLock, String plannedAt, boolean planOverdue) {}
+    /** Alan adı bölümü: pencere içindeki satırlar + izlenen toplam + kilitsiz sayısı. rows boş olabilir. */
+    public record DomainExpiryWeekly(List<DomainExpiryWeeklyRow> rows, int monitorCount, int windowDays, int unlockedCount) {}
+
     /** Zayıf algoritma satırı (2026-09-12): takımın alanlarında zayıf sertifika sayısı + taranan alan sayısı. */
     public record WeakAlgoWeekly(int weak, int scanned) {}
 
@@ -3169,6 +3175,14 @@ public class EmailNotificationService {
                                               List<AvailabilityRow> rows, AvailabilitySummary s,
                                               AttachmentInfo att, PageSpeedWeekly ps, DeploymentWeekly dep,
                                               WeakAlgoWeekly weak) {
+        return buildWeeklyAvailabilityHtml(teamName, weekLabel, rows, s, att, ps, dep, weak, null);
+    }
+
+    /** {@code dom} doluysa "Alan Adı Bitişleri" bölümü eklenir (2026-09-22, madde G): 90 gün içinde bitenler + kilitsizler. */
+    public String buildWeeklyAvailabilityHtml(String teamName, String weekLabel,
+                                              List<AvailabilityRow> rows, AvailabilitySummary s,
+                                              AttachmentInfo att, PageSpeedWeekly ps, DeploymentWeekly dep,
+                                              WeakAlgoWeekly weak, DomainExpiryWeekly dom) {
         String accent = "#1f3864";
         String outerBg = "#f4f6f8";
         String generatedAt = ZonedDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
@@ -3335,6 +3349,52 @@ public class EmailNotificationService {
                 + "</td></tr></table>";
         }
 
+        // Alan adı (registrar) bitişleri (2026-09-22, madde G): sertifikadan AYRI vade sınıfı — kayıt dolarsa site kaybolur.
+        // Boş pencere de raporlanır ("90 günde biten yok, izlenen N"): sessizlik "bakılmadı" ile karışmasın.
+        String domSection = "";
+        if (dom != null) {
+            boolean any = dom.rows() != null && !dom.rows().isEmpty();
+            String edge = any && dom.rows().stream().anyMatch(r -> r.daysRemaining() != null && r.daysRemaining() <= 30) ? "#dc2626" : any ? "#d97706" : "#16a34a";
+            StringBuilder rowsHtml = new StringBuilder();
+            if (any) {
+                rowsHtml.append("<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-top:8px;border-collapse:collapse'>")
+                        .append("<tr>").append(thCell("Alan adı", "left")).append(thCell("Kalan", "left")).append(thCell("Bitiş", "left"))
+                        .append(thCell("Registrar", "left")).append(thCell("Kilit", "left")).append(thCell("Plan", "left")).append("</tr>");
+                for (DomainExpiryWeeklyRow r : dom.rows()) {
+                    Integer d = r.daysRemaining();
+                    String dc = d == null ? "#64748b" : d < 0 ? "#991b1b" : d <= 7 ? "#dc2626" : d <= 30 ? "#d97706" : "#1e293b";
+                    String dTxt = d == null ? "—" : d < 0 ? Math.abs(d) + " gün önce doldu" : d + " gün";
+                    String lock = r.transferLock() == null ? "—" : switch (r.transferLock()) {
+                        case "BOTH" -> "registrar+registry"; case "SERVER" -> "registry"; case "CLIENT" -> "registrar";
+                        case "NONE" -> "YOK"; default -> "doğrulanamadı"; };
+                    String lockColor = "NONE".equals(r.transferLock()) ? "#dc2626" : "#475569";
+                    String plan = r.plannedAt() == null ? "—" : (r.planOverdue() ? "GECİKMİŞ " : "") + r.plannedAt();
+                    String planColor = r.planOverdue() ? "#dc2626" : "#475569";
+                    rowsHtml.append("<tr style='border-top:1px solid #e2e8f0'>")
+                        .append("<td style='padding:7px 12px;font-size:13px;font-weight:600;color:#1e293b;word-break:break-all'>").append(escHtml(r.domain())).append("</td>")
+                        .append("<td style='padding:7px 12px;font-size:13px;font-weight:800;color:").append(dc).append(";white-space:nowrap'>").append(escHtml(dTxt)).append("</td>")
+                        .append("<td style='padding:7px 12px;font-size:13px;color:#475569;white-space:nowrap'>").append(escHtml(r.expiryDate() == null ? "—" : r.expiryDate().length() >= 10 ? r.expiryDate().substring(0, 10) : r.expiryDate())).append("</td>")
+                        .append("<td style='padding:7px 12px;font-size:12px;color:#475569'>").append(escHtml(r.registrar() == null ? "—" : r.registrar())).append("</td>")
+                        .append("<td style='padding:7px 12px;font-size:12px;font-weight:700;color:").append(lockColor).append(";white-space:nowrap'>").append(escHtml(lock)).append("</td>")
+                        .append("<td style='padding:7px 12px;font-size:12px;font-weight:700;color:").append(planColor).append(";white-space:nowrap'>").append(escHtml(plan)).append("</td>")
+                        .append("</tr>");
+                }
+                rowsHtml.append("</table>");
+            }
+            String head = any
+                    ? dom.rows().size() + " alan adı önümüzdeki " + dom.windowDays() + " günde doluyor (izlenen: " + dom.monitorCount() + ")"
+                    : "Önümüzdeki " + dom.windowDays() + " günde biten alan adı yok (izlenen: " + dom.monitorCount() + ")";
+            String unlocked = dom.unlockedCount() > 0 ? " · " + dom.unlockedCount() + " alan adında transfer kilidi YOK" : "";
+            domSection =
+                "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 18px'><tr>"
+                + "<td bgcolor='#f8fafc' style='background:#f8fafc;border-left:4px solid " + edge + ";"
+                + "border-radius:0 8px 8px 0;padding:10px 16px;font-size:13px;color:#1e293b'>"
+                + "<span style='font-weight:800;color:#334155'>🌐 Alan Adı Bitişleri</span><br>"
+                + "<span style='font-size:13px;color:#334155'>" + escHtml(head + unlocked) + "</span>"
+                + rowsHtml
+                + "</td></tr></table>";
+        }
+
         // Domain tablosu (en kötü üstte — servis sıralar)
         StringBuilder body = new StringBuilder();
         body.append("<tr>")
@@ -3415,6 +3475,7 @@ public class EmailNotificationService {
             + pageSpeedSection
             + deploySection
             + weakSection
+            + domSection
             // Footer
             + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
             + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitor — Otomatik Haftalık Rapor</td>"

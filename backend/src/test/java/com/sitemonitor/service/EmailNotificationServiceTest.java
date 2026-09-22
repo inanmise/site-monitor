@@ -1220,4 +1220,30 @@ class EmailNotificationServiceTest {
                 null, null, null);
         assertThat(none).doesNotContain("Zayıf Algoritma");
     }
+
+    @Test
+    @DisplayName("2026-09-22 (G): haftalık e-posta 'Alan Adı Bitişleri' bölümü — satırlar, kilitsiz uyarısı, gecikmiş plan; boş pencere yine yazılır; null → bölüm yok")
+    void weeklyHtml_domainExpirySection() {
+        java.util.List<EmailNotificationService.DomainExpiryWeeklyRow> rows = java.util.List.of(
+                new EmailNotificationService.DomainExpiryWeeklyRow("a.example.com", 5, "2026-09-27T00:00:00Z", "Reg A", "NONE", null, false),
+                new EmailNotificationService.DomainExpiryWeeklyRow("b.example.com", 40, "2026-11-01", null, "BOTH", "2026-09-01", true),
+                new EmailNotificationService.DomainExpiryWeeklyRow("c.example.com", -2, "2026-09-20", "Reg C", "UNKNOWN", null, false));
+        String html = service.buildWeeklyAvailabilityHtml("Takım A", "2026-W39", java.util.List.of(), emptySummary(),
+                null, null, null, null, new EmailNotificationService.DomainExpiryWeekly(rows, 7, 90, 1));
+        assertThat(html).contains("Alan Adı Bitişleri")
+                .contains("3 alan adı önümüzdeki 90 günde doluyor (izlenen: 7)")
+                .contains("1 alan adında transfer kilidi YOK")
+                .contains("a.example.com").contains("5 gün").contains("2026-09-27").contains("Reg A").contains("YOK")
+                .contains("registrar+registry").contains("GECİKMİŞ 2026-09-01")
+                .contains("2 gün önce doldu").contains("doğrulanamadı")
+                .contains("#dc2626");   // ≤30 gün → kırmızı kenar
+
+        String empty = service.buildWeeklyAvailabilityHtml("Takım A", "2026-W39", java.util.List.of(), emptySummary(),
+                null, null, null, null, new EmailNotificationService.DomainExpiryWeekly(java.util.List.of(), 4, 90, 0));
+        assertThat(empty).contains("Önümüzdeki 90 günde biten alan adı yok (izlenen: 4)").contains("#16a34a").doesNotContain("transfer kilidi YOK");
+
+        String none = service.buildWeeklyAvailabilityHtml("Takım A", "2026-W39", java.util.List.of(), emptySummary(),
+                null, null, null, null);
+        assertThat(none).doesNotContain("Alan Adı Bitişleri");
+    }
 }
