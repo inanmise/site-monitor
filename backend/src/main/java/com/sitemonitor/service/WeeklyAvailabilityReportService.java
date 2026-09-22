@@ -825,11 +825,15 @@ public class WeeklyAvailabilityReportService {
         return cc.toArray(new String[0]);
     }
 
-    /** Takımın PO + MANAGER eskalasyon kontak e-postaları (dedup); PO kontak yoksa orgRole=PO kullanıcılar. */
+    /** Haftalık raporun CC rolleri: PO → TECH (takımın eskalasyon kontağı, 2026-09-22) → MANAGER. CLEVEL bilinçli DIŞARIDA
+     *  (yalnız kritik eskalasyonda devreye girer; rutin haftalık özet üst kademeye gitmez). */
+    static final List<String> CC_ROLES = List.of("PO", "TECH", "MANAGER");
+
+    /** Takımın PO + TECH + MANAGER eskalasyon kontak e-postaları (dedup); hiç kontak yoksa orgRole=PO kullanıcılar. */
     private List<String> collectCc(Long teamId) {
         Set<String> seen = new HashSet<>();
         List<String> out = new ArrayList<>();
-        for (String role : List.of("PO", "MANAGER")) {
+        for (String role : CC_ROLES) {
             for (EscalationContact c : contactRepo.findByTeamIdAndRoleAndActiveTrue(teamId, role)) {
                 addEmail(out, seen, c.getEmail());
             }

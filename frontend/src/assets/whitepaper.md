@@ -712,7 +712,7 @@ Webhook gönderimleri e-postayla aynı denetim izine yazılır: `notification_lo
 
 ### 9.3 Haftalık Erişilebilirlik Maili
 
-Sertifika sahibi her aktif takıma, sahip olduğu domainlerin geçen tam haftaya (Pazartesi 00:00 – Pazar 23:59, Europe/Istanbul) ait erişilebilirlik özeti Pazartesi sabahı gönderilir. Kesinti olsun olmasın gider; kesinti yaşayan domainler ayrıca vurgulanır.
+Sertifika sahibi her aktif takıma, sahip olduğu domainlerin geçen tam haftaya (Pazartesi 00:00 – Pazar 23:59, Europe/Istanbul) ait erişilebilirlik özeti Pazartesi sabahı gönderilir. Kesinti olsun olmasın gider; kesinti yaşayan domainler ayrıca vurgulanır. Alıcı takımın e-posta kutusudur; takımın PO, eskalasyon (TECH) ve müdür (MANAGER) kontakları bilgi (CC) alır — üst kademe (CLEVEL) kontağı rutin özete dâhil edilmez.
 
 Maile **ayrıntılı kesinti raporu PDF olarak eklenir**: haftanın her kesintisi grafikler ve durum renkleriyle birlikte listelenir, e-posta gövdesi ekin varlığını açıkça duyurur. Böylece yönetici özetini gövdede okur, ayrıntıyı ekte bulur.
 

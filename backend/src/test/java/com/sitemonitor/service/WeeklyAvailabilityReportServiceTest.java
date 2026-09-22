@@ -995,4 +995,25 @@ class WeeklyAvailabilityReportServiceTest {
         c.setMonitorId(monitorId); c.setDaysRemaining(days); c.setTransferLock(lock); c.setExpiryDate("2027-01-01"); c.setRegistrar("R");
         return c;
     }
+
+    @Test
+    @DisplayName("2026-09-22: haftalık rapor CC'si takımın TECH eskalasyon kontağını da içerir (PO → TECH → MANAGER; CLEVEL dışarıda; dedup)")
+    void send_ccIncludesTechEscalationContact() {
+        Team t = team(5L, "Takım A", "team@example.com");
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
+        when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L)).thenReturn(List.of(inv("a.example.com")));
+        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
+                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(5L, "PO")).thenReturn(List.of(contact("po@example.com")));
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(5L, "TECH")).thenReturn(List.of(contact("tech@example.com"), contact("PO@example.com")));
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(5L, "MANAGER")).thenReturn(List.of(contact("mgr@example.com")));
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(5L, "CLEVEL")).thenReturn(List.of(contact("ceo@example.com")));
+
+        service.sendWeeklyReports(false);
+
+        ArgumentCaptor<String[]> ccCap = ArgumentCaptor.forClass(String[].class);
+        verify(emailService).sendHtmlWithAttachments(any(), ccCap.capture(), anyString(), anyString(), any(), any());
+        assertThat(ccCap.getValue()).containsExactly("po@example.com", "tech@example.com", "mgr@example.com");
+        assertThat(WeeklyAvailabilityReportService.CC_ROLES).containsExactly("PO", "TECH", "MANAGER");
+    }
 }
