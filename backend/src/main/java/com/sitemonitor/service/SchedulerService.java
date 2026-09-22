@@ -602,6 +602,9 @@ public class SchedulerService {
         patch("ALTER TABLE certificate_inventory ADD COLUMN domain_expiry TEXT");
         patch("ALTER TABLE certificate_inventory ADD COLUMN domain_registrar TEXT");
         patch("ALTER TABLE certificate_inventory ADD COLUMN domain_expiry_checked_at TEXT");
+        // Platform (2026-09-22): IIS/OpenShift/Kubernetes/Linux/… + serbest ayrıntı; ddl-auto da ekler, açık patch proje geleneği
+        patch("ALTER TABLE certificate_inventory ADD COLUMN platform VARCHAR(20)");
+        patch("ALTER TABLE certificate_inventory ADD COLUMN platform_detail VARCHAR(160)");
         patch("ALTER TABLE latest_checks ADD COLUMN via TEXT");
         patch("ALTER TABLE latest_checks ADD COLUMN tls_mode_used TEXT");
 

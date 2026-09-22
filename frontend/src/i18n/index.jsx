@@ -3411,6 +3411,19 @@ export const TR = {
   'inv.formDescription':'Açıklama',
   'inv.formChangeDesc':'Değişiklik Açıklaması',
   'inv.formPurchasedBy':'Satın Alan Kişi/Ekip',
+  // Platform (2026-09-22)
+  'inv.formPlatform': 'Platform', 'inv.platformNone': '— Seçilmedi —', 'inv.formPlatformHint': 'Site nerede koşuyor? Sertifikayı kim, nereye kuracak sorusunun cevabı; liste Ayarlar → Platformlar\'dan yönetilir.',
+  'inv.formPlatformDetail': 'Platform ayrıntısı', 'inv.formPlatformDetailPh': 'örn. ocp-prod kümesi, WEBSRV01, nginx', 'inv.colPlatform': 'Platform', 'card.platform': 'Platform',
+  'settings.navPlatforms': 'Platformlar',
+  'plat.title': 'Platformlar', 'plat.desc': 'Sitelerin koştuğu ortam kataloğu (IIS, OpenShift, Kubernetes, Linux…). Envanter formundaki "Platform" seçicisi bu listeden beslenir; kart ve tablo bu adı gösterir. Kod sabittir; ad ve açıklama düzenlenebilir. Kullanımda olan platform silinemez — pasife alın.',
+  'plat.code': 'Kod', 'plat.codeHint': 'Büyük harf, rakam ve alt çizgi; 2–20 karakter (örn. OPENSHIFT_PROD). Sonradan değişmez.', 'plat.codeLocked': 'Kod değiştirilemez (envanter kayıtları buna bağlı).',
+  'plat.name': 'Ad', 'plat.namePh': 'örn. OpenShift Prod', 'plat.description': 'Açıklama', 'plat.descriptionPh': 'Sertifika nasıl/nereye kurulur (isteğe bağlı)',
+  'plat.usage': 'Kullanım', 'plat.usageN': '{0} kayıt', 'plat.status': 'Durum', 'plat.active': 'Aktif', 'plat.inactive': 'Pasif',
+  'plat.add': 'Platform ekle', 'plat.save': 'Kaydet', 'plat.cancelEdit': 'Vazgeç', 'plat.edit': 'Düzenle', 'plat.activate': 'Aktifleştir', 'plat.deactivate': 'Pasife al', 'plat.delete': 'Sil',
+  'plat.deleteTitle': 'Platformu sil', 'plat.deleteMsg': '"{0}" platformu silinsin mi? Bu işlem geri alınamaz.', 'plat.inUse': 'Bu platform {0} envanter kaydında kullanılıyor — silmek yerine pasife alın.',
+  'plat.nameRequired': 'Ad zorunlu', 'plat.codeRequired': 'Kod zorunlu', 'plat.loadError': 'Platformlar yüklenemedi', 'plat.saveError': 'Kaydedilemedi',
+  'plat.created': '"{0}" eklendi', 'plat.updated': '"{0}" güncellendi', 'plat.deleted': '"{0}" silindi', 'plat.activated': '"{0}" aktifleştirildi', 'plat.deactivated': '"{0}" pasife alındı', 'plat.empty': 'Henüz platform yok',
+  'chg.field.platform': 'Platform', 'chg.field.platformDetail': 'Platform ayrıntısı',
   'inv.sectionBasic':  'Temel Bilgiler',
   // Sorumlu Ekipler — sertifikayi kimin yenileyecegi (alarm yonlendirmesine GIRMEZ)
   'inv.sectionContacts': 'Sorumlu Ekipler',
@@ -5510,6 +5523,8 @@ export const TR = {
   'otl.none': 'Bu aralıkta alarm yok',
   'otl.summary': '{0} alarm · toplam {1} · erişilebilirlik %{2}',
   'otl.stillOpen': 'hâlâ açık',
+  'otl.advisory': 'Uyarı', 'otl.advisories': '{0} uyarı (kesinti sayılmaz)', 'otl.advisoryHint': 'Sertifika/alan adı/yavaşlık gibi uyarı alarmları çentik olarak gösterilir; erişilebilirlik hesabına girmez.',
+  'hist.advisoryTriggered': 'Uyarı alarmı',
   // Alarm gürültü analizi (2026-09-12, #18)
   'noise.title': 'Gürültü analizi',
   // Alarm Geçmişi zenginleştirmesi (2026-09-16): imza şeridi, takım kırılımı, gürültü KPI'ları
@@ -11611,6 +11626,19 @@ export const EN = {
   'inv.formDescription':'Description',
   'inv.formChangeDesc':'Change Description',
   'inv.formPurchasedBy':'Purchasing Team / Person',
+  // Platform (2026-09-22)
+  'inv.formPlatform': 'Platform', 'inv.platformNone': '— Not set —', 'inv.formPlatformHint': 'Where does the site run? Answers who installs the certificate and where; the list is managed under Settings → Platforms.',
+  'inv.formPlatformDetail': 'Platform detail', 'inv.formPlatformDetailPh': 'e.g. ocp-prod cluster, WEBSRV01, nginx', 'inv.colPlatform': 'Platform', 'card.platform': 'Platform',
+  'settings.navPlatforms': 'Platforms',
+  'plat.title': 'Platforms', 'plat.desc': 'The catalogue of environments sites run on (IIS, OpenShift, Kubernetes, Linux…). The "Platform" picker on the inventory form is fed from this list; cards and tables show the name. The code is fixed; name and description can be edited. A platform in use cannot be deleted — deactivate it instead.',
+  'plat.code': 'Code', 'plat.codeHint': 'Upper-case letters, digits and underscores; 2–20 characters (e.g. OPENSHIFT_PROD). Cannot be changed later.', 'plat.codeLocked': 'The code cannot be changed (inventory records reference it).',
+  'plat.name': 'Name', 'plat.namePh': 'e.g. OpenShift Prod', 'plat.description': 'Description', 'plat.descriptionPh': 'How/where the certificate is installed (optional)',
+  'plat.usage': 'In use', 'plat.usageN': '{0} records', 'plat.status': 'Status', 'plat.active': 'Active', 'plat.inactive': 'Inactive',
+  'plat.add': 'Add platform', 'plat.save': 'Save', 'plat.cancelEdit': 'Cancel', 'plat.edit': 'Edit', 'plat.activate': 'Activate', 'plat.deactivate': 'Deactivate', 'plat.delete': 'Delete',
+  'plat.deleteTitle': 'Delete platform', 'plat.deleteMsg': 'Delete the "{0}" platform? This cannot be undone.', 'plat.inUse': 'This platform is used by {0} inventory records — deactivate it instead of deleting.',
+  'plat.nameRequired': 'Name is required', 'plat.codeRequired': 'Code is required', 'plat.loadError': 'Could not load platforms', 'plat.saveError': 'Could not save',
+  'plat.created': '"{0}" added', 'plat.updated': '"{0}" updated', 'plat.deleted': '"{0}" deleted', 'plat.activated': '"{0}" activated', 'plat.deactivated': '"{0}" deactivated', 'plat.empty': 'No platforms yet',
+  'chg.field.platform': 'Runtime platform', 'chg.field.platformDetail': 'Platform detail',
   'inv.sectionBasic':  'Basic Information',
   // Responsible teams — who renews this certificate (does NOT affect alert routing)
   'inv.sectionContacts': 'Responsible teams',
@@ -13708,6 +13736,8 @@ export const EN = {
   'otl.none': 'No alerts in this range',
   'otl.summary': '{0} alerts · total {1} · availability {2}%',
   'otl.stillOpen': 'still open',
+  'otl.advisory': 'Advisory', 'otl.advisories': '{0} advisories (not counted as downtime)', 'otl.advisoryHint': 'Certificate, domain-expiry and slowness alerts are shown as ticks; they do not affect availability.',
+  'hist.advisoryTriggered': 'Advisory alert',
   // Alert noise analysis (2026-09-12, #18)
   'noise.title': 'Noise analysis',
   // Alert history enrichment (2026-09-16): signature strip, team breakdown, noise KPIs

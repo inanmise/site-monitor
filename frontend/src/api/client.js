@@ -523,6 +523,11 @@ export const api = {
     importInventory: (rows, dryRun = true) =>
       request('/admin/inventory/import', { method: 'POST', body: JSON.stringify({ rows, dry_run: dryRun }) }),
     getInventoryByDomain: (domain) => request(`/admin/inventory/by-domain?domain=${encodeURIComponent(domain)}`),
+    // Platform kataloğu (2026-09-22): aktifler her oturuma (form seçicisi); all=true + yazma Ayarlar yetkisi
+    listPlatforms: (all = false) => request('/admin/platforms' + (all ? '?all=true' : '')),
+    createPlatform: (body) => request('/admin/platforms', { method: 'POST', body: JSON.stringify(body) }),
+    updatePlatform: (id, body) => request('/admin/platforms/' + id, { method: 'PUT', body: JSON.stringify(body) }),
+    deletePlatform: (id) => request('/admin/platforms/' + id, { method: 'DELETE' }),
     addInventory: (item) => request('/admin/inventory', { method: 'POST', body: JSON.stringify(item) }),
     updateInventory: (id, item) => request(`/admin/inventory/${id}`, { method: 'PUT', body: JSON.stringify(item) }),
     deleteInventory: (id) => request(`/admin/inventory/${id}`, { method: 'DELETE' }),

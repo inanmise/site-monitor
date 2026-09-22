@@ -76,6 +76,7 @@ export function InventoryDetails({ record, teamMap }) {
               : t('inv.tierNone')
           } />
           <ShowField label={t('inv.formPurchasedBy')} value={record.purchased_by || '—'} />
+          <ShowField label={t('inv.formPlatform')} value={record.platform ? `${record.platform}${record.platform_detail ? ' · ' + record.platform_detail : ''}` : '—'} />
           <ShowField label={t('inv.formTlsMode')} value={
             record.tls_mode === 'browser' ? t('inv.tlsModeBrowser')
             : record.tls_mode === 'default' ? t('inv.tlsModeDefault')

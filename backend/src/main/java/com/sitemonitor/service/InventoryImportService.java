@@ -48,13 +48,13 @@ public class InventoryImportService {
             "purchased_by", "svc_mgmt_contact", "app_dev_contact", "iis_admin_contact", "waf_admin_contact",
             "netscaler", "waf_enabled", "openshift", "ssl_pinning", "internal_cert", "jks_keystore",
             "ev_certificate", "external_vendor", "in_use", "use_proxy", "action_required", "server_update",
-            "transferred_to_sy", "change_description");
+            "transferred_to_sy", "change_description", "platform", "platform_detail");
 
     private static final String[] HISTORY_FIELDS = {
         "domain", "port", "active", "tier", "description", "owner", "tags", "externalVendor",
         "actionRequired", "openshift", "sslPinning", "internalCert", "jksKeystore", "serverUpdate",
         "netscaler", "wafEnabled", "inUse", "evCertificate", "transferredToSy", "useProxy",
-        "purchasedBy", "changeDescription", "teamId", "ugTeamId", "groupName",
+        "purchasedBy", "platform", "platformDetail", "changeDescription", "teamId", "ugTeamId", "groupName",
         "svcMgmtContact", "appDevContact", "iisAdminContact", "wafAdminContact"
     };
 
@@ -62,6 +62,8 @@ public class InventoryImportService {
     private final TeamRepository teamRepo;
     private final MonitorHistoryService monitorHistory;
     private final MonitoringGroupService monitoringGroupService;
+    /** Platform kataloğu (2026-09-22) — testte mock verilmezse null; o zaman değer olduğu gibi (üst-harf) alınır. */
+    private final PlatformService platformService;
     private final SchedulerService schedulerService;   // döngü yok: SchedulerService bu servisi bilmez
 
     /** Satır sonucu: {@code action} = create | update | skip | error; {@code reason} makine kodu. */
@@ -186,6 +188,8 @@ public class InventoryImportService {
         text(r, "owner", it.getOwner(), v -> it.setOwner(v), ch);
         text(r, "tags", it.getTags(), v -> it.setTags(v), ch);
         text(r, "purchased_by", it.getPurchasedBy(), v -> it.setPurchasedBy(v), ch);
+        text(r, "platform", it.getPlatform(), v -> it.setPlatform(platformService != null ? platformService.normalize(v) : (v == null || v.isBlank() ? null : v.trim().toUpperCase(java.util.Locale.ROOT))), ch);   // IIS/OPENSHIFT/… (2026-09-22)
+        text(r, "platform_detail", it.getPlatformDetail(), v -> it.setPlatformDetail(v), ch);
         text(r, "change_description", it.getChangeDescription(), v -> it.setChangeDescription(v), ch);
         text(r, "svc_mgmt_contact", it.getSvcMgmtContact(), v -> it.setSvcMgmtContact(v), ch);
         text(r, "app_dev_contact", it.getAppDevContact(), v -> it.setAppDevContact(v), ch);

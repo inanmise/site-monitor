@@ -101,6 +101,12 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const [density, setDensityRaw] = useState(() => readView().density || 'comfortable')
   const [view, setViewRaw]    = useState(() => readUrlParam('i_view', readView().view || 'table'))
   const [colFilters, setColFiltersRaw] = useState(() => !!readView().colFilters)   // kolon süzgeç satırı açık mı (2026-09-22)
+  const [platformNames, setPlatformNames] = useState({})   // kod → ad (tablo/süzgeç etiketi, 2026-09-22)
+  useEffect(() => {
+    let alive = true
+    api.admin.listPlatforms().then(r => { if (alive && r?.success) setPlatformNames(Object.fromEntries((r.data || []).map(p => [p.code, p.name]))) }).catch(() => {})
+    return () => { alive = false }
+  }, [])
   const setColFilters = (v) => { setColFiltersRaw(v); writeView({ colFilters: v }) }
   const [savedViews, setSavedViews] = useState(readSavedViews)
   const setCols = (c) => { setColsRaw(c); writeView({ cols: c }) }
@@ -598,7 +604,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
             onDiagnose={(r) => setDiag({ domain: r.domain, port: r.port || 443 })}
             onCheckNow={checkNow} onInline={inlineUpdate}
             onTagClick={(tag) => setFilters(f => ({ ...f, q: tag }))}
-            filters={filters} onFilters={setFilters} allRows={statusItems} showFilters={colFilters} />
+            filters={filters} onFilters={setFilters} allRows={statusItems} showFilters={colFilters} platformNames={platformNames} />
           <PaginationBar {...pager} />
         </>
       )}

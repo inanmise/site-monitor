@@ -23,6 +23,7 @@ export const INVENTORY_COLUMNS = [
   { key: 'domain_exp',   labelKey: 'inv.colDomainExpiry', def: false,   sort: (r) => r.domain_expiry || '9999' },
   { key: 'interval',     labelKey: 'inv.colInterval',     def: false,   sort: (r) => r.check_interval_hours ?? 0 },
   { key: 'tags',         labelKey: 'inv.colTags',         def: false,   sort: (r) => (r.tags || '').toLowerCase() },
+  { key: 'platform',     labelKey: 'inv.colPlatform',     def: true,    sort: (r) => (r.platform || 'zz').toLowerCase() },   // 2026-09-22
   { key: 'updated',      labelKey: 'inv.colUpdated',      def: false,   sort: (r) => r.updated_at || '' },
   { key: 'active',       labelKey: 'inv.colActive',       fixed: true,  sort: (r) => (r.deleted_at ? 2 : r.active ? 0 : 1) },
 ]
@@ -55,7 +56,7 @@ export const EMPTY_FILTERS = Object.freeze({
   q: '', team: '', ugTeam: '', tier: '', group: '', notifGroup: '', cert: '', contacts: '', flags: [], domainExp: '', hygiene: '', proxy: '',   // proxy: '' | 'on' | 'off' (2026-09-22)
   // Kolon süzgeçleri (2026-09-22, kullanıcı isteği): tablo başlığının altındaki satır. Aynı nesnede yaşar ki URL/kayıtlı
   // görünüm/Temizle hepsini birlikte taşısın. team/tier/group/cert/contacts/domainExp/ugTeam kolonları üstteki süzgeçleri PAYLAŞIR.
-  domain: '', port: '', days: '', checked: '', flag: '', interval: '', tag: '', updated: '', active: '',
+  domain: '', port: '', days: '', checked: '', flag: '', interval: '', tag: '', updated: '', active: '', platform: '',
 })
 
 /** URL parametreleri ← filtre (i_ öneki, PAGE_STATE_PREFIXES'te). Boş değer null → param silinir. */
@@ -65,7 +66,7 @@ export function filtersToParams(f) {
     i_ng: f.notifGroup || null, i_cert: f.cert || null, i_contacts: f.contacts || null,
     i_flags: f.flags?.length ? f.flags.join(',') : null, i_dexp: f.domainExp || null, i_hy: f.hygiene || null, i_proxy: f.proxy || null,
     i_dom: f.domain || null, i_port: f.port || null, i_days: f.days || null, i_chk: f.checked || null, i_flag: f.flag || null,
-    i_int: f.interval || null, i_tag: f.tag || null, i_upd: f.updated || null, i_act: f.active || null,
+    i_int: f.interval || null, i_tag: f.tag || null, i_upd: f.updated || null, i_act: f.active || null, i_plat: f.platform || null,
   }
 }
 export function paramsToFilters(read) {
@@ -74,12 +75,12 @@ export function paramsToFilters(read) {
     notifGroup: read('i_ng', ''), cert: read('i_cert', ''), contacts: read('i_contacts', ''),
     flags: (read('i_flags', '') || '').split(',').filter(Boolean), domainExp: read('i_dexp', ''), hygiene: read('i_hy', ''), proxy: read('i_proxy', ''),
     domain: read('i_dom', ''), port: read('i_port', ''), days: read('i_days', ''), checked: read('i_chk', ''), flag: read('i_flag', ''),
-    interval: read('i_int', ''), tag: read('i_tag', ''), updated: read('i_upd', ''), active: read('i_act', ''),
+    interval: read('i_int', ''), tag: read('i_tag', ''), updated: read('i_upd', ''), active: read('i_act', ''), platform: read('i_plat', ''),
   }
 }
 export function hasActiveFilter(f) {
   return !!(f.q || f.team || f.ugTeam || f.tier || f.group || f.notifGroup || f.cert || f.contacts || f.flags?.length || f.domainExp || f.hygiene || f.proxy
-    || f.domain || f.port || f.days || f.checked || f.flag || f.interval || f.tag || f.updated || f.active)
+    || f.domain || f.port || f.days || f.checked || f.flag || f.interval || f.tag || f.updated || f.active || f.platform)
 }
 
 function daysUntil(iso) {
@@ -103,13 +104,14 @@ function tagList(csv) { return String(csv || '').split(',').map((x) => x.trim())
  * böylece açılır listelerde hiç eşleşmeyecek değer yoktur. Saf; etiketleme bileşende (i18n).
  */
 export function columnFilterOptions(items) {
-  const ports = new Set(), teams = new Map(), ugTeams = new Map(), groups = new Set(), intervals = new Set(), tags = new Map()
+  const ports = new Set(), teams = new Map(), ugTeams = new Map(), groups = new Set(), intervals = new Set(), tags = new Map(), platforms = new Set()
   for (const r of items) {
     ports.add(String(r.port ?? 443))
     if (r.team_id != null) teams.set(String(r.team_id), r.team_name || String(r.team_id))
     if (r.ug_team_id != null) ugTeams.set(String(r.ug_team_id), r.ug_team_name || String(r.ug_team_id))
     if (r.group_name) groups.add(r.group_name)
     if (r.check_interval_hours != null) intervals.add(String(r.check_interval_hours))
+    if (r.platform) platforms.add(r.platform)
     for (const tg of tagList(r.tags)) { const k = tg.toLowerCase(); if (!tags.has(k)) tags.set(k, tg) }
   }
   const byLabel = (a, b) => a.label.localeCompare(b.label)
@@ -120,6 +122,7 @@ export function columnFilterOptions(items) {
     groups: [...groups].sort((a, b) => a.localeCompare(b)),
     intervals: [...intervals].sort((a, b) => Number(a) - Number(b)),
     tags: [...tags.values()].sort((a, b) => a.localeCompare(b)),
+    platforms: [...platforms].sort(),
   }
 }
 
@@ -133,7 +136,7 @@ export function applyFilters(items, f, hygiene = null) {
   const flags = f.flags || []
   return items.filter((r) => {
     if (q) {
-      const hay = [r.domain, r.description, r.tags, r.owner, r.purchased_by, r.group_name, r.team_name, r.ug_team_name,
+      const hay = [r.domain, r.description, r.tags, r.owner, r.purchased_by, r.platform, r.platform_detail, r.group_name, r.team_name, r.ug_team_name,
         ...CONTACT_FIELDS.map(({ key }) => r[key])].filter(Boolean).join(' ').toLowerCase()
       if (!hay.includes(q)) return false
     }
@@ -176,6 +179,7 @@ export function applyFilters(items, f, hygiene = null) {
       if (age == null || age > Number(f.updated)) return false
     }
     if (f.active === 'yes' && !r.active) return false
+    if (f.platform === 'none' ? !!r.platform : (f.platform && (r.platform || '') !== f.platform)) return false
     if (f.active === 'no' && !!r.active) return false
     if (f.hygiene) {
       const codes = hygiene?.[r.domain]
@@ -249,7 +253,7 @@ export function writeSavedViews(list) {
 // ── CSV içe aktarma (#6): istemcide ayrıştır, başlıkları snake_case anahtarlara eşle ─────────────
 export const IMPORT_COLUMNS = [
   'domain', 'port', 'team', 'ug_team', 'tier', 'active', 'group', 'description', 'owner', 'tags',
-  'purchased_by', 'svc_mgmt_contact', 'app_dev_contact', 'iis_admin_contact', 'waf_admin_contact',
+  'purchased_by', 'platform', 'platform_detail', 'svc_mgmt_contact', 'app_dev_contact', 'iis_admin_contact', 'waf_admin_contact',
   ...INVENTORY_FLAGS.map(({ key }) => key), 'change_description',
 ]
 

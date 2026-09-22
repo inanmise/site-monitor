@@ -33,10 +33,10 @@ function setUrl(search) {
 describe('AdminSettings — sekme semantiği, klavye ve derin bağlantı', () => {
   beforeEach(() => setUrl(''))
 
-  it('ARIA sekme deseni: 15 tab (2026-09-16: + Haftalık Raporlar), tekil aria-selected, panele bağlı', () => {
+  it('ARIA sekme deseni: 16 tab (2026-09-22: + Platformlar), tekil aria-selected, panele bağlı', () => {
     render(<AdminSettings />)
     const tabs = screen.getAllByRole('tab')
-    expect(tabs).toHaveLength(15)
+    expect(tabs).toHaveLength(16)
     expect(tabs.filter(t => t.getAttribute('aria-selected') === 'true')).toHaveLength(1)
 
     const panel = screen.getByRole('tabpanel')

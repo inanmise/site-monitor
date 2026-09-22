@@ -131,6 +131,13 @@ public class CertificateInventory {
     @Column(name = "purchased_by", length = 200)
     private String purchasedBy;
 
+    /** Sitenin koştuğu platform (2026-09-22, kullanıcı isteği): IIS | OPENSHIFT | KUBERNETES | LINUX | WINDOWS | CLOUD | OTHER; null = girilmemiş.
+     *  Sertifikayı KİM yenileyecek/nereye kuracak sorusunun cevabı — karttan görünür. Serbest ayrıntı (küme/sunucu adı) platformDetail'de. */
+    @Column(name = "platform", length = 20)
+    private String platform;
+    @Column(name = "platform_detail", length = 160)
+    private String platformDetail;
+
     @Column(name = "change_description", columnDefinition = "TEXT")
     private String changeDescription;
 

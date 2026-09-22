@@ -36,6 +36,7 @@ const EMPTY = {
   timeout_seconds: '',
   check_interval_hours: '',   // '' = genel zamanlama; 1/6/12/24/168 saat
   purchased_by: '',
+  platform: '', platform_detail: '',   // sitenin koştuğu ortam (2026-09-22)
   svc_mgmt_contact: '', app_dev_contact: '', iis_admin_contact: '', waf_admin_contact: '',
   change_description: '',
   expected_fingerprint: '', expected_subject: '',
@@ -89,6 +90,8 @@ function formFrom(item) {
     timeout_seconds:    item.timeout_seconds != null ? String(item.timeout_seconds) : '',
     check_interval_hours: item.check_interval_hours != null ? String(item.check_interval_hours) : '',
     purchased_by:       item.purchased_by     ?? '',
+    platform:           item.platform         ?? '',
+    platform_detail:    item.platform_detail  ?? '',
     change_description: item.change_description ?? '',
     expected_fingerprint: item.expected_fingerprint ?? '',
     expected_subject:   item.expected_subject ?? '',
@@ -140,6 +143,12 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
   const [teams, setTeams] = useState(() => teamsProp ?? [])
   const [teamGroups, setTeamGroups] = useState([])   // seçili takımın "cert" grupları (sızıntısız, server-scoped)
   const [teamTags, setTeamTags] = useState([])   // takımın kullanımdaki etiketleri → TagInput önerileri (2026-09-22)
+  const [platforms, setPlatforms] = useState([])   // Ayarlar → Platformlar kataloğu (aktifler); düzenlenen kayıttaki pasif kod da listede kalır
+  useEffect(() => {
+    let alive = true
+    api.admin.listPlatforms().then(r => { if (alive) setPlatforms(r?.success ? (r.data || []) : []) }).catch(() => { if (alive) setPlatforms([]) })
+    return () => { alive = false }
+  }, [])
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
   const [showScrollHint, setShowScrollHint] = useState(false)
@@ -356,6 +365,8 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
         // Kontrol sıklığı (2026-09-12): BOŞ = genel saatlik zamanlama; sunucu 1/6/12/24/168 dışını null sayar.
         check_interval_hours: form.check_interval_hours ? Number(form.check_interval_hours) : null,
         purchased_by:       form.purchased_by || null,
+        platform:           form.platform || null,
+        platform_detail:    form.platform_detail?.trim() || null,
         change_description: form.change_description || null,
         // DİKKAT: payload'ın tek camelCase çifti (entity Jackson adlarıyla eşleşsin diye).
         // snake_case'e "düzeltilirse" iki alan sessizce null gider.
@@ -475,6 +486,22 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
             disabled={!canManage}
           />
 
+          {/* Platform (2026-09-22, kullanıcı isteği): site nerede koşuyor — sertifikayı KİM/NEREYE kuracak sorusunun cevabı.
+              Bildirim grubunun KARŞISINDA (aynı satır); seçici + ayrıntı tek hücrede. Katalog Ayarlar → Platformlar; kayıttaki kod
+              pasife alınmışsa yine seçili görünür (sessizce düşmesin). */}
+          <div className="inv-platform-field">
+            <label>
+              {t('inv.formPlatform')}
+              <SearchableSelect value={form.platform || ''} onChange={v => f('platform', v)} searchThreshold={6} disabled={!canManage}
+                options={[{ value: '', label: t('inv.platformNone') },
+                  ...platforms.map(p => ({ value: p.code, label: p.name })),
+                  ...(form.platform && !platforms.some(p => p.code === form.platform) ? [{ value: form.platform, label: form.platform }] : [])]} />
+            </label>
+            <input className="input input-sm" value={form.platform_detail} onChange={e => f('platform_detail', e.target.value)} maxLength={160}
+              placeholder={t('inv.formPlatformDetailPh')} aria-label={t('inv.formPlatformDetail')} disabled={!canManage} />
+            <span className="field-hint">{t('inv.formPlatformHint')}</span>
+          </div>
+
           {/* Etiketler — zorunlu (2026-09-18). Tablo/CSV zaten okuyordu; form alanı yoktu. */}
           <div className="full-width http-tags-block">
             <div className="http-block-title">{t('inv.formTags')} <span className="req-star">*</span></div>
@@ -540,6 +567,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
             {t('inv.formPurchasedBy')}
             <input value={form.purchased_by} onChange={e => f('purchased_by', e.target.value)} />
           </label>
+
 
           {/* Vekil anahtarı (2026-09-22, kullanıcı isteği): 13 Evet/Hayır bayrağı arasında gömülüydü; sertifika kontrolünün
               yolunu belirleyen bu tercih Temel Bilgiler'de, Satın Alan'ın yanında AÇIK/KAPALI anahtarı olarak. Bayrak

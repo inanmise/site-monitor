@@ -58,7 +58,9 @@ export default function InventoryTable({
   rows, cols, sort, onSort, density, canManage, canEditRow = () => canManage, isAdmin, teamsCount, teamMap = {}, selected, onToggle, onToggleAll, allOnPage,
   onShow, onEdit, onDuplicate, onTransfer, onDelete, onRestore, onPurge, onDiagnose, onCheckNow, onInline, onTagClick, statusFilter,
   filters = null, onFilters = null, allRows = [], showFilters = false,   // kolon süzgeç satırı (2026-09-22)
+  platformNames = {},   // kod → ad (Ayarlar → Platformlar); yoksa kod gösterilir
 }) {
+  const platformLabel = (code) => platformNames[code] || code
   const t = useT()
   const [editing, setEditing] = useState(null)   // { id, field }
   const [busy, setBusy] = useState(null)         // domain (check now)
@@ -115,12 +117,13 @@ export default function InventoryTable({
             {show('domain_exp') && header('domain_exp', 'inv.colDomainExpiry')}
             {show('interval') && header('interval', 'inv.colInterval')}
             {show('tags') && header('tags', 'inv.colTags')}
+            {show('platform') && header('platform', 'inv.colPlatform')}
             {show('updated') && header('updated', 'inv.colUpdated')}
             {header('active', statusFilter === 'deleted' ? 'inv.colDeleted' : 'inv.colActive')}
             <th>{t('inv.colActions')}</th>
           </tr>
           {showFilters && filters && onFilters && (
-            <InventoryFilterRow filters={filters} onFilters={onFilters} allRows={allRows} cols={cols} canManage={canManage} statusFilter={statusFilter} />
+            <InventoryFilterRow filters={filters} onFilters={onFilters} allRows={allRows} cols={cols} canManage={canManage} statusFilter={statusFilter} platformNames={platformNames} />
           )}
         </thead>
         <tbody>
@@ -162,6 +165,7 @@ export default function InventoryTable({
                 {show('domain_exp') && <td className="inv-dim">{r.domain_expiry ? <span className={`inv-days${dexp != null && dexp <= 30 ? ' is-warn' : ''}`}>{formatDateOnly(r.domain_expiry)}{r.domain_registrar ? ` · ${r.domain_registrar}` : ''}</span> : '—'}</td>}
                 {show('interval') && <td className="inv-dim">{r.check_interval_hours ? t('inv.intervalHours', r.check_interval_hours) : t('inv.intervalInherit')}</td>}
                 {show('tags') && <td>{r.tags ? String(r.tags).split(',').map((x) => x.trim()).filter(Boolean).map((tag) => <button key={tag} type="button" className="inv-tag" onClick={() => onTagClick(tag)}>{tag}</button>) : '—'}</td>}
+                {show('platform') && <td>{r.platform ? <span className="inv-platform" title={r.platform_detail || ''}>{platformLabel(r.platform)}{r.platform_detail ? <span className="inv-dim"> · {r.platform_detail}</span> : null}</span> : '—'}</td>}
                 {show('updated') && <td className="inv-dim">{r.updated_at ? formatDate(r.updated_at) : '—'}{r.updated_by_name ? <span className="inv-by"> · {r.updated_by_name}</span> : null}</td>}
                 <td>
                   {del

@@ -12,7 +12,7 @@ import { INVENTORY_FLAGS } from '../../utils/inventoryFlags.js'
  * listede hiç eşleşmeyecek değer yoktur. team/tier/group/cert/contacts/domainExp/ugTeam üstteki süzgeç paneliyle AYNI
  * anahtarı kullanır — iki yerden de aynı süzgeç görünür/temizlenir. Hücre sırası thead ile birebir (cols + canManage).
  */
-export default function InventoryFilterRow({ filters, onFilters, allRows = [], cols, canManage, statusFilter }) {
+export default function InventoryFilterRow({ filters, onFilters, allRows = [], cols, canManage, statusFilter, platformNames = {} }) {
   const t = useT()
   const show = (k) => cols.includes(k)
   const set = (patch) => onFilters({ ...filters, ...patch })
@@ -69,6 +69,7 @@ export default function InventoryFilterRow({ filters, onFilters, allRows = [], c
         { value: 'global', label: t('inv.colFilterIntervalGlobal') }, ...opts.intervals.map((h) => ({ value: h, label: t('inv.colFilterIntervalH', h) })),
       ]))}
       {show('tags') && cell('tags', sel('tag', opts.tags.map((x) => ({ value: x, label: x }))))}
+      {show('platform') && cell('platform', sel('platform', [{ value: 'none', label: t('inv.filterNone') }, ...opts.platforms.map((c) => ({ value: c, label: platformNames[c] || c }))]))}
       {show('updated') && cell('updated', sel('updated', [
         { value: '24', label: t('inv.colFilterLast24h') }, { value: '168', label: t('inv.colFilterLast7d') }, { value: '720', label: t('inv.colFilterLast30d') },
       ]))}

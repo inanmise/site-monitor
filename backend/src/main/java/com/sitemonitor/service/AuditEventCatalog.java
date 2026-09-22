@@ -174,6 +174,9 @@ public final class AuditEventCatalog {
             "NOTIFICATION_GROUP_UPDATE",
             "PERMISSION_RESET",
             "PERMISSION_UPDATE",
+            "PLATFORM_CREATE",
+            "PLATFORM_DELETE",
+            "PLATFORM_UPDATE",
             "REMEMBER_TOKEN_REVOKE",
             "RETENTION_APPROVAL_SAVE",
             "RETENTION_DRY_RUN",
@@ -312,7 +315,7 @@ public final class AuditEventCatalog {
 
         // Kalan her şey bir AYAR yüzeyidir (settings/branding/storm/guide-link/template…).
         if (t.startsWith("GENERAL_") || t.startsWith("BRANDING_") || t.startsWith("STORM_")
-                || t.startsWith("GUIDE_LINK_") || t.startsWith("TEMPLATE_")
+                || t.startsWith("GUIDE_LINK_") || t.startsWith("TEMPLATE_") || t.startsWith("PLATFORM_")
                 || t.contains("SETTINGS")) return SETTINGS;
 
         return "OTHER";

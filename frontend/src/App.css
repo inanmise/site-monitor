@@ -1506,6 +1506,29 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   font-size: .78em; font-weight: 600; color: var(--text); }
 .cc-team-chip .team-badge { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cc-team-chip .team-badge svg { color: var(--primary, #2563eb); opacity: 1; flex-shrink: 0; }
+/* Kart platform çipi (2026-09-22): site nerede koşuyor — takım çipiyle aynı dil, nötr ton */
+.cc-platform-chip { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; padding: 2px 9px; border-radius: 999px;
+  background: var(--bg-hover); border: 1px solid var(--border); font-size: .78em; font-weight: 600; color: var(--text); }
+.cc-platform-chip svg { color: var(--text-muted); flex-shrink: 0; }
+.cc-platform-name { white-space: nowrap; }
+.cc-detail-row--wrap { flex-wrap: wrap; gap: 6px; }
+.cc-detail-row--wrap .cc-meta { margin-left: auto; }
+.cc-platform-detail { font-weight: 500; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inv-platform { white-space: nowrap; }
+/* Envanter formu — Platform hücresi (Bildirim grubunun karşısı): seçici + ayrıntı alt alta */
+.inv-platform-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.inv-platform-field > label { margin: 0; }
+/* Ayarlar → Platformlar */
+.plat-settings h3 { display: inline-flex; align-items: center; gap: 6px; }
+.plat-form { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 16px; background: var(--bg-surface); }
+.plat-form-grid { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 10px 14px; }
+.plat-form-grid .full-width { grid-column: 1 / -1; }
+.plat-form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.plat-code { font-family: Consolas, monospace; font-size: .9em; padding: 1px 6px; border-radius: 4px; background: var(--bg-hover); }
+.plat-name { font-weight: 600; }
+.plat-desc { color: var(--text-muted); font-size: .9em; }
+.plat-table .grp-actions .btn { margin-left: 4px; }
+@media (max-width: 640px) { .plat-form-grid { grid-template-columns: 1fr; } }
 
 .cc-pill {
   display: inline-flex; align-items: center; gap: 6px;
@@ -12989,6 +13012,8 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
   color: var(--text-muted); padding: 9px 0 3px; border-bottom: 1px solid var(--border); }
 .hist-alert-row { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 5px 9px;
   margin: 3px 0; border-radius: 4px; border-left: 3px solid; }
+/* Uyarı türü alarm satırı (2026-09-22): kesinti kırmızısından ayrı, turuncu */
+.hist-alert-row--advisory { color: #b45309; border-color: #d97706; background: color-mix(in srgb, #d97706 8%, transparent); }
 .hist-alert-row--triggered { color: var(--danger); border-color: var(--danger);
   background: color-mix(in srgb, var(--danger) 8%, transparent); }
 .hist-alert-row--resolved { color: var(--success); border-color: var(--success);
@@ -13180,6 +13205,11 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .otl-seg--warning { background: #d97706; }
 .otl-seg--high { background: #ea580c; }
 .otl-seg.is-open { background-image: repeating-linear-gradient(45deg, transparent 0 4px, rgba(255,255,255,.35) 4px 8px); }
+/* Uyarı işaretçisi (2026-09-22): HTTP_SSL/_SLOW/_EXPIRY gibi türler kesinti DEĞİL — ince turuncu çentik, erişilebilirliği düşürmez */
+.otl-mark { position: absolute; top: -3px; width: 4px; height: 20px; margin-left: -2px; border: 0; padding: 0; border-radius: 2px; background: #d97706; cursor: pointer; opacity: .9; }
+.otl-mark.is-open { box-shadow: 0 0 0 2px rgba(217, 119, 6, .3); }
+.otl-adv-sum { margin-left: 10px; font-size: .86em; color: #b45309; font-weight: 600; }
+.otl-track { overflow: visible; }
 .otl-seg:hover, .otl-seg:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; }
 .otl-axis { display: flex; justify-content: space-between; font-size: .7em; color: var(--text-muted); margin-top: 2px; }
 

@@ -182,6 +182,7 @@ class InventoryPdfWriter implements AutoCloseable {
                 new String[]{ "Takım", r.getTeamId() == null ? "—" : nzDash(teams.get(r.getTeamId())) },
                 new String[]{ "Kritiklik Seviyesi (Tier)", InventoryExportService.tierLabel(r.getTier()) },
                 new String[]{ "Satın Alan Kişi/Ekip", nzDash(r.getPurchasedBy()) },
+                new String[]{ "Platform", nzDash(r.getPlatform()) + (r.getPlatformDetail() == null || r.getPlatformDetail().isBlank() ? "" : " — " + r.getPlatformDetail()) },
                 new String[]{ "TLS Modu", tlsMode(r.getTlsMode()) }));
         y -= 6;
 

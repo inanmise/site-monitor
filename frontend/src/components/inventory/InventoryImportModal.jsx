@@ -25,7 +25,7 @@ export default function InventoryImportModal({ onClose, onDone }) {
   // Dışa aktarma başlıkları (arayüz dilinde) → anahtar
   const labels = useMemo(() => ({
     [t('inv.formDomain')]: 'domain', [t('inv.formPort')]: 'port', [t('inv.formTeam')]: 'team', [t('inv.formTier')]: 'tier',
-    [t('inv.formPurchasedBy')]: 'purchased_by', [t('inv.formSvcMgmt')]: 'svc_mgmt_contact', [t('inv.formAppDev')]: 'app_dev_contact',
+    [t('inv.formPurchasedBy')]: 'purchased_by', [t('inv.formPlatform')]: 'platform', [t('inv.formPlatformDetail')]: 'platform_detail', [t('inv.formSvcMgmt')]: 'svc_mgmt_contact', [t('inv.formAppDev')]: 'app_dev_contact',
     [t('inv.formIisAdmin')]: 'iis_admin_contact', [t('inv.formWafAdmin')]: 'waf_admin_contact', [t('inv.colActive')]: 'active',
     [t('inv.formChangeDesc')]: 'change_description', [t('inv.colUgTeam')]: 'ug_team', [t('inv.colGroup')]: 'group', [t('inv.colTags')]: 'tags',
     ...Object.fromEntries(INVENTORY_FLAGS.map(({ key, labelKey }) => [t(labelKey), key])),
