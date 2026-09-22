@@ -873,6 +873,12 @@ public class SchedulerService {
         patch("ALTER TABLE domain_checks ADD COLUMN blacklist_status VARCHAR(20)");
         patch("ALTER TABLE domain_checks ADD COLUMN blacklist_detail TEXT");
         patch("ALTER TABLE domain_checks ADD COLUMN change_detail TEXT");
+        // Alan adı yenileme planı (2026-09-22, H) — envanterdeki renewal_planned_* eşi; ddl-auto da ekler, açık patch proje geleneği.
+        patch("ALTER TABLE domain_monitors ADD COLUMN renewal_planned_at VARCHAR(10)");
+        patch("ALTER TABLE domain_monitors ADD COLUMN renewal_planned_by VARCHAR(100)");
+        patch("ALTER TABLE domain_monitors ADD COLUMN renewal_planned_by_name VARCHAR(255)");
+        patch("ALTER TABLE domain_monitors ADD COLUMN renewal_planned_note VARCHAR(500)");
+        patch("ALTER TABLE domain_monitors ADD COLUMN renewal_planned_expiry VARCHAR(40)");
         // Sorun bildirimleri genelleştirmesi (2026-08): login_issue_reports artık üç kaynağı taşır
         // (LOGIN | CLIENT_ERROR | USER_REPORT) + otomatik bağlam alanları. Eski satırlar LOGIN'e backfill edilir.
         patch("ALTER TABLE login_issue_reports ADD COLUMN source TEXT");

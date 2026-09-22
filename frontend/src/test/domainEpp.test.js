@@ -18,6 +18,9 @@ describe('eppLabel / eppKey', () => {
 
 describe('domainLife', () => {
   const now = Date.parse('2026-09-22T00:00:00Z')
+  it('bitiş başlangıçtan saatler sonra (toplam 0 güne yuvarlanır) → null, NaN yüzde değil (regresyon 62)', () => {
+    expect(domainLife('2026-09-22T08:00:00Z', '2026-09-22T10:00:00Z', now)).toBeNull()
+  })
   it('başlangıç→bitiş toplamı ve geçen gün; RDAP datetime ve WHOIS date-only', () => {
     const l = domainLife('2024-12-08T08:34:00Z', '2027-03-28T10:41:00Z', now)
     expect(l.total).toBe(840)

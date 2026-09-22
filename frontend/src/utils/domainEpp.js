@@ -24,6 +24,7 @@ export function domainLife(registrationDate, expiryDate, now = Date.now()) {
   const reg = parseIso(registrationDate), exp = parseIso(expiryDate)
   if (reg == null || exp == null || exp <= reg) return null
   const total = Math.round((exp - reg) / 86_400_000)
+  if (total <= 0) return null   // aynı gün başlayıp biten kayıt: 0'a bölme → NaN yüzde olmasın (regresyon 62)
   const elapsed = Math.min(total, Math.max(0, Math.round((now - reg) / 86_400_000)))
   return { total, elapsed, pct: Math.round((elapsed / total) * 100) }
 }
