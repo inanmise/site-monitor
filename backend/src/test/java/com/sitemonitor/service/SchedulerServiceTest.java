@@ -225,7 +225,7 @@ class SchedulerServiceTest {
         inv.setDomain("x.example.com");
         inv.setPort(443);
         when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv));
-        when(uptimeHttpCheckerService.check(eq("x.example.com"), eq(443), anyInt()))
+        when(uptimeHttpCheckerService.check(eq("x.example.com"), eq(443), anyInt(), eq(false)))
                 .thenReturn(Map.of("status", "down", "error", "timeout"));
 
         scheduler.runUptimeChecks();
@@ -242,7 +242,7 @@ class SchedulerServiceTest {
         assertThat(item.detail()).isEqualTo("443");
         // recheck supplier'ı canlı: çağrılınca check + persist yapar
         item.recheck().get();
-        verify(uptimeHttpCheckerService, org.mockito.Mockito.times(2)).check(eq("x.example.com"), eq(443), anyInt());
+        verify(uptimeHttpCheckerService, org.mockito.Mockito.times(2)).check(eq("x.example.com"), eq(443), anyInt(), eq(false));
     }
 
     @Test
@@ -252,7 +252,7 @@ class SchedulerServiceTest {
         inv.setDomain("x.example.com");
         inv.setPort(443);
         when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv));
-        when(uptimeHttpCheckerService.check(eq("x.example.com"), eq(443), anyInt()))
+        when(uptimeHttpCheckerService.check(eq("x.example.com"), eq(443), anyInt(), eq(false)))
                 .thenReturn(Map.of("status", "up", "response_ms", 12L));
         doThrow(new RuntimeException("boom"))
                 .when(monitoringOutageService).handleSweepResults(anyString(), anyList());
@@ -344,7 +344,7 @@ class SchedulerServiceTest {
         com.sitemonitor.model.PageMonitor m = new com.sitemonitor.model.PageMonitor();
         m.setId(21L); m.setName("axess"); m.setUrl("www.axess.com.tr"); m.setMode("SINGLE_PAGE"); m.setActive(true);
         when(pageMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
-        when(pageCheckerService.check(anyString(), anyString(), anyInt(), anyInt(), anyInt(), any(), anyInt(), anyInt(), anyInt()))
+        when(pageCheckerService.check(anyString(), anyString(), anyInt(), anyInt(), anyInt(), any(), anyInt(), anyInt(), anyInt(), anyBoolean()))
                 .thenReturn(new PageCheckerService.PageCheckResult("CONFIG_ERROR", false, null, 0L,
                         0, 0, 0, 0, 0, null, null, com.sitemonitor.util.MonitorUrls.CONFIG_ERROR_MSG, List.of()));
 
@@ -379,7 +379,7 @@ class SchedulerServiceTest {
         com.sitemonitor.model.PageMonitor m = new com.sitemonitor.model.PageMonitor();
         m.setId(22L); m.setName("example"); m.setUrl("https://www.example.com/"); m.setMode("SINGLE_PAGE"); m.setActive(true);
         when(pageMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
-        when(pageCheckerService.check(anyString(), anyString(), anyInt(), anyInt(), anyInt(), any(), anyInt(), anyInt(), anyInt()))
+        when(pageCheckerService.check(anyString(), anyString(), anyInt(), anyInt(), anyInt(), any(), anyInt(), anyInt(), anyInt(), anyBoolean()))
                 .thenReturn(new PageCheckerService.PageCheckResult("DOWN", false, null, 40L,
                         0, 0, 0, 0, 1, null, null, "ana sayfa alınamadı", List.of()));
 
@@ -400,7 +400,7 @@ class SchedulerServiceTest {
         com.sitemonitor.model.HttpMonitor m = new com.sitemonitor.model.HttpMonitor();
         m.setId(31L); m.setName("web"); m.setUrl("www.axess.com.tr"); m.setMethod("GET"); m.setActive(true);
         when(httpMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
-        when(httpCheckerService.check(anyString(), any(), any(), anyInt(), anyBoolean(), anyBoolean()))
+        when(httpCheckerService.check(anyString(), any(), any(), anyInt(), anyBoolean(), anyBoolean(), anyBoolean()))
                 .thenReturn(Map.of("ok", false, "config_error", true,
                         "error", com.sitemonitor.util.MonitorUrls.CONFIG_ERROR_MSG));
 

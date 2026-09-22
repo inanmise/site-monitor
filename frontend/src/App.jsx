@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
-import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Inbox, ShieldCheck, CalendarDays, Plus, LayoutList, LayoutGrid } from 'lucide-react'
+import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Inbox, ShieldCheck, CalendarDays, Plus, LayoutList, LayoutGrid, Loader2 } from 'lucide-react'
 
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
 import { deleteInventoryByDomain } from './utils/deleteInventory.js'
+import { formatDuration } from './utils/incidentMeta.js'
 import { useToast } from './components/ui/Toast.jsx'
 import { useT } from './i18n/index.jsx'
 import { usePagination } from './hooks/usePagination.js'
@@ -119,16 +120,6 @@ function initialSessionExpired() {
   catch { return false }
 }
 
-function formatDurationShort(ms) {
-  if (ms == null || ms < 0) return '—'
-  const s = Math.floor(ms / 1000)
-  if (s < 60)   return `${s}s`
-  const m = Math.floor(s / 60)
-  if (m < 60)   return `${m} dk ${s % 60} sn`
-  const h = Math.floor(m / 60)
-  return `${h} sa ${m % 60} dk`
-}
-
 // Mail/derin-link ile gelen ?tab= değeri — yalnız bilinen sekme anahtarları kabul edilir.
 /** Aynı sekmede param değişimi: handleTabChange(id, extraParams) → sayfalar bu olayı dinler (HelpPage view, SystemHealth sec). */
 export const TAB_PARAMS_EVENT = 'sm:tab-params'
@@ -151,6 +142,9 @@ function initialTabFromUrl() {
   } catch { return null }
 }
 
+
+/** Uyarılar → Ağ kesinti geçmişi: varsayılan görünür kart sayısı (ONGOING'ler her zaman görünür). */
+const OUTAGE_HISTORY_FOLD = 5
 
 export default function App() {
   const { showConfirm } = useDialog()
@@ -230,6 +224,9 @@ export default function App() {
   const [networkStatus, setNetworkStatus] = useState(null)
   const [networkBannerDismissed, setNetworkBannerDismissed] = useState(false)
   const [outageHistory, setOutageHistory] = useState([])
+  // Uyarılar sekmesi kesinti geçmişi: varsayılan katlı (QA ISSUE-002, 2026-09-21 — 50 kart alt alta 16k px'ti). Ham kayıt
+  // silinmez/özetlenmez (ürün kuralı); yalnız ilk OUTAGE_HISTORY_FOLD kartı + tüm ONGOING'ler görünür, kalanı bir tıkla açılır.
+  const [outageHistoryExpanded, setOutageHistoryExpanded] = useState(false)
   const [teamStats, setTeamStats] = useState(null)
   const [weakAlgStats, setWeakAlgStats] = useState(null)
   const [statsVisible, setStatsVisible] = useState(false)
@@ -1249,7 +1246,12 @@ export default function App() {
                     </div>
                   )}
                 </div>
-                {sorted.length === 0 ? (
+                {sorted.length === 0 && lastUpdate == null ? (
+                  /* İlk veri gelene kadar "Sertifika bulunamadı" DEĞİL yükleniyor (kullanıcı bildirimi 2026-09-21, QA ISSUE-006):
+                     certs [] ile başlar, getCertificates yanıtı gecikince boş durum sahte "sertifika yok" algısı veriyordu.
+                     lastUpdate yalnız ilk başarılı yanıtta dolar — tur kapısındaki "veri geldi" sinyaliyle aynı. */
+                  <StatusBlock tone="neutral" icon={Loader2} className="status-block--loading" title={t('app.loadingCerts')} role="status" />
+                ) : sorted.length === 0 ? (
                   <StatusBlock tone="neutral" icon={Inbox} title={statsFilter ? t('app.noFilterCerts', STAT_FILTER_LABEL[statsFilter]) : t('app.noCerts')} description={statsFilter || search ? t('empty.hintFilter') : t('empty.hintCerts')} />
                 ) : (
                   <>
@@ -1325,7 +1327,8 @@ export default function App() {
                     <div className="loading muted">{t('app.networkOutageHistoryEmpty')}</div>
                   ) : (
                     <div className="alert-history-cards">
-                      {outageHistory.map(ev => {
+                      {(outageHistoryExpanded ? outageHistory
+                        : outageHistory.filter((ev, i) => i < OUTAGE_HISTORY_FOLD || ev.status === 'ONGOING')).map(ev => {
                         const ratePct = ev.error_rate != null ? Math.round(ev.error_rate * 100) : null
                         const thresholdPct = ev.threshold != null ? Math.round(ev.threshold * 100) : null
                         const healthy = (ev.total_checks ?? 0) - (ev.network_errors ?? 0)
@@ -1368,7 +1371,8 @@ export default function App() {
                                   <div>
                                     <div className="ahc-tl-label">{t('app.outageDuration')}</div>
                                     <div className="ahc-tl-val">
-                                      {ev.duration_ms ? formatDurationShort(ev.duration_ms) : '—'}
+                                      {/* i18n birimler (QA ISSUE-003): eski yerel biçimleyici EN'de "dk/sn" yazıyordu */}
+                                      {ev.duration_ms ? formatDuration(ev.duration_ms, t) : '—'}
                                     </div>
                                   </div>
                                 </div>
@@ -1406,6 +1410,13 @@ export default function App() {
                         )
                       })}
                     </div>
+                  )}
+                  {outageHistory.length > OUTAGE_HISTORY_FOLD && (
+                    <button type="button" className="fc-show-more outage-history-toggle" onClick={() => setOutageHistoryExpanded(v => !v)}>
+                      {outageHistoryExpanded
+                        ? t('app.outageHistoryShowLess', OUTAGE_HISTORY_FOLD)
+                        : t('app.outageHistoryShowAll', outageHistory.length)}
+                    </button>
                   )}
                 </div>
               </div>

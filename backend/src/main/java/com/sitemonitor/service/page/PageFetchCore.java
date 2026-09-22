@@ -78,6 +78,10 @@ public class PageFetchCore {
     public static final long MAX_TOTAL_MEASURED_BYTES = 150L * 1024 * 1024;
 
     private final SsrfGuard ssrfGuard;
+    // Vekilli eş (2026-09-21): Sayfa Bütünlüğü izlemesi "vekil üzerinden" istiyorsa; alan enjeksiyonu (yapıcı testlerde elle).
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.ProxySettings proxySettings;
+    private HttpClient proxiedClient;
 
     private HttpClient httpClient;
     /** Kaynak fan-out'u için sanal-thread executor (I/O-bound; eşzamanlılık çağıran tarafta Semaphore ile sınırlanır). */
@@ -113,7 +117,17 @@ public class PageFetchCore {
      * @param countBytes    gövde saklanmadan SAYILSIN mı (ağırlık ölçümü) — wantBody ile birlikte de kullanılabilir
      */
     public record FetchOptions(int timeoutMs, String userAgent, Map<String, String> extraHeaders,
-                               boolean wantBody, boolean countBytes) {
+                               boolean wantBody, boolean countBytes, boolean viaProxy) {
+
+        /** Geriye uyum: vekilsiz. */
+        public FetchOptions(int timeoutMs, String userAgent, Map<String, String> extraHeaders, boolean wantBody, boolean countBytes) {
+            this(timeoutMs, userAgent, extraHeaders, wantBody, countBytes, false);
+        }
+
+        /** Kurumsal vekil üzerinden (karar ProxyPolicyService'te). */
+        public FetchOptions withProxy(boolean v) {
+            return new FetchOptions(timeoutMs, userAgent, extraHeaders, wantBody, countBytes, v);
+        }
 
         /** Gövdesi parse edilecek çekim (ana sayfa). */
         public static FetchOptions body(int timeoutMs, String userAgent) {
@@ -131,11 +145,11 @@ public class PageFetchCore {
         }
 
         public FetchOptions withHeaders(Map<String, String> h) {
-            return new FetchOptions(timeoutMs, userAgent, h, wantBody, countBytes);
+            return new FetchOptions(timeoutMs, userAgent, h, wantBody, countBytes, viaProxy);
         }
 
         public FetchOptions counting() {
-            return new FetchOptions(timeoutMs, userAgent, extraHeaders, wantBody, true);
+            return new FetchOptions(timeoutMs, userAgent, extraHeaders, wantBody, true, viaProxy);
         }
     }
 
@@ -156,6 +170,14 @@ public class PageFetchCore {
             log.warn("Sayfa çekme çekirdeği trust-all SSL kurulamadı, varsayılan kullanılacak: {}", e.getMessage());
         }
         httpClient = b.build();
+        if (proxySettings != null && proxySettings.enabled()) {
+            java.net.Authenticator auth = proxySettings.authenticator(log, "Page fetch");
+            HttpClient.Builder pb = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
+                    .followRedirects(HttpClient.Redirect.NEVER).proxy(proxySettings.proxySelector());
+            try { pb.sslContext(httpClient.sslContext()); } catch (Exception ignore) { /* varsayılan güven */ }
+            if (auth != null) pb.authenticator(auth);
+            proxiedClient = pb.build();
+        }
         resourceExecutor = Executors.newVirtualThreadPerTaskExecutor();
     }
 
@@ -211,7 +233,8 @@ public class PageFetchCore {
                 HttpRequest req = "HEAD".equals(m)
                         ? rb.method("HEAD", HttpRequest.BodyPublishers.noBody()).build()
                         : rb.GET().build();
-                HttpResponse<InputStream> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofInputStream());
+                HttpClient c = opts.viaProxy() && proxiedClient != null ? proxiedClient : httpClient;
+                HttpResponse<InputStream> resp = c.send(req, HttpResponse.BodyHandlers.ofInputStream());
                 // send() başlıklar geldiğinde döner → ilk-bayt anı burasıdır (gövde henüz okunmadı).
                 long ttfb = Math.max(0L, System.currentTimeMillis() - start - guardMs);
                 int sc = resp.statusCode();

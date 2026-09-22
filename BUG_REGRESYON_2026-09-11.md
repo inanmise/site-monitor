@@ -1305,3 +1305,23 @@ Kapı bulgusu: progress-guard kapısı kırılım çubuğundaki inline `width` d
 ile (çok parçalı çubuk ProgressBar'a sığmaz). Kapılar HEAD'de yeniden koşuldu.
 Kapılar: frontend lint 0 hata / test:coverage / kapsam tabanı / build; backend değişikliği yok (sürüm için `clean verify` yine
 koşuldu — tek kırmızı `IdentityLeakGuardTest`, yalnız bilinen iki takipsiz dosya). → **REGRESYON YOK**.
+
+## Ek — altmış birinci tur (2026-09-22, sürüm öncesi — izleme başına kurumsal vekil kipi (HTTP/Keyword/Sayfa + Durum + Page Speed), /qa ×2 düzeltmeleri, `v20.76.0..HEAD`)
+
+Kapsam: 17 commit. Özellik: `ProxyPolicyService` (AUTO=envanter / ON / OFF) → HTTP/Keyword/Sayfa formu + kart rozeti; Durum (uptime) yoklaması
+envanter `use_proxy` bayrağını `ProxySettings.openConnectTunnel` ile onurlandırır; Page Speed'e vekil kipi (varsayılan OFF, vekil yolunda faz
+probu atlanır). /qa turları: vekil formu 3 düzeltme (eski etkin ipucu, combobox genişliği, simge boşluğu); tam tarama 6 düzeltme (süpürme
+kaynaklı ağ kesintisi yeniden başlatma sonrası kapanmıyordu — `outageReconciled`; Warnings 50 kart katlama; EN'de dk/sn ve %100 biçimi;
+mobil nav rayı; Genel Bakış ilk yüklemede "Sertifika bulunamadı" yerine yükleniyor).
+İmza taraması (diff'e uyan sınıflar):
+- **S8 (alan ekleme zinciri) — BULGU, düzeltildi:** `PAGESPEED_FIELDS` snapshot listesinde `useProxy` yoktu → yalnız vekil kipi değişen bir Page
+  Speed düzenlemesi Değişiklik Geçmişi'nde boş diff verirdi (listenin kendi yorumundaki tuzak, teyit/kurtarma alanlarıyla aynı sınıf).
+  Ayrıca proje geleneği (scripted `use_proxy` örneği) gereği dört tabloya açık idempotent `ADD COLUMN use_proxy VARCHAR(10)` patch'i eklendi;
+  tablo adı `pagespeed_monitors` (alt çizgisiz — S8'in "yazım hatası dahil" uyarısı ilk taslakta `page_speed_monitors` yazımını yakaladı).
+- **S3 (sınırsız okuma) — sertleştirme:** `openConnectTunnel` başlık tüketme döngüsüne 100 satır tavanı (vekil yönetici yapılandırmasıdır; yine de).
+- S4: yeni soket yolu vekile bağlanır, hedef host tünel öncesi `ssrfGuard.validate` ile doğrulanmaya devam eder ✓. S10: tüm `getUseProxy()`
+  kullanımları `Boolean.TRUE.equals` / normalize üzerinden ✓. S1: yeni uç yok ✓. S11: yeni fetch/async yok (fold state saf) ✓.
+- MonitoringOutageService düzeltmesi (bellek-içi bayrak vs DB): `jdbc-session-vs-startup-clear` öğrenimiyle aynı sınıf — `outageReconciled`
+  regresyon testiyle pinlendi (`MonitoringOutageSweepReconcileRegressionTest`).
+Baseline (Y/O/N serileri): bu turda değişen dosyalar ilgili sınıfların düzeltilmiş imzalarına dokunmuyor (SsrfGuard yolları, Redirect.NEVER,
+sayfalama, outbox); diff-kapsamlı re-check. Kapılar sürüm adımında koşuluyor. → **REGRESYON YOK** (1 S8 bulgusu sürüm öncesi kapatıldı).

@@ -27,6 +27,7 @@ Sağ üstteki **+ Yeni Monitör** butonuna tıklayın ve formu doldurun.
 - **Doğrulama denemesi** — Alarm öncesi ardışık başarısızlık sayısı (0–10, varsayılan 3) + **Deneme aralığı (sn)** (10–600, varsayılan 30).
 - **Kurtarma** — "Düzeldi" demek için gereken ardışık başarılı kontrol (1–20, varsayılan 3) + yeniden deneme aralığı.
 - **Zaman aşımı (ms)** — Yanıt için üst süre (varsayılan **10000**). Aşılırsa erişilemez sayılır.
+- **Kurumsal vekil (proxy)** — Kontrolün pod'dan hangi yoldan çıkacağı. **Envanterle aynı** (varsayılan): URL'nin alan adı sertifika envanterinde "Proxy üzerinden kontrol et = Evet" ise vekil, değilse doğrudan — sertifika kontrolüyle aynı yol. **Her zaman vekil üzerinden**: kurumsal vekil (hedef NO_PROXY listesindeyse yine doğrudan). **Doğrudan**: vekil hiç kullanılmaz — iç ağ hedefleri için. Kartta **Proxy / Doğrudan** rozeti gerçekte kullanılan yolu gösterir.
 - **Aktif** — Kapatılırsa izleme durur ama silinmez.
 
 ### İpuçları
@@ -57,6 +58,7 @@ Click **+ New Monitor** (top right) and fill the form.
 - **Confirm attempts** — Consecutive failures before alerting (0–10, default 3) + **Attempt interval (s)** (10–600, default 30).
 - **Recovery** — Consecutive successes to declare "recovered" (1–20, default 3) + retry interval.
 - **Timeout (ms)** — Max wait for a response (default **10000**). Exceeded = unreachable.
+- **Corporate proxy** — Which route the check leaves the pod by. **Same as inventory** (default): via the proxy when the URL's domain is marked "Check via proxy = Yes" in the certificate inventory, otherwise direct — the same route as the certificate check. **Always via proxy**: the corporate proxy (targets on the NO_PROXY list still go direct). **Direct**: never uses the proxy — for internal targets. The **Proxy / Direct** badge on the card shows the route actually taken.
 - **Active** — When off the monitor pauses without being deleted.
 
 ### Tips
@@ -194,6 +196,7 @@ const KEYWORD_TR = `
 - **İsim** — Boşsa URL kullanılır. **Grup**, **Etiketler**, **Bildirimler (E-posta)** — standart.
 - **Kontrol Sıklığı** — Varsayılan **1 dk**.
 - **SSL Kontrolleri** — HTTP izlemesindeki gibi (SSL/Domain bitiş hatırlatmaları).
+- **Kurumsal vekil (proxy)** — Kontrolün pod'dan hangi yoldan çıkacağı. **Envanterle aynı** (varsayılan): URL'nin alan adı sertifika envanterinde "Proxy üzerinden kontrol et = Evet" ise vekil, değilse doğrudan — sertifika kontrolüyle aynı yol. **Her zaman vekil üzerinden**: kurumsal vekil (hedef NO_PROXY listesindeyse yine doğrudan). **Doğrudan**: vekil hiç kullanılmaz — iç ağ hedefleri için. Kartta **Proxy / Doğrudan** rozeti gerçekte kullanılan yolu gösterir.
 - **Gelişmiş ayarlar** (katlanır) — Yavaşlık eşiği (ms), Doğrulama denemesi, Kurtarma, Aktif.
 
 ### İpuçları
@@ -219,6 +222,7 @@ Open the form with **+ New Monitor**.
 - **Name** — Falls back to URL. **Group**, **Tags**, **Notifications (Email)** — standard.
 - **Check interval** — Default **1m**.
 - **SSL checks** — Same as the HTTP monitor (SSL/Domain expiry reminders).
+- **Corporate proxy** — Which route the check leaves the pod by. **Same as inventory** (default): via the proxy when the URL's domain is marked "Check via proxy = Yes" in the certificate inventory, otherwise direct — the same route as the certificate check. **Always via proxy**: the corporate proxy (targets on the NO_PROXY list still go direct). **Direct**: never uses the proxy — for internal targets. The **Proxy / Direct** badge on the card shows the route actually taken.
 - **Advanced settings** (collapsible) — Slow threshold (ms), Confirm attempts, Recovery, Active.
 
 ### Tips
@@ -294,6 +298,7 @@ Bir sayfanın tüm kaynaklarının (görsel, CSS, JS, link, iframe, font) erişi
 - **Üçüncü-taraf kaynak kırıkları da alarm üretsin** — Varsayılan kapalı (dış CDN gürültüsünü azaltır).
 - **Mixed content alarm üretsin** — HTTPS sayfada \`http://\` kaynak için alarm (varsayılan açık).
 - **Zaman aşımlarını izle** — Açıkken (varsayılan) yanıt vermeyen kaynak KIRIK sayılır; kapalıysa yalnız "Zaman aşımı" olarak tabloda görünür.
+- **Kurumsal vekil (proxy)** — Kontrolün pod'dan hangi yoldan çıkacağı. **Envanterle aynı** (varsayılan): URL'nin alan adı sertifika envanterinde "Proxy üzerinden kontrol et = Evet" ise vekil, değilse doğrudan — sertifika kontrolüyle aynı yol. **Her zaman vekil üzerinden**: kurumsal vekil (hedef NO_PROXY listesindeyse yine doğrudan). **Doğrudan**: vekil hiç kullanılmaz — iç ağ hedefleri için. Kartta **Proxy / Doğrudan** rozeti gerçekte kullanılan yolu gösterir.
 - **Etiketler**, **E-posta bildirimi**, **Kontrol aralığı** (varsayılan 5 dk) — standart.
 - **Gelişmiş ayarlar** (katlanır) — Yavaş kaynak eşiği (ms, def 2000), Kaynak eşzamanlılığı (1–20, def 5), Timeout (ms), Teyit/Kurtarma denemeleri, Aktif.
 
@@ -338,6 +343,7 @@ Open the form with **+ New Monitor**.
 - **Alert on third-party resource breaks too** — Off by default (reduces external-CDN noise).
 - **Alert on mixed content** — Alert on \`http://\` resources on an HTTPS page (default on).
 - **Watch timeouts** — On (default) treats non-responding resources as BROKEN; off shows them only as "Timeout" in the table.
+- **Corporate proxy** — Which route the check leaves the pod by. **Same as inventory** (default): via the proxy when the URL's domain is marked "Check via proxy = Yes" in the certificate inventory, otherwise direct — the same route as the certificate check. **Always via proxy**: the corporate proxy (targets on the NO_PROXY list still go direct). **Direct**: never uses the proxy — for internal targets. The **Proxy / Direct** badge on the card shows the route actually taken.
 - **Tags**, **Email notification**, **Check interval** (default 5m) — standard.
 - **Advanced settings** (collapsible) — Slow-resource threshold (ms, def 2000), Resource concurrency (1–20, def 5), Timeout (ms), Confirm/Recovery attempts, Active.
 
@@ -562,6 +568,7 @@ Boş bıraktığınız metrik **alarm üretmez**. Eşiğin tam değeri ihlal say
 - **Zaman aşımı**, **Eşzamanlı istek** (1–20), **Teyit/Toparlanma** ayarları — standart.
 - **User-Agent** — Boşsa kendini tanıtan varsayılan gider. WAF/bot koruması olan sayfalarda değiştirmeniz gerekebilir.
 - **DNT başlığı** — Ölçümün takip edilmemesini talep eder.
+- **Kurumsal vekil (proxy)** — Varsayılan **Doğrudan**: ölçüm pod'dan gider, vekil gecikmesi rakama karışmaz. **Envanterle aynı** / **Her zaman vekil üzerinden** yalnız vekilsiz erişilemeyen sayfalar için; vekil yolunda DNS/TCP/TLS faz kırılımı ölçülmez (— kalır). Kartta Proxy / Doğrudan rozeti gerçekte kullanılan yolu gösterir.
 - **Tracker'ları ölçüm dışı bırak** — Açıkken bilinen analytics/tracker kaynakları ne indirilir ne sayılır; "kendi sayfam ne kadar ağır" sorusu üçüncü-taraf gürültüsünden arınır. Altındaki alandan kendi desenlerinizi ekleyebilirsiniz.
 - **Kimlikli istekler** — Basic auth kullanıcı/parola. Parola **şifreli** saklanır ve ekrana bir daha dönmez; boş bırakmak "değiştirme" demektir, "sil" değil.
 - **Özel istek başlıkları** — Yalnız yöneticiler düzenleyebilir (serbest başlık iç servislere doğru bir yetki yüzeyi açar). Şifreli saklanır.
@@ -610,6 +617,7 @@ A metric you leave blank raises **no alerts**. The threshold value itself is all
 - **Timeout**, **Concurrent requests** (1–20), **Confirmation/recovery** settings — as elsewhere.
 - **User-Agent** — Left blank, a default that identifies itself is sent. You may need to change it for pages behind a WAF or bot protection.
 - **DNT header** — Asks that the measurement not be tracked.
+- **Corporate proxy** — Default **Direct**: the measurement leaves the pod directly, so proxy latency never pollutes the figure. **Same as inventory** / **Always via proxy** only for pages that are unreachable without the proxy; on the proxy route the DNS/TCP/TLS phase breakdown is not measured (shown as —). The Proxy / Direct badge on the card shows the route actually taken.
 - **Leave trackers out of the measurement** — When on, known analytics and tracker resources are neither downloaded nor counted, so "how heavy is my own page?" is not drowned out by third-party noise. Add your own patterns in the field below it.
 - **Authenticated requests** — Basic auth username and password. The password is stored **encrypted** and never comes back to the screen; leaving it blank means "don't change it", not "delete it".
 - **Custom request headers** — Administrators only, since an arbitrary header opens a route into internal services. Stored encrypted.

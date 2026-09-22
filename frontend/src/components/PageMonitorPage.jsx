@@ -41,6 +41,7 @@ const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
+import MonitorProxyField from './ui/MonitorProxyField.jsx'
 import MonitorSpark from './ui/MonitorSpark.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
@@ -78,7 +79,7 @@ const PAGE_ISSUE_COLS = '1fr 0.9fr 2fr 0.7fr 0.45fr 0.5fr 0.85fr 0.4fr'
 // Hariç desenleri check-time'da 50 satırda kırpılır (PageCheckerService.EXCLUDE_MAX_LINES) — istemci de aynı sınırı uygular.
 const EXCLUDE_MAX_LINES = 50
 const emptyForm = { name: '', url: '', groupName: '', notificationGroupId: '', teamId: '', tags: '', notifyEmail: true, alertLevel: 'WARNING', notifyWebhook: true,
-  mode: 'SINGLE_PAGE', crawlDepth: 2, crawlMaxPages: 50, excludePatterns: '', slowResourceMs: 2000,
+  mode: 'SINGLE_PAGE', crawlDepth: 2, crawlMaxPages: 50, excludePatterns: '', slowResourceMs: 2000, useProxy: 'AUTO',
   alertThirdParty: false, alertMixedContent: true, alertTimeout: true, resourceConcurrency: 5,
   intervalSeconds: 300, timeoutMs: 4000, confirmAttempts: 3, confirmIntervalSeconds: 30,
   recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true }
@@ -272,7 +273,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
       teamId: m.team_id != null ? String(m.team_id) : '',
       tags: m.tags || '', notifyEmail: m.notify_email !== false, alertLevel: m.alert_level || 'WARNING', notifyWebhook: m.notify_webhook !== false,
       mode: m.mode || 'SINGLE_PAGE', crawlDepth: m.crawl_depth ?? 2, crawlMaxPages: m.crawl_max_pages ?? 50,
-      excludePatterns: m.exclude_patterns || '', slowResourceMs: m.slow_resource_ms ?? 2000,
+      excludePatterns: m.exclude_patterns || '', slowResourceMs: m.slow_resource_ms ?? 2000, useProxy: m.use_proxy || 'AUTO',
       alertThirdParty: !!m.alert_third_party, alertMixedContent: m.alert_mixed_content !== false, alertTimeout: m.alert_timeout !== false, resourceConcurrency: m.resource_concurrency ?? 5,
       intervalSeconds: m.interval_seconds ?? 300, timeoutMs: m.timeout_ms ?? 4000,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
@@ -298,7 +299,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
     if (!form.url.trim()) return
     setTesting(true); setTestResult(null)
     try {
-      const res = await api.monitoring.testPage({ url: normalizeUrl(form.url), timeoutMs: Number(form.timeoutMs) })
+      const res = await api.monitoring.testPage({ url: normalizeUrl(form.url), timeoutMs: Number(form.timeoutMs), useProxy: form.useProxy || 'AUTO' })
       setTestResult(res?.success ? res.data : { error: res?.error || t('page.testError') })
     } finally {
       setTesting(false)
@@ -320,7 +321,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
           ? null : Number(form.notificationGroupId),
         tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, alertLevel: form.alertLevel || 'WARNING', notifyWebhook: form.notifyWebhook,
         mode: form.mode, crawlDepth: Number(form.crawlDepth), crawlMaxPages: Number(form.crawlMaxPages),
-        excludePatterns: form.excludePatterns?.trim() || null, slowResourceMs: Number(form.slowResourceMs),
+        excludePatterns: form.excludePatterns?.trim() || null, slowResourceMs: Number(form.slowResourceMs), useProxy: form.useProxy || 'AUTO',
         alertThirdParty: form.alertThirdParty, alertMixedContent: form.alertMixedContent, alertTimeout: form.alertTimeout, resourceConcurrency: Number(form.resourceConcurrency),
         intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
         confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
@@ -968,6 +969,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
                   placeholder={t('page.excludePh')}
                   onChange={e => setForm(f => ({ ...f, excludePatterns: e.target.value }))} />
                 <span className="field-hint">{t('page.excludeHint')}</span></label>
+              {/* Kurumsal vekil (2026-09-21): sertifika envanteriyle aynı karar */}
+              <MonitorProxyField value={form.useProxy} onChange={v => setForm(f => ({ ...f, useProxy: v }))}
+                effective={modal && typeof modal === 'object' && modal.proxy_effective ? { via: modal.proxy_effective, source: modal.proxy_source, bypassed: modal.proxy_bypassed, mode: modal.use_proxy } : null} />
 
               <label className="checkbox-label full-width">
                 <input type="checkbox" checked={form.alertThirdParty} onChange={e => setForm(f => ({ ...f, alertThirdParty: e.target.checked }))} />{t('page.alertThirdParty')}</label>

@@ -39,6 +39,10 @@ public class KeywordCheckerService {
 
     private final SsrfGuard ssrfGuard;
     private HttpClient httpClient;
+    // Vekilli eş (2026-09-21) — HttpCheckerService ile aynı desen; alan enjeksiyonu (yapıcı testlerde elle kuruluyor).
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ProxySettings proxySettings;
+    private HttpClient proxiedClient;
 
     /** İç-CA / self-signed HTTPS sitelerini de izleyebilmek için trust-all
      *  (içerik kontrolü; sertifika geçerliliği ayrı cert checker'da izlenir). */
@@ -63,6 +67,19 @@ public class KeywordCheckerService {
             log.warn("Keyword checker trust-all SSL kurulamadı, varsayılan kullanılacak: {}", e.getMessage());
         }
         httpClient = b.build();
+        if (proxySettings != null && proxySettings.enabled()) {
+            java.net.Authenticator auth = proxySettings.authenticator(log, "Keyword checker");
+            HttpClient.Builder pb = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
+                    .followRedirects(HttpClient.Redirect.NEVER).proxy(proxySettings.proxySelector());
+            try { pb.sslContext(httpClient.sslContext()); } catch (Exception ignore) { /* varsayılan güven */ }
+            if (auth != null) pb.authenticator(auth);
+            proxiedClient = pb.build();
+        }
+    }
+
+    /** viaProxy: vekilli istemci (yapılandırılmamışsa doğrudan). */
+    private HttpClient clientFor(boolean viaProxy) {
+        return viaProxy && proxiedClient != null ? proxiedClient : httpClient;
     }
 
     @Async("certCheckExecutor")
@@ -84,8 +101,14 @@ public class KeywordCheckerService {
      *  büyük/küçük harf DUYARLI eşleşme. Cache busting: URL'deki {timestamp} → güncel Unix saniye;
      *  customHeaders ("Name: Value" satırları, ör. Cache-Control: no-cache). */
     public Map<String, Object> check(String url, String keyword, int timeoutMs, String customHeaders, boolean caseSensitive) {
+        return check(url, keyword, timeoutMs, customHeaders, caseSensitive, false);
+    }
+
+    /** @param viaProxy kurumsal vekil üzerinden (karar {@link ProxyPolicyService}); sonuçta {@code via} proxy|direct. */
+    public Map<String, Object> check(String url, String keyword, int timeoutMs, String customHeaders, boolean caseSensitive, boolean viaProxy) {
         long start = System.currentTimeMillis();
         Map<String, Object> result = new LinkedHashMap<>();
+        result.put("via", viaProxy && proxiedClient != null ? "proxy" : "direct");
         // Yapılandırma hatası (şemasız/host'suz URL) kesinti DEĞİL — istek atılmaz, alarm da açılmaz
         // (SchedulerService config_error bayrağını okur). Eskiden bu durum sahte DOWN alarmı üretiyordu.
         if (!com.sitemonitor.util.MonitorUrls.isCheckable(url)) {
@@ -97,7 +120,7 @@ public class KeywordCheckerService {
         }
         try {
             // SSRF: hedef host HER hop'ta doğrulanır (metadata/loopback/link-local blok; iç ağ ayara bağlı).
-            HttpResponse<InputStream> resp = sendFollowingSafely(applyTimestamp(url), timeoutMs, customHeaders);
+            HttpResponse<InputStream> resp = sendFollowingSafely(applyTimestamp(url), timeoutMs, customHeaders, viaProxy);
             byte[] bytes;
             try (InputStream is = resp.body()) {
                 bytes = is.readNBytes(MAX_BODY_BYTES);   // bellek koruması: gövde tavanı
@@ -151,7 +174,7 @@ public class KeywordCheckerService {
      * <p>Takip edilemeyen bir {@code Location} (http/https dışı şema, host'suz hedef) hata değildir:
      * 3xx yanıt OLDUĞU GİBİ döner ve gövdesi TÜKETİLMEZ — çağıran okuyacaktır.
      */
-    private HttpResponse<InputStream> sendFollowingSafely(String url, int timeoutMs, String customHeaders)
+    private HttpResponse<InputStream> sendFollowingSafely(String url, int timeoutMs, String customHeaders, boolean viaProxy)
             throws java.io.IOException, InterruptedException {
         URI current = URI.create(url);
         for (int hop = 0; hop <= SafeRedirect.MAX_HOPS; hop++) {
@@ -165,7 +188,7 @@ public class KeywordCheckerService {
                     .header("User-Agent", "SiteMonitor-KeywordMonitor/1.0");
             applyCustomHeaders(rb, customHeaders);
             HttpResponse<InputStream> resp =
-                    httpClient.send(rb.GET().build(), HttpResponse.BodyHandlers.ofInputStream());
+                    clientFor(viaProxy).send(rb.GET().build(), HttpResponse.BodyHandlers.ofInputStream());
             if (!SafeRedirect.isRedirect(resp.statusCode())) return resp;
             URI next = SafeRedirect.nextHop(current, resp.headers().firstValue("location").orElse(null));
             if (next == null) return resp;   // takip edilemez → gövde tüketilmeden çağırana bırakılır

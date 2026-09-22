@@ -46,6 +46,14 @@ public class PageMonitor implements MonitorAlertPrefs, MonitorSchedule {
     @Column(name = "exclude_patterns", columnDefinition = "TEXT")
     private String excludePatterns;
 
+    /**
+     * Kurumsal vekil (proxy) tercihi: {@code AUTO} | {@code ON} | {@code OFF} (2026-09-21). AUTO (varsayılan, null da
+     * AUTO): <b>envanterle aynı</b> — alan adı sertifika envanterinde "Proxy üzerinden kontrol et = Evet" ise vekil,
+     * değilse doğrudan. Karar {@code ProxyPolicyService}'te; sertifika kontrolüyle aynı vekil ve NO_PROXY kuralı.
+     */
+    @Column(name = "use_proxy", length = 10)
+    private String useProxy;
+
     /** Kaynak yüklenme süresi bu eşiği (ms) aşarsa SLOW işaretlenir (varsayılan 2000). */
     @Column(name = "slow_resource_ms")
     private Integer slowResourceMs = 2000;

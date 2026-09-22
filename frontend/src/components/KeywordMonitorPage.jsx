@@ -42,6 +42,7 @@ import StatusBlock from './ui/StatusBlock.jsx'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
+import MonitorProxyField from './ui/MonitorProxyField.jsx'
 import MonitorSpark from './ui/MonitorSpark.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
@@ -75,7 +76,7 @@ const intervalIdx = (secs) => {
 const REFRESH_INTERVAL = 60
 const OP_SYM = { GTE: '≥', LTE: '≤', EQ: '=', GT: '>', LT: '<' }
 const emptyForm = { name: '', url: '', keyword: '', operator: 'GTE', matchCount: 1, groupName: '', notificationGroupId: '', teamId: '',
-  caseSensitive: false, tags: '', notifyEmail: true, alertLevel: 'WARNING', notifyWebhook: true,
+  caseSensitive: false, useProxy: 'AUTO', tags: '', notifyEmail: true, alertLevel: 'WARNING', notifyWebhook: true,
   checkSslErrors: false, sslExpiryReminders: false, domainExpiryReminders: false,
   sslReminderDays: '30,14,7', domainReminderDays: '30,14,7',
   slowResponseEnabled: false, slowThresholdMs: 3000,
@@ -216,7 +217,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
     return { name: m.name || '', url: m.url || '', keyword: m.keyword || '',
       operator: m.operator || 'GTE', matchCount: m.match_count ?? 1, groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
       teamId: m.team_id != null ? String(m.team_id) : '',
-      caseSensitive: !!m.case_sensitive, tags: m.tags || '', notifyEmail: m.notify_email !== false, alertLevel: m.alert_level || 'WARNING', notifyWebhook: m.notify_webhook !== false,
+      caseSensitive: !!m.case_sensitive, useProxy: m.use_proxy || 'AUTO', tags: m.tags || '', notifyEmail: m.notify_email !== false, alertLevel: m.alert_level || 'WARNING', notifyWebhook: m.notify_webhook !== false,
       checkSslErrors: !!m.check_ssl_errors, sslExpiryReminders: !!m.ssl_expiry_reminders, domainExpiryReminders: !!m.domain_expiry_reminders,
       sslReminderDays: m.ssl_reminder_days || '30,14,7', domainReminderDays: m.domain_reminder_days || '30,14,7',
       slowResponseEnabled: !!m.slow_response_enabled, slowThresholdMs: m.slow_threshold_ms ?? 3000,
@@ -247,7 +248,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
       const res = await api.monitoring.testKeyword({
         url: normalizeUrl(form.url), keyword: form.keyword, operator: form.operator,
         matchCount: Number(form.matchCount), timeoutMs: Number(form.timeoutMs),
-        customHeaders: form.customHeaders?.trim() || null, caseSensitive: form.caseSensitive,
+        customHeaders: form.customHeaders?.trim() || null, caseSensitive: form.caseSensitive, useProxy: form.useProxy || 'AUTO',
       })
       setTestResult(res?.success ? res.data : { error: res?.error || t('keyword.testError') })
     } finally {
@@ -269,7 +270,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
         // Bos = takim varsayilani -> takim adresi (zincirin kalani).
         notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
           ? null : Number(form.notificationGroupId),
-        caseSensitive: form.caseSensitive, tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, alertLevel: form.alertLevel || 'WARNING', notifyWebhook: form.notifyWebhook,
+        caseSensitive: form.caseSensitive, useProxy: form.useProxy || 'AUTO', tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, alertLevel: form.alertLevel || 'WARNING', notifyWebhook: form.notifyWebhook,
         checkSslErrors: form.checkSslErrors, sslExpiryReminders: form.sslExpiryReminders, domainExpiryReminders: form.domainExpiryReminders,
         sslReminderDays: form.sslReminderDays?.trim() || '30,14,7', domainReminderDays: form.domainReminderDays?.trim() || '30,14,7',
         slowResponseEnabled: form.slowResponseEnabled, slowThresholdMs: Number(form.slowThresholdMs),
@@ -794,6 +795,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
                 <input value={form.keyword} placeholder="SUCCESS" onChange={e => setForm(f => ({ ...f, keyword: e.target.value }))} /></label>
               <label className="checkbox-label">
                 <input type="checkbox" checked={form.caseSensitive} onChange={e => setForm(f => ({ ...f, caseSensitive: e.target.checked }))} />{t('keyword.caseSensitive')}</label>
+              {/* Kurumsal vekil (2026-09-21): sertifika envanteriyle aynı karar */}
+              <MonitorProxyField value={form.useProxy} onChange={v => setForm(f => ({ ...f, useProxy: v }))}
+                effective={modal && typeof modal === 'object' && modal.proxy_effective ? { via: modal.proxy_effective, source: modal.proxy_source, bypassed: modal.proxy_bypassed, mode: modal.use_proxy } : null} />
               <label><span>{t('keyword.name')}</span>
                 <input value={form.name} placeholder={form.url} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
               <label><span>{t('keyword.team')} <span className="req-star">*</span></span>

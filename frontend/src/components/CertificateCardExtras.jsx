@@ -59,7 +59,7 @@ function CertificateCardExtras({ cert, extra, onOpenHealth, onConfirmRenewal, on
         <button type="button" className="ccx-row ccx-uptime ccx-row--link" title={t('ccx.uptimeTip', uptime.checks24 ?? 0, uptime.last_at ? formatDate(uptime.last_at) : '—') + '\n' + t('ccx.uptimeGo')}
           onClick={stop(() => navigateTo('uptime', { q: cert.domain }))}>
           <Activity size={11} className={uptime.last_status === 'up' ? 'ccx-ok' : uptime.last_status ? 'ccx-bad' : ''} />
-          <span className={`ccx-pct${uptime.pct24 != null && uptime.pct24 < 99 ? (uptime.pct24 < 95 ? ' is-bad' : ' is-warn') : ''}`}>{uptime.pct24 == null ? '—' : `%${uptime.pct24}`}</span>
+          <span className={`ccx-pct${uptime.pct24 != null && uptime.pct24 < 99 ? (uptime.pct24 < 95 ? ' is-bad' : ' is-warn') : ''}`}>{uptime.pct24 == null ? '—' : t('ccx.pct', uptime.pct24)}</span>
           <span className="ccx-muted">{t('ccx.uptime24')}</span>
           {uptime.last_ms != null && <span className="ccx-muted">· {uptime.last_ms} ms</span>}
           {Array.isArray(uptime.points) && uptime.points.some((p) => p != null) && (

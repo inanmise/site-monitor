@@ -31,8 +31,10 @@ import java.util.function.Predicate;
  * Bütünlüğü izlemesi onları kırık-link diye kontrol eder; burada saymak sayfayı olduğundan ağır
  * gösterirdi.
  *
- * <p><b>Ağ yolu:</b> proxy kullanılmaz ({@link PageFetchCore} pod'dan doğrudan gider) — proxy gecikmesi
- * ölçüme karışırsa rakam sayfayı değil ağ yolunu anlatır.
+ * <p><b>Ağ yolu:</b> varsayılan DOĞRUDAN ({@link PageFetchCore} pod'dan gider) — proxy gecikmesi ölçüme karışırsa
+ * rakam sayfayı değil ağ yolunu anlatır. 2026-09-21'den itibaren izleme başına {@code useProxy} (OFF|AUTO|ON,
+ * null=OFF) ile vekil SEÇİLEBİLİR (vekil-zorunlu sayfalar aksi hâlde hiç ölçülemiyordu); vekil yolunda faz kırılımı
+ * ölçülmez (null), arayüz bunu söyler.
  */
 @Slf4j
 @Service
@@ -78,6 +80,9 @@ public class PageSpeedCheckerService {
     private final PublicSuffixService publicSuffixService;
     private final AppSettingsService appSettings;
     private final SecretCipher secretCipher;
+    /** Vekil kararı (2026-09-21) — isteğe bağlı: bean yoksa (eski test kurulumları) her zaman doğrudan. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ProxyPolicyService proxyPolicy;
 
     // ── Giriş noktaları ──────────────────────────────────────────────────────
 
@@ -92,7 +97,14 @@ public class PageSpeedCheckerService {
                 PageSpeedRules.exclusion(Boolean.TRUE.equals(m.getExcludeTrackers()), m.getTrackerPatterns()),
                 PageSpeedRules.basicAuthHeader(m.getBasicAuthUser(), pass),
                 PageSpeedRules.parseHeaders(decryptSecret(m.getCustomHeadersEnc())),
-                m);
+                m, viaProxyFor(m));
+    }
+
+    /** İzlemenin vekil kararı: null/OFF → doğrudan (varsayılan); AUTO/ON → {@link ProxyPolicyService}. Bean yoksa doğrudan. */
+    public boolean viaProxyFor(PageSpeedMonitor m) {
+        String mode = ProxyPolicyService.normalizeModeDefaultOff(m == null ? null : m.getUseProxy());
+        if (ProxyPolicyService.OFF.equals(mode) || proxyPolicy == null || m == null) return false;
+        return proxyPolicy.decide(m.getUrl(), mode).viaProxy();
     }
 
     /**
@@ -109,14 +121,14 @@ public class PageSpeedCheckerService {
                 PageSpeedRules.exclusion(Boolean.TRUE.equals(draft.getExcludeTrackers()), draft.getTrackerPatterns()),
                 PageSpeedRules.basicAuthHeader(draft.getBasicAuthUser(), pass),
                 PageSpeedRules.parseHeaders(decryptSecret(draft.getCustomHeadersEnc())),
-                null);   // eşik değerlendirmesi yok
+                null, viaProxyFor(draft));   // eşik değerlendirmesi yok
     }
 
     // ── Ölçüm ────────────────────────────────────────────────────────────────
 
     private Result measure(String url, int timeoutMs, int concurrency, String userAgent, boolean dnt,
                            Predicate<String> exclude, String basicAuth, Map<String, String> customHeaders,
-                           PageSpeedMonitor thresholds) {
+                           PageSpeedMonitor thresholds, boolean viaProxy) {
         // Yapılandırma hatası (şemasız/host'suz URL) kesinti DEĞİL: istek atılmaz ve alarm açılmaz.
         if (!MonitorUrls.isCheckable(url)) {
             return new Result("CONFIG_ERROR", null, 0, 0, 0, 0, 0, 0, false, false,
@@ -125,14 +137,18 @@ public class PageSpeedCheckerService {
         // Faz kırılımı ÖNCE ölçülür (taze bağlantı): HttpClient havuzu ısındıktan sonra ölçmek
         // "sıcak" bir rakam verirdi ve karşılaştırılabilirliği bozardı. Prob ASIL ölçümün ön
         // şartı değildir — başarısız olursa fazlar null kalır, kontrol normal sürer.
-        HttpPhaseProbe.Phases phases = phaseProbe.measure(url, timeoutMs);
+        // Vekil yolunda prob ANLAMSIZ: ham soket hedefe değil vekile bağlanır, DNS/TCP/TLS fazları hedefi değil
+        // vekili ölçer. Ölçülemeyen faz null kalır (sıfır yazmak olmayan bir hızı iddia etmek olurdu).
+        HttpPhaseProbe.Phases phases = viaProxy
+                ? new HttpPhaseProbe.Phases(null, null, null, null, "vekil üzerinden faz kırılımı ölçülmez")
+                : phaseProbe.measure(url, timeoutMs);
 
         long start = System.currentTimeMillis();
         long deadline = start + maxCheckSeconds() * 1000L;
         Map<String, String> headers = buildHeaders(dnt, basicAuth, customHeaders);
 
         PageFetchCore.FetchOptions htmlOpts = PageFetchCore.FetchOptions
-                .body(timeoutMs, userAgent).withHeaders(headers).counting();
+                .body(timeoutMs, userAgent).withHeaders(headers).counting().withProxy(viaProxy);
         PageFetchCore.Fetch main = core.fetch(url, "GET", htmlOpts);
 
         if (main.blocked() || main.status() == 0 || main.status() >= 400 || main.body() == null) {
@@ -155,7 +171,7 @@ public class PageSpeedCheckerService {
         // kısmi olduğunda çıkıyor.
         boolean capped = loadable.size() >= PageFetchCore.MAX_RESOURCES_PER_CHECK;
 
-        Weighed weighed = weighAll(loadable, rootHost, timeoutMs, concurrency, userAgent, headers, deadline);
+        Weighed weighed = weighAll(loadable, rootHost, timeoutMs, concurrency, userAgent, headers, deadline, viaProxy);
         List<Measured> measured = weighed.rows();
 
         long totalBytes = main.bytes();
@@ -192,10 +208,12 @@ public class PageSpeedCheckerService {
 
     /** Alt kaynakları sınırlı eşzamanlılıkla, deadline'a VE toplam bayt bütçesine saygılı tartar. */
     private Weighed weighAll(List<PageFetchCore.Resource> resources, String rootHost, int timeoutMs,
-                             int concurrency, String userAgent, Map<String, String> headers, long deadline) {
+                             int concurrency, String userAgent, Map<String, String> headers, long deadline,
+                             boolean viaProxy) {
         if (resources.isEmpty()) return new Weighed(List.of(), false);
+        // Sayfa ve alt kaynaklar AYNI yoldan gider (Sayfa Bütünlüğü ile aynı sözleşme).
         PageFetchCore.FetchOptions opts = PageFetchCore.FetchOptions
-                .weigh(timeoutMs, userAgent).withHeaders(headers);
+                .weigh(timeoutMs, userAgent).withHeaders(headers).withProxy(viaProxy);
         Semaphore gate = new Semaphore(concurrency);
         // Tek kontrolün indirebileceği TOPLAM bayt: kaynak başına tavan tek başına yetmiyor
         // (500 × 10 MB = 5 GB). Tek pod'da bant genişliği ve CPU gerçek sınırlar.

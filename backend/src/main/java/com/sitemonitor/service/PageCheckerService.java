@@ -72,6 +72,28 @@ public class PageCheckerService {
      *  üst sınırı (yavaş/yanıt-vermeyen hedefin scheduler/request thread'ini süresiz tutmasını engeller — H1/M1). */
     public PageCheckResult check(String url, String mode, int timeoutMs, int slowMs, int concurrency,
                                  String excludePatterns, int crawlDepth, int crawlMaxPages, int maxCheckSeconds) {
+        return check(url, mode, timeoutMs, slowMs, concurrency, excludePatterns, crawlDepth, crawlMaxPages, maxCheckSeconds, false);
+    }
+
+    /**
+     * Koşum boyunca vekil kararı (2026-09-21). Kaynak doğrulamaları {@code core.executor()} iş parçacıklarında koşar;
+     * ThreadLocal oraya KENDİLİĞİNDEN geçmez → fan-out lambda'sı bayrağı gönderim anında yakalayıp işçide kurar.
+     */
+    private static final ThreadLocal<Boolean> VIA_PROXY = ThreadLocal.withInitial(() -> false);
+
+    /** @param viaProxy kurumsal vekil üzerinden (karar {@link ProxyPolicyService}). */
+    public PageCheckResult check(String url, String mode, int timeoutMs, int slowMs, int concurrency,
+                                 String excludePatterns, int crawlDepth, int crawlMaxPages, int maxCheckSeconds, boolean viaProxy) {
+        VIA_PROXY.set(viaProxy);
+        try {
+            return checkInternal(url, mode, timeoutMs, slowMs, concurrency, excludePatterns, crawlDepth, crawlMaxPages, maxCheckSeconds);
+        } finally {
+            VIA_PROXY.remove();
+        }
+    }
+
+    private PageCheckResult checkInternal(String url, String mode, int timeoutMs, int slowMs, int concurrency,
+                                          String excludePatterns, int crawlDepth, int crawlMaxPages, int maxCheckSeconds) {
         // Yapılandırma hatası (şemasız/host'suz URL) kesinti DEĞİL: istek atılmaz, CONFIG_ERROR döner ve
         // SchedulerService bunun için alarm açmaz. Eskiden URI.create şemasız değeri relative referans sayıp
         // host=null verdiği için sonuç DOWN oluyor ve takıma sahte "Sayfa yüklenemiyor" e-postası gidiyordu.
@@ -89,7 +111,14 @@ public class PageCheckerService {
     }
 
     /** Kaydetmeden canlı test için basit sarmalayıcı (SINGLE_PAGE, varsayılan eşikler + 60sn deadline). */
-    public PageCheckResult test(String url, int timeoutMs) {
+    public PageCheckResult test(String url, int timeoutMs) { return test(url, timeoutMs, false); }
+
+    public PageCheckResult test(String url, int timeoutMs, boolean viaProxy) {
+        VIA_PROXY.set(viaProxy);
+        try { return testInternal(url, timeoutMs); } finally { VIA_PROXY.remove(); }
+    }
+
+    private PageCheckResult testInternal(String url, int timeoutMs) {
         if (!com.sitemonitor.util.MonitorUrls.isCheckable(url)) {        // check(...) ile aynı yapılandırma geçidi
             return new PageCheckResult("CONFIG_ERROR", false, null, 0L, 0, 0, 0, 0, 0, null, null,
                     com.sitemonitor.util.MonitorUrls.CONFIG_ERROR_MSG, List.of());
@@ -251,12 +280,14 @@ public class PageCheckerService {
         Semaphore gate = new Semaphore(concurrency);
         List<CompletableFuture<ResourceIssue>> futures = new ArrayList<>();
         for (Resource r : resources) {
+            final boolean viaProxy = VIA_PROXY.get();   // gönderim anında yakala (işçi iş parçacığı ThreadLocal'ı görmez)
             futures.add(CompletableFuture.supplyAsync(() -> {
                 if (System.currentTimeMillis() > deadline) return null;   // deadline geçti → çalıştırma
+                VIA_PROXY.set(viaProxy);
                 try {
                     gate.acquire();
                     try { return verifyOne(r, pageHttps, rootHost, timeoutMs, slowMs); }
-                    finally { gate.release(); }
+                    finally { gate.release(); VIA_PROXY.remove(); }
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                     return null;
@@ -393,9 +424,9 @@ public class PageCheckerService {
 
     // ── Fetch — PageFetchCore'a devredildi (trust-all TLS + hop-başına SSRF orada) ────
     private PageFetchCore.Fetch fetchFollowing(String url, String method, boolean wantBody, int timeoutMs) {
-        PageFetchCore.FetchOptions opts = wantBody
+        PageFetchCore.FetchOptions opts = (wantBody
                 ? PageFetchCore.FetchOptions.body(timeoutMs, userAgent())
-                : PageFetchCore.FetchOptions.probe(timeoutMs, userAgent());
+                : PageFetchCore.FetchOptions.probe(timeoutMs, userAgent())).withProxy(VIA_PROXY.get());
         return core.fetch(url, method, opts);
     }
 

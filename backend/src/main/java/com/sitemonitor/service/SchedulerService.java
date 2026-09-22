@@ -132,6 +132,12 @@ public class SchedulerService {
     /** Tablo kayıt defteri (SQL Playground "ne zaman oluştu / son değişim", 2026-09-11) — isteğe bağlı. */
     @Autowired(required = false)
     private SchemaTableRegistryService schemaRegistry;
+    /** HTTP/Keyword/Sayfa vekil kararı (2026-09-21) — isteğe bağlı: bean yoksa doğrudan (bugünkü davranış). */
+    @Autowired(required = false)
+    private ProxyPolicyService proxyPolicy;
+    /** Durum (uptime) yoklaması için kurumsal vekil (2026-09-21) — isteğe bağlı: bean yoksa doğrudan. */
+    @Autowired(required = false)
+    private ProxySettings proxySettings;
 
     private final DomainMonitorRepository domainMonitorRepo;
     private final DomainCheckRepository domainCheckRepo;
@@ -648,6 +654,12 @@ public class SchedulerService {
         // Sentetik koşumun kurumsal çıkış vekilini kullanıp kullanmayacağı (AUTO/ON/OFF) ve
         // koşumun gerçekten vekilden geçip geçmediği. Mevcut satırlarda NULL = AUTO.
         patch("ALTER TABLE scripted_monitors ADD COLUMN use_proxy VARCHAR(10)");
+        // İzleme başına kurumsal vekil kipi (2026-09-21): HTTP/Keyword/Sayfa NULL = AUTO (envanterle aynı), Sayfa Hızı NULL = OFF
+        // (doğrudan). ddl-auto da ekler; açık patch proje geleneği (idempotent, kolon varsa noop).
+        patch("ALTER TABLE http_monitors ADD COLUMN use_proxy VARCHAR(10)");
+        patch("ALTER TABLE keyword_monitors ADD COLUMN use_proxy VARCHAR(10)");
+        patch("ALTER TABLE page_monitors ADD COLUMN use_proxy VARCHAR(10)");
+        patch("ALTER TABLE pagespeed_monitors ADD COLUMN use_proxy VARCHAR(10)");
         patch("ALTER TABLE scripted_checks ADD COLUMN via_proxy BOOLEAN");
         // İsteğin faz kırılımı: k6 bunları hep üretiyordu, okunmuyordu — "request timeout"un
         // DNS mi TCP mi TLS mi TTFB mi olduğu kayıttan cevaplanamıyordu. NULL = o faza girilmedi.
@@ -2318,6 +2330,11 @@ public class SchedulerService {
         return before;
     }
 
+    /** HTTP/Keyword/Sayfa izlemesi vekil üzerinden mi (2026-09-21)? Bean yoksa doğrudan. */
+    private boolean viaProxyFor(String url, String mode) {
+        return proxyPolicy != null && proxyPolicy.decide(url, mode).viaProxy();
+    }
+
     List<Map<String, Object>> loadDomainsFromInventory() {   // paket-görünür: test
         List<CertificateInventory> items = inventoryRepo.findByActiveTrueOrderByDomainAsc();
         List<Map<String, Object>> result = new ArrayList<>();
@@ -2537,7 +2554,7 @@ public class SchedulerService {
         List<Map.Entry<CertificateInventory, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
         for (CertificateInventory inv : active) {
             int port = inv.getPort() != null ? inv.getPort() : 443;
-            started.add(Map.entry(inv, startNetworkCheck(() -> recheckUptime(inv.getDomain(), port))));
+            started.add(Map.entry(inv, startNetworkCheck(() -> recheckUptime(inv.getDomain(), port, uptimeViaProxy(inv)))));
         }
         for (var entry : started) {
             CertificateInventory inv = entry.getKey();
@@ -2550,7 +2567,7 @@ public class SchedulerService {
                         EscalationService.TYPE_ACCESSIBILITY, inv.getDomain(), String.valueOf(port),
                         "up".equals(r.get("status")), (String) r.get("error"),
                         Map.of("port", port),
-                        () -> recheckUptime(inv.getDomain(), port)));
+                        () -> recheckUptime(inv.getDomain(), port, uptimeViaProxy(inv))));
             } catch (Exception e) {
                 log.warn("Uptime check failed for {}:{}: {}", inv.getDomain(), port, e.getMessage());
             }
@@ -2567,7 +2584,21 @@ public class SchedulerService {
     /** Uptime check + uptime_checks persist'i — hem sweep hem teyit re-check'leri
      *  bu yoldan geçer (teyit izi Durum izleme geçmişinde görünür). */
     private Map<String, Object> recheckUptime(String domain, int port) {
-        Map<String, Object> r = uptimeHttpCheckerService.check(domain, port, 10000);
+        return recheckUptime(domain, port, false);
+    }
+
+    /**
+     * Durum yoklaması envanter kaydının "Proxy üzerinden kontrol et" tercihini onurlandırır (2026-09-21):
+     * sertifika kontrolüyle AYNI karar ({@code ProxySettings.useFor}: bayrak Evet + vekil tanımlı + hedef NO_PROXY'de
+     * değil). Hayır olan kayıtlar bugünkü gibi doğrudan çıkar — yol yalnız envanterde Evet işaretli alan adlarında değişir.
+     */
+    private boolean uptimeViaProxy(CertificateInventory inv) {
+        return proxySettings != null && inv != null
+                && proxySettings.useFor(inv.getDomain(), Boolean.TRUE.equals(inv.getUseProxy()));
+    }
+
+    private Map<String, Object> recheckUptime(String domain, int port, boolean viaProxy) {
+        Map<String, Object> r = uptimeHttpCheckerService.check(domain, port, 10000, viaProxy);
         try {
             UptimeCheck check = new UptimeCheck();
             check.setDomain(domain);
@@ -2818,7 +2849,7 @@ public class SchedulerService {
     private Map<String, Object> recheckKeyword(KeywordMonitor m) {
         int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000;
         Map<String, Object> r = keywordCheckerService.check(m.getUrl(), m.getKeyword(), timeout, m.getCustomHeaders(),
-                Boolean.TRUE.equals(m.getCaseSensitive()));
+                Boolean.TRUE.equals(m.getCaseSensitive()), viaProxyFor(m.getUrl(), m.getUseProxy()));
         boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
         int count = r.get("count") instanceof Number cn ? cn.intValue() : (found ? 1 : 0);
         int threshold = m.getMatchCount() != null ? m.getMatchCount() : 1;
@@ -3326,7 +3357,8 @@ public class SchedulerService {
     private Map<String, Object> recheckHttp(HttpMonitor m) {
         int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000;
         Map<String, Object> r = httpCheckerService.check(m.getUrl(), m.getMethod(), m.getExpectedStatus(),
-                timeout, Boolean.TRUE.equals(m.getVerifySsl()), !Boolean.FALSE.equals(m.getFollowRedirects()));
+                timeout, Boolean.TRUE.equals(m.getVerifySsl()), !Boolean.FALSE.equals(m.getFollowRedirects()),
+                viaProxyFor(m.getUrl(), m.getUseProxy()));
         boolean ok = Boolean.TRUE.equals(r.get("ok"));
         try {
             HttpCheck res = new HttpCheck();
@@ -3498,7 +3530,7 @@ public class SchedulerService {
                 m.getExcludePatterns(),
                 m.getCrawlDepth() != null ? m.getCrawlDepth() : 2,
                 m.getCrawlMaxPages() != null ? m.getCrawlMaxPages() : 50,
-                maxCheckSec);
+                maxCheckSec, viaProxyFor(m.getUrl(), m.getUseProxy()));
 
         // Alarm-uygunluk YALNIZ e-posta geçidi (tabloda her sorun görünür). countsForAlarm: BLOCKED/SLOW hiç,
         // LINK yalnız 404/410 (dış link 5xx/timeout alarm üretmez — Q1), yüklenen alt-kaynak broken/timeout.
@@ -4491,7 +4523,7 @@ public class SchedulerService {
         if (!Boolean.TRUE.equals(m.getSlowResponseEnabled())) { out.put("status", "up"); return out; }
         int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000;
         Map<String, Object> r = keywordCheckerService.check(m.getUrl(), m.getKeyword(), timeout, m.getCustomHeaders(),
-                Boolean.TRUE.equals(m.getCaseSensitive()));
+                Boolean.TRUE.equals(m.getCaseSensitive()), viaProxyFor(m.getUrl(), m.getUseProxy()));
         Long ms = r.get("response_ms") instanceof Number n ? n.longValue() : null;
         if (ms != null) out.put("response_ms", ms);
         boolean slow = r.get("error") == null && ms != null && ms > th;   // HTTP hatası → yavaşlık değerlendirilemez → up

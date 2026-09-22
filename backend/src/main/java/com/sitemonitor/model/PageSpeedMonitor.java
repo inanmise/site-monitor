@@ -127,6 +127,16 @@ public class PageSpeedMonitor implements MonitorAlertPrefs, MonitorSchedule {
     @Column(name = "resource_concurrency")
     private Integer resourceConcurrency = 5;
 
+    /**
+     * Kurumsal vekil (proxy) tercihi: {@code OFF} (varsayılan; null da OFF) | {@code AUTO} | {@code ON} (2026-09-21).
+     * Sayfa Hızı'nda varsayılan DOĞRUDAN'dır (HTTP/Keyword/Sayfa'daki AUTO'dan farklı): ölçüm bugüne kadar pod'dan
+     * gidiyordu ve vekil gecikmesi rakama karışır; mevcut kayıtlar yol değiştirmez. AUTO = envanter kaydı "Proxy üzerinden
+     * kontrol et = Evet" ise vekil; ON = her zaman vekil (NO_PROXY hariç). Karar {@code ProxyPolicyService}'te.
+     * Vekil yolunda faz kırılımı (DNS/TCP/TLS) ölçülemez → null kalır (sıfır yazılmaz).
+     */
+    @Column(name = "use_proxy", length = 10)
+    private String useProxy;
+
     // ── Alarm davranışı ───────────────────────────────────────────────────────
 
     /** Per-monitor teyit: alarm öncesi doğrulama denemesi sayısı (varsayılan 3; 0 = anında). */

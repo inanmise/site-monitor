@@ -35,7 +35,7 @@ describe('CertificateCard — zengin görünüm', () => {
     expect(onClick).not.toHaveBeenCalled()                                   // kart detayı açılmadı
     fireEvent.click(screen.getByRole('button', { name: /2 açık alarm|2 open alerts/ }))
     expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'alerthistory', params: { incident: 41 } })
-    expect(screen.getByText('%91.7')).toBeInTheDocument()
+    expect(screen.getByText('91.7%')).toBeInTheDocument()   // EN render: yüzde sonda (QA ISSUE-004); TR'de '%91.7'
     expect(document.querySelector('.ccx-spark svg')).not.toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /^Onayla$|^Confirm$/ }))
     expect(onConfirm).toHaveBeenCalledWith('a.example.com')

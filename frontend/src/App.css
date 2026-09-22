@@ -781,6 +781,15 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   .sb { width: var(--sb-closed-width); min-width: var(--sb-closed-width); }
   .sb-brand-text, .sb-label, .sb-user-name, .sb-logout span:last-child { display: none; }
   .sb.sb-closed { width: var(--sb-closed-width); }
+  /* Dar ekranda ray 60px'e zorlanır ama React `open` durumu true kalır → arama/bildirim/rol etiketleri çizilip
+     kırpılıyordu ("Searc", "Notifi", ADMIN taşması). Masaüstü daraltmasıyla (--mini) aynı görünüm (QA ISSUE-005). */
+  .sb-search-text, .sb-search-kbd, .sb-bell-text, .sb-role-badge { display: none; }
+  .sb-search, .sb-bell { justify-content: center; padding: 6px; margin-left: 8px; margin-right: 8px; }
+  .sb-bell .sb-bell-badge { position: absolute; top: -4px; right: -4px; }
+  /* Kullanıcı çipi: 44px genişlikte simgeler 0'a büzülüp boş beyaz kutu kalıyordu — yalnız kullanıcı simgesi */
+  .sb-user-trigger { justify-content: center; gap: 0; padding: 8px 0; }
+  .sb-user-trigger > svg { flex-shrink: 0; }
+  .sb-user-trigger .sb-user-chevron, .sb-user-trigger .sb-user-info { display: none; }
 }
 
 /* ── Legacy (kept for compatibility) ─────────────────── */
@@ -1059,6 +1068,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .status-block--danger  { --sb-ink: var(--danger); }
 .status-block--success { --sb-ink: var(--success); }
 .status-block-icon { display: flex; justify-content: center; margin-bottom: 12px; }
+/* İlk yükleme durumu (QA ISSUE-006): simge döner, yükseklik boş-durumla aynı → kartlar gelince zıplama yok */
+.status-block--loading .status-block-icon svg { animation: spin .9s linear infinite; }
 .status-block-title { font-size: 1.2em; font-weight: 600; margin-bottom: 8px; color: var(--sb-ink); }
 .status-block-desc { color: var(--text-light); margin-bottom: 18px; }
 .status-block-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
@@ -9429,6 +9440,15 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .udir-teams { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 .udir-table td { vertical-align: top; }
 .udir-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+/* İzleme vekil alanı + rozeti (2026-09-21) */
+.mon-proxy-field .field-hint { display: block; margin-top: 4px; }
+/* Üç seçenekli select tam satırı kaplamasın — kardeş "Metod" sütunu genişliği (QA ISSUE-002, kullanıcı bildirimi 2026-09-21) */
+.mon-proxy-field .ss-wrap { max-width: 320px; }
+/* `.mon-proxy-field .field-hint {display:block}` (0,2,0) tek sınıfı eziyordu → gap uygulanmıyor, simge metne bitişikti (QA ISSUE-003) */
+.mon-proxy-eff, .mon-proxy-field .mon-proxy-eff { display: inline-flex; align-items: center; gap: 4px; }
+.mon-proxy-eff--proxy { color: var(--primary); }
+.mon-proxy-badge { display: inline-flex; align-items: center; gap: 4px; font-size: .92em; color: var(--text-light); }
+.mon-proxy-badge.is-proxy { color: var(--primary); }
 .udir-badges .uact-pill { margin-left: 0; }
 /* Durum sütunu: başlıkta süzgeç seçicisi, satırda tıklanır hesap rozeti (2026-09-20) */
 .udir-th-filter { padding-top: 4px !important; padding-bottom: 4px !important; }
@@ -11924,6 +11944,8 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
   transition: background .15s;
 }
 .fc-show-more:hover { filter: brightness(1.1); }
+/* Uyarılar → Ağ kesinti geçmişi katlama düğmesi (QA ISSUE-002, 2026-09-21) */
+.outage-history-toggle { margin-top: 10px; }
 
 /* ── Pie empty state ── */
 .fc-pie-empty { display: flex; flex-direction: column; }
