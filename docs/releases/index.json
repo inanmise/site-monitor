@@ -1,9 +1,72 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-22T16:52:20Z",
+  "generatedAt": "2026-09-22T23:06:36Z",
   "repo": "inanmise/site-monitor",
-  "count": 669,
+  "count": 670,
   "releases": [
+    {
+      "version": "20.79.1",
+      "tag": "v20.79.1",
+      "releasedAt": "2026-09-22T23:06:30Z",
+      "commit": "6a92ef920e01492a11cd92f49741206505a9c35b",
+      "prevVersion": "20.79.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 5,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "6a92ef92",
+          "subject": "uçtan uca kod denetimi raporu (2026-09-23)"
+        },
+        {
+          "type": "fix",
+          "scope": "http",
+          "breaking": false,
+          "sha": "18c84d31",
+          "subject": "tanı penceresi sekme dönüşünde kendiliğinden açılıyordu + a11y ve ölü modal katmanı"
+        },
+        {
+          "type": "fix",
+          "scope": "scripted",
+          "breaking": false,
+          "sha": "70984c9c",
+          "subject": "anomaliyle kapatılan izleme için telefona \"DÜZELDİ\" gidiyor, \"devre dışı\" hiç gitmiyordu"
+        },
+        {
+          "type": "fix",
+          "scope": "security",
+          "breaking": false,
+          "sha": "da05370f",
+          "subject": "\"Oturumu Sonlandır\" kararı pod yeniden başlatmasında sessizce geri alınıyordu"
+        },
+        {
+          "type": "fix",
+          "scope": "security",
+          "breaking": false,
+          "sha": "dd9403bb",
+          "subject": "kullanıcı aktivite uçları giriş IP'si, konumu ve tarayıcı parmak izini her kademeye açıyordu"
+        },
+        {
+          "type": "fix",
+          "scope": "security",
+          "breaking": false,
+          "sha": "5adb6dfa",
+          "subject": "yönlendirmede kimlik bilgisi sızıntısı — Basic Auth ve özel başlıklar yabancı host'a gidiyordu"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.79.0",
       "tag": "v20.79.0",
