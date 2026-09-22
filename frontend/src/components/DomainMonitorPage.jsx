@@ -1028,6 +1028,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
           expiry_key: planRow.expiry_date ? String(planRow.expiry_date).substring(0, 10) : null, renew_by_key: null }}
         plan={(date, note) => api.monitoring.domainRenewalPlan(planRow.id, date, note)}
         unplan={() => api.monitoring.domainRenewalUnplan(planRow.id)}
+        hint={t('dom.planHint', planRow.expiry_date ? formatDateOnly(String(planRow.expiry_date).substring(0, 10)) : '—')}
         onClose={() => setPlanRow(null)} onSaved={applyPlanRow} onCleared={applyPlanRow} />}
 
       {/* ── Sorun Tanıla (Alan Adı Süre Bitişi Tanılama) Modal — en son portal: diğer modalların ÜSTÜNde durur ── */}

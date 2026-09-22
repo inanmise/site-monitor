@@ -3385,12 +3385,18 @@ public class EmailNotificationService {
                     ? dom.rows().size() + " alan adı önümüzdeki " + dom.windowDays() + " günde doluyor (izlenen: " + dom.monitorCount() + ")"
                     : "Önümüzdeki " + dom.windowDays() + " günde biten alan adı yok (izlenen: " + dom.monitorCount() + ")";
             String unlocked = dom.unlockedCount() > 0 ? " · " + dom.unlockedCount() + " alan adında transfer kilidi YOK" : "";
+            // İngilizce alt satır — kardeş bantlarla (Sürüm & Dağıtım, Zayıf Algoritma) aynı iki dilli düzen
+            String headEn = any
+                    ? dom.rows().size() + (dom.rows().size() == 1 ? " domain expires" : " domains expire") + " within the next " + dom.windowDays() + " days (" + dom.monitorCount() + " monitored)"
+                    : "No domain expires within the next " + dom.windowDays() + " days (" + dom.monitorCount() + " monitored)";
+            String unlockedEn = dom.unlockedCount() > 0 ? " · " + dom.unlockedCount() + (dom.unlockedCount() == 1 ? " domain has" : " domains have") + " no transfer lock" : "";
             domSection =
                 "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 18px'><tr>"
                 + "<td bgcolor='#f8fafc' style='background:#f8fafc;border-left:4px solid " + edge + ";"
                 + "border-radius:0 8px 8px 0;padding:10px 16px;font-size:13px;color:#1e293b'>"
                 + "<span style='font-weight:800;color:#334155'>🌐 Alan Adı Bitişleri</span><br>"
-                + "<span style='font-size:13px;color:#334155'>" + escHtml(head + unlocked) + "</span>"
+                + "<span style='font-size:13px;color:#334155'>" + escHtml(head + unlocked) + "</span><br>"
+                + "<span style='font-size:11px;color:#64748b'>" + escHtml(headEn + unlockedEn) + "</span>"
                 + rowsHtml
                 + "</td></tr></table>";
         }

@@ -1233,6 +1233,7 @@ class EmailNotificationServiceTest {
         assertThat(html).contains("Alan Adı Bitişleri")
                 .contains("3 alan adı önümüzdeki 90 günde doluyor (izlenen: 7)")
                 .contains("1 alan adında transfer kilidi YOK")
+                .contains("3 domains expire within the next 90 days (7 monitored)").contains("1 domain has no transfer lock")
                 .contains("a.example.com").contains("5 gün").contains("2026-09-27").contains("Reg A").contains("YOK")
                 .contains("registrar+registry").contains("GECİKMİŞ 2026-09-01")
                 .contains("2 gün önce doldu").contains("doğrulanamadı")
@@ -1240,7 +1241,7 @@ class EmailNotificationServiceTest {
 
         String empty = service.buildWeeklyAvailabilityHtml("Takım A", "2026-W39", java.util.List.of(), emptySummary(),
                 null, null, null, null, new EmailNotificationService.DomainExpiryWeekly(java.util.List.of(), 4, 90, 0));
-        assertThat(empty).contains("Önümüzdeki 90 günde biten alan adı yok (izlenen: 4)").contains("#16a34a").doesNotContain("transfer kilidi YOK");
+        assertThat(empty).contains("Önümüzdeki 90 günde biten alan adı yok (izlenen: 4)").contains("No domain expires within the next 90 days (4 monitored)").contains("#16a34a").doesNotContain("transfer kilidi YOK");
 
         String none = service.buildWeeklyAvailabilityHtml("Takım A", "2026-W39", java.util.List.of(), emptySummary(),
                 null, null, null, null);
