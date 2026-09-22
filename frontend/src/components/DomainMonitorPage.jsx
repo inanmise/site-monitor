@@ -29,7 +29,7 @@ import IntervalSlider from './ui/IntervalSlider.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
-import { RefreshCw, Plus, Trash2, CalendarClock, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Building2, Activity, Calendar, Inbox, Lock, LockOpen, ShieldCheck, ShieldOff, ListX, Server, Download, ChevronDown } from 'lucide-react'
+import { RefreshCw, Plus, Trash2, CalendarClock, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Building2, Activity, Calendar, Inbox, Lock, LockOpen, ShieldCheck, ShieldOff, ListX, Server, Download, ChevronDown, CalendarPlus } from 'lucide-react'
 import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
 import ModalScrollHint from './ui/ModalScrollHint.jsx'
 import { duplicateName } from '../utils/duplicateName.js'
@@ -51,6 +51,8 @@ import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import { ProgressBar } from './ui/Progress.jsx'
 import { eppLabel, domainLife } from '../utils/domainEpp.js'
 import { exportDomainsCsv, exportDomainsPdf } from '../utils/exportDomains.js'
+import RenewalPlanModal from './RenewalPlanModal.jsx'   // yenileme planı (2026-09-22, H) — sertifikayla ortak modal
+import { formatDateOnly } from '../api/client'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
@@ -192,6 +194,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   const [secondsSince, setSecondsSince] = useState(0)
   // Dışa aktarım menüsü (2026-09-22, D): görünen (süzülmüş + sıralanmış) liste CSV/PDF — envanterle aynı menü deseni
   const [exportOpen, setExportOpen] = useState(false)
+  const [planRow, setPlanRow] = useState(null)   // yenileme planı modalı: izleme satırı (2026-09-22, H)
   const [exporting, setExporting] = useState(false)
   const exportRef = useRef(null)
   useEffect(() => {
@@ -467,6 +470,26 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
     }
   }
 
+  /** Plan kaydedildi/kaldırıldı: sunucunun döndürdüğü satırı listeye ve açık detaya işle (yeniden yükleme yok). */
+  function applyPlanRow(row) {
+    if (!row?.id) return
+    setMonitors(prev => prev.map(x => x.id === row.id ? { ...x, ...row } : x))
+    setSelected(sel => (sel && sel.id === row.id) ? { ...sel, ...row } : sel)
+    setPlanRow(null)
+  }
+  /** Plan rozeti: gecikmiş (plan tarihi geçti, bitiş ilerlemedi) kırmızı; aksi hâlde bilgi. */
+  function planBadge(m) {
+    if (!m.renewal_planned_at) return null
+    return (
+      <button type="button" className={`ccx-chip ${m.renewal_overdue ? 'ccx-chip--bad' : 'ccx-chip--info'} dom-plan-chip`}
+        title={[m.renewal_planned_by, m.renewal_planned_note].filter(Boolean).join(' · ')}
+        onClick={e => { e.stopPropagation(); if (canManageRow(m)) setPlanRow(m) }}>
+        <CalendarPlus size={11} />{m.renewal_overdue ? t('ccx.planOverdue', formatDateOnly(m.renewal_planned_at)) : t('ccx.plan', formatDateOnly(m.renewal_planned_at))}
+        {m.renewal_planned_by && <span className="ccx-muted"> · {m.renewal_planned_by}</span>}
+      </button>
+    )
+  }
+
   async function doExport(kind) {
     setExportOpen(false)
     if (displayMonitors.length === 0) { toast.error(t('inv.exportNoData')); return }
@@ -721,6 +744,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
                 <div className="dom-hero-expiry"><Calendar size={12} /><span>{t('dom.expiresShort')} {fmtExpiry(m.expiry_date)}</span></div>
               </div>
               <DomainProtectionBadges m={m} t={t} />
+              {planBadge(m) && <div className="dom-plan-row">{planBadge(m)}</div>}
               {Array.isArray(m.status_codes) && m.status_codes.length > 0 && (
                 <div className="dom-epp-row">
                   {m.status_codes.slice(0, 4).map(sc => <span key={sc} className="dom-epp-chip" title={eppLabel(sc)}>{eppLabel(sc)}</span>)}
@@ -768,6 +792,11 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
                 deleting={deleting === selected.id}
                 deleteTitle={t('dom.delete')}
                 onClose={closeDetail}>
+                {canManageRow(selected) && (
+                  <button type="button" className="btn btn-sm upt-refresh-btn" onClick={() => setPlanRow(selected)} title={t('ccx.planCta')}>
+                    <CalendarPlus size={14} />{selected.renewal_planned_at ? formatDateOnly(selected.renewal_planned_at) : t('ccx.planCta')}
+                  </button>
+                )}
                 <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
               </MonitorModalActions>
             </div>
@@ -992,6 +1021,14 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         </div>,
         document.body
       )}
+
+      {/* Yenileme planı (2026-09-22, H): sertifika envanteriyle ORTAK modal, izleme uçlarıyla */}
+      {planRow && <RenewalPlanModal
+        row={{ domain: planRow.domain, renewal_planned_at: planRow.renewal_planned_at, renewal_planned_note: planRow.renewal_planned_note,
+          expiry_key: planRow.expiry_date ? String(planRow.expiry_date).substring(0, 10) : null, renew_by_key: null }}
+        plan={(date, note) => api.monitoring.domainRenewalPlan(planRow.id, date, note)}
+        unplan={() => api.monitoring.domainRenewalUnplan(planRow.id)}
+        onClose={() => setPlanRow(null)} onSaved={applyPlanRow} onCleared={applyPlanRow} />}
 
       {/* ── Sorun Tanıla (Alan Adı Süre Bitişi Tanılama) Modal — en son portal: diğer modalların ÜSTÜNde durur ── */}
       {diag && createPortal(

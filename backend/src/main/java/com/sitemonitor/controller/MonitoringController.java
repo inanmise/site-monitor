@@ -82,6 +82,8 @@ public class MonitoringController {
     private com.sitemonitor.repository.DomainExpiryReminderRepository domainReminderRepo;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private DomainExpiryReminderService domainReminders;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.DomainRenewalPlanService domainRenewalPlans;   // yenileme planı (2026-09-22, H)
     private final DomainCheckerService domainChecker;
     private final PublicSuffixService publicSuffixService;
     private final ActivityLogService activityLog;   // birleşik aktivite akışı (yaşam döngüsü olayları, best-effort)
@@ -125,7 +127,7 @@ public class MonitoringController {
         "intervalSeconds", "timeoutMs", "warningDays", "criticalDays", "protocol", "verifySsl", "followRedirects", "useProxy",
         "mode", "crawlDepth", "crawlMaxPages", "excludePatterns", "slowResourceMs", "alertThirdParty", "alertMixedContent", "alertTimeout", "resourceConcurrency",
         "notificationGroupId",
-        "transferLockAlert", "blacklistEnabled", "changeAlert", "notifyEmail", "notifyWebhook",
+        "transferLockAlert", "blacklistEnabled", "changeAlert", "notifyEmail", "notifyWebhook", "renewalPlannedAt", "renewalPlannedNote",
         // Teyit/kurtarma ayarlari: 6 noktanin 5'inde vardi (patch, create, update, gosterim, form)
         // ama DIFF'te yoktu. Yalniz bu alanlari degistiren bir duzenleme AuditDiff'te bos donuyor,
         // noteConfigChanged erken cikiyor ve denetim kaydi / izleme gecmisi / aktivite akisi
@@ -4900,6 +4902,35 @@ public class MonitoringController {
         return ok(out);
     }
 
+    /** Yenileme planı koy/güncelle (2026-09-22, H) — karttaki "Planla"; yetki: izlemeyi yönetebilen. */
+    @PostMapping("/domain/{id}/renewal-plan")
+    public ResponseEntity<Map<String, Object>> planDomainRenewal(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        if (domainRenewalPlans == null) return badRequest("renewal plan unavailable");
+        return domainMonitorRepo.findById(id).map(m -> {
+            if (!SessionScope.canView(session, m.getTeamId())) return notFound("Domain monitor not found");
+            if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu takımın izlemesini yönetemezsiniz");
+            String date = body.get("date") == null ? "" : String.valueOf(body.get("date")).trim();
+            if (!date.matches("^\\d{4}-\\d{2}-\\d{2}$")) return badRequest("date: YYYY-MM-DD");
+            String note = body.get("note") == null ? null : String.valueOf(body.get("note"));
+            String currentExpiry = domainCheckRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(id, "NONE").map(DomainCheck::getExpiryDate).orElse(null);
+            DomainMonitor saved = domainRenewalPlans.plan(m, date, note, currentExpiry, session);
+            return ok(enrichDomain(saved, domainCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(), null));
+        }).orElse(notFound("Domain monitor not found"));
+    }
+
+    @DeleteMapping("/domain/{id}/renewal-plan")
+    public ResponseEntity<Map<String, Object>> unplanDomainRenewal(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        if (domainRenewalPlans == null) return badRequest("renewal plan unavailable");
+        return domainMonitorRepo.findById(id).map(m -> {
+            if (!SessionScope.canView(session, m.getTeamId())) return notFound("Domain monitor not found");
+            if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu takımın izlemesini yönetemezsiniz");
+            DomainMonitor saved = domainRenewalPlans.unplan(m, session);
+            return ok(enrichDomain(saved, domainCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(), null));
+        }).orElse(notFound("Domain monitor not found"));
+    }
+
     @PostMapping("/domain/{id}/check")
     public ResponseEntity<Map<String, Object>> triggerDomain(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.trigger", "execute");
@@ -4907,6 +4938,7 @@ public class MonitoringController {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             Map<String, Object> r = domainChecker.check(m);   // DomainCheck persist eder
             if (domainReminders != null) domainReminders.evaluate(m, r);   // elle kontrol de eşik hatırlatmasını tetikler (2026-09-22, E)
+            if (domainRenewalPlans != null) domainRenewalPlans.onCheckResult(m, r);   // yenileme görüldüyse plan kapanır (H)
             // Manuel kontrol de alarm üretsin/çözsün (sweep'in günlük checkDue geciktirmesini bekleme):
             // WARNING/CRITICAL/UNKNOWN görülürse alarm + e-posta anında; düzeldiyse açık alarm kapanır.
             try { schedulerService.evaluateDomainAlarmsNow(m, r); }
@@ -5021,6 +5053,11 @@ public class MonitoringController {
         item.put("transfer_lock_alert", !Boolean.FALSE.equals(m.getTransferLockAlert()));
         item.put("blacklist_enabled",   Boolean.TRUE.equals(m.getBlacklistEnabled()));
         item.put("change_alert",        !Boolean.FALSE.equals(m.getChangeAlert()));
+        // Planlanan yenileme (2026-09-22, H): kart rozeti + plan modalı; gecikmiş = plan tarihi geçti, plan hâlâ açık
+        item.put("renewal_planned_at",   m.getRenewalPlannedAt());
+        item.put("renewal_planned_by",   m.getRenewalPlannedByName());
+        item.put("renewal_planned_note", m.getRenewalPlannedNote());
+        item.put("renewal_overdue",      m.getRenewalPlannedAt() != null && m.getRenewalPlannedAt().compareTo(java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString()) < 0);
         if (latest != null) {
             item.put("status",            latest.getStatus());
             item.put("source",            latest.getSource());

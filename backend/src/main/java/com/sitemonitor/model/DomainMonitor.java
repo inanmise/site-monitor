@@ -155,6 +155,16 @@ public class DomainMonitor implements MonitorAlertPrefs, MonitorSchedule {
     @jakarta.persistence.Column(name = "notification_group_id")
     private Long notificationGroupId;
 
+    // ── Planlanan yenileme (2026-09-22, madde H; sertifika envanterindeki renewal_planned_* eşi) ─────────────
+    // Operatör "bu tarihte yenileyeceğiz" der; plan tarihi geçip bitiş ileri gitmemişse kart "gecikmiş" gösterir; gerçek
+    // yenileme (bitiş > plan anındaki bitiş) görülünce sunucu planı kendiliğinden kapatır. Hepsi nullable, eski satırlar null.
+    @Column(name = "renewal_planned_at", length = 10)      private String renewalPlannedAt;      // YYYY-MM-DD
+    @Column(name = "renewal_planned_by", length = 100)     private String renewalPlannedBy;
+    @Column(name = "renewal_planned_by_name")              private String renewalPlannedByName;
+    @Column(name = "renewal_planned_note", length = 500)   private String renewalPlannedNote;
+    /** Plan konduğu andaki bitiş (ham ISO) — otomatik kapatmanın kıyas tabanı. */
+    @Column(name = "renewal_planned_expiry", length = 40)  private String renewalPlannedExpiry;
+
     // MonitorSchedule (2026-09-19): "Sizin için — bugün" bayat-izleme kartı
     @Override public String scheduleType() { return "DOMAIN"; }
     @Override public String scheduleTarget() { return domain; }

@@ -3118,6 +3118,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .dom-hero { padding: 6px 0 2px; }
 /* Kart zenginleştirme (2026-09-22): ömür çubuğu satırı, kısaltılan registrar, koruma rozetleri */
 .dom-hero-row { display: flex; align-items: center; gap: 14px; }
+/* Yenileme planı rozeti (2026-09-22, H) */
+.dom-plan-row { margin-top: 6px; }
+.dom-plan-chip { max-width: 100%; }
 /* Domain Kaydı → Hatırlatmalar (2026-09-22, E) */
 .dreg-rem-thresholds { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }
 .dreg-rem-chip { font-size: .74em; font-weight: 700; padding: 2px 9px; border-radius: 10px; border: 1px solid var(--border); color: var(--text-muted); background: var(--bg-card); }

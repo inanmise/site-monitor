@@ -12,19 +12,23 @@ import { isHoliday, isWeekend, lastBusinessDay } from '../pages/forecastModel.js
  * "Planla" kısayolu da aynı modalı kullanır. row: { domain, renewal_planned_at, renewal_planned_note, renew_by_key,
  * expiry_key }. onSaved/onCleared plan JSON'u alır ({ domain, renewal_planned_at, renewal_planned_by, renewal_planned_note }).
  */
-export default function RenewalPlanModal({ row, onClose, onSaved, onCleared }) {
+/**
+ * Alan adı izlemesi de aynı modalı kullanır (2026-09-22, H): `plan(date, note)` / `unplan()` verilirse envanter uçları
+ * yerine onlar çağrılır; verilmezse eski davranış (sertifika envanteri).
+ */
+export default function RenewalPlanModal({ row, onClose, onSaved, onCleared, plan = null, unplan = null }) {
   const t = useT(); const toast = useToast()
   const [date, setDate] = useState(row.renewal_planned_at || row.renew_by_key || '')
   const [note, setNote] = useState(row.renewal_planned_note || '')
   const [busy, setBusy] = useState(false)
   async function save() {
     setBusy(true)
-    try { const r = await api.forecastPlan(row.domain, date, note); if (r?.success) { toast.success(t('forecast.planSaved', row.domain)); onSaved(r.data) } else toast.error(r?.error || t('forecast.planError')) }
+    try { const r = plan ? await plan(date, note) : await api.forecastPlan(row.domain, date, note); if (r?.success) { toast.success(t('forecast.planSaved', row.domain)); onSaved(r.data) } else toast.error(r?.error || t('forecast.planError')) }
     catch (e) { toast.error(e?.message || t('forecast.planError')) } finally { setBusy(false) }
   }
   async function clear() {
     setBusy(true)
-    try { const r = await api.forecastUnplan(row.domain); if (r?.success) { toast.success(t('forecast.planCleared', row.domain)); onCleared(r.data) } else toast.error(r?.error || t('forecast.planError')) }
+    try { const r = unplan ? await unplan() : await api.forecastUnplan(row.domain); if (r?.success) { toast.success(t('forecast.planCleared', row.domain)); onCleared(r.data) } else toast.error(r?.error || t('forecast.planError')) }
     catch (e) { toast.error(e?.message || t('forecast.planError')) } finally { setBusy(false) }
   }
   return (

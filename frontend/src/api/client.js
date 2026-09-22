@@ -1287,6 +1287,9 @@ export const api = {
     getDomainTrend: (id, days = 90) => request(`/monitoring/domain/${id}/trend?days=${days}`),
     // Gönderilen süre-bitişi hatırlatmaları (2026-09-22): eşikler + kayıtlar
     getDomainReminders: (id) => request(`/monitoring/domain/${id}/reminders`),
+    // Yenileme planı (2026-09-22, H) — sertifikadaki forecastPlan/forecastUnplan eşi, izleme kimliğiyle
+    domainRenewalPlan:   (id, date, note) => request(`/monitoring/domain/${id}/renewal-plan`, { method: 'POST', body: JSON.stringify({ date, note }) }),
+    domainRenewalUnplan: (id) => request(`/monitoring/domain/${id}/renewal-plan`, { method: 'DELETE' }),
 
     // Ping
     getPingMonitors:   () => request('/monitoring/ping'),

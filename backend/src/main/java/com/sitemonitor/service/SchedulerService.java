@@ -138,6 +138,9 @@ public class SchedulerService {
     /** Alan adı süre-bitişi hatırlatmaları (2026-09-22, madde E) — isteğe bağlı: bean yoksa hatırlatma yok. */
     @Autowired(required = false)
     private DomainExpiryReminderService domainReminders;
+    /** Alan adı yenileme planı — yenileme görülünce otomatik kapatma (2026-09-22, madde H). */
+    @Autowired(required = false)
+    private DomainRenewalPlanService domainRenewalPlans;
     /** Durum (uptime) yoklaması için kurumsal vekil (2026-09-21) — isteğe bağlı: bean yoksa doğrudan. */
     @Autowired(required = false)
     private ProxySettings proxySettings;
@@ -4728,6 +4731,7 @@ public class SchedulerService {
             try {
                 Map<String, Object> r = domainCheckerService.check(m);   // yeni domain_checks satırı persist eder
                 if (domainReminders != null) domainReminders.evaluate(m, r);   // elle kontrol de eşik hatırlatmasını tetikler
+                if (domainRenewalPlans != null) domainRenewalPlans.onCheckResult(m, r);   // yenileme görüldüyse plan kapanır
                 evaluateDomainAlarmsNow(m, r);                           // yenilendiyse EXPIRY alarmı kapanır; hâlâ kritikse reAlert dedupe → yeni bildirim YOK
                 Integer days = r.get("days_remaining") instanceof Number n ? n.intValue() : null;
                 int warn = m.getWarningDays() != null ? m.getWarningDays() : 30;
@@ -4765,6 +4769,7 @@ public class SchedulerService {
                 Map<String, Object> r = domainCheckerService.check(m);   // DomainCheck persist eder
                 checked++;
                 if (domainReminders != null) domainReminders.evaluate(m, r);   // eşik hatırlatmaları (bir kez / eşik / bitiş)
+                if (domainRenewalPlans != null) domainRenewalPlans.onCheckResult(m, r);   // yenileme görüldüyse plan kapanır
                 addDomainSweepItems(m, r, unknownSweep, expirySweep, statusSweep, changedSweep,
                         lockSweep, blacklistSweep);
             } catch (Exception e) {
