@@ -120,6 +120,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
   const [form, setForm]   = useState(() => initialForm(mode, record))
   const [teams, setTeams] = useState(() => teamsProp ?? [])
   const [teamGroups, setTeamGroups] = useState([])   // seçili takımın "cert" grupları (sızıntısız, server-scoped)
+  const [teamTags, setTeamTags] = useState([])   // takımın kullanımdaki etiketleri → TagInput önerileri (2026-09-22)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
   const [showScrollHint, setShowScrollHint] = useState(false)
@@ -174,9 +175,10 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
 
   // Seçili takımın "cert" gruplarını sunucudan getir (başka takım sızmaz).
   useEffect(() => {
-    if (!form.team_id) { setTeamGroups([]); return }
+    if (!form.team_id) { setTeamGroups([]); setTeamTags([]); return }
     let alive = true
     api.monitoring.listGroups(form.team_id, 'cert').then(r => { if (alive && r?.success) setTeamGroups(r.data || []) })
+    api.monitoring.listTags(form.team_id).then(r => { if (alive) setTeamTags(r?.success ? (r.data || []) : []) })
     return () => { alive = false }
   }, [form.team_id])
 
@@ -458,7 +460,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
           <div className="full-width http-tags-block">
             <div className="http-block-title">{t('inv.formTags')} <span className="req-star">*</span></div>
             <div className="field-hint" style={{ marginBottom: 6 }}>{t('inv.tagsHint')}</div>
-            <TagInput value={form.tags} onChange={v => f('tags', v)} disabled={!canManage} placeholder={t('mon.tagsPlaceholder')} />
+            <TagInput value={form.tags} onChange={v => f('tags', v)} disabled={!canManage} placeholder={t('mon.tagsPlaceholder')} suggestions={teamTags} />
           </div>
 
           <label>

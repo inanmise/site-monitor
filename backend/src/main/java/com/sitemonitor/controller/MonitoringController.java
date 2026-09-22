@@ -80,6 +80,9 @@ public class MonitoringController {
     /** Hatırlatma izleri (2026-09-22) — alan enjeksiyonu: @WebMvcTest bağlamında mock'lanmadan da yüklensin (schedulerService deseni). */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.repository.DomainExpiryReminderRepository domainReminderRepo;
+    /** Takım etiket kataloğu (2026-09-22) — aynı isteğe bağlı enjeksiyon deseni. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.MonitoringTagService monitoringTags;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private DomainExpiryReminderService domainReminders;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -779,6 +782,14 @@ public class MonitoringController {
         if (teamId != null && !SessionScope.isGlobalViewer(session) && (scope == null || !scope.contains(teamId)))
             return forbidden("Bu takımın gruplarını görme yetkiniz yok");
         return ok(monitoringGroupService.listForScope(scope, teamId, blank(type) ? null : type.trim()));
+    }
+
+    /** Takımın kullanımdaki etiketleri (tüm izleme türleri + envanter) — form autocomplete (2026-09-22). Aynı yetki kapısı: takım görünür olmalı. */
+    @GetMapping("/tags")
+    public ResponseEntity<Map<String, Object>> listTags(@RequestParam Long teamId, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        if (!SessionScope.canView(session, teamId)) return forbidden("Bu takımın etiketlerini görme yetkiniz yok");
+        return ok(monitoringTags == null ? List.of() : monitoringTags.listForTeam(teamId));
     }
 
     /** Bir grubu (registry id) yeniden adlandırır — yalnız o türün monitörleri + o türün alarm geçmişi (takım-scope). */

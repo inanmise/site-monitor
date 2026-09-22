@@ -1049,6 +1049,8 @@ export const api = {
       return request('/monitoring/groups' + (q ? '?' + q : ''))
     },
     renameGroup: (id, newName) => request('/monitoring/groups/' + id, { method: 'PUT', body: JSON.stringify({ new_name: newName }) }),
+    // Takımın kullanımdaki etiketleri (tüm türler + envanter) → form autocomplete (2026-09-22)
+    listTags: (teamId) => request('/monitoring/tags?teamId=' + encodeURIComponent(teamId)),
     // Monitor guide + notes (hedef-bazlı: type = KEYWORD|PING, target = url/host)
     getMonitorNotes: (type, target) =>
       request(`/monitoring/notes?type=${encodeURIComponent(type)}&target=${encodeURIComponent(target)}`),

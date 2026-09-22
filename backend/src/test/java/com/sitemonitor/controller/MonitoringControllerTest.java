@@ -75,6 +75,7 @@ class MonitoringControllerTest {
     @MockitoBean DomainCheckRepository domainCheckRepo;
     @MockitoBean com.sitemonitor.service.DomainExpiryReminderService domainReminders;   // hatırlatmalar (2026-09-22, E)
     @MockitoBean com.sitemonitor.service.DomainRenewalPlanService domainRenewalPlans;   // yenileme planı (2026-09-22, H)
+    @MockitoBean com.sitemonitor.service.MonitoringTagService monitoringTags;   // etiket kataloğu (2026-09-22)
     @MockitoBean com.sitemonitor.service.DomainCheckerService domainChecker;
     @MockitoBean com.sitemonitor.service.PublicSuffixService publicSuffixService;
     @MockitoBean TeamRepository teamRepo;
@@ -1364,6 +1365,24 @@ class MonitoringControllerTest {
                 .andExpect(jsonPath("$.data[0].type").value("dns"))
                 .andExpect(jsonPath("$.data[0].team_name").value("SY-A"))
                 .andExpect(jsonPath("$.data[0].count").value(4));
+    }
+
+    @Test
+    @DisplayName("GET /tags?teamId (2026-09-22): takımın etiket kataloğu; başka takım için USER 403, global admin serbest")
+    void listTags_scopedCatalog() throws Exception {
+        when(monitoringTags.listForTeam(3L)).thenReturn(List.of(new com.sitemonitor.service.MonitoringTagService.TagUse("pci", 4), new com.sitemonitor.service.MonitoringTagService.TagUse("prod", 2)));
+        MockHttpSession user = sessionWithTeam("USER", 3L); user.setAttribute("viewTeamIds", List.of(3L));
+        mvc.perform(get("/api/monitoring/tags").param("teamId", "3").session(user))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].name").value("pci"))
+                .andExpect(jsonPath("$.data[0].count").value(4))
+                .andExpect(jsonPath("$.data[1].name").value("prod"));
+        mvc.perform(get("/api/monitoring/tags").param("teamId", "9").session(user))
+                .andExpect(status().isForbidden());
+        verify(monitoringTags, never()).listForTeam(9L);
+        when(monitoringTags.listForTeam(9L)).thenReturn(List.of());
+        mvc.perform(get("/api/monitoring/tags").param("teamId", "9").session(session("ADMIN")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data").isEmpty());
     }
 
     @Test

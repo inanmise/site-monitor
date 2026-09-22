@@ -116,6 +116,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
+  const [teamTags, setTeamTags] = useState([])   // takımın kullanımdaki etiketleri → TagInput önerileri (2026-09-22)
   const [advOpen, setAdvOpen] = useState(false)               // "Gelişmiş ayarlar" accordion
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(null)
@@ -175,9 +176,10 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
 
   // Form açıkken seçili takımın + bu türün gruplarını sunucudan getir (başka takım sızmaz).
   useEffect(() => {
-    if (!modal || form.teamId === '' || form.teamId == null) { setTeamGroups([]); return }
+    if (!modal || form.teamId === '' || form.teamId == null) { setTeamGroups([]); setTeamTags([]); return }
     let alive = true
     api.monitoring.listGroups(form.teamId, 'port').then(r => { if (alive && r?.success) setTeamGroups(r.data || []) })
+    api.monitoring.listTags(form.teamId).then(r => { if (alive) setTeamTags(r?.success ? (r.data || []) : []) })
     return () => { alive = false }
   }, [modal, form.teamId])
 
@@ -800,7 +802,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
               <div className="full-width port-tags-block">
                 <div className="port-block-title">{t('port.tagsTitle')} <span className="req-star">*</span></div>
                 <div className="field-hint" style={{ marginBottom: 6 }}>{t('port.tagsHint')}</div>
-                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('port.tagsPlaceholder')} />
+                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('port.tagsPlaceholder')} suggestions={teamTags} />
               </div>
 
 

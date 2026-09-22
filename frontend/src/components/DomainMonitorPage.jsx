@@ -169,6 +169,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
     ? (pickTeams.find(tm => String(tm.id) === String(form.teamId))?.name || t('app.noTeam'))
     : (teamName || t('app.noTeam'))
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
+  const [teamTags, setTeamTags] = useState([])   // takımın kullanımdaki etiketleri → TagInput önerileri (2026-09-22)
   const [defaults, setDefaults] = useState(null)
   const [saving, setSaving] = useState(false)
   // Tek kimlik yerine KUME: uzun suren bir kontrol digerlerini bekletmesin ve
@@ -243,9 +244,10 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
 
   // Form açıkken seçili takımın + bu türün gruplarını sunucudan getir (başka takım sızmaz).
   useEffect(() => {
-    if (!modal || form.teamId === '' || form.teamId == null) { setTeamGroups([]); return }
+    if (!modal || form.teamId === '' || form.teamId == null) { setTeamGroups([]); setTeamTags([]); return }
     let alive = true
     api.monitoring.listGroups(form.teamId, 'domain').then(r => { if (alive && r?.success) setTeamGroups(r.data || []) })
+    api.monitoring.listTags(form.teamId).then(r => { if (alive) setTeamTags(r?.success ? (r.data || []) : []) })
     return () => { alive = false }
   }, [modal, form.teamId])
 
@@ -934,7 +936,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
               <div className="full-width http-tags-block">
                 <div className="http-block-title">{t('mon.tagsTitle')} <span className="req-star">*</span></div>
                 <div className="field-hint" style={{ marginBottom: 6 }}>{t('mon.tagsHint')}</div>
-                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('mon.tagsPlaceholder')} />
+                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('mon.tagsPlaceholder')} suggestions={teamTags} />
               </div>
 
               <label><span>{t('dom.warningDays')}</span>

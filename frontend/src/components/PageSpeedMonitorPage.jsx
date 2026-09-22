@@ -187,6 +187,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   const [dupSource, setDupSource] = useState(null)
   const [form, setForm] = useState(emptyForm)
   const [teamGroups, setTeamGroups] = useState([])
+  const [teamTags, setTeamTags] = useState([])   // takımın kullanımdaki etiketleri → TagInput önerileri (2026-09-22)
   const [defaults, setDefaults] = useState(null)
   const [advOpen, setAdvOpen] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -248,9 +249,10 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   useVisibleInterval(() => setSecondsSince(s => s + 1), 1000, false)
 
   useEffect(() => {
-    if (!modal || form.teamId === '' || form.teamId == null) { setTeamGroups([]); return }
+    if (!modal || form.teamId === '' || form.teamId == null) { setTeamGroups([]); setTeamTags([]); return }
     let alive = true
     api.monitoring.listGroups(form.teamId, 'pagespeed').then(r => { if (alive && r?.success) setTeamGroups(r.data || []) })
+    api.monitoring.listTags(form.teamId).then(r => { if (alive) setTeamTags(r?.success ? (r.data || []) : []) })
     return () => { alive = false }
   }, [modal, form.teamId])
 
@@ -1044,7 +1046,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
               {/* Etiketler */}
               <div className="full-width kw-tags-block">
                 <div className="kw-block-title">{t('pspd.tagsTitle')} <span className="req-star">*</span></div>
-                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('pspd.tagsPlaceholder')} />
+                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('pspd.tagsPlaceholder')} suggestions={teamTags} />
               </div>
 
 

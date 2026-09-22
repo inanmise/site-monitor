@@ -2806,6 +2806,15 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .checkbox-label.userpush-secret-toggle { display: inline-flex; }   /* yanındaki HelpTip aynı satırda kalsın */
 /* Etiket chip input (incident formu) — text+Enter ile renkli etiketler */
 .tag-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+/* Etiket önerileri (2026-09-22): TagInput altında takımın mevcut etiketleri — SearchableSelect menüsüyle aynı dil */
+.tag-input-wrap { position: relative; display: block; }
+.tag-suggest { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 40; margin: 0; padding: 4px 0; list-style: none;
+  max-height: 220px; overflow-y: auto; background: var(--bg-card, #fff); border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.12); animation: ssSlide .12s ease; }
+.tag-suggest-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 12px; cursor: pointer; font-size: .92em; color: var(--text); font-weight: 400; }
+.tag-suggest-item:hover, .tag-suggest-item.is-active { background: var(--bg-hover); }
+.tag-suggest-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag-suggest-count { font-size: .82em; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .tag-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 20px;
   border: 1px solid; font-size: .82em; font-weight: 600; line-height: 1.5; }
 .tag-chip-x { background: none; border: none; cursor: pointer; font-size: 1.15em; line-height: 1;

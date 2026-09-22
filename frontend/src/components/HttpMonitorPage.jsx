@@ -122,6 +122,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
+  const [teamTags, setTeamTags] = useState([])   // takımın kullanımdaki etiketleri → TagInput önerileri (2026-09-22)
   const [defaults, setDefaults] = useState(null)
   const [saving, setSaving] = useState(false)
   // Tek kimlik yerine KUME: uzun suren bir kontrol digerlerini bekletmesin ve
@@ -183,9 +184,10 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
 
   // Form açıkken seçili takımın + bu türün gruplarını sunucudan getir (başka takım sızmaz).
   useEffect(() => {
-    if (!modal || form.teamId === '' || form.teamId == null) { setTeamGroups([]); return }
+    if (!modal || form.teamId === '' || form.teamId == null) { setTeamGroups([]); setTeamTags([]); return }
     let alive = true
     api.monitoring.listGroups(form.teamId, 'http').then(r => { if (alive && r?.success) setTeamGroups(r.data || []) })
+    api.monitoring.listTags(form.teamId).then(r => { if (alive) setTeamTags(r?.success ? (r.data || []) : []) })
     return () => { alive = false }
   }, [modal, form.teamId])
 
@@ -786,7 +788,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
               <div className="full-width http-tags-block">
                 <div className="http-block-title">{t('http.tagsTitle')} <span className="req-star">*</span></div>
                 <div className="field-hint" style={{ marginBottom: 6 }}>{t('http.tagsHint')}</div>
-                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('http.tagsPlaceholder')} />
+                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('http.tagsPlaceholder')} suggestions={teamTags} />
               </div>
 
 
