@@ -4915,6 +4915,8 @@ public class MonitoringController {
             String note = body.get("note") == null ? null : String.valueOf(body.get("note"));
             String currentExpiry = domainCheckRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(id, "NONE").map(DomainCheck::getExpiryDate).orElse(null);
             DomainMonitor saved = domainRenewalPlans.plan(m, date, note, currentExpiry, session);
+            auditService.recordAction("MONITOR_RENEWAL_PLANNED", session, "DOMAIN_MONITOR", String.valueOf(saved.getId()), saved.getDomain(),
+                    AuditDetail.of("domain", saved.getDomain(), "planned_at", date, "note", note == null ? "" : note));
             return ok(enrichDomain(saved, domainCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(), null));
         }).orElse(notFound("Domain monitor not found"));
     }
@@ -4926,7 +4928,10 @@ public class MonitoringController {
         return domainMonitorRepo.findById(id).map(m -> {
             if (!SessionScope.canView(session, m.getTeamId())) return notFound("Domain monitor not found");
             if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu takımın izlemesini yönetemezsiniz");
+            String was = m.getRenewalPlannedAt();
             DomainMonitor saved = domainRenewalPlans.unplan(m, session);
+            auditService.recordAction("MONITOR_RENEWAL_PLAN_CLEARED", session, "DOMAIN_MONITOR", String.valueOf(saved.getId()), saved.getDomain(),
+                    AuditDetail.of("domain", saved.getDomain(), "was_planned_at", was == null ? "" : was));
             return ok(enrichDomain(saved, domainCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(), null));
         }).orElse(notFound("Domain monitor not found"));
     }

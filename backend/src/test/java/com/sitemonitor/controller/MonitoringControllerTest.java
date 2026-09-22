@@ -3835,6 +3835,8 @@ class MonitoringControllerTest {
                 .andExpect(jsonPath("$.data.renewal_planned_at").value("2026-10-15"))
                 .andExpect(jsonPath("$.data.renewal_planned_by").value("Ops"))
                 .andExpect(jsonPath("$.data.renewal_overdue").value(false));
+        // Denetim izi (AuditCoverageTest kapısı, regresyon 62): plan koyma MONITOR_RENEWAL_PLANNED yazar
+        verify(auditService).recordAction(eq("MONITOR_RENEWAL_PLANNED"), any(jakarta.servlet.http.HttpSession.class), eq("DOMAIN_MONITOR"), eq("7"), any(), any());
 
         mvc.perform(post("/api/monitoring/domain/7/renewal-plan").session(session("ADMIN"))
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"date\":\"15.10.2026\"}"))
