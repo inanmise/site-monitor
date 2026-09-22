@@ -3118,6 +3118,17 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .dom-hero { padding: 6px 0 2px; }
 /* Kart zenginleştirme (2026-09-22): ömür çubuğu satırı, kısaltılan registrar, koruma rozetleri */
 .dom-hero-row { display: flex; align-items: center; gap: 14px; }
+/* Vade Takvimi → Alan adı bitişleri paneli (2026-09-22, F): mor = alan adı serisi (sertifika renklerinden ayrı) */
+.fc-domains { border-top: 3px solid #7c3aed; }
+.fc-domains-note { font-size: .82em; color: var(--text-muted); margin: 0 0 10px; }
+.fc-domains-kpis { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.fc-domains-strip { display: flex; align-items: flex-end; gap: 1px; height: 46px; padding: 2px 0; border-bottom: 1px solid var(--border); }
+.fc-domains-bar { flex: 1 1 0; min-width: 1px; background: var(--border); height: 3px; border-radius: 2px 2px 0 0; }
+.fc-domains-bar.has { background: #7c3aed; cursor: help; }
+.fc-domains-strip-foot { display: flex; justify-content: space-between; font-size: .72em; color: var(--text-muted); margin: 2px 0 8px; }
+.fc-domains-list li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fc-domains-link { display: inline-flex; align-items: center; gap: 4px; }
+[data-theme="dark"] .fc-domains-bar.has { background: #a78bfa; }
 /* Yenileme planı rozeti (2026-09-22, H) */
 .dom-plan-row { margin-top: 6px; }
 .dom-plan-chip { max-width: 100%; }
