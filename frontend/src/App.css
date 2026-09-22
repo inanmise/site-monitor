@@ -11753,6 +11753,9 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 [data-theme="dark"] .badge-team-type-ug { background: #082f49; color: #38bdf8; }
 
 /* ── Domain Inventory — Soft Delete ──────────────────────────────────────── */
+/* Süzgeç hiçbir şeyi eşleştirmediğinde tablo ayakta kalır; satır içi boş durum (2026-09-22 QA) */
+.inv-row-empty td { padding: 22px 12px; text-align: center; }
+.inv-empty-inline { display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--text-muted); }
 .inv-row-deleted td { opacity: 0.55; }
 .inv-row-deleted td:first-child strong { text-decoration: line-through; color: var(--text-light, #94a3b8); }
 .badge-deleted { background: #6b7280; color: #fff; }

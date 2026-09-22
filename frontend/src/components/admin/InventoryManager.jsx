@@ -28,7 +28,7 @@ import InventoryDrawer from '../inventory/InventoryDrawer.jsx'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval.js'
 import {
   applyFilters, sortItems, detectOverlaps, filtersToParams, paramsToFilters, readView, writeView, readCols, writeCols, restoreCols, colKeys,
-  readSavedViews, writeSavedViews, EMPTY_FILTERS,
+  readSavedViews, writeSavedViews, EMPTY_FILTERS, hasActiveFilter,
 } from '../inventory/inventoryModel.js'
 
 /**
@@ -263,6 +263,8 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     setFilters({ ...EMPTY_FILTERS, ...(v.filters || {}) }); setSortPersist(v.sort || 'domain|asc'); setCols(restoreCols(v.cols, v.colsKnown))
     setDensity(v.density || 'comfortable'); setStatusFilter(v.statusFilter || 'default'); setView(v.view || 'table')
   }
+  /** Tüm süzgeçleri sıfırla — boş durumdan ve tablo içi "eşleşme yok" satırından çağrılır (2026-09-22). */
+  function clearFilters() { setFilters({ ...EMPTY_FILTERS }) }
   function deleteView(name) { const next = savedViews.filter(x => x.name !== name); setSavedViews(next); writeSavedViews(next) }
   async function copyLink() {
     try { await navigator.clipboard.writeText(window.location.href); toast.success(t('inv.copied')) } catch { toast.error(t('inv.copyFailed')) }
@@ -591,9 +593,13 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       {view === 'team' ? (
         <InventoryTeamView rows={visibleItems} onShow={(r) => setShowItem(r)}
           onFilterTeam={(teamId) => { setFilters(f => ({ ...f, team: teamId == null ? '' : String(teamId) })); setView('table') }} />
-      ) : visibleItems.length === 0 ? (
+      ) : visibleItems.length === 0 && !(colFilters && statusItems.length > 0) ? (
+        /* Kolon süzgeç satırı açıkken tablo ayakta kalır (aşağıda); kapalıyken boş durum + Temizle (2026-09-22 QA). */
         <StatusBlock tone="neutral" icon={Inbox} title={statusItems.length === 0 ? t('inv.emptyTitle') : t('inv.noMatch')}
-          description={statusItems.length === 0 ? (canManage ? t('inv.emptyHintAdmin') : t('inv.emptyHint')) : t('empty.hintFilter')} />
+          description={statusItems.length === 0 ? (canManage ? t('inv.emptyHintAdmin') : t('inv.emptyHint')) : t('empty.hintFilter')}
+          actions={statusItems.length > 0 && hasActiveFilter(filters)
+            ? <button type="button" className="btn btn-sm btn-secondary" onClick={clearFilters}>{t('inv.filterClear')}</button>
+            : null} />
       ) : (
         <>
           <InventoryTable rows={pager.pageItems} cols={cols} sort={sort} onSort={setSortPersist} density={density}
@@ -604,8 +610,9 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
             onDiagnose={(r) => setDiag({ domain: r.domain, port: r.port || 443 })}
             onCheckNow={checkNow} onInline={inlineUpdate}
             onTagClick={(tag) => setFilters(f => ({ ...f, q: tag }))}
-            filters={filters} onFilters={setFilters} allRows={statusItems} showFilters={colFilters} platformNames={platformNames} />
-          <PaginationBar {...pager} />
+            filters={filters} onFilters={setFilters} allRows={statusItems} showFilters={colFilters} platformNames={platformNames}
+            onClearFilters={hasActiveFilter(filters) ? clearFilters : null} />
+          {pager.pageItems.length > 0 && <PaginationBar {...pager} />}
         </>
       )}
 

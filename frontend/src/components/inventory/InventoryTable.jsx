@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import {
   Server, Shield, Cloud, Lock, Key, BadgeCheck, Building, Handshake, CircleCheck, Route, AlertTriangle, RefreshCw, ArrowRightLeft,
-  ArrowUp, ArrowDown, Play,
+  ArrowUp, ArrowDown, Play, Inbox,
 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { formatDate, formatDateOnly } from '../../api/client'
@@ -57,7 +57,7 @@ export function ContactsCell({ r, t }) {
 export default function InventoryTable({
   rows, cols, sort, onSort, density, canManage, canEditRow = () => canManage, isAdmin, teamsCount, teamMap = {}, selected, onToggle, onToggleAll, allOnPage,
   onShow, onEdit, onDuplicate, onTransfer, onDelete, onRestore, onPurge, onDiagnose, onCheckNow, onInline, onTagClick, statusFilter,
-  filters = null, onFilters = null, allRows = [], showFilters = false,   // kolon süzgeç satırı (2026-09-22)
+  filters = null, onFilters = null, allRows = [], showFilters = false, onClearFilters = null,   // kolon süzgeç satırı (2026-09-22)
   platformNames = {},   // kod → ad (Ayarlar → Platformlar); yoksa kod gösterilir
 }) {
   const platformLabel = (code) => platformNames[code] || code
@@ -205,6 +205,21 @@ export default function InventoryTable({
               </tr>
             )
           })}
+          {/* Hiç satır kalmadığında tabloyu KALDIRMIYORUZ (2026-09-22 QA): süzgeç satırı ekrandan
+              silinince kullanıcı ne yazdığını göremiyor ve geri dönecek bir şey bulamıyordu. */}
+          {rows.length === 0 && (
+            <tr className="inv-row-empty">
+              <td colSpan={99}>
+                <div className="inv-empty-inline">
+                  <Inbox size={14} />
+                  <span>{t('inv.noMatch')}</span>
+                  {onClearFilters && (
+                    <button type="button" className="btn btn-sm btn-secondary" onClick={onClearFilters}>{t('inv.filterClear')}</button>
+                  )}
+                </div>
+              </td>
+            </tr>
+          )}
         </tbody>
       </table>
     </div>
