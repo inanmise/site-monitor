@@ -2507,7 +2507,14 @@ public class SchedulerService {
                 result.put("run_id", "inventory-add");
                 certService.saveResult(result);
                 certService.evictAllCaches();
-                log.info("Yeni envanter anında kontrol edildi: {}:{}", domain, p);
+                // Alarm da ANINDA (kullanıcı isteği 2026-09-22): 14 günü kalmış bir sertifika eklendiğinde bir sonraki saatlik
+                // sweep'i beklemeden aynı eskalasyon hattından geçer (eşik/tier/suppression/re-alert kuralları birebir aynı).
+                // Ağ kesintisi bayrağı açıkken sweep de işlemez → burada da işlenmez; ayar kapalıysa yine atlanır.
+                if (!networkOutageActive.get() && appSettings.getBoolean("site.monitor.expiry.alert-enabled", true)) {
+                    try { escalationService.processResults(java.util.List.of(result)); }
+                    catch (Exception e) { log.warn("Yeni envanter anında alarm değerlendirmesi başarısız {}: {}", domain, e.getMessage()); }
+                }
+                log.info("Yeni envanter anında kontrol edildi (alarm değerlendirmesi dâhil): {}:{}", domain, p);
             } catch (Exception e) {
                 log.warn("Yeni envanter anında kontrol başarısız {}: {}", domain, e.getMessage());
             }

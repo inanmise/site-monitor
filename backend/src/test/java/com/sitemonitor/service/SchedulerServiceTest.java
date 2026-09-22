@@ -1859,4 +1859,21 @@ class SchedulerServiceTest {
         verify(checkerService).checkAsync("hourly.example.com", 443, false, null, 7);
         verify(checkerService, never()).checkAsync(org.mockito.ArgumentMatchers.eq("daily.example.com"), anyInt(), anyBoolean(), any(), any());
     }
+
+    @Test
+    @DisplayName("2026-09-22: yeni envanter anında kontrolü sonucu kaydeder VE aynı sonucu eskalasyona verir (sweep beklenmez); ayar kapalıysa alarm işlenmez")
+    void checkSingleDomainAsync_evaluatesAlertsImmediately() {
+        java.util.Map<String, Object> res = new java.util.LinkedHashMap<>(); res.put("domain", "new.example.com"); res.put("days_remaining", 14);
+        when(checkerService.check("new.example.com", 443, false, null)).thenReturn(res);
+        lenient().when(appSettings.getBoolean(anyString(), anyBoolean())).thenAnswer(i -> i.getArgument(1));
+        scheduler.checkSingleDomainAsync("new.example.com", 443, false, null);
+        verify(certService).saveResult(org.mockito.ArgumentMatchers.argThat(m -> "inventory-add".equals(m.get("run_id"))));
+        verify(escalationService).processResults(org.mockito.ArgumentMatchers.argThat(l -> l.size() == 1 && "new.example.com".equals(l.get(0).get("domain"))));
+        // Kapalı ayar: kontrol yine kaydedilir, alarm hattı çağrılmaz
+        org.mockito.Mockito.clearInvocations(escalationService, certService);
+        when(appSettings.getBoolean(org.mockito.ArgumentMatchers.eq("site.monitor.expiry.alert-enabled"), anyBoolean())).thenReturn(false);
+        scheduler.checkSingleDomainAsync("new.example.com", 443, false, null);
+        verify(certService).saveResult(any());
+        verify(escalationService, never()).processResults(any());
+    }
 }

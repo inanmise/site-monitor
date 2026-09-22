@@ -1512,6 +1512,22 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .cc-platform-chip svg { color: var(--text-muted); flex-shrink: 0; }
 .cc-platform-name { white-space: nowrap; }
 .cc-detail-row--wrap { flex-wrap: wrap; gap: 6px; }
+/* Paylaşılan sertifika: çip artık düğme (2026-09-22) + pencere yerleşimi */
+.ccx-shared-btn { cursor: pointer; }
+.shc-lead { margin: 0 0 12px; }
+.shc-cert { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 4px 12px; margin: 0 0 16px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-surface); }
+.shc-cert dt { color: var(--text-muted); font-size: .88em; }
+.shc-cert dd { margin: 0; overflow-wrap: anywhere; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.shc-san { gap: 4px; }
+.shc-san-chip { font-size: .8em; padding: 1px 7px; border-radius: 999px; background: var(--bg-hover); border: 1px solid var(--border); }
+.shc-peers-head { font-weight: 700; font-size: .92em; margin: 0 0 6px; }
+.shc-table td, .shc-table th { vertical-align: middle; }
+.shc-table tr.shc-self { background: color-mix(in srgb, var(--primary) 7%, transparent); }
+.shc-self-chip, .shc-ext-chip { margin-left: 6px; }
+.shc-crit { color: var(--danger, #dc2626); font-weight: 700; }
+.shc-warn { color: #b45309; font-weight: 600; }
+.shc-foot { margin: 12px 0 0; }
+.shc-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
 .cc-detail-row--wrap .cc-meta { margin-left: auto; }
 .cc-platform-detail { font-weight: 500; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inv-platform { white-space: nowrap; }
@@ -5371,6 +5387,8 @@ button.tm-stat:hover { border-color: var(--primary); color: var(--primary); }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ss-option:hover { background: var(--bg-hover); }
+/* Seçenek alt açıklaması (2026-09-22): platform seçicisinde "nasıl/nereye kurulur" satırı — kırpılır, tam metin title'da */
+.ss-option-hint { display: block; font-size: .8em; color: var(--text-muted); font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 340px; }
 .ss-option.ss-selected { background: #eff6ff; color: var(--primary, #3b82f6); font-weight: 600; }
 .ss-opt-placeholder { color: var(--text-muted); font-style: italic; }
 .ss-no-result { padding: 10px 12px; color: var(--text-muted); font-size: .9em; text-align: center; }

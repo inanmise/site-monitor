@@ -22,6 +22,7 @@ import StatsPanel from './components/StatsPanel'
 import StatsView from './components/StatsView'
 import CertificateCard from './components/CertificateCard'
 import CertificatesTable from './components/CertificatesTable'
+const SharedCertificateModal = lazy(() => import('./components/SharedCertificateModal'))   // kart çipi → paylaşılan sertifika (2026-09-22)
 import CertificateModal from './components/CertificateModal'
 import CaDiversityModal from './components/CaDiversityModal'
 import RenewalPlanModal from './components/RenewalPlanModal.jsx'   // Genel Bakış kartı 'Planla' (2026-09-19)
@@ -241,6 +242,7 @@ export default function App() {
   // dolayısıyla modalın Envanter sekmesi elle tazelenene kadar eski değerleri gösterirdi.
   const [certModalRefresh, setCertModalRefresh] = useState(0)
   const [invForm, setInvForm] = useState(null)                 // { domain, mode } — kart → envanter formu
+  const [sharedCert, setSharedCert] = useState(null)           // domain — "N alan aynı sertifikayı paylaşıyor" penceresi (2026-09-22)
   const [deletingDomain, setDeletingDomain] = useState(null)   // kart silme sürerken çift tıklamayı kapatır
   // Envanter yazma yetkisi: inventory.crud yalnız bu iki rolde. Kart aksiyonları ve "Domain Ekle"
   // butonu aynı koşulu paylaşır. Kart bazında takım karşılaştırması YAPILMAZ — frontend'de
@@ -1261,6 +1263,7 @@ export default function App() {
                           extra={cardMode === 'rich' ? cardExtras[cert.domain] : undefined}
                           live={cardExtras[cert.domain] ? { uptime: cardExtras[cert.domain].uptime, alert: cardExtras[cert.domain].last_alert } : undefined}
                           onOpenHealth={openCertHealth} onConfirmRenewal={confirmCardRenewal} onPlanRenewal={planCardRenewal} confirming={confirmingDomain === cert.domain}
+                          onOpenShared={setSharedCert}
                           hasSilentAlert={silentAlertDomains.has(cert.domain)}
                           hasMailFailure={mailFailureDomains.has(cert.domain)}
                           onMailFailureClick={() => {
@@ -1636,6 +1639,14 @@ export default function App() {
 
       {/* Kart → envanter formu (Düzenle / Kopyala). Kendi Suspense sınırı: yukarıdaki sınır sekme
           içeriğiyle birlikte kapanıyor ve eager import MDEditor'ü dashboard'un ilk chunk'ına sokardı. */}
+      {/* Paylaşılan sertifika penceresi (2026-09-22): kart çipinden açılır; alan seçilince o alanın kartı açılır */}
+      {sharedCert && (
+        <Suspense fallback={null}>
+          <SharedCertificateModal domain={sharedCert} onClose={() => setSharedCert(null)}
+            onSelectDomain={(d) => { const c = certs.find((x) => x.domain === d); openCertModal(c ?? { domain: d }) }} />
+        </Suspense>
+      )}
+
       {invForm && (
         <Suspense fallback={null}>
           <InventoryFormModalForDomain

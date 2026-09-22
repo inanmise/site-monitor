@@ -79,11 +79,10 @@ export default function CheckTeamPicker({
   const buckets = useMemo(() => bucketsProp ?? teamBuckets(certs), [bucketsProp, certs])
   const allKeys = useMemo(() => buckets.map(b => b.key), [buckets])
 
-  const [selected, setSelected] = useState(() => {
-    const saved = readSavedTeams(storageKey)
-    const valid = saved ? saved.filter(k => allKeys.includes(k)) : null
-    return valid && valid.length ? valid : allKeys
-  })
+  // Varsayılan HER ZAMAN tüm takımlar (kullanıcı kararı 2026-09-22): önceki seçim geri yüklenmez — "Şimdi Kontrol Et"
+  // rutini tüm envanteri taramaktır; daraltma o koşum için bilinçli bir seçimdir. Son seçim yine yazılır (readSavedTeams
+  // başka yüzeyler için kalır).
+  const [selected, setSelected] = useState(() => allKeys)
 
   const total = buckets.filter(b => selected.includes(b.key)).reduce((s, b) => s + b.count, 0)
   const allSelected = selected.length === allKeys.length && allKeys.length > 0

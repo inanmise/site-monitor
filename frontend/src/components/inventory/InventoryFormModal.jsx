@@ -494,7 +494,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
               {t('inv.formPlatform')}
               <SearchableSelect value={form.platform || ''} onChange={v => f('platform', v)} searchThreshold={6} disabled={!canManage}
                 options={[{ value: '', label: t('inv.platformNone') },
-                  ...platforms.map(p => ({ value: p.code, label: p.name })),
+                  ...platforms.map(p => ({ value: p.code, label: p.name, title: p.description || undefined, hint: p.description || undefined })),   // açıklama: satır altı + tooltip (kullanıcı isteği)
                   ...(form.platform && !platforms.some(p => p.code === form.platform) ? [{ value: form.platform, label: form.platform }] : [])]} />
             </label>
             <input className="input input-sm" value={form.platform_detail} onChange={e => f('platform_detail', e.target.value)} maxLength={160}

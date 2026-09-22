@@ -283,6 +283,8 @@ export const api = {
 
   getCertificates: () => request('/certificates'),
 
+  // Paylaşılan sertifika ayrıntısı (2026-09-22): kart çipi → pencere
+  getSharedCertificate: (domain) => request('/certificates/shared?domain=' + encodeURIComponent(domain)),
   getCertificatesPaginated: (params) => {
     const q = new URLSearchParams(params).toString()
     return request(`/certificates/list?${q}`)

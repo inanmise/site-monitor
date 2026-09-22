@@ -48,6 +48,7 @@ class CertificateCardExtrasServiceTest {
     @Mock AlertEventRepository alertEventRepo;
     @Mock UptimeCheckRepository uptimeCheckRepo;
     @Mock MaintenanceService maintenanceService;
+    @Mock com.sitemonitor.repository.TeamRepository teamRepo;   // takım adı çözümü (2026-09-22, paylaşılan sertifika)
     @Mock CertificateHealthService healthService;
     CertificateCardExtrasService svc;
 
@@ -65,7 +66,7 @@ class CertificateCardExtrasServiceTest {
 
     @BeforeEach
     void setUp() {
-        svc = new CertificateCardExtrasService(inventoryRepo, latestCheckRepo, alertEventRepo, uptimeCheckRepo, maintenanceService, healthService, null);
+        svc = new CertificateCardExtrasService(inventoryRepo, latestCheckRepo, alertEventRepo, uptimeCheckRepo, maintenanceService, teamRepo, healthService, null);
         when(healthService.thresholdResolution()).thenReturn(ThresholdResolution.fixed(null));   // tier bazlı çözüm (2026-09-20): 30/15/7
         when(healthService.evaluate(any(), any(), eq(false), anyInt(), anyInt())).thenReturn(new CertificateHealthService.HealthResult(List.of(), 0, 0));
         when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of());

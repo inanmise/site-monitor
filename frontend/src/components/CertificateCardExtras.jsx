@@ -16,7 +16,7 @@ const CRITICAL_HF = new Set(['revocation', 'trust', 'sanMatch', 'chain'])
 
 function stop(fn) { return (e) => { e.stopPropagation(); fn?.(e) } }
 
-function CertificateCardExtras({ cert, extra, onOpenHealth, onConfirmRenewal, onPlanRenewal, onEditContacts, confirming = false }) {
+function CertificateCardExtras({ cert, extra, onOpenHealth, onConfirmRenewal, onPlanRenewal, onEditContacts, confirming = false, onOpenShared }) {
   const t = useT()
   if (!extra) return null
   const { health, alerts, uptime, change, renewal, shared, maintenance, contacts } = extra
@@ -100,9 +100,11 @@ function CertificateCardExtras({ cert, extra, onOpenHealth, onConfirmRenewal, on
       {(shared || maintenance || contacts) && (
         <div className="ccx-row">
           {shared && shared.count > 0 && (
-            <span className="ccx-mini ccx-mini--info" title={`${t('ccx.sharedTip')}\n${(shared.domains || []).join('\n')}${shared.count > (shared.domains || []).length ? `\n…` : ''}`}>
+            <button type="button" className="ccx-mini ccx-mini--info ccx-mini--link ccx-shared-btn"   /* tıklanabilir (2026-09-22): pencere alanları takım/platform/kalan gün ile gösterir */
+              title={`${t('ccx.sharedTip')}\n${(shared.domains || []).join('\n')}${shared.count > (shared.domains || []).length ? `\n…` : ''}\n\n${t('ccx.sharedClick')}`}
+              onClick={(e) => { e.stopPropagation(); onOpenShared?.(cert.domain) }}>
               <Link2 size={10} /> {t('ccx.shared', shared.count)}{shared.san_count > 1 ? ` · ${t('ccx.san', shared.san_count)}` : ''}
-            </span>
+            </button>
           )}
           {shared && shared.count === 0 && shared.san_count > 1 && <span className="ccx-mini" title={t('ccx.sanTip')}>{t('ccx.san', shared.san_count)}</span>}
           {maintenance && (

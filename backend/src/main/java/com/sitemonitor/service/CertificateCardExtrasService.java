@@ -54,6 +54,8 @@ public class CertificateCardExtrasService {
     private final AlertEventRepository alertEventRepo;
     private final UptimeCheckRepository uptimeCheckRepo;
     private final MaintenanceService maintenanceService;
+    /** Takım adı çözümü (2026-09-22): CertificateInventory.teamName @Transient — DB'den gelmez, burada eşlenir. */
+    private final com.sitemonitor.repository.TeamRepository teamRepo;
     private final CertificateHealthService healthService;
     private final @Nullable CacheManager cacheManager;
 
@@ -231,6 +233,68 @@ public class CertificateCardExtrasService {
         m.put("planned_at", plannedAt); m.put("by", inv.getRenewalPlannedByName() != null ? inv.getRenewalPlannedByName() : inv.getRenewalPlannedBy());
         m.put("note", inv.getRenewalPlannedNote()); m.put("overdue", past && !renewedSincePlan); m.put("done", renewedSincePlan);
         return m;
+    }
+
+    /**
+     * Paylaşılan sertifika penceresi (2026-09-22): {@code domain}'in parmak izini taşıyan TÜM alanlar, karar için gereken
+     * bağlamla. {@code scope} null = global görüş; doluysa kapsam dışı eşler listeye girmez ama {@code hidden} sayısında
+     * görünür (varlık gizlenmez, ayrıntı sızmaz). Alan yoksa/parmak izi yoksa boş sonuç.
+     */
+    public Map<String, Object> sharedDetail(String domain, java.util.Set<String> scope) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("domain", domain);
+        LatestCheck self = domain == null ? null : latestCheckRepo.findById(domain).orElse(null);
+        String fp = self == null ? null : self.getFingerprint();
+        out.put("fingerprint", fp);
+        out.put("subject", self == null ? null : self.getSubject());
+        out.put("issuer", self == null ? null : (self.getIssuerCn() != null ? self.getIssuerCn() : self.getIssuer()));
+        out.put("not_after", self == null ? null : self.getNotAfter());
+        out.put("days_remaining", self == null ? null : self.getDaysRemaining());
+        out.put("san", self == null ? List.of() : sanList(self.getSan()));
+        List<Map<String, Object>> peers = new java.util.ArrayList<>();
+        int hidden = 0;
+        if (fp != null && !fp.isBlank()) {
+            Map<Long, String> teamNames = new java.util.HashMap<>();
+            for (com.sitemonitor.model.Team tm : teamRepo.findAll()) if (tm.getId() != null) teamNames.put(tm.getId(), tm.getName());
+            Map<String, CertificateInventory> invByDomain = new java.util.HashMap<>();
+            for (CertificateInventory inv : inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc()) if (inv.getDomain() != null) invByDomain.putIfAbsent(inv.getDomain(), inv);
+            for (LatestCheck lc : latestCheckRepo.findAllByOrderByDomainAsc()) {
+                if (lc.getFingerprint() == null || !fp.equalsIgnoreCase(lc.getFingerprint())) continue;
+                if (scope != null && !scope.contains(lc.getDomain())) { hidden++; continue; }
+                CertificateInventory inv = invByDomain.get(lc.getDomain());
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("domain", lc.getDomain());
+                m.put("self", lc.getDomain() != null && lc.getDomain().equals(domain));
+                m.put("status", lc.getStatus());
+                m.put("days_remaining", lc.getDaysRemaining());
+                m.put("not_after", lc.getNotAfter());
+                m.put("checked_at", lc.getCheckedAt());
+                m.put("port", inv == null ? null : inv.getPort());
+                m.put("tier", inv == null ? null : inv.getTier());
+                m.put("team_id", inv == null ? null : inv.getTeamId());
+                m.put("team_name", inv == null || inv.getTeamId() == null ? null : teamNames.get(inv.getTeamId()));
+                m.put("platform", inv == null ? null : inv.getPlatform());
+                m.put("platform_detail", inv == null ? null : inv.getPlatformDetail());
+                m.put("group_name", inv == null ? null : inv.getGroupName());
+                m.put("in_inventory", inv != null);
+                peers.add(m);
+            }
+        }
+        out.put("peers", peers);
+        out.put("hidden", hidden);
+        out.put("count", peers.size());
+        return out;
+    }
+
+    /** SAN JSON'u → liste (bozuksa virgül/boşlukla ayırma yedeği; boşsa boş liste). */
+    static List<String> sanList(String san) {
+        if (san == null || san.isBlank()) return List.of();
+        try {
+            List<?> l = new com.fasterxml.jackson.databind.ObjectMapper().readValue(san, List.class);
+            return l.stream().map(String::valueOf).filter(x -> !x.isBlank()).toList();
+        } catch (Exception ignore) {
+            return java.util.Arrays.stream(san.split("[,;\\s]+")).filter(x -> !x.isBlank()).toList();
+        }
     }
 
     // ── 6) Paylaşılan sertifika + SAN ─────────────────────────────────────────────────────
