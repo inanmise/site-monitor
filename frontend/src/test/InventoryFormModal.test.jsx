@@ -29,8 +29,15 @@ vi.mock('../components/ui/Dialog.jsx', () => ({
   DialogProvider: ({ children }) => children,
 }))
 // MDEditor jsdom'da ağır; forma dair iddialar onu gerektirmiyor.
+// extraCommands da çizilir: araç çubuğundaki "panoya kopyala" komutu (2026-09-22) gerçek editör gibi state.text ile çağrılır.
 vi.mock('@uiw/react-md-editor', () => ({
-  default: ({ value, textareaProps }) => <textarea readOnly value={value ?? ''} {...(textareaProps ?? {})} />,
+  default: ({ value, textareaProps, extraCommands = [] }) => (<>
+    <div className="w-md-editor-toolbar">{extraCommands.filter(c => c && c.execute).map(c => (
+      <button key={c.name} type="button" {...(c.buttonProps ?? {})} onClick={() => c.execute({ text: value ?? '' })}>{c.icon}</button>
+    ))}</div>
+    <textarea readOnly value={value ?? ''} {...(textareaProps ?? {})} />
+  </>),
+  commands: { divider: { name: 'divider' }, codeEdit: { name: 'edit' }, codePreview: { name: 'preview' }, fullscreen: { name: 'fullscreen' } },
 }))
 
 import { api } from '../api/client'
@@ -447,14 +454,15 @@ describe('InventoryFormModal — Kaydet sırasında kayma yok', () => {
     expect(container.querySelector('.modal-wide-title .mon-running')).toBeNull()
   })
 
-  it('değişiklik açıklaması "Kopyala" (2026-09-22): metni panoya verir; boşken pasif', async () => {
+  it('araç çubuğu "Açıklamayı panoya kopyala" (2026-09-22): editör metnini panoya verir; boşken uyarır, kopyalamaz', async () => {
     const { unmount } = render(<InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
-    const btn = screen.getByRole('button', { name: /^Kopyala$|^Copy$/ })
-    expect(btn).not.toBeDisabled()
-    fireEvent.click(btn)
+    fireEvent.click(screen.getByRole('button', { name: /panoya kopyala|to clipboard/i }))
     await waitFor(() => expect(copyMock).toHaveBeenCalledWith('2026-01 yenilendi'))
     unmount()
+    copyMock.mockClear()
     render(<InventoryFormModal mode="edit" record={{ ...RECORD, change_description: '' }} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
-    expect(screen.getByRole('button', { name: /^Kopyala$|^Copy$/ })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: /panoya kopyala|to clipboard/i }))
+    await new Promise(r => setTimeout(r, 0))
+    expect(copyMock).not.toHaveBeenCalled()
   })
 })

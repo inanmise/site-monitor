@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from 'react'
-import { ChevronDown, FlaskConical, Trash2, RefreshCw, Copy } from 'lucide-react'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import { ChevronDown, FlaskConical, Trash2, RefreshCw } from 'lucide-react'
 import { copyText } from '../../utils/copyText.js'   // değişiklik açıklaması kopyala (2026-09-22)
-import MDEditor from '@uiw/react-md-editor'
+import MDEditor, { commands as mdCommands } from '@uiw/react-md-editor'
 import { api, formatDateOnly } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -53,6 +53,13 @@ function YesNo({ value, onChange }) {
     </div>
   )
 }
+
+/** Araç çubuğu pano ikonu — MDEditor komutları lucide bileşeni değil düz SVG ister (WeeklyReportsPage deseni). */
+const COPY_ICON = (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </svg>
+)
 
 function SectionHeader({ label }) {
   return <div className="form-section-header">{label}</div>
@@ -115,6 +122,18 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
   const t = useT()
   const { theme } = useTheme()
   const toast = useToast()
+  // Araç çubuğu "Panoya kopyala" komutu (2026-09-22): editörün API'sinden GÜNCEL metni alır (form state ile aynı);
+  // boşken uyarır, "kopyalandı" yalanı söylemez.
+  const copyCommand = useMemo(() => ({
+    name: 'copy-all', keyCommand: 'copy-all',
+    buttonProps: { 'aria-label': t('inv.copyChangeDesc'), title: t('inv.copyChangeDesc') },
+    icon: COPY_ICON,
+    execute: async (state) => {
+      const text = state?.text ?? ''
+      if (!text.trim()) { toast.info(t('inv.copyEmpty')); return }
+      if (await copyText(text)) toast.success(t('inv.changeDescCopied')); else toast.error(t('inv.copyFailed'))
+    },
+  }), [t, toast])
   const { showConfirm } = useDialog()
 
   const [form, setForm]   = useState(() => initialForm(mode, record))
@@ -573,14 +592,9 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
               (0,2,1) kütüphanenin (0,1,0) kurallarını yenip o overlay'e OPAK arka plan verince
               <pre> tamamen örtülüyor ve kutu BOŞ görünüyordu. Field, etiketi htmlFor ile ayrı
               kurar — bağ korunur, seçici artık eşleşmez. */}
-          {/* Kopyala düğmesi (kullanıcı bildirimi 2026-09-22): MDEditor'ün şeffaf textarea katmanında fareyle
-              seçim güvenilmez; metin tek tıkla panoya gider. Boşken pasif — "kopyalandı" yalanı olmasın. */}
-          <Field label={<span className="inv-desc-label">{t('inv.formChangeDesc')}
-              <button type="button" className="btn btn-sm btn-secondary inv-desc-copy" disabled={!form.change_description}
-                title={t('inv.copyChangeDesc')} aria-label={t('inv.copyChangeDesc')}
-                onClick={async () => { if (await copyText(form.change_description)) toast.success(t('inv.changeDescCopied')); else toast.error(t('inv.copyFailed')) }}>
-                <Copy size={13} /> {t('inv.copyChangeDesc')}
-              </button></span>} className="full-width">
+          {/* Kopyala, editörün KENDİ araç çubuğunda (kullanıcı seçimi 2026-09-22): MDEditor'ün şeffaf textarea katmanında
+              fareyle seçim güvenilmez; sağdaki görünüm ikonlarının yanındaki pano ikonu metni tek tıkla kopyalar. */}
+          <Field label={t('inv.formChangeDesc')} className="full-width">
             {({ id }) => (
               <div className="md-editor-box" data-color-mode={theme === 'dark' ? 'dark' : 'light'}>
                 <MDEditor
@@ -589,6 +603,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
                   preview="edit"
                   height={260}
                   visibleDragbar={false}
+                  extraCommands={[copyCommand, mdCommands.divider, mdCommands.codeEdit, mdCommands.codePreview, mdCommands.fullscreen]}
                   textareaProps={{ id }}
                 />
               </div>
