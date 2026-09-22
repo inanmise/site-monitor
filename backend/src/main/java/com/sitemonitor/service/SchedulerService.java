@@ -135,6 +135,9 @@ public class SchedulerService {
     /** HTTP/Keyword/Sayfa vekil kararı (2026-09-21) — isteğe bağlı: bean yoksa doğrudan (bugünkü davranış). */
     @Autowired(required = false)
     private ProxyPolicyService proxyPolicy;
+    /** Alan adı süre-bitişi hatırlatmaları (2026-09-22, madde E) — isteğe bağlı: bean yoksa hatırlatma yok. */
+    @Autowired(required = false)
+    private DomainExpiryReminderService domainReminders;
     /** Durum (uptime) yoklaması için kurumsal vekil (2026-09-21) — isteğe bağlı: bean yoksa doğrudan. */
     @Autowired(required = false)
     private ProxySettings proxySettings;
@@ -4724,6 +4727,7 @@ public class SchedulerService {
         for (DomainMonitor m : monitors) {
             try {
                 Map<String, Object> r = domainCheckerService.check(m);   // yeni domain_checks satırı persist eder
+                if (domainReminders != null) domainReminders.evaluate(m, r);   // elle kontrol de eşik hatırlatmasını tetikler
                 evaluateDomainAlarmsNow(m, r);                           // yenilendiyse EXPIRY alarmı kapanır; hâlâ kritikse reAlert dedupe → yeni bildirim YOK
                 Integer days = r.get("days_remaining") instanceof Number n ? n.intValue() : null;
                 int warn = m.getWarningDays() != null ? m.getWarningDays() : 30;
@@ -4760,6 +4764,7 @@ public class SchedulerService {
             try {
                 Map<String, Object> r = domainCheckerService.check(m);   // DomainCheck persist eder
                 checked++;
+                if (domainReminders != null) domainReminders.evaluate(m, r);   // eşik hatırlatmaları (bir kez / eşik / bitiş)
                 addDomainSweepItems(m, r, unknownSweep, expirySweep, statusSweep, changedSweep,
                         lockSweep, blacklistSweep);
             } catch (Exception e) {

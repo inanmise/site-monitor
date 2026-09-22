@@ -2098,6 +2098,15 @@ public class EscalationService {
         return collectTeamEmails(teamId, null, null);
     }
 
+    /**
+     * Bir izlemenin bildirim alıcıları (2026-09-22): bildirim grubu → takım varsayılan grubu → takım e-postası — alarm
+     * maillerinin kullandığı zincirin AYNISI. Alarm dışı bildirimler (alan adı hatırlatması) de bu zinciri kullansın ki
+     * "hatırlatma başka adrese gitti" olmasın.
+     */
+    public List<String> teamEmailsForMonitor(Long teamId, Long notificationGroupId) {
+        return collectTeamEmails(teamId, null, notificationGroupId);
+    }
+
     private List<String> collectTeamEmails(Long syTeamId, Long ugTeamId, Long stampedGroupId) {
         List<String> result = new ArrayList<>();
         Set<String> seen = new HashSet<>();

@@ -12,6 +12,7 @@ import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.MonitorHistoryService;
 import com.sitemonitor.service.PageSpeedCheckerService;
+import com.sitemonitor.service.DomainExpiryReminderService;
 import com.sitemonitor.service.PortCheckerService;
 import com.sitemonitor.service.KeywordCheckerService;
 import com.sitemonitor.service.PingCheckerService;
@@ -76,6 +77,11 @@ public class MonitoringController {
 
     private final DomainMonitorRepository domainMonitorRepo;
     private final DomainCheckRepository domainCheckRepo;
+    /** Hatırlatma izleri (2026-09-22) — alan enjeksiyonu: @WebMvcTest bağlamında mock'lanmadan da yüklensin (schedulerService deseni). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DomainExpiryReminderRepository domainReminderRepo;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DomainExpiryReminderService domainReminders;
     private final DomainCheckerService domainChecker;
     private final PublicSuffixService publicSuffixService;
     private final ActivityLogService activityLog;   // birleşik aktivite akışı (yaşam döngüsü olayları, best-effort)
@@ -4787,6 +4793,7 @@ public class MonitoringController {
                     Set.of(EscalationService.TYPE_DOMAINMON_EXPIRY, EscalationService.TYPE_DOMAINMON_UNKNOWN,
                            EscalationService.TYPE_DOMAINMON_STATUS, EscalationService.TYPE_DOMAINMON_CHANGED),
                     "Sistem (izleme silindi)");
+            if (domainReminderRepo != null) domainReminderRepo.deleteByMonitorId(m.getId());   // hatırlatma izleri de gider (2026-09-22)
             domainMonitorRepo.delete(m);
             activityLog.recordLifecycle(ActivityLogService.DOMAIN, m.getId(), m.getName(),
                     m.getDomain(), m.getTeamId(), "DELETED", actor(session));
@@ -4881,12 +4888,25 @@ public class MonitoringController {
         return ok(out);
     }
 
+    /** Gönderilen süre-bitişi hatırlatmaları (2026-09-22, madde E) — detay penceresi Domain Kaydı sekmesi. */
+    @GetMapping("/domain/{id}/reminders")
+    public ResponseEntity<Map<String, Object>> domainReminders(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        DomainMonitor mon = domainMonitorRepo.findById(id).orElse(null);
+        if (mon == null || !SessionScope.canView(session, mon.getTeamId())) return notFound("Domain monitor not found");
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("thresholds", DomainExpiryReminderService.parseThresholds(mon.getThresholdsCsv()));
+        out.put("items", domainReminders == null ? List.of() : domainReminders.history(id));
+        return ok(out);
+    }
+
     @PostMapping("/domain/{id}/check")
     public ResponseEntity<Map<String, Object>> triggerDomain(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.trigger", "execute");
         return domainMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             Map<String, Object> r = domainChecker.check(m);   // DomainCheck persist eder
+            if (domainReminders != null) domainReminders.evaluate(m, r);   // elle kontrol de eşik hatırlatmasını tetikler (2026-09-22, E)
             // Manuel kontrol de alarm üretsin/çözsün (sweep'in günlük checkDue geciktirmesini bekleme):
             // WARNING/CRITICAL/UNKNOWN görülürse alarm + e-posta anında; düzeldiyse açık alarm kapanır.
             try { schedulerService.evaluateDomainAlarmsNow(m, r); }

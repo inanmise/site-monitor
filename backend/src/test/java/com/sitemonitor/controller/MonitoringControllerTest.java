@@ -73,6 +73,7 @@ class MonitoringControllerTest {
     @MockitoBean com.sitemonitor.service.HttpCheckerService httpChecker;
     @MockitoBean DomainMonitorRepository domainMonitorRepo;
     @MockitoBean DomainCheckRepository domainCheckRepo;
+    @MockitoBean com.sitemonitor.service.DomainExpiryReminderService domainReminders;   // hatırlatmalar (2026-09-22, E)
     @MockitoBean com.sitemonitor.service.DomainCheckerService domainChecker;
     @MockitoBean com.sitemonitor.service.PublicSuffixService publicSuffixService;
     @MockitoBean TeamRepository teamRepo;
@@ -3773,5 +3774,39 @@ class MonitoringControllerTest {
         mvc.perform(get("/api/monitoring/domain/9/trend").session(s)).andExpect(status().isNotFound());
         when(domainMonitorRepo.findById(10L)).thenReturn(Optional.empty());
         mvc.perform(get("/api/monitoring/domain/10/trend").session(session("ADMIN"))).andExpect(status().isNotFound());
+    }
+
+    // ── Süre-bitişi hatırlatmaları (2026-09-22, madde E) ─────────────────────────────
+
+    @Test
+    @DisplayName("GET /domain/{id}/reminders: izlemenin eşikleri + gönderilenler; yabancı takım 404")
+    void domainReminders_listsThresholdsAndItems() throws Exception {
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(7L); m.setDomain("a.example.com"); m.setTeamId(1L); m.setThresholdsCsv("30,7");
+        when(domainMonitorRepo.findById(7L)).thenReturn(Optional.of(m));
+        when(domainReminders.history(7L)).thenReturn(List.of(java.util.Map.of("id", 1L, "threshold_days", 30, "status", "SENT")));
+
+        mvc.perform(get("/api/monitoring/domain/7/reminders").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.thresholds[0]").value(30))
+                .andExpect(jsonPath("$.data.thresholds[1]").value(7))
+                .andExpect(jsonPath("$.data.items[0].status").value("SENT"));
+
+        MockHttpSession s = session("USER");
+        s.setAttribute("viewTeamIds", java.util.List.of(2L));
+        mvc.perform(get("/api/monitoring/domain/7/reminders").session(s)).andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("POST /domain/{id}/check: elle kontrol de hatırlatma değerlendirmesini tetikler")
+    void domainCheck_evaluatesReminders() throws Exception {
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(7L); m.setDomain("a.example.com"); m.setTeamId(1L); m.setActive(true);
+        when(domainMonitorRepo.findById(7L)).thenReturn(Optional.of(m));
+        java.util.Map<String, Object> r = new java.util.HashMap<>(java.util.Map.of("status", "OK", "days_remaining", 12, "expiry_date", "2026-10-04T00:00:00Z"));
+        when(domainChecker.check(any())).thenReturn(r);
+
+        mvc.perform(post("/api/monitoring/domain/7/check").session(session("ADMIN"))).andExpect(status().isOk());
+        verify(domainReminders).evaluate(eq(m), eq(r));
     }
 }

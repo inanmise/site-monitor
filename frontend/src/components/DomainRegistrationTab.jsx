@@ -3,7 +3,7 @@ import { dateLocale } from '../i18n/dateLocale.js'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { RefreshCw, ShieldCheck, ShieldOff, ShieldAlert, ListX, History,
-  Server, Globe, Building2, CalendarClock } from 'lucide-react'
+  Server, Globe, Building2, CalendarClock, BellRing } from 'lucide-react'
 import { Spinner, LoadingBlock } from './ui/Progress.jsx'
 
 /** Bitiş tarihi — insan-okur ("6 Ağustos 2026 15:37"), tr-TR; date-only ("2029-10-26") ve datetime güvenli. */
@@ -36,6 +36,7 @@ export default function DomainRegistrationTab({ monitor }) {
   const [loading, setLoading] = useState(true)
   const [stale, setStale] = useState(false)          // live başarısız → DB'deki son bilgi gösteriliyor
   const [err, setErr] = useState(null)
+  const [rem, setRem] = useState(null)   // hatırlatmalar (2026-09-22, E): { thresholds, items }
 
   const load = useCallback(async (live = true) => {
     if (!id) return
@@ -61,6 +62,11 @@ export default function DomainRegistrationTab({ monitor }) {
   }, [id, t])
 
   useEffect(() => { load(true) }, [load])
+  useEffect(() => {
+    let alive = true
+    api.monitoring.getDomainReminders?.(monitor.id)?.then(r => { if (alive && r?.success) setRem(r.data) }).catch(() => {})
+    return () => { alive = false }
+  }, [monitor.id])
 
   if (loading && !reg) return <LoadingBlock label={t('dreg.loading')} className="upt-modal-loading" size={16} />
   if (err && !reg) return <div className="alert-msg alert-msg--err">{err}</div>
@@ -147,6 +153,29 @@ export default function DomainRegistrationTab({ monitor }) {
           <span className="dreg-protect-change">{d.change_detail}</span>
         </>)}
       </div>
+
+      {/* Hatırlatmalar (2026-09-22, E): eşik takvimi + gönderilenler. Eskiden eşik alanı ölü idi (form + rehber "mail gider" diyordu, gitmiyordu). */}
+      <div className="dreg-section-hdr"><BellRing size={15} /> {t('dreg.reminders')}</div>
+      {rem && (<>
+        <div className="dreg-rem-thresholds">
+          {(rem.thresholds || []).map(th => {
+            const hit = (rem.items || []).find(x => x.threshold_days === th && x.expiry_date === d.expiry_date)
+            const cls = hit ? (hit.status === 'SENT' ? 'sent' : hit.status === 'COVERED' ? 'covered' : 'skipped') : (d.days_remaining != null && d.days_remaining <= th ? 'due' : 'pending')
+            return <span key={th} className={`dreg-rem-chip dreg-rem-chip--${cls}`} title={hit ? `${t('dreg.remStatus_' + hit.status)} · ${formatDateSec(hit.sent_at)}` : t('dreg.remPending')}>{th} {t('card.daysUnit')}</span>
+          })}
+        </div>
+        <div className="dreg-rem-legend">{t('dreg.remLegend')}</div>
+        {(rem.items || []).length > 0 ? (
+          <ul className="dreg-list dreg-rem-list">
+            {rem.items.slice(0, 10).map(x => (
+              <li key={x.id}><span className={`dreg-rem-dot dreg-rem-dot--${x.status === 'SENT' ? 'sent' : x.status === 'COVERED' ? 'covered' : 'skipped'}`} />
+                {formatDateSec(x.sent_at)} · {t('dreg.remRow', x.threshold_days, x.days_remaining ?? '—')} · {t('dreg.remStatus_' + x.status)}
+                {x.recipients ? <span className="dreg-why"> → {x.recipients}</span> : null}
+                {x.push_queued != null ? <span className="dreg-why"> · push {x.push_queued}</span> : null}</li>
+            ))}
+          </ul>
+        ) : <div className="dreg-empty">{t('dreg.remNone')}</div>}
+      </>)}
 
       {/* Kontrol Geçmişi buradan kaldırıldı — "Kontrol" sekmesindeki geçmiş tablosuyla aynıydı (tekrar). */}
     </div>

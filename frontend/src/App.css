@@ -3118,6 +3118,18 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .dom-hero { padding: 6px 0 2px; }
 /* Kart zenginleştirme (2026-09-22): ömür çubuğu satırı, kısaltılan registrar, koruma rozetleri */
 .dom-hero-row { display: flex; align-items: center; gap: 14px; }
+/* Domain Kaydı → Hatırlatmalar (2026-09-22, E) */
+.dreg-rem-thresholds { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }
+.dreg-rem-chip { font-size: .74em; font-weight: 700; padding: 2px 9px; border-radius: 10px; border: 1px solid var(--border); color: var(--text-muted); background: var(--bg-card); }
+.dreg-rem-chip--sent { color: #15803d; border-color: #86efac; background: #f0fdf4; }
+.dreg-rem-chip--covered { color: #475569; border-color: #cbd5e1; background: #f8fafc; }
+.dreg-rem-chip--skipped { color: #b45309; border-color: #fcd34d; background: #fffbeb; }
+.dreg-rem-chip--due { color: #dc2626; border-color: #fca5a5; background: #fef2f2; }
+.dreg-rem-legend { font-size: .76em; color: var(--text-muted); margin-bottom: 6px; }
+.dreg-rem-list li { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.dreg-rem-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+.dreg-rem-dot--sent { background: #15803d; } .dreg-rem-dot--covered { background: #94a3b8; } .dreg-rem-dot--skipped { background: #f59e0b; }
+[data-theme="dark"] .dreg-rem-chip--sent { background: rgba(21,128,61,.18); } [data-theme="dark"] .dreg-rem-chip--due { background: rgba(220,38,38,.18); } [data-theme="dark"] .dreg-rem-chip--covered { background: rgba(148,163,184,.15); } [data-theme="dark"] .dreg-rem-chip--skipped { background: rgba(245,158,11,.18); }
 /* Kalan-gün trendi (2026-09-22, I) */
 .dom-trend { margin: 6px 0 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); }
 .dom-trend--empty { font-size: .82em; color: var(--text-muted); }

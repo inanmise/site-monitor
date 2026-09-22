@@ -383,7 +383,7 @@ Bir alan adının **tescil süresinin (whois/RDAP)** bitişini izler ve yaklaş�
 - **İsim** — Boşsa domain kullanılır. **Grup** — mevcut/yeni.
 - **Uyarı eşiği (gün)** — Bitişe bu kadar gün kala "uyarı" durumuna geçer (varsayılan 30).
 - **Kritik eşiği (gün)** — Bu kadar gün kala "kritik" olur (varsayılan 7).
-- **Hatırlatma eşikleri (gün, CSV)** — Hangi günlerde hatırlatma e-postası gideceği (varsayılan \`60,30,14,7,3,1\`).
+- **Hatırlatma eşikleri (gün, CSV)** — Hangi günlerde hatırlatma gideceği (varsayılan \`60,30,14,7,3,1\`). Her eşik için **bir kez** e-posta + push (bildirim grubu → takım zinciri); aynı anda birden çok eşik aşılmışsa yalnız en sıkısı gönderilir, alan adı yenilenince seri sıfırlanır. Gönderilenler detay penceresinin Domain Kaydı sekmesinde listelenir.
 - **RDAP kontrol timeout (ms)** — RDAP sorgusu için üst süre (1000–30000; opsiyonel).
 - **Aktif** — Aç/kapat.
 
@@ -407,7 +407,7 @@ Open the form with **+ New Monitor**.
 - **Name** — Falls back to domain. **Group** — existing/new.
 - **Warning threshold (days)** — Enters "warning" this many days before expiry (default 30).
 - **Critical threshold (days)** — Becomes "critical" this many days before (default 7).
-- **Reminder thresholds (days, CSV)** — Which days a reminder email is sent (default \`60,30,14,7,3,1\`).
+- **Reminder thresholds (days, CSV)** — Which days a reminder goes out (default \`60,30,14,7,3,1\`). One e-mail + push **per threshold** (notification group → team chain); when several thresholds are crossed at once only the tightest is sent, and the series restarts after a renewal. Sent reminders are listed on the Domain Record tab of the detail window.
 - **RDAP lookup timeout (ms)** — Max time for the RDAP query (1000–30000; optional).
 - **Active** — Enable/disable.
 

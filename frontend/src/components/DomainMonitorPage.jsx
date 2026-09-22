@@ -653,7 +653,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         </div>
       </div>
 
-      <MonitorHowBox bullets={[t('dom.how1'), t('dom.how2'), t('dom.how3'), t('dom.how4'), t('dom.how5'), t('dom.how6'), t('dom.how7')]} />
+      <MonitorHowBox bullets={[t('dom.how1'), t('dom.how2'), t('dom.how3'), t('dom.how4'), t('dom.how5'), t('dom.how6'), t('dom.how7'), t('dom.how8')]} />
 
       <MonitorStatsSection
         loading={loading} total={monitors.length}
@@ -914,6 +914,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
                 <input type="number" min="1" value={form.criticalDays} onChange={e => setForm(f => ({ ...f, criticalDays: Number(e.target.value) }))} /></label>
               <label className="full-width"><span>{t('dom.thresholds')}</span>
                 <input value={form.thresholdsCsv} placeholder="60,30,14,7,3,1" onChange={e => setForm(f => ({ ...f, thresholdsCsv: e.target.value }))} /></label>
+              <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('dom.thresholdsHint')}</div>
               <label className="full-width"><span>{t('dom.checkTimeout')}</span>
                 <input type="number" min="1000" max="30000" step="500" value={form.checkTimeoutMs}
                   placeholder={t('dom.checkTimeoutPh')}
