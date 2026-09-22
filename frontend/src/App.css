@@ -13810,6 +13810,9 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .inv-fr-clear { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); border: 0; background: none; color: var(--text-muted); cursor: pointer; padding: 2px; display: inline-flex; }
 .inv-fr-clear:hover { color: var(--danger, #dc2626); }
 .inv-table thead .inv-filter-row td.inv-td--sticky { position: sticky; left: 0; z-index: 2; }
+/* Tüm Sertifikalar tablosunda aynı satır (2026-09-22): hücreler kolon genişliğine uyar, denetimler dar */
+.ct-filter-row .inv-fr-cell { padding: 4px 6px; }
+.ct-filter-row .inv-fr-text { min-width: 120px; }
 .inv-td--sticky { background: var(--bg-surface); }
 .admin-table tr:hover .inv-td--sticky { background: #f0f7ff; }
 .inv-domain { border: 0; background: none; color: var(--text); font: inherit; font-weight: 700; cursor: pointer; padding: 0; text-align: left; }

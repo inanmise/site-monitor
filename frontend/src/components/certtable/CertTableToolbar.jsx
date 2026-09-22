@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { X, Download, Bookmark, Columns3, GripVertical, ShieldAlert } from 'lucide-react'
+import { X, Download, Bookmark, Columns3, GripVertical, ShieldAlert, ListFilter } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
@@ -14,6 +14,7 @@ import { TABLE_COLUMNS, COLUMN_BY_KEY, STATUS_OPTIONS, WINDOW_OPTIONS, TIER_OPTI
 export default function CertTableToolbar({
   filters, onFilter, onReset, facets, cols, onCols, density, onDensity, sortBy, onSort,
   presets, onSavePreset, onApplyPreset, onDeletePreset, exportUrl, total, teamNames = {},
+  colFilters = false, onColFilters = null,   // kolon süzgeç satırı anahtarı (2026-09-22)
 }) {
   const t = useT()
   const [colsOpen, setColsOpen] = useState(false)
@@ -132,6 +133,12 @@ export default function CertTableToolbar({
           {chips.length > 0 && <button type="button" className="ct-chip ct-chip--clear" onClick={onReset}>{t('tbl.reset')}</button>}
         </div>
         <div className="ct-tools">
+          {onColFilters && (
+            <button type="button" className={`btn btn-sm ${colFilters ? 'btn-primary' : 'btn-secondary'}`} onClick={() => onColFilters(!colFilters)}
+              title={t('inv.colFiltersHint')} aria-pressed={colFilters}>
+              <ListFilter size={14} /> {t('inv.colFilters')}
+            </button>
+          )}
           <SegmentedControl value={density} onChange={onDensity} ariaLabel={t('tbl.density')}
             options={[{ value: 'comfortable', label: t('tbl.densityComfortable') }, { value: 'compact', label: t('tbl.densityCompact') }]} />
           <div className="colpick" ref={presetRef} data-tour="ct-presets">

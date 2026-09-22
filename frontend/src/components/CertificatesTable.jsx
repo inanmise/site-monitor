@@ -17,6 +17,7 @@ import { copyText } from '../utils/copyText.js'
 import { isInsecure, securityTitle } from '../utils/certSecurity.js'
 import CertTableToolbar from './certtable/CertTableToolbar.jsx'
 import CertBulkBar from './certtable/CertBulkBar.jsx'
+import CertFilterRow from './certtable/CertFilterRow.jsx'   // kolon süzgeç satırı (2026-09-22)
 import { TABLE_COLUMNS, COLUMN_BY_KEY, STATUS_OPTIONS, EMPTY_FILTERS, LEVEL_CLASS, LEVEL_TEXT, URL_KEYS,
   readView, writeView, readPresets, writePresets, savePreset, defaultCols, normalizeCols, csvColumnsFor,
   filtersFromUrl, toQuery, toUrlMapping, levelOf, trustOf, lifetimePct, isStale, relTime, shortFp } from './certtable/certTableModel.js'
@@ -55,6 +56,7 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
   const [perPage, setPerPage] = useState(() => readUrlInt('c_ps', null) || defaultPerPage)
   const [cols, setCols] = useState(() => { const v = readView()?.cols; return Array.isArray(v) && v.length ? normalizeCols(v) : defaultCols() })
   const [density, setDensity] = useState(() => readView()?.density === 'compact' ? 'compact' : 'comfortable')
+  const [colFilters, setColFilters] = useState(() => !!readView()?.colFilters)   // kolon süzgeç satırı açık mı (2026-09-22)
   const [presets, setPresets] = useState(() => readPresets())
 
   const [certs, setCerts] = useState([])
@@ -134,6 +136,7 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
   }
   function changeCols(next) { const n = normalizeCols(next); setCols(n); writeView({ cols: n }) }
   function changeDensity(d) { setDensity(d); writeView({ density: d }) }
+  function changeColFilters(v) { setColFilters(v); writeView({ colFilters: v }) }
   function selectStatus(val) { updateFilters({ ...filters, status: val }); setStatusDropOpen(false); writeView({ filterStatus: val }) }
   function savePresetNamed(name) {
     const next = savePreset(presets, { name, filters, sortBy, cols })
@@ -223,6 +226,7 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
       <CertTableToolbar
         filters={filters} onFilter={updateFilters} onReset={reset} facets={facets}
         cols={cols} onCols={changeCols} density={density} onDensity={changeDensity}
+        colFilters={colFilters} onColFilters={changeColFilters}
         sortBy={sortBy} onSort={changeSort} presets={presets} onSavePreset={savePresetNamed}
         onApplyPreset={applyPreset} onDeletePreset={deletePreset} exportUrl={exportUrl} total={p.total} teamNames={teamNamesRef.current} />
 
@@ -251,6 +255,7 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
                 {cols.map(headerFor)}
                 <th data-col="actions" className="ct-td-actions"><span className="sr-only">{t('tbl.actions')}</span></th>
               </tr>
+              {colFilters && <CertFilterRow filters={filters} onFilter={updateFilters} cols={cols} facets={facets} teamNames={teamNamesRef.current} showSelect={showSelect} pageRows={certs} />}
             </thead>
             <tbody>
               {certs.map((cert, i) => (
