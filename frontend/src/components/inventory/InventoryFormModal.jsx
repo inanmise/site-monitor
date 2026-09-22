@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { ChevronDown, FlaskConical, Trash2, RefreshCw } from 'lucide-react'
+import { ChevronDown, FlaskConical, Trash2, RefreshCw, Copy } from 'lucide-react'
+import { copyText } from '../../utils/copyText.js'   // değişiklik açıklaması kopyala (2026-09-22)
 import MDEditor from '@uiw/react-md-editor'
 import { api, formatDateOnly } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
@@ -570,7 +571,14 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
               (0,2,1) kütüphanenin (0,1,0) kurallarını yenip o overlay'e OPAK arka plan verince
               <pre> tamamen örtülüyor ve kutu BOŞ görünüyordu. Field, etiketi htmlFor ile ayrı
               kurar — bağ korunur, seçici artık eşleşmez. */}
-          <Field label={t('inv.formChangeDesc')} className="full-width">
+          {/* Kopyala düğmesi (kullanıcı bildirimi 2026-09-22): MDEditor'ün şeffaf textarea katmanında fareyle
+              seçim güvenilmez; metin tek tıkla panoya gider. Boşken pasif — "kopyalandı" yalanı olmasın. */}
+          <Field label={<span className="inv-desc-label">{t('inv.formChangeDesc')}
+              <button type="button" className="btn btn-sm btn-secondary inv-desc-copy" disabled={!form.change_description}
+                title={t('inv.copyChangeDesc')} aria-label={t('inv.copyChangeDesc')}
+                onClick={async () => { if (await copyText(form.change_description)) toast.success(t('inv.changeDescCopied')); else toast.error(t('inv.copyFailed')) }}>
+                <Copy size={13} /> {t('inv.copyChangeDesc')}
+              </button></span>} className="full-width">
             {({ id }) => (
               <div className="md-editor-box" data-color-mode={theme === 'dark' ? 'dark' : 'light'}>
                 <MDEditor

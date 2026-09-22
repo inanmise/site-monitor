@@ -1080,6 +1080,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .form-field,
 .form-group { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
 .form-field-label { font-weight: 600; font-size: .88em; }
+/* Envanter formu — değişiklik açıklaması başlığı + kopyala düğmesi (2026-09-22) */
+.inv-desc-label { display: inline-flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; }
+.inv-desc-copy { display: inline-flex; align-items: center; gap: 4px; font-weight: 500; }
 .hint { display: block; font-size: .82em; color: var(--text-light); }
 .field-error { display: block; font-size: .82em; color: var(--danger); }
 

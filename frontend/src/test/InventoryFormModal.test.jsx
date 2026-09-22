@@ -9,6 +9,8 @@ import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
 const confirmMock = vi.fn(() => Promise.resolve(true))
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
+const copyMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)))
+vi.mock('../utils/copyText.js', () => ({ copyText: copyMock }))
 
 vi.mock('../api/client', () => ({
   api: withApiFallback({
@@ -439,5 +441,16 @@ describe('InventoryFormModal — Kaydet sırasında kayma yok', () => {
     release()
     await waitFor(() => expect(testBtn).not.toBeDisabled())
     expect(container.querySelector('.modal-wide-title .mon-running')).toBeNull()
+  })
+
+  it('değişiklik açıklaması "Kopyala" (2026-09-22): metni panoya verir; boşken pasif', async () => {
+    const { unmount } = render(<InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+    const btn = screen.getByRole('button', { name: /^Kopyala$|^Copy$/ })
+    expect(btn).not.toBeDisabled()
+    fireEvent.click(btn)
+    await waitFor(() => expect(copyMock).toHaveBeenCalledWith('2026-01 yenilendi'))
+    unmount()
+    render(<InventoryFormModal mode="edit" record={{ ...RECORD, change_description: '' }} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+    expect(screen.getByRole('button', { name: /^Kopyala$|^Copy$/ })).toBeDisabled()
   })
 })
