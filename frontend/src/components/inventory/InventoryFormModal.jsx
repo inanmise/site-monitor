@@ -94,12 +94,12 @@ function initialForm(mode, record) {
   if (mode === 'add' || !record) return EMPTY
   const base = formFrom(record)
   if (mode !== 'duplicate') return base
-  // Kopyada taşınMAyan üç alan:
-  //  - expected_* : o domain'in BEKLENEN sertifika parmak izi/subject'i. Kopyaya taşınırsa yeni
-  //    domain sürekli DEPLOYMENT_INCOMPLETE alarmı üretir (ScriptedMonitorPage'in gizli env'leri
-  //    sıfırlamasıyla aynı mantık).
-  //  - change_description : kaynak domain'in kendi değişiklik geçmişi; kopyada yanıltıcı olur.
-  return { ...base, expected_fingerprint: '', expected_subject: '', change_description: '' }
+  // Kopyada taşınMAyan iki alan — expected_* : o domain'in BEKLENEN sertifika parmak izi/subject'i. Kopyaya
+  // taşınırsa yeni domain sürekli DEPLOYMENT_INCOMPLETE alarmı üretir (ScriptedMonitorPage'in gizli env'leri
+  // sıfırlamasıyla aynı mantık). Yenileme planı (renewal_planned_*) formda yok, dolayısıyla zaten taşınmaz.
+  // change_description ARTIK KOPYALANIR (kullanıcı kararı 2026-09-22): aynı süreç/ekip notu kardeş
+  // domainlerde ortaktır; kullanıcı gerekirse düzenler. Geri kalan HER alan formFrom ile birebir taşınır.
+  return { ...base, expected_fingerprint: '', expected_subject: '' }
 }
 
 /**

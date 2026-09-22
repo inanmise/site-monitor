@@ -161,7 +161,7 @@ describe('InventoryFormModal', () => {
     expect(api.admin.updateInventory.mock.calls[0][1].svc_mgmt_contact).toBe('ad.soyad@')
   })
 
-  it('duplicate: domain KAYNAKTAN dolu gelir; expected_* ve change_description kopyalanmaz', async () => {
+  it('duplicate: domain KAYNAKTAN dolu gelir; expected_* kopyalanmaz, change_description ve diğer TÜM alanlar kopyalanır', async () => {
     render(<InventoryFormModal mode="duplicate" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
 
     expect(screen.getByDisplayValue('a.example.com')).toBeInTheDocument()
@@ -174,11 +174,15 @@ describe('InventoryFormModal', () => {
     // Beklenen parmak izi kopyalansaydı yeni domain sürekli DEPLOYMENT_INCOMPLETE alarmı üretirdi.
     expect(payload.expected_fingerprint).toBeNull()
     expect(payload.expected_subject).toBeNull()
-    expect(payload.change_description).toBeNull()
-    // Ayarlar ise kopyalanır — kopyalamanın amacı bu.
-    expect(payload.port).toBe(8443)
-    expect(payload.tier).toBe(2)
-    expect(payload.team_id).toBe(1)
+    // Değişiklik açıklaması KOPYALANIR (kullanıcı kararı 2026-09-22) — uçtan uca: kayıt → form → payload
+    expect(payload.change_description).toBe('2026-01 yenilendi')
+    // Ayarlar ise kopyalanır — kopyalamanın amacı bu. Kayıttaki her düzenlenebilir alan payload'da olmalı:
+    expect(payload).toMatchObject({
+      port: 8443, tier: 2, team_id: 1, group_name: 'Prod', tags: 'prod', tls_mode: 'browser', purchased_by: 'ACME',
+      owner: 'Ops Ekibi', description: 'Kritik ödeme servisi', external_vendor: true, in_use: true,
+      svc_mgmt_contact: 'Ad Soyad - ad.soyad@example.com', app_dev_contact: 'ekip@example.com',
+      iis_admin_contact: 'iis@example.com', waf_admin_contact: 'waf@example.com', active: true,
+    })
     expect(api.admin.updateInventory).not.toHaveBeenCalled()
   })
 
