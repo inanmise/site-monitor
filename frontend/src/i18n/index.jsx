@@ -5530,7 +5530,7 @@ export const TR = {
   // Kesinti zaman çizelgesi (2026-09-12, #12)
   'otl.aria': 'Kesinti zaman çizelgesi',
   'otl.title': 'Kesinti zaman çizelgesi',
-  'otl.none': 'Bu aralıkta alarm yok',
+  'otl.none': 'Bu aralıkta kesinti yok',
   'otl.summary': '{0} alarm · toplam {1} · erişilebilirlik %{2}',
   'otl.stillOpen': 'hâlâ açık',
   'otl.advisory': 'Uyarı', 'otl.advisories': '{0} uyarı (kesinti sayılmaz)', 'otl.advisoryHint': 'Sertifika/alan adı/yavaşlık gibi uyarı alarmları çentik olarak gösterilir; erişilebilirlik hesabına girmez.',
@@ -6820,7 +6820,7 @@ export const TR = {
   'http.colTime': 'Zaman', 'http.colStatus': 'Durum', 'http.colDetail': 'Detay',
   // HTTP hata tanısı paneli (2026-09-22)
   'httpdiag.title': 'Hata tanısı', 'httpdiag.close': 'Kapat', 'httpdiag.rowShow': 'ayrıntı', 'httpdiag.rowHide': 'gizle',
-  'httpdiag.legacy': 'Bu kayıt tanı ayrıntısı olmadan yazılmış (tanı 20.79 ile geldi); yalnız ham hata metni var.',
+  'httpdiag.legacy': 'Bu kayıt, tanı ayrıntısı eklenmeden önce yazılmış; elde yalnız ham hata metni var.',
   'httpdiag.phasesLabel': 'Kontrol evreleri', 'httpdiag.phase.DNS': 'DNS', 'httpdiag.phase.CONNECT': 'TCP', 'httpdiag.phase.TLS': 'TLS', 'httpdiag.phase.REQUEST': 'İstek', 'httpdiag.phase.RESPONSE': 'Yanıt',
   'httpdiag.state.done': 'tamam', 'httpdiag.state.stuck': 'TAKILDI', 'httpdiag.state.skipped': 'ulaşılmadı', 'httpdiag.state.na': 'yok',
   'httpdiag.route': 'Yol', 'httpdiag.viaDirect': 'doğrudan (pod çıkışı)', 'httpdiag.viaProxy': 'kurumsal vekil üzerinden → {0}',
@@ -13753,10 +13753,10 @@ export const EN = {
   // Outage timeline (2026-09-12, #12)
   'otl.aria': 'Outage timeline',
   'otl.title': 'Outage timeline',
-  'otl.none': 'No alerts in this range',
+  'otl.none': 'No outages in this range',
   'otl.summary': '{0} alerts · total {1} · availability {2}%',
   'otl.stillOpen': 'still open',
-  'otl.advisory': 'Advisory', 'otl.advisories': '{0} advisories (not counted as downtime)', 'otl.advisoryHint': 'Certificate, domain-expiry and slowness alerts are shown as ticks; they do not affect availability.',
+  'otl.advisory': 'Advisory', 'otl.advisories': 'Advisories: {0} (not counted as downtime)', 'otl.advisoryHint': 'Certificate, domain-expiry and slowness alerts are shown as ticks; they do not affect availability.',
   'hist.advisoryTriggered': 'Advisory alert',
   // Alert noise analysis (2026-09-12, #18)
   'noise.title': 'Noise analysis',
@@ -15036,7 +15036,7 @@ export const EN = {
   'http.colTime': 'Time', 'http.colStatus': 'Status', 'http.colDetail': 'Detail',
   // HTTP failure diagnostics panel (2026-09-22)
   'httpdiag.title': 'Failure diagnosis', 'httpdiag.close': 'Close', 'httpdiag.rowShow': 'details', 'httpdiag.rowHide': 'hide',
-  'httpdiag.legacy': 'This record was written before diagnostics existed (added in 20.79); only the raw error text is available.',
+  'httpdiag.legacy': 'This record was written before diagnostics were added, so only the raw error text is available.',
   'httpdiag.phasesLabel': 'Check phases', 'httpdiag.phase.DNS': 'DNS', 'httpdiag.phase.CONNECT': 'TCP', 'httpdiag.phase.TLS': 'TLS', 'httpdiag.phase.REQUEST': 'Request', 'httpdiag.phase.RESPONSE': 'Response',
   'httpdiag.state.done': 'ok', 'httpdiag.state.stuck': 'FAILED HERE', 'httpdiag.state.skipped': 'not reached', 'httpdiag.state.na': 'n/a',
   'httpdiag.route': 'Path', 'httpdiag.viaDirect': 'direct (pod egress)', 'httpdiag.viaProxy': 'via corporate proxy → {0}',
