@@ -38,6 +38,7 @@ import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import DomainRegistrationTab from './DomainRegistrationTab.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import DomainExpiryTrace from './DomainExpiryTrace.jsx'
+import DomainExpiryTrend from './DomainExpiryTrend.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
@@ -765,8 +766,11 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
               )}
               <CheckHistoryTab kind="domain" monitorId={selected.id} listKey="domain-history" reloadSignal={histReload}
                 presets={[7, 30, 90, 365]} defaultPreset={30} gridClass="dom-rt-grid"
+                timeline={false}
+                renderAbove={({ preset }) => <DomainExpiryTrend monitorId={selected.id} reloadSignal={histReload}
+                  days={Number.isFinite(Number(preset)) ? Number(preset) : 90} />}
                 columns={[t('dom.colTime'), t('dom.colSource'), t('dom.colExpiry'),
-                  t('dom.daysLeft'), t('dom.colStatus'), t('dom.registrar'), t('dom.colIps')]}
+                  t('dom.daysLeft'), t('dom.colStatus'), t('dom.registrar')]}
                 renderRow={(c) => {
                   const cDays = c.days_remaining
                   const cIps = (Array.isArray(c.resolved_ips) ? c.resolved_ips : String(c.resolved_ips ?? '').split(',')).map(s => String(s).trim()).filter(Boolean)
@@ -776,8 +780,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
                     <span>{fmtExpiry(c.expiry_date)}</span>
                     <span style={{ color: daysColor(cDays), fontWeight: 600 }}>{cDays ?? '—'}</span>
                     <span className={`dom-st dom-st--${statusCls(c.status)}`}>{statusLabel(c.status)}{c.changed ? ' ⚑' : ''}</span>
-                    <span title={c.registrar} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.registrar || (c.error ? c.error : '—')}</span>
-                    <span title={cIps.join(', ')} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{cIps.length ? cIps.join(', ') : '—'}</span>
+                    {/* Çözülen IP ayrı sütun değil: 7. sütun tabloyu kırıyordu; IP registrar hücresinin tooltip'inde (Domain Kaydı sekmesinde tam liste) */}
+                    <span title={[c.registrar, cIps.length ? 'IP: ' + cIps.join(', ') : null].filter(Boolean).join(' · ')} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.registrar || (c.error ? c.error : '—')}{cIps.length ? <span className="dom-rt-ipcount"> · {cIps.length} IP</span> : null}</span>
                   </>)
                 }} />
             </>)}

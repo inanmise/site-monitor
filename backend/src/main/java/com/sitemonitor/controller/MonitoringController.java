@@ -4831,6 +4831,56 @@ public class MonitoringController {
                 new CsvColumn<>("error", DomainCheck::getError)), response);
     }
 
+    /**
+     * Kalan-gün trendi (2026-09-22, alan adı denetimi madde I): kontrol geçmişindeki "kesinti çizelgesi" bir alan adı
+     * kaydı için anlamsızdı — soru "kaç gün kaldı, ne zaman yenilendi, kayıt ne zaman değişti". Günlük seri: her gün
+     * için o günün SON kontrolü (kalan gün, bitiş, registrar, kaynak) + o gün tespit edilen değişiklik(ler). Sayfalı
+     * geçmişten türetilmez (bir sayfa = 50 satır); aralık tek sorguda okunur, gün başına indirgenir.
+     */
+    @GetMapping("/domain/{id}/trend")
+    public ResponseEntity<Map<String, Object>> domainTrend(@PathVariable Long id,
+            @RequestParam(defaultValue = "90") int days, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        DomainMonitor mon = domainMonitorRepo.findById(id).orElse(null);
+        if (mon == null || !SessionScope.canView(session, mon.getTeamId())) return notFound("Domain monitor not found");
+        int d = Math.max(1, Math.min(days, 730));
+        String to = ISO.format(java.time.Instant.now());
+        String from = ISO.format(java.time.Instant.now().minus(java.time.Duration.ofDays(d)));
+        var pageable = org.springframework.data.domain.PageRequest.of(0, 5000,
+                org.springframework.data.domain.Sort.by("checkedAt").ascending());
+        List<DomainCheck> rows = domainCheckRepo.findByMonitorIdAndCheckedAtBetween(id, from, to, pageable).getContent();
+        // Gün → o günün son kontrolü; değişiklik detayları gün içinde birleştirilir (aynı gün iki değişiklik kaybolmasın).
+        Map<String, Map<String, Object>> byDay = new java.util.TreeMap<>();
+        for (DomainCheck c : rows) {
+            if (c.getCheckedAt() == null || c.getCheckedAt().length() < 10) continue;
+            String day = c.getCheckedAt().substring(0, 10);
+            Map<String, Object> pt = byDay.computeIfAbsent(day, k -> new LinkedHashMap<>());
+            pt.put("day", day);
+            pt.put("checked_at", c.getCheckedAt());
+            pt.put("days_remaining", c.getDaysRemaining());
+            pt.put("expiry_date", c.getExpiryDate());
+            pt.put("registrar", c.getRegistrar());
+            pt.put("source", c.getSource());
+            pt.put("status", c.getStatus());
+            if (Boolean.TRUE.equals(c.getChanged())) {
+                pt.put("changed", true);
+                String prev = (String) pt.get("change_detail");
+                String cur = c.getChangeDetail() == null ? "" : c.getChangeDetail();
+                pt.put("change_detail", prev == null || prev.isBlank() ? cur : (cur.isBlank() || prev.contains(cur) ? prev : prev + " " + cur));
+            } else if (!pt.containsKey("changed")) {
+                pt.put("changed", false);
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("days", d);
+        out.put("from", from);
+        out.put("to", to);
+        out.put("warning_days", mon.getWarningDays());
+        out.put("critical_days", mon.getCriticalDays());
+        out.put("points", new ArrayList<>(byDay.values()));
+        return ok(out);
+    }
+
     @PostMapping("/domain/{id}/check")
     public ResponseEntity<Map<String, Object>> triggerDomain(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.trigger", "execute");

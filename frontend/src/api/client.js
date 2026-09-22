@@ -1283,6 +1283,8 @@ export const api = {
     // Domain Kaydı (registration) — DB'deki son bilgi; live=true → anlık RDAP sorgusu.
     getDomainRegistration: (id, { live } = {}) =>
       request(`/monitoring/domain/${id}/registration${live ? '?live=true' : ''}`),
+    // Kalan-gün trendi (2026-09-22): günlük seri + değişiklik işaretleri
+    getDomainTrend: (id, days = 90) => request(`/monitoring/domain/${id}/trend?days=${days}`),
 
     // Ping
     getPingMonitors:   () => request('/monitoring/ping'),
