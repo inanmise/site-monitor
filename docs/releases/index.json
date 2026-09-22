@@ -1,9 +1,135 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-22T02:47:07Z",
+  "generatedAt": "2026-09-22T06:30:02Z",
   "repo": "inanmise/site-monitor",
-  "count": 667,
+  "count": 668,
   "releases": [
+    {
+      "version": "20.78.0",
+      "tag": "v20.78.0",
+      "releasedAt": "2026-09-22T06:29:56Z",
+      "commit": "66bfa7c5323d569f32ba46a56573db20240d456d",
+      "prevVersion": "20.77.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 11,
+        "fix": 4,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "retention",
+          "breaking": false,
+          "sha": "66bfa7c5",
+          "subject": "domain_expiry_reminders tablosuna saklama politikası (bildirim geçmişiyle aynı pencere)"
+        },
+        {
+          "type": "fix",
+          "scope": "audit",
+          "breaking": false,
+          "sha": "52b2e372",
+          "subject": "alan adı yenileme planı uçları denetim izi yazar (MONITOR_RENEWAL_PLANNED / _PLAN_CLEARED)"
+        },
+        {
+          "type": "fix",
+          "scope": "regresyon",
+          "breaking": false,
+          "sha": "112319db",
+          "subject": "62. tur — domain_monitors.renewal_planned_* açık şema patch'i, domainLife sıfır-gün NaN koruması"
+        },
+        {
+          "type": "feat",
+          "scope": "weekly-report",
+          "breaking": false,
+          "sha": "20fdbb25",
+          "subject": "haftalık erişilebilirlik raporu takımın eskalasyon (TECH) kontağına da CC gider"
+        },
+        {
+          "type": "fix",
+          "scope": "domain",
+          "breaking": false,
+          "sha": "7f0963ae",
+          "subject": "yenileme planı modalında alan adına özgü ipucu, değişiklik etiketleri, haftalık raporda İngilizce alt satır"
+        },
+        {
+          "type": "feat",
+          "scope": "weekly-report",
+          "breaking": false,
+          "sha": "982f905a",
+          "subject": "haftalık takım raporuna \"Alan Adı Bitişleri\" bölümü (G)"
+        },
+        {
+          "type": "feat",
+          "scope": "forecast",
+          "breaking": false,
+          "sha": "31ce6df3",
+          "subject": "Vade Takvimi'ne alan adı (registrar) bitişleri — ayrı seri, panel ve ay takvimi olayları (F)"
+        },
+        {
+          "type": "feat",
+          "scope": "domain",
+          "breaking": false,
+          "sha": "b8e046d5",
+          "subject": "yenileme planı — planla/kaldır, gecikmiş rozeti, yenileme görülünce otomatik kapanış (H)"
+        },
+        {
+          "type": "feat",
+          "scope": "domain",
+          "breaking": false,
+          "sha": "2ba4d648",
+          "subject": "hatırlatma eşikleri gerçekten işler — eşik başına bir kez e-posta + push (E / F1)"
+        },
+        {
+          "type": "feat",
+          "scope": "domain",
+          "breaking": false,
+          "sha": "50d52580",
+          "subject": "liste CSV/PDF dışa aktarımı (D)"
+        },
+        {
+          "type": "feat",
+          "scope": "domain",
+          "breaking": false,
+          "sha": "d039ffe8",
+          "subject": "kalan-gün trendi + kontrol geçmişi tablosu düzeltmesi (I / F2)"
+        },
+        {
+          "type": "feat",
+          "scope": "domain",
+          "breaking": false,
+          "sha": "e112b473",
+          "subject": "Domain Kaydı sekmesinde her \"—\" için kısa neden (K)"
+        },
+        {
+          "type": "feat",
+          "scope": "domain",
+          "breaking": false,
+          "sha": "85ec34d6",
+          "subject": "hızlı süzgeç, ≤30 gün / kilitsiz sayaçları, registrar-takım-son değişiklik sıralaması (B)"
+        },
+        {
+          "type": "feat",
+          "scope": "domain",
+          "breaking": false,
+          "sha": "9b8242a2",
+          "subject": "zengin kart — kayıt dönemi çubuğu, koruma rozetleri, tek biçim EPP, kısaltılan registrar (A)"
+        },
+        {
+          "type": "feat",
+          "scope": "proxy",
+          "breaking": false,
+          "sha": "0f3c67e0",
+          "subject": "envanter formunda vekil anahtarı Satın Alan'ın yanında (AÇIK/KAPALI); vekil süzgeci envanter + dört izleme sayfasında"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.77.0",
       "tag": "v20.77.0",
