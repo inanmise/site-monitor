@@ -949,6 +949,8 @@ public class SchedulerService {
         patch("CREATE INDEX IF NOT EXISTS idx_dnsr_monitor_checked ON dns_records(monitor_id, checked_at)");
         patch("CREATE INDEX IF NOT EXISTS idx_dc_monitor_checked ON domain_checks(monitor_id, checked_at)");
         patch("CREATE INDEX IF NOT EXISTS idx_hc_monitor_checked ON http_checks(monitor_id, checked_at)");
+        // HTTP hata tanısı (2026-09-22): yalnız başarısız satırda dolu; ddl-auto da ekler, açık patch proje geleneği.
+        patch("ALTER TABLE http_checks ADD COLUMN error_detail TEXT");
         // remember_me_tokens: saatlik expired-token temizliği (DELETE WHERE expires_at < ?).
         patch("CREATE INDEX IF NOT EXISTS idx_rmt_expires ON remember_me_tokens(expires_at)");
         // Genel Ayarlar (runtime config override'ları) — tablo ddl-auto ile oluşur; unique key güvenlik ağı.
@@ -3379,6 +3381,7 @@ public class SchedulerService {
             res.setHttpStatus(r.get("http_status") instanceof Number n ? n.intValue() : null);
             res.setResponseMs(r.get("response_ms") instanceof Number n ? n.longValue() : null);
             res.setError((String) r.get("error"));
+            res.setErrorDetail(r.get("error_detail") instanceof String d ? d : null);
             res.setCheckedAt(ISO.format(Instant.now()));
             httpCheckRepo.save(res);
         } catch (Exception e) {

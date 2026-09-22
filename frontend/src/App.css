@@ -8396,6 +8396,39 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 
 /* "Nerede takıldı?" — isteğin faz kırılımı. Fazlar SIRALI okunur; ölçülmeyen ilk faz vurgulanır.
    Renkler token'lardan: sabit hex kullanılırsa karanlık tema kırılır (proje kuralı). */
+/* HTTP/Website hata tanısı paneli (2026-09-22): sentetik CheckDetail'in kardeşi — geçmiş listesinin altında açılır */
+.hdiag { margin-top: 10px; border: 1px solid var(--border); border-left: 4px solid var(--danger, #dc2626); border-radius: 8px; padding: 12px 14px; background: var(--bg-surface); font-size: .9em; }
+.hdiag-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.hdiag-title { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; color: var(--danger, #dc2626); }
+.hdiag-when { color: var(--text-muted); font-family: Consolas, monospace; font-size: .92em; }
+.hdiag-close { margin-left: auto; }
+.hdiag-phases { list-style: none; margin: 0 0 10px; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
+.hdiag-phase { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 4px; border-radius: 6px; border: 1px solid var(--border); text-align: center; }
+.hdiag-phase-name { font-size: .78em; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+.hdiag-phase-state { font-size: .8em; color: var(--text-muted); }
+.hdiag-phase--done { border-color: rgba(22, 163, 74, .45); background: rgba(22, 163, 74, .08); }
+.hdiag-phase--done .hdiag-phase-name, .hdiag-phase--done .hdiag-phase-state { color: #15803d; }
+.hdiag-phase--stuck { border-color: rgba(220, 38, 38, .5); background: rgba(220, 38, 38, .10); }
+.hdiag-phase--stuck .hdiag-phase-name, .hdiag-phase--stuck .hdiag-phase-state { color: var(--danger, #b91c1c); font-weight: 700; }
+.hdiag-phase--skipped, .hdiag-phase--na { opacity: .5; }
+.hdiag-kind { font-weight: 700; font-size: 1.02em; margin: 4px 0 2px; }
+.hdiag-hint { margin: 0 0 10px; color: var(--text-muted); line-height: 1.45; }
+.hdiag-route { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border-radius: 6px; background: var(--bg-hover); margin-bottom: 10px; }
+.hdiag-route-k { font-size: .78em; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+.hdiag-ip { font-family: Consolas, monospace; font-size: .92em; padding: 1px 6px; border-radius: 4px; background: var(--bg-card); border: 1px solid var(--border); }
+.hdiag-ip--target { border-color: var(--primary); font-weight: 700; }
+.hdiag-via { font-size: .82em; color: var(--text-muted); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; }
+.hdiag-grid { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 4px 12px; margin: 0; }
+.hdiag-grid dt { color: var(--text-muted); font-size: .88em; padding-top: 2px; }
+.hdiag-grid dd { margin: 0; overflow-wrap: anywhere; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.hdiag-bad { color: var(--danger, #dc2626); font-weight: 600; }
+.hdiag-flag { color: var(--danger, #dc2626); font-weight: 700; }
+.hdiag-redirects { margin: 0; padding-left: 18px; }
+.hdiag-rawbox { margin-top: 10px; }
+.hdiag-rawtoggle { display: inline-flex; align-items: center; gap: 4px; background: none; border: none; color: var(--primary); cursor: pointer; font: inherit; font-size: .88em; padding: 0; }
+.hdiag-raw { margin: 6px 0 0; padding: 8px 10px; border-radius: 6px; background: var(--bg-card); border: 1px solid var(--border); font-size: .82em; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; }
+.hdiag-legacy { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); margin-bottom: 6px; }
+@media (max-width: 640px) { .hdiag-phases { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 2px; } .hdiag-grid { grid-template-columns: 1fr; } }
 .sc-phases { margin-top: 10px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--bg-surface); }
 .sc-phases-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .sc-phases-title { font-weight: 600; font-size: .92em; }

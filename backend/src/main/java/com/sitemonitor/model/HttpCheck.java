@@ -33,6 +33,11 @@ public class HttpCheck {
 
     private String error;
 
+    /** Başarısız kontrolün yapısal tanısı (JSON, {@code HttpFailureDiagnostics}; 2026-09-22): evre, tür, kaynak→hedef IP:port,
+     *  çözümlenen IP'ler, vekil, zaman aşımı/bekleme, yönlendirmeler, istisna zinciri. Başarılı satırda null. */
+    @Column(name = "error_detail", columnDefinition = "TEXT")
+    private String errorDetail;
+
     @Column(name = "checked_at")
     private String checkedAt;
 }

@@ -159,6 +159,21 @@ public class HttpCheckerService {
     /** Bir deneme sonucu + yakalanan hata (trust-failure sınıflandırması için). */
     private record Attempt(Map<String, Object> result, Exception cause) {}
 
+    private HttpFailureDiagnostics.Trace newTrace(String url, String method, int timeoutMs, boolean verifySsl, boolean followRedirects, boolean proxied) {
+        String proxyTarget = proxied && proxySettings != null ? proxySettings.host() + ":" + proxySettings.port() : null;
+        return new HttpFailureDiagnostics.Trace().start(url, method == null ? "GET" : method.trim().toUpperCase(Locale.ROOT),
+                timeoutMs, verifySsl, followRedirects, proxied ? "proxy" : "direct", proxyTarget);
+    }
+
+    /** Hata sonrası hedef IP'yi çözer (başarı yolunda ek maliyet YOK). Çözülemiyorsa liste boş kalır — tanı DNS der. */
+    private static void lateResolve(HttpFailureDiagnostics.Trace trace) {
+        if (trace.host == null) return;
+        if (NetworkResolver.isIpLiteral(trace.host)) { trace.targetIp = trace.host; trace.resolvedIps.add(trace.host); trace.dnsMs = 0L; return; }   // literal: çözümleme yok
+        long t0 = System.currentTimeMillis();
+        try { trace.resolved(NetworkResolver.allAddresses(trace.host), System.currentTimeMillis() - t0); }
+        catch (Exception ignore) { trace.dnsMs = System.currentTimeMillis() - t0; }
+    }
+
     /**
      * {"http_status", "response_ms", "ok", "error"?, "repinned"?} döner. Strict (verifySsl=true) https
      * kontrolü PKIX güven hatasıyla düşerse ve auto-pin açıksa: hedef host (+ handshake'te reddedilen
@@ -182,6 +197,9 @@ public class HttpCheckerService {
             r.put("ok", false);
             r.put("config_error", true);
             r.put("error", com.sitemonitor.util.MonitorUrls.CONFIG_ERROR_MSG);
+            r.put("error_detail", HttpFailureDiagnostics.toJson(HttpFailureDiagnostics.forException(
+                    newTrace(url, method, timeoutMs, verifySsl, followRedirects, false),
+                    new IllegalArgumentException("URL: " + com.sitemonitor.util.MonitorUrls.CONFIG_ERROR_MSG))));
             return r;
         }
         // SSRF: hedef host'u istekten önce doğrula (metadata/loopback/link-local blok; iç ağ ayara bağlı).
@@ -190,6 +208,8 @@ public class HttpCheckerService {
             Map<String, Object> r = new LinkedHashMap<>();
             r.put("ok", false);
             r.put("error", blocked);
+            r.put("error_detail", HttpFailureDiagnostics.toJson(HttpFailureDiagnostics.forException(
+                    newTrace(url, method, timeoutMs, verifySsl, followRedirects, viaProxy), new SsrfGuard.BlockedException(blocked))));
             return r;
         }
         Attempt a1 = doCheck(url, method, expectedStatus, timeoutMs, verifySsl, followRedirects, viaProxy);
@@ -247,23 +267,36 @@ public class HttpCheckerService {
                             int timeoutMs, boolean verifySsl, boolean followRedirects, boolean viaProxy) {
         long start = System.currentTimeMillis();
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("via", viaProxy && client(verifySsl, true) != client(verifySsl, false) ? "proxy" : "direct");
+        boolean proxied = viaProxy && client(verifySsl, true) != client(verifySsl, false);
+        result.put("via", proxied ? "proxy" : "direct");
+        // Tanı izi (2026-09-22): çözümlenen IP'ler, pinlenen hedef, yönlendirme zinciri — yalnız hata anında JSON'a döner.
+        HttpFailureDiagnostics.Trace trace = newTrace(url, method, timeoutMs, verifySsl, followRedirects, proxied);
+        trace.expectedStatus = expectedStatus;
         Exception failure = null;
         try {
             String m = method == null ? "GET" : method.trim().toUpperCase(Locale.ROOT);
             HttpResponse<Void> resp = sendFollowing(
-                    URI.create(url.trim()), m, timeoutMs, verifySsl, followRedirects, viaProxy);
+                    URI.create(url.trim()), m, timeoutMs, verifySsl, followRedirects, viaProxy, trace);
             long ms = System.currentTimeMillis() - start;
             int status = resp.statusCode();
             result.put("http_status", status);
             result.put("response_ms", ms);
-            result.put("ok", matchesStatus(status, expectedStatus));
+            boolean ok = matchesStatus(status, expectedStatus);
+            result.put("ok", ok);
+            if (!ok) {
+                trace.httpStatus = status; trace.elapsedMs = ms;
+                result.put("error_detail", HttpFailureDiagnostics.toJson(HttpFailureDiagnostics.forStatusMismatch(trace)));
+            }
         } catch (Exception e) {
             failure = e;
             result.put("http_status", null);
-            result.put("response_ms", System.currentTimeMillis() - start);
+            long ms = System.currentTimeMillis() - start;
+            result.put("response_ms", ms);
             result.put("ok", false);
             result.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            trace.elapsedMs = ms;
+            if (trace.resolvedIps.isEmpty()) lateResolve(trace);   // DNS'e hiç gelinmediyse/pin yoksa hedef IP'yi şimdi çöz (JVM önbelleği — ucuz)
+            result.put("error_detail", HttpFailureDiagnostics.toJson(HttpFailureDiagnostics.forException(trace, e)));
             log.debug("HTTP check failed for {}: {}", url, e.getMessage());
         }
         return new Attempt(result, failure);
@@ -287,9 +320,10 @@ public class HttpCheckerService {
      * Çok-A pin yolu ({@link #sendMultiAware}) her hop için ayrı ayrı çalışır.
      */
     private HttpResponse<Void> sendFollowing(URI baseUri, String method, int timeoutMs,
-                                             boolean verifySsl, boolean followRedirects, boolean viaProxy)
+                                             boolean verifySsl, boolean followRedirects, boolean viaProxy,
+                                             HttpFailureDiagnostics.Trace trace)
             throws java.io.IOException, InterruptedException {
-        if (!followRedirects) return sendMultiAware(baseUri, method, timeoutMs, verifySsl, viaProxy);
+        if (!followRedirects) return sendMultiAware(baseUri, method, timeoutMs, verifySsl, viaProxy, trace);
         URI current = baseUri;
         String m = method;
         for (int hop = 0; hop <= SafeRedirect.MAX_HOPS; hop++) {
@@ -300,9 +334,10 @@ public class HttpCheckerService {
                     throw new SsrfGuard.BlockedException("geçersiz yönlendirme hedefi: " + current);
                 ssrfGuard.validate(host);
             }
-            HttpResponse<Void> resp = sendMultiAware(current, m, timeoutMs, verifySsl, viaProxy);
+            HttpResponse<Void> resp = sendMultiAware(current, m, timeoutMs, verifySsl, viaProxy, trace);
             if (!SafeRedirect.isRedirect(resp.statusCode())) return resp;
             URI next = SafeRedirect.nextHop(current, resp.headers().firstValue("location").orElse(null));
+            if (trace != null) trace.hop(next);
             // Takip edilemeyen hedef (şema dışı / host'suz / güvenlik düşürmesi) → 3xx olduğu gibi döner.
             if (next == null || SafeRedirect.isDowngrade(current, next)) return resp;
             m = SafeRedirect.nextMethod(resp.statusCode(), m);
@@ -311,7 +346,8 @@ public class HttpCheckerService {
         throw new java.io.IOException("çok fazla yönlendirme (" + SafeRedirect.MAX_HOPS + " hop aşıldı)");
     }
 
-    private HttpResponse<Void> sendMultiAware(URI baseUri, String method, int timeoutMs, boolean verifySsl, boolean viaProxy)
+    private HttpResponse<Void> sendMultiAware(URI baseUri, String method, int timeoutMs, boolean verifySsl, boolean viaProxy,
+                                              HttpFailureDiagnostics.Trace trace)
             throws java.io.IOException, InterruptedException {
         HttpClient shared = client(verifySsl, viaProxy);
         String host = baseUri.getHost();
@@ -322,7 +358,9 @@ public class HttpCheckerService {
         if (host == null || NetworkResolver.isIpLiteral(host)) {
             return shared.send(buildRequest(baseUri, method, timeoutMs, null), HttpResponse.BodyHandlers.discarding());
         }
+        long dns0 = System.currentTimeMillis();
         List<InetAddress> addrs = NetworkResolver.allAddresses(host);
+        if (trace != null && trace.resolvedIps.isEmpty()) trace.resolved(addrs, System.currentTimeMillis() - dns0);
         if (addrs.size() <= 1) {
             return shared.send(buildRequest(baseUri, method, timeoutMs, null), HttpResponse.BodyHandlers.discarding());
         }
@@ -335,6 +373,7 @@ public class HttpCheckerService {
         InetAddress reachable = verifySsl ? null
                 : NetworkResolver.firstReachable(addrs, port, Math.min(Math.max(1000, timeoutMs), 4000));
         HttpClient pinned = reachable != null ? pinnedClient(host, false) : null;
+        if (trace != null) trace.pinned(reachable);
         if (pinned != null) {
             try {
                 URI pinnedUri = rewriteHostToIp(baseUri, reachable, port);

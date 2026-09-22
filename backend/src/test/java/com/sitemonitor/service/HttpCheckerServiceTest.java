@@ -148,6 +148,9 @@ class HttpCheckerServiceTest {
         assertThat(r.get("ok")).isEqualTo(false);
         assertThat((String) r.get("error")).containsIgnoringCase("certif");
         assertThat(r).doesNotContainKey("repinned");
+        // Tanı (2026-09-22): TLS evresi, güven hatası türü, hedef IP/port ve istisna zinciri JSON olarak taşınır
+        assertThat((String) r.get("error_detail")).contains("\"kind\":\"TLS_CERT_UNTRUSTED\"").contains("\"phase\":\"TLS\"")
+                .contains("\"target_ip\":\"127.0.0.1\"").contains("\"cause_chain\"");
         verify(f.repo(), never()).save(any());
     }
 
@@ -322,6 +325,8 @@ class HttpCheckerServiceTest {
                     "GET", "200-399", 3000, false, true);
             assertThat(r.get("ok")).isEqualTo(false);
             assertThat((String) r.get("error")).contains("cloud-metadata");
+            assertThat((String) r.get("error_detail")).contains("\"kind\":\"SSRF_BLOCKED\"").contains("\"phase\":\"POLICY\"")
+                    .contains("\"redirects\":[\"http://169.254.169.254/latest/meta-data/\"]");
         } finally {
             entry.stop(0);
         }
@@ -341,5 +346,18 @@ class HttpCheckerServiceTest {
         } finally {
             entry.stop(0);
         }
+    }
+
+    @Test
+    @DisplayName("Tanı: çözülemeyen host → DNS evresi, DNS_UNRESOLVED; başarılı kontrolde error_detail YOK")
+    void diagnostics_dnsAndSuccess() throws Exception {
+        Fixture f = fixture("", false);
+        Map<String, Object> r = f.service().check("https://" + TestHosts.UNRESOLVABLE + "/", "GET", "200-399", 3000, false, false);
+        assertThat(r.get("ok")).isEqualTo(false);
+        assertThat((String) r.get("error_detail")).contains("\"kind\":\"DNS_UNRESOLVED\"").contains("\"phase\":\"DNS\"")
+                .contains("\"host\":\"" + TestHosts.UNRESOLVABLE + "\"").contains("\"port\":443").contains("\"timeout_ms\":3000");
+        Map<String, Object> ok = check(f, false);
+        assertThat(ok.get("ok")).isEqualTo(true);
+        assertThat(ok).doesNotContainKey("error_detail");
     }
 }

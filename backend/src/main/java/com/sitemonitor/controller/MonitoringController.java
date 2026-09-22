@@ -2784,6 +2784,7 @@ public class MonitoringController {
             res.setHttpStatus(r.get("http_status") instanceof Number n ? n.intValue() : null);
             res.setResponseMs(r.get("response_ms") instanceof Number n ? n.longValue() : null);
             res.setError((String) r.get("error"));
+            res.setErrorDetail(r.get("error_detail") instanceof String d ? d : null);
             res.setCheckedAt(ISO.format(Instant.now()));
             httpCheckRepo.save(res);
             auditService.recordAction("MONITOR_TRIGGER", session, "HTTP_MONITOR", String.valueOf(m.getId()), m.getName(), null);
@@ -2826,6 +2827,7 @@ public class MonitoringController {
         out.put("condition_met",   Boolean.TRUE.equals(r.get("ok")));
         out.put("expected_status", expected);
         out.put("error",           r.get("error"));
+        out.put("error_detail",    r.get("error_detail"));   // form testinde de tanı paneli (2026-09-22)
         return ok(out);
     }
 
