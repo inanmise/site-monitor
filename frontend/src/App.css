@@ -11946,6 +11946,12 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .fc-show-more:hover { filter: brightness(1.1); }
 /* Uyarılar → Ağ kesinti geçmişi katlama düğmesi (QA ISSUE-002, 2026-09-21) */
 .outage-history-toggle { margin-top: 10px; }
+/* Envanter formu: vekil AÇIK/KAPALI anahtarı — Satın Alan'ın yanında (2026-09-22) */
+.inv-proxy-field { display: flex; flex-direction: column; gap: 5px; font-size: .88em; font-weight: 600; min-width: 0; }
+.inv-proxy-label { display: block; }
+.inv-proxy-switch-row { display: inline-flex; align-items: center; gap: 10px; min-height: 38px; }
+.inv-proxy-state { font-size: .8em; font-weight: 700; letter-spacing: .04em; color: var(--text-light); }
+.inv-proxy-state.is-on { color: var(--primary); }
 
 /* ── Pie empty state ── */
 .fc-pie-empty { display: flex; flex-direction: column; }

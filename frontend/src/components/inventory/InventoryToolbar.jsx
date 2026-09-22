@@ -131,9 +131,14 @@ export default function InventoryToolbar({
             <SearchableSelect value={filters.domainExp} onChange={(v) => set({ domainExp: v })} options={[
               { value: '', label: t('inv.filterAny') }, { value: '30', label: t('inv.domainExpIn', 30) }, { value: '60', label: t('inv.domainExpIn', 60) }, { value: '90', label: t('inv.domainExpIn', 90) }, { value: 'unknown', label: t('inv.domainExpUnknown') },
             ]} /></label>
+          {/* Vekil süzgeci (2026-09-22): bayrak çipleri arasında gömülüydü; "vekil üzerinden kontrol edilenler" hızlı erişim için ayrı seçici */}
+          <label className="invtb-f"><span>{t('inv.filterProxy')}</span>
+            <SearchableSelect value={filters.proxy || ''} onChange={(v) => set({ proxy: v })} options={[
+              { value: '', label: t('inv.filterAny') }, { value: 'on', label: t('inv.filterProxyOn') }, { value: 'off', label: t('inv.filterProxyOff') },
+            ]} /></label>
           <div className="invtb-flags">
             <span>{t('inv.filterFlags')}</span>
-            {INVENTORY_FLAGS.map(({ key, labelKey }) => (
+            {INVENTORY_FLAGS.filter(({ key }) => key !== 'use_proxy').map(({ key, labelKey }) => (
               <button key={key} type="button" className={`invtb-chip${filters.flags.includes(key) ? ' is-on' : ''}`} onClick={() => toggleFlag(key)} aria-pressed={filters.flags.includes(key)}>{t(labelKey)}</button>
             ))}
           </div>

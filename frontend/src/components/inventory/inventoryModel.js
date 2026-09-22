@@ -52,7 +52,7 @@ export function certRank(r) {
 }
 
 export const EMPTY_FILTERS = Object.freeze({
-  q: '', team: '', ugTeam: '', tier: '', group: '', notifGroup: '', cert: '', contacts: '', flags: [], domainExp: '', hygiene: '',
+  q: '', team: '', ugTeam: '', tier: '', group: '', notifGroup: '', cert: '', contacts: '', flags: [], domainExp: '', hygiene: '', proxy: '',   // proxy: '' | 'on' | 'off' (2026-09-22)
 })
 
 /** URL parametreleri ← filtre (i_ öneki, PAGE_STATE_PREFIXES'te). Boş değer null → param silinir. */
@@ -60,18 +60,18 @@ export function filtersToParams(f) {
   return {
     i_q: f.q || null, i_team: f.team || null, i_ug: f.ugTeam || null, i_tier: f.tier || null, i_group: f.group || null,
     i_ng: f.notifGroup || null, i_cert: f.cert || null, i_contacts: f.contacts || null,
-    i_flags: f.flags?.length ? f.flags.join(',') : null, i_dexp: f.domainExp || null, i_hy: f.hygiene || null,
+    i_flags: f.flags?.length ? f.flags.join(',') : null, i_dexp: f.domainExp || null, i_hy: f.hygiene || null, i_proxy: f.proxy || null,
   }
 }
 export function paramsToFilters(read) {
   return {
     q: read('i_q', ''), team: read('i_team', ''), ugTeam: read('i_ug', ''), tier: read('i_tier', ''), group: read('i_group', ''),
     notifGroup: read('i_ng', ''), cert: read('i_cert', ''), contacts: read('i_contacts', ''),
-    flags: (read('i_flags', '') || '').split(',').filter(Boolean), domainExp: read('i_dexp', ''), hygiene: read('i_hy', ''),
+    flags: (read('i_flags', '') || '').split(',').filter(Boolean), domainExp: read('i_dexp', ''), hygiene: read('i_hy', ''), proxy: read('i_proxy', ''),
   }
 }
 export function hasActiveFilter(f) {
-  return !!(f.q || f.team || f.ugTeam || f.tier || f.group || f.notifGroup || f.cert || f.contacts || f.flags?.length || f.domainExp || f.hygiene)
+  return !!(f.q || f.team || f.ugTeam || f.tier || f.group || f.notifGroup || f.cert || f.contacts || f.flags?.length || f.domainExp || f.hygiene || f.proxy)
 }
 
 function daysUntil(iso) {
@@ -108,6 +108,9 @@ export function applyFilters(items, f, hygiene = null) {
     if (f.contacts === 'partial' && !(filledContacts(r).length > 0 && filledContacts(r).length < CONTACT_FIELDS.length)) return false
     if (f.contacts === 'full' && filledContacts(r).length < CONTACT_FIELDS.length) return false
     for (const k of flags) if (!r[k]) return false
+    // Vekil süzgeci (2026-09-22): 'on' → yalnız "Proxy üzerinden kontrol et = Evet"; 'off' → Hayır (null da Hayır)
+    if (f.proxy === 'on' && !r.use_proxy) return false
+    if (f.proxy === 'off' && !!r.use_proxy) return false
     if (f.domainExp) {
       const d = daysUntil(r.domain_expiry)
       if (f.domainExp === 'unknown' ? d != null : (d == null || d > Number(f.domainExp))) return false

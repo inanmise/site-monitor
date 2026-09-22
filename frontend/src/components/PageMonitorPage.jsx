@@ -39,7 +39,7 @@ import { LoadingBlock } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 import MonitorStatsSection from './MonitorStatsSection.jsx'
-import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
+import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText, matchesProxy } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorProxyField from './ui/MonitorProxyField.jsx'
 import MonitorSpark from './ui/MonitorSpark.jsx'
@@ -142,6 +142,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
   const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))   // etiket filtresi (2026-09-18)
+  const [proxyFilter, setProxyFilter] = useState(() => readUrlParam('via', 'all'))   // vekil süzgeci (2026-09-22): all | proxy | direct
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
   const [secondsSince, setSecondsSince] = useState(0)
@@ -536,14 +537,18 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
     [groupNames, groupMonitors, t])
   const groupSelectOptions = useMemo(() => teamGroups.map(g => ({ value: g.name, label: g.name })), [teamGroups])
 
+  // Vekil süzgeci seçenekleri (2026-09-22): gerçekte kullanılan yola göre (proxy_effective).
+  const proxyFilterOptions = useMemo(() => [{ value: 'all', label: t('mon.proxy.filterAll') },
+    { value: 'proxy', label: t('mon.proxy.filterProxy') }, { value: 'direct', label: t('mon.proxy.filterDirect') }], [t])
   const scoped = useMemo(() => monitors.filter(m => {
     if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
     if (!matchesTag(m, tagFilter)) return false
+    if (!matchesProxy(m, proxyFilter)) return false
     if (matchesGroupOrTagText(m, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
     if (!search.trim()) return true
     const q = search.trim().toLowerCase()
     return (m.url || '').toLowerCase().includes(q) || (m.name || '').toLowerCase().includes(q)
-  }), [monitors, teamFilter, groupFilter, tagFilter, search])
+  }), [monitors, teamFilter, groupFilter, tagFilter, proxyFilter, search])
 
   const counts = useMemo(() => {
     const c = { total: scoped.length, ok: 0, degraded: 0, down: 0, alarm: 0, unacked: 0 }
@@ -573,14 +578,14 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
   // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(displayMonitors, {
-    listKey: 'page-monitors', resetDeps: [search, teamFilter, groupFilter, tagFilter, statFilter],
+    listKey: 'page-monitors', resetDeps: [search, teamFilter, groupFilter, tagFilter, proxyFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
 
   // Paylaşılabilir URL: görünür durum (filtre/arama/sayfa/açık modal) adres çubuğunda yaşar;
   // varsayılan değerler param üretmez (temiz URL). Yazım debounce'lu replaceState (useUrlQuerySync).
   useUrlQuerySync({
-    ...monitorUrlState({ teamFilter, groupFilter, tagFilter, search, statFilter, pager }),
+    ...monitorUrlState({ teamFilter, groupFilter, tagFilter, proxyFilter, search, statFilter, pager }),
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'issues' ? detailTab : null,
     // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
@@ -665,6 +670,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
           {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />}
           {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} />}
+          <SearchableSelect value={proxyFilter} onChange={setProxyFilter} options={proxyFilterOptions} ariaLabel={t('mon.proxy.label')} />
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />}
           <input className="upt-search" type="text" placeholder={t('page.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
@@ -684,6 +690,8 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
           api={{ update: api.monitoring.updatePageMonitor, remove: api.monitoring.deletePageMonitor }}
           onClear={() => setBulkSel(new Set())} onDone={load}
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
+        {/* Süzgeç/arama hiçbir izlemeyi bırakmadıysa boş alan yerine açık mesaj (2026-09-22; vekil süzgeciyle görünür oldu) */}
+        {displayMonitors.length === 0 && <StatusBlock tone="neutral" icon={Inbox} title={t('mon.noFilterMatch')} description={t('empty.hintFilter')} />}
         <div className="upt-grid">
           {pager.pageItems.map(m => (
             <div key={m.id} className={`upt-card ${cardClass(m)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
