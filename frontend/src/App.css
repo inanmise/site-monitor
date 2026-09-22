@@ -1690,7 +1690,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .cc-algo-weak   { background: #fef2f2; color: #dc2626; border-color: #fca5a5; }
 
 .cc-footer {
-  display: flex; flex-wrap: wrap; gap: 6px;
+  display: flex; flex-wrap: wrap; gap: 4px;   /* 6→4: "şu an" şeridi + eylemler tek satırda kalsın (2026-09-22 QA) */
   padding-top: 12px;
   border-top: 1px dashed #e5e7eb;
   justify-content: space-between; align-items: center;
@@ -1700,7 +1700,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .cc-footer-chips   { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
 /* margin-left:auto ŞART: footer flex-wrap'li ve hata kartlarında çipler satırı doldurup butonları
    ALT SATIRA atıyor; orada tek öğe kaldığı için space-between onları sola yaslardı. */
-.cc-footer-actions { display: flex; gap: 4px; flex-shrink: 0; margin-left: auto; }   /* 6→4: "şu an" şeridi tek satırda sığsın (2026-09-22) */
+.cc-footer-actions { display: flex; gap: 2px; flex-shrink: 0; margin-left: auto; }   /* 6→4→2: "şu an" şeridi tek satırda sığsın (2026-09-22) */
 .cc-footer-actions .btn-sm { margin-right: 0; }   /* .btn-sm global margin-right:4px taşıyor */
 .cc-chip {
   display: inline-flex; align-items: center; gap: 5px;
@@ -5492,12 +5492,16 @@ button.ccx-mini:hover { color: var(--primary); }
 .ccx-act:hover { background: color-mix(in srgb, var(--primary) 10%, transparent); }
 .ccx-act:disabled { opacity: .55; cursor: not-allowed; }
 /* "Şu an" şeridi — footer sol: son erişim + son alarm; yalnız sorunda renkli */
-.cc-live { display: inline-flex; align-items: center; gap: 3px; font: inherit; font-size: .68em; font-weight: 600; padding: 2px 6px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-surface); color: var(--text-muted); cursor: pointer; white-space: nowrap; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.cc-live { display: inline-flex; align-items: center; gap: 2px; font: inherit; font-size: .68em; font-weight: 600; padding: 2px 5px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-surface); color: var(--text-muted); cursor: pointer; white-space: nowrap; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 /* Şerit eylem düğmeleriyle AYNI satırda kalsın: çip kabı esner/daralır, şerit taşarsa üç nokta */
 /* Kırpma YOK (2026-09-22, kullanıcı bildirimi: "YÜKSE"): şerit kendi genişliğini korur; dar kartta eylem
    düğmeleri (.cc-footer flex-wrap + margin-left:auto) alt satıra iner. Eskiden 0'a kadar büzülüp overflow:hidden
    ile kesiliyordu — alarm seviyesi/çözülme süresi tam olarak bu metindi. */
-.cc-footer-chips:has(.cc-live) { flex: 1 1 auto; min-width: max-content; flex-wrap: nowrap; }
+/* flex-grow YOK (2026-09-22 QA): 1 1 auto verildiğinde çip kabı satırın TAMAMINI kaplıyor ve eylem
+   düğmeleri 16 ms'lik kısa şeritte bile hep alt satıra iniyordu (kart 29 px uzuyordu). 0 1 auto ile
+   kap kendi içeriği kadar; eylemler margin-left:auto ile sağa yaslanıp AYNI satırda kalıyor, yalnız
+   gerçekten sığmayan uzun şeritte alta iniyor. Kırpma yine YOK. */
+.cc-footer-chips:has(.cc-live) { flex: 0 1 auto; min-width: max-content; flex-wrap: nowrap; }
 .cc-footer-chips .cc-live { flex: 0 0 auto; overflow: visible; }
 .cc-live-alert { white-space: nowrap; }
 .cc-live:hover { border-color: var(--primary); color: var(--primary); }
@@ -5508,7 +5512,7 @@ button.ccx-mini:hover { color: var(--primary); }
 .cc-live-dot.is-down { background: var(--danger); box-shadow: 0 0 0 3px rgba(220, 38, 38, .18); }
 .cc-live-muted { font-weight: 500; opacity: .85; }
 .cc-live-alert.is-open { font-weight: 700; }
-.cc-live-sep { margin: 0 2px; opacity: .6; }
+.cc-live-sep { margin: 0 1px; opacity: .6; }
 /* Kart ekleri: tıklanabilir erişilebilirlik satırı ve sorumlu kişi çipi (2026-09-20) */
 button.ccx-row--link { font: inherit; background: none; border: 0; padding: 0; cursor: pointer; color: inherit; text-align: left; width: 100%; }
 button.ccx-row--link:hover .ccx-muted, button.ccx-row--link:hover .ccx-pct { color: var(--primary); }
