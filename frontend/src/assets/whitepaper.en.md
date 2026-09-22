@@ -573,7 +573,7 @@ Webhook deliveries land in the same audit trail as email: every attempt appears 
 
 ### 9.3 The Weekly Availability Email
 
-Every active team that owns certificates receives a summary of its domains' availability for the previous full week (Monday to Sunday) on Monday morning. It goes out whether or not there were outages, with any affected domains highlighted.
+Every active team that owns certificates receives a summary of its domains' availability for the previous full week (Monday to Sunday) on Monday morning. It goes out whether or not there were outages, with any affected domains highlighted. It is addressed to the team mailbox, with the team's PO, escalation (TECH) and manager (MANAGER) contacts copied in; the C-level contact is left off the routine summary.
 
 A **detailed outage report is attached as a PDF**: every outage of the week, with charts and status colouring, and the email body announces the attachment explicitly. Managers read the summary in the body and find the detail in the attachment.
 

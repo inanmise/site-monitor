@@ -1325,3 +1325,23 @@ mobil nav rayı; Genel Bakış ilk yüklemede "Sertifika bulunamadı" yerine yü
   regresyon testiyle pinlendi (`MonitoringOutageSweepReconcileRegressionTest`).
 Baseline (Y/O/N serileri): bu turda değişen dosyalar ilgili sınıfların düzeltilmiş imzalarına dokunmuyor (SsrfGuard yolları, Redirect.NEVER,
 sayfalama, outbox); diff-kapsamlı re-check. Kapılar sürüm adımında koşuluyor. → **REGRESYON YOK** (1 S8 bulgusu sürüm öncesi kapatıldı).
+
+## Ek — altmış ikinci tur (2026-09-22, sürüm öncesi — Alan Adı Süre Bitişi zenginleştirme A/B/D/E/F/G/H/I/K + haftalık rapor CC, `v20.77.0..HEAD`)
+
+Kapsam: 12 commit, 51 dosya (+2.272). Backend: `DomainExpiryReminder{,Repository,Service}` (eşik başına bir kez e-posta+push),
+`DomainRenewalPlanService` (planla/kaldır/otomatik kapanış), üç yeni uç (`/domain/{id}/trend|reminders|renewal-plan`), `RenewalForecastService.domains`,
+haftalık rapora alan adı bölümü + TECH CC. Frontend: DomainMonitorPage kart/süzgeç/sıralama/dışa aktarım, DomainExpiryTrend, ForecastDomainsPanel,
+RenewalPlanModal `hint`, envanter vekil anahtarı/süzgeci.
+İmza taraması (diff'e uyan sınıflar):
+- **S8 (alan ekleme zinciri) — BULGU, düzeltildi:** `domain_monitors.renewal_planned_*` (5 kolon) için açık idempotent `ADD COLUMN` patch'i yoktu;
+  ddl-auto ekler ama proje geleneği (61. tur, `use_proxy`) açık patch ister → `applySchemaPatches`'e eklendi. `domain_expiry_reminders` YENİ tablo
+  (ddl-auto tam oluşturur, NOT NULL/indeks tuzağı yok). MON_FIELDS `renewalPlannedAt/Note` ✓, `chg.field.*` etiketleri (kapı yakaladı, düzeltildi) ✓.
+- **S5 (sayısal sınır) — BULGU (DÜŞÜK), düzeltildi:** `domainLife`: `exp > reg` ama fark 12 saatten kısaysa `total` 0'a yuvarlanır → `elapsed/total = NaN`
+  yüzde (docstring "toplam ≤ 0 ise null" diyordu, kod uygulamıyordu). `total <= 0 → null` + test. Trend `range = max(1, …)`, panel `max(1, …counts)` ✓.
+- S1: üç yeni uç `permissionService.require` + `SessionScope.canView(teamId)` + yazanlarda `canOperateTeam` ✓; forecast `domains` görünür-takım süzgeci ✓.
+- S9: `DomainExpiryReminderRepository.deleteByMonitorId` `@Modifying @Transactional int` ✓, izleme silinince çağrılıyor ✓ (kapı `RepositoryWriteTransactionGuardTest`).
+- S10: yeni servislerde tüm Boolean okumaları `Boolean.TRUE/FALSE.equals` ✓. S11: `DomainExpiryTrend` ve hatırlatma yüklemesi `alive` korumalı ✓.
+- S14: hatırlatma alıcıları alarmla aynı kaynak (`teamEmailsForMonitor` grup→takım zinciri), push `enqueueTeamNotice` ✓; kanal bayrakları (`notifyEmail/Webhook`) onurlandırılıyor ✓.
+- S17: hatırlatma e-postası tüm değerleri `escHtml`, Outlook-safe (`td bgcolor`, VML CTA, `LIGHT_SCHEME_META`) ✓; CSV dışa aktarım ortak `csvCell` (B1 sınıfı) ✓.
+Baseline (Y/O/N serileri): değişen dosyalar düzeltilmiş imzalara dokunmuyor (SsrfGuard/Redirect/sayfalama/outbox/SQL yolu değişmedi); diff-kapsamlı re-check.
+Kapılar sürüm adımında koşuluyor. → **REGRESYON YOK** (1 S8 + 1 S5 bulgusu sürüm öncesi kapatıldı).

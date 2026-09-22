@@ -50,6 +50,11 @@ public class WeeklyAvailabilityReportService {
      *  dairesel referans üretiyor ve uygulama hiç açılmıyor; depolar o zincire girmez. */
     private final com.sitemonitor.repository.PageSpeedMonitorRepository pageSpeedMonitorRepo;
     private final com.sitemonitor.repository.PageSpeedCheckRepository pageSpeedCheckRepo;
+    /** Alan adı bitişleri bölümü (2026-09-22, madde G) — DEPO enjeksiyonu, isteğe bağlı (yapıcı büyümez, eski test kurulumları kırılmaz). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DomainMonitorRepository domainMonitorRepo;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DomainCheckRepository domainCheckRepo;
     /** "Sürüm & Dağıtım" satırı (E2). @Lazy — aşağıdaki yapıcı notuna bak. */
     private final DeploymentHistoryService deploymentHistory;
 
@@ -345,8 +350,9 @@ public class WeeklyAvailabilityReportService {
         EmailNotificationService.PageSpeedWeekly pageSpeed = collectPageSpeed(team, w);
         EmailNotificationService.DeploymentWeekly deployments = collectDeployments(w);
         EmailNotificationService.WeakAlgoWeekly weak = collectWeakAlgo(domains);
+        EmailNotificationService.DomainExpiryWeekly domExp = collectDomainExpiry(team);
         String html = emailService.buildWeeklyAvailabilityHtml(
-                team.getName(), w.weekLabel(), rows, summary, att, pageSpeed, deployments, weak);
+                team.getName(), w.weekLabel(), rows, summary, att, pageSpeed, deployments, weak, domExp);
         return new TeamReport(rows, summary, subject, html, to, cc, outage);
     }
 
@@ -359,6 +365,38 @@ public class WeeklyAvailabilityReportService {
      *
      * <p>Patlarsa {@code null} döner ve rapor bu satır OLMADAN gider (sayfa hızı / ek ile aynı ilke).
      */
+    /** Alan adı bitişleri (2026-09-22, madde G): takımın aktif alan adı izlemeleri, 90 gün içinde bitenler + kilitsizler.
+     *  Depo yoksa ya da patlarsa {@code null} → rapor bu bölüm OLMADAN gider (sayfa hızı ile aynı ilke). */
+    EmailNotificationService.DomainExpiryWeekly collectDomainExpiry(Team team) {
+        if (domainMonitorRepo == null || domainCheckRepo == null || team == null) return null;
+        try {
+            final int window = 90;
+            Map<Long, com.sitemonitor.model.DomainCheck> latest = new HashMap<>();
+            for (com.sitemonitor.model.DomainCheck c : domainCheckRepo.findLatestPerMonitor())
+                if (c.getMonitorId() != null) latest.putIfAbsent(c.getMonitorId(), c);
+            String today = java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString();
+            List<EmailNotificationService.DomainExpiryWeeklyRow> rows = new ArrayList<>();
+            int count = 0, unlocked = 0;
+            for (com.sitemonitor.model.DomainMonitor m : domainMonitorRepo.findByActiveTrue()) {
+                if (m.getTeamId() == null || !m.getTeamId().equals(team.getId())) continue;
+                count++;
+                com.sitemonitor.model.DomainCheck c = latest.get(m.getId());
+                if (c != null && "NONE".equals(c.getTransferLock())) unlocked++;
+                Integer d = c != null ? c.getDaysRemaining() : null;
+                boolean overdue = m.getRenewalPlannedAt() != null && m.getRenewalPlannedAt().compareTo(today) < 0;
+                if ((d != null && d <= window) || overdue)
+                    rows.add(new EmailNotificationService.DomainExpiryWeeklyRow(m.getDomain(), d, c != null ? c.getExpiryDate() : null,
+                            c != null ? c.getRegistrar() : null, c != null ? c.getTransferLock() : null, m.getRenewalPlannedAt(), overdue));
+            }
+            rows.sort(Comparator.comparing((EmailNotificationService.DomainExpiryWeeklyRow r) -> r.daysRemaining() == null ? Integer.MAX_VALUE : r.daysRemaining()));
+            if (rows.size() > 12) rows = new ArrayList<>(rows.subList(0, 12));
+            return new EmailNotificationService.DomainExpiryWeekly(rows, count, window, unlocked);
+        } catch (Exception e) {
+            log.warn("Haftalık rapor alan adı bölümü üretilemedi: {}", e.getMessage());
+            return null;
+        }
+    }
+
     /**
      * Zayıf algoritma satırı (2026-09-12) — DEPO ile hesaplanır (WeakAlgorithmReportService enjekte
      * edilmez: bu sınıfa servis eklemek dairesel referans üretir). Hüküm ortak yardımcıdan.
@@ -787,11 +825,15 @@ public class WeeklyAvailabilityReportService {
         return cc.toArray(new String[0]);
     }
 
-    /** Takımın PO + MANAGER eskalasyon kontak e-postaları (dedup); PO kontak yoksa orgRole=PO kullanıcılar. */
+    /** Haftalık raporun CC rolleri: PO → TECH (takımın eskalasyon kontağı, 2026-09-22) → MANAGER. CLEVEL bilinçli DIŞARIDA
+     *  (yalnız kritik eskalasyonda devreye girer; rutin haftalık özet üst kademeye gitmez). */
+    static final List<String> CC_ROLES = List.of("PO", "TECH", "MANAGER");
+
+    /** Takımın PO + TECH + MANAGER eskalasyon kontak e-postaları (dedup); hiç kontak yoksa orgRole=PO kullanıcılar. */
     private List<String> collectCc(Long teamId) {
         Set<String> seen = new HashSet<>();
         List<String> out = new ArrayList<>();
-        for (String role : List.of("PO", "MANAGER")) {
+        for (String role : CC_ROLES) {
             for (EscalationContact c : contactRepo.findByTeamIdAndRoleAndActiveTrue(teamId, role)) {
                 addEmail(out, seen, c.getEmail());
             }

@@ -73,6 +73,8 @@ class MonitoringControllerTest {
     @MockitoBean com.sitemonitor.service.HttpCheckerService httpChecker;
     @MockitoBean DomainMonitorRepository domainMonitorRepo;
     @MockitoBean DomainCheckRepository domainCheckRepo;
+    @MockitoBean com.sitemonitor.service.DomainExpiryReminderService domainReminders;   // hatırlatmalar (2026-09-22, E)
+    @MockitoBean com.sitemonitor.service.DomainRenewalPlanService domainRenewalPlans;   // yenileme planı (2026-09-22, H)
     @MockitoBean com.sitemonitor.service.DomainCheckerService domainChecker;
     @MockitoBean com.sitemonitor.service.PublicSuffixService publicSuffixService;
     @MockitoBean TeamRepository teamRepo;
@@ -3708,5 +3710,151 @@ class MonitoringControllerTest {
                 .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://lvl2.example.com\",\"teamId\":1,\"alertLevel\":\"bogus\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.alert_level").value("WARNING"));
+    }
+
+    // ── Kalan-gün trendi (2026-09-22, alan adı denetimi madde I) ─────────────────────────────
+
+    private static com.sitemonitor.model.DomainCheck trendCheck(String at, Integer days, boolean changed, String detail) {
+        com.sitemonitor.model.DomainCheck c = new com.sitemonitor.model.DomainCheck();
+        c.setMonitorId(7L); c.setCheckedAt(at); c.setDaysRemaining(days); c.setStatus("OK");
+        c.setExpiryDate("2027-03-28T10:41:00Z"); c.setRegistrar("Registrar A"); c.setSource("RDAP");
+        c.setChanged(changed); c.setChangeDetail(detail);
+        return c;
+    }
+
+    @Test
+    @DisplayName("GET /domain/{id}/trend: gün başına SON kontrol, aynı günün iki değişikliği birleşir, eşikler izlemeden")
+    void domainTrend_collapsesPerDay_mergesChanges() throws Exception {
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(7L); m.setDomain("a.example.com"); m.setTeamId(1L); m.setWarningDays(45); m.setCriticalDays(10);
+        when(domainMonitorRepo.findById(7L)).thenReturn(Optional.of(m));
+        when(domainCheckRepo.findByMonitorIdAndCheckedAtBetween(eq(7L), anyString(), anyString(), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(
+                        trendCheck("2026-09-20T01:00:00", 190, false, null),
+                        trendCheck("2026-09-20T13:00:00", 189, true, "registrar: A → B;"),
+                        trendCheck("2026-09-20T22:00:00", 189, true, "nameserver seti değişti;"),
+                        trendCheck("2026-09-21T02:00:00", 188, false, null))));
+
+        mvc.perform(get("/api/monitoring/domain/7/trend?days=30").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.days").value(30))
+                .andExpect(jsonPath("$.data.warning_days").value(45))
+                .andExpect(jsonPath("$.data.critical_days").value(10))
+                .andExpect(jsonPath("$.data.points.length()").value(2))
+                .andExpect(jsonPath("$.data.points[0].day").value("2026-09-20"))
+                .andExpect(jsonPath("$.data.points[0].days_remaining").value(189))     // günün SON kontrolü
+                .andExpect(jsonPath("$.data.points[0].checked_at").value("2026-09-20T22:00:00"))
+                .andExpect(jsonPath("$.data.points[0].changed").value(true))
+                .andExpect(jsonPath("$.data.points[0].change_detail").value("registrar: A → B; nameserver seti değişti;"))
+                .andExpect(jsonPath("$.data.points[1].changed").value(false));
+    }
+
+    @Test
+    @DisplayName("GET /domain/{id}/trend: days 1..730 arasına kırpılır")
+    void domainTrend_clampsDays() throws Exception {
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(7L); m.setDomain("a.example.com"); m.setTeamId(1L);
+        when(domainMonitorRepo.findById(7L)).thenReturn(Optional.of(m));
+        when(domainCheckRepo.findByMonitorIdAndCheckedAtBetween(eq(7L), anyString(), anyString(), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
+        mvc.perform(get("/api/monitoring/domain/7/trend?days=99999").session(session("ADMIN")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.days").value(730))
+                .andExpect(jsonPath("$.data.points.length()").value(0));
+        mvc.perform(get("/api/monitoring/domain/7/trend?days=0").session(session("ADMIN")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.days").value(1));
+    }
+
+    @Test
+    @DisplayName("GET /domain/{id}/trend IDOR: başka takımın izlemesi ve olmayan kayıt 404 (varlık sızdırmaz)")
+    void domainTrend_foreignTeam_notFound() throws Exception {
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(9L); m.setDomain("x.example.com"); m.setTeamId(2L);
+        when(domainMonitorRepo.findById(9L)).thenReturn(Optional.of(m));
+        MockHttpSession s = session("USER");
+        s.setAttribute("viewTeamIds", java.util.List.of(1L));
+        mvc.perform(get("/api/monitoring/domain/9/trend").session(s)).andExpect(status().isNotFound());
+        when(domainMonitorRepo.findById(10L)).thenReturn(Optional.empty());
+        mvc.perform(get("/api/monitoring/domain/10/trend").session(session("ADMIN"))).andExpect(status().isNotFound());
+    }
+
+    // ── Süre-bitişi hatırlatmaları (2026-09-22, madde E) ─────────────────────────────
+
+    @Test
+    @DisplayName("GET /domain/{id}/reminders: izlemenin eşikleri + gönderilenler; yabancı takım 404")
+    void domainReminders_listsThresholdsAndItems() throws Exception {
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(7L); m.setDomain("a.example.com"); m.setTeamId(1L); m.setThresholdsCsv("30,7");
+        when(domainMonitorRepo.findById(7L)).thenReturn(Optional.of(m));
+        when(domainReminders.history(7L)).thenReturn(List.of(java.util.Map.of("id", 1L, "threshold_days", 30, "status", "SENT")));
+
+        mvc.perform(get("/api/monitoring/domain/7/reminders").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.thresholds[0]").value(30))
+                .andExpect(jsonPath("$.data.thresholds[1]").value(7))
+                .andExpect(jsonPath("$.data.items[0].status").value("SENT"));
+
+        MockHttpSession s = session("USER");
+        s.setAttribute("viewTeamIds", java.util.List.of(2L));
+        mvc.perform(get("/api/monitoring/domain/7/reminders").session(s)).andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("POST /domain/{id}/check: elle kontrol de hatırlatma değerlendirmesini tetikler")
+    void domainCheck_evaluatesReminders() throws Exception {
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(7L); m.setDomain("a.example.com"); m.setTeamId(1L); m.setActive(true);
+        when(domainMonitorRepo.findById(7L)).thenReturn(Optional.of(m));
+        java.util.Map<String, Object> r = new java.util.HashMap<>(java.util.Map.of("status", "OK", "days_remaining", 12, "expiry_date", "2026-10-04T00:00:00Z"));
+        when(domainChecker.check(any())).thenReturn(r);
+
+        mvc.perform(post("/api/monitoring/domain/7/check").session(session("ADMIN"))).andExpect(status().isOk());
+        verify(domainReminders).evaluate(eq(m), eq(r));
+    }
+
+    // ── Yenileme planı (2026-09-22, madde H) ──────────────────────────────────────────
+
+    @Test
+    @DisplayName("POST /domain/{id}/renewal-plan: tarih doğrulanır, servis plan anındaki bitişle çağrılır; satır plan alanlarını döner")
+    void domainRenewalPlan_post() throws Exception {
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(7L); m.setDomain("a.example.com"); m.setName("A"); m.setTeamId(1L); m.setActive(true);
+        when(domainMonitorRepo.findById(7L)).thenReturn(Optional.of(m));
+        com.sitemonitor.model.DomainCheck last = new com.sitemonitor.model.DomainCheck();
+        last.setMonitorId(7L); last.setSource("RDAP"); last.setExpiryDate("2026-11-22T00:00:00Z"); last.setStatus("OK");
+        when(domainCheckRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(7L, "NONE")).thenReturn(Optional.of(last));
+        when(domainCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(7L)).thenReturn(Optional.of(last));
+        when(domainRenewalPlans.plan(any(), eq("2026-10-15"), eq("not"), eq("2026-11-22T00:00:00Z"), any())).thenAnswer(i -> {
+            com.sitemonitor.model.DomainMonitor x = i.getArgument(0);
+            x.setRenewalPlannedAt("2026-10-15"); x.setRenewalPlannedByName("Ops"); x.setRenewalPlannedNote("not");
+            return x;
+        });
+
+        mvc.perform(post("/api/monitoring/domain/7/renewal-plan").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"date\":\"2026-10-15\",\"note\":\"not\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.renewal_planned_at").value("2026-10-15"))
+                .andExpect(jsonPath("$.data.renewal_planned_by").value("Ops"))
+                .andExpect(jsonPath("$.data.renewal_overdue").value(false));
+        // Denetim izi (AuditCoverageTest kapısı, regresyon 62): plan koyma MONITOR_RENEWAL_PLANNED yazar
+        verify(auditService).recordAction(eq("MONITOR_RENEWAL_PLANNED"), any(jakarta.servlet.http.HttpSession.class), eq("DOMAIN_MONITOR"), eq("7"), any(), any());
+
+        mvc.perform(post("/api/monitoring/domain/7/renewal-plan").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"date\":\"15.10.2026\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("DELETE /domain/{id}/renewal-plan: yabancı takım 404; görüntüleyen ama yönetemeyen 403")
+    void domainRenewalPlan_scope() throws Exception {
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(9L); m.setDomain("x.example.com"); m.setTeamId(2L);
+        when(domainMonitorRepo.findById(9L)).thenReturn(Optional.of(m));
+        MockHttpSession s = session("USER");
+        s.setAttribute("viewTeamIds", java.util.List.of(1L));
+        mvc.perform(delete("/api/monitoring/domain/9/renewal-plan").session(s)).andExpect(status().isNotFound());
+
+        MockHttpSession v = sessionWithTeam("USER", 1L);
+        v.setAttribute("viewTeamIds", java.util.List.of(1L, 2L));
+        mvc.perform(delete("/api/monitoring/domain/9/renewal-plan").session(v)).andExpect(status().isForbidden());
     }
 }

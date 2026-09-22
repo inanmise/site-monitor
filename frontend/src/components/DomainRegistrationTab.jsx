@@ -3,7 +3,7 @@ import { dateLocale } from '../i18n/dateLocale.js'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { RefreshCw, ShieldCheck, ShieldOff, ShieldAlert, ListX, History,
-  Server, Globe, Building2, CalendarClock } from 'lucide-react'
+  Server, Globe, Building2, CalendarClock, BellRing } from 'lucide-react'
 import { Spinner, LoadingBlock } from './ui/Progress.jsx'
 
 /** Bitiş tarihi — insan-okur ("6 Ağustos 2026 15:37"), tr-TR; date-only ("2029-10-26") ve datetime güvenli. */
@@ -20,7 +20,7 @@ function daysColor(d) {
   if (d <= 30) return '#D68910'
   return '#1E8449'
 }
-const eppKey = (c) => String(c || '').replace(/\s+/g, '').toLowerCase()
+import { eppKey, eppLabel } from '../utils/domainEpp.js'
 
 function csv(v) {
   if (Array.isArray(v)) return v
@@ -36,6 +36,7 @@ export default function DomainRegistrationTab({ monitor }) {
   const [loading, setLoading] = useState(true)
   const [stale, setStale] = useState(false)          // live başarısız → DB'deki son bilgi gösteriliyor
   const [err, setErr] = useState(null)
+  const [rem, setRem] = useState(null)   // hatırlatmalar (2026-09-22, E): { thresholds, items }
 
   const load = useCallback(async (live = true) => {
     if (!id) return
@@ -61,6 +62,11 @@ export default function DomainRegistrationTab({ monitor }) {
   }, [id, t])
 
   useEffect(() => { load(true) }, [load])
+  useEffect(() => {
+    let alive = true
+    api.monitoring.getDomainReminders?.(monitor.id)?.then(r => { if (alive && r?.success) setRem(r.data) }).catch(() => {})
+    return () => { alive = false }
+  }, [monitor.id])
 
   if (loading && !reg) return <LoadingBlock label={t('dreg.loading')} className="upt-modal-loading" size={16} />
   if (err && !reg) return <div className="alert-msg alert-msg--err">{err}</div>
@@ -100,15 +106,15 @@ export default function DomainRegistrationTab({ monitor }) {
 
       {/* Nameservers */}
       <div className="dreg-section-hdr"><Server size={15} /> {t('dreg.nameservers')}</div>
-      {ns.length ? <ul className="dreg-list">{ns.map(n => <li key={n}>{n}</li>)}</ul> : <div className="dreg-empty">—</div>}
+      {ns.length ? <ul className="dreg-list">{ns.map(n => <li key={n}>{n}</li>)}</ul> : <div className="dreg-empty">— <span className="dreg-why">{d.source === 'NONE' || !d.source ? t('dreg.whyNoData') : t('dreg.whyNoNs')}</span></div>}
 
       {/* IP + Hostname */}
       <div className="dreg-section-hdr"><Globe size={15} /> {t('dreg.ips')}</div>
       {ips.length ? (
         <table className="dreg-iptable"><tbody>
-          {ips.map((ip, i) => <tr key={ip}><td className="dreg-ip">{ip}</td><td className="dreg-host">{hosts[i] || '—'}</td></tr>)}
+          {ips.map((ip, i) => <tr key={ip}><td className="dreg-ip">{ip}</td><td className="dreg-host">{hosts[i] || <span className="dreg-why">{t('dreg.whyNoPtr')}</span>}</td></tr>)}
         </tbody></table>
-      ) : <div className="dreg-empty">—</div>}
+      ) : <div className="dreg-empty">— <span className="dreg-why">{t('dreg.whyNoIp', d.domain || '')}</span></div>}
 
       {/* Domain Status (EPP) */}
       <div className="dreg-section-hdr">{t('dreg.eppStatus')}</div>
@@ -117,17 +123,17 @@ export default function DomainRegistrationTab({ monitor }) {
           {epp.map(c => {
             const k = 'epp.' + eppKey(c)
             const desc = t(k)
-            return <span key={c} className="dreg-epp-pill" title={desc !== k ? desc : c}>{c}</span>
+            return <span key={c} className="dreg-epp-pill" title={desc !== k ? desc : c}>{eppLabel(c)}</span>
           })}
         </div>
-      ) : <div className="dreg-empty">—</div>}
+      ) : <div className="dreg-empty">— <span className="dreg-why">{d.source === 'WHOIS' ? t('dreg.whyNoEppWhois') : t('dreg.whyNoData')}</span></div>}
 
       {/* DNSSEC */}
       <div className="dreg-section-hdr">DNSSEC</div>
       <div className="dreg-dnssec">
         {d.dnssec === 'signed' ? <><ShieldCheck size={15} className="dreg-ok" /> {t('dreg.dnssecSigned')}</>
           : d.dnssec === 'unsigned' ? <><ShieldOff size={15} className="dreg-muted" /> {t('dreg.dnssecUnsigned')}</>
-          : <span className="dreg-empty">{t('dreg.dnssecUnknown')}</span>}
+          : <span className="dreg-empty">{t('dreg.dnssecUnknown')} <span className="dreg-why">{d.source === 'WHOIS' ? t('dreg.whyDnssecWhois') : t('dreg.whyNoData')}</span></span>}
       </div>
       {/* ── Koruma durumu ────────────────────────────────────────────────────────
           Üç sinyal de ÜÇ/DÖRT durumlu: "doğrulanamadı" ayrı bir cevaptır, "sorun yok"
@@ -139,13 +145,37 @@ export default function DomainRegistrationTab({ monitor }) {
         <LockBadge value={d.transfer_lock} t={t} />
 
         <span className="dreg-protect-lbl">{t('dom.blacklist')}</span>
-        <BlacklistBadge status={d.blacklist_status} detail={d.blacklist_detail} t={t} />
+        <BlacklistBadge status={d.blacklist_status} detail={d.blacklist_detail} t={t} noIp={ips.length === 0} />
+        {d.transfer_lock === 'UNKNOWN' && <span className="dreg-why dreg-why--row">{d.source === 'WHOIS' ? t('dreg.whyLockWhois') : t('dreg.whyNoData')}</span>}
 
         {d.change_detail && (<>
           <span className="dreg-protect-lbl"><History size={13} /> {t('dom.lastChange')}</span>
           <span className="dreg-protect-change">{d.change_detail}</span>
         </>)}
       </div>
+
+      {/* Hatırlatmalar (2026-09-22, E): eşik takvimi + gönderilenler. Eskiden eşik alanı ölü idi (form + rehber "mail gider" diyordu, gitmiyordu). */}
+      <div className="dreg-section-hdr"><BellRing size={15} /> {t('dreg.reminders')}</div>
+      {rem && (<>
+        <div className="dreg-rem-thresholds">
+          {(rem.thresholds || []).map(th => {
+            const hit = (rem.items || []).find(x => x.threshold_days === th && x.expiry_date === d.expiry_date)
+            const cls = hit ? (hit.status === 'SENT' ? 'sent' : hit.status === 'COVERED' ? 'covered' : 'skipped') : (d.days_remaining != null && d.days_remaining <= th ? 'due' : 'pending')
+            return <span key={th} className={`dreg-rem-chip dreg-rem-chip--${cls}`} title={hit ? `${t('dreg.remStatus_' + hit.status)} · ${formatDateSec(hit.sent_at)}` : t('dreg.remPending')}>{th} {t('card.daysUnit')}</span>
+          })}
+        </div>
+        <div className="dreg-rem-legend">{t('dreg.remLegend')}</div>
+        {(rem.items || []).length > 0 ? (
+          <ul className="dreg-list dreg-rem-list">
+            {rem.items.slice(0, 10).map(x => (
+              <li key={x.id}><span className={`dreg-rem-dot dreg-rem-dot--${x.status === 'SENT' ? 'sent' : x.status === 'COVERED' ? 'covered' : 'skipped'}`} />
+                {formatDateSec(x.sent_at)} · {t('dreg.remRow', x.threshold_days, x.days_remaining ?? '—')} · {t('dreg.remStatus_' + x.status)}
+                {x.recipients ? <span className="dreg-why"> → {x.recipients}</span> : null}
+                {x.push_queued != null ? <span className="dreg-why"> · push {x.push_queued}</span> : null}</li>
+            ))}
+          </ul>
+        ) : <div className="dreg-empty">{t('dreg.remNone')}</div>}
+      </>)}
 
       {/* Kontrol Geçmişi buradan kaldırıldı — "Kontrol" sekmesindeki geçmiş tablosuyla aynıydı (tekrar). */}
     </div>
@@ -169,7 +199,7 @@ function LockBadge({ value, t }) {
 }
 
 /** Kara liste rozeti. LISTED'de kanıt (hangi liste) ipucunda taşınır — rakam tek başına iş görmez. */
-function BlacklistBadge({ status, detail, t }) {
+function BlacklistBadge({ status, detail, t, noIp = false }) {
   const v = String(status || 'UNKNOWN').toUpperCase()
   if (v === 'CLEAN')   return <span className="dreg-badge dreg-badge--ok"><ShieldCheck size={13} /> {t('dom.blClean')}</span>
   if (v === 'SKIPPED') return <span className="dreg-badge dreg-badge--muted">{t('dom.blSkipped')}</span>
@@ -181,5 +211,6 @@ function BlacklistBadge({ status, detail, t }) {
       </span>
     )
   }
-  return <span className="dreg-badge dreg-badge--unknown"><ShieldOff size={13} /> {t('dom.blUnknown')}</span>
+  // Neden doğrulanamadı: IP yoksa sorgulanacak şey yok (apex A kaydı olmayan alan adı — www için bakılmaz); IP varsa DNSBL sorgusu cevapsız (kurumsal ağ) (2026-09-22, K)
+  return <span className="dreg-badge dreg-badge--unknown" title={noIp ? t('dreg.whyBlNoIp') : t('dreg.whyBlNoAnswer')}><ShieldOff size={13} /> {t('dom.blUnknown')} <span className="dreg-why">{noIp ? t('dreg.whyBlNoIp') : t('dreg.whyBlNoAnswer')}</span></span>
 }

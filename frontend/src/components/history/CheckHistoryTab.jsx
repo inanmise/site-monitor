@@ -32,6 +32,8 @@ export default function CheckHistoryTab({
   reloadSignal = 0,                          // dışarıdan tazeleme (modaldaki "Çalıştır") — sayfa/filtre korunur
   onCounts = null,                           // modal başlık özeti için {total, fail} bildirimi
   range = null, onRangeChange = null,        // kontrollü aralık (Uptime: tek picker iki kolonu sürer)
+  timeline = true,                            // kesinti zaman çizelgesi (alan adı: kapalı — kesinti değil süre izlenir; 2026-09-22)
+  renderAbove = null,                         // aralık değişince yeniden çizilen özel blok, ör. kalan-gün trendi (h.preset/h.range verilir)
   // ── Ardışık aynı sonuçları tek satırda topla (OPT-IN, varsayılan KAPALI) ──
   // Sürekli aynı hatayı veren bir monitörde geçmiş, aynı satırın yüzlerce kopyasına dönüşüyor
   // (gerçek vaka: 291 kaydın 291'i aynı k6 sözdizimi hatası). Varsayılanı kapalı tutmak şart:
@@ -194,7 +196,8 @@ export default function CheckHistoryTab({
       )}
 
       {/* Kesinti zaman çizelgesi (2026-09-12, #12): alarm açılış→çözüm segmentleri, süre + Alarm Geçmişi bağlantısı */}
-      <OutageTimeline alerts={h.alerts} range={h.range} />
+      {renderAbove && renderAbove({ preset: h.preset, range: h.range })}
+      {timeline && <OutageTimeline alerts={h.alerts} range={h.range} />}
       <DensityStrip buckets={h.buckets} zoomed={!fixedMode && h.preset === 'custom'}
         onZoom={(fromIso, toIso) => {
           if (fixedMode) { onRangeChange?.(new Date(fromIso + 'Z'), new Date(toIso + 'Z')); return }

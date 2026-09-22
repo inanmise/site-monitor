@@ -50,6 +50,13 @@ public class RenewalForecastService {
     private final AlertThresholdRepository thresholdRepo;
     private final AppSettingsService appSettings;
     private final JdbcTemplate jdbc;
+    /** Alan adı bitişleri (2026-09-22, madde F) — isteğe bağlı: bean yoksa bölüm boş liste (eski test kurulumları kırılmaz). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DomainMonitorRepository domainMonitorRepo;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DomainCheckRepository domainCheckRepo;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.TeamRepository teamRepo;
 
     /** Tier → lead gün. Ayar boş/0 ise genel varsayılana (o da boşsa 14) düşer. */
     public Map<String, Integer> leadDays() {
@@ -148,6 +155,7 @@ public class RenewalForecastService {
         out.put("data_as_of", dataAsOf);
         out.put("generated_at", ISO.format(Instant.now()));
         out.put("renewals", renewals(certs.stream().map(c -> (String) c.get("domain")).toList(), inv, lead));
+        out.put("domains", domainExpiries(canView));   // alan adı (registrar) bitişleri — ayrı seri (2026-09-22, F)
         return out;
     }
 
@@ -171,6 +179,51 @@ public class RenewalForecastService {
         Instant t = parseUtc(utcTs);
         if (t != null) return t.atZone(zone).toLocalDate().toString();
         return utcTs == null ? null : utcTs.substring(0, Math.min(10, utcTs.length()));
+    }
+
+    /**
+     * Alan adı kayıt (registrar) bitişleri — Vade Takvimi'nde sertifikaların YANINDA ayrı seri (2026-09-22, madde F).
+     * Kaynak: aktif alan adı izlemeleri + her birinin son kontrolü. Sertifika modeline karıştırılmaz (parmak izi, issuer,
+     * tier-lead sözleşmesi yok); arayüz ayrı panelde çizer. Görünürlük: izlemenin takımı canView'dan geçmeli.
+     */
+    private List<Map<String, Object>> domainExpiries(Predicate<Long> canView) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (domainMonitorRepo == null || domainCheckRepo == null) return out;
+        try {
+            Map<Long, com.sitemonitor.model.DomainCheck> latest = new HashMap<>();
+            for (com.sitemonitor.model.DomainCheck c : domainCheckRepo.findLatestPerMonitor())
+                if (c.getMonitorId() != null) latest.putIfAbsent(c.getMonitorId(), c);
+            Map<Long, String> teamNames = new HashMap<>();
+            if (teamRepo != null) for (com.sitemonitor.model.Team tm : teamRepo.findAll()) teamNames.put(tm.getId(), tm.getName());
+            String today = java.time.LocalDate.now(ZONE).toString();
+            for (com.sitemonitor.model.DomainMonitor m : domainMonitorRepo.findByActiveTrue()) {
+                if (!canView.test(m.getTeamId())) continue;
+                com.sitemonitor.model.DomainCheck c = latest.get(m.getId());
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("id", m.getId());
+                row.put("domain", m.getDomain());
+                row.put("name", m.getName());
+                row.put("team_id", m.getTeamId());
+                row.put("team_name", m.getTeamId() != null ? teamNames.get(m.getTeamId()) : null);
+                row.put("group_name", m.getGroupName());
+                row.put("expiry_date", c != null ? c.getExpiryDate() : null);
+                row.put("days_remaining", c != null ? c.getDaysRemaining() : null);
+                row.put("status", c != null ? c.getStatus() : "UNKNOWN");
+                row.put("registrar", c != null ? c.getRegistrar() : null);
+                row.put("source", c != null ? c.getSource() : null);
+                row.put("transfer_lock", c != null ? c.getTransferLock() : null);
+                row.put("warning_days", m.getWarningDays());
+                row.put("critical_days", m.getCriticalDays());
+                row.put("renewal_planned_at", m.getRenewalPlannedAt());
+                row.put("renewal_planned_by", m.getRenewalPlannedByName());
+                row.put("renewal_overdue", m.getRenewalPlannedAt() != null && m.getRenewalPlannedAt().compareTo(today) < 0);
+                out.add(row);
+            }
+            out.sort(java.util.Comparator.comparing((Map<String, Object> r) -> r.get("days_remaining") == null ? Integer.MAX_VALUE : (Integer) r.get("days_remaining")));
+        } catch (Exception e) {
+            log.warn("Vade takvimi alan adı bölümü üretilemedi: {}", e.getMessage());
+        }
+        return out;
     }
 
     private static Instant parseUtc(String ts) {

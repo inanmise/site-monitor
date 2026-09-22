@@ -7,10 +7,12 @@ import {
 } from 'recharts'
 import { Calendar, RefreshCw, Download, Link2, Printer, Play, CalendarPlus, CalendarCheck, AlertTriangle, ShieldOff } from 'lucide-react'
 import { api, formatDate, formatDateOnly, localDayKey } from '../api/client'
+import { navigateTo } from '../utils/navigate.js'
 import { useT } from '../i18n/index.jsx'
 import BrandLogo from '../components/BrandLogo.jsx'
 import AlertBanner from '../components/ui/AlertBanner.jsx'
 import PlanModal from '../components/RenewalPlanModal.jsx'   // Genel Bakış kartıyla ortak (2026-09-19)
+import ForecastDomainsPanel from './ForecastDomainsPanel.jsx'   // alan adı bitişleri — ayrı seri (2026-09-22, F)
 import StatusBlock from '../components/ui/StatusBlock.jsx'
 import SearchableSelect from '../components/ui/SearchableSelect.jsx'
 import ModalShell from '../components/ui/ModalShell.jsx'
@@ -360,11 +362,17 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
       date: r.renew_by_key || r.expiry_key, label: r.domain, title: `${r.domain} · ${t('forecast.csvRenewBy')} ${r.renew_by_key || '—'} · ${t('forecast.csvExpiry')} ${r.expiry_key || '—'}`,
       tone: r.cls === 'overdue' || r.cls === 'critical' ? 'bad' : r.cls === 'high' || r.window === 'late' ? 'warn' : 'info', onClick: () => onSelectDomain?.(r.domain),
     })),
+    // Alan adı (registrar) bitişleri de takvimde — ayrı ton/etiket (2026-09-22, F)
+    ...(data?.domains || []).filter((d) => d.expiry_date).map((d) => ({
+      date: String(d.expiry_date).slice(0, 10), label: '🌐 ' + d.domain, title: `${d.domain} · ${t('forecast.domTitle')} · ${String(d.expiry_date).slice(0, 10)}`,
+      tone: d.days_remaining != null && d.days_remaining <= (d.critical_days ?? 7) ? 'bad' : d.days_remaining != null && d.days_remaining <= (d.warning_days ?? 30) ? 'warn' : 'info',
+      onClick: () => navigateTo('domain', { monitor: d.id }),
+    })),
     // Planlı yenileme günü de olay (ISSUE-008)
     ...certs.filter((c) => c.renewal_plan_state === 'planned' && c.renewal_planned_at).map((c) => ({
       date: c.renewal_planned_at, label: c.domain, title: `${c.domain} · ${t('forecast.hmPlanned', c.renewal_planned_at)}`, tone: 'ok', onClick: () => onSelectDomain?.(c.domain),
     })),
-  ], [monthList, certs, onSelectDomain, t])
+  ], [monthList, certs, data, onSelectDomain, t])
 
   async function checkNow(domain) {
     setBusyDomain(domain)
@@ -627,6 +635,8 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
               )}
             </div>
           </div>
+          {/* ── 07 Alan adı (registrar) bitişleri — sertifika serisinden AYRI (2026-09-22, F) ── */}
+          <ForecastDomainsPanel domains={data?.domains || []} t={t} num="07" />
         </>
       )}
 

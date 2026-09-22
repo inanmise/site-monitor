@@ -3106,7 +3106,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .dom-epp-chip { font-size: .68em; font-weight: 600; padding: 1px 7px; border-radius: 10px; white-space: nowrap;
   background: rgba(124,58,237,.1); color: #6d28d9; border: 1px solid rgba(124,58,237,.28); }
 [data-theme="dark"] .dom-epp-chip { color: #c4b5fd; }
-.dom-rt-grid { grid-template-columns: 1.3fr .6fr .9fr .5fr .85fr 1.2fr 1.1fr; }
+/* F2 (2026-09-22): .upt-rt-grid daha SONRA tanımlı ve aynı özgüllükte → bu sütun tanımı hiç uygulanmıyor, tablo 4 sütuna kırılıyordu */
+.upt-rt-grid.dom-rt-grid { grid-template-columns: 150px 120px 90px 64px 90px minmax(0, 1fr); }
+.dom-rt-ipcount { color: var(--text-muted); font-weight: 400; }
 .dom-st { font-weight: 600; }
 .dom-st--up { color: #15803d; }
 .dom-st--warn { color: #b45309; }
@@ -3114,6 +3116,64 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .dom-st--unknown { color: var(--text-muted); }
 /* Kart hero — kalan gün (genel bakış/sertifika kartı stili) + bitiş satırı */
 .dom-hero { padding: 6px 0 2px; }
+/* Kart zenginleştirme (2026-09-22): ömür çubuğu satırı, kısaltılan registrar, koruma rozetleri */
+.dom-hero-row { display: flex; align-items: center; gap: 14px; }
+/* Vade Takvimi → Alan adı bitişleri paneli (2026-09-22, F): mor = alan adı serisi (sertifika renklerinden ayrı) */
+.fc-domains { border-top: 3px solid #7c3aed; }
+.fc-domains-note { font-size: .82em; color: var(--text-muted); margin: 0 0 10px; }
+.fc-domains-kpis { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.fc-domains-strip { display: flex; align-items: flex-end; gap: 1px; height: 46px; padding: 2px 0; border-bottom: 1px solid var(--border); }
+.fc-domains-bar { flex: 1 1 0; min-width: 1px; background: var(--border); height: 3px; border-radius: 2px 2px 0 0; }
+.fc-domains-bar.has { background: #7c3aed; cursor: help; }
+.fc-domains-strip-foot { display: flex; justify-content: space-between; font-size: .72em; color: var(--text-muted); margin: 2px 0 8px; }
+.fc-domains-list li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fc-domains-link { display: inline-flex; align-items: center; gap: 4px; }
+[data-theme="dark"] .fc-domains-bar.has { background: #a78bfa; }
+/* Yenileme planı rozeti (2026-09-22, H) */
+.dom-plan-row { margin-top: 6px; }
+.dom-plan-chip { max-width: 100%; }
+/* Domain Kaydı → Hatırlatmalar (2026-09-22, E) */
+.dreg-rem-thresholds { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }
+.dreg-rem-chip { font-size: .74em; font-weight: 700; padding: 2px 9px; border-radius: 10px; border: 1px solid var(--border); color: var(--text-muted); background: var(--bg-card); }
+.dreg-rem-chip--sent { color: #15803d; border-color: #86efac; background: #f0fdf4; }
+.dreg-rem-chip--covered { color: #475569; border-color: #cbd5e1; background: #f8fafc; }
+.dreg-rem-chip--skipped { color: #b45309; border-color: #fcd34d; background: #fffbeb; }
+.dreg-rem-chip--due { color: #dc2626; border-color: #fca5a5; background: #fef2f2; }
+.dreg-rem-legend { font-size: .76em; color: var(--text-muted); margin-bottom: 6px; }
+.dreg-rem-list li { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.dreg-rem-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+.dreg-rem-dot--sent { background: #15803d; } .dreg-rem-dot--covered { background: #94a3b8; } .dreg-rem-dot--skipped { background: #f59e0b; }
+[data-theme="dark"] .dreg-rem-chip--sent { background: rgba(21,128,61,.18); } [data-theme="dark"] .dreg-rem-chip--due { background: rgba(220,38,38,.18); } [data-theme="dark"] .dreg-rem-chip--covered { background: rgba(148,163,184,.15); } [data-theme="dark"] .dreg-rem-chip--skipped { background: rgba(245,158,11,.18); }
+/* Kalan-gün trendi (2026-09-22, I) */
+.dom-trend { margin: 6px 0 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); }
+.dom-trend--empty { font-size: .82em; color: var(--text-muted); }
+.dom-trend-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.dom-trend-title { display: inline-flex; align-items: center; gap: 5px; font-size: .78em; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+.dom-trend-legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: .74em; color: var(--text-muted); }
+.dom-trend-leg::before { content: ''; display: inline-block; width: 10px; height: 2px; margin-right: 4px; vertical-align: middle; background: currentColor; }
+.dom-trend-leg--warn { color: #e07b00; } .dom-trend-leg--crit { color: #dc2626; } .dom-trend-leg--chg { color: #7c3aed; } .dom-trend-leg--renew { color: #15803d; }
+.dom-trend-leg--chg::before { width: 8px; height: 8px; border-radius: 50%; }
+.dom-trend-svg { display: block; width: 100%; height: 96px; }
+.dom-trend-line { fill: none; stroke: var(--primary); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.dom-trend-th { stroke-width: 1; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
+.dom-trend-th--warn { stroke: #e07b00; } .dom-trend-th--crit { stroke: #dc2626; }
+.dom-trend-renew { stroke: #15803d; stroke-width: 2; stroke-dasharray: 2 3; vector-effect: non-scaling-stroke; }
+.dom-trend-marks { position: relative; height: 12px; }
+.dom-trend-mark { position: absolute; top: 1px; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%; background: #7c3aed; border: 2px solid var(--bg-card); cursor: help; }
+.dom-trend-foot { display: flex; justify-content: space-between; gap: 8px; font-size: .74em; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+/* Domain Kaydı sekmesi: "—" için kısa neden metni (2026-09-22, K) */
+.dreg-why { font-size: .82em; font-weight: 400; color: var(--text-muted); }
+.dreg-why--row { grid-column: 1 / -1; margin-top: -4px; }
+.dom-life-bar { --pg-fill: var(--text-light); }
+.dom-registrar { display: flex; align-items: center; gap: 5px; font-size: .78em; color: var(--text-muted); margin-top: 2px; min-width: 0; }
+.dom-registrar span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dom-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.dom-badge { display: inline-flex; align-items: center; gap: 4px; font-size: .7em; font-weight: 600; padding: 2px 7px; border-radius: 10px; white-space: nowrap; background: var(--bg-hover); color: var(--text-light); }
+.dom-badge--ok { color: #15803d; background: #f0fdf4; }
+.dom-badge--bad { color: #dc2626; background: #fef2f2; }
+.dom-badge--muted { color: var(--text-muted); }
+[data-theme="dark"] .dom-badge--ok { background: rgba(21,128,61,.18); }
+[data-theme="dark"] .dom-badge--bad { background: rgba(220,38,38,.18); }
 .dom-hero-number { font-size: 2.4em; font-weight: 800; line-height: 1; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .dom-hero-label { margin-top: 3px; font-size: .8em; font-weight: 500; color: var(--text-muted); }
 .dom-hero-expiry { margin-top: 6px; display: inline-flex; align-items: center; gap: 5px; font-size: .82em; font-weight: 600; color: var(--text-muted); }
@@ -11946,6 +12006,12 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .fc-show-more:hover { filter: brightness(1.1); }
 /* Uyarılar → Ağ kesinti geçmişi katlama düğmesi (QA ISSUE-002, 2026-09-21) */
 .outage-history-toggle { margin-top: 10px; }
+/* Envanter formu: vekil AÇIK/KAPALI anahtarı — Satın Alan'ın yanında (2026-09-22) */
+.inv-proxy-field { display: flex; flex-direction: column; gap: 5px; font-size: .88em; font-weight: 600; min-width: 0; }
+.inv-proxy-label { display: block; }
+.inv-proxy-switch-row { display: inline-flex; align-items: center; gap: 10px; min-height: 38px; }
+.inv-proxy-state { font-size: .8em; font-weight: 700; letter-spacing: .04em; color: var(--text-light); }
+.inv-proxy-state.is-on { color: var(--primary); }
 
 /* ── Pie empty state ── */
 .fc-pie-empty { display: flex; flex-direction: column; }

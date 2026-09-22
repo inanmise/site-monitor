@@ -161,6 +161,8 @@ public final class AuditEventCatalog {
             "MONITOR_NOTE_ADD",
             "MONITOR_NOTE_DELETE",
             "MONITOR_NOTE_EDIT",
+            "MONITOR_RENEWAL_PLANNED",
+            "MONITOR_RENEWAL_PLAN_CLEARED",
             "MONITOR_RESTORE",
             "MONITOR_TEST",
             "MONITOR_TRIGGER",

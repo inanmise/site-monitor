@@ -135,6 +135,12 @@ public class SchedulerService {
     /** HTTP/Keyword/Sayfa vekil kararı (2026-09-21) — isteğe bağlı: bean yoksa doğrudan (bugünkü davranış). */
     @Autowired(required = false)
     private ProxyPolicyService proxyPolicy;
+    /** Alan adı süre-bitişi hatırlatmaları (2026-09-22, madde E) — isteğe bağlı: bean yoksa hatırlatma yok. */
+    @Autowired(required = false)
+    private DomainExpiryReminderService domainReminders;
+    /** Alan adı yenileme planı — yenileme görülünce otomatik kapatma (2026-09-22, madde H). */
+    @Autowired(required = false)
+    private DomainRenewalPlanService domainRenewalPlans;
     /** Durum (uptime) yoklaması için kurumsal vekil (2026-09-21) — isteğe bağlı: bean yoksa doğrudan. */
     @Autowired(required = false)
     private ProxySettings proxySettings;
@@ -867,6 +873,12 @@ public class SchedulerService {
         patch("ALTER TABLE domain_checks ADD COLUMN blacklist_status VARCHAR(20)");
         patch("ALTER TABLE domain_checks ADD COLUMN blacklist_detail TEXT");
         patch("ALTER TABLE domain_checks ADD COLUMN change_detail TEXT");
+        // Alan adı yenileme planı (2026-09-22, H) — envanterdeki renewal_planned_* eşi; ddl-auto da ekler, açık patch proje geleneği.
+        patch("ALTER TABLE domain_monitors ADD COLUMN renewal_planned_at VARCHAR(10)");
+        patch("ALTER TABLE domain_monitors ADD COLUMN renewal_planned_by VARCHAR(100)");
+        patch("ALTER TABLE domain_monitors ADD COLUMN renewal_planned_by_name VARCHAR(255)");
+        patch("ALTER TABLE domain_monitors ADD COLUMN renewal_planned_note VARCHAR(500)");
+        patch("ALTER TABLE domain_monitors ADD COLUMN renewal_planned_expiry VARCHAR(40)");
         // Sorun bildirimleri genelleştirmesi (2026-08): login_issue_reports artık üç kaynağı taşır
         // (LOGIN | CLIENT_ERROR | USER_REPORT) + otomatik bağlam alanları. Eski satırlar LOGIN'e backfill edilir.
         patch("ALTER TABLE login_issue_reports ADD COLUMN source TEXT");
@@ -4724,6 +4736,8 @@ public class SchedulerService {
         for (DomainMonitor m : monitors) {
             try {
                 Map<String, Object> r = domainCheckerService.check(m);   // yeni domain_checks satırı persist eder
+                if (domainReminders != null) domainReminders.evaluate(m, r);   // elle kontrol de eşik hatırlatmasını tetikler
+                if (domainRenewalPlans != null) domainRenewalPlans.onCheckResult(m, r);   // yenileme görüldüyse plan kapanır
                 evaluateDomainAlarmsNow(m, r);                           // yenilendiyse EXPIRY alarmı kapanır; hâlâ kritikse reAlert dedupe → yeni bildirim YOK
                 Integer days = r.get("days_remaining") instanceof Number n ? n.intValue() : null;
                 int warn = m.getWarningDays() != null ? m.getWarningDays() : 30;
@@ -4760,6 +4774,8 @@ public class SchedulerService {
             try {
                 Map<String, Object> r = domainCheckerService.check(m);   // DomainCheck persist eder
                 checked++;
+                if (domainReminders != null) domainReminders.evaluate(m, r);   // eşik hatırlatmaları (bir kez / eşik / bitiş)
+                if (domainRenewalPlans != null) domainRenewalPlans.onCheckResult(m, r);   // yenileme görüldüyse plan kapanır
                 addDomainSweepItems(m, r, unknownSweep, expirySweep, statusSweep, changedSweep,
                         lockSweep, blacklistSweep);
             } catch (Exception e) {

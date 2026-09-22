@@ -1283,6 +1283,13 @@ export const api = {
     // Domain Kaydı (registration) — DB'deki son bilgi; live=true → anlık RDAP sorgusu.
     getDomainRegistration: (id, { live } = {}) =>
       request(`/monitoring/domain/${id}/registration${live ? '?live=true' : ''}`),
+    // Kalan-gün trendi (2026-09-22): günlük seri + değişiklik işaretleri
+    getDomainTrend: (id, days = 90) => request(`/monitoring/domain/${id}/trend?days=${days}`),
+    // Gönderilen süre-bitişi hatırlatmaları (2026-09-22): eşikler + kayıtlar
+    getDomainReminders: (id) => request(`/monitoring/domain/${id}/reminders`),
+    // Yenileme planı (2026-09-22, H) — sertifikadaki forecastPlan/forecastUnplan eşi, izleme kimliğiyle
+    domainRenewalPlan:   (id, date, note) => request(`/monitoring/domain/${id}/renewal-plan`, { method: 'POST', body: JSON.stringify({ date, note }) }),
+    domainRenewalUnplan: (id) => request(`/monitoring/domain/${id}/renewal-plan`, { method: 'DELETE' }),
 
     // Ping
     getPingMonitors:   () => request('/monitoring/ping'),

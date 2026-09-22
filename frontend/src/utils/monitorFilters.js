@@ -60,9 +60,10 @@ export function matchesTeamAndGroup(m, teamFilter, groupFilter) {
  *
  * @returns {object} useUrlQuerySync'e yayılacak (spread) ortak parametreler
  */
-export function monitorUrlState({ teamFilter, groupFilter, tagFilter = 'all', search, statFilter, pager }) {
+export function monitorUrlState({ teamFilter, groupFilter, tagFilter = 'all', proxyFilter = 'all', search, statFilter, pager }) {
   return {
     team: teamFilter === 'all' ? null : teamFilter,
+    via: proxyFilter === 'all' ? null : proxyFilter,   // vekil süzgeci (2026-09-22): proxy | direct
     group: groupFilter === 'all' ? null : groupFilter,
     tag: tagFilter === 'all' ? null : tagFilter,   // etiket filtresi (2026-09-18)
     q: search.trim() || null,
@@ -70,6 +71,17 @@ export function monitorUrlState({ teamFilter, groupFilter, tagFilter = 'all', se
     page: pager.page > 1 ? pager.page : null,
     ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
   }
+}
+
+/**
+ * Vekil (proxy) süzgeci (2026-09-22): 'all' → süzgeç yok; 'proxy' → yalnız gerçekte vekilden çıkanlar
+ * (`proxy_effective`, kaydedilen tercih değil — AUTO seçili ama envanter Hayır olan kayıt 'direct'tir);
+ * 'direct' → geri kalanı (alan yoksa doğrudan sayılır).
+ */
+export function matchesProxy(m, proxyFilter) {
+  if (!proxyFilter || proxyFilter === 'all') return true
+  const via = m?.proxy_effective === 'proxy' ? 'proxy' : 'direct'
+  return via === proxyFilter
 }
 
 /** Virgülle ayrılmış etiket dizesini temiz listeye çevirir ("prod, kritik" → ['prod','kritik']). */

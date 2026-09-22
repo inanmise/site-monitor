@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
 import { dateLocale } from '../i18n/dateLocale.js'
 import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
@@ -29,7 +29,7 @@ import IntervalSlider from './ui/IntervalSlider.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
-import { RefreshCw, Plus, Trash2, CalendarClock, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Building2, Activity, Calendar, Inbox } from 'lucide-react'
+import { RefreshCw, Plus, Trash2, CalendarClock, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Building2, Activity, Calendar, Inbox, Lock, LockOpen, ShieldCheck, ShieldOff, ListX, Server, Download, ChevronDown, CalendarPlus } from 'lucide-react'
 import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
 import ModalScrollHint from './ui/ModalScrollHint.jsx'
 import { duplicateName } from '../utils/duplicateName.js'
@@ -38,6 +38,7 @@ import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import DomainRegistrationTab from './DomainRegistrationTab.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import DomainExpiryTrace from './DomainExpiryTrace.jsx'
+import DomainExpiryTrend from './DomainExpiryTrend.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
@@ -47,11 +48,28 @@ import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { useEscapeKey } from '../hooks/useEscapeKey.js'
+import { ProgressBar } from './ui/Progress.jsx'
+import { eppLabel, domainLife } from '../utils/domainEpp.js'
+import { exportDomainsCsv, exportDomainsPdf } from '../utils/exportDomains.js'
+import RenewalPlanModal from './RenewalPlanModal.jsx'   // yenileme planı (2026-09-22, H) — sertifikayla ortak modal
+import { formatDateOnly } from '../api/client'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
 const REFRESH_INTERVAL = 60
-const SORTS = ['days_asc', 'days_desc', 'name']
+const SORTS = ['days_asc', 'days_desc', 'name', 'registrar', 'team', 'changed']   // registrar/takım/son değişiklik (2026-09-22, B)
+/** Hızlı süzgeç (2026-09-22, B): URL `dq`. 'all' | 'nolock' | 'unsigned' | 'soon' | 'rdap' | 'whois' | 'alarm' */
+const QUICK = ['all', 'soon', 'nolock', 'unsigned', 'alarm', 'rdap', 'whois']
+const SOON_DAYS = 30
+const QUICK_PRED = {
+  all: () => true,
+  soon: m => m.days_remaining != null && m.days_remaining <= SOON_DAYS,
+  nolock: m => m.transfer_lock === 'NONE',
+  unsigned: m => m.dnssec === 'unsigned',
+  alarm: m => !!m.active_alarm,
+  rdap: m => m.source === 'RDAP',
+  whois: m => m.source === 'WHOIS',
+}
 // Domain kaydi gunde birkac kez sorgulanir; taban SAAT olcegindedir (WHOIS/RDAP nezaketi).
 // Diger turlerdeki dakika olcegi burada anlamsiz olurdu — bu yuzden liste TURE OZEL.
 const INTERVALS = [
@@ -95,6 +113,27 @@ function sourceTag(source, provider) {
   if (!source) return null
   const p = provider && WHOIS_PROVIDER_LABEL[provider]
   return (source === 'WHOIS' && p) ? `WHOIS · ${p}` : source
+}
+
+/**
+ * Kart koruma rozetleri (2026-09-22): transfer kilidi, DNSSEC, kara liste, NS sayısı — kartta yalnız EPP kodları
+ * vardı; kilit/DNSSEC/kara liste yalnız Domain Kaydı sekmesinde görülüyordu. Kaynak yoksa (UNKNOWN) "Doğrulanamadı",
+ * izleme kapalıysa (SKIPPED) rozet çizilmez — kapalı bir şeyi "temiz" göstermek yanlış iddia olurdu.
+ */
+function DomainProtectionBadges({ m, t }) {
+  const lock = m.transfer_lock
+  const lockCls = lock === 'NONE' ? 'bad' : (lock === 'BOTH' || lock === 'SERVER' || lock === 'CLIENT') ? 'ok' : 'muted'
+  const lockLabel = lock === 'BOTH' ? t('dom.lockBoth') : lock === 'SERVER' ? t('dom.lockServer') : lock === 'CLIENT' ? t('dom.lockClient') : lock === 'NONE' ? t('dom.lockNone') : t('dom.lockUnknown')
+  const bl = m.blacklist_status
+  const nsCount = Array.isArray(m.nameservers) ? m.nameservers.length : String(m.nameservers || '').split(',').filter(Boolean).length
+  return (
+    <div className="dom-badges">
+      <span className={`dom-badge dom-badge--${lockCls}`} title={t('dom.transferLock')}>{lockCls === 'ok' ? <Lock size={11} /> : lockCls === 'bad' ? <LockOpen size={11} /> : <ShieldOff size={11} />}{lockLabel}</span>
+      {m.dnssec && <span className={`dom-badge dom-badge--${m.dnssec === 'signed' ? 'ok' : 'muted'}`} title="DNSSEC">{m.dnssec === 'signed' ? <ShieldCheck size={11} /> : <ShieldOff size={11} />}DNSSEC {m.dnssec === 'signed' ? t('dreg.dnssecSigned') : t('dreg.dnssecUnsigned')}</span>}
+      {bl && bl !== 'SKIPPED' && <span className={`dom-badge dom-badge--${bl === 'LISTED' ? 'bad' : bl === 'CLEAN' ? 'ok' : 'muted'}`} title={t('dom.blacklist')}><ListX size={11} />{t('dom.blacklist')}: {bl === 'LISTED' ? t('dom.blListed').replace('{n}', String((m.blacklist_detail || '').split(/\r?\n/).filter(Boolean).length || '?')) : bl === 'CLEAN' ? t('dom.blClean') : t('dom.blUnknown')}</span>}
+      {nsCount > 0 && <span className="dom-badge dom-badge--muted" title={Array.isArray(m.nameservers) ? m.nameservers.join(', ') : String(m.nameservers || '')}><Server size={11} />{t('dom.nsCount', nsCount)}</span>}
+    </div>
+  )
 }
 
 export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeams = [] }) {
@@ -149,9 +188,22 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
   const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))   // etiket filtresi (2026-09-18)
   const [sortBy, setSortBy] = useState(() => readUrlParam('sort', 'days_asc'))
+  const [quick, setQuick] = useState(() => { const v = readUrlParam('dq', 'all'); return QUICK.includes(v) ? v : 'all' })   // hızlı süzgeç (2026-09-22)
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
   const [secondsSince, setSecondsSince] = useState(0)
+  // Dışa aktarım menüsü (2026-09-22, D): görünen (süzülmüş + sıralanmış) liste CSV/PDF — envanterle aynı menü deseni
+  const [exportOpen, setExportOpen] = useState(false)
+  const [planRow, setPlanRow] = useState(null)   // yenileme planı modalı: izleme satırı (2026-09-22, H)
+  const [exporting, setExporting] = useState(false)
+  const exportRef = useRef(null)
+  useEffect(() => {
+    if (!exportOpen) return
+    const onClick = (e) => { if (!exportRef.current?.contains(e.target)) setExportOpen(false) }
+    const onKey = (e) => { if (e.key === 'Escape') setExportOpen(false) }
+    document.addEventListener('mousedown', onClick); document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onClick); document.removeEventListener('keydown', onKey) }
+  }, [exportOpen])
 
   const load = useCallback(async () => {
     // HATA DALI: eskiden else yoktu → API düşünce liste boş kalıyor ve ekran
@@ -418,6 +470,36 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
     }
   }
 
+  /** Plan kaydedildi/kaldırıldı: sunucunun döndürdüğü satırı listeye ve açık detaya işle (yeniden yükleme yok). */
+  function applyPlanRow(row) {
+    if (!row?.id) return
+    setMonitors(prev => prev.map(x => x.id === row.id ? { ...x, ...row } : x))
+    setSelected(sel => (sel && sel.id === row.id) ? { ...sel, ...row } : sel)
+    setPlanRow(null)
+  }
+  /** Plan rozeti: gecikmiş (plan tarihi geçti, bitiş ilerlemedi) kırmızı; aksi hâlde bilgi. */
+  function planBadge(m) {
+    if (!m.renewal_planned_at) return null
+    return (
+      <button type="button" className={`ccx-chip ${m.renewal_overdue ? 'ccx-chip--bad' : 'ccx-chip--info'} dom-plan-chip`}
+        title={[m.renewal_planned_by, m.renewal_planned_note].filter(Boolean).join(' · ')}
+        onClick={e => { e.stopPropagation(); if (canManageRow(m)) setPlanRow(m) }}>
+        <CalendarPlus size={11} />{m.renewal_overdue ? t('ccx.planOverdue', formatDateOnly(m.renewal_planned_at)) : t('ccx.plan', formatDateOnly(m.renewal_planned_at))}
+        {m.renewal_planned_by && <span className="ccx-muted"> · {m.renewal_planned_by}</span>}
+      </button>
+    )
+  }
+
+  async function doExport(kind) {
+    setExportOpen(false)
+    if (displayMonitors.length === 0) { toast.error(t('inv.exportNoData')); return }
+    setExporting(true)
+    try {
+      const n = kind === 'csv' ? exportDomainsCsv(displayMonitors, t) : await exportDomainsPdf(displayMonitors, t)
+      toast.success(t('inv.exportSuccess', n))
+    } catch { toast.error(t('inv.exportError')) } finally { setExporting(false) }
+  }
+
   const { teamOptions, hasTeamOptions } = useTeamOptions(monitors)
   const teamSelectOptions = useMemo(() => [...(isAdmin ? [{ value: '', label: t('dom.noTeam') }] : []),   // "takımsız" yalnız admin: üye için takım zorunlu (2026-09-18)
     ...pickTeams.map(tm => ({ value: String(tm.id), label: tm.name }))], [isAdmin, pickTeams, t])
@@ -447,18 +529,20 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   // Form içi grup dropdown'ı takım+tür kapsamlı endpoint'ten (liste filtresi değil): admin başka takımın grubunu görmez.
   const groupSelectOptions = useMemo(() => teamGroups.map(g => ({ value: g.name, label: g.name })), [teamGroups])
   const sortOptions = useMemo(() => SORTS.map(s => ({ value: s, label: t('dom.sort_' + s) })), [t])
+  const quickOptions = useMemo(() => QUICK.map(q => ({ value: q, label: q === 'soon' ? t('dom.quick_soon', SOON_DAYS) : t('dom.quick_' + q) })), [t])
 
   const scoped = useMemo(() => monitors.filter(m => {
     if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
     if (!matchesTag(m, tagFilter)) return false
+    if (!(QUICK_PRED[quick] || QUICK_PRED.all)(m)) return false
     if (matchesGroupOrTagText(m, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
     if (!search.trim()) return true
     const q = search.trim().toLowerCase()
     return (m.domain || '').toLowerCase().includes(q) || (m.name || '').toLowerCase().includes(q) || (m.registrar || '').toLowerCase().includes(q)
-  }), [monitors, teamFilter, groupFilter, tagFilter, search])
+  }), [monitors, teamFilter, groupFilter, tagFilter, quick, search])
 
   const counts = useMemo(() => {
-    const c = { total: scoped.length, ok: 0, warning: 0, critical: 0, unknown: 0, changed: 0 }
+    const c = { total: scoped.length, ok: 0, warning: 0, critical: 0, unknown: 0, changed: 0, soon: 0, nolock: 0 }
     for (const m of scoped) {
       const s = m.status
       if (s === 'OK') c.ok++
@@ -466,6 +550,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
       else if (s === 'CRITICAL') c.critical++
       else c.unknown++
       if (m.changed) c.changed++
+      if (m.days_remaining != null && m.days_remaining <= SOON_DAYS) c.soon++
+      if (m.transfer_lock === 'NONE') c.nolock++
     }
     return c
   }, [scoped])
@@ -477,14 +563,19 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         ok: m => m.status === 'OK', warning: m => m.status === 'WARNING',
         critical: m => m.status === 'CRITICAL', unknown: m => m.status !== 'OK' && m.status !== 'WARNING' && m.status !== 'CRITICAL',
         changed: m => m.changed,
+        soon: QUICK_PRED.soon, nolock: QUICK_PRED.nolock,
       }[statFilter]
       if (pred) list = list.filter(pred)
     }
     const dv = (m) => (m.days_remaining == null ? (sortBy === 'days_asc' ? 1e9 : -1e9) : m.days_remaining)
     const sorted = [...list]
+    const byDomain = (a, b) => (a.domain || '').localeCompare(b.domain || '')
     if (sortBy === 'days_asc') sorted.sort((a, b) => dv(a) - dv(b))
     else if (sortBy === 'days_desc') sorted.sort((a, b) => dv(b) - dv(a))
-    else sorted.sort((a, b) => (a.domain || '').localeCompare(b.domain || ''))
+    else if (sortBy === 'registrar') sorted.sort((a, b) => (a.registrar || '\uffff').localeCompare(b.registrar || '\uffff') || byDomain(a, b))
+    else if (sortBy === 'team') sorted.sort((a, b) => (a.team_name || '\uffff').localeCompare(b.team_name || '\uffff') || byDomain(a, b))
+    else if (sortBy === 'changed') sorted.sort((a, b) => String(b.last_changed || '').localeCompare(String(a.last_changed || '')) || byDomain(a, b))   // en yeni kayıt değişikliği önce
+    else sorted.sort(byDomain)
     return sorted
   }, [scoped, statFilter, sortBy])
 
@@ -493,7 +584,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
   // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(displayMonitors, {
-    listKey: 'domain-monitors', resetDeps: [search, teamFilter, groupFilter, tagFilter, statFilter, sortBy],
+    listKey: 'domain-monitors', resetDeps: [search, teamFilter, groupFilter, tagFilter, quick, statFilter, sortBy],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
 
@@ -502,6 +593,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   useUrlQuerySync({
     ...monitorUrlState({ teamFilter, groupFilter, tagFilter, search, statFilter, pager }),
     sort: sortBy !== 'days_asc' ? sortBy : null,
+    dq: quick !== 'all' ? quick : null,   // hızlı süzgeç (2026-09-22)
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'control' ? detailTab : null,
     // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
@@ -514,6 +606,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
     { key: 'critical', Icon: ShieldAlert,      label: t('dom.dashCritical'), value: counts.critical, cls: 'critical' },
     { key: 'unknown',  Icon: HelpCircle,       label: t('dom.dashUnknown'),  value: counts.unknown,  cls: 'high'     },
     { key: 'changed',  Icon: Activity, label: t('dom.dashChanged'),  value: counts.changed,  cls: 'error'    },
+    { key: 'soon',     Icon: CalendarClock,    label: t('dom.dashSoon', SOON_DAYS), value: counts.soon, cls: 'warning' },
+    { key: 'nolock',   Icon: LockOpen,         label: t('dom.dashNoLock'),   value: counts.nolock,   cls: 'high'     },
   ]
   const onStatClick = (key) => setStatFilter(k => k === key ? null : key)
   const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }
@@ -559,12 +653,30 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
             done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
             onClick={checkRun.openPicker} />
           <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+          <div className="sqlpg-menu-wrap" ref={exportRef}>
+            <button type="button" className={`btn btn-sm upt-refresh-btn sqlpg-menu-trigger${exportOpen ? ' is-open' : ''}`}
+              onClick={() => setExportOpen(o => !o)} disabled={exporting} aria-haspopup="menu" aria-expanded={exportOpen}>
+              <Download size={14} />{t('inv.export')}<ChevronDown size={12} className="sqlpg-menu-chev" />
+            </button>
+            {exportOpen && (
+              <div className="sqlpg-menu inv-export-menu" role="menu">
+                <button type="button" className="sqlpg-item" role="menuitem" onClick={() => doExport('csv')}>
+                  <div className="sqlpg-item-label">{t('inv.exportCsv')}</div>
+                  <div className="sqlpg-item-preview">{t('dom.exportCsvHint', displayMonitors.length)}</div>
+                </button>
+                <button type="button" className="sqlpg-item" role="menuitem" onClick={() => doExport('pdf')}>
+                  <div className="sqlpg-item-label">{t('inv.exportPdf')}</div>
+                  <div className="sqlpg-item-preview">{t('dom.exportPdfHint', displayMonitors.length)}</div>
+                </button>
+              </div>
+            )}
+          </div>
           <MonitorGuideButton type="domain" />
           {canWrite && <button className="btn btn-sm btn-primary" onClick={openNew}><Plus size={14} />{t('dom.addMonitor')}</button>}
         </div>
       </div>
 
-      <MonitorHowBox bullets={[t('dom.how1'), t('dom.how2'), t('dom.how3'), t('dom.how4'), t('dom.how5'), t('dom.how6'), t('dom.how7')]} />
+      <MonitorHowBox bullets={[t('dom.how1'), t('dom.how2'), t('dom.how3'), t('dom.how4'), t('dom.how5'), t('dom.how6'), t('dom.how7'), t('dom.how8')]} />
 
       <MonitorStatsSection
         loading={loading} total={monitors.length}
@@ -576,6 +688,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
           <SearchableSelect value={sortBy} onChange={setSortBy} options={sortOptions} />
+          <SearchableSelect value={quick} onChange={setQuick} options={quickOptions} ariaLabel={t('dom.quickLabel')} />
           {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />}
           {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} />}
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />}
@@ -592,6 +705,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         <StatusBlock tone="neutral" icon={Inbox} title={canWrite ? t('dom.noMonitorsAdmin') : t('dom.noMonitors')} description={canWrite ? t('empty.hintMonitorsAdmin') : t('empty.hintMonitors')} />
       ) : (
         <>
+        {/* Süzgeç/arama hiçbir izlemeyi bırakmadıysa boş alan yerine açık mesaj (2026-09-22) */}
+        {displayMonitors.length === 0 && <StatusBlock tone="neutral" icon={Inbox} title={t('mon.noFilterMatch')} description={t('empty.hintFilter')} />}
         <div className="upt-grid">
           {pager.pageItems.map(m => (
             <div key={m.id} className={`upt-card upt-card--${statusCls(m.status)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
@@ -599,7 +714,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
               <div className="upt-card-top">
                 {statusBadge(m)}
                 {alarmBadge(m)}<MaintenanceBadge target={m.domain} />
-                {m.changed && <span className="dom-changed-ico" title={t('dom.changedTip')}><Activity size={13} /></span>}
+                {m.changed && <span className="dom-changed-ico" title={m.change_detail ? `${t('dom.changedTip')} — ${m.change_detail}` : t('dom.changedTip')}><Activity size={13} /></span>}
                 <span className="upt-card-top-right">
                   {m.source && <span className="upt-port-tag" title={m.whois_provider ? t('dom.sourceVia') : undefined}>{sourceTag(m.source, m.whois_provider)}</span>}
                   <CopyLinkButton iconOnly url={monitorDeepLink('domain', m.id)} className="btn btn-sm upt-card-copy" />
@@ -607,20 +722,32 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
               </div>
               <div className="upt-card-domain" title={m.domain}>{m.domain}</div>
               {m.registrar && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '.78em', color: 'var(--text-muted)', marginTop: 2, wordBreak: 'break-word' }}>
-                  <Building2 size={12} />{m.registrar}
+                <div className="dom-registrar" title={m.registrar}>
+                  <Building2 size={12} /><span>{m.registrar}</span>
                 </div>
               )}
               <MonitorCardMeta monitor={m} />
               <div className="upt-card-divider" />
               <div className="dom-hero">
-                <div className="dom-hero-number" style={{ color: daysColor(m.days_remaining) }}>{m.days_remaining == null ? '—' : Math.abs(m.days_remaining)}</div>
+                {(() => { const life = domainLife(m.last_changed || m.registration_date, m.expiry_date); return (
+                <div className="dom-hero-row" title={life ? t('dom.lifeTip', fmtExpiry(m.last_changed || m.registration_date), life.elapsed, life.total) : undefined}>
+                  <div className="dom-hero-number" style={{ color: daysColor(m.days_remaining) }}>{m.days_remaining == null ? '—' : Math.abs(m.days_remaining)}</div>
+                  {/* Kayıt ömrü çubuğu (2026-09-22): sertifika kartındaki ömür çubuğunun eşi — oluşturma→bitiş */}
+                  {life && (
+                    <div className="cc-life-block">
+                      <ProgressBar value={life.pct} max={100} size="sm" decorative className="cc-life-bar dom-life-bar" />
+                      <div className="cc-life-caption">{life.elapsed} / {life.total} {t('card.daysUnit')}</div>
+                    </div>
+                  )}
+                </div>) })()}
                 <div className="dom-hero-label">{m.days_remaining != null && m.days_remaining < 0 ? t('dom.expiredAgo') : t('dom.daysLeft')}</div>
                 <div className="dom-hero-expiry"><Calendar size={12} /><span>{t('dom.expiresShort')} {fmtExpiry(m.expiry_date)}</span></div>
               </div>
+              <DomainProtectionBadges m={m} t={t} />
+              {planBadge(m) && <div className="dom-plan-row">{planBadge(m)}</div>}
               {Array.isArray(m.status_codes) && m.status_codes.length > 0 && (
                 <div className="dom-epp-row">
-                  {m.status_codes.slice(0, 4).map(sc => <span key={sc} className="dom-epp-chip">{sc}</span>)}
+                  {m.status_codes.slice(0, 4).map(sc => <span key={sc} className="dom-epp-chip" title={eppLabel(sc)}>{eppLabel(sc)}</span>)}
                   {m.status_codes.length > 4 && <span className="dom-epp-chip">+{m.status_codes.length - 4}</span>}
                 </div>
               )}
@@ -665,6 +792,11 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
                 deleting={deleting === selected.id}
                 deleteTitle={t('dom.delete')}
                 onClose={closeDetail}>
+                {canManageRow(selected) && (
+                  <button type="button" className="btn btn-sm upt-refresh-btn" onClick={() => setPlanRow(selected)} title={t('ccx.planCta')}>
+                    <CalendarPlus size={14} />{selected.renewal_planned_at ? formatDateOnly(selected.renewal_planned_at) : t('ccx.planCta')}
+                  </button>
+                )}
                 <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
               </MonitorModalActions>
             </div>
@@ -679,7 +811,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
             </div>
             {Array.isArray(selected.status_codes) && selected.status_codes.length > 0 && (
               <div className="dom-epp-row" style={{ padding: '0 4px 6px' }}>
-                {selected.status_codes.map(sc => <span key={sc} className="dom-epp-chip">{sc}</span>)}
+                {selected.status_codes.map(sc => <span key={sc} className="dom-epp-chip">{eppLabel(sc)}</span>)}
               </div>
             )}
             <div className="upt-modal-divider" />
@@ -703,8 +835,11 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
               )}
               <CheckHistoryTab kind="domain" monitorId={selected.id} listKey="domain-history" reloadSignal={histReload}
                 presets={[7, 30, 90, 365]} defaultPreset={30} gridClass="dom-rt-grid"
+                timeline={false}
+                renderAbove={({ preset }) => <DomainExpiryTrend monitorId={selected.id} reloadSignal={histReload}
+                  days={Number.isFinite(Number(preset)) ? Number(preset) : 90} />}
                 columns={[t('dom.colTime'), t('dom.colSource'), t('dom.colExpiry'),
-                  t('dom.daysLeft'), t('dom.colStatus'), t('dom.registrar'), t('dom.colIps')]}
+                  t('dom.daysLeft'), t('dom.colStatus'), t('dom.registrar')]}
                 renderRow={(c) => {
                   const cDays = c.days_remaining
                   const cIps = (Array.isArray(c.resolved_ips) ? c.resolved_ips : String(c.resolved_ips ?? '').split(',')).map(s => String(s).trim()).filter(Boolean)
@@ -714,8 +849,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
                     <span>{fmtExpiry(c.expiry_date)}</span>
                     <span style={{ color: daysColor(cDays), fontWeight: 600 }}>{cDays ?? '—'}</span>
                     <span className={`dom-st dom-st--${statusCls(c.status)}`}>{statusLabel(c.status)}{c.changed ? ' ⚑' : ''}</span>
-                    <span title={c.registrar} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.registrar || (c.error ? c.error : '—')}</span>
-                    <span title={cIps.join(', ')} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{cIps.length ? cIps.join(', ') : '—'}</span>
+                    {/* Çözülen IP ayrı sütun değil: 7. sütun tabloyu kırıyordu; IP registrar hücresinin tooltip'inde (Domain Kaydı sekmesinde tam liste) */}
+                    <span title={[c.registrar, cIps.length ? 'IP: ' + cIps.join(', ') : null].filter(Boolean).join(' · ')} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.registrar || (c.error ? c.error : '—')}{cIps.length ? <span className="dom-rt-ipcount"> · {cIps.length} IP</span> : null}</span>
                   </>)
                 }} />
             </>)}
@@ -808,6 +943,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
                 <input type="number" min="1" value={form.criticalDays} onChange={e => setForm(f => ({ ...f, criticalDays: Number(e.target.value) }))} /></label>
               <label className="full-width"><span>{t('dom.thresholds')}</span>
                 <input value={form.thresholdsCsv} placeholder="60,30,14,7,3,1" onChange={e => setForm(f => ({ ...f, thresholdsCsv: e.target.value }))} /></label>
+              <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('dom.thresholdsHint')}</div>
               <label className="full-width"><span>{t('dom.checkTimeout')}</span>
                 <input type="number" min="1000" max="30000" step="500" value={form.checkTimeoutMs}
                   placeholder={t('dom.checkTimeoutPh')}
@@ -885,6 +1021,15 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         </div>,
         document.body
       )}
+
+      {/* Yenileme planı (2026-09-22, H): sertifika envanteriyle ORTAK modal, izleme uçlarıyla */}
+      {planRow && <RenewalPlanModal
+        row={{ domain: planRow.domain, renewal_planned_at: planRow.renewal_planned_at, renewal_planned_note: planRow.renewal_planned_note,
+          expiry_key: planRow.expiry_date ? String(planRow.expiry_date).substring(0, 10) : null, renew_by_key: null }}
+        plan={(date, note) => api.monitoring.domainRenewalPlan(planRow.id, date, note)}
+        unplan={() => api.monitoring.domainRenewalUnplan(planRow.id)}
+        hint={t('dom.planHint', planRow.expiry_date ? formatDateOnly(String(planRow.expiry_date).substring(0, 10)) : '—')}
+        onClose={() => setPlanRow(null)} onSaved={applyPlanRow} onCleared={applyPlanRow} />}
 
       {/* ── Sorun Tanıla (Alan Adı Süre Bitişi Tanılama) Modal — en son portal: diğer modalların ÜSTÜNde durur ── */}
       {diag && createPortal(

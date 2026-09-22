@@ -71,7 +71,7 @@ class WeeklyAvailabilityReportServiceTest {
         when(emailService.sendHtmlWithAttachments(any(), any(), any(), any(), any(), any())).thenReturn("SENT");
         when(outageReportService.collect(any(), any(), any())).thenReturn(outageData(3, 1));
         when(outageReportService.pdf(any())).thenReturn(new byte[]{ 1, 2, 3 });
-        when(emailService.buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), any(), any(), any()))
+        when(emailService.buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn("<html></html>");
         // Varsayılan: dağıtım geçmişi boş → "dağıtım yapılmadı" satırı (rapor yine gider).
         when(deploymentHistory.currentEnvironment()).thenReturn("prod");
@@ -313,7 +313,7 @@ class WeeklyAvailabilityReportServiceTest {
         // Ek sessizce iliştirilseydi okuyanların çoğu — özellikle telefonda — fark etmezdi.
         ArgumentCaptor<EmailNotificationService.AttachmentInfo> attCap =
                 ArgumentCaptor.forClass(EmailNotificationService.AttachmentInfo.class);
-        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture(), any(), any(), any());
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture(), any(), any(), any(), any());
         assertThat(attCap.getValue()).isNotNull();
         assertThat(attCap.getValue().fileName()).endsWith(".pdf");
         assertThat(attCap.getValue().monitorTypeCount()).isEqualTo(MonitorTypeCatalog.ORDER.size());
@@ -352,7 +352,7 @@ class WeeklyAvailabilityReportServiceTest {
 
         ArgumentCaptor<EmailNotificationService.AttachmentInfo> attCap =
                 ArgumentCaptor.forClass(EmailNotificationService.AttachmentInfo.class);
-        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture(), any(), any(), any());
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture(), any(), any(), any(), any());
         assertThat(attCap.getValue()).isNull();      // gövdede ek bandı çizilmez
         verify(outageReportService, never()).pdf(any());
         assertThat(result.sent()).isEqualTo(1);      // rapor yine gitti
@@ -809,7 +809,7 @@ class WeeklyAvailabilityReportServiceTest {
         service.sendWeeklyReports(false);
         ArgumentCaptor<EmailNotificationService.DeploymentWeekly> cap =
                 ArgumentCaptor.forClass(EmailNotificationService.DeploymentWeekly.class);
-        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), any(), cap.capture(), any());
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), any(), cap.capture(), any(), any());
         assertThat(cap.getValue()).isNull();
         verify(emailService).sendHtmlWithAttachments(any(), any(), any(), any(), any(), any());
     }
@@ -852,7 +852,7 @@ class WeeklyAvailabilityReportServiceTest {
     private EmailNotificationService.PageSpeedWeekly capturePageSpeed() {
         ArgumentCaptor<EmailNotificationService.PageSpeedWeekly> cap =
                 ArgumentCaptor.forClass(EmailNotificationService.PageSpeedWeekly.class);
-        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), cap.capture(), any(), any());
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), cap.capture(), any(), any(), any());
         return cap.getValue();
     }
 
@@ -952,5 +952,68 @@ class WeeklyAvailabilityReportServiceTest {
 
         when(latestCheckRepo.findWeakAlgorithmCandidates()).thenThrow(new RuntimeException("db"));
         assertThat(service.collectWeakAlgo(java.util.List.of(a, b))).isNull();
+    }
+
+    @Test
+    @DisplayName("2026-09-22 (G): collectDomainExpiry — takımın alan adları: 90 gün içindekiler + gecikmiş plan satıra girer, kilitsiz sayılır; depo yoksa/düşerse null")
+    void collectDomainExpiry_windowAndDegrades() {
+        // Depolar yapıcıda değil (dairesel referans kuralı) → alan enjeksiyonu; yokken bölüm atlanır
+        assertThat(service.collectDomainExpiry(team(1L, "Takım A", "a@example.com"))).isNull();
+        com.sitemonitor.repository.DomainMonitorRepository dmRepo = mock(com.sitemonitor.repository.DomainMonitorRepository.class);
+        com.sitemonitor.repository.DomainCheckRepository dcRepo = mock(com.sitemonitor.repository.DomainCheckRepository.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "domainMonitorRepo", dmRepo);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "domainCheckRepo", dcRepo);
+        com.sitemonitor.model.DomainMonitor soon = dm(1L, 1L, "soon.example.com", null);
+        com.sitemonitor.model.DomainMonitor far = dm(2L, 1L, "far.example.com", null);
+        com.sitemonitor.model.DomainMonitor planned = dm(3L, 1L, "planned.example.com", "2000-01-01");   // gecikmiş plan
+        com.sitemonitor.model.DomainMonitor otherTeam = dm(4L, 2L, "other.example.com", null);
+        com.sitemonitor.model.DomainMonitor unchecked = dm(5L, 1L, "new.example.com", null);
+        when(dmRepo.findByActiveTrue()).thenReturn(java.util.List.of(soon, far, planned, otherTeam, unchecked));
+        when(dcRepo.findLatestPerMonitor()).thenReturn(java.util.List.of(dc(1L, 12, "NONE"), dc(2L, 300, "BOTH"), dc(3L, 200, "NONE"), dc(4L, 3, "NONE")));
+
+        EmailNotificationService.DomainExpiryWeekly d = service.collectDomainExpiry(team(1L, "Takım A", "a@example.com"));
+        assertThat(d.monitorCount()).isEqualTo(4);          // diğer takımın alanı sayılmaz
+        assertThat(d.windowDays()).isEqualTo(90);
+        assertThat(d.unlockedCount()).isEqualTo(2);         // soon + planned (far kilitli, unchecked bilinmiyor)
+        assertThat(d.rows()).extracting(EmailNotificationService.DomainExpiryWeeklyRow::domain)
+                .containsExactly("soon.example.com", "planned.example.com");   // kalan güne göre sıralı; far 300 gün → dışarıda
+        assertThat(d.rows().get(1).planOverdue()).isTrue();
+        assertThat(d.rows().get(0).transferLock()).isEqualTo("NONE");
+
+        when(dcRepo.findLatestPerMonitor()).thenThrow(new RuntimeException("db"));
+        assertThat(service.collectDomainExpiry(team(1L, "Takım A", "a@example.com"))).isNull();
+    }
+
+    private static com.sitemonitor.model.DomainMonitor dm(Long id, Long teamId, String domain, String plannedAt) {
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(id); m.setTeamId(teamId); m.setDomain(domain); m.setActive(true); m.setRenewalPlannedAt(plannedAt);
+        return m;
+    }
+
+    private static com.sitemonitor.model.DomainCheck dc(Long monitorId, int days, String lock) {
+        com.sitemonitor.model.DomainCheck c = new com.sitemonitor.model.DomainCheck();
+        c.setMonitorId(monitorId); c.setDaysRemaining(days); c.setTransferLock(lock); c.setExpiryDate("2027-01-01"); c.setRegistrar("R");
+        return c;
+    }
+
+    @Test
+    @DisplayName("2026-09-22: haftalık rapor CC'si takımın TECH eskalasyon kontağını da içerir (PO → TECH → MANAGER; CLEVEL dışarıda; dedup)")
+    void send_ccIncludesTechEscalationContact() {
+        Team t = team(5L, "Takım A", "team@example.com");
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
+        when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L)).thenReturn(List.of(inv("a.example.com")));
+        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
+                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(5L, "PO")).thenReturn(List.of(contact("po@example.com")));
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(5L, "TECH")).thenReturn(List.of(contact("tech@example.com"), contact("PO@example.com")));
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(5L, "MANAGER")).thenReturn(List.of(contact("mgr@example.com")));
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(5L, "CLEVEL")).thenReturn(List.of(contact("ceo@example.com")));
+
+        service.sendWeeklyReports(false);
+
+        ArgumentCaptor<String[]> ccCap = ArgumentCaptor.forClass(String[].class);
+        verify(emailService).sendHtmlWithAttachments(any(), ccCap.capture(), anyString(), anyString(), any(), any());
+        assertThat(ccCap.getValue()).containsExactly("po@example.com", "tech@example.com", "mgr@example.com");
+        assertThat(WeeklyAvailabilityReportService.CC_ROLES).containsExactly("PO", "TECH", "MANAGER");
     }
 }

@@ -12,6 +12,7 @@ import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.MonitorHistoryService;
 import com.sitemonitor.service.PageSpeedCheckerService;
+import com.sitemonitor.service.DomainExpiryReminderService;
 import com.sitemonitor.service.PortCheckerService;
 import com.sitemonitor.service.KeywordCheckerService;
 import com.sitemonitor.service.PingCheckerService;
@@ -76,6 +77,13 @@ public class MonitoringController {
 
     private final DomainMonitorRepository domainMonitorRepo;
     private final DomainCheckRepository domainCheckRepo;
+    /** Hatırlatma izleri (2026-09-22) — alan enjeksiyonu: @WebMvcTest bağlamında mock'lanmadan da yüklensin (schedulerService deseni). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DomainExpiryReminderRepository domainReminderRepo;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DomainExpiryReminderService domainReminders;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.DomainRenewalPlanService domainRenewalPlans;   // yenileme planı (2026-09-22, H)
     private final DomainCheckerService domainChecker;
     private final PublicSuffixService publicSuffixService;
     private final ActivityLogService activityLog;   // birleşik aktivite akışı (yaşam döngüsü olayları, best-effort)
@@ -119,7 +127,7 @@ public class MonitoringController {
         "intervalSeconds", "timeoutMs", "warningDays", "criticalDays", "protocol", "verifySsl", "followRedirects", "useProxy",
         "mode", "crawlDepth", "crawlMaxPages", "excludePatterns", "slowResourceMs", "alertThirdParty", "alertMixedContent", "alertTimeout", "resourceConcurrency",
         "notificationGroupId",
-        "transferLockAlert", "blacklistEnabled", "changeAlert", "notifyEmail", "notifyWebhook",
+        "transferLockAlert", "blacklistEnabled", "changeAlert", "notifyEmail", "notifyWebhook", "renewalPlannedAt", "renewalPlannedNote",
         // Teyit/kurtarma ayarlari: 6 noktanin 5'inde vardi (patch, create, update, gosterim, form)
         // ama DIFF'te yoktu. Yalniz bu alanlari degistiren bir duzenleme AuditDiff'te bos donuyor,
         // noteConfigChanged erken cikiyor ve denetim kaydi / izleme gecmisi / aktivite akisi
@@ -4787,6 +4795,7 @@ public class MonitoringController {
                     Set.of(EscalationService.TYPE_DOMAINMON_EXPIRY, EscalationService.TYPE_DOMAINMON_UNKNOWN,
                            EscalationService.TYPE_DOMAINMON_STATUS, EscalationService.TYPE_DOMAINMON_CHANGED),
                     "Sistem (izleme silindi)");
+            if (domainReminderRepo != null) domainReminderRepo.deleteByMonitorId(m.getId());   // hatırlatma izleri de gider (2026-09-22)
             domainMonitorRepo.delete(m);
             activityLog.recordLifecycle(ActivityLogService.DOMAIN, m.getId(), m.getName(),
                     m.getDomain(), m.getTeamId(), "DELETED", actor(session));
@@ -4831,12 +4840,110 @@ public class MonitoringController {
                 new CsvColumn<>("error", DomainCheck::getError)), response);
     }
 
+    /**
+     * Kalan-gün trendi (2026-09-22, alan adı denetimi madde I): kontrol geçmişindeki "kesinti çizelgesi" bir alan adı
+     * kaydı için anlamsızdı — soru "kaç gün kaldı, ne zaman yenilendi, kayıt ne zaman değişti". Günlük seri: her gün
+     * için o günün SON kontrolü (kalan gün, bitiş, registrar, kaynak) + o gün tespit edilen değişiklik(ler). Sayfalı
+     * geçmişten türetilmez (bir sayfa = 50 satır); aralık tek sorguda okunur, gün başına indirgenir.
+     */
+    @GetMapping("/domain/{id}/trend")
+    public ResponseEntity<Map<String, Object>> domainTrend(@PathVariable Long id,
+            @RequestParam(defaultValue = "90") int days, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        DomainMonitor mon = domainMonitorRepo.findById(id).orElse(null);
+        if (mon == null || !SessionScope.canView(session, mon.getTeamId())) return notFound("Domain monitor not found");
+        int d = Math.max(1, Math.min(days, 730));
+        String to = ISO.format(java.time.Instant.now());
+        String from = ISO.format(java.time.Instant.now().minus(java.time.Duration.ofDays(d)));
+        var pageable = org.springframework.data.domain.PageRequest.of(0, 5000,
+                org.springframework.data.domain.Sort.by("checkedAt").ascending());
+        List<DomainCheck> rows = domainCheckRepo.findByMonitorIdAndCheckedAtBetween(id, from, to, pageable).getContent();
+        // Gün → o günün son kontrolü; değişiklik detayları gün içinde birleştirilir (aynı gün iki değişiklik kaybolmasın).
+        Map<String, Map<String, Object>> byDay = new java.util.TreeMap<>();
+        for (DomainCheck c : rows) {
+            if (c.getCheckedAt() == null || c.getCheckedAt().length() < 10) continue;
+            String day = c.getCheckedAt().substring(0, 10);
+            Map<String, Object> pt = byDay.computeIfAbsent(day, k -> new LinkedHashMap<>());
+            pt.put("day", day);
+            pt.put("checked_at", c.getCheckedAt());
+            pt.put("days_remaining", c.getDaysRemaining());
+            pt.put("expiry_date", c.getExpiryDate());
+            pt.put("registrar", c.getRegistrar());
+            pt.put("source", c.getSource());
+            pt.put("status", c.getStatus());
+            if (Boolean.TRUE.equals(c.getChanged())) {
+                pt.put("changed", true);
+                String prev = (String) pt.get("change_detail");
+                String cur = c.getChangeDetail() == null ? "" : c.getChangeDetail();
+                pt.put("change_detail", prev == null || prev.isBlank() ? cur : (cur.isBlank() || prev.contains(cur) ? prev : prev + " " + cur));
+            } else if (!pt.containsKey("changed")) {
+                pt.put("changed", false);
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("days", d);
+        out.put("from", from);
+        out.put("to", to);
+        out.put("warning_days", mon.getWarningDays());
+        out.put("critical_days", mon.getCriticalDays());
+        out.put("points", new ArrayList<>(byDay.values()));
+        return ok(out);
+    }
+
+    /** Gönderilen süre-bitişi hatırlatmaları (2026-09-22, madde E) — detay penceresi Domain Kaydı sekmesi. */
+    @GetMapping("/domain/{id}/reminders")
+    public ResponseEntity<Map<String, Object>> domainReminders(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        DomainMonitor mon = domainMonitorRepo.findById(id).orElse(null);
+        if (mon == null || !SessionScope.canView(session, mon.getTeamId())) return notFound("Domain monitor not found");
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("thresholds", DomainExpiryReminderService.parseThresholds(mon.getThresholdsCsv()));
+        out.put("items", domainReminders == null ? List.of() : domainReminders.history(id));
+        return ok(out);
+    }
+
+    /** Yenileme planı koy/güncelle (2026-09-22, H) — karttaki "Planla"; yetki: izlemeyi yönetebilen. */
+    @PostMapping("/domain/{id}/renewal-plan")
+    public ResponseEntity<Map<String, Object>> planDomainRenewal(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        if (domainRenewalPlans == null) return badRequest("renewal plan unavailable");
+        return domainMonitorRepo.findById(id).map(m -> {
+            if (!SessionScope.canView(session, m.getTeamId())) return notFound("Domain monitor not found");
+            if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu takımın izlemesini yönetemezsiniz");
+            String date = body.get("date") == null ? "" : String.valueOf(body.get("date")).trim();
+            if (!date.matches("^\\d{4}-\\d{2}-\\d{2}$")) return badRequest("date: YYYY-MM-DD");
+            String note = body.get("note") == null ? null : String.valueOf(body.get("note"));
+            String currentExpiry = domainCheckRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(id, "NONE").map(DomainCheck::getExpiryDate).orElse(null);
+            DomainMonitor saved = domainRenewalPlans.plan(m, date, note, currentExpiry, session);
+            auditService.recordAction("MONITOR_RENEWAL_PLANNED", session, "DOMAIN_MONITOR", String.valueOf(saved.getId()), saved.getDomain(),
+                    AuditDetail.of("domain", saved.getDomain(), "planned_at", date, "note", note == null ? "" : note));
+            return ok(enrichDomain(saved, domainCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(), null));
+        }).orElse(notFound("Domain monitor not found"));
+    }
+
+    @DeleteMapping("/domain/{id}/renewal-plan")
+    public ResponseEntity<Map<String, Object>> unplanDomainRenewal(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        if (domainRenewalPlans == null) return badRequest("renewal plan unavailable");
+        return domainMonitorRepo.findById(id).map(m -> {
+            if (!SessionScope.canView(session, m.getTeamId())) return notFound("Domain monitor not found");
+            if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu takımın izlemesini yönetemezsiniz");
+            String was = m.getRenewalPlannedAt();
+            DomainMonitor saved = domainRenewalPlans.unplan(m, session);
+            auditService.recordAction("MONITOR_RENEWAL_PLAN_CLEARED", session, "DOMAIN_MONITOR", String.valueOf(saved.getId()), saved.getDomain(),
+                    AuditDetail.of("domain", saved.getDomain(), "was_planned_at", was == null ? "" : was));
+            return ok(enrichDomain(saved, domainCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(), null));
+        }).orElse(notFound("Domain monitor not found"));
+    }
+
     @PostMapping("/domain/{id}/check")
     public ResponseEntity<Map<String, Object>> triggerDomain(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.trigger", "execute");
         return domainMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             Map<String, Object> r = domainChecker.check(m);   // DomainCheck persist eder
+            if (domainReminders != null) domainReminders.evaluate(m, r);   // elle kontrol de eşik hatırlatmasını tetikler (2026-09-22, E)
+            if (domainRenewalPlans != null) domainRenewalPlans.onCheckResult(m, r);   // yenileme görüldüyse plan kapanır (H)
             // Manuel kontrol de alarm üretsin/çözsün (sweep'in günlük checkDue geciktirmesini bekleme):
             // WARNING/CRITICAL/UNKNOWN görülürse alarm + e-posta anında; düzeldiyse açık alarm kapanır.
             try { schedulerService.evaluateDomainAlarmsNow(m, r); }
@@ -4951,6 +5058,11 @@ public class MonitoringController {
         item.put("transfer_lock_alert", !Boolean.FALSE.equals(m.getTransferLockAlert()));
         item.put("blacklist_enabled",   Boolean.TRUE.equals(m.getBlacklistEnabled()));
         item.put("change_alert",        !Boolean.FALSE.equals(m.getChangeAlert()));
+        // Planlanan yenileme (2026-09-22, H): kart rozeti + plan modalı; gecikmiş = plan tarihi geçti, plan hâlâ açık
+        item.put("renewal_planned_at",   m.getRenewalPlannedAt());
+        item.put("renewal_planned_by",   m.getRenewalPlannedByName());
+        item.put("renewal_planned_note", m.getRenewalPlannedNote());
+        item.put("renewal_overdue",      m.getRenewalPlannedAt() != null && m.getRenewalPlannedAt().compareTo(java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString()) < 0);
         if (latest != null) {
             item.put("status",            latest.getStatus());
             item.put("source",            latest.getSource());

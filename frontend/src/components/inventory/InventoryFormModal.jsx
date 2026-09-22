@@ -519,6 +519,22 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
             <input value={form.purchased_by} onChange={e => f('purchased_by', e.target.value)} />
           </label>
 
+          {/* Vekil anahtarı (2026-09-22, kullanıcı isteği): 13 Evet/Hayır bayrağı arasında gömülüydü; sertifika kontrolünün
+              yolunu belirleyen bu tercih Temel Bilgiler'de, Satın Alan'ın yanında AÇIK/KAPALI anahtarı olarak. Bayrak
+              listesi (INVENTORY_FLAGS) değişmez — dışa aktarım/e-posta/backend senkronu aynı kalır. */}
+          <div className="inv-proxy-field">
+            <span className="inv-proxy-label" id="inv-proxy-label">{t('inv.formUseProxy')}</span>
+            <div className="inv-proxy-switch-row">
+              <button type="button" role="switch" aria-checked={!!form.use_proxy} aria-labelledby="inv-proxy-label"
+                className={`perm-pill ${form.use_proxy ? 'perm-pill-on' : 'perm-pill-off'}`}
+                onClick={() => f('use_proxy', !form.use_proxy)}>
+                <span className="perm-pill-knob" />
+              </button>
+              <span className={`inv-proxy-state${form.use_proxy ? ' is-on' : ''}`}>{form.use_proxy ? t('mon.proxy.on') : t('mon.proxy.off')}</span>
+            </div>
+            <span className="field-hint">{t('inv.formUseProxyHint')}</span>
+          </div>
+
           {/* ── Sorumlu Ekipler ── */}
           <div ref={contactsRef} className="full-width" data-testid="contacts-anchor" />
           <SectionHeader label={t('inv.sectionContacts')} />
@@ -541,7 +557,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
           <SectionHeader label={t('inv.sectionOps')} />
 
           <div className="yn-grid">
-            {INVENTORY_FLAGS.map(({ key, labelKey }) => (
+            {INVENTORY_FLAGS.filter(({ key }) => key !== 'use_proxy').map(({ key, labelKey }) => (   /* vekil: Temel Bilgiler'de anahtar */
               <div key={key} className="yn-field-row">
                 <span className="yn-field-label">{t(labelKey)}</span>
                 <YesNo value={form[key]} onChange={v => f(key, v)} />

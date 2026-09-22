@@ -2989,6 +2989,107 @@ public class EmailNotificationService {
             + "</body></html>";
     }
 
+    // ── Alan adı süre-bitişi hatırlatması (2026-09-22, madde E) ─────────────────────
+
+    /**
+     * Eşik hatırlatması: "X alan adının kaydı N gün sonra doluyor" — Outlook-güvenli desen (td bgcolor, düz hex,
+     * LIGHT_SCHEME_META, MSO ghost-table, VML CTA), haftalık rapor hatırlatmasıyla aynı iskelet. CTA izleme
+     * detayına derin bağlantı (?tab=domain&monitor=id); base URL canlı ayardan.
+     */
+    public String buildDomainExpiryReminderHtml(String name, String domain, int days, String expiryIso, int threshold,
+                                                String registrar, String level, Long monitorId) {
+        boolean critical = "CRITICAL".equals(level);
+        boolean expired = days < 0;
+        String accent = critical ? "#991b1b" : "WARNING".equals(level) ? "#b45309" : "#1f3864";
+        String outerBg = "#f4f6f8";
+        String generatedAt = ZonedDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        String expiryText = expiryIso == null ? "—" : expiryIso.length() >= 10 ? expiryIso.substring(8, 10) + "." + expiryIso.substring(5, 7) + "." + expiryIso.substring(0, 4) : expiryIso;
+        String headline = expired
+                ? "⚠ " + escHtml(name) + " — alan adı kaydı " + Math.abs(days) + " gün önce DOLDU"
+                : "⏰ " + escHtml(name) + " — alan adı bitişine " + days + " gün";
+        String url = liveBaseUrl().isBlank() || monitorId == null ? "" : liveBaseUrl() + "/?tab=domain&monitor=" + monitorId;
+        String btnLabel = "Alan adı izlemesini aç &rarr;";
+        String cta = url.isBlank() ? "" :
+              "<div style='margin:4px 0 20px'>"
+            + "<!--[if mso]>"
+            + "<v:roundrect xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:w=\"urn:schemas-microsoft-com:office:word\""
+            + " href=\"" + escHtml(url) + "\" style=\"height:44px;v-text-anchor:middle;width:300px;\""
+            + " arcsize=\"16%\" strokecolor=\"" + accent + "\" fillcolor=\"" + accent + "\">"
+            + "<w:anchorlock/>"
+            + "<center style=\"color:#ffffff;font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:15px;font-weight:bold;\">"
+            + btnLabel + "</center>"
+            + "</v:roundrect>"
+            + "<![endif]-->"
+            + "<!--[if !mso]><!-->"
+            + "<table role='presentation' border='0' cellspacing='0' cellpadding='0'><tr>"
+            + "<td align='center' bgcolor='" + accent + "' style='background:" + accent + ";border-radius:8px;padding:12px 24px;color:#ffffff'>"
+            + "<a href='" + escHtml(url) + "' target='_blank' style='color:#ffffff;text-decoration:none;font-size:15px;font-weight:800;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+            + "<span style='color:#ffffff'>" + btnLabel + "</span></a>"
+            + "</td></tr></table>"
+            + "<!--<![endif]-->"
+            + "</div>";
+
+        String facts =
+              "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='font-size:14px;color:#1e293b;line-height:1.7'>"
+            + "<tr><td width='160' style='color:#64748b;padding:2px 0'>Alan adı</td><td style='padding:2px 0'><strong>" + escHtml(domain) + "</strong></td></tr>"
+            + "<tr><td style='color:#64748b;padding:2px 0'>Bitiş tarihi</td><td style='padding:2px 0'><strong>" + escHtml(expiryText) + "</strong></td></tr>"
+            + "<tr><td style='color:#64748b;padding:2px 0'>Kalan gün</td><td style='padding:2px 0'><strong style='color:" + accent + "'>" + (expired ? Math.abs(days) + " gün önce doldu" : days + " gün") + "</strong></td></tr>"
+            + "<tr><td style='color:#64748b;padding:2px 0'>Registrar</td><td style='padding:2px 0'>" + escHtml(registrar == null || registrar.isBlank() ? "—" : registrar) + "</td></tr>"
+            + "<tr><td style='color:#64748b;padding:2px 0'>Hatırlatma eşiği</td><td style='padding:2px 0'>" + threshold + " gün</td></tr>"
+            + "</table>";
+
+        String stepsBody =
+              "<ol style='margin:0;padding-left:20px;font-size:14px;line-height:1.8;color:#1e293b'>"
+            + "<li>Registrar panelinde alan adını yenileyin (otomatik yenileme açıksa ödeme yöntemini doğrulayın).</li>"
+            + "<li>Yenileme sonrası Site Monitor'de <strong>Şimdi Kontrol Et</strong> ile bitiş tarihinin ileri gittiğini görün — bu hatırlatma serisi yeni bitiş için sıfırdan başlar.</li>"
+            + "<li>Transfer kilidi yoksa (kartta \"Kilit yok\") registrar'dan kilidi açtırın.</li>"
+            + "</ol>";
+
+        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml'"
+            + " xmlns:o='urn:schemas-microsoft-com:office:office'>"
+            + "<head><meta charset='UTF-8'>"
+            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
+            + LIGHT_SCHEME_META
+            + "<style>@media only screen and (max-width:870px){"
+            + ".em-wrap{padding:0!important}.em-card{border-radius:0!important;width:100%!important}"
+            + ".em-body{padding:14px!important}}</style></head>"
+            + "<body bgcolor='" + outerBg + "' style='margin:0;padding:0;background:" + outerBg
+            + ";font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+            + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0'"
+            + " bgcolor='" + outerBg + "' style='background:" + outerBg + ";padding:24px 10px'>"
+            + "<tr><td align='center' bgcolor='" + outerBg + "'>"
+            + "<!--[if mso]><table role='presentation' width='850' align='center' cellpadding='0' cellspacing='0' border='0'><tr><td><![endif]-->"
+            + "<table class='em-card' width='850' cellpadding='0' cellspacing='0' border='0'"
+            + " bgcolor='#ffffff' style='max-width:850px;width:100%;background:#ffffff;"
+            + "border:1px solid #d7dde5;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.10)'><tr><td bgcolor='#ffffff' style='padding:0'>"
+            + brandBar()
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
+            + "<td bgcolor='" + accent + "' style='background:" + accent + ";padding:22px 24px'>"
+            + "<div style='color:#e2e8f0;font-size:11px;font-weight:700;letter-spacing:.12em'>ALAN ADI SÜRE BİTİŞİ HATIRLATMASI</div>"
+            + "<div style='color:#ffffff;font-size:22px;font-weight:900;margin-top:10px;line-height:1.25'>" + headline + "</div>"
+            + "<div style='color:#e2e8f0;font-size:14px;font-weight:600;margin-top:8px'>" + escHtml(domain) + " · bitiş " + escHtml(expiryText) + "</div>"
+            + "</td></tr></table>"
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'><tr>"
+            + "<td class='em-body' bgcolor='#ffffff' style='padding:22px 24px'>"
+            + "<p style='font-size:14px;color:#334155;line-height:1.7;margin:0 0 14px'>"
+            + "Bu ileti izlemenin <strong>" + threshold + " gün</strong> hatırlatma eşiği için <strong>bir kez</strong> gönderilir; "
+            + "sonraki eşiklerde (" + "daha az gün kala" + ") yeniden hatırlatılır. Alan adı yenilenince seri kendiliğinden sıfırlanır.</p>"
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 14px;border-radius:8px;overflow:hidden'><tr>"
+            + "<td width='4' bgcolor='" + accent + "' style='background-color:" + accent + ";width:4px;font-size:0;line-height:0'>&nbsp;</td>"
+            + "<td bgcolor='#f8fafc' style='background-color:#f8fafc;padding:10px 14px'>" + facts + "</td></tr></table>"
+            + cta
+            + reportSection("Ne yapmalı?", stepsBody, accent)
+            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
+            + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitor — Otomatik Hatırlatma</td>"
+            + "<td align='right' valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8;line-height:1.7'>"
+            + "Oluşturuldu: " + generatedAt + "</td></tr></table>"
+            + "</td></tr></table>"
+            + "</td></tr></table>"
+            + "<!--[if mso]></td></tr></table><![endif]-->"
+            + "</td></tr></table>"
+            + "</body></html>";
+    }
+
     // ── Haftalık Erişilebilirlik (availability) e-postası ───────────────────────
 
     /** E-posta görünüm DTO'ları — view katmanı kendi girdilerini sahiplenir (servis bağımlılığı
@@ -3031,6 +3132,12 @@ public class EmailNotificationService {
      */
     public record DeploymentWeekly(int deployments, String fromVersion, String toVersion, int restarts, int rollbacks) {}
 
+    /** Haftalık rapordaki alan adı (registrar) bitiş satırı (2026-09-22, madde G). plannedAt null = plan yok. */
+    public record DomainExpiryWeeklyRow(String domain, Integer daysRemaining, String expiryDate, String registrar,
+                                        String transferLock, String plannedAt, boolean planOverdue) {}
+    /** Alan adı bölümü: pencere içindeki satırlar + izlenen toplam + kilitsiz sayısı. rows boş olabilir. */
+    public record DomainExpiryWeekly(List<DomainExpiryWeeklyRow> rows, int monitorCount, int windowDays, int unlockedCount) {}
+
     /** Zayıf algoritma satırı (2026-09-12): takımın alanlarında zayıf sertifika sayısı + taranan alan sayısı. */
     public record WeakAlgoWeekly(int weak, int scanned) {}
 
@@ -3068,6 +3175,14 @@ public class EmailNotificationService {
                                               List<AvailabilityRow> rows, AvailabilitySummary s,
                                               AttachmentInfo att, PageSpeedWeekly ps, DeploymentWeekly dep,
                                               WeakAlgoWeekly weak) {
+        return buildWeeklyAvailabilityHtml(teamName, weekLabel, rows, s, att, ps, dep, weak, null);
+    }
+
+    /** {@code dom} doluysa "Alan Adı Bitişleri" bölümü eklenir (2026-09-22, madde G): 90 gün içinde bitenler + kilitsizler. */
+    public String buildWeeklyAvailabilityHtml(String teamName, String weekLabel,
+                                              List<AvailabilityRow> rows, AvailabilitySummary s,
+                                              AttachmentInfo att, PageSpeedWeekly ps, DeploymentWeekly dep,
+                                              WeakAlgoWeekly weak, DomainExpiryWeekly dom) {
         String accent = "#1f3864";
         String outerBg = "#f4f6f8";
         String generatedAt = ZonedDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
@@ -3234,6 +3349,58 @@ public class EmailNotificationService {
                 + "</td></tr></table>";
         }
 
+        // Alan adı (registrar) bitişleri (2026-09-22, madde G): sertifikadan AYRI vade sınıfı — kayıt dolarsa site kaybolur.
+        // Boş pencere de raporlanır ("90 günde biten yok, izlenen N"): sessizlik "bakılmadı" ile karışmasın.
+        String domSection = "";
+        if (dom != null) {
+            boolean any = dom.rows() != null && !dom.rows().isEmpty();
+            String edge = any && dom.rows().stream().anyMatch(r -> r.daysRemaining() != null && r.daysRemaining() <= 30) ? "#dc2626" : any ? "#d97706" : "#16a34a";
+            StringBuilder rowsHtml = new StringBuilder();
+            if (any) {
+                rowsHtml.append("<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-top:8px;border-collapse:collapse'>")
+                        .append("<tr>").append(thCell("Alan adı", "left")).append(thCell("Kalan", "left")).append(thCell("Bitiş", "left"))
+                        .append(thCell("Registrar", "left")).append(thCell("Kilit", "left")).append(thCell("Plan", "left")).append("</tr>");
+                for (DomainExpiryWeeklyRow r : dom.rows()) {
+                    Integer d = r.daysRemaining();
+                    String dc = d == null ? "#64748b" : d < 0 ? "#991b1b" : d <= 7 ? "#dc2626" : d <= 30 ? "#d97706" : "#1e293b";
+                    String dTxt = d == null ? "—" : d < 0 ? Math.abs(d) + " gün önce doldu" : d + " gün";
+                    String lock = r.transferLock() == null ? "—" : switch (r.transferLock()) {
+                        case "BOTH" -> "registrar+registry"; case "SERVER" -> "registry"; case "CLIENT" -> "registrar";
+                        case "NONE" -> "YOK"; default -> "doğrulanamadı"; };
+                    String lockColor = "NONE".equals(r.transferLock()) ? "#dc2626" : "#475569";
+                    String plan = r.plannedAt() == null ? "—" : (r.planOverdue() ? "GECİKMİŞ " : "") + r.plannedAt();
+                    String planColor = r.planOverdue() ? "#dc2626" : "#475569";
+                    rowsHtml.append("<tr style='border-top:1px solid #e2e8f0'>")
+                        .append("<td style='padding:7px 12px;font-size:13px;font-weight:600;color:#1e293b;word-break:break-all'>").append(escHtml(r.domain())).append("</td>")
+                        .append("<td style='padding:7px 12px;font-size:13px;font-weight:800;color:").append(dc).append(";white-space:nowrap'>").append(escHtml(dTxt)).append("</td>")
+                        .append("<td style='padding:7px 12px;font-size:13px;color:#475569;white-space:nowrap'>").append(escHtml(r.expiryDate() == null ? "—" : r.expiryDate().length() >= 10 ? r.expiryDate().substring(0, 10) : r.expiryDate())).append("</td>")
+                        .append("<td style='padding:7px 12px;font-size:12px;color:#475569'>").append(escHtml(r.registrar() == null ? "—" : r.registrar())).append("</td>")
+                        .append("<td style='padding:7px 12px;font-size:12px;font-weight:700;color:").append(lockColor).append(";white-space:nowrap'>").append(escHtml(lock)).append("</td>")
+                        .append("<td style='padding:7px 12px;font-size:12px;font-weight:700;color:").append(planColor).append(";white-space:nowrap'>").append(escHtml(plan)).append("</td>")
+                        .append("</tr>");
+                }
+                rowsHtml.append("</table>");
+            }
+            String head = any
+                    ? dom.rows().size() + " alan adı önümüzdeki " + dom.windowDays() + " günde doluyor (izlenen: " + dom.monitorCount() + ")"
+                    : "Önümüzdeki " + dom.windowDays() + " günde biten alan adı yok (izlenen: " + dom.monitorCount() + ")";
+            String unlocked = dom.unlockedCount() > 0 ? " · " + dom.unlockedCount() + " alan adında transfer kilidi YOK" : "";
+            // İngilizce alt satır — kardeş bantlarla (Sürüm & Dağıtım, Zayıf Algoritma) aynı iki dilli düzen
+            String headEn = any
+                    ? dom.rows().size() + (dom.rows().size() == 1 ? " domain expires" : " domains expire") + " within the next " + dom.windowDays() + " days (" + dom.monitorCount() + " monitored)"
+                    : "No domain expires within the next " + dom.windowDays() + " days (" + dom.monitorCount() + " monitored)";
+            String unlockedEn = dom.unlockedCount() > 0 ? " · " + dom.unlockedCount() + (dom.unlockedCount() == 1 ? " domain has" : " domains have") + " no transfer lock" : "";
+            domSection =
+                "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 18px'><tr>"
+                + "<td bgcolor='#f8fafc' style='background:#f8fafc;border-left:4px solid " + edge + ";"
+                + "border-radius:0 8px 8px 0;padding:10px 16px;font-size:13px;color:#1e293b'>"
+                + "<span style='font-weight:800;color:#334155'>🌐 Alan Adı Bitişleri</span><br>"
+                + "<span style='font-size:13px;color:#334155'>" + escHtml(head + unlocked) + "</span><br>"
+                + "<span style='font-size:11px;color:#64748b'>" + escHtml(headEn + unlockedEn) + "</span>"
+                + rowsHtml
+                + "</td></tr></table>";
+        }
+
         // Domain tablosu (en kötü üstte — servis sıralar)
         StringBuilder body = new StringBuilder();
         body.append("<tr>")
@@ -3314,6 +3481,7 @@ public class EmailNotificationService {
             + pageSpeedSection
             + deploySection
             + weakSection
+            + domSection
             // Footer
             + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
             + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitor — Otomatik Haftalık Rapor</td>"
