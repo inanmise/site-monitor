@@ -29,4 +29,20 @@ describe('OutageTimeline', () => {
     const { container: c2 } = render(<OutageTimeline range={null} alerts={[]} />)
     expect(c2.querySelector('.otl')).toBeNull()
   })
+
+  it('uyarı türleri (HTTP_SSL, PING_SLOW) segment DEĞİL çentik: erişilebilirliği düşürmez, sayım ayrı (2026-09-22)', () => {
+    const { container } = render(<OutageTimeline range={range} alerts={[
+      { id: 1, alert_type: 'HTTP_DOWN', alert_level: 'CRITICAL', created_at: '2026-09-12T02:00:00', resolved: true, resolved_at: '2026-09-12T03:00:00' },
+      { id: 5, alert_type: 'HTTP_SSL', alert_level: 'WARNING', created_at: '2026-09-12T05:00:00', resolved: false },
+      { id: 6, alert_type: 'PING_SLOW', alert_level: 'WARNING', created_at: '2026-09-12T08:00:00', resolved: true, resolved_at: '2026-09-12T09:00:00' },
+    ]} />)
+    expect(container.querySelectorAll('.otl-seg').length).toBe(1)   // yalnız HTTP_DOWN
+    const marks = container.querySelectorAll('.otl-mark')
+    expect(marks.length).toBe(2)
+    expect(marks[0].style.left).toBe('50%'); expect(marks[0].classList.contains('is-open')).toBe(true)
+    expect(marks[0].getAttribute('title')).toMatch(/HTTP_SSL/)
+    // Erişilebilirlik yalnız 1 saatlik kesintiden: %90 — SSL uyarısı (açık, aralık sonuna dek) hesaba GİRMEZ
+    expect(screen.getByText(/1 alarm · toplam 1 sa · erişilebilirlik %90\.00|1 alerts · total 1 sa · availability 90\.00%/)).toBeInTheDocument()
+    expect(screen.getByText(/2 uyarı \(kesinti sayılmaz\)|2 advisories/)).toBeInTheDocument()
+  })
 })
