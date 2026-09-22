@@ -3114,6 +3114,18 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .dom-st--unknown { color: var(--text-muted); }
 /* Kart hero — kalan gün (genel bakış/sertifika kartı stili) + bitiş satırı */
 .dom-hero { padding: 6px 0 2px; }
+/* Kart zenginleştirme (2026-09-22): ömür çubuğu satırı, kısaltılan registrar, koruma rozetleri */
+.dom-hero-row { display: flex; align-items: center; gap: 14px; }
+.dom-life-bar { --pg-fill: var(--text-light); }
+.dom-registrar { display: flex; align-items: center; gap: 5px; font-size: .78em; color: var(--text-muted); margin-top: 2px; min-width: 0; }
+.dom-registrar span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dom-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.dom-badge { display: inline-flex; align-items: center; gap: 4px; font-size: .7em; font-weight: 600; padding: 2px 7px; border-radius: 10px; white-space: nowrap; background: var(--bg-hover); color: var(--text-light); }
+.dom-badge--ok { color: #15803d; background: #f0fdf4; }
+.dom-badge--bad { color: #dc2626; background: #fef2f2; }
+.dom-badge--muted { color: var(--text-muted); }
+[data-theme="dark"] .dom-badge--ok { background: rgba(21,128,61,.18); }
+[data-theme="dark"] .dom-badge--bad { background: rgba(220,38,38,.18); }
 .dom-hero-number { font-size: 2.4em; font-weight: 800; line-height: 1; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .dom-hero-label { margin-top: 3px; font-size: .8em; font-weight: 500; color: var(--text-muted); }
 .dom-hero-expiry { margin-top: 6px; display: inline-flex; align-items: center; gap: 5px; font-size: .82em; font-weight: 600; color: var(--text-muted); }

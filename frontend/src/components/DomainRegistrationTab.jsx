@@ -20,7 +20,7 @@ function daysColor(d) {
   if (d <= 30) return '#D68910'
   return '#1E8449'
 }
-const eppKey = (c) => String(c || '').replace(/\s+/g, '').toLowerCase()
+import { eppKey, eppLabel } from '../utils/domainEpp.js'
 
 function csv(v) {
   if (Array.isArray(v)) return v
@@ -117,7 +117,7 @@ export default function DomainRegistrationTab({ monitor }) {
           {epp.map(c => {
             const k = 'epp.' + eppKey(c)
             const desc = t(k)
-            return <span key={c} className="dreg-epp-pill" title={desc !== k ? desc : c}>{c}</span>
+            return <span key={c} className="dreg-epp-pill" title={desc !== k ? desc : c}>{eppLabel(c)}</span>
           })}
         </div>
       ) : <div className="dreg-empty">—</div>}

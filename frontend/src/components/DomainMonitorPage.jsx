@@ -29,7 +29,7 @@ import IntervalSlider from './ui/IntervalSlider.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
-import { RefreshCw, Plus, Trash2, CalendarClock, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Building2, Activity, Calendar, Inbox } from 'lucide-react'
+import { RefreshCw, Plus, Trash2, CalendarClock, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Building2, Activity, Calendar, Inbox, Lock, LockOpen, ShieldCheck, ShieldOff, ListX, Server } from 'lucide-react'
 import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
 import ModalScrollHint from './ui/ModalScrollHint.jsx'
 import { duplicateName } from '../utils/duplicateName.js'
@@ -47,6 +47,8 @@ import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { useEscapeKey } from '../hooks/useEscapeKey.js'
+import { ProgressBar } from './ui/Progress.jsx'
+import { eppLabel, domainLife } from '../utils/domainEpp.js'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
@@ -95,6 +97,27 @@ function sourceTag(source, provider) {
   if (!source) return null
   const p = provider && WHOIS_PROVIDER_LABEL[provider]
   return (source === 'WHOIS' && p) ? `WHOIS · ${p}` : source
+}
+
+/**
+ * Kart koruma rozetleri (2026-09-22): transfer kilidi, DNSSEC, kara liste, NS sayısı — kartta yalnız EPP kodları
+ * vardı; kilit/DNSSEC/kara liste yalnız Domain Kaydı sekmesinde görülüyordu. Kaynak yoksa (UNKNOWN) "Doğrulanamadı",
+ * izleme kapalıysa (SKIPPED) rozet çizilmez — kapalı bir şeyi "temiz" göstermek yanlış iddia olurdu.
+ */
+function DomainProtectionBadges({ m, t }) {
+  const lock = m.transfer_lock
+  const lockCls = lock === 'NONE' ? 'bad' : (lock === 'BOTH' || lock === 'SERVER' || lock === 'CLIENT') ? 'ok' : 'muted'
+  const lockLabel = lock === 'BOTH' ? t('dom.lockBoth') : lock === 'SERVER' ? t('dom.lockServer') : lock === 'CLIENT' ? t('dom.lockClient') : lock === 'NONE' ? t('dom.lockNone') : t('dom.lockUnknown')
+  const bl = m.blacklist_status
+  const nsCount = Array.isArray(m.nameservers) ? m.nameservers.length : String(m.nameservers || '').split(',').filter(Boolean).length
+  return (
+    <div className="dom-badges">
+      <span className={`dom-badge dom-badge--${lockCls}`} title={t('dom.transferLock')}>{lockCls === 'ok' ? <Lock size={11} /> : lockCls === 'bad' ? <LockOpen size={11} /> : <ShieldOff size={11} />}{lockLabel}</span>
+      {m.dnssec && <span className={`dom-badge dom-badge--${m.dnssec === 'signed' ? 'ok' : 'muted'}`} title="DNSSEC">{m.dnssec === 'signed' ? <ShieldCheck size={11} /> : <ShieldOff size={11} />}DNSSEC {m.dnssec === 'signed' ? t('dreg.dnssecSigned') : t('dreg.dnssecUnsigned')}</span>}
+      {bl && bl !== 'SKIPPED' && <span className={`dom-badge dom-badge--${bl === 'LISTED' ? 'bad' : bl === 'CLEAN' ? 'ok' : 'muted'}`} title={t('dom.blacklist')}><ListX size={11} />{t('dom.blacklist')}: {bl === 'LISTED' ? t('dom.blListed').replace('{n}', String((m.blacklist_detail || '').split(/\r?\n/).filter(Boolean).length || '?')) : bl === 'CLEAN' ? t('dom.blClean') : t('dom.blUnknown')}</span>}
+      {nsCount > 0 && <span className="dom-badge dom-badge--muted" title={Array.isArray(m.nameservers) ? m.nameservers.join(', ') : String(m.nameservers || '')}><Server size={11} />{t('dom.nsCount', nsCount)}</span>}
+    </div>
+  )
 }
 
 export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeams = [] }) {
@@ -599,7 +622,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
               <div className="upt-card-top">
                 {statusBadge(m)}
                 {alarmBadge(m)}<MaintenanceBadge target={m.domain} />
-                {m.changed && <span className="dom-changed-ico" title={t('dom.changedTip')}><Activity size={13} /></span>}
+                {m.changed && <span className="dom-changed-ico" title={m.change_detail ? `${t('dom.changedTip')} — ${m.change_detail}` : t('dom.changedTip')}><Activity size={13} /></span>}
                 <span className="upt-card-top-right">
                   {m.source && <span className="upt-port-tag" title={m.whois_provider ? t('dom.sourceVia') : undefined}>{sourceTag(m.source, m.whois_provider)}</span>}
                   <CopyLinkButton iconOnly url={monitorDeepLink('domain', m.id)} className="btn btn-sm upt-card-copy" />
@@ -607,20 +630,31 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
               </div>
               <div className="upt-card-domain" title={m.domain}>{m.domain}</div>
               {m.registrar && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '.78em', color: 'var(--text-muted)', marginTop: 2, wordBreak: 'break-word' }}>
-                  <Building2 size={12} />{m.registrar}
+                <div className="dom-registrar" title={m.registrar}>
+                  <Building2 size={12} /><span>{m.registrar}</span>
                 </div>
               )}
               <MonitorCardMeta monitor={m} />
               <div className="upt-card-divider" />
               <div className="dom-hero">
-                <div className="dom-hero-number" style={{ color: daysColor(m.days_remaining) }}>{m.days_remaining == null ? '—' : Math.abs(m.days_remaining)}</div>
+                {(() => { const life = domainLife(m.last_changed || m.registration_date, m.expiry_date); return (
+                <div className="dom-hero-row" title={life ? t('dom.lifeTip', fmtExpiry(m.last_changed || m.registration_date), life.elapsed, life.total) : undefined}>
+                  <div className="dom-hero-number" style={{ color: daysColor(m.days_remaining) }}>{m.days_remaining == null ? '—' : Math.abs(m.days_remaining)}</div>
+                  {/* Kayıt ömrü çubuğu (2026-09-22): sertifika kartındaki ömür çubuğunun eşi — oluşturma→bitiş */}
+                  {life && (
+                    <div className="cc-life-block">
+                      <ProgressBar value={life.pct} max={100} size="sm" decorative className="cc-life-bar dom-life-bar" />
+                      <div className="cc-life-caption">{life.elapsed} / {life.total} {t('card.daysUnit')}</div>
+                    </div>
+                  )}
+                </div>) })()}
                 <div className="dom-hero-label">{m.days_remaining != null && m.days_remaining < 0 ? t('dom.expiredAgo') : t('dom.daysLeft')}</div>
                 <div className="dom-hero-expiry"><Calendar size={12} /><span>{t('dom.expiresShort')} {fmtExpiry(m.expiry_date)}</span></div>
               </div>
+              <DomainProtectionBadges m={m} t={t} />
               {Array.isArray(m.status_codes) && m.status_codes.length > 0 && (
                 <div className="dom-epp-row">
-                  {m.status_codes.slice(0, 4).map(sc => <span key={sc} className="dom-epp-chip">{sc}</span>)}
+                  {m.status_codes.slice(0, 4).map(sc => <span key={sc} className="dom-epp-chip" title={eppLabel(sc)}>{eppLabel(sc)}</span>)}
                   {m.status_codes.length > 4 && <span className="dom-epp-chip">+{m.status_codes.length - 4}</span>}
                 </div>
               )}
@@ -679,7 +713,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
             </div>
             {Array.isArray(selected.status_codes) && selected.status_codes.length > 0 && (
               <div className="dom-epp-row" style={{ padding: '0 4px 6px' }}>
-                {selected.status_codes.map(sc => <span key={sc} className="dom-epp-chip">{sc}</span>)}
+                {selected.status_codes.map(sc => <span key={sc} className="dom-epp-chip">{eppLabel(sc)}</span>)}
               </div>
             )}
             <div className="upt-modal-divider" />
