@@ -17,6 +17,9 @@ public interface LatestCheckRepository extends JpaRepository<LatestCheck, String
 
     List<LatestCheck> findByDomainIn(java.util.Collection<String> domains);
 
+    /** Aynı sertifikayı taşıyan alanlar (paylaşılan sertifika penceresi) — tüm tabloyu çekip elemenin yerine (2026-09-22). */
+    List<LatestCheck> findByFingerprintIgnoreCase(String fingerprint);
+
     /**
      * Zayıf algoritma adaylarını DB'de filtreler (tüm tabloyu çekmek yerine):
      * eski hash (MD2/MD5/SHA1) veya kısa anahtar (RSA/DSA < 2048, EC < 256).

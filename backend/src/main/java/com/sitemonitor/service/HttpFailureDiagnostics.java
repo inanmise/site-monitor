@@ -209,7 +209,7 @@ public final class HttpFailureDiagnostics {
         m.put("method", tr.method);
         m.put("scheme", tr.scheme);
         m.put("host", tr.host);
-        m.put("port", tr.port);
+        m.put("port", tr.port > 0 ? Integer.valueOf(tr.port) : null);   // bozuk URL'de Trace.start catch'e düşer, ilkel alan 0'da kalır → arayüzde "hedef:0"
         m.put("via", tr.via);
         m.put("proxy", tr.proxyTarget);
         m.put("resolved_ips", tr.resolvedIps);

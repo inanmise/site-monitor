@@ -190,6 +190,10 @@ public class HttpCheckerService {
      */
     public Map<String, Object> check(String url, String method, String expectedStatus,
                                      int timeoutMs, boolean verifySsl, boolean followRedirects, boolean viaProxy) {
+        // Tanıdaki `via` GERÇEKTEN vekil kullanıldı mı sorusunu yanıtlar (2026-09-22): izlemede useProxy=ON olsa da
+        // sistemde vekil tanımlı değilse istek doğrudan gider. doCheck aynı ifadeyi kullanıyor; erken dönen iki dal
+        // (config_error / SSRF) ham bayrağı geçtiği için tanı panelinde "via: proxy, proxy: null" gösteriyordu.
+        boolean proxied = viaProxy && client(verifySsl, true) != client(verifySsl, false);
         // Yapılandırma hatası (şemasız/host'suz URL) kesinti DEĞİL — istek atılmaz, alarm da açılmaz
         // (SchedulerService config_error bayrağını okur). Eskiden bu durum sahte DOWN alarmı üretiyordu.
         if (!com.sitemonitor.util.MonitorUrls.isCheckable(url)) {
@@ -198,7 +202,7 @@ public class HttpCheckerService {
             r.put("config_error", true);
             r.put("error", com.sitemonitor.util.MonitorUrls.CONFIG_ERROR_MSG);
             r.put("error_detail", HttpFailureDiagnostics.toJson(HttpFailureDiagnostics.forException(
-                    newTrace(url, method, timeoutMs, verifySsl, followRedirects, false),
+                    newTrace(url, method, timeoutMs, verifySsl, followRedirects, proxied),
                     new IllegalArgumentException("URL: " + com.sitemonitor.util.MonitorUrls.CONFIG_ERROR_MSG))));
             return r;
         }
@@ -209,7 +213,7 @@ public class HttpCheckerService {
             r.put("ok", false);
             r.put("error", blocked);
             r.put("error_detail", HttpFailureDiagnostics.toJson(HttpFailureDiagnostics.forException(
-                    newTrace(url, method, timeoutMs, verifySsl, followRedirects, viaProxy), new SsrfGuard.BlockedException(blocked))));
+                    newTrace(url, method, timeoutMs, verifySsl, followRedirects, proxied), new SsrfGuard.BlockedException(blocked))));
             return r;
         }
         Attempt a1 = doCheck(url, method, expectedStatus, timeoutMs, verifySsl, followRedirects, viaProxy);

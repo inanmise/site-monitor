@@ -74,7 +74,10 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
 
   // Metin süzgeçleri her tuşta istek atmasın; öteki süzgeçler hemen uygulanır.
   useEffect(() => {
-    const textChanged = filters.domain !== queryFilters.domain || filters.issuer !== queryFilters.issuer
+    // fp (parmak izi) da bir METİN alanı (CertFilterRow "fingerprint" kolonu) — listede unutulunca
+    // gecikme 0'a düşüyor ve her tuş vuruşu facet hesaplayan /certificates/list sorgusu atıyordu.
+    const TEXT_KEYS = ['domain', 'issuer', 'fp']
+    const textChanged = TEXT_KEYS.some((k) => filters[k] !== queryFilters[k])
     const id = setTimeout(() => setQueryFilters(filters), textChanged ? 300 : 0)
     return () => clearTimeout(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -238,7 +241,10 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
           actions={<button type="button" className="btn btn-sm btn-secondary" onClick={() => load()}>{t('tbl.retry')}</button>} />
       ) : !loaded ? (
         <LoadingBlock label={t('tbl.loading')} fullWidth />
-      ) : certs.length === 0 ? (
+      ) : certs.length === 0 && !colFilters ? (
+        /* Kolon süzgeç satırı açıkken tablo AYAKTA kalır (aşağıda tbody içinde "eşleşme yok" satırı):
+           tabloyu kaldırmak süzgeç satırını da götürüyor, kullanıcı ne yazdığını göremiyor ve o hücreyi
+           temizleyemiyordu. Envanterde aynı bug 3284c40e ile düzeltilmişti — kardeş yüzeye taşındı. */
         <StatusBlock tone="neutral" icon={Inbox} title={t('tbl.noCerts')} description={hasFilters ? t('empty.hintFilter') : t('empty.hintCerts')}
           actions={hasFilters ? <button type="button" className="btn btn-sm btn-secondary" onClick={reset}>{t('tbl.reset')}</button> : null} />
       ) : (
@@ -265,6 +271,17 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
                   onEdit={canManage ? onEdit : null} onCopyLink={copyRowLink}
                   onSameCert={(fp) => updateFilters({ ...filters, fp })} />
               ))}
+              {certs.length === 0 && (
+                <tr className="inv-row-empty">
+                  <td colSpan={99}>
+                    <div className="inv-empty-inline">
+                      <Inbox size={14} />
+                      <span>{t('tbl.noMatch')}</span>
+                      {hasFilters && <button type="button" className="btn btn-sm btn-secondary" onClick={reset}>{t('tbl.reset')}</button>}
+                    </div>
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

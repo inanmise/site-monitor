@@ -63,7 +63,7 @@ public class InventoryExportService {
         // Kolon adları ekrandaki dışa aktarımın TR etiketleriyle BİREBİR
         // (frontend/src/utils/exportInventory.js → i18n inv.* anahtarları).
         List<String> header = new java.util.ArrayList<>(List.of(
-                "Domain", "Port", "Takım", "Kritiklik Seviyesi (Tier)", "Satın Alan Kişi/Ekip", "Platform", "Platform Ayrıntısı", "Aktif"));
+                "Domain", "Port", "Takım", "Kritiklik Seviyesi (Tier)", "Satın Alan Kişi/Ekip", "Platform", "Platform ayrıntısı", "Aktif"));
         CertificateInventoryOps.ALL.forEach(f -> header.add(f.label()));
         header.addAll(List.of("Değişiklik Açıklaması",
                 "Beklenen Parmak İzi — SHA-256 hex (dağıtım uyumsuzluğu tespiti için)",

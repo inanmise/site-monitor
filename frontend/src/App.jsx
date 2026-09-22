@@ -657,7 +657,11 @@ export default function App() {
   }, [])
 
   const openCertModal = useCallback((d) => {
-    setModalCert(certsRef.current.find(c => c.domain === d) ?? null)
+    // Alan adı STRING beklenir (CertificateCard `onClick(cert.domain)` verir). Satır NESNESİ geçen bir
+    // çağıran sessizce hiçbir şey açmıyordu (find hep undefined → modal kapalı), bu yüzden burada normalize
+    // ediliyor — sınıfı tek yerde kapatır. (2026-09-22, paylaşılan sertifika penceresi)
+    const domain = typeof d === 'string' ? d : d?.domain
+    setModalCert(certsRef.current.find(c => c.domain === domain) ?? null)
     // Başlangıç listesi: ilk kart açıldı (sunucuya yalnız henüz işaretli değilse yazılır — TourProvider aynı kuralı sekmeler için uygular)
     const ts = readMirror(); if (ts && ts.status !== 'dismissed' && !ts.checklist?.card && !ts.checklist_hidden) persistTourRef.current?.({ checklist: { card: true } })
   }, [])
@@ -1643,7 +1647,7 @@ export default function App() {
       {sharedCert && (
         <Suspense fallback={null}>
           <SharedCertificateModal domain={sharedCert} onClose={() => setSharedCert(null)}
-            onSelectDomain={(d) => { const c = certs.find((x) => x.domain === d); openCertModal(c ?? { domain: d }) }} />
+            onSelectDomain={(d) => { const c = certs.find((x) => x.domain === d); if (c) openCertModal(d); else setModalCert({ domain: d, _preview: true }) }} />
         </Suspense>
       )}
 

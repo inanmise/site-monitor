@@ -145,17 +145,6 @@ export const api = {
     },
     getReleaseNotes: (since) => request(`/system/releases/notes${since ? `?since=${encodeURIComponent(since)}` : ''}`),
   },
-  /** Sürüm & yayın yüzeyi — kimlikli HERKES (K9). Nav çipi popover'ı + Yardım → Yenilikler. */
-  system: {
-    getVersion: () => request('/system/version'),
-    getReleases: (params = {}) => {
-      const qs = new URLSearchParams()
-      for (const [k, v] of Object.entries(params)) if (v != null && v !== '' && v !== false) qs.set(k, String(v))
-      const s = qs.toString()
-      return request(`/system/releases${s ? `?${s}` : ''}`)
-    },
-    getReleaseNotes: (since) => request(`/system/releases/notes${since ? `?since=${encodeURIComponent(since)}` : ''}`),
-  },
   me: {
     /** "Sizin için — bugün" paneli (2026-09-12, #3) */
     today: (opts = {}) => request(opts.full ? '/me/today?full=true' : '/me/today'),

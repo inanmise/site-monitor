@@ -173,4 +173,29 @@ class CertificateCardExtrasServiceTest {
         assertThat(CertificateCardExtrasService.sanCount("a.example.com, b.example.com c.example.com")).isEqualTo(3);
         assertThat(CertificateCardExtrasService.sanCount(null)).isZero();
     }
+
+    @Test
+    @DisplayName("kapsam: paylaşılan sertifika çipi kapsam DIŞI takımın alan adını sızdırmaz (varlık/sayı kalır)")
+    void sharedNamesAreScoped() {
+        // Aynı parmak izi iki farklı takımda: a=Takım 1 (kullanıcının kapsamı), z=Takım 2 (kapsam dışı).
+        CertificateInventory a = inv("a.example.com", null, null);
+        CertificateInventory z = inv("z.example.com", null, null); z.setTeamId(2L);
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(a, z));
+        when(latestCheckRepo.findAll()).thenReturn(List.of(
+                lc("a.example.com", "FP1", null, null, null),
+                lc("z.example.com", "FP1", null, null, null)));
+
+        // Global görüş: eş adı görünür — fixture'ın gerçekten eş ürettiğini kanıtlar.
+        Map<String, Object> global = (Map<String, Object>) svc.forDomains(null).get("a.example.com").get("shared");
+        assertThat(global).containsEntry("count", 1).containsEntry("domains", List.of("z.example.com"));
+
+        // Kapsamlı görüş: sayı (varlık) korunur, AD sızmaz.
+        Map<String, Object> scoped = (Map<String, Object>) svc.forDomains(Set.of("a.example.com")).get("a.example.com").get("shared");
+        assertThat(scoped).containsEntry("count", 1);
+        assertThat((List<String>) scoped.get("domains")).isEmpty();
+
+        // Önbellekteki blok kirlenmemeli: kapsamlı çağrıdan SONRA global yine tam listeyi vermeli.
+        Map<String, Object> againGlobal = (Map<String, Object>) svc.forDomains(null).get("a.example.com").get("shared");
+        assertThat(againGlobal).containsEntry("domains", List.of("z.example.com"));
+    }
 }

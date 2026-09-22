@@ -58,6 +58,24 @@ describe('CertificatesTable', () => {
     expect(onRowClick).toHaveBeenCalledWith('click.com')
   })
 
+  // Envanterde 3284c40e ile düzeltilen bugun kardeş yüzeydeki hâli: süzgeç sonuç vermeyince tablo
+  // TAMAMEN kaldırılıyordu, süzgeç satırı da onunla gidiyor ve kullanıcı yazdığı metni ne görebiliyor
+  // ne temizleyebiliyordu (tek çıkış "Sıfırla" ile TÜM süzgeçleri kaybetmek).
+  it('kolon süzgeci sonuç vermeyince tablo + süzgeç satırı ekranda kalır, satır içi "eşleşme yok" çıkar', async () => {
+    localStorage.setItem('certtable-view', JSON.stringify({ colFilters: true }))
+    try {
+      api.getCertificatesPaginated.mockResolvedValue(paged([]))
+
+      const { container } = render(<CertificatesTable onRowClick={() => {}} />)
+
+      await waitFor(() => expect(container.querySelector('table.certificates-table')).not.toBeNull())
+      expect(container.querySelector('[data-testid="ct-filter-row"]')).not.toBeNull()
+      expect(container.querySelector('.inv-row-empty')).not.toBeNull()
+    } finally {
+      localStorage.removeItem('certtable-view')
+    }
+  })
+
   it('boş veri → hiç sertifika satırı çizilmez (boş durum)', async () => {
     api.getCertificatesPaginated.mockResolvedValue(paged([]))
 

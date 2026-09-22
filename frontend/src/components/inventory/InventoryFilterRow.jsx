@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
@@ -16,7 +16,11 @@ export default function InventoryFilterRow({ filters, onFilters, allRows = [], c
   const t = useT()
   const show = (k) => cols.includes(k)
   const set = (patch) => onFilters({ ...filters, ...patch })
-  const opts = columnFilterOptions(allRows)
+  // Gecikmeli yazma en güncel süzgeçlerin üstüne uygulanmalı: efekt kendi render'ının `filters`'ını
+  // yakalıyor, 250 ms içinde başka bir kolon seçilirse o seçim eski gövdeyle eziliyordu.
+  const filtersRef = useRef(filters)
+  filtersRef.current = filters
+  const opts = useMemo(() => columnFilterOptions(allRows), [allRows])
   const any = { value: '', label: t('inv.filterAny') }
   const sel = (key, options, extra = {}) => (
     <SearchableSelect value={filters[key] || ''} onChange={(v) => set({ [key]: v })} options={[any, ...options]} searchThreshold={6} {...extra} />
@@ -25,7 +29,10 @@ export default function InventoryFilterRow({ filters, onFilters, allRows = [], c
   const [domainDraft, setDomainDraft] = useState(filters.domain || '')
   useEffect(() => { setDomainDraft(filters.domain || '') }, [filters.domain])
   useEffect(() => {
-    const id = setTimeout(() => { if (domainDraft !== (filters.domain || '')) set({ domain: domainDraft }) }, 250)
+    const id = setTimeout(() => {
+      const cur = filtersRef.current
+      if (domainDraft !== (cur.domain || '')) onFilters({ ...cur, domain: domainDraft })
+    }, 250)
     return () => clearTimeout(id)
   }, [domainDraft]) // eslint-disable-line react-hooks/exhaustive-deps
   const cell = (key, node, extra = '') => <td key={key} className={`inv-fr-cell${extra}`}>{node}</td>

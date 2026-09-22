@@ -206,7 +206,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
     if (!form.team_id) { setTeamGroups([]); setTeamTags([]); return }
     let alive = true
     api.monitoring.listGroups(form.team_id, 'cert').then(r => { if (alive && r?.success) setTeamGroups(r.data || []) })
-    api.monitoring.listTags(form.team_id).then(r => { if (alive) setTeamTags(r?.success ? (r.data || []) : []) })
+    api.monitoring.listTags(form.team_id).then(r => { if (alive) setTeamTags(r?.success ? (r.data || []) : []) }).catch(() => { if (alive) setTeamTags([]) })
     return () => { alive = false }
   }, [form.team_id])
 

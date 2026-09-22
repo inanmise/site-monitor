@@ -47,6 +47,8 @@ public class CertificateCardExtrasService {
     private static final DateTimeFormatter ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
     private static final ZoneId IST = ZoneId.of("Europe/Istanbul");
     static final int CHANGE_NOTICE_DAYS = 7, SHARED_LIST_CAP = 10;
+    /** Thread-safe ve kurulumu pahalı — alan başına yeniden kurulmaz (HttpFailureDiagnostics ile aynı desen). */
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
     private static final List<String> LEVEL_ORDER = List.of("CRITICAL", "HIGH", "WARNING", "MEDIUM", "LOW", "INFO");
 
     private final CertificateInventoryRepository inventoryRepo;
@@ -68,13 +70,37 @@ public class CertificateCardExtrasService {
         return v == null ? Map.of() : v;
     }
 
-    /** Kapsam süzgeci: yalnız verilen alanlar (null = hepsi). */
+    /**
+     * Kapsam süzgeci: yalnız verilen alanlar (null = hepsi).
+     * <p>Kapsam doluysa {@code shared.domains} listesi DE süzülür (2026-09-22): parmak izi haritası
+     * {@link #compute} içinde TÜM envanterden kurulduğu için, üst seviye anahtarları süzmek kapsam dışı
+     * takımların alan ADLARINI çipin ipucunda açıkta bırakıyordu — {@code GET /api/certificates/shared}
+     * penceresi aynı adları özellikle gizlerken. Varlık gizlenmez ({@code count} toplam eş sayısı kalır,
+     * pencereyle aynı sözleşme: "varlık gizlenmez, ayrıntı sızmaz"); çip zaten {@code count > domains.size()}
+     * olunca "…" gösterir. Önbellekteki blok tüm kullanıcılarca paylaşıldığı için KOPYALANARAK yazılır —
+     * yerinde değiştirmek önbelleği bozar ve sızıntıyı kalıcılaştırırdı.
+     */
     public Map<String, Map<String, Object>> forDomains(@Nullable Set<String> domains) {
         Map<String, Map<String, Object>> all = all();
         if (domains == null) return all;
         Map<String, Map<String, Object>> out = new LinkedHashMap<>();
-        for (String d : domains) { Map<String, Object> m = all.get(d); if (m != null) out.put(d, m); }
+        for (String d : domains) { Map<String, Object> m = all.get(d); if (m != null) out.put(d, scopeShared(m, domains)); }
         return out;
+    }
+
+    /** {@code shared.domains}'i kapsama göre süzen KOPYA; süzülecek ad yoksa özgün harita döner. */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> scopeShared(Map<String, Object> m, Set<String> scope) {
+        if (!(m.get("shared") instanceof Map<?, ?> raw)) return m;
+        Map<String, Object> shared = (Map<String, Object>) raw;
+        if (!(shared.get("domains") instanceof List<?> names) || names.isEmpty()) return m;
+        List<?> visible = names.stream().filter(scope::contains).toList();
+        if (visible.size() == names.size()) return m;
+        Map<String, Object> scopedShared = new LinkedHashMap<>(shared);
+        scopedShared.put("domains", visible);
+        Map<String, Object> copy = new LinkedHashMap<>(m);
+        copy.put("shared", scopedShared);
+        return copy;
     }
 
     Map<String, Map<String, Object>> compute(Instant now) {
@@ -256,10 +282,19 @@ public class CertificateCardExtrasService {
         if (fp != null && !fp.isBlank()) {
             Map<Long, String> teamNames = new java.util.HashMap<>();
             for (com.sitemonitor.model.Team tm : teamRepo.findAll()) if (tm.getId() != null) teamNames.put(tm.getId(), tm.getName());
+            // Tek pod / 200-1000+ alan: bu uç her çip tıklamasında çağrılıyor ve önbelleksiz. Parmak izini DB'de süz,
+            // envanteri yalnız eş alanlar için çek — eskiden latest_checks + certificate_inventory TAM tarama + tam
+            // hidrasyondu (kardeş `card-extras` ucunun önbelleği tam bu maliyetten kaçınmak için var). (2026-09-22)
+            List<LatestCheck> peerChecks = latestCheckRepo.findByFingerprintIgnoreCase(fp).stream()
+                    .filter(lc -> lc.getDomain() != null)
+                    .sorted(java.util.Comparator.comparing(LatestCheck::getDomain))
+                    .toList();
             Map<String, CertificateInventory> invByDomain = new java.util.HashMap<>();
-            for (CertificateInventory inv : inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc()) if (inv.getDomain() != null) invByDomain.putIfAbsent(inv.getDomain(), inv);
-            for (LatestCheck lc : latestCheckRepo.findAllByOrderByDomainAsc()) {
-                if (lc.getFingerprint() == null || !fp.equalsIgnoreCase(lc.getFingerprint())) continue;
+            if (!peerChecks.isEmpty()) {
+                for (CertificateInventory inv : inventoryRepo.findByDomainIn(peerChecks.stream().map(LatestCheck::getDomain).toList()))
+                    if (inv.getDomain() != null && inv.getDeletedAt() == null) invByDomain.putIfAbsent(inv.getDomain(), inv);
+            }
+            for (LatestCheck lc : peerChecks) {
                 if (scope != null && !scope.contains(lc.getDomain())) { hidden++; continue; }
                 CertificateInventory inv = invByDomain.get(lc.getDomain());
                 Map<String, Object> m = new LinkedHashMap<>();
@@ -290,7 +325,7 @@ public class CertificateCardExtrasService {
     static List<String> sanList(String san) {
         if (san == null || san.isBlank()) return List.of();
         try {
-            List<?> l = new com.fasterxml.jackson.databind.ObjectMapper().readValue(san, List.class);
+            List<?> l = JSON.readValue(san, List.class);
             return l.stream().map(String::valueOf).filter(x -> !x.isBlank()).toList();
         } catch (Exception ignore) {
             return java.util.Arrays.stream(san.split("[,;\\s]+")).filter(x -> !x.isBlank()).toList();
@@ -311,7 +346,7 @@ public class CertificateCardExtrasService {
     static int sanCount(String san) {
         if (san == null || san.isBlank()) return 0;
         try {
-            List<?> l = new com.fasterxml.jackson.databind.ObjectMapper().readValue(san, List.class);
+            List<?> l = JSON.readValue(san, List.class);
             return l.size();
         } catch (Exception e) {
             return (int) java.util.Arrays.stream(san.split("[,;\\s]+")).filter(x -> !x.isBlank()).count();
