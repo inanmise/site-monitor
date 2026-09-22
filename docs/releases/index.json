@@ -1,9 +1,163 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-22T06:30:02Z",
+  "generatedAt": "2026-09-22T16:52:20Z",
   "repo": "inanmise/site-monitor",
-  "count": 668,
+  "count": 669,
   "releases": [
+    {
+      "version": "20.79.0",
+      "tag": "v20.79.0",
+      "releasedAt": "2026-09-22T16:52:14Z",
+      "commit": "6ef512577ab54fe99bb133751a46a0e4dbdc855b",
+      "prevVersion": "20.78.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 7,
+        "fix": 10,
+        "perf": 0,
+        "refactor": 1,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "certs,inventory",
+          "breaking": false,
+          "sha": "6ef51257",
+          "subject": "kapsam sızıntısı, ölü tıklama ve import veri kaybı"
+        },
+        {
+          "type": "fix",
+          "scope": "i18n",
+          "breaking": false,
+          "sha": "85e24971",
+          "subject": "kesinti çizelgesi ve HTTP tanı metinleri — çelişkili \"alarm yok\", sabit sürüm no, \"1 advisories\""
+        },
+        {
+          "type": "fix",
+          "scope": "dashboard",
+          "breaking": false,
+          "sha": "a0837c64",
+          "subject": "kart alt satırı — \"şu an\" şeridi ve eylem düğmeleri artık aynı satırda"
+        },
+        {
+          "type": "fix",
+          "scope": "i18n",
+          "breaking": false,
+          "sha": "8149c096",
+          "subject": "yinelenen 'inv.copyFailed' anahtarı + yineleme kapısı"
+        },
+        {
+          "type": "fix",
+          "scope": "inventory",
+          "breaking": false,
+          "sha": "3284c40e",
+          "subject": "kolon süzgeci sonuç vermeyince tablo (ve süzgeç satırı) ekrandan siliniyordu"
+        },
+        {
+          "type": "fix",
+          "scope": "tables",
+          "breaking": false,
+          "sha": "67e975cc",
+          "subject": "kayıtlı sütun görünümü yeni eklenen varsayılan sütunu gizliyordu (Platform)"
+        },
+        {
+          "type": "feat",
+          "scope": "certs",
+          "breaking": false,
+          "sha": "bfd39a3e",
+          "subject": "paylaşılan sertifika penceresi + platform seçenek açıklamaları, \"Şimdi Kontrol Et\" varsayılanı, yeni kayıtta anında alarm"
+        },
+        {
+          "type": "fix",
+          "scope": "history",
+          "breaking": false,
+          "sha": "83873bff",
+          "subject": "kesinti zaman çizelgesi uyarı alarmlarını (HTTP_SSL, *_SLOW, *_EXPIRY…) kesinti saymaz"
+        },
+        {
+          "type": "feat",
+          "scope": "inventory",
+          "breaking": false,
+          "sha": "295f3cd7",
+          "subject": "platform kataloğu — site nerede koşuyor (IIS / OpenShift / Kubernetes / Linux …), Ayarlar'dan yönetilir"
+        },
+        {
+          "type": "style",
+          "scope": "dashboard",
+          "breaking": false,
+          "sha": "d3b48275",
+          "subject": "kart takım bilgisi okunaklı tonlu rozet (gri .72em meta yazısı yerine)"
+        },
+        {
+          "type": "feat",
+          "scope": "certs",
+          "breaking": false,
+          "sha": "b316abb1",
+          "subject": "Tüm Sertifikalar tablosunda kolon süzgeç satırı (envanterle aynı desen)"
+        },
+        {
+          "type": "feat",
+          "scope": "inventory",
+          "breaking": false,
+          "sha": "aa86eb1c",
+          "subject": "Domain Envanteri tablosunda kolon süzgeç satırı (her kolonda arama/combobox)"
+        },
+        {
+          "type": "refactor",
+          "scope": "inventory",
+          "breaking": false,
+          "sha": "d48a38fa",
+          "subject": "açıklama Kopyala düğmesi editör araç çubuğuna taşındı (kullanıcı seçimi)"
+        },
+        {
+          "type": "fix",
+          "scope": "inventory",
+          "breaking": false,
+          "sha": "3e187f7e",
+          "subject": "\"Değişiklik Açıklaması\" Kopyala düğmesi başlığın hemen yanında (sağa savrulmaz)"
+        },
+        {
+          "type": "fix",
+          "scope": "inventory",
+          "breaking": false,
+          "sha": "e6093c3b",
+          "subject": "Kopyala ipucu metni yeni davranışla uyumlu (değişiklik açıklaması dâhil)"
+        },
+        {
+          "type": "fix",
+          "scope": "dashboard",
+          "breaking": false,
+          "sha": "165a1f70",
+          "subject": "kart \"Kopyala\" değişiklik açıklamasını da taşır; \"şu an\" şeridi (Ayakta · ms · YÜKSEK) kırpılmaz"
+        },
+        {
+          "type": "feat",
+          "scope": "tags",
+          "breaking": false,
+          "sha": "ba7925dd",
+          "subject": "izleme/envanter formlarında takımın mevcut etiketleri aranıp seçilebilir (10 form)"
+        },
+        {
+          "type": "feat",
+          "scope": "inventory",
+          "breaking": false,
+          "sha": "dde4ea6a",
+          "subject": "domain düzenlemede \"Değişiklik Açıklaması\" için Kopyala düğmesi"
+        },
+        {
+          "type": "feat",
+          "scope": "http",
+          "breaking": false,
+          "sha": "d0ff896e",
+          "subject": "başarısız HTTP/Website kontrolüne yapısal hata tanısı — evre, kaynak→hedef IP:port, bekleme, istisna zinciri"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.78.0",
       "tag": "v20.78.0",
