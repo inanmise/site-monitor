@@ -1,9 +1,142 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-20T22:39:20Z",
+  "generatedAt": "2026-09-22T02:47:07Z",
   "repo": "inanmise/site-monitor",
-  "count": 666,
+  "count": 667,
   "releases": [
+    {
+      "version": "20.77.0",
+      "tag": "v20.77.0",
+      "releasedAt": "2026-09-22T02:47:01Z",
+      "commit": "6b3419a085debf123b15edc4cd41375611003936",
+      "prevVersion": "20.76.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 2,
+        "fix": 10,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 4
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "regresyon",
+          "breaking": false,
+          "sha": "6b3419a0",
+          "subject": "61. tur — PAGESPEED_FIELDS'a useProxy (boş diff tuzağı), dört tabloya açık use_proxy patch'i, tünel başlık tavanı"
+        },
+        {
+          "type": "feat",
+          "scope": "proxy",
+          "breaking": false,
+          "sha": "fa6f5f20",
+          "subject": "Durum (uptime) yoklaması envanter vekil bayrağını onurlandırır; Page Speed'e vekil kipi (varsayılan Doğrudan)"
+        },
+        {
+          "type": "chore",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "e2b2fd8a",
+          "subject": "ISSUE-003 yorumunu JSX süslü parantez içine al (lint uyarısı)"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "247c5299",
+          "subject": "ISSUE-006 — Genel Bakış ilk yüklemede \"Sertifika bulunamadı\" yerine yükleniyor durumu (kullanıcı bildirimi)"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "41f89db7",
+          "subject": "ISSUE-005 — dar ekranda nav rayı: kırpık Search/Notifications/ADMIN etiketleri gizlenir, kullanıcı çipi simgeye düşer"
+        },
+        {
+          "type": "test",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "386f8771",
+          "subject": "regression test for ISSUE-004 — yüzde işareti TR önde / EN sonda"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "ed1f6529",
+          "subject": "ISSUE-004 — sertifika kartında erişilebilirlik yüzdesi dile bağlı (EN: 100%, TR: %100)"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "77cdee9d",
+          "subject": "ISSUE-003 — kesinti süresi i18n biçimleyiciyle (EN'de \"1 dk 0 sn\" yazıyordu)"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "04acc00c",
+          "subject": "ISSUE-002 — Uyarılar'daki ağ kesinti geçmişi varsayılan katlı (ilk 5 + ONGOING'ler, tümünü göster/daha az)"
+        },
+        {
+          "type": "test",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "833e756d",
+          "subject": "regression test for ISSUE-001 — yeniden başlatma sonrası açık kesinti kaydı ilk sağlıklı süpürmede kapanır"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "e9f04f89",
+          "subject": "ISSUE-001 — süpürme kaynaklı ağ kesintisi kaydı yeniden başlatma sonrası da kapanır"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "a245863c",
+          "subject": "ISSUE-003 — vekil etkin-karar ipucunda simge ile metin arasına boşluk (özgüllük)"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "4127e963",
+          "subject": "ISSUE-002 — vekil combobox'ı tam satır yerine Metod sütunu genişliğinde (kullanıcı bildirimi)"
+        },
+        {
+          "type": "test",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "6e53dc59",
+          "subject": "regression test for ISSUE-001 — etkin ipucu yalnız kaydedilmiş kiple aynıyken"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "c34f3fa1",
+          "subject": "ISSUE-001 — vekil formunda kip değiştirilince eski etkin-karar ipucu gizlenir"
+        },
+        {
+          "type": "feat",
+          "scope": "proxy",
+          "breaking": false,
+          "sha": "05377adf",
+          "subject": "HTTP/Keyword/Sayfa izlemelerine izleme başına kurumsal vekil tercihi (AUTO|ON|OFF)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.76.0",
       "tag": "v20.76.0",
