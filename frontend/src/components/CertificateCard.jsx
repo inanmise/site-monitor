@@ -192,7 +192,7 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
       {(cert.team_name || showVia) && (
         <div className="cc-detail-row">
           {cert.team_name ? (
-            <span className="cc-meta" title={t('card.team')} style={{ marginLeft: 0 }}>
+            <span className="cc-team-chip" title={t('card.team')}>   {/* tonlu rozet (2026-09-22): gri .72em meta yazısı okunmuyordu */}
               <TeamBadge teamId={cert.team_id} teamName={cert.team_name} />
             </span>
           ) : <span />}

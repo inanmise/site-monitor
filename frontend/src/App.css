@@ -1500,6 +1500,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   white-space: nowrap;
 }
 .cc-meta svg { opacity: .7; flex-shrink: 0; }
+/* Kart takım çipi (2026-09-22): .cc-meta'nın gri/.72em yazısı okunmuyordu — tonlu rozet, koyu metin, taşarsa üç nokta */
+.cc-team-chip { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; padding: 2px 9px; border-radius: 999px;
+  background: color-mix(in srgb, var(--primary, #2563eb) 10%, var(--bg-surface)); border: 1px solid color-mix(in srgb, var(--primary, #2563eb) 28%, var(--border));
+  font-size: .78em; font-weight: 600; color: var(--text); }
+.cc-team-chip .team-badge { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-team-chip .team-badge svg { color: var(--primary, #2563eb); opacity: 1; flex-shrink: 0; }
 
 .cc-pill {
   display: inline-flex; align-items: center; gap: 6px;
