@@ -6,13 +6,15 @@ import { parseHttpDiag, phaseStates, routeOf, hitTimeout, STRIP_PHASES } from '.
 /**
  * HTTP/Website kontrol hatasının tanı paneli (2026-09-22): "ne oldu, hangi evrede, kimden kime, ne kadar bekledi".
  *
- * Sentetik izlemenin CheckDetail deseniyle aynı yerleşim: geçmiş satırına tıklanınca listenin ALTINDA açılır.
+ * Geçmiş satırındaki Detay düğmesine tıklanınca KENDİ penceresinde açılır (2026-09-23; eskiden listenin
+ * altında satır içi açılıyordu — dar alanda okunmuyordu). `className="hdiag--modal"` kabuk içindeki
+ * varyant: kendi çerçevesini ve başlık tekrarını bırakır, pencere başlığı onları zaten veriyor.
  * İçerik: evre şeridi (DNS → TCP → TLS → istek → yanıt; takılan kırmızı), tür başlığı + açıklama/öneri (i18n,
  * `httpdiag.kind.*` / `httpdiag.hint.*`), yol satırı (kaynak IP → hedef IP:port, vekil), bekleme/zaman aşımı,
  * çözümlenen IP'ler, yönlendirme zinciri, beklenen/gelen durum kodu ve ham istisna zinciri (katlanır).
  * Tanı olmayan (eski) satırda yalnız ham hata metni + not gösterilir — sessiz boşluk yok.
  */
-export default function HttpErrorDetail({ check, t, onClose }) {
+export default function HttpErrorDetail({ check, t, className = '' }) {
   const [raw, setRaw] = useState(false)
   if (!check) return null
   const d = parseHttpDiag(check)
@@ -22,11 +24,14 @@ export default function HttpErrorDetail({ check, t, onClose }) {
   const timedOut = hitTimeout(d)
 
   return (
-    <div className="hdiag" data-testid="http-error-detail">
+    <div className={`hdiag${className ? ` ${className}` : ''}`} data-testid="http-error-detail">
       <div className="hdiag-head">
         <span className="hdiag-title"><AlertTriangle size={14} /> {t('httpdiag.title')}</span>
         <span className="hdiag-when">{formatDateSec(check.checked_at)}</span>
-        {onClose && <button type="button" className="btn btn-sm btn-secondary hdiag-close" onClick={onClose}>{t('httpdiag.close')}</button>}
+        {/* Kapatma düğmesi YOK: panel iki yerde de kendi çerçevesini kurmuyor — tanı penceresinde
+            ModalShell kapatıyor, test önizlemesinde panel zaten satır içi. `onClose` prop'u hiçbir
+            çağrı yerinden geçilmiyordu, yani düğme ulaşılamaz koddu (ve testi yeşil kalarak var
+            olmayan bir yüzeyi doğruluyordu). */}
       </div>
 
       {!d ? (

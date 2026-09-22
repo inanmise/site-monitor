@@ -397,4 +397,34 @@ describe('HttpMonitorPage', () => {
     await waitFor(() => expect(document.querySelector('.chk-modal')).not.toBeNull())
     expect(document.querySelectorAll('.chk-td-status').length).toBe(1)
   })
+
+  it('geçmişteki başarısız satırın Detay hücresi DÜĞMEDİR ve tanıyı KENDİ penceresinde açar', async () => {
+    // 2026-09-23 kullanıcı isteği: tanı listenin altında satır içi değil, ayrı bir pencerede açılsın ve
+    // hücre tıklanabilir görünsün. Eskiden salt `cursor:pointer` taşıyan bir span'di — ne düğmeydi
+    // (Tab ile erişilemiyordu) ne de tıklanabilir duruyordu.
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      items: [{
+        id: 9, checked_at: '2026-09-22T20:02:10', ok: false, http_status: null, response_ms: 79,
+        error: 'No name matching qa.example.com found',
+        error_detail: JSON.stringify({ kind: 'HOSTNAME_MISMATCH', phase: 'TLS', scheme: 'https', method: 'GET', url: 'https://qa.example.com/' }),
+      }],
+      counts: { total: 1, fail: 1 }, buckets: [], alerts: [], range: {}, total: 1, page: 0, size: 50,
+    } })
+    window.history.replaceState({}, '', '/?tab=http&monitor=1')
+    try {
+      render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+
+      const open = await screen.findByRole('button', { name: /ayrı pencerede aç|own window/i })
+      expect(open.tagName).toBe('BUTTON')                              // klavyeyle açılabilir
+      expect(open.textContent).toMatch(/ayrıntı|details/i)             // tıklanabilir olduğunu SÖYLÜYOR
+      expect(screen.queryByTestId('http-error-detail')).toBeNull()     // tıklamadan önce panel yok
+
+      fireEvent.click(open)
+
+      const panel = await screen.findByTestId('http-error-detail')
+      // Sayfada başka role="dialog" yok (izleme detay modalı elle kurulmuş, rol taşımıyor):
+      // bu yüzden bu iddia "satır içi değil, ModalShell penceresinde" demenin kesin yolu.
+      expect(panel.closest('[role="dialog"]')).not.toBeNull()
+    } finally { window.history.replaceState({}, '', '/') }
+  })
 })
