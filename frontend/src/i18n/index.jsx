@@ -6651,6 +6651,7 @@ export const TR = {
   'dreg.nameservers': 'Nameserver\'lar', 'dreg.ips': 'IP Adresleri + Hostname',
   'dreg.eppStatus': 'Domain Durum Kodları (EPP)',
   'dreg.dnssecSigned': 'İmzalı (signed)', 'dreg.dnssecUnsigned': 'İmzasız (unsigned)', 'dreg.dnssecUnknown': 'Bilinmiyor',
+  'dreg.whyNoData': '(sorgu veri döndürmedi)', 'dreg.whyNoNs': '(kayıtta nameserver yok)', 'dreg.whyNoIp': '({0} için A/AAAA kaydı yok — apex çözülmüyor; www gibi alt alanlara bakılmaz)', 'dreg.whyNoPtr': 'PTR kaydı yok', 'dreg.whyNoEppWhois': '(WHOIS kaynağı EPP kodu vermedi)', 'dreg.whyDnssecWhois': '(WHOIS kaynağında DNSSEC satırı yok)', 'dreg.whyLockWhois': 'Kilit yalnız RDAP kaynağında doğrulanabilir; bu kayıt WHOIS\'ten geldi.', 'dreg.whyBlNoIp': '(sorgulanacak IP yok — apex A kaydı çözülmüyor)', 'dreg.whyBlNoAnswer': '(DNSBL sorgusu yanıtsız — kurumsal ağ dış DNS\'i reddediyor olabilir)',
   // EPP kod açıklamaları (tooltip)
   'epp.clienttransferprohibited': 'Registrar transferi engelli (istemci kilidi) — yetkisiz transfere karşı koruma.',
   'epp.clientdeleteprohibited': 'Silme engelli (istemci kilidi).', 'epp.clientupdateprohibited': 'Güncelleme engelli (istemci kilidi).',
@@ -14792,6 +14793,7 @@ export const EN = {
   'dreg.nameservers': 'Nameservers', 'dreg.ips': 'IP Addresses + Hostname',
   'dreg.eppStatus': 'Domain Status Codes (EPP)',
   'dreg.dnssecSigned': 'Signed', 'dreg.dnssecUnsigned': 'Unsigned', 'dreg.dnssecUnknown': 'Unknown',
+  'dreg.whyNoData': '(the lookup returned no data)', 'dreg.whyNoNs': '(no nameservers in the record)', 'dreg.whyNoIp': '(no A/AAAA record for {0} — the apex does not resolve; subdomains such as www are not checked)', 'dreg.whyNoPtr': 'no PTR record', 'dreg.whyNoEppWhois': '(the WHOIS source returned no EPP codes)', 'dreg.whyDnssecWhois': '(no DNSSEC line in the WHOIS source)', 'dreg.whyLockWhois': 'The lock can only be verified from RDAP; this record came from WHOIS.', 'dreg.whyBlNoIp': '(nothing to query — the apex A record does not resolve)', 'dreg.whyBlNoAnswer': '(the DNSBL query went unanswered — the corporate network may block external DNS)',
   // EPP status code descriptions (tooltip)
   'epp.clienttransferprohibited': 'Registrar transfer prohibited (client lock) — protects against unauthorized transfer.',
   'epp.clientdeleteprohibited': 'Deletion prohibited (client lock).', 'epp.clientupdateprohibited': 'Updates prohibited (client lock).',

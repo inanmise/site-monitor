@@ -3116,6 +3116,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .dom-hero { padding: 6px 0 2px; }
 /* Kart zenginleştirme (2026-09-22): ömür çubuğu satırı, kısaltılan registrar, koruma rozetleri */
 .dom-hero-row { display: flex; align-items: center; gap: 14px; }
+/* Domain Kaydı sekmesi: "—" için kısa neden metni (2026-09-22, K) */
+.dreg-why { font-size: .82em; font-weight: 400; color: var(--text-muted); }
+.dreg-why--row { grid-column: 1 / -1; margin-top: -4px; }
 .dom-life-bar { --pg-fill: var(--text-light); }
 .dom-registrar { display: flex; align-items: center; gap: 5px; font-size: .78em; color: var(--text-muted); margin-top: 2px; min-width: 0; }
 .dom-registrar span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
