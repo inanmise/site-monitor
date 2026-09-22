@@ -30,6 +30,7 @@ class InventoryImportServiceTest {
     @Mock MonitorHistoryService monitorHistory;
     @Mock MonitoringGroupService monitoringGroupService;
     @Mock SchedulerService schedulerService;
+    @Mock PlatformService platformService;
     @InjectMocks InventoryImportService service;
 
     private static Team team(long id, String name) { Team t = new Team(); t.setId(id); t.setName(name); return t; }
@@ -120,5 +121,55 @@ class InventoryImportServiceTest {
         assertThat(InventoryImportService.boolOrNull("")).isNull();
         assertThat(InventoryImportService.intOrNull("T3")).isEqualTo(3);
         assertThat(InventoryImportService.intOrNull("abc")).isNull();
+    }
+
+    @Test
+    @DisplayName("platform: katalogda olmayan değer 'error:unknown_platform' — kayıtlı platformu SESSİZCE silmez")
+    void unknownPlatformIsRejectedNotWiped() {
+        CertificateInventory ex = new CertificateInventory();
+        ex.setId(7L); ex.setDomain("a.example.com"); ex.setTeamId(5L); ex.setPlatform("IIS");
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(Optional.of(ex));
+        when(platformService.normalize("Tomcat")).thenReturn(null);
+
+        var res = service.commit(List.of(row("domain", "a.example.com", "team", "takım a", "platform", "Tomcat")),
+                t -> true, "admin", null);
+
+        assertThat(res.errors()).isEqualTo(1);
+        assertThat(res.rows().get(0).action()).isEqualTo("error");
+        assertThat(res.rows().get(0).reason()).isEqualTo("unknown_platform");
+        assertThat(ex.getPlatform()).isEqualTo("IIS");   // eski yol burada null yazıyordu
+        verify(inventoryRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("platform: katalog ADI koda çözülür; kod zaten aynıysa hayalet 'update' üretmez")
+    void platformNameResolvesToCodeWithoutPhantomChange() {
+        CertificateInventory ex = new CertificateInventory();
+        ex.setId(7L); ex.setDomain("a.example.com"); ex.setTeamId(5L); ex.setPlatform("OPENSHIFT");
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(Optional.of(ex));
+        when(platformService.normalize("OpenShift")).thenReturn("OPENSHIFT");
+
+        var res = service.commit(List.of(row("domain", "a.example.com", "team", "takım a", "platform", "OpenShift")),
+                t -> true, "admin", null);
+
+        assertThat(res.skipped()).isEqualTo(1);
+        assertThat(res.rows().get(0).reason()).isEqualTo("no_change");   // eski yol: ham "OpenShift" != kod → sahte update
+        verify(inventoryRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("platform: katalogdaki farklı yazım koda çözülür ve gerçekten değişiyorsa yazılır")
+    void platformChangeIsWritten() {
+        CertificateInventory ex = new CertificateInventory();
+        ex.setId(7L); ex.setDomain("a.example.com"); ex.setTeamId(5L); ex.setPlatform("IIS");
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(Optional.of(ex));
+        when(platformService.normalize("openshift")).thenReturn("OPENSHIFT");
+
+        var res = service.commit(List.of(row("domain", "a.example.com", "team", "takım a", "platform", "openshift")),
+                t -> true, "admin", null);
+
+        assertThat(res.updated()).isEqualTo(1);
+        assertThat(res.rows().get(0).changes()).contains("platform");
+        assertThat(ex.getPlatform()).isEqualTo("OPENSHIFT");
     }
 }

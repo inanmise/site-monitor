@@ -27,8 +27,8 @@ import InventoryImportModal from '../inventory/InventoryImportModal.jsx'
 import InventoryDrawer from '../inventory/InventoryDrawer.jsx'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval.js'
 import {
-  applyFilters, sortItems, detectOverlaps, filtersToParams, paramsToFilters, readView, writeView, defaultCols,
-  readSavedViews, writeSavedViews, EMPTY_FILTERS,
+  applyFilters, sortItems, detectOverlaps, filtersToParams, paramsToFilters, readView, writeView, readCols, writeCols, restoreCols, colKeys,
+  readSavedViews, writeSavedViews, EMPTY_FILTERS, hasActiveFilter,
 } from '../inventory/inventoryModel.js'
 
 /**
@@ -97,11 +97,19 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   // Süzgeç / sıralama / sütun / yoğunluk / görünüm (#1 #4 #13 #15 #7) — süzgeç URL'de (i_ öneki), gerisi localStorage
   const [filters, setFilters] = useState(() => paramsToFilters(readUrlParam))
   const [sort, setSort]       = useState(() => readUrlParam('i_sort', readView().sort || 'domain|asc'))   // paylaşılan bağlantı sıralamayı taşır (ISSUE-002)
-  const [cols, setColsRaw]    = useState(() => { const v = readView().cols; return Array.isArray(v) && v.length ? v : defaultCols() })
+  const [cols, setColsRaw]    = useState(readCols)   // kayıtlı seçim + kullanıcının hiç görmediği yeni varsayılan sütunlar (2026-09-22)
   const [density, setDensityRaw] = useState(() => readView().density || 'comfortable')
   const [view, setViewRaw]    = useState(() => readUrlParam('i_view', readView().view || 'table'))
+  const [colFilters, setColFiltersRaw] = useState(() => !!readView().colFilters)   // kolon süzgeç satırı açık mı (2026-09-22)
+  const [platformNames, setPlatformNames] = useState({})   // kod → ad (tablo/süzgeç etiketi, 2026-09-22)
+  useEffect(() => {
+    let alive = true
+    api.admin.listPlatforms().then(r => { if (alive && r?.success) setPlatformNames(Object.fromEntries((r.data || []).map(p => [p.code, p.name]))) }).catch(() => {})
+    return () => { alive = false }
+  }, [])
+  const setColFilters = (v) => { setColFiltersRaw(v); writeView({ colFilters: v }) }
   const [savedViews, setSavedViews] = useState(readSavedViews)
-  const setCols = (c) => { setColsRaw(c); writeView({ cols: c }) }
+  const setCols = (c) => { setColsRaw(c); writeCols(c) }
   const setDensity = (d) => { setDensityRaw(d); writeView({ density: d }) }
   const setView = (v) => { setViewRaw(v); writeView({ view: v }) }
   const setSortPersist = (v) => { setSort(v); writeView({ sort: v }) }
@@ -247,14 +255,16 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
 
   // ── Kayıtlı görünümler (#13) + paylaşım bağlantısı ──
   function saveView(name) {
-    const v = { name, filters, sort, cols, density, statusFilter, view }
+    const v = { name, filters, sort, cols, colsKnown: colKeys(), density, statusFilter, view }
     const next = [...savedViews.filter(x => x.name !== name), v]
     setSavedViews(next); writeSavedViews(next); toast.success(t('inv.viewSaved', name))
   }
   function applyView(v) {
-    setFilters({ ...EMPTY_FILTERS, ...(v.filters || {}) }); setSortPersist(v.sort || 'domain|asc'); setCols(v.cols?.length ? v.cols : defaultCols())
+    setFilters({ ...EMPTY_FILTERS, ...(v.filters || {}) }); setSortPersist(v.sort || 'domain|asc'); setCols(restoreCols(v.cols, v.colsKnown))
     setDensity(v.density || 'comfortable'); setStatusFilter(v.statusFilter || 'default'); setView(v.view || 'table')
   }
+  /** Tüm süzgeçleri sıfırla — boş durumdan ve tablo içi "eşleşme yok" satırından çağrılır (2026-09-22). */
+  function clearFilters() { setFilters({ ...EMPTY_FILTERS }) }
   function deleteView(name) { const next = savedViews.filter(x => x.name !== name); setSavedViews(next); writeSavedViews(next) }
   async function copyLink() {
     try { await navigator.clipboard.writeText(window.location.href); toast.success(t('inv.copied')) } catch { toast.error(t('inv.copyFailed')) }
@@ -557,7 +567,8 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       <InventoryToolbar filters={filters} onFilters={setFilters} teams={teams} groupNames={groupNames} notifGroups={notifGroups}
         shown={visibleItems.length} total={statusItems.length}
         cols={cols} onCols={setCols} sort={sort} onSort={setSortPersist} density={density} onDensity={setDensity}
-        view={view} onView={setView} savedViews={savedViews} onSaveView={saveView} onApplyView={applyView} onDeleteView={deleteView} onCopyLink={copyLink} />
+        view={view} onView={setView} savedViews={savedViews} onSaveView={saveView} onApplyView={applyView} onDeleteView={deleteView} onCopyLink={copyLink}
+        colFilters={colFilters} onColFilters={setColFilters} />
 
       {canManage && selected.size > 0 && (
         <div className="inv-stats-pills" style={{ marginBottom: 10, gap: 8, alignItems: 'center',
@@ -582,9 +593,13 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       {view === 'team' ? (
         <InventoryTeamView rows={visibleItems} onShow={(r) => setShowItem(r)}
           onFilterTeam={(teamId) => { setFilters(f => ({ ...f, team: teamId == null ? '' : String(teamId) })); setView('table') }} />
-      ) : visibleItems.length === 0 ? (
+      ) : visibleItems.length === 0 && !(colFilters && statusItems.length > 0) ? (
+        /* Kolon süzgeç satırı açıkken tablo ayakta kalır (aşağıda); kapalıyken boş durum + Temizle (2026-09-22 QA). */
         <StatusBlock tone="neutral" icon={Inbox} title={statusItems.length === 0 ? t('inv.emptyTitle') : t('inv.noMatch')}
-          description={statusItems.length === 0 ? (canManage ? t('inv.emptyHintAdmin') : t('inv.emptyHint')) : t('empty.hintFilter')} />
+          description={statusItems.length === 0 ? (canManage ? t('inv.emptyHintAdmin') : t('inv.emptyHint')) : t('empty.hintFilter')}
+          actions={statusItems.length > 0 && hasActiveFilter(filters)
+            ? <button type="button" className="btn btn-sm btn-secondary" onClick={clearFilters}>{t('inv.filterClear')}</button>
+            : null} />
       ) : (
         <>
           <InventoryTable rows={pager.pageItems} cols={cols} sort={sort} onSort={setSortPersist} density={density}
@@ -594,8 +609,10 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
             onDelete={del} onRestore={restore} onPurge={purge}
             onDiagnose={(r) => setDiag({ domain: r.domain, port: r.port || 443 })}
             onCheckNow={checkNow} onInline={inlineUpdate}
-            onTagClick={(tag) => setFilters(f => ({ ...f, q: tag }))} />
-          <PaginationBar {...pager} />
+            onTagClick={(tag) => setFilters(f => ({ ...f, q: tag }))}
+            filters={filters} onFilters={setFilters} allRows={statusItems} showFilters={colFilters} platformNames={platformNames}
+            onClearFilters={hasActiveFilter(filters) ? clearFilters : null} />
+          {pager.pageItems.length > 0 && <PaginationBar {...pager} />}
         </>
       )}
 

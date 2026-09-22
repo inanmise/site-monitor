@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   applyFilters, sortItems, detectOverlaps, parseCsv, mapCsv, importTemplateCsv, filtersToParams, paramsToFilters,
-  hasActiveFilter, EMPTY_FILTERS, INVENTORY_COLUMNS, defaultCols, certRank, IMPORT_COLUMNS,
+  hasActiveFilter, EMPTY_FILTERS, INVENTORY_COLUMNS, defaultCols, certRank, IMPORT_COLUMNS, columnFilterOptions,
+  restoreCols, readCols, writeCols, LEGACY_KNOWN_COLS, colKeys, VIEW_KEY,
 } from '../components/inventory/inventoryModel.js'
 
 /** Envanter saf modeli (2026-09-12): filtre/sıralama/çakışma/CSV — React'siz. */
@@ -34,6 +35,46 @@ describe('applyFilters', () => {
     expect(applyFilters(rows, EMPTY_FILTERS)).toHaveLength(5)
     expect(hasActiveFilter(EMPTY_FILTERS)).toBe(false)
     expect(hasActiveFilter({ ...EMPTY_FILTERS, flags: ['waf_enabled'] })).toBe(true)
+  })
+  it('kolon süzgeçleri (2026-09-22): domain metni, port, kalan gün, son kontrol, tek bayrak, aralık, etiket, güncelleme, aktif', () => {
+    const now = Date.now()
+    const iso = (h) => new Date(now - h * 3600000).toISOString().replace(/\.\d{3}Z$/, '')
+    const rs = [
+      { ...rows[0], port: 8443, cert_checked_at: iso(2), check_interval_hours: 6, updated_at: iso(100) },
+      { ...rows[1], port: 443, cert_checked_at: iso(200), check_interval_hours: null, updated_at: iso(2) },
+      { ...rows[2], port: 443, cert_days_remaining: -3, tags: 'PCI' },
+    ]
+    const ids = (f) => applyFilters(rs, { ...EMPTY_FILTERS, ...f }).map((r) => r.id)
+    expect(ids({ domain: 'WWW' })).toEqual([3])
+    expect(ids({ port: '8443' })).toEqual([1])
+    expect(ids({ days: '90' })).toEqual([])            // 120 gün > 90; null ve dolmuş dışarıda
+    expect(ids({ days: '180' })).toEqual([1])
+    expect(ids({ days: 'expired' })).toEqual([3])
+    expect(ids({ days: 'unknown' })).toEqual([2])
+    expect(ids({ checked: '24' })).toEqual([1])
+    expect(ids({ checked: 'never' })).toEqual([3])
+    expect(ids({ flag: 'waf_enabled' })).toEqual([2])
+    expect(ids({ interval: '6' })).toEqual([1])
+    expect(ids({ interval: 'global' })).toEqual([2, 3])
+    expect(ids({ tag: 'pci' })).toEqual([1, 3])        // büyük/küçük harf duyarsız, tam etiket
+    expect(ids({ updated: '24' })).toEqual([2])
+    expect(ids({ active: 'no' })).toEqual([3])
+    expect(hasActiveFilter({ ...EMPTY_FILTERS, tag: 'x' })).toBe(true)
+    const p = filtersToParams({ ...EMPTY_FILTERS, domain: 'a', days: '30', tag: 'pci', active: 'yes' })
+    expect(p).toMatchObject({ i_dom: 'a', i_days: '30', i_tag: 'pci', i_act: 'yes', i_port: null })
+    expect(paramsToFilters((k, d) => p[k] ?? d)).toMatchObject({ domain: 'a', days: '30', tag: 'pci', active: 'yes' })
+  })
+  it('columnFilterOptions: satırlardan tekil port/takım/grup/aralık/etiket; etiket büyük/küçük harf birleşik, sıralı', () => {
+    const o = columnFilterOptions([
+      { port: 8443, team_id: 5, team_name: 'Takım A', group_name: 'core', check_interval_hours: 6, tags: 'web, PCI' },
+      { port: 443, team_id: 9, team_name: 'Takım B', tags: 'pci' },
+      { team_id: 5, team_name: 'Takım A', group_name: 'core', check_interval_hours: 24 },
+    ])
+    expect(o.ports).toEqual(['443', '8443'])
+    expect(o.teams).toEqual([{ value: '5', label: 'Takım A' }, { value: '9', label: 'Takım B' }])
+    expect(o.groups).toEqual(['core'])
+    expect(o.intervals).toEqual(['6', '24'])
+    expect(o.tags).toEqual(['PCI', 'web'])
   })
   it('URL param gidiş-dönüş kayıpsız', () => {
     const f = { ...EMPTY_FILTERS, q: 'x', team: '5', flags: ['netscaler', 'waf_enabled'], cert: 'problem' }
@@ -90,5 +131,33 @@ describe('CSV import', () => {
     expect(head).toEqual(IMPORT_COLUMNS)
     expect(head).toContain('waf_enabled')
     expect(mapCsv([]).rows).toEqual([])
+  })
+})
+
+describe('sütun tercihi × sonradan eklenen sütun (2026-09-22 QA)', () => {
+  it('kullanıcının hiç görmediği yeni varsayılan sütun katalog sırasındaki yerine eklenir', () => {
+    // colsKnown YOK → görünüm "platform" katalogda yokken yazılmış sayılır
+    const saved = ['domain', 'port', 'team', 'tags', 'active']
+    const out = restoreCols(saved, undefined)
+    expect(out).toContain('platform')
+    expect(out.indexOf('platform')).toBe(out.indexOf('tags') + 1)   // katalogda tags'ten hemen sonra
+    expect(out.filter((k) => k !== 'platform')).toEqual(saved)      // kalanların sırası bozulmaz
+  })
+  it('kullanıcının BİLEREK kapattığı sütun geri gelmez; boş liste varsayılana düşer', () => {
+    expect(restoreCols(['domain', 'port', 'active'], colKeys())).toEqual(['domain', 'port', 'active'])
+    expect(restoreCols([], colKeys())).toEqual(defaultCols())
+    expect(restoreCols(null)).toEqual(defaultCols())
+  })
+  it('LEGACY_KNOWN_COLS dondurulmuş: yeni sütunları İÇERMEZ, eskilerin hepsini içerir', () => {
+    expect(LEGACY_KNOWN_COLS).not.toContain('platform')
+    const legacy = new Set(LEGACY_KNOWN_COLS)
+    for (const k of colKeys()) if (k !== 'platform') expect(legacy.has(k)).toBe(true)
+  })
+  it('writeCols o anki kataloğu da saklar → aynı sütun ikinci kez eklenmez', () => {
+    localStorage.setItem(VIEW_KEY, JSON.stringify({ cols: ['domain', 'port', 'active'] }))
+    expect(readCols()).toContain('platform')          // eski kayıt: yeni sütun gelir
+    writeCols(['domain', 'port', 'active'])           // kullanıcı onu kapatıyor
+    expect(readCols()).toEqual(['domain', 'port', 'active'])
+    localStorage.clear()
   })
 })

@@ -127,6 +127,10 @@ public class CertificateDto {
     private String groupName;
 
     private String tags;
+    /** Sitenin koştuğu platform + ayrıntı (envanterden; 2026-09-22) — kart/tablo "nereye kurulacak" bilgisi */
+    private String platform;
+    private String platformDetail;
+    private String platformName;   // katalog adı (kod pasife alınmış/katalog yoksa null → arayüz kodu gösterir)
 
     /**
      * Envanterdeki alan-başına kontrol sıklığı (saat; null = genel süpürme). Tablo "bayat" rozeti

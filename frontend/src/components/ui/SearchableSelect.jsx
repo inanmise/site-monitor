@@ -171,8 +171,10 @@ export default function SearchableSelect({
                   <div
                     className={`ss-option${deletable ? ' ss-option-deletable' : ''}${String(opt.value) === String(value) ? ' ss-selected' : ''}${opt.value === '' ? ' ss-opt-placeholder' : ''}`}
                     onMouseDown={(e) => { e.preventDefault(); select(opt.value) }}
+                    title={opt.title || undefined}   /* isteğe bağlı açıklama tooltip'i (2026-09-22: platform seçicisi) */
                   >
                     {deletable ? <span className="ss-option-label">{opt.label}</span> : opt.label}
+                    {opt.hint && <span className="ss-option-hint">{opt.hint}</span>}
                     {deletable && (
                       <span className="ss-option-del" role="button" title={t('ss.delete')}
                         onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(opt.value) }}>×</span>

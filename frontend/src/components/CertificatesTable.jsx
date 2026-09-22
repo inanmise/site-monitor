@@ -17,8 +17,9 @@ import { copyText } from '../utils/copyText.js'
 import { isInsecure, securityTitle } from '../utils/certSecurity.js'
 import CertTableToolbar from './certtable/CertTableToolbar.jsx'
 import CertBulkBar from './certtable/CertBulkBar.jsx'
+import CertFilterRow from './certtable/CertFilterRow.jsx'   // kolon süzgeç satırı (2026-09-22)
 import { TABLE_COLUMNS, COLUMN_BY_KEY, STATUS_OPTIONS, EMPTY_FILTERS, LEVEL_CLASS, LEVEL_TEXT, URL_KEYS,
-  readView, writeView, readPresets, writePresets, savePreset, defaultCols, normalizeCols, csvColumnsFor,
+  readView, writeView, readPresets, writePresets, savePreset, readCols, writeCols, normalizeCols, csvColumnsFor,
   filtersFromUrl, toQuery, toUrlMapping, levelOf, trustOf, lifetimePct, isStale, relTime, shortFp } from './certtable/certTableModel.js'
 
 export { TABLE_COLUMNS }
@@ -53,8 +54,9 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
   const [sortBy, setSortBy] = useState(() => readUrlParam('c_sort', null) || readView()?.sortBy || 'priority|asc')
   const [page, setPage] = useState(() => readUrlInt('c_page', 1))
   const [perPage, setPerPage] = useState(() => readUrlInt('c_ps', null) || defaultPerPage)
-  const [cols, setCols] = useState(() => { const v = readView()?.cols; return Array.isArray(v) && v.length ? normalizeCols(v) : defaultCols() })
+  const [cols, setCols] = useState(readCols)   // kayıtlı seçim + hiç görülmemiş yeni varsayılan sütunlar (2026-09-22)
   const [density, setDensity] = useState(() => readView()?.density === 'compact' ? 'compact' : 'comfortable')
+  const [colFilters, setColFilters] = useState(() => !!readView()?.colFilters)   // kolon süzgeç satırı açık mı (2026-09-22)
   const [presets, setPresets] = useState(() => readPresets())
 
   const [certs, setCerts] = useState([])
@@ -72,7 +74,10 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
 
   // Metin süzgeçleri her tuşta istek atmasın; öteki süzgeçler hemen uygulanır.
   useEffect(() => {
-    const textChanged = filters.domain !== queryFilters.domain || filters.issuer !== queryFilters.issuer
+    // fp (parmak izi) da bir METİN alanı (CertFilterRow "fingerprint" kolonu) — listede unutulunca
+    // gecikme 0'a düşüyor ve her tuş vuruşu facet hesaplayan /certificates/list sorgusu atıyordu.
+    const TEXT_KEYS = ['domain', 'issuer', 'fp']
+    const textChanged = TEXT_KEYS.some((k) => filters[k] !== queryFilters[k])
     const id = setTimeout(() => setQueryFilters(filters), textChanged ? 300 : 0)
     return () => clearTimeout(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -132,8 +137,9 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
     const [k, d] = sortBy.split('|')
     changeSort(`${key}|${k === key && d === 'asc' ? 'desc' : 'asc'}`)
   }
-  function changeCols(next) { const n = normalizeCols(next); setCols(n); writeView({ cols: n }) }
+  function changeCols(next) { const n = normalizeCols(next); setCols(n); writeCols(n) }
   function changeDensity(d) { setDensity(d); writeView({ density: d }) }
+  function changeColFilters(v) { setColFilters(v); writeView({ colFilters: v }) }
   function selectStatus(val) { updateFilters({ ...filters, status: val }); setStatusDropOpen(false); writeView({ filterStatus: val }) }
   function savePresetNamed(name) {
     const next = savePreset(presets, { name, filters, sortBy, cols })
@@ -223,6 +229,7 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
       <CertTableToolbar
         filters={filters} onFilter={updateFilters} onReset={reset} facets={facets}
         cols={cols} onCols={changeCols} density={density} onDensity={changeDensity}
+        colFilters={colFilters} onColFilters={changeColFilters}
         sortBy={sortBy} onSort={changeSort} presets={presets} onSavePreset={savePresetNamed}
         onApplyPreset={applyPreset} onDeletePreset={deletePreset} exportUrl={exportUrl} total={p.total} teamNames={teamNamesRef.current} />
 
@@ -234,7 +241,10 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
           actions={<button type="button" className="btn btn-sm btn-secondary" onClick={() => load()}>{t('tbl.retry')}</button>} />
       ) : !loaded ? (
         <LoadingBlock label={t('tbl.loading')} fullWidth />
-      ) : certs.length === 0 ? (
+      ) : certs.length === 0 && !colFilters ? (
+        /* Kolon süzgeç satırı açıkken tablo AYAKTA kalır (aşağıda tbody içinde "eşleşme yok" satırı):
+           tabloyu kaldırmak süzgeç satırını da götürüyor, kullanıcı ne yazdığını göremiyor ve o hücreyi
+           temizleyemiyordu. Envanterde aynı bug 3284c40e ile düzeltilmişti — kardeş yüzeye taşındı. */
         <StatusBlock tone="neutral" icon={Inbox} title={t('tbl.noCerts')} description={hasFilters ? t('empty.hintFilter') : t('empty.hintCerts')}
           actions={hasFilters ? <button type="button" className="btn btn-sm btn-secondary" onClick={reset}>{t('tbl.reset')}</button> : null} />
       ) : (
@@ -251,6 +261,7 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
                 {cols.map(headerFor)}
                 <th data-col="actions" className="ct-td-actions"><span className="sr-only">{t('tbl.actions')}</span></th>
               </tr>
+              {colFilters && <CertFilterRow filters={filters} onFilter={updateFilters} cols={cols} facets={facets} teamNames={teamNamesRef.current} showSelect={showSelect} pageRows={certs} />}
             </thead>
             <tbody>
               {certs.map((cert, i) => (
@@ -260,6 +271,17 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
                   onEdit={canManage ? onEdit : null} onCopyLink={copyRowLink}
                   onSameCert={(fp) => updateFilters({ ...filters, fp })} />
               ))}
+              {certs.length === 0 && (
+                <tr className="inv-row-empty">
+                  <td colSpan={99}>
+                    <div className="inv-empty-inline">
+                      <Inbox size={14} />
+                      <span>{t('tbl.noMatch')}</span>
+                      {hasFilters && <button type="button" className="btn btn-sm btn-secondary" onClick={reset}>{t('tbl.reset')}</button>}
+                    </div>
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

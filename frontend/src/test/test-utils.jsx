@@ -44,7 +44,8 @@ export async function fillGroupAndTags({ group = 'Grup A', tag = 't1', root } = 
   fireEvent.mouseDown(existing || wrap.querySelector('.ss-create'))
   // handleCreate async: onCreate() await'inden sonra select() koşar — bir mikro-görev bekle.
   await act(async () => {})
-  const tagInput = [...scope.querySelectorAll('label.full-width > input.input')]
+  // TagInput kutusu artık öneri listesi için bir .tag-input-wrap içinde (2026-09-22) — doğrudan çocuk değil, torun
+  const tagInput = [...scope.querySelectorAll('label.full-width input.input')]
     .find((i) => /etiket|tag|enter/i.test(i.placeholder || ''))
   if (!tagInput) throw new Error('fillGroupAndTags: etiket kutusu bulunamadı')
   fireEvent.change(tagInput, { target: { value: tag } })

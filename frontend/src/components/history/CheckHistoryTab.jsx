@@ -8,6 +8,7 @@ import PaginationBar from '../ui/PaginationBar.jsx'
 import DateTimeRangePicker from '../ui/DateTimeRangePicker.jsx'
 import DensityStrip from './DensityStrip.jsx'
 import OutageTimeline from './OutageTimeline.jsx'
+import { isOutageAlert } from '../../utils/alertKinds.js'
 import useCheckHistory from './useCheckHistory.js'
 import useUrlQuerySync from '../../hooks/useUrlQuerySync.js'
 import { LoadingBlock } from '../ui/Progress.jsx'
@@ -231,11 +232,11 @@ export default function CheckHistoryTab({
               const triggered = r.type === 'triggered'
               return (
                 <div key={r.key}
-                  className={`hist-alert-row ${triggered ? 'hist-alert-row--triggered' : 'hist-alert-row--resolved'}`}
+                  className={`hist-alert-row ${triggered ? (isOutageAlert(a.alert_type) ? 'hist-alert-row--triggered' : 'hist-alert-row--advisory') : 'hist-alert-row--resolved'}`}
                   title={a.message || ''}>
                   {triggered ? <BellRing size={13} /> : <BellOff size={13} />}
                   <span className="hist-alert-text">
-                    {t(triggered ? 'hist.alertTriggered' : 'hist.alertResolved')}
+                    {t(triggered ? (isOutageAlert(a.alert_type) ? 'hist.alertTriggered' : 'hist.advisoryTriggered') : 'hist.alertResolved')}
                     <span className="hist-alert-meta"> · {a.alert_type}{a.alert_level ? ` · ${a.alert_level}` : ''}</span>
                   </span>
                   <span className="hist-alert-time">{formatDateSec(r.ts)}</span>

@@ -124,6 +124,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
   const [teamGroups, setTeamGroups] = useState([])
+  const [teamTags, setTeamTags] = useState([])   // takımın kullanımdaki etiketleri → TagInput önerileri (2026-09-22)
   const [defaults, setDefaults] = useState(null)
   const [advOpen, setAdvOpen] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -184,9 +185,10 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   useVisibleInterval(load, checkRun.running ? 0 : REFRESH_INTERVAL * 1000)
 
   useEffect(() => {
-    if (!modal || form.teamId === '' || form.teamId == null) { setTeamGroups([]); return }
+    if (!modal || form.teamId === '' || form.teamId == null) { setTeamGroups([]); setTeamTags([]); return }
     let alive = true
     api.monitoring.listGroups(form.teamId, 'page').then(r => { if (alive && r?.success) setTeamGroups(r.data || []) })
+    api.monitoring.listTags(form.teamId).then(r => { if (alive) setTeamTags(r?.success ? (r.data || []) : []) }).catch(() => { if (alive) setTeamTags([]) })
     return () => { alive = false }
   }, [modal, form.teamId])
 
@@ -996,7 +998,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
               {/* Etiketler */}
               <div className="full-width kw-tags-block">
                 <div className="kw-block-title">{t('page.tagsTitle')} <span className="req-star">*</span></div>
-                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('page.tagsPlaceholder')} />
+                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('page.tagsPlaceholder')} suggestions={teamTags} />
               </div>
 
 

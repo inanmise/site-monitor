@@ -145,17 +145,6 @@ export const api = {
     },
     getReleaseNotes: (since) => request(`/system/releases/notes${since ? `?since=${encodeURIComponent(since)}` : ''}`),
   },
-  /** Sürüm & yayın yüzeyi — kimlikli HERKES (K9). Nav çipi popover'ı + Yardım → Yenilikler. */
-  system: {
-    getVersion: () => request('/system/version'),
-    getReleases: (params = {}) => {
-      const qs = new URLSearchParams()
-      for (const [k, v] of Object.entries(params)) if (v != null && v !== '' && v !== false) qs.set(k, String(v))
-      const s = qs.toString()
-      return request(`/system/releases${s ? `?${s}` : ''}`)
-    },
-    getReleaseNotes: (since) => request(`/system/releases/notes${since ? `?since=${encodeURIComponent(since)}` : ''}`),
-  },
   me: {
     /** "Sizin için — bugün" paneli (2026-09-12, #3) */
     today: (opts = {}) => request(opts.full ? '/me/today?full=true' : '/me/today'),
@@ -283,6 +272,8 @@ export const api = {
 
   getCertificates: () => request('/certificates'),
 
+  // Paylaşılan sertifika ayrıntısı (2026-09-22): kart çipi → pencere
+  getSharedCertificate: (domain) => request('/certificates/shared?domain=' + encodeURIComponent(domain)),
   getCertificatesPaginated: (params) => {
     const q = new URLSearchParams(params).toString()
     return request(`/certificates/list?${q}`)
@@ -523,6 +514,11 @@ export const api = {
     importInventory: (rows, dryRun = true) =>
       request('/admin/inventory/import', { method: 'POST', body: JSON.stringify({ rows, dry_run: dryRun }) }),
     getInventoryByDomain: (domain) => request(`/admin/inventory/by-domain?domain=${encodeURIComponent(domain)}`),
+    // Platform kataloğu (2026-09-22): aktifler her oturuma (form seçicisi); all=true + yazma Ayarlar yetkisi
+    listPlatforms: (all = false) => request('/admin/platforms' + (all ? '?all=true' : '')),
+    createPlatform: (body) => request('/admin/platforms', { method: 'POST', body: JSON.stringify(body) }),
+    updatePlatform: (id, body) => request('/admin/platforms/' + id, { method: 'PUT', body: JSON.stringify(body) }),
+    deletePlatform: (id) => request('/admin/platforms/' + id, { method: 'DELETE' }),
     addInventory: (item) => request('/admin/inventory', { method: 'POST', body: JSON.stringify(item) }),
     updateInventory: (id, item) => request(`/admin/inventory/${id}`, { method: 'PUT', body: JSON.stringify(item) }),
     deleteInventory: (id) => request(`/admin/inventory/${id}`, { method: 'DELETE' }),
@@ -1049,6 +1045,8 @@ export const api = {
       return request('/monitoring/groups' + (q ? '?' + q : ''))
     },
     renameGroup: (id, newName) => request('/monitoring/groups/' + id, { method: 'PUT', body: JSON.stringify({ new_name: newName }) }),
+    // Takımın kullanımdaki etiketleri (tüm türler + envanter) → form autocomplete (2026-09-22)
+    listTags: (teamId) => request('/monitoring/tags?teamId=' + encodeURIComponent(teamId)),
     // Monitor guide + notes (hedef-bazlı: type = KEYWORD|PING, target = url/host)
     getMonitorNotes: (type, target) =>
       request(`/monitoring/notes?type=${encodeURIComponent(type)}&target=${encodeURIComponent(target)}`),

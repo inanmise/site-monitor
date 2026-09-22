@@ -303,6 +303,9 @@ public class CertificateService {
         Map<String, Integer> intervalMap = new HashMap<>(activeInventory.size());   // alan başına sıklık → tablo "bayat" rozeti
         Map<String, String> groupMap = new HashMap<>(activeInventory.size());       // grup/etiket → Genel Bakış filtresi (2026-09-18)
         Map<String, String> tagsMap = new HashMap<>(activeInventory.size());
+        Map<String, String> platformMap = new HashMap<>(activeInventory.size());        // platform (2026-09-22) — iki ayrı harita, dizeye paketleme YOK
+        Map<String, String> platformDetailMap = new HashMap<>(activeInventory.size());
+        Map<String, String> platformNames = platformNameMap();
         for (CertificateInventory inv : activeInventory) {
             String d = inv.getDomain();
             if (d == null) continue;
@@ -310,6 +313,8 @@ public class CertificateService {
             if (inv.getGroupName() != null && !inv.getGroupName().isBlank()) groupMap.put(d, inv.getGroupName());
             if (inv.getTags() != null && !inv.getTags().isBlank()) tagsMap.put(d, inv.getTags());
             if (inv.getTier() != null) tierMap.put(d, inv.getTier());
+            if (inv.getPlatform() != null) platformMap.put(d, inv.getPlatform());
+            if (inv.getPlatformDetail() != null && !inv.getPlatformDetail().isBlank()) platformDetailMap.put(d, inv.getPlatformDetail());
             if (inv.getPort() != null) portMap.put(d, inv.getPort());
             if (inv.getCheckIntervalHours() != null) intervalMap.put(d, inv.getCheckIntervalHours());
             if (inv.getTeamId() != null) {
@@ -332,6 +337,9 @@ public class CertificateService {
                     dto.setTeamName(teamNameMap.get(c.getDomain()));
                     dto.setGroupName(groupMap.get(c.getDomain()));
                     dto.setTags(tagsMap.get(c.getDomain()));
+                    dto.setPlatform(platformMap.get(c.getDomain()));
+                    dto.setPlatformDetail(platformDetailMap.get(c.getDomain()));
+                    if (dto.getPlatform() != null) dto.setPlatformName(platformNames.get(dto.getPlatform()));
                     dto.setCheckIntervalHours(intervalMap.get(c.getDomain()));
                     int[] td = thresholds.days(tierMap.get(c.getDomain()));
                     dto.setAlertLevel(computeAlertLevel(dto, td[0], td[1], td[2]));
@@ -386,6 +394,16 @@ public class CertificateService {
             if (tn != null) out.put(inv.getDomain(), tn);
         }
         return out;
+    }
+
+    /** Platform kataloğu (2026-09-22) — isteğe bağlı: test bağlamlarında yok, o zaman ad haritası boş (arayüz kodu gösterir). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.PlatformRepository platformRepo;
+    private Map<String, String> platformNameMap() {
+        Map<String, String> m = new HashMap<>();
+        if (platformRepo == null) return m;
+        try { for (var p : platformRepo.findAll()) m.put(p.getCode(), p.getName()); } catch (Exception ignore) { /* katalog okunamadı → kod gösterilir */ }
+        return m;
     }
 
     private Map<String, Integer> buildTierMap() {

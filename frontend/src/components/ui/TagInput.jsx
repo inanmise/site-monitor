@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 
 const randomHue = () => Math.floor(Math.random() * 360)
 /** Deterministik ton — henüz renk atanmamış (düzenlemede yüklenen) etiketler için stabil fallback. */
@@ -27,7 +27,13 @@ const tagHue = (s) => {
  * işaretlenmez; kullanıcı ikinci kez basmak zorunda kalırdı. Önizleme yeri baştan ayırdığı için
  * işleme alma anında yükseklik DEĞİŞMEZ ve tıklama hedefinde kalır.
  */
-export default function TagInput({ label, value, onChange, disabled, placeholder }) {
+/**
+ * `suggestions` (2026-09-22, kullanıcı isteği): takımın kullanımdaki etiketleri — kutuya odaklanınca / yazınca
+ * süzülmüş açılır liste; seçilen chip olur. Seçilmiş olanlar listelenmez; eşleşme yoksa liste kapanır ve
+ * Enter yine YENİ etiket ekler (eski davranış korunur). Ok tuşları + Enter ile seçim; Escape kapatır.
+ * Öğeler string ya da { name, count } olabilir (count sağda soluk sayı).
+ */
+export default function TagInput({ label, value, onChange, disabled, placeholder, suggestions = null, suggestLabel = null }) {
   const [text, setText] = useState('')
   const [hues, setHues] = useState({})
   const tags = (value || '').split(',').map(s => s.trim()).filter(Boolean)
@@ -50,6 +56,28 @@ export default function TagInput({ label, value, onChange, disabled, placeholder
   }
   const remove = (tag) => onChange(tags.filter(x => x !== tag).join(', '))
   const pending = text.trim()
+  // ── Öneri listesi ─────────────────────────────────────────────────────────────
+  const [open, setOpen] = useState(false)
+  const [hi, setHi] = useState(0)
+  const listRef = useRef(null)
+  const pool = useMemo(() => (Array.isArray(suggestions) ? suggestions : [])
+    .map(x => (typeof x === 'string' ? { name: x, count: null } : { name: String(x?.name ?? ''), count: x?.count ?? null }))
+    .filter(x => x.name), [suggestions])
+  const matches = useMemo(() => {
+    if (!pool.length) return []
+    const q = pending.toLowerCase()
+    const taken = new Set(tags.map(x => x.toLowerCase()))
+    return pool.filter(x => !taken.has(x.name.toLowerCase()) && (!q || x.name.toLowerCase().includes(q))).slice(0, 50)
+  }, [pool, pending, value]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setHi(0) }, [pending, matches.length])
+  const pick = (name) => {
+    if (!tags.some(x => x.toLowerCase() === name.toLowerCase())) {
+      setHues(prev => ({ ...prev, [name]: randomHue() }))
+      onChange([...tags, name].join(', '))
+    }
+    setText('')
+  }
+  const showList = open && !disabled && matches.length > 0
   // Yinelenen girdi `add` tarafından zaten eklenmiyor; önizlemesi de gösterilmez. Böylece
   // "önizlemede görünen ne ise işleme alınan odur" eşitliği — dolayısıyla yükseklik
   // kararlılığı — her iki dalda da korunur.
@@ -58,9 +86,38 @@ export default function TagInput({ label, value, onChange, disabled, placeholder
     <label className="full-width">
       {label && <span>{label}</span>}
       {!disabled && (
-        <input type="text" className="input" value={text} placeholder={placeholder}
-          onChange={e => setText(e.target.value)} onBlur={add}
-          onKeyDown={e => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add() } }} />
+        <span className="tag-input-wrap">
+          <input type="text" className="input" value={text} placeholder={placeholder}
+            role={pool.length ? 'combobox' : undefined} aria-expanded={pool.length ? showList : undefined} aria-autocomplete={pool.length ? 'list' : undefined}
+            onChange={e => { setText(e.target.value); setOpen(true) }}
+            onFocus={() => setOpen(true)}
+            onBlur={() => { setOpen(false); add() }}
+            onKeyDown={e => {
+              if (showList && e.key === 'ArrowDown') { e.preventDefault(); setHi(h => Math.min(h + 1, matches.length - 1)); return }
+              if (showList && e.key === 'ArrowUp') { e.preventDefault(); setHi(h => Math.max(h - 1, 0)); return }
+              if (e.key === 'Escape') { setOpen(false); return }
+              if (e.key === 'Enter' || e.key === ',') {
+                e.preventDefault()
+                // Liste açıkken Enter vurgulanan öneriyi alır; yazılan metin tam eşleşmiyorsa bile mevcut etiketi tercih et
+                if (showList && matches[hi]) pick(matches[hi].name); else add()
+              }
+            }} />
+          {showList && (
+            <ul className="tag-suggest" role="listbox" ref={listRef} aria-label={suggestLabel || undefined}>
+              {matches.map((m, i) => (
+                <li key={m.name} role="option" aria-selected={i === hi}
+                  className={`tag-suggest-item${i === hi ? ' is-active' : ''}`}
+                  // mousedown'da blur ENGELLENİR: aksi hâlde önce blur→add yazılan metni chip yapar, sonra tıklama boşa düşer
+                  onMouseDown={e => e.preventDefault()}
+                  onMouseEnter={() => setHi(i)}
+                  onClick={() => pick(m.name)}>
+                  <span className="tag-suggest-name">{m.name}</span>
+                  {m.count != null && <span className="tag-suggest-count">{m.count}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </span>
       )}
       {(tags.length > 0 || pendingIsNew) && (
         <div className="tag-chips">

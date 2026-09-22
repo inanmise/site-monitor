@@ -104,4 +104,55 @@ describe('TagInput — bekleyen girdi önizlemesi', () => {
     fireEvent.click(screen.getAllByLabelText('remove')[0])
     expect(onValue).toHaveBeenCalledWith('b@example.com')
   })
+
+  // ── Öneriler (2026-09-22): takımın mevcut etiketleri arasından ara/seç ──────────────
+  function SHarness({ initial = '', onValue, suggestions }) {
+    const [v, setV] = useState(initial)
+    return <TagInput value={v} onChange={next => { setV(next); onValue?.(next) }} suggestions={suggestions} placeholder="etiket" />
+  }
+
+  it('öneriler: odaklanınca liste (seçili olanlar hariç), yazınca süzülür, tıklayınca chip; sayı sağda', () => {
+    const onValue = vi.fn()
+    const { container } = render(<SHarness initial="pci" onValue={onValue} suggestions={[{ name: 'pci', count: 4 }, { name: 'prod', count: 9 }, { name: 'payment', count: 2 }, 'staging']} />)
+    const input = screen.getByPlaceholderText('etiket')
+    expect(container.querySelector('.tag-suggest')).toBeNull()
+    fireEvent.focus(input)
+    let items = [...container.querySelectorAll('.tag-suggest-item .tag-suggest-name')].map(e => e.textContent)
+    expect(items).toEqual(['prod', 'payment', 'staging'])   // pci zaten seçili → listede yok
+    expect(container.querySelector('.tag-suggest-count').textContent).toBe('9')
+    fireEvent.change(input, { target: { value: 'pa' } })
+    items = [...container.querySelectorAll('.tag-suggest-item .tag-suggest-name')].map(e => e.textContent)
+    expect(items).toEqual(['payment'])
+    fireEvent.click(container.querySelector('.tag-suggest-item'))
+    expect(onValue).toHaveBeenLastCalledWith('pci, payment')
+    expect(input.value).toBe('')
+  })
+
+  it('öneriler: ok tuşları + Enter vurgulananı seçer; eşleşme yoksa Enter YENİ etiket ekler (eski davranış); Escape kapatır', () => {
+    const onValue = vi.fn()
+    const { container } = render(<SHarness onValue={onValue} suggestions={['prod', 'pre-prod', 'test']} />)
+    const input = screen.getByPlaceholderText('etiket')
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'pr' } })   // prod, pre-prod
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    expect(container.querySelector('.tag-suggest-item.is-active .tag-suggest-name').textContent).toBe('pre-prod')
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onValue).toHaveBeenLastCalledWith('pre-prod')
+    fireEvent.change(input, { target: { value: 'yeni-etiket' } })
+    expect(container.querySelector('.tag-suggest')).toBeNull()   // eşleşme yok → liste yok
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onValue).toHaveBeenLastCalledWith('pre-prod, yeni-etiket')
+    fireEvent.change(input, { target: { value: 't' } })
+    expect(container.querySelector('.tag-suggest')).not.toBeNull()
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(container.querySelector('.tag-suggest')).toBeNull()
+  })
+
+  it('öneri yoksa (prop verilmemiş) davranış aynen: combobox rolü yok, liste yok', () => {
+    const { container } = render(<SHarness />)
+    const input = screen.getByPlaceholderText('etiket')
+    fireEvent.focus(input)
+    expect(input.getAttribute('role')).toBeNull()
+    expect(container.querySelector('.tag-suggest')).toBeNull()
+  })
 })

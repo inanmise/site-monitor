@@ -1,4 +1,4 @@
-import { ShieldAlert, ShieldCheck, MailWarning, BellOff, Clock, Calendar, Network, Globe, Users, Building2,
+import { ShieldAlert, ShieldCheck, MailWarning, BellOff, Clock, Calendar, Network, Globe, Users, Building2, Layers,
   Play, Pencil, Copy, Trash2, RefreshCw } from 'lucide-react'
 import { memo } from 'react'
 import { formatDate } from '../api/client'
@@ -18,7 +18,7 @@ function parseDn(dn, field) {
 
 function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure = false,
                                           onMailFailureClick, isWeak,
-                                          onCheckNow, onEdit, onDuplicate, onDelete, onEditContacts,
+                                          onCheckNow, onEdit, onDuplicate, onDelete, onEditContacts, onOpenShared,
                                           checking = false, deleting = false, tourId,
                                           // Zengin görünüm (2026-09-19): /card-extras bloğu + eylemler; extra yoksa kart bugünkü hâlinde
                                           extra, onOpenHealth, onConfirmRenewal, onPlanRenewal, confirming = false,
@@ -189,13 +189,20 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
       )}
 
       {/* ── Takım (sol) ↔ kontrol yolu (sağ) — aynı satırda karşılıklı ── */}
-      {(cert.team_name || showVia) && (
-        <div className="cc-detail-row">
+      {(cert.team_name || showVia || cert.platform) && (
+        <div className="cc-detail-row cc-detail-row--wrap">
           {cert.team_name ? (
-            <span className="cc-meta" title={t('card.team')} style={{ marginLeft: 0 }}>
+            <span className="cc-team-chip" title={t('card.team')}>   {/* tonlu rozet (2026-09-22): gri .72em meta yazısı okunmuyordu */}
               <TeamBadge teamId={cert.team_id} teamName={cert.team_name} />
             </span>
           ) : <span />}
+          {/* Platform (2026-09-22): site nerede koşuyor — kompaktta ad, zenginde (extra) ayrıntı da; tooltip her ikisinde */}
+          {cert.platform && (
+            <span className="cc-platform-chip" title={t('card.platform') + ': ' + (cert.platform_name || cert.platform) + (cert.platform_detail ? ' · ' + cert.platform_detail : '')}>
+              <Layers size={12} /><span className="cc-platform-name">{cert.platform_name || cert.platform}</span>
+              {extra && cert.platform_detail && <span className="cc-platform-detail">· {cert.platform_detail}</span>}
+            </span>
+          )}
           {showVia && (
             <span className="cc-meta" title={t('card.viaTooltip', viaLabel, cert.tls_mode_used || '—')}>
               {cert.via === 'proxy' ? <Network size={11} /> : <Globe size={11} />}
@@ -206,7 +213,7 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
       )}
 
       {/* ── Zengin görünüm: sağlık · alarm · erişilebilirlik · değişim · plan · paylaşılan/bakım/kontak (2026-09-19) ── */}
-      {extra && <CertificateCardExtras cert={cert} extra={extra} onOpenHealth={onOpenHealth} onConfirmRenewal={onConfirmRenewal} onPlanRenewal={onPlanRenewal} onEditContacts={onEditContacts} confirming={confirming} />}
+      {extra && <CertificateCardExtras cert={cert} extra={extra} onOpenHealth={onOpenHealth} onConfirmRenewal={onConfirmRenewal} onPlanRenewal={onPlanRenewal} onEditContacts={onEditContacts} confirming={confirming} onOpenShared={onOpenShared} />}
 
       {/* ── Footer — solda alarm çipleri, sağda aksiyonlar ── */}
       {hasFooter && (

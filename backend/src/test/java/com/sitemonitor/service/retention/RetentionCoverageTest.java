@@ -40,6 +40,7 @@ class RetentionCoverageTest {
             Map.entry("app_users", "Kullanıcı sayısı kadar; silme kullanıcı yönetiminden yapılır."),
             Map.entry("app_user_teams", "Kullanıcı×takım üyeliği; kullanıcı silinince JPA temizler."),
             Map.entry("teams", "Takım sayısı kadar."),
+            Map.entry("platforms", "Platform kataloğu (IIS/OpenShift/…) — Ayarlar'dan elle yönetilir, onlarca satır."),
             Map.entry("permission_grants", "Rol×kaynak matrisi — sabit boyut."),
             Map.entry("escalation_contacts", "Eskalasyon kontakları — elle yönetilir."),
             Map.entry("notification_groups", "Bildirim grubu — takım başına birkaç satır, yumuşak silinir (elle yönetilir)."),

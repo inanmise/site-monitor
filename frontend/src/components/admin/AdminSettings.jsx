@@ -5,6 +5,7 @@ import SmtpSettings from './SmtpSettings'
 import LdapSettings from './LdapSettings'
 import GeneralSettings from './GeneralSettings'
 import MonitorGroups from './MonitorGroups'
+import PlatformSettings from './PlatformSettings.jsx'   // platform kataloğu (2026-09-22)
 import SecretTools from './SecretTools'
 import DatabaseInfo from './DatabaseInfo'
 import WeeklyAvailabilitySettings from './WeeklyAvailabilitySettings'
@@ -24,6 +25,7 @@ const SECTIONS = [
   { id: 'general', labelKey: 'settings.navGeneral' },
   { id: 'branding', labelKey: 'settings.navBranding' },
   { id: 'monitorgroups', labelKey: 'settings.navMonitorGroups' },
+  { id: 'platforms', labelKey: 'settings.navPlatforms' },
   { id: 'smtp', labelKey: 'settings.navSmtp' },
   { id: 'weeklyavail', labelKey: 'settings.navWeeklyAvail' },
   { id: 'weeklyreports', labelKey: 'settings.navWeeklyReports' },
@@ -130,6 +132,7 @@ export default function AdminSettings({ globalAdmin = true }) {
         {active === 'general' && <GeneralSettings focusKey={focusKey} />}
         {active === 'branding' && <BrandingSettings />}
         {active === 'monitorgroups' && <MonitorGroups />}
+        {active === 'platforms' && <PlatformSettings />}
         {active === 'smtp' && <SmtpSettings />}
         {active === 'weeklyavail' && <WeeklyAvailabilitySettings />}
         {active === 'weeklyreports' && <WeeklyReportAccessSettings />}

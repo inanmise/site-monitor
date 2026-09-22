@@ -80,6 +80,9 @@ public class MonitoringController {
     /** Hatırlatma izleri (2026-09-22) — alan enjeksiyonu: @WebMvcTest bağlamında mock'lanmadan da yüklensin (schedulerService deseni). */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.repository.DomainExpiryReminderRepository domainReminderRepo;
+    /** Takım etiket kataloğu (2026-09-22) — aynı isteğe bağlı enjeksiyon deseni. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.MonitoringTagService monitoringTags;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private DomainExpiryReminderService domainReminders;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -779,6 +782,14 @@ public class MonitoringController {
         if (teamId != null && !SessionScope.isGlobalViewer(session) && (scope == null || !scope.contains(teamId)))
             return forbidden("Bu takımın gruplarını görme yetkiniz yok");
         return ok(monitoringGroupService.listForScope(scope, teamId, blank(type) ? null : type.trim()));
+    }
+
+    /** Takımın kullanımdaki etiketleri (tüm izleme türleri + envanter) — form autocomplete (2026-09-22). Aynı yetki kapısı: takım görünür olmalı. */
+    @GetMapping("/tags")
+    public ResponseEntity<Map<String, Object>> listTags(@RequestParam Long teamId, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        if (!SessionScope.canView(session, teamId)) return forbidden("Bu takımın etiketlerini görme yetkiniz yok");
+        return ok(monitoringTags == null ? List.of() : monitoringTags.listForTeam(teamId));
     }
 
     /** Bir grubu (registry id) yeniden adlandırır — yalnız o türün monitörleri + o türün alarm geçmişi (takım-scope). */
@@ -2784,6 +2795,7 @@ public class MonitoringController {
             res.setHttpStatus(r.get("http_status") instanceof Number n ? n.intValue() : null);
             res.setResponseMs(r.get("response_ms") instanceof Number n ? n.longValue() : null);
             res.setError((String) r.get("error"));
+            res.setErrorDetail(r.get("error_detail") instanceof String d ? d : null);
             res.setCheckedAt(ISO.format(Instant.now()));
             httpCheckRepo.save(res);
             auditService.recordAction("MONITOR_TRIGGER", session, "HTTP_MONITOR", String.valueOf(m.getId()), m.getName(), null);
@@ -2826,6 +2838,7 @@ public class MonitoringController {
         out.put("condition_met",   Boolean.TRUE.equals(r.get("ok")));
         out.put("expected_status", expected);
         out.put("error",           r.get("error"));
+        out.put("error_detail",    r.get("error_detail"));   // form testinde de tanı paneli (2026-09-22)
         return ok(out);
     }
 

@@ -112,7 +112,7 @@ describe('exportInventoryCsv', () => {
     const [head, row] = lastCsv.replace(/^﻿/, '').split('\r\n')
     expect(splitCsvLine(head)).toHaveLength(splitCsvLine(row).length)
     // Sabit sütunlar + bayraklar: sayı değişirse bu iddia da bilinçli güncellenmeli.
-    expect(splitCsvLine(head)).toHaveLength(15 + INVENTORY_FLAGS.length)
+    expect(splitCsvLine(head)).toHaveLength(17 + INVENTORY_FLAGS.length)   // 17: +platform, +platform_detail (2026-09-22)
   })
 
   it('Sorumlu Ekipler sütunları DOĞRU sırada ve doğru değerle çıkar', () => {

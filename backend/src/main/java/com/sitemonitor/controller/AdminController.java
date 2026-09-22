@@ -74,7 +74,7 @@ public class AdminController {
         "domain", "port", "active", "tier", "description", "owner", "tags", "externalVendor",
         "actionRequired", "openshift", "sslPinning", "internalCert", "jksKeystore", "serverUpdate",
         "netscaler", "wafEnabled", "inUse", "evCertificate", "transferredToSy", "useProxy",
-        "tlsMode", "purchasedBy", "changeDescription", "expectedFingerprint", "expectedSubject",
+        "tlsMode", "purchasedBy", "platform", "platformDetail", "changeDescription", "expectedFingerprint", "expectedSubject",
         "teamId", "groupName", "deletedAt", "notificationGroupId",
         "svcMgmtContact", "appDevContact", "iisAdminContact", "wafAdminContact",
         "timeoutSeconds", "checkIntervalHours"
@@ -235,6 +235,8 @@ public class AdminController {
             throw new IllegalArgumentException("A team must be selected for the certificate");
         }
         requireInventoryGroupAndTags(item);   // grup + etiket zorunlu (2026-09-18)
+        item.setPlatform(normalizePlatform(item.getPlatform()));   // bilinmeyen değer → null (2026-09-22)
+        item.setPlatformDetail(blankToNull(item.getPlatformDetail()));
         // Seçilen takım çağıranın YAZMA kapsamında olmalı: global admin her takım; yönetici/PO yönettiği
         // takımlar; USER ÜYESİ olduğu takım(lar) (2026-09-18: "Domain Ekle" her kullanıcı seviyesinde).
         requireInventoryWriter(session, item.getTeamId());
@@ -369,6 +371,8 @@ public class AdminController {
         existing.setTlsMode(item.getTlsMode());
         existing.setCheckIntervalHours(normalizeInterval(item.getCheckIntervalHours()));
         existing.setPurchasedBy(item.getPurchasedBy());
+        existing.setPlatform(normalizePlatform(item.getPlatform()));
+        existing.setPlatformDetail(blankToNull(item.getPlatformDetail()));
         existing.setChangeDescription(item.getChangeDescription());
         existing.setTier(item.getTier());
         existing.setGroupName(monitoringGroupService.getOrCreate(existing.getTeamId(), "cert", item.getGroupName(), actor(session)));
@@ -430,6 +434,8 @@ public class AdminController {
         fieldDiff(sb, "timeoutSeconds",     o.getTimeoutSeconds(),       n.getTimeoutSeconds());
         fieldDiff(sb, "tlsMode",            o.getTlsMode(),              n.getTlsMode());
         fieldDiff(sb, "purchasedBy",        o.getPurchasedBy(),          n.getPurchasedBy());
+        fieldDiff(sb, "platform",           o.getPlatform(),             n.getPlatform());
+        fieldDiff(sb, "platformDetail",     o.getPlatformDetail(),       n.getPlatformDetail());
         fieldDiff(sb, "changeDescription",  o.getChangeDescription(),    n.getChangeDescription());
         fieldDiff(sb, "expectedFingerprint",o.getExpectedFingerprint(),  n.getExpectedFingerprint());
         fieldDiff(sb, "expectedSubject",    o.getExpectedSubject(),      n.getExpectedSubject());
@@ -478,6 +484,18 @@ public class AdminController {
 
     /** tls_mode: null/blank → null (inherit global); only "browser"/"default" allowed. */
     /** Kontrol sıklığı (saat): izin verilen değerler; başka/boş → null (genel zamanlama). */
+    /** Platform kataloğu (2026-09-22): Ayarlar → Platformlar. İsteğe bağlı enjeksiyon (@WebMvcTest bağlamı); yokken yalnız
+     *  biçim doğrulanır (üst-harf slug). Bilinmeyen değer → null: sessiz bozuk değer yerine boş. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.PlatformService platformService;
+    String normalizePlatform(String v) {
+        if (v == null || v.isBlank()) return null;
+        if (platformService != null) return platformService.normalize(v);
+        String u = v.trim().toUpperCase(java.util.Locale.ROOT);
+        return u.matches("^[A-Z0-9_]{2,20}$") ? u : null;
+    }
+    private static String blankToNull(String v) { return v == null || v.isBlank() ? null : v.trim(); }
+
     static Integer normalizeInterval(Integer h) {
         if (h == null) return null;
         return java.util.Set.of(1, 6, 12, 24, 168).contains(h) ? h : null;

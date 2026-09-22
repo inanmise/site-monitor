@@ -60,6 +60,10 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     @Query("SELECT c.teamId, c.groupName, COUNT(c) FROM CertificateInventory c WHERE c.groupName IS NOT NULL AND c.groupName <> '' AND c.deletedAt IS NULL GROUP BY c.teamId, c.groupName")
     List<Object[]> groupCountsByTeam();
 
+    /** [platform kodu, sayı] — silinmemiş kayıtlar; Ayarlar → Platformlar kullanım sayacı + silme koruması (2026-09-22). */
+    @Query("SELECT c.platform, COUNT(c) FROM CertificateInventory c WHERE c.platform IS NOT NULL AND c.deletedAt IS NULL GROUP BY c.platform")
+    List<Object[]> platformCounts();
+
     /** Bir TAKIMIN grup adını yeniden adlandır. Caller'da @Transactional zorunlu. */
     @Modifying
     @Query("UPDATE CertificateInventory c SET c.groupName = :newName WHERE LOWER(c.groupName) = LOWER(:oldName) AND ((:teamId IS NULL AND c.teamId IS NULL) OR c.teamId = :teamId)")

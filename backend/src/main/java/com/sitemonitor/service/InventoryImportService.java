@@ -48,13 +48,13 @@ public class InventoryImportService {
             "purchased_by", "svc_mgmt_contact", "app_dev_contact", "iis_admin_contact", "waf_admin_contact",
             "netscaler", "waf_enabled", "openshift", "ssl_pinning", "internal_cert", "jks_keystore",
             "ev_certificate", "external_vendor", "in_use", "use_proxy", "action_required", "server_update",
-            "transferred_to_sy", "change_description");
+            "transferred_to_sy", "change_description", "platform", "platform_detail");
 
     private static final String[] HISTORY_FIELDS = {
         "domain", "port", "active", "tier", "description", "owner", "tags", "externalVendor",
         "actionRequired", "openshift", "sslPinning", "internalCert", "jksKeystore", "serverUpdate",
         "netscaler", "wafEnabled", "inUse", "evCertificate", "transferredToSy", "useProxy",
-        "purchasedBy", "changeDescription", "teamId", "ugTeamId", "groupName",
+        "purchasedBy", "platform", "platformDetail", "changeDescription", "teamId", "ugTeamId", "groupName",
         "svcMgmtContact", "appDevContact", "iisAdminContact", "wafAdminContact"
     };
 
@@ -62,6 +62,8 @@ public class InventoryImportService {
     private final TeamRepository teamRepo;
     private final MonitorHistoryService monitorHistory;
     private final MonitoringGroupService monitoringGroupService;
+    /** Platform kataloğu (2026-09-22) — testte mock verilmezse null; o zaman değer olduğu gibi (üst-harf) alınır. */
+    private final PlatformService platformService;
     private final SchedulerService schedulerService;   // döngü yok: SchedulerService bu servisi bilmez
 
     /** Satır sonucu: {@code action} = create | update | skip | error; {@code reason} makine kodu. */
@@ -123,6 +125,17 @@ public class InventoryImportService {
             if (port != null && (port < 1 || port > 65535)) { out.add(new RowResult(line, domain, "error", "invalid_port", List.of())); errors++; continue; }
             Integer tier = intOrNull(r.get("tier"));
             if (tier != null && (tier < 1 || tier > 4)) { out.add(new RowResult(line, domain, "error", "invalid_tier", List.of())); errors++; continue; }
+            // Platform port/tier ile AYNI yerde doğrulanır (2026-09-22): normalize katalogda olmayan değer için null
+            // döner; ham değerle karşılaştırıp normalize edileni yazan eski yol, bilinmeyen yazımda kayıtlı platformu
+            // SESSİZCE siliyor ("IIS" → "Tomcat" → null, satır sonucu yine "update"), farklı yazımda ("OpenShift" ↔
+            // kod "OPENSHIFT") ise hiçbir şey değişmeden hayalet "update" + geçmiş kaydı üretiyordu.
+            String platformRaw = str(r.get("platform")).trim();
+            String platform = null;
+            if (!platformRaw.isEmpty()) {
+                platform = platformService != null ? platformService.normalize(platformRaw)
+                        : platformRaw.toUpperCase(java.util.Locale.ROOT);
+                if (platform == null) { out.add(new RowResult(line, domain, "error", "unknown_platform", List.of())); errors++; continue; }
+            }
 
             Optional<CertificateInventory> existingOpt = inventoryRepo.findByDomain(domain);
             if (existingOpt.isPresent()) {
@@ -132,7 +145,7 @@ public class InventoryImportService {
                     out.add(new RowResult(line, domain, "skip", "scope", List.of())); skipped++; continue;
                 }
                 Map<String, Object> before = AuditDiff.snapshot(ex, HISTORY_FIELDS);
-                List<String> changes = apply(ex, r, teamId, ugTeamId, port, tier, actor, false);
+                List<String> changes = apply(ex, r, teamId, ugTeamId, port, tier, platform, actor, false);
                 if (changes.isEmpty()) { out.add(new RowResult(line, domain, "skip", "no_change", List.of())); skipped++; continue; }
                 if (!dryRun) {
                     ex.setUpdatedAt(now);
@@ -150,7 +163,7 @@ public class InventoryImportService {
                 it.setPort(port != null ? port : 443);
                 it.setActive(true);
                 it.setTeamId(teamId);
-                List<String> changes = apply(it, r, teamId, ugTeamId, port, tier, actor, true);
+                List<String> changes = apply(it, r, teamId, ugTeamId, port, tier, platform, actor, true);
                 if (!dryRun) {
                     it.setCreatedAt(now); it.setUpdatedAt(now);
                     if (session != null) monitorHistory.stampCreated(it, session);
@@ -169,7 +182,7 @@ public class InventoryImportService {
 
     /** Dolu gelen alanları uygular; değişen alan adlarını döner. {@code isNew}: port/team her zaman yazılır. */
     private List<String> apply(CertificateInventory it, Map<String, Object> r, Long teamId, Long ugTeamId,
-                               Integer port, Integer tier, String actor, boolean isNew) {
+                               Integer port, Integer tier, String platform, String actor, boolean isNew) {
         List<String> ch = new ArrayList<>();
         if (port != null && !isNew && !Objects.equals(it.getPort(), port)) { it.setPort(port); ch.add("port"); }
         if (teamId != null && !isNew && !Objects.equals(it.getTeamId(), teamId)) { it.setTeamId(teamId); ch.add("team"); }
@@ -186,6 +199,9 @@ public class InventoryImportService {
         text(r, "owner", it.getOwner(), v -> it.setOwner(v), ch);
         text(r, "tags", it.getTags(), v -> it.setTags(v), ch);
         text(r, "purchased_by", it.getPurchasedBy(), v -> it.setPurchasedBy(v), ch);
+        // Katalog kodu çağıran döngüde doğrulanmış gelir; karşılaştırma NORMALİZE değer üzerinden yapılır (2026-09-22).
+        if (platform != null && !Objects.equals(it.getPlatform(), platform)) { it.setPlatform(platform); ch.add("platform"); }
+        text(r, "platform_detail", it.getPlatformDetail(), v -> it.setPlatformDetail(v), ch);
         text(r, "change_description", it.getChangeDescription(), v -> it.setChangeDescription(v), ch);
         text(r, "svc_mgmt_contact", it.getSvcMgmtContact(), v -> it.setSvcMgmtContact(v), ch);
         text(r, "app_dev_contact", it.getAppDevContact(), v -> it.setAppDevContact(v), ch);

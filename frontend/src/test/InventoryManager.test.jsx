@@ -262,6 +262,24 @@ describe('InventoryManager', () => {
     await waitFor(() => expect(screen.getByText('Cekilen')).toBeInTheDocument())
     expect(screen.queryByText('Proptan')).toBeNull()
   })
+
+  // ── Kolon süzgeci hiçbir şeyi eşleştirmediğinde (2026-09-22 QA) ────────────────
+
+  it('kolon süzgeci sonuç vermezse tablo + süzgeç satırı EKRANDA KALIR; "Temizle" süzgeçleri sıfırlar', async () => {
+    window.history.replaceState(null, '', '/?i_dom=yok-boyle-bir-sey')
+    renderIm()
+    await waitFor(() => expect(api.admin.getInventory).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /Kolon süzgeçleri|Column filters/i }))
+
+    // Süzgeç satırı ekranda kalır (kullanıcı ne yazdığını görür), tablo kaldırılmaz
+    await waitFor(() => expect(screen.getByTestId('inv-filter-row')).toBeInTheDocument())
+    expect(document.querySelector('.inv-row-empty')).not.toBeNull()
+    expect(screen.queryByText('aktif-bir.example.com')).toBeNull()
+
+    fireEvent.click(within(document.querySelector('.inv-row-empty')).getByRole('button', { name: /Temizle|Clear/i }))
+    expect(await screen.findByText('aktif-bir.example.com')).toBeInTheDocument()
+    expect(document.querySelector('.inv-row-empty')).toBeNull()
+  })
 })
 
 // ── USER: kendi takımının kaydını düzenler (2026-09-18) ──

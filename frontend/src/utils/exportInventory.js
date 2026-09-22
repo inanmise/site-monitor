@@ -37,6 +37,8 @@ export function exportInventoryCsv(items, teams, t) {
     t('inv.formTeam'),
     t('inv.formTier'),
     t('inv.formPurchasedBy'),
+    t('inv.formPlatform'),
+    t('inv.formPlatformDetail'),
     t('inv.formSvcMgmt'),
     t('inv.formAppDev'),
     t('inv.formIisAdmin'),
@@ -55,6 +57,8 @@ export function exportInventoryCsv(items, teams, t) {
     teamName(it.team_id, teams) || '',
     tierLabel(it, t),
     it.purchased_by ?? '',
+    it.platform ?? '',
+    it.platform_detail ?? '',
     it.svc_mgmt_contact ?? '',
     it.app_dev_contact ?? '',
     it.iis_admin_contact ?? '',
@@ -215,6 +219,7 @@ export async function exportInventoryPdf(items, teams, t) {
       [t('inv.formWafAdmin'),    it.waf_admin_contact || '—'],
       [t('inv.formTier'),        tierLabel(it, t)],
       [t('inv.formPurchasedBy'), it.purchased_by || '—'],
+      [t('inv.formPlatform'),    it.platform ? it.platform + (it.platform_detail ? ' · ' + it.platform_detail : '') : '—'],
     ])
     y += 6
 

@@ -37,6 +37,7 @@ import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
+import HttpErrorDetail from './http/HttpErrorDetail.jsx'   // hata tanısı paneli (2026-09-22)
 import { LoadingBlock } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
@@ -121,6 +122,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
+  const [teamTags, setTeamTags] = useState([])   // takımın kullanımdaki etiketleri → TagInput önerileri (2026-09-22)
   const [defaults, setDefaults] = useState(null)
   const [saving, setSaving] = useState(false)
   // Tek kimlik yerine KUME: uzun suren bir kontrol digerlerini bekletmesin ve
@@ -134,6 +136,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
   // canlı yenilemesi yetmiyor: 1. sayfa dışındaysan ya da özel aralık seçtiysen KAPALI. Sinyal,
   // sekmeyi remount ETMEDEN yeniden okutur (remount seçilen aralığı/sayfayı/filtreyi sıfırlardı).
   const [histReload, setHistReload] = useState(0)
+  const [selCheck, setSelCheck] = useState(null)   // geçmişte tıklanan başarısız kontrol → tanı paneli (sentetikle aynı desen)
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
@@ -181,9 +184,10 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
 
   // Form açıkken seçili takımın + bu türün gruplarını sunucudan getir (başka takım sızmaz).
   useEffect(() => {
-    if (!modal || form.teamId === '' || form.teamId == null) { setTeamGroups([]); return }
+    if (!modal || form.teamId === '' || form.teamId == null) { setTeamGroups([]); setTeamTags([]); return }
     let alive = true
     api.monitoring.listGroups(form.teamId, 'http').then(r => { if (alive && r?.success) setTeamGroups(r.data || []) })
+    api.monitoring.listTags(form.teamId).then(r => { if (alive) setTeamTags(r?.success ? (r.data || []) : []) }).catch(() => { if (alive) setTeamTags([]) })
     return () => { alive = false }
   }, [modal, form.teamId])
 
@@ -201,8 +205,8 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
   // E-posta CTA deep-link: ?monitor=<id> → ilgili monitörün detayını aç (bir kez).
   useMonitorDeepLink(monitors, openDetail)
 
-  function openDetail(m) { setSelected(m); setSummary({ total: 0, down: 0 }); setDetailTab('control') }
-  function closeDetail() { setSelected(null) }
+  function openDetail(m) { setSelected(m); setSelCheck(null); setSummary({ total: 0, down: 0 }); setDetailTab('control') }
+  function closeDetail() { setSelected(null); setSelCheck(null) }
 
   function openNew() {
     setTestResult(null); setDupSource(null)
@@ -676,15 +680,25 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
               <CheckHistoryTab kind="http" monitorId={selected.id} listKey="http-history" reloadSignal={histReload}
                 columns={[t('http.colTime'), t('http.colStatus'), 'HTTP', t('http.colDetail')]}
                 onCounts={(c) => setSummary({ total: c.total, down: c.fail })}
-                renderRow={(c) => (<>
-                  <span className="upt-rt-time">{formatDateSec(c.checked_at)}</span>
-                  <span className={c.ok ? 'upt-rt-up' : 'upt-rt-down'}>{c.ok ? t('http.statusOk') : (c.error ? t('http.statusError') : t('http.statusDown'))}</span>
-                  <span className="upt-rt-ms">{c.http_status ?? '—'}</span>
-                  {c.error
-                    ? <span className="upt-rt-error" title={c.error}>{c.error}</span>
-                    : <span className="upt-rt-ms">{c.response_ms != null ? `${c.response_ms} ms` : '—'}</span>}
-                </>)} />
+                renderRow={(c) => {
+                  // Başarısız satır tıklanabilir → altta tanı paneli (evre, kaynak→hedef IP:port, bekleme, istisna zinciri)
+                  const bad = !c.ok
+                  const isSel = selCheck?.id === c.id
+                  const toggle = bad ? () => setSelCheck(isSel ? null : c) : undefined
+                  const clk = bad ? { style: { cursor: 'pointer' }, onClick: toggle } : {}
+                  return (<>
+                    <span className="upt-rt-time" {...clk}>{formatDateSec(c.checked_at)}</span>
+                    <span className={c.ok ? 'upt-rt-up' : 'upt-rt-down'} {...clk} style={{ ...(clk.style || {}), fontWeight: isSel ? 700 : undefined }}>{c.ok ? t('http.statusOk') : (c.error ? t('http.statusError') : t('http.statusDown'))}</span>
+                    <span className="upt-rt-ms" {...clk}>{c.http_status ?? '—'}</span>
+                    {c.error
+                      ? <span className="upt-rt-error" title={c.error} {...clk}>{c.error}{bad && <span className="sc-stuck-chip">{isSel ? t('httpdiag.rowHide') : t('httpdiag.rowShow')}</span>}</span>
+                      : bad
+                        ? <span className="upt-rt-ms" {...clk}>{c.response_ms != null ? `${c.response_ms} ms` : '—'}<span className="sc-stuck-chip">{isSel ? t('httpdiag.rowHide') : t('httpdiag.rowShow')}</span></span>
+                        : <span className="upt-rt-ms">{c.response_ms != null ? `${c.response_ms} ms` : '—'}</span>}
+                  </>)
+                }} />
             )}
+            {detailTab === 'control' && selCheck && <HttpErrorDetail check={selCheck} t={t} onClose={() => setSelCheck(null)} />}
 
             {detailTab === 'alerts' && <AlertHistory domain={selected.url} types={alertTypesFor('http')} />}
 
@@ -774,7 +788,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
               <div className="full-width http-tags-block">
                 <div className="http-block-title">{t('http.tagsTitle')} <span className="req-star">*</span></div>
                 <div className="field-hint" style={{ marginBottom: 6 }}>{t('http.tagsHint')}</div>
-                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('http.tagsPlaceholder')} />
+                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('http.tagsPlaceholder')} suggestions={teamTags} />
               </div>
 
 
@@ -844,6 +858,10 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
                       </>}
                 </span>
               </div>
+            )}
+            {/* Form testi düştüyse aynı tanı paneli (kaydetmeden önce "neden" görülsün) — 2026-09-22 */}
+            {testResult && !testResult.condition_met && (testResult.error || testResult.http_status != null) && (
+              <HttpErrorDetail t={t} check={{ id: 'test', ok: false, error: testResult.error, http_status: testResult.http_status, checked_at: new Date().toISOString(), error_detail: testResult.error_detail }} />
             )}
             {/* Yalnız DÜZENLEMEDE: "neden" sorusu ancak var olan bir şey değişince anlamlı. */}
             {modal !== 'new' && (

@@ -183,3 +183,22 @@ describe('CertificateCard — yakın zamanda yenilendi rozeti (2026-09-12, #6)',
     expect(container.querySelector('.cc-algo-chip').getAttribute('title')).toMatch(/SHA256withRSA/)
   })
 })
+
+describe('CertificateCard — platform çipi (2026-09-22)', () => {
+  const base = { domain: 'p.example.com', status: 'valid', alert_level: 'OK', days_remaining: 300, not_after: '2027-07-01T00:00:00', checked_at: '2026-09-12T10:00:00', team_id: 5, team_name: 'Takım A' }
+  it('kompakt: katalog adı (yoksa kod) çizilir, ayrıntı yalnız tooltip; zengin (extra): ayrıntı metni de görünür; platform yoksa çip yok', () => {
+    const cert = { ...base, platform: 'OPENSHIFT', platform_name: 'OpenShift', platform_detail: 'ocp-prod' }
+    const { container, unmount } = render(<CertificateCard cert={cert} isWeak={false} onClick={() => {}} />)
+    const chip = container.querySelector('.cc-platform-chip')
+    expect(chip.querySelector('.cc-platform-name').textContent).toBe('OpenShift')
+    expect(chip.querySelector('.cc-platform-detail')).toBeNull()
+    expect(chip.getAttribute('title')).toMatch(/ocp-prod/)
+    unmount()
+    const { container: c2, unmount: u2 } = render(<CertificateCard cert={{ ...cert, platform_name: null }} extra={{}} isWeak={false} onClick={() => {}} />)
+    expect(c2.querySelector('.cc-platform-name').textContent).toBe('OPENSHIFT')
+    expect(c2.querySelector('.cc-platform-detail').textContent).toMatch(/ocp-prod/)
+    u2()
+    const { container: c3 } = render(<CertificateCard cert={base} isWeak={false} onClick={() => {}} />)
+    expect(c3.querySelector('.cc-platform-chip')).toBeNull()
+  })
+})

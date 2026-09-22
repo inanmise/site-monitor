@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import {
   Server, Shield, Cloud, Lock, Key, BadgeCheck, Building, Handshake, CircleCheck, Route, AlertTriangle, RefreshCw, ArrowRightLeft,
-  ArrowUp, ArrowDown, Play,
+  ArrowUp, ArrowDown, Play, Inbox,
 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { formatDate, formatDateOnly } from '../../api/client'
@@ -9,6 +9,7 @@ import TeamBadge from '../ui/TeamBadge.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import { CONTACT_FIELDS } from '../../utils/inventoryContacts.js'
 import { INVENTORY_COLUMNS, filledContacts, activeFlags } from './inventoryModel.js'
+import InventoryFilterRow from './InventoryFilterRow.jsx'   // kolon süzgeç satırı (2026-09-22)
 
 const FLAG_ICON = {
   netscaler: Server, waf_enabled: Shield, openshift: Cloud, ssl_pinning: Lock, jks_keystore: Key, ev_certificate: BadgeCheck,
@@ -56,7 +57,10 @@ export function ContactsCell({ r, t }) {
 export default function InventoryTable({
   rows, cols, sort, onSort, density, canManage, canEditRow = () => canManage, isAdmin, teamsCount, teamMap = {}, selected, onToggle, onToggleAll, allOnPage,
   onShow, onEdit, onDuplicate, onTransfer, onDelete, onRestore, onPurge, onDiagnose, onCheckNow, onInline, onTagClick, statusFilter,
+  filters = null, onFilters = null, allRows = [], showFilters = false, onClearFilters = null,   // kolon süzgeç satırı (2026-09-22)
+  platformNames = {},   // kod → ad (Ayarlar → Platformlar); yoksa kod gösterilir
 }) {
+  const platformLabel = (code) => platformNames[code] || code
   const t = useT()
   const [editing, setEditing] = useState(null)   // { id, field }
   const [busy, setBusy] = useState(null)         // domain (check now)
@@ -113,10 +117,14 @@ export default function InventoryTable({
             {show('domain_exp') && header('domain_exp', 'inv.colDomainExpiry')}
             {show('interval') && header('interval', 'inv.colInterval')}
             {show('tags') && header('tags', 'inv.colTags')}
+            {show('platform') && header('platform', 'inv.colPlatform')}
             {show('updated') && header('updated', 'inv.colUpdated')}
             {header('active', statusFilter === 'deleted' ? 'inv.colDeleted' : 'inv.colActive')}
             <th>{t('inv.colActions')}</th>
           </tr>
+          {showFilters && filters && onFilters && (
+            <InventoryFilterRow filters={filters} onFilters={onFilters} allRows={allRows} cols={cols} canManage={canManage} statusFilter={statusFilter} platformNames={platformNames} />
+          )}
         </thead>
         <tbody>
           {rows.map((r) => {
@@ -157,6 +165,7 @@ export default function InventoryTable({
                 {show('domain_exp') && <td className="inv-dim">{r.domain_expiry ? <span className={`inv-days${dexp != null && dexp <= 30 ? ' is-warn' : ''}`}>{formatDateOnly(r.domain_expiry)}{r.domain_registrar ? ` · ${r.domain_registrar}` : ''}</span> : '—'}</td>}
                 {show('interval') && <td className="inv-dim">{r.check_interval_hours ? t('inv.intervalHours', r.check_interval_hours) : t('inv.intervalInherit')}</td>}
                 {show('tags') && <td>{r.tags ? String(r.tags).split(',').map((x) => x.trim()).filter(Boolean).map((tag) => <button key={tag} type="button" className="inv-tag" onClick={() => onTagClick(tag)}>{tag}</button>) : '—'}</td>}
+                {show('platform') && <td>{r.platform ? <span className="inv-platform" title={r.platform_detail || ''}>{platformLabel(r.platform)}{r.platform_detail ? <span className="inv-dim"> · {r.platform_detail}</span> : null}</span> : '—'}</td>}
                 {show('updated') && <td className="inv-dim">{r.updated_at ? formatDate(r.updated_at) : '—'}{r.updated_by_name ? <span className="inv-by"> · {r.updated_by_name}</span> : null}</td>}
                 <td>
                   {del
@@ -196,6 +205,21 @@ export default function InventoryTable({
               </tr>
             )
           })}
+          {/* Hiç satır kalmadığında tabloyu KALDIRMIYORUZ (2026-09-22 QA): süzgeç satırı ekrandan
+              silinince kullanıcı ne yazdığını göremiyor ve geri dönecek bir şey bulamıyordu. */}
+          {rows.length === 0 && (
+            <tr className="inv-row-empty">
+              <td colSpan={99}>
+                <div className="inv-empty-inline">
+                  <Inbox size={14} />
+                  <span>{t('inv.noMatch')}</span>
+                  {onClearFilters && (
+                    <button type="button" className="btn btn-sm btn-secondary" onClick={onClearFilters}>{t('inv.filterClear')}</button>
+                  )}
+                </div>
+              </td>
+            </tr>
+          )}
         </tbody>
       </table>
     </div>

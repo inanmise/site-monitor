@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { ChevronDown, FlaskConical, Trash2, RefreshCw } from 'lucide-react'
-import MDEditor from '@uiw/react-md-editor'
+import { copyText } from '../../utils/copyText.js'   // değişiklik açıklaması kopyala (2026-09-22)
+import MDEditor, { commands as mdCommands } from '@uiw/react-md-editor'
 import { api, formatDateOnly } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -35,6 +36,7 @@ const EMPTY = {
   timeout_seconds: '',
   check_interval_hours: '',   // '' = genel zamanlama; 1/6/12/24/168 saat
   purchased_by: '',
+  platform: '', platform_detail: '',   // sitenin koştuğu ortam (2026-09-22)
   svc_mgmt_contact: '', app_dev_contact: '', iis_admin_contact: '', waf_admin_contact: '',
   change_description: '',
   expected_fingerprint: '', expected_subject: '',
@@ -52,6 +54,13 @@ function YesNo({ value, onChange }) {
     </div>
   )
 }
+
+/** Araç çubuğu pano ikonu — MDEditor komutları lucide bileşeni değil düz SVG ister (WeeklyReportsPage deseni). */
+const COPY_ICON = (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </svg>
+)
 
 function SectionHeader({ label }) {
   return <div className="form-section-header">{label}</div>
@@ -81,6 +90,8 @@ function formFrom(item) {
     timeout_seconds:    item.timeout_seconds != null ? String(item.timeout_seconds) : '',
     check_interval_hours: item.check_interval_hours != null ? String(item.check_interval_hours) : '',
     purchased_by:       item.purchased_by     ?? '',
+    platform:           item.platform         ?? '',
+    platform_detail:    item.platform_detail  ?? '',
     change_description: item.change_description ?? '',
     expected_fingerprint: item.expected_fingerprint ?? '',
     expected_subject:   item.expected_subject ?? '',
@@ -93,12 +104,12 @@ function initialForm(mode, record) {
   if (mode === 'add' || !record) return EMPTY
   const base = formFrom(record)
   if (mode !== 'duplicate') return base
-  // Kopyada taşınMAyan üç alan:
-  //  - expected_* : o domain'in BEKLENEN sertifika parmak izi/subject'i. Kopyaya taşınırsa yeni
-  //    domain sürekli DEPLOYMENT_INCOMPLETE alarmı üretir (ScriptedMonitorPage'in gizli env'leri
-  //    sıfırlamasıyla aynı mantık).
-  //  - change_description : kaynak domain'in kendi değişiklik geçmişi; kopyada yanıltıcı olur.
-  return { ...base, expected_fingerprint: '', expected_subject: '', change_description: '' }
+  // Kopyada taşınMAyan iki alan — expected_* : o domain'in BEKLENEN sertifika parmak izi/subject'i. Kopyaya
+  // taşınırsa yeni domain sürekli DEPLOYMENT_INCOMPLETE alarmı üretir (ScriptedMonitorPage'in gizli env'leri
+  // sıfırlamasıyla aynı mantık). Yenileme planı (renewal_planned_*) formda yok, dolayısıyla zaten taşınmaz.
+  // change_description ARTIK KOPYALANIR (kullanıcı kararı 2026-09-22): aynı süreç/ekip notu kardeş
+  // domainlerde ortaktır; kullanıcı gerekirse düzenler. Geri kalan HER alan formFrom ile birebir taşınır.
+  return { ...base, expected_fingerprint: '', expected_subject: '' }
 }
 
 /**
@@ -114,11 +125,30 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
   const t = useT()
   const { theme } = useTheme()
   const toast = useToast()
+  // Araç çubuğu "Panoya kopyala" komutu (2026-09-22): editörün API'sinden GÜNCEL metni alır (form state ile aynı);
+  // boşken uyarır, "kopyalandı" yalanı söylemez.
+  const copyCommand = useMemo(() => ({
+    name: 'copy-all', keyCommand: 'copy-all',
+    buttonProps: { 'aria-label': t('inv.copyChangeDesc'), title: t('inv.copyChangeDesc') },
+    icon: COPY_ICON,
+    execute: async (state) => {
+      const text = state?.text ?? ''
+      if (!text.trim()) { toast.info(t('inv.copyEmpty')); return }
+      if (await copyText(text)) toast.success(t('inv.changeDescCopied')); else toast.error(t('inv.copyDescFailed'))
+    },
+  }), [t, toast])
   const { showConfirm } = useDialog()
 
   const [form, setForm]   = useState(() => initialForm(mode, record))
   const [teams, setTeams] = useState(() => teamsProp ?? [])
   const [teamGroups, setTeamGroups] = useState([])   // seçili takımın "cert" grupları (sızıntısız, server-scoped)
+  const [teamTags, setTeamTags] = useState([])   // takımın kullanımdaki etiketleri → TagInput önerileri (2026-09-22)
+  const [platforms, setPlatforms] = useState([])   // Ayarlar → Platformlar kataloğu (aktifler); düzenlenen kayıttaki pasif kod da listede kalır
+  useEffect(() => {
+    let alive = true
+    api.admin.listPlatforms().then(r => { if (alive) setPlatforms(r?.success ? (r.data || []) : []) }).catch(() => { if (alive) setPlatforms([]) })
+    return () => { alive = false }
+  }, [])
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
   const [showScrollHint, setShowScrollHint] = useState(false)
@@ -173,9 +203,10 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
 
   // Seçili takımın "cert" gruplarını sunucudan getir (başka takım sızmaz).
   useEffect(() => {
-    if (!form.team_id) { setTeamGroups([]); return }
+    if (!form.team_id) { setTeamGroups([]); setTeamTags([]); return }
     let alive = true
     api.monitoring.listGroups(form.team_id, 'cert').then(r => { if (alive && r?.success) setTeamGroups(r.data || []) })
+    api.monitoring.listTags(form.team_id).then(r => { if (alive) setTeamTags(r?.success ? (r.data || []) : []) }).catch(() => { if (alive) setTeamTags([]) })
     return () => { alive = false }
   }, [form.team_id])
 
@@ -334,6 +365,8 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
         // Kontrol sıklığı (2026-09-12): BOŞ = genel saatlik zamanlama; sunucu 1/6/12/24/168 dışını null sayar.
         check_interval_hours: form.check_interval_hours ? Number(form.check_interval_hours) : null,
         purchased_by:       form.purchased_by || null,
+        platform:           form.platform || null,
+        platform_detail:    form.platform_detail?.trim() || null,
         change_description: form.change_description || null,
         // DİKKAT: payload'ın tek camelCase çifti (entity Jackson adlarıyla eşleşsin diye).
         // snake_case'e "düzeltilirse" iki alan sessizce null gider.
@@ -453,11 +486,27 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
             disabled={!canManage}
           />
 
+          {/* Platform (2026-09-22, kullanıcı isteği): site nerede koşuyor — sertifikayı KİM/NEREYE kuracak sorusunun cevabı.
+              Bildirim grubunun KARŞISINDA (aynı satır); seçici + ayrıntı tek hücrede. Katalog Ayarlar → Platformlar; kayıttaki kod
+              pasife alınmışsa yine seçili görünür (sessizce düşmesin). */}
+          <div className="inv-platform-field">
+            <label>
+              {t('inv.formPlatform')}
+              <SearchableSelect value={form.platform || ''} onChange={v => f('platform', v)} searchThreshold={6} disabled={!canManage}
+                options={[{ value: '', label: t('inv.platformNone') },
+                  ...platforms.map(p => ({ value: p.code, label: p.name, title: p.description || undefined, hint: p.description || undefined })),   // açıklama: satır altı + tooltip (kullanıcı isteği)
+                  ...(form.platform && !platforms.some(p => p.code === form.platform) ? [{ value: form.platform, label: form.platform }] : [])]} />
+            </label>
+            <input className="input input-sm" value={form.platform_detail} onChange={e => f('platform_detail', e.target.value)} maxLength={160}
+              placeholder={t('inv.formPlatformDetailPh')} aria-label={t('inv.formPlatformDetail')} disabled={!canManage} />
+            <span className="field-hint">{t('inv.formPlatformHint')}</span>
+          </div>
+
           {/* Etiketler — zorunlu (2026-09-18). Tablo/CSV zaten okuyordu; form alanı yoktu. */}
           <div className="full-width http-tags-block">
             <div className="http-block-title">{t('inv.formTags')} <span className="req-star">*</span></div>
             <div className="field-hint" style={{ marginBottom: 6 }}>{t('inv.tagsHint')}</div>
-            <TagInput value={form.tags} onChange={v => f('tags', v)} disabled={!canManage} placeholder={t('mon.tagsPlaceholder')} />
+            <TagInput value={form.tags} onChange={v => f('tags', v)} disabled={!canManage} placeholder={t('mon.tagsPlaceholder')} suggestions={teamTags} />
           </div>
 
           <label>
@@ -519,6 +568,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
             <input value={form.purchased_by} onChange={e => f('purchased_by', e.target.value)} />
           </label>
 
+
           {/* Vekil anahtarı (2026-09-22, kullanıcı isteği): 13 Evet/Hayır bayrağı arasında gömülüydü; sertifika kontrolünün
               yolunu belirleyen bu tercih Temel Bilgiler'de, Satın Alan'ın yanında AÇIK/KAPALI anahtarı olarak. Bayrak
               listesi (INVENTORY_FLAGS) değişmez — dışa aktarım/e-posta/backend senkronu aynı kalır. */}
@@ -570,6 +620,8 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
               (0,2,1) kütüphanenin (0,1,0) kurallarını yenip o overlay'e OPAK arka plan verince
               <pre> tamamen örtülüyor ve kutu BOŞ görünüyordu. Field, etiketi htmlFor ile ayrı
               kurar — bağ korunur, seçici artık eşleşmez. */}
+          {/* Kopyala, editörün KENDİ araç çubuğunda (kullanıcı seçimi 2026-09-22): MDEditor'ün şeffaf textarea katmanında
+              fareyle seçim güvenilmez; sağdaki görünüm ikonlarının yanındaki pano ikonu metni tek tıkla kopyalar. */}
           <Field label={t('inv.formChangeDesc')} className="full-width">
             {({ id }) => (
               <div className="md-editor-box" data-color-mode={theme === 'dark' ? 'dark' : 'light'}>
@@ -579,6 +631,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
                   preview="edit"
                   height={260}
                   visibleDragbar={false}
+                  extraCommands={[copyCommand, mdCommands.divider, mdCommands.codeEdit, mdCommands.codePreview, mdCommands.fullscreen]}
                   textareaProps={{ id }}
                 />
               </div>
