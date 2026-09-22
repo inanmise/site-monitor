@@ -60,9 +60,18 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
 
     /** Açılışta stale tek-oturum işaretlerini topluca temizler — in-memory oturumlar restart'ı
      *  yaşamaz, ama DB'deki activeSessionId kalır; aksi halde restart sonrası aktif sayım şişer ve
-     *  login'de yanlış "başka yerde aktif oturum" onayı çıkar. Temizlenen satır sayısını döner. */
+     *  login'de yanlış "başka yerde aktif oturum" onayı çıkar. Temizlenen satır sayısını döner.
+     *
+     *  <p>TERMINATED sentinel'i HARİÇ (:57 ile aynı koruma). Yöneticinin "Oturumu Sonlandır"
+     *  kararı gerçek oturumu silmez, sentinel yazar ve kick kullanıcının BİR SONRAKİ isteğinde
+     *  {@code AuthInterceptor.isSessionSuperseded} ile uygulanır. Prod'da store-type=jdbc ve
+     *  timeout 24 saat, yani oturum pod ölümünden sağ çıkıyor — sentinel de süpürülürse rutin bir
+     *  sürüm kick'i sessizce geri alıyordu (istek geçiyor, adoptSessionIfNone oturumu yeniden
+     *  sahipleniyordu). Süpürmenin "in-memory oturumlar restart'ı yaşamaz" varsayımı prod için
+     *  yanlış; sentinel'i korumak kick'i restart'tan bağımsız kılar. */
     @Modifying
-    @Query("UPDATE AppUser u SET u.activeSessionId = null WHERE u.activeSessionId IS NOT NULL")
+    @Query("UPDATE AppUser u SET u.activeSessionId = null WHERE u.activeSessionId IS NOT NULL "
+        + "AND u.activeSessionId NOT LIKE 'TERMINATED:%'")
     int clearAllActiveSessions();
 
     /** Oturum ping'i: yalnız kullanıcının GÜNCEL oturumu için lastSeenAt'i tazeler (tek statement). */

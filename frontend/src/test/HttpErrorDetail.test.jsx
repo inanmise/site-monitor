@@ -19,8 +19,7 @@ describe('HttpErrorDetail', () => {
   const check = { id: 1, ok: false, error: 'HTTP connect timed out', checked_at: '2026-09-22T10:00:00', error_detail: JSON.stringify(detail) }
 
   it('zaman aşımı: TCP evresi takıldı, kaynak → hedef:port, bekleme + ayar + "dayandı", IP listesi, yönlendirme, ham zincir katlanır', () => {
-    const onClose = vi.fn()
-    const { container } = render(<HttpErrorDetail check={check} t={t} onClose={onClose} />)
+    const { container } = render(<HttpErrorDetail check={check} t={t} />)
     expect(screen.getByText('httpdiag.kind.CONNECT_TIMEOUT')).toBeInTheDocument()
     expect(screen.getByText('httpdiag.hint.CONNECT_TIMEOUT')).toBeInTheDocument()
     expect(container.querySelector('.hdiag-phase--stuck .hdiag-phase-name').textContent).toBe('httpdiag.phase.CONNECT')
@@ -42,8 +41,8 @@ describe('HttpErrorDetail', () => {
     expect(container.querySelector('.hdiag-raw')).toBeNull()
     fireEvent.click(screen.getByText('httpdiag.rawToggle'))
     expect(container.querySelector('.hdiag-raw').textContent).toContain('java.net.ConnectException: connect timed out')
-    fireEvent.click(screen.getByText('httpdiag.close'))
-    expect(onClose).toHaveBeenCalled()
+    // Panelin kendi kapatma düğmesi YOK — kapatmayı saran ModalShell veriyor (2026-09-23).
+    expect(container.querySelector('.hdiag-close')).toBeNull()
   })
 
   it('vekil yolu: TCP hedefi vekil, asıl hedef rozetle; durum uyuşmazlığı yanıt evresinde', () => {

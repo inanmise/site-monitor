@@ -2087,16 +2087,11 @@ public class EscalationService {
         return email.isBlank() ? List.of() : List.of(email);
     }
 
-    /**
-     * Bir takımın alarm e-posta adresi — alarm zincirinin DIŞINDAN bildirim gönderenler için.
-     *
-     * <p>{@link ScriptedAnomalyGuard} bunu kullanır: otomatik devre dışı bırakma bir alarm TÜRÜ
-     * değil (kapatılan izleme sweep üretmez, alarm hiç kapanamazdı) ama aynı kişilere gitmeli.
-     * Alıcı çözümü tek yerde kalsın diye burada açılıyor, kopyalanmıyor.
-     */
-    public List<String> teamAlertEmails(Long teamId) {
-        return collectTeamEmails(teamId, null, null);
-    }
+    /* teamAlertEmails(teamId) KALDIRILDI (2026-09-23). Tek çağıranı ScriptedAnomalyGuard'dı ve
+       javadoc'u "aynı kişilere gitmeli" diyordu, ama collectTeamEmails(teamId, null, NULL) ile
+       monitörün kendi bildirim grubunu yok sayıyordu: otomatik kapatma bildirimi, o monitörün
+       normal alarmlarından BAŞKA bir adres kümesine gidiyordu. Çağıran artık aşağıdaki
+       teamEmailsForMonitor'ü kullanıyor — javadoc'un tarif ettiği davranışın kendisi. */
 
     /**
      * Bir izlemenin bildirim alıcıları (2026-09-22): bildirim grubu → takım varsayılan grubu → takım e-postası — alarm

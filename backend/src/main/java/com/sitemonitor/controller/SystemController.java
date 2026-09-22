@@ -157,8 +157,47 @@ public class SystemController {
     public ResponseEntity<Map<String, Object>> getUserActivity(HttpSession session) {
         permissionService.require(session, "system_health.read", "view");
         return ok(Map.of(
-                "data", maskEmployeeIds(userActivityService.getOverview(), SessionScope.isGlobalAdmin(session))));
+                "data", maskIdentity(
+                        maskEmployeeIds(userActivityService.getOverview(), SessionScope.isGlobalAdmin(session)),
+                        identityVisible(session), (String) session.getAttribute("username"))));
     }
+
+    /**
+     * Giriş IP'si / coğrafi konum / tarayıcı parmak izi yalnız GLOBAL admin ve AUDIT'e döner.
+     *
+     * <p>Sicil maskesiyle aynı ilke, farklı kapı: sicil yalnız global admin'in, kimlik izi
+     * denetim verisidir ve proje bunu iki yerde zaten yazmış — {@code AuditController.userDeviceLogins}
+     * aynı veriyi {@code requireAuditAccess} ile kapatıyor, {@code AppUser.lastLoginIp} ise
+     * {@code @JsonIgnore} ("işaretlenmezse IP'ler TEAM_ADMIN'e de açılırdı"). Bu uçlar 2026-09-19
+     * ürün kararıyla her kademeye AÇIK olduğundan kapatmak yerine alan düşürülür: bölüm görünür
+     * kalır, kimlik izi payload'da hiç olmaz.
+     */
+    static boolean identityVisible(HttpSession session) {
+        return SessionScope.isGlobalAdmin(session) || "AUDIT".equals(session.getAttribute("systemRole"));
+    }
+
+    /** Kimlik izi taşıyan alanları listelerden düşürür. {@code selfUsername} doluysa o kişinin
+     *  kendi satırı korunur (kullanıcı kendi giriş geçmişini görebilir). */
+    @SuppressWarnings("unchecked")
+    static Map<String, Object> maskIdentity(Map<String, Object> payload, boolean visible, String selfUsername) {
+        if (visible || payload == null) return payload;
+        Map<String, Object> copy = new LinkedHashMap<>(payload);
+        for (String key : new String[]{"active_users", "login_status", "events", "anomalies"}) {
+            if (!(payload.get(key) instanceof List<?> rows)) continue;
+            List<Object> masked = new java.util.ArrayList<>(rows.size());
+            for (Object r : rows) {
+                if (!(r instanceof Map<?, ?> m)) { masked.add(r); continue; }
+                Map<String, Object> c = new LinkedHashMap<>((Map<String, Object>) m);
+                boolean self = selfUsername != null && selfUsername.equalsIgnoreCase(String.valueOf(c.get("username")));
+                if (!self) for (String f : IDENTITY_FIELDS) c.remove(f);
+                masked.add(c);
+            }
+            copy.put(key, masked);
+        }
+        return copy;
+    }
+
+    private static final String[] IDENTITY_FIELDS = {"ip", "country", "city", "org", "user_agent"};
 
     /**
      * Sicil numarası yalnız GLOBAL admin'e döner (TeamBadge/üye listesi beyaz listesiyle aynı ilke: sicil ASLA
@@ -211,7 +250,13 @@ public class SystemController {
                                                             @RequestParam(defaultValue = "20") int limit,
                                                             HttpSession session) {
         permissionService.require(session, "system_health.read", "view");   // 2026-09-19: her kademe (salt-okuma)
-        return ok(Map.of("data", userActivityService.userTimeline(username, Math.min(100, Math.max(1, limit)))));
+        // Kimlik izi kapısı: bu uç SATIR BAŞINA ip/şehir/ülke/user-agent döndürüyor, yani kardeşi
+        // AuditController.userDeviceLogins'in requireAuditAccess ile koruduğu veriyi. Kapsam ürün
+        // kararı gereği açık kalıyor, alanlar düşürülüyor. Kendi kaydını herkes tam görür.
+        boolean self = username != null && username.equalsIgnoreCase((String) session.getAttribute("username"));
+        return ok(Map.of("data", maskIdentity(
+                userActivityService.userTimeline(username, Math.min(100, Math.max(1, limit))),
+                self || identityVisible(session), null)));
     }
 
     /** Anomali onayı (#3): "gördüm/inceledim" damgası (+ not). acknowledge=false → onayı kaldır. Denetime yazılır. */

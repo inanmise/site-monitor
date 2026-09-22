@@ -6821,7 +6821,8 @@ export const TR = {
   'http.whoisHint':   'SSL, host sertifikasından; Domain bitişi registrar RDAP/WHOIS kaydından okunur. İç/kapalı ağ domainlerinde public kayıt bulunmayabilir (alarm oluşmaz).',
   'http.colTime': 'Zaman', 'http.colStatus': 'Durum', 'http.colDetail': 'Detay',
   // HTTP hata tanısı paneli (2026-09-22)
-  'httpdiag.title': 'Hata tanısı', 'httpdiag.close': 'Kapat', 'httpdiag.rowShow': 'ayrıntı', 'httpdiag.rowHide': 'gizle',
+  'httpdiag.title': 'Hata tanısı', 'httpdiag.close': 'Kapat', 'httpdiag.rowShow': 'ayrıntı',
+  'httpdiag.rowOpenAria': 'Hata tanısını ayrı pencerede aç',
   'httpdiag.legacy': 'Bu kayıt, tanı ayrıntısı eklenmeden önce yazılmış; elde yalnız ham hata metni var.',
   'httpdiag.phasesLabel': 'Kontrol evreleri', 'httpdiag.phase.DNS': 'DNS', 'httpdiag.phase.CONNECT': 'TCP', 'httpdiag.phase.TLS': 'TLS', 'httpdiag.phase.REQUEST': 'İstek', 'httpdiag.phase.RESPONSE': 'Yanıt',
   'httpdiag.state.done': 'tamam', 'httpdiag.state.stuck': 'TAKILDI', 'httpdiag.state.skipped': 'ulaşılmadı', 'httpdiag.state.na': 'yok',
@@ -15039,7 +15040,8 @@ export const EN = {
   'http.whoisHint':   'SSL is read from the host certificate; domain expiry from the registrar RDAP/WHOIS record. Internal/private domains may have no public record (no alarm raised).',
   'http.colTime': 'Time', 'http.colStatus': 'Status', 'http.colDetail': 'Detail',
   // HTTP failure diagnostics panel (2026-09-22)
-  'httpdiag.title': 'Failure diagnosis', 'httpdiag.close': 'Close', 'httpdiag.rowShow': 'details', 'httpdiag.rowHide': 'hide',
+  'httpdiag.title': 'Failure diagnosis', 'httpdiag.close': 'Close', 'httpdiag.rowShow': 'details',
+  'httpdiag.rowOpenAria': 'Open the failure diagnosis in its own window',
   'httpdiag.legacy': 'This record was written before diagnostics were added, so only the raw error text is available.',
   'httpdiag.phasesLabel': 'Check phases', 'httpdiag.phase.DNS': 'DNS', 'httpdiag.phase.CONNECT': 'TCP', 'httpdiag.phase.TLS': 'TLS', 'httpdiag.phase.REQUEST': 'Request', 'httpdiag.phase.RESPONSE': 'Response',
   'httpdiag.state.done': 'ok', 'httpdiag.state.stuck': 'FAILED HERE', 'httpdiag.state.skipped': 'not reached', 'httpdiag.state.na': 'n/a',

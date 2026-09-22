@@ -202,6 +202,14 @@ public class PageFetchCore {
         long guardMs = 0L;
         String current = url;
         String m = method;
+        // Ek başlıklar YALNIZ ilk host'a gider. extraHeaders pratikte sır taşıyor — Sayfa Hızı
+        // izlemesinin Basic Auth parolası buradan geçiyor (PageSpeedCheckerService.buildHeaders,
+        // decryptSecret ile çözülmüş hâli) ve RESERVED_HEADERS bunu kapsamıyor. Başlık hop
+        // döngüsünün içinde uygulandığı için, izlenen adres 302 ile yabancı bir host'a
+        // yönlendirdiğinde parola o host'a aynen gidiyordu. Tarayıcıların cross-origin
+        // yönlendirmede Authorization düşürmesiyle aynı kural. (Düşürmenin KENDİSİ bu sınıfta
+        // bilinçli olarak takip edilmeye devam ediyor — SafeRedirect.isDowngrade javadoc'u.)
+        final String originHost = hostOf(url) == null ? "" : hostOf(url);
         try {
             for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
                 String host = hostOf(current);
@@ -229,7 +237,7 @@ public class PageFetchCore {
                         // diyordu ama olculen sey acilmis boyuttu (44.6 MB ↔ tarayicida 6.1 MB).
                         // Artik telde ne gidiyorsa o sayiliyor; govde YALNIZ ayristirmak icin aciliyor.
                         .header("Accept-Encoding", "gzip, deflate");
-                applyExtraHeaders(rb, opts.extraHeaders());
+                if (originHost.equalsIgnoreCase(host)) applyExtraHeaders(rb, opts.extraHeaders());
                 HttpRequest req = "HEAD".equals(m)
                         ? rb.method("HEAD", HttpRequest.BodyPublishers.noBody()).build()
                         : rb.GET().build();

@@ -57,6 +57,7 @@ public class ScriptedAnomalyGuard {
     private final ActivityLogService activityLog;
     private final EscalationService escalationService;
     private final EmailNotificationService emailService;
+    private final UserPushService userPushService;
     private final AppSettingsService appSettings;
 
     /** Kaç ardışık zaman aşımından sonra izleme kapatılır. ≤0 ⇒ bu tetik kapalı. */
@@ -162,22 +163,39 @@ public class ScriptedAnomalyGuard {
      * kurulur (Outlook-güvenli işaretleme oradan gelir, elle HTML yazılmaz).
      */
     private void notifyOwners(ScriptedMonitor m, String reason) {
-        if (Boolean.FALSE.equals(m.getNotifyEmail())) return;
-        try {
-            List<String> to = escalationService.teamAlertEmails(m.getTeamId());
-            if (to.isEmpty()) {
-                log.warn("Anomali bildirimi gönderilemedi — {} için alıcı yok", m.getName());
-                return;
+        String body = reason + "\n\nİzleme: " + m.getName()
+                + "\nDurum: DEVRE DIŞI (otomatik)\n"
+                + "Yeniden açmak için izlemeyi düzenleyip aktif hâle getirmeniz yeterli; "
+                + "kapatma sebebi izleme sayfasında görünmeye devam eder.";
+
+        if (!Boolean.FALSE.equals(m.getNotifyEmail())) {
+            try {
+                // Alıcı, monitörün KENDİ bildirim grubundan çözülür. Eski teamAlertEmails(teamId) =
+                // collectTeamEmails(teamId, null, null), yani grubu yok sayıyordu: bu bildirim aynı
+                // monitörün normal alarmlarından BAŞKA bir adres kümesine gidiyordu.
+                List<String> to = escalationService.teamEmailsForMonitor(m.getTeamId(), m.getNotificationGroupId());
+                if (to.isEmpty()) log.warn("Anomali e-postası gönderilemedi — {} için alıcı yok", m.getName());
+                else emailService.sendAlert(to.toArray(new String[0]),
+                        "Sentetik izleme devre dışı bırakıldı: " + m.getName(), body,
+                        m.getName(), "CRITICAL", EscalationService.TYPE_SCRIPTED_FAIL, null, Map.of());
+            } catch (Exception e) {
+                log.warn("Anomali e-postası gönderilemedi ({}): {}", m.getName(), e.toString());
             }
-            String subject = "Sentetik izleme devre dışı bırakıldı: " + m.getName();
-            String body = reason + "\n\nİzleme: " + m.getName()
-                    + "\nDurum: DEVRE DIŞI (otomatik)\n"
-                    + "Yeniden açmak için izlemeyi düzenleyip aktif hâle getirmeniz yeterli; "
-                    + "kapatma sebebi izleme sayfasında görünmeye devam eder.";
-            emailService.sendAlert(to.toArray(new String[0]), subject, body,
-                    m.getName(), "CRITICAL", EscalationService.TYPE_SCRIPTED_FAIL, null, Map.of());
+        }
+
+        // PUSH halkası. disable() bu metottan ÖNCE resolveOpenAlertsSilently çağırıyor ve o yol
+        // enqueueResolvePushQuietly ile telefona "DÜZELDİ" atıyor (2026-09-10 ürün kararı, doğru
+        // davranış). Push halkası burada bağlı olmadığı sürece yalnız push kullanan nöbetçi,
+        // OTOMATİK KAPATILMIŞ bir izleme için "normale döndü" görüp izlemenin artık hiç koşmadığını
+        // hiçbir kanaldan öğrenemiyordu — ters yönde bilgi. Kanal paritesi kuralı: e-postaya
+        // bağlanan her bildirim push'a da bağlanır.
+        try {
+            userPushService.enqueueTeamNotice(m.getTeamId(), "SCRIPTED_DISABLED", "CRITICAL", "SCRIPTED",
+                    m.getName(),
+                    "Sentetik izleme otomatik olarak DEVRE DIŞI bırakıldı: " + m.getName() + " — " + reason,
+                    "scripted-disabled:" + m.getId() + ":" + m.getDisabledAt());
         } catch (Exception e) {
-            log.warn("Anomali bildirimi gönderilemedi ({}): {}", m.getName(), e.toString());
+            log.warn("Anomali push'u gönderilemedi ({}): {}", m.getName(), e.toString());
         }
     }
 }

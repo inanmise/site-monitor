@@ -177,6 +177,11 @@ public class KeywordCheckerService {
     private HttpResponse<InputStream> sendFollowingSafely(String url, int timeoutMs, String customHeaders, boolean viaProxy)
             throws java.io.IOException, InterruptedException {
         URI current = URI.create(url);
+        // Özel başlıklar YALNIZ ilk host'a gider. customHeaders kullanıcı girdisi ve pratikte sır
+        // taşıyor (Authorization / X-Api-Key); yönlendirme hedefi başka bir host'a çıktığında onu
+        // da göndermek anahtarı yabancıya teslim etmek demek. Tarayıcıların cross-origin
+        // yönlendirmede Authorization düşürmesiyle aynı kural.
+        final String originHost = current.getHost() == null ? "" : current.getHost();
         for (int hop = 0; hop <= SafeRedirect.MAX_HOPS; hop++) {
             String host = current.getHost();
             if (host == null || host.isBlank())
@@ -186,12 +191,15 @@ public class KeywordCheckerService {
                     .uri(current)
                     .timeout(Duration.ofMillis(Math.max(1000, timeoutMs)))
                     .header("User-Agent", "SiteMonitor-KeywordMonitor/1.0");
-            applyCustomHeaders(rb, customHeaders);
+            if (originHost.equalsIgnoreCase(host)) applyCustomHeaders(rb, customHeaders);
             HttpResponse<InputStream> resp =
                     clientFor(viaProxy).send(rb.GET().build(), HttpResponse.BodyHandlers.ofInputStream());
             if (!SafeRedirect.isRedirect(resp.statusCode())) return resp;
             URI next = SafeRedirect.nextHop(current, resp.headers().firstValue("location").orElse(null));
-            if (next == null) return resp;   // takip edilemez → gövde tüketilmeden çağırana bırakılır
+            // Takip edilemeyen hedef (şema dışı / host'suz / HTTPS→HTTP düşürmesi) → 3xx olduğu gibi
+            // döner. HttpCheckerService:346 ile AYNI satır: elle takibe geçen iki çağıran da
+            // Redirect.NORMAL'in davranışını korur (SafeRedirect.isDowngrade javadoc'u).
+            if (next == null || SafeRedirect.isDowngrade(current, next)) return resp;
             try (InputStream is = resp.body()) { is.readNBytes(4096); } catch (Exception ignore) { /* bağlantı iadesi */ }
             current = next;
         }

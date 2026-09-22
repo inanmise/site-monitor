@@ -16,7 +16,7 @@ import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { RefreshCw, Plus, Trash2, Globe, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ShieldCheck, Inbox } from 'lucide-react'
+import { RefreshCw, Plus, Trash2, Globe, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ShieldCheck, Inbox, ChevronRight } from 'lucide-react'
 import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
 import ModalScrollHint from './ui/ModalScrollHint.jsx'
 import { duplicateName } from '../utils/duplicateName.js'
@@ -38,6 +38,7 @@ import AlertHistory from './admin/AlertHistory.jsx'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import HttpErrorDetail from './http/HttpErrorDetail.jsx'   // hata tanısı paneli (2026-09-22)
+import ModalShell from './ui/ModalShell.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
@@ -666,14 +667,20 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
               <div className="kw-reqinfo-row"><span className="kw-reqinfo-k">{t('http.sslSectionTitle')}</span>
                 <span>{[selected.check_ssl_errors && t('http.checkSslErrors'), selected.ssl_expiry_reminders && t('http.sslExpiryReminders'), selected.domain_expiry_reminders && t('http.domainExpiryReminders')].filter(Boolean).join(' · ') || t('http.none')}</span></div>
             </div>
+            {/* Sekme değişince seçili kontrol DÜŞER. Tanı penceresi `detailTab === 'control'`
+                koşuluyla gizleniyordu ama `selCheck` ayakta kalıyordu: kullanıcı pencere açıkken
+                başka sekmeye geçip geri döndüğünde pencere kendiliğinden yeniden açılıyordu —
+                üstelik 30 sn'lik canlı yenileme listeyi tazelediyse artık listede olmayan bir
+                satırın tanısıyla. */}
             <div className="modal-tabs">
-              <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('hist.tab')}</button>
-              <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('http.tabAlerts')}</button>
-              <button className={`modal-tab${detailTab === 'chart' ? ' active' : ''}`} onClick={() => setDetailTab('chart')}>{t('http.tabChart')}</button>
-              <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('http.tabGuide')}</button>
-              {/* Yapılandırma geçmişi — kontrol geçmişiyle (ilk sekme) KARIŞTIRILMAMALI:
-                  orası "hedef ayakta mıydı", burası "ayarları kim değiştirdi". */}
-              <button className={`modal-tab${detailTab === 'changes' ? ' active' : ''}`} onClick={() => setDetailTab('changes')}>{t('chg.tab')}</button>
+              {[['control', t('hist.tab')], ['alerts', t('http.tabAlerts')], ['chart', t('http.tabChart')],
+                ['notes', t('http.tabGuide')],
+                // Yapılandırma geçmişi — kontrol geçmişiyle (ilk sekme) KARIŞTIRILMAMALI:
+                // orası "hedef ayakta mıydı", burası "ayarları kim değiştirdi".
+                ['changes', t('chg.tab')]].map(([key, label]) => (
+                <button key={key} className={`modal-tab${detailTab === key ? ' active' : ''}`}
+                  onClick={() => { setDetailTab(key); setSelCheck(null) }}>{label}</button>
+              ))}
             </div>
 
             {detailTab === 'control' && (
@@ -681,24 +688,33 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
                 columns={[t('http.colTime'), t('http.colStatus'), 'HTTP', t('http.colDetail')]}
                 onCounts={(c) => setSummary({ total: c.total, down: c.fail })}
                 renderRow={(c) => {
-                  // Başarısız satır tıklanabilir → altta tanı paneli (evre, kaynak→hedef IP:port, bekleme, istisna zinciri)
+                  // Başarısız satırın Detay hücresi GERÇEK bir düğme (2026-09-23 kullanıcı isteği): tanı artık
+                  // listenin altında değil, kendi penceresinde açılıyor. Düğme olması aynı zamanda klavyeyle
+                  // (Tab + Enter/Space) açılmasını sağlıyor — eskiden salt `cursor:pointer` span'di.
                   const bad = !c.ok
-                  const isSel = selCheck?.id === c.id
-                  const toggle = bad ? () => setSelCheck(isSel ? null : c) : undefined
-                  const clk = bad ? { style: { cursor: 'pointer' }, onClick: toggle } : {}
+                  const open = bad ? () => setSelCheck(c) : undefined
+                  const clk = bad ? { style: { cursor: 'pointer' }, onClick: open } : {}
+                  const detailText = c.error || (c.response_ms != null ? `${c.response_ms} ms` : '—')
                   return (<>
                     <span className="upt-rt-time" {...clk}>{formatDateSec(c.checked_at)}</span>
-                    <span className={c.ok ? 'upt-rt-up' : 'upt-rt-down'} {...clk} style={{ ...(clk.style || {}), fontWeight: isSel ? 700 : undefined }}>{c.ok ? t('http.statusOk') : (c.error ? t('http.statusError') : t('http.statusDown'))}</span>
+                    <span className={c.ok ? 'upt-rt-up' : 'upt-rt-down'} {...clk}>{c.ok ? t('http.statusOk') : (c.error ? t('http.statusError') : t('http.statusDown'))}</span>
                     <span className="upt-rt-ms" {...clk}>{c.http_status ?? '—'}</span>
-                    {c.error
-                      ? <span className="upt-rt-error" title={c.error} {...clk}>{c.error}{bad && <span className="sc-stuck-chip">{isSel ? t('httpdiag.rowHide') : t('httpdiag.rowShow')}</span>}</span>
-                      : bad
-                        ? <span className="upt-rt-ms" {...clk}>{c.response_ms != null ? `${c.response_ms} ms` : '—'}<span className="sc-stuck-chip">{isSel ? t('httpdiag.rowHide') : t('httpdiag.rowShow')}</span></span>
-                        : <span className="upt-rt-ms">{c.response_ms != null ? `${c.response_ms} ms` : '—'}</span>}
+                    {bad
+                      ? <button type="button" className="hdiag-open" onClick={open} title={c.error || undefined}
+                          aria-label={`${detailText} — ${t('httpdiag.rowOpenAria')}`}>
+                          <span className="hdiag-open-text">{detailText}</span>
+                          <span className="hdiag-open-cta">{t('httpdiag.rowShow')}<ChevronRight size={12} aria-hidden="true" /></span>
+                        </button>
+                      : <span className="upt-rt-ms">{detailText}</span>}
                   </>)
                 }} />
             )}
-            {detailTab === 'control' && selCheck && <HttpErrorDetail check={selCheck} t={t} onClose={() => setSelCheck(null)} />}
+            {/* Tanı KENDİ penceresinde (2026-09-23): iç içe modal — ModalShell derinliğe göre katmanlıyor,
+                Escape yalnız en derindekini kapatıyor, odak geri Detay düğmesine dönüyor. */}
+            <ModalShell open={detailTab === 'control' && !!selCheck} onClose={() => setSelCheck(null)}
+              title={t('httpdiag.title')} icon={AlertTriangle} size="lg" closeLabel={t('httpdiag.close')}>
+              <HttpErrorDetail check={selCheck} t={t} className="hdiag--modal" />
+            </ModalShell>
 
             {detailTab === 'alerts' && <AlertHistory domain={selected.url} types={alertTypesFor('http')} />}
 

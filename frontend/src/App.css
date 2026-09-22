@@ -1086,9 +1086,15 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* Modal kabuğu (ui/ModalShell) — mevcut .modal-overlay/.modal-box ailesinin üstüne kurulur,
    yalnız katman + başlık/gövde/altlık düzenini ekler. Giriş animasyonu bilinçli olarak YOK:
    animasyon eklenirse prefers-reduced-motion muafiyeti de gerekirdi. */
-.modal-shell-overlay { z-index: var(--modal-z, 2000); }
+/* ÖZGÜLLÜK NOTU: her iki kural da `.modal-overlay` ile BİRLİKTE kullanılıyor
+   (`class="modal-overlay modal-shell-overlay"`), `.modal-overlay` ise bu dosyada DAHA SONRA
+   (~:2632) `z-index: 2000` ile tanımlı. Tek sınıf yazılırsa (0-1-0 ↔ 0-1-0) kaynakta sonra gelen
+   kazanıyordu: `--modal-z` ölü token oluyor, ModalShell'in derinlik katmanlaması ve
+   UserEditModal'ın "üstte kal" garantisi sessizce düşüyordu (iç içe modallar yalnız DOM sırası
+   sayesinde tesadüfen doğru çiziliyordu). İki sınıf = 0-2-0, sıra artık önemli değil. */
+.modal-overlay.modal-shell-overlay { z-index: var(--modal-z, 2000); }
 /* Başka bir modalın (ModalShell, derinlik başına +10) ÜSTÜNDE açılması gereken düz modal — UserEditModal. */
-.modal-overlay--top { z-index: 2100; }
+.modal-overlay.modal-overlay--top { z-index: 2100; }
 
 /* ═══ Sürüm çipi + popover (Nav) — 2026-09-11 ═══ */
 .sb-brand-version-btn {
@@ -8459,12 +8465,37 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 
 /* "Nerede takıldı?" — isteğin faz kırılımı. Fazlar SIRALI okunur; ölçülmeyen ilk faz vurgulanır.
    Renkler token'lardan: sabit hex kullanılırsa karanlık tema kırılır (proje kuralı). */
-/* HTTP/Website hata tanısı paneli (2026-09-22): sentetik CheckDetail'in kardeşi — geçmiş listesinin altında açılır */
+/* HTTP/Website hata tanısı paneli (2026-09-22): sentetik CheckDetail'in kardeşi — kendi penceresinde açılır */
 .hdiag { margin-top: 10px; border: 1px solid var(--border); border-left: 4px solid var(--danger, #dc2626); border-radius: 8px; padding: 12px 14px; background: var(--bg-surface); font-size: .9em; }
+
+/* Pencere içi varyant (2026-09-23): kabuk zaten çerçeve + başlık veriyor; panel kendi çerçevesini ve
+   başlık tekrarını bırakır, yazı tabana döner (satır içi .9em daraltması pencerede gereksiz). */
+.hdiag--modal { margin-top: 0; border: 0; border-radius: 0; padding: 0; background: transparent; font-size: 1em; }
+.hdiag--modal .hdiag-title { display: none; }
+.hdiag--modal .hdiag-head { margin-bottom: 12px; }
+.hdiag--modal .hdiag-phases { gap: 6px; }
+.hdiag--modal .hdiag-phase { padding: 10px 6px; }
+
+/* Geçmiş satırının Detay hücresi: gerçek düğme, tıklanabilir GÖRÜNÜR (2026-09-23 kullanıcı isteği).
+   Eskiden salt `cursor:pointer` span'di — ne klavyeyle açılıyordu ne de tıklanabilir duruyordu. */
+.hdiag-open {
+  display: inline-flex; align-items: center; gap: 8px; width: 100%;
+  padding: 3px 8px; border: 1px solid transparent; border-radius: 6px;
+  background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.hdiag-open:hover { background: var(--bg-hover); border-color: var(--border); }
+.hdiag-open:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.hdiag-open-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--danger, #dc2626); }
+.hdiag-open-cta {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 2px;
+  font-size: .78em; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--bg-card); color: var(--text-muted);
+}
+.hdiag-open:hover .hdiag-open-cta { border-color: var(--primary); color: var(--primary); }
 .hdiag-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .hdiag-title { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; color: var(--danger, #dc2626); }
 .hdiag-when { color: var(--text-muted); font-family: Consolas, monospace; font-size: .92em; }
-.hdiag-close { margin-left: auto; }
 .hdiag-phases { list-style: none; margin: 0 0 10px; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
 .hdiag-phase { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 4px; border-radius: 6px; border: 1px solid var(--border); text-align: center; }
 .hdiag-phase-name { font-size: .78em; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }

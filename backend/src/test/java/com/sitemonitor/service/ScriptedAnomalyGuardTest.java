@@ -47,6 +47,7 @@ class ScriptedAnomalyGuardTest {
     @Mock ActivityLogService activityLog;
     @Mock EscalationService escalationService;
     @Mock EmailNotificationService emailService;
+    @Mock UserPushService userPushService;
     @Mock AppSettingsService appSettings;
 
     @InjectMocks ScriptedAnomalyGuard guard;
@@ -66,7 +67,7 @@ class ScriptedAnomalyGuardTest {
         when(appSettings.getBoolean(eq("site.monitor.scripted.anomaly.enabled"), anyBoolean())).thenReturn(true);
         when(appSettings.getInt(eq("site.monitor.scripted.anomaly.timeout-streak"), anyInt())).thenReturn(5);
         when(scriptedChecker.maxRequestsPerRun()).thenReturn(200);
-        when(escalationService.teamAlertEmails(anyLong())).thenReturn(List.of("takim@example.com"));
+        when(escalationService.teamEmailsForMonitor(anyLong(), any())).thenReturn(List.of("takim@example.com"));
     }
 
     private static ScriptedCheckerService.ScriptedResult result(String status, Long httpReqs) {
@@ -207,7 +208,7 @@ class ScriptedAnomalyGuardTest {
     @Test
     @DisplayName("bildirim/alarm adımı patlasa bile kapatma tamamlanır ve çağıran istisna GÖRMEZ")
     void notificationFailureDoesNotBreakDisabling() {
-        when(escalationService.teamAlertEmails(anyLong())).thenThrow(new IllegalStateException("smtp yok"));
+        when(escalationService.teamEmailsForMonitor(anyLong(), any())).thenThrow(new IllegalStateException("smtp yok"));
 
         assertThat(guard.evaluate(monitor, result("PASS", 5000L))).isNotNull();
         verify(monitorRepo).save(any());
@@ -241,10 +242,40 @@ class ScriptedAnomalyGuardTest {
     @Test
     @DisplayName("alıcı yoksa e-posta denenmez ama kapatma yine yapılır")
     void noRecipientsStillDisables() {
-        when(escalationService.teamAlertEmails(anyLong())).thenReturn(List.of());
+        when(escalationService.teamEmailsForMonitor(anyLong(), any())).thenReturn(List.of());
         assertThat(guard.evaluate(monitor, result("PASS", 5000L))).isNotNull();
         verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(),
                 anyString(), anyString(), anyString(), any(), any());
+    }
+
+    @Test
+    @DisplayName("PUSH da gider — disable() önce 'DÜZELDİ' push'u atıyor, 'devre dışı' bildirimi olmazsa nöbetçi TERS bilgi alır")
+    void ownersAreNotifiedOnPushToo() {
+        // K1 (2026-09-23): resolveOpenAlertsSilently -> enqueueResolvePushQuietly telefona "normale
+        // döndü" yolluyor. Push halkası bağlı değilken yalnız push kullanan kişi, OTOMATİK
+        // KAPATILMIŞ bir izleme için "düzeldi" görüyor ve izlemenin durduğunu hiç öğrenmiyordu.
+        guard.evaluate(monitor, result("PASS", 5000L));
+        verify(userPushService).enqueueTeamNotice(eq(5L), eq("SCRIPTED_DISABLED"), eq("CRITICAL"),
+                eq("SCRIPTED"), eq("Ödeme akışı"), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("notify_email kapalı olsa bile PUSH gider — kanal bağımsızlığı")
+    void pushGoesEvenWhenEmailDisabled() {
+        monitor.setNotifyEmail(false);
+        guard.evaluate(monitor, result("PASS", 5000L));
+        verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(),
+                anyString(), anyString(), anyString(), any(), any());
+        verify(userPushService).enqueueTeamNotice(anyLong(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("alıcı, monitörün KENDİ bildirim grubundan çözülür — grup yok sayılırsa bildirim başka adrese gider")
+    void recipientsComeFromTheMonitorsOwnGroup() {
+        monitor.setNotificationGroupId(42L);
+        guard.evaluate(monitor, result("PASS", 5000L));
+        verify(escalationService).teamEmailsForMonitor(5L, 42L);
     }
 
     @Test
