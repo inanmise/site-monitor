@@ -117,6 +117,12 @@ public final class RetentionCatalog {
                 365, 30, true, DataClass.PERSONAL,
                 "Gönderilen bildirim geçmişi (alıcı adı/e-postası içerir). Kişisel veri saklama süreleri "
                 + "1 yılda eşitlendi (2026-08 kullanıcı kararı) — denetimde tek bir pencere savunulur."),
+        age("domain-expiry-reminders", "domain_expiry_reminders", "sent_at", "site.monitor.notification.retention-days",
+                365, 30, false, DataClass.PERSONAL,
+                "Alan adı bitiş hatırlatma izleri (2026-09-22): eşik başına bir kez gönderim kaydı + alıcı e-postaları. "
+                + "Bildirim geçmişiyle AYNI pencere (aynı ayar anahtarı): tekrar-gönderim kilidi bitiş tarihi + eşik "
+                + "çiftine bağlı; 30 gün alt sınırı en gevşek eşiğin (60 gün) yarısıdır, purge sonrası daha sıkı eşik "
+                + "zaten gönderilmiş/kapsanmış olur — ikinci e-posta gitmez."),
         age("sql-query-history", "sql_query_history", "executed_at", "site.monitor.sql-history.retention-days",
                 365, 7, false, DataClass.SECURITY_AUDIT,
                 "Admin SQL çalışma alanı geçmişi (kullanıcı + serbest SQL metni). Denetim penceresiyle "
