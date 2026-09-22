@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest'
+import fs from 'node:fs'
+import path from 'node:path'
 import { TR, EN } from '../i18n/index.jsx'
 
 /**
@@ -9,6 +11,31 @@ import { TR, EN } from '../i18n/index.jsx'
  * a Turkish operator stumbled across an English string in production.
  */
 describe('i18n parity (TR ↔ EN)', () => {
+  /**
+   * YİNELENEN ANAHTAR (2026-09-22 QA): aynı anahtar bir sözlükte iki kez tanımlanırsa SONRAKİ
+   * kazanır — nesne yine geçerli olduğundan yukarıdaki eşleşme testleri bunu GÖREMEZ. Gerçek
+   * vaka: 'inv.copyFailed' hem "bağlantı kopyalanamadı" hem "açıklama kopyalanamadı" için
+   * tanımlandı; kullanıcı açıklamayı kopyalayamayınca "adres çubuğundan kopyalayın" uyarısı aldı.
+   * Vite yalnız derleme UYARISI basıyor (kimse görmüyor), bu yüzden kaynak metin taranır.
+   */
+  it('aynı anahtar bir sözlükte iki kez tanımlanmaz (sonraki sessizce kazanır)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../i18n/index.jsx'), 'utf8')
+    const start = (marker) => src.indexOf(marker)
+    const blocks = {
+      TR: src.slice(start('export const TR = {'), start('export const EN = {')),
+      EN: src.slice(start('export const EN = {')),
+    }
+    const dups = {}
+    for (const [lang, body] of Object.entries(blocks)) {
+      const seen = new Set(); const twice = new Set()
+      for (const m of body.matchAll(/(?:^|[{,\s])'([a-zA-Z0-9_.$-]+)'\s*:/g)) {
+        if (seen.has(m[1])) twice.add(m[1]); else seen.add(m[1])
+      }
+      if (twice.size) dups[lang] = [...twice].sort()
+    }
+    expect(dups, `Yinelenen i18n anahtarı: ${JSON.stringify(dups)}`).toEqual({})
+  })
+
   it('every TR key has an EN counterpart', () => {
     const missing = Object.keys(TR).filter((k) => !(k in EN))
     expect(missing, `EN translations missing for keys: ${missing.join(', ')}`).toEqual([])

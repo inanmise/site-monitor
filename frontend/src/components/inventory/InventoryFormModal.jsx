@@ -134,7 +134,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
     execute: async (state) => {
       const text = state?.text ?? ''
       if (!text.trim()) { toast.info(t('inv.copyEmpty')); return }
-      if (await copyText(text)) toast.success(t('inv.changeDescCopied')); else toast.error(t('inv.copyFailed'))
+      if (await copyText(text)) toast.success(t('inv.changeDescCopied')); else toast.error(t('inv.copyDescFailed'))
     },
   }), [t, toast])
   const { showConfirm } = useDialog()
