@@ -281,13 +281,25 @@ public class MonitoringWeeklyStatsService {
             aOpen = sumBucket(c.openNow(), alerts), aOpenedPrev = sumBucket(c.openedPrev(), alerts);
 
         long total = 0, success = 0, changedSum = 0;
+        // Ağırlıklı ortalama ÖLÇÜMLÜ satırlar üzerinden: AVG NULL'ları atladığı, COUNT saymadığı için
+        // payda `total` olursa hafta boyu down duran bir monitör (AVG=NULL, COUNT=1000) paydayı şişirip
+        // ortalamayı aşağı çekiyordu — rapor, kesinti arttıkça yanıt süresini İYİ gösteriyordu.
+        // Sorgular beşinci kolon olarak ölçümlü satır sayısını döndürüyor (kardeş emsal:
+        // ActivityLogRepository:103 aynı hesabı `responseMs IS NOT NULL` filtresiyle yapıyor).
+        long measured = 0;
         double weightedMs = 0;
         int closed = 0;
         List<TopTarget> targets = new ArrayList<>();
         for (Object[] r : cur) {
             long t = lng(r[1]), s = lng(r[2]);
             total += t; success += s;
-            if (extraMode == ExtraMode.AVG_MS && r.length > 3 && r[3] != null) weightedMs += ((Number) r[3]).doubleValue() * t;
+            if (extraMode == ExtraMode.AVG_MS && r.length > 3 && r[3] != null) {
+                // Beşinci kolon yoksa (eski/başka şekilli sorgu) `t`'ye düş — davranış en kötü
+                // ihtimalle eski hâline döner, NPE üretmez.
+                long w = r.length > 4 && r[4] != null ? ((Number) r[4]).longValue() : t;
+                weightedMs += ((Number) r[3]).doubleValue() * w;
+                measured += w;
+            }
             if (extraMode == ExtraMode.CHANGED_SUM && r.length > 3 && r[3] != null) changedSum += ((Number) r[3]).longValue();
             if (extraMode == ExtraMode.CLOSED_COUNT && s < t) closed++;
             String name = nameOf.apply(r[0]);
@@ -303,7 +315,7 @@ public class MonitoringWeeklyStatsService {
         Integer openedDelta = aOpened - aOpenedPrev;
 
         Double extra = switch (extraMode) {
-            case AVG_MS       -> total > 0 ? round1(weightedMs / total) : null;
+            case AVG_MS       -> measured > 0 ? round1(weightedMs / measured) : null;
             case CHANGED_SUM  -> (double) changedSum;
             case CLOSED_COUNT -> (double) closed;
             case EXTERNAL     -> externalExtra;

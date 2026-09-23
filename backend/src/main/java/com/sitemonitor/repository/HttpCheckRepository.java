@@ -57,8 +57,12 @@ public interface HttpCheckRepository extends JpaRepository<HttpCheck, Long> {
     List<Object[]> responseSeriesRaw(@Param("id") Long id, @Param("from") String from,
                                      @Param("to") String to, @Param("limit") int limit);
 
-    /** Haftalık izleme özeti: [monitorId, toplam, BAŞARILI, ort_yanıt_ms] — ids ∩ [from,to]; başarı = ok=true. */
-    @Query("SELECT r.monitorId, COUNT(r), SUM(CASE WHEN r.ok = true THEN 1L ELSE 0L END), AVG(r.responseMs) "
+    /** Haftalık izleme özeti: [monitorId, toplam, BAŞARILI, ort_yanıt_ms, ÖLÇÜMLÜ_satır] — ids ∩ [from,to]; başarı = ok=true.
+     *  Beşinci kolon şart: AVG NULL'ları ATLAR, COUNT saymaz. Ağırlıklı ortalama paydası `toplam`
+     *  olursa ölçümü olmayan (down) kontroller de paydaya giriyor ve rapor, kesinti arttıkça yanıt
+     *  süresini İYİ gösteriyordu. Ağırlık da payda da bu sayaç olmalı. */
+    @Query("SELECT r.monitorId, COUNT(r), SUM(CASE WHEN r.ok = true THEN 1L ELSE 0L END), AVG(r.responseMs), "
+         + "SUM(CASE WHEN r.responseMs IS NOT NULL THEN 1L ELSE 0L END) "
          + "FROM HttpCheck r WHERE r.monitorId IN :ids AND r.checkedAt >= :from AND r.checkedAt <= :to "
          + "GROUP BY r.monitorId")
     List<Object[]> weeklyStatsByMonitor(@Param("ids") java.util.Collection<Long> ids,

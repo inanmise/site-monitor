@@ -61,8 +61,12 @@ public interface PingCheckRepository extends JpaRepository<PingCheck, Long> {
     List<Object[]> responseSeriesRaw(@Param("id") Long id, @Param("from") String from,
                                      @Param("to") String to, @Param("limit") int limit);
 
-    /** Haftalık izleme özeti: [monitorId, toplam, BAŞARILI, ort_rtt_ms] — ids ∩ [from,to]; başarı = up=true. */
-    @Query("SELECT c.monitorId, COUNT(c), SUM(CASE WHEN c.up = true THEN 1L ELSE 0L END), AVG(c.rttMs) "
+    /** Haftalık izleme özeti: [monitorId, toplam, BAŞARILI, ort_rtt_ms, ÖLÇÜMLÜ_satır] — ids ∩ [from,to]; başarı = up=true.
+     *  Beşinci kolon şart: AVG NULL'ları ATLAR, COUNT saymaz. Ağırlıklı ortalama paydası `toplam`
+     *  olursa ölçümü olmayan (down) kontroller de paydaya giriyor ve rapor, kesinti arttıkça yanıt
+     *  süresini İYİ gösteriyordu. Ağırlık da payda da bu sayaç olmalı. */
+    @Query("SELECT c.monitorId, COUNT(c), SUM(CASE WHEN c.up = true THEN 1L ELSE 0L END), AVG(c.rttMs), "
+         + "SUM(CASE WHEN c.rttMs IS NOT NULL THEN 1L ELSE 0L END) "
          + "FROM PingCheck c WHERE c.monitorId IN :ids AND c.checkedAt >= :from AND c.checkedAt <= :to "
          + "GROUP BY c.monitorId")
     List<Object[]> weeklyStatsByMonitor(@Param("ids") java.util.Collection<Long> ids,
