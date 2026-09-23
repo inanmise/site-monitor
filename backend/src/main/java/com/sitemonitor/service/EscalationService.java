@@ -2380,10 +2380,16 @@ public class EscalationService {
     /** Çözüldü e-postasında detay için alarm anı context'inin küçük JSON snapshot'ı.
      *  Sayfa anahtarları 2026-08-04'te eklendi ("sorun neydi" detayı için) — daha ESKİ açık alarmların
      *  snapshot'ında yoklar; çözüm maili o durumda zarifçe sade düzene düşer. */
-    private String snapshotContext(Map<String, Object> ctx) {
-        if (ctx == null) return null;
-        Map<String, Object> snap = new LinkedHashMap<>();
-        for (String k : List.of("keyword", "operator", "match_count", "occurrences",
+    /**
+     * Çözüm e-postasının okuyabileceği alarm-anı bağlam anahtarları (snapshot whitelist'i).
+     *
+     * <p>Tek doğruluk kaynağı: {@code snapshotContext} bunu yazıyor,
+     * {@code EmailTemplateBuilder.buildResolvedHtml/Text} bunu okuyor. İkisi ayrıştığında şablonun
+     * o satırı SESSİZCE ölü koda dönüşüyor — anahtar üretici tarafta yazılsa bile snapshot'a hiç
+     * girmediği için çözüm mailinde hiçbir zaman görünmüyor (2026-09-23'te duration_ms ve
+     * failed_checks tam olarak böyle kaybolmuştu). Kapı: {@code ResolvedMailContextKeysTest}.
+     */
+    public static final java.util.List<String> RESOLVED_CONTEXT_KEYS = List.of("keyword", "operator", "match_count", "occurrences",
                                  "url", "host", "ip_version", "monitor_id", "condition",
                                  "http_status", "last_error", "response_ms", "threshold_ms", "port", "protocol",
                                  // Sayfa Bütünlüğü (PAGE_DOWN/PAGE_INTEGRITY) — çözüm maili "sorun neydi" bloğu
@@ -2393,7 +2399,23 @@ public class EscalationService {
                                  // Kanal bastirma damgalari: cozum yolu ctx'i olaydan geri okuyor;
                                  // bu anahtarlar kalicilastirilmazsa "e-postayi kapattim ama COZULDU
                                  // maili geliyor" paritesizligi olusuyordu.
-                                 "mail_disabled", "push_disabled")) {
+                                 "mail_disabled", "push_disabled",
+                                 // Sentetik (SCRIPTED_SLOW/FAIL) çözüm maili — EmailTemplateBuilder
+                                 // bu ikisini okuyor (HTML :460-473, düz metin :537-549) ve üretici
+                                 // taraf yazıyor (SchedulerService:4066, :4089) ama whitelist'te
+                                 // olmadıkları için snapshot'a HİÇ girmiyorlardı: "Süre (alarm anı)"
+                                 // ve "Düşen Doğrulamalar" satırları ölü koddu. Kapı:
+                                 // ResolvedMailContextKeysTest — şablonun okuduğu her anahtar burada.
+                                 // "error" da aynı kapıdan geçti: SchedulerService ctx'e yazıyor ve
+                                 // şablon firstNonNull(error, last_error) okuyor. last_error yedeği
+                                 // satırı ayakta tutuyordu ama birincil anahtar hiç snapshot'a
+                                 // girmiyordu; "error" daha zengin olduğunda bilgi kaybediliyordu.
+                                 "duration_ms", "failed_checks", "error");
+
+    private String snapshotContext(Map<String, Object> ctx) {
+        if (ctx == null) return null;
+        Map<String, Object> snap = new LinkedHashMap<>();
+        for (String k : RESOLVED_CONTEXT_KEYS) {
             if (ctx.get(k) != null) snap.put(k, ctx.get(k));
         }
         if (snap.isEmpty()) return null;
