@@ -435,7 +435,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
                       onAlerts={() => navigateTo('alerthistory', { team: String(team.id) })} />
                   </td>
                   <td>
-                    <KebabMenu label={t('team.colActions')} items={[
+                    <KebabMenu label={t('team.colActions')} rowLabel={team.name} items={[
                       { label: t('team.edit'), onClick: () => openEdit(team), hidden: !canEditRow(team.id) },
                       { label: t('team.manageMembers'), onClick: () => setManageTeam(team), hidden: !canEditRow(team.id) },
                       { label: t('hist.title'), onClick: () => setHistFilter({ id: team.id, name: team.name }) },

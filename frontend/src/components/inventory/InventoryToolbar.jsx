@@ -94,7 +94,7 @@ export default function InventoryToolbar({
               {savedViews.map((v) => (
                 <div key={v.name} className="invtb-view-row">
                   <button type="button" className="invtb-view-apply" onClick={() => { onApplyView(v); setViewsOpen(false) }}>{v.name}</button>
-                  <button type="button" className="invtb-view-del" onClick={() => onDeleteView(v.name)} aria-label={t('inv.viewDelete')}><X size={12} /></button>
+                  <button type="button" className="invtb-view-del" onClick={() => onDeleteView(v.name)} aria-label={t('inv.viewDeleteFor', v.name)}><X size={12} /></button>
                 </div>
               ))}
               <div className="invtb-view-new">

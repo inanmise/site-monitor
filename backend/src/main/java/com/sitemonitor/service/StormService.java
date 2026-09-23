@@ -473,7 +473,11 @@ public class StormService {
                 // Listeler TAKIMA ÖZEL: her takım yalnız kendi monitörlerini görür. Toplam sayı
                 // (hesap geneli) başlıkta kalır — sızıntı host ADLARINDAYDI, sayıda değil.
                 List<String> targets = sampleTargets(d.members());
-                int extra = Math.max(0, downMembers.size() - targets.size());
+                // "+ N monitör daha" TAKIMIN KENDİ üyelerinden türer. Hesap-geneli sayıdan
+                // türetilince tek monitörü düşmüş bir takımın maili "a.example ... ve 39 monitör
+                // daha" diyordu; okuyan bunu kendi 39 monitörü sanıp gereksiz kriz başlatıyordu.
+                // Hesap-geneli toplam başlıkta/konuda kalır (yukarıdaki not).
+                int extra = Math.max(0, d.members().size() - targets.size());
 
                 if (!d.emails().isEmpty()) {
                     String html = emailService.buildStormAlertHtml(
@@ -547,24 +551,27 @@ public class StormService {
                     else mineStillDown.add(m);
                 }
                 List<String> targets = sampleTargets(mineRecovered);
-                int extra = Math.max(0, recovered.size() - targets.size());
+                int extra = Math.max(0, mineRecovered.size() - targets.size());   // takım kapsamlı (bkz. alarm yolu)
                 // Hâlâ-down üyeler ADLARIYLA listelenir: eskiden yalnız sayı ("2 hâlâ izlemede")
                 // gidiyor, hangileri olduğu ne mailde ne webhook'ta söyleniyordu.
                 List<String> stillDownTargets = sampleTargets(mineStillDown);
 
                 if (!d.emails().isEmpty()) {
+                    // "Hâlâ erişilemeyen" sayacı da TAKIM kapsamlı: listenin kendisi öyle ve
+                    // webhook partı (aşağıda) zaten mineStillDown kullanıyordu — e-posta hesap
+                    // geneli sayı geçtiği için aynı olay iki kanalda farklı rakam veriyordu.
                     String html = emailService.buildStormRecoveryHtml(
-                            recovered.size(), stillDown.size(), scopeLabel,
+                            recovered.size(), mineStillDown.size(), scopeLabel,
                             storm.getCreatedAt(), storm.getResolvedAt(), targets, extra, stillDownTargets);
                     String text = emailService.buildStormRecoveryText(
-                            recovered.size(), stillDown.size(), scopeLabel,
+                            recovered.size(), mineStillDown.size(), scopeLabel,
                             storm.getCreatedAt(), storm.getResolvedAt(), targets, extra, stillDownTargets);
                     emailService.sendHtml(d.emails().toArray(new String[0]), null, subject, html, text, List.of(), false, null);
                 }
 
                 enqueueStormPush(d.teamId(), "STORM_RESOLVED", "INFO",
                         recovered.size() + " monitör kurtarıldı — " + scopeLabel
-                                + (stillDown.isEmpty() ? "" : " · hâlâ erişilemeyen: " + stillDown.size()),
+                                + (mineStillDown.isEmpty() ? "" : " · hâlâ erişilemeyen: " + mineStillDown.size()),
                         "storm-resolved:" + storm.getId());
 
                 // Webhook (Teams/Slack) — açılışın AYNASI. Eskiden yalnız e-posta gidiyordu: aynı kişi

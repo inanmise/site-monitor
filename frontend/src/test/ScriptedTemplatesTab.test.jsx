@@ -90,7 +90,8 @@ async function openMenu(cardName) {
   await waitFor(() => expect(document.querySelector('.sc-tpl-branch-head')).not.toBeNull())
   await expandAll()
   const card = (await screen.findByText(cardName)).closest('.sc-tpl-card')
-  fireEvent.click(within(card).getByLabelText('tpl.actions'))
+  // Kebab'ın adı artık şablon adını da taşıyor ("<ad> — tpl.actions").
+  fireEvent.click(within(card).getByLabelText(/tpl[.]actions$/))
   return () => screen.queryAllByRole('button').map(b => b.textContent)
 }
 

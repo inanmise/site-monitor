@@ -248,6 +248,8 @@ public class AuditController {
             @PathVariable String domain, @RequestBody Map<String, String> body,
             HttpSession session, HttpServletRequest request) {
         permissionService.require(session, "weak_algo.manage", "edit");
+        ResponseEntity<Map<String, Object>> denied = denyIfDomainNotManageable(session, domain);
+        if (denied != null) return denied;
         try {
             var e = weakAlgoService.setException(domain, body.get("reason"), body.get("until"),
                     String.valueOf(session.getAttribute("username")));
@@ -266,6 +268,8 @@ public class AuditController {
     public ResponseEntity<Map<String, Object>> weakAlgorithmExceptionClear(
             @PathVariable String domain, HttpSession session, HttpServletRequest request) {
         permissionService.require(session, "weak_algo.manage", "edit");
+        ResponseEntity<Map<String, Object>> denied = denyIfDomainNotManageable(session, domain);
+        if (denied != null) return denied;
         boolean removed = weakAlgoService.clearException(domain);
         if (removed) auditService.recordAction("WEAK_ALGO_EXCEPTION_CLEAR", session, request, "WEAK_ALGO", domain, com.sitemonitor.service.AuditDetail.of("domain", domain, "removed", true));
         return ok(Map.of("removed", removed));
@@ -279,6 +283,8 @@ public class AuditController {
     public ResponseEntity<Map<String, Object>> weakAlgorithmNotify(
             @PathVariable String domain, HttpSession session, HttpServletRequest request) {
         permissionService.require(session, "weak_algo.manage", "edit");
+        ResponseEntity<Map<String, Object>> denied = denyIfDomainNotManageable(session, domain);
+        if (denied != null) return denied;
         CertificateInventory inv = inventoryRepo.findByDomain(domain).orElse(null);
         if (inv == null) return ResponseEntity.status(404).body(Map.of("success", false, "error", "Alan envanterde yok"));
         LatestCheck lc = latestCheckRepo.findById(domain).orElse(null);
@@ -353,6 +359,34 @@ public class AuditController {
         String role = (String) session.getAttribute("systemRole");
         if (!SessionScope.isGlobalAdmin(session) && !"AUDIT".equals(role))
             throw new SecurityException("Audit access required");
+    }
+
+    /**
+     * Zayıf-algoritma YAZMA uçlarının takım kapısı.
+     *
+     * <p>{@code weak_algo.manage} izni {@code PermissionCatalog}'ta TEAM_ADMIN varsayılanında
+     * AÇIK ve bu bilinçli: takım yöneticisi KENDİ alanının bulgusuna istisna yazabilmeli. Ama
+     * uçlar {@code {domain}}'i hiçbir kapıdan geçirmiyordu — kapsamlı bir müdür, BAŞKA takımın
+     * zayıf kripto bulgusunu güvenlik raporundan istediği tarihe kadar sildirebiliyor, başkasının
+     * istisnasını kaldırabiliyor ve ilgisiz bir takıma CRITICAL mail+push tetikleyebiliyordu
+     * (kapsamlı müdür sınıfı: rol ADMIN ama yetki takım-kapsamlı).
+     *
+     * <p>Kardeş emsali {@code MonitoringController.denyIfDomainNotViewable}; burada YAZMA
+     * söz konusu olduğu için {@code canManage} kullanılır. Global admin/AUDIT (sistem-geneli
+     * denetçi) her alandan geçer — {@code canManage} onlar için zaten true döner.
+     */
+    private ResponseEntity<Map<String, Object>> denyIfDomainNotManageable(HttpSession session, String domain) {
+        // Sistem-geneli denetçi (global admin / AUDIT) envanterden BAĞIMSIZ geçer: kapı yalnız
+        // kapsamlı kullanıcılar için var ve envanterde olmayan bir alana istisna yazma davranışı
+        // onlar için aynen korunur (kapı eklemek mevcut yeteneği daraltmasın).
+        if (SessionScope.isGlobalViewer(session)) return null;
+        CertificateInventory inv = domain == null ? null : inventoryRepo.findByDomain(domain).orElse(null);
+        if (inv == null)
+            return ResponseEntity.status(404).body(Map.of("success", false, "error", "Alan envanterde yok"));
+        if (SessionScope.canManage(session, inv.getTeamId())) return null;
+        if (inv.getUgTeamId() != null && SessionScope.canManage(session, inv.getUgTeamId())) return null;
+        return ResponseEntity.status(403).body(Map.of("success", false, "error",
+                "Bu alan adı sizin takımınıza ait değil"));
     }
 
     private ResponseEntity<Map<String, Object>> ok(Map<String, Object> body) {

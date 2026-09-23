@@ -346,6 +346,7 @@ export default function NotificationGroups({ teams = [], systemRole }) {
                     <td>
                       <KebabMenu
                         label={t('ng.actions')}
+                        rowLabel={g.name}
                         items={[
                           // Gecmis OKUMA'dir: ekrani gorebilen, bu grubun gecmisini de gorebilir.
                           { label: t('ng.histBtn'), icon: <History size={14} />, onClick: () => openHistory(g) },

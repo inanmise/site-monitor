@@ -176,7 +176,16 @@ export default function SearchableSelect({
                     {deletable ? <span className="ss-option-label">{opt.label}</span> : opt.label}
                     {opt.hint && <span className="ss-option-hint">{opt.hint}</span>}
                     {deletable && (
-                      <span className="ss-option-del" role="button" title={t('ss.delete')}
+                      /* role="button" tek başına yetmiyordu: tabIndex yok + yalnız onMouseDown
+                         dinleniyordu, yani klavye/dokunmatik kullanıcısı seçeneği HİÇ silemiyordu.
+                         Ad da her satırda aynı ("Sil") olduğu için hangi seçeneğin silineceği
+                         duyulmuyordu. onMouseDown korunuyor — listeyi kapatan blur'u önlüyor. */
+                      <span className="ss-option-del" role="button" tabIndex={0}
+                        title={t('ss.delete')} aria-label={t('ss.deleteOption', opt.label)}
+                        onKeyDown={(e) => {
+                          if (e.key !== 'Enter' && e.key !== ' ') return
+                          e.preventDefault(); e.stopPropagation(); onDelete(opt.value)
+                        }}
                         onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(opt.value) }}>×</span>
                     )}
                   </div>

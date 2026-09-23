@@ -527,7 +527,7 @@ export default function Login({ onLogin, sessionExpired = false }) {
                    aria-label={t('login.helpTitle')} onClick={(e) => e.stopPropagation()}>
                 <div className="lp-modal-head">
                   <h3 className="lp-modal-title">{t('login.helpTitle')}</h3>
-                  <button type="button" className="lp-modal-close" aria-label="close" onClick={closeHelp}>
+                  <button type="button" className="lp-modal-close" aria-label={t('app.close')} onClick={closeHelp}>
                     <X size={16} />
                   </button>
                 </div>

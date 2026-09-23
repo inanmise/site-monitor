@@ -1903,7 +1903,11 @@ public class EmailNotificationService {
         sb.append(stormTargetsText(sampleTargets, truncatedExtra, "KURTARILAN MONİTÖRLER"));
         if (stillDownCount > 0) {
             sb.append(NL).append("HÂLÂ ERİŞİLEMEYEN (").append(stillDownCount).append("):").append(NL);
-            sb.append(stormTargetsText(stillDownTargets, 0, null));
+            // Kırpma sayacı HTML partıyla aynı hesap: liste sampleTargets ile 12'de kesiliyor,
+            // düz metin sabit 0 geçtiği için "+ N monitör daha" satırı düşüyordu — aynı mailin
+            // iki partı çelişiyor, düz metne düşen istemci 12 adı TAM liste sanıyordu.
+            sb.append(stormTargetsText(stillDownTargets,
+                    Math.max(0, stillDownCount - (stillDownTargets == null ? 0 : stillDownTargets.size())), null));
         }
         String cta = stormCtaUrl();
         if (!cta.isBlank()) sb.append(NL).append("Olayları aç: ").append(cta).append(NL);

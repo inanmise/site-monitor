@@ -257,7 +257,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
                 })()}</td>
                 <td><span className={c.active ? 'badge badge-ok' : 'badge badge-err'}>{c.active ? t('ec.active') : t('ec.inactive')}</span></td>
                 <td>
-                  <KebabMenu label={t('ec.colActions')} items={[
+                  <KebabMenu label={t('ec.colActions')} rowLabel={c.name || c.email} items={[
                     ...(canManage ? [{ label: t('ec.edit'), onClick: () => openEdit(c) }] : []),
                     { label: t('hist.title'), onClick: () => setHistFilter({ id: c.id, name: c.name || c.email }) },
                     ...(canManage && c.webhook_url ? [{ label: t('ec.testWebhook'), onClick: () => { if (testingId !== c.id) testWebhook(c) } }] : []),

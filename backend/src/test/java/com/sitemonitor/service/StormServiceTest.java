@@ -630,4 +630,52 @@ class StormServiceTest {
         verify(stormRepo, never()).save(any());
         verifyNoInteractions(emailService, webhookService);
     }
+
+    @Test
+    @DisplayName("B6: '+N monitör daha' sayacı TAKIMIN KENDİ üyelerinden türer (hesap geneli sayı sızmaz)")
+    void storm_truncationCounterIsTeamScoped() {
+        wireObjectMapper();
+        com.sitemonitor.model.Team a = new com.sitemonitor.model.Team();
+        a.setId(7L); a.setName("Takım A"); a.setEmail("a@example.com");
+        com.sitemonitor.model.Team b = new com.sitemonitor.model.Team();
+        b.setId(8L); b.setName("Takım B"); b.setEmail("b@example.com");
+        when(teamRepo.findById(7L)).thenReturn(java.util.Optional.of(a));
+        when(teamRepo.findById(8L)).thenReturn(java.util.Optional.of(b));
+
+        AlertEvent m7 = down(1, EscalationService.TYPE_HTTP_DOWN, 7L);
+        AlertEvent m8 = down(2, EscalationService.TYPE_HTTP_DOWN, 8L);
+
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                storm, "sendStormAlert", storm(310L), java.util.List.of(m7, m8), "INITIAL");
+
+        // Her takımın listesi 1 host; kırpılan YOK. Sayaç hesap genelinden (2) türetilince
+        // tek monitörü düşmüş takımın maili "ve 1 monitör daha" diyordu — okuyan bunu KENDİ
+        // ikinci monitörü sanıyor. Hesap-geneli toplam yalnız başlıkta kalır (ilk argüman: 2).
+        org.mockito.ArgumentCaptor<Integer> extra = org.mockito.ArgumentCaptor.captor();
+        verify(emailService, times(2)).buildStormAlertHtml(eq(2), any(), any(), any(), any(), extra.capture());
+        assertThat(extra.getAllValues()).containsExactly(0, 0);
+    }
+
+    @Test
+    @DisplayName("B6: çözüm mailinde 'hâlâ erişilemeyen' sayısı da takım kapsamlı — webhook partıyla aynı rakam")
+    void stormRecovery_stillDownCountIsTeamScoped() {
+        wireObjectMapper();
+        com.sitemonitor.model.Team a = new com.sitemonitor.model.Team();
+        a.setId(7L); a.setName("Takım A"); a.setEmail("a@example.com");
+        com.sitemonitor.model.Team b = new com.sitemonitor.model.Team();
+        b.setId(8L); b.setName("Takım B"); b.setEmail("b@example.com");
+        when(teamRepo.findById(7L)).thenReturn(java.util.Optional.of(a));
+        when(teamRepo.findById(8L)).thenReturn(java.util.Optional.of(b));
+
+        AlertEvent recoveredA = down(1, EscalationService.TYPE_HTTP_DOWN, 7L);
+        AlertEvent stillDownB = down(2, EscalationService.TYPE_HTTP_DOWN, 8L);
+
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                storm, "sendStormRecovery", storm(311L),
+                java.util.List.of(recoveredA), java.util.List.of(stillDownB));
+
+        // Takım A'nın hiç down monitörü kalmadı: maili "hâlâ erişilemeyen: 1" DEMEMELİ.
+        verify(emailService, times(1)).buildStormRecoveryHtml(
+                eq(1), eq(0), any(), any(), any(), any(), anyInt(), any());
+    }
 }

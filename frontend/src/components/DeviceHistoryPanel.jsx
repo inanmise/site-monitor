@@ -311,7 +311,7 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
                   </div>
                   <button type="button" className="dev-row-toggle"
                     aria-expanded={expanded === row.id}
-                    aria-label={t('dev.toggleDetail')}
+                    aria-label={t('dev.toggleDetailFor', formatDateSec(row.at))}
                     onClick={() => setExpanded(e => (e === row.id ? null : row.id))}>
                     <ChevronRight size={15} />
                   </button>

@@ -32,7 +32,7 @@ import { Menu } from 'lucide-react'
 const GAP = 4    // buton ile menü arası
 const EDGE = 8   // viewport kenar payı
 
-export default function KebabMenu({ items = [], label = 'İşlemler', placement = 'bottom' }) {
+export default function KebabMenu({ items = [], label = 'İşlemler', rowLabel = null, placement = 'bottom' }) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState(null)   // null = henüz ölçülmedi
   const btnRef = useRef(null)
@@ -128,8 +128,12 @@ export default function KebabMenu({ items = [], label = 'İşlemler', placement 
 
   return (
     <div className="wr-menu-wrap">
+      {/* aria-label SATIRI ayırt eder, title kısa kalır: 200 satırlık bir tabloda ekran
+          okuyucu 200 kez "İşlemler, menü" okuyordu — hangi kaydın silme menüsünde olunduğu
+          duyulmuyordu. rowLabel verilmezse davranış eskisiyle birebir aynı. */}
       <button ref={btnRef} type="button" className="btn-sm kebab-trigger"
-        title={label} aria-label={label} aria-expanded={open} aria-haspopup="menu"
+        title={label} aria-label={rowLabel ? `${rowLabel} — ${label}` : label}
+        aria-expanded={open} aria-haspopup="menu"
         style={{ background: '#eef2f7', color: '#334155' }} onClick={toggle}>
         <Menu size={15} />
       </button>

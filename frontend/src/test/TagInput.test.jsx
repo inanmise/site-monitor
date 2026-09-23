@@ -101,7 +101,9 @@ describe('TagInput — bekleyen girdi önizlemesi', () => {
     render(<Harness initial="a@example.com, b@example.com" onValue={onValue} />)
     expect(chips()).toHaveLength(2)
 
-    fireEvent.click(screen.getAllByLabelText('remove')[0])
+    // Kaldırma düğmesinin adı ETİKETİ taşır (2026-09-23): sabit "remove" iken iki chip'in
+    // düğmesi ekran okuyucuda birbirinin aynıydı ve TR arayüzde İngilizce okunuyordu.
+    fireEvent.click(screen.getAllByLabelText(/a@example[.]com/).find(el => el.tagName === 'BUTTON'))
     expect(onValue).toHaveBeenCalledWith('b@example.com')
   })
 

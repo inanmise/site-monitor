@@ -331,4 +331,82 @@ class AuditControllerTest {
         mvc.perform(post("/api/admin/users/5/devices/logout-others").session(session("ADMIN")))
                 .andExpect(status().isNotFound());
     }
+
+    // ── Zayıf algoritma YAZMA uçları: takım kapsamı (2026-09-23) ───────────────────────────
+
+    private MockHttpSession scopedAdmin(long teamId) {
+        MockHttpSession s = session("ADMIN");
+        s.setAttribute("viewTeamIds", java.util.List.of(teamId));     // kapsamlı → global DEĞİL
+        s.setAttribute("manageTeamIds", java.util.List.of(teamId));
+        return s;
+    }
+
+    private static CertificateInventory invOf(String domain, Long teamId) {
+        CertificateInventory i = new CertificateInventory();
+        i.setDomain(domain);
+        i.setTeamId(teamId);
+        return i;
+    }
+
+    @Test
+    @DisplayName("KAPI: kapsamlı müdür BAŞKA takımın alanına istisna yazamaz (403) — kendi alanına yazar")
+    void weakAlgoException_isTeamScoped() throws Exception {
+        org.mockito.Mockito.doNothing().when(permissionService)
+                .require(any(HttpSession.class), eq("weak_algo.manage"), eq("edit"));
+        when(inventoryRepo.findByDomain("baskatakim.example.com"))
+                .thenReturn(java.util.Optional.of(invOf("baskatakim.example.com", 77L)));
+        when(inventoryRepo.findByDomain("kendi.example.com"))
+                .thenReturn(java.util.Optional.of(invOf("kendi.example.com", 5L)));
+
+        // İzin matrisi "edit" diyor ama alan A takımının: yazma reddedilmeli.
+        mvc.perform(post("/api/admin/audit/weak-algorithms/baskatakim.example.com/exception")
+                        .session(scopedAdmin(5L))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"x\",\"until\":\"2099-01-01\"}"))
+                .andExpect(status().isForbidden());
+        org.mockito.Mockito.verify(weakAlgoService, org.mockito.Mockito.never())
+                .setException(eq("baskatakim.example.com"), any(), any(), any());
+
+        com.sitemonitor.model.WeakAlgorithmException e = new com.sitemonitor.model.WeakAlgorithmException();
+        e.setDomain("kendi.example.com"); e.setUntil("2099-01-01");
+        when(weakAlgoService.setException(eq("kendi.example.com"), any(), eq("2099-01-01"), any())).thenReturn(e);
+
+        mvc.perform(post("/api/admin/audit/weak-algorithms/kendi.example.com/exception")
+                        .session(scopedAdmin(5L))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"x\",\"until\":\"2099-01-01\"}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("KAPI: istisna SİLME ve BİLDİRİM uçları da takım kapsamlı (başkasının bulgusu susturulamaz/ilgisiz takım uyarılamaz)")
+    void weakAlgoClearAndNotify_areTeamScoped() throws Exception {
+        org.mockito.Mockito.doNothing().when(permissionService)
+                .require(any(HttpSession.class), eq("weak_algo.manage"), eq("edit"));
+        when(inventoryRepo.findByDomain("baskatakim.example.com"))
+                .thenReturn(java.util.Optional.of(invOf("baskatakim.example.com", 77L)));
+
+        mvc.perform(delete("/api/admin/audit/weak-algorithms/baskatakim.example.com/exception")
+                        .session(scopedAdmin(5L)))
+                .andExpect(status().isForbidden());
+        org.mockito.Mockito.verify(weakAlgoService, org.mockito.Mockito.never()).clearException(any());
+
+        mvc.perform(post("/api/admin/audit/weak-algorithms/baskatakim.example.com/notify")
+                        .session(scopedAdmin(5L)))
+                .andExpect(status().isForbidden());
+        org.mockito.Mockito.verifyNoInteractions(emailService, userPushService);
+    }
+
+    @Test
+    @DisplayName("Global admin/AUDIT kapıdan envanterden bağımsız geçer (mevcut yetenek daralmaz)")
+    void weakAlgoWrite_globalAuditorUnaffected() throws Exception {
+        org.mockito.Mockito.doNothing().when(permissionService)
+                .require(any(HttpSession.class), eq("weak_algo.manage"), eq("edit"));
+        when(inventoryRepo.findByDomain(any())).thenReturn(java.util.Optional.empty());
+        when(weakAlgoService.clearException("envanterde-yok.example.com")).thenReturn(false);
+
+        mvc.perform(delete("/api/admin/audit/weak-algorithms/envanterde-yok.example.com/exception")
+                        .session(session("AUDIT")))
+                .andExpect(status().isOk());
+    }
 }

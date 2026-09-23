@@ -184,7 +184,7 @@ export default function InventoryTable({
                         <Play size={12} className={busy === r.domain ? 'is-spinning' : ''} />
                       </button>
                     )}
-                    <KebabMenu label={t('inv.colActions')} items={del
+                    <KebabMenu label={t('inv.colActions')} rowLabel={r.domain} items={del
                       ? [
                           { label: t('inv.show'), onClick: () => onShow(r) },
                           { label: t('inv.restore'), onClick: () => onRestore(r.id), hidden: !canManage },

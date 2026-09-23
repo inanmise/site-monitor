@@ -332,7 +332,7 @@ export default function ActivityLog({ refreshTrigger }) {
                       </span>
                       <span className="act-item-time" title={formatDateSec(row.activity_time)}>{rel(row.activity_time)}</span>
                     </button>
-                    {dest && <button type="button" className="act-item-go" onClick={go} title={t('act.goMonitor')} aria-label={t('act.goMonitor')}><ExternalLink size={14} /></button>}
+                    {dest && <button type="button" className="act-item-go" onClick={go} title={t('act.goMonitor')} aria-label={t('act.goMonitorFor', row.monitor_name || row.target || '')}><ExternalLink size={14} /></button>}
                   </div>
                   {isOpen && (
                     <div className="act-item-detail">

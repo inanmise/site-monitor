@@ -119,7 +119,8 @@ describe('ActivityLog — zaman grupları + katlama (2026-09-12, #22)', () => {
     const { container } = render(<ActivityLog />)
     expect(await screen.findByText('gw')).toBeInTheDocument()
     expect(container.querySelector('.act-item-team').textContent).toContain('Takim A')
-    fireEvent.click(screen.getByRole('button', { name: /İzlemeye git|Go to the monitor/ }))
+    // Ad artık satırı ayırt ediyor: "gw — izlemeye git" (eskiden her satırda aynıydı).
+    fireEvent.click(screen.getByRole('button', { name: /izlemeye git|go to the monitor/i }))
     expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'ping', params: { monitor: 9 } })
     fireEvent.click(screen.getByText('gw'))
     expect(nav).toHaveBeenCalledTimes(2)

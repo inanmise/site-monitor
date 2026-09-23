@@ -276,7 +276,10 @@ describe('PageMonitorPage', () => {
     fireEvent.click(screen.getByText('https://www.example.com/'))
     await waitFor(() => expect(api.monitoring.getPageIssues).toHaveBeenCalled())
 
-    const btn = await screen.findByRole('button', { name: /hariç tut$|^exclude$/i })
+    // Düğmenin erişilebilir adı artık KAYNAK URL'ini taşıyor (satırlar ayırt edilsin diye),
+    // yani dile bağlı sabit bir desenle aranamaz. Etkin (disabled olmayan) dışlama düğmesi:
+    await waitFor(() => expect(document.querySelector('.page-exclude-btn:not([disabled])')).not.toBeNull())
+    const btn = document.querySelector('.page-exclude-btn:not([disabled])')
     fireEvent.click(btn)
 
     // Prompt açıldı, giriş değeri = kaynak URL'i (düzenlenebilir)

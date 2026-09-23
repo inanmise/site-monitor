@@ -1530,7 +1530,7 @@ public class MonitoringController {
             String now = ISO.format(Instant.now());
             PortCheck check = new PortCheck();
             check.setMonitorId(m.getId());
-            check.setOpen((Boolean) r.getOrDefault("open", false));
+            check.setOpen(Boolean.TRUE.equals(r.get("open")));   // kardeşleriyle aynı: null-güvenli (SchedulerService:2806, bu dosya:1575)
             check.setResponseMs(r.get("response_ms") != null ? ((Number) r.get("response_ms")).longValue() : null);
             check.setError((String) r.get("error"));
             check.setCheckedAt(now);

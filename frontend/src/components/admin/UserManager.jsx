@@ -432,7 +432,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                   {user.permanent_lock && <span className="badge badge-err" style={{ marginLeft: 4 }} title={t('usr.permLocked')}>🔒</span>}
                 </td>
                 <td className="um-col-actions" onClick={(e) => e.stopPropagation()}>
-                  <KebabMenu label={t('usr.colActions')} items={canManage ? [
+                  <KebabMenu label={t('usr.colActions')} rowLabel={user.display_name || user.username} items={canManage ? [
                     { label: t('usr.edit'), onClick: () => openEdit(user) },
                     { label: t('hist.title'), onClick: () => setHistFilter({ id: user.id, name: user.display_name || user.username }), hidden: !isAdmin },
                     { label: t('usr.autoResetBtn'), onClick: () => setAutoResetModal(user) },

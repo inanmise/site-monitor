@@ -597,11 +597,19 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
         {displayMonitors.length === 0 && <StatusBlock tone="neutral" icon={Inbox} title={t('mon.noFilterMatch')} description={t('empty.hintFilter')} />}
         <div className="upt-grid">
           {pager.pageItems.map(m => (
+            /* Kart klavyeyle de açılabilir (ScriptedMonitorPage kalıbı): role+tabIndex+Enter/Space.
+               onKeyDown YALNIZ kartın KENDİ hedefinde çalışır — içerideki düğmelerde Enter'a
+               basıldığında tuş olayı karta baloncuklanıp detayı DA açardı (çift eylem). */
             <div key={m.id} className={`upt-card ${cardClass(m)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
+              role="button" tabIndex={0} aria-label={t('mon.openDetailFor', m.url)}
+              onKeyDown={e => {
+                if (e.target !== e.currentTarget) return
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(m) }
+              }}
               onClick={() => openDetail(m)}>
               <div className="upt-card-top">
                 {canManageRow(m) && (
-                  <input type="checkbox" className="upt-card-check" checked={bulkSel.has(m.id)} onChange={() => toggleBulk(m.id)} onClick={(e) => e.stopPropagation()} aria-label={t('bulk.selectOne')} />
+                  <input type="checkbox" className="upt-card-check" checked={bulkSel.has(m.id)} onChange={() => toggleBulk(m.id)} onClick={(e) => e.stopPropagation()} aria-label={t('bulk.selectOneFor', m.url)} />
                 )}
                 {statusBadge(m)}
                 {alarmBadge(m)}<MaintenanceBadge target={m.url} />
@@ -706,7 +714,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
                 <span className="kw-reqinfo-k">{t('keyword.customHeadersShort')}</span>
                 {/* Düz değer artık API'den GELMİYOR (şifreli). Yalnız varlık + ad listesi. */}
                 {selected.has_custom_headers
-                  ? <span className="kw-on">{(selected.custom_header_names || []).join(', ') || t('keyword.customHeadersSet')}</span>
+                  ? <span className="kw-on">{(selected.custom_header_names || []).filter(Boolean).join(', ') || t('keyword.customHeadersSet')}</span>
                   : <span className="kw-off">{t('keyword.none')}</span>}
               </div>
             </div>

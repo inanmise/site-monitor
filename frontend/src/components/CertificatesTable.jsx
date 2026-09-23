@@ -388,12 +388,12 @@ function TableRow({ cert, cols, shared, selected, onToggle, onOpen, onCheckNow, 
       onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onOpen(cert.domain) } }}>
       {onToggle && (
         <td className="ct-td-select" onClick={stop}>
-          <input type="checkbox" checked={selected} onChange={() => onToggle(cert.domain)} aria-label={t('bulk.selectOne')} />
+          <input type="checkbox" checked={selected} onChange={() => onToggle(cert.domain)} aria-label={t('bulk.selectOneFor', cert.domain)} />
         </td>
       )}
       {cols.map(cell)}
       <td className="ct-td-actions" onClick={stop} onKeyDown={stop} data-tour={tourId}>
-        <KebabMenu items={menu} label={t('tbl.actions')} />
+        <KebabMenu items={menu} label={t('tbl.actions')} rowLabel={cert.domain} />
       </td>
     </tr>
   )
