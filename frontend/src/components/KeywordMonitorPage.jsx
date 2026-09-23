@@ -225,7 +225,10 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
       sslReminderDays: m.ssl_reminder_days || '30,14,7', domainReminderDays: m.domain_reminder_days || '30,14,7',
       slowResponseEnabled: !!m.slow_response_enabled, slowThresholdMs: m.slow_threshold_ms ?? 3000,
       intervalSeconds: m.interval_seconds ?? 60, timeoutMs: m.timeout_ms ?? 10000,
-      confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30, recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30, customHeaders: m.custom_headers || '',
+      confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30, recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
+      // Write-only: API düz değeri DÖNDÜRMÜYOR (şifreli saklanıyor). Alan boş başlar; boş
+      // gönderilirse mevcut başlıklar korunur (payload'a hiç girmez).
+      customHeaders: '',
       active: m.active !== false }
   }
   function openEdit(m) {
@@ -279,9 +282,11 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
         slowResponseEnabled: form.slowResponseEnabled, slowThresholdMs: Number(form.slowThresholdMs),
         intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
         confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds), recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
-        customHeaders: form.customHeaders?.trim() || null,
         active: form.active,
       }
+      // Başlıklar YALNIZ admin ve alan DOLUYKEN gönderilir: boş bırakmak "değiştirme"
+      // demektir (kardeşi PageSpeedMonitorPage ile aynı write-only sözleşme).
+      if (isAdmin && form.customHeaders?.trim()) payload.customHeaders = form.customHeaders.trim()
       // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
       if (changeNote.trim()) payload.changeNote = changeNote.trim()
       const res = modal === 'new'
@@ -699,8 +704,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
               </div>
               <div className="kw-reqinfo-row">
                 <span className="kw-reqinfo-k">{t('keyword.customHeadersShort')}</span>
-                {selected.custom_headers
-                  ? <pre className="kw-reqinfo-headers">{selected.custom_headers}</pre>
+                {/* Düz değer artık API'den GELMİYOR (şifreli). Yalnız varlık + ad listesi. */}
+                {selected.has_custom_headers
+                  ? <span className="kw-on">{(selected.custom_header_names || []).join(', ') || t('keyword.customHeadersSet')}</span>
                   : <span className="kw-off">{t('keyword.none')}</span>}
               </div>
             </div>
@@ -789,7 +795,13 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
                   {t('keyword.cacheBustLink')}
                 </button></span>
                 <textarea rows={2} value={form.customHeaders} spellCheck={false} placeholder={t('keyword.customHeadersPh')}
+                  disabled={!isAdmin}
                   onChange={e => setForm(f => ({ ...f, customHeaders: e.target.value }))} /></label>
+              <div className="full-width field-hint" style={{ marginTop: -6 }}>
+                {modal !== 'new' && modal?.has_custom_headers
+                  ? t('keyword.customHeadersSavedHint').replace('{0}', (modal.custom_header_names || []).join(', '))
+                  : t('keyword.customHeadersHint')}
+              </div>
               <label><span>{t('keyword.operator')}</span>
                 <SearchableSelect value={form.operator} onChange={v => setForm(f => ({ ...f, operator: v }))}
                   options={[{ value: 'GTE', label: t('keyword.opGte') }, { value: 'LTE', label: t('keyword.opLte') },
