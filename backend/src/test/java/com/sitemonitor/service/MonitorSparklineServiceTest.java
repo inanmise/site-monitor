@@ -121,4 +121,73 @@ class MonitorSparklineServiceTest {
         assertThat(out.get(3L)).containsEntry("n", 0).containsEntry("bad_hours", 0);
         assertThat(out.get(3L).get("up_pct")).isNull();
     }
+
+    @SuppressWarnings("unchecked")
+    private static Map<Integer, Map<String, Object>> windows(Map<String, Object> m) {
+        Map<Integer, Map<String, Object>> byDays = new java.util.LinkedHashMap<>();
+        for (Map<String, Object> w : (List<Map<String, Object>>) m.get("windows")) byDays.put((Integer) w.get("days"), w);
+        return byDays;
+    }
+
+    @Test
+    @DisplayName("availability windows (2026-09-24): 1/7/15/30 gün dönemleri aynı sorguda — adet/hata/yüzde/hatalı saat dönem içinden; kova başı dönemden önce olsa da yalnız dönem içi hata sayılır; kontrolsüz dönemde up_pct null")
+    void availability_windows() {
+        // NOW tam saatin 30. dakikası: kova sınırları CI saatinden bağımsız (sabit fixture tarihi değil — hepsi NOW'a göre).
+        Instant now = Instant.now().truncatedTo(ChronoUnit.HOURS).plus(30, ChronoUnit.MINUTES);
+        checkAt(1, now.minus(5, ChronoUnit.MINUTES), 200L, null);                  // 1 gün içinde, sağlıklı
+        checkAt(1, now.minus(2, ChronoUnit.HOURS), null, "timeout");                // 1 gün içinde, hata (kova A)
+        checkAt(1, now.minus(2, ChronoUnit.HOURS).plus(5, ChronoUnit.MINUTES), null, "timeout");   // aynı kova A
+        checkAt(1, now.minus(3, ChronoUnit.DAYS), 300L, null);                      // 7 gün içinde
+        checkAt(1, now.minus(10, ChronoUnit.DAYS), null, "503");                    // 15 gün içinde, hata (kova B)
+        checkAt(1, now.minus(20, ChronoUnit.DAYS), 300L, null);                     // 30 gün içinde
+        // Kova sınırı: 1 gün penceresi now−24sa = HH:30'da başlar. Aynı saat kovasında pencereden ÖNCE (HH:10) bir hata,
+        // pencere içinde (HH:40) sağlıklı kontrol → 1 gün penceresinde o kova hatalı SAYILMAZ, 7 günde sayılır.
+        Instant dayAgoHour = now.minus(24, ChronoUnit.HOURS).truncatedTo(ChronoUnit.HOURS);
+        checkAt(1, dayAgoHour.plus(10, ChronoUnit.MINUTES), null, "timeout");       // kova C, 1 gün DIŞI
+        checkAt(1, dayAgoHour.plus(40, ChronoUnit.MINUTES), 200L, null);            // kova C, 1 gün İÇİ
+
+        Map<String, Object> m = svc.availability("http", 30, Set.of(1L, 3L), now).get(1L);
+
+        assertThat(m).containsEntry("n", 8).containsEntry("fail", 4).containsEntry("bad_hours", 3);   // üst alanlar değişmedi
+        Map<Integer, Map<String, Object>> w = windows(m);
+        assertThat(w.keySet()).containsExactly(1, 7, 15, 30);
+        assertThat(w.get(1)).containsEntry("n", 4).containsEntry("fail", 2).containsEntry("bad_hours", 1).containsEntry("up_pct", 50.0);
+        assertThat(w.get(7)).containsEntry("n", 6).containsEntry("fail", 3).containsEntry("bad_hours", 2).containsEntry("up_pct", 50.0);
+        assertThat(w.get(15)).containsEntry("n", 7).containsEntry("fail", 4).containsEntry("bad_hours", 3);
+        assertThat(w.get(30)).containsEntry("n", 8).containsEntry("fail", 4).containsEntry("bad_hours", 3).containsEntry("up_pct", 50.0);
+        // Saat dilimi başına DÖNEM İÇİ hata adedi, en yeni dilim önce (2026-09-24: "o saatte 5 hata varsa 5 hata yazsın").
+        String hA = ISO.format(now.minus(2, ChronoUnit.HOURS)).substring(0, 13);
+        String hB = ISO.format(now.minus(10, ChronoUnit.DAYS)).substring(0, 13);
+        String hC = ISO.format(dayAgoHour).substring(0, 13);
+        assertThat(w.get(1).get("slots")).isEqualTo(List.of(Map.of("h", hA, "fail", 2)));                 // kova C'nin hatası dönem dışı
+        assertThat(w.get(7).get("slots")).isEqualTo(List.of(Map.of("h", hA, "fail", 2), Map.of("h", hC, "fail", 1)));
+        assertThat(w.get(15).get("slots")).isEqualTo(List.of(Map.of("h", hA, "fail", 2), Map.of("h", hC, "fail", 1), Map.of("h", hB, "fail", 1)));
+        // kontrolü olmayan monitör: her dönem n=0, up_pct null
+        assertThat(windows(svc.availability("http", 30, Set.of(3L), now).get(3L)).values())
+                .allSatisfy(x -> assertThat(x).containsEntry("n", 0).containsEntry("up_pct", null));
+    }
+
+    @Test
+    @DisplayName("availability windows: dönem başına en yeni 6 hatalı saat dilimi döner (adetleriyle), bad_hours tam sayıyı korur")
+    void availability_slotsCapped() {
+        Instant now = Instant.now().truncatedTo(ChronoUnit.HOURS).plus(30, ChronoUnit.MINUTES);
+        for (int h = 1; h <= 8; h++) {
+            for (int i = 0; i < h; i++) checkAt(1, now.minus(h, ChronoUnit.HOURS).plus(i, ChronoUnit.MINUTES), null, "timeout");   // h. saatte h hata
+        }
+        Map<String, Object> day = windows(svc.availability("http", 30, Set.of(1L), now).get(1L)).get(1);
+        assertThat(day).containsEntry("bad_hours", 8).containsEntry("fail", 36);
+        @SuppressWarnings("unchecked") List<Map<String, Object>> slots = (List<Map<String, Object>>) day.get("slots");
+        assertThat(slots).hasSize(6);
+        assertThat(slots).extracting(s -> s.get("fail")).containsExactly(1, 2, 3, 4, 5, 6);   // en yeni önce; 5. dilim "5 hata"
+        assertThat(slots).extracting(s -> (String) s.get("h")).isSortedAccordingTo(java.util.Comparator.reverseOrder());
+    }
+
+    @Test
+    @DisplayName("availability windows: istenen pencereden uzun dönem atlanır; listede olmayan pencere sona eklenir")
+    void availability_windowsFollowDays() {
+        Instant now = Instant.now();
+        checkAt(1, now.minus(1, ChronoUnit.HOURS), 100L, null);
+        assertThat(windows(svc.availability("http", 7, Set.of(1L), now).get(1L)).keySet()).containsExactly(1, 7);
+        assertThat(windows(svc.availability("http", 90, Set.of(1L), now).get(1L)).keySet()).containsExactly(1, 7, 15, 30, 90);
+    }
 }

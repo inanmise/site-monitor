@@ -1186,6 +1186,8 @@ SHA-1 imza, RSA-1024 gibi güvensiz algoritma kullanan sertifikaları listeler: 
 
 Sayfanın üstünde o türe ait açıklama kutusu ve istatistik şeridi (toplam / çalışan / sorunlu / duraklatılmış) bulunur; istatistik kartına tıklamak listeyi o duruma filtreler. Altında durum, grup, takım ve serbest metin filtreleriyle daraltılabilen, sayfalanmış monitör listesi durur. Sağ üstte **+ Yeni Monitör** ve o türe özel **Rehber** butonu vardır.
 
+HTTP / Website, Port, Ping, DNS, Keyword, Sayfa Bütünlüğü, Sayfa Hızı ve Sentetik izlemede her monitör kartının altında son 24 saatin yanıt süresi trendi ve son beş kontrol noktası, en altta da 30 günlük erişilebilirlik satırı (ör. `30 gün: %99.95 · hedef %99.9 ✓`) bulunur. Satırın sağındaki **1 gün · 7 gün · 15 gün · 30 gün** etiketleri o dönemde hata görülüp görülmediğini gösterir: hatasız dönem yeşil, hata görülen dönem ⚠ ikonuyla turuncu, erişilebilirliği hedefin altına düşen dönem ⚠ ikonuyla kırmızıdır; o dönemde hiç kontrol yoksa etiket soluktur. Etiketin üzerine gelince dönemin kontrol sayısı, hata sayısı ve erişilebilirlik yüzdesi, altında da hata görülen her saat dilimi o dilimde kaç hata alındığıyla listelenir (ör. `23.09 17:00–18:00 — 5 hata alındı`); en yeni altı dilim gösterilir, fazlası "+N saat dilimi daha" diye belirtilir.
+
 Bir monitöre tıkladığınızda sekmeli detay penceresi açılır:
 
 - **Kontrol geçmişi** — sayfalanmış, her satırda sonuç, süre ve varsa hata mesajı.
