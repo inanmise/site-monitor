@@ -304,6 +304,11 @@ public class RetentionService {
     /** Tablodaki en eski ve en yeni kayıt tarihi — kullanıcıya "veri şu tarihten beri" demek için. */
     public String[] bounds(RetentionPolicy p) {
         if (p.timeColumn() == null) return new String[]{ null, null };
+        // AGE_VIA_PARENT: zaman kolonu ÇOCUK tabloda değil EBEVEYN tablodadır. Sorguyu çocuk
+        // tabloya kurmak "kolon yok" hatası veriyor, catch onu yutuyor ve ekranda kalıcı boş
+        // aralık kalıyordu. Bu mod için aralık ANLAMSIZ (satırın kendi yaşı yok) — açıkça boş
+        // döner; sessiz istisna yerine bilinçli davranış.
+        if (p.mode() == RetentionPolicy.Mode.AGE_VIA_PARENT) return new String[]{ null, null };
         try {
             return jdbcTemplate.queryForObject(
                     "SELECT MIN(" + p.timeColumn() + "), MAX(" + p.timeColumn() + ") FROM " + p.table(),

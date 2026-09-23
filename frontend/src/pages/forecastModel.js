@@ -15,7 +15,7 @@ export function paramsToFilters(read) {
 
 export function todayKey() { return localDayKey(new Date().toISOString()) }
 function ymd(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
-function addDays(key, n) { const d = new Date(key + 'T00:00:00'); d.setDate(d.getDate() + n); return ymd(d) }   // yerel gün — toISOString UTC'ye kayardı
+export function addDays(key, n) { const d = new Date(key + 'T00:00:00'); d.setDate(d.getDate() + n); return ymd(d) }   // yerel gün — toISOString UTC'ye kayardı
 export function dayDiff(fromKey, toKey) { return Math.round((new Date(toKey + 'T00:00:00') - new Date(fromKey + 'T00:00:00')) / 86400000) }
 
 /** Sunucu damgası → yerel gün anahtarı (bitiş 23:59Z = ertesi gün 02:59 İstanbul). */

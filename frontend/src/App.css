@@ -13032,6 +13032,9 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .hist-chip.active .hist-chip-count { background: color-mix(in srgb, currentColor 14%, transparent); }
 
 .hist-live { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-muted); }
+/* Canlı yenileme HATA aldığında: yeşil nokta yerine uyarı rengi — bayat veriyi canlı
+   göstermemek için (nokta da çizilmez, sınıf yalnız metin taşır). */
+.hist-live--stale { color: var(--warning); }
 .hist-live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success);
   animation: histLivePulse 2s ease-in-out infinite; }
 @keyframes histLivePulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }

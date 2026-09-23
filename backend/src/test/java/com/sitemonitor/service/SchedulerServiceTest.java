@@ -1766,17 +1766,69 @@ class SchedulerServiceTest {
         return m;
     }
 
-    private static java.util.Optional<com.sitemonitor.model.LatestCheck> lastCheckedAgo(java.time.Duration ago) {
-        com.sitemonitor.model.LatestCheck lc = new com.sitemonitor.model.LatestCheck();
-        lc.setCheckedAt(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
-                .withZone(java.time.ZoneOffset.UTC).format(java.time.Instant.now().minus(ago)));
-        return java.util.Optional.of(lc);
+    private static String isoAgo(java.time.Duration ago) {
+        return java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+                .withZone(java.time.ZoneOffset.UTC).format(java.time.Instant.now().minus(ago));
     }
+
+    /** domain → checked_at. dueForScheduledSweep artık TOPLU okuyor (findAllById), tekil findById değil. */
+    private final java.util.Map<String, String> latestCheckedAt = new java.util.LinkedHashMap<>();
+
+    /** Stub'lar test başına TEK KEZ kurulur: her seedLatest çağrısında yeniden kaydetmek
+     *  strict-stub'da "aynı stub N kez" hatası üretiyordu. */
+    private boolean latestStubsWired = false;
+
+    /**
+     * domain → checked_at tohumla; iki okuma yolunu da AYNI tohumdan besle.
+     *
+     * <p>{@code dueForScheduledSweep} toplu okumaya geçti ({@code findAllById}),
+     * {@code nextCertificateSweepAt} hâlâ tekil {@code findById} kullanıyor. İkisi tek kaynaktan
+     * beslenmezse testler sessizce ayrışır. Stub'lar {@code lenient}: bir test yalnız bir yolu
+     * kullanıyor olabilir ve kullanılmayan stub hata değildir.
+     *
+     * <p>{@code doAnswer(...).when(mock)} kullanılıyor, {@code when(mock.call())} DEĞİL: ikincisi
+     * yeniden-stub sırasında mock'u NULL argümanla GERÇEKTEN çağırıp önceki Answer'ı patlatıyor.
+     */
+    private void seedLatest(String domain, String checkedAt) {
+        if (checkedAt != null) latestCheckedAt.put(domain, checkedAt);
+        if (latestStubsWired) return;
+        latestStubsWired = true;
+
+        org.mockito.Mockito.lenient().doAnswer(inv -> {
+            java.util.List<com.sitemonitor.model.LatestCheck> out = new java.util.ArrayList<>();
+            for (Object id : (Iterable<?>) inv.getArgument(0)) {
+                com.sitemonitor.model.LatestCheck lc = latestCheckOf(String.valueOf(id));
+                if (lc != null) out.add(lc);
+            }
+            return out;
+        }).when(latestCheckRepo).findAllById(any());
+
+    }
+
+    /** Açık (tekil) stub'lar için hazır LatestCheck. */
+    private static com.sitemonitor.model.LatestCheck latestCheckOf2(String domain, java.time.Duration ago) {
+        com.sitemonitor.model.LatestCheck lc = new com.sitemonitor.model.LatestCheck();
+        lc.setDomain(domain);
+        lc.setCheckedAt(isoAgo(ago));
+        return lc;
+    }
+
+    /** Tohumda kaydı olmayan domain = "hiç kontrol edilmemiş" (null). */
+    private com.sitemonitor.model.LatestCheck latestCheckOf(String domain) {
+        String at = latestCheckedAt.get(domain);
+        if (at == null) return null;
+        com.sitemonitor.model.LatestCheck lc = new com.sitemonitor.model.LatestCheck();
+        lc.setDomain(domain);
+        lc.setCheckedAt(at);
+        return lc;
+    }
+
+    private void seedLatest(String domain, java.time.Duration ago) { seedLatest(domain, isoAgo(ago)); }
 
     @Test
     @DisplayName("2026-09-12: sıklık boş/1 saat → her süpürmede; 24 saat → 3 saat önce kontrol edildiyse atlanır")
     void dueForScheduledSweep_skipsDomainsWhoseOwnIntervalIsNotDue() {
-        when(latestCheckRepo.findById("daily.example.com")).thenReturn(lastCheckedAgo(java.time.Duration.ofHours(3)));
+        seedLatest("daily.example.com", java.time.Duration.ofHours(3));
         List<Map<String, Object>> due = scheduler.dueForScheduledSweep(List.of(
                 invRow("global.example.com", null),
                 invRow("hourly.example.com", 1),
@@ -1791,11 +1843,9 @@ class SchedulerServiceTest {
     @Test
     @DisplayName("2026-09-12: vadesi gelen (25 sa önce), hiç kontrol edilmemiş ve tarihi bozuk alanlar 24 saatlikte de girer")
     void dueForScheduledSweep_includesDueNeverCheckedAndUnparsable() {
-        when(latestCheckRepo.findById("old.example.com")).thenReturn(lastCheckedAgo(java.time.Duration.ofHours(25)));
-        when(latestCheckRepo.findById("never.example.com")).thenReturn(java.util.Optional.empty());
-        com.sitemonitor.model.LatestCheck broken = new com.sitemonitor.model.LatestCheck();
-        broken.setCheckedAt("not-a-date");
-        when(latestCheckRepo.findById("broken.example.com")).thenReturn(java.util.Optional.of(broken));
+        seedLatest("old.example.com", java.time.Duration.ofHours(25));
+        seedLatest("never.example.com", (String) null);   // kayit YOK = hic kontrol edilmemis
+        seedLatest("broken.example.com", "not-a-date");
         List<Map<String, Object>> due = scheduler.dueForScheduledSweep(List.of(
                 invRow("old.example.com", 24), invRow("never.example.com", 24), invRow("broken.example.com", 24)));
         assertThat(due).extracting(m -> m.get("domain"))
@@ -1805,9 +1855,9 @@ class SchedulerServiceTest {
     @Test
     @DisplayName("2026-09-12: 5 dk tolerans — 23 sa 57 dk önce kontrol edilen günlük alan bu turu KAÇIRMAZ; 23 sa 50 dk ise bekler")
     void dueForScheduledSweep_fiveMinuteToleranceAroundCronBoundary() {
-        when(latestCheckRepo.findById("edge.example.com")).thenReturn(lastCheckedAgo(java.time.Duration.ofHours(24).minusMinutes(3)));
+        seedLatest("edge.example.com", java.time.Duration.ofHours(24).minusMinutes(3));
         assertThat(scheduler.dueForScheduledSweep(List.of(invRow("edge.example.com", 24)))).hasSize(1);
-        when(latestCheckRepo.findById("wait.example.com")).thenReturn(lastCheckedAgo(java.time.Duration.ofHours(24).minusMinutes(10)));
+        seedLatest("wait.example.com", java.time.Duration.ofHours(24).minusMinutes(10));
         assertThat(scheduler.dueForScheduledSweep(List.of(invRow("wait.example.com", 24)))).isEmpty();
     }
 
@@ -1829,7 +1879,10 @@ class SchedulerServiceTest {
         assertThat(scheduler.nextCertificateSweepAt("plain.example.com", null)).isEqualTo(global);
         assertThat(scheduler.nextCertificateSweepAt("plain.example.com", 1)).isEqualTo(global);
 
-        when(latestCheckRepo.findById("weekly.example.com")).thenReturn(lastCheckedAgo(java.time.Duration.ofDays(2)));
+        // Bu test TEKİL okuma yolunu (nextCertificateSweepAt) sınıyor, toplu okumayı değil →
+        // stub da tekil ve açık. (dueForScheduledSweep testleri seedLatest ile toplu okur.)
+        when(latestCheckRepo.findById("weekly.example.com"))
+                .thenReturn(java.util.Optional.of(latestCheckOf2("weekly.example.com", java.time.Duration.ofDays(2))));
         String next = scheduler.nextCertificateSweepAt("weekly.example.com", 168);
         java.time.Instant nextI = java.time.LocalDateTime.parse(next).toInstant(java.time.ZoneOffset.UTC);
         java.time.Instant dueFrom = java.time.Instant.now().plus(java.time.Duration.ofDays(5)).minusSeconds(5 * 60);
@@ -1837,7 +1890,8 @@ class SchedulerServiceTest {
         assertThat(nextI).isBefore(dueFrom.plus(java.time.Duration.ofHours(1)).plusSeconds(2));
 
         // vadesi çoktan geçmiş (sıklık 24 sa, 3 gün önce) → sıradaki genel süpürme
-        when(latestCheckRepo.findById("late.example.com")).thenReturn(lastCheckedAgo(java.time.Duration.ofDays(3)));
+        when(latestCheckRepo.findById("late.example.com"))
+                .thenReturn(java.util.Optional.of(latestCheckOf2("late.example.com", java.time.Duration.ofDays(3))));
         assertThat(scheduler.nextCertificateSweepAt("late.example.com", 24)).isEqualTo(global);
     }
     @Test
@@ -1848,7 +1902,7 @@ class SchedulerServiceTest {
         when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(daily, hourly));
         // 65 dk penceresinde hiçbiri taze değil (her ikisi de 3 sa önce kontrol edildi)
         when(latestCheckRepo.findByCheckedAtGreaterThanEqual(anyString())).thenReturn(java.util.Set.of());
-        when(latestCheckRepo.findById("daily.example.com")).thenReturn(lastCheckedAgo(java.time.Duration.ofHours(3)));
+        seedLatest("daily.example.com", java.time.Duration.ofHours(3));
         Map<String, Object> ok = Map.of("domain", "hourly.example.com", "status", "valid");
         when(checkerService.checkAsync(anyString(), anyInt(), anyBoolean(), any(), any()))
                 .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(ok));

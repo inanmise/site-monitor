@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Globe, CalendarPlus, ExternalLink } from 'lucide-react'
 import { formatDateOnly } from '../api/client'
 import { navigateTo } from '../utils/navigate.js'
-import { todayKey } from './forecastModel.js'
+import { todayKey, addDays } from './forecastModel.js'
 
 /**
  * Vade Takvimi → "Alan adı bitişleri" paneli (2026-09-22, alan adı denetimi madde F).
@@ -13,7 +13,6 @@ import { todayKey } from './forecastModel.js'
  * Ölçülemeyen (UNKNOWN, kalan gün yok) satırlar listenin sonunda "—" ile durur, gizlenmez.
  */
 const RANGES = [30, 90, 180]
-const DAY_MS = 86_400_000
 
 export default function ForecastDomainsPanel({ domains = [], t, num = '07' }) {
   const [range, setRange] = useState(90)
@@ -59,7 +58,11 @@ export default function ForecastDomainsPanel({ domains = [], t, num = '07' }) {
       <div className="fc-domains-strip" role="img" aria-label={t('forecast.domStripLabel', range)}>
         {strip.map(({ i, c, h }) => (
           <span key={i} className={`fc-domains-bar${c ? ' has' : ''}`} style={{ height: `${h}%` }}
-            title={c ? `${formatDateOnly(new Date(Date.parse(today + 'T00:00:00') + i * DAY_MS).toISOString().slice(0, 10))} · ${t('forecast.domCount', c)}` : undefined} />
+            /* addDays (kardeş yüzeyin dağarcığı) — Date.parse(...+'T00:00:00') Z'siz olduğu için
+               YEREL okunuyor, .toISOString() ise UTC'ye kaydırıyordu: İstanbul'da "bugün"
+               çubuğunun ipucu DÜNÜ gösteriyordu (i'inci çubuk today+i-1). Çubuğun sayısı doğru,
+               etiketi yanlıştı. Aynı sınıf hata forecastModel.js:18'de zaten düzeltilmişti. */
+            title={c ? `${formatDateOnly(addDays(today, i))} · ${t('forecast.domCount', c)}` : undefined} />
         ))}
       </div>
       <div className="fc-domains-strip-foot"><span>{t('forecast.domToday')}</span><span>+{range} {t('card.daysUnit')}</span></div>

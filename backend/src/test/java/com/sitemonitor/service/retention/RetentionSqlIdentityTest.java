@@ -46,9 +46,16 @@ class RetentionSqlIdentityTest {
         m.put("page-checks", "DELETE FROM page_checks WHERE checked_at < ?");
         m.put("series-scripted", "DELETE FROM scripted_checks WHERE checked_at < ?");
         m.put("system-heartbeat", "DELETE FROM system_heartbeat WHERE recorded_at < CAST(? AS timestamp)");
+        // series-dns ile AYNI düzeltme (2026-09-23, kardeş süpürmesi): baseline koruması YALNIZ
+        // yaşayan monitörler için. GROUP BY monitor_id silinmiş monitörlerin id'lerini de
+        // gruplayınca her ÖKSÜZ monitör için İKİ satır sonsuza kadar korunuyordu ve domain_checks
+        // için bir öksüz kuralı da yoktu; koruma, temizlenemeyen bir kalıntıya dönüşmüştü.
         m.put("series-domain", "DELETE FROM domain_checks WHERE checked_at < ? "
-                + "AND id NOT IN (SELECT MAX(id) FROM domain_checks GROUP BY monitor_id) "
-                + "AND id NOT IN (SELECT MAX(id) FROM domain_checks WHERE source <> 'NONE' GROUP BY monitor_id)");
+                + "AND monitor_id IN (SELECT id FROM domain_monitors) "
+                + "AND id NOT IN (SELECT MAX(id) FROM domain_checks "
+                + "WHERE monitor_id IN (SELECT id FROM domain_monitors) GROUP BY monitor_id) "
+                + "AND id NOT IN (SELECT MAX(id) FROM domain_checks "
+                + "WHERE source <> 'NONE' AND monitor_id IN (SELECT id FROM domain_monitors) GROUP BY monitor_id)");
         m.put("diagnostic-runs", "DELETE FROM diagnostic_runs WHERE executed_at < ?");
         m.put("alert-events", "DELETE FROM alert_events WHERE resolved = true AND resolved_at < ?");
         m.put("login-issue-images", "DELETE FROM login_issue_report_images WHERE report_id IN "
