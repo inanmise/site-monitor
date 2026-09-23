@@ -26,6 +26,7 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -90,6 +91,16 @@ public class StormService {
     /** Sayfa hızı türü — alan enjeksiyonu (pageRepo/scriptedRepo ile aynı desen). */
     @org.springframework.beans.factory.annotation.Autowired
     private com.sitemonitor.repository.PageSpeedMonitorRepository pageSpeedRepo;
+
+    /** Kişi-push kanalı — alan enjeksiyonu (constructor/test büyütmemek için, pageRepo deseni).
+     *  Fırtına yolunda push HİÇ YOKTU: ürünün en ciddi olayında (12 monitör birden düştü) yalnız
+     *  kişi-push'u kullanan nöbetçi hiçbir bildirim almıyordu. null-güvenli çağrılır. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private UserPushService userPushService;
+
+    /** Olay ctx'indeki kanal bastırma damgasını okumak için — alan enjeksiyonu, null-güvenli. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     public enum StormAction {
         /** Storm devrede değil / eşik altı → bireysel alarm gönder (bugünkü davranış, sıfır gecikme). */
@@ -285,13 +296,28 @@ public class StormService {
 
     /** Toggle KAPALI iken aktif storm'u zarifçe dağıt: üyeleri geri-bağla (bireysele dön), sessiz kapat. */
     private void disband(AlertStorm storm) {
-        for (AlertEvent e : alertEventRepo.findByStormIdAndResolvedFalse(storm.getId())) {
+        List<AlertEvent> stillDown = alertEventRepo.findByStormIdAndResolvedFalse(storm.getId());
+        // Fırtına aktifken KURTULAN üyelerin bireysel çözüm maili bilinçli bastırılıyor
+        // (EscalationService:734-747: "TEK toplu recovery, fırtına dağıldığında storm sweep'inden
+        // gider"). Admin storm.enabled'ı kapattığında bu yol yalnız hâlâ-down üyeleri geri
+        // bağlayıp storm'u sendStormRecovery ÇAĞIRMADAN kapatıyordu: zaten çözülmüş üyeler için
+        // toplu recovery artık hiç gönderilmiyordu. O takımlar "düştü" mailini aldı, "düzeldi"yi
+        // hiç almayacaktı. Kapanış yolu ne olursa olsun bildirim simetrik kalmalı.
+        List<AlertEvent> recovered = new ArrayList<>();
+        Set<Long> stillDownIds = new java.util.HashSet<>();
+        for (AlertEvent e : stillDown) if (e.getId() != null) stillDownIds.add(e.getId());
+        for (AlertEvent e : alertEventRepo.findByStormId(storm.getId()))
+            if (e.getId() != null && !stillDownIds.contains(e.getId())) recovered.add(e);
+
+        for (AlertEvent e : stillDown) {
             alertEventRepo.unlinkFromStorm(e.getId());   // koşullu geri-bağlama (M6); sonraki sweep bireysel re-alert
         }
         storm.setResolved(true);
         storm.setResolvedAt(now());
         stormRepo.save(storm);
-        log.info("🌩 Storm #{} kapatıldı (özellik kapatıldı) — üyeler bireysel alarmlamaya döndü", storm.getId());
+        if (!recovered.isEmpty()) sendStormRecovery(storm, recovered, stillDown);
+        log.info("🌩 Storm #{} kapatıldı (özellik kapatıldı) — {} kurtulan için toplu çözüm gitti, "
+                + "{} üye bireysel alarmlamaya döndü", storm.getId(), recovered.size(), stillDown.size());
     }
 
     // ── Eşik / pencere / denominatör ──────────────────────────────────────────────
@@ -429,39 +455,56 @@ public class StormService {
 
     private void sendStormAlert(AlertStorm storm, List<AlertEvent> downMembers, String trigger) {
         try {
-            Recipients r = resolveRecipients(downMembers);
+            List<TeamDispatch> dispatches = resolveDispatches(downMembers);
             String scopeLabel = scopeLabel(storm);
-            List<String> targets = sampleTargets(downMembers);
-            int extra = Math.max(0, downMembers.size() - targets.size());
             String rootCauseLabel = rootCauseLabel(storm.getRootCause());
             String prefix = "DAILY_REALERT".equals(trigger) ? "[RE-ALERT] " : "";
             String subject = prefix + "[Site Monitor 🌩 ALARM FIRTINASI] "
                     + downMembers.size() + " monitör birden erişilemez"
                     + ("ACCOUNT".equalsIgnoreCase(storm.getScopeType()) ? "" : " — " + scopeLabel);
-
-            String html = emailService.buildStormAlertHtml(
-                    downMembers.size(), scopeLabel, rootCauseLabel,
-                    storm.getCreatedAt(), targets, extra);
-
-            String[] to = r.emails.toArray(new String[0]);
-            if (to.length > 0) {
-                emailService.sendHtml(to, null, subject, html, List.of());
-            } else {
-                log.warn("Storm #{} toplu alarm — alıcı yok, e-posta atlandı", storm.getId());
-            }
-            // Webhook (Teams/Slack) — birleşik distinct kontak webhook'larına özet
             String whText = downMembers.size() + " monitör birden erişilemez (" + scopeLabel + "). Kök-neden: " + rootCauseLabel + ".";
-            for (Map.Entry<String, String> w : r.webhooks.entrySet()) {
-                try { webhookService.send(w.getValue(), w.getKey(), subject, whText, "CRITICAL"); }
-                catch (Exception ex) {
-                    // Fırtına en kritik olaydır; teslim hatası DEBUG'da (prod=INFO) hiçbir yere
-                    // yazılmıyordu. Adres maskelenir — webhook URL'inin kendisi kimlik bilgisidir.
-                    log.warn("Storm #{} webhook başarısız [{}]: {}",
-                            storm.getId(), WebhookService.maskUrl(w.getKey()), ex.getMessage());
+
+            Set<String> teamNames = new LinkedHashSet<>();
+            Map<String, String> sentWebhooks = new LinkedHashMap<>();
+            boolean anyEmail = false;
+
+            for (TeamDispatch d : dispatches) {
+                if (d.teamName() != null) teamNames.add(d.teamName());
+                // Listeler TAKIMA ÖZEL: her takım yalnız kendi monitörlerini görür. Toplam sayı
+                // (hesap geneli) başlıkta kalır — sızıntı host ADLARINDAYDI, sayıda değil.
+                List<String> targets = sampleTargets(d.members());
+                int extra = Math.max(0, downMembers.size() - targets.size());
+
+                if (!d.emails().isEmpty()) {
+                    String html = emailService.buildStormAlertHtml(
+                            downMembers.size(), scopeLabel, rootCauseLabel, storm.getCreatedAt(), targets, extra);
+                    String text = emailService.buildStormAlertText(
+                            downMembers.size(), scopeLabel, rootCauseLabel, storm.getCreatedAt(), targets, extra);
+                    emailService.sendHtml(d.emails().toArray(new String[0]), null, subject, html, text, List.of(), false, null);
+                    anyEmail = true;
+                }
+
+                // PUSH — e-postanın eşleniği. Kanal bağımsız: mail_disabled push'u susturmaz.
+                enqueueStormPush(d.teamId(), "STORM", "CRITICAL",
+                        downMembers.size() + " monitör birden erişilemez — " + scopeLabel
+                                + " · kök-neden: " + rootCauseLabel,
+                        "storm:" + storm.getId() + ":" + trigger);
+
+                // Webhook (Teams/Slack) — URL bazında dedup: aynı kanal iki kez mesaj almasın.
+                for (Map.Entry<String, String> w : d.webhooks().entrySet()) {
+                    if (sentWebhooks.putIfAbsent(w.getKey(), w.getValue()) != null) continue;
+                    try { webhookService.send(w.getValue(), w.getKey(), subject, whText, "CRITICAL"); }
+                    catch (Exception ex) {
+                        // Fırtına en kritik olaydır; teslim hatası DEBUG'da (prod=INFO) hiçbir yere
+                        // yazılmıyordu. Adres maskelenir — webhook URL'inin kendisi kimlik bilgisidir.
+                        log.warn("Storm #{} webhook başarısız [{}]: {}",
+                                storm.getId(), WebhookService.maskUrl(w.getKey()), ex.getMessage());
+                    }
                 }
             }
+            if (!anyEmail) log.warn("Storm #{} toplu alarm — alıcı yok, e-posta atlandı", storm.getId());
 
-            storm.setNotifiedTeams(String.join(", ", r.teamNames));
+            storm.setNotifiedTeams(String.join(", ", teamNames));
             storm.setMemberCount(downMembers.size());
             storm.setLastReAlertAt(now());
             stormRepo.save(storm);
@@ -470,41 +513,73 @@ public class StormService {
         }
     }
 
+    /** Fırtına push'u — teslim hatası bildirimin geri kalanını ASLA düşürmesin. */
+    private void enqueueStormPush(Long teamId, String trigger, String level, String message, String dedupeKey) {
+        if (userPushService == null || teamId == null) return;
+        try {
+            userPushService.enqueueTeamNotice(teamId, trigger, level, "STORM", "Alarm fırtınası", message, dedupeKey);
+        } catch (Exception e) {
+            log.warn("Storm push'u gönderilemedi (takım {}): {}", teamId, e.toString());
+        }
+    }
+
     private void sendStormRecovery(AlertStorm storm, List<AlertEvent> recovered, List<AlertEvent> stillDown) {
         try {
             // Recovery alıcıları = tüm etkilenen üyeler (kurtulan + hâlâ-down) → herkes durumu görsün.
             List<AlertEvent> all = new ArrayList<>(recovered);
             all.addAll(stillDown);
-            Recipients r = resolveRecipients(all);
+            List<TeamDispatch> dispatches = resolveDispatches(all);
             String scopeLabel = scopeLabel(storm);
-            List<String> targets = sampleTargets(recovered);
-            int extra = Math.max(0, recovered.size() - targets.size());
-            String duration = null; // builder createdAt→resolvedAt'ten hesaplar
             String subject = "[Site Monitor ✅ ÇÖZÜLDÜ] Alarm fırtınası sona erdi — "
                     + recovered.size() + " monitör kurtarıldı"
                     + ("ACCOUNT".equalsIgnoreCase(storm.getScopeType()) ? "" : " — " + scopeLabel);
 
-            // Hâlâ-down üyeler ADLARIYLA listelenir: eskiden yalnız sayı ("2 hâlâ izlemede") gidiyor,
-            // hangileri olduğu ne mailde ne webhook'ta söyleniyordu.
-            List<String> stillDownTargets = sampleTargets(stillDown);
-            String html = emailService.buildStormRecoveryHtml(
-                    recovered.size(), stillDown.size(), scopeLabel,
-                    storm.getCreatedAt(), storm.getResolvedAt(), targets, extra, stillDownTargets);
+            Set<Long> recoveredIds = new java.util.HashSet<>();
+            for (AlertEvent e : recovered) if (e.getId() != null) recoveredIds.add(e.getId());
+            Map<String, String> sentWebhooks = new LinkedHashMap<>();
 
-            String[] to = r.emails.toArray(new String[0]);
-            if (to.length > 0) emailService.sendHtml(to, null, subject, html, List.of());
+            for (TeamDispatch d : dispatches) {
+                // Takıma özel bölme: kurtulan/hâlâ-down listeleri yalnız BU takımın üyelerinden.
+                List<AlertEvent> mineRecovered = new ArrayList<>();
+                List<AlertEvent> mineStillDown = new ArrayList<>();
+                for (AlertEvent m : d.members()) {
+                    if (m.getId() != null && recoveredIds.contains(m.getId())) mineRecovered.add(m);
+                    else mineStillDown.add(m);
+                }
+                List<String> targets = sampleTargets(mineRecovered);
+                int extra = Math.max(0, recovered.size() - targets.size());
+                // Hâlâ-down üyeler ADLARIYLA listelenir: eskiden yalnız sayı ("2 hâlâ izlemede")
+                // gidiyor, hangileri olduğu ne mailde ne webhook'ta söyleniyordu.
+                List<String> stillDownTargets = sampleTargets(mineStillDown);
 
-            // Webhook (Teams/Slack) — açılışın AYNASI. Eskiden yalnız e-posta gidiyordu: aynı kişi
-            // Teams'te "🌩 12 monitör birden erişilemez" görüyor, "✅ fırtına sona erdi" mesajını
-            // hiç almıyordu. Kanal, olayın yalnız yarısını anlatıyordu.
-            String whText = recovered.size() + " monitör kurtarıldı (" + scopeLabel + ")."
-                    + (stillDown.isEmpty() ? "" : " Hâlâ erişilemeyen: " + stillDown.size()
-                        + " (" + String.join(", ", stillDownTargets) + ").");
-            for (Map.Entry<String, String> w : r.webhooks.entrySet()) {
-                try { webhookService.send(w.getValue(), w.getKey(), subject, whText, "INFO"); }
-                catch (Exception ex) {
-                    log.warn("Storm #{} recovery webhook başarısız [{}]: {}",
-                            storm.getId(), WebhookService.maskUrl(w.getKey()), ex.getMessage());
+                if (!d.emails().isEmpty()) {
+                    String html = emailService.buildStormRecoveryHtml(
+                            recovered.size(), stillDown.size(), scopeLabel,
+                            storm.getCreatedAt(), storm.getResolvedAt(), targets, extra, stillDownTargets);
+                    String text = emailService.buildStormRecoveryText(
+                            recovered.size(), stillDown.size(), scopeLabel,
+                            storm.getCreatedAt(), storm.getResolvedAt(), targets, extra, stillDownTargets);
+                    emailService.sendHtml(d.emails().toArray(new String[0]), null, subject, html, text, List.of(), false, null);
+                }
+
+                enqueueStormPush(d.teamId(), "STORM_RESOLVED", "INFO",
+                        recovered.size() + " monitör kurtarıldı — " + scopeLabel
+                                + (stillDown.isEmpty() ? "" : " · hâlâ erişilemeyen: " + stillDown.size()),
+                        "storm-resolved:" + storm.getId());
+
+                // Webhook (Teams/Slack) — açılışın AYNASI. Eskiden yalnız e-posta gidiyordu: aynı kişi
+                // Teams'te "🌩 12 monitör birden erişilemez" görüyor, "✅ fırtına sona erdi" mesajını
+                // hiç almıyordu. Kanal, olayın yalnız yarısını anlatıyordu.
+                String whText = recovered.size() + " monitör kurtarıldı (" + scopeLabel + ")."
+                        + (mineStillDown.isEmpty() ? "" : " Hâlâ erişilemeyen: " + mineStillDown.size()
+                            + " (" + String.join(", ", stillDownTargets) + ").");
+                for (Map.Entry<String, String> w : d.webhooks().entrySet()) {
+                    if (sentWebhooks.putIfAbsent(w.getKey(), w.getValue()) != null) continue;
+                    try { webhookService.send(w.getValue(), w.getKey(), subject, whText, "INFO"); }
+                    catch (Exception ex) {
+                        log.warn("Storm #{} recovery webhook başarısız [{}]: {}",
+                                storm.getId(), WebhookService.maskUrl(w.getKey()), ex.getMessage());
+                    }
                 }
             }
         } catch (Exception e) {
@@ -512,14 +587,9 @@ public class StormService {
         }
     }
 
-    /** Alıcı çözümü — EscalationService.collectTeamEmails/getContactsForLevel mantığının aynası (huniye
-     *  dokunmadan; StormService kendi dispatch'ini yapar). Üyelerin takım/kontaklarını union+dedup eder. */
-    private Recipients resolveRecipients(List<AlertEvent> members) {
-        Set<String> seenEmail = new LinkedHashSet<>();
-        List<String> emails = new ArrayList<>();
-        Set<String> teamNames = new LinkedHashSet<>();
-        Map<String, String> webhooks = new HashMap<>();   // url -> type (dedup)
+    private List<TeamDispatch> resolveDispatches(List<AlertEvent> members) {
         Map<Long, TeamInfo> teamCache = new HashMap<>();
+        Map<Long, Dispatch> byTeam = new LinkedHashMap<>();
 
         for (AlertEvent m : members) {
             boolean teamOnly = EscalationService.teamOnlyRecipients(m.getAlertType(), m.getAlertLevel());
@@ -534,19 +604,59 @@ public class StormService {
                 }
                 contacts = contactsForLevel(m.getAlertLevel(), teamId);
             }
-            addTeam(teamId, teamCache, seenEmail, emails, teamNames);
-            addTeam(ugTeamId, teamCache, seenEmail, emails, teamNames);
-            for (EscalationContact c : contacts) {
-                if (c.getEmail() != null && !c.getEmail().isBlank()
-                        && seenEmail.add(c.getEmail().trim().toLowerCase())) {
-                    emails.add(c.getEmail().trim());
-                }
-                if (c.getWebhookUrl() != null && !c.getWebhookUrl().isBlank()) {
-                    webhooks.putIfAbsent(c.getWebhookUrl(), c.getWebhookType());
+            boolean mailOff = mailDisabled(m);
+            for (Long tid : new Long[]{teamId, ugTeamId}) {
+                if (tid == null) continue;
+                Dispatch d = byTeam.computeIfAbsent(tid, id -> {
+                    TeamInfo info = teamCache.computeIfAbsent(id, x -> teamRepo.findById(x)
+                            .map(t -> new TeamInfo(resolveTeamEmails(x, t.getEmail()), t.getName()))
+                            .orElse(TeamInfo.EMPTY));
+                    return new Dispatch(id, info);
+                });
+                d.members.add(m);
+                if (!mailOff) d.anyMailEligible = true;
+                for (EscalationContact c : contacts) {
+                    if (c.getEmail() != null && !c.getEmail().isBlank()) d.contactEmails.add(c.getEmail().trim());
+                    if (c.getWebhookUrl() != null && !c.getWebhookUrl().isBlank())
+                        d.webhooks.putIfAbsent(c.getWebhookUrl(), c.getWebhookType());
                 }
             }
         }
-        return new Recipients(emails, new ArrayList<>(teamNames), webhooks);
+
+        List<TeamDispatch> out = new ArrayList<>();
+        Set<String> seenEmail = new LinkedHashSet<>();
+        for (Dispatch d : byTeam.values()) {
+            List<String> emails = new ArrayList<>();
+            if (d.anyMailEligible) {
+                for (String e : d.info.emails()) if (seenEmail.add(e.toLowerCase())) emails.add(e);
+                for (String e : d.contactEmails) if (seenEmail.add(e.toLowerCase())) emails.add(e);
+            }
+            String name = d.info.name() != null && !d.info.name().isBlank() ? d.info.name().trim() : null;
+            out.add(new TeamDispatch(d.teamId, name, emails, d.webhooks, d.members));
+        }
+        return out;
+    }
+
+    /** İzlemenin "E-posta" kanalı kapalı mı — olayın alarm-anı ctx damgasından. */
+    private boolean mailDisabled(AlertEvent m) {
+        String json = m.getContextJson();
+        if (json == null || json.isBlank() || objectMapper == null) return false;
+        try {
+            Map<?, ?> ctx = objectMapper.readValue(json, Map.class);
+            return Boolean.TRUE.equals(ctx.get("mail_disabled"));
+        } catch (Exception e) {
+            return false;   // bozuk ctx bastırma SAYILMAZ — bildirim kaybetmektense fazladan gönder
+        }
+    }
+
+    /** resolveDispatches iç birikteci (takım başına). */
+    private static final class Dispatch {
+        final Long teamId; final TeamInfo info;
+        final List<AlertEvent> members = new ArrayList<>();
+        final Set<String> contactEmails = new LinkedHashSet<>();
+        final Map<String, String> webhooks = new LinkedHashMap<>();
+        boolean anyMailEligible = false;
+        Dispatch(Long teamId, TeamInfo info) { this.teamId = teamId; this.info = info; }
     }
 
     /**
@@ -648,7 +758,9 @@ public class StormService {
 
     // ── Küçük yardımcılar ─────────────────────────────────────────────────────────
 
-    private record Recipients(List<String> emails, List<String> teamNames, Map<String, String> webhooks) {}
+    /** Bir takıma yapılacak fırtına bildirimi: adresler, webhook'lar ve O TAKIMA ait üyeler. */
+    private record TeamDispatch(Long teamId, String teamName, List<String> emails,
+                                Map<String, String> webhooks, List<AlertEvent> members) {}
     private record TeamInfo(List<String> emails, String name) {
         static final TeamInfo EMPTY = new TeamInfo(List.of(), null);
     }
