@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-23T23:07:04Z",
+  "generatedAt": "2026-09-23T23:46:15Z",
   "repo": "inanmise/site-monitor",
-  "count": 679,
+  "count": 680,
   "releases": [
+    {
+      "version": "20.84.0",
+      "tag": "v20.84.0",
+      "releasedAt": "2026-09-23T23:46:06Z",
+      "commit": "64f9b233c7a614c7e1f9e1ce02943149977fa86f",
+      "prevVersion": "20.83.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": "monitoring",
+          "breaking": false,
+          "sha": "64f9b233",
+          "subject": "Port ve Ping kartında izlenen uç nokta / protokol belirgin"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.83.0",
       "tag": "v20.83.0",
