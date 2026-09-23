@@ -3920,8 +3920,14 @@ public class SchedulerService {
      * BREACH işaretiyle ikinci kez KALICI yazılır — "geçen salı neden yavaşladı" sorusu sonradan da
      * cevaplanabilsin diye. İhlal SÜRERKEN tekrar dondurulmaz (bkz. gövdedeki gerekçe).
      */
-    private void writeResourceBreakdown(com.sitemonitor.model.PageSpeedMonitor m, PageSpeedCheck pc,
-                                        PageSpeedCheckerService.Result res, String ts, boolean wasBreached) {
+    @org.springframework.transaction.annotation.Transactional
+    void writeResourceBreakdown(com.sitemonitor.model.PageSpeedMonitor m, PageSpeedCheck pc,
+                                PageSpeedCheckerService.Result res, String ts, boolean wasBreached) {
+        // SİL + YAZ TEK TX: deleteByMonitorIdAndKeepReason kendi @Transactional'ı ile ayrı commit
+        // ediyordu; saveAll düşerse (yüzlerce satır, bağlantı/timeout) LATEST kırılımı ZATEN
+        // silinmiş oluyor ve çağıran istisnayı log.warn ile yutuyordu → "Kaynak Kırılımı" ekranı
+        // bir sonraki BAŞARILI kontrole kadar boş, kullanıcıya hiçbir hata gösterilmiyordu.
+        // Metodun kendi yorumu boş-kaynak yolunu kapatmış, yazma hatası yolunu açık bırakmıştı.
         // Kırılım YOKSA (sayfa alınamadı / yapılandırma hatası) mevcut LATEST satırlarına DOKUNULMAZ.
         // Önce silip sonra dönmek, tek bir başarısız kontrolde son iyi kırılımı KALICI olarak
         // siliyordu — yani kullanıcı "bozulmadan önce sayfa neye benziyordu" diye baktığı ANDA

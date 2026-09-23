@@ -3302,6 +3302,13 @@ public class MonitoringController {
         }).orElse(notFound("Sayfa hızı izlemesi bulunamadı"));
     }
 
+    /** ÜÇ tablo (kaynak kırılımı → ölçüm serisi → monitör) TEK tx'te siliniyor: metotta
+     *  @Transactional yokken üçü ayrı ayrı commit ediyordu ve pagespeed_checks 180 gün saklandığı
+     *  için ikinci silme lock/statement timeout'a düşerse kaynak kırılımı ZATEN kalıcı gitmiş,
+     *  monitör hâlâ duruyor ve kullanıcı 500 alıyordu. Ters sırada ise öksüz keep_reason='LATEST'
+     *  satırları retention'ın yaş kuralı dışında kalıp sonsuza kadar birikiyordu.
+     *  Desen AdminController.purgeInventory'de zaten uygulanmış. */
+    @org.springframework.transaction.annotation.Transactional
     @DeleteMapping("/pagespeed/{id}")
     public ResponseEntity<Map<String, Object>> deletePageSpeed(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
