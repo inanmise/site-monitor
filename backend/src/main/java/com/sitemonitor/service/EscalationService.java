@@ -409,7 +409,9 @@ public class EscalationService {
         // Çözüm yoluyla AYNI kural: damgalanmış takım önceliklidir (bkz. sendResolutionNotification).
         Long invTeamId = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
         Long domainTeamId = event.getTeamId() != null ? event.getTeamId() : invTeamId;
-        Long ugTeamId     = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null);
+        Long ugTeamId     = includeInventoryUgTeam(event, invTeamId)
+                ? inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null)
+                : null;
         return new ReNotifyTargets(domainTeamId, ugTeamId,
                 getContactsForLevel(event.getAlertLevel(), domainTeamId), event.getNotificationGroupId());
     }
@@ -1486,7 +1488,9 @@ public class EscalationService {
                 // üç yolu (açılış / çözüm / tekrar-bildir) tek doğruluk kaynağına bağlar.
                 Long invTeamId = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
                 domainTeamId = event.getTeamId() != null ? event.getTeamId() : invTeamId;
-                ugTeamId     = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null);
+                ugTeamId     = includeInventoryUgTeam(event, invTeamId)
+                        ? inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null)
+                        : null;
                 contacts = getContactsForLevel(event.getAlertLevel(), domainTeamId);
                 // Damgasız eski olayı çözümde tek seferlik damgala: push satırı ve "tekrar bildir"
                 // aynı takımı görsün (açılış yolundaki geri doldurmanın çözüm eşleniği).
@@ -2392,6 +2396,11 @@ public class EscalationService {
     public static final java.util.List<String> RESOLVED_CONTEXT_KEYS = List.of("keyword", "operator", "match_count", "occurrences",
                                  "url", "host", "ip_version", "monitor_id", "condition",
                                  "http_status", "last_error", "response_ms", "threshold_ms", "port", "protocol",
+                                 // team_id: AÇILIŞ yolu "ctx'te team_id varsa ugTeamId = null" diyor
+                                 // (bağımsız izleme takım-özeldir). Damga snapshot'a girmezse çözüm ve
+                                 // "tekrar bildir" yolları aynı kararı veremiyor ve envanterin UG
+                                 // takımına, alarmı HİÇ görmemiş olmasına rağmen "ÇÖZÜLDÜ" gidiyordu.
+                                 "team_id",
                                  // Sayfa Bütünlüğü (PAGE_DOWN/PAGE_INTEGRITY) — çözüm maili "sorun neydi" bloğu
                                  "page_status", "page_mode", "broken_resources", "timeout_count",
                                  "mixed_content_count", "total_resources",
@@ -2430,6 +2439,26 @@ public class EscalationService {
 
     /** Takımı cert envanterinden DEĞİL AlertEvent.teamId'den (alarm anında damgalanan) bulunan standalone izleme tipi mi?
      *  Serbest-form izleme (keyword/ping/http) + domain monitör alarmları böyledir. */
+    /**
+     * Envanterin UG takımı bu olayın bildirimlerine eklenmeli mi? AÇILIŞ yolunun kuralının aynası.
+     *
+     * <p>{@code processConfirmedOutage} ctx'te {@code team_id} damgası görünce {@code ugTeamId = null}
+     * yapıyor — bağımsız izleme takım-özeldir. Çözüm ve "tekrar bildir" yolları ise bu kararı
+     * {@code isStandaloneMon} tip listesinden veriyordu ve PORT / DNS / PING_SLOW tipleri o
+     * listede YOK (yıldızlı kısaltma yazmayın: javadoc içinde yorumu erken kapatır):
+     * host'u cert envanterinde de bulunan bağımsız bir Port izlemesi düştüğünde alarm yalnız Port
+     * takımına gidiyor, "✅ ÇÖZÜLDÜ" maili ise alarmı hiç görmemiş UG takımına DA gidiyordu.
+     *
+     * <p>Damga snapshot'ta ({@code team_id}). Damgasız ESKİ olaylar için yedek ölçüt: olayın takımı
+     * envanterin takımından FARKLIYSA damga envanterden gelmemiştir → bağımsız izleme.
+     */
+    private boolean includeInventoryUgTeam(AlertEvent event, Long invTeamId) {
+        Map<String, Object> ctx = deserializeContext(event.getContextJson());
+        if (ctx != null && ctx.get("team_id") instanceof Number) return false;
+        Long stamped = event.getTeamId();
+        return stamped == null || stamped.equals(invTeamId);
+    }
+
     private static boolean isStandaloneMon(String alertType) {
         return TYPE_KEYWORD.equals(alertType) || TYPE_PING_DOWN.equals(alertType)
                 || TYPE_HTTP_DOWN.equals(alertType) || TYPE_HTTP_SSL.equals(alertType) || TYPE_DOMAIN_EXPIRY.equals(alertType)
