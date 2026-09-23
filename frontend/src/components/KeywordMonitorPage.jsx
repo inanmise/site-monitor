@@ -798,8 +798,14 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
                   disabled={!isAdmin}
                   onChange={e => setForm(f => ({ ...f, customHeaders: e.target.value }))} /></label>
               <div className="full-width field-hint" style={{ marginTop: -6 }}>
+                {/* İsim listesi BOŞ olabilir: API adları yalnız global admin'e döndürüyor ve
+                    kayıtlı metin "Ad: değer" biçiminde değilse ayrıştırılamıyor. Yer tutucuyu boş
+                    dizeyle doldurmak "Kayıtlı başlıklar: ." gibi kırık bir cümle üretiyor ve
+                    kullanıcıya hiçbir şey kayıtlı değilmiş izlenimi veriyordu. Yedek metin hem
+                    cümleyi tamamlıyor hem kayıtlı değerin biçim sorununu işaret ediyor. */}
                 {modal !== 'new' && modal?.has_custom_headers
-                  ? t('keyword.customHeadersSavedHint').replace('{0}', (modal.custom_header_names || []).join(', '))
+                  ? t('keyword.customHeadersSavedHint').replace('{0}',
+                      (modal.custom_header_names || []).filter(Boolean).join(', ') || t('mon.customHeadersSavedUnnamed'))
                   : t('keyword.customHeadersHint')}
               </div>
               <label><span>{t('keyword.operator')}</span>

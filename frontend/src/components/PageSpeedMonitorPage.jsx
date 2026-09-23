@@ -1122,8 +1122,11 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                           placeholder={t('pspd.customHeadersPh')}
                           onChange={e => setForm(f => ({ ...f, customHeaders: e.target.value }))} /></label>
                       <div className="field-hint">
+                        {/* Kardeşi KeywordMonitorPage ile aynı yedek: isim listesi boş olduğunda
+                            yer tutucu boş dizeyle doldurulup cümle kırılmasın. */}
                         {modal !== 'new' && modal.has_custom_headers
-                          ? t('pspd.customHeadersSavedHint').replace('{0}', (modal.custom_header_names || []).join(', '))
+                          ? t('pspd.customHeadersSavedHint').replace('{0}',
+                              (modal.custom_header_names || []).filter(Boolean).join(', ') || t('mon.customHeadersSavedUnnamed'))
                           : t('pspd.customHeadersHint')}
                       </div>
                     </>)}
