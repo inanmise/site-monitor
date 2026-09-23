@@ -43,7 +43,7 @@ public class WebhookService {
         // CA'sı. İÇ ağdaki bir webhook alıcısı kurumsal CA ile imzalıysa düz istemci PKIX ile düşerdi
         // (kişi-webhook kanalında aynısı prod'da yaşandı). null → varsayılan güvene düş.
         SSLContext ssl = trustEvaluator.pinAwareOutboundSslContext(
-                caAutoPinService::trustManagerForHost, caAutoPinService::recordTrustFailure);
+                caAutoPinService::trustManagerForHost, (h, prt) -> caAutoPinService.recordTrustFailure("webhook", h, prt));
         if (ssl != null) b.sslContext(ssl);
         httpClient = b.build();
     }

@@ -754,7 +754,7 @@ public class UserPushService {
                     .proxy(HttpClient.Builder.NO_PROXY)
                     .connectTimeout(Duration.ofSeconds(ct));
             SSLContext ssl = trustEvaluator.pinAwareOutboundSslContext(
-                    caAutoPinService::trustManagerForHost, caAutoPinService::recordTrustFailure);
+                    caAutoPinService::trustManagerForHost, (h, prt) -> caAutoPinService.recordTrustFailure("user-push", h, prt));
             if (ssl != null) b.sslContext(ssl);   // null = kurulamadı → varsayılan güvene düş
             fresh = b.build();
             httpClient = fresh;

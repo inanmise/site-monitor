@@ -234,6 +234,63 @@ class CaAutoPinServiceTest {
         assertThat(store.get("host.example.test:443").getLastReason()).isEqualTo("scheduled-refresh");
     }
 
+    // ── Y5: güven hatası kaydı KAYNAĞINA bağlı ve okuma YIKICI DEĞİL ─────────────
+
+    @Test
+    @DisplayName("bir alt sistemin güven hatası BAŞKA alt sistem adına pinlenemez")
+    void trustFailuresAreScopedToTheirSource() {
+        CaAutoPinService svc = newService();
+        long wm = System.currentTimeMillis();
+        svc.recordTrustFailure("webhook", "webhook-hedefi.example.com", 443);
+        svc.recordTrustFailure("http-check", "izlenen.example.com", 443);
+
+        // HTTP kontrolü yalnız KENDİ kaydını görür; webhook çıkışındaki PKIX hatası onun
+        // adına "http-check" gerekçesiyle TOFU pinlenemez.
+        assertThat(svc.recentTrustFailuresSince("http-check", wm))
+                .containsExactly("izlenen.example.com:443");
+        assertThat(svc.recentTrustFailuresSince("webhook", wm))
+                .containsExactly("webhook-hedefi.example.com:443");
+        assertThat(svc.recentTrustFailuresSince("rdap", wm)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("okuma YIKICI DEĞİL — paralel sweep'te bir monitör diğerinin kaydını çalamaz")
+    void readingDoesNotConsumeOtherChecksRecords() {
+        CaAutoPinService svc = newService();
+        long wm = System.currentTimeMillis();
+        svc.recordTrustFailure("http-check", "a.example.com", 443);
+        svc.recordTrustFailure("http-check", "b.example.com", 443);
+
+        // Eski drain iterator ile HER girdiyi siliyordu: önce koşan thread ikisini birden alıyor,
+        // ikincisi BOŞ dönüyor ve pinned=false ile o tur HTTP_DOWN yazıyordu.
+        assertThat(svc.recentTrustFailuresSince("http-check", wm))
+                .containsExactlyInAnyOrder("a.example.com:443", "b.example.com:443");
+        assertThat(svc.recentTrustFailuresSince("http-check", wm))
+                .as("ikinci okuyucu da aynı kayıtları görmeli — okuma tüketmez")
+                .containsExactlyInAnyOrder("a.example.com:443", "b.example.com:443");
+    }
+
+    @Test
+    @DisplayName("su damgasından ÖNCEKİ kayıt bu kontrole ait değildir — dönmez")
+    void recordsOlderThanTheWatermarkAreNotReturned() {
+        CaAutoPinService svc = newService();
+        svc.recordTrustFailure("http-check", "onceki-tur.example.com", 443);
+        long wm = System.currentTimeMillis() + 1;   // kontrol BUNDAN sonra başladı
+        assertThat(svc.recentTrustFailuresSince("http-check", wm)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("bileşik anahtar dizeye paketlenmez — ayırıcı taşıyan host çakışma üretmez")
+    void compositeKeyIsARecordNotAPackedString() {
+        CaAutoPinService svc = newService();
+        long wm = System.currentTimeMillis();
+        // "a:443" adlı bir kaynak ile "a" host/443 portu, dizeye paketlense aynı anahtara düşerdi.
+        svc.recordTrustFailure("http-check", "a.example.com", 443);
+        svc.recordTrustFailure("http-check:a.example.com", "x.example.com", 443);
+        assertThat(svc.recentTrustFailuresSince("http-check", wm))
+                .containsExactly("a.example.com:443");
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
 
     private static X509Certificate selfSigned(String dn) throws Exception {

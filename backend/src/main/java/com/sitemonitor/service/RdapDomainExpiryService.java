@@ -76,7 +76,7 @@ public class RdapDomainExpiryService {
     @PostConstruct
     void init() {
         SSLContext ssl = trustEvaluator.pinAwareOutboundSslContext(
-                caAutoPinService::trustManagerForHost, caAutoPinService::recordTrustFailure);
+                caAutoPinService::trustManagerForHost, (h, prt) -> caAutoPinService.recordTrustFailure("rdap-expiry", h, prt));
         this.http = newClient(ssl, null, null);
         if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
             java.net.Authenticator auth =

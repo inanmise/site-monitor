@@ -118,7 +118,7 @@ public class HttpCheckerService {
         // Strict: cacerts VEYA kurumsal CA paketi VEYA host'un pinlenmiş CA'sı; TM ayar/pin'i her
         // handshake'te canlı okur, client'ın bir kez kurulması reload'u engellemez. null → varsayılan güven.
         SSLContext strict = trustEvaluator.pinAwareOutboundSslContext(
-                caAutoPinService::trustManagerForHost, caAutoPinService::recordTrustFailure);
+                caAutoPinService::trustManagerForHost, (h, prt) -> caAutoPinService.recordTrustFailure("http-check", h, prt));
         this.trustAllCtx = trustAll;
         this.strictCtx   = strict;
         trustAllNoFollow = build(trustAll);
@@ -216,6 +216,10 @@ public class HttpCheckerService {
                     newTrace(url, method, timeoutMs, verifySsl, followRedirects, proxied), new SsrfGuard.BlockedException(blocked))));
             return r;
         }
+        // Su damgası: bu kontrol BAŞLAMADAN önceki güven hatası kayıtları bize ait değil. Eskiden
+        // drain haritayı topluca boşaltıyordu ve paralel sweep'te bir monitör diğerinin kaydını
+        // çalıyordu; watermark + kaynak filtresi kaydı sahibine bağlar.
+        long trustWatermark = System.currentTimeMillis();
         Attempt a1 = doCheck(url, method, expectedStatus, timeoutMs, verifySsl, followRedirects, viaProxy);
         if (Boolean.TRUE.equals(a1.result().get("ok")) || !verifySsl
                 || !isTrustFailure(a1.cause()) || !caAutoPinService.isEnabled()) {
@@ -232,7 +236,7 @@ public class HttpCheckerService {
             log.debug("Auto-pin URL parse failed for {}: {}", url, e.getMessage());
         }
         // Redirect hedefi farklı bir host'ta reddedilmiş olabilir — TM'in kaydettiği hedefleri de pinle.
-        for (String hp : caAutoPinService.drainRecentTrustFailures()) {
+        for (String hp : caAutoPinService.recentTrustFailuresSince("http-check", trustWatermark)) {
             int idx = hp.lastIndexOf(':');
             if (idx <= 0) continue;
             try {

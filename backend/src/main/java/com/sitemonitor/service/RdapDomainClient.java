@@ -90,7 +90,7 @@ public class RdapDomainClient {
         // admin kurumsal CA paketi (canlı reload) → host'un OTOMATİK pinlenmiş CA'sı (CaAutoPinService, TOFU) —
         // PKIX hatasında send() proxy CA'sını kendisi çekip pinler; elle bundle girmek gerekmez.
         SSLContext ssl = trustEvaluator.pinAwareOutboundSslContext(
-                caAutoPinService::trustManagerForHost, caAutoPinService::recordTrustFailure);
+                caAutoPinService::trustManagerForHost, (h, prt) -> caAutoPinService.recordTrustFailure("rdap", h, prt));
         direct = newClient(ct, null, ssl, null);
         if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
             java.net.Authenticator auth = ProxyAuthSupport.proxyAuthenticatorOrNull(proxyUser, proxyPass, log, "RDAP");
