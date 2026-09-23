@@ -1,4 +1,6 @@
 import { navigateTo } from '../utils/navigate.js'
+import { toUtc } from '../utils/localDay.js'
+import { dateLocale } from '../i18n/dateLocale.js'
 import TeamBadge from './ui/TeamBadge.jsx'
 
 /**
@@ -72,6 +74,8 @@ export function MonitorRowBody({ section, item: x, t, onOpen }) {
 
 /** Bildirim: "kanal:olay:hedef:zaman" — aynı olay için e-posta ve webhook ayrı satır. Sağlık: alan adı. */
 export function monitorRowKey(x) {
+  if (x.window_id != null) return `mw:${x.window_id}`
+  if (x.kind === 'EXCEPTION') return `ex:${x.domain}`
   if (x.channel) return `${x.channel}:${x.alert_event_id ?? ''}:${x.target ?? ''}:${x.at ?? ''}`
   if (x.findings) return `h:${x.domain}`
   return `${x.type}:${x.monitor_id}`
@@ -107,3 +111,64 @@ export function HealthRowBody({ item: x, t, onOpen }) {
   </>)
 }
 const HEALTH_CRITICAL = new Set(['revocation', 'trust', 'sanMatch', 'chain'])
+
+// ── Susturulmuş ve bakımda (2026-09-23) ────────────────────────────────────────────────────
+
+/** Satır tıklaması: bakım → Bakım sayfası; istisna → Zayıf Algoritma; duraklatılmış → izlemenin kendisi. */
+export function openQuiet(item) {
+  if (item?.window_id != null) return navigateTo('maintenance')
+  if (item?.kind === 'EXCEPTION') return navigateTo('weakalgo')
+  return openMonitor(item)
+}
+
+/** UTC ISO → yerel "HH:mm" (bugünse) ya da "gg.aa HH:mm". */
+export function whenText(iso) {
+  if (!iso) return ''
+  const d = new Date(toUtc(iso))
+  if (Number.isNaN(d.getTime())) return String(iso)
+  const loc = dateLocale()
+  const time = d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit' })
+  return d.toDateString() === new Date().toDateString()
+    ? time
+    : `${d.toLocaleDateString(loc, { day: '2-digit', month: '2-digit' })} ${time}`
+}
+
+function pausedText(t, x) {
+  if (x.paused_days == null) return t('today.pausedUnknown')
+  if (x.paused_days === 0) return t('today.pausedToday')
+  if (x.paused_days === 1) return t('today.pausedOneDay')
+  return t('today.pausedDays', x.paused_days)
+}
+
+/** Kart ve pop-up ortak satırı: [TÜR] ad · ne zaman/ne kadar · takım. */
+export function QuietRowBody({ item: x, t, onOpen }) {
+  const team = x.team_name ? <TeamBadge teamId={x.team_id} teamName={x.team_name} /> : null
+  if (x.window_id != null) {
+    const active = x.kind === 'MAINT_ACTIVE'
+    return (<>
+      <span className={`today-type today-type--${active ? 'maint' : 'soon'}`}>{t(`today.qk.${x.kind}`)}</span>
+      <button type="button" className="today-link" onClick={() => onOpen?.(x)}>{x.name}</button>
+      <span className="today-days">{active ? t('today.maintUntil', whenText(x.until)) : t('today.maintStarts', whenText(x.next_start))}</span>
+      <span className="today-muted">{x.target_count < 0 ? t('today.maintAll') : t('today.maintTargets', x.target_count)}</span>
+      {team}
+    </>)
+  }
+  if (x.kind === 'EXCEPTION') return (<>
+    <span className="today-type">{t('today.qk.EXCEPTION')}</span>
+    <button type="button" className="today-link" title={x.reason || undefined} onClick={() => onOpen?.(x)}>{x.domain}</button>
+    <span className={`today-days ${x.days_left <= 1 ? 'is-bad' : 'is-warn'}`}>
+      {x.days_left === 0 ? t('today.exToday') : x.days_left === 1 ? t('today.exTomorrow') : t('today.exDays', x.days_left)}
+    </span>
+    {team}
+  </>)
+  // PAUSED — 7+ gündür duraklatılmış satır "unutulmuş olabilir" (uyarı rengi); yaklaşık tarih ~ ile işaretli
+  const long = x.paused_days != null && x.paused_days >= 7
+  return (<>
+    <span className="today-type">{x.type}</span>
+    <button type="button" className="today-link" title={x.target || undefined} onClick={() => onOpen?.(x)}>{x.name}</button>
+    <span className={`today-days${long ? ' is-warn' : ''}`} title={x.paused_since_exact === false && x.paused_days != null ? t('today.pausedApprox') : undefined}>
+      {x.paused_since_exact === false && x.paused_days != null ? '~' : ''}{pausedText(t, x)}
+    </span>
+    {team}
+  </>)
+}

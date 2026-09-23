@@ -36,6 +36,9 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     /** Yönetici özeti (2026-09-12, #20): pencere içinde AÇILAN alarmlar (delta hesabı). */
     List<AlertEvent> findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(String since);
 
+    /** "Sizin için — bugün" son 24 saat şeridi (2026-09-23): pencere içinde ÇÖZÜLEN alarmlar. */
+    List<AlertEvent> findByResolvedAtGreaterThanEqual(String since);
+
     @Query("SELECT e FROM AlertEvent e WHERE e.resolved = false ORDER BY e.alertLevel DESC, e.createdAt DESC")
     List<AlertEvent> findAllOpenOrderBySeverity();
 

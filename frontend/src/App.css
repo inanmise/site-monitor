@@ -13574,6 +13574,17 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .today-card--ok { border-left-color: var(--success); }
 .today-card--warn { border-left-color: #d97706; }
 .today-card--bad { border-left-color: var(--danger); }
+.today-card--info { border-left-color: var(--primary); }
+.today-card--info .today-card-count { color: var(--primary); }
+/* Dünden bugüne (2026-09-23): kart sayısının yanında ▲ kötüleşme / ▼ iyileşme — renk tek sinyal değil (ok + title). */
+.today-delta { font-size: .72em; font-weight: 700; padding: 1px 6px; border-radius: 6px; white-space: nowrap; }
+.today-delta.is-worse { background: #fee2e2; color: #991b1b; }
+.today-delta.is-better { background: #dcfce7; color: #166534; }
+[data-theme="dark"] .today-delta.is-worse { background: #450a0a; color: #fca5a5; }
+[data-theme="dark"] .today-delta.is-better { background: #052e16; color: #86efac; }
+.today-recent { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 0 14px 10px; font-size: .84em; color: var(--text-light); }
+.today-recent-lbl { font-weight: 600; color: var(--text); }
+.today-recent-legend { margin-left: auto; font-size: .92em; }
 .today-card-head { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 .today-card-title { flex: 1; min-width: 0; }
 .today-card-count { font-size: 1.2em; }
@@ -13605,12 +13616,16 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .today-type--email { background: #dbeafe; color: #1e40af; }
 .today-type--webhook { background: #ede9fe; color: #5b21b6; }
 .today-type--push { background: #ffedd5; color: #9a3412; }
+.today-type--maint { background: #dbeafe; color: #1e40af; }
+.today-type--soon { background: #e0e7ff; color: #3730a3; }
 /* Sağlık bulgusu rozeti (Zayıf imza / Zincir kırık …) — kritik anahtarlar kırmızı */
 .today-finding { font-size: .74em; font-weight: 600; padding: 1px 7px; border-radius: 6px; background: #fef3c7; color: #92400e; white-space: nowrap; }
 .today-finding.is-bad { background: #fee2e2; color: #991b1b; }
 [data-theme="dark"] .today-type--email { background: #1e3a8a; color: #bfdbfe; }
 [data-theme="dark"] .today-type--webhook { background: #2e1065; color: #ddd6fe; }
 [data-theme="dark"] .today-type--push { background: #431407; color: #fdba74; }
+[data-theme="dark"] .today-type--maint { background: #1e3a8a; color: #bfdbfe; }
+[data-theme="dark"] .today-type--soon { background: #312e81; color: #c7d2fe; }
 [data-theme="dark"] .today-finding { background: #422006; color: #fcd34d; }
 [data-theme="dark"] .today-finding.is-bad { background: #450a0a; color: #fca5a5; }
 .today-status { font-size: .78em; font-weight: 600; padding: 1px 7px; border-radius: 6px; background: var(--bg-hover); }

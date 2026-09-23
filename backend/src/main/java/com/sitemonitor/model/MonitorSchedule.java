@@ -15,6 +15,13 @@ public interface MonitorSchedule {
     /** UTC ISO ({@code yyyy-MM-dd'T'HH:mm:ss}) — yeni yaratılan izleme ilk kontrolünü beklerken "bayat" sayılmasın. */
     String getCreatedAt();
 
+    /**
+     * UTC ISO son güncelleme — "ne zamandır duraklatılmış" için YEDEK kaynak (2026-09-23): asıl kaynak
+     * değişiklik geçmişindeki {@code active} değişimi; geçmiş yoksa (eski kayıt) bu kullanılır.
+     * Dokuz türün hepsinde Lombok üretir; varsayılan yalnız test çiftleri içindir.
+     */
+    default String getUpdatedAt() { return null; }
+
     /** {@code ActivityLogService} tür kodu (HTTP, PORT, PING, DNS, KEYWORD, PAGE, PAGESPEED, SCRIPTED, DOMAIN). */
     String scheduleType();
 
