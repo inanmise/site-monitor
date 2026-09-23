@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-23T18:31:05Z",
+  "generatedAt": "2026-09-23T19:11:48Z",
   "repo": "inanmise/site-monitor",
-  "count": 677,
+  "count": 678,
   "releases": [
+    {
+      "version": "20.82.1",
+      "tag": "v20.82.1",
+      "releasedAt": "2026-09-23T19:11:41Z",
+      "commit": "69deedf194dacfd7d27279bf99dce06362fc60b7",
+      "prevVersion": "20.82.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "today",
+          "breaking": false,
+          "sha": "69deedf1",
+          "subject": "sıfır kartlar \"Sorun yok\" şeridine iner, kartlar genişler ve boşuna uzamaz"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.82.0",
       "tag": "v20.82.0",
