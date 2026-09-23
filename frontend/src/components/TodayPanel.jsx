@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { CalendarClock, Siren, CalendarDays, ArrowRight, ChevronDown, Sparkles, Activity, Gauge, BellOff, Globe, MailX, ShieldAlert, PauseCircle } from 'lucide-react'
+import { CalendarClock, Siren, CalendarDays, ArrowRight, ChevronDown, Sparkles, Activity, Gauge, BellOff, Globe, MailX, ShieldAlert, PauseCircle, CheckCircle2 } from 'lucide-react'
 import { api } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
@@ -44,15 +44,23 @@ export default function TodayPanel({ onOpenDomain }) {
 
   // prev: ~24 saat önceki görünür sayı (sunucu; görüntü yoksa alan hiç gelmez → gösterge yok). Artış kötü (▲ kırmızı),
   // azalış iyi (▼ yeşil) — kartların hepsi "ilgilenilecek şey" sayar. Renk tek sinyal değil: ok + sayı + başlık metni.
+  const delta = (count, prev) => {
+    const d = typeof prev === 'number' ? count - prev : 0
+    if (d === 0) return null
+    const trend = t(d > 0 ? 'today.trendUp' : 'today.trendDown', Math.abs(d), prev)
+    return <span className={`today-delta ${d > 0 ? 'is-worse' : 'is-better'}`} title={trend} aria-label={trend}>{d > 0 ? '▲' : '▼'}{Math.abs(d)}</span>
+  }
+
+  // Sayısı 0 olan kart ÇİZİLMEZ (2026-09-23, kullanıcı: "üst satırda çok fazla kart, yazılar sığmıyor") — adı alttaki
+  // tek satırlık "Sorun yok" şeridine gider; üstte yalnız ilgilenilecek kartlar kalır ve geniş yer bulur.
   const Card = ({ icon: Icon, tone, title, count, prev, sub, onGo, section, onOpenItem, children }) => {
-    const delta = typeof prev === 'number' ? count - prev : 0
-    const trend = delta === 0 ? null : t(delta > 0 ? 'today.trendUp' : 'today.trendDown', Math.abs(delta), prev)
+    if (!count) return null
     return (
     <div className={`today-card today-card--${tone}`}>
       <div className="today-card-head">
         <Icon size={16} aria-hidden="true" />
         <span className="today-card-title">{title}</span>
-        {trend && <span className={`today-delta ${delta > 0 ? 'is-worse' : 'is-better'}`} title={trend} aria-label={trend}>{delta > 0 ? '▲' : '▼'}{Math.abs(delta)}</span>}
+        {delta(count, prev)}
         <b className="today-card-count">{count}</b>
       </div>
       {sub && <div className="today-card-sub">{sub}</div>}
@@ -79,6 +87,13 @@ export default function TodayPanel({ onOpenDomain }) {
     : maintCount > 0 ? () => navigateTo('maintenance')
     : quiet.exceptions > 0 ? () => navigateTo('weakalgo')
     : () => navigateTo(MONITOR_TAB[firstPaused?.type] || 'http')
+  // "Sorun yok" şeridi — kart sırasıyla aynı; dün doluyken bugün 0'a düşen kartın ▼ göstergesi şeritte kalır (iyi haber kaybolmaz).
+  const clearCards = [
+    ['certs', t('today.certs'), certs], ['alerts', t('today.alerts'), alerts], ['flapping', t('today.flapping'), flapping],
+    ['slow', t('today.slow'), slow], ['stale', t('today.stale'), stale], ['domains', t('today.domains'), domains],
+    ['notifications', t('today.notif'), notif], ['health', t('today.health'), health], ['quiet', t('today.quiet'), quiet],
+  ].filter(([, , b]) => !b.count).map(([key, title, b]) => ({ key, title, prev: b.prev }))
+  if (weekly.count > 0 && !weekly.missing) clearCards.push({ key: 'weekly', title: t('today.weekly', weekly.week) })
   const recentParts = recent ? [
     recent.opened > 0 && t('today.recentOpened', recent.opened),
     recent.resolved > 0 && t('today.recentResolved', recent.resolved),
@@ -206,6 +221,15 @@ export default function TodayPanel({ onOpenDomain }) {
             </ul>
           </Card>
           )}
+        </div>
+      )}
+      {open && total > 0 && clearCards.length > 0 && (
+        <div className="today-ok">
+          <CheckCircle2 size={14} aria-hidden="true" />
+          <span className="today-ok-lbl">{t('today.okLabel')}</span>
+          <ul className="today-ok-list">
+            {clearCards.map((c) => <li key={c.key}>{c.title}{delta(0, c.prev)}</li>)}
+          </ul>
         </div>
       )}
       {listModal && (

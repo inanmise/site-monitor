@@ -90,6 +90,7 @@ describe('TodayPanel', () => {
     fireEvent.click(head)
     expect(head).toHaveAttribute('aria-expanded', 'true')
     expect(localStorage.getItem('today-panel-open')).toBe('true')
+    expect(document.querySelector('.today-ok')).toBeNull()   // hepsi temizken "Sorun yok" şeridi tekrar olurdu
   })
 
   it('2026-09-19 izleme kartları: kararsız/yavaşlayan/sessiz/alan adı satırları; satır tıklaması izlemenin sekmesine ?monitor=; pop-up aynı satırı çizer; "Sayfaya git" bölüm sekmesine', async () => {
@@ -256,6 +257,29 @@ describe('TodayPanel', () => {
     const strip = document.querySelector('.today-recent')
     expect(strip.textContent).toMatch(/2 sertifika yenilendi|certificates renewed: 2/)
     expect(strip.textContent).not.toMatch(/dün bu saate göre|compared with this time yesterday/)
+  })
+
+  it('2026-09-23 yerleşim: sayısı 0 olan kart ÇİZİLMEZ, adı alttaki "Sorun yok" şeridine gider (kart sırasıyla); 0\'a düşen kartın ▼ göstergesi şeritte kalır; haftalık rapor tamamsa şeritte', async () => {
+    api.me.today.mockResolvedValue({ success: true, data: {
+      certs: { count: 2, expired: 0, items: [{ domain: 'a.example.com', days: 10 }, { domain: 'b.example.com', days: 20 }] },
+      alerts: { count: 0, critical: 0, prev: 3, items: [] },
+      ...EMPTY_MON,
+      quiet: { count: 0, items: [] },
+      weekly: { count: 1, missing: 0, week: 38, items: [{ team_id: 1, team_name: 'Takım A', status: 'APPROVED' }] },
+    } })
+    try { localStorage.setItem('today-panel-open', 'true') } catch { /* yok */ }
+    render(<TodayPanel />)
+    await screen.findByText(/2 konu ilgi bekliyor|2 items need attention/)
+    expect(document.querySelectorAll('.today-card')).toHaveLength(1)   // yalnız 30 gün altı sertifika
+    const ok = document.querySelector('.today-ok')
+    expect(ok.textContent).toMatch(/^Sorun yok:|^All clear:/)
+    expect([...ok.querySelectorAll('li')].map((li) => li.firstChild.textContent)).toEqual([
+      expect.stringMatching(/Açık alarm|Open alert/), expect.stringMatching(/Kararsız|Flapping/), expect.stringMatching(/Yavaşlayan|Slow/),
+      expect.stringMatching(/Sessiz|Silent/), expect.stringMatching(/alan adı|domain/i), expect.stringMatching(/bildirim|notification/i),
+      expect.stringMatching(/sağlık|health/i), expect.stringMatching(/Susturulmuş|Muted/), expect.stringMatching(/38/)])
+    const down = within(ok).getByLabelText(/Dün bu saate göre 3 azaldı \(dün: 3\)|Down 3 on this time yesterday \(was 3\)/)
+    expect(down.textContent).toBe('▼3')
+    expect(down.className).toContain('is-better')
   })
 
   it('uç başarısız → panel çizilmez', async () => {
