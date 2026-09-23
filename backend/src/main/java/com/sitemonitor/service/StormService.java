@@ -591,18 +591,30 @@ public class StormService {
         Map<Long, TeamInfo> teamCache = new HashMap<>();
         Map<Long, Dispatch> byTeam = new LinkedHashMap<>();
 
+        // Fırtına, tanım gereği onlarca-yüzlerce açık alarmın aynı anda toplandığı andır: alıcı
+        // çözümü DB'nin en yüklü olduğu dakikada koşar. Envanter ve kontak sorguları da takımlar
+        // gibi önbelleklenir — eskiden yalnız teamCache vardı, diğer ikisi üye başına tekil
+        // SELECT atıyordu.
+        Map<String, java.util.Optional<com.sitemonitor.model.CertificateInventory>> invCache = new HashMap<>();
+        Map<String, List<EscalationContact>> contactCache = new HashMap<>();
+
         for (AlertEvent m : members) {
             boolean teamOnly = EscalationService.teamOnlyRecipients(m.getAlertType(), m.getAlertLevel());
             Long teamId = m.getTeamId();
             Long ugTeamId = null;
             List<EscalationContact> contacts = List.of();
             if (!teamOnly) {
-                var inv = inventoryRepo.findByDomain(m.getDomain());
+                var inv = invCache.computeIfAbsent(String.valueOf(m.getDomain()),
+                        k -> inventoryRepo.findByDomain(m.getDomain()));
                 if (inv.isPresent()) {
                     if (teamId == null) teamId = inv.get().getTeamId();
                     ugTeamId = inv.get().getUgTeamId();
                 }
-                contacts = contactsForLevel(m.getAlertLevel(), teamId);
+                // Önbellek anahtarı ÇÖZÜLMÜŞ takımı taşır (envanterden doldurulmuş olabilir);
+                // lambda da aynı değeri kullanmalı — final kopya şart.
+                final Long resolvedTeam = teamId;
+                contacts = contactCache.computeIfAbsent(m.getAlertLevel() + "|" + resolvedTeam,
+                        k -> contactsForLevel(m.getAlertLevel(), resolvedTeam));
             }
             boolean mailOff = mailDisabled(m);
             for (Long tid : new Long[]{teamId, ugTeamId}) {

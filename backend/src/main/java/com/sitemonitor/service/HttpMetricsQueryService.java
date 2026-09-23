@@ -65,11 +65,14 @@ public class HttpMetricsQueryService {
 
         // Tüm zaman eksenini doldur: istek GELMEYEN kovalar count=0 + null süreler → grafik boşlukları çizgiyle
         // BİRLEŞTİRMEZ (latency çizgileri null'da kırılır; istek alanı 0'a iner → sahte süreklilik olmaz).
+        List<String> axis = bucketKeysInRange(from, to, gran);
         List<Map<String, Object>> data = new ArrayList<>();
-        for (String key : bucketKeysInRange(from, to, gran)) {
+        for (String key : axis) {
             Agg a = buckets.get(key);
             data.add(a != null ? a.toPoint(key) : emptyPoint(key));
         }
+        // Eksen tavanda durduysa özet ile grafik AYNI aralığı kapsamıyor demektir; çağıran bilsin.
+        boolean capped = axis.size() >= MAX_BUCKETS;
 
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("total", overall.count);
@@ -85,6 +88,8 @@ public class HttpMetricsQueryService {
         out.put("granularity", gran);
         out.put("data", data);
         out.put("summary", summary);
+        // true → grafik aralığın TAMAMINI çizmiyor (özet çiziyor). Arayüz uyarı gösterebilsin.
+        out.put("capped", capped);
         return out;
     }
 
@@ -117,6 +122,9 @@ public class HttpMetricsQueryService {
     }
 
     /** [from,to] (UTC ISO) aralığındaki TÜM kova anahtarları (IST yerel, granülarite adımıyla) — boş kovalar dahil. */
+    /** Zaman ekseni tavanı — aşılırsa yanıt "capped" bayrağı taşır (sessiz kırpma YOK). */
+    static final int MAX_BUCKETS = 5000;
+
     static List<String> bucketKeysInRange(String fromUtc, String toUtc, String gran) {
         List<String> keys = new ArrayList<>();
         try {
@@ -126,8 +134,13 @@ public class HttpMetricsQueryService {
                     .atZone(ZoneOffset.UTC).withZoneSameInstant(IST).truncatedTo(step);
             ZonedDateTime t = LocalDateTime.parse(toUtc.substring(0, Math.min(19, toUtc.length())))
                     .atZone(ZoneOffset.UTC).withZoneSameInstant(IST);
+            // Tavan aşılırsa çağıran BİLİR (capped bayrağı): eskiden liste sessizce 5000'de
+            // duruyordu. granularity=minute + 7 gün = 10.080 kova → grafik ~3,5 gün çiziyor, aynı
+            // yanıtın summary.total/p95 alanları 7 günün TAMAMINI kapsıyordu; kullanıcı "özet 400k
+            // diyor, grafiğin altındaki alan bunun yarısı" çelişkisini kırpma bayrağı olmadan
+            // görüyordu. Desen MonitoringController.buildResponseSeries'te zaten var.
             int guard = 0;
-            for (ZonedDateTime cur = f; !cur.isAfter(t) && guard < 5000; guard++, cur = cur.plus(1, step)) {
+            for (ZonedDateTime cur = f; !cur.isAfter(t) && guard < MAX_BUCKETS; guard++, cur = cur.plus(1, step)) {
                 String d = cur.toLocalDate().toString();
                 keys.add(hour ? d + "T" + String.format("%02d:00:00", cur.getHour())
                               : d + "T" + String.format("%02d:%02d:00", cur.getHour(), cur.getMinute()));

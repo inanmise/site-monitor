@@ -91,13 +91,22 @@ public class PageUsageService {
             }
             // Yazılanı düş — yazma sırasında gelen ping'ler kalır (fark alınır)
             for (Map.Entry<Key, Acc> e : snap.entrySet()) {
-                Acc live = buffer.get(e.getKey());
-                if (live == null) continue;
-                synchronized (live) {
-                    live.pings -= e.getValue().pings;
-                    if (live.pings <= 0) buffer.remove(e.getKey());
-                    else live.first = null;
-                }
+                // ATOMİK-KOŞULLU kaldırma. Eskiden `synchronized (live) { ...; buffer.remove(key) }`
+                // idi ve kilit haritadaki VARLIK üzerinde değil Acc NESNESİ üzerindeydi:
+                // record() computeIfAbsent'ten döndükten SONRA ama synchronized'a girmeden önce
+                // preempt edilirse, flush aynı Acc'i sıfırlayıp haritadan düşürüyor, sonra record()
+                // kilidi alıp artık haritada olmayan YETİM nesneye pings++ yazıyordu — o ping DB'ye
+                // hiç gitmiyordu. computeIfPresent silme ile eşzamanlı computeIfAbsent'i aynı kova
+                // kilidinde serileştirir: yeni ping ya eski Acc'e ya taze bir Acc'e gider, ikisi de
+                // haritada kalır.
+                buffer.computeIfPresent(e.getKey(), (k, live) -> {
+                    synchronized (live) {
+                        live.pings -= e.getValue().pings;
+                        if (live.pings <= 0) return null;   // haritadan düş (atomik)
+                        live.first = null;
+                        return live;
+                    }
+                });
             }
         } catch (Exception ex) {
             log.debug("page_usage_daily yazılamadı, sonraki tura kaldı: {}", ex.toString());
