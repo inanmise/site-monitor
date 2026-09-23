@@ -390,7 +390,46 @@ ve yanlış `cron_misses_deadline` uyarısı üretebilir. Spring cron'da sarmal�
 
 ---
 
-## Önerilen düzeltme sırası
+## Kapanış durumu (2026-09-23, aynı gün)
+
+**51 bulgunun TAMAMI kapatıldı.** Altı tur, 19 atomik commit. Kapılar: backend
+4000 test, frontend 275 dosya / 2275 test, lint 0 hata, kapsam tabanı geçti.
+Yerelde tek kırmızı `IdentityLeakGuardTest` ve kaynağı takipsiz iki not dosyası
+(`docs/CORE_WEB_VITALS_FIZIBILITE.md`, `sre-slo-sekmesi.komut.md`) — push
+edilmiyorlar, CI'da oluşmuyor; kanıt: o ikisi kenara alınınca test 5/5 yeşil.
+
+Denetim sırasında **yeni kapılar** eklendi — her biri bulduğu bulgunun SINIFINI
+kapatıyor, örneğini değil:
+
+| Kapı | Ne yakalıyor | Yazılır yazılmaz bulduğu |
+|---|---|---|
+| `ResolvedMailContextKeysTest` | Çözüm mailinin okuduğu her ctx anahtarı snapshot'ta mı | 4 yetim anahtar daha |
+| `PushMessageContractTest` (genişletildi) | Her alarm tipinin bilinçli bir push şablonu var mı | — |
+| `NoBareLocalNowInTestsTest` | Test kaynaklarında zone'suz `now()` | kendi açıklama metni |
+| `RetentionColumnExistsTest` | Politikanın (tablo, kolon) çifti şemada var mı | entity'siz 2 rollup tablosu |
+| 7 tür için `(team_id, LOWER(hedef))` UNIQUE | Mükerrer monitör yarışı | — |
+
+### Rapordan bilinçli sapmalar
+
+- **D11** (mükerrer monitör): rapor "önce `mergeDuplicates`, sonra UNIQUE indeks"
+  diyordu. `dedupeAndLockMonitorKeys`'in kendi yorumu kullanıcının aynı hedefi
+  bilinçli iki kez izlemesinin MEŞRU olduğunu yazıyor; kayıtları sessizce
+  birleştirmek veri yok etme riski. Yalnız indeksler eklendi — veri temizse yarış
+  kapanıyor, kirliyse indeks kurulmuyor ve `warnIfIndexMissing` logda söylüyor.
+- **D10** (`login-issue-images`): rapor `timeColumn`'u null'lamayı öneriyordu; sözleşme
+  onu ZORUNLU tutuyor ve değer aslında EBEVEYN tablonun kolonu. Düzeltme `bounds()`
+  tarafına taşındı.
+- **Y8** (`error` anahtarı): rapor onu tamamen kayıp sayıyordu; `last_error` yedeği
+  satırı ayakta tutuyordu. Yine de whitelist'e alındı (birincil, daha zengin değer).
+
+### Kullanıcıya görünür davranış değişikliği
+
+**O7** — keyword izlemesi "Kopyala" ile çoğaltılınca özel başlıklar TAŞINMAZ. Alan
+şifreli saklandığı ve API düz değeri döndürmediği için kopya onu okuyamıyor.
+Kardeşi Sayfa Hızı yıllardır aynısını yapıyor (sırlar write-only). Kopyaya başlık
+gerekiyorsa yönetici yeniden yazar.
+
+## Önerilen düzeltme sırası (kapatıldı — kayıt için)
 
 **Tur 1 — yayın öncesi kapatılmalı (kimlik bilgisi + yetki + ters bilgi).**
 K1, Y1, Y2, Y3, Y4. Beşi de dar, yerel düzeltme; üçünde doğru sürüm kod tabanında zaten duruyor.
