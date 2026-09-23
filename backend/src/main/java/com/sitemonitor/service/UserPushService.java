@@ -598,10 +598,19 @@ public class UserPushService {
             for (UserPushDelivery d : pending)
                 byBatch.computeIfAbsent(d.getBatchId() == null ? "solo-" + d.getId() : d.getBatchId(),
                         k -> new ArrayList<>()).add(d);
+            // Bu turda işlenen satırları HARİÇ tut: fail() retry edilebilir hatada satırı PENDING
+            // bırakıp 30/120 sn backoff PLANLIYOR, ama kuyruk-sonu taraması onları yeniden
+            // görüp worker.execute ile GECİKMESİZ tur kuyruklıyordu. Tek-thread worker'da
+            // gecikmesiz görev planlanmış görevden önce koşar → aynı batch retryMax tükenene dek
+            // milisaniyeler içinde tekrar gönderiliyor, backoff hiçbir zaman uygulanmıyordu
+            // (retry-max yükseltilirse tek arıza penceresinde push API'sine ardışık burst).
+            Set<Long> handled = new java.util.HashSet<>();
+            for (UserPushDelivery d : pending) if (d.getId() != null) handled.add(d.getId());
             for (var e : byBatch.entrySet()) sendBatch(e.getValue());
-            // Gönderim sürerken yeni satır birikmiş olabilir — bir tur daha bak.
-            if (!deliveryRepo.findTop50ByStatusOrderByIdAsc("PENDING").isEmpty())
-                worker.execute(this::drainOutbox);
+            // Gönderim sürerken YENİ satır birikmiş olabilir — yalnız onlar için bir tur daha bak.
+            boolean freshWork = deliveryRepo.findTop50ByStatusOrderByIdAsc("PENDING").stream()
+                    .anyMatch(d -> d.getId() == null || !handled.contains(d.getId()));
+            if (freshWork) worker.execute(this::drainOutbox);
         } catch (Exception e) {
             log.warn("user-push outbox taraması düştü (bir sonraki enqueue yeniden dener): {}", e.toString());
         }

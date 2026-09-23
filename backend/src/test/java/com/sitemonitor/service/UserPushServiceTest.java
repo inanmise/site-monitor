@@ -935,6 +935,12 @@ class UserPushServiceTest {
         // varlık nesnesini FAILED yapıyordu — assert ile yarışıyor (yerelde yeşil, CI'da kırmızı,
         // 2026-09-16). Bu test satır YAZIMINI sınıyor, teslimatı değil.
         when(deliveryRepo.findTop50ByStatusOrderByIdAsc(anyString())).thenReturn(List.of());
+        // Dedupe cevabı ORTADA yeniden stub'lanMAZ: ilk enqueueDirect'in worker ipliği hâlâ
+        // koşarken when(...) çağırmak Mockito'nun stubbing bağlamını o ipliğin çağrısıyla
+        // karıştırıyor (WrongTypeOfReturnValue). Tek stub + bayrak: yarış penceresi yok.
+        java.util.concurrent.atomic.AtomicBoolean dedupeHit = new java.util.concurrent.atomic.AtomicBoolean(false);
+        when(deliveryRepo.existsByDedupeKeyAndUsername("WR_APPROVED:1:3:MGR", "M00001"))
+                .thenAnswer(i -> dedupeHit.get());
         var a = new UserPushService.DirectRecipient("M00001", "Müdür Bir", false);
         var b = new UserPushService.DirectRecipient("M00002", "Müdür İki", true);
         var dup = new UserPushService.DirectRecipient(" M00001 ", "Müdür Bir", false);
@@ -952,7 +958,7 @@ class UserPushServiceTest {
         assertThat(rows.get(1).getStatus()).isEqualTo("SKIPPED_USER_OPT_OUT");
         verify(resolver, never()).resolve(any(), any());
 
-        when(deliveryRepo.existsByDedupeKeyAndUsername("WR_APPROVED:1:3:MGR", "M00001")).thenReturn(true);
+        dedupeHit.set(true);
         assertThat(service.enqueueDirect(List.of(a), 5L, "WEEKLY_REPORT", "WARNING", "WEEKLY_REPORT", "x", "y", "WR_APPROVED:1:3:MGR").get("queued")).isEqualTo(0);
         assertThat(service.enqueueDirect(List.of(), 5L, "WEEKLY_REPORT", "WARNING", "WEEKLY_REPORT", "x", "y", null).get("reason")).isEqualTo("SKIPPED_NO_RECIPIENTS");
     }
