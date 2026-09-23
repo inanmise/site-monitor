@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-23T10:38:51Z",
+  "generatedAt": "2026-09-23T13:45:05Z",
   "repo": "inanmise/site-monitor",
-  "count": 674,
+  "count": 675,
   "releases": [
+    {
+      "version": "20.80.0",
+      "tag": "v20.80.0",
+      "releasedAt": "2026-09-23T13:44:59Z",
+      "commit": "35caf8cad3e133795ae8276126476816fad55b0d",
+      "prevVersion": "20.79.5",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": "nav",
+          "breaking": false,
+          "sha": "35caf8ca",
+          "subject": "tema, dil ve Sorun Bildir kullanıcı menüsüne taşındı + satır kontrollerinde klavye erişimi"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.79.5",
       "tag": "v20.79.5",
