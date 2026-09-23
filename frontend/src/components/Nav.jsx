@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { Fragment, useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { useTheme } from '../i18n/theme.jsx'
@@ -51,13 +51,15 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
     },
     {
       labelKey: 'nav.groupMonitoring',
+      // Ara başlıklar (2026-09-23): `section` taşıyan sekme, önüne tıklanmayan bir alt başlık çizer —
+      // türler cevapladıkları soruya göre: ayakta mı / adres doğru mu / sayfa doğru ve hızlı mı.
       tabs: [
-        { id: 'http',    Icon: Globe,    labelKey: 'nav.http',    show: true },
-        { id: 'domain',  Icon: CalendarDays, labelKey: 'nav.domainmon', show: true },
-        { id: 'port',   Icon: Network,  labelKey: 'nav.port',   show: true },
-        { id: 'dns',     Icon: Search,   labelKey: 'nav.dns',     show: true },
-        { id: 'keyword', Icon: Target,   labelKey: 'nav.keyword', show: true },
+        { id: 'http',    Icon: Globe,    labelKey: 'nav.http',    show: true, section: 'nav.secAvailability' },
         { id: 'ping',    Icon: Radio,    labelKey: 'nav.ping',    show: true },
+        { id: 'port',   Icon: Network,  labelKey: 'nav.port',   show: true },
+        { id: 'dns',     Icon: Search,   labelKey: 'nav.dns',     show: true, section: 'nav.secDomainDns' },
+        { id: 'domain',  Icon: CalendarDays, labelKey: 'nav.domainmon', show: true },
+        { id: 'keyword', Icon: Target,   labelKey: 'nav.keyword', show: true, section: 'nav.secContent' },
         { id: 'page',    Icon: ScanSearch, labelKey: 'nav.page',  show: true },
         { id: 'pagespeed', Icon: Gauge, labelKey: 'nav.pagespeed', show: true },
         { id: 'scripted', Icon: FlaskConical, labelKey: 'nav.scripted', show: true },
@@ -274,18 +276,24 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
                 <div className="sb-group-rule" />
               )}
               <div className={`sb-group-items${collapsed ? ' sb-group-items-collapsed' : ''}`}>
-                {visibleTabs.map(({ id, Icon, labelKey }) => (
-                  <button
-                    key={id}
-                    className={`sb-item${activeTab === id ? ' sb-active' : ''}`}
-                    data-tour={`nav-tab-${id}`}
-                    onClick={() => onTabChange(id)}
-                    title={!open ? t(labelKey) : undefined}
-                  >
-                    <span className="sb-icon"><Icon size={18} /></span>
-                    {open && <span className="sb-label">{t(labelKey)}</span>}
-                  </button>
-                ))}
+                <div className="sb-group-inner">
+                  {visibleTabs.map(({ id, Icon, labelKey, section }, ti) => (
+                    <Fragment key={id}>
+                      {section && (open
+                        ? <div className="sb-section" role="presentation">{t(section)}</div>
+                        : ti > 0 && <div className="sb-section-rule" aria-hidden="true" />)}
+                      <button
+                        className={`sb-item${activeTab === id ? ' sb-active' : ''}`}
+                        data-tour={`nav-tab-${id}`}
+                        onClick={() => onTabChange(id)}
+                        title={!open ? t(labelKey) : undefined}
+                      >
+                        <span className="sb-icon"><Icon size={18} /></span>
+                        {open && <span className="sb-label">{t(labelKey)}</span>}
+                      </button>
+                    </Fragment>
+                  ))}
+                </div>
               </div>
             </div>
           )

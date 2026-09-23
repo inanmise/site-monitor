@@ -153,3 +153,38 @@ describe('Nav — çok takımlı kullanıcı', () => {
     expect(items[1].textContent).not.toMatch(/PRIMARY|BİRİNCİL/)
   })
 })
+
+describe('Nav — İzleme ara başlıkları (2026-09-23)', () => {
+  it('üç ara başlık sırayla çizilir; her biri kendi ilk sekmesinin HEMEN önünde durur', () => {
+    const { container } = render(<Nav {...DEFAULT_PROPS} />)
+    const heads = [...container.querySelectorAll('.sb-section')]
+    expect(heads.map((h) => h.textContent)).toEqual(
+      [expect.stringMatching(/Erişilebilirlik|Availability/), expect.stringMatching(/Alan Adı ve DNS|Domains and DNS/), expect.stringMatching(/İçerik ve Deneyim|Content and experience/)])
+    expect(heads.map((h) => h.nextElementSibling.getAttribute('data-tour')))
+      .toEqual(['nav-tab-http', 'nav-tab-dns', 'nav-tab-keyword'])
+    // Başlık tıklanabilir bir kontrol DEĞİL — klavye odağına girmez
+    heads.forEach((h) => expect(h.tagName).toBe('DIV'))
+  })
+
+  it('İzleme grubunun dokuz sekmesinin hiçbiri kaybolmaz', () => {
+    const { container } = render(<Nav {...DEFAULT_PROPS} />)
+    for (const id of ['http', 'ping', 'port', 'dns', 'domain', 'keyword', 'page', 'pagespeed', 'scripted']) {
+      expect(container.querySelector(`[data-tour="nav-tab-${id}"]`)).toBeTruthy()
+    }
+  })
+})
+
+describe('Nav — kullanıcı menüsü (2026-09-23)', () => {
+  it('tema, dil ve Sorun Bildir alt bilgide DEĞİL, kullanıcı popover\'ında; Sorun Bildir Ayarlar\'ın hemen altında', () => {
+    const { container } = render(<Nav {...DEFAULT_PROPS} systemRole="ADMIN" />)
+    const foot = container.querySelector('.sb-foot')
+    expect(foot.textContent).not.toMatch(/Sorun Bildir|Report a Problem|Koyu Mod|Dark Mode|Açık Mod|Light Mode|Switch to English|Türkçeye Geç/)
+    fireEvent.click(container.querySelector('[data-tour="nav-user"]'))
+    const labels = [...document.querySelectorAll('.sb-user-popover .sb-user-popover-item')].map((b) => b.textContent)
+    const settingsAt = labels.findIndex((l) => /^(Ayarlar|Settings)$/.test(l))
+    expect(settingsAt).toBeGreaterThanOrEqual(0)
+    expect(labels[settingsAt + 1]).toMatch(/Sorun Bildir|Report a Problem/)
+    expect(labels.some((l) => /Koyu Mod|Dark Mode|Açık Mod|Light Mode/.test(l))).toBe(true)
+    expect(labels.some((l) => /Switch to English|Türkçeye Geç/.test(l))).toBe(true)
+  })
+})

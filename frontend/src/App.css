@@ -538,8 +538,28 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .sb-group-chevron { flex-shrink: 0; transition: transform .22s ease; }
 .sb-group-chevron-closed { transform: rotate(-90deg); }
 
-.sb-group-items { overflow: hidden; max-height: 600px; transition: max-height .25s ease; display: flex; flex-direction: column; gap: 2px; }
-.sb-group-items-collapsed { max-height: 0; }
+/* Akordeon: max-height DEĞİL grid 0fr↔1fr — max-height:600px'te açılan grup içerik boyuna sürenin
+   başında varır, kapanan grup sonunda küçülür; arada iki grup birden açık kalır ve .sb-nav taşıp
+   kaydırma çubuğunu bir anlığına açardı. fr geçişi gerçek yükseklikte simetrik ilerler. */
+.sb-group-items { display: grid; grid-template-rows: 1fr; transition: grid-template-rows .25s ease; }
+.sb-group-items-collapsed { grid-template-rows: 0fr; }
+.sb-group-inner { overflow: hidden; min-height: 0; display: flex; flex-direction: column; gap: 2px; }
+
+.sb-section {
+  padding: 8px 12px 2px 43px;
+  font-size: .68em;
+  font-weight: 700;
+  letter-spacing: .02em;
+  color: #8fa9c6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sb-section-rule {
+  height: 1px;
+  background: rgba(255,255,255,.06);
+  margin: 4px 14px;
+}
 
 .sb-group-rule {
   height: 1px;
