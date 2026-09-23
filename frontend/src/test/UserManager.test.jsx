@@ -48,7 +48,7 @@ import UserManager from '../components/admin/UserManager.jsx'
 const TEAMS = [{ id: 5, name: 'SY-A' }, { id: 9, name: 'SY-B' }]
 
 const USERS = [
-  { id: 1, username: 'einanmis', display_name: 'Erdi I', email: 'erdi@example.com',
+  { id: 1, username: 'ali', display_name: 'Ali V', email: 'ali@example.com',
     system_role: 'USER', team_ids: [5], active: true },
   { id: 2, username: 'admin2', display_name: 'Admin İki', email: 'a2@example.com',
     system_role: 'ADMIN', team_ids: [5], active: true },
@@ -85,7 +85,7 @@ describe('UserManager', () => {
 
   it('kullanıcıları ve takım adlarını basar', async () => {
     renderUm()
-    expect(await screen.findByText('einanmis')).toBeInTheDocument()
+    expect(await screen.findByText('ali')).toBeInTheDocument()
     expect(screen.getAllByText('SY-A').length).toBeGreaterThan(0)
   })
 
@@ -93,7 +93,7 @@ describe('UserManager', () => {
 
   it('TEAM_ADMIN kaydında takım KENDİ takımına sabitlenir (formdaki değer dikkate alınmaz)', async () => {
     renderUm({ systemRole: 'TEAM_ADMIN', ownTeamId: 9 })
-    await openRowMenu('einanmis')                       // team_ids: [5]
+    await openRowMenu('ali')                       // team_ids: [5]
     fireEvent.click(await screen.findByText(/^Düzenle$|^Edit$/))
     fireEvent.click(await screen.findByRole('button', { name: /^Kaydet$|^Save$/ }))
 
@@ -106,7 +106,7 @@ describe('UserManager', () => {
 
   it('ADMIN kaydında kullanıcının takım seçimi KORUNUR', async () => {
     renderUm()
-    await openRowMenu('einanmis')
+    await openRowMenu('ali')
     fireEvent.click(await screen.findByText(/^Düzenle$|^Edit$/))
     fireEvent.click(await screen.findByRole('button', { name: /^Kaydet$|^Save$/ }))
 
@@ -130,7 +130,7 @@ describe('UserManager', () => {
   it('SİLME onay ister; iptalde kullanıcı silinmez', async () => {
     confirmMock.mockResolvedValue(false)
     renderUm()
-    await openRowMenu('einanmis')
+    await openRowMenu('ali')
     fireEvent.click(await screen.findByText(/^Sil$|^Delete$/))
 
     await waitFor(() => expect(confirmMock).toHaveBeenCalled())
@@ -140,7 +140,7 @@ describe('UserManager', () => {
   it('onaylanınca doğru id ile silinir ve liste yenilenir', async () => {
     renderUm()
     const before = api.admin.searchUsers.mock.calls.length
-    await openRowMenu('einanmis')
+    await openRowMenu('ali')
     fireEvent.click(await screen.findByText(/^Sil$|^Delete$/))
 
     await waitFor(() => expect(api.admin.deleteUser).toHaveBeenCalledWith(1))
@@ -148,8 +148,8 @@ describe('UserManager', () => {
   })
 
   it('KENDİNİ silme seçeneği menüde YOK (kullanıcı kendi erişimini kesemez)', async () => {
-    renderUm({ currentUsername: 'einanmis' })
-    await openRowMenu('einanmis')
+    renderUm({ currentUsername: 'ali' })
+    await openRowMenu('ali')
 
     expect(await screen.findByText(/^Düzenle$|^Edit$/)).toBeInTheDocument()   // menü açık
     expect(screen.queryByText(/^Sil$|^Delete$/)).toBeNull()
@@ -169,7 +169,7 @@ describe('UserManager', () => {
   it('silme sunucuda reddedilirse hata bildirilir, başarı denmez', async () => {
     api.admin.deleteUser.mockResolvedValue({ success: false, error: 'son admin' })
     renderUm()
-    await openRowMenu('einanmis')
+    await openRowMenu('ali')
     fireEvent.click(await screen.findByText(/^Sil$|^Delete$/))
 
     await waitFor(() => expect(toastMock.error).toHaveBeenCalled())
@@ -180,10 +180,10 @@ describe('UserManager', () => {
 
   it('geçersiz e-posta kaydetmeyi ENGELLER (istek hiç gitmez)', async () => {
     renderUm()
-    await openRowMenu('einanmis')
+    await openRowMenu('ali')
     fireEvent.click(await screen.findByText(/^Düzenle$|^Edit$/))
 
-    const emailInput = document.querySelector('input[value="erdi@example.com"]')
+    const emailInput = document.querySelector('input[value="ali@example.com"]')
     fireEvent.change(emailInput, { target: { value: 'bozuk-adres' } })
     fireEvent.click(screen.getByRole('button', { name: /^Kaydet$|^Save$/ }))
 
@@ -193,7 +193,7 @@ describe('UserManager', () => {
 
   it('kilit açma yalnız KİLİTLİ kullanıcıda görünür ve doğru id ile çağrılır', async () => {
     renderUm()
-    await openRowMenu('einanmis')                       // permanent_lock yok
+    await openRowMenu('ali')                       // permanent_lock yok
     expect(screen.queryByText(/Kilidi Aç|Unlock/i)).toBeNull()
     fireEvent.keyDown(document, { key: 'Escape' })
 
@@ -208,10 +208,10 @@ describe('UserManager', () => {
     renderUm()
     const lockedRow = (await screen.findByText('cokTakim')).closest('tr')
     expect(within(lockedRow).getByTitle(/Takımlar kilitli|Teams locked/i)).toBeInTheDocument()
-    const plainRow = screen.getByText('einanmis').closest('tr')
+    const plainRow = screen.getByText('ali').closest('tr')
     expect(within(plainRow).queryByTitle(/Takımlar kilitli|Teams locked/i)).toBeNull()
 
-    await openRowMenu('einanmis')
+    await openRowMenu('ali')
     expect(screen.queryByText(/Takımları AD'ye geri ver|Return teams to AD/i)).toBeNull()
     fireEvent.keyDown(document, { key: 'Escape' })
 
@@ -223,7 +223,7 @@ describe('UserManager', () => {
   it('kaydetme reddedilirse modal AÇIK kalır ve hata gösterilir', async () => {
     api.admin.updateUser.mockResolvedValue({ success: false, error: 'çakışma' })
     renderUm()
-    await openRowMenu('einanmis')
+    await openRowMenu('ali')
     fireEvent.click(await screen.findByText(/^Düzenle$|^Edit$/))
     fireEvent.click(await screen.findByRole('button', { name: /^Kaydet$|^Save$/ }))
 

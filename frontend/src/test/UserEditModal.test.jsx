@@ -12,9 +12,9 @@ import { api } from '../api/client'
 
 const sampleUser = {
   id: 7,
-  username: 'einanmis',
-  display_name: 'Erdi I',
-  email: 'erdi@example.com',
+  username: 'ali',
+  display_name: 'Ali V',
+  email: 'ali@example.com',
   employee_id: '12345',
   system_role: 'ADMIN',
   org_role: 'TECH',
@@ -34,10 +34,10 @@ describe('UserEditModal', () => {
 
   it('renders the username as disabled and pre-fills email and employee id', () => {
     render(<UserEditModal user={sampleUser} teams={teams} onClose={() => {}} />)
-    const username = screen.getByDisplayValue('einanmis')
+    const username = screen.getByDisplayValue('ali')
     expect(username).toBeDefined()
     expect(username.disabled).toBe(true)
-    expect(screen.getByDisplayValue('erdi@example.com')).toBeDefined()
+    expect(screen.getByDisplayValue('ali@example.com')).toBeDefined()
     expect(screen.getByDisplayValue('12345')).toBeDefined()
   })
 
@@ -54,8 +54,8 @@ describe('UserEditModal', () => {
     await waitFor(() => expect(api.admin.updateUser).toHaveBeenCalledWith(
       7,
       expect.objectContaining({
-        username: 'einanmis',
-        email: 'erdi@example.com',
+        username: 'ali',
+        email: 'ali@example.com',
         team_id: 3,
         system_role: 'ADMIN',
         org_role: 'TECH',

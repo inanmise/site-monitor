@@ -320,4 +320,61 @@ class WeakAlgorithmReportServiceTest {
                 List.of(weak, other), Map.of("w.example.com", weak, "c.example.com", clean));
         assertThat(r).containsExactly(1, 2);
     }
+
+    // ── Görüş kapsamı (2026-09-23) ─────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("KAPSAM: kapsamlı kullanıcı YALNIZ kendi takımlarının alanlarını görür — sahipsiz alanlar da dışarıda")
+    void build_scopedToViewTeams() {
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(
+                inv("benim.example.com", 1L), inv("baskasi.example.com", 2L), inv("sahipsiz.example.com", null)));
+        when(latestCheckRepo.findAll()).thenReturn(List.of(
+                lc("benim.example.com", "SHA1withRSA", "RSA", 2048, "TLSv1.2", "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"),
+                lc("baskasi.example.com", "SHA1withRSA", "RSA", 2048, "TLSv1.2", "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"),
+                lc("sahipsiz.example.com", "SHA1withRSA", "RSA", 2048, "TLSv1.2", "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256")));
+        when(teamRepo.findAll()).thenReturn(List.of(team(1L, "Takım A"), team(2L, "Takım B")));
+
+        Map<String, Object> scoped = svc.build(List.of(1L));
+
+        // Üç alanın üçü de zayıf; kapsamlı kullanıcı yalnız birini görmeli.
+        assertThat(rows(scoped.get("data"))).extracting(r -> r.get("domain"))
+                .containsExactly("benim.example.com");
+        assertThat(scoped.get("total")).isEqualTo(1);
+        assertThat(((Map<?, ?>) scoped.get("scan")).get("active_domains")).isEqualTo(1);
+        // Takım kırılımı da daralır: başka takımın satırı hiç görünmez.
+        assertThat(rows(((Map<?, ?>) scoped.get("teams")).get("rows")))
+                .extracting(r -> r.get("team_id")).containsExactly(1L);
+
+        // Kapsamsız çağrı (global admin / AUDIT) eski davranışı korur: üçü de görünür.
+        Map<String, Object> all = svc.build();
+        assertThat(rows(all.get("data"))).hasSize(3);
+        assertThat(all.get("total")).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("KAPSAM: trend de süzülür — envanter daralmışken gözlem tablosu başka takımın alan adını sızdırmaz")
+    void trend_isScopedToVisibleDomains() {
+        String today = LocalDate.now(ZoneOffset.UTC).toString();
+        String earlier = LocalDate.now(ZoneOffset.UTC).minusDays(5).toString();
+        when(certificateCheckRepo.weakObservationsSince(anyString())).thenReturn(List.of(
+                new Object[] { "benim.example.com", earlier },
+                new Object[] { "baskasi.example.com", earlier }));
+
+        Instant now = Instant.now();
+        Map<String, Object> scoped = svc.trend(now, Set.of(), Set.of("benim.example.com"));
+
+        // detected: pencere başında değil, daha sonra ilk kez görülen alanlar.
+        assertThat(rows(scoped.get("detected"))).extracting(m -> m.get("domain"))
+                .containsExactly("benim.example.com");
+        assertThat(rows(scoped.get("resolved"))).extracting(m -> m.get("domain"))
+                .containsExactly("benim.example.com");
+        int scopedWeak = rows(scoped.get("series")).stream()
+                .mapToInt(m -> (int) m.get("weak")).sum();
+        assertThat(scopedWeak).as("seri yalnız kapsamdaki gözlemleri sayar").isEqualTo(1);
+        assertThat(today).isNotBlank();   // kayan tarih kullanıldığını belgeler (sabit fixture yok)
+
+        // Süzgeçsiz çağrı (global) ikisini de sayar.
+        Map<String, Object> all = svc.trend(now, Set.of());
+        assertThat(rows(all.get("series")).stream().mapToInt(m -> (int) m.get("weak")).sum()).isEqualTo(2);
+    }
 }

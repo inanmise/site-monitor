@@ -267,7 +267,16 @@ public class SchedulerService {
     @Value("${site.monitor.network.min-errors:3}")
     private int networkMinErrors;
 
-    @Value("${site.monitor.system-admin.email:erdi.inanmis@gmail.com}")
+    /**
+     * Sistem yöneticisi bildirim adresi — varsayılanı BOŞ.
+     *
+     * <p>Eskiden burada gerçek bir KİŞİSEL posta kutusu vardı: ayar (Ayarlar → Genel) boş
+     * bırakıldığında kurumsal izleme aracının ağ kesintisi bildirimleri o kutuya gidiyordu.
+     * Aynı ayarın diğer sekiz tüketicisi ({@code AuthController}, {@code LoginHelpController},
+     * {@code IssueReportController}, …) zaten boş varsayılanla çalışıp adres yokken gönderimi
+     * ATLIYOR; burası tek istisnaydı. Artık sözleşme her yerde aynı: adres yoksa mail yok.
+     */
+    @Value("${site.monitor.system-admin.email:}")
     private String systemAdminEmail;
 
     private static final DateTimeFormatter ISO =
@@ -5387,6 +5396,11 @@ public class SchedulerService {
 
     private void trySendAdminAlert() {
         String adminEmail = appSettings.getString("site.monitor.system-admin.email", systemAdminEmail);
+        if (adminEmail == null || adminEmail.isBlank()) {   // kardeş tüketicilerle aynı: adres yoksa mail yok
+            pendingAdminAlertEmail.set(false);
+            log.info("Ağ kesintisi bildirimi atlandı — system-admin.email boş");
+            return;
+        }
         double rateThreshold = appSettings.getDouble("site.monitor.network.error-rate-threshold", networkErrorRateThreshold);
         String status;
         try {
@@ -5411,6 +5425,12 @@ public class SchedulerService {
 
     private void trySendAdminResolved() {
         String adminEmail = appSettings.getString("site.monitor.system-admin.email", systemAdminEmail);
+        if (adminEmail == null || adminEmail.isBlank()) {
+            pendingAdminResolvedEmail.set(false);
+            pendingAdminAlertEmail.set(false);
+            log.info("Ağ kesintisi çözüm bildirimi atlandı — system-admin.email boş");
+            return;
+        }
         long durationMs = computeOutageDurationMs();
         String status;
         try {

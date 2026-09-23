@@ -159,8 +159,8 @@ class PermissionServiceTest {
         // EN KRITIK DAVRANIS: bir yonetici bu yetkiyi bilincli kapattiysa migration onu EZMEZ.
         // Ayrica kendini sinirlar — yukseltmeden sonra kapatilirsa updated_by artik o yonetici
         // olur ve bir daha asla geri acilmaz; aksi halde her acilista yoneticiyle kavga ederdi.
-        var edit = grantBy("USER", "monitoring.scripted", "edit", false, "erdi.inanmis");
-        var exec = grantBy("USER", "monitoring.scripted", "execute", false, "erdi.inanmis");
+        var edit = grantBy("USER", "monitoring.scripted", "edit", false, "ali.veli");
+        var exec = grantBy("USER", "monitoring.scripted", "execute", false, "ali.veli");
         when(repo.findByRoleAndResourceKeyAndAction("USER", "monitoring.scripted", "edit"))
                 .thenReturn(Optional.of(edit));
         when(repo.findByRoleAndResourceKeyAndAction("USER", "monitoring.scripted", "execute"))

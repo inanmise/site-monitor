@@ -196,7 +196,8 @@ class AuditControllerTest {
     @Test
     @DisplayName("weak-algorithms: gövde servisten aynen döner (eski data/total/critical/high sözleşmesi korunur)")
     void weakAlgorithms_delegatesToService() throws Exception {
-        when(weakAlgoService.build()).thenReturn(weakBody());
+        // Uç artık çağıranın GÖRÜŞ kapsamıyla kuruyor (global admin → null kapsam).
+        when(weakAlgoService.build(org.mockito.ArgumentMatchers.isNull())).thenReturn(weakBody());
         mvc.perform(get("/api/admin/audit/weak-algorithms").session(session("ADMIN")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value(1))
@@ -208,7 +209,7 @@ class AuditControllerTest {
     @Test
     @DisplayName("weak-algorithms/export: text/csv indirme + WEAK_ALGO_EXPORT denetim kaydı")
     void weakAlgorithms_exportCsv() throws Exception {
-        when(weakAlgoService.build()).thenReturn(weakBody());
+        when(weakAlgoService.build(org.mockito.ArgumentMatchers.isNull())).thenReturn(weakBody());
         when(weakAlgoService.toCsv(any())).thenReturn("source,severity,domain\r\ncertificate,HIGH,sha1.example.com\r\n");
         mvc.perform(get("/api/admin/audit/weak-algorithms/export").session(session("ADMIN")))
                 .andExpect(status().isOk())
@@ -408,5 +409,24 @@ class AuditControllerTest {
         mvc.perform(delete("/api/admin/audit/weak-algorithms/envanterde-yok.example.com/exception")
                         .session(session("AUDIT")))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("KAPI: rapor OKUMA da kapsamlı — kapsamlı müdürün görüş takımları servise geçer, global admin null geçer")
+    void weakAlgoRead_passesViewScope() throws Exception {
+        org.mockito.Mockito.doNothing().when(permissionService)
+                .require(any(HttpSession.class), eq("weak_algo.read"), eq("view"));
+        when(weakAlgoService.build(any())).thenReturn(weakBody());
+        when(weakAlgoService.build(org.mockito.ArgumentMatchers.isNull())).thenReturn(weakBody());
+
+        mvc.perform(get("/api/admin/audit/weak-algorithms").session(scopedAdmin(5L)))
+                .andExpect(status().isOk());
+        // Kapsamlı kullanıcı kendi takımlarıyla sorar: rapor başka takımların zayıf kripto
+        // bulgularını, alan adlarını ve takım kırılımını göstermez.
+        org.mockito.Mockito.verify(weakAlgoService).build(java.util.List.of(5L));
+
+        mvc.perform(get("/api/admin/audit/weak-algorithms").session(session("ADMIN")))
+                .andExpect(status().isOk());
+        org.mockito.Mockito.verify(weakAlgoService).build(org.mockito.ArgumentMatchers.isNull());
     }
 }

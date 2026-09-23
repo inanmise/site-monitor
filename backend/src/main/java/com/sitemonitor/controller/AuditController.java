@@ -223,14 +223,17 @@ public class AuditController {
     @GetMapping("/audit/weak-algorithms")
     public ResponseEntity<Map<String, Object>> weakAlgorithmReport(HttpSession session) {
         permissionService.require(session, "weak_algo.read", "view");
-        return ok(weakAlgoService.build());
+        // Rapor çağıranın GÖRÜŞ kapsamıyla kurulur: viewTeamIds global admin/AUDIT için null
+        // (tüm takımlar), kapsamlı müdür için kendi takımları. Yazma uçları 2026-09-23'te
+        // kapsama alınmıştı; okuma tarafı aynı gün eşitlendi.
+        return ok(weakAlgoService.build(SessionScope.viewTeamIds(session)));
     }
 
     /** CSV dışa aktarma — sertifika + TLS + zincir bulguları tek dosyada; denetim kaydı düşer. */
     @GetMapping(value = "/audit/weak-algorithms/export", produces = "text/csv")
     public ResponseEntity<String> weakAlgorithmExport(HttpSession session, HttpServletRequest request) {
         permissionService.require(session, "weak_algo.read", "view");
-        Map<String, Object> body = weakAlgoService.build();
+        Map<String, Object> body = weakAlgoService.build(SessionScope.viewTeamIds(session));   // CSV de kapsamlı
         String csv = weakAlgoService.toCsv(body);
         auditService.recordAction("WEAK_ALGO_EXPORT", session, request, "WEAK_ALGO", "export",
                 "{\"rows\":" + body.get("total") + ",\"tls\":" + ((Map<?, ?>) body.get("tls")).get("total")
