@@ -701,7 +701,11 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
                     <span className="upt-rt-ms" {...clk}>{c.http_status ?? '—'}</span>
                     {bad
                       ? <button type="button" className="hdiag-open" onClick={open} title={c.error || undefined}
-                          aria-label={`${detailText} — ${t('httpdiag.rowOpenAria')}`}>
+                          /* Erişilebilir ad ZAMANI da taşır: aynı hata art arda tekrarladığında
+                             (tipik durum — 32 satırın hepsi "HTTP connect timed out") yalnız hata
+                             metniyle satırlar ekran okuyucuda birbirinin aynı okunuyor ve klavye
+                             kullanıcısı hangi kontrolde olduğunu ayırt edemiyordu. */
+                          aria-label={`${formatDateSec(c.checked_at)} · ${detailText} — ${t('httpdiag.rowOpenAria')}`}>
                           <span className="hdiag-open-text">{detailText}</span>
                           <span className="hdiag-open-cta">{t('httpdiag.rowShow')}<ChevronRight size={12} aria-hidden="true" /></span>
                         </button>

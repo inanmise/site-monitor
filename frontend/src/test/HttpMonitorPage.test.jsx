@@ -398,6 +398,38 @@ describe('HttpMonitorPage', () => {
     expect(document.querySelectorAll('.chk-td-status').length).toBe(1)
   })
 
+  // Regression: ISSUE-002 — 32 satırın "ayrıntı" düğmesi ekran okuyucuda AYNI adı taşıyordu
+  // Found by /qa on 2026-09-23
+  // Report: .gstack/qa-reports/
+  it('Detay düğmelerinin erişilebilir adı ZAMANI taşır — aynı hata tekrarlasa da satırlar ayırt edilir', async () => {
+    // Sahada tipik durum: aynı monitörün 30+ satırı aynı hatayı taşıyor ("HTTP connect timed out").
+    // aria-label yalnız hata metnini taşıyınca klavye/ekran okuyucu kullanıcısı Tab ile gezerken
+    // her düğmede AYNI adı duyuyor ve hangi kontrolde olduğunu ayırt edemiyordu.
+    const ayniHata = 'HTTP connect timed out'
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      items: [
+        { id: 1, checked_at: '2026-09-22T20:02:10', ok: false, http_status: null, response_ms: null, error: ayniHata },
+        { id: 2, checked_at: '2026-09-22T19:57:03', ok: false, http_status: null, response_ms: null, error: ayniHata },
+        { id: 3, checked_at: '2026-09-22T19:51:44', ok: false, http_status: null, response_ms: null, error: ayniHata },
+      ],
+      counts: { total: 3, fail: 3 }, buckets: [], alerts: [], range: {}, total: 3, page: 0, size: 50,
+    } })
+    window.history.replaceState({}, '', '/?tab=http&monitor=1')
+    try {
+      render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+
+      const dugmeler = await screen.findAllByRole('button', { name: /ayrı pencerede aç|own window/i })
+      expect(dugmeler).toHaveLength(3)
+
+      const adlar = dugmeler.map(b => b.getAttribute('aria-label'))
+      expect(new Set(adlar).size).toBe(3)                       // ÜÇÜ DE farklı
+      adlar.forEach(a => expect(a).toContain(ayniHata))         // hata metni korunuyor
+      expect(adlar[0]).toContain('2026-09-22T20:02:10')         // zaman damgası adda
+    } finally {
+      window.history.replaceState({}, '', '/')
+    }
+  })
+
   it('geçmişteki başarısız satırın Detay hücresi DÜĞMEDİR ve tanıyı KENDİ penceresinde açar', async () => {
     // 2026-09-23 kullanıcı isteği: tanı listenin altında satır içi değil, ayrı bir pencerede açılsın ve
     // hücre tıklanabilir görünsün. Eskiden salt `cursor:pointer` taşıyan bir span'di — ne düğmeydi
