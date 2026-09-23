@@ -4281,8 +4281,14 @@ public class EmailNotificationService {
         return "<div style='margin:0 0 14px'>" + whyReceivingInner(teamNames) + "</div>";
     }
 
+    /** Kardeş {@code EmailTemplateBuilder.esc} ve {@code MailCta.esc} ile AYNI küme: tek tırnak da
+     *  kaçırılır. Bu dosyada href/src öznitelikleri TEK tırnakla yazılıyor
+     *  ({@code "<a href='" + escHtml(...) + "'"}) ve değer kullanıcının girdiği monitör URL'i;
+     *  içinde tek tırnak geçen (tamamen geçerli) bir URL özniteliği kapatıp alarm mailinin
+     *  başlığını bozuyor, linki kırıyor ve öznitelik enjeksiyonuna açık bırakıyordu. */
     private static String escHtml(String s) {
         if (s == null) return "";
-        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace("\"", "&quot;").replace("'", "&#39;");
     }
 }

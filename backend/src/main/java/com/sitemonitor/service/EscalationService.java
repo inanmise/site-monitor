@@ -311,7 +311,14 @@ public class EscalationService {
                         event.setMessage(message);
                         event.setDaysRemaining(daysRemaining);
                         if (notAfterOf(result) != null) event.setNotAfter(notAfterOf(result));
+                        // ÜÇ alan birden sıfırlanır (izleme yolu :1056-1058 ile aynı). Yalnız
+                        // acknowledged düşürülünce acknowledgedAt/By bayat kalıyordu: WARNING'de
+                        // onaylanıp KRİTİK'e tırmanan olay, olay ekranında ve mail/incidentMeta
+                        // sunumunda hâlâ "X tarafından <eski tarih> onaylandı" taşıyor, yani
+                        // tırmanma sonrası kimse onaylamamışken "ele alınmış" görünüyordu.
                         event.setAcknowledged(false);
+                        event.setAcknowledgedAt(null);
+                        event.setAcknowledgedBy(null);
 
                         List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId);
                         // Terfi ÖNCE kalıcılaşır, SONRA gönderilir (INITIAL dalıyla aynı sıra). Kişi-webhook tetiği
@@ -712,9 +719,31 @@ public class EscalationService {
 
     private void resolveOpenAlertsForDomain(String domain, Collection<String> types) {
         // Bakım penceresinde recovery: alarm kapanır ama çözüm e-postası GÖNDERİLMEZ (tam sessizlik).
+        //
+        // ASİMETRİ DÜZELTMESİ: bakım bastırması yalnız BURADA ve processConfirmedOutage'da var;
+        // SERTİFİKA sweep'i (processResults) isUnderMaintenance'a hiç bakmıyor. Yani bakım
+        // penceresinde sertifika değiştirilirken CHAIN_BROKEN/UNTRUSTED_CA alarmı AÇILIYOR ve
+        // mail + push gidiyor, iş bitip zincir düzelince pencere hâlâ açık olduğu için çözüm
+        // sessizce kapanıyordu: takım açılışı alıyor, kapanışı ALMIYOR, alarm posta kutusunda
+        // sonsuza dek açık görünüyordu. Kural: açılış bildirimi GİTTİYSE çözüm de gider.
         if (maintenanceService.isUnderMaintenance(domain)) {
-            resolveOpenAlertsSilently(domain, types, "Sistem (bakım penceresi — sessiz kapanış)");
-            return;
+            List<AlertEvent> open = alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(domain, types);
+            List<String> notified = new ArrayList<>();
+            for (AlertEvent e : open) {
+                if (e.getId() != null && !notificationLogRepo.findByAlertEventIdOrderBySentAtDesc(e.getId()).isEmpty())
+                    notified.add(e.getAlertType());
+            }
+            if (!notified.isEmpty()) {
+                // Bildirimi gitmiş tipler NORMAL yoldan kapanır (çözüm maili gider); kalanlar sessiz.
+                List<String> silent = new ArrayList<>(types);
+                silent.removeAll(notified);
+                if (!silent.isEmpty())
+                    resolveOpenAlertsSilently(domain, silent, "Sistem (bakım penceresi — sessiz kapanış)");
+                types = notified;
+            } else {
+                resolveOpenAlertsSilently(domain, types, "Sistem (bakım penceresi — sessiz kapanış)");
+                return;
+            }
         }
         List<AlertEvent> openAlerts = alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(domain, types);
         for (AlertEvent event : openAlerts) {

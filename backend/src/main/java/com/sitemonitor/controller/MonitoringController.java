@@ -49,6 +49,10 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class MonitoringController {
 
+    /** Kurum saat dilimi — "bugün" kararları (vade gecikmesi vb.) burada verilir.
+     *  Kardeş yüzeyler RenewalForecastService/CertificateCardExtrasService ile aynı. */
+    private static final java.time.ZoneId ORG_ZONE = java.time.ZoneId.of("Europe/Istanbul");
+
     private final LatestCheckRepository latestCheckRepo;
     private final CertificateInventoryRepository inventoryRepo;
     private final CertificateCheckRepository certCheckRepo;
@@ -64,6 +68,8 @@ public class MonitoringController {
     private final DnsCheckerService dnsChecker;
 
     private final KeywordMonitorRepository keywordMonitorRepo;
+    /** Keyword özel başlıklarının şifreli kaynağı (O7) — düz değer hiçbir yüzeye çıkmaz. */
+    private final com.sitemonitor.service.KeywordHeaderSecrets keywordHeaderSecrets;
     private final KeywordResultRepository keywordResultRepo;
     private final KeywordCheckerService keywordChecker;
 
@@ -448,6 +454,29 @@ public class MonitoringController {
         };
     }
 
+    /** Canlı varlığın ETKİN takımı — Port/DNS çift kaynaklı olduğu için effectiveTeam'den geçer. */
+    private Long liveTeamOf(String kind, Object entity) {
+        return switch (kind) {
+            case MonitorHistoryService.PORT -> {
+                var m = (com.sitemonitor.model.PortMonitor) entity;
+                yield effectiveTeam(m.getHost(), m.getStandalone(), m.getTeamId());
+            }
+            case MonitorHistoryService.DNS -> {
+                var m = (com.sitemonitor.model.DnsMonitor) entity;
+                yield effectiveTeam(m.getDomain(), m.getStandalone(), m.getTeamId());
+            }
+            case MonitorHistoryService.KEYWORD   -> ((com.sitemonitor.model.KeywordMonitor) entity).getTeamId();
+            case MonitorHistoryService.HTTP      -> ((com.sitemonitor.model.HttpMonitor) entity).getTeamId();
+            case MonitorHistoryService.PAGE      -> ((com.sitemonitor.model.PageMonitor) entity).getTeamId();
+            case MonitorHistoryService.PAGESPEED -> ((com.sitemonitor.model.PageSpeedMonitor) entity).getTeamId();
+            case MonitorHistoryService.SCRIPTED  -> ((com.sitemonitor.model.ScriptedMonitor) entity).getTeamId();
+            case MonitorHistoryService.DOMAIN    -> ((com.sitemonitor.model.DomainMonitor) entity).getTeamId();
+            case MonitorHistoryService.PING      -> ((com.sitemonitor.model.PingMonitor) entity).getTeamId();
+            // Bilinmeyen tür → null: canManage(null) fail-closed davranır.
+            default -> null;
+        };
+    }
+
     private void saveRestored(String kind, Object entity) {
         switch (kind) {
             case MonitorHistoryService.PORT -> portMonitorRepo.save((com.sitemonitor.model.PortMonitor) entity);
@@ -485,6 +514,8 @@ public class MonitoringController {
         var rowOpt = changeLogRepo.findByResourceKindAndResourceIdAndSeq(resolved, id, seq);
         if (rowOpt.isEmpty()) return notFound("Kayıt bulunamadı");
         var row = rowOpt.get();
+        // ÖN FİLTRE (ucuz): geçmiş satırının takımı. Tek başına YETMEZ (aşağıya bakın) ama
+        // yetkisiz çağrıyı kaydın varlığını sızdırmadan 403 ile keser.
         if (!SessionScope.canManage(session, row.getTeamId())) return forbidden("Bu izleme üzerinde yetkiniz yok");
         if (row.getSnapshot() == null || row.getSnapshot().isBlank())
             return badRequest("Bu olayda geri yüklenecek bir durum kaydı yok");
@@ -492,6 +523,14 @@ public class MonitoringController {
         var entityOpt = findRestorable(resolved, id);
         if (entityOpt.isEmpty()) return notFound("İzleme bulunamadı ya da bu tür geri alınamıyor");
         Object entity = entityOpt.get();
+        // YETKİLİ KAPI CANLI KAYITTAN KURULUR. Eskiden YALNIZ geçmiş satırının teamId'sine bakılıyordu,
+        // ama o, kaydın YAZILDIĞI andaki takımdır ve izlemenin takımı resolveTeamChange ile
+        // değişebiliyor: X izlemesi A takımındayken düzenlenir (geçmiş satırı teamId=A), sonra B
+        // takımına aktarılır; A'nın yöneticisi eski seq ile restore çağırdığında kapı A'ya bakıp
+        // geçiyor ve B takımının CANLI monitörünün url/interval/expectedStatus/active alanlarını
+        // geri sarıyordu. Geçmiş satırının takımı yalnız OKUMA için doğru kaynaktır.
+        if (!SessionScope.canManage(session, liveTeamOf(resolved, entity)))
+            return forbidden("Bu izleme üzerinde yetkiniz yok");
 
         String[] fields = MonitorHistoryService.SCRIPTED.equals(resolved) ? SCRIPTED_FIELDS
                 : MonitorHistoryService.PAGESPEED.equals(resolved) ? PAGESPEED_FIELDS : MON_FIELDS;
@@ -2088,6 +2127,7 @@ public class MonitoringController {
                 .filter(r -> r.getMonitorId() != null)
                 .collect(Collectors.toMap(KeywordResult::getMonitorId, r -> r, (a, b) -> a));
         Map<Long, String> teams = teamNameMap();
+        boolean admin = SessionScope.isGlobalAdmin(session);
         // IDOR (H2): yalnız görüntülenebilir takımların monitörleri (global admin → hepsi).
         List<KeywordMonitor> monitors = keywordMonitorRepo.findAllByOrderByNameAsc().stream()
                 .filter(m -> SessionScope.canView(session, m.getTeamId())).toList();
@@ -2095,7 +2135,7 @@ public class MonitoringController {
                 monitors.stream().map(KeywordMonitor::getUrl).collect(Collectors.toSet()),
                 EscalationService.TYPE_KEYWORD);
         List<Map<String, Object>> result = monitors.stream()
-                .map(m -> enrichKeyword(m, latest.get(m.getId()), teams, alarms.get(m.getUrl()))).toList();
+                .map(m -> enrichKeyword(m, latest.get(m.getId()), teams, alarms.get(m.getUrl()), admin)).toList();
         return ok(result);
     }
 
@@ -2120,7 +2160,12 @@ public class MonitoringController {
         m.setName((String) body.get("name"));
         m.setUrl(kwUrl);
         m.setKeyword((String) body.get("keyword"));
-        if (body.get("customHeaders") != null) m.setCustomHeaders((String) body.get("customHeaders"));
+        // Başlıklar ŞİFRELİ saklanır ve yazma GLOBAL ADMIN'e kapalıdır (kardeşi
+        // applyPageSpeedFields:3617 ile aynı desen). Admin olmayanın gönderdiği alan sessizce YOK
+        // SAYILIR — hata değil: takım kullanıcısı formu kaydettiğinde admin'in koyduğu başlıklar
+        // silinmesin. Serbest başlık iç servislere yetki/SSRF yüzeyi açar.
+        if (body.get("customHeaders") != null && SessionScope.isGlobalAdmin(session))
+            keywordHeaderSecrets.store(m, (String) body.get("customHeaders"));
         if (body.containsKey("useProxy")) m.setUseProxy(com.sitemonitor.service.ProxyPolicyService.normalizeMode(body.get("useProxy")));
         applyKeywordCondition(m, body);
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
@@ -2145,7 +2190,7 @@ public class MonitoringController {
         // ürün geçmişi "hangi değerlerle doğdu" sorusunu cevaplamak zorunda.
         monitorHistory.record(MonitorHistoryService.KEYWORD, saved.getId(), saved.getName(), saved.getTeamId(),
                 MonitorHistoryService.CREATE, null, AuditDiff.snapshot(saved, MON_FIELDS), changeNote(body), session);
-        return ok(enrichKeyword(saved, null, teamNameMap(), null));
+        return ok(enrichKeyword(saved, null, teamNameMap(), null, SessionScope.isGlobalAdmin(session)));
     }
 
     @PutMapping("/keyword/{id}")
@@ -2167,7 +2212,8 @@ public class MonitoringController {
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("url")             != null) m.setUrl(intendedUrl);
             if (body.get("keyword")         != null) m.setKeyword((String) body.get("keyword"));
-            if (body.containsKey("customHeaders"))    m.setCustomHeaders((String) body.get("customHeaders"));
+            if (body.containsKey("customHeaders") && SessionScope.isGlobalAdmin(session))
+                keywordHeaderSecrets.store(m, (String) body.get("customHeaders"));
             if (body.containsKey("useProxy"))         m.setUseProxy(com.sitemonitor.service.ProxyPolicyService.normalizeMode(body.get("useProxy")));
             if (body.get("operator") != null || body.get("matchCount") != null || body.get("condition") != null) applyKeywordCondition(m, body);
             if (body.containsKey("groupName"))       m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
@@ -2192,7 +2238,8 @@ public class MonitoringController {
                     MonitorHistoryService.UPDATE, _before, AuditDiff.snapshot(saved, MON_FIELDS), changeNote(body), session);
             noteConfigChanged(changeRow, ActivityLogService.KEYWORD, saved.getUrl(), session);
             return ok(enrichKeyword(saved, keywordResultRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
-                    alertEventRepo.findOpenAlert(saved.getUrl(), EscalationService.TYPE_KEYWORD).orElse(null)));
+                    alertEventRepo.findOpenAlert(saved.getUrl(), EscalationService.TYPE_KEYWORD).orElse(null),
+                    SessionScope.isGlobalAdmin(session)));
         }).orElse(notFound("Keyword monitor not found"));
     }
 
@@ -2255,7 +2302,7 @@ public class MonitoringController {
         return keywordMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             Map<String, Object> r = keywordChecker.check(m.getUrl(), m.getKeyword(),
-                    m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000, m.getCustomHeaders(), Boolean.TRUE.equals(m.getCaseSensitive()),
+                    m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000, keywordHeaderSecrets.effectiveHeaders(m), Boolean.TRUE.equals(m.getCaseSensitive()),
                     viaProxy(m.getUrl(), m.getUseProxy()));
             boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
             int count = r.get("count") instanceof Number cn ? cn.intValue() : (found ? 1 : 0);
@@ -2277,7 +2324,8 @@ public class MonitoringController {
             // (dogrulama denemeleri + kurtarma sayaci).
             schedulerService.evaluateKeywordNow(m, r);   // AYNI sonuç — ikinci kontrol/kayıt YOK
             return ok(enrichKeyword(m, res, teamNameMap(),
-                    alertEventRepo.findOpenAlert(m.getUrl(), EscalationService.TYPE_KEYWORD).orElse(null)));
+                    alertEventRepo.findOpenAlert(m.getUrl(), EscalationService.TYPE_KEYWORD).orElse(null),
+                    SessionScope.isGlobalAdmin(session)));
         }).orElse(notFound("Keyword monitor not found"));
     }
 
@@ -2549,7 +2597,8 @@ public class MonitoringController {
         return out;
     }
 
-    private Map<String, Object> enrichKeyword(KeywordMonitor m, KeywordResult latest, Map<Long, String> teams, AlertEvent openAlarm) {
+    private Map<String, Object> enrichKeyword(KeywordMonitor m, KeywordResult latest, Map<Long, String> teams,
+                                              AlertEvent openAlarm, boolean admin) {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("id",               m.getId());
         item.put("name",             m.getName());
@@ -2570,7 +2619,10 @@ public class MonitoringController {
         item.put("confirm_interval_seconds", m.getConfirmIntervalSeconds());
         item.put("recovery_checks",           m.getRecoveryChecks());
         item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
-        item.put("custom_headers",            m.getCustomHeaders());
+        // DÜZ DEĞER ASLA DÖNMEZ (kardeşi pagespeed :3689-3691 ile aynı): uç yalnız
+        // monitoring.read + takım görünürlüğü istiyor ve alana Authorization/X-Api-Key yazılıyor.
+        item.put("has_custom_headers",        keywordHeaderSecrets.hasHeaders(m));
+        item.put("custom_header_names",       admin ? keywordHeaderSecrets.headerNames(m) : List.of());
         item.put("case_sensitive",            m.getCaseSensitive());
         item.put("tags",                      m.getTags());
         item.put("alert_level",     com.sitemonitor.model.MonitorAlertPrefs.effectiveLevel(m.getAlertLevel()));
@@ -5082,7 +5134,12 @@ public class MonitoringController {
         item.put("renewal_planned_at",   m.getRenewalPlannedAt());
         item.put("renewal_planned_by",   m.getRenewalPlannedByName());
         item.put("renewal_planned_note", m.getRenewalPlannedNote());
-        item.put("renewal_overdue",      m.getRenewalPlannedAt() != null && m.getRenewalPlannedAt().compareTo(java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString()) < 0);
+        // "Bugün" ORG saat diliminde: kardeş yüzeyler (RenewalForecastService, CertificateCardExtrasService)
+        // LocalDate.now(IST) kullanıyor. UTC ile hesaplanınca prod'da her gece 00:00-03:00 arasında
+        // Vade Takvimi "gecikmiş", İzleme listesi "gecikmiş değil" diyordu (aynı kayıt, iki ekran,
+        // çelişen cevap). Projede 24 kullanımdan 21'i IST.
+        item.put("renewal_overdue",      m.getRenewalPlannedAt() != null
+                && m.getRenewalPlannedAt().compareTo(java.time.LocalDate.now(ORG_ZONE).toString()) < 0);
         if (latest != null) {
             item.put("status",            latest.getStatus());
             item.put("source",            latest.getSource());
