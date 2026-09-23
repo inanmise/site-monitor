@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-23T19:11:48Z",
+  "generatedAt": "2026-09-23T23:07:04Z",
   "repo": "inanmise/site-monitor",
-  "count": 678,
+  "count": 679,
   "releases": [
+    {
+      "version": "20.83.0",
+      "tag": "v20.83.0",
+      "releasedAt": "2026-09-23T23:06:58Z",
+      "commit": "1619a985b8751d8e98183da92accda82ad1868a1",
+      "prevVersion": "20.82.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": "monitoring",
+          "breaking": false,
+          "sha": "1619a985",
+          "subject": "kartta \"x hatalı saat\" yerine 1/7/15/30 gün etiketleri + saat dilimi başına hata adedi"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.82.1",
       "tag": "v20.82.1",
