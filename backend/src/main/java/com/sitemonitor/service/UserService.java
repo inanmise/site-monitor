@@ -813,7 +813,17 @@ public class UserService {
         if (body.containsKey("department"))    u.setDepartment(bodyStr(body.get("department")));
         if (body.containsKey("company_level")) u.setCompanyLevel(bodyStr(body.get("company_level")));
         if (body.containsKey("mudurluk_name")) u.setMudurlukName(bodyStr(body.get("mudurluk_name")));
-        if (body.containsKey("manager_sicil")) {
+        // manager_sicil YETKİLENDİRME girdisidir, sıradan bir profil alanı değil: computeViewTeamIds
+        // ve computeManageTeamIds, LDAP kaynaklı ADMIN için ownPlusSubordinateTeamIds döndürüyor ve
+        // subordinateTeamIds findByManagerId sonucundaki her astın TÜM teamIds'ini kapsama ekliyor.
+        // Kapısız bırakıldığında kapsamlı müdür, yönetim kapsamındaki ÇOK TAKIMLI bir kullanıcıyı
+        // {"manager_sicil":"<kendi sicili>"} ile kendine ast yapıp o kullanıcının DİĞER takımlarını
+        // da görüş/yönetim kapsamına alabiliyordu (requireTeamScopedAdmin yalnız hedefin BİRİNCİL
+        // takımına bakıyor). Yazma yalnız global yöneticide; değilse alan sessizce yok sayılır —
+        // MonitoringController.customHeaders deseninin aynısı. LDAP senkronu bu yoldan geçmez,
+        // kendi kaydını setManagerSicil/setManagerId ile doğrudan yazar.
+        if (body.containsKey("manager_sicil")
+                && com.sitemonitor.controller.SessionScope.isGlobalAdminInRequest()) {
             String sicil = bodyStr(body.get("manager_sicil"));
             u.setManagerSicil(sicil);
             // Elle girilen sicil DB'de bir kullanıcıya denk geliyorsa bağı da kur (Takım Müdürü sütunu ve

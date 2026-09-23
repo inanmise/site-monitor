@@ -119,6 +119,30 @@ public final class SessionScope {
                 && session.getAttribute("viewTeamIds") != null;
     }
 
+    /**
+     * İstek bağlamındaki oturum GLOBAL yönetici mi? {@code AppSettingsCatalog.GLOBAL_ONLY}
+     * anahtarlarının tek kapısı.
+     *
+     * <p>Kapı eskiden {@link #isScopedAdminInRequest} ile kuruluyordu, ama o yalnız "rol ADMIN
+     * ama takım-kapsamlı" durumunu yakalıyor; TEAM_ADMIN ve USER için FALSE dönüyordu. İzin
+     * matrisinden {@code settings.general/edit} verilen herhangi bir role SSRF/CA/push-URL
+     * anahtarlarını yazma yolu açık kalıyordu.
+     *
+     * <p><b>HTTP bağlamı YOKSA true döner:</b> zamanlayıcı, açılış ve diğer sistem çağrıları
+     * oturum taşımaz; bu kapı KULLANICI isteklerini süzmek içindir, sistem yazmalarını değil.
+     * Bağlam VAR ama oturum yoksa (kimliksiz istek) false.
+     */
+    public static boolean isGlobalAdminInRequest() {
+        try {
+            var ra = org.springframework.web.context.request.RequestContextHolder.getRequestAttributes();
+            if (ra instanceof org.springframework.web.context.request.ServletRequestAttributes sra) {
+                HttpSession s = sra.getRequest().getSession(false);
+                return s != null && isGlobalAdmin(s);
+            }
+        } catch (Exception ignored) { /* bağlam yok → sistem çağrısı */ }
+        return true;
+    }
+
     /** {@link #isScopedAdmin} — istek bağlamındaki oturum için (servis katmanı, HttpSession parametresi yokken). */
     public static boolean isScopedAdminInRequest() {
         try {

@@ -164,9 +164,17 @@ public class AppSettingsService {
             if (s == null) throw new IllegalArgumentException(Msg.t("Bilinmeyen ayar: ", "Unknown setting: ") + key);
             String val = e.getValue() == null ? null : e.getValue().toString().trim();
             validate(s, val);
-            // Kapsamlı müdür GLOBAL_ONLY anahtarı yazamaz — hangi denetleyiciden gelirse gelsin tek kapı.
+            // GLOBAL_ONLY anahtarını YALNIZ global yönetici yazar — hangi denetleyiciden gelirse
+            // gelsin tek kapı. Şart eskiden isScopedAdminInRequest() idi; o yalnız "systemRole=ADMIN
+            // ama takım-kapsamlı" durumunu yakalıyor, TEAM_ADMIN ve USER için FALSE dönüyordu.
+            // İzin matrisinden settings.general/edit verilen bir role (matris UI bunu normal bir
+            // tık olarak sunuyor) monitoring.allow-loopback-targets (SsrfGuard'ın loopback kapısı),
+            // trust.ca-bundle-pem (giden TLS güvenine kendi CA'sı) ve userpush.url + headers
+            // (çözülmüş sırlarla push trafiğini kendi sunucusuna çevirme) yazma yolu açılıyordu.
+            // Anahtar kümesinin adı ve AppSettingsCatalog yorumu zaten "yalnız global yönetici"
+            // diyordu; kontrol bunu uygulamıyordu.
             if (AppSettingsCatalog.isGlobalOnly(key)
-                    && com.sitemonitor.controller.SessionScope.isScopedAdminInRequest()) {
+                    && !com.sitemonitor.controller.SessionScope.isGlobalAdminInRequest()) {
                 throw new SecurityException(com.sitemonitor.util.Msg.t(
                         "Bu ayar yalnız global yönetici tarafından değiştirilebilir: ",
                         "Only a global administrator can change this setting: ") + key);
