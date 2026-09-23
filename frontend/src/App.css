@@ -13569,7 +13569,16 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .today--clear .today-summary { color: var(--success); font-weight: 600; }
 .today-chevron { transition: transform .15s; }
 .today-chevron.is-open { transform: rotate(180deg); }
-.today-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; padding: 0 12px 12px; }
+/* 2026-09-23: 240px'te satıra 5 kart sığıyor, başlıklar iki satıra kırılıyordu → 300px (dar kapta 100%'e iner);
+   start: boş kalan kart satırın en uzun kartı kadar uzamasın. */
+.today-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); align-items: start; gap: 10px; padding: 0 12px 12px; }
+/* Sayısı 0 olan kartlar tam kart yerine tek satır (2026-09-23). */
+.today-ok { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 0 14px 12px; font-size: .84em; color: var(--text-light); }
+.today-ok > svg { color: var(--success); flex-shrink: 0; }
+.today-ok-lbl { font-weight: 600; color: var(--text); }
+.today-ok-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: center; row-gap: 4px; }
+.today-ok-list li { display: inline-flex; align-items: center; gap: 4px; }
+.today-ok-list li + li::before { content: '·'; margin: 0 7px; }
 .today-card { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-left-width: 4px; border-radius: 10px; background: var(--bg); min-width: 0; }
 .today-card--ok { border-left-color: var(--success); }
 .today-card--warn { border-left-color: #d97706; }

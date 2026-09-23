@@ -5346,6 +5346,7 @@ export const TR = {
   'today.recentRenewed': '{0} sertifika yenilendi',
   'today.recentNone': 'değişiklik yok',
   'today.trendLegend': '▲▼ dün bu saate göre',
+  'today.okLabel': 'Sorun yok:',
   // Genel Bakış kartı zengin görünümü (2026-09-19)
   'ccx.modeRich': 'Zengin',
   'ccx.modeCompact': 'Kompakt',
@@ -13630,6 +13631,7 @@ export const EN = {
   'today.recentRenewed': 'certificates renewed: {0}',
   'today.recentNone': 'no changes',
   'today.trendLegend': '▲▼ compared with this time yesterday',
+  'today.okLabel': 'All clear:',
   // Overview card rich view (2026-09-19)
   'ccx.modeRich': 'Rich',
   'ccx.modeCompact': 'Compact',
