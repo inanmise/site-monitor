@@ -343,7 +343,27 @@ class SqlPlaygroundServiceTest {
 
         assertThat(t1).isNotSameAs(jdbc).isSameAs(t2);
         assertThat(t1.getQueryTimeout()).isEqualTo(30);
-        assertThat(t1.getDataSource()).isSameAs(ds);
+        // DataSource artık SALT-OKUNUR sarmalayıcı (2026-09-23); hedefi yine paylaşılan havuz.
+        assertThat(t1.getDataSource()).isNotSameAs(ds)
+                .isInstanceOf(org.springframework.jdbc.datasource.DelegatingDataSource.class);
+        assertThat(((org.springframework.jdbc.datasource.DelegatingDataSource) t1.getDataSource())
+                .getTargetDataSource()).isSameAs(ds);
+    }
+
+    @Test
+    @DisplayName("Oyun alanı bağlantısı JDBC seviyesinde SALT-OKUNUR açılır — kara-liste tek savunma değil")
+    void playgroundConnection_isOpenedReadOnly() throws Exception {
+        // Metin kontrolleri (SELECT/WITH ile başlama, into/merge, yasak fonksiyonlar) ilk kapı;
+        // kelime sınırlarını atlatan bir yazma yolu için ikinci kapı DB'nin kendisi olmalı.
+        // Connection.setReadOnly(true) PostgreSQL'de default_transaction_read_only uygular.
+        javax.sql.DataSource ds = org.mockito.Mockito.mock(javax.sql.DataSource.class);
+        java.sql.Connection con = org.mockito.Mockito.mock(java.sql.Connection.class);
+        when(ds.getConnection()).thenReturn(con);
+        when(jdbc.getDataSource()).thenReturn(ds);
+
+        service.playgroundTemplate().getDataSource().getConnection();
+
+        verify(con).setReadOnly(true);
     }
 
     // ── tableDetails zenginleştirme (2026-09-20) ─────────────────────────────

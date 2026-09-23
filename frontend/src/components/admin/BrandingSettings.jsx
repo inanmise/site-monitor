@@ -173,7 +173,7 @@ export default function BrandingSettings() {
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <input type="text" value={primary} placeholder={t('branding.primaryPlaceholder')}
                 onChange={(ev) => set(K('primary-color'), ev.target.value)} style={{ flex: 1 }} />
-              <span aria-label="color-preview" style={{
+              <span aria-hidden="true" style={{
                 width: 28, height: 28, borderRadius: 6, border: '1px solid #d1d5db',
                 background: primary || 'var(--primary)', flexShrink: 0 }} />
             </div>

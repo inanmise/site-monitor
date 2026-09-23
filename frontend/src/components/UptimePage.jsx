@@ -285,9 +285,17 @@ export default function UptimePage({ systemRole }) {
       ) : (
         <div className="upt-grid">
           {pager.pageItems.map(item => (
+            /* Kart klavyeyle de açılabilir (ScriptedMonitorPage kalıbı): role+tabIndex+Enter/Space.
+               onKeyDown YALNIZ kartın KENDİ hedefinde çalışır — içerideki düğmeler çift eylem
+               üretmesin. */
             <div
               key={item.domain}
               className={`upt-card ${cardSslClass(item)}`}
+              role="button" tabIndex={0} aria-label={t('mon.openDetailFor', item.domain)}
+              onKeyDown={e => {
+                if (e.target !== e.currentTarget) return
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openModal(item) }
+              }}
               onClick={() => openModal(item)}
             >
               <div className="upt-card-top">

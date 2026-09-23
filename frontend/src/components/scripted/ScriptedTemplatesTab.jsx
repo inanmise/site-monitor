@@ -309,7 +309,7 @@ function TemplateCard({ t, lang, row, onView, onEdit, onVersions, onDuplicate, o
         </div>
         {/* placement="right": aşağı açılan menü kartın kendi içeriğini örtüyordu ve kullanıcı
             hangi şablonun menüsünü açtığını göremiyordu. */}
-        <KebabMenu items={items} label={t('tpl.actions')} placement="right" />
+        <KebabMenu items={items} label={t('tpl.actions')} rowLabel={name} placement="right" />
       </div>
 
       {desc && <p className="sc-tpl-card-desc">{desc}</p>}

@@ -125,6 +125,7 @@ function CreatableSelect({ label, value, onChange, options, disabled, onCreate, 
  *  "Ekle" için tekil SearchableSelect (seçilenler hariç). Picker seçim sonrası boş kalır.
  *  tagHue/.tag-chip yeniden kullanılır (yeni CSS yok). */
 function CreatableMultiSelect({ label, value, onChange, options, disabled, onCreate, onDelete, placeholder }) {
+  const t = useT()
   const selected = (value || '').split(',').map(s => s.trim()).filter(Boolean)
   const add = (v) => {
     const x = (v ?? '').trim()
@@ -151,7 +152,7 @@ function CreatableMultiSelect({ label, value, onChange, options, disabled, onCre
               <span key={val} className="tag-chip"
                 style={{ background: `hsl(${h},70%,93%)`, color: `hsl(${h},65%,30%)`, borderColor: `hsl(${h},70%,78%)` }}>
                 {val}
-                {!disabled && <button type="button" className="tag-chip-x" aria-label="remove"
+                {!disabled && <button type="button" className="tag-chip-x" aria-label={t('tag.removeTag', val)}
                   style={{ color: `hsl(${h},60%,38%)` }} onClick={() => remove(val)}>×</button>}
               </span>
             )
@@ -236,7 +237,7 @@ function TagInput({ label, value, onChange, disabled, t }) {
               <span key={tag} className="tag-chip"
                 style={{ background: `hsl(${h},70%,93%)`, color: `hsl(${h},65%,30%)`, borderColor: `hsl(${h},70%,78%)` }}>
                 {tag}
-                {!disabled && <button type="button" className="tag-chip-x" aria-label="remove"
+                {!disabled && <button type="button" className="tag-chip-x" aria-label={t('tag.removeTag', tag)}
                   style={{ color: `hsl(${h},60%,38%)` }} onClick={() => remove(tag)}>×</button>}
               </span>
             )

@@ -705,7 +705,7 @@ export default function UserPushSettings() {
                   onChange={(e) => setHeaders(headers.map((x, j) => j === i ? { ...x, secret: e.target.checked } : x))} />
                 <span>{t('userpush.headerSecret')}</span>
               </label><HelpTip helpKey="help.userpush.headerRow" label={t('userpush.headerSecret')} />
-              <button type="button" className="btn btn-sm" aria-label="Sil"
+              <button type="button" className="btn btn-sm" aria-label={t('userpush.headerDelete', h.name || String(i + 1))}
                 onClick={() => setHeaders(headers.filter((_, j) => j !== i))}><Trash2 size={14} /></button>
             </div>
           ))}
@@ -1003,7 +1003,7 @@ export default function UserPushSettings() {
               ...TRIGGERS.map((s) => ({ value: s, label: t('userpush.trigger.' + s) }))]} searchThreshold={8} />
           <input type="text" className="upt-search" placeholder="notificationId" value={fNotifId}
             onChange={(e) => { setFNotifId(e.target.value); setPage(0) }} />
-          <button type="button" className="btn btn-sm" onClick={loadDeliveries} aria-label="Yenile">
+          <button type="button" className="btn btn-sm" onClick={loadDeliveries} aria-label={t('app.refresh')}>
             <RefreshCw size={14} />
           </button>
           <a className="btn btn-sm" href={api.admin.userPush.exportUrl({

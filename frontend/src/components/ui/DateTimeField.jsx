@@ -4,7 +4,7 @@ import DatePicker, { registerLocale } from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
 import { tr, enUS } from 'date-fns/locale'
 import { Calendar, ChevronDown, X } from 'lucide-react'
-import { useLanguage } from '../../i18n/index.jsx'
+import { useLanguage, useT } from '../../i18n/index.jsx'
 
 registerLocale('tr', tr)
 registerLocale('en', enUS)
@@ -16,6 +16,7 @@ const BodyPortal = ({ children }) => createPortal(children, document.body)
 // Modül seviyesi — render'lar arası yeniden yaratılmaz, react-datepicker stabil kalır.
 const TriggerInput = forwardRef(function TriggerInput(
   { value, onClick, disabled, placeholder, onClear }, ref) {
+  const t = useT()
   return (
     <button className="dp-trigger" onClick={onClick} ref={ref} type="button" disabled={disabled}>
       <Calendar size={13} className="dp-trigger-icon" />
@@ -23,7 +24,7 @@ const TriggerInput = forwardRef(function TriggerInput(
         {value || placeholder || '—'}
       </span>
       {value && onClear && !disabled
-        ? <X size={14} className="dp-trigger-chevron" role="button" aria-label="clear"
+        ? <X size={14} className="dp-trigger-chevron" role="button" aria-label={t('app.clear')}
              onClick={(e) => { e.stopPropagation(); onClear() }} />
         : <ChevronDown size={12} className="dp-trigger-chevron" />}
     </button>

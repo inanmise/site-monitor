@@ -106,6 +106,50 @@ describe('KeywordMonitorPage', () => {
     expect(api.monitoring.createKeywordMonitor.mock.calls[0][0].url).toBe('https://x.example.com/a?t={timestamp}')
   })
 
+  // Regression: ISSUE-001 — "Kayıtlı başlıklar: ." kırık cümlesi (boş isim listesi)
+  // Found by /qa on 2026-09-23
+  // Report: .gstack/qa-reports/
+  it('kayıtlı başlık ipucu BOŞ isim listesinde kırılmaz — yer tutucu yedek metinle dolar', async () => {
+    // has_custom_headers TRUE ama custom_header_names BOŞ: API adları yalnız global admin'e
+    // döndürüyor ve kayıtlı metin "Ad: değer" biçiminde değilse hiç ad çıkarılamıyor. Eski kod
+    // {0}'ı boş dizeyle doldurup "Kayıtlı başlıklar: ." üretiyor, kullanıcıya hiçbir şey kayıtlı
+    // değilmiş izlenimi veriyordu — oysa alan boş bırakılırsa değer KORUNUYOR (çelişki).
+    api.monitoring.getKeywordMonitors.mockResolvedValue({ success: true, data: [{
+      id: 1, name: 'Example', url: 'https://www.example.com/', keyword: 'example', status: 'up',
+      checked_at: '2026-06-24T00:00:00', team_id: 5,
+      has_custom_headers: true, custom_header_names: [],
+    }] })
+
+    render(<KeywordMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
+    await screen.findByText('https://www.example.com/')
+    fireEvent.click(screen.getByRole('button', { name: /düzenle|edit/i }))
+
+    const hint = [...document.querySelectorAll('.field-hint')]
+      .find(h => /Kayıtlı başlıklar|Stored headers/i.test(h.textContent))
+    expect(hint).toBeTruthy()
+    expect(hint.textContent).not.toMatch(/:\s*\./)          // sarkan nokta YOK
+    expect(hint.textContent).toMatch(/Ad: değer|Name: value/) // yedek metin geldi
+  })
+
+  it('kayıtlı başlık ipucu isimleri LİSTELER — yedek metin doğru olanı gizlemez', async () => {
+    api.monitoring.getKeywordMonitors.mockResolvedValue({ success: true, data: [{
+      id: 1, name: 'Example', url: 'https://www.example.com/', keyword: 'example', status: 'up',
+      checked_at: '2026-06-24T00:00:00', team_id: 5,
+      has_custom_headers: true, custom_header_names: ['X-Api-Key', 'Cache-Control'],
+    }] })
+
+    render(<KeywordMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
+    await screen.findByText('https://www.example.com/')
+    fireEvent.click(screen.getByRole('button', { name: /düzenle|edit/i }))
+
+    const hint = [...document.querySelectorAll('.field-hint')]
+      .find(h => /Kayıtlı başlıklar|Stored headers/i.test(h.textContent))
+    expect(hint.textContent).toContain('X-Api-Key, Cache-Control')
+    expect(hint.textContent).not.toMatch(/Ad: değer|Name: value/)
+  })
+
   it('Kopyala: TÜM kullanıcı ayarları birebir kopyalanır (yalnız ad "(Kopya)" olur)', async () => {
     // Her alan varsayılandan FARKLI → bir alan formFrom'dan düşerse tam-payload karşılaştırması kırılır.
     api.monitoring.getKeywordMonitors.mockResolvedValue({ success: true, data: [{

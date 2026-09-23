@@ -95,7 +95,7 @@ describe('CertificatesTable — zenginleştirme (2026-09-13)', () => {
     render(<CertificatesTable onRowClick={() => {}} onRefresh={onRefresh} />)
     await screen.findByText('a.example.com')
     expect(document.querySelector('.ct-bulkbar')).toBeNull()
-    fireEvent.click(within(document.querySelector('tr[data-domain="b.example.com"]')).getByLabelText(/Toplu işlem için seç|Select for bulk/))
+    fireEvent.click(within(document.querySelector('tr[data-domain="b.example.com"]')).getByLabelText(/for bulk action|toplu işlem için seç/i))
     const bar = document.querySelector('.ct-bulkbar')
     expect(bar.textContent).toMatch(/1 seçili|1 selected/)
     fireEvent.click(within(bar).getByText(/Şimdi kontrol et|Check now/))
@@ -108,7 +108,8 @@ describe('CertificatesTable — zenginleştirme (2026-09-13)', () => {
     api.admin.bulkInventory.mockResolvedValue({ success: true, data: { processed: 1, skipped: 0 } })
     render(<CertificatesTable onRowClick={() => {}} canManage />)
     await screen.findByText('a.example.com')
-    fireEvent.click(within(document.querySelector('tr[data-domain="a.example.com"]')).getByLabelText(/Toplu işlem için seç|Select for bulk/))
+    // Ad artık satırı ayırt ediyor ("Select a.example.com for bulk action").
+    fireEvent.click(within(document.querySelector('tr[data-domain="a.example.com"]')).getByLabelText(/for bulk action|toplu işlem için seç/i))
     const bar = document.querySelector('.ct-bulkbar')
     const tierBtn = within(bar).getByText(/Kademe ata|Set tier/)
     expect(tierBtn).toBeDisabled()

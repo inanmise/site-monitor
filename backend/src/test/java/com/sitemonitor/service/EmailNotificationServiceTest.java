@@ -1247,4 +1247,31 @@ class EmailNotificationServiceTest {
                 null, null, null, null);
         assertThat(none).doesNotContain("Alan Adı Bitişleri");
     }
+
+    @Test
+    @DisplayName("B5: fırtına çözüm mailinin DÜZ METİN partı 'hâlâ erişilemeyen' listesinin kırpıldığını da söyler (HTML ile parite)")
+    void stormRecoveryText_reportsTruncatedStillDown() {
+        java.util.List<String> sample = new java.util.ArrayList<>();
+        for (int i = 1; i <= 12; i++) sample.add("host" + i + ".example.com");
+
+        String text = service.buildStormRecoveryText(5, 40, "Takım A",
+                "2026-09-23T10:00:00", "2026-09-23T10:40:00",
+                java.util.List.of("ok1.example.com"), 0, sample);
+
+        // Liste 12'de kesiliyor (sampleTargets tavanı). Metin partı sabit 0 geçiyordu: düz metne
+        // düşen istemcide 12 ad TAM liste sanılıyor, HTML okuyan aynı maili "+28 daha" görüyordu.
+        assertThat(text).contains("HÂLÂ ERİŞİLEMEYEN (40)")
+                        .contains("... ve 28 monitör daha");
+    }
+
+    @Test
+    @DisplayName("B5: kırpma yoksa 'daha' satırı BASILMAZ (sayaç uydurmuyor)")
+    void stormRecoveryText_noTruncationLine_whenListComplete() {
+        String text = service.buildStormRecoveryText(5, 2, "Takım A",
+                "2026-09-23T10:00:00", "2026-09-23T10:40:00",
+                java.util.List.of("ok1.example.com"), 0,
+                java.util.List.of("d1.example.com", "d2.example.com"));
+
+        assertThat(text).contains("HÂLÂ ERİŞİLEMEYEN (2)").doesNotContain("monitör daha");
+    }
 }

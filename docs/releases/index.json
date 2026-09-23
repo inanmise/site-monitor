@@ -1,9 +1,58 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-23T06:59:49Z",
+  "generatedAt": "2026-09-23T10:03:56Z",
   "repo": "inanmise/site-monitor",
-  "count": 672,
+  "count": 673,
   "releases": [
+    {
+      "version": "20.79.4",
+      "tag": "v20.79.4",
+      "releasedAt": "2026-09-23T10:03:50Z",
+      "commit": "6d1e340aaacb65e37f4618043a7200eba0071b4e",
+      "prevVersion": "20.79.3",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 3,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "a11y,push,audit,storm",
+          "breaking": false,
+          "sha": "6d1e340a",
+          "subject": "yayın öncesi regresyon taraması — 20 bulgu ve beş kapı"
+        },
+        {
+          "type": "test",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "48ef03d5",
+          "subject": "ISSUE-001 için regresyon testleri — boş isim listesi ve dolu liste"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "267b6697",
+          "subject": "ISSUE-002 — Detay düğmelerinin erişilebilir adı satırları ayırt etmiyordu"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "93fa7f23",
+          "subject": "ISSUE-001 — kayıtlı başlık ipucu boş listede kırık cümle üretiyordu"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.79.3",
       "tag": "v20.79.3",

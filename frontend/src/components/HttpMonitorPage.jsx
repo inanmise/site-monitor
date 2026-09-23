@@ -569,11 +569,19 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
         {displayMonitors.length === 0 && <StatusBlock tone="neutral" icon={Inbox} title={t('mon.noFilterMatch')} description={t('empty.hintFilter')} />}
         <div className="upt-grid" data-tour="mon-cards">
           {pager.pageItems.map(m => (
+            /* Kart klavyeyle de açılabilir (ScriptedMonitorPage kalıbı): role+tabIndex+Enter/Space.
+               onKeyDown YALNIZ kartın KENDİ hedefinde çalışır — içerideki düğmelerde Enter'a
+               basıldığında tuş olayı karta baloncuklanıp detayı DA açardı (çift eylem). */
             <div key={m.id} className={`upt-card ${cardClass(m)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
+              role="button" tabIndex={0} aria-label={t('mon.openDetailFor', m.url)}
+              onKeyDown={e => {
+                if (e.target !== e.currentTarget) return
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(m) }
+              }}
               onClick={() => openDetail(m)}>
               <div className="upt-card-top">
                 {canManageRow(m) && (
-                  <input type="checkbox" className="upt-card-check" checked={bulkSel.has(m.id)} onChange={() => toggleBulk(m.id)} onClick={(e) => e.stopPropagation()} aria-label={t('bulk.selectOne')} />
+                  <input type="checkbox" className="upt-card-check" checked={bulkSel.has(m.id)} onChange={() => toggleBulk(m.id)} onClick={(e) => e.stopPropagation()} aria-label={t('bulk.selectOneFor', m.url)} />
                 )}
                 {statusBadge(m)}
                 {alarmBadge(m)}<MaintenanceBadge target={m.url} />
@@ -701,7 +709,11 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
                     <span className="upt-rt-ms" {...clk}>{c.http_status ?? '—'}</span>
                     {bad
                       ? <button type="button" className="hdiag-open" onClick={open} title={c.error || undefined}
-                          aria-label={`${detailText} — ${t('httpdiag.rowOpenAria')}`}>
+                          /* Erişilebilir ad ZAMANI da taşır: aynı hata art arda tekrarladığında
+                             (tipik durum — 32 satırın hepsi "HTTP connect timed out") yalnız hata
+                             metniyle satırlar ekran okuyucuda birbirinin aynı okunuyor ve klavye
+                             kullanıcısı hangi kontrolde olduğunu ayırt edemiyordu. */
+                          aria-label={`${formatDateSec(c.checked_at)} · ${detailText} — ${t('httpdiag.rowOpenAria')}`}>
                           <span className="hdiag-open-text">{detailText}</span>
                           <span className="hdiag-open-cta">{t('httpdiag.rowShow')}<ChevronRight size={12} aria-hidden="true" /></span>
                         </button>

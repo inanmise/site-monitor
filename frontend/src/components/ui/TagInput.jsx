@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
+import { useT } from '../../i18n/index.jsx'
 
 const randomHue = () => Math.floor(Math.random() * 360)
 /** Deterministik ton — henüz renk atanmamış (düzenlemede yüklenen) etiketler için stabil fallback. */
@@ -34,6 +35,7 @@ const tagHue = (s) => {
  * Öğeler string ya da { name, count } olabilir (count sağda soluk sayı).
  */
 export default function TagInput({ label, value, onChange, disabled, placeholder, suggestions = null, suggestLabel = null }) {
+  const t = useT()
   const [text, setText] = useState('')
   const [hues, setHues] = useState({})
   const tags = (value || '').split(',').map(s => s.trim()).filter(Boolean)
@@ -127,7 +129,10 @@ export default function TagInput({ label, value, onChange, disabled, placeholder
               <span key={tag} className="tag-chip"
                 style={{ background: `hsl(${h},70%,93%)`, color: `hsl(${h},65%,30%)`, borderColor: `hsl(${h},70%,78%)` }}>
                 {tag}
-                {!disabled && <button type="button" className="tag-chip-x" aria-label="remove"
+                {/* Ad hem çevrilir hem ETİKETİ taşır: sabit "remove" 8 etiketli bir kayıtta
+                    8 özdeş düğme demekti (hangisinin kaldırılacağı duyulmuyordu) ve TR
+                    arayüzde İngilizce okunuyordu. */}
+                {!disabled && <button type="button" className="tag-chip-x" aria-label={t('tag.removeTag', tag)}
                   style={{ color: `hsl(${h},60%,38%)` }} onClick={() => remove(tag)}>×</button>}
               </span>
             )
@@ -138,7 +143,7 @@ export default function TagInput({ label, value, onChange, disabled, placeholder
               {/* Gerçek chip ile AYNI öğe türü: farklı bir etiket kullanmak (span) düğme
                   yazı tipi kalıtımı yüzünden birkaç piksellik genişlik farkı üretir ve
                   önizlemenin ayırdığı yer tam oturmaz. */}
-              <button type="button" className="tag-chip-x" tabIndex={-1} aria-label="discard"
+              <button type="button" className="tag-chip-x" tabIndex={-1} aria-label={t('tag.discardPending')}
                 // mousedown'da blur ENGELLENİR: aksi halde metin önce chip'e dönüşür, bu
                 // düğme kaybolur ve tıklama boşa düşerdi.
                 onMouseDown={e => e.preventDefault()}

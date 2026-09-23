@@ -49,6 +49,9 @@ import java.util.stream.Collectors;
 @Slf4j
 public class WeakAlgorithmReportService {
 
+    /** Kurum saat dilimi — gün sınırı bu zona göre (proje konvansiyonu). */
+    private static final java.time.ZoneId ORG_ZONE = java.time.ZoneId.of("Europe/Istanbul");
+
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
     static final int TREND_DAYS = 30;
@@ -101,7 +104,10 @@ public class WeakAlgorithmReportService {
                 .collect(Collectors.toMap(Team::getId, t -> t, (a, b) -> a, LinkedHashMap::new));
         Map<String, WeakAlgorithmException> exceptions = exceptionRepo.findAll().stream()
                 .collect(Collectors.toMap(WeakAlgorithmException::getDomain, e -> e, (a, b) -> a));
-        String today = LocalDate.now(ZoneOffset.UTC).toString();
+        // Kurum saatiyle "bugün": UTC kullanmak gece 00:00-03:00 arasında süresi IST'ye göre
+        // dolmuş bir istisnayı 3 saat daha "kabul edildi" gösteriyor ve gerçek bir zayıf-kripto
+        // bulgusunu gizliyordu. Kardeş yüzeyler (yenileme tahmini, sertifika kartı) IST kullanıyor.
+        String today = LocalDate.now(ORG_ZONE).toString();
 
         // ── Satırlar (eski sözleşme) + tls / chain bulguları ─────────────────────────────
         List<Map<String, Object>> rows = new ArrayList<>();
@@ -391,7 +397,7 @@ public class WeakAlgorithmReportService {
         LocalDate u;
         try { u = LocalDate.parse(until.trim()); }
         catch (java.time.format.DateTimeParseException e) { throw new IllegalArgumentException("until_format"); }
-        if (u.isBefore(LocalDate.now(ZoneOffset.UTC))) throw new IllegalArgumentException("until_past");
+        if (u.isBefore(LocalDate.now(ORG_ZONE))) throw new IllegalArgumentException("until_past");   // kurum saati (bkz. build())
         WeakAlgorithmException e = exceptionRepo.findByDomain(domain.trim()).orElseGet(WeakAlgorithmException::new);
         e.setDomain(domain.trim());
         e.setReason(reason == null ? null : reason.trim());

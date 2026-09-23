@@ -560,11 +560,19 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
         <div className="upt-grid">
           {pager.pageItems.map(m => (
+            /* Kart klavyeyle de açılabilir (ScriptedMonitorPage kalıbı): role+tabIndex+Enter/Space.
+               onKeyDown YALNIZ kartın KENDİ hedefinde çalışır — içerideki düğmelerde Enter'a
+               basıldığında tuş olayı karta baloncuklanıp detayı DA açardı (çift eylem). */
             <div key={m.id} className={`upt-card ${cardClass(m)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
+              role="button" tabIndex={0} aria-label={t('mon.openDetailFor', m.host)}
+              onKeyDown={e => {
+                if (e.target !== e.currentTarget) return
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(m) }
+              }}
               onClick={() => openDetail(m)}>
               <div className="upt-card-top">
                 {canManageRow(m) && (
-                  <input type="checkbox" className="upt-card-check" checked={bulkSel.has(m.id)} onChange={() => toggleBulk(m.id)} onClick={(e) => e.stopPropagation()} aria-label={t('bulk.selectOne')} />
+                  <input type="checkbox" className="upt-card-check" checked={bulkSel.has(m.id)} onChange={() => toggleBulk(m.id)} onClick={(e) => e.stopPropagation()} aria-label={t('bulk.selectOneFor', m.host)} />
                 )}
                 {statusBadge(m)}
                 {alarmBadge(m)}<MaintenanceBadge target={m.host} />

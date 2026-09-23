@@ -72,6 +72,46 @@ public class SqlPlaygroundService {
      * ayrı bir örneğe uygulanır; paylaşılan bean'e dokunulmaz. DataSource yoksa (mock) paylaşılan
      * bean'i olduğu gibi kullanır (setter ÇAĞRILMAZ).
      */
+    /**
+     * Bu servise ait bağlantıları JDBC seviyesinde salt-okunur açar.
+     *
+     * <p>Neden: metin kara-listesi (SELECT/WITH ile başlama, {@code into}/{@code merge}, yasak
+     * fonksiyonlar) TEK savunma olduğu sürece, kelime sınırlarını atlatan herhangi bir yazma
+     * yolu (alıntılı tanımlayıcı, ileride eklenen bir PG sözdizimi) doğrudan yazma demekti.
+     * {@code Connection.setReadOnly(true)} PostgreSQL'de {@code default_transaction_read_only}
+     * uygular: yazma girişimi artık UYGULAMADA değil VERİTABANINDA reddedilir.
+     *
+     * <p>Sınıf javadoc'undaki "{@code @Transactional(readOnly=true)} işe yaramaz" tespiti
+     * doğruydu (Hibernate yalnız flush'ı kapatır) — ama JDBC bayrağı onunla aynı şey değil ve
+     * atlanmıştı. Ayrı bir salt-okunur Postgres ROLÜ hâlâ ops tarafının işi; bu, onun yerine
+     * geçmez, önündeki katmandır.
+     *
+     * <p>Havuz (Hikari) bağlantıyı iade ederken {@code readOnly} bayrağını kendi varsayılanına
+     * geri çeker; uygulamanın geri kalanı etkilenmez.
+     */
+    static final class ReadOnlyDataSource extends org.springframework.jdbc.datasource.DelegatingDataSource {
+        ReadOnlyDataSource(javax.sql.DataSource target) { super(target); }
+
+        @Override
+        public java.sql.Connection getConnection() throws java.sql.SQLException {
+            return readOnly(super.getConnection());
+        }
+
+        @Override
+        public java.sql.Connection getConnection(String username, String password) throws java.sql.SQLException {
+            return readOnly(super.getConnection(username, password));
+        }
+
+        private java.sql.Connection readOnly(java.sql.Connection con) {
+            // Sürücü/havuz bayrağı reddederse (bazı sürücüler aktif tx'te atar) metin kapıları
+            // yerinde kalır — sorguyu düşürmektense savunmanın bir katmanını kaybederiz.
+            try { con.setReadOnly(true); } catch (java.sql.SQLException e) {
+                log.warn("SQL Playground bağlantısı salt-okunur yapılamadı: {}", e.toString());
+            }
+            return con;
+        }
+    }
+
     JdbcTemplate playgroundTemplate() {
         JdbcTemplate t = timedTemplate;
         if (t == null) {
@@ -80,7 +120,7 @@ public class SqlPlaygroundService {
                 if (t == null) {
                     javax.sql.DataSource ds = jdbcTemplate.getDataSource();
                     if (ds != null) {
-                        t = new JdbcTemplate(ds);
+                        t = new JdbcTemplate(new ReadOnlyDataSource(ds));
                         t.setQueryTimeout(QUERY_TIMEOUT_SEC);
                     } else {
                         t = jdbcTemplate;
@@ -193,11 +233,14 @@ public class SqlPlaygroundService {
      * {@code SELECT * INTO yeni_tablo FROM x} bu kapiyi geciyordu (SELECT ile baslar, tek
      * statement'tir) ve TABLO OLUSTURUYORDU — {@code into} artik kara-listede.
      *
-     * <p><b>Kalan is (ops).</b> Kesin guvence uygulama katmaninda degil DB'dedir: bu havuzun
-     * salt-okunur bir Postgres ROLU ile baglanmasi. JPA kullanildigi icin
-     * {@code @Transactional(readOnly = true)} JDBC baglantisini salt-okunur YAPMAZ (Hibernate
-     * yalnizca flush'i kapatir); hicbir sey yapmayan bir anotasyon yanlis guven verecegi icin
-     * bilerek EKLENMEDI. Guvenlik denetiminin "SQL RO rol" maddesi bu isi izliyor.
+     * <p><b>Ikinci kapi (2026-09-23).</b> Bu servisin baglantilari artik JDBC seviyesinde
+     * salt-okunur aciliyor ({@link ReadOnlyDataSource}): PostgreSQL bunu
+     * {@code default_transaction_read_only} olarak uygular, yani kara-listeyi atlatan bir yazma
+     * girisimini DB reddeder. {@code @Transactional(readOnly = true)} bunu YAPMAZ (Hibernate
+     * yalnizca flush'i kapatir) — o yuzden hala eklenmedi.
+     *
+     * <p><b>Kalan is (ops).</b> Kesin guvence yine de ayri bir salt-okunur Postgres ROLUDUR;
+     * guvenlik denetiminin "SQL RO rol" maddesi bu isi izlemeye devam ediyor.
      */
     public Map<String, Object> execute(String rawSql, String executedBy) {
         String sanitized = sanitize(rawSql);

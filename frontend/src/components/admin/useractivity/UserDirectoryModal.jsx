@@ -210,7 +210,7 @@ export default function UserDirectoryModal({ data, initial = {}, isAdmin, global
                       <span className={`uact-pill udir-tour--${r.tour_status || 'none'}`} title={`${t('uact.colTour')}${r.tour_at ? ' · ' + formatDateSec(r.tour_at) : ''}`}>{t('uact.colTour')}: {t(`uact.tour.${r.tour_status || 'none'}`)}</span>
                     </div>
                   </td>
-                  <td data-label={t('uact.colAction')} className="uact-actions">{busy === r.username ? <span className="sys-muted sys-small">…</span> : <KebabMenu items={menu(r)} label={t('uact.colAction')} />}</td>
+                  <td data-label={t('uact.colAction')} className="uact-actions">{busy === r.username ? <span className="sys-muted sys-small">…</span> : <KebabMenu items={menu(r)} label={t('uact.colAction')} rowLabel={r.username} />}</td>
                 </tr>
               )
             })}</tbody>

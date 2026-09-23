@@ -10,6 +10,10 @@ import com.sitemonitor.repository.UserPushDeliveryRepository;
 import com.sitemonitor.repository.UserPushScopeRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
+import org.springframework.core.annotation.Order;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PreDestroy;
@@ -581,6 +585,36 @@ public class UserPushService {
         d.setHttpStatus(null);
         d.setBatchId("requeue-" + d.getId() + "-" + System.currentTimeMillis());
         deliveryRepo.save(d);
+        worker.execute(this::drainOutbox);
+    }
+
+    /**
+     * Açılış süpürmesi — outbox sözleşmesini gerçekten tutan halka.
+     *
+     * <p>Sınıf javadoc'u "pod yeniden başlasa da PENDING satırlar durur" diyor; doğru, ama
+     * 2026-09-23'e kadar o satırları GERİ ALAN hiçbir tetik yoktu: {@code drainOutbox} yalnız
+     * {@code enqueue*} yollarından ve {@code fail()}'in BELLEKTEKİ {@code worker.schedule}
+     * timer'ından çağrılıyordu. Prod tek pod ve her sürüm bir restart demek — backoff beklerken
+     * ya da yeni yazılmışken yeniden başlayan bir pod, o satırları bir sonraki alarma kadar
+     * (sessiz bir gecede saatlerce) askıda bırakıyordu. Satır FAILED bile olmadığı için
+     * gönderim logunda "bekliyor" görünüyor, nöbetçinin telefonunda hiçbir şey yok.
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    @Order(400)
+    public void drainOnStartup() {
+        worker.execute(this::drainOutbox);
+    }
+
+    /**
+     * Periyodik ağ süpürmesi: bellekteki backoff timer'ı kaybolduysa (restart) ya da bir tur
+     * istisnayla düştüyse kuyruk burada geri alınır. {@code findTop50ByStatusOrderByIdAsc}
+     * idempotent; kuyruk boşsa tur bedava. Devre kesici açıkken atlanır — cooldown'ı zaten
+     * {@code drainOutbox}'ın kendi {@code schedule}'ı bekliyor, üstüne görev yığmayalım.
+     */
+    @Scheduled(fixedDelayString = "${site.monitor.userpush.outbox-sweep-ms:60000}",
+               initialDelayString = "${site.monitor.userpush.outbox-sweep-initial-ms:30000}")
+    void sweepOutbox() {
+        if (circuitOpen()) return;
         worker.execute(this::drainOutbox);
     }
 

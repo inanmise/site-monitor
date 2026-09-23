@@ -1128,7 +1128,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
               onClick={() => openDetail(m)}>
               <div className="upt-card-top">
                 {canManageRow(m) && (
-                  <input type="checkbox" className="upt-card-check" checked={bulkSel.has(m.id)} onChange={() => toggleBulk(m.id)} onClick={(e) => e.stopPropagation()} aria-label={t('bulk.selectOne')} />
+                  <input type="checkbox" className="upt-card-check" checked={bulkSel.has(m.id)} onChange={() => toggleBulk(m.id)} onClick={(e) => e.stopPropagation()} aria-label={t('bulk.selectOneFor', m.name)} />
                 )}
                 {statusBadge(m)}
                 {alarmBadge(m)}<MaintenanceBadge target={m.name} />
@@ -1287,7 +1287,20 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
                 renderRow={(c) => {
                   const isSel = selCheck?.id === c.id
                   return (<>
-                    <span className="upt-rt-time" style={{ cursor: 'pointer' }} onClick={() => setSelCheck(isSel ? null : c)}>{formatDateSec(c.checked_at)}</span>
+                    {/* Satırı AÇAN kontrol klavyeye ve ekran okuyucuya görünür olmalı: eskiden
+                        yalnız cursor:pointer taşıyan bir span'di, koşum detayı klavyeyle hiç
+                        açılamıyordu. Erişilebilir ad ZAMANI taşır — aynı durum art arda
+                        tekrarladığında satırlar birbirinden ancak böyle ayrılıyor (kardeş
+                        yüzey: HttpMonitorPage geçmiş satırı). Odak YALNIZ bu hücrede: dört
+                        hücrenin dördü de odaklanabilir olsaydı satır başına dört durak olurdu. */}
+                    <span className="upt-rt-time" style={{ cursor: 'pointer' }}
+                      role="button" tabIndex={0}
+                      aria-label={`${formatDateSec(c.checked_at)} · ${statusLabel(t, c.status)} — ${t('scripted.rowOpenAria')}`}
+                      onKeyDown={e => {
+                        if (e.key !== 'Enter' && e.key !== ' ') return
+                        e.preventDefault(); setSelCheck(isSel ? null : c)
+                      }}
+                      onClick={() => setSelCheck(isSel ? null : c)}>{formatDateSec(c.checked_at)}</span>
                     <span className={isPass(c.status) ? 'upt-rt-up' : isWarnLike(c.status) ? 'upt-rt-warn' : 'upt-rt-down'} style={{ cursor: 'pointer', fontWeight: isSel ? 700 : undefined }}
                       onClick={() => setSelCheck(isSel ? null : c)}>{statusLabel(t, c.status)}</span>
                     {/* Bu koşumun HANGİ sürümle yapıldığı. Boş olabilir ve bu MEŞRU: sürümleme
