@@ -1206,7 +1206,8 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                   isMarked={(y, w) => weekMarks[y]?.has(w) ?? false}
                   onViewYearChange={ensureMarks} />
               </div>
-              <button className="btn btn-secondary btn-sm-p" onClick={loadList}>
+              <button className="btn btn-secondary btn-sm-p" onClick={loadList}
+                title={t('app.refresh')} aria-label={t('app.refresh')}>
                 <RefreshCcw size={13} />
               </button>
               {!isAudit && (
@@ -1375,7 +1376,8 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                     <td data-label={t('wr.colSent')}>{r.sent_at ? formatDate(r.sent_at) : '—'}</td>
                     <td onClick={(e) => e.stopPropagation()}>
                       <div className="wr-menu-wrap">
-                        <button className="btn-sm" title={t('wr.actions')} aria-label={t('wr.actions')}
+                        <button className="btn-sm" title={t('wr.actions')}
+                          aria-label={`${formatWeekRange(r.report_year, r.week_no, lang)} — ${t('wr.actions')}`}
                           style={{ background: '#eef2f7', color: '#334155' }}
                           onClick={(e) => {
                             if (openMenuId === r.id) { setOpenMenuId(null); return }

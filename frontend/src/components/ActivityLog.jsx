@@ -262,7 +262,8 @@ export default function ActivityLog({ refreshTrigger }) {
             <input className="filter-input" placeholder={t('act.searchPh')} value={qInput}
               onChange={(e) => setQInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') applySearch() }} />
-            <button className="btn btn-secondary" onClick={applySearch}><Search size={14} /></button>
+            <button className="btn btn-secondary" onClick={applySearch}
+              title={t('act.search')} aria-label={t('act.search')}><Search size={14} /></button>
           </div>
           <div className="act-filter-actions">
             {anyFilter && <button className="act-stat-clear" onClick={clearAll}><X size={12} /> {t('act.clearFilter')}</button>}
@@ -323,7 +324,11 @@ export default function ActivityLog({ refreshTrigger }) {
                         <tm.Icon size={13} /> {row.monitor_type}
                       </span>
                       {/* Ad tıklanınca izlemeye gider (2026-09-20); satırın kalanı detayı açar */}
-                      <span className={`act-item-name${dest ? ' act-item-name--link' : ''}`} title={dest ? t('act.goMonitor') : row.monitor_name} onClick={dest ? go : undefined}>{row.monitor_name}</span>
+                      <span className={`act-item-name${dest ? ' act-item-name--link' : ''}`}
+                        title={dest ? t('act.goMonitor') : row.monitor_name}
+                        role={dest ? 'button' : undefined} tabIndex={dest ? 0 : undefined}
+                        onKeyDown={dest ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(e) } } : undefined}
+                        onClick={dest ? go : undefined}>{row.monitor_name}</span>
                       <span className="act-item-target" title={row.target}>{row.target}</span>
                       <span className="act-item-team">{row.team_id != null ? <TeamBadge teamId={row.team_id} teamName={row.team_name} static /> : <span className="sys-muted">—</span>}</span>
                       <span className="act-item-action">{t('act.ac.' + row.action)}</span>

@@ -284,8 +284,11 @@ export default function LoginIssueReports() {
             </thead>
             <tbody>
               {groupBySignature(rows).map((g) => (
-                <tr key={g.sig} onClick={() => openDetail(g.latestId)} style={{ cursor: 'pointer' }}
-                    title={t('loginIssues.groupOpenHint')}>
+                <tr key={g.sig} style={{ cursor: 'pointer' }} tabIndex={0}
+                    title={t('loginIssues.groupOpenHint')}
+                    aria-label={t('a11y.openRow', g.sig || String(g.count))}
+                    onClick={() => openDetail(g.latestId)}
+                    onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openDetail(g.latestId) } }}>
                   <td style={{ fontFamily: 'monospace', fontSize: 12.5, wordBreak: 'break-all' }}>{g.sig || '—'}</td>
                   <td>{g.count}</td>
                   <td>{g.users.join(', ')}</td>
@@ -314,7 +317,10 @@ export default function LoginIssueReports() {
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} onClick={() => openDetail(r.id)} style={{ cursor: 'pointer' }}>
+                <tr key={r.id} style={{ cursor: 'pointer' }} tabIndex={0}
+                  aria-label={t('a11y.openRow', r.refCode || r.id)}
+                  onClick={() => openDetail(r.id)}
+                  onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openDetail(r.id) } }}>
                   <td>{r.refCode}</td>
                   <td><SourceBadge source={r.source} t={t} />
                     {r.linkedReference &&
@@ -448,7 +454,10 @@ export default function LoginIssueReports() {
                         const info = mailStatusInfo(ml.status, t)
                         const open = openMail === i
                         const rows = [
-                          <tr key={i} onClick={() => setOpenMail(open ? null : i)} style={{ cursor: 'pointer' }}>
+                          <tr key={i} style={{ cursor: 'pointer' }} tabIndex={0}
+                            aria-label={t('a11y.toggleRow', mailTypeLabel(ml.mailType, t))}
+                            onClick={() => setOpenMail(open ? null : i)}
+                            onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setOpenMail(open ? null : i) } }}>
                             <td>{open ? '▾ ' : '▸ '}{mailTypeLabel(ml.mailType, t)}</td>
                             <td style={{ wordBreak: 'break-all' }}>
                               {ml.to || '—'}

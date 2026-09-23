@@ -24,6 +24,10 @@ export default function MonitorStatsBar({ items, activeFilter, onStatClick }) {
           <div
             key={item.key}
             className={`stat-item stat-item-${item.cls} stat-clickable${isActive ? ' stat-active' : ''}`}
+            role="button" tabIndex={0}
+            aria-pressed={isActive}
+            aria-label={isActive ? t('mondash.clearTip') : t('mondash.filterTip', item.label)}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onStatClick(item.key) } }}
             onClick={() => onStatClick(item.key)}
             title={[isActive ? t('mondash.clearTip') : t('mondash.filterTip', item.label), item.hint]
               .filter(Boolean).join(' — ')}

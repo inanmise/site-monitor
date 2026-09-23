@@ -102,11 +102,16 @@ geçiyor mu).
 Java testi) gerçek kullanıcı adı, gösterim adı ve posta yerel-adı duruyordu; proje geleneğindeki
 yer tutuculara çevrildi (`ali` / `Ali V` / `ali@example.com`, `ali.veli`). Toplam 22 geçiş.
 
-   Tarama ayrıca **üretimde** bir kalıntı buldu: `SchedulerService`'teki
-   `site.monitor.system-admin.email` `@Value` varsayılanı gerçek bir KİŞİSEL posta kutusuydu —
-   ayar (Ayarlar → Genel) boş bırakıldığında kurumsal izleme aracının ağ kesintisi bildirimleri
-   oraya gidiyordu. Aynı ayarın diğer sekiz tüketicisi zaten boş varsayılanla çalışıp gönderimi
-   atlıyordu; bu tek istisna kardeşleriyle hizalandı (varsayılan boş + adres yoksa gönderme).
+   Tarama ayrıca **üretim kaynağında** bir kalıntı buldu: `SchedulerService`'teki
+   `site.monitor.system-admin.email` `@Value` varsayılanı gerçek bir KİŞİSEL posta kutusuydu.
+
+   **Düzeltme: etki iddiası (2026-09-23, üçüncü tur).** İlk yazımda bu "ayar boşken bildirimler
+   oraya gidiyordu" diye anlatılmıştı; **yanlıştı**. `application.properties:582` özelliği
+   `${SYSTEM_ADMIN_EMAIL:}` ile BOŞ olarak tanımlıyor (üstündeki yorum riski açıkça anlatıyor),
+   yani özellik her zaman çözülüyor ve `@Value`'nun satır-içi varsayılanı prod'da HİÇ devreye
+   girmiyordu. Gerçek kusur çalışma anında yanlış teslimat değil, (a) kaynakta duran kimlik
+   bilgisi ve (b) sözleşme tutarsızlığı: diğer sekiz tüketici adres boşken gönderimi atlarken bu
+   iki yol atlamıyordu. İkisi de kapatıldı (varsayılan boş + adres yoksa gönderme).
 
    `IdentityLeakGuardTest.FORBIDDEN` iki yeni terimle genişletildi (kullanıcı adı ve noktalı
    ad.soyad). **Bilinçli olarak yasaklanmayanlar:** soyadın tek başı — GitHub handle'ı

@@ -106,6 +106,8 @@ export default function WeekDatePicker({
           {rows.map(({ week, days }) => (
             <div key={`${week.year}-${week.week}`}
               className={`wdp-row${isMarked?.(week.year, week.week) ? ' wdp-has-report' : ''}`}
+              role="button" tabIndex={0} aria-label={`${week.year} — ${week.week}`}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(days[0]) } }}
               onClick={() => pick(days[0])}>
               <span className="wdp-wk">
                 {week.week}

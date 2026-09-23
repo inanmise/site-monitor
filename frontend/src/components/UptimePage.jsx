@@ -406,7 +406,8 @@ export default function UptimePage({ systemRole }) {
                 <span className="upt-modal-domain">{selected.domain}</span>
                 <span className="upt-port-tag">:{selected.port}</span>
               </div>
-              <button className="upt-modal-close" onClick={closeModal}>
+              <button className="upt-modal-close" onClick={closeModal}
+                title={t('app.close')} aria-label={t('app.close')}>
                 <X size={18} />
               </button>
             </div>

@@ -39,6 +39,9 @@ export default function MonitorStatsSection({
     <>
       {hasMonitors && (
         <div className="stats-collapse-bar" onClick={onToggle}
+          role="button" tabIndex={0} aria-expanded={statsVisible}
+          aria-label={statsVisible ? t('app.collapseStats') : t('app.expandStats')}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle() } }}
           title={statsVisible ? t('app.collapseStats') : t('app.expandStats')}>
           <span className="stats-collapse-icon"><BarChart3 size={18} /></span>
           <span className="stats-collapse-label">{t('app.statistics')}</span>

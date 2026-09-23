@@ -104,6 +104,10 @@ export default function IncidentsPage({ systemRole }) {
     const key = SORTABLE[col]
     setSort(s => s.by === key ? { by: key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { by: key, dir: 'desc' })
   }
+  /** Ekran okuyucuya siralama YONU: gorsel ok (sortIcon) tek basina bu bilgiyi tasimiyordu. */
+  const ariaSort = (col) => (sort.by === SORTABLE[col]
+    ? (sort.dir === 'asc' ? 'ascending' : 'descending')
+    : 'none')
   const sortIcon = (col) => sort.by === SORTABLE[col]
     ? (sort.dir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : null
 
@@ -231,12 +235,18 @@ export default function IncidentsPage({ systemRole }) {
             <table className="admin-table inc-table">
               <thead>
                 <tr>
-                  <th className="inc-th-sort" onClick={() => toggleSort('status')}>{t('incov.colStatus')} {sortIcon('status')}</th>
+                  <th className="inc-th-sort" tabIndex={0} aria-sort={ariaSort('status')}
+                      onClick={() => toggleSort('status')}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSort('status') } }}>{t('incov.colStatus')} {sortIcon('status')}</th>
                   <th>{t('incov.colMonitor')}</th>
                   <th>{t('incov.colTeam')}</th>
-                  <th className="inc-th-sort" onClick={() => toggleSort('rootCause')}>{t('incov.colRootCause')} {sortIcon('rootCause')}</th>
+                  <th className="inc-th-sort" tabIndex={0} aria-sort={ariaSort('rootCause')}
+                      onClick={() => toggleSort('rootCause')}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSort('rootCause') } }}>{t('incov.colRootCause')} {sortIcon('rootCause')}</th>
                   <th>{t('incov.colComments')}</th>
-                  <th className="inc-th-sort" onClick={() => toggleSort('started')}>{t('incov.colStarted')} {sortIcon('started')}</th>
+                  <th className="inc-th-sort" tabIndex={0} aria-sort={ariaSort('started')}
+                      onClick={() => toggleSort('started')}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSort('started') } }}>{t('incov.colStarted')} {sortIcon('started')}</th>
                   <th>{t('incov.colDuration')}</th>
                   <th className="inc-th-actions">{t('incov.colActions')}</th>
                 </tr>

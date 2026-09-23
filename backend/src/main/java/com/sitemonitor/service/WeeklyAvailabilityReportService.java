@@ -29,9 +29,6 @@ import java.util.*;
 @Service
 public class WeeklyAvailabilityReportService {
 
-    /** Kurum saat dilimi — takvim günü kararları bu zona göre (proje konvansiyonu). */
-    private static final java.time.ZoneId ORG_ZONE = java.time.ZoneId.of("Europe/Istanbul");
-
     private static final ZoneId IST = ZoneId.of("Europe/Istanbul");
     private static final DateTimeFormatter UTC_ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -398,7 +395,7 @@ public class WeeklyAvailabilityReportService {
             // geride kalıyor ve 90 günlük pencerenin kenarındaki alan adı raporda bir hafta
             // daha "bitmiyor" görünüyordu. Kardeş yüzeyler (yenileme tahmini, zayıf algoritma)
             // kurum dilimini kullanıyor.
-            String today = java.time.LocalDate.now(ORG_ZONE).toString();
+            String today = java.time.LocalDate.now(IST).toString();   // sınıfın MEVCUT kurum-zonu sabiti
             List<EmailNotificationService.DomainExpiryWeeklyRow> rows = new ArrayList<>();
             int count = 0, unlocked = 0;
             for (com.sitemonitor.model.DomainMonitor m : domainMonitorRepo.findByActiveTrue()) {

@@ -186,6 +186,9 @@ export default function SqlPlayground() {
                 <span
                   className="sqlpg-table-chev"
                   onClick={(e) => { e.stopPropagation(); toggleTable(tbl.table_name) }}
+                  role="button" tabIndex={0}
+                  aria-label={`${tbl.table_name} — ${t('sql.toggleCols')}`}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); toggleTable(tbl.table_name) } }}
                   title={t('sql.toggleCols')}
                 >
                   {expandedTable === tbl.table_name
@@ -205,6 +208,9 @@ export default function SqlPlayground() {
                 <span
                   className="sqlpg-table-info"
                   onClick={(e) => openTableDetails(tbl.table_name, e)}
+                  role="button" tabIndex={0}
+                  aria-label={`${tbl.table_name} — ${t('sql.td.open')}`}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); openTableDetails(tbl.table_name, e) } }}
                   title={t('sql.td.open')}
                 >
                   <Table size={11} />

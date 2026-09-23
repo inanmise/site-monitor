@@ -409,7 +409,10 @@ export default function SmtpLogView({ onBack, initial }) {
               </thead>
               <tbody>
                 {rows.items.map((row) => (
-                  <tr key={row.id} className="smtp-log-row" onClick={() => setDetailId(row.id)}>
+                  <tr key={row.id} className="smtp-log-row" tabIndex={0}
+                    aria-label={t('a11y.openRow', formatDate(row.sent_at))}
+                    onClick={() => setDetailId(row.id)}
+                    onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setDetailId(row.id) } }}>
                     <td className="smtp-log-date sys-mono">{formatDate(row.sent_at)}</td>
                     <td>{row.team_name ? <span className="sml-stop" onClick={(e) => e.stopPropagation()}><TeamBadge teamId={row.team_id} teamName={row.team_name} /></span> : <span className="sys-muted">—</span>}</td>
                     <td className="smtp-log-domain sys-mono sys-small" title={row.domain || ''}>{row.domain || '—'}</td>

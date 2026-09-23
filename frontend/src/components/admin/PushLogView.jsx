@@ -327,7 +327,10 @@ export default function PushLogView({ onBack, initial }) {
               </thead>
               <tbody>
                 {rows.items.map((row) => (
-                  <tr key={row.id} className="smtp-log-row" onClick={() => setDetailId(row.id)}>
+                  <tr key={row.id} className="smtp-log-row" tabIndex={0}
+                    aria-label={t('a11y.openRow', formatDate(row.at))}
+                    onClick={() => setDetailId(row.id)}
+                    onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setDetailId(row.id) } }}>
                     <td className="smtp-log-date sys-mono">{formatDate(row.at)}</td>
                     <td>{row.team_name ? <span className="sml-stop" onClick={(e) => e.stopPropagation()}><TeamBadge teamId={row.team_id} teamName={row.team_name} /></span> : <span className="sys-muted">—</span>}</td>
                     <td><span className="sml-stop" onClick={(e) => e.stopPropagation()}><UserBadge username={row.username} displayName={row.display_name} inline size="sm" /></span></td>

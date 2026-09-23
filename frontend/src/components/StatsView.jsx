@@ -164,7 +164,9 @@ function TeamTierSection({ certs, teamStats, tierFilter, setTierFilter, teamFilt
         const cardActive = teamFilter?.label === team.name
         return (
           <div key={team.id} className={`ttg-card${cardActive ? ' ttg-card-active' : ''}`}>
-            <div className="ttg-header" onClick={() => handleTeamHeaderClick(team)}>
+            <div className="ttg-header" onClick={() => handleTeamHeaderClick(team)}
+              role="button" tabIndex={0} aria-label={team.name}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleTeamHeaderClick(team) } }}>
               <span className="ttg-team-name">{team.name}</span>
               <span className="ttg-team-total">{team.total} {t('ts.total')}</span>
             </div>
@@ -196,7 +198,10 @@ function TeamTierSection({ certs, teamStats, tierFilter, setTierFilter, teamFilt
                           <td
                             key={key}
                             className={`ts-grid-val-cell ts-cell-${key}${count > 0 ? ' ts-cell-active' : ' ts-cell-zero'}${selected ? ' ts-cell-selected' : ''}`}
+                            tabIndex={count > 0 ? 0 : undefined}
+                            aria-label={count > 0 ? `${team.name} — ${t(`ts.${key}`)}: ${count}` : undefined}
                             onClick={() => count > 0 && handleCellClick(team, row.tier, key)}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); count > 0 && handleCellClick(team, row.tier, key) } }}
                           >{count}</td>
                         )
                       })}
@@ -298,6 +303,9 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
       {/* ── Team × Tier cards (collapsible — matches Dashboard stats toggle) ── */}
       <div
         className="stats-collapse-bar"
+        role="button" tabIndex={0} aria-expanded={showTeamStats}
+        aria-label={showTeamStats ? t('sv.hideTeamStats') : t('sv.showTeamStats')}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowTeamStats((v) => !v) } }}
         onClick={() => setShowTeamStats((v) => !v)}
         title={showTeamStats ? t('sv.hideTeamStats') : t('sv.showTeamStats')}
       >
@@ -431,7 +439,10 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
               : cert.warning  ? t('tbl.statusWarning') : t('tbl.statusValid')
             const teamInfo    = domainMap[cert.domain]
             return (
-              <tr key={cert.domain} onClick={() => onRowClick?.(cert.domain)} style={{ cursor: 'pointer' }}>
+              <tr key={cert.domain} style={{ cursor: 'pointer' }} tabIndex={0}
+                aria-label={t('a11y.openRow', cert.domain)}
+                onClick={() => onRowClick?.(cert.domain)}
+                onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onRowClick?.(cert.domain) } }}>
                 <td><strong>{cert.domain}</strong></td>
                 <td className="sv-team-cell">
                   {teamInfo?.syTeams?.length

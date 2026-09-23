@@ -227,7 +227,9 @@ export default function RetentionSettings() {
   )
 
   const panelBar = (id, Icon, label, hint) => (
-    <div className="stats-collapse-bar" onClick={() => setOpenPanel(v => v === id ? null : id)}>
+    <div className="stats-collapse-bar" onClick={() => setOpenPanel(v => v === id ? null : id)}
+      role="button" tabIndex={0} aria-expanded={openPanel === id} aria-label={label}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenPanel(v => v === id ? null : id) } }}>
       <span className="stats-collapse-icon"><Icon size={18} /></span>
       <span className="stats-collapse-label">{label}</span>
       {openPanel !== id && hint ? <span className="stats-collapse-hint">{hint}</span> : null}
@@ -313,7 +315,10 @@ export default function RetentionSettings() {
         const dirty = pendingByClass[key] || 0
         return (
           <div className="stats-section" key={key}>
-            <div className="stats-collapse-bar" onClick={() => toggleClass(key)}>
+            <div className="stats-collapse-bar" onClick={() => toggleClass(key)}
+              role="button" tabIndex={0} aria-expanded={openClasses.has(key)}
+              aria-label={t(`ret.class.${key}`)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleClass(key) } }}>
               <span className="stats-collapse-icon"><Icon size={18} /></span>
               <span className="stats-collapse-label">{t(`ret.class.${key}`)}</span>
               <span className="ret-class-count">{list.length}</span>

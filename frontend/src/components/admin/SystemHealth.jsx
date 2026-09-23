@@ -476,7 +476,9 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
       )}
 
       {msg && (
-        <div className="sys-msg" onClick={() => setMsg(null)}>
+        <div className="sys-msg" onClick={() => setMsg(null)}
+          role="button" tabIndex={0} aria-label={t('app.close')}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setMsg(null) } }}>
           {msg} <span className="sys-msg-close">✕</span>
         </div>
       )}
@@ -484,6 +486,9 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
       <div className="stats-section">
         <div
           className="stats-collapse-bar"
+          role="button" tabIndex={0} aria-expanded={sysVisible}
+          aria-label={sysVisible ? t('app.collapseStats') : t('app.expandStats')}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSection('sys') } }}
           onClick={() => toggleSection('sys')}
           title={sysVisible ? t('app.collapseStats') : t('app.expandStats')}
         >
@@ -589,7 +594,9 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
 
         {/* Weekly availability email scheduler card */}
         {weeklyAvail && (
-          <div className="sys-card sys-card-clickable" onClick={openWaLogsModal} title={t('waLogs.clickHint')}>
+          <div className="sys-card sys-card-clickable" onClick={openWaLogsModal} title={t('waLogs.clickHint')}
+            role="button" tabIndex={0} aria-label={t('waLogs.clickHint')}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openWaLogsModal() } }}>
             <div className="sys-card-header">
               <div className="hb-title-row">
                 <svg className={`sched-icon ${waEnabled ? 'sched-icon-running' : 'sched-icon-idle'}`} viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -755,6 +762,8 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
         <div
           className={`sys-card sys-card-clickable${smtpHasAlarm ? ' sys-card-alarm' : ''}`}
           onClick={openSmtpModal}
+          role="button" tabIndex={0} aria-label={t('health.smtpClickHint')}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSmtpModal() } }}
           title={t('health.smtpClickHint')}
         >
           <div className="sys-card-header">
@@ -824,7 +833,10 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
           const alarm = rate != null && rate < 0.9
           const rateCls = rate == null ? '' : rate >= 0.95 ? 'sys-ok-text' : rate >= 0.8 ? 'sys-warn-text' : 'sys-err-text'
           return (
-            <div className={`sys-card sys-card-clickable${alarm ? ' sys-card-alarm' : ''}`} onClick={openPushView} title={t('pl.cardHint')} data-testid="push-card">
+            <div className={`sys-card sys-card-clickable${alarm ? ' sys-card-alarm' : ''}`} onClick={openPushView}
+              role="button" tabIndex={0} aria-label={t('pl.cardHint')}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPushView() } }}
+              title={t('pl.cardHint')} data-testid="push-card">
               <div className="sys-card-header">
                 <div className="hb-title-row">
                   <Webhook size={20} className={`push-card-icon${alarm ? ' is-alarm' : ''}`} aria-hidden="true" />
@@ -1058,6 +1070,9 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
         <div className="stats-section">
           <div
             className="stats-collapse-bar"
+            role="button" tabIndex={0} aria-expanded={httpVisible}
+            aria-label={httpVisible ? t('app.collapseStats') : t('app.expandStats')}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSection('http') } }}
             onClick={() => toggleSection('http')}
             title={httpVisible ? t('app.collapseStats') : t('app.expandStats')}
           >
@@ -1130,6 +1145,9 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
       <div className="stats-section">
         <div
           className="stats-collapse-bar"
+          role="button" tabIndex={0} aria-expanded={cpuVisible}
+          aria-label={cpuVisible ? t('app.collapseStats') : t('app.expandStats')}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSection('cpu') } }}
           onClick={() => toggleSection('cpu')}
           title={cpuVisible ? t('app.collapseStats') : t('app.expandStats')}
         >
@@ -1189,6 +1207,9 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
       <div className="stats-section">
         <div
           className="stats-collapse-bar"
+          role="button" tabIndex={0} aria-expanded={dbVisible}
+          aria-label={dbVisible ? t('app.collapseStats') : t('app.expandStats')}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSection('db') } }}
           onClick={() => toggleSection('db')}
           title={dbVisible ? t('app.collapseStats') : t('app.expandStats')}
         >
@@ -1212,6 +1233,9 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
           const kpi2 = (key, Icon, val, label, sub, variant, onClick) => (
             <div key={key}
               className={`uact-kpi${variant ? ' uact-kpi--' + variant : ''}${onClick ? ' is-clickable' : ''}`}
+              role={onClick ? 'button' : undefined} tabIndex={onClick ? 0 : undefined}
+              aria-label={onClick ? `${label}: ${val}` : undefined}
+              onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } } : undefined}
               onClick={onClick} title={onClick ? t('uact.detailHint') : undefined}>
               <span className="uact-kpi-icon"><Icon size={16} /></span>
               <span className="uact-kpi-val">{val}</span>
@@ -1403,6 +1427,9 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
       <div className="stats-section">
         <div
           className="stats-collapse-bar"
+          role="button" tabIndex={0} aria-expanded={usersVisible}
+          aria-label={usersVisible ? t('app.collapseStats') : t('app.expandStats')}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSection('users') } }}
           onClick={() => toggleSection('users')}
           title={usersVisible ? t('app.collapseStats') : t('app.expandStats')}
         >
@@ -1617,7 +1644,10 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
                   </thead>
                   <tbody>
                     {waLogs.map(row => (
-                      <tr key={row.id} className="smtp-log-row" onClick={() => openWaItem(row)}>
+                      <tr key={row.id} className="smtp-log-row" tabIndex={0}
+                          aria-label={t('a11y.openRow', formatDate(row.sent_at))}
+                          onClick={() => openWaItem(row)}
+                          onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openWaItem(row) } }}>
                         <td className="smtp-log-date sys-mono">{formatDate(row.sent_at)}</td>
                         <td>{row.team || '—'}</td>
                         <td>
@@ -1684,6 +1714,9 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
       <div className="stats-section">
         <div
           className="stats-collapse-bar"
+          role="button" tabIndex={0} aria-expanded={releasesVisible}
+          aria-label={releasesVisible ? t('app.collapseStats') : t('app.expandStats')}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSection('releases') } }}
           onClick={() => toggleSection('releases')}
           title={releasesVisible ? t('app.collapseStats') : t('app.expandStats')}
         >

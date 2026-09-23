@@ -150,7 +150,11 @@ export default function AdminChangeHistory({ resource, filter = null, onClearFil
                   return (
                     <Fragment key={r.id}>
                       <tr className={`aud-row${isOpen ? ' is-selected' : ''}`} aria-expanded={isOpen}
-                        onClick={() => parsed && setExpanded(isOpen ? null : r.id)} style={{ cursor: parsed ? 'pointer' : 'default' }}>
+                        tabIndex={parsed ? 0 : undefined}
+                        aria-label={parsed ? t('a11y.toggleRow', formatDateSec(r.at)) : undefined}
+                        onClick={() => parsed && setExpanded(isOpen ? null : r.id)}
+                        onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); parsed && setExpanded(isOpen ? null : r.id) } }}
+                        style={{ cursor: parsed ? 'pointer' : 'default' }}>
                         <td className="aud-col-chevron">{parsed ? (isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : null}</td>
                         <td className="audit-cell-time">{formatDateSec(r.at)}</td>
                         <td><span className={`audit-event-badge ${badgeClass(r.event_type)}`} title={r.event_type}>{actLabel(r.action)}</span></td>

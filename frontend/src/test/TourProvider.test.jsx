@@ -15,7 +15,6 @@ function Targets() {
       <button type="button" data-tour="nav-search">ara</button>
       <div data-tour="nav-inbox">inbox</div>
       <div data-tour="nav-user">user</div>
-      <button type="button" data-tour="nav-theme">tema</button>
       <div data-tour="dash-stats">stats</div>
       <div data-tour="dash-filters">filters</div>
       <button type="button" data-tour="check-now">check</button>

@@ -32,7 +32,6 @@ export const MAIN_STEPS = [
     advanceOn: { selector: '.palette-overlay' }, doIt: { click: 'nav-search' }, after: { closePalette: true } },
   { id: 'inbox',     target: 'nav-inbox', placement: 'right', since: 1, help: '14.2' },
   { id: 'user',      target: 'nav-user', placement: 'right', since: 1, help: '14.21' },
-  { id: 'theme',     target: 'nav-theme', placement: 'right', since: 1 },
   { id: 'help',      target: 'help-fab', placement: 'left', since: 1, help: '14.29' },
   { id: 'done',      center: true, since: 1, help: '14.30' },
 ]

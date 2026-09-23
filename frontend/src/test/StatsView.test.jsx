@@ -105,7 +105,8 @@ describe('StatsView — katlanabilir takım istatistikleri', () => {
 
     // Takım bölümündeki tıklanabilir ilk hücre/satır — bileşen yapısı değişse de
     // "açık bölümde etkileşim çalışıyor" iddiası korunur.
-    const clickable = document.querySelector('.sv-root [role="button"], .sv-root tbody tr, .sv-root .sv-team-row')
+    // Katlama çubuğu da role=button taşır (klavye erişimi) — onu seçmek bölümü geri kapatır.
+    const clickable = document.querySelector('.sv-root [role="button"]:not(.stats-collapse-bar), .sv-root tbody tr, .sv-root .sv-team-row')
     if (clickable) {
       await user.click(clickable)
       expect(onRowClick.mock.calls.length >= 0).toBe(true)
