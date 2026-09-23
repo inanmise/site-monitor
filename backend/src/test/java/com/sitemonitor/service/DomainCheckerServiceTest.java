@@ -72,7 +72,13 @@ class DomainCheckerServiceTest {
 
     // ── Transfer kilidi (K1) ─────────────────────────────────────────────────
 
-    private static final String FUTURE = java.time.LocalDate.now().plusDays(400) + "T00:00:00Z";
+    /* ZONE'SUZ now() cagrisi YOK (2026-09-23): DomainCheckerService.daysUntil beklenen tarihi
+       atStartOfDay(ZoneOffset.UTC) ile UTC gece yarısına sabitleyip Instant.now() ile farkı
+       floorDiv ediyor. Fixture zone'suz kalınca yerelde Europe/Istanbul, CI'da UTC okunuyor ve
+       plusDays(N) için hesaplanan kalan gün CI'da N-1, yerelde (00:00-03:00 arası) N çıkıyordu —
+       eşikler ya da fixture'lar bir adım kayınca "yerelde yeşil, CI'da kırmızı". Servis UTC gece
+       yarısına göre hesapladığı için doğrusu ZoneOffset.UTC. */
+    private static final String FUTURE = java.time.LocalDate.now(java.time.ZoneOffset.UTC).plusDays(400) + "T00:00:00Z";
 
     @Test
     @DisplayName("Kilit DÖRT durumlu: registry ve registrar kilidi AYRI raporlanır")
@@ -206,7 +212,7 @@ class DomainCheckerServiceTest {
         when(whois.anySourceEnabled()).thenReturn(true);   // socket=false ama tr-web=true
         Map<String, Object> w = new HashMap<>();
         w.put("source", "WHOIS");
-        w.put("expiry_date", LocalDate.now().plusDays(1175).toString());
+        w.put("expiry_date", LocalDate.now(java.time.ZoneOffset.UTC).plusDays(1175).toString());
         w.put("registrar", "İHS Kurumsal");
         when(whois.lookup("wingscard.com.tr")).thenReturn(w);
 
@@ -233,28 +239,28 @@ class DomainCheckerServiceTest {
     @Test
     @DisplayName("uzak bitiş + transfer kilidi → OK")
     void ok() {
-        when(rdap.lookup(eq("example.com"), any())).thenReturn(rdapOk(LocalDate.now().plusDays(200).toString(), List.of("client transfer prohibited")));
+        when(rdap.lookup(eq("example.com"), any())).thenReturn(rdapOk(LocalDate.now(java.time.ZoneOffset.UTC).plusDays(200).toString(), List.of("client transfer prohibited")));
         assertThat(svc.test("example.com", 30, 7).get("status")).isEqualTo("OK");
     }
 
     @Test
     @DisplayName("kritik eşiğe yakın bitiş → CRITICAL")
     void critical() {
-        when(rdap.lookup(eq("example.com"), any())).thenReturn(rdapOk(LocalDate.now().plusDays(3).toString(), List.of("client transfer prohibited")));
+        when(rdap.lookup(eq("example.com"), any())).thenReturn(rdapOk(LocalDate.now(java.time.ZoneOffset.UTC).plusDays(3).toString(), List.of("client transfer prohibited")));
         assertThat(svc.test("example.com", 30, 7).get("status")).isEqualTo("CRITICAL");
     }
 
     @Test
     @DisplayName("uyarı eşiği içinde → WARNING")
     void warning() {
-        when(rdap.lookup(eq("example.com"), any())).thenReturn(rdapOk(LocalDate.now().plusDays(20).toString(), List.of("client transfer prohibited")));
+        when(rdap.lookup(eq("example.com"), any())).thenReturn(rdapOk(LocalDate.now(java.time.ZoneOffset.UTC).plusDays(20).toString(), List.of("client transfer prohibited")));
         assertThat(svc.test("example.com", 30, 7).get("status")).isEqualTo("WARNING");
     }
 
     @Test
     @DisplayName("redemptionPeriod EPP → anında CRITICAL (bitiş uzak olsa da)")
     void redemptionPeriod() {
-        when(rdap.lookup(eq("example.com"), any())).thenReturn(rdapOk(LocalDate.now().plusDays(200).toString(), List.of("redemption period")));
+        when(rdap.lookup(eq("example.com"), any())).thenReturn(rdapOk(LocalDate.now(java.time.ZoneOffset.UTC).plusDays(200).toString(), List.of("redemption period")));
         Map<String, Object> r = svc.test("example.com", 30, 7);
         assertThat(r.get("status")).isEqualTo("CRITICAL");
         assertThat(r.get("epp_critical")).isEqualTo(true);
@@ -264,7 +270,7 @@ class DomainCheckerServiceTest {
     @DisplayName("registration alanları out'a akar: registrar_iana_id, dnssec, resolved_ips")
     @SuppressWarnings("unchecked")
     void registrationFieldsFlowThrough() {
-        Map<String, Object> info = rdapOk(LocalDate.now().plusDays(200).toString(), List.of("client transfer prohibited"));
+        Map<String, Object> info = rdapOk(LocalDate.now(java.time.ZoneOffset.UTC).plusDays(200).toString(), List.of("client transfer prohibited"));
         info.put("registrar_iana_id", "292");
         info.put("dnssec", "signed");
         when(rdap.lookup(eq("example.com"), any())).thenReturn(info);

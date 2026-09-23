@@ -146,7 +146,10 @@ describe('KeywordMonitorPage', () => {
       slowResponseEnabled: true, slowThresholdMs: 4500,
       intervalSeconds: 900, timeoutMs: 8000,
       confirmAttempts: 5, confirmIntervalSeconds: 45, recoveryChecks: 4, recoveryIntervalSeconds: 90,
-      customHeaders: 'X-Api-Key: abc',
+      // customHeaders KOPYALANMAZ (O7, 2026-09-23): alan artık şifreli saklanıyor ve API düz
+      // değeri döndürmüyor, dolayısıyla kopya onu taşıyamaz. Kardeşi PageSpeedMonitorPage da
+      // aynısını yapıyor (formFrom: customHeaders '', basicAuthPass '') — sırlar write-only'dir.
+      // Yeni kopyaya başlık gerekiyorsa yönetici yeniden yazar.
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
       // Bildirim grubu da kopyalanir: kopya, kaynagin alarmini ALAN ekibe gitsin.
       notificationGroupId: 7,

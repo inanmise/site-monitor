@@ -716,7 +716,8 @@ public class EmailNotificationService {
         sb.append("<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:0 0 16px;font-size:14px'>");
         sb.append(adminRow("Zaman penceresi", escHtml(r.windowStart()) + " → " + escHtml(r.windowEnd()) + " (UTC)"));
         sb.append(adminRow("Toplam başarısız login", String.valueOf(r.total())));
-        sb.append(adminRow("Önceki dönem ort.", r.baselineAvgPerWindow() + " / " + r.windowMinutes() + " dk pencere"));
+        sb.append(adminRow("Önceki dönem ort.",
+                FailedLoginAnomalyService.fmt1(r.baselineAvgPerWindow()) + " / " + r.windowMinutes() + " dk pencere"));
         sb.append("</table>");
 
         int n = (r.hits() == null) ? 0 : r.hits().size();
@@ -1869,6 +1870,57 @@ public class EmailNotificationService {
         return sb.toString();
     }
 
+    /** Duz-metin partlarinda satir sonu. Kacissiz sabit: kaynak uretimi sirasinda "\n" kacisinin
+     *  cokmesi bu dosyayi bir kez derlenemez hale getirdi; Character.toString(10) o riski kaldirir. */
+    private static final String NL = Character.toString(10);
+
+    /** Fırtına alarmının düz-metin karşılığı (multipart/alternative ikinci partı). */
+    public String buildStormAlertText(int monitorCount, String scopeLabel, String rootCauseLabel,
+                                      String startedAt, List<String> sampleTargets, int truncatedExtra) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("ALARM FIRTINASI — ").append(monitorCount).append(" monitör birden erişilemez").append(NL).append(NL);
+        sb.append("Kapsam: ").append(nz(scopeLabel)).append(NL);
+        sb.append("Ortak kök-neden: ").append(nz(rootCauseLabel)).append(NL);
+        sb.append("Başlangıç: ").append(fmtOrDash(formatIstanbul(startedAt))).append(NL);
+        sb.append(stormTargetsText(sampleTargets, truncatedExtra, "ETKİLENEN MONİTÖRLER"));
+        String cta = stormCtaUrl();
+        if (!cta.isBlank()) sb.append(NL).append("Olayları aç: ").append(cta).append(NL);
+        return sb.toString();
+    }
+
+    /** Fırtına çözümünün düz-metin karşılığı. */
+    public String buildStormRecoveryText(int recoveredCount, int stillDownCount, String scopeLabel,
+                                         String startedAt, String resolvedAt,
+                                         List<String> sampleTargets, int truncatedExtra,
+                                         List<String> stillDownTargets) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("ÇÖZÜLDÜ — alarm fırtınası sona erdi (").append(recoveredCount)
+          .append(" monitör kurtarıldı)").append(NL).append(NL);
+        sb.append("Kapsam: ").append(nz(scopeLabel)).append(NL);
+        sb.append("Başlangıç: ").append(fmtOrDash(formatIstanbul(startedAt))).append(NL);
+        sb.append("Çözülme: ").append(fmtOrDash(formatIstanbul(resolvedAt))).append(NL);
+        sb.append("Toplam süre: ").append(formatOutageDuration(startedAt, resolvedAt)).append(NL);
+        sb.append(stormTargetsText(sampleTargets, truncatedExtra, "KURTARILAN MONİTÖRLER"));
+        if (stillDownCount > 0) {
+            sb.append(NL).append("HÂLÂ ERİŞİLEMEYEN (").append(stillDownCount).append("):").append(NL);
+            sb.append(stormTargetsText(stillDownTargets, 0, null));
+        }
+        String cta = stormCtaUrl();
+        if (!cta.isBlank()) sb.append(NL).append("Olayları aç: ").append(cta).append(NL);
+        return sb.toString();
+    }
+
+    private static String nz(String v) { return v == null || v.isBlank() ? "-" : v; }
+
+    private static String stormTargetsText(List<String> targets, int truncatedExtra, String heading) {
+        StringBuilder sb = new StringBuilder();
+        if (heading != null) sb.append(NL).append(heading).append(":").append(NL);
+        if (targets == null || targets.isEmpty()) sb.append("  (liste yok)").append(NL);
+        else for (String t : targets) sb.append("  - ").append(t).append(NL);
+        if (truncatedExtra > 0) sb.append("  ... ve ").append(truncatedExtra).append(" monitör daha").append(NL);
+        return sb.toString();
+    }
+
     /**
      * Toplu alarm fırtınası e-postası — {@code monitorCount} monitör birden erişilemez.
      * StormService promotion (INITIAL) + günlük toplu re-alert (DAILY_REALERT) bunu kullanır.
@@ -2512,8 +2564,25 @@ public class EmailNotificationService {
         return sendHtml(to, cc, subject, html, inline, force, null);
     }
 
+    /**
+     * {@code plainText} dolu ise mail {@code multipart/alternative} (düz metin + HTML) gider.
+     *
+     * <p>Bireysel alarm/çözüm mailleri bunu zaten yapıyordu ({@code sendAlert}: setText(text, html)),
+     * {@code sendHtml} hunisi ise YALNIZ HTML part üretiyordu. Düz metine düşen istemci ya da
+     * kurumsal gateway'de fırtına maili (ürünün en kritik bildirimi) boş görünüyordu.
+     */
+    public String sendHtml(String[] to, String[] cc, String subject, String html, String plainText,
+                           List<InlineImage> inline, boolean force, List<MailAttachment> attachments) {
+        return sendHtmlInternal(to, cc, subject, html, plainText, inline, force, attachments);
+    }
+
     public String sendHtml(String[] to, String[] cc, String subject, String html,
                            List<InlineImage> inline, boolean force, List<MailAttachment> attachments) {
+        return sendHtmlInternal(to, cc, subject, html, null, inline, force, attachments);
+    }
+
+    private String sendHtmlInternal(String[] to, String[] cc, String subject, String html, String plainText,
+                                    List<InlineImage> inline, boolean force, List<MailAttachment> attachments) {
         if (!force && !isEnabled()) {
             log.info("⚠ Email devre dışı — TO={} CC={} | KONU={}",
                     Arrays.toString(to), Arrays.toString(cc != null ? cc : new String[0]), subject);
@@ -2527,7 +2596,8 @@ public class EmailNotificationService {
             if (cc != null && cc.length > 0) helper.setCc(cc);
             applyFrom(helper);
             helper.setSubject(subject);
-            helper.setText(html, true);
+            if (plainText != null && !plainText.isBlank()) helper.setText(plainText, html);
+            else helper.setText(html, true);
             boolean brandAttached = false;
             if (inline != null) {
                 for (InlineImage img : inline) {
@@ -4211,8 +4281,14 @@ public class EmailNotificationService {
         return "<div style='margin:0 0 14px'>" + whyReceivingInner(teamNames) + "</div>";
     }
 
+    /** Kardeş {@code EmailTemplateBuilder.esc} ve {@code MailCta.esc} ile AYNI küme: tek tırnak da
+     *  kaçırılır. Bu dosyada href/src öznitelikleri TEK tırnakla yazılıyor
+     *  ({@code "<a href='" + escHtml(...) + "'"}) ve değer kullanıcının girdiği monitör URL'i;
+     *  içinde tek tırnak geçen (tamamen geçerli) bir URL özniteliği kapatıp alarm mailinin
+     *  başlığını bozuyor, linki kırıyor ve öznitelik enjeksiyonuna açık bırakıyordu. */
     private static String escHtml(String s) {
         if (s == null) return "";
-        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace("\"", "&quot;").replace("'", "&#39;");
     }
 }

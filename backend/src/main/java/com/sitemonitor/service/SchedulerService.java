@@ -86,6 +86,10 @@ public class SchedulerService {
     private final EscalationService escalationService;
     private final MaintenanceService maintenanceService;
     private final CertificateInventoryRepository inventoryRepo;
+
+    /** Keyword özel başlıklarının şifreli kaynağı — alan enjeksiyonu (constructor/test büyütmemek için). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private KeywordHeaderSecrets keywordHeaderSecrets;
     private final LatestCheckRepository latestCheckRepo;
     private final AlertThresholdRepository thresholdRepo;
     private final JdbcTemplate jdbcTemplate;
@@ -667,6 +671,10 @@ public class SchedulerService {
         // (doğrudan). ddl-auto da ekler; açık patch proje geleneği (idempotent, kolon varsa noop).
         patch("ALTER TABLE http_monitors ADD COLUMN use_proxy VARCHAR(10)");
         patch("ALTER TABLE keyword_monitors ADD COLUMN use_proxy VARCHAR(10)");
+        // Keyword özel başlıkları ŞİFRELİ kolona taşınıyor (kardeşi pagespeed_monitors ile
+        // aynı desen). Düz kolon göç kaynağı olarak DURUYOR; KeywordHeaderSecrets açılışta
+        // bir kez şifreleyip onu NULL'lar.
+        patch("ALTER TABLE keyword_monitors ADD COLUMN custom_headers_enc TEXT");
         patch("ALTER TABLE page_monitors ADD COLUMN use_proxy VARCHAR(10)");
         patch("ALTER TABLE pagespeed_monitors ADD COLUMN use_proxy VARCHAR(10)");
         patch("ALTER TABLE scripted_checks ADD COLUMN via_proxy BOOLEAN");
@@ -1363,6 +1371,31 @@ public class SchedulerService {
 
         warnIfIndexMissing("uq_pm_host_port");
         warnIfIndexMissing("uq_dnsm_domain");
+
+        // KULLANICI YOLU (D11): yedi izleme türünde mükerrer koruması YALNIZ uygulama katmanındaydı
+        // (existsDuplicate + save, tx'siz) ve tabloların HİÇBİRİNDE karşılık gelen UNIQUE indeks
+        // yoktu. "Ekle" düğmesine çift tıklama / ağ tekrarında iki istek existsDuplicate'i aynı
+        // anda false okuyup ikisi de yazıyor → aynı takımda aynı hedef için İKİ monitör, iki
+        // alarm, iki bildirim. Kıyas: certificate_inventory.domain DB'de unique olduğu için
+        // envanter bu yarışa kapalı. İndeks kuralı existsDuplicate'in AYNISIDIR: (takım, LOWER(hedef)).
+        //
+        // NOT: yukarıdaki port/dns yolundan farklı olarak burada mergeDuplicates ÇAĞRILMIYOR —
+        // mevcut mükerrerleri sessizce birleştirmek kullanıcının kasıtlı kayıtlarını yok edebilir.
+        // Veri kirliyse CREATE UNIQUE INDEX başarısız olur, warnIfIndexMissing bunu logda söyler
+        // ve ops elle temizler; indeks kurulana kadar davranış bugünküyle AYNI kalır (regresyon yok).
+        uniqueMonitorTarget("uq_httpm_team_url",    "http_monitors",      "url");
+        uniqueMonitorTarget("uq_kwm_team_url",      "keyword_monitors",   "url");
+        uniqueMonitorTarget("uq_pagem_team_url",    "page_monitors",      "url");
+        uniqueMonitorTarget("uq_psm_team_url",      "pagespeed_monitors", "url");
+        uniqueMonitorTarget("uq_domm_team_domain",  "domain_monitors",    "domain");
+        uniqueMonitorTarget("uq_pingm_team_host",   "ping_monitors",      "host");
+    }
+
+    /** (team_id, LOWER(hedef)) benzersizliği — existsDuplicate kuralının DB karşılığı. */
+    private void uniqueMonitorTarget(String indexName, String table, String targetCol) {
+        patch("CREATE UNIQUE INDEX IF NOT EXISTS " + indexName
+            + " ON " + table + "(team_id, LOWER(" + targetCol + "))");
+        warnIfIndexMissing(indexName);
     }
 
     /**
@@ -2381,11 +2414,24 @@ public class SchedulerService {
         Instant now = Instant.now();
         List<Map<String, Object>> due = new ArrayList<>(domains.size());
         int skipped = 0;
+        // TOPLU okuma: eskiden alan başına ayrı findById atılıyordu. Metot saatlik sweep'ten VE
+        // 5 DAKİKADA BİR koşan stale sweep'inden çağrılıyor; 1000 domain'in çoğuna alan-başına
+        // sıklık verildiğinde bu, 5 dakikada bir ~1000 tekil SELECT demekti. Tek pod / 100
+        // eşzamanlı kullanıcı kısıtında bedava önlenebilir bir yük. Desen: enrich* teamNameMap.
+        List<String> needLookup = new ArrayList<>();
+        for (Map<String, Object> d : domains) {
+            Integer hours = (Integer) d.get("check_interval_hours");
+            if (hours != null && hours > 1 && d.get("domain") != null) needLookup.add((String) d.get("domain"));
+        }
+        Map<String, String> checkedAtByDomain = new HashMap<>();
+        if (!needLookup.isEmpty()) {
+            for (var lc : latestCheckRepo.findAllById(needLookup))
+                if (lc.getDomain() != null) checkedAtByDomain.put(lc.getDomain(), lc.getCheckedAt());
+        }
         for (Map<String, Object> d : domains) {
             Integer hours = (Integer) d.get("check_interval_hours");
             if (hours == null || hours <= 1) { due.add(d); continue; }
-            String checkedAt = latestCheckRepo.findById((String) d.get("domain")).map(lc -> lc.getCheckedAt()).orElse(null);
-            Instant last = parseIsoInstant(checkedAt);
+            Instant last = parseIsoInstant(checkedAtByDomain.get((String) d.get("domain")));
             // 5 dk tolerans: cron tam saatte, kontrol birkaç sn sürer — "23 sa 59 dk" yüzünden bir tur kaçmasın.
             if (last == null || !last.plus(hours, ChronoUnit.HOURS).minus(5, ChronoUnit.MINUTES).isAfter(now)) due.add(d);
             else skipped++;
@@ -2872,7 +2918,7 @@ public class SchedulerService {
      *  HTTP hatası → ok=false (down). {"status","error"} döner. */
     private Map<String, Object> recheckKeyword(KeywordMonitor m) {
         int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000;
-        Map<String, Object> r = keywordCheckerService.check(m.getUrl(), m.getKeyword(), timeout, m.getCustomHeaders(),
+        Map<String, Object> r = keywordCheckerService.check(m.getUrl(), m.getKeyword(), timeout, keywordHeaderSecrets.effectiveHeaders(m),
                 Boolean.TRUE.equals(m.getCaseSensitive()), viaProxyFor(m.getUrl(), m.getUseProxy()));
         boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
         int count = r.get("count") instanceof Number cn ? cn.intValue() : (found ? 1 : 0);
@@ -3920,8 +3966,14 @@ public class SchedulerService {
      * BREACH işaretiyle ikinci kez KALICI yazılır — "geçen salı neden yavaşladı" sorusu sonradan da
      * cevaplanabilsin diye. İhlal SÜRERKEN tekrar dondurulmaz (bkz. gövdedeki gerekçe).
      */
-    private void writeResourceBreakdown(com.sitemonitor.model.PageSpeedMonitor m, PageSpeedCheck pc,
-                                        PageSpeedCheckerService.Result res, String ts, boolean wasBreached) {
+    @org.springframework.transaction.annotation.Transactional
+    void writeResourceBreakdown(com.sitemonitor.model.PageSpeedMonitor m, PageSpeedCheck pc,
+                                PageSpeedCheckerService.Result res, String ts, boolean wasBreached) {
+        // SİL + YAZ TEK TX: deleteByMonitorIdAndKeepReason kendi @Transactional'ı ile ayrı commit
+        // ediyordu; saveAll düşerse (yüzlerce satır, bağlantı/timeout) LATEST kırılımı ZATEN
+        // silinmiş oluyor ve çağıran istisnayı log.warn ile yutuyordu → "Kaynak Kırılımı" ekranı
+        // bir sonraki BAŞARILI kontrole kadar boş, kullanıcıya hiçbir hata gösterilmiyordu.
+        // Metodun kendi yorumu boş-kaynak yolunu kapatmış, yazma hatası yolunu açık bırakmıştı.
         // Kırılım YOKSA (sayfa alınamadı / yapılandırma hatası) mevcut LATEST satırlarına DOKUNULMAZ.
         // Önce silip sonra dönmek, tek bir başarısız kontrolde son iyi kırılımı KALICI olarak
         // siliyordu — yani kullanıcı "bozulmadan önce sayfa neye benziyordu" diye baktığı ANDA
@@ -4547,7 +4599,7 @@ public class SchedulerService {
         out.put("threshold_ms", th);
         if (!Boolean.TRUE.equals(m.getSlowResponseEnabled())) { out.put("status", "up"); return out; }
         int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000;
-        Map<String, Object> r = keywordCheckerService.check(m.getUrl(), m.getKeyword(), timeout, m.getCustomHeaders(),
+        Map<String, Object> r = keywordCheckerService.check(m.getUrl(), m.getKeyword(), timeout, keywordHeaderSecrets.effectiveHeaders(m),
                 Boolean.TRUE.equals(m.getCaseSensitive()), viaProxyFor(m.getUrl(), m.getUseProxy()));
         Long ms = r.get("response_ms") instanceof Number n ? n.longValue() : null;
         if (ms != null) out.put("response_ms", ms);

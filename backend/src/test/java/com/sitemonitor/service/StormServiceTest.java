@@ -80,6 +80,14 @@ class StormServiceTest {
         return e;
     }
 
+    /** Alıcısı OLAN takım: fırtına maili artık yalnız adresi olan takıma kuruluyor (takım başına
+     *  bölme, Y11). Adres stub'lanmazsa hiçbir mail gitmez ve "tek toplu alarm" iddiası boşa döner. */
+    private void teamWithEmail(long id) {
+        com.sitemonitor.model.Team t = new com.sitemonitor.model.Team();
+        t.setId(id); t.setName("Takım A"); t.setEmail("takim@example.com");
+        when(teamRepo.findById(id)).thenReturn(java.util.Optional.of(t));
+    }
+
     private void enabledAccountWide() {
         when(appSettings.getBoolean(eq(StormService.KEY_ENABLED), anyBoolean())).thenReturn(true);
         when(appSettings.getBoolean(eq(StormService.KEY_PER_GROUP), anyBoolean())).thenReturn(false);
@@ -192,6 +200,7 @@ class StormServiceTest {
         when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(), any(), any(), any(), any(), any()))
                 .thenReturn(1);   // biz oluşturduk (kazanan)
 
+        teamWithEmail(7L);
         AlertEvent e = down(1, EscalationService.TYPE_HTTP_DOWN, 7L);
         assertThat(storm.evaluate(e, null)).isEqualTo(StormService.StormAction.SUPPRESSED);
         assertThat(e.getStormId()).isEqualTo(200L);
@@ -232,6 +241,7 @@ class StormServiceTest {
         when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(), any(), any(), any(), any(), any()))
                 .thenReturn(1);
 
+        teamWithEmail(7L);
         for (int i = 1; i <= 5; i++) {
             AlertEvent e = down(i, EscalationService.TYPE_HTTP_DOWN, 7L);
             assertThat(storm.evaluate(e, null)).isEqualTo(StormService.StormAction.SUPPRESSED);
@@ -424,13 +434,124 @@ class StormServiceTest {
         m.setAlertLevel("WARNING"); m.setTeamId(7L);   // 2026-09-19: varsayılan seviye; CRITICAL seçilseydi kontaklar eklenirdi
 
         org.springframework.test.util.ReflectionTestUtils.invokeMethod(
-                storm, "resolveRecipients", java.util.List.of(m));
+                storm, "resolveDispatches", java.util.List.of(m));
 
         // Takım-özel tipte kontak deposuna HİÇ gidilmemeli (müdür eklenmez).
         verify(contactRepo, org.mockito.Mockito.never()).findByActiveTrueOrderByRoleAsc();
         verify(contactRepo, org.mockito.Mockito.never()).findByTeamIdAndActiveTrueOrderByRoleAsc(org.mockito.ArgumentMatchers.anyLong());
         // Envanter araması da yapılmamalı (teamOnly dalında hiç okunmaz).
         verify(inventoryRepo, org.mockito.Mockito.never()).findByDomain(org.mockito.ArgumentMatchers.anyString());
+    }
+
+    // ── Denetim 8. tur (2026-09-23): kanal paritesi + takım izolasyonu ──────────
+
+    /** Fırtına yolunda push kanalı HİÇ yoktu; alan enjeksiyonu olduğu için testte elle bağlanır. */
+    private UserPushService wirePush() {
+        UserPushService push = org.mockito.Mockito.mock(UserPushService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(storm, "userPushService", push);
+        return push;
+    }
+
+    private void wireObjectMapper() {
+        org.springframework.test.util.ReflectionTestUtils.setField(
+                storm, "objectMapper", new com.fasterxml.jackson.databind.ObjectMapper());
+    }
+
+    @Test
+    @DisplayName("Y9: fırtına PUSH da gönderir — yalnız push kullanan nöbetçi eskiden hiçbir bildirim almıyordu")
+    void storm_alsoPushes() {
+        wireObjectMapper();
+        teamWithEmail(7L);
+        UserPushService push = wirePush();
+
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                storm, "sendStormAlert", storm(299L),
+                java.util.List.of(down(1, EscalationService.TYPE_HTTP_DOWN, 7L),
+                                  down(2, EscalationService.TYPE_HTTP_DOWN, 7L)), "INITIAL");
+
+        // StormService'in bağımlılık listesinde UserPushService HİÇ yoktu: ürünün en ciddi
+        // olayında (12 monitör birden düştü) yalnız kişi-push'u kullanan kişi susuyordu.
+        verify(push, times(1)).enqueueTeamNotice(eq(7L), eq("STORM"), eq("CRITICAL"),
+                eq("STORM"), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Y9: fırtına ÇÖZÜMÜ de push gönderir — açılışın aynası")
+    void stormRecovery_alsoPushes() {
+        wireObjectMapper();
+        teamWithEmail(7L);
+        UserPushService push = wirePush();
+        AlertEvent recovered = down(1, EscalationService.TYPE_HTTP_DOWN, 7L);
+
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                storm, "sendStormRecovery", storm(298L),
+                java.util.List.of(recovered), java.util.List.<AlertEvent>of());
+
+        verify(push, times(1)).enqueueTeamNotice(eq(7L), eq("STORM_RESOLVED"), eq("INFO"),
+                eq("STORM"), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Y11: ACCOUNT kapsamlı fırtınada her takım YALNIZ kendi host'larını görür")
+    void storm_perTeamTargetsDoNotLeakAcrossTeams() {
+        wireObjectMapper();
+        com.sitemonitor.model.Team a = new com.sitemonitor.model.Team();
+        a.setId(7L); a.setName("Takım A"); a.setEmail("a@example.com");
+        com.sitemonitor.model.Team b = new com.sitemonitor.model.Team();
+        b.setId(8L); b.setName("Takım B"); b.setEmail("b@example.com");
+        when(teamRepo.findById(7L)).thenReturn(java.util.Optional.of(a));
+        when(teamRepo.findById(8L)).thenReturn(java.util.Optional.of(b));
+
+        AlertEvent m7 = down(1, EscalationService.TYPE_HTTP_DOWN, 7L);   // host1.example.com
+        AlertEvent m8 = down(2, EscalationService.TYPE_HTTP_DOWN, 8L);   // host2.example.com
+
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                storm, "sendStormAlert", storm(300L), java.util.List.of(m7, m8), "INITIAL");
+
+        // Takım A'nın mailindeki liste yalnız host1, Takım B'ninki yalnız host2 olmalı.
+        org.mockito.ArgumentCaptor<java.util.List<String>> targets = org.mockito.ArgumentCaptor.captor();
+        verify(emailService, times(2)).buildStormAlertHtml(eq(2), any(), any(), any(), targets.capture(), anyInt());
+        assertThat(targets.getAllValues().get(0)).containsExactly("host1.example.com");
+        assertThat(targets.getAllValues().get(1)).containsExactly("host2.example.com");
+    }
+
+    @Test
+    @DisplayName("Y10: izlemenin E-posta kanalı KAPALIYSA fırtına maili de gitmez — push etkilenmez")
+    void storm_respectsMailDisabledStamp() {
+        wireObjectMapper();
+        UserPushService push = wirePush();
+        teamWithEmail(7L);
+        AlertEvent m = down(1, EscalationService.TYPE_HTTP_DOWN, 7L);
+        m.setContextJson("{\"mail_disabled\":true}");
+
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                storm, "sendStormAlert", storm(301L), java.util.List.of(m), "INITIAL");
+
+        // Bireysel yol bu damgayı okuyup maili atlıyordu; fırtına yolu contextJson'a hiç bakmıyordu.
+        verify(emailService, org.mockito.Mockito.never())
+                .buildStormAlertHtml(anyInt(), any(), any(), any(), any(), anyInt());
+        // Kanal bağımsızlığı: mail bastırması push'u SUSTURMAZ.
+        verify(push, times(1)).enqueueTeamNotice(eq(7L), eq("STORM"), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("O26: fırtına özelliği kapatılınca kurtulan üyeler toplu ÇÖZÜLDÜ bildirimini alır")
+    void disband_sendsRecoveryForAlreadyRecoveredMembers() {
+        wireObjectMapper();
+        teamWithEmail(7L);
+        AlertStorm st = storm(302L);
+        AlertEvent stillDown = down(1, EscalationService.TYPE_HTTP_DOWN, 7L);
+        AlertEvent recovered = down(2, EscalationService.TYPE_HTTP_DOWN, 7L);
+        when(alertEventRepo.findByStormIdAndResolvedFalse(302L)).thenReturn(java.util.List.of(stillDown));
+        when(alertEventRepo.findByStormId(302L)).thenReturn(java.util.List.of(stillDown, recovered));
+
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(storm, "disband", st);
+
+        // Eskiden disband yalnız hâlâ-down üyeleri geri bağlayıp storm'u sessizce kapatıyordu:
+        // kurtulan üyelerin bireysel çözüm maili zaten bastırılmış olduğu için o takımlar
+        // "düştü" mailini alıp "düzeldi"yi hiç almıyordu.
+        verify(emailService, times(1)).buildStormRecoveryHtml(
+                eq(1), eq(1), any(), any(), any(), any(), anyInt(), any());
     }
 
     @Test

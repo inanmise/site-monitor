@@ -52,6 +52,8 @@ public class CaAutoPinService {
     /** recordTrustFailure → drain penceresi (redirect hedefinin pinlenebilmesi için). */
     private static final long FAILURE_WINDOW_MS = 10_000;
     private static final int  MAX_MAP_ENTRIES   = 10_000;
+    /** recentTrustFailures tavanı — aşılınca pencere dışı girdiler atılır (clear DEĞİL). */
+    private static final int  MAX_FAILURE_ENTRIES = 1_000;
     private static final int  FETCH_TIMEOUT_SEC = 8;
 
     private final CertificateCheckerService certificateCheckerService;
@@ -75,7 +77,21 @@ public class CaAutoPinService {
                     return size() > MAX_MAP_ENTRIES;
                 }
             });
-    private final ConcurrentHashMap<String, Long>    recentTrustFailures = new ConcurrentHashMap<>();
+    /**
+     * Güven hatası kaydının anahtarı — KAYNAK alt sistem dâhil.
+     *
+     * <p>Kaynak olmadan altı alt sistem (http-check, webhook, user-push, rdap, rdap-expiry,
+     * tr-whois) tek havuza yazıyordu ve havuzu yalnız HTTP kontrolü okuyordu: webhook çıkışında
+     * oluşan bir PKIX hatası, ilgisiz bir HTTP monitör kontrolü tarafından {@code "http-check"}
+     * gerekçesiyle TOFU pinleniyordu. Bir alt sistemin güven kararı başka alt sistem adına
+     * üretilemez.
+     *
+     * <p>Bileşik anahtar dizeye PAKETLENMEZ (ayırıcı ya host içindeki bir karakterle çakışır ya
+     * kontrol baytına dönüşür) — record anahtar, projenin {@code SourceControlCharTest} kuralı.
+     */
+    public record TrustFailureKey(String source, String host, int port) {}
+
+    private final ConcurrentHashMap<TrustFailureKey, Long> recentTrustFailures = new ConcurrentHashMap<>();
 
     public boolean isEnabled() {
         return appSettings.getBoolean(ENABLED_KEY, true);
@@ -178,22 +194,48 @@ public class CaAutoPinService {
         }
     }
 
-    /** Handshake reddi anında TM tarafından çağrılır — retry yolunun redirect hedefini de pinleyebilmesi için. */
-    public void recordTrustFailure(String host, int port) {
+    /**
+     * Handshake reddi anında TM tarafından çağrılır — retry yolunun redirect hedefini de
+     * pinleyebilmesi için. {@code source} çağıran alt sistemi adlandırır ve kaydı ona bağlar.
+     */
+    public void recordTrustFailure(String source, String host, int port) {
         if (host == null || host.isBlank()) return;
-        if (recentTrustFailures.size() > 1_000) recentTrustFailures.clear();
-        recentTrustFailures.put(key(normalizeHost(host), port), System.currentTimeMillis());
+        long now = System.currentTimeMillis();
+        // Tavanda clear() DEĞİL, yaşlıları at: clear eşzamanlı bir kontrolün az önce yazdığı
+        // kaydı da siliyordu. Pencere zaten 10 sn, prune tavanı pratikte hiç zorlamaz.
+        if (recentTrustFailures.size() > MAX_FAILURE_ENTRIES)
+            recentTrustFailures.entrySet().removeIf(e -> now - e.getValue() > FAILURE_WINDOW_MS);
+        recentTrustFailures.put(
+                new TrustFailureKey(source == null ? "" : source, normalizeHost(host), port), now);
     }
 
-    /** Son {@value #FAILURE_WINDOW_MS} ms içindeki güven hatası hedeflerini ("host:port") boşaltarak döner. */
-    public Set<String> drainRecentTrustFailures() {
+    /**
+     * Verilen kaynağın {@code watermark}'tan SONRA kaydettiği güven hatası hedefleri ("host:port").
+     *
+     * <p><b>Yıkıcı DEĞİL.</b> Eskiden iterator ile her girdiyi siliyordu (üstelik zaman
+     * filtresinden ÖNCE), oysa HTTP sweep'i monitörleri {@code certCheckExecutor} üzerinde
+     * PARALEL koşturuyor: aynı anda düşen iki monitörden birinin thread'i diğerinin kaydını da
+     * alıp götürüyordu. Kaydı çalınan monitör {@code pinned=false} ile kalıyor, tekrar
+     * denenmiyor ve CA az önce pinlenmiş olmasına rağmen o tur HTTP_DOWN yazıyordu — sessiz
+     * yanlış alarm. Mükerrer pinleme zaten {@link #PIN_RATE_LIMIT_MS} ile no-op olduğundan
+     * silmeye gerek yok; temizliği pencere + prune yapar.
+     *
+     * @param watermark çağıranın kontrole BAŞLARKEN aldığı {@code System.currentTimeMillis()}
+     */
+    public Set<String> recentTrustFailuresSince(String source, long watermark) {
         long now = System.currentTimeMillis();
+        String src = source == null ? "" : source;
         Set<String> out = new HashSet<>();
-        for (var it = recentTrustFailures.entrySet().iterator(); it.hasNext(); ) {
-            var en = it.next();
-            it.remove();
-            if (now - en.getValue() <= FAILURE_WINDOW_MS) out.add(en.getKey());
+        for (var en : recentTrustFailures.entrySet()) {
+            TrustFailureKey k = en.getKey();
+            if (!src.equals(k.source())) continue;              // başka alt sistemin kaydı
+            long at = en.getValue();
+            if (at < watermark) continue;                       // bu kontrolden ÖNCE yazılmış
+            if (now - at > FAILURE_WINDOW_MS) continue;         // bayat
+            out.add(key(k.host(), k.port()));
         }
+        // Bayatları temizle (pencere dışı) — harita sınırsız büyümesin.
+        recentTrustFailures.entrySet().removeIf(e -> now - e.getValue() > FAILURE_WINDOW_MS);
         return out;
     }
 

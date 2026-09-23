@@ -1671,6 +1671,7 @@ export const TR = {
   'hist.filterChanged':  'Değişenler',
   'hist.exportCsvHint':  'Seçili aralık + filtreyle geçmişi CSV indir',
   'hist.live':           'Canlı',
+  'hist.liveStale':      'son yenileme başarısız',
   'hist.liveHint':       'Bu görünüm 30 saniyede bir otomatik yenilenir',
   'hist.alertTriggered': 'Alarm tetiklendi',
   'hist.alertResolved':  'Alarm çözüldü',
@@ -7177,6 +7178,9 @@ export const TR = {
   'keyword.urlHint':    'Şema yazmazsanız https:// eklenir (alandan çıkınca gösterilir); http:// gerekiyorsa elle düzeltin.',
   'keyword.customHeaders': 'Özel HTTP Header (cache busting)',
   'keyword.customHeadersPh': 'Örn: Cache-Control: no-cache',
+  'keyword.customHeadersSet': 'tanımlı',
+  'keyword.customHeadersHint': 'Satır başına "Ad: değer". Yalnız yöneticiler düzenleyebilir: serbest başlık, iç servislere doğru bir yetki yüzeyi açar. Şifreli saklanır, değerleri arayüze dönmez.',
+  'keyword.customHeadersSavedHint': 'Kayıtlı başlıklar: {0}. Değiştirmek için yeniden yazın; boş bırakırsanız mevcut değerler korunur.',
   'keyword.reqSettings':     'İstek Ayarları',
   'keyword.cacheBusting':    'Cache busting',
   'keyword.cbOn':            'Açık ({timestamp} var)',
@@ -8157,6 +8161,10 @@ export const TR = {
     'Ne işe yarar: Başarısız bir push için yapılacak en fazla yeniden deneme sayısı.\nFaydası: Anlık bir ağ hatası yüzünden bildirim kaybolmaz.\nÖnerilen değer: 2 (varsayılan); izinli aralık 0-5. Yüksek değerler, sağlayıcı gerçekten kapalıysa gecikmeyi büyütür.',
   'help.set.site.monitor.userpush.role-groups':
     'Ne işe yarar: Hangi rol gruplarının push alacağını, her gruba giren org rollerini ve asgari seviyesini tanımlayan JSON yapılandırması. Eşleşme yalnız org rolüyle yapılır; unvan metni okunmaz.\nFaydası: Alıcı listesi elle tutulmaz; dizin verisi değiştikçe kendiliğinden güncellenir.\nÖnerilen değer: Yukarıdaki kartlardan düzenleyin. Asgari seviyeyi UYARI\'ya çekmek bildirim hacmini ciddi biçimde artırır.',
+  'help.set.site.monitor.userpush.template.cert':
+    'Ne işe yarar: SERTİFİKA KUSURU (cert) push mesajının metin şablonu; süslü parantezli yer tutucular gönderim anında doldurulur (örn. {ad}, {ip}, {cn}, {neden}).\nFaydası: Sertifika sorunu "yanıt vermiyor" DEĞİLDİR — host gayet iyi cevap veriyor olabilir; ayrı şablon nöbetçiyi doğru yere bakmaya yönlendirir.\nÖnerilen değer: {ip} ve {cn} kanıttır, sebepten ÖNCE gelmeli — 200 karakter tavanında ilk düşen kuyruktur. Boş bırakılırsa gömülü varsayılan şablon kullanılır.',
+  'help.set.site.monitor.userpush.template.degraded':
+    'Ne işe yarar: BOZUK AMA AYAKTA (degraded) push mesajının metin şablonu; sayfa bütünlüğü ve çözülemeyen alan adı durumu gibi, hedefin erişilebilir olduğu ama sonucun bozuk olduğu alarmlarda kullanılır.\nFaydası: Bu tipler eskiden "yanıt vermiyor" şablonuna düşüyordu; sayfa ayaktayken erişim sorunu demek nöbetçiyi ağ tarafına yönlendirip teşhisi geciktiriyordu.\nÖnerilen değer: Tek satır, 200 karakterin altında tutun. Metin "erişilemiyor" ya da "yanıt vermiyor" İÇERMEMELİ. Boş bırakılırsa gömülü varsayılan kullanılır.',
   'help.set.site.monitor.userpush.template.changed':
     'Ne işe yarar: DEĞİŞİKLİK (changed) push mesajının metin şablonu; süslü parantezli yer tutucular gönderim anında doldurulur (örn. {ad}, {hedef}, {degisen}).\nFaydası: Mesaj kurumunuzun diline uyarlanır; kullanıcı bildirimi açmadan ne olduğunu anlar.\nÖnerilen değer: Tek satır, 200 karakterin altında tutun — telefon bildirimi uzun metni keser. Boş bırakılırsa gömülü varsayılan şablon kullanılır.',
   'help.set.site.monitor.userpush.template.down':
@@ -9907,6 +9915,7 @@ export const EN = {
   'hist.filterChanged':  'Changed',
   'hist.exportCsvHint':  'Download history as CSV with the selected range + filter',
   'hist.live':           'Live',
+  'hist.liveStale':      'last refresh failed',
   'hist.liveHint':       'This view auto-refreshes every 30 seconds',
   'hist.alertTriggered': 'Alert triggered',
   'hist.alertResolved':  'Alert resolved',
@@ -15396,6 +15405,9 @@ export const EN = {
   'keyword.urlHint':    'If you omit the scheme, https:// is added (shown when you leave the field); switch to http:// manually if needed.',
   'keyword.customHeaders': 'Custom HTTP headers (cache busting)',
   'keyword.customHeadersPh': 'e.g. Cache-Control: no-cache',
+  'keyword.customHeadersSet': 'set',
+  'keyword.customHeadersHint': 'One "Name: value" per line. Administrators only: an arbitrary header opens a route into internal services. Stored encrypted; the values never come back to this screen.',
+  'keyword.customHeadersSavedHint': 'Stored headers: {0}. Retype them to change them; leave the field blank and the existing values are kept.',
   'keyword.reqSettings':     'Request Settings',
   'keyword.cacheBusting':    'Cache busting',
   'keyword.cbOn':            'On ({timestamp} present)',
@@ -16376,6 +16388,10 @@ export const EN = {
     'What it does: The maximum number of retries for a failed push.\nBenefit: A momentary network error does not lose the notification.\nRecommended: 2 (the default), within an allowed 0-5. Higher values simply add delay when the provider really is down.',
   'help.set.site.monitor.userpush.role-groups':
     'What it does: The JSON configuration defining which role groups receive push, which org roles belong to each group, and its minimum severity. Matching is by org role only; job titles are ignored.\nBenefit: The recipient list is not maintained by hand; it follows the directory as it changes.\nRecommended: Edit it through the cards above. Dropping a group\'s minimum severity to warning increases volume considerably.',
+  'help.set.site.monitor.userpush.template.cert':
+    'What it does: The text template for the certificate-fault (cert) push message; the placeholders in braces are filled in at send time (e.g. {ad}, {ip}, {cn}, {neden}).\nBenefit: A certificate fault is not the same as being unreachable — the host may be answering perfectly well, so a separate template points the on-call engineer at the right thing.\nRecommended: {ip} and {cn} are the evidence and should come before the reason, since the tail is the first thing lost at the 200-character limit. Left empty, the built-in default template is used.',
+  'help.set.site.monitor.userpush.template.degraded':
+    'What it does: The text template for the degraded push message, used where the target is reachable but the result is wrong — page-integrity problems and domain statuses that cannot be resolved.\nBenefit: These types used to fall back to the outage template; saying a page is unreachable while it is serving sends the on-call engineer to the network and delays the diagnosis.\nRecommended: Keep it to one line under about 200 characters, and do not use wording such as "unreachable" or "not responding". Left empty, the built-in default is used.',
   'help.set.site.monitor.userpush.template.changed':
     'What it does: The text template for the change (changed) push message; the placeholders in braces are filled in at send time (e.g. {ad}, {hedef}, {degisen}).\nBenefit: The wording fits your organisation, and people understand the situation without opening the notification.\nRecommended: Keep it to one line under about 200 characters — phone notifications truncate. Left empty, the built-in default template is used.',
   'help.set.site.monitor.userpush.template.down':

@@ -35,6 +35,18 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @org.springframework.context.annotation.Import(com.sitemonitor.service.CheckHistoryService.class)
 class MonitoringControllerTest {
 
+    /**
+     * Vade planı fixture'ı — UZAK gelecek.
+     *
+     * <p>Eskiden sabit "2026-10-15" yazıyordu ve iddia {@code renewal_overdue = false} idi.
+     * Üretim tarafı bunu canlı {@code now()} ile karşılaştırdığı için 2026-10-16'dan itibaren
+     * iddia düşüyor: ÜRETİM KODUNA TEK SATIR DOKUNULMADAN süit kırmızıya dönüyordu (kayan
+     * pencereye karşı sabit fixture = zaman bombası). Doğru yazım emsali
+     * WeeklyAvailabilityReportServiceTest: "2000-01-01" — hep geçmiş, güvenli yön.
+     */
+    private static final String FUTURE_PLAN_DATE = "2099-01-15";
+
+
     @Autowired MockMvc mvc;
 
     /** Saklama süreleri katalogdan okunur; kontrat testinde mock yeter (varsayılan 0 → fallback kullanılır). */
@@ -63,6 +75,8 @@ class MonitoringControllerTest {
     @MockitoBean com.sitemonitor.service.PermissionService permissionService;
 
     @MockitoBean KeywordMonitorRepository keywordMonitorRepo;
+    /** O7: keyword özel başlıkları şifreli saklanıyor; denetleyici düz değeri bu servisten alır. */
+    @MockitoBean com.sitemonitor.service.KeywordHeaderSecrets keywordHeaderSecrets;
     @MockitoBean KeywordResultRepository keywordResultRepo;
     @MockitoBean com.sitemonitor.service.KeywordCheckerService keywordChecker;
     @MockitoBean PingMonitorRepository pingMonitorRepo;
@@ -1151,7 +1165,7 @@ class MonitoringControllerTest {
     }
 
     @Test
-    @DisplayName("POST /keyword: yanıt custom_headers + recovery_checks + recovery_interval_seconds taşır; interval clamp (5→10)")
+    @DisplayName("POST /keyword: özel başlıklar ŞİFRELİ yazılır ve DÜZ DÖNMEZ; recovery alanları + interval clamp (5→10)")
     void createKeyword_returnsHeadersAndRecoveryFields_withClamp() throws Exception {
         when(keywordMonitorRepo.save(any(com.sitemonitor.model.KeywordMonitor.class)))
                 .thenAnswer(a -> { com.sitemonitor.model.KeywordMonitor k = a.getArgument(0); k.setId(11L); return k; });
@@ -1161,9 +1175,13 @@ class MonitoringControllerTest {
                 .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://x.example.com\",\"keyword\":\"foo\",\"operator\":\"GTE\",\"matchCount\":1,\"teamId\":3," +
                         "\"customHeaders\":\"Cache-Control: no-cache\",\"recoveryChecks\":4,\"recoveryIntervalSeconds\":5}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.custom_headers").value("Cache-Control: no-cache"))
+                // O7 (2026-09-23): düz değer ARTIK DÖNMÜYOR — alana Authorization/X-Api-Key
+                // yazılıyor ve uç yalnız monitoring.read istiyordu. Yazma şifreli servise gider.
+                .andExpect(jsonPath("$.data.custom_headers").doesNotExist())
                 .andExpect(jsonPath("$.data.recovery_checks").value(4))
                 .andExpect(jsonPath("$.data.recovery_interval_seconds").value(10)); // clampInterval(5) → 10
+
+        verify(keywordHeaderSecrets).store(any(com.sitemonitor.model.KeywordMonitor.class), eq("Cache-Control: no-cache"));
     }
 
     @Test
@@ -3842,16 +3860,17 @@ class MonitoringControllerTest {
         last.setMonitorId(7L); last.setSource("RDAP"); last.setExpiryDate("2026-11-22T00:00:00Z"); last.setStatus("OK");
         when(domainCheckRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(7L, "NONE")).thenReturn(Optional.of(last));
         when(domainCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(7L)).thenReturn(Optional.of(last));
-        when(domainRenewalPlans.plan(any(), eq("2026-10-15"), eq("not"), eq("2026-11-22T00:00:00Z"), any())).thenAnswer(i -> {
+        when(domainRenewalPlans.plan(any(), eq(FUTURE_PLAN_DATE), eq("not"), eq("2026-11-22T00:00:00Z"), any())).thenAnswer(i -> {
             com.sitemonitor.model.DomainMonitor x = i.getArgument(0);
-            x.setRenewalPlannedAt("2026-10-15"); x.setRenewalPlannedByName("Ops"); x.setRenewalPlannedNote("not");
+            x.setRenewalPlannedAt(FUTURE_PLAN_DATE); x.setRenewalPlannedByName("Ops"); x.setRenewalPlannedNote("not");
             return x;
         });
 
         mvc.perform(post("/api/monitoring/domain/7/renewal-plan").session(session("ADMIN"))
-                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"date\":\"2026-10-15\",\"note\":\"not\"}"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"date\":\"" + FUTURE_PLAN_DATE + "\",\"note\":\"not\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.renewal_planned_at").value("2026-10-15"))
+                .andExpect(jsonPath("$.data.renewal_planned_at").value(FUTURE_PLAN_DATE))
                 .andExpect(jsonPath("$.data.renewal_planned_by").value("Ops"))
                 .andExpect(jsonPath("$.data.renewal_overdue").value(false));
         // Denetim izi (AuditCoverageTest kapısı, regresyon 62): plan koyma MONITOR_RENEWAL_PLANNED yazar

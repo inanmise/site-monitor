@@ -77,10 +77,29 @@ public class KeywordMonitor implements MonitorAlertPrefs, MonitorSchedule {
     @Column(name = "recovery_interval_seconds")
     private Integer recoveryIntervalSeconds = 30;
 
-    /** Cache busting: satır başına "Name: Value" özel HTTP header'ları (ör. Cache-Control: no-cache).
-     *  URL'de {timestamp} placeholder'ı her kontrolde güncel Unix saniye ile değiştirilir. */
+    /**
+     * ESKİ, DÜZ METİN kolon — yalnız tek seferlik göçün kaynağı. Yeni yazımlar
+     * {@link #customHeadersEnc} alanına gider; göç sonrası bu kolon NULL'lanır.
+     *
+     * @deprecated {@link #customHeadersEnc} kullanın.
+     */
+    @Deprecated
     @Column(name = "custom_headers", columnDefinition = "TEXT")
     private String customHeaders;
+
+    /**
+     * Satır başına "Name: Value" özel HTTP header'ları (ör. Cache-Control: no-cache) — ŞİFRELİ.
+     * URL'de {@code {timestamp}} yer tutucusu her kontrolde güncel Unix saniye ile değiştirilir.
+     *
+     * <p>Şifreli saklanmasının sebebi kardeşi {@code PageSpeedMonitor.customHeadersEnc} ile aynı:
+     * buraya en sık yazılan şey {@code Authorization: Bearer …} / {@code X-Api-Key: …} türünden
+     * bir kimlik jetonudur. Düz saklanırsa hem veritabanında hem değişiklik geçmişi anlık
+     * görüntülerinde hem SQL Playground çıktılarında okunabilir hâlde durur — ve liste API'si
+     * değeri AYNEN döndürdüğü için takımın (ve müdürün görüş alanındaki) herkes okuyabiliyordu.
+     * API bu alanı asla düz döndürmez; yalnız başlık ADLARI görünür.
+     */
+    @Column(name = "custom_headers_enc", columnDefinition = "TEXT")
+    private String customHeadersEnc;
 
     /** Büyük/küçük harf DUYARLI eşleşme (varsayılan false = duyarsız). */
     @Column(name = "case_sensitive")

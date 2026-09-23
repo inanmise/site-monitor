@@ -279,14 +279,14 @@ public class WeeklyAvailabilityReportService {
     public AvailabilitySummary weeklyUptime(Long teamId, Window w, Integer tierOnly) {
         List<CertificateInventory> domains =
                 inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(teamId);
+        Map<String, Integer> certDays = certDaysByDomain(domains);
         List<AvailabilityRow> rows = new ArrayList<>();
         for (CertificateInventory inv : domains) {
             if (tierOnly != null && !tierOnly.equals(inv.getTier())) continue;
             int port = inv.getPort() != null ? inv.getPort() : 443;
             List<UptimeCheck> checks = uptimeCheckRepo
                     .findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(inv.getDomain(), port, w.fromUtc(), w.toUtc());
-            Integer certDays = latestCheckRepo.findById(inv.getDomain()).map(LatestCheck::getDaysRemaining).orElse(null);
-            rows.add(computeRow(inv.getDomain(), checks, w.windowEnd(), certDays));
+            rows.add(computeRow(inv.getDomain(), checks, w.windowEnd(), certDays.get(inv.getDomain())));
         }
         return summarize(rows);
     }
@@ -321,15 +321,32 @@ public class WeeklyAvailabilityReportService {
     }
 
     /** Tek takım için availability satırlarını hesaplar, HTML + konu + çözülmüş alıcıları kurar (GÖNDERMEZ). */
+    /**
+     * Domain → kalan sertifika günü, TEK sorguda.
+     *
+     * <p>Eskiden döngü içinde domain başına {@code latestCheckRepo.findById} atılıyordu: 200
+     * domain'li bir takımın haftalık raporu ~200 ek tekil SELECT demekti ve
+     * {@code WeeklyReportKpiService} bunu EKRAN İSTEĞİ içinde çağırıyor — N+1 kullanıcı
+     * isteğinde patlıyordu. Desen: enrich* teamNameMap toplu-haritası.
+     */
+    private Map<String, Integer> certDaysByDomain(List<CertificateInventory> domains) {
+        List<String> keys = new ArrayList<>();
+        for (CertificateInventory inv : domains) if (inv.getDomain() != null) keys.add(inv.getDomain());
+        Map<String, Integer> out = new HashMap<>();
+        if (keys.isEmpty()) return out;
+        for (LatestCheck lc : latestCheckRepo.findAllById(keys))
+            if (lc.getDomain() != null) out.put(lc.getDomain(), lc.getDaysRemaining());
+        return out;
+    }
+
     TeamReport buildTeamReport(Team team, Window w, List<CertificateInventory> domains) {
+        Map<String, Integer> certDays = certDaysByDomain(domains);
         List<AvailabilityRow> rows = new ArrayList<>();
         for (CertificateInventory inv : domains) {
             int port = inv.getPort() != null ? inv.getPort() : 443;
             List<UptimeCheck> checks = uptimeCheckRepo
                     .findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(inv.getDomain(), port, w.fromUtc(), w.toUtc());
-            Integer certDays = latestCheckRepo.findById(inv.getDomain())
-                    .map(LatestCheck::getDaysRemaining).orElse(null);
-            rows.add(computeRow(inv.getDomain(), checks, w.windowEnd(), certDays));
+            rows.add(computeRow(inv.getDomain(), checks, w.windowEnd(), certDays.get(inv.getDomain())));
         }
         // En kötü availability üstte (null = veri yok, en sona)
         rows.sort(Comparator.comparing(r -> r.availabilityPct() == null ? Double.MAX_VALUE : r.availabilityPct()));

@@ -153,6 +153,33 @@ class MonitoringWeeklyStatsServiceTest {
     }
 
     @Test
+    @DisplayName("compute: ÖLÇÜMSÜZ kontroller ağırlıklı ortalamanın paydasına girmez — down monitör raporu iyileştiremez")
+    void compute_avgMsIgnoresUnmeasuredChecks() {
+        // Y7 (2026-09-23): AVG NULL'ları ATLAR, COUNT saymaz. Payda `total` iken hafta boyu down duran
+        // bir monitör (AVG=NULL, COUNT=1000) paydayı şişirip ortalamayı aşağı çekiyordu: rapor
+        // 266,7 ms yazıyordu, doğrusu 400 ms. Yani ne kadar çok monitör düşerse yanıt süresi o kadar
+        // "iyi" görünüyordu. Beşinci kolon = ölçümlü satır sayısı.
+        long teamId = 5L;
+        stubWindows();
+        when(httpMonitorRepo.findByActiveTrue()).thenReturn(List.of(
+                http(1, "saglikli-1", teamId), http(2, "saglikli-2", teamId), http(3, "hafta-boyu-down", teamId)));
+        when(httpCheckRepo.weeklyStatsByMonitor(anyList(), any(), any())).thenAnswer(i ->
+                curFrom.equals(i.getArgument(1))
+                        ? rows(new Object[]{1L, 1000L, 1000L, 400.0, 1000L},
+                               new Object[]{2L, 1000L, 1000L, 400.0, 1000L},
+                               new Object[]{3L, 1000L, 0L, null, 0L})
+                        : rows());
+        when(alertEventRepo.countFilteredByType(any(), any(), any(), any(), any(), any(), anyBoolean(), anyList()))
+                .thenAnswer(i -> rows());
+
+        var http = service.compute(teamId, isoYear, isoWeek).types().stream()
+                .filter(t -> t.type().equals("http")).findFirst().orElseThrow();
+        assertThat(http.totalChecks()).isEqualTo(3000);   // toplam DEĞİŞMEZ — oran hâlâ tüm kontrolleri sayar
+        assertThat(http.successRate()).isEqualTo(66.7);
+        assertThat(http.extra()).isEqualTo(400.0);        // eski kod: 266.7
+    }
+
+    @Test
     @DisplayName("compute: DNS/Port ENVANTER-TÜREVİ monitörler (teamId=null) takım envanter domain'inden kapsanır")
     void compute_dnsPortInventoryDerivedScoping() {
         long teamId = 7L;

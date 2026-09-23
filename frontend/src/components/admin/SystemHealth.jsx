@@ -137,6 +137,9 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
   const [releasing, setReleasing]     = useState(false)
   const [triggering, setTriggering]   = useState(false)
   const fastPollRef  = useRef(null)
+  // Watchdog timer'i da REF'te: id saklanmadigi icin iptal edilemiyor, unmount'ta
+  // temizlenmiyor ve KUSAK bilgisi olmadan fastPollRef.current'i clearInterval ediyordu.
+  const watchdogRef  = useRef(null)
   const seenRunning  = useRef(false)
   const [msg, setMsg]                 = useState(null)
   const [modalChart, setModalChart]   = useState(null)
@@ -199,7 +202,10 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
   }, [canViewUserActivity])
 
   useVisibleInterval(load, 30000)   // gizli sekmede polling durur
-  useEffect(() => () => { if (fastPollRef.current) clearInterval(fastPollRef.current) }, [])   // scan fast-poll temizliği
+  useEffect(() => () => {                                   // scan fast-poll + watchdog temizliği
+    if (fastPollRef.current) clearInterval(fastPollRef.current)
+    if (watchdogRef.current) clearTimeout(watchdogRef.current)
+  }, [])
 
 
   // Veritabanı analitiği — DB bölümü açıkken / pencere değişince çek
@@ -346,8 +352,9 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
 
   const startScanPoll = useCallback((prevLastRun) => {
     if (fastPollRef.current) clearInterval(fastPollRef.current)
+    if (watchdogRef.current) clearTimeout(watchdogRef.current)
     seenRunning.current = false
-    fastPollRef.current = setInterval(async () => {
+    const myTimer = setInterval(async () => {
       const res = await api.admin.getSystemHealth()
       if (!res?.success) return
       setHealth(res.data)
@@ -358,13 +365,19 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
       const done = (seenRunning.current && !isRunning) ||
                    (newLastRun && newLastRun !== prevLastRun)
       if (done) {
-        clearInterval(fastPollRef.current)
-        fastPollRef.current = null
+        clearInterval(myTimer)
+        if (fastPollRef.current === myTimer) fastPollRef.current = null
         load()
       }
     }, 2000)
-    setTimeout(() => {
-      if (fastPollRef.current) { clearInterval(fastPollRef.current); fastPollRef.current = null }
+    fastPollRef.current = myTimer
+    // KUŞAK KONTROLÜ: watchdog yalnız KENDİ interval'ini öldürür. Eskiden tarama #1'in
+    // watchdog'u (t=300s) o anda fastPollRef'te duran tarama #2'nin interval'ini temizliyordu:
+    // #2'nin canlı ilerleme poll'ü sessizce ölüyor, `done` dalına hiç girilmediği için load()
+    // çağrılmıyor ve panel "tarama sürüyor" görünümünde donuyordu (elle yenileme gerekiyordu).
+    watchdogRef.current = setTimeout(() => {
+      clearInterval(myTimer)
+      if (fastPollRef.current === myTimer) fastPollRef.current = null
     }, 300_000)
   }, [load])
 

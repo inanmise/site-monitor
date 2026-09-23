@@ -332,6 +332,11 @@ public class ScriptedTemplateController {
 
     // ── Silme / geri alma ────────────────────────────────────────────────────────────────────
 
+    /** Kalıcı silmede sürüm geçmişi + şablon TEK tx'te gider: ikisi ayrı commit ederken sürümler
+     *  silinip şablon silme düşerse şablon DENETİM İZİ OLMADAN ayakta kalıyordu. Sürüm geçmişi
+     *  RetentionCoverageTest.EXEMPT ("şablon kalıcı silinince geçmişi de silinir") olduğu için
+     *  o kalıntıyı başka hiçbir kural toplamıyor — geri dönüşü olmayan yol. */
+    @org.springframework.transaction.annotation.Transactional
     @DeleteMapping("/scripted/templates/{id}")
     public ResponseEntity<Map<String, Object>> deleteTemplate(
             @PathVariable Long id,

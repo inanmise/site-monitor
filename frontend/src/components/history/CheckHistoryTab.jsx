@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { BellRing, BellOff, Calendar, Download } from 'lucide-react'
+import { BellRing, BellOff, Calendar, Download, Inbox } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { api, formatDateSec, formatDateOnly } from '../../api/client'
 import { localDayKey } from '../../utils/localDay.js'
@@ -12,6 +12,7 @@ import { isOutageAlert } from '../../utils/alertKinds.js'
 import useCheckHistory from './useCheckHistory.js'
 import useUrlQuerySync from '../../hooks/useUrlQuerySync.js'
 import { LoadingBlock } from '../ui/Progress.jsx'
+import StatusBlock from '../ui/StatusBlock.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 
 /**
@@ -167,7 +168,16 @@ export default function CheckHistoryTab({
         )}
         {filterChips}
         <span className="hist-toolbar-spacer" />
-        {h.liveActive && <span className="hist-live" title={t('hist.liveHint')}><span className="hist-live-dot" />{t('hist.live')}</span>}
+        {/* Hata varken "Canlı" rozeti GÖSTERİLMEZ. useCheckHistory hatayı error'a yazarken eski
+            data'yı koruyor; 30 sn'lik sessiz yenileme 500/403/timeout almaya başladığında ekranda
+            eski kayıtlar duruyor ve rozet yanıp sönmeye devam ediyordu — kullanıcı bayat veriye
+            canlı veri diye bakıyordu ("bilinmiyor" ile "sorun yok" aynı ekrana düşmemeli). */}
+        {h.liveActive && !h.error && (
+          <span className="hist-live" title={t('hist.liveHint')}><span className="hist-live-dot" />{t('hist.live')}</span>
+        )}
+        {h.liveActive && h.error && (
+          <span className="hist-live hist-live--stale" title={String(h.error)}>{t('hist.liveStale')}</span>
+        )}
         {csv && h.total > 0 && (
           <a className="hist-csv-btn" href={api.monitoring.getCheckHistoryCsvUrl(kind, monitorId, h.csvParams)}
             download title={t('hist.exportCsvHint')}>
@@ -213,11 +223,20 @@ export default function CheckHistoryTab({
         <LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />
       ) : h.error && h.items.length === 0 ? (
         <AlertBanner tone="danger" title={t('hist.loadError')} role="alert"
-          actions={<button className="btn btn-sm btn-secondary" onClick={h.reload}>{t('hist.retry')}</button>}>
+          /* onClick={h.reload} DEĞİL: h.reload = load(silent = false) ve React SyntheticEvent
+             argüman olarak gidince silent truthy oluyor, `if (!silent) setLoading(true)` atlanıyor
+             ve "Yeniden dene"ye basınca ekranda HİÇBİR ŞEY değişmiyordu (spinner yok, hata bandı
+             aynı) — kullanıcı düğmenin bozuk olduğunu sanıp basmaya devam ediyor, her basış
+             gerçek bir istek atıyordu. */
+          actions={<button className="btn btn-sm btn-secondary" onClick={() => h.reload()}>{t('hist.retry')}</button>}>
           {String(h.error)}
         </AlertBanner>
       ) : h.items.length === 0 ? (
-        <LoadingBlock label={t('hist.noData')} className="upt-modal-loading" />
+        /* LoadingBlock DEĞİL: o koşulsuz .pg-spinner + role="status" basıyor, yani gerçekten
+           veri olmayan monitörde ekranda SONSUZA KADAR dönen bir spinner + "Kayıt yok" duruyordu.
+           Kullanıcı "hâlâ yükleniyor" sanıp bekliyor, ekran okuyucu da bunu yükleniyor durumu
+           gibi duyuruyordu. Ortak bileşen → 9 izleme türünü birden etkiliyordu. */
+        <StatusBlock tone="neutral" icon={Inbox} title={t('hist.noData')} />
       ) : (
         <div className="upt-rt-list hist-list">
           <div className={`upt-rt-grid upt-rt-head ${gridClass}`}>

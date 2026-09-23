@@ -1,9 +1,149 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-22T23:06:36Z",
+  "generatedAt": "2026-09-23T06:09:55Z",
   "repo": "inanmise/site-monitor",
-  "count": 670,
+  "count": 671,
   "releases": [
+    {
+      "version": "20.79.2",
+      "tag": "v20.79.2",
+      "releasedAt": "2026-09-23T06:09:50Z",
+      "commit": "319235d41e87de3c5a32bbf82e6840bd48a81e14",
+      "prevVersion": "20.79.1",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 15,
+        "perf": 1,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "319235d4",
+          "subject": "bug raporuna kapanış durumu — 51/51, eklenen kapılar, rapordan sapmalar"
+        },
+        {
+          "type": "fix",
+          "scope": "retention,frontend,tests",
+          "breaking": false,
+          "sha": "26b1abbd",
+          "subject": "öksüz seri kalıntısı, canlı-rozet yanılgısı, iki zaman bombası + üç kapı"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "95fcde89",
+          "subject": "döngü içi tekil sorgular toplu okumaya çevrildi + sessiz kırpmaya bayrak + kayıp-güncelleme"
+        },
+        {
+          "type": "fix",
+          "scope": "sweep",
+          "breaking": false,
+          "sha": "14b634be",
+          "subject": "kardeş süpürmesi — saat dilimi, bakım bastırması, onay alanları, HTML kaçışı, sayaç↔liste"
+        },
+        {
+          "type": "fix",
+          "scope": "keyword",
+          "breaking": false,
+          "sha": "f29e60d7",
+          "subject": "özel HTTP başlıkları artık şifreli saklanıyor ve API düz değeri döndürmüyor"
+        },
+        {
+          "type": "fix",
+          "scope": "security",
+          "breaking": false,
+          "sha": "c6b53fc6",
+          "subject": "yetki kapıları kardeşleriyle hizalandı — ayar anahtarı, müdür bağı, geçmiş geri yükleme"
+        },
+        {
+          "type": "fix",
+          "scope": "system-health",
+          "breaking": false,
+          "sha": "f5d0808c",
+          "subject": "izlenmeyen watchdog, SONRAKİ taramanın canlı poll'ünü öldürüyordu"
+        },
+        {
+          "type": "fix",
+          "scope": "outage",
+          "breaking": false,
+          "sha": "fb973c27",
+          "subject": "iptal edilmiş recovery zinciri alarmı erken kapatabiliyordu (kuşak yarışı)"
+        },
+        {
+          "type": "fix",
+          "scope": "push",
+          "breaking": false,
+          "sha": "1a8f84ec",
+          "subject": "outbox kuyruk-sonu tetiği retry backoff'unu tamamen etkisizleştiriyordu"
+        },
+        {
+          "type": "fix",
+          "scope": "tx",
+          "breaking": false,
+          "sha": "e65c016d",
+          "subject": "çok tablolu kalıcı silme/üzerine-yazma yolları tek transaction'a alındı"
+        },
+        {
+          "type": "fix",
+          "scope": "push",
+          "breaking": false,
+          "sha": "981e56a0",
+          "subject": "beş alarm tipi telefona yanlışlıkla \"yanıt vermiyor\" diyordu + kapsam kapısı"
+        },
+        {
+          "type": "fix",
+          "scope": "alerts",
+          "breaking": false,
+          "sha": "6eb97760",
+          "subject": "UG takımı kuralı üç yolda tek kaynağa bağlandı"
+        },
+        {
+          "type": "fix",
+          "scope": "storm",
+          "breaking": false,
+          "sha": "5c9857f4",
+          "subject": "fırtına bildirimi takım başına çözülüyor — push kanalı, mail bastırması ve takım izolasyonu"
+        },
+        {
+          "type": "fix",
+          "scope": "mail",
+          "breaking": false,
+          "sha": "f7d716d2",
+          "subject": "çözüm e-postasının ölçü satırları snapshot'a hiç girmiyordu + sözleşme kapısı"
+        },
+        {
+          "type": "fix",
+          "scope": "reports",
+          "breaking": false,
+          "sha": "21aa4e79",
+          "subject": "haftalık ağırlıklı ortalama, kesinti arttıkça yanıt süresini İYİ gösteriyordu"
+        },
+        {
+          "type": "fix",
+          "scope": "security",
+          "breaking": false,
+          "sha": "7a15d773",
+          "subject": "tamsayı bölmesi başarısız-giriş görece anomali kuralını ölü koda çeviriyordu"
+        },
+        {
+          "type": "fix",
+          "scope": "trust",
+          "breaking": false,
+          "sha": "f282a054",
+          "subject": "güven hatası kaydı kaynağına bağlandı, okuma artık yıkıcı değil"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.79.1",
       "tag": "v20.79.1",

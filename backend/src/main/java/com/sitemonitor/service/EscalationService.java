@@ -311,7 +311,14 @@ public class EscalationService {
                         event.setMessage(message);
                         event.setDaysRemaining(daysRemaining);
                         if (notAfterOf(result) != null) event.setNotAfter(notAfterOf(result));
+                        // ÜÇ alan birden sıfırlanır (izleme yolu :1056-1058 ile aynı). Yalnız
+                        // acknowledged düşürülünce acknowledgedAt/By bayat kalıyordu: WARNING'de
+                        // onaylanıp KRİTİK'e tırmanan olay, olay ekranında ve mail/incidentMeta
+                        // sunumunda hâlâ "X tarafından <eski tarih> onaylandı" taşıyor, yani
+                        // tırmanma sonrası kimse onaylamamışken "ele alınmış" görünüyordu.
                         event.setAcknowledged(false);
+                        event.setAcknowledgedAt(null);
+                        event.setAcknowledgedBy(null);
 
                         List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId);
                         // Terfi ÖNCE kalıcılaşır, SONRA gönderilir (INITIAL dalıyla aynı sıra). Kişi-webhook tetiği
@@ -409,7 +416,9 @@ public class EscalationService {
         // Çözüm yoluyla AYNI kural: damgalanmış takım önceliklidir (bkz. sendResolutionNotification).
         Long invTeamId = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
         Long domainTeamId = event.getTeamId() != null ? event.getTeamId() : invTeamId;
-        Long ugTeamId     = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null);
+        Long ugTeamId     = includeInventoryUgTeam(event, invTeamId)
+                ? inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null)
+                : null;
         return new ReNotifyTargets(domainTeamId, ugTeamId,
                 getContactsForLevel(event.getAlertLevel(), domainTeamId), event.getNotificationGroupId());
     }
@@ -710,9 +719,31 @@ public class EscalationService {
 
     private void resolveOpenAlertsForDomain(String domain, Collection<String> types) {
         // Bakım penceresinde recovery: alarm kapanır ama çözüm e-postası GÖNDERİLMEZ (tam sessizlik).
+        //
+        // ASİMETRİ DÜZELTMESİ: bakım bastırması yalnız BURADA ve processConfirmedOutage'da var;
+        // SERTİFİKA sweep'i (processResults) isUnderMaintenance'a hiç bakmıyor. Yani bakım
+        // penceresinde sertifika değiştirilirken CHAIN_BROKEN/UNTRUSTED_CA alarmı AÇILIYOR ve
+        // mail + push gidiyor, iş bitip zincir düzelince pencere hâlâ açık olduğu için çözüm
+        // sessizce kapanıyordu: takım açılışı alıyor, kapanışı ALMIYOR, alarm posta kutusunda
+        // sonsuza dek açık görünüyordu. Kural: açılış bildirimi GİTTİYSE çözüm de gider.
         if (maintenanceService.isUnderMaintenance(domain)) {
-            resolveOpenAlertsSilently(domain, types, "Sistem (bakım penceresi — sessiz kapanış)");
-            return;
+            List<AlertEvent> open = alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(domain, types);
+            List<String> notified = new ArrayList<>();
+            for (AlertEvent e : open) {
+                if (e.getId() != null && !notificationLogRepo.findByAlertEventIdOrderBySentAtDesc(e.getId()).isEmpty())
+                    notified.add(e.getAlertType());
+            }
+            if (!notified.isEmpty()) {
+                // Bildirimi gitmiş tipler NORMAL yoldan kapanır (çözüm maili gider); kalanlar sessiz.
+                List<String> silent = new ArrayList<>(types);
+                silent.removeAll(notified);
+                if (!silent.isEmpty())
+                    resolveOpenAlertsSilently(domain, silent, "Sistem (bakım penceresi — sessiz kapanış)");
+                types = notified;
+            } else {
+                resolveOpenAlertsSilently(domain, types, "Sistem (bakım penceresi — sessiz kapanış)");
+                return;
+            }
         }
         List<AlertEvent> openAlerts = alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(domain, types);
         for (AlertEvent event : openAlerts) {
@@ -1486,7 +1517,9 @@ public class EscalationService {
                 // üç yolu (açılış / çözüm / tekrar-bildir) tek doğruluk kaynağına bağlar.
                 Long invTeamId = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
                 domainTeamId = event.getTeamId() != null ? event.getTeamId() : invTeamId;
-                ugTeamId     = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null);
+                ugTeamId     = includeInventoryUgTeam(event, invTeamId)
+                        ? inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null)
+                        : null;
                 contacts = getContactsForLevel(event.getAlertLevel(), domainTeamId);
                 // Damgasız eski olayı çözümde tek seferlik damgala: push satırı ve "tekrar bildir"
                 // aynı takımı görsün (açılış yolundaki geri doldurmanın çözüm eşleniği).
@@ -2380,12 +2413,23 @@ public class EscalationService {
     /** Çözüldü e-postasında detay için alarm anı context'inin küçük JSON snapshot'ı.
      *  Sayfa anahtarları 2026-08-04'te eklendi ("sorun neydi" detayı için) — daha ESKİ açık alarmların
      *  snapshot'ında yoklar; çözüm maili o durumda zarifçe sade düzene düşer. */
-    private String snapshotContext(Map<String, Object> ctx) {
-        if (ctx == null) return null;
-        Map<String, Object> snap = new LinkedHashMap<>();
-        for (String k : List.of("keyword", "operator", "match_count", "occurrences",
+    /**
+     * Çözüm e-postasının okuyabileceği alarm-anı bağlam anahtarları (snapshot whitelist'i).
+     *
+     * <p>Tek doğruluk kaynağı: {@code snapshotContext} bunu yazıyor,
+     * {@code EmailTemplateBuilder.buildResolvedHtml/Text} bunu okuyor. İkisi ayrıştığında şablonun
+     * o satırı SESSİZCE ölü koda dönüşüyor — anahtar üretici tarafta yazılsa bile snapshot'a hiç
+     * girmediği için çözüm mailinde hiçbir zaman görünmüyor (2026-09-23'te duration_ms ve
+     * failed_checks tam olarak böyle kaybolmuştu). Kapı: {@code ResolvedMailContextKeysTest}.
+     */
+    public static final java.util.List<String> RESOLVED_CONTEXT_KEYS = List.of("keyword", "operator", "match_count", "occurrences",
                                  "url", "host", "ip_version", "monitor_id", "condition",
                                  "http_status", "last_error", "response_ms", "threshold_ms", "port", "protocol",
+                                 // team_id: AÇILIŞ yolu "ctx'te team_id varsa ugTeamId = null" diyor
+                                 // (bağımsız izleme takım-özeldir). Damga snapshot'a girmezse çözüm ve
+                                 // "tekrar bildir" yolları aynı kararı veremiyor ve envanterin UG
+                                 // takımına, alarmı HİÇ görmemiş olmasına rağmen "ÇÖZÜLDÜ" gidiyordu.
+                                 "team_id",
                                  // Sayfa Bütünlüğü (PAGE_DOWN/PAGE_INTEGRITY) — çözüm maili "sorun neydi" bloğu
                                  "page_status", "page_mode", "broken_resources", "timeout_count",
                                  "mixed_content_count", "total_resources",
@@ -2393,7 +2437,23 @@ public class EscalationService {
                                  // Kanal bastirma damgalari: cozum yolu ctx'i olaydan geri okuyor;
                                  // bu anahtarlar kalicilastirilmazsa "e-postayi kapattim ama COZULDU
                                  // maili geliyor" paritesizligi olusuyordu.
-                                 "mail_disabled", "push_disabled")) {
+                                 "mail_disabled", "push_disabled",
+                                 // Sentetik (SCRIPTED_SLOW/FAIL) çözüm maili — EmailTemplateBuilder
+                                 // bu ikisini okuyor (HTML :460-473, düz metin :537-549) ve üretici
+                                 // taraf yazıyor (SchedulerService:4066, :4089) ama whitelist'te
+                                 // olmadıkları için snapshot'a HİÇ girmiyorlardı: "Süre (alarm anı)"
+                                 // ve "Düşen Doğrulamalar" satırları ölü koddu. Kapı:
+                                 // ResolvedMailContextKeysTest — şablonun okuduğu her anahtar burada.
+                                 // "error" da aynı kapıdan geçti: SchedulerService ctx'e yazıyor ve
+                                 // şablon firstNonNull(error, last_error) okuyor. last_error yedeği
+                                 // satırı ayakta tutuyordu ama birincil anahtar hiç snapshot'a
+                                 // girmiyordu; "error" daha zengin olduğunda bilgi kaybediliyordu.
+                                 "duration_ms", "failed_checks", "error");
+
+    private String snapshotContext(Map<String, Object> ctx) {
+        if (ctx == null) return null;
+        Map<String, Object> snap = new LinkedHashMap<>();
+        for (String k : RESOLVED_CONTEXT_KEYS) {
             if (ctx.get(k) != null) snap.put(k, ctx.get(k));
         }
         if (snap.isEmpty()) return null;
@@ -2408,6 +2468,26 @@ public class EscalationService {
 
     /** Takımı cert envanterinden DEĞİL AlertEvent.teamId'den (alarm anında damgalanan) bulunan standalone izleme tipi mi?
      *  Serbest-form izleme (keyword/ping/http) + domain monitör alarmları böyledir. */
+    /**
+     * Envanterin UG takımı bu olayın bildirimlerine eklenmeli mi? AÇILIŞ yolunun kuralının aynası.
+     *
+     * <p>{@code processConfirmedOutage} ctx'te {@code team_id} damgası görünce {@code ugTeamId = null}
+     * yapıyor — bağımsız izleme takım-özeldir. Çözüm ve "tekrar bildir" yolları ise bu kararı
+     * {@code isStandaloneMon} tip listesinden veriyordu ve PORT / DNS / PING_SLOW tipleri o
+     * listede YOK (yıldızlı kısaltma yazmayın: javadoc içinde yorumu erken kapatır):
+     * host'u cert envanterinde de bulunan bağımsız bir Port izlemesi düştüğünde alarm yalnız Port
+     * takımına gidiyor, "✅ ÇÖZÜLDÜ" maili ise alarmı hiç görmemiş UG takımına DA gidiyordu.
+     *
+     * <p>Damga snapshot'ta ({@code team_id}). Damgasız ESKİ olaylar için yedek ölçüt: olayın takımı
+     * envanterin takımından FARKLIYSA damga envanterden gelmemiştir → bağımsız izleme.
+     */
+    private boolean includeInventoryUgTeam(AlertEvent event, Long invTeamId) {
+        Map<String, Object> ctx = deserializeContext(event.getContextJson());
+        if (ctx != null && ctx.get("team_id") instanceof Number) return false;
+        Long stamped = event.getTeamId();
+        return stamped == null || stamped.equals(invTeamId);
+    }
+
     private static boolean isStandaloneMon(String alertType) {
         return TYPE_KEYWORD.equals(alertType) || TYPE_PING_DOWN.equals(alertType)
                 || TYPE_HTTP_DOWN.equals(alertType) || TYPE_HTTP_SSL.equals(alertType) || TYPE_DOMAIN_EXPIRY.equals(alertType)

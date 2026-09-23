@@ -41,7 +41,12 @@ public class AlertNoiseService {
         try { for (CertificateInventory i : inventoryRepo.findByActiveTrueOrderByDomainAsc()) if (canViewTeam.test(i.getTeamId())) domains.add(i.getDomain()); }
         catch (Exception e) { log.debug("noise: envanter okunamadı: {}", e.toString()); }
 
-        String since = ISO.format(Instant.now().minus(d, ChronoUnit.DAYS));
+        // Pencere ile kovalar AYNI takvimden: olaylar UTC kayan pencereden çekilirken kovalar
+        // LocalDate.now(IST) ile kuruluyordu ve :81 computeIfPresent kullandığı için haritada
+        // olmayan gün SESSİZCE düşüyordu. d=7, 13:00 IST: since = 6 gün önce 10:00Z, kovalar
+        // bugün dâhil son 7 IST günü → o gün 10:00Z-21:00Z arasında açılan alarmlar total'e
+        // giriyor ama series'ten düşüyordu (KPI 120, kıvılcım çizgisinin toplamı 97).
+        String since = ISO.format(LocalDate.now(IST).minusDays(d - 1L).atStartOfDay(IST).toInstant());
         List<AlertEvent> events = new ArrayList<>();
         for (AlertEvent e : alertEventRepo.findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(since)) {
             boolean vis = (e.getTeamId() != null && canViewTeam.test(e.getTeamId())) || (e.getDomain() != null && domains.contains(e.getDomain()));

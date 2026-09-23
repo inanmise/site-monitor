@@ -71,7 +71,7 @@ public class TrWebWhoisClient {
     @PostConstruct
     void init() {
         this.ssl = trustEvaluator.pinAwareOutboundSslContext(
-                caAutoPinService::trustManagerForHost, caAutoPinService::recordTrustFailure);
+                caAutoPinService::trustManagerForHost, (h, prt) -> caAutoPinService.recordTrustFailure("tr-whois", h, prt));
         if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
             this.proxySelector = ProxySelector.of(new InetSocketAddress(proxyHost, proxyPort));
             this.proxyAuth = ProxyAuthSupport.proxyAuthenticatorOrNull(proxyUser, proxyPass, log, ".tr web-whois");

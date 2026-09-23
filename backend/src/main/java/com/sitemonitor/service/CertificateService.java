@@ -916,10 +916,13 @@ public class CertificateService {
                 if (d < 0) { expired++; expiredDomains.add(c.getDomain()); }
             }
         }
-        // O1a düzeltmesinin yan etkisi: dolmuşlar critical'dan çıkınca bu türetimde
-        // "warning" kovasına sızarlardı — onlar da düşülür (yalnız hatasız olanlar; hatalılar
-        // zaten errors ile düşülüyor, çifte düşme olmasın).
-        long warningOnly = warnings.size() - errors - criticalCount - highCount - expiredActive;
+        // Sayaç, DRILL-DOWN LİSTESİNDEN türetilir — çıkarmayla değil. Çıkarma yolu
+        // daysRemaining == null olan hatasız satırları "warning" kovasına düşürüyordu: o satırlar
+        // warnings.size() içinde ama criticalCount/highCount/expiredActive'in HİÇBİRİNİ
+        // artırmıyor (hepsi `d != null` bloğunun içinde) ve warningDomains'e de eklenmiyorlar.
+        // Sonuç: panoda "uyarı: 3" yazıyor, tıklanınca 2 alan adı listeleniyordu. Tek kaynak =
+        // listenin kendisi; tarihi bilinmeyenler ayrı kovaya alınır (sessizce kaybolmasınlar).
+        long warningOnly = warningDomains.size();
 
         long valid = 0, revoked = 0, mismatch = 0, chainBroken = 0;
         List<String> validDomains = new ArrayList<>();

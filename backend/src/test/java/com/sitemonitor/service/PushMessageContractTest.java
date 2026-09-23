@@ -227,6 +227,80 @@ class PushMessageContractTest {
     }
 
     @Test
+    @DisplayName("HER alarm tipi BİLİNÇLİ bir şablona bağlı — yeni tip sessizce 'yanıt vermiyor'a düşemez")
+    void everyAlertTypeHasADeliberateTemplate() {
+        // O23 (2026-09-23): templateKeyFor zincirin sonunda "down" döndüğü için, hiçbir dala
+        // uymayan tipler sessizce "{seviye}: {ad} yanıt vermiyor" alıyordu — sayfa/DNS AYAKTAYKEN.
+        // E-posta aynı olay için "Sayfa Bütünlüğü Sorunu" / "DNS Beklenmeyen Değer" diyordu.
+        // Bu tablo BİLİNÇLİ kararların kaydıdır: yeni tip ekleyen bu testi de güncellemek zorunda.
+        Map<String, String> expected = Map.ofEntries(
+                Map.entry("ACCESSIBILITY", "down"),
+                Map.entry("HTTP_DOWN", "down"),
+                Map.entry("PING_DOWN", "down"),
+                Map.entry("PORT_DOWN", "down"),
+                Map.entry("PAGE_DOWN", "down"),
+                Map.entry("PAGESPEED_DOWN", "down"),
+                Map.entry("KEYWORD", "down"),
+                Map.entry("SCRIPTED_FAIL", "down"),
+                Map.entry("DNS_FAILURE", "down"),
+                // Yavaşlık ailesi
+                Map.entry("PING_SLOW", "slow"),
+                Map.entry("PORT_SLOW", "slow"),
+                Map.entry("KEYWORD_SLOW", "slow"),
+                Map.entry("DNS_SLOW", "slow"),
+                Map.entry("PAGESPEED_SLOW", "slow"),
+                Map.entry("SCRIPTED_SLOW", "slow"),
+                // Süre bitişi
+                Map.entry("EXPIRY", "expiry"),
+                Map.entry("DOMAIN_EXPIRY", "expiry"),
+                Map.entry("KEYWORD_DOMAIN_EXPIRY", "expiry"),
+                Map.entry("DOMAINMON_EXPIRY", "expiry"),
+                // Değişim ailesi
+                Map.entry("DNS_CHANGED", "changed"),
+                Map.entry("DOMAINMON_CHANGED", "changed"),
+                Map.entry("DOMAINMON_TRANSFER_LOCK", "changed"),
+                Map.entry("DOMAINMON_BLACKLIST", "changed"),
+                Map.entry("DNS_UNEXPECTED", "changed"),
+                Map.entry("DNS_INCONSISTENT", "changed"),
+                Map.entry("DOMAINMON_STATUS", "changed"),
+                // Sertifika kusuru — host ayakta olabilir
+                Map.entry("HTTP_SSL", "cert"),
+                Map.entry("KEYWORD_SSL", "cert"),
+                Map.entry("HOSTNAME_MISMATCH", "cert"),
+                Map.entry("MISMATCH", "cert"),
+                Map.entry("REVOKED", "cert"),
+                Map.entry("CHAIN_BROKEN", "cert"),
+                Map.entry("UNTRUSTED_CA", "cert"),
+                // Hedef ayakta ama bozuk / bilinmiyor
+                Map.entry("PAGE_INTEGRITY", "degraded"),
+                Map.entry("DOMAINMON_UNKNOWN", "degraded"));
+
+        List<String> wrong = new java.util.ArrayList<>();
+        List<String> unmapped = new java.util.ArrayList<>();
+        for (String type : MonitorTypeCatalog.allAlertTypes()) {
+            String actual = UserPushService.templateKeyFor(type, "OPEN");
+            String want = expected.get(type);
+            if (want == null) { unmapped.add(type + " → " + actual); continue; }
+            if (!want.equals(actual)) wrong.add(type + ": beklenen " + want + ", gelen " + actual);
+        }
+
+        assertThat(unmapped)
+                .as("Bu alarm tipleri için şablon kararı kayıtlı DEĞİL. templateKeyFor'da bir dala "
+                  + "bağlayın ve buraya da yazın — yoksa tip sessizce 'yanıt vermiyor' alır.")
+                .isEmpty();
+        assertThat(wrong).as("Şablon eşlemesi kaydedilen karardan sapmış").isEmpty();
+    }
+
+    @Test
+    @DisplayName("degraded şablonu 'yanıt vermiyor' DEMEZ — sayfa/alan adı ayakta, sorun başka")
+    void degradedTemplateDoesNotClaimUnreachable() {
+        assertThat(UserPushService.DEFAULT_TEMPLATES.get("degraded"))
+                .isNotNull()
+                .doesNotContain("yanıt vermiyor")
+                .doesNotContain("erişilemiyor");
+    }
+
+    @Test
     @DisplayName("Bulgu 15: KANIT (IP ve CN) push mesajına ULAŞIR — sebep kırpması onu düşürmez")
     void certAlert_carriesEvidence() {
         AlertEvent e = event("CRITICAL", "olmayan.example.com",

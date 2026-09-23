@@ -194,10 +194,20 @@ public final class RetentionCatalog {
 
         guarded("series-domain", "domain_checks", "checked_at", "site.monitor.series.domain.retention-days",
                 180, 30,
-                "{t} AND id NOT IN (SELECT MAX(id) FROM domain_checks GROUP BY monitor_id) "
-                + "AND id NOT IN (SELECT MAX(id) FROM domain_checks WHERE source <> 'NONE' GROUP BY monitor_id)",
+                // series-dns ile AYNI düzeltme (kardeş süpürmesi): baseline koruması YALNIZ yaşayan
+                // monitörler için. GROUP BY monitor_id silinmiş monitörlerin id'lerini de gruplayınca
+                // her öksüz monitör için İKİ satır sonsuza kadar korunuyordu ve domain_checks için
+                // bir …-orphan kuralı da yoktu — koruma, temizlenemeyen bir kalıntıya dönüşmüştü.
+                "{t} AND monitor_id IN (SELECT id FROM domain_monitors) "
+                + "AND id NOT IN (SELECT MAX(id) FROM domain_checks "
+                + "WHERE monitor_id IN (SELECT id FROM domain_monitors) GROUP BY monitor_id) "
+                + "AND id NOT IN (SELECT MAX(id) FROM domain_checks "
+                + "WHERE source <> 'NONE' AND monitor_id IN (SELECT id FROM domain_monitors) GROUP BY monitor_id)",
                 DataClass.OPERATIONAL,
-                "Alan adı kontrol serisi. İKİ baseline korunur: her monitörün en yeni satırı ve en yeni source<>'NONE' satırı."),
+                "Alan adı kontrol serisi. Yaşayan her monitör için İKİ baseline korunur: en yeni satır ve en yeni source<>'NONE' satırı."),
+        orphan("domain-checks-orphan", "domain_checks",
+                "monitor_id NOT IN (SELECT id FROM domain_monitors)", DataClass.OPERATIONAL,
+                "Monitörü kalıcı silinmiş alan adı kontrol satırları — deleteDomain seriye dokunmuyor, baseline koruması da öksüzleri tutuyordu."),
         age("diagnostic-runs", "diagnostic_runs", "executed_at", "site.monitor.diagnostics.retention-days",
                 365, 7, false, DataClass.PERSONAL,
                 "Elle çalıştırılan tanılamalar (çalıştıran kullanıcı ve kaynak IP içerir). "
@@ -207,6 +217,12 @@ public final class RetentionCatalog {
                 "Alarm olayları. Yalnız ÇÖZÜLMÜŞ alarmlar silinir — açık/onaylanmış alarmlar ASLA silinmez."),
 
         // ── Sorun bildirimleri: görseller → rapor → öksüz mail logları ─────────────────────────
+        // DİKKAT: "resolved_at" bu tabloda DEĞİL, EBEVEYN tablodadır (login_issue_reports) —
+        // AGE_VIA_PARENT modunda zaman kolonu ebeveyne aittir ve WHERE onu alt sorguda kullanır.
+        // Silme doğru ({t} kullanılmıyor), ama RetentionService.bounds() kolonu ÇOCUK tabloda
+        // arıyordu ve hatayı catch(Exception) ile yutuyordu: Ayarlar → Veri Saklama ekranında bu
+        // kural için "en eski/en yeni kayıt" kalıcı boş görünüyor, operatör "bu tabloda veri yok"
+        // sanıyordu. Düzeltme bounds() tarafında; kapı RetentionColumnExistsTest.
         new RetentionPolicy("login-issue-images", "login_issue_report_images", "resolved_at", TimeKind.ISO_STRING,
                 "site.monitor.login-issue.retention-days", 365, 90, false,
                 "report_id IN (SELECT id FROM login_issue_reports WHERE status = 'RESOLVED' AND resolved_at < ?)",
