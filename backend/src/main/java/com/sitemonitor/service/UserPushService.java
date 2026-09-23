@@ -880,6 +880,9 @@ public class UserPushService {
             // Kanıt (IP/CN) sebepten ÖNCE gelir — 200 karakter tavanında ilk düşen kuyruk olur.
             "cert",     "{seviye}: {ad} sertifikası kabul edilemez (IP {ip}, CN {cn}). {neden}",
             "resolved", "DÜZELDİ: {ad} normale döndü. Süre {sure} (başlangıç {baslangic}, bitiş {bitis}).",
+            // Hedef AYAKTA ama bozuk: sayfa bütünlüğü, çözülemeyen alan adı durumu. "yanıt
+            // vermiyor" demek nöbetçiyi yanlış teşhise (ağ/erişim) yönlendiriyordu.
+            "degraded", "{seviye}: {ad} - sorun var (erişim değil). {neden} Başlangıç {baslangic}.",
             "test",     "Deneme: SiteMonitor webhook testi - {saat}");
 
     /** Kaydetmede bilinen yer tutucular — bilinmeyeni reddet (sessiz bozulma olmasın). */
@@ -925,6 +928,13 @@ public class UserPushService {
         // vermiyor" gidiyor, e-posta ise "SSL Sertifika Sorunu" diyordu. Mesaj kendi içinde de
         // çelişiyordu ("yanıt vermiyor … TLS sertifikası sorunu — bitişe 12 gün").
         if (t.endsWith("_SSL")) return "cert";
+        // Aşağıdakiler hiçbir dala uymuyor ve "down" şablonuna düşüyordu: telefona "{seviye}: {ad}
+        // yanıt vermiyor" gidiyor, e-posta AYNI olay için "DNS Beklenmeyen Değer" / "Sayfa
+        // Bütünlüğü Sorunu" diyordu. Sayfa/DNS ayaktayken "erişilemiyor" demek nöbetçiyi yanlış
+        // teşhise yönlendiriyor — HTTP_SSL/KEYWORD_SSL için yukarıda kapatılan hatanın kalanı.
+        if ("DNS_UNEXPECTED".equals(t) || "DNS_INCONSISTENT".equals(t) || "DOMAINMON_STATUS".equals(t))
+            return "changed";
+        if ("PAGE_INTEGRITY".equals(t) || "DOMAINMON_UNKNOWN".equals(t)) return "degraded";
         return "down";
     }
 

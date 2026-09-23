@@ -75,6 +75,10 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.userpush.template.slow",       "userpush",   Type.STRING),
         new Setting("site.monitor.userpush.template.expiry",     "userpush",   Type.STRING),
         new Setting("site.monitor.userpush.template.changed",    "userpush",   Type.STRING),
+        // cert/degraded şablonları da yönetilebilir olsun — kardeşleri katalogda, bu ikisi
+        // atlandığı için sessizce özelleştirilemez kalıyordu (aynı sınıf boşluk).
+        new Setting("site.monitor.userpush.template.cert",       "userpush",   Type.STRING),
+        new Setting("site.monitor.userpush.template.degraded",   "userpush",   Type.STRING),
         new Setting("site.monitor.userpush.template.resolved",   "userpush",   Type.STRING),
         new Setting("site.monitor.userpush.template.test",       "userpush",   Type.STRING),
         // K8: mail neyi gönderiyorsa webhook da — günlük re-alert dahil (vars. AÇIK).
