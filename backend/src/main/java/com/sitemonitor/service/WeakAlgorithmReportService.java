@@ -90,9 +90,39 @@ public class WeakAlgorithmReportService {
 
     // ── Rapor gövdesi ──────────────────────────────────────────────────────────────────────
 
+    /** Kapsamsız çağrı = TÜM takımlar. Yalnız sistem-geneli denetçi (global admin/AUDIT) içindir. */
     public Map<String, Object> build() {
+        return build(null);
+    }
+
+    /**
+     * Raporu çağıranın GÖRÜŞ KAPSAMINA göre kurar.
+     *
+     * @param viewTeamIds {@code null} → tüm takımlar (global admin / AUDIT: sistem-geneli denetçi).
+     *                    Dolu liste → yalnız o takımların (ya da alt-grup takımının) aktif alanları.
+     *
+     * <p><b>Neden.</b> {@code weak_algo.read} izni takım yöneticisi varsayılanında AÇIK ama rapor
+     * hesap-geneli çalışıyordu: kapsamlı bir müdür BAŞKA takımların zayıf kripto bulgularını,
+     * alan adlarını ve takım kırılımını görüyordu. {@code PermissionCatalog}'un kendi politikası
+     * (sistem-geneli rapor → yalnız global admin/AUDIT) süzmeyi zaten gerektiriyor; yazma yolu
+     * 2026-09-23'te kapatılmıştı, bu okuma tarafının eşleniğidir.
+     *
+     * <p>Süzgeç TEK noktada (aktif envanter listesi) uygulanır: satırlar, TLS/zincir bulguları,
+     * dağılımlar, 2030 görünümü, takım kırılımı ve tarama sayaçları hepsi bu listeden türediği
+     * için kendiliğinden daralır. TEK istisna trend'dir — o, envanterden değil gözlem
+     * tablosundan gelir ve kendi süzgecini ayrıca alır (aşağıya bakınız).
+     */
+    public Map<String, Object> build(List<Long> viewTeamIds) {
         Instant now = Instant.now();
         List<CertificateInventory> active = inventoryRepo.findByActiveTrueOrderByDomainAsc();
+        if (viewTeamIds != null) {
+            Set<Long> scope = new HashSet<>(viewTeamIds);
+            // Sahipsiz alanlar (teamId null) kapsamlı kullanıcıya GÖRÜNMEZ: hiçbir takımına ait değil.
+            active = active.stream()
+                    .filter(i -> (i.getTeamId() != null && scope.contains(i.getTeamId()))
+                              || (i.getUgTeamId() != null && scope.contains(i.getUgTeamId())))
+                    .toList();
+        }
         Map<String, CertificateInventory> invByDomain = new LinkedHashMap<>();
         for (CertificateInventory i : active) invByDomain.putIfAbsent(i.getDomain(), i);
 
@@ -322,7 +352,11 @@ public class WeakAlgorithmReportService {
         body.put("tls", Map.of("total", tlsRows.size(), "rows", tlsRows));
         body.put("chain", Map.of("total", chainRows.size(), "rows", chainRows));
         body.put("teams", teamsMap);
-        body.put("trend", trend(now, rows.stream().map(r -> (String) r.get("domain")).collect(Collectors.toSet())));
+        // Trend envanterden DEĞİL gözlem tablosundan gelir: kapsam süzgecini ayrıca almalı,
+        // yoksa kapsamlı kullanıcı başka takımların alan adlarını detected/resolved satırlarında
+        // görürdü (rapor gövdesi daralmışken trend sızdırırdı).
+        body.put("trend", trend(now, rows.stream().map(r -> (String) r.get("domain")).collect(Collectors.toSet()),
+                viewTeamIds == null ? null : invByDomain.keySet()));
         body.put("exceptions", exceptionRows);
         return body;
     }
@@ -352,7 +386,16 @@ public class WeakAlgorithmReportService {
      * satırlar); {@code detected} = pencere içinde ilk kez görülen alan, {@code resolved} = son zayıf
      * gözlemi bugün olmayan ve şu an zayıf listesinde OLMAYAN alan (yenilenip temizlendi).
      */
+    /** Kapsamsız trend (tüm alanlar) — sistem-geneli denetçi yolu ve mevcut testler için. */
     Map<String, Object> trend(Instant now, Set<String> weakNow) {
+        return trend(now, weakNow, null);
+    }
+
+    /**
+     * @param visibleDomains {@code null} → süzgeç yok (global görüş). Dolu küme → yalnız bu
+     *        alanların gözlemleri sayılır; kapsam dışı alan ne seriye ne detected/resolved'a girer.
+     */
+    Map<String, Object> trend(Instant now, Set<String> weakNow, Set<String> visibleDomains) {
         LocalDate today = now.atZone(ZoneOffset.UTC).toLocalDate();
         LocalDate from = today.minusDays(TREND_DAYS - 1L);
         Map<String, Integer> perDay = new LinkedHashMap<>();
@@ -363,6 +406,7 @@ public class WeakAlgorithmReportService {
             for (Object[] o : certificateCheckRepo.weakObservationsSince(from.toString() + "T00:00:00")) {
                 String domain = (String) o[0], day = (String) o[1];
                 if (domain == null || day == null || !perDay.containsKey(day)) continue;
+                if (visibleDomains != null && !visibleDomains.contains(domain)) continue;
                 perDay.merge(day, 1, Integer::sum);
                 daysByDomain.computeIfAbsent(domain, k -> new TreeSet<>()).add(day);
             }

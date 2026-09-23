@@ -25,8 +25,8 @@ const sampleTeams = [
 ]
 const sampleMembers = [
   {
-    id: 7, username: 'einanmis', display_name: 'Erdi I',
-    employee_id: '12345', email: 'erdi@example.com',
+    id: 7, username: 'ali', display_name: 'Ali V',
+    employee_id: '12345', email: 'ali@example.com',
     system_role: 'ADMIN', org_role: 'TECH', team_id: 1, active: true,
   },
 ]
@@ -93,10 +93,10 @@ describe('TeamManager — business-card members', () => {
     await waitFor(() => expect(document.querySelector('.tm-member-card')).not.toBeNull())
     // Label-value fields are rendered with i18n labels and raw values inside the card
     const card = document.querySelector('.tm-member-card')
-    expect(card.textContent).toContain('Erdi I')
-    expect(card.textContent).toContain('einanmis')
+    expect(card.textContent).toContain('Ali V')
+    expect(card.textContent).toContain('ali')
     expect(card.textContent).toContain('12345')
-    expect(card.textContent).toContain('erdi@example.com')
+    expect(card.textContent).toContain('ali@example.com')
   })
 
   it('opens the user edit modal when a member card is clicked (admin only)', async () => {
@@ -110,7 +110,7 @@ describe('TeamManager — business-card members', () => {
     fireEvent.click(card)
 
     // The shared UserEditModal renders an editable email input with the user's email
-    await waitFor(() => expect(screen.getByDisplayValue('erdi@example.com')).toBeDefined())
+    await waitFor(() => expect(screen.getByDisplayValue('ali@example.com')).toBeDefined())
   })
 
   it('member card is non-clickable for non-admin (read-only view)', async () => {

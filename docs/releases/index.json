@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-23T10:03:56Z",
+  "generatedAt": "2026-09-23T10:38:51Z",
   "repo": "inanmise/site-monitor",
-  "count": 673,
+  "count": 674,
   "releases": [
+    {
+      "version": "20.79.5",
+      "tag": "v20.79.5",
+      "releasedAt": "2026-09-23T10:38:44Z",
+      "commit": "b1e32a510725a0278fd61bd43a10d805925bd697",
+      "prevVersion": "20.79.4",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "audit,identity",
+          "breaking": false,
+          "sha": "b1e32a51",
+          "subject": "zayıf algoritma raporu görüş kapsamına alındı + gerçek kimlik fixture'lardan ve üretim varsayılanından temizlendi"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.79.4",
       "tag": "v20.79.4",

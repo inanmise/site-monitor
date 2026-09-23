@@ -83,11 +83,35 @@ TR/EN anahtar paritesi (tek yönlü fark yok).
 
 ---
 
-## Açık kalan — ürün kararı gerekiyor (bu sürümde DEĞİŞMEDİ)
+## Kapanış eki (aynı gün, ikinci tur)
 
-**Zayıf Algoritma Raporunun OKUMA kapsamı.** `weak_algo.read` izni takım yöneticisi
-varsayılanında açık ve `WeakAlgorithmReportService.build()` hesap-geneli çalışıyor: kapsamlı bir
-müdür BAŞKA takımların zayıf kripto bulgularını da listede görüyor. Yazma yolu bu sürümde
-kapatıldı; okumayı `viewTeamIds` ile süzmek **görünür bir davranış değişikliği** olduğu için
-bilinçli olarak yapılmadı. `PermissionCatalog`'un kendi politikası (sistem-geneli rapor → yalnız
-global admin/AUDIT) süzmeyi destekliyor; karar kullanıcıya bırakıldı.
+Raporda "ürün kararı bekliyor" diye bırakılan iki madde kullanıcı onayıyla kapatıldı:
+
+**1. Zayıf Algoritma Raporunun OKUMA kapsamı — KAPANDI.** `build()` artık çağıranın görüş
+kapsamını alıyor (`build(viewTeamIds)`); global admin/AUDIT için `null` = tüm takımlar, kapsamlı
+müdür için yalnız kendi takımlarının (ya da alt-grup takımının) aktif alanları. Süzgeç tek noktada
+(aktif envanter listesi) uygulanıyor: satırlar, TLS/zincir bulguları, dağılımlar, 2030 görünümü,
+takım kırılımı ve tarama sayaçları kendiliğinden daralıyor. Sahipsiz alanlar (takımı olmayan)
+kapsamlı kullanıcıya görünmüyor. **Trend ayrı süzgeç aldı** — o envanterden değil gözlem
+tablosundan geliyor ve süzülmeseydi rapor gövdesi daralmışken `detected`/`resolved` satırlarında
+başka takımların alan adlarını sızdırırdı. CSV dışa aktarma da aynı kapsamla çalışıyor.
+Kapılar: `WeakAlgorithmReportServiceTest` (2 yeni test) + `AuditControllerTest` (kapsam servise
+geçiyor mu).
+
+**2. Test fixture'larındaki gerçek kimlik — TEMİZLENDİ.** Beş dosyada (dört frontend testi + bir
+Java testi) gerçek kullanıcı adı, gösterim adı ve posta yerel-adı duruyordu; proje geleneğindeki
+yer tutuculara çevrildi (`ali` / `Ali V` / `ali@example.com`, `ali.veli`). Toplam 22 geçiş.
+
+   Tarama ayrıca **üretimde** bir kalıntı buldu: `SchedulerService`'teki
+   `site.monitor.system-admin.email` `@Value` varsayılanı gerçek bir KİŞİSEL posta kutusuydu —
+   ayar (Ayarlar → Genel) boş bırakıldığında kurumsal izleme aracının ağ kesintisi bildirimleri
+   oraya gidiyordu. Aynı ayarın diğer sekiz tüketicisi zaten boş varsayılanla çalışıp gönderimi
+   atlıyordu; bu tek istisna kardeşleriyle hizalandı (varsayılan boş + adres yoksa gönderme).
+
+   `IdentityLeakGuardTest.FORBIDDEN` iki yeni terimle genişletildi (kullanıcı adı ve noktalı
+   ad.soyad). **Bilinçli olarak yasaklanmayanlar:** soyadın tek başı — GitHub handle'ı
+   (`ghcr.io/<handle>/site-monitor`, chart `home`/`sources`) onu içeriyor ve bu işlevsel bir
+   değer; adın tek başı — dört harfli hece yüzlerce Türkçe sözcüğün içinde geçtiği için kapı
+   sürekli yanlış yere ısırırdı. Tek yeni muafiyet `helm/site-monitor/Chart.yaml` (chart
+   maintainer iletişimi = depo sahibinin kendi genel kimliği, paket metaverisi olarak gerçek
+   olmak zorunda).

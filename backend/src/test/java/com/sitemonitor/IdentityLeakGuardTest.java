@@ -61,7 +61,20 @@ class IdentityLeakGuardTest {
             // Test fixture'larına sızmıştı; git geçmişi kalıcı olduğu için girişte durdurulur.
             "dijit" + "alsy",
             "Kav" + "ruk",
-            "Ekme" + "kçi");
+            "Ekme" + "kçi",
+            // ── Depo sahibinin KENDİ kimliği (2026-09-23) ────────────────────
+            // Test fixture'ları yıllardır gerçek kullanıcı adı + gösterim adı + posta yerel-adı
+            // taşıyordu (5 dosya, 45 geçiş) ve üretimde bir @Value varsayılanı kişisel posta
+            // kutusuna gidiyordu. Yer tutucuya çevrildi; kapı geri gelmesini engelliyor.
+            //
+            // NOT — SOYAD tek başına YASAKLANMADI: GitHub handle'ı (imaj yolu
+            // ghcr.io/<handle>/site-monitor, chart home/sources) onu içeriyor ve bu işlevsel bir
+            // değer. Yasaklanan, KİŞİYİ tanımlayan iki biçim: kullanıcı adı ve noktalı ad.soyad.
+            //
+            // AD tek başına da YASAKLANMADI: dört harfli hece yüzlerce Türkçe sözcüğün içinde
+            // geçiyor ("gönderdi", "değerdir"), kapı sürekli yanlış yere ısırırdı.
+            "ein" + "anmis",
+            "er" + "di.in" + "anmis");
 
     private static final Set<String> SCAN_EXT = Set.of(
             ".java", ".jsx", ".js", ".json", ".md", ".yaml", ".yml", ".properties", ".css", ".sql");
@@ -126,7 +139,12 @@ class IdentityLeakGuardTest {
             Map.entry("helm/site-monitor/values.yaml",
                     "proxy varsayılanını açıklayan yorum"),
             Map.entry("helm/site-monitor/templates/deployment.yaml",
-                    "egress korelasyonunu açıklayan yorum")));
+                    "egress korelasyonunu açıklayan yorum"),
+
+            // ── Paket metaverisi: depo sahibinin KENDİ genel kimliği ──
+            Map.entry("helm/site-monitor/Chart.yaml",
+                    "chart maintainer iletişimi — depo sahibinin kendi genel GitHub/e-posta kimliği; "
+                  + "paket metaverisi olarak gerçek olmak zorunda (home/sources URL'leriyle aynı kimlik)")));
 
     private static Path repoRoot() {
         return Path.of("..").toAbsolutePath().normalize();
