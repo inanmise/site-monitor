@@ -1,3 +1,5 @@
+import { useT } from '../../i18n/index.jsx'
+
 // Pure-SVG sparkline chart — no external dependencies.
 // props: data [{ts, value}], color, label, unit, maxY, gran ('day'|'hour'|'minute'|undefined)
 // ts values come from the backend as UTC (no Z suffix) — add Z before parsing so
@@ -18,6 +20,7 @@ const axisLabel = (ts, gran, lastInclusive) => {
  * rozeti (pencere içinde eşiği aşan nokta sayısı). Eşik yoksa görünüm eskisiyle aynı.
  */
 export default function MiniChart({ data = [], color = '#4f9cf9', label, unit = '%', maxY, onClick, gran, thresholds = null, breachLabel = null }) {
+  const t = useT()
   const W = 400, H = 82
   const PAD = { top: 8, bottom: 20, left: 34, right: 8 }
   const pw = W - PAD.left - PAD.right   // plot width
@@ -49,7 +52,10 @@ export default function MiniChart({ data = [], color = '#4f9cf9', label, unit = 
     <div
       className={`mini-chart${onClick ? ' mini-chart-clickable' : ''}`}
       onClick={onClick}
-      title={onClick ? 'Click to expand' : undefined}
+      role={onClick ? 'button' : undefined} tabIndex={onClick ? 0 : undefined}
+      aria-label={onClick ? `${label} — ${t('mini.expand')}` : undefined}
+      onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } } : undefined}
+      title={onClick ? t('mini.expand') : undefined}
     >
       <div className="mini-chart-hdr">
         <span className="mini-chart-lbl">{label}</span>

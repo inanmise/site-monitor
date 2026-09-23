@@ -48,6 +48,85 @@ const LITERAL_ARIA = /aria-label="([^"]*)"/g
  */
 const EXEMPT = new Map()
 
+/** Kendiliğinden odaklanabilir OLMAYAN öğeler: tıklanabilir yapılırsa klavye kancası şart. */
+const NON_INTERACTIVE = new Set(['div', 'span', 'li', 'tr', 'th', 'td', 'section', 'nav', 'p', 'ul', 'label'])
+
+/**
+ * Gerekçeli muafiyet (tıklanabilirlik): `dosya:<etiket> başlangıç…` öneki → NEDEN klavye
+ * kancası gereksiz. Cırcır YALNIZ küçülür.
+ */
+const EXEMPT_CLICK = new Map([
+  ['components/ui/Toast.jsx:<div>',
+    'role="status" CANLI BÖLGE: odaklanabilir yapmak erişilebilirlik anti-deseni (ekran okuyucu ' +
+    'zaten okur). Tıklama yalnız erken kapatma kısayolu; bildirim kendiliğinden kayboluyor.'],
+  ['components/admin/AuditLogViewer.jsx:<tr>',
+    'DOLAŞAN TABINDEX ızgarası: tabIndex satırda, ok/Home/End/Escape tuşları tbody üzerinde ' +
+    '(daha gelişmiş kalıp). Kapı ikisini aynı etikette aradığı için burada yanlış ısırıyor.'],
+  ['components/ScriptedMonitorPage.jsx:<span>',
+    'Satırın açma kontrolü BİLİNÇLİ olarak tek hücrede (zaman): dört hücrenin dördü de ' +
+    'odaklanabilir olsaydı satır başına dört durak olurdu. Diğer hücreler yalnız fare kolaylığı.'],
+  ['components/ui/CodeEditor.jsx:<span>',
+    'Satır numarası oluğu: düzenleyicinin kendisi (textarea) klavyeyle tam erişilebilir ve satır ' +
+    'seçimi orada yapılır; oluk yalnız fare kısayolu.'],
+])
+
+/**
+ * Tıklama gerçek bir EYLEM mi, yoksa pasif bir sarmalayıcı mı?
+ *
+ * <p>İki yaygın ve DOĞRU kalıp klavye kancası istemez: (1) yalnız olay yayılımını durduran
+ * sarmalayıcılar (`onClick={e => e.stopPropagation()}`, `onClick={stop}`) — kendileri hiçbir şey
+ * yapmaz; (2) modal örtüsü/maske — kapatma ayrıca gerçek bir düğmeyle ve Escape ile sağlanır,
+ * örtüye odak vermek ekran okuyucu kullanıcısını çıkmaza sokar.
+ */
+function isPassiveClick(tagText) {
+  const m = tagText.match(/onClick=\{([^]*?)\}\s*(?:[a-zA-Z-]+=|\/?>|$)/)
+  const handler = (m ? m[1] : '').trim()
+  // Yalnız yayılımı durduran / varsayılanı engelleyen sarmalayıcı: kendisi hiçbir şey yapmaz.
+  const body = handler.replace(/^\(?\w*\)?\s*=>\s*\{?/, '').replace(/\}?$/, '')
+  if (body && /^(\s*e?\.?(preventDefault|stopPropagation)\(\)\s*;?\s*)+$/.test(body)) return true
+  if (/^stop$/.test(handler)) return true
+  // Modal örtüsü: kapatma ayrıca gerçek düğme + Escape ile sağlanır; örtüye odak vermek
+  // ekran okuyucu kullanıcısını çıkmaza sokar.
+  if (/classList\.contains\(/.test(handler)) return true
+  return /className="[^"]*(overlay|backdrop|mask)/.test(tagText)
+}
+
+/**
+ * JSX açılış etiketlerini ayrıştırır.
+ *
+ * <p>Regex ile `<div…>` aramak bu kod tabanında GÜVENİLMEZ: etiketin içindeki ok fonksiyonları
+ * (`onClick={() => …}`) `>` taşıyor, yani "ilk `>`'a kadar" kabulü etiketi ortasından kesiyor ve
+ * kapı sessizce yanlış cevap veriyor. Bu yüzden süslü parantez derinliği ve tırnak durumu
+ * izlenerek etiket sonu gerçekten bulunur.
+ */
+function openingTags(src) {
+  const tags = []
+  for (let i = 0; i < src.length; i++) {
+    if (src[i] !== '<') continue
+    const m = /^<([a-z][a-z0-9]*)[\s/>]/.exec(src.slice(i, i + 24))
+    if (!m) continue
+    let depth = 0
+    let quote = null
+    let j = i + 1 + m[1].length
+    for (; j < src.length; j++) {
+      const c = src[j]
+      if (quote) {
+        if (c === quote && src[j - 1] !== '\\') quote = null
+        continue
+      }
+      if (c === '"' || c === "'" || c === '`') { quote = c; continue }
+      if (c === '{') depth++
+      else if (c === '}') depth--
+      else if (c === '>' && depth === 0) break
+    }
+    if (j < src.length) {
+      tags.push({ name: m[1], text: src.slice(i, j + 1) })
+      i = j
+    }
+  }
+  return tags
+}
+
 describe('satır kontrolleri — erişilebilir ad ve klavye erişimi', () => {
   it('tarama vakum değil — kayda değer sayıda kaynak dosya okunuyor', () => {
     expect(files.length).toBeGreaterThan(100)
@@ -89,5 +168,48 @@ describe('satır kontrolleri — erişilebilir ad ve klavye erişimi', () => {
       'ayırt edilemez. ScriptedMonitorPage kalıbını uygulayın: role="button" tabIndex={0}',
       "aria-label={t('mon.openDetailFor', …)} + Enter/Space onKeyDown (yalnız e.target === e.currentTarget).",
     ].join(' ')).toEqual([])
+  })
+
+  it('tıklanabilir olan her öğe klavyeyle de kullanılabilir (tabIndex + onKeyDown)', () => {
+    const offenders = []
+    for (const f of files) {
+      const src = fs.readFileSync(f, 'utf8')
+      for (const tag of openingTags(src)) {
+        if (!NON_INTERACTIVE.has(tag.name)) continue
+        if (!/\bonClick=/.test(tag.text)) continue
+        if (isPassiveClick(tag.text)) continue
+        if (/\btabIndex=/.test(tag.text) && /\bonKeyDown=/.test(tag.text)) continue
+        const key = `${rel(f)}:<${tag.name}> ${tag.text.slice(0, 60).replace(/\s+/g, ' ')}…`
+        if ([...EXEMPT_CLICK.keys()].some(k => key.startsWith(k))) continue
+        offenders.push(key)
+      }
+    }
+    expect(offenders, [
+      'Tıklanabilir ama klavyeye kapalı öğe: Tab ona hiç uğramaz, yani yalnız klavye kullanan',
+      '(ya da ekran okuyucu kullanan) biri o eylemi HİÇ yapamaz — satır detayı açılmaz, filtre',
+      'uygulanmaz, kart genişlemez. Kardeş kalıplar: satır için CertificatesTable (tabIndex={0} +',
+      'Enter/Space, e.target === e.currentTarget korumalı), kart/başlık için ScriptedMonitorPage ve',
+      'ui/TeamBadge (role="button" tabIndex={0} + Enter/Space). Gerçekten pasif bir sarmalayıcıysa',
+      '(yalnız stopPropagation / modal örtüsü) kural onu zaten atlar; başka bir zorunluluk varsa',
+      'EXEMPT_CLICK listesine GEREKÇESİYLE ekleyin.',
+    ].join(' ')).toEqual([])
+  })
+
+  it('muafiyet listesi ÖLÜ kayıt taşımaz — cırcır yalnız küçülür', () => {
+    const live = new Set()
+    for (const f of files) {
+      const src = fs.readFileSync(f, 'utf8')
+      for (const tag of openingTags(src)) {
+        if (!NON_INTERACTIVE.has(tag.name)) continue
+        if (!/\bonClick=/.test(tag.text)) continue
+        if (isPassiveClick(tag.text)) continue
+        if (/\btabIndex=/.test(tag.text) && /\bonKeyDown=/.test(tag.text)) continue
+        live.add(`${rel(f)}:<${tag.name}>`)
+      }
+    }
+    const dead = [...EXEMPT_CLICK.keys()].filter(k => !live.has(k))
+    expect(dead, 'Bu yollarda artık klavyeye kapalı tıklama yok — muafiyet DÜŞMELİ').toEqual([])
+    expect([...EXEMPT_CLICK.values()].filter(v => !v || !v.trim()), 'Her muafiyet GEREKÇELİ olmalı')
+      .toEqual([])
   })
 })

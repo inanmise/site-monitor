@@ -269,7 +269,9 @@ function NotifLogCard({ log: l, alertLevel }) {
 
   return (
     <div className={`nl-card nl-card--${trig.cls}${open ? ' is-open' : ''}`}>
-      <div className="nl-card-header" onClick={() => setOpen(o => !o)}>
+      <div className="nl-card-header" role="button" tabIndex={0} aria-expanded={open}
+        onClick={() => setOpen(o => !o)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o) } }}>
         <span className={`nl-trigger-badge nl-trigger--${trig.cls}`}>
           <trig.Icon size={11} /> {trig.text}
         </span>

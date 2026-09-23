@@ -292,7 +292,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
         })}
       </nav>
 
-      {/* ── Footer: user settings, theme toggle, lang toggle, logout ── */}
+      {/* ── Footer: user menu (settings, issue report, theme, language), logout ── */}
       <div className="sb-foot">
         <div className="sb-user-wrap">
           <button
@@ -356,6 +356,15 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
                 <span>{t('nav.settings')}</span>
               </button>
             )}
+            {/* Kalıcı "Sorun Bildir" girişi — çökme OLMAYAN sorunlar için (yanlış veri, yavaşlık,
+                görsel bozukluk). Çökme durumunda ErrorBoundary kendi butonunu gösterir. */}
+            <button
+              className="sb-user-popover-item"
+              onClick={() => { setUserMenuOpen(false); setIssueOpen(true) }}
+            >
+              <Bug size={14} />
+              <span>{t('nav.reportIssue')}</span>
+            </button>
             <button
               className="sb-user-popover-item"
               onClick={() => { setUserMenuOpen(false); onChangePassword?.() }}
@@ -371,19 +380,18 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
               <Compass size={14} />
               <span>{t('tour.restart')}</span>
             </button>
+            {/* Tema ve dil — popover AÇIK kalır; değişiklik anında görünsün, geri alınabilsin. */}
+            <button className="sb-user-popover-item" onClick={toggleTheme}>
+              {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+              <span>{theme === 'dark' ? t('nav.lightMode') : t('nav.darkMode')}</span>
+            </button>
+            <button className="sb-user-popover-item" onClick={toggle}>
+              <Globe size={14} />
+              <span>{t('nav.langSwitch')}</span>
+            </button>
           </div>,
           document.body
         )}
-        {/* Kalıcı "Sorun Bildir" girişi — çökme OLMAYAN sorunlar için (yanlış veri, yavaşlık,
-            görsel bozukluk). Çökme durumunda ErrorBoundary kendi butonunu gösterir. */}
-        <button
-          className="sb-logout"
-          onClick={() => setIssueOpen(true)}
-          title={!open ? t('nav.reportIssue') : undefined}
-        >
-          <Bug size={15} />
-          {open && <span>{t('nav.reportIssue')}</span>}
-        </button>
         <IssueReportModal open={issueOpen} onClose={() => setIssueOpen(false)} />
         <ModalShell open={teamsOpen} onClose={() => setTeamsOpen(false)} title={t('nav.myTeamsTitle')} icon={Users} size="sm">
           <p className="field-hint" style={{ marginTop: 0 }}>{t('nav.myTeamsHint')}</p>
@@ -396,24 +404,6 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
             ))}
           </ul>
         </ModalShell>
-        <button
-          className="sb-logout"
-          data-tour="nav-theme"
-          onClick={toggleTheme}
-          title={!open ? (theme === 'dark' ? t('nav.lightMode') : t('nav.darkMode')) : undefined}
-        >
-          {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
-          {open && <span>{theme === 'dark' ? t('nav.lightMode') : t('nav.darkMode')}</span>}
-        </button>
-        <button
-          className="sb-logout"
-          onClick={toggle}
-          title={!open ? t('nav.langSwitch') : undefined}
-          style={{ fontSize: open ? '.78em' : undefined }}
-        >
-          <Globe size={15} />
-          {open && <span>{t('nav.langSwitch')}</span>}
-        </button>
         <button
           className="sb-logout"
           onClick={() => {

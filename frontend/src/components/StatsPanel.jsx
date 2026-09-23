@@ -29,6 +29,10 @@ export default function StatsPanel({ stats, visible, onStatClick, activeFilter, 
           <div
             key={item.key}
             className={`stat-item stat-item-${item.cls} stat-clickable${isActive ? ' stat-active' : ''}`}
+            role="button" tabIndex={0}
+            aria-pressed={isActive}
+            aria-label={isActive ? t('stat.clearTip') : t('stat.filterTip', label)}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onStatClick(item.key) } }}
             onClick={() => onStatClick(item.key)}
             title={isActive ? t('stat.clearTip') : t('stat.filterTip', label)}
           >
@@ -44,7 +48,10 @@ export default function StatsPanel({ stats, visible, onStatClick, activeFilter, 
         const cls = clsMap[issuerStats.uniqueCount] ?? 'valid'
         const sub = `${issuerStats.dominantIssuer} (${issuerStats.dominantCount}, %${issuerStats.dominantPct})`
         return (
-          <div className={`stat-item stat-item-${cls} stat-clickable`} title={sub} onClick={onCaClick}>
+          <div className={`stat-item stat-item-${cls} stat-clickable`} title={sub}
+            role="button" tabIndex={0} aria-label={`${t('stat.caDiv')} — ${sub}`}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onCaClick() } }}
+            onClick={onCaClick}>
             <span className="stat-icon"><Building2 size={32} /></span>
             <span className={`stat-value stat-value-${cls}`}>{issuerStats.uniqueCount}</span>
             <span className="stat-label">{t('stat.caDiv')}</span>
@@ -58,6 +65,10 @@ export default function StatsPanel({ stats, visible, onStatClick, activeFilter, 
         return (
           <div
             className={`stat-item stat-item-weak stat-clickable${isActive ? ' stat-active' : ''}`}
+            role="button" tabIndex={0}
+            aria-pressed={isActive}
+            aria-label={isActive ? t('stat.clearTip') : t('stat.filterTip', label)}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onStatClick('weak') } }}
             onClick={() => onStatClick('weak')}
             title={isActive ? t('stat.clearTip') : t('stat.filterTip', label)}
           >
@@ -86,6 +97,10 @@ export default function StatsPanel({ stats, visible, onStatClick, activeFilter, 
         return (
           <div
             className={`stat-item stat-item-certissue stat-clickable${isActive ? ' stat-active' : ''}`}
+            role="button" tabIndex={0}
+            aria-pressed={isActive}
+            aria-label={isActive ? t('stat.clearTip') : t('stat.filterTip', label)}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onStatClick('certissue') } }}
             onClick={() => onStatClick('certissue')}
             title={isActive ? t('stat.clearTip') : t('stat.filterTip', label)}
           >

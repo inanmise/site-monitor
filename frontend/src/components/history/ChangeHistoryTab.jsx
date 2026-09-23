@@ -104,6 +104,8 @@ export default function ChangeHistoryTab({ t, kind, monitorId, teamNames = {}, c
     <>
       {row.ip_address && (
         <span className="chg-ip" title={t('chg.ipTitle')}
+          role="button" tabIndex={0} aria-label={`${row.ip_address} — ${t('chg.ipTitle')}`}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); copyText(row.ip_address) } }}
           onClick={(e) => { e.stopPropagation(); copyText(row.ip_address) }}>
           {row.ip_address}<Copy size={10} aria-hidden="true" />
         </span>

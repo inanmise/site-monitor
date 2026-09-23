@@ -111,9 +111,12 @@ export default function HeartbeatHistoryModal({ onClose }) {
                   <div
                     key={i}
                     className={`hb-tl-cell hb-tl-${s}${isSelected ? ' hb-tl-selected' : ''}`}
+                    role="button" tabIndex={0} aria-pressed={isSelected}
+                    aria-label={`${t('health.hbHistoryTitle')} — ${s}`}
                     onMouseEnter={() => setHovered(b)}
                     onMouseLeave={() => setHovered(null)}
                     onClick={() => setSelected(prev => prev?.i === i ? null : { i, b, s })}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(prev => prev?.i === i ? null : { i, b, s }) } }}
                   >
                     {s === 'missing' && <span className="hb-tl-x">×</span>}
                   </div>

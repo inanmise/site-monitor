@@ -88,7 +88,8 @@ export default function TeamMembersManager({ team, users = [], canManage, onClos
                   </span>
                   {canManage && (
                     <button className="btn btn-sm-p btn-secondary tmm-remove" onClick={() => remove(u)} disabled={busy}
-                      title={t('team.memberRemove')} aria-label={t('team.memberRemove')}><UserMinus size={13} /></button>
+                      title={t('team.memberRemove')}
+                      aria-label={`${u.display_name || u.username} — ${t('team.memberRemove')}`}><UserMinus size={13} /></button>
                   )}
                 </li>
               ))}

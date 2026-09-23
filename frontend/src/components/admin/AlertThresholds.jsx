@@ -189,7 +189,8 @@ export default function AlertThresholds() {
                 <div className="threshold-actions">
                   <button className="btn btn-secondary" onClick={() => startEdit(thr)}>{t('thr.edit')}</button>
                   {tier && (
-                    <button className="btn btn-danger btn-sm-p" onClick={() => remove(thr)} title={t('thr.delete')} aria-label={t('thr.delete')}>
+                    <button className="btn btn-danger btn-sm-p" onClick={() => remove(thr)} title={t('thr.delete')}
+                      aria-label={`${t('thr.scopeTier', tier)} — ${t('thr.delete')}`}>
                       <Trash2 size={14} />
                     </button>
                   )}

@@ -54,11 +54,11 @@ describe('TeamMembersManager', () => {
     render(<TeamMembersManager team={TEAM} users={USERS} canManage onClose={() => {}} />)
     await screen.findByText('Ali')
     confirmMock.mockResolvedValueOnce(false)
-    fireEvent.click(screen.getByRole('button', { name: /^Çıkar$|^Remove$/ }))
+    fireEvent.click(screen.getByRole('button', { name: /— (Çıkar|Remove)$/ }))
     await waitFor(() => expect(confirmMock).toHaveBeenCalled())
     expect(api.admin.removeTeamMember).not.toHaveBeenCalled()
     confirmMock.mockResolvedValueOnce(true)
-    fireEvent.click(screen.getByRole('button', { name: /^Çıkar$|^Remove$/ }))
+    fireEvent.click(screen.getByRole('button', { name: /— (Çıkar|Remove)$/ }))
     await waitFor(() => expect(api.admin.removeTeamMember).toHaveBeenCalledWith(7, 1))
   })
 
@@ -66,7 +66,7 @@ describe('TeamMembersManager', () => {
     render(<TeamMembersManager team={TEAM} users={USERS} canManage={false} onClose={() => {}} />)
     await screen.findByText('Ali')
     expect(screen.queryByRole('button', { name: /^Ekle$|^Add$/ })).toBeNull()
-    expect(screen.queryByRole('button', { name: /^Çıkar$|^Remove$/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /— (Çıkar|Remove)$/ })).toBeNull()
   })
 })
 

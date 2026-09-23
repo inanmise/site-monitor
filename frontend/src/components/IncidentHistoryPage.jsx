@@ -719,7 +719,10 @@ export default function IncidentHistoryPage() {
             </tr></thead>
             <tbody>
               {rows.map(r => (
-                <tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => setModal({ mode: 'view', form: { ...EMPTY, ...r } })}>
+                <tr key={r.id} style={{ cursor: 'pointer' }} tabIndex={0}
+                  aria-label={t('a11y.openRow', r.title || r.id)}
+                  onClick={() => setModal({ mode: 'view', form: { ...EMPTY, ...r } })}
+                  onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setModal({ mode: 'view', form: { ...EMPTY, ...r } }) } }}>
                   {allowManage && <td onClick={e => e.stopPropagation()}>
                     <input type="checkbox" checked={selected.has(r.id)} onChange={() => toggleSel(r.id)} />
                   </td>}

@@ -25,7 +25,10 @@ function TierRow({ label, stats, teamName, onStatClick, t }) {
           <td
             key={key}
             className={`ts-grid-val-cell ts-cell-${key}${count > 0 ? ' ts-cell-active' : ' ts-cell-zero'}`}
+            tabIndex={count > 0 ? 0 : undefined}
+            aria-label={count > 0 ? `${t(`ts.${key}`)}: ${count}` : undefined}
             onClick={() => count > 0 && click(domainsKey, t(`ts.${key}`))}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); count > 0 && click(domainsKey, t(`ts.${key}`)) } }}
           >{count}</td>
         )
       })}

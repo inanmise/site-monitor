@@ -172,7 +172,8 @@ export default function InventoryTable({
                     ? <span className="badge badge-deleted" title={formatDate(r.deleted_at)}>{t('inv.deletedBadge')}{daysBetween(r.deleted_at) != null ? ` · ${t('inv.deletedAgo', daysBetween(r.deleted_at))}` : ''}{r.updated_by_name ? ` · ${r.updated_by_name}` : ''}</span>
                     : canManage
                       ? <label className="inv-switch" title={t('inv.inlineEditTip')}>
-                          <input type="checkbox" checked={!!r.active} onChange={(e) => onInline(r, { active: e.target.checked })} aria-label={t('inv.colActive')} />
+                          <input type="checkbox" checked={!!r.active} onChange={(e) => onInline(r, { active: e.target.checked })}
+                                 aria-label={`${r.domain} — ${t('inv.colActive')}`} />
                           <span className={r.active ? 'badge badge-ok' : 'badge badge-err'}>{r.active ? t('inv.active') : t('inv.inactive')}</span>
                         </label>
                       : <span className={r.active ? 'badge badge-ok' : 'badge badge-err'}>{r.active ? t('inv.active') : t('inv.inactive')}</span>}
@@ -180,7 +181,8 @@ export default function InventoryTable({
                 <td>
                   <div className="inv-row-actions">
                     {!del && (
-                      <button type="button" className="btn btn-sm btn-secondary inv-checknow" disabled={busy === r.domain} onClick={() => checkNow(r)} title={t('inv.checkNow')} aria-label={t('inv.checkNow')}>
+                      <button type="button" className="btn btn-sm btn-secondary inv-checknow" disabled={busy === r.domain} onClick={() => checkNow(r)} title={t('inv.checkNow')}
+                        aria-label={`${r.domain} — ${t('inv.checkNow')}`}>
                         <Play size={12} className={busy === r.domain ? 'is-spinning' : ''} />
                       </button>
                     )}

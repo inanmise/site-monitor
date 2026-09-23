@@ -372,8 +372,10 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
               </td></tr>
             )}
             {users.map((user) => (
-              <tr key={user.id} style={{ cursor: 'pointer' }} title={t('usr.viewTitle')}
-                onClick={() => setViewUser(user)}>
+              <tr key={user.id} style={{ cursor: 'pointer' }} title={t('usr.viewTitle')} tabIndex={0}
+                aria-label={t('a11y.openRow', user.display_name || user.username)}
+                onClick={() => setViewUser(user)}
+                onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setViewUser(user) } }}>
                 {canManage && (
                   <td className="um-col-check" onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={selected.has(user.id)} onChange={() => toggleOne(user.id)} aria-label={user.username} />

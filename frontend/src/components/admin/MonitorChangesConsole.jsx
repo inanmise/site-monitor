@@ -214,6 +214,9 @@ export default function MonitorChangesConsole({ globalViewer = false }) {
       {/* Katlama başlığı — izleme sayfalarındaki `stats-collapse-bar` ile AYNI şekil ve
           aynı sözlük anahtarları: kullanıcı burada yeni bir kalıp öğrenmez. */}
       <div className="stats-collapse-bar" onClick={() => setStatsVisible(v => !v)}
+        role="button" tabIndex={0} aria-expanded={statsVisible}
+        aria-label={statsVisible ? t('app.collapseStats') : t('app.expandStats')}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setStatsVisible(v => !v) } }}
         title={statsVisible ? t('app.collapseStats') : t('app.expandStats')}>
         <span className="stats-collapse-icon"><BarChart3 size={18} /></span>
         <span className="stats-collapse-label">{t('app.statistics')}</span>
@@ -337,6 +340,9 @@ export default function MonitorChangesConsole({ globalViewer = false }) {
                       <div className="chg-row-facts">
                         {r.ip_address && (
                           <span className="chg-ip" title={t('chg.ipTitle')}
+                            role="button" tabIndex={0}
+                            aria-label={`${r.ip_address} — ${t('chg.ipTitle')}`}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); copyText(r.ip_address) } }}
                             onClick={() => copyText(r.ip_address)}>
                             {r.ip_address}<Copy size={10} aria-hidden="true" />
                           </span>

@@ -500,7 +500,10 @@ export default function AuditLogViewer() {
           {savedViews.map(v => (
             <button key={v.name} className="audit-view-chip" onClick={() => applySavedView(v)} title={v.name}>
               <span className="audit-view-name">{v.name}</span>
-              <span className="audit-view-del" onClick={e => deleteSavedView(v.name, e)} title={t('audit.deleteView')}>×</span>
+              <span className="audit-view-del" onClick={e => deleteSavedView(v.name, e)}
+                    role="button" tabIndex={0}
+                    title={t('audit.deleteView')} aria-label={`${v.name} — ${t('audit.deleteView')}`}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); deleteSavedView(v.name, e) } }}>×</span>
             </button>
           ))}
         </div>

@@ -1116,6 +1116,9 @@ export default function App() {
             <div className="stats-section" data-tour="dash-stats">
               <div
                 className="stats-collapse-bar"
+                role="button" tabIndex={0} aria-expanded={statsVisible}
+                aria-label={statsVisible ? t('app.collapseStats') : t('app.expandStats')}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setStatsVisible((v) => !v) } }}
                 onClick={() => setStatsVisible((v) => !v)}
                 title={statsVisible ? t('app.collapseStats') : t('app.expandStats')}
               >

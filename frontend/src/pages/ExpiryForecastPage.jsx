@@ -591,8 +591,10 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
                   {r.renewal_plan_state === 'planned' && <span className="fc-exp-plan is-planned" title={r.renewal_planned_note || ''}>{t('forecast.planned', formatDateOnly(r.renewal_planned_at))}</span>}
                   {r.renewal_plan_state === 'done' && <span className="fc-exp-plan is-done">{t('forecast.planDone')}</span>}
                   <span className="fc-exp-actions no-print">
-                    <button type="button" className="btn btn-sm btn-secondary" disabled={busyDomain === r.domain} onClick={() => checkNow(r.domain)} title={t('inv.checkNow')} aria-label={t('inv.checkNow')}><Play size={11} /></button>
-                    <button type="button" className="btn btn-sm btn-secondary" onClick={() => setPlanRow(r)} title={t('forecast.planTitle', r.domain)} aria-label={t('forecast.planBtn')}><CalendarPlus size={11} /></button>
+                    <button type="button" className="btn btn-sm btn-secondary" disabled={busyDomain === r.domain} onClick={() => checkNow(r.domain)} title={t('inv.checkNow')}
+                      aria-label={`${r.domain} — ${t('inv.checkNow')}`}><Play size={11} /></button>
+                    <button type="button" className="btn btn-sm btn-secondary" onClick={() => setPlanRow(r)} title={t('forecast.planTitle', r.domain)}
+                      aria-label={t('forecast.planTitle', r.domain)}><CalendarPlus size={11} /></button>
                   </span>
                 </div>
               ))}

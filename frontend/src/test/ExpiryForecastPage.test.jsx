@@ -110,7 +110,8 @@ describe('ExpiryForecastPage', () => {
     const row = screen.getByText('crit.example.com').closest('.fc-exp-row')
     fireEvent.click(within(row).getByRole('button', { name: /Check now|Şimdi kontrol et/ }))
     await waitFor(() => expect(api.refreshCertificateHealth).toHaveBeenCalledWith('crit.example.com'))
-    fireEvent.click(within(row).getByRole('button', { name: /^Plan$|^Planla$/ }))
+    // Plan düğmesinin adı artık ALAN ADINI da taşıyor (satırlar ayırt edilsin diye).
+    fireEvent.click(within(row).getByRole('button', { name: /plan/i }))
     const dlg = await screen.findByRole('dialog')
     fireEvent.change(within(dlg).getByLabelText(/Planned renewal date|Planlanan yenileme tarihi/), { target: { value: '2026-09-20' } })
     fireEvent.change(within(dlg).getByLabelText(/^Note$|^Not$/), { target: { value: 'x' } })
