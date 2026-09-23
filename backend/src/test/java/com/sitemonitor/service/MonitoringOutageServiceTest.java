@@ -982,4 +982,46 @@ class MonitoringOutageServiceTest {
         verify(escalationService).processConfirmedOutage(
                 eq("live.example.com"), eq(EscalationService.TYPE_ACCESSIBILITY), eq("WARNING"), any());
     }
+    // ── O12 (2026-09-23): aktif recovery zincirinde KUŞAK yarışı ───────────────
+
+    private static MonitoringOutageService.SweepItem upItem(String domain) {
+        return new MonitoringOutageService.SweepItem(
+                EscalationService.TYPE_ACCESSIBILITY, domain, null, true, null, java.util.Map.of(),
+                () -> java.util.Map.of("status", "up"));
+    }
+
+    @Test
+    @DisplayName("O12: İPTAL EDİLMİŞ recovery zinciri alarmı kapatamaz — eski kuşak sessizce düşer")
+    void cancelledRecoveryChainCannotResolveTheAlert() {
+        ReflectionTestUtils.setField(service, "recoveryExecutor", immediateExecutor());
+        String key = EscalationService.TYPE_ACCESSIBILITY + ":x.example.com";
+
+        // 1. zincir başlar (kuşak 1), sonra sweep DOWN görüp iptal eder (kuşak 2'ye çıkar).
+        long stale = (Long) ReflectionTestUtils.invokeMethod(service, "bumpRecoveryGeneration", key);
+        ReflectionTestUtils.invokeMethod(service, "bumpRecoveryGeneration", key);
+
+        // 1. zincirin kuyrukta bekleyen görevi ŞİMDİ ateşlenir. Eskiden guard yalnız
+        // recoveryInFlight.contains(key) idi: sonraki sweep UP görüp anahtarı YENİDEN eklediğinde
+        // bu eski görev canlanıyor ve kendi n sayacıyla alarmı kapatıyordu — arada gerçek bir DOWN
+        // görülmüş olmasına rağmen.
+        ReflectionTestUtils.invokeMethod(service, "runRecoveryAttempt",
+                key, stale, EscalationService.TYPE_ACCESSIBILITY, "x.example.com",
+                java.util.List.of(upItem("x.example.com")), 2, 1L, 5);
+
+        verify(escalationService, never()).resolveMonitoringAlertsForDomain(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("O12: GEÇERLİ kuşak alarmı kapatır — düzeltme zinciri sağlam bırakmalı")
+    void currentGenerationStillResolves() {
+        ReflectionTestUtils.setField(service, "recoveryExecutor", immediateExecutor());
+        String key = EscalationService.TYPE_ACCESSIBILITY + ":y.example.com";
+        long gen = (Long) ReflectionTestUtils.invokeMethod(service, "bumpRecoveryGeneration", key);
+
+        ReflectionTestUtils.invokeMethod(service, "runRecoveryAttempt",
+                key, gen, EscalationService.TYPE_ACCESSIBILITY, "y.example.com",
+                java.util.List.of(upItem("y.example.com")), 2, 1L, 1);
+
+        verify(escalationService).resolveMonitoringAlertsForDomain("y.example.com", EscalationService.TYPE_ACCESSIBILITY);
+    }
 }

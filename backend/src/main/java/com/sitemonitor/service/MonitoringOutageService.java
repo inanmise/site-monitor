@@ -180,8 +180,43 @@ public class MonitoringOutageService {
                 return t;
             });
 
-    /** "tip:domain" — aktif recovery döngüsü çift-başlatma + iptal guard'ı. */
-    private final Set<String> recoveryInFlight = ConcurrentHashMap.newKeySet();
+    /**
+     * "tip:domain" → KUŞAK numarası — aktif recovery döngüsünün çift-başlatma + iptal guard'ı.
+     *
+     * <p>Eskiden {@code Set} idi ve hem "zincir sürüyor" hem "dışarıdan iptal edildi" sinyalini
+     * taşıyordu, ama planlanan görevin {@code ScheduledFuture}'ı tutulmadığı için gerçek iptal
+     * YOKTU — yalnız görev girişindeki {@code contains(key)} bakışı vardı. İki yüzü:
+     *
+     * <p>(a) Sweep DOWN görüp anahtarı kaldırır, sonraki sweep UP görüp YENİDEN ekler; 1. zincirin
+     * kuyrukta bekleyen görevi ateşlenir, {@code contains} artık TRUE olduğu için çalışır ve KENDİ
+     * {@code n} sayacıyla {@code done >= required} koşulunu sağlayıp alarmı kapatır — arada gerçek
+     * bir DOWN görülmüş olmasına rağmen.
+     *
+     * <p>(b) {@code contains} yalnız GİRİŞTE bakılıyordu; gövdedeki {@code recheck().get()} döngüsü
+     * tüm monitörleri yeniden kontrol ettiği için saniyeler sürüyor ve o pencerede gelen iptali
+     * hiç görmüyordu.
+     *
+     * <p>Kuşak numarası ikisini de kapatır: iptal ve yeniden başlatma numarayı ARTIRIR, görev de
+     * hem girişte hem {@code resolve} çağrısından hemen ÖNCE kendi kuşağını doğrular.
+     */
+    private final ConcurrentHashMap<String, Long> recoveryGeneration = new ConcurrentHashMap<>();
+
+    /** Zincir sürüyor mu (kuşak kaydı var mı)? */
+    private boolean recoveryActive(String key) { return recoveryGeneration.containsKey(key); }
+
+    /** İptal / yeniden başlatma: kuşağı artır — kuyrukta bekleyen eski görevler kendiliğinden düşer. */
+    private long bumpRecoveryGeneration(String key) {
+        return recoveryGeneration.merge(key, 1L, Long::sum);
+    }
+
+    /** Zinciri tamamen kapat (artık aktif değil). */
+    private void endRecovery(String key) { recoveryGeneration.remove(key); }
+
+    /** Bu görev hâlâ GEÇERLİ kuşağa mı ait? Hem girişte hem alarm kapatmadan önce sorulur. */
+    private boolean isCurrentGeneration(String key, long gen) {
+        Long cur = recoveryGeneration.get(key);
+        return cur != null && cur == gen;
+    }
 
     @PreDestroy
     void shutdown() {
@@ -392,7 +427,7 @@ public class MonitoringOutageService {
                     }
                 } else {
                     recoveryUpCount.remove(alertType + ":" + domain);   // açık alarm yok → bayat sayaç temizle
-                    recoveryInFlight.remove(alertType + ":" + domain);
+                    endRecovery(alertType + ":" + domain);
                 }
             } else if (hasOpenAlert) {
                 // Kesinti SÜRÜYOR — recovery penceresini SIFIRLA (pasif + aktif) + günlük re-alert yolu.
@@ -400,7 +435,10 @@ public class MonitoringOutageService {
                 // zaten teyitli ve alarmlı; sonraki sweep'ler re-alert kadansını işletir. 30sn'lik teyit
                 // re-check'leri yalnız İLK tespit → alarm açılana kadarki pencerede koşar.
                 recoveryUpCount.remove(alertType + ":" + domain);
-                recoveryInFlight.remove(alertType + ":" + domain);   // aktif recovery döngüsünü iptal et
+                // İptal: kuşağı ARTIR — kuyrukta bekleyen eski görev artık kendi kuşağını
+                // doğrulayamaz. remove() yetmiyordu: sonraki sweep UP görüp anahtarı yeniden
+                // eklediğinde o eski görev canlanıp alarmı kapatabiliyordu.
+                bumpRecoveryGeneration(alertType + ":" + domain);
                 SweepItem firstDown = domainItems.stream().filter(it -> !it.up()).findFirst().orElseThrow();
                 withLock(alertType, domain, () ->
                         escalationService.processConfirmedOutage(domain, alertType,
@@ -680,25 +718,26 @@ public class MonitoringOutageService {
     void startRecovery(String alertType, String domain, List<SweepItem> items, int required, long intervalMs) {
         String key = alertType + ":" + domain;
         if (required <= 1) {
-            recoveryInFlight.remove(key);   // tek kontrol yeterli → beklemeden kapat
+            endRecovery(key);   // tek kontrol yeterli → beklemeden kapat
             withLock(alertType, domain, () ->
                     escalationService.resolveMonitoringAlertsForDomain(domain, alertType));
             return;
         }
-        if (!recoveryInFlight.add(key)) {
+        if (recoveryActive(key)) {
             log.debug("Aktif recovery zaten sürüyor, atlanıyor: {}", key);
             return;
         }
+        final long gen = bumpRecoveryGeneration(key);
         log.info("Recovery başladı (aktif): {} [{}] — {} sn arayla {} doğrulama denemesi",
                 domain, alertType, intervalMs / 1000, required - 1);
         recoveryExecutor.schedule(
-                () -> runRecoveryAttempt(key, alertType, domain, items, required, intervalMs, 1),
+                () -> runRecoveryAttempt(key, gen, alertType, domain, items, required, intervalMs, 1),
                 intervalMs, TimeUnit.MILLISECONDS);
     }
 
-    void runRecoveryAttempt(String key, String alertType, String domain, List<SweepItem> items,
+    void runRecoveryAttempt(String key, long gen, String alertType, String domain, List<SweepItem> items,
                             int required, long intervalMs, int n) {
-        if (!recoveryInFlight.contains(key)) return;   // arada DOWN → dışarıdan iptal edilmiş
+        if (!isCurrentGeneration(key, gen)) return;   // arada DOWN / yeniden başlatma → bu zincir iptal
         try {
             boolean allUp = true;
             for (SweepItem it : items) {
@@ -707,24 +746,30 @@ public class MonitoringOutageService {
             }
             if (!allUp) {
                 log.info("Recovery kesildi (yeniden DOWN): {} [{}] — {}. denemede", domain, alertType, n);
-                recoveryInFlight.remove(key);
+                if (isCurrentGeneration(key, gen)) endRecovery(key);
                 return;   // alarm açık kalır; sonraki sweep kesinti-sürüyor yolunu işletir
             }
             int done = n + 1;   // ilk başarılı sweep (tetikleyici) = 1, sonrası aktif re-check'ler
             if (done >= required) {
+                // İKİNCİ kuşak doğrulaması: yukarıdaki recheck döngüsü saniyeler sürdü, o pencerede
+                // sweep DOWN görüp zinciri iptal etmiş olabilir. Alarmı kapatmadan HEMEN ÖNCE bak.
+                if (!isCurrentGeneration(key, gen)) {
+                    log.info("Recovery iptal edilmiş, alarm kapatılmıyor: {} [{}]", domain, alertType);
+                    return;
+                }
                 log.info("Recovery tamamlandı (aktif): {} [{}] — {}/{} ardışık başarılı, alarm kapatılıyor",
                         domain, alertType, done, required);
-                recoveryInFlight.remove(key);
+                endRecovery(key);
                 withLock(alertType, domain, () ->
                         escalationService.resolveMonitoringAlertsForDomain(domain, alertType));
                 return;
             }
             recoveryExecutor.schedule(
-                    () -> runRecoveryAttempt(key, alertType, domain, items, required, intervalMs, n + 1),
+                    () -> runRecoveryAttempt(key, gen, alertType, domain, items, required, intervalMs, n + 1),
                     intervalMs, TimeUnit.MILLISECONDS);
         } catch (Exception e) {
             log.error("Recovery re-check hatası: {} [{}] — {}", domain, alertType, e.getMessage(), e);
-            recoveryInFlight.remove(key);
+            if (isCurrentGeneration(key, gen)) endRecovery(key);
         }
     }
 
