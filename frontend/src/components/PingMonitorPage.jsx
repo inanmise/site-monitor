@@ -42,6 +42,7 @@ import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorSpark from './ui/MonitorSpark.jsx'
+import PingProtocol from './ui/PingProtocol.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
@@ -577,11 +578,13 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
                 {statusBadge(m)}
                 {alarmBadge(m)}<MaintenanceBadge target={m.host} />
                 <span className="upt-card-top-right">
-                  <span className="upt-port-tag">{m.ip_version && m.ip_version !== 'auto' ? m.ip_version.toUpperCase() : 'ICMP'}</span>
                   <CopyLinkButton iconOnly url={monitorDeepLink('ping', m.id)} className="btn btn-sm upt-card-copy" />
                 </span>
               </div>
-              <div className="upt-card-domain" title={m.host}>{m.host}</div>
+              {/* Protokol / IP sürümü / paket sayısı başlığın hemen altında belirgin (2026-09-24 — eskiden sağ üstte
+                  11px gri yazıydı ve v4/v6 "V4" diye görünüyordu). */}
+              <div className="upt-card-domain upt-card-domain--tight" title={m.host}>{m.host}</div>
+              <div className="port-ep-row"><PingProtocol host={m.host} ipVersion={m.ip_version} packetCount={m.packet_count} /></div>
               <MonitorCardMeta monitor={m} />
               <MonitorSpark spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days} />
               <div className="upt-card-divider" />
@@ -623,6 +626,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
               <div className="upt-modal-header-left">
                 {statusBadge(selected)}
                 <span className="upt-modal-domain">{selected.host}</span>
+                <PingProtocol host={selected.host} ipVersion={selected.ip_version} packetCount={selected.packet_count} size="lg" />
               </div>
               {/* Hızlı eylemler KARTIN aynısı (MonitorModalActions): detayı açan kişi kontrol
                   koşturmak ya da ayarı düzeltmek için modalı kapatıp karta dönmesin. Yetki

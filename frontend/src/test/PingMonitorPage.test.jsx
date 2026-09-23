@@ -46,6 +46,34 @@ describe('PingMonitorPage', () => {
     expect(screen.getByText('Y Sistemleri')).toBeInTheDocument()
   })
 
+  it('2026-09-24 kart: ICMP rozeti başlığın altında belirgin; IP sürümü "IPv4/IPv6" (eskiden v4 → "V4"), IPv6 → ICMPv6; paket sayısı; detay başlığında aynı gösterim (büyük)', async () => {
+    api.monitoring.getPingMonitors.mockResolvedValue({ success: true, data: [
+      { ...monitor, packet_count: 4 },
+      { ...monitor, id: 2, host: '10.0.0.2', ip_version: 'v4', packet_count: 1 },
+      { ...monitor, id: 3, host: 'fe80::1', ip_version: 'v6' }] })
+    const { container } = render(<PingMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await screen.findByText('fe80::1')
+    const ep = (host) => [...container.querySelectorAll('.upt-card')]
+      .find((c) => c.querySelector('.upt-card-domain')?.textContent === host).querySelector('.port-ep')
+    const auto = ep('10.0.0.1')
+    expect(auto.querySelector('.port-ep-proto').textContent).toBe('ICMP')
+    expect(auto.querySelector('.port-ep-proto').className).toContain('port-ep-proto--icmp')
+    expect(auto.querySelector('.port-ep-fam')).toBeNull()                         // otomatik → sürüm yazılmaz
+    expect(auto.querySelector('.port-ep-svc').textContent).toMatch(/^4 paket$|^packets: 4$/)
+    expect(auto).toHaveAttribute('title', expect.stringMatching(/^10\.0\.0\.1 · ICMP echo (isteği|request) \(ping\) · (IP sürümü otomatik|IP version chosen automatically) · /))
+    expect(ep('10.0.0.2').querySelector('.port-ep-fam').textContent).toBe('IPv4')
+    const v6 = ep('fe80::1')
+    expect(v6.querySelector('.port-ep-proto').textContent).toBe('ICMPv6')
+    expect(v6.querySelector('.port-ep-fam').textContent).toBe('IPv6')
+    expect(v6.querySelector('.port-ep-svc')).toBeNull()                           // paket sayısı yoksa uydurulmaz
+    expect(container.querySelector('.upt-card .upt-port-tag')).toBeNull()        // eski sağ üst gri yazı yok
+    expect(container.textContent).not.toMatch(/\bV4\b|\bV6\b/)
+    fireEvent.click(screen.getByText('10.0.0.2'))
+    const head = await waitFor(() => { const h = document.querySelector('.upt-modal-header .port-ep.port-ep--lg'); expect(h).not.toBeNull(); return h })
+    expect(head.querySelector('.port-ep-proto').textContent).toBe('ICMP')
+    expect(head.querySelector('.port-ep-fam').textContent).toBe('IPv4')
+  })
+
   it('Yeni modal: grup alanı render olur', async () => {
     render(<PingMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPingMonitors).toHaveBeenCalled())

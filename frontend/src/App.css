@@ -8251,6 +8251,35 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 
 .upt-port-tag { font-size: 11px; color: var(--text-muted); font-family: 'Consolas', monospace; }
 
+/* Port İzleme uç noktası (2026-09-24): başlığın altında belirgin :port + renkli protokol rozeti. */
+.upt-card-domain--tight { margin-bottom: 6px; }
+.port-ep-row { margin-bottom: 12px; min-width: 0; }
+.port-ep { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.port-ep-port { font-family: 'Consolas', ui-monospace, monospace; font-size: 14px; font-weight: 700; color: var(--text);
+  background: var(--bg-hover); border: 1px solid var(--border); border-radius: 6px; padding: 1px 7px; line-height: 1.4; }
+.port-ep-proto { font-size: 11px; font-weight: 700; letter-spacing: .04em; padding: 2px 7px; border-radius: 6px; line-height: 1.4; }
+.port-ep-proto--tcp { background: #dbeafe; color: #1e40af; }
+.port-ep-proto--tls { background: #dcfce7; color: #166534; }
+.port-ep-proto--http { background: #ede9fe; color: #5b21b6; }
+.port-ep-proto--banner { background: #fef3c7; color: #92400e; }
+.port-ep-proto--udp { background: #ffedd5; color: #9a3412; }
+.port-ep-path { font-family: 'Consolas', ui-monospace, monospace; font-size: 12px; color: var(--text-muted);
+  max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.port-ep-svc { font-size: 12px; color: var(--text-muted); }
+.port-ep--lg .port-ep-port { font-size: 16px; }
+/* Ping (2026-09-24): ICMP rozeti satırın ana öğesi → bir boy büyük; IP sürümü çerçeveli kod. */
+.port-ep-proto--icmp { background: #cffafe; color: #155e75; }
+.port-ep-proto--lead { font-size: 12.5px; padding: 2px 9px; }
+.port-ep--lg .port-ep-proto--lead { font-size: 13.5px; }
+.port-ep-fam { font-family: 'Consolas', ui-monospace, monospace; font-size: 12px; font-weight: 700; color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; line-height: 1.4; }
+[data-theme="dark"] .port-ep-proto--icmp { background: #164e63; color: #a5f3fc; }
+[data-theme="dark"] .port-ep-proto--tcp { background: #1e3a8a; color: #bfdbfe; }
+[data-theme="dark"] .port-ep-proto--tls { background: #14532d; color: #bbf7d0; }
+[data-theme="dark"] .port-ep-proto--http { background: #2e1065; color: #ddd6fe; }
+[data-theme="dark"] .port-ep-proto--banner { background: #422006; color: #fcd34d; }
+[data-theme="dark"] .port-ep-proto--udp { background: #431407; color: #fdba74; }
+
 /* Domain name */
 .upt-card-domain {
   font-size: 15px; font-weight: 700; color: var(--text);
