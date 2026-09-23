@@ -6236,6 +6236,9 @@ export const TR = {
   'help.langNote':      'Kılavuz dili üst menüdeki dil seçimini izler',
 
   'nav.groupMonitoring': 'İzleme',
+  'nav.secAvailability': 'Erişilebilirlik',
+  'nav.secDomainDns':    'Alan Adı ve DNS',
+  'nav.secContent':      'İçerik ve Deneyim',
   'nav.uptime':          'Durum İzleme',
   'nav.port':            'Port İzleme',
   'nav.dns':             'DNS İzleme',
@@ -14486,6 +14489,9 @@ export const EN = {
   'help.langNote':      'The guide follows the language selected in the top menu',
 
   'nav.groupMonitoring': 'Monitoring',
+  'nav.secAvailability': 'Availability',
+  'nav.secDomainDns':    'Domains and DNS',
+  'nav.secContent':      'Content and experience',
   'nav.uptime':          'Status',
   'nav.port':            'Port',
   'nav.dns':             'DNS',
