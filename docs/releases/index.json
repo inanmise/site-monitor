@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-23T06:09:55Z",
+  "generatedAt": "2026-09-23T06:59:49Z",
   "repo": "inanmise/site-monitor",
-  "count": 671,
+  "count": 672,
   "releases": [
+    {
+      "version": "20.79.3",
+      "tag": "v20.79.3",
+      "releasedAt": "2026-09-23T06:59:44Z",
+      "commit": "b81b5771dc6799fdddb92057995046902e68b23a",
+      "prevVersion": "20.79.2",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "b81b5771",
+          "subject": "Core Web Vitals fizibilitesi + SRE/SLO sekmesi spesifikasyonu (kimlik bilgisi temizlendi)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.79.2",
       "tag": "v20.79.2",
