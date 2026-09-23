@@ -13229,6 +13229,16 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .mspark-sla.is-below .mspark-sla-val, .mspark-sla.is-below .mspark-sla-target { color: var(--danger); }
 .mspark-sla.is-met .mspark-sla-target { color: var(--success); }
 .mspark-sla-bad { color: #d97706; }
+/* Dönem etiketleri (2026-09-24): 1/7/15/30 gün; hata görülen dönemde ⚠ — renk tek sinyal değil (ikon + title). */
+.mspark-wins { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: auto; }
+.mspark-win { display: inline-flex; align-items: center; gap: 3px; padding: 0 6px; border: 1px solid var(--border); border-radius: 999px;
+  font-weight: 600; line-height: 1.6; white-space: nowrap; cursor: help; color: var(--text-muted); background: var(--bg-surface); }
+.mspark-win.is-ok { color: var(--success); }
+.mspark-win.is-warn { color: #b45309; border-color: #f59e0b; background: #fffbeb; }
+.mspark-win.is-bad { color: var(--danger); border-color: var(--danger); background: #fef2f2; }
+.mspark-win.is-none { opacity: .6; }
+[data-theme="dark"] .mspark-win.is-warn { color: #fcd34d; border-color: #b45309; background: #422006; }
+[data-theme="dark"] .mspark-win.is-bad { color: #fca5a5; background: #450a0a; }
 
 /* ── Alarm gürültü analizi (Alarm Geçmişi üstü, 2026-09-12 #18) ─────────────────────────────── */
 .noise { border: 1px solid var(--border); border-radius: 10px; background: var(--bg-surface); margin: 0 0 12px; }

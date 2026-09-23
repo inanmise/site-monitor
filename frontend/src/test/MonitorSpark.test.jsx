@@ -49,4 +49,36 @@ describe('MonitorSpark — 30 günlük SLA satırı (2026-09-12, #11)', () => {
     expect(c2.querySelector('.mspark-sla.is-met')).not.toBeNull()
     expect(c2.querySelector('.mspark-sla-bad')).toBeNull()
   })
+
+  it('2026-09-24 dönem etiketleri: "x hatalı saat" yerine 1/7/15/30 gün; hata olan dönemde ⚠ (hedef altı kırmızı, üstü turuncu), hatasız yeşil, kontrolsüz soluk; üzerine gelince ayrıntı', () => {
+    const windows = [
+      { days: 1, n: 0, fail: 0, up_pct: null, bad_hours: 0 },
+      { days: 7, n: 2016, fail: 0, up_pct: 100, bad_hours: 0 },
+      { days: 15, n: 4320, fail: 2, up_pct: 99.95, bad_hours: 1, slots: [{ h: '2026-09-20T11', fail: 2 }] },
+      { days: 30, n: 8640, fail: 20, up_pct: 99.77, bad_hours: 3, slots: [{ h: '2026-09-20T11', fail: 2 }, { h: '2026-09-02T04', fail: 1 }] },
+    ]
+    const { container } = render(<MonitorSpark spark={undefined}
+      sla={{ n: 8640, fail: 20, up_pct: 99.77, bad_hours: 3, windows }} slaTarget={99.9} slaDays={30} />)
+    const sla = container.querySelector('.mspark-sla')
+    expect(sla.querySelector('.mspark-sla-bad')).toBeNull()                       // eski "3 hatalı saat" metni yok
+    expect(sla.textContent).not.toMatch(/hatalı saat|bad hours/)
+    const chips = [...sla.querySelectorAll('.mspark-win')]
+    expect(chips.map((c) => c.textContent)).toEqual([
+      expect.stringMatching(/^1 gün$|^1 day$/), expect.stringMatching(/^7 gün$|^7 days$/),
+      expect.stringMatching(/^15 gün$|^15 days$/), expect.stringMatching(/^30 gün$|^30 days$/)])
+    expect(chips.map((c) => c.className.replace('mspark-win ', ''))).toEqual(['is-none', 'is-ok', 'is-warn', 'is-bad'])
+    expect(chips.map((c) => c.querySelector('svg') != null)).toEqual([false, false, true, true])   // ⚠ yalnız sorunlu dönemde
+    expect(chips[0]).toHaveAttribute('title', expect.stringMatching(/Son 24 saat: bu dönemde kontrol yok|Last 24 hours: no checks in this period/))
+    expect(chips[1]).toHaveAttribute('title', expect.stringMatching(/Son 7 gün: 2\.016 kontrol, hata yok · erişilebilirlik %100\.00|Last 7 days: 2,016 checks, no failures · availability 100\.00%/))
+    // Hata görülen her saat dilimi kendi satırında, o dilimdeki hata ADEDİYLE (2026-09-24: "5 hata varsa 5 hata alındı")
+    const slot = String.raw`[\d./]+ \d{2}[:.]\d{2}–\d{2}[:.]\d{2} — `
+    expect(chips[2].getAttribute('title')).toMatch(new RegExp(String.raw`^(Son 15 gün: 4\.320 kontrol, 2 hata · erişilebilirlik %99\.95|Last 15 days: 4,320 checks, 2 failures · availability 99\.95%)\n` + slot + '(2 hata alındı|2 failures)$'))
+    const t30 = chips[3].getAttribute('title').split('\n')
+    expect(t30[0]).toMatch(/Son 30 gün: 8\.640 kontrol, 20 hata · erişilebilirlik %99\.77 · hedefin \(%99\.9\) altında|Last 30 days: 8,640 checks, 20 failures · availability 99\.77% · below the 99\.9% target/)
+    expect(t30[1]).toMatch(new RegExp('^' + slot + '(2 hata alındı|2 failures)$'))
+    expect(t30[2]).toMatch(new RegExp('^' + slot + '(1 hata alındı|1 failure)$'))
+    expect(t30[3]).toMatch(/^\+1 saat dilimi daha$|^further hourly slots with failures: 1$/)   // bad_hours 3, listede 2
+    expect(t30).toHaveLength(4)
+    expect(chips[3]).toHaveAttribute('aria-label', chips[3].getAttribute('title'))   // ekran okuyucu da aynı ayrıntıyı duyar
+  })
 })
