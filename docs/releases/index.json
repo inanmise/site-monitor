@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-23T15:40:32Z",
+  "generatedAt": "2026-09-23T18:31:05Z",
   "repo": "inanmise/site-monitor",
-  "count": 676,
+  "count": 677,
   "releases": [
+    {
+      "version": "20.82.0",
+      "tag": "v20.82.0",
+      "releasedAt": "2026-09-23T18:30:55Z",
+      "commit": "543cd9912f5b6ec7c72cdd03f611c42d3c38651c",
+      "prevVersion": "20.81.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": "today",
+          "breaking": false,
+          "sha": "543cd991",
+          "subject": "\"Susturulmuş ve bakımda\" kartı + dünden bugüne göstergesi ve son 24 saat şeridi"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.81.0",
       "tag": "v20.81.0",
