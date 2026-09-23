@@ -48,6 +48,31 @@ describe('PortMonitorPage', () => {
     expect(await screen.findByText('10.0.0.1')).toBeInTheDocument()
   })
 
+  it('2026-09-24 kart: port ve protokol başlığın altında belirgin — büyük :port, türüne göre renkli protokol rozeti, HTTP yolu, bilinen portun hizmet adı; eski küçük gri etiket ve yinelenen Port ölçüsü yok', async () => {
+    api.monitoring.getPortMonitors.mockResolvedValue({ success: true, data: [
+      monitor, { ...monitor, id: 2, name: 'web', host: '10.0.0.2', port: 8443, protocol: 'HTTP', send_data: '/health' },
+      { ...monitor, id: 3, name: 'custom', host: '10.0.0.3', port: 7001, protocol: 'UDP' }] })
+    const { container } = render(<PortMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await screen.findByText('10.0.0.3')
+    const card = (host) => [...container.querySelectorAll('.upt-card')].find((c) => c.querySelector('.upt-card-domain')?.textContent === host)
+    const ep1 = card('10.0.0.1').querySelector('.port-ep')
+    expect(ep1.querySelector('.port-ep-port').textContent).toBe(':25')
+    expect(ep1.querySelector('.port-ep-proto').textContent).toBe('TCP')
+    expect(ep1.querySelector('.port-ep-proto').className).toContain('port-ep-proto--tcp')
+    expect(ep1.querySelector('.port-ep-svc').textContent).toBe('SMTP')
+    expect(ep1.querySelector('.port-ep-path')).toBeNull()                                   // yol yalnız HTTP türünde
+    expect(ep1).toHaveAttribute('title', expect.stringMatching(/^10\.0\.0\.1:25 · TCP — .+ · SMTP$/))
+    const ep2 = card('10.0.0.2').querySelector('.port-ep')
+    expect(ep2.querySelector('.port-ep-proto').className).toContain('port-ep-proto--http')
+    expect(ep2.querySelector('.port-ep-path').textContent).toBe('/health')
+    expect(ep2.querySelector('.port-ep-svc').textContent).toBe('HTTPS (alt)')
+    const ep3 = card('10.0.0.3').querySelector('.port-ep')
+    expect(ep3.querySelector('.port-ep-proto').className).toContain('port-ep-proto--udp')
+    expect(ep3.querySelector('.port-ep-svc')).toBeNull()                                    // bilinmeyen port → hizmet adı uydurulmaz
+    expect(container.querySelector('.upt-card .upt-port-tag')).toBeNull()
+    expect(card('10.0.0.1').querySelector('.upt-card-metrics').textContent).not.toMatch(/^Port|Port$/)
+  })
+
   it('Yeni Monitör butonu ADMIN için modal açar (host/port/grup alanları)', async () => {
     render(<PortMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPortMonitors).toHaveBeenCalled())
@@ -117,6 +142,11 @@ describe('PortMonitorPage', () => {
     render(<PortMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPortMonitors).toHaveBeenCalled())
     fireEvent.click(await screen.findByText('10.0.0.1'))            // satıra tıkla → detay modali açılır
+    // Başlıkta kartla aynı belirgin uç nokta (büyük boy) — eski ":25" gri etiketi değil (2026-09-24)
+    const headEp = document.querySelector('.upt-modal-header .port-ep.port-ep--lg')
+    expect(headEp).not.toBeNull()
+    expect(headEp.querySelector('.port-ep-port').textContent).toBe(':25')
+    expect(headEp.querySelector('.port-ep-proto').textContent).toBe('TCP')
     // 4 sekmeli parite çubuğu (ping/keyword ile aynı)
     expect(screen.getByRole('button', { name: /check history|kontrol geçmişi/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /alarm history|alarm geçmişi/i })).toBeInTheDocument()

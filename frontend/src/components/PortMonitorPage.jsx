@@ -13,6 +13,7 @@ import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorSpark from './ui/MonitorSpark.jsx'
+import PortEndpoint from './ui/PortEndpoint.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
@@ -573,21 +574,17 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
                 {statusBadge(m.status)}
                 {alarmBadge(m)}<MaintenanceBadge target={m.host} />
                 <span className="upt-card-top-right">
-                  <span className="upt-port-tag">:{m.port} {m.protocol || 'TCP'}</span>
                   <CopyLinkButton iconOnly url={monitorDeepLink('port', m.id)} className="btn btn-sm upt-card-copy" />
                 </span>
               </div>
-              {/* Baslik YALNIZ host: port ust-sag rozette ve olcum satirinda zaten var.
-              Host'u ":" ile bolmek onu tek bir metin dugumu olmaktan cikariyordu. */}
-              <div className="upt-card-domain" title={`${m.host}:${m.port}`}>{m.host}</div>
+              {/* Baslik YALNIZ host (":" ile bolmek onu tek metin dugumu olmaktan cikariyordu); port + protokol
+                  hemen altinda belirgin uc nokta satirinda (2026-09-24 — eskiden sag ustte 11px gri yaziydi). */}
+              <div className="upt-card-domain upt-card-domain--tight" title={`${m.host}:${m.port}`}>{m.host}</div>
+              <div className="port-ep-row"><PortEndpoint host={m.host} port={m.port} protocol={m.protocol} path={m.send_data} /></div>
               <MonitorCardMeta monitor={m} />
               <MonitorSpark spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days} />
               <div className="upt-card-divider" />
               <div className="upt-card-metrics">
-                <div className="upt-metric">
-                  <span className="upt-metric-val">{m.port}</span>
-                  <span className="upt-metric-lbl">{t('port.port')}</span>
-                </div>
                 {m.response_ms != null && (
                   <div className="upt-metric">
                     <span className="upt-metric-val">{m.response_ms}ms</span>
@@ -624,7 +621,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
               <div className="upt-modal-header-left">
                 {statusBadge(selected.status)}
                 <span className="upt-modal-domain">{selected.host}</span>
-                <span className="upt-port-tag">:{selected.port}</span>
+                <PortEndpoint host={selected.host} port={selected.port} protocol={selected.protocol} path={selected.send_data} size="lg" />
               </div>
               {/* Hızlı eylemler KARTIN aynısı (MonitorModalActions): detayı açan kişi kontrol
                   koşturmak ya da ayarı düzeltmek için modalı kapatıp karta dönmesin. Yetki
