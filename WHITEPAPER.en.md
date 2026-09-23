@@ -979,6 +979,8 @@ The table below gives each screen's address-bar key and its visibility rule. Kno
 
 The screen you land on after signing in. An expandable statistics panel — total, valid, warning, error, expiring within 30 days, expired — sits above cards carrying each certificate's domain, days remaining, status badge, issuer and last check.
 
+**For you — today.** The collapsible panel at the top gathers what needs attention across the teams you can see: certificates with under 30 days left, open alerts, flapping, slowing and silent monitors, domain registrations about to lapse, notifications that could not be delivered, certificate health findings and this week's report. The **Muted and under maintenance** card shows where the system is deliberately quiet: maintenance windows in progress or starting within 24 hours, paused monitors (with how long they have been paused, shown in the warning colour once a pause passes a week, as it may have been forgotten) and weak-algorithm exceptions that expire within seven days. The **▲ / ▼** marker beside each card's count shows the change on this time yesterday (a rise in red, a fall in green), and the strip under the panel heading sums up the alerts opened and resolved and the certificates renewed in the last 24 hours. The comparison relies on an hourly snapshot, so the markers do not appear on the first day after installation or after a long outage.
+
 | Action | What happens |
 |---|---|
 | Click a statistic card | Filters to that category |
@@ -987,7 +989,7 @@ The screen you land on after signing in. An expandable statistics panel — tota
 | Sort and page size | Orders by priority or days remaining |
 | Click a card | Opens the certificate detail window |
 | "Check Now" (if permitted) | Starts an immediate background scan |
-| Language and theme | Switches between English and Turkish, light and dark |
+| Language and theme | From the user menu, switches between English and Turkish, light and dark |
 
 ### 14.5 Certificate Detail Window
 

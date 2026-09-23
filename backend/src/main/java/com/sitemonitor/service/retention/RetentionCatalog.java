@@ -310,6 +310,9 @@ public final class RetentionCatalog {
                 "Sürüm & dağıtım geçmişi (K10, 2026-09-10): her pod açılışı bir satır (sürüm/commit/ortam/helm rev). "
                 + "ASLA silinmez — 'hangi sürüm ne zaman devreye alındı' sorusunun tek kalıcı kaynağı; yalnız elle "
                 + "girilen (MANUAL) satır admin tarafından silinebilir. Büyüme sınırlı (~günde birkaç satır)."),
+        info("today-panel-snapshots", "today_panel_snapshots", Mode.BOUNDED, DataClass.OPERATIONAL,
+                "Sizin için — bugün paneli dünden bugüne görüntüsü (2026-09-23): saatte bir satır, kartların satır "
+                + "KİMLİKLERİ (JSON). TodayPanelService her kayıtta 72 saatten eskileri siler → en fazla ~72 satır."),
         info("schema-table-registry", "schema_table_registry", Mode.BOUNDED, DataClass.OPERATIONAL,
                 "Tablo kayıt defteri (SQL Playground, 2026-09-11): tablo başına TEK satır — ilk görülme anı ve son veri "
                 + "değişimi. Tablo sayısı kadar satır; asla silinmez (silinirse 'oluşturma' bilgisi kaybolur)."),

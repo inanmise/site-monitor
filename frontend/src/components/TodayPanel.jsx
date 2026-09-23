@@ -1,12 +1,12 @@
 import { useCallback, useState } from 'react'
-import { CalendarClock, Siren, CalendarDays, ArrowRight, ChevronDown, Sparkles, Activity, Gauge, BellOff, Globe, MailX, ShieldAlert } from 'lucide-react'
+import { CalendarClock, Siren, CalendarDays, ArrowRight, ChevronDown, Sparkles, Activity, Gauge, BellOff, Globe, MailX, ShieldAlert, PauseCircle } from 'lucide-react'
 import { api } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import { navigateTo } from '../utils/navigate.js'
 import TeamBadge from './ui/TeamBadge.jsx'
 import TodayListModal from './TodayListModal.jsx'
-import { MonitorRowBody, NotificationRowBody, HealthRowBody, MONITOR_SECTION_TAB, monitorRowKey, openMonitor, openNotification } from './todayMonitorRows.jsx'
+import { MonitorRowBody, NotificationRowBody, HealthRowBody, QuietRowBody, MONITOR_SECTION_TAB, MONITOR_TAB, monitorRowKey, openMonitor, openNotification, openQuiet } from './todayMonitorRows.jsx'
 
 /**
  * "Sizin için — bugün" (2026-09-12, zenginleştirme #3): dashboard'un üstünde kartlar —
@@ -14,6 +14,8 @@ import { MonitorRowBody, NotificationRowBody, HealthRowBody, MONITOR_SECTION_TAB
  * istisnası kartının yerine, kullanıcı seçimi): kararsız · yavaşlayan · sessiz/bayat · alan adı kaydı dolan;
  * ikinci tur: teslim edilemeyen bildirim (24 sa) · sertifika sağlık bulguları. Her kart doğru sayfaya süzülmüş bağlantı. Hepsi sıfırsa tek satır yeşil "bugün ilgilenilecek bir şey yok".
  * 2 dk'da bir görünürken tazelenir; VARSAYILAN KAPALI, açık/kapalı tercihi localStorage'da.
+ * 2026-09-23: "Susturulmuş ve bakımda" kartı (süren/yaklaşan bakım · duraklatılmış izleme · dolacak istisna) ve
+ * "dünden bugüne": kart sayısının yanında dün bu saate göre ▲/▼ fark (sunucu `prev`), başlığın altında son 24 saat şeridi.
  */
 export default function TodayPanel({ onOpenDomain }) {
   const t = useT()
@@ -31,20 +33,26 @@ export default function TodayPanel({ onOpenDomain }) {
   if (!data) return null
   const certs = data.certs || {}, alerts = data.alerts || {}, weekly = data.weekly || {}
   const flapping = data.flapping || {}, slow = data.slow || {}, stale = data.stale || {}, domains = data.domains || {}
-  const notif = data.notifications || {}, health = data.health || {}
+  const notif = data.notifications || {}, health = data.health || {}, quiet = data.quiet || {}, recent = data.recent || null
   const total = (certs.count || 0) + (alerts.count || 0) + (weekly.missing || 0)
     + (flapping.count || 0) + (slow.count || 0) + (stale.count || 0) + (domains.count || 0)
-    + (notif.count || 0) + (health.count || 0)
+    + (notif.count || 0) + (health.count || 0) + (quiet.count || 0)
 
   function toggle() {
     setOpen((o) => { try { localStorage.setItem('today-panel-open', String(!o)) } catch { /* yoksay */ } return !o })
   }
 
-  const Card = ({ icon: Icon, tone, title, count, sub, onGo, section, onOpenItem, children }) => (
+  // prev: ~24 saat önceki görünür sayı (sunucu; görüntü yoksa alan hiç gelmez → gösterge yok). Artış kötü (▲ kırmızı),
+  // azalış iyi (▼ yeşil) — kartların hepsi "ilgilenilecek şey" sayar. Renk tek sinyal değil: ok + sayı + başlık metni.
+  const Card = ({ icon: Icon, tone, title, count, prev, sub, onGo, section, onOpenItem, children }) => {
+    const delta = typeof prev === 'number' ? count - prev : 0
+    const trend = delta === 0 ? null : t(delta > 0 ? 'today.trendUp' : 'today.trendDown', Math.abs(delta), prev)
+    return (
     <div className={`today-card today-card--${tone}`}>
       <div className="today-card-head">
         <Icon size={16} aria-hidden="true" />
         <span className="today-card-title">{title}</span>
+        {trend && <span className={`today-delta ${delta > 0 ? 'is-worse' : 'is-better'}`} title={trend} aria-label={trend}>{delta > 0 ? '▲' : '▼'}{Math.abs(delta)}</span>}
         <b className="today-card-count">{count}</b>
       </div>
       {sub && <div className="today-card-sub">{sub}</div>}
@@ -55,7 +63,27 @@ export default function TodayPanel({ onOpenDomain }) {
           onClick={() => setListModal({ section, title, icon: Icon, onOpen: onOpenItem, onGo })}>{t('today.go')} <ArrowRight size={12} aria-hidden="true" /></button>
       )}
     </div>
-  )
+    )
+  }
+
+  // "Susturulmuş ve bakımda": alt satır parçaları; "Sayfaya git" en anlamlı sayfaya (bakım → istisna → ilk duraklatılmışın türü).
+  const maintCount = (quiet.maint_active || 0) + (quiet.maint_soon || 0)
+  const quietSub = [
+    quiet.maint_active > 0 && t('today.quietMaintActive', quiet.maint_active),
+    quiet.maint_soon > 0 && t('today.quietMaintSoon', quiet.maint_soon),
+    quiet.paused > 0 && (quiet.paused_long > 0 ? t('today.quietPausedLong', quiet.paused, quiet.paused_long) : t('today.quietPaused', quiet.paused)),
+    quiet.exceptions > 0 && t('today.quietExceptions', quiet.exceptions),
+  ].filter(Boolean).join(' · ') || t('today.quietSub')
+  const firstPaused = (quiet.items || []).find((x) => x.kind === 'PAUSED')
+  const quietGo = !quiet.count ? null
+    : maintCount > 0 ? () => navigateTo('maintenance')
+    : quiet.exceptions > 0 ? () => navigateTo('weakalgo')
+    : () => navigateTo(MONITOR_TAB[firstPaused?.type] || 'http')
+  const recentParts = recent ? [
+    recent.opened > 0 && t('today.recentOpened', recent.opened),
+    recent.resolved > 0 && t('today.recentResolved', recent.resolved),
+    recent.renewed > 0 && t('today.recentRenewed', recent.renewed),
+  ].filter(Boolean) : []
 
   return (
     <section className={`today${open ? ' is-open' : ''}${total === 0 ? ' today--clear' : ''}`} aria-label={t('today.title')}>
@@ -65,9 +93,17 @@ export default function TodayPanel({ onOpenDomain }) {
         <span className="today-summary">{total === 0 ? t('today.clear') : t('today.summary', total)}</span>
         <ChevronDown size={16} className={`today-chevron${open ? ' is-open' : ''}`} aria-hidden="true" />
       </button>
+      {/* Son 24 saat şeridi (2026-09-23): panel temizken de görünür — çözülen alarm / yenilenen sertifika iyi haberdir. */}
+      {open && recent && (
+        <div className="today-recent">
+          <span className="today-recent-lbl">{t('today.recent', recent.hours || 24)}:</span>
+          <span>{recentParts.length ? recentParts.join(' · ') : t('today.recentNone')}</span>
+          {data.trend_at && <span className="today-recent-legend">{t('today.trendLegend')}</span>}
+        </div>
+      )}
       {open && total > 0 && (
         <div className="today-grid">
-          <Card icon={CalendarClock} tone={certs.expired > 0 ? 'bad' : certs.count > 0 ? 'warn' : 'ok'} title={t('today.certs')} count={certs.count || 0}
+          <Card icon={CalendarClock} tone={certs.expired > 0 ? 'bad' : certs.count > 0 ? 'warn' : 'ok'} title={t('today.certs')} count={certs.count || 0} prev={certs.prev}
             sub={certs.expired > 0 ? t('today.certsExpired', certs.expired) : t('today.certsSub')}
             onGo={certs.count ? () => navigateTo('renewal') : null} section="certs" onOpenItem={(c) => onOpenDomain?.(c.domain)}>
             <ul className="today-list">
@@ -81,7 +117,7 @@ export default function TodayPanel({ onOpenDomain }) {
             </ul>
           </Card>
 
-          <Card icon={Siren} tone={alerts.critical > 0 ? 'bad' : alerts.count > 0 ? 'warn' : 'ok'} title={t('today.alerts')} count={alerts.count || 0}
+          <Card icon={Siren} tone={alerts.critical > 0 ? 'bad' : alerts.count > 0 ? 'warn' : 'ok'} title={t('today.alerts')} count={alerts.count || 0} prev={alerts.prev}
             sub={alerts.critical > 0 ? t('today.alertsCritical', alerts.critical) : t('today.alertsSub')}
             onGo={alerts.count ? () => navigateTo('warnings') : null} section="alerts" onOpenItem={(a) => navigateTo('alerthistory', { incident: a.id })}>
             <ul className="today-list">
@@ -96,7 +132,7 @@ export default function TodayPanel({ onOpenDomain }) {
           </Card>
 
           {/* İzleme kartları (2026-09-19): satır çizimi todayMonitorRows.jsx'te (pop-up ile ortak). */}
-          <Card icon={Activity} tone={flapping.count > 0 ? 'warn' : 'ok'} title={t('today.flapping')} count={flapping.count || 0}
+          <Card icon={Activity} tone={flapping.count > 0 ? 'warn' : 'ok'} title={t('today.flapping')} count={flapping.count || 0} prev={flapping.prev}
             sub={t('today.flappingSub')}
             onGo={flapping.count ? () => navigateTo(MONITOR_SECTION_TAB.flapping) : null} section="flapping" onOpenItem={openMonitor}>
             <ul className="today-list">
@@ -104,7 +140,7 @@ export default function TodayPanel({ onOpenDomain }) {
             </ul>
           </Card>
 
-          <Card icon={Gauge} tone={slow.count > 0 ? 'warn' : 'ok'} title={t('today.slow')} count={slow.count || 0}
+          <Card icon={Gauge} tone={slow.count > 0 ? 'warn' : 'ok'} title={t('today.slow')} count={slow.count || 0} prev={slow.prev}
             sub={t('today.slowSub')}
             onGo={slow.count ? () => navigateTo(MONITOR_SECTION_TAB.slow) : null} section="slow" onOpenItem={openMonitor}>
             <ul className="today-list">
@@ -112,15 +148,15 @@ export default function TodayPanel({ onOpenDomain }) {
             </ul>
           </Card>
 
-          <Card icon={BellOff} tone={stale.count > 0 ? 'warn' : 'ok'} title={t('today.stale')} count={stale.count || 0}
-            sub={stale.paused > 0 ? `${t('today.staleSub')} · ${t('today.stalePaused', stale.paused)}` : t('today.staleSub')}
+          <Card icon={BellOff} tone={stale.count > 0 ? 'warn' : 'ok'} title={t('today.stale')} count={stale.count || 0} prev={stale.prev}
+            sub={t('today.staleSub')}
             onGo={stale.count ? () => navigateTo(MONITOR_SECTION_TAB.stale) : null} section="stale" onOpenItem={openMonitor}>
             <ul className="today-list">
               {(stale.items || []).map((x) => <li key={monitorRowKey(x)}><MonitorRowBody section="stale" item={x} t={t} onOpen={openMonitor} /></li>)}
             </ul>
           </Card>
 
-          <Card icon={Globe} tone={domains.expired > 0 ? 'bad' : domains.count > 0 ? 'warn' : 'ok'} title={t('today.domains')} count={domains.count || 0}
+          <Card icon={Globe} tone={domains.expired > 0 ? 'bad' : domains.count > 0 ? 'warn' : 'ok'} title={t('today.domains')} count={domains.count || 0} prev={domains.prev}
             sub={domains.expired > 0 ? t('today.domainsExpired', domains.expired) : t('today.domainsSub')}
             onGo={domains.count ? () => navigateTo(MONITOR_SECTION_TAB.domains) : null} section="domains" onOpenItem={openMonitor}>
             <ul className="today-list">
@@ -128,7 +164,7 @@ export default function TodayPanel({ onOpenDomain }) {
             </ul>
           </Card>
 
-          <Card icon={MailX} tone={notif.count > 0 ? 'bad' : 'ok'} title={t('today.notif')} count={notif.count || 0}
+          <Card icon={MailX} tone={notif.count > 0 ? 'bad' : 'ok'} title={t('today.notif')} count={notif.count || 0} prev={notif.prev}
             sub={notif.count > 0 ? t('today.notifBreakdown', notif.email || 0, notif.webhook || 0, notif.push || 0) : t('today.notifSub')}
             onGo={notif.count ? () => navigateTo('health', { view: 'smtp', m_status: 'FAILED', m_range: '24h' }) : null} section="notifications" onOpenItem={openNotification}>
             <ul className="today-list">
@@ -136,11 +172,21 @@ export default function TodayPanel({ onOpenDomain }) {
             </ul>
           </Card>
 
-          <Card icon={ShieldAlert} tone={health.critical > 0 ? 'bad' : health.count > 0 ? 'warn' : 'ok'} title={t('today.health')} count={health.count || 0}
+          <Card icon={ShieldAlert} tone={health.critical > 0 ? 'bad' : health.count > 0 ? 'warn' : 'ok'} title={t('today.health')} count={health.count || 0} prev={health.prev}
             sub={health.critical > 0 ? t('today.healthCritical', health.critical) : t('today.healthSub')}
             onGo={health.count ? () => navigateTo(MONITOR_SECTION_TAB.health) : null} section="health" onOpenItem={(x) => onOpenDomain?.(x.domain)}>
             <ul className="today-list">
               {(health.items || []).map((x) => <li key={monitorRowKey(x)}><HealthRowBody item={x} t={t} onOpen={(h) => onOpenDomain?.(h.domain)} /></li>)}
+            </ul>
+          </Card>
+
+          {/* Susturulmuş ve bakımda (2026-09-23): diğer kartlar sorun OLDUĞUNDA uyarır; bu kart sistemin bilerek
+              sustuğu yerleri gösterir. 7+ gündür duraklatılmış izleme ya da dolacak istisna varsa uyarı tonu. */}
+          <Card icon={PauseCircle} tone={quiet.paused_long > 0 || quiet.exceptions > 0 ? 'warn' : quiet.count > 0 ? 'info' : 'ok'}
+            title={t('today.quiet')} count={quiet.count || 0} prev={quiet.prev} sub={quietSub}
+            onGo={quietGo} section="quiet" onOpenItem={openQuiet}>
+            <ul className="today-list">
+              {(quiet.items || []).map((x) => <li key={monitorRowKey(x)}><QuietRowBody item={x} t={t} onOpen={openQuiet} /></li>)}
             </ul>
           </Card>
 

@@ -4,6 +4,7 @@ import com.sitemonitor.model.AlertEvent;
 import com.sitemonitor.model.CertificateInventory;
 import com.sitemonitor.model.DnsMonitor;
 import com.sitemonitor.model.LatestCheck;
+import com.sitemonitor.model.MaintenanceWindow;
 import com.sitemonitor.model.NotificationLog;
 import com.sitemonitor.model.UserPushDelivery;
 import com.sitemonitor.model.WeakAlgorithmException;
@@ -16,6 +17,8 @@ import com.sitemonitor.repository.ActivityLogRepository;
 import com.sitemonitor.repository.AlertEventRepository;
 import com.sitemonitor.repository.CertificateInventoryRepository;
 import com.sitemonitor.repository.LatestCheckRepository;
+import com.sitemonitor.repository.MaintenanceWindowRepository;
+import com.sitemonitor.repository.MonitorChangeLogRepository;
 import com.sitemonitor.repository.NotificationLogRepository;
 import com.sitemonitor.repository.UserPushDeliveryRepository;
 import com.sitemonitor.repository.WeakAlgorithmExceptionRepository;
@@ -85,6 +88,8 @@ class TodayMonitorInsightsServiceTest {
     @Mock PageSpeedMonitorRepository pageSpeedRepo;
     @Mock ScriptedMonitorRepository scriptedRepo;
     @Mock DomainMonitorRepository domainRepo;
+    @Mock MaintenanceWindowRepository maintenanceRepo;
+    @Mock MonitorChangeLogRepository changeLogRepo;
     TodayMonitorInsightsService svc;
 
     private static String at(long minutesAgo) { return ISO.format(NOW.minus(Duration.ofMinutes(minutesAgo))); }
@@ -104,7 +109,8 @@ class TodayMonitorInsightsServiceTest {
     void setUp() {
         svc = new TodayMonitorInsightsService(activityRepo, inventoryRepo, notificationLogRepo, pushDeliveryRepo, alertEventRepo,
                 latestCheckRepo, exceptionRepo, healthService, domainCheckRepo, httpRepo, portRepo, pingRepo, dnsRepo,
-                keywordRepo, pageRepo, pageSpeedRepo, scriptedRepo, domainRepo);
+                keywordRepo, pageRepo, pageSpeedRepo, scriptedRepo, domainRepo,
+                maintenanceRepo, new MaintenanceService(maintenanceRepo), changeLogRepo);
         for (var r : List.of(portRepo, pingRepo, dnsRepo, keywordRepo, pageRepo, pageSpeedRepo, scriptedRepo, domainRepo, httpRepo))
             when(r.findAll()).thenReturn(List.of());
         when(activityRepo.monitorsWithFailureSince(anyString())).thenReturn(List.of());
@@ -117,6 +123,10 @@ class TodayMonitorInsightsServiceTest {
         when(pushDeliveryRepo.findByStatusAndCreatedAtGreaterThanEqualOrderByIdDesc(anyString(), anyString())).thenReturn(List.of());
         when(latestCheckRepo.findAll()).thenReturn(List.of());
         when(exceptionRepo.findAll()).thenReturn(List.of());
+        when(maintenanceRepo.findByActiveTrue()).thenReturn(List.of());
+        when(changeLogRepo.lastActiveChange(any())).thenReturn(List.of());
+        when(alertEventRepo.findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(anyString())).thenReturn(List.of());
+        when(alertEventRepo.findByResolvedAtGreaterThanEqual(anyString())).thenReturn(List.of());
         when(healthService.thresholdResolution()).thenReturn(ThresholdResolution.fixed(null));   // tier bazlı çözüm (2026-09-20): 30/15/7
     }
 
@@ -164,7 +174,8 @@ class TodayMonitorInsightsServiceTest {
         LatestCheck lc = new LatestCheck(); lc.setDomain("c.example.com");
         LatestCheck ld = new LatestCheck(); ld.setDomain("d.example.com");
         when(latestCheckRepo.findAll()).thenReturn(List.of(la, lb, lc, ld));
-        String today = LocalDate.now(ZoneId.of("Europe/Istanbul")).toString();
+        // "bugün" enjekte edilen NOW'dan (2026-09-23: health() artık duvar saatini okumuyor) — kurum zonunda.
+        String today = NOW.atZone(ZoneId.of("Europe/Istanbul")).toLocalDate().toString();
         WeakAlgorithmException live = new WeakAlgorithmException(); live.setDomain("b.example.com"); live.setUntil(LocalDate.parse(today).plusDays(3).toString());
         WeakAlgorithmException dead = new WeakAlgorithmException(); dead.setDomain("c.example.com"); dead.setUntil(LocalDate.parse(today).minusDays(1).toString());
         when(exceptionRepo.findAll()).thenReturn(List.of(live, dead));
@@ -257,14 +268,14 @@ class TodayMonitorInsightsServiceTest {
                 http(4, "never-new", true, 60, at(2)),     // hiç kontrol yok, 2 dk önce yaratıldı → taze
                 http(5, "never-old", true, 60, at(600)),   // hiç kontrol yok, 10 saat önce yaratıldı → bayat (age 600 dk, never)
                 http(8, "ancient", true, 60, at(30 * 1440)), // hiç kontrol yok, 30 gün önce yaratıldı → "7+ gündür yok" (yaş pencereyle sınırlı, never DEĞİL)
-                http(6, "paused", false, 60, at(10_000)),  // duraklatılmış → sayılır, listelenmez
+                http(6, "paused", false, 60, at(10_000)),  // duraklatılmış → bayat değil, paused listesinde
                 http(7, "paused2", false, 60, at(10_000))));
         when(activityRepo.lastCheckByMonitor(anyString())).thenReturn(List.<Object[]>of(
                 new Object[]{"HTTP", 1L, at(30)}, new Object[]{"HTTP", 2L, at(3)}, new Object[]{"HTTP", 3L, at(50)}));
 
         TodayMonitorInsightsService.Snapshot snap = svc.snapshot(NOW);
 
-        assertThat(snap.paused()).isEqualTo(2);
+        assertThat(snap.paused()).extracting(m -> m.get("monitor_id")).containsExactlyInAnyOrder(6L, 7L);   // 2026-09-23: sayı değil satır
         assertThat(snap.stale()).extracting(m -> m.get("monitor_id")).containsExactly(8L, 5L, 1L);
         assertThat(snap.stale().get(2)).containsEntry("age_min", 30L).containsEntry("expected_min", 5L).containsEntry("interval_sec", 60)
                 .containsEntry("last_check", at(30)).containsEntry("never", false);
@@ -335,5 +346,96 @@ class TodayMonitorInsightsServiceTest {
         assertThat(dns).containsEntry("type", "DNS").containsEntry("domain", "shop.example.com").containsEntry("team_id", null);
         Map<String, Object> port = snap.stale().stream().filter(m -> m.get("monitor_id").equals(8L)).findFirst().orElseThrow();
         assertThat(port).containsEntry("type", "PORT").containsEntry("target", "db.example.com:5432").containsEntry("domain", "db.example.com");
+    }
+
+    // ── Susturulmuş ve bakımda (2026-09-23) ─────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("duraklatılmış: 'ne zamandır' değişiklik geçmişindeki active değişiminden (kesin), yoksa son güncellemeden (yaklaşık), o da yoksa bilinmiyor (sonda); en eski üstte; öksüz envanter-türevi Port sayılmaz")
+    void paused_sinceFromChangeLogThenUpdatedAt() {
+        HttpMonitor exact = http(6, "exact", false, 60, at(20 * 1440)); exact.setUpdatedAt(at(60));         // adı dün değişmiş olabilir — kesin kaynak geçmiş
+        HttpMonitor approx = http(7, "approx", false, 60, at(20 * 1440)); approx.setUpdatedAt(at(10 * 1440));
+        HttpMonitor unknown = http(9, "unknown", false, 60, null);
+        HttpMonitor running = http(10, "running", true, 60, at(20 * 1440));
+        when(httpRepo.findAll()).thenReturn(List.of(exact, approx, unknown, running));
+        PortMonitor orphan = new PortMonitor(); orphan.setId(11L); orphan.setName("gone"); orphan.setHost("gone.example.com"); orphan.setPort(443);
+        orphan.setActive(false); orphan.setStandalone(false);
+        when(portRepo.findAll()).thenReturn(List.of(orphan));
+        when(changeLogRepo.lastActiveChange(any())).thenReturn(List.<Object[]>of(new Object[]{"HTTP", 6L, at(3 * 1440)}, new Object[]{"PING", 7L, at(1)}));
+
+        List<Map<String, Object>> p = svc.snapshot(NOW).paused();
+
+        assertThat(p).extracting(m -> m.get("monitor_id")).containsExactly(7L, 6L, 9L);
+        assertThat(p.get(0)).containsEntry("kind", "PAUSED").containsEntry("paused_days", 10L).containsEntry("paused_since_exact", false);
+        assertThat(p.get(1)).containsEntry("paused_since", at(3 * 1440)).containsEntry("paused_days", 3L).containsEntry("paused_since_exact", true);
+        assertThat(p.get(2)).containsEntry("paused_since", null).containsEntry("paused_days", null);
+        // PING:7 satırı HTTP:7'ye karışmaz (anahtar tür+id)
+        assertThat(p.get(0).get("paused_since")).isEqualTo(at(10 * 1440));
+    }
+
+    private static MaintenanceWindow mw(long id, String name, String startAt, int durMin, Long team, boolean all) {
+        MaintenanceWindow w = new MaintenanceWindow(); w.setId(id); w.setName(name); w.setStartAt(startAt); w.setDurationMinutes(durMin);
+        w.setRecurrence("NONE"); w.setTimezone("Europe/Istanbul"); w.setActive(true); w.setTeamId(team); w.setAllMonitors(all);
+        w.setTargetsJson("[{\"type\":\"HTTP\",\"target\":\"a.example.com\"},{\"type\":\"PING\",\"target\":\"10.0.0.1\"}]");
+        return w;
+    }
+
+    @Test
+    @DisplayName("bakım: şu an süren (bitişiyle) ve 24 saat içinde başlayacak pencereler girer, süren üstte; 24 saatten ileri ve bitmiş olan girmez; tüm-monitör/takımsız pencere herkese açık")
+    void maintenance_activeAndSoon() {
+        when(maintenanceRepo.findByActiveTrue()).thenReturn(List.of(
+                mw(1, "yakında", at(-300), 60, 2L, false),        // 5 saat sonra başlar
+                mw(2, "şimdi", at(30), 60, null, true),           // 30 dk önce başladı, 30 dk sonra biter
+                mw(3, "uzak", at(-30 * 60), 60, 1L, false),       // 30 saat sonra → girmez
+                mw(4, "bitti", at(180), 60, 1L, false)));         // 2 saat önce bitti → girmez
+
+        List<Map<String, Object>> m = svc.snapshot(NOW).maintenance();
+
+        assertThat(m).extracting(r -> r.get("window_id")).containsExactly(2L, 1L);
+        assertThat(m.get(0)).containsEntry("kind", "MAINT_ACTIVE").containsEntry("until", at(-30)).containsEntry("public", true)
+                .containsEntry("target_count", -1);
+        assertThat(m.get(1)).containsEntry("kind", "MAINT_SOON").containsEntry("next_start", at(-300)).containsEntry("public", false)
+                .containsEntry("team_id", 2L).containsEntry("target_count", 2).containsEntry("duration_min", 60);
+    }
+
+    @Test
+    @DisplayName("istisna: 7 gün içinde (bugün dâhil) dolacaklar girer, en yakın üstte; dolmuş, 7 günden uzak ve süresiz olan girmez; takım envanterden")
+    void exceptions_expiringSoon() {
+        LocalDate today = NOW.atZone(ZoneId.of("Europe/Istanbul")).toLocalDate();
+        CertificateInventory inv = new CertificateInventory(); inv.setDomain("b.example.com"); inv.setTeamId(4L); inv.setActive(true);
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv));
+        WeakAlgorithmException in3 = new WeakAlgorithmException(); in3.setDomain("b.example.com"); in3.setUntil(today.plusDays(3).toString()); in3.setReason("Tedarikçi yenileyecek");
+        WeakAlgorithmException todayEx = new WeakAlgorithmException(); todayEx.setDomain("t.example.com"); todayEx.setUntil(today.toString());
+        WeakAlgorithmException gone = new WeakAlgorithmException(); gone.setDomain("g.example.com"); gone.setUntil(today.minusDays(1).toString());
+        WeakAlgorithmException far = new WeakAlgorithmException(); far.setDomain("f.example.com"); far.setUntil(today.plusDays(8).toString());
+        WeakAlgorithmException forever = new WeakAlgorithmException(); forever.setDomain("e.example.com");
+        when(exceptionRepo.findAll()).thenReturn(List.of(in3, todayEx, gone, far, forever));
+
+        List<Map<String, Object>> ex = svc.snapshot(NOW).exceptions();
+
+        assertThat(ex).extracting(r -> r.get("domain")).containsExactly("t.example.com", "b.example.com");
+        assertThat(ex.get(0)).containsEntry("days_left", 0L).containsEntry("team_id", null);
+        assertThat(ex.get(1)).containsEntry("days_left", 3L).containsEntry("team_id", 4L).containsEntry("reason", "Tedarikçi yenileyecek");
+    }
+
+    @Test
+    @DisplayName("son 24 saat: açılan ve çözülen alarmlar (çözülmemiş satır 'çözülen' sayılmaz) + parmak izi son 24 saatte değişen sertifikalar")
+    void recent_openedResolvedRenewed() {
+        AlertEvent o1 = new AlertEvent(); o1.setId(1L); o1.setTeamId(1L); o1.setDomain("a.example.com"); o1.setAlertLevel("CRITICAL");
+        AlertEvent r1 = new AlertEvent(); r1.setId(2L); r1.setTeamId(2L); r1.setResolved(true);
+        AlertEvent reopened = new AlertEvent(); reopened.setId(3L); reopened.setResolved(false);   // çözülmüş-sonra-yeniden-açılmış
+        when(alertEventRepo.findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(ISO.format(NOW.minus(Duration.ofHours(24))))).thenReturn(List.of(o1));
+        when(alertEventRepo.findByResolvedAtGreaterThanEqual(ISO.format(NOW.minus(Duration.ofHours(24))))).thenReturn(List.of(r1, reopened));
+        LatestCheck fresh = new LatestCheck(); fresh.setDomain("new.example.com"); fresh.setFingerprintChangedAt(at(90));
+        LatestCheck old = new LatestCheck(); old.setDomain("old.example.com"); old.setFingerprintChangedAt(at(26 * 60));
+        LatestCheck none = new LatestCheck(); none.setDomain("none.example.com");
+        when(latestCheckRepo.findAll()).thenReturn(List.of(fresh, old, none));
+
+        Map<String, List<Map<String, Object>>> r = svc.snapshot(NOW).recent();
+
+        assertThat(r.get("opened")).extracting(m -> m.get("id")).containsExactly(1L);
+        assertThat(r.get("opened").get(0)).containsEntry("team_id", 1L).containsEntry("domain", "a.example.com");
+        assertThat(r.get("resolved")).extracting(m -> m.get("id")).containsExactly(2L);
+        assertThat(r.get("renewed")).extracting(m -> m.get("domain")).containsExactly("new.example.com");
     }
 }

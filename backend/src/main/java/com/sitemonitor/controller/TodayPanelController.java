@@ -25,6 +25,7 @@ public class TodayPanelController {
 
     private final TodayPanelService todayPanelService;
     private final com.sitemonitor.service.InboxService inboxService;
+    private final com.sitemonitor.service.PermissionService permissionService;
 
     @GetMapping("/today")
     public ResponseEntity<Map<String, Object>> today(@org.springframework.web.bind.annotation.RequestParam(defaultValue = "false") boolean full,
@@ -34,8 +35,10 @@ public class TodayPanelController {
         if (view != null) own.addAll(view);
         else if (session.getAttribute("teamId") instanceof Long tid) own.add(tid);
         // full=true: "Tümünü gör" pop-up'ı — kart başına tavan kalkar (2026-09-18).
+        // Bakım satırları ("Susturulmuş ve bakımda" kartı, 2026-09-23) yalnız bakım sayfasını görebilene.
+        boolean showMaintenance = permissionService.allows(session, "maintenance.view", "view");
         Map<String, Object> data = todayPanelService.build(teamId -> SessionScope.canView(session, teamId), own,
-                full ? Integer.MAX_VALUE : com.sitemonitor.service.TodayPanelService.TOP);
+                full ? Integer.MAX_VALUE : com.sitemonitor.service.TodayPanelService.TOP, showMaintenance);
         return ResponseEntity.ok(Map.of("success", true, "data", data));
     }
 

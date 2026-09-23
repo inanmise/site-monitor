@@ -1120,6 +1120,8 @@ Aşağıdaki tablo her ekranın adres çubuğundaki anahtarını ve görünürl�
 
 Giriş sonrası açılan ana ekrandır. Genişletilebilir istatistik paneli (Toplam / Geçerli / Uyarı / Hata / 30 günde doluyor / Süresi dolmuş) ve her sertifika için domain, kalan gün, durum rozeti, veren kurum ve son kontrol bilgisini taşıyan kartlardan oluşur.
 
+**Sizin için — bugün.** Ekranın üstündeki katlanır panel, görebildiğiniz takımlar için ilgilenilmesi gerekenleri kartlar hâlinde toplar: 30 gün altı sertifikalar, açık alarmlar, kararsız / yavaşlayan / sessiz izlemeler, dolan alan adı kayıtları, teslim edilemeyen bildirimler, sertifika sağlık bulguları ve bu haftanın raporu. **Susturulmuş ve bakımda** kartı ise sistemin bilerek sustuğu yerleri gösterir: şu an süren ya da 24 saat içinde başlayacak bakım pencereleri, duraklatılmış izlemeler (ne zamandır duraklatıldığıyla; 7 günü geçen duraklatma unutulmuş olabilir diye uyarı renginde) ve 7 gün içinde süresi dolacak zayıf algoritma istisnaları. Her kartın sayısının yanındaki **▲ / ▼** göstergesi dün bu saate göre farkı verir (artış kırmızı, azalış yeşil); panel başlığının altındaki şerit son 24 saatte açılan ve çözülen alarmları ve yenilenen sertifikaları özetler. Karşılaştırma saatlik bir anlık görüntüye dayanır, bu yüzden kurulumdan ya da uzun bir kesintiden sonraki ilk gün gösterge görünmez.
+
 | Aksiyon | Açıklama |
 |---|---|
 | İstatistik kartına tıklama | İlgili kategoriye göre filtreler |
@@ -1128,7 +1130,7 @@ Giriş sonrası açılan ana ekrandır. Genişletilebilir istatistik paneli (Top
 | Sıralama ve sayfa boyutu | Önceliğe veya kalan güne göre sıralar |
 | Karta tıklama | Sertifika detay penceresini açar |
 | "Şimdi Kontrol Et" (yetkili) | Anlık arka plan taraması başlatır |
-| Dil / tema değiştirme | TR/EN ve Açık/Koyu arasında geçiş |
+| Dil / tema değiştirme | Kullanıcı menüsünden TR/EN ve Açık/Koyu arasında geçiş |
 
 ### 14.5 Sertifika Detay Penceresi
 

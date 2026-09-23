@@ -113,7 +113,8 @@ describe('TodayPanel', () => {
     expect(screen.getByText(/90 dk önce · beklenen ≤10 dk|90 min ago · expected ≤10 min/)).toBeInTheDocument()
     expect(screen.getByText(/hiç kontrol edilmedi|never checked/)).toBeInTheDocument()
     expect(screen.getByText(/7\+ gündür kontrol yok|no check for 7\+ days/)).toBeInTheDocument()
-    expect(screen.getByText(/2 izleme duraklatılmış|2 monitors paused/)).toBeInTheDocument()
+    // 2026-09-23: duraklatılmış sayısı sessiz kartından "Susturulmuş ve bakımda" kartına taşındı (orada satır satır)
+    expect(screen.queryByText(/izleme duraklatılmış|Paused monitors/)).toBeNull()
     expect(screen.getByText(/1 tanesi DOLMUŞ|1 already EXPIRED/)).toBeInTheDocument()
     expect(screen.getByText('Registrar X')).toBeInTheDocument()
     // satır → izlemenin sekmesi + ?monitor=; Sentetik'te derin bağlantı yok
@@ -172,6 +173,89 @@ describe('TodayPanel', () => {
     fireEvent.click(within(modal).getByRole('button', { name: /Sayfaya git|Open the page/ }))
     expect(nav.mock.calls.at(-1)[0].detail.tab).toBe('weakalgo')
     window.removeEventListener('sm:navigate', nav)
+  })
+
+  it('2026-09-23 susturulmuş ve bakımda: süren bakım / duraklatılmış (yaklaşık ~, 7+ gün uyarı) / dolacak istisna; satır tıklamaları doğru sayfaya; pop-up aynı satırı çizer', async () => {
+    const until = new Date(Date.now() + 30 * 60_000).toISOString().slice(0, 19)   // sunucu biçimi: UTC, Z'siz
+    const data = {
+      certs: { count: 0, items: [] }, alerts: { count: 0, items: [] }, weekly: { count: 0, missing: 0, items: [] }, ...EMPTY_MON,
+      quiet: { count: 4, maint_active: 1, maint_soon: 0, paused: 2, paused_long: 1, exceptions: 1, items: [
+        { kind: 'MAINT_ACTIVE', window_id: 5, name: 'Gece bakımı', until, target_count: -1, team_id: null, public: true },
+        { kind: 'PAUSED', type: 'HTTP', monitor_id: 21, name: 'eski-api', target: 'https://old.example.com', paused_days: 10, paused_since_exact: false, team_id: 1, team_name: 'Takım A' },
+        { kind: 'PAUSED', type: 'PING', monitor_id: 22, name: 'gw2', target: '10.0.0.2', paused_days: 0, paused_since_exact: true },
+        { kind: 'EXCEPTION', domain: 'weak.example.com', until: '2026-09-24', days_left: 1, reason: 'Tedarikçi yenileyecek' }] },
+    }
+    api.me.today.mockResolvedValue({ success: true, data })
+    const nav = vi.fn(); window.addEventListener('sm:navigate', nav)
+    try { localStorage.setItem('today-panel-open', 'true') } catch { /* yok */ }
+    render(<TodayPanel />)
+    await screen.findByText(/4 konu ilgi bekliyor|4 items need attention/)
+    const card = screen.getByText(/^Susturulmuş ve bakımda$|^Muted and under maintenance$/).closest('.today-card')
+    expect(card.className).toContain('today-card--warn')   // 7+ gündür duraklatılmış + dolacak istisna
+    expect(within(card).getByText(/1 bakım sürüyor · 2 izleme duraklatılmış \(1 tanesi 7\+ gündür\) · 1 istisnanın süresi doluyor|Maintenance in progress: 1 · Paused monitors: 2 \(1 for over a week\) · Exceptions expiring: 1/)).toBeInTheDocument()
+    expect(within(card).getByText(/^BAKIMDA$|^MAINTENANCE$/)).toBeInTheDocument()
+    expect(within(card).getByText(/tüm izlemeler|all monitors/)).toBeInTheDocument()
+    const approx = within(card).getByText(/~10 gündür duraklatılmış|~paused for 10 days/)
+    expect(approx.className).toContain('is-warn')
+    expect(approx).toHaveAttribute('title', expect.stringMatching(/Yaklaşık|Approximate/))
+    expect(within(card).getByText(/^bugün duraklatıldı$|^paused today$/)).not.toHaveAttribute('title')   // kesin tarih → ~ yok
+    expect(within(card).getByText(/yarın doluyor|expires tomorrow/)).toBeInTheDocument()
+    // satırlar: bakım → Bakım sayfası; duraklatılmış → izlemenin kendisi; istisna → Zayıf Algoritma
+    fireEvent.click(within(card).getByRole('button', { name: 'Gece bakımı' }))
+    expect(nav.mock.calls.at(-1)[0].detail.tab).toBe('maintenance')
+    fireEvent.click(screen.getByRole('button', { name: 'eski-api' }))
+    expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'http', params: { monitor: 21 } })
+    fireEvent.click(screen.getByRole('button', { name: 'weak.example.com' }))
+    expect(nav.mock.calls.at(-1)[0].detail.tab).toBe('weakalgo')
+    // pop-up: dört satır aynı bileşenle (anahtarlar çakışmaz), "Sayfaya git" → bakım sayfası (bakım varken)
+    fireEvent.click(within(screen.getByText(/^Susturulmuş ve bakımda$|^Muted and under maintenance$/).closest('.today-card'))
+      .getByRole('button', { name: /Tümünü gör|See all/ }))
+    const modal = await screen.findByRole('dialog')
+    await waitFor(() => expect(modal.querySelectorAll('.today-modal-row')).toHaveLength(4))
+    fireEvent.click(within(modal).getByRole('button', { name: /Sayfaya git|Open the page/ }))
+    expect(nav.mock.calls.at(-1)[0].detail.tab).toBe('maintenance')
+    window.removeEventListener('sm:navigate', nav)
+  })
+
+  it('2026-09-23 dünden bugüne: prev gelen kartta ▲ artış (kötü) / ▼ azalış (iyi) + açıklayıcı başlık; prev yoksa ya da fark 0 ise gösterge yok; son 24 saat şeridi', async () => {
+    api.me.today.mockResolvedValue({ success: true, data: {
+      certs: { count: 3, expired: 0, prev: 1, items: [{ domain: 'a.example.com', days: 10 }, { domain: 'b.example.com', days: 11 }, { domain: 'c.example.com', days: 12 }] },
+      alerts: { count: 0, critical: 0, prev: 2, items: [] },
+      ...EMPTY_MON,
+      quiet: { count: 1, maint_active: 0, maint_soon: 0, paused: 1, paused_long: 0, exceptions: 0, prev: 1,
+        items: [{ kind: 'PAUSED', type: 'PING', monitor_id: 3, name: 'gw', paused_days: 2, paused_since_exact: true }] },
+      weekly: { count: 0, missing: 0, items: [] },
+      recent: { opened: 4, resolved: 6, renewed: 0, hours: 24 },
+      trend_at: '2026-09-22T09:00:00',
+    } })
+    try { localStorage.setItem('today-panel-open', 'true') } catch { /* yok */ }
+    render(<TodayPanel />)
+    await screen.findByText(/4 konu ilgi bekliyor|4 items need attention/)
+    const up = screen.getByLabelText(/Dün bu saate göre 2 arttı \(dün: 1\)|Up 2 on this time yesterday \(was 1\)/)
+    expect(up.textContent).toBe('▲2')
+    expect(up.className).toContain('is-worse')
+    const down = screen.getByLabelText(/Dün bu saate göre 2 azaldı \(dün: 2\)|Down 2 on this time yesterday \(was 2\)/)
+    expect(down.textContent).toBe('▼2')
+    expect(down.className).toContain('is-better')
+    expect(document.querySelectorAll('.today-delta')).toHaveLength(2)   // quiet: fark 0; izleme kartları: prev yok
+    const strip = document.querySelector('.today-recent')
+    expect(strip.textContent).toMatch(/Son 24 saatte:.*4 alarm açıldı · 6 alarm çözüldü|Last 24 hours:.*alerts opened: 4 · alerts resolved: 6/)
+    expect(strip.textContent).not.toMatch(/sertifika yenilendi|certificates renewed/)   // 0 olan parça yazılmaz
+    expect(strip.textContent).toMatch(/dün bu saate göre|compared with this time yesterday/)
+  })
+
+  it('2026-09-23 son 24 saat şeridi panel TEMİZKEN de görünür (iyi haber); trend görüntüsü yoksa gösterge açıklaması yok', async () => {
+    api.me.today.mockResolvedValue({ success: true, data: {
+      certs: { count: 0, items: [] }, alerts: { count: 0, items: [] }, ...EMPTY_MON, weekly: { count: 0, missing: 0, items: [] },
+      recent: { opened: 0, resolved: 0, renewed: 2, hours: 24 },
+    } })
+    try { localStorage.setItem('today-panel-open', 'true') } catch { /* yok */ }
+    render(<TodayPanel />)
+    await screen.findByText(/Bugün ilgilenilecek bir şey yok|Nothing needs attention today/)
+    expect(document.querySelector('.today-grid')).toBeNull()
+    const strip = document.querySelector('.today-recent')
+    expect(strip.textContent).toMatch(/2 sertifika yenilendi|certificates renewed: 2/)
+    expect(strip.textContent).not.toMatch(/dün bu saate göre|compared with this time yesterday/)
   })
 
   it('uç başarısız → panel çizilmez', async () => {

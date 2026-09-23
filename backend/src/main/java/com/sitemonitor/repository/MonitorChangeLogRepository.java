@@ -126,6 +126,20 @@ public interface MonitorChangeLogRepository extends JpaRepository<MonitorChangeL
                                            @Param("teamScopeAll") boolean teamScopeAll,
                                            @Param("teamIds") Collection<Long> teamIds);
 
+    /**
+     * "Ne zamandır duraklatılmış" (2026-09-23, bugün paneli): verilen kaynakların {@code active} alanının
+     * EN SON değiştiği an (tür, id, zaman). Duraklatılmış bir izleme için bu, duraklatılma anıdır.
+     * {@code changes} {@code AuditDiff} JSON'u ({@code {"active":{"from":..,"to":..}}}); anahtar metni
+     * tırnaklı arandığı için "isActive" gibi başka bir alan yanlış eşleşmez. {@code ids} yalnız
+     * DURAKLATILMIŞ izlemelerdir (onlarca) — tablo taranmaz, idx_mchg_resource kullanılır.
+     */
+    @Query("""
+           SELECT c.resourceKind, c.resourceId, MAX(c.createdAt) FROM MonitorChangeLog c
+           WHERE c.resourceId IN :ids AND c.eventType = 'UPDATE' AND c.changes LIKE '%"active":{"from":%'
+           GROUP BY c.resourceKind, c.resourceId
+           """)
+    List<Object[]> lastActiveChange(@Param("ids") Collection<Long> ids);
+
     /** Backfill idempotensi: aynı kaynak+olay+zaman üçlüsü ikinci kez yazılmasın. */
     boolean existsByResourceKindAndResourceIdAndEventTypeAndCreatedAt(
             String resourceKind, Long resourceId, String eventType, String createdAt);

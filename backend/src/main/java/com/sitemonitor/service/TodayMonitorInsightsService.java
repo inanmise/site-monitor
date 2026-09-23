@@ -4,6 +4,7 @@ import com.sitemonitor.model.AlertEvent;
 import com.sitemonitor.model.CertificateInventory;
 import com.sitemonitor.model.DomainCheck;
 import com.sitemonitor.model.LatestCheck;
+import com.sitemonitor.model.MaintenanceWindow;
 import com.sitemonitor.model.MonitorSchedule;
 import com.sitemonitor.model.NotificationLog;
 import com.sitemonitor.model.UserPushDelivery;
@@ -12,6 +13,8 @@ import com.sitemonitor.repository.ActivityLogRepository;
 import com.sitemonitor.repository.AlertEventRepository;
 import com.sitemonitor.repository.CertificateInventoryRepository;
 import com.sitemonitor.repository.LatestCheckRepository;
+import com.sitemonitor.repository.MaintenanceWindowRepository;
+import com.sitemonitor.repository.MonitorChangeLogRepository;
 import com.sitemonitor.repository.NotificationLogRepository;
 import com.sitemonitor.repository.UserPushDeliveryRepository;
 import com.sitemonitor.repository.WeakAlgorithmExceptionRepository;
@@ -37,6 +40,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -75,6 +79,12 @@ public class TodayMonitorInsightsService {
     static final int DOMAIN_DAYS = 30;
     /** Teslim edilemeyen bildirim penceresi (saat). */
     static final int NOTIFY_WINDOW_HOURS = 24;
+    /** "Susturulmuş ve bakımda" (2026-09-23): bu kadar saat içinde başlayacak bakım da listelenir. */
+    static final int MAINT_SOON_HOURS = 24;
+    /** … ve bu kadar gün içinde süresi dolacak zayıf-algoritma istisnası (dolunca bulgu geri gelir). */
+    static final int EXCEPTION_SOON_DAYS = 7;
+    /** "Son 24 saatte" şeridi penceresi (saat). */
+    static final int RECENT_WINDOW_HOURS = 24;
     /** Sağlık bulgusu: FAIL satırlar; "expiry" kendi kartında (30 gün altı sertifika) → hariç. Bunlar KRİTİK sayılır. */
     static final Set<String> HEALTH_CRITICAL_KEYS = Set.of("revocation", "trust", "sanMatch", "chain");
     private static final ZoneId IST = ZoneId.of("Europe/Istanbul");
@@ -101,11 +111,22 @@ public class TodayMonitorInsightsService {
     private final PageSpeedMonitorRepository pageSpeedRepo;
     private final ScriptedMonitorRepository scriptedRepo;
     private final DomainMonitorRepository domainRepo;
+    private final MaintenanceWindowRepository maintenanceRepo;
+    private final MaintenanceService maintenanceService;
+    private final MonitorChangeLogRepository changeLogRepo;
 
-    /** Tüm takımlar için hesaplanmış listeler + duraklatılmış izleme sayısı. Satırlar {@code team_id} ve {@code domain} taşır (süzme için). */
+    /**
+     * Tüm takımlar için hesaplanmış listeler. Satırlar {@code team_id} ve {@code domain} taşır (süzme için).
+     * {@code paused}: duraklatılmış izlemeler (2026-09-23'e kadar yalnız TÜM takımların SAYISIYDI — kapsam
+     * sızıntısı; artık satır, süzme panelde). {@code maintenance}/{@code exceptions}: "Susturulmuş ve bakımda"
+     * kartı. {@code recent}: son 24 saat şeridi — {@code opened}/{@code resolved} (alarm) ve {@code renewed}
+     * (sertifika) satırları.
+     */
     public record Snapshot(List<Map<String, Object>> flapping, List<Map<String, Object>> slow,
-                           List<Map<String, Object>> stale, int paused, List<Map<String, Object>> domains,
-                           int domainsExpired, List<Map<String, Object>> notifications, List<Map<String, Object>> health) { }
+                           List<Map<String, Object>> stale, List<Map<String, Object>> paused, List<Map<String, Object>> domains,
+                           int domainsExpired, List<Map<String, Object>> notifications, List<Map<String, Object>> health,
+                           List<Map<String, Object>> maintenance, List<Map<String, Object>> exceptions,
+                           Map<String, List<Map<String, Object>>> recent) { }
 
     @Cacheable(value = "today-monitors", sync = true)
     public Snapshot snapshot() {
@@ -115,15 +136,28 @@ public class TodayMonitorInsightsService {
     /** Test edilebilir çekirdek — {@code now} enjekte edilir (kayan pencere, sabit fixture tarihi YOK). */
     public Snapshot snapshot(Instant now) {
         Map<String, MonitorSchedule> monitors = loadMonitors();
+        List<LatestCheck> latest = loadLatest();
         List<Map<String, Object>> flapping = safe(() -> flapping(now, monitors));
         List<Map<String, Object>> slow = safe(() -> slow(now, monitors));
-        int[] paused = {0};
-        List<Map<String, Object>> stale = safe(() -> stale(now, monitors, activeInventoryDomains(), paused));
+        Set<String> activeDomains = activeInventoryDomains();
+        List<Map<String, Object>> stale = safe(() -> stale(now, monitors, activeDomains));
+        List<Map<String, Object>> paused = safe(() -> paused(now, monitors, activeDomains));
         int[] expired = {0};
         List<Map<String, Object>> domains = safe(() -> domains(monitors, expired));
         List<Map<String, Object>> notifications = safe(() -> notifications(now));
-        List<Map<String, Object>> health = safe(this::health);
-        return new Snapshot(flapping, slow, stale, paused[0], domains, expired[0], notifications, health);
+        List<Map<String, Object>> health = safe(() -> health(now, latest));
+        List<Map<String, Object>> maintenance = safe(() -> maintenance(now));
+        List<Map<String, Object>> exceptions = safe(() -> exceptions(now));
+        Map<String, List<Map<String, Object>>> recent = new LinkedHashMap<>();
+        recent.put("opened", safe(() -> openedSince(now)));
+        recent.put("resolved", safe(() -> resolvedSince(now)));
+        recent.put("renewed", safe(() -> renewedSince(now, latest)));
+        return new Snapshot(flapping, slow, stale, paused, domains, expired[0], notifications, health, maintenance, exceptions, recent);
+    }
+
+    private List<LatestCheck> loadLatest() {
+        try { return latestCheckRepo.findAll(); }
+        catch (Exception e) { log.debug("today/monitors latest_checks okunamadı: {}", e.toString()); return List.of(); }
     }
 
     private static List<Map<String, Object>> safe(Supplier<List<Map<String, Object>>> s) {
@@ -245,7 +279,7 @@ public class TodayMonitorInsightsService {
     }
 
     // ── 3) Sessiz / bayat ────────────────────────────────────────────────────────────────────
-    private List<Map<String, Object>> stale(Instant now, Map<String, MonitorSchedule> monitors, Set<String> activeDomains, int[] paused) {
+    private List<Map<String, Object>> stale(Instant now, Map<String, MonitorSchedule> monitors, Set<String> activeDomains) {
         Instant sinceAt = now.minus(Duration.ofDays(STALE_LOOKBACK_DAYS));
         String since = ISO.format(sinceAt);
         Map<String, String> last = new HashMap<>();
@@ -253,7 +287,7 @@ public class TodayMonitorInsightsService {
             if (r[2] != null) last.put(key((String) r[0], ((Number) r[1]).longValue()), (String) r[2]);
         List<Map<String, Object>> items = new ArrayList<>();
         for (MonitorSchedule m : monitors.values()) {
-            if (!Boolean.TRUE.equals(m.getActive())) { paused[0]++; continue; }
+            if (!Boolean.TRUE.equals(m.getActive())) continue;   // duraklatılmış → kendi kartında (paused)
             // Envanter-türevi DNS/Port: alanı aktif envanterde değilse süpürme BİLEREK atlıyor (öksüz) → bayat değil.
             if (!m.scheduleStandalone() && !activeDomains.contains(String.valueOf(hostOf(m.scheduleTarget())))) continue;
             int interval = m.getIntervalSeconds() != null && m.getIntervalSeconds() > 0 ? m.getIntervalSeconds() : STALE_FLOOR_SEC;
@@ -331,10 +365,10 @@ public class TodayMonitorInsightsService {
      * kendi kartı var). Süresi dolmamış zayıf-algoritma istisnası "signature"/"keySize" bulgularını SUSTURUR (bilinçli
      * kabul edilmiş risk; süresi dolunca bulgu yeniden görünür — kaldırılan istisna kartının işlevi buraya taşındı).
      */
-    private List<Map<String, Object>> health() {
+    private List<Map<String, Object>> health(Instant now, List<LatestCheck> latestRows) {
         Map<String, LatestCheck> latest = new HashMap<>();
-        for (LatestCheck lc : latestCheckRepo.findAll()) if (lc.getDomain() != null) latest.put(lc.getDomain(), lc);
-        String today = LocalDate.now(IST).toString();
+        for (LatestCheck lc : latestRows) if (lc.getDomain() != null) latest.put(lc.getDomain(), lc);
+        String today = now.atZone(IST).toLocalDate().toString();
         Set<String> silenced = new HashSet<>();
         for (WeakAlgorithmException ex : exceptionRepo.findAll())
             if (ex.getDomain() != null && (ex.getUntil() == null || ex.getUntil().compareTo(today) >= 0)) silenced.add(ex.getDomain());
@@ -364,6 +398,144 @@ public class TodayMonitorInsightsService {
                 .thenComparingInt(m -> -((List<?>) m.get("findings")).size())
                 .thenComparing(m -> String.valueOf(m.get("domain"))));
         return items;
+    }
+
+    // ── 7) Susturulmuş ve bakımda (2026-09-23) ──────────────────────────────────────────────
+    // Diğer kartlar bir sorun OLDUĞUNDA uyarır; bu kart sistemin BİLEREK sustuğu yerleri gösterir —
+    // unutulmuş bir duraklatma, haftalarca kimse fark etmeden izlemenin kapalı kalması demektir.
+
+    /**
+     * Duraklatılmış izlemeler — en uzun süredir duraklatılan üstte. "Ne zamandır": değişiklik geçmişinde
+     * {@code active} alanının son değiştiği an ({@code paused_since_exact=true}); geçmiş yoksa (eski kayıt)
+     * izlemenin son güncellenmesi (yaklaşık); o da yoksa bilinmiyor (null, listenin sonunda).
+     * Envanter-türevi öksüz DNS/Port satırı sayılmaz (bayat kartıyla aynı kural: liste uçları da göstermez).
+     */
+    private List<Map<String, Object>> paused(Instant now, Map<String, MonitorSchedule> monitors, Set<String> activeDomains) {
+        List<MonitorSchedule> list = new ArrayList<>();
+        for (MonitorSchedule m : monitors.values()) {
+            if (Boolean.TRUE.equals(m.getActive())) continue;
+            if (!m.scheduleStandalone() && !activeDomains.contains(String.valueOf(hostOf(m.scheduleTarget())))) continue;
+            list.add(m);
+        }
+        if (list.isEmpty()) return List.of();
+        Map<String, String> changed = new HashMap<>();
+        try {
+            Set<Long> ids = new HashSet<>();
+            for (MonitorSchedule m : list) ids.add(m.getId());
+            for (Object[] r : changeLogRepo.lastActiveChange(ids))
+                if (r[2] != null) changed.put(key((String) r[0], ((Number) r[1]).longValue()), (String) r[2]);
+        } catch (Exception e) { log.debug("today/monitors duraklatma geçmişi okunamadı: {}", e.toString()); }
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (MonitorSchedule m : list) {
+            String exact = changed.get(key(m.scheduleType(), m.getId()));
+            Instant at = parse(exact != null ? exact : m.getUpdatedAt());
+            Map<String, Object> row = row(m);
+            row.put("kind", "PAUSED");
+            row.put("paused_since", at == null ? null : ISO.format(at));
+            row.put("paused_days", at == null ? null : Math.max(0, Duration.between(at, now).toDays()));
+            row.put("paused_since_exact", exact != null);
+            items.add(row);
+        }
+        items.sort(Comparator.comparing((Map<String, Object> m) -> (String) m.get("paused_since"), Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(m -> String.valueOf(m.get("name"))));
+        return items;
+    }
+
+    /**
+     * Şu an süren ya da {@link #MAINT_SOON_HOURS} saat içinde başlayacak bakım pencereleri — süren üstte.
+     * Occurrence kuralı {@link MaintenanceService}'ten (DST-güvenli; sayfa ve alarm bastırma ile aynı hesap).
+     * {@code public}: bakım sayfasıyla AYNI görünürlük — tüm-monitör ve takımsız pencere herkesin alarmını
+     * bastırabildiği için herkese görünür ("alarm neden gelmiyor" sorusu cevapsız kalmasın).
+     */
+    private List<Map<String, Object>> maintenance(Instant now) {
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (MaintenanceWindow w : maintenanceRepo.findByActiveTrue()) {
+            Instant end = maintenanceService.activeEndAt(w, now);
+            String next = end == null ? maintenanceService.nextOccurrence(w, now) : null;
+            Instant nextAt = parse(next);
+            if (end == null && (nextAt == null || nextAt.isAfter(now.plus(Duration.ofHours(MAINT_SOON_HOURS))))) continue;
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("kind", end != null ? "MAINT_ACTIVE" : "MAINT_SOON");
+            r.put("window_id", w.getId()); r.put("name", w.getName());
+            r.put("until", end == null ? null : ISO.format(end));
+            r.put("next_start", next);
+            r.put("duration_min", w.getDurationMinutes());
+            r.put("recurrence", w.getRecurrence() == null ? "NONE" : w.getRecurrence());
+            r.put("target_count", maintenanceService.targetCount(w));
+            r.put("team_id", w.getTeamId()); r.put("domain", null);
+            r.put("public", Boolean.TRUE.equals(w.getAllMonitors()) || w.getTeamId() == null);
+            items.add(r);
+        }
+        items.sort(Comparator.comparingInt((Map<String, Object> m) -> "MAINT_ACTIVE".equals(m.get("kind")) ? 0 : 1)
+                .thenComparing(m -> String.valueOf(m.get("MAINT_ACTIVE".equals(m.get("kind")) ? "until" : "next_start"))));
+        return items;
+    }
+
+    /**
+     * {@link #EXCEPTION_SOON_DAYS} gün içinde süresi dolacak zayıf-algoritma istisnaları — dolunca sağlık
+     * bulgusu geri gelir; takım önceden yenilemeye ya da sertifikayı değiştirmeye karar verebilsin.
+     * Süresiz istisna ({@code until} boş) dolmaz → listelenmez. Takım envanterden.
+     */
+    private List<Map<String, Object>> exceptions(Instant now) {
+        LocalDate today = now.atZone(IST).toLocalDate(), limit = today.plusDays(EXCEPTION_SOON_DAYS);
+        Map<String, Long> domainTeam = new HashMap<>();
+        for (CertificateInventory i : inventoryRepo.findByActiveTrueOrderByDomainAsc())
+            if (i.getDomain() != null) domainTeam.put(i.getDomain(), i.getTeamId());
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (WeakAlgorithmException ex : exceptionRepo.findAll()) {
+            if (ex.getDomain() == null || ex.getUntil() == null || ex.getUntil().length() < 10) continue;
+            LocalDate until;
+            try { until = LocalDate.parse(ex.getUntil().substring(0, 10)); } catch (Exception e) { continue; }
+            if (until.isBefore(today) || until.isAfter(limit)) continue;
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("kind", "EXCEPTION"); r.put("domain", ex.getDomain()); r.put("until", until.toString());
+            r.put("days_left", ChronoUnit.DAYS.between(today, until));
+            r.put("reason", trim(ex.getReason(), 160)); r.put("team_id", domainTeam.get(ex.getDomain()));
+            items.add(r);
+        }
+        items.sort(Comparator.comparing((Map<String, Object> m) -> (String) m.get("until")).thenComparing(m -> (String) m.get("domain")));
+        return items;
+    }
+
+    // ── 8) Son 24 saat şeridi (2026-09-23, "dünden bugüne") ─────────────────────────────────
+    /** Pencerede AÇILAN alarmlar (sonradan çözülmüş olsa da) — kimlik + görünürlük alanları. */
+    private List<Map<String, Object>> openedSince(Instant now) {
+        String since = ISO.format(now.minus(Duration.ofHours(RECENT_WINDOW_HOURS)));
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (AlertEvent e : alertEventRepo.findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(since)) out.add(alertIdent(e));
+        return out;
+    }
+
+    /** Pencerede ÇÖZÜLEN alarmlar. */
+    private List<Map<String, Object>> resolvedSince(Instant now) {
+        String since = ISO.format(now.minus(Duration.ofHours(RECENT_WINDOW_HOURS)));
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (AlertEvent e : alertEventRepo.findByResolvedAtGreaterThanEqual(since))
+            if (Boolean.TRUE.equals(e.getResolved())) out.add(alertIdent(e));
+        return out;
+    }
+
+    private static Map<String, Object> alertIdent(AlertEvent e) {
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("id", e.getId()); r.put("team_id", e.getTeamId()); r.put("domain", e.getDomain()); r.put("level", e.getAlertLevel());
+        return r;
+    }
+
+    /**
+     * Pencerede sertifikası YENİLENEN alanlar: sabitlenmiş parmak izinin değiştiği an
+     * ({@code fingerprintChangedAt}; ilk sabitleme bir yenileme değildir ve bu alanı yazmaz).
+     */
+    private List<Map<String, Object>> renewedSince(Instant now, List<LatestCheck> latest) {
+        Instant since = now.minus(Duration.ofHours(RECENT_WINDOW_HOURS));
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (LatestCheck lc : latest) {
+            Instant at = parse(lc.getFingerprintChangedAt());
+            if (lc.getDomain() == null || at == null || at.isBefore(since) || at.isAfter(now)) continue;
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("domain", lc.getDomain()); r.put("team_id", null); r.put("at", ISO.format(at));
+            out.add(r);
+        }
+        return out;
     }
 
     // ── 4) Alan adı kaydı dolan ──────────────────────────────────────────────────────────────
