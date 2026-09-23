@@ -63,7 +63,7 @@ public class FailedLoginAnomalyService {
 
     public record AnomalyReport(
             String windowStart, String windowEnd, int windowMinutes,
-            long total, long baselineAvgPerWindow,
+            long total, double baselineAvgPerWindow,
             List<RuleHit> hits,
             List<KV> topAccounts, List<KV> topIps, List<KV> stuffingIps, List<KV> distributedAccounts,
             Map<String, Long> reasonDistribution) {
@@ -107,7 +107,7 @@ public class FailedLoginAnomalyService {
         List<KV> stuffingIps        = kv(auditLogRepo.countDistinctUsersPerIpSince(windowStart));
         List<KV> distributedAccounts= kv(auditLogRepo.countDistinctIpsPerActorSince(windowStart));
         Map<String, Long> reasons   = reasonDistribution(windowStart, windowEnd, total);
-        long baselineAvg            = computeBaselineAvgPerWindow(windowStart, nominalWindowMinutes);
+        double baselineAvg          = computeBaselineAvgPerWindow(windowStart, nominalWindowMinutes);
 
         // Eşikler — canlı (AppSettings), @Value fallback.
         long tTotal   = appSettings.getInt("site.monitor.failed-login.threshold-total", thresholdTotalDefault);
@@ -150,15 +150,28 @@ public class FailedLoginAnomalyService {
         if (baselineAvg > 0 && total >= relFloor && total >= relMul * baselineAvg) {
             long effThreshold = (long) Math.ceil(relMul * baselineAvg);
             hits.add(new RuleHit("RELATIVE_SPIKE", total, effThreshold,
-                    "taban ort. " + baselineAvg + "/pencere, çarpan " + relMul));
+                    "taban ort. " + fmt1(baselineAvg) + "/pencere, çarpan " + relMul));
         }
 
         return new AnomalyReport(windowStart, windowEnd, nominalWindowMinutes, total, baselineAvg,
                 hits, topAccounts, topIps, stuffingIps, distributedAccounts, reasons);
     }
 
-    /** Taban = önceki [windowStart-baselineHours, windowStart] aralığının pencere başına ortalaması. */
-    private long computeBaselineAvgPerWindow(String windowStart, int windowMinutes) {
+    /** Tek ondalıklı, yerelden bağımsız gösterim (rapor metni ve e-posta aynı biçimi kullansın). */
+    public static String fmt1(double v) {
+        return String.format(java.util.Locale.ROOT, "%.1f", v);
+    }
+
+    /**
+     * Taban = önceki [windowStart-baselineHours, windowStart] aralığının pencere başına ortalaması.
+     *
+     * <p>ONDALIK döner. Eskiden {@code long} idi ve {@code baselineTotal / buckets} tamsayı
+     * bölmesiyle hesaplanıyordu: varsayılanlarda (10 dk pencere, 24 saat taban) kova sayısı 144,
+     * yani günde 143 başarısız girişe kadar taban <b>0</b> çıkıyor ve R6'nın {@code baselineAvg > 0}
+     * kapısı hiç açılmıyordu — kural fiilen ölü koddu. Taban doluyken de aşağı yuvarlama eşiği
+     * düşürüyordu (1000/gün → 6 yerine 6,94; çarpan 3 ile eşik 18 yerine 20,8 olmalıydı).
+     */
+    private double computeBaselineAvgPerWindow(String windowStart, int windowMinutes) {
         int baselineHours = appSettings.getInt("site.monitor.failed-login.baseline-hours", baselineHoursDefault);
         if (baselineHours <= 0 || windowMinutes <= 0) return 0;
         Instant startInstant;
@@ -170,7 +183,7 @@ public class FailedLoginAnomalyService {
         String baselineStart = ISO.format(startInstant.minusSeconds(baselineHours * 3600L));
         long baselineTotal = auditLogRepo.countFailedLoginsBetween(baselineStart, windowStart);
         long buckets = Math.max(1L, (baselineHours * 60L) / windowMinutes);
-        return baselineTotal / buckets;
+        return (double) baselineTotal / buckets;
     }
 
     /** Failure-reason önek dağılımı — satır çekmeden (BAD_PASSWORD / UNKNOWN_USER / … / OTHER). */

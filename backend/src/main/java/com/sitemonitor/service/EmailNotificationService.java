@@ -716,7 +716,8 @@ public class EmailNotificationService {
         sb.append("<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:0 0 16px;font-size:14px'>");
         sb.append(adminRow("Zaman penceresi", escHtml(r.windowStart()) + " → " + escHtml(r.windowEnd()) + " (UTC)"));
         sb.append(adminRow("Toplam başarısız login", String.valueOf(r.total())));
-        sb.append(adminRow("Önceki dönem ort.", r.baselineAvgPerWindow() + " / " + r.windowMinutes() + " dk pencere"));
+        sb.append(adminRow("Önceki dönem ort.",
+                FailedLoginAnomalyService.fmt1(r.baselineAvgPerWindow()) + " / " + r.windowMinutes() + " dk pencere"));
         sb.append("</table>");
 
         int n = (r.hits() == null) ? 0 : r.hits().size();

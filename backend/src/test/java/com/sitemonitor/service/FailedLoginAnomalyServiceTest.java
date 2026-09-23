@@ -13,6 +13,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
@@ -117,12 +118,37 @@ class FailedLoginAnomalyServiceTest {
         when(repo.countFailedLoginsBetween(BASELINE_START, WS)).thenReturn(288L);
         when(repo.countFailedLoginsBetween(WS, WE)).thenReturn(8L);
         AnomalyReport hit = service.evaluate(WS, WE, 10);
-        assertThat(hit.baselineAvgPerWindow()).isEqualTo(2L);
+        assertThat(hit.baselineAvgPerWindow()).isEqualTo(2.0);
         assertThat(codes(hit)).contains("RELATIVE_SPIKE");
 
         // zemin altı: total=5 (< floor 8) → tetiklenmez (küçük sayı gürültüsü)
         when(repo.countFailedLoginsBetween(WS, WE)).thenReturn(5L);
         assertThat(codes(service.evaluate(WS, WE, 10))).doesNotContain("RELATIVE_SPIKE");
+    }
+
+    @Test
+    @DisplayName("R6 taban 1 KOVADAN AZ olduğunda da yaşar — tamsayı bölmesi kuralı ölü koda çeviriyordu")
+    void relativeSpikeSurvivesSubBucketBaseline() {
+        // Y6 (2026-09-23): varsayılanlarda kova sayısı 144. Taban 143 iken eski kod 143/144 = 0
+        // hesaplıyor, `baselineAvg > 0` kapısı kapanıyor ve R6 HİÇ tetiklenmiyordu — yani kural
+        // ancak günde 144+ başarısız giriş varken canlanıyordu. Ondalıkla taban 0,993 çıkar.
+        when(repo.countFailedLoginsBetween(BASELINE_START, WS)).thenReturn(143L);
+        when(repo.countFailedLoginsBetween(WS, WE)).thenReturn(8L);          // zemin 8, çarpan 3
+        AnomalyReport hit = service.evaluate(WS, WE, 10);
+        assertThat(hit.baselineAvgPerWindow()).isCloseTo(0.993, within(0.001));
+        assertThat(codes(hit)).contains("RELATIVE_SPIKE");
+    }
+
+    @Test
+    @DisplayName("R6 eşiği AŞAĞI yuvarlamıyor — taban 6,94 iken eşik 3×6 değil 3×6,94")
+    void relativeSpikeThresholdIsNotFloored() {
+        // 1000 / 144 = 6,944 → efektif eşik ceil(3 × 6,944) = 21. Eski tamsayı tabanı 6 verip
+        // eşiği 18'e düşürüyordu, yani %14 erken tetikliyordu.
+        when(repo.countFailedLoginsBetween(BASELINE_START, WS)).thenReturn(1000L);
+        when(repo.countFailedLoginsBetween(WS, WE)).thenReturn(19L);
+        assertThat(codes(service.evaluate(WS, WE, 10))).doesNotContain("RELATIVE_SPIKE");
+        when(repo.countFailedLoginsBetween(WS, WE)).thenReturn(21L);
+        assertThat(codes(service.evaluate(WS, WE, 10))).contains("RELATIVE_SPIKE");
     }
 
     @Test
