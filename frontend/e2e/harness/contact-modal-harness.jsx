@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client'
 import SearchableSelect from '../../src/components/ui/SearchableSelect.jsx'
+import '../../src/styles/globals.css'   // uygulamayla aynı kaskat: shadcn jetonları + Tailwind
 import '../../src/App.css'
 
 /**

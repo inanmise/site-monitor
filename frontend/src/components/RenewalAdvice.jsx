@@ -255,7 +255,7 @@ export default function RenewalAdvice({ onSelectDomain }) {
             </tr></thead>
             <tbody>{pager.pageItems.map((a) => (
               <tr key={a.domain + a.code} className="rn-row">
-                <td><span className="renewal-badge" style={{ background: PRIORITY_COLOR[a.priority] || '#6c757d' }}>{PRIORITY_LABEL[a.priority] || a.priority}</span></td>
+                <td><span className="renewal-badge" style={{ background: PRIORITY_COLOR[a.priority] || '#71717a' }}>{PRIORITY_LABEL[a.priority] || a.priority}</span></td>
                 <td>
                   <button type="button" className="inv-domain" onClick={() => onSelectDomain?.(a.domain)}>{a.domain}</button>
                   {a.port && a.port !== 443 ? <span className="inv-dim">:{a.port}</span> : null}
@@ -278,7 +278,7 @@ export default function RenewalAdvice({ onSelectDomain }) {
       )}
 
       {view === 'list' && pager.pageItems.map((item) => {
-        const color = PRIORITY_COLOR[item.priority] || '#6c757d'
+        const color = PRIORITY_COLOR[item.priority] || '#71717a'
         const label = PRIORITY_LABEL[item.priority] || item.priority
         const days = item.days_remaining
         const daysAbs = days !== null && days !== undefined ? Math.abs(days) : null

@@ -94,7 +94,7 @@ const emptyForm = {
 const DRAFT_DEBOUNCE_MS = 1500
 const DRAFT_INTERVAL_MS = 30000
 
-const STATUS_COLOR = { PASS: '#16a34a', FAIL: '#d97706', ERROR: '#dc2626', TIMEOUT: '#b45309', NO_CHECKS: '#d97706', unknown: '#9ca3af' }
+const STATUS_COLOR = { PASS: '#16a34a', FAIL: '#d97706', ERROR: '#dc2626', TIMEOUT: '#b45309', NO_CHECKS: '#d97706', unknown: '#a1a1aa' }
 function statusLabel(t, s) { return t(`scripted.status_${s || 'unknown'}`) }
 /** PASS/FAIL/ERROR/TIMEOUT/NO_CHECKS alfabesi → kanonik up/down eşlemesi (upt-card/upt-badge aileleri). */
 function isPass(s) { return s === 'PASS' }

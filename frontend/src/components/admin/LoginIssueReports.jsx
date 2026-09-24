@@ -324,12 +324,12 @@ export default function LoginIssueReports() {
                   <td>{r.refCode}</td>
                   <td><SourceBadge source={r.source} t={t} />
                     {r.linkedReference &&
-                      <div style={{ fontSize: 11, color: 'var(--text-light,#64748b)' }} title={t('loginIssues.linkedRefHint')}>
+                      <div style={{ fontSize: 11, color: 'var(--text-light,#71717a)' }} title={t('loginIssues.linkedRefHint')}>
                         ⇄ {r.linkedReference}</div>}
                   </td>
                   <td>{r.messageSummary}
                     {r.category &&
-                      <div style={{ fontSize: 11, color: 'var(--text-light,#64748b)' }}>{categoryLabel(r.category, t)}</div>}
+                      <div style={{ fontSize: 11, color: 'var(--text-light,#71717a)' }}>{categoryLabel(r.category, t)}</div>}
                   </td>
                   <td>{r.username || '—'}</td>
                   <td>{r.ipAddress || '—'}</td>
@@ -381,7 +381,7 @@ export default function LoginIssueReports() {
               <div style={{ marginTop: 10 }}>
                 <div style={{ fontWeight: 700, fontSize: '.9em', marginBottom: 4 }}>{t('loginIssues.errorText')}</div>
                 <div style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: 13, lineHeight: 1.5,
-                  background: 'var(--bg,#f8fafc)', border: '1px solid var(--border,#e5e7eb)', borderRadius: 6, padding: '8px 10px' }}>
+                  background: 'var(--bg,#fafafa)', border: '1px solid var(--border,#e4e4e7)', borderRadius: 6, padding: '8px 10px' }}>
                   {detail.errorText}</div>
               </div>
             )}
@@ -389,7 +389,7 @@ export default function LoginIssueReports() {
             <div style={{ marginTop: 10 }}>
               <div style={{ fontWeight: 700, fontSize: '.9em', marginBottom: 4 }}>{t('loginIssues.message')}</div>
               <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5,
-                background: 'var(--bg,#f8fafc)', border: '1px solid var(--border,#e5e7eb)', borderRadius: 6, padding: '8px 10px' }}>
+                background: 'var(--bg,#fafafa)', border: '1px solid var(--border,#e4e4e7)', borderRadius: 6, padding: '8px 10px' }}>
                 {detail.message}</div>
             </div>
 
@@ -401,7 +401,7 @@ export default function LoginIssueReports() {
                     <img key={i} src={src} alt={`shot ${i + 1}`} title={t('loginIssues.imageZoomHint')}
                       onClick={() => setZoom(src)}
                       style={{ height: 96, width: 'auto', maxWidth: 180, objectFit: 'cover', cursor: 'zoom-in',
-                        border: '1px solid var(--border,#e5e7eb)', borderRadius: 6 }} />
+                        border: '1px solid var(--border,#e4e4e7)', borderRadius: 6 }} />
                   ))}
                 </div>
               </div>
@@ -410,7 +410,7 @@ export default function LoginIssueReports() {
             {detail.userAgent && (
               <div style={{ marginTop: 10 }}>
                 <div style={{ fontWeight: 700, fontSize: '.9em', marginBottom: 4 }}>{t('loginIssues.userAgent')}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-light,#64748b)', wordBreak: 'break-all' }}>{detail.userAgent}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-light,#71717a)', wordBreak: 'break-all' }}>{detail.userAgent}</div>
               </div>
             )}
 
@@ -419,7 +419,7 @@ export default function LoginIssueReports() {
               <div style={{ marginTop: 10 }}>
                 <div style={{ fontWeight: 700, fontSize: '.9em', marginBottom: 4 }}>{t('loginIssues.autoContext')}</div>
                 <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.5,
-                  background: 'var(--bg,#f8fafc)', border: '1px solid var(--border,#e5e7eb)', borderRadius: 6,
+                  background: 'var(--bg,#fafafa)', border: '1px solid var(--border,#e4e4e7)', borderRadius: 6,
                   padding: '8px 10px', margin: 0, maxHeight: 220, overflow: 'auto' }}>
                   {prettyJson(detail.autoContextJson)}</pre>
               </div>
@@ -431,7 +431,7 @@ export default function LoginIssueReports() {
                 <div style={{ fontWeight: 700, fontSize: '.9em' }}>
                   {t('loginIssues.mailHistory')}
                   {detail.mailHistory && detail.mailHistory.length > 0 &&
-                    <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-light,#64748b)', marginLeft: 8 }}>
+                    <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-light,#71717a)', marginLeft: 8 }}>
                       {t('loginIssues.mailRowHint')}</span>}
                 </div>
                 <button className="btn btn-secondary btn-sm-p" onClick={() => openDetail(detail.id)}>{t('loginIssues.mailRefresh')}</button>
@@ -461,13 +461,13 @@ export default function LoginIssueReports() {
                             <td>{open ? '▾ ' : '▸ '}{mailTypeLabel(ml.mailType, t)}</td>
                             <td style={{ wordBreak: 'break-all' }}>
                               {ml.to || '—'}
-                              {ml.cc ? <div style={{ fontSize: 11, color: 'var(--text-light,#64748b)' }}>CC: {ml.cc}</div> : null}
+                              {ml.cc ? <div style={{ fontSize: 11, color: 'var(--text-light,#71717a)' }}>CC: {ml.cc}</div> : null}
                             </td>
                             <td>
                               <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999,
                                 fontSize: 12, fontWeight: 600, background: info.bg, color: info.color }}>{info.label}</span>
                               {ml.forced ? <span title={t('loginIssues.mailForcedHint')}
-                                style={{ marginLeft: 6, fontSize: 11, color: 'var(--text-light,#64748b)' }}>⚡</span> : null}
+                                style={{ marginLeft: 6, fontSize: 11, color: 'var(--text-light,#71717a)' }}>⚡</span> : null}
                               {ml.error ? <div style={{ fontSize: 11, color: '#b91c1c', marginTop: 2, wordBreak: 'break-word' }}>{ml.error}</div> : null}
                             </td>
                             <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(ml.sentAt)}</td>
@@ -476,13 +476,13 @@ export default function LoginIssueReports() {
                         if (open) {
                           rows.push(
                             <tr key={i + '-content'}>
-                              <td colSpan={4} style={{ background: 'var(--bg,#f8fafc)' }}>
+                              <td colSpan={4} style={{ background: 'var(--bg,#fafafa)' }}>
                                 <div style={{ fontSize: 12, marginBottom: 4 }}><b>{t('loginIssues.mailFrom')}:</b> {ml.from || '—'}</div>
                                 <div style={{ fontSize: 12, marginBottom: 6 }}><b>{t('loginIssues.mailSubject')}:</b> {ml.subject || '—'}</div>
                                 {ml.body ? (
                                   <iframe title={`mail-${i}`} sandbox=""
                                     srcDoc={mailPreviewSrcDoc(mailBodyWithImages(ml.body, detail.images))}
-                                    style={{ width: '100%', height: 340, border: '1px solid var(--border,#e5e7eb)',
+                                    style={{ width: '100%', height: 340, border: '1px solid var(--border,#e4e4e7)',
                                       borderRadius: 6, background: '#fff' }} />
                                 ) : (
                                   <div className="hint">{t('loginIssues.mailNoContent')}</div>
@@ -568,9 +568,9 @@ function mailStatusInfo(status, t) {
   const s = status || ''
   if (s === 'SENT') return { label: t('loginIssues.mailSent'), bg: '#dcfce7', color: '#15803d' }
   if (s.startsWith('FAILED')) return { label: t('loginIssues.mailFailed'), bg: '#fee2e2', color: '#b91c1c' }
-  if (s.startsWith('SKIPPED')) return { label: t('loginIssues.mailSkipped'), bg: '#f3f4f6', color: '#6b7280' }
+  if (s.startsWith('SKIPPED')) return { label: t('loginIssues.mailSkipped'), bg: '#f4f4f5', color: '#71717a' }
   if (s.startsWith('QUEUED')) return { label: t('loginIssues.mailQueued'), bg: '#fef3c7', color: '#b45309' }
-  return { label: s || '—', bg: '#f3f4f6', color: '#6b7280' }
+  return { label: s || '—', bg: '#f4f4f5', color: '#71717a' }
 }
 
 function mailTypeLabel(type, t) {

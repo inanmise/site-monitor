@@ -12,7 +12,7 @@ export default function CircularGauge({ value = 0, size = 96, stroke = 8, color 
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="wr-gauge"
       role="img" aria-label={label || `${v}/100`}>
-      <circle cx={c} cy={c} r={r} fill="none" stroke="var(--border, #ddd)" strokeWidth={stroke} />
+      <circle cx={c} cy={c} r={r} fill="none" stroke="var(--border, #e4e4e7)" strokeWidth={stroke} />
       <circle cx={c} cy={c} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round"
         strokeDasharray={`${dash} ${circ - dash}`} transform={`rotate(-90 ${c} ${c})`} />
     </svg>

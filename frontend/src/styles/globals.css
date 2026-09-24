@@ -1,0 +1,141 @@
+/*
+ * shadcn/ui + Tailwind v4 girişi (feature/shadcn-ui).
+ *
+ * KASKAT SÖZLEŞMESİ — neden Tailwind'in preflight'ı YOK:
+ *   Uygulamanın 14k satırlık App.css'i KATMANSIZ kalır (mevcut kaskat birebir korunur: prism /
+ *   react-datepicker / md-editor gibi JS'ten yüklenen üçüncü parti CSS'lere verdiği tema ezmeleri
+ *   aynen çalışır). Katmansız kurallar katmanlı her kuralı yener; bu yüzden Tailwind yardımcıları
+ *   yalnız legacy SINIFLARIN olmadığı öğelerde (shadcn bileşenleri) etkilidir ve çakışma olmaz.
+ *   Preflight global bir sıfırlama olduğu için taşınmamış ekranları bozardı → alınmadı; yerine
+ *   shadcn bileşenlerinin ihtiyaç duyduğu dar sıfırlama `[data-slot]` ile base katmanında.
+ *   App.css'in `* { margin:0; padding:0 }` kuralı da buraya (base) taşındı: katmansız kalsaydı
+ *   her `p-4`/`mx-2` yardımcısını ezerdi.
+ */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "tw-animate-css";
+@import "@fontsource-variable/inter";
+
+/* Tailwind'e kaynak taraması: tüm JSX */
+@source "../";
+
+/* Koyu tema: uygulamanın ThemeProvider'ı <html data-theme="dark"> yazar (sınıf değil) */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/*
+ * shadcn jetonları — "nötr + marka mavisi" (kullanıcı kararı 2026-09-24): yüzeyler shadcn'in
+ * nötr (zinc) skalası, ana renk marka mavisi. --primary/--border App.css ile ORTAK ad: ikisi de
+ * zaten renk olarak kullanılıyordu (503 / binlerce kullanım) → değerler burada ve App.css'te aynı.
+ */
+:root {
+  --radius: 0.625rem;
+  --background: #ffffff;
+  --foreground: #09090b;
+  --card: #ffffff;
+  --card-foreground: #09090b;
+  --popover: #ffffff;
+  --popover-foreground: #09090b;
+  --primary: var(--brand-primary, #2563eb);
+  --primary-foreground: #ffffff;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #18181b;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --accent: #f4f4f5;
+  --accent-foreground: #18181b;
+  --destructive: #dc2626;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --ring: color-mix(in srgb, var(--primary) 55%, transparent);
+  --chart-1: #2563eb;
+  --chart-2: #16a34a;
+  --chart-3: #f59e0b;
+  --chart-4: #dc2626;
+  --chart-5: #8b5cf6;
+  --sidebar: #fafafa;
+  --sidebar-foreground: #3f3f46;
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f4f4f5;
+  --sidebar-accent-foreground: #18181b;
+  --sidebar-border: #e4e4e7;
+  --sidebar-ring: var(--ring);
+}
+
+[data-theme="dark"] {
+  --background: #09090b;
+  --foreground: #fafafa;
+  --card: #18181b;
+  --card-foreground: #fafafa;
+  --popover: #18181b;
+  --popover-foreground: #fafafa;
+  --primary: var(--brand-primary, #3b82f6);
+  --primary-foreground: #ffffff;
+  --secondary: #27272a;
+  --secondary-foreground: #fafafa;
+  --muted: #27272a;
+  --muted-foreground: #a1a1aa;
+  --accent: #27272a;
+  --accent-foreground: #fafafa;
+  --destructive: #ef4444;
+  --border: #27272a;
+  --input: #3f3f46;
+  --sidebar: #18181b;
+  --sidebar-foreground: #d4d4d8;
+  --sidebar-accent: #27272a;
+  --sidebar-accent-foreground: #fafafa;
+  --sidebar-border: #27272a;
+}
+
+@theme inline {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  /* App.css'ten taşındı (katmansız kalsa her boşluk yardımcısını ezerdi) */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  /* shadcn bileşenlerinin preflight'tan beklediği dar sıfırlama — yalnız data-slot taşıyan öğeler */
+  [data-slot] { border: 0 solid var(--color-border); }
+  button[data-slot], input[data-slot], textarea[data-slot], select[data-slot] {
+    font: inherit; color: inherit; background-color: transparent; letter-spacing: inherit;
+  }
+  button[data-slot] { cursor: pointer; }
+  button[data-slot]:disabled { cursor: not-allowed; }
+  [data-slot] svg { display: inline-block; vertical-align: middle; }
+}

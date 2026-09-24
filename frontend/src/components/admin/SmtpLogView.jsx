@@ -43,7 +43,7 @@ const STATUS_META = {
   QUEUED:  { Icon: Clock,       cls: 'smtp-kind-skipped', key: 'sml.statusQueued' },
   UNKNOWN: { Icon: HelpCircle,  cls: 'smtp-kind-skipped', key: 'health.statusUnknown' },
 }
-const KPI_COLORS = { total: '#64748b', sent: '#059669', failed: '#dc2626', skipped: '#94a3b8', rate: '#2563eb', recipients: '#b45309' }
+const KPI_COLORS = { total: '#71717a', sent: '#059669', failed: '#dc2626', skipped: '#a1a1aa', rate: '#2563eb', recipients: '#b45309' }
 
 /** Yerel Date → sunucu UTC ISO (saniye, 'Z'siz). */
 function toIso(d) { return d instanceof Date && !isNaN(d) ? d.toISOString().slice(0, 19) : null }
@@ -498,7 +498,7 @@ export default function SmtpLogView({ onBack, initial }) {
               )}
               <div className="smtp-detail-body-label">{t('health.emailDetailBody')}</div>
               <iframe className="smtp-detail-iframe" title={detail.subject || 'mail'} sandbox=""
-                srcDoc={mailPreviewSrcDoc(detail.message ?? `<p style="color:#9ca3af;font-family:sans-serif">${t('health.emailDetailNoBody')}</p>`,
+                srcDoc={mailPreviewSrcDoc(detail.message ?? `<p style="color:#a1a1aa;font-family:sans-serif">${t('health.emailDetailNoBody')}</p>`,
                   { logoVariant: mailLogoVariant({ trigger: detail.trigger, level: detail.alert_level }) })} />
             </div>
           )}

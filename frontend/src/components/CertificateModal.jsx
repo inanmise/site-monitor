@@ -31,7 +31,7 @@ function categoryStripe(cat) {
     case 'DEPLOYMENT': return '#2563eb'
     case 'INCIDENT':   return '#dc2626'
     case 'RENEWAL':    return '#10b981'
-    default:           return '#94a3b8'
+    default:           return '#a1a1aa'
   }
 }
 
@@ -261,7 +261,7 @@ function NotesTab({ domain, t, currentUser, isAdmin }) {
             const revs       = revisions[n.id] ?? []
             return (
               <div key={n.id} className={`alert-history-card cert-note-card${isDeleted ? ' cert-note-deleted' : ''}`}>
-                <div className="ahc-stripe" style={{ background: isDeleted ? '#9ca3af' : categoryStripe(cat) }} />
+                <div className="ahc-stripe" style={{ background: isDeleted ? '#a1a1aa' : categoryStripe(cat) }} />
                 <div className="ahc-body">
                   {isDeleted && (
                     <div className="cert-note-deleted-banner">

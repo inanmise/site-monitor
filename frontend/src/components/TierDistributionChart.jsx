@@ -7,8 +7,8 @@ const TIER_COLORS = {
   1:    '#4f46e5',
   2:    '#0284c7',
   3:    '#0891b2',
-  4:    '#6b7280',
-  null: '#94a3b8',
+  4:    '#71717a',
+  null: '#a1a1aa',
 }
 
 const TIER_DESC_KEYS = {

@@ -15,7 +15,7 @@ function fmtDateHuman(iso) {
   return d.toLocaleString(dateLocale(), { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 function daysColor(d) {
-  if (d == null) return 'var(--text-muted, #64748b)'
+  if (d == null) return 'var(--text-muted, #71717a)'
   if (d < 0 || d <= 7) return '#C0392B'
   if (d <= 30) return '#D68910'
   return '#1E8449'

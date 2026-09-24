@@ -134,7 +134,7 @@ export default function KebabMenu({ items = [], label = 'İşlemler', rowLabel =
       <button ref={btnRef} type="button" className="btn-sm kebab-trigger"
         title={label} aria-label={rowLabel ? `${rowLabel} — ${label}` : label}
         aria-expanded={open} aria-haspopup="menu"
-        style={{ background: '#eef2f7', color: '#334155' }} onClick={toggle}>
+        style={{ background: '#eef2f7', color: '#3f3f46' }} onClick={toggle}>
         <Menu size={15} />
       </button>
       {open && createPortal(pop, document.body)}

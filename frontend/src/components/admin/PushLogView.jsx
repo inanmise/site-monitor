@@ -50,7 +50,7 @@ const STATUS_META = {
   SKIPPED: { Icon: MinusCircle, cls: 'smtp-kind-skipped', key: 'health.statusSkipped' },
   UNKNOWN: { Icon: HelpCircle,  cls: 'smtp-kind-skipped', key: 'health.statusUnknown' },
 }
-const KPI_COLORS = { total: '#64748b', sent: '#059669', failed: '#dc2626', pending: '#d97706', skipped: '#94a3b8', rate: '#2563eb', users: '#b45309' }
+const KPI_COLORS = { total: '#71717a', sent: '#059669', failed: '#dc2626', pending: '#d97706', skipped: '#a1a1aa', rate: '#2563eb', users: '#b45309' }
 
 function toIso(d) { return d instanceof Date && !isNaN(d) ? d.toISOString().slice(0, 19) : null }
 function fromIso(s) { if (!s) return null; const d = new Date(s + 'Z'); return isNaN(d) ? null : d }

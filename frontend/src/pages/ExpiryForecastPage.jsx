@@ -247,7 +247,7 @@ function CalendarHeatmap({ certs, th, t, today, rangeDays, setRangeDays, onOpenD
 }
 
 // ── Yenileme yükü — 12 ay (korundu) ──────────────────────────────────────────────────────────────
-const LOAD_COLORS = ['#2563eb', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#94a3b8']
+const LOAD_COLORS = ['#2563eb', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#a1a1aa']
 function computeRenewalLoad(certs, locale) {
   const now = new Date(); const months = []
   for (let i = 0; i < 12; i++) { const d = new Date(now.getFullYear(), now.getMonth() + i, 1); months.push({ key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, label: d.toLocaleDateString(locale, { month: 'short', year: '2-digit' }) }) }
@@ -469,8 +469,8 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
                     <ComposedChart data={chartData} margin={{ top: 4, right: 20, bottom: 0, left: 0 }} style={{ cursor: 'pointer' }}
                       onClick={(st) => { const i = [st?.activeTooltipIndex, st?.activeIndex].map(Number).find(Number.isInteger); openChartDay(st?.activePayload?.[0]?.payload ?? (i != null ? chartData[i] : null)) }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#1e3a5f" />
-                      <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10 }} interval={Math.max(0, Math.floor(chartRange / 6))} />
-                      <YAxis yAxisId="left" allowDecimals={false} tick={{ fill: '#94a3b8', fontSize: 10 }} width={26} />
+                      <XAxis dataKey="label" tick={{ fill: '#71717a', fontSize: 10 }} interval={Math.max(0, Math.floor(chartRange / 6))} />
+                      <YAxis yAxisId="left" allowDecimals={false} tick={{ fill: '#a1a1aa', fontSize: 10 }} width={26} />
                       <YAxis yAxisId="right" orientation="right" allowDecimals={false} tick={{ fill: '#3b82f6', fontSize: 10 }} width={36} />
                       <RTooltip content={<BarTooltip t={t} />} cursor={{ fill: 'rgba(255,255,255,.04)' }} />
                       {/* Recharts 3: grafik-seviyesi onClick her tıklamada activePayload vermiyor (kullanıcı bildirimi
@@ -494,9 +494,9 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
                     <PieChart>
                       <Pie data={teams.map((r) => ({ name: r.name || t('inv.teamNoTeam'), value: r.total }))} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={64} innerRadius={36} paddingAngle={2}>
                         {teams.map((_, i) => <Cell key={i} fill={LOAD_COLORS[i % LOAD_COLORS.length]} />)}
-                        <Label value={teams.reduce((n, r) => n + r.total, 0)} position="center" fill="#e2e8f0" fontSize={18} fontWeight={800} />
+                        <Label value={teams.reduce((n, r) => n + r.total, 0)} position="center" fill="#e4e4e7" fontSize={18} fontWeight={800} />
                       </Pie>
-                      <RTooltip formatter={(v, n) => [v, n]} contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', fontSize: 12 }} />
+                      <RTooltip formatter={(v, n) => [v, n]} contentStyle={{ background: '#18181b', border: '1px solid #3f3f46', borderRadius: 6, color: '#e4e4e7', fontSize: 12 }} />
                     </PieChart>
                   </ResponsiveContainer>
                   {/* Hücreler tıklanır (2026-09-18): sayı → o takım+kova sertifika listesi (gün modaliyle aynı yüzey) */}

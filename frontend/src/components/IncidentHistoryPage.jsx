@@ -534,7 +534,7 @@ export default function IncidentHistoryPage() {
     } else toast.error(res?.error || t('inc.saveError'))
   }
 
-  const sevBadge = (s) => <span style={{ color: SEV_COLOR[s] || '#64748b', fontWeight: 700 }}>{t('inc.sev' + s) || s}</span>
+  const sevBadge = (s) => <span style={{ color: SEV_COLOR[s] || '#71717a', fontWeight: 700 }}>{t('inc.sev' + s) || s}</span>
   const sum = trends?.summary || {}
   const bySev = trends?.by_severity || {}
   const byStatus = trends?.by_status || {}
@@ -692,7 +692,7 @@ export default function IncidentHistoryPage() {
       {/* Toplu transfer çubuğu — seçim varken */}
       {allowManage && selected.size > 0 && (
         <div className="inv-stats-pills" style={{ marginBottom: 10, gap: 8, alignItems: 'center',
-          background: '#f1f5f9', padding: '8px 12px', borderRadius: 6 }}>
+          background: '#f4f4f5', padding: '8px 12px', borderRadius: 6 }}>
           <span style={{ fontWeight: 700, fontSize: '.9em' }}>{t('inc.selectedN', selected.size)}</span>
           <select className="filter-select" value={transferTeam} onChange={e => setTransferTeam(e.target.value)}>
             <option value="">{t('inc.transferTo')}</option>
@@ -846,7 +846,7 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, all
       {/* Dış tıklamada KAPANMAZ — giriş kaybını önlemek için yalnız İptal/Kaydet ile kapanır */}
       <div className="modal-box modal-wide" onClick={e => e.stopPropagation()}>
         <div className="modal-icon-hdr">
-          <div className="modal-icon-hdr-badge" style={{ background: 'linear-gradient(135deg,#0f172a,#334155)', color: '#fff' }}>
+          <div className="modal-icon-hdr-badge" style={{ background: 'linear-gradient(135deg,#09090b,#3f3f46)', color: '#fff' }}>
             <ListChecks size={20} />
           </div>
           <h3>{t(titleKey)}</h3>

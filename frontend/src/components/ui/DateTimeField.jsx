@@ -106,7 +106,7 @@ export default function DateTimeField({ value, onChange, disabled, placeholder, 
             belirten ve takvimi kapatan açık bir "Tamam" butonu. dateOnly modunda gerek yok (gün
             tıklanınca zaten kapanır). */}
         {!dateOnly && (
-          <div style={{ padding: '6px 8px', borderTop: '1px solid var(--border, #e2e8f0)',
+          <div style={{ padding: '6px 8px', borderTop: '1px solid var(--border, #e4e4e7)',
                         display: 'flex', justifyContent: 'flex-end' }}>
             <button type="button" onClick={() => dpRef.current?.setOpen(false)}
               style={{ padding: '5px 16px', fontWeight: 600, fontSize: '.85rem', cursor: 'pointer',

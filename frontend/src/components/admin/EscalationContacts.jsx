@@ -242,7 +242,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
                 <td>{c.email}</td>
                 <td>{teamMap[c.team_id] || '—'}</td>
                 <td><span className="role-badge">{roleLabelMap[c.role] || c.role}</span></td>
-                <td><span className="level-badge" style={{ background: levelColor[c.min_alert_level] || '#999' }}>{levelLabelMap[c.min_alert_level] || c.min_alert_level}</span></td>
+                <td><span className="level-badge" style={{ background: levelColor[c.min_alert_level] || '#a1a1aa' }}>{levelLabelMap[c.min_alert_level] || c.min_alert_level}</span></td>
                 <td>{c.webhook_url ? <span className="badge badge-ok">{c.webhook_type}</span> : '—'}</td>
                 <td>{(() => {
                   if (!c.webhook_url) return '—'

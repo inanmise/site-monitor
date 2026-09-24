@@ -153,7 +153,7 @@ export default function CodeEditor({ value, onChange, placeholder, readOnly = fa
         // FONT BURADA YOK — tek kaynak `.code-editor-wrap` (App.css). pre/textarea kütüphanede
         // `inherit`; hayalet de aynı zincirden miras alır. Buraya font yazılırsa iki zincir
         // ayrışır ve sarma noktaları kayar.
-        style={{ minHeight, color: '#1f2937', caretColor: '#111' }}
+        style={{ minHeight, color: '#27272a', caretColor: '#111' }}
       />
     </div>
   )

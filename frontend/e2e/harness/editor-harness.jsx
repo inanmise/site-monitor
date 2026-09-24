@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import CodeEditor from '../../src/components/ui/CodeEditor.jsx'
+import '../../src/styles/globals.css'   // uygulamayla aynı kaskat: shadcn jetonları + Tailwind
 import '../../src/App.css'
 
 /**

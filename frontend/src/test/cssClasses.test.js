@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { compile } from '@tailwindcss/node'
 
 const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -14,8 +15,12 @@ const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
  * hazırlanmıştı: `ng-panel`, `data-table`, `text-danger`, `form-hint` gibi 13 ad hiçbir CSS
  * dosyasında yoktu, ekran biçimsiz çizildi ve bunu ancak kullanıcı ekran görüntüsüyle gösterdi.
  *
- * Kural: `className="..."` içinde geçen DÜZ sınıf adları ya bir CSS dosyasında tanımlı olmalı ya
- * da aşağıdaki muafiyet listesinde GEREKÇESİYLE yer almalı.
+ * Kural: `className="..."` içinde geçen DÜZ sınıf adları ya bir CSS dosyasında tanımlı olmalı, ya
+ * Tailwind'in ÜRETTİĞİ bir yardımcı olmalı (shadcn/ui bileşenleri — `size-4`, `w-full`), ya da
+ * aşağıdaki muafiyet listesinde GEREKÇESİYLE yer almalı. Tailwind sınıfları hiçbir .css dosyasında
+ * yazılı değildir, derleme anında üretilir; bu yüzden projenin GERÇEK Tailwind girdisi
+ * (styles/globals.css) derleyiciye verilip sorulur. Tailwind'in üretmediği bir ad (ör. `ng-panel`)
+ * yine hayalettir ve kapı onu yakalamaya devam eder.
  *
  * Kapsam bilinçli olarak dar: yalnız tırnaklı, interpolasyonsuz `className="a b"` biçimi taranır.
  * Şablon literalleri (`` `x-${v}` ``) statik olarak çözülemez; onları da kapsamaya çalışmak
@@ -67,8 +72,6 @@ const EXEMPT = new Map([
   ['trp-col-quick', 'TimeRangePicker hızlı sütunu'],
   ['sqlpg-menu-history', 'SqlPlayground geçmiş menüsü'],
   ['sqlpg-menu-samples', 'SqlPlayground örnek menüsü'],
-  ['lp-blocked-icon--permanent', 'Login kalıcı-blok varyantı'],
-  ['lp-blocked-title--permanent', 'Login kalıcı-blok varyantı'],
 ])
 
 function walk(dir, out = []) {
@@ -90,6 +93,16 @@ for (const f of files.filter(x => x.endsWith('.css'))) {
   for (const m of css.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)) definedClasses.add(m[1])
 }
 
+/** Tailwind'e sor: verilen adlardan hangileri gerçekten bir kural üretiyor? */
+const twCompiler = await compile(fs.readFileSync(path.join(SRC, 'styles', 'globals.css'), 'utf8'), {
+  base: path.join(SRC, 'styles'),
+  onDependency: () => {},
+})
+function tailwindGenerated(names) {
+  const css = twCompiler.build([...names])
+  return new Set([...names].filter(n => new RegExp('\\.' + n + '(?![\\w-])').test(css)))
+}
+
 /** className="a b c" — interpolasyonsuz, düz string biçimi. */
 const CLASS_ATTR = /className="([^"{}$`]*)"/g
 
@@ -98,7 +111,7 @@ describe('CSS sınıf kapısı (JSX’te yazılan her düz sınıf adı tanıml�
     expect(definedClasses.size).toBeGreaterThan(500)
   })
 
-  it('className="..." içindeki her ad CSS’te tanımlı ya da gerekçeli muaf', () => {
+  it('className="..." içindeki her ad CSS’te tanımlı, Tailwind üretiyor ya da gerekçeli muaf', () => {
     const offenders = []
     for (const f of files.filter(x => x.endsWith('.jsx'))) {
       const src = fs.readFileSync(f, 'utf8')
@@ -111,7 +124,16 @@ describe('CSS sınıf kapısı (JSX’te yazılan her düz sınıf adı tanıml�
         }
       }
     }
-    expect([...new Set(offenders)].sort()).toEqual([])
+    // CSS'te bulunmayanlardan Tailwind'in ürettikleri tanımlıdır (shadcn yardımcıları)
+    const tw = tailwindGenerated(new Set(offenders.map(o => o.slice(o.lastIndexOf('.') + 1))))
+    expect([...new Set(offenders.filter(o => !tw.has(o.slice(o.lastIndexOf('.') + 1))))].sort()).toEqual([])
+  })
+
+  it('Tailwind sorgusu gerçek: shadcn yardımcısını tanır, uydurma adı tanımaz (kapı vakumda değil)', () => {
+    const tw = tailwindGenerated(new Set(['size-4', 'w-full', 'ng-panel']))
+    expect(tw.has('size-4')).toBe(true)
+    expect(tw.has('w-full')).toBe(true)
+    expect(tw.has('ng-panel')).toBe(false)
   })
 
   it('muafiyet listesi ÖLÜ kayıt taşımaz — cırcır yalnız küçülsün', () => {

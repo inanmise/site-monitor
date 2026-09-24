@@ -92,7 +92,7 @@ export function ProgressBar({
  */
 export function ProgressRing({
   value, max = 100, size = 44, stroke = 4, label, showValue = true,
-  color = 'var(--accent, #2563eb)', className = '',
+  color = 'var(--primary, #2563eb)', className = '',
 }) {
   const v = clampValue(value, max)
   const percent = v == null ? null : pct(v, max)
@@ -113,7 +113,7 @@ export function ProgressRing({
       style={{ width: size, height: size }}
     >
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
-        <circle cx={c} cy={c} r={r} fill="none" stroke="var(--border, #e5e7eb)" strokeWidth={stroke} />
+        <circle cx={c} cy={c} r={r} fill="none" stroke="var(--border, #e4e4e7)" strokeWidth={stroke} />
         <circle cx={c} cy={c} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round"
           strokeDasharray={`${dash} ${circ - dash}`} transform={`rotate(-90 ${c} ${c})`} />
       </svg>

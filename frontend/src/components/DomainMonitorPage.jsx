@@ -991,7 +991,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
               <div style={{ margin: '2px 0 12px', padding: '10px 12px', borderRadius: 8, fontSize: '.86em', lineHeight: 1.5,
                 display: 'flex', alignItems: 'flex-start', gap: 8, border: '1px solid',
                 ...(testResult.error || testResult.status === 'UNKNOWN'
-                  ? { background: '#f8fafc', borderColor: '#e2e8f0', color: '#475569' }
+                  ? { background: '#fafafa', borderColor: '#e4e4e7', color: '#52525b' }
                   : testResult.status === 'OK'
                     ? { background: '#f0fdf4', borderColor: '#bbf7d0', color: '#15803d' }
                     : { background: '#fff7ed', borderColor: '#fed7aa', color: '#b45309' }) }}>

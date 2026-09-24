@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import { coverageConfigDefaults } from 'vitest/config'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
 
@@ -10,7 +11,9 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(version),
   },
-  plugins: [react()],
+  // shadcn/ui (feature/shadcn-ui): Tailwind v4 Vite eklentisi + '@' takma adı (shadcn bileşen içe aktarımları)
+  plugins: [react(), tailwindcss()],
+  resolve: { alias: { '@': resolve(__dirname, './src') } },
   // Kod-bölme: ağır/seyrek admin & rapor sekmeleri App.jsx'te React.lazy ile yüklenir;
   // Vite varsayılanı her lazy sekmenin kendine özel ağır bağımlılığını (recharts/md-editor/
   // jspdf) o sekmenin async chunk'ına koyar → ilk (eager) paket küçülür. Manuel chunk
@@ -38,7 +41,9 @@ export default defineConfig({
       reporter: ['text', 'html', 'json-summary'],
       // Varsayılan coverage exclude'u yalnız 'node_modules'ü tanır; kilitli-dosya geçici
       // kopyaları (node_modules.stale) "all files" taramasına girip yüzdeleri ezmesin.
-      exclude: ['**/node_modules*/**', ...coverageConfigDefaults.exclude],
+      // `src/components/shadcn/**`: shadcn CLI'nin ÜRETTİĞİ ilkel bileşenler (Radix + Tailwind sarmalayıcıları)
+      // — kütüphane kodu gibi ele alınır; kullanan ekranlar kendi testleriyle kapsanır.
+      exclude: ['**/node_modules*/**', 'src/components/shadcn/**', ...coverageConfigDefaults.exclude],
       thresholds: {
         statements: 65,
         lines: 65,

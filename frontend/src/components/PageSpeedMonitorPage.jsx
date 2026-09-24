@@ -609,7 +609,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }
 
   // SLOW ayrı bir renk: kesinti DEĞİL, sayfa ayakta ama hedeflenenden ağır/yavaş.
-  const STATUS_COLOR = { OK: '#15803d', SLOW: '#e07b00', DOWN: '#c0392b', CONFIG_ERROR: '#7c3aed', unknown: '#64748b' }
+  const STATUS_COLOR = { OK: '#15803d', SLOW: '#e07b00', DOWN: '#c0392b', CONFIG_ERROR: '#7c3aed', unknown: '#71717a' }
   function cardClass(m) {
     if (m.status === 'OK') return 'upt-card--up'
     if (m.status === 'DOWN') return 'upt-card--down'

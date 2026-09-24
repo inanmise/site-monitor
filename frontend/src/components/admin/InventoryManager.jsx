@@ -572,7 +572,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
 
       {canManage && selected.size > 0 && (
         <div className="inv-stats-pills" style={{ marginBottom: 10, gap: 8, alignItems: 'center',
-          background: '#f1f5f9', padding: '8px 12px', borderRadius: 6 }}>
+          background: '#f4f4f5', padding: '8px 12px', borderRadius: 6 }}>
           <span style={{ fontWeight: 700, fontSize: '.9em' }}>{t('inv.bulkSelected', selected.size)}</span>
           <button className="btn btn-success btn-sm-p"   onClick={() => bulkAction('activate')}>{t('inv.bulkActivateBtn')}</button>
           <button className="btn btn-warning btn-sm-p"   onClick={() => bulkAction('deactivate')}>{t('inv.bulkDeactivateBtn')}</button>

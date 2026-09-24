@@ -12,8 +12,8 @@ const TIER_META = {
   1: { color: '#4f46e5', label: 'T1', descKey: 'tier.desc1' },
   2: { color: '#0284c7', label: 'T2', descKey: 'tier.desc2' },
   3: { color: '#0891b2', label: 'T3', descKey: 'tier.desc3' },
-  4: { color: '#6b7280', label: 'T4', descKey: 'tier.desc4' },
-  0: { color: '#94a3b8', label: '?',  descKey: 'tier.descNone' },
+  4: { color: '#71717a', label: 'T4', descKey: 'tier.desc4' },
+  0: { color: '#a1a1aa', label: '?',  descKey: 'tier.descNone' },
 }
 
 const CELL_STATUSES = [

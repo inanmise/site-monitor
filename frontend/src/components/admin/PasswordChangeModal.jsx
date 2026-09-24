@@ -25,7 +25,7 @@ function PwdStrengthMeter({ pwd, t }) {
       <div className="pwd-strength-bars">
         {[1, 2, 3, 4].map(i => (
           <span key={i} className="pwd-strength-bar"
-            style={{ background: i <= score ? STRENGTH_COLORS[score] : '#e2e8f0' }} />
+            style={{ background: i <= score ? STRENGTH_COLORS[score] : '#e4e4e7' }} />
         ))}
       </div>
       <span className="pwd-strength-label" style={{ color: STRENGTH_COLORS[score] }}>

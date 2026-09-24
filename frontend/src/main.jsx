@@ -8,6 +8,7 @@ import { LangProvider } from './i18n/index.jsx'
 import { ThemeProvider } from './i18n/theme.jsx'
 import { BrandingProvider } from './contexts/BrandingProvider.jsx'
 import { migrateStorageKeys } from './utils/migrateStorageKeys.js'
+import './styles/globals.css'   // shadcn/ui + Tailwind (önce: App.css katmansız, üstüne biner)
 import './App.css'
 
 // Rename storage göçü — render'dan ÖNCE senkron: Theme/Lang provider'ları localStorage'ı

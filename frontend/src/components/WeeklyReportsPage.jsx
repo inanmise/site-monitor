@@ -721,7 +721,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     if (s === 'SENT') return { label: t('wr.mailStatusSent'), color: '#16a34a' }
     if (s.startsWith('QUEUED_RETRY')) return { label: t('wr.mailStatusQueued'), color: '#d97706' }
     if (s === 'SKIPPED_NO_CONTACT') return { label: t('wr.mailStatusNoContact'), color: '#dc2626' }
-    if (s === 'SKIPPED_DISABLED') return { label: t('wr.mailStatusDisabled'), color: '#6b7280' }
+    if (s === 'SKIPPED_DISABLED') return { label: t('wr.mailStatusDisabled'), color: '#71717a' }
     return { label: t('wr.mailStatusFailed'), color: '#dc2626' } // FAILED:*
   }
 
@@ -1378,7 +1378,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                       <div className="wr-menu-wrap">
                         <button className="btn-sm" title={t('wr.actions')}
                           aria-label={`${formatWeekRange(r.report_year, r.week_no, lang)} — ${t('wr.actions')}`}
-                          style={{ background: '#eef2f7', color: '#334155' }}
+                          style={{ background: '#eef2f7', color: '#3f3f46' }}
                           onClick={(e) => {
                             if (openMenuId === r.id) { setOpenMenuId(null); return }
                             const rect = e.currentTarget.getBoundingClientRect()

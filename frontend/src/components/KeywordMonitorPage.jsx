@@ -823,7 +823,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
                     { value: 'LT', label: t('keyword.opLt') }]} /></label>
               <label><span>{t('keyword.matchCount')}</span>
                 <input type="number" min="0" value={form.matchCount} onChange={e => setForm(f => ({ ...f, matchCount: Number(e.target.value) }))} /></label>
-              <div className="full-width" style={{ background: '#f1f5f9', borderLeft: '3px solid #1f3864', borderRadius: '0 6px 6px 0', padding: '9px 12px', fontSize: '.82em', lineHeight: 1.55, color: '#334155' }}>
+              <div className="full-width" style={{ background: '#f4f4f5', borderLeft: '3px solid #1f3864', borderRadius: '0 6px 6px 0', padding: '9px 12px', fontSize: '.82em', lineHeight: 1.55, color: '#3f3f46' }}>
                 <div><Check size={12} style={{ verticalAlign: '-2px', color: '#15803d' }} /> <strong>{t('keyword.explHealthy')}:</strong> « {form.keyword?.trim() || t('keyword.theKeyword')} » {expectPhrase(form.operator, Number(form.matchCount) || 0)} bulunmalı.</div>
                 <div style={{ marginTop: 4 }}><AlertTriangle size={12} style={{ verticalAlign: '-2px', color: '#dc2626' }} /> <strong>{t('keyword.explAlarm')}:</strong> {triggerPhrase(form.operator, Number(form.matchCount) || 0, form.keyword)} tetiklenir.</div>
               </div>
@@ -980,7 +980,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
               <div className="modal-icon-hdr-badge"><Target size={20} /></div>
               <h3>{t('keyword.cacheBustTitle')}</h3>
             </div>
-            <div style={{ fontSize: '.9em', color: 'var(--text, #1e293b)', lineHeight: 1.6, padding: '4px 2px' }}>
+            <div style={{ fontSize: '.9em', color: 'var(--text, #18181b)', lineHeight: 1.6, padding: '4px 2px' }}>
               <p style={{ marginTop: 0 }}>{t('keyword.cacheBustHint')}</p>
               <div style={{ whiteSpace: 'pre-line' }}>{t('keyword.cacheBustExamples')}</div>
             </div>
