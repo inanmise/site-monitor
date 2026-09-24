@@ -456,7 +456,14 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   gap: 2px;
   overflow-y: auto;
   overflow-x: hidden;
+  /* Kenar çubuğu iki temada da koyu: tarayıcı varsayılanı beyaz izli kaydırma çubuğu çiziyor ve daraltılmış
+     (60px) modda alanın belirgin kısmını kaplıyordu (QA 2026-09-24, ISSUE-002). İnce + yarı saydam. */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,.22) transparent;
 }
+.sb-nav::-webkit-scrollbar { width: 6px; }
+.sb-nav::-webkit-scrollbar-track { background: transparent; }
+.sb-nav::-webkit-scrollbar-thumb { background: rgba(255,255,255,.22); border-radius: 3px; }
 
 .sb-item {
   display: flex;
