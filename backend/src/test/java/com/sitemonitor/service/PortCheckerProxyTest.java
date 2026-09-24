@@ -38,6 +38,11 @@ class PortCheckerProxyTest {
         final Thread thread;
 
         FakeProxy(BiConsumer<BufferedReader, OutputStream> afterConnect, String connectStatus) throws Exception {
+            this(afterConnect, connectStatus, "");
+        }
+
+        /** @param coalesced vekil yanıtıyla AYNI yazmada gönderilen hedef baytları (sunucu önce konuşur: SMTP/SSH) */
+        FakeProxy(BiConsumer<BufferedReader, OutputStream> afterConnect, String connectStatus, String coalesced) throws Exception {
             server = new ServerSocket(0);
             thread = new Thread(() -> {
                 while (!server.isClosed()) {
@@ -47,7 +52,7 @@ class PortCheckerProxyTest {
                         connectLines.add(in.readLine());
                         String l;
                         while ((l = in.readLine()) != null && !l.isEmpty()) { /* başlıkları tüket */ }
-                        out.write((connectStatus + "\r\n\r\n").getBytes(StandardCharsets.ISO_8859_1));
+                        out.write((connectStatus + "\r\n\r\n" + coalesced).getBytes(StandardCharsets.ISO_8859_1));
                         out.flush();
                         if (connectStatus.contains(" 200")) afterConnect.accept(in, out);
                     } catch (Exception ignored) { /* soket kapandı */ }
@@ -104,11 +109,13 @@ class PortCheckerProxyTest {
     }
 
     @Test
-    @DisplayName("BANNER vekil üzerinden: tünelden gelen bant beklenen metinle eşleşir")
+    @DisplayName("BANNER vekil üzerinden: bant vekilin 200 yanıtıyla AYNI pakette gelse de kaybolmaz (sunucu önce konuşur)")
     void bannerViaProxy() throws Exception {
+        // Regression (CI 2026-09-24): tünel yanıtı BufferedReader ile okunuyordu → aynı paketteki "220" tampona yutulup
+        // kayboluyordu (Linux'ta paketler birleşir). Tek yazma, birleşmeyi her ortamda (Windows dahil) zorlar.
         proxy = new FakeProxy((in, out) -> {
-            try { out.write("220 mail ready\r\n".getBytes(StandardCharsets.ISO_8859_1)); out.flush(); Thread.sleep(200); } catch (Exception ignored) { }
-        }, "HTTP/1.1 200 Connection established");
+            try { Thread.sleep(200); } catch (Exception ignored) { }
+        }, "HTTP/1.1 200 Connection established", "220 mail ready\r\n");
         PortCheckerService svc = serviceWithProxy(proxy.port(), List.of("25"));
 
         Map<String, Object> r = svc.check("localhost", 25, 2000, "BANNER", null, "220", "auto", true);
