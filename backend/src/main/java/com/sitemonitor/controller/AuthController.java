@@ -924,9 +924,11 @@ public class AuthController {
         try {
             String role = String.valueOf(session.getAttribute("systemRole"));
             boolean adminOrAudit = SessionScope.isGlobalAdmin(session) || "AUDIT".equals(role);
+            // ADMIN rolü (global ya da kapsamlı müdür) modül bayrağından bağımsız HER ZAMAN görür (2026-09-25).
+            boolean adminRole = "ADMIN".equals(role);
             Object ids = resp.get("team_ids");
             if (weeklyReportService == null) return false;   // @Autowired(required=false): test/kısmi bağlamda kapalı say
-            return weeklyReportService.visibleFor(ids instanceof java.util.Collection ? (java.util.Collection<Long>) ids : List.of(), adminOrAudit);
+            return weeklyReportService.visibleFor(ids instanceof java.util.Collection ? (java.util.Collection<Long>) ids : List.of(), adminOrAudit, adminRole);
         } catch (Exception e) {
             log.debug("weekly_reports_visible hesaplanamadı: {}", e.toString());
             return false;
