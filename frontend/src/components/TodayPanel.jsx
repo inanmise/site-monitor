@@ -94,10 +94,13 @@ export default function TodayPanel({ onOpenDomain }) {
     ['notifications', t('today.notif'), notif], ['health', t('today.health'), health], ['quiet', t('today.quiet'), quiet],
   ].filter(([, , b]) => !b.count).map(([key, title, b]) => ({ key, title, prev: b.prev }))
   if (weekly.count > 0 && !weekly.missing) clearCards.push({ key: 'weekly', title: t('today.weekly', weekly.week) })
+  // Tekil ayrı anahtar (QA 2026-09-24, ISSUE-003): EN "alerts opened: 3" etiketin kendi iki noktasıyla
+  // "Last 24 hours: alerts opened: 3" diye okunuyordu; artık "3 alerts opened" / "1 alert opened".
+  const count = (key, n) => (n === 1 ? t(`${key}1`) : t(key, n))
   const recentParts = recent ? [
-    recent.opened > 0 && t('today.recentOpened', recent.opened),
-    recent.resolved > 0 && t('today.recentResolved', recent.resolved),
-    recent.renewed > 0 && t('today.recentRenewed', recent.renewed),
+    recent.opened > 0 && count('today.recentOpened', recent.opened),
+    recent.resolved > 0 && count('today.recentResolved', recent.resolved),
+    recent.renewed > 0 && count('today.recentRenewed', recent.renewed),
   ].filter(Boolean) : []
 
   return (

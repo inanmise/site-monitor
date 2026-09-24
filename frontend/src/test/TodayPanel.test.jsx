@@ -240,8 +240,8 @@ describe('TodayPanel', () => {
     expect(down.className).toContain('is-better')
     expect(document.querySelectorAll('.today-delta')).toHaveLength(2)   // quiet: fark 0; izleme kartları: prev yok
     const strip = document.querySelector('.today-recent')
-    expect(strip.textContent).toMatch(/Son 24 saatte:.*4 alarm açıldı · 6 alarm çözüldü|Last 24 hours:.*alerts opened: 4 · alerts resolved: 6/)
-    expect(strip.textContent).not.toMatch(/sertifika yenilendi|certificates renewed/)   // 0 olan parça yazılmaz
+    expect(strip.textContent).toMatch(/Son 24 saatte:.*4 alarm açıldı · 6 alarm çözüldü|Last 24 hours:.*4 alerts opened · 6 alerts resolved/)
+    expect(strip.textContent).not.toMatch(/sertifika yenilendi|certificates? renewed/)   // 0 olan parça yazılmaz
     expect(strip.textContent).toMatch(/dün bu saate göre|compared with this time yesterday/)
   })
 
@@ -255,7 +255,7 @@ describe('TodayPanel', () => {
     await screen.findByText(/Bugün ilgilenilecek bir şey yok|Nothing needs attention today/)
     expect(document.querySelector('.today-grid')).toBeNull()
     const strip = document.querySelector('.today-recent')
-    expect(strip.textContent).toMatch(/2 sertifika yenilendi|certificates renewed: 2/)
+    expect(strip.textContent).toMatch(/2 sertifika yenilendi|2 certificates renewed/)
     expect(strip.textContent).not.toMatch(/dün bu saate göre|compared with this time yesterday/)
   })
 
