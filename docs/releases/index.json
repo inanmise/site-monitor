@@ -1,9 +1,65 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-23T23:46:15Z",
+  "generatedAt": "2026-09-24T01:09:02Z",
   "repo": "inanmise/site-monitor",
-  "count": 680,
+  "count": 681,
   "releases": [
+    {
+      "version": "20.84.1",
+      "tag": "v20.84.1",
+      "releasedAt": "2026-09-24T01:08:55Z",
+      "commit": "031b2528a5171b039f96894ea2ac98d3177538f1",
+      "prevVersion": "20.84.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 3,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 2
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "031b2528",
+          "subject": "regression test for ISSUE-003 — son 24 saat şeridi metni (EN/TR, tekil/çoğul)"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "e544b66c",
+          "subject": "ISSUE-003 — 'Son 24 saat' şeridinde doğal İngilizce (sayı önde, tekil/çoğul)"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "36c8425c",
+          "subject": "ISSUE-002 — koyu kenar çubuğunda ince, yarı saydam kaydırma çubuğu"
+        },
+        {
+          "type": "test",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "4825e13a",
+          "subject": "regression test for ISSUE-001 — açık alarmların önem sırası"
+        },
+        {
+          "type": "fix",
+          "scope": "qa",
+          "breaking": false,
+          "sha": "3f5a3ca5",
+          "subject": "ISSUE-001 — açık alarmlar önem sırasına göre (kritik önce) dizilir"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.84.0",
       "tag": "v20.84.0",
