@@ -1117,6 +1117,8 @@ export const api = {
     deletePortMonitor: (id) => request(`/monitoring/port/${id}`, { method: 'DELETE' }),
     triggerPortCheck:  (id) => request(`/monitoring/port/${id}/check`, { method: 'POST' }),
     testPortMonitor:   (data) => request('/monitoring/port/test', { method: 'POST', body: JSON.stringify(data) }),
+    // Vekil bilgisi (2026-09-24): tanımlı mı + CONNECT tüneline izin verilen portlar (form notları)
+    getPortProxyInfo:  () => request('/monitoring/port/proxy-info'),
     getPortResponseSeries: (id, { from, to, days } = {}) => {
       const q = new URLSearchParams(
         Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),

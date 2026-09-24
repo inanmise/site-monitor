@@ -205,6 +205,9 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.weekly-report.deadline-time", "monitoring", Type.STRING),
         // Kullanılabilirlik hedefi (%) — izleme kartlarındaki 30 günlük SLA satırı bununla karşılaştırılır (2026-09-12, #11).
         new Setting("site.monitor.sla.target-pct",             "monitoring", Type.DOUBLE),
+        // Kurumsal vekilin CONNECT tüneline izin verdiği portlar (2026-09-24) — Port İzleme formunda kullanıcıya gösterilir,
+        // vekil reddinde hata mesajına eklenir. Vekil yöneticisinin politikasını yansıtır; kontrolü ENGELLEMEZ.
+        new Setting("site.monitor.proxy.connect-ports",        "monitoring", Type.CSV),
         // Vade takvimi (2026-09-12): yenileme öncesi süre — genel + tier başına (boş/0 = genel)
         new Setting("site.monitor.renewal.lead-days",           "monitoring", Type.INT),
         new Setting("site.monitor.renewal.lead-days-t1",        "monitoring", Type.INT),

@@ -611,6 +611,68 @@ class MonitoringControllerTest {
                 .andExpect(jsonPath("$.data.group_name").value("mail"));
     }
 
+    // ── Port vekil seçeneği (2026-09-24) ───────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("POST /port vekil seçilmeden: kip OFF kaydedilir, satırda rozet alanı (proxy_effective) YOK — mevcut kartlar değişmez")
+    void createPort_withoutProxy_staysDirectAndBadgeFree() throws Exception {
+        when(portMonitorRepo.findFirstByHostAndPortOrderByIdAsc(anyString(), anyInt())).thenReturn(Optional.empty());
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.PortMonitor> saved = org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.PortMonitor.class);
+        when(portMonitorRepo.save(saved.capture())).thenAnswer(a -> { com.sitemonitor.model.PortMonitor p = a.getArgument(0); p.setId(7L); return p; });
+        mvc.perform(post("/api/monitoring/port").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"host\":\"1.2.3.4\",\"port\":25,\"teamId\":3,\"groupName\":\"mail\",\"tags\":\"t1\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.use_proxy").value("OFF"))
+                .andExpect(jsonPath("$.data.proxy_effective").doesNotExist());
+        assertThat(saved.getValue().getUseProxy()).isNull();   // gövdede yoksa kolona dokunulmaz (null = OFF)
+    }
+
+    @Test
+    @DisplayName("POST /port useProxy=on: 'ON' olarak normalize edilir; satırda etkin yol ve kaynağı döner")
+    void createPort_withProxy_normalizedAndEffective() throws Exception {
+        when(portMonitorRepo.findFirstByHostAndPortOrderByIdAsc(anyString(), anyInt())).thenReturn(Optional.empty());
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.PortMonitor> saved = org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.PortMonitor.class);
+        when(portMonitorRepo.save(saved.capture())).thenAnswer(a -> { com.sitemonitor.model.PortMonitor p = a.getArgument(0); p.setId(7L); return p; });
+        when(portChecker.proxyDecision(anyString(), any(), eq("ON")))
+                .thenReturn(new com.sitemonitor.service.ProxyPolicyService.Decision(true, "monitor", true, false));
+        mvc.perform(post("/api/monitoring/port").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"host\":\"a.example.com\",\"port\":443,\"teamId\":3,\"groupName\":\"web\",\"tags\":\"t1\",\"useProxy\":\"on\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.use_proxy").value("ON"))
+                .andExpect(jsonPath("$.data.proxy_effective").value("proxy"))
+                .andExpect(jsonPath("$.data.proxy_source").value("monitor"));
+        assertThat(saved.getValue().getUseProxy()).isEqualTo("ON");
+    }
+
+    @Test
+    @DisplayName("GET /port/proxy-info: vekil tanımlı mı + CONNECT izinli portlar (form notu)")
+    void portProxyInfo_returnsConfiguredAndPorts() throws Exception {
+        when(portChecker.proxyConfigured()).thenReturn(true);
+        when(portChecker.proxyConnectPorts()).thenReturn(java.util.List.of(443, 8443));
+        mvc.perform(get("/api/monitoring/port/proxy-info").session(session("USER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.configured").value(true))
+                .andExpect(jsonPath("$.data.connect_ports[0]").value(443))
+                .andExpect(jsonPath("$.data.connect_ports[1]").value(8443));
+    }
+
+    @Test
+    @DisplayName("POST /port/test useProxy=ON: vekil kararı denetleyiciye geçer (viaProxy=true), yanıtta via döner")
+    void testPort_passesProxyDecision() throws Exception {
+        when(portChecker.proxyDecision(eq("a.example.com"), eq("TCP"), eq("ON")))
+                .thenReturn(new com.sitemonitor.service.ProxyPolicyService.Decision(true, "monitor", true, false));
+        when(portChecker.check(eq("a.example.com"), eq(443), anyInt(), eq("TCP"), any(), any(), anyString(), eq(true)))
+                .thenReturn(java.util.Map.of("open", true, "via", "proxy", "detail", "vekil üzerinden bağlandı"));
+        mvc.perform(post("/api/monitoring/port/test").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"host\":\"a.example.com\",\"port\":443,\"protocol\":\"TCP\",\"useProxy\":\"ON\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.open").value(true))
+                .andExpect(jsonPath("$.data.via").value("proxy"));
+    }
+
     @Test
     @DisplayName("DENETİM: port oluşturma MONITOR_CREATE audit kaydı üretir (kim ne yaptı)")
     void createPort_writesAuditRecord() throws Exception {
@@ -681,7 +743,8 @@ class MonitoringControllerTest {
     @Test
     @DisplayName("POST /port/test: kaydetmeden kontrol çalıştırır; sonuç + condition_met döner, kayıt OLUŞMAZ")
     void testPort_runsCheckWithoutSaving() throws Exception {
-        when(portChecker.check(eq("svc.local"), eq(8080), anyInt(), eq("HTTP"), any(), eq("2xx"), anyString()))
+        // 2026-09-24: test uç noktası vekil kararını da geçirir (8. argüman) — eski 7 argümanlı stub eşleşmezdi
+        when(portChecker.check(eq("svc.local"), eq(8080), anyInt(), eq("HTTP"), any(), eq("2xx"), anyString(), org.mockito.ArgumentMatchers.anyBoolean()))
                 .thenReturn(java.util.Map.of("open", true, "response_ms", 12L, "detail", "HTTP 200"));
         mvc.perform(post("/api/monitoring/port/test").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
