@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-24T01:09:02Z",
+  "generatedAt": "2026-09-24T01:49:50Z",
   "repo": "inanmise/site-monitor",
-  "count": 681,
+  "count": 682,
   "releases": [
+    {
+      "version": "20.84.2",
+      "tag": "v20.84.2",
+      "releasedAt": "2026-09-24T01:49:43Z",
+      "commit": "8b1d71b7e832a7d71c349b3ad842c9b15ff3329c",
+      "prevVersion": "20.84.1",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "today",
+          "breaking": false,
+          "sha": "8b1d71b7",
+          "subject": "uzun bildirim hatası kartı taşırmıyor; kartlar aynı hizada açılıyor"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.84.1",
       "tag": "v20.84.1",
