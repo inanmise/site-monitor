@@ -39,7 +39,15 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     /** "Sizin için — bugün" son 24 saat şeridi (2026-09-23): pencere içinde ÇÖZÜLEN alarmlar. */
     List<AlertEvent> findByResolvedAtGreaterThanEqual(String since);
 
-    @Query("SELECT e FROM AlertEvent e WHERE e.resolved = false ORDER BY e.alertLevel DESC, e.createdAt DESC")
+    /**
+     * Açık alarmlar, en ACİL önce. Önem METİN olarak saklanıyor: {@code ORDER BY alertLevel DESC} alfabetik
+     * sıralayıp WARNING &gt; HIGH &gt; CRITICAL verdiği için kritikler listenin SONUNA düşüyordu ve ilk 5'i gösteren
+     * "Sizin için — bugün / Açık alarm" kartı onları hiç göstermiyordu (QA 2026-09-24, ISSUE-001). Sıra açıkça
+     * yazılır; bilinmeyen seviye en sona.
+     */
+    @Query("SELECT e FROM AlertEvent e WHERE e.resolved = false ORDER BY "
+         + "CASE UPPER(e.alertLevel) WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'WARNING' THEN 2 "
+         + "WHEN 'LOW' THEN 3 WHEN 'INFO' THEN 4 ELSE 5 END, e.createdAt DESC")
     List<AlertEvent> findAllOpenOrderBySeverity();
 
     /** Genel Bakış kartı "şu an" şeridi (2026-09-19): alan başına EN SON alarm olayı (açık ya da çözülmüş) — tek sorgu. */
