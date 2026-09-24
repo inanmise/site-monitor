@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from './test-utils'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 
@@ -163,8 +164,8 @@ describe('NotificationGroups', () => {
     render(<NotificationGroups teams={TEAMS} systemRole="USER" />)
     await screen.findByText('Ödeme Nöbetçi')
 
-    fireEvent.click(screen.getByRole('button', { name: /Actions/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/ }))
+    pressMenuTrigger(screen.getByRole('button', { name: /Actions/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^Delete$/ }))
 
     await waitFor(() => expect(api.notificationGroups.remove).toHaveBeenCalledWith(10))
   })
@@ -177,8 +178,8 @@ describe('NotificationGroups', () => {
     render(<NotificationGroups teams={TEAMS} systemRole="USER" />)
     await screen.findByText('Ödeme Nöbetçi')
 
-    fireEvent.click(screen.getByRole('button', { name: /Actions/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/ }))
+    pressMenuTrigger(screen.getByRole('button', { name: /Actions/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^Delete$/ }))
 
     // ÖNCE onayın sorulduğunu bekle, SONRA işleyicinin kalanını akıt. Doğrudan
     // waitFor(not.toHaveBeenCalled()) yazmak SAHTE YEŞİL verirdi: iddia daha ilk
@@ -200,8 +201,8 @@ describe('NotificationGroups', () => {
     render(<NotificationGroups teams={TEAMS} systemRole="USER" />)
     await screen.findByText('Ödeme Nöbetçi')
 
-    fireEvent.click(screen.getByRole('button', { name: /Actions/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/ }))
+    pressMenuTrigger(screen.getByRole('button', { name: /Actions/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^Delete$/ }))
 
     expect(await screen.findByText(/This group is in use/)).toBeTruthy()
     expect(screen.getByText('GW')).toBeTruthy()
@@ -217,8 +218,8 @@ describe('NotificationGroups', () => {
     render(<NotificationGroups teams={TEAMS} systemRole="USER" />)
     await screen.findByText('Ödeme Nöbetçi')
 
-    fireEvent.click(screen.getAllByRole('button', { name: /Actions/i })[0])
-    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/ }))
+    pressMenuTrigger(screen.getAllByRole('button', { name: /Actions/i })[0])
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^Delete$/ }))
     await screen.findByText(/This group is in use/)
 
     fireEvent.mouseDown(screen.getByRole('button', { name: /Target group/i }))
@@ -240,8 +241,8 @@ describe('NotificationGroups', () => {
     render(<NotificationGroups teams={TEAMS} systemRole="USER" />)
     await screen.findByText('Ödeme Nöbetçi')
 
-    fireEvent.click(screen.getByRole('button', { name: /Actions/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/ }))
+    pressMenuTrigger(screen.getByRole('button', { name: /Actions/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^Delete$/ }))
     await screen.findByText(/This group is in use/)
 
     fireEvent.click(screen.getByRole('button', { name: /Move to another group/i }))
@@ -277,7 +278,7 @@ describe('NotificationGroups', () => {
     render(<NotificationGroups teams={TEAMS} systemRole="ADMIN" />)
     await screen.findByText('Ödeme Nöbetçi')
 
-    fireEvent.click(screen.getByRole('button', { name: /Actions/i }))
+    pressMenuTrigger(screen.getByRole('button', { name: /Actions/i }))
     fireEvent.click(screen.getByText('History'))
 
     await waitFor(() => expect(api.notificationGroups.history).toHaveBeenCalledWith(10, { page: 0, size: 25 }))
@@ -291,7 +292,7 @@ describe('NotificationGroups', () => {
     render(<NotificationGroups teams={TEAMS} systemRole="USER" />)
     await screen.findByText('Ödeme Nöbetçi')
 
-    fireEvent.click(screen.getByRole('button', { name: /Actions/i }))
+    pressMenuTrigger(screen.getByRole('button', { name: /Actions/i }))
     expect(screen.getByText('History')).toBeTruthy()
     for (const forbidden of [/^Edit$/, /^Delete$/, /Make team default/i]) {
       expect(screen.queryByText(forbidden)).toBeNull()
@@ -310,7 +311,7 @@ describe('NotificationGroups', () => {
     fireEvent.click(screen.getByRole('button', { name: /Show history|Geçmişi göster/i }))
     await waitFor(() => expect(api.notificationGroups.history).toHaveBeenCalledWith(null, { page: 0, size: 25 }))
     await waitFor(() => expect(document.querySelectorAll('.ng-hist-row')).toHaveLength(25))
-    expect(document.querySelector('.pgn-bar').textContent).toMatch(/60/)
+    expect(screen.getByText(/[–-]25 (of|\/) 60 (records|kayıt)/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Sonraki|Next/ }))
     await waitFor(() => expect(api.notificationGroups.history).toHaveBeenLastCalledWith(null, { page: 1, size: 25 }))
     fireEvent.click(screen.getByRole('button', { name: /^50$/ }))

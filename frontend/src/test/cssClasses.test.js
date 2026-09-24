@@ -66,9 +66,6 @@ const EXEMPT = new Map([
   ['ts-grid-row', 'TeamStats/StatsView satırı'],
   ['wr-brief-left', 'WeeklyReportsPage sol sütun'],
   ['wr-sum-col', 'WeeklySummaryBrief sütunu'],
-  ['pg-info-page', 'PaginationBar sayfa bilgisi'],
-  ['pg-info-range', 'PaginationBar aralık bilgisi'],
-  ['kebab-trigger', 'KebabMenu tetiği — görünüm .btn-sm + satır-içi stilden'],
   ['trp-col-quick', 'TimeRangePicker hızlı sütunu'],
   ['sqlpg-menu-history', 'SqlPlayground geçmiş menüsü'],
   ['sqlpg-menu-samples', 'SqlPlayground örnek menüsü'],
@@ -98,9 +95,15 @@ const twCompiler = await compile(fs.readFileSync(path.join(SRC, 'styles', 'globa
   base: path.join(SRC, 'styles'),
   onDependency: () => {},
 })
+/**
+ * Tailwind İŞARETÇİ sınıfları: kendileri kural üretmez, `group-hover:` / `peer-disabled:` gibi
+ * varyantların ata/kardeş seçicisi olarak DERLENMİŞ çıktıda kullanılırlar (shadcn sidebar/label).
+ * Derleyiciye tek başına sorulunca boş döner; hayalet değil, sözdizimsel kancadır.
+ */
+const TAILWIND_MARKERS = new Set(['group', 'peer'])
 function tailwindGenerated(names) {
   const css = twCompiler.build([...names])
-  return new Set([...names].filter(n => new RegExp('\\.' + n + '(?![\\w-])').test(css)))
+  return new Set([...names].filter(n => TAILWIND_MARKERS.has(n) || new RegExp('\\.' + n + '(?![\\w-])').test(css)))
 }
 
 /** className="a b c" — interpolasyonsuz, düz string biçimi. */

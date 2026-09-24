@@ -1,17 +1,37 @@
-import { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react'
-import { createPortal } from 'react-dom'
+import { createContext, useContext, useState, useCallback, useRef, useEffect, useId } from 'react'
 import { Trash2, AlertTriangle, Info, CheckCircle, XCircle, LogOut, Pencil } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { Button } from '@/components/shadcn/button'
+import { Input } from '@/components/shadcn/input'
+import { Label } from '@/components/shadcn/label'
+import { Textarea } from '@/components/shadcn/textarea'
+import {
+  AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
+  AlertDialogMedia, AlertDialogTitle,
+} from '@/components/shadcn/alert-dialog'
+import { useT } from '../../i18n/index.jsx'
 
 const DialogCtx = createContext(null)
 
+/**
+ * Varyant → ikon + ton. Ton dekoratif ikon kutusunu renklendirir; onay düğmesi yıkıcı tonda
+ * shadcn `destructive`, diğerlerinde birincil düğmedir.
+ */
 const VARIANTS = {
-  danger:  { Icon: Trash2,        color: '#c0392b', bg: '#fdf2f2', border: '#f5c6cb' },
-  warning: { Icon: AlertTriangle, color: '#d97706', bg: '#fffbeb', border: '#fcd34d' },
-  info:    { Icon: Info,          color: '#1d6fbf', bg: '#eff6ff', border: '#bfdbfe' },
-  success: { Icon: CheckCircle,   color: '#15803d', bg: '#f0fdf4', border: '#bbf7d0' },
-  error:   { Icon: XCircle,       color: '#b91c1c', bg: '#fef2f2', border: '#fecaca' },
-  logout:  { Icon: LogOut,        color: '#dc2626', bg: '#fef2f2', border: '#fecaca' },
-  prompt:  { Icon: Pencil,        color: '#1d6fbf', bg: '#eff6ff', border: '#bfdbfe' },
+  danger:  { Icon: Trash2,        tone: 'destructive' },
+  warning: { Icon: AlertTriangle, tone: 'warning' },
+  info:    { Icon: Info,          tone: 'primary' },
+  success: { Icon: CheckCircle,   tone: 'success' },
+  error:   { Icon: XCircle,       tone: 'destructive' },
+  logout:  { Icon: LogOut,        tone: 'destructive' },
+  prompt:  { Icon: Pencil,        tone: 'primary' },
+}
+
+const TONE_MEDIA = {
+  destructive: 'bg-destructive/10 text-destructive',
+  warning:     'bg-amber-500/15 text-amber-600 dark:text-amber-400',
+  success:     'bg-green-600/10 text-green-700 dark:text-green-400',
+  primary:     'bg-primary/10 text-primary',
 }
 
 /**
@@ -28,22 +48,37 @@ export function isNoteValid(note) {
   return t.split(/\s+/).filter(w => w.length >= NOTE_RULE.minWordLen).length >= NOTE_RULE.minWords
 }
 
-/** Odak tuzagi icin: diyalog icindeki odaklanabilir ogeler (gizli/pasif olanlar HARIC). */
-const FOCUSABLE =
-  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
-
+/**
+ * Onay / bilgi / metin / gerekçe penceresi — shadcn AlertDialog (Radix).
+ *
+ * Radix'ten gelenler: odak tuzağı (Tab/Shift+Tab döngüsü, arkadaki sayfaya kaçmaz), Escape =
+ * İptal (katman yığınında en üstteki pencere alır — altındaki ModalShell kapanmaz), arka plan
+ * kaydırma kilidi, arkadaki içeriğin erişilebilirlik ağacından gizlenmesi.
+ *
+ * Eski sözleşmeden bilerek KORUNANLAR:
+ *   • role: yalnız `alert` tipi ALERTDIALOG (dikkat isteyen kesinti); onay/metin/gerekçe `dialog`.
+ *     Radix AlertDialog her içeriği alertdialog yapardı — role bilinçli olarak eziliyor.
+ *   • İlk odak ONAY düğmesinde (metin/gerekçe tipinde alanda). Radix varsayılanı İptal'dir.
+ *   • Örtüye tıklamak = İptal. Radix AlertDialog dış tıklamayı yutar; örtü olayı elle bağlı.
+ *   • Kapanışta odak TETİKLEYİCİYE döner (tetik Radix'in DialogTrigger'ı değil, Radix dönmez).
+ *   • Sonuç sözleşmesi: confirm/alert true|false, prompt metin|null, note {confirmed, note}.
+ */
 function DialogModal({ dialog, onConfirm, onCancel }) {
+  const t = useT()
   const [inputVal, setInputVal] = useState(dialog.defaultValue ?? '')
   const inputRef  = useRef(null)
   const confirmRef = useRef(null)
-  const boxRef = useRef(null)
   // Diyalog acilmadan ONCEKI odak — kapaninca oraya geri verilir.
   const returnFocusRef = useRef(null)
-  // Baslik/mesaj id'leri: aria-labelledby/describedby bunlara bagli. useId yerine sabit
-  // id yeterli cunku ayni anda TEK diyalog acik olur (provider tek `dialog` state tutar).
-  const titleId = 'dlg-title'
-  const messageId = 'dlg-message'
+  // Başlık/mesaj/ipucu id'leri: aria-labelledby/describedby bunlara bağlı. Başlık id'si ELLE
+  // veriliyor çünkü metin girişi de adını başlıktan alıyor (Radix'in iç id'si dışarı açık değil).
+  const uid = useId()
+  const titleId = `${uid}-title`
+  const messageId = `${uid}-message`
+  const noteId = `${uid}-note`
+  const hintId = `${uid}-note-hint`
   const v = VARIANTS[dialog.variant] ?? VARIANTS.info
+  const isPrompt = dialog.type === 'prompt'
   const isNote = dialog.type === 'note'
   const noteOk = !isNote || isNoteValid(inputVal)
 
@@ -51,140 +86,142 @@ function DialogModal({ dialog, onConfirm, onCancel }) {
     // Odagi GERI VERMEK icin nereden geldigimizi sakla. Bu olmadan, tablodaki bir satiri
     // silmeyi onaylayan klavye kullanicisi odagi body'de bulur ve listedeki yerini kaybeder.
     returnFocusRef.current = document.activeElement
-    if (dialog.type === 'prompt' || dialog.type === 'note') {
-      inputRef.current?.focus()
-      inputRef.current?.select()
-    } else {
-      confirmRef.current?.focus()
-    }
     return () => {
       const back = returnFocusRef.current
       // Tetikleyici bu arada DOM'dan kalkmis olabilir (ornegin silinen satirin dugmesi);
       // o zaman geri verme atlanir, hata firlatilmaz.
       if (back && typeof back.focus === 'function' && document.contains(back)) back.focus()
     }
-  }, [dialog.type])
+  }, [])
 
-  function handleOverlayClick(e) {
-    if (e.target === e.currentTarget) onCancel()
-  }
-
-  function handleKey(e) {
-    if (e.key === 'Escape') { onCancel(); return }
-    // ODAK TUZAGI: Tab diyalogdan CIKMAMALI. Aksi halde klavye/ekran-okuyucu kullanicisi
-    // ortuk sayfadaki dugmelere ulasir ve modalin arkasindaki iceriklerle etkilesebilir.
-    if (e.key === 'Tab') {
-      const items = boxRef.current ? [...boxRef.current.querySelectorAll(FOCUSABLE)] : []
-      if (items.length === 0) return
-      const first = items[0]
-      const last = items[items.length - 1]
-      const active = document.activeElement
-      if (e.shiftKey && (active === first || !boxRef.current.contains(active))) {
-        e.preventDefault(); last.focus()
-      } else if (!e.shiftKey && (active === last || !boxRef.current.contains(active))) {
-        e.preventDefault(); first.focus()
-      }
-      return
+  function focusInitial(e) {
+    e.preventDefault()   // Radix'in İptal'e odaklanmasını engelle
+    if (isPrompt || isNote) {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    } else {
+      confirmRef.current?.focus()
     }
-    // Not modalinde Enter ONAYLAMAZ: metin çok satırlı ve Enter yeni satır demek. Ayrıca
-    // kural sağlanmadan Enter'la geçilmesi zorunluluğu delerdi.
-    if (e.key === 'Enter' && dialog.type !== 'prompt' && dialog.type !== 'note') onConfirm(true)
   }
 
-  return createPortal(
-    <div className="dlg-overlay" onClick={handleOverlayClick} onKeyDown={handleKey} tabIndex={-1}>
-      {/* role/aria-modal: ekran okuyucu bunu DIYALOG olarak duyurur ve sanal imleci iceriye
-          hapseder. aria-labelledby/describedby olmadan role tek basina yetmez — diyalogun
-          erisilebilir ADI ve ACIKLAMASI bu iki id'den gelir. */}
-      <div
-        ref={boxRef}
-        className="dlg-box"
+  function confirm() {
+    if (isPrompt) return onConfirm(inputVal || null)
+    if (isNote) return onConfirm({ confirmed: true, note: inputVal.trim() })
+    onConfirm(true)
+  }
+
+  function handleKeyDown(e) {
+    if (e.key !== 'Enter' || e.defaultPrevented) return
+    // Metin girişinde Enter girişin kendi işleyicisinde; not modalinde Enter ONAYLAMAZ: metin
+    // çok satırlı ve Enter yeni satır demek. Ayrıca kural sağlanmadan Enter'la geçilmesi
+    // zorunluluğu delerdi.
+    if (isPrompt || isNote) return
+    // Odak onay DIŞINDAKİ bir düğmedeyse (İptal) Enter o düğmenin kendi etkinleştirmesidir.
+    // Eskiden kabuk düzeyindeki dinleyici İptal'e odaklıyken de ONAYLIYORDU — silme onayında
+    // "vazgeç" demek isteyen klavye kullanıcısı kaydı sildiriyordu.
+    const btn = e.target instanceof Element ? e.target.closest('button') : null
+    if (btn && btn !== confirmRef.current) return
+    e.preventDefault()   // onay düğmesinin yerel "Enter = tıkla"sı ikinci kez çözmesin
+    confirm()
+  }
+
+  return (
+    <AlertDialog open onOpenChange={(open) => { if (!open) onCancel() }}>
+      <AlertDialogContent
         role={dialog.type === 'alert' ? 'alertdialog' : 'dialog'}
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={dialog.message ? messageId : undefined}
-        style={{ '--dlg-accent': v.color, '--dlg-bg': v.bg, '--dlg-border': v.border }}
+        onOpenAutoFocus={focusInitial}
+        onCloseAutoFocus={(e) => e.preventDefault()}
+        onKeyDown={handleKeyDown}
+        overlayProps={{ onClick: onCancel }}
       >
+        <AlertDialogHeader>
+          {/* Ikon DEKORATIF: anlami zaten baslikta yazili, SR'a iki kez okutmanin faydasi yok. */}
+          <AlertDialogMedia aria-hidden="true" className={cn('rounded-full', TONE_MEDIA[v.tone])}>
+            <v.Icon />
+          </AlertDialogMedia>
+          <AlertDialogTitle id={titleId}>{dialog.title}</AlertDialogTitle>
+          {dialog.message && (
+            <AlertDialogDescription id={messageId} className="whitespace-pre-line">
+              {dialog.message}
+            </AlertDialogDescription>
+          )}
+        </AlertDialogHeader>
 
-        {/* Ikon DEKORATIF: anlami zaten baslikta yazili, SR'a iki kez okutmanin faydasi yok. */}
-        <div className="dlg-icon-ring" aria-hidden="true">
-          <v.Icon size={30} color={v.color} />
-        </div>
-
-        <h3 className="dlg-title" id={titleId}>{dialog.title}</h3>
-
-        {dialog.message && (
-          <p className="dlg-message" id={messageId}>{dialog.message}</p>
-        )}
-
-        {dialog.type === 'prompt' && (
-          <input
+        {isPrompt && (
+          <Input
             ref={inputRef}
-            className="dlg-input"
             value={inputVal}
             onChange={e => setInputVal(e.target.value)}
             placeholder={dialog.placeholder ?? ''}
-            onKeyDown={e => e.key === 'Enter' && onConfirm(inputVal || null)}
+            aria-labelledby={titleId}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return
+              e.preventDefault()
+              onConfirm(inputVal || null)
+            }}
           />
         )}
 
         {isNote && (
-          <div className="dlg-note">
+          <div className="grid gap-2">
+            <Label htmlFor={noteId}>{dialog.noteLabel ?? t('dlg.noteLabel')}</Label>
             {/* Hazır gerekçeler: metni DOLDURUR, kilitlemez — kullanıcı üzerine yazabilir.
                 Çip seçmek tek başına yetmez; kural yine geçerli (çipler kuralı sağlayacak
                 uzunlukta yazıldı ama kullanıcı silip kısaltırsa düğme yine pasifleşir). */}
             {dialog.chips?.length > 0 && (
-              <div className="dlg-note-chips">
+              <div className="flex flex-wrap gap-1.5">
                 {dialog.chips.map(c => (
-                  <button key={c} type="button" className="dlg-note-chip"
+                  <Button key={c} type="button" variant="outline" size="xs"
+                    className="h-auto min-h-6 rounded-full py-1 font-normal whitespace-normal"
                     onClick={() => { setInputVal(c); inputRef.current?.focus() }}>
                     {c}
-                  </button>
+                  </Button>
                 ))}
               </div>
             )}
-            <textarea
+            {/* aria-invalid kırmızı çerçeveyi bilinçli olarak NÖTR bırakır: yazmaya başlamadan
+                kırmızı göstermek cezalandırıcı olur; eksik olan aşağıdaki ipucunda yazılı. */}
+            <Textarea
               ref={inputRef}
-              className="dlg-note-input"
+              id={noteId}
               rows={3}
               value={inputVal}
               onChange={e => setInputVal(e.target.value)}
               placeholder={dialog.placeholder ?? ''}
-              aria-label={dialog.noteLabel ?? 'Gerekçe'}
               aria-invalid={!noteOk}
-              aria-describedby="dlg-note-hint"
+              aria-describedby={hintId}
+              className="aria-invalid:border-input aria-invalid:ring-ring/50 dark:aria-invalid:ring-ring/50"
             />
             {/* Neyin eksik olduğu YAZILI — düğmeyi pasif bırakıp sebebini söylememek,
-                kullanıcıya "bozuk" hissi verir. */}
-            <div id="dlg-note-hint" className={`dlg-note-hint${noteOk ? ' is-ok' : ''}`}>
+                kullanıcıya "bozuk" hissi verir. min-h: metin değişince pencere zıplamasın. */}
+            <p id={hintId}
+              className={cn('min-h-4 text-xs', noteOk ? 'text-green-700 dark:text-green-400' : 'text-muted-foreground')}>
               {noteOk ? (dialog.noteOkText ?? '') : (dialog.noteHint ?? '')}
-            </div>
+            </p>
           </div>
         )}
 
-        <div className="dlg-actions">
+        <AlertDialogFooter>
           {dialog.type !== 'alert' && (
-            <button className="dlg-btn dlg-btn-cancel" onClick={onCancel}>
+            <Button type="button" variant="outline" onClick={onCancel}>
               {dialog.cancelText ?? 'İptal'}
-            </button>
+            </Button>
           )}
-          <button
+          <Button
             ref={confirmRef}
-            className="dlg-btn dlg-btn-confirm"
+            type="button"
+            variant={v.tone === 'destructive' ? 'destructive' : 'default'}
             disabled={!noteOk}
-            onClick={() => {
-              if (dialog.type === 'prompt') return onConfirm(inputVal || null)
-              if (isNote) return onConfirm({ confirmed: true, note: inputVal.trim() })
-              onConfirm(true)
-            }}
+            onClick={confirm}
           >
             {dialog.confirmText ?? 'Tamam'}
-          </button>
-        </div>
-
-      </div>
-    </div>,
-    document.body
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 

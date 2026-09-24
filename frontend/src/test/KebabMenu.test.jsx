@@ -1,19 +1,20 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import KebabMenu from '../components/ui/KebabMenu.jsx'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 /**
- * KebabMenu davranış kapısı.
+ * KebabMenu davranış kapısı (iç uygulama: shadcn DropdownMenu / Radix).
  *
  * NEDEN VAR: 2026-08-21'de şablon kartlarında menü "bazen açılmıyor, bazen başka yerde
  * açılıyordu". İki ayrı kusur vardı: (1) menü kartın İÇİNDE render ediliyordu ve
  * `.sc-tpl-card:hover`'daki `transform` fixed konumlandırmayı viewport'tan kopardı;
- * (2) dışarı-tıklama kontrolü ".kebab-trigger" SINIFINA bakıyordu, bu yüzden başka bir
- * kartın tetiğine basınca eski menü de açık kalıyordu.
+ * (2) dışarı-tıklama kontrolü bir SINIFA bakıyordu, bu yüzden başka bir kartın tetiğine
+ * basınca eski menü de açık kalıyordu.
  *
- * SINIR (jsdom): burada KONUM doğrulanamaz — jsdom yerleşim yapmaz, tüm dikdörtgenler
- * sıfırdır. Bu test yalnız portal hedefini ve açık/kapalı mantığını pinler; ekranda nereye
- * çizildiği tarayıcıda doğrulanır.
+ * SINIR (jsdom): jsdom yerleşim yapmaz, tüm dikdörtgenler sıfırdır. Konum testleri aşağıda
+ * tetik/menü/viewport ölçülerini SABİTLEYEREK Radix Popper'ın (floating-ui) hesabını sınar;
+ * ekrandaki nihai görünüm yine tarayıcıda doğrulanır.
  */
 function TwoCards() {
   return (
@@ -28,126 +29,164 @@ function TwoCards() {
   )
 }
 
+/** Radix dış-tıklama dinleyicisini açılıştan bir tık SONRA bağlar (açan basış onu kapatmasın). */
+const tick = () => act(() => new Promise((r) => setTimeout(r, 0)))
+
 describe('KebabMenu', () => {
   it('menü body\'ye portal\'lanır (transform\'lu kart onu konumdan koparmasın)', () => {
     render(<TwoCards />)
-    fireEvent.click(screen.getByLabelText('A menü'))
+    pressMenuTrigger(screen.getByLabelText('A menü'))
 
-    const pop = document.querySelector('.wr-menu-pop')
-    expect(pop).not.toBeNull()
-    expect(pop.parentElement).toBe(document.body)
-    expect(screen.getByTestId('card-a').querySelector('.wr-menu-pop')).toBeNull()
+    const pop = screen.getByRole('menu')
+    expect(document.body.contains(pop)).toBe(true)
+    expect(screen.getByTestId('card-a').contains(pop)).toBe(false)
+    expect(screen.getByRole('menuitem', { name: 'A-Düzenle' })).toBeInTheDocument()
   })
 
-  it('başka bir kartın tetiğine basınca önceki menü KAPANIR (aynı anda tek menü)', () => {
+  it('başka bir kartın tetiğine basınca önceki menü KAPANIR (aynı anda tek menü)', async () => {
     render(<TwoCards />)
-    fireEvent.click(screen.getByLabelText('A menü'))
+    pressMenuTrigger(screen.getByLabelText('A menü'))
     expect(screen.getByText('A-Düzenle')).toBeInTheDocument()
+    await tick()
 
-    // Gerçek etkileşim sırası: mousedown (dışarı-tıklama kapanışı) → click (yeni menü).
-    const bTrigger = screen.getByLabelText('B menü')
-    fireEvent.mouseDown(bTrigger)
-    fireEvent.click(bTrigger)
+    // Gerçek etkileşim sırası: pointerdown (dışarı-tıklama kapanışı + yeni menü) → mousedown → click.
+    pressMenuTrigger(screen.getByLabelText('B menü'))
 
-    expect(screen.queryByText('A-Düzenle')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('A-Düzenle')).not.toBeInTheDocument())
     expect(screen.getByText('B-Düzenle')).toBeInTheDocument()
-    expect(document.querySelectorAll('.wr-menu-pop')).toHaveLength(1)
+    expect(screen.getAllByRole('menu')).toHaveLength(1)
   })
 
-  it('aynı tetiğe ikinci tıklama kapatır, Escape de kapatır', () => {
+  it('aynı tetiğe ikinci basış kapatır, Escape de kapatır', async () => {
     render(<TwoCards />)
     const a = screen.getByLabelText('A menü')
 
-    fireEvent.click(a)
+    pressMenuTrigger(a)
     expect(a).toHaveAttribute('aria-expanded', 'true')
-    fireEvent.mouseDown(a)
-    fireEvent.click(a)
-    expect(screen.queryByText('A-Düzenle')).not.toBeInTheDocument()
+    await tick()
+    pressMenuTrigger(a)
+    await waitFor(() => expect(screen.queryByText('A-Düzenle')).not.toBeInTheDocument())
+    expect(a).toHaveAttribute('aria-expanded', 'false')
 
-    fireEvent.click(a)
+    pressMenuTrigger(a)
     expect(screen.getByText('A-Düzenle')).toBeInTheDocument()
-    fireEvent.keyDown(document, { key: 'Escape' })
-    expect(screen.queryByText('A-Düzenle')).not.toBeInTheDocument()
+    fireEvent.keyDown(document.activeElement || document, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByText('A-Düzenle')).not.toBeInTheDocument())
   })
 
-  it('menüdeki eylem tıklanınca menü kapanır ve onClick çalışır', () => {
+  it('menüdeki eylem tıklanınca menü kapanır ve onClick çalışır; tehlikeli eylem yıkıcı varyantta', async () => {
     const onClick = vi.fn()
     render(
       <div className="sc-tpl-card">
         <KebabMenu label="menü" items={[{ label: 'Sil', onClick, danger: true }]} />
       </div>,
     )
-    fireEvent.click(screen.getByLabelText('menü'))
-    fireEvent.click(screen.getByText('Sil'))
+    pressMenuTrigger(screen.getByLabelText('menü'))
+    const item = screen.getByRole('menuitem', { name: 'Sil' })
+    expect(item).toHaveAttribute('data-variant', 'destructive')
+    fireEvent.click(item)
 
     expect(onClick).toHaveBeenCalledTimes(1)
-    expect(document.querySelector('.wr-menu-pop')).toBeNull()
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+  })
+
+  it('rowLabel verilince tetiğin adı satırı ayırt eder, title kısa kalır', () => {
+    render(<KebabMenu label="İşlemler" rowLabel="example.com" items={[{ label: 'Sil', onClick: vi.fn() }]} />)
+    const trigger = screen.getByRole('button', { name: 'example.com — İşlemler' })
+    expect(trigger).toHaveAttribute('title', 'İşlemler')
+    expect(trigger).toHaveAttribute('aria-haspopup', 'menu')
   })
 
   /**
-   * Konumlandırma saf aritmetiktir: girdisi iki dikdörtgen + viewport. jsdom yerleşim yapmasa da
-   * dikdörtgenleri SABİTLEYEREK bu aritmetik doğrulanabilir — "jsdom konum ölçemez" gerekçesi
-   * hesabın kendisini test etmemek için mazeret olmamalı. Ekrandaki nihai görünüm yine tarayıcıda
-   * doğrulanır; burada pinlenen, menünün karta doğru mu yoksa karttan uzağa mı açıldığıdır.
+   * Konumlandırma artık Radix Popper'ın (floating-ui) işi; girdisi yine iki dikdörtgen +
+   * viewport. Ölçüler SABİTLENEREK bizim verdiğimiz yön/hizalama (side/align) ve çarpışma
+   * davranışı doğrulanır — pinlenen, menünün karta doğru mu yoksa karttan uzağa mı açıldığıdır.
    */
-  function stubRects({ btn, menu, vw = 1200, vh = 800 }) {
-    const orig = Element.prototype.getBoundingClientRect
+  function stubGeometry({ btn, menu, vw = 1200, vh = 800 }) {
+    const origRect = Element.prototype.getBoundingClientRect
+    const ow = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth')
+    const oh = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight')
+    const cw = Object.getOwnPropertyDescriptor(Element.prototype, 'clientWidth')
+    const ch = Object.getOwnPropertyDescriptor(Element.prototype, 'clientHeight')
+    const isTrigger = (el) => el.getAttribute?.('aria-haspopup') === 'menu'
+    const isPop = (el) => el.hasAttribute?.('data-radix-popper-content-wrapper') || el.getAttribute?.('role') === 'menu'
+    const zero = { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0 }
     Element.prototype.getBoundingClientRect = function rect() {
-      if (this.classList?.contains('kebab-trigger')) return btn
-      if (this.classList?.contains('wr-menu-pop')) return menu
-      return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 }
+      if (isTrigger(this)) return { ...btn, x: btn.left, y: btn.top }
+      if (isPop(this)) return { ...menu, x: menu.left, y: menu.top }
+      return zero
     }
-    window.innerWidth = vw
-    window.innerHeight = vh
-    return () => { Element.prototype.getBoundingClientRect = orig }
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, get() { return isPop(this) ? menu.width : 0 } })
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, get() { return isPop(this) ? menu.height : 0 } })
+    Object.defineProperty(Element.prototype, 'clientWidth', { configurable: true, get() { return this === document.documentElement ? vw : 0 } })
+    Object.defineProperty(Element.prototype, 'clientHeight', { configurable: true, get() { return this === document.documentElement ? vh : 0 } })
+    return () => {
+      Element.prototype.getBoundingClientRect = origRect
+      Object.defineProperty(HTMLElement.prototype, 'offsetWidth', ow)
+      Object.defineProperty(HTMLElement.prototype, 'offsetHeight', oh)
+      Object.defineProperty(Element.prototype, 'clientWidth', cw)
+      Object.defineProperty(Element.prototype, 'clientHeight', ch)
+    }
   }
 
-  it('placement="right": menü butonun SAĞINA açılır, kartın üstünü örtmez', () => {
-    const restore = stubRects({
+  /** Radix konumu hesaplayınca sarmalayıcıya translate(x, y) yazar; menü `data-side` taşır. */
+  async function placed() {
+    const menu = screen.getByRole('menu')
+    const wrapper = menu.closest('[data-radix-popper-content-wrapper]')
+    await waitFor(() => expect(wrapper.style.transform).toMatch(/translate\(/))
+    const [, x, y] = wrapper.style.transform.match(/translate\((-?[\d.]+)px,\s*(-?[\d.]+)px\)/)
+    return { side: menu.getAttribute('data-side'), align: menu.getAttribute('data-align'), left: Number(x), top: Number(y) }
+  }
+
+  it('placement="right": menü butonun SAĞINA açılır, kartın üstünü örtmez', async () => {
+    const restore = stubGeometry({
       btn: { top: 100, left: 300, right: 330, bottom: 130, width: 30, height: 30 },
       menu: { top: 0, left: 0, right: 200, bottom: 150, width: 200, height: 150 },
     })
     try {
       render(<KebabMenu label="menü" placement="right" items={[{ label: 'Düzenle', onClick: vi.fn() }]} />)
-      fireEvent.click(screen.getByLabelText('menü'))
+      pressMenuTrigger(screen.getByLabelText('menü'))
 
-      const pop = document.querySelector('.wr-menu-pop')
+      const p = await placed()
+      expect(p.side).toBe('right')
       // Sol kenarı butonun SAĞ kenarından sonra: menü kartın içine değil dışına doğru açılıyor.
-      expect(parseFloat(pop.style.left)).toBeGreaterThanOrEqual(330)
+      expect(p.left).toBeGreaterThanOrEqual(330)
       // Dikeyde butonun üstüyle hizalı (aşağı kaymıyor).
-      expect(parseFloat(pop.style.top)).toBe(100)
+      expect(p.top).toBe(100)
     } finally { restore() }
   })
 
-  it('placement="right": sağda yer yoksa SOLA düşer (viewport dışına taşmaz)', () => {
-    const restore = stubRects({
+  it('placement="right": sağda yer yoksa SOLA düşer (viewport dışına taşmaz)', async () => {
+    const restore = stubGeometry({
       btn: { top: 100, left: 1150, right: 1180, bottom: 130, width: 30, height: 30 },
       menu: { top: 0, left: 0, right: 200, bottom: 150, width: 200, height: 150 },
       vw: 1200,
     })
     try {
       render(<KebabMenu label="menü" placement="right" items={[{ label: 'Düzenle', onClick: vi.fn() }]} />)
-      fireEvent.click(screen.getByLabelText('menü'))
+      pressMenuTrigger(screen.getByLabelText('menü'))
 
-      const pop = document.querySelector('.wr-menu-pop')
-      const left = parseFloat(pop.style.left)
-      expect(left).toBeLessThanOrEqual(1150 - 200)   // butonun soluna geçti
-      expect(left).toBeGreaterThanOrEqual(8)         // kenar payının içinde
+      const p = await placed()
+      expect(p.side).toBe('left')
+      expect(p.left).toBeLessThanOrEqual(1150 - 200)   // butonun soluna geçti
+      expect(p.left).toBeGreaterThanOrEqual(8)         // kenar payının içinde
     } finally { restore() }
   })
 
-  it('varsayılan (bottom) davranış DEĞİŞMEDİ — tablo menüleri hâlâ altta ve sağa hizalı', () => {
-    const restore = stubRects({
+  it('varsayılan (bottom) davranış DEĞİŞMEDİ — tablo menüleri hâlâ altta ve sağa hizalı', async () => {
+    const restore = stubGeometry({
       btn: { top: 100, left: 300, right: 330, bottom: 130, width: 30, height: 30 },
       menu: { top: 0, left: 0, right: 200, bottom: 150, width: 200, height: 150 },
     })
     try {
       render(<KebabMenu label="menü" items={[{ label: 'Düzenle', onClick: vi.fn() }]} />)
-      fireEvent.click(screen.getByLabelText('menü'))
+      pressMenuTrigger(screen.getByLabelText('menü'))
 
-      const pop = document.querySelector('.wr-menu-pop')
-      expect(parseFloat(pop.style.top)).toBe(134)          // buton altı + GAP(4)
-      expect(parseFloat(pop.style.left)).toBe(130)         // sağ kenar butonla hizalı (330-200)
+      const p = await placed()
+      expect(p.side).toBe('bottom')
+      expect(p.align).toBe('end')
+      expect(p.top).toBe(134)          // buton altı + sideOffset(4)
+      expect(p.left).toBe(130)         // sağ kenar butonla hizalı (330-200)
     } finally { restore() }
   })
 

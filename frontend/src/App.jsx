@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
-import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Inbox, ShieldCheck, CalendarDays, Plus, LayoutList, LayoutGrid, Loader2 } from 'lucide-react'
+import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Inbox, ShieldCheck, CalendarDays, Plus, LayoutList, LayoutGrid, Loader2, Search } from 'lucide-react'
+import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/shadcn/input-group'
 
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
@@ -1059,28 +1061,6 @@ export default function App() {
                   <Plus size={14} /> {t('inv.addBtn')}
                 </button>
               )}
-              {/* Domain ara — Domain Ekle'nin yanında (2026-09-19, kullanıcı isteği); eskiden süzgeç satırının başındaydı */}
-              {tab === 'dashboard' && (
-                <span className="controls-search">
-                  <input
-                    className="sort-bar-search"
-                    type="text"
-                    placeholder={t('app.searchPlaceholder')}
-                    value={search}
-                    onChange={(e) => { setSearch(e.target.value); dashPager.setPage(1) }}
-                  />
-                  {search && (
-                    <button
-                      type="button"
-                      className="sort-bar-search-clear"
-                      onClick={() => { setSearch(''); dashPager.setPage(1) }}
-                      title={t('app.clearFilter')}
-                    >
-                      ✕
-                    </button>
-                  )}
-                </span>
-              )}
               <div className="add-domain-section" data-tour="add-domain">
                 <input className="domain-input" type="text" placeholder={t('app.newDomainPlaceholder')}
                   value={newDomain} onChange={(e) => setNewDomain(e.target.value)}
@@ -1224,12 +1204,33 @@ export default function App() {
                 <div className="dashboard-header">
                   <div className="dashboard-title-row">
                     <h2>{t('app.dashTitle')}</h2>
-                    <div className="dash-card-mode-seg" role="group" aria-label={t('ccx.modeTip')} title={t('ccx.modeTip')}>
-                      <button type="button" className={`dash-card-mode-btn${cardMode === 'compact' ? ' is-active' : ''}`} aria-pressed={cardMode === 'compact'}
-                        onClick={() => cardMode !== 'compact' && toggleCardMode()}><LayoutGrid size={13} /> {t('ccx.modeCompact')}</button>
-                      <button type="button" className={`dash-card-mode-btn${cardMode === 'rich' ? ' is-active' : ''}`} aria-pressed={cardMode === 'rich'}
-                        onClick={() => cardMode !== 'rich' && toggleCardMode()}><LayoutList size={13} /> {t('ccx.modeRich')}</button>
-                    </div>
+                    {/* Kart görünümü — shadcn ToggleGroup (tek seçim; seçili öğe boşaltılamaz) */}
+                    <ToggleGroup type="single" variant="outline" size="sm" value={cardMode}
+                      onValueChange={(v) => { if (v && v !== cardMode) toggleCardMode() }}
+                      aria-label={t('ccx.modeTip')} title={t('ccx.modeTip')}>
+                      <ToggleGroupItem value="compact" className="px-2.5"><LayoutGrid /> {t('ccx.modeCompact')}</ToggleGroupItem>
+                      <ToggleGroupItem value="rich" className="px-2.5"><LayoutList /> {t('ccx.modeRich')}</ToggleGroupItem>
+                    </ToggleGroup>
+                    {/* Domain ara — kart görünümü seçicisinin yanında (2026-09-25, kullanıcı isteği; eskiden üst
+                        kontrol satırındaydı). shadcn InputGroup: büyüteç + doluysa temizle düğmesi. */}
+                    <InputGroup className="h-8 w-64 max-w-full">
+                      <InputGroupAddon><Search /></InputGroupAddon>
+                      <InputGroupInput
+                        type="text"
+                        placeholder={t('app.searchPlaceholder')}
+                        aria-label={t('app.searchPlaceholder')}
+                        value={search}
+                        onChange={(e) => { setSearch(e.target.value); dashPager.setPage(1) }}
+                      />
+                      {search && (
+                        <InputGroupAddon align="inline-end">
+                          <InputGroupButton size="icon-xs" onClick={() => { setSearch(''); dashPager.setPage(1) }}
+                            title={t('app.clearFilter')} aria-label={t('app.clearFilter')}>
+                            <X />
+                          </InputGroupButton>
+                        </InputGroupAddon>
+                      )}
+                    </InputGroup>
                   </div>
                   {statsFilter && (
                     <div className="stats-filter-bar">

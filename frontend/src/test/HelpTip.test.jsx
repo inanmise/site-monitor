@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { render, screen, fireEvent, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, cleanup, act, within } from '@testing-library/react'
 import HelpTip from '../components/ui/HelpTip.jsx'
 import { EN } from '../i18n/index.jsx'
 
@@ -12,8 +12,22 @@ import { EN } from '../i18n/index.jsx'
  *  • Tetikleyici <button> DEĞİL role="button" taşıyan <span>: ekranların çoğunda kontrolü
  *    SARAN bir <label> içinde duruyor ve <button> labelable olduğu için etiketin kontrolünü
  *    sessizce çalar (input erişilebilir adını kaybeder). Bu testler o seçimi de pinler.
- *  • Kapanma yolları: yeniden tıklama, Escape, dışarıya mousedown.
+ *  • Kapanma yolları: yeniden tıklama, Escape, dışarıya basış.
+ *
+ * İç uygulama shadcn Popover (Radix). Radix dış-basışı `pointerdown` ile yakalar, kapanışı ise
+ * aynı basışın `click`'ine erteler (dışarıdaki düğmeye basış hem kapatır hem o düğmeyi çalıştırır)
+ * ve dinleyiciyi açılıştan bir tık SONRA bağlar (açan basış onu kapatmasın) — testler bu yüzden
+ * bir tık bekleyip gerçek fare olay sırasını gönderir.
  */
+const tick = () => act(() => new Promise((r) => setTimeout(r, 0)))
+/** Gerçek fare basış + bırakışının olay sırası. */
+function press(el) {
+  fireEvent.pointerDown(el, { button: 0, pointerType: 'mouse' })
+  fireEvent.mouseDown(el, { button: 0 })
+  fireEvent.pointerUp(el, { button: 0, pointerType: 'mouse' })
+  fireEvent.mouseUp(el, { button: 0 })
+  fireEvent.click(el, { button: 0 })
+}
 // Varsayılan dil EN (LangProvider yokken storedLang -> 'en'): metinler EN sözlükten.
 const KEY = 'help.set.site.monitor.storm.enabled'
 
@@ -56,17 +70,19 @@ describe('HelpTip', () => {
     expect(trigger.getAttribute('aria-expanded')).toBe('false')
   })
 
-  it('dışarıya mousedown kapatır, baloncuğun İÇİ kapatmaz', () => {
+  it('dışarıya basış kapatır, baloncuğun İÇİ kapatmaz', async () => {
     render(<HelpTip helpKey={KEY} />)
     fireEvent.click(screen.getByRole('button'))
     const pop = screen.getByRole('tooltip')
+    await tick()
 
     // Metni seçmek için baloncuğa basmak kapatmamalı.
-    fireEvent.mouseDown(pop)
+    press(pop)
     expect(screen.queryByRole('tooltip')).toBeTruthy()
 
-    fireEvent.mouseDown(document.body)
+    press(document.body)
     expect(screen.queryByRole('tooltip')).toBeNull()
+    expect(screen.getByRole('button').getAttribute('aria-expanded')).toBe('false')
   })
 
   it('klavyeyle (Enter / Space) açılır', () => {
@@ -95,13 +111,13 @@ describe('HelpTip', () => {
     const pop = screen.getByRole('tooltip')
     expect(container.contains(pop)).toBe(false)
     expect(document.body.contains(pop)).toBe(true)
-    expect(pop.className).toContain('help-tip-pop')
   })
 
   it('üç satırlı metin pre-line ile çizilir (\\n gerçek satır olur)', () => {
     render(<HelpTip helpKey={KEY} />)
     fireEvent.click(screen.getByRole('button'))
-    const body = document.querySelector('.help-tip-text')
+    const body = within(screen.getByRole('tooltip')).getByText(/What it does/)
+    expect(body).toHaveClass('whitespace-pre-line')
     expect(body.textContent).toBe(EN[KEY])
     expect(body.textContent.split('\n')).toHaveLength(3)
   })

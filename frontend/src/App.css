@@ -50,7 +50,7 @@
      Sıra bilinçli: oturum-uyarısı > toast > dialog > modal > duyuru. Bir modalın
      ÜSTÜNDE toast görünmeli (işlem sonucu okunabilsin), bir dialog modalın üstünde
      açılmalı, oturum bitiyor uyarısı ise her şeyi geçmeli.
-     Eskiden dört ayrı bileşen 9999'du (.toast-container, .dlg-overlay,
+     Eskiden dört ayrı bileşen 9999'du (eski toast kabı, eski onay örtüsü,
      .inactivity-warning, ~.ann-hero-overlay) ve hangisinin üstte kalacağı DOM'a
      ekleme sırasının kazasına bağlıydı.
      NOT: .react-datepicker-popper 9100 !important taşıyor (modalın üstünde kalsın
@@ -1099,16 +1099,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .hint { display: block; font-size: .82em; color: var(--text-light); }
 .field-error { display: block; font-size: .82em; color: var(--danger); }
 
-/* Modal kabuğu (ui/ModalShell) — mevcut .modal-overlay/.modal-box ailesinin üstüne kurulur,
-   yalnız katman + başlık/gövde/altlık düzenini ekler. Giriş animasyonu bilinçli olarak YOK:
-   animasyon eklenirse prefers-reduced-motion muafiyeti de gerekirdi. */
-/* ÖZGÜLLÜK NOTU: her iki kural da `.modal-overlay` ile BİRLİKTE kullanılıyor
-   (`class="modal-overlay modal-shell-overlay"`), `.modal-overlay` ise bu dosyada DAHA SONRA
-   (~:2632) `z-index: 2000` ile tanımlı. Tek sınıf yazılırsa (0-1-0 ↔ 0-1-0) kaynakta sonra gelen
-   kazanıyordu: `--modal-z` ölü token oluyor, ModalShell'in derinlik katmanlaması ve
-   UserEditModal'ın "üstte kal" garantisi sessizce düşüyordu (iç içe modallar yalnız DOM sırası
-   sayesinde tesadüfen doğru çiziliyordu). İki sınıf = 0-2-0, sıra artık önemli değil. */
-.modal-overlay.modal-shell-overlay { z-index: var(--modal-z, 2000); }
 /* Başka bir modalın (ModalShell, derinlik başına +10) ÜSTÜNDE açılması gereken düz modal — UserEditModal. */
 .modal-overlay.modal-overlay--top { z-index: 2100; }
 
@@ -1215,56 +1205,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .deploy-table tr.is-current td { background: color-mix(in srgb, var(--success, #16a34a) 6%, transparent); }
 .deploy-matrix tr.is-never td { color: var(--text-muted); }
 [data-theme="dark"] .sb-version-pop { background: var(--bg-card); }
-/* .modal-box (aşağıda, 2573) max-width:640px ile aynı özgüllükte ve SONRA geldiği için lg/xl/full hiç
-   uygulanmıyordu — her ModalShell 640px'e sıkışıyordu (2026-09-19, SMTP detay modalında fark edildi).
-   Bileşik seçici (.modal-box.modal-shell--*) özgüllüğü artırır; sm/md eski değerlerinde. */
-.modal-box.modal-shell--sm { max-width: 460px; }
-.modal-box.modal-shell--md { max-width: 620px; }
-.modal-box.modal-shell--lg { max-width: 900px; }
-.modal-box.modal-shell--xl { max-width: 1140px; }
-.modal-box.modal-shell--full { max-width: 96vw; }
 .modal-box:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
-.modal-shell-hdr {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  margin-bottom: 14px;
-}
-.modal-shell-title {
-  display: flex; align-items: center; gap: 8px;
-  margin: 0; font-size: 1.125rem; font-weight: 600; letter-spacing: -.01em;
-}
-.modal-shell-close {
-  flex: 0 0 auto; border: none; background: transparent; color: var(--text-light);
-  cursor: pointer; padding: 6px; border-radius: 6px; display: flex; line-height: 0;
-}
-.modal-shell-close:hover:not(:disabled) { color: var(--text); background: var(--bg-hover, #eef2f7); }
-.modal-shell-close:disabled { opacity: .45; cursor: not-allowed; }
-.modal-shell-close:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
-.modal-shell-body { min-width: 0; }
-.modal-shell-footer {
-  display: flex; justify-content: flex-end; gap: 8px;
-  margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border);
-}
-
-/* scrollBody: uzun formlarda YALNIZ gövde kaydırılır, altlık (Kaydet/İptal) daima görünür.
-   Neden gerekli: .modal-overlay `align-items: flex-start` + `overflow-y: auto` ile kutuyu
-   serbest bırakıyor; içerik uzayınca düğmeler ekranın çok altına düşüyor ve kullanıcı her
-   kayıt için sayfayı sonuna kadar kaydırmak zorunda kalıyordu (şablon editörü).
-   Yükseklik tavanı overlay'in 60px üst+alt dolgusunu düşer — kutu scrim'in dışına taşmasın. */
-.modal-box.modal-shell--scroll {
-  max-height: min(88vh, calc(100vh - 120px));
-  display: flex; flex-direction: column; overflow: hidden;
-}
-.modal-shell--scroll .modal-shell-hdr { flex: 0 0 auto; }
-/* min-height:0 ŞART — flex öğesinin varsayılan `min-height:auto`'su içeriğe göre büyür ve
-   overflow hiç devreye girmez (altlık yine aşağı kaçar). */
-.modal-shell--scroll .modal-shell-body {
-  flex: 1 1 auto; overflow-y: auto; min-height: 0;
-  /* Kaydırma çubuğu içerik kenarına yapışmasın; kutunun 28px dolgusu korunur. */
-  padding-right: 4px; margin-right: -4px;
-}
-.modal-shell--scroll .modal-shell-footer { flex: 0 0 auto; margin-top: 14px; }
-[data-theme="dark"] .modal-shell-close:hover:not(:disabled) { background: var(--bg-surface); }
-
 /* Sorun Bildir modalı (components/IssueReportModal.jsx) — eskiden tamamı satır içi stildi. */
 .issue-auto {
   border: 1px solid var(--border); border-radius: 10px;
@@ -2829,62 +2770,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
 .alert-msg { background: #d4edda; color: #155724; padding: 10px 14px; border-radius: 5px; margin-bottom: 12px; font-size: .9em; }
 
-/* ── Toast notifications ─────────────────────────────────────────────────── */
-.toast-container {
-  position: fixed;
-  top: 16px;
-  right: 16px;
-  z-index: var(--z-toast);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  pointer-events: none;
-}
-.toast {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 260px;
-  max-width: 420px;
-  padding: 12px 14px;
-  border-radius: 8px;
-  font-size: .875rem;
-  font-weight: 500;
-  color: var(--popover-foreground);
-  background: var(--popover);
-  border: 1px solid var(--border);
-  box-shadow: 0 10px 15px -3px rgb(0 0 0 / .1), 0 4px 6px -4px rgb(0 0 0 / .1);
-  cursor: pointer;
-  pointer-events: auto;
-  animation: toast-in .25s cubic-bezier(.2,.7,.3,1.1);
-}
-.toast-success { background: #ecfdf3; border-color: #bffcd9; color: #008a2e; }
-.toast-error   { background: #fff0f0; border-color: #ffe0e1; color: #e60000; }
-.toast-info    { background: #f0f8ff; border-color: #d6ebff; color: #0973dc; }
-[data-theme="dark"] .toast-success { background: #001f0f; border-color: #003d1c; color: #59f3a6; }
-[data-theme="dark"] .toast-error   { background: #2d0607; border-color: #4d0408; color: #ff9ea1; }
-[data-theme="dark"] .toast-info    { background: #000d1f; border-color: #00113d; color: #5896f3; }
-.toast-icon { display: flex; align-items: center; flex-shrink: 0; }
-.toast-msg  { flex: 1; line-height: 1.35; }
-/* Tekrarlanan bildirim sayacı: aynı mesaj yığılmak yerine "×N" ile sayılır. */
-.toast-count { flex: 0 0 auto; margin-left: 6px; padding: 1px 6px; border-radius: 999px;
-  background: color-mix(in srgb, currentColor 14%, transparent); font-size: .82em; font-weight: 700; font-variant-numeric: tabular-nums; }
-.toast-close {
-  background: transparent; border: none; color: inherit; cursor: pointer;
-  display: flex; align-items: center; padding: 2px; opacity: .85;
-}
-.toast-close:hover { opacity: 1; }
-@keyframes toast-in {
-  from { transform: translateX(20px); opacity: 0; }
-  to   { transform: translateX(0); opacity: 1; }
-}
-/* Ev standardı: her animasyon ailesi kendi reduced-motion bloğunu YANINA koyar
-   (bkz. Progress ailesi). Toast ve dialog bu kapsamın dışında kalmıştı. */
-@media (prefers-reduced-motion: reduce) {
-  .toast { animation: none; }
-  .dlg-box { animation: none; }
-  .dlg-overlay { animation: none; }
-}
 .alert-msg--err { background: #f8d7da; color: #721c24; }
 
 /* Thresholds */
@@ -3822,187 +3707,6 @@ button.tm-stat:hover { border-color: var(--primary); color: var(--primary); }
 [data-theme="dark"] .act-domain-group { border-left-color: #b91c1c; }
 [data-theme="dark"] .act-domain-error-msg { color: #fca5a5; }
 
-/* ── Modern Dialog ──────────────────────────────────── */
-.dlg-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.5);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  z-index: var(--z-dialog);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-  animation: dlg-fade 0.18s ease;
-}
-
-.dlg-box {
-  background: #fff;
-  border-radius: 20px;
-  padding: 36px 32px 28px;
-  max-width: 420px;
-  width: 100%;
-  box-shadow: 0 24px 64px rgba(0,0,0,0.22), 0 4px 16px rgba(0,0,0,0.08);
-  text-align: center;
-  animation: dlg-pop 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
-  border-top: 4px solid var(--dlg-accent);
-}
-
-.dlg-icon-ring {
-  width: 72px;
-  height: 72px;
-  border-radius: 50%;
-  background: var(--dlg-bg);
-  border: 2px solid var(--dlg-border);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0 auto 20px;
-}
-
-.dlg-title {
-  font-size: 1.2em;
-  font-weight: 700;
-  color: #18181b;
-  margin: 0 0 10px;
-  line-height: 1.3;
-}
-
-.dlg-message {
-  font-size: 0.92em;
-  color: #71717a;
-  margin: 0 0 24px;
-  line-height: 1.6;
-  white-space: pre-line;
-}
-
-.dlg-input {
-  width: 100%;
-  padding: 11px 14px;
-  border: 2px solid #e4e4e7;
-  border-radius: 10px;
-  font-size: 0.95em;
-  margin-bottom: 24px;
-  box-sizing: border-box;
-  outline: none;
-  transition: border-color 0.2s, box-shadow 0.2s;
-  color: #18181b;
-}
-.dlg-input:focus {
-  border-color: var(--dlg-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dlg-accent) 15%, transparent);
-}
-
-/* ── Zorunlu gerekçe notu (onayla/çöz) ───────────────────────────────────────
-   Renkler token'lardan; satır içi stil YOK — koyu temada okunmayan açık zeminler
-   bu yüzden oluşuyordu (bkz. Alarm Geçmişi tema düzeltmesi). */
-.dlg-note {
-  width: 100%;
-  text-align: left;
-  margin-bottom: 18px;
-}
-.dlg-note-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 8px;
-}
-.dlg-note-chip {
-  background: var(--bg-surface);
-  border: 1px solid var(--border, #e4e4e7);
-  color: var(--text, #18181b);
-  border-radius: 999px;
-  padding: 4px 10px;
-  font-size: .78em;
-  cursor: pointer;
-  transition: background .15s, border-color .15s;
-}
-.dlg-note-chip:hover {
-  background: color-mix(in srgb, var(--dlg-accent) 12%, transparent);
-  border-color: var(--dlg-accent);
-}
-.dlg-note-input {
-  width: 100%;
-  padding: 10px 12px;
-  border: 2px solid var(--border, #e4e4e7);
-  border-radius: 10px;
-  font-size: .92em;
-  font-family: inherit;
-  box-sizing: border-box;
-  outline: none;
-  resize: vertical;
-  background: var(--input-bg);
-  color: var(--text, #18181b);
-  transition: border-color .2s, box-shadow .2s;
-}
-.dlg-note-input:focus {
-  border-color: var(--dlg-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dlg-accent) 15%, transparent);
-}
-.dlg-note-input[aria-invalid="true"] {
-  border-color: var(--border, #e4e4e7);   /* yazmaya başlamadan kırmızı göstermek cezalandırıcı olur */
-}
-.dlg-note-hint {
-  margin-top: 6px;
-  min-height: 16px;                        /* metin değişince modal ZIPLAMASIN */
-  font-size: .76em;
-  color: var(--text-light, #71717a);
-}
-.dlg-note-hint.is-ok {
-  color: #15803d;
-}
-.dlg-btn-confirm:disabled {
-  opacity: .5;
-  cursor: not-allowed;
-  filter: grayscale(.4);
-}
-
-[data-theme="dark"] .dlg-note-chip {
-  background: rgba(148, 163, 184, .12);
-  border-color: rgba(148, 163, 184, .3);
-  color: #e4e4e7;
-}
-[data-theme="dark"] .dlg-note-input {
-  background: rgba(15, 23, 42, .6);
-  border-color: rgba(148, 163, 184, .3);
-  color: #e4e4e7;
-}
-[data-theme="dark"] .dlg-note-hint.is-ok { color: #4ade80; }
-
-.dlg-actions {
-  display: flex;
-  gap: 10px;
-  justify-content: center;
-}
-
-.dlg-btn {
-  padding: 11px 28px;
-  border: none;
-  border-radius: 10px;
-  font-size: 0.92em;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s;
-  min-width: 110px;
-  letter-spacing: 0.01em;
-}
-
-.dlg-btn-cancel {
-  background: #f4f4f5;
-  color: #3f3f46;
-  border: 1px solid #e4e4e7;
-}
-.dlg-btn-cancel:hover { background: #e4e4e7; }
-
-.dlg-btn-confirm {
-  background: var(--dlg-accent);
-  color: #fff;
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--dlg-accent) 40%, transparent);
-}
-.dlg-btn-confirm:hover { filter: brightness(0.88); transform: translateY(-1px); }
-.dlg-btn-confirm:active { transform: translateY(0); }
-
 @keyframes dlg-fade {
   from { opacity: 0; }
   to   { opacity: 1; }
@@ -4646,9 +4350,11 @@ button.tm-stat:hover { border-color: var(--primary); color: var(--primary); }
    eski [data-theme="dark"] .lp-* override'ları kaldırıldı (yeni stili eziyorlardı). */
 
 /* Inputs, selects */
-[data-theme="dark"] input:not([type="checkbox"]),
-[data-theme="dark"] select,
-[data-theme="dark"] textarea { background: var(--input-bg); color: var(--input-text); border-color: var(--input); }
+/* Yalnız LEGACY alanlar: shadcn Input/Textarea/NativeSelect (data-slot) kendi koyu tonunu Tailwind'den
+   alır — katmansız bu kural onları ezip InputGroup içinde ayrı bir kutu çiziyordu. */
+[data-theme="dark"] input:not([type="checkbox"]):not([data-slot]),
+[data-theme="dark"] select:not([data-slot]),
+[data-theme="dark"] textarea:not([data-slot]) { background: var(--input-bg); color: var(--input-text); border-color: var(--input); }
 [data-theme="dark"] .search-box,
 [data-theme="dark"] .domain-input { background: var(--input-bg); color: var(--input-text); }
 [data-theme="dark"] .sort-select { background: var(--input-bg); color: var(--input-text); }
@@ -4670,13 +4376,6 @@ button.tm-stat:hover { border-color: var(--primary); color: var(--primary); }
 [data-theme="dark"] .modal-san-chip    { background: var(--bg-surface); border-color: var(--border); color: var(--text); }
 [data-theme="dark"] .modal-actions     { border-top-color: var(--border); }
 
-/* Dialog */
-[data-theme="dark"] .dlg-box { background: var(--bg-card); }
-[data-theme="dark"] .dlg-title { color: var(--text); }
-[data-theme="dark"] .dlg-message { color: var(--text-light); }
-[data-theme="dark"] .dlg-input { background: var(--input-bg); color: var(--text); border-color: var(--border); }
-[data-theme="dark"] .dlg-btn-cancel { background: #3f3f46; color: #e4e4e7; border-color: #52525b; }
-[data-theme="dark"] .dlg-btn-cancel:hover { background: #52525b; }
 
 /* Admin panel */
 [data-theme="dark"] .admin-tab-btn { color: var(--text-light); }
@@ -12385,7 +12084,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
    <HelpTip>'i alt satıra düşürüyordu (Haftalık e-posta "etkin" anahtarı, 2026-09-12 — 17 yerde aynı
    desen: </label><HelpTip …/>). inline-flex ile ipucu etiketin hemen sağında; blok akışı için
    kapsayıcı .ldap-toggle-row kullanılır. */
-.ldap-toggle + .help-tip { vertical-align: middle; }
 .ldap-toggle-row { display: flex; align-items: center; flex-wrap: wrap; gap: 0 4px; }
 .ldap-toggle input { width: 16px; height: 16px; cursor: pointer; }
 .ldap-toggle-major { font-weight: 700; font-size: 1em; }
@@ -12583,39 +12281,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 }
 
 
-/* ── Standart sayfalama barı (PaginationBar) — tüm listelerin TEK deseni ─────────────────
-   Eski aileler (dash-pagination, alh-pagination, upt-page*, pagination-controls,
-   audit-pagination, dns-history-pagination) dönüşüm bitince kaldırılır. */
-.pgn-bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 14px; font-size: .9em; }
-.pg-sizer { display: inline-flex; align-items: center; gap: 4px; }
-.pg-sizer-label { color: var(--text-light); margin-right: 2px; white-space: nowrap; }
-.pg-size-btn { border: 1px solid transparent; background: transparent; color: var(--text-muted);
-  border-radius: 6px; padding: 3px 9px; cursor: pointer; font-size: .92em; line-height: 1.4; }
-.pg-size-btn:hover { background: var(--accent); color: var(--text); }
-.pg-size-btn--active { background: var(--bg-card); border-color: var(--border); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px 0 rgb(0 0 0 / .05); }
-.pg-nav { display: inline-flex; align-items: center; gap: 3px; }
-.pg-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 28px;
-  border: 1px solid transparent; background: transparent; color: var(--text);
-  border-radius: 6px; padding: 0 6px; cursor: pointer; font-size: .92em; font-variant-numeric: tabular-nums; }
-.pg-btn:hover:not(:disabled) { background: var(--accent); }
-.pg-btn:disabled { opacity: .4; cursor: default; }
-.pg-btn--active { background: var(--bg-card); border-color: var(--border); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px 0 rgb(0 0 0 / .05); }
-.pg-btn--active:hover:not(:disabled) { background: var(--accent); }
-.pg-ellipsis { color: var(--text-light); padding: 0 3px; user-select: none; }
-.pg-goto input { width: 64px; border: 1px solid var(--border); background: var(--bg-surface, var(--bg));
-  color: var(--text); border-radius: 6px; padding: 4px 8px; font-size: .92em; }
-.pg-goto input:focus { outline: none; border-color: var(--primary); }
-.pg-info { display: inline-flex; align-items: center; gap: 10px; color: var(--text-light);
-  white-space: nowrap; margin-left: auto; font-variant-numeric: tabular-nums; }
-.pg-info-mini { color: var(--text-light); padding: 0 6px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.pgn-bar--compact { gap: 10px; margin-top: 10px; font-size: .85em; }
-.pgn-bar--compact .pg-size-btn { padding: 2px 7px; }
-.pgn-bar--compact .pg-btn { min-width: 24px; height: 24px; }
-@media (max-width: 640px) {
-  .pg-btn--num { display: none; }              /* dar ekranda numaralar gizli; «‹›» + bilgi kalır */
-  .pg-info { margin-left: 0; }
-}
-
 /* ── Kontrol Geçmişi v2 (CheckHistoryTab + SegmentedControl + DensityStrip) ─────────────
    Tamamı token'lı — hex yok; koyu tema token override'larından otomatik gelir. */
 
@@ -12785,26 +12450,9 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .dns-diff-cell.dns-diff-row-rotated { border-left-color: var(--info);
   background: color-mix(in srgb, var(--info) 6%, transparent); }
 
-/* ── HelpTip — alan-bazlı açıklama baloncuğu (components/ui/HelpTip.jsx) ─────────────
-   Baloncuk body'ye PORTAL ile çizilir: `overflow` taşıyan hiçbir ata onu kırpamaz.
-   Konumu JS hesaplar (position: fixed + inline top/left), görünümü buradan gelir. */
-.help-tip { display: inline-flex; align-items: center; justify-content: center;
-  width: 18px; height: 18px; padding: 0; margin-left: 5px; vertical-align: -3px;
-  border: none; border-radius: 50%; background: transparent; cursor: pointer;
-  color: var(--text-muted); line-height: 0; flex-shrink: 0; }
-.help-tip:hover, .help-tip[aria-expanded="true"] { color: var(--primary); }
-.help-tip:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
-
-.help-tip-pop { position: fixed; z-index: var(--z-dialog); max-width: calc(100vw - 16px);
-  padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
-  background: var(--bg-card); box-shadow: var(--shadow); color: var(--text);
-  font-size: 12.5px; line-height: 1.55; font-weight: 400; text-align: left; }
 /* Etiket + ipucu ikonu tek satırda: `.threshold-field` flex-column olduğu için ikon
    doğrudan çocuk olarak konulursa alt satıra düşerdi. */
 .help-label-row { display: inline-flex; align-items: center; gap: 0; }
-.help-tip-title { font-weight: 700; font-size: 12.5px; margin-bottom: 4px; color: var(--text); }
-/* pre-line: sözlükteki \n gerçek satır olur (üç satırlık "ne işe yarar/faydası/önerilen"). */
-.help-tip-text { white-space: pre-line; color: var(--text-muted); }
 
 /* ── Kart mini trendi + son 5 kontrol (2026-09-12, zenginleştirme #4/#14) ─────────────────── */
 .mspark { display: flex; flex-direction: column; gap: 3px; margin: 6px 0 2px; cursor: default; }
@@ -13867,7 +13515,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .tour-link--muted { color: var(--text-light); font-weight: 500; }
 .tour-foot { display: flex; justify-content: space-between; gap: 8px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
 /* Karşılama kartı */
-.tour-welcome .modal-shell-body { padding-top: 6px; }
 .tour-welcome-body { margin: 0 0 10px; line-height: 1.5; }
 .tour-welcome-list { margin: 0 0 10px; padding-left: 18px; line-height: 1.6; font-size: .92em; }
 .tour-welcome-hint { margin: 0; font-size: .82em; color: var(--text-light); }

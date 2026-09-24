@@ -59,7 +59,7 @@ describe('AuditLogViewer', () => {
     expect(await screen.findByText(/Bütünlük zinciri|Integrity chain/)).toBeInTheDocument()
     expect(document.querySelector('.audit-diff-to')).not.toBeNull()
     expect(document.querySelector('.aud-detail'), 'dar ekranda yan panel OLMAMALI').toBeNull()
-    expect(document.querySelector('.modal-shell-overlay'), 'dar ekranda modal OLMAMALI').toBeNull()
+    expect(screen.queryByRole('dialog'), 'dar ekranda modal OLMAMALI').toBeNull()
 
     const inline = document.querySelector('.aud-inline')
     expect(inline, 'satır-içi ayrıntı satırı açılmalı').not.toBeNull()
@@ -233,7 +233,7 @@ describe('AuditLogViewer', () => {
       fireEvent.click(await screen.findByTitle('USER_UPDATE'))
 
       expect(document.querySelector('.aud-detail'), 'yan panel açılmalı').not.toBeNull()
-      expect(document.querySelector('.modal-shell-overlay'), 'modal AÇILMAMALI').toBeNull()
+      expect(screen.queryByRole('dialog'), 'modal AÇILMAMALI').toBeNull()
       expect(document.querySelector('.aud-inline'), 'satır-içi gövde de AÇILMAMALI').toBeNull()
       // Yan panel bir diyalog DEĞİL: odak tabloda kalmalı ki ok tuşlarıyla gezinme sürsün.
       expect(document.querySelector('.aud-detail').getAttribute('role')).toBe('complementary')
@@ -292,7 +292,7 @@ describe('AuditLogViewer', () => {
     fireEvent.click(tlBtn)
     await waitFor(() => expect(api.admin.getAuditResourceHistory).toHaveBeenCalledWith('USER', '5', 100))
     // Drawer artık ModalShell: elle kurulmuş overlay'de role/aria-modal/ESC/focus trap yoktu.
-    expect(document.querySelector('.modal-shell-overlay'), 'ModalShell açılmalı').not.toBeNull()
+    expect(screen.getByRole('dialog'), 'ModalShell açılmalı').toHaveAttribute('aria-modal', 'true')
     expect(document.querySelector('.audit-timeline-list')).not.toBeNull()
     expect(await screen.findAllByTitle('MONITOR_UPDATE')).not.toHaveLength(0)
   })

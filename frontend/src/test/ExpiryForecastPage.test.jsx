@@ -84,7 +84,7 @@ describe('ExpiryForecastPage', () => {
     const modal = await screen.findByRole('dialog')
     expect(modal.textContent).toMatch(/Takım C/)
     expect(modal.querySelectorAll('.fc-day-row')).toHaveLength(10)          // 10'luk sayfa
-    expect(modal.querySelector('.pg-nav')).not.toBeNull()
+    expect(within(modal).getByRole('navigation', { name: /Sayfalama|Pagination/ })).toBeInTheDocument()
     expect(modal.textContent).toMatch(/1[–-]10/)                             // 1–10 / 12
     fireEvent.click([...modal.querySelectorAll('button')].find((b) => /sonraki|next|›|»/i.test(b.textContent + (b.getAttribute('aria-label') || ''))))
     await waitFor(() => expect(modal.querySelectorAll('.fc-day-row')).toHaveLength(2))

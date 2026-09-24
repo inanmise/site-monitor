@@ -2,6 +2,7 @@
 import { Command as CommandPrimitive } from "cmdk"
 import { cn } from "@/lib/utils"
 import { SearchIcon } from "lucide-react"
+import { useT } from "@/i18n/index.jsx"
 
 import {
   Dialog,
@@ -28,18 +29,19 @@ function Command({
 }
 
 function CommandDialog({
-  title = "Command Palette",
-  description = "Search for a command to run...",
+  title,
+  description,
   children,
   className,
   showCloseButton = true,
   ...props
 }) {
+  const t = useT()
   return (
     <Dialog {...props}>
       <DialogHeader className="sr-only">
-        <DialogTitle>{title}</DialogTitle>
-        <DialogDescription>{description}</DialogDescription>
+        <DialogTitle>{title ?? t('palette.title')}</DialogTitle>
+        <DialogDescription>{description ?? t('palette.trigger')}</DialogDescription>
       </DialogHeader>
       <DialogContent
         className={cn("overflow-hidden p-0", className)}

@@ -57,14 +57,18 @@ const NON_INTERACTIVE = new Set(['div', 'span', 'li', 'tr', 'th', 'td', 'section
  */
 const EXEMPT_CLICK = new Map([
   ['components/ui/Toast.jsx:<div>',
-    'role="status" CANLI BÖLGE: odaklanabilir yapmak erişilebilirlik anti-deseni (ekran okuyucu ' +
-    'zaten okur). Tıklama yalnız erken kapatma kısayolu; bildirim kendiliğinden kayboluyor.'],
+    'Sonner bildirim listesinin olay-yetkisi sarmalayıcısı (display: contents, kendisi kutu değil): ' +
+    'gövdeye tıklamak yalnız erken kapatma kısayolu, bildirim kendiliğinden kayboluyor. Klavyeyle ' +
+    'kapatma her kutudaki Sonner X düğmesinde (adı i18n\'den); liste aria-live ile zaten okunur.'],
   ['components/admin/AuditLogViewer.jsx:<tr>',
     'DOLAŞAN TABINDEX ızgarası: tabIndex satırda, ok/Home/End/Escape tuşları tbody üzerinde ' +
     '(daha gelişmiş kalıp). Kapı ikisini aynı etikette aradığı için burada yanlış ısırıyor.'],
   ['components/ScriptedMonitorPage.jsx:<span>',
     'Satırın açma kontrolü BİLİNÇLİ olarak tek hücrede (zaman): dört hücrenin dördü de ' +
     'odaklanabilir olsaydı satır başına dört durak olurdu. Diğer hücreler yalnız fare kolaylığı.'],
+  ['components/shadcn/input-group.jsx:<div>',
+    'shadcn InputGroupAddon: eke (ikon/metin) tıklamak yalnız içteki alana odak kısayolu; alanın ' +
+    'kendisi klavyeyle tam erişilebilir, ekin içinde düğme varsa (InputGroupButton) o zaten odaklanır.'],
   ['components/ui/CodeEditor.jsx:<span>',
     'Satır numarası oluğu: düzenleyicinin kendisi (textarea) klavyeyle tam erişilebilir ve satır ' +
     'seçimi orada yapılır; oluk yalnız fare kısayolu.'],
@@ -88,6 +92,8 @@ function isPassiveClick(tagText) {
   // Modal örtüsü: kapatma ayrıca gerçek düğme + Escape ile sağlanır; örtüye odak vermek
   // ekran okuyucu kullanıcısını çıkmaza sokar.
   if (/classList\.contains\(/.test(handler)) return true
+  // shadcn örtüsü legacy sınıf adıyla değil `data-slot` ile tanınır (ui/ModalShell scrim'i).
+  if (/data-slot="(alert-)?dialog-overlay"/.test(tagText)) return true
   return /className="[^"]*(overlay|backdrop|mask)/.test(tagText)
 }
 

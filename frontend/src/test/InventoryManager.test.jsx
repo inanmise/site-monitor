@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { LangProvider } from '../i18n/index.jsx'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 /**
  * ENVANTER YÖNETİMİ — uygulamanın GERİ ALINAMAZ eylemlerini barındıran ekran; buraya kadar kendi
@@ -68,7 +69,7 @@ const renderIm = (role = 'ADMIN') =>
 /** Domain adına göre o satırın kebab menüsünü açar. */
 async function openRowMenu(domain) {
   const row = (await screen.findByText(domain)).closest('tr')
-  fireEvent.click(within(row).getByRole('button', { name: /işlem|actions/i }))
+  pressMenuTrigger(within(row).getByRole('button', { name: /işlem|actions/i }))
 }
 
 // Satır SEÇİM kutuları (ilk hücre) — aktif/pasif anahtarı da checkbox (2026-09-12, satır-içi düzenleme), o sayılmaz
@@ -296,15 +297,16 @@ describe('InventoryManager — USER satır düzenleme kapısı', () => {
     expect(container.querySelector('thead input[type=checkbox]')).toBeNull()
 
     const own = screen.getByText('kendi.example.com').closest('tr')
-    fireEvent.click(own.querySelector('.kebab-trigger'))
-    let items = [...document.querySelectorAll('.wr-menu-pop button')].map((b) => b.textContent.trim())
+    pressMenuTrigger(within(own).getByRole('button', { name: /işlem|actions/i }))
+    let items = screen.getAllByRole('menuitem').map((b) => b.textContent.trim())
     expect(items).toEqual(expect.arrayContaining([expect.stringMatching(/^(Düzenle|Edit)$/), expect.stringMatching(/Kopyala|Duplicate/i)]))
     expect(items.some((x) => /^(Sil|Delete)$/.test(x))).toBe(false)
     fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
 
     const other = screen.getByText('baska.example.com').closest('tr')
-    fireEvent.click(other.querySelector('.kebab-trigger'))
-    items = [...document.querySelectorAll('.wr-menu-pop button')].map((b) => b.textContent.trim())
+    pressMenuTrigger(within(other).getByRole('button', { name: /işlem|actions/i }))
+    items = screen.getAllByRole('menuitem').map((b) => b.textContent.trim())
     expect(items.some((x) => /^(Düzenle|Edit)$/.test(x))).toBe(false)
   })
 })

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { LangProvider } from '../i18n/index.jsx'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 /**
  * ALARM KİME GİDİYOR — bu ekran eskalasyon kontaklarını yönetir ve buraya kadar SIFIR testi vardı.
@@ -75,7 +76,7 @@ describe('EscalationContacts', () => {
     await screen.findByText('Ali V')
 
     const kebabs = screen.getAllByRole('button', { name: /actions|işlem/i })
-    fireEvent.click(kebabs[0])
+    pressMenuTrigger(kebabs[0])
     fireEvent.click(await screen.findByText(/^Delete$|^Sil$/i))
 
     await waitFor(() => expect(confirmMock).toHaveBeenCalled())
@@ -87,7 +88,7 @@ describe('EscalationContacts', () => {
     await screen.findByText('Ali V')
 
     const kebabs = screen.getAllByRole('button', { name: /actions|işlem/i })
-    fireEvent.click(kebabs[1])                     // ikinci satır → id=2
+    pressMenuTrigger(kebabs[1])                     // ikinci satır → id=2
     fireEvent.click(await screen.findByText(/^Delete$|^Sil$/i))
 
     await waitFor(() => expect(api.admin.deleteContact).toHaveBeenCalledWith(2))
@@ -99,7 +100,7 @@ describe('EscalationContacts', () => {
     renderEc()
     await screen.findByText('Ali V')
 
-    fireEvent.click(screen.getAllByRole('button', { name: /actions|işlem/i })[0])
+    pressMenuTrigger(screen.getAllByRole('button', { name: /actions|işlem/i })[0])
     fireEvent.click(await screen.findByText(/^Delete$|^Sil$/i))
 
     await waitFor(() => expect(toastMock.error).toHaveBeenCalled())
@@ -110,7 +111,7 @@ describe('EscalationContacts', () => {
     renderEc()
     await screen.findByText('Ali V')
 
-    fireEvent.click(screen.getAllByRole('button', { name: /actions|işlem/i })[0])
+    pressMenuTrigger(screen.getAllByRole('button', { name: /actions|işlem/i })[0])
     fireEvent.click(await screen.findByText(/^Edit$|^Düzenle$/i))
     fireEvent.click(await screen.findByRole('button', { name: /^Save$|^Kaydet$/i }))
 
@@ -129,7 +130,7 @@ describe('EscalationContacts', () => {
     renderEc()
     await screen.findByText('Ali V')
 
-    fireEvent.click(screen.getAllByRole('button', { name: /actions|işlem/i })[0])
+    pressMenuTrigger(screen.getAllByRole('button', { name: /actions|işlem/i })[0])
     fireEvent.click(await screen.findByText(/^Edit$|^Düzenle$/i))
     const saveBtn = await screen.findByRole('button', { name: /^Save$|^Kaydet$/i })
     fireEvent.click(saveBtn)

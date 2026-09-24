@@ -1,3 +1,4 @@
+import * as React from "react"
 import { cva } from "class-variance-authority";
 import { cn } from "@/lib/utils"
 import { Slot } from "radix-ui"
@@ -24,22 +25,26 @@ const badgeVariants = cva(
   }
 )
 
-function Badge({
+// React 18 (proje sürümü): shadcn CLI 4.x bileşenleri React 19 kalıbıyla üretir (ref düz prop).
+// React 18 işlev bileşenine verilen ref'i DÜŞÜRÜR — Radix `asChild` tetikleyicileri konum için
+// ref'e muhtaç, ekranlar da odak için ref kullanıyor. forwardRef React 19'da da geçerli.
+const Badge = React.forwardRef(function Badge({
   className,
   variant = "default",
   asChild = false,
   ...props
-}) {
+}, ref) {
   const Comp = asChild ? Slot.Root : "span"
 
   return (
     <Comp
+      ref={ref}
       data-slot="badge"
       data-variant={variant}
       className={cn(badgeVariants({ variant }), className)}
       {...props}
     />
   )
-}
+})
 
 export { Badge, badgeVariants }

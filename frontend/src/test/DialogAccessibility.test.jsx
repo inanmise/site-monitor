@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 import { DialogProvider, useDialog } from '../components/ui/Dialog.jsx'
 
 /**
@@ -117,7 +117,7 @@ describe('Dialog erisilebilirlik', () => {
     fireEvent.click(trigger)
 
     const dlg = await screen.findByRole('dialog')
-    fireEvent.click(dlg.querySelector('.dlg-btn-cancel'))
+    fireEvent.click(within(dlg).getByRole('button', { name: 'İptal' }))
 
     await waitFor(() => expect(document.activeElement).toBe(trigger))
   })
@@ -141,17 +141,54 @@ describe('Dialog erisilebilirlik', () => {
     fireEvent.click(screen.getByText('Diyalogu ac'))
     const dlg = await screen.findByRole('dialog')
 
-    expect(dlg.querySelector('.dlg-icon-ring')).toHaveAttribute('aria-hidden', 'true')
+    // İkon kutusu shadcn AlertDialogMedia (rolsüz dekoratif yüzey → data-slot ile bulunur).
+    expect(dlg.querySelector('[data-slot="alert-dialog-media"]')).toHaveAttribute('aria-hidden', 'true')
   })
 
   it('NOT alani: onayin neden pasif oldugu alanin ACIKLAMASI olarak baglanir', async () => {
     renderHarness({ ...BASE, kind: 'note', noteHint: 'En az 3 kelime yazin' })
     fireEvent.click(screen.getByText('Diyalogu ac'))
-    await screen.findByRole('dialog')
+    const dlg = await screen.findByRole('dialog')
 
-    const ta = document.querySelector('.dlg-note-input')
+    const ta = within(dlg).getByRole('textbox')
     const hintId = ta.getAttribute('aria-describedby')
     expect(document.getElementById(hintId).textContent).toContain('En az 3 kelime')
     expect(ta).toHaveAttribute('aria-invalid', 'true')
+  })
+
+  it('Enter (odak onayda) ONAYLAR ve true doner', async () => {
+    const onResult = vi.fn()
+    renderHarness(BASE, onResult)
+    fireEvent.click(screen.getByText('Diyalogu ac'))
+    const dlg = await screen.findByRole('dialog')
+    await waitFor(() => expect(document.activeElement).toHaveTextContent('Sil'))
+
+    fireEvent.keyDown(document.activeElement, { key: 'Enter' })
+    await waitFor(() => expect(onResult).toHaveBeenCalledWith(true))
+    expect(dlg).not.toBeInTheDocument()
+  })
+
+  it('Enter IPTAL dugmesindeyken ONAYLAMAZ (vazgecmek isteyen kaydi sildirmez)', async () => {
+    const onResult = vi.fn()
+    renderHarness(BASE, onResult)
+    fireEvent.click(screen.getByText('Diyalogu ac'))
+    const dlg = await screen.findByRole('dialog')
+    const cancel = within(dlg).getByRole('button', { name: 'İptal' })
+    cancel.focus()
+
+    fireEvent.keyDown(cancel, { key: 'Enter' })
+    expect(onResult).not.toHaveBeenCalledWith(true)
+    expect(dlg).toBeInTheDocument()
+  })
+
+  it('ORTU tiklamasi Iptal sayilir (false doner)', async () => {
+    const onResult = vi.fn()
+    renderHarness(BASE, onResult)
+    fireEvent.click(screen.getByText('Diyalogu ac'))
+    await screen.findByRole('dialog')
+
+    fireEvent.click(document.querySelector('[data-slot="alert-dialog-overlay"]'))
+    await waitFor(() => expect(onResult).toHaveBeenCalledWith(false))
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })

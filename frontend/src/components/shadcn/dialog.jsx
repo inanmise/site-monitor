@@ -1,3 +1,4 @@
+import * as React from "react"
 import { cn } from "@/lib/utils"
 import { XIcon } from "lucide-react"
 import { Dialog as DialogPrimitive } from "radix-ui"
@@ -28,21 +29,33 @@ function DialogClose({
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />
 }
 
-function DialogOverlay({
+/*
+ * Proje uyarlamaları (shadcn kaynağı bilinçli olarak düzenlendi):
+ *  • Katman: `z-50` → `--z-modal` (App.css katman sözleşmesi). z-50 uygulamanın legacy katmanlarının
+ *    (sabit başlıklar, --z-modal 2000 scrim'leri) ALTINDA kalıyordu.
+ *  • Giriş/çıkış yalnız OPAKLIK (zoom-95 kaldırıldı): App.css'teki modal girişiyle aynı karar —
+ *    e2e yerleşim ölçümleri animasyon ortasındaki ölçek kaymasına düşmesin.
+ *  • prefers-reduced-motion: animasyon tamamen kapanır (ev standardı: her animasyon ailesi kendi
+ *    reduced-motion kuralını taşır). `!` şart: data-[state] varyantının özgüllüğü daha yüksek.
+ *  • DialogOverlay forwardRef (React 18): DialogPortal çocuğunu Radix Presence'a ref'le bağlar;
+ *    düz işlev bileşeni ref'i düşürür ve her açılışta konsola uyarı basar.
+ */
+const DialogOverlay = React.forwardRef(function DialogOverlay({
   className,
   ...props
-}) {
+}, ref) {
   return (
     <DialogPrimitive.Overlay
+      ref={ref}
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
+        "fixed inset-0 z-(--z-modal) bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none!",
         className
       )}
       {...props}
     />
   )
-}
+})
 
 function DialogContent({
   className,
@@ -56,7 +69,7 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-6 shadow-lg duration-200 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg",
+          "fixed top-[50%] left-[50%] z-(--z-modal) grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-6 shadow-lg duration-200 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none! sm:max-w-lg",
           className
         )}
         {...props}

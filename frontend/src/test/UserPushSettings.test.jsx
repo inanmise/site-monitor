@@ -244,7 +244,7 @@ describe('UserPushSettings', () => {
     fireEvent.click(within(teamChips).getByRole('button', { name: /Takım A/ }))
     await waitFor(() => expect(api.admin.userPush.getDeliveries).toHaveBeenLastCalledWith(expect.objectContaining({ teamId: 5 })))
 
-    fireEvent.click(within(dlg.querySelector('.modal-shell-footer')).getByRole('button', { name: /^(Kapat|Close)$/ }))
+    fireEvent.click(within(dlg.querySelector('[data-slot="dialog-footer"]')).getByRole('button', { name: /^(Kapat|Close)$/ }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
 
     fireEvent.click(cards[0].querySelector('.up-kpi-fail'))    // Son 24 saat → FAILED ile açılır

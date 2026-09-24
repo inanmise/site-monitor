@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, within } from './test-utils.jsx'
 import CertificatesTable from '../components/CertificatesTable.jsx'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 // Tüm Sertifikalar zenginleştirmesi (2026-09-13): tazeleme sinyali, facet'li durum menüsü, başlıktan sıralama,
 // URL derin bağlantı, satır seçimi + toplu işlem, satır menüsü, paylaşılan sertifika süzgeci, bayat rozeti,
@@ -129,8 +130,9 @@ describe('CertificatesTable — zenginleştirme (2026-09-13)', () => {
     const row = document.querySelector('tr[data-domain="a.example.com"]')
     fireEvent.keyDown(row, { key: 'Enter' })
     expect(onRowClick).toHaveBeenCalledWith('a.example.com')
-    fireEvent.click(within(row).getByLabelText(/Satır işlemleri|Row actions/))
-    fireEvent.click(screen.getByText(/Alarm geçmişi|Alert history/))
+    // Satır menüsü shadcn DropdownMenu (Radix): tetik pointerdown ile açılır, öğe menuitem rolündedir
+    pressMenuTrigger(within(row).getByLabelText(/Satır işlemleri|Row actions/))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Alarm geçmişi|Alert history/ }))
     expect(onRowClick).toHaveBeenLastCalledWith('a.example.com', 'alerts')
   })
 

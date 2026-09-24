@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, fillGroupAndTags } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within, fillGroupAndTags } from './test-utils.jsx'
 import PageMonitorPage from '../components/PageMonitorPage.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -283,10 +283,10 @@ describe('PageMonitorPage', () => {
     fireEvent.click(btn)
 
     // Prompt açıldı, giriş değeri = kaynak URL'i (düzenlenebilir)
-    const input = document.querySelector('.dlg-input')
-    expect(input).not.toBeNull()
+    const prompt = await screen.findByRole('dialog', { name: /Add to exclude patterns|Hariç tutulanlara ekle/ })
+    const input = within(prompt).getByRole('textbox')
     expect(input.value).toBe('https://voting.institutionalinvestor.com/welcome')
-    fireEvent.click(document.querySelector('.dlg-btn-confirm'))
+    fireEvent.click(within(prompt).getByRole('button', { name: /^(Exclude|Hariç tut)$/ }))
 
     await waitFor(() => expect(api.monitoring.updatePageMonitor).toHaveBeenCalledWith(1, {
       excludePatterns: '/ads/\nhttps://voting.institutionalinvestor.com/welcome',

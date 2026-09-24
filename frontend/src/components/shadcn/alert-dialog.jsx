@@ -1,3 +1,4 @@
+import * as React from "react"
 import { cn } from "@/lib/utils"
 import { AlertDialog as AlertDialogPrimitive } from "radix-ui"
 
@@ -25,35 +26,48 @@ function AlertDialogPortal({
   )
 }
 
-function AlertDialogOverlay({
+/*
+ * Proje uyarlamaları (shadcn kaynağı bilinçli olarak düzenlendi):
+ *  • Katman: `z-50` → `--z-dialog` (App.css katman sözleşmesi: onay penceresi her modalın
+ *    üstünde, menü ve bildirimlerin altında).
+ *  • Giriş/çıkış yalnız OPAKLIK (zoom-95 kaldırıldı) + prefers-reduced-motion'da animasyon yok —
+ *    Dialog ile aynı gerekçe (bkz. dialog.jsx).
+ *  • `overlayProps`: örtüye olay bağlamak için (ör. örtü tıklaması = İptal — ui/Dialog.jsx).
+ *    Radix AlertDialog dış etkileşimi her koşulda yutar; örtü tıklamasını çağıran bilinçli verir.
+ *  • AlertDialogOverlay forwardRef (React 18): Portal çocuğunu Radix Presence'a ref'le bağlar;
+ *    düz işlev bileşeni ref'i düşürür ve her açılışta konsola uyarı basar.
+ */
+const AlertDialogOverlay = React.forwardRef(function AlertDialogOverlay({
   className,
   ...props
-}) {
+}, ref) {
   return (
     <AlertDialogPrimitive.Overlay
+      ref={ref}
       data-slot="alert-dialog-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
+        "fixed inset-0 z-(--z-dialog) bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none!",
         className
       )}
       {...props}
     />
   )
-}
+})
 
 function AlertDialogContent({
   className,
   size = "default",
+  overlayProps,
   ...props
 }) {
   return (
     <AlertDialogPortal>
-      <AlertDialogOverlay />
+      <AlertDialogOverlay {...overlayProps} />
       <AlertDialogPrimitive.Content
         data-slot="alert-dialog-content"
         data-size={size}
         className={cn(
-          "group/alert-dialog-content fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-6 shadow-lg duration-200 data-[size=sm]:max-w-xs data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[size=default]:sm:max-w-lg",
+          "group/alert-dialog-content fixed top-[50%] left-[50%] z-(--z-dialog) grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-6 shadow-lg duration-200 data-[size=sm]:max-w-xs data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none! data-[size=default]:sm:max-w-lg",
           className
         )}
         {...props}

@@ -1,13 +1,18 @@
+import * as React from "react"
 import { cn } from "@/lib/utils"
 
-function Input({
+// React 18 (proje sürümü): shadcn CLI 4.x bileşenleri React 19 kalıbıyla üretir (ref düz prop).
+// React 18 işlev bileşenine verilen ref'i DÜŞÜRÜR — Radix `asChild` tetikleyicileri konum için
+// ref'e muhtaç, ekranlar da odak için ref kullanıyor. forwardRef React 19'da da geçerli.
+const Input = React.forwardRef(function Input({
   className,
   type,
   ...props
-}) {
+}, ref) {
   return (
     <input
       type={type}
+      ref={ref}
       data-slot="input"
       className={cn(
         "h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-xs transition-[color,box-shadow] outline-none selection:bg-primary selection:text-primary-foreground file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 md:text-sm dark:bg-input/30",
@@ -18,6 +23,6 @@ function Input({
       {...props}
     />
   )
-}
+})
 
 export { Input }

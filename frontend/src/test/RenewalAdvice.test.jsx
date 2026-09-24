@@ -130,7 +130,7 @@ describe('RenewalAdvice — yeniden tasarım', () => {
     render(<RenewalAdvice />)
     await screen.findByText('d01.example.com')
     expect(document.querySelectorAll('.renewal-card')).toHaveLength(25)
-    expect(document.querySelector('.pg-nav')).not.toBeNull()
+    expect(screen.getByRole('navigation', { name: /Sayfalama|Pagination/ })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /^Tablo$|^Table$/ }))
     await waitFor(() => expect(document.querySelectorAll('.rn-table tbody tr')).toHaveLength(25))
     const row3 = screen.getByText('d03.example.com').closest('tr')

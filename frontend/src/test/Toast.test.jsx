@@ -1,6 +1,30 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
+import { toast as sonnerToast } from 'sonner'
 import { ToastProvider, useToast } from '../components/ui/Toast.jsx'
+import { ThemeProvider } from '../i18n/theme.jsx'
+import { TR, EN } from '../i18n/index.jsx'
+
+/*
+ * Görünüm shadcn Sonner. Seçiciler legacy sınıflar yerine Sonner'ın KENDİ öznitelikleri:
+ * kutu `[data-sonner-toast]`, tür `data-type`, görünürlük `data-visible`; kapat düğmesi
+ * i18n'den gelen erişilebilir adıyla.
+ *
+ * Sonner zamanlaması (beklemeler bunun için, iddialar değişmedi):
+ *  - yeni/güncellenen kutu Toaster'a bir setTimeout(0) sonra düşer → `flush()`;
+ *  - kapanan kutu iki animasyon karesi + 200 ms çıkış animasyonundan sonra DOM'dan çıkar →
+ *    süre ilerletilirken React'in her adımı işlemesi gerekir → `advance()` adım adım act'ler
+ *    (tek büyük act'te Sonner'ın zincirli güncellemeleri sona yığılır, tarayıcıdaki gibi akmaz).
+ */
+const EXIT_MS = 400          // 2 kare + 200 ms çıkış animasyonu, pay ile — otomatik kapanmanın (3.5 sn) çok altında
+const flush = () => act(() => { vi.advanceTimersByTime(0) })
+function advance(ms, step = 50) {
+  for (let done = 0; done < ms; done += step) {
+    act(() => { vi.advanceTimersByTime(Math.min(step, ms - done)) })
+  }
+}
+const boxes = () => document.querySelectorAll('[data-sonner-toast]')
+const CLOSE_NAME = new RegExp(`^(${EN['toast.close']}|${TR['toast.close']})$`)
 
 function Trigger({ kind = 'success', message = 'Hello', duration, label = 'Show' }) {
   const toast = useToast()
@@ -32,8 +56,9 @@ describe('Toast', () => {
       </ToastProvider>
     )
     fireEvent.click(screen.getByText('Show'))
+    flush()
     expect(screen.getByText('Saved')).toBeDefined()
-    expect(document.querySelector('.toast-success')).toBeTruthy()
+    expect(document.querySelector('[data-sonner-toast][data-type="success"]')).toBeTruthy()
   })
 
   it('auto-dismisses success toast after 3.5 seconds', () => {
@@ -43,9 +68,11 @@ describe('Toast', () => {
       </ToastProvider>
     )
     fireEvent.click(screen.getByText('Show'))
-    expect(screen.queryByText('Bye')).toBeDefined()
+    flush()
+    advance(3400)
+    expect(screen.getByText('Bye')).toBeInTheDocument()   // 3.4 sn: hâlâ ekranda
 
-    act(() => { vi.advanceTimersByTime(3600) })
+    advance(100 + EXIT_MS)                                 // 3.5 sn'de kapanır (+ çıkış animasyonu)
     expect(screen.queryByText('Bye')).toBeNull()
   })
 
@@ -56,40 +83,51 @@ describe('Toast', () => {
       </ToastProvider>
     )
     fireEvent.click(screen.getByText('Show'))
-    expect(screen.queryByText('Boom')).toBeDefined()
+    flush()
 
-    act(() => { vi.advanceTimersByTime(3600) })
+    advance(3600)
     // Still visible at 3.6s (error default 5s)
-    expect(screen.queryByText('Boom')).toBeDefined()
+    expect(screen.getByText('Boom')).toBeInTheDocument()
 
-    act(() => { vi.advanceTimersByTime(2000) })
+    advance(2000)
     expect(screen.queryByText('Boom')).toBeNull()
   })
 
-  it('dismisses immediately on toast body click', () => {
+  it('dismisses immediately on toast body click (no waiting for auto-close)', () => {
     render(
       <ToastProvider>
         <Trigger message="Click me" />
       </ToastProvider>
     )
     fireEvent.click(screen.getByText('Show'))
-    const toast = document.querySelector('.toast')
+    flush()
+    const toast = boxes()[0]
     expect(toast).toBeTruthy()
     fireEvent.click(toast)
+    advance(EXIT_MS)                                       // yalnız çıkış animasyonu
     expect(screen.queryByText('Click me')).toBeNull()
   })
 
-  it('dismisses on close button click', () => {
+  it('dismisses on close button click (accessible name from i18n)', () => {
     render(
       <ToastProvider>
         <Trigger message="Closable" />
       </ToastProvider>
     )
     fireEvent.click(screen.getByText('Show'))
-    const closeBtn = document.querySelector('.toast-close')
-    expect(closeBtn).toBeTruthy()
+    flush()
+    const closeBtn = screen.getByRole('button', { name: CLOSE_NAME })
     fireEvent.click(closeBtn)
+    advance(EXIT_MS)
     expect(screen.queryByText('Closable')).toBeNull()
+
+    // X'i Sonner kendisi kapatır; defter de senkronlanmalı: aynı mesaj yeniden gelirse
+    // kapanmış kutuya "×2" eklenmez, yeni ve sayaçsız bir kutu açılır.
+    fireEvent.click(screen.getByText('Show'))
+    flush()
+    expect(boxes().length).toBe(1)
+    expect(screen.getByText('Closable')).toBeInTheDocument()
+    expect(screen.queryByText('×2')).toBeNull()
   })
 
   // Yığılma sözleşmesi: FARKLI mesajlar yığılır, AYNI mesaj sayılır.
@@ -108,9 +146,10 @@ describe('Toast', () => {
     fireEvent.click(btn)
     fireEvent.click(btn)
     fireEvent.click(btn)
+    flush()
 
-    expect(document.querySelectorAll('.toast').length).toBe(1)
-    expect(document.querySelector('.toast-count').textContent).toBe('×3')
+    expect(boxes().length).toBe(1)
+    expect(screen.getByText('×3')).toBeInTheDocument()
   })
 
   it('FARKLI mesajlar yığılır ama görünür yığın TAVANLIDIR (en eski düşer)', () => {
@@ -124,10 +163,15 @@ describe('Toast', () => {
       </ToastProvider>
     )
     for (const l of ['A', 'B', 'C', 'D']) fireEvent.click(screen.getByText(l))
-    expect(document.querySelectorAll('.toast').length).toBe(4)
+    flush()
+    expect(boxes().length).toBe(4)
 
     fireEvent.click(screen.getByText('E'))
-    expect(document.querySelectorAll('.toast').length).toBe(4)   // tavan
+    flush()
+    // Tavan ANINDA geçerli: düşen kutu çıkış animasyonundayken bile görünür olan 4.
+    expect(document.querySelectorAll('[data-sonner-toast][data-visible="true"]').length).toBe(4)
+    advance(EXIT_MS)
+    expect(boxes().length).toBe(4)                               // tavan
     expect(screen.queryByText('Bir')).toBeNull()                 // en eski düştü
     expect(screen.getByText('Bes')).toBeTruthy()
   })
@@ -140,12 +184,13 @@ describe('Toast', () => {
     )
     const btn = screen.getByText('Show')
     fireEvent.click(btn)
-    act(() => { vi.advanceTimersByTime(4000) })
+    flush()
+    advance(4000)
     fireEvent.click(btn)                    // 2. tekrar → sayaç ×2, süre sıfırlanır
-    act(() => { vi.advanceTimersByTime(4000) })
+    advance(4000)
     expect(screen.getByText('Tekrar')).toBeTruthy()
 
-    act(() => { vi.advanceTimersByTime(1500) })
+    advance(1500)
     expect(screen.queryByText('Tekrar')).toBeNull()
   })
 
@@ -161,35 +206,46 @@ describe('Toast', () => {
   })
 
   it('REGRESYON: unmount bekleyen otomatik-kapanma zamanlayıcısını İPTAL eder', () => {
-    // 2026-08-14: bu zamanlayıcı temizlenmediği için sağlayıcı gittikten sonra `setToasts`
+    // 2026-08-14: bu zamanlayıcı temizlenmediği için sağlayıcı gittikten sonra güncelleme
     // çalışıyordu. Tarayıcıda sessiz bir uyarı; jsdom kapandıktan SONRA ise React'in
     // `getCurrentEventPriority`'si `window`'a dokunup yakalanmamış `ReferenceError` fırlatıyor
     // ve vitest tüm koşuyu düşürüyor (673 test geçti, CI yine kırmızı).
     const clearSpy = vi.spyOn(globalThis, 'clearTimeout')
+    const dismissSpy = vi.spyOn(sonnerToast, 'dismiss')
     const { unmount } = render(<ToastProvider><Trigger /></ToastProvider>)
     fireEvent.click(screen.getByText('Show'))
+    flush()
     expect(screen.getByText('Hello')).toBeInTheDocument()
 
     clearSpy.mockClear()
     unmount()
     expect(clearSpy, 'unmount bekleyen zamanlayıcıyı iptal etmedi').toHaveBeenCalled()
 
-    // Zamanlayıcı gerçekten ölmüş olmalı: süre ilerletilince hiçbir güncelleme tetiklenmemeli.
-    expect(() => act(() => { vi.advanceTimersByTime(10_000) })).not.toThrow()
+    // Zamanlayıcı gerçekten ölmüş olmalı: süre ilerletilince hiçbir kapatma tetiklenmemeli
+    // (unmount'un kendi global-depo temizliği dışında).
+    dismissSpy.mockClear()
+    expect(() => advance(10_000, 500)).not.toThrow()
+    expect(dismissSpy, 'unmount sonrası sarkan zamanlayıcı kapatma tetikledi').not.toHaveBeenCalled()
     clearSpy.mockRestore()
+    dismissSpy.mockRestore()
   })
 
   it('elle kapatma da zamanlayıcıyı iptal eder (çift kaldırma yok)', () => {
     const clearSpy = vi.spyOn(globalThis, 'clearTimeout')
+    const dismissSpy = vi.spyOn(sonnerToast, 'dismiss')
     render(<ToastProvider><Trigger /></ToastProvider>)
     fireEvent.click(screen.getByText('Show'))
+    flush()
     clearSpy.mockClear()
 
     fireEvent.click(screen.getByText('Hello'))          // toast'a tıklamak kapatır
     expect(clearSpy).toHaveBeenCalled()
+    advance(EXIT_MS)
     expect(screen.queryByText('Hello')).toBeNull()
-    expect(() => act(() => { vi.advanceTimersByTime(10_000) })).not.toThrow()
+    expect(() => advance(10_000, 500)).not.toThrow()
+    expect(dismissSpy, 'kutu iki kez kapatıldı').toHaveBeenCalledTimes(1)
     clearSpy.mockRestore()
+    dismissSpy.mockRestore()
   })
 
   // ── Aynı tick / aynı yığın: gerçek arıza tam burada oluyordu ───────────────
@@ -206,9 +262,10 @@ describe('Toast', () => {
     }
     render(<ToastProvider><Double /></ToastProvider>)
     fireEvent.click(screen.getByText('Ikisi'))
-    expect(document.querySelectorAll('.toast').length).toBe(2)
+    flush()
+    expect(boxes().length).toBe(2)
 
-    act(() => { vi.advanceTimersByTime(6000) })
+    advance(6000)
     expect(screen.queryByText('Bir'), 'ilk kutu ekranda kaldı').toBeNull()
     expect(screen.queryByText('Iki'), 'ikinci kutu zamanlayıcısız kaldı — sonsuza kadar ekranda').toBeNull()
   })
@@ -220,8 +277,9 @@ describe('Toast', () => {
     }
     render(<ToastProvider><Double /></ToastProvider>)
     fireEvent.click(screen.getByText('Ikisi'))
-    expect(document.querySelectorAll('.toast').length).toBe(1)
-    expect(document.querySelector('.toast-count').textContent).toBe('×2')
+    flush()
+    expect(boxes().length).toBe(1)
+    expect(screen.getByText('×2')).toBeInTheDocument()
   })
 
   it('tavan aşıldığında DÜŞEN kutunun zamanlayıcısı da iptal edilir (sarkan zamanlayıcı yok)', () => {
@@ -250,9 +308,33 @@ describe('Toast', () => {
       seen.add(toast)
       return <button onClick={() => toast.success('x')}>Show</button>
     }
-    render(<ToastProvider><Probe /></ToastProvider>)
-    fireEvent.click(screen.getByText('Show'))         // durum değişti → yeniden render
+    const { rerender } = render(<ToastProvider><Probe /></ToastProvider>)
+    fireEvent.click(screen.getByText('Show'))
+    flush()
     expect(screen.getByText('x')).toBeTruthy()
+    rerender(<ToastProvider><Probe /></ToastProvider>)   // sağlayıcı yeniden çizilir
     expect(seen.size, 'toast API kimliği değişti').toBe(1)
+  })
+
+  it('Sonner teması uygulamanın temasını izler (beklenmedik değer → açık); katman --z-toast', () => {
+    // ThemeProvider temayı localStorage'dan DOĞRULAMADAN okur; Sonner bilmediği bir değerde
+    // richColors tonlarını hiç tanımlamaz (kutu şeffaf çizilir).
+    // Katman: Sonner'ın kendi z-index'i (999999999) oturum-uyarısı şeridini de örterdi; bildirim
+    // App.css ölçeğindeki yerinde (modal/dialog üstü, kritik şerit altı) durmalı.
+    const cases = [['dark', 'dark'], ['light', 'light'], ['sepia', 'light']]
+    for (const [stored, expected] of cases) {
+      localStorage.setItem('site-monitor-theme', stored)
+      const { unmount } = render(<ThemeProvider><ToastProvider><Trigger /></ToastProvider></ThemeProvider>)
+      fireEvent.click(screen.getByText('Show'))
+      flush()
+      const list = document.querySelector('[data-sonner-toaster]')
+      expect(list.getAttribute('data-sonner-theme'), `kayıtlı tema "${stored}"`).toBe(expected)
+      expect(list.style.zIndex).toBe('var(--z-toast)')
+      // Radix modal <body>'yi pointer-events:none yapar; liste bunu miras alırsa X tıklanamaz.
+      expect(list.style.pointerEvents).toBe('auto')
+      unmount()
+    }
+    localStorage.removeItem('site-monitor-theme')
+    document.documentElement.removeAttribute('data-theme')
   })
 })

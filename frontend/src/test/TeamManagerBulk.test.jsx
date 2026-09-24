@@ -121,6 +121,6 @@ describe('TeamManager — süzgeç + toplu işlem (2026-09-20)', () => {
     expect(screen.queryByLabelText(/Payments takımını seç|Select team Payments/)).toBeNull()
     expect(screen.getByLabelText(/Ledger takımını seç|Select team Ledger/)).toBeInTheDocument()
     expect(document.querySelector('.audit-pagination')).toBeNull()
-    await waitFor(() => expect(document.querySelector('.pgn-bar')).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('group', { name: /Sayfa başına|Per page/ })).toBeInTheDocument())
   })
 })

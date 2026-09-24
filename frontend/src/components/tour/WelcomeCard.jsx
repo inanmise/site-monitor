@@ -11,7 +11,7 @@ export default function WelcomeCard({ kind = 'welcome', isMobile = false, onStar
   const whatsNew = kind === 'whatsnew'
   return (
     <ModalShell open onClose={onLater} size="sm" icon={whatsNew ? Sparkles : Compass}
-      title={t(whatsNew ? 'tour.newTitle' : 'tour.welcomeTitle')} className="tour-welcome"
+      title={t(whatsNew ? 'tour.newTitle' : 'tour.welcomeTitle')}
       footer={(
         <div className="tour-welcome-actions">
           <button type="button" className="tour-link tour-link--muted" onClick={onNever}>{t('tour.never')}</button>

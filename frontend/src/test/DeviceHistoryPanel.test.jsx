@@ -101,8 +101,7 @@ describe('DeviceHistoryPanel', () => {
     // Onaylanmadan API CAGRILMAZ.
     expect(api.me.revokeRememberedDevice).not.toHaveBeenCalled()
 
-    await waitFor(() => expect(document.querySelector('.dlg-box')).not.toBeNull())
-    const dialog = document.querySelector('.dlg-box')
+    const dialog = await screen.findByRole('dialog')
     fireEvent.click(within(dialog).getByText(/^Sign out$|^İptal et$/))
 
     await waitFor(() => expect(api.me.revokeRememberedDevice).toHaveBeenCalledWith(5))
@@ -165,8 +164,7 @@ describe('DeviceHistoryPanel', () => {
     fireEvent.click(await screen.findByText(/Sign out all remembered devices|Tüm hatırlanan girişleri iptal et/i))
     expect(api.me.logoutOtherDevices).not.toHaveBeenCalled()
 
-    await waitFor(() => expect(document.querySelector('.dlg-box')).not.toBeNull())
-    const dialog = document.querySelector('.dlg-box')
+    const dialog = await screen.findByRole('dialog')
     fireEvent.click(within(dialog).getByText(/^Sign out$|^İptal et$/))
 
     await waitFor(() => expect(api.me.logoutOtherDevices).toHaveBeenCalled())

@@ -169,7 +169,8 @@ describe('UserActivityPanel', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /Detay|Details/ })[0])
     const dlg = await screen.findByRole('dialog')
     expect(within(dlg).getByText('E-1')).toBeInTheDocument()
-    fireEvent.click(within(dlg).getByRole('button', { name: /Kapat|Close|Dismiss/i }))
+    // Altlıktaki kapat düğmesi: başlıktaki X de artık adlı (i18n "Kapat/Close") — altlığa daraltılır.
+    fireEvent.click(within(dlg.querySelector('[data-slot="dialog-footer"]')).getByRole('button', { name: /Kapat|Close|Dismiss/i }))
     fireEvent.click(screen.getByRole('button', { name: /Dışa aktar|Export/ }))
     fireEvent.click(screen.getByRole('button', { name: /Oturumlar \(CSV\)|Sessions \(CSV\)/ }))
     fireEvent.click(screen.getByRole('button', { name: /Bağlantıyı kopyala|Copy link/ }))

@@ -56,11 +56,13 @@ describe('CSS hijyeni', () => {
     }
   })
 
-  it('.pg-bar yalnız Progress ailesine ait — PaginationBar .pgn-bar kullanır', () => {
+  it('.pg-bar yalnız Progress ailesine ait — PaginationBar onu kullanmaz (shadcn Pagination)', () => {
     // İki bileşen aynı seçiciyi paylaşıyordu; App.css'te sonra gelen pagination kuralı
     // Progress'inkini eziyor ve her <ProgressBar>'a flex + margin-top bindiriyordu.
+    // PaginationBar artık shadcn Pagination + Tailwind ile çizilir; Progress sınıfına dönmemeli.
     const paginationSrc = FILES.find(([f]) => f.endsWith(path.join('ui', 'PaginationBar.jsx')))[1]
-    expect(paginationSrc).toContain('pgn-bar')
+    expect(paginationSrc).toContain('@/components/shadcn/pagination')
+    expect(paginationSrc).not.toMatch(/\bpg-bar\b/)
     expect(paginationSrc).not.toMatch(/className=\{`pg-bar/)
     // App.css'te tek bir top-level `.pg-bar {` kuralı kalmalı
     expect(CSS.match(/^\.pg-bar \{/gm) ?? []).toHaveLength(1)
@@ -107,17 +109,48 @@ describe('CSS hijyeni', () => {
     for (const tok of ['--z-modal', '--z-announce', '--z-dialog', '--z-toast', '--z-critical']) {
       expect(CSS, `${tok} tanımlı değil`).toContain(`${tok}:`)
     }
+    // Kullanım CSS'te YA DA bir bileşenin satır içi stilinde olabilir: kendi stil sayfasını
+    // enjekte eden kütüphaneler (shadcn Sonner — Toaster'ın z-index'i) katmana JSX `style`'ından
+    // bağlanır; App.css'te o token'ı okuyan bir kural kalmaz. Yorumdaki anma kullanım sayılmaz.
     for (const tok of ['--z-announce', '--z-dialog', '--z-toast', '--z-critical']) {
-      expect(CSS, `${tok} hiç kullanılmıyor`).toContain(`var(${tok})`)
+      const used = CSS.includes(`var(${tok})`) || FILES.some(([, src]) => src.includes(`var(${tok})`))
+      expect(used, `${tok} hiç kullanılmıyor`).toBe(true)
     }
   })
 
   it('animasyonlu her aile prefers-reduced-motion kapsamında', () => {
     const blocks = CSS.match(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\n\}/g) ?? []
     const all = blocks.join('\n')
-    for (const sel of ['.pg-spinner', '.toast', '.dlg-box']) {
+    for (const sel of ['.pg-spinner']) {
       expect(all, `${sel} reduced-motion bloğunda yok`).toContain(sel)
     }
+  })
+
+  it('pencere (shadcn Dialog/AlertDialog + ModalShell scrim) animasyonu da prefers-reduced-motion kapsamında', () => {
+    // ui/Dialog.jsx ve ui/ModalShell.jsx artık shadcn AlertDialog/Dialog: giriş animasyonu App.css'teki
+    // `.dlg-box` ailesinde değil, bileşen sınıflarında (tw-animate-css `animate-in`). Kapsam da ORADA
+    // olmalı: `animate-in` taşıyan her sınıf dizesi `motion-reduce:animate-none` da taşır.
+    for (const rel of [['shadcn', 'dialog.jsx'], ['shadcn', 'alert-dialog.jsx'], ['ui', 'ModalShell.jsx']]) {
+      const src = FILES.find(([f]) => f.endsWith(path.join('components', ...rel)))[1]
+      const animated = [...src.matchAll(/"[^"\n]*\banimate-in\b[^"\n]*"/g)].map(m => m[0])
+      expect(animated.length, `${rel.join('/')}: animate-in bulunamadı (tarama vakumda)`).toBeGreaterThan(0)
+      for (const cls of animated) {
+        expect(cls, `${rel.join('/')}: reduced-motion muafiyeti yok`).toContain('motion-reduce:animate-none')
+      }
+    }
+  })
+
+  it('bildirim (toast) animasyonu da prefers-reduced-motion kapsamında — Sonner\'ın enjekte ettiği stil', async () => {
+    // Toast artık shadcn Sonner: giriş/çıkış animasyonu App.css'te değil, `sonner` paketinin modül
+    // yüklenirken <head>'e enjekte ettiği stilde. Kapsam da ORADA olmalı — bir paket güncellemesi
+    // kuralı düşürürse bu kırmızı olur (çalışma anındaki stil okunur, dosya kopyası değil).
+    await import('sonner')
+    const injected = [...document.head.querySelectorAll('style')].map(s => s.textContent).join('\n')
+    const rules = [...injected.matchAll(/@media \(prefers-reduced-motion(?::\s*reduce)?\)\s*\{([^{}]*)\{([^}]*)\}/g)]
+    const toastRule = rules.find(([, sel]) => sel.split(',').map(s => s.trim()).includes('[data-sonner-toast]'))
+    expect(toastRule, 'Sonner stilinde [data-sonner-toast] için reduced-motion kuralı yok').toBeTruthy()
+    expect(toastRule[2]).toMatch(/animation:\s*none/)
+    expect(toastRule[2]).toMatch(/transition:\s*none/)
   })
 
   it('yeni durum yüzeylerinin her tonu koyu tema karşılığına sahip', () => {
