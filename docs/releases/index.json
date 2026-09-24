@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-24T01:49:50Z",
+  "generatedAt": "2026-09-24T06:08:50Z",
   "repo": "inanmise/site-monitor",
-  "count": 682,
+  "count": 683,
   "releases": [
+    {
+      "version": "20.85.0",
+      "tag": "v20.85.0",
+      "releasedAt": "2026-09-24T06:08:44Z",
+      "commit": "d7a570bf2163d5f5a67c58c2d4aad9a7ee209938",
+      "prevVersion": "20.84.2",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "proxy",
+          "breaking": false,
+          "sha": "d7a570bf",
+          "subject": "vekil tünel yanıtı bayt bayt okunur — sunucunun ilk baytları (SMTP/SSH bandı) kaybolmaz"
+        },
+        {
+          "type": "feat",
+          "scope": "port",
+          "breaking": false,
+          "sha": "a2a3e9b0",
+          "subject": "Port İzleme kurumsal vekil üzerinden (CONNECT tüneli) + izinli portlar ve UDP uyarısı"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.84.2",
       "tag": "v20.84.2",
