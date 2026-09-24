@@ -13615,9 +13615,11 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .today--clear .today-summary { color: var(--success); font-weight: 600; }
 .today-chevron { transition: transform .15s; }
 .today-chevron.is-open { transform: rotate(180deg); }
-/* 2026-09-23: 240px'te satıra 5 kart sığıyor, başlıklar iki satıra kırılıyordu → 300px (dar kapta 100%'e iner);
-   start: boş kalan kart satırın en uzun kartı kadar uzamasın. */
-.today-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); align-items: start; gap: 10px; padding: 0 12px 12px; }
+/* 2026-09-23: 240px'te satıra 5 kart sığıyor, başlıklar iki satıra kırılıyordu → 300px (dar kapta 100%'e iner).
+   2026-09-24: satırdaki kartlar EŞİT yükseklikte (varsayılan stretch) — "Tümünü gör" (.today-card-go, margin-top:auto)
+   hepsinde aynı hizada biter. Bir gün önceki align-items:start boş kartlar uzamasın diyeydi; sıfır kartlar artık hiç
+   çizilmiyor ("Sorun yok" şeridi), o gerekçe kalmadı ve farklı boyda biten kartlar dağınık görünüyordu. */
+.today-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 10px; padding: 0 12px 12px; }
 /* Sayısı 0 olan kartlar tam kart yerine tek satır (2026-09-23). */
 .today-ok { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 0 14px 12px; font-size: .84em; color: var(--text-light); }
 .today-ok > svg { color: var(--success); flex-shrink: 0; }
@@ -13658,10 +13660,13 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
   .today-grid { grid-template-columns: minmax(0, 1fr); }
 }
 .today-link:hover { text-decoration: underline; }
-.today-days { font-size: .9em; color: var(--text-light); white-space: nowrap; }
+/* nowrap metin kart genişliğini AŞAMAZ (2026-09-24, kullanıcı ekran görüntüsü): teslim edilemeyen bildirimin
+   uzun hata metni ("…HttpConnectTimeoutException: HTTP connect timed out") tek satırda kartın ~200px dışına
+   taşıp yandaki kartın üstüne biniyordu. Tek satırda kalır, sığmayan kısım "…" ile kesilir; tam metin title'da. */
+.today-days { font-size: .9em; color: var(--text-light); white-space: nowrap; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .today-days.is-warn { color: #d97706; font-weight: 600; }
 .today-days.is-bad { color: var(--danger); font-weight: 600; }
-.today-muted { font-size: .85em; color: var(--text-light); }
+.today-muted { font-size: .85em; color: var(--text-light); min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .today-level { font-size: .7em; font-weight: 700; padding: 1px 6px; border-radius: 6px; background: var(--bg-hover); }
 .today-level--critical { background: #fee2e2; color: #991b1b; }
 .today-level--high { background: #ffedd5; color: #9a3412; }
@@ -13674,7 +13679,7 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .today-type--maint { background: #dbeafe; color: #1e40af; }
 .today-type--soon { background: #e0e7ff; color: #3730a3; }
 /* Sağlık bulgusu rozeti (Zayıf imza / Zincir kırık …) — kritik anahtarlar kırmızı */
-.today-finding { font-size: .74em; font-weight: 600; padding: 1px 7px; border-radius: 6px; background: #fef3c7; color: #92400e; white-space: nowrap; }
+.today-finding { font-size: .74em; font-weight: 600; padding: 1px 7px; border-radius: 6px; background: #fef3c7; color: #92400e; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .today-finding.is-bad { background: #fee2e2; color: #991b1b; }
 [data-theme="dark"] .today-type--email { background: #1e3a8a; color: #bfdbfe; }
 [data-theme="dark"] .today-type--webhook { background: #2e1065; color: #ddd6fe; }
@@ -14127,7 +14132,10 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .fc-day-search { width: 100%; margin-bottom: 8px; }
 /* "Sizin için — bugün" Tümünü gör pop-up'ı (2026-09-18) */
 .today-modal-list { display: flex; flex-direction: column; gap: 6px; }
-.today-modal-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; }
+.today-modal-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; min-width: 0; }
+/* "Tümünü gör" ayrıntı görünümüdür: kartta "…" ile kesilen uzun metin (bildirim hatası) burada TAMAMI okunur,
+   pencereyi kaydırmadan alt satıra sarar (2026-09-24, kullanıcı: pop-up'ta da kayma vardı). */
+.today-modal-row .today-days { white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
 .fc-hm-cell-v2.fc-hm-off { background-image: repeating-linear-gradient(135deg, transparent 0 4px, rgba(148,163,184,.18) 4px 6px); }
 .fc-hm-cell-v2:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 .fc-hm-cell-v2.fc-hm-planned { outline: 2px dashed #7c3aed; outline-offset: -3px; }
