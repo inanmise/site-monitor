@@ -104,6 +104,15 @@ public class PortMonitor implements MonitorAlertPrefs, MonitorSchedule {
     @ColumnDefault("'auto'")   // ddl-auto ADD COLUMN'a DEFAULT ekler → mevcut satırlı tabloda "not null" boot hatası olmaz
     private String ipVersion = "auto";
 
+    /**
+     * Kurumsal vekil tercihi (2026-09-24): {@code AUTO} | {@code ON} | {@code OFF}. HTTP'den FARKLI olarak null =
+     * <b>OFF</b> (Sayfa Hızı kuralı, {@code ProxyPolicyService.normalizeModeDefaultOff}): port kontrolleri bugüne kadar
+     * hep pod'dan doğrudan gidiyordu — mevcut kayıtların yolu değişmesin. Vekil yolu {@code CONNECT host:port} tüneli;
+     * UDP HTTP vekilinden geçemez → her zaman doğrudan. Nullable: dolu tabloya ddl-auto sorunsuz ekler.
+     */
+    @Column(name = "use_proxy", length = 10)
+    private String useProxy;
+
     @Column(name = "created_at")
     private String createdAt;
 

@@ -14,6 +14,7 @@ import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorSpark from './ui/MonitorSpark.jsx'
 import PortEndpoint from './ui/PortEndpoint.jsx'
+import MonitorProxyField, { ProxyViaBadge } from './ui/MonitorProxyField.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
@@ -72,7 +73,7 @@ const intervalIdx = (secs) => {
 
 const REFRESH_INTERVAL = 60
 const PORT_TYPES = ['TCP', 'TLS', 'HTTP', 'BANNER', 'UDP']
-const emptyForm = { name: '', host: '', port: '', protocol: 'TCP', expect: '', sendData: '', teamId: '', groupName: '', notificationGroupId: '',
+const emptyForm = { name: '', host: '', port: '', protocol: 'TCP', useProxy: 'OFF', expect: '', sendData: '', teamId: '', groupName: '', notificationGroupId: '',
   tags: '', notifyEmail: true, alertLevel: 'WARNING', notifyWebhook: true, ipVersion: 'auto', slowResponseEnabled: false, slowThresholdMs: 3000,
   intervalSeconds: 300, timeoutMs: 5000,
   confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true }
@@ -98,6 +99,15 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
   const toggleBulk = (id) => setBulkSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
 
   const sparks = useSparklines('port')   // kart mini trendi (2026-09-12)
+  // Vekil bilgisi (2026-09-24): tanımlı mı + CONNECT izinli portlar — form notları ve uyarılar buna göre.
+  const [proxyInfo, setProxyInfo] = useState({ configured: null, connect_ports: [443, 8443] })
+  useEffect(() => {
+    let alive = true
+    Promise.resolve(api.monitoring.getPortProxyInfo?.())
+      .then((r) => { if (alive && r?.success && r.data && !Array.isArray(r.data)) setProxyInfo(r.data) })
+      .catch(() => { /* bilgi süs; form varsayılanla çalışır */ })
+    return () => { alive = false }
+  }, [])
   const sla = useSla('port')   // 30 günlük kullanılabilirlik / hedef (2026-09-12, #11)
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
@@ -224,7 +234,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
     // Envanter-türevi monitörde team_id null olabilir; liste team_name'i (domain→takım) gösterir →
     // edit'te o takımı önseç (aksi halde "takımsız" görünür), team_name'i teams'ten eşleştirerek.
     const derivedTeam = m.team_id == null && m.team_name ? teams.find(tm => tm.name === m.team_name) : null
-    return { name: m.name || '', host: m.host || '', port: m.port ?? '', protocol: m.protocol || 'TCP',
+    return { name: m.name || '', host: m.host || '', port: m.port ?? '', protocol: m.protocol || 'TCP', useProxy: m.use_proxy || 'OFF',
       expect: m.expect || '', sendData: m.send_data || '',
       teamId: m.team_id != null ? String(m.team_id) : (derivedTeam ? String(derivedTeam.id) : ''), groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
       tags: m.tags || '', notifyEmail: m.notify_email !== false, alertLevel: m.alert_level || 'WARNING', notifyWebhook: m.notify_webhook !== false, ipVersion: m.ip_version || 'auto',
@@ -258,7 +268,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
     try {
       const payload = {
         name: (form.name || form.host).trim(), host: form.host.trim(), port: Number(form.port),
-        protocol: form.protocol?.trim() || 'TCP',
+        protocol: form.protocol?.trim() || 'TCP', useProxy: form.useProxy || 'OFF',
         expect: form.expect?.trim() || null, sendData: form.sendData || null,
         teamId: form.teamId === '' ? null : Number(form.teamId), groupName: form.groupName?.trim() || null,
         // Bos = takim varsayilani -> takim adresi (zincirin kalani).
@@ -296,7 +306,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
       const res = await api.monitoring.testPortMonitor({
         host: form.host.trim(), port: Number(form.port), protocol: form.protocol,
         expect: form.expect?.trim() || null, sendData: form.sendData || null, timeoutMs: Number(form.timeoutMs),
-        ipVersion: form.ipVersion,
+        ipVersion: form.ipVersion, useProxy: form.useProxy || 'OFF',
       })
       setTestResult(res?.success ? res.data : { error: res?.error || t('port.testError') })
     } finally {
@@ -668,6 +678,12 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
                   <span className="upt-modal-metric-lbl">{t('port.protocol')}</span>
                 </div>
               )}
+              {selected.proxy_effective && (
+                <div className="upt-modal-metric">
+                  <span className="upt-modal-metric-val"><ProxyViaBadge via={selected.proxy_effective} source={selected.proxy_source} bypassed={selected.proxy_bypassed} /></span>
+                  <span className="upt-modal-metric-lbl">{t('mon.proxy.label')}</span>
+                </div>
+              )}
               {selected.interval_seconds != null && (
                 <div className="upt-modal-metric">
                   <span className="upt-modal-metric-val upt-modal-metric-time">{selected.interval_seconds}s</span>
@@ -786,6 +802,11 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
                   ⓘ {t(`port.typeHint.${form.protocol}`)}
                 </div>
               )}
+              {/* Kurumsal vekil (2026-09-24): varsayılan Doğrudan — mevcut izlemeler yol değiştirmez; hangi portların
+                  vekilden denetlenebileceği ve UDP/izinsiz port uyarıları hemen altında. */}
+              <MonitorProxyField value={form.useProxy} onChange={v => setForm(f => ({ ...f, useProxy: v }))}
+                effective={modal && typeof modal === 'object' && modal.proxy_effective ? { via: modal.proxy_effective, source: modal.proxy_source, bypassed: modal.proxy_bypassed, mode: modal.use_proxy } : null} />
+              <PortProxyNotes t={t} mode={form.useProxy} protocol={form.protocol} port={form.port} info={proxyInfo} />
               <label><span>{t('port.team')} <span className="req-star">*</span></span>
                 {canPickTeam
                   ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
@@ -865,6 +886,8 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
                     {testResult.response_ms != null && <span className="ptr-ms"> · {testResult.response_ms} ms</span>}
                   </div>
                   {testResult.detail && <div className="ptr-row">{t('port.testReturned')}: <b>{testResult.detail}</b></div>}
+                  {testResult.via === 'proxy' && <div className="ptr-row">{t('port.testVia')}: <b>{t('mon.proxy.effProxy')}</b></div>}
+                  {testResult.proxy_bypassed && <div className="ptr-row">{t('port.testBypassed')}</div>}
                   {testResult.error && <div className="ptr-row ptr-err">{testResult.error}</div>}
                   <div className="ptr-note">{testResult.open ? t('port.testNoteOk') : t('port.testNoteFail')}</div>
                 </div>
@@ -910,6 +933,27 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
       )}
       <MonitorCheckRunModal run={checkRun.run} type="port"
         onCancel={checkRun.cancel} onClose={checkRun.close} />
+    </div>
+  )
+}
+
+/**
+ * Vekil notları (2026-09-24, kullanıcı: "hangi portlar proxy üzerinden kontrol edilebilir, kullanıcıya aktaralım;
+ * UDP gibi bir türü proxy'den izlemek isterse uyaralım"). İzinli port listesi her zaman görünür; uyarılar yalnız vekil
+ * seçiliyken (Açık ya da Envanterle aynı). Uyarılar kaydı ENGELLEMEZ — vekil politikası değişebilir.
+ */
+function PortProxyNotes({ t, mode, protocol, port, info }) {
+  const ports = Array.isArray(info?.connect_ports) && info.connect_ports.length ? info.connect_ports : [443, 8443]
+  const list = ports.join(', ')
+  const wantsProxy = mode === 'ON' || mode === 'AUTO'
+  const n = Number(port)
+  return (
+    <div className="full-width port-proxy-notes">
+      <span className="field-hint">ⓘ {t('port.proxyPorts', list)}</span>
+      {wantsProxy && protocol === 'UDP' && <span className="field-hint field-hint--warn">⚠ {t('port.proxyUdpWarn')}</span>}
+      {wantsProxy && protocol !== 'UDP' && n > 0 && !ports.includes(n) && <span className="field-hint field-hint--warn">⚠ {t('port.proxyPortWarn', n, list)}</span>}
+      {wantsProxy && info?.configured === false && <span className="field-hint field-hint--warn">⚠ {t('port.proxyNotConfigured')}</span>}
+      {wantsProxy && protocol !== 'UDP' && <span className="field-hint">{t('port.proxyMeaning')}</span>}
     </div>
   )
 }

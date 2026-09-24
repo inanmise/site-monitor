@@ -94,15 +94,18 @@ public class ProxySettings {
             req.append(crlf);
             raw.getOutputStream().write(req.toString().getBytes(java.nio.charset.StandardCharsets.US_ASCII));
             raw.getOutputStream().flush();
-            java.io.BufferedReader in = new java.io.BufferedReader(
-                    new java.io.InputStreamReader(raw.getInputStream(), java.nio.charset.StandardCharsets.US_ASCII));
-            String status = in.readLine();
+            // Yanıt BAYT BAYT okunur (2026-09-24): BufferedReader önden 8 KB tamponlar; önce SUNUCUNUN konuştuğu
+            // servislerde (SMTP "220", SSH bandı) hedefin ilk baytları vekilin "200" yanıtıyla aynı pakette gelirse
+            // tampona yutulur ve döndürülen sokette KAYBOLUR → Banner kontrolü "yanıt yok" der. CI (Linux) tam bunu
+            // yakaladı; Windows'ta paketler ayrı geldiği için görünmüyordu.
+            java.io.InputStream in = raw.getInputStream();
+            String status = readTunnelLine(in);
             if (status == null || !status.startsWith("HTTP/1.") || !status.regionMatches(9, "200", 0, 3)) {
                 throw new java.io.IOException("vekil tüneli reddetti: " + (status == null ? "(boş yanıt)" : status.trim()));
             }
             String line;
             int headerLines = 0;
-            while ((line = in.readLine()) != null && !line.isEmpty()) {   // tünel başlıklarını tüket
+            while ((line = readTunnelLine(in)) != null && !line.isEmpty()) {   // tünel başlıklarını tüket
                 if (++headerLines > 100) throw new java.io.IOException("vekil tünel yanıtı: aşırı başlık (100+)");   // S3: tavanlı okuma
             }
             return raw;
@@ -111,6 +114,21 @@ public class ProxySettings {
             throw e;
         }
     }
+
+    /** Tek satır (CRLF/LF) — önden okumadan; satır başına 8 KB tavan. Akış bitmiş ve satır boşsa null. */
+    static String readTunnelLine(java.io.InputStream in) throws java.io.IOException {
+        java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+        int b;
+        while ((b = in.read()) != -1) {
+            if (b == '\n') break;
+            if (buf.size() >= 8192) throw new java.io.IOException("vekil tünel yanıtı: aşırı uzun satır");
+            buf.write(b);
+        }
+        if (b == -1 && buf.size() == 0) return null;
+        String line = buf.toString(java.nio.charset.StandardCharsets.US_ASCII);
+        return line.endsWith("\r") ? line.substring(0, line.length() - 1) : line;
+    }
+
     public int port() { return port; }
 
     /** {@code NO_PROXY} ham listesi (virgülle ayrık); tanımsızsa boş string. */

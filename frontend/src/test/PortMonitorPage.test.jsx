@@ -96,6 +96,52 @@ describe('PortMonitorPage', () => {
     expect(payload.port).toBe(993)
   })
 
+  it('2026-09-24 vekil: varsayılan Doğrudan (payload useProxy=OFF); formda vekilden denetlenebilen portlar HER ZAMAN yazılı; uyarı yok', async () => {
+    api.monitoring.createPortMonitor.mockResolvedValue({ success: true, data: {} })
+    render(<PortMonitorPage systemRole="TEAM_ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getPortMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitor/i }))
+    const notes = await waitFor(() => { const n = document.querySelector('.port-proxy-notes'); expect(n).not.toBeNull(); return n })
+    expect(notes.textContent).toMatch(/443, 8443/)
+    expect(notes.querySelector('.field-hint--warn')).toBeNull()
+    expect(screen.getByText(/^Doğrudan \(vekil kullanma\)$|^Direct \(no proxy\)$/)).toBeInTheDocument()
+    fireEvent.change(screen.getByPlaceholderText(/1\.2\.3\.4/), { target: { value: 'mail.example.com' } })
+    fireEvent.change(screen.getAllByRole('spinbutton')[0], { target: { value: '25' } })
+    await fillGroupAndTags()
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+    await waitFor(() => expect(api.monitoring.createPortMonitor).toHaveBeenCalled())
+    expect(api.monitoring.createPortMonitor.mock.calls[0][0].useProxy).toBe('OFF')
+  })
+
+  it('2026-09-24 vekil seçilince: izinsiz port (22) uyarılır; UDP seçilince "UDP vekilden geçemez" uyarısı; izinli port (443) uyarısız; test yolu gösterilir', async () => {
+    api.monitoring.testPortMonitor.mockResolvedValue({ success: true, data: { open: true, response_ms: 30, via: 'proxy', detail: 'vekil üzerinden bağlandı' } })
+    render(<PortMonitorPage systemRole="TEAM_ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getPortMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitor/i }))
+    fireEvent.change(screen.getByPlaceholderText(/1\.2\.3\.4/), { target: { value: 'a.example.com' } })
+    fireEvent.change(screen.getAllByRole('spinbutton')[0], { target: { value: '22' } })
+    // Vekil: Her zaman vekil üzerinden
+    fireEvent.mouseDown(screen.getByRole('button', { name: /Kurumsal vekil|Corporate proxy/ }))
+    fireEvent.mouseDown(screen.getByText(/^Her zaman vekil üzerinden$|^Always via proxy$/))
+    const warns = () => [...document.querySelectorAll('.port-proxy-notes .field-hint--warn')].map((w) => w.textContent)
+    await waitFor(() => expect(warns().join(' ')).toMatch(/22.*443, 8443/))
+    // izinli port → port uyarısı kalkar
+    fireEvent.change(screen.getAllByRole('spinbutton')[0], { target: { value: '443' } })
+    await waitFor(() => expect(warns()).toHaveLength(0))
+    // UDP → UDP uyarısı
+    const typeLabel = [...document.querySelectorAll('label > span:first-child')].find((sp) => /^(Kontrol Tipi|Check type)$/i.test(sp.textContent.trim()))
+    fireEvent.mouseDown(typeLabel.parentElement.querySelector('.ss-trigger'))
+    fireEvent.mouseDown(screen.getByText(/^UDP — /))
+    await waitFor(() => expect(warns().join(' ')).toMatch(/UDP/))
+    // TCP'ye dön, test et → yol satırı
+    fireEvent.mouseDown(typeLabel.parentElement.querySelector('.ss-trigger'))
+    fireEvent.mouseDown(screen.getByText(/^TCP — /))
+    fireEvent.click(screen.getByRole('button', { name: /^(Test|Test et|Dene|Kaydetmeden test)/i }))
+    await waitFor(() => expect(api.monitoring.testPortMonitor).toHaveBeenCalled())
+    expect(api.monitoring.testPortMonitor.mock.calls[0][0].useProxy).toBe('ON')
+    expect(await screen.findByText(/^(Vekil üzerinden|Via proxy)$/)).toBeInTheDocument()
+  })
+
   it('Kopyala: TÜM kullanıcı ayarları birebir kopyalanır (yalnız ad "(Kopya)" olur)', async () => {
     // Her alan varsayılandan FARKLI → bir alan formFrom'dan düşerse tam-payload karşılaştırması kırılır.
     api.monitoring.getPortMonitors.mockResolvedValue({ success: true, data: [{
@@ -106,6 +152,7 @@ describe('PortMonitorPage', () => {
       interval_seconds: 900, timeout_ms: 7000,
       confirm_attempts: 5, confirm_interval_seconds: 45, recovery_checks: 4, recovery_interval_seconds: 90,
       active: false, notification_group_id: 7,
+      use_proxy: 'ON', proxy_effective: 'proxy', proxy_source: 'monitor',   // vekil tercihi (2026-09-24) kopyaya taşınır
     }] })
     api.monitoring.createPortMonitor.mockResolvedValue({ success: true, data: {} })
 
@@ -125,7 +172,7 @@ describe('PortMonitorPage', () => {
     expect(api.monitoring.updatePortMonitor).not.toHaveBeenCalled()
 
     expect(api.monitoring.createPortMonitor.mock.calls[0][0]).toEqual({
-      name: 'mail (Kopya)', host: '10.0.0.1', port: 8443, protocol: 'HTTP',
+      name: 'mail (Kopya)', host: '10.0.0.1', port: 8443, protocol: 'HTTP', useProxy: 'ON',
       expect: '2xx', sendData: '/health',
       teamId: 3, groupName: 'Kurumsal', tags: 'prod,kritik', alertLevel: 'HIGH', notifyEmail: false, notifyWebhook: true,
       ipVersion: 'v4', slowResponseEnabled: true, slowThresholdMs: 4500,

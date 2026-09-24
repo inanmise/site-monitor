@@ -26,7 +26,14 @@ import java.util.concurrent.CompletableFuture;
  *   <li><b>BANNER</b> — bağlan, (varsa) veri gönder, sunucu yanıtını oku, beklenen alt-dizgeyi doğrula.</li>
  *   <li><b>UDP</b> — datagram gönder; yanıt/ICMP'ye bakar (bağlantısız olduğundan sonuç güvenilir değildir).</li>
  * </ul>
- * Sonuç: {@code {open, response_ms, error?, detail?}}.
+ * Sonuç: {@code {open, response_ms, error?, detail?, via}}.
+ *
+ * <p><b>Vekil (2026-09-24):</b> izleme {@code useProxy} ile kurumsal vekil üzerinden de denetlenebilir — TCP/TLS/BANNER
+ * {@link ProxySettings#openConnectTunnel} ile açılan {@code CONNECT host:port} tünelinden, HTTP türü aynı tünelde elle
+ * GET ile. UDP HTTP vekilinden GEÇEMEZ → her zaman doğrudan. Kurumsal vekiller CONNECT'i çoğunlukla yalnız belirli
+ * portlara açar ({@link #CONNECT_PORTS_KEY}, vars. 443,8443); vekil reddederse sonuç "vekil izin vermedi" diye ayrı
+ * yazılır ({@code proxy_refused}) ki "port kapalı" sanılmasın. Vekil yolunda "açık" = hedefe VEKİLİN ağından erişilebilir.
+ * Hedef doğrulaması (SSRF) vekil yolunda da hedef adına uygulanır — HTTP izlemesiyle aynı.
  */
 @Slf4j
 @Service
@@ -34,6 +41,44 @@ import java.util.concurrent.CompletableFuture;
 public class PortCheckerService {
 
     private final SsrfGuard ssrfGuard;
+
+    /** Vekil bağımlılıkları İSTEĞE BAĞLI (testler / vekilsiz kurulum): yoksa her kontrol doğrudan. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false) private ProxyPolicyService proxyPolicy;
+    @org.springframework.beans.factory.annotation.Autowired(required = false) private ProxySettings proxySettings;
+    @org.springframework.beans.factory.annotation.Autowired(required = false) private AppSettingsService appSettings;
+
+    /** Vekilin CONNECT tüneline izin verdiği portlar (Ayarlar → İzleme); formda kullanıcıya gösterilir, retçe eklenir. */
+    public static final String CONNECT_PORTS_KEY = "site.monitor.proxy.connect-ports";
+    static final String DEFAULT_CONNECT_PORTS = "443,8443";
+
+    /** Vekil tanımlı mı (host + port). */
+    public boolean proxyConfigured() { return proxySettings != null && proxySettings.enabled(); }
+
+    /** Vekilin tünel açtığı bilinen portlar — ayar bozuksa varsayılan. */
+    public List<Integer> proxyConnectPorts() {
+        List<String> raw = appSettings != null ? appSettings.getCsv(CONNECT_PORTS_KEY, DEFAULT_CONNECT_PORTS)
+                : List.of(DEFAULT_CONNECT_PORTS.split(","));
+        java.util.TreeSet<Integer> out = new java.util.TreeSet<>();
+        for (String p : raw) {
+            try { int v = Integer.parseInt(p.trim()); if (v >= 1 && v <= 65535) out.add(v); } catch (Exception ignored) { /* bozuk parça atlanır */ }
+        }
+        if (out.isEmpty()) for (String p : DEFAULT_CONNECT_PORTS.split(",")) out.add(Integer.parseInt(p));
+        return new java.util.ArrayList<>(out);
+    }
+
+    /**
+     * Port izlemesinin vekil kararı. null/bilinmeyen kip = OFF (mevcut kayıtlar doğrudan). UDP istense de doğrudan:
+     * {@code wanted=true, bypassed=true} döner ki arayüz "UDP vekilden geçemez" diyebilsin.
+     */
+    public ProxyPolicyService.Decision proxyDecision(String host, String protocol, String mode) {
+        String m = ProxyPolicyService.normalizeModeDefaultOff(mode);
+        if (proxyPolicy == null || ProxyPolicyService.OFF.equals(m)) return ProxyPolicyService.Decision.direct("monitor");
+        ProxyPolicyService.Decision d = proxyPolicy.decideForHost(host == null ? null : host.trim().toLowerCase(java.util.Locale.ROOT), m);
+        if (d.viaProxy() && "UDP".equals(normalizeType(protocol))) return new ProxyPolicyService.Decision(false, d.source(), true, true);
+        return d;
+    }
+
+    static String normalizeType(String type) { return type != null ? type.trim().toUpperCase(java.util.Locale.ROOT) : "TCP"; }
 
     @Async("certCheckExecutor")
     public CompletableFuture<Map<String, Object>> checkAsync(String host, int port, int timeoutMs) {
@@ -45,12 +90,13 @@ public class PortCheckerService {
         return check(host, port, timeoutMs, "TCP", null, null);
     }
 
-    /** Monitor tipine göre kontrol (IP sürümü dahil). */
+    /** Monitor tipine göre kontrol (IP sürümü + vekil tercihi dahil) — zamanlayıcı ve elle kontrol buradan geçer. */
     public Map<String, Object> check(PortMonitor m) {
+        boolean viaProxy = proxyDecision(m.getHost(), m.getProtocol(), m.getUseProxy()).viaProxy();
         return check(m.getHost(), m.getPort(),
                 m.getTimeoutMs() != null ? m.getTimeoutMs() : 5000,
                 m.getProtocol(), m.getSendData(), m.getExpect(),
-                m.getIpVersion());
+                m.getIpVersion(), viaProxy);
     }
 
     /** Geriye uyum: IP sürümü belirtilmeden (auto). */
@@ -59,9 +105,16 @@ public class PortCheckerService {
     }
 
     public Map<String, Object> check(String host, int port, int timeoutMs, String type, String send, String expect, String ipVersion) {
-        String t = type != null ? type.trim().toUpperCase() : "TCP";
+        return check(host, port, timeoutMs, type, send, expect, ipVersion, false);
+    }
+
+    /** @param viaProxy vekil üzerinden (karar {@link #proxyDecision}); UDP'de ve vekil tanımsızken yok sayılır. */
+    public Map<String, Object> check(String host, int port, int timeoutMs, String type, String send, String expect, String ipVersion, boolean viaProxy) {
+        String t = normalizeType(type);
+        boolean proxied = viaProxy && !"UDP".equals(t) && proxyConfigured();
         long start = System.currentTimeMillis();
         Map<String, Object> result = new LinkedHashMap<>();
+        result.put("via", proxied ? "proxy" : "direct");
         // SSRF: hedefi bağlanmadan ÖNCE doğrula (cloud-metadata/loopback/link-local blok; iç ağ ayara bağlı).
         // Doğrulanan IP'lere bağlanılır → DNS-rebind kapanır.
         List<InetAddress> vetted;
@@ -71,6 +124,28 @@ public class PortCheckerService {
             result.put("open", false);
             result.put("response_ms", null);
             result.put("error", be.getMessage());
+            return result;
+        }
+        if (proxied) {
+            try {
+                checkViaProxy(t, host, port, timeoutMs, send, expect, result);
+                if (Boolean.TRUE.equals(result.get("open")) && result.get("response_ms") == null) {
+                    result.put("response_ms", System.currentTimeMillis() - start);
+                }
+                if (!result.containsKey("response_ms")) result.put("response_ms", null);
+            } catch (Exception e) {
+                result.put("open", false);
+                result.put("response_ms", null);
+                String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+                if (msg.startsWith("vekil tüneli reddetti")) {
+                    // "port kapalı" DEĞİL: vekil bu porta tünel açmadı — izinli portlar mesajda
+                    result.put("proxy_refused", true);
+                    msg = msg + " — vekil bu porta tünel açmıyor olabilir (izinli: "
+                            + proxyConnectPorts().stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(", ")) + ")";
+                }
+                result.put("error", msg);
+                log.debug("Port check via proxy ({}) failed for {}:{}: {}", t, host, port, e.toString());
+            }
             return result;
         }
         try {
@@ -93,6 +168,62 @@ public class PortCheckerService {
             log.debug("Port check ({}) failed for {}:{}: {}", t, host, port, e.toString());
         }
         return result;
+    }
+
+    // ── Vekil yolu (2026-09-24) ─────────────────────────────────────────────────────────────
+    private void checkViaProxy(String t, String host, int port, int timeoutMs, String send, String expect, Map<String, Object> result) throws Exception {
+        try (Socket tunnel = proxySettings.openConnectTunnel(host, port, timeoutMs)) {
+            tunnel.setSoTimeout(timeoutMs);
+            switch (t) {
+                case "TLS" -> {
+                    try (SSLSocket ssl = tlsOver(tunnel, host, port, timeoutMs)) {
+                        result.put("open", true);
+                        result.put("detail", "TLS " + ssl.getSession().getProtocol() + " · vekil üzerinden");
+                    }
+                }
+                case "HTTP" -> httpOver(tunnel, host, port, timeoutMs, send, expect, result);
+                case "BANNER" -> bannerOn(tunnel, send, expect, result);
+                default -> {                       // TCP: vekil tüneli açtıysa hedef port (vekilden) erişilebilir
+                    result.put("open", true);
+                    result.put("detail", "vekil üzerinden bağlandı");
+                }
+            }
+        }
+    }
+
+    private static SSLSocket tlsOver(Socket raw, String host, int port, int timeoutMs) throws Exception {
+        SSLSocket ssl = (SSLSocket) TRUST_ALL_FACTORY.createSocket(raw, host, port, true);
+        ssl.setSoTimeout(timeoutMs);
+        try {
+            SSLParameters p = ssl.getSSLParameters();
+            p.setServerNames(List.of(new SNIHostName(host)));
+            ssl.setSSLParameters(p);
+        } catch (Exception ignore) { /* SNI opsiyonel */ }
+        ssl.startHandshake();
+        return ssl;
+    }
+
+    /** Tünelde elle HTTP GET — yalnız durum satırı okunur (gövde yok, yönlendirme izlenmez: doğrudan yolla aynı). */
+    private static void httpOver(Socket tunnel, String host, int port, int timeoutMs, String path, String expect, Map<String, Object> result) throws Exception {
+        boolean https = port == 443 || port == 8443;
+        String p = (path != null && !path.isBlank()) ? path.trim() : "/";
+        if (!p.startsWith("/")) p = "/" + p;
+        Socket s = https ? tlsOver(tunnel, host, port, timeoutMs) : tunnel;
+        try {
+            String req = "GET " + p + " HTTP/1.1\r\nHost: " + ((port == 80 || port == 443) ? host : host + ":" + port)
+                    + "\r\nUser-Agent: SiteMonitor-PortCheck\r\nConnection: close\r\n\r\n";
+            s.getOutputStream().write(req.getBytes(StandardCharsets.US_ASCII));
+            s.getOutputStream().flush();
+            String status = new java.io.BufferedReader(new java.io.InputStreamReader(s.getInputStream(), StandardCharsets.US_ASCII)).readLine();
+            if (status == null || !status.startsWith("HTTP/") || status.length() < 12) throw new java.io.IOException("geçersiz HTTP yanıtı: " + status);
+            int code = Integer.parseInt(status.substring(9, 12));
+            boolean ok = httpStatusMatches(code, expect);
+            result.put("open", ok);
+            result.put("detail", "HTTP " + code + " · vekil üzerinden");
+            if (!ok) result.put("error", "HTTP " + code + (expect != null && !expect.isBlank() ? " (beklenen: " + expect.trim() + ")" : ""));
+        } finally {
+            if (s != tunnel) s.close();
+        }
     }
 
     private void doTcp(InetAddress addr, List<InetAddress> vetted, int port, int timeoutMs, Map<String, Object> result) throws Exception {
@@ -151,22 +282,27 @@ public class PortCheckerService {
     private void doBanner(InetAddress addr, List<InetAddress> vetted, int port, int timeoutMs, String send, String expect, Map<String, Object> result) throws Exception {
         try (Socket s = connectAny(addr, vetted, port, timeoutMs)) {
             s.setSoTimeout(timeoutMs);
-            if (send != null && !send.isEmpty()) {
-                OutputStream os = s.getOutputStream();
-                os.write(unescape(send).getBytes(StandardCharsets.ISO_8859_1));
-                os.flush();
-            }
-            byte[] buf = new byte[1024];
-            int n = s.getInputStream().read(buf);
-            String banner = n > 0 ? new String(buf, 0, n, StandardCharsets.ISO_8859_1).trim() : "";
-            boolean ok = (expect != null && !expect.isBlank()) ? banner.contains(expect.trim()) : n > 0;
-            String shortB = banner.length() > 80 ? banner.substring(0, 80) + "…" : banner;
-            result.put("open", ok);
-            result.put("detail", shortB);
-            if (!ok) result.put("error", (expect != null && !expect.isBlank())
-                    ? "Beklenen yanit yok: '" + expect.trim() + "' (gelen: " + (shortB.isEmpty() ? "bos" : shortB) + ")"
-                    : "Banner alinamadi");
+            bannerOn(s, send, expect, result);
         }
+    }
+
+    /** Bağlı sokette (doğrudan ya da vekil tüneli) gönder-oku-eşleştir. */
+    private static void bannerOn(Socket s, String send, String expect, Map<String, Object> result) throws Exception {
+        if (send != null && !send.isEmpty()) {
+            OutputStream os = s.getOutputStream();
+            os.write(unescape(send).getBytes(StandardCharsets.ISO_8859_1));
+            os.flush();
+        }
+        byte[] buf = new byte[1024];
+        int n = s.getInputStream().read(buf);
+        String banner = n > 0 ? new String(buf, 0, n, StandardCharsets.ISO_8859_1).trim() : "";
+        boolean ok = (expect != null && !expect.isBlank()) ? banner.contains(expect.trim()) : n > 0;
+        String shortB = banner.length() > 80 ? banner.substring(0, 80) + "…" : banner;
+        result.put("open", ok);
+        result.put("detail", shortB);
+        if (!ok) result.put("error", (expect != null && !expect.isBlank())
+                ? "Beklenen yanit yok: '" + expect.trim() + "' (gelen: " + (shortB.isEmpty() ? "bos" : shortB) + ")"
+                : "Banner alinamadi");
     }
 
     private void doUdp(InetAddress addr, List<InetAddress> vetted, int port, int timeoutMs, String send, Map<String, Object> result) throws Exception {

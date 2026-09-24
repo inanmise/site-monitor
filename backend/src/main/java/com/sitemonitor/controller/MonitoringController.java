@@ -1569,9 +1569,15 @@ public class MonitoringController {
                         "send_data", send != null, "expect", expect != null), null);
         String ipVersion = body.get("ipVersion") != null && java.util.Set.of("v4", "v6", "auto").contains(body.get("ipVersion").toString())
                 ? body.get("ipVersion").toString() : "auto";
-        Map<String, Object> r = portChecker.check(host, port, timeoutMs, type, send, expect, ipVersion);
+        // Vekil (2026-09-24): formdaki tercihle aynı karar — kaydedince zamanlayıcının gideceği yol test edilsin.
+        com.sitemonitor.service.ProxyPolicyService.Decision pd = portChecker.proxyDecision(host, type, body.get("useProxy") == null ? null : body.get("useProxy").toString());
+        if (pd == null) pd = com.sitemonitor.service.ProxyPolicyService.Decision.direct("monitor");
+        Map<String, Object> r = portChecker.check(host, port, timeoutMs, type, send, expect, ipVersion, pd.viaProxy());
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("type",          type);
+        out.put("via",           r.getOrDefault("via", "direct"));
+        out.put("proxy_bypassed", pd.bypassed());
+        out.put("proxy_refused", Boolean.TRUE.equals(r.get("proxy_refused")));
         out.put("open",          Boolean.TRUE.equals(r.get("open")));   // kontrol gecti mi (acik/eslesti)
         out.put("condition_met", Boolean.TRUE.equals(r.get("open")));   // alarm kosulu = kontrolun gecmesi
         out.put("response_ms",   r.get("response_ms"));
@@ -1610,6 +1616,7 @@ public class MonitoringController {
         item.put("slow_response_enabled",     m.getSlowResponseEnabled());
         item.put("slow_threshold_ms",         m.getSlowThresholdMs());
         item.put("ip_version",                m.getIpVersion());
+        putPortProxyFields(item, m);
         item.put("standalone",      m.getStandalone());
         item.put("created_at",      m.getCreatedAt());
         item.put("updated_at",      m.getUpdatedAt());
@@ -1682,6 +1689,38 @@ public class MonitoringController {
             String v = body.get("ipVersion").toString().trim();
             m.setIpVersion(java.util.Set.of("v4", "v6", "auto").contains(v) ? v : "auto");
         }
+        // Vekil tercihi (2026-09-24): null/bilinmeyen = OFF — mevcut port izlemelerinin yolu değişmez.
+        if (body.containsKey("useProxy")) m.setUseProxy(com.sitemonitor.service.ProxyPolicyService.normalizeModeDefaultOff(body.get("useProxy")));
+    }
+
+    /** Port satırına vekil alanları (2026-09-24): HTTP kartıyla aynı adlar + UDP'nin vekilden geçemediği bilgisi. */
+    private void putPortProxyFields(Map<String, Object> item, PortMonitor m) {
+        String mode = com.sitemonitor.service.ProxyPolicyService.normalizeModeDefaultOff(m.getUseProxy());
+        item.put("use_proxy",       mode);
+        // OFF (mevcut tüm kayıtlar): rozet alanı YOK — kart meta proxy_effective görünce "Doğrudan" rozeti ekler; mevcut
+        // port kartlarının görünümü değişmesin. Vekil yalnız bilinçle seçildiğinde kartta görünür.
+        if (com.sitemonitor.service.ProxyPolicyService.OFF.equals(mode)) return;
+        com.sitemonitor.service.ProxyPolicyService.Decision d = portChecker.proxyDecision(m.getHost(), m.getProtocol(), mode);
+        if (d == null) return;
+        boolean udp = d.wanted() && "UDP".equalsIgnoreCase(String.valueOf(m.getProtocol()));
+        item.put("proxy_effective", d.via());
+        // UDP: vekil istendi ama geçemez — "NO_PROXY/tanımsız" demek yanlış neden olurdu; kaynak "udp"
+        item.put("proxy_source",    udp ? "udp" : d.source());
+        item.put("proxy_bypassed",  !udp && d.bypassed());
+        item.put("proxy_udp",       udp);
+    }
+
+    /**
+     * Port formunun vekil bilgisi (2026-09-24): vekil tanımlı mı ve CONNECT tüneline izin verilen portlar — kullanıcı
+     * vekil seçerken hangi portların vekilden denetlenebileceğini formda görür.
+     */
+    @GetMapping("/port/proxy-info")
+    public ResponseEntity<Map<String, Object>> portProxyInfo(HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("configured",    portChecker.proxyConfigured());
+        out.put("connect_ports", portChecker.proxyConnectPorts());
+        return ok(out);
     }
 
     // ── DNS Monitors ──────────────────────────────────────────────────────────

@@ -83,11 +83,13 @@ const PORT_TR = `
 - **İsim** — Boşsa host kullanılır. **Grup**, **Etiketler**, **Bildirimler (E-posta)** — HTTP'dekiyle aynı.
 - **Kontrol Sıklığı** — 30 sn … 24 saat (varsayılan 5 dk).
 - **IP sürümü** — Otomatik (IPv4 öncelikli) / IPv4 / IPv6.
+- **Kurumsal vekil** — Varsayılan **Doğrudan (vekil kullanma)**: mevcut izlemelerin yolu değişmez. **Her zaman vekil üzerinden** ya da **Envanterle aynı** seçilirse TCP/TLS/HTTP/Banner kontrolleri vekilin CONNECT tüneliyle yapılır. Vekil yalnız izin verdiği portlara tünel açar — formda **"Vekil üzerinden denetlenebilen portlar"** satırında listelenir (varsayılan 443, 8443; Ayarlar → İzleme'den değişir). **UDP vekilden geçemez**; vekil seçilse de doğrudan yapılır ve form uyarır.
 - **Gelişmiş ayarlar** (katlanır) — "Yavaş yanıt alarmı" → **Yavaşlık eşiği (ms)** (varsayılan 3000); **Doğrulama denemesi** (0–10, def 3) + aralık; **Kurtarma** (1–20, def 3) + aralık; **Aktif**.
 
 ### İpuçları
 - Yalnız "port açık mı" için **TCP** yeterli. Sertifika sunumunu da görmek için **TLS** seçin.
 - UDP bağlantısız olduğundan sonuçları daha az kesindir; mümkünse TCP/TLS tercih edin.
+- Vekil üzerinden "açık" sonucu, hedefe **vekilin ağından** erişilebildiğini gösterir. İzinli olmayan bir portu vekilden denetlerseniz vekil tüneli reddeder ve kontrol "vekil tüneli reddetti" hatasıyla alarm üretir.
 `
 
 const PORT_EN = `
@@ -107,11 +109,13 @@ Open the form with **+ New Monitor**.
 - **Name** — Falls back to host. **Group**, **Tags**, **Notifications (Email)** — same as HTTP.
 - **Check interval** — 30s … 24h (default 5m).
 - **IP version** — Auto (IPv4 first) / IPv4 / IPv6.
+- **Corporate proxy** — **Direct (no proxy)** by default, so existing monitors keep their route. Choose **Always through the proxy** or **Same as inventory** and TCP/TLS/HTTP/Banner checks run through the proxy CONNECT tunnel. The proxy only opens tunnels to the ports it allows; the form lists them on the **"Ports that can be checked through the proxy"** line (443 and 8443 by default; change them under Settings → Monitoring). **UDP cannot use the proxy**: it runs directly even with the proxy selected, and the form warns you.
 - **Advanced settings** (collapsible) — "Slow-response alert" → **Slow threshold (ms)** (default 3000); **Confirm attempts** (0–10, def 3) + interval; **Recovery** (1–20, def 3) + interval; **Active**.
 
 ### Tips
 - For "is the port open" **TCP** is enough. To also see the certificate, pick **TLS**.
 - UDP is connectionless so its results are less definitive; prefer TCP/TLS when possible.
+- Through the proxy, "open" means the target is reachable **from the proxy network**. If you check a port the proxy does not allow, it refuses the tunnel and the check raises an alert with "proxy refused the tunnel".
 `
 
 const DNS_TR = `
