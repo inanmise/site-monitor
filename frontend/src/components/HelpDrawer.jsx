@@ -9,6 +9,7 @@ import { useTour } from './tour/TourProvider.jsx'
 import { PAGE_TOURS } from './tour/tourSteps.js'
 import whitepaperTr from '../assets/whitepaper.md?raw'
 import whitepaperEn from '../assets/whitepaper.en.md?raw'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Bağlama duyarlı yardım (2026-09-12, zenginleştirme #24): sağ altta "?" — o sayfanın kılavuz bölümü
@@ -64,9 +65,9 @@ export default function HelpDrawer({ tab }) {
             <div className="helpd-head">
               <BookOpen size={16} aria-hidden="true" />
               <span className="helpd-title">{t('helpd.title')}</span>
-              <button type="button" className="btn btn-sm btn-secondary" onClick={() => { setOpen(false); navigateTo('help') }}>{t('helpd.full')}</button>
-              <button type="button" className="btn btn-sm btn-secondary" onClick={() => { setOpen(false); tour.start('main') }}>{t('tour.restart')}</button>
-              {PAGE_TOURS[tab]?.length > 0 && <button type="button" className="btn btn-sm btn-secondary" onClick={() => { setOpen(false); tour.start('page', { pageId: tab }) }}>{t('tour.pageStart')}</button>}
+              <Button type="button" variant="secondary" size="sm" onClick={() => { setOpen(false); navigateTo('help') }}>{t('helpd.full')}</Button>
+              <Button type="button" variant="secondary" size="sm" onClick={() => { setOpen(false); tour.start('main') }}>{t('tour.restart')}</Button>
+              {PAGE_TOURS[tab]?.length > 0 && <Button type="button" variant="secondary" size="sm" onClick={() => { setOpen(false); tour.start('page', { pageId: tab }) }}>{t('tour.pageStart')}</Button>}
               <button type="button" className="helpd-close" onClick={() => setOpen(false)} aria-label={t('app.close')}><X size={14} /></button>
             </div>
             <div className="helpd-body help-content">

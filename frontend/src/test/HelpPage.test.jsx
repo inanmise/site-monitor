@@ -26,7 +26,8 @@ function toc() {
 }
 
 function downloadLink() {
-  return document.querySelector('a.help-download-btn')
+  // shadcn Button asChild → <a>: legacy sınıf yok, bağlantı rol + erişilebilir adla bulunur (TR/EN)
+  return screen.queryByRole('link', { name: /PDF İndir|Download PDF/i })
 }
 
 beforeEach(() => {

@@ -1,14 +1,15 @@
 import { ListChecks } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * İzleme sayfalarının araç çubuğundaki TOPLU kontrol düğmesi — panodaki "Şimdi Kontrol Et"in
  * karşılığı.
  *
- * <p><b>Neden nötr görünüyor:</b> pano düğmesi {@code btn-primary}, çünkü orada tek birincil
+ * <p><b>Neden nötr görünüyor:</b> pano düğmesi birincil (shadcn Button default), çünkü orada tek birincil
  * eylem odur. İzleme sayfalarında mavi düğme zaten "Yeni Monitör"; ikinci bir mavi düğme
  * hangisinin ana eylem olduğunu belirsizleştirirdi. Bu yüzden sınıf yanındaki "Yenile" ile
- * BİREBİR aynı ({@code btn btn-sm upt-refresh-btn}); ikon farkı yeter. {@code RefreshCw}
+ * BİREBİR aynı (shadcn Button outline + sm); ikon farkı yeter. {@code RefreshCw}
  * bilerek kullanılmıyor — o simgeyi komşusu taşıyor.
  *
  * <p>Etiket SAYIYI taşır ("Şimdi Kontrol Et (12)"). İki sebep: karttaki tekil düğmenin
@@ -24,9 +25,9 @@ export default function CheckAllButton({ count, running, done = 0, total = 0, on
   // Sayfaların `canWrite` kapılı düğmeleri de aynı davranıyor.
   if (!count) return null
   return (
-    <button
+    <Button
       type="button"
-      className="btn btn-sm upt-refresh-btn"
+      variant="outline" size="sm"
       onClick={onClick}
       disabled={running}
       aria-busy={running || undefined}
@@ -34,6 +35,6 @@ export default function CheckAllButton({ count, running, done = 0, total = 0, on
     >
       <ListChecks size={14} />
       {running ? t('app.checkedOf', done, total) : t('mon.checkAll', count)}
-    </button>
+    </Button>
   )
 }

@@ -4,6 +4,7 @@ import { LoadingBlock } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * "Kim, ne zaman, neyi değiştirdi" — bildirim gruplarının değişiklik geçmişi.
@@ -137,9 +138,9 @@ export default function NotificationGroupHistory({
       {filterName && (
         <div className="ng-hist-filter">
           <span className="field-hint">{t('ng.histFilterOn').replace('{name}', filterName)}</span>
-          <button type="button" className="btn btn-secondary" onClick={onClearFilter}>
+          <Button type="button" variant="secondary" onClick={onClearFilter}>
             {t('ng.histFilterClear')}
-          </button>
+          </Button>
         </div>
       )}
 

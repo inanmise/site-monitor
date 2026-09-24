@@ -10,6 +10,7 @@ import { categoryOptions } from '../../utils/templateCategories.js'
 import { pickLang } from '../../utils/scriptSourceOptions.js'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Şablon editörü — oluşturma, düzenleme ve salt-okunur görüntüleme TEK bileşende.
@@ -136,13 +137,13 @@ export default function ScriptedTemplateEditor({
       dismissOnBackdrop={false} scrollBody
       footer={
         <>
-          <button className="btn btn-secondary" onClick={onClose}>
+          <Button variant="secondary" onClick={onClose}>
             {readOnly ? t('tpl.close') : t('tpl.cancel')}
-          </button>
+          </Button>
           {!readOnly &&
-            <button className="btn btn-primary" onClick={save} disabled={!canSave} aria-busy={saving}>
+            <Button onClick={save} disabled={!canSave} aria-busy={saving}>
               {saving ? '…' : t('tpl.save')}
-            </button>}
+            </Button>}
         </>
       }>
       {loading
@@ -204,11 +205,11 @@ export default function ScriptedTemplateEditor({
                 bindirme), İngilizce arayüzde GÖRÜNTÜLERKEN ise Türkçe aslı. İçerik hiçbir modda
                 kaybolmaz, yalnız hangisinin "asıl" hangisinin "diğer" olduğu yer değiştirir. */}
             <div className="full-width sc-tpl-block">
-              <button type="button" className="btn btn-sm btn-secondary" onClick={() => setShowEn(v => !v)}>
+              <Button type="button" variant="secondary" size="sm" onClick={() => setShowEn(v => !v)}>
                 {readOnly && en
                   ? (showEn ? t('tpl.trHide') : t('tpl.trShow'))
                   : (showEn ? t('tpl.enHide') : t('tpl.enShow'))}
-              </button>
+              </Button>
               {showEn && (
                 <div className="form-grid form-grid--top sc-tpl-en">
                   <label className="full-width"><span>{otherLangLabel('name')}</span>
@@ -231,7 +232,7 @@ export default function ScriptedTemplateEditor({
                   {k6Version && <span className="sc-k6ver-chip">k6 {k6Version}</span>}
                   {/* Şablonun asıl işi kopyalanmak: salt-okunur görünümde de dursun. */}
                   {(form.script || '').trim() &&
-                    <CopyButton value={form.script} className="btn btn-sm btn-secondary"
+                    <CopyButton value={form.script} variant="secondary"
                       label={t('tpl.scriptCopy')} copiedLabel={t('tpl.scriptCopied')} />}
                 </span>
               </div>
@@ -264,9 +265,9 @@ export default function ScriptedTemplateEditor({
                   ))}
                 </div>}
               {!readOnly &&
-                <button type="button" className="btn btn-secondary btn-sm env-add" onClick={addEnvRow}>
+                <Button type="button" variant="secondary" size="sm" className="env-add" onClick={addEnvRow}>
                   <Plus size={13} /> {t('tpl.envAdd')}
-                </button>}
+                </Button>}
               <span className="field-hint">{t('tpl.envHint')}</span>
             </div>
 

@@ -7,6 +7,7 @@ import SecretKeyWarning from './SecretKeyWarning.jsx'
 import { Spinner } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import HelpTip from '../ui/HelpTip.jsx'
+import { Button } from '@/components/shadcn/button'
 
 export default function SmtpSettings() {
   const t = useT()
@@ -226,12 +227,12 @@ export default function SmtpSettings() {
 
       {/* Save / test connection */}
       <div className="ldap-actions">
-        <button className="btn btn-primary" onClick={save} disabled={saving}>
+        <Button onClick={save} disabled={saving}>
           {saving ? <Spinner size={15} inline decorative /> : null} {saving ? t('settings.saving') : t('settings.save')}
-        </button>
-        <button className="btn btn-secondary" onClick={test} disabled={testing || !hasHost}>
+        </Button>
+        <Button variant="secondary" onClick={test} disabled={testing || !hasHost}>
           {testing ? <Spinner size={15} inline decorative /> : <PlugZap size={15} />} {t('smtp.testConnection')}
-        </button>
+        </Button>
         {testResult && (
           <span className={`ldap-test-result ${testResult.success ? 'ok' : 'fail'}`}>
             {testResult.success ? (testResult.message || t('smtp.testOk')) : (testResult.error || t('smtp.testFail'))}
@@ -247,9 +248,9 @@ export default function SmtpSettings() {
           <input type="email" value={recipient} placeholder="recipient@example.com"
             onChange={(e) => setRecipient(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') sendTest() }} />
-          <button className="btn btn-primary" onClick={sendTest} disabled={sending || !hasHost || !recipient.trim()}>
+          <Button onClick={sendTest} disabled={sending || !hasHost || !recipient.trim()}>
             {sending ? <Spinner size={15} inline decorative /> : <Send size={15} />} {t('smtp.sendBtn')}
-          </button>
+          </Button>
         </div>
         {!hasHost && <p className="hint">{t('smtp.saveFirst')}</p>}
         {sendResult && (

@@ -42,8 +42,8 @@ const SETTINGS = {
 }
 
 const pwBox = (c) => c.querySelector('input[type="password"]')
-const saveBtn = (c) => c.querySelector('.ldap-actions .btn-primary')
-const testBtn = (c) => [...c.querySelectorAll('.ldap-actions button')].find(b => b.className.includes('btn-secondary'))
+const saveBtn = (c) => c.querySelector('.ldap-actions [data-slot="button"][data-variant="default"]')
+const testBtn = (c) => [...c.querySelectorAll('.ldap-actions button')].find(b => b.getAttribute('data-variant') === 'secondary')
 const emailBox = (c) => c.querySelector('input[type="email"]')
 
 describe('SmtpSettings', () => {
@@ -120,7 +120,7 @@ describe('SmtpSettings', () => {
     expect(testBtn(container)).toBeDisabled()
     // Alici girilse bile gonderim acilmaz.
     fireEvent.change(emailBox(container), { target: { value: 'ops@example.com' } })
-    expect(container.querySelector('.ldap-lookup-row .btn-primary')).toBeDisabled()
+    expect(container.querySelector('.ldap-lookup-row [data-slot="button"][data-variant="default"]')).toBeDisabled()
   })
 
   it('BOS alici ile test maili gonderilmez', async () => {

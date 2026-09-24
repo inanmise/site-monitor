@@ -18,6 +18,10 @@ const buttonVariants = cva(
         ghost:
           "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
         link: "text-primary underline-offset-4 hover:underline",
+        // Proje varyantları (shadcn'in önerdiği yol: cva'yı genişlet). Legacy .btn-success / .btn-warning karşılığı:
+        // olumlu birincil eylem (ör. "SSL Checker", "Aktifleştir") ve dikkat isteyen eylem.
+        success: "bg-success text-white hover:bg-success/90 focus-visible:ring-success/30",
+        warning: "bg-amber-600 text-white hover:bg-amber-600/90 focus-visible:ring-amber-600/30",
       },
       size: {
         default: "h-9 px-4 py-2 has-[>svg]:px-3",

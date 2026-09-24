@@ -15,6 +15,7 @@ import { toCsv, downloadCsv, stampedName } from '../../utils/csvExport.js'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import { usePagination } from '../../hooks/usePagination.js'
+import { Button } from '@/components/shadcn/button'
 
 const ROLES  = ['PO', 'TECH', 'MANAGER', 'CLEVEL']
 const LEVELS = ['WARNING', 'HIGH', 'CRITICAL']
@@ -186,12 +187,12 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
           </div>
         </div>
         <div className="hdr-actions">
-          <button className="btn btn-secondary" title={t('ec.exportCsv')} onClick={() => {
+          <Button variant="secondary" title={t('ec.exportCsv')} onClick={() => {
             const rows = filteredContacts.map(c => [c.name, c.email, teamMap[c.team_id] || '', roleLabelMap[c.role] || c.role, levelLabelMap[c.min_alert_level] || c.min_alert_level,
               c.webhook_url ? c.webhook_type : '', c.active ? t('ec.active') : t('ec.inactive')])
             downloadCsv(stampedName('eskalasyon-kisileri'), toCsv([t('ec.colName'), t('ec.colEmail'), t('ec.colTeam'), t('ec.colRole'), t('ec.colLevel'), t('ec.colWebhook'), t('ec.colActive')], rows))
-          }}><Download size={14} /> {t('ec.exportCsv')}</button>
-          {canManage && <button className="btn btn-success" onClick={openAdd}>{t('ec.addBtn')}</button>}
+          }}><Download size={14} /> {t('ec.exportCsv')}</Button>
+          {canManage && <Button variant="success" onClick={openAdd}>{t('ec.addBtn')}</Button>}
         </div>
       </div>
       {msg && <div className="alert-msg">{msg}</div>}
@@ -348,10 +349,10 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
               </label>
             </div>
             <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setModal(null)}>{t('ec.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving || !canSave}>
+              <Button variant="secondary" onClick={() => setModal(null)}>{t('ec.cancel')}</Button>
+              <Button onClick={save} disabled={saving || !canSave}>
                 {saving ? t('ec.saving') : t('ec.save')}
-              </button>
+              </Button>
             </div>
           </div>
         </div>

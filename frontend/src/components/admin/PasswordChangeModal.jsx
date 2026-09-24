@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
+import { Button } from '@/components/shadcn/button'
 
 // Index by score (0..4). Score 0 is mapped to 'weak' since once a user has
 // typed anything, "weak" is more useful than a blank label.
@@ -117,12 +118,12 @@ export default function PasswordChangeModal({ mode, targetUser, onClose, onSucce
         {msg && <div className="alert-msg alert-msg--err" style={{ marginTop: 8 }}>{msg}</div>}
         <div className="modal-actions">
           {!isForced && (
-            <button className="btn btn-secondary" onClick={onClose}>{t('usr.cancel')}</button>
+            <Button variant="secondary" onClick={onClose}>{t('usr.cancel')}</Button>
           )}
-          <button className="btn btn-primary" onClick={submit}
+          <Button onClick={submit}
             disabled={saving || !verifyPwd || newPwd.length < 6 || newPwd.length > 10 || newPwd !== confirmPwd}>
             {saving ? t('usr.saving') : t('usr.pwdSave')}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

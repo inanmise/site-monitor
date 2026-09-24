@@ -30,6 +30,7 @@ import {
   applyFilters, sortItems, detectOverlaps, filtersToParams, paramsToFilters, readView, writeView, readCols, writeCols, restoreCols, colKeys,
   readSavedViews, writeSavedViews, EMPTY_FILTERS, hasActiveFilter,
 } from '../inventory/inventoryModel.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Toplu sorumlu-ekip atama formu.
@@ -46,10 +47,10 @@ function BulkContactsModal({ count, onApply, onClose }) {
     <ModalShell open onClose={onClose} title={t('inv.bulkContactsTitle')} icon={Users}
       footer={
         <>
-          <button className="btn btn-secondary" onClick={onClose}>{t('inv.cancel')}</button>
-          <button className="btn btn-primary" onClick={() => onApply(values)}>
+          <Button variant="secondary" onClick={onClose}>{t('inv.cancel')}</Button>
+          <Button onClick={() => onApply(values)}>
             {t('inv.bulkContactsBtn')}
-          </button>
+          </Button>
         </>
       }>
       <AlertBanner tone="info">{t('inv.bulkContactsHint', count)}</AlertBanner>
@@ -521,9 +522,9 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
         </div>
         <div className="inv-header-actions">
           <div className="sqlpg-menu-wrap" ref={exportRef}>
-            <button
+            <Button
               type="button"
-              className={`btn btn-secondary sqlpg-menu-trigger${exportOpen ? ' is-open' : ''}`}
+              variant="secondary" className={`sqlpg-menu-trigger ${exportOpen ? ' is-open' : ''}`}
               onClick={() => setExportOpen(o => !o)}
               disabled={exporting}
             >
@@ -532,7 +533,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                 : <Download size={14} />}
               {t('inv.export')}
               <ChevronDown size={12} className="sqlpg-menu-chev" />
-            </button>
+            </Button>
             {exportOpen && (
               <div className="sqlpg-menu inv-export-menu">
                 <button
@@ -554,8 +555,8 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
               </div>
             )}
           </div>
-          {canManage && <button className="btn btn-secondary" onClick={() => setImportOpen(true)}><Upload size={14} /> {t('inv.import')}</button>}
-          {canAdd && <button className="btn btn-success" onClick={openAdd}><Plus size={14} /> {t('inv.addBtn')}</button>}
+          {canManage && <Button variant="secondary" onClick={() => setImportOpen(true)}><Upload size={14} /> {t('inv.import')}</Button>}
+          {canAdd && <Button variant="success" onClick={openAdd}><Plus size={14} /> {t('inv.addBtn')}</Button>}
         </div>
       </div>
 
@@ -574,11 +575,11 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
         <div className="inv-stats-pills" style={{ marginBottom: 10, gap: 8, alignItems: 'center',
           background: '#f4f4f5', padding: '8px 12px', borderRadius: 6 }}>
           <span style={{ fontWeight: 700, fontSize: '.9em' }}>{t('inv.bulkSelected', selected.size)}</span>
-          <button className="btn btn-success btn-sm-p"   onClick={() => bulkAction('activate')}>{t('inv.bulkActivateBtn')}</button>
-          <button className="btn btn-warning btn-sm-p"   onClick={() => bulkAction('deactivate')}>{t('inv.bulkDeactivateBtn')}</button>
-          <button className="btn btn-danger btn-sm-p"    onClick={() => bulkAction('delete')}>{t('inv.bulkDeleteBtn')}</button>
-          <button className="btn btn-secondary btn-sm-p" onClick={() => setContactsModal({})}>{t('inv.bulkContactsBtn')}</button>
-          <button className="btn btn-secondary btn-sm-p" onClick={() => setSelected(new Set())}>{t('inv.bulkClear')}</button>
+          <Button variant="success" size="sm"   onClick={() => bulkAction('activate')}>{t('inv.bulkActivateBtn')}</Button>
+          <Button variant="warning" size="sm"   onClick={() => bulkAction('deactivate')}>{t('inv.bulkDeactivateBtn')}</Button>
+          <Button variant="destructive" size="sm"    onClick={() => bulkAction('delete')}>{t('inv.bulkDeleteBtn')}</Button>
+          <Button variant="secondary" size="sm" onClick={() => setContactsModal({})}>{t('inv.bulkContactsBtn')}</Button>
+          <Button variant="secondary" size="sm" onClick={() => setSelected(new Set())}>{t('inv.bulkClear')}</Button>
         </div>
       )}
 
@@ -586,7 +587,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
         <div className="inv-stats-pills" style={{ marginBottom: 10, gap: 8, alignItems: 'center',
           background: '#fef2f2', padding: '8px 12px', borderRadius: 6 }}>
           <span style={{ fontWeight: 700, fontSize: '.9em' }}>{t('inv.purgeAllHint', stats.deleted)}</span>
-          <button className="btn btn-danger btn-sm-p" onClick={purgeAll}>{t('inv.purgeAllBtn')}</button>
+          <Button variant="destructive" size="sm" onClick={purgeAll}>{t('inv.purgeAllBtn')}</Button>
         </div>
       )}
 
@@ -598,7 +599,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
         <StatusBlock tone="neutral" icon={Inbox} title={statusItems.length === 0 ? t('inv.emptyTitle') : t('inv.noMatch')}
           description={statusItems.length === 0 ? (canManage ? t('inv.emptyHintAdmin') : t('inv.emptyHint')) : t('empty.hintFilter')}
           actions={statusItems.length > 0 && hasActiveFilter(filters)
-            ? <button type="button" className="btn btn-sm btn-secondary" onClick={clearFilters}>{t('inv.filterClear')}</button>
+            ? <Button type="button" variant="secondary" size="sm" onClick={clearFilters}>{t('inv.filterClear')}</Button>
             : null} />
       ) : (
         <>
@@ -663,10 +664,10 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
               </label>
             </div>
             <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setTransferModal(null)}>{t('inv.cancel')}</button>
-              <button className="btn btn-primary" onClick={doTransfer} disabled={saving}>
+              <Button variant="secondary" onClick={() => setTransferModal(null)}>{t('inv.cancel')}</Button>
+              <Button onClick={doTransfer} disabled={saving}>
                 {saving ? t('inv.saving') : t('inv.transferConfirm')}
-              </button>
+              </Button>
             </div>
           </div>
         </div>

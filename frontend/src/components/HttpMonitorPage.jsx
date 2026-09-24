@@ -53,6 +53,7 @@ import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { useEscapeKey } from '../hooks/useEscapeKey.js'
+import { Button } from '@/components/shadcn/button'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
@@ -516,18 +517,18 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
           <span className="upt-last-check">
             {t('http.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}
           </span>
-          <button className="btn btn-sm upt-refresh-btn" onClick={load}>
+          <Button variant="outline" size="sm" onClick={load}>
             <RefreshCw size={14} />{t('http.refresh')}
-          </button>
+          </Button>
           <CheckAllButton count={checkable.length} running={checkRun.running}
             done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
             onClick={checkRun.openPicker} />
-          <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+          <CopyLinkButton iconOnly variant="outline" />
           <MonitorGuideButton type="http" />
           {canWrite && (
-            <button className="btn btn-sm btn-primary" onClick={openNew} data-tour="mon-new">
+            <Button size="sm" onClick={openNew} data-tour="mon-new">
               <Plus size={14} />{t('http.addMonitor')}
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -554,7 +555,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
 
       {loading ? <LoadingBlock label={t('tbl.loading')} fullWidth /> : loadError && monitors.length === 0 ? (
         <AlertBanner tone="danger" title={t('mon.loadError')} role="alert"
-          actions={<button className="btn btn-sm btn-secondary" onClick={load}>{t('hist.retry')}</button>}>
+          actions={<Button variant="secondary" size="sm" onClick={load}>{t('hist.retry')}</Button>}>
           {String(loadError)}
         </AlertBanner>
       ) : monitors.length === 0 ? (
@@ -587,7 +588,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
                 {alarmBadge(m)}<MaintenanceBadge target={m.url} />
                 <span className="upt-card-top-right">
                   <span className="upt-port-tag">{m.method || 'GET'}</span>
-                  <CopyLinkButton iconOnly url={monitorDeepLink('http', m.id)} className="btn btn-sm upt-card-copy" />
+                  <CopyLinkButton iconOnly url={monitorDeepLink('http', m.id)} variant="ghost" size="icon-xs" className="upt-card-copy" />
                 </span>
               </div>
               <div className="upt-card-domain" title={m.url}>{m.url}</div>
@@ -647,7 +648,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
                 deleting={deleting === selected.id}
                 deleteTitle={t('http.delete')}
                 onClose={closeDetail}>
-                <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+                <CopyLinkButton iconOnly variant="outline" />
               </MonitorModalActions>
             </div>
             <div className="upt-modal-divider" />
@@ -898,13 +899,13 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
             </div>
             <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
             <div className="modal-actions">
-              <button className="btn btn-secondary" style={{ marginRight: 'auto' }} onClick={runTest}
+              <Button variant="secondary" style={{ marginRight: 'auto' }} onClick={runTest}
                 aria-busy={testing || undefined} disabled={testing || !form.url.trim()}>
                 <FlaskConical size={14} />{t('http.test')}
-              </button>
-              {modal !== 'new' && canDeleteRow(modal) && <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('http.delete')}</button>}
-              <button className="btn btn-secondary" onClick={closeEdit}>{t('http.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.teamId}>{t('http.save')}</button>
+              </Button>
+              {modal !== 'new' && canDeleteRow(modal) && <Button variant="destructive" onClick={del}><Trash2 size={14} />{t('http.delete')}</Button>}
+              <Button variant="secondary" onClick={closeEdit}>{t('http.cancel')}</Button>
+              <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.teamId}>{t('http.save')}</Button>
             </div>
           </div>
         </div>,

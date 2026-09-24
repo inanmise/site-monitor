@@ -3,6 +3,7 @@ import { ShieldAlert, ArrowRight } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import { fmtNum } from './PolicyRow.jsx'
 import { Spinner } from '../../ui/Progress.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Kaydetmeden ÖNCE "ne değişecek" özeti. Kullanıcı hangi tabloda hangi değerden hangi değere
@@ -73,14 +74,14 @@ export default function RetentionReviewModal({ changes, onCancel, onConfirm, sav
         </div>
 
         <div className="modal-actions">
-          <button className="btn btn-secondary" onClick={onCancel} disabled={saving}>
+          <Button variant="secondary" onClick={onCancel} disabled={saving}>
             {t('app.cancel')}
-          </button>
-          <button className={`btn ${danger ? 'btn-danger' : 'btn-primary'}`}
+          </Button>
+          <Button variant={danger ? 'destructive' : 'default'}
             onClick={onConfirm} disabled={saving}>
             {saving ? <Spinner size={15} inline decorative /> : null}
             {danger ? t('ret.reviewConfirmDanger') : t('ret.reviewConfirm')}
-          </button>
+          </Button>
         </div>
       </div>
     </div>,

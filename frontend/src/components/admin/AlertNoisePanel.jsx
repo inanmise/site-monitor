@@ -4,6 +4,7 @@ import { ChevronDown, Activity, Flame, Lightbulb, Timer, MoonStar, CheckCircle2,
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { navigateTo } from '../../utils/navigate.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Alarm gürültü analizi (2026-09-12, zenginleştirme #18): en çok alarm üreten 10 hedef, gün × saat
@@ -74,7 +75,7 @@ export default function AlertNoisePanel({ onPickDomain }) {
         <div className="noise-body">
           <div className="noise-toolbar">
             {DAYS.map((d) => (
-              <button type="button" key={d} className={`btn btn-sm ${days === d ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setDays(d)} aria-pressed={days === d}>{t('noise.days', d)}</button>
+              <Button type="button" key={d} variant={days === d ? 'default' : 'secondary'} size="sm" onClick={() => setDays(d)} aria-pressed={days === d}>{t('noise.days', d)}</Button>
             ))}
           </div>
           {!data && <div className="noise-empty">{t('noise.loading')}</div>}

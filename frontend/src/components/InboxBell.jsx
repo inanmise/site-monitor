@@ -5,6 +5,7 @@ import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import { navigateTo } from '../utils/navigate.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Bildirim kutusu (2026-09-12, zenginleştirme #2; v2 2026-09-20): Nav'daki zil — açık alarm, son 24 saatte çözülen,
@@ -170,8 +171,8 @@ export default function InboxBell({ username, compact = false }) {
               <span className="inbox-count">{unread > 0 ? t('inbox.unread', unread) : t('inbox.allRead')}</span>
               {view === 'current' && (
                 <>
-                  <button type="button" className="btn btn-sm btn-secondary" onClick={markAll} disabled={!unread}><CheckCheck size={13} /> {t('inbox.markAll')}</button>
-                  <button type="button" className="btn btn-sm btn-secondary" onClick={clearAll} disabled={visible.length === 0} title={t('inbox.clearAllTip')}><Trash2 size={13} /> {t('inbox.clearAll')}</button>
+                  <Button type="button" variant="secondary" size="sm" onClick={markAll} disabled={!unread}><CheckCheck size={13} /> {t('inbox.markAll')}</Button>
+                  <Button type="button" variant="secondary" size="sm" onClick={clearAll} disabled={visible.length === 0} title={t('inbox.clearAllTip')}><Trash2 size={13} /> {t('inbox.clearAll')}</Button>
                 </>
               )}
               <button type="button" className="inbox-close" onClick={() => setOpen(false)} aria-label={t('app.close')}><X size={14} /></button>
@@ -188,9 +189,9 @@ export default function InboxBell({ username, compact = false }) {
             {view === 'current' && selected.size > 0 && (
               <div className="inbox-selbar" data-testid="inbox-selbar">
                 <span>{t('inbox.selected', selected.size)}</span>
-                <button type="button" className="btn btn-sm btn-secondary" onClick={markSelected}><CheckCheck size={13} /> {t('inbox.markSelected')}</button>
-                <button type="button" className="btn btn-sm btn-secondary" onClick={() => dismissKeys([...selected])}><Trash2 size={13} /> {t('inbox.clearSelected')}</button>
-                <button type="button" className="btn btn-sm btn-secondary" onClick={() => setSelected(new Set())}>{t('inbox.cancelSelect')}</button>
+                <Button type="button" variant="secondary" size="sm" onClick={markSelected}><CheckCheck size={13} /> {t('inbox.markSelected')}</Button>
+                <Button type="button" variant="secondary" size="sm" onClick={() => dismissKeys([...selected])}><Trash2 size={13} /> {t('inbox.clearSelected')}</Button>
+                <Button type="button" variant="secondary" size="sm" onClick={() => setSelected(new Set())}>{t('inbox.cancelSelect')}</Button>
               </div>
             )}
 
@@ -218,9 +219,9 @@ export default function InboxBell({ username, compact = false }) {
               )}
               {view === 'history' && hist && (
                 <span className="inbox-pager">
-                  <button type="button" className="btn btn-sm btn-secondary" disabled={histPage <= 0} onClick={() => setHistPage((p) => p - 1)} aria-label={t('app.prevPage')}><ChevronLeft size={13} /></button>
+                  <Button type="button" variant="secondary" size="sm" disabled={histPage <= 0} onClick={() => setHistPage((p) => p - 1)} aria-label={t('app.prevPage')}><ChevronLeft size={13} /></Button>
                   <span>{t('inbox.pageInfo', histPage + 1, histPages, hist.total ?? 0)}</span>
-                  <button type="button" className="btn btn-sm btn-secondary" disabled={histPage + 1 >= histPages} onClick={() => setHistPage((p) => p + 1)} aria-label={t('app.nextPage')}><ChevronRight size={13} /></button>
+                  <Button type="button" variant="secondary" size="sm" disabled={histPage + 1 >= histPages} onClick={() => setHistPage((p) => p + 1)} aria-label={t('app.nextPage')}><ChevronRight size={13} /></Button>
                 </span>
               )}
               {view === 'history' && <span className="inbox-foot-note">{t('inbox.historyNote')}</span>}

@@ -11,6 +11,7 @@ import ModalShell from '../ui/ModalShell.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Zayıf Algoritma Raporu — zengin sürüm (2026-09-12, kullanıcı: "sayfa çok uzun süredir boş; neyi
@@ -131,10 +132,10 @@ function ExceptionModal({ domain, existing, onClose, onSaved }) {
   return (
     <ModalShell open onClose={onClose} title={t('wa.exceptionTitle', domain)} icon={ClipboardCheck} size="sm" busy={saving}
       footer={<>
-        <button type="button" className="btn btn-secondary" onClick={onClose} disabled={saving}>{t('app.cancel')}</button>
-        <button type="button" className="btn btn-primary" onClick={save} disabled={saving || !until}>
+        <Button type="button" variant="secondary" onClick={onClose} disabled={saving}>{t('app.cancel')}</Button>
+        <Button type="button" onClick={save} disabled={saving || !until}>
           {saving ? <Spinner size={14} inline decorative /> : <ClipboardCheck size={14} />} {t('wa.exceptionSave')}
-        </button>
+        </Button>
       </>}>
       <p className="wa-banner-info">{t('wa.exceptionHelp')}</p>
       <label className="wa-field">
@@ -242,7 +243,7 @@ export default function WeakAlgorithmReport() {
       <div className="wa-empty" role="alert">
         <ShieldAlert size={40} style={{ marginBottom: 12, opacity: .4 }} />
         <p>{error}</p>
-        <button type="button" className="btn btn-secondary" onClick={load}><RefreshCw size={14} /> {t('wa.retry')}</button>
+        <Button type="button" variant="secondary" onClick={load}><RefreshCw size={14} /> {t('wa.retry')}</Button>
       </div>
     )
   }
@@ -250,23 +251,23 @@ export default function WeakAlgorithmReport() {
   /** Eylem hücresi — kontrol et / bildir / istisna (yalnız manage yetkisinde). */
   const Actions = ({ row }) => (
     <div className="wa-actions">
-      <button type="button" className="btn btn-sm btn-secondary" onClick={() => checkNow(row.domain)}
+      <Button type="button" variant="secondary" size="sm" onClick={() => checkNow(row.domain)}
         disabled={!!busy[row.domain]} title={t('wa.actCheck')}>
         {busy[row.domain] === 'check' ? <Spinner size={13} inline decorative /> : <RefreshCw size={13} />} {t('wa.actCheck')}
-      </button>
+      </Button>
       {canManage && (
         <>
-          <button type="button" className="btn btn-sm btn-secondary" onClick={() => notify(row)}
+          <Button type="button" variant="secondary" size="sm" onClick={() => notify(row)}
             disabled={!!busy[row.domain] || !row.team_id} title={row.team_id ? t('wa.actNotify') : t('wa.noTeam')}>
             {busy[row.domain] === 'notify' ? <Spinner size={13} inline decorative /> : <BellRing size={13} />} {t('wa.actNotify')}
-          </button>
+          </Button>
           {row.exception
-            ? <button type="button" className="btn btn-sm btn-secondary" onClick={() => clearException(row.domain)} title={t('wa.exceptionClear')}>
+            ? <Button type="button" variant="secondary" size="sm" onClick={() => clearException(row.domain)} title={t('wa.exceptionClear')}>
                 <ClipboardX size={13} /> {t('wa.exceptionClear')}
-              </button>
-            : <button type="button" className="btn btn-sm btn-secondary" onClick={() => setExModal({ domain: row.domain, existing: null })} title={t('wa.actException')}>
+              </Button>
+            : <Button type="button" variant="secondary" size="sm" onClick={() => setExModal({ domain: row.domain, existing: null })} title={t('wa.actException')}>
                 <ClipboardCheck size={13} /> {t('wa.actException')}
-              </button>}
+              </Button>}
         </>
       )}
     </div>
@@ -292,12 +293,12 @@ export default function WeakAlgorithmReport() {
           <span className="wa-muted">· {t('wa.latestCheck', scan.latest_checked_at ? formatDateSec(scan.latest_checked_at) : '—')}</span>
         </div>
         <div className="wa-toolbar-actions">
-          <button type="button" className="btn btn-sm btn-secondary" onClick={load} disabled={loading}>
+          <Button type="button" variant="secondary" size="sm" onClick={load} disabled={loading}>
             {loading ? <Spinner size={13} inline decorative /> : <RefreshCw size={13} />} {t('wa.refresh')}
-          </button>
-          <button type="button" className="btn btn-sm btn-secondary" onClick={exportCsv}>
+          </Button>
+          <Button type="button" variant="secondary" size="sm" onClick={exportCsv}>
             <Download size={13} /> {t('wa.exportCsv')}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -599,8 +600,8 @@ export default function WeakAlgorithmReport() {
                     <td className="wa-sub">{e.created_by || '—'}{e.created_at && <div>{formatDateSec(e.created_at)}</div>}</td>
                     {canManage && (
                       <td className="wa-actions">
-                        <button type="button" className="btn btn-sm btn-secondary" onClick={() => setExModal({ domain: e.domain, existing: e })}><ClipboardCheck size={13} /> {t('wa.exceptionEdit')}</button>
-                        <button type="button" className="btn btn-sm btn-secondary" onClick={() => clearException(e.domain)}><ClipboardX size={13} /> {t('wa.exceptionClear')}</button>
+                        <Button type="button" variant="secondary" size="sm" onClick={() => setExModal({ domain: e.domain, existing: e })}><ClipboardCheck size={13} /> {t('wa.exceptionEdit')}</Button>
+                        <Button type="button" variant="secondary" size="sm" onClick={() => clearException(e.domain)}><ClipboardX size={13} /> {t('wa.exceptionClear')}</Button>
                       </td>
                     )}
                   </tr>

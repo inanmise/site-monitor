@@ -8,6 +8,7 @@ import AlertBanner from '../ui/AlertBanner.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { Spinner } from '../ui/Progress.jsx'
 import AdminChangeHistory from './AdminChangeHistory.jsx'
+import { Button } from '@/components/shadcn/button'
 
 const TIERS = [1, 2, 3, 4]
 const PREVIEW_DEBOUNCE_MS = 400
@@ -154,8 +155,8 @@ export default function AlertThresholds() {
         {orderError && <AlertBanner tone="danger">{t('thr.orderError')}</AlertBanner>}
         {!orderError && <ThresholdPreview preview={preview} t={t} />}
         <div className="modal-actions">
-          <button className="btn btn-secondary" onClick={() => { setEditing(null); setPreview(null) }}>{t('thr.cancel')}</button>
-          <button className="btn btn-primary" onClick={save} disabled={saving || orderError} aria-busy={saving || undefined}>{t('thr.save')}</button>
+          <Button variant="secondary" onClick={() => { setEditing(null); setPreview(null) }}>{t('thr.cancel')}</Button>
+          <Button onClick={save} disabled={saving || orderError} aria-busy={saving || undefined}>{t('thr.save')}</Button>
         </div>
       </div>
     )
@@ -187,12 +188,12 @@ export default function AlertThresholds() {
                   <div className="level-badge info">{t('thr.displayInterval', thr.re_alert_interval_hours)}</div>
                 </div>
                 <div className="threshold-actions">
-                  <button className="btn btn-secondary" onClick={() => startEdit(thr)}>{t('thr.edit')}</button>
+                  <Button variant="secondary" onClick={() => startEdit(thr)}>{t('thr.edit')}</Button>
                   {tier && (
-                    <button className="btn btn-danger btn-sm-p" onClick={() => remove(thr)} title={t('thr.delete')}
+                    <Button variant="destructive" size="sm" onClick={() => remove(thr)} title={t('thr.delete')}
                       aria-label={`${t('thr.scopeTier', tier)} — ${t('thr.delete')}`}>
                       <Trash2 size={14} />
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
@@ -219,9 +220,9 @@ export default function AlertThresholds() {
             ariaLabel={t('thr.addTierPick')}
             options={[{ value: '', label: t('thr.addTierPick') }, ...freeTiers.map(x => ({ value: String(x), label: t(`inv.tier${x}`) }))]}
           />
-          <button className="btn btn-secondary" onClick={startAdd} disabled={!addTier}>
+          <Button variant="secondary" onClick={startAdd} disabled={!addTier}>
             <Plus size={14} /> {t('thr.addTier')}
-          </button>
+          </Button>
         </div>
       )}
 

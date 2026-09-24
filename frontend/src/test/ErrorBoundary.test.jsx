@@ -109,8 +109,8 @@ describe('ErrorBoundary', () => {
     fetchMock.mockRejectedValue(new Error('network down'))
     render(<ErrorBoundary><Bomb /></ErrorBoundary>)
     await screen.findByText(/could not send this error report/i)
-    expect(screen.getByRole('button', { name: /Report a Problem/i }).className).toContain('btn-primary')
-    expect(screen.getByRole('button', { name: /Reload/i }).className).not.toContain('btn-primary')
+    expect(screen.getByRole('button', { name: /Report a Problem/i }).getAttribute('data-variant')).toBe('default')
+    expect(screen.getByRole('button', { name: /Reload/i }).getAttribute('data-variant')).not.toBe('default')
   })
 
   it('sunucu 500 dönerse de başarısız sayılır (sessizce yutulmaz)', async () => {

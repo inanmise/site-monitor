@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
+import { Button } from '@/components/shadcn/button'
 
 // İzleme türü etiketleri — mevcut İzleme Göstergeleri anahtarlarını yeniden kullan (yeni i18n gerekmez).
 export const TYPE_LABEL = {
@@ -120,8 +121,8 @@ export default function MonitorGroups() {
                       />
                     </td>
                     <td className="grp-actions">
-                      <button className="btn btn-secondary" onClick={() => setEditing(null)}>{t('grp.cancel')}</button>
-                      <button className="btn btn-primary" onClick={() => save(g)} disabled={saving}>{saving ? t('settings.saving') : t('grp.save')}</button>
+                      <Button variant="secondary" onClick={() => setEditing(null)}>{t('grp.cancel')}</Button>
+                      <Button onClick={() => save(g)} disabled={saving}>{saving ? t('settings.saving') : t('grp.save')}</Button>
                     </td>
                   </>
                 ) : (
@@ -129,7 +130,7 @@ export default function MonitorGroups() {
                     <td className="grp-name">{g.name}</td>
                     <td>{g.count}</td>
                     <td className="grp-actions">
-                      <button className="btn btn-secondary" onClick={() => startEdit(g)}>{t('grp.rename')}</button>
+                      <Button variant="secondary" onClick={() => startEdit(g)}>{t('grp.rename')}</Button>
                     </td>
                   </>
                 )}

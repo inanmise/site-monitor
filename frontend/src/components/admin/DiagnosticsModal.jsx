@@ -4,6 +4,7 @@ import { api, formatDate } from '../../api/client'
 import { useToast } from '../ui/Toast.jsx'
 import { useT } from '../../i18n/index.jsx'
 import { Spinner } from '../ui/Progress.jsx'
+import { Button } from '@/components/shadcn/button'
 
 function ShowField({ label, value, mono, full }) {
   return (
@@ -398,10 +399,10 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
                       ikinci kez göstermekten başka işe yaramazdı. */}
                   {diag.suggested && (
                     <div style={{ marginTop: 8 }}>
-                      <button className="btn btn-sm btn-primary"
+                      <Button size="sm"
                         onClick={() => runDiag({ ...diag.item, domain: diag.suggested })}>
                         {t('inv.diagTrySuggested').replace('{0}', diag.suggested)}
-                      </button>
+                      </Button>
                     </div>
                   )}
                 </div>
@@ -485,8 +486,8 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
                   {/* ── Derin SSL/TLS taraması (openssl) ── */}
                   <div className="show-section-header" style={{ marginTop: 18 }}>{t('inv.osslTitle')}</div>
                   {!diag.ossl && (
-                    <button className="btn btn-secondary btn-sm-p" style={{ marginTop: 6 }}
-                      onClick={() => runOpenssl(diag.item)}>{t('inv.osslRun')}</button>
+                    <Button variant="secondary" size="sm" style={{ marginTop: 6 }}
+                      onClick={() => runOpenssl(diag.item)}>{t('inv.osslRun')}</Button>
                   )}
                   {diag.ossl?.loading && (
                     <div className="show-field-value"><Spinner size={14} inline decorative /> {t('inv.diagRunning')}</div>
@@ -497,8 +498,8 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
                   {/* ── Ağ Derin Analizi ── */}
                   <div className="show-section-header" style={{ marginTop: 18 }}>{t('inv.netTitle')}</div>
                   {!diag.net && (
-                    <button className="btn btn-secondary btn-sm-p" style={{ marginTop: 6 }}
-                      onClick={() => runNetwork(diag.item)}>{t('inv.netRun')}</button>
+                    <Button variant="secondary" size="sm" style={{ marginTop: 6 }}
+                      onClick={() => runNetwork(diag.item)}>{t('inv.netRun')}</Button>
                   )}
                   {diag.net?.loading && (
                     <div className="show-field-value"><Spinner size={14} inline decorative /> {t('inv.diagRunning')}</div>
@@ -509,8 +510,8 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
                   {/* ── HSTS Analizi ── */}
                   <div className="show-section-header" style={{ marginTop: 18 }}>{t('inv.hstsTitle')}</div>
                   {!diag.hsts && (
-                    <button className="btn btn-secondary btn-sm-p" style={{ marginTop: 6 }}
-                      onClick={() => runHsts(diag.item)}>{t('inv.hstsRun')}</button>
+                    <Button variant="secondary" size="sm" style={{ marginTop: 6 }}
+                      onClick={() => runHsts(diag.item)}>{t('inv.hstsRun')}</Button>
                   )}
                   {diag.hsts?.loading && (
                     <div className="show-field-value"><Spinner size={14} inline decorative /> {t('inv.diagRunning')}</div>
@@ -521,8 +522,8 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
                   {/* ── Client IP / Proxy başlıkları (loglardaki IP teşhisi) ── */}
                   <div className="show-section-header" style={{ marginTop: 18 }}>{t('inv.cipTitle')}</div>
                   {!diag.cip && (
-                    <button className="btn btn-secondary btn-sm-p" style={{ marginTop: 6 }}
-                      onClick={() => runClientIp()}>{t('inv.cipRun')}</button>
+                    <Button variant="secondary" size="sm" style={{ marginTop: 6 }}
+                      onClick={() => runClientIp()}>{t('inv.cipRun')}</Button>
                   )}
                   {diag.cip?.loading && (
                     <div className="show-field-value"><Spinner size={14} inline decorative /> {t('inv.diagRunning')}</div>
@@ -533,13 +534,13 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
               )}
 
               <div className="modal-actions">
-                <button className="btn btn-secondary" onClick={onClose}>{t('app.dismiss')}</button>
-                <button className="btn btn-secondary" onClick={() => openHistory(diag.item)}>
+                <Button variant="secondary" onClick={onClose}>{t('app.dismiss')}</Button>
+                <Button variant="secondary" onClick={() => openHistory(diag.item)}>
                   {t('inv.diagHistory')}
-                </button>
-                <button className="btn btn-primary" onClick={() => runDiag(diag.item)} disabled={!!diag.loading}>
+                </Button>
+                <Button onClick={() => runDiag(diag.item)} disabled={!!diag.loading}>
                   {t('inv.diagRerun')}
-                </button>
+                </Button>
               </div>
 
             </div>
@@ -592,9 +593,9 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
                               {h.summary && <span style={{ marginLeft: 8 }}>{h.summary}</span>}
                             </td>
                             <td>
-                              <button className="btn-sm btn-show" onClick={() => openHistoryDetail(h.id)}>
+                              <Button variant="outline" size="sm" onClick={() => openHistoryDetail(h.id)}>
                                 {t('inv.histView')}
-                              </button>
+                              </Button>
                             </td>
                           </tr>
                         ))}
@@ -608,8 +609,8 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
 
               {history.detail && (
                 <>
-                  <button className="btn btn-secondary btn-sm-p" style={{ marginBottom: 10 }}
-                    onClick={() => setHistory((h) => ({ ...h, detail: null }))}>← {t('inv.diagHistory')}</button>
+                  <Button variant="secondary" size="sm" style={{ marginBottom: 10 }}
+                    onClick={() => setHistory((h) => ({ ...h, detail: null }))}>← {t('inv.diagHistory')}</Button>
                   <div className="show-grid-2">
                     <ShowField label={t('inv.histColWho')} value={history.detail.executed_by} />
                     <ShowField label={t('inv.histColWhen')} value={formatDate(history.detail.executed_at)} />
@@ -664,7 +665,7 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
               )}
 
               <div className="modal-actions">
-                <button className="btn btn-secondary" onClick={() => setHistory(null)}>{t('app.dismiss')}</button>
+                <Button variant="secondary" onClick={() => setHistory(null)}>{t('app.dismiss')}</Button>
               </div>
             </div>
           </div>

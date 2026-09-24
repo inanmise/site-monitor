@@ -9,6 +9,7 @@ import StatusBlock from './ui/StatusBlock.jsx'
 import TeamBadge from './ui/TeamBadge.jsx'
 import CopyableRef from './ui/CopyableRef.jsx'
 import { navigateTo } from '../utils/navigate.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Paylaşılan sertifika penceresi (2026-09-22, kullanıcı isteği): kart üzerindeki "N alan aynı sertifikayı paylaşıyor"
@@ -90,7 +91,7 @@ export default function SharedCertificateModal({ domain, onClose, onSelectDomain
         )}
         <p className="field-hint shc-foot">{t('shc.foot')}</p>
         <div className="shc-actions">
-          <button type="button" className="btn btn-sm btn-secondary" onClick={() => { navigateTo('renewal'); onClose?.() }}>{t('shc.toRenewal')}</button>
+          <Button type="button" variant="secondary" size="sm" onClick={() => { navigateTo('renewal'); onClose?.() }}>{t('shc.toRenewal')}</Button>
         </div>
       </>)}
     </ModalShell>

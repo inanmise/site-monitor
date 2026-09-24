@@ -6,6 +6,7 @@ import { useT } from '../../i18n/index.jsx'
 import { api } from '../../api/client'
 import { INVENTORY_FLAGS } from '../../utils/inventoryFlags.js'
 import { parseCsv, mapCsv, importTemplateCsv, IMPORT_COLUMNS } from './inventoryModel.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * CSV içe aktarma (2026-09-12, #6): dosya ya da yapıştırılan metin → istemcide ayrıştır → sunucuda KURU
@@ -63,20 +64,22 @@ export default function InventoryImportModal({ onClose, onDone }) {
     <ModalShell open onClose={onClose} title={t('inv.importTitle')} icon={Upload} size="lg"
       footer={
         <>
-          <button type="button" className="btn btn-secondary" onClick={onClose}>{result ? t('app.close') : t('inv.cancel')}</button>
-          {!result && <button type="button" className="btn btn-secondary" disabled={busy || parsed.rows.length === 0} onClick={() => run(true)}>{t('inv.importPreview')}</button>}
-          {!result && <button type="button" className="btn btn-primary" disabled={busy || !plan || (plan.created + plan.updated) === 0} onClick={() => run(false)} title={!plan ? t('inv.importPreviewFirst') : undefined}>
+          <Button type="button" variant="secondary" onClick={onClose}>{result ? t('app.close') : t('inv.cancel')}</Button>
+          {!result && <Button type="button" variant="secondary" disabled={busy || parsed.rows.length === 0} onClick={() => run(true)}>{t('inv.importPreview')}</Button>}
+          {!result && <Button type="button" disabled={busy || !plan || (plan.created + plan.updated) === 0} onClick={() => run(false)} title={!plan ? t('inv.importPreviewFirst') : undefined}>
             {busy ? t('inv.saving') : t('inv.importCommit', plan ? plan.created + plan.updated : 0)}
-          </button>}
+          </Button>}
         </>
       }>
       <p className="field-hint">{t('inv.importHint')}</p>
       <div className="inv-import-src">
-        <label className="btn btn-secondary btn-sm">
-          <FileSpreadsheet size={13} /> {t('inv.importFile')}
-          <input type="file" accept=".csv,text/csv,text/plain" onChange={onFile} style={{ display: 'none' }} />
-        </label>
-        <button type="button" className="btn btn-secondary btn-sm" onClick={downloadTemplate}><Download size={13} /> {t('inv.importTemplate')}</button>
+        <Button asChild variant="secondary" size="sm">
+          <label>
+            <FileSpreadsheet size={13} /> {t('inv.importFile')}
+            <input type="file" accept=".csv,text/csv,text/plain" onChange={onFile} style={{ display: 'none' }} />
+          </label>
+        </Button>
+        <Button type="button" variant="secondary" size="sm" onClick={downloadTemplate}><Download size={13} /> {t('inv.importTemplate')}</Button>
         <span className="inv-import-cols" title={IMPORT_COLUMNS.join(', ')}>{t('inv.importCols', IMPORT_COLUMNS.length)}</span>
       </div>
       <textarea className="input inv-import-text" rows={6} value={text} placeholder={t('inv.importPaste')}

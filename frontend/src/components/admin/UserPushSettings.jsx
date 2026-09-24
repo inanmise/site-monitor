@@ -20,6 +20,7 @@ import HelpTip from '../ui/HelpTip.jsx'
 import ModalShell from '../ui/ModalShell.jsx'
 import { formatDateSec } from '../../api/client'
 import { copyText } from '../../utils/copyText.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Kişi-bazlı Webhook Bildirimleri — mail hattından TAMAMEN bağımsız ikinci kanalın yönetimi.
@@ -194,9 +195,9 @@ function WindowModal({ win, status, counts, teams: teamRows, windowFrom, statusT
       closeLabel={t('userpush.winClose')}
       footer={(
         <>
-          <a className="btn btn-sm" href={api.admin.userPush.exportUrl({ from, ...(status ? { status } : {}) })} download>CSV</a>
-          <button type="button" className="btn btn-sm btn-secondary" onClick={onOpenInLog}>{t('userpush.winOpenInLog')}</button>
-          <button type="button" className="btn btn-sm btn-primary" onClick={onClose}>{t('userpush.winClose')}</button>
+          <Button asChild variant="outline" size="sm"><a href={api.admin.userPush.exportUrl({ from, ...(status ? { status } : {}) })} download>CSV</a></Button>
+          <Button type="button" variant="secondary" size="sm" onClick={onOpenInLog}>{t('userpush.winOpenInLog')}</Button>
+          <Button type="button" size="sm" onClick={onClose}>{t('userpush.winClose')}</Button>
         </>
       )}>
       <p className="section-desc">{t('userpush.winSince', formatDateSec(from + 'Z'))}</p>
@@ -607,9 +608,9 @@ export default function UserPushSettings() {
       <div className="admin-section">
         <div className="cs-page-head">
           <h3><BellRing size={18} style={{ verticalAlign: '-3px' }} /> {t('userpush.title')}</h3>
-          <button type="button" className="btn btn-sm cs-all" onClick={() => setAllSections(!allOpen)}>
+          <Button type="button" variant="outline" size="sm" className="cs-all" onClick={() => setAllSections(!allOpen)}>
             {allOpen ? t('userpush.collapseAll') : t('userpush.expandAll')}
-          </button>
+          </Button>
         </div>
         <p className="section-desc">{t('userpush.desc')}</p>
         {stats && (
@@ -705,13 +706,13 @@ export default function UserPushSettings() {
                   onChange={(e) => setHeaders(headers.map((x, j) => j === i ? { ...x, secret: e.target.checked } : x))} />
                 <span>{t('userpush.headerSecret')}</span>
               </label><HelpTip helpKey="help.userpush.headerRow" label={t('userpush.headerSecret')} />
-              <button type="button" className="btn btn-sm" aria-label={t('userpush.headerDelete', h.name || String(i + 1))}
-                onClick={() => setHeaders(headers.filter((_, j) => j !== i))}><Trash2 size={14} /></button>
+              <Button type="button" variant="outline" size="sm" aria-label={t('userpush.headerDelete', h.name || String(i + 1))}
+                onClick={() => setHeaders(headers.filter((_, j) => j !== i))}><Trash2 size={14} /></Button>
             </div>
           ))}
-          <button type="button" className="btn btn-sm" onClick={() => setHeaders([...headers, { name: '', value: '', secret: true }])}>
+          <Button type="button" variant="outline" size="sm" onClick={() => setHeaders([...headers, { name: '', value: '', secret: true }])}>
             <Plus size={14} /> {t('userpush.addHeader')}
-          </button>
+          </Button>
 
           <div className="userpush-grid4" style={{ marginTop: 14 }}>
             <label className="threshold-field"><span className="help-label-row">{t('userpush.timeoutConnect')}<HelpTip helpKey="help.set.site.monitor.userpush.timeout-connect-seconds" label={t('userpush.timeoutConnect')} /></span>
@@ -811,8 +812,8 @@ export default function UserPushSettings() {
             <input type="text" className="upt-search up-team-search" value={teamQuery}
               placeholder={t('userpush.searchTeam')}
               onChange={(e) => setTeamQuery(e.target.value)} />
-            <button type="button" className="btn btn-sm" onClick={() => bulkTeams(true)}>{t('userpush.enableAll')}</button>
-            <button type="button" className="btn btn-sm" onClick={() => bulkTeams(false)}>{t('userpush.disableAll')}</button>
+            <Button type="button" variant="outline" size="sm" onClick={() => bulkTeams(true)}>{t('userpush.enableAll')}</Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => bulkTeams(false)}>{t('userpush.disableAll')}</Button>
           </div>
           <div className="up-chip-grid" role="group" aria-label={t('userpush.teamMatrix')}>
             {visibleTeams.map((tm) => (
@@ -929,10 +930,10 @@ export default function UserPushSettings() {
         <div className="userpush-test-row">
           <SearchableSelect value={testTemplate} onChange={setTestTemplate}
             options={TEMPLATE_KEYS.map((k) => ({ value: k, label: t(`userpush.template.${k}`) }))} />
-          <button type="button" className="btn" onClick={sendTest} disabled={testing || !enabled}
+          <Button type="button" variant="outline" onClick={sendTest} disabled={testing || !enabled}
             title={!enabled ? t('userpush.disabledWarn') : undefined}>
             {testing ? <Spinner size={14} inline decorative /> : <Send size={14} />} {t('userpush.testSend')}
-          </button>
+          </Button>
         </div>
         {testResult && (
           <div className="userpush-test-result">
@@ -988,10 +989,10 @@ export default function UserPushSettings() {
         <p className="section-desc">{t('userpush.logDesc')}</p>
         <div className="userpush-log-filters">
           {fWindow && (
-            <button type="button" className="btn btn-sm up-window-chip" onClick={() => { setFWindow(''); setPage(0) }}
+            <Button type="button" variant="outline" size="sm" className="up-window-chip" onClick={() => { setFWindow(''); setPage(0) }}
               title={t('userpush.windowClear')}>
               {t('userpush.windowActive', t(winLabelKey(fWindow)))} ✕
-            </button>
+            </Button>
           )}
           <input type="text" className="upt-search" placeholder={t('userpush.filterSicil')} value={fUser}
             onChange={(e) => { setFUser(e.target.value); setPage(0) }} />
@@ -1003,14 +1004,14 @@ export default function UserPushSettings() {
               ...TRIGGERS.map((s) => ({ value: s, label: t('userpush.trigger.' + s) }))]} searchThreshold={8} />
           <input type="text" className="upt-search" placeholder="notificationId" value={fNotifId}
             onChange={(e) => { setFNotifId(e.target.value); setPage(0) }} />
-          <button type="button" className="btn btn-sm" onClick={loadDeliveries} aria-label={t('app.refresh')}>
+          <Button type="button" variant="outline" size="sm" onClick={loadDeliveries} aria-label={t('app.refresh')}>
             <RefreshCw size={14} />
-          </button>
-          <a className="btn btn-sm" href={api.admin.userPush.exportUrl({
+          </Button>
+          <Button asChild variant="outline" size="sm"><a href={api.admin.userPush.exportUrl({
             ...(fUser ? { username: fUser } : {}), ...(fStatus ? { status: fStatus } : {}),
             ...(fTrigger ? { trigger: fTrigger } : {}), ...(fNotifId ? { notificationId: fNotifId } : {}),
             ...(windowFrom(fWindow) ? { from: windowFrom(fWindow) } : {}),
-          })} download>CSV</a>
+          })} download>CSV</a></Button>
         </div>
 
         {rows === null ? <LoadingBlock label={t('modal.loading')} />
@@ -1047,11 +1048,11 @@ export default function UserPushSettings() {
           </span>
           <div className="up-savebar-actions">
             {dirty && (
-              <button type="button" className="btn btn-sm btn-secondary" onClick={discard} disabled={saving}>{t('userpush.discard')}</button>
+              <Button type="button" variant="secondary" size="sm" onClick={discard} disabled={saving}>{t('userpush.discard')}</Button>
             )}
-            <button type="button" className="btn btn-sm btn-primary" onClick={save} disabled={saving || !dirty}>
+            <Button type="button" size="sm" onClick={save} disabled={saving || !dirty}>
               {saving ? <Spinner size={14} inline decorative /> : <Save size={14} />} {saving ? t('settings.saving') : t('settings.save')}
-            </button>
+            </Button>
           </div>
         </div>
       )}

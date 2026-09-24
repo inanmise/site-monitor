@@ -51,6 +51,7 @@ import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { csvCell } from '../utils/csv.js'
 import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
+import { Button } from '@/components/shadcn/button'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
@@ -643,18 +644,18 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
           <span className="upt-last-check">
             {t('page.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}
           </span>
-          <button className="btn btn-sm upt-refresh-btn" onClick={load}>
+          <Button variant="outline" size="sm" onClick={load}>
             <RefreshCw size={14} />{t('page.refresh')}
-          </button>
+          </Button>
           <CheckAllButton count={checkable.length} running={checkRun.running}
             done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
             onClick={checkRun.openPicker} />
-          <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+          <CopyLinkButton iconOnly variant="outline" />
           <MonitorGuideButton type="page" />
           {canWrite && (
-            <button className="btn btn-sm btn-primary" onClick={openNew}>
+            <Button size="sm" onClick={openNew}>
               <Plus size={14} />{t('page.addMonitor')}
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -681,7 +682,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
 
       {loading ? <LoadingBlock label={t('tbl.loading')} fullWidth /> : loadError && monitors.length === 0 ? (
         <AlertBanner tone="danger" title={t('mon.loadError')} role="alert"
-          actions={<button className="btn btn-sm btn-secondary" onClick={load}>{t('hist.retry')}</button>}>
+          actions={<Button variant="secondary" size="sm" onClick={load}>{t('hist.retry')}</Button>}>
           {String(loadError)}
         </AlertBanner>
       ) : monitors.length === 0 ? (
@@ -714,7 +715,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
                 {alarmBadge(m)}<MaintenanceBadge target={m.url} />
                 <span className="upt-card-top-right">
                   <span className="upt-port-tag">{m.mode === 'SITE_CRAWL' ? t('page.modeCrawl') : t('page.modeSingle')}</span>
-                  <CopyLinkButton iconOnly url={monitorDeepLink('page', m.id)} className="btn btn-sm upt-card-copy" />
+                  <CopyLinkButton iconOnly url={monitorDeepLink('page', m.id)} variant="ghost" size="icon-xs" className="upt-card-copy" />
                 </span>
               </div>
               <div className="upt-card-domain" title={m.url}>{m.url}</div>
@@ -780,7 +781,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
                 deleting={deleting === selected.id}
                 deleteTitle={t('page.delete')}
                 onClose={closeDetail}>
-                <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+                <CopyLinkButton iconOnly variant="outline" />
               </MonitorModalActions>
             </div>
             <div className="upt-modal-divider" />
@@ -815,11 +816,11 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
             {detailTab === 'issues' && (<>
               <div className="upt-range-btns page-issue-filters" style={{ flexWrap: 'wrap' }}>
                 {issueFilters.map(f => (
-                  <button key={f} type="button" className={`btn btn-sm ${issueFilter === f ? 'btn-primary' : 'btn-secondary'}`}
-                    onClick={() => selectIssueFilter(selected.id, f)}>{t(`page.filter_${f}`)}</button>
+                  <Button key={f} type="button" variant={issueFilter === f ? 'default' : 'secondary'} size="sm"
+                    onClick={() => selectIssueFilter(selected.id, f)}>{t(`page.filter_${f}`)}</Button>
                 ))}
-                <button type="button" className="btn btn-sm btn-secondary" style={{ marginLeft: 'auto' }}
-                  disabled={!issues.length} onClick={exportIssuesCsv}><Download size={12} />{t('page.exportCsv')}</button>
+                <Button type="button" variant="secondary" size="sm" style={{ marginLeft: 'auto' }}
+                  disabled={!issues.length} onClick={exportIssuesCsv}><Download size={12} />{t('page.exportCsv')}</Button>
               </div>
               {issuesLoading ? <LoadingBlock label={t('modal.loading')} className="upt-modal-loading" /> : issues.length === 0 ? (
                 <LoadingBlock label={t('page.noIssues')} className="upt-modal-loading" />
@@ -869,13 +870,13 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
                         <span>
                           {canManageRow(selected) && (
                             isExcluded(selected, r.resource_url)
-                              ? <button type="button" className="btn btn-sm btn-secondary page-exclude-btn" disabled
+                              ? <Button type="button" variant="secondary" size="sm" className="page-exclude-btn" disabled
                                   title={t('page.excludeAlready')} aria-label={t('page.excludeAlreadyFor', r.resource_url)}>
-                                  <EyeOff size={12} /></button>
-                              : <button type="button" className="btn btn-sm btn-secondary page-exclude-btn"
+                                  <EyeOff size={12} /></Button>
+                              : <Button type="button" variant="secondary" size="sm" className="page-exclude-btn"
                                   title={t('page.excludeAdd')} aria-label={t('page.excludeAddFor', r.resource_url)}
                                   onClick={e => { e.stopPropagation(); addExclude(r) }}>
-                                  <EyeOff size={12} /></button>
+                                  <EyeOff size={12} /></Button>
                           )}
                         </span>
                       </div>
@@ -1070,13 +1071,13 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
             </div>
             <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
             <div className="modal-actions">
-              <button className="btn btn-secondary" style={{ marginRight: 'auto' }} onClick={runTest}
+              <Button variant="secondary" style={{ marginRight: 'auto' }} onClick={runTest}
                 aria-busy={testing || undefined} disabled={testing || !form.url.trim()}>
                 <FlaskConical size={14} />{t('page.test')}
-              </button>
-              {modal !== 'new' && canDeleteRow(modal) && <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('page.delete')}</button>}
-              <button className="btn btn-secondary" onClick={closeEdit}>{t('page.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.teamId}>{t('page.save')}</button>
+              </Button>
+              {modal !== 'new' && canDeleteRow(modal) && <Button variant="destructive" onClick={del}><Trash2 size={14} />{t('page.delete')}</Button>}
+              <Button variant="secondary" onClick={closeEdit}>{t('page.cancel')}</Button>
+              <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.teamId}>{t('page.save')}</Button>
             </div>
           </div>
         </div>,

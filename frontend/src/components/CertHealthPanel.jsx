@@ -5,6 +5,7 @@ import { useT } from '../i18n/index.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
 import CopyButton from './ui/CopyButton.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Sertifika Sağlık Kontrol Listesi.
@@ -186,21 +187,21 @@ export default function CertHealthPanel({ domain, canRefresh = true }) {
             filtreyi açmadan da görünür. Sorun yoksa düğme hiç çizilmez — boş bir filtre
             sunmak "bir şey kaçırdım mı" sorusunu üretir. */}
         {issueCount > 0 && (
-          <button type="button"
-            className={`btn btn-sm hlth-filter${onlyIssues ? ' btn-primary' : ' btn-secondary'}`}
+          <Button type="button"
+            variant={onlyIssues ? 'default' : 'secondary'} size="sm"
             aria-pressed={onlyIssues}
             onClick={() => setOnlyIssues(v => !v)}>
             <TriangleAlert size={13} />
             {onlyIssues ? t('hlth.showAll') : t('hlth.onlyIssues', issueCount)}
-          </button>
+          </Button>
         )}
 
         {canRefresh && (
-          <button type="button" className="btn btn-sm btn-secondary hlth-refresh"
+          <Button type="button" variant="secondary" size="sm" className="hlth-refresh"
             onClick={refresh} disabled={refreshing}>
             <RefreshCw size={13} className={refreshing ? 'hlth-spin' : undefined} />
             {refreshing ? t('hlth.checking') : t('hlth.checkNow')}
-          </button>
+          </Button>
         )}
       </div>
 
@@ -269,9 +270,9 @@ function HealthRow({ row, t, tlsModeUsed, expanded, onToggle, confirming = false
           Yalnız "değişti — planlı mıydı doğrula" durumunda çizilir; onaylanınca satır OK gelir. */}
       {row.key === 'pinnedFingerprint' && row.status === 'WARN' && row.action_key === 'confirmRenewal' && onConfirmRenewal && (
         <div className="hlth-row-cta">
-          <button type="button" className="btn btn-sm btn-primary" onClick={onConfirmRenewal} disabled={confirming}>
+          <Button type="button" size="sm" onClick={onConfirmRenewal} disabled={confirming}>
             <ShieldCheck size={13} /> {confirming ? t('hlth.btn.confirming') : t('hlth.btn.confirmRenewal')}
-          </button>
+          </Button>
           <span className="hlth-row-cta-hint">{t('hlth.cta.confirmHint')}</span>
         </div>
       )}

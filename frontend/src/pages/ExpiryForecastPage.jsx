@@ -30,6 +30,7 @@ import {
   EMPTY_FILTERS, filtersToParams, paramsToFilters, applyFilters, computeKpis, dailySeries, byTeam, teamBucketCerts, batches, coverage, byIssuer,
   upcoming, nextExpiry, expiryKey, classify, isHoliday, isWeekend, lastBusinessDay, icsEvents, csvRows, todayKey, dayDiff,
 } from './forecastModel.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Vade Takvimi (Expiry Forecast) — 2026-09-12 zenginleştirme, 14 madde:
@@ -133,7 +134,7 @@ function DayListModal({ modal, th, t, onClose, onSelectDomain, onPlan }) {
   const title = modal.title ?? t('forecast.dayModalTitle', formatDateOnly(modal.key), modal.certs.length)
   return (
     <ModalShell open onClose={onClose} title={title} icon={Calendar} size="lg" scrollBody
-      footer={<button type="button" className="btn btn-secondary" onClick={onClose}>{t('app.close')}</button>}>
+      footer={<Button type="button" variant="secondary" onClick={onClose}>{t('app.close')}</Button>}>
       {modal.certs.length > 5 && (
         <input className="input fc-day-search" type="text" placeholder={t('forecast.daySearch')} value={q} onChange={(e) => setQ(e.target.value)} />
       )}
@@ -146,7 +147,7 @@ function DayListModal({ modal, th, t, onClose, onSelectDomain, onPlan }) {
             {c.tier && <span className={`tier-badge tier-badge-${c.tier}`}>T{c.tier}</span>}
             {c.team_name && <TeamBadge teamId={c.team_id} teamName={c.team_name} />}
             <span className="inv-dim">{c.days_remaining} {t('forecast.daysLeft')}{rb ? ` · ${t('forecast.renewBy')} ${formatDateOnly(rb)}` : ''}{c.issuer_cn ? ` · ${c.issuer_cn}` : ''}</span>
-            <span className="fc-exp-actions"><button type="button" className="btn btn-sm btn-secondary" onClick={() => onPlan(c, rb)}><CalendarPlus size={11} /> {t('forecast.planBtn')}</button></span>
+            <span className="fc-exp-actions"><Button type="button" variant="secondary" size="sm" onClick={() => onPlan(c, rb)}><CalendarPlus size={11} /> {t('forecast.planBtn')}</Button></span>
           </li>)
       })}</ul>
       {rows.length === 0 && <div className="fc-no-data">{t('empty.hintFilter')}</div>}
@@ -432,7 +433,7 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
             <label className="fc-f"><span>{t('inv.filterTier')}</span><SearchableSelect value={filters.tier} onChange={(v) => setFilters((f) => ({ ...f, tier: v }))} options={[{ value: '', label: t('inv.filterAny') }, { value: '1', label: 'T1' }, { value: '2', label: 'T2' }, { value: '3', label: 'T3' }, { value: '4', label: 'T4' }, { value: 'none', label: t('inv.tierNone') }]} /></label>
             <label className="fc-f"><span>{t('inv.filterGroup')}</span><SearchableSelect value={filters.group} onChange={(v) => setFilters((f) => ({ ...f, group: v }))} options={[{ value: '', label: t('inv.filterAny') }, ...groupOpts]} /></label>
             <span className="fc-f-count">{t('inv.shownOf', certs.length, allCerts.length)}</span>
-            {filterActive && <button type="button" className="btn btn-sm btn-secondary" onClick={() => setFilters({ ...EMPTY_FILTERS })}>{t('inv.filterClear')}</button>}
+            {filterActive && <Button type="button" variant="secondary" size="sm" onClick={() => setFilters({ ...EMPTY_FILTERS })}>{t('inv.filterClear')}</Button>}
             <span className="invtb-spacer" />
             <span className="fc-th-note" title={t('forecast.thresholdTip')}>{t('forecast.thresholdNote', th.critical, th.high, th.warning)} · {t('forecast.leadNote', data.lead_days?.default ?? 14)}</span>
           </div>
@@ -531,7 +532,7 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
                           {cell('later', r.later, 'inv-dim')}
                           {cell('late', r.late, r.late > 0 ? 'is-warn' : '')}
                           {cell('total', r.total, 'is-total')}
-                          <td>{r.id !== 'none' && <button type="button" className="btn btn-sm btn-secondary" onClick={() => setFilters((f) => ({ ...f, team: f.team === r.id ? '' : r.id }))}>{filters.team === r.id ? t('inv.filterClear') : t('forecast.teamFilter')}</button>}</td>
+                          <td>{r.id !== 'none' && <Button type="button" variant="secondary" size="sm" onClick={() => setFilters((f) => ({ ...f, team: f.team === r.id ? '' : r.id }))}>{filters.team === r.id ? t('inv.filterClear') : t('forecast.teamFilter')}</Button>}</td>
                         </tr>)
                     })}</tbody>
                   </table>
@@ -565,10 +566,10 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
               <span className="fc-sec-badge">{t('forecast.certCount', list.length)}</span>
               <div className="fc-range-filter">{RANGE_OPTIONS.map((d) => <button key={d} type="button" className={`fc-range-btn${listRange === d ? ' active' : ''}`} onClick={() => setListRange(d)}>{t('forecast.chartDays', d)}</button>)}</div>
               <div className="fc-actions no-print">
-                <button type="button" className="btn btn-sm btn-secondary" disabled={!list.length} onClick={exportIcs} title={t('renewal.icsTip')}><Download size={12} /> ICS</button>
-                <button type="button" className="btn btn-sm btn-secondary" disabled={!list.length} onClick={exportCsv}><Download size={12} /> CSV</button>
-                <button type="button" className="btn btn-sm btn-secondary" onClick={copyLink}><Link2 size={12} /> {t('inv.copyLink')}</button>
-                <button type="button" className="btn btn-sm btn-secondary" onClick={() => window.print()}><Printer size={12} /> {t('forecast.print')}</button>
+                <Button type="button" variant="secondary" size="sm" disabled={!list.length} onClick={exportIcs} title={t('renewal.icsTip')}><Download size={12} /> ICS</Button>
+                <Button type="button" variant="secondary" size="sm" disabled={!list.length} onClick={exportCsv}><Download size={12} /> CSV</Button>
+                <Button type="button" variant="secondary" size="sm" onClick={copyLink}><Link2 size={12} /> {t('inv.copyLink')}</Button>
+                <Button type="button" variant="secondary" size="sm" onClick={() => window.print()}><Printer size={12} /> {t('forecast.print')}</Button>
               </div>
             </div>
             {batchList.length > 0 && (
@@ -591,15 +592,15 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
                   {r.renewal_plan_state === 'planned' && <span className="fc-exp-plan is-planned" title={r.renewal_planned_note || ''}>{t('forecast.planned', formatDateOnly(r.renewal_planned_at))}</span>}
                   {r.renewal_plan_state === 'done' && <span className="fc-exp-plan is-done">{t('forecast.planDone')}</span>}
                   <span className="fc-exp-actions no-print">
-                    <button type="button" className="btn btn-sm btn-secondary" disabled={busyDomain === r.domain} onClick={() => checkNow(r.domain)} title={t('inv.checkNow')}
-                      aria-label={`${r.domain} — ${t('inv.checkNow')}`}><Play size={11} /></button>
-                    <button type="button" className="btn btn-sm btn-secondary" onClick={() => setPlanRow(r)} title={t('forecast.planTitle', r.domain)}
-                      aria-label={t('forecast.planTitle', r.domain)}><CalendarPlus size={11} /></button>
+                    <Button type="button" variant="secondary" size="sm" disabled={busyDomain === r.domain} onClick={() => checkNow(r.domain)} title={t('inv.checkNow')}
+                      aria-label={`${r.domain} — ${t('inv.checkNow')}`}><Play size={11} /></Button>
+                    <Button type="button" variant="secondary" size="sm" onClick={() => setPlanRow(r)} title={t('forecast.planTitle', r.domain)}
+                      aria-label={t('forecast.planTitle', r.domain)}><CalendarPlus size={11} /></Button>
                   </span>
                 </div>
               ))}
               {!showAll && list.length > 15 && <button type="button" className="fc-show-more" onClick={() => setShowAll(true)}>+{list.length - 15} {t('forecast.showMore')}</button>}
-              {list.length === 0 && <StatusBlock tone="success" title={t('forecast.noneInRange', listRange)} description={hintNext} actions={next && next.days >= listRange ? <button type="button" className="btn btn-sm btn-secondary" onClick={() => setListRange(90)}>{t('forecast.widen', 90)}</button> : null} />}
+              {list.length === 0 && <StatusBlock tone="success" title={t('forecast.noneInRange', listRange)} description={hintNext} actions={next && next.days >= listRange ? <Button type="button" variant="secondary" size="sm" onClick={() => setListRange(90)}>{t('forecast.widen', 90)}</Button> : null} />}
             </div>
           </div>
 

@@ -360,11 +360,11 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       fireEvent.change(screen.getByTestId('code-editor'), { target: { value: 'kirli icerik' } })
 
       api.monitoring.saveScriptedDraft.mockClear()
-      // Hedef DÜZENLEME MODALININ silme düğmesi (`.btn-danger`). Kartta da artık bir silme
+      // Hedef DÜZENLEME MODALININ silme düğmesi (`[data-slot="button"][data-variant="destructive"]`). Kartta da artık bir silme
       // düğmesi var (`.mon-act--danger`, dokuz türün tamamına eklendi), bu yüzden yalnız
       // erişilebilir adla sorgulamak iki eşleşme döndürüyor. Satır 360'taki `.mon-act--edit`
       // ile aynı ayrıştırma.
-      fireEvent.click(document.querySelector('.modal-box .btn-danger, .btn-danger'))
+      fireEvent.click(document.querySelector('.modal-box [data-slot="button"][data-variant="destructive"], [data-slot="button"][data-variant="destructive"]'))
       // Onay artık PROJENİN diyaloğu (window.confirm değil): tarayıcı-varsayılanı kutu tasarım
       // sisteminin dışındaydı ve jsdom'da hiç çalışmadığı için bu yol yalnız spy ile test
       // edilebiliyordu — yani gerçek onay akışı test EDİLMİYORDU.

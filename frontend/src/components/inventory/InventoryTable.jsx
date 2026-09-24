@@ -9,7 +9,8 @@ import TeamBadge from '../ui/TeamBadge.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import { CONTACT_FIELDS } from '../../utils/inventoryContacts.js'
 import { INVENTORY_COLUMNS, filledContacts, activeFlags } from './inventoryModel.js'
-import InventoryFilterRow from './InventoryFilterRow.jsx'   // kolon süzgeç satırı (2026-09-22)
+import InventoryFilterRow from './InventoryFilterRow.jsx'
+import { Button } from '@/components/shadcn/button'   // kolon süzgeç satırı (2026-09-22)
 
 const FLAG_ICON = {
   netscaler: Server, waf_enabled: Shield, openshift: Cloud, ssl_pinning: Lock, jks_keystore: Key, ev_certificate: BadgeCheck,
@@ -181,10 +182,10 @@ export default function InventoryTable({
                 <td>
                   <div className="inv-row-actions">
                     {!del && (
-                      <button type="button" className="btn btn-sm btn-secondary inv-checknow" disabled={busy === r.domain} onClick={() => checkNow(r)} title={t('inv.checkNow')}
+                      <Button type="button" variant="secondary" size="sm" className="inv-checknow" disabled={busy === r.domain} onClick={() => checkNow(r)} title={t('inv.checkNow')}
                         aria-label={`${r.domain} — ${t('inv.checkNow')}`}>
                         <Play size={12} className={busy === r.domain ? 'is-spinning' : ''} />
-                      </button>
+                      </Button>
                     )}
                     <KebabMenu label={t('inv.colActions')} rowLabel={r.domain} items={del
                       ? [
@@ -216,7 +217,7 @@ export default function InventoryTable({
                   <Inbox size={14} />
                   <span>{t('inv.noMatch')}</span>
                   {onClearFilters && (
-                    <button type="button" className="btn btn-sm btn-secondary" onClick={onClearFilters}>{t('inv.filterClear')}</button>
+                    <Button type="button" variant="secondary" size="sm" onClick={onClearFilters}>{t('inv.filterClear')}</Button>
                   )}
                 </div>
               </td>

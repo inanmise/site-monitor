@@ -4,6 +4,7 @@ import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import HelpTip from '../ui/HelpTip.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /** Tarayıcıda kriptografik olarak güçlü rastgele anahtar üretir (32 bayt → base64). */
 function generateKey() {
@@ -76,9 +77,9 @@ export default function SecretTools() {
           </div>
         </div>
         <div className="ldap-actions">
-          <button className="btn btn-primary" onClick={() => run()} disabled={busy || !key.trim()}>
+          <Button onClick={() => run()} disabled={busy || !key.trim()}>
             {busy ? t('secret.decrypting') : t('secret.decrypt')}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -87,9 +88,9 @@ export default function SecretTools() {
         <h4 className="ldap-subhdr">{t('secret.genTitle')}</h4>
         <p className="section-desc">{t('secret.genDesc')}</p>
         <div className="ldap-actions" style={{ marginBottom: 10 }}>
-          <button className="btn btn-primary" onClick={() => setGenKey(generateKey())}>
+          <Button onClick={() => setGenKey(generateKey())}>
             <RefreshCw size={14} /> {t('secret.gen')}
-          </button>
+          </Button>
         </div>
         {genKey && (
           <div className="threshold-field" style={{ maxWidth: 560 }}>
@@ -97,9 +98,9 @@ export default function SecretTools() {
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <input type="text" readOnly value={genKey} style={{ flex: 1, fontFamily: 'monospace' }}
                 onFocus={(e) => e.target.select()} />
-              <button type="button" className="btn btn-secondary btn-sm-p" onClick={copyGen} title={t('secret.copy')}>
+              <Button type="button" variant="secondary" size="sm" onClick={copyGen} title={t('secret.copy')}>
                 <Copy size={14} />
-              </button>
+              </Button>
             </div>
             <span className="hint">{t('secret.genHint')}</span>
           </div>
@@ -117,10 +118,10 @@ export default function SecretTools() {
               onFocus={(e) => e.target.select()} />
           </div>
           <div className="ldap-actions" style={{ marginTop: 10 }}>
-            <button className="btn btn-secondary" disabled={busy}
+            <Button variant="secondary" disabled={busy}
               onClick={() => { setKey(info.dev_default_key); run(info.dev_default_key) }}>
               {t('secret.devTry')}
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -144,10 +145,10 @@ export default function SecretTools() {
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <input type={reveal[r.column] ? 'text' : 'password'} readOnly value={r.value ?? ''}
                     style={{ flex: 1, fontFamily: 'monospace' }} />
-                  <button type="button" className="btn btn-secondary btn-sm-p"
+                  <Button type="button" variant="secondary" size="sm"
                     onClick={() => setReveal((p) => ({ ...p, [r.column]: !p[r.column] }))}>
                     {reveal[r.column] ? <EyeOff size={14} /> : <Eye size={14} />}
-                  </button>
+                  </Button>
                 </div>
               ) : (
                 <span style={{ color: 'var(--danger)', fontWeight: 600 }}>{t('secret.fail')}</span>

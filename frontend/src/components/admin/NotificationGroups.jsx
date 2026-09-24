@@ -15,6 +15,7 @@ import KebabMenu from '../ui/KebabMenu.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
 import NotificationGroupHistory from './NotificationGroupHistory.jsx'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
+import { Button } from '@/components/shadcn/button'
 
 /** Grup başına adres tavanı — backend {@code NotificationGroupService.MAX_EMAILS_PER_GROUP} ile AYNI. */
 const MAX_EMAILS = 15
@@ -272,9 +273,9 @@ export default function NotificationGroups({ teams = [], systemRole }) {
             </div>
           )}
           {writableTeamIds.length > 0 && (
-            <button className="btn btn-success" onClick={openAdd}>
+            <Button variant="success" onClick={openAdd}>
               <Plus size={15} aria-hidden="true" /> {t('ng.add')}
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -375,12 +376,12 @@ export default function NotificationGroups({ teams = [], systemRole }) {
           <h3>{t('ng.histTitle')}</h3>
           <p className="section-desc">{t('ng.histDesc')}</p>
         </div>
-        <button
-          className="btn btn-secondary"
+        <Button
+          variant="secondary"
           onClick={() => { if (histOpen) { setHistOpen(false); setHistGroup(null) } else setHistOpen(true) }}
         >
           <History size={15} aria-hidden="true" /> {histOpen ? t('ng.histHide') : t('ng.histShow')}
-        </button>
+        </Button>
       </div>
 
       {histOpen && (
@@ -405,12 +406,12 @@ export default function NotificationGroups({ teams = [], systemRole }) {
         busy={moving}
         footer={
           <>
-            <button className="btn btn-secondary" onClick={() => setUsageModal(null)} disabled={moving}>
+            <Button variant="secondary" onClick={() => setUsageModal(null)} disabled={moving}>
               {t('ng.cancel')}
-            </button>
-            <button className="btn btn-primary" onClick={doMove} disabled={moving}>
+            </Button>
+            <Button onClick={doMove} disabled={moving}>
               {moving ? t('ng.saving') : t('ng.moveBtn')}
-            </button>
+            </Button>
           </>
         }
       >
@@ -469,12 +470,12 @@ export default function NotificationGroups({ teams = [], systemRole }) {
         busy={saving}
         footer={
           <>
-            <button className="btn btn-secondary" onClick={() => setModal(null)} disabled={saving}>
+            <Button variant="secondary" onClick={() => setModal(null)} disabled={saving}>
               {t('ng.cancel')}
-            </button>
-            <button className="btn btn-primary" onClick={save} disabled={saving || overLimit}>
+            </Button>
+            <Button onClick={save} disabled={saving || overLimit}>
               {saving ? t('ng.saving') : t('ng.save')}
-            </button>
+            </Button>
           </>
         }
       >

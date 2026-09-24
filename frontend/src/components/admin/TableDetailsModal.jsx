@@ -6,6 +6,7 @@ import { LoadingBlock, ProgressBar } from '../ui/Progress.jsx'
 import ModalShell from '../ui/ModalShell.jsx'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * SQL Playground — tablo şema detayları (salt-okunur). 2026-09-20 yeniden tasarım (kullanıcı bildirimi:
@@ -63,9 +64,9 @@ export default function TableDetailsModal({ table, details, loading, onClose, on
 
   const footer = (
     <>
-      {onUseQuery && <button type="button" className="btn btn-secondary" onClick={() => { onUseQuery(`SELECT * FROM ${table} LIMIT 100`); onClose?.() }}><Play size={14} /> {t('sql.td.useQuery')}</button>}
-      <button type="button" className="btn btn-secondary" onClick={() => { try { navigator.clipboard?.writeText(table) } catch { /* jsdom */ } }}><Copy size={14} /> {t('sql.td.copyName')}</button>
-      <button type="button" className="btn btn-primary" onClick={onClose}>{t('sql.closeRowDetails')}</button>
+      {onUseQuery && <Button type="button" variant="secondary" onClick={() => { onUseQuery(`SELECT * FROM ${table} LIMIT 100`); onClose?.() }}><Play size={14} /> {t('sql.td.useQuery')}</Button>}
+      <Button type="button" variant="secondary" onClick={() => { try { navigator.clipboard?.writeText(table) } catch { /* jsdom */ } }}><Copy size={14} /> {t('sql.td.copyName')}</Button>
+      <Button type="button" onClick={onClose}>{t('sql.closeRowDetails')}</Button>
     </>
   )
 

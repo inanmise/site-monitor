@@ -21,6 +21,7 @@ function daysColor(d) {
   return '#1E8449'
 }
 import { eppKey, eppLabel } from '../utils/domainEpp.js'
+import { Button } from '@/components/shadcn/button'
 
 function csv(v) {
   if (Array.isArray(v)) return v
@@ -79,9 +80,9 @@ export default function DomainRegistrationTab({ monitor }) {
     <div className="dreg">
       <div className="dreg-toolbar">
         {stale && <span className="dreg-stale">{t('dreg.stale').replace('{0}', formatDateSec(d.checked_at))}</span>}
-        <button className="btn btn-sm btn-secondary" style={{ marginLeft: 'auto' }} onClick={() => load(true)} disabled={loading}>
+        <Button variant="secondary" size="sm" style={{ marginLeft: 'auto' }} onClick={() => load(true)} disabled={loading}>
           {loading ? <Spinner size={13} inline decorative /> : <RefreshCw size={13} />}{t('dreg.refresh')}
-        </button>
+        </Button>
       </div>
 
       {/* Registrar */}

@@ -9,6 +9,7 @@ import { useToast } from '../ui/Toast.jsx'
 import TimeRangePicker, { resolveRange } from '../ui/TimeRangePicker.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
+import { Button } from '@/components/shadcn/button'
 
 const RETENTION_KEY = 'site.monitor.metrics.http.retention-days'
 const pad = (n) => String(n).padStart(2, '0')
@@ -137,9 +138,9 @@ export default function HttpMetricsExplorer() {
           <div className="hme-ep"><SearchableSelect value={endpoint} onChange={setEndpoint}
             options={epOptions} searchThreshold={2} placeholder={t('http.exp.allEndpoints')} /></div>
           <TimeRangePicker value={range} onChange={setRange} />
-          <button type="button" className="btn btn-sm btn-secondary" onClick={load} disabled={loading}>
+          <Button type="button" variant="secondary" size="sm" onClick={load} disabled={loading}>
             <RefreshCw size={14} />{t('http.exp.refresh')}
-          </button>
+          </Button>
         </div>
         {retention != null && (
           <div className="hme-retention">
@@ -147,9 +148,9 @@ export default function HttpMetricsExplorer() {
             <input type="number" min="1" max="365" value={retention}
               onChange={e => setRetention(e.target.value)} />
             <span>{t('http.exp.days')}</span>
-            <button type="button" className="btn btn-sm btn-primary" onClick={saveRetention} disabled={savingRet}>
+            <Button type="button" size="sm" onClick={saveRetention} disabled={savingRet}>
               {t('http.exp.save')}
-            </button>
+            </Button>
           </div>
         )}
       </div>

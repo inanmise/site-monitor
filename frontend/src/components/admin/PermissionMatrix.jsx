@@ -5,6 +5,7 @@ import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import { ShieldCheck, Lock, Eye, Pencil, Zap, RotateCcw, ChevronDown } from 'lucide-react'
+import { Button } from '@/components/shadcn/button'
 
 const ROLES = [
   { key: 'ADMIN',      colorClass: 'perm-role-admin' },
@@ -122,10 +123,10 @@ export default function PermissionMatrix() {
           <ShieldCheck size={20} />
           <span>{t('perm.title')}</span>
         </h3>
-        <button className="btn btn-secondary perm-reset-btn" onClick={resetDefaults}>
+        <Button variant="secondary" className="perm-reset-btn" onClick={resetDefaults}>
           <RotateCcw size={14} />
           <span>{t('perm.resetBtn')}</span>
-        </button>
+        </Button>
       </div>
 
       <p className="section-desc">{t('perm.desc')}</p>

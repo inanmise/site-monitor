@@ -8,6 +8,7 @@ import { mailPreviewSrcDoc, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview
 import { Spinner } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import HelpTip from '../ui/HelpTip.jsx'
+import { Button } from '@/components/shadcn/button'
 
 export default function WeeklyAvailabilitySettings() {
   const t = useT()
@@ -275,15 +276,15 @@ export default function WeeklyAvailabilitySettings() {
             placeholder={t('weeklyavail.selectTeam')} searchThreshold={2} options={teamOptions} />
           <SearchableSelect value={String(previewWeekOffset)} onChange={(v) => setPreviewWeekOffset(Number(v))}
             placeholder={t('weeklyavail.previewWeek')} options={weekSelectOptions} />
-          <button className="btn btn-primary" onClick={doPreview} disabled={previewing || !previewTeamId}>
+          <Button onClick={doPreview} disabled={previewing || !previewTeamId}>
             {previewing ? <Spinner size={15} inline decorative /> : <Eye size={15} />} {t('weeklyavail.previewBtn')}
-          </button>
+          </Button>
           {/* Ek, gövdeyle AYNI takım/hafta seçiminden üretilir — iki ayrı seçici olsaydı
               "önizlediğim hafta ile indirdiğim PDF farklı" tuzağı doğardı. */}
-          <button className="btn btn-secondary" onClick={downloadPdf}
+          <Button variant="secondary" onClick={downloadPdf}
             disabled={downloadingPdf || !previewTeamId} title={t('weeklyavail.pdfTip')}>
             {downloadingPdf ? <Spinner size={15} inline decorative /> : <FileDown size={15} />} {t('weeklyavail.pdfBtn')}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -299,10 +300,10 @@ export default function WeeklyAvailabilitySettings() {
           <input type="email" value={testEmail} placeholder="recipient@example.com"
             onChange={(e) => setTestEmail(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') sendTest() }} />
-          <button className="btn btn-primary" onClick={sendTest}
+          <Button onClick={sendTest}
             disabled={sending || !testTeamId || !testEmail.trim()}>
             {sending ? <Spinner size={15} inline decorative /> : <Send size={15} />} {t('weeklyavail.sendBtn')}
-          </button>
+          </Button>
         </div>
         {sendResult && (
           <div className={`alert-msg ${sendResult.success ? '' : 'ldap-lookup-error'}`} style={{ marginTop: 12 }}>
@@ -322,9 +323,9 @@ export default function WeeklyAvailabilitySettings() {
               <input type="checkbox" checked={includeTest} onChange={(e) => setIncludeTest(e.target.checked)} />
               <span>{t('weeklyavail.includeTest')}</span>
             </label>
-            <button className="btn btn-secondary" onClick={loadHistory} disabled={historyLoading}>
+            <Button variant="secondary" onClick={loadHistory} disabled={historyLoading}>
               {historyLoading ? <Spinner size={15} inline decorative /> : <RefreshCw size={15} />} {t('weeklyavail.refresh')}
-            </button>
+            </Button>
           </div>
         </div>
         <p className="section-desc">{t('weeklyavail.historyDesc')}</p>
@@ -355,9 +356,9 @@ export default function WeeklyAvailabilitySettings() {
                     <td>{m.to}{m.cc ? ` · CC: ${m.cc}` : ''}</td>
                     <td>{statusCell(m.status)}</td>
                     <td>
-                      <button className="btn btn-secondary" onClick={() => openArchived(m)} disabled={openingId === m.id}>
+                      <Button variant="secondary" onClick={() => openArchived(m)} disabled={openingId === m.id}>
                         {openingId === m.id ? <Spinner size={14} inline decorative /> : <Eye size={14} />} {t('weeklyavail.view')}
-                      </button>
+                      </Button>
                     </td>
                   </tr>
                 ))}
@@ -374,7 +375,7 @@ export default function WeeklyAvailabilitySettings() {
             style={{ maxWidth: 920, width: '100%', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 12 }}>
               <h3 style={{ margin: 0 }}>{viewer.title}</h3>
-              <button className="btn btn-secondary" onClick={() => setViewer(null)} aria-label={t('app.dismiss')}>✕</button>
+              <Button variant="secondary" onClick={() => setViewer(null)} aria-label={t('app.dismiss')}>✕</Button>
             </div>
             <p className="ldap-meta" style={{ marginTop: 0 }}>
               <strong>{t('weeklyavail.recipientsTo')}:</strong>{' '}

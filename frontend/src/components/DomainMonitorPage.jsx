@@ -53,6 +53,7 @@ import { eppLabel, domainLife } from '../utils/domainEpp.js'
 import { exportDomainsCsv, exportDomainsPdf } from '../utils/exportDomains.js'
 import RenewalPlanModal from './RenewalPlanModal.jsx'   // yenileme planı (2026-09-22, H) — sertifikayla ortak modal
 import { formatDateOnly } from '../api/client'
+import { Button } from '@/components/shadcn/button'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
@@ -650,16 +651,16 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         </div>
         <div className="upt-header-right">
           <span className="upt-last-check">{t('dom.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}</span>
-          <button className="btn btn-sm upt-refresh-btn" onClick={load}><RefreshCw size={14} />{t('dom.refresh')}</button>
+          <Button variant="outline" size="sm" onClick={load}><RefreshCw size={14} />{t('dom.refresh')}</Button>
           <CheckAllButton count={checkable.length} running={checkRun.running}
             done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
             onClick={checkRun.openPicker} />
-          <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+          <CopyLinkButton iconOnly variant="outline" />
           <div className="sqlpg-menu-wrap" ref={exportRef}>
-            <button type="button" className={`btn btn-sm upt-refresh-btn sqlpg-menu-trigger${exportOpen ? ' is-open' : ''}`}
+            <Button type="button" variant="outline" size="sm" className={`sqlpg-menu-trigger ${exportOpen ? ' is-open' : ''}`}
               onClick={() => setExportOpen(o => !o)} disabled={exporting} aria-haspopup="menu" aria-expanded={exportOpen}>
               <Download size={14} />{t('inv.export')}<ChevronDown size={12} className="sqlpg-menu-chev" />
-            </button>
+            </Button>
             {exportOpen && (
               <div className="sqlpg-menu inv-export-menu" role="menu">
                 <button type="button" className="sqlpg-item" role="menuitem" onClick={() => doExport('csv')}>
@@ -674,7 +675,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
             )}
           </div>
           <MonitorGuideButton type="domain" />
-          {canWrite && <button className="btn btn-sm btn-primary" onClick={openNew}><Plus size={14} />{t('dom.addMonitor')}</button>}
+          {canWrite && <Button size="sm" onClick={openNew}><Plus size={14} />{t('dom.addMonitor')}</Button>}
         </div>
       </div>
 
@@ -700,7 +701,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
 
       {loading ? <LoadingBlock label={t('tbl.loading')} fullWidth /> : loadError && monitors.length === 0 ? (
         <AlertBanner tone="danger" title={t('mon.loadError')} role="alert"
-          actions={<button className="btn btn-sm btn-secondary" onClick={load}>{t('hist.retry')}</button>}>
+          actions={<Button variant="secondary" size="sm" onClick={load}>{t('hist.retry')}</Button>}>
           {String(loadError)}
         </AlertBanner>
       ) : monitors.length === 0 ? (
@@ -727,7 +728,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
                 {m.changed && <span className="dom-changed-ico" title={m.change_detail ? `${t('dom.changedTip')} — ${m.change_detail}` : t('dom.changedTip')}><Activity size={13} /></span>}
                 <span className="upt-card-top-right">
                   {m.source && <span className="upt-port-tag" title={m.whois_provider ? t('dom.sourceVia') : undefined}>{sourceTag(m.source, m.whois_provider)}</span>}
-                  <CopyLinkButton iconOnly url={monitorDeepLink('domain', m.id)} className="btn btn-sm upt-card-copy" />
+                  <CopyLinkButton iconOnly url={monitorDeepLink('domain', m.id)} variant="ghost" size="icon-xs" className="upt-card-copy" />
                 </span>
               </div>
               <div className="upt-card-domain" title={m.domain}>{m.domain}</div>
@@ -803,11 +804,11 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
                 deleteTitle={t('dom.delete')}
                 onClose={closeDetail}>
                 {canManageRow(selected) && (
-                  <button type="button" className="btn btn-sm upt-refresh-btn" onClick={() => setPlanRow(selected)} title={t('ccx.planCta')}>
+                  <Button type="button" variant="outline" size="sm" onClick={() => setPlanRow(selected)} title={t('ccx.planCta')}>
                     <CalendarPlus size={14} />{selected.renewal_planned_at ? formatDateOnly(selected.renewal_planned_at) : t('ccx.planCta')}
-                  </button>
+                  </Button>
                 )}
-                <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+                <CopyLinkButton iconOnly variant="outline" />
               </MonitorModalActions>
             </div>
             <div className="upt-modal-divider" />
@@ -838,9 +839,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
             {detailTab === 'control' && (<>
               {isAdmin && (
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-                  <button type="button" className="btn btn-sm btn-secondary" onClick={() => diagnose(selected)}>
+                  <Button type="button" variant="secondary" size="sm" onClick={() => diagnose(selected)}>
                     <ShieldAlert size={13} />{t('dexp.diagnose')}
-                  </button>
+                  </Button>
                 </div>
               )}
               <CheckHistoryTab kind="domain" monitorId={selected.id} listKey="domain-history" reloadSignal={histReload}
@@ -1014,18 +1015,18 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
             <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
             <div className="modal-actions">
               <span style={{ display: 'flex', gap: 8, marginRight: 'auto' }}>
-                <button className="btn btn-secondary" onClick={runTest} aria-busy={testing || undefined} disabled={testing || !form.domain.trim()}>
+                <Button variant="secondary" onClick={runTest} aria-busy={testing || undefined} disabled={testing || !form.domain.trim()}>
                   <FlaskConical size={14} />{t('dom.test')}
-                </button>
+                </Button>
                 {isAdmin && (
-                  <button className="btn btn-secondary" onClick={() => diagnose({ domain: normalizeDomainInput(form.domain) })} disabled={!form.domain.trim()}>
+                  <Button variant="secondary" onClick={() => diagnose({ domain: normalizeDomainInput(form.domain) })} disabled={!form.domain.trim()}>
                     <ShieldAlert size={14} />{t('dexp.diagnose')}
-                  </button>
+                  </Button>
                 )}
               </span>
-              {modal !== 'new' && canDeleteRow(modal) && <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('dom.delete')}</button>}
-              <button className="btn btn-secondary" onClick={closeEdit}>{t('dom.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} aria-busy={saving || undefined} disabled={saving || !form.domain.trim() || !form.teamId}>{t('dom.save')}</button>
+              {modal !== 'new' && canDeleteRow(modal) && <Button variant="destructive" onClick={del}><Trash2 size={14} />{t('dom.delete')}</Button>}
+              <Button variant="secondary" onClick={closeEdit}>{t('dom.cancel')}</Button>
+              <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.domain.trim() || !form.teamId}>{t('dom.save')}</Button>
             </div>
           </div>
         </div>,
@@ -1053,7 +1054,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
             {diag.error && <div className="alert-msg alert-msg--err">{diag.error}</div>}
             {diag.data && <DomainExpiryTrace data={diag.data} />}
             <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setDiag(null)}>{t('dom.cancel')}</button>
+              <Button variant="secondary" onClick={() => setDiag(null)}>{t('dom.cancel')}</Button>
             </div>
           </div>
         </div>,

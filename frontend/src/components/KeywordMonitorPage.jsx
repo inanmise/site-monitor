@@ -51,6 +51,7 @@ import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
+import { Button } from '@/components/shadcn/button'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
@@ -544,18 +545,18 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
           <span className="upt-last-check">
             {t('keyword.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}
           </span>
-          <button className="btn btn-sm upt-refresh-btn" onClick={load}>
+          <Button variant="outline" size="sm" onClick={load}>
             <RefreshCw size={14} />{t('keyword.refresh')}
-          </button>
+          </Button>
           <CheckAllButton count={checkable.length} running={checkRun.running}
             done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
             onClick={checkRun.openPicker} />
-          <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+          <CopyLinkButton iconOnly variant="outline" />
           <MonitorGuideButton type="keyword" />
           {canWrite && (
-            <button className="btn btn-sm btn-primary" onClick={openNew}>
+            <Button size="sm" onClick={openNew}>
               <Plus size={14} />{t('keyword.addMonitor')}
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -582,7 +583,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
 
       {loading ? <LoadingBlock label={t('tbl.loading')} fullWidth /> : loadError && monitors.length === 0 ? (
         <AlertBanner tone="danger" title={t('mon.loadError')} role="alert"
-          actions={<button className="btn btn-sm btn-secondary" onClick={load}>{t('hist.retry')}</button>}>
+          actions={<Button variant="secondary" size="sm" onClick={load}>{t('hist.retry')}</Button>}>
           {String(loadError)}
         </AlertBanner>
       ) : monitors.length === 0 ? (
@@ -617,7 +618,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
                   <span className="upt-port-tag">
                     {(OP_SYM[m.operator] || '≥') + (m.match_count ?? 1)} {t('keyword.times')}
                   </span>
-                  <CopyLinkButton iconOnly url={monitorDeepLink('keyword', m.id)} className="btn btn-sm upt-card-copy" />
+                  <CopyLinkButton iconOnly url={monitorDeepLink('keyword', m.id)} variant="ghost" size="icon-xs" className="upt-card-copy" />
                 </span>
               </div>
               <div className="upt-card-domain" title={m.url}>{m.url}</div>
@@ -686,7 +687,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
                 deleting={deleting === selected.id}
                 deleteTitle={t('keyword.delete')}
                 onClose={closeDetail}>
-                <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+                <CopyLinkButton iconOnly variant="outline" />
               </MonitorModalActions>
             </div>
             <div className="upt-modal-divider" />
@@ -956,13 +957,13 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
             </div>
             <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
             <div className="modal-actions">
-              <button className="btn btn-secondary" style={{ marginRight: 'auto' }} onClick={runTest}
+              <Button variant="secondary" style={{ marginRight: 'auto' }} onClick={runTest}
                 aria-busy={testing || undefined} disabled={testing || !form.url.trim() || !form.keyword.trim()}>
                 <FlaskConical size={14} />{t('keyword.test')}
-              </button>
-              {modal !== 'new' && canDeleteRow(modal) && <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('keyword.delete')}</button>}
-              <button className="btn btn-secondary" onClick={closeEdit}>{t('keyword.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.keyword.trim() || !form.teamId}>{t('keyword.save')}</button>
+              </Button>
+              {modal !== 'new' && canDeleteRow(modal) && <Button variant="destructive" onClick={del}><Trash2 size={14} />{t('keyword.delete')}</Button>}
+              <Button variant="secondary" onClick={closeEdit}>{t('keyword.cancel')}</Button>
+              <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.keyword.trim() || !form.teamId}>{t('keyword.save')}</Button>
             </div>
           </div>
         </div>,
@@ -985,7 +986,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
               <div style={{ whiteSpace: 'pre-line' }}>{t('keyword.cacheBustExamples')}</div>
             </div>
             <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setShowCacheHelp(false)}>{t('sql.closeRowDetails')}</button>
+              <Button variant="secondary" onClick={() => setShowCacheHelp(false)}>{t('sql.closeRowDetails')}</Button>
             </div>
           </div>
         </div>,

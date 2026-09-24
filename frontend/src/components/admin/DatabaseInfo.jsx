@@ -3,6 +3,7 @@ import { Database, RefreshCw } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /** Salt-okunur etiket/değer alanı — boş değer "—" gösterir, tıklayınca seçilir. */
 function Field({ label, value }) {
@@ -59,9 +60,9 @@ export default function DatabaseInfo() {
         <h3><Database size={16} style={{ verticalAlign: '-3px', marginRight: 6 }} />{t('db.title')}</h3>
         <p className="section-desc">{t('db.desc')}</p>
         <div className="ldap-actions">
-          <button className="btn btn-secondary" onClick={load} disabled={loading}>
+          <Button variant="secondary" onClick={load} disabled={loading}>
             <RefreshCw size={14} className={loading ? 'spin' : ''} /> {loading ? t('db.loading') : t('db.refresh')}
-          </button>
+          </Button>
         </div>
       </div>
 

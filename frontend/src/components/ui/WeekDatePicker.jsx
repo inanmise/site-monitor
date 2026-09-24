@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import { Calendar, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useT, useLanguage, useDateLocale } from '../../i18n/index.jsx'
 import { MONTHS, monthGrid } from '../../utils/isoWeek'
+import { Button } from '@/components/shadcn/button'
 
 const DOW = {
   tr: ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'],
@@ -131,14 +132,14 @@ export default function WeekDatePicker({
             <span className="wdp-legend"><span className="wdp-dot" /> {t('wr.weekHasReport')}</span>
             <span style={{ flex: 1 }} />
             {value && (
-              <button type="button" className="btn-sm" onClick={() => { onChange(''); setOpen(false) }}>
+              <Button type="button" variant="outline" size="sm" onClick={() => { onChange(''); setOpen(false) }}>
                 {t('wr.clear')}
-              </button>
+              </Button>
             )}
-            <button type="button" className="btn-sm btn-edit" onClick={() => pick(new Date(Date.UTC(
+            <Button type="button" variant="secondary" size="sm" onClick={() => pick(new Date(Date.UTC(
               today.getFullYear(), today.getMonth(), today.getDate(), 12)))}>
               {t('wr.today')}
-            </button>
+            </Button>
           </div>
         </div>
       )}

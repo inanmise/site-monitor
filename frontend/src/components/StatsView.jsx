@@ -6,6 +6,7 @@ import SearchableSelect from './ui/SearchableSelect.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { usePagination } from '../hooks/usePagination.js'
 import ExecutiveSummary from './ExecutiveSummary.jsx'
+import { Button } from '@/components/shadcn/button'
 
 // ── Tier meta ────────────────────────────────────────────────────────────────
 const TIER_META = {
@@ -368,7 +369,7 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
             <input className="filter-input" placeholder={t('tbl.domainPh')} value={filterDomain}
               onChange={e => { setFilterDomain(e.target.value); pager.setPage(1) }} />
             {canAddDomain && onAddDomain && (
-              <button className="btn btn-success sv-add-domain" onClick={onAddDomain}>{t('inv.addBtn')}</button>
+              <Button variant="success" className="sv-add-domain" onClick={onAddDomain}>{t('inv.addBtn')}</Button>
             )}
           </div>
         </div>
@@ -403,9 +404,9 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
           />
         </div>
         {hasTableFilter && (
-          <button className="btn btn-secondary" style={{ marginTop: 24 }} onClick={resetAll}>
+          <Button variant="secondary" style={{ marginTop: 24 }} onClick={resetAll}>
             {t('tbl.reset')}
-          </button>
+          </Button>
         )}
       </div>
 

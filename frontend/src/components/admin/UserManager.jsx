@@ -16,6 +16,7 @@ import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import { UserPlus, UserCog, BellOff } from 'lucide-react'
 import AdminAutoResetModal from './AdminAutoResetModal.jsx'
 import UserEditModal, { ModalHeaderAvatar } from './UserEditModal.jsx'
+import { Button } from '@/components/shadcn/button'
 
 const emptyUser = { username: '', password: '', display_name: '', email: '', employee_id: '', system_role: 'USER', team_ids: [], org_role: '', active: true,
   first_name: '', last_name: '', title: '', phone: '', department: '', company_level: '', mudurluk_name: '', manager_sicil: '' }
@@ -289,8 +290,8 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
       <div className="admin-section-header">
         <h3>{t('usr.title')}</h3>
         <div className="hdr-actions">
-          <button className="btn btn-secondary" onClick={exportCsv} title={t('usr.exportCsv')}><Download size={14} /> {t('usr.exportCsv')}</button>
-          {canManage && <button className="btn btn-success" onClick={openAdd}>{t('usr.addBtn')}</button>}
+          <Button variant="secondary" onClick={exportCsv} title={t('usr.exportCsv')}><Download size={14} /> {t('usr.exportCsv')}</Button>
+          {canManage && <Button variant="success" onClick={openAdd}>{t('usr.addBtn')}</Button>}
         </div>
       </div>
       {msg && !modal && !autoResetModal && <div className="alert-msg">{msg}</div>}
@@ -303,12 +304,12 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
             <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('usr.searchPlaceholder')} aria-label={t('usr.searchLabel')} />
             {q && <button type="button" className="invtb-clear" onClick={() => setQ('')} aria-label={t('inv.filterClear')}><X size={12} /></button>}
           </label>
-          <button type="button" className={`btn btn-sm ${filtersOpen || filterActive ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setFiltersOpen((o) => !o)} aria-expanded={filtersOpen}>
+          <Button type="button" variant={filtersOpen || filterActive ? 'default' : 'secondary'} size="sm" onClick={() => setFiltersOpen((o) => !o)} aria-expanded={filtersOpen}>
             <SlidersHorizontal size={13} /> {t('inv.filters')}{filterActive ? ` · ${t('inv.filterActive')}` : ''}
-          </button>
+          </Button>
           <span className="invtb-count">{loading ? '…' : t('inv.shownOf', users.length, total)}</span>
           <div className="invtb-spacer" />
-          {(filterActive || q) && <button type="button" className="btn btn-sm btn-secondary" onClick={clearFilters}>{t('inv.filterClear')}</button>}
+          {(filterActive || q) && <Button type="button" variant="secondary" size="sm" onClick={clearFilters}>{t('inv.filterClear')}</Button>}
         </div>
         {filtersOpen && (
           <div className="invtb-filters" role="group" aria-label={t('inv.filters')}>
@@ -335,15 +336,15 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
       {canManage && selected.size > 0 && (
         <div className="um-bulk" data-testid="bulk-bar" aria-busy={bulkBusy || undefined}>
           <span className="um-bulk-count">{t('usr.selected', selected.size)}</span>
-          <button className="btn btn-sm-p btn-secondary" onClick={() => runBulk('activate')} disabled={bulkBusy}>{t('usr.bulkActivate')}</button>
-          <button className="btn btn-sm-p btn-danger" onClick={() => runBulk('deactivate')} disabled={bulkBusy}>{t('usr.bulkDeactivate')}</button>
+          <Button variant="secondary" size="sm" onClick={() => runBulk('activate')} disabled={bulkBusy}>{t('usr.bulkActivate')}</Button>
+          <Button variant="destructive" size="sm" onClick={() => runBulk('deactivate')} disabled={bulkBusy}>{t('usr.bulkDeactivate')}</Button>
           {canSeeAllTeams && (
             <SearchableSelect value={bulk?.team_id || ''} onChange={(v) => v && runBulk('assign_team', { team_id: Number(v) })} placeholder={t('usr.bulkAssignTeam')} ariaLabel={t('usr.bulkAssignTeam')}
               searchThreshold={2} options={[{ value: '', label: t('usr.bulkPickTeam') }, ...(teams || []).map(tm => ({ value: String(tm.id), label: tm.name }))]} />
           )}
           <SearchableSelect value={bulk?.org_role || ''} onChange={(v) => v && runBulk('set_org_role', { org_role: v })} placeholder={t('usr.bulkOrgRole')} ariaLabel={t('usr.bulkOrgRole')}
             options={[{ value: '', label: t('usr.bulkPickOrgRole') }, ...['PO', 'TECH', 'MANAGER', 'BOLUM_BASKANI', 'CLEVEL'].map(r => ({ value: r, label: t('usr.orgRoleVal.' + r) }))]} />
-          <button className="btn btn-sm-p btn-secondary" onClick={() => setSelected(new Set())} disabled={bulkBusy}>{t('usr.bulkClear')}</button>
+          <Button variant="secondary" size="sm" onClick={() => setSelected(new Set())} disabled={bulkBusy}>{t('usr.bulkClear')}</Button>
         </div>
       )}
 
@@ -597,11 +598,11 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
             </div>
             {msg && <div className="alert-msg alert-msg--err" style={{ marginTop: 8 }}>{msg}</div>}
             <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setModal(null)}>{t('usr.cancel')}</button>
-              <button className="btn btn-primary" onClick={save}
+              <Button variant="secondary" onClick={() => setModal(null)}>{t('usr.cancel')}</Button>
+              <Button onClick={save}
                 disabled={saving || !form.username.trim() || !form.email.trim() || (form.system_role !== 'ADMIN' && (isTeamAdmin ? !ownTeamId : form.team_ids.length === 0)) || (modal === 'add' && form.password.length < 4)}>
                 {saving ? t('usr.saving') : t('usr.save')}
-              </button>
+              </Button>
             </div>
           </div>
         </div>

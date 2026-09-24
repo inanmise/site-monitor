@@ -5,6 +5,7 @@ import { useToast } from './Toast.jsx'
 import { useDialog } from './Dialog.jsx'
 import { Spinner } from './Progress.jsx'
 import SearchableSelect from './SearchableSelect.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Toplu işlem çubuğu (2026-09-12, zenginleştirme #13) — izleme sayfalarında çoklu seçim:
@@ -55,28 +56,28 @@ export default function BulkActionBar({ selected, items, onClear, onDone, api, t
       </button>
       <span className="bulkbar-count">{t('bulk.selected', ids.length)}</span>
       <div className="bulkbar-actions">
-        <button type="button" className="btn btn-sm btn-secondary" disabled={!!busy} onClick={() => run('pause', (m) => api.update(m.id, { active: false }), (m) => m.active !== false)}>
+        <Button type="button" variant="secondary" size="sm" disabled={!!busy} onClick={() => run('pause', (m) => api.update(m.id, { active: false }), (m) => m.active !== false)}>
           {busy === 'pause' ? <Spinner size={12} inline decorative /> : <Pause size={13} />} {t('bulk.pause')}
-        </button>
-        <button type="button" className="btn btn-sm btn-secondary" disabled={!!busy} onClick={() => run('resume', (m) => api.update(m.id, { active: true }), (m) => m.active === false)}>
+        </Button>
+        <Button type="button" variant="secondary" size="sm" disabled={!!busy} onClick={() => run('resume', (m) => api.update(m.id, { active: true }), (m) => m.active === false)}>
           {busy === 'resume' ? <Spinner size={12} inline decorative /> : <Play size={13} />} {t('bulk.resume')}
-        </button>
+        </Button>
         {teams.length > 0 && (
           <span className="bulkbar-field">
             <Users size={13} aria-hidden="true" />
             <SearchableSelect value={teamId} onChange={setTeamId} ariaLabel={t('bulk.team')} placeholder={t('bulk.team')}
               options={teams.map((tm) => ({ value: String(tm.id), label: tm.name }))} />
-            <button type="button" className="btn btn-sm btn-secondary" disabled={!!busy || !teamId} onClick={() => run('team', (m) => api.update(m.id, { teamId: Number(teamId) }))}>{t('bulk.apply')}</button>
+            <Button type="button" variant="secondary" size="sm" disabled={!!busy || !teamId} onClick={() => run('team', (m) => api.update(m.id, { teamId: Number(teamId) }))}>{t('bulk.apply')}</Button>
           </span>
         )}
         <span className="bulkbar-field">
           <FolderInput size={13} aria-hidden="true" />
           <input className="input" value={group} onChange={(e) => setGroup(e.target.value)} placeholder={t('bulk.group')} aria-label={t('bulk.group')} />
-          <button type="button" className="btn btn-sm btn-secondary" disabled={!!busy || !group.trim()} onClick={() => run('group', (m) => api.update(m.id, { groupName: group.trim() }))}>{t('bulk.apply')}</button>
+          <Button type="button" variant="secondary" size="sm" disabled={!!busy || !group.trim()} onClick={() => run('group', (m) => api.update(m.id, { groupName: group.trim() }))}>{t('bulk.apply')}</Button>
         </span>
-        <button type="button" className="btn btn-sm btn-danger" disabled={!!busy} onClick={del}>
+        <Button type="button" variant="destructive" size="sm" disabled={!!busy} onClick={del}>
           {busy === 'delete' ? <Spinner size={12} inline decorative /> : <Trash2 size={13} />} {t('bulk.delete')}
-        </button>
+        </Button>
       </div>
       <button type="button" className="bulkbar-close" onClick={onClear} aria-label={t('bulk.clear')}><X size={14} /></button>
     </div>

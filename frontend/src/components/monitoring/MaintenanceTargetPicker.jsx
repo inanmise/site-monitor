@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Search, X, Check } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Bakım penceresi hedef seçici (2026-09-17, kullanıcı isteği): ÖNCE izleme tipi, SONRA o tipin
@@ -94,9 +95,9 @@ export default function MaintenanceTargetPicker({ options = [], value = [], onCh
               <input className="input" value={q} onChange={(e) => setQ(e.target.value)}
                 placeholder={t('mtp.searchPh')} aria-label={t('mtp.searchPh')} />
             </div>
-            <button type="button" className="btn btn-secondary btn-sm-p" onClick={toggleAllOfType} disabled={!currentAll.length}>
+            <Button type="button" variant="secondary" size="sm" onClick={toggleAllOfType} disabled={!currentAll.length}>
               {allPicked ? t('mtp.clearType', label(current)) : t('mtp.selectType', label(current))}
-            </button>
+            </Button>
           </div>
           <ul className="mtp-list">
             {list.map((o) => {

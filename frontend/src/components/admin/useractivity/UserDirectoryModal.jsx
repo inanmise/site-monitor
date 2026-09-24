@@ -15,6 +15,7 @@ import { usePagination } from '../../../hooks/usePagination.js'
 import { navigateTo } from '../../../utils/navigate.js'
 import { toCsv, downloadCsv, stampedName } from '../../../utils/csvExport.js'
 import { relTime, loginStatus } from './uactModel.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Kullanıcı Dizini (2026-09-20, kullanıcı bildirimi): "1 Aktif oturum" kartı yalnız oturumdakileri
@@ -138,8 +139,8 @@ export default function UserDirectoryModal({ data, initial = {}, isAdmin, global
   return (
     <ModalShell open onClose={onClose} title={`${title} · ${rows.length}${rows.length !== all.length ? ' / ' + all.length : ''}`} icon={Users} size="xl" scrollBody
       footer={<>
-        <button type="button" className="btn btn-secondary" onClick={() => downloadCsv(stampedName('users'), directoryCsv(rows, t))}><Download size={14} /> {t('uact.exportDirectory')}</button>
-        <button type="button" className="btn btn-primary" onClick={onClose}>{t('app.dismiss')}</button>
+        <Button type="button" variant="secondary" onClick={() => downloadCsv(stampedName('users'), directoryCsv(rows, t))}><Download size={14} /> {t('uact.exportDirectory')}</Button>
+        <Button type="button" onClick={onClose}>{t('app.dismiss')}</Button>
       </>}>
       <div className="udir-stats" data-testid="udir-stats">
         {chip('all', stats.total, t('uact.dirAll'))}
@@ -158,7 +159,7 @@ export default function UserDirectoryModal({ data, initial = {}, isAdmin, global
         <label className="invtb-f"><span>{t('uact.colRole')}</span><SearchableSelect ariaLabel={t('uact.colRole')} value={f.role} onChange={(v) => setF({ role: v })} options={roleOptions} searchThreshold={99} /></label>
         <label className="invtb-f"><span>{t('uact.colAuthSource')}</span><SearchableSelect ariaLabel={t('uact.colAuthSource')} value={f.provider} onChange={(v) => setF({ provider: v })} options={providerOptions} searchThreshold={99} /></label>
         <label className="invtb-f"><span>{t('uact.colTour')}</span><SearchableSelect ariaLabel={t('uact.colTour')} value={f.tour} onChange={(v) => setF({ tour: v })} options={tourOptions} searchThreshold={99} /></label>
-        {(f.q || f.team || f.role || f.provider || f.tour || f.account || f.view !== 'all') && <button type="button" className="btn btn-sm btn-secondary" onClick={() => setFRaw({ view: 'all', tour: '', team: '', role: '', provider: '', account: '', q: '' })}>{t('uact.filterClear')}</button>}
+        {(f.q || f.team || f.role || f.provider || f.tour || f.account || f.view !== 'all') && <Button type="button" variant="secondary" size="sm" onClick={() => setFRaw({ view: 'all', tour: '', team: '', role: '', provider: '', account: '', q: '' })}>{t('uact.filterClear')}</Button>}
       </div>
       {rows.length === 0 ? <StatusBlock tone="neutral" icon={Users} title={t('uact.noRows')} /> : (
         <div className="health-table-wrap uact-table-wrap">

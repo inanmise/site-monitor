@@ -4,6 +4,7 @@ import { useT } from '../../i18n/index.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import { filledContacts } from './inventoryModel.js'
 import { CertCell, ContactsCell, FlagCluster } from './InventoryTable.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * "Takıma göre" görünüm (2026-09-12, #7): SY takımı → (UG takımı) → alanlar; grup başlığında sayaçlar
@@ -48,7 +49,7 @@ export default function InventoryTeamView({ rows, onShow, onFilterTeam }) {
               {g.expiring > 0 && <span className="invtv-stat is-warn">{t('inv.teamExpiring30', g.expiring)}</span>}
               {g.error > 0 && <span className="invtv-stat is-bad">{t('inv.teamErrors', g.error)}</span>}
               <span className="invtb-spacer" />
-              <button type="button" className="btn btn-sm btn-secondary" onClick={() => onFilterTeam(g.id)}>{t('inv.teamShowInTable')}</button>
+              <Button type="button" variant="secondary" size="sm" onClick={() => onFilterTeam(g.id)}>{t('inv.teamShowInTable')}</Button>
             </div>
             {isOpen && [...g.sub.values()].map((s, i) => (
               <div key={i} className="invtv-sub">

@@ -18,6 +18,7 @@ import AlertBanner from '../ui/AlertBanner.jsx'
 import Field from '../ui/Field.jsx'
 import DiagnosticsModal from '../admin/DiagnosticsModal.jsx'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Envanter (sertifika) kayıt formu — InventoryManager'dan ÇIKARILDI ki dashboard kartındaki
@@ -670,9 +671,9 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
             title={testResult.status === 'error' ? t('inv.testFailed')
               : testResult.status === 'warning' ? t('inv.testExpiring') : t('inv.testValid')}
             actions={testResult.status === 'error' && canDiagnose
-              ? <button className="btn btn-sm btn-secondary" onClick={() => setShowDiag(true)}>
+              ? <Button variant="secondary" size="sm" onClick={() => setShowDiag(true)}>
                   {t('inv.diagnose')}
-                </button>
+                </Button>
               : null}>
             {testResult.status === 'error'
               ? (testResult.error || t('inv.testError'))
@@ -698,27 +699,27 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
             koşuyor…" gibi uzayan metinler + araya giren şerit satırı 723 px'e taşırıyor ve Test et
             modalın dışına kayıyordu. Evre başlıktaki şeritte; düğme kilitli + aria-busy. */}
         <div className="modal-actions">
-          <button className="btn btn-secondary" style={{ marginRight: 'auto' }} onClick={runTest}
+          <Button variant="secondary" style={{ marginRight: 'auto' }} onClick={runTest}
             disabled={testing || !form.domain.trim()} aria-busy={testing || undefined}>
             <FlaskConical size={14} />{t('inv.test')}
-          </button>
+          </Button>
           {/* Çalıştır ve Sil YALNIZ kayıtlı kayıtta: yeni/kopya modunda henüz ortada bir kayıt yok. */}
           {savedDomain && (
-            <button className="btn btn-secondary" onClick={runNow} disabled={running} aria-busy={running || undefined}
+            <Button variant="secondary" onClick={runNow} disabled={running} aria-busy={running || undefined}
               title={t('inv.runTitle', savedDomain)}>
               <RefreshCw size={14} />{t('inv.run')}
-            </button>
+            </Button>
           )}
           {savedDomain && canDelete && (
-            <button className="btn btn-danger" onClick={del} disabled={deleting}>
+            <Button variant="destructive" onClick={del} disabled={deleting}>
               <Trash2 size={14} />{t('inv.delete')}
-            </button>
+            </Button>
           )}
-          <button className="btn btn-secondary" onClick={onClose} disabled={saving || firstRun}>{t('inv.cancel')}</button>
-          <button className="btn btn-primary" onClick={save} aria-busy={(saving || firstRun) || undefined}
+          <Button variant="secondary" onClick={onClose} disabled={saving || firstRun}>{t('inv.cancel')}</Button>
+          <Button onClick={save} aria-busy={(saving || firstRun) || undefined}
             disabled={saving || firstRun || !form.domain.trim() || !form.team_id}>
             {t('inv.save')}
-          </button>
+          </Button>
         </div>
       </div>
       {/* Tanılama YAZILAN değerle koşar — kaydetmeden deneme. */}

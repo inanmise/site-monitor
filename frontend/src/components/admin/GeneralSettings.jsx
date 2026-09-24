@@ -6,6 +6,7 @@ import { useToast } from '../ui/Toast.jsx'
 import { Spinner } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import HelpTip from '../ui/HelpTip.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Genel Ayarlar — küratörlü, tipli proje config'leri (key/value). Backend kataloğundan
@@ -190,9 +191,9 @@ export default function GeneralSettings({ focusKey = null }) {
       ))}
 
       <div className="ldap-actions">
-        <button className="btn btn-primary" onClick={save} disabled={saving}>
+        <Button onClick={save} disabled={saving}>
           {saving ? t('settings.saving') : t('settings.save')}
-        </button>
+        </Button>
       </div>
     </div>
   )

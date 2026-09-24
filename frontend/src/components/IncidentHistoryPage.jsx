@@ -16,6 +16,7 @@ import { autoDurationMinutes } from '../utils/incidentMeta.js'
 import { mailPreviewSrcDoc, MAIL_PREVIEW_SANDBOX } from '../utils/mailPreview.js'
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, Legend, Cell } from 'recharts'
 import { LoadingBlock } from './ui/Progress.jsx'
+import { Button } from '@/components/shadcn/button'
 
 const SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']
 const STATUSES   = ['OPEN', 'INVESTIGATING', 'MITIGATED', 'RESOLVED']
@@ -544,13 +545,13 @@ export default function IncidentHistoryPage() {
       <div className="admin-section-header">
         <h3>{t('inc.title')}</h3>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-secondary btn-sm-p" onClick={() => { load(); loadTrends(); loadTrendDaily() }} disabled={loading}>
+          <Button variant="secondary" size="sm" onClick={() => { load(); loadTrends(); loadTrendDaily() }} disabled={loading}>
             <RefreshCcw size={13} /> {t('inc.refresh')}
-          </button>
+          </Button>
           {allowManage && (
-            <button className="btn btn-primary btn-sm-p" onClick={() => setModal({ mode: 'create', form: { ...EMPTY } })}>
+            <Button size="sm" onClick={() => setModal({ mode: 'create', form: { ...EMPTY } })}>
               <Plus size={14} /> {t('inc.new')}
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -698,8 +699,8 @@ export default function IncidentHistoryPage() {
             <option value="">{t('inc.transferTo')}</option>
             {teams.map(tm => <option key={tm.id} value={String(tm.id)}>{tm.name}</option>)}
           </select>
-          <button className="btn btn-primary btn-sm-p" disabled={!transferTeam} onClick={doTransfer}>{t('inc.transferBtn')}</button>
-          <button className="btn btn-secondary btn-sm-p" onClick={() => setSelected(new Set())}>{t('inc.clearSel')}</button>
+          <Button size="sm" disabled={!transferTeam} onClick={doTransfer}>{t('inc.transferBtn')}</Button>
+          <Button variant="secondary" size="sm" onClick={() => setSelected(new Set())}>{t('inc.clearSel')}</Button>
         </div>
       )}
 
@@ -737,10 +738,10 @@ export default function IncidentHistoryPage() {
                   <td>{r.sla_breached ? <span style={{ color: '#dc2626', fontWeight: 700 }}>✓</span> : '—'}</td>
                   <td onClick={e => e.stopPropagation()}>
                     {allowManage && (
-                      <button className="btn-sm btn-show" title={t('inc.edit')}
+                      <Button variant="outline" size="sm" title={t('inc.edit')}
                               onClick={() => setModal({ mode: 'edit', form: { ...EMPTY, ...r } })}>
                         <Pencil size={13} />
-                      </button>
+                      </Button>
                     )}
                   </td>
                 </tr>
@@ -905,15 +906,15 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, all
               {t('inc.sendMail')}
             </label>
           )}
-          {editing && <button className="btn btn-secondary" onClick={openPreview} disabled={previewing}>{previewing ? t('inc.previewing') : t('inc.previewMail')}</button>}
-          {editing && <button className="btn btn-primary" onClick={save} disabled={saving}>{t('inc.save')}</button>}
+          {editing && <Button variant="secondary" onClick={openPreview} disabled={previewing}>{previewing ? t('inc.previewing') : t('inc.previewMail')}</Button>}
+          {editing && <Button onClick={save} disabled={saving}>{t('inc.save')}</Button>}
           {modal.mode === 'view' && (
             <>
-              {allowManage && <button className="btn btn-secondary" onClick={() => setModal(m => ({ ...m, mode: 'edit' }))}>{t('inc.edit')}</button>}
-              {allowDelete && <button className="btn btn-danger" onClick={() => remove(f)}><Trash2 size={13} /> {t('inc.delete')}</button>}
+              {allowManage && <Button variant="secondary" onClick={() => setModal(m => ({ ...m, mode: 'edit' }))}>{t('inc.edit')}</Button>}
+              {allowDelete && <Button variant="destructive" onClick={() => remove(f)}><Trash2 size={13} /> {t('inc.delete')}</Button>}
             </>
           )}
-          <button className="btn btn-secondary" onClick={() => setModal(null)}>{t('inc.cancel')}</button>
+          <Button variant="secondary" onClick={() => setModal(null)}>{t('inc.cancel')}</Button>
         </div>
       </div>
     </div>
@@ -926,7 +927,7 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, all
           <iframe title="mail-preview" srcDoc={mailPreviewSrcDoc(previewHtml)} sandbox={MAIL_PREVIEW_SANDBOX}
             style={{ flex: 1, border: '1px solid var(--border)', borderRadius: 8, background: '#f4f6f8' }} />
           <div className="modal-actions">
-            <button className="btn btn-secondary" onClick={() => setPreviewHtml(null)}>{t('inc.cancel')}</button>
+            <Button variant="secondary" onClick={() => setPreviewHtml(null)}>{t('inc.cancel')}</Button>
           </div>
         </div>
       </div>

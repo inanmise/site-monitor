@@ -8,6 +8,7 @@ import MultiTeamSelect from '../ui/MultiTeamSelect.jsx'
 import { UserCog, ChevronRight, Compass } from 'lucide-react'
 import DeviceHistoryPanel from '../DeviceHistoryPanel.jsx'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /** Modal başlık rozetinde kullanıcının LDAP fotoğrafı; yoksa ikona düşer. */
 export function ModalHeaderAvatar({ userId, children }) {
@@ -196,7 +197,7 @@ export default function UserEditModal({ user, teams, onClose, onSaved, readOnly 
           <div className="usr-tour-row">
             <Compass size={14} />
             <span>{t('usr.tourLabel')}</span>
-            <button type="button" className="btn btn-sm btn-secondary" disabled={tourBusy} onClick={resetTour}>{tourBusy ? t('usr.saving') : t('usr.tourReset')}</button>
+            <Button type="button" variant="secondary" size="sm" disabled={tourBusy} onClick={resetTour}>{tourBusy ? t('usr.saving') : t('usr.tourReset')}</Button>
           </div>
         )}
         {/* Cihaz Gecmisi (K8) — SALT-OKUNUR. Yetkisi olmayana HIC cizilmez; aksi halde
@@ -215,16 +216,16 @@ export default function UserEditModal({ user, teams, onClose, onSaved, readOnly 
         <div className="modal-actions">
           {readOnly ? (
             <>
-              <button className="btn btn-secondary" onClick={onClose}>{t('usr.close')}</button>
-              {onEdit && <button className="btn btn-primary" onClick={onEdit}>{t('usr.edit')}</button>}
+              <Button variant="secondary" onClick={onClose}>{t('usr.close')}</Button>
+              {onEdit && <Button onClick={onEdit}>{t('usr.edit')}</Button>}
             </>
           ) : (
             <>
-              <button className="btn btn-secondary" onClick={onClose}>{t('usr.cancel')}</button>
-              <button className="btn btn-primary" onClick={save}
+              <Button variant="secondary" onClick={onClose}>{t('usr.cancel')}</Button>
+              <Button onClick={save}
                 disabled={saving || !form.username.trim() || !form.email.trim() || (form.system_role !== 'ADMIN' && form.team_ids.length === 0)}>
                 {saving ? t('usr.saving') : t('usr.save')}
-              </button>
+              </Button>
             </>
           )}
         </div>

@@ -3,6 +3,7 @@ import { CalendarClock, Plus, ArrowRight, AlertTriangle, CheckCircle2, ChevronDo
 import { useT, useLanguage } from '../../i18n/index.jsx'
 import { formatWeekRange } from '../../utils/isoWeek'
 import { countdown } from './weeklyModel.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * "Bu hafta" şeridi (2026-09-13): kapsamdaki her takım için bu ISO haftanın durumu + son giriş anına geri
@@ -41,8 +42,8 @@ export default function WeeklyThisWeekStrip({ data, onOpen, onCreate, canCreate,
           const st = x.status
           const label = st === 'APPROVED' && x.sent_at ? t('wr.statusSent') : t(st === 'MISSING' ? 'wr.tw.stMissing' : `wr.status${st === 'PENDING_APPROVAL' ? 'Pending' : st.charAt(0) + st.slice(1).toLowerCase()}`)
           const action = st === 'MISSING'
-            ? (canCreate ? <button type="button" className="btn btn-sm btn-success" onClick={() => onCreate(x.team_id, data.year, data.week)}><Plus size={13} /> {t('wr.tw.create')}</button> : null)
-            : <button type="button" className="btn btn-sm btn-secondary" onClick={() => onOpen(x.report_id)}>{st === 'DRAFT' || st === 'REJECTED' ? t('wr.tw.continue') : t('wr.open')} <ArrowRight size={13} /></button>
+            ? (canCreate ? <Button type="button" variant="success" size="sm" onClick={() => onCreate(x.team_id, data.year, data.week)}><Plus size={13} /> {t('wr.tw.create')}</Button> : null)
+            : <Button type="button" variant="secondary" size="sm" onClick={() => onOpen(x.report_id)}>{st === 'DRAFT' || st === 'REJECTED' ? t('wr.tw.continue') : t('wr.open')} <ArrowRight size={13} /></Button>
           const done = st === 'APPROVED' || st === 'PENDING_APPROVAL'
           return (
             <li key={x.team_id} className={`wr-tw-item wr-tw-item--${st.toLowerCase()}`}>

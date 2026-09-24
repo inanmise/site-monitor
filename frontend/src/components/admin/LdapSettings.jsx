@@ -7,6 +7,7 @@ import SecretKeyWarning from './SecretKeyWarning.jsx'
 import { Spinner } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import HelpTip from '../ui/HelpTip.jsx'
+import { Button } from '@/components/shadcn/button'
 
 // Role values match AppUser.systemRole tokens (used when provisioning is wired in a later phase).
 const ROLES = ['ADMIN', 'TEAM_ADMIN', 'USER', 'AUDIT']
@@ -298,18 +299,18 @@ export default function LdapSettings() {
                     </select>
                   </td>
                   <td>
-                    <button className="btn btn-icon-danger" onClick={() => removeMapping(i)} title={t('ldap.removeMapping')}>
+                    <Button variant="ghost" className="text-destructive" onClick={() => removeMapping(i)} title={t('ldap.removeMapping')}>
                       <Trash2 size={15} />
-                    </button>
+                    </Button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <button className="btn btn-secondary ldap-add-map" onClick={addMapping}>
+        <Button variant="secondary" className="ldap-add-map" onClick={addMapping}>
           <Plus size={14} /> {t('ldap.addMapping')}
-        </button>
+        </Button>
         <div className="threshold-field" style={{ maxWidth: 260, marginTop: 14 }}>
           <label><span className="help-label-row">{t('ldap.defaultRole')}<HelpTip helpKey="help.ldap.defaultRole" label={t('ldap.defaultRole')} /></span></label>
           <select value={form.default_role || 'ADMIN'} onChange={(e) => set('default_role', e.target.value)}>
@@ -321,18 +322,18 @@ export default function LdapSettings() {
 
       {/* Save / Test */}
       <div className="ldap-actions">
-        <button className="btn btn-primary" onClick={save} disabled={saving}>
+        <Button onClick={save} disabled={saving}>
           {saving ? <Spinner size={15} inline decorative /> : null} {saving ? t('settings.saving') : t('settings.save')}
-        </button>
-        <button className="btn btn-secondary" onClick={() => test(false)} disabled={testing}>
+        </Button>
+        <Button variant="secondary" onClick={() => test(false)} disabled={testing}>
           {testing ? <Spinner size={15} inline decorative /> : null} {t('ldap.testConnection')}
-        </button>
+        </Button>
         {/* Ayarı kapatmadan önce doğrulamalı deneme — yeşilse "atla" güvenle kapatılabilir. */}
         {form.skip_cert_verification && (
-          <button className="btn btn-secondary" onClick={() => test(true)} disabled={testing}
+          <Button variant="secondary" onClick={() => test(true)} disabled={testing}
             title={t('ldap.testVerifiedHint')}>
             {testing ? <Spinner size={15} inline decorative /> : null} {t('ldap.testVerified')}
-          </button>
+          </Button>
         )}
         {testResult && (
           <span className={`ldap-test-result ${testResult.success ? 'ok' : 'fail'}`}>
@@ -362,9 +363,9 @@ export default function LdapSettings() {
               : t('ldap.lookupPlaceholder')}
             onChange={(e) => setQueryName(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') runQuery() }} />
-          <button className="btn btn-primary" onClick={runQuery} disabled={querying || !queryName.trim()}>
+          <Button onClick={runQuery} disabled={querying || !queryName.trim()}>
             {querying ? <Spinner size={15} inline decorative /> : <Search size={15} />} {t('ldap.lookupBtn')}
-          </button>
+          </Button>
         </div>
 
         {queryResult && <LookupResult result={queryResult} t={t} />}

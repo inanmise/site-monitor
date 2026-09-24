@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { ShieldCheck, AlertTriangle, ChevronDown, Sparkles } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Hijyen bandı (2026-09-12, #2): e-posta raporunun analizi sayfada — sayaçlar tıklanınca ilgili
@@ -52,7 +53,7 @@ export default function InventoryHygieneBand({ data, overlaps, active, onSelect,
                 <b>{counts[k]}</b> {t(`inv.hy.${k}`)}
               </button>
             ))}
-            {active && <button type="button" className="btn btn-sm btn-secondary" onClick={() => onSelect('')}>{t('inv.filterClear')}</button>}
+            {active && <Button type="button" variant="secondary" size="sm" onClick={() => onSelect('')}>{t('inv.filterClear')}</Button>}
           </div>
           <p className="invhy-hint">{t('inv.hyHint')}</p>
         </div>

@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { localDayKey } from '../../api/client'
 import { dateLocale } from '../../i18n/dateLocale.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Aylık takvim ızgarası (2026-09-12, zenginleştirme #8/#19) — kütüphanesiz.
@@ -54,10 +55,10 @@ export default function MonthCalendar({ events = [], initialMonth, maxPerDay = 3
   return (
     <div className="mcal" role="group" aria-label={ariaLabel || t('cal.aria')}>
       <div className="mcal-head">
-        <button type="button" className="btn btn-sm btn-secondary" onClick={() => setCursor(new Date(year, month - 1, 1))} aria-label={t('cal.prev')}><ChevronLeft size={14} /></button>
+        <Button type="button" variant="secondary" size="sm" onClick={() => setCursor(new Date(year, month - 1, 1))} aria-label={t('cal.prev')}><ChevronLeft size={14} /></Button>
         <span className="mcal-title">{monthLabel} <small className="mcal-count">{t('cal.count', monthEvents)}</small></span>
-        <button type="button" className="btn btn-sm btn-secondary" onClick={() => setCursor(new Date(year, month + 1, 1))} aria-label={t('cal.next')}><ChevronRight size={14} /></button>
-        <button type="button" className="btn btn-sm btn-secondary mcal-today" onClick={() => { const n = new Date(); setCursor(new Date(n.getFullYear(), n.getMonth(), 1)) }}>{t('cal.today')}</button>
+        <Button type="button" variant="secondary" size="sm" onClick={() => setCursor(new Date(year, month + 1, 1))} aria-label={t('cal.next')}><ChevronRight size={14} /></Button>
+        <Button type="button" variant="secondary" size="sm" className="mcal-today" onClick={() => { const n = new Date(); setCursor(new Date(n.getFullYear(), n.getMonth(), 1)) }}>{t('cal.today')}</Button>
       </div>
       <div className="mcal-grid">
         {dayNames.map((n) => <div key={n} className="mcal-dow">{n}</div>)}

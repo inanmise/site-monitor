@@ -41,6 +41,7 @@ import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
+import { Button } from '@/components/shadcn/button'
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS']
 
 // Kaydirma cubugu icin sirali aralik seti. DNS'in tabani 30 sn olabilir (tek sorgu ucuz);
@@ -518,16 +519,16 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
         </div>
         <div className="upt-header-right">   {/* diğer 8 sayfayla aynı eylem kümesi stili (2026-09-19) */}
           <span className="upt-last-check">{t('dns.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}</span>
-          <button className="btn btn-sm upt-refresh-btn" onClick={load}><RefreshCw size={14} />{t('dns.refreshBtn')}</button>
+          <Button variant="outline" size="sm" onClick={load}><RefreshCw size={14} />{t('dns.refreshBtn')}</Button>
           <CheckAllButton count={checkable.length} running={checkRun.running}
             done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
             onClick={checkRun.openPicker} />
-          <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+          <CopyLinkButton iconOnly variant="outline" />
           <MonitorGuideButton type="dns" />
           {canWrite && (
-            <button className="btn btn-sm btn-primary" onClick={openNew}>
+            <Button size="sm" onClick={openNew}>
               <Plus size={14} />{t('dns.addMonitor')}
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -587,7 +588,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
         <LoadingBlock label={t('dns.loading')} fullWidth />
       ) : loadError && monitors.length === 0 ? (
         <AlertBanner tone="danger" title={t('mon.loadError')} role="alert"
-          actions={<button className="btn btn-sm btn-secondary" onClick={load}>{t('hist.retry')}</button>}>
+          actions={<Button variant="secondary" size="sm" onClick={load}>{t('hist.retry')}</Button>}>
           {String(loadError)}
         </AlertBanner>
       ) : monitors.length === 0 ? (
@@ -622,7 +623,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
                 )}
                 <span className="upt-card-top-right">
                   <span className="upt-port-tag">{m.record_type}</span>
-                  <CopyLinkButton iconOnly url={monitorDeepLink('dns', m.id)} className="btn btn-sm upt-card-copy" />
+                  <CopyLinkButton iconOnly url={monitorDeepLink('dns', m.id)} variant="ghost" size="icon-xs" className="upt-card-copy" />
                 </span>
               </div>
               <div className="upt-card-domain" title={m.domain}>{m.domain}</div>
@@ -893,17 +894,17 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
             </div>
             <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
             <div className="modal-actions">
-              <button className="btn btn-secondary" style={{ marginRight: 'auto' }} onClick={runTest}
+              <Button variant="secondary" style={{ marginRight: 'auto' }} onClick={runTest}
                 aria-busy={testing || undefined} disabled={testing || !form.domain.trim()}>
                 <FlaskConical size={14} />{t('dns.test')}
-              </button>
-              <button className="btn btn-secondary" onClick={closeEditModal}>{t('dns.cancel')}</button>
-              <button
-                className="btn btn-primary"
+              </Button>
+              <Button variant="secondary" onClick={closeEditModal}>{t('dns.cancel')}</Button>
+              <Button
+
                 onClick={save} aria-busy={saving || undefined} disabled={saving || !form.recordType || !form.domain.trim() || ((modal === 'new' || modal?.standalone) && !form.teamId)}
               >
                 {t('dns.save')}
-              </button>
+              </Button>
             </div>
           </div>
         </div>

@@ -78,6 +78,7 @@ import { TourProvider } from './components/tour/TourProvider.jsx'
 import OnboardingChecklist from './components/tour/OnboardingChecklist.jsx'
 import TourPageChip from './components/tour/TourPageChip.jsx'
 import { readMirror, writeMirror, mergeState } from './components/tour/tourEngine.js'
+import { Button } from '@/components/shadcn/button'
 const WeeklyReportsPage = lazy(() => import('./components/WeeklyReportsPage'))
 const IncidentHistoryPage = lazy(() => import('./components/IncidentHistoryPage'))
 const SystemHealth = lazy(() => import('./components/admin/SystemHealth'))
@@ -1049,25 +1050,25 @@ export default function App() {
           {/* Kontroller yalnız SERTİFİKA sayfalarında — izleme/yönetim sekmelerinde işlevsizdi. */}
           {CERT_TABS.has(tab) && (
             <div className="controls">
-              <button className="btn btn-primary" data-tour="check-now" onClick={() => setTeamPickerOpen(true)} disabled={refreshing}>
+              <Button data-tour="check-now" onClick={() => setTeamPickerOpen(true)} disabled={refreshing}>
                 {refreshing
                   ? t('app.checkedOf', checkRun?.rows.length ?? 0, checkRun?.total ?? 0)
                   : t('app.checkNow')}
-              </button>
+              </Button>
               {/* Domain Ekle "Şimdi Kontrol Et"in yanında (2026-09-19, kullanıcı isteği) — eskiden süzgeç satırının sağındaydı */}
               {tab === 'dashboard' && canAddInventory && (
-                <button type="button" className="btn btn-primary controls-add-domain"
+                <Button type="button" className="controls-add-domain"
                         onClick={() => { setPendingAddDomain(true); handleTabChange('domains') }}>
                   <Plus size={14} /> {t('inv.addBtn')}
-                </button>
+                </Button>
               )}
               <div className="add-domain-section" data-tour="add-domain">
                 <input className="domain-input" type="text" placeholder={t('app.newDomainPlaceholder')}
                   value={newDomain} onChange={(e) => setNewDomain(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleAddDomain()} />
-                <button className="btn btn-success" onClick={handleAddDomain} disabled={checkLoading}>
+                <Button variant="success" onClick={handleAddDomain} disabled={checkLoading}>
                   {checkLoading ? t('app.checkingDomain') : t('app.checkBtn')}
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -1192,9 +1193,9 @@ export default function App() {
                     </span>
                   )}
                   {dashFiltersActive && (
-                    <button type="button" className="btn btn-secondary btn-sm-p" onClick={clearDashFilters}>
+                    <Button type="button" variant="secondary" size="sm" onClick={clearDashFilters}>
                       {t('app.clearFilters')}
-                    </button>
+                    </Button>
                   )}
                 </div>
                 {/* "Sizin için — bugün" (2026-09-12, #3): takımın ilgilenmesi gerekenler, sayfanın üstünde */}

@@ -31,6 +31,7 @@ import WeeklyComments from './weekly/WeeklyComments.jsx'
 import WeeklyReminderStatus from './weekly/WeeklyReminderStatus.jsx'
 import { WeeklyStatusChips, SortTh, ScoreBadge, DeltaBadge, SuggestBadge, PrevNoteToggle } from './weekly/WeeklyListExtras.jsx'
 import { statusFacets, approvalQueue, filterByStatus, sortReports, parsePrevContent, buildYearCsv, toUrlMapping } from './weekly/weeklyModel.js'
+import { Button } from '@/components/shadcn/button'
 
 /** Oturum kesintisi yedekleri için localStorage anahtar öneki. */
 const DRAFT_BACKUP_PREFIX = 'wr.draft.'
@@ -276,11 +277,11 @@ function MdField({ value, onChange, editable, reportId, height = 220 }) {
                 onChange={(e) => setCaption(e.target.value)} />
             </label>
             <div className="modal-actions">
-              <button className="btn btn-secondary" disabled={uploading}
-                onClick={() => setPendingFile(null)}>{t('wr.cancel')}</button>
-              <button className="btn btn-primary" disabled={uploading || pendingFile.processing} onClick={doUpload}>
+              <Button variant="secondary" disabled={uploading}
+                onClick={() => setPendingFile(null)}>{t('wr.cancel')}</Button>
+              <Button disabled={uploading || pendingFile.processing} onClick={doUpload}>
                 {uploading ? t('wr.uploading') : t('wr.insertImage')}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -1133,45 +1134,45 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   const actionButtons = report && (
     <>
       {canDeleteRow(report) && (
-        <button className="btn btn-danger" onClick={() => deleteReport(report)} disabled={busy}>
+        <Button variant="destructive" onClick={() => deleteReport(report)} disabled={busy}>
           <Trash2 size={14} /> {t('wr.deleteReport')}
-        </button>
+        </Button>
       )}
-      <button className="btn btn-secondary" onClick={openPreview} disabled={busy}>
+      <Button variant="secondary" onClick={openPreview} disabled={busy}>
         <Eye size={14} /> {t('wr.preview')}
-      </button>
-      <button className="btn btn-secondary wr-print-btn" onClick={() => window.print()} disabled={busy}>
+      </Button>
+      <Button variant="secondary" className="wr-print-btn" onClick={() => window.print()} disabled={busy}>
         <Printer size={14} /> {t('wr.print')}
-      </button>
+      </Button>
       {editable && !conflict && (
-        <button className="btn btn-primary" onClick={() => save()} disabled={busy || !dirty}>
+        <Button onClick={() => save()} disabled={busy || !dirty}>
           <Save size={14} /> {busy ? t('wr.saving') : t('wr.save')}
-        </button>
+        </Button>
       )}
       {canSubmit && !conflict && (
-        <button className="btn btn-success" onClick={submit} disabled={busy}>
+        <Button variant="success" onClick={submit} disabled={busy}>
           <Send size={14} /> {t('wr.submit')}
-        </button>
+        </Button>
       )}
       {showApproval && (
         <>
-          <button className="btn btn-success" onClick={approve} disabled={busy || managerMissing}>
+          <Button variant="success" onClick={approve} disabled={busy || managerMissing}>
             <CheckCircle size={14} /> {t('wr.approve')}
-          </button>
-          <button className="btn btn-secondary" onClick={() => setRejectModal({ note: '' })} disabled={busy}>
+          </Button>
+          <Button variant="secondary" onClick={() => setRejectModal({ note: '' })} disabled={busy}>
             <Undo2 size={14} /> {t('wr.reject')}
-          </button>
+          </Button>
         </>
       )}
       {canResend && (
-        <button className="btn btn-success" onClick={resendReport} disabled={busy || managerMissing}>
+        <Button variant="success" onClick={resendReport} disabled={busy || managerMissing}>
           <RefreshCcw size={14} /> {t('wr.resend')}
-        </button>
+        </Button>
       )}
       {canReopen && (
-        <button className="btn btn-secondary" onClick={reopenReport} disabled={busy}>
+        <Button variant="secondary" onClick={reopenReport} disabled={busy}>
           <FilePenLine size={14} /> {t('wr.reopen')}
-        </button>
+        </Button>
       )}
     </>
   )
@@ -1206,21 +1207,21 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                   isMarked={(y, w) => weekMarks[y]?.has(w) ?? false}
                   onViewYearChange={ensureMarks} />
               </div>
-              <button className="btn btn-secondary btn-sm-p" onClick={loadList}
+              <Button variant="secondary" size="sm" onClick={loadList}
                 title={t('app.refresh')} aria-label={t('app.refresh')}>
                 <RefreshCcw size={13} />
-              </button>
+              </Button>
               {!isAudit && (
-                <button className="btn btn-success" data-tour="wr-new"
+                <Button variant="success" data-tour="wr-new"
                   onClick={() => setNewModal({ ...isoWeekInfo(), teamId: isAdmin ? selTeamId : String(teamId ?? ''), carry: false })}>
                   <Plus size={14} /> {t('wr.newReport')}
-                </button>
+                </Button>
               )}
             </>
           ) : (
-            <button className="btn btn-secondary" onClick={backToList}>
+            <Button variant="secondary" onClick={backToList}>
               <ArrowLeft size={14} /> {t('wr.backToList')}
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -1228,10 +1229,10 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       {/* ── Admin-only: hatırlatma maillerini cron beklemeden gönder (test kolaylığı) ── */}
       {!selectedId && isAdmin && (
         <div className="wr-reminder-trigger">
-          <button type="button" className="btn btn-secondary btn-sm-p"
+          <Button type="button" variant="secondary" size="sm"
             onClick={sendReminders} disabled={sendingReminder}>
             <Bell size={14} /> {sendingReminder ? t('wr.reminderSending') : t('wr.sendReminderNow')}
-          </button>
+          </Button>
           <WeeklyReminderStatus nonce={reminderNonce} />
         </div>
       )}
@@ -1301,22 +1302,22 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
               <WeeklyStatusChips facets={facets} value={statusChip} onChange={(v) => { setStatusChip(v); setSelectedIds(new Set()) }}
                 mineCount={mineCount} showMine={!isAudit && (isAdmin || isTeamAdmin || mineCount > 0)} />
               <span className="wr-spacer" />
-              <button type="button" className="btn btn-secondary btn-sm-p" onClick={downloadYearCsv} title={t('wr.csvTitle')} data-tour="wr-csv" disabled={!displayedReports.length}>
+              <Button type="button" variant="secondary" size="sm" onClick={downloadYearCsv} title={t('wr.csvTitle')} data-tour="wr-csv" disabled={!displayedReports.length}>
                 <Download size={13} /> CSV
-              </button>
+              </Button>
             </div>
             {isAdmin && selectedIds.size > 0 && (
               <div className="wr-bulk-bar">
                 <span className="wr-bulk-count">{t('wr.selectedCount', selectedIds.size)}</span>
-                <button type="button" className="btn btn-primary btn-sm-p" onClick={() => openTransfer([...selectedIds])}>
+                <Button type="button" size="sm" onClick={() => openTransfer([...selectedIds])}>
                   <ArrowRightLeft size={14} /> {t('wr.transferSelected')}
-                </button>
-                <button type="button" className="btn btn-success btn-sm-p" onClick={approveSelected} disabled={busy}>
+                </Button>
+                <Button type="button" variant="success" size="sm" onClick={approveSelected} disabled={busy}>
                   <CheckCircle size={14} /> {t('wr.bulkApprove')}
-                </button>
-                <button type="button" className="btn btn-secondary btn-sm-p" onClick={() => setSelectedIds(new Set())}>
+                </Button>
+                <Button type="button" variant="secondary" size="sm" onClick={() => setSelectedIds(new Set())}>
                   {t('wr.clearSelection')}
-                </button>
+                </Button>
               </div>
             )}
             {displayedReports.length ? (
@@ -1376,7 +1377,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                     <td data-label={t('wr.colSent')}>{r.sent_at ? formatDate(r.sent_at) : '—'}</td>
                     <td onClick={(e) => e.stopPropagation()}>
                       <div className="wr-menu-wrap">
-                        <button className="btn-sm" title={t('wr.actions')}
+                        <Button variant="outline" size="sm" title={t('wr.actions')}
                           aria-label={`${formatWeekRange(r.report_year, r.week_no, lang)} — ${t('wr.actions')}`}
                           style={{ background: '#eef2f7', color: '#3f3f46' }}
                           onClick={(e) => {
@@ -1386,7 +1387,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                             setOpenMenuId(r.id)
                           }}>
                           <Menu size={15} />
-                        </button>
+                        </Button>
                         {openMenuId === r.id && (
                           <div className="wr-menu-pop"
                             style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, right: 'auto' }}>
@@ -1507,13 +1508,13 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
           {!lockHeld && lockHolder && canModifyRow(report) && (
             <div className="alert-msg" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <span>{t('wr.lockedBy', lockHolder.name ?? '?')}</span>
-              <button type="button" className="btn-sm btn-edit" onClick={retryLock}>
+              <Button type="button" variant="secondary" size="sm" onClick={retryLock}>
                 {t('wr.lockRetry')}
-              </button>
+              </Button>
               {isAdmin && (
-                <button type="button" className="btn-sm btn-del" onClick={takeoverLock}>
+                <Button type="button" variant="destructive" size="sm" onClick={takeoverLock}>
                   {t('wr.lockTakeover')}
-                </button>
+                </Button>
               )}
             </div>
           )}
@@ -1523,21 +1524,21 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
               background: '#fde8e8', color: '#9b1c1c',
             }}>
               <span>⚠ {t('wr.conflictBanner', conflict.replace('VERSION_CONFLICT: ', ''))}</span>
-              <button type="button" className="btn-sm btn-edit" onClick={() => loadReport(report.id)}>
+              <Button type="button" variant="secondary" size="sm" onClick={() => loadReport(report.id)}>
                 {t('wr.loadLatest')}
-              </button>
+              </Button>
             </div>
           )}
           {pendingBackup && (
             <div className="alert-msg" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <span>💾 {t('wr.backupFound',
                 new Date(pendingBackup.saved_at).toLocaleString(lang === 'en' ? 'en-GB' : 'tr-TR'))}</span>
-              <button type="button" className="btn-sm btn-edit" onClick={restoreBackup}>
+              <Button type="button" variant="secondary" size="sm" onClick={restoreBackup}>
                 {t('wr.restore')}
-              </button>
-              <button type="button" className="btn-sm" onClick={discardBackup}>
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={discardBackup}>
                 {t('wr.discardBackup')}
-              </button>
+              </Button>
             </div>
           )}
 
@@ -1670,9 +1671,9 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                     <input value={channels[channelTab].name}
                       onChange={(e) => patch(['item4', 'channels', channelTab, 'name'], e.target.value)} />
                   </label>
-                  <button type="button" className="btn-sm btn-del" onClick={() => removeChannel(channelTab)}>
+                  <Button type="button" variant="destructive" size="sm" onClick={() => removeChannel(channelTab)}>
                     <Trash2 size={12} /> {t('wr.deleteChannel')}
-                  </button>
+                  </Button>
                 </div>
               )}
               <MdField value={channels[channelTab].notes_md} editable={editable} reportId={report.id}
@@ -1728,9 +1729,9 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
             </div>
             <p style={{ fontSize: '.82em', color: 'var(--text-light)', marginTop: 8 }}>{newModal.carry ? t('wr.carryHint') : t('wr.templateHint')}</p>
             <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setNewModal(null)}>{t('wr.cancel')}</button>
-              <button className="btn btn-primary" onClick={createReport}
-                disabled={isAdmin && !newModal.teamId}>{t('wr.create')}</button>
+              <Button variant="secondary" onClick={() => setNewModal(null)}>{t('wr.cancel')}</Button>
+              <Button onClick={createReport}
+                disabled={isAdmin && !newModal.teamId}>{t('wr.create')}</Button>
             </div>
           </div>
         </div>
@@ -1747,8 +1748,8 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                 onChange={(e) => setRejectModal((m) => ({ ...m, note: e.target.value }))} />
             </label>
             <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setRejectModal(null)}>{t('wr.cancel')}</button>
-              <button className="btn btn-primary" onClick={doReject} disabled={busy}>{t('wr.reject')}</button>
+              <Button variant="secondary" onClick={() => setRejectModal(null)}>{t('wr.cancel')}</Button>
+              <Button onClick={doReject} disabled={busy}>{t('wr.reject')}</Button>
             </div>
           </div>
         </div>
@@ -1773,10 +1774,10 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
               />
             </label>
             <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setTransferModal(null)}>{t('wr.cancel')}</button>
-              <button className="btn btn-primary" onClick={doTransfer} disabled={transferring || !transferTeamId}>
+              <Button variant="secondary" onClick={() => setTransferModal(null)}>{t('wr.cancel')}</Button>
+              <Button onClick={doTransfer} disabled={transferring || !transferTeamId}>
                 {transferring ? t('wr.transferring') : t('wr.transferConfirm')}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -1825,10 +1826,10 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                       )}
                     </div>
                     <div style={{ padding: '0 12px 10px' }}>
-                      <button type="button" className="btn-sm btn-edit"
+                      <Button type="button" variant="secondary" size="sm"
                         onClick={() => setOpenMailBody(openMailBody === m.id ? null : m.id)}>
                         {openMailBody === m.id ? t('wr.mailHideBody') : t('wr.mailShowBody')}
-                      </button>
+                      </Button>
                       {openMailBody === m.id && (
                         // allow-same-origin: görseller oturum çerezi ile yüklenir; script yok
                         <iframe title={`mail-${m.id}`} srcDoc={mailPreviewSrcDoc(m.body_html)} sandbox="allow-same-origin"
@@ -1843,8 +1844,8 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
               })}
             </div>
             <div className="modal-actions">
-              <button className="btn btn-secondary"
-                onClick={() => { setMailHistory(null); setOpenMailBody(null) }}>{t('wr.close')}</button>
+              <Button variant="secondary"
+                onClick={() => { setMailHistory(null); setOpenMailBody(null) }}>{t('wr.close')}</Button>
             </div>
           </div>
         </div>
@@ -1860,7 +1861,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
             <iframe title="preview" srcDoc={mailPreviewSrcDoc(previewHtml)} sandbox="allow-same-origin"
               style={{ flex: 1, border: '1px solid var(--border)', borderRadius: 8, background: '#f4f6f8' }} />
             <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setPreviewHtml(null)}>{t('wr.close')}</button>
+              <Button variant="secondary" onClick={() => setPreviewHtml(null)}>{t('wr.close')}</Button>
             </div>
           </div>
         </div>

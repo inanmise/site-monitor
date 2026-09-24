@@ -17,6 +17,7 @@ import { Spinner, ProgressBar, LoadingBlock } from '../ui/Progress.jsx'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import { readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import { Rocket } from 'lucide-react'
+import { Button } from '@/components/shadcn/button'
 const DeploymentHistoryPanel = lazy(() => import('./DeploymentHistoryPanel.jsx'))   // yalnız bölüm açılınca
 /**
  * Grafik eşikleri (2026-09-12, #23): her grafik "normal mi" sorusuna cevap versin — uyarı/kritik bandı +
@@ -469,9 +470,9 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
         <div className="health-alarm-banner" role="alert" style={{ background: '#fff5f5', borderLeft: '4px solid var(--danger)' }}>
           <span className="health-alarm-icon">✕</span>
           <strong>{t('health.loadErrorTitle')}:</strong> {failedSections.join(', ')}.&nbsp;
-          <button type="button" className="btn btn-secondary" style={{ marginLeft: 8 }} onClick={load}>
+          <Button type="button" variant="secondary" style={{ marginLeft: 8 }} onClick={load}>
             {t('err.reload')}
-          </button>
+          </Button>
         </div>
       )}
 
@@ -543,13 +544,12 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
             <dd>{scheduler?.active_domains}</dd>
           </dl>
           {isAdmin && (
-            <button
-              className="btn-primary sys-action-btn"
+            <Button
               disabled={isRunning || triggering}
               onClick={handleForceRun}
             >
               {triggering ? t('sys.triggering') : t('sys.forceRun')}
-            </button>
+            </Button>
           )}
         </div>
 
@@ -578,13 +578,13 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
                 <dd>{lock.held_by_me ? t('sys.yes') : t('sys.no')}</dd>
               </dl>
               {!lock.held_by_me && isAdmin && (
-                <button
-                  className="btn-danger sys-action-btn"
+                <Button
+                  variant="destructive"
                   disabled={releasing}
                   onClick={handleForceRelease}
                 >
                   {releasing ? t('sys.releasing') : t('sys.forceRelease')}
-                </button>
+                </Button>
               )}
             </>
           ) : (

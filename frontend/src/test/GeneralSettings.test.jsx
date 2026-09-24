@@ -46,7 +46,7 @@ const ITEMS = [
 ]
 
 const SKIPPED = ['branding', 'retention', 'userpush', 'storm', 'login-anomaly']
-const saveBtn = (c) => c.querySelector('.ldap-actions .btn-primary')
+const saveBtn = (c) => c.querySelector('.ldap-actions [data-slot="button"][data-variant="default"]')
 
 describe('GeneralSettings', () => {
   beforeEach(() => {
@@ -191,7 +191,7 @@ describe('GeneralSettings — read_only kalemler', () => {
     ]
     api.admin.getGeneralSettings.mockResolvedValue({ success: true, data: items })
     const { container } = render(<GeneralSettings />)
-    await waitFor(() => expect(container.querySelector('.ldap-actions .btn-primary')).not.toBeNull())
+    await waitFor(() => expect(container.querySelector('.ldap-actions [data-slot="button"][data-variant="default"]')).not.toBeNull())
 
     const field = (key) => [...container.querySelectorAll('.threshold-field')].find(f => f.textContent.includes(key))
     expect(field('site.monitor.cors.allowed-origins').querySelector('input').disabled).toBe(true)

@@ -72,7 +72,7 @@ describe('DeploymentHistoryPanel', () => {
     render(<DeploymentHistoryPanel canEdit />)
     await screen.findByText('bilet 123')
     // Silme düğmesi: yalnız MANUAL satır (1 adet)
-    const dels = document.querySelectorAll('.deploy-table .btn-danger')
+    const dels = document.querySelectorAll('.deploy-table [data-slot="button"][data-variant="destructive"]')
     expect(dels.length).toBe(1)
     fireEvent.click(dels[0])
     await screen.findByText(/silinsin mi|Delete this manual/)

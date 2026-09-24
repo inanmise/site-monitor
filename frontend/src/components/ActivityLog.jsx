@@ -11,6 +11,7 @@ import {
 import { csvCell } from '../utils/csv.js'
 import TeamBadge from './ui/TeamBadge.jsx'
 import { navigateTo } from '../utils/navigate.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Aktivite satırı → ilgili izleme sekmesi (2026-09-20, kullanıcı bildirimi: "ping logunu görünce o ping izlemesine
@@ -262,15 +263,15 @@ export default function ActivityLog({ refreshTrigger }) {
             <input className="filter-input" placeholder={t('act.searchPh')} value={qInput}
               onChange={(e) => setQInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') applySearch() }} />
-            <button className="btn btn-secondary" onClick={applySearch}
-              title={t('act.search')} aria-label={t('act.search')}><Search size={14} /></button>
+            <Button variant="secondary" onClick={applySearch}
+              title={t('act.search')} aria-label={t('act.search')}><Search size={14} /></Button>
           </div>
           <div className="act-filter-actions">
             {anyFilter && <button className="act-stat-clear" onClick={clearAll}><X size={12} /> {t('act.clearFilter')}</button>}
-            <button className="btn btn-secondary" onClick={() => load(page, false)} title={t('act.refresh')}><RefreshCw size={14} /></button>
-            <button className="btn btn-secondary" onClick={() => exportCsv(data)} disabled={!data.length} title={t('act.exportCsv')}>
+            <Button variant="secondary" onClick={() => load(page, false)} title={t('act.refresh')}><RefreshCw size={14} /></Button>
+            <Button variant="secondary" onClick={() => exportCsv(data)} disabled={!data.length} title={t('act.exportCsv')}>
               <Download size={14} /> CSV
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -376,8 +377,8 @@ export default function ActivityLog({ refreshTrigger }) {
           <div className="act-pagination">
             <span className="act-page-info">{t('act.pageInfo', page + 1, totalPages, total)}</span>
             <div className="act-page-btns">
-              <button className="btn btn-secondary" disabled={page <= 0} onClick={() => load(page - 1, false)}>{t('act.prev')}</button>
-              <button className="btn btn-secondary" disabled={page + 1 >= totalPages} onClick={() => load(page + 1, false)}>{t('act.next')}</button>
+              <Button variant="secondary" disabled={page <= 0} onClick={() => load(page - 1, false)}>{t('act.prev')}</Button>
+              <Button variant="secondary" disabled={page + 1 >= totalPages} onClick={() => load(page + 1, false)}>{t('act.next')}</Button>
             </div>
           </div>
         </>

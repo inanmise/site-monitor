@@ -7,6 +7,7 @@ import { useDialog } from '../ui/Dialog.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import Field from '../ui/Field.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Ayarlar → Platformlar (2026-09-22, kullanıcı isteği): sitenin koştuğu ortam kataloğu (IIS, OpenShift, Kubernetes, Linux…).
@@ -89,14 +90,14 @@ export default function PlatformSettings() {
           </Field>
         </div>
         <div className="plat-form-actions">
-          {editing != null && <button type="button" className="btn btn-secondary" onClick={startNew}>{t('plat.cancelEdit')}</button>}
-          <button type="button" className="btn btn-primary" disabled={saving} onClick={save}>
+          {editing != null && <Button type="button" variant="secondary" onClick={startNew}>{t('plat.cancelEdit')}</Button>}
+          <Button type="button" disabled={saving} onClick={save}>
             {editing == null ? <><Plus size={14} /> {t('plat.add')}</> : <><Pencil size={14} /> {t('plat.save')}</>}
-          </button>
+          </Button>
         </div>
       </div>
 
-      {error && <AlertBanner tone="danger" role="alert" actions={<button type="button" className="btn btn-sm btn-secondary" onClick={load}>{t('hist.retry')}</button>}>{error}</AlertBanner>}
+      {error && <AlertBanner tone="danger" role="alert" actions={<Button type="button" variant="secondary" size="sm" onClick={load}>{t('hist.retry')}</Button>}>{error}</AlertBanner>}
       {loading ? <p className="section-desc">{t('settings.loading')}</p> : rows.length === 0 ? (
         <StatusBlock tone="neutral" icon={Layers} title={t('plat.empty')} />
       ) : (
@@ -113,9 +114,9 @@ export default function PlatformSettings() {
                 <td>{p.usage > 0 ? <span className="ccx-chip ccx-chip--info">{t('plat.usageN', p.usage)}</span> : <span className="inv-dim">—</span>}</td>
                 <td>{p.active ? <span className="badge badge-ok">{t('plat.active')}</span> : <span className="badge badge-err">{t('plat.inactive')}</span>}</td>
                 <td className="grp-actions">
-                  <button type="button" className="btn btn-sm btn-secondary" onClick={() => startEdit(p)} title={t('plat.edit')}><Pencil size={12} /></button>
-                  <button type="button" className="btn btn-sm btn-secondary" onClick={() => toggleActive(p)} title={p.active ? t('plat.deactivate') : t('plat.activate')} aria-pressed={!p.active}><Power size={12} /></button>
-                  <button type="button" className="btn btn-sm btn-danger" onClick={() => remove(p)} disabled={p.usage > 0} title={p.usage > 0 ? t('plat.inUse', p.usage) : t('plat.delete')}><Trash2 size={12} /></button>
+                  <Button type="button" variant="secondary" size="sm" onClick={() => startEdit(p)} title={t('plat.edit')}><Pencil size={12} /></Button>
+                  <Button type="button" variant="secondary" size="sm" onClick={() => toggleActive(p)} title={p.active ? t('plat.deactivate') : t('plat.activate')} aria-pressed={!p.active}><Power size={12} /></Button>
+                  <Button type="button" variant="destructive" size="sm" onClick={() => remove(p)} disabled={p.usage > 0} title={p.usage > 0 ? t('plat.inUse', p.usage) : t('plat.delete')}><Trash2 size={12} /></Button>
                 </td>
               </tr>
             ))}

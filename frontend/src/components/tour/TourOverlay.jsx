@@ -4,6 +4,7 @@ import { X, ArrowLeft, ArrowRight, Check, BookOpen, MousePointerClick } from 'lu
 import { useT } from '../../i18n/index.jsx'
 import { ProgressBar } from '../ui/Progress.jsx'
 import { placeTooltip, spotlightRect, keyAction, TIP_W, MOBILE_MAX } from './tourEngine.js'
+import { Button } from '@/components/shadcn/button'
 
 const FIND_TIMEOUT_MS = 3000
 const POLL_MS = 120
@@ -158,10 +159,10 @@ export default function TourOverlay({ active, onNext, onPrev, onStop, navigate }
         <div className="tour-actions">
           {step.help && <button type="button" className="tour-link" onClick={openHelp}><BookOpen size={13} /> {t('tour.more')}</button>}
           <span className="tour-spacer" />
-          {index > 0 && <button type="button" className="btn btn-sm btn-secondary" onClick={onPrev}><ArrowLeft size={13} /> {t('tour.prev')}</button>}
+          {index > 0 && <Button type="button" variant="secondary" size="sm" onClick={onPrev}><ArrowLeft size={13} /> {t('tour.prev')}</Button>}
           {isLast
-            ? <button type="button" className="btn btn-sm btn-primary" onClick={() => onStop('done')}><Check size={13} /> {t('tour.finish')}</button>
-            : <button type="button" className="btn btn-sm btn-primary" onClick={onNext}>{t('tour.next')} <ArrowRight size={13} /></button>}
+            ? <Button type="button" size="sm" onClick={() => onStop('done')}><Check size={13} /> {t('tour.finish')}</Button>
+            : <Button type="button" size="sm" onClick={onNext}>{t('tour.next')} <ArrowRight size={13} /></Button>}
         </div>
         {kind !== 'page' && !isLast && (
           <div className="tour-foot">

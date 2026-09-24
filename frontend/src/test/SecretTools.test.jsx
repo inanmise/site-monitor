@@ -62,7 +62,7 @@ describe('SecretTools', () => {
     const { container } = render(<SecretTools />)
     await waitFor(() => expect(api.admin.secretToolsInfo).toHaveBeenCalled())
 
-    const btn = container.querySelector('.ldap-actions .btn-primary')
+    const btn = container.querySelector('.ldap-actions [data-slot="button"][data-variant="default"]')
     if (btn) fireEvent.click(btn)
 
     await waitFor(() => expect(api.admin.decryptSecrets).not.toHaveBeenCalled())
@@ -74,7 +74,7 @@ describe('SecretTools', () => {
 
     fireEvent.change(container.querySelector('input[placeholder="SITE_MONITOR_SECRET_KEY"]'),
       { target: { value: 'ANAHTAR' } })
-    fireEvent.click(container.querySelector('.ldap-actions .btn-primary'))
+    fireEvent.click(container.querySelector('.ldap-actions [data-slot="button"][data-variant="default"]'))
 
     await waitFor(() => expect(api.admin.decryptSecrets).toHaveBeenCalledWith('ANAHTAR'))
     expect(await screen.findByText(/smtp_password/)).toBeInTheDocument()
@@ -86,7 +86,7 @@ describe('SecretTools', () => {
 
     fireEvent.change(container.querySelector('input[placeholder="SITE_MONITOR_SECRET_KEY"]'),
       { target: { value: 'ANAHTAR' } })
-    fireEvent.click(container.querySelector('.ldap-actions .btn-primary'))
+    fireEvent.click(container.querySelector('.ldap-actions [data-slot="button"][data-variant="default"]'))
     await waitFor(() => expect(api.admin.decryptSecrets).toHaveBeenCalled())
 
     // Değer alanları password tipinde olmalı; düz metin olan HİÇBİR alan sırrı taşımamalı.
@@ -104,7 +104,7 @@ describe('SecretTools', () => {
 
     fireEvent.change(container.querySelector('input[placeholder="SITE_MONITOR_SECRET_KEY"]'),
       { target: { value: 'ANAHTAR' } })
-    fireEvent.click(container.querySelector('.ldap-actions .btn-primary'))
+    fireEvent.click(container.querySelector('.ldap-actions [data-slot="button"][data-variant="default"]'))
     await waitFor(() => expect(api.admin.decryptSecrets).toHaveBeenCalled())
 
     const before = container.querySelector('input[readonly][type="password"]')
@@ -130,7 +130,7 @@ describe('SecretTools', () => {
 
     fireEvent.change(container.querySelector('input[placeholder="SITE_MONITOR_SECRET_KEY"]'),
       { target: { value: 'YANLIS' } })
-    fireEvent.click(container.querySelector('.ldap-actions .btn-primary'))
+    fireEvent.click(container.querySelector('.ldap-actions [data-slot="button"][data-variant="default"]'))
 
     await waitFor(() => expect(api.admin.decryptSecrets).toHaveBeenCalled())
     expect(screen.queryByText(/smtp_password/)).toBeNull()
@@ -144,7 +144,7 @@ describe('SecretTools', () => {
 
     fireEvent.change(container.querySelector('input[placeholder="SITE_MONITOR_SECRET_KEY"]'),
       { target: { value: 'ANAHTAR' } })
-    fireEvent.click(container.querySelector('.ldap-actions .btn-primary'))
+    fireEvent.click(container.querySelector('.ldap-actions [data-slot="button"][data-variant="default"]'))
 
     await waitFor(() => expect(api.admin.decryptSecrets).toHaveBeenCalled())
     expect(container.querySelector('.ldap-settings')).not.toBeNull()

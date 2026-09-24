@@ -64,7 +64,7 @@ describe('AlertThresholds', () => {
     const { container } = render(<AlertThresholds />)
     await ready(container)
 
-    fireEvent.click(container.querySelector('.threshold-display .btn-secondary'))
+    fireEvent.click(container.querySelector('.threshold-display [data-slot="button"][data-variant="secondary"]'))
     await waitFor(() => expect(container.querySelector('.threshold-form')).not.toBeNull())
 
     const inputs = container.querySelectorAll('.threshold-form input[type="number"]')
@@ -79,7 +79,7 @@ describe('AlertThresholds', () => {
     fireEvent.change(inputs[2], { target: { value: '61' } })
     fireEvent.change(inputs[3], { target: { value: '64' } })
 
-    fireEvent.click(container.querySelector('.threshold-form .btn-primary'))
+    fireEvent.click(container.querySelector('.threshold-form [data-slot="button"][data-variant="default"]'))
     await waitFor(() => expect(api.admin.updateThreshold).toHaveBeenCalled())
 
     const payload = api.admin.updateThreshold.mock.calls[0][1]
@@ -93,10 +93,10 @@ describe('AlertThresholds', () => {
     const { container } = render(<AlertThresholds />)
     await ready(container)
 
-    fireEvent.click(container.querySelector('.threshold-display .btn-secondary'))
+    fireEvent.click(container.querySelector('.threshold-display [data-slot="button"][data-variant="secondary"]'))
     await waitFor(() => expect(container.querySelector('.threshold-form')).not.toBeNull())
 
-    fireEvent.click(container.querySelector('.threshold-form .btn-secondary'))
+    fireEvent.click(container.querySelector('.threshold-form [data-slot="button"][data-variant="secondary"]'))
     await waitFor(() => expect(container.querySelector('.threshold-form')).toBeNull())
     expect(api.admin.updateThreshold).not.toHaveBeenCalled()
   })
@@ -105,7 +105,7 @@ describe('AlertThresholds', () => {
     const { container } = render(<AlertThresholds />)
     await ready(container)
 
-    fireEvent.click(container.querySelector('.threshold-display .btn-secondary'))
+    fireEvent.click(container.querySelector('.threshold-display [data-slot="button"][data-variant="secondary"]'))
     await waitFor(() => expect(container.querySelector('.threshold-form')).not.toBeNull())
 
     const first = container.querySelector('.threshold-form input[type="number"]')
@@ -118,13 +118,13 @@ describe('AlertThresholds', () => {
     const { container } = render(<AlertThresholds />)
     await ready(container)
 
-    fireEvent.click(container.querySelector('.threshold-display .btn-secondary'))
+    fireEvent.click(container.querySelector('.threshold-display [data-slot="button"][data-variant="secondary"]'))
     await waitFor(() => expect(container.querySelector('.threshold-form')).not.toBeNull())
 
     const inputs = container.querySelectorAll('.threshold-form input[type="number"]')
     fireEvent.change(inputs[0], { target: { value: '60' } })
 
-    fireEvent.click(container.querySelector('.threshold-form .btn-primary'))
+    fireEvent.click(container.querySelector('.threshold-form [data-slot="button"][data-variant="default"]'))
 
     await waitFor(() => expect(api.admin.updateThreshold).toHaveBeenCalled())
     const [id, payload] = api.admin.updateThreshold.mock.calls[0]
@@ -139,10 +139,10 @@ describe('AlertThresholds', () => {
     const { container } = render(<AlertThresholds />)
     await ready(container)
 
-    fireEvent.click(container.querySelector('.threshold-display .btn-secondary'))
+    fireEvent.click(container.querySelector('.threshold-display [data-slot="button"][data-variant="secondary"]'))
     await waitFor(() => expect(container.querySelector('.threshold-form')).not.toBeNull())
 
-    fireEvent.click(container.querySelector('.threshold-form .btn-primary'))
+    fireEvent.click(container.querySelector('.threshold-form [data-slot="button"][data-variant="default"]'))
 
     expect(await screen.findByText(/esik kaydedilemedi/)).toBeInTheDocument()
   })
@@ -153,9 +153,9 @@ describe('AlertThresholds', () => {
     await ready(container)
     const cards = container.querySelectorAll('.threshold-card')
     expect(cards[0].textContent).toMatch(/Varsayılan|Default/)
-    expect(cards[0].querySelector('.btn-danger')).toBeNull()
+    expect(cards[0].querySelector('[data-slot="button"][data-variant="destructive"]')).toBeNull()
     expect(cards[1].textContent).toMatch(/Tier 1/)
-    expect(cards[1].querySelector('.btn-danger')).not.toBeNull()
+    expect(cards[1].querySelector('[data-slot="button"][data-variant="destructive"]')).not.toBeNull()
     // Satırı olmayan tier'lar (2,3,4) eklenebilir; Tier 1 listede YOK.
     expect(container.querySelector('.threshold-add')).not.toBeNull()
   })
@@ -163,7 +163,7 @@ describe('AlertThresholds', () => {
   it('düzenlerken etki önizlemesi sunucudan tier + günlerle istenir ve fark parantezde gösterilir', async () => {
     const { container } = render(<AlertThresholds />)
     await ready(container)
-    fireEvent.click(container.querySelectorAll('.threshold-display .btn-secondary')[1])   // Tier 1 satırı
+    fireEvent.click(container.querySelectorAll('.threshold-display [data-slot="button"][data-variant="secondary"]')[1])   // Tier 1 satırı
     await waitFor(() => expect(api.admin.previewThreshold).toHaveBeenCalled(), { timeout: 2000 })
     expect(api.admin.previewThreshold.mock.calls[0][0]).toEqual({ tier: 1, warning: 45, high: 21, critical: 10 })
     const panel = await screen.findByTestId('threshold-preview')
@@ -174,12 +174,12 @@ describe('AlertThresholds', () => {
   it('bozuk sıra (kritik > yüksek) anında uyarır, Kaydet kilitlenir ve önizleme istenmez', async () => {
     const { container } = render(<AlertThresholds />)
     await ready(container)
-    fireEvent.click(container.querySelector('.threshold-display .btn-secondary'))
+    fireEvent.click(container.querySelector('.threshold-display [data-slot="button"][data-variant="secondary"]'))
     await waitFor(() => expect(container.querySelector('.threshold-form')).not.toBeNull())
     const inputs = container.querySelectorAll('.threshold-form input[type="number"]')
     fireEvent.change(inputs[2], { target: { value: '99' } })   // kritik 99 > yüksek 14
     expect(await screen.findByText(/Sıra bozuk|Out of order/)).toBeInTheDocument()
-    expect(container.querySelector('.threshold-form .btn-primary')).toBeDisabled()
+    expect(container.querySelector('.threshold-form [data-slot="button"][data-variant="default"]')).toBeDisabled()
   })
 
   it('Tier ekle: seçilen tier ile POST createThreshold (varsayılan günler ön-dolu)', async () => {
@@ -190,9 +190,9 @@ describe('AlertThresholds', () => {
     fireEvent.mouseDown(add.querySelector('.ss-trigger'))
     const opt = await screen.findByText(/Tier 2/)
     fireEvent.mouseDown(opt)
-    fireEvent.click(add.querySelector('.btn'))
+    fireEvent.click(add.querySelector('[data-slot="button"]'))
     await waitFor(() => expect(container.querySelector('.threshold-form')).not.toBeNull())
-    fireEvent.click(container.querySelector('.threshold-form .btn-primary'))
+    fireEvent.click(container.querySelector('.threshold-form [data-slot="button"][data-variant="default"]'))
     await waitFor(() => expect(api.admin.createThreshold).toHaveBeenCalled())
     const body = api.admin.createThreshold.mock.calls[0][0]
     expect(body.tier).toBe(2)
@@ -204,11 +204,11 @@ describe('AlertThresholds', () => {
     const { container } = render(<AlertThresholds />)
     await ready(container)
     confirmMock.mockResolvedValueOnce(false)
-    fireEvent.click(container.querySelectorAll('.threshold-card')[1].querySelector('.btn-danger'))
+    fireEvent.click(container.querySelectorAll('.threshold-card')[1].querySelector('[data-slot="button"][data-variant="destructive"]'))
     await waitFor(() => expect(confirmMock).toHaveBeenCalled())
     expect(api.admin.deleteThreshold).not.toHaveBeenCalled()          // vazgeçildi
     confirmMock.mockResolvedValueOnce(true)
-    fireEvent.click(container.querySelectorAll('.threshold-card')[1].querySelector('.btn-danger'))
+    fireEvent.click(container.querySelectorAll('.threshold-card')[1].querySelector('[data-slot="button"][data-variant="destructive"]'))
     await waitFor(() => expect(api.admin.deleteThreshold).toHaveBeenCalledWith(2))
   })
 })

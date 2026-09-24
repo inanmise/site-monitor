@@ -110,8 +110,9 @@ describe('CheckAllButton', () => {
   it('nötr araç çubuğu sınıfını taşır (mavi DEĞİL) ve sayıyı gösterir', () => {
     render(<CheckAllButton count={12} running={false} onClick={() => {}} />)
     const btn = screen.getByRole('button')
-    expect(btn.className).toBe('btn btn-sm upt-refresh-btn')
-    expect(btn.className).not.toContain('btn-primary')
+    // Komşusu "Yenile" ile BİREBİR aynı görünüm: shadcn Button outline + sm (birincil mavi DEĞİL)
+    expect(btn.getAttribute('data-variant')).toBe('outline')
+    expect(btn.getAttribute('data-size')).toBe('sm')
     expect(btn.textContent).toContain('12')
   })
 

@@ -4,6 +4,7 @@ import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { INVENTORY_FLAGS } from '../../utils/inventoryFlags.js'
 import { INVENTORY_COLUMNS, EMPTY_FILTERS, hasActiveFilter, defaultCols } from './inventoryModel.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Envanter araç çubuğu (2026-09-12, #1 arama+süzgeç · #4 sütun seçici · #13 kayıtlı görünüm + bağlantı ·
@@ -49,9 +50,9 @@ export default function InventoryToolbar({
           <input type="search" value={qDraft} onChange={(e) => setQDraft(e.target.value)} placeholder={t('inv.searchPh')} aria-label={t('inv.search')} />
           {qDraft && <button type="button" className="invtb-clear" onClick={() => { setQDraft(''); set({ q: '' }) }} aria-label={t('inv.filterClear')}><X size={12} /></button>}
         </label>
-        <button type="button" className={`btn btn-sm ${open || active ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <Button type="button" variant={open || active ? 'default' : 'secondary'} size="sm" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
           <SlidersHorizontal size={13} /> {t('inv.filters')}{active ? ` · ${t('inv.filterActive')}` : ''}
-        </button>
+        </Button>
         <span className="invtb-count">{t('inv.shownOf', shown, total)}</span>
         <div className="invtb-spacer" />
         <div className="seg-ctl" role="group" aria-label={t('inv.viewLabel')}>
@@ -59,18 +60,18 @@ export default function InventoryToolbar({
           <button type="button" className={`seg-ctl-btn${view === 'team' ? ' active' : ''}`} onClick={() => onView('team')} aria-pressed={view === 'team'}><Users size={13} className="seg-ctl-icon" /> {t('inv.viewByTeam')}</button>
         </div>
         {onColFilters && view === 'table' && (
-          <button type="button" className={`btn btn-sm ${colFilters ? 'btn-primary' : 'btn-secondary'}`} onClick={() => onColFilters(!colFilters)}
+          <Button type="button" variant={colFilters ? 'default' : 'secondary'} size="sm" onClick={() => onColFilters(!colFilters)}
             title={t('inv.colFiltersHint')} aria-pressed={colFilters}>
             <ListFilter size={13} /> {t('inv.colFilters')}
-          </button>
+          </Button>
         )}
-        <button type="button" className="btn btn-sm btn-secondary" onClick={() => onDensity(density === 'compact' ? 'comfortable' : 'compact')} title={t('inv.density')} aria-pressed={density === 'compact'}>
+        <Button type="button" variant="secondary" size="sm" onClick={() => onDensity(density === 'compact' ? 'comfortable' : 'compact')} title={t('inv.density')} aria-pressed={density === 'compact'}>
           <Rows3 size={13} /> {density === 'compact' ? t('inv.densityCompact') : t('inv.densityComfortable')}
-        </button>
+        </Button>
         <div className="colpick" ref={colsRef}>
-          <button type="button" className="btn btn-sm btn-secondary" onClick={() => setColsOpen((o) => !o)} aria-expanded={colsOpen} aria-haspopup="true">
+          <Button type="button" variant="secondary" size="sm" onClick={() => setColsOpen((o) => !o)} aria-expanded={colsOpen} aria-haspopup="true">
             <Columns3 size={13} /> {t('tbl.columns')} ({cols.length}/{INVENTORY_COLUMNS.length})
-          </button>
+          </Button>
           {colsOpen && (
             <div className="colpick-menu" role="group" aria-label={t('tbl.columns')}>
               {INVENTORY_COLUMNS.map((c) => (
@@ -79,15 +80,15 @@ export default function InventoryToolbar({
                     onChange={() => onCols(cols.includes(c.key) ? cols.filter((x) => x !== c.key) : [...cols, c.key])} /> {t(c.labelKey)}
                 </label>
               ))}
-              <button type="button" className="btn btn-sm btn-secondary" onClick={() => onCols(defaultCols())}>{t('tbl.columnsReset')}</button>
+              <Button type="button" variant="secondary" size="sm" onClick={() => onCols(defaultCols())}>{t('tbl.columnsReset')}</Button>
               <span className="colpick-note">{t('tbl.viewSaved')}</span>
             </div>
           )}
         </div>
         <div className="colpick" ref={viewsRef}>
-          <button type="button" className="btn btn-sm btn-secondary" onClick={() => setViewsOpen((o) => !o)} aria-expanded={viewsOpen} aria-haspopup="true">
+          <Button type="button" variant="secondary" size="sm" onClick={() => setViewsOpen((o) => !o)} aria-expanded={viewsOpen} aria-haspopup="true">
             <Bookmark size={13} /> {t('inv.views')}{savedViews.length ? ` (${savedViews.length})` : ''}
-          </button>
+          </Button>
           {viewsOpen && (
             <div className="colpick-menu invtb-views" role="group" aria-label={t('inv.views')}>
               {savedViews.length === 0 && <span className="colpick-note">{t('inv.viewsEmpty')}</span>}
@@ -99,9 +100,9 @@ export default function InventoryToolbar({
               ))}
               <div className="invtb-view-new">
                 <input className="input input-sm" value={viewName} onChange={(e) => setViewName(e.target.value)} placeholder={t('inv.viewName')} maxLength={40} />
-                <button type="button" className="btn btn-sm btn-primary" disabled={!viewName.trim()} onClick={() => { onSaveView(viewName.trim()); setViewName('') }}>{t('inv.viewSave')}</button>
+                <Button type="button" size="sm" disabled={!viewName.trim()} onClick={() => { onSaveView(viewName.trim()); setViewName('') }}>{t('inv.viewSave')}</Button>
               </div>
-              <button type="button" className="btn btn-sm btn-secondary" onClick={() => { onCopyLink(); setViewsOpen(false) }}><Link2 size={12} /> {t('inv.copyLink')}</button>
+              <Button type="button" variant="secondary" size="sm" onClick={() => { onCopyLink(); setViewsOpen(false) }}><Link2 size={12} /> {t('inv.copyLink')}</Button>
             </div>
           )}
         </div>
@@ -155,7 +156,7 @@ export default function InventoryToolbar({
                 { value: 'domain|asc', label: t('inv.sortDomain') }, { value: 'cert|asc', label: t('inv.sortCert') }, { value: 'days|asc', label: t('inv.sortDays') },
                 { value: 'team|asc', label: t('inv.sortTeam') }, { value: 'tier|asc', label: t('inv.sortTier') }, { value: 'updated|desc', label: t('inv.sortUpdated') },
               ]} /></label>
-            <button type="button" className="btn btn-sm btn-secondary" disabled={!active} onClick={() => onFilters({ ...EMPTY_FILTERS })}>{t('inv.filterClear')}</button>
+            <Button type="button" variant="secondary" size="sm" disabled={!active} onClick={() => onFilters({ ...EMPTY_FILTERS })}>{t('inv.filterClear')}</Button>
           </div>
         </div>
       )}

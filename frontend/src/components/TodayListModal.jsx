@@ -8,6 +8,7 @@ import { LoadingBlock } from './ui/Progress.jsx'
 import TeamBadge from './ui/TeamBadge.jsx'
 import { usePagination } from '../hooks/usePagination.js'
 import { MonitorRowBody, NotificationRowBody, HealthRowBody, QuietRowBody, monitorRowKey } from './todayMonitorRows.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * "Sizin için — bugün" → "Tümünü gör" pop-up'ı (2026-09-18, kullanıcı isteği): kart yalnız ilk 5 satırı
@@ -74,8 +75,8 @@ export default function TodayListModal({ section, title, icon, onClose, onOpen, 
   return (
     <ModalShell open onClose={onClose} title={`${title} (${count})`} icon={icon} size="md" scrollBody
       footer={<>
-        {onGo && <button type="button" className="btn btn-primary" onClick={() => { onClose(); onGo() }}>{t('today.goPage')} <ArrowRight size={12} aria-hidden="true" /></button>}
-        <button type="button" className="btn btn-secondary" onClick={onClose}>{t('app.close')}</button>
+        {onGo && <Button type="button" onClick={() => { onClose(); onGo() }}>{t('today.goPage')} <ArrowRight size={12} aria-hidden="true" /></Button>}
+        <Button type="button" variant="secondary" onClick={onClose}>{t('app.close')}</Button>
       </>}>
       {!data && !error && <LoadingBlock label={t('tbl.loading')} fullWidth />}
       {error && <div className="alh-ts-empty">{error}</div>}

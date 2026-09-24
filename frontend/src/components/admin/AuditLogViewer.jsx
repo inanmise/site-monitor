@@ -16,6 +16,7 @@ import StatusBlock from '../ui/StatusBlock.jsx'
 import ModalShell from '../ui/ModalShell.jsx'
 import AuditDetailPanel from './audit/AuditDetailPanel.jsx'
 import { eventClass, eventLabel, parseDetail, actionSentence } from './audit/auditFormat.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Sunucu kataloğu gelmezse kullanılacak YEDEK liste.
@@ -602,7 +603,7 @@ export default function AuditLogViewer() {
         <div className="aud-list">
           {loadError && (
             <AlertBanner tone="danger" title={t('audit.loadErrorTitle')}
-              actions={<button className="btn btn-sm" onClick={() => loadLogs(page)}>{t('audit.retry')}</button>}>
+              actions={<Button variant="outline" size="sm" onClick={() => loadLogs(page)}>{t('audit.retry')}</Button>}>
               {t('audit.loadErrorBody')}
             </AlertBanner>
           )}
@@ -705,7 +706,7 @@ export default function AuditLogViewer() {
               hasActiveFilters ? (
                 <StatusBlock tone="neutral" title={t('audit.emptyFiltered')}
                   description={t('audit.emptyFilteredHint')}
-                  actions={<button className="btn btn-sm" onClick={clearFilters}>{t('audit.clear')}</button>} />
+                  actions={<Button variant="outline" size="sm" onClick={clearFilters}>{t('audit.clear')}</Button>} />
               ) : (
                 <StatusBlock tone="neutral" title={t('audit.empty')} />
               )

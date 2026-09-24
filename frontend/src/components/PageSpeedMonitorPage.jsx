@@ -54,6 +54,7 @@ import { formatBytes } from '../utils/formatBytes.js'
 import { suggestThresholds, suggestionIsPartial } from '../utils/pageSpeedThresholds.js'
 import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
+import { Button } from '@/components/shadcn/button'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
@@ -651,18 +652,18 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
           <span className="upt-last-check">
             {t('pspd.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}
           </span>
-          <button className="btn btn-sm upt-refresh-btn" onClick={load}>
+          <Button variant="outline" size="sm" onClick={load}>
             <RefreshCw size={14} />{t('pspd.refresh')}
-          </button>
+          </Button>
           <CheckAllButton count={checkable.length} running={checkRun.running}
             done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
             onClick={checkRun.openPicker} />
-          <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+          <CopyLinkButton iconOnly variant="outline" />
           <MonitorGuideButton type="pagespeed" />
           {canWrite && (
-            <button className="btn btn-sm btn-primary" onClick={openNew}>
+            <Button size="sm" onClick={openNew}>
               <Plus size={14} />{t('pspd.addMonitor')}
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -690,7 +691,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
 
       {loading ? <LoadingBlock label={t('tbl.loading')} fullWidth /> : loadError && monitors.length === 0 ? (
         <AlertBanner tone="danger" title={t('mon.loadError')} role="alert"
-          actions={<button className="btn btn-sm btn-secondary" onClick={load}>{t('hist.retry')}</button>}>
+          actions={<Button variant="secondary" size="sm" onClick={load}>{t('hist.retry')}</Button>}>
           {String(loadError)}
         </AlertBanner>
       ) : monitors.length === 0 ? (
@@ -722,7 +723,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                 {statusBadge(m)}
                 {alarmBadge(m)}<MaintenanceBadge target={m.url} />
                 <span className="upt-card-top-right">
-                  <CopyLinkButton iconOnly url={monitorDeepLink('pagespeed', m.id)} className="btn btn-sm upt-card-copy" />
+                  <CopyLinkButton iconOnly url={monitorDeepLink('pagespeed', m.id)} variant="ghost" size="icon-xs" className="upt-card-copy" />
                 </span>
               </div>
               <div className="upt-card-domain" title={m.url}>{m.url}</div>
@@ -802,7 +803,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                 deleting={deleting === selected.id}
                 deleteTitle={t('pspd.delete')}
                 onClose={closeDetail}>
-                <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+                <CopyLinkButton iconOnly variant="outline" />
               </MonitorModalActions>
             </div>
             <div className="upt-modal-divider" />
@@ -879,8 +880,8 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                   <span className="field-hint pspd-snapshot-count">
                     {t('pspd.breachCount', breaches.length)}</span>
                 </>)}
-                <button type="button" className="btn btn-sm btn-secondary pspd-snapshot-csv"
-                  disabled={!resources.length} onClick={exportResourcesCsv}><Download size={12} />{t('pspd.exportCsv')}</button>
+                <Button type="button" variant="secondary" size="sm" className="pspd-snapshot-csv"
+                  disabled={!resources.length} onClick={exportResourcesCsv}><Download size={12} />{t('pspd.exportCsv')}</Button>
               </div>
               {/* Sunucu en agir N kaynagi dondurur. Kirpildiysa bunu SOYLEMEK zorunlu: yoksa
                   kullanici 50 satiri sayfanin tamami sanip agirligin nereden geldigini yanlis okur. */}
@@ -1204,9 +1205,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                       <em>{t('pspd.suggestWhyRequests')}</em></li>
                   </ul>
                   {partial && <div className="field-hint field-hint--warn">{t('pspd.suggestPartial')}</div>}
-                  <button type="button" className="btn btn-sm btn-primary" onClick={apply}>
+                  <Button type="button" size="sm" onClick={apply}>
                     <Wand2 size={14} />{t('pspd.suggestApply')}
-                  </button>
+                  </Button>
                   <div className="field-hint">{t('pspd.suggestNote')}</div>
                 </div>
               )
@@ -1219,14 +1220,14 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
             <div className="modal-actions">
               {/* URL boşken ölçüm yapılamaz. Buton zaten kapalı; title kapalı olma SEBEBİNİ söyler
                   (sessizce tıklanmayan bir buton kullanıcıya arıza gibi görünüyor). */}
-              <button className="btn btn-secondary" style={{ marginRight: 'auto' }} onClick={runTest}
+              <Button variant="secondary" style={{ marginRight: 'auto' }} onClick={runTest}
                 aria-busy={testing || undefined} disabled={testing || !form.url.trim()}
                 title={!form.url.trim() ? t('pspd.testNeedsUrl') : undefined}>
                 <FlaskConical size={14} />{t('pspd.test')}
-              </button>
-              {modal !== 'new' && canDeleteRow(modal) && <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('pspd.delete')}</button>}
-              <button className="btn btn-secondary" onClick={closeEdit}>{t('pspd.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.teamId}>{t('pspd.save')}</button>
+              </Button>
+              {modal !== 'new' && canDeleteRow(modal) && <Button variant="destructive" onClick={del}><Trash2 size={14} />{t('pspd.delete')}</Button>}
+              <Button variant="secondary" onClick={closeEdit}>{t('pspd.cancel')}</Button>
+              <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.teamId}>{t('pspd.save')}</Button>
             </div>
           </div>
         </div>,

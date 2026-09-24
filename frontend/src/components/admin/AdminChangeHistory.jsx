@@ -7,6 +7,7 @@ import TeamBadge from '../ui/TeamBadge.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /** Olay türü → rozet sınıfı (Denetim Kaydı sayfasıyla aynı dağarcık). */
 function badgeClass(action) {
@@ -91,10 +92,10 @@ export default function AdminChangeHistory({ resource, filter = null, onClearFil
           <p className="section-desc">{t(`hist.desc.${resource}`)}</p>
         </div>
         <div className="hdr-actions">
-          {open && <button className="btn btn-secondary btn-sm-p" onClick={() => setNonce(n => n + 1)} title={t('hist.refresh')} aria-label={t('hist.refresh')}><RefreshCw size={14} /></button>}
-          <button className="btn btn-secondary" onClick={() => { if (open) { setOpen(false); onClearFilter?.() } else setOpen(true) }}>
+          {open && <Button variant="secondary" size="sm" onClick={() => setNonce(n => n + 1)} title={t('hist.refresh')} aria-label={t('hist.refresh')}><RefreshCw size={14} /></Button>}
+          <Button variant="secondary" onClick={() => { if (open) { setOpen(false); onClearFilter?.() } else setOpen(true) }}>
             <History size={15} aria-hidden="true" /> {open ? t('ng.histHide') : t('ng.histShow')}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -104,7 +105,7 @@ export default function AdminChangeHistory({ resource, filter = null, onClearFil
             {filter && (
               <span className="ach-filter">
                 {t('ng.histFilterOn').replace('{name}', filter.name)}
-                <button type="button" className="btn btn-sm-p btn-secondary" onClick={onClearFilter}>{t('ng.histFilterClear')}</button>
+                <Button type="button" variant="secondary" size="sm" onClick={onClearFilter}>{t('ng.histFilterClear')}</Button>
               </span>
             )}
             {allTypes.length > 0 && (

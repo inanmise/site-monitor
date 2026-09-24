@@ -11,6 +11,7 @@ import DateTimeField from '../ui/DateTimeField.jsx'
 import { mailPreviewSrcDoc } from '../../utils/mailPreview.js'
 import { Spinner } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
+import { Button } from '@/components/shadcn/button'
 
 // Durum → rozet sınıfı (kırmızı YOK — sistem alarmlarına saklı). OPEN/IN_PROGRESS amber, RESOLVED yeşil.
 const STATUS_BADGE = { OPEN: 'badge badge-warn', IN_PROGRESS: 'badge badge-warn', RESOLVED: 'badge badge-ok' }
@@ -227,15 +228,15 @@ export default function LoginIssueReports() {
       </div>
 
       <div className="ldap-actions" style={{ margin: '10px 0', display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-        <button className={`btn btn-secondary btn-sm-p${statusFilter === '' ? ' active' : ''}`}
-          onClick={() => setStatusFilter('')}>{t('loginIssues.filterAll')}</button>
+        <Button variant="secondary" size="sm" className={`${statusFilter === '' ? ' active' : ''}`}
+          onClick={() => setStatusFilter('')}>{t('loginIssues.filterAll')}</Button>
         {/* Kaynak filtresi — üç akış tek ekranda; boş = tümü */}
         {['', 'LOGIN', 'CLIENT_ERROR', 'USER_REPORT'].map((s) => (
-          <button key={s || 'all'}
-            className={`btn btn-secondary btn-sm-p${sourceFilter === s ? ' active' : ''}`}
+          <Button key={s || 'all'}
+            variant="secondary" size="sm" className={`${sourceFilter === s ? ' active' : ''}`}
             onClick={() => setSourceFilter(s)}>
             {t(s ? 'loginIssues.source' + sourcePascal(s) : 'loginIssues.sourceAll')}
-          </button>
+          </Button>
         ))}
         <select className="filter-input" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}
           style={{ padding: '4px 8px' }} aria-label={t('issue.category')}>
@@ -244,10 +245,10 @@ export default function LoginIssueReports() {
           <option value="ANNOYANCE">{t('issue.catAnnoyance')}</option>
           <option value="SUGGESTION">{t('issue.catSuggestion')}</option>
         </select>
-        <button className={`btn btn-secondary btn-sm-p${grouped ? ' active' : ''}`}
+        <Button variant="secondary" size="sm" className={`${grouped ? ' active' : ''}`}
           onClick={() => setGrouped((g) => !g)} title={t('loginIssues.groupHint')}>
           {t('loginIssues.groupBySignature')}
-        </button>
+        </Button>
       </div>
 
       {/* Arama (hata mesajı / açıklama / kullanıcı) + bildirim tarihi aralığı */}
@@ -434,7 +435,7 @@ export default function LoginIssueReports() {
                     <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-light,#71717a)', marginLeft: 8 }}>
                       {t('loginIssues.mailRowHint')}</span>}
                 </div>
-                <button className="btn btn-secondary btn-sm-p" onClick={() => openDetail(detail.id)}>{t('loginIssues.mailRefresh')}</button>
+                <Button variant="secondary" size="sm" onClick={() => openDetail(detail.id)}>{t('loginIssues.mailRefresh')}</Button>
               </div>
               {(!detail.mailHistory || detail.mailHistory.length === 0) ? (
                 <div className="hint">{t('loginIssues.mailNone')}</div>
@@ -520,24 +521,24 @@ export default function LoginIssueReports() {
 
             <div className="modal-actions">
               {detail.status === 'OPEN' && (
-                <button className="btn btn-secondary" disabled={busy} onClick={() => changeStatus('IN_PROGRESS')}>
-                  {t('loginIssues.actionInProgress')}</button>
+                <Button variant="secondary" disabled={busy} onClick={() => changeStatus('IN_PROGRESS')}>
+                  {t('loginIssues.actionInProgress')}</Button>
               )}
               {detail.status !== 'RESOLVED' && (
-                <button className="btn btn-primary" disabled={busy} onClick={() => changeStatus('RESOLVED')}>
-                  {t('loginIssues.actionResolve')}</button>
+                <Button disabled={busy} onClick={() => changeStatus('RESOLVED')}>
+                  {t('loginIssues.actionResolve')}</Button>
               )}
               {detail.status === 'RESOLVED' && (
-                <button className="btn btn-warning" disabled={busy} onClick={() => changeStatus('OPEN')}>
-                  {t('loginIssues.actionReopen')}</button>
+                <Button variant="warning" disabled={busy} onClick={() => changeStatus('OPEN')}>
+                  {t('loginIssues.actionReopen')}</Button>
               )}
               {/* Yetkisi olmayana HIC cizilmez: dugmeye basip 403 almak, kullaniciya
                   "bozuk" hissi verir. */}
               {canPurge && (
-                <button className="btn btn-danger" disabled={busy} onClick={purgeReport}>
-                  <Trash2 size={13} />{t('loginIssues.purgeAction')}</button>
+                <Button variant="destructive" disabled={busy} onClick={purgeReport}>
+                  <Trash2 size={13} />{t('loginIssues.purgeAction')}</Button>
               )}
-              <button className="btn btn-secondary" onClick={() => setDetail(null)}>{t('dom.close')}</button>
+              <Button variant="secondary" onClick={() => setDetail(null)}>{t('dom.close')}</Button>
             </div>
           </div>
         </div>

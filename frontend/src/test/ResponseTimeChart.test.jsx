@@ -99,8 +99,8 @@ describe('ResponseTimeChart', () => {
     render(<ResponseTimeChart monitorId={7} kind="scripted" />)
     await waitFor(() => expect(api.monitoring.getScriptedResponseSeries).toHaveBeenCalled())
 
-    // Seçili preset btn-primary, diğerleri btn-secondary
-    const selected = [...document.querySelectorAll('button.btn-primary')].map(b => b.textContent.trim())
+    // Seçili preset birincil (data-variant=default), diğerleri ikincil
+    const selected = [...document.querySelectorAll('button[data-variant="default"]')].map(b => b.textContent.trim())
     expect(selected).toContain('24h')
     expect(selected).not.toContain('30d')
   })

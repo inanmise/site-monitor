@@ -9,6 +9,7 @@ import AlertBanner from './ui/AlertBanner.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 import VersionTimeline from './scripted/VersionTimeline.jsx'
 import { DEPLOY_KIND_STYLE, bumpIcon, groupChanges, readLastSeenVersion } from '../utils/releaseUi.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Yardım → Yenilikler (K1/K5): imaja gömülü yayın dizini (docs/releases/index.json → /app/releases.json)
@@ -43,9 +44,9 @@ function ReleaseChangeList({ changes = [], truncated, omitted, t }) {
         </div>
       ))}
       {hidden > 0 && (
-        <button type="button" className="btn btn-sm btn-secondary rel-more" onClick={() => setShowAll(true)}>
+        <Button type="button" variant="secondary" size="sm" className="rel-more" onClick={() => setShowAll(true)}>
           {t('releases.more', hidden)}
-        </button>
+        </Button>
       )}
       {truncated && <div className="field-hint">{t('releases.truncated', omitted ?? 0)}</div>}
     </div>

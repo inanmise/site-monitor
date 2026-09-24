@@ -72,6 +72,18 @@ body { font-family: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, '
 /* shadcn: yerel onay kutusu/radyo marka renginde (Radix Checkbox'a geçmeden aynı ton) */
 input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 
+/* shadcn Button KÖPRÜSÜ (2a, 2026-09-25): legacy `.btn-sm` her küçük düğmeye margin-right:4px veriyordu ve
+   yan yana düğme dizen gap'siz eski kapsayıcılar buna güveniyor — shadcn Button'a geçişte düğmeler birbirine
+   yapışmasın diye aynı aralık küçük düğmede korunur. Sıfırlayan kapsayıcılar da taşındı. YENİ kod `gap` kullanır. */
+:where([data-slot="button"][data-size="sm"]) { margin-right: 4px; }
+.cc-footer-actions [data-slot="button"], .upt-card-foot [data-slot="button"], .page-issue-filters [data-slot="button"],
+.ct-tools [data-slot="button"], .tour-actions [data-slot="button"], .tour-chip [data-slot="button"],
+.wr-tw-item [data-slot="button"] { margin-right: 0; }
+.usr-tour-row [data-slot="button"] { margin-left: auto; margin-right: 0; }
+.inc-cmt-add [data-slot="button"] { align-self: flex-end; }
+.plat-table .grp-actions [data-slot="button"], .dns-cell-actions [data-slot="button"] { margin-left: 4px; }
+.sml-actions [data-slot="button"] { margin-right: 4px; }
+
 /* ── App shell layout ────────────────────────────────── */
 .app-layout {
   display: flex;
@@ -874,29 +886,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .add-domain-section { display: flex; gap: 8px; margin-left: auto; }
 .domain-input { width: 350px; max-width: 100%; padding: 7px 12px; min-height: 36px; border: 1px solid var(--input); border-radius: calc(var(--radius) - 2px); font-size: .875rem; line-height: 1.25rem; background: var(--input-bg); color: var(--input-text); box-shadow: 0 1px 2px 0 rgb(0 0 0 / .05); }
 
-/* ── Buttons ────────────────────────────────────────── */
-/* Düğme kutusu SABİT (2026-09-13): satır yüksekliği/hizalama tanımsızken aynı çubuktaki metinli (27), ikon+metin
-   (25) ve yalnız-ikon (24) düğmeler farklı boyda çıkıyordu; orta boy input (39) ile de eşleşmiyordu. inline-flex +
-   line-height + min-height (em tabanlı: yalnız-ikon da aynı boy) — .btn-sm için de aynı. */
-.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 7px 16px; border: 1px solid var(--border); border-radius: calc(var(--radius) - 2px); cursor: pointer; font-size: .875rem; font-weight: 500; line-height: 1.25rem; min-height: 36px; transition: background-color .15s, color .15s, border-color .15s, box-shadow .15s, opacity .15s; white-space: nowrap;
-  /* shadcn: varyantsız .btn = "outline" (eskiden tarayıcı varsayılanı gri ButtonFace çiziliyordu) */
-  background: var(--bg-card); color: var(--text); box-shadow: 0 1px 2px 0 rgb(0 0 0 / .05); }
-/* :where() → özgüllük (0,1,0): sonradan gelen tek-sınıflı özel düğme kuralları hover'ı kendi yönetir */
-.btn:where(:hover:not(:disabled)) { background: var(--accent); }
-.btn:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 30%, transparent); }
-.btn:disabled { opacity: .5; cursor: not-allowed; }
-/* Varyantlar = shadcn default / secondary / destructive; hover = %90 örtücülük (bg-primary/90) */
-.btn-primary { background: var(--primary); color: #fff; border-color: transparent; }
-.btn-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--primary) 90%, transparent); }
-.btn-secondary { background: var(--secondary); color: var(--secondary-foreground); border-color: transparent; box-shadow: none; }
-.btn-secondary:hover:not(:disabled) { background: color-mix(in srgb, var(--secondary) 80%, var(--text) 6%); }
-.btn-warning { background: #d97706; color: #fff; border-color: transparent; }
-.btn-warning:hover:not(:disabled) { background: color-mix(in srgb, #d97706 90%, transparent); }
-.btn-success { background: var(--success); color: #fff; border-color: transparent; }
-.btn-success:hover:not(:disabled) { background: color-mix(in srgb, var(--success) 90%, transparent); }
-.btn-danger { background: var(--danger); color: #fff; border-color: transparent; }
-.btn-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 90%, transparent); }
-
 /* ── Stats Panel ────────────────────────────────────── */
 .stats-panel {
   display: grid;
@@ -1506,7 +1495,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .plat-code { font-family: Consolas, monospace; font-size: .9em; padding: 1px 6px; border-radius: 4px; background: var(--bg-hover); }
 .plat-name { font-weight: 600; }
 .plat-desc { color: var(--text-muted); font-size: .9em; }
-.plat-table .grp-actions .btn { margin-left: 4px; }
 @media (max-width: 640px) { .plat-form-grid { grid-template-columns: 1fr; } }
 
 .cc-pill {
@@ -1664,7 +1652,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 /* margin-left:auto ŞART: footer flex-wrap'li ve hata kartlarında çipler satırı doldurup butonları
    ALT SATIRA atıyor; orada tek öğe kaldığı için space-between onları sola yaslardı. */
 .cc-footer-actions { display: flex; gap: 2px; flex-shrink: 0; margin-left: auto; }   /* 6→4→2: "şu an" şeridi tek satırda sığsın (2026-09-22) */
-.cc-footer-actions .btn-sm { margin-right: 0; }   /* .btn-sm global margin-right:4px taşıyor */
 .cc-chip {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: .72em; font-weight: 600;
@@ -2105,14 +2092,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 @media (max-width: 1100px) {
   .um-identity-name, .um-identity-title, .um-email { max-width: 160px; }
 }
-/* Kenarlık RENGİ burada yazılmaz: .btn (outline) ya da varyant (transparent) belirler — .btn-sm
-   dosyada varyantlardan SONRA geldiği için renk yazsaydı birincil küçük düğmeye gri çerçeve çizerdi.
-   .btn'siz tek başına .btn-sm için en düşük öncelikli :where() yedeği. */
-.btn-sm { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 3px 10px; border-width: 1px; border-style: solid; border-radius: calc(var(--radius) - 2px); cursor: pointer; font-size: .8125rem; font-weight: 500; line-height: 1.25rem; min-height: 28px; margin-right: 4px; }
-:where(.btn-sm) { border-color: var(--border); }
-.btn-sm-p { padding: 5px 12px; font-size: .8125rem; min-height: 32px; }
-.btn-edit { background: color-mix(in srgb, var(--primary) 10%, transparent); color: var(--primary); border-color: transparent; }
-.btn-del { background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); border-color: transparent; }
 .fingerprint-cell { font-family: monospace; font-size: .8em; }
 
 /* İzleme Grupları (Ayarlar) — arama + tür rozetleri + satır-içi yeniden adlandırma */
@@ -2629,7 +2608,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .inc-cmt-body { font-size: .88em; line-height: 1.5; color: var(--text, #18181b); white-space: pre-wrap; word-break: break-word; }
 .inc-cmt-add { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
 .inc-cmt-add textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font: inherit; font-size: .9em; resize: vertical; }
-.inc-cmt-add .btn { align-self: flex-end; }
 
 /* ── Maintenance Windows (.mw-*) ────────────────────────────────────────────── */
 .mw-page { max-width: 100%; }
@@ -5506,12 +5484,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
   transition: width .4s ease;
 }
 
-.sys-action-btn {
-  padding: 8px 16px; border: none; border-radius: 6px;
-  font-size: .875em; font-weight: 600; cursor: pointer;
-  transition: all .15s;
-}
-.sys-action-btn:disabled { opacity: .55; cursor: not-allowed; }
 
 .sys-refresh-note { font-size: .78em; color: var(--text-light); margin-top: 8px; }
 
@@ -6761,7 +6733,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .wa-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .wa-toolbar-meta { display: inline-flex; align-items: center; gap: 8px; font-size: .85em; color: var(--text-light); }
 .wa-toolbar-actions { display: flex; gap: 8px; }
-.wa-toolbar-actions .btn, .wa-actions .btn { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 
 .wa-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
 .wa-kpi { display: flex; flex-direction: column; gap: 3px; padding: 10px 14px; border: 1px solid var(--border);
@@ -7192,9 +7163,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .ts-cell-selected { outline: 2px solid currentColor; outline-offset: -2px; border-radius: 4px; }
 
 /* ── Inventory Show Modal ────────────────────────── */
-.btn-show { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
-.btn-show:hover { background: #c8e6c9; }
-[data-theme="dark"] .btn-show { background: #1b2e1c; color: #81c784; border-color: #2e7d32; }
 
 .modal-show { max-width: 760px; max-height: 90vh; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
 
@@ -7336,7 +7304,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .help-page { display: flex; flex-direction: column; height: calc(100vh - 60px); overflow: hidden; }
 .help-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 24px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .help-header-title { margin: 0; font-size: 17px; font-weight: 600; color: var(--text); }
-.help-download-btn { font-size: 13px; padding: 7px 14px; text-decoration: none; }
 .help-layout { display: flex; flex: 1; overflow: hidden; }
 
 .help-toc { width: 240px; flex-shrink: 0; overflow-y: auto; padding: 14px 10px; border-right: 1px solid var(--border); background: var(--bg-surface); }
@@ -7388,41 +7355,11 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
    olduğu için alt satıra düşüyordu) tek başına kalan satır space-between yüzünden SOLA yaslanıyordu. */
 .upt-header-right { display: flex; align-items: center; gap: 12px; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
 .upt-last-check { font-size: 12px; color: var(--text-muted); }
-.upt-refresh-btn { display: flex; align-items: center; gap: 5px; }
-
-/* ── Sayfa başlığı eylem düğmeleri — TEK STİL (2026-09-19, kullanıcı isteği) ──
-   Eskiden aynı satırda üç dil vardı: "Yenile/Şimdi Kontrol Et" renksiz .btn, "Nasıl doldurulur?" koyu gri
-   .btn-secondary, "Yeni Monitör" düz mavi .btn-primary; envanterde "Domain Ekle" yeşil .btn-success.
-   Kapsam BİLİNÇLİ dar: yalnız başlık eylem kümeleri (.upt-header-right, .inv-header-actions) — modal/form
-   düğmelerine (İptal/Kaydet) dokunulmaz. Genel Bakış'ın Domain Ekle'si üst kontrol satırında "Şimdi Kontrol Et"
-   ile aynı küresel .btn-primary'yi kullanır (yan yana iki farklı mavi olmasın).
-   Dil: ikincil eylemler "hayalet" (yüzey zemini + ince kenarlık, hover'da marka rengi); birincil eylem
-   (Yeni Monitör / Domain Ekle) marka degradesi + gölge. Aynı yükseklik, yarıçap, yazı, ikon boşluğu. */
-.upt-header-right .btn, .inv-header-actions .btn {
-  height: 36px; min-height: 36px; padding: 0 14px; margin: 0; gap: 8px;
-  border-radius: calc(var(--radius) - 2px); font-size: .875rem; font-weight: 500; line-height: 1;
-  border: 1px solid var(--border); background: var(--bg-card); color: var(--text);
-  box-shadow: 0 1px 2px 0 rgb(0 0 0 / .05);
-  transition: border-color .15s, color .15s, background .15s, box-shadow .15s;
-}
-.upt-header-right .btn:hover, .inv-header-actions .btn:hover {
-  background: var(--accent);
-}
-.upt-header-right .btn:disabled, .inv-header-actions .btn:disabled { opacity: .5; cursor: not-allowed; }
-.upt-header-right .btn > svg, .inv-header-actions .btn > svg { width: 16px; height: 16px; flex-shrink: 0; }
 /* Kılavuz düğmesi: koyu gri dolgu yerine hayalet; ikon marka rengi (mor sabitini bırakır) */
 .upt-header-right .mguide-btn > svg { color: var(--primary); }
 /* İkon-only (Bağlantıyı kopyala): kare */
-.upt-header-right .btn[data-icon-only] { width: 36px; padding: 0; justify-content: center; }
 /* Birincil eylem: Yeni Monitör / Domain Ekle / İzleme Ekle */
-.upt-header-right .btn-primary, .inv-header-actions .btn-primary, .inv-header-actions .btn-success {
-  color: #fff; border-color: transparent; background: var(--primary); box-shadow: 0 1px 2px 0 rgb(0 0 0 / .05);
-}
-.upt-header-right .btn-primary:hover, .inv-header-actions .btn-primary:hover, .inv-header-actions .btn-success:hover {
-  color: #fff; background: color-mix(in srgb, var(--primary) 90%, transparent);
-}
 .upt-header-right .upt-last-check { font-size: 12px; color: var(--text-muted); margin-right: 2px; }
-[data-theme="dark"] .upt-header-right .btn, [data-theme="dark"] .inv-header-actions .btn { box-shadow: 0 1px 2px rgba(0,0,0,.35); }
 
 /* ── Uptime grid ── */
 /* İzleme kart ızgarası — Pano ile AYNI ölçü (2026-09-24, kullanıcı isteği): en küçük kart 340px, aralık 20px.
@@ -7574,7 +7511,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
   border-top: 1px solid var(--border); padding-top: 8px;
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
 }
-.upt-card-foot .btn-sm { margin-right: 0; }
 
 /* Status dot (used in detail panel title) */
 .upt-status-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
@@ -8088,7 +8024,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 /* Başlık satırının SAĞ grubu: k6 sürüm rozeti + panoya kopyala. Tek tek çocuk olsalardı
    `justify-content: space-between` ikisini satırın iki ucuna dağıtırdı. */
 .sc-script-tools { display: inline-flex; align-items: center; gap: 8px; }
-.sc-script-tools .btn { line-height: 0; padding: 5px 8px; }
 
 /* SearchableSelect grup başlığı (kayıtlı script'ler / şablonlar ayrımı). */
 .ss-group {
@@ -8348,7 +8283,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .up-savebar-msg { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--text-light); }
 .up-savebar--dirty .up-savebar-msg { color: var(--text); }
 .up-savebar-actions { display: flex; gap: 8px; }
-.up-savebar-actions .btn { display: inline-flex; align-items: center; gap: 6px; }
 
 /* Rozetler */
 .up-badge { font-size: .7em; font-weight: 700; padding: 2px 8px; border-radius: 10px; letter-spacing: .02em; }
@@ -10463,7 +10397,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .dns-cell-num { font-variant-numeric: tabular-nums; color: var(--text-light); }
 .dns-cell-time { color: var(--text-light); font-size: .85em; }
 .dns-cell-actions { white-space: nowrap; }
-.dns-cell-actions .btn { margin-left: 4px; padding: 4px 8px; }
 
 .dns-type-badge {
   display: inline-block;
@@ -10825,7 +10758,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 
 /* Sorun filtre chip'leri — birbirine yapışmasın (paylaşımlı .upt-range-btns'e dokunmadan) */
 .page-issue-filters { gap: 8px 10px; }
-.page-issue-filters .btn-sm { margin-right: 0; border-radius: 999px; }
 /* Diff bloğu başındaki tespit zamanı çipi. */
 .dns-diff-when {
   display: inline-flex; align-items: center; gap: 6px;
@@ -11132,8 +11064,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .inv-stat-inactive.is-selected { border-color: #a1a1aa; background: rgba(156,163,175,.15); }
 .inv-stat-deleted.is-selected  { border-color: #ef4444; background: rgba(239,68,68,.10); }
 .inv-stat-pill.is-selected     { box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
-.btn-transfer-sy { background: #6366f1; color: #fff; margin-right: 3px; }
-.btn-transfer-ug { background: #0891b2; color: #fff; margin-right: 3px; }
 [data-theme="dark"] .badge-deleted { background: #3f3f46; color: #d4d4d8; }
 
 /* ── Expiry Forecast Page ─────────────────────────────────────────────────── */
@@ -11951,7 +11881,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
   text-transform: uppercase; letter-spacing: .05em;
 }
 .wr-flt .ss-wrap { width: 180px; }
-.wr-filters > .btn { height: 38px; box-sizing: border-box; }
 
 /* Tarihe Git — hafta odaklı takvim (WeekDatePicker, ss-dropdown üstüne):
    ISO hafta no sütunu, satır bazlı hafta vurgusu, raporlu haftada nokta. */
@@ -12093,16 +12022,9 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .ldap-settings .admin-table select { width: 100%; }
 .ldap-empty { text-align: center; color: var(--text-light); font-size: .88em; padding: 14px; }
 .ldap-add-map { margin-top: 10px; display: inline-flex; align-items: center; gap: 6px; }
-.btn-icon-danger {
-  display: inline-flex; align-items: center; justify-content: center;
-  padding: 6px; background: transparent; border: 1px solid var(--border);
-  border-radius: 4px; color: var(--danger); cursor: pointer;
-}
-.btn-icon-danger:hover { background: rgba(220, 53, 69, .1); }
 
 /* Save / test action row */
 .ldap-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 8px 0 30px; }
-.ldap-actions .btn { display: inline-flex; align-items: center; gap: 7px; }
 .ldap-test-result { font-size: .88em; font-weight: 600; }
 .ldap-test-result.ok { color: #16a34a; }
 .ldap-test-result.fail { color: var(--danger); }
@@ -12112,7 +12034,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .ldap-lookup-row { display: flex; gap: 10px; align-items: stretch; max-width: 520px; margin-top: 8px; }
 .ldap-lookup-row input { flex: 1; }
 .ldap-lookup-attr { flex: 0 0 auto; max-width: 190px; padding: 9px; }
-.ldap-lookup-row .btn { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .ldap-lookup-error { background: #f8d7da; color: #721c24; }
 .ldap-lookup-result { margin-top: 16px; }
 .ldap-dn { font-size: .9em; margin-bottom: 10px; word-break: break-all; }
@@ -12443,7 +12364,7 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
    alarm ve bakım rozeti de yoksa geriye tek bu grup kalıyor ve kayıt-tipi etiketiyle bağlantı
    kopyalama düğmesi kartın SOLUNA düşüyordu. `auto` kenar boşluğu kardeş sayısından bağımsız. */
 .upt-card-top-right { display: flex; align-items: center; gap: 6px; margin-left: auto; }
-.upt-card-copy { padding: 2px 5px; opacity: .45; transition: opacity .15s; line-height: 1; }
+.upt-card-copy { opacity: .45; transition: opacity .15s; }
 .upt-card:hover .upt-card-copy, .upt-card-copy:focus-visible { opacity: 1; }
 .dns-diff-cell { padding: 8px 10px; border-left: 3px solid var(--danger); border-radius: 4px;
   background: color-mix(in srgb, var(--danger) 6%, transparent); margin: 4px 0 6px; }
@@ -12606,10 +12527,8 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .rn-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; font-size: .82em; color: var(--text-muted); }
 .rn-meta-item { display: inline-flex; align-items: center; gap: 4px; }
 .rn-card-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
-.rn-card-actions .btn { display: inline-flex; align-items: center; gap: 4px; }
 @media (max-width: 640px) { .rn-views { margin-left: 0; } .rn-search-wrap { max-width: none; } }
 .renewal-toolbar .seg { display: inline-flex; gap: 4px; }
-.renewal-toolbar .btn { display: inline-flex; align-items: center; gap: 5px; }
 
 /* ── SMTP Gönderim Logu v2 (2026-09-19) — Sistem Sağlığı tam sayfa alt görünümü ─────────────── */
 .sml { display: flex; flex-direction: column; gap: 14px; }
@@ -12619,7 +12538,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .sml-title > svg { color: var(--primary); flex-shrink: 0; }
 .sml-title h3 { margin: 0; font-size: 1.1em; }
 .sml-head-actions { display: flex; gap: 8px; }
-.sml-head-actions .btn { display: inline-flex; align-items: center; gap: 5px; }
 .sml-filters { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-surface); }
 .sml-ranges { display: flex; gap: 6px; flex-wrap: wrap; }
 .sml-chips { display: inline-flex; gap: 6px; flex-wrap: wrap; }
@@ -12699,7 +12617,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .sml-status { display: flex; flex-direction: column; gap: 2px; }
 .sml-cls { display: inline-block; margin-top: 3px; font-size: .7em; font-weight: 700; letter-spacing: .03em; padding: 1px 6px; border-radius: 6px; background: #fee2e2; color: #991b1b; }
 .sml-actions { white-space: nowrap; }
-.sml-actions .btn { display: inline-flex; align-items: center; margin-right: 4px; }
 .sml-resend { color: var(--primary); }
 .sml-table-card .pg-bar, .sml-table-card .pagination-bar { padding: 8px 12px; }
 .sml-detail { display: flex; flex-direction: column; }
@@ -13115,7 +13032,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .bulkbar-all:hover, .bulkbar-close:hover { background: var(--bg-hover); color: var(--text); }
 .bulkbar-count { font-weight: 700; }
 .bulkbar-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.bulkbar-actions .btn { display: inline-flex; align-items: center; gap: 4px; }
 .bulkbar-field { display: inline-flex; align-items: center; gap: 4px; padding-left: 6px; border-left: 1px solid var(--border); }
 .bulkbar-field .ss-trigger, .bulkbar-field .input { min-width: 140px; }
 .bulkbar-close { margin-left: auto; }
@@ -13372,7 +13288,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .fc-exp-plan.is-planned { background: #ede9fe; color: #5b21b6; }
 .fc-exp-plan.is-done { background: #dcfce7; color: #15803d; }
 .fc-exp-actions { display: inline-flex; gap: 4px; margin-left: auto; }
-.fc-exp-actions .btn { padding: 3px 6px; }
 .fc-intel { display: grid; gap: 12px; }
 .fc-intel-block { min-width: 0; }
 .fc-intel-h { font-size: .76em; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin-bottom: 4px; }
@@ -13412,7 +13327,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .ct-chip--clear { border-color: var(--border); background: transparent; color: var(--text-light); }
 .ct-chip--clear:hover { background: var(--bg-hover); color: var(--text); }
 .ct-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.ct-tools .btn-sm { margin-right: 0; }
 .ct-preset-menu { min-width: 260px; }
 .ct-preset-row { display: flex; align-items: center; gap: 4px; }
 .ct-preset-apply { flex: 1; text-align: left; background: none; border: 0; padding: 5px 6px; border-radius: 4px; color: var(--text); font: inherit; font-size: .88em; cursor: pointer; }
@@ -13508,7 +13422,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .tour-tip .pg-bar-wrap, .tour-check .pg-bar-wrap { margin: 4px 0 10px; }   /* ilerleme: ProgressBar (.tour-bar sınıfı dolgu tonu için) */
 .tour-bar { --pg-fill: var(--primary); }
 .tour-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.tour-actions .btn-sm { margin-right: 0; }
 .tour-spacer { flex: 1; }
 .tour-link { background: none; border: 0; padding: 2px 4px; color: var(--primary); font: inherit; font-size: .84em; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; border-radius: 4px; }
 .tour-link:hover { text-decoration: underline; }
@@ -13521,7 +13434,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .tour-welcome-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; width: 100%; }
 /* Sayfa çipi */
 .tour-chip { position: fixed; right: 72px; bottom: 22px; z-index: 890; display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px; border-radius: 999px; background: var(--bg-card); border: 1px solid var(--border); box-shadow: 0 8px 24px rgba(0, 0, 0, .18); font-size: .86em; }
-.tour-chip .btn-sm { margin-right: 0; }
 /* Başlangıç listesi */
 .tour-check { border: 1px solid color-mix(in srgb, var(--primary) 35%, var(--border)); background: color-mix(in srgb, var(--primary) 6%, var(--bg-card)); border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; }
 .tour-check-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
@@ -13534,7 +13446,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 /* Sistem Sağlığı: 7. KPI (tur) */
 .uact-kpi-grid--tour { grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .usr-tour-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: .9em; }
-.usr-tour-row .btn-sm { margin-left: auto; margin-right: 0; }
 /* Bildirim düğmesi kutusu ARA ile aynı genişlikte olsun (2026-09-16): sarmalayıcı BLOK iken buton
    form denetimi olarak içeriğine göre daralıyordu (204px'e karşı 103px). Flex sütun + stretch,
    butonu tıpkı .sb-search gibi kenar boşlukları kadar içeriden tam genişliğe yayar. */
@@ -13564,7 +13475,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .wr-tw-due.is-past { color: var(--danger); }
 .wr-tw-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .wr-tw-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-top: 1px dashed var(--border); flex-wrap: wrap; }
-.wr-tw-item .btn-sm { margin-right: 0; }
 .wr-tw-team { font-weight: 600; }
 .wr-tw-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); flex: 0 0 8px; }
 .wr-tw-item--draft .wr-tw-dot, .wr-tw-item--rejected .wr-tw-dot { background: #f59e0b; }

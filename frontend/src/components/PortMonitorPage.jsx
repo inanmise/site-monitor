@@ -48,6 +48,7 @@ import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
+import { Button } from '@/components/shadcn/button'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
@@ -511,18 +512,18 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
           <span className="upt-last-check">
             {t('port.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}
           </span>
-          <button className="btn btn-sm upt-refresh-btn" onClick={load}>
+          <Button variant="outline" size="sm" onClick={load}>
             <RefreshCw size={14} />{t('port.refresh')}
-          </button>
+          </Button>
           <CheckAllButton count={checkable.length} running={checkRun.running}
             done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
             onClick={checkRun.openPicker} />
-          <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+          <CopyLinkButton iconOnly variant="outline" />
           <MonitorGuideButton type="port" />
           {canWrite && (
-            <button className="btn btn-sm btn-primary" onClick={openNew}>
+            <Button size="sm" onClick={openNew}>
               <Plus size={14} />{t('port.addMonitor')}
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -553,7 +554,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
 
       {loading ? <LoadingBlock label={t('tbl.loading')} fullWidth /> : loadError && monitors.length === 0 ? (
         <AlertBanner tone="danger" title={t('mon.loadError')} role="alert"
-          actions={<button className="btn btn-sm btn-secondary" onClick={load}>{t('hist.retry')}</button>}>
+          actions={<Button variant="secondary" size="sm" onClick={load}>{t('hist.retry')}</Button>}>
           {String(loadError)}
         </AlertBanner>
       ) : monitors.length === 0 ? (
@@ -584,7 +585,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
                 {statusBadge(m.status)}
                 {alarmBadge(m)}<MaintenanceBadge target={m.host} />
                 <span className="upt-card-top-right">
-                  <CopyLinkButton iconOnly url={monitorDeepLink('port', m.id)} className="btn btn-sm upt-card-copy" />
+                  <CopyLinkButton iconOnly url={monitorDeepLink('port', m.id)} variant="ghost" size="icon-xs" className="upt-card-copy" />
                 </span>
               </div>
               {/* Baslik YALNIZ host (":" ile bolmek onu tek metin dugumu olmaktan cikariyordu); port + protokol
@@ -647,7 +648,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
                 deleting={deleting === selected.id}
                 deleteTitle={t('port.delete')}
                 onClose={closeModal}>
-                <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+                <CopyLinkButton iconOnly variant="outline" />
               </MonitorModalActions>
             </div>
             <div className="upt-modal-divider" />
@@ -903,15 +904,15 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
             <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
             <div className="modal-actions">
               <div style={{ display: 'flex', gap: 8, marginRight: 'auto' }}>
-                <button className="btn btn-secondary" onClick={runTest} aria-busy={testing || undefined} disabled={testing || !form.host.trim() || !form.port}>
+                <Button variant="secondary" onClick={runTest} aria-busy={testing || undefined} disabled={testing || !form.host.trim() || !form.port}>
                   <FlaskConical size={14} />{t('port.test')}
-                </button>
+                </Button>
                 {modal !== 'new' && canDeleteRow(modal) && (
-                  <button className="btn btn-danger" onClick={() => deleteMonitor(modal)}><Trash2 size={14} />{t('port.delete')}</button>
+                  <Button variant="destructive" onClick={() => deleteMonitor(modal)}><Trash2 size={14} />{t('port.delete')}</Button>
                 )}
               </div>
-              <button className="btn btn-secondary" onClick={closeEdit}>{t('port.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} aria-busy={saving || undefined} disabled={saving || !form.host.trim() || !form.port || !form.teamId}>{t('port.save')}</button>
+              <Button variant="secondary" onClick={closeEdit}>{t('port.cancel')}</Button>
+              <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.host.trim() || !form.port || !form.teamId}>{t('port.save')}</Button>
             </div>
           </div>
         </div>,
