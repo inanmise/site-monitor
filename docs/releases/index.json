@@ -1,9 +1,72 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-24T06:08:50Z",
+  "generatedAt": "2026-09-25T13:21:05Z",
   "repo": "inanmise/site-monitor",
-  "count": 683,
+  "count": 684,
   "releases": [
+    {
+      "version": "20.86.0",
+      "tag": "v20.86.0",
+      "releasedAt": "2026-09-25T13:20:59Z",
+      "commit": "28e87ab1b0f14f847d7533ebc79faf68fd8acd65",
+      "prevVersion": "20.85.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 5,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "28e87ab1",
+          "subject": "yayın öncesi regresyon taraması bulguları (R1–R17) + kapsam dışı takıma taşıma açığı"
+        },
+        {
+          "type": "feat",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "d2a6ef5b",
+          "subject": "shadcn geçişi 2b/2c + ekip kapsamlı denetim, salt okunur yetki matrisi, pano platform süzgeci"
+        },
+        {
+          "type": "feat",
+          "scope": "weekly-reports",
+          "breaking": false,
+          "sha": "b97454f2",
+          "subject": "ADMIN rolü Haftalık Raporları her zaman görür"
+        },
+        {
+          "type": "feat",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "12f0b879",
+          "subject": "shadcn geçişi 2a — tüm düğmeler shadcn Button"
+        },
+        {
+          "type": "feat",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "f6888f55",
+          "subject": "shadcn geçişi 1. aşama — ortak bileşenler gerçek shadcn"
+        },
+        {
+          "type": "feat",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "27bfda5a",
+          "subject": "shadcn/ui görsel dili — Tailwind v4 + shadcn bileşenleri (deneme dalı)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.85.0",
       "tag": "v20.85.0",
