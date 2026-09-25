@@ -8039,8 +8039,6 @@ button.ccx-mini--link:hover { color: var(--primary); background: color-mix(in sr
 .dtf, .dtf .react-datepicker-wrapper, .dtf .react-datepicker__input-container { width: 100%; }
 .dtf .dp-trigger { width: 100%; padding: 9px 10px; border-radius: 4px; font-size: .95em; font-weight: 400; }
 .dtf .dp-trigger-value { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; }
-.dtf .dp-trigger-chevron[role="button"] { cursor: pointer; }
-.dtf .dp-trigger-chevron[role="button"]:hover { color: var(--danger); }
 /* Inline varyant (filtre From/To) — auto genişlik, filtre pill görünümü (.filter-* ile eşleşir). */
 .dtf.dtf-inline, .dtf.dtf-inline .react-datepicker-wrapper, .dtf.dtf-inline .react-datepicker__input-container { width: auto; }
 .dtf.dtf-inline .dp-trigger { width: auto; padding: 9px 11px; font-size: .92em; }

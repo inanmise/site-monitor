@@ -635,6 +635,8 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
           teams={teams}
           canManage={canManage}
           canWrite={canAdd}
+          // R4: düzenlemede takım aktarımı yalnız rol ADMIN'de — sunucu TEAM_ADMIN/USER için takımı sabitler.
+          canMoveTeam={isAdmin}
           onClose={() => setFormModal(null)}
           onSaved={() => { setFormModal(null); load(); onInventoryChange?.() }}
         />

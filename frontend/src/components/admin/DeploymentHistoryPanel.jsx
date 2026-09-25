@@ -337,7 +337,9 @@ export default function DeploymentHistoryPanel({ canEdit = false }) {
                     {canEdit && (
                       <td className="um-col-actions">
                         {r.source === 'MANUAL' && (
-                          <Button type="button" variant="destructive" size="sm" onClick={() => del(r)} title={t('deploy.delete')}><Trash2 size={13} /></Button>
+                          <Button type="button" variant="destructive" size="sm" onClick={() => del(r)} title={t('deploy.delete')}
+                            // Ad kaydı ayırır (sürüm + başlangıç); ipucu kısa kalır (2026-09-25, R15).
+                            aria-label={t('a11y.rowAction', `${r.version ? `v${r.version}` : '?'} · ${formatDateSec(r.startedAt)}`, t('deploy.delete'))}><Trash2 size={13} /></Button>
                         )}
                       </td>
                     )}

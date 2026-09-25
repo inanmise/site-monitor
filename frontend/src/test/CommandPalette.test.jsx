@@ -57,4 +57,23 @@ describe('CommandPalette', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
     window.removeEventListener('sm:navigate', nav)
   })
+
+  // R12 (2026-09-25): kısa sorgu dalı seq'i artırmıyordu → uçuştaki "ab" yanıtı "a"ya dönünce listeleniyordu.
+  it('R12: sorgu 2 karakterin altına inince uçuştaki eski yanıt LİSTELENMEZ', async () => {
+    let release
+    api.search.mockImplementationOnce(() => new Promise(r => { release = () => r({ success: true, data: [
+      { kind: 'certificate', id: 'ab.example.com', label: 'ab.example.com', tab: 'dashboard', params: { domain: 'ab.example.com' } },
+    ] }) }))
+    render(<CommandPalette tabs={TABS} onTabChange={() => {}} />)
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true })
+    const input = screen.getByRole('combobox')
+    fireEvent.change(input, { target: { value: 'ab' } })
+    await waitFor(() => expect(api.search).toHaveBeenCalledWith('ab'))
+
+    fireEvent.change(input, { target: { value: 'a' } })   // kısa sorgu: sunucu sonucu olmamalı
+    release()
+    await new Promise(r => setTimeout(r, 0))
+    expect(screen.queryByText('ab.example.com')).toBeNull()
+    expect(screen.queryByText(/Aranıyor|Searching/)).toBeNull()
+  })
 })

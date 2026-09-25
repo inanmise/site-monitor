@@ -117,7 +117,8 @@ describe('Dialog erisilebilirlik', () => {
     fireEvent.click(trigger)
 
     const dlg = await screen.findByRole('dialog')
-    fireEvent.click(within(dlg).getByRole('button', { name: 'İptal' }))
+    // Varsayılan İptal metni dile göre (2026-09-25, R16) — testler varsayılan dilde (EN) koşar.
+    fireEvent.click(within(dlg).getByRole('button', { name: /^(İptal|Cancel)$/ }))
 
     await waitFor(() => expect(document.activeElement).toBe(trigger))
   })
@@ -173,7 +174,7 @@ describe('Dialog erisilebilirlik', () => {
     renderHarness(BASE, onResult)
     fireEvent.click(screen.getByText('Diyalogu ac'))
     const dlg = await screen.findByRole('dialog')
-    const cancel = within(dlg).getByRole('button', { name: 'İptal' })
+    const cancel = within(dlg).getByRole('button', { name: /^(İptal|Cancel)$/ })
     cancel.focus()
 
     fireEvent.keyDown(cancel, { key: 'Enter' })
@@ -190,5 +191,44 @@ describe('Dialog erisilebilirlik', () => {
     fireEvent.click(document.querySelector('[data-slot="alert-dialog-overlay"]'))
     await waitFor(() => expect(onResult).toHaveBeenCalledWith(false))
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+/**
+ * 2026-09-25 (R16): varsayılan düğme metinleri DİLE GÖRE. Eskiden 'Sil'/'İptal'/'Tamam'/'Onayla'
+ * sağlayıcıda sabitti — `cancelText` geçmeyen 20 çağrı yeri İngilizce arayüzde "İptal", istem
+ * penceresi "Tamam" gösteriyordu. Metin çizim anında o anki dilden çözülür; Türkçe metinler
+ * eskisiyle birebir aynı kalır (mevcut kullanıcılar için görünür değişiklik yok).
+ */
+describe('Dialog varsayılan düğme metinleri dile göre (2026-09-25)', () => {
+  const KEY = 'site-monitor-lang'
+  const openWith = async (lang, opts) => {
+    localStorage.setItem(KEY, lang)
+    try {
+      renderHarness(opts)
+      fireEvent.click(screen.getByText('Diyalogu ac'))
+      return await screen.findByRole(opts.kind === 'alert' ? 'alertdialog' : 'dialog')
+    } finally {
+      localStorage.removeItem(KEY)
+    }
+  }
+  const labels = (dlg) => within(dlg).getAllByRole('button').map((b) => b.textContent.trim())
+
+  // Not ve istem tipleri ek düğme (çip) taşımaz; yalnız iptal + onay çizilir.
+  it.each([
+    ['en', 'confirm', ['Cancel', 'Delete']],
+    ['en', 'alert', ['OK']],
+    ['en', 'note', ['Cancel', 'Confirm']],
+    ['tr', 'confirm', ['İptal', 'Sil']],
+    ['tr', 'alert', ['Tamam']],
+    ['tr', 'note', ['İptal', 'Onayla']],
+  ])('%s arayüz, %s tipi → %j (Türkçe metinler eskisiyle birebir)', async (lang, kind, expected) => {
+    const dlg = await openWith(lang, { title: 'Başlık', message: 'Mesaj', kind })
+    expect(labels(dlg)).toEqual(expected)
+  })
+
+  it('çağıranın verdiği metin varsayılanı ezer (her iki dilde)', async () => {
+    const dlg = await openWith('en', { title: 'x', confirmText: 'Sign out', cancelText: 'Stay' })
+    expect(labels(dlg)).toEqual(['Stay', 'Sign out'])
   })
 })

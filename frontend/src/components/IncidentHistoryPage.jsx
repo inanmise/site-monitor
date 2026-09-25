@@ -725,7 +725,9 @@ export default function IncidentHistoryPage() {
                   onClick={() => setModal({ mode: 'view', form: { ...EMPTY, ...r } })}
                   onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setModal({ mode: 'view', form: { ...EMPTY, ...r } }) } }}>
                   {allowManage && <td onClick={e => e.stopPropagation()}>
-                    <input type="checkbox" checked={selected.has(r.id)} onChange={() => toggleSel(r.id)} />
+                    {/* Ad satırı ayırır: toplu takım aktarımı onayı yalnız ADET söylüyor (2026-09-25, R5). */}
+                    <input type="checkbox" checked={selected.has(r.id)} onChange={() => toggleSel(r.id)}
+                      aria-label={t('bulk.selectOneFor', r.title || r.id)} />
                   </td>}
                   <td style={{ whiteSpace: 'nowrap' }}>{formatDate(r.occurred_at)}</td>
                   <td>{r.title}</td>
@@ -739,6 +741,7 @@ export default function IncidentHistoryPage() {
                   <td onClick={e => e.stopPropagation()}>
                     {allowManage && (
                       <Button variant="outline" size="sm" title={t('inc.edit')}
+                              aria-label={t('a11y.rowAction', r.title || r.id, t('inc.edit'))}
                               onClick={() => setModal({ mode: 'edit', form: { ...EMPTY, ...r } })}>
                         <Pencil size={13} />
                       </Button>

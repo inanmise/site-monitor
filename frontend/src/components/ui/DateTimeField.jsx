@@ -5,6 +5,7 @@ import 'react-datepicker/dist/react-datepicker.css'
 import { tr, enUS } from 'date-fns/locale'
 import { Calendar, ChevronDown, X } from 'lucide-react'
 import { useLanguage, useT } from '../../i18n/index.jsx'
+import { Button } from '@/components/shadcn/button'
 
 registerLocale('tr', tr)
 registerLocale('en', enUS)
@@ -14,20 +15,36 @@ registerLocale('en', enUS)
 const BodyPortal = ({ children }) => createPortal(children, document.body)
 
 // Modül seviyesi — render'lar arası yeniden yaratılmaz, react-datepicker stabil kalır.
+//
+// Temizleme GERÇEK bir düğme ve tetiğin DIŞINDA (kardeşi): eskiden tetik <button>'ın İÇİNDE
+// role="button" taşıyan bir SVG'ydi — odaklanamıyordu (Tab ona hiç uğramaz), düğme içinde düğme
+// de geçersiz yapı; klavye kullanıcısı isteğe bağlı bir tarihi temizleyemiyordu (2026-09-25, R14).
+// Kardeş, react-datepicker'ın `__input-container`'ında durur (position: relative, tetiği sarar) →
+// hem tam genişlik hem inline varyantta tetiğin sağ köşesine oturur. Tetik o köşede ok yerine
+// aynı genişlikte boş yer bırakır ki değer metni düğmenin altına kaymasın. `ref` tetikte kalır.
 const TriggerInput = forwardRef(function TriggerInput(
-  { value, onClick, disabled, placeholder, onClear }, ref) {
-  const t = useT()
+  { value, onClick, disabled, placeholder, onClear, clearLabel }, ref) {
+  const clearShown = !!(value && onClear && !disabled)
   return (
-    <button className="dp-trigger" onClick={onClick} ref={ref} type="button" disabled={disabled}>
-      <Calendar size={13} className="dp-trigger-icon" />
-      <span className="dp-trigger-value" style={value ? undefined : { color: 'var(--text-muted)', fontWeight: 500 }}>
-        {value || placeholder || '—'}
-      </span>
-      {value && onClear && !disabled
-        ? <X size={14} className="dp-trigger-chevron" role="button" aria-label={t('app.clear')}
-             onClick={(e) => { e.stopPropagation(); onClear() }} />
-        : <ChevronDown size={12} className="dp-trigger-chevron" />}
-    </button>
+    <>
+      <button className="dp-trigger" onClick={onClick} ref={ref} type="button" disabled={disabled}>
+        <Calendar size={13} className="dp-trigger-icon" />
+        <span className="dp-trigger-value" style={value ? undefined : { color: 'var(--text-muted)', fontWeight: 500 }}>
+          {value || placeholder || '—'}
+        </span>
+        {clearShown
+          ? <span aria-hidden="true" className="size-5 shrink-0" />
+          : <ChevronDown size={12} className="dp-trigger-chevron" aria-hidden="true" />}
+      </button>
+      {clearShown && (
+        <Button type="button" variant="ghost" size="icon-xs"
+          className="absolute top-1/2 right-1.5 -translate-y-1/2 text-muted-foreground hover:text-destructive"
+          aria-label={clearLabel} title={clearLabel}
+          onClick={onClear}>
+          <X aria-hidden="true" />
+        </Button>
+      )}
+    </>
   )
 })
 
@@ -76,6 +93,7 @@ function toDateOnly(d) {
  */
 export default function DateTimeField({ value, onChange, disabled, placeholder, clearable, dateOnly, className, min }) {
   const { lang } = useLanguage()
+  const t = useT()
   const dpRef = useRef(null)
   const parse = dateOnly ? parseDateOnly : parseIso
   const selected = parse(value)
@@ -96,7 +114,7 @@ export default function DateTimeField({ value, onChange, disabled, placeholder, 
         locale={lang === 'tr' ? 'tr' : 'en'}
         popperContainer={BodyPortal}
         customInput={<TriggerInput disabled={disabled} placeholder={placeholder}
-          onClear={clearable ? () => onChange('') : undefined} />}
+          onClear={clearable ? () => onChange('') : undefined} clearLabel={t('app.clear')} />}
         showPopperArrow={false}
         popperPlacement="bottom-start"
         calendarClassName="dp-calendar"

@@ -1024,6 +1024,8 @@ public class SchedulerService {
         patch("CREATE INDEX IF NOT EXISTS idx_ae_resolved_at ON alert_events(resolved_at)");
         // Denetim konsolu: event_type filtresi + event_time sıralı/range (findAdvanced) — tek-kolon yerine bileşik.
         patch("CREATE INDEX IF NOT EXISTS idx_audit_type_time ON audit_log(event_type, event_time)");
+        // Ekip kapsamlı Denetim Logu (2026-09-25, regresyon R9): actor_team_id eşleşmesi + event_time sırası.
+        patch("CREATE INDEX IF NOT EXISTS idx_audit_actor_team_time ON audit_log(actor_team_id, event_time)");
         // Sayfa-bütünlüğü (9. tür) — LATERAL en-güncel + sorun listesi + purge güvenlik-ağı index'leri (ddl-auto ile de gelir).
         patch("CREATE INDEX IF NOT EXISTS idx_pc_monitor_checked ON page_checks(monitor_id, checked_at)");
         patch("CREATE INDEX IF NOT EXISTS idx_pri_monitor_checked ON page_resource_issues(monitor_id, checked_at)");

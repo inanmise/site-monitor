@@ -73,9 +73,11 @@ function useElapsedSeconds(running) {
  * @param {boolean} running  bu monitör şu anda kontrol ediliyor
  * @param {boolean} disabled çalışma dışı bir sebeple kapalı (ör. k6 kurulu değil)
  */
-export function CheckNowButton({ running, disabled, onClick, title, className = '' }) {
+export function CheckNowButton({ running, disabled, onClick, title, className = '', rowLabel }) {
   const t = useT()
   const label = running ? t('mon.checkRunning') : title
+  // rowLabel: erişilebilir ad kartı/satırı ayırır (ipucu kısa kalır) — 2026-09-25, R15.
+  const name = rowLabel ? t('a11y.rowAction', rowLabel, label) : label
   return (
     <Button
       type="button"
@@ -85,7 +87,7 @@ export function CheckNowButton({ running, disabled, onClick, title, className = 
       disabled={running || disabled}
       onClick={onClick}
       title={label}
-      aria-label={label}
+      aria-label={name}
       aria-busy={running || undefined}
     >
       {running ? <Spinner size={12} inline decorative /> : <Play size={12} />}

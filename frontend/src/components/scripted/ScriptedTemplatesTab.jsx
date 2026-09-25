@@ -171,7 +171,7 @@ export default function ScriptedTemplatesTab({ t, lang, teams = [], teamName, on
       <div className="upt-toolbar sc-tpl-toolbar">
         <SegmentedControl value={scope} onChange={setScope} options={scopeOptions} ariaLabel={t('tpl.scope')} />
         {tagOptions.length > 1 &&
-          <SearchableSelect value={tag} onChange={setTag} options={tagOptions} searchThreshold={6} />}
+          <SearchableSelect value={tag} onChange={setTag} options={tagOptions} searchThreshold={6} ariaLabel={t('flt.tag')} />}
         <input className="upt-search" type="text" placeholder={t('tpl.searchPlaceholder')}
           value={search} onChange={e => setSearch(e.target.value)} aria-label={t('tpl.searchPlaceholder')} />
         {canCreate &&

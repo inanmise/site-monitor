@@ -263,4 +263,26 @@ describe('SearchableSelect', () => {
     fireEvent.mouseDown(trigger)
     expect(screen.queryByRole('listbox')).toBeNull()
   })
+
+  /**
+   * 2026-09-25 (R17): tetik role="combobox" ve adını İÇERİKTEN ALMAZ. Eski `.ss-trigger` düz
+   * düğmeydi (ad = görünen değer); rol değişince htmlFor'suz etiketli / ariaLabel'sız seçiciler
+   * sessizce adsız kaldı. Üç ad yolu da çalışmalı; hiçbiri yoksa ad BOŞ (kapı bunu yakalar).
+   */
+  it('ad yolları: ariaLabel, id + <label htmlFor>, ariaLabelledBy — içerik ad değildir', () => {
+    const { unmount } = render(<SearchableSelect value="1" onChange={() => {}} options={opts(3)} />)
+    expect(screen.getByRole('combobox')).toHaveAccessibleName('')   // "Option 1" görünür ama ad değil
+    unmount()
+
+    render(<>
+      <SearchableSelect value="1" onChange={() => {}} options={opts(3)} ariaLabel="Takıma göre süz" />
+      <label htmlFor="ss-sort">Sırala:</label>
+      <SearchableSelect id="ss-sort" value="1" onChange={() => {}} options={opts(3)} />
+      <span id="ss-yr">Yıl</span>
+      <SearchableSelect ariaLabelledBy="ss-yr" value="1" onChange={() => {}} options={opts(3)} />
+    </>)
+    expect(screen.getByRole('combobox', { name: 'Takıma göre süz' })).toBeDefined()
+    expect(screen.getByRole('combobox', { name: 'Sırala:' })).toBeDefined()
+    expect(screen.getByRole('combobox', { name: 'Yıl' })).toBeDefined()
+  })
 })

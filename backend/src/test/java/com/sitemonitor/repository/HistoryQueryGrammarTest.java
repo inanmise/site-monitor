@@ -352,7 +352,8 @@ class HistoryQueryGrammarTest {
                 chg("PORT", 1L, "Port A", "CREATE", 5L, "N23456", "2026-08-02T09:00:00"),
                 byId,
                 chg("DOMAIN", 4L, "Alan A", "UPDATE", null, "N22222", "2026-08-02T11:00:00"),
-                chg("DOMAIN", 5L, "Alan B", "CREATE", null, "N99999", "2026-08-02T12:00:00")));   // yabancı
+                chg("DOMAIN", 5L, "Alan B", "CREATE", null, "N99999", "2026-08-02T12:00:00"),     // yabancı
+                foreignByMate()));                                                                  // üye, BAŞKA takımın izlemesi
 
         var members = List.of(41L);
         var memberNames = List.of("n22222");            // TeamActorScope küçük harfe çevirir
@@ -385,6 +386,13 @@ class HistoryQueryGrammarTest {
             kinds.merge(String.valueOf(r[0]), ((Number) r[2]).longValue(), Long::sum);
         }
         assertThat(kinds).containsOnly(Map.entry("PORT", 1L), Map.entry("SCRIPTED", 1L), Map.entry("DOMAIN", 1L));
+    }
+
+    /** Ekip üyesinin (kimlik 41) BAŞKA takımın (9) izlemesinde yaptığı değişiklik — R1: takım 5'e görünmez. */
+    private static MonitorChangeLog foreignByMate() {
+        MonitorChangeLog c = chg("HTTP", 6L, "Yabancı takımın izlemesi", "UPDATE", 9L, "N11111", "2026-08-02T13:00:00");
+        c.setActorId(41L);
+        return c;
     }
 
     private static MonitorChangeLog chg(String kind, Long id, String name, String event,

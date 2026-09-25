@@ -500,18 +500,29 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   // URL eşitleme (2026-09-13): süzgeç/açık rapor paylaşılabilir, F5 açık raporu korur
   useUrlQuerySync(toUrlMapping({ selectedId, selTeamId: isAdmin ? selTeamId : '', year, weekFilter, statusChip, sort: listSort, currentYear: isoWeekInfo().year }))
 
+  // R11 (2026-09-25): açılış yarışı kilidi sızdırıyordu. Rapor yüklenirken listeye dönülünce lockHeld
+  // henüz false olduğu için backToList kilidi bırakmıyor, geç gelen yanıt raporu yazıp kilidi alıyor ve
+  // 45 sn'lik kalp atışı kullanıcı liste ekranındayken kilidi tazeliyordu ("X düzenliyor"). Artık her
+  // açılış bir sıra numarası taşır; bayat yanıt hiçbir state'e yazmaz, bu arada alınmış kilidi BIRAKIR.
+  const loadSeq = useRef(0)
+  const loadTarget = useRef(null)   // şu an açılmak istenen rapor (liste/söküm → null)
+  useEffect(() => () => { loadSeq.current++; loadTarget.current = null }, [])
   const loadReport = useCallback(async (id) => {
-    if (!id) { setReport(null); setContent(null); setLockHeld(false); setLockHolder(null); return }
+    const seq = ++loadSeq.current
+    loadTarget.current = id || null
+    if (!id) { setReport(null); setContent(null); setLockHeld(false); setLockHolder(null); setLoadingReport(false); return }
     setLoadingReport(true)
     try {
-      await loadReportInner(id)
+      await loadReportInner(id, seq)
     } finally {
-      setLoadingReport(false)
+      if (seq === loadSeq.current) setLoadingReport(false)
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function loadReportInner(id) {
+  async function loadReportInner(id, seq) {
+    const stale = () => seq !== loadSeq.current
     const res = await api.weeklyReports.get(id)
+    if (stale()) return   // kullanıcı listeye döndü / başka rapora geçti / sayfa söküldü
     if (res?.success) {
       const r = res.data.report
       setReport({ ...r, images: res.data.images })
@@ -527,6 +538,14 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       setLockHolder(res.data.lock_holder ?? null)
       if (canModifyRow(r)) {
         const lk = await api.weeklyReports.lock(r.id)
+        if (stale()) {
+          // Kilit bu arada alındıysa bırak — aynı raporu yeniden açan daha yeni bir yükleme yoksa
+          // (o yükleme kilidi kendisi alır; burada bırakmak onun kilidini düşürürdü).
+          if (lk?.success && lk.data?.acquired && String(loadTarget.current) !== String(r.id)) {
+            api.weeklyReports.unlock(r.id)?.catch?.(() => { /* best-effort: kilit 3 dk'da bayatlar */ })
+          }
+          return
+        }
         if (lk?.success && lk.data?.acquired) {
           setLockHeld(true)
           setLockHolder(null)
@@ -1189,7 +1208,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                 <div className="wr-flt">
                   <span>{t('wr.team')}</span>
                   <SearchableSelect value={selTeamId} onChange={(v) => { setSelTeamId(v); setLoadingList(true) }}
-                    placeholder={t('wr.allTeams')} searchThreshold={2}
+                    placeholder={t('wr.allTeams')} searchThreshold={2} ariaLabel={t('wr.team')}
                     options={[{ value: '', label: t('wr.allTeams') },
                       ...teams.map((tm) => ({ value: String(tm.id), label: tm.name }))]} />
                 </div>
@@ -1197,6 +1216,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
               <div className="wr-flt">
                 <span>{t('wr.year')}</span>
                 <SearchableSelect value={year} onChange={(v) => { setYear(Number(v)); setLoadingList(true) }}
+                  ariaLabel={t('wr.year')}
                   options={[...new Set([...years, year])].sort((a, b) => b - a)
                     .map((y) => ({ value: y, label: String(y) }))} />
               </div>
@@ -1349,7 +1369,10 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                     onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setSelectedId(r.id) } }}>
                     {isAdmin && (
                       <td onClick={(e) => e.stopPropagation()} style={{ width: 32 }}>
-                        <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelect(r.id)} />
+                        {/* Ad = HAFTA + TAKIM: toplu "onayla ve gönder" onayı yalnız ADET söylüyor; adsız
+                            kutuyla ekran okuyucu kullanıcısı yanlış haftayı gönderebilirdi (2026-09-25, R5). */}
+                        <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelect(r.id)}
+                          aria-label={t('bulk.selectOneFor', `${formatWeekRange(r.report_year, r.week_no, lang)} · ${teams.find((tm) => tm.id === r.team_id)?.name ?? r.team_id}`)} />
                       </td>
                     )}
                     <td data-label={t('wr.colWeek')}><strong>{formatWeekRange(r.report_year, r.week_no, lang)}</strong></td>

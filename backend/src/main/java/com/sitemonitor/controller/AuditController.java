@@ -86,8 +86,10 @@ public class AuditController {
             @PathVariable String type, @PathVariable String id,
             @RequestParam(defaultValue = "100") int limit, HttpSession session) {
         TeamActorScope scope = auditReadScope(session);
-        var rows = visible(auditLogRepo.findByResourceTypeAndResourceIdOrderByEventTimeDesc(
-                type, id, PageRequest.of(0, Math.max(1, Math.min(limit, 500)))), scope);
+        var rows = scope.all()
+                ? auditLogRepo.findByResourceTypeAndResourceIdOrderByEventTimeDesc(
+                        type, id, PageRequest.of(0, Math.max(1, Math.min(limit, 500))))
+                : scopedHistory(scope, null, type, id, limit);
         return ok(Map.of("data", rows, "total", rows.size()));
     }
 
@@ -97,8 +99,9 @@ public class AuditController {
             @PathVariable Long actorId,
             @RequestParam(defaultValue = "100") int limit, HttpSession session) {
         TeamActorScope scope = auditReadScope(session);
-        var rows = visible(auditLogRepo.findByActorIdOrderByEventTimeDesc(
-                actorId, PageRequest.of(0, Math.max(1, Math.min(limit, 500)))), scope);
+        var rows = scope.all()
+                ? auditLogRepo.findByActorIdOrderByEventTimeDesc(actorId, PageRequest.of(0, Math.max(1, Math.min(limit, 500))))
+                : scopedHistory(scope, actorId, null, null, limit);
         return ok(Map.of("data", rows, "total", rows.size()));
     }
 
@@ -212,7 +215,7 @@ public class AuditController {
 
         // Kapsam dışı satır 404 döner (403 değil): kaydın VARLIĞI da ekip dışına sızmasın.
         return auditLogRepo.findById(id)
-                .filter(row -> scope.allows(row.getActorTeamId(), row.getActorId(), row.getActor()))
+                .filter(row -> teamVisible(row, scope))
                 .map(row -> ok(Map.of("data", row)))
                 .orElseGet(() -> ResponseEntity.status(404)
                         .body(Map.of("success", false, "error", "Denetim kaydı bulunamadı")));
@@ -374,7 +377,10 @@ public class AuditController {
      * tam ayrıntı"). Global admin / AUDIT: sınırsız, {@code audit_log.read} izni aranır (değişmedi). Diğer herkes
      * (USER, TEAM_ADMIN, kapsamlı müdür): yalnız görüş alanındaki takımların ÜYELERİNİN eylemleri — IP, konum ve
      * cihaz dâhil tam satır. Ekip kapsamında {@code audit_log.read} ARANMAZ: kural "kendi ekibinin kaydı"dır ve
-     * satırlar zaten aktör üyeliğiyle sınırlanır ({@code NotificationGroupController#history} emsali).
+     * satırlar zaten aktör üyeliğiyle sınırlanır ({@code NotificationGroupController#history} emsali). Kullanıcı
+     * kararı (2026-09-25, regresyon R8): ekip görünürlüğü HER ZAMAN açık, matristen kapatılmaz; matris satırı
+     * {@code audit_log.read} yalnız SİSTEM GENELİ denetimi (admin/AUDIT) anlatır. ADMIN/AUDIT aktörlerinin
+     * satırları ekip kapsamına girmez (R2).
      *
      * <p>Sistem-geneli yüzeyler (hash-zinciri bütünlüğü, özet istatistikler, olay türü sayımları, başka
      * kullanıcının cihaz geçmişi) bu kapsamı KULLANMAZ — {@link #requireAuditAccess} ile admin/AUDIT'te kalır.
@@ -387,10 +393,31 @@ public class AuditController {
         return TeamActorScope.ofTeams(SessionScope.viewTeamIds(session), appUserRepo);
     }
 
-    /** Bellekte süzülen küçük listeler için aynı kural (sayfalanan liste kuralı sorguda uygular). */
+    /** Ekip kapsamına HİÇ girmeyen aktör rolleri (kullanıcı kararı 2026-09-25, regresyon R2) — sorgudaki kuralla aynı. */
+    private static final Set<String> SYSTEM_WIDE_ROLES = Set.of("ADMIN", "AUDIT");
+
+    /** Satır bu kapsamda görünür mü? Sayfalanan liste AYNI kuralı sorguda uygular ({@code findAdvanced}). */
+    private static boolean teamVisible(AuditLog r, TeamActorScope scope) {
+        if (scope.all()) return true;
+        if (r.getActorRole() != null && SYSTEM_WIDE_ROLES.contains(r.getActorRole())) return false;
+        return scope.allows(r.getActorTeamId(), r.getActorId(), r.getActor());
+    }
+
+    /** Bellekte süzülen küçük listeler (korelasyon) için aynı kural. */
     private static List<AuditLog> visible(List<AuditLog> rows, TeamActorScope scope) {
         if (scope.all()) return rows;
-        return rows.stream().filter(r -> scope.allows(r.getActorTeamId(), r.getActorId(), r.getActor())).toList();
+        return rows.stream().filter(r -> teamVisible(r, scope)).toList();
+    }
+
+    /**
+     * Ekip kapsamında kaynak/aktör geçmişi: kapsam SORGUDA uygulanır (regresyon R7). Önce ilk N satırı çekip
+     * sonra süzmek, son N olayı yabancı aktörlerinse zaman çizelgesini boş/eksik döndürüyordu.
+     */
+    private List<AuditLog> scopedHistory(TeamActorScope scope, Long actorId, String resourceType, String resourceId, int limit) {
+        return auditLogRepo.findAdvanced(null, actorId, false, typesOrDummy(null), resourceType, resourceId,
+                null, null, null, null, false, null,
+                false, scope.teamIds(), scope.actorIds(), scope.actorNames(),
+                PageRequest.of(0, Math.max(1, Math.min(limit, 500)))).getContent();
     }
 
     /**

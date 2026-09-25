@@ -340,8 +340,14 @@ export default function PushLogView({ onBack, initial }) {
                     <td><span className={`smtp-trigger-badge pl-trigger-${(row.trigger || '').toLowerCase()}`}>{triggerLabel(row.trigger, t)}</span></td>
                     <td><PushStatusBadge row={row} t={t} />{row.error_class && <span className="sml-cls">{t(`pl.cls.${row.error_class}`)}</span>}</td>
                     <td className="sml-actions" onClick={(e) => e.stopPropagation()}>
-                      <Button type="button" variant="secondary" size="sm" title={t('pl.detail')} onClick={() => setDetailId(row.id)}><Eye size={13} /></Button>
-                      {canRequeue && retryable(row) && <Button type="button" variant="secondary" size="sm" className="sml-resend" title={t('pl.requeue')} disabled={busy} onClick={() => requeue(row)}><RotateCcw size={13} /></Button>}
+                      {/* Adlar kaydı ayırır (izleme/başlık + zaman): yeniden kuyruğa alma YAN ETKİLİ ve
+                          her satırda aynı adla duyuluyordu (2026-09-25, R15). İpucu kısa kalır. */}
+                      <Button type="button" variant="secondary" size="sm" title={t('pl.detail')}
+                        aria-label={t('a11y.rowAction', `${row.monitor_name || row.title || '—'} · ${formatDate(row.at)}`, t('pl.detail'))}
+                        onClick={() => setDetailId(row.id)}><Eye size={13} /></Button>
+                      {canRequeue && retryable(row) && <Button type="button" variant="secondary" size="sm" className="sml-resend" title={t('pl.requeue')}
+                        aria-label={t('a11y.rowAction', `${row.monitor_name || row.title || '—'} · ${formatDate(row.at)}`, t('pl.requeue'))}
+                        disabled={busy} onClick={() => requeue(row)}><RotateCcw size={13} /></Button>}
                     </td>
                   </tr>
                 ))}

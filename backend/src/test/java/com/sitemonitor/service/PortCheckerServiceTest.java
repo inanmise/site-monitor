@@ -135,4 +135,37 @@ class PortCheckerServiceTest {
         assertThat(PortCheckerService.httpStatusMatches(404, "2xx,3xx")).isFalse();
         assertThat(PortCheckerService.httpStatusMatches(401, "401, 403")).isTrue();
     }
+
+    // ── Regresyon R3 (2026-09-25): vekil tünelindeki durum satırı tavanlı + süreli okunur ──
+
+    @Test
+    @DisplayName("readStatusLine: CRLF'li durum satırını okur; satırsız biten akışta null")
+    void readStatusLine_normal() throws IOException {
+        long far = System.nanoTime() + 5_000_000_000L;
+        assertThat(PortCheckerService.readStatusLine(
+                new java.io.ByteArrayInputStream("HTTP/1.1 204 No Content\r\nX: y\r\n".getBytes()), far))
+                .isEqualTo("HTTP/1.1 204 No Content");
+        assertThat(PortCheckerService.readStatusLine(new java.io.ByteArrayInputStream(new byte[0]), far)).isNull();
+    }
+
+    @Test
+    @DisplayName("readStatusLine: satır sonu göndermeyen hedef 8 KB'ta KESİLİR (tavansız tampon büyümez)")
+    void readStatusLine_capped() {
+        byte[] flood = new byte[PortCheckerService.STATUS_LINE_MAX + 100];
+        java.util.Arrays.fill(flood, (byte) 'A');
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> PortCheckerService.readStatusLine(
+                        new java.io.ByteArrayInputStream(flood), System.nanoTime() + 5_000_000_000L))
+                .isInstanceOf(IOException.class).hasMessageContaining("uzun");
+    }
+
+    @Test
+    @DisplayName("readStatusLine: süre tavanı dolunca damlatan hedef zaman aşımına düşer (iş parçacığı tutulmaz)")
+    void readStatusLine_deadline() {
+        java.io.InputStream drip = new java.io.InputStream() {
+            @Override public int read() { return 'H'; }   // hiç satır sonu yok
+        };
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                        PortCheckerService.readStatusLine(drip, System.nanoTime() - 1))
+                .isInstanceOf(java.net.SocketTimeoutException.class);
+    }
 }

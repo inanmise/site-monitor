@@ -55,6 +55,14 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     @Query("SELECT DISTINCT u FROM AppUser u LEFT JOIN u.teamIds tid WHERE u.teamId IN :teamIds OR tid IN :teamIds")
     List<AppUser> findMembersOfTeams(@Param("teamIds") Collection<Long> teamIds);
 
+    /**
+     * Ekip kapsamı için üyelerin YALNIZ kimliği + küçük harf kullanıcı adı (regresyon R9): tam {@code AppUser}
+     * fotoğraf kolonunu ve EAGER takım koleksiyonunu da çekiyordu — Denetim Logu herkese açıldığı için istek başı
+     * maliyet önemli. Satır: {@code [Long id, String lowerUsername]}.
+     */
+    @Query("SELECT DISTINCT u.id, LOWER(u.username) FROM AppUser u LEFT JOIN u.teamIds tid WHERE u.teamId IN :teamIds OR tid IN :teamIds")
+    List<Object[]> findMemberIdentities(@Param("teamIds") Collection<Long> teamIds);
+
     /** Takım silme guard'ı: takıma üye (birincil veya ek) kullanıcı var mı. */
     @Query("SELECT COUNT(u) > 0 FROM AppUser u JOIN u.teamIds tid WHERE tid = :teamId")
     boolean existsByMembershipTeamId(@Param("teamId") Long teamId);

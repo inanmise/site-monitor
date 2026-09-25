@@ -379,7 +379,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                 onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setViewUser(user) } }}>
                 {canManage && (
                   <td className="um-col-check" onClick={(e) => e.stopPropagation()}>
-                    <input type="checkbox" checked={selected.has(user.id)} onChange={() => toggleOne(user.id)} aria-label={user.username} />
+                    <input type="checkbox" checked={selected.has(user.id)} onChange={() => toggleOne(user.id)} aria-label={t('bulk.selectOneFor', user.username)} />
                   </td>
                 )}
                 <td className="um-col-user">

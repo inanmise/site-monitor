@@ -273,9 +273,9 @@ export default function WeeklyAvailabilitySettings() {
         <p className="section-desc">{t('weeklyavail.previewDesc')}</p>
         <div className="ldap-lookup-row">
           <SearchableSelect value={previewTeamId} onChange={setPreviewTeamId}
-            placeholder={t('weeklyavail.selectTeam')} searchThreshold={2} options={teamOptions} />
+            placeholder={t('weeklyavail.selectTeam')} searchThreshold={2} options={teamOptions} ariaLabel={t('weeklyavail.selectTeam')} />
           <SearchableSelect value={String(previewWeekOffset)} onChange={(v) => setPreviewWeekOffset(Number(v))}
-            placeholder={t('weeklyavail.previewWeek')} options={weekSelectOptions} />
+            placeholder={t('weeklyavail.previewWeek')} options={weekSelectOptions} ariaLabel={t('weeklyavail.previewWeek')} />
           <Button onClick={doPreview} disabled={previewing || !previewTeamId}>
             {previewing ? <Spinner size={15} inline decorative /> : <Eye size={15} />} {t('weeklyavail.previewBtn')}
           </Button>
@@ -294,7 +294,7 @@ export default function WeeklyAvailabilitySettings() {
         <p className="section-desc">{t('weeklyavail.testDesc')}</p>
         <div style={{ maxWidth: 520, marginTop: 8 }}>
           <SearchableSelect value={testTeamId} onChange={setTestTeamId}
-            placeholder={t('weeklyavail.selectTeam')} searchThreshold={2} options={teamOptions} />
+            placeholder={t('weeklyavail.selectTeam')} searchThreshold={2} options={teamOptions} ariaLabel={t('weeklyavail.selectTeam')} />
         </div>
         <div className="ldap-lookup-row">
           <input type="email" value={testEmail} placeholder="recipient@example.com"

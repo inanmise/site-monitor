@@ -279,9 +279,9 @@ export default function MonitorChangesConsole({ globalViewer = false }) {
               options={teamOptions} searchThreshold={2} ariaLabel={t('chg.teamFilter')} />
           )}
           <SearchableSelect value={kind} onChange={(v) => { setKind(v); setPage(0) }}
-            options={kindOptions} searchThreshold={6} />
+            options={kindOptions} searchThreshold={6} ariaLabel={t('flt.monitorType')} />
           <SearchableSelect value={actor} onChange={(v) => { setActor(v); setPage(0) }}
-            options={actorOptions} searchThreshold={6} />
+            options={actorOptions} searchThreshold={6} ariaLabel={t('flt.actor')} />
           <input className="upt-search" type="text" value={q} aria-label={t('chg.searchPlaceholder')}
             placeholder={t('chg.searchPlaceholder')}
             onChange={(e) => { setQ(e.target.value); setPage(0) }} />

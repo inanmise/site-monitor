@@ -103,9 +103,9 @@ class AuditControllerTest {
     }
 
     private void stubTeamMate(long teamId, long id, String username) {
-        com.sitemonitor.model.AppUser mate = new com.sitemonitor.model.AppUser();
-        mate.setId(id); mate.setUsername(username);
-        when(appUserRepo.findMembersOfTeams(List.of(teamId))).thenReturn(List.of(mate));
+        // Projeksiyon satırı: [id, küçük harf kullanıcı adı] (regresyon R9)
+        when(appUserRepo.findMemberIdentities(List.of(teamId)))
+                .thenReturn(List.<Object[]>of(new Object[]{id, username.toLowerCase(java.util.Locale.ROOT)}));
     }
 
     private static AuditLog auditRow(long id, Long actorTeamId, Long actorId, String actor) {
@@ -144,15 +144,25 @@ class AuditControllerTest {
         AuditLog stranger = auditRow(12, 9L, 99L, "N99999");
         when(auditLogRepo.findById(10L)).thenReturn(java.util.Optional.of(mine));
         when(auditLogRepo.findById(12L)).thenReturn(java.util.Optional.of(stranger));
+        AuditLog adminMate = auditRow(13, 5L, 41L, "N11111");
+        adminMate.setActorRole("ADMIN");                                 // takımı olan yönetici — ekip kapsamına GİRMEZ (R2)
+        when(auditLogRepo.findById(13L)).thenReturn(java.util.Optional.of(adminMate));
         when(auditLogRepo.findByResourceTypeAndResourceIdOrderByEventTimeDesc(eq("USER"), eq("5"), any()))
                 .thenReturn(List.of(mine, byName, stranger));
-        when(auditLogRepo.findByCorrelationIdOrderBySeqAsc("c1")).thenReturn(List.of(stranger, mine));
+        // Ekip kapsamında kaynak geçmişi SORGUDA kapsamlanır (R7): findAdvanced kaynak süzgeci + kapsam listeleriyle.
+        when(auditLogRepo.findAdvanced(any(), any(), anyBoolean(), any(), eq("USER"), eq("5"), any(), any(), any(), any(),
+                anyBoolean(), any(), eq(false), eq(List.of(5L)), eq(List.of(41L)), eq(List.of("n11111")), any()))
+                .thenReturn(new PageImpl<>(List.of(mine, byName)));
+        when(auditLogRepo.findByCorrelationIdOrderBySeqAsc("c1")).thenReturn(List.of(stranger, mine, adminMate));
 
         mvc.perform(get("/api/admin/audit/10").session(teamUser(5L))).andExpect(status().isOk());
         mvc.perform(get("/api/admin/audit/12").session(teamUser(5L))).andExpect(status().isNotFound());
+        mvc.perform(get("/api/admin/audit/13").session(teamUser(5L))).andExpect(status().isNotFound());
         mvc.perform(get("/api/admin/audit/resource/USER/5").session(teamUser(5L)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value(2));
+        verify(auditLogRepo, org.mockito.Mockito.never())
+                .findByResourceTypeAndResourceIdOrderByEventTimeDesc(any(), any(), any());
         mvc.perform(get("/api/admin/audit/correlation/c1").session(teamUser(5L)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(1))
@@ -222,6 +232,10 @@ class AuditControllerTest {
         mvc.perform(get("/api/admin/audit/resource/PORT_MONITOR/7").session(session("AUDIT")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value(1));
+        // Kapsamı olmayan kullanıcı: kukla listelerle sorgulanır (R7: kapsam sorguda), sonuç boş.
+        when(auditLogRepo.findAdvanced(any(), any(), anyBoolean(), any(), eq("PORT_MONITOR"), eq("7"), any(), any(), any(), any(),
+                anyBoolean(), any(), eq(false), eq(List.of(-1L)), eq(List.of(-1L)), eq(List.of("")), any()))
+                .thenReturn(new PageImpl<>(List.of()));
         mvc.perform(get("/api/admin/audit/resource/PORT_MONITOR/7").session(session("USER")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value(0));

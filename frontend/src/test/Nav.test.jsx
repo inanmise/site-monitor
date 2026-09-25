@@ -206,3 +206,36 @@ describe('Nav — kullanıcı menüsü (2026-09-23)', () => {
     expect(labels.some((l) => /Switch to English|Türkçeye Geç/.test(l))).toBe(true)
   })
 })
+
+/**
+ * 2026-09-25 (R17): daraltılmış (ikon) kipte grup başlıkları görünmez (opacity-0) ve bir şey yapmaz
+ * (onOpenChange yutulur) — ama odaklanabilir kalıyordu: klavye kullanıcısı Tab'la 7 görünmez, işlevsiz
+ * durakta dolaşıyordu. Daraltılınca Tab sırasından ve erişilebilirlik ağacından çıkmalı; genişken
+ * normal düğme olarak kalmalı (grup açma/kapama onlarla yapılıyor).
+ */
+describe('Nav — daraltılmış kenar çubuğu grup başlıkları (2026-09-25)', () => {
+  const groupTriggers = (container) => [...container.querySelectorAll('[data-sidebar="group-label"]')]
+
+  it('daraltılınca grup başlıkları Tab sırasından ve erişilebilirlik ağacından çıkar', () => {
+    const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} systemRole="ADMIN" />, { open: false }))
+    const triggers = groupTriggers(container)
+    expect(triggers.length).toBeGreaterThan(3)
+    for (const b of triggers) {
+      expect(b.tagName).toBe('BUTTON')
+      expect(b).toHaveAttribute('tabindex', '-1')
+      expect(b).toHaveAttribute('aria-hidden', 'true')
+    }
+    // Sekmelerin kendisi (ikonlar) erişilebilir kalır.
+    expect(screen.getByRole('button', { name: /Dashboard/ })).toBeInTheDocument()
+  })
+
+  it('genişken grup başlıkları normal, odaklanabilir düğmedir', () => {
+    const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} systemRole="ADMIN" />))
+    const triggers = groupTriggers(container)
+    expect(triggers.length).toBeGreaterThan(3)
+    for (const b of triggers) {
+      expect(b).not.toHaveAttribute('tabindex', '-1')
+      expect(b).not.toHaveAttribute('aria-hidden')
+    }
+  })
+})

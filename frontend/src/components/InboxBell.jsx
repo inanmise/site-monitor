@@ -162,7 +162,9 @@ export default function InboxBell({ username }) {
         </Button>
         {it.monitor_tab && (
           <Button type="button" variant="outline" size="icon-sm" className="shrink-0" onClick={() => go(it, 'monitor')}
-            title={t('inbox.goMonitor')} aria-label={t('inbox.goMonitor')}>
+            // Ad öğeyi ayırır: her satırda aynı "İzlemeye git" duyuluyordu — ActivityLog'daki F4
+            // düzeltmesinin birebir kardeşi (2026-09-25, R15). İpucu kısa kalır.
+            title={t('inbox.goMonitor')} aria-label={t('act.goMonitorFor', it.monitor_name || it.title || '')}>
             <Activity aria-hidden="true" />
           </Button>
         )}

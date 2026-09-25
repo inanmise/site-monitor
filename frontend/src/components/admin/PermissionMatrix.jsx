@@ -35,6 +35,10 @@ export default function PermissionMatrix() {
   // Salt okunur kip (2026-09-25, kullanıcı kararı): matrisi herkes görür, yalnız global admin değiştirir.
   // Kaynak sunucunun `can_edit` alanı (kapsamlı müdür de false) — arayüz kendi rol tahminini yapmaz.
   const [canEdit, setCanEdit] = useState(false)
+  // R10 (2026-09-25): yükleme hatası AYRI bir durum. Eskiden success:false'ta canEdit false kalıyor,
+  // global admin "salt okunur" bandını ve boş tabloyu görüyordu ("bilinmiyor" = "yetkin yok");
+  // istek fırlatırsa da işlenmeyen ret oluşuyordu.
+  const [loadError, setLoadError] = useState(false)
   // Akordiyon: aynı anda tek grup açık — varsayılan "certificates" (Sertifika Yönetimi).
   // Bir gruba tıklayınca o açılır, diğer açık olanlar kapanır; açık olana tıklayınca kapanır.
   const [openGroup, setOpenGroup] = useState('certificates')
@@ -55,7 +59,14 @@ export default function PermissionMatrix() {
         setCatalog(res.catalog || [])
         setGrants(res.grants || [])
         setCanEdit(res.can_edit === true)
+        setLoadError(false)
+      } else {
+        setLoadError(true)
+        setCanEdit(false)   // bayat veriyle anahtar çevrilmesin
       }
+    } catch {
+      setLoadError(true)
+      setCanEdit(false)
     } finally {
       setLoading(false)
     }
@@ -140,7 +151,14 @@ export default function PermissionMatrix() {
 
       <p className="section-desc">{t('perm.desc')}</p>
 
-      {!loading && !canEdit && (
+      {!loading && loadError && (
+        <AlertBanner tone="danger" title={t('perm.loadErrorTitle')}
+          actions={<Button variant="outline" size="sm" onClick={load}>{t('perm.retry')}</Button>}>
+          {t('perm.loadErrorText')}
+        </AlertBanner>
+      )}
+      {/* Salt okunur bandı YALNIZ başarılı yüklemeden sonra: sunucu can_edit=false dedi demektir. */}
+      {!loading && !loadError && !canEdit && (
         <AlertBanner tone="info" icon={Eye} title={t('perm.readOnlyTitle')}>{t('perm.readOnlyText')}</AlertBanner>
       )}
       <AlertBanner tone="info" icon={Lock}>{t('perm.adminLockedNote')}</AlertBanner>
@@ -220,7 +238,7 @@ export default function PermissionMatrix() {
                 {t('perm.loading')}
               </td></tr>
             )}
-            {!loading && grouped.map(([groupName, items]) => {
+            {!loading && !loadError && grouped.map(([groupName, items]) => {
               const open = openGroup === groupName
               return (
               <Fragment key={groupName}>
@@ -253,8 +271,11 @@ export default function PermissionMatrix() {
                           return (
                             <td key={r.key + '-' + key} className="perm-locked-cell" title={t('perm.adminLocked')}>
                               <span className="perm-locked-badge">
-                                <Lock size={11} />
+                                <Lock size={11} aria-hidden="true" />
                               </span>
+                              {/* title ekran okuyucuda güvenilir değil ve ikon gizli: hücre BOŞ okunuyordu
+                                  (2026-09-25, R16). Metin görsel olarak gizli, erişilebilirlik ağacında. */}
+                              <span className="sr-only">{t('perm.adminLocked')}</span>
                             </td>
                           )
                         }

@@ -281,7 +281,12 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
             <Collapsible key={gi} open={isOpen} onOpenChange={() => { if (!collapsed) toggleGroup(gi) }} className="group/collapsible">
               <SidebarGroup className="py-1">
                 <SidebarGroupLabel asChild>
-                  <CollapsibleTrigger className="w-full text-[11px] font-semibold tracking-wider uppercase">
+                  {/* Daraltılmış kipte başlık görünmez (opacity-0) ve bir şey yapmaz (onOpenChange
+                      yutuluyor) — ama odaklanabilir kalıyordu: klavyede 7 görünmez, işlevsiz durak.
+                      Tab sırasından ve erişilebilirlik ağacından çıkar (2026-09-25, R17). CSS tarafı
+                      sidebar.jsx'te (invisible). */}
+                  <CollapsibleTrigger className="w-full text-[11px] font-semibold tracking-wider uppercase"
+                    tabIndex={collapsed ? -1 : undefined} aria-hidden={collapsed || undefined}>
                     {t(group.labelKey)}
                     <ChevronDown className="ml-auto size-3.5 transition-transform group-data-[state=closed]/collapsible:-rotate-90" />
                   </CollapsibleTrigger>

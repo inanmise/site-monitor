@@ -132,10 +132,14 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
      * ({@code actorTeamId}) kapsamda, ya da kimliği / küçük harf kullanıcı adı kapsamdaki takımların üyeleri
      * arasında (takımı sonradan değişen üye ve kimliksiz giriş olayları için). Boş listeler kukla değerle gelir
      * ({@code TeamActorScope}).
+     *
+     * <p><b>ADMIN / AUDIT aktörleri ekip kapsamına GİRMEZ</b> (kullanıcı kararı 2026-09-25, regresyon R2): takımı
+     * olan bir yönetici ya da denetçinin başka takımlara dair eylemleri (kullanıcı kaydı diff'leri, ayarlar, SQL)
+     * o takıma akmasın. Bu satırlar yalnız tam kapsamda (global admin / AUDIT) görünür.
      */
     @Query("SELECT a FROM AuditLog a WHERE " +
-           "(:scopeAll = TRUE OR a.actorTeamId IN :scopeTeamIds OR a.actorId IN :scopeActorIds " +
-           " OR LOWER(a.actor) IN :scopeActorNames) AND " +
+           "(:scopeAll = TRUE OR ((a.actorRole IS NULL OR a.actorRole NOT IN ('ADMIN', 'AUDIT')) AND " +
+           " (a.actorTeamId IN :scopeTeamIds OR a.actorId IN :scopeActorIds OR LOWER(a.actor) IN :scopeActorNames))) AND " +
            "(:actor IS NULL OR LOWER(a.actor) LIKE :actor) AND " +
            "(:actorId IS NULL OR a.actorId = :actorId) AND " +
            "(:typeFilter = FALSE OR a.eventType IN :types) AND " +

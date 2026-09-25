@@ -49,7 +49,8 @@ describe('InboxBell v2', () => {
     const nav = vi.fn(); window.addEventListener('sm:navigate', nav)
     const dlg = await openBox()
     const row = within(dlg).getByText('down.example.com').closest('[data-inbox-row]')
-    fireEvent.click(within(row).getByRole('button', { name: /İzlemeye git|Go to monitor/ }))
+    // Ad satırı ayırır (izleme adı + eylem) — her satırda aynı "İzlemeye git" değil (2026-09-25, R15)
+    fireEvent.click(within(row).getByRole('button', { name: /^Ana site — (izlemeye git|go to the monitor)$/ }))
     expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'http', params: { monitor: 77 } })
     expect(screen.queryByRole('dialog')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /Bildirimler|Notifications/ }))
@@ -58,7 +59,7 @@ describe('InboxBell v2', () => {
     // bakım satırının izleme eylemi yok
     fireEvent.click(screen.getByRole('button', { name: /Bildirimler|Notifications/ }))
     const maint = screen.getByText('Gece bakımı').closest('[data-inbox-row]')
-    expect(within(maint).queryByRole('button', { name: /İzlemeye git|Go to monitor/ })).toBeNull()
+    expect(within(maint).queryByRole('button', { name: /izlemeye git|go to the monitor/i })).toBeNull()
     window.removeEventListener('sm:navigate', nav)
   })
 

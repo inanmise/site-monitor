@@ -43,10 +43,12 @@ export default function CommandPalette({ tabs = [], onTabChange }) {
   }, [open])
 
   // Sunucu araması — 200 ms debounce, geç gelen yanıt atılır (seq).
+  // R12 (2026-09-25): kısa sorgu ve kapanış dalları da seq'i ARTIRIR — artırmıyordu, uçuştaki "ab"
+  // yanıtı kullanıcı "a"ya döndükten (ya da paleti kapatıp açtıktan) sonra listeyi dolduruyordu.
   useEffect(() => {
-    if (!open) return undefined
+    if (!open) { seq.current++; return undefined }
     const needle = q.trim()
-    if (needle.length < 2) { setRemote([]); setLoading(false); return undefined }
+    if (needle.length < 2) { seq.current++; setRemote([]); setLoading(false); return undefined }
     const my = ++seq.current
     setLoading(true)
     const h = setTimeout(async () => {

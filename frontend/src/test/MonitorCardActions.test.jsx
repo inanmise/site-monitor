@@ -119,4 +119,27 @@ describe('MonitorCardActions', () => {
     expect(byName(/^Kaydı düzenle$/).getAttribute('title')).toBe('Kaydı düzenle')
     expect(byName(/kopyala|duplicate/i)).toBeInTheDocument()
   })
+
+  /**
+   * 2026-09-25 (R15): 50 kartlık ızgarada 50 özdeş "Sil" duyuluyordu — düğme listesinde hangi
+   * monitörün silineceği ayırt edilemiyordu. rowLabel verilince DÖRT düğmenin de adı kartı
+   * ayırır (KebabMenu `rowLabel` deseni); ipucu (title) kısa kalır.
+   */
+  it('rowLabel: dört düğmenin ADI kartı ayırır, ipucu kısa kalır — iki kart birbirinden ayrılır', () => {
+    render(
+      <LangProvider>
+        <MonitorCardActions running={false} onCheck={() => {}} onEdit={() => {}} onDuplicate={() => {}}
+          onDelete={() => {}} checkTitle="Kontrol Et" editTitle="Düzenle" deleteTitle="Sil" rowLabel="a.example.com" />
+        <MonitorCardActions running={false} onCheck={() => {}} onEdit={() => {}} onDuplicate={() => {}}
+          onDelete={() => {}} checkTitle="Kontrol Et" editTitle="Düzenle" deleteTitle="Sil" rowLabel="b.example.com" />
+      </LangProvider>)
+    for (const host of ['a.example.com', 'b.example.com']) {
+      expect(byName(new RegExp(`^${host} — Kontrol Et$`))).toHaveAttribute('title', 'Kontrol Et')
+      expect(byName(new RegExp(`^${host} — Düzenle$`))).toHaveAttribute('title', 'Düzenle')
+      expect(byName(new RegExp(`^${host} — (Kopyala|Duplicate)`, 'i'))).toBeInTheDocument()
+      expect(byName(new RegExp(`^${host} — Sil$`))).toHaveAttribute('title', 'Sil')
+    }
+    // Hiçbir düğme çıplak eylem adıyla kalmadı.
+    expect(screen.queryByRole('button', { name: /^Sil$/ })).toBeNull()
+  })
 })

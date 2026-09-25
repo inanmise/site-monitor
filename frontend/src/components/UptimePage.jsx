@@ -259,10 +259,10 @@ export default function UptimePage({ systemRole }) {
               <option value="incidents-desc">{t('uptime.sortIncidentsDesc')}</option>
             </select>
             {hasTeamOptions && (
-              <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />
+              <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />
             )}
-            {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupOptions} searchThreshold={2} />}
-            {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagOptions} searchThreshold={2} />}
+            {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupOptions} searchThreshold={2} ariaLabel={t('flt.group')} />}
+            {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
             {filtersActive && (
               <Button type="button" variant="secondary" size="sm" onClick={clearFilters}>{t('app.clearFilters')}</Button>
             )}

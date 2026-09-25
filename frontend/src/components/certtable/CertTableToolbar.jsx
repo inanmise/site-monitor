@@ -90,20 +90,20 @@ export default function CertTableToolbar({
             onChange={(e) => set('issuer', e.target.value)} />
         </div>
         <div className="filter-group">
-          <label>{t('app.teamLabel')}</label>
-          <SearchableSelect value={filters.team} onChange={(v) => set('team', v)} options={teamOpts} />
+          <label htmlFor="ct-f-team">{t('app.teamLabel')}</label>
+          <SearchableSelect id="ct-f-team" value={filters.team} onChange={(v) => set('team', v)} options={teamOpts} />
         </div>
         <div className="filter-group">
-          <label>{t('tbl.windowLabel')}</label>
-          <SearchableSelect value={filters.window} onChange={(v) => set('window', v)}
+          <label htmlFor="ct-f-window">{t('tbl.windowLabel')}</label>
+          <SearchableSelect id="ct-f-window" value={filters.window} onChange={(v) => set('window', v)}
             options={WINDOW_OPTIONS.map((w) => ({
               value: w,
               label: w === '' ? t('tbl.filterAll') : `${w === 'expired' ? t('tbl.winExpired') : t('tbl.winDays', w)}${win[w] != null ? ` (${win[w]})` : ''}`,
             }))} />
         </div>
         <div className="filter-group">
-          <label>{t('tbl.sort')}</label>
-          <SearchableSelect value={sortBy} onChange={onSort} options={sortOptions} />
+          <label htmlFor="ct-f-sort">{t('tbl.sort')}</label>
+          <SearchableSelect id="ct-f-sort" value={sortBy} onChange={onSort} options={sortOptions} />
         </div>
         <div className="filter-group ct-filters-more">
           <label>{t('tbl.moreFilters')}</label>

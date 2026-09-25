@@ -105,6 +105,7 @@ export default function MyAuditLog({ loginInfo = null, onChangePassword = null, 
           value={filters.eventType}
           onChange={v => setFilters(f => ({ ...f, eventType: v }))}
           placeholder={t('audit.allEvents')}
+          ariaLabel={t('flt.eventType')}
           options={[
             { value: '', label: t('audit.allEvents') },
             ...EVENT_TYPES.map(et => ({ value: et, label: et })),
@@ -114,6 +115,7 @@ export default function MyAuditLog({ loginInfo = null, onChangePassword = null, 
           value={filters.outcome}
           onChange={v => setFilters(f => ({ ...f, outcome: v }))}
           placeholder={t('audit.allOutcomes')}
+          ariaLabel={t('flt.outcome')}
           options={[
             { value: '', label: t('audit.allOutcomes') },
             ...OUTCOMES.map(o => ({ value: o, label: o })),

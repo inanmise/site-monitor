@@ -1,6 +1,5 @@
 package com.sitemonitor.controller;
 
-import com.sitemonitor.model.AppUser;
 import com.sitemonitor.repository.AppUserRepository;
 
 import java.util.ArrayList;
@@ -37,10 +36,13 @@ public record TeamActorScope(boolean all, List<Long> teamIds, List<Long> actorId
         if (teams == null || teams.isEmpty()) return new TeamActorScope(false, NO_IDS, NO_IDS, NO_NAMES);
         Set<Long> ids = new LinkedHashSet<>();
         Set<String> names = new LinkedHashSet<>();
-        // users null: opsiyonel bağımlılık (dilimli test bağlamı) — kapsam yalnız takım koşuluna düşer
-        for (AppUser u : users == null ? List.<AppUser>of() : users.findMembersOfTeams(teams)) {
-            if (u.getId() != null) ids.add(u.getId());
-            if (u.getUsername() != null && !u.getUsername().isBlank()) names.add(u.getUsername().toLowerCase(Locale.ROOT));
+        // users null: opsiyonel bağımlılık (dilimli test bağlamı) — kapsam yalnız takım koşuluna düşer.
+        // Projeksiyon (id + küçük harf ad): tam varlık fotoğraf kolonunu ve takım koleksiyonunu da çekerdi (R9).
+        List<Object[]> rows = users == null ? null : users.findMemberIdentities(teams);
+        for (Object[] r : rows == null ? List.<Object[]>of() : rows) {
+            if (r == null || r.length < 2) continue;
+            if (r[0] instanceof Number n) ids.add(n.longValue());
+            if (r[1] instanceof String name && !name.isBlank()) names.add(name.toLowerCase(Locale.ROOT));
         }
         return new TeamActorScope(false, new ArrayList<>(teams),
                 ids.isEmpty() ? NO_IDS : new ArrayList<>(ids),

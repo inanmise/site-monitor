@@ -323,3 +323,37 @@ describe('InventoryManager — USER satır düzenleme kapısı', () => {
     expect(screen.getByRole('combobox', { name: /Grup|Group/ })).toBeEnabled()
   })
 })
+
+// ── R4 (2026-09-25): düzenleme formunda takım kutusu sunucu kuralına eşit — updateInventory takımı yalnız
+//    rol ADMIN'de yazar, TEAM_ADMIN'de mevcut takıma sabitler ("Kaydedildi" deyip bildirim grubunu düşürüyordu). ──
+describe('InventoryManager — düzenlemede takım aktarımı (R4)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.admin.getInventory.mockResolvedValue({ success: true, data: ITEMS })
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'SY-A' }, { id: 9, name: 'SY-B' }] })
+  })
+
+  /** Satırın Düzenle eylemiyle formu açar; sorgular FORMA kapsanır (listenin takım süzgeci de bir combobox). */
+  async function openEditForm(role) {
+    renderIm(role)
+    await openRowMenu('aktif-bir.example.com')
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^(Düzenle|Edit)$/ }))
+    const form = await waitFor(() => {
+      const el = document.querySelector('.modal-wide')
+      if (!el) throw new Error('form henüz açılmadı')
+      return el
+    })
+    return within(form)
+  }
+
+  it('ADMIN: düzenleme formunda takım kutusu AÇIK', async () => {
+    const form = await openEditForm('ADMIN')
+    expect(form.getByRole('combobox', { name: /Takım|Team/ })).toBeEnabled()
+  })
+
+  it('TEAM_ADMIN: düzenleme formunda takım kutusu KİLİTLİ, grup seçicisi açık', async () => {
+    const form = await openEditForm('TEAM_ADMIN')
+    expect(form.getByRole('combobox', { name: /Takım|Team/ })).toBeDisabled()
+    expect(form.getByRole('combobox', { name: /Grup|Group/ })).toBeEnabled()
+  })
+})

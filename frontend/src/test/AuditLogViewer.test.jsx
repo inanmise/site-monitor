@@ -313,4 +313,22 @@ describe('AuditLogViewer', () => {
     expect(document.querySelector('.audit-timeline-list')).not.toBeNull()
     expect(await screen.findAllByTitle('MONITOR_UPDATE')).not.toHaveLength(0)
   })
+
+  // R12 (2026-09-25): eski süzgecin GEÇ gelen yanıtı yeni preset'in sonucunu ezmemeli.
+  it('R12: sıra dışı yanıt — önce başlayan (eski süzgeç) istek SONRA dönerse ekrana yazılmaz', async () => {
+    let releaseStale
+    api.admin.getAuditLogs
+      .mockImplementationOnce(() => new Promise(r => { releaseStale = () => r({ success: true, data: [row()], total: 1, page: 0 }) }))
+      .mockResolvedValueOnce({ success: true, data: [row({ id: 9, event_type: 'LOGIN', outcome: 'BLOCKED' })], total: 1, page: 0 })
+    render(<AuditLogViewer />)
+    await waitFor(() => expect(api.admin.getAuditLogs).toHaveBeenCalledTimes(1))
+
+    fireEvent.click(screen.getByText(/Güvenlik olaylar|Security events/))
+    expect(await screen.findByTitle('LOGIN')).toBeInTheDocument()
+
+    releaseStale()                                   // ilk (süzgeçsiz) istek ŞİMDİ dönüyor
+    await new Promise(r => setTimeout(r, 0))
+    await waitFor(() => expect(screen.getByTitle('LOGIN')).toBeInTheDocument())
+    expect(screen.queryByTitle('USER_UPDATE')).toBeNull()
+  })
 })

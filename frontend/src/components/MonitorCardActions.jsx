@@ -31,9 +31,13 @@ import { CheckNowButton, CheckRunningStrip } from './ui/CheckRunning.jsx'
  *                                        ya da silinemeyen satırda sayfa undefined geçirir)
  * @param {boolean} deleting              bu satır ŞU AN siliniyor (çift tık koruması)
  * @param {string} deleteTitle            sil düğmesinin ipucu metni (sayfaya özgü i18n)
+ * @param {string} rowLabel               kartın kimliği (alan adı / URL / host:port / ad) — düğmelerin
+ *                                        ERİŞİLEBİLİR ADINA eklenir (KebabMenu `rowLabel` deseni). Yoksa
+ *                                        50 kartlık ızgarada 50 özdeş "Sil" duyuluyordu (2026-09-25, R15).
+ *                                        İpucu (title) kısa kalır; ad satırı ayırır.
  */
 export default function MonitorCardActions({
-  running, onCheck, onEdit, onDuplicate, checkTitle, editTitle,
+  running, onCheck, onEdit, onDuplicate, checkTitle, editTitle, rowLabel,
   // Kontrol dugmesi PASIF olabilmeli: senaryo izlemesinde k6 yoksa calistirmak anlamsiz.
   // Bu tek fark yuzunden ScriptedMonitorPage bloğun tamamini kopyalamisti.
   checkDisabled = false,
@@ -44,17 +48,18 @@ export default function MonitorCardActions({
   onDelete, deleting = false, deleteTitle,
 }) {
   const t = useT()
+  const named = (label) => (rowLabel ? t('a11y.rowAction', rowLabel, label) : label)
   return (
     <span className="mon-actions" onClick={e => e.stopPropagation()}>
       <CheckRunningStrip running={running} />
-      <CheckNowButton running={running} disabled={checkDisabled} onClick={onCheck} title={checkTitle} />
+      <CheckNowButton running={running} disabled={checkDisabled} onClick={onCheck} title={checkTitle} rowLabel={rowLabel} />
       <button type="button" className="mon-act mon-act--edit"
-        onClick={onEdit} title={editTitle} aria-label={editTitle}><Pencil size={13} /></button>
+        onClick={onEdit} title={editTitle} aria-label={named(editTitle)}><Pencil size={13} /></button>
       <button type="button" className="mon-act mon-act--copy"
-        onClick={onDuplicate} title={t('mon.duplicate')} aria-label={t('mon.duplicate')}><Copy size={13} /></button>
+        onClick={onDuplicate} title={t('mon.duplicate')} aria-label={named(t('mon.duplicate'))}><Copy size={13} /></button>
       {onDelete && (
         <button type="button" className="mon-act mon-act--danger" disabled={deleting}
-          onClick={onDelete} title={deleteTitle} aria-label={deleteTitle}><Trash2 size={13} /></button>
+          onClick={onDelete} title={deleteTitle} aria-label={named(deleteTitle)}><Trash2 size={13} /></button>
       )}
     </span>
   )

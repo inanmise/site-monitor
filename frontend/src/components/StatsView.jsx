@@ -379,16 +379,18 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
             onChange={e => { setFilterIssuer(e.target.value); pager.setPage(1) }} />
         </div>
         <div className="filter-group">
-          <label>{t('tbl.colStatus')}</label>
+          <label htmlFor="stats-f-status">{t('tbl.colStatus')}</label>
           <SearchableSelect
+            id="stats-f-status"
             value={filterStatus}
             onChange={v => { setFilterStatus(v); pager.setPage(1) }}
             options={STATUS_OPTIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))}
           />
         </div>
         <div className="filter-group">
-          <label>{t('tbl.sort')}</label>
+          <label htmlFor="stats-f-sort">{t('tbl.sort')}</label>
           <SearchableSelect
+            id="stats-f-sort"
             value={sortBy}
             onChange={v => { setSortBy(v); pager.setPage(1) }}
             options={[

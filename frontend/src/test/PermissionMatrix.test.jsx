@@ -191,4 +191,30 @@ describe('PermissionMatrix', () => {
     renderMatrix()
     expect(await screen.findByText(/Salt okunur görünüm|Read-only view/)).toBeInTheDocument()
   })
+
+  // R10 (2026-09-25): "bilinmiyor" ile "yetkin yok" aynı ekrana düşmemeli.
+  const errorBanner = () => document.querySelector('[data-slot="alert"][data-tone="danger"]')
+
+  it('R10: yükleme success:false → HATA bandı + yeniden dene; salt-okunur bandı ve anahtarlar YOK; yeniden deneyince matris gelir', async () => {
+    api.admin.getPermissionMatrix.mockResolvedValueOnce({ success: false, error: '500' })
+    renderMatrix()
+    await waitFor(() => expect(errorBanner()).not.toBeNull())
+    expect(errorBanner()).toHaveTextContent(/Yetki matrisi yüklenemedi|Could not load the permission matrix/)
+    expect(screen.queryByText(/Salt okunur görünüm|Read-only view/)).toBeNull()
+    expect(pills()).toHaveLength(0)
+    expect(screen.queryByRole('button', { name: /reset|varsayılan/i })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Yeniden dene$|^Try again$/ }))
+    await waitFor(() => expect(pills()).toHaveLength(9))
+    expect(api.admin.getPermissionMatrix).toHaveBeenCalledTimes(2)
+    expect(errorBanner()).toBeNull()
+  })
+
+  it('R10: istek FIRLATIRSA ret yakalanır ve hata bandı çıkar (işlenmeyen ret yok)', async () => {
+    api.admin.getPermissionMatrix.mockRejectedValueOnce(new Error('ağ yok'))
+    renderMatrix()
+    await waitFor(() => expect(errorBanner()).not.toBeNull())
+    expect(screen.queryByText(/Salt okunur görünüm|Read-only view/)).toBeNull()
+    expect(screen.queryByText(/Yetkiler yükleniyor|Loading permissions/)).toBeNull()
+  })
 })

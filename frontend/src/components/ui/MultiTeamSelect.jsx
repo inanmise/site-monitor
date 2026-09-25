@@ -12,6 +12,8 @@ import { PickerContent, PickerTrigger, usePickerOpen } from './PickerPopover.jsx
  */
 export default function MultiTeamSelect({
   value = [], onChange, options = [], placeholder, disabled = false, searchThreshold = 4,
+  // Ad yolları SearchableSelect ile aynı (role="combobox" içerikten ad almaz — PickerTrigger).
+  ariaLabel, ariaLabelledBy, id,
 }) {
   const t = useT()
   const { open, openRef, setOpen } = usePickerOpen()
@@ -51,6 +53,9 @@ export default function MultiTeamSelect({
           onOpen={() => setQuery('')}
           disabled={disabled}
           placeholderShown={isEmpty}
+          ariaLabel={ariaLabel}
+          ariaLabelledBy={ariaLabelledBy}
+          id={id}
         >
           {triggerLabel}
         </PickerTrigger>
@@ -67,6 +72,10 @@ export default function MultiTeamSelect({
                     <CommandItem
                       key={String(opt.value)}
                       value={`o:${String(opt.value)}`}
+                      // Seçili durum DUYURULUR: kutu aria-hidden (satırın kendisi seçenek) ve cmdk'nin
+                      // aria-selected'ı klavye VURGUSU demek, seçim değil. Çoklu listbox'ta seçim
+                      // aria-checked ile söylenir — kardeş FacetedFilter ile aynı (2026-09-25, R17).
+                      aria-checked={checked}
                       data-checked={checked ? 'true' : undefined}
                       // Basışta çevir (odak arama kutusunda kalır); klavyede Enter → cmdk onSelect.
                       onMouseDown={(e) => {

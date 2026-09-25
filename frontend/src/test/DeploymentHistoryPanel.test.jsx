@@ -74,6 +74,9 @@ describe('DeploymentHistoryPanel', () => {
     // Silme düğmesi: yalnız MANUAL satır (1 adet)
     const dels = document.querySelectorAll('.deploy-table [data-slot="button"][data-variant="destructive"]')
     expect(dels.length).toBe(1)
+    // 2026-09-25 (R15): ADI kaydı ayırır (sürüm + başlangıç); ipucu kısa kalır
+    expect(dels[0]).toHaveAccessibleName(/^v20\.50\.0 · .+ — (Sil|Delete)$/)
+    expect(dels[0]).toHaveAttribute('title', expect.stringMatching(/^(Sil|Delete)$/))
     fireEvent.click(dels[0])
     await screen.findByText(/silinsin mi|Delete this manual/)
     fireEvent.click(screen.getAllByRole('button', { name: /^(Sil|Delete)$/ }).pop())   // sonuncusu: onay diyaloğu (portal)

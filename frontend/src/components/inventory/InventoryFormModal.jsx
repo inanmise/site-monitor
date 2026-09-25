@@ -120,11 +120,17 @@ function initialForm(mode, record) {
  * @param {boolean} [canManage=true]      yönetici (admin / takım yöneticisi): tüm alanlar + takım değiştirme
  * @param {boolean} [canWrite=false]      ekleme yetkili kullanıcı (USER, inventory.crud): alanlar AÇIK, takım yalnız
  *                                        ekle/kopyala'da seçilir (düzenlemede sunucu mevcut takımı korur)
+ * @param {boolean} [canMoveTeam=false]   DÜZENLEMEDE takım aktarımı. Sunucu kuralının aynası (AdminController
+ *                                        updateInventory): takım yalnız rol ADMIN'de yazılır — global admin ya da
+ *                                        kapsamlı müdür (yönetim kapsamı = görüş kapsamı, açabildiği her kayıt
+ *                                        kapsamında); TEAM_ADMIN ve USER'da mevcut takıma SABİTLENİR. Varsayılan
+ *                                        KAPALI: bilmeyen çağıran kutuyu açıp "Kaydedildi" yalanına yol açmasın.
  * @param {Function} onClose
  * @param {Function} onSaved              (savedResponse) => void — çağıran kapatır + tazeler
  */
 export default function InventoryFormModal({ mode = 'add', record = null, teams: teamsProp,
-                                             canManage = true, canWrite = false, onClose, onSaved, focus = null }) {
+                                             canManage = true, canWrite = false, canMoveTeam = false,
+                                             onClose, onSaved, focus = null }) {
   const t = useT()
   const { theme } = useTheme()
   const toast = useToast()
@@ -148,8 +154,10 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
   // USER takım/grup/etiket seçemediği için kayıt açamıyordu (2026-09-25 kullanıcı bildirimi). Artık ekleme
   // yetkisi alanları açar; takım listesi zaten üyesi olduğu takımlar (çağıran geçer), sunucu üyeliği doğrular.
   const fieldsEnabled = canManage || canWrite
-  // Düzenlemede USER'ın takım değişikliği sunucuda YOK SAYILIR (updateInventory mevcut takımı yazar) → kutu kilitli.
-  const teamPickable = canManage || (canWrite && mode !== 'edit')
+  // Düzenlemede takım değişikliği TEAM_ADMIN ve USER için sunucuda YOK SAYILIR (updateInventory mevcut takımı
+  // yazar; seçilen takımın bildirim grubu düşer, grup adı eski takımın altında yaratılır) ama ekran "Kaydedildi"
+  // diyordu → kutu yalnız sunucunun takımı gerçekten yazdığı rolde açık (R4, 2026-09-25).
+  const teamPickable = mode === 'edit' ? (canMoveTeam && fieldsEnabled) : fieldsEnabled
   const [teamGroups, setTeamGroups] = useState([])   // seçili takımın "cert" grupları (sızıntısız, server-scoped)
   const [teamTags, setTeamTags] = useState([])   // takımın kullanımdaki etiketleri → TagInput önerileri (2026-09-22)
   const [platforms, setPlatforms] = useState([])   // Ayarlar → Platformlar kataloğu (aktifler); düzenlenen kayıttaki pasif kod da listede kalır
@@ -749,10 +757,16 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
  * Domain'den kaydı çözen sarmalayıcı — dashboard kartında envanter ID'si YOK (sertifikalar
  * domain-anahtarlı). Kayıt bulunamazsa (silinmiş / yetki kapsamı dışı) BOŞ FORM AÇILMAZ:
  * kullanıcı doldurup kaydeder ve mükerrer bir envanter kaydı doğardı.
+ *
+ * Yetki propları (R4, 2026-09-25): eskiden hiçbiri geçmiyordu, formun `canManage=true` varsayılanı yüzünden
+ * pano yolunda HERKES için takım kutusu açıktı. Burada varsayılanlar KAPALI; `canWrite` verilmezse matristen
+ * (inventory.crud/edit) okunur — sarmalayıcı PermissionsProvider'ın içinde çizilir, App gövdesi değil.
  */
-export function InventoryFormModalForDomain({ domain, mode = 'edit', onClose, onSaved, focus = null }) {
+export function InventoryFormModalForDomain({ domain, mode = 'edit', onClose, onSaved, focus = null,
+                                              canManage = false, canWrite, canMoveTeam = false }) {
   const t = useT()
   const toast = useToast()
+  const matrixCanWrite = usePermissions().canEdit('inventory.crud')
   const [record, setRecord] = useState(null)
   const [loading, setLoading] = useState(true)
 
@@ -778,5 +792,6 @@ export function InventoryFormModalForDomain({ domain, mode = 'edit', onClose, on
       </div>
     )
   }
-  return <InventoryFormModal mode={mode} record={record} onClose={onClose} onSaved={onSaved} focus={focus} />
+  return <InventoryFormModal mode={mode} record={record} onClose={onClose} onSaved={onSaved} focus={focus}
+    canManage={canManage} canWrite={canWrite ?? matrixCanWrite} canMoveTeam={canMoveTeam} />
 }

@@ -136,7 +136,7 @@ export default function HttpMetricsExplorer() {
       <div className="hme-bar">
         <div className="hme-bar-left">
           <div className="hme-ep"><SearchableSelect value={endpoint} onChange={setEndpoint}
-            options={epOptions} searchThreshold={2} placeholder={t('http.exp.allEndpoints')} /></div>
+            options={epOptions} searchThreshold={2} placeholder={t('http.exp.allEndpoints')} ariaLabel={t('flt.endpoint')} /></div>
           <TimeRangePicker value={range} onChange={setRange} />
           <Button type="button" variant="secondary" size="sm" onClick={load} disabled={loading}>
             <RefreshCw size={14} />{t('http.exp.refresh')}

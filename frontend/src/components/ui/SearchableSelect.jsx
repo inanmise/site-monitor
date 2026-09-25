@@ -43,7 +43,10 @@ const itemValue = (v) => `o:${String(v)}`
 
 export default function SearchableSelect({
   value, onChange, options, placeholder, disabled = false, searchThreshold = 4,
-  creatable = false, onCreate, onDelete, ariaLabel, collapsibleGroups = false
+  creatable = false, onCreate, onDelete, ariaLabel, collapsibleGroups = false,
+  // Ad yolları (role="combobox" içerikten ad almaz — PickerTrigger): ariaLabel, görünür etiketin
+  // id'si ya da `id` + `<label htmlFor>` / Field render-prop'u.
+  ariaLabelledBy, id,
 }) {
   const t = useT()
   const { open, openRef, setOpen } = usePickerOpen()
@@ -242,6 +245,8 @@ export default function SearchableSelect({
           disabled={disabled}
           placeholderShown={isEmpty}
           ariaLabel={ariaLabel}
+          ariaLabelledBy={ariaLabelledBy}
+          id={id}
         >
           {triggerLabel}
         </PickerTrigger>

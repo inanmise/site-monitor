@@ -929,7 +929,8 @@ export default function UserPushSettings() {
           placeholder="N00001" />
         <div className="userpush-test-row">
           <SearchableSelect value={testTemplate} onChange={setTestTemplate}
-            options={TEMPLATE_KEYS.map((k) => ({ value: k, label: t(`userpush.template.${k}`) }))} />
+            options={TEMPLATE_KEYS.map((k) => ({ value: k, label: t(`userpush.template.${k}`) }))}
+            ariaLabel={t('userpush.testTemplateAria')} />
           <Button type="button" variant="outline" onClick={sendTest} disabled={testing || !enabled}
             title={!enabled ? t('userpush.disabledWarn') : undefined}>
             {testing ? <Spinner size={14} inline decorative /> : <Send size={14} />} {t('userpush.testSend')}
@@ -948,7 +949,7 @@ export default function UserPushSettings() {
         <SectionHead id="explain" title={t('userpush.explainTitle')} open={isOpen('explain')} onToggle={() => toggleSec('explain')}></SectionHead>
         <p className="section-desc">{t('userpush.explainDesc')}</p>
         <div className="userpush-log-filters">
-          <SearchableSelect value={exTeam} onChange={(v) => setExTeam(v)} placeholder={t('userpush.explainPickTeam')} searchThreshold={4}
+          <SearchableSelect value={exTeam} onChange={(v) => setExTeam(v)} placeholder={t('userpush.explainPickTeam')} searchThreshold={4} ariaLabel={t('userpush.explainPickTeam')}
             options={[{ value: '', label: t('userpush.explainPickTeam') }, ...(teams || []).map(tm => ({ value: String(tm.id), label: tm.name }))]} />
           <SegmentedControl value={exLevel} onChange={setExLevel} ariaLabel={t('userpush.explainLevel')}
             options={['WARNING', 'HIGH', 'CRITICAL'].map(l => ({ value: l, label: l }))} />
@@ -998,10 +999,10 @@ export default function UserPushSettings() {
             onChange={(e) => { setFUser(e.target.value); setPage(0) }} />
           <SearchableSelect value={fStatus} onChange={(v) => { setFStatus(v); setPage(0) }}
             options={[{ value: '', label: t('userpush.allStatuses') },
-              ...STATUS_OPTIONS.map((s) => ({ value: s, label: s }))]} searchThreshold={8} />
+              ...STATUS_OPTIONS.map((s) => ({ value: s, label: s }))]} searchThreshold={8} ariaLabel={t('flt.status')} />
           <SearchableSelect value={fTrigger} onChange={(v) => { setFTrigger(v); setPage(0) }}
             options={[{ value: '', label: t('userpush.allTriggers') },
-              ...TRIGGERS.map((s) => ({ value: s, label: t('userpush.trigger.' + s) }))]} searchThreshold={8} />
+              ...TRIGGERS.map((s) => ({ value: s, label: t('userpush.trigger.' + s) }))]} searchThreshold={8} ariaLabel={t('flt.trigger')} />
           <input type="text" className="upt-search" placeholder="notificationId" value={fNotifId}
             onChange={(e) => { setFNotifId(e.target.value); setPage(0) }} />
           <Button type="button" variant="outline" size="sm" onClick={loadDeliveries} aria-label={t('app.refresh')}>

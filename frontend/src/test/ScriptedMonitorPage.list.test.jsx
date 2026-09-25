@@ -66,7 +66,9 @@ describe('ScriptedMonitorPage — liste ve kartlar', () => {
     expect(card.querySelector('.upt-badge')).not.toBeNull()
     expect(card.querySelector('.upt-card-domain')).not.toBeNull()
     // Aksiyonlar .upt-card-foot İÇİNDE (2026-08 şikayeti: butonlar kayıyordu)
-    expect(within(card.querySelector('.upt-card-foot')).getByRole('button', { name: /^(Şimdi Çalıştır|Run now)$/i })).toBeInTheDocument()
+    // Ad kartı ayırır (izleme adı + eylem; 2026-09-25, R15) — ipucu kısa kalır
+    const run = within(card.querySelector('.upt-card-foot')).getByRole('button', { name: /^OIDC Login — (Şimdi Çalıştır|Run now)$/i })
+    expect(run).toHaveAttribute('title', expect.stringMatching(/^(Şimdi Çalıştır|Run now)$/i))
     expect(card.querySelector('.upt-card-foot .mon-act--edit')).not.toBeNull()
     // Tanımsız eski sınıflar terk edildi
     expect(container.querySelector('.mon-card')).toBeNull()

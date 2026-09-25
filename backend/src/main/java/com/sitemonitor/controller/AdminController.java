@@ -295,6 +295,14 @@ public class AdminController {
         if (isTeamAdmin(session) || !canManageTeamResource(session, existing.getTeamId())) {
             item.setTeamId(existing.getTeamId());
         }
+        // HEDEF takım da yönetim kapsamında olmalı (2026-09-25, regresyon R4 incelemesi): yalnız kaynak takım
+        // denetleniyordu — kaynağı yöneten kapsamlı müdür kaydı kapsamı DIŞINDAKİ bir takıma taşıyabiliyordu.
+        if (item.getTeamId() != null && !java.util.Objects.equals(item.getTeamId(), existing.getTeamId())
+                && !canManageTeamResource(session, item.getTeamId())) {
+            log.warn("Inventory team move outside management scope by user={} from={} to={}",
+                    actor(session), existing.getTeamId(), item.getTeamId());
+            throw new SecurityException("Access denied: the target team is outside your management scope");
+        }
         item.setTlsMode(normalizeTlsMode(item.getTlsMode()));
 
         // Build diff BEFORE applying changes

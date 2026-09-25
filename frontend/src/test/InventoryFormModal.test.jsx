@@ -42,6 +42,10 @@ vi.mock('@uiw/react-md-editor', () => ({
 
 import { api } from '../api/client'
 import InventoryFormModal, { InventoryFormModalForDomain } from '../components/inventory/InventoryFormModal.jsx'
+import { PermissionsProvider } from '../contexts/PermissionsProvider.jsx'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const TEAMS = [{ id: 1, name: 'SY-Takım A' }, { id: 2, name: 'SY-Takım B' }]
 
@@ -266,6 +270,28 @@ describe('InventoryFormModal', () => {
     expect(tagInput()).toBeNull()   // TagInput kapalıyken yazma kutusunu hiç çizmez
   })
 
+  // ── R4 (2026-09-25): düzenlemede takım kutusu SUNUCU kuralına eşit. updateInventory takımı yalnız rol
+  //    ADMIN'de yazar; TEAM_ADMIN/USER'da sabitler ama ekran "Kaydedildi" diyor, bildirim grubu düşüyordu. ──
+  it('R4 düzenle — ADMIN (canMoveTeam): takım kutusu AÇIK', () => {
+    render(<InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} canManage canMoveTeam onClose={() => {}} onSaved={() => {}} />)
+    expect(teamPicker()).toBeEnabled()
+  })
+
+  it('R4 düzenle — TEAM_ADMIN (canManage, canMoveTeam yok): takım KİLİTLİ, diğer alanlar açık', () => {
+    render(<InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} canManage onClose={() => {}} onSaved={() => {}} />)
+    expect(teamPicker()).toBeDisabled()
+    expect(tagInput()).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: /Grup|Group/ })).toBeEnabled()
+  })
+
+  it('R4 ekle/kopyala DEĞİŞMEDİ: TEAM_ADMIN (canManage) takımı seçer; canMoveTeam yalnız düzenlemeyi etkiler', () => {
+    const { unmount } = render(<InventoryFormModal mode="add" teams={TEAMS} canManage onClose={() => {}} onSaved={() => {}} />)
+    expect(teamPicker()).toBeEnabled()
+    unmount()
+    render(<InventoryFormModal mode="duplicate" record={RECORD} teams={TEAMS} canManage onClose={() => {}} onSaved={() => {}} />)
+    expect(teamPicker()).toBeEnabled()
+  })
+
   it('teams prop verilince getTeams çağrılmaz; verilmeyince çağrılır', async () => {
     const { unmount } = render(
       <InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
@@ -348,6 +374,53 @@ describe('InventoryFormModalForDomain', () => {
 
     await waitFor(() => expect(onClose).toHaveBeenCalled())
     expect(screen.queryByRole('button', { name: /^Kaydet$|^Save$/i })).toBeNull()
+  })
+
+  // ── R4: pano kartı yolu. Sarmalayıcı eskiden hiçbir yetki propu geçmiyordu → formun canManage=true
+  //    varsayılanıyla takım kutusu HERKESE açıktı (USER kendi takımının kartından takımı "değiştiriyordu"). ──
+  const teamPicker = () => screen.getByRole('combobox', { name: /Takım|Team/ })
+  const tagInput = () => screen.queryByPlaceholderText(/eklemek için yazıp Enter|type and press Enter/)
+  const openForDomain = async (props = {}, perms = null) => {
+    api.admin.getInventoryByDomain.mockResolvedValueOnce({ success: true, data: RECORD })
+    if (perms) api.me.getPermissions.mockResolvedValue({ success: true, data: perms })
+    const el = <InventoryFormModalForDomain domain="a.example.com" mode="edit" onClose={() => {}} onSaved={() => {}} {...props} />
+    render(perms ? <PermissionsProvider user="kullanici">{el}</PermissionsProvider> : el)
+    await waitFor(() => expect(screen.getByDisplayValue('a.example.com')).toBeInTheDocument())
+  }
+
+  it('R4 pano düzenle — varsayılan (prop yok): takım kutusu KAPALI (güvenli varsayılan)', async () => {
+    await openForDomain()
+    expect(teamPicker()).toBeDisabled()
+  })
+
+  it('R4 pano düzenle — ADMIN (canManage + canMoveTeam): takım kutusu AÇIK', async () => {
+    await openForDomain({ canManage: true, canMoveTeam: true })
+    expect(teamPicker()).toBeEnabled()
+  })
+
+  it('R4 pano düzenle — TEAM_ADMIN (canManage, canMoveTeam yok): takım KİLİTLİ', async () => {
+    await openForDomain({ canManage: true })
+    expect(teamPicker()).toBeDisabled()
+    expect(tagInput()).toBeInTheDocument()
+  })
+
+  it('R4 pano düzenle — USER: alanlar matristen (inventory.crud/edit) AÇILIR, takım KİLİTLİ', async () => {
+    await openForDomain({}, { 'inventory.crud': { view: true, edit: true } })
+    await waitFor(() => expect(tagInput()).toBeInTheDocument())
+    expect(teamPicker()).toBeDisabled()
+  })
+
+  it('R4 pano kopyala — USER (matris yetkili): takım SEÇİLEBİLİR (ekleme yolu değişmedi)', async () => {
+    await openForDomain({ mode: 'duplicate' }, { 'inventory.crud': { view: true, edit: true } })
+    await waitFor(() => expect(teamPicker()).toBeEnabled())
+  })
+
+  // App bileşeni bu dosyada çizilemeyecek kadar ağır; kart yolunun yetki proplarını GEÇTİĞİ kaynaktan pinlenir.
+  it('R4 kaynak sözleşmesi: App kart yolu canManage + canMoveTeam (rol ADMIN) geçer', () => {
+    const app = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../App.jsx'), 'utf8')
+    const el = app.match(/<InventoryFormModalForDomain[\s\S]*?\/>/)?.[0] ?? ''
+    expect(el).toMatch(/canManage=\{canManageInventory\}/)
+    expect(el).toMatch(/canMoveTeam=\{systemRole === 'ADMIN'\}/)
   })
 })
 

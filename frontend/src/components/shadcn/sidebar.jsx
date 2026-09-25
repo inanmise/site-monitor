@@ -407,8 +407,12 @@ function SidebarGroupLabel({
       data-slot="sidebar-group-label"
       data-sidebar="group-label"
       className={cn(
-        "flex h-8 shrink-0 items-center rounded-md px-2 text-xs font-medium text-sidebar-foreground/70 ring-sidebar-ring outline-hidden transition-[margin,opacity] duration-200 ease-linear focus-visible:ring-2 [&>svg]:size-4 [&>svg]:shrink-0",
-        "group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0",
+        "flex h-8 shrink-0 items-center rounded-md px-2 text-xs font-medium text-sidebar-foreground/70 ring-sidebar-ring outline-hidden transition-[margin,opacity,visibility] duration-200 ease-linear focus-visible:ring-2 [&>svg]:size-4 [&>svg]:shrink-0",
+        // Proje uyarlaması (2026-09-25, R17): ikon kipinde yalnız opacity-0 → etiket (asChild ile
+        // düğme olabilir) görünmez ama ODAKLANABİLİR kalıyordu. `invisible` Tab sırasından ve
+        // erişilebilirlik ağacından çıkarır; `visibility` geçişe eklendi → solma animasyonu korunur
+        // (gizlenirken süre sonunda, görünürken hemen değişir).
+        "group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0 group-data-[collapsible=icon]:invisible",
         className
       )}
       {...props}

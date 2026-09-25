@@ -60,6 +60,13 @@ class AuditLogRepositoryTest {
         repo.save(carol);
         // Kimliksiz giriş olayı: yalnız kullanıcı adı taşır, büyük harfle yazılmış.
         repo.save(a(6, "2026-07-28T15:00:00", "LOGIN_FAILED", "DAVE", null, "USER", "dave", "FAILURE"));
+        // Ekip üyesi ama rolü ADMIN/AUDIT: satırları ekip kapsamına GİRMEZ (R2 kararı).
+        AuditLog adminMate = a(7, "2026-07-28T16:00:00", "USER_UPDATE", "carol", 3L, "USER", "9", "SUCCESS");
+        adminMate.setActorTeamId(5L); adminMate.setActorRole("ADMIN");
+        repo.save(adminMate);
+        AuditLog auditorMate = a(8, "2026-07-28T17:00:00", "SQL_EXECUTE", "bob", 2L, "SYSTEM", "sql", "SUCCESS");
+        auditorMate.setActorRole("AUDIT");
+        repo.save(auditorMate);
 
         // Kapsam: takım 5 + üye kimliği 2 (bob) + üye adı "dave". alice (kimlik 1) ekip dışı.
         Page<AuditLog> p = repo.findAdvanced(null, null, false, NO_TYPES, null, null, null, null, null, null, false, null,

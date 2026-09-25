@@ -341,14 +341,22 @@ export default function AuditLogViewer({ fullScope = true }) {
     api.admin.getAuditStats().then(r => { if (r?.success) setStats(r.data) })
   }, [fullScope])
 
+  // R12 (2026-09-25): 15 sn'lik canlı tazeleme ile preset/kart/sayfa tetikleri üst üste binebiliyor;
+  // ESKİ süzgecin geç gelen yanıtı yeni preset çipinin altına yazılıyordu. Yalnız EN SON isteğin
+  // yanıtı ekrana yazar (PageSpeedMonitorPage resSeq deseni); bayat yanıt yükleme bayrağına da dokunmaz.
+  const logsSeq = useRef(0)
+  useEffect(() => () => { logsSeq.current++ }, [])   // sökülünce uçuştaki yanıt state'e yazmasın
   const loadLogs = useCallback((p = 0, f = filters, sz = size) => {
+    const seq = ++logsSeq.current
     setLoading(true)
     // Hata ARTIK SESSIZ DEGIL: eskiden `r.success` false ise hicbir sey olmuyordu ve
     // kullanici bos tabloya bakip "kayit yok" saniyordu.
     api.admin.getAuditLogs({ page: p, size: sz, ...f }).then(r => {
+      if (seq !== logsSeq.current) return   // daha yeni bir istek var → bu yanıtı AT
       if (r?.success) { setRows(r.data); setTotal(r.total); setPage(r.page); setLoadError(false) }
       else setLoadError(true)
-    }).catch(() => setLoadError(true)).finally(() => setLoading(false))
+    }).catch(() => { if (seq === logsSeq.current) setLoadError(true) })
+      .finally(() => { if (seq === logsSeq.current) setLoading(false) })
   }, [filters, size])
 
   useEffect(() => { loadStats(); loadLogs(readUrlInt('page', 1) - 1) }, [])
@@ -563,6 +571,7 @@ export default function AuditLogViewer({ fullScope = true }) {
           value={filters.eventType}
           onChange={v => setFilters(f => ({ ...f, eventType: v }))}
           placeholder={t('audit.allEvents')}
+          ariaLabel={t('flt.eventType')}
           options={[
             { value: '', label: t('audit.allEvents') },
             ...eventTypeOptions,
@@ -572,6 +581,7 @@ export default function AuditLogViewer({ fullScope = true }) {
           value={filters.outcome}
           onChange={v => setFilters(f => ({ ...f, outcome: v }))}
           placeholder={t('audit.allOutcomes')}
+          ariaLabel={t('flt.outcome')}
           options={[
             { value: '', label: t('audit.allOutcomes') },
             ...OUTCOMES.map(o => ({ value: o, label: outcomeText[o] || o })),

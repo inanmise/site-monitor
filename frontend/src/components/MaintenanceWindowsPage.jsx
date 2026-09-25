@@ -255,14 +255,16 @@ export default function MaintenanceWindowsPage({ systemRole }) {
                   <td>{statusBadge(w.status)}</td>
                   <td className="mw-th-actions">
                     {canManage && <>
-                      <button className="mw-act" title={w.status === 'paused' ? t('mw.resume') : t('mw.pause')} onClick={() => togglePause(w)}>
+                      {/* Adlar satırı ayırır (pencere adı + eylem); ipucu kısa kalır (2026-09-25, R15). */}
+                      <button className="mw-act" title={w.status === 'paused' ? t('mw.resume') : t('mw.pause')}
+                        aria-label={t('a11y.rowAction', w.name, w.status === 'paused' ? t('mw.resume') : t('mw.pause'))} onClick={() => togglePause(w)}>
                         {w.status === 'paused' ? <Play size={13} /> : <Pause size={13} />}
                       </button>
-                      <button className="mw-act" title={t('mw.edit')} onClick={() => openEdit(w)}><Pencil size={13} /></button>
+                      <button className="mw-act" title={t('mw.edit')} aria-label={t('a11y.rowAction', w.name, t('mw.edit'))} onClick={() => openEdit(w)}><Pencil size={13} /></button>
                       {/* Pencerenin GEÇMİŞİ: planlı kesinti alarmları susturur, dolayısıyla
                           "bu pencereyi kim genişletti" sorusunun izlenebilir olması gerekir. */}
-                      <button className="mw-act" title={t('chg.tab')} onClick={() => setHistoryItem(w)}><History size={13} /></button>
-                      <button className="mw-act mw-act-danger" title={t('mw.delete')} onClick={() => del(w)}><Trash2 size={13} /></button>
+                      <button className="mw-act" title={t('chg.tab')} aria-label={t('a11y.rowAction', w.name, t('chg.tab'))} onClick={() => setHistoryItem(w)}><History size={13} /></button>
+                      <button className="mw-act mw-act-danger" title={t('mw.delete')} aria-label={t('a11y.rowAction', w.name, t('mw.delete'))} onClick={() => del(w)}><Trash2 size={13} /></button>
                     </>}
                   </td>
                 </tr>

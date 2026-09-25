@@ -343,6 +343,27 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.success").value(true));
     }
 
+    // 2026-09-25 regresyon R4 incelemesi: düzenleme ucu takım değişikliğinde yalnız KAYNAK takımı denetliyordu.
+    @Test
+    @DisplayName("PUT inventory: kapsamlı müdür kaydı yönetim kapsamı DIŞINDAKİ takıma taşıyamaz (403, yazılmaz); kendi takımında düzenler")
+    void updateInventory_scopedAdmin_cannotMoveToForeignTeam() throws Exception {
+        CertificateInventory existing = inventory("kendi.example.com");
+        existing.setId(1L);
+        existing.setTeamId(2L);
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+        when(inventoryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        String body = "{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"kendi.example.com\",\"port\":443,\"active\":true,\"team_id\":%d}";
+
+        mvc.perform(put("/api/admin/inventory/1").session(scopedAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON).content(String.format(body, 9)))
+                .andExpect(status().isForbidden());
+        verify(inventoryRepo, org.mockito.Mockito.never()).save(any());
+
+        mvc.perform(put("/api/admin/inventory/1").session(scopedAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON).content(String.format(body, 2)))
+                .andExpect(status().isOk());
+    }
+
     @Test
     @DisplayName("PUT /api/admin/inventory/{id} deactivating (active true→false) closes open alerts")
     void updateInventory_deactivate_closesAlerts() throws Exception {

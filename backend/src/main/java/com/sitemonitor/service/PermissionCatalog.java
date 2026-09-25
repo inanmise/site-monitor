@@ -214,7 +214,7 @@ public final class PermissionCatalog {
             // release_history.read (2026-09-19, ürün kararı): Sistem Sağlığı'ndaki HER bölüm her kademeye açık —
             // Sürüm & Dağıtım bölümü de. Yazma (release_history.edit) yönetici alanı olarak kalır.
             "release_history.read",
-            // audit_log.read: denetim kaydı sistem-geneli (tüm takımlar/kullanıcılar) → yalnız
+            // audit_log.read: SİSTEM GENELİ denetim kaydı (tüm takımlar/kullanıcılar) → yalnız
             // global admin/AUDIT erişebilir (requireAuditAccess); TEAM_ADMIN'e verilmez.
             "weak_algo.read", "weak_algo.manage",
             // monitoring.crud/trigger: kendi takımı için keyword/ping izleme oluştur/düzenle/çalıştır
@@ -285,7 +285,8 @@ public final class PermissionCatalog {
             // ve k6 zaman/kaynak tavanları herkese aynı şekilde uygulanır.
             // Her iki eylem de "sensitive" işaretli kalır: matriste kapatmak tek tık.
             "monitoring.scripted",
-            // audit_log.read: sistem-geneli denetim → yalnız admin/AUDIT (requireAuditAccess)
+            // audit_log.read: SİSTEM GENELİ denetim → yalnız admin/AUDIT (requireAuditAccess). Ekip kapsamlı
+            // Denetim Logu (ekip arkadaşlarının kayıtları) bu izne BAĞLI DEĞİL, herkese açık (2026-09-25 kararı).
             "weak_algo.read",
             // Haftalık raporlar: USER kendi takımının raporunu yazar/düzenler
             // (onay yetkisi yok — PO onayı servis tarafında orgRole ile ayrı)

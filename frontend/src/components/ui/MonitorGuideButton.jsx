@@ -30,7 +30,9 @@ export default function MonitorGuideButton({ type }) {
           <div className="modal-box modal-wide mguide-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-head">
               <h3><BookOpen size={17} style={{ verticalAlign: '-3px', marginRight: 6, color: '#7c3aed' }} />{t('guideForm.title')}</h3>
-              <button type="button" className="icon-btn" onClick={() => setOpen(false)}><X size={18} /></button>
+              {/* İkon-yalnız düğme: adı i18n'den (dokuz sayfada adsız "düğme" duyuluyordu — 2026-09-25, R16). */}
+              <button type="button" className="icon-btn" onClick={() => setOpen(false)}
+                aria-label={t('app.close')} title={t('app.close')}><X size={18} aria-hidden="true" /></button>
             </div>
             <div className="mguide-body">
               <MarkdownEditor value={md} editable={false} />

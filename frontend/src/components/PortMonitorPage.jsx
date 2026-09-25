@@ -540,12 +540,12 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', marginBottom: '14px', gap: 8 }}>
           {hasTeamOptions && (
-            <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />
+            <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />
           )}
           {hasGroupOptions && (
-            <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />
+            <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} ariaLabel={t('flt.group')} />
           )}
-          {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} />}
+          {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
           <input className="upt-search" type="text"
             placeholder={t('port.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
@@ -609,7 +609,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
                     "mon-actions" yapiyor; ayni sinifi ic ice uygulamak gap/margin'i iki
                     kez sayip ScriptedMonitorPage'den farkli bir bosluk uretiyordu. */}
                 {canManageRow(m) && (
-                  <MonitorCardActions
+                  <MonitorCardActions rowLabel={`${m.host}:${m.port}`}
                     running={isRunning(m.id)}
                     onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
                     checkTitle={t('port.check')} editTitle={t('port.edit')}

@@ -40,8 +40,14 @@ const TRIGGER_CLASS = cn(
  * Tetik: shadcn Button (`role="combobox"`). Açılış FARE BASIŞINDA — eski sözleşme; odak
  * tetiğe hiç geçmeden liste açılır ve arama kutusuna gider. Radix'in `click` toggle'ı bu yüzden
  * bastırılıyor: bastırılmasaydı basış açar, ardından gelen tık hemen kapatırdı.
+ *
+ * AD: `role="combobox"` adını İÇERİKTEN ALMAZ (ARIA "name from author") — tetikte yazan seçili
+ * değer ad değil, değerdir. Eski `.ss-trigger` düz bir düğmeydi ve adını içerikten alıyordu;
+ * rol değişince ad sessizce düştü (2026-09-25, R17). Adın üç yolu var: `ariaLabel`, görünür
+ * etiketin id'si (`ariaLabelledBy`) ya da `id` + `<label htmlFor>` / Field render-prop'u.
+ * Tetiği bir `<label>` sarıyorsa ad oradan gelir. Kapı: rowAccessibleNames.test.js.
  */
-export function PickerTrigger({ open, openRef, setOpen, onOpen, disabled, placeholderShown, ariaLabel, children }) {
+export function PickerTrigger({ open, openRef, setOpen, onOpen, disabled, placeholderShown, ariaLabel, ariaLabelledBy, id, children }) {
   const toggle = () => {
     const next = !openRef.current
     if (next) onOpen?.()
@@ -68,12 +74,14 @@ export function PickerTrigger({ open, openRef, setOpen, onOpen, disabled, placeh
       }}
     >
       <Button
+        id={id}
         type="button"
         variant="outline"
         role="combobox"
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={ariaLabel}
+        aria-labelledby={ariaLabelledBy}
         disabled={disabled}
         data-placeholder={placeholderShown ? '' : undefined}
         className={TRIGGER_CLASS}

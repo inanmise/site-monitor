@@ -271,7 +271,9 @@ export default function IncidentsPage({ systemRole }) {
                     <td onClick={e => e.stopPropagation()}>{(inc.team_name || inc.team_id != null) ? <TeamBadge teamId={inc.team_id} teamName={inc.team_name} /> : <span className="inv-muted">—</span>}</td>
                     <td>{rootCauseCell(inc.root_cause)}</td>
                     <td>
-                      <button className="inc-comments-btn" onClick={e => { e.stopPropagation(); setCommentsFor(inc) }}>
+                      <button className="inc-comments-btn"
+                        aria-label={t('a11y.rowAction', `${inc.monitor?.name || '—'} · ${formatIncidentTime(inc.started_at, dateLocale)}`, t('incov.comments', inc.comment_count ?? 0))}
+                        onClick={e => { e.stopPropagation(); setCommentsFor(inc) }}>
                         <MessageSquare size={13} />{t('incov.comments', inc.comment_count ?? 0)}
                       </button>
                     </td>
@@ -286,7 +288,11 @@ export default function IncidentsPage({ systemRole }) {
                     </td>
                     <td className="inc-th-actions">
                       {isAdmin && (
-                        <button className="inc-del-btn" title={t('incov.delete')} onClick={e => { e.stopPropagation(); del(inc) }}><Trash2 size={13} /></button>
+                        <button className="inc-del-btn" title={t('incov.delete')}
+                          // Ad olayı ayırır (izleme + başlangıç): silme onayı hedefi ADIYLA söylemiyor,
+                          // her satırda aynı "Sil" duyuluyordu (2026-09-25, R15).
+                          aria-label={t('a11y.rowAction', `${inc.monitor?.name || '—'} · ${formatIncidentTime(inc.started_at, dateLocale)}`, t('incov.delete'))}
+                          onClick={e => { e.stopPropagation(); del(inc) }}><Trash2 size={13} /></button>
                       )}
                     </td>
                   </tr>

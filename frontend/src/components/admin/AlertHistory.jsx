@@ -1238,11 +1238,11 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
             shownCount={alerts.length} />
 
           <div className="upt-toolbar alh-toolbar">
-            <SearchableSelect value={levelFilter} onChange={setLevelFilter} options={levelOptions} />
+            <SearchableSelect value={levelFilter} onChange={setLevelFilter} options={levelOptions} ariaLabel={t('flt.level')} />
             {teamOptions.length > 1 && (
-              <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} searchThreshold={2} />
+              <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} searchThreshold={2} ariaLabel={t('flt.team')} />
             )}
-            <SearchableSelect value={ackFilter} onChange={setAckFilter} options={ackOptions} />
+            <SearchableSelect value={ackFilter} onChange={setAckFilter} options={ackOptions} ariaLabel={t('flt.ack')} />
             <input className="upt-search" type="text" placeholder={t('alh.searchPlaceholder')}
               value={search} onChange={e => setSearch(e.target.value)} />
             {hasActiveFilters && (
@@ -1379,7 +1379,9 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
                     className="alh-card-check"
                     checked={selected.has(a.id)}
                     onChange={() => toggleSelect(a.id)}
-                    aria-label={t('alh.bulk.selectOne')}
+                    // Ad alarmı ayırır (alan adı + tür): toplu onayla/çöz/yeniden bildir onayı yalnız
+                    // ADET söylüyor — "Bu alarmı seç" her kartta aynıydı (2026-09-25, R5).
+                    aria-label={t('alh.bulk.selectOneFor', a.domain, alertTypeLabel(t, a.alert_type))}
                   />
                   <span className={`alert-level-badge alh-lvl-bg--${levelClass(a.alert_level)}`}>
                     {levelLabel[a.alert_level] || a.alert_level}

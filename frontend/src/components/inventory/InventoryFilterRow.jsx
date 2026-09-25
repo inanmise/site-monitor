@@ -2,8 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
-import { columnFilterOptions } from './inventoryModel.js'
+import { columnFilterOptions, INVENTORY_COLUMNS } from './inventoryModel.js'
 import { INVENTORY_FLAGS } from '../../utils/inventoryFlags.js'
+
+/** Kolon anahtarı → başlık i18n anahtarı (seçicinin erişilebilir adı başlıkla aynı sözcüğü taşır). */
+const COL_LABEL = Object.fromEntries(INVENTORY_COLUMNS.map((c) => [c.key, c.labelKey]))
+/** Süzgeç anahtarı kolon anahtarından farklıysa eşlemesi; listede olmayanlar aynı adı taşır. */
+const FILTER_COL = { ugTeam: 'ug_team', flag: 'flags', domainExp: 'domain_exp', tag: 'tags' }
 
 /**
  * Domain Envanteri tablosu — başlığın altındaki KOLON SÜZGEÇ SATIRI (2026-09-22, kullanıcı isteği: "her kolonda
@@ -22,8 +27,15 @@ export default function InventoryFilterRow({ filters, onFilters, allRows = [], c
   filtersRef.current = filters
   const opts = useMemo(() => columnFilterOptions(allRows), [allRows])
   const any = { value: '', label: t('inv.filterAny') }
+  // Ad = KOLON: seçicinin tetiği role="combobox" ve içerikten ad almaz; hücrede görünür etiket yok
+  // (başlık üstte). Adsızken on beş seçicinin hepsi yalnız "combobox" duyuluyordu (2026-09-25, R17).
+  // Süzgeç anahtarı kolon anahtarından farklı olabilir (ugTeam ↔ ug_team) — eşleme burada.
+  const colAria = (key) => {
+    const col = FILTER_COL[key] ?? key
+    return t('flt.column', t(COL_LABEL[col] ?? col))
+  }
   const sel = (key, options, extra = {}) => (
-    <SearchableSelect value={filters[key] || ''} onChange={(v) => set({ [key]: v })} options={[any, ...options]} searchThreshold={6} {...extra} />
+    <SearchableSelect value={filters[key] || ''} onChange={(v) => set({ [key]: v })} options={[any, ...options]} searchThreshold={6} ariaLabel={colAria(key)} {...extra} />
   )
   // Domain metni: yazarken 250 ms bekle (her tuşta süzme + URL yazımı olmasın); dıştan temizlenince taslak da boşalır
   const [domainDraft, setDomainDraft] = useState(filters.domain || '')

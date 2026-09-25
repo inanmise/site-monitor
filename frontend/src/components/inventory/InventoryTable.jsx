@@ -136,7 +136,7 @@ export default function InventoryTable({
               <tr key={r.id} className={del ? 'inv-row-deleted' : ''}>
                 {canManage && (
                   <td onClick={(e) => e.stopPropagation()}>
-                    {!del && <input type="checkbox" checked={selected.has(r.id)} onChange={() => onToggle(r.id)} aria-label={r.domain} />}
+                    {!del && <input type="checkbox" checked={selected.has(r.id)} onChange={() => onToggle(r.id)} aria-label={t('bulk.selectOneFor', r.domain)} />}
                   </td>
                 )}
                 <td className="inv-td--sticky">

@@ -57,6 +57,12 @@ describe('PushLogView', () => {
     expect(document.querySelectorAll('.sml-table tbody tr')).toHaveLength(3)
     expect(screen.getByText(/3 deneme|3 attempts/)).toBeInTheDocument()
     expect(screen.getAllByText(/HTTP 500/).length).toBeGreaterThan(0)   // 'HTTP 500 · 3 deneme' aynı düğümde
+    // 2026-09-25 (R15): satır eylemlerinin ADI kaydı ayırır (izleme + zaman) — yeniden kuyruğa alma
+    // YAN ETKİLİ ve her satırda aynı adla duyuluyordu. İpucu kısa kalır.
+    const detailNames = screen.getAllByRole('button', { name: /— (Push Detayı|Push Details)$/ }).map((b) => b.getAttribute('aria-label'))
+    expect(detailNames).toHaveLength(3)
+    expect(new Set(detailNames).size).toBe(3)
+    expect(detailNames).toContain(`api · 2026-09-19 11:54 — ${detailNames[0].endsWith('Details') ? 'Push Details' : 'Push Detayı'}`)
   })
 
   it('KPI Engellendi → status=BLOCKED; seviye kırılımı → level; alıcı satırı → username çipi; filtreleri temizle', async () => {

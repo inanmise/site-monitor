@@ -130,7 +130,7 @@ function DayListModal({ modal, th, t, onClose, onSelectDomain, onPlan }) {
     const s = q.trim().toLowerCase()
     return s ? modal.certs.filter((c) => (c.domain || '').toLowerCase().includes(s) || (c.team_name || '').toLowerCase().includes(s)) : modal.certs
   }, [modal.certs, q])
-  const pager = usePagination(rows, { listKey: 'forecast-day', defaultSize: 10, resetDeps: [q, modal] })
+  const pager = usePagination(rows, { listKey: 'forecast-day', defaultSize: 10, sizeOptions: [10, 25, 50], resetDeps: [q, modal] })
   const title = modal.title ?? t('forecast.dayModalTitle', formatDateOnly(modal.key), modal.certs.length)
   return (
     <ModalShell open onClose={onClose} title={title} icon={Calendar} size="lg" scrollBody
@@ -151,7 +151,7 @@ function DayListModal({ modal, th, t, onClose, onSelectDomain, onPlan }) {
           </li>)
       })}</ul>
       {rows.length === 0 && <div className="fc-no-data">{t('empty.hintFilter')}</div>}
-      <PaginationBar {...pager} sizeOptions={[10, 25, 50]} />
+      <PaginationBar {...pager} />
     </ModalShell>
   )
 }

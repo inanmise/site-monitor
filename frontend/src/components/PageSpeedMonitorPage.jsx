@@ -680,10 +680,10 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
 
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
-          {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />}
-          {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} />}
+          {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} ariaLabel={t('flt.group')} />}
+          {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
           <SearchableSelect value={proxyFilter} onChange={setProxyFilter} options={proxyFilterOptions} ariaLabel={t('mon.proxy.label')} />
-          {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />}
+          {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />}
           <input className="upt-search" type="text" placeholder={t('pspd.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
@@ -764,7 +764,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
               <div className="upt-card-foot">
                 <span>{m.last_check ? formatDateSec(m.last_check) : ''}</span>
                 {canManageRow(m) && (
-                  <MonitorCardActions
+                  <MonitorCardActions rowLabel={m.url}
                     running={isRunning(m.id)}
                     onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
                     checkTitle={t('pspd.check')} editTitle={t('pspd.edit')}
@@ -876,7 +876,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                       { value: '', label: t('pspd.resLatest') },
                       ...breaches.map(b => ({ value: String(b.check_id), label: formatDateSec(b.checked_at) })),
                     ]}
-                    searchThreshold={8} />
+                    searchThreshold={8} ariaLabel={t('pspd.snapshotLabel')} />
                   <span className="field-hint pspd-snapshot-count">
                     {t('pspd.breachCount', breaches.length)}</span>
                 </>)}

@@ -27,6 +27,18 @@ const VARIANTS = {
   prompt:  { Icon: Pencil,        tone: 'primary' },
 }
 
+/**
+ * Onay düğmesinin VARSAYILAN metni (çağıran `confirmText` vermezse) — tip başına i18n anahtarı.
+ * Çizim anında `t()` ile çözülür, yani dil sonradan değişse de doğru dilde görünür. İptal'in
+ * varsayılanı `dlg.cancel`. Türkçe metinler eskisiyle birebir (Sil / Tamam / Onayla / İptal).
+ */
+const DEFAULT_CONFIRM_KEY = {
+  confirm: 'dlg.delete',
+  prompt:  'dlg.ok',
+  alert:   'dlg.ok',
+  note:    'dlg.confirm',
+}
+
 const TONE_MEDIA = {
   destructive: 'bg-destructive/10 text-destructive',
   warning:     'bg-amber-500/15 text-amber-600 dark:text-amber-400',
@@ -207,7 +219,7 @@ function DialogModal({ dialog, onConfirm, onCancel }) {
         <AlertDialogFooter>
           {dialog.type !== 'alert' && (
             <Button type="button" variant="outline" onClick={onCancel}>
-              {dialog.cancelText ?? 'İptal'}
+              {dialog.cancelText ?? t('dlg.cancel')}
             </Button>
           )}
           <Button
@@ -217,7 +229,7 @@ function DialogModal({ dialog, onConfirm, onCancel }) {
             disabled={!noteOk}
             onClick={confirm}
           >
-            {dialog.confirmText ?? 'Tamam'}
+            {dialog.confirmText ?? t(DEFAULT_CONFIRM_KEY[dialog.type] ?? 'dlg.ok')}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -232,16 +244,19 @@ export function DialogProvider({ children }) {
     new Promise(resolve => setDialog({ ...config, resolve })),
   [])
 
+  // Varsayılan düğme metinleri BURADA gömülmez: DialogModal çizim anında o anki dilden çözer
+  // (DEFAULT_CONFIRM_KEY + dlg.cancel). Eskiden 'Sil'/'İptal'/'Tamam' sabitti — `cancelText`
+  // geçmeyen 20 çağrı yeri İngilizce arayüzde "İptal" gösteriyordu (2026-09-25, R16).
   const showConfirm = useCallback((opts) =>
-    _show({ type: 'confirm', variant: 'danger', confirmText: 'Sil', cancelText: 'İptal', ...opts }),
+    _show({ type: 'confirm', variant: 'danger', ...opts }),
   [_show])
 
   const showPrompt = useCallback((opts) =>
-    _show({ type: 'prompt', variant: 'prompt', confirmText: 'Tamam', cancelText: 'İptal', ...opts }),
+    _show({ type: 'prompt', variant: 'prompt', ...opts }),
   [_show])
 
   const showAlert = useCallback((opts) =>
-    _show({ type: 'alert', variant: 'info', confirmText: 'Tamam', ...opts }),
+    _show({ type: 'alert', variant: 'info', ...opts }),
   [_show])
 
   /**
@@ -251,7 +266,7 @@ export function DialogProvider({ children }) {
    * bekliyor. Dönüş şeklini oraya eklemek her birini riske atardı; yeni yol hiçbirine dokunmuyor.
    */
   const showNoteConfirm = useCallback((opts) =>
-    _show({ type: 'note', variant: 'warning', confirmText: 'Onayla', cancelText: 'İptal', ...opts }),
+    _show({ type: 'note', variant: 'warning', ...opts }),
   [_show])
 
   function handleConfirm(value) {

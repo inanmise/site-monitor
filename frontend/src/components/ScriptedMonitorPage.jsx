@@ -1090,9 +1090,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
 
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
-          {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />}
-          {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} />}
-          {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />}
+          {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} ariaLabel={t('flt.group')} />}
+          {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
+          {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />}
           <input className="upt-search" type="text" placeholder={t('scripted.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
@@ -1175,7 +1175,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
               <div className="upt-card-foot">
                 <span>{m.checked_at ? formatDateSec(m.checked_at) : t('scripted.neverRun')}</span>
                 {canManageRow(m) && (
-                  <MonitorCardActions
+                  <MonitorCardActions rowLabel={m.name}
                     running={isRunning(m.id)} checkDisabled={!k6.available}
                     onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
                     checkTitle={t('scripted.runNow')} editTitle={t('scripted.edit')}

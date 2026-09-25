@@ -539,9 +539,9 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
 
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
-          {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />}
-          {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} />}
-          {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />}
+          {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} ariaLabel={t('flt.group')} />}
+          {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
+          {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />}
           <input className="upt-search" type="text" placeholder={t('ping.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
@@ -604,7 +604,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
               <div className="upt-card-foot">
                 <span>{m.checked_at ? formatDateSec(m.checked_at) : ''}</span>
                 {canManageRow(m) && (
-                  <MonitorCardActions
+                  <MonitorCardActions rowLabel={m.host}
                     running={isRunning(m.id)}
                     onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
                     checkTitle={t('ping.check')} editTitle={t('ping.edit')}

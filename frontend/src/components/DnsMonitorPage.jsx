@@ -565,12 +565,12 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
 
       <div className="dns-toolbar">
         {hasTeamOptions && (
-          <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />
+          <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />
         )}
         {hasGroupOptions && (
-          <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />
+          <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} ariaLabel={t('flt.group')} />
         )}
-        {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} />}
+        {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
         <input
           className="dns-search-input"
           type="text"
@@ -665,7 +665,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
                   {/* Silme kartta KALIR: tabloda vardı ve kaldırılması yetenek kaybı olurdu.
                       Artık ortak bileşenin içinde — dokuz türde tek düğme, tek stopPropagation. */}
                   {canManageRow(m) && (
-                    <MonitorCardActions
+                    <MonitorCardActions rowLabel={m.domain}
                       running={isRunning(m.id)}
                       onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
                       checkTitle={t('dns.check')} editTitle={t('dns.edit')}

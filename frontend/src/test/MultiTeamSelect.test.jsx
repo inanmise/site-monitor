@@ -68,4 +68,27 @@ describe('MultiTeamSelect', () => {
     fireEvent.keyDown(search, { key: 'Enter' })
     expect(onChange).toHaveBeenCalledWith([1, 2])
   })
+
+  /**
+   * 2026-09-25 (R17): seçili durum DUYURULUR. Kutu aria-hidden (satırın kendisi seçenek) ve cmdk'nin
+   * aria-selected'ı klavye vurgusu demek — seçimi söyleyen tek şey aria-checked. Eskiden yalnız
+   * görsel data-checked vardı: ekran okuyucu hangi takımların seçili olduğunu duymuyordu.
+   */
+  it('seçenekler seçili durumu aria-checked ile duyurur (seçili true, diğerleri false)', () => {
+    render(<MultiTeamSelect value={[1, 3]} onChange={() => {}} options={teams} ariaLabel="Takımlar" />)
+    open()
+    expect(screen.getByRole('option', { name: 'SY-Alpha' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('option', { name: 'SY-Gamma' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('option', { name: 'SY-Beta' })).toHaveAttribute('aria-checked', 'false')
+  })
+
+  it('tetik (role="combobox") adını ariaLabel\'dan ya da bağlı etiketten alır', () => {
+    const { unmount } = render(<MultiTeamSelect value={[1]} onChange={() => {}} options={teams} ariaLabel="Takımlar" />)
+    // İçerik ("SY-Alpha") ad DEĞİL — combobox adını içerikten almaz.
+    expect(screen.getByRole('combobox', { name: 'Takımlar' })).toBeDefined()
+    unmount()
+    render(<><label htmlFor="mts-x">Üye olduğu takımlar</label>
+      <MultiTeamSelect id="mts-x" value={[]} onChange={() => {}} options={teams} /></>)
+    expect(screen.getByRole('combobox', { name: 'Üye olduğu takımlar' })).toBeDefined()
+  })
 })

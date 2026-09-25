@@ -190,4 +190,14 @@ class MonitorSparklineServiceTest {
         assertThat(windows(svc.availability("http", 7, Set.of(1L), now).get(1L)).keySet()).containsExactly(1, 7);
         assertThat(windows(svc.availability("http", 90, Set.of(1L), now).get(1L)).keySet()).containsExactly(1, 7, 15, 30, 90);
     }
+
+    // ── Regresyon R6 (2026-09-25): hata varken yüzde ASLA 100 olmaz ──
+    @Test
+    @DisplayName("pct: 43.200 kontrolde tek hata %99,99 (yuvarlama 100,00 göstermez); hatasızsa 100; kontrolsüzse null")
+    void pct_neverHundredWithFailures() {
+        assertThat(MonitorSparklineService.pct(43_200, 1)).isEqualTo(99.99);
+        assertThat(MonitorSparklineService.pct(43_200, 0)).isEqualTo(100.0);
+        assertThat(MonitorSparklineService.pct(7, 1)).isEqualTo(85.71);
+        assertThat(MonitorSparklineService.pct(0, 0)).isNull();
+    }
 }

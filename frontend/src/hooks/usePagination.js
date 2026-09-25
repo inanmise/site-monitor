@@ -17,13 +17,24 @@ export const DEFAULT_PAGE_SIZE = 50
 
 const LS_PREFIX = 'sm.pageSize.'
 
+/**
+ * Görünümün sunduğu boyut listesi (R13, 2026-09-25): hook sabit [25,50,100,200] listesine göre
+ * doğruluyordu; kendi listesini ([10,25,50]) PaginationBar'a veren sayfada "10"a geri dönmek
+ * sessizce yutuluyordu. Artık TEK liste: hook'a verilir, hook döndürür, `{...pager}` çubuğa taşır.
+ * Geçersiz/boş liste → varsayılan liste (çubuk ile hook yine aynı listeyi görür).
+ */
+function normalizeSizeOptions(sizeOptions) {
+  const list = Array.isArray(sizeOptions) ? sizeOptions.filter(n => Number.isInteger(n) && n > 0) : []
+  return list.length ? list : PAGE_SIZE_OPTIONS
+}
+
 /** localStorage'dan kayıtlı sayfa boyutu; geçersiz/eksik → defaultSize (private mode'da try/catch). */
-export function readPageSize(listKey, defaultSize = DEFAULT_PAGE_SIZE) {
+export function readPageSize(listKey, defaultSize = DEFAULT_PAGE_SIZE, sizeOptions = PAGE_SIZE_OPTIONS) {
   if (!listKey) return defaultSize
   try {
     const raw = localStorage.getItem(LS_PREFIX + listKey)
     const n = Number(raw)
-    return PAGE_SIZE_OPTIONS.includes(n) ? n : defaultSize
+    return normalizeSizeOptions(sizeOptions).includes(n) ? n : defaultSize
   } catch {
     return defaultSize
   }
@@ -35,12 +46,14 @@ export function writePageSize(listKey, size) {
   try { localStorage.setItem(LS_PREFIX + listKey, String(size)) } catch { /* private mode */ }
 }
 
-export function usePagination(items, { listKey, defaultSize = DEFAULT_PAGE_SIZE, resetDeps = [], initialPage = 1, initialSize = null } = {}) {
+export function usePagination(items, { listKey, defaultSize = DEFAULT_PAGE_SIZE, resetDeps = [], initialPage = 1, initialSize = null, sizeOptions = PAGE_SIZE_OPTIONS } = {}) {
+  // sizeOptions: çubukta sunulan boyutlar — doğrulama da AYNI listeyle yapılır (normalizeSizeOptions).
+  const allowedSizes = normalizeSizeOptions(sizeOptions)
   // initialPage/initialSize: paylaşılan URL'den (?page=3&ps=100) gelen başlangıç — ps geçerli bir
   // boyutsa localStorage tercihine BASKINDIR (link alan kişide 3. sayfa başka dilime kaymasın).
   const [page, setPageRaw] = useState(() => (Number.isInteger(initialPage) && initialPage > 0 ? initialPage : 1))
   const [pageSize, setPageSizeRaw] = useState(() =>
-    PAGE_SIZE_OPTIONS.includes(initialSize) ? initialSize : readPageSize(listKey, defaultSize))
+    allowedSizes.includes(initialSize) ? initialSize : readPageSize(listKey, defaultSize, allowedSizes))
 
   const totalItems = items?.length ?? 0
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
@@ -82,7 +95,7 @@ export function usePagination(items, { listKey, defaultSize = DEFAULT_PAGE_SIZE,
 
   const setPageSize = (size) => {
     const n = Number(size)
-    if (!PAGE_SIZE_OPTIONS.includes(n)) return
+    if (!allowedSizes.includes(n)) return
     setPageSizeRaw(n)
     setPageRaw(1)                    // boyut değişince başa dön
     writePageSize(listKey, n)
@@ -98,6 +111,7 @@ export function usePagination(items, { listKey, defaultSize = DEFAULT_PAGE_SIZE,
     setPage,
     pageSize,
     setPageSize,
+    sizeOptions: allowedSizes,       // <PaginationBar {...pager} /> çubuğa AYNI listeyi taşır
     totalPages,
     totalItems,
     pageItems,

@@ -1177,8 +1177,11 @@ export default function App() {
               <div className="tab-content active">
                 <div className="sort-controls sort-bar" data-tour="dash-filters">
                   {/* Arama kutusu 2026-09-19'da üst kontrol satırına ("Domain Ekle"nin yanına) taşındı; burada yalnız sıralama/süzgeçler. */}
-                  <label>{t('app.sortLabel')}</label>
+                  {/* htmlFor ↔ id: seçici tetiği role="combobox" ve adını İÇERİKTEN almaz; bağsız
+                      etiket ekran okuyucuya adsız bir liste bırakıyordu (2026-09-25, R17). */}
+                  <label htmlFor="dash-f-sort">{t('app.sortLabel')}</label>
                   <SearchableSelect
+                    id="dash-f-sort"
                     value={sortOrder}
                     onChange={v => { setSortOrder(v); dashPager.setPage(1) }}
                     options={[
@@ -1187,8 +1190,9 @@ export default function App() {
                       { value: 'desc',    label: t('app.sortDesc') },
                     ]}
                   />
-                  <label>{t('app.statusLabel')}</label>
+                  <label htmlFor="dash-f-status">{t('app.statusLabel')}</label>
                   <SearchableSelect
+                    id="dash-f-status"
                     value={statusFilter}
                     onChange={v => { setStatusFilter(v); dashPager.setPage(1) }}
                     options={[
@@ -1198,8 +1202,9 @@ export default function App() {
                       { value: 'error',   label: t('app.error') },
                     ]}
                   />
-                  <label>{t('app.expiryLabel')}</label>
+                  <label htmlFor="dash-f-expiry">{t('app.expiryLabel')}</label>
                   <SearchableSelect
+                    id="dash-f-expiry"
                     value={expiryFilter}
                     onChange={v => { setExpiryFilter(v); dashPager.setPage(1) }}
                     options={[
@@ -1212,8 +1217,9 @@ export default function App() {
                   />
                   {hasTeamOptions && (
                     <span className="sort-bar-field">
-                      <label>{t('app.teamLabel')}</label>
+                      <label htmlFor="dash-f-team">{t('app.teamLabel')}</label>
                       <SearchableSelect
+                        id="dash-f-team"
                         value={teamFilter}
                         onChange={v => { setTeamFilter(v); dashPager.setPage(1) }}
                         options={teamOptions}
@@ -1222,8 +1228,9 @@ export default function App() {
                   )}
                   {hasGroupOptions && (
                     <span className="sort-bar-field">
-                      <label>{t('app.groupLabel')}</label>
+                      <label htmlFor="dash-f-group">{t('app.groupLabel')}</label>
                       <SearchableSelect
+                        id="dash-f-group"
                         value={groupFilter}
                         onChange={v => { setGroupFilter(v); dashPager.setPage(1) }}
                         options={groupOptions} searchThreshold={2}
@@ -1232,8 +1239,9 @@ export default function App() {
                   )}
                   {hasTagOptions && (
                     <span className="sort-bar-field">
-                      <label>{t('app.tagLabel')}</label>
+                      <label htmlFor="dash-f-tag">{t('app.tagLabel')}</label>
                       <SearchableSelect
+                        id="dash-f-tag"
                         value={tagFilter}
                         onChange={v => { setTagFilter(v); dashPager.setPage(1) }}
                         options={tagOptions} searchThreshold={2}
@@ -1726,6 +1734,11 @@ export default function App() {
             domain={invForm.domain}
             mode={invForm.mode}
             focus={invForm.focus || null}
+            // R4 (2026-09-25): InventoryManager yoluyla AYNI yetki sözleşmesi. canWrite sarmalayıcıda matristen
+            // okunur (usePermissions App gövdesinde çalışmaz). Takım aktarımı yalnız rol ADMIN'de: sunucu
+            // (updateInventory) TEAM_ADMIN ve USER için takımı mevcut değere sabitler.
+            canManage={canManageInventory}
+            canMoveTeam={systemRole === 'ADMIN'}
             onClose={() => setInvForm(null)}
             onSaved={() => { setInvForm(null); loadData(); setCertModalRefresh(k => k + 1) }}
           />

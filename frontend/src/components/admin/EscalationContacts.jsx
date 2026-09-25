@@ -203,14 +203,14 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
       <div className="audit-filters">
         <input className="audit-filter-input" placeholder={t('ec.searchPlaceholder')}
           value={q} onChange={(e) => setQ(e.target.value)} />
-        <SearchableSelect value={fRole} onChange={setFRole} placeholder={t('ec.allRoles')}
+        <SearchableSelect value={fRole} onChange={setFRole} placeholder={t('ec.allRoles')} ariaLabel={t('flt.role')}
           options={[{ value: '', label: t('ec.allRoles') },
             ...ROLES.map(r => ({ value: r, label: roleLabelMap[r] }))]} />
-        <SearchableSelect value={fLevel} onChange={setFLevel} placeholder={t('ec.allLevels')}
+        <SearchableSelect value={fLevel} onChange={setFLevel} placeholder={t('ec.allLevels')} ariaLabel={t('flt.level')}
           options={[{ value: '', label: t('ec.allLevels') },
             ...LEVELS.map(l => ({ value: l, label: levelLabelMap[l] }))]} />
         {isAdmin && teams.length > 0 && (
-          <SearchableSelect value={fTeam} onChange={setFTeam} placeholder={t('ec.allTeams')} searchThreshold={2}
+          <SearchableSelect value={fTeam} onChange={setFTeam} placeholder={t('ec.allTeams')} searchThreshold={2} ariaLabel={t('flt.team')}
             options={[{ value: '', label: t('ec.allTeams') },
               ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))]} />
         )}

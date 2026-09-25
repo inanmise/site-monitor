@@ -2432,9 +2432,7 @@ class MonitoringControllerTest {
         @Test
         @DisplayName("Toplu akış: takım kapsamı ekip ÜYELERİNİN kimlik + küçük harf adlarını da taşır")
         void recent_teamUser_scopeCarriesTeamMembers() throws Exception {
-            com.sitemonitor.model.AppUser mate = new com.sitemonitor.model.AppUser();
-            mate.setId(41L); mate.setUsername("N11111");
-            when(appUserRepo.findMembersOfTeams(List.of(5L))).thenReturn(List.of(mate));
+            when(appUserRepo.findMemberIdentities(List.of(5L))).thenReturn(List.<Object[]>of(new Object[]{41L, "n11111"}));
             when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(), any(), any(),
                     eq(false), eq(List.of(5L)), eq(List.of(41L)), eq(List.of("n11111")), any()))
                     .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(null))));
@@ -2450,9 +2448,7 @@ class MonitoringControllerTest {
         @Test
         @DisplayName("Takım SÜZGECİ o takımın üyelerini de sorar (üye değişikliği takım süzgecinde görünür)")
         void recent_teamFilter_carriesFilterTeamMembers() throws Exception {
-            com.sitemonitor.model.AppUser mate = new com.sitemonitor.model.AppUser();
-            mate.setId(77L); mate.setUsername("N77777");
-            when(appUserRepo.findMembersOfTeams(List.of(9L))).thenReturn(List.of(mate));
+            when(appUserRepo.findMemberIdentities(List.of(9L))).thenReturn(List.<Object[]>of(new Object[]{77L, "n77777"}));
             when(changeLogRepo.search(any(), any(), any(), eq(9L), eq(List.of(77L)), eq(List.of("n77777")),
                     any(), any(), any(), eq(true), any(), any(), any(), any()))
                     .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(null))));
