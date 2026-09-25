@@ -40,7 +40,7 @@ describe('TeamBadge as="span" — bir <button> içinde geçerli ve tıklanabilir
       </button>
     )
     expect(container.querySelectorAll('button button')).toHaveLength(0)
-    const badge = container.querySelector('.chg-row-head .team-badge')
+    const badge = container.querySelector('.chg-row-head [data-slot="team-badge"]')
     expect(badge.tagName).toBe('SPAN')
     expect(badge).toHaveAttribute('role', 'button')
     expect(badge).toHaveAttribute('tabindex', '0')
@@ -53,7 +53,7 @@ describe('TeamBadge as="span" — bir <button> içinde geçerli ve tıklanabilir
         Ödeme akışı · <TeamBadge teamId={5} teamName="Payments" as="span" />
       </button>
     )
-    fireEvent.click(container.querySelector('.team-badge'))
+    fireEvent.click(container.querySelector('[data-slot="team-badge"]'))
     await waitFor(() => expect(api.teams.members).toHaveBeenCalledWith(5))
     expect(await screen.findByRole('dialog')).toBeInTheDocument()
     expect(outer).not.toHaveBeenCalled()
@@ -65,7 +65,7 @@ describe('TeamBadge as="span" — bir <button> içinde geçerli ve tıklanabilir
         x · <TeamBadge teamId={5} teamName="Payments" as="span" />
       </button>
     )
-    fireEvent.keyDown(container.querySelector('.team-badge'), { key: 'Enter' })
+    fireEvent.keyDown(container.querySelector('[data-slot="team-badge"]'), { key: 'Enter' })
     await waitFor(() => expect(api.teams.members).toHaveBeenCalledWith(5))
   })
 

@@ -5,7 +5,7 @@ import * as RechartsPrimitive from "recharts"
 // Format: { THEME_NAME: CSS_SELECTOR }
 const THEMES = {
   light: "",
-  dark: ".dark"
+  dark: '[data-theme="dark"]'
 }
 
 const INITIAL_DIMENSION = {

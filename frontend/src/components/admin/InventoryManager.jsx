@@ -634,6 +634,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
           record={formModal.record}
           teams={teams}
           canManage={canManage}
+          canWrite={canAdd}
           onClose={() => setFormModal(null)}
           onSaved={() => { setFormModal(null); load(); onInventoryChange?.() }}
         />

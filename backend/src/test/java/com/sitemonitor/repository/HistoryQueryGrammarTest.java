@@ -46,6 +46,9 @@ class HistoryQueryGrammarTest {
     private static final String T10  = "2026-08-01T10:00:00";   // sağlıklı
     private static final String T10b = "2026-08-01T10:30:00";   // HATALI (aynı saat kovası)
     private static final String T11  = "2026-08-01T11:00:00";   // sağlıklı
+    /** Değişiklik geçmişi kapsamındaki boş IN listelerinin kukla değerleri (TeamActorScope ile aynı). */
+    private static final List<Long> NO_IDS = List.of(-1L);
+    private static final List<String> NO_NAMES = List.of("");
     private static final int HOUR_BUCKET = 13;                  // "yyyy-MM-ddTHH"
 
     @Autowired PingCheckRepository pingRepo;
@@ -267,33 +270,33 @@ class HistoryQueryGrammarTest {
         var all = List.of(5L, 7L);
 
         // 1) TÜM süzgeçler null (konsolun ilk açılışı) — kaçağın yaşandığı tam senaryo.
-        var open = changeRepo.search(null, null, null, null, null, null, null, true, all, PageRequest.of(0, 25));
+        var open = changeRepo.search(null, null, null, null, NO_IDS, NO_NAMES, null, null, null, true, all, NO_IDS, NO_NAMES, PageRequest.of(0, 25));
         assertThat(open.getTotalElements()).isEqualTo(3);
         assertThat(open.getContent()).extracting("resourceKind").doesNotContain("SYSTEM");
         // Sıralama: en yeni üstte.
         assertThat(open.getContent().get(0).getResourceName()).isEqualTo("Ödeme akışı");
 
         // 2) Serbest arama + aktör: LOWER/CONCAT yolu gerçekten eşleşmeli (cast doğru yerde mi).
-        assertThat(changeRepo.search(null, null, null, null, null, null, "ödeme p", true, all,
+        assertThat(changeRepo.search(null, null, null, null, NO_IDS, NO_NAMES, null, null, "ödeme p", true, all, NO_IDS, NO_NAMES,
                 PageRequest.of(0, 25)).getTotalElements()).isEqualTo(2);
-        assertThat(changeRepo.search(null, null, "n23456", null, null, null, null, true, all,
+        assertThat(changeRepo.search(null, null, "n23456", null, NO_IDS, NO_NAMES, null, null, null, true, all, NO_IDS, NO_NAMES,
                 PageRequest.of(0, 25)).getTotalElements()).isEqualTo(2);   // aktör aramasi harf duyarsiz
 
         // 3) Tür + olay + tarih süzgeçleri.
-        assertThat(changeRepo.search("SCRIPTED", null, null, null, null, null, null, true, all,
+        assertThat(changeRepo.search("SCRIPTED", null, null, null, NO_IDS, NO_NAMES, null, null, null, true, all, NO_IDS, NO_NAMES,
                 PageRequest.of(0, 25)).getTotalElements()).isEqualTo(1);
-        assertThat(changeRepo.search(null, "UPDATE", null, null, null, null, null, true, all,
+        assertThat(changeRepo.search(null, "UPDATE", null, null, NO_IDS, NO_NAMES, null, null, null, true, all, NO_IDS, NO_NAMES,
                 PageRequest.of(0, 25)).getTotalElements()).isEqualTo(1);
-        assertThat(changeRepo.search(null, null, null, null, "2026-08-01T11:30:00", null, null, true, all,
+        assertThat(changeRepo.search(null, null, null, null, NO_IDS, NO_NAMES, "2026-08-01T11:30:00", null, null, true, all, NO_IDS, NO_NAMES,
                 PageRequest.of(0, 25)).getTotalElements()).isEqualTo(1);
 
         // 4) Takım kapsamı: teamScopeAll=false iken YALNIZ verilen takımlar.
-        assertThat(changeRepo.search(null, null, null, null, null, null, null, false, List.of(7L),
+        assertThat(changeRepo.search(null, null, null, null, NO_IDS, NO_NAMES, null, null, null, false, List.of(7L), NO_IDS, NO_NAMES,
                 PageRequest.of(0, 25)).getTotalElements()).isEqualTo(1);
 
         // 5) Özet şeridi de aynı kapsam + SYSTEM dışlaması ile çalışmalı.
         Map<String, Long> counts = new LinkedHashMap<>();
-        for (Object[] r : changeRepo.countByEventType(null, null, null, true, all)) {
+        for (Object[] r : changeRepo.countByEventType(null, null, null, NO_IDS, NO_NAMES, true, all, NO_IDS, NO_NAMES)) {
             counts.put(String.valueOf(r[0]), ((Number) r[1]).longValue());
         }
         assertThat(counts).containsEntry("CREATE", 2L).containsEntry("UPDATE", 1L);
@@ -301,7 +304,7 @@ class HistoryQueryGrammarTest {
 
         // 5b) Tür kartları: (tür × olay) kırılımı — konsolun "hangi izlemede ne kadar" sorusu.
         Map<String, Map<String, Long>> byKind = new LinkedHashMap<>();
-        for (Object[] r : changeRepo.countByKindAndEventType(null, null, null, true, all)) {
+        for (Object[] r : changeRepo.countByKindAndEventType(null, null, null, NO_IDS, NO_NAMES, true, all, NO_IDS, NO_NAMES)) {
             byKind.computeIfAbsent(String.valueOf(r[0]), k -> new LinkedHashMap<>())
                   .put(String.valueOf(r[1]), ((Number) r[2]).longValue());
         }
@@ -312,17 +315,17 @@ class HistoryQueryGrammarTest {
         // 5c) TAKIM süzgeci ÜÇ sorguda da daraltmalı. Yalnız listeye uygulansaydı yönetici bir
         //     takım seçtiğinde liste daralır ama şerit ve kartlar tüm takımları saymaya devam
         //     eder, rakamlar ekranda listeyle çelişirdi.
-        assertThat(changeRepo.search(null, null, null, 7L, null, null, null, true, all,
+        assertThat(changeRepo.search(null, null, null, 7L, NO_IDS, NO_NAMES, null, null, null, true, all, NO_IDS, NO_NAMES,
                 PageRequest.of(0, 25)).getTotalElements()).isEqualTo(1);
 
         Map<String, Long> team7 = new LinkedHashMap<>();
-        for (Object[] r : changeRepo.countByEventType(null, null, 7L, true, all)) {
+        for (Object[] r : changeRepo.countByEventType(null, null, 7L, NO_IDS, NO_NAMES, true, all, NO_IDS, NO_NAMES)) {
             team7.put(String.valueOf(r[0]), ((Number) r[1]).longValue());
         }
         assertThat(team7).containsExactly(java.util.Map.entry("CREATE", 1L));
 
         Map<String, Map<String, Long>> byKind7 = new LinkedHashMap<>();
-        for (Object[] r : changeRepo.countByKindAndEventType(null, null, 7L, true, all)) {
+        for (Object[] r : changeRepo.countByKindAndEventType(null, null, 7L, NO_IDS, NO_NAMES, true, all, NO_IDS, NO_NAMES)) {
             byKind7.computeIfAbsent(String.valueOf(r[0]), k -> new LinkedHashMap<>())
                    .put(String.valueOf(r[1]), ((Number) r[2]).longValue());
         }
@@ -335,6 +338,53 @@ class HistoryQueryGrammarTest {
                 .get().extracting("eventType").isEqualTo("UPDATE");
         assertThat(changeRepo.findByResourceKindAndResourceIdAndSeq("PORT", 1L, 0)).isPresent();
         assertThat(changeRepo.existsByResourceKindAndEventType("SYSTEM", "AUDIT_BACKFILL")).isTrue();
+    }
+
+    // 2026-09-25: takım kullanıcısı ekip arkadaşının değişikliğini, izlemenin takımı BOŞ olsa da görmeli
+    // (envanter türevi / sentetik satırlar — yerelde 136 değişikliğin 45'i). Aktör ekip üyesiyse satır
+    // kapsama girer; kimlikten VEYA harf duyarsız kullanıcı adından eşleşir. Yabancının satırı girmez.
+    @Test
+    @DisplayName("değişiklik geçmişi: takımı boş satır, aktör ekip üyesiyse kapsamda ve takım süzgecinde görünür")
+    void monitorChangeLogActorMembership() {
+        MonitorChangeLog byId = chg("SCRIPTED", 3L, "Sentetik A", "CREATE", null, "N11111", "2026-08-02T10:00:00");
+        byId.setActorId(41L);
+        changeRepo.saveAll(List.of(
+                chg("PORT", 1L, "Port A", "CREATE", 5L, "N23456", "2026-08-02T09:00:00"),
+                byId,
+                chg("DOMAIN", 4L, "Alan A", "UPDATE", null, "N22222", "2026-08-02T11:00:00"),
+                chg("DOMAIN", 5L, "Alan B", "CREATE", null, "N99999", "2026-08-02T12:00:00")));   // yabancı
+
+        var members = List.of(41L);
+        var memberNames = List.of("n22222");            // TeamActorScope küçük harfe çevirir
+        var page = PageRequest.of(0, 25);
+
+        // Kapsam: takım 5 + üyeleri → takım satırı + iki üye satırı; yabancı YOK.
+        var scoped = changeRepo.search(null, null, null, null, NO_IDS, NO_NAMES, null, null, null,
+                false, List.of(5L), members, memberNames, page);
+        assertThat(scoped.getContent()).extracting("resourceName")
+                .containsExactlyInAnyOrder("Port A", "Sentetik A", "Alan A");
+        // Üye listesi boşken (kukla) eski davranış: yalnız takımın kendi satırı.
+        assertThat(changeRepo.search(null, null, null, null, NO_IDS, NO_NAMES, null, null, null,
+                false, List.of(5L), NO_IDS, NO_NAMES, page).getTotalElements()).isEqualTo(1);
+
+        // Takım SÜZGECİ aynı kural: global görünümde takım 5 seçilince üyelerin satırları da gelir.
+        assertThat(changeRepo.search(null, null, null, 5L, members, memberNames, null, null, null,
+                true, List.of(5L), NO_IDS, NO_NAMES, page).getTotalElements()).isEqualTo(3);
+
+        // Şerit ve tür kartları listeyle aynı sayıyı söylemeli.
+        Map<String, Long> counts = new LinkedHashMap<>();
+        for (Object[] r : changeRepo.countByEventType(null, null, null, NO_IDS, NO_NAMES,
+                false, List.of(5L), members, memberNames)) {
+            counts.put(String.valueOf(r[0]), ((Number) r[1]).longValue());
+        }
+        assertThat(counts).containsOnly(Map.entry("CREATE", 2L), Map.entry("UPDATE", 1L));
+
+        Map<String, Long> kinds = new LinkedHashMap<>();
+        for (Object[] r : changeRepo.countByKindAndEventType(null, null, 5L, members, memberNames,
+                true, List.of(5L), NO_IDS, NO_NAMES)) {
+            kinds.merge(String.valueOf(r[0]), ((Number) r[2]).longValue(), Long::sum);
+        }
+        assertThat(kinds).containsOnly(Map.entry("PORT", 1L), Map.entry("SCRIPTED", 1L), Map.entry("DOMAIN", 1L));
     }
 
     private static MonitorChangeLog chg(String kind, Long id, String name, String event,

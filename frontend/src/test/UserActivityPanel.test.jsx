@@ -112,10 +112,10 @@ describe('UserActivityPanel', () => {
     expect(screen.getByText('90%')).toBeInTheDocument()
     expect(document.querySelectorAll('.uact-chip').length).toBeGreaterThan(10)   // 35 sekme − 2 kullanılan
     // takım süzgeci: SearchableSelect (mousedown ile açılır)
-    const trig = document.querySelectorAll('.uact-filters .ss-trigger')[0]
+    const trig = document.querySelectorAll('.uact-filters button[role="combobox"]')[0]
     fireEvent.mouseDown(trig)
-    await waitFor(() => expect(document.querySelector('.ss-option')).not.toBeNull())
-    fireEvent.mouseDown([...document.querySelectorAll('.ss-option')].find((el) => el.textContent === 'Takım B'))
+    await waitFor(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
+    fireEvent.mouseDown([...document.querySelectorAll('[role="option"]')].find((el) => el.textContent === 'Takım B'))
     await waitFor(() => expect(window.location.search).toContain('u_team=9'))
     const table = document.querySelector('.uact-table--sessions')
     expect(within(table).queryByText('Yönetici')).toBeNull()

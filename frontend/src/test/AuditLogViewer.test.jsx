@@ -42,6 +42,23 @@ describe('AuditLogViewer', () => {
     ] })
   })
 
+  // Ekip kapsamı (2026-09-25): ekip üyeleri takım arkadaşlarının kayıtlarını görür; sistem-geneli yüzeyler yok.
+  it('ekip kapsamı (fullScope=false): bilgi şeridi görünür, özet ucu HİÇ çağrılmaz, bütünlük düğmesi yok; liste çalışır', async () => {
+    render(<AuditLogViewer fullScope={false} />)
+    expect(await screen.findByTitle('USER_UPDATE')).toBeInTheDocument()
+    expect(screen.getByText(/Ekibinizin denetim kayıtları|Your team's audit records/)).toBeInTheDocument()
+    expect(api.admin.getAuditStats).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: /Bütünlüğü doğrula|Verify integrity/ })).toBeNull()
+    expect(screen.getByRole('button', { name: 'CSV' })).toBeInTheDocument()   // dışa aktarma ekip kapsamını taşır
+  })
+
+  it('tam kapsam (varsayılan): özet çağrılır, bütünlük düğmesi var, ekip şeridi yok', async () => {
+    render(<AuditLogViewer />)
+    await waitFor(() => expect(api.admin.getAuditStats).toHaveBeenCalled())
+    expect(screen.getByRole('button', { name: /Bütünlüğü doğrula|Verify integrity/ })).toBeInTheDocument()
+    expect(screen.queryByText(/Ekibinizin denetim kayıtları|Your team's audit records/)).toBeNull()
+  })
+
   it('satır ÇEVRİLMİŞ etiket gösterir, ham tür TITLE içinde kalır (denetçi onunla filtreler)', async () => {
     const { container } = render(<AuditLogViewer />)
     const badge = await screen.findByTitle('USER_UPDATE')
@@ -195,8 +212,8 @@ describe('AuditLogViewer', () => {
 
     // Olay türü seçicisi filtre çubuğundaki ilk SearchableSelect. Gruplar kapalı başlar;
     // arama kutusuna yazmak tüm dalları açar (bileşenin sözleşmesi).
-    fireEvent.mouseDown(container.querySelectorAll('.ss-trigger')[0])   // acilis onMouseDown ile
-    fireEvent.change(container.querySelector('.ss-search-input'), { target: { value: 'MAINTENANCE' } })
+    fireEvent.mouseDown(container.querySelectorAll('button[role="combobox"]')[0])   // acilis onMouseDown ile
+    fireEvent.change(document.querySelector('[cmdk-input]'), { target: { value: 'MAINTENANCE' } })
 
     expect(await screen.findByText(/MAINTENANCE_CREATE/)).toBeInTheDocument()
   })
@@ -205,8 +222,8 @@ describe('AuditLogViewer', () => {
     const { container } = render(<AuditLogViewer />)
     await waitFor(() => expect(api.admin.getAuditEventTypes).toHaveBeenCalled())
 
-    fireEvent.mouseDown(container.querySelectorAll('.ss-trigger')[0])   // acilis onMouseDown ile
-    fireEvent.change(container.querySelector('.ss-search-input'), { target: { value: 'LOGIN' } })
+    fireEvent.mouseDown(container.querySelectorAll('button[role="combobox"]')[0])   // acilis onMouseDown ile
+    fireEvent.change(document.querySelector('[cmdk-input]'), { target: { value: 'LOGIN' } })
 
     expect(await screen.findByText(/LOGIN \(42\)/)).toBeInTheDocument()
   })
@@ -217,8 +234,8 @@ describe('AuditLogViewer', () => {
     const { container } = render(<AuditLogViewer />)
     await waitFor(() => expect(api.admin.getAuditLogs).toHaveBeenCalled())
 
-    fireEvent.mouseDown(container.querySelectorAll('.ss-trigger')[0])   // acilis onMouseDown ile
-    fireEvent.change(container.querySelector('.ss-search-input'), { target: { value: 'LOGIN_FAILED' } })
+    fireEvent.mouseDown(container.querySelectorAll('button[role="combobox"]')[0])   // acilis onMouseDown ile
+    fireEvent.change(document.querySelector('[cmdk-input]'), { target: { value: 'LOGIN_FAILED' } })
 
     expect(await screen.findByText('LOGIN_FAILED')).toBeInTheDocument()
   })

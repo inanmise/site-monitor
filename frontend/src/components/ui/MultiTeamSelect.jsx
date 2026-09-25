@@ -1,18 +1,26 @@
-import { useState, useRef, useEffect } from 'react'
+import { useRef, useState } from 'react'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/shadcn/command'
+import { Popover } from '@/components/shadcn/popover'
 import { useT } from '../../i18n/index.jsx'
+import { PickerContent, PickerTrigger, usePickerOpen } from './PickerPopover.jsx'
 
 /**
  * Çoklu seçim açılır listesi (takımlar için). `value` = id dizisi, `onChange(ids)`.
- * SearchableSelect'in `.ss-*` stillerini yeniden kullanır (yeni CSS yok); farkları:
- * checkbox'lı çoklu seçim, seçimde KAPANMAZ, tetikleyicide seçili etiketler virgülle gösterilir.
+ * SearchableSelect ile aynı shadcn Combobox deseni (Popover + Command, PickerPopover.jsx); farkları:
+ * shadcn Checkbox'lı çoklu seçim, seçimde KAPANMAZ, tetikleyicide seçili etiketler virgülle gösterilir.
  */
 export default function MultiTeamSelect({
   value = [], onChange, options = [], placeholder, disabled = false, searchThreshold = 4,
 }) {
   const t = useT()
-  const [open, setOpen] = useState(false)
+  const { open, openRef, setOpen } = usePickerOpen()
   const [query, setQuery] = useState('')
-  const ref = useRef(null)
+  // Liste seçimde KAPANMADIĞI için SearchableSelect'in "kapandıysa yut" koruması burada işlemez:
+  // basışta çevrilen seçeneği, aynı basışın ardından cmdk'nin click → onSelect'i geri çevirirdi
+  // (net değişiklik sıfır). Basılan seçenek hatırlanır, onun click'i yutulur; klavye (Enter)
+  // öncesinde keydown hatırlananı temizler, böylece klavye seçimi her zaman işler.
+  const pressedRef = useRef(null)
 
   const selectedIds = Array.isArray(value) ? value : []
   const isSel = (v) => selectedIds.some(id => String(id) === String(v))
@@ -21,19 +29,6 @@ export default function MultiTeamSelect({
   const filtered = showSearch
     ? options.filter(o => String(o.label ?? '').toLowerCase().includes(query.toLowerCase()))
     : options
-
-  useEffect(() => {
-    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
-
-  function toggleOpen(e) {
-    if (disabled) return
-    e.preventDefault()
-    setOpen(p => !p)
-    setQuery('')
-  }
 
   function toggle(v) {
     const next = isSel(v)
@@ -47,52 +42,58 @@ export default function MultiTeamSelect({
   const triggerLabel = isEmpty ? (placeholder || t('ss.choose')) : selectedLabels.join(', ')
 
   return (
-    <div className={`ss-wrap${disabled ? ' ss-disabled' : ''}`} ref={ref}>
-      <button
-        type="button"
-        className={`ss-trigger${open ? ' ss-open' : ''}${isEmpty ? ' ss-placeholder' : ''}`}
-        onMouseDown={toggleOpen}
-        disabled={disabled}
-      >
-        <span className="ss-label">{triggerLabel}</span>
-        <svg className="ss-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-      </button>
-
-      {open && (
-        <div className="ss-dropdown">
+    <div className="ss-wrap" data-slot="multi-team-select">
+      <Popover open={open} onOpenChange={(next) => { if (!next) { setOpen(false); setQuery('') } }}>
+        <PickerTrigger
+          open={open}
+          openRef={openRef}
+          setOpen={setOpen}
+          onOpen={() => setQuery('')}
+          disabled={disabled}
+          placeholderShown={isEmpty}
+        >
+          {triggerLabel}
+        </PickerTrigger>
+        <PickerContent commandProps={{ label: t('ss.search'), onKeyDown: () => { pressedRef.current = null } }}>
           {showSearch && (
-            <div className="ss-search">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
-                <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
-              </svg>
-              <input
-                autoFocus
-                className="ss-search-input"
-                placeholder={t('ss.search')}
-                value={query}
-                onChange={e => setQuery(e.target.value)}
-                onMouseDown={e => e.stopPropagation()}
-              />
-            </div>
+            <CommandInput placeholder={t('ss.search')} value={query} onValueChange={setQuery} />
           )}
-          <div className="ss-options">
-            {filtered.map(opt => (
-              <div
-                key={String(opt.value)}
-                className={`ss-option${isSel(opt.value) ? ' ss-selected' : ''}`}
-                onMouseDown={(e) => { e.preventDefault(); toggle(opt.value) }}
-              >
-                <input type="checkbox" checked={isSel(opt.value)} readOnly
-                  style={{ marginRight: 8, pointerEvents: 'none' }} />
-                {opt.label}
-              </div>
-            ))}
-            {filtered.length === 0 && <div className="ss-no-result">{t('ss.noResult')}</div>}
-          </div>
-        </div>
-      )}
+          <CommandList className="min-h-0 flex-1" aria-multiselectable="true">
+            {filtered.length > 0 && (
+              <CommandGroup>
+                {filtered.map(opt => {
+                  const checked = isSel(opt.value)
+                  return (
+                    <CommandItem
+                      key={String(opt.value)}
+                      value={`o:${String(opt.value)}`}
+                      data-checked={checked ? 'true' : undefined}
+                      // Basışta çevir (odak arama kutusunda kalır); klavyede Enter → cmdk onSelect.
+                      onMouseDown={(e) => {
+                        if (e.button !== 0) return
+                        e.preventDefault()
+                        pressedRef.current = String(opt.value)
+                        toggle(opt.value)
+                      }}
+                      onSelect={() => {
+                        if (pressedRef.current === String(opt.value)) { pressedRef.current = null; return }
+                        toggle(opt.value)
+                      }}
+                    >
+                      {/* Görsel işaret: satırın kendisi seçenek; kutu ayrıca odak/tık almaz. */}
+                      <Checkbox checked={checked} tabIndex={-1} aria-hidden="true" className="pointer-events-none" />
+                      <span className="min-w-0 flex-1 truncate">{opt.label}</span>
+                    </CommandItem>
+                  )
+                })}
+              </CommandGroup>
+            )}
+            {filtered.length === 0 && (
+              <CommandEmpty className="py-3 text-center text-sm text-muted-foreground">{t('ss.noResult')}</CommandEmpty>
+            )}
+          </CommandList>
+        </PickerContent>
+      </Popover>
     </div>
   )
 }

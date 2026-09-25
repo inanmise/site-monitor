@@ -121,7 +121,7 @@ describe('PortMonitorPage', () => {
     fireEvent.change(screen.getByPlaceholderText(/1\.2\.3\.4/), { target: { value: 'a.example.com' } })
     fireEvent.change(screen.getAllByRole('spinbutton')[0], { target: { value: '22' } })
     // Vekil: Her zaman vekil üzerinden
-    fireEvent.mouseDown(screen.getByRole('button', { name: /Kurumsal vekil|Corporate proxy/ }))
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: /Kurumsal vekil|Corporate proxy/ }))
     fireEvent.mouseDown(screen.getByText(/^Her zaman vekil üzerinden$|^Always via proxy$/))
     const warns = () => [...document.querySelectorAll('.port-proxy-notes .field-hint--warn')].map((w) => w.textContent)
     await waitFor(() => expect(warns().join(' ')).toMatch(/22.*443, 8443/))
@@ -130,11 +130,11 @@ describe('PortMonitorPage', () => {
     await waitFor(() => expect(warns()).toHaveLength(0))
     // UDP → UDP uyarısı
     const typeLabel = [...document.querySelectorAll('label > span:first-child')].find((sp) => /^(Kontrol Tipi|Check type)$/i.test(sp.textContent.trim()))
-    fireEvent.mouseDown(typeLabel.parentElement.querySelector('.ss-trigger'))
+    fireEvent.mouseDown(typeLabel.parentElement.querySelector('button[role="combobox"]'))
     fireEvent.mouseDown(screen.getByText(/^UDP — /))
     await waitFor(() => expect(warns().join(' ')).toMatch(/UDP/))
     // TCP'ye dön, test et → yol satırı
-    fireEvent.mouseDown(typeLabel.parentElement.querySelector('.ss-trigger'))
+    fireEvent.mouseDown(typeLabel.parentElement.querySelector('button[role="combobox"]'))
     fireEvent.mouseDown(screen.getByText(/^TCP — /))
     fireEvent.click(screen.getByRole('button', { name: /^(Test|Test et|Dene|Kaydetmeden test)/i }))
     await waitFor(() => expect(api.monitoring.testPortMonitor).toHaveBeenCalled())
@@ -242,7 +242,8 @@ describe('PortMonitorPage', () => {
       render(<PortMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
       await waitFor(() => expect(api.monitoring.getPortMonitors).toHaveBeenCalled())
 
-      const runBtn = document.querySelector('.mon-act--check')
+      // Kartın kontrol düğmesi (modal da aynı adlı düğmeyi taşır; DOM sırasında kart önce gelir)
+      const runBtn = screen.getAllByRole('button', { name: /^(Kontrol Et|Check now)$/i })[0]
       expect(runBtn).not.toBeNull()
       fireEvent.click(runBtn)
 

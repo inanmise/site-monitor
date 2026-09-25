@@ -17,6 +17,10 @@ const badgeVariants = cva(
           "border-border text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
         ghost: "[a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
         link: "text-primary underline-offset-4 [a&]:hover:underline",
+        // Proje varyantı (shadcn'in önerdiği yol: cva'yı genişlet) — dikkat isteyen durum rozeti
+        // (ör. ui/MaintenanceBadge "Bakımda"). Tonlu zemin, amber mürekkep; koyu temada açılır.
+        warning:
+          "bg-amber-500/15 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300 [a&]:hover:bg-amber-500/25",
       },
     },
     defaultVariants: {

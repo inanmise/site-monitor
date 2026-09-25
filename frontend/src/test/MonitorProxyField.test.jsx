@@ -10,7 +10,7 @@ describe('MonitorProxyField', () => {
     expect(PROXY_MODES).toEqual(['AUTO', 'ON', 'OFF'])
     expect(screen.getByText('Corporate proxy')).toBeInTheDocument()
     expect(screen.getByText('Same as inventory')).toBeInTheDocument()
-    fireEvent.mouseDown(screen.getByRole('button', { name: /Corporate proxy/ }))
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: /Corporate proxy/ }))
     fireEvent.mouseDown(screen.getByText('Always via proxy'))
     expect(onChange).toHaveBeenCalledWith('ON')
   })

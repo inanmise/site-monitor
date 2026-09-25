@@ -69,15 +69,15 @@ describe('MonitorCardActions', () => {
     expect(onCheck).not.toHaveBeenCalled()
 
     // Şerit: "Kontrol ediliyor… 0 sn" — ekran okuyucuya da duyurulur.
-    expect(document.querySelector('.mon-running')).not.toBeNull()
-    expect(document.querySelector('.mon-running-sec').textContent).toMatch(/^0\s/)
+    expect(screen.queryByRole('status')).not.toBeNull()
+    expect(document.querySelector('[data-slot="check-running-seconds"]').textContent).toMatch(/^0\s/)
   })
 
   it('kontrol BİTİNCE düğme geri açılır ve şerit kaybolur', () => {
     const { onCheck } = setup({ running: false })
     expect(byName(/^Kontrol Et$/).disabled).toBe(false)
     // Şerit çalışmıyorken HİÇBİR ŞEY render etmemeli: kart yüksekliği değişirse liste zıplar.
-    expect(document.querySelector('.mon-running')).toBeNull()
+    expect(screen.queryByRole('status')).toBeNull()
     fireEvent.click(byName(/^Kontrol Et$/))
     expect(onCheck).toHaveBeenCalledTimes(1)
   })

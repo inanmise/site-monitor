@@ -1,5 +1,8 @@
+import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import SearchableSelect from '../../src/components/ui/SearchableSelect.jsx'
+import ModalShell from '../../src/components/ui/ModalShell.jsx'
+import { LangProvider } from '../../src/i18n/index.jsx'
 import '../../src/styles/globals.css'   // uygulamayla aynı kaskat: shadcn jetonları + Tailwind
 import '../../src/App.css'
 
@@ -16,7 +19,9 @@ import '../../src/App.css'
  * "Ad Soyad (Uzun Bölüm Adı) (uzun.eposta@example.com)" biçiminde ve ekranı taşıran da buydu.
  * Gerçek kişi/kurum adı KULLANILMAZ (proje kuralı) — aynı UZUNLUKTA yer tutucu kullanılıyor.
  *
- *   ?w=<px>   host genişliği (dar ekran senaryosu)
+ *   ?w=<px>       host genişliği (dar ekran senaryosu)
+ *   ?mode=shell   aynı seçici ModalShell (shadcn Dialog) İÇİNDE: açılır liste body'ye portal'lanır,
+ *                 pencerenin alt kenarında kırpılmamalı, üstte kalmalı; Escape önce listeyi kapatır.
  */
 const q = new URLSearchParams(location.search)
 
@@ -78,6 +83,36 @@ function App() {
   )
 }
 
+/** 40 seçenekli liste: kısa bir pencerenin alt kenarını mutlaka aşar (eskiden orada kırpılıyordu). */
+const MANY = Array.from({ length: 40 }, (_, i) => ({ value: String(i + 1), label: `Seçenek ${i + 1}` }))
+
+function ShellApp() {
+  const [open, setOpen] = useState(true)
+  const [value, setValue] = useState('')
+  // onChange sayacı: seçim fare basışında olur; kapanış animasyonu sürerken aynı basışın click'i
+  // ikinci bir onChange üretmemeli (jsdom animasyon yapmadığı için bunu yalnız tarayıcı görür).
+  const [changes, setChanges] = useState(0)
+  return (
+    <ModalShell open={open} onClose={() => setOpen(false)} title="Kişi Ekle" size="sm">
+      <output data-testid="change-count">{changes}</output>
+      <div className="form-grid form-grid--top">
+        <label data-testid="f-long">Uzun liste
+          <SearchableSelect value={value} onChange={(v) => { setValue(v); setChanges((c) => c + 1) }}
+            options={MANY} ariaLabel="Uzun liste" />
+        </label>
+        <label data-testid="f-user">Kullanıcı
+          <SearchableSelect value="1" onChange={() => {}} searchThreshold={2}
+            options={[{ value: '1', label: LONG_USER }]} ariaLabel="Kullanıcı" />
+        </label>
+      </div>
+    </ModalShell>
+  )
+}
+
 const host = document.getElementById('host')
 if (q.has('w')) host.style.width = q.get('w') + 'px'
-createRoot(host).render(<App />)
+createRoot(host).render(
+  <LangProvider>
+    {q.get('mode') === 'shell' ? <ShellApp /> : <App />}
+  </LangProvider>
+)

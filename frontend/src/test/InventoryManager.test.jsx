@@ -309,4 +309,17 @@ describe('InventoryManager — USER satır düzenleme kapısı', () => {
     items = screen.getAllByRole('menuitem').map((b) => b.textContent.trim())
     expect(items.some((x) => /^(Düzenle|Edit)$/.test(x))).toBe(false)
   })
+
+  // 2026-09-25 kullanıcı bildirimi: USER "Domain Ekle"yi açabiliyordu ama form seçicileri (takım/grup/etiket)
+  // yalnız yöneticiye açıktı → takım seçilemediği için kayıt HİÇ açılamıyordu. Form artık ekleme yetkisiyle açılır.
+  it('USER: "Domain Ekle" formunda takım (tek takımı önseçili) ve grup seçicileri AÇIK', async () => {
+    vi.clearAllMocks()
+    api.admin.getInventory.mockResolvedValue({ success: true, data: [] })
+    render(<LangProvider><InventoryManager systemRole="USER" teams={[{ id: 5, name: 'SY-A' }]} /></LangProvider>)
+    fireEvent.click(await screen.findByRole('button', { name: /Domain Ekle|Add Domain/i }))
+    const team = await screen.findByRole('combobox', { name: /Takım|Team/ })
+    expect(team).toBeEnabled()
+    await waitFor(() => expect(team).toHaveTextContent('SY-A'))
+    expect(screen.getByRole('combobox', { name: /Grup|Group/ })).toBeEnabled()
+  })
 })

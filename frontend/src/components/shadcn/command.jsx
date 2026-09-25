@@ -1,4 +1,5 @@
 
+import * as React from "react"
 import { Command as CommandPrimitive } from "cmdk"
 import { cn } from "@/lib/utils"
 import { SearchIcon } from "lucide-react"
@@ -12,12 +13,17 @@ import {
   DialogTitle,
 } from "@/components/shadcn/dialog"
 
-function Command({
+// React 18 (proje sürümü): Command ve CommandInput forwardRef — SearchableSelect açılışta odağı
+// arama kutusuna (yoksa cmdk köküne; ok tuşları kökteki keydown'la çalışır) kendisi verir ve
+// bunun için ref'e muhtaç. Düz işlev bileşeni ref'i DÜŞÜRÜRDÜ. cmdk'nin kendi parçaları zaten
+// forwardRef; bu sarmalayıcılar ref'i yalnız geçirir.
+const Command = React.forwardRef(function Command({
   className,
   ...props
-}) {
+}, ref) {
   return (
     <CommandPrimitive
+      ref={ref}
       data-slot="command"
       className={cn(
         "flex h-full w-full flex-col overflow-hidden rounded-md bg-popover text-popover-foreground",
@@ -26,7 +32,7 @@ function Command({
       {...props}
     />
   )
-}
+})
 
 function CommandDialog({
   title,
@@ -55,10 +61,10 @@ function CommandDialog({
   )
 }
 
-function CommandInput({
+const CommandInput = React.forwardRef(function CommandInput({
   className,
   ...props
-}) {
+}, ref) {
   return (
     <div
       data-slot="command-input-wrapper"
@@ -66,6 +72,7 @@ function CommandInput({
     >
       <SearchIcon className="size-4 shrink-0 opacity-50" />
       <CommandPrimitive.Input
+        ref={ref}
         data-slot="command-input"
         className={cn(
           "flex h-10 w-full rounded-md bg-transparent py-3 text-sm outline-hidden placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50",
@@ -75,7 +82,7 @@ function CommandInput({
       />
     </div>
   )
-}
+})
 
 function CommandList({
   className,

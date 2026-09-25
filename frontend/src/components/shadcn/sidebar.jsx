@@ -1,4 +1,3 @@
-"use client";
 import * as React from "react"
 import { cva } from "class-variance-authority";
 import { cn } from "@/lib/utils"
@@ -82,6 +81,9 @@ function SidebarProvider({
   // Adds a keyboard shortcut to toggle the sidebar.
   React.useEffect(() => {
     const handleKeyDown = (event) => {
+      // Yazı alanında Ctrl+B = kalın (Markdown editörü vb.) — kenar çubuğunu KAPATMAZ (proje uyarlaması).
+      const el = event.target
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return
       if (
         event.key === SIDEBAR_KEYBOARD_SHORTCUT &&
         (event.metaKey || event.ctrlKey)
@@ -501,7 +503,9 @@ const sidebarMenuButtonVariants = cva(
   }
 )
 
-function SidebarMenuButton({
+// React 18: asChild çocuğu olarak kullanılıyor (Radix Slot ref bağlar) — forwardRef şart
+// (bkz. button.jsx notu).
+const SidebarMenuButton = React.forwardRef(function SidebarMenuButton({
   asChild = false,
   isActive = false,
   variant = "default",
@@ -509,12 +513,13 @@ function SidebarMenuButton({
   tooltip,
   className,
   ...props
-}) {
+}, ref) {
   const Comp = asChild ? Slot.Root : "button"
   const { isMobile, state } = useSidebar()
 
   const button = (
     <Comp
+      ref={ref}
       data-slot="sidebar-menu-button"
       data-sidebar="menu-button"
       data-size={size}
@@ -545,7 +550,7 @@ function SidebarMenuButton({
       />
     </Tooltip>
   )
-}
+})
 
 function SidebarMenuAction({
   className,

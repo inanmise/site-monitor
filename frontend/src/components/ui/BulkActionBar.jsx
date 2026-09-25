@@ -6,6 +6,8 @@ import { useDialog } from './Dialog.jsx'
 import { Spinner } from './Progress.jsx'
 import SearchableSelect from './SearchableSelect.jsx'
 import { Button } from '@/components/shadcn/button'
+import { ButtonGroup } from '@/components/shadcn/button-group'
+import { Input } from '@/components/shadcn/input'
 
 /**
  * Toplu işlem çubuğu (2026-09-12, zenginleştirme #13) — izleme sayfalarında çoklu seçim:
@@ -49,37 +51,54 @@ export default function BulkActionBar({ selected, items, onClear, onDone, api, t
     run('delete', (m) => api.remove(m.id), canDelete)
   }
 
+  // Alan bölmesi: ikon + kontrol + "Uygula" — solunda ince ayraç (eski .bulkbar-field dili).
+  const fieldCls = 'inline-flex items-center gap-1.5 border-l border-border pl-2 text-muted-foreground'
+  const selectAllLabel = allVisibleSelected ? t('bulk.unselectAll') : t('bulk.selectAll')
   return (
-    <div className="bulkbar" role="region" aria-label={t('bulk.aria')}>
-      <button type="button" className="bulkbar-all" onClick={onToggleAll} title={allVisibleSelected ? t('bulk.unselectAll') : t('bulk.selectAll')}>
+    // Görünüm Tailwind + shadcn (Button / ButtonGroup / Input); App.css .bulkbar* kurallarına
+    // bağlı değil — o aile yalnız CertBulkBar'da yaşıyor.
+    <div data-slot="bulk-action-bar" role="region" aria-label={t('bulk.aria')}
+      className="sticky top-2 z-[6] mb-2.5 flex flex-wrap items-center gap-2.5 rounded-[10px] border border-primary bg-card px-3 py-2 shadow-lg">
+      <Button type="button" variant="ghost" size="icon-sm" className="text-muted-foreground"
+        onClick={onToggleAll} title={selectAllLabel} aria-label={selectAllLabel}>
         {allVisibleSelected ? <CheckSquare size={15} /> : <Square size={15} />}
-      </button>
-      <span className="bulkbar-count">{t('bulk.selected', ids.length)}</span>
-      <div className="bulkbar-actions">
-        <Button type="button" variant="secondary" size="sm" disabled={!!busy} onClick={() => run('pause', (m) => api.update(m.id, { active: false }), (m) => m.active !== false)}>
-          {busy === 'pause' ? <Spinner size={12} inline decorative /> : <Pause size={13} />} {t('bulk.pause')}
-        </Button>
-        <Button type="button" variant="secondary" size="sm" disabled={!!busy} onClick={() => run('resume', (m) => api.update(m.id, { active: true }), (m) => m.active === false)}>
-          {busy === 'resume' ? <Spinner size={12} inline decorative /> : <Play size={13} />} {t('bulk.resume')}
-        </Button>
+      </Button>
+      <span className="font-bold">{t('bulk.selected', ids.length)}</span>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {/* Duraklat / Sürdür birbirinin karşıtı — tek bir düğme grubu. */}
+        <ButtonGroup>
+          <Button type="button" variant="secondary" size="sm" disabled={!!busy} onClick={() => run('pause', (m) => api.update(m.id, { active: false }), (m) => m.active !== false)}>
+            {busy === 'pause' ? <Spinner size={12} inline decorative /> : <Pause size={13} />} {t('bulk.pause')}
+          </Button>
+          <Button type="button" variant="secondary" size="sm" disabled={!!busy} onClick={() => run('resume', (m) => api.update(m.id, { active: true }), (m) => m.active === false)}>
+            {busy === 'resume' ? <Spinner size={12} inline decorative /> : <Play size={13} />} {t('bulk.resume')}
+          </Button>
+        </ButtonGroup>
         {teams.length > 0 && (
-          <span className="bulkbar-field">
+          <span className={fieldCls}>
             <Users size={13} aria-hidden="true" />
-            <SearchableSelect value={teamId} onChange={setTeamId} ariaLabel={t('bulk.team')} placeholder={t('bulk.team')}
-              options={teams.map((tm) => ({ value: String(tm.id), label: tm.name }))} />
+            <span className="min-w-[140px]">
+              <SearchableSelect value={teamId} onChange={setTeamId} ariaLabel={t('bulk.team')} placeholder={t('bulk.team')}
+                options={teams.map((tm) => ({ value: String(tm.id), label: tm.name }))} />
+            </span>
             <Button type="button" variant="secondary" size="sm" disabled={!!busy || !teamId} onClick={() => run('team', (m) => api.update(m.id, { teamId: Number(teamId) }))}>{t('bulk.apply')}</Button>
           </span>
         )}
-        <span className="bulkbar-field">
+        <span className={fieldCls}>
           <FolderInput size={13} aria-hidden="true" />
-          <input className="input" value={group} onChange={(e) => setGroup(e.target.value)} placeholder={t('bulk.group')} aria-label={t('bulk.group')} />
-          <Button type="button" variant="secondary" size="sm" disabled={!!busy || !group.trim()} onClick={() => run('group', (m) => api.update(m.id, { groupName: group.trim() }))}>{t('bulk.apply')}</Button>
+          <ButtonGroup>
+            <Input className="h-8 min-w-[140px] text-foreground" value={group} onChange={(e) => setGroup(e.target.value)} placeholder={t('bulk.group')} aria-label={t('bulk.group')} />
+            <Button type="button" variant="secondary" size="sm" disabled={!!busy || !group.trim()} onClick={() => run('group', (m) => api.update(m.id, { groupName: group.trim() }))}>{t('bulk.apply')}</Button>
+          </ButtonGroup>
         </span>
         <Button type="button" variant="destructive" size="sm" disabled={!!busy} onClick={del}>
           {busy === 'delete' ? <Spinner size={12} inline decorative /> : <Trash2 size={13} />} {t('bulk.delete')}
         </Button>
       </div>
-      <button type="button" className="bulkbar-close" onClick={onClear} aria-label={t('bulk.clear')}><X size={14} /></button>
+      <Button type="button" variant="ghost" size="icon-sm" className="ml-auto text-muted-foreground"
+        onClick={onClear} aria-label={t('bulk.clear')}>
+        <X size={14} />
+      </Button>
     </div>
   )
 }

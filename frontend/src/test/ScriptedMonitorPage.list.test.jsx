@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import ScriptedMonitorPage
   from '../components/ScriptedMonitorPage.jsx'
@@ -66,7 +66,7 @@ describe('ScriptedMonitorPage — liste ve kartlar', () => {
     expect(card.querySelector('.upt-badge')).not.toBeNull()
     expect(card.querySelector('.upt-card-domain')).not.toBeNull()
     // Aksiyonlar .upt-card-foot İÇİNDE (2026-08 şikayeti: butonlar kayıyordu)
-    expect(card.querySelector('.upt-card-foot .mon-act--check')).not.toBeNull()
+    expect(within(card.querySelector('.upt-card-foot')).getByRole('button', { name: /^(Şimdi Çalıştır|Run now)$/i })).toBeInTheDocument()
     expect(card.querySelector('.upt-card-foot .mon-act--edit')).not.toBeNull()
     // Tanımsız eski sınıflar terk edildi
     expect(container.querySelector('.mon-card')).toBeNull()
@@ -197,8 +197,8 @@ describe('ScriptedMonitorPage — liste ve kartlar', () => {
     api.monitoring.getScriptedMonitors.mockResolvedValue({ success: true, data: {
       k6_available: true, can_manage: true, monitors: [] } })
     const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-    await waitFor(() => expect(container.querySelector('.status-block')).not.toBeNull())
-    expect(container.querySelector('.pg-spinner')).toBeNull()   // dönen spinner yok
+    await waitFor(() => expect(container.querySelector('[data-slot="empty"]')).not.toBeNull())
+    expect(container.querySelector('[data-slot="spinner"]')).toBeNull()   // dönen spinner yok
   })
 
   it('kart klavyeyle açılır: role/tabIndex var, Enter ve Space detayı açar', async () => {

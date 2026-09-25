@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
+import { withSidebar } from './helpers/sidebar.jsx'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 vi.mock('../api/client', () => ({ formatDateSec: (s) => String(s ?? ''), api: withApiFallback({ me: { inbox: vi.fn(), inboxHistory: vi.fn() } }) }))
@@ -23,7 +25,7 @@ describe('InboxBell v2', () => {
     api.me.inboxHistory.mockResolvedValue({ success: true, data: [ITEMS[1]], total: 41, page: 0, size: 25, total_pages: 2 })
   })
   const openBox = async () => {
-    render(<InboxBell username="u1" />)
+    render(withSidebar(<InboxBell username="u1" />))
     await waitFor(() => expect(api.me.inbox).toHaveBeenCalled())
     fireEvent.click(screen.getByRole('button', { name: /Bildirimler|Notifications/ }))
     return screen.getByRole('dialog')
@@ -31,22 +33,22 @@ describe('InboxBell v2', () => {
 
   it('satırda takım, "başladı … · 3 sa 12 dk açık" ve çözülende "sürdü 2 sa"; bakımda takım yok', async () => {
     const dlg = await openBox()
-    const open = within(dlg).getByText('down.example.com').closest('.inbox-row')
+    const open = within(dlg).getByText('down.example.com').closest('[data-inbox-row]')
     expect(open.textContent).toContain('Takım A')
     expect(open.textContent).toMatch(/başladı|started/)
     expect(open.textContent).toMatch(/3 sa 12 dk açık|open for 3 h 12 min/)
     expect(open.textContent).toContain('Ana site')
-    const res = within(dlg).getByText('ok.example.com').closest('.inbox-row')
+    const res = within(dlg).getByText('ok.example.com').closest('[data-inbox-row]')
     expect(res.textContent).toMatch(/sürdü 2 sa 0 dk|lasted 2 h 0 min/)
     expect(res.textContent).toMatch(/çözüldü|resolved/)
-    const maint = within(dlg).getByText('Gece bakımı').closest('.inbox-row')
-    expect(maint.querySelector('.inbox-team')).toBeNull()
+    const maint = within(dlg).getByText('Gece bakımı').closest('[data-inbox-row]')
+    expect(maint.querySelector('[data-slot="badge"]')).toBeNull()   // takım rozeti yok
   })
 
   it('"İzlemeye git" izleme sekmesine monitor paramıyla gider; ana tıklama Alarm Geçmişi\\u0027ne', async () => {
     const nav = vi.fn(); window.addEventListener('sm:navigate', nav)
     const dlg = await openBox()
-    const row = within(dlg).getByText('down.example.com').closest('.inbox-row')
+    const row = within(dlg).getByText('down.example.com').closest('[data-inbox-row]')
     fireEvent.click(within(row).getByRole('button', { name: /İzlemeye git|Go to monitor/ }))
     expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'http', params: { monitor: 77 } })
     expect(screen.queryByRole('dialog')).toBeNull()
@@ -55,26 +57,26 @@ describe('InboxBell v2', () => {
     expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'alerthistory', params: { alert: 9 } })
     // bakım satırının izleme eylemi yok
     fireEvent.click(screen.getByRole('button', { name: /Bildirimler|Notifications/ }))
-    const maint = screen.getByText('Gece bakımı').closest('.inbox-row')
+    const maint = screen.getByText('Gece bakımı').closest('[data-inbox-row]')
     expect(within(maint).queryByRole('button', { name: /İzlemeye git|Go to monitor/ })).toBeNull()
     window.removeEventListener('sm:navigate', nav)
   })
 
   it('çoklu seçim: iki satır seç → "Seçilenleri okundu say" rozeti 3→1; "Seçilenleri temizle" listeden düşürür ve saklanır', async () => {
     const dlg = await openBox()
-    await waitFor(() => expect(document.querySelector('.sb-bell-badge')?.textContent).toBe('3'))
+    await waitFor(() => expect(document.querySelector('[data-sidebar="menu-badge"]')?.textContent).toBe('3'))
     fireEvent.click(within(dlg).getByLabelText(/down\.example\.com seç|Select down\.example\.com/))
     fireEvent.click(within(dlg).getByLabelText(/ok\.example\.com seç|Select ok\.example\.com/))
     const bar = within(dlg).getByTestId('inbox-selbar')
     expect(bar.textContent).toMatch(/2 seçili|2 selected/)
     fireEvent.click(within(bar).getByRole('button', { name: /Seçilenleri okundu say|Mark selected as read/ }))
-    expect(document.querySelector('.sb-bell-badge').textContent).toBe('1')
+    expect(document.querySelector('[data-sidebar="menu-badge"]').textContent).toBe('1')
     expect(within(dlg).queryByTestId('inbox-selbar')).toBeNull()
     fireEvent.click(within(dlg).getByLabelText(/Gece bakımı seç|Select Gece bakımı/))
     fireEvent.click(within(within(dlg).getByTestId('inbox-selbar')).getByRole('button', { name: /Seçilenleri temizle|Clear selected/ }))
     expect(within(dlg).queryByText('Gece bakımı')).toBeNull()
     expect(JSON.parse(localStorage.getItem('inbox-dismissed:u1'))).toEqual(['maint:3:x'])
-    expect(document.querySelector('.sb-bell-badge')).toBeNull()
+    expect(document.querySelector('[data-sidebar="menu-badge"]')).toBeNull()
   })
 
   it('"Tümünü temizle" listeyi boşaltır, "Temizlenenleri göster" geri getirir', async () => {
@@ -83,12 +85,12 @@ describe('InboxBell v2', () => {
     expect(within(dlg).getByText(/3 bildirim temizlendi|3 cleared/)).toBeInTheDocument()
     fireEvent.click(within(dlg).getByRole('button', { name: /Temizlenenleri göster|Show cleared/ }))
     expect(within(dlg).getByText('down.example.com')).toBeInTheDocument()
-    expect(within(dlg).getByText('down.example.com').closest('.inbox-row').className).toContain('is-dismissed')
+    expect(within(dlg).getByText('down.example.com').closest('[data-inbox-row]').getAttribute('data-dismissed')).toBe('true')
   })
 
   it('Geçmiş sekmesi: sayfalı yükler (page 0, size 25), sonraki sayfa page=1', async () => {
     const dlg = await openBox()
-    fireEvent.click(within(dlg).getByRole('tab', { name: /Geçmiş|History/ }))
+    pressMenuTrigger(within(dlg).getByRole('tab', { name: /Geçmiş|History/ }))   // Radix Tabs mousedown ile geçer
     await waitFor(() => expect(api.me.inboxHistory).toHaveBeenCalledWith(0, 25))
     expect(await within(dlg).findByText('ok.example.com')).toBeInTheDocument()
     expect(within(dlg).getByText(/Sayfa 1 \/ 2 — 41|Page 1 \/ 2 — 41/)).toBeInTheDocument()

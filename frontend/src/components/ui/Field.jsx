@@ -1,7 +1,15 @@
 import { useId } from 'react'
+import {
+  Field as ShadcnField,
+  FieldLabel,
+  FieldDescription,
+  FieldError as ShadcnFieldError,
+} from '@/components/shadcn/field'
+import { cn } from '@/lib/utils'
 
 /**
  * Form alanı sarmalayıcısı — etiket ↔ kontrol bağını, ipucunu ve alan hatasını TEK yerde kurar.
+ * Çizim shadcn Field (FieldLabel / FieldDescription / FieldError).
  *
  * Neden var: projedeki admin formlarında <label>'ların çoğu ne htmlFor taşıyor ne de kontrolü
  * sarıyor; ekran okuyucu için alanların erişilebilir adı yok. Ayrıca ipuçları görsel olarak
@@ -13,27 +21,28 @@ import { useId } from 'react'
  *
  *   <Field label={t('issue.describe')} required error={errors.message}>
  *     {({ id, describedBy, invalid }) => (
- *       <textarea id={id} aria-describedby={describedBy} aria-invalid={invalid} className="input" … />
+ *       <Textarea id={id} aria-describedby={describedBy} aria-invalid={invalid} … />
  *     )}
  *   </Field>
  *
- * Zorunluluk yıldızı i18n metnine GÖMÜLMEZ; ayrı bir <span className="req-star"> olarak eklenir.
+ * Zorunluluk yıldızı i18n metnine GÖMÜLMEZ; etiketin içinde ayrı bir eleman olarak eklenir
+ * (`data-slot="field-required"`).
  */
 export function FieldHint({ tone = 'muted', id, children }) {
   return (
-    <span className={`field-hint${tone === 'warn' ? ' field-hint--warn' : ''}`} id={id}>
+    <FieldDescription id={id} className={cn('text-xs [overflow-wrap:break-word]', tone === 'warn' && 'text-warning')}>
       {children}
-    </span>
+    </FieldDescription>
   )
 }
 
 /**
- * Alan-bazlı hata metni. Bilinçli olarak role="alert" TAŞIMAZ: kontrol zaten
- * aria-invalid + aria-describedby ile bu metne bağlı, ekran okuyucu odaklanınca okur.
- * Her alana bir alert koymak formu duyuru gürültüsüne boğardı.
+ * Alan-bazlı hata metni. Bilinçli olarak role="alert" TAŞIMAZ (shadcn FieldError varsayılanı
+ * ezilir): kontrol zaten aria-invalid + aria-describedby ile bu metne bağlı, ekran okuyucu
+ * odaklanınca okur. Her alana bir alert koymak formu duyuru gürültüsüne boğardı.
  */
 export function FieldError({ id, children }) {
-  return <span className="field-error" id={id}>{children}</span>
+  return <ShadcnFieldError id={id} role={undefined} className="text-xs">{children}</ShadcnFieldError>
 }
 
 export default function Field({
@@ -55,16 +64,20 @@ export default function Field({
     control = children
   }
 
+  // role: shadcn Field kökü role="group" basar; burada tek bir kontrolü saran alan için grup rolü
+  // (adsız) ekran okuyucuya boş bir "grup" duyurusu ekler — eski sarmalayıcıda rol yoktu.
+  // mb: eski .form-field alt boşluğu (formlar alanları üst üste dizerken ona güveniyor).
   return (
-    <div className={['form-field', className].filter(Boolean).join(' ')}>
+    <ShadcnField role={undefined} data-invalid={error ? true : undefined}
+      className={cn('mb-3.5 gap-1.5', className)}>
       {label && (
-        <label className="form-field-label" htmlFor={id}>
-          {label}{required && <> <span className="req-star">*</span></>}
-        </label>
+        <FieldLabel htmlFor={id} className="gap-1 font-semibold">
+          {label}{required && <> <span data-slot="field-required" className="text-destructive">*</span></>}
+        </FieldLabel>
       )}
       {control}
       {hint && <FieldHint id={hintId} tone={hintTone}>{hint}</FieldHint>}
       {error && <FieldError id={errorId}>{error}</FieldError>}
-    </div>
+    </ShadcnField>
   )
 }

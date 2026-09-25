@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { render } from './test-utils.jsx'
+import { withSidebar } from './helpers/sidebar.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 
@@ -55,8 +56,9 @@ describe('varsayılan marka logosu (turp) — koruma', () => {
   })
 
   it('override yokken Nav turp logosunu DAİMA nötr yeşil (ok) gösterir — kullanıcı kararı: marka durumla kızarmaz', () => {
-    const { container } = render(<Nav activeTab="dashboard" onTabChange={() => {}} username="u" onLogout={() => {}} />)
-    const img = container.querySelector('.sb-logo .brand-logo')
+    const { container } = render(withSidebar(<Nav activeTab="dashboard" onTabChange={() => {}} username="u" onLogout={() => {}} />))
+    // shadcn Sidebar başlığı: logo SidebarHeader'da (legacy .sb-logo sarmalayıcısı yok)
+    const img = container.querySelector('[data-sidebar="header"] .brand-logo')
     expect(img).not.toBeNull()
     expect(img.getAttribute('src')).toMatch(/^\/brand\/logo-ok-(32|64)\.png$/)
   })

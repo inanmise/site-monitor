@@ -117,20 +117,20 @@ describe('HttpMonitorPage', () => {
     await screen.findByText('https://a.example.com/')
     const toolbar = document.querySelector('.upt-toolbar')
     // Etiket kutusu: "Tüm etiketler" tetikleyicisi
-    const tagTrigger = [...toolbar.querySelectorAll('.ss-trigger')].find((b) => /tüm etiketler|all tags/i.test(b.textContent))
+    const tagTrigger = [...toolbar.querySelectorAll('button[role="combobox"]')].find((b) => /tüm etiketler|all tags/i.test(b.textContent))
     expect(tagTrigger).toBeTruthy()
     fireEvent.mouseDown(tagTrigger)
-    const labels = [...toolbar.querySelectorAll('.ss-option')].map((o) => o.textContent.trim())
+    const labels = [...document.querySelectorAll('[role="option"]')].map((o) => o.textContent.trim())
     expect(labels).toEqual(expect.arrayContaining(['edge', 'kritik', 'prod']))
     expect(labels.some((l) => /etiketsiz|untagged/i.test(l))).toBe(true)   // id 3 etiketsiz → seçenek var
-    fireEvent.mouseDown([...toolbar.querySelectorAll('.ss-option')].find((o) => o.textContent.trim() === 'kritik'))
+    fireEvent.mouseDown([...document.querySelectorAll('[role="option"]')].find((o) => o.textContent.trim() === 'kritik'))
     await waitFor(() => expect(screen.queryByText('https://b.example.com/')).toBeNull())
     expect(screen.getByText('https://a.example.com/')).toBeInTheDocument()
     expect(screen.queryByText('https://c.example.com/')).toBeNull()
 
     // Filtreyi sıfırla, serbest metinle grup adı ara
-    fireEvent.mouseDown([...toolbar.querySelectorAll('.ss-trigger')].find((b) => /kritik/.test(b.textContent)))
-    fireEvent.mouseDown([...toolbar.querySelectorAll('.ss-option')].find((o) => /tüm etiketler|all tags/i.test(o.textContent)))
+    fireEvent.mouseDown([...toolbar.querySelectorAll('button[role="combobox"]')].find((b) => /kritik/.test(b.textContent)))
+    fireEvent.mouseDown([...document.querySelectorAll('[role="option"]')].find((o) => /tüm etiketler|all tags/i.test(o.textContent)))
     fireEvent.change(toolbar.querySelector('.upt-search'), { target: { value: 'ödeme' } })
     await waitFor(() => expect(screen.getByText('https://b.example.com/')).toBeInTheDocument())
     expect(screen.queryByText('https://a.example.com/')).toBeNull()
@@ -144,13 +144,13 @@ describe('HttpMonitorPage', () => {
     render(<HttpMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await screen.findByText('https://own.example.com/')
     const toolbar = document.querySelector('.upt-toolbar')
-    fireEvent.mouseDown([...toolbar.querySelectorAll('.ss-trigger')].find((b) => /tüm gruplar|all groups/i.test(b.textContent)))
-    expect([...toolbar.querySelectorAll('.ss-option')].map((o) => o.textContent.trim())).toEqual(expect.arrayContaining(['Kendi Grubu', 'Öteki Grup']))
-    fireEvent.mouseDown([...toolbar.querySelectorAll('.ss-option')].find((o) => o.textContent.trim() === 'Öteki Grup'))
+    fireEvent.mouseDown([...toolbar.querySelectorAll('button[role="combobox"]')].find((b) => /tüm gruplar|all groups/i.test(b.textContent)))
+    expect([...document.querySelectorAll('[role="option"]')].map((o) => o.textContent.trim())).toEqual(expect.arrayContaining(['Kendi Grubu', 'Öteki Grup']))
+    fireEvent.mouseDown([...document.querySelectorAll('[role="option"]')].find((o) => o.textContent.trim() === 'Öteki Grup'))
     await waitFor(() => expect(screen.queryByText('https://own.example.com/')).toBeNull())
     expect(screen.getByText('https://other.example.com/')).toBeInTheDocument()
-    fireEvent.mouseDown([...toolbar.querySelectorAll('.ss-trigger')].find((b) => /tüm etiketler|all tags/i.test(b.textContent)))
-    expect([...toolbar.querySelectorAll('.ss-option')].map((o) => o.textContent.trim())).toEqual(expect.arrayContaining(['kendi', 'öteki']))
+    fireEvent.mouseDown([...toolbar.querySelectorAll('button[role="combobox"]')].find((b) => /tüm etiketler|all tags/i.test(b.textContent)))
+    expect([...document.querySelectorAll('[role="option"]')].map((o) => o.textContent.trim())).toEqual(expect.arrayContaining(['kendi', 'öteki']))
   })
 
   // ── Alarm seviyesi (2026-09-19): formda seçilir, payload'a alertLevel gider; düzenlemede kayıtlı seviye yüklenir ──
@@ -201,12 +201,12 @@ describe('HttpMonitorPage', () => {
 
     // Kutu açık (kilitli input değil) ve birincil takım seçili gelir
     const modal = document.querySelector('.modal-box')
-    const trigger = [...modal.querySelectorAll('.ss-trigger')].find((b) => /SY-A/.test(b.textContent))
+    const trigger = [...modal.querySelectorAll('button[role="combobox"]')].find((b) => /SY-A/.test(b.textContent))
     expect(trigger).toBeTruthy()
     fireEvent.mouseDown(trigger)   // açılış onMouseDown ile
-    const labels = [...modal.querySelectorAll('.ss-option')].map((o) => o.textContent.trim())
+    const labels = [...document.querySelectorAll('[role="option"]')].map((o) => o.textContent.trim())
     expect(labels).toEqual(['SY-A', 'SY-B'])   // takımsız seçenek yok: üye için takım zorunlu
-    fireEvent.mouseDown([...modal.querySelectorAll('.ss-option')].find((o) => o.textContent.trim() === 'SY-B'))
+    fireEvent.mouseDown([...document.querySelectorAll('[role="option"]')].find((o) => o.textContent.trim() === 'SY-B'))
 
     fireEvent.change(screen.getByPlaceholderText('https://example.com'), { target: { value: 'https://iki.example.com' } })
     await fillGroupAndTags()   // grup + etiket zorunlu (2026-09-18)
@@ -223,7 +223,7 @@ describe('HttpMonitorPage', () => {
     const modal = document.querySelector('.modal-box')
     const locked = [...modal.querySelectorAll('input[disabled]')].find((i) => i.value === 'SY-A')
     expect(locked).toBeTruthy()
-    expect([...modal.querySelectorAll('.ss-trigger')].some((b) => /SY-A/.test(b.textContent))).toBe(false)
+    expect([...modal.querySelectorAll('button[role="combobox"]')].some((b) => /SY-A/.test(b.textContent))).toBe(false)
   })
 
   it('Kopyala: TÜM kullanıcı ayarları birebir kopyalanır (yalnız ad "(Kopya)" olur)', async () => {
@@ -348,7 +348,8 @@ describe('HttpMonitorPage', () => {
       render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
       await waitFor(() => expect(api.monitoring.getHttpMonitors).toHaveBeenCalled())
 
-      const runBtn = document.querySelector('.mon-act--check')
+      // Kartın kontrol düğmesi (modal da aynı adlı düğmeyi taşır; DOM sırasında kart önce gelir)
+      const runBtn = screen.getAllByRole('button', { name: /^(Şimdi kontrol et|Check now)$/i })[0]
       expect(runBtn).not.toBeNull()
       fireEvent.click(runBtn)
 

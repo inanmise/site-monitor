@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
-import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Inbox, ShieldCheck, CalendarDays, Plus, LayoutList, LayoutGrid, Loader2, Search } from 'lucide-react'
+import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Inbox, ShieldCheck, CalendarDays, Plus, LayoutList, LayoutGrid, Loader2, Search, Layers } from 'lucide-react'
 import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/shadcn/input-group'
+import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/shadcn/sidebar'
 
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
@@ -15,6 +16,8 @@ import { matchesTag, tagNamesOf, matchesGroupOrTagText } from './utils/monitorFi
 import PaginationBar from './components/ui/PaginationBar.jsx'
 import { useUrlQuerySync, readUrlParam, readUrlInt, PAGE_STATE_PARAMS, PAGE_STATE_PREFIXES } from './hooks/useUrlQuerySync.js'
 import SearchableSelect from './components/ui/SearchableSelect.jsx'
+import FacetedFilter from './components/ui/FacetedFilter.jsx'
+import { PLATFORM_NONE, PLATFORM_URL_KEY, parsePlatformParam, serializePlatformParam, matchesPlatform, countPlatforms, buildPlatformOptions } from './utils/platformFilter.js'
 import Login, { REMEMBER_KEY } from './pages/Login'
 import Nav from './components/Nav'
 import BrandLogo from './components/BrandLogo.jsx'
@@ -161,6 +164,15 @@ export default function App() {
   const [globalAdmin, setGlobalAdmin] = useState(false)
   // Haftalık Raporlar modülü takım bazlı açılır (2026-09-16): sunucu /me + giriş yanıtında söyler.
   const [weeklyReportsVisible, setWeeklyReportsVisible] = useState(false)
+  // Kenar çubuğu açık/daraltılmış — shadcn SidebarProvider'a kontrollü verilir; eski anahtar ('sidebar-open')
+  // korunur ki kullanıcının tercihi geçişte kaybolmasın. Hook, auth erken-return'lerinden ÖNCE (kural).
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    try { return localStorage.getItem('sidebar-open') !== 'false' } catch { return true }
+  })
+  const onSidebarOpenChange = useCallback((next) => {
+    setSidebarOpen(next)
+    try { localStorage.setItem('sidebar-open', String(next)) } catch { /* depolama yok */ }
+  }, [])
   const [teamId, setTeamId] = useState(null)
   const [teamName, setTeamName] = useState(null)
   // Kullanıcının TÜM takım üyelikleri (birincil takım ilk). Takım Yönetimi'ndeki haftalık e-posta
@@ -276,6 +288,11 @@ export default function App() {
   // Genel Bakış grup/etiket filtresi (2026-09-18, kullanıcı isteği): izleme sayfalarıyla aynı sözleşme.
   const [groupFilter, setGroupFilter] = useState('all')
   const [tagFilter, setTagFilter] = useState('all')
+  // Genel Bakış platform süzgeci (2026-09-25, kullanıcı isteği): çoklu seçim (kod listesi; PLATFORM_NONE = girilmemiş).
+  // Derin link ?platform=IIS,OPENSHIFT — yalnız pano açılışında okunur (başka sekmeye gelen link panoyu süzmesin).
+  const [platformFilter, setPlatformFilter] = useState(() =>
+    (initialTabFromUrl() ?? 'dashboard') === 'dashboard' ? parsePlatformParam(readUrlParam(PLATFORM_URL_KEY, null)) : [])
+  const [platformCatalog, setPlatformCatalog] = useState([])   // Ayarlar → Platformlar (aktifler, sunucu sırası)
   const [activityRefreshKey, setActivityRefreshKey] = useState(0)
   const [silentAlertDomains, setSilentAlertDomains] = useState(new Set())
   // Genel Bakış kartı zengin görünümü (2026-09-19): /card-extras haritası + Kompakt/Zengin anahtarı (localStorage)
@@ -475,6 +492,17 @@ export default function App() {
   useEffect(() => {
     if (!user) return
     api.admin.getWeakAlgorithms().then(r => { if (r?.success) setWeakAlgStats(r) })
+  }, [user])
+
+  // Platform kataloğu (pano platform süzgecinin seçenek adları/sırası): login'de BİR KEZ — aktif liste her oturuma
+  // açık (GET /admin/platforms). Okunamazsa süzgeç yine çalışır: seçenekler veriden türer, ad = platform_name ya da kod.
+  useEffect(() => {
+    if (!user) return
+    let alive = true
+    api.admin.listPlatforms()
+      .then(r => { if (alive && r?.success && Array.isArray(r.data)) setPlatformCatalog(r.data) })
+      .catch(() => { /* katalog yok → veriden türet */ })
+    return () => { alive = false }
   }, [user])
 
   // Süpersede edilen oturumu HIZLI yakala: kısa aralıklı hafif yoklama + sekmeye/pencereye
@@ -912,14 +940,16 @@ export default function App() {
   const hasTagOptions = tagOptions.length > 1
   // "Filtreleri temizle" (2026-09-18): herhangi bir daraltma varken görünür; hepsini varsayılana döndürür.
   const dashFiltersActive = !!search || sortOrder !== 'default' || statusFilter !== 'all' || expiryFilter !== 'all'
-    || teamFilter !== 'all' || groupFilter !== 'all' || tagFilter !== 'all' || !!statsFilter
+    || teamFilter !== 'all' || groupFilter !== 'all' || tagFilter !== 'all' || !!statsFilter || platformFilter.length > 0
   const clearDashFilters = () => {
     setSearch(''); setSortOrder('default'); setStatusFilter('all'); setExpiryFilter('all')
-    setTeamFilter('all'); setGroupFilter('all'); setTagFilter('all'); setStatsFilter(null)
+    setTeamFilter('all'); setGroupFilter('all'); setTagFilter('all'); setStatsFilter(null); setPlatformFilter([])
     dashPager.setPage(1)
   }
 
-  const filtered = useMemo(() => certs.filter((c) => {
+  // Platform DIŞINDAKİ bütün süzgeçler (2026-09-25): platform seçeneklerinin sayıları buradan sayılır — her
+  // seçenek "diğer süzgeçler + bu platform" ile kaç kart kalacağını söyler (faset sayısı; seçim sayıları kaydırmaz).
+  const preFiltered = useMemo(() => certs.filter((c) => {
     if (statFn   && !statFn(c))   return false
     if (!statusFn(c))              return false
     if (!expiryFn(c))              return false
@@ -939,6 +969,17 @@ export default function App() {
   // Bağımlılıklar FİLTRE ANAHTARLARI: statusFn/expiryFn `?? (() => true)` ile her render'da YENİ
   // fonksiyon üretiyor; onları dep olarak vermek memo'yu tümüyle boşa çıkarırdı.
   }), [certs, statsFilter, statusFilter, expiryFilter, teamFilter, groupFilter, tagFilter, search])
+  const platformCounts = useMemo(() => countPlatforms(preFiltered), [preFiltered])
+  const platformOptions = useMemo(() => buildPlatformOptions({
+    catalog: platformCatalog, certs, counts: platformCounts, selected: platformFilter, noneLabel: t('app.platformNone'),
+  }), [platformCatalog, certs, platformCounts, platformFilter, t])
+  // Katalog boş + hiçbir kartta platform yoksa süzgeç gizli (tek seçenek "Belirtilmemiş" olurdu); URL'den gelen seçim
+  // varsa HER ZAMAN görünür — kaldırılabilsin.
+  const showPlatformFilter = platformFilter.length > 0 || platformOptions.some((o) => o.value !== PLATFORM_NONE)
+  // Pano boru hattının son halkası: platform (VEYA içinde) diğer süzgeçlerle VE. Sıralama/sayfalama/sayaçlar bunu izler.
+  const filtered = useMemo(
+    () => (platformFilter.length > 0 ? preFiltered.filter((c) => matchesPlatform(c, platformFilter)) : preFiltered),
+    [preFiltered, platformFilter])
 
   function defaultPriority(c) {
     const al = c.alert_level
@@ -979,6 +1020,7 @@ export default function App() {
     q: search.trim() || null,
     page: dashPager.page > 1 ? dashPager.page : null,
     ps: (dashPager.pageSize !== 50 || dashPager.page > 1) ? dashPager.pageSize : null,
+    [PLATFORM_URL_KEY]: serializePlatformParam(platformFilter),   // ?platform=IIS,__none__ (PAGE_STATE_PARAMS'ta)
   }, { enabled: tab === 'dashboard' })
 
   // KULLANICI KARARI (2026-08-06): marka logosu HER ZAMAN nötr yeşil ("ok") — navbar ve favicon
@@ -1017,7 +1059,7 @@ export default function App() {
     <UserDirectoryProvider>
     <TeamDirectoryProvider>
     <TourProvider ctx={tourCtx} tourState={tourState} onPersist={persistTour}>
-    <div className="app-layout">
+    <SidebarProvider open={sidebarOpen} onOpenChange={onSidebarOpenChange} className="app-layout">
 
       {inactivityWarning && (
         <div className="inactivity-warning">
@@ -1038,7 +1080,13 @@ export default function App() {
         />
       )}
 
-      <main className="app-main">
+      {/* bg-transparent: sayfa zemini .app-layout'tan (--bg); kartlar beyaz kalsın */}
+      <SidebarInset className="app-main bg-transparent">
+        {/* Mobil (<768px): kenar çubuğu çekmece (Sheet) olur — açma düğmesi burada */}
+        <header className="sticky top-0 z-30 flex h-12 items-center gap-2 border-b bg-background px-3 md:hidden print:hidden">
+          <SidebarTrigger />
+          <span className="text-sm font-semibold">SiteMonitor</span>
+        </header>
         {/* Bağlama duyarlı yardım (2026-09-12, #24): sağ altta "?", o sayfanın kılavuz bölümü yan panelde */}
         <HelpDrawer tab={tab} />
         <TourPageChip tab={tab} />
@@ -1232,6 +1280,19 @@ export default function App() {
                         </InputGroupAddon>
                       )}
                     </InputGroup>
+                    {/* Platform süzgeci (2026-09-25, kullanıcı isteği) — shadcn faset süzgeci; aramanın yanında, diğer
+                        süzgeçlerle VE. Seçenekler katalog + verideki kodlar + Belirtilmemiş, sayılar o anki süzgeçlerle. */}
+                    {showPlatformFilter && (
+                      <FacetedFilter
+                        title={t('app.platformFilter')}
+                        icon={Layers}
+                        tooltip={t('app.platformFilterTip')}
+                        searchPlaceholder={t('app.platformSearch')}
+                        options={platformOptions}
+                        value={platformFilter}
+                        onChange={(next) => { setPlatformFilter(next); dashPager.setPage(1) }}
+                      />
+                    )}
                   </div>
                   {statsFilter && (
                     <div className="stats-filter-bar">
@@ -1247,6 +1308,7 @@ export default function App() {
                           setExpiryFilter('all')
                           setGroupFilter('all')
                           setTagFilter('all')
+                          setPlatformFilter([])
                           setSearch('')
                           setSortOrder('default')
                           dashPager.setPage(1)
@@ -1261,9 +1323,9 @@ export default function App() {
                   /* İlk veri gelene kadar "Sertifika bulunamadı" DEĞİL yükleniyor (kullanıcı bildirimi 2026-09-21, QA ISSUE-006):
                      certs [] ile başlar, getCertificates yanıtı gecikince boş durum sahte "sertifika yok" algısı veriyordu.
                      lastUpdate yalnız ilk başarılı yanıtta dolar — tur kapısındaki "veri geldi" sinyaliyle aynı. */
-                  <StatusBlock tone="neutral" icon={Loader2} className="status-block--loading" title={t('app.loadingCerts')} role="status" />
+                  <StatusBlock tone="neutral" icon={Loader2} loading title={t('app.loadingCerts')} role="status" />
                 ) : sorted.length === 0 ? (
-                  <StatusBlock tone="neutral" icon={Inbox} title={statsFilter ? t('app.noFilterCerts', STAT_FILTER_LABEL[statsFilter]) : t('app.noCerts')} description={statsFilter || search ? t('empty.hintFilter') : t('empty.hintCerts')} />
+                  <StatusBlock tone="neutral" icon={Inbox} title={statsFilter ? t('app.noFilterCerts', STAT_FILTER_LABEL[statsFilter]) : t('app.noCerts')} description={certs.length > 0 ? t('empty.hintFilter') : t('empty.hintCerts')} />
                 ) : (
                   <>
                     <div className="cards-container">
@@ -1514,7 +1576,8 @@ export default function App() {
               </div>
             )}
 
-            {tab === 'permissions' && globalAdmin && (
+            {/* Yetki Yönetimi (2026-09-25): herkese açık; düzenleme yalnız global admin (sunucunun can_edit'i). */}
+            {tab === 'permissions' && (
               <div className="tab-content active">
                 {/* Başlık PermissionMatrix kendi header'ında (ikon + Reset) — çift başlık olmasın */}
                 <PermissionMatrix />
@@ -1531,10 +1594,11 @@ export default function App() {
               </div>
             )}
 
-            {tab === 'system' && (globalAdmin || systemRole === 'AUDIT') && (
+            {/* Denetim Logu (2026-09-25): herkese açık; admin/AUDIT sistem geneli, diğerleri ekip arkadaşlarının kayıtları. */}
+            {tab === 'system' && (
               <div className="tab-content active">
                 <h2>{t('app.systemTitle')}</h2>
-                <AuditLogViewer />
+                <AuditLogViewer fullScope={globalAdmin || systemRole === 'AUDIT'} />
               </div>
             )}
 
@@ -1633,7 +1697,7 @@ export default function App() {
           </footer>
 
         </div>
-      </main>
+      </SidebarInset>
 
       {/* Çalıştır/Düzenle KARTLA AYNI kaynaktan (`cardActions`) gelir — modal içinde ikinci bir
           kontrol/düzenleme yolu tanımlanmaz. Önizleme (envanterde olmayan domain) modunda ikisi
@@ -1682,7 +1746,7 @@ export default function App() {
         onCancel={() => { checkCancelRef.current = true }}
         onClose={() => { checkCancelRef.current = true; setCheckRun(null) }}
       />
-    </div>
+    </SidebarProvider>
     </TourProvider>
     </TeamDirectoryProvider>
     </UserDirectoryProvider>

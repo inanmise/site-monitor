@@ -26,7 +26,8 @@ export default function GeneralSettings({ focusKey = null }) {
     if (!el) return
     el.scrollIntoView({ behavior: 'smooth', block: 'center' })
     el.classList.add('is-focus-target')
-    el.querySelector('input, select, textarea, .ss-trigger')?.focus?.({ preventScroll: true })
+    // SearchableSelect tetiği shadcn Button (role="combobox") — eski `.ss-trigger` sınıfı artık yok.
+    el.querySelector('input, select, textarea, button[role="combobox"]')?.focus?.({ preventScroll: true })
     const id = setTimeout(() => el.classList.remove('is-focus-target'), 2000)
     return () => clearTimeout(id)
   }, [focusKey, items])

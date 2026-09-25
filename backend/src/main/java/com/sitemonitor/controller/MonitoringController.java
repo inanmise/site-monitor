@@ -53,6 +53,11 @@ public class MonitoringController {
      *  Kardeş yüzeyler RenewalForecastService/CertificateCardExtrasService ile aynı. */
     private static final java.time.ZoneId ORG_ZONE = java.time.ZoneId.of("Europe/Istanbul");
 
+    /** Ekip üyesi kapsamı (Monitor Changes, 2026-09-25). Opsiyonel: @WebMvcTest bağlamlarında depo yok —
+     *  yokken kapsam yalnız takım koşuluna düşer (TeamActorScope.ofTeams). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.AppUserRepository appUserRepo;
+
     private final LatestCheckRepository latestCheckRepo;
     private final CertificateInventoryRepository inventoryRepo;
     private final CertificateCheckRepository certCheckRepo;
@@ -628,25 +633,31 @@ public class MonitoringController {
 
         boolean all = SessionScope.isGlobalViewer(session);
         List<Long> view = SessionScope.viewTeamIds(session);
-        // Boş IN listesi bazı sağlayıcılarda sözdizimi hatası verir — kukla değerle koru
-        // (ScriptedTemplateController.readableTeamTemplates'teki aynı tuzak).
-        List<Long> scope = (view == null || view.isEmpty()) ? List.of(-1L) : view;
         if (!all && (view == null || view.isEmpty())) return ok(Map.of("changes", List.of(), "total", 0));
+        // Kapsam (2026-09-25): izlemenin takımı VEYA değişikliği yapan ekip üyesi — takımı boş satırlar
+        // (envanter türevi / sentetik) takım arkadaşının değişikliği olarak da görünür. Boş IN listeleri
+        // kukla değerle korunur (TeamActorScope).
+        TeamActorScope sc = all ? TeamActorScope.unrestricted() : TeamActorScope.ofTeams(view, appUserRepo);
+        // Takım SÜZGECİ aynı kuralla: o takımın izlemesi VEYA o takım üyesinin değişikliği.
+        TeamActorScope fl = teamId == null ? TeamActorScope.unrestricted() : TeamActorScope.ofTeams(List.of(teamId), appUserRepo);
 
         String kindKey = kind == null || kind.isBlank() ? null
                 : MonitorHistoryService.KIND_BY_PATH.getOrDefault(kind.toLowerCase(Locale.ROOT), kind.toUpperCase(Locale.ROOT));
         var pg = changeLogRepo.search(kindKey, blankToNull(eventType), blankToNull(actor), teamId,
-                blankToNull(from), blankToNull(to), blankToNull(q), all, scope,
+                fl.actorIds(), fl.actorNames(),
+                blankToNull(from), blankToNull(to), blankToNull(q), all, sc.teamIds(), sc.actorIds(), sc.actorNames(),
                 PageRequest.of(Math.max(0, page), Math.max(1, Math.min(size, 200))));
 
         Map<String, Object> counts = new LinkedHashMap<>();
-        for (Object[] row : changeLogRepo.countByEventType(blankToNull(from), blankToNull(to), teamId, all, scope)) {
+        for (Object[] row : changeLogRepo.countByEventType(blankToNull(from), blankToNull(to), teamId,
+                fl.actorIds(), fl.actorNames(), all, sc.teamIds(), sc.actorIds(), sc.actorNames())) {
             counts.put(String.valueOf(row[0]), row[1]);
         }
         // Tür kartları: (tür → olay → adet). Sayfalanan listeden türetilemez (o yalnız görünen
         // sayfayı taşır); kartlar seçili zaman penceresinin TAMAMINI özetler.
         Map<String, Map<String, Object>> byKind = new LinkedHashMap<>();
-        for (Object[] row : changeLogRepo.countByKindAndEventType(blankToNull(from), blankToNull(to), teamId, all, scope)) {
+        for (Object[] row : changeLogRepo.countByKindAndEventType(blankToNull(from), blankToNull(to), teamId,
+                fl.actorIds(), fl.actorNames(), all, sc.teamIds(), sc.actorIds(), sc.actorNames())) {
             byKind.computeIfAbsent(String.valueOf(row[0]), k -> new LinkedHashMap<>())
                   .put(String.valueOf(row[1]), row[2]);
         }

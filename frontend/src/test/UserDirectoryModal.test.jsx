@@ -170,7 +170,8 @@ describe('UserDirectoryModal', () => {
     expect(rowsOf(dlg)).toHaveLength(4)
     // başlıktaki seçici: Pasif
     fireEvent.mouseDown(within(th).getByLabelText(/^Hesap$|^Account$/))
-    fireEvent.mouseDown((within(dlg).getAllByText(/^Pasif$|^Inactive$/)).find((el) => el.closest('.ss-option')))
+    // Liste body'ye portal'lanır — seçenek diyaloğun DIŞINDA, belge genelinde aranır.
+    fireEvent.mouseDown(screen.getAllByText(/^Pasif$|^Inactive$/).find((el) => el.closest('[role="option"]')))
     expect(rowsOf(dlg)).toHaveLength(1)
   })
 

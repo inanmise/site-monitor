@@ -1903,8 +1903,13 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
           {/* Kaydetme sonrası doğrulama koşumu. Sürüm ZATEN kaydedildi — metin bunu söylüyor
               ve "Kapat" her an açık: koşum sunucuda sürer, sonucu Kontrol Geçmişi'ne düşer. */}
           {smoke && (
-            <div className="full-width sc-smoke">
-              <AlertBanner tone={smoke.state === 'skipped' ? 'warning' : 'info'}>
+            <div className="full-width">
+              <AlertBanner tone={smoke.state === 'skipped' ? 'warning' : 'info'}
+                actions={
+                  <Button type="button" variant="secondary" size="sm" onClick={dismissSmoke}>
+                    {t('scripted.smokeClose')}
+                  </Button>
+                }>
                 <span className="sc-smoke-msg">
                   {smoke.state === 'running' && <Spinner size={14} inline decorative />}
                   {smoke.state === 'running'  && t('scripted.smokeRunning')}
@@ -1912,9 +1917,6 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
                   {smoke.state === 'cooldown' && t('scripted.smokeCooldown')}
                   {smoke.state === 'skipped'  && t('scripted.smokeSkipped', smoke.reason || '')}
                 </span>
-                <Button type="button" variant="secondary" size="sm" onClick={dismissSmoke}>
-                  {t('scripted.smokeClose')}
-                </Button>
               </AlertBanner>
             </div>
           )}

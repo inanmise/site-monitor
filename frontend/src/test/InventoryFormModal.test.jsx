@@ -76,7 +76,9 @@ describe('InventoryFormModal', () => {
   // ── Grup + etiket zorunlu (2026-09-18): envanter kaydı da bir izleme ──
   it('edit: etiket alanı formda ÇİZİLİR ve kayıtlı etiketler payload\'a geri gider (eskiden alan yoktu → düzenleme etiketleri siliyordu)', async () => {
     render(<InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
-    expect(document.querySelector('.tag-chip')?.textContent).toMatch(/^prod/)
+    // Etiket chip'i shadcn Badge; kaldırma düğmesinin adı etiketi taşır → chip ondan bulunur.
+    expect(screen.getByRole('button', { name: /Remove the prod tag|prod etiketini kaldır/ })
+      .closest('[data-slot="badge"]')?.textContent).toMatch(/^prod/)
     fireEvent.click(saveBtn())
     await waitFor(() => expect(api.admin.updateInventory).toHaveBeenCalled())
     expect(api.admin.updateInventory.mock.calls[0][1].tags).toBe('prod')
@@ -231,6 +233,37 @@ describe('InventoryFormModal', () => {
 
     await waitFor(() => expect(api.admin.updateInventory).toHaveBeenCalled())
     expect(onSaved).not.toHaveBeenCalled()
+  })
+
+  // ── USER "Domain Ekle" (2026-09-25 kullanıcı bildirimi): ekleme yetkisi vardı ama takım/grup/etiket
+  //    seçicileri yalnız yöneticiye açıktı → USER hiçbir takımı seçemediği için kayıt AÇAMIYORDU. ──
+  const teamPicker = () => screen.getByRole('combobox', { name: /Takım|Team/ })
+  const tagInput = () => screen.queryByPlaceholderText(/eklemek için yazıp Enter|type and press Enter/)
+
+  it('USER ekle (canWrite): tek takımı ÖNSEÇİLİ gelir, takım/grup/platform seçicileri ve etiket kutusu AÇIK', async () => {
+    render(<InventoryFormModal mode="add" teams={[TEAMS[0]]} canManage={false} canWrite onClose={() => {}} onSaved={() => {}} />)
+    await waitFor(() => expect(teamPicker()).toHaveTextContent('SY-Takım A'))
+    expect(teamPicker()).toBeEnabled()
+    expect(screen.getAllByRole('combobox').filter(el => el.disabled)).toEqual([])
+    expect(tagInput()).toBeInTheDocument()
+  })
+
+  it('USER ekle (canWrite) birden çok takım: önseçim YOK, kutu açık ve yalnız verilen (üyesi olduğu) takımları listeler', async () => {
+    render(<InventoryFormModal mode="add" teams={TEAMS} canManage={false} canWrite onClose={() => {}} onSaved={() => {}} />)
+    expect(teamPicker()).toBeEnabled()
+    expect(teamPicker()).not.toHaveTextContent('SY-Takım')
+  })
+
+  it('USER düzenle (canWrite): takım KİLİTLİ (sunucu mevcut takımı korur), diğer alanlar açık', () => {
+    render(<InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} canManage={false} canWrite onClose={() => {}} onSaved={() => {}} />)
+    expect(teamPicker()).toBeDisabled()
+    expect(tagInput()).toBeInTheDocument()
+  })
+
+  it('yazma yetkisi YOK (canManage=false, canWrite=false): seçiciler kapalı kalır', () => {
+    render(<InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} canManage={false} onClose={() => {}} onSaved={() => {}} />)
+    expect(teamPicker()).toBeDisabled()
+    expect(tagInput()).toBeNull()   // TagInput kapalıyken yazma kutusunu hiç çizmez
   })
 
   it('teams prop verilince getTeams çağrılmaz; verilmeyince çağrılır', async () => {
@@ -400,8 +433,8 @@ describe('InventoryFormModal — Kaydet sırasında kayma yok', () => {
     await waitFor(() => expect(api.admin.updateInventory).toHaveBeenCalled())
     // Evre 1: şerit başlıkta, düğme metni değişmedi, şerit alt barda DEĞİL.
     const title = container.querySelector('.modal-wide-title')
-    expect(title.querySelector('.mon-running')).toHaveTextContent(/Kaydediliyor|Saving/)
-    expect(footer.querySelector('.mon-running')).toBeNull()
+    expect(title.querySelector('[data-slot="check-running"]')).toHaveTextContent(/Kaydediliyor|Saving/)
+    expect(footer.querySelector('[data-slot="check-running"]')).toBeNull()
     expect(saveBtn()).toBeDisabled()
     expect(saveBtn()).toHaveAttribute('aria-busy', 'true')
     expect(Array.from(footer.querySelectorAll('button')).map(b => b.textContent.trim())).toEqual(labelsBefore)
@@ -409,8 +442,8 @@ describe('InventoryFormModal — Kaydet sırasında kayma yok', () => {
     // Evre 2: ilk kontrol — yine başlıkta, yine aynı düğmeler.
     releaseSave()
     await waitFor(() => expect(api.refreshCertificateHealth).toHaveBeenCalled())
-    await waitFor(() => expect(title.querySelector('.mon-running')).toHaveTextContent(/İlk kontrol koşuyor|Running first check/))
-    expect(footer.querySelector('.mon-running')).toBeNull()
+    await waitFor(() => expect(title.querySelector('[data-slot="check-running"]')).toHaveTextContent(/İlk kontrol koşuyor|Running first check/))
+    expect(footer.querySelector('[data-slot="check-running"]')).toBeNull()
     expect(Array.from(footer.querySelectorAll('button')).map(b => b.textContent.trim())).toEqual(labelsBefore)
     expect(screen.getByRole('button', { name: /^İptal$|^Cancel$/i })).toBeDisabled()
 
@@ -448,10 +481,10 @@ describe('InventoryFormModal — Kaydet sırasında kayma yok', () => {
     fireEvent.click(testBtn)
     await waitFor(() => expect(testBtn).toBeDisabled())
     expect(testBtn).toHaveTextContent(/^Test et$|^Test$/)
-    expect(container.querySelector('.modal-wide-title .mon-running')).toHaveTextContent(/Test ediliyor|Testing/)
+    expect(container.querySelector('.modal-wide-title [data-slot="check-running"]')).toHaveTextContent(/Test ediliyor|Testing/)
     release()
     await waitFor(() => expect(testBtn).not.toBeDisabled())
-    expect(container.querySelector('.modal-wide-title .mon-running')).toBeNull()
+    expect(container.querySelector('.modal-wide-title [data-slot="check-running"]')).toBeNull()
   })
 
   it('araç çubuğu "Açıklamayı panoya kopyala" (2026-09-22): editör metnini panoya verir; boşken uyarır, kopyalamaz', async () => {

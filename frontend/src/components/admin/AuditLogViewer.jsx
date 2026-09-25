@@ -222,7 +222,13 @@ function TimeDensityChart({ data, title }) {
   )
 }
 
-export default function AuditLogViewer() {
+/**
+ * @param {boolean} [fullScope=true]  sistem-geneli denetçi (global admin / AUDIT). false = ekip kapsamı (2026-09-25,
+ *   kullanıcı kararı: ekip üyeleri takım arkadaşlarının kayıtlarını TAM ayrıntıyla görür). Ekip kapsamında sistem-geneli
+ *   yüzeyler (özet kartları, yoğunluk/dağılım, hash-zinciri bütünlüğü) çizilmez ve uçları hiç çağrılmaz — sunucu da
+ *   onları admin/AUDIT'e kapatır; liste/dışa aktarma sunucuda aktör üyeliğiyle süzülür.
+ */
+export default function AuditLogViewer({ fullScope = true }) {
   const t = useT()
   const outcomeText = outcomeLabels(t)
   const [eventCatalog, setEventCatalog] = useState(null)   // [{type, category, count}] | null
@@ -331,8 +337,9 @@ export default function AuditLogViewer() {
   }
 
   const loadStats = useCallback(() => {
+    if (!fullScope) return   // sistem-geneli özet: ekip kapsamında uç 403 verir, hiç çağrılmaz
     api.admin.getAuditStats().then(r => { if (r?.success) setStats(r.data) })
-  }, [])
+  }, [fullScope])
 
   const loadLogs = useCallback((p = 0, f = filters, sz = size) => {
     setLoading(true)
@@ -433,6 +440,9 @@ export default function AuditLogViewer() {
 
   return (
     <div className="audit-viewer">
+      {!fullScope && (
+        <AlertBanner tone="info" title={t('audit.teamScopeTitle')}>{t('audit.teamScopeText')}</AlertBanner>
+      )}
       {/* Stats cards */}
       {stats && (
         <div className="audit-stats-row">
@@ -489,7 +499,7 @@ export default function AuditLogViewer() {
             title={t('audit.autoRefreshHint')}>
             <span className={`audit-live-dot${autoRefresh ? ' on' : ''}`} />{t('audit.autoRefresh')}
           </button>
-          <button className="audit-filter-btn" onClick={checkIntegrity}>{t('audit.verifyIntegrity')}</button>
+          {fullScope && <button className="audit-filter-btn" onClick={checkIntegrity}>{t('audit.verifyIntegrity')}</button>}
           <button className="audit-filter-btn" onClick={() => exportAudit('csv')}>CSV</button>
           <button className="audit-filter-btn" onClick={() => exportAudit('json')}>JSON</button>
         </div>

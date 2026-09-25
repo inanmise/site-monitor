@@ -9,6 +9,7 @@ import org.springframework.data.repository.Repository;
 import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -123,8 +124,18 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
 
     // ── Gelişmiş filtre + kaynak/aktör geçmişi (Batch C) ─────────────────────────
 
-    /** Zengin filtre: aktör(LIKE)/actorId(exact)/çoklu-eventType/kaynak-tür+id/outcome/ip/tarih/anomali/serbest-metin. */
+    /**
+     * Zengin filtre: aktör(LIKE)/actorId(exact)/çoklu-eventType/kaynak-tür+id/outcome/ip/tarih/anomali/serbest-metin.
+     *
+     * <p><b>Ekip kapsamı (2026-09-25, kullanıcı kararı "tüm olaylar, tam ayrıntı").</b> {@code scopeAll} true ise
+     * (global admin / AUDIT) kısıt yok. Aksi hâlde satır yalnız AKTÖRÜ ekip arkadaşıysa döner: olay anındaki takımı
+     * ({@code actorTeamId}) kapsamda, ya da kimliği / küçük harf kullanıcı adı kapsamdaki takımların üyeleri
+     * arasında (takımı sonradan değişen üye ve kimliksiz giriş olayları için). Boş listeler kukla değerle gelir
+     * ({@code TeamActorScope}).
+     */
     @Query("SELECT a FROM AuditLog a WHERE " +
+           "(:scopeAll = TRUE OR a.actorTeamId IN :scopeTeamIds OR a.actorId IN :scopeActorIds " +
+           " OR LOWER(a.actor) IN :scopeActorNames) AND " +
            "(:actor IS NULL OR LOWER(a.actor) LIKE :actor) AND " +
            "(:actorId IS NULL OR a.actorId = :actorId) AND " +
            "(:typeFilter = FALSE OR a.eventType IN :types) AND " +
@@ -143,7 +154,10 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
         @Param("resourceType") String resourceType, @Param("resourceId") String resourceId,
         @Param("outcome") String outcome, @Param("ip") String ip,
         @Param("since") String since, @Param("until") String until,
-        @Param("anomalyOnly") boolean anomalyOnly, @Param("q") String q, Pageable pageable);
+        @Param("anomalyOnly") boolean anomalyOnly, @Param("q") String q,
+        @Param("scopeAll") boolean scopeAll, @Param("scopeTeamIds") Collection<Long> scopeTeamIds,
+        @Param("scopeActorIds") Collection<Long> scopeActorIds, @Param("scopeActorNames") Collection<String> scopeActorNames,
+        Pageable pageable);
 
     /** Bir kaynağın tüm geçmişi ("bu izlemeye kim ne yaptı"). */
     List<AuditLog> findByResourceTypeAndResourceIdOrderByEventTimeDesc(String resourceType, String resourceId, Pageable pageable);

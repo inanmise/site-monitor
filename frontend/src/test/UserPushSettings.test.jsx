@@ -275,8 +275,8 @@ describe('UserPushSettings', () => {
     // Takım seçimi: SearchableSelect gizli native select ya da tetikleyici — değeri doğrudan state'e taşımak için
     // bileşenin combobox'ını aç ve seçeneği tıkla.
     const section = document.querySelector('.up-explain')
-    fireEvent.mouseDown(section.querySelector('.ss-trigger'))   // açılış onMouseDown ile
-    const opt = [...section.querySelectorAll('.ss-option')].find(o => o.textContent.trim() === 'Takım A')
+    fireEvent.mouseDown(section.querySelector('button[role="combobox"]'))   // açılış onMouseDown ile
+    const opt = [...document.querySelectorAll('[role="option"]')].find(o => o.textContent.trim() === 'Takım A')
     fireEvent.mouseDown(opt)
     await waitFor(() => expect(api.admin.userPush.explain).toHaveBeenCalledWith('5', 'HIGH'))
     await screen.findByText('Geliştirici İki')

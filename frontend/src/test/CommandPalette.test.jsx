@@ -24,7 +24,7 @@ describe('CommandPalette', () => {
     const onTab = vi.fn()
     render(<CommandPalette tabs={TABS} onTabChange={onTab} />)
     fireEvent.keyDown(window, { key: 'k', ctrlKey: true })
-    const input = screen.getByRole('textbox')
+    const input = screen.getByRole('combobox')
     fireEvent.change(input, { target: { value: 'z' } })
     expect(screen.getByText('Zayıf Algoritma')).toBeInTheDocument()
     expect(screen.queryByText('Yardım')).toBeNull()
@@ -42,13 +42,13 @@ describe('CommandPalette', () => {
     window.addEventListener('sm:navigate', nav)
     render(<CommandPalette tabs={TABS} onTabChange={() => {}} />)
     window.dispatchEvent(new CustomEvent('sm:palette'))
-    const input = await screen.findByRole('textbox')
+    const input = await screen.findByRole('combobox')
     fireEvent.change(input, { target: { value: 'abc' } })
     await waitFor(() => expect(api.search).toHaveBeenCalledWith('abc'))
     await screen.findByText('abc.example.com')
     expect(screen.getByText('Ödeme')).toBeInTheDocument()
     // 2026-09-20: takım / grup / etiket çipleri satırda
-    const row = screen.getByText('Ödeme').closest('.palette-item')
+    const row = screen.getByText('Ödeme').closest('[cmdk-item]')   // shadcn Command (cmdk) öğesi
     expect(row.textContent).toContain('Takım A'); expect(row.textContent).toContain('Satış'); expect(row.textContent).toContain('odeme')
     // sekme eşleşmesi yok ('abc') → ilk öğe sertifika
     fireEvent.keyDown(input, { key: 'Enter' })

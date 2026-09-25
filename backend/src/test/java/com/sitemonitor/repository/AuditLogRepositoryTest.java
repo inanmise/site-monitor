@@ -48,11 +48,39 @@ class AuditLogRepositoryTest {
 
     private static final PageRequest PAGE = PageRequest.of(0, 20);
     private static final List<String> NO_TYPES = List.of("");
+    /** Ekip kapsamının boş IN listeleri için kukla değerler (TeamActorScope ile aynı). */
+    private static final List<Long> NO_IDS = List.of(-1L);
+    private static final List<String> NO_NAMES = List.of("");
+
+    @Test
+    @DisplayName("findAdvanced: ekip kapsamı — aktörün takımı, kimliği ya da harf duyarsız adı eşleşen satırlar; yabancı YOK")
+    void findAdvanced_teamScope() {
+        AuditLog carol = a(5, "2026-07-28T14:00:00", "LOGIN", "carol", 3L, "USER", "3", "SUCCESS");
+        carol.setActorTeamId(5L);                      // olay anındaki takımı kapsamda
+        repo.save(carol);
+        // Kimliksiz giriş olayı: yalnız kullanıcı adı taşır, büyük harfle yazılmış.
+        repo.save(a(6, "2026-07-28T15:00:00", "LOGIN_FAILED", "DAVE", null, "USER", "dave", "FAILURE"));
+
+        // Kapsam: takım 5 + üye kimliği 2 (bob) + üye adı "dave". alice (kimlik 1) ekip dışı.
+        Page<AuditLog> p = repo.findAdvanced(null, null, false, NO_TYPES, null, null, null, null, null, null, false, null,
+                false, List.of(5L), List.of(2L), List.of("dave"), PAGE);
+        assertThat(p.getContent()).extracting(AuditLog::getActor)
+                .containsExactlyInAnyOrder("carol", "bob", "bob", "DAVE");
+
+        // Kukla kapsam (takımı/üyesi olmayan kullanıcı) hiçbir şey görmez.
+        assertThat(repo.findAdvanced(null, null, false, NO_TYPES, null, null, null, null, null, null, false, null,
+                false, NO_IDS, NO_IDS, NO_NAMES, PAGE).getTotalElements()).isZero();
+
+        // Kapsam süzgeçlerle VE çalışır: ekip içinde yalnız başarısız olaylar.
+        assertThat(repo.findAdvanced(null, null, false, NO_TYPES, null, null, "FAILURE", null, null, null, false, null,
+                false, List.of(5L), List.of(2L), List.of("dave"), PAGE).getContent())
+                .extracting(AuditLog::getActor).containsExactly("DAVE");
+    }
 
     @Test
     @DisplayName("findAdvanced: filtresiz → tümü, en yeni üstte")
     void findAdvanced_noFilter_all() {
-        Page<AuditLog> p = repo.findAdvanced(null, null, false, NO_TYPES, null, null, null, null, null, null, false, null, PAGE);
+        Page<AuditLog> p = repo.findAdvanced(null, null, false, NO_TYPES, null, null, null, null, null, null, false, null, true, NO_IDS, NO_IDS, NO_NAMES, PAGE);
         assertThat(p.getTotalElements()).isEqualTo(4);
         assertThat(p.getContent().get(0).getEventType()).isEqualTo("MONITOR_UPDATE");   // en yeni
     }
@@ -60,7 +88,7 @@ class AuditLogRepositoryTest {
     @Test
     @DisplayName("findAdvanced: actorId exact → yalnız o kullanıcı")
     void findAdvanced_actorId() {
-        Page<AuditLog> p = repo.findAdvanced(null, 2L, false, NO_TYPES, null, null, null, null, null, null, false, null, PAGE);
+        Page<AuditLog> p = repo.findAdvanced(null, 2L, false, NO_TYPES, null, null, null, null, null, null, false, null, true, NO_IDS, NO_IDS, NO_NAMES, PAGE);
         assertThat(p.getTotalElements()).isEqualTo(2);
         assertThat(p.getContent()).allMatch(x -> x.getActorId() == 2L);
     }
@@ -69,21 +97,21 @@ class AuditLogRepositoryTest {
     @DisplayName("findAdvanced: çoklu eventType IN")
     void findAdvanced_multiEventType() {
         Page<AuditLog> p = repo.findAdvanced(null, null, true, List.of("USER_UPDATE", "ACCESS_DENIED"),
-                null, null, null, null, null, null, false, null, PAGE);
+                null, null, null, null, null, null, false, null, true, NO_IDS, NO_IDS, NO_NAMES, PAGE);
         assertThat(p.getTotalElements()).isEqualTo(2);
     }
 
     @Test
     @DisplayName("findAdvanced: kaynak tür+id → o kaynağın olayları")
     void findAdvanced_resource() {
-        Page<AuditLog> p = repo.findAdvanced(null, null, false, NO_TYPES, "PORT_MONITOR", "7", null, null, null, null, false, null, PAGE);
+        Page<AuditLog> p = repo.findAdvanced(null, null, false, NO_TYPES, "PORT_MONITOR", "7", null, null, null, null, false, null, true, NO_IDS, NO_IDS, NO_NAMES, PAGE);
         assertThat(p.getTotalElements()).isEqualTo(2);   // create + update
     }
 
     @Test
     @DisplayName("findAdvanced: outcome=BLOCKED → yalnız güvenlik olayı")
     void findAdvanced_outcome() {
-        Page<AuditLog> p = repo.findAdvanced(null, null, false, NO_TYPES, null, null, "BLOCKED", null, null, null, false, null, PAGE);
+        Page<AuditLog> p = repo.findAdvanced(null, null, false, NO_TYPES, null, null, "BLOCKED", null, null, null, false, null, true, NO_IDS, NO_IDS, NO_NAMES, PAGE);
         assertThat(p.getTotalElements()).isEqualTo(1);
         assertThat(p.getContent().get(0).getEventType()).isEqualTo("ACCESS_DENIED");
     }
@@ -91,7 +119,7 @@ class AuditLogRepositoryTest {
     @Test
     @DisplayName("findAdvanced: serbest metin q (resource_id) LIKE")
     void findAdvanced_freeText() {
-        Page<AuditLog> p = repo.findAdvanced(null, null, false, NO_TYPES, null, null, null, null, null, null, false, "%get /x%", PAGE);
+        Page<AuditLog> p = repo.findAdvanced(null, null, false, NO_TYPES, null, null, null, null, null, null, false, "%get /x%", true, NO_IDS, NO_IDS, NO_NAMES, PAGE);
         assertThat(p.getTotalElements()).isEqualTo(1);
     }
 

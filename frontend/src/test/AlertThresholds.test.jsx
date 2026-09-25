@@ -187,7 +187,7 @@ describe('AlertThresholds', () => {
     await ready(container)
     const add = container.querySelector('.threshold-add')
     // SearchableSelect: aç, Tier 2'yi seç (mousedown sözleşmesi)
-    fireEvent.mouseDown(add.querySelector('.ss-trigger'))
+    fireEvent.mouseDown(add.querySelector('button[role="combobox"]'))
     const opt = await screen.findByText(/Tier 2/)
     fireEvent.mouseDown(opt)
     fireEvent.click(add.querySelector('[data-slot="button"]'))

@@ -98,7 +98,7 @@ describe('UptimePage — grup/etiket filtresi', () => {
     render(<UptimePage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await screen.findByText('odeme.example.com')
     const bar = document.querySelector('.upt-toolbar')
-    const triggers = [...bar.querySelectorAll('.ss-trigger')].map((b) => b.textContent.trim())
+    const triggers = [...bar.querySelectorAll('button[role="combobox"]')].map((b) => b.textContent.trim())
     expect(triggers).toEqual(expect.arrayContaining([expect.stringMatching(/tüm gruplar|all groups/i), expect.stringMatching(/tüm etiketler|all tags/i)]))
     expect(screen.queryByText(/filtreleri temizle|clear filters/i)).toBeNull()
 
@@ -112,8 +112,8 @@ describe('UptimePage — grup/etiket filtresi', () => {
     expect(await screen.findByText('kampanya.example.com')).toBeInTheDocument()
 
     // Grup kutusu: "Grupsuz" eski kaydı bulur
-    fireEvent.mouseDown([...bar.querySelectorAll('.ss-trigger')].find((b) => /tüm gruplar|all groups/i.test(b.textContent)))
-    fireEvent.mouseDown([...bar.querySelectorAll('.ss-option')].find((o) => /grupsuz|no group/i.test(o.textContent)))
+    fireEvent.mouseDown([...bar.querySelectorAll('button[role="combobox"]')].find((b) => /tüm gruplar|all groups/i.test(b.textContent)))
+    fireEvent.mouseDown([...document.querySelectorAll('[role="option"]')].find((o) => /grupsuz|no group/i.test(o.textContent)))
     await waitFor(() => expect(screen.queryByText('odeme.example.com')).toBeNull())
     expect(screen.getByText('eski.example.com')).toBeInTheDocument()
   })

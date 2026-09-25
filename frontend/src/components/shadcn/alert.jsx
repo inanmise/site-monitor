@@ -9,6 +9,17 @@ const alertVariants = cva(
         default: "bg-card text-card-foreground",
         destructive:
           "bg-card text-destructive *:data-[slot=alert-description]:text-destructive/90 [&>svg]:text-current",
+        // Proje varyantları (shadcn'in önerdiği yol: cva'yı genişlet) — ui/AlertBanner'ın dört tonu.
+        // Tonlu zemin + kenar + mürekkep; açıklama mürekkebi izler (varsayılandaki gri metin tonlu
+        // zeminde okunmuyordu). Değerler eski .alert-banner--* paletinin Tailwind karşılıkları.
+        info:
+          "border-blue-200 bg-blue-50 text-blue-800 *:data-[slot=alert-description]:text-current dark:border-blue-900 dark:bg-blue-950/60 dark:text-blue-200",
+        success:
+          "border-green-200 bg-green-50 text-green-800 *:data-[slot=alert-description]:text-current dark:border-green-800 dark:bg-green-950/60 dark:text-green-400",
+        warning:
+          "border-amber-300 bg-amber-50 text-amber-800 *:data-[slot=alert-description]:text-current dark:border-yellow-700 dark:bg-amber-950/60 dark:text-amber-200",
+        danger:
+          "border-red-200 bg-red-50 text-red-800 *:data-[slot=alert-description]:text-current dark:border-red-800 dark:bg-red-950/60 dark:text-red-400",
       },
     },
     defaultVariants: {

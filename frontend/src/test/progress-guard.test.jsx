@@ -33,6 +33,26 @@ function walk(dir, acc = []) {
 const files = walk(SRC).filter(f => !f.endsWith(UI_PROGRESS))
 const rel = (f) => path.relative(SRC, f)
 
+/** Yorumları ayıklar — bir sınıfı ANLATAN yorum, o sınıfın kullanımı sayılmamalı. */
+function stripComments(src) {
+  return src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+}
+
+/** `@media (prefers-reduced-motion: reduce) { … }` bloklarının GÖVDELERİ (iç içe süslü parantez sayılarak). */
+function reducedMotionBlocks(css) {
+  const out = []
+  const head = '@media (prefers-reduced-motion: reduce)'
+  for (let at = css.indexOf(head); at !== -1; at = css.indexOf(head, at + head.length)) {
+    const open = css.indexOf('{', at)
+    let depth = 0
+    for (let i = open; i < css.length; i++) {
+      if (css[i] === '{') depth++
+      else if (css[i] === '}' && --depth === 0) { out.push(css.slice(open + 1, i)); break }
+    }
+  }
+  return out
+}
+
 describe('progress göstergesi bekçileri', () => {
   it('kaynak ağacı taranabiliyor', () => {
     expect(files.length).toBeGreaterThan(50)
@@ -71,15 +91,37 @@ describe('progress göstergesi bekçileri', () => {
     expect(hits, 'Belirsiz gösterge için <Spinner> kullanın').toEqual([])
   })
 
-  it('Progress ailesi prefers-reduced-motion kapsamında', () => {
+  it('Progress ailesi prefers-reduced-motion kapsamında (shadcn Spinner/Progress + halka)', () => {
+    // Progress ailesi artık shadcn: dönme/geçiş App.css'teki .pg-* kurallarında değil, bileşen
+    // sınıflarında (Tailwind `animate-spin`, `transition-*`). Kapsam da ORADA olmalı: dönen ya da
+    // geçiş yapan her sınıf dizesi aynı dizede bir `motion-reduce:` karşılığı taşır.
+    const sources = [
+      path.join('components', 'ui', 'Progress.jsx'),
+      path.join('components', 'shadcn', 'spinner.jsx'),
+      path.join('components', 'shadcn', 'progress.jsx'),
+    ].map((rel) => [rel, stripComments(fs.readFileSync(path.join(SRC, rel), 'utf8'))])
+    let spinning = 0
+    for (const [rel, src] of sources) {
+      const strings = [...src.matchAll(/(["'`])((?:(?!\1)[^\n])*)\1/g)].map((m) => m[2])
+      for (const s of strings.filter((x) => /\banimate-spin\b/.test(x))) {
+        spinning++
+        expect(s, `${rel}: dönen öğe reduced-motion kapsamında değil`).toMatch(/motion-reduce:animate-(none|pulse)\b/)
+      }
+      for (const s of strings.filter((x) => /(^|\s)transition(-[\w[\]-]+)?(\s|$)/.test(x))) {
+        expect(s, `${rel}: geçiş reduced-motion kapsamında değil`).toContain('motion-reduce:transition-none')
+      }
+    }
+    expect(spinning, 'animate-spin bulunamadı (tarama vakumda)').toBeGreaterThan(1)
+  })
+
+  it('CSS tabanlı kalan dönen göstergeler de prefers-reduced-motion kapsamında', () => {
+    // Progress ailesinin DIŞINDA kalan, App.css'te dönen sınıflar (ikon döndürme, login halkası…).
     const css = fs.readFileSync(path.join(SRC, 'App.css'), 'utf8')
-    // Seçici listesi ".pg-spinner," ile başlayan reduced-motion bloğunu bul.
-    const at = css.indexOf('.pg-spinner,')
-    expect(at, 'Progress reduced-motion seçici listesi bulunamadı').toBeGreaterThan(-1)
-    expect(css.slice(Math.max(0, at - 200), at)).toContain('@media (prefers-reduced-motion: reduce)')
-    const block = css.slice(at, at + 400)
-    for (const sel of ['.pg-spinner', '.spin', '.chk-spin', '.lp-spinner', '.page-confirm-spin']) {
-      expect(block, `${sel} hareket azaltma kapsamında değil`).toContain(sel)
+    const blocks = reducedMotionBlocks(css)
+    expect(blocks.length, 'reduced-motion bloğu bulunamadı (tarama vakumda)').toBeGreaterThan(0)
+    for (const sel of ['.spin', '.chk-spin', '.lp-spinner', '.page-confirm-spin']) {
+      const covered = blocks.some((b) => new RegExp(`\\${sel}(?![\\w-])`).test(b))
+      expect(covered, `${sel} hareket azaltma kapsamında değil`).toBe(true)
     }
   })
 })

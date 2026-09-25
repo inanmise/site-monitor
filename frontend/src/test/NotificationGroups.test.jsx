@@ -222,11 +222,11 @@ describe('NotificationGroups', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: /^Delete$/ }))
     await screen.findByText(/This group is in use/)
 
-    fireEvent.mouseDown(screen.getByRole('button', { name: /Target group/i }))
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: /Target group/i }))
     // SearchableSelect secenekleri onMouseDown ile secilir (click DEGIL); ayrica "Hedef" adi
-    // hem tabloda hem acilir listede gectigi icin .ss-option olani hedefliyoruz.
+    // hem tabloda hem acilir listede gectigi icin role="option" olani hedefliyoruz.
     const opts = await screen.findAllByText('Hedef')
-    fireEvent.mouseDown(opts.find(el => el.closest('.ss-option')))
+    fireEvent.mouseDown(opts.find(el => el.closest('[role="option"]')))
     fireEvent.click(screen.getByRole('button', { name: /Move to another group/i }))
 
     await waitFor(() => expect(api.notificationGroups.reassign).toHaveBeenCalledWith(10, 11))

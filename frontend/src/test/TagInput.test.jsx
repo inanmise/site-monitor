@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { useState } from 'react'
-import { render, screen, fireEvent } from './test-utils'
+import { render, screen, fireEvent, within } from './test-utils'
 import TagInput from '../components/ui/TagInput.jsx'
+import ModalShell from '../components/ui/ModalShell.jsx'
 
 /**
  * TagInput — bekleyen girdinin ÖNİZLEME chip'i ve "yükseklik kararlılığı" sözleşmesi.
@@ -20,8 +21,14 @@ function Harness({ initial = '', onValue }) {
   return <TagInput label="E-posta" value={v} onChange={next => { setV(next); onValue?.(next) }} />
 }
 
-const chips = () => document.querySelectorAll('.tag-chip')
+// Chip'ler shadcn Badge; bekleyen girdinin önizlemesi `data-pending` taşır.
+const chips = () => document.querySelectorAll('[data-slot="badge"]')
+const pendingChip = () => document.querySelector('[data-slot="badge"][data-pending]')
 const input = () => screen.getByRole('textbox')
+// Öneri listesi body'ye PORTAL'lanır (Radix Popover) — container'da DEĞİL, belge genelinde aranır;
+// aksi hâlde "liste yok" iddiaları boşuna geçerdi. Öğe adı cmdk'nin `data-value`'sunda.
+const suggestList = () => screen.queryByRole('listbox')
+const suggestNames = () => screen.getAllByRole('option').map(o => o.getAttribute('data-value'))
 
 describe('TagInput — bekleyen girdi önizlemesi', () => {
   it("yazılan metin, henüz işlenmeden önizleme chip'i olarak yer ayırır", () => {
@@ -31,7 +38,7 @@ describe('TagInput — bekleyen girdi önizlemesi', () => {
     fireEvent.change(input(), { target: { value: 'nobet@example.com' } })
 
     expect(chips()).toHaveLength(1)
-    expect(document.querySelector('.tag-chip--pending').textContent).toContain('nobet@example.com')
+    expect(pendingChip().textContent).toContain('nobet@example.com')
   })
 
   it('BLUR ile işleme alma chip sayısını DEĞİŞTİRMEZ (tıklama hedefinde kalır)', () => {
@@ -45,7 +52,7 @@ describe('TagInput — bekleyen girdi önizlemesi', () => {
 
     // Önizleme kaldırılırsa before=0 / after=1 olur ve bu iddia düşer — kapının çekirdeği bu.
     expect(after).toBe(before)
-    expect(document.querySelector('.tag-chip--pending')).toBeNull()
+    expect(pendingChip()).toBeNull()
     expect(onValue).toHaveBeenCalledWith('nobet@example.com')
   })
 
@@ -84,7 +91,7 @@ describe('TagInput — bekleyen girdi önizlemesi', () => {
     render(<Harness onValue={onValue} />)
     fireEvent.change(input(), { target: { value: 'yanlis' } })
 
-    const x = document.querySelector('.tag-chip--pending .tag-chip-x')
+    const x = within(pendingChip()).getByRole('button', { name: /discard/i })
     // mousedown'da varsayılan ENGELLENMELİ; aksi halde önce blur → chip eklenir ve
     // düğme kaybolur, tıklama boşa düşerdi.
     const md = fireEvent.mouseDown(x)
@@ -115,46 +122,75 @@ describe('TagInput — bekleyen girdi önizlemesi', () => {
 
   it('öneriler: odaklanınca liste (seçili olanlar hariç), yazınca süzülür, tıklayınca chip; sayı sağda', () => {
     const onValue = vi.fn()
-    const { container } = render(<SHarness initial="pci" onValue={onValue} suggestions={[{ name: 'pci', count: 4 }, { name: 'prod', count: 9 }, { name: 'payment', count: 2 }, 'staging']} />)
+    render(<SHarness initial="pci" onValue={onValue} suggestions={[{ name: 'pci', count: 4 }, { name: 'prod', count: 9 }, { name: 'payment', count: 2 }, 'staging']} />)
     const input = screen.getByPlaceholderText('etiket')
-    expect(container.querySelector('.tag-suggest')).toBeNull()
+    expect(suggestList()).toBeNull()
     fireEvent.focus(input)
-    let items = [...container.querySelectorAll('.tag-suggest-item .tag-suggest-name')].map(e => e.textContent)
+    let items = suggestNames()
     expect(items).toEqual(['prod', 'payment', 'staging'])   // pci zaten seçili → listede yok
-    expect(container.querySelector('.tag-suggest-count').textContent).toBe('9')
+    expect(within(screen.getByRole('option', { name: /prod/ })).getByText('9')).toBeDefined()
     fireEvent.change(input, { target: { value: 'pa' } })
-    items = [...container.querySelectorAll('.tag-suggest-item .tag-suggest-name')].map(e => e.textContent)
+    items = suggestNames()
     expect(items).toEqual(['payment'])
-    fireEvent.click(container.querySelector('.tag-suggest-item'))
+    fireEvent.click(screen.getAllByRole('option')[0])
     expect(onValue).toHaveBeenLastCalledWith('pci, payment')
     expect(input.value).toBe('')
   })
 
   it('öneriler: ok tuşları + Enter vurgulananı seçer; eşleşme yoksa Enter YENİ etiket ekler (eski davranış); Escape kapatır', () => {
     const onValue = vi.fn()
-    const { container } = render(<SHarness onValue={onValue} suggestions={['prod', 'pre-prod', 'test']} />)
+    render(<SHarness onValue={onValue} suggestions={['prod', 'pre-prod', 'test']} />)
     const input = screen.getByPlaceholderText('etiket')
     fireEvent.focus(input)
     fireEvent.change(input, { target: { value: 'pr' } })   // prod, pre-prod
     fireEvent.keyDown(input, { key: 'ArrowDown' })
-    expect(container.querySelector('.tag-suggest-item.is-active .tag-suggest-name').textContent).toBe('pre-prod')
+    expect(screen.getByRole('option', { selected: true }).getAttribute('data-value')).toBe('pre-prod')
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onValue).toHaveBeenLastCalledWith('pre-prod')
     fireEvent.change(input, { target: { value: 'yeni-etiket' } })
-    expect(container.querySelector('.tag-suggest')).toBeNull()   // eşleşme yok → liste yok
+    expect(suggestList()).toBeNull()   // eşleşme yok → liste yok
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onValue).toHaveBeenLastCalledWith('pre-prod, yeni-etiket')
     fireEvent.change(input, { target: { value: 't' } })
-    expect(container.querySelector('.tag-suggest')).not.toBeNull()
+    expect(suggestList()).not.toBeNull()
     fireEvent.keyDown(input, { key: 'Escape' })
-    expect(container.querySelector('.tag-suggest')).toBeNull()
+    expect(suggestList()).toBeNull()
   })
 
   it('öneri yoksa (prop verilmemiş) davranış aynen: combobox rolü yok, liste yok', () => {
-    const { container } = render(<SHarness />)
+    render(<SHarness />)
     const input = screen.getByPlaceholderText('etiket')
     fireEvent.focus(input)
     expect(input.getAttribute('role')).toBeNull()
-    expect(container.querySelector('.tag-suggest')).toBeNull()
+    expect(suggestList()).toBeNull()
+  })
+
+  it('öneri listesi ModalShell içinde: Escape YALNIZ listeyi kapatır, pencere açık kalır', () => {
+    const onClose = vi.fn()
+    render(
+      <ModalShell open onClose={onClose} title="Pencere">
+        <SHarness suggestions={['prod', 'test']} />
+      </ModalShell>
+    )
+    const input = screen.getByPlaceholderText('etiket')
+    fireEvent.focus(input)
+    expect(suggestList()).not.toBeNull()
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(suggestList()).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog')).toBeDefined()
+  })
+
+  it('öneriye BASMAK blur üretmez: yazılan metin chip olmaz, seçilen öneri eklenir', () => {
+    const onValue = vi.fn()
+    render(<SHarness onValue={onValue} suggestions={['prod', 'payment']} />)
+    const input = screen.getByPlaceholderText('etiket')
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'pa' } })
+    const opt = screen.getByRole('option', { name: /payment/ })
+    expect(fireEvent.mouseDown(opt)).toBe(false)   // preventDefault → odak kutuda kalır
+    fireEvent.click(opt)
+    expect(onValue).toHaveBeenCalledTimes(1)
+    expect(onValue).toHaveBeenLastCalledWith('payment')
   })
 })

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, fillGroupAndTags } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within, fillGroupAndTags } from './test-utils.jsx'
 import KeywordMonitorPage from '../components/KeywordMonitorPage.jsx'
 
 // Açıklama ifadeleri (expectPhrase/triggerPhrase) dilden bağımsız TR; butonlar
@@ -305,7 +305,8 @@ describe('KeywordMonitorPage', () => {
       render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
       await waitFor(() => expect(api.monitoring.getCheckHistory).toHaveBeenCalled())   // modal açıldı
       await waitFor(() => expect(window.location.search).toContain('monitor=1'), { timeout: 1500 })
-      fireEvent.click(document.querySelector('.upt-modal-close'))
+      // Detay modalının başlık eylemlerindeki kapatma (MonitorModalActions — shadcn Button)
+      fireEvent.click(within(document.querySelector('[data-slot="monitor-modal-actions"]')).getByRole('button', { name: /^(Kapat|Close)$/i }))
       await waitFor(() => expect(window.location.search).not.toContain('monitor='), { timeout: 1500 })
     } finally { window.history.replaceState({}, '', '/') }
   })
@@ -321,7 +322,8 @@ describe('KeywordMonitorPage', () => {
       render(<KeywordMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
       await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
 
-      const runBtn = document.querySelector('.mon-act--check')
+      // Kartın kontrol düğmesi (modal da aynı adlı düğmeyi taşır; DOM sırasında kart önce gelir)
+      const runBtn = screen.getAllByRole('button', { name: /^(Kontrol Et|Check now)$/i })[0]
       expect(runBtn).not.toBeNull()
       fireEvent.click(runBtn)
 

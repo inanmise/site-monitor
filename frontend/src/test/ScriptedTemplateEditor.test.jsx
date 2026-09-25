@@ -49,7 +49,7 @@ function draw(props = {}) {
 
 /** SearchableSelect hem açılışta hem seçimde mouseDown dinler (click DEĞİL). */
 function openScopeSelect() {
-  fireEvent.mouseDown(document.querySelector('.ss-trigger'))
+  fireEvent.mouseDown(document.querySelector('button[role="combobox"]'))
 }
 function pickOption(label) {
   fireEvent.mouseDown(screen.getByText(label))

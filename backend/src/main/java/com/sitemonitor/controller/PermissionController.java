@@ -28,9 +28,16 @@ public class PermissionController {
     private final PermissionGrantRepository repo;
     private final AuditService auditService;
 
+    /**
+     * İzin matrisi — OKUMA herkese açık (2026-09-25, kullanıcı kararı: "admin hariç diğer kullanıcılar read
+     * edebilsin, değişiklik yapamasın; sadece kimin neye yetkisi var görsün"). Oturum zorunluluğunu
+     * AuthInterceptor sağlar. Yazma uçları (PUT, reset) yalnız global admin'de kalır; kapsamlı müdür de dahil
+     * diğer herkese {@code can_edit=false} döner ve satırlar yalnız (rol, kaynak, eylem, izin) taşır — kimin
+     * ne zaman değiştirdiği ({@code updated_by/updated_at}) yönetim bilgisidir, salt okuyana gitmez.
+     */
     @GetMapping
     public ResponseEntity<Map<String, Object>> getMatrix(HttpSession session) {
-        requireAdmin(session);
+        boolean canEdit = SessionScope.isGlobalAdmin(session);
 
         // Render catalog as plain list-of-maps so frontend doesn't depend on Java types.
         List<Map<String, Object>> catalog = PermissionCatalog.ALL.stream()
@@ -44,10 +51,16 @@ public class PermissionController {
             })
             .toList();
 
+        List<?> grants = canEdit ? repo.findAll() : repo.findAll().stream()
+            .map(g -> Map.of("role", g.getRole(), "resource_key", g.getResourceKey(),
+                    "action", g.getAction(), "allowed", Boolean.TRUE.equals(g.getAllowed())))
+            .toList();
+
         return ResponseEntity.ok(Map.of(
             "success", true,
             "catalog", catalog,
-            "grants",  repo.findAll()
+            "grants",  grants,
+            "can_edit", canEdit
         ));
     }
 

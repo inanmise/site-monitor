@@ -33,10 +33,10 @@ describe('InventoryFilterRow', () => {
   it('port combobox seçenekleri satırlardan türer; seçim filtreye yazar; takım seçeneği ad ile', () => {
     const { onFilters } = renderRow()
     const triggers = screen.getAllByText(/^Hepsi$|^Any$/)
-    fireEvent.mouseDown(triggers[0].closest('.ss-trigger'))   // port
+    fireEvent.mouseDown(triggers[0].closest('button[role="combobox"]'))   // port
     fireEvent.mouseDown(screen.getByText('8443'))
     expect(onFilters).toHaveBeenCalledWith({ ...EMPTY_FILTERS, port: '8443' })
-    fireEvent.mouseDown(screen.getAllByText(/^Hepsi$|^Any$/)[2].closest('.ss-trigger'))   // takım
+    fireEvent.mouseDown(screen.getAllByText(/^Hepsi$|^Any$/)[2].closest('button[role="combobox"]'))   // takım
     expect(screen.getByText('Takım B')).toBeInTheDocument()
   })
 
@@ -45,6 +45,6 @@ describe('InventoryFilterRow', () => {
     render(<table><thead><InventoryFilterRow filters={EMPTY_FILTERS} onFilters={() => {}} allRows={rows} cols={cols} canManage={false} statusFilter="deleted" /></thead></table>)
     const row = screen.getByTestId('inv-filter-row')
     expect(row.children).toHaveLength(cols.length + 1)
-    expect(row.lastElementChild.previousElementSibling.querySelector('.ss-trigger')).toBeNull()
+    expect(row.lastElementChild.previousElementSibling.querySelector('button[role="combobox"]')).toBeNull()
   })
 })
